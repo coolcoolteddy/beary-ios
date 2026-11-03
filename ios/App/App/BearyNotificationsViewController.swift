@@ -93,6 +93,20 @@ final class BearyNotificationsViewController: UIViewController {
     /// 容器可弹信件框；容器未接时本页就地弹提示框兜底。
     var onSystemNotificationSelected: ((NotificationItem) -> Void)?
 
+    /// 消息页合并列表接线（独立通知页不设，保持原行为）：
+    /// - onMergeSnapshotChanged：行表／分页／已读／水印变化时通知容器重排合并列表。
+    ///   关注卡状态变化不走这里（只影响详情页按钮，走 onFollowStateChangedForDetail）。
+    /// - toastOverride：设了则 toast 改投指定闭包（合并模式下容器转投当前可见页，
+    ///   子页 view 不进层级、原 BearyToast.show(in: view) 会不可见）。
+    /// - letterModalHostView：设了则信件模态改挂该 view（合并模式下容器传自己
+    ///   的 view；详情页打开时详情页自己改挂，关闭时容器恢复）。
+    var onMergeSnapshotChanged: (() -> Void)?
+    var toastOverride: ((String) -> Void)?
+    weak var letterModalHostView: UIView?
+    /// 详情页关注按钮状态变化通知（只在合并模式下容器接）：传关注方 id，
+    /// 详情页据此重配可见行的回关钮，不整表重载。
+    var onFollowStateChangedForDetail: ((Int) -> Void)?
+
     /// 当前未读数（与最近一次角标通知一致；容器也可直接读它）。
     var currentUnread: Int {
         return unreadTotal
@@ -963,6 +977,8 @@ final class BearyNotificationsViewController: UIViewController {
         displayHighlightWatermarkMs = (UserDefaults.standard.object(forKey: seenWatermarkKey) as? NSNumber)?.int64Value
         UserDefaults.standard.set(Int64(Date().timeIntervalSince1970 * 1000), forKey: seenWatermarkKey)
         applyReadAppearanceToVisibleRows()
+        // 水印变化改高亮旗：合并列表快照里的 highlight 随之变，需通知容器重排。
+        notifyMergeSnapshotChanged()
     }
 
     /// 高亮判定：未读 且（首次进页 或 创建时间晚于上次进页水印）。
@@ -1141,6 +1157,7 @@ final class BearyNotificationsViewController: UIViewController {
         cancelCardAnimation()
         BearyAPI.shared.bumpAuthEpoch()
         tableView.reloadData()
+        notifyMergeSnapshotChanged()
     }
 
     /// 补缺 P3-38：账号变化时复位 seen 水印（与 clearItemsAfterUnauthorized 的登出重置同款两字段）。
@@ -1379,6 +1396,7 @@ final class BearyNotificationsViewController: UIViewController {
             }
         }
         displayRows = rows
+        notifyMergeSnapshotChanged()
     }
 
     /// 点卡只展开/收起：展开是整区高度生长（网页 .nt-syslist grid-template-rows
@@ -1867,6 +1885,8 @@ final class BearyNotificationsViewController: UIViewController {
                     }
                 }
                 self.refreshFollowCardRows(actorId: actorId)
+                // 详情页按钮同步：合并模式下详情页开着时，回关钮状态要跟着变。
+                self.onFollowStateChangedForDetail?(actorId)
             }
         }
     }
@@ -1933,11 +1953,13 @@ final class BearyNotificationsViewController: UIViewController {
                     BearyFriends.clearDiaryCachesAndNotify()
                     self.markFollowCardRead(notificationId: notificationId)
                     self.refreshFollowCardRows(actorId: actorId)
+                    self.onFollowStateChangedForDetail?(actorId)
                 case .failure(let error):
                     // 失败回滚回点按前确认态，不再一律回 canFollowBack（那会把一次
                     // 失败的“关注”点按也画成回关，正是本支要修的 stale 回关同类问题）。
                     self.followCardStates[actorId] = previousState
                     self.refreshFollowCardRows(actorId: actorId)
+                    self.onFollowStateChangedForDetail?(actorId)
                     if case .unauthorized = error {
                         self.onRequireLogin?()
                     } else {
@@ -1984,6 +2006,7 @@ final class BearyNotificationsViewController: UIViewController {
         recordFullLoadUnread()
         applyReadAppearanceToVisibleRows()
         markSingleRead(item, at: index)
+        notifyMergeSnapshotChanged()
     }
 
     private func openNotification(_ item: NotificationItem, at index: Int) {
@@ -2002,6 +2025,7 @@ final class BearyNotificationsViewController: UIViewController {
             // 否则 POST 成功后轻量比对会误判为变化而多拉一次整页；失败回滚处同步改回。
             recordFullLoadUnread()
             applyReadAppearanceToVisibleRows()
+            notifyMergeSnapshotChanged()
         }
         if isUnread {
             markSingleRead(item, at: index)
@@ -2108,6 +2132,7 @@ final class BearyNotificationsViewController: UIViewController {
                     // 标已读失败回滚：快照随本地未读数改回，与回滚后的列表一致。
                     strongSelf.recordFullLoadUnread()
                     strongSelf.applyReadAppearanceToVisibleRows()
+                    strongSelf.notifyMergeSnapshotChanged()
                 }
             }
         }
@@ -2301,6 +2326,10 @@ final class BearyNotificationsViewController: UIViewController {
     /// FAB 仅首页/时间线显示，消息页无 FAB 但底栏分段器仍在，落点由
     /// 组件算到分段器顶之上；调用签名与文案、触发时机不变。
     private func showToast(message: String) {
+        if let override = toastOverride {
+            override(message)
+            return
+        }
         BearyToast.show(in: view, message: message)
     }
 
@@ -2358,7 +2387,8 @@ final class BearyNotificationsViewController: UIViewController {
                 self?.activeLetterModal = nil
             }
         }
-        modal.show(in: view)
+        // 合并模式下信件模态改挂容器给的 view（子页 view 不进层级时原 view 不可见）。
+        modal.show(in: letterModalHostView ?? view)
         activeLetterModal = modal
         return modal
     }
@@ -2957,7 +2987,7 @@ private final class BearyLetterModalButton: UIButton {
 
 // MARK: - 通知行 cell（网页 .nt-item 口径）
 
-private class BearyNotificationCell: UITableViewCell {
+class BearyNotificationCell: UITableViewCell {
 
     private var avatarTask: URLSessionDataTask?
     private var avatarLoadGeneration = 0
@@ -3385,6 +3415,15 @@ private class BearyNotificationCell: UITableViewCell {
     /// 卡面箭头旋转（调用方用 UIView.animate 包裹即得展开/收起动画）。
     func setChevronExpanded(_ expanded: Bool) {
         chevronView.transform = expanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : CGAffineTransform.identity
+    }
+
+    /// 详情页入口箭头：合并列表里的卡面不再原地展开，点按进详情页，
+    /// 箭头改右向（展开/收起的下箭头不再用）。独立通知页不调本方法，
+    /// 其展开箭头行为不变。
+    func setDetailChevron() {
+        chevronView.isHidden = false
+        chevronView.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 16)
+        chevronView.transform = .identity
     }
 
     /// 未读高亮与未读点分离：高亮只画在 unreadBgView（嵌套行从竖线右侧
@@ -3914,7 +3953,7 @@ private final class BearyPopperView: UIView {
 
 // MARK: - 哨兵 cell（翻页触发占位：忙时 16px 转圈，闲时不可见，失败时显重试文案）
 
-private class BearyNotificationTrailingCell: UITableViewCell {
+class BearyNotificationTrailingCell: UITableViewCell {
 
     /// 忙时仅 16pt 官方刷新图标转圈（与网页 .more-sentinel 16px 同口径；2026-10-30
     /// 全 App 统一 icon_refresh，不再用 medium 圈 ×0.8 缩放）。
@@ -3987,5 +4026,338 @@ private class BearyNotificationTrailingCell: UITableViewCell {
         spinner.stopSpinning()
         spinner.isHidden = true
         retryLabel.isHidden = false
+    }
+}
+
+// MARK: - 消息页合并列表数据（真交错支；独立通知页不走这里）
+//
+// 合并列表不再嵌子页表：容器只读本快照拼一张表，子页 view 不进层级，
+// 首拉／轮询／门控仍由子页原有路径驱动（viewDidLoad 首拉、pageDidEnter
+// 轮询、容器 refresh 入口均不动）。独立通知页（showPage(.notif)）仍用
+// 子页自己的表与原地展开，本节只给合并列表与详情页用，行为互不干扰。
+// 卡面在合并列表里不再展开：点按推详情页（见 BearyNotificationDetailViewController），
+// 卡面箭头改右向（cell.setDetailChevron），展开动画／零高行／chevron 旋转
+// 只留给独立页。
+
+/// 合并列表用通知卡快照：与 cellForRowAt 的卡面口径一致（最新条的时间、
+/// 最新条标题／摘要、组内任一未读、seen 水印高亮）。
+struct NotifMergeCardData {
+    enum Kind {
+        case system
+        case interactive
+    }
+    let kind: Kind
+    let title: String
+    let excerpt: String
+    let timeMs: Int?
+    let anyUnread: Bool
+    let highlight: Bool
+    /// 该卡全部条目（items 原序，即 created_at 倒序），详情页直接用。
+    let items: [NotificationItem]
+}
+
+/// 合并列表用通知快照：行（卡＋信件行）与分页／首载状态一次给齐。
+struct NotifMergeSnapshot {
+    let cards: [NotifMergeCardData]
+    let letters: [NotificationItem]
+    let hasMore: Bool
+    let isLoadingMore: Bool
+    let loadMoreFailed: Bool
+    /// 首载是否未落定：缓存秒显也算落定（hasSuccessfulLoad 已真），
+    /// 后台刷新不重新置 pending；401 清场后复位回 pending。
+    let isFirstPending: Bool
+    let firstLoadFailed: Bool
+    var hasRows: Bool {
+        return !cards.isEmpty || !letters.isEmpty
+    }
+}
+
+extension BearyNotificationsViewController {
+
+    /// 合并快照：按 cellForRowAt 同口径现算（不缓存，调用方在快照变化回调里取）。
+    var mergeSnapshot: NotifMergeSnapshot {
+        var cards: [NotifMergeCardData] = []
+        let sysIndices = items.indices.filter({ items[$0].type == "system" })
+        if let latestIndex = sysIndices.first {
+            let latest = items[latestIndex]
+            let excerpt: String
+            if let latestTitle = latest.title, !latestTitle.isEmpty {
+                excerpt = latestTitle
+            } else {
+                excerpt = latest.excerpt ?? ""
+            }
+            cards.append(NotifMergeCardData(
+                kind: .system,
+                title: "系统消息",
+                excerpt: excerpt,
+                timeMs: latest.createdAt,
+                anyUnread: sysIndices.contains(where: { (items[$0].read ?? true) == false }),
+                highlight: shouldHighlightCard(indices: Array(sysIndices)),
+                items: sysIndices.map({ items[$0] })
+            ))
+        }
+        let actIndices = items.indices.filter({ (items[$0].type ?? "") != "system" && (items[$0].type ?? "") != "letter" })
+        if let latestIndex = actIndices.first {
+            let latest = items[latestIndex]
+            let actorName = latest.actorName ?? ""
+            let latestVerb = BearyNotificationCell.verb(for: latest.type)
+            cards.append(NotifMergeCardData(
+                kind: .interactive,
+                title: "互动消息",
+                excerpt: latestVerb.isEmpty ? actorName : actorName + " " + latestVerb,
+                timeMs: latest.createdAt,
+                anyUnread: actIndices.contains(where: { (items[$0].read ?? true) == false }),
+                highlight: shouldHighlightCard(indices: Array(actIndices)),
+                items: actIndices.map({ items[$0] })
+            ))
+        }
+        let letters = items.filter({ $0.type == "letter" })
+        return NotifMergeSnapshot(
+            cards: cards,
+            letters: letters,
+            hasMore: hasMore,
+            isLoadingMore: isLoadingMore,
+            loadMoreFailed: loadMoreFailed,
+            isFirstPending: !(hasSuccessfulLoad || firstLoadFailed),
+            firstLoadFailed: firstLoadFailed
+        )
+    }
+
+    /// 快照变化通知：行表重建／401 清场／乐观已读／回滚／水印落定处调。
+    /// 关注卡状态变化不调（只影响详情页按钮，走 onFollowStateChangedForDetail）。
+    func notifyMergeSnapshotChanged() {
+        onMergeSnapshotChanged?()
+    }
+
+    /// 合并列表翻页入口：守卫全在原 loadMore 内（在途／首载／无更多页直接回）。
+    func loadMoreForMerge() {
+        loadMore()
+    }
+
+    /// 合并列表首载重试入口：失败行／失败态的重试钮走这里（即 loadFirstPage，
+    /// 开头即把 firstLoadFailed 复位，容器据快照收失败行）。
+    func retryFirstLoadForMerge() {
+        loadFirstPage()
+    }
+
+    /// 哨兵滚出视野后的失败旗重 arm（原 scrollViewDidScroll 口径，合并列表
+    /// 的表滚不动子页表，改由容器在哨兵不可见时调）。
+    func clearLoadMoreFailedForMerge() {
+        guard loadMoreFailed else { return }
+        loadMoreFailed = false
+        notifyMergeSnapshotChanged()
+    }
+
+    /// 合并行／详情行点按：走原 openNotification 全套（乐观已读＋POST、
+    /// entry／个人页／会话／信件模态分流），只把导航交给容器既有回调；
+    /// 信件模态挂 letterModalHostView（合并模式下容器给自己的 view）。
+    /// 按 id 找下标（翻页／刷新后旧下标可能指错行，id 是唯一稳键）。
+    func openItemForDetail(_ item: NotificationItem) {
+        guard let id = item.id,
+              let index = items.firstIndex(where: { $0.id == id }) else { return }
+        openNotification(items[index], at: index)
+    }
+
+    /// 详情页高亮判定：与行 cell 同口径（未读且晚于 seen 水印）。
+    func highlightForDetail(_ item: NotificationItem) -> Bool {
+        return shouldHighlight(item: item)
+    }
+
+    /// 详情页回关钮状态：有缓存直接给；无缓存先画 loading，同时拉一次
+    /// state（与行 cell 的 configureFollowCardIfNeeded 同口径）。
+    func followStateForDetail(actorId: Int) -> BearyNotificationCell.FollowCardState {
+        if let state = followCardStates[actorId] {
+            return state
+        }
+        fetchFollowCardState(actorId: actorId)
+        return .loading
+    }
+
+    /// 详情页回关钮点按：按关注方找首条 follow 行走原 handleFollowBack
+    /// 全套（失败态点按 = 重试拉取、互关／已关注／在途不发请求、成功
+    /// 直定互关／已关注、失败回滚＋toast），不另写一份关注逻辑。
+    func performFollowBackForDetail(actorId: Int) {
+        guard let index = items.firstIndex(where: { $0.type == "follow" && $0.actorId == actorId }) else { return }
+        handleFollowBack(itemIndex: index)
+    }
+}
+
+// MARK: - 通知详情页（合并列表卡面点按推的新页；独立通知页不用）
+//
+// 一张卡一页：标题为卡名（系统消息／互动消息），表内是该卡全部条目
+// （items 原序倒序），每行与行 cell 同款（头像／名＋动词／摘要／时间），
+// 关注行另带回关钮（状态与动作全走子页原有回关逻辑）。
+// 行点按走子页 openItemForDetail 全套分流（进日记详情／个人页／会话／
+// 信件模态），与合并行点按同口径；人名／头像点按：follow 行进个人页
+// （原来整行点按就是进个人页，拆成独立按钮后行为不变；其余行人名不
+// 另设按钮，整行点按目的地不变）。
+// 信件模态挂本页 view（子页 letterModalHostView 在 viewWillAppear 改挂、
+// viewWillDisappear 时由容器恢复，见 onDetailWillDisappear）。
+// 翻页追加的新条目：本页打开期间不实时追（回列表重进即见最新），
+// 但从上层页返回时 viewWillAppear 重读卡快照补齐。
+
+final class BearyNotificationDetailViewController: UIViewController, UITableViewDelegate, UITableViewDataSource {
+
+    private let card: NotifMergeCardData
+    private let notifSource: BearyNotificationsViewController
+    private let onDetailWillDisappear: (() -> Void)?
+
+    private let tableView = UITableView(frame: .zero, style: .plain)
+    private var items: [NotificationItem]
+
+    init(
+        card: NotifMergeCardData,
+        notifSource: BearyNotificationsViewController,
+        onDetailWillDisappear: (() -> Void)?
+    ) {
+        self.card = card
+        self.notifSource = notifSource
+        self.items = card.items
+        self.onDetailWillDisappear = onDetailWillDisappear
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = BearyColors.bg
+
+        let topBar = UIView()
+        topBar.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(topBar)
+        let backButton = UIButton(type: .system)
+        backButton.translatesAutoresizingMaskIntoConstraints = false
+        backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 20), for: .normal)
+        backButton.tintColor = BearyColors.ink
+        backButton.accessibilityLabel = "返回"
+        backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
+        backButton.bearyAddPressFeedback()
+        topBar.addSubview(backButton)
+        let titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.text = card.title
+        topBar.addSubview(titleLabel)
+
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        tableView.backgroundColor = BearyColors.bg
+        tableView.separatorStyle = .none
+        tableView.rowHeight = UITableView.automaticDimension
+        tableView.estimatedRowHeight = 88
+        // 顶栏已是固定条、底 inset 手动补（viewDidLayoutSubviews），
+        // 不自动叠加安全区内边距，免得手动值与系统值叠成双份。
+        tableView.contentInsetAdjustmentBehavior = .never
+        tableView.delegate = self
+        tableView.dataSource = self
+        tableView.register(BearyNotificationCell.self, forCellReuseIdentifier: "BearyNotificationCell")
+        view.addSubview(tableView)
+
+        NSLayoutConstraint.activate([
+            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            topBar.heightAnchor.constraint(equalToConstant: 44),
+            backButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            backButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            backButton.widthAnchor.constraint(equalToConstant: 44),
+            backButton.heightAnchor.constraint(equalToConstant: 44),
+            titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: backButton.trailingAnchor, constant: 8),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 模态全屏无底栏：表底只留安全区底＋16，不留 tab 页的 80。
+        let bottom = 16 + view.safeAreaInsets.bottom
+        if tableView.contentInset.bottom != bottom {
+            tableView.contentInset.bottom = bottom
+            tableView.scrollIndicatorInsets.bottom = bottom
+        }
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // 从上层页返回时补齐翻页追加的新条目；信件模态与 toast 改挂本页。
+        if let fresh = notifSource.mergeSnapshot.cards.first(where: { $0.kind == card.kind }) {
+            items = fresh.items
+            tableView.reloadData()
+        }
+        notifSource.letterModalHostView = view
+        notifSource.toastOverride = { [weak self] message in
+            guard let view = self?.view else { return }
+            BearyToast.show(in: view, message: message)
+        }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        // 容器恢复合并模式宿主（信件模态挂容器 view、toast 投容器 view）。
+        onDetailWillDisappear?()
+    }
+
+    @objc private func backTapped() {
+        dismiss(animated: BearyMotion.animated(true))
+    }
+
+    /// 详情页回关钮状态刷新：只重配可见 follow 行的动作区，不 reloadRows
+    ///（与子页 refreshFollowCardRows 同口径，避免整行闪一下）。
+    func refreshFollowButtons(actorId: Int) {
+        for path in tableView.indexPathsForVisibleRows ?? [] {
+            guard path.row < items.count else { continue }
+            let item = items[path.row]
+            guard item.type == "follow", item.actorId == actorId,
+                  let cell = tableView.cellForRow(at: path) as? BearyNotificationCell else { continue }
+            cell.configureFollowCard(state: notifSource.followStateForDetail(actorId: actorId)) { [weak self] in
+                self?.notifSource.performFollowBackForDetail(actorId: actorId)
+            }
+        }
+    }
+
+    // MARK: - Table
+
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return items.count
+    }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        guard let cell = tableView.dequeueReusableCell(
+            withIdentifier: "BearyNotificationCell",
+            for: indexPath
+        ) as? BearyNotificationCell else {
+            return UITableViewCell()
+        }
+        let item = items[indexPath.row]
+        // 详情页行是顶层行（非嵌套）：头像 x=20、分隔线起于行左缘，
+        // 与展开卡内嵌套行（头像 x=50）不同。
+        cell.configure(with: item, nested: false, highlight: notifSource.highlightForDetail(item))
+        if item.type == "follow", let actorId = item.actorId {
+            cell.configureFollowCard(state: notifSource.followStateForDetail(actorId: actorId)) { [weak self] in
+                self?.notifSource.performFollowBackForDetail(actorId: actorId)
+            }
+        }
+        return cell
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: !UIAccessibility.isReduceMotionEnabled)
+        BearyHaptics.press()
+        guard indexPath.row < items.count else { return }
+        // 行点按全走子页原分流（乐观已读＋POST＋导航）：follow 行 → 容器
+        // onOpenUser → 个人页（旧行为整行点按即进个人页，这里同口径，
+        // 不另给人名／头像加独立按钮）；entry 行 → 日记详情；dm 行 →
+        // 会话页；无 entry 的系统／信件行 → 信件模态（挂本页 view）。
+        notifSource.openItemForDetail(items[indexPath.row])
     }
 }

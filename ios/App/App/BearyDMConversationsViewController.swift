@@ -47,6 +47,9 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     private var tableViewTopToTopBarConstraint: NSLayoutConstraint?
     private var tableViewTopToBannerConstraint: NSLayoutConstraint?
 
+    /// 合并列表快照变化通知（容器接；独立会话页不设，行为不变）。
+    var onMergeSnapshotChanged: (() -> Void)?
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
@@ -279,6 +282,8 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             firstLoadPending = true
             updateEmptyState()
             tableView.reloadData()
+            // 合并列表：清表即快照变化，容器先把旧号行撤掉再等新号首拉。
+            notifyDMConversationsMergeChanged()
             if loading {
                 needsReloadAfterUserChange = true
             } else {
@@ -291,6 +296,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             needsReloadAfterUserChange = false
             updateEmptyState()
             tableView.reloadData()
+            notifyDMConversationsMergeChanged()
         }
     }
 
@@ -338,6 +344,9 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                 }
                 self.updateEmptyState()
                 self.tableView.reloadData()
+                // 合并列表：首拉落定（成功或失败）即快照变化，容器重排并
+                // 按两组落定情况收顶部唯一转圈；旧号回包早退不调。
+                self.notifyDMConversationsMergeChanged()
             }
         }
     }
@@ -409,7 +418,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
 
 // MARK: - 行 Cell（头像首字母兜底 + 摘要 + 时间 + 未读角标；无自绘图形）
 
-private final class BearyDMConversationCell: UITableViewCell {
+final class BearyDMConversationCell: UITableViewCell {
 
     // C3：头像走统一 BearyAvatarView（44 圆角 22、首字母占位、失败重试内含）。
     private let avatarView = BearyAvatarView()
@@ -535,5 +544,46 @@ private final class BearyDMConversationCell: UITableViewCell {
         unreadBadgeZeroWidthConstraint?.isActive = unread <= 0
         // C3：头像加载/占位/重试全走 BearyAvatarView（与旧 configure 同口径）。
         avatarView.configure(displayName: displayName, avatarURL: peer?.avatarUrl.flatMap { BearyImageURLs.avatarURL($0) }, ownerID: peer?.id)
+    }
+}
+
+// MARK: - 消息页合并列表数据（真交错支；独立会话页不走这里）
+//
+// 合并列表不再嵌子页表：容器只读本快照拼一张表，子页 view 不进层级，
+// 首拉仍由子页原有路径驱动（viewDidLoad 末尾 load()、关系／账号广播
+// 重拉均不动）。独立会话页（showPage(.conversations)）仍用子页自己的
+// 表与自有首次加载态／空态／失败态，本节只给合并列表用。
+// 注意：合并模式下子页 view 不进层级，故子页自己的 firstLoadStateView
+//（转圈＋“加载中…”）与 conversationStateView 永不渲染——私信组首次
+// 加载态由容器顶部唯一转圈承担（见 BearyMessagesViewController 的
+// loadingHeaderView），本支不再复制私信组的加载态。
+
+/// 合并列表用私信快照：会话行与首次落定状态一次给齐。
+struct DMConversationsMergeSnapshot {
+    let conversations: [BearyAPI.DMConversation]
+    /// 首载是否未落定：load() 完成回调置 false；账号切换时 userChanged
+    /// 置 true（重新点亮容器顶部转圈，直到新号首拉落定）。
+    let isFirstPending: Bool
+    let loadFailed: Bool
+    var hasRows: Bool {
+        return !conversations.isEmpty
+    }
+}
+
+extension BearyDMConversationsViewController {
+
+    /// 合并快照：现算（不缓存，调用方在快照变化回调里取）。
+    var mergeSnapshot: DMConversationsMergeSnapshot {
+        return DMConversationsMergeSnapshot(
+            conversations: conversations,
+            isFirstPending: firstLoadPending,
+            loadFailed: loadFailed
+        )
+    }
+
+    /// 快照变化通知：load() 完成回调与账号切换清表后调（guest 早退不调，
+    /// 无变化时不调；friendsChanged 走 load() 完成回调覆盖）。
+    func notifyDMConversationsMergeChanged() {
+        onMergeSnapshotChanged?()
     }
 }

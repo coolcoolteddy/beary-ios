@@ -179,6 +179,9 @@ final class BearyChromeViewController: UIViewController {
     private var trashEdgeDismiss: BearyEdgeDismissController?
     private var editProfileEdgeDismiss: BearyEdgeDismissController?
     private var userProfileEdgeDismiss: BearyEdgeDismissController?
+    /// 通知详情页 modal 的 EdgeDismiss 强持有（transitioningDelegate 弱引用，
+    /// 不持有则手势与动画代理失效，见 presentNotificationDetail）。
+    private var notificationDetailEdgeDismiss: BearyEdgeDismissController?
     /// 22(b) Plan A：顶栏高恒为安全区顶 + 60，显隐不再塌高（收起态只上移 +
     /// 淡出，见 setHeaderVisible）；页顶约束恒为 view.top，但常量为 -12：
     /// 液态玻璃顶边自带高光恰落在屏幕顶边即用户报的那条白线，顶边推出屏外
@@ -2458,8 +2461,9 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// 消息页（Li 2026-11-03 定）：底栏“消息”段的根页——通知＋私信合成一列
-    /// （两组标题行已去，行仍按组排、组内时间倒序，跨组不按时间交错）；
-    /// 各复用既有页实例（通知页／会话列表页的类），不另写逻辑；
+    /// （真交错：两组行按时间倒序交错排，最新在最上，同时间戳通知行在前；
+    /// 通知卡面点按推详情页，不再原地展开）；各复用既有页实例
+    /// （通知页／会话列表页的类），不另写逻辑；
     /// 顶栏右钮进好友列表页（图标 icon_friends）。
     /// 游客/未登录不建页：showPage 的门控已先拦（游客登录门、未登录 toast+登录门），
     /// 本页 load() 的 onRequireLogin 是第二道门（两组子页各自接线）。
@@ -2474,6 +2478,7 @@ final class BearyChromeViewController: UIViewController {
         vc.onOpenEntry = { [weak self] entryId in self?.gotoEntry(entryId: entryId) }
         vc.onOpenUser = { [weak self] userId in self?.presentUserProfile(userId: userId) }
         vc.onOpenDM = { [weak self] peer in self?.presentDMChat(peer: peer) }
+        vc.onOpenNotificationDetail = { [weak self] detailVC in self?.presentNotificationDetail(detailVC) }
         addPageVC(vc, page: .messages)
         messagesVC = vc
         vc.applyHeaderTopInset(visible: headerVisible)
@@ -3220,6 +3225,21 @@ final class BearyChromeViewController: UIViewController {
         nav.transitioningDelegate = userProfileEdgeDismiss
         self.userProfileEdgeDismiss = userProfileEdgeDismiss
         present(nav, animated: BearyMotion.animated(true))
+    }
+
+    /// 通知详情页（真交错支）：合并列表卡面点按推的新页，呈现口径与
+    /// 个人主页 modal 同款（系统导航栏隐藏、自有顶栏、modal 全屏、
+    /// EdgeDismiss 边缘右滑 dismiss；transitioningDelegate 须强持有，
+    /// 见 notificationDetailEdgeDismiss 属性）。
+    private func presentNotificationDetail(_ vc: BearyNotificationDetailViewController) {
+        let nav = UINavigationController(rootViewController: vc)
+        nav.isNavigationBarHidden = true
+        nav.modalPresentationStyle = .fullScreen
+        let edgeDismiss = BearyEdgeDismissController()
+        edgeDismiss.attach(to: nav)
+        nav.transitioningDelegate = edgeDismiss
+        self.notificationDetailEdgeDismiss = edgeDismiss
+        topmostViewController().present(nav, animated: BearyMotion.animated(true))
     }
 
     @objc private func didTapUserProfileClose() {
