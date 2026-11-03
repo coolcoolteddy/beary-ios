@@ -176,14 +176,14 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     }
 
     deinit {
-        activeGeocoder?.cancel()
+        activeGeocoder?.cancelGeocode()
     }
 
     /// 取消当前轮地理编码并换代，返回新代次。重算与切账号入口共用。
     @discardableResult
     private func cancelGeocoding() -> Int {
         geocodeGeneration += 1
-        activeGeocoder?.cancel()
+        activeGeocoder?.cancelGeocode()
         activeGeocoder = nil
         return geocodeGeneration
     }
