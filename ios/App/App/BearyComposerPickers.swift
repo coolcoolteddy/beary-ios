@@ -444,7 +444,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         } else {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetView.layer.borderWidth = 0
-            BearySheetChrome.applyShadow(to: sheetView.layer)
+            BearyShadow.applyRaised(to: sheetView.layer)
         }
     }
 

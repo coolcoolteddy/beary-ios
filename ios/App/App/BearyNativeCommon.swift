@@ -89,13 +89,11 @@ enum BearySheetChrome {
     static let bottomShadowOpacity: Float = 0.22
     static let bottomShadowRadius: CGFloat = 16
     static let bottomShadowOffset = CGSize(width: 0, height: -12)
-    /// 面板阴影唯一入口：底 sheet 档（0.22 / 16 / (0, -12)）；圆角不动。
-    /// 旧 0.30/30/(0, 24) 档已于 2026-11-02 定版第 2 组废弃删除，不再提供参数分流。
+    /// 面板阴影唯一入口（规格附录第 2 项已定：阴影一档化为 raised）：
+    /// 兼容别名，转调 BearyShadow.applyRaised（0.12 / 8 / (0, 2)）；底 sheet 旧档
+    /// 0.22 / 16 / (0, -12) 已废弃，不删除本函数以防其他分支引用断裂。
     static func applyShadow(to layer: CALayer) {
-        layer.shadowColor = shadowColor
-        layer.shadowOpacity = bottomShadowOpacity
-        layer.shadowRadius = bottomShadowRadius
-        layer.shadowOffset = bottomShadowOffset
+        BearyShadow.applyRaised(to: layer)
     }
 }
 

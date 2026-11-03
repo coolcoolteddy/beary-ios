@@ -4050,7 +4050,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         // 网页抓手无附加安全区：不再补 28pt 顶 inset；抓手直接落在 sheet 顶部（顶距 10）。
         // 阴影层挂在容器里、presentedView 下方（presentedView 自身裁剪，阴影不能挂它身上）。
         sheetShadowView.backgroundColor = .clear
-        BearySheetChrome.applyShadow(to: sheetShadowView.layer)
+        BearyShadow.applyRaised(to: sheetShadowView.layer)
         container.addSubview(sheetShadowView)
         if UIAccessibility.isReduceMotionEnabled {
             dimmingView.alpha = 1
