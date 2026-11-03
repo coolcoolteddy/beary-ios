@@ -544,6 +544,23 @@ final class BearyImageLoader {
         }
     }
 
+    /// 静态性能修复：按精确 URL 逐出本机图片缓存（头像替换用）。
+    /// 与 evictEntryImages 同款代次屏障＋取消在途＋内存全清＋磁盘删文件；
+    /// 区别只在输入是 URL 本身而非日记图片 key，故不展开 _t 缩略变体
+    /// （头像 URL 无 _t 变体；磁盘文件按完整 URL 的 SHA256 定键，精确删即够；
+    /// 内存键含下采样宽度后缀、不可枚举，故仍全清——与 evictEntryImages 同副作用）。
+    func evictURLs(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        let bucket = currentAccountId
+        bumpGeneration(for: bucket)
+        cancelInFlight(forURLs: urls, bucket: bucket)
+        cache.removeAllObjects()
+        for url in urls {
+            guard let file = diskFileURL(for: url, bucket: bucket) else { continue }
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
     /// 审计三轮 23 项：磁盘累计字节（按桶）。本进程内每桶只在首次写入时
     /// 枚举校准一次，之后写盘只做单文件 stat + 累加（O(1)），不再每写必扫
     /// 目录；只有累计值越过上限时才重新枚举、按真实大小与修改时间淘汰。

@@ -1184,6 +1184,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     }
                     switch result {
                     case .success:
+                        // 静态性能修复：彻底删除成功即逐出该篇图片的本机缓存
+                        //（trashValue.imageKeys 为服务端透传的原篇图片 keys；
+                        // 此前只靠 24 小时 TTL 自然过期）。只清本机缓存。
+                        BearyImageLoader.shared.evictEntryImages(keys: trashValue.imageKeys ?? [])
                         self.removeRow(identifier: identifier)
                         // 防回插 + 后台落盘：口径与恢复成功处完全一致
                         // （主线程先记已移除 id，再走同步串行后台队列清桶）。

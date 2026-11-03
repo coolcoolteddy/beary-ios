@@ -1080,6 +1080,16 @@ class BearyEditProfileViewController: UIViewController {
         // 服务端没存；后端补分支回显后本分支自动转确认，无需再改 App）。
         // 名字 / 头像 / 封面仍按原口径写已提交态（不在本条审计范围内）。
         if let snapshot = savingSnapshot {
+            // 静态性能修复：头像替换落库成功即逐出旧头像的本机缓存（此前只靠
+            // 24 小时 TTL 自然过期）。initialAvatarUrl 在本页仍是保存前的值，
+            // 故此处取到的即旧头像；新头像是 dataURL 时 avatarURL 为 nil，
+            // 与旧 URL 一定不同，不会误删新图；旧头像本身就是 dataURL 时
+            // avatarURL 为 nil（dataURL 走直接解码、不走加载器缓存），无可逐出。
+            if snapshot.avatarChanged,
+               let oldAvatarURL = BearyImageURLs.avatarURL(initialAvatarUrl),
+               oldAvatarURL != BearyImageURLs.avatarURL(snapshot.avatarDataURL) {
+                BearyImageLoader.shared.evictURLs([oldAvatarURL])
+            }
             let signatureConfirmed: Bool
             if snapshot.signatureChanged, let response = profileResponse {
                 let expected: String? = snapshot.signatureValue.isEmpty ? nil : snapshot.signatureValue

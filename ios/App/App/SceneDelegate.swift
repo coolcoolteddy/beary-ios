@@ -2423,6 +2423,10 @@ final class BearyChromeViewController: UIViewController {
                     self.deletingEntryIds.remove(entryId)
                     switch result {
                     case .success:
+                        // 静态性能修复：删帖成功即逐出该篇图片的本机缓存（此前只靠
+                        // 24 小时 TTL 自然过期，TTL 内旧图仍可读）。只清本机缓存，
+                        // 服务端数据不动；软删除进回收站，恢复后从网络重下。
+                        BearyImageLoader.shared.evictEntryImages(keys: entry.images ?? [])
                         BearySoundPlayer.play(.deleteSwoosh)
                         // 88 包 M14：时间线走行级退场，不再整页首拉重载；
                         // 首页与个人主页仍用原有重拉同步（其列表非日期分区，
