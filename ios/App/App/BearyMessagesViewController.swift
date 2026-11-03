@@ -2,28 +2,30 @@ import UIKit
 
 // MARK: - 消息页（Li 2026-11-03 定）：底栏“消息”段的根页
 //
-// 好友页改成消息页：铃铛通知＋私信同页分两组——上面“通知”，下面“私信”。
+// 好友页改成消息页：铃铛通知＋私信合成一列——两组标题行已去，
+// 通知行在上、私信行在下，各组内按时间倒序；跨组不按时间交错
+// （真交错需把通知卡片／分页／回关接线与会话行并进同一张表，另起一支）。
 // 两组不另写逻辑，各复用既有页实例：通知组是 BearyNotificationsViewController
 // （关注卡回关按实时关系等行为原样保留），私信组是
 // BearyDMConversationsViewController（未读角标蓝底白字原样保留）。
 // 两组表内滚动交外层滚动视图：外层一个 UIScrollView 纵向排布，
 // 每组容器高由组内表内容高回调驱动（见两组各自的 onContentHeightChanged）。
-// 顶栏：左边标题“消息”，右上角用户列表按钮（双人图标 44×44），
+// 顶栏：左边标题“消息”，右上角好友列表按钮（icon_friends 单人＋三横 44×44），
 // 点进原好友列表页——原页面只换入口，不重做（容器接线 showPage(.friends)）。
 // 底栏“好友”段同步改叫“消息”、图标换气泡，见 SceneDelegate 底栏接线。
 // 下拉刷新：外层不另挂刷新头（内层通知页的自定义下拉头在嵌入态下会
 // 落在组顶、与外层圈双显），刷新走同 tab 重拍、进页门控、聊天关闭回调
 // 与关系／账号广播——两组各自原有的刷新路径（见 refresh / pageDidEnter /
 // refreshGroups），不在此另起一套。
-// 已看水印：进消息页本身不记通知已看；通知组实际出现在滚动视口内时
-// 才记一次／访问（见 updateNotifSeenIfVisible）；聊天关闭回填、私信组
-// 刷新都不记。铃铛角标数字仍走服务端未读数，不受 seen 水印影响。
+// 已看水印：进消息页本身不记通知已看；通知行区域实际出现在滚动视口内时
+// 才记一次／访问（见 updateNotifSeenIfVisible）；聊天关闭回填、私信行
+// 刷新都不记。seen 水印只影响行高亮，不改服务端未读数。
 
 final class BearyMessagesViewController: UIViewController {
 
     /// 未登录时调用：容器接线到登录门。
     var onRequireLogin: (() -> Void)?
-    /// 顶栏用户列表钮点按：容器接线到原好友列表页。
+    /// 顶栏好友列表钮点按：容器接线到好友列表页。
     var onOpenUserList: (() -> Void)?
     /// 通知行点按（日记去向）：传日记 id，容器接线到 gotoEntry。
     var onOpenEntry: ((String) -> Void)?
@@ -59,12 +61,12 @@ final class BearyMessagesViewController: UIViewController {
         titleLabel.textColor = BearyColors.ink
         titleLabel.text = "消息"
         topBar.addSubview(titleLabel)
-        // 顶栏右钮：用户列表（双人图标），点进原好友列表页。
+        // 顶栏右钮：好友列表（icon_friends 单人＋三横），点进好友列表页。
         let userListButton = UIButton(type: .system)
         userListButton.translatesAutoresizingMaskIntoConstraints = false
-        userListButton.setImage(BearyIconImages.image(named: "icon_users", pointSize: 20), for: .normal)
+        userListButton.setImage(BearyIconImages.image(named: "icon_friends", pointSize: 20), for: .normal)
         userListButton.tintColor = BearyColors.ink
-        userListButton.accessibilityLabel = "用户列表"
+        userListButton.accessibilityLabel = "好友列表"
         userListButton.addTarget(self, action: #selector(userListTapped), for: .touchUpInside)
         userListButton.bearyAddPressFeedback()
         topBar.addSubview(userListButton)
@@ -123,7 +125,7 @@ final class BearyMessagesViewController: UIViewController {
         notifChild.onRequireLogin = { [weak self] in self?.onRequireLogin?() }
         notifChild.onOpenUser = { [weak self] userId in self?.onOpenUser?(userId) }
         notifChild.onOpenDM = { [weak self] peer in self?.onOpenDM?(peer) }
-        // 嵌入态：表内滚动交外层，表头标题改作“通知”组头；容器顶 inset 收起。
+        // 嵌入态：表内滚动交外层，通知组头已在子页内去掉；容器顶 inset 收起。
         notifChild.setEmbedded()
         notifChild.applyHeaderTopInset(visible: false)
         notifChild.onContentHeightChanged = { [weak self] height in
@@ -131,7 +133,7 @@ final class BearyMessagesViewController: UIViewController {
             self.notifHeightConstraint?.constant = height
         }
 
-        // 私信组接线与会话列表页同口径；嵌入态无返回钮（组头只留“私信”标题）。
+        // 私信组接线与会话列表页同口径；嵌入态无返回钮、组头顶栏已在子页内折叠。
         conversationsChild.onRequireLogin = { [weak self] in self?.onRequireLogin?() }
         conversationsChild.onOpenChat = { [weak self] conversation in
             guard let peer = conversation.peer, peer.id != nil else { return }
@@ -157,9 +159,9 @@ final class BearyMessagesViewController: UIViewController {
         updateNotifSeenIfVisible()
     }
 
-    /// 通知组可见性门控：只在通知组实际出现在滚动视口内时记已看。
-    /// 进消息页本身不记；首进时通知组在顶部、一般立即可见；此前已滚到
-    /// 私信组、切回后仍在深位时不记，滚回顶部露出通知组时才记。
+    /// 通知行区域可见性门控：只在通知行区域实际出现在滚动视口内时记已看。
+    /// 进消息页本身不记；首进时通知行在顶部、一般立即可见；此前已滚到
+    /// 私信行、切回后仍在深位时不记，滚回顶部露出通知行时才记。
     /// 记一次／访问（守卫在子页 markNotifPageEntered，离页复位）。
     private func updateNotifSeenIfVisible() {
         // 容器切页只改 isHidden：离页、旋转等布局回调也可能走到这里，

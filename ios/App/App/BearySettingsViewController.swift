@@ -2,11 +2,11 @@
 // 齿轮菜单与头像菜单的“账户设置”入口均改开本页，旧 BearyAccountViewController 已删除，
 // 不留两个入口、不留死代码页）=====
 // C 批（C2/C3/C4）：模块顺序改为 [ID 概览卡 & Plus 状态] → [通用与通知
-// （外观切换、消息角标、使用指南入口）] → [账户与安全（登录设备管理、导出数据；
+// （外观切换、使用指南入口）] → [账户与安全（登录设备管理、导出数据；
 // 个人资料入口为 ID 卡右侧“编辑资料”钮，旧账户组四行已按 C4 删除）] → [隐私与协议]；
 // 退出登录为独立居中常规钮（BearyButton 工厂），注销账户下沉至页底弱化灰字，
 // 两者行为一字不动；齿轮直达本页，不再经 ActionSheet / 外观 Popover 中转。
-// 新增行一律真实能力：消息角标开关（本地 UserDefaults 门控底栏角标）、外观主题三选
+// 新增行一律真实能力：外观主题三选
 // （复用 beary_theme_mode 存档键）、版本行（Bundle 实值）；全修 3-4 已删“系统通知设置”行
 // （全仓无通知调用，系统通知开关对本 App 无效，不留无效入口）、
 // 隐私政策 / 用户协议（方案一：服务器下发文字、App 内原生排版，不开网页；
@@ -834,7 +834,6 @@ final class BearySettingsViewController: UIViewController {
         generalNotifyWrap.spacing = 20
         generalNotifyWrap.alignment = .fill
         buildGeneralSection()
-        buildNotificationSection()
 
         accountSecurityWrap.translatesAutoresizingMaskIntoConstraints = false
         accountSecurityWrap.axis = .vertical
@@ -2695,35 +2694,6 @@ final class BearySettingsViewController: UIViewController {
         return wrap
     }
 
-    private func buildNotificationSection() {
-        // 消息角标：本地开关，门控顶栏消息铃铛未读数显示（SceneDelegate.chrome.updateBellBadge 内查档）。
-        let badgeTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
-        badgeTitle.text = "消息角标"
-        badgeTitle.numberOfLines = 0 // P1-7：开关行正文标题多行
-        let badgeDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
-        badgeDetail.text = "顶栏消息铃铛显示未读数"
-        let badgeTextStack = UIStackView(arrangedSubviews: [badgeTitle, badgeDetail])
-        badgeTextStack.axis = .vertical
-        badgeTextStack.spacing = 2
-        badgeTextStack.alignment = .fill
-        let badgeSwitch = UISwitch()
-        badgeSwitch.isOn = UserDefaults.standard.object(forKey: "beary_unread_badge_enabled") as? Bool ?? true
-        badgeSwitch.setContentHuggingPriority(.required, for: .horizontal)
-        badgeSwitch.setContentCompressionResistancePriority(.required, for: .horizontal)
-        badgeSwitch.addTarget(self, action: #selector(badgeSwitchValueChanged(_:)), for: .valueChanged)
-        let badgeRow = UIStackView(arrangedSubviews: [badgeTextStack, badgeSwitch])
-        badgeRow.translatesAutoresizingMaskIntoConstraints = false
-        badgeRow.axis = .horizontal
-        badgeRow.spacing = 12
-        badgeRow.alignment = .center
-
-        // 全修 3-4：全仓 grep 无任何本地/远程通知调用（无 UNUserNotificationCenter、
-        // UserNotifications import、registerForRemoteNotifications、推送 entitlement），
-        // App 不发任何通知，系统设置里的通知开关对本 App 无效，故“系统通知设置”行
-        // 整行删除，不留无效入口；消息角标开关是应用内铃铛未读数门控，与系统推送无关，保留。
-        let group = makeGroupCard(title: "消息与通知", rows: [badgeRow])
-        generalNotifyWrap.addArrangedSubview(group.card)
-    }
 
     private func buildGeneralSection() {
         let current = UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system"
@@ -2976,11 +2946,6 @@ final class BearySettingsViewController: UIViewController {
         // 审计 P2-16：全屏 modal 补 fadeRise（与诊断/反馈/明细页同款）。
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         presentSettingsPage(vc)
-    }
-
-    @objc private func badgeSwitchValueChanged(_ sender: UISwitch) {
-        UserDefaults.standard.set(sender.isOn, forKey: "beary_unread_badge_enabled")
-        SceneDelegate.chrome?.reapplyBellBadge()
     }
 
     @objc private func soundSwitchValueChanged(_ sender: UISwitch) {

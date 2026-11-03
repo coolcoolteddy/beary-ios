@@ -230,6 +230,8 @@ final class BearyNotificationsViewController: UIViewController {
     private var needsReloadAfterUnauthorized = false
     private var zeroHeightRows: Set<Int> = []
     private var headerHeight: CGFloat = 48
+    /// 嵌入消息页时组头已去掉（见 setEmbedded），布局回写表头时跳过。
+    private var isEmbedded = false
     private var stateContainerTopConstraint: NSLayoutConstraint?
     /// 审计三轮第 14 项：600 列上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews，
     /// 与 Feed 的 feedColCapConstraint 同模式；常驻会把 601–820 档也压到 600）。
@@ -628,7 +630,7 @@ final class BearyNotificationsViewController: UIViewController {
                 withHorizontalFittingPriority: .required,
                 verticalFittingPriority: .fittingSizeLevel
             ).height
-            if abs(headerView.frame.width - width) > 0.5 || abs(headerView.frame.height - fittingHeight) > 0.5 {
+            if !isEmbedded, abs(headerView.frame.width - width) > 0.5 || abs(headerView.frame.height - fittingHeight) > 0.5 {
                 headerView.frame = CGRect(x: 0, y: 0, width: width, height: fittingHeight)
                 tableView.tableHeaderView = headerView
                 headerHeight = fittingHeight
@@ -885,11 +887,16 @@ final class BearyNotificationsViewController: UIViewController {
         return max(280, 26 + stackHeight + 20)
     }
 
-    /// 嵌入消息页时调用：表内滚动交外层滚动视图，表头标题改作“通知”组头
-    /// （表头“全部已读”钮保留，行为不变）。
+    /// 嵌入消息页时调用：表内滚动交外层滚动视图，组头整条去掉
+    /// （表头标题“通知”与右侧“全部已读”钮一并拿掉；“全部已读”
+    /// 的一键服务端标已读动作随之没了，单条已读仍走点开行）。
+    /// 独立通知页（showPage(.notif)）的组头不受影响。
     func setEmbedded() {
+        isEmbedded = true
         tableView.isScrollEnabled = false
-        titleLabel.text = "通知"
+        tableView.tableHeaderView = nil
+        stateContainerTopConstraint?.constant = 0
+        headerHeight = 0
     }
 
     /// 嵌入态高度上报：在布局末尾算一次，高度不变不重复报（防布局循环）。
