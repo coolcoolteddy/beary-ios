@@ -4514,7 +4514,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // B 修法：退场前先收起弹出框（无动画）。
                 self.hideCallout(animated: false)
                 self.updatePublishState()
-                self.showToast(message: "编辑时间已结束，当前内容仍在，可复制后关闭")
+                self.showToast(message: "编辑时间已结束，内容已保留，可复制后关闭")
                 return
             }
             self.editTimerLabel.text = "剩 \(remain / 60):\(String(format: "%02d", remain % 60))"
