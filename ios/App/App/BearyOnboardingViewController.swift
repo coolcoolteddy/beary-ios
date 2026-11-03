@@ -815,17 +815,17 @@ final class BearyOnboardingViewController: UIViewController {
         switch page {
         case 0: return "把日子留在这里"
         case 1: return "写下来，也选好谁能看。"
-        case 2: return "有些心情，一只小熊就懂。"
+        case 2: return "用小熊回应日记。"
         default: return "从今天的一小件事开始。"
         }
     }
 
     private func pageSubtitle(_ page: Int) -> String {
         switch page {
-        case 0: return "记下一点生活，也留住当时的心情。"
+        case 0: return "写下今天的事和心情。"
         case 1: return "发布前，确认这篇日记的可见范围。"
-        case 2: return "用小熊回应，让一句日常被温柔接住。"
-        default: return "不必写得完整，想记下的就值得留下。"
+        case 2: return "用小熊回应这篇日记。"
+        default: return "想写什么，就写什么。"
         }
     }
 
