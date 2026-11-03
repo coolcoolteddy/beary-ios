@@ -31,7 +31,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private let failureView = UIView()
     private let failureLabel = UILabel()
-    private let retryButton = UIButton(type: .system)
+    // 失败态重试钮 Hit44：只换 BearyHit44Button（point(inside:) 向外扩到至少 44x44），
+    // 视觉帧、字号、文案、约束、didTapRetry 逻辑一字不动；failureView 不裁剪，扩展热区不被截断。
+    private let retryButton = BearyHit44Button(type: .system)
 
     private var allEntries: [Entry] = []
     private var groups: [BearyLocationMapGroup] = []
