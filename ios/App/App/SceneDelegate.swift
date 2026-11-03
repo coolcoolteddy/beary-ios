@@ -571,9 +571,11 @@ final class BearyChromeViewController: UIViewController {
         top.contentView.addSubview(topStack)
         // logo 行锚安全区顶（不再锚玻璃底边）：玻璃加高后 logo 行仍贴安全区顶，
         // 切换行落在其下方；旧底边锚在 60 高玻璃下与此等价。
+        // V7：横向锚 view 水平 safeArea（非玻璃 contentView 边），横屏刘海/圆角侧
+        // safeArea 不为 0 时内容仍留 16pt 内边距；纵向锚不动。
         NSLayoutConstraint.activate([
-            topStack.leadingAnchor.constraint(equalTo: top.contentView.leadingAnchor, constant: BearySpace.lg),
-            topStack.trailingAnchor.constraint(equalTo: top.contentView.trailingAnchor, constant: -BearySpace.lg),
+            topStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: BearySpace.lg),
+            topStack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -BearySpace.lg),
             topStack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topStack.heightAnchor.constraint(equalToConstant: 60),
         ])
@@ -588,8 +590,8 @@ final class BearyChromeViewController: UIViewController {
         top.contentView.addSubview(homeSegment)
         homeSegmentControl = homeSegment
         NSLayoutConstraint.activate([
-            homeSegment.leadingAnchor.constraint(equalTo: top.contentView.leadingAnchor, constant: BearySpace.lg),
-            homeSegment.trailingAnchor.constraint(equalTo: top.contentView.trailingAnchor, constant: -BearySpace.lg),
+            homeSegment.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: BearySpace.lg),
+            homeSegment.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -BearySpace.lg),
             homeSegment.topAnchor.constraint(equalTo: topStack.bottomAnchor, constant: 8),
             homeSegment.heightAnchor.constraint(equalToConstant: 32),
         ])
