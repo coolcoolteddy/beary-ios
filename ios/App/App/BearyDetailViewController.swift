@@ -4,7 +4,7 @@
 // 全屏页（盖住底栏，fadeRise 进场，与 App 全屏页同款），顶栏只剩左上文字“关闭”；
 // 版式骨架照搬首页日记卡片 BearyDiaryCardCell（mode=.feed），唯一有意偏离是
 // 标题放开换行（首页单行截断；详情是全文页）与正文全文不折叠（首页折叠钮不出现）。
-// 单层内容列（#213 保留）：宽 ≤820 时屏宽−32（393 宽即 361pt），宽 ≥821 时 600 居中。
+// 单层内容列（#213 保留）：宽 ≤820 时安全区宽−32（竖屏安全区横向 inset 为 0，393 宽即 361pt 不变），宽 ≥821 时 600 居中。
 // 列内：头像 40 + 间距 12 + 右列；@ 行（12 粗体橙 + 13 图标）在作者行上方；
 // 作者行（名 16.5 粗体、徽章 17、皇冠 19 带 drop-shadow、垫片吸宽、时间 13 灰、
 // 天气 15 灰、心情 13 灰 + 20 熊图，按文字基线对齐）；标题 16.5 粗体；正文 16/1.6；
@@ -116,8 +116,8 @@ final class BearyDetailViewController: UIViewController {
     private var renderedEmoteSignature: String?
     private var lastFlowWidth: CGFloat = 0
     /// 详情页重做（2026-10-30 预览定版，Li 点头）：单层内容列，两分支互斥。
-    /// 宽 ≤820：leading = frame.leading＋16、trailing = frame.trailing−16
-    /// （required 等式，宽 = 屏宽−32，393 宽即 361pt），不靠 centerX＋
+    /// 宽 ≤820：leading = view 安全区 leading＋16、trailing = view 安全区 trailing−16
+    /// （required 等式，宽 = 安全区宽−32；竖屏横向 inset 为 0，393 宽即 361pt 不变），不靠 centerX＋
     /// 不等式护栏、不靠 750 优先级补丁等式，内容内在宽不再反推列宽。
     /// 宽 ≥821：宽 600 居中。两组约束只激活一组，切换时在
     /// viewDidLayoutSubviews 里整组开关，状态不变不开关，避免布局循环。
@@ -621,7 +621,7 @@ final class BearyDetailViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // 详情重做：两分支互斥整组开关（状态不变不开关，避免布局循环）。
-        // 宽 ≥821 用 600 居中，宽 ≤820 用屏宽−32；切换时重算一次。
+        // 宽 ≥821 用 600 居中，宽 ≤820 用安全区宽−32；切换时重算一次。
         let wantWide = view.bounds.width >= 821
         if wantWide != columnIsWide {
             columnIsWide = wantWide
@@ -679,9 +679,14 @@ final class BearyDetailViewController: UIViewController {
         // 详情重做（#213 保留）：单层内容列，一条 required 等式钉死列宽，不用
         // centerX＋≥/≤ 不等式护栏，不用 750 优先级补丁等式。
         // scrollView 本身全宽，不加左右 contentInset；列宽分支：
-        // ≤820 屏宽−32（393 宽即 361pt），≥821 宽 600 居中。
-        columnNarrowLeading = contentColumnView.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 16)
-        columnNarrowTrailing = contentColumnView.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -16)
+        // ≤820 安全区宽−32（竖屏横向 inset 为 0，393 宽即 361pt 不变），≥821 宽 600 居中。
+        // 窄屏列改锚 view 安全区（此前锚 scrollView frame 边缘，横屏刘海/灵动岛一侧
+        // 会侵入正文列左侧 16pt 边距内）：安全区随横竖屏自动变化，无需在
+        // viewDidLayoutSubviews 里另算；scrollView 已先 addSubview 到 view，
+        // contentColumnView 已先挂进 scrollView，激活时已有共同祖先 view，
+        // 不触 #106 式无共同祖先激活崩溃。宽屏 600 居中分支与关闭钮（已用安全区）不动。
+        columnNarrowLeading = contentColumnView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16)
+        columnNarrowTrailing = contentColumnView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16)
         columnWideWidth = contentColumnView.widthAnchor.constraint(equalToConstant: 600)
         columnWideCenterX = contentColumnView.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor)
         columnWideWidth?.isActive = false
