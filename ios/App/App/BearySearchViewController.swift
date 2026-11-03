@@ -276,8 +276,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         NotificationCenter.default.addObserver(self, selector: #selector(handleFollowChangedNotification(_:)), name: .bearyFriendsChanged, object: nil)
         // 审计：监听账号切换，切号时清空搜索结果、关注态与私密行（见 handleUserChanged）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleUserChanged), name: .bearyUserDidChange, object: nil)
-        // 扫荡组 A：键盘弹起时给滚动区补底部留白（见 keyboardWillShow）。
+        // 扫荡组 A：键盘弹起时给滚动区补底部留白（见 keyboardWillShow /
+        // keyboardWillChangeFrame；DM 聊天页同口径三通知全注册）。
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
     }
 
@@ -288,6 +290,26 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var keyboardBottomInset: CGFloat = 0
 
     @objc private func keyboardWillShow(_ notification: Notification) {
+        updateKeyboardBottomInset(from: notification)
+    }
+
+    @objc private func keyboardWillChangeFrame(_ notification: Notification) {
+        // WillShow 只在键盘初次弹起发一次；切换输入法（候选栏高度变）、
+        // iPad 浮动键盘拖动、键盘高度变化只走 WillChangeFrame。不补它，
+        // 底部留白就停在旧高度，末行要么被新键盘盖住、要么浮动键盘移走
+        // 后仍留一片空白。本方法与 WillShow 同口径逐次重算、不累加。
+        updateKeyboardBottomInset(from: notification)
+    }
+
+    @objc private func keyboardWillHide(_ notification: Notification) {
+        keyboardBottomInset = 0
+        applyKeyboardBottomInset()
+    }
+
+    /// 键盘帧统一换算（WillShow / WillChangeFrame 共用）：
+    /// 底栏占位与安全区由 chromeBottomInset 一次算清，键盘只补安全区之上的
+    /// 遮挡部分（帧底边贴视图底边才计，浮动键盘不贴底计 0），安全区不重复计。
+    private func updateKeyboardBottomInset(from notification: Notification) {
         guard let frameValue = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
         // 聊天/登录同款：先转窗口坐标再算实际遮挡；贴底键盘按遮挡垫底，
         // 浮动键盘（底边未贴视图底边）不垫空白——搜索框在顶部本就不会被盖住。
@@ -297,14 +319,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         } else {
             keyboardBottomInset = 0
         }
-        scrollView.contentInset.bottom = BearyChrome.chromeBottomInset(includesFab: false, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom) + keyboardBottomInset
-        scrollView.scrollIndicatorInsets.bottom = BearyChrome.chromeBottomInset(includesFab: false, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom) + keyboardBottomInset
+        applyKeyboardBottomInset()
     }
 
-    @objc private func keyboardWillHide(_ notification: Notification) {
-        keyboardBottomInset = 0
-        scrollView.contentInset.bottom = BearyChrome.chromeBottomInset(includesFab: false, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
-        scrollView.scrollIndicatorInsets.bottom = BearyChrome.chromeBottomInset(includesFab: false, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
+    private func applyKeyboardBottomInset() {
+        let chrome = BearyChrome.chromeBottomInset(includesFab: false, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
+        scrollView.contentInset.bottom = chrome + keyboardBottomInset
+        scrollView.scrollIndicatorInsets.bottom = chrome + keyboardBottomInset
     }
 
     /// 补缺 P2-21：搜索拉黑判定（与 SceneDelegate isBlockedAuthor 同口径：游客不承接拉黑表，
@@ -459,6 +480,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyFriendsChanged, object: nil)
         NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillHideNotification, object: nil)
     }
 
@@ -937,9 +959,23 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     @objc private func searchFieldChanged() {
         updateClearButtonVisibility()
         searchTimer?.invalidate()
+        searchTimer = nil
+        // 敲键即失效旧请求：序号 +1 使在途搜索回包凭序号丢弃（防抖等待
+        // 期内返回的旧词回包也一样，不写回列表、不写最近搜索），同时取消
+        // 在途搜索任务；防抖只决定新请求何时发起，不再是旧请求失效的时机。
+        searchSeq += 1
+        currentSearchTask?.cancel()
+        currentSearchTask = nil
+        // 中文组词未提交时不发查询：markedTextRange 非空说明输入法正在
+        // 组词，当前文本只是中间态；提交后 editingChanged 会再触发，届时
+        // markedTextRange 已空、防抖计时重新开始，才真正发起搜索。
+        if searchField.markedTextRange != nil { return }
         // 网页 input 监听口径：250ms 防抖后执行。
         searchTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
             guard let self = self else { return }
+            // 二次守卫：计时到期时若仍在组词，跳过本次、不发中间态查询；
+            // 组词提交后的 editingChanged 会重新排期。
+            if self.searchField.markedTextRange != nil { return }
             self.runSearch(query: self.searchField.text ?? "")
         }
     }
