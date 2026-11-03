@@ -38,6 +38,10 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 文本 → 坐标的本页内存缓存（只活在本页实例里，deinit 即丢；绝不写盘）。
     private var geocodeCache: [String: CLLocationCoordinate2D] = [:]
     private var loadGeneration = 0
+    /// 地理编码代次（审计 24）：每次重算、切账号、页面退出都换代并取消在途请求，
+    /// 旧编码回调凭代次一律丢弃，不得写回本页。
+    private var geocodeGeneration = 0
+    private var activeGeocoder: CLGeocoder?
     private var needsRefreshAfterDetail = false
     private var didInitialGeocode = false
 
@@ -151,12 +155,37 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             viewerIsAuthor = (currentViewerId != nil && currentViewerId == authorId)
             geocodeCache.removeAll()
             selectedGroup = nil
+            // 切账号先取消旧身份在途的编码：重拉完成前旧回调不得写回新身份的页面。
+            cancelGeocoding()
             fetchAllEntries()
         } else if needsRefreshAfterDetail {
             // 从本页进详情回来：只重拉一次，不是每次 appear 都拉、更不是轮询。
             needsRefreshAfterDetail = false
             fetchAllEntries()
         }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        // 页面退出（pop / dismiss）才取消：在途编码换代，CLGeocoder 取消后
+        // 的回调即使到达也凭代次丢弃。进详情不算退出，不取消，返回后重拉
+        // 完成时 regroup 再换代。
+        if isMovingFromParent || isBeingDismissed {
+            cancelGeocoding()
+        }
+    }
+
+    deinit {
+        activeGeocoder?.cancel()
+    }
+
+    /// 取消当前轮地理编码并换代，返回新代次。重算与切账号入口共用。
+    @discardableResult
+    private func cancelGeocoding() -> Int {
+        geocodeGeneration += 1
+        activeGeocoder?.cancel()
+        activeGeocoder = nil
+        return geocodeGeneration
     }
 
     @objc private func didTapClose() {
@@ -258,9 +287,14 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         }
     }
 
-    // MARK: - 聚合 + 现场地理编码（串行编组键，不按篇编）
+    // MARK: - 聚合 + 现场地理编码（串行编未缓存的组键，不按篇编）
+    // 审计 24：不等整批编完才成图——先按缓存即时成图、列表即时刷新，
+    // 未缓存的组逐个编出即逐批补标记，编不出即逐个进“未能在地图上定位”。
+    // 聚合规则、标记数据、编码查询词一律不动；只改成图时机与代次门控。
 
     private func regroupAndGeocode() {
+        // 重新加载先换代并取消上一轮在途编码：旧回调不得写回新一轮。
+        let generation = cancelGeocoding()
         groups = BearyLocationMap.groups(entries: allEntries, viewerIsAuthor: viewerIsAuthor)
         // 已选组若因重算消失（删篇/翻私密），回落到未选态，不留指向旧组的列表。
         if let selected = selectedGroup, !groups.contains(where: { $0.key == selected.key }) {
@@ -274,31 +308,38 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             return
         }
         statusLabel.text = "共 \(allEntries.filter { !DiaryLocation(entry: $0).isEmpty }.count) 篇带位置日记 · \(groups.count) 个地点"
-        geocodeGroupsSequentially(index: 0, located: [], unlocated: [])
+        // 先展示已有列表与已命中的坐标缓存：清掉上一轮标记、列表即时刷新，
+        // 缓存组一次成图；未缓存的组随后串行编码、逐批补标记。
+        unlocatedGroups = []
+        mapView.removeAnnotations(mapView.annotations)
+        var cachedLocated: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)] = []
+        var pendingGroups: [BearyLocationMapGroup] = []
+        for group in groups {
+            if let cached = geocodeCache[group.key] {
+                cachedLocated.append((group, cached))
+            } else {
+                pendingGroups.append(group)
+            }
+        }
+        addLocatedAnnotations(cachedLocated)
+        tableView.reloadData()
+        geocodePendingGroups(pending: pendingGroups, index: 0, located: cachedLocated, unlocated: [], generation: generation)
     }
 
-    private func geocodeGroupsSequentially(index: Int, located: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)], unlocated: [BearyLocationMapGroup]) {
-        guard index < groups.count else {
-            applyGeocodedGroups(located: located, unlocated: unlocated)
+    /// 串行编码未缓存的组：每组编出即补一个标记、编不出即进未定位列表，
+    /// 不等整批编完；代次不对（重算/切账号/退出）时整条旧链直接停掉。
+    private func geocodePendingGroups(pending: [BearyLocationMapGroup], index: Int, located: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)], unlocated: [BearyLocationMapGroup], generation: Int) {
+        guard generation == geocodeGeneration, index < pending.count else {
+            if generation == geocodeGeneration {
+                applyGeocodedGroups(located: located, unlocated: unlocated)
+            }
             return
         }
-        let group = groups[index]
-        if let cached = geocodeCache[group.key] {
-            var next = located
-            next.append((group, cached))
-            geocodeGroupsSequentially(index: index + 1, located: next, unlocated: unlocated)
-            return
-        }
-        // 地图打点根因修复：作者组键只是精确地点名（如“朝晖路248弄21号”），
-        // 不带任何城市/区级上下文，CLGeocoder 仅凭裸名经常编不出坐标，组就掉进
-        // “未能在地图上定位”而不是地图上的标记。改成按组内日记的区级文本逐级
-        // 兜底：先编“区级+地点名”，再编裸名，最后编区级；编出即停。
-        // 显示键、聚合口径、脱敏口径一律不动：区级只是本页内存里的编码查询词，
-        // 不写盘、不进日记行、不透给他人（他人组键本身就是区级，只编一格）。
+        let group = pending[index]
         geocodeGroupCandidates(
-            group: group, groupIndex: index,
+            group: group, pending: pending, pendingIndex: index,
             candidates: geocodeCandidates(for: group), candidateIndex: 0,
-            located: located, unlocated: unlocated)
+            located: located, unlocated: unlocated, generation: generation)
     }
 
     /// 编码查询词（只活本页内存）：作者组 = 区级+名 → 裸名 → 区级；
@@ -317,43 +358,58 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     }
 
     /// 逐级兜底编码：某一级编出坐标即进 located，全部编不出才进 unlocated。
-    /// 换代门控与原单次编码一致：重算后组已换代时旧结果直接丢弃。
+    /// 代次门控：重算/切账号/退出后代次已变，旧回调（含被取消请求的回调）
+    /// 到达时直接丢弃，不写缓存、不补标记、不续跑下一组。
+    /// 查询词口径不动（见 geocodeCandidates）：作者组 = 区级+名 → 裸名 → 区级；
+    /// 他人组键本身就是区级，只编一格。
     private func geocodeGroupCandidates(
-        group: BearyLocationMapGroup, groupIndex: Int,
+        group: BearyLocationMapGroup, pending: [BearyLocationMapGroup], pendingIndex: Int,
         candidates: [String], candidateIndex: Int,
         located: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)],
-        unlocated: [BearyLocationMapGroup]
+        unlocated: [BearyLocationMapGroup],
+        generation: Int
     ) {
+        guard generation == geocodeGeneration else { return }
         guard candidateIndex < candidates.count else {
             var nextUnlocated = unlocated
             nextUnlocated.append(group)
-            geocodeGroupsSequentially(index: groupIndex + 1, located: located, unlocated: nextUnlocated)
+            // 编不出也即时进“未能在地图上定位”，不等整批编完。
+            unlocatedGroups = nextUnlocated
+            tableView.reloadData()
+            geocodePendingGroups(pending: pending, index: pendingIndex + 1, located: located, unlocated: nextUnlocated, generation: generation)
             return
         }
-        CLGeocoder().geocodeAddressString(candidates[candidateIndex]) { [weak self] placemarks, _ in
+        let geocoder = CLGeocoder()
+        activeGeocoder = geocoder
+        geocoder.geocodeAddressString(candidates[candidateIndex]) { [weak self] placemarks, _ in
             DispatchQueue.main.async {
-                guard let self = self else { return }
-                guard groupIndex < self.groups.count, self.groups[groupIndex].key == group.key else { return }
+                guard let self = self, generation == self.geocodeGeneration else { return }
+                if self.activeGeocoder === geocoder { self.activeGeocoder = nil }
                 if let coordinate = placemarks?.first?.location?.coordinate {
                     self.geocodeCache[group.key] = coordinate
                     var nextLocated = located
                     nextLocated.append((group, coordinate))
-                    self.geocodeGroupsSequentially(index: groupIndex + 1, located: nextLocated, unlocated: unlocated)
+                    // 编出即逐批补标记，不等整批编完。
+                    self.addLocatedAnnotations([(group, coordinate)])
+                    self.unlocatedGroups = unlocated
+                    self.tableView.reloadData()
+                    self.geocodePendingGroups(pending: pending, index: pendingIndex + 1, located: nextLocated, unlocated: unlocated, generation: generation)
                 } else {
                     self.geocodeGroupCandidates(
-                        group: group, groupIndex: groupIndex,
+                        group: group, pending: pending, pendingIndex: pendingIndex,
                         candidates: candidates, candidateIndex: candidateIndex + 1,
-                        located: located, unlocated: unlocated)
+                        located: located, unlocated: unlocated, generation: generation)
                 }
             }
         }
     }
 
-    private func applyGeocodedGroups(located: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)], unlocated: [BearyLocationMapGroup]) {
-        unlocatedGroups = unlocated
-        mapView.removeAnnotations(mapView.annotations)
+    /// 补一批标记（缓存批或单组编出）：只加本批、不清已有标记；
+    /// 首批成图时缩放到本批标记，之后批次不再抢用户正在看的区域。
+    private func addLocatedAnnotations(_ items: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)]) {
+        guard !items.isEmpty else { return }
         var annotations: [MKPointAnnotation] = []
-        for item in located {
+        for item in items {
             let annotation = MKPointAnnotation()
             annotation.coordinate = item.coordinate
             annotation.title = item.group.key
@@ -361,15 +417,19 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             annotations.append(annotation)
         }
         mapView.addAnnotations(annotations)
-        if !annotations.isEmpty {
-            // 首批成图时缩放到全部标记；之后重算（翻转回来）不再抢用户正在看的区域。
-            if !didInitialGeocode {
-                didInitialGeocode = true
-                mapView.showAnnotations(annotations, animated: false)
-            }
+        if !didInitialGeocode {
+            didInitialGeocode = true
+            mapView.showAnnotations(annotations, animated: false)
         }
-        tableView.reloadData()
+    }
 
+    /// 终态对齐（与旧行为一致的收口）：清掉全部标记后按最终 located 重建，
+    /// 保证逐批渲染后终态与原来整批渲染的终态相同；已首批缩放过的不再抢区域。
+    private func applyGeocodedGroups(located: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)], unlocated: [BearyLocationMapGroup]) {
+        unlocatedGroups = unlocated
+        mapView.removeAnnotations(mapView.annotations)
+        addLocatedAnnotations(located)
+        tableView.reloadData()
     }
 
     private func selectGroup(_ group: BearyLocationMapGroup) {
