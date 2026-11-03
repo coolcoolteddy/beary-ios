@@ -1275,7 +1275,6 @@ final class BearyTimelineCell: UITableViewCell {
         } else {
             dotView.layer.bearyDynamicBorderColor = BearyColors.bg
         }
-        quoteLeftLineView.backgroundColor = BearyColors.line
     }
 
     /// U14：行点按给内容列短暂 faint 底色（selectionStyle 已是 .none，
