@@ -65,3 +65,13 @@ enum BearyColors {
         }
     }
 }
+
+/// 圆角唯一档（规格附录第 6 项已定，#790 立档）：角色圆角（卡片／容器／按钮）统一 12。
+/// 例外（不在此档内）：高度一半的药丸／圆形（公式或等值字面量）、999 全圆角、
+/// 0 方角、微元素（点／线／抓手／复选框小角）、引用卡 8（网页对照值）、
+/// 底 sheet 顶圆角 20（chrome）。
+/// 放本文件不放 BearyNativeCommon.swift：本文件双 target 共用（见文件头 #555 注释），
+/// BearyPastSelf.swift 在 BearyCoreTests target 内用它，#790 修红（test 找不到 BearyCorners）。
+enum BearyCorners {
+    static let single: CGFloat = 12
+}

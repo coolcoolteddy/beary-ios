@@ -23,13 +23,9 @@ enum BearySpace {
     static let lg: CGFloat = 16
 }
 
-/// 圆角唯一档（规格附录第 6 项已定）：角色圆角（卡片／容器／按钮）统一 12。
-/// 例外（不在此档内）：高度一半的药丸／圆形（公式或等值字面量）、999 全圆角、
-/// 0 方角、微元素（点／线／抓手／复选框小角）、引用卡 8（网页对照值）、
-/// 底 sheet 顶圆角 20（chrome）。
-enum BearyCorners {
-    static let single: CGFloat = 12
-}
+/// 圆角唯一档 BearyCorners 见 BearyColors.swift（#790 修红：本文件不在
+/// BearyCoreTests target 内，BearyPastSelf.swift 单测编不过；token 须放双 target
+/// 共用文件，与 #555 把 BearyColors 抽出同款处理）。
 
 /// 底边距统一口径（视觉清单 Grok 项 1.2）：宽 ≥821 时 44（消息页口径）；
 /// 窄屏时底栏占位 64（分段器 58 + 距安全区 6）+ 16 余量 = 80，含 FAB 的页
