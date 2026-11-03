@@ -464,7 +464,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     private func presentFriendMenu(user: BearyAPI.FriendUser, sourceButton: UIButton) {
         guard let userId = user.id else { return }
         let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
-        sheet.addAction(UIAlertAction(title: "取关", style: .destructive) { [weak self] _ in
+        sheet.addAction(UIAlertAction(title: "取消关注", style: .destructive) { [weak self] _ in
             guard let self = self else { return }
             BearyFriends.confirmUnfollow(from: self, displayName: user.displayName ?? "", userId: userId, mutual: true) { [weak self] in
                 self?.friends.removeAll { $0.id == userId }

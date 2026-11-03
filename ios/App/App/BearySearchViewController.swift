@@ -2351,7 +2351,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         case .following:
             button.setImage(nil, for: .normal)
             button.setTitle("已关注", for: .normal)
-            button.accessibilityLabel = "已关注，点按取关"
+            button.accessibilityLabel = "已关注，点按取消关注"
             button.isEnabled = true
             button.alpha = 1
         case .followedBy:
@@ -2363,7 +2363,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         case .mutual:
             button.setImage(BearyIconImages.image(named: "icon_user_check", pointSize: 13), for: .normal)
             button.setTitle("互关", for: .normal)
-            button.accessibilityLabel = "互关，点按取关"
+            button.accessibilityLabel = "互关，点按取消关注"
             button.isEnabled = true
             button.alpha = 1
         }
