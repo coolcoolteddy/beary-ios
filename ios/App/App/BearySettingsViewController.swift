@@ -1354,7 +1354,9 @@ final class BearySettingsViewController: UIViewController {
         removeButton.translatesAutoresizingMaskIntoConstraints = false
         removeButton.setTitle("移除", for: .normal)
         removeButton.setTitleColor(BearyColors.gray, for: .normal)
-        removeButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        // 按钮普查：裸 13pt 改 scaledFont，跟随系统字号（账号行高足，最大档不裁剪）。
+        removeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        removeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         removeButton.tag = model.userId
         removeButton.addTarget(self, action: #selector(removeAccountButtonTapped(_:)), for: .touchUpInside)
         removeButton.bearyAddPressFeedback()

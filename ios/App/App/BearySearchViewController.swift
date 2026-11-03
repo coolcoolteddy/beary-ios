@@ -180,6 +180,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var followStateLoadingIds: Set<Int> = []
     private var followButtonUserIds: [UIButton: Int] = [:]
     private var followButtonsByUserId: [Int: UIButton] = [:]
+    // 按钮普查（#672 同款口径）：搜索关注钮乐观更新＋定宽＋代次防过期回包。
+    private var followActionSeqByUserId: [Int: Int] = [:]
+    private var confirmedFollowStates: [Int: BearyFollowState] = [:]
+    private var followButtonWidthConstraints: [Int: NSLayoutConstraint] = [:]
+    private var followButtonMeasuredCategory: UIContentSizeCategory?
     private var entryButtons: [UIButton] = []
     private var rowEntryIds: [String] = []
     /// 5-20：行身份 -> 视图映射（同批动画按 key 查表，不按下标配对）。
@@ -465,6 +470,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         updateBorderColors()
+        // 按钮普查：字号档变了，搜索关注钮定宽按新字号重算（个人页同款）。
+        if followButtonMeasuredCategory != traitCollection.preferredContentSizeCategory {
+            for button in followButtonsByUserId.values {
+                applyFollowButtonFixedWidth(button)
+            }
+        }
     }
 
     // MARK: - 搭建
@@ -1596,6 +1607,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         followButtonsByUserId = [:]
         followStates = [:]
         followStateLoadingIds = []
+        followActionSeqByUserId = [:]
+        confirmedFollowStates = [:]
+        followButtonWidthConstraints = [:]
         entryButtons = []
         rowEntryIds = []
         entryRowById = [:]
@@ -2004,6 +2018,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             followButtonUserIds[followButton] = userId
             followButtonsByUserId[userId] = followButton
             applyFollowButtonState(followButton, userId: userId)
+            applyFollowButtonFixedWidth(followButton)
             if followStates[userId] == nil {
                 loadFollowState(userId: userId)
             }
@@ -2268,6 +2283,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 self.followStateLoadingIds.remove(userId)
                 if case .success(let state) = result {
                     self.followStates[userId] = BearyFollowState(response: state)
+                    self.confirmedFollowStates[userId] = BearyFollowState(response: state)
                     if let button = self.followButtonsByUserId[userId] {
                         self.applyFollowButtonState(button, userId: userId)
                     }
@@ -2326,35 +2342,112 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         switch state {
         case .none, .followedBy:
+            // 按钮普查（#672 同款口径）：点按瞬间即显最终态，服务端只确认；
+            // 快连点按最后一次点按的态显示，过期在途回包直接丢弃。
+            let wasFollowedBy = state == .followedBy
+            let target: BearyFollowState = wasFollowedBy ? .mutual : .following
+            followActionSeqByUserId[userId, default: 0] += 1
+            let requestSeq = followActionSeqByUserId[userId] ?? 0
+            followStates[userId] = target
+            if let button = followButtonsByUserId[userId] {
+                applyFollowButtonState(button, userId: userId)
+            }
             BearyAPI.shared.followFriend(userId: userId) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
+                    guard requestSeq == self.followActionSeqByUserId[userId] else { return }
                     switch result {
                     case .success:
-                        let wasFollowedBy = state == .followedBy
-                        self.followStates[userId] = wasFollowedBy ? .mutual : .following
+                        self.confirmedFollowStates[userId] = target
                         if wasFollowedBy {
                             BearyFriends.clearDiaryCachesAndNotify()
                         }
-                        if let button = self.followButtonsByUserId[userId] {
-                            self.applyFollowButtonState(button, userId: userId)
-                        }
                         BearyToast.show(in: self.view, message: wasFollowedBy ? "已互关" : "已关注")
                     case .failure:
+                        // 失败回滚到最后确认态（不是点按前的中间态），再走拒绝动效。
+                        self.followStates[userId] = self.confirmedFollowStates[userId] ?? state
+                        if let button = self.followButtonsByUserId[userId] {
+                            self.applyFollowButtonState(button, userId: userId)
+                            self.playFollowDenyShake(on: button)
+                        }
                         BearyToast.show(in: self.view, message: "关注失败，请重试")
                     }
                 }
             }
         case .following, .mutual:
-            // 行内取关走二次确认（与好友列表页 ⋯ 菜单取关同口径，静默解除）。
-            BearyFriends.confirmUnfollow(from: self, displayName: "", userId: userId, mutual: state == .mutual) { [weak self] in
+            // 行内取关走二次确认（与好友列表页 ⋯ 菜单取关同口径，静默解除）；
+            // 确认取关的瞬间即显最终态，服务端只确认，失败回滚＋拒绝动效。
+            BearyFriends.confirmUnfollowAlert(from: self, displayName: "", mutual: state == .mutual) { [weak self] in
                 guard let self = self else { return }
-                self.followStates[userId] = state == .mutual ? .followedBy : .none
+                let target: BearyFollowState = state == .mutual ? .followedBy : .none
+                self.followActionSeqByUserId[userId, default: 0] += 1
+                let requestSeq = self.followActionSeqByUserId[userId] ?? 0
+                self.followStates[userId] = target
                 if let button = self.followButtonsByUserId[userId] {
                     self.applyFollowButtonState(button, userId: userId)
                 }
+                BearyAPI.shared.unfollowFriend(userId: userId) { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        guard requestSeq == self.followActionSeqByUserId[userId] else { return }
+                        switch result {
+                        case .success:
+                            self.confirmedFollowStates[userId] = target
+                            BearyFriends.clearDiaryCachesAndNotify()
+                        case .failure:
+                            self.followStates[userId] = self.confirmedFollowStates[userId] ?? state
+                            if let button = self.followButtonsByUserId[userId] {
+                                self.applyFollowButtonState(button, userId: userId)
+                                self.playFollowDenyShake(on: button)
+                            }
+                            BearyToast.show(in: self.view, message: "取关失败，请重试")
+                        }
+                    }
+                }
             }
         }
+    }
+
+    /// 搜索关注钮定宽（#672 同款口径）：四态最宽钉宽度约束，态变不顶名字行；
+    /// 字号档变了重算（与个人页 followButtonMeasuredCategory 同款）。
+    private func applyFollowButtonFixedWidth(_ button: UIButton) {
+        guard let userId = followButtonUserIds[button] else { return }
+        let font = button.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        var maxWidth: CGFloat = 0
+        let states: [(imageName: String?, title: String)] = [
+            ("icon_user_plus", "关注"),
+            (nil, "已关注"),
+            ("icon_user_plus", "回关"),
+            ("icon_user_check", "互关"),
+        ]
+        for config in states {
+            var width = button.contentEdgeInsets.left + button.contentEdgeInsets.right
+            if let name = config.imageName, let image = BearyIconImages.image(named: name, pointSize: 13) {
+                width += image.size.width + button.titleEdgeInsets.left
+            }
+            width += ceil((config.title as NSString).size(withAttributes: [NSAttributedString.Key.font: font]).width)
+            maxWidth = max(maxWidth, width)
+        }
+        if let constraint = followButtonWidthConstraints[userId] {
+            constraint.constant = maxWidth
+        } else {
+            let constraint = button.widthAnchor.constraint(equalToConstant: maxWidth)
+            constraint.isActive = true
+            followButtonWidthConstraints[userId] = constraint
+        }
+        followButtonMeasuredCategory = traitCollection.preferredContentSizeCategory
+    }
+
+    /// 搜索关注钮拒绝动效（个人页 playFollowDenyShake 同款：warning 震动＋0.4s 摇头）。
+    private func playFollowDenyShake(on button: UIButton) {
+        BearyHaptics.rejectionWarning()
+        if UIAccessibility.isReduceMotionEnabled { return }
+        button.layer.removeAnimation(forKey: "bearySearchFollowDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = 0.4
+        button.layer.add(shake, forKey: "bearySearchFollowDenyShake")
     }
 
     @objc private func entryRowTapped(_ sender: UIButton) {

@@ -606,7 +606,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let locationLineRow = UIStackView()
     private let locationIconView = UIImageView()
     private let locationLabel = UILabel()
-    private let locationClearButton = UIButton(type: .system)
+    // 按钮普查：视觉 24×24，热区用 Hit44 扩到 44（视觉不动；左右邻居为文字行，无互叠按钮）。
+    private let locationClearButton = BearyHit44Button(type: .system)
     private let locationNoteLabel = UILabel()
     private enum CalloutKind { case mood, weather }
     private var activeCallout: CalloutKind?
@@ -1187,7 +1188,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         titleLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
         // 发布：墨底白字 pill + 发送图标（网页 obtn p）；禁用时按网页口径：无底灰字。
         publishButton.setTitle(isEditMode ? "保存" : "发布", for: .normal)
-        publishButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        // 按钮普查：36 高固定容器，标题走 cappedFont（上限 20，工厂紧凑款同款口径），
+        // 默认字号下与原 14 一致，超大字号档不再被固定高度裁剪。
+        publishButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14))
+        publishButton.titleLabel?.adjustsFontForContentSizeCategory = true
         publishButton.setImage(BearyIconImages.image(named: "icon_send", pointSize: 22), for: .normal)
         // 顶栏右上角三钮收紧（2026-10-31 真机报间距偏大）：发布 pill 左右内边距 12 → 10，
         // 宽度重算读 live 边距（refreshPublishButtonWidth），spinner 前沿同步 12 → 10，见下。
@@ -1951,7 +1955,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteDeletedLabel.textColor = BearyColors.gray
         quoteDeletedRemoveButton.setTitle("移除", for: .normal)
         quoteDeletedRemoveButton.setTitleColor(BearyColors.blue, for: .normal)
-        quoteDeletedRemoveButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        // 按钮普查：裸 13pt 改 scaledFont，跟随系统字号。
+        quoteDeletedRemoveButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        quoteDeletedRemoveButton.titleLabel?.adjustsFontForContentSizeCategory = true
         quoteDeletedRemoveButton.addTarget(self, action: #selector(didTapRemoveQuote), for: .touchUpInside)
         quoteDeletedRemoveButton.bearyAddPressFeedback()
         quoteDeletedRow.addArrangedSubview(quoteDeletedLabel)
@@ -2084,7 +2090,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             let tabButton = UIButton(type: .system)
             tabButton.translatesAutoresizingMaskIntoConstraints = false
             tabButton.setTitle(title, for: .normal)
-            tabButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+            // 按钮普查：36 高 tab 条，标题走 cappedFont（上限 20，工厂紧凑款同款口径）。
+            tabButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
+            tabButton.titleLabel?.adjustsFontForContentSizeCategory = true
             tabButton.layer.cornerRadius = 18
             tabButton.layer.masksToBounds = true
             tabButton.addTarget(self, action: #selector(didTapQuoteTab(_:)), for: .touchUpInside)
@@ -2118,7 +2126,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanelRetryButton.translatesAutoresizingMaskIntoConstraints = false
         quotePanelRetryButton.setTitle("加载失败，重试", for: .normal)
         quotePanelRetryButton.setTitleColor(BearyColors.blue, for: .normal)
-        quotePanelRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        // 按钮普查：裸 15pt 改 scaledFont，跟随系统字号。
+        quotePanelRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        quotePanelRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         quotePanelRetryButton.isHidden = true
         quotePanelRetryButton.addTarget(self, action: #selector(didTapQuotePanelRetry), for: .touchUpInside)
         quotePanelRetryButton.bearyAddPressFeedback()

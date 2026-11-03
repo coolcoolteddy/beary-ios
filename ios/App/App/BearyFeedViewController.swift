@@ -195,7 +195,9 @@ class BearyFeedViewController: UIViewController {
     /// 阴影 0 6px 18px rgba(0,0,0,.22)，
     /// 底部 92 + 安全区上方，点按应用待定内容并回顶）。
     private lazy var newContentPill: UIButton = {
-        let btn = UIButton(type: .system)
+        // 按钮普查：悬浮 pill 视觉高约 34（13pt 字＋上下 9 内边距），热区用 Hit44 扩到 44；
+        // 居中悬浮、无相邻按钮，视觉不动。
+        let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.setTitle("有新内容", for: .normal)
         btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
