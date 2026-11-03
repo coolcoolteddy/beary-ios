@@ -2436,7 +2436,8 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
             if let latestIndex = actIndices.first {
                 let latest = items[latestIndex]
                 let anyUnread = actIndices.contains(where: { (items[$0].read ?? true) == false })
-                let actorName = latest.actorName ?? ""
+                // 32 注销口径：互动卡对方已注销时，摘要里的对方名显“用户已注销”。
+                let actorName = bearyDeletedAuthorDisplayName(latest.actorName) ?? ""
                 let latestVerb = BearyNotificationCell.verb(for: latest.type)
                 cell.configureAsCard(
                     title: "互动消息",
@@ -3579,7 +3580,8 @@ private class BearyNotificationCell: UITableViewCell {
                 kindIconName = "icon_mood"
             }
             kindIconView.image = BearyIconImages.image(named: kindIconName, pointSize: 11)
-            let actorName = item.actorName ?? ""
+            // 32 注销口径：通知行对方已注销时，标题与头像首字母显“用户已注销／用”。
+            let actorName = bearyDeletedAuthorDisplayName(item.actorName) ?? ""
             if let avatarURL = BearyImageURLs.avatarURL(item.actorAvatar) {
                 loadAvatar(url: avatarURL, actorName: actorName)
             } else {

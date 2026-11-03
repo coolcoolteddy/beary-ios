@@ -1600,7 +1600,8 @@ final class BearyTimelineCell: UITableViewCell {
             metaStack.addArrangedSubview(moodRow)
         }
         if let mentionedName = entry.mentionedName, !mentionedName.isEmpty {
-            recipientLabel.text = "@\(mentionedName)"
+            // 32 注销口径：被 @ 者已注销时显“@用户已注销”。
+            recipientLabel.text = "@\(bearyDeletedAuthorDisplayName(mentionedName) ?? mentionedName)"
             metaStack.addArrangedSubview(recipientLabel)
         }
         // 6A pill 左 packed：行末 defaultLow 吸宽 spacer（足行 footSpacer 同款口径），

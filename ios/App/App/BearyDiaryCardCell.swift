@@ -1817,6 +1817,10 @@ class BearyDiaryCardCell: UITableViewCell {
 
     /// 空名回退一律为“beary 用户”（不再以 Li 的 handle "teddy" 充当他人名，避免错归属）。
     private func displayAuthorName(_ rawName: String?) -> String {
+        // 32 注销口径：后端 author_name 下发“已注销用户”，卡片与引用卡统一显“用户已注销”。
+        if rawName == "已注销用户" {
+            return "用户已注销"
+        }
         if let rawName = rawName, !rawName.isEmpty {
             return rawName
         }
@@ -2006,7 +2010,8 @@ class BearyDiaryCardCell: UITableViewCell {
         // iCity @ 标签：有 mentionedName 即显“@名”（替代旧“写给 X”文案），无则隐藏。
         if let mentioned = entry.mentionedName, !mentioned.isEmpty {
             recipientRow.isHidden = false
-            recipientLabel.text = "@" + mentioned
+            // 32 注销口径：被 @ 者已注销时显“@用户已注销”，不用后端原名。
+            recipientLabel.text = "@" + (bearyDeletedAuthorDisplayName(mentioned) ?? mentioned)
         } else {
             recipientRow.isHidden = true
             recipientLabel.text = nil
@@ -2095,7 +2100,7 @@ class BearyDiaryCardCell: UITableViewCell {
         cellBookmarkedByMe = entry.bookmarkedByMe ?? false
         profileDisabled = interactionDisabled
         self.isExpanded = isExpanded
-        let authorNameValue = entry.authorName ?? "beary 用户"
+        let authorNameValue = bearyDeletedAuthorDisplayName(entry.authorName) ?? "beary 用户"
         nameLabel.text = authorNameValue
         if let createdMs = entry.createdAt, createdMs > 0 {
             timeLabel.text = BearyDiaryCardCell.feedTimeString(ms: createdMs)
@@ -2116,7 +2121,8 @@ class BearyDiaryCardCell: UITableViewCell {
         // iCity @ 标签：有 mentionedName 即显“@名”，无则隐藏。
         if let mentioned = entry.mentionedName, !mentioned.isEmpty {
             recipientRow.isHidden = false
-            recipientLabel.text = "@" + mentioned
+            // 32 注销口径：被 @ 者已注销时显“@用户已注销”，不用后端原名。
+            recipientLabel.text = "@" + (bearyDeletedAuthorDisplayName(mentioned) ?? mentioned)
         } else {
             recipientRow.isHidden = true
             recipientLabel.text = nil

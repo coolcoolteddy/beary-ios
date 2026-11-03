@@ -540,6 +540,8 @@ final class BearyQuoteCardView: UIView {
     /// clear() 已把日期行与缩略图区藏起，showGone 只显图标 + 占位文案（+ 可选提醒句）。
     func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, allowThumbs: Bool = true, authorHandle: String? = nil, sourceTappable: Bool = false) {
         clear()
+        // 32 注销口径：引用原作者已注销时，来源行与读屏文案统一显“用户已注销”。
+        let authorName = bearyDeletedAuthorDisplayName(authorName) ?? authorName
         // 52 批：lite 卡不带头像名——authorName/authorAvatar 参数仅为调用点兼容保留，不再赋值给任何视图。
         // 来源行：handle + 原尾部日期（feedTimeString 口径）并入本行，尾部不再重复显日期。
         setSourceRow(handle: authorHandle, dateMs: createdAt, tappable: sourceTappable, deleted: false)

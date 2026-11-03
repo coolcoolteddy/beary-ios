@@ -123,6 +123,13 @@ struct Quote: Codable {
 
 /// 全量同步落盘用：Entry 加 Encodable（只补编码能力，不改字段语义；
 /// 解码仍走 convertFromSnakeCase，编码配 convertToSnakeCase 往返）。
+/// 32 注销口径：后端下发的“已注销用户”在 App 界面统一显“用户已注销”
+/// （个人页／卡片／详情／时间线／引用卡／@ 行／通知同口径；后端原串不动，
+/// 网页仍显已注销用户，见 PR 说明残留）。
+func bearyDeletedAuthorDisplayName(_ raw: String?) -> String? {
+    raw == "已注销用户" ? "用户已注销" : raw
+}
+
 struct Entry: Codable {
     var id: String?
     var authorId: Int?
