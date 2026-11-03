@@ -71,7 +71,7 @@ enum BearyDiaryPin {
             return "仅作者可以置顶"
         case .http(let status, _) where status == 503:
             return "置顶功能暂不可用，请稍后再试"
-        case .server(let code) where code == "rate_limited":
+        case .server(let code, _) where code == "rate_limited":
             return "操作太频繁，请稍后再试"
         case .http(let status, _) where status == 429:
             return "操作太频繁，请稍后再试"
