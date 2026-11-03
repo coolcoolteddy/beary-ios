@@ -819,9 +819,9 @@ class BearyProfileViewController: UIViewController {
     }
     private static let followButtonConfigs: [BearyFollowState: FollowButtonConfig] = [
         .none: FollowButtonConfig(imageName: "icon_user_plus", title: "关注", accessibilityLabel: "关注"),
-        .following: FollowButtonConfig(imageName: "icon_user_check", title: "已关注", accessibilityLabel: "已关注，点按取关"),
+        .following: FollowButtonConfig(imageName: "icon_user_check", title: "已关注", accessibilityLabel: "已关注，点按取消关注"),
         .followedBy: FollowButtonConfig(imageName: "icon_user_plus", title: "回关", accessibilityLabel: "回关"),
-        .mutual: FollowButtonConfig(imageName: "icon_users", title: "互关", accessibilityLabel: "互关，点按取关"),
+        .mutual: FollowButtonConfig(imageName: "icon_users", title: "互关", accessibilityLabel: "互关，点按取消关注"),
     ]
 
     private let nameLabel: UILabel = {
@@ -3324,7 +3324,7 @@ class BearyProfileViewController: UIViewController {
                                 self.onRequireLogin?()
                             } else {
                                 self.playFollowDenyShake()
-                                BearyToast.show(in: self.view, message: "取关失败，请重试")
+                                BearyToast.show(in: self.view, message: "取消关注失败，请重试")
                             }
                         }
                     }
