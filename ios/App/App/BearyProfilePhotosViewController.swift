@@ -60,6 +60,9 @@ final class BearyProfilePhotosViewController: UIViewController {
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.ink
         labelValue.textAlignment = .center
+        // 无障碍：标题允许换到 2 行——长标题＋计数在左右限位内先换行，
+        // 而不是单行直接截断；纵向仍由 cappedFont 封顶，见顶栏约束。
+        labelValue.numberOfLines = 2
         return labelValue
     }()
 
@@ -106,13 +109,18 @@ final class BearyProfilePhotosViewController: UIViewController {
             topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topBarView.heightAnchor.constraint(equalToConstant: 44),
+            // 无障碍：第 7 轮好友顶栏同款口径——顶栏不再钉死 44，只定最小
+            // 高；标题上下约束撑高顶栏，默认字号下仍为 44。新增照片逐项
+            // 动画的减动效短路已存在，本支不动它。
+            topBarView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             backButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: 8),
             backButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
             backButton.widthAnchor.constraint(equalToConstant: 44),
             backButton.heightAnchor.constraint(equalToConstant: 44),
             titleLabel.centerXAnchor.constraint(equalTo: topBarView.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
+            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBarView.topAnchor, constant: 7),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBarView.bottomAnchor, constant: -7),
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: backButton.trailingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBarView.trailingAnchor, constant: -52),
             collectionView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),

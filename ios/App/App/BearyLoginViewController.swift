@@ -285,8 +285,13 @@ final class BearyLoginViewController: UIViewController {
         inviteDisclosureRow.accessibilityValue = "已收起"
         inviteDisclosureRow.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(inviteDisclosureTapped)))
         NSLayoutConstraint.activate([
-            inviteDisclosureRow.heightAnchor.constraint(equalToConstant: 44),
+            // 无障碍：第 7 轮好友顶栏同款口径——行高不再钉死 44，只定最小
+            // 高；邀请文案是 scaledFont，大字号下行高超过 44 时靠文案上下
+            // 约束撑高行，默认字号下仍为 44，文案与读屏本身不动。
+            inviteDisclosureRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             inviteDisclosureLabel.leadingAnchor.constraint(equalTo: inviteDisclosureRow.leadingAnchor),
+            inviteDisclosureLabel.topAnchor.constraint(greaterThanOrEqualTo: inviteDisclosureRow.topAnchor, constant: 6),
+            inviteDisclosureLabel.bottomAnchor.constraint(lessThanOrEqualTo: inviteDisclosureRow.bottomAnchor, constant: -6),
             inviteDisclosureLabel.centerYAnchor.constraint(equalTo: inviteDisclosureRow.centerYAnchor),
             inviteDisclosureChevron.leadingAnchor.constraint(equalTo: inviteDisclosureLabel.trailingAnchor, constant: 4),
             inviteDisclosureChevron.centerYAnchor.constraint(equalTo: inviteDisclosureRow.centerYAnchor),
