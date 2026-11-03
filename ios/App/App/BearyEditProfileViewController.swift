@@ -907,7 +907,7 @@ class BearyEditProfileViewController: UIViewController {
             return
         }
         if !nameValue.isEmpty && nameValue.rangeOfCharacter(from: .alphanumerics) == nil {
-            presentSimpleAlert(message: "名字里至少要有一个文字")
+            presentSimpleAlert(message: "昵称需至少包含一个文字或数字")
             return
         }
         let signatureValue = (signatureField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1145,9 +1145,9 @@ class BearyEditProfileViewController: UIViewController {
             return "登录已过期，请重新登录"
         case .server(let code, _):
             switch code {
-            case "name_taken": return "该用户名已被使用"
+            case "name_taken": return "这个昵称已被使用"
             case "name_too_long": return "显示名称最多 30 个字"
-            case "name_no_text": return "名字里至少要有一个文字"
+            case "name_no_text": return "昵称需至少包含一个文字或数字"
             case "signature_too_long": return "签名最多 60 个字"
             case "avatar_too_large": return "头像太大了，换一张小一点的吧"
             case "cover_too_large": return "这张图太大了，换一张小一点的吧"

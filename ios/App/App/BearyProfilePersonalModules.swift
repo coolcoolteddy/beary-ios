@@ -920,7 +920,7 @@ final class BearyYearReviewViewController: UIViewController {
         summaryLabel.numberOfLines = 0
         summaryLabel.font = UIFont.systemFont(ofSize: 15)
         summaryLabel.textColor = BearyColors.ink
-        var summary = "今年已写 \(yearEntriesValue.count) 篇 · 最长连续 \(longest) 天"
+        var summary = "\(selectedYear) 年共写 \(yearEntriesValue.count) 篇 · 最长连续 \(longest) 天"
         if let firstCreatedAt = first?.createdAt {
             let date = Date(timeIntervalSince1970: TimeInterval(firstCreatedAt) / 1000)
             let parts = calendar.dateComponents([.month, .day], from: date)
