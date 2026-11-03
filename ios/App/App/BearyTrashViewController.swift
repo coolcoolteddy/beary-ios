@@ -36,6 +36,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     private var trashHasMore = false
     private var trashLoading = false
     private var trashLoadingMore = false
+    /// 第 7 轮属实项 7：翻页失败持续态。true 时尾部多一节直接重试入口；
+    /// 由新一轮翻页开始时清掉（点按重试与滚动触发同路）、翻页成功
+    /// 或首屏重拉时确认为清掉；本轮若再失败，失败分支重新立节
+    ///（照片墙 #729 同款口径：失败不 reload 已有行，保内容与滚动位置）。
+    /// 401 不进此态（走登录门）。
+    private var trashLoadMoreFailed = false
     private var trashSilentRefreshing = false
     /// 静默刷新代次守卫（全量同步 trash 腿同款口径，见 BearyEntrySync）：
     /// 刷新开始时记下回收站写盘代际，终态提交前比对——期间发生过任何
@@ -95,6 +101,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     // 空态 emptyWrap 与登录态 loginWrap 本批不动；Feed/Profile 各页的接入留给卡片线。
     private let failureStateView = BearyStateView()
     private let moreSpinner = BearyRefreshIconView()
+    /// 翻页失败尾部重试节（照片墙 #729 同款：仅失败时出现的一节入口，
+    /// 平时隐藏；已到底时仍无尾部，沿用 B-G14 网页对照——列表直接结束）。
+    private let loadMoreRetryWrap = UIStackView()
+    private let loadMoreRetryButton = BearyHit44Button(type: .custom)
     private let loginWrap = UIStackView()
     // 审计-时间线：回收站“去登录”钮改 BearyHit44Button，视觉帧不动、热区扩至 44×44（纵向扩区受 loginWrap 栈界约束，见 PR 说明）。
     private let loginButton = BearyHit44Button(type: .custom)
@@ -275,6 +285,20 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         moreSpinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
         moreSpinner.isHidden = true
 
+        // 翻页失败尾部重试节：居中一钮，44 高热区；平时隐藏，失败时才出现。
+        loadMoreRetryWrap.axis = .vertical
+        loadMoreRetryWrap.alignment = .center
+        loadMoreRetryWrap.isHidden = true
+        loadMoreRetryButton.setTitle("加载失败 · 重试", for: .normal)
+        loadMoreRetryButton.setTitleColor(BearyColors.ink, for: .normal)
+        loadMoreRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        loadMoreRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        loadMoreRetryButton.accessibilityLabel = "加载失败，点按重试加载更多"
+        loadMoreRetryButton.addTarget(self, action: #selector(retryLoadMoreTapped), for: .touchUpInside)
+        loadMoreRetryButton.bearyAddPressFeedback()
+        loadMoreRetryButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        loadMoreRetryWrap.addArrangedSubview(loadMoreRetryButton)
+
         // W7：401 登录空态（与时间线“先登录 + 去登录”同口径）。
         loginWrap.axis = .vertical
         loginWrap.alignment = .center
@@ -319,6 +343,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         contentStack.addArrangedSubview(failureWrap)
         contentStack.addArrangedSubview(loginWrap)
         contentStack.addArrangedSubview(moreSpinner)
+        contentStack.addArrangedSubview(loadMoreRetryWrap)
         emptyWrap.addArrangedSubview(emptyIconView)
         emptyWrap.addArrangedSubview(emptyLabel)
         failureWrap.addArrangedSubview(failureStateView)
@@ -374,6 +399,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         loadFirstPage()
     }
 
+    /// 翻页失败尾部重试唯一入口：直接走已有翻页入口 loadMoreIfNeeded
+    ///（只续拉下一页；入口内守门：加载中/静默刷新中/无更多页时不触发，
+    /// 此时重试节保留；新一轮开始时入口先撤节，成功后节不再出现）。
+    @objc private func retryLoadMoreTapped() {
+        loadMoreIfNeeded()
+    }
+
     @objc private func loginTapped() {
         onRequireLogin?()
     }
@@ -384,6 +416,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         if trashLoading || trashBucketLoading || trashSilentRefreshing {
             return
         }
+        // 首屏重拉 supersede 翻页失败态：新一桶到来前先撤尾部重试节，
+        // 免得旧失败节挂在新列表底下（翻页成功/首屏重拉均撤节）。
+        trashLoadMoreFailed = false
+        loadMoreRetryWrap.isHidden = true
         // 回收站同步落盘：桶已存在时先读本地秒显（不转菊花），再静默整桶重拉对齐；
         // 桶不存在时走现行网络首拉（菊花 + 失败态口径一字不动）。
         // 开页读改走同步串行后台队列（与恢复/删除写、静默刷新写同一队列，
@@ -564,6 +600,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             renderStateViews()
             return
         }
+        // 新一轮翻页开始即撤旧重试节（滚动触发与点按触发同路）；
+        // 本轮若再失败，失败分支会重新立节，不丢重试入口。
+        trashLoadMoreFailed = false
+        loadMoreRetryWrap.isHidden = true
         trashLoadingMore = true
         moreSpinner.isHidden = false
         moreSpinner.startSpinning()
@@ -589,12 +629,21 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     self.trashItems.append(contentsOf: appended)
                     self.trashHasMore = list.hasMore
                     self.appendListRows(appended)
+                    // 成功即撤重试节（本轮开始时已撤，此处再确一次）；
+                    // hasMore=false 时列表直接结束，不另立“已到底”尾部（B-G14）。
+                    self.trashLoadMoreFailed = false
+                    self.loadMoreRetryWrap.isHidden = true
                     self.renderStateViews()
                 case .failure(let error):
                     if case .unauthorized = error {
                         self.notifyTrashLoginOnce()
                     } else {
                         self.showToast(message: "加载失败")
+                        // 失败只立尾部重试节：不碰 trashItems、不重建行、
+                        // 不动滚动位置；停在尾部无滚动余量时点此节即可重试，
+                        // 不再只靠 scrollViewDidScroll 再次越过阈值。
+                        self.trashLoadMoreFailed = true
+                        self.loadMoreRetryWrap.isHidden = false
                     }
                 }
             }
