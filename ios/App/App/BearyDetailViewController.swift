@@ -455,8 +455,8 @@ final class BearyDetailViewController: UIViewController {
         v.translatesAutoresizingMaskIntoConstraints = false
         v.isHidden = true
         v.isAccessibilityElement = false
-        v.widthAnchor.constraint(equalToConstant: 21).isActive = true
-        v.heightAnchor.constraint(equalToConstant: 21).isActive = true
+        v.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        v.heightAnchor.constraint(equalToConstant: 24).isActive = true
         return v
     }()
     private let guestPromptButton = BearyHit44Button(type: .custom)
@@ -858,7 +858,7 @@ final class BearyDetailViewController: UIViewController {
         // authorRow 入栈已移到皇冠块之前（见上，118 闪退修复），此处不再重复添加。
         // 右上角 ⋯ 钮：时间线 moreButton 同款（21pt 灰色、28 框、44 热区），图标恒为三点。
         moreButton.translatesAutoresizingMaskIntoConstraints = false
-        moreButton.setImage(BearyFeedIconCache.image(named: "icon_more", pointSize: 21), for: .normal)
+        moreButton.setImage(BearyFeedIconCache.image(named: "icon_more", pointSize: 24), for: .normal)
         moreButton.tintColor = BearyColors.gray
         moreButton.adjustsImageWhenHighlighted = false
         moreButton.addTarget(self, action: #selector(moreTapped), for: .touchUpInside)
@@ -999,29 +999,29 @@ final class BearyDetailViewController: UIViewController {
         likeButton.bearyAddPressFeedback()
         // 显式宽约束（卡片同款，见 likeButtonWidthConstraint 注释）：初始只图标宽，
         // refreshActionRow 按赞数重算；不靠按钮固有宽，防数字被裁成左半弧。
-        let likeWidth = likeButton.widthAnchor.constraint(equalToConstant: 22)
+        let likeWidth = likeButton.widthAnchor.constraint(equalToConstant: 24)
         likeWidth.isActive = true
         likeButtonWidthConstraint = likeWidth
 
         // 批 B：收藏／分享均为纯图标（首页同款，收藏去中文标签）；尺寸 21。
         bookmarkButton.translatesAutoresizingMaskIntoConstraints = false
         bookmarkButton.adjustsImageWhenHighlighted = false
-        bookmarkButton.setImage(BearyFeedIconCache.image(named: "icon_bookmark", pointSize: 21), for: .normal)
+        bookmarkButton.setImage(BearyFeedIconCache.image(named: "icon_bookmark", pointSize: 24), for: .normal)
         bookmarkButton.tintColor = BearyColors.gray
         bookmarkButton.addTarget(self, action: #selector(bookmarkTapped), for: .touchUpInside)
         bookmarkButton.bearyAddPressFeedback()
 
         shareButton.translatesAutoresizingMaskIntoConstraints = false
         shareButton.adjustsImageWhenHighlighted = false
-        shareButton.setImage(BearyFeedIconCache.image(named: "icon_share", pointSize: 21), for: .normal)
+        shareButton.setImage(BearyFeedIconCache.image(named: "icon_share", pointSize: 24), for: .normal)
         shareButton.tintColor = BearyColors.gray
         shareButton.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
         shareButton.bearyAddPressFeedback()
         NSLayoutConstraint.activate([
-            bookmarkButton.widthAnchor.constraint(equalToConstant: 21),
-            bookmarkButton.heightAnchor.constraint(equalToConstant: 21),
-            shareButton.widthAnchor.constraint(equalToConstant: 21),
-            shareButton.heightAnchor.constraint(equalToConstant: 21),
+            bookmarkButton.widthAnchor.constraint(equalToConstant: 24),
+            bookmarkButton.heightAnchor.constraint(equalToConstant: 24),
+            shareButton.widthAnchor.constraint(equalToConstant: 24),
+            shareButton.heightAnchor.constraint(equalToConstant: 24),
         ])
 
         // 中部 spacer（最低 hugging / 最低抗压）吸掉全部剩余宽度，赞左、
@@ -1830,13 +1830,13 @@ final class BearyDetailViewController: UIViewController {
 
         let liked = entry.likedByMe ?? false
         let likeCount = entry.likeCount ?? 0
-        let heartImage = BearyFeedIconCache.image(named: liked ? "icon_heart_fill" : "icon_heart", pointSize: 22)
-            ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 22)
+        let heartImage = BearyFeedIconCache.image(named: liked ? "icon_heart_fill" : "icon_heart", pointSize: 24)
+            ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 24)
         likeButton.setImage(heartImage, for: .normal)
         // 赞数 0 隐藏整段数字（2026-10-31 Li 纠正口径）：setTitle(nil) 后宽度只剩
         // 图标宽，不占数字位、不留残影；有赞时显完整数字，宽度显式算
         //（图标宽 + 6 边距 + 标题宽，卡片同款），不靠按钮固有宽。
-        let imageWidth = heartImage?.size.width ?? 22
+        let imageWidth = heartImage?.size.width ?? 24
         if likeCount <= 0 {
             likeButton.setTitle(nil, for: .normal)
             likeButtonWidthConstraint?.constant = imageWidth
@@ -1853,8 +1853,8 @@ final class BearyDetailViewController: UIViewController {
         likeButton.accessibilityLabel = likeCount <= 0 ? "点赞" : "\(liked ? "已点赞" : "点赞")，\(likeCount)"
 
         let bookmarked = entry.bookmarkedByMe ?? false
-        let bookmarkImage = BearyFeedIconCache.image(named: bookmarked ? "icon_bookmark_fill" : "icon_bookmark", pointSize: 21)
-            ?? BearyFeedIconCache.image(named: "icon_bookmark", pointSize: 21)
+        let bookmarkImage = BearyFeedIconCache.image(named: bookmarked ? "icon_bookmark_fill" : "icon_bookmark", pointSize: 24)
+            ?? BearyFeedIconCache.image(named: "icon_bookmark", pointSize: 24)
         bookmarkButton.setImage(bookmarkImage, for: .normal)
         bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
         bookmarkButton.accessibilityLabel = bookmarked ? "已收藏" : "收藏"
@@ -2006,7 +2006,7 @@ final class BearyDetailViewController: UIViewController {
         } else {
             let made = BearyDiaryCardDashedAddButton(frame: .zero)
             made.translatesAutoresizingMaskIntoConstraints = false
-            made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 16), for: .normal)
+            made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 24), for: .normal)
             made.tintColor = BearyColors.gray
             made.accessibilityLabel = "贴一只小熊"
             made.widthAnchor.constraint(equalToConstant: 34).isActive = true

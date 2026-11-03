@@ -54,7 +54,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         topBarTopConstraint = topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60)
         let backButton = UIButton(type: .system)
         backButton.translatesAutoresizingMaskIntoConstraints = false
-        backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 20), for: .normal)
+        backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
         backButton.tintColor = BearyColors.ink
         backButton.accessibilityLabel = "返回好友列表"
         backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)

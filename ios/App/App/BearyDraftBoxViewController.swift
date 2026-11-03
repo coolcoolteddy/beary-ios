@@ -953,7 +953,7 @@ final class BearyDraftBoxViewController: UIViewController {
         }
         // 卡片操作钮（网页 .df-trash 同款）：删除钮本地删卡；打开只走整卡点按。
         let deleteButton = UIButton(type: .custom)
-        if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 21) {
+        if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 24) {
             deleteButton.setImage(trashImage, for: .normal)
         }
         deleteButton.imageView?.contentMode = .scaleAspectFit

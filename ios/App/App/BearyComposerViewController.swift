@@ -1254,7 +1254,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 默认字号下与原 14 一致，超大字号档不再被固定高度裁剪。
         publishButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14))
         publishButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        publishButton.setImage(BearyIconImages.image(named: "icon_send", pointSize: 22), for: .normal)
+        publishButton.setImage(BearyIconImages.image(named: "icon_send", pointSize: 24), for: .normal)
         // 顶栏右上角三钮收紧（2026-10-31 真机报间距偏大）：发布 pill 左右内边距 12 → 10，
         // 宽度重算读 live 边距（refreshPublishButtonWidth），spinner 前沿同步 12 → 10，见下。
         publishButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
@@ -1380,7 +1380,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let titleRight = publishButton.titleEdgeInsets.right
         let normalTitle = isEditMode ? "保存" : "发布"
         let busyTitle = isEditMode ? "保存中…" : "发布中…"
-        let sendImageWidth = BearyIconImages.image(named: "icon_send", pointSize: 22)?.size.width ?? 22
+        let sendImageWidth = BearyIconImages.image(named: "icon_send", pointSize: 24)?.size.width ?? 24
         let normalWidth = contentLeft + sendImageWidth + 6 + textWidth(normalTitle) + titleRight + contentRight
         let busyWidth = contentLeft + Self.publishSpinnerTitleInset + textWidth(busyTitle) + titleRight + contentRight
         publishWidthConstraint?.constant = max(normalWidth, busyWidth)
@@ -4757,7 +4757,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             BearyIconMotion.startSpin(on: publishRingView, duration: 0.9, key: "bearyPublishSpin")
         } else {
             publishButton.setTitle(isEditMode ? "保存" : "发布", for: .normal)
-            publishButton.setImage(BearyIconImages.image(named: "icon_send", pointSize: 22), for: .normal)
+            publishButton.setImage(BearyIconImages.image(named: "icon_send", pointSize: 24), for: .normal)
             publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
             publishRingView.isHidden = true
             BearyIconMotion.stopSpin(on: publishRingView, key: "bearyPublishSpin")

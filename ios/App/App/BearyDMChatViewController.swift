@@ -103,7 +103,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         view.addSubview(topBar)
         let closeButton = UIButton(type: .system)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 20), for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 24), for: .normal)
         closeButton.tintColor = BearyColors.ink
         closeButton.accessibilityLabel = "关闭"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)

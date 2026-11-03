@@ -488,9 +488,9 @@ final class BearyBubbleMenuView: UIView {
             button.titleLabel?.font = BearyDynamicType.scaledFont(
                 for: selected ? UIFont.boldSystemFont(ofSize: 15) : UIFont.systemFont(ofSize: 15))
             if selected {
-                button.setImage(BearyIconImages.image(named: "icon_check", pointSize: 16), for: .normal)
+                button.setImage(BearyIconImages.image(named: "icon_check", pointSize: 24), for: .normal)
             } else {
-                button.setImage(Self.clearPlaceholderImage(pointSize: 16), for: .normal)
+                button.setImage(Self.clearPlaceholderImage(pointSize: 24), for: .normal)
             }
         }
     }

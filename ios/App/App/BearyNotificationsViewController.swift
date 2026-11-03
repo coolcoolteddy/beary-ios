@@ -260,7 +260,7 @@ final class BearyNotificationsViewController: UIViewController {
         // 宽已超 44 不横扩；视觉不动（标题顶距不变，多余高度落到底部留白）。
         let button = BearyHit44Button(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
+        button.setImage(BearyIconImages.image(named: "icon_check", pointSize: 24), for: .normal)
         button.setTitle("全部已读", for: .normal)
         button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         button.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -1735,7 +1735,7 @@ final class BearyNotificationsViewController: UIViewController {
         isMarkingAllRead = true
         readAllButton.isEnabled = false
         // 网页口径：处理中换成转圈图标 +“处理中…”（check 图标不再保留）。
-        readAllButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 14), for: .normal)
+        readAllButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 24), for: .normal)
         readAllButton.setTitle("处理中…", for: .normal)
         updateReadAllButtonWidth()
         readAllButton.layoutIfNeeded()
@@ -1752,7 +1752,7 @@ final class BearyNotificationsViewController: UIViewController {
                 if let buttonImageView = strongSelf.readAllButton.imageView {
                     BearyIconMotion.stopSpin(on: buttonImageView, key: "bearyReadAllSpin")
                 }
-                strongSelf.readAllButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
+                strongSelf.readAllButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 24), for: .normal)
                 strongSelf.readAllButton.setTitle("全部已读", for: .normal)
                 strongSelf.updateReadAllButtonWidth()
                 // P1-21：代次已变 → 旧账号回包丢弃，不整批置已读、不重拉。
@@ -2998,7 +2998,7 @@ private class BearyNotificationCell: UITableViewCell {
     private let avatarRetryButton: UIButton = {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
+        button.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 24), for: .normal)
         button.tintColor = BearyColors.ink
         button.isHidden = true
         button.accessibilityLabel = "重试"

@@ -2123,7 +2123,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             thumb.layer.masksToBounds = true
             let thumbRetryButton = UIButton(type: .custom)
             thumbRetryButton.translatesAutoresizingMaskIntoConstraints = false
-            thumbRetryButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
+            thumbRetryButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 24), for: .normal)
             thumbRetryButton.tintColor = BearyColors.ink
             thumbRetryButton.isHidden = true
             thumbRetryButton.accessibilityLabel = "重试"
