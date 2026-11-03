@@ -1392,7 +1392,7 @@ final class BearyDraftBoxViewController: UIViewController {
                 self?.dismissWithExitAnimation(completion: nil)
             })
             alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-            present(alert, animated: true)
+            present(alert, animated: BearyMotion.animated(true))
             return
         }
         // 弹窗审计 E1-18：关闭钮/遮罩/把手下滑三路只走统一退场，回调为空，

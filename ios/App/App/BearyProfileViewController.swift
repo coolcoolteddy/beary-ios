@@ -6134,7 +6134,7 @@ class BearyProfileViewController: UIViewController {
             isMutualFriendValue: isMutualFriend
         )
         photosVC.modalPresentationStyle = .fullScreen
-        present(photosVC, animated: true, completion: nil)
+        present(photosVC, animated: BearyMotion.animated(true), completion: nil)
     }
 
     @objc private func photosWallButtonTapped(_ sender: UIButton) {
@@ -6159,11 +6159,11 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             guard let strongSelf = self, let viewerValue = viewer else { return }
             guard tappedIndex >= 0, tappedIndex < strongSelf.photoWallPhotosValue.count else { return }
             let targetEntry = strongSelf.photoWallPhotosValue[tappedIndex].entry
-            viewerValue.dismiss(animated: true) {
+            viewerValue.dismiss(animated: BearyMotion.animated(true)) {
                 strongSelf.onOpenEntry?(targetEntry)
             }
         }
-        present(viewer, animated: true, completion: nil)
+        present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }
 
     private func makeLoadingFooter() -> UIView {
