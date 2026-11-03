@@ -20,14 +20,6 @@ enum BearySound: String, CaseIterable {
     case refuseBonk = "refuse_bonk"
     case loginChime = "login_chime"
     case wishDing = "wish_ding"
-    /// 进入主页音效（2026-10-30 Li 定稿：02 双音音高中间档）。
-    /// 定稿参数：330→415Hz 大三度上行、第二声更轻、时长 0.43s、
-    /// 峰值 0.18、44.1kHz 单声道；源文件 02_soft_dual_up_pitch_mid.wav
-    /// 原样入包，未改音高、音量、时长、结构。
-    /// 触发点占位说明（本批只入包、不接线）：正式接 veil 时，
-    /// 在 veil 淡出完成回调里调用 BearySoundPlayer.play(.homeEntry)，
-    /// 不要挂 Lottie complete 标记；标语动画全程仍静默。
-    case homeEntry = "home_entry"
 }
 
 enum BearySoundPlayer {
@@ -58,7 +50,7 @@ enum BearySoundPlayer {
     /// 播放器、就绪后符合新鲜度才播放（见 play 未命中路径），播完回池
     /// 时按上限丢弃多余。
     private static let maxPooledPerSound = 2
-    /// 审计动效组：全部 12 音在启动或闲时预热解码（旧口径只预热 3 音，
+    /// 审计动效组：全部 11 音在启动或闲时预热解码（旧口径只预热 3 音，
     /// 其余 9 音首次播放走主线程文件 IO）；预热只做后台解码，不改音色、
     /// 音量与触发点，门控仍是设置页开关 + .ambient + mixWithOthers。
     private static let prewarmSounds: [BearySound] = BearySound.allCases
@@ -72,7 +64,7 @@ enum BearySoundPlayer {
     /// prepareToPlay）只在这里做，绝不上主线程；播放调用本身只做取池 + play()。
     private static let poolQueue = DispatchQueue(label: "com.beary.soundPool", qos: .utility)
 
-    /// 审计动效组：启动时调用（见 AppDelegate），后台解码全部 12 音；
+    /// 审计动效组：启动时调用（见 AppDelegate），后台解码全部 11 音；
     /// 与 play 内的 schedulePrewarmIfNeeded 共用一次门控，重复调用无额外开销。
     static func prewarmAll() {
         schedulePrewarmIfNeeded()
