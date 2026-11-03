@@ -344,8 +344,69 @@ final class BearyImageRedirectGuard: NSObject, URLSessionTaskDelegate {
 
 final class BearyImageLoader {
     static let shared = BearyImageLoader()
-    private let cache = NSCache<NSString, UIImage>()
+
+    /// 审计 22/23 项：内存条目（不只存图）。expiresAt 与 diskCacheMaxAge
+    /// 同口径（24 小时，数值本身不动）：内存命中也要先验过期，过期即
+    /// 视为未命中、不再像过去那样无时间戳直接返回。generation 为存入时
+    /// 该账号桶的缓存代次：purge/evict 推进代次后，旧代次条目即使未被
+    /// removeAllObjects 清掉（如写盘竞态中后落盘），命中时也被判失效。
+    private final class MemoryImage {
+        let image: UIImage
+        let expiresAt: Date
+        let generation: UInt64
+        init(image: UIImage, expiresAt: Date, generation: UInt64) {
+            self.image = image
+            self.expiresAt = expiresAt
+            self.generation = generation
+        }
+    }
+
+    private let cache = NSCache<NSString, MemoryImage>()
     private let session: URLSession
+
+    /// 审计 22/23 项：按账号桶的缓存代次。purgeAccount 与
+    /// evictEntryImages（权限变化）推进对应桶代次；在途写入在落盘
+    /// （内存 + 磁盘）前再次校验代次，代次已变即弃写不落盘。切换账号
+    /// 不推进代次（旧桶磁盘保留、切回可复用，见 setAccount 注释）。
+    private let generationLock = NSLock()
+    private var generations: [String: UInt64] = [:]
+
+    private func bucketName(_ bucket: Int?) -> String {
+        bucket.map(String.init) ?? "guest"
+    }
+
+    private func generation(for bucket: Int?) -> UInt64 {
+        generationLock.lock()
+        defer { generationLock.unlock() }
+        return generations[bucketName(bucket)] ?? 0
+    }
+
+    private func bumpGeneration(for bucket: Int?) {
+        generationLock.lock()
+        generations[bucketName(bucket), default: 0] += 1
+        generationLock.unlock()
+    }
+
+    /// 内存命中：过期或代次已变均视为未命中（并摘除该条目），不再
+    /// 直接返回。调用方随后走磁盘/网络，磁盘支同样有 24 小时 TTL。
+    private func cachedMemoryImage(forKey key: NSString, bucket: Int?) -> UIImage? {
+        guard let entry = cache.object(forKey: key) else { return nil }
+        guard Date() < entry.expiresAt, entry.generation == generation(for: bucket) else {
+            cache.removeObject(forKey: key)
+            return nil
+        }
+        return entry.image
+    }
+
+    /// 内存写盘：代次已变即弃写（调用方在写前也已校验，本处为
+    /// 最后一道屏障）。cost 口径与原 setObject 调用处一致（按像素计）。
+    private func storeMemory(_ img: UIImage, forKey key: NSString, bucket: Int?, generation: UInt64) {
+        guard generation == self.generation(for: bucket) else { return }
+        let scale = img.scale
+        let cost = max(Int(img.size.width * scale) * Int(img.size.height * scale), 1)
+        let entry = MemoryImage(image: img, expiresAt: Date().addingTimeInterval(Self.diskCacheMaxAge), generation: generation)
+        cache.setObject(entry, forKey: key, cost: cost)
+    }
 
     /// 账号隔离 4 号：当前账号（容器 onUserChanged 写入）。缓存键与磁盘
     /// 目录均含该维度，未登录为 nil 时走 guest 桶，与任何账号桶互不命中。
@@ -363,7 +424,13 @@ final class BearyImageLoader {
 
     /// 账号隔离 4 号：退出/会话失效时清掉该账号的全部缓存——内存全清
     ///（NSCache 不可按 key 枚举，故全清；重建成本低）+ 该账号磁盘目录删除。
+    /// 审计 22 项：先推进该桶代次、取消该桶旧订阅，再清内存、删目录。
+    /// 代次屏障使删除前已在途、删除后才到写盘点的旧写入被弃写，
+    /// 不再重新创建刚删除的旧账号缓存；取消订阅使仍在途的网络任务
+    /// 在完成回调守卫处即被丢弃（不再分发、不再落盘）。
     func purgeAccount(_ id: Int) {
+        bumpGeneration(for: id)
+        cancelInFlight(forBucket: id)
         cache.removeAllObjects()
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
         let dir = caches.appendingPathComponent("BearyImageCache").appendingPathComponent("\(id)")
@@ -457,14 +524,23 @@ final class BearyImageLoader {
     /// 公开图 1 天 max-age + 本方法同款 24 小时 TTL 约束，不会无限期可读。
     func evictEntryImages(keys: [String]) {
         guard !keys.isEmpty else { return }
-        cache.removeAllObjects()
         let bucket = currentAccountId
+        // 审计 22/23 项：转私密是权限变化——先推进该桶代次、取消该篇
+        // 图片的旧订阅，再清内存、删磁盘文件。代次屏障使转私密前已在途、
+        // 转私密后才到写盘点的旧写入被弃写，不再把刚逐出的私密图重新落盘。
+        bumpGeneration(for: bucket)
+        var urls: [URL] = []
         for key in keys {
             for thumb in [false, true] {
-                guard let url = BearyImageURLs.imageURL(key: key, thumb: thumb),
-                      let file = diskFileURL(for: url, bucket: bucket) else { continue }
-                try? FileManager.default.removeItem(at: file)
+                guard let url = BearyImageURLs.imageURL(key: key, thumb: thumb) else { continue }
+                urls.append(url)
             }
+        }
+        cancelInFlight(forURLs: urls, bucket: bucket)
+        cache.removeAllObjects()
+        for url in urls {
+            guard let file = diskFileURL(for: url, bucket: bucket) else { continue }
+            try? FileManager.default.removeItem(at: file)
         }
     }
 
@@ -632,6 +708,42 @@ final class BearyImageLoader {
         }
     }
 
+    /// 审计 22/23 项：批量取消订阅（purge 按桶、evict 按 URL 前缀）。
+    /// 内存键形如 "<桶>|<URL>" 或 "<桶>|<URL>|downsample:<宽>"，故桶
+    /// 取消用 "<桶>|" 前缀、URL 取消用 "<桶>|<URL>" 前缀，均能覆盖
+    /// 下采样变体。匹配项的订阅全摘后即无订阅者，底层任务随即取消
+    ///（与单条取消的“最后一个订阅者取消才取消任务”口径一致）；
+    /// 取消在锁外执行，避免锁内回调。已通过完成回调守卫的在途写入
+    /// 另由代次屏障弃写。
+    private func cancelInFlight(matching prefix: (String) -> Bool) {
+        inFlightLock.lock()
+        // 先快照匹配键再删表：遍历中直接改字典会触发枚举期变异，
+        // 故匹配与删除分两步。
+        let matched = inFlight.keys.filter { prefix($0 as String) }
+        var tasks: [URLSessionDataTask] = []
+        for key in matched {
+            guard let entry = inFlight[key] else { continue }
+            entry.subscribers.removeAll()
+            if let task = entry.task {
+                tasks.append(task)
+            }
+            inFlight[key] = nil
+        }
+        inFlightLock.unlock()
+        for task in tasks { task.cancel() }
+    }
+
+    private func cancelInFlight(forBucket bucket: Int?) {
+        let prefix = "\(bucketName(bucket))|"
+        cancelInFlight { $0.hasPrefix(prefix) }
+    }
+
+    private func cancelInFlight(forURLs urls: [URL], bucket: Int?) {
+        guard !urls.isEmpty else { return }
+        let prefixes = urls.map { "\(bucketName(bucket))|\($0.absoluteString)" }
+        cancelInFlight { key in prefixes.contains { key.hasPrefix($0) } }
+    }
+
     private func cancelInFlight(key: NSString, id: UUID) {
         inFlightLock.lock()
         guard let entry = inFlight[key] else {
@@ -663,12 +775,17 @@ final class BearyImageLoader {
     @discardableResult
     func loadDetailed(url: URL, downsampleToWidth: CGFloat? = nil, completion: @escaping (Result<UIImage, BearyImageLoadError>) -> Void) -> URLSessionDataTask? {
         let key = memoryKey(for: url, downsampleToWidth: downsampleToWidth)
-        if let img = cache.object(forKey: key) {
+        // 审计 23 项：内存命中先验过期与代次，过期或代次已变即视为
+        // 未命中、继续走磁盘/网络，不再无时间戳直接返回。
+        if let img = cachedMemoryImage(forKey: key, bucket: currentAccountId) {
             DispatchQueue.main.async { completion(.success(img)) }
             return nil
         }
         // S2：请求发起时固定 bucket，整条链路（磁盘读 / 网络写盘）都用它。
         let bucket = currentAccountId
+        // 审计 22 项：发起时固定该桶代次，落盘前再次校验（见网络与
+        // 磁盘两支的写盘点）；purge/evict 推进代次后，旧写入弃写不落盘。
+        let capturedGeneration = generation(for: bucket)
         let subscriberId = UUID()
         let proxy = CoalescedImageTask(loader: self, key: key, id: subscriberId)
         inFlightLock.lock()
@@ -709,11 +826,13 @@ final class BearyImageLoader {
                 deliver(.failure(.invalidData))
                 return
             }
-            // G23：cost 按像素计（pt 尺寸 × scale 的平方方向取整边长之积）。
-            let scale = img.scale
-            let cost = max(Int(img.size.width * scale) * Int(img.size.height * scale), 1)
-            self.cache.setObject(img, forKey: key, cost: cost)
-            self.writeDisk(data: data, for: url, bucket: bucket)
+            // 审计 22 项：写盘前再次验证代次——purge/evict 后旧写入
+            // 弃写（内存与磁盘双双不落），只向仍在世的订阅者分发本次
+            // 结果（分发不是落盘；被取消的订阅者已在上方守卫处丢弃）。
+            if capturedGeneration == self.generation(for: bucket) {
+                self.storeMemory(img, forKey: key, bucket: bucket, generation: capturedGeneration)
+                self.writeDisk(data: data, for: url, bucket: bucket)
+            }
             deliver(.success(img))
         }
         entry.task = task
@@ -746,10 +865,12 @@ final class BearyImageLoader {
                 let subs = entry.subscribers
                 self.inFlight[key] = nil
                 self.inFlightLock.unlock()
-                // G23：cost 按像素计（pt 尺寸 × scale 的平方方向取整边长之积）。
-                let scale = img.scale
-                let cost = max(Int(img.size.width * scale) * Int(img.size.height * scale), 1)
-                self.cache.setObject(img, forKey: key, cost: cost)
+                // 审计 22 项：磁盘命中写内存前同样验代次，代次已变即
+                // 不写内存（磁盘文件本身已被 purge/evict 删掉或即将删掉，
+                // 读到的是删除前已解码在手的旧字节，不得再留存）。
+                if capturedGeneration == self.generation(for: bucket) {
+                    self.storeMemory(img, forKey: key, bucket: bucket, generation: capturedGeneration)
+                }
                 DispatchQueue.main.async {
                     for sub in subs { sub.completion(.success(img)) }
                 }

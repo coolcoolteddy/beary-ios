@@ -6704,6 +6704,26 @@ enum BearyTimelineCache {
     private static let ioQueue = DispatchQueue(label: "beary.timelineCache.io", qos: .utility)
     static let snapshotEntryLimit = 60
 
+    /// 审计 22 项：按桶的失效代次，与 BearyFeedCache 同口径——purge
+    /// 同步推进代次、删除进 ioQueue；save/load 调用时固定代次、队列内
+    /// 执行时再次校验。purge 前已排队的写被弃写，purge 前排队的读在
+    /// 代次已变时改发 nil，删除后旧任务不能重新落盘、旧快照不能递给
+    /// 退出后的界面。代次只由 purge 推进，退出后重登同一桶读写正常。
+    private static let generationLock = NSLock()
+    private static var generations: [String: UInt64] = [:]
+
+    private static func generation(for bucket: String) -> UInt64 {
+        generationLock.lock()
+        defer { generationLock.unlock() }
+        return generations[bucket] ?? 0
+    }
+
+    private static func bumpGeneration(for bucket: String) {
+        generationLock.lock()
+        generations[bucket, default: 0] += 1
+        generationLock.unlock()
+    }
+
     private struct Snapshot: Codable {
         var savedAt: TimeInterval
         var entries: [Entry]
@@ -6720,13 +6740,15 @@ enum BearyTimelineCache {
     }
 
     static func load(bucket: String, completion: @escaping ((entries: [Entry], hasMore: Bool, trashCount: Int, total: Int?, priv: Int?, pub: Int?, savedAt: TimeInterval)?) -> Void) {
+        let capturedGeneration = generation(for: bucket)
         ioQueue.async {
             var result: (entries: [Entry], hasMore: Bool, trashCount: Int, total: Int?, priv: Int?, pub: Int?, savedAt: TimeInterval)?
             if let url = fileURL(bucket: bucket), let data = try? Data(contentsOf: url),
                let snap = try? JSONDecoder().decode(Snapshot.self, from: data) {
                 result = (snap.entries, snap.hasMore, snap.trashCount, snap.total, snap.priv, snap.pub, snap.savedAt)
             }
-            let captured = result
+            // 代次已变（期间 purge 过）：旧快照不再递出，改发 nil。
+            let captured = capturedGeneration == generation(for: bucket) ? result : nil
             DispatchQueue.main.async { completion(captured) }
         }
     }
@@ -6735,7 +6757,9 @@ enum BearyTimelineCache {
         let capped = Array(entries.prefix(snapshotEntryLimit))
         let storedHasMore = hasMore || entries.count > snapshotEntryLimit
         let snap = Snapshot(savedAt: Date().timeIntervalSince1970, entries: capped, hasMore: storedHasMore, trashCount: trashCount, total: counts?.total, priv: counts?.priv, pub: counts?.pub)
+        let capturedGeneration = generation(for: bucket)
         ioQueue.async {
+            guard capturedGeneration == generation(for: bucket) else { return }
             guard let url = fileURL(bucket: bucket) else { return }
             guard let data = try? JSONEncoder().encode(snap) else { return }
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -6748,9 +6772,15 @@ enum BearyTimelineCache {
     /// 补的缺口（广场 / 图片 / 日落盘此前已有清理，见 SessionManager）。
     /// 只删传入的桶，不碰其他账号的桶；账号切换（不退出）绝不调这里，
     /// 旧号快照保留、切回可复用。
+    /// 审计 22 项：删除进入 ioQueue，不再同步删文件（同步删与异步写
+    /// 不在同一队列时，删后仍在途的写会重新创建文件）；删除块排在此前
+    /// 所有读写块之后，且代次屏障已先弃写 purge 前排队的写。
     static func purge(bucket: String) {
-        guard let url = fileURL(bucket: bucket) else { return }
-        try? FileManager.default.removeItem(at: url)
+        bumpGeneration(for: bucket)
+        ioQueue.async {
+            guard let url = fileURL(bucket: bucket) else { return }
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }
 

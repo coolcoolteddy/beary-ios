@@ -2741,7 +2741,30 @@ enum BearyFeedCache {
     private static let ioQueue = DispatchQueue(label: "beary.feedCache.io", qos: .utility)
     static let snapshotEntryLimit = 12
 
+    /// 审计 22 项：按桶的失效代次。purge 同步推进代次、删除进 ioQueue；
+    /// save/load 在调用时固定代次、队列内执行时再次校验。purge 前已排队
+    /// 的写在执行时因代次已变被弃写，不再重新创建刚删除的旧账号缓存；
+    /// purge 后排队的读因在删除块之后执行，读不到已删文件；purge 前排队
+    /// 的读若执行时才发现代次已变，改发 nil，不把删除前的旧快照递给
+    /// 退出后的界面。代次只由 purge 推进，不由 save/load 推进，故退出后
+    /// 重新登录同一桶时新代次下的读写均正常通过。
+    private static let generationLock = NSLock()
+    private static var generations: [String: UInt64] = [:]
+
+    private static func generation(for bucket: String) -> UInt64 {
+        generationLock.lock()
+        defer { generationLock.unlock() }
+        return generations[bucket] ?? 0
+    }
+
+    private static func bumpGeneration(for bucket: String) {
+        generationLock.lock()
+        generations[bucket, default: 0] += 1
+        generationLock.unlock()
+    }
+
     static func load(bucket: String, completion: @escaping (Snapshot?) -> Void) {
+        let capturedGeneration = generation(for: bucket)
         ioQueue.async {
             var snap: Snapshot?
             if let url = fileURL(bucket: bucket), let data = try? Data(contentsOf: url) {
@@ -2749,7 +2772,8 @@ enum BearyFeedCache {
                 decoder.keyDecodingStrategy = .convertFromSnakeCase
                 snap = try? decoder.decode(Snapshot.self, from: data)
             }
-            let result = snap
+            // 代次已变（期间 purge 过）：旧快照不再递出，改发 nil。
+            let result = capturedGeneration == generation(for: bucket) ? snap : nil
             DispatchQueue.main.async { completion(result) }
         }
     }
@@ -2757,13 +2781,16 @@ enum BearyFeedCache {
     /// 写缓存：只存有效公开篇（visibleHead 过滤）；hasMore 由调用方按
     /// 本次首拉回包量给（不能从存后篇数反推——删篇后写回时篇数会缩水），
     /// 再叠加截断修正（见上）。写盘异步进行，调用方先应用界面、不等写盘。
+    /// 审计 22 项：队列内写盘前验代次，purge 前已排队的写被弃写。
     static func save(bucket: String?, entries: [Entry], hasMore: Bool) {
         guard let bucket = bucket, !bucket.isEmpty else { return }
         let head = visibleHead(entries)
         let capped = Array(head.prefix(snapshotEntryLimit))
         let storedHasMore = hasMore || head.count > snapshotEntryLimit
         let snap = Snapshot(savedAt: Date().timeIntervalSince1970, entries: capped, hasMore: storedHasMore)
+        let capturedGeneration = generation(for: bucket)
         ioQueue.async {
+            guard capturedGeneration == generation(for: bucket) else { return }
             guard let url = fileURL(bucket: bucket) else { return }
             let encoder = JSONEncoder()
             encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -2773,8 +2800,16 @@ enum BearyFeedCache {
         }
     }
 
+    /// 审计 22 项：删除进入 ioQueue，不再同步删文件。同步删与异步写
+    /// 不在同一队列时，删后仍在途的写会重新创建文件；现删除块排在
+    /// 此前所有读写块之后执行，且代次屏障已先弃写 purge 前排队的写，
+    /// 两者叠加保证删除后旧任务不能重新落盘。purge 后新发起的读写
+    /// 属新代次，正常执行（退出后重登同一桶仍可重新缓存）。
     static func purge(bucket: String) {
-        guard let url = fileURL(bucket: bucket) else { return }
-        try? FileManager.default.removeItem(at: url)
+        bumpGeneration(for: bucket)
+        ioQueue.async {
+            guard let url = fileURL(bucket: bucket) else { return }
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }
