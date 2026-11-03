@@ -351,6 +351,10 @@ class BearyProfileViewController: UIViewController {
     /// 那年今日同年多篇展开态（默认收起）。
     private var thisDayExpanded = false
     private var tabBackgroundTab: ProfileTab?
+    // 失败态全量·对账轻提示：后台回填失败只 toast 一次的记账。成功回填时清零，
+    // 使下一次失败能再提示；连续失败（切 tab 反复触发）不再重复刷屏。
+    // 不改缓存、不改失败态、不弹确认框。
+    private var backgroundReconcileFailToasted = false
     private var rowTapGuardUntil: Date?
     /// 清单 2 滚动藏栏（个人主页部分）：与首页／时间线同款 120pt 阈值；
     /// 本页主滚动视图即 tableView（头部为 tableHeaderView、contentInset.top = 0，
@@ -5716,9 +5720,18 @@ class BearyProfileViewController: UIViewController {
                     // 仍会先判 tabError 而显旧 tab 的失败脚部；失败分支口径不动，
                     // 也不改成按 tab 分字典。
                     strongSelf.tabError = false
+                    strongSelf.backgroundReconcileFailToasted = false
                     strongSelf.refreshFooter()
                 case .failure:
-                    break
+                    // 失败态全量·对账轻提示：既定静默口径不动——仍保留缓存、
+                    // 不改失败态、不弹阻断框；只补一个非阻断 toast，告诉用户
+                    // 现在看的是上次的数据。一次失败只提示一次：连续失败
+                    // （切 tab 反复触发回填）不再重复弹，直至某次回填成功清零。
+                    // 文案请 Li 纠正。
+                    if !strongSelf.backgroundReconcileFailToasted {
+                        strongSelf.backgroundReconcileFailToasted = true
+                        BearyToast.show(in: strongSelf.view, message: "同步失败，显示的是上次的数据")
+                    }
                 }
             }
         }
