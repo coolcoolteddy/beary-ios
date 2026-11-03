@@ -96,6 +96,11 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 矩形（未传时关场走淡出兜底，同样不闪）；全屏模态下底层表无法滚动，
     /// present 时 captured 的矩形在关场时仍然有效。
     var originFrameInWindow: CGRect?
+    /// 无障碍：关闭后焦点返回的原缩略图视图（由调用方在 present 前传入；
+    /// 未传入时不发焦点通知）。只传视图引用，不改关场动画与矩形逻辑。
+    var focusReturnElement: UIView?
+    /// 无障碍：打开首焦点只发一次。
+    private var didPostViewerOpenFocus = false
     /// 关场动画只在“当前图就是打开时那张”时走回到原处；翻页后关场走淡出
     /// 兜底（原处已不是当前图对应的缩略图，硬缩回去反而错位）。
     var initialIndex: Int = 0
@@ -377,6 +382,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
 
     private func updateCounter() {
         counterLabel.text = "\(currentIndex + 1) / \(imageKeys.count)"
+        // 无障碍：计数视觉文案是“1 / 9”，VoiceOver 直接读会含糊；补一句
+        // 完整读法“第 1 张，共 9 张”，切图时 updateCounter 重算，焦点停在
+        // 计数上即可读到当前页；底部圆点是纯装饰 UIView，不另做无障碍元素。
+        counterLabel.accessibilityLabel = "第 \(currentIndex + 1) 张，共 \(imageKeys.count) 张"
         for (dotIndex, dot) in dotViews.enumerated() {
             dot.backgroundColor = (dotIndex == currentIndex) ? .white : UIColor(white: 1, alpha: 0.35)
         }
@@ -484,9 +493,33 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         updateLoadingSpinner()
     }
 
+    /// 无障碍：打开首焦点只发一次——多图落到计数（读“第 N 张，共 M 张”），
+    /// 单图落到关闭钮。未开 VoiceOver 时 post 为空操作。
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard !didPostViewerOpenFocus else { return }
+        didPostViewerOpenFocus = true
+        let target: UIView = imageKeys.count > 1 ? counterLabel : closeButton
+        DispatchQueue.main.async { [weak self] in
+            guard self != nil else { return }
+            UIAccessibility.post(notification: .layoutChanged, argument: target)
+        }
+    }
+
+    /// 无障碍：统一关场入口——关闭钮与纵向甩关闭都走这里；dismiss 完成
+    /// 后若调用方传入的原缩略图仍在窗口内，焦点回到它；未传入时不发。
+    /// 失败图「图片加载失败，点按重试」本身不是问题，本支不动它。
+    private func dismissViewer() {
+        let returnElement = focusReturnElement
+        dismiss(animated: UIAccessibility.isReduceMotionEnabled == false) {
+            if let element = returnElement, !element.isHidden, element.window != nil {
+                UIAccessibility.post(notification: .layoutChanged, argument: element)
+            }
+        }
+    }
+
     @objc private func closeTapped() {
-        let reduceMotion = UIAccessibility.isReduceMotionEnabled
-        dismiss(animated: reduceMotion == false, completion: nil)
+        dismissViewer()
     }
 
     /// E-G3 相邻图预取：前后各一张（回绕也算相邻，与本页循环翻页一致），
@@ -835,7 +868,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 panMode = 0
                 dismissDragActive = false
                 if shouldDismiss {
-                    dismiss(animated: UIAccessibility.isReduceMotionEnabled == false, completion: nil)
+                    dismissViewer()
                 } else {
                     hideNeighbor()
                     tx = 0
