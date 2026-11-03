@@ -305,6 +305,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 编辑回填补拉单篇只做一次（quote 体缺失时）：避免已删引用（gone 只有 id、无正文）
     /// 补拉后仍无正文时反复请求。
     private var editQuoteFetchAttempted = false
+    /// 编辑回填补拉失败态：true 时编辑器留在页上、引用区露“加载失败 + 重试”行，
+    /// 保存钮禁用（此时 lockedQuote 与图片条尚未回填，PUT 会误清原引用与原图，
+    /// 故禁发）；点重试重新补拉，成功后清掉并走正常回填。失败不再关编辑器。
+    private var editQuoteFetchFailed = false
+    /// 编辑回填补拉在途态：true 时引用区失败行暂隐（防重复点重试）、保存钮同样
+    /// 禁用（回填未完成时 PUT 同样会误清原引用与原图）；成功或失败回落时清掉。
+    private var editQuoteFetchInFlight = false
     /// 引用 qp-mode 进出时保存/恢复的外层滚动位置（网页 qpPrevScroll 的 sheet 滚动等价；
     /// 正文 UITextView 关滚动、随内容生长，故无 textarea 内部滚动需要另存）。
     private var quotePanelSavedScrollOffset = CGPoint.zero
@@ -710,6 +717,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let quoteDeletedRow = UIStackView()
     private let quoteDeletedLabel = UILabel()
     private let quoteDeletedRemoveButton = UIButton(type: .system)
+    /// 编辑回填补拉失败行：灰字“引用的日记加载失败”+ 右端“重试”钮（已删行同款
+    /// 布局，见 buildQuoteSection）；失败态才露，在途时暂隐防重复点按。
+    private let quoteFetchFailedRow = UIStackView()
+    private let quoteFetchFailedLabel = UILabel()
+    private let quoteFetchFailedRetryButton = UIButton(type: .system)
     private let quotePanel = UIView()
     // 选择引用置顶 tab 条（预览 preview-quote-select-redesign-20261031.html）：
     // 直接挂在根视图、锚顶栏底，不随滚动区滚动；旧的面板内 tab 条已废除
@@ -1941,7 +1953,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteCardRemoveButton.tintColor = BearyColors.gray
         quoteCardRemoveButton.addTarget(self, action: #selector(didTapRemoveQuote), for: .touchUpInside)
         quoteCardRemoveButton.bearyAddPressFeedback()
-        for v in [quoteSection, quoteCardWrap, quoteCard, quoteCardRemoveButton, quoteDeletedRow, quoteDeletedLabel, quoteDeletedRemoveButton] {
+        for v in [quoteSection, quoteCardWrap, quoteCard, quoteCardRemoveButton, quoteDeletedRow, quoteDeletedLabel, quoteDeletedRemoveButton, quoteFetchFailedRow, quoteFetchFailedLabel, quoteFetchFailedRetryButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
         // 已删态行（恢复用）：灰字 + “移除”钮，默认隐藏；见 refreshQuoteSection。
@@ -1965,9 +1977,29 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteDeletedRow.addArrangedSubview(deletedSpacer)
         quoteDeletedRow.addArrangedSubview(quoteDeletedRemoveButton)
         quoteDeletedRow.isHidden = true
+        // 补拉失败行（已删行同款布局）：灰字 + “重试”钮，默认隐藏；见 refreshQuoteSection。
+        quoteFetchFailedRow.axis = .horizontal
+        quoteFetchFailedRow.spacing = 8
+        quoteFetchFailedRow.alignment = .center
+        quoteFetchFailedRow.isLayoutMarginsRelativeArrangement = true
+        quoteFetchFailedRow.layoutMargins = UIEdgeInsets(top: 16, left: 2, bottom: 14, right: 2)
+        quoteFetchFailedLabel.text = "引用的日记加载失败"
+        quoteFetchFailedLabel.font = UIFont.systemFont(ofSize: 13)
+        quoteFetchFailedLabel.textColor = BearyColors.gray
+        quoteFetchFailedRetryButton.setTitle("重试", for: .normal)
+        quoteFetchFailedRetryButton.setTitleColor(BearyColors.blue, for: .normal)
+        quoteFetchFailedRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        quoteFetchFailedRetryButton.addTarget(self, action: #selector(didTapRetryEditQuoteFetch), for: .touchUpInside)
+        quoteFetchFailedRetryButton.bearyAddPressFeedback()
+        quoteFetchFailedRow.addArrangedSubview(quoteFetchFailedLabel)
+        let fetchFailedSpacer = UIView()
+        quoteFetchFailedRow.addArrangedSubview(fetchFailedSpacer)
+        quoteFetchFailedRow.addArrangedSubview(quoteFetchFailedRetryButton)
+        quoteFetchFailedRow.isHidden = true
         contentStack.addArrangedSubview(quoteSection)
         quoteSection.addArrangedSubview(quoteCardWrap)
         quoteSection.addArrangedSubview(quoteDeletedRow)
+        quoteSection.addArrangedSubview(quoteFetchFailedRow)
         quoteCardWrap.addSubview(quoteCard)
         quoteCardWrap.addSubview(quoteCardRemoveButton)
         NSLayoutConstraint.activate([
@@ -1997,6 +2029,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard let shown = quote else {
             quoteCardWrap.isHidden = true
             quoteDeletedRow.isHidden = true
+            // 补拉失败态（lockedQuote 尚未回填）才露失败行；在途时暂隐防重复点按，
+            // 非失败态（新建未选 / 编辑已删引用已清）本行塌掉不留空位。
+            quoteFetchFailedRow.isHidden = !(editQuoteFetchFailed && !editQuoteFetchInFlight)
             updatePreferredContentSize()
             return
         }
@@ -2005,10 +2040,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 已删引用仍占槽位（清除后才可经工具栏引用钮再选）。
             quoteCardWrap.isHidden = true
             quoteDeletedRow.isHidden = false
+            quoteFetchFailedRow.isHidden = true
             updatePreferredContentSize()
             return
         }
         quoteDeletedRow.isHidden = true
+        quoteFetchFailedRow.isHidden = true
         quoteCardWrap.isHidden = false
         // allowThumbs: true 沿用旧编辑器行为——已选引用在本地草稿预览中恒出图；
         // 列表侧的 isPublic/本人门控不适用于编辑器预览（预览不出公开发布）。
@@ -4543,7 +4580,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // U13：空正文不再真禁用（禁用钮收不到点按、零反馈）——改视觉置灰 + 点按给“先写点什么”
         // 轻提示（见 didTapPublish）；超长时保持可用的口径不动。
         // 期限已过且在途保存已失败：保存钮持续禁用（防重发），编辑器仅保留输入供复制。
-        publishButton.isEnabled = !isPublishing && !hasUploadingImage() && !editSaveBlockedAfterDeadline
+        // 补拉在途/失败时禁发：此时 lockedQuote 与图片条尚未回填，PUT 会把原引用
+        // 与原图误清掉（lockedQuote 为空即清 quote_id 的口径，见 didTapRemoveQuote
+        // 注释）；重试成功后 setupEditContent 末尾重调此处即恢复。
+        publishButton.isEnabled = !isPublishing && !hasUploadingImage() && !editSaveBlockedAfterDeadline && !editQuoteFetchFailed && !editQuoteFetchInFlight
         refreshPublishAppearance()
         refreshPublishBusyState()
         refreshPublishingInputFreeze()
@@ -5504,9 +5544,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// C12：编辑回填带加载态与失败路径。quote 体缺失（quote 为空但有 quoteId、
     /// 或 quote 有 id 无正文）时补拉单篇（详情同款 fetchEntry）：拉取中标题为
-    /// “加载日记…”，成功后以新 entry 重填；失败则关编辑器 + toast“日记加载失败，
-    /// 请重试”（toast 挂在 presenting 方，关编辑器后仍可见）。补拉只做一次，
-    /// 已删引用（gone 只有 id、无正文）补拉后仍无正文时不再反复请求。
+    /// “加载日记…”，成功后以新 entry 重填；失败则编辑器留在页上、引用区露
+    /// “引用的日记加载失败 + 重试”行、保存钮禁用，点重试重新补拉（见
+    /// fetchEditEntryForMissingQuote / didTapRetryEditQuoteFetch），不再关编辑器、
+    /// 不再发无入口的“请重试”toast。补拉只做一次自动请求（重试由用户点按触发，
+    /// 不计入该一次），已删引用（gone 只有 id、无正文）补拉后仍无正文时不再反复请求。
     private func setupEditContent() {
         guard let entry = editingEntry else { return }
         // 录屏批 (b) 同款：面板打开时标题归面板（“选择引用”），回填不许把它顶回
@@ -5555,27 +5597,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         if quoteBodyMissing && !editQuoteFetchAttempted, let entryId = entry.id, !entryId.isEmpty {
             editQuoteFetchAttempted = true
-            if quotePanelOpen {
-                quotePanelSavedTitle = "加载日记…"
-            } else {
-                titleLabel.text = "加载日记…"
-            }
-            refreshRecipientRow()
-            refreshQuoteSection()
-            refreshToolStrip()
-            BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    switch result {
-                    case .success(let fetched):
-                        self.editingEntry = fetched
-                        self.setupEditContent()
-                    case .failure:
-                        self.showToastAfterClose(message: "日记加载失败，请重试")
-                        self.onCancelled?()
-                    }
-                }
-            }
+            fetchEditEntryForMissingQuote(entryId: entryId)
             return
         }
         if let quote = entry.quote, let quoteId = quote.id, let content = quote.content {
@@ -5606,6 +5628,56 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 扫一遍同款（4c）：补拉单篇后的第二次回填是 viewDidLoad 之后唯一的正文
         // 填充点，此前不调 updatePublishState，保存钮会留在空态灰直到用户输入。
         updatePublishState()
+    }
+
+    /// 编辑回填补拉单篇（详情同款 fetchEntry），首次自动补拉与失败行“重试”共用：
+    /// 拉取中标题为“加载日记…”、失败行暂隐、保存钮禁用；成功后以新 entry 重填
+    /// （setupEditContent 二次调用，editQuoteFetchAttempted 仍为 true，故气温/位置/@
+    /// 的守卫口径不变，不覆盖用户在加载期间的手改）；失败则标题还原为“编辑日记”、
+    /// 置 editQuoteFetchFailed 并露失败行、保存钮继续禁用，编辑器不关闭——toast
+    /// 直接指到页内重试入口，不再是无入口的“请重试”。重试不重置
+    /// editQuoteFetchAttempted：已删引用补拉后仍无正文时走正常回填，不再自动重拉。
+    private func fetchEditEntryForMissingQuote(entryId: String) {
+        editQuoteFetchInFlight = true
+        if quotePanelOpen {
+            quotePanelSavedTitle = "加载日记…"
+        } else {
+            titleLabel.text = "加载日记…"
+        }
+        refreshRecipientRow()
+        refreshQuoteSection()
+        refreshToolStrip()
+        updatePublishState()
+        BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.editQuoteFetchInFlight = false
+                switch result {
+                case .success(let fetched):
+                    self.editQuoteFetchFailed = false
+                    self.editingEntry = fetched
+                    self.setupEditContent()
+                case .failure:
+                    self.editQuoteFetchFailed = true
+                    if self.quotePanelOpen {
+                        self.quotePanelSavedTitle = "编辑日记"
+                    } else {
+                        self.titleLabel.text = "编辑日记"
+                    }
+                    self.refreshQuoteSection()
+                    self.updatePublishState()
+                    self.showToast(message: "引用的日记加载失败，点引用区“重试”再试一次")
+                }
+            }
+        }
+    }
+
+    /// 补拉失败行“重试”：只在失败态重拉，不碰其他编辑器功能；点击时若已在途
+    /// （失败行在途暂隐，正常点按到不了这里）或已非编辑态，直接返回。
+    @objc private func didTapRetryEditQuoteFetch() {
+        guard isEditMode, editQuoteFetchFailed, !editQuoteFetchInFlight,
+              let entryId = editingEntry?.id, !entryId.isEmpty else { return }
+        fetchEditEntryForMissingQuote(entryId: entryId)
     }
 
     /// 回填后原引用的有效 id（setup 时 content 为空的引用视为已删、不算原引用，
@@ -6414,6 +6486,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 此处再拦一道（防按钮态竞态），不发 PUT、不清输入。
         if isEditMode && editSaveBlockedAfterDeadline {
             showAlert(message: "编辑时间已过，无法再保存，可复制内容后关闭")
+            return
+        }
+        // 补拉在途/失败：保存钮已由 updatePublishState 禁用，此处再拦一道
+        // （防按钮态竞态），不发 PUT——此时回填未完成，发 PUT 会误清原引用与原图。
+        if isEditMode && (editQuoteFetchFailed || editQuoteFetchInFlight) {
+            showToast(message: editQuoteFetchFailed ? "引用的日记还没加载成功，点引用区“重试”后再保存" : "引用的日记正在加载，稍后再保存")
             return
         }
         // 批 E：发布/保存时先收定位气泡，防气泡确认与发布请求竞态。
