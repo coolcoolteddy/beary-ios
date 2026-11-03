@@ -714,9 +714,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let quoteCardRemoveButton = BearyHit44Button(type: .system)
     /// 引用已删态行：灰字“引用的日记已删除”+ 右端“移除”钮（lite 卡隐藏时仍可清除引用，
     /// 否则已删引用会堵住引用入口，用户无法再选引用）。
+    /// “移除”钮走 BearyHit44Button：13pt 文字视觉帧不动，热区由 point(inside:) 扩至 44；
+    /// 引用卡右上角 ×（quoteCardRemoveButton）本身已是 Hit44，本支不动它。
     private let quoteDeletedRow = UIStackView()
     private let quoteDeletedLabel = UILabel()
-    private let quoteDeletedRemoveButton = UIButton(type: .system)
+    private let quoteDeletedRemoveButton = BearyHit44Button(type: .system)
     /// 编辑回填补拉失败行：灰字“引用的日记加载失败”+ 右端“重试”钮（已删行同款
     /// 布局，见 buildQuoteSection）；失败态才露，在途时暂隐防重复点按。
     private let quoteFetchFailedRow = UIStackView()
@@ -1018,12 +1020,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolStripStack.translatesAutoresizingMaskIntoConstraints = false
         // 92 包整页列宽：贴边约束与居中约束二选一，由 updateColumnConstraints 按宽切换
         //（个人主页同款：lazy 式成对约束、状态变化时才切换）。居中约束初始不激活。
-        topBarLeadingConstraint = topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor)
-        topBarTrailingConstraint = topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor)
-        toolbarLeadingConstraint = toolbarContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16)
-        toolbarTrailingConstraint = toolbarContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16)
-        scrollLeadingConstraint = scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor)
-        scrollTrailingConstraint = scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        // 窄屏分支：左右锚横向安全区（非 view 边缘）——竖屏安全区左右 inset 为 0，
+        // 故竖屏几何不变；横屏（刘海/主屏幕指示器侧边 inset）与 iPad 窄分屏时，
+        // 顶栏按钮、滚动内容、工具栏不再贴到安全区外。宽 ≥821 的居中约束不动。
+        topBarLeadingConstraint = topBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor)
+        topBarTrailingConstraint = topBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)
+        toolbarLeadingConstraint = toolbarContainer.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16)
+        toolbarTrailingConstraint = toolbarContainer.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16)
+        scrollLeadingConstraint = scrollView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor)
+        scrollTrailingConstraint = scrollView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)
         topBarCenterXConstraint = topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor)
         topBarWidthConstraint = topBar.widthAnchor.constraint(equalToConstant: 640)
         toolbarCenterXConstraint = toolbarContainer.centerXAnchor.constraint(equalTo: view.centerXAnchor)
