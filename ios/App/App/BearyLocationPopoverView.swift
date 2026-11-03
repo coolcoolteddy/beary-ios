@@ -324,7 +324,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         if UIAccessibility.isReduceMotionEnabled {
             changes()
         } else {
-            UIView.transition(with: mainStack, duration: 0.16, options: [.transitionCrossDissolve, .allowUserInteraction], animations: changes)
+            UIView.transition(with: mainStack, duration: BearyMotion.localStateDuration, options: [.transitionCrossDissolve, .allowUserInteraction], animations: changes)
         }
     }
 

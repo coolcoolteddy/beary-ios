@@ -254,7 +254,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             return
         }
         statusLabel.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             self.statusLabel.alpha = 1
         })
     }
@@ -267,7 +267,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             return
         }
         statusBadge.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             self.statusBadge.alpha = 1
         })
     }

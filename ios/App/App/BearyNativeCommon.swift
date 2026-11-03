@@ -61,6 +61,9 @@ enum BearyShadow {
 /// 减动效时一律返回 false，present/dismiss 即瞬时落终值。
 enum BearyMotion {
     static func animated(_ animated: Bool) -> Bool { UIAccessibility.isReduceMotionEnabled ? false : animated }
+    /// 局部状态动效统一时长（规格附录第 3 项已定）：开关、选中等小反馈取 0.18s。
+    /// 拒绝摇头 0.4s 是拒绝动效、不是局部状态动效，不走本值。
+    static let localStateDuration: TimeInterval = 0.18
 }
 
 // MARK: - Sheet/居中模态统一口径（B 批）

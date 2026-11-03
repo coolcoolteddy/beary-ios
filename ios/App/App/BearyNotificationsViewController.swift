@@ -1438,7 +1438,7 @@ final class BearyNotificationsViewController: UIViewController {
             }
             cardAnimationGeneration += 1
             let generation = cardAnimationGeneration
-            let animator = UIViewPropertyAnimator(duration: 0.34, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
+            let animator = UIViewPropertyAnimator(duration: BearyMotion.localStateDuration, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
             animator.addAnimations({
                 self.zeroHeightRows.removeAll()
                 self.tableView.beginUpdates()
@@ -1552,7 +1552,7 @@ final class BearyNotificationsViewController: UIViewController {
         cardAnimatingExpanding = true
         cardAnimationGeneration += 1
         let generation = cardAnimationGeneration
-        let animator = UIViewPropertyAnimator(duration: 0.34, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
+        let animator = UIViewPropertyAnimator(duration: BearyMotion.localStateDuration, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
         animator.addAnimations({
             self.tableView.beginUpdates()
             self.tableView.endUpdates()
