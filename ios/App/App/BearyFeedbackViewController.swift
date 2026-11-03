@@ -915,12 +915,37 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             BearyAppLog.event("feedback mail no account copy fallback")
             return
         }
+        // 静态性能修复：撰写器路径不再同步读 zip。zip 已就绪时先在后台读文件，
+        // 读完回主线程再组装撰写器；读失败则 toast 停留原页、不弹撰写器。
+        // zip 从未就绪的提交兜底路径（zipReady 为 false）仍按原口径直接发、不带 zip。
+        if zipReady, let url = zipURL {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let zipData = try? Data(contentsOf: url)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    guard self.view.window != nil, self.presentedViewController == nil else { return }
+                    guard let zipData = zipData else {
+                        BearyToast.show(in: self.view, message: "日志包读取失败，请重试")
+                        BearyHaptics.rejectionWarning()
+                        BearyAppLog.event("feedback mail zip read failed")
+                        return
+                    }
+                    self.presentMailComposer(withZipData: zipData)
+                }
+            }
+            return
+        }
+        presentMailComposer(withZipData: nil)
+    }
+
+    /// 组装并弹出反馈撰写器（须在主线程调用）。zipData 为 nil 表示不带日志包。
+    private func presentMailComposer(withZipData zipData: Data?) {
         let composer = MFMailComposeViewController()
         composer.mailComposeDelegate = self
         composer.setToRecipients([Self.recipient])
         composer.setSubject("\(typePrefix()) beary 反馈")
         composer.setMessageBody(submitBodyText(), isHTML: false)
-        if zipReady, let url = zipURL, let zipData = try? Data(contentsOf: url) {
+        if let zipData = zipData {
             composer.addAttachmentData(zipData, mimeType: "application/zip", fileName: "beary-feedback-logs.zip")
         }
         for attachment in attachments {
@@ -930,12 +955,35 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func presentLogOnlyComposer() {
+        // 与 presentMailComposer 同口径：zip 读文件移到后台，读失败 toast 停留原页。
+        guard let url = zipURL else {
+            presentLogOnlyComposer(withZipData: nil)
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let zipData = try? Data(contentsOf: url)
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                guard self.view.window != nil, self.presentedViewController == nil else { return }
+                guard let zipData = zipData else {
+                    BearyToast.show(in: self.view, message: "日志包读取失败，请重试")
+                    BearyHaptics.rejectionWarning()
+                    BearyAppLog.event("feedback log mail zip read failed")
+                    return
+                }
+                self.presentLogOnlyComposer(withZipData: zipData)
+            }
+        }
+    }
+
+    /// 组装并弹出仅日志撰写器（须在主线程调用）。zipData 为 nil 表示不带日志包。
+    private func presentLogOnlyComposer(withZipData zipData: Data?) {
         let composer = MFMailComposeViewController()
         composer.mailComposeDelegate = self
         composer.setToRecipients([Self.recipient])
         composer.setSubject("[日志] beary 诊断日志")
         composer.setMessageBody("beary 诊断日志见附件。", isHTML: false)
-        if let url = zipURL, let zipData = try? Data(contentsOf: url) {
+        if let zipData = zipData {
             composer.addAttachmentData(zipData, mimeType: "application/zip", fileName: "beary-feedback-logs.zip")
         }
         present(composer, animated: BearyMotion.animated(true))
