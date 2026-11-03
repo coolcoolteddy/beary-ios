@@ -3653,7 +3653,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         locationPopover.isHidden = true
         locationDismissView.isHidden = true
         locationPopover.delegate = self
-        locationDismissView.onTapOutside = { [weak self] in self?.hideLocationPopover(animated: true) }
+        locationDismissView.onTapOutside = { [weak self] in self?.hideLocationPopover(animated: true, restoreFocus: true) }
         view.addSubview(locationDismissView)
         view.addSubview(locationPopover)
         NSLayoutConstraint.activate([
@@ -3681,7 +3681,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 不递增 weatherFetchGeneration、不取消天气请求，只拦末尾抢开）。
         invalidatePendingCalloutPresentation()
         if locationPopoverOpen {
-            hideLocationPopover(animated: true)
+            hideLocationPopover(animated: true, restoreFocus: true)
             return
         }
         hideCallout(animated: false)
@@ -3693,8 +3693,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         locationDismissView.isHidden = false
         locationDismissView.passthroughRects = [toolbarContainer.convert(toolbarContainer.bounds, to: locationDismissView)]
         locationPopover.isHidden = false
+        // 无障碍：位置浮层照抄心情／天气框口径——打开置为模态（VoiceOver 不滑
+        // 到被遮的编辑器内容；触摸穿透不动，工具栏仍可点），下一 runloop 把
+        // 焦点送进框内状态行；期间已关闭则不发。
+        locationPopover.accessibilityViewIsModal = true
         view.layoutIfNeeded()
         updateLocationPopoverArrow()
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.locationPopoverOpen, !self.locationPopover.isHidden else { return }
+            UIAccessibility.post(notification: .layoutChanged, argument: self.locationPopover.initialAccessibilityElement)
+        }
         if UIAccessibility.isReduceMotionEnabled || view.window == nil {
             locationPopover.alpha = 1
             locationPopover.transform = .identity
@@ -3710,7 +3718,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         locationPopover.startAutoLocate()
     }
 
-    private func hideLocationPopover(animated: Bool) {
+    /// 无障碍：restoreFocus 只在用户主动关闭时传 true（框外点按、同钮再点、
+    /// 头部确认落定）；程序性收起（换工具／发布／取消等）默认 false，不把
+    /// 焦点从新界面抢回触发钮。还焦点只在框真正隐藏后发。
+    private func hideLocationPopover(animated: Bool, restoreFocus: Bool = false) {
         guard locationPopoverOpen else { return }
         locationPopoverOpen = false
         locationPopover.cancelRequests()
@@ -3718,7 +3729,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             locationPopover.isHidden = true
             locationPopover.alpha = 1
             locationPopover.transform = .identity
+            locationPopover.accessibilityViewIsModal = false
             locationDismissView.isHidden = true
+            if restoreFocus, !locationToolButton.isHidden, locationToolButton.window != nil {
+                UIAccessibility.post(notification: .layoutChanged, argument: locationToolButton)
+            }
             return
         }
         UIView.animate(withDuration: 0.20, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
@@ -3729,7 +3744,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             self.locationPopover.isHidden = true
             self.locationPopover.alpha = 1
             self.locationPopover.transform = .identity
+            self.locationPopover.accessibilityViewIsModal = false
             self.locationDismissView.isHidden = true
+            if restoreFocus, !self.locationToolButton.isHidden, self.locationToolButton.window != nil {
+                UIAccessibility.post(notification: .layoutChanged, argument: self.locationToolButton)
+            }
         })
     }
 
@@ -4912,6 +4931,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.spinner.startSpinning()
         // 审计-编辑器详情：上传中 × 即取消入口，VoiceOver 明说。
         item.removeButton.accessibilityLabel = "取消上传"
+        refreshAttachmentAccessibilityLabels()
     }
 
     private func markUploaded(_ item: ComposerImageItem, key: String) {
@@ -4923,6 +4943,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.imageView.alpha = 1.0
         item.spinner.stopSpinning()
         item.removeButton.accessibilityLabel = "删除图片"
+        refreshAttachmentAccessibilityLabels()
     }
 
     private func markFailed(_ item: ComposerImageItem) {
@@ -4932,6 +4953,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.imageView.isHidden = true
         item.spinner.stopSpinning()
         item.removeButton.accessibilityLabel = "删除图片"
+        refreshAttachmentAccessibilityLabels()
+    }
+
+    /// 无障碍：附件删除钮按条内顺序编号（“删除图片 1”／“取消上传 2”），
+    /// 多图时 VoiceOver 不再读出多个同名按钮；增删、撤销恢复、上传态变化
+    /// 后都重算，序号始终与条内实际顺序一致，删除行为本身不动。
+    private func refreshAttachmentAccessibilityLabels() {
+        for (index, item) in imageItems.enumerated() {
+            item.removeButton.accessibilityLabel = item.uploading ? "取消上传 \(index + 1)" : "删除图片 \(index + 1)"
+        }
     }
 
     @objc private func didTapImageItem(_ gesture: UITapGestureRecognizer) {
@@ -5012,6 +5043,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         editorEditVersion += 1
         imageItems.append(item)
         imageStackView.addArrangedSubview(item.container)
+        refreshAttachmentAccessibilityLabels()
         refreshImageStripVisibility()
         updatePublishState()
         updatePreferredContentSize()
@@ -5043,6 +5075,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         imageStackView.removeArrangedSubview(item.container)
         item.container.removeFromSuperview()
+        refreshAttachmentAccessibilityLabels()
         refreshImageStripVisibility()
         updatePublishState()
         scheduleDraftSave()
@@ -5072,6 +5105,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageItems = kept
         imageStackView.removeArrangedSubview(item.container)
         item.container.removeFromSuperview()
+        refreshAttachmentAccessibilityLabels()
         pendingRemovedImage = PendingRemovedImage(item: item, index: index)
         pendingUndoTimer = Timer.scheduledTimer(withTimeInterval: Self.imageUndoSeconds, repeats: false) { [weak self] _ in
             self?.commitPendingRemoval()
@@ -5092,6 +5126,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let index = min(pending.index, imageItems.count)
         imageItems.insert(item, at: index)
         imageStackView.insertArrangedSubview(item.container, at: index)
+        refreshAttachmentAccessibilityLabels()
         refreshImageUndoBar()
         refreshImageStripVisibility()
         updatePublishState()
@@ -7523,7 +7558,7 @@ extension BearyComposerViewController: BearyLocationPopoverDelegate {
     func locationPopover(_ popover: BearyLocationPopoverView, didConfirm location: DiaryLocation) {
         // 确认即落定（点建议也是直接落定，不再等头部确认钮）；气泡关闭、行显示、草稿跟随保存。
         selectedLocation = location
-        hideLocationPopover(animated: true)
+        hideLocationPopover(animated: true, restoreFocus: true)
         refreshLocationRow()
         scheduleDraftSave()
     }

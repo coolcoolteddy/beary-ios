@@ -30,6 +30,11 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         }
     }
 
+    /// 无障碍打开首焦点：状态行（“正在获取当前位置…”／已定位地名），与心情／
+    /// 天气框的 initialAccessibilityElement 同口径，调用方打开后下一 runloop
+    /// 把 VoiceOver 焦点送到这里。
+    var initialAccessibilityElement: UIView { statusLabel }
+
     private static let arrowHeight: CGFloat = 10
     private static let arrowHalfWidth: CGFloat = 8
     private static let cornerRadius: CGFloat = 14
