@@ -3969,8 +3969,12 @@ class BearyProfileViewController: UIViewController {
                 case .success(let fetched):
                     // onOpenEntry 内部按 id 重拉并做可见性门；这里传回包的完整 Entry。
                     strongSelf.onOpenEntry?(fetched)
-                case .failure:
-                    BearyToast.show(in: strongSelf.view, message: "这篇日记不存在或已被删除")
+                case .failure(let error):
+                    if case .notFound = error {
+                        BearyToast.show(in: strongSelf.view, message: "这篇日记不存在或已被删除")
+                    } else {
+                        BearyToast.show(in: strongSelf.view, message: "日记加载失败，请重试")
+                    }
                 }
             }
         }
