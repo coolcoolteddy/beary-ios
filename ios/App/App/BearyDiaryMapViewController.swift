@@ -26,6 +26,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     private let mapView = MKMapView()
     private let statusLabel = UILabel()
+    private let inlineRetryButton = UIButton(type: .system)
+    private let statusStackView = UIStackView()
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private let failureView = UIView()
     private let failureLabel = UILabel()
@@ -76,7 +78,23 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         statusLabel.textColor = BearyColors.gray
         statusLabel.numberOfLines = 0
         statusLabel.text = "加载中…"
-        view.addSubview(statusLabel)
+        // 状态行旁的就近重试：只在已有内容刷新失败 / 仅有暂存部分结果时出现，
+        // 平时隐藏；UIStackView 会自动收起隐藏的 arranged 子视图，状态行恢复满宽。
+        // 字体与失败页重试钮同档，不引入新样式值；不改 statusLabel 自身的约束数值。
+        inlineRetryButton.translatesAutoresizingMaskIntoConstraints = false
+        inlineRetryButton.setTitle("重试", for: .normal)
+        inlineRetryButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 15)
+        inlineRetryButton.addTarget(self, action: #selector(didTapInlineRetry), for: .touchUpInside)
+        inlineRetryButton.isHidden = true
+        inlineRetryButton.setContentHuggingPriority(.required, for: .horizontal)
+        inlineRetryButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        statusStackView.translatesAutoresizingMaskIntoConstraints = false
+        statusStackView.axis = .horizontal
+        statusStackView.alignment = .center
+        statusStackView.spacing = 8
+        statusStackView.addArrangedSubview(statusLabel)
+        statusStackView.addArrangedSubview(inlineRetryButton)
+        view.addSubview(statusStackView)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
@@ -121,10 +139,10 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             mapPreferredHeight,
             mapMinimumHeight,
             listMinimumHeight,
-            statusLabel.topAnchor.constraint(equalTo: mapView.bottomAnchor, constant: 12),
-            statusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            statusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            tableView.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 8),
+            statusStackView.topAnchor.constraint(equalTo: mapView.bottomAnchor, constant: 12),
+            statusStackView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            statusStackView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            tableView.topAnchor.constraint(equalTo: statusStackView.bottomAnchor, constant: 8),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -225,6 +243,17 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     @objc private func didTapRetry() {
         failureView.isHidden = true
+        inlineRetryButton.isHidden = true
+        setStatusTextFaded("加载中…")
+        fetchAllEntries()
+    }
+
+    /// 状态行旁的就近重试：复用 fetchAllEntries（与失败页重试同一入口），
+    /// 只重拉数据，不动地图视角（不调 setRegion/showAnnotations、不重置
+    /// didInitialGeocode）、不动列表偏移、不清地理编码缓存与已选组，
+    /// 因此重试前后视角与列表位置自然保留。
+    @objc private func didTapInlineRetry() {
+        inlineRetryButton.isHidden = true
         setStatusTextFaded("加载中…")
         fetchAllEntries()
     }
@@ -239,6 +268,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         loadGeneration += 1
         fetchCollected = []
         fetchSeenIds = []
+        inlineRetryButton.isHidden = true
         fetchEntriesPage(before: nil, beforeId: nil, page: 1, generation: loadGeneration)
     }
 
@@ -259,11 +289,32 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 switch result {
                 case .failure:
                     if self.fetchCollected.isEmpty && self.allEntries.isEmpty {
+                        self.inlineRetryButton.isHidden = true
                         self.showFailureViewFaded()
                         self.setStatusTextFaded("日记加载失败")
-                    } else {
-                        // 已有数据时网络失败不清空地图：保留已加载聚合，状态行明示。
+                    } else if !self.allEntries.isEmpty {
+                        // 已有已展示数据时网络失败不清空地图：保留已加载聚合，
+                        // 状态行明示，并在状态行旁给就近重试（失败页重试钮在
+                        // 隐藏的 failureView 内，本分支点不到，故另设此钮）。
                         self.setStatusTextFaded("网络失败，显示已加载的日记")
+                        self.inlineRetryButton.isHidden = false
+                    } else {
+                        // 同构修正：无初始数据、首批成功后后续页失败时，
+                        // allEntries 仍空、画面实际什么都没显示，不能再写
+                        // “显示已加载的日记”。把本轮已暂存的部分结果先上屏
+                        // 并明示“仅部分”，同时给就近重试；若暂存结果里连
+                        // 一个可展示的地点组都没有，则仍走可重试的失败页，
+                        // 不谎称已显示部分结果。
+                        self.allEntries = self.fetchCollected
+                        self.regroupAndGeocode()
+                        if self.groups.isEmpty {
+                            self.inlineRetryButton.isHidden = true
+                            self.showFailureViewFaded()
+                            self.setStatusTextFaded("日记加载失败")
+                        } else {
+                            self.setStatusTextFaded("网络失败，仅显示已加载的部分日记")
+                            self.inlineRetryButton.isHidden = false
+                        }
                     }
                 case .success(let list):
                     let pageEntries = list.entries ?? []
@@ -280,6 +331,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                         return
                     }
                     self.failureView.isHidden = true
+                    self.inlineRetryButton.isHidden = true
                     self.allEntries = self.fetchCollected
                     self.regroupAndGeocode()
                 }
