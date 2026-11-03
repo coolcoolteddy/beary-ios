@@ -3280,7 +3280,7 @@ class BearyProfileViewController: UIViewController {
                             self.onRequireLogin?()
                         } else {
                             self.playFollowDenyShake()
-                            BearyToast.show(in: self.view, message: "关注失败，请重试")
+                            BearyToast.show(in: self.view, message: wasFollowedBy ? "回关失败，请重试" : "关注失败，请重试")
                         }
                     }
                 }

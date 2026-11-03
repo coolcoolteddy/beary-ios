@@ -2406,7 +2406,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                             self.applyFollowButtonState(button, userId: userId)
                             self.playFollowDenyShake(on: button)
                         }
-                        BearyToast.show(in: self.view, message: "关注失败，请重试")
+                        BearyToast.show(in: self.view, message: state == .followedBy ? "回关失败，请重试" : "关注失败，请重试")
                     }
                 }
             }
