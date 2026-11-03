@@ -926,7 +926,7 @@ class BearyEditProfileViewController: UIViewController {
         guard !isSaving else { return }
         let nameValue = (nameField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let handleValue = (handleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if !nameValue.isEmpty && nameValue.count > 30 {
+        if !nameValue.isEmpty && nameValue.utf16.count > 30 {
             presentSimpleAlert(message: "显示名称最多 30 个字")
             return
         }
@@ -935,7 +935,7 @@ class BearyEditProfileViewController: UIViewController {
             return
         }
         let signatureValue = (signatureField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if signatureValue.count > 60 {
+        if signatureValue.utf16.count > 60 {
             presentSimpleAlert(message: "签名最多 60 个字")
             return
         }
@@ -1380,6 +1380,22 @@ extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
 extension BearyEditProfileViewController: UITextFieldDelegate {
     /// F13：网页 maxlength 口径——打字即截断（名字 30、签名 60、用户名 20；输入法
     /// 组字中不截断，组字结束后的超长部分在下一次输入时截断）。
+    /// 计数单位与服务端一致：服务端用 JS `.length`（UTF-16 码元）判上限，
+    /// 故这里也按 `utf16.count` 计；截断按字素簇累加，绝不拆开一个表情或
+    /// 代理对（旧口径按 `String.count` 字素簇计，30 个生僻表情在客户端能
+    /// 通过、服务端算 60 码元会拒）。
+    private func truncatedToUTF16Limit(_ value: String, limit: Int) -> String {
+        var result = ""
+        var total = 0
+        for ch in value {
+            let w = ch.utf16.count
+            if total + w > limit { break }
+            total += w
+            result.append(ch)
+        }
+        return result
+    }
+
     func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
         if textField.markedTextRange != nil { return true }
         let maxLength: Int
@@ -1395,8 +1411,8 @@ extension BearyEditProfileViewController: UITextFieldDelegate {
         let current = textField.text ?? ""
         guard let swiftRange = Range(range, in: current) else { return true }
         let proposed = current.replacingCharacters(in: swiftRange, with: string)
-        if proposed.count > maxLength {
-            textField.text = String(proposed.prefix(maxLength))
+        if proposed.utf16.count > maxLength {
+            textField.text = truncatedToUTF16Limit(proposed, limit: maxLength)
             // 审计-个人页设置：超长粘贴截断时 toast 提示（单字键入到顶不提示，
             // 免得每敲一字都弹；多字替换视为粘贴才提示；光标落末尾是
             // 程序赋值固有行为，本条只补提示，不改光标逻辑）。
