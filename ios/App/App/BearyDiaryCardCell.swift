@@ -130,10 +130,12 @@ final class BearyActionStackView: UIStackView {
         return false
     }
 
-    /// 追加 1（B 法）：重叠带命中优先级——收藏/分享的 44pt 扩后热区在两钮之间
-    /// 重叠（个人主页约 7pt、首页约 3pt），UIKit 默认按子视图逆序命中，重叠带
-    /// 一律落到右侧钮；此处多钮同时命中时按视觉中心最近者胜（重叠带中线分流），
-    /// 单钮命中时走默认路径，spacer、公开行等其他视图行为一字不动。
+    /// 追加 1（B 法，今为兜底）：收藏—分享间距改 24 后，两钮 44pt 热区之间
+    /// 已留 1pt 间隙、不再重叠（见 actionStack 注释的中心距算法），本分支
+    /// 不再是重叠带的分流主路径；仅保留作舍入/边界点的确定性兜底——多钮
+    /// 同时命中时按视觉中心最近者胜，单钮命中时走默认路径，spacer、公开行
+    /// 等其他视图行为一字不动。旧行为注记：间距 16 时中心距 37、重叠 7pt，
+    /// UIKit 默认按子视图逆序命中，重叠带一律落到右侧钮。
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard self.point(inside: point, with: event) else { return nil }
         var claimants: [UIButton] = []
@@ -1006,10 +1008,17 @@ class BearyDiaryCardCell: UITableViewCell {
     private lazy var actionStack: BearyActionStackView = {
         // 2026-10-29 100 包反馈第 1 项：点赞留左，收藏＋分享放右侧成组。
         // 中部 spacer（最低 hugging / 最低抗压）吸掉全部剩余宽度，左右两组
-        // 只占固有宽、每篇位置固定一致；三钮间距仍 16（栈 spacing，作用于
-        // 点赞—spacer 与 spacer—收藏之间时被 spacer 宽度吸收，视觉上只剩
-        // 组内 16）。两模式共用同一 actionStack（广场 .feed / 个人页
-        // .profile 均走此栈），改一处即全覆盖，无分叉面。
+        // 只占固有宽、每篇位置固定一致；栈 spacing 仍 16（作用于点赞—spacer
+        // 与 spacer—收藏之间时被 spacer 宽度吸收）。两模式共用同一 actionStack
+        // （广场 .feed / 个人页 .profile 均走此栈），改一处即全覆盖，无分叉面。
+        // 收藏—分享间距单独 24（不是 16）：两钮视觉宽均为 21，44pt 热区各向
+        // 外扩 (44-21)/2 = 11.5；间距 16 时中心距 = 10.5+16+10.5 = 37，热区
+        // 重叠 44-37 = 7pt，旧 hitTest 只能按视觉中心分流重叠带。间距 24 时
+        // 中心距 = 10.5+24+10.5 = 45，热区重叠 44-45 = -1，即两 44pt 热区
+        // 之间留 1pt 间隙、严格不交（不用 23：23 只让两热区边缘相切，相切
+        // 点仍同时属于两钮）。视觉尺寸不动：两钮仍 21×21，右组右沿仍钉
+        // 在右列右缘，增量 8pt 全部由收藏钮左移吸收，点赞钮不动（spacer
+        // 吸宽）；分享隐藏时同间距落在收藏—占位 spacer 之间，无热区影响。
         let actionSpacer = UIView()
         actionSpacer.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
         actionSpacer.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
@@ -1017,6 +1026,7 @@ class BearyDiaryCardCell: UITableViewCell {
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 16
+        st.setCustomSpacing(24, after: bookmarkButton)
         st.alignment = .center
         return st
     }()
