@@ -5188,7 +5188,12 @@ class BearyProfileViewController: UIViewController {
         }
         var meta = personalDateString(timestampMs: entry.createdAt)
         if isOwnProfile {
-            meta += entry.isPublic == true ? " · 公开" : " · 私密"
+            // 可见性三档实标（与那年今日主卡、星图底卡同口径，不再用公开／私密二值）；
+            // 存活限时篇追加倒计时（与 #696 第 2 项同款）。
+            meta += " · " + BearyVisibility.title(for: BearyVisibility.current(for: entry))
+            if BearyEphemeral.isLive(entry), let until = entry.ephemeralUntil {
+                meta += " · " + BearyEphemeral.remainingText(until: until)
+            }
         }
         randomMetaLabel.text = meta
         // 空标题时整行标题不渲染（同那年今日主卡；不再用摘要回退充当标题）。
