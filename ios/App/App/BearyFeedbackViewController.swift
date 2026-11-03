@@ -10,7 +10,7 @@ import Darwin
 // 问题描述区：系统 UISegmentedControl（问题反馈 / 优化建议，选中段墨底 +
 // 反色字，既定样式，不自造分段控件）+ 编辑器正文同款 UITextView；图片或视频
 // （可选，最多 5 个）添加卡（手绘 icon_image）；设备信息卡 8 行；底部依次为
-// 墨底主钮「提交反馈」、secondaryOutline「分享诊断日志」（手绘 icon_share）、
+// 墨底主钮「撰写反馈邮件」、secondaryOutline「分享诊断日志」（手绘 icon_share）、
 // 「诊断」分组 + secondaryOutline「仅发送日志」、footnote。
 // 组件规矩（2026-10-28 Li 定，长期有效）：组件一律走 iOS 系统组件
 // （UIButton / UITextView / PHPicker / MFMailCompose / UIActivityViewController），
@@ -219,7 +219,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     private let placeholderLabel = UILabel()
     private let attachLabelButton = UIButton(type: .custom)
     private let attachClearButton = UIButton(type: .system)
-    private let submitButton = BearyButton.make(style: .primaryPill(.ink), title: "提交反馈")
+    private let submitButton = BearyButton.make(style: .primaryPill(.ink), title: "撰写反馈邮件")
     private let shareButton = BearyButton.make(style: .secondaryOutline(.regular), title: "分享诊断日志")
     private let logOnlyButton = BearyButton.make(style: .secondaryOutline(.regular), title: "仅发送日志")
 
@@ -232,6 +232,11 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     /// 审计反馈分享防重：zip 生成进行中标记与排队回调。ensureZip 已在途时
     /// 后续调用只排队、不另起生成任务，生成完成时按序回放同一结果。
     private var zipInFlight = false
+    /// 进页首次 zip 生成在途标记：viewDidLoad 直接调 generateZip，不经过
+    /// ensureZip 的 zipInFlight 排队标记；关闭守卫须同时查这一项，否则
+    /// 最常见的首次生成窗口会被漏拦。本标记只供关闭守卫读，不参与
+    /// ensureZip 的排队逻辑，避免首次生成完成时排队回调无人回放。
+    private var initialZipInFlight = false
     private var pendingZipCompletions: [(Bool) -> Void] = []
     private var pendingMailKind: PendingMailKind = .submit
 
@@ -275,8 +280,10 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         buildContent()
         updateSubmitEnabled()
         refreshAttachUI()
+        initialZipInFlight = true
         generateZip { [weak self] url in
             guard let self = self else { return }
+            self.initialZipInFlight = false
             if let urlValue = url {
                 self.zipURL = urlValue
                 self.zipReady = true
@@ -574,6 +581,16 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         submitButton.translatesAutoresizingMaskIntoConstraints = false
         submitButton.addTarget(self, action: #selector(submitTapped), for: .touchUpInside)
         submitButton.bearyAddPressFeedback()
+        // 主按钮只打开邮件撰写框、本身不完成提交：footnote 已写“发送走
+        // 邮件到 hi@teddyhn.com”，这里只补后半句，不重复目的地与未配
+        // 邮箱 fallback。样式沿用 footnote 同款（13pt 灰字）。
+        let submitHint = UILabel()
+        submitHint.translatesAutoresizingMaskIntoConstraints = false
+        submitHint.font = UIFont.systemFont(ofSize: 13)
+        submitHint.textColor = BearyColors.gray
+        submitHint.numberOfLines = 0
+        submitHint.textAlignment = .center
+        submitHint.text = "将打开邮件撰写界面，还需在邮件里再按一次发送，取消即未提交。"
         shareButton.translatesAutoresizingMaskIntoConstraints = false
         if let shareIcon = BearyIconImages.image(named: "icon_share", pointSize: 18) {
             shareButton.setImage(shareIcon, for: .normal)
@@ -593,7 +610,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         footnote.numberOfLines = 0
         footnote.text = "反馈发送走邮件到 hi@teddyhn.com。未配置邮箱时，仅复制反馈文字，附件不随复制发出。分享或仅发送日志时只发日志包，不含描述与附件。"
 
-        let views: [UIView] = [statusCard, descLabel, descCard, mediaLabel, attachCard, deviceLabel, deviceCard, submitButton, shareButton, diagLabel, logOnlyButton, footnote]
+        let views: [UIView] = [statusCard, descLabel, descCard, mediaLabel, attachCard, deviceLabel, deviceCard, submitButton, submitHint, shareButton, diagLabel, logOnlyButton, footnote]
         for viewItem in views {
             contentStack.addArrangedSubview(viewItem)
         }
@@ -604,7 +621,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         contentStack.setCustomSpacing(18, after: attachCard)
         contentStack.setCustomSpacing(8, after: deviceLabel)
         contentStack.setCustomSpacing(20, after: deviceCard)
-        contentStack.setCustomSpacing(12, after: submitButton)
+        contentStack.setCustomSpacing(8, after: submitButton)
+        contentStack.setCustomSpacing(12, after: submitHint)
         contentStack.setCustomSpacing(18, after: shareButton)
         contentStack.setCustomSpacing(8, after: diagLabel)
         contentStack.setCustomSpacing(16, after: logOnlyButton)
@@ -748,8 +766,36 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 操作
 
+    /// 编辑资料页 hasUnsavedChanges／requestExit 口径的反馈页照抄版
+    /// （只抄口径，不跨页调用）：有内容 = 描述去空白后非空（与
+    /// updateSubmitEnabled 的 hasText 同算式），或附件非空。反馈页
+    /// 只有顶栏关闭钮、没有边缘滑动退出，故无 interactive 分支。
+    private var hasFeedbackContent: Bool {
+        let hasText = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return hasText || !attachments.isEmpty
+    }
+
     @objc private func closeTapped() {
-        dismiss(animated: BearyMotion.animated(true))
+        // zip 生成在途（首次生成或 ensureZip 重生成）时先拦：与编辑
+        // 资料页“保存中拦截、不弹放弃确认”同口径；提示走本页已有的
+        // BearyToast，不另起 alert。已有弹层时不叠弹。
+        if zipInFlight || initialZipInFlight {
+            if presentedViewController == nil {
+                BearyToast.show(in: view, message: "正在准备附件，请稍候")
+            }
+            return
+        }
+        guard hasFeedbackContent else {
+            dismiss(animated: BearyMotion.animated(true))
+            return
+        }
+        guard presentedViewController == nil else { return }
+        let alert = UIAlertController(title: "放弃这份反馈？", message: nil, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "继续编辑", style: .cancel, handler: nil))
+        alert.addAction(UIAlertAction(title: "放弃反馈", style: .destructive, handler: { [weak self] _ in
+            self?.dismiss(animated: BearyMotion.animated(true))
+        }))
+        present(alert, animated: BearyMotion.animated(true), completion: nil)
     }
 
     @objc private func pickTapped() {
