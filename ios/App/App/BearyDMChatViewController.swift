@@ -80,6 +80,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private let permBannerView = UIView()
     private let permBannerLabel = UILabel()
     private var permBannerHeight: NSLayoutConstraint?
+    /// 横幅显示时的最小高（36，沿用现行默认高度）；隐藏时由 permBannerHeight（=0）收起。
+    private var permBannerMinHeight: NSLayoutConstraint?
     private var lastMarkedReadMessageId: Int?
 
     init(peer: BearyAPI.FriendUser) {
@@ -260,7 +262,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             olderLoadingLabel.centerYAnchor.constraint(equalTo: olderLoadingView.centerYAnchor),
         ])
 
-        // 私信权限横幅：对方不接受私信时出现（高 36），平时高 0 不占位。
+        // 私信权限横幅：对方不接受私信时出现，平时高 0 不占位。
+        // 显示时至少 36（沿用现行默认高度），文字随字号/窄宽度换行时横幅跟随增高；
+        // 上下内边距约束用 defaultHigh：隐藏时收起约束（=0，required）优先，横幅干净归零，
+        // 显示时无竞争的定高约束，横幅由文字高度 + 上下各 8 撑起，不低于 36。
         permBannerView.translatesAutoresizingMaskIntoConstraints = false
         permBannerView.backgroundColor = BearyColors.faint
         permBannerView.isHidden = true
@@ -268,20 +273,27 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         permBannerLabel.translatesAutoresizingMaskIntoConstraints = false
         permBannerLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         permBannerLabel.adjustsFontForContentSizeCategory = true
+        permBannerLabel.numberOfLines = 0
         permBannerLabel.textColor = BearyColors.gray
         permBannerLabel.textAlignment = .center
         permBannerLabel.text = "对方目前不接受你的私信"
         permBannerView.addSubview(permBannerLabel)
         permBannerHeight = permBannerView.heightAnchor.constraint(equalToConstant: 0)
         permBannerHeight?.isActive = true
+        permBannerMinHeight = permBannerView.heightAnchor.constraint(greaterThanOrEqualToConstant: 36)
+        permBannerMinHeight?.isActive = false
+        let permBannerLabelTop = permBannerLabel.topAnchor.constraint(equalTo: permBannerView.topAnchor, constant: 8)
+        permBannerLabelTop.priority = .defaultHigh
+        let permBannerLabelBottom = permBannerLabel.bottomAnchor.constraint(equalTo: permBannerView.bottomAnchor, constant: -8)
+        permBannerLabelBottom.priority = .defaultHigh
         NSLayoutConstraint.activate([
             permBannerView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             permBannerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             permBannerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            permBannerLabel.centerXAnchor.constraint(equalTo: permBannerView.centerXAnchor),
-            permBannerLabel.centerYAnchor.constraint(equalTo: permBannerView.centerYAnchor),
-            permBannerLabel.leadingAnchor.constraint(greaterThanOrEqualTo: permBannerView.leadingAnchor, constant: 16),
-            permBannerLabel.trailingAnchor.constraint(lessThanOrEqualTo: permBannerView.trailingAnchor, constant: -16),
+            permBannerLabel.leadingAnchor.constraint(equalTo: permBannerView.leadingAnchor, constant: 16),
+            permBannerLabel.trailingAnchor.constraint(equalTo: permBannerView.trailingAnchor, constant: -16),
+            permBannerLabelTop,
+            permBannerLabelBottom,
         ])
 
         // U5：失败态 StateView（仅空消息时显，与 emptyLabel 同槽位居中、互斥）；
@@ -630,7 +642,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     /// 私信权限横幅：可见 = dmNotAllowed；输入与发送钮同步禁用/恢复。
     private func updatePermBanner() {
         permBannerView.isHidden = !dmNotAllowed
-        permBannerHeight?.constant = dmNotAllowed ? 36 : 0
+        // 显示：定高收起约束停用、最小高 36 生效，横幅随换行文字增高；
+        // 隐藏：最小高停用、定高 0 生效，横幅不占位。
+        permBannerHeight?.isActive = !dmNotAllowed
+        permBannerMinHeight?.isActive = dmNotAllowed
         inputTextView.isEditable = !dmNotAllowed && !sessionClosed
         updateSendButton()
     }
