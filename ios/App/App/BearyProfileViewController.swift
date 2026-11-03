@@ -2057,6 +2057,10 @@ class BearyProfileViewController: UIViewController {
     func pageDidReturn() {
         resetCoverStretch()
         view.layoutIfNeeded()
+        // 切 tab 回页不触发滚动事件：按当前 offset 重算一次吸顶态（显隐／
+        // 跟踪图顶／名字／模糊），否则布局与残留吸顶态错位成背景重影。
+        // 与 viewWillAppear 回页路（经 updateTopBarVisibility）同款调用。
+        updateProfileCoverScroll(offsetY: tableView.contentOffset.y, topBaseline: -tableView.contentInset.top)
     }
 
     /// 顶栏透度批（容器调用，见 SceneDelegate.applyHeaderTopInsets）：主滚动视图即 tableView。
@@ -2214,9 +2218,10 @@ class BearyProfileViewController: UIViewController {
         if stickyHeaderBgLeadingConstraint.constant != tableFrame.minX {
             stickyHeaderBgLeadingConstraint.constant = tableFrame.minX
         }
-        if stickyHeaderBgTopConstraint.constant != tableFrame.minY {
-            stickyHeaderBgTopConstraint.constant = tableFrame.minY
-        }
+        // 跟踪图顶是滚动回调的专属状态：布局只更新自然顶锚点，不得把顶打回
+        // 自然顶——已上滑时顶应为自然顶 - 上滑量 - 54（或锁定值），布局打回后、
+        // 下次滚动事件前跟踪图与真封面错位；切 tab 回页不触发滚动事件，错位
+        // 即常驻成背景重影（带内一片＋下方真封面一片＋接缝）。
         stickyHeaderBgNaturalTop = tableFrame.minY
         if stickyHeaderBgWidthConstraint.constant != tableFrame.width {
             stickyHeaderBgWidthConstraint.constant = tableFrame.width
@@ -2231,9 +2236,8 @@ class BearyProfileViewController: UIViewController {
         if stickyHeaderBlurWidthConstraint.constant != tableFrame.width {
             stickyHeaderBlurWidthConstraint.constant = tableFrame.width
         }
-        // 布局时顶复位（静止态几何：自然顶 - 54，与裁剪区内图顶一致）；
-        // 只在未上滑时复位：已上滑时顶由滚动回调接管，布局复位会把顶打回
-        // 静止值、直到下次滚动事件前错位（转屏／深浅切换时无滚动事件）。
+        // 布局时顶复位只在未上滑时做（静止态几何：自然顶 - 54，与裁剪区内图顶
+        // 一致）；已上滑时顶一律由滚动回调接管，布局不得写顶。
         let layoutUp = tableView.contentOffset.y + tableView.contentInset.top
         if layoutUp <= 0 {
             if stickyHeaderBgTopConstraint.constant != tableFrame.minY - 54 {
