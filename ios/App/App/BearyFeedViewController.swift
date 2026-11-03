@@ -1276,13 +1276,28 @@ class BearyFeedViewController: UIViewController {
     /// 已渲染行数与旧模型一致，对不上时整表重载（模型已正确），不
     /// 带病发 deleteRows（连续删帖闪退同款成因）。
     func removeDeletedEntry(entryId: String) {
+        // 第 7 轮属实项 3：首页切段已删日记回显。删除只改当前段 live 列表
+        // （plazaRaw／firstPageIds）时，另一段槽位仍留着已删篇：同一篇可
+        // 同时出现在广场段与关注段（被关注作者的公开篇），切段时
+        // restoreLiveFeedState() 会把另一段槽位读回 live，已删篇即复活。
+        // 故按 id 同步清两个分段槽位与当前 live 列表；槽位是值类型 struct，
+        // 直接改其 entries／firstPageIds 字段写回，不动 hasMore 等分页态
+        //（与原 live 删除口径一致）。本篇不在当前 live 时只清槽位、不碰
+        // 表——行号不存在，deleteRows 会闪退；在 live 时只删受影响的一行，
+        // 行数对不上才整表重载（原防闪退兜底不动）。
+        plazaSegmentCache.entries.removeAll { $0.id == entryId }
+        plazaSegmentCache.firstPageIds.removeAll { $0 == entryId }
+        followingSegmentCache.entries.removeAll { $0.id == entryId }
+        followingSegmentCache.firstPageIds.removeAll { $0 == entryId }
+        // 审计-广场（删除定向失效）：该篇作为被引源的缓存同步失效，
+        // 别处引用它的卡下次重配时重新拉取、按已删除渲染占位。
+        // 统一在此处调用一次：本篇不在当前 live 时同样要失效引用缓存，
+        // 原先 early return 会跳过这一步。
+        BearyDiaryCardCell.invalidateQuote(forQuoteId: entryId)
         guard let row = plazaRaw.firstIndex(where: { $0.id == entryId }) else { return }
         let oldCount = plazaRaw.count
         plazaRaw.removeAll { $0.id == entryId }
         firstPageIds.removeAll { $0 == entryId }
-        // 审计-广场（删除定向失效）：该篇作为被引源的缓存同步失效，
-        // 别处引用它的卡下次重配时重新拉取、按已删除渲染占位。
-        BearyDiaryCardCell.invalidateQuote(forQuoteId: entryId)
         guard isViewLoaded else { return }
         if tableView.numberOfRows(inSection: 0) == oldCount {
             tableView.deleteRows(at: [IndexPath(row: row, section: 0)], with: .fade)
