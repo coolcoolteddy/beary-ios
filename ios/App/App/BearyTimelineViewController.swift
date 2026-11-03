@@ -2583,35 +2583,6 @@ class BearyTimelineViewController: UIViewController {
         SceneDelegate.chrome?.setChromeHidden(false, animated: false)
     }
 
-    /// 0 篇档置灰（与顶栏计数同源 tl_counts 全量）：pub==0 → 公开、限时同灰；
-    /// priv==0 → 私密、仅好友同灰；counts 未到（nil）时 fail-open 全可点；
-    /// “全部”恒可点。当前选中档变灰时自动切回全部（applyVisFilter(.all)，
-    /// 其首拉回包又会走 updateCountsLabel 重算一次，.all 不在灰集内即收敛）。
-    /// 前提纠正：tl_counts 是全量（服务端 WHERE author_id=本人、无日期范围），
-    /// 不随周/月视图切换而变——置灰只在计数变化（首屏回包、删帖/恢复、缓存
-    /// 恢复，经 updateCountsLabel 漏斗）与气泡打开时重算，周/月切换不触发。
-    /// 同源约束下的诚实上限：pub/priv 两侧各自只能证明“同侧两档同为 0”，
-    /// 一侧 >0 时另一档是否为 0 无法区分，该侧两档保持可点（点进去可能是
-    /// 空列表，不是错灰）；不得另起一套单档计数。
-    private func updateVisFilterDisabledStates() {
-        var disabled = Set<String>()
-        if let counts = countsValue {
-            if (counts.pub ?? 0) == 0 {
-                disabled.insert("\(TimelineVisFilter.publicPosts)")
-                disabled.insert("\(TimelineVisFilter.ephemeral)")
-            }
-            if (counts.priv ?? 0) == 0 {
-                disabled.insert("\(TimelineVisFilter.privatePosts)")
-                disabled.insert("\(TimelineVisFilter.friendsOnly)")
-            }
-        }
-        visFilterBubble.setDisabledKeys(disabled)
-        visFilterBubble.setSelectedKey("\(timelineVisFilter)")
-        if disabled.contains("\(timelineVisFilter)") {
-            applyVisFilter(.all)
-        }
-    }
-
     /// 筛子钮标题 = 当前档位（选中态可见处）+ 无障碍文案同步。
     private func updateVisFilterButton() {
         visFilterButton.setTitle(timelineVisFilter.title, for: .normal)
@@ -2650,8 +2621,6 @@ class BearyTimelineViewController: UIViewController {
             view.addSubview(visFilterBubble)
         }
         visFilterBubble.setSelectedKey("\(timelineVisFilter)")
-        // 打开时按当前计数重算置灰（计数变化漏斗已算过一次，此处是开盖前复核）。
-        updateVisFilterDisabledStates()
         view.layoutIfNeeded()
         let buttonFrame = visFilterButton.convert(visFilterButton.bounds, to: view)
         let bubbleWidth: CGFloat = 200
@@ -4128,8 +4097,6 @@ class BearyTimelineViewController: UIViewController {
         } else {
             setLabelTextFaded(countsLabel, "")
         }
-        // 计数是置灰的唯一来源：经本漏斗的每次计数变化都重算置灰。
-        updateVisFilterDisabledStates()
     }
 
     /// 64 包反馈修（第 3 项）：写新日记后统计行失效——清已渲染签名并丢掉当前视图月份缓存，
