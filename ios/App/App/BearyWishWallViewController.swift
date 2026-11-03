@@ -73,8 +73,9 @@ private final class WishRowView: UIView {
         upButton.addTarget(self, action: #selector(voteTouchDown), for: .touchDown)
         downButton.addTarget(self, action: #selector(voteTouchDown), for: .touchDown)
         doneButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
-        // P1-17：展开钮与完成钮补通用按压反馈；两票钮不补——投票已有即时选中
-        // 反馈（configure 立改选中态）＋ wishDing 音效，再挂按压缩放/震动即重复反馈。
+        // P1-17（已改）：展开钮、完成钮与两票钮均补通用按压反馈；
+        // 两票钮点按瞬间给 light（与点赞同款），成功分支不再另补，防双震；
+        // 失败三件套（摇头＋warning＋toast）不动。
         // 29：详情展开钮——超三行时才出现，点按原位展开/收起，不新增二级页面；
         // 未超三行时隐藏（见 layoutSubviews 的 updateExpandVisibility）。
         expandButton.setTitle("展开", for: .normal)
@@ -86,6 +87,8 @@ private final class WishRowView: UIView {
         expandButton.addTarget(self, action: #selector(expandTapped), for: .touchUpInside)
         expandButton.bearyAddPressFeedback()
         doneButton.bearyAddPressFeedback()
+        upButton.bearyAddPressFeedback()
+        downButton.bearyAddPressFeedback()
         // 15：净赞成进操作行末尾——弹性 spacer 把它顶到行末，赞成/反对钮本身不动；
         // spacer 抗拉伸与抗压缩均最低，窄屏先压 spacer，不挤按钮与净赞成文案。
         let voteSpacer = UIView()

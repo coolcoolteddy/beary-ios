@@ -3058,6 +3058,8 @@ class BearyDiaryCardCell: UITableViewCell {
             BearySoundPlayer.play(.likePop)
         } else {
             applyPreUnlike()
+            // 取消点赞与点赞对称：确认时同样补一次 likeTap（按下仅 prepare，不双震）。
+            BearyHaptics.likeTap()
             BearySoundPlayer.play(.unlikeSoft)
         }
         let targetLiked = currentlyLiked == false

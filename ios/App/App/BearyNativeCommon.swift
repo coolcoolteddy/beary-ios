@@ -2177,6 +2177,8 @@ enum BearyHaptics {
         light().impactOccurred()
     }
     /// 发布成功：服务端确认、成功反馈出现时。
+    /// 通用成功确认，不只用于发布日记——详情可见性翻转、留话／回复成功、
+    /// 反馈邮件成功都在用；调用点一字未动。
     static func publishSuccess() {
         notification().notificationOccurred(.success)
     }
