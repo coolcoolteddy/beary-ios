@@ -270,6 +270,9 @@ final class BearyChromeViewController: UIViewController {
     /// 放在顶栏玻璃内、logo 行下方 8pt、高 32，随顶栏显隐走（不随列表滚动）。
     /// 控件归容器所有，点按转发给首页 FeedVC 的 feedSegmentChanged；
     /// FeedVC 的段重置经本控件同步选中态。
+    /// 热区：实体为 BearyHit44SegmentedControl（与底栏同款热区扩类），
+    /// 视觉高仍 32 不动，仅 point(inside:) 把有效点击高扩到 44；对外类型
+    /// 保持 UISegmentedControl? 不变，FeedVC 的同步选中态调用一字不动。
     var homeSegmentControl: UISegmentedControl?
     // 批一：原生页切换状态。currentPage 为 nil 表示尚未显示任何页（启动时 showPage(.home) 亮原生列表）。
     private enum ContainerPage {
@@ -591,7 +594,16 @@ final class BearyChromeViewController: UIViewController {
         // 归容器所有、随玻璃显隐走；点按转发给 FeedVC（见 homeSegmentChanged）。
         // 非首页时玻璃整体藏起（transform + alpha + 不可点），切换行随之藏起，
         // 无需另设显隐。
-        let homeSegment = UISegmentedControl(items: ["广场", "正在关注"])
+        // 首页切换热区：视觉高仍钉死 32（外观、玻璃总高 108 一字不动），
+        // 实体改走底栏同款 BearyHit44SegmentedControl——其 point(inside:)
+        // 把高度不足 44 的轴向两侧扩到 44，本控件上下各扩 6pt、有效点击高 44。
+        // 命中关系（以安全区顶为原点）：logo 行底在 +60、切换视觉区在 +68…+100、
+        // 玻璃底在 +108；扩后热区为 +62…+106——上方离 logo 行尚留 2pt、
+        // 下方离玻璃底尚留 2pt，不碰 logo 行按钮、不探出玻璃压到下方列表；
+        // 控件通栏宽远超 44，横向不扩，无左右邻区重叠。顶栏收起时玻璃
+        // isUserInteractionEnabled=false，扩区随之一并失效，与收起前一致。
+        // 底栏分段器（288×58）本支一字不动。
+        let homeSegment = BearyHit44SegmentedControl(items: ["广场", "正在关注"])
         homeSegment.translatesAutoresizingMaskIntoConstraints = false
         homeSegment.selectedSegmentIndex = 0
         homeSegment.addTarget(self, action: #selector(homeSegmentChanged), for: .valueChanged)
