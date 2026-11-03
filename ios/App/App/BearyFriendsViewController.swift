@@ -131,6 +131,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             // 默认字号下 14（顶距）＋标题高＋7 ≈ 44，视觉与旧固定 44 一致；
             // 系统字号放大、标题变高时顶栏随之伸展，不再把标题底边裁在 44 内。
             // 横向护栏（标题右缘 ≤ 私信钮左缘 −8）不动。
+            // 第 7 轮属实项 2 同款：顶栏不再钉死 44，只定最小高度。
             topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             backButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             backButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
@@ -143,7 +144,9 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -7),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: dmButton.leadingAnchor, constant: -8),
             dmButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),
-            dmButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            // 私信入口改跟顶栏实际行高中对齐：原先跟标题中心对齐，标题增高
+            // 后入口会偏上；顶栏撑高后仍居中于顶栏，44 高入口不越界。
+            dmButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             dmButton.widthAnchor.constraint(equalToConstant: 44),
             dmButton.heightAnchor.constraint(equalToConstant: 44),
             tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
