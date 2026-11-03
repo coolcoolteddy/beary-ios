@@ -2344,7 +2344,7 @@ final class BearySettingsViewController: UIViewController {
                             return
                         }
                         applyScopeResult(result, &mineEntries)
-                        self.setExportProgress("正在导出（3/4）信箱…")
+                        self.setExportProgress("正在导出（3/4）私密日记…")
                         self.fetchAllEntries(scope: .mailbox, pin: pin) { result in
                             DispatchQueue.main.async {
                                 if self.exportPinChanged(pin) || result.reason == "账号已切换" {
