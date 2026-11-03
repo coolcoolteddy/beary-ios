@@ -1018,6 +1018,17 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         present(sheet, animated: BearyMotion.animated(true), completion: nil)
     }
 
+    /// 在途切号校验：发起时捕获的账号 ID 与鉴权代际，任一对不上即旧登录态回包。
+    /// 账号 ID 拦 A→B 切号；代际拦 A→退出→A 同号重登（id 不变但 SessionManager
+    /// 在权威变迁时 bump 了 BearyAPI.authEpoch，见通知页 P1-21）。401 门与同行
+    /// 互斥（trashBusyIdentifiers）本身不动，只在调用前加这道门：失配的 401
+    /// 也不弹登录，避免旧号 401 把新号界面踢向登录页（BearyAPI 侧已压住全局
+    /// onUnauthorized，本地 notifyTrashLoginOnce 是另一条需同门控的路径）。
+    private func isStaleTrashRequest(requestAccountId: Int?, requestAuthEpoch: Int) -> Bool {
+        return SessionManager.shared.currentUser?.id != requestAccountId
+            || BearyAPI.shared.authEpoch != requestAuthEpoch
+    }
+
     /// 审计-时间线：回收站 401 登录门本页去重；回页时复位（见 viewWillAppear），取消登录后再次 401 仍可提醒。
     private func notifyTrashLoginOnce() {
         if !trashLoginNotified {
@@ -1067,6 +1078,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         let purgeSibling = purgeEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button
         purgeSibling?.isEnabled = false
         purgeSibling?.alpha = 0.5
+        // 在途切号门：发起时捕获账号 ID 与鉴权代际（通知页 P1-21 同款口径）。
+        // 恢复成功回调现行读回调时刻账号清桶——在途切号会把清理记到新账号
+        // 名下（还连带推全局写盘代际，误伤新号在途的静默刷新快照）。
+        // 回调先比对两者，任一对不上即旧登录态回包：busy 复位仍执行
+        // （否则行按钮永久置灰），其余一律丢弃，不动当前页、不清任何桶。
+        let requestAccountId = SessionManager.shared.currentUser?.id
+        let requestAuthEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.restoreTrashDetail(id: identifier) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -1074,6 +1092,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 self.setRowButtonBusy(sender, busy: false, busyTitle: "恢复中…", idleTitle: "恢复")
                 purgeSibling?.isEnabled = true
                 purgeSibling?.alpha = 1
+                if self.isStaleTrashRequest(requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch) {
+                    return
+                }
                 switch result {
                 case .success(let resp):
                     // iCity：恢复回原可见性——服务端返回 published/isPublic 时按其分流，
@@ -1099,7 +1120,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     if self.trashSilentRefreshing {
                         self.trashRemovedDuringSilentRefresh.insert(identifier)
                     }
-                    if let uid = SessionManager.shared.currentUser?.id {
+                    // 清桶用发起账号，不再读回调时刻账号（已门控，两者此时相等，
+                    // 但发起值才是本次请求的归属，避免校验与写盘之间再被切号钻空）。
+                    if let uid = requestAccountId {
                         BearyEntrySync.shared.runDiskWrite {
                             BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
                         }
@@ -1145,6 +1168,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             let restoreSibling = self.restoreEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button
             restoreSibling?.isEnabled = false
             restoreSibling?.alpha = 0.5
+            // 在途切号门：确认框可能横跨一次切号，故在真正发起处（而非
+            // purgeTapped 入口）捕获账号 ID 与鉴权代际；失配口径与恢复处一致。
+            let requestAccountId = SessionManager.shared.currentUser?.id
+            let requestAuthEpoch = BearyAPI.shared.authEpoch
             BearyAPI.shared.purgeTrash(id: identifier) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
@@ -1152,6 +1179,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     self.setRowButtonBusy(sender, busy: false, busyTitle: "删除中…", idleTitle: "彻底删除")
                     restoreSibling?.isEnabled = true
                     restoreSibling?.alpha = 1
+                    if self.isStaleTrashRequest(requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch) {
+                        return
+                    }
                     switch result {
                     case .success:
                         self.removeRow(identifier: identifier)
@@ -1160,7 +1190,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         if self.trashSilentRefreshing {
                             self.trashRemovedDuringSilentRefresh.insert(identifier)
                         }
-                        if let uid = SessionManager.shared.currentUser?.id {
+                        // 清桶用发起账号，口径与恢复成功处一致。
+                        if let uid = requestAccountId {
                             BearyEntrySync.shared.runDiskWrite {
                                 BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
                             }
