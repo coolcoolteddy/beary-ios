@@ -1380,24 +1380,35 @@ final class BearyDraftBoxViewController: UIViewController {
         }
     }
 
-    @objc private func closeBox() {
-        // 审计-编辑器详情：补查证实——删盘在 finishDelete 即落盘，撤销只活
-        // 在箱内 pendingUndos 内存（deinit 即清计时器与队列），故 6 秒窗内
-        // 关箱即丢撤销。修法取审计“弹确认”分支：仅当仍有可撤销笔时确认，
-        // 无待撤销笔时关闭路径一字不动；打开/新建篇幅走各自退场，不在此拦。
+    /// 四路统一离场守卫：关闭钮／遮罩／把手下滑（均走 closeBox）、新建、
+    /// 点开另一篇共用。撤销只活在箱内 pendingUndos 内存（deinit 即清计时器
+    /// 与队列），故 6 秒窗内任一路离箱都会丢撤销：有可撤销笔时一律先弹确认，
+    /// 确认才执行该路的离场动作，取消则保留箱内状态与撤销队列；无待撤销笔
+    /// 时各路关闭路径一字不动。关闭路的提示文案与确认钮文案保持原样，
+    /// 新建／点开路复用同一条提示文案，确认钮为“仍要继续”。
+    private func exitWithUndoGuard(confirmTitle: String, confirmedExit: @escaping () -> Void) {
         if presentedViewController is UIAlertController { return }
         if !pendingUndos.isEmpty {
             let alert = UIAlertController(title: nil, message: "关闭草稿箱后，刚删除的草稿将无法撤销", preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "仍要关闭", style: .destructive) { [weak self] _ in
-                self?.dismissWithExitAnimation(completion: nil)
+            alert.addAction(UIAlertAction(title: confirmTitle, style: .destructive) { _ in
+                confirmedExit()
             })
             alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
             present(alert, animated: true)
             return
         }
-        // 弹窗审计 E1-18：关闭钮/遮罩/把手下滑三路只走统一退场，回调为空，
-        // 不另播动画——旧 closeBox 本身就是这支退场，抽成共用方法后行为不变。
-        dismissWithExitAnimation(completion: nil)
+        confirmedExit()
+    }
+
+    @objc private func closeBox() {
+        // 审计-编辑器详情：补查证实——删盘在 finishDelete 即落盘，撤销只活
+        // 在箱内 pendingUndos 内存（deinit 即清计时器与队列），故 6 秒窗内
+        // 关箱即丢撤销。修法取审计“弹确认”分支：仅当仍有可撤销笔时确认，
+        // 无待撤销笔时关闭路径一字不动；新建／点开路同样经 exitWithUndoGuard
+        // 拦，不再各自直走退场。
+        exitWithUndoGuard(confirmTitle: "仍要关闭") { [weak self] in
+            self?.dismissWithExitAnimation(completion: nil)
+        }
     }
 
     /// 弹窗审计 E1-18 统一退场完成回调：关闭、打开、新建三路共用同一
@@ -1430,8 +1441,12 @@ final class BearyDraftBoxViewController: UIViewController {
     }
 
     @objc private func newDraftTapped() {
-        dismissWithExitAnimation { [weak self] in
-            self?.onNewHandler()
+        // 与关闭／点开路共用 exitWithUndoGuard：6 秒窗内有可撤销笔时先弹确认，
+        // 取消保留箱内撤销，确认才退场并调原 onNew 回调。
+        exitWithUndoGuard(confirmTitle: "仍要继续") { [weak self] in
+            self?.dismissWithExitAnimation { [weak self] in
+                self?.onNewHandler()
+            }
         }
     }
 
@@ -1529,9 +1544,13 @@ final class BearyDraftBoxViewController: UIViewController {
     @objc private func cardTapped(_ sender: UIButton) {
         for entry in cardEntries {
             if entry.button === sender {
-                // E1-18：整卡打开先走统一退场，dismiss 后再调原 onOpen 回调。
-                dismissWithExitAnimation { [weak self] in
-                    self?.onOpenHandler(entry.draftValue)
+                // E1-18：整卡打开先走统一退场，dismiss 后再调原 onOpen 回调；
+                // 与关闭／新建路共用 exitWithUndoGuard：6 秒窗内有可撤销笔时
+                // 先弹确认，取消保留箱内撤销，确认才退场。
+                exitWithUndoGuard(confirmTitle: "仍要继续") { [weak self] in
+                    self?.dismissWithExitAnimation { [weak self] in
+                        self?.onOpenHandler(entry.draftValue)
+                    }
                 }
                 return
             }
