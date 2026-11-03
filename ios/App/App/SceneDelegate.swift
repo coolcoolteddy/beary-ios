@@ -296,6 +296,9 @@ final class BearyChromeViewController: UIViewController {
     private var conversationsVC: BearyDMConversationsViewController?
     /// 消息页常驻页（底栏“消息”段根页，见 ensureMessagesVC）。
     private var messagesVC: BearyMessagesViewController?
+    /// 好友页是否从消息页用户列表钮进来（进好友页时消费一次）：
+    /// 只有这条路才显返回钮；底栏直点好友段不显。
+    private var friendsOpenedFromMessages = false
     private var profileGated = false
     /// 账号隔离 2 号：我页建造时绑定的账号 id（ensureProfileVC 写入）。
     /// onUserChanged 以它为准判定是否重建，不再只看 gated 态与当前页。
@@ -2182,6 +2185,12 @@ final class BearyChromeViewController: UIViewController {
         view.endEditing(true)
         currentPage = page
         let incomingView: UIView = (page == .home) ? ensureFeedVC().view : pageView(for: page).view
+        if page == .friends {
+            // 好友页返回钮只认用户列表钮这条路：进页时按来源重设并消费旗标；
+            // 底栏直点、重拍都不经过这里改旗标，根页保持无返回钮。
+            friendsVC?.setOpenedFromMessages(friendsOpenedFromMessages)
+            friendsOpenedFromMessages = false
+        }
         incomingView.isHidden = false
         // 入场页接管时机不变：切换开始即恢复交互。快速反向切页时，入场页可能
         // 正是上一段交叉淡入的离场页（当时被禁用）；不等上一段动画完成回调，
@@ -2522,6 +2531,7 @@ final class BearyChromeViewController: UIViewController {
                 self?.presentUserProfile(handle: handle)
             }
         }
+        vc.onBackToMessages = { [weak self] in self?.showPage(.messages) }
         vc.onOpenConversations = { [weak self] in self?.showPage(.conversations) }
         addPageVC(vc, page: .friends)
         friendsVC = vc
@@ -2538,7 +2548,10 @@ final class BearyChromeViewController: UIViewController {
         if let vc = messagesVC { return vc }
         let vc = BearyMessagesViewController()
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
-        vc.onOpenUserList = { [weak self] in self?.showPage(.friends) }
+        vc.onOpenUserList = { [weak self] in
+            self?.friendsOpenedFromMessages = true
+            self?.showPage(.friends)
+        }
         vc.onOpenEntry = { [weak self] entryId in self?.gotoEntry(entryId: entryId) }
         vc.onOpenUser = { [weak self] userId in self?.presentUserProfile(userId: userId) }
         vc.onOpenDM = { [weak self] peer in self?.presentDMChat(peer: peer) }

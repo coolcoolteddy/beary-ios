@@ -15,6 +15,9 @@ import UIKit
 // 落在组顶、与外层圈双显），刷新走同 tab 重拍、进页门控、聊天关闭回调
 // 与关系／账号广播——两组各自原有的刷新路径（见 refresh / pageDidEnter /
 // refreshGroups），不在此另起一套。
+// 已看水印：进消息页本身不记通知已看；通知组实际出现在滚动视口内时
+// 才记一次／访问（见 updateNotifSeenIfVisible）；聊天关闭回填、私信组
+// 刷新都不记。铃铛角标数字仍走服务端未读数，不受 seen 水印影响。
 
 final class BearyMessagesViewController: UIViewController {
 
@@ -70,6 +73,7 @@ final class BearyMessagesViewController: UIViewController {
         // 外层滚动视图不自动叠加安全区内边距：顶栏已是固定条，底 inset 手动补
         //（viewDidLayoutSubviews，底栏浮在页底、末行不被盖住，与好友页同口径）。
         scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.delegate = self
         view.addSubview(scrollView)
 
         let stack = UIStackView()
@@ -150,6 +154,22 @@ final class BearyMessagesViewController: UIViewController {
             scrollView.contentInset.bottom = bottom
             scrollView.scrollIndicatorInsets.bottom = bottom
         }
+        updateNotifSeenIfVisible()
+    }
+
+    /// 通知组可见性门控：只在通知组实际出现在滚动视口内时记已看。
+    /// 进消息页本身不记；首进时通知组在顶部、一般立即可见；此前已滚到
+    /// 私信组、切回后仍在深位时不记，滚回顶部露出通知组时才记。
+    /// 记一次／访问（守卫在子页 markNotifPageEntered，离页复位）。
+    private func updateNotifSeenIfVisible() {
+        // 容器切页只改 isHidden：离页、旋转等布局回调也可能走到这里，
+        // 只有本页真正在窗内且未隐藏时才按可见性记。
+        guard view.window != nil, !view.isHidden else { return }
+        let groupFrame = notifContainer.convert(notifContainer.bounds, to: scrollView)
+        let visibleRect = CGRect(origin: scrollView.contentOffset, size: scrollView.bounds.size)
+        let intersection = groupFrame.intersection(visibleRect)
+        guard intersection.height >= 24 else { return }
+        notifChild.markNotifGroupViewed()
     }
 
     private func embed(child: UIViewController, in container: UIView) {
@@ -182,7 +202,7 @@ final class BearyMessagesViewController: UIViewController {
     }
 
     var isRefreshingForRetap: Bool {
-        notifChild.isRefreshingForRetap
+        notifChild.isRefreshingForRetap || conversationsChild.isRefreshingForRetap
     }
 
     func scrollToTop() {
@@ -196,10 +216,12 @@ final class BearyMessagesViewController: UIViewController {
     }
 
     /// 容器切页进页钩子（与铃铛页 showPage 分支同口径）：恢复通知轮询，
-    /// 未读数变了才整页重拉（门控在通知页内部）。
+    /// 未读数变了才整页重拉（门控在通知页内部）；进页不记已看，已看由
+    /// 通知组可见性门控记（铃铛页进页仍走记已看的原口径）。
     func pageDidEnter() {
         notifChild.pageDidEnter()
-        notifChild.refreshListIfUnreadChanged()
+        notifChild.refreshListIfUnreadChangedWithoutMarking()
+        updateNotifSeenIfVisible()
     }
 
     /// 容器切页离页钩子：停通知轮询、写回通知缓存（与铃铛页同口径）。
@@ -208,9 +230,16 @@ final class BearyMessagesViewController: UIViewController {
     }
 
     /// 聊天页关闭后的刷新（容器 presentDMChat onClosed 接线）：会话组重拉
-    /// （新消息改摘要／未读），通知组按未读门控刷新。
+    /// （新消息改摘要／未读），通知组按未读门控刷新、不记已看
+    /// （私信组路径不触发通知已看）。
     func refreshGroups() {
         conversationsChild.refresh()
-        notifChild.refreshListIfUnreadChanged()
+        notifChild.refreshListIfUnreadChangedWithoutMarking()
+    }
+}
+
+extension BearyMessagesViewController: UIScrollViewDelegate {
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        updateNotifSeenIfVisible()
     }
 }
