@@ -469,9 +469,6 @@ final class BearyCalendarCardView: UIView {
 
     private let titleLabel = UILabel()
     private let todayButton = BearyHit44Button(type: .system)
-    /// “今”钮与标题之间的 8pt 间隔垫片：与钮同显同隐，隐藏时栈内
-    /// 不占位，标题 → 切换钮间距与改前（custom 0）完全一致。
-    private let todaySpacer = UIView()
     private let toggleButton = BearyHit44Button(type: .system)
     private let prevButton = BearyHit44Button(type: .system)
     private let nextButton = BearyHit44Button(type: .system)
@@ -497,6 +494,9 @@ final class BearyCalendarCardView: UIView {
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
+        // 第 7 轮属实项 1：标题独占一行，极端字号下换行不断字、不裁字。
+        titleLabel.numberOfLines = 0
+        titleLabel.lineBreakMode = .byCharWrapping
 
         toggleButton.translatesAutoresizingMaskIntoConstraints = false
         toggleButton.backgroundColor = BearyColors.faint
@@ -504,6 +504,9 @@ final class BearyCalendarCardView: UIView {
         toggleButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12.5))
         toggleButton.titleLabel?.adjustsFontForContentSizeCategory = true
         toggleButton.setTitleColor(BearyColors.ink, for: .normal)
+        // 第 7 轮属实项 1：切换钮按内容撑宽、不被相邻钮挤压（宽度下限见约束处）。
+        toggleButton.setContentHuggingPriority(.required, for: .horizontal)
+        toggleButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         toggleButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         toggleButton.addTarget(self, action: #selector(didTapToggle), for: .touchUpInside)
         toggleButton.bearyAddPressFeedback()
@@ -523,8 +526,6 @@ final class BearyCalendarCardView: UIView {
         todayButton.bearyAddPressFeedback()
         todayButton.isHidden = true
         todayButton.alpha = 0
-        todaySpacer.translatesAutoresizingMaskIntoConstraints = false
-        todaySpacer.isHidden = true
 
         prevButton.translatesAutoresizingMaskIntoConstraints = false
         prevButton.backgroundColor = BearyColors.faint
@@ -555,12 +556,22 @@ final class BearyCalendarCardView: UIView {
         nextButton.addTarget(self, action: #selector(didTapNext), for: .touchUpInside)
         nextButton.bearyAddPressFeedback()
 
-        let topRow = UIStackView(arrangedSubviews: [titleLabel, todaySpacer, todayButton, toggleButton, prevButton, nextButton])
-        topRow.translatesAutoresizingMaskIntoConstraints = false
-        topRow.axis = .horizontal
-        topRow.alignment = .center
-        topRow.spacing = 6
-        topRow.setCustomSpacing(0, after: titleLabel)
+        // 第 7 轮属实项 1：顶行拆为两行——第 1 行只放月份标题，第 2 行放
+        // 操作钮（今 / 周月切换 / 上一 / 下一）。窄屏或大字号下两行不再同行
+        // 抢宽，标题与切换钮互不挤压、不裁字；操作钮仍靠右对齐，与改前
+        // 右侧成组的位置一致。原标题→“今”钮的 8pt 垫片随拆行作废（“今”钮
+        // 改为操作行首钮，显隐仍由 setTodayButtonVisible 控制栈内占位）。
+        let titleRow = UIStackView(arrangedSubviews: [titleLabel])
+        titleRow.translatesAutoresizingMaskIntoConstraints = false
+        titleRow.axis = .horizontal
+        titleRow.alignment = .center
+        let controlsSpacer = UIView()
+        controlsSpacer.translatesAutoresizingMaskIntoConstraints = false
+        let controlsRow = UIStackView(arrangedSubviews: [controlsSpacer, todayButton, toggleButton, prevButton, nextButton])
+        controlsRow.translatesAutoresizingMaskIntoConstraints = false
+        controlsRow.axis = .horizontal
+        controlsRow.alignment = .center
+        controlsRow.spacing = 6
 
         let weekdayRow = UIStackView()
         weekdayRow.translatesAutoresizingMaskIntoConstraints = false
@@ -579,11 +590,12 @@ final class BearyCalendarCardView: UIView {
         gridStack.translatesAutoresizingMaskIntoConstraints = false
         gridStack.axis = .vertical
 
-        let outer = UIStackView(arrangedSubviews: [topRow, weekdayRow, gridStack])
+        let outer = UIStackView(arrangedSubviews: [titleRow, controlsRow, weekdayRow, gridStack])
         outer.translatesAutoresizingMaskIntoConstraints = false
         outer.axis = .vertical
         outer.spacing = 0
-        outer.setCustomSpacing(8, after: topRow)
+        outer.setCustomSpacing(6, after: titleRow)
+        outer.setCustomSpacing(8, after: controlsRow)
         outer.setCustomSpacing(BearySpace.sm, after: weekdayRow)
         addSubview(outer)
         NSLayoutConstraint.activate([
@@ -591,15 +603,16 @@ final class BearyCalendarCardView: UIView {
             outer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: BearySpace.lg),
             outer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -BearySpace.lg),
             outer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -BearySpace.lg),
-            todaySpacer.widthAnchor.constraint(equalToConstant: 8),
             todayButton.widthAnchor.constraint(equalToConstant: 32),
             todayButton.heightAnchor.constraint(equalToConstant: 32),
             toggleButton.heightAnchor.constraint(equalToConstant: 32),
-            // 64 包反馈修（第 6 项）：周/月切换钮等宽——旧代码宽度随标题内容走，
-            // “月视图”/“周视图”两态渲染宽不一致；固定 64（内边距 12+12 + 3 字×12.5 + 余量），
-            // 两态同宽，不再随标题伸缩。
-            // 审计-时间线：切换钮宽保持定值 64 不动（样式冻结：宽度档位未定版前不改数值；大字号下标题可能裁字，待 Li 定版后处理）。
-            toggleButton.widthAnchor.constraint(equalToConstant: 64),
+            // 第 7 轮属实项 1：切换钮不再钉死 64。64 只作最小宽（内边距
+            // 12+12 + 默认字号 3 字标题的旧定值）；大字号下标题变宽时按钮随
+            // 内容增长，不再裁字。旧 64 包反馈修“两态同宽”与审计-时间线
+            // “宽度档位未定版前不改数值”的注释随本支 supersede：此前 V4
+            // 宽度档位待 Li 定版，本支按报告方向实现，Li 可再纠正数值。
+            // 其余数值（高 32、圆角 16、内边距 12、翻页钮 32）一律不动。
+            toggleButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 64),
             prevButton.widthAnchor.constraint(equalToConstant: 32),
             prevButton.heightAnchor.constraint(equalToConstant: 32),
             nextButton.widthAnchor.constraint(equalToConstant: 32),
@@ -677,7 +690,6 @@ final class BearyCalendarCardView: UIView {
         if visible {
             guard todayButton.isHidden || todayButton.alpha < 1 else { return }
             todayButton.isHidden = false
-            todaySpacer.isHidden = false
             if UIAccessibility.isReduceMotionEnabled {
                 todayButton.alpha = 1
             } else {
@@ -690,13 +702,11 @@ final class BearyCalendarCardView: UIView {
             if UIAccessibility.isReduceMotionEnabled {
                 todayButton.alpha = 0
                 todayButton.isHidden = true
-                todaySpacer.isHidden = true
             } else {
                 UIView.animate(withDuration: 0.2, animations: {
                     self.todayButton.alpha = 0
                 }, completion: { _ in
                     self.todayButton.isHidden = true
-                    self.todaySpacer.isHidden = true
                 })
             }
         }
