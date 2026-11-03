@@ -15,12 +15,13 @@ import Network
 // 动态色 token 见 BearyColors.swift（App 与 BearyCoreTests 双 target 共用，只依赖 UIKit）。
 
 /// 间距 token（视觉清单 Grok 项 1.1）：页面只引用 token，不再写散落数字。
-/// xs 组内间距 / sm 相关间距 / md 卡片内边距 / lg 页边距。
+/// xs 组内间距 / sm 相关间距 / md 卡片内边距 / lg 页边距 / xl 基础档（规格附录第 1 项已定：20 入档，与 24／32 并列；现有页面不逐页重排）。
 enum BearySpace {
     static let xs: CGFloat = 4
     static let sm: CGFloat = 8
     static let md: CGFloat = 12
     static let lg: CGFloat = 16
+    static let xl: CGFloat = 20
 }
 
 /// 圆角唯一档 BearyCorners 见 BearyColors.swift（#790 修红：本文件不在
