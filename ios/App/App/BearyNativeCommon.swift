@@ -237,6 +237,8 @@ final class BearyGlassButton: BearyHit44Button {
 }
 
 // MARK: - 44pt 热区（B 组：只扩触摸帧，视觉帧一律不动）
+// 口径（规格附录第 7 项已定）：默认优先扩到 44；排得很密的场景可例外不扩，
+// 但默认仍扩到 44。扩热区逻辑本身不动。
 // BearyHit44Button / BearyHit44SegmentedControl：point(inside:) 向外扩到至少 44x44，
 // 小于 44 的轴按 (44-边长)/2 向两侧扩，已达 44 的轴不扩；不改约束、不改图标、不改布局。
 // 先例：SceneDelegate 的 BearyHitExpandingButton（32 视觉扩 4pt 至 40）；本类是其通用版。
