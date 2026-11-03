@@ -4279,7 +4279,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // viewWillAppear 重起计时器时也不得再走关闭路径（否则失败后一次
         // 弹窗/切出返回就会把保留的输入连同编辑器一起关掉）。
         if editSaveBlockedAfterDeadline {
-            editTimerLabel.text = "编辑已结束"
+            editTimerLabel.text = "编辑时间已结束"
             updatePublishState()
             return
         }
@@ -4296,7 +4296,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // 不收弹出框；计时器先停，置位后保存钮由
                     // updatePublishState 持续禁用；结果到时成功走原
                     // onUpdated 关闭，失败走 performUpdate 的过期分支。
-                    self.editTimerLabel.text = "编辑已结束"
+                    self.editTimerLabel.text = "编辑时间已结束"
                     self.editTimer?.invalidate()
                     self.editTimer = nil
                     self.editSaveBlockedAfterDeadline = true
@@ -4310,14 +4310,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // editSaveBlockedAfterDeadline 分支）、保存钮持续禁用，15 分钟
                 // 规则本身不延长；用户可复制内容后手动关闭，关闭时本地临时图
                 // 仍按取消路径清理（见 didTapCancel 编辑分支）。
-                self.editTimerLabel.text = "编辑已结束"
+                self.editTimerLabel.text = "编辑时间已结束"
                 self.editTimer?.invalidate()
                 self.editTimer = nil
                 self.editSaveBlockedAfterDeadline = true
                 // B 修法：退场前先收起弹出框（无动画）。
                 self.hideCallout(animated: false)
                 self.updatePublishState()
-                self.showToast(message: "编辑已结束，内容已保留，可复制后关闭")
+                self.showToast(message: "编辑时间已结束，当前内容仍在，可复制后关闭")
                 return
             }
             self.editTimerLabel.text = "剩 \(remain / 60):\(String(format: "%02d", remain % 60))"
@@ -4640,7 +4640,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         container.addGestureRecognizer(tap)
         // 图片上传转圈改网页同款圆环（不再用下拉刷新那套 icon_refresh）。
         let spinner = BearyWebRingSpinnerView()
-        // 失败态：行内红底块（网页 thumb-fail 同款：红 10% 底 + 图标 + “失败，点我重试”），
+        // 失败态：行内红底块（网页 thumb-fail 同款：红 10% 底 + 图标 + “上传失败，点按重试”），
         // 点块重试，不弹全局框；发布时有失败图直接 toast 拦截（决议第 5 项 A），不弹框。
         let failView = UIView()
         failView.translatesAutoresizingMaskIntoConstraints = false
@@ -4659,7 +4659,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         failIcon.translatesAutoresizingMaskIntoConstraints = false
         let failLabel = UILabel()
         failLabel.translatesAutoresizingMaskIntoConstraints = false
-        failLabel.text = "失败，点我重试"
+        failLabel.text = "上传失败，点按重试"
         failLabel.font = UIFont.systemFont(ofSize: 10)
         failLabel.textColor = BearyColors.red
         failLabel.textAlignment = .center
@@ -6072,8 +6072,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         BearyHaptics.rejectionWarning()
                         BearySoundPlayer.play(.refuseBonk)
                         self.showToast(message: result.hadPreviousSavedVersion
-                            ? "草稿保存失败，本次修改没存上，旧版还在，再点一次保留并新建重试"
-                            : "草稿保存失败，这篇草稿还没存上，再点一次保留并新建重试")
+                            ? "草稿保存失败，当前内容仍保留在此页，上次保存的草稿未受影响，再点一次保留并新建重试"
+                            : "草稿保存失败，当前内容仍保留在此页，再点一次保留并新建重试")
                         return
                     }
                     self.resetEditorToBlank()
@@ -6490,7 +6490,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         // 发布在途时此前未冻结（见 refreshPublishingInputFreeze），
                         // 在途改动会使 toast 与实际发出态相反；现可见性已随冻结
                         // 禁用，此处仍以发送值为准，双保险。
-                        self.showToastAfterClose(message: (snapshot.visibility == "friends" ? "已发布 · 仅好友可见" : (publishVisibility == 1 ? "已发布 · 已公开" : "已发布 · 已设为私密")))
+                        self.showToastAfterClose(message: (snapshot.ephemeral == 1 ? "已发布 · 24 小时后转为私密" : (snapshot.visibility == "friends" ? "已发布 · 仅好友可见" : (publishVisibility == 1 ? "已发布 · 已公开" : "已发布 · 已设为私密"))))
                         BearyHaptics.publishSuccess()
                         BearySoundPlayer.play(.publishSuccess)
                         // B 修法：发布成功退场前先收起弹出框（无动画）。
@@ -6502,12 +6502,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     }
                 case .failure(let error):
                     // 失败一律保留草稿；离线/网络错误给明确文案。
-                    self.saveDraftNow()
-                    if case .unauthorized = error {
+                    // 网络分支：草稿兜底须按落盘成败分文案——此前无条件称“已保存为
+                    // 草稿”，落盘失败时即谎称；现接 saveDraftNow 的 DraftSaveResult，
+                    // 成功才称已保存，失败明示草稿也未保存、请保留内容后重试。
+                    // 非网络分支（未授权/通用）口径不动，仍沿用原 fire-and-forget 调用。
+                    if case .network = error {
+                        self.saveDraftNow { [weak self] result in
+                            guard let self = self else { return }
+                            if result.succeeded {
+                                self.showAlert(message: "网络不可用，已保存为草稿，联网后可重试")
+                            } else {
+                                self.showAlert(message: "发布失败，草稿也未保存，请保留当前内容后重试")
+                            }
+                        }
+                    } else if case .unauthorized = error {
+                        self.saveDraftNow()
                         self.onRequireLogin?()
-                    } else if case .network = error {
-                        self.showAlert(message: "网络不可用，已保存为草稿，联网后可重试")
                     } else {
+                        self.saveDraftNow()
                         self.showAlert(message: self.message(forPublishError: error))
                     }
                 }
@@ -6519,9 +6531,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if case .server(let code, _) = error {
             switch code {
             case "create_gap":
-                return "发得有点快，歇一下再写"
+                return "发布太频繁，请稍后再试"
             case "create_day_limit":
-                return "今天写够了，明天再继续吧"
+                return "今日发布次数已达上限，请明天再试"
             case "create_dup":
                 return "这篇和你写过的一篇一模一样"
             case "content too long":
@@ -7009,7 +7021,7 @@ private final class ComposerImageItem {
 // 5. 发布/保存无确认弹框（决议第 3 项 B）：点发布/保存直接发；有失败图时 toast 拦截不发（决议第 5 项 A）。
 // 6. 超 2000 字红字提示用 BearyColors.red（网页 --red #e5484d，浅深同值），字数圆环同步变红；
 //    图片 × 衬底用 BearyColors.scrim（固定深色半透明，深色下 ink 是近白、白字会看不清）；
-//    上传失败图为行内红底块（红 10% 底 + “失败，点我重试”），发布时有失败图 toast 拦截不发。
+//    上传失败图为行内红底块（红 10% 底 + “上传失败，点按重试”），发布时有失败图 toast 拦截不发。
 //    其余白字只出现在恒定橙底上（心情 chip 回退名）与墨底上（发布 pill），浅深皆可读。
 // 8. C1：段落顺序改为正文 → 已选 Chip 行 → 图片 → 状态行 → 引用 → 规则框；
 //    工具栏贴键盘上方，心情/天气/@ 为工具栏上方单行选择条（旧附加选项栏已删）；

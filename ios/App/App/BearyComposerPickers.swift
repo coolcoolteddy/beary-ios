@@ -714,7 +714,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             // 与搜索日记页“中央可见转中央”同规则；框里放大镜此时静态）。
             stateIcon.image = BearyIconImages.image(named: "icon_at", pointSize: 25)
             stateTitle.text = "正在找"
-            stateSubtitle.text = "马上就来"
+            stateSubtitle.text = "正在搜索…"
         } else if kind == "none" {
             stateIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 25)
             stateTitle.text = "没有找到「" + query + "」"
