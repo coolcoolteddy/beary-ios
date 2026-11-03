@@ -57,8 +57,9 @@ func bearyMakeWordprintScopeBadge(scope: BearyWordprintScope) -> UIView {
     row.axis = .horizontal
     row.spacing = 4
     row.alignment = .center
-    if scope == .other, let badgeImage = UIImage(named: "icon_public_only") {
+    if scope == .other, let badgeImage = BearyIconImages.image(named: "icon_public_only", pointSize: 14) {
         let badgeView = UIImageView(image: badgeImage)
+        badgeView.tintColor = BearyColors.blue
         badgeView.translatesAutoresizingMaskIntoConstraints = false
         badgeView.contentMode = .scaleAspectFit
         NSLayoutConstraint.activate([

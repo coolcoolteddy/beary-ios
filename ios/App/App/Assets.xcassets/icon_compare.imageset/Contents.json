@@ -3,21 +3,25 @@
     {
       "idiom": "universal",
       "filename": "compare.png",
+      "template-rendering-intent": "template",
       "scale": "1x"
     },
     {
       "idiom": "universal",
       "filename": "compare@2x.png",
+      "template-rendering-intent": "template",
       "scale": "2x"
     },
     {
       "idiom": "universal",
       "filename": "compare@3x.png",
+      "template-rendering-intent": "template",
       "scale": "3x"
     },
     {
       "idiom": "universal",
       "filename": "compare-dark.png",
+      "template-rendering-intent": "template",
       "scale": "1x",
       "appearances": [
         {
@@ -29,6 +33,7 @@
     {
       "idiom": "universal",
       "filename": "compare-dark@2x.png",
+      "template-rendering-intent": "template",
       "scale": "2x",
       "appearances": [
         {
@@ -40,6 +45,7 @@
     {
       "idiom": "universal",
       "filename": "compare-dark@3x.png",
+      "template-rendering-intent": "template",
       "scale": "3x",
       "appearances": [
         {
