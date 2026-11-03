@@ -2606,13 +2606,12 @@ extension Notification.Name {
     static let bearyFeedFirstScreenDone = Notification.Name("bearyFeedFirstScreenDone")
 }
 
-/// 举报理由：上报值复用服务端 reasons 枚举原值（worker.js REASONS 逐字校验，
-/// 改发中文会 400）；界面展示另走 displayTitle：spam 只在界面上显示为“垃圾广告”。
+/// 举报理由：复用封禁五类（服务端 reasons 枚举同款文案）。
+/// 显示与上报同值：all 既作选择 sheet 的标题、也原样发给服务端（见
+/// BearyReportFlow.present）；“垃圾广告”即上报值，后端 REASONS 须
+/// 同时接受该中文值与旧值 "spam"（防旧包断线，见后端部署记录）。
 enum BearyReportReason {
-    static let all = ["违规内容", "刷量", "人身攻击", "spam", "其他"]
-    static func displayTitle(for reason: String) -> String {
-        reason == "spam" ? "垃圾广告" : reason
-    }
+    static let all = ["违规内容", "刷量", "人身攻击", "垃圾广告", "其他"]
 }
 
 /// 弹窗 present 统一守卫（审计 2026-11-02 弹窗组）：present 前须同时满足
@@ -2689,7 +2688,7 @@ enum BearyReportFlow {
         let title = entryLabel == nil ? "举报这篇日记？" : "举报\(entryLabel!)？"
         let sheet = UIAlertController(title: title, message: "举报后这篇日记将从你的信息流消失，不可撤销。", preferredStyle: .actionSheet)
         for reason in BearyReportReason.all {
-            sheet.addAction(UIAlertAction(title: BearyReportReason.displayTitle(for: reason), style: .default) { _ in
+            sheet.addAction(UIAlertAction(title: reason, style: .default) { _ in
                 let busy = BearyFlowBusy.show(in: vc.view)
                 BearyAPI.shared.reportEntry(entryId: entryId, reason: reason) { result in
                     DispatchQueue.main.async {
