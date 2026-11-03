@@ -6121,6 +6121,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     guard result.succeeded else {
                         BearyHaptics.rejectionWarning()
                         BearySoundPlayer.play(.refuseBonk)
+                        if !UIAccessibility.isReduceMotionEnabled {
+                            self.cancelButton.layer.removeAnimation(forKey: "bearyDenyShake")
+                            let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+                            shake.values = [0, -8, 8, -5, 5, 0]
+                            shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+                            shake.duration = 0.4
+                            self.cancelButton.layer.add(shake, forKey: "bearyDenyShake")
+                        }
                         self.showToast(message: result.hadPreviousSavedVersion
                             ? "草稿保存失败，当前内容仍保留在此页，上次保存的草稿未受影响，再点一次保留并新建重试"
                             : "草稿保存失败，当前内容仍保留在此页，再点一次保留并新建重试")
@@ -6548,6 +6556,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         self.onPublished?(entryId)
                     } else {
                         self.saveDraftNow()
+                        BearyHaptics.rejectionWarning()
+                        if !self.publishButton.isHidden, !UIAccessibility.isReduceMotionEnabled {
+                            self.publishButton.layer.removeAnimation(forKey: "bearyDenyShake")
+                            let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+                            shake.values = [0, -8, 8, -5, 5, 0]
+                            shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+                            shake.duration = 0.4
+                            self.publishButton.layer.add(shake, forKey: "bearyDenyShake")
+                        }
                         self.showAlert(message: "发布失败，请重试")
                     }
                 case .failure(let error):
@@ -6570,6 +6587,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         self.onRequireLogin?()
                     } else {
                         self.saveDraftNow()
+                        BearyHaptics.rejectionWarning()
+                        if !self.publishButton.isHidden, !UIAccessibility.isReduceMotionEnabled {
+                            self.publishButton.layer.removeAnimation(forKey: "bearyDenyShake")
+                            let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+                            shake.values = [0, -8, 8, -5, 5, 0]
+                            shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+                            shake.duration = 0.4
+                            self.publishButton.layer.add(shake, forKey: "bearyDenyShake")
+                        }
                         self.showAlert(message: self.message(forPublishError: error))
                     }
                 }

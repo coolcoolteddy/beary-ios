@@ -4716,6 +4716,8 @@ class BearyProfileViewController: UIViewController {
             return
         }
         guard let message = store.add(originEntryId: mainId, body: text, createdAtMs: pastSelfNowMs(), calendar: .current) else {
+            BearyHaptics.rejectionWarning()
+            pastSelfDenyShake(pastSelfComposeSubmitButton)
             // 审计登录杂项：等待中超限时拒绝新留话并行内提示（不关编辑器、不清草稿，
             // 用户撤回一句或等送达后可再写）；其余拒绝（该链已有等待中）沿用旧文案。
             if store.lastRejection == .waitingCapped {
@@ -5016,6 +5018,8 @@ class BearyProfileViewController: UIViewController {
             return
         }
         guard let message = store.add(originEntryId: chainId, body: text, createdAtMs: pastSelfNowMs(), calendar: .current) else {
+            BearyHaptics.rejectionWarning()
+            pastSelfDenyShake(sender)
             // 审计登录杂项：同上，等待中超限时只提示、不清回复态与草稿。
             if store.lastRejection == .waitingCapped {
                 BearyToast.show(in: view, message: "留话已满 200 条，等待中的留话不能丢，撤回一句或等送达后再写")
