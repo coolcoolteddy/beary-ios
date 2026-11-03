@@ -4634,8 +4634,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// astral 表情占 1 簇、2 码元，表情多的正文会在客户端放行、服务端
     /// 400 content too long。故落字数直接取已落字串的 utf16.count；
     /// 纯中英文下与原值完全一致，圆环进度与超长红环口径随之对齐服务端。
+    /// 与提交检查同口径：提交用去首尾空白后的 trimmedContent() 计长，
+    /// 故计数器也取 trim 后的长度——旧口径用未 trim 长度，首尾空白会让
+    /// 圆环读数与提交判定读数不同（如正文 1999 字加一串尾空格，圆环
+    /// 已超红、提交却不判超限）；纯空白正文计 0，与提交“先写点什么”
+    /// 的空判定一致。标题仍按码点计，两处单位不同是各自口径，不统一。
     private func committedTextCount() -> Int {
-        return committedContent().utf16.count
+        return trimmedContent().utf16.count
     }
 
     /// 字数：圆环进度（数字已隐藏，只留圆环）；空时圆环隐藏，超字红环。
