@@ -963,18 +963,9 @@ final class BearyTimelineCell: UITableViewCell {
     private var dotSizeConstraint: NSLayoutConstraint?
     private var dotRingSizeConstraint: NSLayoutConstraint?
     private var dotTopConstraint: NSLayoutConstraint?
-    // TL-3 引用卡与私密操作行。
-    private let quoteButton = UIButton(type: .custom)
-    // B-G1: left 3px line (web .tl-qcard border-left; full border removed).
-    private let quoteLeftLineView = UIView()
-    private let quoteIconView = UIImageView()
-    private let quoteTitleLabel = UILabel()
-    private let quoteBodyLabel = UILabel()
-    private let quoteThumbsStack = UIStackView()
-    // 6A：引用缩略图横向滚动容器（主图条 thumbsScrollView 同款口径）；
-    // 原先 stack 直接进 quoteStack、无滚动，多图溢出卡宽后滑不动。
-    private let quoteThumbsScrollView = UIScrollView()
-    private var quoteThumbImageViews: [UIImageView] = []
+    // TL-3 引用卡与私密操作行：C4 起复用公共 BearyQuoteCardView，
+    // 自绘卡（标题 11.5 不缩放、正文限 2 行、每 configure 新建缩略图视图）已删。
+    private let quoteCard = BearyQuoteCardView()
     private var currentEntry: Entry?
     var onEditEntry: ((Entry) -> Void)?
     var onDeleteEntry: ((Entry) -> Void)?
@@ -1120,77 +1111,10 @@ final class BearyTimelineCell: UITableViewCell {
         dotView.translatesAutoresizingMaskIntoConstraints = false
         dotView.layer.masksToBounds = true
 
-        quoteButton.translatesAutoresizingMaskIntoConstraints = false
-        // 2026-10-29 B 方案：引用卡底色同步回 #183 之前的值（faint）；
-        // v3 引用卡值（浅 #f2f2f7／深 #1c1c1e）距 faint（浅 #f5f5f5／深 #141414）仅 Δ≤10，
-        // faint 即最接近的既有 token，故沿用，不另起精确值。
-        quoteButton.backgroundColor = BearyColors.faint
-        // B-G1: web .tl-qcard has no full border, only left 3px line + radius 8.
-        quoteButton.layer.borderWidth = 0
-        quoteButton.layer.cornerRadius = 8
-        quoteButton.layer.masksToBounds = true
-        quoteLeftLineView.translatesAutoresizingMaskIntoConstraints = false
-        quoteLeftLineView.backgroundColor = BearyColors.line
-        quoteButton.contentHorizontalAlignment = .left
-        quoteButton.addTarget(self, action: #selector(quoteTapped), for: .touchUpInside)
-        quoteButton.bearyAddPressFeedback()
-        quoteIconView.translatesAutoresizingMaskIntoConstraints = false
-        quoteIconView.tintColor = BearyColors.gray
-        quoteTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        // 8-3 例外：引用标题 11.5 属装饰性小字（同 pill 11.5 口径），不缩放。
-        quoteTitleLabel.font = UIFont.systemFont(ofSize: 11.5)
-        quoteTitleLabel.textColor = BearyColors.gray
-        quoteBodyLabel.translatesAutoresizingMaskIntoConstraints = false
-        // B-G1: web .tl-qt 13.5/1.6, clamped to 2 lines.
-        // 8-3：引用正文（正文类）走 scaledFont（富文本侧见 configure 内同款）。
-        quoteBodyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5))
-        quoteBodyLabel.adjustsFontForContentSizeCategory = true
-        quoteBodyLabel.textColor = BearyColors.ink
-        quoteBodyLabel.numberOfLines = 2
-        quoteBodyLabel.lineBreakMode = .byTruncatingTail
-        let quoteTitleRow = UIStackView(arrangedSubviews: [quoteIconView, quoteTitleLabel])
-        quoteTitleRow.translatesAutoresizingMaskIntoConstraints = false
-        quoteTitleRow.axis = .horizontal
-        quoteTitleRow.spacing = 5
-        quoteTitleRow.alignment = .center
-        // F2：引用缩略图行（网页 tl-qcard 内 .quote-thumbs 口径）：无图时隐藏不占位。
-        // 6A：stack 包进横向滚动条（主图条同款：四边钉 scroll、间距 5、42px 图不变）；
-        // 显隐改由 scroll 承担，stack 本身不再藏（藏了 scroll 后 stack 藏不藏都不显示）。
-        quoteThumbsStack.translatesAutoresizingMaskIntoConstraints = false
-        quoteThumbsStack.axis = .horizontal
-        quoteThumbsStack.spacing = 5
-        quoteThumbsScrollView.translatesAutoresizingMaskIntoConstraints = false
-        quoteThumbsScrollView.showsHorizontalScrollIndicator = false
-        quoteThumbsScrollView.delaysContentTouches = false
-        quoteThumbsScrollView.isHidden = true
-        quoteThumbsScrollView.addSubview(quoteThumbsStack)
-        NSLayoutConstraint.activate([
-            quoteThumbsStack.topAnchor.constraint(equalTo: quoteThumbsScrollView.topAnchor),
-            quoteThumbsStack.leadingAnchor.constraint(equalTo: quoteThumbsScrollView.leadingAnchor),
-            quoteThumbsStack.trailingAnchor.constraint(equalTo: quoteThumbsScrollView.trailingAnchor),
-            quoteThumbsStack.bottomAnchor.constraint(equalTo: quoteThumbsScrollView.bottomAnchor),
-            quoteThumbsScrollView.heightAnchor.constraint(equalToConstant: 42),
-        ])
-        let quoteStack = UIStackView(arrangedSubviews: [quoteTitleRow, quoteBodyLabel, quoteThumbsScrollView])
-        quoteStack.translatesAutoresizingMaskIntoConstraints = false
-        quoteStack.axis = .vertical
-        quoteStack.spacing = 4
-        quoteButton.addSubview(quoteStack)
-        NSLayoutConstraint.activate([
-            quoteIconView.widthAnchor.constraint(equalToConstant: 12),
-            quoteIconView.heightAnchor.constraint(equalToConstant: 12),
-            quoteStack.topAnchor.constraint(equalTo: quoteButton.topAnchor, constant: 9),
-            quoteStack.leadingAnchor.constraint(equalTo: quoteButton.leadingAnchor, constant: 12),
-            quoteStack.trailingAnchor.constraint(equalTo: quoteButton.trailingAnchor, constant: -12),
-            quoteStack.bottomAnchor.constraint(equalTo: quoteButton.bottomAnchor, constant: -9),
-        ])
-        quoteButton.addSubview(quoteLeftLineView)
-        NSLayoutConstraint.activate([
-            quoteLeftLineView.leadingAnchor.constraint(equalTo: quoteButton.leadingAnchor),
-            quoteLeftLineView.topAnchor.constraint(equalTo: quoteButton.topAnchor),
-            quoteLeftLineView.bottomAnchor.constraint(equalTo: quoteButton.bottomAnchor),
-            quoteLeftLineView.widthAnchor.constraint(equalToConstant: 3),
-        ])
+        quoteCard.translatesAutoresizingMaskIntoConstraints = false
+        // 点按走共享卡 onTapped（卡片手势 + 来源行按钮同一路）；gone/locked
+        // 不导航的守卫仍在 quoteTapped 内，不凭渲染快照放行。
+        quoteCard.onTapped = { [weak self] in self?.quoteTapped() }
 
         // 8-3：私密操作行状态文案（正文类）走 scaledFont + adjusts。
         editStatusLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
@@ -1236,14 +1160,14 @@ final class BearyTimelineCell: UITableViewCell {
         // 批 E 补漏：位置行落点 = 引用卡 → 位置行 → 足行（操作行一带），与卡片
         // “图片条之后、操作行之前”同序；图片条后的动态间距（configure 内按有图
         // 9 / 无图 0）现为图片条→位置行间距，位置行隐藏时栈自动塌掉不留空行。
-        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleLabel, contentLabel, quoteButton, thumbsScrollView, timelineLocationStack, footStack, actsStack])
+        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleLabel, contentLabel, quoteCard, thumbsScrollView, timelineLocationStack, footStack, actsStack])
         cardStack.translatesAutoresizingMaskIntoConstraints = false
         cardStack.axis = .vertical
         cardStack.spacing = 0
         cardStack.setCustomSpacing(6, after: metaStack)
         cardStack.setCustomSpacing(4, after: titleLabel)
         cardStack.setCustomSpacing(9, after: contentLabel)
-        cardStack.setCustomSpacing(10, after: quoteButton)
+        cardStack.setCustomSpacing(10, after: quoteCard)
         cardStack.setCustomSpacing(9, after: thumbsScrollView)
         cardStack.setCustomSpacing(9, after: timelineLocationStack)
         cardStack.setCustomSpacing(9, after: footStack)
@@ -1480,10 +1404,9 @@ final class BearyTimelineCell: UITableViewCell {
         // 分割线是静态约束 + 动态线色，无需复位。
         cardView.backgroundColor = BearyColors.bg
         cardView.layer.borderWidth = 0
-        quoteButton.isHidden = true
+        quoteCard.clear()
+        quoteCard.isHidden = true
         pillIconView.image = nil
-        quoteBodyLabel.isHidden = false
-        clearQuoteThumbs()
         actsStack.isHidden = true
         for imageView in thumbImageViews {
             imageView.bearySetImage(url: nil)
@@ -1535,45 +1458,9 @@ final class BearyTimelineCell: UITableViewCell {
         return 280
     }
 
-    /// 引用规则简化来源行（时间线自绘引用块版）：标题行即来源行。
-    /// 有 handle 时“引用自 @handle · 日期”（日期走本块现行 timelineQuoteDateFormatter 口径）；
-    /// 仅日期时沿用旧“引用 · 日期”格式；皆无时返回 nil（调用方回退到占位主句/“引用”）。
-    private func timelineSourceTitle(handle: String?, dateMs: Int?) -> String? {
-        let handleText = (handle ?? "").isEmpty ? nil : handle!
-        let dateText = (dateMs ?? 0) > 0 ? Self.timelineQuoteDateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(dateMs!) / 1000.0)) : nil
-        if let handleText = handleText, let dateText = dateText {
-            return "引用自 @\(handleText) · \(dateText)"
-        }
-        if let handleText = handleText {
-            return "引用自 @\(handleText)"
-        }
-        if let dateText = dateText {
-            return "引用 · \(dateText)的日记"
-        }
-        return nil
-    }
-
-    /// 时间线占位：标题行改写为来源行（deleted 时固定“引用自已删除的日记”；
-    /// handle/日期皆无时标题仍为主句），正文行改写为占位主句（＋提醒句第二行，灰字；
-    /// 正文行限 2 行，主句＋提醒句恰好 2 行）。占位按钮本就禁用，来源行只展示、不点按。
-    private func applyTimelinePlaceholder(main: String, detail: String?, deleted: Bool, handle: String?, dateMs: Int?) {
-        if deleted {
-            quoteTitleLabel.text = "引用自已删除的日记"
-        } else if let source = timelineSourceTitle(handle: handle, dateMs: dateMs) {
-            quoteTitleLabel.text = source
-        } else {
-            quoteTitleLabel.text = main
-        }
-        var body = main
-        if let detail = detail {
-            body += "\n" + detail
-        }
-        quoteBodyLabel.attributedText = NSAttributedString(string: body, attributes: [
-            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5)),
-            .foregroundColor: BearyColors.gray,
-        ])
-        quoteBodyLabel.isHidden = false
-    }
+    /// C4：时间线引用占位/来源行已并入公共 BearyQuoteCardView（showGone /
+    /// configure 来源行）；自绘 timelineSourceTitle / applyTimelinePlaceholder
+    /// 一并删除，不再另维护一套。
 
     func configure(entry: Entry) {
         stopWeatherLottie()
@@ -1729,101 +1616,65 @@ final class BearyTimelineCell: UITableViewCell {
         titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
         titleLabel.isHidden = trimmedTitle.isEmpty
         contentLabel.attributedText = BearyText.inlineAttributedText(from: body, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark)
-        // TL-3 引用卡（网页 tlQuoteHtml 口径）：引用日记在时间线里必须有痕迹，
-        // 卡内附 42px 引用缩略图行（见下方 F2 分支），无图不占位。
+        // TL-3 引用卡（C4 起复用公共 BearyQuoteCardView，不再自绘）：
+        // 引用日记在时间线里必须有痕迹，卡内附 42px 引用缩略图行，无图不占位。
         // B-G2 (privacy, server fields first): Quote.gone/locked ARE decoded
         // (BearyAPI.swift); read them before any heuristic - gone -> deleted state,
         // locked -> locked state, neither leaks body/images, neither is tappable.
         // Missing fields fall back to the old heuristic. A visibility gate also applies:
         // a non-public quote on someone else's entry never shows body, even if the
         // server passed body through (fail-closed, see below).
-        // quoteId 有而 quote 体缺失 → 已删除；quote 体无正文且未公开 → 未公开占位。
-        // 引用规则简化来源行：标题行即来源行（正常态“引用自 @handle · 日期”；
-        // 占位态标题为来源行、正文为占位主句＋提醒句；占位按钮禁用，只展示不点按）。
-        // 引用缩略图见下方 F2 分支（仅有正文的公开/自己的引用才配图）。
-        quoteButton.isHidden = true
-        quoteBodyLabel.isHidden = false
-        clearQuoteThumbs()
-        quoteButton.isEnabled = true
+        // 判定顺序与旧自绘卡一字不动，只把渲染交给公共卡：占位一律 showGone
+        // （点按由公共卡 isGoneState 拦住，allowGoneTap 保持 false，与旧禁用按钮
+        // 等价）；正常态走 configure（来源行 12、正文 13.5 限 3 行可展开、图标 15、
+        // 缩略图池化，均为公共卡口径）。占位文案一字不动。
+        quoteCard.clear()
+        quoteCard.isHidden = true
         if entry.quote == nil, entry.quoteId != nil {
-            applyTimelinePlaceholder(main: "引用的日记已删除", detail: nil, deleted: true, handle: nil, dateMs: nil)
-            quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
-            quoteButton.isEnabled = false
-            quoteButton.isHidden = false
+            quoteCard.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
+            quoteCard.isHidden = false
         } else if let quote = entry.quote {
             // B-G2 decision order (web tlQuoteHtml order: gone -> locked -> visibility):
             // non-empty server fields win; missing fields fall back to old heuristic.
             let quoteBody = (quote.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if quote.gone == true {
-                applyTimelinePlaceholder(main: "引用的日记已删除", detail: nil, deleted: true, handle: nil, dateMs: nil)
-                quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
-                quoteButton.isEnabled = false
-                quoteButton.isHidden = false
+                quoteCard.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
+                quoteCard.isHidden = false
             } else if quote.locked == true {
                 let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: true, visibility: quote.visibility)
-                applyTimelinePlaceholder(main: placeholder.main, detail: placeholder.detail, deleted: false, handle: quote.authorHandle, dateMs: quote.createdAt)
-                quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
-                quoteButton.isEnabled = false
-                quoteButton.isHidden = false
+                quoteCard.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
+                quoteCard.isHidden = false
             } else if quoteBody.isEmpty {
                 if quote.isPublic == true {
-                    applyTimelinePlaceholder(main: "引用的日记已删除", detail: nil, deleted: true, handle: nil, dateMs: nil)
-                    quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
+                    quoteCard.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
                 } else {
                     let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
-                    applyTimelinePlaceholder(main: placeholder.main, detail: placeholder.detail, deleted: false, handle: quote.authorHandle, dateMs: quote.createdAt)
-                    quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
+                    quoteCard.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
                 }
-                quoteButton.isEnabled = false
-                quoteButton.isHidden = false
+                quoteCard.isHidden = false
             } else if quote.isPublic != true && !(quote.isMine == true || (quote.authorId != nil && quote.authorId == SessionManager.shared.currentUser?.id)) {
                 // iCity viewer 实时判定：被引篇非公开且 viewer 不是被引作者时，
                 // 即使服务端透传了正文也以占位替代，绝不泄漏正文与图片
                 //（旧口径以宿主是否本人为代理，已作废；Quote 现有 authorId/isMine 字段）。
                 // 10a：仅好友来源走定版句（其余仍回落私密/未公开档，见 placeholderTextForQuote）。
                 let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
-                applyTimelinePlaceholder(main: placeholder.main, detail: placeholder.detail, deleted: false, handle: quote.authorHandle, dateMs: quote.createdAt)
-                quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
-                quoteButton.isEnabled = false
-                quoteButton.isHidden = false
+                quoteCard.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
+                quoteCard.isHidden = false
             } else {
-                // G8：引用日期走北京时区（静态 formatter 同口径）；来源行口径：
-                // 有 handle 时“引用自 @handle · 日期”，无 handle 时沿用旧格式，不编造。
-                quoteTitleLabel.text = timelineSourceTitle(handle: quote.authorHandle, dateMs: quote.createdAt) ?? "引用"
-                // B-G1: web .tl-qt 13.5/1.6, clamped to 2 lines (count set in init).
-                let quoteParagraph = NSMutableParagraphStyle()
-                quoteParagraph.lineHeightMultiple = 1.6
-                quoteParagraph.lineBreakMode = .byTruncatingTail
-                quoteBodyLabel.attributedText = NSAttributedString(string: quoteBody, attributes: [
-                    .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5)),
-                    .foregroundColor: BearyColors.ink,
-                    .paragraphStyle: quoteParagraph,
-                ])
-                quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
-                // F2：引用卡内补一行 42px 小缩略图（网页 tl-qcard 内 .quote-thumbs 口径）；
-                // 仅公开引用或 viewer 是被引作者时才配图，无图不占位。
-                if quote.isPublic == true || quote.isMine == true || (quote.authorId != nil && quote.authorId == SessionManager.shared.currentUser?.id) {
-                    let quoteKeys = (quote.images ?? []).filter { !$0.isEmpty }
-                    for key in quoteKeys {
-                        let imageView = UIImageView()
-                        imageView.translatesAutoresizingMaskIntoConstraints = false
-                        imageView.contentMode = .scaleAspectFill
-                        imageView.clipsToBounds = true
-                        imageView.layer.cornerRadius = 8
-                        imageView.backgroundColor = BearyColors.faint
-                        quoteThumbsStack.addArrangedSubview(imageView)
-                        NSLayoutConstraint.activate([
-                            imageView.widthAnchor.constraint(equalToConstant: 42),
-                            imageView.heightAnchor.constraint(equalToConstant: 42),
-                        ])
-                        quoteThumbImageViews.append(imageView)
-                        if let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                            imageView.bearySetImage(url: url, downsampleToWidth: 42 * UIScreen.main.scale)
-                        }
-                    }
-                    quoteThumbsScrollView.isHidden = quoteKeys.isEmpty
-                }
-                quoteButton.isHidden = false
+                // 正常态：缩略图门控与旧自绘卡 F2 一致——仅公开引用或 viewer
+                // 是被引作者时出图（allowThumbs），无图不占位；池化由公共卡内做。
+                quoteCard.configure(
+                    authorName: quote.authorName ?? "",
+                    authorAvatar: quote.authorAvatar,
+                    content: quoteBody,
+                    images: quote.images ?? [],
+                    dims: quote.imgDims,
+                    createdAt: quote.createdAt,
+                    allowThumbs: quote.isPublic == true || quote.isMine == true || (quote.authorId != nil && quote.authorId == SessionManager.shared.currentUser?.id),
+                    authorHandle: quote.authorHandle,
+                    sourceTappable: true
+                )
+                quoteCard.isHidden = false
             }
         }
         let imageKeys = (entry.images ?? []).filter { !$0.isEmpty }
@@ -2104,15 +1955,6 @@ final class BearyTimelineCell: UITableViewCell {
         moreButton.layer.add(shake, forKey: "bearyDenyShake")
     }
 
-    /// F2 引用缩略图清理（复用与重配时先清，避免旧图残留）。
-    private func clearQuoteThumbs() {
-        for imageView in quoteThumbImageViews {
-            imageView.bearySetImage(url: nil)
-            imageView.removeFromSuperview()
-        }
-        quoteThumbImageViews = []
-        quoteThumbsScrollView.isHidden = true
-    }
 
     /// TL-2/TL-3 的 1 秒 tick 入口：只改本行编辑倒计时文案，不重建行
     ///（pill 现为静态两态，公开/私密行都跑编辑倒计时）。
@@ -2139,14 +1981,6 @@ final class BearyTimelineCell: UITableViewCell {
         f.locale = Locale(identifier: "zh_CN")
         f.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
         f.dateFormat = "HH:mm"
-        return f
-    }()
-    // 补缺 P3-29：引用日期全站统一 F3 口径 M月d日 H:mm（卡片/详情引用卡已用该口径；原 M 月 d 日无时间且带空格）。
-    private static let timelineQuoteDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        f.dateFormat = "M月d日 H:mm"
         return f
     }()
 
