@@ -6770,6 +6770,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             BearyHaptics.likeTap()
             BearySoundPlayer.play(.likePop)
         } else {
+            // 取消点赞与点赞对称：控制器确认时补一次 likeTap。
+            // 个人页 cell 的 likePressDown 仅 prepare、不震动，故此处恒补也不双震。
+            BearyHaptics.likeTap()
             BearySoundPlayer.play(.unlikeSoft)
         }
         let seq = (likeSeqById[entryId] ?? 0) + 1

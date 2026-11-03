@@ -2440,6 +2440,11 @@ final class BearyDetailViewController: UIViewController {
             }
             BearySoundPlayer.play(.likePop)
         } else {
+            // 取消点赞按点赞同款守卫：touchDown 已给 press 轻震时不再补，
+            // 直达抬起（无 touchDown）时补一次；每点按只震一次，不双震。
+            if !hadPressPreview {
+                BearyHaptics.likeTap()
+            }
             BearySoundPlayer.play(.unlikeSoft)
         }
         entry.likedByMe = targetLiked
