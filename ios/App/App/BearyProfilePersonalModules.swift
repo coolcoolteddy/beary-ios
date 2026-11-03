@@ -855,7 +855,7 @@ final class BearyYearReviewViewController: UIViewController {
         footnote.numberOfLines = 0
         footnote.font = UIFont.systemFont(ofSize: 12)
         footnote.textColor = BearyColors.gray
-        footnote.text = "词汇指纹只按当年正文统计，不展示正文。完整年度报告年底另做。"
+        footnote.text = "词汇指纹只按当年正文统计，不展示正文。完整年度报告年底再做。"
         return footnote
     }
 
