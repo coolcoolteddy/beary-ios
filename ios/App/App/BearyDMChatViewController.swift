@@ -350,12 +350,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             topLine.trailingAnchor.constraint(equalTo: inputBar.trailingAnchor),
             topLine.heightAnchor.constraint(equalToConstant: 1),
             inputTextView.topAnchor.constraint(equalTo: inputBar.topAnchor, constant: 9),
-            inputTextView.leadingAnchor.constraint(equalTo: inputBar.leadingAnchor, constant: 16),
+            // 横向安全区：竖屏 safeArea 左右为 0、与原 16 内距一致；横屏时输入框不再贴圆角/刘海边缘。
+            // inputBar 本身仍铺满宽度（背景与顶线不变），只让框与发送钮的横向边界让出安全区。
+            inputTextView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             inputTextView.bottomAnchor.constraint(equalTo: inputBar.bottomAnchor, constant: -9),
             // 输入框高度走 inputTextViewHeightConstraint（空态一行、上限五行，见 updateInputTextViewHeight）；
             // 旧的 36~160 区间约束不给确定高度，空态会被布局落到高处，故不再保留。
             sendButton.leadingAnchor.constraint(equalTo: inputTextView.trailingAnchor, constant: 8),
-            sendButton.trailingAnchor.constraint(equalTo: inputBar.trailingAnchor, constant: -16),
+            sendButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
             sendButton.bottomAnchor.constraint(equalTo: inputBar.bottomAnchor, constant: -9),
             // V6：发送钮改最小高度 32——常规字号视觉仍 32，大字号下字高超 32 时钮随内容长高不截字。
             sendButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
