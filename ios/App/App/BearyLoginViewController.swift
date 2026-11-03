@@ -11,6 +11,11 @@ import UIKit
 //     文案被读到（审计 2026-11-02 登录杂项）。
 //   - onCancelled：用户点关闭钮；容器负责 dismiss。
 //   - onGuestMode：用户点“先逛逛（游客模式）”；容器负责 dismiss 并进入游客态。
+// 容器侧待续写意图（SceneDelegate.pendingComposerAfterLogin）：写作入口在未登录
+// 时弹本页前记下意图，本页成功（onLoggedIn）后容器在 dismiss + refreshMe
+// 确认登录后自动开编辑器；取消（onCancelled，含关闭钮／遮罩点按／抓手拖动
+// 的 cancelFromSheet）与游客模式（onGuestMode）均清除意图。本页不感知该标记，
+// 只按原样交回三个回调，不自己 dismiss、不改登录逻辑。
 // 页面元素（对照网页版登录框 beary.html 的 lgm 系列）：邮箱输入 + 获取验证码 +
 // 6 位验证码输入 + 邀请码输入（选填）+ 隐私协议复选框 + 登录钮 + 游客钮 + 关闭钮。
 // 文案与尺寸：wordmark 为 LogoHorizontal 官方资产（高 28，全屏页左对齐、Sheet 弹窗居中）、
