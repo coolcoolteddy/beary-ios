@@ -1322,7 +1322,7 @@ class BearyProfileViewController: UIViewController {
         stackValue.isHidden = true
         return stackValue
     }()
-    private let pastSelfComposeView = PastSelfComposeView(placeholder: "写给一年前的自己，不经过 AI，全是你自己的话…")
+    private let pastSelfComposeView = PastSelfComposeView(placeholder: "写给一年前的自己，不使用 AI…")
     private let pastSelfComposeHintLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
@@ -3990,8 +3990,17 @@ class BearyProfileViewController: UIViewController {
                 case .success(let fetched):
                     // onOpenEntry 内部按 id 重拉并做可见性门；这里传回包的完整 Entry。
                     strongSelf.onOpenEntry?(fetched)
-                case .failure:
-                    BearyToast.show(in: strongSelf.view, message: "这篇日记不存在或已被删除")
+                case .failure(let error):
+                    // 404 = 被删；403 = 私密篇不可见——两者都不展开原因，仍走原句，
+                    // 不向他人泄露“存在但私密”。取消不弹 toast；其余加载失败可重试。
+                    if case .cancelled = error { return }
+                    if case .notFound = error {
+                        BearyToast.show(in: strongSelf.view, message: "这篇日记不存在或已被删除")
+                    } else if error.isPermissionDenied {
+                        BearyToast.show(in: strongSelf.view, message: "这篇日记不存在或已被删除")
+                    } else {
+                        BearyToast.show(in: strongSelf.view, message: "加载失败，请再试一次，可再次点脚印进入")
+                    }
                 }
             }
         }
@@ -4664,7 +4673,7 @@ class BearyProfileViewController: UIViewController {
             if pastSelfComposingThisDay {
                 pastSelfComposeSection.isHidden = false
                 pastSelfComposeView.text = pastSelfThisDayDraft
-                pastSelfComposeHintLabel.text = "将于明年同一天（\(pastSelfDisplayDate(pastSelfThisDayDeliverOn))）与这篇原篇并排推送给你。未到那天前仅你可见。"
+                pastSelfComposeHintLabel.text = "明年同一天（\(pastSelfDisplayDate(pastSelfThisDayDeliverOn))）会和这篇日记一起送达。在此之前仅你可见。"
             } else {
                 pastSelfEntryRow.isHidden = false
             }
@@ -4889,7 +4898,7 @@ class BearyProfileViewController: UIViewController {
             deletedRow.addArrangedSubview(deletedLabel)
             section.addArrangedSubview(deletedRow)
             let deletedNote = pastSelfMetaLabel()
-            deletedNote.text = "对话记录已一并隐藏，不残留正文；原篇从回收站恢复后，对话会再次出现。"
+            deletedNote.text = "对话已隐藏，隐藏期间不展示正文。恢复日记后，对话会再次出现。"
             section.addArrangedSubview(deletedNote)
             return section
         }
