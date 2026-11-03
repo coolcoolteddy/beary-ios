@@ -343,7 +343,13 @@ final class BearySettingsViewController: UIViewController {
     /// 设置页只缓存数据（accountSessions 既有）与失败态、不再内联展开；
     /// sessionsStack 已随之删除。退出其他设备钮仍留在设置页。
     private var sessionsLoadFailed = false
-    private let logoutOthersButton = UIButton(type: .system)
+    // 设置“退出其他设备”热区：普通 UIButton 高钉死 36、无 Hit44，
+    // 上下各缺 4pt 可点区。改 BearyHit44Button——视觉高仍钉死 36、
+    // 圆角 12、13/600 红字红边（45%）与文案/目标/按压反馈/忙碌态一律不动，
+    // 仅 point(inside:) 把热区上下各扩 4pt 至 44pt（扩区落在
+    // makeGroupCard 每行上下各 14pt 的 wrap 留白内，不抢邻行点击）。
+    // 不要把视觉高改成 44，也不要换 BearyButton 工厂（会改圆角/字号）。
+    private let logoutOthersButton = BearyHit44Button(type: .system)
     /// 审计 E2 第 23 项：退出其他设备请求期的原入口忙碌图标（既有刷新图标，
     /// 红 tint 贴合本钮红字；请求终结时停转隐藏，标题文案不动）。
     private let logoutOthersSpinner: BearyRefreshIconView = {
