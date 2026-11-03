@@ -3232,10 +3232,12 @@ class BearyProfileViewController: UIViewController {
         followButtonMeasuredCategory = category
     }
 
-    /// 关注钮失败拒绝动效（点赞同款：摇头＋warning 震动，toast 由调用方发；
-    /// 减动效时只跳过视觉抖动，震动照常给）。
+    /// 关注钮失败拒绝动效（点赞同款：摇头＋warning 震动＋拒绝音效，toast 由调用方发；
+    /// 减动效时只跳过视觉抖动，震动与音效照常给；音效门控同 BearySoundPlayer：
+    /// 设置页音效开关＋系统静音键，见 BearySoundPlayer.play）。
     private func playFollowDenyShake() {
         BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
         if UIAccessibility.isReduceMotionEnabled { return }
         followButton.layer.removeAnimation(forKey: "bearyFollowDenyShake")
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
