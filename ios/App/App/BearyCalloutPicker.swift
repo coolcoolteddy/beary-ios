@@ -405,6 +405,9 @@ final class BearyBubbleMenuView: UIView {
     private var rowButtons: [(key: String, button: UIButton)] = []
     private var selectedKey: String?
     private var stackConstraintsInstalled = false
+    /// 0 篇置灰：key 与 Row.key 同口径（档位 case 名，如 publicPosts）；
+    /// 置灰行只显灰字、不可点，行本身保留可见（用户要看得到有这个档）。
+    private var disabledKeys: Set<String> = []
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -448,6 +451,12 @@ final class BearyBubbleMenuView: UIView {
             button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
             button.titleLabel?.adjustsFontForContentSizeCategory = true
             button.setTitleColor(BearyColors.ink, for: .normal)
+            // 黑块加固：行背景与各态标题色显式钉死——选中行只剩半粗体＋对勾，
+            // 任何态都不得出现深色底；标题 label 背景亦显式透明。
+            button.backgroundColor = .clear
+            button.setTitleColor(BearyColors.ink, for: .selected)
+            button.setTitleColor(BearyColors.ink, for: .highlighted)
+            button.titleLabel?.backgroundColor = .clear
             button.tintColor = BearyColors.ink
             button.contentHorizontalAlignment = .left
             button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
@@ -480,6 +489,22 @@ final class BearyBubbleMenuView: UIView {
         refreshSelectedStates()
     }
 
+    /// 0 篇置灰入口（时间线侧按顶栏计数算出后调入；气泡打开时亦重算一次）：
+    /// 只改行可用态与灰字，不删行、不动选中态本身。
+    func setDisabledKeys(_ keys: Set<String>) {
+        disabledKeys = keys
+        refreshDisabledStates()
+    }
+
+    private func refreshDisabledStates() {
+        for (key, button) in rowButtons {
+            let disabled = disabledKeys.contains(key)
+            button.isEnabled = !disabled
+            // .disabled 态标题色显式灰；可点行仍走 .normal 墨色。
+            button.setTitleColor(BearyColors.gray, for: .disabled)
+        }
+    }
+
     private func refreshSelectedStates() {
         for (key, button) in rowButtons {
             let selected = (selectedKey != nil && key == selectedKey)
@@ -493,6 +518,8 @@ final class BearyBubbleMenuView: UIView {
                 button.setImage(Self.clearPlaceholderImage(pointSize: 24), for: .normal)
             }
         }
+        // 选中态刷新不碰可用态；重建行后置灰须重算一次（新钮默认可点）。
+        refreshDisabledStates()
     }
 
     private static func clearPlaceholderImage(pointSize: CGFloat) -> UIImage {
