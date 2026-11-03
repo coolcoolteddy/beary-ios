@@ -58,6 +58,10 @@ private final class BlindBoxPoolRowView: UIView {
         pillLabel.textAlignment = .center
         pillLabel.layer.cornerRadius = 9
         pillLabel.clipsToBounds = true
+        // 无障碍：胶囊横向不再钉死 48——字号有上限 14、18 高本来够用，
+        // 纵向不动；横向改最小宽＋抗压 required，较长状态文案时胶囊随
+        // 文案变宽（同行文案栈可换行让位），不再被截断。
+        pillLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         checkView.translatesAutoresizingMaskIntoConstraints = false
         checkView.contentMode = .scaleAspectFit
@@ -89,7 +93,7 @@ private final class BlindBoxPoolRowView: UIView {
             row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
-            pillLabel.widthAnchor.constraint(equalToConstant: 48),
+            pillLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 48),
             pillLabel.heightAnchor.constraint(equalToConstant: 18),
             checkView.widthAnchor.constraint(equalToConstant: 16),
             checkView.heightAnchor.constraint(equalToConstant: 16),
