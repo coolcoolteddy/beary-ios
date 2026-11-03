@@ -60,6 +60,15 @@ extension APIError {
             return false
         }
     }
+
+    /// 超时／结果未知：底层 URLError 为超时或连接中途丢失时，请求是否
+    /// 已落库无法从客户端确认，调用方不得按“肯定没发出去”处理，也不得
+    /// 鼓励用户无条件立即重发（私信无去重键，重发可能重复落库）。
+    var isTimeoutOrUnknownResult: Bool {
+        guard case .network(let underlying) = self,
+              let urlError = underlying as? URLError else { return false }
+        return urlError.code == .timedOut || urlError.code == .networkConnectionLost
+    }
 }
 
 // MARK: - 数据模型
