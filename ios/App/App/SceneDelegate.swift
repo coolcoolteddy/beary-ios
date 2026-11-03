@@ -1149,8 +1149,12 @@ final class BearyChromeViewController: UIViewController {
         // G10 + F7：容器接线 SessionManager.onUnauthorized——401 后 toast“请先登录”，
         // 私密页（消息/时间线/我页）先回首页，再于 1.2 秒后弹登录页（网页同口径的延迟，
         // 让 toast 先可见；回调里校验仍未登录、未切页、无 modal 在前，否则取消，见 U21）。
+        // B6 例外取消（2026-11-03 Li 定）：401 触发登录门时也给拒绝震动，与其他失败
+        // 一致取 BearyHaptics.rejectionWarning()（warning 档）；震动在 401 回调触发时
+        // （与 toast 同时）给，不等 1.2 秒后登录页真正弹出；401 走登录门本身的流程不动。
         SessionManager.shared.onUnauthorized = { [weak self] in
             guard let self = self else { return }
+            BearyHaptics.rejectionWarning()
             // 好友第一期：好友段、消息页与会话列表页同属私密页，401 时先回首页。
             if self.currentPage == .notif || self.currentPage == .timeline || self.currentPage == .me || self.currentPage == .friends || self.currentPage == .conversations || self.currentPage == .messages {
                 self.showPage(.home)
