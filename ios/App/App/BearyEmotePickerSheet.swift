@@ -40,6 +40,12 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         super.init(nibName: nibNameOrNil, bundle: nibBundleOrNil)
         modalPresentationStyle = .overFullScreen
         transitioningDelegate = sheetTransition
+        // 打开前先记焦点：present 后当前焦点即被 Sheet 夺走，此时再记就晚了。
+        // 调用方均为“创建后立即 present”（首页/个人页/详情/盲盒四处），init 时
+        // 焦点仍在原入口控件上。
+        if #available(iOS 17.0, *) {
+            previousFocusedElement = UIAccessibility.focusedElement(using: nil) as? AnyObject
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -55,9 +61,19 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     private var emoteCollectionView: UICollectionView?
     private var sheetHeightConstraint: NSLayoutConstraint?
     private var sheetBottomConstraint: NSLayoutConstraint?
+    /// VoiceOver 焦点返回：与通知弹层同口径（BearyNotificationsViewController），
+    /// init 时记下 Sheet 外当前焦点元素（通常为触发回应的入口控件）；关闭后
+    /// 把焦点还回去。weak 持有：触发控件是列表 cell 内元素，复用/离屏后失效
+    /// 即放弃返回，不强留。取焦点 API 以 iOS 17 起可用作守门，旧系统无显式
+    /// 返回、走系统默认行为。
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // 无障碍模态范围显式声明：VoiceOver 在 Sheet 打开期间不扫读下层。
+        // 注：本 Sheet 是 .overFullScreen presented VC，系统模态呈现本身在
+        // 多数情况下已给 VoiceOver 一定 containment，此处为显式声明＋焦点
+        // 返回，真机仍需验 containment 是否如预期（见 PR 描述）。
+        view.accessibilityViewIsModal = true
         view.backgroundColor = .clear
         scrimView.backgroundColor = BearySheetChrome.scrimColor
         scrimView.translatesAutoresizingMaskIntoConstraints = false
@@ -150,6 +166,17 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         ])
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // VoiceOver：Sheet 出现即聚焦标题。下一 runloop 再发，等布局与过渡
+        // 落位后再取标题；若期间已关闭（view 已离线）则不发。未开 VoiceOver
+        // 时 post 为空操作。
+        DispatchQueue.main.async { [weak self] in
+            guard let strongSelf = self, strongSelf.view.window != nil else { return }
+            UIAccessibility.post(notification: .screenChanged, argument: strongSelf.titleLabel)
+        }
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let target = min(540, view.bounds.height * 0.7)
@@ -190,6 +217,15 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     @objc private func closeTapped() {
         let reduceMotion = UIAccessibility.isReduceMotionEnabled
         dismiss(animated: reduceMotion == false, completion: nil)
+    }
+
+    /// VoiceOver 双指 scrub（无障碍退出手势）：走原关闭请求 closeTapped，与
+    /// 遮罩点按、关闭钮同一口径。本 Sheet 无未保存草稿与在途操作（点选即
+    /// 时回调 onPick、由调用方关闭），故无需另设“未保存/操作在途”门控；
+    /// 焦点返回由 viewDidDisappear 统一处理。
+    override func accessibilityPerformEscape() -> Bool {
+        closeTapped()
+        return true
     }
 
     /// 审计 D-7：下滑关闭的起手门——不再用固定 y < 70（原门控盖住首行上缘约 8pt：
@@ -324,6 +360,13 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         // 关闭完成后再恢复选项（单例防御；正常关闭后实例即丢弃）。
         didPickEmote = false
         emoteCollectionView?.isUserInteractionEnabled = true
+        // VoiceOver 焦点返回：仅真正被 dismiss 时还（被上层弹窗盖住时
+        // isBeingDismissed 为 false，不抢焦点）。关闭钮/遮罩/下滑/退出手势
+        // 与点选后调用方关闭五路皆汇到此处，无需各路重复发。
+        if isBeingDismissed, let element = previousFocusedElement {
+            UIAccessibility.post(notification: .layoutChanged, argument: element)
+            previousFocusedElement = nil
+        }
     }
 }
 
