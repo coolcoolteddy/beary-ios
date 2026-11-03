@@ -294,6 +294,13 @@ class BearyProfileViewController: UIViewController {
     /// 50 口径，不在本常量内，见各处注释）。
     private let tabPageLimit = 20
     private var tabLoading = false
+    /// 审计第 7 项残留：权限变化（取关/互关翻转）待全量重拉标记。
+    /// 置位后下一次真正跑起来的 loadTab(forceReload:) 不走 since、直接
+    /// 全量首拉并先清当前 tab 模型；普通刷新不置位，since 口径不动。
+    /// loadTab 因 tabLoading 守卫提前返回时不消费本标记，留待在途回包
+    /// 结束后由回包收尾再触发一次 loadTab（见 loadTabSince 成功收尾与
+    /// handleTabResult 收尾），避免“在途即丢、旧行复活”。
+    private var tabPermissionChangedNeedsFullReload = false
 
     private var tabLoadMore = false
     private var tabError = false
@@ -3092,7 +3099,11 @@ class BearyProfileViewController: UIViewController {
         refreshDMCan()
         // 关系变化可能改变本页可见日记（取关后仅好友篇消失、回关后出现）：
         // 列表强制重拉一遍，资料头不动。
+        // 审计第 7 项残留：旧路 loadTab 非空表走 since（只前插新篇、旧行
+        // 不复核），取关后仅好友旧行残留，失败又保留旧模型；故本路置位
+        // 权限全量标记，loadTab 内先清当前 tab 模型再全量首拉（见 loadTab）。
         if !isOwnProfile {
+            tabPermissionChangedNeedsFullReload = true
             loadTab(forceReload: true)
         }
     }
@@ -3131,6 +3142,9 @@ class BearyProfileViewController: UIViewController {
                     let newMutual: Bool
                     if case .mutual = newState { newMutual = true } else { newMutual = false }
                     if !self.isOwnProfile, previousMutual != newMutual, !self.diaryEntries.isEmpty {
+                        // 审计第 7 项残留：互关翻转同为权限变化，与广播路同口径
+                        // 置位，loadTab 内先清模型再全量首拉，不走 since。
+                        self.tabPermissionChangedNeedsFullReload = true
                         self.loadTab(forceReload: true)
                     }
                 case .failure:
@@ -5215,8 +5229,24 @@ class BearyProfileViewController: UIViewController {
             // 109：记下请求发出时的 tab；回包按该归属分发，切走即丢弃
             //（与后台回填 loadTabBackground 的 tabAtStart 同口径）。
             let tabAtStart = currentTab
+            // 审计第 7 项残留：权限变化时不走 since——since 只前插新篇，
+            // 旧行不复核（取关后仅好友旧行残留），其回落首拉失败时又保留
+            // 旧模型。权限路先清当前 tab 模型并落表（仅好友行立刻消失，
+            // 不等网络；引用随行同清，引用缓存已由广播前清理），再全量
+            // 首拉；首拉失败时 handleTabResult 置 tabError、表里已无旧行，
+            // 不保留失资格旧行。标记只在本分支真正跑起来时消费；守卫提前
+            // 返回时不消费，留待在途回包收尾再触发（见收尾钩子）。
+            let permissionChanged = tabPermissionChangedNeedsFullReload
+            tabPermissionChangedNeedsFullReload = false
+            if permissionChanged {
+                setEntries(entries: [])
+                tableView.reloadData()
+                fetchTabFirstPageFull(scope: scopeValue, tabAtStart: tabAtStart)
+                return
+            }
             // 113：已有行时先走 since 增量（新篇前插、旧篇不动、不跳顶）；
             // 空表或游标取不到时走全量；后台回填 loadTabBackground 不动。
+            // 普通刷新（权限标记未置位）仍走本路，一字不动。
             let cursorKey: Int?
             if tabAtStart == .saved {
                 cursorKey = currentEntries.first?.bmAt ?? currentEntries.first?.createdAt
@@ -5288,6 +5318,12 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.endCustomPullRefresh()
                     strongSelf.consumePendingDirectEntry()
                     strongSelf.tryLocatePending()
+                    // 审计第 7 项残留收尾：since 在途期间置位的权限标记
+                    // （loadTab 因守卫提前返回、未消费）在此补触发一次全量，
+                    // loadTab 内消费标记、先清模型再首拉，不会循环。
+                    if strongSelf.tabPermissionChangedNeedsFullReload {
+                        strongSelf.loadTab(forceReload: true)
+                    }
                 }
             }
         }
@@ -5386,6 +5422,13 @@ class BearyProfileViewController: UIViewController {
         // 6A：tab 回包尾部消费定位挂起（日记 tab 内找到即滚到高亮，
         // 未找到且还有更多页即续拉，否则静默清掉）。
         tryLocatePending()
+        // 审计第 7 项残留收尾：与 loadTabSince 成功收尾同款——在途期间
+        // 置位的权限标记（loadTab 因守卫提前返回、未消费）在此补触发
+        // 一次全量；本路回包对应的权限全量本身已在 loadTab 内消费标记，
+        // 故此处标记为假，不会循环。
+        if tabPermissionChangedNeedsFullReload {
+            loadTab(forceReload: true)
+        }
     }
 
     /// 6A gotoEntry 落点（他人篇，直接落点版）：调用方已持有单篇时用它直接落点，
