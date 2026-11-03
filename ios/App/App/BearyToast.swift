@@ -11,8 +11,12 @@ import UIKit
 /// 统一样式：玻璃 pill、ink 字、14pt medium、内边距 top 10 / left 18 /
 /// bottom 10 / right 18、两侧留 20pt 上限、居中；pill 圆角取半高
 /// （layoutSubviews 跟 bounds 走，单行约 19pt，与“圆角 18”同口径）。
-/// 展示 2.0s：淡入 0.25s、到点淡出 0.25s 后移除；减动效时直接现身、
+/// 展示时长按文案长度分档（U9，见 displayDuration）：≤20 字 2.0s（与旧值一致）、
+/// 21–40 字 3.0s、>40 字 4.0s；淡入 0.25s、到点淡出 0.25s 后移除；减动效时直接现身、
 /// 到点直接移除，不播淡入淡出（与各页原 A5-3 口径一致）。
+/// 动作入口（U9）：show 的 actionTitle/action 均可选、默认 nil；两者都传时 toast
+/// 右侧显示动作入口、点按先撤 toast 再执行回调；任一缺省即无动作入口，现有
+/// 无动作调用点行为与外观完全不变。无动作时容器仍不参与触摸。
 /// 落点：容器页是 Chrome 子页时，按 Chrome 当前可见的底部 chrome 定——
 /// FAB 可见落 FAB 顶之上 12pt（FAB 底边安全区 -92、高 54、顶为 -146，
 /// 故与旧 -158 同值），仅底栏可见落底栏顶之上 12pt（底栏底边安全区 -6、
@@ -29,11 +33,12 @@ import UIKit
 /// 旧 toast 挂起的到点闭包只持有旧视图，移除后为空操作，不会误清新 toast。
 enum BearyToast {
 
-    static func show(in container: UIView, message: String) {
+    static func show(in container: UIView, message: String,
+                     actionTitle: String? = nil, action: (() -> Void)? = nil) {
         for oldToast in container.subviews where oldToast is BearyToastView {
             oldToast.removeFromSuperview()
         }
-        let toast = BearyToastView(message: message)
+        let toast = BearyToastView(message: message, actionTitle: actionTitle, action: action)
         container.addSubview(toast)
         container.bringSubviewToFront(toast)
         let bottomConstraint = toast.bottomAnchor.constraint(
@@ -55,7 +60,7 @@ enum BearyToast {
         // 弱持有下旧视图提前移除后到点闭包为空操作。（阴影/描边不补，属样式 token。）
         if UIAccessibility.isReduceMotionEnabled {
             toast.alpha = 1
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak toast] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + displayDuration(for: message)) { [weak toast] in
                 toast?.removeFromSuperview()
             }
         } else {
@@ -63,13 +68,25 @@ enum BearyToast {
             UIView.animate(withDuration: 0.25) {
                 toast.alpha = 1
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak toast] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + displayDuration(for: message)) { [weak toast] in
                 UIView.animate(withDuration: 0.25, animations: {
                     toast?.alpha = 0
                 }, completion: { _ in
                     toast?.removeFromSuperview()
                 })
             }
+        }
+    }
+
+    /// U9 展示时长分档（按文案字符数，CJK 每字计 1）：短文案沿用旧 2.0s，
+    /// 中长文案给足读完时间，长文案再延长一档；动作入口不另加时长。
+    private static func displayDuration(for message: String) -> TimeInterval {
+        if message.count <= 20 {
+            return 2.0
+        } else if message.count <= 40 {
+            return 3.0
+        } else {
+            return 4.0
         }
     }
 
@@ -120,6 +137,10 @@ enum BearyToast {
 private final class BearyToastView: UIView {
 
     private let label = UILabel()
+    /// U9 动作入口：仅 actionTitle 与 action 双全时建钮；无动作时恒 nil，
+    /// 视图外观与约束与旧版逐项一致。
+    private var actionButton: UIButton?
+    private var actionHandler: (() -> Void)?
 
     // MARK: - 键盘避让（审计第 10 项）
 
@@ -211,7 +232,7 @@ private final class BearyToastView: UIView {
         constraint.constant = constant
     }
 
-    init(message: String) {
+    init(message: String, actionTitle: String? = nil, action: (() -> Void)? = nil) {
         super.init(frame: .zero)
         backgroundColor = BearyColors.surface
         // 2026-11-02 定版第 2 组：Toast 补 hairline 阴影（0.08 / 4 / (0, 1)）＋ 1px line 描边
@@ -219,7 +240,23 @@ private final class BearyToastView: UIView {
         BearyShadow.applyHairline(to: layer)
         layer.borderWidth = 1
         layer.bearyDynamicBorderColor = BearyColors.line
-        isUserInteractionEnabled = false
+        // U9：有动作入口时容器须接点按（仅钮本身可点）；无动作时保持旧版
+        // 不参与触摸，瞬时提示不吞下方内容的点按。
+        if let actionTitle = actionTitle, let action = action {
+            isUserInteractionEnabled = true
+            actionHandler = action
+            let button = UIButton(type: .system)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.setTitle(actionTitle, for: .normal)
+            button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+            button.titleLabel?.adjustsFontForContentSizeCategory = true
+            button.setTitleColor(BearyColors.ink, for: .normal)
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+            button.addTarget(self, action: #selector(actionTapped), for: .touchUpInside)
+            actionButton = button
+        } else {
+            isUserInteractionEnabled = false
+        }
         translatesAutoresizingMaskIntoConstraints = false
         label.text = message
         label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .medium))
@@ -229,12 +266,41 @@ private final class BearyToastView: UIView {
         label.numberOfLines = 0
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
-        ])
+        if let button = actionButton {
+            addSubview(button)
+            NSLayoutConstraint.activate([
+                label.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+                label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+                label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
+                label.trailingAnchor.constraint(equalTo: button.leadingAnchor, constant: -12),
+                button.centerYAnchor.constraint(equalTo: centerYAnchor),
+                button.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
+            ])
+        } else {
+            NSLayoutConstraint.activate([
+                label.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+                label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+                label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
+                label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
+            ])
+        }
+    }
+
+    /// U9：点动作先撤 toast（到点闭包弱持有旧视图，撤后为空操作，不会
+    /// 二次清理），再执行回调；动效只走既有 alpha 淡入淡出，不新增。
+    @objc private func actionTapped() {
+        removeFromSuperview()
+        actionHandler?()
+    }
+
+    /// U9：有动作时仅钮区接点按，pill 其余区域继续透传、不吞下方点按；
+    /// 无动作时容器本身不参与触摸（isUserInteractionEnabled=false，hit-test
+    /// 不到本视图，本分支不生效）。
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        if let button = actionButton {
+            return button.frame.contains(point)
+        }
+        return false
     }
 
     required init?(coder: NSCoder) {
