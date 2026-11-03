@@ -39,6 +39,15 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     private var loading = false
     private var needsReloadAfterUserChange = false
     private var loadFailed = false
+    // 失败态全量·好友列表：已有内容时刷新失败的非阻断提示条，口径参照
+    // #736 会话列表（常驻于顶栏下方、列表上方；只在 loadFailed 且列表非空
+    // 时显，空列表仍走居中空态文案，不与本条重复）；显隐只切换表顶约束，
+    // 不动 contentOffset、不清列表、不丢标题人数。
+    private let refreshFailedBanner = UIView()
+    private let refreshFailedLabel = UILabel()
+    private let refreshFailedRetryButton = UIButton(type: .system)
+    private var tableViewTopToTopBarConstraint: NSLayoutConstraint?
+    private var tableViewTopToBannerConstraint: NSLayoutConstraint?
     private let dmUnreadBadge = UILabel()
     private var dmUnreadGen = 0
     private var dmUnreadLoading = false
@@ -108,6 +117,29 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         tableView.refreshControl = refresh
         view.addSubview(tableView)
 
+        // 已有内容刷新失败条：常驻于顶栏下方、列表上方（非弹框、非 toast，
+        // 失败不消失直至下次成功）；点“重试”只重拉，不改列表与滚动位置。
+        refreshFailedBanner.translatesAutoresizingMaskIntoConstraints = false
+        refreshFailedBanner.backgroundColor = BearyColors.alpha(BearyColors.red, 0.12)
+        refreshFailedBanner.isHidden = true
+        view.addSubview(refreshFailedBanner)
+        refreshFailedLabel.translatesAutoresizingMaskIntoConstraints = false
+        refreshFailedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        refreshFailedLabel.adjustsFontForContentSizeCategory = true
+        refreshFailedLabel.textColor = BearyColors.ink
+        refreshFailedLabel.text = "未能刷新"
+        refreshFailedBanner.addSubview(refreshFailedLabel)
+        refreshFailedRetryButton.translatesAutoresizingMaskIntoConstraints = false
+        refreshFailedRetryButton.setTitle("重试", for: .normal)
+        refreshFailedRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        refreshFailedRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        refreshFailedRetryButton.setTitleColor(BearyColors.blue, for: .normal)
+        refreshFailedRetryButton.accessibilityLabel = "重试"
+        refreshFailedRetryButton.accessibilityHint = "重新拉取好友列表，不改变当前列表位置"
+        refreshFailedRetryButton.addTarget(self, action: #selector(refreshFailedRetryTapped), for: .touchUpInside)
+        refreshFailedRetryButton.bearyAddPressFeedback()
+        refreshFailedBanner.addSubview(refreshFailedRetryButton)
+
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         emptyLabel.adjustsFontForContentSizeCategory = true
@@ -149,7 +181,16 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             dmButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             dmButton.widthAnchor.constraint(equalToConstant: 44),
             dmButton.heightAnchor.constraint(equalToConstant: 44),
-            tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            refreshFailedBanner.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            refreshFailedBanner.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            refreshFailedBanner.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            refreshFailedBanner.heightAnchor.constraint(equalToConstant: 44),
+            refreshFailedLabel.leadingAnchor.constraint(equalTo: refreshFailedBanner.leadingAnchor, constant: 16),
+            refreshFailedLabel.centerYAnchor.constraint(equalTo: refreshFailedBanner.centerYAnchor),
+            refreshFailedRetryButton.trailingAnchor.constraint(equalTo: refreshFailedBanner.trailingAnchor, constant: -16),
+            refreshFailedRetryButton.centerYAnchor.constraint(equalTo: refreshFailedBanner.centerYAnchor),
+            refreshFailedRetryButton.heightAnchor.constraint(equalToConstant: 44),
+            refreshFailedRetryButton.leadingAnchor.constraint(greaterThanOrEqualTo: refreshFailedLabel.trailingAnchor, constant: 8),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -163,6 +204,11 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             firstLoadStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
             firstLoadStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
         ])
+        // 表顶二选一：无失败条时贴顶栏，有失败条时贴失败条底部。
+        // 只换约束，不碰 tableView.contentOffset，故列表滚动位置不动。
+        tableViewTopToTopBarConstraint = tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor)
+        tableViewTopToBannerConstraint = tableView.topAnchor.constraint(equalTo: refreshFailedBanner.bottomAnchor)
+        tableViewTopToTopBarConstraint?.isActive = true
 
         NotificationCenter.default.addObserver(self, selector: #selector(friendsChanged), name: .bearyFriendsChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(userChanged), name: .bearyUserDidChange, object: nil)
@@ -259,6 +305,12 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         load()
     }
 
+    @objc private func refreshFailedRetryTapped() {
+        // 只重拉：load() 在途时直接返回、不重复请求；成功才清条，
+        // 失败条继续留着；全程不清 friends、不 scrollToTop。
+        load()
+    }
+
     @objc private func friendsChanged() {
         // 别处回关/取关后本页若还开着，重拉一次（不叠加 toast、不抢焦点）。
         load()
@@ -339,17 +391,30 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     }
 
     private func updateTitleAndEmptyState() {
-        // 标题行带人数（失败或空时只显“好友”，不把失败画成 0 人）。
-        titleLabel.text = loadFailed || friends.isEmpty ? "好友" : "好友 · \(friends.count)人"
+        // 标题行带人数：只要列表非空就显人数，刷新失败也不退成光秃标题
+        //（旧口径 loadFailed 时一律只显“好友”，把失败画成人数丢失）；
+        // 只有空列表时只显“好友”，不把失败画成 0 人。
+        titleLabel.text = friends.isEmpty ? "好友" : "好友 · \(friends.count)人"
         if loadFailed && friends.isEmpty {
             emptyLabel.text = "加载失败，下拉重试"
             emptyLabel.isHidden = false
+            setRefreshFailedBannerVisible(false)
         } else if friends.isEmpty {
             emptyLabel.text = "还没有互关好友\n关注对方、等对方回关后就会出现在这里"
             emptyLabel.isHidden = false
+            setRefreshFailedBannerVisible(false)
         } else {
             emptyLabel.isHidden = true
+            // 已有内容时失败不再零反馈：旧列表原样保留，顶栏下出
+            // “未能刷新 · 重试”常驻条；成功（loadFailed=false）时收起。
+            setRefreshFailedBannerVisible(loadFailed)
         }
+    }
+
+    private func setRefreshFailedBannerVisible(_ visible: Bool) {
+        refreshFailedBanner.isHidden = !visible
+        tableViewTopToTopBarConstraint?.isActive = !visible
+        tableViewTopToBannerConstraint?.isActive = visible
     }
 
     // MARK: - Table
