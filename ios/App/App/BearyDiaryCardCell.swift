@@ -2413,7 +2413,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 才显全文，否则 showGone 占位（占位不带日期与缩略图，见 BearyQuoteCardView.showGone）。
     /// - gone：gone 态 → “引用的日记已删除”（点按无动作）；
     /// - locked / 未公开：→ 引用规则简化占位文案（见 BearyQuoteGate.placeholderText；
-    ///   曾公开“该日记已私密”＋提醒句，从未公开“该日记未公开”），点按无动作；
+    ///   曾公开“该日记已设为私密”＋提醒句，从未公开“该日记未公开”），点按无动作；
     /// - 正文空：未公开→未公开占位，其余→已删占位；
     /// - 正文非空但 viewer 非作者且未公开：占位（绝不凭“正文非空”推断作者身份，fail-closed）。
     /// 缩略图门控：仅被引公开或 viewer 为作者时出。
