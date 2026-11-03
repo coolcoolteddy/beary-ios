@@ -343,6 +343,22 @@ final class BearyChromeViewController: UIViewController {
     private var feedFirstScreenObserver: NSObjectProtocol?
     /// P1-1：FAB 已在等 /me 回包时不再重复排队等（等的过程中再点 FAB 直接返回）。
     private var composerMeWaitPending = false
+    /// 登录→写日记恢复意图（新增恢复路径，非旧行为）：
+    /// 写作入口（FAB／空态“写一篇”等共用 presentComposer 的入口）在未登录时
+    /// 弹登录门之前置真；主登录路径（presentLogin）的 onLoggedIn 在 dismiss +
+    /// refreshMe 确认已登录后消费一次、自动开编辑器。取消登录（onCancelled，
+    /// 含关闭钮／遮罩点按／抓手拖动，均经登录页 cancelFromSheet）与游客模式
+    /// （onGuestMode）清除，不跨次登录残留；登录成功时即使因已有 modal／
+    /// 编辑器在栈而开不了，也直接丢弃，不留到下一次登录时误弹。
+    /// 不覆盖：引导页内登录（presentLoginOverOnboarding）已有 firstLaunch
+    /// 成功后开编辑器的自有路径，不走本标记；编辑入口
+    /// （presentComposerForEdit）需带篇目恢复，不在本标记范围，登录后仍需
+    /// 用户再次点编辑。
+    private var pendingComposerAfterLogin = false
+    /// 删帖进回收站的在途防重复提交：按日记 id 记在途删除；同一篇首请求
+    /// 在途时重开确认框再点直接丢弃，不重发 DELETE。成功／失败（含 401）
+    /// 回包时一律清除，失败后用户可再次确认重删，不会被标记永久卡住。
+    private var deletingEntryIds: Set<String> = []
     /// 冷启动竞态修（我页门）：点“我的”时首个 /me 未回包且本地有有效会话
     /// cookie，currentUser 仍为 nil 不能断定是游客——先等回包再判（FAB 的
     /// P1-1 同口径）；等的过程中再点“我的”直接返回，不叠等。
@@ -2384,6 +2400,10 @@ final class BearyChromeViewController: UIViewController {
     /// （网页 confirmDelete 文案确认 → deleteEntry → 时间线行级退场 +
     /// 首页重拉 + 主页重载；失败 toast）。Feed/Profile 上下文菜单删除与
     /// 时间线滑动删除均走此方法，不另写执行逻辑。
+    /// 在途防重复：同一确认框点按后即 dismiss，框内重按不可能；真缺口
+    /// 在关框后、首请求在途时重开确认框再点，故按日记 id 记在途
+    /// （deletingEntryIds），在途重按直接丢弃、不重发 DELETE。
+    /// 删除成功后的快照清理与段快照逻辑一字不动（未合入 #734 的范围）。
     private func confirmAndDeleteEntry(_ entry: Entry) {
         guard let entryId = entry.id else { return }
         // 审计 P2-23：删除是作者动作——非作者不弹确认（服务端同样校验作者，客户端先拦）。
@@ -2392,9 +2412,15 @@ final class BearyChromeViewController: UIViewController {
         let alert = UIAlertController(title: "确认删除？", message: "删除后会移入回收站，30 天内可在「回收站」里恢复。", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
         alert.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
+            guard let self = self else { return }
+            // 在途即丢弃：不重发、不 toast（首请求回包自带成功／失败反馈）。
+            guard self.deletingEntryIds.insert(entryId).inserted else { return }
             BearyAPI.shared.deleteEntry(id: entryId) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
+                    // 成功／失败一律先清在途标记：失败后用户可再次确认重删，
+                    // 不会被标记永久卡住；成功后篇目已退场，标记本就无意义。
+                    self.deletingEntryIds.remove(entryId)
                     switch result {
                     case .success:
                         BearySoundPlayer.play(.deleteSwoosh)
@@ -2426,8 +2452,21 @@ final class BearyChromeViewController: UIViewController {
                         }
                         self.feedVC?.refreshAll()
                         self.profileVC?.reloadProfile()
-                    case .failure:
-                        self.showToast(message: "删除失败，请重试")
+                    case .failure(let error):
+                        if case .unauthorized = error {
+                            // 401 走统一登录入口，不在此处另弹登录页、不自动重删：
+                            // BearyAPI 回包时已触发全局 onUnauthorized（SessionManager
+                            // 清态 → 容器 toast“请先登录”+ 1.2s 后统一弹登录）；
+                            // 重新登录后用户须再次确认删除（在途标记已清，确认框可重开）。
+                            // 例外：回包时仍是登录态（旧账号在途请求的 401 被 epoch
+                            // 压住全局回调、或用户已重登），全局入口不会再弹，
+                            // 才落本地 toast 提示重试。
+                            if SessionManager.shared.isLoggedIn {
+                                self.showToast(message: "删除失败，请重试")
+                            }
+                        } else {
+                            self.showToast(message: "删除失败，请重试")
+                        }
                     }
                 }
             }
@@ -2782,7 +2821,10 @@ final class BearyChromeViewController: UIViewController {
             return
         }
         let vc = BearyLoginSheet.make()
-        vc.onCancelled = { [weak vc] in
+        vc.onCancelled = { [weak self, weak vc] in
+            // 待续写意图随取消清除：取消即放弃本次写作入口触发的登录，
+            // 不得留到用户下一次因别事登录时误开编辑器。
+            self?.pendingComposerAfterLogin = false
             // 添加账号会话守卫：从添加/过期重登进来的取消，在此恢复原会话；
             // 未登录直登时守卫未 arm、cancel 是空操作，原有取消行为不动。
             SessionManager.shared.cancelAccountAddSession()
@@ -2795,17 +2837,35 @@ final class BearyChromeViewController: UIViewController {
             vc?.dismiss(animated: BearyMotion.animated(true)) {
                 SessionManager.shared.refreshMe { [weak self] _ in
                     DispatchQueue.main.async {
+                        guard let self = self else { return }
                         // 审计登录杂项：邀请绑定反馈落点——进 App 后 BearyToast 一次
                         //（登录页内行文案随 dismiss 消失，不再指望被读到；Plus 到期日
                         // 由 refreshMe 后的 currentUser.plusUntil 补全）。
-                        guard let self = self, let text = referralText, !text.isEmpty else { return }
-                        self.showToast(message: BearyReferralFeedback.toastText(base: text, plusUntil: SessionManager.shared.currentUser?.plusUntil))
+                        // 注意：原代码以 referralText 非空为守卫直接 return，会把
+                        // 下面的待续写恢复一并跳过，故此处先 toast（有文案时）、
+                        // 再消费意图，两路互不阻塞。
+                        if let text = referralText, !text.isEmpty {
+                            self.showToast(message: BearyReferralFeedback.toastText(base: text, plusUntil: SessionManager.shared.currentUser?.plusUntil))
+                        }
+                        // 登录→写日记恢复：写作入口触发登录门时记下的意图，
+                        // 在此消费一次。只在 refreshMe 已确认登录、且栈上无
+                        // 编辑器、无其他 modal 在前时开编辑器；条件不满足
+                        // 直接丢弃意图（见 pendingComposerAfterLogin 注释），
+                        // 不自动重试、不留到下次登录。
+                        let shouldResumeComposer = self.pendingComposerAfterLogin
+                        self.pendingComposerAfterLogin = false
+                        if shouldResumeComposer && SessionManager.shared.isLoggedIn
+                            && !self.isComposerPresented() && self.presentedViewController == nil {
+                            self.presentComposer()
+                        }
                     }
                 }
             }
         }
         // 游客模式入口：登录页“先逛逛”回调；容器负责关登录页后进游客态。
         vc.onGuestMode = { [weak self, weak vc] in
+            // 游客不写日记：待续写意图随进游客态清除，之后登录不再误开编辑器。
+            self?.pendingComposerAfterLogin = false
             vc?.dismiss(animated: BearyMotion.animated(true)) {
                 self?.enterGuestMode()
             }
@@ -3587,6 +3647,11 @@ final class BearyChromeViewController: UIViewController {
                 }
                 return
             }
+            // 未登录直走登录门：先记待续写意图，登录成功后由 presentLogin
+            // 的 onLoggedIn 消费、自动开编辑器；取消／游客模式清除意图。
+            // 旧行为：登录成功只 dismiss + refreshMe，不自动开编辑器，
+            // 用户须回首页再点一次 FAB。
+            pendingComposerAfterLogin = true
             presentLoginGate()
             return
         }
@@ -3634,7 +3699,12 @@ final class BearyChromeViewController: UIViewController {
             presentComposer()
         } else if SessionManager.shared.authUnknown {
             // G26：网络失败不按游客处理，onNetworkUnstable 已 toast，此处不再弹登录页。
+            // 会话确认失败（authUnknown）时只 toast、不弹登录页的现有行为不动，
+            // 也不记待续写意图——未证实游客，不得把用户推向登录门。
         } else if !isComposerPresented() && presentedViewController == nil {
+            // /me 已确认未登录才弹登录门：同 presentComposer 直走分支，
+            // 先记待续写意图，登录成功后自动开编辑器。
+            pendingComposerAfterLogin = true
             presentLoginGate()
         }
     }
