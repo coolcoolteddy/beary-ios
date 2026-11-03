@@ -3,16 +3,19 @@
     {
       "idiom": "universal",
       "filename": "icon-72.png",
+      "template-rendering-intent": "template",
       "scale": "1x"
     },
     {
       "idiom": "universal",
       "filename": "icon-144.png",
+      "template-rendering-intent": "template",
       "scale": "2x"
     },
     {
       "idiom": "universal",
       "filename": "icon-216.png",
+      "template-rendering-intent": "template",
       "scale": "3x"
     }
   ],
