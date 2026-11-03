@@ -387,7 +387,8 @@ class BearyEditProfileViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
         buildLayout()
-        // U3：输入框 Return 收起/切换 + 滑动收键盘 + 键盘顶起时调 inset（与登录页同口径）。
+        // U3：输入框 Return 收起/切换 + 滑动收键盘 + 键盘顶起时调 inset
+        //（私信页口径：三通知全齐，帧转视图坐标后算实际遮挡，浮动键盘不按全高垫）。
         nameField.delegate = self
         signatureField.delegate = self
         handleField.delegate = self
@@ -397,6 +398,7 @@ class BearyEditProfileViewController: UIViewController {
         signatureField.addTarget(self, action: #selector(signatureFieldChanged), for: .editingChanged)
         scrollView.keyboardDismissMode = .onDrag
         NotificationCenter.default.addObserver(self, selector: #selector(editKeyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(editKeyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(editKeyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
         nameField.text = initialDisplayName
         handleField.text = initialHandle
@@ -834,10 +836,21 @@ class BearyEditProfileViewController: UIViewController {
         requestExit(interactive: false)
     }
 
-    // U3：键盘顶起时调 inset（与登录页同口径：扣掉底部安全区后的键盘高）。
+    // U3：键盘顶起时调 inset（私信页口径：帧先转视图坐标，再算与滚动区
+    // 底边——底锚安全区底——的实际遮挡；iPad 浮动键盘停在中部不贴底时
+    // 不按全高垫，键盘高度／候选栏变化时 WillChangeFrame 跟随重算）。
     @objc private func editKeyboardWillShow(_ notification: Notification) {
-        guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
-        let inset = max(0, frame.height - view.safeAreaInsets.bottom)
+        applyEditKeyboardInset(notification)
+    }
+
+    @objc private func editKeyboardWillChangeFrame(_ notification: Notification) {
+        applyEditKeyboardInset(notification)
+    }
+
+    private func applyEditKeyboardInset(_ notification: Notification) {
+        guard let value = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
+        let frameInView = view.convert(value.cgRectValue, from: nil)
+        let inset = max(0, view.bounds.height - frameInView.minY - view.safeAreaInsets.bottom)
         scrollView.contentInset.bottom = inset
         scrollView.verticalScrollIndicatorInsets.bottom = inset
     }
