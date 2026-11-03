@@ -317,6 +317,8 @@ class BearyProfileViewController: UIViewController {
     private var confirmedBookmarkedById: [String: Bool] = [:]
     private var emoteBusyIds: Set<String> = []
     private var pubBusyIds: Set<String> = []
+    /// 置顶在途去重（pubBusyIds 同款口径；确认弹窗期间不占位，确认后发请求时才占位）。
+    private var pinBusyIds: Set<String> = []
     // MARK: - 批 D 个性化模块状态（语料 = 作者 scope 全量分页结果，只走已有字段聚合）
     /// 模块语料所属 profile id；与当前 profile 不一致即视为切账号/换目标，语料与
     /// 随机上一次 id 全复位（scheduleModulesRefresh 内处理，不靠调用方记得清）。
@@ -426,9 +428,13 @@ class BearyProfileViewController: UIViewController {
 
     /// 展示用日记：过滤后按创建时间倒序（createdAt 缺失按 0 计、排最后；
     /// 同毫秒保持服务端原顺序）。赞过/收藏 tab 不走这里，顺序一字不动。
+    /// 置顶优先（2026-11-03 单槽位口径）：置顶篇（至多 1 篇）排最前、其余仍按
+    /// createdAt 倒序——服务端已按置顶优先排，本处只防本地 createdAt 排序冲掉
+    /// 置顶顺序，不做二次全量重排；置顶篇的 pinned 位由列表接口下发。
     static func sortedDisplayableDiaryEntries(from entries: [Entry], isOwnProfile: Bool, isMutualFriend: Bool = false) -> [Entry] {
         let filtered = entries.filter { isProfileDiaryDisplayable(entry: $0, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend) }
         return filtered.enumerated().sorted(by: { left, right in
+            if left.element.isPinned != right.element.isPinned { return left.element.isPinned }
             let leftMs = left.element.createdAt ?? 0
             let rightMs = right.element.createdAt ?? 0
             if leftMs != rightMs { return leftMs > rightMs }
@@ -5592,6 +5598,10 @@ class BearyProfileViewController: UIViewController {
         case .liked: likedEntries = entries
         case .saved: savedEntries = entries
         }
+        // 置顶记忆只采作者 scope（本人日记 tab）：他人页列表是他人置顶篇，不得写入本人记忆。
+        if currentTab == .diary && isOwnProfile {
+            BearyDiaryPin.noteEntries(entries)
+        }
     }
 
     private func appendEntries(entries: [Entry]) {
@@ -5599,6 +5609,9 @@ class BearyProfileViewController: UIViewController {
         case .diary: diaryEntries.append(contentsOf: entries)
         case .liked: likedEntries.append(contentsOf: entries)
         case .saved: savedEntries.append(contentsOf: entries)
+        }
+        if currentTab == .diary && isOwnProfile {
+            BearyDiaryPin.noteEntries(entries)
         }
     }
 
@@ -6795,6 +6808,11 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         if entry.isMine == true {
+            // 置顶行（本人篇才有；菜单行一律纯文字——UIAlertAction 无公开 image 入参，
+            // 项目菜单行同款，图钉只出现在卡片置顶标识上）：未置顶显“置顶”，已置顶显“取消置顶”。
+            sheet.addAction(UIAlertAction(title: entry.isPinned ? "取消置顶" : "置顶", style: .default) { [weak self] _ in
+                self?.handlePinToggle(entry: entry)
+            })
             if let deadline = entry.editDeadline, nowMs < deadline {
                 sheet.addAction(UIAlertAction(title: "编辑内容", style: .default) { [weak self] _ in
                     self?.onEditEntry?(entry)
@@ -6822,6 +6840,83 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             popover.sourceRect = sourceView.bounds
         }
         present(sheet, animated: BearyMotion.animated(true))
+    }
+
+    // MARK: - 日记置顶（单槽位，乐观更新总口径）
+
+    /// 菜单置顶入口：只对本人篇；已有另一置顶篇时先弹替换确认，取消则什么都不做、
+    /// 不调接口、不改本地态；无旧置顶时直接置顶；已置顶篇点按即取消置顶（不弹确认）。
+    private func handlePinToggle(entry: Entry) {
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        guard BearyDiaryPin.isOwn(entry) else { return }
+        guard !pinBusyIds.contains(entryId) else { return }
+        if entry.isPinned {
+            performPinToggle(entry: entry, pinning: false, previousPinnedId: nil)
+        } else if let oldId = BearyDiaryPin.existingPinnedId(excluding: entryId, in: diaryEntries) {
+            BearyDiaryPin.confirmReplacement(from: self) { [weak self] confirmed in
+                guard confirmed else { return }
+                self?.performPinToggle(entry: entry, pinning: true, previousPinnedId: oldId)
+            }
+        } else {
+            performPinToggle(entry: entry, pinning: true, previousPinnedId: nil)
+        }
+    }
+
+    /// 乐观置顶／取消置顶：点按瞬间即最终态（目标篇标置顶／清标识、旧置顶篇清标识；
+    /// 日记 tab 的置顶优先排序自动把新置顶篇推到最前），服务端回包只确认；
+    /// 失败回滚到最后确认态＋摇头＋toast＋warning 震动（playPublishDenyShake 内含）。
+    /// 成功后以回包 pinned／pinned_at 为准对齐；整表 reloadData（置顶换位会动行序，
+    /// 单行 reload 覆盖不了换位；已播过入场的行不重播，见 willDisplay 守卫）。
+    private func performPinToggle(entry: Entry, pinning: Bool, previousPinnedId: String?) {
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        pinBusyIds.insert(entryId)
+        let originalTarget = entry
+        let originalPrevious = previousPinnedId.flatMap { id in diaryEntries.first(where: { $0.id == id }) }
+        var optimistic = entry
+        optimistic.pinned = pinning ? 1 : 0
+        optimistic.pinnedAt = pinning ? Int(Date().timeIntervalSince1970 * 1000) : nil
+        updateEntryInAllTabs(entry: optimistic)
+        if let prev = originalPrevious {
+            var cleared = prev
+            cleared.pinned = 0
+            cleared.pinnedAt = nil
+            updateEntryInAllTabs(entry: cleared)
+        }
+        tableView.reloadData()
+        let completion: (Result<BearyAPI.PinResponse, APIError>) -> Void = { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.pinBusyIds.remove(entryId)
+                switch result {
+                case .success(let resp):
+                    var updated = optimistic
+                    if let pinned = resp.pinned { updated.pinned = pinned ? 1 : 0 }
+                    if let pinnedAt = resp.pinnedAt { updated.pinnedAt = pinnedAt } else if !pinning { updated.pinnedAt = nil }
+                    strongSelf.updateEntryInAllTabs(entry: updated)
+                    BearyDiaryPin.notePinResult(entryId: entryId, pinned: updated.isPinned)
+                    strongSelf.tableView.reloadData()
+                case .failure(let err):
+                    strongSelf.updateEntryInAllTabs(entry: originalTarget)
+                    if let prev = originalPrevious {
+                        strongSelf.updateEntryInAllTabs(entry: prev)
+                    }
+                    strongSelf.tableView.reloadData()
+                    BearyToast.show(in: strongSelf.view, message: BearyDiaryPin.errorMessage(for: err, pinning: pinning))
+                    // reloadData 后布局未必已落定，下一 runloop 再取可见行摇头。
+                    DispatchQueue.main.async {
+                        guard let row = strongSelf.displayedEntries.firstIndex(where: { $0.id == entryId }),
+                              let cell = strongSelf.tableView.cellForRow(at: IndexPath(row: row, section: 0)) as? BearyDiaryCardCell,
+                              cell.cellEntryId == entryId else { return }
+                        cell.playPublishDenyShake()
+                    }
+                }
+            }
+        }
+        if pinning {
+            BearyAPI.shared.pinEntry(id: entryId, completion: completion)
+        } else {
+            BearyAPI.shared.unpinEntry(id: entryId, completion: completion)
+        }
     }
 
     private func handleCellVisibilityToggle(entry: Entry) {

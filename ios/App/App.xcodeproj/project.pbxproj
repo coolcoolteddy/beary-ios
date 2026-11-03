@@ -45,6 +45,7 @@
 		23D88D2D590450808C9EF6BE /* BearyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4373B88D3E61CD26A7F93F7F /* BearyStateView.swift */; };
 		8B953B521BC24EF1807184F7 /* BearyAvatarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A147B76F8584FBF96D83CFD /* BearyAvatarView.swift */; };
 		5FF297D2E2804166BA8159B5 /* BearyDiaryCardCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0D12B066C04B3780DCF797 /* BearyDiaryCardCell.swift */; };
+		33682D1F43521B7B51E6FF30 /* BearyDiaryPin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */; };
 		1476E40C4B0A489082D4F060 /* BearyQuoteCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B1C032A6C0F4B51BD65D3E6 /* BearyQuoteCardView.swift */; };
 		6E1E41D1D67C42CEB3FBC5F3 /* BearyEmoteFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 009D1C4789D54436BA953274 /* BearyEmoteFlowView.swift */; };
 		EF7B997969434C45BAEE28A3 /* BearyEmotePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16C3C0A0F75C4251A59FA4F6 /* BearyEmotePickerSheet.swift */; };
@@ -259,6 +260,7 @@
 		4373B88D3E61CD26A7F93F7F /* BearyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyStateView.swift; sourceTree = "<group>"; };
 		1A147B76F8584FBF96D83CFD /* BearyAvatarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyAvatarView.swift; sourceTree = "<group>"; };
 		BD0D12B066C04B3780DCF797 /* BearyDiaryCardCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryCardCell.swift; sourceTree = "<group>"; };
+		10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryPin.swift; sourceTree = "<group>"; };
 		7B1C032A6C0F4B51BD65D3E6 /* BearyQuoteCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyQuoteCardView.swift; sourceTree = "<group>"; };
 		009D1C4789D54436BA953274 /* BearyEmoteFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmoteFlowView.swift; sourceTree = "<group>"; };
 		16C3C0A0F75C4251A59FA4F6 /* BearyEmotePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmotePickerSheet.swift; sourceTree = "<group>"; };
@@ -500,6 +502,7 @@
 				4373B88D3E61CD26A7F93F7F /* BearyStateView.swift */,
 				1A147B76F8584FBF96D83CFD /* BearyAvatarView.swift */,
 				BD0D12B066C04B3780DCF797 /* BearyDiaryCardCell.swift */,
+				10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */,
 				7B1C032A6C0F4B51BD65D3E6 /* BearyQuoteCardView.swift */,
 				009D1C4789D54436BA953274 /* BearyEmoteFlowView.swift */,
 				16C3C0A0F75C4251A59FA4F6 /* BearyEmotePickerSheet.swift */,
@@ -933,6 +936,7 @@
 				23D88D2D590450808C9EF6BE /* BearyStateView.swift in Sources */,
 				8B953B521BC24EF1807184F7 /* BearyAvatarView.swift in Sources */,
 				5FF297D2E2804166BA8159B5 /* BearyDiaryCardCell.swift in Sources */,
+				33682D1F43521B7B51E6FF30 /* BearyDiaryPin.swift in Sources */,
 				1476E40C4B0A489082D4F060 /* BearyQuoteCardView.swift in Sources */,
 				6E1E41D1D67C42CEB3FBC5F3 /* BearyEmoteFlowView.swift in Sources */,
 				EF7B997969434C45BAEE28A3 /* BearyEmotePickerSheet.swift in Sources */,
