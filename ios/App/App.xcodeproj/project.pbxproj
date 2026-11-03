@@ -47,6 +47,7 @@
 		8B953B521BC24EF1807184F7 /* BearyAvatarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A147B76F8584FBF96D83CFD /* BearyAvatarView.swift */; };
 		5FF297D2E2804166BA8159B5 /* BearyDiaryCardCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0D12B066C04B3780DCF797 /* BearyDiaryCardCell.swift */; };
 		33682D1F43521B7B51E6FF30 /* BearyDiaryPin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */; };
+		5CD0ACC7665FEC6310F8023D /* BearyFestivalWallpaperView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D041B25C74C0DEB0BECC18CC /* BearyFestivalWallpaperView.swift */; };
 		1476E40C4B0A489082D4F060 /* BearyQuoteCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B1C032A6C0F4B51BD65D3E6 /* BearyQuoteCardView.swift */; };
 		6E1E41D1D67C42CEB3FBC5F3 /* BearyEmoteFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 009D1C4789D54436BA953274 /* BearyEmoteFlowView.swift */; };
 		EF7B997969434C45BAEE28A3 /* BearyEmotePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16C3C0A0F75C4251A59FA4F6 /* BearyEmotePickerSheet.swift */; };
@@ -98,6 +99,7 @@
 		EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */ = {isa = PBXBuildFile; fileRef = B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */; };
 		248993E9EF7C4D73A470CCE9 /* BearyNightPatrol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F7AC7C7B59449186BD24AF /* BearyNightPatrol.swift */; };
 		93F45F628E22C5045A1EF58F /* agree.json in Resources */ = {isa = PBXBuildFile; fileRef = DAE48A2C16A1E3B2821093EB /* agree.json */; };
+		3A970A89A5411DB05EA8D92C /* BearyFestivalWallpapers.json in Resources */ = {isa = PBXBuildFile; fileRef = C69BECF80F639F3B86A1C5F7 /* BearyFestivalWallpapers.json */; };
 		4497343DBC967B83178641E1 /* agree_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 37B9943EDEF2C3A792782E9E /* agree_dark.json */; };
 		7089387273580DA6004FDF8A /* crown.json in Resources */ = {isa = PBXBuildFile; fileRef = 4ED6BF206A0F34DF117D855A /* crown.json */; };
 		2D246D12E611A91D2B5942DA /* crown_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = F6FD1914898A32397E582D45 /* crown_dark.json */; };
@@ -287,6 +289,7 @@
 		1A147B76F8584FBF96D83CFD /* BearyAvatarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyAvatarView.swift; sourceTree = "<group>"; };
 		BD0D12B066C04B3780DCF797 /* BearyDiaryCardCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryCardCell.swift; sourceTree = "<group>"; };
 		10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryPin.swift; sourceTree = "<group>"; };
+		D041B25C74C0DEB0BECC18CC /* BearyFestivalWallpaperView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyFestivalWallpaperView.swift; sourceTree = "<group>"; };
 		7B1C032A6C0F4B51BD65D3E6 /* BearyQuoteCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyQuoteCardView.swift; sourceTree = "<group>"; };
 		009D1C4789D54436BA953274 /* BearyEmoteFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmoteFlowView.swift; sourceTree = "<group>"; };
 		16C3C0A0F75C4251A59FA4F6 /* BearyEmotePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmotePickerSheet.swift; sourceTree = "<group>"; };
@@ -335,6 +338,7 @@
 		B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmoteImages.swift; sourceTree = "<group>"; };
 		60F7AC7C7B59449186BD24AF /* BearyNightPatrol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyNightPatrol.swift; sourceTree = "<group>"; };
 		DAE48A2C16A1E3B2821093EB /* agree.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree.json; sourceTree = "<group>"; };
+		C69BECF80F639F3B86A1C5F7 /* BearyFestivalWallpapers.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = BearyFestivalWallpapers.json; sourceTree = "<group>"; };
 		37B9943EDEF2C3A792782E9E /* agree_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree_dark.json; sourceTree = "<group>"; };
 		4ED6BF206A0F34DF117D855A /* crown.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieCrown/crown.json; sourceTree = "<group>"; };
 		F6FD1914898A32397E582D45 /* crown_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieCrown/crown_dark.json; sourceTree = "<group>"; };
@@ -553,6 +557,8 @@
 				1A147B76F8584FBF96D83CFD /* BearyAvatarView.swift */,
 				BD0D12B066C04B3780DCF797 /* BearyDiaryCardCell.swift */,
 				10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */,
+				D041B25C74C0DEB0BECC18CC /* BearyFestivalWallpaperView.swift */,
+				C69BECF80F639F3B86A1C5F7 /* BearyFestivalWallpapers.json */,
 				7B1C032A6C0F4B51BD65D3E6 /* BearyQuoteCardView.swift */,
 				009D1C4789D54436BA953274 /* BearyEmoteFlowView.swift */,
 				16C3C0A0F75C4251A59FA4F6 /* BearyEmotePickerSheet.swift */,
@@ -854,6 +860,7 @@
 				504EC30D1FED79650016851F /* Main.storyboard in Resources */,
 				2FAD9763203C412B000D30F8 /* config.xml in Resources */,
 				93F45F628E22C5045A1EF58F /* agree.json in Resources */,
+				3A970A89A5411DB05EA8D92C /* BearyFestivalWallpapers.json in Resources */,
 				4497343DBC967B83178641E1 /* agree_dark.json in Resources */,
 				7089387273580DA6004FDF8A /* crown.json in Resources */,
 				2D246D12E611A91D2B5942DA /* crown_dark.json in Resources */,
@@ -1037,6 +1044,7 @@
 				8B953B521BC24EF1807184F7 /* BearyAvatarView.swift in Sources */,
 				5FF297D2E2804166BA8159B5 /* BearyDiaryCardCell.swift in Sources */,
 				33682D1F43521B7B51E6FF30 /* BearyDiaryPin.swift in Sources */,
+				5CD0ACC7665FEC6310F8023D /* BearyFestivalWallpaperView.swift in Sources */,
 				1476E40C4B0A489082D4F060 /* BearyQuoteCardView.swift in Sources */,
 				6E1E41D1D67C42CEB3FBC5F3 /* BearyEmoteFlowView.swift in Sources */,
 				EF7B997969434C45BAEE28A3 /* BearyEmotePickerSheet.swift in Sources */,
