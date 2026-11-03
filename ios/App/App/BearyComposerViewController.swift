@@ -7433,7 +7433,8 @@ private final class ComposerImageItem {
 //    草稿 pill 计数按 v3 多槽篇数，0 篇时只留“草稿”二字、计数段隐藏；
 //    引用面板为网页 qp-mode 整编形态（打开只留面板、发布钮隐藏、取消变“返回”只退面板、
 //    进出保存/恢复滚动位置、每 tab 缓存 + 序号守卫、选篇立即落盘）；
-//    编辑倒计时到 0 显示“编辑已结束”并走 onCancelled 关闭编辑器（网页 closeEditor + loadFeed 同款，
+//    编辑倒计时到 0 显示“编辑时间已结束”，编辑器留页保留内容、可复制后关闭，
+//    不走 onCancelled 关闭编辑器（旧“编辑已结束＋关闭”口径已废止；
 //    列表刷新需容器侧接线，本文件不碰 SceneDelegate）。
 //    草稿箱弹层 BearyDraftBoxViewController 与熊图 BearyEmoteImages 均由其他代理新建文件提供，
 //    本文件只调用、不定义；两者未落地前本文件单独编译会缺符号，待齐套后由 CI 验证。
