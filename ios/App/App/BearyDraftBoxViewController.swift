@@ -820,9 +820,9 @@ final class BearyDraftBoxViewController: UIViewController {
                 failedLabel.trailingAnchor.constraint(equalTo: failedWrap.trailingAnchor, constant: -20),
             ])
             if draftsLoadCorrupt {
-                let clearButton = BearyButton.make(style: .destructiveOutline(.compact), title: "清除损坏的草稿库")
+                let clearButton = BearyButton.make(style: .destructiveOutline(.compact), title: "清除损坏的草稿数据")
                 clearButton.translatesAutoresizingMaskIntoConstraints = false
-                clearButton.accessibilityLabel = "清除损坏的草稿库"
+                clearButton.accessibilityLabel = "清除损坏的草稿数据"
                 clearButton.addTarget(self, action: #selector(clearCorruptStoreTapped), for: .touchUpInside)
                 clearButton.bearyAddPressFeedback()
                 failedWrap.addSubview(clearButton)
