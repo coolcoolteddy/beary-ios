@@ -1208,7 +1208,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     /// poolTapped 单独并入已入池分支（入池无“已换过”态）。
     private func isAlreadyPooledError(_ error: APIError) -> Bool {
         switch error {
-        case .server(let code):
+        case .server(let code, _):
             return code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "already_pooled"
         case .http(_, let snippet):
             if let snippet = snippet {
@@ -1222,7 +1222,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     private func isPoolEmptyError(_ error: APIError) -> Bool {
         switch error {
-        case .server(let code):
+        case .server(let code, _):
             return code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "pool_empty"
         case .http(_, let snippet):
             if let snippet = snippet {
@@ -1240,7 +1240,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             return "登录已过期，请重新登录"
         case .notFound:
             return "盲盒服务暂未上线，请稍后再试"
-        case .server(let code):
+        case .server(let code, _):
             return fallback
         case .http(let code, let snippet):
             if code == 404 { return "盲盒服务暂未上线，请稍后再试" }

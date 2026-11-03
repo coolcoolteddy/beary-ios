@@ -6305,7 +6305,7 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.applyVisibilityLocally(entryId: entryId, isPublic: originalPublic, publishedAt: originalPublishedAt, visibility: originalVisibility, ephemeralUntil: originalEphemeralUntil)
                     strongSelf.reloadVisibleTimelineRow(entryId: entryId)
                     let message: String
-                    if case .server(let code) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
+                    if case .server(let code, _) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
                     else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
                     else { message = "切换失败，请重试" }
                     strongSelf.showTimelineToast(message: message)

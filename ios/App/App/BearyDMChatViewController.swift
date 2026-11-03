@@ -520,11 +520,15 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.markReadIfNeeded()
                     onLoaded?(wasAtBottom)
                 case .failure(let error):
-                    if case .http(403, let snippet) = error, snippet?.contains("dm_not_allowed") == true {
+                    if error.isDMNotAllowed {
                         // 档位不允许：横幅 + 禁用，不走“会话已关闭”（那是拉黑路径）。
+                        // 审计第 9 项：带业务码的 403 也经此分支——.server 既保留
+                        // 业务码又保留 HTTP 状态，.server("dm_not_allowed", 403) 不再漏网。
                         self.dmNotAllowed = true
                         self.updatePermBanner()
-                    } else if case .http(403, _) = error {
+                    } else if error.isPermissionDenied {
+                        // 审计第 9 项：带业务码的 403 同样进会话关闭＋禁用输入；
+                        // 其余 .server 错误（非 403）不在此列，仍只走 loadFailed。
                         self.sessionClosed = true
                         self.inputTextView.isEditable = false
                         self.updateSendButton()
@@ -622,11 +626,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 case .failure(let error):
                     if case .unauthorized = error {
                         self.onRequireLogin?()
-                    } else if case .http(403, let snippet) = error, snippet?.contains("dm_not_allowed") == true {
+                    } else if error.isDMNotAllowed {
                         // 档位不允许：横幅 + 禁用，输入框原文字保留（仅不可再发）。
+                        // 审计第 9 项：带业务码的 403 也经此分支（见 APIError.isDMNotAllowed）。
                         self.dmNotAllowed = true
                         self.updatePermBanner()
-                    } else if case .http(403, _) = error {
+                    } else if error.isPermissionDenied {
+                        // 审计第 9 项：带业务码的 403 同样进会话关闭；其余 .server
+                        // 错误不在此列，仍走下面通用“发送失败，请重试”toast。
                         self.sessionClosed = true
                         self.inputTextView.isEditable = false
                         self.updateSendButton()

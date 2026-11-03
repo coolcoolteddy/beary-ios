@@ -2171,7 +2171,7 @@ final class BearySettingsViewController: UIViewController {
                         return
                     }
                     if case .cancelled = error { return }
-                    if case .server(let code) = error, code == "admin_cannot_delete" {
+                    if case .server(let code, _) = error, code == "admin_cannot_delete" {
                         self.showToast("管理员账号不能注销")
                         return
                     }

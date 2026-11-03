@@ -6428,7 +6428,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func message(forPublishError error: APIError) -> String {
-        if case .server(let code) = error {
+        if case .server(let code, _) = error {
             switch code {
             case "create_gap":
                 return "发得有点快，歇一下再写"
@@ -6547,7 +6547,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         // 登录页盖上来也救不回已过的期限，反而会挡住复制
                         // 输入的机会；非过期态的登录失效仍走原分支。
                         // 失败原因常驻 alert（不用一闪而过的 toast），确保看得到。
-                        if case .server(let code) = error, code == "edit window expired" {
+                        if case .server(let code, _) = error, code == "edit window expired" {
                             self.showAlert(message: "超过 15 分钟，已无法编辑；内容仍在编辑器里，可复制后关闭")
                         } else if case .network = error {
                             self.showAlert(message: "网络不可用，修改未保存；编辑时间已过，无法再保存，可复制内容后关闭")
@@ -6558,7 +6558,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         }
                     } else if case .unauthorized = error {
                         self.onRequireLogin?()
-                    } else if case .server(let code) = error, code == "edit window expired" {
+                    } else if case .server(let code, _) = error, code == "edit window expired" {
                         // C5：编辑期过期只 toast“超过 15 分钟，已无法编辑”，编辑器保持打开、
                         // 不删本地文件、不关编辑器（网页 PUT 失败同款收尾）。
                         // iCity：编辑锁只看 15 分钟、与可见性无关——旧“已公开”分支已删，
@@ -6575,7 +6575,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func message(forUpdateError error: APIError) -> String {
-        if case .server(let code) = error {
+        if case .server(let code, _) = error {
             switch code {
             case "content too long":
                 return "正文最多 2000 字"

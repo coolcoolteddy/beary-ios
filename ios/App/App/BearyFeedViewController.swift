@@ -2350,7 +2350,7 @@ class BearyFeedViewController: UIViewController {
                     // 失败原因透传：限流时服务端 message 比通用文案有用（entry_write
                     // 120/小时打满即 429）；其余失败仍走通用文案。
                     let message: String
-                    if case .server(let code) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
+                    if case .server(let code, _) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
                     else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
                     else { message = "切换失败，请重试" }
                     BearyToast.show(in: strongSelf.view, message: message)
