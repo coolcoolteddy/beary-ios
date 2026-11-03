@@ -714,6 +714,8 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     private static let detailLimit = 2000
     /// 11：提交锁——锁期间 titleChanged 不得重新启用提交钮（服务端幂等另有工人做）。
     private var isSubmitting = false
+    /// 提交在途时关闭钮的引用：提交期间一并禁用，失败后恢复；成功即随页关闭，无需恢复。
+    private var createCloseButton: BearyHit44Button?
     /// 13：600 上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews；与列表页同款）。
     private var colCapConstraints: [NSLayoutConstraint] = []
     /// 17：当前焦点框（键盘弹出时把它滚到可见区）。
@@ -738,6 +740,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         closeButton.accessibilityLabel = "关闭"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
+        createCloseButton = closeButton
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "发起许愿"
@@ -912,6 +915,13 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     /// P0-13：关闭未保存提示——空内容（标题与详情均空白）直接关；有修改时先弹
     /// 确认，“继续编辑”留页、“放弃修改”才关（编辑资料页“放弃未保存的改动？”同款口径）。
     @objc private func closeTapped() {
+        // 提交在途时关闭入口统一为“正在提交，请稍候”：不弹放弃改动确认、
+        // 不直接退出——已发出的创建请求无取消路径，退出会让用户误以为已取消、
+        // 实际愿望仍在服务端创建成功；等请求结束再按成功／失败结果处理。
+        guard !isSubmitting else {
+            BearyToast.show(in: view, message: "正在提交，请稍候")
+            return
+        }
         let hasTitle = !(titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasDetail = !detailView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         guard hasTitle || hasDetail else {
@@ -986,6 +996,8 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         setFieldErrorVisible(false)
         submitButton.isEnabled = false
         submitButton.alpha = 0.4
+        createCloseButton?.isEnabled = false
+        createCloseButton?.alpha = 0.4
         BearyAPI.shared.createWish(title: title, detail: detail) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -997,6 +1009,9 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
                     // 11：解锁后按当前标题重新评估启用态，不再无条件 isEnabled = true
                     //（提交期间标题被清空时，失败后提交钮仍应保持禁用）。
                     self.isSubmitting = false
+                    // 失败后表单内容保留：不清空标题／详情，只恢复关闭钮与提交钮启用态，可再提交。
+                    self.createCloseButton?.isEnabled = true
+                    self.createCloseButton?.alpha = 1
                     self.titleChanged()
                     // 30：超长 400 'bad wish' 走字段级提示（字段旁红字），不弹通用 toast；
                     // 其余失败映射不变（not_plus / rate_limited / 通用 toast）。
