@@ -735,7 +735,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         buttonValue.layer.borderWidth = 1
-        buttonValue.layer.cornerRadius = 20
+        buttonValue.layer.cornerRadius = BearyCorners.single
         buttonValue.addTarget(self, action: #selector(editButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         // P2-4：照抄点赞钮实测字宽修法——按钮固有宽不含标题边距，显式宽 =
@@ -767,7 +767,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.layer.borderWidth = 0
         buttonValue.backgroundColor = BearyColors.ink
         buttonValue.clipsToBounds = true
-        buttonValue.layer.cornerRadius = 20
+        buttonValue.layer.cornerRadius = BearyCorners.single
         buttonValue.addTarget(self, action: #selector(followButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         buttonValue.isHidden = true
@@ -1007,7 +1007,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.tintColor = BearyColors.ink
         buttonValue.accessibilityLabel = "设置"
         buttonValue.layer.borderWidth = 1
-        buttonValue.layer.cornerRadius = 20
+        buttonValue.layer.cornerRadius = BearyCorners.single
         buttonValue.addTarget(self, action: #selector(gearButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         return buttonValue
@@ -1030,7 +1030,7 @@ class BearyProfileViewController: UIViewController {
         viewValue.translatesAutoresizingMaskIntoConstraints = false
         viewValue.backgroundColor = BearyColors.bg
         viewValue.layer.borderWidth = 1
-        viewValue.layer.cornerRadius = 14
+        viewValue.layer.cornerRadius = BearyCorners.single
         viewValue.isHidden = true
         return viewValue
     }()
@@ -1076,7 +1076,7 @@ class BearyProfileViewController: UIViewController {
         viewValue.translatesAutoresizingMaskIntoConstraints = false
         viewValue.backgroundColor = BearyColors.bg
         viewValue.layer.borderWidth = 1
-        viewValue.layer.cornerRadius = 14
+        viewValue.layer.cornerRadius = BearyCorners.single
         viewValue.isHidden = true
         return viewValue
     }()
@@ -1435,7 +1435,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.tintColor = BearyColors.onBrand
         buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         buttonValue.backgroundColor = BearyColors.orange
-        buttonValue.layer.cornerRadius = 10
+        buttonValue.layer.cornerRadius = BearyCorners.single
         buttonValue.clipsToBounds = true
         buttonValue.addTarget(self, action: #selector(randomShuffleTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
@@ -3882,7 +3882,7 @@ class BearyProfileViewController: UIViewController {
             let buttonValue = UIButton(type: .custom)
             buttonValue.translatesAutoresizingMaskIntoConstraints = false
             buttonValue.backgroundColor = BearyColors.hov
-            buttonValue.layer.cornerRadius = 22
+            buttonValue.layer.cornerRadius = BearyCorners.single
             buttonValue.clipsToBounds = true
             buttonValue.tag = index
             buttonValue.setImage(BearyIconImages.image(named: "icon_paw", pointSize: 24), for: .normal)
@@ -6389,7 +6389,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         retryButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         retryButton.layer.borderWidth = 1
         retryButton.layer.bearyDynamicBorderColor = BearyColors.line
-        retryButton.layer.cornerRadius = 20
+        retryButton.layer.cornerRadius = BearyCorners.single
         retryButton.addTarget(self, action: #selector(retryButtonTapped), for: .touchUpInside)
         retryButton.bearyAddPressFeedback()
         retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true

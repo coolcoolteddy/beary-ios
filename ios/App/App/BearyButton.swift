@@ -57,11 +57,11 @@ enum BearyButtonStyle: Equatable {
     var cornerRadius: CGFloat {
         switch self {
         case .primaryPill:
-            return 22
+            return BearyCorners.single
         case .secondaryOutline(let size):
-            return size == .regular ? 22 : 18
+            return BearyCorners.single
         case .destructiveOutline(let size):
-            return size == .regular ? 22 : 18
+            return BearyCorners.single
         case .iconCircleClose:
             return 16
         }

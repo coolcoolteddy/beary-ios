@@ -34,7 +34,7 @@ private final class BlindBoxPoolRowView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = BearyColors.surface
-        layer.cornerRadius = 14
+        layer.cornerRadius = BearyCorners.single
         layer.borderWidth = 1
         layer.bearyDynamicBorderColor = BearyColors.line
         clipsToBounds = true
@@ -466,7 +466,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private func buildReceivedSection() {
         receivedView.translatesAutoresizingMaskIntoConstraints = false
         receivedView.backgroundColor = BearyColors.surface
-        receivedView.layer.cornerRadius = 16
+        receivedView.layer.cornerRadius = BearyCorners.single
         receivedView.layer.borderWidth = 1
         receivedView.layer.bearyDynamicBorderColor = BearyColors.line
         receivedView.clipsToBounds = true
@@ -578,7 +578,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         placeholderView.translatesAutoresizingMaskIntoConstraints = false
         // 占位框：实线边框（CALayer 无虚线属性，虚线需 CAShapeLayer 另绘；
         // 本页占位语义由文案承担，不为演示样式另起一层 shape 图层）。
-        placeholderView.layer.cornerRadius = 14
+        placeholderView.layer.cornerRadius = BearyCorners.single
         placeholderView.layer.borderWidth = 1
         placeholderView.layer.bearyDynamicBorderColor = BearyColors.line
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false

@@ -568,7 +568,7 @@ final class BearyChromeViewController: UIViewController {
         login.titleLabel?.adjustsFontForContentSizeCategory = false
         login.setTitleColor(BearyColors.onBrand, for: .normal)
         login.backgroundColor = .clear
-        login.layer.cornerRadius = 16
+        login.layer.cornerRadius = BearyCorners.single
         login.addTarget(self, action: #selector(didTapLogin), for: .touchUpInside)
         login.bearyAddPressFeedback()
         login.translatesAutoresizingMaskIntoConstraints = false

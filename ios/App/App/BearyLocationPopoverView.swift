@@ -119,7 +119,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         confirmButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 18), for: .normal)
         confirmButton.tintColor = BearyColors.onBrand
         confirmButton.backgroundColor = BearyColors.orange
-        confirmButton.layer.cornerRadius = 16
+        confirmButton.layer.cornerRadius = BearyCorners.single
         confirmButton.clipsToBounds = true
         confirmButton.accessibilityLabel = "确认使用这个位置"
         confirmButton.setContentHuggingPriority(.required, for: .horizontal)

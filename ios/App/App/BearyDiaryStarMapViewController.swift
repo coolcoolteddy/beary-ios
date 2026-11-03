@@ -280,7 +280,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         }
 
         skyView.translatesAutoresizingMaskIntoConstraints = false
-        skyView.layer.cornerRadius = 16
+        skyView.layer.cornerRadius = BearyCorners.single
         skyView.clipsToBounds = true
         contentView.addSubview(skyView)
 
@@ -298,7 +298,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
         sheetCard.translatesAutoresizingMaskIntoConstraints = false
         sheetCard.backgroundColor = BearyStarMapNight.sheetBackground
-        sheetCard.layer.cornerRadius = 14
+        sheetCard.layer.cornerRadius = BearyCorners.single
         sheetCard.layer.bearyDynamicBorderColor = BearyStarMapNight.sheetBorder
         sheetCard.layer.borderWidth = 1
         sheetCard.clipsToBounds = true
@@ -495,7 +495,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         button.bearyAddPressFeedback()
         button.setTitleColor(selected ? BearyStarMapNight.selectedText : BearyStarMapNight.bodyText, for: .normal)
         button.backgroundColor = selected ? BearyStarMapNight.selected : .clear
-        button.layer.cornerRadius = 16
+        button.layer.cornerRadius = BearyCorners.single
         button.layer.borderWidth = selected ? 0 : 1
         button.layer.bearyDynamicBorderColor = BearyStarMapNight.pillBorder
         button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)

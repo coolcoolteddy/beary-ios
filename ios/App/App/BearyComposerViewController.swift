@@ -1260,7 +1260,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         publishButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
         publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         // v6-4：发布钮高 44 → 36、pill 圆角随高取半 18；顶栏高 60 居中后底部到分界线净留白 12。其余样式与行为不动。
-        publishButton.layer.cornerRadius = 18
+        publishButton.layer.cornerRadius = BearyCorners.single
         publishButton.layer.masksToBounds = true
         publishButton.addTarget(self, action: #selector(didTapPublish), for: .touchUpInside)
         // 发布中 spinner：平时停在发送图标位，发布/保存中时替下发送图标转圈（E3-4）。
@@ -2173,7 +2173,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 按钮普查：36 高 tab 条，标题走 cappedFont（上限 20，工厂紧凑款同款口径）。
             tabButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
             tabButton.titleLabel?.adjustsFontForContentSizeCategory = true
-            tabButton.layer.cornerRadius = 18
+            tabButton.layer.cornerRadius = BearyCorners.single
             tabButton.layer.masksToBounds = true
             tabButton.addTarget(self, action: #selector(didTapQuoteTab(_:)), for: .touchUpInside)
             tabButton.bearyAddPressFeedback()
@@ -2866,7 +2866,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     imageView.translatesAutoresizingMaskIntoConstraints = false
                     imageView.contentMode = .scaleAspectFill
                     imageView.clipsToBounds = true
-                    imageView.layer.cornerRadius = 10
+                    imageView.layer.cornerRadius = BearyCorners.single
                     imageView.layer.masksToBounds = true
                     if let url = BearyImageURLs.imageURL(key: key, thumb: true) {
                         // B3-2：面板行图与引用条同规格（高 118、宽 65–262），取上限 262。
@@ -4834,7 +4834,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         container.translatesAutoresizingMaskIntoConstraints = false
         // 网页 thumb 本身无容器底：单项背后不再铺 faint 底，圆角 10 由容器裁剪提供。
         container.backgroundColor = UIColor.clear
-        container.layer.cornerRadius = 10
+        container.layer.cornerRadius = BearyCorners.single
         container.layer.masksToBounds = true
         let imageView = UIImageView()
         imageView.translatesAutoresizingMaskIntoConstraints = false
@@ -4851,7 +4851,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let failView = UIView()
         failView.translatesAutoresizingMaskIntoConstraints = false
         failView.backgroundColor = BearyColors.red.withAlphaComponent(0.10)
-        failView.layer.cornerRadius = 10
+        failView.layer.cornerRadius = BearyCorners.single
         failView.layer.masksToBounds = true
         failView.isHidden = !failed
         let failStack = UIStackView()

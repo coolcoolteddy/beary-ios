@@ -156,7 +156,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         inputTextView.adjustsFontForContentSizeCategory = true
         inputTextView.textColor = BearyColors.ink
         inputTextView.backgroundColor = BearyColors.faint
-        inputTextView.layer.cornerRadius = 16
+        inputTextView.layer.cornerRadius = BearyCorners.single
         inputTextView.clipsToBounds = true
         inputTextView.textContainerInset = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
         inputTextView.delegate = self
@@ -1024,7 +1024,7 @@ private final class BearyDMMessageCell: UITableViewCell {
             stack.spacing = 2
             stack.alignment = isMine ? .trailing : .leading
             bubble.translatesAutoresizingMaskIntoConstraints = false
-            bubble.layer.cornerRadius = 16
+            bubble.layer.cornerRadius = BearyCorners.single
             bubble.clipsToBounds = true
             bubble.backgroundColor = isMine ? BearyColors.orange : BearyColors.faint
             textLabel.translatesAutoresizingMaskIntoConstraints = false
