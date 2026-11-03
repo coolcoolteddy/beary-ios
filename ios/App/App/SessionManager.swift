@@ -555,6 +555,17 @@ final class SessionManager {
     /// 失败时保管库项与当前账号都原样保留。当前账号：登出成功后走
     /// signOutLocally（清该号磁盘缓存 + 保管库项），有下一账号时切
     /// 过去，无账号时报告 loggedOut（调用方走现有退出后路径）。
+    /// 切号竞态修（第一轮第 ④ 项）：移除在途时用户切到另一账号，原代码
+    /// 回包不复核当前账号就清态——删当前账号在途时切到 B，回包的
+    /// clearLocalCookies 会删掉 B 刚装好的 cookie、signOutLocally 会按
+    /// currentUser（已是 B）删掉 B 的保管库项与快照，等于误退出 B；
+    /// 删非当前账号在途时切到该目标号，回包 vault.remove 也会删掉正
+    /// 在用的当前号。修法取“发起时捕获目标身份、回包只作用于目标”：
+    /// 两路回包成功时先复核当前账号仍是目标号，否则本次移除作废、
+    /// 报 .failed（保管库与当前态一字不动；已发出的服务端登出无法
+    /// 撤回，目标号若正好是当前号则其会话已死，下次请求 401 走登录
+    /// 门重新登录——这是已发出请求的固有限制，不是本地清态错误）。
+    /// 未取“移除期间禁切号”的串行化：切号本身无害，作废移除比锁 UI 更轻。
     func removeAccount(userId: Int, completion: @escaping (AccountRemoveResult) -> Void) {
         // 主线程收敛：非主线程调用整段重派主线程。
         guard Thread.isMainThread else {
@@ -573,6 +584,12 @@ final class SessionManager {
                 DispatchQueue.main.async {
                     switch result {
                     case .success:
+                        // 竞态复核：移除在途时切到了目标号（目标号已是当前号），
+                        // 此时删保管库项等于删正在用的当前号，本次移除作废。
+                        guard self.currentUser?.id != userId else {
+                            completion(.failed)
+                            return
+                        }
                         _ = vault.remove(userId: userId)
                         completion(.removed)
                     case .failure:
@@ -594,6 +611,14 @@ final class SessionManager {
             DispatchQueue.main.async {
                 switch result {
                 case .success:
+                    // 竞态复核：移除在途时当前账号已被切走（例如切到 B），
+                    // 此时 clearLocalCookies 会删 B 的 cookie、signOutLocally
+                    // 会按 currentUser（已是 B）删 B 的保管库项与快照，
+                    // 等于误退出 B；本次移除作废，B 与目标号的本地态都不动。
+                    guard self.currentUser?.id == userId else {
+                        completion(.failed)
+                        return
+                    }
                     self.clearLocalCookies()
                     self.signOutLocally()
                     let remaining = vault.loadAll()
