@@ -277,6 +277,9 @@ final class BearyChromeViewController: UIViewController {
         /// 好友第一期：底栏第四段（互关列表，tab）；会话列表（私信，非 tab 页，
         /// 由好友列表页顶栏进入、返回回好友段）。
         case friends, conversations
+        /// 消息页（Li 2026-11-03 定）：底栏“消息”段的根页——通知＋私信同页两组；
+        /// 好友列表页仍保留，由消息页顶栏用户列表钮进入。
+        case messages
     }
     private var currentPage: ContainerPage?
     private var placeholderVCs: [ContainerPage: UIViewController] = [:]
@@ -291,6 +294,11 @@ final class BearyChromeViewController: UIViewController {
     /// 好友第一期：底栏第四段常驻页（互关列表）与会话列表页（私信）。
     private var friendsVC: BearyFriendsViewController?
     private var conversationsVC: BearyDMConversationsViewController?
+    /// 消息页常驻页（底栏“消息”段根页，见 ensureMessagesVC）。
+    private var messagesVC: BearyMessagesViewController?
+    /// 好友页是否从消息页用户列表钮进来（进好友页时消费一次）：
+    /// 只有这条路才显返回钮；底栏直点好友段不显。
+    private var friendsOpenedFromMessages = false
     private var profileGated = false
     /// 账号隔离 2 号：我页建造时绑定的账号 id（ensureProfileVC 写入）。
     /// onUserChanged 以它为准判定是否重建，不再只看 gated 态与当前页。
@@ -627,12 +635,12 @@ final class BearyChromeViewController: UIViewController {
             blur.widthAnchor.constraint(equalToConstant: 288),
             blur.heightAnchor.constraint(equalToConstant: 58),
         ])
-        // 好友第一期：底栏“好友”段（互关列表页；新图标 icon_friends，
-        // PR #610 落位，#610 先于本支合入）。顺序：首页、好友、时间线、我的
-        // （Li 2026-11-01 定：好友放时间线左边）。
+        // 消息页（Li 2026-11-03 定）：底栏第 2 段由“好友”改叫“消息”、图标换气泡
+        //（icon_comment），顺序不变：首页、消息、时间线、我的。
+        // 好友列表页仍保留，由消息页顶栏用户列表钮进入。
         let tabIcons: [(String, String)] = [
             ("IconHome", "icon_home"),
-            ("icon_friends", "icon_friends"),
+            ("icon_comment", "icon_comment"),
             ("IconTimeline", "icon_calendar"),
             ("IconUser", "icon_user"),
         ]
@@ -650,10 +658,10 @@ final class BearyChromeViewController: UIViewController {
             return UIColor.black.withAlphaComponent(0.12)
         }
         seg.selectedSegmentIndex = 0
-        // 审计第三轮无障碍：整栏单名“底栏”改为每段各一名（首页/好友/时间线/我的），
+        // 审计第三轮无障碍：整栏单名“底栏”改为每段各一名（首页/消息/时间线/我的），
         // 当前段带 .selected；分段器本身不再作为读屏元素，避免与代理重复。
         seg.isAccessibilityElement = false
-        let segmentNames = ["首页", "好友", "时间线", "我的"]
+        let segmentNames = ["首页", "消息", "时间线", "我的"]
         seg.accessibilityElements = segmentNames.enumerated().map { index, name in
             let element = BottomSegmentAccessibilityElement(accessibilityContainer: seg)
             element.segmentIndex = index
@@ -1115,8 +1123,8 @@ final class BearyChromeViewController: UIViewController {
         // 让 toast 先可见；回调里校验仍未登录、未切页、无 modal 在前，否则取消，见 U21）。
         SessionManager.shared.onUnauthorized = { [weak self] in
             guard let self = self else { return }
-            // 好友第一期：好友段与会话列表页同属私密页，401 时先回首页。
-            if self.currentPage == .notif || self.currentPage == .timeline || self.currentPage == .me || self.currentPage == .friends || self.currentPage == .conversations {
+            // 好友第一期：好友段、消息页与会话列表页同属私密页，401 时先回首页。
+            if self.currentPage == .notif || self.currentPage == .timeline || self.currentPage == .me || self.currentPage == .friends || self.currentPage == .conversations || self.currentPage == .messages {
                 self.showPage(.home)
             }
             self.showToast(message: "请先登录")
@@ -1573,6 +1581,7 @@ final class BearyChromeViewController: UIViewController {
         searchVC?.applyHeaderTopInset(visible: visible)
         friendsVC?.applyHeaderTopInset(visible: visible)
         conversationsVC?.applyHeaderTopInset(visible: visible)
+        messagesVC?.applyHeaderTopInset(visible: visible)
     }
 
     /// 栏显隐：动画可中断、可交互，reduced-motion 下直接设终值（与原栏动画同口径）。
@@ -1705,15 +1714,16 @@ final class BearyChromeViewController: UIViewController {
     func setChromeHidden(_ hidden: Bool, animated: Bool) { setBarsVisible(!hidden, animated: animated) }
 
     /// 底栏选中态：分段器选段与 currentPage 双向同步。当前页不是 tab（搜索 /
-    /// 消息 / 邀请 / 个人主页）时选段置 noSegment，对应旧“全部灰色、无 pill”口径。
-    /// 消息页已无 tab（入口挪到首页顶栏铃铛），故 .notif 同样置 noSegment。
+    /// 铃铛 / 邀请 / 个人主页）时选段置 noSegment，对应旧“全部灰色、无 pill”口径。
+    /// 铃铛页（.notif）无 tab，置 noSegment；消息页（.messages）与好友列表页
+    /// （.friends，同属消息段子页）均对应底栏第 2 段。
     /// 程序化设 selectedSegmentIndex 不发 valueChanged，不会与点按手势重入。
     private func updateTabSelection() {
         guard let seg = bottomSegmented else { return }
         let index: Int
         switch currentPage {
         case .home: index = 0
-        case .friends: index = 1
+        case .friends, .messages: index = 1
         case .timeline: index = 2
         case .me: index = 3
         default: index = UISegmentedControl.noSegment
@@ -1820,9 +1830,9 @@ final class BearyChromeViewController: UIViewController {
     @objc private func didTapHome() { showPage(.home) }
     @objc private func didTapTimeline() { navigator.goTab("timeline") }
     @objc private func didTapMe() { navigator.goTab("me") }
-    /// 好友第一期：底栏第四段“好友”点按（tab 页走 showPage，与首页同口径，
-    /// 不走 navigator.goTab——好友段无旧钮导航可沿用）。
-    @objc private func didTapFriends() { showPage(.friends) }
+    /// 消息页（Li 2026-11-03 定）：底栏第 2 段“消息”点按（tab 页走 showPage，
+    /// 与首页同口径，不走 navigator.goTab——消息段无旧钮导航可沿用）。
+    @objc private func didTapMessages() { showPage(.messages) }
 
     /// 底栏分段 touchDown：记录旧选段。valueChanged 与点按手势都在 touchUp 时触发、
     /// 时序不定，故重拍判定不以手势触发时的 selectedSegmentIndex 为准，只认 touchDown 快照。
@@ -1837,7 +1847,7 @@ final class BearyChromeViewController: UIViewController {
         BearyHaptics.press()
         switch bottomSegmented.selectedSegmentIndex {
         case 0: didTapHome()
-        case 1: didTapFriends()
+        case 1: didTapMessages()
         case 2: didTapTimeline()
         case 3: didTapMe()
         default: break
@@ -1850,7 +1860,7 @@ final class BearyChromeViewController: UIViewController {
         if seg.selectedSegmentIndex == index {
             switch index {
             case 0: didTapHome()
-            case 1: didTapFriends()
+            case 1: didTapMessages()
             case 2: didTapTimeline()
             case 3: didTapMe()
             default: break
@@ -1874,7 +1884,7 @@ final class BearyChromeViewController: UIViewController {
         BearyHaptics.press()
         switch tapped {
         case 0: didTapHome()
-        case 1: didTapFriends()
+        case 1: didTapMessages()
         case 2: didTapTimeline()
         case 3: didTapMe()
         default: break
@@ -2032,11 +2042,11 @@ final class BearyChromeViewController: UIViewController {
     /// 原生页切换：首页与新页均为常驻子 VC（hide/show 保留滚动位置）。
     /// 重拍当前 tab：首页先回顶再刷新（与网页 topThen 同口径），消息页回顶再刷新，时间线重拉。
     private func showPage(_ page: ContainerPage) {
-        // 游客模式（只读）：时间线/我页/消息页/好友段不对游客开放，点按一律走登录弹窗，
+        // 游客模式（只读）：时间线/我页/铃铛消息页/好友段/消息页不对游客开放，点按一律走登录弹窗，
         // 不进页、不弹原登录页；首页/搜索/他人主页（.user）游客可看，直放行。
         if SessionManager.shared.isGuestMode {
             switch page {
-            case .timeline, .me, .notif, .friends, .conversations:
+            case .timeline, .me, .notif, .friends, .conversations, .messages:
                 presentLoginGate()
                 // Tab 错位修：门控拦住切页时，pill 已被点按先翻到新段；
                 // 只恢复 pill 到实际页（currentPage），不跳页、不改门控业务。
@@ -2050,9 +2060,9 @@ final class BearyChromeViewController: UIViewController {
         // 冷启动竞态修：首个 /me 未回包且本地有有效会话 cookie 时，currentUser
         // 仍为 nil 不能断定是游客——等一次 refreshMe 回包再判（FAB 的 P1-1 同口径），
         // 等的过程中不 toast、不弹登录页、不亮 tab；无 cookie 时按原口径直走登录门。
-        // 好友第一期：好友段与会话列表页与“我”页同口径——未登录不进页，
+        // 好友第一期：好友段、消息页与会话列表页与“我”页同口径——未登录不进页，
         // toast + 1200ms 后弹登录（见 showTabLoginGate；游客分支已在上方拦下）。
-        if (page == .me || page == .friends || page == .conversations) && SessionManager.shared.isLoggedIn == false {
+        if (page == .me || page == .friends || page == .conversations || page == .messages) && SessionManager.shared.isLoggedIn == false {
             if profileMeWaitPending {
                 // 已在等 /me 回包：第二下点按同样只恢复 pill，不重复发请求。
                 updateTabSelection()
@@ -2113,6 +2123,9 @@ final class BearyChromeViewController: UIViewController {
             } else if page == .friends {
                 // 好友第一期：好友段重拍 = 回顶再刷新（与消息页同口径）。
                 retapCurrentPage(.friends, pageVC: friendsVC, isAtTop: friendsVC?.isAtTop ?? true, isRefreshing: friendsVC?.isRefreshingForRetap ?? false, scrollToTop: { friendsVC?.scrollToTop() }, refresh: { friendsVC?.refresh() })
+            } else if page == .messages {
+                // 消息页重拍 = 回顶再刷新（两组各走原有刷新入口，见消息页 refresh）。
+                retapCurrentPage(.messages, pageVC: messagesVC, isAtTop: messagesVC?.isAtTop ?? true, isRefreshing: messagesVC?.isRefreshingForRetap ?? false, scrollToTop: { messagesVC?.scrollToTop() }, refresh: { messagesVC?.refresh() })
             } else if page == .search {
                 // F5：重拍搜索页回顶——搜索页无下拉刷新入口，不硬加刷新。
                 scrollPageToTop(searchVC)
@@ -2148,6 +2161,8 @@ final class BearyChromeViewController: UIViewController {
             timelineVC?.pageDidLeave()
         } else if previousPage == .notif {
             notifVC?.pageDidLeave()
+        } else if previousPage == .messages {
+            messagesVC?.pageDidLeave()
         } else if previousPage == .search {
             searchVC?.pageDidLeave()
         }
@@ -2170,6 +2185,12 @@ final class BearyChromeViewController: UIViewController {
         view.endEditing(true)
         currentPage = page
         let incomingView: UIView = (page == .home) ? ensureFeedVC().view : pageView(for: page).view
+        if page == .friends {
+            // 好友页返回钮只认用户列表钮这条路：进页时按来源重设并消费旗标；
+            // 底栏直点、重拍都不经过这里改旗标，根页保持无返回钮。
+            friendsVC?.setOpenedFromMessages(friendsOpenedFromMessages)
+            friendsOpenedFromMessages = false
+        }
         incomingView.isHidden = false
         // 入场页接管时机不变：切换开始即恢复交互。快速反向切页时，入场页可能
         // 正是上一段交叉淡入的离场页（当时被禁用）；不等上一段动画完成回调，
@@ -2276,6 +2297,11 @@ final class BearyChromeViewController: UIViewController {
             notifVC?.pageDidEnter()
             notifVC?.refreshListIfUnreadChanged()
         }
+        if page == .messages {
+            // 消息页进页：嵌入的通知组恢复轮询＋按未读门控刷新（与铃铛页同口径，
+            // 两组转发集中在消息页 pageDidEnter 内）。
+            messagesVC?.pageDidEnter()
+        }
     }
 
     /// 容器页解析：消息/时间线/我/搜索/他人主页走真实现（邀请已改弹窗，不再是容器页）。
@@ -2288,6 +2314,7 @@ final class BearyChromeViewController: UIViewController {
         case .user: return ensureUserVC()
         case .friends: return ensureFriendsVC()
         case .conversations: return ensureConversationsVC()
+        case .messages: return ensureMessagesVC()
         default: return ensurePlaceholder(page)
         }
     }
@@ -2504,9 +2531,32 @@ final class BearyChromeViewController: UIViewController {
                 self?.presentUserProfile(handle: handle)
             }
         }
+        vc.onBackToMessages = { [weak self] in self?.showPage(.messages) }
         vc.onOpenConversations = { [weak self] in self?.showPage(.conversations) }
         addPageVC(vc, page: .friends)
         friendsVC = vc
+        vc.applyHeaderTopInset(visible: headerVisible)
+        return vc
+    }
+
+    /// 消息页（Li 2026-11-03 定）：底栏“消息”段的根页——通知＋私信同页两组，
+    /// 各复用既有页实例（通知页／会话列表页的类），不另写逻辑；
+    /// 顶栏右钮进原好友列表页（只换入口，朋友页本身不动）。
+    /// 游客/未登录不建页：showPage 的门控已先拦（游客登录门、未登录 toast+登录门），
+    /// 本页 load() 的 onRequireLogin 是第二道门（两组子页各自接线）。
+    private func ensureMessagesVC() -> BearyMessagesViewController {
+        if let vc = messagesVC { return vc }
+        let vc = BearyMessagesViewController()
+        vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
+        vc.onOpenUserList = { [weak self] in
+            self?.friendsOpenedFromMessages = true
+            self?.showPage(.friends)
+        }
+        vc.onOpenEntry = { [weak self] entryId in self?.gotoEntry(entryId: entryId) }
+        vc.onOpenUser = { [weak self] userId in self?.presentUserProfile(userId: userId) }
+        vc.onOpenDM = { [weak self] peer in self?.presentDMChat(peer: peer) }
+        addPageVC(vc, page: .messages)
+        messagesVC = vc
         vc.applyHeaderTopInset(visible: headerVisible)
         return vc
     }
@@ -2554,6 +2604,9 @@ final class BearyChromeViewController: UIViewController {
                 conversations.refresh()
             }
             self?.notifVC?.refreshListIfUnreadChanged()
+            if let messages = self?.messagesVC, messages.isViewLoaded {
+                messages.refreshGroups()
+            }
         }
         topmostViewController().present(vc, animated: BearyMotion.animated(true))
     }
@@ -2670,6 +2723,8 @@ final class BearyChromeViewController: UIViewController {
         // 仅为 switch 穷尽而留，不可达。
         case .friends: title = "好友"; message = "正在做原生版"
         case .conversations: title = "私信"; message = "正在做原生版"
+        // 消息页：真实页（pageView 分流），占位分支仅为 switch 穷尽而留，不可达。
+        case .messages: title = "消息"; message = "正在做原生版"
         }
         let vc = BearyPlaceholderViewController(title: title, message: message)
         addChild(vc)

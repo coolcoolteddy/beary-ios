@@ -20,6 +20,8 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     var onRequireLogin: (() -> Void)?
     /// 顶栏“会话”钮点按：容器接线到会话列表页（互关私信独立页）。
     var onOpenConversations: (() -> Void)?
+    /// 返回钮点按：只在从消息页打开时显，容器接线回消息页。
+    var onBackToMessages: (() -> Void)?
 
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let emptyLabel = UILabel()
@@ -31,6 +33,8 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     private var fadedRowKeys = Set<String>()
     private let titleLabel = UILabel()
     private var topBarTopConstraint: NSLayoutConstraint?
+    private var backButton: UIButton?
+    private var titleLeadingConstraint: NSLayoutConstraint?
     private var friends: [BearyAPI.FriendUser] = []
     private var loading = false
     private var needsReloadAfterUserChange = false
@@ -53,6 +57,17 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         titleLabel.textColor = BearyColors.ink
         titleLabel.text = "好友"
         topBar.addSubview(titleLabel)
+        // 从消息页打开时的返回钮（回消息页；底栏根页默认隐藏，见 setOpenedFromMessages）。
+        let backButton = UIButton(type: .system)
+        backButton.translatesAutoresizingMaskIntoConstraints = false
+        backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 20), for: .normal)
+        backButton.tintColor = BearyColors.ink
+        backButton.accessibilityLabel = "返回消息页"
+        backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
+        backButton.bearyAddPressFeedback()
+        backButton.isHidden = true
+        topBar.addSubview(backButton)
+        self.backButton = backButton
         // 段内分流入口（顶栏右钮，官方图标）：会话 icon_mail。
         let dmButton = UIButton(type: .system)
         dmButton.translatesAutoresizingMaskIntoConstraints = false
@@ -107,6 +122,8 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         view.addSubview(firstLoadStateView)
 
         topBarTopConstraint?.isActive = true
+        let titleLeading = titleLabel.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16)
+        titleLeadingConstraint = titleLeading
         NSLayoutConstraint.activate([
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -115,8 +132,13 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             // 系统字号放大、标题变高时顶栏随之伸展，不再把标题底边裁在 44 内。
             // 横向护栏（标题右缘 ≤ 私信钮左缘 −8）不动。
             topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            backButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            backButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            backButton.widthAnchor.constraint(equalToConstant: 44),
+            backButton.heightAnchor.constraint(equalToConstant: 44),
             // 时间线同款：标题左对齐、左缘 16、顶距 14（时间线标题行栈顶 +14 同口径）。
-            titleLabel.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
+            // 从消息页进来时左缘改 68（16 + 返回钮 44 + 间隙 8），见 setOpenedFromMessages。
+            titleLeading,
             titleLabel.topAnchor.constraint(equalTo: topBar.topAnchor, constant: 14),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -7),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: dmButton.leadingAnchor, constant: -8),
@@ -163,6 +185,17 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     /// 是固定条而非滚动内边距，故改约束常量而非 contentInset）。
     func applyHeaderTopInset(visible: Bool) {
         topBarTopConstraint?.constant = visible ? 60 : 0
+    }
+
+    /// 从消息页打开时显返回钮（回消息页），标题左缘同步让位；
+    /// 底栏根页不显，布局与原来一致。容器在每次进好友页时按来源重设。
+    func setOpenedFromMessages(_ opened: Bool) {
+        backButton?.isHidden = !opened
+        titleLeadingConstraint?.constant = opened ? 68 : 16
+    }
+
+    @objc private func backTapped() {
+        onBackToMessages?()
     }
 
     /// 同 tab 重拍口径（容器 showPage 用）：回顶 + 刷新入口。

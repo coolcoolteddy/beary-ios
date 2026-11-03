@@ -30,6 +30,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     private var fadedRowKeys = Set<String>()
     private let titleLabel = UILabel()
     private var topBarTopConstraint: NSLayoutConstraint?
+    private var backButton: UIButton?
     private var conversations: [BearyAPI.DMConversation] = []
     private var loading = false
     private var needsReloadAfterUserChange = false
@@ -51,6 +52,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
         backButton.bearyAddPressFeedback()
         topBar.addSubview(backButton)
+        self.backButton = backButton
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
         titleLabel.adjustsFontForContentSizeCategory = true
@@ -125,11 +127,56 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             tableView.contentInset.bottom = bottom
             tableView.scrollIndicatorInsets.bottom = bottom
         }
+        reportEmbeddedContentHeight()
+    }
+
+    /// 嵌入消息页时用：表内容高度变化回调（消息页据此定嵌入容器高）。
+    /// 不含安全区顶：子页嵌在消息页滚动栈内、已在消息页顶栏之下，顶部
+    /// 安全区在外层算过一次，再加会重复计入、横屏／分屏下组间距多一截。
+    /// 顶栏高仍算（组头“私信”标题条）；空态另留自适应内容高（底线 160，
+    /// 大字号下随空文案换行撑高），否则居中空文案会顶到顶栏上。
+    var onContentHeightChanged: ((CGFloat) -> Void)?
+    private var lastReportedContentHeight: CGFloat = -1
+
+    /// 空态自适应底线：默认字号下空文案折算后低于 160，走 160 底线；
+    /// 大字号下空文案换行变高，底线随之撑高、不钉死 160。
+    private var adaptiveEmptyMinHeight: CGFloat {
+        guard view.bounds.width > 0 else { return 160 }
+        let textWidth = max(0, view.bounds.width - 64)
+        let textHeight = emptyLabel.sizeThatFits(
+            CGSize(width: textWidth, height: CGFloat.greatestFiniteMagnitude)
+        ).height
+        return max(160, textHeight + 48)
+    }
+
+    /// 嵌入消息页时调用：隐藏返回钮（组头只留“私信”标题），表内滚动交外层滚动视图。
+    func setEmbedded() {
+        backButton?.isHidden = true
+        tableView.isScrollEnabled = false
+    }
+
+    /// 嵌入态高度上报：在布局末尾算一次，高度不变不重复报（防布局循环）。
+    private func reportEmbeddedContentHeight() {
+        guard onContentHeightChanged != nil else { return }
+        let topPad = (topBarTopConstraint?.constant ?? 0) + 44
+        var height = topPad + tableView.contentSize.height
+        if !emptyLabel.isHidden {
+            height = max(height, topPad + adaptiveEmptyMinHeight)
+        }
+        if abs(height - lastReportedContentHeight) > 0.5 {
+            lastReportedContentHeight = height
+            onContentHeightChanged?(height)
+        }
     }
 
     /// 容器顶栏显隐同步（与好友列表页同口径：固定条改约束常量）。
     func applyHeaderTopInset(visible: Bool) {
         topBarTopConstraint?.constant = visible ? 60 : 0
+    }
+
+    /// 同 tab 重拍口径（消息页取两组并集用）：在途加载或下拉刷新在途都算刷新中。
+    var isRefreshingForRetap: Bool {
+        loading || (tableView.refreshControl?.isRefreshing ?? false)
     }
 
     /// 会话页关闭 / 关系变化后的外部刷新入口（容器接线）。

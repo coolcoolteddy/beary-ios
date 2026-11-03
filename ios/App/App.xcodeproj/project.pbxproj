@@ -32,6 +32,7 @@
 		62A7D36DFC5C414F97A8DFC2 /* BearyFriends.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AA457831FB692BAD3805997 /* BearyFriends.swift */; };
 		FBE8D94C776A22C7A27151F5 /* BearyFriendsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 211813330D055BE3541E630C /* BearyFriendsViewController.swift */; };
 		8349E51FD3A43CAD4E980720 /* BearyDMConversationsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A9E7ABB49F8AD8F83EF4E7D /* BearyDMConversationsViewController.swift */; };
+		B8A5BA88BA43A7E6E8BD1EB8 /* BearyMessagesViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA7D839A6ABA259943127DC3 /* BearyMessagesViewController.swift */; };
 		B5B3A47B5AD9ECD75DA67FA8 /* BearyDMChatViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7245C876ECA3396B83F977B /* BearyDMChatViewController.swift */; };
 		07C80C38B7864F209AD90628 /* BearyDMStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 191F2C5C0AA746E788DFE195 /* BearyDMStore.swift */; };
 		18A6452B1F1FB1587C13CB37 /* BearyComposerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77AD3CB98561B2E60A48412C /* BearyComposerViewController.swift */; };
@@ -245,6 +246,7 @@
 		1AA457831FB692BAD3805997 /* BearyFriends.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyFriends.swift; sourceTree = "<group>"; };
 		211813330D055BE3541E630C /* BearyFriendsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyFriendsViewController.swift; sourceTree = "<group>"; };
 		6A9E7ABB49F8AD8F83EF4E7D /* BearyDMConversationsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDMConversationsViewController.swift; sourceTree = "<group>"; };
+		BA7D839A6ABA259943127DC3 /* BearyMessagesViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyMessagesViewController.swift; sourceTree = "<group>"; };
 		C7245C876ECA3396B83F977B /* BearyDMChatViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDMChatViewController.swift; sourceTree = "<group>"; };
 		191F2C5C0AA746E788DFE195 /* BearyDMStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDMStore.swift; sourceTree = "<group>"; };
 		77AD3CB98561B2E60A48412C /* BearyComposerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyComposerViewController.swift; sourceTree = "<group>"; };
@@ -485,6 +487,7 @@
 				1AA457831FB692BAD3805997 /* BearyFriends.swift */,
 				211813330D055BE3541E630C /* BearyFriendsViewController.swift */,
 				6A9E7ABB49F8AD8F83EF4E7D /* BearyDMConversationsViewController.swift */,
+				BA7D839A6ABA259943127DC3 /* BearyMessagesViewController.swift */,
 				C7245C876ECA3396B83F977B /* BearyDMChatViewController.swift */,
 				191F2C5C0AA746E788DFE195 /* BearyDMStore.swift */,
 				77AD3CB98561B2E60A48412C /* BearyComposerViewController.swift */,
@@ -917,6 +920,7 @@
 				62A7D36DFC5C414F97A8DFC2 /* BearyFriends.swift in Sources */,
 				FBE8D94C776A22C7A27151F5 /* BearyFriendsViewController.swift in Sources */,
 				8349E51FD3A43CAD4E980720 /* BearyDMConversationsViewController.swift in Sources */,
+				B8A5BA88BA43A7E6E8BD1EB8 /* BearyMessagesViewController.swift in Sources */,
 				B5B3A47B5AD9ECD75DA67FA8 /* BearyDMChatViewController.swift in Sources */,
 				07C80C38B7864F209AD90628 /* BearyDMStore.swift in Sources */,
 				18A6452B1F1FB1587C13CB37 /* BearyComposerViewController.swift in Sources */,

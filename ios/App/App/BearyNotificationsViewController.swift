@@ -428,6 +428,9 @@ final class BearyNotificationsViewController: UIViewController {
         return stateView
     }()
 
+    /// 态容器内竖栈（空态自适应底线用：实测栈高，大字号下底线随之撑高）。
+    private var stateStackView: UIStackView?
+
     /// 加载 / 空 / 失败 / 登录四态共用容器（盖在表区上，顶栏“消息”始终可见）。
     private lazy var stateContainer: UIView = {
         let container = UIView()
@@ -459,6 +462,7 @@ final class BearyNotificationsViewController: UIViewController {
             errorStateView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             errorStateView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
         ])
+        self.stateStackView = stack
         return container
     }()
 
@@ -628,6 +632,7 @@ final class BearyNotificationsViewController: UIViewController {
                 pullView.frame.size.width = width
             }
         }
+        reportEmbeddedContentHeight()
     }
 
     /// 缓存写回：仅成功加载过才存（失败/未加载不以空列表覆盖旧缓存）。
@@ -852,6 +857,48 @@ final class BearyNotificationsViewController: UIViewController {
         beginCustomPullRefresh()
     }
 
+    /// 嵌入消息页时用：表内容高度变化回调（消息页据此定嵌入容器高）。
+    /// 不含安全区顶：子页嵌在消息页滚动栈内、已在消息页顶栏之下，顶部
+    /// 安全区在外层算过一次，再加会重复计入、横屏／分屏下组间距多一截。
+    /// 状态容器可见时表只有表头高，另留自适应状态区高度（底线 280，
+    /// 大字号下随栈高撑高），否则空态／加载态会被压没。
+    var onContentHeightChanged: ((CGFloat) -> Void)?
+    private var lastReportedContentHeight: CGFloat = -1
+
+    /// 空态自适应底线：默认字号下栈高折算后低于 280，走 280 底线；
+    /// 大字号下标题／副标题换行使栈变高，底线随之撑高、不钉死 280。
+    private var adaptiveStateMinHeight: CGFloat {
+        guard let stack = stateStackView, view.bounds.width > 0 else { return 280 }
+        let contentWidth: CGFloat = view.bounds.width >= 821 ? 600 : view.bounds.width
+        let stackWidth = max(0, contentWidth - 40)
+        let stackHeight = stack.systemLayoutSizeFitting(
+            CGSize(width: stackWidth, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        return max(280, 26 + stackHeight + 20)
+    }
+
+    /// 嵌入消息页时调用：表内滚动交外层滚动视图，表头标题改作“通知”组头
+    /// （表头“全部已读”钮保留，行为不变）。
+    func setEmbedded() {
+        tableView.isScrollEnabled = false
+        titleLabel.text = "通知"
+    }
+
+    /// 嵌入态高度上报：在布局末尾算一次，高度不变不重复报（防布局循环）。
+    private func reportEmbeddedContentHeight() {
+        guard onContentHeightChanged != nil else { return }
+        var height = tableView.contentSize.height
+        if !stateContainer.isHidden {
+            height = max(height, headerHeight + adaptiveStateMinHeight)
+        }
+        if abs(height - lastReportedContentHeight) > 0.5 {
+            lastReportedContentHeight = height
+            onContentHeightChanged?(height)
+        }
+    }
+
     /// 与其他 tab 的重拍行为一致：未到顶部先回顶，已到顶部才刷新。
     /// 用 contentInset 不用 adjustedContentInset：与 scrollToTop 落点、首页／时间线
     /// isAtTop 同口径；若系统某天叠加安全区使 adjusted > content，adjusted 口径
@@ -920,8 +967,25 @@ final class BearyNotificationsViewController: UIViewController {
     /// 门控重拉入口（供容器未来在 showPage(.notif) 时调用，本次未改容器）：
     /// 未读数变了才整页重拉，没变只刷角标；与无条件 refresh() 不同——
     /// 重拍 tab 与登录翻转仍走 refresh()，不走这里。
+    /// 通知组被实际查看时才记已看（消息页可见性门控调用；铃铛页进页仍走
+    /// 下方 refreshListIfUnreadChanged 的原口径）。只记一次／访问（守卫在
+    /// markNotifPageEntered 内，pageDidLeave 复位）。
+    func markNotifGroupViewed() {
+        markNotifPageEntered()
+    }
+
     func refreshListIfUnreadChanged() {
         markNotifPageEntered()
+        refreshListIfUnreadChangedCore()
+    }
+
+    /// 门控刷新不记已看（消息页进页、聊天关闭回填用）：只按未读门控重拉，
+    /// 不动 seen 水印；私信组路径调这里不会把通知刷成已看。
+    func refreshListIfUnreadChangedWithoutMarking() {
+        refreshListIfUnreadChangedCore()
+    }
+
+    private func refreshListIfUnreadChangedCore() {
         // C-G4：401 清场后（hasSuccessfulLoad 已复位 false）仍要能拉新账号
         // 首拉——旗立起时无条件整页拉取，不走“未成功加载过则返回”的早退。
         if needsReloadAfterUnauthorized {
