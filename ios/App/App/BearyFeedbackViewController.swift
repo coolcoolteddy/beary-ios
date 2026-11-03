@@ -1024,8 +1024,13 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     @objc private func keyboardWillShow(_ note: Notification) {
         guard let value = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
         let frameInView = view.convert(value.cgRectValue, from: nil)
-        let scrollBottom = view.bounds.maxY - view.safeAreaInsets.bottom
-        let bottom = max(0, scrollBottom - frameInView.minY)
+        // U2：照抄编辑器选人框 ComposerPickers:572-579 与私信页 #704 的口径——
+        // 先判键盘帧与输入框是否相交，再算重叠；浮动键盘停在中部未碰输入框时
+        // 不再大值垫 inset。贴底键盘的重叠量口径与旧代码一致。
+        view.layoutIfNeeded()
+        let inputFrame = view.convert(textView.bounds, from: textView)
+        let overlapsInput = frameInView.isEmpty == false && frameInView.intersects(inputFrame)
+        let bottom = overlapsInput ? max(0, view.bounds.maxY - view.safeAreaInsets.bottom - frameInView.minY) : 0
         let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
         let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
         UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {

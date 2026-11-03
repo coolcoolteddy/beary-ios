@@ -1024,8 +1024,20 @@ final class BearyLoginViewController: UIViewController {
     @objc private func keyboardWillShow(_ notification: Notification) {
         guard let value = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
         let frameInView = view.convert(value.cgRectValue, from: nil)
-        let scrollBottom = view.bounds.maxY - view.safeAreaInsets.bottom
-        let bottom = max(0, scrollBottom - frameInView.minY)
+        // U2：照抄编辑器选人框 ComposerPickers:572-579 与私信页 #704 的口径——
+        // 先判键盘帧与当前输入框是否相交，再算重叠；浮动键盘停在中部未碰输入框时
+        // 不再大值垫 inset。贴底键盘的重叠量口径与旧代码一致。
+        // 本页三个输入框（邮箱／验证码／邀请码）取当前 firstResponder 的那一个；
+        // 键盘弹出时必有一个输入框持有焦点，取不到则不垫。
+        view.layoutIfNeeded()
+        let overlapsInput: Bool
+        if let activeField = [emailField, codeField, inviteField].first(where: { $0.isFirstResponder }) {
+            let inputFrame = view.convert(activeField.bounds, from: activeField)
+            overlapsInput = frameInView.isEmpty == false && frameInView.intersects(inputFrame)
+        } else {
+            overlapsInput = false
+        }
+        let bottom = overlapsInput ? max(0, view.bounds.maxY - view.safeAreaInsets.bottom - frameInView.minY) : 0
         let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
         let curveRaw = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
         UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {
