@@ -373,6 +373,13 @@ final class BearySettingsViewController: UIViewController {
         loadAll()
         // 切号后私信权限行跟新账号走（设置页内切换账号时 viewWillAppear 不触发）。
         NotificationCenter.default.addObserver(self, selector: #selector(refreshDMLevelRow), name: .bearyUserDidChange, object: nil)
+        // 添加账号回设置页时 viewWillAppear 跑在 refreshMe 完成之前（dismiss 动画
+        // 起始即触发，refreshMe 在 dismiss 完成回调里才跑），当时 currentUser 仍是
+        // 旧号、快照不变、指纹不变，旧卡被保留；refreshMe 完成后 id 真变才广播
+        // bearyUserDidChange——此前本页只拿它刷私信档位行，切换卡没跟上，
+        // 于是新号要退出重进才出现。这里补上切换卡刷新（指纹守卫保证无变
+        // 化时不重建；切换／移除的直接刷新路径不受影响）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleUserChangedForAccountSwitch), name: .bearyUserDidChange, object: nil)
     }
 
     deinit {
@@ -1182,6 +1189,12 @@ final class BearySettingsViewController: UIViewController {
         accountSwitchWrap.translatesAutoresizingMaskIntoConstraints = false
         accountSwitchWrap.isHidden = true
         accountSecurityWrap.addArrangedSubview(accountSwitchWrap)
+    }
+
+    /// 账号真变广播到达时补刷切换卡（见 viewDidLoad 的注释：添加账号后
+    /// viewWillAppear 跑早了，真正的新号要等这条广播才进卡）。
+    @objc private func handleUserChangedForAccountSwitch() {
+        refreshAccountSwitchSection()
     }
 
     /// 重建切换账号卡：只读保管库，不发网络；未登录时整卡隐藏。
