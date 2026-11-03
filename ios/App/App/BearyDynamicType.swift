@@ -9,8 +9,11 @@ import UIKit
 
 /// C8 审计口径（只此两处，不扩大）：
 /// - 日记正文 16pt、卡片标题 16.5pt 粗体：走 UIFontMetrics scaledFont，label 侧须配
-///   adjustsFontForContentSizeCategory = true；富文本 attributed 内的字号在下次
-///   configure/reload 时重解（系统字号切换当下不自动重绘富文本，属已知局限）。
+///   adjustsFontForContentSizeCategory = true；富文本 attributed 内的字号不随
+///   adjustsFont 自动重解——日记卡片（BearyDiaryCardCell）在内容字号档变化时
+///   经 traitCollectionDidChange 立即重建正文/标题富文本并通知行高重算
+///   （审计第 27 项修复；此前“下次 configure/reload 才重解”的已知局限在卡片
+///   一支已消除，其余富文本仍走下次 configure 口径）。
 /// - 固定高度容器（Profile modal 顶栏 44pt，顶栏名 17pt）：cappedFont 上限 20pt 防撑破；
 ///   默认字号下与原字号完全一致（17 -> 17），只在超大字号档截断。
 /// 全工程其余硬编码 systemFont 本批不动，见 PR 描述后续清单。
