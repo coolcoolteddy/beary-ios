@@ -6873,7 +6873,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         // 发布在途时此前未冻结（见 refreshPublishingInputFreeze），
                         // 在途改动会使 toast 与实际发出态相反；现可见性已随冻结
                         // 禁用，此处仍以发送值为准，双保险。
-                        self.showToastAfterClose(message: (snapshot.ephemeral == 1 ? "已发布 · 24 小时后转为私密" : (snapshot.visibility == "friends" ? "已发布 · 仅好友可见" : (publishVisibility == 1 ? "已发布 · 已公开" : "已发布 · 已设为私密"))))
+                        self.showToastAfterClose(message: (snapshot.ephemeral == 1 ? "已发布 · 限时公开" : (snapshot.visibility == "friends" ? "已发布 · 仅好友可见" : (publishVisibility == 1 ? "已发布 · 已公开" : "已发布 · 已设为私密"))))
                         BearyHaptics.publishSuccess()
                         BearySoundPlayer.play(.publishSuccess)
                         // B 修法：发布成功退场前先收起弹出框（无动画）。
