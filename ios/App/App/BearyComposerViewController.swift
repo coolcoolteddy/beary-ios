@@ -3917,8 +3917,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 间距随显隐切换（隐藏时置 0，否则隐藏行仍残留 8pt 空隙，见面板间隙修复同款）。
     /// 审计 16 项：心情／天气去“心情 ·”“天气 ·”前缀，改官方图标＋值（心情走
     /// emote 静态图、天气走 icon_wx_*，40 只深浅与 9 个天气资产已核齐全、无缺款）；
-    /// 写给改“写给 昵称”。图标只是视觉辅助：accessibilityLabel 一律保留完整表述
-    /// （“心情：开心”“天气：晴”“写给：昵称”），不只靠图标传达信息。
+    /// 22 方向：收件人 chip 改“提到 昵称”。图标只是视觉辅助：accessibilityLabel 一律保留完整表述
+    /// （“心情：开心”“天气：晴”“提到：昵称”），不只靠图标传达信息。
     /// 图标计入按钮 intrinsicContentSize，P1-3 换行总宽自动含图标宽。
     private func refreshSelectedChips() {
         if let mood = selectedMood, let name = BearyText.moodNames[mood] {
@@ -3974,9 +3974,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         if let name = recipientName {
             recipientChipButton.isHidden = false
-            // 审计 16 项：写给 chip 由“@昵称”改“写给 昵称”（纯文本，不另加图标）。
-            recipientChipButton.setTitle("写给 " + name, for: .normal)
-            recipientChipButton.accessibilityLabel = "写给：" + name
+            // 22 方向：收件人 chip 由“写给 昵称”改“提到 昵称”（纯文本，不另加图标）。
+            recipientChipButton.setTitle("提到 " + name, for: .normal)
+            recipientChipButton.accessibilityLabel = "提到：" + name
         } else {
             recipientChipButton.isHidden = true
         }
