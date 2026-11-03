@@ -606,7 +606,7 @@ final class BearySettingsViewController: UIViewController {
         card.backgroundColor = BearyColors.bg
         card.layer.borderWidth = 1
         card.layer.bearyDynamicBorderColor = BearyColors.line
-        card.layer.cornerRadius = 20
+        card.layer.cornerRadius = BearyCorners.single
         card.clipsToBounds = true
         cardViews.append(card)
         return card

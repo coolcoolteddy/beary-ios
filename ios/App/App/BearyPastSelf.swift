@@ -393,7 +393,7 @@ final class PastSelfIconView: UIView {
         } else {
             // 占位标注：资产未注册前明确标出缺失项，不伪装成正式图标。
             layer.borderWidth = 1
-            layer.cornerRadius = 10
+            layer.cornerRadius = BearyCorners.single
             layer.bearyDynamicBorderColor = BearyColors.line
             let label = UILabel()
             label.translatesAutoresizingMaskIntoConstraints = false

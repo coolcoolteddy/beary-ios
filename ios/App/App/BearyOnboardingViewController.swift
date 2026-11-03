@@ -304,7 +304,7 @@ final class BearyOnboardingViewController: UIViewController {
         // 底部圆角卡片：BearyColors faint 底、顶部圆角 28、通栏。
         bottomCard.translatesAutoresizingMaskIntoConstraints = false
         bottomCard.backgroundColor = BearyColors.faint
-        bottomCard.layer.cornerRadius = 28
+        bottomCard.layer.cornerRadius = BearyCorners.single
         bottomCard.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         heroContent.addSubview(bottomCard)
 
@@ -336,7 +336,7 @@ final class BearyOnboardingViewController: UIViewController {
         // 固定高度容器：字号上限 20 防撑破（BearyDynamicType.cappedFont 口径）。
         primaryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
         primaryButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        primaryButton.layer.cornerRadius = 28
+        primaryButton.layer.cornerRadius = BearyCorners.single
         primaryButton.addTarget(self, action: #selector(primaryTapped), for: .touchUpInside)
         primaryButton.bearyAddPressFeedback()
         bottomStack.addArrangedSubview(primaryButton)
@@ -442,7 +442,7 @@ final class BearyOnboardingViewController: UIViewController {
         let card = UIView()
         card.translatesAutoresizingMaskIntoConstraints = false
         card.backgroundColor = BearyColors.faint
-        card.layer.cornerRadius = 16
+        card.layer.cornerRadius = BearyCorners.single
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
@@ -574,7 +574,7 @@ final class BearyOnboardingViewController: UIViewController {
         let demoCard = UIView()
         demoCard.translatesAutoresizingMaskIntoConstraints = false
         demoCard.backgroundColor = BearyColors.faint
-        demoCard.layer.cornerRadius = 16
+        demoCard.layer.cornerRadius = BearyCorners.single
         let demoStack = UIStackView()
         demoStack.translatesAutoresizingMaskIntoConstraints = false
         demoStack.axis = .vertical
@@ -651,7 +651,7 @@ final class BearyOnboardingViewController: UIViewController {
         let demoCard = UIView()
         demoCard.translatesAutoresizingMaskIntoConstraints = false
         demoCard.backgroundColor = BearyColors.faint
-        demoCard.layer.cornerRadius = 16
+        demoCard.layer.cornerRadius = BearyCorners.single
         let demoStack = UIStackView()
         demoStack.translatesAutoresizingMaskIntoConstraints = false
         demoStack.axis = .vertical
@@ -795,7 +795,7 @@ final class BearyOnboardingViewController: UIViewController {
         let promptCard = UIView()
         promptCard.translatesAutoresizingMaskIntoConstraints = false
         promptCard.backgroundColor = BearyColors.faint
-        promptCard.layer.cornerRadius = 16
+        promptCard.layer.cornerRadius = BearyCorners.single
         let prompt = makeLabel(size: 17, color: BearyColors.gray, alignment: .center)
         prompt.text = "今天，想记住什么？"
         promptCard.addSubview(prompt)
@@ -1140,7 +1140,7 @@ private final class OnboardingOptionButton: BearyHit44Button {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         backgroundColor = BearyColors.surface
-        layer.cornerRadius = 16
+        layer.cornerRadius = BearyCorners.single
         layer.borderWidth = 1.5
         layer.bearyDynamicBorderColor = BearyColors.line
 

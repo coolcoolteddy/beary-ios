@@ -898,7 +898,7 @@ final class BearyDraftBoxViewController: UIViewController {
         card.backgroundColor = UIColor.clear
         card.layer.borderWidth = 1
         card.layer.bearyDynamicBorderColor = BearyColors.line
-        card.layer.cornerRadius = 14
+        card.layer.cornerRadius = BearyCorners.single
         card.addTarget(self, action: #selector(cardTouchDown(_:)), for: .touchDown)
         card.addTarget(self, action: #selector(cardTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         card.addTarget(self, action: #selector(cardTapped(_:)), for: .touchUpInside)

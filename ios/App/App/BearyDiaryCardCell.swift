@@ -81,7 +81,7 @@ func bearyFeedRetryButton(target: Any?, action: Selector) -> BearyFeedRetryButto
     btn.setImage(BearyFeedIconCache.image(named: "icon_refresh", pointSize: 20), for: .normal)
     btn.tintColor = BearyColors.gray
     btn.backgroundColor = BearyColors.bg
-    btn.layer.cornerRadius = 14
+    btn.layer.cornerRadius = BearyCorners.single
     btn.clipsToBounds = true
     btn.isHidden = true
     btn.accessibilityLabel = "重新加载图片"
@@ -211,7 +211,7 @@ final class BearyEmoteChipView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         translatesAutoresizingMaskIntoConstraints = false
-        layer.cornerRadius = 16
+        layer.cornerRadius = BearyCorners.single
         layer.borderWidth = 1
         clipsToBounds = true
         row.axis = .horizontal

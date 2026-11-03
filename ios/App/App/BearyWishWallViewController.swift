@@ -39,7 +39,7 @@ private final class WishRowView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = BearyColors.surface
-        layer.cornerRadius = 16
+        layer.cornerRadius = BearyCorners.single
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
