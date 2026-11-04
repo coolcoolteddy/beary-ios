@@ -711,6 +711,58 @@ class BearyProfileViewController: UIViewController {
         return buttonValue
     }()
 
+    /// 景深背景（2026-11-03）：tilt-v3 分层立体＋陀螺仪墙纸，只放个人页 header
+    /// 封面带（180 高），不贴日记卡片。UI 名「景深背景」，主题名仍是万圣节／春节／
+    /// 默认；Plus 专属（皇冠同口径 profile.plus）；深色模式压暗一档（黑遮罩）。
+    /// 持久化本机先行：UserDefaults 按当前账号 id 分键，服务端同步待后端一支
+    /// （accounts PUT /api/account/profile 无此字段，他人页暂不显示墙纸）。
+    /// 流程（Li 2026-11-03 定）：本人页点封面带弹选择框（图库／景深背景），
+    /// 景深背景进 BearyDepthBackgroundViewController 新页选主题；枚举放 internal
+    /// 供新页共用同一主题口径。
+    enum FestivalTheme: String {
+        case none, halloween, spring
+        var wallpaperTheme: BearyFestivalWallpaperView.Theme? {
+            switch self {
+            case .none: return nil
+            case .halloween: return .halloween
+            case .spring: return .spring
+            }
+        }
+        var title: String {
+            switch self {
+            case .none: return "默认"
+            case .halloween: return "万圣节"
+            case .spring: return "春节"
+            }
+        }
+    }
+
+    private var festivalWallpaperView: BearyFestivalWallpaperView?
+    private let festivalDimView: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = .black
+        viewValue.alpha = 0
+        viewValue.isUserInteractionEnabled = false
+        viewValue.accessibilityElementsHidden = true
+        return viewValue
+    }()
+    private var festivalTheme: FestivalTheme = .none
+    private var festivalWallpaperVisible = false
+
+    private var festivalThemeDefaultsKey: String {
+        // 切号／退出不串号：键跟当前账号 id 走；未取到 id 时落单键（仅游客态兜底，
+        // 游客进不了本人页，实际走不到选择器）。
+        let accountId = viewerUserIdValue ?? profile?.profileIdValue ?? -1
+        return "beary.festivalTheme.\(accountId)"
+    }
+
+    private func storedFestivalTheme() -> FestivalTheme {
+        guard let raw = UserDefaults.standard.string(forKey: festivalThemeDefaultsKey),
+              let theme = FestivalTheme(rawValue: raw) else { return .none }
+        return theme
+    }
+
     private let avatarLetterLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
@@ -2081,6 +2133,8 @@ class BearyProfileViewController: UIViewController {
         profileLastScrollOffsetY = tableView.contentOffset.y
         SceneDelegate.chrome?.setChromeHidden(false, animated: false)
         updateTopBarVisibility()
+        // 景深背景：回页时按当前带子位置重算动画开关。
+        updateFestivalWallpaperVisibility()
     }
 
     /// 批 C 回页钩子：容器切页只改 isHidden、不触发 appearance 回调时，
@@ -2093,6 +2147,8 @@ class BearyProfileViewController: UIViewController {
         // 跟踪图顶／名字／模糊），否则布局与残留吸顶态错位成背景重影。
         // 与 viewWillAppear 回页路（经 updateTopBarVisibility）同款调用。
         updateProfileCoverScroll(offsetY: tableView.contentOffset.y, topBaseline: -tableView.contentInset.top)
+        // 景深背景：容器切回时滚动事件不一定触发，按当前带子位置重算动画开关。
+        updateFestivalWallpaperVisibility()
     }
 
     /// 顶栏透度批（容器调用，见 SceneDelegate.applyHeaderTopInsets）：主滚动视图即 tableView。
@@ -2689,6 +2745,8 @@ class BearyProfileViewController: UIViewController {
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         updateDynamicLayerColors()
+        // 景深背景深色压暗跟随深浅切换。
+        updateFestivalDim()
         // 全修 6-3 同步点：大字号/深浅切换后页签钮宽可能变化，下划线直设终值重算一次。
         updateUnderlinePosition(animated: false)
         // 批 D：深浅切换时心情图需换深浅版（emote_<key> / emote_<key>_dark），
@@ -3696,6 +3754,9 @@ class BearyProfileViewController: UIViewController {
         }
         updateDynamicLayerColors()
         layoutHeaderForced(widthValue: headerWidthValue)
+        // 景深背景收口：资料每次回包后按本机存量重贴（本人页才有主题，他人页恒默认），
+        // 否则 applyProfile 上方的封面显隐赋值会把主题态冲回照片／默认背景。
+        applyFestivalTheme(storedFestivalTheme(), persist: false)
     }
 
     /// 头像加载（含失败回退）：起手先藏重试图标 + 藏首字母（与旧行为一致，
@@ -8047,10 +8108,155 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     }
 
     @objc private func coverViewTapped() {
-        guard !coverImageView.isHidden, let image = coverImageView.image else { return }
+        // 本人页点封面带 = 封面来源选择框（Li 2026-11-03 定：图库／景深背景）；
+        // 他人页保持原样：有封面照片才进灯箱，无照片不响应。
+        if isOwnProfile {
+            presentCoverSourcePicker()
+            return
+        }
+        presentCoverLightbox()
+    }
+
+    /// 封面来源选择框（卡片 ⋯ 菜单同款 UIAlertController actionSheet）：
+    /// 图库走旧的封面大图灯箱（个人页本身无换封面流程，不新造；有封面照片时
+    /// 才出图库行，与旧「查看封面大图」同条件）；景深背景进新页选主题；
+    /// iPad 走 popover、锚点封面带。
+    private func presentCoverSourcePicker() {
+        let sheet = UIAlertController(title: "封面", message: nil, preferredStyle: .actionSheet)
+        if coverImageView.image != nil {
+            sheet.addAction(UIAlertAction(title: "图库", style: .default) { [weak self] _ in
+                self?.presentCoverLightbox()
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "景深背景", style: .default) { [weak self] _ in
+            self?.presentDepthBackgroundPicker()
+        })
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = coverClipView
+            popover.sourceRect = coverClipView.bounds
+        }
+        present(sheet, animated: BearyMotion.animated(true))
+    }
+
+    /// 封面大图灯箱（旧入口抽出：他人页点封面带与本人页图库共用；主题态下
+    /// 封面图虽被隐藏、image 仍在，图库行仍可进灯箱看原封面）。
+    private func presentCoverLightbox() {
+        guard let image = coverImageView.image else { return }
         let viewer = BearyEntryImageViewerViewController(images: [image], startIndex: 0)
         viewer.originFrameInWindow = coverImageView.convert(coverImageView.bounds, to: nil)
         present(viewer, animated: BearyMotion.animated(true), completion: nil)
+    }
+
+    /// 景深背景新页：当前主题与 Plus 态传过去，点按回本页应用（门控／失败
+    /// 由 handleFestivalThemePicked 弹 toast）；应用成功新页自行关闭。
+    private func presentDepthBackgroundPicker() {
+        let picker = BearyDepthBackgroundViewController(
+            currentTheme: festivalTheme,
+            isPlus: profile?.plus == true,
+            onPick: { [weak self] theme in
+                guard let strongSelf = self else { return false }
+                return strongSelf.handleFestivalThemePicked(theme)
+            })
+        present(picker, animated: BearyMotion.animated(true))
+    }
+
+    /// 景深背景应用。返回 true 仅表示已应用；Plus 门控或加载失败时 toast
+    /// 并返回 false（存量不动，新页停留）。
+    private func handleFestivalThemePicked(_ option: FestivalTheme) -> Bool {
+        // Plus 门控（皇冠同口径 profile.plus，资料未到按非 Plus 计、不静默放行；
+        // beary 无内购，只提示不卖）：默认档人人可回，非 Plus 选节日档只提示。
+        if option != .none, profile?.plus != true {
+            BearyToast.show(in: view, message: "仅 Plus 会员可使用景深背景")
+            return false
+        }
+        // 加载失败不落盘：墙纸 View 起不来（缺 JSON／缺图）时只 toast、不改存量，
+        // 下次进页仍是旧主题；成功才由 applyFestivalTheme 内持久化。
+        if !applyFestivalTheme(option, persist: true), option != .none {
+            BearyToast.show(in: view, message: "景深背景加载失败，请重试")
+            return false
+        }
+        return true
+    }
+
+    /// 景深背景贴／撤。返回 false 仅表示主题 View 创建失败（缺资源）。
+    /// 他人页恒默认（本机先行阶段存量只属于当前账号，不替别人贴墙纸）。
+    /// 主题态：封面照片与默认 wordmark 一并隐藏，吸顶背景随 coverImageView
+    /// 隐藏自动消失（syncStickyHeaderCover 原有分支），不另动吸顶逻辑。
+    @discardableResult
+    private func applyFestivalTheme(_ theme: FestivalTheme, persist: Bool) -> Bool {
+        let effective = isOwnProfile ? theme : .none
+        coverViewButton.accessibilityLabel = isOwnProfile ? "景深背景" : "查看封面大图"
+        if effective == .none {
+            if let oldView = festivalWallpaperView {
+                oldView.isAnimationEnabled = false
+                oldView.removeFromSuperview()
+                festivalWallpaperView = nil
+            }
+            festivalDimView.removeFromSuperview()
+            festivalWallpaperVisible = false
+            festivalTheme = .none
+            // 从主题切回默认须把 applyProfile 压住的封面态还原（本函数由选择器
+            // 直接调用时 applyProfile 不重跑，不还原会一直露空带）。
+            let hasCover = !(profile?.coverUrl ?? "").isEmpty && BearyImageURLs.avatarURL(profile?.coverUrl) != nil
+            coverImageView.isHidden = !hasCover
+            defaultWordmarkView.isHidden = !profileShowsDefaultCover
+            if persist {
+                UserDefaults.standard.set(FestivalTheme.none.rawValue, forKey: festivalThemeDefaultsKey)
+            }
+            return true
+        }
+        guard let wallpaperTheme = effective.wallpaperTheme else { return false }
+        if festivalWallpaperView == nil || festivalTheme != effective {
+            do {
+                let wallpaperView = try BearyFestivalWallpaperView(theme: wallpaperTheme)
+                wallpaperView.translatesAutoresizingMaskIntoConstraints = false
+                wallpaperView.accessibilityElementsHidden = true
+                festivalWallpaperView?.removeFromSuperview()
+                festivalWallpaperView = wallpaperView
+                coverClipView.addSubview(wallpaperView)
+                coverClipView.addSubview(festivalDimView)
+                NSLayoutConstraint.activate([
+                    wallpaperView.topAnchor.constraint(equalTo: coverClipView.topAnchor),
+                    wallpaperView.leadingAnchor.constraint(equalTo: coverClipView.leadingAnchor),
+                    wallpaperView.trailingAnchor.constraint(equalTo: coverClipView.trailingAnchor),
+                    wallpaperView.bottomAnchor.constraint(equalTo: coverClipView.bottomAnchor),
+                    festivalDimView.topAnchor.constraint(equalTo: coverClipView.topAnchor),
+                    festivalDimView.leadingAnchor.constraint(equalTo: coverClipView.leadingAnchor),
+                    festivalDimView.trailingAnchor.constraint(equalTo: coverClipView.trailingAnchor),
+                    festivalDimView.bottomAnchor.constraint(equalTo: coverClipView.bottomAnchor),
+                ])
+            } catch {
+                return false
+            }
+        }
+        festivalTheme = effective
+        coverImageView.isHidden = true
+        defaultWordmarkView.isHidden = true
+        updateFestivalDim()
+        festivalWallpaperVisible = false
+        updateFestivalWallpaperVisibility()
+        if persist {
+            UserDefaults.standard.set(effective.rawValue, forKey: festivalThemeDefaultsKey)
+        }
+        return true
+    }
+
+    /// 深色压暗一档：深色下黑遮罩 0.35，浅色下不压（墙纸本身已按主题底色铺满带子）；
+    /// 带内无文字（名字在带下方），遮罩只保深色下春节浅米色底不晃眼。
+    private func updateFestivalDim() {
+        festivalDimView.alpha = traitCollection.userInterfaceStyle == .dark ? 0.35 : 0
+    }
+
+    /// 滚动可见性开关：带子滚出视野（或切走页、未进窗口）时关动画，防列表下面
+    /// 白跑陀螺仪＋30fps 刷新；回视野再开。变化守卫防滚动每帧重复 attach/detach。
+    private func updateFestivalWallpaperVisibility() {
+        guard let wallpaperView = festivalWallpaperView else { return }
+        let bandFrame = coverClipView.convert(coverClipView.bounds, to: view)
+        let visible = view.window != nil && !view.isHidden && view.bounds.intersects(bandFrame)
+        guard visible != festivalWallpaperVisible else { return }
+        festivalWallpaperVisible = visible
+        wallpaperView.isAnimationEnabled = visible
     }
 
     /// 批 E 日记地图入口：以作者日记 tab（diaryEntries）为即时数据源进地图页，
@@ -8116,6 +8322,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         updateCoverStretch(offsetY: y, topBaseline: -scrollView.contentInset.top)
         // v22 封面滚动态（上滑锁定＋头像＋用户名转移）：同样须在早退之前跑，否则上滑区量不到。
         updateProfileCoverScroll(offsetY: y, topBaseline: -scrollView.contentInset.top)
+        // 景深背景：带子滚出视野即停陀螺仪动画，回视野再开。
+        updateFestivalWallpaperVisibility()
         // 顶栏透度批：在顶判定改以 -contentInset.top 为基准（现行收起态内边距 0 时与旧 y<=0 等价）。
         if y <= -scrollView.contentInset.top {
             if profileChromeHidden {

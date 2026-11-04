@@ -1,0 +1,377 @@
+{
+  "size": [
+    768,
+    512
+  ],
+  "period": 6,
+  "readingWidth": 0.5729166666666666,
+  "themes": {
+    "halloween": {
+      "background": [
+        2,
+        5,
+        20
+      ],
+      "layers": [
+        {
+          "id": "background",
+          "name": "beary-tilt-halloween-background",
+          "rect": [
+            42,
+            0,
+            726,
+            512
+          ],
+          "depth": 0
+        },
+        {
+          "id": "wall",
+          "name": "beary-tilt-halloween-wall",
+          "rect": [
+            708,
+            4,
+            100,
+            471
+          ],
+          "depth": 0.1,
+          "anchor": [
+            738.0,
+            239.5
+          ]
+        },
+        {
+          "id": "steps",
+          "name": "beary-tilt-halloween-steps",
+          "rect": [
+            469,
+            390,
+            339,
+            162
+          ],
+          "depth": 0.42,
+          "anchor": [
+            618.5,
+            451.0
+          ]
+        },
+        {
+          "id": "groundShadow",
+          "name": "beary-tilt-halloween-groundShadow",
+          "rect": [
+            476,
+            395,
+            292,
+            79
+          ],
+          "depth": 0.42
+        },
+        {
+          "id": "pool",
+          "name": "beary-tilt-halloween-pool",
+          "rect": [
+            487,
+            398,
+            281,
+            93
+          ],
+          "depth": 0.42
+        },
+        {
+          "id": "wallLight",
+          "name": "beary-tilt-halloween-wallLight",
+          "rect": [
+            714,
+            88,
+            54,
+            291
+          ],
+          "depth": 0.1
+        },
+        {
+          "id": "batShadow",
+          "name": "beary-tilt-halloween-batShadow",
+          "rect": [
+            724,
+            219,
+            44,
+            24
+          ],
+          "depth": 0.1
+        },
+        {
+          "id": "pumpkin",
+          "name": "beary-tilt-halloween-pumpkin",
+          "rect": [
+            468,
+            229,
+            250,
+            205
+          ],
+          "depth": 0.42
+        },
+        {
+          "id": "cavity",
+          "name": "beary-tilt-halloween-cavity",
+          "rect": [
+            514,
+            309,
+            155,
+            97
+          ],
+          "depth": 0.42
+        },
+        {
+          "id": "warm",
+          "name": "beary-tilt-halloween-warm",
+          "rect": [
+            492,
+            232,
+            224,
+            200
+          ],
+          "depth": 0.42
+        },
+        {
+          "id": "cool",
+          "name": "beary-tilt-halloween-cool",
+          "rect": [
+            476,
+            240,
+            163,
+            192
+          ],
+          "depth": 0.42
+        },
+        {
+          "id": "flame",
+          "name": "beary-tilt-halloween-flame",
+          "rect": [
+            582,
+            373,
+            24,
+            26
+          ],
+          "depth": 0.42,
+          "anchor": [
+            592,
+            399
+          ]
+        },
+        {
+          "id": "leaf",
+          "name": "beary-tilt-halloween-leaf",
+          "rect": [
+            629,
+            434,
+            46,
+            39
+          ],
+          "depth": 1,
+          "anchor": [
+            651,
+            456
+          ]
+        }
+      ]
+    },
+    "spring": {
+      "background": [
+        252,
+        232,
+        206
+      ],
+      "layers": [
+        {
+          "id": "background",
+          "name": "beary-tilt-spring-background",
+          "rect": [
+            42,
+            0,
+            726,
+            512
+          ],
+          "depth": 0
+        },
+        {
+          "id": "bridge",
+          "name": "beary-tilt-spring-bridge",
+          "rect": [
+            411,
+            331,
+            397,
+            176
+          ],
+          "depth": 0.07,
+          "anchor": [
+            589.5,
+            419.0
+          ]
+        },
+        {
+          "id": "roof",
+          "name": "beary-tilt-spring-roof",
+          "rect": [
+            495,
+            -40,
+            313,
+            232
+          ],
+          "depth": 0.47,
+          "anchor": [
+            631.5,
+            96.0
+          ]
+        },
+        {
+          "id": "amber",
+          "name": "beary-tilt-spring-amber",
+          "rect": [
+            476,
+            0,
+            284,
+            512
+          ],
+          "depth": 0.16
+        },
+        {
+          "id": "vermilion",
+          "name": "beary-tilt-spring-vermilion",
+          "rect": [
+            479,
+            13,
+            289,
+            459
+          ],
+          "depth": 0.17
+        },
+        {
+          "id": "lanternShadow",
+          "name": "beary-tilt-spring-lanternShadow",
+          "rect": [
+            482,
+            248,
+            282,
+            167
+          ],
+          "depth": 0.18
+        },
+        {
+          "id": "cord",
+          "name": "beary-tilt-spring-cord",
+          "rect": [
+            576,
+            84,
+            5,
+            111
+          ],
+          "depth": 0.47,
+          "anchor": [
+            578,
+            85
+          ]
+        },
+        {
+          "id": "lantern",
+          "name": "beary-tilt-spring-lantern",
+          "rect": [
+            519,
+            188,
+            118,
+            115
+          ],
+          "depth": 0.47,
+          "anchor": [
+            578,
+            194
+          ]
+        },
+        {
+          "id": "lanternGold",
+          "name": "beary-tilt-spring-lanternGold",
+          "rect": [
+            519,
+            194,
+            118,
+            104
+          ],
+          "depth": 0.47,
+          "anchor": [
+            578,
+            194
+          ]
+        },
+        {
+          "id": "lanternRed",
+          "name": "beary-tilt-spring-lanternRed",
+          "rect": [
+            524,
+            194,
+            113,
+            104
+          ],
+          "depth": 0.47,
+          "anchor": [
+            578,
+            194
+          ]
+        },
+        {
+          "id": "tassel",
+          "name": "beary-tilt-spring-tassel",
+          "rect": [
+            568,
+            298,
+            21,
+            58
+          ],
+          "depth": 0.47,
+          "anchor": [
+            578,
+            298
+          ]
+        },
+        {
+          "id": "frame",
+          "name": "beary-tilt-spring-frame",
+          "rect": [
+            680,
+            191,
+            128,
+            103
+          ],
+          "depth": 0.85,
+          "anchor": [
+            724.0,
+            242.5
+          ]
+        },
+        {
+          "id": "blossom",
+          "name": "beary-tilt-spring-blossom",
+          "rect": [
+            707,
+            225,
+            20,
+            19
+          ],
+          "depth": 0.85
+        },
+        {
+          "id": "petal",
+          "name": "beary-tilt-spring-petal",
+          "rect": [
+            658,
+            244,
+            27,
+            20
+          ],
+          "depth": 1,
+          "anchor": [
+            672,
+            254
+          ]
+        }
+      ]
+    }
+  }
+}
