@@ -48,6 +48,7 @@
 		5FF297D2E2804166BA8159B5 /* BearyDiaryCardCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0D12B066C04B3780DCF797 /* BearyDiaryCardCell.swift */; };
 		33682D1F43521B7B51E6FF30 /* BearyDiaryPin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */; };
 		BE2B0EB0998F4D128F9ABC4F613BC305 /* BearyDepthBackgroundViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F35D9B786C44F9B94496CC7AD342A62 /* BearyDepthBackgroundViewController.swift */; };
+		AEA9D9D3FBCB5ACEDC623626 /* BearyProfileCoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E759B4A0FB236185ECACFD00 /* BearyProfileCoverView.swift */; };
 		5CD0ACC7665FEC6310F8023D /* BearyFestivalWallpaperView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D041B25C74C0DEB0BECC18CC /* BearyFestivalWallpaperView.swift */; };
 		1476E40C4B0A489082D4F060 /* BearyQuoteCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B1C032A6C0F4B51BD65D3E6 /* BearyQuoteCardView.swift */; };
 		6E1E41D1D67C42CEB3FBC5F3 /* BearyEmoteFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 009D1C4789D54436BA953274 /* BearyEmoteFlowView.swift */; };
@@ -100,6 +101,24 @@
 		EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */ = {isa = PBXBuildFile; fileRef = B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */; };
 		248993E9EF7C4D73A470CCE9 /* BearyNightPatrol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F7AC7C7B59449186BD24AF /* BearyNightPatrol.swift */; };
 		93F45F628E22C5045A1EF58F /* agree.json in Resources */ = {isa = PBXBuildFile; fileRef = DAE48A2C16A1E3B2821093EB /* agree.json */; };
+		9472B5CCFE207ADBF3F56CAB /* germany-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = E3723A3C311893D5090357E2 /* germany-poster.png */; };
+		D237566290B7035BF1928EB8 /* canada-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = B80A1FE89536993709074D35 /* canada-poster.png */; };
+		0CDBFAF1BD16A7D96367D9AA /* korea-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = C122ACFC0449BFB0CD560F16 /* korea-poster.png */; };
+		E195462EA07695771B3C456A /* china-depth.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 30B9BE4B1A189F1C3036A24B /* china-depth.jpg */; };
+		0804FD06C2B72198488BD522 /* usa-depth.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 1EE7FA01AEFC0B5C394BC29F /* usa-depth.jpg */; };
+		CA5EE08874CB2253D5FC3F69 /* japan-depth.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 81F460D717BD906DBBF8CBA3 /* japan-depth.jpg */; };
+		A2CB1D4E382EED3BF5A8EE7E /* germany-depth.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 78C6A4971A877FDBD8E0653A /* germany-depth.jpg */; };
+		6EA6ECC42050DD64A2895C03 /* canada-depth.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 69A120940CE160ACACCA9806 /* canada-depth.jpg */; };
+		77F1221CD9C6C1E13D4C4259 /* korea-depth.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 0B2FFD30A24FCA590BAD30D8 /* korea-depth.jpg */; };
+		190B2D0AA30CE264CCA0E977 /* boat.png in Resources */ = {isa = PBXBuildFile; fileRef = 41B514EADF31F3D6AE10BAC3 /* boat.png */; };
+		A36BB4FD6B072F7829122386 /* train.png in Resources */ = {isa = PBXBuildFile; fileRef = 67EB47AE89807E9A7D4FB299 /* train.png */; };
+		34D81CE53D07D80B333D610B /* chime.png in Resources */ = {isa = PBXBuildFile; fileRef = 7B6FFDB773A6B5E22E02923E /* chime.png */; };
+		5248D64A4F66BE386B48299F /* gondola.png in Resources */ = {isa = PBXBuildFile; fileRef = FC056EBEC9C7471EF1CC7D35 /* gondola.png */; };
+		D7F7C2346FCC7058EC3C8CC0 /* floatplane.png in Resources */ = {isa = PBXBuildFile; fileRef = 77EBD303DE6467641446EC80 /* floatplane.png */; };
+		3AB193F0F7DEDDF8D243AE44 /* kite.png in Resources */ = {isa = PBXBuildFile; fileRef = 43B1FA4DBAD92CAC036BE233 /* kite.png */; };
+		D395C5A456F0D264FAA5D081 /* china-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = F61DF01274DB03D3F0AB6FE0 /* china-poster.png */; };
+		1938F81450975213C5CE2010 /* japan-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = B18573473A12570FBD9DB089 /* japan-poster.png */; };
+		C73ABC14EF8C1B595064A827 /* usa-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = 95FB0D0AFDFEF9F5C38C947B /* usa-poster.png */; };
 		3A970A89A5411DB05EA8D92C /* BearyFestivalWallpapers.json in Resources */ = {isa = PBXBuildFile; fileRef = C69BECF80F639F3B86A1C5F7 /* BearyFestivalWallpapers.json */; };
 		4497343DBC967B83178641E1 /* agree_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 37B9943EDEF2C3A792782E9E /* agree_dark.json */; };
 		7089387273580DA6004FDF8A /* crown.json in Resources */ = {isa = PBXBuildFile; fileRef = 4ED6BF206A0F34DF117D855A /* crown.json */; };
@@ -291,6 +310,10 @@
 		BD0D12B066C04B3780DCF797 /* BearyDiaryCardCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryCardCell.swift; sourceTree = "<group>"; };
 		10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryPin.swift; sourceTree = "<group>"; };
 		6F35D9B786C44F9B94496CC7AD342A62 /* BearyDepthBackgroundViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDepthBackgroundViewController.swift; sourceTree = "<group>"; };
+		E759B4A0FB236185ECACFD00 /* BearyProfileCoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyProfileCoverView.swift; sourceTree = "<group>"; };
+		F61DF01274DB03D3F0AB6FE0 /* china-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/china-poster.png; sourceTree = "<group>"; };
+		B18573473A12570FBD9DB089 /* japan-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/japan-poster.png; sourceTree = "<group>"; };
+		95FB0D0AFDFEF9F5C38C947B /* usa-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/usa-poster.png; sourceTree = "<group>"; };
 		D041B25C74C0DEB0BECC18CC /* BearyFestivalWallpaperView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyFestivalWallpaperView.swift; sourceTree = "<group>"; };
 		7B1C032A6C0F4B51BD65D3E6 /* BearyQuoteCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyQuoteCardView.swift; sourceTree = "<group>"; };
 		009D1C4789D54436BA953274 /* BearyEmoteFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmoteFlowView.swift; sourceTree = "<group>"; };
@@ -340,6 +363,21 @@
 		B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmoteImages.swift; sourceTree = "<group>"; };
 		60F7AC7C7B59449186BD24AF /* BearyNightPatrol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyNightPatrol.swift; sourceTree = "<group>"; };
 		DAE48A2C16A1E3B2821093EB /* agree.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree.json; sourceTree = "<group>"; };
+		E3723A3C311893D5090357E2 /* germany-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/germany-poster.png; sourceTree = "<group>"; };
+		B80A1FE89536993709074D35 /* canada-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/canada-poster.png; sourceTree = "<group>"; };
+		C122ACFC0449BFB0CD560F16 /* korea-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/korea-poster.png; sourceTree = "<group>"; };
+		30B9BE4B1A189F1C3036A24B /* china-depth.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = ProfileCovers/china-depth.jpg; sourceTree = "<group>"; };
+		1EE7FA01AEFC0B5C394BC29F /* usa-depth.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = ProfileCovers/usa-depth.jpg; sourceTree = "<group>"; };
+		81F460D717BD906DBBF8CBA3 /* japan-depth.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = ProfileCovers/japan-depth.jpg; sourceTree = "<group>"; };
+		78C6A4971A877FDBD8E0653A /* germany-depth.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = ProfileCovers/germany-depth.jpg; sourceTree = "<group>"; };
+		69A120940CE160ACACCA9806 /* canada-depth.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = ProfileCovers/canada-depth.jpg; sourceTree = "<group>"; };
+		0B2FFD30A24FCA590BAD30D8 /* korea-depth.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = ProfileCovers/korea-depth.jpg; sourceTree = "<group>"; };
+		41B514EADF31F3D6AE10BAC3 /* boat.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/boat.png; sourceTree = "<group>"; };
+		67EB47AE89807E9A7D4FB299 /* train.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/train.png; sourceTree = "<group>"; };
+		7B6FFDB773A6B5E22E02923E /* chime.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/chime.png; sourceTree = "<group>"; };
+		FC056EBEC9C7471EF1CC7D35 /* gondola.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/gondola.png; sourceTree = "<group>"; };
+		77EBD303DE6467641446EC80 /* floatplane.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/floatplane.png; sourceTree = "<group>"; };
+		43B1FA4DBAD92CAC036BE233 /* kite.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/kite.png; sourceTree = "<group>"; };
 		C69BECF80F639F3B86A1C5F7 /* BearyFestivalWallpapers.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = BearyFestivalWallpapers.json; sourceTree = "<group>"; };
 		37B9943EDEF2C3A792782E9E /* agree_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree_dark.json; sourceTree = "<group>"; };
 		4ED6BF206A0F34DF117D855A /* crown.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieCrown/crown.json; sourceTree = "<group>"; };
@@ -763,6 +801,25 @@
 				BE07B090D304A418C102D6C5 /* keep_v3_hold_light.png */,
 				BBA0D0BEA2AE929C2EB3A121 /* keep_v3_hold_dark.png */,
 				0AB06C47E08A427BB03EDF69 /* BearySoundPlayer.swift */,
+				E759B4A0FB236185ECACFD00 /* BearyProfileCoverView.swift */,
+				F61DF01274DB03D3F0AB6FE0 /* china-poster.png */,
+				B18573473A12570FBD9DB089 /* japan-poster.png */,
+				95FB0D0AFDFEF9F5C38C947B /* usa-poster.png */,
+				E3723A3C311893D5090357E2 /* germany-poster.png */,
+				B80A1FE89536993709074D35 /* canada-poster.png */,
+				C122ACFC0449BFB0CD560F16 /* korea-poster.png */,
+				30B9BE4B1A189F1C3036A24B /* china-depth.jpg */,
+				1EE7FA01AEFC0B5C394BC29F /* usa-depth.jpg */,
+				81F460D717BD906DBBF8CBA3 /* japan-depth.jpg */,
+				78C6A4971A877FDBD8E0653A /* germany-depth.jpg */,
+				69A120940CE160ACACCA9806 /* canada-depth.jpg */,
+				0B2FFD30A24FCA590BAD30D8 /* korea-depth.jpg */,
+				41B514EADF31F3D6AE10BAC3 /* boat.png */,
+				67EB47AE89807E9A7D4FB299 /* train.png */,
+				7B6FFDB773A6B5E22E02923E /* chime.png */,
+				FC056EBEC9C7471EF1CC7D35 /* gondola.png */,
+				77EBD303DE6467641446EC80 /* floatplane.png */,
+				43B1FA4DBAD92CAC036BE233 /* kite.png */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -1008,6 +1065,24 @@
 				11154CAD773B5B9029A42D91 /* keep_v3_dark.json in Resources */,
 				CB5D246C81D576E1DC471B44 /* keep_v3_hold_light.png in Resources */,
 				985366A89C5D0D001010E6BB /* keep_v3_hold_dark.png in Resources */,
+				D395C5A456F0D264FAA5D081 /* china-poster.png in Resources */,
+				1938F81450975213C5CE2010 /* japan-poster.png in Resources */,
+				C73ABC14EF8C1B595064A827 /* usa-poster.png in Resources */,
+				9472B5CCFE207ADBF3F56CAB /* germany-poster.png in Resources */,
+				D237566290B7035BF1928EB8 /* canada-poster.png in Resources */,
+				0CDBFAF1BD16A7D96367D9AA /* korea-poster.png in Resources */,
+				E195462EA07695771B3C456A /* china-depth.jpg in Resources */,
+				0804FD06C2B72198488BD522 /* usa-depth.jpg in Resources */,
+				CA5EE08874CB2253D5FC3F69 /* japan-depth.jpg in Resources */,
+				A2CB1D4E382EED3BF5A8EE7E /* germany-depth.jpg in Resources */,
+				6EA6ECC42050DD64A2895C03 /* canada-depth.jpg in Resources */,
+				77F1221CD9C6C1E13D4C4259 /* korea-depth.jpg in Resources */,
+				190B2D0AA30CE264CCA0E977 /* boat.png in Resources */,
+				A36BB4FD6B072F7829122386 /* train.png in Resources */,
+				34D81CE53D07D80B333D610B /* chime.png in Resources */,
+				5248D64A4F66BE386B48299F /* gondola.png in Resources */,
+				D7F7C2346FCC7058EC3C8CC0 /* floatplane.png in Resources */,
+				3AB193F0F7DEDDF8D243AE44 /* kite.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1097,6 +1172,7 @@
 				EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */,
 				248993E9EF7C4D73A470CCE9 /* BearyNightPatrol.swift in Sources */,
 				3AA12B2885B64262BB5A9AD8 /* BearySoundPlayer.swift in Sources */,
+				AEA9D9D3FBCB5ACEDC623626 /* BearyProfileCoverView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
