@@ -2259,6 +2259,10 @@ class BearyTimelineViewController: UIViewController {
     private var dayEntries: [Entry] = []
     private var dayState = LoadState.idle
     private var dayKeyForLoad: String?
+    /// 按日请求递增序号：快速切日 A→B→A 时，切回 A 的新请求会把 dayKeyForLoad
+    /// 置回 A，旧 A 回包只验日期反而能通过；序号让旧回包一律作废（账号、
+    /// 筛子档、dayKey 校验原样保留）。
+    private var dayLoadSeq = 0
     private var dayEntriesKey: String?
     /// N2：已加载过的当日数据缓存（key=北京日，value=该日成功回包的条目）。
     /// 日历缓存（calendarCache）只含计数、不含条目，故切日此前必重拉；
@@ -2266,9 +2270,15 @@ class BearyTimelineViewController: UIViewController {
     /// 缓存是“先显示、后台再对齐”的底子，过期由每次切日的静默刷新纠正，
     /// 不设 TTL（当日数据变化只来自本人的写/删/公开操作，见删除时的清缓存）。
     private var dayEntriesCache: [String: [Entry]] = [:]
+    /// 日缓存版本（key=北京日）：每次经 cacheDayEntries 的权威写缓存都 +1；
+    /// 相邻日预取发出时捕获当时版本，回调写缓存前比对——期间主动加载已写过
+    /// 该日缓存时版本已变，旧预取拒写，不覆盖新数据。预取写缓存本身也推进
+    /// 版本，使更早的预取同样被拒；预取从不阻塞主动加载，只丢弃自己的写。
+    private var dayCacheVersions: [String: Int] = [:]
     /// 全量同步落盘：落盘是 dayEntriesCache 的持久层，不是第二套真相——
     /// 读顺序永远是内存 → 落盘 → 网络；每次网络日成功都同时写内存与落盘。
     private func cacheDayEntries(key: String, entries: [Entry]) {
+        dayCacheVersions[key, default: 0] += 1
         dayEntriesCache[key] = entries
         if let uid = SessionManager.shared.currentUser?.id {
             // 落盘写走同步队列（不卡主线程，同时记写盘代际供全量同步提交守卫判断）；
@@ -2291,6 +2301,7 @@ class BearyTimelineViewController: UIViewController {
     /// 不重建，故必须显式清，否则新账号当日面板会先闪出旧账号的日缓存。
     func clearDayCacheForAccountChange() {
         dayEntriesCache.removeAll()
+        dayCacheVersions.removeAll()
         dayPrefetchInFlight.removeAll()
     }
     /// 相邻日预取在途集合（key=北京日）：独立通道专用，与正向单槽
@@ -4644,7 +4655,13 @@ class BearyTimelineViewController: UIViewController {
         let dims = (entry.imgDims ?? [:]).map { "\($0.key):\($0.value.map(String.init).joined(separator: "x"))" }.sorted().joined(separator: ",")
         let live = (entry.liveVideos ?? [:]).map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ",")
         let quote = entry.quote
-        let quotePart = "\(entry.quoteId ?? "")|\(quote?.id ?? "")|\(quote?.content ?? "")|\(quote?.gone ?? false)|\(quote?.locked ?? false)|\(quote?.isPublic ?? false)"
+        // 引用签名须覆盖全部参与引用卡绘制的字段：只比 id/正文/删除/锁定/
+        // 公开时，引用只换图片、作者信息或可见性会被 dayUnchanged 误判为没变
+        // （与详情页、个人页回填的签名覆盖口径一致；imgDims 现阶段服务端
+        // 恒为 nil，仍先行纳入，透传后直接生效）。
+        let quoteImages = (quote?.images ?? []).joined(separator: ",")
+        let quoteDims = (quote?.imgDims ?? [:]).map { "\($0.key):\($0.value.map(String.init).joined(separator: "x"))" }.sorted().joined(separator: ",")
+        let quotePart = "\(entry.quoteId ?? "")|\(quote?.id ?? "")|\(quote?.content ?? "")|\(quote?.gone ?? false)|\(quote?.locked ?? false)|\(quote?.isPublic ?? false)|\(quoteImages)|\(quoteDims)|\(quote?.authorName ?? "")|\(quote?.authorAvatar ?? "")|\(quote?.authorHandle ?? "")|\(quote?.visibility ?? "")|\(quote?.publishedAt ?? 0)|\(quote?.ephemeralUntil ?? 0)"
         return "\(entry.content ?? "")|\(entry.isPublic ?? false)|\(entry.visibility ?? "")|\(entry.likeCount ?? 0)|\(entry.likedByMe ?? false)|\(entry.bookmarkedByMe ?? false)|\(entry.bookmarkCount ?? 0)|\(emoteParts.joined(separator: ","))|\(entry.locationName ?? "")|\(entry.locationDistrict ?? "")|\(images)|\(dims)|\(live)|\(entry.weather ?? "")|\(entry.temperatureC.map(String.init) ?? "")|\(entry.mood ?? "")|\(entry.title ?? "")|\(quotePart)|\(entry.authorName ?? "")|\(entry.authorAvatar ?? "")|\(entry.authorBadge ?? "")|\(entry.authorPlus ?? 0)|\(entry.mentionedName ?? "")|\(entry.createdAt ?? 0)|\(entry.publishedAt ?? 0)|\(entry.ephemeralUntil ?? 0)"
     }
 
@@ -5489,9 +5506,14 @@ class BearyTimelineViewController: UIViewController {
         // 旧账号回包直接丢弃（新账号的 reloadTimeline 会重拉，不靠旧回包对齐）。
         let requestUid = SessionManager.shared.currentUser?.id
         let requestVis = timelineVisFilter
+        // 按日请求序号：每次发出即 +1，回调先比序号——切回同日的旧回包
+        // 即使日期、账号、筛子档全对上，也因序号过期而丢弃，不动面板与缓存。
+        dayLoadSeq += 1
+        let requestDaySeq = dayLoadSeq
         BearyAPI.shared.fetchTimelineDay(date: key, vis: timelineVisFilter.queryValue) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
+                guard requestDaySeq == strongSelf.dayLoadSeq else { return }
                 if strongSelf.dayKeyForLoad != key { return }
                 if SessionManager.shared.currentUser?.id != requestUid { return }
                 // 筛子档快照：请求发出后用户切了档，旧档回包不得写入当日面板
@@ -5637,6 +5659,9 @@ class BearyTimelineViewController: UIViewController {
             guard dayEntriesCache[next] == nil, !dayPrefetchInFlight.contains(next) else { continue }
             if dayKeyForLoad == next && dayState == .loading { continue }
             dayPrefetchInFlight.insert(next)
+            // 缓存版本快照：发出时记下该日版本，回调写缓存前比对——期间
+            // 主动加载已写过该日时版本已变，旧预取直接拒写，不覆盖新缓存。
+            let requestCacheVersion = dayCacheVersions[next] ?? 0
             BearyAPI.shared.fetchTimelineDay(date: next) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let strongSelf = self else { return }
@@ -5645,6 +5670,7 @@ class BearyTimelineViewController: UIViewController {
                     switch result {
                     case .success(let list):
                         if strongSelf.dayKeyForLoad == next && strongSelf.dayState == .loading { return }
+                        guard (strongSelf.dayCacheVersions[next] ?? 0) == requestCacheVersion else { return }
                         strongSelf.cacheDayEntries(key: next, entries: list.entries ?? [])
                     case .failure:
                         break
