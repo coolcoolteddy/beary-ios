@@ -851,6 +851,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             charTrackLayer?.strokeColor = BearyColors.line.cgColor
             updateCountLabel()
         }
+        // 审计补漏：字号档变化时发布钮宽度重算（此前只在搭建与忙态切换时算，
+        // 编辑器开着时改系统字号，pill 宽度直接过期、大字号下裁标题）。
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            refreshPublishButtonWidth()
+        }
         // 动态字号变化时标题字号跟随（原 UITextField 靠
         // adjustsFontForContentSizeCategory 自动跟，UITextView 没有该属性，
         // 故手动重建标题 attributed；字号没变时不动，不打断正在输入的标题）。
@@ -1371,7 +1376,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 不读 live 标题／图标，忙态切换时宽约束常量不再变、顶栏不再横向跳动；
     /// 代价是常态 pill 比文字宽约一格忙态增量，内容居中、仍是同一 pill，不改常态语义）。
     private func refreshPublishButtonWidth() {
-        let font = UIFont.systemFont(ofSize: 14)
+        // 审计补漏：宽度按标题实际字体算（标题走 cappedFont 上限 20pt，
+        // 原写死 14pt 量出的“发布中…”比大字号下实际窄约三分之一，pill 会裁标题）。
+        let font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14))
         func textWidth(_ text: String) -> CGFloat {
             return ceil((text as NSString).size(withAttributes: [NSAttributedString.Key.font: font]).width)
         }

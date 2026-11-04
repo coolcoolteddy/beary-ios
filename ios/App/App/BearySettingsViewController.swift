@@ -1575,7 +1575,7 @@ final class BearySettingsViewController: UIViewController {
             logoutStandaloneButton.topAnchor.constraint(equalTo: logoutRow.topAnchor),
             logoutStandaloneButton.centerXAnchor.constraint(equalTo: logoutRow.centerXAnchor),
             logoutStandaloneButton.widthAnchor.constraint(equalToConstant: 220),
-            logoutStandaloneButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
+            logoutStandaloneButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
             logoutStandaloneButton.bottomAnchor.constraint(equalTo: logoutRow.bottomAnchor),
         ])
         let deleteRow = UIView()
@@ -2933,22 +2933,33 @@ final class BearySettingsViewController: UIViewController {
         // 的手势接了 requestExit 未保存拦截；本路若不接，边缘滑会绕过未保存
         // 确认直接关页，故同款接上（无改动时返回 true，手势照常）。
         vc.loadViewIfNeeded()
-        let settingsPageEdgeDismiss = BearyEdgeDismissController()
-        if let editVC = vc as? BearyEditProfileViewController {
-            settingsPageEdgeDismiss.shouldAllowInteractiveDismiss = { [weak editVC] in
-                editVC?.requestExit(interactive: true) ?? true
-            }
+        // 审计补漏（#829 回归）：仅原转场为 fadeRise 的子页改走 EdgeDismiss。
+        // 登录页自带底 sheet 转场（BearyLoginSheet：尺寸/拖动条/点遮罩关闭），
+        // 若在此被覆盖，底 sheet 会变成全屏滑入、叉叉落在全屏页上，故原样放行。
+        let useEdgeDismiss: Bool
+        if let fadeRise = SceneDelegate.chrome?.fadeRiseTransitionDelegate {
+            useEdgeDismiss = (vc.transitioningDelegate === fadeRise)
+        } else {
+            useEdgeDismiss = false
         }
-        settingsPageEdgeDismiss.attach(to: vc)
-        vc.transitioningDelegate = settingsPageEdgeDismiss
-        self.settingsPageEdgeDismiss = settingsPageEdgeDismiss
-        let preBounds = view.window?.bounds ?? UIScreen.main.bounds
-        vc.view.frame = preBounds
-        vc.view.setNeedsLayout()
-        vc.view.layoutIfNeeded()
+        if useEdgeDismiss {
+            let settingsPageEdgeDismiss = BearyEdgeDismissController()
+            if let editVC = vc as? BearyEditProfileViewController {
+                settingsPageEdgeDismiss.shouldAllowInteractiveDismiss = { [weak editVC] in
+                    editVC?.requestExit(interactive: true) ?? true
+                }
+            }
+            settingsPageEdgeDismiss.attach(to: vc)
+            vc.transitioningDelegate = settingsPageEdgeDismiss
+            self.settingsPageEdgeDismiss = settingsPageEdgeDismiss
+            let preBounds = view.window?.bounds ?? UIScreen.main.bounds
+            vc.view.frame = preBounds
+            vc.view.setNeedsLayout()
+            vc.view.layoutIfNeeded()
+        }
         present(vc, animated: BearyMotion.animated(true)) { [weak self, weak vc] in
             self?.isPresentingSettingsPage = false
-            guard let vc = vc, let window = vc.view.window else { return }
+            guard useEdgeDismiss, let vc = vc, let window = vc.view.window else { return }
             let bounds = window.bounds
             if vc.view.frame != bounds || !vc.view.transform.isIdentity {
                 vc.view.transform = .identity

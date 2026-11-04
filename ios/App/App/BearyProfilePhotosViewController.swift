@@ -113,7 +113,7 @@ final class BearyProfilePhotosViewController: UIViewController {
             // 高；标题上下约束撑高顶栏，默认字号下仍为 44。新增照片逐项
             // 动画的减动效短路已存在，本支不动它。
             topBarView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            backButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: 8),
+            backButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: 16),
             backButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
             backButton.widthAnchor.constraint(equalToConstant: 44),
             backButton.heightAnchor.constraint(equalToConstant: 44),

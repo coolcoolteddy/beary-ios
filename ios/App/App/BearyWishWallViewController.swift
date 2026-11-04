@@ -122,9 +122,9 @@ private final class WishRowView: UIView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
             donePill.widthAnchor.constraint(equalToConstant: 56),
             donePill.heightAnchor.constraint(equalToConstant: 18),
-            upButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
-            downButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
-            doneButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
+            upButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
+            downButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
+            doneButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
         ])
     }
 
@@ -396,7 +396,7 @@ final class BearyWishWallViewController: UIViewController {
         contentStack.addArrangedSubview(wishStateView)
         contentStack.addArrangedSubview(emptyLabel)
         NSLayoutConstraint.activate([
-            createButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.ink).height),
+            createButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
         ])
         loadWishes()
     }
@@ -854,7 +854,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
             detailCountLabel.topAnchor.constraint(equalTo: detailView.bottomAnchor, constant: 4),
             fieldErrorLabel.topAnchor.constraint(equalTo: detailCountLabel.bottomAnchor, constant: 8),
             submitButton.topAnchor.constraint(equalTo: fieldErrorLabel.bottomAnchor, constant: 12),
-            submitButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.ink).height),
+            submitButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
             // 内容底含提交钮 +16 边距——键盘顶起后提交钮也可滚到可见区。
             submitButton.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -16),
         ] + fieldColumnConstraints(for: titleField)

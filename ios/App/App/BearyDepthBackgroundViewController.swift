@@ -106,7 +106,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
             topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             topBarView.heightAnchor.constraint(equalToConstant: 44),
-            backButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: 8),
+            backButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: 16),
             backButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
             backButton.widthAnchor.constraint(equalToConstant: 44),
             backButton.heightAnchor.constraint(equalToConstant: 44),

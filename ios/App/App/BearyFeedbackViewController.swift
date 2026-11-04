@@ -626,9 +626,9 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         contentStack.setCustomSpacing(8, after: diagLabel)
         contentStack.setCustomSpacing(16, after: logOnlyButton)
         NSLayoutConstraint.activate([
-            submitButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.ink).height),
-            shareButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
-            logOnlyButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
+            submitButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
+            shareButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
+            logOnlyButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
         ])
     }
 

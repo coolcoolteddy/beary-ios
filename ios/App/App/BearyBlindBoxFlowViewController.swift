@@ -400,7 +400,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             openStack.leadingAnchor.constraint(equalTo: openSection.leadingAnchor),
             openStack.trailingAnchor.constraint(equalTo: openSection.trailingAnchor),
             openStack.bottomAnchor.constraint(equalTo: openSection.bottomAnchor),
-            openButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.ink).height),
+            openButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
         ])
 
         buildReceivedSection()
@@ -422,7 +422,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             loginStack.leadingAnchor.constraint(equalTo: loginView.leadingAnchor),
             loginStack.trailingAnchor.constraint(equalTo: loginView.trailingAnchor),
             loginStack.bottomAnchor.constraint(equalTo: loginView.bottomAnchor),
-            loginButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.orange).height),
+            loginButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.orange).height),
         ])
 
         errorLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -459,7 +459,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         contentStack.addArrangedSubview(loginView)
         contentStack.addArrangedSubview(errorView)
         NSLayoutConstraint.activate([
-            poolButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.orange).height),
+            poolButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.orange).height),
         ])
     }
 
