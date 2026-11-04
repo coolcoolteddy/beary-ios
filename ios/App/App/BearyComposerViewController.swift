@@ -1238,7 +1238,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         titleLabel.text = isEditMode ? "编辑日记" : "新日记"
         // 审计-编辑器详情：顶栏标题走 Dynamic Type（正文标题输入框此前已
         // 走 scaledFont，此处补顶栏标题一处；窄屏压缩优先级 749 不动）。
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         // v6-2：标题靠左对齐、紧贴叉叉右侧 8pt，不再居中（v3 左右钮之间居中口径已推翻，不实施）。

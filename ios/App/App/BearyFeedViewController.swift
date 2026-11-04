@@ -425,9 +425,9 @@ class BearyFeedViewController: UIViewController {
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.textAlignment = .center
         subtitleLabel.numberOfLines = 0
-        // Q5 空态 CTA：高 44、圆角 22（pill 口径）、左右内边距 20；点按只回调
+        // Q5 空态 CTA：高 44、圆角走工厂 single 12、左右内边距 20；点按只回调
         // onComposeRequested，导航归容器（与 FAB 同去向），本文件不 present。
-        // Q5 空态 CTA 走 BearyButton 工厂（secondaryOutline 常规 44/22 与原口径
+        // Q5 空态 CTA 走 BearyButton 工厂（secondaryOutline 常规 44/12 与原口径
         // 一致：surface 底 + line 边框 + ink 字；字号事后覆为原 14 semibold；
         // 边框深浅切换由工厂 trait 重刷，不再停留旧主题色）。
         let writeButton = BearyButton(style: .secondaryOutline(.regular))
