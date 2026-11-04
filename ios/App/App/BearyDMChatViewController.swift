@@ -9,8 +9,11 @@ import UIKit
 // 已读回执不显示给对方：read_at 只用于自己未读计数，本页不画任何已读态。
 // 档位不允许时 history/send 回 403 dm_not_allowed：页顶横幅提示并禁用输入；
 // 拉黑 403 仍走原“会话已关闭”路径，不泄露拉黑方向。
-// 发送成功不做乐观假态：服务端确认后重拉最新页再落行（与点赞“服务端确认”
-// 口径一致）；失败保留输入框草稿，只 toast。
+// 乐观发送（2026-11-04 Li 定，取代旧“服务端确认后重拉再落行”口径）：
+// 点发送即把消息落到记录末尾（0.22s 淡入 + 从输入条位置轻微上浮），输入框
+// 立即清空；成功后靠重拉与服务端行配对认领、替换成本行；网络失败时本行
+// 侧边出红色感叹号（44pt 热区），点按重发。超时/结果未知不认失败——
+// 无法确认是否已送达，谎称失败或谎称成功都会错，改走撤行 + 草稿回填 + toast。
 
 final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UITableViewDataSource, UITextViewDelegate {
 
@@ -39,18 +42,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     // U5：加载失败态（空消息时）复用 BearyStateView 的动作入口（重试钮），
     // 与 #685 的 firstLoadStateView（仅 loading 形态）分开，不动它。
     private let loadFailedStateView = BearyStateView()
-    // U1：发送后未确认常驻 pill（与“新消息”pill 同槽位、互斥显隐）；
-    // 点按只重拉历史确认送达状态，不重发消息（避免重复发送）。
-    private let syncFailedPill = UIButton(type: .system)
-    /// U1：发送后待确认——输入已清、尚未被一次新鲜历史拉取确认送达。
-    private var sendUnconfirmed = false
-    /// U1：待确认的那次新鲜拉取的序号；被守卫跳过时为 nil（在途旧请求不算确认）。
-    private var sendConfirmSequence: Int?
-    /// loadLatest 实际发起请求的单调序号（被守卫跳过的不计）。
-    private var loadSequence = 0
     private let placeholderLabel = UILabel()
     private let countLabel = UILabel()
-    private var inputBarBottomConstraint: NSLayoutConstraint?
+    /// 2026-11-04 乐观发送：失败待发行的本地键集合（行侧边出红叹号、点按重发）。
+    private var failedSendKeys = Set<String>()
     /// 输入框高度约束：跟内容走（空态一行、上限五行），替代旧的 36~160 区间约束。
     private var inputTextViewHeightConstraint: NSLayoutConstraint?
     private var messages: [BearyAPI.DMMessage] = []
@@ -71,7 +66,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private var hasMoreOlder = false
     private var loadFailed = false
     private var sessionClosed = false
-    private var sending = false
     private var didMarkRead = false
     /// 本页私信本地文件的账号（进页时捕获，切号后仍写原账号文件，不串号）。
     private let storeAccountId: Int?
@@ -212,27 +206,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             newMessagePill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             newMessagePill.heightAnchor.constraint(equalToConstant: 32),
         ])
-        // U1：发送后确认失败常驻 pill（与“新消息”pill 同槽位、互斥显隐）：
-        // 点按只重拉历史确认送达状态，不重发消息；高亮态与常态同色（不压暗），
-        // 按压反馈走通用 transform 缩放（bearyAddPressFeedback）。
-        syncFailedPill.translatesAutoresizingMaskIntoConstraints = false
-        syncFailedPill.setTitle("发送未确认，点按重试", for: .normal)
-        syncFailedPill.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
-        syncFailedPill.titleLabel?.adjustsFontForContentSizeCategory = true
-        syncFailedPill.setTitleColor(BearyColors.bg, for: .normal)
-        syncFailedPill.setTitleColor(BearyColors.bg, for: .highlighted)
-        syncFailedPill.backgroundColor = BearyColors.ink
-        syncFailedPill.layer.cornerRadius = 16
-        syncFailedPill.contentEdgeInsets = UIEdgeInsets(top: 8, left: 16, bottom: 8, right: 16)
-        syncFailedPill.isHidden = true
-        syncFailedPill.addTarget(self, action: #selector(syncFailedPillTapped), for: .touchUpInside)
-        syncFailedPill.bearyAddPressFeedback()
-        view.addSubview(syncFailedPill)
-        NSLayoutConstraint.activate([
-            syncFailedPill.bottomAnchor.constraint(equalTo: inputBar.topAnchor, constant: -8),
-            syncFailedPill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            syncFailedPill.heightAnchor.constraint(equalToConstant: 32),
-        ])
         newMessagePillBottomConstraint = newMessagePill.bottomAnchor.constraint(equalTo: inputBar.topAnchor, constant: -8)
         newMessagePillBottomConstraint?.isActive = true
         // 翻旧加载态浮标（见声明处注释）：悬在列表顶部，不占表高。
@@ -308,8 +281,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             loadFailedStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
         ])
 
-        inputBarBottomConstraint = inputBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
-        inputBarBottomConstraint?.isActive = true
+        // 2026-11-04 键盘跟随：输入条底直接锚系统 keyboardLayoutGuide 顶——
+        // 贴底键盘弹起时输入条底恰贴键盘顶、跟系统动画走；浮动键盘不占底部，
+        // guide 高为 0，输入条留在底部不动；旧手算 constant（applyKeyboard）
+        // 随旧帧、键盘帧与输入条相交门等手工口径一并废弃。
+        inputBar.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor).isActive = true
         // 输入框初始一行高；后续由 updateInputTextViewHeight 按内容修正。
         inputTextViewHeightConstraint = inputTextView.heightAnchor.constraint(equalToConstant: 36)
         inputTextViewHeightConstraint?.isActive = true
@@ -363,9 +339,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             sendButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
         ])
 
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+        // 2026-11-04：键盘跟随改走 keyboardLayoutGuide，不再监听键盘通知。
         // 先显本地消息（服务端 7 天到期后本地仍可看），再拉服务端合并。
         if let userId = peer.id {
             messages = BearyDMStore.messages(accountId: storeAccountId, peerId: userId)
@@ -399,42 +373,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     @objc private func refreshPulled() {
         loadLatest()
-    }
-
-    @objc private func keyboardWillShow(_ note: Notification) {
-        applyKeyboard(note)
-    }
-
-    @objc private func keyboardWillChangeFrame(_ note: Notification) {
-        applyKeyboard(note)
-    }
-
-    @objc private func keyboardWillHide(_ note: Notification) {
-        applyKeyboard(note)
-    }
-
-    /// 键盘跟随（审计）：跟系统时长曲线做动画；帧先 convert 到本视图坐标，
-    /// 再按与视图底边的实际遮挡算 inset——iPad 浮动键盘、分屏不贴底时不按全高垫。
-    /// 不抢滚动位：输入条顶起后表高缩小，旧 offset 自然保留，正在翻旧消息
-    /// 的用户不被拽到底；新消息发送成功后由 loadLatest 的 wasAtBottom 分支处理。
-    /// （iPad/分屏复核：旧代码直接取键盘帧高度、无 convert、无动画跟随，
-    /// 缺陷在代码层面已证实；浮动/分屏键盘的实际遮挡仍待真机复验。）
-    private func applyKeyboard(_ note: Notification) {
-        guard let frameValue = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
-        let frameInView = view.convert(frameValue.cgRectValue, from: nil)
-        // U2：照抄编辑器选人框 ComposerPickers:572-579 的口径——先判键盘帧与
-        // 输入条是否相交，再算重叠；浮动键盘停在中部未碰输入条时不再大值顶起。
-        // 重叠量口径与旧代码一致（贴底键盘行为不变），只多了相交门。
-        view.layoutIfNeeded()
-        let overlapsInput = frameInView.isEmpty == false && frameInView.intersects(inputBar.frame)
-        let overlap = overlapsInput ? max(0, view.bounds.height - frameInView.minY - view.safeAreaInsets.bottom) : 0
-        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
-        let curve = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue ?? 0
-        let options = UIView.AnimationOptions(rawValue: UInt(curve << 16))
-        inputBarBottomConstraint?.constant = -overlap
-        UIView.animate(withDuration: duration, delay: 0, options: options, animations: {
-            self.view.layoutIfNeeded()
-        }, completion: nil)
     }
 
     func textViewDidChange(_ textView: UITextView) {
@@ -488,21 +426,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     @objc private func newMessagePillTapped() {
         setNewMessagePillVisible(false)
         scrollToBottomIfNeeded()
-    }
-
-    /// U1：发送后未确认 pill——仅“已发出待新鲜拉取确认、有消息、非关闭/禁言态”时常驻；
-    /// 显隐与“新消息”pill 互斥（确认失败优先，不叠两个 pill）。
-    private func updateSyncFailedPill() {
-        let show = sendUnconfirmed && !messages.isEmpty && !sessionClosed && !dmNotAllowed
-        syncFailedPill.isHidden = !show
-        if show {
-            newMessagePill.isHidden = true
-        }
-    }
-
-    @objc private func syncFailedPillTapped() {
-        // 重试语义：只重拉历史确认送达状态，不重发消息。
-        loadLatest()
     }
 
     /// “新消息”pill 显隐唯一入口：显隐之外同步两件事——
@@ -560,7 +483,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     private func updateSendButton() {
         let hasText = !inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        sendButton.isEnabled = hasText && !sending && !sessionClosed && !dmNotAllowed
+        // 2026-11-04 乐观发送：不再单发锁——点发送即清空输入框，连点第二下
+        // 因空文案被拦，不会重复发出；多条在途请求各自认领自己的待发行。
+        sendButton.isEnabled = hasText && !sessionClosed && !dmNotAllowed
         sendButton.alpha = sendButton.isEnabled ? 1 : 0.6
     }
 
@@ -571,9 +496,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         tableView.scrollToRow(at: path, at: .bottom, animated: false)
     }
 
-    /// 发送动画：末行是刚发出的本人消息且可见时，让该 cell 从输入框位置
-    /// 动进它在历史区的位置。只走 transform（位移）+ opacity，全站 0.25s
-    /// 口径，无弹簧无花哨；末行不是本人消息（对方恰好同时发来）或不可见时不播。
+    /// 发送动画（2026-11-04 乐观发送入场）：末行是刚发出的本人消息且可见时，
+    /// 让该 cell 从输入框位置动进它在历史区的位置。只走 transform（位移）
+    /// + opacity，0.22s（与新行淡入口径同 dur），无弹簧无花哨；末行不是
+    /// 本人消息（对方恰好同时发来）或不可见时不播。成功后本行不动——
+    /// 点按即最终态，不二次闪动；服务端行认领时整行替换，不重播入场。
     private func animateLastMineRow() {
         guard let last = messages.last,
               last.senderId != nil,
@@ -588,10 +515,115 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         guard deltaY > 0 else { return }
         cell.alpha = 0
         cell.transform = CGAffineTransform(translationX: 0, y: deltaY)
-        UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
+        UIView.animate(withDuration: 0.22, delay: 0, options: .curveEaseOut, animations: {
             cell.alpha = 1
             cell.transform = .identity
         }, completion: nil)
+    }
+
+    /// 当前待发行（localKey 非空的行，即乐观落行后尚未被服务端行认领的）。
+    private func pendingTemps() -> [BearyAPI.DMMessage] {
+        messages.filter { $0.localKey != nil }
+    }
+
+    /// 待发行与服务端行配对认领：按发送顺序，服务端行须是本人、正文相同、
+    /// 服务端时间不早于发送时间 5 秒前（容时钟偏差）；一条服务端行只认领
+    /// 一条待发（同文案连发不串位）。认领到的待发丢弃（服务端行已在列表里，
+    /// 不闪动、不重播）；未认领的待发重新拼到末尾（失败态跟随 localKey 保留）。
+    private func reconcilePendingSends(_ pending: [BearyAPI.DMMessage]) {
+        guard !pending.isEmpty else { return }
+        let myId = SessionManager.shared.currentUser?.id
+        var usedServer = Set<Int>()
+        var remaining: [BearyAPI.DMMessage] = []
+        for temp in pending {
+            guard let key = temp.localKey else { continue }
+            if let idx = messages.indices.first(where: { i in
+                !usedServer.contains(i) &&
+                messages[i].localKey == nil &&
+                messages[i].senderId == myId &&
+                messages[i].body == temp.body &&
+                (messages[i].createdAt ?? 0) >= (temp.createdAt ?? 0) - 5000
+            }) {
+                usedServer.insert(idx)
+                failedSendKeys.remove(key)
+            } else {
+                remaining.append(temp)
+            }
+        }
+        messages += remaining
+    }
+
+    /// 待发行重发：失败红叹号点按入口。重发期先清失败态（叹号消失），
+    /// 成功靠重拉认领；再失败则叹号回来；超时/未知与 401/403 走撤行口径
+    ///（见 removePendingSend），不给会重复发出的重试。
+    private func retrySend(key: String) {
+        guard let userId = peer.id,
+              let temp = messages.first(where: { $0.localKey == key }),
+              let body = temp.body,
+              !sessionClosed, !dmNotAllowed,
+              SessionManager.shared.isLoggedIn else { return }
+        failedSendKeys.remove(key)
+        reloadPendingRow(key: key)
+        BearyAPI.shared.sendDM(userId: userId, body: body) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success:
+                    self.dmNotAllowed = false
+                    self.updatePermBanner()
+                    self.loadLatest()
+                case .failure(let error):
+                    if case .unauthorized = error {
+                        self.removePendingSend(key: key, restoreDraft: true)
+                        self.onRequireLogin?()
+                    } else if error.isDMNotAllowed {
+                        self.removePendingSend(key: key, restoreDraft: true)
+                        self.dmNotAllowed = true
+                        self.updatePermBanner()
+                    } else if error.isPermissionDenied {
+                        self.removePendingSend(key: key, restoreDraft: true)
+                        self.sessionClosed = true
+                        self.inputTextView.isEditable = false
+                        self.updateSendButton()
+                        self.updateEmptyState()
+                        BearyToast.show(in: self.view, message: "该会话已关闭")
+                    } else if error.isTimeoutOrUnknownResult {
+                        self.removePendingSend(key: key, restoreDraft: true)
+                        BearyToast.show(in: self.view, message: "发送结果未知，请确认对方是否已收到后再重发")
+                    } else {
+                        self.failedSendKeys.insert(key)
+                        self.reloadPendingRow(key: key)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 撤掉一条待发行（401/403/超时未知口径）：行从记录里消失；正文能回填
+    /// 输入框时回填（用户已打新字时不覆盖，只 toast 说明内容未保留）。
+    private func removePendingSend(key: String, restoreDraft: Bool) {
+        guard let idx = messages.firstIndex(where: { $0.localKey == key }) else { return }
+        let body = messages[idx].body ?? ""
+        messages.remove(at: idx)
+        failedSendKeys.remove(key)
+        if restoreDraft, !body.isEmpty {
+            if inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                inputTextView.text = body
+                updateSendButton()
+                updateInputChrome()
+                updateInputTextViewHeight()
+            } else {
+                BearyToast.show(in: view, message: "上一条发送失败，内容未保留，请重新输入")
+            }
+        }
+        updateEmptyState()
+        tableView.reloadData()
+    }
+
+    /// 仅刷新一条待发行（失败态显隐切换），行已不在时不做事。
+    private func reloadPendingRow(key: String) {
+        guard let row = messages.firstIndex(where: { $0.localKey == key }) else { return }
+        tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
     }
 
     private func updateEmptyState() {
@@ -599,12 +631,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             emptyLabel.text = "该会话已关闭"
             emptyLabel.isHidden = false
             loadFailedStateView.isHidden = true
-        } else if sendUnconfirmed && messages.isEmpty {
-            // U1：输入已清但送达尚未被新鲜拉取确认——不显示“还没有消息”
-            //（会让用户以为消息丢了），改给常驻确认入口；点按只重拉，不重发。
-            emptyLabel.isHidden = true
-            loadFailedStateView.configure(kind: .error, title: "发送未确认", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.loadLatest() })
-            loadFailedStateView.isHidden = false
         } else if loadFailed && messages.isEmpty {
             // U5：失败态不再纯文字——StateView 带“重试”动作入口（点按重拉历史，不重发）。
             emptyLabel.isHidden = true
@@ -618,7 +644,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             emptyLabel.isHidden = true
             loadFailedStateView.isHidden = true
         }
-        updateSyncFailedPill()
     }
 
     private func markReadIfNeeded() {
@@ -670,7 +695,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     }
 
     /// 最新页：服务端按 id 倒序下发，展示时反转为正序；成功后清未读。
-    /// onLoaded 报告拉取开始时用户是否在底部附近（发送成功后的 pill 判定用）。
     /// 根因补全：后端 history 只给 from_me、不给 sender_id，入库前须把
     /// senderId 补全（自己发 = 本人 id，否则 = 对方 id），否则本地 store
     /// 会把无 senderId 的行当脏行跳过，整页历史永远显空态。
@@ -685,7 +709,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }
     }
 
-    private func loadLatest(onLoaded: ((Bool) -> Void)? = nil, onSkipped: (() -> Void)? = nil) {
+    private func loadLatest() {
         guard let userId = peer.id else { return }
         guard SessionManager.shared.isLoggedIn else {
             tableView.refreshControl?.endRefreshing()
@@ -701,15 +725,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             refreshQueued = true
             return
         }
-        // U1 分锁版：共用 messageBusy 已由 #727 拆为 latestLoading／olderLoading；
-        // 最新页在途的跳过仍走 onSkipped 回调（发送后重拉即走此路），但不 endRefreshing——
-        // 在途那次结束时会 endRefreshing（#727“最新页在途同样不断刷新控件”口径）；
-        // 翻旧在途的跳过走上面排队路，同样不断刷新控件。
-        guard !latestLoading else {
-            // U1：被守卫跳过不是“已确认”——回调给调用方补反馈（发送后重拉即走此路）。
-            onSkipped?()
-            return
-        }
+        // 最新页在途时跳过、不 endRefreshing——在途那次结束时会 endRefreshing
+        //（#727“最新页在途同样不断刷新控件”口径）；翻旧在途的跳过走上面排队路，
+        // 同样不断刷新控件。
+        guard !latestLoading else { return }
         latestLoading = true
         loadFailed = false
         // 审计第 19 项：首次无本地消息才显加载态；有本地消息时先显旧消息、
@@ -720,13 +739,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             firstLoadStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
             firstLoadStateView.isHidden = false
             loadFailedStateView.isHidden = true
-        }
-        loadSequence += 1
-        let sequence = loadSequence
-        // U1：任何在“待确认”期间实际发起的新鲜拉取都成为确认拉取
-        //（被守卫跳过的在途旧请求不算，避免 stale 回包提前清掉待确认）。
-        if sendUnconfirmed {
-            sendConfirmSequence = sequence
         }
         let wasAtBottom = isNearBottom()
         BearyAPI.shared.fetchDMHistory(userId: userId, limit: 30) { [weak self] result in
@@ -741,18 +753,18 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.sessionClosed = false
                     self.inputTextView.isEditable = true
                     self.updatePermBanner()
+                    // 2026-11-04 乐观发送：先留住待发行，再用服务端行覆盖，
+                    // 最后配对认领——已送达的待发丢弃（服务端行已在列表里），
+                    // 未认领的（在途/失败）重新拼到末尾，刷新不得吞掉它们。
+                    let pending = self.pendingTemps()
                     let fetched = self.resolvedSenders(Array(history.resolvedMessages.reversed()))
                     BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched)
                     self.messages = BearyDMStore.messages(accountId: self.storeAccountId, peerId: userId)
+                    self.reconcilePendingSends(pending)
                     self.hasMoreOlder = history.resolvedMessages.count >= 30
                     self.loadFailed = false
                     self.firstLoadPending = false
                     self.firstLoadStateView.isHidden = true
-                    // U1：仅当完成的是确认拉取本身时清待确认（旧请求先完成不算）。
-                    if let confirm = self.sendConfirmSequence, confirm == sequence {
-                        self.sendUnconfirmed = false
-                        self.sendConfirmSequence = nil
-                    }
                     self.updateEmptyState()
                     self.tableView.reloadData()
                     if wasAtBottom {
@@ -766,7 +778,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         self.didMarkRead = false
                     }
                     self.markReadIfNeeded()
-                    onLoaded?(wasAtBottom)
                 case .failure(let error):
                     if error.isDMNotAllowed {
                         // 档位不允许：横幅 + 禁用，不走“会话已关闭”（那是拉黑路径）。
@@ -826,8 +837,13 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     let userMovedAway = !anchorStillVisible || (userIsScrolling && responseOffsetY > 120)
                     let older = self.resolvedSenders(Array(history.resolvedMessages.reversed()))
                     self.hasMoreOlder = history.resolvedMessages.count >= 30
+                    // 2026-11-04 乐观发送：翻旧回包同样先留住待发行再拼回末尾，
+                    // 否则在途/失败的待发会被整表覆盖吞掉（翻旧取的是更早页，
+                    // 不可能含待发，无需配对认领、直接拼回）。
+                    let pending = self.pendingTemps()
                     BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older)
                     self.messages = BearyDMStore.messages(accountId: self.storeAccountId, peerId: userId)
+                    self.messages += pending
                     self.tableView.reloadData()
                     self.tableView.layoutIfNeeded()
                     self.setOlderLoadingState(loading: false, failed: false)
@@ -861,8 +877,12 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }
     }
 
+    /// 乐观发送（2026-11-04）：点按即落行——待发行拼到记录末尾、输入框立即
+    /// 清空、滚到底、0.22s 淡入 + 从输入条位置上浮；请求在后台跑。成功后重拉
+    /// 认领（服务端行到位即替换待发）；网络失败行侧边出红叹号、点按重发；
+    /// 401/403/超时未知走撤行 + 草稿回填（不谎称已发、也不给会重复发出的重试）。
     @objc private func sendTapped() {
-        guard let userId = peer.id, !sending, !sessionClosed, !dmNotAllowed else { return }
+        guard let userId = peer.id, !sessionClosed, !dmNotAllowed else { return }
         let body = inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return }
         guard body.utf16.count <= 2000 else {
@@ -873,53 +893,47 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             onRequireLogin?()
             return
         }
-        sending = true
+        guard let myId = SessionManager.shared.currentUser?.id else {
+            onRequireLogin?()
+            return
+        }
+        let key = UUID().uuidString
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let temp = BearyAPI.DMMessage(id: nil, senderId: myId, fromMe: true, body: body, createdAt: nowMs, localKey: key)
+        messages.append(temp)
+        // 入场动效归 animateLastMineRow——先记已播，免得 willDisplay
+        // 的通用淡入与上浮动画抢 alpha。
+        fadedRowKeys.insert("msg-pending-\(key)")
+        inputTextView.text = ""
         updateSendButton()
+        updateInputChrome()
+        updateInputTextViewHeight()
+        updateEmptyState()
+        tableView.reloadData()
+        scrollToBottomIfNeeded()
+        animateLastMineRow()
         BearyAPI.shared.sendDM(userId: userId, body: body) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.sending = false
                 switch result {
                 case .success:
                     // 发送成功即权限无问题：横幅清掉（进页 can 误判时靠此恢复）。
                     self.dmNotAllowed = false
                     self.updatePermBanner()
-                    // 只清掉刚发出的那份：发送等待期用户又打的字不得误删。
-                    if self.inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines) == body {
-                        self.inputTextView.text = ""
-                    }
-                    self.updateSendButton()
-                    self.updateInputChrome()
-                    self.updateInputTextViewHeight()
-                    // 服务端确认后重拉最新页再落行，不做乐观假态。
-                    // 审计：发送成功不再强行拽到底部——仅用户已在底部附近时跟随，
-                    // 否则显“新消息”pill，点按再到底部。
-                    // U1：输入已清、确认责任交给这次重拉——先标记待确认；重拉被
-                    // 在途请求守卫跳过时 onSkipped 经 updateEmptyState 补常驻反馈
-                    //（有消息出 pill、空消息出“发送未确认”失败态），不让用户以为
-                    // 已发出；重拉失败时失败分支经 updateEmptyState 同样出反馈。
-                    self.sendUnconfirmed = true
-                    self.loadLatest(onLoaded: { [weak self] wasAtBottom in
-                        if !wasAtBottom {
-                            self?.setNewMessagePillVisible(true)
-                        } else {
-                            // 发送动画：刚发出的气泡从输入框位置动进历史区末行。
-                            self?.animateLastMineRow()
-                        }
-                    }, onSkipped: { [weak self] in
-                        self?.updateEmptyState()
-                    })
+                    self.loadLatest()
                 case .failure(let error):
                     if case .unauthorized = error {
+                        self.removePendingSend(key: key, restoreDraft: true)
                         self.onRequireLogin?()
                     } else if error.isDMNotAllowed {
-                        // 档位不允许：横幅 + 禁用，输入框原文字保留（仅不可再发）。
-                        // 审计第 9 项：带业务码的 403 也经此分支（见 APIError.isDMNotAllowed）。
+                        // 档位不允许：横幅 + 禁用，撤行后草稿回填输入框。
+                        self.removePendingSend(key: key, restoreDraft: true)
                         self.dmNotAllowed = true
                         self.updatePermBanner()
                     } else if error.isPermissionDenied {
                         // 审计第 9 项：带业务码的 403 同样进会话关闭；其余 .server
-                        // 错误不在此列，仍走下面通用“发送失败，请重试”toast。
+                        // 错误不在此列，仍走下面失败叹号分支。
+                        self.removePendingSend(key: key, restoreDraft: true)
                         self.sessionClosed = true
                         self.inputTextView.isEditable = false
                         self.updateSendButton()
@@ -927,13 +941,15 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         // 审计：403 即已关闭态，不再给自相矛盾的“请重试”。
                         BearyToast.show(in: self.view, message: "该会话已关闭")
                     } else if error.isTimeoutOrUnknownResult {
-                        // 超时／结果未知：输入框原文字保留（本分支不清空），
-                        // 不鼓励立即重发——先确认对方是否已收到再决定。
+                        // 超时／结果未知：可能已送达，不认失败、不给重发——撤行、
+                        // 草稿回填，让用户确认对方是否已收到再决定。
+                        self.removePendingSend(key: key, restoreDraft: true)
                         BearyToast.show(in: self.view, message: "发送结果未知，请确认对方是否已收到后再重发")
                     } else {
-                        BearyToast.show(in: self.view, message: "发送失败，请重试")
+                        // 确认未送达的失败：行留在原地、侧边出红叹号，点按重发。
+                        self.failedSendKeys.insert(key)
+                        self.reloadPendingRow(key: key)
                     }
-                    self.updateSendButton()
                 }
             }
         }
@@ -949,7 +965,13 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         let cell = tableView.dequeueReusableCell(withIdentifier: "dmMessageCell", for: indexPath) as! BearyDMMessageCell
         let message = messages[indexPath.row]
         let isMine = message.senderId != nil && message.senderId == SessionManager.shared.currentUser?.id
-        cell.configure(message: message, isMine: isMine)
+        // 2026-11-04 乐观发送：仅本人待发行可带失败态；失败时叹号点按重发该条。
+        let showFail = isMine && message.localKey.map { failedSendKeys.contains($0) } == true
+        let retryKey = message.localKey
+        cell.configure(message: message, isMine: isMine, showFail: showFail, onRetry: showFail ? { [weak self] in
+            guard let key = retryKey else { return }
+            self?.retrySend(key: key)
+        } : nil)
         return cell
     }
 
@@ -960,7 +982,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
         guard indexPath.row < messages.count else { return }
         let message = messages[indexPath.row]
-        let key = message.id.map { "msg-\($0)" } ?? "msg-noid-\(message.senderId ?? -1)-\(message.createdAt ?? 0)-\(message.body ?? "")"
+        // 2026-11-04 乐观发送：待发行无服务端 id，凭本地键记已播（发送时已预记，
+        // 入场动效归 animateLastMineRow，不走这里的通用淡入）。
+        let key = message.localKey.map { "msg-pending-\($0)" } ?? message.id.map { "msg-\($0)" } ?? "msg-noid-\(message.senderId ?? -1)-\(message.createdAt ?? 0)-\(message.body ?? "")"
         if fadedRowKeys.contains(key) {
             cell.alpha = 1
             return
@@ -1009,6 +1033,12 @@ private final class BearyDMMessageCell: UITableViewCell {
     private let theirsTextLabel = UILabel()
     private let mineTimeLabel = UILabel()
     private let theirsTimeLabel = UILabel()
+    // 2026-11-04 乐观发送失败态：本人行气泡左侧红叹号。热区 44×44（视觉
+    // 22 红圆 + 白叹号），仅失败待发行显示，点按重发该条。
+    private let failButton = UIButton(type: .system)
+    private let failBadge = UIView()
+    private let failMark = UILabel()
+    private var onRetry: (() -> Void)?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -1057,6 +1087,41 @@ private final class BearyDMMessageCell: UITableViewCell {
             theirsStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -104),
             theirsStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6),
         ])
+        // 失败叹号：44 热区包 22 红圆，圆心与本人气泡纵向居中、贴气泡左侧 8pt。
+        failButton.translatesAutoresizingMaskIntoConstraints = false
+        failButton.backgroundColor = .clear
+        failButton.isHidden = true
+        failButton.addTarget(self, action: #selector(failTapped), for: .touchUpInside)
+        failBadge.translatesAutoresizingMaskIntoConstraints = false
+        failBadge.backgroundColor = BearyColors.red
+        failBadge.layer.cornerRadius = 11
+        failBadge.clipsToBounds = true
+        failBadge.isUserInteractionEnabled = false
+        failMark.translatesAutoresizingMaskIntoConstraints = false
+        failMark.text = "!"
+        failMark.font = UIFont.systemFont(ofSize: 15, weight: .bold)
+        failMark.textColor = .white
+        failMark.textAlignment = .center
+        failMark.isUserInteractionEnabled = false
+        failButton.addSubview(failBadge)
+        failBadge.addSubview(failMark)
+        contentView.addSubview(failButton)
+        NSLayoutConstraint.activate([
+            failButton.widthAnchor.constraint(equalToConstant: 44),
+            failButton.heightAnchor.constraint(equalToConstant: 44),
+            failButton.trailingAnchor.constraint(equalTo: mineStack.leadingAnchor, constant: -8),
+            failButton.centerYAnchor.constraint(equalTo: mineBubble.centerYAnchor),
+            failBadge.widthAnchor.constraint(equalToConstant: 22),
+            failBadge.heightAnchor.constraint(equalToConstant: 22),
+            failBadge.centerXAnchor.constraint(equalTo: failButton.centerXAnchor),
+            failBadge.centerYAnchor.constraint(equalTo: failButton.centerYAnchor),
+            failMark.centerXAnchor.constraint(equalTo: failBadge.centerXAnchor),
+            failMark.centerYAnchor.constraint(equalTo: failBadge.centerYAnchor),
+        ])
+    }
+
+    @objc private func failTapped() {
+        onRetry?()
     }
 
     required init?(coder: NSCoder) {
@@ -1072,11 +1137,17 @@ private final class BearyDMMessageCell: UITableViewCell {
         theirsTextLabel.text = nil
         mineTimeLabel.text = nil
         theirsTimeLabel.text = nil
+        // 失败叹号与重发闭包不得串行（复用 cell 默认无叹号）。
+        failButton.isHidden = true
+        onRetry = nil
     }
 
-    func configure(message: BearyAPI.DMMessage, isMine: Bool) {
+    func configure(message: BearyAPI.DMMessage, isMine: Bool, showFail: Bool = false, onRetry: (() -> Void)? = nil) {
         mineStack.isHidden = !isMine
         theirsStack.isHidden = isMine
+        // 失败叹号只挂本人行；对方行、成功行一律不画。
+        failButton.isHidden = !(isMine && showFail)
+        self.onRetry = onRetry
         let body = message.body ?? ""
         let timeText: String = {
             guard let createdAt = message.createdAt else { return "" }
