@@ -80,7 +80,7 @@ private final class WishRowView: UIView {
         // 29：详情展开钮——超三行时才出现，点按原位展开/收起，不新增二级页面；
         // 未超三行时隐藏（见 layoutSubviews 的 updateExpandVisibility）。
         expandButton.setTitle("展开", for: .normal)
-        expandButton.setTitleColor(BearyColors.blue, for: .normal)
+        expandButton.setTitleColor(BearyColors.ink, for: .normal)
         expandButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         expandButton.titleLabel?.adjustsFontForContentSizeCategory = true
         expandButton.contentHorizontalAlignment = .leading

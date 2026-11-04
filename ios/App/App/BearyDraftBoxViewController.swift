@@ -529,7 +529,7 @@ final class BearyDraftBoxViewController: UIViewController {
         undoLabel.textColor = BearyColors.ink
         undoLabel.translatesAutoresizingMaskIntoConstraints = false
         undoButton.setTitle("撤销", for: .normal)
-        undoButton.setTitleColor(BearyColors.blue, for: .normal)
+        undoButton.setTitleColor(BearyColors.ink, for: .normal)
         undoButton.titleLabel?.font = UIFont.systemFont(ofSize: 13.5, weight: .semibold)
         undoButton.translatesAutoresizingMaskIntoConstraints = false
         undoButton.addTarget(self, action: #selector(undoDeleteTapped), for: .touchUpInside)
@@ -1116,7 +1116,7 @@ final class BearyDraftBoxViewController: UIViewController {
 
     private func chipShell() -> UIView {
         let chip = UIView()
-        chip.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.13)
+        chip.backgroundColor = BearyColors.faint
         chip.layer.cornerRadius = 999
         chip.layer.masksToBounds = true
         return chip

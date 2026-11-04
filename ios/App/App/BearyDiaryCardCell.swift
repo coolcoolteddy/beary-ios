@@ -651,7 +651,7 @@ class BearyDiaryCardCell: UITableViewCell {
         let v = UIImageView()
         v.translatesAutoresizingMaskIntoConstraints = false
         v.image = BearyFeedIconCache.image(named: "icon_at", pointSize: 13)
-        v.tintColor = BearyColors.orange
+        v.tintColor = BearyColors.ink
         v.contentMode = .scaleAspectFit
         return v
     }()
@@ -659,7 +659,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private let recipientLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.textColor = BearyColors.deepOrangeText
+        lb.textColor = BearyColors.ink
         lb.numberOfLines = 1
         return lb
     }()
@@ -700,7 +700,7 @@ class BearyDiaryCardCell: UITableViewCell {
         lb.translatesAutoresizingMaskIntoConstraints = false
         lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         lb.adjustsFontForContentSizeCategory = true
-        lb.textColor = BearyColors.deepOrangeText
+        lb.textColor = BearyColors.gray
         lb.numberOfLines = 0
         lb.isHidden = true
         return lb

@@ -274,7 +274,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.faint
+        view.backgroundColor = BearyColors.bg
         BearyAppLog.event("feedback open")
         buildChrome()
         buildContent()
@@ -347,7 +347,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
         let topBar = UIView()
         topBar.translatesAutoresizingMaskIntoConstraints = false
-        topBar.backgroundColor = BearyColors.faint
+        topBar.backgroundColor = BearyColors.bg
         topBar.addSubview(closeButton)
         topBar.addSubview(titleLabel)
         view.addSubview(topBar)
@@ -637,6 +637,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         card.translatesAutoresizingMaskIntoConstraints = false
         card.backgroundColor = BearyColors.surface
         card.layer.cornerRadius = 12
+        card.layer.borderWidth = 1
+        card.layer.bearyDynamicBorderColor = BearyColors.line
         card.clipsToBounds = true
         return card
     }

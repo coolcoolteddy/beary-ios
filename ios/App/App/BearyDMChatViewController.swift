@@ -1058,11 +1058,11 @@ private final class BearyDMMessageCell: UITableViewCell {
             bubble.translatesAutoresizingMaskIntoConstraints = false
             bubble.layer.cornerRadius = BearyCorners.single
             bubble.clipsToBounds = true
-            bubble.backgroundColor = isMine ? BearyColors.orange : BearyColors.faint
+            bubble.backgroundColor = isMine ? BearyColors.ink : BearyColors.faint
             textLabel.translatesAutoresizingMaskIntoConstraints = false
             textLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
             textLabel.adjustsFontForContentSizeCategory = true
-            textLabel.textColor = isMine ? BearyColors.onBrand : BearyColors.ink
+            textLabel.textColor = isMine ? BearyColors.bg : BearyColors.ink
             textLabel.numberOfLines = 0
             timeLabel.translatesAutoresizingMaskIntoConstraints = false
             timeLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))

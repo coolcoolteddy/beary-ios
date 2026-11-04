@@ -942,7 +942,7 @@ final class BearyTimelineCell: UITableViewCell {
         lb.translatesAutoresizingMaskIntoConstraints = false
         lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         lb.adjustsFontForContentSizeCategory = true
-        lb.textColor = BearyColors.deepOrangeText
+        lb.textColor = BearyColors.gray
         lb.numberOfLines = 0
         lb.isHidden = true
         return lb
@@ -1083,7 +1083,7 @@ final class BearyTimelineCell: UITableViewCell {
         // 默认档仍为 12.5 粗体，仅跟随系统字号，170 上限与单行截断口径不动。
         recipientLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12.5))
         recipientLabel.adjustsFontForContentSizeCategory = true
-        recipientLabel.textColor = BearyColors.deepOrangeText
+        recipientLabel.textColor = BearyColors.ink
         // B-G12 (web .tl-to): max-width 170 + single-line ellipsis, never wrap.
         recipientLabel.numberOfLines = 1
         recipientLabel.lineBreakMode = .byTruncatingTail
@@ -5937,7 +5937,7 @@ class BearyTimelineViewController: UIViewController {
                 button.layer.bearyDynamicBorderColor = BearyColors.line
                 button.layer.cornerRadius = BearyCorners.single
             } else {
-                button.setTitleColor(BearyColors.blue, for: .normal)
+                button.setTitleColor(BearyColors.ink, for: .normal)
             }
             // 样式规格第 4 表：空态描边重试钮 40→44，与“统一 44”口径一致；
             // 仅改高约束，圆角 20、边框、内边距一律不动（圆角归第 1 组管）。

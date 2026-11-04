@@ -2016,7 +2016,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteDeletedLabel.font = UIFont.systemFont(ofSize: 13)
         quoteDeletedLabel.textColor = BearyColors.gray
         quoteDeletedRemoveButton.setTitle("移除", for: .normal)
-        quoteDeletedRemoveButton.setTitleColor(BearyColors.blue, for: .normal)
+        quoteDeletedRemoveButton.setTitleColor(BearyColors.ink, for: .normal)
         // 按钮普查：裸 13pt 改 scaledFont，跟随系统字号。
         quoteDeletedRemoveButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         quoteDeletedRemoveButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -2037,7 +2037,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteFetchFailedLabel.font = UIFont.systemFont(ofSize: 13)
         quoteFetchFailedLabel.textColor = BearyColors.gray
         quoteFetchFailedRetryButton.setTitle("重试", for: .normal)
-        quoteFetchFailedRetryButton.setTitleColor(BearyColors.blue, for: .normal)
+        quoteFetchFailedRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         quoteFetchFailedRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         quoteFetchFailedRetryButton.addTarget(self, action: #selector(didTapRetryEditQuoteFetch), for: .touchUpInside)
         quoteFetchFailedRetryButton.bearyAddPressFeedback()
@@ -2212,7 +2212,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanelEmptyLabel.isHidden = true
         quotePanelRetryButton.translatesAutoresizingMaskIntoConstraints = false
         quotePanelRetryButton.setTitle("加载失败，重试", for: .normal)
-        quotePanelRetryButton.setTitleColor(BearyColors.blue, for: .normal)
+        quotePanelRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         // 按钮普查：裸 15pt 改 scaledFont，跟随系统字号。
         quotePanelRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         quotePanelRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -3137,7 +3137,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftStatusBannerLabel.lineBreakMode = .byTruncatingTail
         draftStatusBannerLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         draftStatusRetryButton.setTitle("重试", for: .normal)
-        draftStatusRetryButton.setTitleColor(BearyColors.blue, for: .normal)
+        draftStatusRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         draftStatusRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
         draftStatusRetryButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
         draftStatusRetryButton.accessibilityLabel = "重试保存草稿"
@@ -3610,7 +3610,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         locationClearButton.addTarget(self, action: #selector(didTapClearLocation), for: .touchUpInside)
         locationNoteLabel.translatesAutoresizingMaskIntoConstraints = false
         locationNoteLabel.font = UIFont.systemFont(ofSize: 12)
-        locationNoteLabel.textColor = BearyColors.deepOrangeText
+        locationNoteLabel.textColor = BearyColors.gray
         locationNoteLabel.numberOfLines = 0
         locationLineRow.axis = .horizontal
         locationLineRow.spacing = 6
@@ -4144,7 +4144,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageUndoLabel.font = UIFont.systemFont(ofSize: 13)
         imageUndoLabel.textColor = BearyColors.ink
         imageUndoButton.setTitle("撤销", for: .normal)
-        imageUndoButton.setTitleColor(BearyColors.blue, for: .normal)
+        imageUndoButton.setTitleColor(BearyColors.ink, for: .normal)
         imageUndoButton.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
         imageUndoButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
         imageUndoButton.addTarget(self, action: #selector(didTapUndoRemovedImage), for: .touchUpInside)

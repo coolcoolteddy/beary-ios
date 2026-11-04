@@ -284,7 +284,7 @@ private final class BearyDepthBackgroundCell: UITableViewCell {
             stateLabel.textColor = BearyColors.gray
         } else if isLocked {
             stateLabel.text = "Plus 专属"
-            stateLabel.textColor = BearyColors.deepOrangeText
+            stateLabel.textColor = BearyColors.ink
         } else {
             stateLabel.text = nil
         }

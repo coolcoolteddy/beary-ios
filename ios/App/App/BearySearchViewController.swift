@@ -622,10 +622,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateWrap.addSubview(stateStack)
 
         stateCircle.translatesAutoresizingMaskIntoConstraints = false
-        // 空态圈视觉统一：与 BearyStateView 同款——橙 18% 透明底（不再混
-        // surface；深色下混 surface 会比 StateView 的圈亮一档）。
-        stateCircle.backgroundColor = BearyColors.orange.withAlphaComponent(0.18)
-        stateCircle.layer.borderWidth = 1
+        // 空态圈视觉统一：与 BearyStateView 同款——浅灰底无描边墨图标
+        //（黑白灰新标准，橙圈已删）。
+        stateCircle.backgroundColor = BearyColors.faint
+        stateCircle.layer.borderWidth = 0
         // 8-11：初值 27 = 54/2（首次布局前 bounds 未定时的正确帧；布局后由
         // viewDidLayoutSubviews 按高/2 重算，见该处注释）。
         stateCircle.layer.cornerRadius = 27
@@ -636,7 +636,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 8-12 例外：状态圆内图标 25 不归 21 档——它是 54 圆的圆内比例，
         // 统一组件 BearyStateView 同款 54 圆亦用 25，故保留。
         stateIconView.image = BearyIconImages.image(named: "icon_search", pointSize: 25)
-        stateIconView.tintColor = BearyColors.orange
+        stateIconView.tintColor = BearyColors.ink
         stateIconView.contentMode = .scaleAspectFit
         stateCircle.addSubview(stateIconView)
 
@@ -885,16 +885,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// CGColor 不跟随深浅模式自动变：边框色一律这里集中刷新。
     private func updateBorderColors() {
         if searchBoxFocused {
-            // 网页 :focus-within 口径：边框取蓝 55% 混 line（color-mix，
-            // 不是蓝 55% 透明——深色下两者不同；原 withAlphaComponent 写法
-            // 在深色 line #3a3a40 上会偏蓝偏暗，随 E-G11 一并纠正）。
-            // 边框色由 traitCollectionDidChange → updateBorderColors 重赋。
-            searchBoxView.layer.bearyDynamicBorderColor = BearySearchViewController.mixedColor(BearyColors.blue, 0.55, over: BearyColors.line)
+            // 聚焦边框收敛：旧代码两处打架（此处蓝 55% 混 line vs
+            // updateSearchBoxShadow 的实心蓝，布局刷新后实心蓝总会覆盖混色），
+            // 统一为实心蓝（聚焦＝蓝的小系统与输入容器同口径）；边框色只归此处管。
+            searchBoxView.layer.bearyDynamicBorderColor = BearyColors.blue
         } else {
             searchBoxView.layer.bearyDynamicBorderColor = BearyColors.line
         }
-        // 状态圆描边：网页 inset 1px 橙 25% 圈。
-        stateCircle.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.25)
         retryButton.layer.bearyDynamicBorderColor = BearyColors.line
         clearSearchButton.layer.bearyDynamicBorderColor = BearyColors.line
         searchFooterRetryButton.layer.bearyDynamicBorderColor = BearyColors.line
@@ -902,43 +899,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         updateSearchBoxShadow()
     }
 
-    /// 网页 color-mix(in srgb, A w%, B) 的原生等价：按当前 trait 重解两色
-    /// 再按权重混 RGBA（BearyColors.alpha 只降透明度，混不出“盖在某色上”
-    /// 的效果；动态色闭包保证深浅切换后重解，不固化当前 trait）。
-    /// 本文件内专用（不改共享 BearyNativeCommon，避免波及其他路）。
-    private static func mixedColor(_ first: UIColor, _ weight: CGFloat, over second: UIColor) -> UIColor {
-        return UIColor { trait in
-            let a = rgbComponents(of: first.resolvedColor(with: trait))
-            let b = rgbComponents(of: second.resolvedColor(with: trait))
-            return UIColor(
-                red: a.0 * weight + b.0 * (1 - weight),
-                green: a.1 * weight + b.1 * (1 - weight),
-                blue: a.2 * weight + b.2 * (1 - weight),
-                alpha: a.3 * weight + b.3 * (1 - weight)
-            )
-        }
-    }
-
-    private static func rgbComponents(of color: UIColor) -> (CGFloat, CGFloat, CGFloat, CGFloat) {
-        var r: CGFloat = 0
-        var g: CGFloat = 0
-        var b: CGFloat = 0
-        var a: CGFloat = 0
-        if color.getRed(&r, green: &g, blue: &b, alpha: &a) {
-            return (r, g, b, a)
-        }
-        var w: CGFloat = 0
-        if color.getWhite(&w, alpha: &a) {
-            return (w, w, w, a)
-        }
-        return (0, 0, 0, 1)
-    }
-
-    /// 搜索框阴影（网页 .srch-box）：常态 0 4 14 黑 5%；聚焦时常态阴影
-    /// 被 :focus-within 的 2px 蓝 55% 外圈取代（不是叠加）。外圈用
-    /// radius 0 + 外扩 2px 的 shadowPath 实现实心环：框体不透明底盖住
-    /// path 内部，只露出框外 2px 一圈；path 随 bounds 更新（见
-    /// viewDidLayoutSubviews），旋转后不错位。
+    /// 搜索框阴影（网页 .srch-box）：常态 0 4 14 黑 5%；聚焦时阴影清掉、
+    /// 改 1pt 实心蓝边框（边框色归 updateBorderColors 管，此处只清阴影、
+    /// 置 borderWidth；path 随 bounds 更新见 viewDidLayoutSubviews）。
     private func updateSearchBoxShadow() {
         let bounds = searchBoxView.bounds
         guard bounds.width > 0 && bounds.height > 0 else { return }
@@ -946,7 +909,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             searchBoxView.layer.shadowOpacity = 0
             searchBoxView.layer.shadowPath = nil
             searchBoxView.layer.borderWidth = 1
-            searchBoxView.layer.bearyDynamicBorderColor = BearyColors.blue
         } else {
             searchBoxView.layer.borderWidth = 0
             BearyShadow.applyHairline(to: searchBoxView.layer)
@@ -2236,19 +2198,19 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private func makePrivatePill(friendsOnly: Bool = false, ephemeralLive: Bool = false) -> UIView {
         let pill = UIView()
         pill.translatesAutoresizingMaskIntoConstraints = false
-        pill.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
+        pill.backgroundColor = friendsOnly ? BearyColors.faint : BearyColors.alpha(BearyColors.blue, 0.13)
         pill.layer.cornerRadius = 11
         pill.layer.masksToBounds = true
-        // 好友第一期：仅好友 pill 沿用私密档的蓝（不新发明颜色），只换图标与文案。
-        // 审计 2026-11-02 第十节：存活限时档同样沿用蓝档，文案“限时”。
+        // 黑白灰新标准：仅好友 pill 改墨字灰底（与编辑器 chip 同口径）；
+        // 私密/限时仍沿用蓝档（可见性语义，不动）。
         let lock = UIImageView(image: BearyIconImages.image(named: friendsOnly ? "icon_friends_lock" : "icon_lock", pointSize: 12))
         lock.translatesAutoresizingMaskIntoConstraints = false
-        lock.tintColor = BearyColors.blue
+        lock.tintColor = friendsOnly ? BearyColors.ink : BearyColors.blue
         lock.contentMode = .scaleAspectFit
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
         label.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
-        label.textColor = BearyColors.blue
+        label.textColor = friendsOnly ? BearyColors.ink : BearyColors.blue
         label.text = ephemeralLive ? "限时" : (friendsOnly ? "仅好友" : "私密")
         pill.addSubview(lock)
         pill.addSubview(label)
