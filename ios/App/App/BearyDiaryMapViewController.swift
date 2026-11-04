@@ -26,7 +26,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     private let mapView = MKMapView()
     private let statusLabel = UILabel()
-    private let inlineRetryButton = UIButton(type: .system)
+    private let inlineRetryButton = BearyHit44Button(type: .system)
     private let statusStackView = UIStackView()
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private let failureView = UIView()
