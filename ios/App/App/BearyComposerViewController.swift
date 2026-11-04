@@ -2576,9 +2576,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let requestAccountId = BearyAPI.shared.authAccountId
         BearyAPI.shared.fetchEntries(scope: quotePanelScope(), limit: 50) { [weak self] result in
             DispatchQueue.main.async {
-                guard let self = self, seq == self.quotePanelSeq, tab == self.quotePanelTab,
-                      requestEpoch == BearyAPI.shared.authEpoch,
-                      requestAccountId == BearyAPI.shared.authAccountId else { return }
+                guard let self = self else { return }
+                // 已有新请求在途时转圈归新请求管，旧回包直接丢弃、不抢清。
+                guard seq == self.quotePanelSeq, tab == self.quotePanelTab else { return }
+                // 账号代次变了、但旧请求仍占着转圈：主动作废并收起加载态，
+                // 旧账号缓存一并清掉，不渲染旧账号数据；面板回到当前账号空闲态，
+                // 由用户点重试或切 tab 按新账号重拉。
+                if requestEpoch != BearyAPI.shared.authEpoch ||
+                    requestAccountId != BearyAPI.shared.authAccountId {
+                    self.quotePanelSpinner.stopSpinning()
+                    self.quotePanelLoadingLabel.isHidden = true
+                    self.quotePanelLoading = false
+                    self.quotePanelCache.removeAll()
+                    return
+                }
                 self.quotePanelSpinner.stopSpinning()
                 self.quotePanelLoadingLabel.isHidden = true
                 self.quotePanelLoading = false
@@ -6725,6 +6736,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.selectedVisibilityFriends = false
                 self.isEphemeral = false
                 self.refreshVisibilityButton()
+                // 门禁改档与常规切档同口径：位置行副行（公开后他人仅见区级）
+                // 须同步变，否则发布失败留在编辑器时位置行仍留公开说明。
+                self.refreshLocationRow()
                 var gated = snapshot
                 gated.published = 0
                 gated.visibility = "private"
@@ -7250,7 +7264,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if let userInfo = notification.userInfo {
                 if let frameValue = userInfo[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue {
                     let frame = view.convert(frameValue.cgRectValue, from: nil)
-                    height = max(0, view.bounds.maxY - frame.minY)
+                    // iPad 浮动键盘：键盘框底未贴到视图底边时，底部并未被遮挡，
+                    // 旧口径 view 底减键盘顶会把键盘下方的空隙也算成遮挡，工具栏
+                    // 被多顶一截；只有键盘贴底（框底到达或超出视图底边）时，才按
+                    // 旧口径算遮挡高度，贴底键盘行为与现行一致；1pt 容差防浮点
+                    // 舍入把贴底误判成浮动（真浮动悬空都是几十 pt 以上的间隙）。
+                    if frame.maxY >= view.bounds.maxY - 1 {
+                        height = max(0, view.bounds.maxY - frame.minY)
+                    } else {
+                        height = 0
+                    }
                 }
             }
         }
