@@ -7702,7 +7702,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         optimistic.bookmarkedByMe = wantBookmarked
         updateEntryInAllTabs(entry: optimistic)
         // 方案一：先行同步显式不禁用，防重入只靠代次守卫。
-        syncVisibleCell(entry: optimistic, interactionDisabled: false)?.playBookmarkPop()
+        let syncedBookmarkCell = syncVisibleCell(entry: optimistic, interactionDisabled: false)
+        syncedBookmarkCell?.playBookmarkPop()
+        if wantBookmarked { syncedBookmarkCell?.playBookmarkBurst() }
         if wantBookmarked { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.unlikeSoft) }
         let seq = (bookmarkSeqById[entryId] ?? 0) + 1
         bookmarkSeqById[entryId] = seq

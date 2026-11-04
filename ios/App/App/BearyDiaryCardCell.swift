@@ -1605,6 +1605,8 @@ class BearyDiaryCardCell: UITableViewCell {
         // （0.55s 动画窗口内复用曾使微粒串位到新篇按钮上）。
         BearyIconMotion.clearLikeBurst(on: likeButton)
         BearyIconMotion.clearFillFade(on: likeButton)
+        BearyBurstParticles.clear(from: likeButton)
+        BearyBurstParticles.clear(from: bookmarkButton)
         onContextMenuEdit = nil
         onContextMenuDelete = nil
         onLike = nil
@@ -3042,15 +3044,22 @@ class BearyDiaryCardCell: UITableViewCell {
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
     }
 
+    /// 收藏变橙时炸星星（只在变橙时调；取消收藏不调）。
+    func playBookmarkBurst() {
+        BearyBurstParticles.burstStar(from: bookmarkButton)
+    }
+
     /// 点赞爆点（Li 2026-10-27 新规格）：与填色同起，点按确认时播；
     /// 取消点赞不调用（取消时由调用方清在飞微粒）。
     func playLikeBurst() {
         BearyIconMotion.playLikeBurst(on: likeButton)
+        BearyBurstParticles.burstLike(from: likeButton)
     }
 
     /// 清掉在飞的炸开微粒（取消点赞时，屏幕只反映最新点按态）。
     func clearLikeBurst() {
         BearyIconMotion.clearLikeBurst(on: likeButton)
+        BearyBurstParticles.clear(from: likeButton)
     }
 
     // MARK: - 交互
@@ -3083,13 +3092,14 @@ class BearyDiaryCardCell: UITableViewCell {
         onTapImages?(currentImageKeys, index, sender.view.map { $0.convert($0.bounds, to: nil) })
     }
 
-    /// 按压反馈（两页同款 .96/.13s，视觉清单第 9 项：.84 → .96）。
+    /// 按压反馈（预览 v3 定版：按下 0.95 / 0.1s、松手弹簧 1.03 → 0.99 → 1 / 0.32s，
+    /// 走按钮层，与共用按压路径同款核心；震动仍由各点按流程自理，不在此补）。
     @objc private func iconTouchDown(_ sender: UIButton) {
-        BearyIconMotion.animateIconScale(on: sender, to: 0.96)
+        BearyIconMotion.pressDownVisual(on: sender)
     }
 
     @objc private func iconTouchUp(_ sender: UIButton) {
-        BearyIconMotion.animateIconScale(on: sender, to: 1)
+        BearyIconMotion.pressUp(on: sender)
     }
 
     /// 跟手批：按下即给先行反馈（轻震/预取消赞），手指的按压不等抬起；
@@ -3202,7 +3212,7 @@ class BearyDiaryCardCell: UITableViewCell {
             currentEntry?.likedByMe = true
             currentEntry?.likeCount = originalCount + 1
             updateLikeButton()
-            BearyIconMotion.playLikeBurst(on: likeButton)
+            playLikeBurst()
         } else {
             // 取消点赞双向即时（2026-10-29 定版）：抬起确认时立即褪色、计数 -1；
             // 按下预览（applyPreUnlike 的空心 + .8）与新模型渲染一致，不闪；
@@ -3210,7 +3220,7 @@ class BearyDiaryCardCell: UITableViewCell {
             currentEntry?.likedByMe = false
             currentEntry?.likeCount = max(0, originalCount - 1)
             updateLikeButton()
-            BearyIconMotion.clearLikeBurst(on: likeButton)
+            clearLikeBurst()
         }
         likeSeq += 1
         let reqSeq = likeSeq
@@ -3276,6 +3286,7 @@ class BearyDiaryCardCell: UITableViewCell {
         currentEntry?.bookmarkedByMe = flipped
         updateBookmarkButton()
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
+        if flipped { playBookmarkBurst() }
         if flipped { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.unlikeSoft) }
         bookmarkSeq += 1
         let reqSeq = bookmarkSeq
