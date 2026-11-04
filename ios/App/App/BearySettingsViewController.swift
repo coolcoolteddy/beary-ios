@@ -324,6 +324,8 @@ final class BearySettingsViewController: UIViewController {
 
     // Plus 分组
     private let plusStatusLabel = UILabel()
+    /// Plus 页入口行尾文案（未开通／至到期日／永久有效，随 fillPlusDetail 更新）。
+    private let plusEntryLabel = UILabel()
     private var plusFreeRow: UIView = UIView()
     /// F4：内测限免行的分组卡包容器（藏行须藏包容器，否则内边距仍占位）。
     private var plusFreeWrapper: UIView?
@@ -1010,7 +1012,28 @@ final class BearySettingsViewController: UIViewController {
         plusPersonalLabel.textColor = BearyColors.gray
         plusPersonalLabel.numberOfLines = 0
         plusPersonalLabel.textAlignment = .right
+        plusEntryLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        plusEntryLabel.adjustsFontForContentSizeCategory = true
+        plusEntryLabel.textColor = BearyColors.gray
+        plusEntryLabel.numberOfLines = 0
+        plusEntryLabel.textAlignment = .right
         plusFreeRow = makeRow(title: "内测限免", detailLabel: plusFreeLabel, iconName: "icon_gift")
+        // Plus 页入口行（组内首行）：标题“Plus 会员”＋行尾状态（未开通／到期日／
+        // 永久有效），点按进 Plus 展示页；到期日只留 Plus 组，不进 ID 卡（全修 3-2）。
+        let plusEntryTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        plusEntryTitle.text = "Plus 会员"
+        plusEntryTitle.numberOfLines = 0
+        plusEntryTitle.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        let plusEntryContent = UIStackView(arrangedSubviews: [plusEntryTitle, makeRowSpacer(), plusEntryLabel, makeRowChevron()])
+        plusEntryContent.translatesAutoresizingMaskIntoConstraints = false
+        plusEntryContent.axis = .horizontal
+        plusEntryContent.spacing = 12
+        plusEntryContent.alignment = .center
+        let plusEntryButton = UIButton(type: .custom)
+        plusEntryButton.accessibilityLabel = "Plus 会员"
+        plusEntryButton.addTarget(self, action: #selector(openPlusPage), for: .touchUpInside)
+        plusEntryButton.bearyAddPressHaptic()
+        let plusEntryRow = makeSettingsTappableRow(content: plusEntryContent, button: plusEntryButton)
         // 2026-10-29 第 7 项：来源明细抽成独立页——组内只留一行（标题 + 行尾
         // 官方包右箭头），点击进 BearyPlusGrantsViewController；原内联发放卡已删。
         let grantsTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
@@ -1029,6 +1052,7 @@ final class BearySettingsViewController: UIViewController {
         let grantsRow = makeSettingsTappableRow(content: grantsContent, button: grantsButton)
         // F4：标题入卡内（网页 Plus 会员 group-title 口径）；Plus 组网页行本身无图标，不补。
         let plusGroup = makeGroupCard(title: "Plus 会员", rows: [
+            plusEntryRow,
             makeRow(title: "当前状态", detailLabel: plusStatusLabel, iconName: "icon_info"),
             plusFreeRow,
             makeRow(title: "专属会员", detailLabel: plusPersonalLabel, iconName: "icon_star"),
@@ -1933,6 +1957,7 @@ final class BearySettingsViewController: UIViewController {
         // 静默刷新：已有旧值时不先清标签/发放行，新值到了再覆盖；
         // 首拉（plusDetail 为 nil）才走现行置“–”+ 空发放态。
         if plusDetail == nil {
+            plusEntryLabel.text = "–"
             plusStatusLabel.text = "–"
             plusFreeLabel.text = "–"
             plusPersonalLabel.text = "–"
@@ -1975,6 +2000,16 @@ final class BearySettingsViewController: UIViewController {
             statusText = "普通用户"
         }
         setLabelTextFaded(plusStatusLabel, statusText)
+        // 入口行尾与当前状态同源：永久→永久有效、有期→到期日、无期→未开通。
+        let plusEntryText: String
+        if permanent {
+            plusEntryText = "永久有效"
+        } else if effective > now {
+            plusEntryText = "至 " + BearyAccountText.dateString(ms: effective)
+        } else {
+            plusEntryText = "未开通"
+        }
+        setLabelTextFaded(plusEntryLabel, plusEntryText)
         let freeUntil = detail.freeUntil ?? 0
         if freeUntil > 0 {
             let freeRowWasHidden = plusFreeRow.isHidden
@@ -3066,6 +3101,23 @@ final class BearySettingsViewController: UIViewController {
         vc.modalPresentationStyle = .fullScreen
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         presentSettingsPage(vc)
+    }
+
+    /// Plus 页入口②：设置页 Plus 组首行点按进 Plus 展示页。状态与入口行尾同源
+    /// （plusDetail 已到时用永久／有效期判定，未到时退回 /me 的 plus）。
+    private var isPlusMember: Bool {
+        if let detail = plusDetail {
+            let now = Int(Date().timeIntervalSince1970 * 1000)
+            return detail.permanent == true || (detail.effectiveUntil ?? 0) > now
+        }
+        return SessionManager.shared.currentUser?.plus == true
+    }
+
+    @objc private func openPlusPage() {
+        let page = BearyPlusPageViewController(isPlus: isPlusMember)
+        page.modalPresentationStyle = .fullScreen
+        page.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        presentSettingsPage(page)
     }
 
     /// 2026-10-29 第 7 项：会员来源明细独立页——优先用设置页已拉到的
