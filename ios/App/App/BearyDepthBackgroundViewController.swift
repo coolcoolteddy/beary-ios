@@ -17,6 +17,8 @@ final class BearyDepthBackgroundViewController: UIViewController {
     private let currentThemeValue: Theme
     private let isPlusValue: Bool
     private let onPickValue: (Theme) -> Bool
+    /// 滚动中：willDisplay 不再重开动效，停稳后才由滚动结束回调统一评估。
+    private var isScrollingPreviews = false
 
     private let themesValue: [Theme] = [.none, .halloween, .spring, .china, .usa, .japan, .germany, .canada, .korea]
 
@@ -119,13 +121,13 @@ final class BearyDepthBackgroundViewController: UIViewController {
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+        // 进页预热：六张底图在后台线程读盘＋下采样，cell 出现时直接贴缓存，不在主线程首解码。
+        ProfileCoverView.prewarmBackdrops()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        for cell in tableView.visibleCells {
-            (cell as? BearyDepthBackgroundCell)?.setPreviewAnimationEnabled(true)
-        }
+        refreshFullyVisiblePreviewAnimation()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -163,11 +165,39 @@ extension BearyDepthBackgroundViewController: UITableViewDataSource, UITableView
     }
 
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
-        (cell as? BearyDepthBackgroundCell)?.setPreviewAnimationEnabled(true)
+        guard let cell = cell as? BearyDepthBackgroundCell else { return }
+        // 只给完全可见的行开动效：半露出的行保持静态，滚动中一律先关、停稳再评估。
+        let fullyVisible = tableView.bounds.contains(tableView.rectForRow(at: indexPath))
+        cell.setPreviewAnimationEnabled(!isScrollingPreviews && fullyVisible)
     }
 
     func tableView(_ tableView: UITableView, didEndDisplaying cell: UITableViewCell, forRowAt indexPath: IndexPath) {
         (cell as? BearyDepthBackgroundCell)?.setPreviewAnimationEnabled(false)
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        isScrollingPreviews = true
+        for cell in tableView.visibleCells {
+            (cell as? BearyDepthBackgroundCell)?.setPreviewAnimationEnabled(false)
+        }
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        if !decelerate { refreshFullyVisiblePreviewAnimation() }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        refreshFullyVisiblePreviewAnimation()
+    }
+
+    /// 停稳后统一评估：只给完全可见的行开动效，半露出的行保持静态。
+    private func refreshFullyVisiblePreviewAnimation() {
+        isScrollingPreviews = false
+        for cell in tableView.visibleCells {
+            guard let cell = cell as? BearyDepthBackgroundCell,
+                  let indexPath = tableView.indexPath(for: cell) else { continue }
+            cell.setPreviewAnimationEnabled(tableView.bounds.contains(tableView.rectForRow(at: indexPath)))
+        }
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
@@ -263,20 +293,13 @@ private final class BearyDepthBackgroundCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        // 只关动效、不拆预览视图：同主题复用时留住视图，省掉重建与重读图；
+        // 换主题时 configure() 再拆旧建新。
         setPreviewAnimationEnabled(false)
-        wallpaperView?.removeFromSuperview()
-        wallpaperView = nil
-        coverView?.isPlaying = false
-        coverView?.removeFromSuperview()
-        coverView = nil
     }
 
     func configure(theme: BearyDepthBackgroundViewController.Theme, isCurrent: Bool, isLocked: Bool) {
-        wallpaperView?.removeFromSuperview()
-        wallpaperView = nil
-        coverView?.isPlaying = false
-        coverView?.removeFromSuperview()
-        coverView = nil
+        let sameTheme = currentTheme == theme
         currentTheme = theme
         nameLabel.text = theme.title
         if isCurrent {
@@ -290,6 +313,16 @@ private final class BearyDepthBackgroundCell: UITableViewCell {
         }
         accessibilityLabel = isCurrent ? "\(theme.title)，已应用" : (isLocked ? "\(theme.title)，Plus 专属" : theme.title)
         if let coverTheme = theme.coverTheme {
+            // 同主题复用：留住已建好的封面视图，只更新文字状态，不重建、不重读图。
+            if sameTheme, coverView != nil {
+                updateDim()
+                return
+            }
+            wallpaperView?.removeFromSuperview()
+            wallpaperView = nil
+            coverView?.isPlaying = false
+            coverView?.removeFromSuperview()
+            coverView = nil
             let preview = ProfileCoverView(theme: coverTheme)
             preview.translatesAutoresizingMaskIntoConstraints = false
             preview.accessibilityElementsHidden = true
@@ -305,6 +338,16 @@ private final class BearyDepthBackgroundCell: UITableViewCell {
             updateDim()
             return
         }
+        // 非封面行：封面视图撤掉；节日视图同主题也留住。
+        coverView?.isPlaying = false
+        coverView?.removeFromSuperview()
+        coverView = nil
+        if sameTheme, wallpaperView != nil {
+            updateDim()
+            return
+        }
+        wallpaperView?.removeFromSuperview()
+        wallpaperView = nil
         guard let wallpaperTheme = theme.wallpaperTheme else {
             updateDim()
             return
