@@ -735,10 +735,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let charGroupStack = UIStackView()
     private var charTrackLayer: CAShapeLayer?
     private var charProgressLayer: CAShapeLayer?
-    // @（pick 钮内的“@ 谁”钮 / chip；无按篇通知行）
+    // @（写给区：仅已选 chip；无按篇通知行）
     private let recipientSection = UIStackView()
     private let recipientLine = UIStackView()
-    private let recipientPickButton = BearyComposerDashedPickButton()
     private let recipientChipView = UIView()
     private let recipientChipAvatar = UIImageView()
     private let recipientChipFallback = UILabel()
@@ -1777,8 +1776,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         ])
     }
 
-    // MARK: - @（网页 addr-row：@ 图标 + “@ 谁”钮 / chip；只选一人、不可 @ 自己；
-    // @ 提醒无按篇开关；编辑模式可改选可清除，见 refreshRecipientRow 编辑分支）
+    // MARK: - @（写给区：仅已选 chip；空态虚线“@ 谁”钮已删，未选时本区塌为 0 高；
+    // 只选一人、不可 @ 自己；@ 提醒无按篇开关；编辑模式可改选可清除，见 refreshRecipientRow 编辑分支）
 
     private func buildRecipientRow() {
         recipientSection.axis = .vertical
@@ -1787,20 +1786,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientLine.axis = .horizontal
         recipientLine.spacing = 8
         recipientLine.alignment = .center
-        // D-G8：网页 @ 在 pick 钮内（addr-pick 内含 15px @ 图 + gap 6），已选 chip 内无 @；
-        // App 原行首独立 @ 图（pill 外）删除，@ 改放进 pick 钮。
-        // 未选：虚线边框 pill 钮（网页 addr-pick：1.5px dashed line、圆角 999；
-        // 虚线由 BearyComposerDashedPickButton 的 CAShapeLayer 画，路径圆角取半高即 pill）。
-        recipientPickButton.setImage(BearyIconImages.image(named: "icon_at", pointSize: 15), for: .normal)
-        recipientPickButton.tintColor = BearyColors.gray
-        recipientPickButton.imageEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 6)
-        recipientPickButton.setTitle("@ 谁", for: .normal)
-        recipientPickButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
-        recipientPickButton.setTitleColor(BearyColors.gray, for: .normal)
-        recipientPickButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
-        recipientPickButton.layer.cornerRadius = 999
-        recipientPickButton.addTarget(self, action: #selector(didTapPickRecipient), for: .touchUpInside)
-        recipientPickButton.bearyAddPressFeedback()
         // 已选 chip：黑白灰新标准改灰底（与内容区 chip 同口径）；原橙 13% 混色已删。
         recipientChipView.backgroundColor = BearyColors.faint
         recipientChipView.layer.cornerRadius = 15
@@ -1843,7 +1828,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         notifyGroup.addArrangedSubview(notifyLabel)
         recipientSection.translatesAutoresizingMaskIntoConstraints = false
         recipientLine.translatesAutoresizingMaskIntoConstraints = false
-        recipientPickButton.translatesAutoresizingMaskIntoConstraints = false
         recipientChipView.translatesAutoresizingMaskIntoConstraints = false
         recipientChipAvatar.translatesAutoresizingMaskIntoConstraints = false
         recipientChipFallback.translatesAutoresizingMaskIntoConstraints = false
@@ -1854,7 +1838,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientSection.isHidden = true
         recipientSection.addArrangedSubview(recipientLine)
         recipientSection.addArrangedSubview(notifyGroup)
-        recipientLine.addArrangedSubview(recipientPickButton)
         recipientLine.addArrangedSubview(recipientChipView)
         recipientChipView.addSubview(recipientChipAvatar)
         recipientChipView.addSubview(recipientChipFallback)
@@ -1883,14 +1866,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshRecipientRow()
     }
 
-    /// @ 行状态：新建未选 → @ + “@ 谁”钮；新建已选 → chip + ×；
-    /// 编辑模式 → 可改选可清除：已清除且未重选 → “@ 谁”钮；已改选 → 新 chip + ×；
-    /// 未动 → 原 @ chip + ×；编辑且无 @ → “@ 谁”钮。@ 提醒无按篇开关，通知行一律隐藏。
+    /// @ 行状态：新建未选 → 区内无内容（高度塌为 0）；新建已选 → chip + ×；
+    /// 编辑模式 → 可改选可清除：已清除且未重选 → 区内无内容；已改选 → 新 chip + ×；
+    /// 未动 → 原 @ chip + ×；编辑且无 @ → 区内无内容。@ 提醒无按篇开关，通知行一律隐藏。
     private func refreshRecipientRow() {
         if isEditMode {
             notifyGroup.isHidden = true
             if editMentionCleared, selectedRecipient == nil {
-                recipientPickButton.isHidden = false
                 recipientChipView.isHidden = true
             } else if let user = selectedRecipient {
                 let name: String
@@ -1901,7 +1883,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 } else {
                     name = "用户"
                 }
-                recipientPickButton.isHidden = true
                 recipientChipView.isHidden = false
                 if let avatarPath = user.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
                     recipientChipAvatar.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 22 * UIScreen.main.scale)
@@ -1915,7 +1896,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 recipientChipName.text = "@" + name
                 recipientClearButton.isHidden = false
             } else if let name = lockedRecipientName {
-                recipientPickButton.isHidden = true
                 recipientChipView.isHidden = false
                 recipientChipAvatar.isHidden = true
                 recipientChipFallback.isHidden = false
@@ -1923,7 +1903,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 recipientChipName.text = "@" + name
                 recipientClearButton.isHidden = false
             } else {
-                recipientPickButton.isHidden = false
                 recipientChipView.isHidden = true
             }
             refreshSelectedChips()
@@ -1938,7 +1917,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             } else {
                 name = "用户"
             }
-            recipientPickButton.isHidden = true
             recipientChipView.isHidden = false
             if let avatarPath = user.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
                 recipientChipAvatar.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 22 * UIScreen.main.scale)
@@ -1954,7 +1932,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // iCity：@ 提醒无按篇开关，选择条内不显示通知行。
             notifyGroup.isHidden = true
         } else {
-            recipientPickButton.isHidden = false
             recipientChipView.isHidden = true
             notifyGroup.isHidden = true
         }
@@ -3329,7 +3306,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 本支删除旧条带后栈内只剩写给区。2026-10-31：限时行底锚三档随行删除
         //（选择条底已直贴工具栏顶）。
         let stackHidden = quotePanelOpen || activeToolStrip != .recipient
-        // iCity：编辑模式 @ 可新增——无 @ 时条内仍有“@ 谁”钮，不再整区隐藏；
+        // iCity：编辑模式 @ 可新增——无 @ 时条内无内容（高度塌为 0），不再整区隐藏；
         // 其余态按条开关显隐。
         recipientSection.isHidden = activeToolStrip != .recipient
         updateScrollBottomAnchoring()
@@ -4819,7 +4796,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 2026-10-31：限时开关已删，钮冻结只看在途态（限时态本身不再锁钮，菜单仍可点开重选）。
         visibilityButton.isEnabled = !frozen
         // P1-14：冻结清单补齐全部入口——草稿 pill、引用钮、三枚已选 Chip、
-        // @ pick/清除、引用卡 ×（含已删行“移除”）；其余入口见下。
+        // @ 清除、引用卡 ×（含已删行“移除”）；其余入口见下。
         draftPillButton.isEnabled = !frozen
         // 窄屏 5 项之 3：独立行重试钮同属发布冻结清单——在途点重试会与
         // 发布流程并发写同一篇草稿，冻结与工具栏其他入口同口径恢复。
@@ -4828,7 +4805,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         moodChipButton.isEnabled = !frozen
         weatherChipButton.isEnabled = !frozen
         recipientChipButton.isEnabled = !frozen
-        recipientPickButton.isEnabled = !frozen
         recipientClearButton.isEnabled = !frozen
         // 例外：通知复选框编辑态本就禁用（refreshRecipientRow 的编辑锁定），
         // 冻结恢复时不得误解开；新建态才随冻结恢复。
@@ -7535,7 +7511,7 @@ private final class ComposerImageItem {
 //    再点已选项不取消；publish 传 weather；不选不传（服务端 validWeather 对缺失值置 null，
 //    与网页同口径）。publishEntry 同步补齐 quote_id/published/mentioned_user_id
 //    （默认参数，旧调用点不受影响）。天气图标见 icon_wx_<key>（与网页 WX_ICON 同款）。
-// 2. @：新建模式只选一人（搜索接口 users 组），@ 图标 + “@ 谁”钮 / chip；
+// 2. @：新建模式只选一人（搜索接口 users 组），仅已选 chip（空态虚线钮已删）；
 //    @ 提醒无按篇开关；编辑模式可改选可清除（PUT 带 mentioned_user_id，清除发 clearMentioned）。
 //    引用：qp-mode 面板三 tab（我的日记 timeline / 赞过的 liked / 收藏的 saved），行是完整
 //    lite 卡（头像 40 + 名 + 日期 + 全文 + 118 图片条；Plus 皇冠已取消显示）；服务端
@@ -7576,46 +7552,10 @@ private final class ComposerImageItem {
 // 7. 第四项：键盘跟随 WillChangeFrame（旋转/表情键盘/悬浮键盘拖动）；打开编辑器自动聚焦一次，
 //    有草稿时光标置末尾；选图按选择顺序占位插入（.ordered + 先建项后填图），读图失败直接移除占位项。
 
-// MARK: - 虚线“写给某个人”钮（网页 addr-pick：1.5px dashed line、pill 圆角；
-// 实现同款详情页 BearyDashedAddButton：CAShapeLayer 虚线，布局时按当前 bounds 重画路径）
-
-private final class BearyComposerDashedPickButton: UIButton {
-
-    private let dashedLayer = CAShapeLayer()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        dashedLayer.fillColor = UIColor.clear.cgColor
-        dashedLayer.lineWidth = 1.5
-        dashedLayer.lineDashPattern = [4, 3]
-        updateStrokeColor()
-        layer.addSublayer(dashedLayer)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    private func updateStrokeColor() {
-        dashedLayer.strokeColor = BearyColors.line.cgColor
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        dashedLayer.frame = bounds
-        dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).cgPath
-    }
-
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        updateStrokeColor()
-    }
-}
-
 // MARK: - 112 引用列表 v2 状态 pill（预览 preview-quote-list-status-v2-20261031.html）
 //
 // 裸字 + 细边、无底色块：公开橙实线、私密蓝实线、限时橙虚线；字 12、内边距 2/8。
-// 虚线走 BearyComposerDashedPickButton 同款 CAShapeLayer（1.5pt、dash [4, 3]），
+// 虚线用 CAShapeLayer 自画（1.5pt、dash [4, 3]），
 // 布局时按当前 bounds 重画；深浅切换时重解动态蓝（orange 为固定色，无需重解）。
 // 仅展示、不拦截点按（行按钮的点按选引用行为不动）。
 private final class BearyQuoteStatusPillView: UIView {
