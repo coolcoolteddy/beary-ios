@@ -1913,7 +1913,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if let display = user.displayName {
                 name = display
             } else if let handle = user.handle {
-                name = "@" + handle
+                name = handle
             } else {
                 name = "用户"
             }
@@ -1970,7 +1970,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             _ = notify
             self.editMentionCleared = false
             self.refreshRecipientRow()
-            self.refreshToolStrip()
+            // 选完人立即打开写给条：只刷新时 activeToolStrip 仍不是 .recipient，
+            // 显隐门控会把整栈藏住、底部 @ 条选完人不出现；openToolStrip 先收框、
+            // 置 activeToolStrip = .recipient 再刷新。
+            self.openToolStrip(.recipient)
             // 网页选人即 saveDraftQuiet 立即落盘，不走防抖（500ms 内杀 App 会丢改动）。
             self.saveDraftNow()
         }
@@ -2409,7 +2412,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 if self.quotePanelSavedScrollValid {
                     self.quotePanelSavedScrollValid = false
                     self.view.layoutIfNeeded()
-                    self.scrollView.setContentOffset(self.quotePanelSavedScrollOffset, animated: false)
+                    // 关闭恢复时偏移钳制到 ≥ 0：负偏移叠加滞留的顶 inset 会把整块
+                    // 内容往下顶（标题行多出空白）；正常态下偏移本就不应为负。
+                    let restoredOffset = self.quotePanelSavedScrollOffset
+                    self.scrollView.setContentOffset(CGPoint(x: restoredOffset.x, y: max(0, restoredOffset.y)), animated: false)
+                }
+                // 关闭完成收敛：若某关闭路径绕过了复位导致顶 inset 滞留（如 46pt），
+                // 在此强制归 0，避免整块内容被往下顶。
+                if self.scrollView.contentInset.top != 0 {
+                    self.scrollView.contentInset.top = 0
                 }
                 self.updatePreferredContentSize()
             }
@@ -6163,9 +6174,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 109：草稿标题回填进新输入框。
                 self.setHeadlineText(draft.title)
                 self.selectedMood = draft.mood
-                self.refreshSelectedChips()
                 self.selectedWeather = draft.weather
                 self.selectedTemperature = draft.temperature
+                // 草稿恢复先赋值后刷新：先刷新时天气还是旧值（nil），步进器与
+                // 天气 chip 会被刷成隐藏、随后赋值却不再刷新（与草稿箱打开路径一致）。
+                self.refreshSelectedChips()
                 self.syncWeatherToolButton()
                 self.restoreVisibility(index: draft.visibilitySegmentIndex, ephemeral: draft.ephemeralEnabled)
                 self.selectedRecipient = self.restoredRecipient(from: draft)
