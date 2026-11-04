@@ -604,6 +604,10 @@ class BearyDiaryCardCell: UITableViewCell {
     var profileLikeState: (liked: Bool, count: Int) { (cellLikedByMe, cellLikeCount) }
     var profileBookmarkedState: Bool { cellBookmarkedByMe }
     private var cellEmoteSignature = ""
+    /// 回应行签名守卫有效标记：仅 renderEmotes 完成一次拆建后才置真，
+    /// prepareForReuse 时清掉。没有它时，复用后首次渲染空列表会因
+    /// 签名同为空串而误判“无变化”跳过拆建、旧篇 chip 残留。
+    private var cellEmoteSignatureValid = false
     /// 个人主页模式互动禁用态（控制器 busy 集合现算后传入，渲染与同步共用）。
     private var profileDisabled = false
     private var authorTapInstalled = false
@@ -1630,6 +1634,7 @@ class BearyDiaryCardCell: UITableViewCell {
         cellLikeCount = 0
         cellBookmarkedByMe = false
         cellEmoteSignature = ""
+        cellEmoteSignatureValid = false
         profileDisabled = false
         // 80 包 A4：错峰改 cell.alpha/transform，对称复位。
         alpha = 1
@@ -3441,10 +3446,19 @@ class BearyDiaryCardCell: UITableViewCell {
     /// animatedLayout：用户动作（先行贴/摘、回滚）时 + 钮与已存 chip 随新布局平滑移位
     /// （flow 帧动画，只动位置，不重播已有 chip）；服务端对齐与初始渲染走瞬时。
     private func renderEmotes(animatedLayout: Bool = false) {
+        let list = (currentEntry?.emotes ?? []).sorted(by: { ($0.count ?? 0) > ($1.count ?? 0) })
+        let newSignature = BearyEmoteOrder.signature(list.filter { ($0.emote ?? "").isEmpty == false })
+        if cellEmoteSignatureValid && newSignature == cellEmoteSignature {
+            // 签名一致：chip 行内容无变化，跳过拆建。连续点按/回包对齐时
+            // 第二次渲染若在 0.25s 位移动画中途拆掉在场 chip 再重建，
+            // 第一个 chip 就会先消失再出现；此处只刷新互动启用态
+            // （busy 等状态可能已变，内容未变），行高与 + 钮均不受影响。
+            updateEmoteInteractivity()
+            return
+        }
         for sub in emoteFlowView.subviews {
             sub.removeFromSuperview()
         }
-        let list = (currentEntry?.emotes ?? []).sorted(by: { ($0.count ?? 0) > ($1.count ?? 0) })
         currentEmoteList = list
         chipKeys = []
         var chipIndex = 0
@@ -3490,7 +3504,8 @@ class BearyDiaryCardCell: UITableViewCell {
             chipIndex += 1
         }
         // 就地同步判等用（个人主页模式）：本轮实际渲染的 chip 签名。
-        cellEmoteSignature = BearyEmoteOrder.signature(list.filter { ($0.emote ?? "").isEmpty == false })
+        cellEmoteSignature = newSignature
+        cellEmoteSignatureValid = true
         if cardMode == .feed {
             let addButton: BearyDiaryCardDashedAddButton
             if let reused = feedAddButton {
