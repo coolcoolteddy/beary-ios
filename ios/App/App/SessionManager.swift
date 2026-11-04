@@ -322,6 +322,70 @@ final class SessionManager {
         return domain == "teddyhn.com" || domain.hasSuffix(".teddyhn.com")
     }
 
+    /// 冷启动快照先行恢复（2026-11-04）：同步、无网络，供容器在首帧前调用。
+    /// 背景：冷启动时 currentUser 为空，要等 /me 回包（首屏信号或 3 秒兜底 +
+    /// 网络往返）才翻已登录，窗口期内点“我的”、点赞、发日记都会被拦住等它；
+    /// 弱网/断网时 /me 回不来，窗口期更长，体感即“明明登录了却显示没登录”。
+    /// 本方法用钥匙串保管库里的账号快照先把已登录态立起来，门控与首帧
+    /// 立即按已登录走；后台 /me 仍按原口径校验，401 时走原有清态路径
+    /// （快照是旧信息，纠正以服务端为准），网络失败时按 G26 口径保持旧态。
+    /// 选取顺序：① 本地有未过期会话 cookie 时，按 cookie token 在库里找
+    /// 同一账号；② 无 cookie 时，按上次已知用户 id（BearyFeedCache 的冷启动
+    /// 桶提示）在库里找；③ 再无则取库中最晚保存且 token 未过期的账号，
+    /// 并把它的 token 装回共享 cookie 桶（使后续请求与 /me 能用它）。
+    /// 只设内存态 currentUser + 请求账号标识，不发 onUserChanged——首帧翻转
+    /// 与数据刷新仍由后台 /me 回包走原口径，避免首帧双刷新；容器在调用点
+    /// 另行藏登录钮、切草稿/图片桶。
+    /// token 已过期的快照不选：过期会话 /me 必 401，选了也只会闪一下已登录
+    /// 又掉回游客，不如直接走游客首帧等 /me。
+    /// 必须在主线程调用（viewDidLoad 即主线程）；非主线程返回 nil，
+    /// 调用方按原口径走游客首帧，/me 仍会校验。
+    @discardableResult
+    func restoreCachedUserFromVault() -> MeUser? {
+        guard Thread.isMainThread else { return nil }
+        if let current = currentUser { return current }
+        let vault = BearyAccountVault.shared
+        let accounts = vault.loadAll()
+        guard !accounts.isEmpty else { return nil }
+        let nowMs = Date().timeIntervalSince1970 * 1000
+        let tokenAlive = { (a: BearyStoredAccount) -> Bool in
+            guard let exp = a.tokenExpiresAtMs else { return true }
+            return exp > nowMs
+        }
+        var target: BearyStoredAccount?
+        var needsCookieInstall = false
+        let liveCookie: HTTPCookie? = {
+            guard let cookie = currentSessionCookie(), !cookie.value.isEmpty else { return nil }
+            if let exp = cookie.expiresDate, exp <= Date() { return nil }
+            return cookie
+        }()
+        if let cookie = liveCookie {
+            // 活 cookie 在手时只认 token 完全一致的账号；库里没有也绝不
+            // 拿别的账号 token 覆盖它（例如网页登录后 App 内尚无快照时，
+            // 覆盖会把活会话换成错号；此时返回 nil 走原口径，/me 会用活
+            // cookie 自己恢复并顺带快照）。
+            target = accounts.first { $0.token == cookie.value }
+            guard target != nil else { return nil }
+        } else {
+            if let lastId = BearyFeedCache.lastKnownUserId() {
+                target = accounts.first { $0.userId == lastId && tokenAlive($0) }
+            }
+            if target == nil {
+                target = accounts.filter(tokenAlive).max { $0.savedAtMs < $1.savedAtMs }
+            }
+            needsCookieInstall = true
+        }
+        guard let account = target else { return nil }
+        if needsCookieInstall {
+            installSessionCookie(token: account.token, expiresDate: account.tokenExpiresAtMs.map { Date(timeIntervalSince1970: $0 / 1000) })
+        }
+        let user = MeUser(id: account.userId, email: account.email, displayName: account.displayName, handle: account.handle, avatar: account.avatarURL, coverVer: nil, createdAt: nil, plus: nil, plusUntil: nil, plusFree: nil, isAdmin: nil, inviteCode: nil, referral: nil, serialId: nil)
+        self.currentUser = user
+        self.authUnknown = false
+        self.api.setAuthAccountId(user.id)
+        return user
+    }
+
     // MARK: - 多账号切换（设置页账号分组，2026-10-31）
 
     /// 切换结果：调用方只按结果给 toast / 弹登录页，不另猜原因。
