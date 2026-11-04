@@ -255,7 +255,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // 栈内固有尺寸与旧 medium 圈一致（20pt 图）。
         loadingView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
         emptyStateView.translatesAutoresizingMaskIntoConstraints = false
-        emptyStateView.configure(kind: .empty, title: "回收站是空的", iconName: "icon_trash", actionTitle: nil)
+        emptyStateView.configure(kind: .empty, title: "回收站是空的", subtitle: nil, iconName: "icon_trash", actionTitle: nil)
         emptyStateView.isHidden = true
 
         failureWrap.axis = .vertical
