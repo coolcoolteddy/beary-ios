@@ -137,12 +137,14 @@ class BearySettingsSubpageViewController: UIViewController {
         // 109：子页壳关闭钮改 BearyHit44Button——视觉（15pt 墨字、无尺寸约束）
         // 不变，仅 point(inside:) 把热区扩到 44pt；对照组设置主页/法律页/
         // 诊断页/拉黑页关闭钮均为 BearyHit44Button，本壳此前是普通钮（约 30×18pt）。
+        // 全屏页左上角统一左箭头：此前是文字“关闭”，现改 icon_back 图标钮
+        // （左上角位置与 44pt 热区不动，行为仍是 closeTapped 关页）。
         let closeButton = BearyHit44Button(type: .custom)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.setTitle("关闭", for: .normal)
-        closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
-        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        closeButton.setTitle(nil, for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        closeButton.tintColor = BearyColors.ink
+        closeButton.accessibilityLabel = "返回"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         let titleLabel = UILabel()

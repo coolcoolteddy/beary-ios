@@ -103,9 +103,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         view.addSubview(topBar)
         let closeButton = UIButton(type: .system)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 24), for: .normal)
+        // 全屏页左上角统一左箭头：此前是 icon_close 叉叉，位置（左上角 44pt）
+        // 不动，只换图与 VoiceOver 文案，行为仍是 onBack 关页。
+        closeButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
         closeButton.tintColor = BearyColors.ink
-        closeButton.accessibilityLabel = "关闭"
+        closeButton.accessibilityLabel = "返回"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         topBar.addSubview(closeButton)

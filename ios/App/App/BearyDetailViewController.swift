@@ -644,11 +644,12 @@ final class BearyDetailViewController: UIViewController {
         // 顶栏：只剩左上文字“关闭”（15pt 墨字），右侧不放任何图标。
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         // 扫查组：此前裸 15pt；顶栏钉高 52，走 cappedFont（与许愿墙顶栏同口径），不撑破顶栏。
-        closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
-        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        closeButton.setTitle("关闭", for: .normal)
-        closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.setTitleColor(BearyColors.ink, for: .highlighted)
+        // 全屏页左上角统一左箭头：此前是文字“关闭”，现改 icon_back 图标钮
+        // （左上角位置与 52 高顶栏不动，行为仍是 closeTapped 关页）。
+        closeButton.setTitle(nil, for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        closeButton.tintColor = BearyColors.ink
+        closeButton.accessibilityLabel = "返回"
         closeButton.adjustsImageWhenHighlighted = false
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()

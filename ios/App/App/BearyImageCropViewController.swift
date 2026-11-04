@@ -65,10 +65,14 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         super.viewDidLoad()
         view.backgroundColor = UIColor.black
         topBar.backgroundColor = UIColor.black
-        cancelButton.setTitle("取消", for: .normal)
-        cancelButton.setTitleColor(UIColor.white, for: .normal)
-        cancelButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
-        cancelButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        // 全屏页左上角统一左箭头：此前是文字“取消”（白字黑底），现改
+        // icon_back 白色图标钮（左上角位置与 44pt 热区不动，行为仍是
+        // didTapCancel；本页是全屏拖图工具页，不接左边缘手势，以免拖图
+        // 起手在边缘时误触返回，关闭只靠本钮）。
+        cancelButton.setTitle(nil, for: .normal)
+        cancelButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        cancelButton.tintColor = UIColor.white
+        cancelButton.accessibilityLabel = "返回"
         cancelButton.addTarget(self, action: #selector(self.didTapCancel), for: .touchUpInside)
         cancelButton.bearyAddPressFeedback()
         titleLabel.text = "裁剪"

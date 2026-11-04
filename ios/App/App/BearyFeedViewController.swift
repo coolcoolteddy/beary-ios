@@ -33,6 +33,8 @@ class BearyFeedViewController: UIViewController {
 
     /// 未登录点赞/收藏时转发（详情页同款接线：SceneDelegate 可接登录占位）。
     var onRequireLogin: (() -> Void)?
+    /// 盲盒流程页的 EdgeDismiss 强持有（transitioningDelegate 弱引用）。
+    private var blindBoxEdgeDismiss: BearyEdgeDismissController?
 
     /// 引用卡点按：走 gotoEntry 等价（容器接线：按 id 进详情/作者主页定位，先校验再放行）。
     /// gone/locked 卡不触发；私密卡经容器显占位。
@@ -1985,11 +1987,15 @@ class BearyFeedViewController: UIViewController {
         }
     }
 
-    /// 盲盒流程页（全屏 modal + fadeRise，许愿墙同款；游客态由流程页内登录提示承接）。
+    /// 盲盒流程页（全屏 modal + EdgeDismiss，许愿墙同款；游客态由流程页内登录提示承接）。
     private func presentBlindBoxFlow() {
         let vc = BearyBlindBoxFlowViewController()
         vc.modalPresentationStyle = .fullScreen
-        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        // 全站返回手势补齐：盲盒页此前只有 fadeRise、没有左边缘右滑；改走 EdgeDismiss。
+        let blindBoxEdgeDismiss = BearyEdgeDismissController()
+        blindBoxEdgeDismiss.attach(to: vc)
+        vc.transitioningDelegate = blindBoxEdgeDismiss
+        self.blindBoxEdgeDismiss = blindBoxEdgeDismiss
         present(vc, animated: BearyMotion.animated(true), completion: nil)
     }
 

@@ -201,6 +201,11 @@ class BearyProfileViewController: UIViewController {
 
     /// 页内顶栏返回按钮点按：容器接线到关闭 / 返回。
     var onBack: (() -> Void)?
+    /// 照片页 / 地图 / 星图 modal 的 EdgeDismiss 强持有（transitioningDelegate
+    /// 弱引用；三页均由本页直接 present/push 入口开出，见各开页函数）。
+    private var profileSubpageEdgeDismiss: BearyEdgeDismissController?
+    /// 景深背景新页的 EdgeDismiss 强持有（仅窄屏全屏路用，见 presentDepthBackgroundPicker）。
+    private var depthPickerEdgeDismiss: BearyEdgeDismissController?
 
     /// C2 保留（齿轮路径不再触发）：原齿轮菜单退出登录成功后调用，
     /// 容器接线到刷新登录态；退出入口现为设置页独立按钮。
@@ -6587,6 +6592,11 @@ class BearyProfileViewController: UIViewController {
             isMutualFriendValue: isMutualFriend
         )
         photosVC.modalPresentationStyle = .fullScreen
+        // 全站返回手势补齐：照片页此前只有返回钮、没有左边缘右滑；改走 EdgeDismiss。
+        let photosEdgeDismiss = BearyEdgeDismissController()
+        photosEdgeDismiss.attach(to: photosVC)
+        photosVC.transitioningDelegate = photosEdgeDismiss
+        self.profileSubpageEdgeDismiss = photosEdgeDismiss
         present(photosVC, animated: BearyMotion.animated(true), completion: nil)
     }
 
@@ -8443,6 +8453,16 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
                 guard let strongSelf = self else { return false }
                 return strongSelf.handleFestivalThemePicked(theme)
             })
+        // 全站返回手势补齐：窄屏（iPhone）时本页是自动全屏，没有左边缘
+        // 滑，改走 EdgeDismiss；宽屏（iPad）时本页是居中 sheet，自带下滑
+        // 关闭，不改呈现方式、不接 EdgeDismiss（免得 slide 动画盖掉 sheet）。
+        if traitCollection.horizontalSizeClass == .compact {
+            picker.modalPresentationStyle = .fullScreen
+            let depthPickerEdgeDismiss = BearyEdgeDismissController()
+            depthPickerEdgeDismiss.attach(to: picker)
+            picker.transitioningDelegate = depthPickerEdgeDismiss
+            self.depthPickerEdgeDismiss = depthPickerEdgeDismiss
+        }
         present(picker, animated: BearyMotion.animated(true))
     }
 
@@ -8636,9 +8656,17 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             onOpenEntry: { [weak self] entry in self?.onOpenEntry?(entry) }
         )
         if let nav = navigationController {
+            // 已在导航栈内时 push 自带系统左边缘返回手势，不另接 EdgeDismiss。
             nav.pushViewController(mapVC, animated: BearyMotion.animated(true))
         } else {
+            // 全站返回手势补齐：tab 个人页无导航栈时新起导航栈当根页，此前
+            // 没有左边缘返回；改走 EdgeDismiss（与他人主页 modal 同款）。
             let nav = UINavigationController(rootViewController: mapVC)
+            nav.modalPresentationStyle = .fullScreen
+            let mapEdgeDismiss = BearyEdgeDismissController()
+            mapEdgeDismiss.attach(to: nav)
+            nav.transitioningDelegate = mapEdgeDismiss
+            self.profileSubpageEdgeDismiss = mapEdgeDismiss
             present(nav, animated: BearyMotion.animated(true))
         }
     }
@@ -8663,9 +8691,17 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             onOpenEntry: { [weak self] entry in self?.onOpenEntry?(entry) }
         )
         if let nav = navigationController {
+            // 已在导航栈内时 push 自带系统左边缘返回手势，不另接 EdgeDismiss。
             nav.pushViewController(starVC, animated: BearyMotion.animated(true))
         } else {
+            // 全站返回手势补齐：tab 个人页无导航栈时新起导航栈当根页，此前
+            // 没有左边缘返回；改走 EdgeDismiss（与他人主页 modal 同款）。
             let nav = UINavigationController(rootViewController: starVC)
+            nav.modalPresentationStyle = .fullScreen
+            let starEdgeDismiss = BearyEdgeDismissController()
+            starEdgeDismiss.attach(to: nav)
+            nav.transitioningDelegate = starEdgeDismiss
+            self.profileSubpageEdgeDismiss = starEdgeDismiss
             present(nav, animated: BearyMotion.animated(true))
         }
     }
