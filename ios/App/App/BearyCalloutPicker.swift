@@ -154,15 +154,24 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
         accessoryView?.removeFromSuperview()
         accessoryView = view
         guard let view = view else { return }
-        // 框内附属行走手动 frame（见 layoutSubviews），不参与 Auto Layout。
-        view.translatesAutoresizingMaskIntoConstraints = true
+        // 附属行走常规 Auto Layout（顶／左／高约束＋自然宽，不再由 layoutSubviews
+        // 手动落 frame）：手动 frame 下 stack view 子树布局时序不可靠，附属行
+        // 曾出现“框高已长、行内按钮全无”的空白；改约束后按钮帧由布局引擎保证。
+        view.translatesAutoresizingMaskIntoConstraints = false
         addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: topAnchor, constant: Self.verticalPadding),
+            view.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.horizontalPadding),
+            view.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -Self.horizontalPadding),
+            view.heightAnchor.constraint(equalToConstant: Self.accessoryRowHeight),
+        ])
         setNeedsLayout()
     }
 
     func setAccessoryVisible(_ visible: Bool) {
         guard accessoryView?.isHidden == visible else { return }
         accessoryView?.isHidden = !visible
+        accessoryView?.setNeedsLayout()
         setNeedsLayout()
     }
 
@@ -293,16 +302,7 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
         // 附属行后加、层级在滚动区之上，两者在纵向不重叠，点按互不干扰。
         scrollView.frame = CGRect(x: 0, y: accessoryExtraHeight, width: width, height: boxHeight)
         fadeView.frame = CGRect(x: width - Self.fadeWidth, y: accessoryExtraHeight, width: Self.fadeWidth, height: boxHeight)
-        if let accessory = accessoryView, !accessory.isHidden {
-            let naturalWidth = accessory.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width
-            let accessoryWidth = naturalWidth > 0 ? min(naturalWidth, max(width - Self.horizontalPadding * 2, 0)) : max(width - Self.horizontalPadding * 2, 0)
-            accessory.frame = CGRect(
-                x: Self.horizontalPadding,
-                y: Self.verticalPadding,
-                width: accessoryWidth,
-                height: Self.accessoryRowHeight
-            )
-        }
+        // 附属行位置由 setAccessoryView 的约束定，不再此处手动落 frame。
         fadeLayer.frame = fadeView.bounds
         // 尖角钳制：顶点离左右边各留半宽 + 4pt，三角不伸出框外。
         let clampedX = min(max(arrowCenterX, Self.arrowHalfWidth + 4), max(width - Self.arrowHalfWidth - 4, Self.arrowHalfWidth + 4))
