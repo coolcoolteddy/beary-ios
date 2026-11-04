@@ -395,6 +395,34 @@ final class BearyImageLoader {
         generationLock.unlock()
     }
 
+    /// 审计 r1-images 第 2 项：逐出戳（URL 前缀 → 逐出后桶代次）。
+    /// evict 按 URL 前缀记、purge 按桶前缀记；交付时核对，戳代次晚于
+    /// 加载发起时代次即判定本加载发起后该 URL 被逐出。桶级代次本身
+    /// 不作交付门控（见 finishDelivery）。条目为尽力而为的防御层：
+    /// 网络支已有实时订阅快照兜底；满 512 条清库重记（逐出为低频
+    /// 动作，在途加载存活极短，旧戳本就无意义）。
+    private let evictionStampLock = NSLock()
+    private var evictionStamps: [String: UInt64] = [:]
+
+    private func recordEvictionStamps(prefixes: [String], bucket: Int?) {
+        guard !prefixes.isEmpty else { return }
+        let stampGeneration = generation(for: bucket)
+        evictionStampLock.lock()
+        if evictionStamps.count >= 512 { evictionStamps.removeAll() }
+        for prefix in prefixes { evictionStamps[prefix] = stampGeneration }
+        evictionStampLock.unlock()
+    }
+
+    private func isSuppressedByEviction(key: NSString, capturedGeneration: UInt64) -> Bool {
+        let keyString = key as String
+        evictionStampLock.lock()
+        defer { evictionStampLock.unlock() }
+        for (prefix, stampGeneration) in evictionStamps {
+            if stampGeneration > capturedGeneration && keyString.hasPrefix(prefix) { return true }
+        }
+        return false
+    }
+
     /// 内存命中：过期或代次已变均视为未命中（并摘除该条目），不再
     /// 直接返回。调用方随后走磁盘/网络，磁盘支同样有 24 小时 TTL。
     private func cachedMemoryImage(forKey key: NSString, bucket: Int?) -> UIImage? {
@@ -438,6 +466,8 @@ final class BearyImageLoader {
     /// 在完成回调守卫处即被丢弃（不再分发、不再落盘）。
     func purgeAccount(_ id: Int) {
         bumpGeneration(for: id)
+        // 审计 r1-images 第 2 项：整桶逐出戳，交付时核对（见 finishDelivery）。
+        recordEvictionStamps(prefixes: ["\(bucketName(id))|"], bucket: id)
         cancelInFlight(forBucket: id)
         cache.removeAllObjects()
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
@@ -511,6 +541,11 @@ final class BearyImageLoader {
 
     private func diskData(for url: URL, bucket: Int?) -> Data? {
         guard let file = diskFileURL(for: url, bucket: bucket) else { return nil }
+        // 审计 r1-images 第 4 项：逐出删除在途时视之为未命中（见 deletedDiskFiles）。
+        diskCacheLock.lock()
+        let pendingDelete = deletedDiskFiles.contains(file.path)
+        diskCacheLock.unlock()
+        guard !pendingDelete else { return nil }
         // TTL：以文件修改时间（即写入时间）为准；过期先删文件再判未命中，
         // 避免过期文件占着 200MB 桶；删文件失败也不影响未命中判定。
         if let values = try? file.resourceValues(forKeys: [.contentModificationDateKey]),
@@ -526,8 +561,14 @@ final class BearyImageLoader {
     /// 磁盘按 URL 精确删（原图 + _t 缩略图两个变体）；内存 NSCache 无法
     /// 按前缀枚举（下采样宽度后缀使同一 URL 有多个内存键），故转私密时
     /// 全清内存——转私密是低频用户动作，内存图可从磁盘快速重建，不走网络。
-    /// 逐出是同步 unlink（不读数据），调用方在转私密成功回调里调本方法后，
-    /// 后续加载即走网络、服务端按新可见性判定，不会再命中旧图。
+    /// 审计 r1-images 第 4 项：磁盘删除改后台队列（deleteDiskFilesAsync），
+    /// 删除窗口内 diskData 凭待删集合视之为未命中，调用方在转私密成功
+    /// 回调里调本方法后，后续加载即走网络、服务端按新可见性判定，
+    /// 不会再命中旧图。
+    /// 审计 r1-images 第 3 项核实：桶代次＋内存全清维持现状——NSCache
+    /// 不可按前缀枚举，逐 URL 代次需另起并行失效系统并改动全部缓存
+    /// 读写点，回归风险大于收益；逐出低频、内存可从磁盘重建，故不为
+    /// 缩小而改。
     /// 注意：本方法只清本机当前账号桶；他人设备上的旧缓存仍受服务端
     /// 公开图 1 天 max-age + 本方法同款 24 小时 TTL 约束，不会无限期可读。
     func evictEntryImages(keys: [String]) {
@@ -544,12 +585,11 @@ final class BearyImageLoader {
                 urls.append(url)
             }
         }
+        // 审计 r1-images 第 2 项：记逐出戳，交付时核对（见 finishDelivery）。
+        recordEvictionStamps(prefixes: urls.map { "\(bucketName(bucket))|\($0.absoluteString)" }, bucket: bucket)
         cancelInFlight(forURLs: urls, bucket: bucket)
         cache.removeAllObjects()
-        for url in urls {
-            guard let file = diskFileURL(for: url, bucket: bucket) else { continue }
-            try? FileManager.default.removeItem(at: file)
-        }
+        deleteDiskFilesAsync(urls.compactMap { diskFileURL(for: $0, bucket: bucket) })
     }
 
     /// 静态性能修复：按精确 URL 逐出本机图片缓存（头像替换用）。
@@ -557,16 +597,17 @@ final class BearyImageLoader {
     /// 区别只在输入是 URL 本身而非日记图片 key，故不展开 _t 缩略变体
     /// （头像 URL 无 _t 变体；磁盘文件按完整 URL 的 SHA256 定键，精确删即够；
     /// 内存键含下采样宽度后缀、不可枚举，故仍全清——与 evictEntryImages 同副作用）。
+    /// 审计 r1-images 第 3/4 项：同 evictEntryImages——内存全清维持现状
+    /// （见该方法注释），磁盘删除改后台队列（deleteDiskFilesAsync）。
     func evictURLs(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
         let bucket = currentAccountId
         bumpGeneration(for: bucket)
+        // 审计 r1-images 第 2 项：记逐出戳，交付时核对（见 finishDelivery）。
+        recordEvictionStamps(prefixes: urls.map { "\(bucketName(bucket))|\($0.absoluteString)" }, bucket: bucket)
         cancelInFlight(forURLs: urls, bucket: bucket)
         cache.removeAllObjects()
-        for url in urls {
-            guard let file = diskFileURL(for: url, bucket: bucket) else { continue }
-            try? FileManager.default.removeItem(at: file)
-        }
+        deleteDiskFilesAsync(urls.compactMap { diskFileURL(for: $0, bucket: bucket) })
     }
 
     /// 审计三轮 23 项：磁盘累计字节（按桶）。本进程内每桶只在首次写入时
@@ -580,14 +621,48 @@ final class BearyImageLoader {
     private let diskCacheLock = NSLock()
     private var diskCacheTotals: [String: Int64] = [:]
 
+    /// 审计 r1-images 第 4 项：待删磁盘文件路径集（由 diskCacheLock 守卫）。
+    /// 逐出删除已改后台队列，删除完成前本集仍记该文件，diskData 视之为
+    /// 未命中——否则逐出后立即重拉会在删除窗口内又把刚逐出的私密图读
+    /// 出来；删除完成后条目清除，后续合法重写可正常命中。
+    private var deletedDiskFiles: Set<String> = []
+
+    /// 审计 r1-images 第 4 项：逐出文件删除走后台队列（diskAndDecodeQueue，
+    /// 本就只做磁盘 I/O、不占主线程）。调用方在主线程调逐出时不再被
+    /// 同步 unlink 挡住；删除窗口由 deletedDiskFiles 守住，不漏旧图。
+    private func deleteDiskFilesAsync(_ files: [URL]) {
+        guard !files.isEmpty else { return }
+        let paths = files.map { $0.path }
+        diskCacheLock.lock()
+        for path in paths { deletedDiskFiles.insert(path) }
+        diskCacheLock.unlock()
+        Self.diskAndDecodeQueue.async { [weak self] in
+            for file in files { try? FileManager.default.removeItem(at: file) }
+            guard let self = self else { return }
+            self.diskCacheLock.lock()
+            for path in paths { self.deletedDiskFiles.remove(path) }
+            self.diskCacheLock.unlock()
+        }
+    }
+
+    /// 审计 r1-images 第 5 项：写盘串行锁。stat→原子写→stat 的计量三段
+    /// 必须相对其他写盘调用原子，否则同文件并发写会重复累计 delta
+    /// （两次 oldSize 均为 0、两次 delta 均为 N，累计多算 N）。
+    /// 与 diskCacheLock 分开：本锁释放后才调 enforceDiskCacheCap（其内
+    /// 持 diskCacheLock），两锁永不嵌套，无死锁。
+    private let diskWriteLock = NSLock()
+
     private func writeDisk(data: Data, for url: URL, bucket: Int?) {
         guard let file = diskFileURL(for: url, bucket: bucket) else { return }
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        diskWriteLock.lock()
         let oldSize = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
         try? data.write(to: file, options: .atomic)
         // 原子写失败时旧文件仍在，newSize == oldSize，delta 为 0，不污染累计值。
         let newSize = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
-        enforceDiskCacheCap(bucket: bucket, writtenDelta: newSize - oldSize)
+        let delta = newSize - oldSize
+        diskWriteLock.unlock()
+        enforceDiskCacheCap(bucket: bucket, writtenDelta: delta)
     }
 
     /// 审计 B 批：图片磁盘缓存上限 200MB（按账号桶分别算，不跨桶删别人的文件）。
@@ -703,13 +778,18 @@ final class BearyImageLoader {
     /// 审计三轮 23 项：在途合并表。键 = memoryKey（已含账号桶与下采样宽度，
     /// 同 URL 不同桶/不同下采样宽度绝不合并）；一条在途记录只建一个网络任务、
     /// 只做一次磁盘读与写盘，结果分发给全部订阅者。订阅者表只在 inFlightLock
-    /// 内读写，回调分发前先取快照、清表，再回主线程逐个回调，锁内绝不回调。
+    /// 内读写；完成方先置 finishing 再校验/写盘，交付时在 finishDelivery 内
+    /// 取实时订阅快照并摘表，再回主线程逐个回调，锁内绝不回调。
     private let inFlightLock = NSLock()
     private var inFlight: [NSString: InFlightImageLoad] = [:]
 
     private final class InFlightImageLoad {
         var task: URLSessionDataTask?
         var subscribers: [(id: UUID, completion: (Result<UIImage, BearyImageLoadError>) -> Void)] = []
+        /// 审计 r1-images 第 1 项：完成态标记。网络回调或磁盘支任一先到者
+        /// 置位并负责交付，另一支见此标记即退出，不双发；交付前加入的
+        /// 订阅者仍能赶上最终实时快照（见 finishDelivery）。
+        var finishing = false
     }
 
     /// 审计三轮 23 项：每订阅者的取消句柄。调用方只用它调 cancel()（存取与
@@ -788,6 +868,28 @@ final class BearyImageLoader {
         task?.cancel()
     }
 
+    /// 审计 r1-images 第 1/2 项：统一交付口。交付时才取实时订阅快照并
+    /// 摘表——校验/写盘期间加入的订阅者一并分发，不留合并窗口；
+    /// 逐出/清理已取消的订阅者自然不在快照里，不再画旧图。
+    /// 交付门控说明：桶级代次只拦写盘、不拦交付——同桶某 URL 被逐出
+    /// 时，同桶其他未逐出 URL 的在途图仍应正常交付，否则一次转私密
+    /// 会让整桶在途图集体画不出来；逐出 URL 本身另由逐出戳拦下：
+    /// 逐出时按 URL 前缀记戳，主线程派发前再核一次，戳代次晚于本加载
+    /// 发起时代次即本加载发起后该 URL 被逐出，跳过交付（与取消语义
+    /// 一致：被取消的订阅者本来就收不到回调）。
+    private func finishDelivery(entry: InFlightImageLoad, key: NSString, capturedGeneration: UInt64, result: Result<UIImage, BearyImageLoadError>) {
+        inFlightLock.lock()
+        let liveSubs = entry.subscribers
+        if inFlight[key] === entry { inFlight[key] = nil }
+        inFlightLock.unlock()
+        guard !liveSubs.isEmpty else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            guard !self.isSuppressedByEviction(key: key, capturedGeneration: capturedGeneration) else { return }
+            for sub in liveSubs { sub.completion(result) }
+        }
+    }
+
     /// 带失败原因的加载（F10 钩子的底层）：所有回调统一回主线程（内存命中、
     /// 磁盘命中、网络三支一致，不再有同步回调碰 UIKit）；磁盘读与解码走后台
     /// diskAndDecodeQueue；网络分支验 HTTP 200–299 + image/* MIME，不符按
@@ -824,41 +926,38 @@ final class BearyImageLoader {
         let task = session.dataTask(with: url) { [weak self, weak entry] data, response, error in
             guard let self = self, let entry = entry else { return }
             self.inFlightLock.lock()
-            guard self.inFlight[key] === entry, !entry.subscribers.isEmpty else {
+            guard self.inFlight[key] === entry, !entry.subscribers.isEmpty, !entry.finishing else {
                 self.inFlightLock.unlock()
                 return
             }
-            let subs = entry.subscribers
-            self.inFlight[key] = nil
+            // 审计 r1-images 第 1 项：完成方先置位、不摘表——校验/解码/
+            // 写盘期间同键新加载挂到同一记录上，交付时一并分发，不再因
+            // 摘表过早另起加载链；磁盘支见置位即退出，不双发。
+            entry.finishing = true
             self.inFlightLock.unlock()
-            let deliver: (Result<UIImage, BearyImageLoadError>) -> Void = { result in
-                DispatchQueue.main.async {
-                    for sub in subs { sub.completion(result) }
-                }
-            }
             if let e = error as NSError?, e.code == NSURLErrorCancelled {
-                deliver(.failure(.cancelled))
+                self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .failure(.cancelled))
                 return
             }
             if let e = error {
-                deliver(.failure(.network(e)))
+                self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .failure(.network(e)))
                 return
             }
             // S1：验 HTTP 状态与 MIME，不符走失败分支（错误页/HTML 误当图片不再入库）。
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
                   let mime = http.mimeType, mime.hasPrefix("image/"),
                   let data = data, let img = BearyImageLoader.decodedImage(data: data, downsampleToWidth: downsampleToWidth) else {
-                deliver(.failure(.invalidData))
+                self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .failure(.invalidData))
                 return
             }
             // 审计 22 项：写盘前再次验证代次——purge/evict 后旧写入
-            // 弃写（内存与磁盘双双不落），只向仍在世的订阅者分发本次
-            // 结果（分发不是落盘；被取消的订阅者已在上方守卫处丢弃）。
+            // 弃写（内存与磁盘双双不落）；分发走 finishDelivery，其内另按
+            // 逐出戳核对，不再是无条件交付。
             if capturedGeneration == self.generation(for: bucket) {
                 self.storeMemory(img, forKey: key, bucket: bucket, generation: capturedGeneration)
                 self.writeDisk(data: data, for: url, bucket: bucket)
             }
-            deliver(.success(img))
+            self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .success(img))
         }
         entry.task = task
         entry.subscribers.append((id: subscriberId, completion: completion))
@@ -877,32 +976,30 @@ final class BearyImageLoader {
         Self.diskAndDecodeQueue.async { [weak self, weak entry] in
             guard let self = self, let entry = entry, let task = entry.task else { return }
             self.inFlightLock.lock()
-            let alive = self.inFlight[key] === entry && !entry.subscribers.isEmpty
+            let alive = self.inFlight[key] === entry && !entry.subscribers.isEmpty && !entry.finishing
             self.inFlightLock.unlock()
             guard alive, task.state != .canceling, task.state != .completed else { return }
             if let disk = self.diskData(for: url, bucket: bucket),
                let img = BearyImageLoader.decodedImage(data: disk, downsampleToWidth: downsampleToWidth) {
                 self.inFlightLock.lock()
-                guard self.inFlight[key] === entry, !entry.subscribers.isEmpty else {
+                guard self.inFlight[key] === entry, !entry.subscribers.isEmpty, !entry.finishing else {
                     self.inFlightLock.unlock()
                     return
                 }
-                let subs = entry.subscribers
-                self.inFlight[key] = nil
+                entry.finishing = true
                 self.inFlightLock.unlock()
                 // 审计 22 项：磁盘命中写内存前同样验代次，代次已变即
                 // 不写内存（磁盘文件本身已被 purge/evict 删掉或即将删掉，
                 // 读到的是删除前已解码在手的旧字节，不得再留存）。
+                // 交付走 finishDelivery，其内另按逐出戳核对。
                 if capturedGeneration == self.generation(for: bucket) {
                     self.storeMemory(img, forKey: key, bucket: bucket, generation: capturedGeneration)
                 }
-                DispatchQueue.main.async {
-                    for sub in subs { sub.completion(.success(img)) }
-                }
+                self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .success(img))
                 return
             }
             self.inFlightLock.lock()
-            let stillAlive = self.inFlight[key] === entry && !entry.subscribers.isEmpty
+            let stillAlive = self.inFlight[key] === entry && !entry.subscribers.isEmpty && !entry.finishing
             self.inFlightLock.unlock()
             guard stillAlive, task.state != .canceling, task.state != .completed else { return }
             task.resume()
