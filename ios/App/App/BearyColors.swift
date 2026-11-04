@@ -55,7 +55,7 @@ enum BearyColors {
     static var hov: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 244.0/255.0, green: 244.0/255.0, blue: 248.0/255.0, alpha: 0.08) : UIColor(red: 17.0/255.0, green: 17.0/255.0, blue: 20.0/255.0, alpha: 0.06) } }
 
     /// C6：按当前 trait 重解 base 色再降透明度的动态色。0.13 透明底
-    /// （私密 pill 蓝底、草稿 chip 橙底、图片未保存红底等）一律走这里，
+    /// （私密 pill 蓝底、草稿 chip 灰底、图片未保存红底等）一律走这里，
     /// 不得对动态色直接 withAlphaComponent——后者会在生成时固化当前
     /// trait 的解析值，深浅切换后不再跟随。固定色（橙/红/绿）重解后不变，
     /// 同样可走本方法。

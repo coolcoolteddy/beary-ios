@@ -1448,7 +1448,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.setTitle("给一年前的自己留一句话", for: .normal)
         // 审计-个人页设置：橙色正文对比度约 2.20:1 低于 AA，改深橙文字 token；
         // 只改使用处颜色，不改橙色 token 值（橙底白字与图标 tint 不动）。
-        buttonValue.setTitleColor(BearyColors.deepOrangeText, for: .normal)
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.contentHorizontalAlignment = .leading
         buttonValue.addTarget(self, action: #selector(pastSelfEntryTapped), for: .touchUpInside)
@@ -1507,7 +1507,7 @@ class BearyProfileViewController: UIViewController {
         labelValue.translatesAutoresizingMaskIntoConstraints = false
         labelValue.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         // 审计-个人页设置：橙色正文改深橙文字 token（同 pastSelfEntryButton，token 值不动）。
-        labelValue.textColor = BearyColors.deepOrangeText
+        labelValue.textColor = BearyColors.ink
         return labelValue
     }()
     private let pastSelfWaitingBodyLabel: UILabel = {
@@ -1567,12 +1567,12 @@ class BearyProfileViewController: UIViewController {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("换一篇", for: .normal)
-        buttonValue.setTitleColor(BearyColors.onBrand, for: .normal)
+        buttonValue.setTitleColor(BearyColors.bg, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.setImage(BearyIconImages.image(named: "icon_shuffle", pointSize: 16), for: .normal)
-        buttonValue.tintColor = BearyColors.onBrand
+        buttonValue.tintColor = BearyColors.bg
         buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        buttonValue.backgroundColor = BearyColors.orange
+        buttonValue.backgroundColor = BearyColors.ink
         buttonValue.layer.cornerRadius = BearyCorners.single
         buttonValue.clipsToBounds = true
         buttonValue.addTarget(self, action: #selector(randomShuffleTapped), for: .touchUpInside)
@@ -4125,7 +4125,7 @@ class BearyProfileViewController: UIViewController {
                 if let aiImage = NightPatrolIcons.image(named: NightPatrolIcons.aiPaw, pointSize: 16) {
                     let badgeView = UIImageView(image: aiImage)
                     badgeView.translatesAutoresizingMaskIntoConstraints = false
-                    badgeView.tintColor = BearyColors.orange
+                    badgeView.tintColor = BearyColors.ink
                     badgeView.contentMode = .scaleAspectFit
                     wrapper.addSubview(badgeView)
                     NSLayoutConstraint.activate([
@@ -4139,7 +4139,7 @@ class BearyProfileViewController: UIViewController {
                     badgeLabel.translatesAutoresizingMaskIntoConstraints = false
                     badgeLabel.text = "AI"
                     badgeLabel.font = UIFont.systemFont(ofSize: 9, weight: .bold)
-                    badgeLabel.textColor = BearyColors.deepOrangeText
+                    badgeLabel.textColor = BearyColors.ink
                     badgeLabel.backgroundColor = BearyColors.bg
                     badgeLabel.layer.cornerRadius = 4
                     badgeLabel.clipsToBounds = true

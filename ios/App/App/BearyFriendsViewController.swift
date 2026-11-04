@@ -102,7 +102,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         refreshFailedRetryButton.setTitle("重试", for: .normal)
         refreshFailedRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         refreshFailedRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        refreshFailedRetryButton.setTitleColor(BearyColors.blue, for: .normal)
+        refreshFailedRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         refreshFailedRetryButton.accessibilityLabel = "重试"
         refreshFailedRetryButton.accessibilityHint = "重新拉取好友列表，不改变当前列表位置"
         refreshFailedRetryButton.addTarget(self, action: #selector(refreshFailedRetryTapped), for: .touchUpInside)

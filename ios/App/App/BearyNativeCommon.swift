@@ -199,7 +199,7 @@ enum BearyGlass {
 final class BearyGlassButton: BearyHit44Button {
     private var glassView: UIVisualEffectView?
 
-    /// 玻璃 tint：默认中性 bg 52%；顶栏登录 pill 置 BearyColors.orange（点亮色不动）。
+    /// 玻璃 tint：默认中性 bg 52%；顶栏登录 pill 置 BearyColors.ink（2026-11-04 黑白灰，橙玻璃已删）。
     var glassTint: UIColor? = BearyGlass.neutralTint {
         didSet { rebuildGlass() }
     }

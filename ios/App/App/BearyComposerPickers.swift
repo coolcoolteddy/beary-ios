@@ -267,7 +267,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateSubtitle.textAlignment = .center
         stateSubtitle.numberOfLines = 0
         stateRetryButton.setTitle("重试", for: .normal)
-        stateRetryButton.setTitleColor(BearyColors.blue, for: .normal)
+        stateRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         stateRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         stateRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         stateRetryButton.isHidden = true

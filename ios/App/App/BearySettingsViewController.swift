@@ -1295,7 +1295,7 @@ final class BearySettingsViewController: UIViewController {
         let avatarInitialLabel = UILabel()
         avatarInitialLabel.translatesAutoresizingMaskIntoConstraints = false
         avatarInitialLabel.font = UIFont.systemFont(ofSize: 15, weight: .bold)
-        avatarInitialLabel.textColor = BearyColors.deepOrangeText
+        avatarInitialLabel.textColor = BearyColors.ink
         avatarInitialLabel.textAlignment = .center
         avatarInitialLabel.text = String(model.title.prefix(1))
         avatarContainer.addSubview(avatarImageView)
@@ -4285,7 +4285,7 @@ private final class BearyBlockedUserCell: UITableViewCell {
         let button = BearyHit44Button(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setTitle("解除拉黑", for: .normal)
-        button.setTitleColor(BearyColors.blue, for: .normal)
+        button.setTitleColor(BearyColors.ink, for: .normal)
         button.titleLabel?.font = UIFont.systemFont(ofSize: 15)
         button.addTarget(self, action: #selector(unblockTapped), for: .touchUpInside)
         button.bearyAddPressFeedback()

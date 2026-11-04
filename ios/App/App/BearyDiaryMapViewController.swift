@@ -94,6 +94,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         // 字体与失败页重试钮同档，不引入新样式值；不改 statusLabel 自身的约束数值。
         inlineRetryButton.translatesAutoresizingMaskIntoConstraints = false
         inlineRetryButton.setTitle("重试", for: .normal)
+        inlineRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         inlineRetryButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 15)
         inlineRetryButton.addTarget(self, action: #selector(didTapInlineRetry), for: .touchUpInside)
         inlineRetryButton.isHidden = true
@@ -124,6 +125,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         failureLabel.text = "日记加载失败，请重试"
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("重试", for: .normal)
+        retryButton.setTitleColor(BearyColors.ink, for: .normal)
         // 按钮普查：裸粗体 15pt 改 scaledFont，跟随系统字号（失败页居中独立钮，无固定容器）。
         retryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
         retryButton.titleLabel?.adjustsFontForContentSizeCategory = true

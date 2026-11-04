@@ -312,7 +312,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         loginTitleLabel.textColor = BearyColors.ink
         loginTitleLabel.textAlignment = .center
         loginButton.setTitle("去登录", for: .normal)
-        loginButton.setTitleColor(BearyColors.blue, for: .normal)
+        loginButton.setTitleColor(BearyColors.ink, for: .normal)
         // 扫查组：此前裸 14pt；本钮无固定高，走 scaledFont 全跟随。
         loginButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         loginButton.titleLabel?.adjustsFontForContentSizeCategory = true

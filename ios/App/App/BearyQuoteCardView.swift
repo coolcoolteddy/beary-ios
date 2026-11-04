@@ -145,7 +145,7 @@ final class BearyQuoteCardView: UIView {
         btn.setTitle("展开", for: .normal)
         btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
-        btn.setTitleColor(BearyColors.blue, for: .normal)
+        btn.setTitleColor(BearyColors.ink, for: .normal)
         btn.contentHorizontalAlignment = .left
         btn.isHidden = true
         btn.accessibilityLabel = "展开全文"

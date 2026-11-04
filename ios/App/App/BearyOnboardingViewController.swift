@@ -708,7 +708,7 @@ final class BearyOnboardingViewController: UIViewController {
 
         // 回应标签：点选后才出现；只让新增元素入场一次，后续改选只换内容、不重播。
         responseChip.translatesAutoresizingMaskIntoConstraints = false
-        responseChip.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.07)
+        responseChip.backgroundColor = BearyColors.faint
         responseChip.isHidden = true
         responseChipIcon.translatesAutoresizingMaskIntoConstraints = false
         responseChipCount.translatesAutoresizingMaskIntoConstraints = false
@@ -1042,8 +1042,8 @@ final class BearyOnboardingViewController: UIViewController {
         for (buttonKey, button) in emoteButtons {
             let selected = buttonKey == key
             button.layer.borderWidth = selected ? 2 : 0
-            button.layer.bearyDynamicBorderColor = BearyColors.orange
-            button.backgroundColor = selected ? BearyColors.alpha(BearyColors.orange, 0.07) : BearyColors.faint
+            button.layer.bearyDynamicBorderColor = BearyColors.ink
+            button.backgroundColor = selected ? BearyColors.alpha(BearyColors.ink, 0.07) : BearyColors.faint
         }
         selectedEmote = key
         let isDark = traitCollection.userInterfaceStyle == .dark
@@ -1174,7 +1174,7 @@ private final class OnboardingOptionButton: BearyHit44Button {
         checkView.layer.bearyDynamicBorderColor = BearyColors.line
         checkImageView.translatesAutoresizingMaskIntoConstraints = false
         checkImageView.image = BearyIconImages.image(named: "icon_check", pointSize: 14)
-        checkImageView.tintColor = BearyColors.onBrand
+        checkImageView.tintColor = BearyColors.bg
         checkView.addSubview(checkImageView)
         addSubview(checkView)
 
@@ -1205,16 +1205,16 @@ private final class OnboardingOptionButton: BearyHit44Button {
 
     func setSelected(_ selected: Bool) {
         isOptionSelected = selected
-        backgroundColor = selected ? BearyColors.alpha(BearyColors.orange, 0.07) : BearyColors.surface
-        checkView.backgroundColor = selected ? BearyColors.orange : .clear
+        backgroundColor = selected ? BearyColors.alpha(BearyColors.ink, 0.07) : BearyColors.surface
+        checkView.backgroundColor = selected ? BearyColors.ink : .clear
         checkImageView.isHidden = !selected
         refreshBorder()
     }
 
     func refreshBorder() {
         layer.borderWidth = isOptionSelected ? 2 : 1.5
-        layer.bearyDynamicBorderColor = isOptionSelected ? BearyColors.orange : BearyColors.line
-        checkView.layer.bearyDynamicBorderColor = isOptionSelected ? BearyColors.orange : BearyColors.line
+        layer.bearyDynamicBorderColor = isOptionSelected ? BearyColors.ink : BearyColors.line
+        checkView.layer.bearyDynamicBorderColor = isOptionSelected ? BearyColors.ink : BearyColors.line
     }
 }
 

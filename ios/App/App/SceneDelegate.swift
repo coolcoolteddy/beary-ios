@@ -570,12 +570,12 @@ final class BearyChromeViewController: UIViewController {
         ])
         // 栏内按钮：顶栏登录 pill，玻璃范围 Token 允许（栏内），点亮橙色与功能不动。
         let login = BearyGlassButton(type: .custom)
-        login.glassTint = BearyColors.orange
+        login.glassTint = BearyColors.ink
         login.setTitle("登录", for: .normal)
         // 网页登录 pill：14 semibold 固定字号，不跟随系统字号缩放。
         login.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
         login.titleLabel?.adjustsFontForContentSizeCategory = false
-        login.setTitleColor(BearyColors.onBrand, for: .normal)
+        login.setTitleColor(BearyColors.bg, for: .normal)
         login.backgroundColor = .clear
         login.layer.cornerRadius = BearyCorners.single
         login.addTarget(self, action: #selector(didTapLogin), for: .touchUpInside)

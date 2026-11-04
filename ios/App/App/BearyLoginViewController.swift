@@ -323,9 +323,8 @@ final class BearyLoginViewController: UIViewController {
         messageLabel.isHidden = true
 
         loginButton.translatesAutoresizingMaskIntoConstraints = false
-        // Sheet 弹窗：品牌橙登录钮（全弹窗唯一重色），前景走 onBrand 恒墨（见 setLoginTitle）；
-        // 全屏页保持墨底白字。
-        loginButton.backgroundColor = sheetMode ? BearyColors.orange : BearyColors.ink
+        // 黑白灰新标准：登录钮统一墨底（sheet 橙已删，全屏页本就墨底）。
+        loginButton.backgroundColor = BearyColors.ink
         loginButton.layer.cornerRadius = 12
         loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
         loginButton.bearyAddPressFeedback()
@@ -684,9 +683,9 @@ final class BearyLoginViewController: UIViewController {
 
     private func refreshAgreeBox() {
         if isAgreed {
-            agreeButton.backgroundColor = BearyColors.orange
-            agreeButton.layer.bearyDynamicBorderColor = BearyColors.orange
-            agreeButton.tintColor = BearyColors.onBrand
+            agreeButton.backgroundColor = BearyColors.ink
+            agreeButton.layer.bearyDynamicBorderColor = BearyColors.ink
+            agreeButton.tintColor = BearyColors.bg
             agreeButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 13), for: .normal)
         } else {
             agreeButton.backgroundColor = BearyColors.faint

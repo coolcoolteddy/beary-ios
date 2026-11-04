@@ -117,8 +117,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         // ✅ 按钮：官方 icon_check 资产（基线 Assets 在位，三档齐全），非文字“确认”；
         // 固定 32×32 橙色圆钮、白勾，横向抱紧/抗压均为 required，长地名也挤不动它。
         confirmButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 24), for: .normal)
-        confirmButton.tintColor = BearyColors.onBrand
-        confirmButton.backgroundColor = BearyColors.orange
+        confirmButton.tintColor = BearyColors.bg
+        confirmButton.backgroundColor = BearyColors.ink
         confirmButton.layer.cornerRadius = BearyCorners.single
         confirmButton.clipsToBounds = true
         confirmButton.accessibilityLabel = "确认使用这个位置"

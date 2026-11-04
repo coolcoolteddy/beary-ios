@@ -165,7 +165,7 @@ final class BearyDetailViewController: UIViewController {
         let v = UIImageView()
         v.translatesAutoresizingMaskIntoConstraints = false
         v.image = BearyFeedIconCache.image(named: "icon_at", pointSize: 13)
-        v.tintColor = BearyColors.orange
+        v.tintColor = BearyColors.ink
         v.contentMode = .scaleAspectFit
         return v
     }()
@@ -175,7 +175,7 @@ final class BearyDetailViewController: UIViewController {
         // 113：底数 12 粗体不动，只加 scaledFont + adjusts（#322/#324 同款做法）。
         lb.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
         lb.adjustsFontForContentSizeCategory = true
-        lb.textColor = BearyColors.deepOrangeText
+        lb.textColor = BearyColors.ink
         lb.numberOfLines = 1
         return lb
     }()
@@ -418,7 +418,7 @@ final class BearyDetailViewController: UIViewController {
         // 扫查组：此前裸 12pt，多行提示不跟随大字号。
         lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         lb.adjustsFontForContentSizeCategory = true
-        lb.textColor = BearyColors.deepOrangeText
+        lb.textColor = BearyColors.gray
         lb.numberOfLines = 0
         lb.isHidden = true
         return lb

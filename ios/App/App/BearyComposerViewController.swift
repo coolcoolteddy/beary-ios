@@ -1754,19 +1754,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientPickButton.layer.cornerRadius = 999
         recipientPickButton.addTarget(self, action: #selector(didTapPickRecipient), for: .touchUpInside)
         recipientPickButton.bearyAddPressFeedback()
-        // 已选 chip：橙 13% 底 + 22 头像/首字母 + “@名” + ×。
-        // D-G8：网页 addr-chip 底是 color-mix（橙 13% + surface），深色下 surface
-        // 为 #26262c；App 原 13% 透明橙叠在纯黑页底上偏暗。改按当前主题把橙与
-        // surface 混色（浅色 surface 为白，与原效果一致；仅深色变亮）。
-        recipientChipView.backgroundColor = UIColor { trait in
-            let orange = BearyColors.orange.resolvedColor(with: trait)
-            let surface = BearyColors.surface.resolvedColor(with: trait)
-            var oR: CGFloat = 0, oG: CGFloat = 0, oB: CGFloat = 0, oA: CGFloat = 0
-            var sR: CGFloat = 0, sG: CGFloat = 0, sB: CGFloat = 0, sA: CGFloat = 0
-            orange.getRed(&oR, green: &oG, blue: &oB, alpha: &oA)
-            surface.getRed(&sR, green: &sG, blue: &sB, alpha: &sA)
-            return UIColor(red: 0.13 * oR + 0.87 * sR, green: 0.13 * oG + 0.87 * sG, blue: 0.13 * oB + 0.87 * sB, alpha: 1)
-        }
+        // 已选 chip：黑白灰新标准改灰底（与内容区 chip 同口径）；原橙 13% 混色已删。
+        recipientChipView.backgroundColor = BearyColors.faint
         recipientChipView.layer.cornerRadius = 15
         recipientChipView.layer.masksToBounds = true
         recipientChipAvatar.contentMode = .scaleAspectFill
@@ -1774,8 +1763,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientChipAvatar.layer.cornerRadius = 11
         recipientChipAvatar.layer.masksToBounds = true
         recipientChipFallback.font = UIFont.boldSystemFont(ofSize: 12)
-        recipientChipFallback.textColor = BearyColors.onBrand
-        recipientChipFallback.backgroundColor = BearyColors.orange
+        recipientChipFallback.textColor = BearyColors.ink
+        recipientChipFallback.backgroundColor = BearyColors.surface
         recipientChipFallback.textAlignment = .center
         recipientChipFallback.layer.cornerRadius = 11
         recipientChipFallback.layer.masksToBounds = true
@@ -2020,7 +2009,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteDeletedLabel.font = UIFont.systemFont(ofSize: 13)
         quoteDeletedLabel.textColor = BearyColors.gray
         quoteDeletedRemoveButton.setTitle("移除", for: .normal)
-        quoteDeletedRemoveButton.setTitleColor(BearyColors.blue, for: .normal)
+        quoteDeletedRemoveButton.setTitleColor(BearyColors.ink, for: .normal)
         // 按钮普查：裸 13pt 改 scaledFont，跟随系统字号。
         quoteDeletedRemoveButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         quoteDeletedRemoveButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -2041,7 +2030,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteFetchFailedLabel.font = UIFont.systemFont(ofSize: 13)
         quoteFetchFailedLabel.textColor = BearyColors.gray
         quoteFetchFailedRetryButton.setTitle("重试", for: .normal)
-        quoteFetchFailedRetryButton.setTitleColor(BearyColors.blue, for: .normal)
+        quoteFetchFailedRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         quoteFetchFailedRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         quoteFetchFailedRetryButton.addTarget(self, action: #selector(didTapRetryEditQuoteFetch), for: .touchUpInside)
         quoteFetchFailedRetryButton.bearyAddPressFeedback()
@@ -2216,7 +2205,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanelEmptyLabel.isHidden = true
         quotePanelRetryButton.translatesAutoresizingMaskIntoConstraints = false
         quotePanelRetryButton.setTitle("加载失败，重试", for: .normal)
-        quotePanelRetryButton.setTitleColor(BearyColors.blue, for: .normal)
+        quotePanelRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         // 按钮普查：裸 15pt 改 scaledFont，跟随系统字号。
         quotePanelRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         quotePanelRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -2720,7 +2709,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 112 v2：去掉每行外面的灰色方块感——行底色显式走页面底色
             // BearyColors.bg（浅色白、深色跟页面底色黑），整列表只留行间细分割线；
             // 作者、时间、正文、行内边距、分割线、点按选引用行为均不动。
-            rowButton.backgroundColor = isSelectedRow ? BearyColors.orange.withAlphaComponent(0.08) : BearyColors.bg
+            rowButton.backgroundColor = isSelectedRow ? BearyColors.alpha(BearyColors.ink, 0.08) : BearyColors.bg
             let authorName = entry.authorName ?? "用户"
             let avatarView = UIImageView()
             avatarView.translatesAutoresizingMaskIntoConstraints = false
@@ -2842,14 +2831,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if isSelectedRow {
                 let checkView = UIView()
                 checkView.translatesAutoresizingMaskIntoConstraints = false
-                checkView.backgroundColor = BearyColors.orange
+                checkView.backgroundColor = BearyColors.ink
                 checkView.layer.cornerRadius = 12
                 checkView.layer.masksToBounds = true
                 checkView.isUserInteractionEnabled = false
                 let checkLabel = UILabel()
                 checkLabel.translatesAutoresizingMaskIntoConstraints = false
                 checkLabel.font = UIFont.boldSystemFont(ofSize: 14)
-                checkLabel.textColor = BearyColors.onBrand
+                checkLabel.textColor = BearyColors.bg
                 checkLabel.textAlignment = .center
                 checkLabel.text = "✓"
                 checkView.addSubview(checkLabel)
@@ -3141,7 +3130,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftStatusBannerLabel.lineBreakMode = .byTruncatingTail
         draftStatusBannerLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         draftStatusRetryButton.setTitle("重试", for: .normal)
-        draftStatusRetryButton.setTitleColor(BearyColors.blue, for: .normal)
+        draftStatusRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         draftStatusRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
         draftStatusRetryButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
         draftStatusRetryButton.accessibilityLabel = "重试保存草稿"
@@ -3614,7 +3603,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         locationClearButton.addTarget(self, action: #selector(didTapClearLocation), for: .touchUpInside)
         locationNoteLabel.translatesAutoresizingMaskIntoConstraints = false
         locationNoteLabel.font = UIFont.systemFont(ofSize: 12)
-        locationNoteLabel.textColor = BearyColors.deepOrangeText
+        locationNoteLabel.textColor = BearyColors.gray
         locationNoteLabel.numberOfLines = 0
         locationLineRow.axis = .horizontal
         locationLineRow.spacing = 6
@@ -4148,7 +4137,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageUndoLabel.font = UIFont.systemFont(ofSize: 13)
         imageUndoLabel.textColor = BearyColors.ink
         imageUndoButton.setTitle("撤销", for: .normal)
-        imageUndoButton.setTitleColor(BearyColors.blue, for: .normal)
+        imageUndoButton.setTitleColor(BearyColors.ink, for: .normal)
         imageUndoButton.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
         imageUndoButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
         imageUndoButton.addTarget(self, action: #selector(didTapUndoRemovedImage), for: .touchUpInside)
