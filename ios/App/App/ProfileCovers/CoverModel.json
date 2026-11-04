@@ -1,0 +1,203 @@
+{
+  "width": 1248,
+  "height": 390,
+  "padX": 72,
+  "padY": 36,
+  "background": "#757f75",
+  "themes": {
+    "china": {
+      "name": "中国 · 江南归舟",
+      "style": "青瓷色彩墨",
+      "motion": {
+        "kind": "slide",
+        "x": 757,
+        "y": 319,
+        "dx": 23,
+        "w": 169,
+        "h": 47
+      },
+      "fx": {
+        "x": 959,
+        "y": 349,
+        "rx": 82,
+        "ry": 22,
+        "dx": 30,
+        "dy": 6,
+        "color": "#ffcb80",
+        "base": 0.16,
+        "gain": 0.32,
+        "water": true
+      },
+      "egg": {
+        "x": 936,
+        "y": 207,
+        "w": 21,
+        "h": 30,
+        "layer": "mid"
+      }
+    },
+    "usa": {
+      "name": "美国 · 纽约高架",
+      "style": "双色电影丝网印刷",
+      "motion": {
+        "kind": "slide",
+        "x": 744,
+        "y": 223,
+        "dx": 29,
+        "w": 432,
+        "h": 88,
+        "layer": "mid"
+      },
+      "fx": {
+        "x": 733,
+        "y": 326,
+        "rx": 148,
+        "ry": 25,
+        "dx": 45,
+        "dy": 8,
+        "color": "#ffad68",
+        "base": 0.18,
+        "gain": 0.46,
+        "water": true
+      },
+      "egg": {
+        "x": 389,
+        "y": 34,
+        "w": 22,
+        "h": 25,
+        "layer": "subject"
+      }
+    },
+    "japan": {
+      "name": "日本 · 海边候车室",
+      "style": "青绿动画背景",
+      "motion": {
+        "kind": "pivot",
+        "x": 966,
+        "y": 70,
+        "angle": 0.058,
+        "w": 76,
+        "h": 144,
+        "layer": "near"
+      },
+      "fx": {
+        "x": 935,
+        "y": 318,
+        "rx": 78,
+        "ry": 12,
+        "dx": 37,
+        "dy": 5,
+        "color": "#f8edb5",
+        "base": 0.24,
+        "gain": 0.45,
+        "water": false
+      },
+      "egg": {
+        "x": 35,
+        "y": 104,
+        "w": 24,
+        "h": 14,
+        "layer": "subject"
+      }
+    },
+    "germany": {
+      "name": "德国 · 莱茵缆车",
+      "style": "赭绿套色石版",
+      "motion": {
+        "kind": "cable",
+        "x": 770,
+        "y": 125,
+        "dx": 25,
+        "slope": 0.073,
+        "w": 88,
+        "h": 89,
+        "layer": "mid"
+      },
+      "fx": {
+        "x": 744,
+        "y": 347,
+        "rx": 113,
+        "ry": 23,
+        "dx": 36,
+        "dy": 6,
+        "color": "#f4cb84",
+        "base": 0.2,
+        "gain": 0.38,
+        "water": true
+      },
+      "egg": {
+        "x": 31,
+        "y": 49,
+        "w": 29,
+        "h": 21,
+        "layer": "subject"
+      }
+    },
+    "canada": {
+      "name": "加拿大 · 冰湖水上飞机",
+      "style": "国家公园套色印刷",
+      "motion": {
+        "kind": "slide",
+        "x": 794,
+        "y": 326,
+        "dx": 24,
+        "w": 201,
+        "h": 80
+      },
+      "fx": {
+        "x": 784,
+        "y": 343,
+        "rx": 115,
+        "ry": 17,
+        "dx": 36,
+        "dy": 5,
+        "color": "#e1f5cd",
+        "base": 0.21,
+        "gain": 0.38,
+        "water": true
+      },
+      "egg": {
+        "x": 49,
+        "y": 16,
+        "w": 20,
+        "h": 20,
+        "layer": "subject"
+      }
+    },
+    "korea": {
+      "name": "韩国 · 韩屋盾风筝",
+      "style": "杏灰韩纸与丹青",
+      "motion": {
+        "kind": "arc",
+        "x": 1044,
+        "y": 298,
+        "radius": 272,
+        "theta": -1.02,
+        "angle": 0.075,
+        "dx": 0.045,
+        "w": 86,
+        "h": 115,
+        "layer": "mid"
+      },
+      "fx": {
+        "x": 1006,
+        "y": 330,
+        "rx": 105,
+        "ry": 21,
+        "dx": 35,
+        "dy": 7,
+        "color": "#ffc378",
+        "base": 0.18,
+        "gain": 0.43,
+        "water": false
+      },
+      "egg": {
+        "x": 60,
+        "y": 14,
+        "w": 19,
+        "h": 19,
+        "layer": "subject"
+      }
+    }
+  }
+}

@@ -2,15 +2,7 @@ import CoreMotion
 import UIKit
 
 public enum ProfileCoverTheme: String {
-    case china, usa, japan
-
-    fileprivate var reveal: (start: CGFloat, end: CGFloat) {
-        switch self {
-        case .china: return (5, 8.9)
-        case .usa: return (5.3, 7.9)
-        case .japan: return (4.5, 6.2)
-        }
-    }
+    case china, usa, japan, germany, canada, korea
 }
 
 public final class ProfileCoverView: UIView {
@@ -21,38 +13,37 @@ public final class ProfileCoverView: UIView {
         didSet { refreshActivity() }
     }
 
-    private static let artSize = CGSize(width: 1230, height: 385)
+    private static let model: CoverModel? = {
+        guard let url = Bundle.main.url(forResource: "CoverModel", withExtension: "json"),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(CoverModel.self, from: data)
+    }()
     private let motion = CMMotionManager()
     private let art: [String: UIImage]
     private var link: CADisplayLink?
     private var lastFrame: CFTimeInterval?
-    private var clock: CGFloat = 0
+    private var egg: CGFloat = 0
     private var tilt: CGPoint = .zero
     private var neutral: CGPoint?
     private var orientation: UIInterfaceOrientation?
     private var hold: CGFloat = 0
-    private var armed = false
     private var shown = false
     private var revealing = false
     private lazy var target = FrameTarget(self)
 
     public init(theme: ProfileCoverTheme) {
         self.theme = theme
-        var names = [theme.rawValue + "-back", theme.rawValue + "-near", theme.rawValue + "-poster"]
-        switch theme {
-        case .china: names.append("boat")
-        case .usa: names.append("train")
-        case .japan: names += ["bell", "paper"]
-        }
+        let roles = ["back", "mid", "near", "subject", "egg", "poster"]
         var images: [String: UIImage] = [:]
-        for name in names {
+        for role in roles {
+            let name = theme.rawValue + "-" + role
             guard let url = Bundle.main.url(forResource: name, withExtension: "png") else { continue }
-            images[name] = UIImage(contentsOfFile: url.path)
+            images[role] = UIImage(contentsOfFile: url.path)
         }
         art = images
         super.init(frame: .zero)
         isOpaque = true
-        backgroundColor = UIColor(red: 0.23, green: 0.27, blue: 0.30, alpha: 1)
+        backgroundColor = UIColor(hex: Self.model?.background ?? "#757f75")
         contentMode = .redraw
         isUserInteractionEnabled = false
         isAccessibilityElement = false
@@ -80,9 +71,9 @@ public final class ProfileCoverView: UIView {
 
     /// Call on each new visit to the profile to make the hidden detail available again.
     public func restartVisit() {
-        clock = 0
+        egg = 0
+        lastFrame = nil
         hold = 0
-        armed = false
         shown = false
         revealing = false
         neutral = nil
@@ -91,7 +82,10 @@ public final class ProfileCoverView: UIView {
     }
 
     @objc private func activityChanged(_ notification: Notification) { refreshActivity() }
-    @objc private func willResignActive(_ notification: Notification) { stop() }
+    @objc private func willResignActive(_ notification: Notification) {
+        stop()
+        setNeedsDisplay()
+    }
 
     private func refreshActivity() {
         guard isPlaying, window != nil, UIApplication.shared.applicationState == .active,
@@ -101,14 +95,14 @@ public final class ProfileCoverView: UIView {
             return
         }
         guard link == nil else { return }
-        if motion.isDeviceMotionAvailable {
-            motion.deviceMotionUpdateInterval = 1.0 / 30.0
-            motion.startDeviceMotionUpdates()
-        }
+        guard motion.isDeviceMotionAvailable else { return }
+        motion.deviceMotionUpdateInterval = 1.0 / 30.0
+        motion.startDeviceMotionUpdates()
         let next = CADisplayLink(target: target, selector: #selector(FrameTarget.tick(_:)))
         next.preferredFramesPerSecond = 30
         next.add(to: .main, forMode: .common)
         link = next
+        setNeedsDisplay()
     }
 
     private func stop() {
@@ -119,177 +113,155 @@ public final class ProfileCoverView: UIView {
         neutral = nil
         tilt = .zero
         hold = 0
+        egg = 0
+        revealing = false
     }
 
     private func update(_ frame: CADisplayLink) {
-        let dt = CGFloat(min(0.09, frame.timestamp - (lastFrame ?? frame.timestamp)))
+        let dt = CGFloat(min(0.05, frame.timestamp - (lastFrame ?? frame.timestamp)))
         lastFrame = frame.timestamp
-        let lastTime = clock
-        clock = (clock + dt).truncatingRemainder(dividingBy: 9)
-        if let gravity = motion.deviceMotion?.gravity {
-            let current = window?.windowScene?.interfaceOrientation ?? .portrait
-            if current != orientation { neutral = nil; orientation = current }
-            let gx = CGFloat(gravity.x), gy = CGFloat(gravity.y)
-            let reading: CGPoint
-            switch current {
-            case .landscapeLeft: reading = CGPoint(x: gy, y: -gx)
-            case .landscapeRight: reading = CGPoint(x: -gy, y: gx)
-            case .portraitUpsideDown: reading = CGPoint(x: -gx, y: -gy)
-            default: reading = CGPoint(x: gx, y: gy)
-            }
-            let zero = neutral ?? reading
-            neutral = zero
-            let x = min(1, max(-1, (reading.x - zero.x) / 0.40))
-            let y = min(1, max(-1, (reading.y - zero.y) / 0.36))
-            tilt.x += (x - tilt.x) * 0.20
-            tilt.y += (y - tilt.y) * 0.20
-            hold = abs(x) >= 0.32 ? hold + dt : 0
-            if hold >= 0.45 && !shown { armed = true }
+        guard let gravity = motion.deviceMotion?.gravity else { return }
+        let current = window?.windowScene?.interfaceOrientation ?? .portrait
+        if current != orientation {
+            neutral = nil
+            orientation = current
         }
-        let cue = theme.reveal
-        if clock < lastTime || clock >= cue.end { revealing = false }
-        if armed && !shown && lastTime < cue.start && clock >= cue.start {
+        let gx = CGFloat(gravity.x), gy = CGFloat(gravity.y)
+        let reading: CGPoint
+        switch current {
+        case .landscapeLeft: reading = CGPoint(x: gy, y: -gx)
+        case .landscapeRight: reading = CGPoint(x: -gy, y: gx)
+        case .portraitUpsideDown: reading = CGPoint(x: -gx, y: -gy)
+        default: reading = CGPoint(x: gx, y: gy)
+        }
+        let zero = neutral ?? reading
+        neutral = zero
+        let x = response((reading.x - zero.x) / 0.40)
+        let y = response((reading.y - zero.y) / 0.36)
+        let strength = hypot(x, y * 0.7)
+        hold = strength >= 0.44 && !shown ? hold + dt : 0
+        if hold >= 0.45 && !shown {
             shown = true
-            armed = false
             revealing = true
         }
+        if strength < 0.20 { revealing = false }
+        func approach(_ value: CGFloat, _ goal: CGFloat) -> CGFloat {
+            if abs(value - goal) < 0.001 { return goal }
+            return value + (goal - value) * (1 - exp(-dt * 15))
+        }
+        let next = CGPoint(x: approach(tilt.x, x), y: approach(tilt.y, y))
+        let detail = approach(egg, revealing ? 1 : 0)
+        guard next != tilt || detail != egg else { return }
+        tilt = next
+        egg = detail
         setNeedsDisplay()
     }
 
+    private func response(_ raw: CGFloat) -> CGFloat {
+        let magnitude = min(abs(raw), 1)
+        guard magnitude > 0.075 else { return 0 }
+        return (raw < 0 ? -1 : 1) * (magnitude - 0.075) / 0.925
+    }
+
     public override func draw(_ rect: CGRect) {
-        guard bounds.width > 0, bounds.height > 0, let ctx = UIGraphicsGetCurrentContext() else { return }
-        backgroundColor?.setFill()
-        ctx.fill(bounds)
-        let size = Self.artSize
-        let fit = max(bounds.width / size.width, bounds.height / size.height)
+        guard !bounds.isEmpty, let ctx = UIGraphicsGetCurrentContext(),
+              let model = Self.model, let design = model.themes[theme.rawValue] else { return }
+        let fit = max(bounds.width / model.width, bounds.height / model.height)
         ctx.saveGState()
         defer { ctx.restoreGState() }
         ctx.clip(to: bounds)
-        ctx.translateBy(x: (bounds.width - size.width * fit) / 2, y: (bounds.height - size.height * fit) / 2)
+        ctx.translateBy(x: bounds.midX - model.width * fit / 2,
+                        y: bounds.midY - model.height * fit / 2)
         ctx.scaleBy(x: fit, y: fit)
-        let canvas = CGRect(origin: .zero, size: size)
-        if link == nil, let poster = art[theme.rawValue + "-poster"] {
-            poster.draw(in: canvas)
+        if link == nil, let poster = art["poster"] {
+            poster.draw(in: CGRect(x: 0, y: 0, width: model.width, height: model.height))
             return
         }
 
-        let t = clock
-        let baseX = tilt.x * 5.65, baseY = tilt.y * 3.1
-        let nearX = tilt.x * (theme == .usa ? 13.0 : 23.1)
-        let nearY = tilt.y * (theme == .usa ? 4.7 : 10.25)
-        let zoom: CGFloat = 1.048
-        func position(_ x: CGFloat, _ y: CGFloat, _ dx: CGFloat, _ dy: CGFloat) -> CGPoint {
-            CGPoint(x: (x - size.width / 2) * zoom + size.width / 2 + dx,
-                    y: (y - size.height / 2) * zoom + size.height / 2 + dy)
+        let x = unitSigned(tilt.x), y = unitSigned(tilt.y)
+        let far = CGPoint(x: 4 * x, y: 2 * y)
+        let mid = CGPoint(x: 9 * x, y: 3 * y)
+        let near = CGPoint(x: 25 * x, y: 7 * y)
+        func plate(_ name: String, _ offset: CGPoint) {
+            art[name]?.draw(in: CGRect(x: offset.x - model.padX, y: offset.y - model.padY,
+                                       width: model.width + model.padX * 2,
+                                       height: model.height + model.padY * 2))
         }
-        func base(_ x: CGFloat, _ y: CGFloat) -> CGPoint { position(x, y, baseX, baseY) }
-        func drawPlate(_ suffix: String, _ dx: CGFloat, _ dy: CGFloat) {
-            let origin = position(0, 0, dx, dy)
-            art[theme.rawValue + suffix]?.draw(in: CGRect(origin: origin,
-                size: CGSize(width: size.width * zoom, height: size.height * zoom)))
-        }
-
-        drawPlate("-back", baseX, baseY)
-        switch theme {
-        case .china:
-            let progress = unit((t - 0.5) / 7.4)
-            let eased = progress * progress * (3 - 2 * progress)
-            let p = base(789 + 436 * (0.67 * progress + 0.33 * eased),
-                         270 + 76 * progress - 18 * sin(.pi * progress))
-            let width = 70 + 57 * progress
-            let amount = fade(t, 0.5, 8.05, 0.4)
-            glow(ctx, center: CGPoint(x: p.x, y: p.y + width * 0.19), rx: width * 0.57, ry: 7,
-                 color: UIColor.black, alpha: amount * 0.25)
-            for index in 0..<3 {
-                let n = CGFloat(index)
-                let tail = CGPoint(x: p.x - width * 0.38 - n * 19, y: p.y + width * 0.22 + n)
-                stroke(ctx, [tail, CGPoint(x: tail.x - 28 - n * 6, y: tail.y + 4 + n)],
-                       color: UIColor(white: 0.91, alpha: 1), width: 1.7, alpha: (0.42 - n * 0.10) * amount)
-            }
-            bitmap("boat", in: ctx, center: p, width: width, height: width * 0.595,
-                   angle: -0.09, mirror: true, alpha: amount)
-            glow(ctx, center: base(1031 + tilt.x * 6, 329), rx: 19, ry: 31,
-                 color: .systemYellow, alpha: 0.10 + tilt.x * 0.04)
-            if revealing {
-                let a = fade(t, 5, 8.9, 0.85)
-                let gold = UIColor(red: 1, green: 0.71, blue: 0.34, alpha: 1)
-                glow(ctx, center: base(468, 147), rx: 38, ry: 28, color: gold, alpha: a * 0.43)
-                let paneColumns: [CGFloat] = [451, 462, 475]
-                let paneRows: [CGFloat] = [139, 152, 165]
-                for x in paneColumns {
-                    for y in paneRows {
-                        stroke(ctx, [base(x, y), base(x, y + 6)], color: gold, width: 3.3, alpha: a * 0.68)
-                    }
-                }
-            }
-        case .usa:
-            let x = -325 + (t / 9) * 1690
-            let height: CGFloat = 615 * 283 / 1164
-            let rail = 216 - 0.063 * (x + 307 - 455)
-            let railCenter = base(x + 307, rail)
-            let p = CGPoint(x: railCenter.x, y: railCenter.y - height * 0.47)
-            let gold = UIColor(red: 1, green: 0.62, blue: 0.25, alpha: 1)
-            glow(ctx, center: base(x + 325, 366), rx: 76, ry: 30, color: gold, alpha: 0.28)
-            bitmap("train", in: ctx, center: p, width: 615, height: height, angle: -0.046) {
-                if self.revealing {
-                    let c = CGPoint(x: -242, y: 7)
-                    let ink = UIColor(red: 0.19, green: 0.14, blue: 0.16, alpha: 1)
-                    ctx.setFillColor(ink.cgColor)
-                    ctx.fillEllipse(in: CGRect(x: c.x - 3.4, y: c.y - 4.0, width: 6.8, height: 6.8))
-                    self.stroke(ctx, [CGPoint(x: c.x, y: c.y + 4), CGPoint(x: c.x, y: c.y + 12)],
-                                color: ink, width: 4.5, alpha: 1)
-                    self.stroke(ctx, [CGPoint(x: c.x + 1, y: c.y + 6),
-                                      CGPoint(x: c.x + 8 + sin(t * 21) * 1.5, y: c.y - 1)],
-                                color: ink, width: 2.8, alpha: 1)
-                }
-            }
-        case .japan:
-            break
+        func drawDetail(_ x: CGFloat, _ y: CGFloat) {
+            guard egg > 0 else { return }
+            let size = design.egg
+            art["egg"]?.draw(in: CGRect(x: x, y: y, width: size.w, height: size.h),
+                             blendMode: .normal, alpha: egg)
         }
 
-        drawPlate("-near", nearX, nearY)
-        if theme == .japan {
-            let phase = t / 9 * 2 * CGFloat.pi
-            let swing = 0.11 + 0.17 * sin(phase * 2) + tilt.x * 0.12
-            let tagSwing = 0.25 + 0.32 * sin(phase * 2 - 0.65) + tilt.x * 0.19
-            let hook = position(987, 48, nearX, nearY)
-            let bellHeight: CGFloat = 63 * 230 / 175
-            func hanging(_ from: CGPoint, _ angle: CGFloat, _ distance: CGFloat) -> CGPoint {
-                CGPoint(x: from.x + sin(angle) * distance, y: from.y + cos(angle) * distance)
-            }
-            bitmap("bell", in: ctx, center: hanging(hook, swing, bellHeight / 2),
-                   width: 63, height: bellHeight, angle: -swing)
-            let knot = hanging(hook, swing, bellHeight * 0.99)
-            let reveal = revealing ? fade(t, 4.5, 6.2, 0.4) : 0
-            let width = 65 * 95 / 181 * (0.85 - 0.50 * reveal)
-            bitmap("paper", in: ctx, center: hanging(knot, tagSwing, 32.5),
-                   width: width, height: 65, angle: -tagSwing) {
-                if reveal >= 0.45 {
-                    let blue = UIColor(red: 0.20, green: 0.35, blue: 0.49, alpha: 1)
-                    self.stroke(ctx, [CGPoint(x: -width * 0.22, y: 5), CGPoint(x: 0, y: 8),
-                                      CGPoint(x: width * 0.22, y: 4)], color: blue, width: 1.25, alpha: 1)
-                    self.stroke(ctx, [CGPoint(x: 0, y: 7), CGPoint(x: -1, y: 0)],
-                                color: blue, width: 1.0, alpha: 1)
-                }
-            }
-            glow(ctx, center: base(965 + 42 * sin(swing * 3), 258), rx: 47, ry: 8,
-                 color: UIColor(red: 0.72, green: 0.92, blue: 0.95, alpha: 1),
-                 alpha: 0.38 * unit((sin(phase * 2) + 0.4) / 1.4))
+        plate("back", far)
+        plate("mid", mid)
+        if design.egg.layer == "mid" {
+            drawDetail(design.egg.x + mid.x, design.egg.y + mid.y)
         }
-    }
+        drawLight(ctx, effect: design.fx, x: x, y: y)
 
-    private func bitmap(_ key: String, in ctx: CGContext, center: CGPoint, width: CGFloat, height: CGFloat,
-                        angle: CGFloat, mirror: Bool = false, alpha: CGFloat = 1, overlay: (() -> Void)? = nil) {
-        guard let image = art[key], alpha > 0 else { return }
+        let motion = design.motion
+        let travel = unitSigned(x + 0.22 * y)
+        let parent: CGPoint = motion.layer == "near" ? near : motion.layer == "mid" ? mid : .zero
+        let anchor = CGPoint(x: motion.x + parent.x, y: motion.y + parent.y)
+        var origin = CGPoint(x: anchor.x - motion.w / 2, y: anchor.y - motion.h)
         ctx.saveGState()
-        ctx.translateBy(x: center.x, y: center.y)
-        ctx.rotate(by: angle)
-        if mirror { ctx.scaleBy(x: -1, y: 1) }
-        image.draw(in: CGRect(x: -width / 2, y: -height / 2, width: width, height: height),
-                   blendMode: .normal, alpha: alpha)
-        overlay?()
+        switch motion.kind {
+        case .slide:
+            origin.x += (motion.dx ?? 0) * travel
+        case .cable:
+            let dx = (motion.dx ?? 0) * travel
+            origin.x += dx
+            origin.y = anchor.y + (motion.slope ?? 0) * dx
+        case .pivot:
+            plate("near", near)
+            ctx.translateBy(x: anchor.x, y: anchor.y)
+            ctx.rotate(by: (motion.angle ?? 0) * travel)
+            origin = CGPoint(x: -motion.w / 2, y: 0)
+        case .arc:
+            let theta = (motion.theta ?? 0) + (motion.dx ?? 0) * travel
+            let radius = motion.radius ?? 0
+            let end = CGPoint(x: anchor.x + radius * sin(theta), y: anchor.y - radius * cos(theta))
+            stroke(ctx, [anchor, end], color: UIColor(hex: "#6c5657"), width: 1.25, alpha: 0.69)
+            ctx.translateBy(x: end.x, y: end.y)
+            ctx.rotate(by: (motion.angle ?? 0) + 0.065 * travel)
+            origin = CGPoint(x: -motion.w / 2, y: -71)
+        }
+        art["subject"]?.draw(in: CGRect(origin: origin, size: CGSize(width: motion.w, height: motion.h)))
+        if design.egg.layer == "subject" {
+            drawDetail(origin.x + design.egg.x, origin.y + design.egg.y)
+        }
         ctx.restoreGState()
+        if motion.kind != .pivot { plate("near", near) }
     }
+
+    private func drawLight(_ ctx: CGContext, effect: CoverDesign.Light, x: CGFloat, y: CGFloat) {
+        let cx = effect.x + effect.dx * x
+        let cy = effect.y + effect.dy * y
+        let strength = min(1, hypot(x, y * 0.67))
+        let color = UIColor(hex: effect.color)
+        glow(ctx, center: CGPoint(x: cx, y: cy), rx: effect.rx, ry: effect.ry,
+             color: color, alpha: effect.base + effect.gain * strength)
+        glow(ctx, center: CGPoint(x: cx + 11 * x, y: cy + 1), rx: effect.rx * 0.57,
+             ry: effect.ry * 0.44, color: color, alpha: 0.12 + 0.24 * strength)
+        guard effect.water else { return }
+        for i in 0..<5 {
+            let n = CGFloat(i)
+            let xx = cx + (i.isMultiple(of: 2) ? x : -x) * (5 + n * 3)
+            let yy = cy - 7 + n * 4
+            let width = effect.rx * (0.15 + n * 0.055)
+            ctx.setStrokeColor(color.withAlphaComponent((0.18 + strength * 0.29) * (1 - n * 0.11)).cgColor)
+            ctx.setLineWidth(1.15)
+            ctx.setLineCap(.round)
+            ctx.beginPath()
+            ctx.move(to: CGPoint(x: xx - width, y: yy))
+            ctx.addQuadCurve(to: CGPoint(x: xx + width, y: yy), control: CGPoint(x: xx, y: yy - 1))
+            ctx.strokePath()
+        }
+    }
+
+    private func unitSigned(_ value: CGFloat) -> CGFloat { min(1, max(-1, value)) }
 
     private func glow(_ ctx: CGContext, center: CGPoint, rx: CGFloat, ry: CGFloat,
                       color: UIColor, alpha: CGFloat) {
@@ -313,13 +285,49 @@ public final class ProfileCoverView: UIView {
     }
 
     private func unit(_ x: CGFloat) -> CGFloat { min(1, max(0, x)) }
-    private func fade(_ t: CGFloat, _ start: CGFloat, _ end: CGFloat, _ ramp: CGFloat) -> CGFloat {
-        unit((t - start) / ramp) * unit((end - t) / ramp)
-    }
-
     private final class FrameTarget: NSObject {
         weak var view: ProfileCoverView?
         init(_ view: ProfileCoverView) { self.view = view }
         @objc func tick(_ frame: CADisplayLink) { view?.update(frame) }
+    }
+}
+
+private struct CoverModel: Decodable {
+    let width, height, padX, padY: CGFloat
+    let background: String
+    let themes: [String: CoverDesign]
+}
+
+private struct CoverDesign: Decodable {
+    struct Motion: Decodable {
+        enum Kind: String, Decodable { case slide, cable, pivot, arc }
+        let kind: Kind
+        let x, y, w, h: CGFloat
+        let dx, slope, angle, radius, theta: CGFloat?
+        let layer: String?
+    }
+
+    struct Light: Decodable {
+        let x, y, rx, ry, dx, dy, base, gain: CGFloat
+        let color: String
+        let water: Bool
+    }
+
+    struct Detail: Decodable {
+        let x, y, w, h: CGFloat
+        let layer: String
+    }
+
+    let motion: Motion
+    let fx: Light
+    let egg: Detail
+}
+
+private extension UIColor {
+    convenience init(hex: String) {
+        let rgb = UInt32(hex.dropFirst(), radix: 16) ?? 0
+        self.init(red: CGFloat((rgb >> 16) & 255) / 255,
+                  green: CGFloat((rgb >> 8) & 255) / 255,
+                  blue: CGFloat(rgb & 255) / 255, alpha: 1)
     }
 }

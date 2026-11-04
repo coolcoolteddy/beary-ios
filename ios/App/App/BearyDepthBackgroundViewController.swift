@@ -2,10 +2,10 @@ import UIKit
 
 // ===== 景深背景选择页（2026-11-03，Li 定流程）=====
 // 入口：本人页点封面带 → 选择框「景深背景」→ 本页；他人页不进。
-// 列表：默认／万圣节／春节／中国归舟／美国夜班车／日本海风候车室。节日行
+// 列表：默认／万圣节／春节／六地封面。节日行
 // 与封面行都用真的视图做实时预览，动画只在行可见时开、滚出视野关（与个人
 // 页 header 同款省电口径）。
-// 拥有口径：Plus 拥有全部非默认款（含三张封面）；非 Plus 行显「Plus 专属」
+// 拥有口径：Plus 拥有全部非默认款（含六张封面）；非 Plus 行显「Plus 专属」
 // 锁定态、预览照常看，点按走个人页同款 Plus 提示、不应用；默认档人人可回；
 // 当前档点按直接关闭。
 // 深色压暗与 header 同值（黑遮罩 0.35，封面行不压）；减动效沿用包内 freeze。
@@ -18,7 +18,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
     private let isPlusValue: Bool
     private let onPickValue: (Theme) -> Bool
 
-    private let themesValue: [Theme] = [.none, .halloween, .spring, .china, .usa, .japan]
+    private let themesValue: [Theme] = [.none, .halloween, .spring, .china, .usa, .japan, .germany, .canada, .korea]
 
     init(currentTheme: Theme, isPlus: Bool, onPick: @escaping (Theme) -> Bool) {
         self.currentThemeValue = currentTheme

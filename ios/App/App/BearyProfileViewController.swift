@@ -725,17 +725,17 @@ class BearyProfileViewController: UIViewController {
     /// 流程（Li 2026-11-03 定）：本人页点封面带弹选择框（图库／景深背景），
     /// 景深背景进 BearyDepthBackgroundViewController 新页选主题；枚举放 internal
     /// 供新页共用同一主题口径。
-    /// 中美日三张封面（2026-11-04 Li 定放同一选择页）与节日款同页、同 Plus
+    /// 六地封面（2026-11-04 Li 定放同一选择页）与节日款同页、同 Plus
     /// 门控：封面款走 ProfileCoverView（陀螺仪分层视差），不走节日款的
     /// BearyFestivalWallpaperView、不压深色遮罩。
     enum FestivalTheme: String {
-        case none, halloween, spring, china, usa, japan
+        case none, halloween, spring, china, usa, japan, germany, canada, korea
         var wallpaperTheme: BearyFestivalWallpaperView.Theme? {
             switch self {
             case .none: return nil
             case .halloween: return .halloween
             case .spring: return .spring
-            case .china, .usa, .japan: return nil
+            case .china, .usa, .japan, .germany, .canada, .korea: return nil
             }
         }
         var coverTheme: ProfileCoverTheme? {
@@ -743,6 +743,9 @@ class BearyProfileViewController: UIViewController {
             case .china: return .china
             case .usa: return .usa
             case .japan: return .japan
+            case .germany: return .germany
+            case .canada: return .canada
+            case .korea: return .korea
             case .none, .halloween, .spring: return nil
             }
         }
@@ -754,6 +757,9 @@ class BearyProfileViewController: UIViewController {
             case .china: return "中国 · 归舟"
             case .usa: return "美国 · 夜班车"
             case .japan: return "日本 · 海风候车室"
+            case .germany: return "德国 · 莱茵缆车"
+            case .canada: return "加拿大 · 冰湖水上飞机"
+            case .korea: return "韩国 · 韩屋盾风筝"
             }
         }
     }
@@ -2159,7 +2165,7 @@ class BearyProfileViewController: UIViewController {
         // 景深背景：回页时按当前带子位置重算动画开关。
         updateFestivalWallpaperVisibility()
         updateProfileCoverVisibility()
-        // 封面（中美日）：每次进页重置彩蛋可见态（组件说明：每次打开新主页调用 restartVisit）。
+        // 封面（六地）：每次进页重置彩蛋可见态（组件说明：每次打开新主页调用 restartVisit）。
         if festivalTheme.coverTheme != nil {
             profileCoverView?.restartVisit()
         }
