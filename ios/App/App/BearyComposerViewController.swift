@@ -4231,7 +4231,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 状态行（编辑倒计时 + 草稿状态；字数圆环已移入工具栏右端）
 
     private func buildStatusRow() {
-        editTimerLabel.font = UIFont.boldSystemFont(ofSize: 12)
+        editTimerLabel.font = BearyDynamicType.numberFont()
         editTimerLabel.textColor = BearyColors.gray
         editTimerLabel.isHidden = true
         draftStatusLabel.font = UIFont.systemFont(ofSize: 12.5)

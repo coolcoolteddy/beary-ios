@@ -942,7 +942,7 @@ final class BearyDraftBoxViewController: UIViewController {
         // "[mood:happy]" 这类记号原串全算进去，与圆环对不上，故此处不用它；
         // 去组词串一节已由落盘 committedContent 保证，不在此重复。
         wordLabel.text = "\(BearyText.inlineVisibleCount(of: draftValue.content)) 字"
-        wordLabel.font = UIFont.systemFont(ofSize: 12)
+        wordLabel.font = BearyDynamicType.numberFont()
         wordLabel.textColor = BearyColors.gray
         wordLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 流式子项用手动 frame（见 BearyDraftMetaFlowView），不参与 Auto Layout。

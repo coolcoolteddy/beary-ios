@@ -188,7 +188,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         inputBar.addSubview(sendButton)
         // 审计：接近 2000 字实时计数（仅 ≥1800 字出现）与“新消息”pill。
         countLabel.translatesAutoresizingMaskIntoConstraints = false
-        countLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
+        countLabel.font = BearyDynamicType.numberFont()
         countLabel.adjustsFontForContentSizeCategory = true
         countLabel.textColor = BearyColors.gray
         countLabel.isHidden = true

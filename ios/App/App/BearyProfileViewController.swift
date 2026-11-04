@@ -3957,7 +3957,7 @@ class BearyProfileViewController: UIViewController {
             let imageViewValue = BearyEmoteView(key: key, animated: true)
             imageViewValue.translatesAutoresizingMaskIntoConstraints = false
             let countLabel = UILabel()
-            countLabel.font = UIFont.systemFont(ofSize: 12)
+            countLabel.font = BearyDynamicType.numberFont()
             countLabel.textColor = BearyColors.gray
             countLabel.text = "×\(item.count ?? 0)"
             chip.addArrangedSubview(imageViewValue)

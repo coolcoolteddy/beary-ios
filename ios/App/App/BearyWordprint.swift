@@ -220,7 +220,7 @@ final class BearyWordprintView: UIView {
         }
         let countLabel = UILabel()
         countLabel.translatesAutoresizingMaskIntoConstraints = false
-        countLabel.font = UIFont.systemFont(ofSize: 12)
+        countLabel.font = BearyDynamicType.numberFont()
         countLabel.textColor = BearyColors.gray
         countLabel.text = "\(item.docCount) 篇 · \(item.totalCount) 次"
         let wordRow = UIStackView(arrangedSubviews: [wordLabel, UIView(), countLabel])
@@ -413,7 +413,7 @@ final class BearyWordprintDetailViewController: UIViewController {
             }
             barBackground.heightAnchor.constraint(equalToConstant: 8).isActive = true
             let countLabel = UILabel()
-            countLabel.font = UIFont.systemFont(ofSize: 13)
+            countLabel.font = BearyDynamicType.numberFont()
             countLabel.textColor = BearyColors.gray
             countLabel.text = "\(monthCount) 篇"
             row.addArrangedSubview(monthLabel)

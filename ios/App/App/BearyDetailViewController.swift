@@ -1868,7 +1868,7 @@ final class BearyDetailViewController: UIViewController {
             likeButtonWidthConstraint?.constant = imageWidth
         } else {
             let titleText = "\(likeCount)"
-            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))]).width)
             likeButton.setTitle(titleText, for: .normal)
             likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
         }

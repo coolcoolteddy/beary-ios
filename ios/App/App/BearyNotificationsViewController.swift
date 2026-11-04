@@ -1212,8 +1212,8 @@ final class BearyNotificationsViewController: UIViewController {
         return "\(item.id ?? -1):\(item.read ?? false):\(item.type ?? ""):\(item.title ?? ""):\(item.excerpt ?? ""):\(item.actorName ?? ""):\(item.emote ?? ""):\(item.entryId ?? ""):\(item.createdAt ?? 0)"
     }
 
-    /// 逐行错峰入场（网页 staggerIn 口径）：slideDown .42s、步进 40ms、
-    /// 总延迟封顶 240ms、仅可视区前 24 行、减动效不播。
+    /// 逐行错峰入场（网页 staggerIn 口径）：slideDown 0.25s、步进 0.03、
+    /// 总延迟封顶 0.24、仅可视区前 24 行、减动效不播。
     private func playStaggeredEntrance(oldSignatures: Set<String>) {
         if UIAccessibility.isReduceMotionEnabled {
             return

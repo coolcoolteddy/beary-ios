@@ -254,7 +254,7 @@ final class BearyEmoteChipView: UIView {
     /// 才换播放器；不重建容器与约束。
     func render(key: String, count: Int, mine: Bool) {
         mineFlag = mine
-        countLabel.font = UIFont.systemFont(ofSize: 12, weight: mine ? .bold : .regular)
+        countLabel.font = BearyDynamicType.numberFont()
         countLabel.textColor = mine ? BearyColors.ink : BearyColors.gray
         countLabel.text = "\(count)"
         if let current = emotePlayer, current.emoteKey == key {
@@ -2772,7 +2772,7 @@ class BearyDiaryCardCell: UITableViewCell {
             likeButtonWidthConstraint?.constant = imageWidth
         } else {
             let titleText = "\(countValue)"
-            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))]).width)
             likeButton.setTitle(titleText, for: .normal)
             likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
         }
@@ -2802,7 +2802,7 @@ class BearyDiaryCardCell: UITableViewCell {
             likeButtonWidthConstraint?.constant = imageWidth
         } else {
             let titleText = "\(count)"
-            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))]).width)
             likeButton.setTitle(titleText, for: .normal)
             likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
         }
