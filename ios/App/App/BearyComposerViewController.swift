@@ -1945,6 +1945,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if presentedViewController != nil || isRecipientPickerPresenting { return }
         isRecipientPickerPresenting = true
         let picker = BearyRecipientPickerViewController()
+        // 键盘已弹起时打开选人器：编辑器键盘高传给选人器做初始抬升——此时切
+        // first responder 不发 WillShow，不传则搜索框会被键盘盖住（见选人器
+        // applyInitialKeyboardLiftIfNeeded）；键盘没起时传 0，走正常通知路径。
+        picker.initialKeyboardHeight = currentKeyboardHeight
         picker.notifyRecipient = self.notifyRecipient
         picker.onPick = { [weak self] user, notify in
             guard let self = self else { return }
