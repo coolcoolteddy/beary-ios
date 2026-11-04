@@ -1391,12 +1391,15 @@ enum BearyText {
         }
         return out
     }
-    /// 记号 → 附件：字号跟随传入字体（标题 17 粗体 / 正文 16），基线按 descender 对齐。
+    /// 记号 → 附件：尺寸为传入字号的 1.2 倍（正文 16pt 时为 19.2pt），
+    /// 基线按 descender 对齐；1.2 倍是行高不被撑高的上限（系统字体
+    /// ascent+descent 约为字号的 1.196 倍，再大就会把有表情的行顶高、行距不匀）。
     static func inlineAttachment(for key: String, font: UIFont, dark: Bool) -> NSAttributedString? {
         guard bearMoodKeys.contains(key), let image = BearyEmoteImages.image(for: key, dark: dark) else { return nil }
         let attachment = NSTextAttachment()
         attachment.image = image
-        attachment.bounds = CGRect(x: 0, y: font.descender, width: font.pointSize, height: font.pointSize)
+        let emoteSize = font.pointSize * 1.2
+        attachment.bounds = CGRect(x: 0, y: font.descender, width: emoteSize, height: emoteSize)
         attachment.accessibilityLabel = moodNames[key]
         let result = NSMutableAttributedString(attachment: attachment)
         result.addAttribute(inlineMoodKeyAttribute, value: key, range: NSRange(location: 0, length: 1))

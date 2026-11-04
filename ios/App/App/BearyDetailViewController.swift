@@ -1240,7 +1240,8 @@ final class BearyDetailViewController: UIViewController {
               let image = BearyEmoteImages.image(for: key, dark: traitCollection.userInterfaceStyle == .dark) else { return base }
         let attachment = NSTextAttachment()
         attachment.image = image
-        attachment.bounds = CGRect(x: 0, y: font.descender, width: font.pointSize, height: font.pointSize)
+        let emoteSize = font.pointSize * 1.2
+        attachment.bounds = CGRect(x: 0, y: font.descender, width: emoteSize, height: emoteSize)
         let result = NSMutableAttributedString(attributedString: base)
         result.append(NSAttributedString(attachment: attachment))
         return result
