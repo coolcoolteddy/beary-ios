@@ -145,3 +145,87 @@ enum BearyLocationIcon {
         return BearyIconImages.image(named: "icon_location", pointSize: pointSize)
     }
 }
+
+// MARK: - 天气 GPS 一次定位（2026-11-04）
+
+/// 一次定位结果：只给调用方经纬度数值，不暴露 CLLocation 类型；
+/// denied = 用户拒绝/受限（不再弹系统框）；unavailable = 定位失败/超时。
+enum BearyOneShotLocationResult {
+    case coordinate(latitude: Double, longitude: Double)
+    case denied
+    case unavailable
+}
+
+/// 天气钮专用一次定位：复用地点气泡同款权限流程（未决定→请求授权，已允许→
+/// requestLocation，拒绝/受限→直接回落），不持续定位、不缓存坐标、不碰日记。
+/// 完成回调恰好一次：成功、拒绝、失败、超时（10 秒）任一先到即结算；实例靠静态表
+/// 自持到结算，调用方无需持有。
+final class BearyOneShotLocation: NSObject, CLLocationManagerDelegate {
+    private static var active = [BearyOneShotLocation]()
+    private static let timeout: TimeInterval = 10
+
+    private let manager = CLLocationManager()
+    private var completion: ((BearyOneShotLocationResult) -> Void)?
+    private var finished = false
+
+    static func request(completion: @escaping (BearyOneShotLocationResult) -> Void) {
+        let req = BearyOneShotLocation(completion: completion)
+        active.append(req)
+        req.start()
+    }
+
+    private init(completion: @escaping (BearyOneShotLocationResult) -> Void) {
+        self.completion = completion
+        super.init()
+    }
+
+    private func start() {
+        manager.delegate = self
+        switch CLLocationManager.authorizationStatus() {
+        case .notDetermined:
+            manager.requestWhenInUseAuthorization()
+        case .authorizedWhenInUse, .authorizedAlways:
+            manager.requestLocation()
+        case .denied, .restricted:
+            finish(with: .denied)
+        @unknown default:
+            finish(with: .unavailable)
+        }
+        // 兜底：授权框久不答复、或定位回调迟迟不到时，10 秒后按失败结算，
+        // 调用方走 IP 回落，不无限等。
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.timeout) { [weak self] in
+            self?.finish(with: .unavailable)
+        }
+    }
+
+    private func finish(with result: BearyOneShotLocationResult) {
+        guard !finished else { return }
+        finished = true
+        manager.delegate = nil
+        manager.stopUpdatingLocation()
+        Self.active.removeAll { $0 === self }
+        completion?(result)
+        completion = nil
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        guard !finished else { return }
+        switch manager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            manager.requestLocation()
+        case .denied, .restricted:
+            finish(with: .denied)
+        default:
+            break
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard !finished, let coord = locations.last?.coordinate else { return }
+        finish(with: .coordinate(latitude: coord.latitude, longitude: coord.longitude))
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        finish(with: .unavailable)
+    }
+}
