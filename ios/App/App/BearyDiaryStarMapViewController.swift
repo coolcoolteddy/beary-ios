@@ -166,6 +166,32 @@ final class BearyDiaryStarMapViewController: UIViewController {
             }
         }
         buildLayout()
+        // push 路悬浮返回钮：push 进他人主页 modal 导航栈那路，该栈隐藏
+        // 了系统导航栏，既无系统返回钮、也无自定义顶栏，只有边缘手势；
+        // 补一个左上角悬浮左箭头钮（夜空深底，图标用夜空主文字浅色，不加
+        // 底圈），点按 pop 回上一页。根页路（新起导航栈）走上方
+        // navigationItem，不进本分支。
+        if navigationController?.viewControllers.count ?? 0 > 1 {
+            let pushedBackButton = BearyHit44Button(type: .system)
+            pushedBackButton.translatesAutoresizingMaskIntoConstraints = false
+            if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 18) {
+                pushedBackButton.setImage(backImage, for: .normal)
+            } else {
+                pushedBackButton.setTitle("返回", for: .normal)
+                pushedBackButton.setTitleColor(BearyStarMapNight.primaryText, for: .normal)
+            }
+            pushedBackButton.tintColor = BearyStarMapNight.primaryText
+            pushedBackButton.accessibilityLabel = "返回"
+            pushedBackButton.addTarget(self, action: #selector(didTapPushedBack), for: .touchUpInside)
+            pushedBackButton.bearyAddPressFeedback()
+            view.addSubview(pushedBackButton)
+            NSLayoutConstraint.activate([
+                pushedBackButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+                pushedBackButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                pushedBackButton.widthAnchor.constraint(equalToConstant: 44),
+                pushedBackButton.heightAnchor.constraint(equalToConstant: 44),
+            ])
+        }
         skyView.onStarTap = { [weak self] entry in self?.didTapStar(entry) }
         skyView.onOverlapTap = { [weak self] entries in self?.showOverlapSheet(entries) }
         skyView.onEdgeTap = { [weak self] edge in self?.didTapEdge(edge) }
@@ -206,6 +232,11 @@ final class BearyDiaryStarMapViewController: UIViewController {
     @objc private func didTapClose() {
         // 审计登录杂项：关闭走减动效口径，不再写死 animated:true。
         dismiss(animated: BearyMotion.animated(true))
+    }
+
+    /// push 路悬浮返回钮：pop 回上一页（仅 push 栈内有效，根页路不走这里）。
+    @objc private func didTapPushedBack() {
+        navigationController?.popViewController(animated: BearyMotion.animated(true))
     }
 
     @objc private func didTapRetry() {
