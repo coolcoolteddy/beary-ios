@@ -1939,6 +1939,10 @@ class BearyProfileViewController: UIViewController {
     private lazy var stickyHeaderBlurWidthConstraint: NSLayoutConstraint = stickyHeaderBlurImageView.widthAnchor.constraint(equalToConstant: 0)
     /// 预模糊图对应的源图（identity 比对：源图变了才重算，不逐帧现算）。
     private var stickyHeaderBlurSourceImage: UIImage?
+    /// 景深封面吸顶跟踪图缓存：海报图按主题缓存一次，滚动回调不再读盘；
+    /// 主题变了才重载（与静态图同引用比对口径，见 syncStickyHeaderCover）。
+    private var stickyHeaderDepthPosterImage: UIImage?
+    private var stickyHeaderDepthPosterTheme: String?
     /// 模糊起止的锚点（见 updateProfileCoverScroll 内注释）：头像被 header 盖住
     /// 75% 时起糊，盖满后再上滑 100pt 到满糊；只读当前帧几何算，不存跨帧起点，
     /// 程序化跳位、回顶、转屏都不会卡在旧进度。
@@ -2347,7 +2351,27 @@ class BearyProfileViewController: UIViewController {
     /// 再按遮挡进度交叉淡入，背景即逐渐变成 header。无封面照片时仍无图、
     /// 容器即主题底色（默认背景本来就是底色，无图可跟）。
     private func syncStickyHeaderCover() {
-        if let coverImage = coverImageView.image, !coverImageView.isHidden {
+        if festivalTheme.coverTheme != nil {
+            // 景深封面白块根因：景深款走 ProfileCoverView（活的分层视图），静态
+            // 封面视图被隐藏，跟踪图本来无图可跟，吸顶条只剩主题底色（浅色纯白），
+            // 上滑 0→24pt 渐显即一块白条——正是 10-29／11-02 已否掉的“单独一块”。
+            // 改用同款海报图（与景深封面同 artwork 的静态版）作跟踪图，走同一套
+            // 1:1 跟随＋锁定几何，吸顶条即封面本身的底片，不再是单独一块底色；
+            // 海报缺失时退回现行隐藏（不凭空造图）。
+            if stickyHeaderDepthPosterTheme != festivalTheme.rawValue {
+                stickyHeaderDepthPosterTheme = festivalTheme.rawValue
+                stickyHeaderDepthPosterImage = loadStickyHeaderDepthPoster(themeRaw: festivalTheme.rawValue)
+            }
+            if let poster = stickyHeaderDepthPosterImage {
+                if stickyHeaderBgImageView.image !== poster {
+                    stickyHeaderBgImageView.image = poster
+                }
+                stickyHeaderBgImageView.isHidden = false
+            } else {
+                stickyHeaderBgImageView.isHidden = true
+                stickyHeaderBgImageView.image = nil
+            }
+        } else if let coverImage = coverImageView.image, !coverImageView.isHidden {
             if stickyHeaderBgImageView.image !== coverImage {
                 stickyHeaderBgImageView.image = coverImage
             }
@@ -2359,6 +2383,14 @@ class BearyProfileViewController: UIViewController {
         stickyWordmarkView.isHidden = true
         updateStickyHeaderNameColor()
         refreshStickyHeaderBlurImage()
+    }
+
+    /// 景深封面吸顶跟踪图取图：与封面款资源探针同口径（<主题>-poster.png），
+    /// 仅主题切换时调一次（见 syncStickyHeaderCover 的缓存守卫），滚动回调不读盘。
+    private func loadStickyHeaderDepthPoster(themeRaw: String) -> UIImage? {
+        guard let url = Bundle.main.url(forResource: themeRaw + "-poster", withExtension: "png"),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return UIImage(data: data)
     }
 
     /// 视觉清单第 6 项：吸顶用户名固定 ink 字（动态色，跟随主题底色），
