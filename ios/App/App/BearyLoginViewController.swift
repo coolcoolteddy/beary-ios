@@ -151,9 +151,11 @@ final class BearyLoginViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         guard sheetMode else { return }
-        // Sheet 高跟内容走：栈高 + 上下内边距（16/24）+ 安全区底（Home 条）；
+        // Sheet 高跟内容走：栈高 + 上下内边距（12/12）+ 安全区底（Home 条）；
         // 邀请展开/收起、字号档位变化时重算，presentation 控制器跟帧走。
-        let height = stackView.bounds.height + 16 + 24 + view.safeAreaInsets.bottom
+        // 2026-11-04 收矮：上下内边距 16/24 → 12/12，空提示行不占位（见 showMessage），
+        // 只收空气、不动字段与按钮尺寸。
+        let height = stackView.bounds.height + 12 + 12 + view.safeAreaInsets.bottom
         guard height > 0, abs(height - lastSheetPreferredHeight) > 0.5 else { return }
         lastSheetPreferredHeight = height
         preferredContentSize = CGSize(width: 0, height: height)
@@ -315,6 +317,8 @@ final class BearyLoginViewController: UIViewController {
         messageLabel.adjustsFontForContentSizeCategory = true
         messageLabel.textColor = Self.loginErrorRed
         messageLabel.numberOfLines = 0
+        // 2026-11-04 收矮：无文案时整行隐藏、不占 18pt + 8pt 间距；有文案时由 showMessage 恢复显示。
+        messageLabel.isHidden = true
 
         loginButton.translatesAutoresizingMaskIntoConstraints = false
         // Sheet 弹窗：品牌橙登录钮（全弹窗唯一重色），前景走 onBrand 恒墨（见 setLoginTitle）；
@@ -397,26 +401,26 @@ final class BearyLoginViewController: UIViewController {
             inviteLabel.isHidden = true
             inviteContainer.isHidden = true
         }
-        stackView.setCustomSpacing(18, after: closeRow)
+        stackView.setCustomSpacing(12, after: closeRow)
         if sheetMode {
             stackView.setCustomSpacing(12, after: logoRow)
-            stackView.setCustomSpacing(20, after: welcomeTitleLabel)
+            stackView.setCustomSpacing(14, after: welcomeTitleLabel)
         } else {
             stackView.setCustomSpacing(5, after: logoRow)
             stackView.setCustomSpacing(20, after: subtitleLabel)
         }
         stackView.setCustomSpacing(7, after: emailLabel)
-        stackView.setCustomSpacing(14, after: emailContainer)
+        stackView.setCustomSpacing(10, after: emailContainer)
         stackView.setCustomSpacing(7, after: codeLabel)
-        stackView.setCustomSpacing(14, after: codeRow)
+        stackView.setCustomSpacing(10, after: codeRow)
         if sheetMode {
             stackView.setCustomSpacing(7, after: inviteDisclosureRow)
         }
         stackView.setCustomSpacing(7, after: inviteLabel)
         stackView.setCustomSpacing(8, after: inviteContainer)
         stackView.setCustomSpacing(8, after: messageLabel)
-        stackView.setCustomSpacing(12, after: agreeRow)
-        stackView.setCustomSpacing(12, after: loginButton)
+        stackView.setCustomSpacing(10, after: agreeRow)
+        stackView.setCustomSpacing(10, after: loginButton)
         stackView.setCustomSpacing(8, after: guestButton)
 
         // Sheet 弹窗：logo 居中（全屏页左对齐）；宽高比约束与原值一致。
@@ -433,8 +437,8 @@ final class BearyLoginViewController: UIViewController {
             contentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
             contentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
             contentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
-            stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
-            stackView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -24),
+            stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+            stackView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -12),
             stackView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 22),
             stackView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -22),
             stackView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
@@ -724,6 +728,7 @@ final class BearyLoginViewController: UIViewController {
 
     private func showMessage(_ text: String, ok: Bool = false) {
         messageLabel.text = text
+        messageLabel.isHidden = text.isEmpty
         messageLabel.textColor = ok ? BearyColors.deepGreenText : Self.loginErrorRed
         // 审计登录杂项：输入容器已实现 isError 红边，行内失败时同步点亮、
         // 成功 / 清空时复位（此前只写行内红字，从未设置 isError）。
