@@ -33,7 +33,7 @@
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>beary 需要访问相册，以便为日记添加图片。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>beary 需要使用位置，以便为日记添加地点（只保存地点文字，不保存经纬度）。</string>
+	<string>beary 需要使用位置，以便为日记添加地点和填写天气（地点只保存文字，不保存经纬度）。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
