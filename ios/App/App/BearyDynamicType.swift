@@ -57,6 +57,10 @@ enum BearyDynamicType {
 //   Composer results、Detail 辅助行现行写法）。
 // - buttonFont / buttonCompactFont：与 BearyButton.titleFont 现行值逐字一致
 //   （常规 16 semibold scaled 不封顶、紧凑 14 semibold scaled 不封顶）。
+// 小号与展示字已于 2026-11-04 定版（见 smallActionFont / smallBodyFont /
+//   buttonRegularFont / buttonSmallFont / heroNameFont / avatarInitialFont /
+//   smallSemiboldFont），
+//   均为 scaled；设置页 12 处迁入。
 // 数值角色已于 2026-11-04 定版（12 semibold scaled，见 numberFont），
 // 此前混用的 11 regular / 12 bold / 13 semibold 按页分批迁入本入口。
 // diaryBodyFont（正文）与 cardTitleFont（卡片标题）本身已是按角色命名，
@@ -90,5 +94,40 @@ extension BearyDynamicType {
     /// 语义：数值（行内计数）。定版值：12 semibold，scaled（规范第 11 节）。
     static func numberFont() -> UIFont {
         scaledFont(for: UIFont.systemFont(ofSize: 12, weight: .semibold))
+    }
+
+    /// 语义：小号粗体操作（登录钮、复制钮、账号行头像字）。定版值：15 bold，scaled（规范第 11 节，2026-11-04 Li 定）。
+    static func smallActionFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .bold))
+    }
+
+    /// 语义：小号常规（分段器、清除钮、按钮）。定版值：15 regular，scaled（规范第 11 节，2026-11-04 Li 定）。
+    static func smallBodyFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 15))
+    }
+
+    /// 语义：常规字重按钮（编辑资料钮，与紧凑款半粗区分）。定版值：14 regular，scaled（规范第 11 节，2026-11-04 Li 定）。
+    static func buttonRegularFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 14))
+    }
+
+    /// 语义：小号半粗按钮（退出其他设备钮）。定版值：13 semibold，scaled（规范第 11 节，2026-11-04 Li 定）。
+    static func buttonSmallFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+    }
+
+    /// 语义：个人页姓名展示字。定版值：24 heavy，scaled（规范第 11 节，2026-11-04 Li 定）。
+    static func heroNameFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 24, weight: .heavy))
+    }
+
+    /// 语义：头像首字展示字。定版值：28 bold，scaled（规范第 11 节，2026-11-04 Li 定）。
+    static func avatarInitialFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 28, weight: .bold))
+    }
+
+    /// 语义：分段器选中态。定版值：15 semibold，scaled（规范第 11 节，2026-11-04 Li 补定）。
+    static func smallSemiboldFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
     }
 }

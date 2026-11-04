@@ -807,7 +807,8 @@ final class BearySettingsViewController: UIViewController {
         loginHintLabel.text = "请先登录"
         loginButton.setTitle("去登录", for: .normal)
         loginButton.setTitleColor(BearyColors.ink, for: .normal)
-        loginButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .bold)
+        loginButton.titleLabel?.font = BearyDynamicType.smallActionFont()
+        loginButton.titleLabel?.adjustsFontForContentSizeCategory = true
         loginButton.addTarget(self, action: #selector(loginButtonTapped), for: .touchUpInside)
         loginButton.bearyAddPressFeedback()
         loginWrap.translatesAutoresizingMaskIntoConstraints = false
@@ -886,7 +887,8 @@ final class BearySettingsViewController: UIViewController {
         avatarImageView.contentMode = .scaleAspectFill
         avatarImageView.clipsToBounds = true
         avatarInitialLabel.translatesAutoresizingMaskIntoConstraints = false
-        avatarInitialLabel.font = UIFont.systemFont(ofSize: 28, weight: .bold)
+        avatarInitialLabel.font = BearyDynamicType.avatarInitialFont()
+        avatarInitialLabel.adjustsFontForContentSizeCategory = true
         avatarInitialLabel.textColor = BearyColors.ink
         avatarInitialLabel.textAlignment = .center
         avatarContainer.addSubview(avatarImageView)
@@ -901,7 +903,8 @@ final class BearySettingsViewController: UIViewController {
             avatarInitialLabel.centerXAnchor.constraint(equalTo: avatarContainer.centerXAnchor),
             avatarInitialLabel.centerYAnchor.constraint(equalTo: avatarContainer.centerYAnchor),
         ])
-        heroNameLabel.font = UIFont.systemFont(ofSize: 24, weight: .heavy)
+        heroNameLabel.font = BearyDynamicType.heroNameFont()
+        heroNameLabel.adjustsFontForContentSizeCategory = true
         heroNameLabel.textColor = BearyColors.ink
         heroNameLabel.numberOfLines = 0
         heroNameLabel.lineBreakMode = .byCharWrapping
@@ -919,7 +922,8 @@ final class BearySettingsViewController: UIViewController {
         editProfileButton.translatesAutoresizingMaskIntoConstraints = false
         editProfileButton.setTitle("编辑资料", for: .normal)
         editProfileButton.setTitleColor(BearyColors.ink, for: .normal)
-        editProfileButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        editProfileButton.titleLabel?.font = BearyDynamicType.buttonRegularFont()
+        editProfileButton.titleLabel?.adjustsFontForContentSizeCategory = true
         editProfileButton.setContentHuggingPriority(.required, for: .horizontal)
         editProfileButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         editProfileButton.addTarget(self, action: #selector(editProfileButtonTapped), for: .touchUpInside)
@@ -1073,7 +1077,8 @@ final class BearySettingsViewController: UIViewController {
         logoutOthersButton.setTitle("退出其他设备", for: .normal)
         logoutOthersButton.setTitleColor(BearyColors.red, for: .normal)
         // F10：网页 .btn.danger 口径——36 高、13/600、红字红边（红 45% 透明边）。
-        logoutOthersButton.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        logoutOthersButton.titleLabel?.font = BearyDynamicType.buttonSmallFont()
+        logoutOthersButton.titleLabel?.adjustsFontForContentSizeCategory = true
         logoutOthersButton.layer.borderWidth = 1
         logoutOthersButton.layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.red, 0.45)
         logoutOthersButton.layer.cornerRadius = 12
@@ -1294,7 +1299,8 @@ final class BearySettingsViewController: UIViewController {
         avatarImageView.clipsToBounds = true
         let avatarInitialLabel = UILabel()
         avatarInitialLabel.translatesAutoresizingMaskIntoConstraints = false
-        avatarInitialLabel.font = UIFont.systemFont(ofSize: 15, weight: .bold)
+        avatarInitialLabel.font = BearyDynamicType.smallActionFont()
+        avatarInitialLabel.adjustsFontForContentSizeCategory = true
         avatarInitialLabel.textColor = BearyColors.ink
         avatarInitialLabel.textAlignment = .center
         avatarInitialLabel.text = String(model.title.prefix(1))
@@ -1565,7 +1571,8 @@ final class BearySettingsViewController: UIViewController {
         deleteRowButton.translatesAutoresizingMaskIntoConstraints = false
         deleteRowButton.setTitle("注销账户", for: .normal)
         deleteRowButton.setTitleColor(BearyColors.gray, for: .normal)
-        deleteRowButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        deleteRowButton.titleLabel?.font = BearyDynamicType.secondaryFont()
+        deleteRowButton.titleLabel?.adjustsFontForContentSizeCategory = true
         deleteRowButton.addTarget(self, action: #selector(deleteButtonTapped), for: .touchUpInside)
         deleteRowButton.bearyAddPressHaptic()
         let logoutRow = UIView()
@@ -2704,9 +2711,9 @@ final class BearySettingsViewController: UIViewController {
         let themeSegmented = UISegmentedControl(items: modes.map { $0.title })
         themeSegmented.translatesAutoresizingMaskIntoConstraints = false
         themeSegmented.selectedSegmentIndex = modes.firstIndex(where: { $0.value == current }) ?? 0
-        themeSegmented.setTitleTextAttributes([.font: UIFont.systemFont(ofSize: 15)], for: .normal)
+        themeSegmented.setTitleTextAttributes([.font: BearyDynamicType.smallBodyFont()], for: .normal)
         // 三色制：选中段走墨底 + 反色字（2026-10-28 定版：墨=行动/选中，橙底已改回墨；反色字取 bg，浅白深黑，与 ink 互为反色，深浅两态都可读）。
-        themeSegmented.setTitleTextAttributes([.font: UIFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: BearyColors.bg], for: .selected)
+        themeSegmented.setTitleTextAttributes([.font: BearyDynamicType.smallSemiboldFont(), .foregroundColor: BearyColors.bg], for: .selected)
         themeSegmented.selectedSegmentTintColor = BearyColors.ink
         themeSegmented.addTarget(self, action: #selector(themeSegmentChanged(_:)), for: .valueChanged)
         var rows: [UIView] = [themeSegmented]
@@ -3940,13 +3947,15 @@ private final class BearyDiagnosticsViewController: UIViewController {
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         copyButton.setTitle("复制全部", for: .normal)
         copyButton.setTitleColor(BearyColors.ink, for: .normal)
-        copyButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .bold)
+        copyButton.titleLabel?.font = BearyDynamicType.smallActionFont()
+        copyButton.titleLabel?.adjustsFontForContentSizeCategory = true
         copyButton.addTarget(self, action: #selector(copyTapped), for: .touchUpInside)
         copyButton.bearyAddPressFeedback()
         clearButton.translatesAutoresizingMaskIntoConstraints = false
         clearButton.setTitle("清空", for: .normal)
         clearButton.setTitleColor(BearyColors.red, for: .normal)
-        clearButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        clearButton.titleLabel?.font = BearyDynamicType.smallBodyFont()
+        clearButton.titleLabel?.adjustsFontForContentSizeCategory = true
         clearButton.addTarget(self, action: #selector(clearTapped), for: .touchUpInside)
         clearButton.bearyAddPressFeedback()
         let actionRow = UIStackView(arrangedSubviews: [copyButton, clearButton])
@@ -4286,7 +4295,8 @@ private final class BearyBlockedUserCell: UITableViewCell {
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setTitle("解除拉黑", for: .normal)
         button.setTitleColor(BearyColors.ink, for: .normal)
-        button.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        button.titleLabel?.font = BearyDynamicType.smallBodyFont()
+        button.titleLabel?.adjustsFontForContentSizeCategory = true
         button.addTarget(self, action: #selector(unblockTapped), for: .touchUpInside)
         button.bearyAddPressFeedback()
         return button
