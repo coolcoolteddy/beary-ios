@@ -1,7 +1,8 @@
 import CoreMotion
+import ImageIO
 import UIKit
 
-public enum ProfileCoverTheme: String {
+public enum ProfileCoverTheme: String, CaseIterable {
     case china, usa, japan, germany, canada, korea
 }
 
@@ -14,12 +15,10 @@ public final class ProfileCoverView: UIView {
     }
 
     private static let artSize = CGSize(width: 1230, height: 385)
-    private let motion = CMMotionManager()
     private let art: [String: UIImage]
-    private let backdrop: CGImage?
+    /// 底图：不再同步读 5120×969 原图，改后台下采样约 720 宽后回填；没到之前 draw() 走 poster 兜底。
+    private var backdrop: CGImage?
     private var backdropFrames: [Int: UIImage] = [:]
-    private var link: CADisplayLink?
-    private var lastFrame: CFTimeInterval?
     private var egg: CGFloat = 0
     private var tilt: CGPoint = .zero
     private var neutral: CGPoint?
@@ -27,7 +26,6 @@ public final class ProfileCoverView: UIView {
     private var hold: CGFloat = 0
     private var shown = false
     private var revealing = false
-    private lazy var target = FrameTarget(self)
 
     public init(theme: ProfileCoverTheme) {
         self.theme = theme
@@ -46,8 +44,6 @@ public final class ProfileCoverView: UIView {
             images[name] = UIImage(contentsOfFile: url.path)
         }
         art = images
-        backdrop = Bundle.main.url(forResource: theme.rawValue + "-depth", withExtension: "jpg")
-            .flatMap { UIImage(contentsOfFile: $0.path)?.cgImage }
         super.init(frame: .zero)
         isOpaque = true
         backgroundColor = UIColor(red: 0.23, green: 0.27, blue: 0.30, alpha: 1)
@@ -60,14 +56,26 @@ public final class ProfileCoverView: UIView {
             name: UIApplication.willResignActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(activityChanged(_:)),
             name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
+        // 底图在后台线程下采样后回填主线程；没到之前 draw() 走 poster 兜底
+        //（与原来 backdrop == nil 的分支一致），个人页首帧不阻塞。
+        CoverBackdropCache.shared.load(theme: theme) { [weak self] image in
+            guard let self, let image else { return }
+            self.backdrop = image
+            self.backdropFrames = [:]
+            self.setNeedsDisplay()
+        }
+    }
+
+    /// 景深设置页进页时预热：六张底图在后台线程读盘＋下采样，cell 出现时直接贴缓存。
+    static func prewarmBackdrops() {
+        CoverBackdropCache.shared.preload(themes: ProfileCoverTheme.allCases)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Use init(theme:)") }
 
     deinit {
-        link?.invalidate()
-        motion.stopDeviceMotionUpdates()
+        CoverMotionDriver.shared.detach(self)
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -79,7 +87,6 @@ public final class ProfileCoverView: UIView {
     /// Call on each new visit to the profile to make the hidden detail available again.
     public func restartVisit() {
         egg = 0
-        lastFrame = nil
         hold = 0
         shown = false
         revealing = false
@@ -89,45 +96,36 @@ public final class ProfileCoverView: UIView {
     }
 
     @objc private func activityChanged(_ notification: Notification) { refreshActivity() }
-    @objc private func willResignActive(_ notification: Notification) {
-        stop()
-        setNeedsDisplay()
-    }
+    @objc private func willResignActive(_ notification: Notification) { stop() }
 
     private func refreshActivity() {
         guard isPlaying, window != nil, UIApplication.shared.applicationState == .active,
               !UIAccessibility.isReduceMotionEnabled else {
-            stop()
-            setNeedsDisplay()
+            CoverMotionDriver.shared.detach(self)
+            freeze()
             return
         }
-        guard link == nil else { return }
-        guard motion.isDeviceMotionAvailable else { return }
-        motion.deviceMotionUpdateInterval = 1.0 / 30.0
-        motion.startDeviceMotionUpdates()
-        let next = CADisplayLink(target: target, selector: #selector(FrameTarget.tick(_:)))
-        next.preferredFramesPerSecond = 30
-        next.add(to: .main, forMode: .common)
-        link = next
-        setNeedsDisplay()
+        CoverMotionDriver.shared.attach(self)
     }
 
-    private func stop() {
-        link?.invalidate()
-        link = nil
-        lastFrame = nil
-        motion.stopDeviceMotionUpdates()
+    /// 停播时的静态态：姿态归零、彩蛋复位（shown 不动，与原来 stop() 一致），重画一帧。
+    fileprivate func freeze() {
         neutral = nil
         tilt = .zero
         hold = 0
         egg = 0
         revealing = false
+        setNeedsDisplay()
     }
 
-    private func update(_ frame: CADisplayLink) {
-        let dt = CGFloat(min(0.05, frame.timestamp - (lastFrame ?? frame.timestamp)))
-        lastFrame = frame.timestamp
-        guard let gravity = motion.deviceMotion?.gravity else { return }
+    private func stop() {
+        CoverMotionDriver.shared.detach(self)
+        freeze()
+    }
+
+    /// 由共享驱动每帧调用：只算姿态、不直接画；变化小于阈值时跳过重画。
+    fileprivate func step(gravity: CMAcceleration?, dt: CGFloat) {
+        guard let gravity else { return }
         let current = window?.windowScene?.interfaceOrientation ?? .portrait
         if current != orientation {
             neutral = nil
@@ -158,9 +156,11 @@ public final class ProfileCoverView: UIView {
         }
         let next = CGPoint(x: approach(tilt.x, x), y: approach(tilt.y, y))
         let detail = approach(egg, revealing ? 1 : 0)
-        guard next != tilt || detail != egg else { return }
+        // 节流：姿态与彩蛋的变化都小于阈值时不重画（0.002 姿态约合 0.04pt 位移，肉眼不可见）。
+        let delta = max(abs(next.x - tilt.x), abs(next.y - tilt.y), abs(detail - egg))
         tilt = next
         egg = detail
+        guard delta >= 0.002 else { return }
         setNeedsDisplay()
     }
 
@@ -365,6 +365,9 @@ public final class ProfileCoverView: UIView {
     }
     private func drawBackdrop(in destination: CGRect, depth: CGFloat) {
         guard let backdrop else { return }
+        // 底图已是约 720 宽的缩略图：按 5 列 × 3 行切帧，与原图 1024×323 的 13 帧一一对应。
+        let tileWidth = CGFloat(backdrop.width) / 5
+        let tileHeight = CGFloat(backdrop.height) / 3
         let position = (depth + 1) * 6
         let first = min(12, Int(position.rounded(.down)))
         let second = min(12, first + 1)
@@ -373,7 +376,8 @@ public final class ProfileCoverView: UIView {
 
         func image(at index: Int) -> UIImage? {
             if let cached = backdropFrames[index] { return cached }
-            let tile = CGRect(x: index % 5 * 1024, y: index / 5 * 323, width: 1024, height: 323)
+            let tile = CGRect(x: CGFloat(index % 5) * tileWidth, y: CGFloat(index / 5) * tileHeight,
+                              width: tileWidth, height: tileHeight)
             guard let image = backdrop.cropping(to: tile) else { return nil }
             let result = UIImage(cgImage: image)
             backdropFrames[index] = result
@@ -399,12 +403,30 @@ public final class ProfileCoverView: UIView {
         ctx.restoreGState()
     }
 
+    private static var gradientCache: [String: CGGradient] = [:]
+
     private func glow(_ ctx: CGContext, center: CGPoint, rx: CGFloat, ry: CGFloat,
                       color: UIColor, alpha: CGFloat) {
-        guard alpha > 0, let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-            colors: [color.withAlphaComponent(alpha).cgColor, color.withAlphaComponent(0).cgColor] as CFArray,
-            locations: [0, 1]) else { return }
+        guard alpha > 0 else { return }
+        // 渐变只按底色缓存（起止为 color@1 → color@0），可变透明度走 ctx.setAlpha，
+        // 与原来每帧按 alpha 现建渐变的结果一致。
+        let components = color.cgColor.components ?? []
+        let key: String
+        if components.count >= 3 {
+            key = components.prefix(3).map { String(format: "%.3f", $0) }.joined(separator: ",")
+        } else if let white = components.first {
+            key = String(format: "gray:%.3f", white)
+        } else {
+            key = "unknown"
+        }
+        if Self.gradientCache[key] == nil {
+            Self.gradientCache[key] = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: [color.withAlphaComponent(1).cgColor, color.withAlphaComponent(0).cgColor] as CFArray,
+                locations: [0, 1])
+        }
+        guard let gradient = Self.gradientCache[key] else { return }
         ctx.saveGState()
+        ctx.setAlpha(alpha)
         ctx.translateBy(x: center.x, y: center.y)
         ctx.scaleBy(x: 1, y: ry / rx)
         ctx.drawRadialGradient(gradient, startCenter: .zero, startRadius: 0,
@@ -421,9 +443,118 @@ public final class ProfileCoverView: UIView {
     }
 
     private func unit(_ x: CGFloat) -> CGFloat { min(1, max(0, x)) }
-    private final class FrameTarget: NSObject {
-        weak var view: ProfileCoverView?
-        init(_ view: ProfileCoverView) { self.view = view }
-        @objc func tick(_ frame: CADisplayLink) { view?.update(frame) }
+}
+
+/// 封面底图缩略图缓存：读盘＋解码＋缩放只在后台串行队列做，主线程只贴图。
+private final class CoverBackdropCache {
+    static let shared = CoverBackdropCache()
+    private let queue = DispatchQueue(label: "com.beary.cover-backdrop", qos: .userInitiated)
+    private var images: [String: CGImage] = [:]
+    private var loading: Set<String> = []
+    private var pending: [String: [(CGImage?) -> Void]] = [:]
+
+    func preload(themes: [ProfileCoverTheme]) {
+        for theme in themes { load(theme: theme) { _ in } }
+    }
+
+    func load(theme: ProfileCoverTheme, completion: @escaping (CGImage?) -> Void) {
+        let key = theme.rawValue
+        queue.async {
+            if let cached = self.images[key] {
+                DispatchQueue.main.async { completion(cached) }
+                return
+            }
+            self.pending[key, default: []].append(completion)
+            guard !self.loading.contains(key) else { return }
+            self.loading.insert(key)
+            let image = Self.downsampled(theme: theme)
+            if let image { self.images[key] = image }
+            self.loading.remove(key)
+            let callbacks = self.pending.removeValue(forKey: key) ?? []
+            DispatchQueue.main.async { callbacks.forEach { $0(image) } }
+        }
+    }
+
+    /// ImageIO 缩略图：解码＋缩放到约 720 宽一步完成，不经过 UIImage、不碰主线程。
+    private static func downsampled(theme: ProfileCoverTheme) -> CGImage? {
+        guard let url = Bundle.main.url(forResource: theme.rawValue + "-depth", withExtension: "jpg"),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: 720,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+}
+
+/// 封面共享驱动（照 BearyFestivalWallpaperView 的 FestivalMotionDriver 的样子）：
+/// 一个 motion manager＋一个 30fps display link 供全部封面视图共用，不再每行一个。
+private final class CoverMotionDriver: NSObject {
+    static let shared = CoverMotionDriver()
+    private let subscribers = NSHashTable<ProfileCoverView>.weakObjects()
+    private let motion = CMMotionManager()
+    private var link: CADisplayLink?
+    private var lastTime: CFTimeInterval?
+
+    override init() {
+        super.init()
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(stateChanged(_:)),
+                           name: UIApplication.didBecomeActiveNotification, object: nil)
+        center.addObserver(self, selector: #selector(pause(_:)),
+                           name: UIApplication.willResignActiveNotification, object: nil)
+        center.addObserver(self, selector: #selector(stateChanged(_:)),
+                           name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
+    }
+
+    func attach(_ view: ProfileCoverView) {
+        subscribers.add(view)
+        refresh()
+    }
+
+    func detach(_ view: ProfileCoverView) {
+        subscribers.remove(view)
+        refresh()
+    }
+
+    @objc private func stateChanged(_ notification: Notification) { refresh() }
+    @objc private func pause(_ notification: Notification) { stop() }
+
+    private func refresh() {
+        if subscribers.allObjects.isEmpty || UIApplication.shared.applicationState != .active
+            || UIAccessibility.isReduceMotionEnabled {
+            stop()
+            subscribers.allObjects.forEach { $0.freeze() }
+            return
+        }
+        guard link == nil else { return }
+        if motion.isDeviceMotionAvailable {
+            motion.deviceMotionUpdateInterval = 1.0 / 30.0
+            motion.startDeviceMotionUpdates()
+        }
+        let displayLink = CADisplayLink(target: self, selector: #selector(update(_:)))
+        displayLink.preferredFramesPerSecond = 30
+        displayLink.add(to: .main, forMode: .common)
+        link = displayLink
+    }
+
+    private func stop() {
+        link?.invalidate()
+        link = nil
+        lastTime = nil
+        if motion.isDeviceMotionActive { motion.stopDeviceMotionUpdates() }
+    }
+
+    @objc private func update(_ link: CADisplayLink) {
+        let views = subscribers.allObjects
+        guard !views.isEmpty else {
+            stop()
+            return
+        }
+        let dt = min(0.05, max(0, link.timestamp - (lastTime ?? link.timestamp)))
+        lastTime = link.timestamp
+        let gravity = motion.deviceMotion?.gravity
+        views.forEach { $0.step(gravity: gravity, dt: CGFloat(dt)) }
     }
 }
