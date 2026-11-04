@@ -313,14 +313,17 @@ final class BearyInviteViewController: UIViewController {
         stackView.setCustomSpacing(8, after: messageLabel)
 
         NSLayoutConstraint.activate([
-            // 审计 10 项：关闭行钉面板顶、行宽与内容列同宽（关闭钮位置与原来
-            // 在栈内时一致）；滚动区从关闭行下方起，不再盖住它。
+            // 审计 10 项：关闭行钉面板顶、行宽与面板同宽（关闭钮贴面板右缘）；
+            // 滚动区从关闭行下方起，不再盖住它。
             closeRow.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            // 叉叉居中修法：行宽此前只给 >=/<= + centerX + 宽上限、未定宽，
-            // 布局把行压成钮宽 32 再居中，叉叉落在屏中；现行宽与内容列同宽，
-            // 钮贴行右缘即贴内容列右缘（iPad 432 列内同样对齐）。
-            closeRow.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            closeRow.widthAnchor.constraint(equalTo: stackView.widthAnchor),
+            // 叉叉贴面板边修法：此前行宽＝内容列宽、钮贴行右缘即贴内容列右缘，
+            // 手机上钮右缘离面板边约 37.5pt，看着悬在半空、不是右上角（用户报位置不对）；
+            // 规范§8“非全屏弹窗统一右上角叉叉”＋回应 Sheet（面板边 −18）、草稿箱
+            // Sheet（面板边 −14）均把钮贴面板边。本支把行放宽到面板、钮贴行右缘
+            // 内收 16（两先例中间值），不是改回旧口径（旧口径是行宽未定被压成钮宽
+            // 32 再居中、叉叉落在屏中）。
+            closeRow.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            closeRow.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.topAnchor.constraint(equalTo: closeRow.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
@@ -341,7 +344,7 @@ final class BearyInviteViewController: UIViewController {
             closeRow.heightAnchor.constraint(equalToConstant: 44),
             closeButton.widthAnchor.constraint(equalToConstant: 32),
             closeButton.heightAnchor.constraint(equalToConstant: 32),
-            closeButton.trailingAnchor.constraint(equalTo: closeRow.trailingAnchor),
+            closeButton.trailingAnchor.constraint(equalTo: closeRow.trailingAnchor, constant: -16),
             closeButton.centerYAnchor.constraint(equalTo: closeRow.centerYAnchor),
             codeBox.heightAnchor.constraint(greaterThanOrEqualToConstant: 56),
             codeLabel.leadingAnchor.constraint(equalTo: codeBox.leadingAnchor, constant: 16),
