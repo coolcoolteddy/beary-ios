@@ -1472,7 +1472,25 @@ final class BearyDetailViewController: UIViewController {
         }
         let oldQuote = old.quote
         let newQuote = merged.quote
-        if oldQuote?.id != newQuote?.id || oldQuote?.content != newQuote?.content || oldQuote?.gone != newQuote?.gone || oldQuote?.locked != newQuote?.locked || oldQuote?.isPublic != newQuote?.isPublic {
+        // 引用卡更新判定：覆盖 renderQuote 实际使用的全部字段。只比 id/正文/
+        // 删除/锁定/公开时会漏掉图片、作者信息与占位字段，导致后台补齐后
+        // 旧卡仍停留在界面上。imgDims 目前服务端不下发（恒 nil），仍纳入
+        // 判定，服务端透传后直接生效，不必再改条件。
+        let quoteChanged = oldQuote?.id != newQuote?.id
+            || oldQuote?.content != newQuote?.content
+            || oldQuote?.gone != newQuote?.gone
+            || oldQuote?.locked != newQuote?.locked
+            || oldQuote?.isPublic != newQuote?.isPublic
+            || (oldQuote?.images ?? []) != (newQuote?.images ?? [])
+            || (oldQuote?.imgDims ?? [:]) != (newQuote?.imgDims ?? [:])
+            || oldQuote?.authorName != newQuote?.authorName
+            || oldQuote?.authorAvatar != newQuote?.authorAvatar
+            || oldQuote?.authorHandle != newQuote?.authorHandle
+            || oldQuote?.createdAt != newQuote?.createdAt
+            || oldQuote?.visibility != newQuote?.visibility
+            || oldQuote?.publishedAt != newQuote?.publishedAt
+            || oldQuote?.ephemeralUntil != newQuote?.ephemeralUntil
+        if quoteChanged {
             renderQuote()
             // 116：引用卡内容变化时只淡入卡片本身。
             if !quoteView.isHidden { fadeView(quoteView) }
@@ -1737,10 +1755,16 @@ final class BearyDetailViewController: UIViewController {
         }
     }
 
+    /// 引用渲染代次：每次 renderQuote 即 +1。仅好友异步补全回调到达时须与
+    /// 发起时代次一致，否则说明期间已有更新的渲染，旧回调一律丢弃，不得
+    /// 用闭包捕获的旧快照覆盖新卡（同 ID 内容更新也会触发新渲染）。
+    private var quoteRenderSeq = 0
+
     /// 引用卡 viewer 实时判定（卡片 presentQuoteCard 同口径）：作者本人或已公开才显全文，
     /// 否则占位；gone → 已删除，locked／未公开 → 引用规则简化占位文案
     /// （曾公开“该日记已设为私密”＋提醒句，从未公开“该日记未公开”，见 BearyQuoteGate.placeholderText）。
     private func renderQuote() {
+        quoteRenderSeq += 1
         guard let quote = entry.quote, let quoteId = quote.id, !quoteId.isEmpty else {
             quoteView.isHidden = true
             return
@@ -1771,7 +1795,7 @@ final class BearyDetailViewController: UIViewController {
         }
         // 审计 2026-11-02 第十节：引用判定统一走有效态＋互关通道——作者本人或
         // 当前有效公开即显全文；仅好友档先占位、state 回包确认互关后再补全文
-        // （回包到达时若引用已换篇则丢弃，fail-closed）；其余一律占位。
+        // （回包到达时若引用已换篇或已有更新的渲染则丢弃，fail-closed）；其余一律占位。
         let showPlaceholderForQuote = {
             let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
             self.quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
@@ -1794,8 +1818,9 @@ final class BearyDetailViewController: UIViewController {
         }
         if quote.visibility == "friends" {
             showPlaceholderForQuote()
+            let renderSeq = quoteRenderSeq
             BearyQuoteGate.resolveQuoteFullAccess(quote: quote) { [weak self] canView in
-                guard let self = self, canView, self.entry.quote?.id == quoteId else { return }
+                guard let self = self, canView, renderSeq == self.quoteRenderSeq, self.entry.quote?.id == quoteId else { return }
                 self.quoteView.configure(
                     authorName: quote.authorName ?? "",
                     authorAvatar: quote.authorAvatar,
