@@ -22,6 +22,8 @@ enum BearySpace {
     static let md: CGFloat = 12
     static let lg: CGFloat = 16
     static let xl: CGFloat = 20
+    static let xxl: CGFloat = 24
+    static let xxxl: CGFloat = 32
 }
 
 /// 圆角唯一档 BearyCorners 见 BearyColors.swift（#790 修红：本文件不在

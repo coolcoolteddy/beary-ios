@@ -445,7 +445,7 @@ class BearyEditProfileViewController: UIViewController {
                         if !strongSelf.effectiveHandle.isEmpty || strongSelf.fetchedUserId != nil {
                             strongSelf.copyLinkButtonTapped()
                         } else {
-                            strongSelf.presentSimpleAlert(message: "先登录")
+                            strongSelf.presentSimpleAlert(message: "请先登录")
                         }
                     }
                 case .failure:
@@ -877,14 +877,14 @@ class BearyEditProfileViewController: UIViewController {
     }
 
     /// F12：主页链接复制（@handle 优先口径：有 handle 复制 @handle 链，无 handle
-    /// 才回退 /u/id，两者皆无时先登录；与个人主页分享口径一致）。
+    /// 才回退 /u/id，两者皆无时请先登录；与个人主页分享口径一致）。
     @objc private func copyLinkButtonTapped() {
         if !effectiveHandle.isEmpty {
             UIPasteboard.general.string = "https://teddyhn.com/beary/@\(effectiveHandle)"
         } else if let id = fetchedUserId {
             UIPasteboard.general.string = "https://teddyhn.com/beary/u/\(id)"
         } else if meFetchFailed {
-            // 5-4：已登录但 /me 加载失败时不误报“先登录”，给重试
+            // 5-4：已登录但 /me 加载失败时不误报“请先登录”，给重试
             // （重新拉 /me 再刷新链接行，拿到 id/handle 即补复制）。
             let alert = UIAlertController(title: nil, message: "主页链接加载失败", preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
@@ -894,7 +894,7 @@ class BearyEditProfileViewController: UIViewController {
             present(alert, animated: BearyMotion.animated(true), completion: nil)
             return
         } else {
-            presentSimpleAlert(message: "先登录")
+            presentSimpleAlert(message: "请先登录")
             return
         }
         copyLinkButton.setTitle("已复制", for: .normal)

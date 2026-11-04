@@ -48,7 +48,7 @@ enum BearyDynamicType {
 // 只新增转发入口，旧入口（diaryBodyFont / cardTitleFont / scaledFont /
 // cappedFont）全部保留不动，全仓调用点一处不改，故任何实际显示字号不变。
 // 每条新入口的底值均取自现行调用点已在用的内联写法，不是新定字号：
-// - pageTitleFont：顶栏标题 17 semibold scaled（Composer / DMChat /
+// - pageTitleFont：顶栏标题 17 bold scaled（规范第 11 节子页标题；Composer / DMChat /
 //   DMConversations / Login 顶栏标题现行写法；固定高度容器内的 17 标题
 //   仍走原 cappedFont 调用点，本入口不覆盖那种情形）。
 // - secondaryFont：次要文本 13 regular scaled（DM snippet、AppLock 状态、
@@ -56,7 +56,7 @@ enum BearyDynamicType {
 // - captionFont：辅助/时间/提示 12 regular scaled（BlindBox 副标题、DM 时间、
 //   Composer results、Detail 辅助行现行写法）。
 // - buttonFont / buttonCompactFont：与 BearyButton.titleFont 现行值逐字一致
-//   （常规 16 semibold capped、紧凑 14 semibold capped，默认上限 20）。
+//   （常规 16 semibold scaled 不封顶、紧凑 14 semibold scaled 不封顶）。
 // 小号与展示字已于 2026-11-04 定版（见 smallActionFont / smallBodyFont /
 //   buttonRegularFont / buttonSmallFont / heroNameFont / avatarInitialFont /
 //   smallSemiboldFont），
@@ -66,9 +66,9 @@ enum BearyDynamicType {
 // diaryBodyFont（正文）与 cardTitleFont（卡片标题）本身已是按角色命名，
 // 直接列入语义清单，不重复造入口。
 extension BearyDynamicType {
-    /// 语义：页面/顶栏标题。沿用值：17 semibold，scaled。
+    /// 语义：页面/顶栏标题。定版值：17 bold，scaled（规范第 11 节子页标题）。
     static func pageTitleFont() -> UIFont {
-        scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
+        scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
     }
 
     /// 语义：次要文本。沿用值：13 regular，scaled。
@@ -81,14 +81,14 @@ extension BearyDynamicType {
         scaledFont(for: UIFont.systemFont(ofSize: 12))
     }
 
-    /// 语义：按钮（常规款）。沿用值：16 semibold，capped（默认上限 20）。
+    /// 语义：按钮（常规款）。沿用值：16 semibold，scaled 不封顶（与 BearyButton.titleFont 一致）。
     static func buttonFont() -> UIFont {
-        cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+        scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
     }
 
-    /// 语义：按钮（紧凑款）。沿用值：14 semibold，capped（默认上限 20）。
+    /// 语义：按钮（紧凑款）。沿用值：14 semibold，scaled 不封顶（与 BearyButton.titleFont 一致）。
     static func buttonCompactFont() -> UIFont {
-        cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
     }
 
     /// 语义：数值（行内计数）。定版值：12 semibold，scaled（规范第 11 节）。
