@@ -78,7 +78,7 @@ final class BearyFeedRetryButton: UIButton {
 func bearyFeedRetryButton(target: Any?, action: Selector) -> BearyFeedRetryButton {
     let btn = BearyFeedRetryButton(type: .system)
     btn.translatesAutoresizingMaskIntoConstraints = false
-    btn.setImage(BearyFeedIconCache.image(named: "icon_refresh", pointSize: 20), for: .normal)
+    btn.setImage(BearyFeedIconCache.image(named: "icon_refresh", pointSize: 24), for: .normal)
     btn.tintColor = BearyColors.gray
     btn.backgroundColor = BearyColors.bg
     btn.layer.cornerRadius = BearyCorners.single
@@ -254,7 +254,7 @@ final class BearyEmoteChipView: UIView {
     /// 才换播放器；不重建容器与约束。
     func render(key: String, count: Int, mine: Bool) {
         mineFlag = mine
-        countLabel.font = UIFont.systemFont(ofSize: 12, weight: mine ? .bold : .regular)
+        countLabel.font = BearyDynamicType.numberFont()
         countLabel.textColor = mine ? BearyColors.ink : BearyColors.gray
         countLabel.text = "\(count)"
         if let current = emotePlayer, current.emoteKey == key {
@@ -871,7 +871,7 @@ class BearyDiaryCardCell: UITableViewCell {
     }()
 
     private lazy var foldButton: UIButton = {
-        let btn = UIButton(type: .system)
+        let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -2349,7 +2349,7 @@ class BearyDiaryCardCell: UITableViewCell {
         if UIAccessibility.isReduceMotionEnabled {
             foldButton.imageView?.transform = target
         } else {
-            UIView.animate(withDuration: 0.2) { self.foldButton.imageView?.transform = target }
+            UIView.animate(withDuration: 0.18) { self.foldButton.imageView?.transform = target }
         }
     }
 
@@ -2772,7 +2772,7 @@ class BearyDiaryCardCell: UITableViewCell {
             likeButtonWidthConstraint?.constant = imageWidth
         } else {
             let titleText = "\(countValue)"
-            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))]).width)
             likeButton.setTitle(titleText, for: .normal)
             likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
         }
@@ -2802,7 +2802,7 @@ class BearyDiaryCardCell: UITableViewCell {
             likeButtonWidthConstraint?.constant = imageWidth
         } else {
             let titleText = "\(count)"
-            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))]).width)
             likeButton.setTitle(titleText, for: .normal)
             likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
         }

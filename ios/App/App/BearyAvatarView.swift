@@ -26,7 +26,7 @@ final class BearyAvatarView: UIView {
     private lazy var retryButton: UIButton = {
         let button = UIButton(type: .custom)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
+        button.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 24), for: .normal)
         button.tintColor = BearyColors.ink
         // 新交互面口径：关掉系统默认高亮压暗（FAB 同款），按压反馈只走
         // bearyAddPressFeedback 的 transform 缩放＋轻震，不叠加压暗。

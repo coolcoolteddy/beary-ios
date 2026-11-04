@@ -169,7 +169,7 @@ private final class WishRowView: UIView {
         }
         detailLabel.alpha = 0
         detailLabel.transform = CGAffineTransform(translationX: 0, y: 4)
-        UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut], animations: {
+        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut], animations: {
             self.detailLabel.alpha = 1
             self.detailLabel.transform = .identity
         }, completion: nil)
@@ -273,9 +273,9 @@ final class BearyWishWallViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let contentStack = UIStackView()
     private let createButton = BearyButton.make(style: .primaryPill(.ink), title: "发起许愿")
-    private let emptyLabel = UILabel()
-    // P2-18：加载/失败态迁入已有 BearyStateView（不新建组件）；空态仍走原
-    // emptyLabel，不强迫空态套同一插图——故 stateView 两态均不传 iconName。
+    private let wishEmptyStateView = BearyStateView()
+    // P2-18：加载/失败态迁入已有 BearyStateView（不新建组件）；空态走新增的
+    // wishEmptyStateView（同样不传 iconName，不强迫空态套同一插图）。
     private let wishStateView = BearyStateView()
     /// 许愿新建页的 EdgeDismiss 强持有（transitioningDelegate 弱引用）。
     private var wishCreateEdgeDismiss: BearyEdgeDismissController?
@@ -381,20 +381,16 @@ final class BearyWishWallViewController: UIViewController {
         ])
         createButton.addTarget(self, action: #selector(createTapped), for: .touchUpInside)
         createButton.isHidden = !isCurrentUserPlus()
-        emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        emptyLabel.adjustsFontForContentSizeCategory = true
-        emptyLabel.textColor = BearyColors.gray
-        emptyLabel.textAlignment = .center
-        emptyLabel.numberOfLines = 0
-        emptyLabel.text = "还没有愿望，Plus 会员可以发起第一个"
-        emptyLabel.isHidden = true
+        wishEmptyStateView.translatesAutoresizingMaskIntoConstraints = false
+        wishEmptyStateView.configure(kind: .empty, title: "还没有愿望", subtitle: "Plus 会员可以发起第一个", iconName: nil, actionTitle: nil)
+        wishEmptyStateView.isHidden = true
         // P2-18：加载/失败两态的文案与重试动作与旧口径一致（“加载中…”/“加载失败”/“重试”），
-        // 仅承载体换成 BearyStateView；空态仍走 emptyLabel，不进本视图。
+        // 仅承载体换成 BearyStateView；空态走 wishEmptyStateView（见下），不进本视图。
         wishStateView.translatesAutoresizingMaskIntoConstraints = false
         wishStateView.isHidden = true
         contentStack.addArrangedSubview(createButton)
         contentStack.addArrangedSubview(wishStateView)
-        contentStack.addArrangedSubview(emptyLabel)
+        contentStack.addArrangedSubview(wishEmptyStateView)
         NSLayoutConstraint.activate([
             createButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
         ])
@@ -523,7 +519,7 @@ final class BearyWishWallViewController: UIViewController {
     /// 顺序重挂（视图对象不变，展开态与按压态不丢）。服务端顺序即净赞成降序，不重排。
     private func renderWishes() {
         let oldRows = rowViews
-        emptyLabel.isHidden = !wishes.isEmpty
+        wishEmptyStateView.isHidden = !wishes.isEmpty
         var newRows: [WishRowView] = []
         var orderedRows: [WishRowView] = []
         for item in wishes {

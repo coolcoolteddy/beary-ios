@@ -385,6 +385,7 @@ class BearyProfileViewController: UIViewController {
     // 不改缓存、不改失败态、不弹确认框。
     private var backgroundReconcileFailToasted = false
     private var rowTapGuardUntil: Date?
+    private var lastImageViewerAt: Date?
     /// 清单 2 滚动藏栏（个人主页部分）：与首页／时间线同款 120pt 阈值；
     /// 本页主滚动视图即 tableView（头部为 tableHeaderView、contentInset.top = 0，
     /// offset 语义与首页一致，无需自定阈值）。
@@ -3602,7 +3603,7 @@ class BearyProfileViewController: UIViewController {
                 cell.alpha = 1
                 cell.transform = .identity
             })
-            delay += 0.03
+            delay = min(delay + 0.03, 0.24)
         }
     }
 
@@ -3956,7 +3957,7 @@ class BearyProfileViewController: UIViewController {
             let imageViewValue = BearyEmoteView(key: key, animated: true)
             imageViewValue.translatesAutoresizingMaskIntoConstraints = false
             let countLabel = UILabel()
-            countLabel.font = UIFont.systemFont(ofSize: 12)
+            countLabel.font = BearyDynamicType.numberFont()
             countLabel.textColor = BearyColors.gray
             countLabel.text = "×\(item.count ?? 0)"
             chip.addArrangedSubview(imageViewValue)
@@ -5934,6 +5935,7 @@ class BearyProfileViewController: UIViewController {
                 ])
                 // Grok 5.4：有动效时延迟 0、时长 0.2s（原 0.5s / 0.6s 偏慢）；
                 // 减动效分支上游已 return（见本闭包开头），此处不再重复判断。
+                // 注：闪光淡出专属 0.2s（有意效果，非局部状态 0.18 档），保留。
                 UIView.animate(withDuration: 0.2, delay: 0, options: [], animations: {
                     flash.alpha = 0
                 }, completion: { _ in
@@ -6629,6 +6631,10 @@ class BearyProfileViewController: UIViewController {
         let allPhotos = photoWallPhotosValue
         guard !allPhotos.isEmpty, startIndex >= 0, startIndex < allPhotos.count else { return }
         guard presentedViewController == nil else { return }
+        let now = Date()
+        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
+        lastImageViewerAt = now
+
         var wallLiveVideos: [String: String] = [:]
         for photo in allPhotos {
             if let liveKey = photo.entry.liveVideos?[photo.imageKey] {
@@ -6804,7 +6810,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         retryButton.layer.cornerRadius = BearyCorners.single
         retryButton.addTarget(self, action: #selector(retryButtonTapped), for: .touchUpInside)
         retryButton.bearyAddPressFeedback()
-        retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
+        retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         // P2-4：照抄 editButton 实测字宽修法——按钮固有宽不含标题边距，显式宽 =
         // content 12 + 图宽 + titleEdge 6 + 实测标题宽 + content 12，防标题被裁。
         // R8：宽改下限（默认尺寸不变），大字号时可生长。
@@ -6838,7 +6844,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         NSLayoutConstraint.activate([
             iconView.widthAnchor.constraint(equalToConstant: 36),
             iconView.heightAnchor.constraint(equalToConstant: 36),
-            retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
+            retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
@@ -8143,6 +8149,9 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         // N7 主页图片灯箱：复用独立文件内的查看器，全屏模态弹出，弹出方式与时间线同款（已弹出时不叠加、减动效直显）。
         cellValue.onTapImages = { [weak self] keys, index, originFrame in
             guard let self = self, self.presentedViewController == nil else { return }
+            let now = Date()
+            if let last = self.lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
+            self.lastImageViewerAt = now
 let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: entryValue.liveVideos, startIndex: index)
             viewer.originFrameInWindow = originFrame
             viewer.modalPresentationStyle = .fullScreen
@@ -8370,6 +8379,10 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     /// 无图（字母头像占位 / 无封面）时不 present。
     @objc private func avatarViewTapped() {
         guard let image = avatarImageView.image else { return }
+        guard presentedViewController == nil else { return }
+        let now = Date()
+        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
+        lastImageViewerAt = now
         let viewer = BearyEntryImageViewerViewController(images: [image], startIndex: 0)
         viewer.originFrameInWindow = avatarImageView.convert(avatarImageView.bounds, to: nil)
         present(viewer, animated: BearyMotion.animated(true), completion: nil)
@@ -8438,6 +8451,10 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     /// 封面图虽被隐藏、image 仍在，图库行仍可进灯箱看原封面）。
     private func presentCoverLightbox() {
         guard let image = coverImageView.image else { return }
+        guard presentedViewController == nil else { return }
+        let now = Date()
+        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
+        lastImageViewerAt = now
         let viewer = BearyEntryImageViewerViewController(images: [image], startIndex: 0)
         viewer.originFrameInWindow = coverImageView.convert(coverImageView.bounds, to: nil)
         present(viewer, animated: BearyMotion.animated(true), completion: nil)

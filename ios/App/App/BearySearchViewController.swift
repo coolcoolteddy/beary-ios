@@ -96,6 +96,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let onOpenEntryHandler: (String) -> Void
 
     private var searchTimer: Timer?
+    private var lastNavigationAt: Date?
     /// 顶栏透度批：容器最后一次发来的栏态（本页属性内边距不含安全区顶，见 applyHeaderTopInset）。
     private var headerTopInsetVisible = false
     private var searchFieldToBoxTrailing: NSLayoutConstraint?
@@ -239,9 +240,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let searchField = UITextField()
     private let clearButton = BearyHit44Button(type: .custom)
 
-    // 结果区：新搜索与拉黑/举报过滤仍整体重建（与网页 body.innerHTML
-    // 重写同口径）；翻页改增量追加（见 appendResultRows），不再每翻一页
-    // 拆掉全部行重建。
+    // 结果区：换关键词时整体重建（行内高亮文案随 query 走，必须重建）；
+    // 同关键词重渲（拉黑/举报过滤）按 key 复用行节点（见 syncResultRowsReuse），
+    // 不再每次重渲都拆掉全部行重建；翻页改增量追加（见 appendResultRows）。
     private let resultsStack = UIStackView()
 
     // 状态区：网页 .addr-state——容器 padding 28/20/20；圆 54、图标 25、标题 15、副文案 12.5。
@@ -1308,7 +1309,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 新规矩 (b)：状态区首次出现淡入（同态内文案更换不重播；减动效直显）。
         if wasStateHidden && !UIAccessibility.isReduceMotionEnabled {
             stateWrap.alpha = 0
-            UIView.animate(withDuration: 0.2, animations: {
+            UIView.animate(withDuration: 0.18, animations: {
                 self.stateWrap.alpha = 1
             })
         } else {
@@ -1408,7 +1409,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         recentWrap.isHidden = false
         if !UIAccessibility.isReduceMotionEnabled {
             recentWrap.alpha = 0
-            UIView.animate(withDuration: 0.2, animations: {
+            UIView.animate(withDuration: 0.18, animations: {
                 self.recentWrap.alpha = 1
             })
         } else {
@@ -1462,7 +1463,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 新规矩 (b) 同口径：错误态首次出现淡入（同态内不重播；减动效直显）。
         if wasErrorHidden && !UIAccessibility.isReduceMotionEnabled {
             errorStateWrap.alpha = 0
-            UIView.animate(withDuration: 0.2, animations: {
+            UIView.animate(withDuration: 0.18, animations: {
                 self.errorStateWrap.alpha = 1
             })
         } else {
@@ -1663,61 +1664,201 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         resultsStack.isHidden = false
         stateRingView.isHidden = true
         BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
-        clearResultRows()
-        // G13：先建行、行数 >0 时再加分区头，避免全部行被跳过时空挂分区头。
-        // 分区顺序与标题按网页 renderSrchResults：我的日记 · 私密 → 公开日记 → 用户。
-        var mineRows: [UIView] = []
-        for entry in mineEntries {
-            if let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
-                mineRows.append(row)
-            } else {
-                // 5-20 nil 同步：makeEntryRow 在 id 缺失时返回 nil，且返回前未向
-                // entryButtons / rowEntryIds / entryRowById 追加任何表项（追加只在
-                // 成功末尾原子进行），故三表同步、无需插视觉占位行（插占位行会
-                // 破坏 G13“全部行被跳过时不挂空分区头”）；animateResultRows 按 key
-                // 查表，nil 行天然不在动画表中，不会错位到旧行。
+        // 同关键词重渲（拉黑／举报过滤后重渲）按 key 复用行节点，不整体重建；
+        // 换关键词时行内高亮文案随 query 走，必须重建（见 syncResultRowsReuse）。
+        if lastResultQuery == query {
+            syncResultRowsReuse(mineEntries: mineEntries, publicEntries: publicEntries, users: users, query: query)
+        } else {
+            clearResultRows()
+            // G13：先建行、行数 >0 时再加分区头，避免全部行被跳过时空挂分区头。
+            // 分区顺序与标题按网页 renderSrchResults：我的日记 · 私密 → 公开日记 → 用户。
+            var mineRows: [UIView] = []
+            for entry in mineEntries {
+                if let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
+                    mineRows.append(row)
+                } else {
+                    // 5-20 nil 同步：makeEntryRow 在 id 缺失时返回 nil，且返回前未向
+                    // entryButtons / rowEntryIds / entryRowById 追加任何表项（追加只在
+                    // 成功末尾原子进行），故三表同步、无需插视觉占位行（插占位行会
+                    // 破坏 G13“全部行被跳过时不挂空分区头”）；animateResultRows 按 key
+                    // 查表，nil 行天然不在动画表中，不会错位到旧行。
+                }
             }
-        }
-        var publicRows: [UIView] = []
-        for entry in publicEntries {
-            if let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
-                publicRows.append(row)
-            } else {
-                // 5-20 nil 同步：同上，公开组 nil 行亦不进任何表、不插视觉占位行。
+            var publicRows: [UIView] = []
+            for entry in publicEntries {
+                if let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
+                    publicRows.append(row)
+                } else {
+                    // 5-20 nil 同步：同上，公开组 nil 行亦不进任何表、不插视觉占位行。
+                }
             }
-        }
-        var userRows: [UIView] = []
-        for user in users {
-            userRows.append(makeUserRow(user: user, query: query))
-        }
-        if !mineRows.isEmpty {
-            let header = makeSectionHeader(title: "我的日记 · 私密")
-            mineSectionHeader = header
-            resultsStack.addArrangedSubview(header)
-            for row in mineRows {
-                resultsStack.addArrangedSubview(row)
+            var userRows: [UIView] = []
+            for user in users {
+                userRows.append(makeUserRow(user: user, query: query))
             }
-        }
-        if !publicRows.isEmpty {
-            let header = makeSectionHeader(title: "公开日记")
-            publicSectionHeader = header
-            resultsStack.addArrangedSubview(header)
-            for row in publicRows {
-                resultsStack.addArrangedSubview(row)
+            if !mineRows.isEmpty {
+                let header = makeSectionHeader(title: "我的日记 · 私密")
+                mineSectionHeader = header
+                resultsStack.addArrangedSubview(header)
+                for row in mineRows {
+                    resultsStack.addArrangedSubview(row)
+                }
             }
-        }
-        if !userRows.isEmpty {
-            let header = makeSectionHeader(title: "用户")
-            usersSectionHeader = header
-            resultsStack.addArrangedSubview(header)
-            for row in userRows {
-                resultsStack.addArrangedSubview(row)
+            if !publicRows.isEmpty {
+                let header = makeSectionHeader(title: "公开日记")
+                publicSectionHeader = header
+                resultsStack.addArrangedSubview(header)
+                for row in publicRows {
+                    resultsStack.addArrangedSubview(row)
+                }
+            }
+            if !userRows.isEmpty {
+                let header = makeSectionHeader(title: "用户")
+                usersSectionHeader = header
+                resultsStack.addArrangedSubview(header)
+                for row in userRows {
+                    resultsStack.addArrangedSubview(row)
+                }
             }
         }
         // M11：结果区首次出现/换批时行错峰滑入；同一批仅内容变化的行淡入。
         animateResultRows(query: query)
         // sweep32-2：尾行由 updateSearchFooter 按翻页态算（有下一批即亮“加载更多”）。
         updateSearchFooter()
+    }
+
+    /// 同关键词重渲（拉黑／举报过滤后重渲）：按 key 复用已有行节点，不整体重建——
+    /// 仍在的行原地不动（图片加载态与入场态不丢），消失的行摘除，新增的行新建；
+    /// 顺序变化时先摘后按新顺序重挂（视图对象不变）。换关键词不走这里
+    /// （行内高亮文案随 query 走，必须重建），见 renderResults 分支。
+    /// 注意：follow 相关映射表（followButtonsByUserId 等）不在此重建——
+    /// 复用行的按钮本身即最新乐观态，在途跟随动作的完成回调仍按旧表找钮；
+    /// 摘除行的残留表项随下次换关键词全量重建清掉。imageRetryHolders 同理：
+    /// 旧槽位全留（已摘除行的槽位指向离线视图、点按不到，随下次全量重建清掉），
+    /// 新行建行时追加。
+    private func syncResultRowsReuse(mineEntries: [Entry], publicEntries: [Entry], users: [SearchUser], query: String) {
+        let oldEntryRows = entryRowById
+        let oldUserRows = userRowByKey
+        var reusedEntryIds = Set<String>()
+        var mineRows: [UIButton] = []
+        var mineRowIds: [String] = []
+        for entry in mineEntries {
+            if let entryId = entry.id, reusedEntryIds.contains(entryId) == false, let row = oldEntryRows[entryId] {
+                reusedEntryIds.insert(entryId)
+                mineRows.append(row)
+                mineRowIds.append(entryId)
+            } else if let entryId = entry.id, let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
+                reusedEntryIds.insert(entryId)
+                mineRows.append(row)
+                mineRowIds.append(entryId)
+            }
+        }
+        var publicRows: [UIButton] = []
+        var publicRowIds: [String] = []
+        for entry in publicEntries {
+            if let entryId = entry.id, reusedEntryIds.contains(entryId) == false, let row = oldEntryRows[entryId] {
+                reusedEntryIds.insert(entryId)
+                publicRows.append(row)
+                publicRowIds.append(entryId)
+            } else if let entryId = entry.id, let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
+                reusedEntryIds.insert(entryId)
+                publicRows.append(row)
+                publicRowIds.append(entryId)
+            }
+        }
+        var reusedUserKeys = Set<String>()
+        var userRows: [UIButton] = []
+        var rowUsersNew: [SearchUser] = []
+        for user in users {
+            if let key = userKey(for: user), reusedUserKeys.contains(key) == false, let row = oldUserRows[key] {
+                reusedUserKeys.insert(key)
+                userRows.append(row)
+                rowUsersNew.append(user)
+            } else {
+                let row = makeUserRow(user: user, query: query)
+                if let key = userKey(for: user) {
+                    reusedUserKeys.insert(key)
+                }
+                userRows.append(row)
+                rowUsersNew.append(user)
+            }
+        }
+        // 拆栈不拆节点：先把旧 arranged 身份全部拿掉（视图本身留着），
+        // 再按新顺序重挂；不在新顺序里的旧视图（含空分区的旧头）彻底摘除。
+        var keep = Set<ObjectIdentifier>()
+        for row in mineRows + publicRows + userRows {
+            keep.insert(ObjectIdentifier(row))
+        }
+        if !mineRows.isEmpty, let header = mineSectionHeader {
+            keep.insert(ObjectIdentifier(header))
+        }
+        if !publicRows.isEmpty, let header = publicSectionHeader {
+            keep.insert(ObjectIdentifier(header))
+        }
+        if !userRows.isEmpty, let header = usersSectionHeader {
+            keep.insert(ObjectIdentifier(header))
+        }
+        for view in resultsStack.arrangedSubviews {
+            resultsStack.removeArrangedSubview(view)
+            if keep.contains(ObjectIdentifier(view)) == false {
+                view.removeFromSuperview()
+            }
+        }
+        if !mineRows.isEmpty {
+            if mineSectionHeader == nil {
+                mineSectionHeader = makeSectionHeader(title: "我的日记 · 私密")
+            }
+            if let header = mineSectionHeader {
+                resultsStack.addArrangedSubview(header)
+            }
+            for row in mineRows {
+                resultsStack.addArrangedSubview(row)
+            }
+        } else {
+            mineSectionHeader = nil
+        }
+        if !publicRows.isEmpty {
+            if publicSectionHeader == nil {
+                publicSectionHeader = makeSectionHeader(title: "公开日记")
+            }
+            if let header = publicSectionHeader {
+                resultsStack.addArrangedSubview(header)
+            }
+            for row in publicRows {
+                resultsStack.addArrangedSubview(row)
+            }
+        } else {
+            publicSectionHeader = nil
+        }
+        if !userRows.isEmpty {
+            if usersSectionHeader == nil {
+                usersSectionHeader = makeSectionHeader(title: "用户")
+            }
+            if let header = usersSectionHeader {
+                resultsStack.addArrangedSubview(header)
+            }
+            for row in userRows {
+                resultsStack.addArrangedSubview(row)
+            }
+        } else {
+            usersSectionHeader = nil
+        }
+        // 并行表按最终顺序重建（行点按按下标配对 id，必须与展示顺序一致；
+        // 同 id 跨组重复时后者覆盖 entryRowById，与现行建行顺序一致）。
+        entryButtons = mineRows + publicRows
+        rowEntryIds = mineRowIds + publicRowIds
+        entryRowById = [:]
+        for (entryId, row) in zip(rowEntryIds, entryButtons) {
+            entryRowById[entryId] = row
+        }
+        userButtons = userRows
+        rowUsers = rowUsersNew
+        userRowByKey = [:]
+        for (user, row) in zip(rowUsersNew, userRows) {
+            if let key = userKey(for: user) {
+                userRowByKey[key] = row
+            }
+        }
     }
 
     /// 扫 bug 第 9 项：翻页增量追加（仅 loadMore 调用）。
@@ -1731,7 +1872,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// （私密组只取 is_public == false；公开组有效公开 + 未拉黑；
     /// 用户组未拉黑），避免追加行与全量渲染口径不一致。
     /// 行数减少的场景（拉黑/举报过滤、新搜索）不走这里，仍走
-    /// renderResults 全量重建——增量无法表达“删行”。
+    /// renderResults（同关键词时按 key 复用已有行、只增删变化的行；
+    /// 换关键词时全量重建）——增量追加无法表达“删行”。
     private func appendResultRows(data: SearchResult, mine: [Entry], publicEntries: [Entry], users freshUsers: [SearchUser], query: String) {
         lastRenderedData = data
         lastRenderedQuery = query
@@ -2240,6 +2382,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                     BearyToast.show(in: view, message: "该用户已被拉黑")
                     return
                 }
+                // 导航节流 0.8s（与日记行共用导航时钟），防连点叠页。
+                let now = Date()
+                if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
+                lastNavigationAt = now
                 onOpenUserHandler(user)
                 return
             }
@@ -2451,6 +2597,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     @objc private func entryRowTapped(_ sender: UIButton) {
         for index in 0..<entryButtons.count {
             if index < rowEntryIds.count && entryButtons[index] == sender {
+                // 导航节流 0.8s（广场同款），防连点叠页。
+                let now = Date()
+                if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
+                lastNavigationAt = now
                 // iCity §12：搜索结果点按记 search_click（只记 id，不记查询词；失败静默）。
                 BearyAPI.shared.sendEvent(eventType: "search_click", targetId: rowEntryIds[index])
                 onOpenEntryHandler(rowEntryIds[index])

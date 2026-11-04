@@ -57,8 +57,8 @@ enum BearyDynamicType {
 //   Composer results、Detail 辅助行现行写法）。
 // - buttonFont / buttonCompactFont：与 BearyButton.titleFont 现行值逐字一致
 //   （常规 16 semibold capped、紧凑 14 semibold capped，默认上限 20）。
-// 数值角色暂不立入口：现行计数类字号无统一值（11 regular / 12 bold /
-// 13 semibold 混用），任选其一都是自定口径，待定版后再立。
+// 数值角色已于 2026-11-04 定版（12 semibold scaled，见 numberFont），
+// 此前混用的 11 regular / 12 bold / 13 semibold 按页分批迁入本入口。
 // diaryBodyFont（正文）与 cardTitleFont（卡片标题）本身已是按角色命名，
 // 直接列入语义清单，不重复造入口。
 extension BearyDynamicType {
@@ -85,5 +85,10 @@ extension BearyDynamicType {
     /// 语义：按钮（紧凑款）。沿用值：14 semibold，capped（默认上限 20）。
     static func buttonCompactFont() -> UIFont {
         cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+    }
+
+    /// 语义：数值（行内计数）。定版值：12 semibold，scaled（规范第 11 节）。
+    static func numberFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 12, weight: .semibold))
     }
 }

@@ -22,7 +22,8 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     var onBackToMessages: (() -> Void)?
 
     private let tableView = UITableView(frame: .zero, style: .plain)
-    private let emptyLabel = UILabel()
+    // 空／失败态走 BearyStateView（与首次加载态同槽位居中、互斥）。
+    private let emptyStateView = BearyStateView()
     // 审计第 19 项：首次加载态复用 BearyStateView（转圈 +“加载中…”），不加骨架屏。
     // 只在“首次请求且尚无旧数据”时出现；有旧数据时保留内容后台刷新。
     private let firstLoadStateView = BearyStateView()
@@ -109,14 +110,9 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         refreshFailedRetryButton.bearyAddPressFeedback()
         refreshFailedBanner.addSubview(refreshFailedRetryButton)
 
-        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-        emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        emptyLabel.adjustsFontForContentSizeCategory = true
-        emptyLabel.textColor = BearyColors.gray
-        emptyLabel.textAlignment = .center
-        emptyLabel.numberOfLines = 0
-        emptyLabel.isHidden = true
-        view.addSubview(emptyLabel)
+        emptyStateView.translatesAutoresizingMaskIntoConstraints = false
+        emptyStateView.isHidden = true
+        view.addSubview(emptyStateView)
 
         firstLoadStateView.translatesAutoresizingMaskIntoConstraints = false
         firstLoadStateView.isHidden = true
@@ -156,10 +152,10 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
-            emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
+            emptyStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            emptyStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            emptyStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
+            emptyStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
             // 首次加载态与空态同槽位居中（互斥显隐，见 load/updateTitleAndEmptyState）。
             firstLoadStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             firstLoadStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
@@ -278,7 +274,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         // 审计第 19 项：首次无数据才显加载态（下拉刷新自带转圈时不叠加）；
         // 有旧数据时不遮内容，后台刷新完直接换行。
         if firstLoadPending && friends.isEmpty && tableView.refreshControl?.isRefreshing != true {
-            emptyLabel.isHidden = true
+            emptyStateView.isHidden = true
             firstLoadStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
             firstLoadStateView.isHidden = false
         }
@@ -318,15 +314,16 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         // 只有空列表时只显“好友”，不把失败画成 0 人。
         titleLabel.text = friends.isEmpty ? "好友" : "好友 · \(friends.count)人"
         if loadFailed && friends.isEmpty {
-            emptyLabel.text = "加载失败，下拉重试"
-            emptyLabel.isHidden = false
+            // 失败态无动作钮（原口径：重试靠下拉），只换承载体。
+            emptyStateView.configure(kind: .error, title: "加载失败", subtitle: "下拉重试", iconName: nil, actionTitle: nil)
+            emptyStateView.isHidden = false
             setRefreshFailedBannerVisible(false)
         } else if friends.isEmpty {
-            emptyLabel.text = "还没有互关好友\n关注对方、等对方回关后就会出现在这里"
-            emptyLabel.isHidden = false
+            emptyStateView.configure(kind: .empty, title: "还没有互关好友", subtitle: "关注对方、等对方回关后就会出现在这里", iconName: nil, actionTitle: nil)
+            emptyStateView.isHidden = false
             setRefreshFailedBannerVisible(false)
         } else {
-            emptyLabel.isHidden = true
+            emptyStateView.isHidden = true
             // 已有内容时失败不再零反馈：旧列表原样保留，顶栏下出
             // “未能刷新 · 重试”常驻条；成功（loadFailed=false）时收起。
             setRefreshFailedBannerVisible(loadFailed)

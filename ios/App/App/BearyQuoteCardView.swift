@@ -140,7 +140,7 @@ final class BearyQuoteCardView: UIView {
     /// 审计-编辑器详情：正文超 3 行时的展开钮（仅展开、不收起；展开后
     /// numberOfLines 置 0，按钮自藏；复用时 clear() 复位）。
     private let expandButton: UIButton = {
-        let btn = UIButton(type: .system)
+        let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.setTitle("展开", for: .normal)
         btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))

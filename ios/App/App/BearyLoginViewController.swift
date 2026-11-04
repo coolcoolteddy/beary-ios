@@ -264,7 +264,7 @@ final class BearyLoginViewController: UIViewController {
         // Sheet 弹窗标题“欢迎回来”（全屏页无此标题，副标题只在全屏页出现）。
         welcomeTitleLabel.translatesAutoresizingMaskIntoConstraints = false
         welcomeTitleLabel.text = "欢迎回来"
-        welcomeTitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
+        welcomeTitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .bold))
         welcomeTitleLabel.adjustsFontForContentSizeCategory = true
         welcomeTitleLabel.textColor = BearyColors.ink
         welcomeTitleLabel.textAlignment = .center

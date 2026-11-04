@@ -101,6 +101,8 @@ final class BearyDetailViewController: UIViewController {
     private var bookmarkConfirmedSeq = 0
     private var confirmedLiked = false
     private var confirmedLikeCount = 0
+    private var lastNavigationAt: Date?
+    private var lastImageViewerAt: Date?
     private var confirmedBookmarked = false
     private var isEmoteBusy = false
     private var isVisibilityBusy = false
@@ -811,11 +813,7 @@ final class BearyDetailViewController: UIViewController {
         nameButton.translatesAutoresizingMaskIntoConstraints = false
         nameButton.addTarget(self, action: #selector(authorTapped), for: .touchUpInside)
         nameButton.bearyAddPressFeedback()
-        // 首页 feed 模式皇冠带网页 drop-shadow（0 1px 1px 黑 30%）。
-        crownView.layer.shadowColor = UIColor.black.cgColor
-        crownView.layer.shadowOpacity = 0.30
-        crownView.layer.shadowOffset = CGSize(width: 0, height: 1)
-        crownView.layer.shadowRadius = 1
+        // 详情页皇冠无辉光（辉光仅首页 feed 卡片，见 CardCell 的 cardMode == .feed 门控）。
         nameButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         titleSpacerLabel.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
@@ -1870,7 +1868,7 @@ final class BearyDetailViewController: UIViewController {
             likeButtonWidthConstraint?.constant = imageWidth
         } else {
             let titleText = "\(likeCount)"
-            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))]).width)
             likeButton.setTitle(titleText, for: .normal)
             likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
         }
@@ -2013,9 +2011,28 @@ final class BearyDetailViewController: UIViewController {
                 emoteFlowView.addSubview(chip)
                 placed.append(chip)
                 if !isFirstRender && !reduceMotion {
-                    UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) {
-                        chip.transform = .identity
-                        chip.alpha = 1.0
+                    UIView.animateKeyframes(withDuration: 0.45, delay: 0, options: [], animations: {
+                        UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.6) {
+                            chip.transform = CGAffineTransform(scaleX: 1.12, y: 1.12)
+                            chip.alpha = 1.0
+                        }
+                        UIView.addKeyframe(withRelativeStartTime: 0.6, relativeDuration: 0.4) {
+                            chip.transform = .identity
+                            chip.alpha = 1.0
+                        }
+                    }, completion: nil)
+                    if let emoteView = chip.player {
+                        UIView.animateKeyframes(withDuration: 0.5, delay: 0, options: [], animations: {
+                            UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.3) {
+                                emoteView.transform = CGAffineTransform(rotationAngle: -0.1745).scaledBy(x: 1.3, y: 1.3)
+                            }
+                            UIView.addKeyframe(withRelativeStartTime: 0.3, relativeDuration: 0.3) {
+                                emoteView.transform = CGAffineTransform(rotationAngle: 0.1396).scaledBy(x: 1.15, y: 1.15)
+                            }
+                            UIView.addKeyframe(withRelativeStartTime: 0.6, relativeDuration: 0.4) {
+                                emoteView.transform = .identity
+                            }
+                        }, completion: nil)
                     }
                 }
             }
@@ -2066,7 +2083,7 @@ final class BearyDetailViewController: UIViewController {
         } else {
             for chip in departing {
                 chip.overlayButton.isEnabled = false
-                UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .curveEaseIn], animations: {
+                UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState, .curveEaseIn], animations: {
                     chip.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
                     chip.alpha = 0
                 }, completion: { [weak self] _ in
@@ -2237,11 +2254,17 @@ final class BearyDetailViewController: UIViewController {
         // 本人名字不可点（自己主页走底栏“我的”）；他人作者行点按进作者主页。
         if isAuthor { return }
         guard let authorId = entry.authorId else { return }
+        let now = Date()
+        if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
+        lastNavigationAt = now
         onAuthorTapped?(authorId)
     }
 
     @objc private func mentionTapped() {
         guard let mentionedId = entry.mentionedUserId else { return }
+        let now = Date()
+        if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
+        lastNavigationAt = now
         onAuthorTapped?(mentionedId)
     }
 
@@ -2621,6 +2644,9 @@ final class BearyDetailViewController: UIViewController {
         }
         guard !imageKeys.isEmpty, index >= 0, index < imageKeys.count else { return }
         if presentedViewController != nil { return }
+        let now = Date()
+        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
+        lastImageViewerAt = now
 let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: entry.liveVideos, startIndex: index)
         viewer.originFrameInWindow = sender.view.map { $0.convert($0.bounds, to: nil) }
         // 无障碍：关闭后焦点回被点的缩略图。
@@ -2633,6 +2659,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideo
         guard let quote = entry.quote, let quoteId = quote.id, !quoteId.isEmpty else { return }
         // gone/locked 卡不导航；其余一律经容器先校验可见性再放行（私密显占位）。
         if quote.gone == true || quote.locked == true { return }
+        let now = Date()
+        if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
+        lastNavigationAt = now
         onQuoteTapped?(quoteId)
     }
 }

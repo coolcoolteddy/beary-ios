@@ -28,6 +28,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let emptyLabel = UILabel()
+    // 空态走 BearyStateView（仅无消息时显，与 emptyLabel/loadFailedStateView 同槽位居中、互斥；
+    // 会话已关闭分支仍用 emptyLabel）。
+    private let emptyStateView = BearyStateView()
     // 审计第 19 项：首次加载态复用 BearyStateView（转圈 +“加载中…”），不加骨架屏。
     // 只在“首次请求且尚无本地/旧消息”时出现；有旧消息时保留内容后台刷新。
     private let firstLoadStateView = BearyStateView()
@@ -185,7 +188,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         inputBar.addSubview(sendButton)
         // 审计：接近 2000 字实时计数（仅 ≥1800 字出现）与“新消息”pill。
         countLabel.translatesAutoresizingMaskIntoConstraints = false
-        countLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
+        countLabel.font = BearyDynamicType.numberFont()
         countLabel.adjustsFontForContentSizeCategory = true
         countLabel.textColor = BearyColors.gray
         countLabel.isHidden = true
@@ -281,6 +284,15 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             loadFailedStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             loadFailedStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
             loadFailedStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
+        ])
+        emptyStateView.translatesAutoresizingMaskIntoConstraints = false
+        emptyStateView.isHidden = true
+        view.addSubview(emptyStateView)
+        NSLayoutConstraint.activate([
+            emptyStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            emptyStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            emptyStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
+            emptyStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
         ])
 
         // 2026-11-04 键盘跟随：输入条底直接锚系统 keyboardLayoutGuide 顶——
@@ -517,7 +529,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         guard deltaY > 0 else { return }
         cell.alpha = 0
         cell.transform = CGAffineTransform(translationX: 0, y: deltaY)
-        UIView.animate(withDuration: 0.22, delay: 0, options: .curveEaseOut, animations: {
+        UIView.animate(withDuration: BearyMotion.animated(true) ? 0.22 : 0, delay: 0, options: .curveEaseOut, animations: {
             cell.alpha = 1
             cell.transform = .identity
         }, completion: nil)
@@ -632,18 +644,22 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         if sessionClosed {
             emptyLabel.text = "该会话已关闭"
             emptyLabel.isHidden = false
+            emptyStateView.isHidden = true
             loadFailedStateView.isHidden = true
         } else if loadFailed && messages.isEmpty {
             // U5：失败态不再纯文字——StateView 带“重试”动作入口（点按重拉历史，不重发）。
             emptyLabel.isHidden = true
+            emptyStateView.isHidden = true
             loadFailedStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.loadLatest() })
             loadFailedStateView.isHidden = false
         } else if messages.isEmpty {
-            emptyLabel.text = "还没有消息\n发第一条纯文字消息吧"
-            emptyLabel.isHidden = false
+            emptyLabel.isHidden = true
+            emptyStateView.configure(kind: .empty, title: "还没有消息", subtitle: "发第一条纯文字消息吧", iconName: nil, actionTitle: nil)
+            emptyStateView.isHidden = false
             loadFailedStateView.isHidden = true
         } else {
             emptyLabel.isHidden = true
+            emptyStateView.isHidden = true
             loadFailedStateView.isHidden = true
         }
     }
@@ -738,6 +754,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         // 此时 firstLoadPending 已为 false，同样不遮内容（#668 回显口径不动）。
         if firstLoadPending && messages.isEmpty && tableView.refreshControl?.isRefreshing != true {
             emptyLabel.isHidden = true
+            emptyStateView.isHidden = true
             firstLoadStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
             firstLoadStateView.isHidden = false
             loadFailedStateView.isHidden = true

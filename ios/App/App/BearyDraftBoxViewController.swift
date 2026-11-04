@@ -796,85 +796,26 @@ final class BearyDraftBoxViewController: UIViewController {
             subLabel.text = nil
             subWrap.isHidden = true
             hintWrap.isHidden = true
-            let failedLabel = UILabel()
-            // 两种失败态文案分开：损坏态不再沿用“原文件已保留，请稍后再试”
-            //（清除会删坏 v3 文件、只留 .bak），须讲清清除结果与重读回空态；
-            // 非损坏态沿用原话 + 下方“重新读取”，按钮与确认框均不动。
-            failedLabel.text = draftsLoadCorrupt
-                ? "草稿库已损坏\n损坏的草稿无法恢复，.bak 备份保留在手机里。清除后重新读取会回到空态，新草稿可以正常保存。"
-                : "草稿读取失败\n原文件已保留，请稍后再试"
-            failedLabel.font = UIFont.systemFont(ofSize: 13)
-            failedLabel.textColor = BearyColors.gray
-            failedLabel.textAlignment = .center
-            failedLabel.numberOfLines = 0
-            if let attributed = attributedText(failedLabel.text, lineHeightMultiple: 1.7, font: failedLabel.font) {
-                failedLabel.attributedText = attributed
-            }
-            let failedWrap = UIView()
-            failedWrap.translatesAutoresizingMaskIntoConstraints = false
-            failedWrap.addSubview(failedLabel)
-            failedLabel.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                failedLabel.topAnchor.constraint(equalTo: failedWrap.topAnchor, constant: 30),
-                failedLabel.leadingAnchor.constraint(equalTo: failedWrap.leadingAnchor, constant: 20),
-                failedLabel.trailingAnchor.constraint(equalTo: failedWrap.trailingAnchor, constant: -20),
-            ])
+            let failedStateView = BearyStateView()
+            failedStateView.translatesAutoresizingMaskIntoConstraints = false
+            // 两种失败态文案分开：损坏态讲清清除结果（删坏 v3 文件、只留 .bak，
+            // 清除后重读回空态）；非损坏态沿用原话 +“重新读取”，确认框口径不动。
             if draftsLoadCorrupt {
-                let clearButton = BearyButton.make(style: .destructiveOutline(.compact), title: "清除损坏的草稿数据")
-                clearButton.translatesAutoresizingMaskIntoConstraints = false
-                clearButton.accessibilityLabel = "清除损坏的草稿数据"
-                clearButton.addTarget(self, action: #selector(clearCorruptStoreTapped), for: .touchUpInside)
-                clearButton.bearyAddPressFeedback()
-                failedWrap.addSubview(clearButton)
-                NSLayoutConstraint.activate([
-                    clearButton.topAnchor.constraint(equalTo: failedLabel.bottomAnchor, constant: 16),
-                    clearButton.centerXAnchor.constraint(equalTo: failedWrap.centerXAnchor),
-                    clearButton.heightAnchor.constraint(equalToConstant: 36),
-                    clearButton.bottomAnchor.constraint(equalTo: failedWrap.bottomAnchor, constant: -22),
-                ])
+                failedStateView.configure(kind: .error, title: "草稿库已损坏", subtitle: "损坏的草稿无法恢复，.bak 备份保留在手机里。清除后重新读取会回到空态，新草稿可以正常保存。", iconName: nil, actionTitle: "清除损坏的草稿数据", actionStyle: .destructiveOutline(.regular), onAction: { [weak self] in self?.clearCorruptStoreTapped() })
             } else {
-                // 112：非损坏型读取失败给重试钮（点按重读草稿，不删库）——
-                // 文案与样式均与损坏态“清除损坏的草稿库”区分开；损坏态不动。
-                let retryButton = BearyButton.make(style: .secondaryOutline(.compact), title: "重新读取")
-                retryButton.translatesAutoresizingMaskIntoConstraints = false
-                retryButton.accessibilityLabel = "重新读取草稿"
-                retryButton.addTarget(self, action: #selector(retryLoadDraftsTapped), for: .touchUpInside)
-                retryButton.bearyAddPressFeedback()
-                failedWrap.addSubview(retryButton)
-                NSLayoutConstraint.activate([
-                    retryButton.topAnchor.constraint(equalTo: failedLabel.bottomAnchor, constant: 16),
-                    retryButton.centerXAnchor.constraint(equalTo: failedWrap.centerXAnchor),
-                    retryButton.heightAnchor.constraint(equalToConstant: 36),
-                    retryButton.bottomAnchor.constraint(equalTo: failedWrap.bottomAnchor, constant: -22),
-                ])
+                failedStateView.configure(kind: .error, title: "草稿读取失败", subtitle: "原文件已保留，请稍后再试", iconName: nil, actionTitle: "重新读取", onAction: { [weak self] in self?.retryLoadDraftsTapped() })
             }
-            listStack.addArrangedSubview(failedWrap)
+            listStack.addArrangedSubview(failedStateView)
             return
         }
         if drafts.isEmpty {
             subLabel.text = nil
             subWrap.isHidden = true
             hintWrap.isHidden = true
-            let emptyLabel = UILabel()
-            emptyLabel.text = "还没有草稿\n写下的内容会自动存在这里"
-            emptyLabel.font = UIFont.systemFont(ofSize: 13)
-            emptyLabel.textColor = BearyColors.gray
-            emptyLabel.textAlignment = .center
-            emptyLabel.numberOfLines = 0
-            if let attributed = attributedText(emptyLabel.text, lineHeightMultiple: 1.7, font: emptyLabel.font) {
-                emptyLabel.attributedText = attributed
-            }
-            let emptyWrap = UIView()
-            emptyWrap.translatesAutoresizingMaskIntoConstraints = false
-            emptyWrap.addSubview(emptyLabel)
-            emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                emptyLabel.topAnchor.constraint(equalTo: emptyWrap.topAnchor, constant: 30),
-                emptyLabel.bottomAnchor.constraint(equalTo: emptyWrap.bottomAnchor, constant: -22),
-                emptyLabel.leadingAnchor.constraint(equalTo: emptyWrap.leadingAnchor, constant: 20),
-                emptyLabel.trailingAnchor.constraint(equalTo: emptyWrap.trailingAnchor, constant: -20),
-            ])
-            listStack.addArrangedSubview(emptyWrap)
+            let emptyStateView = BearyStateView()
+            emptyStateView.translatesAutoresizingMaskIntoConstraints = false
+            emptyStateView.configure(kind: .empty, title: "还没有草稿", subtitle: "写下的内容会自动存在这里", iconName: nil, actionTitle: nil)
+            listStack.addArrangedSubview(emptyStateView)
         } else {
             subWrap.isHidden = false
             // Q10：App 草稿只存本机，副文案改“仅保存在本设备”
@@ -1001,7 +942,7 @@ final class BearyDraftBoxViewController: UIViewController {
         // "[mood:happy]" 这类记号原串全算进去，与圆环对不上，故此处不用它；
         // 去组词串一节已由落盘 committedContent 保证，不在此重复。
         wordLabel.text = "\(BearyText.inlineVisibleCount(of: draftValue.content)) 字"
-        wordLabel.font = UIFont.systemFont(ofSize: 12)
+        wordLabel.font = BearyDynamicType.numberFont()
         wordLabel.textColor = BearyColors.gray
         wordLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 流式子项用手动 frame（见 BearyDraftMetaFlowView），不参与 Auto Layout。

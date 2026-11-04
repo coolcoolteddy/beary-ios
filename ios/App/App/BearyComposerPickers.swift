@@ -1122,7 +1122,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                 guard !animatedRowKeys.contains(key) else { continue }
                 animatedRowKeys.insert(key)
                 button.alpha = 0
-                UIView.animate(withDuration: 0.25, delay: Double(animIndex) * 0.03, options: [], animations: {
+                UIView.animate(withDuration: 0.25, delay: min(Double(animIndex) * 0.03, 0.24), options: [], animations: {
                     button.alpha = 1
                 }, completion: nil)
                 animIndex += 1
@@ -1161,7 +1161,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// 只动底片背景，不动 transform，故整行不缩放。松开/取消见 rowPressUp。
     @objc private func rowPressDown(_ sender: UIButton) {
         guard let highlight = rowHighlight(for: sender) else { return }
-        UIView.animate(withDuration: 0.10, animations: {
+        UIView.animate(withDuration: BearyMotion.animated(true) ? 0.13 : 0, animations: {
             highlight.backgroundColor = BearyColors.hov
         })
     }
@@ -1170,7 +1170,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// didTapRow 随即 dismiss，淡出是否播完不影响结果）。
     @objc private func rowPressUp(_ sender: UIButton) {
         guard let highlight = rowHighlight(for: sender) else { return }
-        UIView.animate(withDuration: 0.10, animations: {
+        UIView.animate(withDuration: BearyMotion.animated(true) ? 0.13 : 0, animations: {
             highlight.backgroundColor = .clear
         })
     }

@@ -60,7 +60,7 @@ final class BearyBlindBoxEntryView: UIView {
         titleLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
 
         countLabel.translatesAutoresizingMaskIntoConstraints = false
-        countLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        countLabel.font = BearyDynamicType.numberFont()
         countLabel.adjustsFontForContentSizeCategory = true
         countLabel.textColor = BearyColors.gray
         countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)

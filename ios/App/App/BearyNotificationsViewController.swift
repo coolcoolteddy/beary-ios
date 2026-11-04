@@ -276,7 +276,7 @@ final class BearyNotificationsViewController: UIViewController {
         // 宽已超 44 不横扩；视觉不动（标题顶距不变，多余高度落到底部留白）。
         let button = BearyHit44Button(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.setImage(BearyIconImages.image(named: "icon_check", pointSize: 24), for: .normal)
+        button.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
         button.setTitle("全部已读", for: .normal)
         button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         button.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -1212,8 +1212,8 @@ final class BearyNotificationsViewController: UIViewController {
         return "\(item.id ?? -1):\(item.read ?? false):\(item.type ?? ""):\(item.title ?? ""):\(item.excerpt ?? ""):\(item.actorName ?? ""):\(item.emote ?? ""):\(item.entryId ?? ""):\(item.createdAt ?? 0)"
     }
 
-    /// 逐行错峰入场（网页 staggerIn 口径）：slideDown .42s、步进 40ms、
-    /// 总延迟封顶 240ms、仅可视区前 24 行、减动效不播。
+    /// 逐行错峰入场（网页 staggerIn 口径）：slideDown 0.25s、步进 0.03、
+    /// 总延迟封顶 0.24、仅可视区前 24 行、减动效不播。
     private func playStaggeredEntrance(oldSignatures: Set<String>) {
         if UIAccessibility.isReduceMotionEnabled {
             return
@@ -1457,7 +1457,7 @@ final class BearyNotificationsViewController: UIViewController {
             }, completion: nil)
             tableView.layoutIfNeeded()
             if let cardCell = tableView.cellForRow(at: IndexPath(row: cardRow, section: 0)) as? BearyNotificationCell {
-                UIView.animate(withDuration: 0.30) {
+                UIView.animate(withDuration: 0.18) {
                     cardCell.setChevronExpanded(true)
                 }
             }
@@ -1568,7 +1568,7 @@ final class BearyNotificationsViewController: UIViewController {
         guard let cardRow = displayRows.firstIndex(where: { $0.kind == kind }) else { return }
         zeroHeightRows.removeAll()
         if let cardCell = tableView.cellForRow(at: IndexPath(row: cardRow, section: 0)) as? BearyNotificationCell {
-            UIView.animate(withDuration: 0.30) {
+            UIView.animate(withDuration: 0.18) {
                 cardCell.setChevronExpanded(true)
             }
         }
@@ -1760,7 +1760,7 @@ final class BearyNotificationsViewController: UIViewController {
         isMarkingAllRead = true
         readAllButton.isEnabled = false
         // 网页口径：处理中换成转圈图标 +“处理中…”（check 图标不再保留）。
-        readAllButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 24), for: .normal)
+        readAllButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 14), for: .normal)
         readAllButton.setTitle("处理中…", for: .normal)
         updateReadAllButtonWidth()
         readAllButton.layoutIfNeeded()

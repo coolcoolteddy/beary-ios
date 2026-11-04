@@ -89,9 +89,6 @@ enum BearySheetChrome {
     static let scrimAlpha: CGFloat = 0.45
     static var scrimColor: UIColor { BearyColors.scrim.withAlphaComponent(scrimAlpha) }
     static var shadowColor: CGColor { UIColor.black.cgColor }
-    static let bottomShadowOpacity: Float = 0.22
-    static let bottomShadowRadius: CGFloat = 16
-    static let bottomShadowOffset = CGSize(width: 0, height: -12)
     /// 面板阴影唯一入口（规格附录第 2 项已定：阴影一档化为 raised）：
     /// 兼容别名，转调 BearyShadow.applyRaised（0.12 / 8 / (0, 2)）；底 sheet 旧档
     /// 0.22 / 16 / (0, -12) 已废弃，不删除本函数以防其他分支引用断裂。
