@@ -517,7 +517,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         guard deltaY > 0 else { return }
         cell.alpha = 0
         cell.transform = CGAffineTransform(translationX: 0, y: deltaY)
-        UIView.animate(withDuration: 0.22, delay: 0, options: .curveEaseOut, animations: {
+        UIView.animate(withDuration: BearyMotion.animated(true) ? 0.22 : 0, delay: 0, options: .curveEaseOut, animations: {
             cell.alpha = 1
             cell.transform = .identity
         }, completion: nil)

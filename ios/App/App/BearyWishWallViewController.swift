@@ -169,7 +169,7 @@ private final class WishRowView: UIView {
         }
         detailLabel.alpha = 0
         detailLabel.transform = CGAffineTransform(translationX: 0, y: 4)
-        UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut], animations: {
+        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut], animations: {
             self.detailLabel.alpha = 1
             self.detailLabel.transform = .identity
         }, completion: nil)

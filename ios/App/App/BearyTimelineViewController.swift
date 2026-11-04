@@ -1308,8 +1308,8 @@ final class BearyTimelineCell: UITableViewCell {
             // 分割线式：未高亮回页面底 bg（内容列无卡片底色）。
             self.cardView.backgroundColor = highlighted ? BearyColors.faint : BearyColors.bg
         }
-        if animated {
-            UIView.animate(withDuration: 0.15, animations: apply)
+        if BearyMotion.animated(animated) {
+            UIView.animate(withDuration: 0.13, animations: apply)
         } else {
             apply()
         }
@@ -2182,6 +2182,8 @@ class BearyTimelineViewController: UIViewController {
     private var timelineFirstPagePendingCompletions: [() -> Void] = []
     /// 112 手势下拉节流时钟：最近一次首屏网络成功的时间。
     private var lastTimelineFirstPageSuccessAt: Date?
+    private var lastNavigationAt: Date?
+    private var lastImageViewerAt: Date?
     /// 112 增量当日面板：keepDay 刷新时暂存选中日，不立即另发当日请求；
     /// 首屏回包若已覆盖该日（页内出现更早日的篇），直接从首屏派生面板，
     /// 否则回落正向 fetchDayEntries；首屏失败时同样回落正向拉取。
@@ -6290,6 +6292,9 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         let viewerEntry = sections[indexPath.section].entries[indexPath.row]
         cell.onTapImages = { [weak self] keys, index, originFrame in
             guard let self = self, self.presentedViewController == nil else { return }
+            let now = Date()
+            if let last = self.lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
+            self.lastImageViewerAt = now
             let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: viewerEntry.liveVideos, startIndex: index)
             viewer.originFrameInWindow = originFrame
             viewer.modalPresentationStyle = .fullScreen
@@ -6361,6 +6366,9 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         tableView.deselectRow(at: indexPath, animated: false)
         let sections = currentSections()
         guard indexPath.section < sections.count, indexPath.row < sections[indexPath.section].entries.count else { return }
+        let now = Date()
+        if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
+        lastNavigationAt = now
         // W6：行点按补 .light 轻震。
         BearyHaptics.press()
         onOpenEntry?(sections[indexPath.section].entries[indexPath.row])
@@ -6440,7 +6448,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
             if daySwitchGeneration == staggerGeneration {
                 cell.alpha = 0
                 cell.transform = CGAffineTransform(translationX: 0, y: 6)
-                let delay = min(Double(dayOrder) * 0.05, 0.24)
+                let delay = min(Double(dayOrder) * 0.03, 0.24)
                 UIView.animate(withDuration: 0.25, delay: delay, options: [.curveEaseOut, .allowUserInteraction], animations: {
                     cell.alpha = 1
                     cell.transform = .identity

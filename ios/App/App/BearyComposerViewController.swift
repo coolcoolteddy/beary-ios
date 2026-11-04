@@ -2390,7 +2390,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if UIAccessibility.isReduceMotionEnabled {
                 applyClose()
             } else {
-                UIView.animate(withDuration: 0.2, animations: {
+                UIView.animate(withDuration: 0.18, animations: {
                     self.quotePanel.alpha = 0
                 }, completion: { _ in
                     applyClose()
@@ -2948,7 +2948,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 guard !quotePanelAnimatedRowKeys.contains(key) else { continue }
                 quotePanelAnimatedRowKeys.insert(key)
                 button.alpha = 0
-                UIView.animate(withDuration: 0.25, delay: Double(animIndex) * 0.03, options: [], animations: {
+                UIView.animate(withDuration: 0.25, delay: min(Double(animIndex) * 0.03, 0.24), options: [], animations: {
                     button.alpha = 1
                 }, completion: nil)
                 animIndex += 1
@@ -3721,7 +3721,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         } else {
             locationPopover.alpha = 0
             locationPopover.transform = CGAffineTransform(translationX: 0, y: 6)
-            UIView.animate(withDuration: 0.20, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+            UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
                 self.locationPopover.alpha = 1
                 self.locationPopover.transform = .identity
             })
@@ -3748,7 +3748,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             return
         }
-        UIView.animate(withDuration: 0.20, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+        UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
             self.locationPopover.alpha = 0
             self.locationPopover.transform = CGAffineTransform(translationX: 0, y: 6)
         }, completion: { [weak self] _ in

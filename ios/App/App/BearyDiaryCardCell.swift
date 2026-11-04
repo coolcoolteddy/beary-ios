@@ -2349,7 +2349,7 @@ class BearyDiaryCardCell: UITableViewCell {
         if UIAccessibility.isReduceMotionEnabled {
             foldButton.imageView?.transform = target
         } else {
-            UIView.animate(withDuration: 0.2) { self.foldButton.imageView?.transform = target }
+            UIView.animate(withDuration: 0.18) { self.foldButton.imageView?.transform = target }
         }
     }
 

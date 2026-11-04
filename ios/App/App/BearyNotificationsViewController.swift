@@ -1457,7 +1457,7 @@ final class BearyNotificationsViewController: UIViewController {
             }, completion: nil)
             tableView.layoutIfNeeded()
             if let cardCell = tableView.cellForRow(at: IndexPath(row: cardRow, section: 0)) as? BearyNotificationCell {
-                UIView.animate(withDuration: 0.30) {
+                UIView.animate(withDuration: 0.18) {
                     cardCell.setChevronExpanded(true)
                 }
             }
@@ -1568,7 +1568,7 @@ final class BearyNotificationsViewController: UIViewController {
         guard let cardRow = displayRows.firstIndex(where: { $0.kind == kind }) else { return }
         zeroHeightRows.removeAll()
         if let cardCell = tableView.cellForRow(at: IndexPath(row: cardRow, section: 0)) as? BearyNotificationCell {
-            UIView.animate(withDuration: 0.30) {
+            UIView.animate(withDuration: 0.18) {
                 cardCell.setChevronExpanded(true)
             }
         }

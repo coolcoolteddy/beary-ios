@@ -96,6 +96,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let onOpenEntryHandler: (String) -> Void
 
     private var searchTimer: Timer?
+    private var lastNavigationAt: Date?
     /// 顶栏透度批：容器最后一次发来的栏态（本页属性内边距不含安全区顶，见 applyHeaderTopInset）。
     private var headerTopInsetVisible = false
     private var searchFieldToBoxTrailing: NSLayoutConstraint?
@@ -1308,7 +1309,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 新规矩 (b)：状态区首次出现淡入（同态内文案更换不重播；减动效直显）。
         if wasStateHidden && !UIAccessibility.isReduceMotionEnabled {
             stateWrap.alpha = 0
-            UIView.animate(withDuration: 0.2, animations: {
+            UIView.animate(withDuration: 0.18, animations: {
                 self.stateWrap.alpha = 1
             })
         } else {
@@ -1408,7 +1409,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         recentWrap.isHidden = false
         if !UIAccessibility.isReduceMotionEnabled {
             recentWrap.alpha = 0
-            UIView.animate(withDuration: 0.2, animations: {
+            UIView.animate(withDuration: 0.18, animations: {
                 self.recentWrap.alpha = 1
             })
         } else {
@@ -1462,7 +1463,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 新规矩 (b) 同口径：错误态首次出现淡入（同态内不重播；减动效直显）。
         if wasErrorHidden && !UIAccessibility.isReduceMotionEnabled {
             errorStateWrap.alpha = 0
-            UIView.animate(withDuration: 0.2, animations: {
+            UIView.animate(withDuration: 0.18, animations: {
                 self.errorStateWrap.alpha = 1
             })
         } else {
@@ -2240,6 +2241,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                     BearyToast.show(in: view, message: "该用户已被拉黑")
                     return
                 }
+                // 导航节流 0.8s（与日记行共用导航时钟），防连点叠页。
+                let now = Date()
+                if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
+                lastNavigationAt = now
                 onOpenUserHandler(user)
                 return
             }
@@ -2451,6 +2456,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     @objc private func entryRowTapped(_ sender: UIButton) {
         for index in 0..<entryButtons.count {
             if index < rowEntryIds.count && entryButtons[index] == sender {
+                // 导航节流 0.8s（广场同款），防连点叠页。
+                let now = Date()
+                if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
+                lastNavigationAt = now
                 // iCity §12：搜索结果点按记 search_click（只记 id，不记查询词；失败静默）。
                 BearyAPI.shared.sendEvent(eventType: "search_click", targetId: rowEntryIds[index])
                 onOpenEntryHandler(rowEntryIds[index])

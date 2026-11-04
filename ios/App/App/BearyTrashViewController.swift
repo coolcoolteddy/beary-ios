@@ -749,7 +749,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 let delay = min(Double(index) * 0.03, 0.24)
                 rowView.alpha = 0
                 rowView.transform = CGAffineTransform(translationX: 0, y: 6)
-                UIView.animate(withDuration: 0.32, delay: delay, options: .curveEaseOut, animations: {
+                UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
                     rowView.alpha = 1
                     rowView.transform = .identity
                 }, completion: nil)
@@ -770,7 +770,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 let delay = min(Double(index) * 0.03, 0.24)
                 rowView.alpha = 0
                 rowView.transform = CGAffineTransform(translationX: 0, y: 6)
-                UIView.animate(withDuration: 0.32, delay: delay, options: .curveEaseOut, animations: {
+                UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
                     rowView.alpha = 1
                     rowView.transform = .identity
                 }, completion: nil)
