@@ -1896,13 +1896,20 @@ final class BearySettingsViewController: UIViewController {
         avatarImageView.image = nil
         // 审计追加：与编辑页同法——/me 下发的 avatar 本就是 data:image;base64，
         // 直接解码显示，不再跳过 data: 只剩首字母占位；解码失败回落原路径。
+        // 首字母 label 压在照片上层：有图时藏字、无图时显字、URL 加载失败时回显字兜底。
         if let avatar = user.avatar, !avatar.isEmpty, avatar.hasPrefix("data:"),
            let commaIndex = avatar.firstIndex(of: ","),
            let avatarData = Data(base64Encoded: String(avatar[avatar.index(after: commaIndex)...])),
            let avatarImage = UIImage(data: avatarData) {
             avatarImageView.image = avatarImage
+            avatarInitialLabel.isHidden = true
         } else if let avatar = user.avatar, !avatar.isEmpty {
-            avatarImageView.bearySetImage(url: BearyImageURLs.avatarURL(avatar))
+            avatarInitialLabel.isHidden = true
+            avatarImageView.bearySetImage(url: BearyImageURLs.avatarURL(avatar)) { [weak self] _ in
+                self?.avatarInitialLabel.isHidden = false
+            }
+        } else {
+            avatarInitialLabel.isHidden = false
         }
         setLabelTextFaded(idCreatedLabel, BearyAccountText.dateString(ms: user.createdAt))
         // ID 卡会员行：只留状态词（Plus 会员 / 普通用户），不走 plus-detail；
