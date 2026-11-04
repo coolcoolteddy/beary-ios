@@ -268,7 +268,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         topBar.translatesAutoresizingMaskIntoConstraints = false
         let backButton = BearyHit44Button(type: .system)
         backButton.translatesAutoresizingMaskIntoConstraints = false
-        if let back = BearyIconImages.image(named: "icon_back", pointSize: 20) {
+        if let back = BearyIconImages.image(named: "icon_back", pointSize: 24) {
             backButton.setImage(back, for: .normal)
         } else {
             backButton.setTitle("返回", for: .normal)

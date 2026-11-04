@@ -3,12 +3,12 @@ import UIKit
 // ===== BearyButton 按钮工厂（B 批）=====
 // 四类样式（各页实测形态的归纳口径，见下方各 case 注释；数值即原各页数值，
 // 工厂只收敛写法，不改任何一处视觉）：
-//  .primaryPill：高 44、圆角 22；墨底 + 反色字（bg 色，浅白深黑，与 ink 互为反色），
+//  .primaryPill：高 44、圆角 single（12）；墨底 + 反色字（bg 色，浅白深黑，与 ink 互为反色），
 //    或橙底 + onBrand 深墨字（视觉清单第 5 项：橙底前景固定深墨色，不用
 //    深色下会变白的 ink；引导/主操作，Onboarding 主钮同款口径）。
-//  .secondaryOutline：高 44/36、圆角 22/18、1pt line 边框 + surface 底 + ink 字
+//  .secondaryOutline：高 44/36、圆角 single（12）、1pt line 边框 + surface 底 + ink 字
 //    （搜索页“清空搜索”44/22 同款；36/18 为其紧凑版）。
-//  .destructiveOutline：高 36/44、圆角 18/22、1pt 45% 红边框 + 红字 + surface 底
+//  .destructiveOutline：高 36/44、圆角 single（12）、1pt 45% 红边框 + 红字 + surface 底
 //    （回收站“彻底删除”红字口径，边框按任务要求取 45% 红而非 line）。
 //  .iconCircleClose：视觉 32×32、圆角 16、faint 底、icon_close 15 + ink tint；
 //    热区 44×44 由父类 BearyHit44Button 的 point(inside:) 自动扩（视觉帧不动）。
@@ -119,7 +119,7 @@ class BearyButton: BearyHit44Button {
     }
 
     /// 快捷构造：关闭圆钮（faint 底 32 圆钮 + icon_close 15；资产缺失时“✕”文字兜底）。
-    /// 关闭两套定版（2026-10-28 定）：全屏页用文字关闭、弹窗页用本图标圆钮，两套并存，不再强求统一成一种。
+    /// 关闭口径（2026-11-04 定）：全屏页左上角左箭头返回、非全屏弹窗右上角叉叉关闭；本圆钮用于弹窗右上角关闭。
     static func closeButton() -> BearyButton {
         return BearyButton(style: .iconCircleClose)
     }
