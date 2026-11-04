@@ -1668,7 +1668,7 @@ class BearyProfileViewController: UIViewController {
     private let mapEntryRow: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
-        viewValue.backgroundColor = BearyColors.faint
+        viewValue.backgroundColor = BearyColors.bg
         viewValue.layer.cornerRadius = 12
         viewValue.clipsToBounds = true
         return viewValue
@@ -1721,7 +1721,7 @@ class BearyProfileViewController: UIViewController {
     private let starEntryRow: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
-        viewValue.backgroundColor = BearyColors.faint
+        viewValue.backgroundColor = BearyColors.bg
         viewValue.layer.cornerRadius = 12
         viewValue.clipsToBounds = true
         return viewValue
