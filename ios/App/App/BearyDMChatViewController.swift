@@ -129,6 +129,12 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         tableView.refreshControl = refresh
         view.addSubview(tableView)
 
+        // 点记录区收键盘：轻点消息列表即收起键盘；cancelsTouchesInView=false，
+        // 气泡点按、链接点按等原有手势不受影响；只做点按收起，不加拖动收起。
+        let messageAreaTap = UITapGestureRecognizer(target: self, action: #selector(messageAreaTapped))
+        messageAreaTap.cancelsTouchesInView = false
+        tableView.addGestureRecognizer(messageAreaTap)
+
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         emptyLabel.adjustsFontForContentSizeCategory = true
@@ -383,6 +389,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     @objc private func closeTapped() {
         onBack?()
+    }
+
+    @objc private func messageAreaTapped() {
+        view.endEditing(true)
     }
 
     @objc private func refreshPulled() {
