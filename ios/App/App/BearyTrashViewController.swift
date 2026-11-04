@@ -91,14 +91,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     private let noteLabel = UILabel()
     private let listStack = UIStackView()
     private let loadingView = BearyRefreshIconView()
-    private let emptyWrap = UIStackView()
+    // 空态走 BearyStateView（与失败态 failureStateView 同为 contentStack 的 arranged subview）。
+    private let emptyStateView = BearyStateView()
     // B-G14: trash empty-state 40pt top pad (web trashEmptyHtml padding-top:40).
     private let emptyTopSpacer = UIView()
-    private let emptyIconView = UIImageView()
-    private let emptyLabel = UILabel()
     private let failureWrap = UIStackView()
     // B 批示范接入：失败态改走统一 BearyStateView（错误重试态），失败文案与重试动作不变；
-    // 空态 emptyWrap 与登录态 loginWrap 本批不动；Feed/Profile 各页的接入留给卡片线。
+    // 空态已走 BearyStateView（本批）；登录态 loginWrap 不动；Feed/Profile 各页的接入留给卡片线。
     private let failureStateView = BearyStateView()
     private let moreSpinner = BearyRefreshIconView()
     /// 翻页失败尾部重试节（照片墙 #729 同款：仅失败时出现的一节入口，
@@ -255,22 +254,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
 
         // 栈内固有尺寸与旧 medium 圈一致（20pt 图）。
         loadingView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
-        emptyWrap.axis = .vertical
-        emptyWrap.alignment = .center
-        emptyWrap.spacing = 8
-        emptyWrap.isHidden = true
-        if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 36) {
-            emptyIconView.image = trashImage
-        }
-        // 空态图标防压扁：UIImageView 默认 scaleToFill，显式 aspectFit（框已是 36×36 方形）。
-        emptyIconView.contentMode = .scaleAspectFit
-        emptyIconView.tintColor = BearyColors.gray
-        emptyLabel.text = "回收站是空的"
-        // 扫查组：此前裸 15pt，空态文案不跟随大字号。
-        emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
-        emptyLabel.adjustsFontForContentSizeCategory = true
-        emptyLabel.textColor = BearyColors.ink
-        emptyLabel.textAlignment = .center
+        emptyStateView.translatesAutoresizingMaskIntoConstraints = false
+        emptyStateView.configure(kind: .empty, title: "回收站是空的", iconName: "icon_trash", actionTitle: nil)
+        emptyStateView.isHidden = true
 
         failureWrap.axis = .vertical
         failureWrap.alignment = .center
@@ -340,13 +326,11 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         emptyTopSpacer.heightAnchor.constraint(equalToConstant: 40).isActive = true
         emptyTopSpacer.isHidden = true
         contentStack.addArrangedSubview(emptyTopSpacer)
-        contentStack.addArrangedSubview(emptyWrap)
+        contentStack.addArrangedSubview(emptyStateView)
         contentStack.addArrangedSubview(failureWrap)
         contentStack.addArrangedSubview(loginWrap)
         contentStack.addArrangedSubview(moreSpinner)
         contentStack.addArrangedSubview(loadMoreRetryWrap)
-        emptyWrap.addArrangedSubview(emptyIconView)
-        emptyWrap.addArrangedSubview(emptyLabel)
         failureWrap.addArrangedSubview(failureStateView)
         contentStack.setCustomSpacing(6, after: headerRow)
         contentStack.setCustomSpacing(4, after: noteRow)
@@ -358,8 +342,6 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         closeButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
         // Hit44：头行高放开到 44（钮 32 在 stack 内居中，上下各留 6），热区不再被 32 高行截断；钮视觉尺寸不变。
         headerRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true  // 32-17：标题跟随放大时行高随字长高，不裁字
-        emptyIconView.widthAnchor.constraint(equalToConstant: 36).isActive = true
-        emptyIconView.heightAnchor.constraint(equalToConstant: 36).isActive = true
         // 列宽 = 全宽减 32（两侧各 16），宽 ≥821 时取 600 居中；值由 updateColumnWidth
         // 在 viewDidLayoutSubviews 里按 bounds 直派（必需约束，设置页 #92 同款）。
         // 旧 @750 协商宽 + 上限开关在 95 包加载态实证失效（列退化成约 92pt 内容拟合宽，
@@ -662,7 +644,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
 
     private func renderStateViews() {
         // 新规矩(b)：空/失败/登录态由隐藏变可见时淡入 0.25；列表行已有 stagger，不动。
-        let emptyWasHidden = emptyWrap.isHidden
+        let emptyWasHidden = emptyStateView.isHidden
         let failureWasHidden = failureWrap.isHidden
         let loginWasHidden = loginWrap.isHidden
         let hasItems = trashItems.isEmpty == false
@@ -672,16 +654,16 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         } else {
             loadingView.stopSpinning()
         }
-        emptyWrap.isHidden = hasItems || trashLoading || trashFirstLoadFailed || trashLoginEmpty
-        emptyTopSpacer.isHidden = emptyWrap.isHidden
+        emptyStateView.isHidden = hasItems || trashLoading || trashFirstLoadFailed || trashLoginEmpty
+        emptyTopSpacer.isHidden = emptyStateView.isHidden
         // B-G14: in empty state the 4pt spacing after noteRow would stack on top
         // of the 40pt pad (44 total), so empty state uses 0 there and the pad
         // alone gives exactly 40; non-empty state restores 4.
-        contentStack.setCustomSpacing(emptyWrap.isHidden ? 4 : 0, after: noteRow)
+        contentStack.setCustomSpacing(emptyStateView.isHidden ? 4 : 0, after: noteRow)
         failureWrap.isHidden = trashFirstLoadFailed == false || trashLoginEmpty
         loginWrap.isHidden = trashLoginEmpty == false
         if UIAccessibility.isReduceMotionEnabled == false {
-            for (view, wasHidden) in [(emptyWrap, emptyWasHidden), (failureWrap, failureWasHidden), (loginWrap, loginWasHidden)] {
+            for (view, wasHidden) in [(emptyStateView, emptyWasHidden), (failureWrap, failureWasHidden), (loginWrap, loginWasHidden)] {
                 if wasHidden && view.isHidden == false {
                     view.alpha = 0
                     UIView.animate(withDuration: 0.25) {

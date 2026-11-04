@@ -5771,82 +5771,22 @@ class BearyTimelineViewController: UIViewController {
         return "\(comps.month) 月 \(comps.day) 日"
     }
 
-    private func emptyView(title: String, subtitle: String, actionTitle: String?, action: (() -> Void)?, iconName: String = "icon_tray", actionOutlined: Bool = false) -> UIView {
+    private func emptyView(title: String, subtitle: String, actionTitle: String?, action: (() -> Void)?, iconName: String = "icon_tray", kind: BearyStateKind = .empty) -> UIView {
+        // 空／失败／登录态统一走 BearyStateView（54 圆图标＋15 粗标题＋12.5 副文案＋常规描边动作钮）；
+        // 背景视图居中承载（此前 bespoke 栈顶距 40，统一后居中；动作闭包直通 onAction，不再经 emptyActionHandler 中转）。
         let container = UIView()
         container.backgroundColor = BearyColors.bg
-        let iconView = UIImageView()
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        // I13：空态图标按场景区分（登录态 calendar、失败态 wifi-off，默认 tray）；
-        // 资产缺失时回落 tray，不留空白。
-        iconView.image = BearyIconImages.image(named: iconName, pointSize: 36) ?? BearyIconImages.image(named: "icon_tray", pointSize: 36)
-        iconView.tintColor = BearyColors.gray
-        iconView.contentMode = .scaleAspectFit
-        let titleView = UILabel()
-        titleView.translatesAutoresizingMaskIntoConstraints = false
-        titleView.text = title
-        // R8：空态标题/副标题（正文类）走 scaledFont + adjusts。
-        titleView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
-        titleView.adjustsFontForContentSizeCategory = true
-        titleView.textColor = BearyColors.ink
-        titleView.textAlignment = .center
-        let subtitleView = UILabel()
-        subtitleView.translatesAutoresizingMaskIntoConstraints = false
-        subtitleView.text = subtitle
-        subtitleView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        subtitleView.adjustsFontForContentSizeCategory = true
-        subtitleView.textColor = BearyColors.gray
-        subtitleView.textAlignment = .center
-        subtitleView.numberOfLines = 0
-        var arranged: [UIView] = [iconView, titleView, subtitleView]
-        if let actionTitle = actionTitle {
-            let button = UIButton(type: .system)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.setTitle(actionTitle, for: .normal)
-            // R8：空态按钮走 scaledFont + adjusts。
-            button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-            button.titleLabel?.adjustsFontForContentSizeCategory = true
-            if actionOutlined {
-                // 80 包重试统一：与首页失败行/主页失败脚部同款描边 pill 钮。
-                button.setTitleColor(BearyColors.ink, for: .normal)
-                button.tintColor = BearyColors.ink
-                button.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 15), for: .normal)
-                button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-                button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-                button.layer.borderWidth = 1
-                button.layer.bearyDynamicBorderColor = BearyColors.line
-                button.layer.cornerRadius = BearyCorners.single
-            } else {
-                button.setTitleColor(BearyColors.ink, for: .normal)
-            }
-            // 样式规格第 4 表：空态描边重试钮 40→44，与“统一 44”口径一致；
-            // 仅改高约束，圆角 20、边框、内边距一律不动（圆角归第 1 组管）。
-            button.heightAnchor.constraint(equalToConstant: 44).isActive = true
-            button.addTarget(self, action: #selector(didTapEmptyAction(_:)), for: .touchUpInside)
-            button.bearyAddPressFeedback()
-            button.accessibilityIdentifier = "timelineEmptyAction"
-            emptyActionHandler = action
-            arranged.append(button)
-        }
-        let stack = UIStackView(arrangedSubviews: arranged)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .vertical
-        stack.alignment = .center
-        stack.spacing = 8
-        container.addSubview(stack)
+        let stateView = BearyStateView()
+        stateView.translatesAutoresizingMaskIntoConstraints = false
+        stateView.configure(kind: kind, title: title, subtitle: subtitle, iconName: iconName, actionTitle: actionTitle, onAction: action)
+        container.addSubview(stateView)
         NSLayoutConstraint.activate([
-            iconView.widthAnchor.constraint(equalToConstant: 36),
-            iconView.heightAnchor.constraint(equalToConstant: 36),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 40),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            stateView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            stateView.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            stateView.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 20),
+            stateView.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -20),
         ])
         return container
-    }
-
-    private var emptyActionHandler: (() -> Void)?
-
-    @objc private func didTapEmptyAction(_ sender: UIButton) {
-        emptyActionHandler?()
     }
 
     /// 空态/背景视图上次种类（本批 4b：种类切换时新背景视图 0.2s 淡入，
@@ -5879,13 +5819,13 @@ class BearyTimelineViewController: UIViewController {
             if isLoginEmpty {
                 tableView.backgroundView = emptyView(title: "先登录", subtitle: "时间线只放你自己的日记，登录后就能看", actionTitle: "去登录", action: { [weak self] in
                     self?.onRequireLogin?()
-                }, iconName: "icon_calendar")
+                }, iconName: "icon_calendar", kind: .login)
                 newBackgroundKind = "login"
             } else {
                 // W10：加载失败空态副标题为中性文案“加载失败，请重试”。
                 tableView.backgroundView = emptyView(title: "加载失败", subtitle: "加载失败，请重试", actionTitle: "重试", action: { [weak self] in
                     self?.reloadTimeline()
-                }, iconName: "icon_wifi_off", actionOutlined: true)
+                }, iconName: "icon_wifi_off", kind: .error)
                 newBackgroundKind = "failed"
             }
         } else if timelineState == .loaded && !hasRows {

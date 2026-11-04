@@ -201,9 +201,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private let mineWithdrawnView = UIView()
     private let loginView = UIView()
     private let loginButton = BearyButton.make(style: .primaryPill(.ink), title: "登录")
-    private let errorLabel = UILabel()
-    private let errorView = UIView()
-    private let retryButton = BearyButton.make(style: .secondaryOutline(.compact), title: "重试")
+    // 失败态走 BearyStateView（文案随 .error 文本走副文案、常规描边重试钮，动作复用 retryTapped）。
+    private let errorStateView = BearyStateView()
 
     private var step: Step = .loading
     private var poolEntries: [Entry] = []
@@ -429,28 +428,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             loginButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
         ])
 
-        errorLabel.translatesAutoresizingMaskIntoConstraints = false
-        errorLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        errorLabel.adjustsFontForContentSizeCategory = true
-        errorLabel.textColor = BearyColors.gray
-        errorLabel.numberOfLines = 0
-        errorLabel.textAlignment = .center
-        retryButton.translatesAutoresizingMaskIntoConstraints = false
-        retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
-        retryButton.bearyAddPressFeedback()
-        let errorStack = UIStackView(arrangedSubviews: [errorLabel, retryButton])
-        errorStack.axis = .vertical
-        errorStack.spacing = 12
-        errorStack.alignment = .center
-        errorStack.translatesAutoresizingMaskIntoConstraints = false
-        errorView.translatesAutoresizingMaskIntoConstraints = false
-        errorView.addSubview(errorStack)
-        NSLayoutConstraint.activate([
-            errorStack.topAnchor.constraint(equalTo: errorView.topAnchor, constant: 24),
-            errorStack.leadingAnchor.constraint(equalTo: errorView.leadingAnchor),
-            errorStack.trailingAnchor.constraint(equalTo: errorView.trailingAnchor),
-            errorStack.bottomAnchor.constraint(equalTo: errorView.bottomAnchor),
-        ])
+        errorStateView.translatesAutoresizingMaskIntoConstraints = false
+        errorStateView.isHidden = true
 
         contentStack.addArrangedSubview(spinnerWrap)
         contentStack.addArrangedSubview(introLabel)
@@ -461,7 +440,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         contentStack.addArrangedSubview(placeholderView)
         contentStack.addArrangedSubview(mineWithdrawnView)
         contentStack.addArrangedSubview(loginView)
-        contentStack.addArrangedSubview(errorView)
+        contentStack.addArrangedSubview(errorStateView)
         NSLayoutConstraint.activate([
             poolButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
         ])
@@ -631,7 +610,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         placeholderView.isHidden = true
         mineWithdrawnView.isHidden = true
         loginView.isHidden = true
-        errorView.isHidden = true
+        errorStateView.isHidden = true
         switch next {
         case .loading:
             spinnerWrap.isHidden = false
@@ -653,8 +632,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         case .mineWithdrawn:
             mineWithdrawnView.isHidden = false
         case .error(let text):
-            errorLabel.text = text
-            errorView.isHidden = false
+            errorStateView.configure(kind: .error, title: nil, subtitle: text, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
+            errorStateView.isHidden = false
         }
     }
 
