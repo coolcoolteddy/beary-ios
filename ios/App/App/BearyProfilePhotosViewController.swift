@@ -131,6 +131,9 @@ final class BearyProfilePhotosViewController: UIViewController {
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
         ])
         updateTitleAndEmpty()
+        // 空相册自动续拉：首批无可见照片但仍有下一页时，零格使 willDisplay
+        // 永不触发，必须在此主动拉起首轮续拉（见 fetchMoreWhileEmptyIfNeeded）。
+        fetchMoreWhileEmptyIfNeeded()
     }
 
     /// 116 数据填入动效：标题计数变化时只淡入标题本身（alpha 0→1、
@@ -176,6 +179,15 @@ final class BearyProfilePhotosViewController: UIViewController {
         collectionView.isHidden = photosValue.isEmpty
     }
 
+    /// 空相册自动续拉：照片为空且仍有下一页时继续取页，直到出现照片或
+    /// 确认无更多页才停在空态。零格时照片节 willDisplay 永不触发，空态下
+    /// 只能由本入口驱动续拉；取页守门与 hasMore 翻转全复用 fetchNextPageIfNeeded
+    ///（photosFetching 防重入、不足 50 条即无更多页），不另起循环。
+    private func fetchMoreWhileEmptyIfNeeded() {
+        guard photosValue.isEmpty else { return }
+        fetchNextPageIfNeeded()
+    }
+
     private func fetchNextPageIfNeeded() {
         guard photosHasMore, !photosFetching, let authorId = authorIdValue else { return }
         guard let lastEntry = diaryEntriesValue.last, let lastCreated = lastEntry.createdAt, let lastId = lastEntry.id else {
@@ -216,6 +228,12 @@ final class BearyProfilePhotosViewController: UIViewController {
                     strongSelf.updateTitleAndEmpty()
                     // 116：续拉新格错峰滑入（已有格不重播）。
                     strongSelf.staggerNewCells(from: oldPhotoCount)
+                    // 空相册续拉：本页仍无可见照片时继续取下一页；仅当本页
+                    // 确实推进了游标（去重后有新增）才续拉，去重后零新增时
+                    // 不续拉，避免同一游标重复取页死循环。
+                    if strongSelf.photosValue.isEmpty, !appended.isEmpty {
+                        strongSelf.fetchMoreWhileEmptyIfNeeded()
+                    }
                 case .failure:
                     // 109：续拉失败不再封死 hasMore——末项再次进入视野时 willDisplay
                     // 可再触发 fetchNextPageIfNeeded；同时给一次失败提示（toast，
