@@ -448,6 +448,12 @@ final class BearyBubbleMenuView: UIView {
             button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
             button.titleLabel?.adjustsFontForContentSizeCategory = true
             button.setTitleColor(BearyColors.ink, for: .normal)
+            // 黑块加固：行背景与各态标题色显式钉死——选中行只剩半粗体＋对勾，
+            // 任何态都不得出现深色底；标题 label 背景亦显式透明。
+            button.backgroundColor = .clear
+            button.setTitleColor(BearyColors.ink, for: .selected)
+            button.setTitleColor(BearyColors.ink, for: .highlighted)
+            button.titleLabel?.backgroundColor = .clear
             button.tintColor = BearyColors.ink
             button.contentHorizontalAlignment = .left
             button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)

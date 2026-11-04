@@ -658,13 +658,26 @@ final class BearyCalendarCardView: UIView {
         layer.bearyDynamicBorderColor = BearyColors.line
     }
 
+    /// 标题只在值变化时更新：同周/同月内切日期标题值不变时不重复赋值、
+    /// 不重排；fadeTitleForDaySwitch 只在标题真变了时才淡入，同值切日期
+    /// 不再先置 0 再淡回（即此前“标题闪一下”的来源）。
+    private var titleChangedSinceSet = false
+
     func setTitle(_ text: String) {
+        guard titleLabel.text != text else {
+            titleChangedSinceSet = false
+            return
+        }
         titleLabel.text = text
+        titleChangedSinceSet = true
     }
 
     /// N3：换日时日历标题淡入（0.2s、只动 alpha；减动效时调用方不调本方法）。
-    /// 标题 label 是卡内常驻节点，不重建、不重播其他元素。
+    /// 标题 label 是卡内常驻节点，不重建、不重播其他元素；标题值未变时直接
+    /// 返回，不播淡入。
     func fadeTitleForDaySwitch() {
+        guard titleChangedSinceSet else { return }
+        titleChangedSinceSet = false
         titleLabel.alpha = 0
         UIView.animate(withDuration: 0.2, animations: {
             self.titleLabel.alpha = 1
@@ -2139,6 +2152,9 @@ class BearyTimelineViewController: UIViewController {
     /// 入口钮本身不动（#612 定圆角 17 的口径原样保留）。
     private let visFilterBubble = BearyBubbleMenuView()
     private let visFilterDismissView = BearyCalloutDismissView()
+    /// 冷启动框架先行：首个宽就绪布局时先画日历框（当日周/月格＋占位圆点），
+    /// 月份圆点由随后回包异步填入；只 prime 一次，后续由月份回包驱动。
+    private var calendarFramePrimed = false
     private var visFilterBubbleOpen = false
     private var visFilterBubbleGeneration = 0
     private static let visFilterBubbleTransitionDuration: TimeInterval = 0.20
@@ -2461,6 +2477,26 @@ class BearyTimelineViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // 冷启动框架先行：宽一就绪即先画日历框、并行拉当月数据，不等时间线
+        // 首拉完成（此前日历格要等首拉 completion 才出现、表头随之跳高，整页
+        // 被拖后腿）。月份数据无落盘缓存（仅内存），故首屏格子先以加载占位
+        // 画出、回包后填圆点；时间线快照的缓存先行已由审计 13 实现，本支不动。
+        // 延后逻辑（deferredCalendarFetch）保留：已在途/已缓存时其后补调是
+        // no-op，失败时仍由它重试，不改原有重试语义。
+        if !calendarFramePrimed, tableView.bounds.width > 0 {
+            calendarFramePrimed = true
+            if calendarAnchor == nil {
+                calendarAnchor = BearyBeijingDay.todayComponents()
+            }
+            if calendarDisplayedMonth == nil, let anchor = calendarAnchor {
+                calendarDisplayedMonth = (anchor.year, anchor.month)
+            }
+            if selectedDayKey == nil, let today = BearyBeijingDay.todayComponents() {
+                selectedDayKey = BearyBeijingDay.dayKey(year: today.year, month: today.month, day: today.day)
+            }
+            renderCalendar()
+            fetchCalendarMonthsForCurrentView()
+        }
         // 顶栏透度批：安全区变化时按已存栏态重算（容器 viewDidLayoutSubviews 也会重发，双重 no-op）。
         // 自定义下拉刷新进行中 applyHeaderTopInset 有守卫不改写内边距，但 pullView
         // 宽度仍需跟随旋转/分屏宽度（消息页同款宽度同步）。
@@ -2523,6 +2559,11 @@ class BearyTimelineViewController: UIViewController {
         startCountdownTimer()
         // 80 包 A5：进页恢复可见行表情播放（与 stopVisibleEmotes 对称）。
         resumeVisibleEmotes()
+        // 底栏复位：时间线页从不藏栏；首页/个人页下滚藏栏后，离场页减速尾巴
+        // 的滚动回调可能在切页恢复之后又藏一次，而时间线滚动/筛子/跳转原先
+        // 都不碰栏，栏一旦藏住便无恢复路径。进页、切档、跳转、刷新完成四处
+        // 均显式亮回（animated:false，不与在途动画打架），不靠“再滚一下”。
+        restoreChromeAfterTimelineAction()
         // 筛子进页重置：每次切进时间线都回到全部（默认态 no-op，不多发请求）。
         resetVisFilterForPageEntry()
     }
@@ -2531,6 +2572,15 @@ class BearyTimelineViewController: UIViewController {
     func pageDidLeave() {
         stopCountdownTimer()
         hideVisFilterBubble(animated: false)
+    }
+
+    /// 底栏复位（时间线页从不藏栏，故任何时刻亮回都是正确态；animated:false
+    /// 直达终值，不与在途 0.25s 栏动画打架）。
+    /// 可见性守卫：本页被切走（isHidden）或不在窗内时不碰栏——否则后台
+    /// 首拉回包会在首页下滚藏栏后又把栏亮出来，破坏首页滚动藏栏。
+    private func restoreChromeAfterTimelineAction() {
+        guard view.window != nil, !view.isHidden else { return }
+        SceneDelegate.chrome?.setChromeHidden(false, animated: false)
     }
 
     /// 筛子钮标题 = 当前档位（选中态可见处）+ 无障碍文案同步。
@@ -2654,6 +2704,7 @@ class BearyTimelineViewController: UIViewController {
         // 面板不先清——派生/回落到达前旧面板行仍在，不闪空。
         deferredDayKeyForFirstPage = selectedDayKey
         loadTimelineFirstPage(force: true)
+        restoreChromeAfterTimelineAction()
     }
 
     /// 进页重置（切进时间线页时回到全部，modal 回落不走这里故不反复重置：
@@ -3790,7 +3841,10 @@ class BearyTimelineViewController: UIViewController {
         visFilterButton.translatesAutoresizingMaskIntoConstraints = false
         visFilterButton.backgroundColor = BearyColors.faint
         visFilterButton.layer.cornerRadius = 17
-        visFilterButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
+        // 右内边距 16（含补 6pt）：钮固有宽度不计 titleEdgeInsets.left 的 6pt
+        // 间隙，实测钮宽 63pt、内容需 68pt，标题被压成“…”；右补 6 后固有宽
+        // ＝内容宽，档位名完整显示。左缘不动，气泡箭头对齐不变。
+        visFilterButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 16)
         if let chevronImage = BearyIconImages.image(named: "icon_chevron_down", pointSize: 14) {
             visFilterButton.setImage(chevronImage, for: .normal)
         }
@@ -3867,16 +3921,18 @@ class BearyTimelineViewController: UIViewController {
     /// TL-4 翻页/切换动效（审计 14 重构）：目标切换与补拉请求先行——
     /// mutate（含 renderCalendar 与 fetchCalendarMonthsForCurrentView）
     /// 在动画开始前同步执行，请求不再等 0.18s 淡出才发起；视觉只剩
-    /// 一次 0.22s 交接（淡入 + 横移回位 + 表头高度 FLIP），合计约
-    /// 0.22s（原 0.18 淡出 + 0.24 淡回 ≈ 0.42s）。同一 runloop 内先
-    /// mutate 再把卡片置为淡出初态，下一帧才开始呈现，故用户看不到
-    /// 未过动画的新内容闪现；减动效时仍直接变更、无动效。
+    /// 一次 0.22s 交接（淡入 + 表头高度 FLIP），合计约 0.22s（原 0.18 淡出
+    /// + 0.24 淡回 ≈ 0.42s）。同一 runloop 内先 mutate 再把卡片置为淡出初态，
+    /// 下一帧才开始呈现，故用户看不到未过动画的新内容闪现；减动效时仍直接
+    /// 变更、无动效。
+    /// 周/月切换卡片不再横移：旧口径淡入 + 横移 8pt 回位，切换时卡片先偏右
+    /// 8pt 再滑回原位，观感即“左右漂移”；现只剩淡入，卡片位置与宽度纹丝
+    /// 不动，只有里面的日期内容变。翻页（stepCalendar）早已不走本过渡。
     /// 6-3 例外（日历高度部分，定版不改 transform）：表头高度本身就是
     /// tableHeaderView 的布局高度，表体各行必须随高度差整体平移——只对
     /// calendarCard 做 scaleY 会把格子/日期圆压扁（30pt 圆、50pt 行高失真），
     /// 只做平移 + 裁剪则新月多出的行会被裁掉、或与表体行重叠；高度差只能
-    /// 由 frame + layoutIfNeeded 带过去。卡片自身的淡入/横移仍只动
-    /// alpha/transform，不在此例外内。删行高度收起不在本文件（回收站
+    /// 由 frame + layoutIfNeeded 带过去。卡片自身的淡入仍只动 alpha，不在此例外内。删行高度收起不在本文件（回收站
     /// 文件，#5 批已定例外），此处不动。
     private func performCalendarTransition(mutate: @escaping () -> Void) {
         if UIAccessibility.isReduceMotionEnabled {
@@ -3888,10 +3944,8 @@ class BearyTimelineViewController: UIViewController {
         mutate()
         let newHeight = fittingHeaderHeight()
         calendarCard.alpha = 0
-        calendarCard.transform = CGAffineTransform(translationX: 8, y: 0)
         UIView.animate(withDuration: 0.22, delay: 0, options: [.beginFromCurrentState, .curveEaseOut], animations: {
             self.calendarCard.alpha = 1
-            self.calendarCard.transform = .identity
             if abs(newHeight - oldHeight) >= 1 {
                 self.headerContainer.frame = CGRect(x: 0, y: 0, width: self.tableView.bounds.width, height: newHeight)
                 self.tableView.tableHeaderView = self.headerContainer
@@ -4419,6 +4473,8 @@ class BearyTimelineViewController: UIViewController {
         for pendingCompletion in pendingFirstPageCompletions {
             pendingCompletion()
         }
+        // 刷新跑完后栏回到可见（下拉刷新/筛子切档/首拉均经此收口）。
+        restoreChromeAfterTimelineAction()
     }
 
     /// 113 since 增量刷新：只拉比首条新的时间线条目，前插合并，不动
@@ -5063,6 +5119,7 @@ class BearyTimelineViewController: UIViewController {
         }
         pendingEntryJumpCheck = false
         applyDayFixSel()
+        restoreChromeAfterTimelineAction()
         return true
     }
 
@@ -5160,6 +5217,7 @@ class BearyTimelineViewController: UIViewController {
         calendarDisplayedMonth = (year: today.year, month: today.month)
         selectDay(key: BearyBeijingDay.dayKey(year: today.year, month: today.month, day: today.day))
         fetchCalendarMonthsForCurrentView()
+        restoreChromeAfterTimelineAction()
     }
 
     // MARK: - 当日面板（TL-7/TL-8）
