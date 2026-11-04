@@ -2217,8 +2217,6 @@ class BearyTimelineViewController: UIViewController {
         daySwitchTitleFade = false
         daySwitchArrivalKey = nil
     }
-    // M16：跳转提示当前 label 弱引用，消失时先做透明度过渡再移除。
-    private weak var jumpNoteLabel: UILabel?
     private var trashCountValue = 0
     private var countsValue: TlCounts?
     private var loginNotified = false
@@ -2240,12 +2238,12 @@ class BearyTimelineViewController: UIViewController {
     /// fetchCalendarMonth 回包里重试（tryStepFollowSelection）。
     private var pendingStepFollow = false
     /// 第 4 项 calFixSel 守卫：删除后（refreshAfterDetailChange 置位）或
-    /// 月份补拉到达后，选中日计数为 null/0 时才触发跳转/取消选中；
-    /// 平时月份到达不触发，避免空的今天被无故清选区。
+    /// 月份补拉到达后复核选中日计数；2026-11-04 不跳日口径：计数为 null/0
+    /// 也不跳转、不清选区，只清挂起、走正常空态（平时月份到达本就不触发）。
     private var pendingFixSelCheck = false
-    /// 第 2 项 A 初次进入 / 下拉刷新跳转守卫：只在 viewDidLoad 与自定义下拉刷新
-    /// 两处设置；选中日无日记时走 checkEntryJumpForSelectedDay → applyDayFixSel
-    /// 跳最近有篇日并出 jumpNote 提示。故意不用 pendingFixSelCheck 承载，
+    /// 第 2 项 A 初次进入 / 下拉刷新守卫：只在 viewDidLoad 与自定义下拉刷新
+    /// 两处设置；2026-11-04 不跳日口径：选中日无日记时不再跳最近有篇日，
+    /// 只清挂起、走正常空态。故意不用 pendingFixSelCheck 承载，
     /// 避免守卫漏到翻页（tryStepFollowSelection）路径：翻页到全无有篇日时
     /// 必须保留原选区，本标志在当日/月份回包到达时即被消费或清掉。
     private var pendingEntryJumpCheck = false
@@ -2319,8 +2317,6 @@ class BearyTimelineViewController: UIViewController {
     /// N3：切日回包到达时的入场错峰归属（仅 clear:true 的换日回包设置，
     /// 回包消费后清掉；非换日回包不设，避免旧队列在刷新行上重播）。
     private var daySwitchArrivalKey: String?
-    private var showJumpNote = false
-    private var jumpNoteTimer: Timer?
     /// TL-2 1 秒 tick（仅刷编辑倒计时文案）。
     private var countdownTimer: Timer?
     /// 审计-时间线：本 tick 内已翻转过的到期 id（防每秒重复重载同行；离表/重变存活即剪枝）。
@@ -2480,9 +2476,10 @@ class BearyTimelineViewController: UIViewController {
         footerSpinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
         // G15 toast 已委托 B 批统一 BearyToast（见 showTimelineToast），
         // 此处不再建常驻 toast 容器。
-        // 第 2 项 A 调用点 1/2（初次进入）：置跳转守卫挂起，选中日（今天）
-        // 无日记时由当日/月份回包触发跳最近有篇日；标志不放在 reloadTimeline
-        // 内，以免空态重试等其他 reloadTimeline 调用点也被接上守卫。
+        // 第 2 项 A 调用点 1/2（初次进入）：置守卫挂起；2026-11-04 不跳日口径：
+        // 选中日（今天）无日记时不再跳最近有篇日，只清挂起、走正常空态；
+        // 标志不放在 reloadTimeline 内，以免空态重试等其他 reloadTimeline
+        // 调用点也被接上守卫。
         pendingEntryJumpCheck = true
         initialLoadStarted = true
         loadTimelineCachedOrRefresh()
@@ -2792,7 +2789,6 @@ class BearyTimelineViewController: UIViewController {
 
     deinit {
         countdownTimer?.invalidate()
-        jumpNoteTimer?.invalidate()
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.removeObserver(self, name: UIApplication.willEnterForegroundNotification, object: nil)
@@ -2984,10 +2980,9 @@ class BearyTimelineViewController: UIViewController {
         timelinePageFailed = false
         timelineUnauthorized = false
         loginNotified = false
-        showJumpNote = false
         // 当日面板先用缓存首屏里今天的篇顶上（静默刷新随后对齐），
         // 避免面板空等网络；缓存里今天无篇时面板空态由静默刷新补，
-        // 初次进入跳最近有篇日的挂起（viewDidLoad 已置位）照常消费。
+        // 初次进入守卫挂起（viewDidLoad 已置位）照常消费，不再跳转。
         if let dayKey = selectedDayKey {
             dayEntries = snap.entries.filter { entry in
                 guard let created = entry.createdAt, let key = BearyBeijingDay.dayKey(ofMs: created) else { return false }
@@ -3023,9 +3018,6 @@ class BearyTimelineViewController: UIViewController {
             timelinePageFailed = false
             timelineUnauthorized = false
             loginNotified = false
-            showJumpNote = false
-            jumpNoteTimer?.invalidate()
-            jumpNoteTimer = nil
         } else {
             timelineEntries = []
             timelineHasMore = false
@@ -3033,9 +3025,6 @@ class BearyTimelineViewController: UIViewController {
             timelineUnauthorized = false
             timelinePageFailed = false
             loginNotified = false
-            showJumpNote = false
-            jumpNoteTimer?.invalidate()
-            jumpNoteTimer = nil
         }
         if calendarAnchor == nil {
             calendarAnchor = BearyBeijingDay.todayComponents()
@@ -3086,7 +3075,7 @@ class BearyTimelineViewController: UIViewController {
     /// TL-9 供容器调用的刷新入口（详情改动、回收站恢复/删除后由容器调）：
     /// 首屏时间线 + 日历月份（强制重拉，日历圆点/统计重算）+ 当日面板重拉，
     /// 不重置选中日、不清当日面板；互动字段变化时按详情口径发 onInteractionChanged。
-    /// 选中日由有篇变空时走 TL-8 的 calFixSel 等价逻辑（见 fetchDayEntries）。
+    /// 选中日由有篇变空时不再跳转（2026-11-04 不跳日口径），只显示该天空态。
     /// 88 包 M14：删帖行级退场——模型里删掉该篇后按旧分区定位做 deleteRows，
     /// 分区空了则 deleteSections，不再整页首拉重载。日历点与统计行仍走强制
     /// 月份重拉刷新（与 refreshAfterDetailChange 同口径），选中日空了由
@@ -3215,7 +3204,8 @@ class BearyTimelineViewController: UIViewController {
 
     func refreshAfterDetailChange() {
         // 第 4 项删除后守卫：详情/回收站改动后，月份强制重拉到达时
-        // 按日历计数复核选中日（空则跳转/取消），不只靠当日面板变空。
+        // 按日历计数复核选中日；2026-11-04 不跳日口径：空也不跳转/取消，
+        // 只清挂起、走正常空态，不只靠当日面板变空。
         pendingFixSelCheck = true
         let before = interactionSnapshot()
         loadTimelineFirstPage { [weak self] in
@@ -3452,7 +3442,8 @@ class BearyTimelineViewController: UIViewController {
         // G16：刷新时先保存选中日（reloadTimeline keepDay 分支内保留），
         // 跳过当日拉取，只拉一次最终选中日；不再先拉今天再拉回原选中日。
         // 第 2 项 A 调用点 2/2（下拉刷新）：keepSelectedDay 下守卫接在刷新
-        // 完成后——当日/月份回包到达时消费本标志，选中日已空即跳最近有篇日。
+        // 完成后——当日/月份回包到达时消费本标志；2026-11-04 不跳日口径：
+        // 选中日已空也不跳转，只清挂起、走正常空态。
         pendingEntryJumpCheck = true
         reloadTimeline(keepSelectedDay: true)
         // fixall-sync 5-27 集成接线：被守卫挡下的同步在下拉刷新时重跑（内部去重已覆盖已同步/在途）。
@@ -4843,7 +4834,7 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.refreshHeaderHeight()
                 }
                 // 第 3/4 项：月份到达后先解翻页跟随（若仍挂起则跳过守卫，
-                // 避免守卫把选区跳回旧月），跟随落定后再跑 calFixSel 守卫。
+                // 避免守卫动选区），跟随落定后再跑 calFixSel 守卫。
                 if strongSelf.pendingStepFollow {
                     if strongSelf.tryStepFollowSelection() && strongSelf.pendingFixSelCheck {
                         _ = strongSelf.checkFixSelForSelectedDay()
@@ -5087,9 +5078,10 @@ class BearyTimelineViewController: UIViewController {
     }
 
     /// 第 4 项 calFixSel 通用守卫：选中日当月计数为 null（days 缺该日）
-    /// 或 0 时触发；计数 > 0 时不触发并清挂起。月份缓存缺失时挂起并补拉，
-    /// 到达后由 fetchCalendarMonth 回包重试，不直接取消选中。
-    /// 返回 true 表示已执行跳转/取消（调用方应跳过后续重载），false 表示未触发或仍挂起。
+    /// 或 0 时不再触发跳转/取消（2026-11-04 不跳日口径：只清挂起、返回 false，
+    /// 调用方走正常重载，面板显示该天空态）；计数 > 0 时不触发并清挂起。
+    /// 月份缓存缺失时挂起并补拉，到达后由 fetchCalendarMonth 回包重试。
+    /// 返回值现恒为 false（历史跳转/取消语义已随不跳日口径删除）。
     @discardableResult
     private func checkFixSelForSelectedDay() -> Bool {
         guard let key = selectedDayKey else {
@@ -5118,22 +5110,19 @@ class BearyTimelineViewController: UIViewController {
             pendingFixSelCheck = false
             return false
         }
+        // 2026-11-04 不跳日口径：空日不跳转、不清选区，只清挂起、返回 false。
         pendingFixSelCheck = false
-        applyDayFixSel()
-        return true
+        return false
     }
 
-    /// 第 2 项 A 初次进入 / 下拉刷新跳转守卫（checkFixSel 的同月口径、
+    /// 第 2 项 A 初次进入 / 下拉刷新守卫（checkFixSel 的同月口径、
     /// 但走独立挂起标志 pendingEntryJumpCheck，不碰 pendingFixSelCheck）：
-    /// 选中日当月计数 > 0 不动；计数 0 时经 applyDayFixSel 同月先往前、
-    /// 再往后找最近有篇日并跳过去，提示复用现成 jumpNote 机制
-    /// （showJumpNote + viewForHeader 的“这天已没有日记，已跳到最近的一天”）；
-    /// 同月全空时 applyDayFixSel 原有行为是取消选中 + toast“这天已没有日记”
-    /// （无可跳之日，故无跳转提示）。缓存缺失时挂起并补拉该月，到达后由
-    /// fetchCalendarMonth 回包的本守卫分支重试；月份已失败时清挂起、
-    /// 保留选区（与 checkFixSel 同口径，防失败回包 → 守卫 → 再补拉死循环）。
-    /// 返回 true 表示已执行跳转/取消（调用方应跳过后续重载），false 表示
-    /// 未触发或仍挂起。翻页路径永不调用本函数（翻页全空保留原选区）。
+    /// 2026-11-04 不跳日口径：选中日当月计数 0 时不再跳转/取消，只清挂起、
+    /// 返回 false（调用方走正常重载，面板显示该天空态）；计数 > 0 不动。
+    /// 缓存缺失时挂起并补拉该月，到达后由 fetchCalendarMonth 回包的本守卫
+    /// 分支重试；月份已失败时清挂起、保留选区（与 checkFixSel 同口径，
+    /// 防失败回包 → 守卫 → 再补拉死循环）。返回值现恒为 false。
+    /// 翻页路径永不调用本函数（翻页全空保留原选区）。
     @discardableResult
     private func checkEntryJumpForSelectedDay() -> Bool {
         guard let key = selectedDayKey else {
@@ -5160,10 +5149,9 @@ class BearyTimelineViewController: UIViewController {
             pendingEntryJumpCheck = false
             return false
         }
+        // 2026-11-04 不跳日口径：空日不跳转、不清选区，只清挂起、返回 false。
         pendingEntryJumpCheck = false
-        applyDayFixSel()
-        restoreChromeAfterTimelineAction()
-        return true
+        return false
     }
 
     private func stepCalendar(delta: Int) {
@@ -5519,8 +5507,6 @@ class BearyTimelineViewController: UIViewController {
     private func fetchDayEntries(key: String, clear: Bool) {
         // 在途守卫：同一天的拉取还在飞，不再发第二份（只靠回包归属丢弃不够）。
         if dayKeyForLoad == key && dayState == .loading { return }
-        // fixSel 判定用：只有“同一天的面板此前有篇、本次重拉变空”才算删空。
-        let wasNonEmptyForKey = (dayEntriesKey == key && !dayEntries.isEmpty)
         dayKeyForLoad = key
         dayState = .loading
         if clear {
@@ -5581,18 +5567,11 @@ class BearyTimelineViewController: UIViewController {
                     // 预取只写日缓存，不动面板与时间线行（见 prefetchAdjacentDays）。
                     strongSelf.prefetchAdjacentDays(for: key)
                     // 筛子档下当日空是预期（该日无此分类篇），不是删空：
-                    // 跳转/取消选区守卫一律按全部档口径，不在筛子档里挪选区
-                    // （下方三段原语义一字不动，只包一层档位守卫）。
+                    // 选区守卫一律按全部档口径，不在筛子档里挪选区
+                    // （下方两段原语义一字不动，只包一层档位守卫）。
                     if strongSelf.timelineVisFilter == .all {
-                        if wasNonEmptyForKey && strongSelf.dayEntries.isEmpty {
-                            // 第 2 项 A 的活已由本次跳转完成，挂起标志随之清掉，
-                            // 避免之后某次月份到达时对新选区再跑一次初次/刷新守卫。
-                            strongSelf.pendingEntryJumpCheck = false
-                            strongSelf.applyDayFixSel()
-                            return
-                        }
                         // 第 4 项：删除后挂起的守卫在当日面板已空时也跑一次
-                        // （以日历计数为准；已跳转/取消则跳过后续重载）。
+                        // （以日历计数为准；守卫现不跳转，恒返回 false、走正常重载）。
                         if strongSelf.pendingFixSelCheck && strongSelf.dayEntries.isEmpty {
                             if strongSelf.checkFixSelForSelectedDay() {
                                 strongSelf.pendingEntryJumpCheck = false
@@ -5703,108 +5682,6 @@ class BearyTimelineViewController: UIViewController {
                     }
                 }
             }
-        }
-    }
-
-    private func clearDaySelection() {
-        // 80 包 A6-1：清选区不再硬切——复用日历翻页过渡（0.18s 淡出 + 高度过渡淡回），
-        // 减动效时 helper 内直换；队列代际同步 +1，0.18s 窗口内若用户已切新日则旧清区作废。
-        staggerGeneration += 1
-        clearStaggerEntries()
-        let clearGeneration = staggerGeneration
-        performCalendarTransition { [weak self] in
-            guard let strongSelf = self, strongSelf.staggerGeneration == clearGeneration else { return }
-            strongSelf.selectedDayKey = nil
-            strongSelf.dayKeyForLoad = nil
-            strongSelf.dayEntries = []
-            strongSelf.dayEntriesKey = nil
-            strongSelf.dayState = .idle
-            strongSelf.showJumpNote = false
-            strongSelf.jumpNoteTimer?.invalidate()
-            strongSelf.jumpNoteTimer = nil
-            strongSelf.renderCalendar()
-            strongSelf.tableView.reloadData()
-            strongSelf.updateChrome()
-        }
-    }
-
-    /// TL-8 calFixSel 等价逻辑：选中日变空时，同月内先往前、再往后找最近有日记日
-    /// 跳转（周视图下锚点同步跟过去）；同月再无有篇日则取消选中并清面板，
-    /// 并以 toast 提示“这天已没有日记”（第 4 项：找不到也要提示）。
-    /// 跳转时面板头下出 3 秒提示“这天已没有日记，已跳到最近的一天”。
-    /// 注：网页前向搜索上限写死 31 天，本实现按当月实际天数 bound，结果等价。
-    /// 月份缓存缺失时不直接取消选中：挂起并补拉，月份到达后由守卫重试。
-    private func applyDayFixSel() {
-        guard let key = selectedDayKey else { return }
-        let parts = key.split(separator: "-")
-        guard parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) else {
-            clearDaySelection()
-            return
-        }
-        let monthKey = BearyBeijingDay.monthKey(year: year, month: month)
-        guard let monthData = calendarCache[monthKey] else {
-            // 月份已失败时不补拉（防死循环）、不取消选中，保留选区待重试。
-            if calendarFailed.contains(monthKey) {
-                pendingFixSelCheck = false
-                return
-            }
-            pendingFixSelCheck = true
-            fetchCalendarMonth(key: monthKey)
-            return
-        }
-        pendingFixSelCheck = false
-        var foundDay: Int?
-        var backward = day - 1
-        while backward >= 1 && foundDay == nil {
-            let info = monthData.days?["\(backward)"]
-            if (info?.pub ?? 0) + (info?.priv ?? 0) > 0 { foundDay = backward }
-            backward -= 1
-        }
-        if foundDay == nil {
-            guard let dim = BearyBeijingDay.daysInMonth(year: year, month: month) else {
-                clearDaySelection()
-                return
-            }
-            var forward = day + 1
-            while forward <= dim && foundDay == nil {
-                let info = monthData.days?["\(forward)"]
-                if (info?.pub ?? 0) + (info?.priv ?? 0) > 0 { foundDay = forward }
-                forward += 1
-            }
-        }
-        if let foundDay = foundDay {
-            let newKey = BearyBeijingDay.dayKey(year: year, month: month, day: foundDay)
-            selectedDayKey = newKey
-            if calendarMode == .week {
-                calendarAnchor = (year, month, foundDay)
-            }
-            showJumpNote = true
-            jumpNoteTimer?.invalidate()
-            jumpNoteTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
-                guard let strongSelf = self else { return }
-                // M16：提示消失先做 0.4s 透明度过渡，再清标记重载（减动效直清）。
-                let cleanup = {
-                    strongSelf.showJumpNote = false
-                    strongSelf.jumpNoteTimer = nil
-                    strongSelf.tableView.reloadData()
-                }
-                if UIAccessibility.isReduceMotionEnabled {
-                    cleanup()
-                } else if let noteLabel = strongSelf.jumpNoteLabel {
-                    UIView.animate(withDuration: 0.4, animations: {
-                        noteLabel.alpha = 0
-                    }, completion: { _ in cleanup() })
-                } else {
-                    cleanup()
-                }
-            }
-            renderCalendar()
-            tableView.reloadData()
-            updateChrome()
-            fetchDayEntries(key: newKey, clear: true)
-        } else {
-            clearDaySelection()
-            showTimelineToast(message: "这天已没有日记")
         }
     }
 
@@ -6461,31 +6338,6 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         var bottomConstant: CGFloat = isDayPanel ? -4 : -8
         // 第 15 项：当日失败不再出头旁蓝色“重试”文字钮，重试靠再点日期
         // （失败文案本身即“加载失败，点一下日期再试”）。
-        if isDayPanel && showJumpNote {
-            let jumpLabel = UILabel()
-            jumpLabel.text = "这天已没有日记，已跳到最近的一天"
-            // R8：跳转提示（正文类提示文字）走 scaledFont + adjusts。
-            jumpLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
-            jumpLabel.adjustsFontForContentSizeCategory = true
-            jumpLabel.textColor = BearyColors.gray
-            jumpLabel.translatesAutoresizingMaskIntoConstraints = false
-            holder.addSubview(jumpLabel)
-            NSLayoutConstraint.activate([
-                jumpLabel.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 2),
-                jumpLabel.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: leading),
-                jumpLabel.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -16),
-            ])
-            bottomView = jumpLabel
-            bottomConstant = isDayPanel ? -4 : -8
-            // M16：跳转提示出现时 0.3s 透明度淡入（减动效直显）。
-            jumpNoteLabel = jumpLabel
-            if UIAccessibility.isReduceMotionEnabled == false {
-                jumpLabel.alpha = 0
-                UIView.animate(withDuration: 0.3, animations: {
-                    jumpLabel.alpha = 1
-                }, completion: nil)
-            }
-        }
         NSLayoutConstraint.activate([
             label.topAnchor.constraint(equalTo: holder.topAnchor, constant: isDayPanel ? 16 : 18),
             label.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: leading),
