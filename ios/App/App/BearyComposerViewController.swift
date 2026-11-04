@@ -7134,7 +7134,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 pendingFocusScrollAfterKeyboard = true
                 return
             }
-            _ = scrollFocusedFieldIntoView(animated: true)
+            _ = scrollFocusedFieldIntoView(animated: BearyMotion.animated(true))
         }
     }
 
@@ -7214,7 +7214,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.scrollView.setContentOffset(CGPoint(x: self.scrollView.contentOffset.x, y: targetY), animated: false)
             })
         } else if animated {
-            scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: targetY), animated: true)
+            scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: targetY), animated: BearyMotion.animated(true))
         } else {
             // 仅内部调用方明确要求时才瞬时改（现行调用方已全部改为动效，
             // 本分支保留作兜底，不再是键盘路径的默认行为）。
@@ -7360,7 +7360,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 2026-11-01：标题抵消与守卫复查已随标题滚动链删除；
                 // 标题为焦点方时 scrollFocusedFieldIntoView 直接返回 false，
                 // 这里只剩正文路径。
-                _ = self.scrollFocusedFieldIntoView(animated: true, duration: duration, curveRaw: curveRaw)
+                _ = self.scrollFocusedFieldIntoView(animated: BearyMotion.animated(true), duration: duration, curveRaw: curveRaw)
             }
         })
     }

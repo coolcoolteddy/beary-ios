@@ -107,7 +107,7 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
 
     private static let arrowHeight: CGFloat = 10
     private static let arrowHalfWidth: CGFloat = 8
-    private static let cornerRadius: CGFloat = 16
+    private static let cornerRadius: CGFloat = BearyCorners.single
     private static let verticalPadding: CGFloat = 10
     private static let horizontalPadding: CGFloat = 12
     private static let optionSize: CGFloat = 48
@@ -379,7 +379,7 @@ final class BearyBubbleMenuView: UIView {
 
     private static let arrowHeight: CGFloat = 10
     private static let arrowHalfWidth: CGFloat = 8
-    private static let cornerRadius: CGFloat = 16
+    private static let cornerRadius: CGFloat = BearyCorners.single
     private static let verticalPadding: CGFloat = 8
     private static let horizontalPadding: CGFloat = 8
     private static let rowHeight: CGFloat = 44

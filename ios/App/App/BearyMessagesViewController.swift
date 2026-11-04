@@ -108,7 +108,7 @@ final class BearyMessagesViewController: UIViewController {
         // 顶栏右钮：好友列表（icon_friends 单人＋三横），点进好友列表页。
         let userListButton = UIButton(type: .system)
         userListButton.translatesAutoresizingMaskIntoConstraints = false
-        userListButton.setImage(BearyIconImages.image(named: "icon_friends", pointSize: 20), for: .normal)
+        userListButton.setImage(BearyIconImages.image(named: "icon_friends", pointSize: 24), for: .normal)
         userListButton.tintColor = BearyColors.ink
         userListButton.accessibilityLabel = "好友列表"
         userListButton.addTarget(self, action: #selector(userListTapped), for: .touchUpInside)

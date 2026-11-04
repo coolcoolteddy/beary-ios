@@ -26,7 +26,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     private let mapView = MKMapView()
     private let statusLabel = UILabel()
-    private let inlineRetryButton = UIButton(type: .system)
+    private let inlineRetryButton = BearyHit44Button(type: .system)
     private let statusStackView = UIStackView()
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private let failureView = UIView()
@@ -610,7 +610,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         tableView.reloadData()
         // 列表在地图下方：选中后把列表顶到可见区，不用用户再往下翻找。
         if tableView.numberOfSections > 0, tableView.numberOfRows(inSection: 0) > 0 {
-            tableView.scrollToRow(at: IndexPath(row: 0, section: 0), at: .top, animated: true)
+            tableView.scrollToRow(at: IndexPath(row: 0, section: 0), at: .top, animated: BearyMotion.animated(true))
         }
     }
 
