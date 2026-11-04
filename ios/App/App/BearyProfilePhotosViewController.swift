@@ -56,7 +56,7 @@ final class BearyProfilePhotosViewController: UIViewController {
     private let titleLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .heavy))
+        labelValue.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.ink
         labelValue.textAlignment = .center

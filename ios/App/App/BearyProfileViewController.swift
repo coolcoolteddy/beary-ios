@@ -7875,7 +7875,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         guard let index = displayedEntries.firstIndex(where: { $0.id == entryId }),
               let cell = tableView.cellForRow(at: IndexPath(row: index, section: 0)) as? BearyDiaryCardCell,
               cell.cellEntryId == entryId else { return }
-        cell.setFoldDisplay(expanded: expanded, animated: true)
+        cell.setFoldDisplay(expanded: expanded, animated: BearyMotion.animated(true))
         tableView.performBatchUpdates(nil)
     }
 

@@ -107,7 +107,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         topBar.addSubview(closeButton)
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.text = (peer.displayName?.isEmpty == false) ? peer.displayName! : "beary 用户"

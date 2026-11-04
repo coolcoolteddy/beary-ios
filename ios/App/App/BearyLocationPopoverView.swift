@@ -37,7 +37,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
 
     private static let arrowHeight: CGFloat = 10
     private static let arrowHalfWidth: CGFloat = 8
-    private static let cornerRadius: CGFloat = 14
+    private static let cornerRadius: CGFloat = BearyCorners.single
 
     private static var popoverBackgroundColor: UIColor {
         UIColor { trait in

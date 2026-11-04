@@ -5,7 +5,7 @@ import UIKit
 // 不动各页自身的显隐逻辑（本批示范接入见 BearyTrashViewController 的失败态）。
 // 结构（竖向居中栈）：图标圆（54 圈：橙 18% 底 + 1pt 25% 橙圈，选人 sheet 空态圆同款；
 // 无图标时整行隐藏）＋标题（15 粗体 ink）＋副文案（12.5 gray，多行居中）＋
-// 动作钮（BearyButton，默认 secondaryOutline 紧凑 36/18；调用方可传其他工厂样式）。
+// 动作钮（BearyButton，默认 secondaryOutline 常规 44/12；调用方可传其他工厂样式）。
 // 加载态：图标圆内改转圈（官方 icon_refresh 20pt，2026-10-30 全 App 统一，
 // 不再用 UIActivityIndicatorView medium 圈）；加载时动作钮隐藏。
 // 边框重刷：动作钮边框是 CGColor，赋值时固化——traitCollectionDidChange 内重赋
@@ -30,8 +30,8 @@ final class BearyStateView: UIView {
     private let spinner = BearyRefreshIconView()
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
-    private var actionButton: BearyButton = BearyButton(style: .secondaryOutline(.compact))
-    private var actionButtonStyle: BearyButtonStyle = .secondaryOutline(.compact)
+    private var actionButton: BearyButton = BearyButton(style: .secondaryOutline(.regular))
+    private var actionButtonStyle: BearyButtonStyle = .secondaryOutline(.regular)
     private var actionHeightConstraint: NSLayoutConstraint?
     private var actionHandler: (() -> Void)?
     private var visibilityGeneration = 0
@@ -151,7 +151,7 @@ final class BearyStateView: UIView {
         stack.addArrangedSubview(actionButton)
         stack.setCustomSpacing(4, after: titleLabel)
 
-        let heightConstraint = actionButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height)
+        let heightConstraint = actionButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.regular).height)
         heightConstraint.isActive = true
         self.actionHeightConstraint = heightConstraint
 
@@ -176,7 +176,7 @@ final class BearyStateView: UIView {
     /// 一次配齐。kind 只决定加载转圈与否（loading 时图标换转圈、动作钮隐藏）；
     /// 其余行一律按参数有无显隐：iconName 为 nil 则图标圆整行隐藏，actionTitle 为 nil
     /// 则动作钮隐藏；actionStyle 变化时动作钮按新样式重建（工厂钮样式在 init 后不可换）。
-    func configure(kind: BearyStateKind, title: String?, subtitle: String?, iconName: String?, actionTitle: String?, actionStyle: BearyButtonStyle = .secondaryOutline(.compact), onAction: (() -> Void)? = nil) {
+    func configure(kind: BearyStateKind, title: String?, subtitle: String?, iconName: String?, actionTitle: String?, actionStyle: BearyButtonStyle = .secondaryOutline(.regular), onAction: (() -> Void)? = nil) {
         let isLoading = (kind == .loading)
         if let name = iconName, isLoading == false {
             iconCircle.isHidden = false

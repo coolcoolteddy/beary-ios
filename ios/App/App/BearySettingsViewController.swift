@@ -458,9 +458,9 @@ final class BearySettingsViewController: UIViewController {
 
 
     /// 列宽唯一计算入口：宽 ≥821 锁 600（P2-1 同款），宽 ≤820 时
-    /// 屏宽 -40 撑满。顶栏与正文列共用此值，600 上限不再以独立约束形式存在。
+    /// 屏宽 -32 撑满（两侧各 16）。顶栏与正文列共用此值，600 上限不再以独立约束形式存在。
     private func columnWidth(forViewWidth w: CGFloat) -> CGFloat {
-        w >= 821 ? 600 : max(w - 40, 0)
+        w >= 821 ? 600 : max(w - 32, 0)
     }
 
     /// 列宽只由 view.bounds 定（见 columnWidth(forViewWidth:)）；顶栏与正文列
