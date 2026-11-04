@@ -497,6 +497,13 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 单图落到关闭钮。未开 VoiceOver 时 post 为空操作。
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        // 灯箱圈上屏重加：viewDidLoad 里 loadCurrent 调 startSpinning 时，
+        // view 还没被转场挂进容器（转场先取 view 再 addSubview），动画加在
+        // 未上屏的图层上不转；且 spinning 已置真，后续 updateLoadingSpinner
+        // 会被 startSpinning 首行 guard 挡回、动画补不上。上屏后先停再重算，
+        // 强制重加一次；图已到／失败时重算走停分支，无视觉变化。
+        loadingSpinner.stopSpinning()
+        updateLoadingSpinner()
         guard !didPostViewerOpenFocus else { return }
         didPostViewerOpenFocus = true
         let target: UIView = imageKeys.count > 1 ? counterLabel : closeButton
