@@ -2509,8 +2509,10 @@ final class BearyDetailViewController: UIViewController {
         refreshActionRow()
         if targetLiked {
             BearyIconMotion.playLikeBurst(on: likeButton)
+            BearyBurstParticles.burstLike(from: likeButton)
         } else {
             BearyIconMotion.clearLikeBurst(on: likeButton)
+            BearyBurstParticles.clear(from: likeButton)
         }
         likeSeq += 1
         let reqSeq = likeSeq
@@ -2568,6 +2570,7 @@ final class BearyDetailViewController: UIViewController {
         entry.bookmarkedByMe = flipped
         refreshActionRow()
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
+        if flipped { BearyBurstParticles.burstStar(from: bookmarkButton) }
         if flipped { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.unlikeSoft) }
         bookmarkSeq += 1
         let reqSeq = bookmarkSeq

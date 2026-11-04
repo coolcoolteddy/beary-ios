@@ -49,6 +49,7 @@
 		33682D1F43521B7B51E6FF30 /* BearyDiaryPin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */; };
 		BE2B0EB0998F4D128F9ABC4F613BC305 /* BearyDepthBackgroundViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F35D9B786C44F9B94496CC7AD342A62 /* BearyDepthBackgroundViewController.swift */; };
 		21D90F881235BD97CA4571F9 /* BearyPlusPageViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2A756EAE0222F1D95AC0CE2 /* BearyPlusPageViewController.swift */; };
+		6C65B8DF43D34F89AD646817 /* BearyBurstParticles.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1E246323514001B47C4821 /* BearyBurstParticles.swift */; };
 		AEA9D9D3FBCB5ACEDC623626 /* BearyProfileCoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E759B4A0FB236185ECACFD00 /* BearyProfileCoverView.swift */; };
 		5CD0ACC7665FEC6310F8023D /* BearyFestivalWallpaperView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D041B25C74C0DEB0BECC18CC /* BearyFestivalWallpaperView.swift */; };
 		1476E40C4B0A489082D4F060 /* BearyQuoteCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B1C032A6C0F4B51BD65D3E6 /* BearyQuoteCardView.swift */; };
@@ -312,6 +313,7 @@
 		10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryPin.swift; sourceTree = "<group>"; };
 		6F35D9B786C44F9B94496CC7AD342A62 /* BearyDepthBackgroundViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDepthBackgroundViewController.swift; sourceTree = "<group>"; };
 		A2A756EAE0222F1D95AC0CE2 /* BearyPlusPageViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyPlusPageViewController.swift; sourceTree = "<group>"; };
+		AF1E246323514001B47C4821 /* BearyBurstParticles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBurstParticles.swift; sourceTree = "<group>"; };
 		E759B4A0FB236185ECACFD00 /* BearyProfileCoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyProfileCoverView.swift; sourceTree = "<group>"; };
 		F61DF01274DB03D3F0AB6FE0 /* china-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/china-poster.png; sourceTree = "<group>"; };
 		B18573473A12570FBD9DB089 /* japan-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/japan-poster.png; sourceTree = "<group>"; };
@@ -601,6 +603,7 @@
 				10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */,
 				6F35D9B786C44F9B94496CC7AD342A62 /* BearyDepthBackgroundViewController.swift */,
 				A2A756EAE0222F1D95AC0CE2 /* BearyPlusPageViewController.swift */,
+				AF1E246323514001B47C4821 /* BearyBurstParticles.swift */,
 				D041B25C74C0DEB0BECC18CC /* BearyFestivalWallpaperView.swift */,
 				C69BECF80F639F3B86A1C5F7 /* BearyFestivalWallpapers.json */,
 				7B1C032A6C0F4B51BD65D3E6 /* BearyQuoteCardView.swift */,
@@ -1127,6 +1130,7 @@
 				33682D1F43521B7B51E6FF30 /* BearyDiaryPin.swift in Sources */,
 				BE2B0EB0998F4D128F9ABC4F613BC305 /* BearyDepthBackgroundViewController.swift in Sources */,
 				21D90F881235BD97CA4571F9 /* BearyPlusPageViewController.swift in Sources */,
+				6C65B8DF43D34F89AD646817 /* BearyBurstParticles.swift in Sources */,
 				5CD0ACC7665FEC6310F8023D /* BearyFestivalWallpaperView.swift in Sources */,
 				1476E40C4B0A489082D4F060 /* BearyQuoteCardView.swift in Sources */,
 				6E1E41D1D67C42CEB3FBC5F3 /* BearyEmoteFlowView.swift in Sources */,
