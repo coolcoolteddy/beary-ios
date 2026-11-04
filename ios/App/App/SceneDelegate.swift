@@ -921,6 +921,18 @@ final class BearyChromeViewController: UIViewController {
         } else {
             giftButton.isHidden = true
         }
+        // 冷启动快照先行恢复（2026-11-04）：本地有会话残留（活 cookie 或钥匙串
+        // 快照）时，首帧即恢复已登录态，不再等 /me 回包才翻态；弱网/断网时
+        // /me 回不来也不退登，旧内容照常从本地缓存出。后台 /me 仍按原口径
+        // 校验，401 时走原有清态路径；首帧翻转与数据刷新仍由 /me 回包驱动，
+        // 这里只立内存态、藏登录钮、切草稿/图片桶（迁移提示仍由 /me 回包
+        // 的 onUserChanged 按原口径弹，不在这里重复）。
+        if let cachedUser = SessionManager.shared.restoreCachedUserFromVault() {
+            loginButton.isHidden = true
+            loginButton.alpha = 0
+            _ = BearyDraftStore.setAccount(cachedUser.id)
+            BearyImageLoader.shared.setAccount(cachedUser.id)
+        }
         // 秒开-启动瘦身：先注册首屏信号观察再亮首页——Feed 在 showPage 建页时即可能
         // 走缓存渲染、其静默首拉终结后发信号，观察者必须先于建页存在，否则信号会漏接。
         scheduleDeferredStartupMe()
