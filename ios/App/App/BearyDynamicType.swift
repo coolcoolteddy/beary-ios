@@ -58,8 +58,9 @@ enum BearyDynamicType {
 // - buttonFont / buttonCompactFont：与 BearyButton.titleFont 现行值逐字一致
 //   （常规 16 semibold capped、紧凑 14 semibold capped，默认上限 20）。
 // 小号与展示字已于 2026-11-04 定版（见 smallActionFont / smallBodyFont /
-//   buttonRegularFont / buttonSmallFont / heroNameFont / avatarInitialFont），
-//   均为 scaled；设置页 11 处迁入，主题分段器 15 semibold 待定未迁。
+//   buttonRegularFont / buttonSmallFont / heroNameFont / avatarInitialFont /
+//   smallSemiboldFont），
+//   均为 scaled；设置页 12 处迁入。
 // 数值角色已于 2026-11-04 定版（12 semibold scaled，见 numberFont），
 // 此前混用的 11 regular / 12 bold / 13 semibold 按页分批迁入本入口。
 // diaryBodyFont（正文）与 cardTitleFont（卡片标题）本身已是按角色命名，
@@ -123,5 +124,10 @@ extension BearyDynamicType {
     /// 语义：头像首字展示字。定版值：28 bold，scaled（规范第 11 节，2026-11-04 Li 定）。
     static func avatarInitialFont() -> UIFont {
         scaledFont(for: UIFont.systemFont(ofSize: 28, weight: .bold))
+    }
+
+    /// 语义：分段器选中态。定版值：15 semibold，scaled（规范第 11 节，2026-11-04 Li 补定）。
+    static func smallSemiboldFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
     }
 }
