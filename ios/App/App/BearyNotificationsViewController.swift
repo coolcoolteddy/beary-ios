@@ -4178,7 +4178,7 @@ extension BearyNotificationsViewController {
     /// 直定互关／已关注、失败回滚＋toast），不另写一份关注逻辑。
     func performFollowBackForDetail(actorId: Int) {
         guard let index = items.firstIndex(where: { $0.type == "follow" && $0.actorId == actorId }) else { return }
-        handleFollowBack(itemIndex: index)
+        handleFollowBack(actorId: actorId, notificationId: items[index].id)
     }
 }
 
