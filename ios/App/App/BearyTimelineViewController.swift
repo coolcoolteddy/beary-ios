@@ -2146,6 +2146,8 @@ class BearyTimelineViewController: UIViewController {
     /// 筛子触发钮（列表顶表头内，个人页展开钮同款：官方 icon_chevron_down
     /// 在左 + 档位名在右；标题即当前档位 = 选中态可见处）。
     private let visFilterButton = BearyHit44Button(type: .system)
+    /// 筛子钮显式宽度约束：UIButton 固有宽度不计 titleEdgeInsets（见 updateVisFilterButton）。
+    private var visFilterButtonWidthConstraint: NSLayoutConstraint?
     /// 11b 筛子尖角气泡（BearyBubbleMenuView，见 BearyCalloutPicker.swift）
     /// + 复用的框外收起层（BearyCalloutDismissView，与编辑器尖角框同款）。
     /// 气泡以 frame 定位在 VC view 上（不在表头内，避免随表滚动错位）；
@@ -2599,6 +2601,23 @@ class BearyTimelineViewController: UIViewController {
         visFilterButton.setTitle(timelineVisFilter.title, for: .normal)
         visFilterButton.accessibilityLabel = "按可见性筛选，当前：\(timelineVisFilter.title)"
         visFilterButton.accessibilityHint = "点按展开选择全部、公开、私密、限时、仅好友"
+        // 显式宽度：UIButton 的固有宽度不计 titleEdgeInsets.left 的 6pt 间隙，
+        // 布局时标题区实得少 6pt、档位名被压成“…”；#810 的右补 6 无效
+        // （content insets 在固有宽与布局宽里同时出现、互相抵消）。
+        // 按当前标题实算所需宽度并显式约束；档位变化与字号变化时重算。
+        let font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        let titleWidth = (timelineVisFilter.title as NSString).size(withAttributes: [.font: font]).width
+        let imageWidth = visFilterButton.image(for: .normal)?.size.width ?? 0
+        let insets = visFilterButton.contentEdgeInsets
+        let titleInsets = visFilterButton.titleEdgeInsets
+        let width = ceil(insets.left + imageWidth + titleInsets.left + titleWidth + titleInsets.right + insets.right)
+        if let constraint = visFilterButtonWidthConstraint {
+            constraint.constant = width
+        } else {
+            let constraint = visFilterButton.widthAnchor.constraint(equalToConstant: width)
+            constraint.isActive = true
+            visFilterButtonWidthConstraint = constraint
+        }
     }
 
     /// 切筛子：点按展开尖角气泡选择（11b，替代系统 actionSheet；不摊五段条）。
@@ -3865,7 +3884,10 @@ class BearyTimelineViewController: UIViewController {
         visFilterButton.titleLabel?.adjustsFontForContentSizeCategory = true
         visFilterButton.setTitleColor(BearyColors.ink, for: .normal)
         visFilterButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        visFilterButton.setContentHuggingPriority(.required, for: .horizontal)
+        // 横向 hugging 降一档：宽度现由 updateVisFilterButton 的显式约束钉死，
+        // 若 hugging 仍为 required，会与显式宽度（比固有宽大 6pt）形成
+        // required 对 required 的冲突；压缩仍为 required，防栈内挤压。
+        visFilterButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         visFilterButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         visFilterButton.addTarget(self, action: #selector(didTapVisFilter), for: .touchUpInside)
         visFilterButton.bearyAddPressFeedback()
@@ -4171,6 +4193,10 @@ class BearyTimelineViewController: UIViewController {
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         calendarFailedBanner.layer.bearyDynamicBorderColor = BearyColors.line
+        // 字号变化时筛子钮显式宽度随新字号重算（否则标题仍按旧宽截断）。
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            updateVisFilterButton()
+        }
     }
 
     /// 连续写作行：网页 .cal-stats（13.5 灰、数字墨色加粗、16pt 橙色火苗图标）。
