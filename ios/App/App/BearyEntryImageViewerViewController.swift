@@ -40,7 +40,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// BearyColors.bg（浅白／深黑，随 trait 自动跟随），不是纯黑、不是
     /// 骨架屏；图到／失败即藏，旧图绝不滑回的口径不动。
     private let placeholderView = UIView()
-    private let retryButton = UIButton(type: .custom)
+    private let retryButton = BearyHit44Button(type: .custom)
     private let counterLabel = UILabel()
     private let closeButton = BearyButton.closeButton()
     private let dotsStack = UIStackView()

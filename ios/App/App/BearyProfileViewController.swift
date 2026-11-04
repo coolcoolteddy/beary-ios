@@ -6804,7 +6804,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         retryButton.layer.cornerRadius = BearyCorners.single
         retryButton.addTarget(self, action: #selector(retryButtonTapped), for: .touchUpInside)
         retryButton.bearyAddPressFeedback()
-        retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
+        retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         // P2-4：照抄 editButton 实测字宽修法——按钮固有宽不含标题边距，显式宽 =
         // content 12 + 图宽 + titleEdge 6 + 实测标题宽 + content 12，防标题被裁。
         // R8：宽改下限（默认尺寸不变），大字号时可生长。
@@ -6838,7 +6838,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         NSLayoutConstraint.activate([
             iconView.widthAnchor.constraint(equalToConstant: 36),
             iconView.heightAnchor.constraint(equalToConstant: 36),
-            retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
+            retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),

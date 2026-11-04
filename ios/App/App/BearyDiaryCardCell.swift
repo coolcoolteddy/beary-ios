@@ -78,7 +78,7 @@ final class BearyFeedRetryButton: UIButton {
 func bearyFeedRetryButton(target: Any?, action: Selector) -> BearyFeedRetryButton {
     let btn = BearyFeedRetryButton(type: .system)
     btn.translatesAutoresizingMaskIntoConstraints = false
-    btn.setImage(BearyFeedIconCache.image(named: "icon_refresh", pointSize: 20), for: .normal)
+    btn.setImage(BearyFeedIconCache.image(named: "icon_refresh", pointSize: 24), for: .normal)
     btn.tintColor = BearyColors.gray
     btn.backgroundColor = BearyColors.bg
     btn.layer.cornerRadius = BearyCorners.single
@@ -871,7 +871,7 @@ class BearyDiaryCardCell: UITableViewCell {
     }()
 
     private lazy var foldButton: UIButton = {
-        let btn = UIButton(type: .system)
+        let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         btn.titleLabel?.adjustsFontForContentSizeCategory = true

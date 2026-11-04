@@ -811,11 +811,7 @@ final class BearyDetailViewController: UIViewController {
         nameButton.translatesAutoresizingMaskIntoConstraints = false
         nameButton.addTarget(self, action: #selector(authorTapped), for: .touchUpInside)
         nameButton.bearyAddPressFeedback()
-        // 首页 feed 模式皇冠带网页 drop-shadow（0 1px 1px 黑 30%）。
-        crownView.layer.shadowColor = UIColor.black.cgColor
-        crownView.layer.shadowOpacity = 0.30
-        crownView.layer.shadowOffset = CGSize(width: 0, height: 1)
-        crownView.layer.shadowRadius = 1
+        // 详情页皇冠无辉光（辉光仅首页 feed 卡片，见 CardCell 的 cardMode == .feed 门控）。
         nameButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         titleSpacerLabel.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)

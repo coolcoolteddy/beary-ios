@@ -159,7 +159,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         if navigationController?.viewControllers.count == 1, presentingViewController != nil {
             // 全屏页左上角统一左箭头：此前是 icon_close 叉叉，现改 icon_back
             // （tint 仍跟随夜空主文字色，见 viewWillAppear）。
-            if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 18) {
+            if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 24) {
                 navigationItem.leftBarButtonItem = UIBarButtonItem(image: backImage, style: .plain, target: self, action: #selector(didTapClose))
             } else {
                 navigationItem.leftBarButtonItem = UIBarButtonItem(title: "返回", style: .plain, target: self, action: #selector(didTapClose))
@@ -174,7 +174,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         if navigationController?.viewControllers.count ?? 0 > 1 {
             let pushedBackButton = BearyHit44Button(type: .system)
             pushedBackButton.translatesAutoresizingMaskIntoConstraints = false
-            if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 18) {
+            if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 24) {
                 pushedBackButton.setImage(backImage, for: .normal)
             } else {
                 pushedBackButton.setTitle("返回", for: .normal)
