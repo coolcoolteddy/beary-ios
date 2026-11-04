@@ -49,8 +49,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// BearyGrabHitView 透传，不会被误吞；搜索框顶在 y70，正在热区
     /// 边界之外，不受影响。
     private let grabHitView = BearyGrabHitView()
-    private let headerIconWrap = UIView()
-    private let headerIcon = UIImageView()
     private let headerTitle = UILabel()
     private let closeButton = BearyButton.closeButton()
     private let searchBox = UIView()
@@ -62,8 +60,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let notifyCheckButton = BearyHit44Button(type: .custom)
     private let notifyLabel = UILabel()
     /// 搜索框配色（编辑器批）：原 A2 自定义动态底色/边框已删——96 包真机上搜索框
-    /// 整棵子树不画（帧 44pt 证实存在、预测区像素纯白），改走全站已证实可见的
-    /// BearyColors.faint/line，圆角取精确半高 22（见 buildViews）。
+    /// 整棵子树不画（帧 44pt 证实存在、预测区像素纯白），v2 黑白灰改走
+    /// BearyColors.bg 白底＋line 边，圆角取精确半高 22（见 buildViews）。
     private let listContainer = UIView()
     // 审计第 9 项：滚动取消走共享类（见 BearyNativeCommon.BearyCancellableScrollView）——
     // 从选人行按钮上起滑时滚动视图能抢到 pan，点按行为不变；搜索输入框不在本滚动区内。
@@ -85,6 +83,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private var lastQuery = ""
     private var isPadLayout = false
     private var keyboardHeight: CGFloat = 0
+    /// 编辑器打开选人器时键盘已弹起的高度（编辑器 currentKeyboardHeight 传进来；
+    /// 0 = 键盘没起，走正常通知路径）。见 viewWillAppear/viewDidAppear 的初始抬升。
+    var initialKeyboardHeight: CGFloat = 0
     /// 审计 D-4：换算到 view 坐标后的键盘终帧（.zero = 无键盘/键盘不在屏上）；
     /// 键盘通知给的是屏幕坐标，直接对 view.bounds.height 算高度在浮动键盘、
     /// 分屏/台前调度下会错位，故一律先经屏幕坐标空间 convert。
@@ -113,11 +114,33 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        applyInitialKeyboardLiftIfNeeded()
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // 编辑器批：viewDidLoad 时 view 尚未挂窗，首次响应者可能静默失败
         // （96 包截图里面板弹出却无键盘）；移到 viewDidAppear，面板已上屏、键盘必起。
         searchField.becomeFirstResponder()
+        // willAppear 时 bounds 未落定时初始抬升会跳过，didAppear 再补一次
+        // （已消费则 initialKeyboardHeight 已为 0，不重复抬）。
+        applyInitialKeyboardLiftIfNeeded()
+    }
+
+    /// 键盘已弹起时打开选人器的初始抬升：编辑器里正打字时点 @，键盘本就开着，
+    /// 此时切 first responder 不发 WillShow，只靠通知的旧代码抬不起 sheet，
+    /// 搜索框会被键盘盖住（搜索框离 sheet 底约 230pt，小于键盘高）。
+    /// 编辑器把当时的键盘高经 initialKeyboardHeight 传进来，这里按同一套避让
+    /// 逻辑（applyKeyboardFrame，绝对量重算）先抬一次，用完即清；之后的
+    /// WillShow/WillChangeFrame/WillHide 仍按绝对量重算接管，不叠加。
+    private func applyInitialKeyboardLiftIfNeeded() {
+        guard initialKeyboardHeight > 0, view.bounds.height > 0 else { return }
+        let height = initialKeyboardHeight
+        initialKeyboardHeight = 0
+        let frame = CGRect(x: 0, y: view.bounds.height - height, width: view.bounds.width, height: height)
+        applyKeyboardFrame(frame, note: nil)
     }
 
     override func viewDidLayoutSubviews() {
@@ -128,13 +151,11 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 边框与搜索框/头图圈/空态圈描边。
+        // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 边框与搜索框描边。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             applySheetChrome()
             searchBox.layer.bearyDynamicBorderColor = BearyColors.line
             notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
-            headerIconWrap.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.28)
-            stateCircle.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.25)
         }
     }
 
@@ -159,19 +180,12 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         grabberView.backgroundColor = BearyColors.line
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
 
-        // 头图底色：网页 color-mix(in srgb, orange 20%, surface)——以 surface 为底混 20% 橙，
-        // 深色下 surface 为 #26262c 而非 bg 的 #000，故比直接 alpha 叠 bg 更亮；另补内圈 28% 橙描边。
-        headerIconWrap.backgroundColor = bearyOrangeMixedOverSurface(fraction: 0.20)
-        headerIconWrap.layer.cornerRadius = 20
-        headerIconWrap.layer.masksToBounds = true
-        headerIconWrap.layer.borderWidth = 1
-        headerIconWrap.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.28)
-        headerIcon.image = BearyIconImages.image(named: "icon_at", pointSize: 20)
-        headerIcon.tintColor = BearyColors.orange
-        headerIcon.contentMode = .scaleAspectFit
+        // v2 黑白灰：标题行去掉 40×40 橙圈＋橙色 icon_at，改纯文字标题
+        // （15 bold、墨色，与表情 sheet、草稿箱标题同款）；标题顶距 14，
+        // 与旧 40 行同中心（见约束），纵向节奏不动。
         // iCity：选人 sheet 标题改“@ 谁”。
         headerTitle.text = "@ 谁"
-        headerTitle.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        headerTitle.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
         headerTitle.adjustsFontForContentSizeCategory = true
         headerTitle.textColor = BearyColors.ink
         // 关闭钮视觉由 BearyButton.iconCircleClose 工厂定（faint 底 32 圆钮 + icon_close 15）；
@@ -180,10 +194,11 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         closeButton.bearyAddPressFeedback()
         // 编辑器批搜索框去 exotic 化：原自定义动态底色/边框 + 999 圆角在 96 包真机上
         // 整棵子树不画（帧 44pt 证实存在、预测区像素纯白；静态查不到隐藏/透明/遮挡路径）。
-        // 改走全站已证实可见的 BearyColors.faint/line，圆角取精确半高 22；
-        // 显式 44 高、18 图标、16 占位均不动。若真机仍不可见，下一步须诊断包记录
-        // searchBox.frame/alpha/isHidden，而非继续盲改。
-        searchBox.backgroundColor = BearyColors.faint
+        // v2 黑白灰：底由 faint 改 bg（白底＋line 边，草稿箱卡片同款组合），圆角
+        // 仍取精确半高 22；显式 44 高、18 图标、16 占位均不动。注意：96 包的 faint
+        // 底是当时已证实可见的方案，白底组合须真机确认后再算数；若真机仍不可见，
+        // 下一步须诊断包记录 searchBox.frame/alpha/isHidden，而非继续盲改。
+        searchBox.backgroundColor = BearyColors.bg
         searchBox.layer.cornerRadius = 22
         searchBox.layer.masksToBounds = true
         searchBox.layer.borderWidth = 1
@@ -233,13 +248,14 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         resultsLabel.adjustsFontForContentSizeCategory = true
         resultsLabel.textColor = BearyColors.gray
         resultsLabelWrap.isHidden = true
-        // 空态圆：底色 orange 18% 不变，补内圈 orange 25% 描边（网页 .addr-stic 同款）。
-        stateCircle.backgroundColor = BearyColors.orange.withAlphaComponent(0.18)
+        // v2 黑白灰：空态圆去掉橙底＋橙描边，改浅灰底（faint）无描边、墨色 @
+        // （圆 54、标题 15 bold、副标题 12.5 灰均不动；转圈态仍由 setCenterBusy
+        // 换灰色刷新图标，停转后 showState 重置图标、tint 回墨色见 showState）。
+        stateCircle.backgroundColor = BearyColors.faint
         stateCircle.layer.cornerRadius = 27
         stateCircle.layer.masksToBounds = true
-        stateCircle.layer.borderWidth = 1
-        stateCircle.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.25)
-        stateIcon.tintColor = BearyColors.orange
+        stateCircle.layer.borderWidth = 0
+        stateIcon.tintColor = BearyColors.ink
         stateIcon.contentMode = .scaleAspectFit
         stateTitle.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
         stateTitle.adjustsFontForContentSizeCategory = true
@@ -257,7 +273,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateRetryButton.isHidden = true
         stateRetryButton.addTarget(self, action: #selector(didTapStateRetry), for: .touchUpInside)
         stateRetryButton.bearyAddPressFeedback()
-        for v in [backdropButton, sheetView, grabberWrap, grabberView, grabHitView, headerIconWrap, headerIcon, headerTitle, closeButton, searchBox, searchIcon, searchField, notifyRow, notifyCheckButton, listContainer, listScrollView, rowsStack, resultsLabelWrap, resultsLabel, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
+        for v in [backdropButton, sheetView, grabberWrap, grabberView, grabHitView, headerTitle, closeButton, searchBox, searchIcon, searchField, notifyRow, notifyCheckButton, listContainer, listScrollView, rowsStack, resultsLabelWrap, resultsLabel, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
         view.addSubview(backdropButton)
@@ -267,10 +283,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         grabHitView.passthroughView = closeButton
         grabHitView.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(grabberPanGesture(_:))))
         sheetView.addSubview(grabHitView)
-        grabberWrap.addSubview(grabberView)
-        sheetView.addSubview(headerIconWrap)
-        headerIconWrap.addSubview(headerIcon)
         sheetView.addSubview(headerTitle)
+        grabberWrap.addSubview(grabberView)
         sheetView.addSubview(closeButton)
         sheetView.addSubview(searchBox)
         searchBox.addSubview(searchIcon)
@@ -312,21 +326,15 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             grabHitView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
             grabHitView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
             grabHitView.heightAnchor.constraint(equalToConstant: 70),
-            headerIconWrap.topAnchor.constraint(equalTo: grabberWrap.bottomAnchor, constant: 4),
-            headerIconWrap.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
-            headerIconWrap.widthAnchor.constraint(equalToConstant: 40),
-            headerIconWrap.heightAnchor.constraint(equalToConstant: 40),
-            headerIcon.centerXAnchor.constraint(equalTo: headerIconWrap.centerXAnchor),
-            headerIcon.centerYAnchor.constraint(equalTo: headerIconWrap.centerYAnchor),
-            headerIcon.widthAnchor.constraint(equalToConstant: 20),
-            headerIcon.heightAnchor.constraint(equalToConstant: 20),
-            headerTitle.centerYAnchor.constraint(equalTo: headerIconWrap.centerYAnchor),
-            headerTitle.leadingAnchor.constraint(equalTo: headerIconWrap.trailingAnchor, constant: 11),
-            closeButton.centerYAnchor.constraint(equalTo: headerIconWrap.centerYAnchor),
+            // v2：标题行无图标圈——标题顶距 14（与旧 40 行同中心：旧中心为
+            // 抓手底 4＋20，新中心为 14＋标题半高≈24），左缘 16，叉叉与标题同中心。
+            headerTitle.topAnchor.constraint(equalTo: grabberWrap.bottomAnchor, constant: 14),
+            headerTitle.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
+            closeButton.centerYAnchor.constraint(equalTo: headerTitle.centerYAnchor),
             closeButton.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -16),
             closeButton.widthAnchor.constraint(equalToConstant: 32),
             closeButton.heightAnchor.constraint(equalToConstant: 32),
-            searchBox.topAnchor.constraint(equalTo: headerIconWrap.bottomAnchor, constant: 12),
+            searchBox.topAnchor.constraint(equalTo: headerTitle.bottomAnchor, constant: 12),
             searchBox.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
             searchBox.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -16),
             // A2：搜索框显式高度 44pt（不再内容驱动，避免 sheet fitting 压高导致图标/占位看不见）。
@@ -482,9 +490,11 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             ).height
         }
         let bottomPad = 14 + (isPadLayout ? 0 : view.safeAreaInsets.bottom)
-        // 抓手 14 + 头顶 4 + 头图 40 + 头到搜索 12 + 搜索框高 + 搜索到列表 10
-        // + 列表高 + 底 padding（iCity：通知行隐藏后不再占 8 + 行高 + 10）。
-        let fittingHeight = 14 + 4 + 40 + 12 + searchHeight + 10 + listHeight + bottomPad
+        // 抓手 14 + 标题顶 14 + 标题高 + 标题到搜索 12 + 搜索框高 + 搜索到列表 10
+        // + 列表高 + 底 padding（iCity：通知行隐藏后不再占 8 + 行高 + 10；
+        // v2：标题行橙圈已删，行高由标题本身定，标题高取 intrinsic，首帧为 0 时兜底 20）。
+        let titleHeight = max(headerTitle.intrinsicContentSize.height, 20)
+        let fittingHeight = 14 + 14 + titleHeight + 12 + searchHeight + 10 + listHeight + bottomPad
         // 审计 D-4：可用高按键盘顶沿计——手机端键盘顶沿即为可见高（此前 iPad 直接
         // 不扣键盘高度，浮动/分屏键盘会盖住居中卡片）；iPad 另受“上抬后卡片顶不得
         // 顶出安全区”约束：卡片底 = 键盘顶 - 14，故高上限 = 键盘顶 - 14 - 安全区顶。
@@ -504,32 +514,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         let target = min(fittingHeight, maxHeight)
         if let heightConstraint = sheetHeightConstraint, abs(heightConstraint.constant - target) > 0.5 {
             heightConstraint.constant = target
-        }
-    }
-
-    /// 以 BearyColors.surface 为底混 fraction 橙（网页 color-mix 同款，动态色随主题切换）。
-    private func bearyOrangeMixedOverSurface(fraction: CGFloat) -> UIColor {
-        return UIColor { traits in
-            let base = BearyColors.surface.resolvedColor(with: traits)
-            let orange = BearyColors.orange.resolvedColor(with: traits)
-            var baseRed: CGFloat = 0
-            var baseGreen: CGFloat = 0
-            var baseBlue: CGFloat = 0
-            var baseAlpha: CGFloat = 0
-            var orangeRed: CGFloat = 0
-            var orangeGreen: CGFloat = 0
-            var orangeBlue: CGFloat = 0
-            var orangeAlpha: CGFloat = 0
-            if base.getRed(&baseRed, green: &baseGreen, blue: &baseBlue, alpha: &baseAlpha),
-               orange.getRed(&orangeRed, green: &orangeGreen, blue: &orangeBlue, alpha: &orangeAlpha) {
-                return UIColor(
-                    red: fraction * orangeRed + (1 - fraction) * baseRed,
-                    green: fraction * orangeGreen + (1 - fraction) * baseGreen,
-                    blue: fraction * orangeBlue + (1 - fraction) * baseBlue,
-                    alpha: 1
-                )
-            }
-            return BearyColors.orange.withAlphaComponent(fraction)
         }
     }
 
@@ -565,7 +549,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// （+14 间隙，L11 口径保留），不重叠时不动；动画走键盘曲线。
     /// keyboardHeight 供 updateSheetHeight 计可用高（手机端 = 到键盘顶沿的距离，
     /// iPad 端同样计入后由那里的键盘适配高上限再约束一次）。
-    private func applyKeyboardFrame(_ frame: CGRect, note: Notification) {
+    private func applyKeyboardFrame(_ frame: CGRect, note: Notification?) {
         keyboardFrameInView = frame
         view.layoutIfNeeded()
         let sheetFrame = sheetView.frame
@@ -588,10 +572,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// M8：sheet 高度/位置变化走键盘动画同曲线（duration + curve 均取键盘通知，不再固定 0.25 线性）。
     /// 6-3 例外：本函数内 layoutIfNeeded 在键盘动画内、duration/curve 均取键盘通知，
     /// 属系统曲线同步，保留不重写（不要当作通用约束动画口径扩散）。
-    private func animateKeyboardLayout(_ note: Notification) {
+    private func animateKeyboardLayout(_ note: Notification?) {
         var duration: TimeInterval = 0.25
         var options: UIView.AnimationOptions = []
-        if let info = note.userInfo {
+        if let info = note?.userInfo {
             if let value = info[UIResponder.keyboardAnimationDurationUserInfoKey] as? TimeInterval {
                 duration = value
             }
@@ -707,6 +691,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateView.isHidden = false
         listScrollView.isHidden = true
         stateIcon.isHidden = false
+        // v2：中央态 tint 一律先回墨色（转圈态由其后的 setCenterBusy 再换灰；
+        // 旧代码只在 buildViews 设一次橙，首轮转圈后 tint 会永久滞灰）。
+        stateIcon.tintColor = BearyColors.ink
         stateRetryButton.isHidden = true
         stateRetryBottomConstraint?.isActive = false
         if kind == "loading" {
@@ -872,17 +859,15 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
         fallbackLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
         fallbackLabel.adjustsFontForContentSizeCategory = true
-        // 对比度：token 深橙 #C2410C 在 0.18 淡橙底上浅色仅 4.48:1（未达 4.5:1），
-        // 故本行浅色用复算过的 #BE3E0B（4.68:1），深色沿用 token 亮色值 #FF9500（7.50:1）。
-        fallbackLabel.textColor = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1) : UIColor(red: 190.0/255.0, green: 62.0/255.0, blue: 11.0/255.0, alpha: 1) }
-        fallbackLabel.backgroundColor = BearyColors.orange.withAlphaComponent(0.18)
+        // v2 黑白灰：无头像回退圈去掉橙底＋橙描边＋橙字，改浅灰底无描边、
+        // 墨色首字母（与空态圆同口径；仅本弹窗内改，别页回退圈不动，
+        // 是否全站跟进等全站风格审计结论）。
+        fallbackLabel.textColor = BearyColors.ink
+        fallbackLabel.backgroundColor = BearyColors.faint
         fallbackLabel.textAlignment = .center
         fallbackLabel.layer.cornerRadius = 22
         fallbackLabel.layer.masksToBounds = true
-        // D-G10：网页 .addr-user .addr-avafall 回退头像带 inset 1px 橙 25% 内圈；
-        // 描边画在圆内侧，等价于该 inset ring（仅回退头像，真头像不加）。
-        fallbackLabel.layer.borderWidth = 1
-        fallbackLabel.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.25)
+        fallbackLabel.layer.borderWidth = 0
         let nameLabel = UILabel()
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .bold))
