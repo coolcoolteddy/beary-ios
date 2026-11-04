@@ -1636,13 +1636,18 @@ extension BearyAPI {
         requestVoid("/beary/api/entries/\(safe)", method: "PUT", jsonBody: body, completion: completion)
     }
 
-    /// 当地天气：GET https://api.teddyhn.com/api/weather（cat-likes Worker 现成接口，服务端按请求方
-    /// Cloudflare 边缘信息定位 + open-meteo 取数，前端不直连第三方、不取设备 GPS、不存经纬度）。
+    /// 当地天气：GET https://api.teddyhn.com/api/weather（cat-likes Worker 现成接口，open-meteo 取数，
+    /// 前端不直连第三方）。不传经纬度时服务端按请求方 Cloudflare 边缘信息定位（IP 回落链路）；
+    /// 传合法经纬度时服务端优先用之（GPS 链路）。经纬度只用于本次请求，不写入日记、不落库。
     /// 回包 {temp, code, city}：temp 为摄氏度整数，code 为 WMO 天气代码。code 映射见
     /// weatherKey(forWMOCode:)；未覆盖的代码只回气温、不改天气类型，绝不编一个类型填上。
     /// 取不到（网络错、非 200、字段缺失）即走 failure，调用方如实提示、不填假数据。
-    func fetchLocalWeather(completion: @escaping (Result<(weatherKey: String?, temperature: Int, city: String?), Error>) -> Void) {
-        guard let url = URL(string: "https://api.teddyhn.com/api/weather") else {
+    func fetchLocalWeather(latitude: Double? = nil, longitude: Double? = nil, completion: @escaping (Result<(weatherKey: String?, temperature: Int, city: String?), Error>) -> Void) {
+        var urlString = "https://api.teddyhn.com/api/weather"
+        if let lat = latitude, let lon = longitude, lat.isFinite, lon.isFinite {
+            urlString += "?lat=\(lat)&lon=\(lon)"
+        }
+        guard let url = URL(string: urlString) else {
             completion(.failure(NSError(domain: "BearyWeather", code: -1, userInfo: nil)))
             return
         }

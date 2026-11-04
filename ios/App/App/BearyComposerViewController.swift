@@ -4235,7 +4235,28 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         showCallout(.weather, trigger: weatherToolButton)
         weatherFetchGeneration += 1
         let generation = weatherFetchGeneration
-        BearyAPI.shared.fetchLocalWeather { [weak self] result in
+        // 天气 GPS（2026-11-04）：点天气钮时才走定位，不在启动时弹权限；一次定位即可。
+        // 拒绝/受限/定位失败/超时 → 回落 IP 链路（不传经纬度），回落成功后提示一句；
+        // 回落也取不到时沿用旧 toast，不填假数据。代次守卫不变：手改后在途回包一律作废。
+        BearyOneShotLocation.request { [weak self] locationResult in
+            DispatchQueue.main.async {
+                guard let self = self, self.weatherFetchGeneration == generation else { return }
+                switch locationResult {
+                case .coordinate(let latitude, let longitude):
+                    self.fetchWeatherWith(latitude: latitude, longitude: longitude, generation: generation, fallbackTip: nil)
+                case .denied:
+                    self.fetchWeatherWith(latitude: nil, longitude: nil, generation: generation, fallbackTip: "未获得位置权限，已按网络位置填写天气")
+                case .unavailable:
+                    self.fetchWeatherWith(latitude: nil, longitude: nil, generation: generation, fallbackTip: "定位失败，已按网络位置填写天气")
+                }
+            }
+        }
+    }
+
+    /// 天气取数（GPS 链路与 IP 回落链路共用）：成功填类型与气温、回落成功提示一句；
+    /// 失败沿用旧 toast，不编假数据。
+    private func fetchWeatherWith(latitude: Double?, longitude: Double?, generation: Int, fallbackTip: String?) {
+        BearyAPI.shared.fetchLocalWeather(latitude: latitude, longitude: longitude) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self, self.weatherFetchGeneration == generation else { return }
                 switch result {
@@ -4250,6 +4271,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // 框还开着时同步框内选中态与步进器显隐；框已关则不重开。
                     if self.activeCallout == .weather {
                         self.weatherCallout.setSelectedKey(self.selectedWeather)
+                    }
+                    if let tip = fallbackTip {
+                        self.showToast(message: tip)
                     }
                 case .failure:
                     self.showToast(message: "没取到当地天气，请手动选")
