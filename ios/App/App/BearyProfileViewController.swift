@@ -319,6 +319,12 @@ class BearyProfileViewController: UIViewController {
     /// 尾）补触发一次 loadTab；loadTab 真正跑起来时清掉（新请求已
     /// 涵盖本次刷新意愿），补触发时守卫已清，不会循环。
     private var tabPendingForceReload = false
+    /// 审计第三轮第 1 项：切 tab 空缓存调 loadTab 被全局锁挡时记下的待办 tab。
+    /// 旧 tab 回包因 requestTab≠currentTab 被丢弃时，尾部钩子此前不补拉当前
+    /// tab（空缓存 tab 一直空着，直到重拍/下拉才拉）。丢弃分支里若待办 tab
+    /// 就是当前 tab，清掉并补拉一次；成功回包（请求 tab 即当前 tab）则意图
+    /// 已满足，只清不补发；loadTab 真跑起来时同样清掉（本请求即涵盖意图）。
+    private var tabPendingSwitchLoad: ProfileTab?
 
     private var tabLoadMore = false
     private var tabError = false
@@ -505,7 +511,9 @@ class BearyProfileViewController: UIViewController {
     private var photoOverflowHasMore = true
     private var photoOverflowFetching = false
     private var photoOverflowFailed = false
-    private var photoOverflowBaseIds: [String] = []
+    /// 第三轮第 8 项：照片墙基础签名存量——不只比日记 ID，同 ID 但可见性、
+    /// 公开态或图片变了（转私密、换图）也算基础变，照片墙重建，不再沿用旧溢出页。
+    private var photoOverflowBaseSignature = ""
 
     /// 照片墙数据源：首屏 + 溢出页，按 id 去重（直接落点单篇可能与溢出页重叠）。
     private var photoWallSourceEntries: [Entry] {
@@ -525,10 +533,18 @@ class BearyProfileViewController: UIViewController {
         return BearyProfileViewController.profilePhotoItems(from: photoWallSourceEntries, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend)
     }
 
+    /// 照片墙基础签名：日记 ID + 可见性 + 公开态 + 全部图片 key（墙按全部
+    /// 图片铺，只比首图不够）；任一变化即基础变。
+    private func photoWallBaseSignature() -> String {
+        diaryEntries.map { entry in
+            "\(entry.id ?? "")|\(entry.visibility ?? "")|\(entry.isPublic ?? false)|\((entry.images ?? []).joined(separator: ","))"
+        }.joined(separator: ";")
+    }
+
     private func syncPhotoWallBase() {
-        let baseIds = diaryEntries.compactMap { $0.id }
-        if baseIds != photoOverflowBaseIds {
-            photoOverflowBaseIds = baseIds
+        let signature = photoWallBaseSignature()
+        if signature != photoOverflowBaseSignature {
+            photoOverflowBaseSignature = signature
             photoOverflowEntries = []
             photoOverflowHasMore = diaryHasMore
             photoOverflowFetching = false
@@ -544,10 +560,16 @@ class BearyProfileViewController: UIViewController {
               let lastEntry = photoWallSourceEntries.last,
               let lastCreated = lastEntry.createdAt, let lastId = lastEntry.id else { return }
         photoOverflowFetching = true
+        // 第三轮第 4 项：记下发出时的基础签名，供回包校验用。
+        let baseSignature = photoWallBaseSignature()
         BearyAPI.shared.fetchEntries(scope: .author(authorId), limit: 50, before: lastCreated, beforeId: lastId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.photoOverflowFetching = false
+                // 第三轮第 4 项：基础已变（新一轮 sync 清过溢出页）时旧请求回包
+                // 直接丢弃，不再 append＋refreshFooter 写进新轮；现算签名比对，
+                // 不依赖存量（sync 未来得及跑时同样拦得住）。
+                guard baseSignature == strongSelf.photoWallBaseSignature() else { return }
                 switch result {
                 case .success(let listValue):
                     let fresh = listValue.entries ?? []
@@ -575,6 +597,9 @@ class BearyProfileViewController: UIViewController {
     private var cachedPhotosFooterSignature: String?
     /// 审计-个人页设置：照片墙淡入去重——上次已淡入过的墙签名，签名不变不重播。
     private var lastPhotosFooterFadeSignature: String?
+    /// 第三轮第 7 项：照片墙单格加载失败的图 key 集合（失败格显“重试”文案，
+    /// 点按只重拉该格；成功即摘除；墙重建时按 key 重新比对，旧 key 不命中即自然失效）。
+    private var photosWallFailedKeys = Set<String>()
 
     // MARK: - 列表
 
@@ -753,6 +778,18 @@ class BearyProfileViewController: UIViewController {
         viewValue.accessibilityElementsHidden = true
         return viewValue
     }()
+    /// 第四轮第 3 项：景深层下拉模糊层——照片层用预模糊图淡入，景深层是实时
+    /// 动画视图、无法预生成模糊图；故用系统毛玻璃层按同一拉量曲线淡入，
+    /// 视觉上同款下拉模糊（假设，见 PR 描述）。平时 alpha 0 且隐藏。
+    private let festivalBlurView: UIVisualEffectView = {
+        let viewValue = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.alpha = 0
+        viewValue.isHidden = true
+        viewValue.isUserInteractionEnabled = false
+        viewValue.accessibilityElementsHidden = true
+        return viewValue
+    }()
     private var festivalTheme: FestivalTheme = .none
     private var festivalWallpaperVisible = false
 
@@ -866,6 +903,9 @@ class BearyProfileViewController: UIViewController {
     /// 不把“未拉到”画成“可关注”）。目标 id 以 profile 解析值为准（handle 目标
     /// 解析前不拉取、不渲染）。
     private var followState: BearyFollowState?
+    /// 第三轮第 6 项：关注态首轮加载失败标记——无确认态时 applyFollowButton
+    /// 按未关注态显位（点按重试刷新），不再直接藏按钮；成功到达即清掉。
+    private var followStateFirstLoadFailed = false
     private var followStateLoading = false
     private var followBlockedByMe = false
 
@@ -1882,12 +1922,17 @@ class BearyProfileViewController: UIViewController {
     /// updateCoverStretch 同值），滚动回调取此常量、不取拉伸中的 live transform（下拉复位动画
     /// 0.28s 内 live 值会抖）；改封面高时此处与三处同改，另 stickyWordmark 的 144 也要同步。
     private let profileCoverHeight: CGFloat = 180
+    /// 第四轮第 1 项：封面照片加载失败标记——失败时恢复默认 wordmark 显示，
+    /// 封面带点按改走重拉（见 coverViewTapped），不再剩空带。
+    private var coverLoadFailed = false
     /// 资料已到且无封面 URL 时为真：封面区显示主题底色默认背景（applyProfile 置位，布局同步用）。
     private var profileShowsDefaultCover = false
     /// 封面区是否显示（照片或默认背景任一）：下拉拉伸与复位以此为准，
     /// 不以 coverImageView.isHidden 为准（默认背景时图视图本身是隐藏的、区仍在）。
+    /// 第三轮第 13 项：景深主题态同样算显示——贴主题时照片与 wordmark 一并
+    /// 隐藏，旧口径会误判区不在、把带高复位成 0 裁没景深。
     private var profileShowsCoverArea: Bool {
-        return !coverImageView.isHidden || profileShowsDefaultCover
+        return !coverImageView.isHidden || profileShowsDefaultCover || festivalTheme != .none
     }
     /// 头像上压量（Li 2026-10-26 真机观感定）：-28，头像下沿 = 封面下沿 +56，
     /// 按钮（高 40、底对齐头像底）顶部 = 封面下沿 +16，完全落到封面下方。
@@ -3159,7 +3204,8 @@ class BearyProfileViewController: UIViewController {
         gearButton.isHidden = !own
         // 关注钮只属他人主页：本人、游客（viewer 为空）一律隐藏；拉黑态由
         // refreshFollowState 按 state 接口复核（未到前先隐藏，不抢先画“关注”）。
-        followButton.isHidden = own || viewerUserIdValue == nil || followBlockedByMe || followState == nil
+        // 第三轮第 6 项：首轮失败占位态不在此藏按钮（applyFollowButton 显位）。
+        followButton.isHidden = own || viewerUserIdValue == nil || followBlockedByMe || (followState == nil && !followStateFirstLoadFailed)
         updateDMButton()
         // iCity：更多菜单只属他人主页（举报/拉黑均以他人为对象）。
         topMoreButton.isHidden = own
@@ -3228,6 +3274,8 @@ class BearyProfileViewController: UIViewController {
                     let newState = BearyFollowState(response: state)
                     self.followState = newState
                     self.confirmedFollowState = newState
+                    // 第三轮第 6 项：成功到达即清占位标记。
+                    self.followStateFirstLoadFailed = false
                     let newMutual: Bool
                     if case .mutual = newState { newMutual = true } else { newMutual = false }
                     if !self.isOwnProfile, previousMutual != newMutual, !self.diaryEntries.isEmpty {
@@ -3237,9 +3285,16 @@ class BearyProfileViewController: UIViewController {
                         self.loadTab(forceReload: true)
                     }
                 case .failure:
-                    // 已有态时刷新失败不清空、不隐藏（首轮拉取失败仍 fail-closed：
-                    // followState 本就 nil，applyFollowButton 照旧隐藏）。
-                    // 否则一次瞬时失败就会让按钮闪没、再等下次刷新才回来。
+                    // 第三轮第 6 项：首轮（尚无确认态）失败不再直接藏按钮——
+                    // 立占位标记，applyFollowButton 按未关注态显位、点按重试；
+                    // 已有态时刷新失败仍不清空、不隐藏（同旧口径）。
+                    // 失败 toast 只在首次置位时弹一次，重复失败不再刷屏。
+                    if self.followState == nil {
+                        if !self.followStateFirstLoadFailed {
+                            BearyToast.show(in: self.view, message: "关注状态加载失败，点按按钮可重试")
+                        }
+                        self.followStateFirstLoadFailed = true
+                    }
                     break
                 }
                 self.applyFollowButton()
@@ -3249,8 +3304,12 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func applyFollowButton(animated: Bool = false) {
+        // 第三轮第 6 项：首轮失败占位——无确认态但有失败标记时按未关注态显位，
+        // 标题仍是“关注”，点按走重试（见 followButtonTapped 占位分支）。
+        let isPlaceholder = followState == nil && followStateFirstLoadFailed
+        let effectiveState = followState ?? (isPlaceholder ? .none : nil)
         guard !isOwnProfile, viewerUserIdValue != nil, !followBlockedByMe,
-              let state = followState,
+              let state = effectiveState,
               let config = Self.followButtonConfigs[state] else {
             followButton.isHidden = true
             renderedFollowState = nil
@@ -3276,9 +3335,14 @@ class BearyProfileViewController: UIViewController {
             followButton.setTitle(config.title, for: .normal)
         }
         followButton.accessibilityLabel = config.accessibilityLabel
+        if isPlaceholder {
+            // 占位态读屏须讲清：这不是已确认的“关注”按钮，点按是重试。
+            followButton.accessibilityLabel = "关注状态加载失败，点按重试"
+        }
         followButton.isEnabled = true
         followButton.alpha = 1
-        renderedFollowState = state
+        // 占位不记为已渲染态——真实态到达时按首显播切换动效，不按同态直设。
+        renderedFollowState = isPlaceholder ? nil : state
     }
 
     /// 关注钮四态定宽：四态文案／图标宽度不一，内容自适应宽会在点按后变宽变窄、
@@ -3324,6 +3388,11 @@ class BearyProfileViewController: UIViewController {
     }
 
     @objc private func followButtonTapped() {
+        // 第三轮第 6 项：占位态点按 = 重试刷新状态，不发关注请求。
+        if followState == nil && followStateFirstLoadFailed {
+            refreshFollowState()
+            return
+        }
         guard let targetId = profile?.profileIdValue ?? targetUserIdValue,
               let state = followState else { return }
         switch state {
@@ -3508,18 +3577,21 @@ class BearyProfileViewController: UIViewController {
     private func loadProfile() {
         // 提速代次：每轮资料加载 +1，供夜巡 / 模块的本轮去重守卫用。
         profileLoadCycle += 1
+        // 第三轮第 3 项：本轮次快照随请求走，资料回调先比轮次——旧轮回包
+        // （换目标/下拉刷新后先到的旧资料）直接丢弃，不再覆盖新轮资料头。
+        let cycle = profileLoadCycle
         // 夜巡先清后拉：换目标 / 换号时不闪上一位用户的脚印（私密夜巡尤其不可残留）。
         hideNightPatrol()
         if let targetId = targetUserIdValue {
             BearyAPI.shared.fetchUserProfile(userIdValue: targetId) { [weak self] result in
                 DispatchQueue.main.async {
-                    self?.handleProfileResult(result: result)
+                    self?.handleProfileResult(result: result, cycle: cycle)
                 }
             }
         } else if let handle = targetHandleValue {
             BearyAPI.shared.fetchUserProfile(handleValue: handle) { [weak self] result in
                 DispatchQueue.main.async {
-                    self?.handleProfileResult(result: result)
+                    self?.handleProfileResult(result: result, cycle: cycle)
                 }
             }
         }
@@ -3539,7 +3611,10 @@ class BearyProfileViewController: UIViewController {
         loadTab(forceReload: true)
     }
 
-    private func handleProfileResult(result: Result<BearyUserProfile, APIError>) {
+    private func handleProfileResult(result: Result<BearyUserProfile, APIError>, cycle: Int) {
+        // 第三轮第 3 项：轮次不一致 = 旧轮回包（成功与失败都一样），直接丢弃；
+        // 否则旧资料头/旧失败态会覆盖新轮（换目标时尤其不可接受）。
+        guard cycle == profileLoadCycle else { return }
         switch result {
         case .success(let profileValue):
             profileLoadFailed = false
@@ -3719,7 +3794,10 @@ class BearyProfileViewController: UIViewController {
             // 换封面（URL 变）或无图（上次失败）时照常重下。
             if coverImageURL != coverURLValue || coverImageView.image == nil {
                 coverImageURL = coverURLValue
-                coverImageView.bearySetImage(url: coverURLValue, placeholder: nil, downsampleToWidth: (headerWidthValue > 0 ? headerWidthValue : UIScreen.main.bounds.width) * UIScreen.main.scale)
+                coverLoadFailed = false
+                coverImageView.bearySetImage(url: coverURLValue, placeholder: nil, downsampleToWidth: (headerWidthValue > 0 ? headerWidthValue : UIScreen.main.bounds.width) * UIScreen.main.scale, onFailure: { [weak self] _ in
+                    self?.handleCoverLoadFailed()
+                })
             }
         } else {
             coverImageURL = nil
@@ -5371,11 +5449,19 @@ class BearyProfileViewController: UIViewController {
         if tabLoading || tabLoadMore {
             // r1-1：守卫期普通强制刷新不丢弃，立待办标记由回包收尾补拉。
             if forceReload { tabPendingForceReload = true }
+            // 第三轮第 1 项：同时记下想加载的 tab，供丢弃分支补拉当前 tab 用。
+            tabPendingSwitchLoad = currentTab
             return
         }
         if forceReload {
             // 本次请求已涵盖刷新意愿，清掉守卫期待办。
             tabPendingForceReload = false
+            // 第三轮第 1 项：本请求即涵盖当前 tab 的加载意图，清掉待办。
+            if tabPendingSwitchLoad == currentTab { tabPendingSwitchLoad = nil }
+            // 第三轮第 2 项：刷新入口先把当前档 hasMore 置 true（与下拉
+            // 入口同口径）——短页置 false 后不再有刷新能恢复，翻页永久卡死；
+            // 短页回包仍由 handleTabResult 置 false，语义不变。
+            setHasMore(hasMore: true)
             if currentEntries.isEmpty {
                 // 骨架屏已删：首屏无缓存时等数据到后直接显。
             }
@@ -5450,6 +5536,11 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.tabLoadMore = false
                     strongSelf.refreshFooter()
                     strongSelf.endCustomPullRefresh()
+                    // 第三轮第 1 项：丢弃分支补拉当前 tab（待办 tab 即当前 tab 时）。
+                    if strongSelf.tabPendingSwitchLoad == strongSelf.currentTab {
+                        strongSelf.tabPendingSwitchLoad = nil
+                        strongSelf.loadTab(forceReload: true)
+                    }
                     return
                 }
                 switch result {
@@ -5487,6 +5578,11 @@ class BearyProfileViewController: UIViewController {
                         if strongSelf.tabPendingForceReload {
                             strongSelf.loadTab(forceReload: true)
                         }
+                        // 第三轮第 1 项：本回包即当前 tab 的数据，待办意图已满足，
+                        // 只清不补发（补发会多一次无谓请求）。
+                        if strongSelf.tabPendingSwitchLoad == strongSelf.currentTab {
+                            strongSelf.tabPendingSwitchLoad = nil
+                        }
                         return
                     }
                     strongSelf.setEntries(entries: newItems + strongSelf.currentEntries)
@@ -5512,6 +5608,10 @@ class BearyProfileViewController: UIViewController {
                     // 涵盖），故此处不再重复触发。
                     if strongSelf.tabPendingForceReload {
                         strongSelf.loadTab(forceReload: true)
+                    }
+                    // 第三轮第 1 项：本回包即当前 tab 的数据，待办意图已满足，只清不补发。
+                    if strongSelf.tabPendingSwitchLoad == strongSelf.currentTab {
+                        strongSelf.tabPendingSwitchLoad = nil
                     }
                 }
             }
@@ -5560,6 +5660,11 @@ class BearyProfileViewController: UIViewController {
         guard requestTab == currentTab else {
             refreshFooter()
             endCustomPullRefresh()
+            // 第三轮第 1 项：丢弃分支补拉当前 tab（待办 tab 即当前 tab 时）。
+            if tabPendingSwitchLoad == currentTab {
+                tabPendingSwitchLoad = nil
+                loadTab(forceReload: true)
+            }
             return
         }
         switch result {
@@ -5634,6 +5739,9 @@ class BearyProfileViewController: UIViewController {
         if tabPendingForceReload {
             loadTab(forceReload: true)
         }
+        // 第三轮第 1 项：本回包即当前 tab 的数据，待办意图已满足，只清不补发。
+        // （丢弃分支的补拉见上，不与此处混淆。）
+        if tabPendingSwitchLoad == currentTab { tabPendingSwitchLoad = nil }
     }
 
     /// 6A gotoEntry 落点（他人篇，直接落点版）：调用方已持有单篇时用它直接落点，
@@ -5875,6 +5983,9 @@ class BearyProfileViewController: UIViewController {
         // 32 注销口径：已注销用户不做后台回填。
         guard let scopeValue = scopeForTab(tab: currentTab), tabBackgroundTab != currentTab, !profileDeleted else { return }
         tabBackgroundTab = currentTab
+        // 第三轮第 2 项：后台回填入口同样先恢复当前档 hasMore（回填短页仍置
+        // false，见回包分支；只置 false 不恢复时新内容到了也翻不了页）。
+        setHasMore(hasMore: true)
         let tabAtStart = currentTab
         BearyAPI.shared.fetchEntries(scope: scopeValue, limit: tabPageLimit) { [weak self] result in
             DispatchQueue.main.async {
@@ -5958,6 +6069,23 @@ class BearyProfileViewController: UIViewController {
                 }
             }
         }
+        // 第三轮第 9 项：后续页保留——回填只换首屏段。fresh 拉满一页时，
+        // 以 fresh 在旧列表里的最末位置为界，界后的旧行（后续页）原样保留、
+        // 去重后追加；界前不在 fresh 里的旧行视为删行/失资格，照旧摘除。
+        // fresh 不满一页即全量，界后无后续页，不保留。
+        if fresh.count >= tabPageLimit {
+            let freshIds = Set(fresh.compactMap { $0.id })
+            let overlapIndices = currentEntries.indices.filter { idx in
+                currentEntries[idx].id.map { freshIds.contains($0) } ?? false
+            }
+            if let lastOverlap = overlapIndices.max(), lastOverlap + 1 < currentEntries.count {
+                let mergedIds = Set(merged.compactMap { $0.id })
+                let tail = currentEntries[(lastOverlap + 1)...].filter { tailEntry in
+                    !(tailEntry.id.map { mergedIds.contains($0) } ?? false)
+                }
+                merged.append(contentsOf: tail)
+            }
+        }
         setEntries(entries: merged)
     }
 
@@ -5969,7 +6097,11 @@ class BearyProfileViewController: UIViewController {
         let dimsPart = (entryValue.imgDims ?? [:]).map { "\($0.key):\($0.value.map(String.init).joined(separator: "x"))" }.sorted().joined(separator: ",")
         let livePart = (entryValue.liveVideos ?? [:]).map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ",")
         let quote = entryValue.quote
-        let quotePart = "\(entryValue.quoteId ?? "")|\(quote?.id ?? "")|\(quote?.content ?? "")|\(quote?.gone ?? false)|\(quote?.locked ?? false)|\(quote?.isPublic ?? false)"
+        // 第三轮第 5 项：引用签名须覆盖全部参与引用卡绘制的字段（与 #821
+        // 时间线口径一致；imgDims 现阶段服务端恒为 nil，仍先行纳入，透传后直接生效）。
+        let quoteImages = (quote?.images ?? []).joined(separator: ",")
+        let quoteDims = (quote?.imgDims ?? [:]).map { "\($0.key):\($0.value.map(String.init).joined(separator: "x"))" }.sorted().joined(separator: ",")
+        let quotePart = "\(entryValue.quoteId ?? "")|\(quote?.id ?? "")|\(quote?.content ?? "")|\(quote?.gone ?? false)|\(quote?.locked ?? false)|\(quote?.isPublic ?? false)|\(quoteImages)|\(quoteDims)|\(quote?.authorName ?? "")|\(quote?.authorAvatar ?? "")|\(quote?.authorHandle ?? "")|\(quote?.visibility ?? "")|\(quote?.publishedAt ?? 0)|\(quote?.ephemeralUntil ?? 0)"
         return [
             entryValue.content ?? "",
             "\(entryValue.isPublic ?? false)",
@@ -6338,6 +6470,10 @@ class BearyProfileViewController: UIViewController {
                 photoButton.imageView?.contentMode = .scaleAspectFill
                 photoButton.imageView?.clipsToBounds = true
                 photoButton.tag = photoIndex
+                // 第三轮第 7 项：失败格文案字号（成功格标题恒为空，不受影响）。
+                photoButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+                photoButton.titleLabel?.adjustsFontForContentSizeCategory = true
+                photoButton.setTitleColor(BearyColors.gray, for: .normal)
                 photoButton.addTarget(self, action: #selector(photosWallButtonTapped(_:)), for: .touchUpInside)
                 // 个人页照片墙：长按不给按压效果、不变暗。长按即按住不放的
                 // touchDown，与点按走同一条按压路径（bearyAddPressFeedback 的
@@ -6352,8 +6488,17 @@ class BearyProfileViewController: UIViewController {
                 if photoIndex < wall.count {
                     let imageKey = wall[photoIndex].imageKey
                     if let url = BearyImageURLs.imageURL(key: imageKey, thumb: true) {
-                        BearyImageLoader.shared.load(url: url, downsampleToWidth: cellSide * UIScreen.main.scale) { [weak photoButton] imageValue in
-                            photoButton?.setImage(imageValue, for: .normal)
+                        // 第三轮第 7 项：加载失败不再只剩底色——格内显“重试”文案，
+                        // 点按只重拉该格（见 photosWallButtonTapped 失败分支）。
+                        BearyImageLoader.shared.load(url: url, downsampleToWidth: cellSide * UIScreen.main.scale) { [weak self, weak photoButton] imageValue in
+                            if let imageValue = imageValue {
+                                photoButton?.setImage(imageValue, for: .normal)
+                                photoButton?.setTitle(nil, for: .normal)
+                                self?.photosWallFailedKeys.remove(imageKey)
+                            } else {
+                                photoButton?.setTitle("重试", for: .normal)
+                                self?.photosWallFailedKeys.insert(imageKey)
+                            }
                         }
                     }
                 } else {
@@ -6417,6 +6562,26 @@ class BearyProfileViewController: UIViewController {
     }
 
     @objc private func photosWallButtonTapped(_ sender: UIButton) {
+        // 第三轮第 7 项：失败格点按 = 只重拉该格，不进灯箱；在途格（未失败）
+        // 仍走灯箱（灯箱用条目源，不依赖缩略图是否到）。
+        let wall = photosWallItems
+        if sender.tag < wall.count {
+            let imageKey = wall[sender.tag].imageKey
+            if photosWallFailedKeys.contains(imageKey),
+               let url = BearyImageURLs.imageURL(key: imageKey, thumb: true) {
+                let side = sender.bounds.width > 0 ? sender.bounds.width : 100
+                BearyImageLoader.shared.load(url: url, downsampleToWidth: side * UIScreen.main.scale) { [weak self, weak sender] imageValue in
+                    if let imageValue = imageValue {
+                        sender?.setImage(imageValue, for: .normal)
+                        sender?.setTitle(nil, for: .normal)
+                        self?.photosWallFailedKeys.remove(imageKey)
+                    } else {
+                        sender?.setTitle("重试", for: .normal)
+                    }
+                }
+                return
+            }
+        }
         presentPhotosLightbox(startIndex: sender.tag, originFrame: sender.convert(sender.bounds, to: nil))
     }
 
@@ -8102,6 +8267,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         let alreadyNatural = coverClipView.transform == .identity
             && coverViewButton.transform == .identity
             && coverBlurImageView.alpha == 0
+            && festivalBlurView.alpha == 0
         if alreadyNatural || UIAccessibility.isReduceMotionEnabled {
             resetCoverStretch()
             return
@@ -8114,14 +8280,19 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         coverLeadingConstraint.constant = 0
         coverTrailingConstraint.constant = 0
         coverBlurImageView.isHidden = false
+        festivalBlurView.isHidden = false
         UIView.animate(withDuration: 0.28, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             self.coverClipView.transform = .identity
             self.coverViewButton.transform = .identity
             self.coverBlurImageView.alpha = 0
+            self.festivalBlurView.alpha = 0
         }, completion: { [weak self] _ in
             guard let self = self else { return }
             if self.coverBlurImageView.alpha == 0 {
                 self.coverBlurImageView.isHidden = true
+            }
+            if self.festivalBlurView.alpha == 0 {
+                self.festivalBlurView.isHidden = true
             }
         })
     }
@@ -8129,6 +8300,10 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     private func setCoverBlurAlpha(_ alpha: CGFloat) {
         coverBlurImageView.alpha = alpha
         coverBlurImageView.isHidden = (alpha == 0)
+        // 第四轮第 3 项：景深模糊层与照片模糊层同曲线、同调用点（下拉拉伸／
+        // 复位），一处改、两处齐。
+        festivalBlurView.alpha = alpha
+        festivalBlurView.isHidden = (alpha == 0)
     }
 
     /// 预模糊图生成（封面加载完成时调一次）：源图变了才重算，同一源图直接复用；
@@ -8162,6 +8337,12 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     }
 
     @objc private func coverViewTapped() {
+        // 第四轮第 1 项：封面加载失败时点按 = 重拉封面（本人/他人同款），
+        // 不进选择框/灯箱；重拉成功后标记清掉，下次点按回原流程。
+        if coverLoadFailed {
+            reloadCoverImage()
+            return
+        }
         // 本人页点封面带 = 封面来源选择框（Li 2026-11-03 定：图库／景深背景）；
         // 他人页保持原样：有封面照片才进灯箱，无照片不响应。
         if isOwnProfile {
@@ -8171,17 +8352,38 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         presentCoverLightbox()
     }
 
+    /// 第四轮第 1 项：封面加载失败回退——恢复默认 wordmark 显示（带高不变，
+    /// 不剩空带），并立失败标记供封面带点按重拉。
+    private func handleCoverLoadFailed() {
+        coverLoadFailed = true
+        defaultWordmarkView.isHidden = false
+        coverClipView.backgroundColor = BearyColors.bg
+    }
+
+    /// 第四轮第 1 项：封面带点按重拉（失败态专用；成功后标记清掉，下次点按回原流程）。
+    private func reloadCoverImage() {
+        guard let url = coverImageURL else { return }
+        coverLoadFailed = false
+        coverImageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: (headerWidthValue > 0 ? headerWidthValue : UIScreen.main.bounds.width) * UIScreen.main.scale, onFailure: { [weak self] _ in
+            self?.handleCoverLoadFailed()
+        })
+    }
+
     /// 封面来源选择框（卡片 ⋯ 菜单同款 UIAlertController actionSheet）：
-    /// 图库走旧的封面大图灯箱（个人页本身无换封面流程，不新造；有封面照片时
-    /// 才出图库行，与旧「查看封面大图」同条件）；景深背景进新页选主题；
+    /// 图库行恒显示（第四轮第 2 项：不再随封面加载成败消失）——有封面照片时
+    /// 进旧的封面大图灯箱；无照片时进编辑资料页走既有换封面流程（选图／裁剪／
+    /// 上传链路在编辑页，本页不新造）；景深背景进新页选主题；
     /// iPad 走 popover、锚点封面带。
     private func presentCoverSourcePicker() {
         let sheet = UIAlertController(title: "封面", message: nil, preferredStyle: .actionSheet)
-        if coverImageView.image != nil {
-            sheet.addAction(UIAlertAction(title: "图库", style: .default) { [weak self] _ in
+        sheet.addAction(UIAlertAction(title: "图库", style: .default) { [weak self] _ in
+            if self?.coverImageView.image != nil {
                 self?.presentCoverLightbox()
-            })
-        }
+            } else {
+                // 无照片：进编辑资料页换封面（容器接线 onEditProfile；未接线时不做事）。
+                self?.onEditProfile?()
+            }
+        })
         sheet.addAction(UIAlertAction(title: "景深背景", style: .default) { [weak self] _ in
             self?.presentDepthBackgroundPicker()
         })
@@ -8248,6 +8450,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
                 festivalWallpaperView = nil
             }
             festivalDimView.removeFromSuperview()
+            festivalBlurView.removeFromSuperview()
             festivalWallpaperVisible = false
             festivalTheme = .none
             // 从主题切回默认须把 applyProfile 压住的封面态还原（本函数由选择器
@@ -8270,6 +8473,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
                 festivalWallpaperView = wallpaperView
                 coverClipView.addSubview(wallpaperView)
                 coverClipView.addSubview(festivalDimView)
+                // 第四轮第 3 项：模糊层盖在遮罩之上（最上），下拉时按拉量淡入。
+                coverClipView.addSubview(festivalBlurView)
                 NSLayoutConstraint.activate([
                     wallpaperView.topAnchor.constraint(equalTo: coverClipView.topAnchor),
                     wallpaperView.leadingAnchor.constraint(equalTo: coverClipView.leadingAnchor),
@@ -8279,12 +8484,23 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
                     festivalDimView.leadingAnchor.constraint(equalTo: coverClipView.leadingAnchor),
                     festivalDimView.trailingAnchor.constraint(equalTo: coverClipView.trailingAnchor),
                     festivalDimView.bottomAnchor.constraint(equalTo: coverClipView.bottomAnchor),
+                    festivalBlurView.topAnchor.constraint(equalTo: coverClipView.topAnchor),
+                    festivalBlurView.leadingAnchor.constraint(equalTo: coverClipView.leadingAnchor),
+                    festivalBlurView.trailingAnchor.constraint(equalTo: coverClipView.trailingAnchor),
+                    festivalBlurView.bottomAnchor.constraint(equalTo: coverClipView.bottomAnchor),
                 ])
+                // 第四轮第 3 项：新主题初态——模糊层归零隐藏（切主题不继承旧拉量；
+                // 旧视图复用时 alpha 可能残留上次下拉值，须显式清掉）。
+                festivalBlurView.alpha = 0
+                festivalBlurView.isHidden = true
             } catch {
                 return false
             }
         }
         festivalTheme = effective
+        // 121 上报的景深消失兜底（第三轮第 13 项）：此前带高被压成 0 时，
+        // 只贴主题不恢复高度、仍裁没；贴主题即写回自然带高。
+        coverHeightConstraint.constant = profileCoverHeight
         coverImageView.isHidden = true
         defaultWordmarkView.isHidden = true
         updateFestivalDim()
