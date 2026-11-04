@@ -313,6 +313,12 @@ class BearyProfileViewController: UIViewController {
     /// 结束后由回包收尾再触发一次 loadTab（见 loadTabSince 成功收尾与
     /// handleTabResult 收尾），避免“在途即丢、旧行复活”。
     private var tabPermissionChangedNeedsFullReload = false
+    /// 审计 r1-1：守卫期被吞的普通强制刷新待办标记。loadTab 因
+    /// tabLoading/tabLoadMore 守卫提前返回时，若本次是 forceReload，
+    /// 置位而不丢弃；在途回包收尾（handleTabResult / loadTabSince 成功
+    /// 尾）补触发一次 loadTab；loadTab 真正跑起来时清掉（新请求已
+    /// 涵盖本次刷新意愿），补触发时守卫已清，不会循环。
+    private var tabPendingForceReload = false
 
     private var tabLoadMore = false
     private var tabError = false
@@ -5362,8 +5368,14 @@ class BearyProfileViewController: UIViewController {
         // 32 注销口径：已注销用户不拉任何标签列表（在途回包由 handleTabResult 丢弃）。
         if profileDeleted { return }
         guard let scopeValue = scopeForTab(tab: currentTab) else { return }
-        if tabLoading || tabLoadMore { return }
+        if tabLoading || tabLoadMore {
+            // r1-1：守卫期普通强制刷新不丢弃，立待办标记由回包收尾补拉。
+            if forceReload { tabPendingForceReload = true }
+            return
+        }
         if forceReload {
+            // 本次请求已涵盖刷新意愿，清掉守卫期待办。
+            tabPendingForceReload = false
             if currentEntries.isEmpty {
                 // 骨架屏已删：首屏无缓存时等数据到后直接显。
             }
@@ -5407,7 +5419,8 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 113：前台首屏全量取数（原 loadTab 的取数体，不动口径；since
-    /// 失败/无新条目时续发本函数，不再过 tabLoading 守卫）。
+    /// 失败时续发本函数，不再过 tabLoading 守卫；成功零新条目不再
+    /// 续发，见 loadTabSince 内 r1-2 注释）。
     private func fetchTabFirstPageFull(scope: BearyAPI.Scope, tabAtStart: ProfileTab) {
         BearyAPI.shared.fetchEntries(scope: scope, limit: tabPageLimit) { [weak self] result in
             DispatchQueue.main.async {
@@ -5417,8 +5430,9 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 113 since 增量刷新：只拉比首条新的本 tab 条目，前插合并；
-    /// hasMore 不动（since 只补头部，旧页分页游标不受影响）；失败或
-    /// 无新条目时回落全量首拉（其失败口径：tabError=true、旧模型保留在表里）。
+    /// hasMore 不动（since 只补头部，旧页分页游标不受影响）；失败时
+    /// 回落全量首拉（其失败口径：tabError=true、旧模型保留在表里）；
+    /// 成功零新条目不再回落全量（r1-2，复核责任归后台回填）。
     private func loadTabSince(scope: BearyAPI.Scope, tabAtStart: ProfileTab, cursor: Int, headId: String) {
         let knownIds = Set(currentEntries.compactMap { $0.id })
         let sortKey: (Entry) -> Int? = tabAtStart == .saved
@@ -5447,7 +5461,32 @@ class BearyProfileViewController: UIViewController {
                         return !knownIds.contains(entryId)
                     }
                     if newItems.isEmpty {
-                        strongSelf.fetchTabFirstPageFull(scope: scope, tabAtStart: tabAtStart)
+                        // r1-2：增量成功且零新条目时不再串行拉全量首屏。
+                        // 取舍：全量曾兼作旧条目复核（改行／删行／点赞数），
+                        // 砍掉后前台刷新只补新、不复核旧行；复核责任归后台
+                        // 回填 loadTabBackground（切到有缓存的 tab 时跑
+                        // reconcileEntries，签名比对、删行摘除）。残留风险：
+                        // 不切 tab 时旧行一直不复核；回填只复核首屏，深页
+                        // 旧行仍不复核；失败路径仍回落全量，口径不动。
+                        // 附带收益：零新条目刷新不再把已翻的深页打回首屏，
+                        // 且省一次串行请求。
+                        // 原全量路径的日记照片墙清失败旗副作用在此保留。
+                        if tabAtStart == .diary {
+                            strongSelf.photoOverflowFailed = false
+                        }
+                        strongSelf.tabLoading = false
+                        strongSelf.tabError = false
+                        strongSelf.refreshFooter()
+                        strongSelf.endCustomPullRefresh()
+                        strongSelf.consumePendingDirectEntry()
+                        strongSelf.tryLocatePending()
+                        if strongSelf.tabPermissionChangedNeedsFullReload {
+                            strongSelf.loadTab(forceReload: true)
+                        }
+                        // r1-1：守卫期被吞的普通强制刷新在此补拉一次。
+                        if strongSelf.tabPendingForceReload {
+                            strongSelf.loadTab(forceReload: true)
+                        }
                         return
                     }
                     strongSelf.setEntries(entries: newItems + strongSelf.currentEntries)
@@ -5466,6 +5505,12 @@ class BearyProfileViewController: UIViewController {
                     // （loadTab 因守卫提前返回、未消费）在此补触发一次全量，
                     // loadTab 内消费标记、先清模型再首拉，不会循环。
                     if strongSelf.tabPermissionChangedNeedsFullReload {
+                        strongSelf.loadTab(forceReload: true)
+                    }
+                    // r1-1：守卫期被吞的普通强制刷新在此补拉一次；
+                    // 权限全量已跑起来时会先清掉本标记（刷新意愿已被
+                    // 涵盖），故此处不再重复触发。
+                    if strongSelf.tabPendingForceReload {
                         strongSelf.loadTab(forceReload: true)
                     }
                 }
@@ -5578,6 +5623,15 @@ class BearyProfileViewController: UIViewController {
         // 一次全量；本路回包对应的权限全量本身已在 loadTab 内消费标记，
         // 故此处标记为假，不会循环。
         if tabPermissionChangedNeedsFullReload {
+            loadTab(forceReload: true)
+        }
+        // r1-1：守卫期被吞的普通强制刷新在此补拉一次；loadTab 入口
+        // 清标记，补触发时守卫已清，不会循环。权限全量已跑起来时
+        // 本标记已被清掉，不重复触发。
+        // 边界（与权限标记同口径）：切走后丢弃的回包提前返回分支不
+        // 消费本标记；切走期间的刷新意愿待回到该 tab 后的下一次
+        // 刷新或回填覆盖，不在此处补发错 tab 的请求。
+        if tabPendingForceReload {
             loadTab(forceReload: true)
         }
     }
