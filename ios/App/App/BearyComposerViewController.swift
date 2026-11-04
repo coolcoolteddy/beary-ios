@@ -1751,13 +1751,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // 顶部 @ 提示行：顶栏下方固定 44 高行，内一条与底部 chip 同款的 faint 条
     //（13 字、“提到 昵称”、圆角 pill）；有收件人才出现，写字时不随正文滚动；
-    //点按同底部 chip，走 openToolStrip(.recipient)，条内 × 清除、清后“@ 谁”重选；
+    //点按同底部 chip，走 openToolStrip(.recipient)，在选人条里清除/重选；
     //引用面板打开时同其他编辑器 chrome 一并隐藏。
     private func buildMentionTopRow() {
         mentionTopRow.translatesAutoresizingMaskIntoConstraints = false
         mentionTopRow.isHidden = true
         mentionTopPill.translatesAutoresizingMaskIntoConstraints = false
-        mentionTopPill.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        mentionTopPill.titleLabel?.font = BearyDynamicType.secondaryFont()
         mentionTopPill.titleLabel?.numberOfLines = 1
         mentionTopPill.titleLabel?.lineBreakMode = .byTruncatingTail
         mentionTopPill.setTitleColor(BearyColors.ink, for: .normal)
