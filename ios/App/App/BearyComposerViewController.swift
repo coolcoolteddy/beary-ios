@@ -747,6 +747,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let notifyGroup = UIStackView()
     private let notifyCheckButton = BearyHit44Button(type: .system)
     private let notifyLabel = UILabel()
+    // 顶部 @ 提示行（顶栏下方固定行，写字时始终可见；点按同底部 chip，走 openToolStrip(.recipient)）。
+    private let mentionTopRow = UIView()
+    private let mentionTopPill = BearyHit44Button(type: .system)
+    private var mentionTopRowHeightConstraint: NSLayoutConstraint?
+    private var mentionTopName: String?
+    private static let mentionTopRowHeight: CGFloat = 44
     // 引用（lite 卡）+ 内嵌展开面板
     // C1：正文中部“引用一篇日记”全宽大按钮已删，引用唯一入口改工具栏引用钮；
     // 无引用时 quoteSection 只剩隐藏的 lite 卡与已删行，栈自动塌掉不留空位。
@@ -798,6 +804,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         view.backgroundColor = BearyColors.surface
         buildLayout()
         buildTopBar()
+        buildMentionTopRow()
         // 109：内容栈首项为新标题输入区（见 buildHeadlineField），其下为正文。
         buildTextArea()
         buildSelectedChipsRow()
@@ -1046,6 +1053,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         view.addSubview(topBar)
         view.addSubview(toolbarContainer)
         view.addSubview(toolStripStack)
+        view.addSubview(mentionTopRow)
         view.addSubview(scrollView)
         scrollView.addSubview(contentView)
         contentView.addSubview(contentStack)
@@ -1085,13 +1093,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarWidthConstraint = toolbarContainer.widthAnchor.constraint(equalToConstant: 608)
         scrollCenterXConstraint = scrollView.centerXAnchor.constraint(equalTo: view.centerXAnchor)
         scrollWidthConstraint = scrollView.widthAnchor.constraint(equalToConstant: 640)
+        // 顶部 @ 行高约束先建好（初值 0、不占位），显隐由 refreshMentionTopRow 改它；
+        // 约束在 buildLayout 建、样式在 buildMentionTopRow 建，首帧布局前两者都已就位。
+        mentionTopRowHeightConstraint = mentionTopRow.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBarLeadingConstraint!,
             topBarTrailingConstraint!,
             // v6：顶栏高 60，发布钮 36 居中后底部到分界线净留白 12（见 buildTopBar）。
             topBar.heightAnchor.constraint(equalToConstant: 60),
-            scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            // 顶部 @ 行：顶栏下方固定行（无收件人时高 0、不占位），滚动区顶锚它；
+            // 左右跟滚动区走（居中 640 列下自动跟随），不另建列约束。
+            mentionTopRow.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            mentionTopRow.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+            mentionTopRow.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            mentionTopRowHeightConstraint!,
+            scrollView.topAnchor.constraint(equalTo: mentionTopRow.bottomAnchor),
             toolbarBottomToKeyboardConstraint!,
             toolStripStack.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             toolStripStack.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
@@ -1191,7 +1208,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         let targetSize = CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height)
         let fitted = contentStack.systemLayoutSizeFitting(targetSize, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
-        let total = fitted.height + 60 + toolbarHeight
+        // 顶部 @ 行不在内容栈里：出现时 sheet 高另加它（面板打开时走视口档，不到此处）。
+        let mentionTopHeight = mentionTopRow.isHidden ? 0 : Self.mentionTopRowHeight
+        let total = fitted.height + 60 + toolbarHeight + mentionTopHeight
         // 临时诊断（82 包追加，定根因后删除）：total 每轮都记，看是否漂移。
         DiagFile.mark("composer-prefSize total=\(String(format: "%.1f", total))")
         guard abs(preferredContentSize.height - total) > 0.5 else {
@@ -1728,6 +1747,34 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let location = min(savedRange.location, maxLocation)
         let length = min(savedRange.length, maxLocation - location)
         textView.selectedRange = NSRange(location: location, length: length)
+    }
+
+    // 顶部 @ 提示行：顶栏下方固定 44 高行，内一条与底部 chip 同款的 faint 条
+    //（13 字、“提到 昵称”、圆角 pill）；有收件人才出现，写字时不随正文滚动；
+    //点按同底部 chip，走 openToolStrip(.recipient)，条内 × 清除、清后“@ 谁”重选；
+    //引用面板打开时同其他编辑器 chrome 一并隐藏。
+    private func buildMentionTopRow() {
+        mentionTopRow.translatesAutoresizingMaskIntoConstraints = false
+        mentionTopRow.isHidden = true
+        mentionTopPill.translatesAutoresizingMaskIntoConstraints = false
+        mentionTopPill.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        mentionTopPill.titleLabel?.numberOfLines = 1
+        mentionTopPill.titleLabel?.lineBreakMode = .byTruncatingTail
+        mentionTopPill.setTitleColor(BearyColors.ink, for: .normal)
+        mentionTopPill.backgroundColor = BearyColors.faint
+        mentionTopPill.layer.cornerRadius = 999
+        mentionTopPill.layer.masksToBounds = true
+        mentionTopPill.contentHorizontalAlignment = .left
+        mentionTopPill.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
+        mentionTopPill.addTarget(self, action: #selector(didTapMentionTopRow), for: .touchUpInside)
+        mentionTopPill.bearyAddPressFeedback()
+        mentionTopRow.addSubview(mentionTopPill)
+        NSLayoutConstraint.activate([
+            mentionTopPill.leadingAnchor.constraint(equalTo: mentionTopRow.leadingAnchor, constant: 16),
+            mentionTopPill.trailingAnchor.constraint(equalTo: mentionTopRow.trailingAnchor, constant: -16),
+            mentionTopPill.centerYAnchor.constraint(equalTo: mentionTopRow.centerYAnchor),
+            mentionTopPill.heightAnchor.constraint(equalToConstant: 30),
+        ])
     }
 
     // MARK: - @（网页 addr-row：@ 图标 + “@ 谁”钮 / chip；只选一人、不可 @ 自己；
@@ -2295,6 +2342,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             selectedChipsRow.isHidden = true
             imageUndoBar.isHidden = true
             statusRow.isHidden = true
+            // 顶部 @ 行同其他编辑器 chrome 一并隐藏（否则会与面板 tab 条重叠）。
+            refreshMentionTopRow()
             updateScrollBottomAnchoring()
             refreshImageUndoBar()
             quoteSection.isHidden = true
@@ -3991,6 +4040,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         } else {
             recipientChipButton.isHidden = true
         }
+        // 顶部 @ 提示行：与底部 chip 同名同态（编辑态含 lockedRecipientName、已清除为 nil
+        // 均复用此处结论）；选人/清除/换人/草稿恢复/编辑恢复全走 refreshRecipientRow →
+        // refreshSelectedChips，故此处一处挂钩即全覆盖。
+        mentionTopName = recipientName
+        refreshMentionTopRow()
         let anyChipVisible = !moodChipButton.isHidden || !weatherChipButton.isHidden || !recipientChipButton.isHidden
         contentStack.setCustomSpacing(anyChipVisible ? 8 : 0, after: selectedChipsRow)
         // 审计 P1-3：显隐/文案变化后即重算换行（宽变化另由 viewDidLayoutSubviews 驱动）。
@@ -4225,6 +4279,27 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     @objc private func didTapRecipientChip() {
+        openToolStrip(.recipient)
+    }
+
+    /// 顶部 @ 行显隐：有收件人且引用面板未开时出现；引用面板打开时同其他 chrome 一并隐藏。
+    /// 行高进 sheet 高（updatePreferredContentSize 的非面板分支另加本行高）；面板打开时
+    /// 高度走视口档，不在此更新。
+    private func refreshMentionTopRow() {
+        let visible = mentionTopName != nil && !quotePanelOpen
+        if let name = mentionTopName, visible {
+            mentionTopPill.setTitle("提到 " + name, for: .normal)
+            mentionTopPill.accessibilityLabel = "提到：" + name
+        }
+        let wasHidden = mentionTopRow.isHidden
+        mentionTopRow.isHidden = !visible
+        mentionTopRowHeightConstraint?.constant = visible ? Self.mentionTopRowHeight : 0
+        if wasHidden != mentionTopRow.isHidden, !quotePanelOpen {
+            updatePreferredContentSize()
+        }
+    }
+
+    @objc private func didTapMentionTopRow() {
         openToolStrip(.recipient)
     }
 
