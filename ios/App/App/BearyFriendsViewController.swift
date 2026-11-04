@@ -64,7 +64,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         // 从消息页打开时的返回钮（回消息页；底栏根页默认隐藏，见 setOpenedFromMessages）。
         let backButton = UIButton(type: .system)
         backButton.translatesAutoresizingMaskIntoConstraints = false
-        backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 20), for: .normal)
+        backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
         backButton.tintColor = BearyColors.ink
         backButton.accessibilityLabel = "返回消息页"
         backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)

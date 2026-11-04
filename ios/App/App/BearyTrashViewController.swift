@@ -193,21 +193,21 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         closeButton.isHidden = false
-        if let closeImage = BearyIconImages.image(named: "icon_close", pointSize: 15) {
-            closeButton.setImage(closeImage, for: .normal)
+        // 全屏页左上角统一左箭头：此前是右上角 32 圆钮叉叉，现改左上角
+        // icon_back（圆钮 faint 底与 32 尺寸不动，见下方 headerRow 顺序调整）。
+        if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 18) {
+            closeButton.setImage(backImage, for: .normal)
         } else {
             // I14：资产缺失时补文字回退，不留空白热区。
-            closeButton.setTitle("✕", for: .normal)
+            closeButton.setTitle("返回", for: .normal)
             closeButton.setTitleColor(BearyColors.ink, for: .normal)
-            // 扫查组：资产缺失回退文案此前裸 15pt；32×32 钮走 cappedFont，不撑破。
             closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
             closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         }
         closeButton.tintColor = BearyColors.ink
         closeButton.backgroundColor = BearyColors.faint
         closeButton.layer.cornerRadius = 16
-        // P1-26：关闭钮按功能命名（图标/“✕”本身无语义，VoiceOver 勿读符号）。
-        closeButton.accessibilityLabel = "关闭回收站"
+        closeButton.accessibilityLabel = "返回"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
 
@@ -327,9 +327,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         contentWrap.addSubview(contentStack)
         let headerSpacer = UIView()
         headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // 全屏左箭头统一：返回钮放行首、标题紧随其后（此前返回钮在行尾）。
+        headerRow.addArrangedSubview(closeButton)
         headerRow.addArrangedSubview(titleLabel)
         headerRow.addArrangedSubview(headerSpacer)
-        headerRow.addArrangedSubview(closeButton)
         contentStack.addArrangedSubview(headerRow)
         contentStack.addArrangedSubview(noteRow)
         contentStack.addArrangedSubview(listStack)

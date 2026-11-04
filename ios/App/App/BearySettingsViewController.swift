@@ -719,10 +719,10 @@ final class BearySettingsViewController: UIViewController {
 
     private func buildLayout() {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.setTitle("关闭", for: .normal)
-        closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
-        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        closeButton.setTitle(nil, for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        closeButton.tintColor = BearyColors.ink
+        closeButton.accessibilityLabel = "返回"
         closeButton.addTarget(self, action: #selector(closeButtonTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1575,7 +1575,7 @@ final class BearySettingsViewController: UIViewController {
             logoutStandaloneButton.topAnchor.constraint(equalTo: logoutRow.topAnchor),
             logoutStandaloneButton.centerXAnchor.constraint(equalTo: logoutRow.centerXAnchor),
             logoutStandaloneButton.widthAnchor.constraint(equalToConstant: 220),
-            logoutStandaloneButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
+            logoutStandaloneButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
             logoutStandaloneButton.bottomAnchor.constraint(equalTo: logoutRow.bottomAnchor),
         ])
         let deleteRow = UIView()
@@ -2918,18 +2918,48 @@ final class BearySettingsViewController: UIViewController {
     /// 守卫本身安全：呈现动画在途时后续点按直接忽略，动画结束自动解禁，
     /// 不改转场、不改目标页；已 present 出子页时同样忽略，避免叠页）。
     private var isPresentingSettingsPage = false
+    /// 设置子页的 EdgeDismiss 强持有（transitioningDelegate 弱引用；各子页
+    /// 开页时原先各设 fadeRise，本函数统一改走 EdgeDismiss，见下）。
+    private var settingsPageEdgeDismiss: BearyEdgeDismissController?
 
     private func presentSettingsPage(_ vc: UIViewController) {
         guard !isPresentingSettingsPage, presentedViewController == nil else { return }
         isPresentingSettingsPage = true
+        // 全站返回手势补齐：设置子页（拉黑、诊断、反馈、许愿墙、Plus 明细、
+        // 设备、法律文字、设置页路编辑资料）此前全是 fadeRise、没有左边缘右滑；
+        // 在此集中改走 EdgeDismiss，各开页处原先设的 fadeRise 在此被覆盖，
+        // 子页自身的关闭钮行为一字不动。
+        // 设置页路编辑资料例外：容器路编辑资料（SceneDelegate.presentEditProfile）
+        // 的手势接了 requestExit 未保存拦截；本路若不接，边缘滑会绕过未保存
+        // 确认直接关页，故同款接上（无改动时返回 true，手势照常）。
         vc.loadViewIfNeeded()
-        let preBounds = view.window?.bounds ?? UIScreen.main.bounds
-        vc.view.frame = preBounds
-        vc.view.setNeedsLayout()
-        vc.view.layoutIfNeeded()
+        // 审计补漏（#829 回归）：仅原转场为 fadeRise 的子页改走 EdgeDismiss。
+        // 登录页自带底 sheet 转场（BearyLoginSheet：尺寸/拖动条/点遮罩关闭），
+        // 若在此被覆盖，底 sheet 会变成全屏滑入、叉叉落在全屏页上，故原样放行。
+        let useEdgeDismiss: Bool
+        if let fadeRise = SceneDelegate.chrome?.fadeRiseTransitionDelegate {
+            useEdgeDismiss = (vc.transitioningDelegate === fadeRise)
+        } else {
+            useEdgeDismiss = false
+        }
+        if useEdgeDismiss {
+            let settingsPageEdgeDismiss = BearyEdgeDismissController()
+            if let editVC = vc as? BearyEditProfileViewController {
+                settingsPageEdgeDismiss.shouldAllowInteractiveDismiss = { [weak editVC] in
+                    editVC?.requestExit(interactive: true) ?? true
+                }
+            }
+            settingsPageEdgeDismiss.attach(to: vc)
+            vc.transitioningDelegate = settingsPageEdgeDismiss
+            self.settingsPageEdgeDismiss = settingsPageEdgeDismiss
+            let preBounds = view.window?.bounds ?? UIScreen.main.bounds
+            vc.view.frame = preBounds
+            vc.view.setNeedsLayout()
+            vc.view.layoutIfNeeded()
+        }
         present(vc, animated: BearyMotion.animated(true)) { [weak self, weak vc] in
             self?.isPresentingSettingsPage = false
-            guard let vc = vc, let window = vc.view.window else { return }
+            guard useEdgeDismiss, let vc = vc, let window = vc.view.window else { return }
             let bounds = window.bounds
             if vc.view.frame != bounds || !vc.view.transform.isIdentity {
                 vc.view.transform = .identity
@@ -3124,11 +3154,14 @@ final class BearyLegalTextViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
+        // 全屏页左上角统一左箭头：此前是文字“关闭”，现改 icon_back 图标钮
+        // （左上角位置与 44pt 热区不动，行为仍是 closeTapped 关页；本页由
+        // 设置页路与登录页路共用，两路的 EdgeDismiss 各自在开页处接）。
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.setTitle("关闭", for: .normal)
-        closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
-        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        closeButton.setTitle(nil, for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        closeButton.tintColor = BearyColors.ink
+        closeButton.accessibilityLabel = "返回"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -3874,10 +3907,10 @@ private final class BearyDiagnosticsViewController: UIViewController {
 
         let closeButton = BearyHit44Button(type: .system)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.setTitle("关闭", for: .normal)
-        closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
-        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        closeButton.setTitle(nil, for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        closeButton.tintColor = BearyColors.ink
+        closeButton.accessibilityLabel = "返回"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
 
@@ -4044,11 +4077,13 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
+        // 全屏页左上角统一左箭头：此前是文字“关闭”，现改 icon_back 图标钮
+        // （左上角位置与 44pt 热区不动，行为仍是 closeTapped 关页）。
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.setTitle("关闭", for: .normal)
-        closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
-        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        closeButton.setTitle(nil, for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        closeButton.tintColor = BearyColors.ink
+        closeButton.accessibilityLabel = "返回"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false

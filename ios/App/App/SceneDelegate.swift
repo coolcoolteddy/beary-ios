@@ -182,6 +182,14 @@ final class BearyChromeViewController: UIViewController {
     /// 通知详情页 modal 的 EdgeDismiss 强持有（transitioningDelegate 弱引用，
     /// 不持有则手势与动画代理失效，见 presentNotificationDetail）。
     private var notificationDetailEdgeDismiss: BearyEdgeDismissController?
+    /// 日记详情页 modal 的 EdgeDismiss 强持有（见 presentDetail）。
+    private var detailEdgeDismiss: BearyEdgeDismissController?
+    /// 私信聊天页 modal 的 EdgeDismiss 强持有（见 presentDMChat）。
+    private var dmChatEdgeDismiss: BearyEdgeDismissController?
+    /// 编辑器 modal 的 EdgeDismiss 强持有（见 configureComposerPresentation；
+    /// 编辑器取消要先存草稿/清临时文件，不能由手势直接 dismiss，故本页只用
+    /// 边缘滑过阈值后走 didTapCancel 的完成模式，见 BearyEdgeDismiss）。
+    private var composerEdgeDismiss: BearyEdgeDismissController?
     /// 22(b) Plan A：顶栏高恒为安全区顶 + 60，显隐不再塌高（收起态只上移 +
     /// 淡出，见 setHeaderVisible）；页顶约束恒为 view.top，但常量为 -12：
     /// 液态玻璃顶边自带高光恰落在屏幕顶边即用户报的那条白线，顶边推出屏外
@@ -363,6 +371,9 @@ final class BearyChromeViewController: UIViewController {
     private var profileMeWaitPending = false
     /// 等回包期间用户切走了别的页：回包后不再擅自跳回我页（U21 triggerPage 同口径）。
     private var profileMeWaitTriggerPage: ContainerPage?
+    /// 门控等待的目标页：此前门控只服务“我”页，回包后硬跳 .me；时间线
+    /// 补进门控后，等待期间点的是哪页、回包后就进哪页（.me 时仍是 .me）。
+    private var gateWaitTargetPage: ContainerPage?
     /// 登录循环修（401 无限重载）：onUserChanged 上次见到的用户 id；只有 id 真变了
     /// 才走时间线/消息/首页三处重载，nil→nil（已是游客态、401 重复触发）直接跳过。
     private var lastUserChangedUserId: Int?
@@ -1969,7 +1980,9 @@ final class BearyChromeViewController: UIViewController {
         // 等的过程中不 toast、不弹登录页、不亮 tab；无 cookie 时按原口径直走登录门。
         // 好友第一期：好友段、消息页与会话列表页与“我”页同口径——未登录不进页，
         // toast + 1200ms 后弹登录（见 showTabLoginGate；游客分支已在上方拦下）。
-        if (page == .me || page == .friends || page == .conversations || page == .messages) && SessionManager.shared.isLoggedIn == false {
+        // 时间线补进本名单：此前非游客未登录态下时间线不在名单里，直接放行，
+        // 页里旧内容 + 上次账号缓存照常显示，与消息/我的“请先登录”不一致。
+        if (page == .me || page == .friends || page == .conversations || page == .messages || page == .timeline || page == .notif) && SessionManager.shared.isLoggedIn == false {
             if profileMeWaitPending {
                 // 已在等 /me 回包：第二下点按同样只恢复 pill，不重复发请求。
                 updateTabSelection()
@@ -1978,6 +1991,7 @@ final class BearyChromeViewController: UIViewController {
             if !startupMeResolved && SessionManager.shared.hasCachedSession {
                 profileMeWaitPending = true
                 profileMeWaitTriggerPage = currentPage
+                gateWaitTargetPage = page
                 SessionManager.shared.refreshMe { [weak self] result in
                     // 封禁/踢下线/过期原因透传：第二路 /me 会顶掉启动路 /me 的回包
                     // （meSeq 守卫），原因 toast 在此补一次，否则原因文案会被吞掉。
@@ -2531,6 +2545,12 @@ final class BearyChromeViewController: UIViewController {
         }
         let vc = BearyDMChatViewController(peer: peer)
         vc.modalPresentationStyle = .fullScreen
+        // 全站返回手势补齐：私信页此前只有返回钮、没有左边缘右滑；改走
+        // EdgeDismiss（onClosed 由 viewDidDisappear 的 isBeingDismissed 分支照常触发）。
+        let dmChatEdgeDismiss = BearyEdgeDismissController()
+        dmChatEdgeDismiss.attach(to: vc)
+        vc.transitioningDelegate = dmChatEdgeDismiss
+        self.dmChatEdgeDismiss = dmChatEdgeDismiss
         vc.onBack = { [weak vc] in
             vc?.dismiss(animated: BearyMotion.animated(true))
         }
@@ -3431,7 +3451,7 @@ final class BearyChromeViewController: UIViewController {
         presentDetail(entry: placeholderEntry)
     }
 
-    /// 日记详情页（2026-10-28 v5 mock 定版）：全屏 fadeRise 模态；回调接线：
+    /// 日记详情页（2026-10-28 v5 mock 定版）：全屏 EdgeDismiss 模态；回调接线：
     /// 关闭后各列表 guarded 定位回该卡；编辑／删除先关详情再走既有流程；
     /// 作者／引用点按先关详情再路由（防 modal 叠 modal）；可见性与互动变化同步各列表。
     /// 审计 P0-1：拉黑作者判定（作者本人永不命中；游客不承接拉黑表）。
@@ -3452,7 +3472,13 @@ final class BearyChromeViewController: UIViewController {
         }
         let detail = BearyDetailViewController(entry: entry, isGuest: SessionManager.shared.isGuestMode)
         detail.modalPresentationStyle = .fullScreen
-        detail.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        // 全站返回手势补齐：详情此前只有 fadeRise、没有左边缘右滑；改走
+        // EdgeDismiss（slide 右滑入 + 跟手 dismiss；详情关闭无副作用，onDismissed
+        // 由 viewDidDisappear 的 isBeingDismissed 分支照常触发）。
+        let detailEdgeDismiss = BearyEdgeDismissController()
+        detailEdgeDismiss.attach(to: detail)
+        detail.transitioningDelegate = detailEdgeDismiss
+        self.detailEdgeDismiss = detailEdgeDismiss
         // 详情闪退诊断：present 前留一条（与详情 viewDidLoad/rendered 两条对照，
         // 可定位崩在 present 前、进页中、还是渲染后）。
         DiagFile.mark("detail.present id=\(entry.id ?? "?")")
@@ -3609,8 +3635,8 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
-    /// 冷启动竞态修：我页等 /me 回包后的再判（FAB 的 resumePendingComposerAfterMe
-    /// 同口径）：① 已登录 → 进我页；② authUnknown（网络失败未证实游客）→ 不弹
+    /// 冷启动竞态修：门控页等 /me 回包后的再判（FAB 的 resumePendingComposerAfterMe
+    /// 同口径）：① 已登录 → 进等待时点的目标页；② authUnknown（网络失败未证实游客）→ 不弹
     /// 登录页，只留 onNetworkUnstable 的 toast；③ 仍未登录 → 走原我页登录门
     /// （toast + 1200ms 后弹登录）；等的过程中用户已切走别的页 → 静默放弃，
     /// 不擅自跳回我页；已有 modal 在前时同样放弃（不隔着 modal 发 toast）。
@@ -3620,13 +3646,15 @@ final class BearyChromeViewController: UIViewController {
         startupMeResolved = true
         let triggerPage = profileMeWaitTriggerPage
         profileMeWaitTriggerPage = nil
+        let targetPage = gateWaitTargetPage
+        gateWaitTargetPage = nil
         guard currentPage == triggerPage else {
-            // 等待期间已切过别的页：放弃跳回我页，只把 pill 恢复到实际页。
+            // 等待期间已切过别的页：放弃跳回目标页，只把 pill 恢复到实际页。
             updateTabSelection()
             return
         }
         if SessionManager.shared.isLoggedIn {
-            showPage(.me)
+            showPage(targetPage ?? .me)
         } else if SessionManager.shared.authUnknown {
             // G26：网络失败不按游客处理，onNetworkUnstable 已 toast，此处不再弹登录页。
             // 放弃分支：只恢复 pill，不跳页。
@@ -3649,7 +3677,17 @@ final class BearyChromeViewController: UIViewController {
     /// 参数位（两模式同路径）。底 sheet/居中卡片类本身保留，邀请弹窗仍在用，不要删。
     private func configureComposerPresentation(_ composer: BearyComposerViewController, forEdit: Bool) {
         composer.modalPresentationStyle = .fullScreen
-        composer.transitioningDelegate = nil
+        // 全站返回手势补齐（完成模式，见 BearyEdgeDismiss）：编辑器取消不能由
+        // 手势直接 dismiss——新建态要先存草稿、编辑态要先清临时文件，且发布在途
+        // 只 toast、引用面板开着只退面板；故边缘滑过阈值后走 didTapCancel 原流程，
+        // 由它存草稿/清文件后再经 onCancelled 关页，视图不跟手滑走。
+        let composerEdgeDismiss = BearyEdgeDismissController()
+        composerEdgeDismiss.attach(to: composer)
+        composerEdgeDismiss.onEdgeSwipeCompleted = { [weak composer] in
+            composer?.didTapCancel()
+        }
+        composer.transitioningDelegate = composerEdgeDismiss
+        self.composerEdgeDismiss = composerEdgeDismiss
     }
 
     /// 沿 presentedViewController 链走到最上层：编辑器从详情 nav 上 present，而不是从根 VC 起，
@@ -4453,9 +4491,12 @@ final class BearyPrivatePlaceholderViewController: UIViewController {
         view.backgroundColor = BearyColors.bg
         let closeButton = BearyHit44Button(type: .system)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.setTitle("关闭", for: .normal)
-        closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        // 全屏页左上角统一左箭头：此前是文字“关闭”，现改 icon_back
+        // 图标钮（左上角位置与 44pt 热区不动，行为仍是 onClose）。
+        closeButton.setTitle(nil, for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        closeButton.tintColor = BearyColors.ink
+        closeButton.accessibilityLabel = "返回"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         let label = UILabel()

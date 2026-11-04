@@ -122,9 +122,9 @@ private final class WishRowView: UIView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
             donePill.widthAnchor.constraint(equalToConstant: 56),
             donePill.heightAnchor.constraint(equalToConstant: 18),
-            upButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
-            downButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
-            doneButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
+            upButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
+            downButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
+            doneButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
         ])
     }
 
@@ -277,6 +277,8 @@ final class BearyWishWallViewController: UIViewController {
     // P2-18：加载/失败态迁入已有 BearyStateView（不新建组件）；空态仍走原
     // emptyLabel，不强迫空态套同一插图——故 stateView 两态均不传 iconName。
     private let wishStateView = BearyStateView()
+    /// 许愿新建页的 EdgeDismiss 强持有（transitioningDelegate 弱引用）。
+    private var wishCreateEdgeDismiss: BearyEdgeDismissController?
     private var wishes: [BearyAPI.WishItem] = []
     private var rowViews: [Int: WishRowView] = [:]
     private var voteGeneration: [Int: Int] = [:] // 2026-10-29：每条许愿投票代次，旧回包丢弃用；
@@ -317,12 +319,12 @@ final class BearyWishWallViewController: UIViewController {
         topBar.translatesAutoresizingMaskIntoConstraints = false
         let closeButton = BearyHit44Button(type: .system)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.setTitle("关闭", for: .normal)
-        closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        // 31：固定 52 高顶栏配 cappedFont（关闭 15、标题 17，上限 20，不撑破顶栏）。
-        closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
-        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        closeButton.accessibilityLabel = "关闭"
+        // 全屏页左上角统一左箭头：此前是文字“关闭”，现改 icon_back 图标钮
+        // （左上角位置与 44pt 热区不动，行为仍是 closeTapped 关页）。
+        closeButton.setTitle(nil, for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        closeButton.tintColor = BearyColors.ink
+        closeButton.accessibilityLabel = "返回"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         let titleLabel = UILabel()
@@ -394,7 +396,7 @@ final class BearyWishWallViewController: UIViewController {
         contentStack.addArrangedSubview(wishStateView)
         contentStack.addArrangedSubview(emptyLabel)
         NSLayoutConstraint.activate([
-            createButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.ink).height),
+            createButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
         ])
         loadWishes()
     }
@@ -440,7 +442,11 @@ final class BearyWishWallViewController: UIViewController {
     @objc private func createTapped() {
         let vc = BearyWishCreateViewController()
         vc.modalPresentationStyle = .fullScreen
-        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        // 全站返回手势补齐：许愿新建页此前只有 fadeRise、没有左边缘右滑；改走 EdgeDismiss。
+        let wishCreateEdgeDismiss = BearyEdgeDismissController()
+        wishCreateEdgeDismiss.attach(to: vc)
+        vc.transitioningDelegate = wishCreateEdgeDismiss
+        self.wishCreateEdgeDismiss = wishCreateEdgeDismiss
         vc.onCreated = { [weak self] wish in
             guard let self = self else { return }
             // 审计登录杂项：新愿望不再 insert(at:0) 永远置顶（与注释“服务端净赞成
@@ -733,12 +739,12 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         topBar.translatesAutoresizingMaskIntoConstraints = false
         let closeButton = BearyHit44Button(type: .system)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.setTitle("关闭", for: .normal)
-        closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        // 31：固定 52 高顶栏配 cappedFont（与列表页同款）。
-        closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
-        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        closeButton.accessibilityLabel = "关闭"
+        // 全屏页左上角统一左箭头：此前是文字“关闭”，现改 icon_back 图标钮
+        // （左上角位置与 44pt 热区不动，行为仍是 closeTapped 关页）。
+        closeButton.setTitle(nil, for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        closeButton.tintColor = BearyColors.ink
+        closeButton.accessibilityLabel = "返回"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         createCloseButton = closeButton
@@ -848,7 +854,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
             detailCountLabel.topAnchor.constraint(equalTo: detailView.bottomAnchor, constant: 4),
             fieldErrorLabel.topAnchor.constraint(equalTo: detailCountLabel.bottomAnchor, constant: 8),
             submitButton.topAnchor.constraint(equalTo: fieldErrorLabel.bottomAnchor, constant: 12),
-            submitButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.ink).height),
+            submitButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
             // 内容底含提交钮 +16 边距——键盘顶起后提交钮也可滚到可见区。
             submitButton.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -16),
         ] + fieldColumnConstraints(for: titleField)

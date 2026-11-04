@@ -71,7 +71,13 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
         if navigationController?.viewControllers.count == 1, presentingViewController != nil {
-            navigationItem.leftBarButtonItem = UIBarButtonItem(title: "关闭", style: .plain, target: self, action: #selector(didTapClose))
+            // 全屏页左上角统一左箭头：此前是文字“关闭”，现改 icon_back
+            // （push 进栈时系统自带返回钮，本行只服务新起导航栈的根页）。
+            if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 24) {
+                navigationItem.leftBarButtonItem = UIBarButtonItem(image: backImage, style: .plain, target: self, action: #selector(didTapClose))
+            } else {
+                navigationItem.leftBarButtonItem = UIBarButtonItem(title: "返回", style: .plain, target: self, action: #selector(didTapClose))
+            }
         }
         mapView.translatesAutoresizingMaskIntoConstraints = false
         mapView.delegate = self
@@ -165,6 +171,35 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             retryButton.centerXAnchor.constraint(equalTo: failureView.centerXAnchor),
         ])
 
+        // push 路悬浮返回钮：push 进他人主页 modal 导航栈那路，该栈隐藏
+        // 了系统导航栏，既无系统返回钮、也无自定义顶栏，只有边缘手势；
+        // 补一个左上角悬浮左箭头钮（32 圆钮 faint 底，地图瓦片深浅不一、
+        // 纯图标易看不清），点按 pop 回上一页。根页路（新起导航栈）走
+        // 上方 navigationItem，不进本分支。
+        if navigationController?.viewControllers.count ?? 0 > 1 {
+            let pushedBackButton = BearyHit44Button(type: .system)
+            pushedBackButton.translatesAutoresizingMaskIntoConstraints = false
+            if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 18) {
+                pushedBackButton.setImage(backImage, for: .normal)
+            } else {
+                pushedBackButton.setTitle("返回", for: .normal)
+                pushedBackButton.setTitleColor(BearyColors.ink, for: .normal)
+            }
+            pushedBackButton.tintColor = BearyColors.ink
+            pushedBackButton.backgroundColor = BearyColors.faint
+            pushedBackButton.layer.cornerRadius = 16
+            pushedBackButton.accessibilityLabel = "返回"
+            pushedBackButton.addTarget(self, action: #selector(didTapPushedBack), for: .touchUpInside)
+            pushedBackButton.bearyAddPressFeedback()
+            view.addSubview(pushedBackButton)
+            NSLayoutConstraint.activate([
+                pushedBackButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+                pushedBackButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                pushedBackButton.widthAnchor.constraint(equalToConstant: 32),
+                pushedBackButton.heightAnchor.constraint(equalToConstant: 32),
+            ])
+        }
+
         // 先用调用方已加载的日记即时成图，再后台拉全量分页替换（不空等）。
         regroupAndGeocode()
         fetchAllEntries()
@@ -215,6 +250,11 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     @objc private func didTapClose() {
         dismiss(animated: BearyMotion.animated(true))
+    }
+
+    /// push 路悬浮返回钮：pop 回上一页（仅 push 栈内有效，根页路不走这里）。
+    @objc private func didTapPushedBack() {
+        navigationController?.popViewController(animated: BearyMotion.animated(true))
     }
 
     /// 116 数据填入动效：状态文案变化时只淡入该 label 本身（alpha

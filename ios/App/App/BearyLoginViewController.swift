@@ -56,6 +56,8 @@ final class BearyLoginViewController: UIViewController {
     /// Sheet transitioningDelegate 强持有（UIViewController.transitioningDelegate 为弱引用，
     /// 调用方不另持有；随本页释放）。
     var loginSheetDelegate: BearyLoginSheetTransitioningDelegate?
+    /// 法律文字页的 EdgeDismiss 强持有（transitioningDelegate 弱引用）。
+    private var legalTextEdgeDismiss: BearyEdgeDismissController?
 
     private let scrollView = UIScrollView()
     private let contentView = UIView()
@@ -656,8 +658,12 @@ final class BearyLoginViewController: UIViewController {
         // 先显示缓存（或包内兜底），页面立刻打开不阻塞；后台刷新到最新版后只换文字与更新日期。
         let vc = BearyLegalTextViewController(pageTitle: title, pageText: BearyLegalServerText.displayText(for: doc), pageVersion: BearyLegalServerText.cachedUpdatedAt(for: doc))
         vc.modalPresentationStyle = .fullScreen
-        // 审计 P2-16：全屏 modal 补 fadeRise（与设置页法律文本页同款）。
-        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        // 全站返回手势补齐：登录页内法律文字页此前只有 fadeRise、没有左边缘
+        // 右滑；改走 EdgeDismiss（设置页路法律文字页已由 presentSettingsPage 覆盖）。
+        let legalTextEdgeDismiss = BearyEdgeDismissController()
+        legalTextEdgeDismiss.attach(to: vc)
+        vc.transitioningDelegate = legalTextEdgeDismiss
+        self.legalTextEdgeDismiss = legalTextEdgeDismiss
         present(vc, animated: BearyMotion.animated(true))
         BearyLegalServerText.refresh(doc: doc) { [weak vc] text in
             guard let vc = vc, vc.isViewLoaded else { return }

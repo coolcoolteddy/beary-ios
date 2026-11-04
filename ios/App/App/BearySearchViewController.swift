@@ -670,7 +670,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("重试", for: .normal)
         retryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
-        retryButton.heightAnchor.constraint(equalToConstant: BearyButton.retryPageStyle.height).isActive = true
+        retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButton.retryPageStyle.height).isActive = true
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         retryButton.bearyAddPressFeedback()
         stateStack.addArrangedSubview(retryButton)
@@ -741,7 +741,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchFooterRetryButton.translatesAutoresizingMaskIntoConstraints = false
         searchFooterRetryButton.setTitle("重试", for: .normal)
         searchFooterRetryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
-        searchFooterRetryButton.heightAnchor.constraint(equalToConstant: BearyButton.retryPageStyle.height).isActive = true
+        searchFooterRetryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButton.retryPageStyle.height).isActive = true
         searchFooterRetryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         searchFooterRetryButton.bearyAddPressFeedback()
         searchFooterRow.addSubview(searchFooterRetryButton)
@@ -750,7 +750,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchFooterLoadMoreButton.translatesAutoresizingMaskIntoConstraints = false
         searchFooterLoadMoreButton.setTitle("加载更多", for: .normal)
         searchFooterLoadMoreButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
-        searchFooterLoadMoreButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height).isActive = true
+        searchFooterLoadMoreButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height).isActive = true
         searchFooterLoadMoreButton.addTarget(self, action: #selector(loadMoreTapped), for: .touchUpInside)
         searchFooterLoadMoreButton.bearyAddPressFeedback()
         searchFooterRow.addSubview(searchFooterLoadMoreButton)

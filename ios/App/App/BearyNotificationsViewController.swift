@@ -4230,7 +4230,7 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
         view.addSubview(topBar)
         let backButton = UIButton(type: .system)
         backButton.translatesAutoresizingMaskIntoConstraints = false
-        backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 20), for: .normal)
+        backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
         backButton.tintColor = BearyColors.ink
         backButton.accessibilityLabel = "返回"
         backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)

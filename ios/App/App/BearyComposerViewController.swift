@@ -851,6 +851,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             charTrackLayer?.strokeColor = BearyColors.line.cgColor
             updateCountLabel()
         }
+        // 审计补漏：字号档变化时发布钮宽度重算（此前只在搭建与忙态切换时算，
+        // 编辑器开着时改系统字号，pill 宽度直接过期、大字号下裁标题）。
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            refreshPublishButtonWidth()
+        }
         // 动态字号变化时标题字号跟随（原 UITextField 靠
         // adjustsFontForContentSizeCategory 自动跟，UITextView 没有该属性，
         // 故手动重建标题 attributed；字号没变时不动，不打断正在输入的标题）。
@@ -1219,14 +1224,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 玻璃批：顶栏实色 surface 底会盖住 view 的玻璃背板，改 clear 让玻璃透出来；分隔线不动。
         topBar.backgroundColor = UIColor.clear
         topSeparator.backgroundColor = BearyColors.line
-        // v6-1：左侧“取消”文字 → plain X 叉叉：无文字、无圆圈外框、无底色，
-        // icon_close 24pt 墨色（深色反白走 ink 动态色）、44pt 热区；VoiceOver 仍读“取消”。
-        // 双态行为不变：引用面板打开时本钮是“返回”（只退面板），见 setQuotePanelOpen
-        // 改图标为 icon_back 并改 accessibilityLabel、didTapCancel 仍按 quotePanelOpen 分支。
+        // 全屏页左上角统一左箭头：此前是 plain X 叉叉，现改 icon_back 24pt
+        // 墨色（深色反白走 ink 动态色）、44pt 热区；VoiceOver 读“返回”。
+        // 行为不变：引用面板打开时本钮只退面板，见 setQuotePanelOpen；
+        // 面板关着时点按仍走 didTapCancel 原取消流程（存草稿/清临时文件）。
         cancelButton.setTitle(nil, for: .normal)
-        cancelButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 24), for: .normal)
+        cancelButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
         cancelButton.tintColor = BearyColors.ink
-        cancelButton.accessibilityLabel = "取消"
+        cancelButton.accessibilityLabel = "返回"
         cancelButton.contentEdgeInsets = .zero
         cancelButton.addTarget(self, action: #selector(didTapCancel), for: .touchUpInside)
         cancelButton.bearyAddPressFeedback()
@@ -1371,7 +1376,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 不读 live 标题／图标，忙态切换时宽约束常量不再变、顶栏不再横向跳动；
     /// 代价是常态 pill 比文字宽约一格忙态增量，内容居中、仍是同一 pill，不改常态语义）。
     private func refreshPublishButtonWidth() {
-        let font = UIFont.systemFont(ofSize: 14)
+        // 审计补漏：宽度按标题实际字体算（标题走 cappedFont 上限 20pt，
+        // 原写死 14pt 量出的“发布中…”比大字号下实际窄约三分之一，pill 会裁标题）。
+        let font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14))
         func textWidth(_ text: String) -> CGFloat {
             return ceil((text as NSString).size(withAttributes: [NSAttributedString.Key.font: font]).width)
         }
@@ -2313,9 +2320,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 录屏批 (b)：面板标题不再沿用“新日记”/“编辑日记”，打开前先存原标题。
             quotePanelSavedTitle = titleLabel.text
             titleLabel.text = "选择引用"
-            // v6-1：取消钮已无文字，双态只改 VoiceOver 语义：面板打开时读“返回”，点它仍只退面板（didTapCancel 分支不变）。
-            // 审计 11：打开时图标同步换为项目现有 icon_back（24pt，与 buildTopBar 的
-            // 取消态同尺寸、同墨色 tint），位置、行为、文案均不变；退出时在关闭分支恢复 icon_close。
+            // 全屏左箭头统一：顶栏钮恒为 icon_back、恒读“返回”，面板打开时点它
+            // 仍只退面板（didTapCancel 分支不变）；以下两行与初值相同，仅作显式确认。
             cancelButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
             cancelButton.accessibilityLabel = "返回"
             publishButton.isHidden = true
@@ -2359,9 +2365,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.toolbarContainer.isHidden = false
                 self.selectedChipsRow.isHidden = false
                 self.quoteSection.isHidden = false
-                // 审计 11：退出面板恢复取消态图标（与 buildTopBar 初值一致）。
-                self.cancelButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 24), for: .normal)
-                self.cancelButton.accessibilityLabel = "取消"
+                // 全屏左箭头统一：退出面板后图标仍是 icon_back（与 buildTopBar
+                // 初值一致），不再换回叉叉；行为仍是 didTapCancel 原流程。
+                self.cancelButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+                self.cancelButton.accessibilityLabel = "返回"
                 self.publishButton.isHidden = false
                 self.draftPillButton.isHidden = false
                 self.visibilityButton.isHidden = self.isEditMode
@@ -6560,7 +6567,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 取消与发布
 
-    @objc private func didTapCancel() {
+    /// 供容器边缘手势调用：与取消钮同一流程（发布在途只 toast、引用面板
+    /// 开着只退面板、其余存草稿/清临时文件后经 onCancelled 关页），不得另起
+    /// 一条直接 dismiss 的关闭路径。
+    @objc func didTapCancel() {
         // P1-7：发布/保存进行中时取消键不走取消流程，给进行中提示（与 didTapPublish
         // 首行 isPublishing 守卫同口径；真取消在途请求属结构改动，本批不做）。
         // quote-freeze：isPublishing 在“一并公开”点按瞬间即置（见

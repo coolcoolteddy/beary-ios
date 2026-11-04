@@ -312,11 +312,14 @@ final class BearyWordprintDetailViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
+        // 非全屏弹窗右上角统一叉叉：本页是 pageSheet（与年报页同款，年报已是
+        // 右上角叉叉），此前是左上角左箭头；现改右上角 icon_close，行为仍是
+        // closeTapped 关页。
         let backButton = UIButton(type: .system)
         backButton.translatesAutoresizingMaskIntoConstraints = false
-        backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        backButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 24), for: .normal)
         backButton.tintColor = BearyColors.ink
-        backButton.accessibilityLabel = "返回"
+        backButton.accessibilityLabel = "关闭"
         backButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         backButton.bearyAddPressFeedback()
         view.addSubview(backButton)
@@ -331,7 +334,7 @@ final class BearyWordprintDetailViewController: UIViewController {
         scrollView.addSubview(stack)
         NSLayoutConstraint.activate([
             backButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            backButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            backButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             backButton.widthAnchor.constraint(equalToConstant: 44),
             backButton.heightAnchor.constraint(equalToConstant: 44),
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 56),

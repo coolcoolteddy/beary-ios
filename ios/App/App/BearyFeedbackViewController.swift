@@ -330,11 +330,10 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     private func buildChrome() {
         let closeButton = BearyHit44Button(type: .system)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.setTitle("关闭", for: .normal)
-        closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
-        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        closeButton.accessibilityLabel = "关闭"
+        closeButton.setTitle(nil, for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        closeButton.tintColor = BearyColors.ink
+        closeButton.accessibilityLabel = "返回"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
 
@@ -627,9 +626,9 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         contentStack.setCustomSpacing(8, after: diagLabel)
         contentStack.setCustomSpacing(16, after: logOnlyButton)
         NSLayoutConstraint.activate([
-            submitButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.ink).height),
-            shareButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
-            logOnlyButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
+            submitButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
+            shareButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
+            logOnlyButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
         ])
     }
 

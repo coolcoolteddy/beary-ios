@@ -156,9 +156,12 @@ class BearyEditProfileViewController: UIViewController {
     private lazy var closeButton: BearyHit44Button = {
         let buttonValue = BearyHit44Button(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setTitle("关闭", for: .normal)
-        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        // 全屏页左上角统一左箭头：此前是文字“关闭”，现改 icon_back 图标钮
+        // （左上角位置与 44pt 热区不动，行为仍是 closeButtonTapped 走 requestExit）。
+        buttonValue.setTitle(nil, for: .normal)
+        buttonValue.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.accessibilityLabel = "返回"
         buttonValue.addTarget(self, action: #selector(closeButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         return buttonValue

@@ -157,13 +157,41 @@ final class BearyDiaryStarMapViewController: UIViewController {
         navigationItem.standardAppearance = navAppearance
         navigationItem.scrollEdgeAppearance = navAppearance
         if navigationController?.viewControllers.count == 1, presentingViewController != nil {
-            if let closeImage = BearyIconImages.image(named: "icon_close", pointSize: 18) {
-                navigationItem.leftBarButtonItem = UIBarButtonItem(image: closeImage, style: .plain, target: self, action: #selector(didTapClose))
+            // 全屏页左上角统一左箭头：此前是 icon_close 叉叉，现改 icon_back
+            // （tint 仍跟随夜空主文字色，见 viewWillAppear）。
+            if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 18) {
+                navigationItem.leftBarButtonItem = UIBarButtonItem(image: backImage, style: .plain, target: self, action: #selector(didTapClose))
             } else {
-                navigationItem.leftBarButtonItem = UIBarButtonItem(title: "关闭", style: .plain, target: self, action: #selector(didTapClose))
+                navigationItem.leftBarButtonItem = UIBarButtonItem(title: "返回", style: .plain, target: self, action: #selector(didTapClose))
             }
         }
         buildLayout()
+        // push 路悬浮返回钮：push 进他人主页 modal 导航栈那路，该栈隐藏
+        // 了系统导航栏，既无系统返回钮、也无自定义顶栏，只有边缘手势；
+        // 补一个左上角悬浮左箭头钮（夜空深底，图标用夜空主文字浅色，不加
+        // 底圈），点按 pop 回上一页。根页路（新起导航栈）走上方
+        // navigationItem，不进本分支。
+        if navigationController?.viewControllers.count ?? 0 > 1 {
+            let pushedBackButton = BearyHit44Button(type: .system)
+            pushedBackButton.translatesAutoresizingMaskIntoConstraints = false
+            if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 18) {
+                pushedBackButton.setImage(backImage, for: .normal)
+            } else {
+                pushedBackButton.setTitle("返回", for: .normal)
+                pushedBackButton.setTitleColor(BearyStarMapNight.primaryText, for: .normal)
+            }
+            pushedBackButton.tintColor = BearyStarMapNight.primaryText
+            pushedBackButton.accessibilityLabel = "返回"
+            pushedBackButton.addTarget(self, action: #selector(didTapPushedBack), for: .touchUpInside)
+            pushedBackButton.bearyAddPressFeedback()
+            view.addSubview(pushedBackButton)
+            NSLayoutConstraint.activate([
+                pushedBackButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+                pushedBackButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                pushedBackButton.widthAnchor.constraint(equalToConstant: 44),
+                pushedBackButton.heightAnchor.constraint(equalToConstant: 44),
+            ])
+        }
         skyView.onStarTap = { [weak self] entry in self?.didTapStar(entry) }
         skyView.onOverlapTap = { [weak self] entries in self?.showOverlapSheet(entries) }
         skyView.onEdgeTap = { [weak self] edge in self?.didTapEdge(edge) }
@@ -174,7 +202,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        // 关闭钮仍用现有 icon_close；tint 跟随夜空主文字色，离页时还原
+        // 返回钮用 icon_back；tint 跟随夜空主文字色，离页时还原
         //（导航栏 tint 是共享状态，不还原会污染返回后的页）。
         previousNavBarTintColor = navigationController?.navigationBar.tintColor
         navigationController?.navigationBar.tintColor = BearyStarMapNight.primaryText
@@ -204,6 +232,11 @@ final class BearyDiaryStarMapViewController: UIViewController {
     @objc private func didTapClose() {
         // 审计登录杂项：关闭走减动效口径，不再写死 animated:true。
         dismiss(animated: BearyMotion.animated(true))
+    }
+
+    /// push 路悬浮返回钮：pop 回上一页（仅 push 栈内有效，根页路不走这里）。
+    @objc private func didTapPushedBack() {
+        navigationController?.popViewController(animated: BearyMotion.animated(true))
     }
 
     @objc private func didTapRetry() {

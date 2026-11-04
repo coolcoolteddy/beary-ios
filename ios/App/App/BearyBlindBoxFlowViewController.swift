@@ -272,7 +272,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         topBar.translatesAutoresizingMaskIntoConstraints = false
         let backButton = BearyHit44Button(type: .system)
         backButton.translatesAutoresizingMaskIntoConstraints = false
-        if let back = BearyIconImages.image(named: "icon_back", pointSize: 20) {
+        if let back = BearyIconImages.image(named: "icon_back", pointSize: 24) {
             backButton.setImage(back, for: .normal)
         } else {
             backButton.setTitle("返回", for: .normal)
@@ -404,7 +404,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             openStack.leadingAnchor.constraint(equalTo: openSection.leadingAnchor),
             openStack.trailingAnchor.constraint(equalTo: openSection.trailingAnchor),
             openStack.bottomAnchor.constraint(equalTo: openSection.bottomAnchor),
-            openButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.ink).height),
+            openButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
         ])
 
         buildReceivedSection()
@@ -426,7 +426,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             loginStack.leadingAnchor.constraint(equalTo: loginView.leadingAnchor),
             loginStack.trailingAnchor.constraint(equalTo: loginView.trailingAnchor),
             loginStack.bottomAnchor.constraint(equalTo: loginView.bottomAnchor),
-            loginButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.orange).height),
+            loginButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.orange).height),
         ])
 
         errorLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -463,7 +463,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         contentStack.addArrangedSubview(loginView)
         contentStack.addArrangedSubview(errorView)
         NSLayoutConstraint.activate([
-            poolButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.orange).height),
+            poolButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.orange).height),
         ])
     }
 

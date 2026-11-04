@@ -152,7 +152,7 @@ final class BearyStateView: UIView {
         stack.addArrangedSubview(actionButton)
         stack.setCustomSpacing(4, after: titleLabel)
 
-        let heightConstraint = actionButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height)
+        let heightConstraint = actionButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height)
         heightConstraint.isActive = true
         self.actionHeightConstraint = heightConstraint
 
@@ -227,7 +227,7 @@ final class BearyStateView: UIView {
         button.bearyAddPressFeedback()
         button.isHidden = wasHidden
         stack.addArrangedSubview(button)
-        let heightConstraint = button.heightAnchor.constraint(equalToConstant: style.height)
+        let heightConstraint = button.heightAnchor.constraint(greaterThanOrEqualToConstant: style.height)
         heightConstraint.isActive = true
         self.actionButton = button
         self.actionButtonStyle = style
