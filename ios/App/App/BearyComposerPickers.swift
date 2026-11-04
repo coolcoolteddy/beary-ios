@@ -544,9 +544,12 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     }
 
     /// 审计 D-4：键盘避让统一处理（WillShow/WillChangeFrame 共用，绝对量重算）：
-    /// 只在键盘帧与当前卡片帧相交时避让——浮动到卡片之外的键盘不再无故抬卡片；
-    /// 手机端底边抬到键盘顶沿，iPad 居中卡片按卡片底沿与键盘顶沿的重叠量上抬
-    /// （+14 间隙，L11 口径保留），不重叠时不动；动画走键盘曲线。
+    /// 手机端：键盘帧非空即抬升，不再以键盘帧与当前卡片帧相交为门禁——初始抬升后
+    /// 卡片底恰贴键盘顶沿，焦点切到搜索框时系统发 WillChangeFrame（候选栏显隐），
+    /// 帧顶贴着或略低于已抬升的卡片底时门禁会误判 false，把抬升整个撤销；
+    /// initialKeyboardHeight 已在 willAppear 消费，不会再抬第二次，卡片跌回屏底。
+    /// iPad 端：居中卡片按卡片底沿与键盘顶沿的重叠量上抬（+14 间隙，L11 口径保留），
+    /// 不重叠时不动；动画走键盘曲线。
     /// keyboardHeight 供 updateSheetHeight 计可用高（手机端 = 到键盘顶沿的距离，
     /// iPad 端同样计入后由那里的键盘适配高上限再约束一次）。
     private func applyKeyboardFrame(_ frame: CGRect, note: Notification?) {
@@ -554,9 +557,15 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         view.layoutIfNeeded()
         let sheetFrame = sheetView.frame
         let overlapsSheet = frame.isEmpty == false && frame.intersects(sheetFrame)
-        keyboardHeight = overlapsSheet ? max(view.bounds.height - frame.minY, 0) : 0
+        if isPadLayout {
+            keyboardHeight = overlapsSheet ? max(view.bounds.height - frame.minY, 0) : 0
+        } else if frame.isEmpty {
+            keyboardHeight = 0
+        } else {
+            keyboardHeight = max(view.bounds.height - frame.minY, 0)
+        }
         if let bottomConstraint = phoneBottomConstraint, !isPadLayout {
-            bottomConstraint.constant = overlapsSheet ? -keyboardHeight : 0
+            bottomConstraint.constant = -keyboardHeight
         }
         if isPadLayout {
             if overlapsSheet {
