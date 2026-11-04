@@ -176,7 +176,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private let receivedPillWrap = UIView()
     private let introLabel = UILabel()
     private let poolStack = UIStackView()
-    private let poolButton = BearyButton.make(style: .primaryPill(.orange), title: "放进池子")
+    private let poolButton = BearyButton.make(style: .primaryPill(.ink), title: "放进池子")
     private let openSection = UIView()
     private let openButton = BearyButton.make(style: .primaryPill(.ink), title: "开盒")
     private let openHintLabel = UILabel()
@@ -200,7 +200,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private let mineWithdrawnLabel = UILabel()
     private let mineWithdrawnView = UIView()
     private let loginView = UIView()
-    private let loginButton = BearyButton.make(style: .primaryPill(.orange), title: "登录")
+    private let loginButton = BearyButton.make(style: .primaryPill(.ink), title: "登录")
     private let errorLabel = UILabel()
     private let errorView = UIView()
     private let retryButton = BearyButton.make(style: .secondaryOutline(.compact), title: "重试")
@@ -426,7 +426,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             loginStack.leadingAnchor.constraint(equalTo: loginView.leadingAnchor),
             loginStack.trailingAnchor.constraint(equalTo: loginView.trailingAnchor),
             loginStack.bottomAnchor.constraint(equalTo: loginView.bottomAnchor),
-            loginButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.orange).height),
+            loginButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
         ])
 
         errorLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -463,7 +463,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         contentStack.addArrangedSubview(loginView)
         contentStack.addArrangedSubview(errorView)
         NSLayoutConstraint.activate([
-            poolButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.orange).height),
+            poolButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
         ])
     }
 
@@ -479,8 +479,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         receivedPill.text = "来自一位陌生人 · 旧日记"
         receivedPill.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 12, weight: .semibold), maximumPointSize: 14)
         receivedPill.adjustsFontForContentSizeCategory = true
-        receivedPill.textColor = BearyColors.deepOrangeText
-        receivedPill.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.12)
+        receivedPill.textColor = BearyColors.ink
+        receivedPill.backgroundColor = BearyColors.faint
         receivedPill.layer.cornerRadius = 9
         receivedPill.clipsToBounds = true
         receivedPill.textAlignment = .center

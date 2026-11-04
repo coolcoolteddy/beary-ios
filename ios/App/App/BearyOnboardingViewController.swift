@@ -708,7 +708,7 @@ final class BearyOnboardingViewController: UIViewController {
 
         // 回应标签：点选后才出现；只让新增元素入场一次，后续改选只换内容、不重播。
         responseChip.translatesAutoresizingMaskIntoConstraints = false
-        responseChip.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.07)
+        responseChip.backgroundColor = BearyColors.faint
         responseChip.isHidden = true
         responseChipIcon.translatesAutoresizingMaskIntoConstraints = false
         responseChipCount.translatesAutoresizingMaskIntoConstraints = false

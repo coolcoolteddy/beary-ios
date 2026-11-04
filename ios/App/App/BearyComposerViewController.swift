@@ -1754,19 +1754,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientPickButton.layer.cornerRadius = 999
         recipientPickButton.addTarget(self, action: #selector(didTapPickRecipient), for: .touchUpInside)
         recipientPickButton.bearyAddPressFeedback()
-        // 已选 chip：橙 13% 底 + 22 头像/首字母 + “@名” + ×。
-        // D-G8：网页 addr-chip 底是 color-mix（橙 13% + surface），深色下 surface
-        // 为 #26262c；App 原 13% 透明橙叠在纯黑页底上偏暗。改按当前主题把橙与
-        // surface 混色（浅色 surface 为白，与原效果一致；仅深色变亮）。
-        recipientChipView.backgroundColor = UIColor { trait in
-            let orange = BearyColors.orange.resolvedColor(with: trait)
-            let surface = BearyColors.surface.resolvedColor(with: trait)
-            var oR: CGFloat = 0, oG: CGFloat = 0, oB: CGFloat = 0, oA: CGFloat = 0
-            var sR: CGFloat = 0, sG: CGFloat = 0, sB: CGFloat = 0, sA: CGFloat = 0
-            orange.getRed(&oR, green: &oG, blue: &oB, alpha: &oA)
-            surface.getRed(&sR, green: &sG, blue: &sB, alpha: &sA)
-            return UIColor(red: 0.13 * oR + 0.87 * sR, green: 0.13 * oG + 0.87 * sG, blue: 0.13 * oB + 0.87 * sB, alpha: 1)
-        }
+        // 已选 chip：黑白灰新标准改灰底（与内容区 chip 同口径）；原橙 13% 混色已删。
+        recipientChipView.backgroundColor = BearyColors.faint
         recipientChipView.layer.cornerRadius = 15
         recipientChipView.layer.masksToBounds = true
         recipientChipAvatar.contentMode = .scaleAspectFill
@@ -1774,8 +1763,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientChipAvatar.layer.cornerRadius = 11
         recipientChipAvatar.layer.masksToBounds = true
         recipientChipFallback.font = UIFont.boldSystemFont(ofSize: 12)
-        recipientChipFallback.textColor = BearyColors.onBrand
-        recipientChipFallback.backgroundColor = BearyColors.orange
+        recipientChipFallback.textColor = BearyColors.ink
+        recipientChipFallback.backgroundColor = BearyColors.surface
         recipientChipFallback.textAlignment = .center
         recipientChipFallback.layer.cornerRadius = 11
         recipientChipFallback.layer.masksToBounds = true
@@ -2716,7 +2705,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 112 v2：去掉每行外面的灰色方块感——行底色显式走页面底色
             // BearyColors.bg（浅色白、深色跟页面底色黑），整列表只留行间细分割线；
             // 作者、时间、正文、行内边距、分割线、点按选引用行为均不动。
-            rowButton.backgroundColor = isSelectedRow ? BearyColors.orange.withAlphaComponent(0.08) : BearyColors.bg
+            rowButton.backgroundColor = isSelectedRow ? BearyColors.alpha(BearyColors.ink, 0.08) : BearyColors.bg
             let authorName = entry.authorName ?? "用户"
             let avatarView = UIImageView()
             avatarView.translatesAutoresizingMaskIntoConstraints = false
@@ -2838,14 +2827,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if isSelectedRow {
                 let checkView = UIView()
                 checkView.translatesAutoresizingMaskIntoConstraints = false
-                checkView.backgroundColor = BearyColors.orange
+                checkView.backgroundColor = BearyColors.ink
                 checkView.layer.cornerRadius = 12
                 checkView.layer.masksToBounds = true
                 checkView.isUserInteractionEnabled = false
                 let checkLabel = UILabel()
                 checkLabel.translatesAutoresizingMaskIntoConstraints = false
                 checkLabel.font = UIFont.boldSystemFont(ofSize: 14)
-                checkLabel.textColor = BearyColors.onBrand
+                checkLabel.textColor = BearyColors.bg
                 checkLabel.textAlignment = .center
                 checkLabel.text = "✓"
                 checkView.addSubview(checkLabel)

@@ -4125,7 +4125,7 @@ class BearyProfileViewController: UIViewController {
                 if let aiImage = NightPatrolIcons.image(named: NightPatrolIcons.aiPaw, pointSize: 16) {
                     let badgeView = UIImageView(image: aiImage)
                     badgeView.translatesAutoresizingMaskIntoConstraints = false
-                    badgeView.tintColor = BearyColors.orange
+                    badgeView.tintColor = BearyColors.ink
                     badgeView.contentMode = .scaleAspectFit
                     wrapper.addSubview(badgeView)
                     NSLayoutConstraint.activate([
