@@ -31,6 +31,14 @@ import PhotosUI
 /// 取不到时回退居中旧口径；
 /// 字体取 typingAttributes 优先（attributedText 回填后 textView.font 可能取不到，
 /// 此时旧守卫会直接返回 32pt 高 caret，正是对不准的另一半原因）。
+/// 固定偏上修（本支）：110 门限（super 高 > 行高 × 1.3 才下移）分不清两种
+/// super 短矩形——片段顶锚定的短矩形与字形锚定的短矩形高度相近，前者原样
+/// 返回即每行固定偏上 ascender × (倍数 − 1)（16pt 字约 11pt，不随行数增长；
+/// 真机纠正：此前“逐行变大”的说法不成立）。本支不再用 super 的 y：从光标
+/// 所在行同行字符的选区矩形取行片段顶，再按基线公式锚定（顶 = 片段顶 +
+/// ascender × (倍数 − 1)，高 = ascender − descender），两种 super 行为下
+/// 结果一致；取不到片段时回退 110 门限旧口径。x 与宽仍取 super；
+/// isScrollEnabled、倍数、inset、占位与天气 chip 一律不动。
 private final class BearyBodyTextView: UITextView {
     /// 正文编辑器恒定的行高倍数，由 Composer 在 buildTextArea 里与 typingAttributes
     /// 用同一个 bodyParagraph 一并设定；本类只用于正文编辑器，倍数恒定。
@@ -80,13 +88,22 @@ private final class BearyBodyTextView: UITextView {
         if let multiple = multiple, multiple > 1.0 {
             let height = caretFont.ascender - caretFont.descender
             guard height > 0 else { return rect }
-            // 110：super 几何分流。旧口径默认 super caret 是 TextKit 1 的
-            // 片段顶高矩形（高 ≈ 行高 × 倍数，约 32pt），基线锚定下移
-            // ascender × (倍数 − 1) 才对准字形；但 iOS 16+ 默认 TextKit 2，
-            // super 也可能已是字形高矩形（高 ≈ 行高，字形锚定）——此时再下移
-            // 即 double-count，光标整体低于所打文字（110 真机报）。
-            // 只在 super 确为片段顶高矩形时下移；已是字形高时原样返回，
-            // 片段顶高口径的行为与此前一字不动。
+            // 固定偏上修：不再以 super 矩形高度猜锚点。110 门限（高 > 行高 × 1.3
+            // 才下移）有个盲区：TextKit 2 下 super 有时返回片段顶锚定的短矩形
+            // （高约行高、但 origin.y 仍是片段顶），门限误判为“已字形锚定”
+            // 而原样返回，光标每行固定高出字形 ascender × (倍数 − 1)（16pt 字
+            // 约 11pt，不随行数增长）；与 110 那次“已字形锚定再下移即
+            // double-count”的情形恰好相反——单凭高度分不清这两种 super 矩形，
+            // 门限本身不可靠。改为从光标所在行的真实排版矩形直接推导
+            // （见 lineFragmentTop）：顶 = 片段顶 + ascender × (倍数 − 1)，
+            // 高 = ascender − descender；super 的 y 从此不再参与，两种 super
+            // 行为下结果一致；x 与宽仍取 super。
+            if let fragmentTop = lineFragmentTop(for: position, caretX: rect.origin.x) {
+                rect.origin.y = fragmentTop + caretFont.ascender * (multiple - 1)
+                rect.size.height = height
+                return rect
+            }
+            // 取不到行片段时回退 110 门限旧口径（空文档、TextKit 1 等）。
             if rect.height > caretFont.lineHeight * 1.3 {
                 rect.origin.y = rect.origin.y + caretFont.ascender * (multiple - 1)
                 rect.size.height = height
@@ -98,6 +115,47 @@ private final class BearyBodyTextView: UITextView {
         rect.origin.y = centerY - caretFont.lineHeight / 2
         rect.size.height = caretFont.lineHeight
         return rect
+    }
+
+    /// 光标所在行片段顶（textView 坐标系，与 caretRect 同空间）。
+    /// 取同行文字字符的选区矩形 origin.y：选区高亮按行片段满高绘制，
+    /// 故该 y 即行片段顶，与 super 的 y 取值无关——super 在 TextKit 2 下
+    /// 的锚点差异不再影响结果，每行各取各行的片段顶。
+    /// 换行边界（前字符与后字符属不同行）时以 super 的 x 判定归属：
+    /// x 贴左缘（行首）归后一行，否则归前一行；附件字符、换行符不作
+    /// 行内探针；文档末尾换行后，下一行片段顶 = 换行符所在行片段底。
+    /// 探不到时返回 nil，调用方回退 110 门限旧口径。
+    private func lineFragmentTop(for position: UITextPosition, caretX: CGFloat) -> CGFloat? {
+        let text = attributedText ?? NSAttributedString()
+        let offset = self.offset(from: beginningOfDocument, to: position)
+        guard offset >= 0 else { return nil }
+        let nsText = text.string as NSString
+        // 单字符选区矩形；附件字符不作探针（其矩形是图高、不是行片段）。
+        func selectionRect(ofCharAt index: Int) -> CGRect? {
+            guard index >= 0, index < text.length else { return nil }
+            if nsText.character(at: index) == 0xFFFC { return nil }
+            if text.attribute(.attachment, at: index, effectiveRange: nil) != nil { return nil }
+            guard let start = self.position(from: beginningOfDocument, offset: index),
+                  let end = self.position(from: beginningOfDocument, offset: index + 1),
+                  let range = self.textRange(from: start, to: end),
+                  let first = selectionRects(for: range).first,
+                  first.rect.height > 0 else { return nil }
+            return first.rect
+        }
+        let prevIsNewline = offset > 0 && offset - 1 < text.length && nsText.character(at: offset - 1) == 0x000A
+        let prevRect = offset > 0 ? selectionRect(ofCharAt: offset - 1) : nil
+        let nextRect = offset < text.length ? selectionRect(ofCharAt: offset) : nil
+        // 换行符属前一行，不作行内探针。
+        let prevTop = prevIsNewline ? nil : prevRect?.origin.y
+        let nextTop = nextRect?.origin.y
+        if let prevTop = prevTop, let nextTop = nextTop {
+            if abs(prevTop - nextTop) < 0.5 { return prevTop }
+            return caretX <= textContainerInset.left + 2 ? nextTop : prevTop
+        }
+        if let prevTop = prevTop { return prevTop }
+        if let nextTop = nextTop { return nextTop }
+        if prevIsNewline, let prevRect = prevRect { return prevRect.origin.y + prevRect.height }
+        return nil
     }
 }
 
