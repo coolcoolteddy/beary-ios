@@ -285,13 +285,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         loadMoreRetryButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
         loadMoreRetryWrap.addArrangedSubview(loadMoreRetryButton)
 
-        // W7：401 登录空态（与时间线“先登录 + 去登录”同口径）。
+        // W7：401 登录空态（与时间线“请先登录 + 去登录”同口径）。
         loginWrap.axis = .vertical
         loginWrap.alignment = .center
         loginWrap.spacing = 12
         loginWrap.isHidden = true
         let loginTitleLabel = UILabel()
-        loginTitleLabel.text = "先登录"
+        loginTitleLabel.text = "请先登录"
         // 扫查组：此前裸 15pt，未登录空态标题不跟随大字号。
         loginTitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         loginTitleLabel.adjustsFontForContentSizeCategory = true

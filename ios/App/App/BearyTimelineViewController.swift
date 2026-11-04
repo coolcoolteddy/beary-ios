@@ -2073,7 +2073,7 @@ class BearyTimelineViewController: UIViewController {
     var onCompose: (() -> Void)?
     /// 当日/全部列表行点按，传整条 Entry（容器接线：打开详情）。
     var onOpenEntry: ((Entry) -> Void)?
-    /// 未登录：首拉 401 时调用一次（另附“先登录”空态内的“去登录”按钮可再次触发）。
+    /// 未登录：首拉 401 时调用一次（另附“请先登录”空态内的“去登录”按钮可再次触发）。
     var onRequireLogin: (() -> Void)?
     /// TL-3 私密行编辑/删除/引用卡点按（容器接线，未接线时点按无动作）：
     /// 编辑 → 打开编辑器；删除 → 先按网页 confirmDelete 文案弹确认再删；
@@ -5817,7 +5817,7 @@ class BearyTimelineViewController: UIViewController {
             }
         } else if timelineState == .failed && timelineEntries.isEmpty && !hasRows {
             if isLoginEmpty {
-                tableView.backgroundView = emptyView(title: "先登录", subtitle: "时间线只放你自己的日记，登录后就能看", actionTitle: "去登录", action: { [weak self] in
+                tableView.backgroundView = emptyView(title: "请先登录", subtitle: "时间线只放你自己的日记，登录后就能看", actionTitle: "去登录", action: { [weak self] in
                     self?.onRequireLogin?()
                 }, iconName: "icon_calendar", kind: .login)
                 newBackgroundKind = "login"
