@@ -15,6 +15,10 @@ import UIKit
 // 浮动/分屏键盘不动 sheet（页内滚动 inset 已处理遮挡）。
 // 拖动：抓手区（sheet 顶 24pt）下滑跟手，超 80pt 或速度 > 600 关闭（BearySheetDrag
 // 同口径），否则 0.25s 弹回；动效只走 transform/opacity，减动效直显终值。
+// 进场：内容与 chrome（玻璃/抓手/遮罩）同一 animator 动画块 0.25s easeOut
+// 上滑（2026-11-04 改：此前 chrome 走 coordinator alongside、内容走 animator，
+// 两套曲线不同步、玻璃边与内容边错位，看着像从斜向“甩”上来）；退场同理
+// 同一 animator 块 0.25s easeIn 下滑；减动效直显终值。
 // transitioningDelegate 由登录页自身强持有（loginSheetDelegate），随页释放。
 
 enum BearyLoginSheet {
@@ -27,6 +31,11 @@ enum BearyLoginSheet {
         vc.loginSheetDelegate = delegate
         vc.transitioningDelegate = delegate
         vc.modalPresentationStyle = .custom
+        // 2026-11-04：进场前先算一次内容高，首帧不用 666 回退高、随后不再大跳变；
+        // 安全区此时未进窗口为 0，落窗后 viewDidLayoutSubviews 按真实安全区跟帧补齐。
+        vc.loadViewIfNeeded()
+        vc.view.setNeedsLayout()
+        vc.view.layoutIfNeeded()
         return vc
     }
 }
@@ -34,16 +43,22 @@ enum BearyLoginSheet {
 // MARK: - Transitioning delegate
 
 final class BearyLoginSheetTransitioningDelegate: NSObject, UIViewControllerTransitioningDelegate {
+    // 2026-11-04：animator 需驱动 chrome——presentationController 由 UIKit
+    // 先于 animator 建好（同一次呈现），弱持有转交，不另建、不强持。
+    private weak var sheetPresentationController: BearyLoginSheetPresentationController?
+
     func presentationController(forPresented presented: UIViewController, presenting: UIViewController?, source: UIViewController) -> UIPresentationController? {
-        BearyLoginSheetPresentationController(presentedViewController: presented, presenting: presenting)
+        let pc = BearyLoginSheetPresentationController(presentedViewController: presented, presenting: presenting)
+        sheetPresentationController = pc
+        return pc
     }
 
     func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
-        BearyLoginSheetAnimator(isPresenting: true)
+        BearyLoginSheetAnimator(isPresenting: true, presentationController: sheetPresentationController)
     }
 
     func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
-        BearyLoginSheetAnimator(isPresenting: false)
+        BearyLoginSheetAnimator(isPresenting: false, presentationController: sheetPresentationController)
     }
 }
 
@@ -151,27 +166,39 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
         dragStripView.backgroundColor = .clear
         dragStripView.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(dragPan(_:))))
         container.addSubview(dragStripView)
-        // chrome 与 presentedView 同过渡、同距下滑入（与滑入 animator 同 0.25s，
-        // 同 sheet 高位移，滑动全程 chrome 与内容不错位）。
+        // 2026-11-04：这里只摆初始态（屏外 + 遮罩透明），不另起 coordinator
+        // alongside 动画——此前 chrome 走 coordinator、内容走 animator，两套
+        // 曲线不同步、滑动全程玻璃边与内容边错位，看着像“甩”。动画呈现时
+        // chrome 由 animator 与内容同一动画块驱动（见 setChromePresented）；
+        // 非动画呈现（减动效等）无 animator，这里直接落终态。
         let offscreen = CGAffineTransform(translationX: 0, y: sheetFrame(for: container.bounds).height)
         shadowView.transform = offscreen
         glassView.transform = offscreen
         grabberView.transform = offscreen
         dragStripView.transform = offscreen
-        if let coordinator = presentedViewController.transitionCoordinator {
-            coordinator.animate(alongsideTransition: { _ in
-                self.scrimView.alpha = 1
-                self.shadowView.transform = .identity
-                self.glassView.transform = .identity
-                self.grabberView.transform = .identity
-                self.dragStripView.transform = .identity
-            }, completion: nil)
-        } else {
+        scrimView.alpha = 0
+        if presentedViewController.transitionCoordinator == nil {
+            setChromePresented(true)
+        }
+    }
+
+    /// chrome 进场/退场终态（只赋值、不自带动效，调用方须在动画块内调，
+    /// 否则 transform/alpha 直落终值无过渡）。
+    func setChromePresented(_ presented: Bool) {
+        if presented {
             scrimView.alpha = 1
             shadowView.transform = .identity
             glassView.transform = .identity
             grabberView.transform = .identity
             dragStripView.transform = .identity
+        } else {
+            guard let container = containerView else { return }
+            let offscreen = CGAffineTransform(translationX: 0, y: sheetFrame(for: container.bounds).height)
+            scrimView.alpha = 0
+            shadowView.transform = offscreen
+            glassView.transform = offscreen
+            grabberView.transform = offscreen
+            dragStripView.transform = offscreen
         }
     }
 
@@ -182,22 +209,10 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
     }
 
     override func dismissalTransitionWillBegin() {
-        guard let container = containerView else { return }
-        let offscreen = CGAffineTransform(translationX: 0, y: sheetFrame(for: container.bounds).height)
-        if let coordinator = presentedViewController.transitionCoordinator {
-            coordinator.animate(alongsideTransition: { _ in
-                self.scrimView.alpha = 0
-                self.shadowView.transform = offscreen
-                self.glassView.transform = offscreen
-                self.grabberView.transform = offscreen
-                self.dragStripView.transform = offscreen
-            }, completion: nil)
-        } else {
-            scrimView.alpha = 0
-            shadowView.transform = offscreen
-            glassView.transform = offscreen
-            grabberView.transform = offscreen
-            dragStripView.transform = offscreen
+        // 2026-11-04：动画退场时 chrome 由退场 animator 与内容同一动画块驱动，
+        // 这里不动；非动画退场无 animator，直接落终态。
+        if presentedViewController.transitionCoordinator == nil {
+            setChromePresented(false)
         }
     }
 
@@ -337,9 +352,14 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
 private final class BearyLoginSheetAnimator: NSObject, UIViewControllerAnimatedTransitioning {
 
     private let isPresenting: Bool
+    // 2026-11-04：chrome 与内容同一动画块——animator 块内同时驱动
+    // presentedView 与 chrome（同 0.25s、同 curveEaseOut/curveEaseIn），
+    // 不再由 coordinator alongside 另起一套曲线。
+    private weak var presentationController: BearyLoginSheetPresentationController?
 
-    init(isPresenting: Bool) {
+    init(isPresenting: Bool, presentationController: BearyLoginSheetPresentationController? = nil) {
         self.isPresenting = isPresenting
+        self.presentationController = presentationController
         super.init()
     }
 
@@ -362,11 +382,13 @@ private final class BearyLoginSheetAnimator: NSObject, UIViewControllerAnimatedT
             toView.transform = CGAffineTransform(translationX: 0, y: offset)
             if duration == 0 {
                 toView.transform = .identity
+                presentationController?.setChromePresented(true)
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
                 return
             }
             UIView.animate(withDuration: duration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
                 toView.transform = .identity
+                self.presentationController?.setChromePresented(true)
             }, completion: { _ in
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
             })
@@ -378,11 +400,13 @@ private final class BearyLoginSheetAnimator: NSObject, UIViewControllerAnimatedT
             let offset = fromView.bounds.height
             if duration == 0 {
                 fromView.transform = CGAffineTransform(translationX: 0, y: offset)
+                presentationController?.setChromePresented(false)
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
                 return
             }
             UIView.animate(withDuration: duration, delay: 0, options: [.curveEaseIn, .beginFromCurrentState], animations: {
                 fromView.transform = CGAffineTransform(translationX: 0, y: offset)
+                self.presentationController?.setChromePresented(false)
             }, completion: { _ in
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
             })
