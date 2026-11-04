@@ -62,6 +62,10 @@ private final class BlindBoxPoolRowView: UIView {
         // 纵向不动；横向改最小宽＋抗压 required，较长状态文案时胶囊随
         // 文案变宽（同行文案栈可换行让位），不再被截断。
         pillLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 2026-11-04：行是 .fill 分布，胶囊只设了抗压、没设贴紧，默认贴紧度
+        // 低于标题栈，多余宽度全灌进胶囊、随标题长度反比拉宽。贴紧拉满后
+        // 胶囊只取 max(48, 文案宽)，标题栈吃掉剩余宽度。
+        pillLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         checkView.translatesAutoresizingMaskIntoConstraints = false
         checkView.contentMode = .scaleAspectFit
