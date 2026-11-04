@@ -402,9 +402,87 @@ final class BearyBubbleMenuView: UIView {
 
     private let backgroundLayer = CAShapeLayer()
     private let stackView = UIStackView()
-    private var rowButtons: [(key: String, button: UIButton)] = []
+    private var rowViews: [(key: String, row: RowView)] = []
     private var selectedKey: String?
     private var stackConstraintsInstalled = false
+
+    /// 气泡行（普通 UIView，不用 UIButton）：UIButton 的 isSelected/各态
+    /// 标题色/背景渲染机器是选中行黑块的嫌疑源——#810 把背景与各态色
+    /// 显式钉死仍复现；改成视图行后，选中态只剩半粗体＋对勾，无任何
+    /// 系统态渲染可画出深色底。
+    private final class RowView: UIView {
+        let key: String
+        private let iconView = UIImageView()
+        private let titleLabel = UILabel()
+        var onTap: ((String) -> Void)?
+
+        init(key: String, title: String) {
+            self.key = key
+            super.init(frame: .zero)
+            backgroundColor = .clear
+            iconView.translatesAutoresizingMaskIntoConstraints = false
+            iconView.contentMode = .scaleAspectFit
+            iconView.tintColor = BearyColors.ink
+            titleLabel.translatesAutoresizingMaskIntoConstraints = false
+            titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+            titleLabel.adjustsFontForContentSizeCategory = true
+            titleLabel.textColor = BearyColors.ink
+            titleLabel.backgroundColor = .clear
+            titleLabel.text = title
+            let rowStack = UIStackView(arrangedSubviews: [iconView, titleLabel])
+            rowStack.translatesAutoresizingMaskIntoConstraints = false
+            rowStack.axis = .horizontal
+            rowStack.spacing = 8
+            rowStack.alignment = .center
+            addSubview(rowStack)
+            NSLayoutConstraint.activate([
+                iconView.widthAnchor.constraint(equalToConstant: 24),
+                iconView.heightAnchor.constraint(equalToConstant: 24),
+                rowStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+                rowStack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
+                rowStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ])
+            isAccessibilityElement = true
+            accessibilityLabel = title
+            let tap = UITapGestureRecognizer(target: self, action: #selector(didTap))
+            addGestureRecognizer(tap)
+        }
+
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        func setSelected(_ selected: Bool) {
+            titleLabel.font = BearyDynamicType.scaledFont(
+                for: selected ? UIFont.boldSystemFont(ofSize: 15) : UIFont.systemFont(ofSize: 15))
+            iconView.image = selected
+                ? BearyIconImages.image(named: "icon_check", pointSize: 24)
+                : BearyBubbleMenuView.clearPlaceholderImage(pointSize: 24)
+            accessibilityTraits = selected ? [.button, .selected] : [.button]
+        }
+
+        @objc private func didTap() {
+            onTap?(key)
+        }
+
+        // 按压反馈：轻震＋微缩，松手/取消回弹（UIButton 版按压反馈是
+        // UIControl 专属，视图行自带同款手感）。
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesBegan(touches, with: event)
+            BearyHaptics.press()
+            UIView.animate(withDuration: 0.12) { self.transform = CGAffineTransform(scaleX: 0.98, y: 0.98) }
+        }
+
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesEnded(touches, with: event)
+            UIView.animate(withDuration: 0.15) { self.transform = .identity }
+        }
+
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesCancelled(touches, with: event)
+            UIView.animate(withDuration: 0.15) { self.transform = .identity }
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -424,12 +502,12 @@ final class BearyBubbleMenuView: UIView {
     func configure(rows: [Row], selectedKey: String?, onSelect: ((String) -> Void)?) {
         self.onSelect = onSelect
         self.selectedKey = selectedKey
-        for (_, button) in rowButtons {
-            stackView.removeArrangedSubview(button)
-            button.removeFromSuperview()
+        for (_, row) in rowViews {
+            stackView.removeArrangedSubview(row)
+            row.removeFromSuperview()
         }
-        rowButtons.removeAll()
-        // 旧分隔线一并清掉（分隔线不是 rowButtons 成员，单独扫一遍）。
+        rowViews.removeAll()
+        // 旧分隔线一并清掉（分隔线不是行成员，单独扫一遍）。
         for arranged in stackView.arrangedSubviews {
             stackView.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
@@ -442,29 +520,12 @@ final class BearyBubbleMenuView: UIView {
                 separator.heightAnchor.constraint(equalToConstant: Self.separatorHeight).isActive = true
                 stackView.addArrangedSubview(separator)
             }
-            let button = BearyHit44Button(type: .system)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.setTitle(row.title, for: .normal)
-            button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
-            button.titleLabel?.adjustsFontForContentSizeCategory = true
-            button.setTitleColor(BearyColors.ink, for: .normal)
-            // 黑块加固：行背景与各态标题色显式钉死——选中行只剩半粗体＋对勾，
-            // 任何态都不得出现深色底；标题 label 背景亦显式透明。
-            button.backgroundColor = .clear
-            button.setTitleColor(BearyColors.ink, for: .selected)
-            button.setTitleColor(BearyColors.ink, for: .highlighted)
-            button.titleLabel?.backgroundColor = .clear
-            button.tintColor = BearyColors.ink
-            button.contentHorizontalAlignment = .left
-            button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
-            button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 0)
-            button.imageView?.contentMode = .scaleAspectFit
-            button.heightAnchor.constraint(equalToConstant: Self.rowHeight).isActive = true
-            button.addTarget(self, action: #selector(didTapRow(_:)), for: .touchUpInside)
-            button.bearyAddPressFeedback()
-            button.accessibilityLabel = row.title
-            stackView.addArrangedSubview(button)
-            rowButtons.append((key: row.key, button: button))
+            let rowView = RowView(key: row.key, title: row.title)
+            rowView.translatesAutoresizingMaskIntoConstraints = false
+            rowView.heightAnchor.constraint(equalToConstant: Self.rowHeight).isActive = true
+            rowView.onTap = { [weak self] key in self?.onSelect?(key) }
+            stackView.addArrangedSubview(rowView)
+            rowViews.append((key: row.key, row: rowView))
         }
         if !stackConstraintsInstalled {
             stackConstraintsInstalled = true
@@ -487,21 +548,12 @@ final class BearyBubbleMenuView: UIView {
     }
 
     private func refreshSelectedStates() {
-        for (key, button) in rowButtons {
-            let selected = (selectedKey != nil && key == selectedKey)
-            button.isSelected = selected
-            button.accessibilityTraits = selected ? [.button, .selected] : [.button]
-            button.titleLabel?.font = BearyDynamicType.scaledFont(
-                for: selected ? UIFont.boldSystemFont(ofSize: 15) : UIFont.systemFont(ofSize: 15))
-            if selected {
-                button.setImage(BearyIconImages.image(named: "icon_check", pointSize: 24), for: .normal)
-            } else {
-                button.setImage(Self.clearPlaceholderImage(pointSize: 24), for: .normal)
-            }
+        for (key, row) in rowViews {
+            row.setSelected(selectedKey != nil && key == selectedKey)
         }
     }
 
-    private static func clearPlaceholderImage(pointSize: CGFloat) -> UIImage {
+    fileprivate static func clearPlaceholderImage(pointSize: CGFloat) -> UIImage {
         let size = CGSize(width: pointSize, height: pointSize)
         let format = UIGraphicsImageRendererFormat()
         format.scale = UIScreen.main.scale
@@ -534,12 +586,5 @@ final class BearyBubbleMenuView: UIView {
 
     private func updateBackgroundColors() {
         backgroundLayer.fillColor = Self.bubbleBackgroundColor.resolvedColor(with: traitCollection).cgColor
-    }
-
-    @objc private func didTapRow(_ sender: UIButton) {
-        for (key, button) in rowButtons where button == sender {
-            onSelect?(key)
-            return
-        }
     }
 }
