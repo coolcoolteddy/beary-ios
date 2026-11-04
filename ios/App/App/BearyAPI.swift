@@ -1542,6 +1542,10 @@ final class BearyAPI {
         var fromMe: Bool? = nil
         var body: String?
         var createdAt: Int?
+        // 2026-11-04 乐观发送：仅本地待发行的临时键（UUID），服务端从不下发、
+        // 本地 store 从不保存（无 id 的行入库时即被跳过）；聊天页凭它认待发行、
+        // 失败态与重发，服务端行认领后即丢弃。Optional 带默认值，解码不受影响。
+        var localKey: String? = nil
     }
 
     struct DMHistoryResponse: Decodable {
