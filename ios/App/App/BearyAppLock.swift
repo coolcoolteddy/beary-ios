@@ -8,7 +8,8 @@ import LocalAuthentication
 // 一直停在锁屏，没有“跳过”按钮。锁屏与遮罩都是窗口级覆盖层，盖在一切内容
 // 之上（包括 veil、modal、游客页），锁屏本身只放官方 logo 与解锁提示，
 // 不含任何用户内容（无头像、无数字、无标题、无日记）。
-// 遮罩：独立于锁开关（锁关了遮罩照样生效）。切后台时立即显示、回到 active 时
+// 遮罩：独立于锁开关（锁关了遮罩照样生效），但另有独立开关（默认开；
+// 关了切后台不显示遮罩）。切后台时立即显示、回到 active 时
 // 无验证直接撤掉——只防切换器快照偷看，不改变“回前台不锁”的口径。
 // 开关默认关：用户在设置页“账号与安全”手动开启后，下一次冷启动才锁；
 // 开启/关闭操作本身都要先验一次生物识别（防已解锁手机被他人随手关掉）。
@@ -24,6 +25,18 @@ enum BearyAppLockSettings {
 
     static func setEnabled(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: defaultsKey)
+    }
+
+    // 隐私遮罩开关（2026-11-04 Li 定，独立于锁开关）：默认开；
+    // 关了切后台不再显示遮罩。只读走 UserDefaults，写走 setMaskEnabled。
+    static let maskDefaultsKey = "beary_privacy_mask_enabled"
+
+    static var isMaskEnabled: Bool {
+        UserDefaults.standard.object(forKey: maskDefaultsKey) as? Bool ?? true
+    }
+
+    static func setMaskEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: maskDefaultsKey)
     }
 
     /// 当前设备的生物识别名：面容识别 / 触控 ID / Optic ID；无生物识别时回落“生物识别”。
@@ -281,6 +294,8 @@ final class BearyAppLockManager {
     /// 触发点在 sceneWillResignActive（快照拍下之前的最早信号），
     /// sceneDidEnterBackground 再补一次（幂等），确保切换器快照里是遮罩。
     func installShield(on window: UIWindow) {
+        // 2026-11-04 隐私遮罩开关：关了不显示遮罩（默认开，保持现行行为）。
+        guard BearyAppLockSettings.isMaskEnabled else { return }
         if let existing = shieldOverlay {
             if existing.window === window {
                 window.bringSubviewToFront(existing)

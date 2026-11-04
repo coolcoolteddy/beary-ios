@@ -1124,6 +1124,27 @@ final class BearySettingsViewController: UIViewController {
         lockRow.axis = .horizontal
         lockRow.spacing = 12
         lockRow.alignment = .center
+        // 2026-11-04 隐私遮罩开关：独立于锁开关；默认开（保持现行行为），
+        // 关了切后台不再显示仅官方 logo 纯色遮罩。开关即时生效，无需验证。
+        let maskTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        maskTitle.text = "隐私遮罩"
+        maskTitle.numberOfLines = 0
+        let maskDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
+        maskDetail.text = "切换到其他应用时显示纯色遮罩，防止切换器看到日记内容"
+        let maskTextStack = UIStackView(arrangedSubviews: [maskTitle, maskDetail])
+        maskTextStack.axis = .vertical
+        maskTextStack.spacing = 2
+        maskTextStack.alignment = .fill
+        let maskSwitch = UISwitch()
+        maskSwitch.isOn = BearyAppLockSettings.isMaskEnabled
+        maskSwitch.setContentHuggingPriority(.required, for: .horizontal)
+        maskSwitch.setContentCompressionResistancePriority(.required, for: .horizontal)
+        maskSwitch.addTarget(self, action: #selector(maskSwitchValueChanged(_:)), for: .valueChanged)
+        let maskRow = UIStackView(arrangedSubviews: [makeRowIcon("icon_shield"), maskTextStack, maskSwitch])
+        maskRow.translatesAutoresizingMaskIntoConstraints = false
+        maskRow.axis = .horizontal
+        maskRow.spacing = 12
+        maskRow.alignment = .center
         // C2：导出我的数据归入账户与安全模块（原动作卡行，视觉与行为不动，
         // 仅换组；exportRowButton 的 isEnabled 仍由导出流程控制）。
         let exportTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
@@ -1165,6 +1186,7 @@ final class BearySettingsViewController: UIViewController {
             codeLoginRow,
             deviceRow,
             lockRow,
+            maskRow,
             logoutOthersButton,
             exportRowWrap,
         ])
@@ -3018,6 +3040,12 @@ final class BearySettingsViewController: UIViewController {
                 self.showToast("验证未通过，设置未更改")
             }
         }
+    }
+
+    /// 2026-11-04 隐私遮罩开关：独立于锁开关；只写档、即时生效，下一次
+    /// 切后台起按新值执行（已显示的遮罩不受影响，回前台时照常撤掉）。
+    @objc private func maskSwitchValueChanged(_ sender: UISwitch) {
+        BearyAppLockSettings.setMaskEnabled(sender.isOn)
     }
 
     /// D2：诊断日志开关——只存档；DiagFile 每次写入时实时读档，关后新写入即停
