@@ -6,7 +6,7 @@ import UIKit
 // 与封面行都用真的视图做实时预览，动画只在行可见时开、滚出视野关（与个人
 // 页 header 同款省电口径）。
 // 拥有口径：Plus 拥有全部非默认款（含六张封面）；非 Plus 行显「Plus 专属」
-// 锁定态、预览照常看，点按走个人页同款 Plus 提示、不应用；默认档人人可回；
+// 锁定态、预览照常看，点按进 Plus 页（入口③，取代旧的只弹提示做法）、不应用；默认档人人可回；
 // 当前档点按直接关闭。
 // 深色压暗与 header 同值（黑遮罩 0.35，封面行不压）；减动效沿用包内 freeze。
 
@@ -19,6 +19,8 @@ final class BearyDepthBackgroundViewController: UIViewController {
     private let onPickValue: (Theme) -> Bool
     /// 滚动中：willDisplay 不再重开动效，停稳后才由滚动结束回调统一评估。
     private var isScrollingPreviews = false
+    /// Plus 页的 EdgeDismiss 强持有（仅窄屏全屏路用，见 presentPlusPage）。
+    private var plusPageEdgeDismiss: BearyEdgeDismissController?
 
     private let themesValue: [Theme] = [.none, .halloween, .spring, .china, .usa, .japan, .germany, .canada, .korea]
 
@@ -208,10 +210,30 @@ extension BearyDepthBackgroundViewController: UITableViewDataSource, UITableView
             dismiss(animated: BearyMotion.animated(true), completion: nil)
             return
         }
+        // 锁定档点按进 Plus 页（入口③），本页停留；门控 toast 仍留 handleFestivalThemePicked 作兜底。
+        if theme != .none && !isPlusValue {
+            presentPlusPage()
+            return
+        }
         // 门控／加载失败时个人页已弹 toast，本页停留；应用成功才关闭回个人页看效果。
         if onPickValue(theme) {
             dismiss(animated: BearyMotion.animated(true), completion: nil)
         }
+    }
+
+    /// Plus 页入口③：锁定行点按进 Plus 页。呈现口径与本页同款（窄屏全屏＋左边缘
+    /// 右滑，宽屏默认呈现）；锁定行只在非 Plus 时出现，故此处恒为未开通态。
+    private func presentPlusPage() {
+        guard presentedViewController == nil else { return }
+        let page = BearyPlusPageViewController(isPlus: isPlusValue)
+        if traitCollection.horizontalSizeClass == .compact {
+            page.modalPresentationStyle = .fullScreen
+            let edgeDismiss = BearyEdgeDismissController()
+            edgeDismiss.attach(to: page)
+            page.transitioningDelegate = edgeDismiss
+            plusPageEdgeDismiss = edgeDismiss
+        }
+        present(page, animated: BearyMotion.animated(true))
     }
 }
 

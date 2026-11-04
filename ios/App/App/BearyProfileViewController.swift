@@ -206,6 +206,8 @@ class BearyProfileViewController: UIViewController {
     private var profileSubpageEdgeDismiss: BearyEdgeDismissController?
     /// 景深背景新页的 EdgeDismiss 强持有（仅窄屏全屏路用，见 presentDepthBackgroundPicker）。
     private var depthPickerEdgeDismiss: BearyEdgeDismissController?
+    /// Plus 页的 EdgeDismiss 强持有（仅窄屏全屏路用，见 presentPlusPage）。
+    private var plusPageEdgeDismiss: BearyEdgeDismissController?
 
     /// C2 保留（齿轮路径不再触发）：原齿轮菜单退出登录成功后调用，
     /// 容器接线到刷新登录态；退出入口现为设置页独立按钮。
@@ -2922,6 +2924,9 @@ class BearyProfileViewController: UIViewController {
         headerView.addSubview(nameLabel)
         headerView.addSubview(badgeImageView)
         headerView.addSubview(crownView)
+        // Plus 页入口①：名字旁皇冠点按进 Plus 页（本人页非 Plus 时皇冠为未点亮态仍可点，见 updateCrownDisplay）。
+        let crownTap = UITapGestureRecognizer(target: self, action: #selector(crownTapped))
+        crownView.addGestureRecognizer(crownTap)
         headerView.addSubview(handleLabel)
         headerView.addSubview(joinedIconView)
         headerView.addSubview(joinedLabel)
@@ -3885,9 +3890,8 @@ class BearyProfileViewController: UIViewController {
         // BETA 徽章已下线：用户名右边不再显示佩戴徽章，皇冠改贴名字（下方约束已按 badgeVisible=false 走）。
         badgeImageView.image = nil
         badgeImageView.isHidden = true
-        // 1:1 复刻（推翻清单 14）：皇冠按 profile.plus 显示，plus 数据已到位。
-        crownView.isHidden = !(profileValue.plus ?? false)
-        if crownView.isHidden { crownView.stop() } else { crownView.start() }
+        // 皇冠按 plus 显示（见 updateCrownDisplay：本人页非 Plus 时改显未点亮态、不再隐藏）。
+        updateCrownDisplay()
         // 无佩戴徽章时皇冠改贴名字，避免隐藏徽章占位造成的 39pt 空隙。
         let badgeVisible = badgeImageView.isHidden == false
         crownLeadingToBadgeConstraint?.isActive = badgeVisible
@@ -4282,9 +4286,8 @@ class BearyProfileViewController: UIViewController {
         let badgeVisible = badgeImageView.isHidden == false
         crownLeadingToBadgeConstraint?.isActive = badgeVisible
         crownLeadingToNameConstraint?.isActive = !badgeVisible
-        // 1:1 复刻：佩戴刷新时皇冠仍按 profile.plus 显示（不复活/不写死隐藏）。
-        crownView.isHidden = !(profileValue.plus ?? false)
-        if crownView.isHidden { crownView.stop() } else { crownView.start() }
+        // 佩戴刷新时皇冠仍按 plus 显示（见 updateCrownDisplay，不复活/不写死隐藏）。
+        updateCrownDisplay()
         updateNameTrailingLimit()
         layoutHeaderForced(widthValue: headerWidthValue)
     }
@@ -8513,6 +8516,47 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             self.depthPickerEdgeDismiss = depthPickerEdgeDismiss
         }
         present(picker, animated: BearyMotion.animated(true))
+    }
+
+    /// Plus 页入口①：皇冠显隐与点亮态。Plus 时点亮（播动＋全不透明）；
+    /// 本人页非 Plus 时不再隐藏，改显未点亮态（停播＋0.35 透明度、可点进 Plus 页）；
+    /// 他人页非 Plus 时仍隐藏（口径不变）。皇冠资产缺失（hasCrown=false）时一律
+    /// 隐藏、不留空位（BearyCrownView 既定契约）。
+    private func updateCrownDisplay() {
+        guard let profileValue = profile else { return }
+        let isPlus = profileValue.plus ?? false
+        if isPlus {
+            crownView.isHidden = !crownView.hasCrown
+            crownView.alpha = 1
+            if crownView.isHidden { crownView.stop() } else { crownView.start() }
+        } else if isOwnProfile {
+            crownView.isHidden = !crownView.hasCrown
+            crownView.alpha = crownView.isHidden ? 1 : 0.35
+            crownView.stop()
+        } else {
+            crownView.isHidden = true
+            crownView.alpha = 1
+            crownView.stop()
+        }
+    }
+
+    @objc private func crownTapped() {
+        presentPlusPage()
+    }
+
+    /// Plus 页入口①：个人页皇冠点按进 Plus 页。呈现口径与景深背景新页同款
+    /// （窄屏全屏＋左边缘右滑，宽屏默认呈现）；页内状态取当前 profile.plus。
+    private func presentPlusPage() {
+        guard presentedViewController == nil else { return }
+        let page = BearyPlusPageViewController(isPlus: profile?.plus == true)
+        if traitCollection.horizontalSizeClass == .compact {
+            page.modalPresentationStyle = .fullScreen
+            let edgeDismiss = BearyEdgeDismissController()
+            edgeDismiss.attach(to: page)
+            page.transitioningDelegate = edgeDismiss
+            plusPageEdgeDismiss = edgeDismiss
+        }
+        present(page, animated: BearyMotion.animated(true))
     }
 
     /// 景深背景应用。返回 true 仅表示已应用；Plus 门控或加载失败时 toast
