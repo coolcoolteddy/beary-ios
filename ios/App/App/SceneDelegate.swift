@@ -106,8 +106,6 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         // 遮罩回前台无验证直接撤掉（回前台不锁的口径不变）。
         BearyAppLockManager.shared.removeShield()
         (window?.rootViewController as? BearyChromeViewController)?.resumeSideMatrixAnimation()
-        // 审计 B 批：消息页未创建时回前台补一次角标轻量拉取（已创建则页内刷新已覆盖）。
-        (window?.rootViewController as? BearyChromeViewController)?.foregroundBadgeRefreshIfNotifAbsent()
         // fixall-sync 5-27 集成接线：被守卫挡下的同步在回前台时重跑（内部去重已覆盖已同步/在途）。
         BearyEntrySync.shared.kickForCurrentUser()
     }
@@ -233,7 +231,6 @@ final class BearyChromeViewController: UIViewController {
     private var fabPressedState = false
     private var loginButton: UIButton!
     private var giftButton: UIButton!
-    private var bellButton: UIButton!
     /// 顶栏 logo 钮（buildChrome 内建，veil 揭开时自身淡入）。
     private var topLogoButton: UIButton?
     /// 文字启动图 veil（v3 接线，取代旧熊图 veil）：系统 LaunchScreen.storyboard
@@ -263,7 +260,6 @@ final class BearyChromeViewController: UIViewController {
     private var launchVeilPlayTimeout: DispatchWorkItem?
     /// 107 修复：最后一道兜底（install 里建，仅 viewDidAppear 始终没来时清 veil）。
     private var launchVeilLastResort: DispatchWorkItem?
-    private var bellBadge: UILabel!
     /// 顶栏图标行（宽度相关间距：≤360 时 4、≤480 时 10，其余 18，见 layoutChromeOverlays）。
     private var topStackView: UIStackView?
     /// 好友第一期·首页切换钉顶栏（Li 2026-11-01 定）：广场 / 正在关注分段，
@@ -318,7 +314,6 @@ final class BearyChromeViewController: UIViewController {
         let centerX: NSLayoutConstraint
     }
     private var pageColumns: [ContainerPage: PageColumn] = [:]
-    private var unreadObserver: NSObjectProtocol?
     /// G27（S10 后）：门控取自 refreshMe 结果，不再单独拉取；refreshMe 失败时
     /// onUserChanged 不触发，旧 enabled 自然保留，不按关闭处理。
     /// 教程首次启动自动弹出（审计 N1 容器侧）：每进程只自动弹一次，
@@ -414,7 +409,7 @@ final class BearyChromeViewController: UIViewController {
     private var sideDecoRightWidth: NSLayoutConstraint?
     /// 上次建 matrix 时的容器尺寸（bounds 变化才重建，避免布局回调里反复建图）。
     private var sideDecoBuiltSize: CGSize?
-    /// 减动效变化观察者（A10）：减动效开关翻转时停/启 matrix 动画；与 unreadObserver 同口径持有。
+    /// 减动效变化观察者（A10）：减动效开关翻转时停/启 matrix 动画。
     private var reduceMotionObserver: NSObjectProtocol?
     /// 邀请弹窗模态的 transitioningDelegate（弱引用，必须强持有到 dismiss 完成；
     /// 宽屏居中与窄屏底 sheet 各持一个，互不覆盖持有）
@@ -467,7 +462,7 @@ final class BearyChromeViewController: UIViewController {
     /// I17 改（视觉清单第 10 项）：顶栏图标资产缺失回退——资产图优先，缺失时
     /// 用同语义官方资源（小写 icon_*），不再用 SF Symbol 顶替；两源皆空时返回 nil，
     /// 不生成、不绘制任何替代图标（按钮热区与无障碍文案仍在，图标位留空，见 PR 残留风险）。
-    /// 映射：IconSearch→icon_search、IconGift→icon_gift、IconBell→icon_bell、
+    /// 映射：IconSearch→icon_search、IconGift→icon_gift、
     /// IconHome→icon_home、IconUser→icon_user、IconPlus→icon_plus；
     /// IconTimeline 无小写同名资产，同语义取 icon_calendar（与旧 SF calendar 同义）。
     /// 开发环境下两源皆空记一行缺图告警（正式包无日志、无用户可见变化）。
@@ -583,13 +578,10 @@ final class BearyChromeViewController: UIViewController {
         let gift = makeTopIconButton(imageName: "IconGift", officialFallback: "icon_gift", tint: bearyOrange, action: #selector(didTapGift))
         gift.accessibilityLabel = "邀请"
         giftButton = gift
-        // 2026-10-26：头像钮由铃铛钮取代（Li 定：消息入口挪到首页顶栏右上角）；
-        // 铃铛走顶栏图标钮同款（IconBell 官方资产优先、icon_bell 回退），点按进消息页。
-        let bell = makeTopIconButton(imageName: "IconBell", officialFallback: "icon_bell", tint: ink, action: #selector(didTapBell))
-        bell.accessibilityLabel = "消息"
-        bellButton = bell
+        // 2026-11-03（Li 定）：首页顶栏铃铛已去除，消息入口只剩底栏消息段；
+        // 顶栏右钮剩登录／礼物／搜索三钮，trailing 锚不变、三钮自动右移贴右边缘。
         let spacer = UIView()
-        let topStack = UIStackView(arrangedSubviews: [logo, spacer, login, gift, search, bell])
+        let topStack = UIStackView(arrangedSubviews: [logo, spacer, login, gift, search])
         topStack.axis = .horizontal
         topStack.alignment = .center
         topStack.spacing = 18
@@ -716,19 +708,6 @@ final class BearyChromeViewController: UIViewController {
             seg.widthAnchor.constraint(equalToConstant: 288),
             seg.heightAnchor.constraint(equalToConstant: 58),
         ])
-        // 未读角标：挂在铃铛钮右上角，随顶栏藏显；
-        // 样式不变（高 17、10 粗体、蓝底白字、宽下限 17）；位置由 layoutBellBadge 跟铃铛钮走。
-        let badge = BearyBadgeLabel()
-        badge.font = .boldSystemFont(ofSize: 10)
-        badge.adjustsFontForContentSizeCategory = false
-        badge.textColor = .white
-        badge.backgroundColor = UIColor(red: 0.0, green: 102.0/255.0, blue: 204.0/255.0, alpha: 1) // 顶栏铃铛角标专用深蓝 #0066CC（白字 5.57:1）；不动共享 BearyColors.blue
-        badge.textAlignment = .center
-        badge.layer.cornerRadius = 8.5
-        badge.clipsToBounds = true
-        badge.isHidden = true
-        bellButton.addSubview(badge)
-        bellBadge = badge
         // ---- FAB：实色橙色圆钮，与网页 .fab 同尺寸同位置 ----
         // 三层结构：阴影载体在后（本体 clipsToBounds
         // 会裁自身阴影，故阴影另挂一层）、实色本体居中、按钮在最上只负责点击与图标。
@@ -819,29 +798,17 @@ final class BearyChromeViewController: UIViewController {
 
 
     /// 栏覆盖层布局（viewDidLayoutSubviews 与 updateTabSelection 后调用）：
-    /// 顶栏图标间距随屏宽走（≤360 时 4、≤480 时 10，其余 18）；铃铛角标跟铃铛钮走。
+    /// 顶栏图标间距随屏宽走（≤360 时 4、≤480 时 10，其余 18）。
     /// 旧自绘 pill 的/阴影/高光已随分段器改造删除，选中 pill 由系统自绘。
-    /// S9 窄屏档：320pt 宽时固定项 79（logo）+ 约 60（登录 pill）+ 3×40（礼物/搜索/铃铛）
-    /// + 两侧边距 32 = 约 291，5 档间距在 10 时共 50、合计约 341 超宽；≤360 时间距 4，
-    /// 合计约 311 不超宽（不隐藏任何按钮，顶栏高仍 60）。
+    /// S9 窄屏档：320pt 宽时固定项 79（logo）+ 约 60（登录 pill）+ 2×40（礼物/搜索）
+    /// + 两侧边距 32 = 约 251，4 档间距在 18 时共 72、合计约 323 微超；≤360 时间距 4，
+    /// 合计约 267 不超宽（不隐藏任何按钮，顶栏高仍 60）。
     private func layoutChromeOverlays() {
         if let stack = topStackView {
             let width = view.bounds.width
             let desired: CGFloat = width <= 360 ? 4 : (width <= 480 ? 10 : 18)
             if stack.spacing != desired { stack.spacing = desired }
         }
-        layoutBellBadge()
-    }
-
-    /// 铃铛角标定位：铃铛钮（40×40、图标 24 居中）右上角，沿用旧钮同款偏移口径
-    /// （图标右沿 +0.5、图标上沿 +3.5）；角标尺寸取 BearyBadgeLabel 自身口径（高 17、宽下限 17）。
-    /// 角标是铃铛钮的子视图，顶栏藏显自动带上它；每次布局都把它提至最前。
-    private func layoutBellBadge() {
-        guard let bell = bellButton, let badge = bellBadge,
-              bell.bounds.width > 0, bell.bounds.height > 0 else { return }
-        badge.frame = CGRect(origin: .zero, size: badge.intrinsicContentSize)
-        badge.center = CGPoint(x: bell.bounds.width - 7.5, y: 11.5)
-        bell.bringSubviewToFront(badge)
     }
 
     /// L3：挂页后把栏覆盖层一次提齐——页 view 在栏之后加入会盖住栏，
@@ -881,72 +848,6 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
-    /// 最近一次未读数（供角标开关即时重算：开关翻转时不再等下次轮询）。
-    private var lastUnreadCount = 0
-
-    /// 角标开关即时重算（设置页调用；不经过网络，直接按现存未读数重走显隐）。
-    func reapplyBellBadge() {
-        updateBellBadge(unread: lastUnreadCount)
-    }
-
-    /// M23 角标部分：出现时小缩放 + 淡入，消失时淡出 + 小缩放；已显示时只改数字不重播。
-    /// 减动效直设终值。
-    private func updateBellBadge(unread: Int) {
-        lastUnreadCount = unread
-        // 设置页消息角标开关（默认开，未存档按开处理）：关时按 0 走隐藏路径。
-        let effectiveUnread = (UserDefaults.standard.object(forKey: "beary_unread_badge_enabled") as? Bool ?? true) ? unread : 0
-        let text = effectiveUnread > 99 ? "99+" : "\(effectiveUnread)"
-        if effectiveUnread <= 0 {
-            if bellBadge.isHidden { return }
-            if UIAccessibility.isReduceMotionEnabled {
-                bellBadge.isHidden = true
-                bellBadge.alpha = 1
-                bellBadge.transform = .identity
-                return
-            }
-            UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState], animations: {
-                self.bellBadge.alpha = 0
-                self.bellBadge.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
-            }) { _ in
-                // A7：隐藏完成时若动画途中已有新未读，不再无条件藏起角标。
-                let effectiveUnread = (UserDefaults.standard.object(forKey: "beary_unread_badge_enabled") as? Bool ?? true) ? self.lastUnreadCount : 0
-                guard effectiveUnread <= 0 else { return }
-                self.bellBadge.isHidden = true
-                self.bellBadge.alpha = 1
-                self.bellBadge.transform = .identity
-            }
-        } else {
-            bellBadge.text = text
-            if bellBadge.isHidden {
-                bellBadge.isHidden = false
-                if UIAccessibility.isReduceMotionEnabled {
-                    bellBadge.alpha = 1
-                    bellBadge.transform = .identity
-                    return
-                }
-                bellBadge.alpha = 0
-                bellBadge.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
-                UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState], animations: {
-                    self.bellBadge.alpha = 1
-                    self.bellBadge.transform = .identity
-                })
-            } else if bellBadge.alpha < 1 || !bellBadge.transform.isIdentity {
-                // A7：在途隐藏动画未取消时，已显示的角标不能只改数字——把 alpha/transform
-                // 动画回可见态，否则隐藏动画跑完会把它留在透明态；隐藏完成回调已按最新未读数条件执行（见上）。
-                if UIAccessibility.isReduceMotionEnabled {
-                    bellBadge.alpha = 1
-                    bellBadge.transform = .identity
-                } else {
-                    UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState], animations: {
-                        self.bellBadge.alpha = 1
-                        self.bellBadge.transform = .identity
-                    })
-                }
-            }
-        }
-        layoutBellBadge()
-    }
-
     /// F5 回顶：我页/搜索页均无公开回顶方法（不编方法名），容器内 BFS 找页级滚动视图——
     /// 页级滚动视图（Profile 的 tableView、Search 的 scrollView）均为 view 的直接子视图，
     /// 嵌套的横向小滚动条在更深层，故 BFS 首个命中的即页级滚动视图。
@@ -978,34 +879,6 @@ final class BearyChromeViewController: UIViewController {
         return nil
     }
 
-    /// F8：容器启动且已登录时主动拉一次未读数（轻量接口 limit:1），
-    /// 以消息页同一机制发 BearyUnreadChanged（同名 + 同 payload 格式 ["unread": Int, "sysUnread": Int]），
-    /// 铃铛角标观察者复用，不另起角标通道；失败静默（消息页首拉时自会再拉）。
-    private func fetchInitialUnread() {
-        guard SessionManager.shared.isLoggedIn, !unreadFetchInFlight else { return }
-        unreadFetchInFlight = true
-        BearyAPI.shared.fetchNotifications(limit: 1) { [weak self] result in
-            DispatchQueue.main.async {
-                self?.unreadFetchInFlight = false
-                guard case .success(let list) = result else { return }
-                NotificationCenter.default.post(
-                    name: BearyNotificationsViewController.unreadChangedNotificationName,
-                    object: nil,
-                    userInfo: ["unread": list.unread ?? 0, "sysUnread": list.sysUnread ?? 0]
-                )
-            }
-        }
-    }
-
-    /// 审计 B 批：容器级回前台角标补刷——仅当消息页尚未创建时（已创建则页内
-    /// 60 秒轮询 + 回前台刷新已覆盖），做一次去重轻量拉取（在途跳过，见
-    /// fetchInitialUnread 的 unreadFetchInFlight），只补角标，不进列表。
-    /// 未登录时 fetchInitialUnread 自身守卫，不发请求。
-    private var unreadFetchInFlight = false
-    func foregroundBadgeRefreshIfNotifAbsent() {
-        guard notifVC == nil else { return }
-        fetchInitialUnread()
-    }
 
 
     override func viewDidLoad() {
@@ -1037,9 +910,7 @@ final class BearyChromeViewController: UIViewController {
         // 初始态：本地有有效会话 cookie 时首帧直接按缓存登录态出（登录钮藏），
         // 后台验出 401 才切游客态；无 cookie 时仍按游客首帧。旧口径“恒按未登录首帧”
         // 会让已登录用户每次重开都先见登录钮、几秒后才翻态，体感即“检测几秒是否登录”。
-        // 首帧直设显隐（不走 setTopButtonVisible 的 0.25s 淡入淡出）。铃铛钮常显。
-        bellButton.isHidden = false
-        bellButton.alpha = 1
+        // 首帧直设显隐（不走 setTopButtonVisible 的 0.25s 淡入淡出）。
         if SessionManager.shared.hasCachedSession {
             loginButton.isHidden = true
             loginButton.alpha = 0
@@ -1091,20 +962,16 @@ final class BearyChromeViewController: UIViewController {
             } else {
                 BearyEntrySync.shared.noteLoggedOut()
             }
-            // 首次同步只恢复态：礼物门控由 applyLoginState 从 refreshMe 结果复用，不再单独拉；启动未读照常拉，翻转刷新跳过（见 sessionFlipArmed 注释）。
+            // 首次同步只恢复态：礼物门控由 applyLoginState 从 refreshMe 结果复用，不再单独拉；翻转刷新跳过（见 sessionFlipArmed 注释）。
             if !self.sessionFlipArmed {
                 self.sessionFlipArmed = true
-                if user != nil {
-                    self.fetchInitialUnread()
-                }
                 return
             }
             if user != nil {
                 // 游客登录后恢复完整 chrome：FAB 在游客态由 setBarsVisible 藏起，
                 // 登录本身不切页，故在此显式恢复一次（按当前页重算，.me 等无 FAB 页仍为藏）。
                 setBarsVisible(true, animated: BearyMotion.animated(true))
-                // S10：礼物门控已由 applyLoginState 从 refreshMe 结果复用，此处不再单独拉；F8 启动/登录未读照常拉。
-                self.fetchInitialUnread()
+                // S10：礼物门控已由 applyLoginState 从 refreshMe 结果复用，此处不再单独拉。
                 // 账号隔离 2 号：我页按建造时账号钉死，账号变化时重建
                 //（不限当前页与 gated 态；重建后非我页保持隐藏，见 rebuildProfileVC）。
                 // G11 登录翻转刷新：gated 我页重建（新页自拉），其余已建页各走已存在的方法，
@@ -1191,11 +1058,6 @@ final class BearyChromeViewController: UIViewController {
         // 秒开-启动瘦身：启动期 /me 不在此处立即发——已改由 showPage 之前注册的
         // scheduleDeferredStartupMe 调度（首屏信号或 3 秒兜底，见下方两方法）。
         // 原审计 P1-7 的原因 toast 逻辑原样移到 fireStartupMeIfNeeded 的 completion 里。
-        // 未读角标：消息页发 BearyUnreadChanged，铃铛角标跟数走（0 隐藏；显隐走 M23 动画）。
-        unreadObserver = NotificationCenter.default.addObserver(forName: BearyNotificationsViewController.unreadChangedNotificationName, object: nil, queue: .main) { [weak self] note in
-            let unread = note.userInfo?["unread"] as? Int ?? 0
-            self?.updateBellBadge(unread: unread)
-        }
         // 文字启动图 veil（v3 接线）：viewDidLoad 挂画面（Lottie 未起播时停在第 0 帧，
         // 减动效则直接挂停留帧 53 静帧），viewDidAppear 起播 Lottie → 播完 veil 淡出＋
         // 主页首次揭开错峰；只播一次，modal 回落与热启动不重播。
@@ -1766,16 +1628,15 @@ final class BearyChromeViewController: UIViewController {
         layoutChromeOverlays()
     }
 
-    /// 登录态 → 顶栏：已登录显礼物钮、藏登录钮；未登录反之。铃铛钮常显（消息入口不依赖登录态，未登录点按由消息页引导登录）。
+    /// 登录态 → 顶栏：已登录显礼物钮、藏登录钮；未登录反之（消息入口只剩底栏消息段）。
     /// M21：显隐走 alpha 动画（setTopButtonVisible，减动效直设终值）。
     private func applyLoginState(_ user: MeUser?) {
         // 游客模式（只读）：顶栏只留登录（搜索是“看”的延伸，游客开放故保留；
-        // 铃铛/礼物隐藏，FAB 由 setBarsVisible 的游客分支隐藏）。
-        // 放 authUnknown 守卫之前：游客态不依赖 /me 结果，网络失败也不得把铃铛翻回来。
+        // 礼物隐藏，FAB 由 setBarsVisible 的游客分支隐藏）。
+        // 放 authUnknown 守卫之前：游客态不依赖 /me 结果。
         if SessionManager.shared.isGuestMode {
             setTopButtonVisible(loginButton, visible: true)
             setTopButtonVisible(giftButton, visible: false)
-            setTopButtonVisible(bellButton, visible: false)
             // 审计 P0-1：游客不承接任何账号的拉黑表（防上个账号的表漏到游客身份）。
             BearyBlockedStore.clear()
             return
@@ -1830,7 +1691,6 @@ final class BearyChromeViewController: UIViewController {
     // 顶栏入口：登录弹原生登录页，其余走 tab 页；不再有任何跳网页的调用。
     @objc private func didTapLogin() { presentLogin() }
     @objc private func didTapSearch() { showPage(.search) }
-    @objc private func didTapBell() { showPage(.notif) }
     @objc private func didTapGift() { presentInvite() }
     @objc private func didTapWrite() {
         // 临时诊断（81 包，定根因后删除）：FAB 点按入口。
@@ -2576,7 +2436,7 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// 好友第一期：底栏第四段常驻页（互关列表；容器页，非 modal）。行点按进
-    /// 对方主页走 presentUserProfile；顶栏会话钮进会话列表容器页。
+    /// 对方主页走 presentUserProfile；好友页顶栏会话钮已去除，私信只从消息页进。
     /// 游客/未登录不建页：showPage 的门控已先拦（游客 Sheet、未登录 toast+登录门），
     /// 本页 load() 的 onRequireLogin 是第二道门。
     private func ensureFriendsVC() -> BearyFriendsViewController {
@@ -2591,16 +2451,16 @@ final class BearyChromeViewController: UIViewController {
             }
         }
         vc.onBackToMessages = { [weak self] in self?.showPage(.messages) }
-        vc.onOpenConversations = { [weak self] in self?.showPage(.conversations) }
         addPageVC(vc, page: .friends)
         friendsVC = vc
         vc.applyHeaderTopInset(visible: headerVisible)
         return vc
     }
 
-    /// 消息页（Li 2026-11-03 定）：底栏“消息”段的根页——通知＋私信同页两组，
+    /// 消息页（Li 2026-11-03 定）：底栏“消息”段的根页——通知＋私信合成一列
+    /// （两组标题行已去，行仍按组排、组内时间倒序，跨组不按时间交错）；
     /// 各复用既有页实例（通知页／会话列表页的类），不另写逻辑；
-    /// 顶栏右钮进原好友列表页（只换入口，朋友页本身不动）。
+    /// 顶栏右钮进好友列表页（图标 icon_friends）。
     /// 游客/未登录不建页：showPage 的门控已先拦（游客登录门、未登录 toast+登录门），
     /// 本页 load() 的 onRequireLogin 是第二道门（两组子页各自接线）。
     private func ensureMessagesVC() -> BearyMessagesViewController {

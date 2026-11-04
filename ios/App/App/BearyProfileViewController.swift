@@ -1003,7 +1003,7 @@ class BearyProfileViewController: UIViewController {
     /// iCity：拉黑成功后容器接线（离页 + 刷新信息流）；容器未接线时本页清列表兜底。
     var onBlockedUser: ((Int) -> Void)?
 
-    /// 私信开放四档：他人主页私信钮点按，容器接线到聊天页（与 onOpenConversations 同款）。
+    /// 私信开放四档：他人主页私信钮点按，容器接线到聊天页。
     var onOpenDMChat: ((BearyAPI.FriendUser) -> Void)?
 
     // MARK: - 头像行动作：齿轮（仅本人）；头像行分享已按 1:1 去掉，modal 态走顶栏分享

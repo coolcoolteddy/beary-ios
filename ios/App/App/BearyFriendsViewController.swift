@@ -4,7 +4,7 @@ import UIKit
 //
 // 位置：底栏第四段（首页、时间线、我的之后）；他人页不展示对方的好友列表，
 // 本页只看自己的互关好友。段内两处分开，不混在一页：本页只列互关好友与取关，
-// 会话列表（互关私信）走顶栏按钮进独立页（容器接线 onOpenConversations）。
+// 会话列表不再从本页进：顶栏信封钮已去除，私信只从消息页的会话行进。
 // 关注流已归并到首页顶栏“广场 / 正在关注”切换处（Li 2026-11-01 定），
 // 好友段内不再另设关注流一处。
 // 行：头像、名字、@handle；点人进对方公开主页；取关走行内 ⋯ 菜单里的删除
@@ -18,8 +18,6 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     var onOpenUser: ((BearyAPI.FriendUser) -> Void)?
     /// 未登录时调用：容器接线到登录门。
     var onRequireLogin: (() -> Void)?
-    /// 顶栏“会话”钮点按：容器接线到会话列表页（互关私信独立页）。
-    var onOpenConversations: (() -> Void)?
     /// 返回钮点按：只在从消息页打开时显，容器接线回消息页。
     var onBackToMessages: (() -> Void)?
 
@@ -48,9 +46,6 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     private let refreshFailedRetryButton = UIButton(type: .system)
     private var tableViewTopToTopBarConstraint: NSLayoutConstraint?
     private var tableViewTopToBannerConstraint: NSLayoutConstraint?
-    private let dmUnreadBadge = UILabel()
-    private var dmUnreadGen = 0
-    private var dmUnreadLoading = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -77,32 +72,6 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         backButton.isHidden = true
         topBar.addSubview(backButton)
         self.backButton = backButton
-        // 段内分流入口（顶栏右钮，官方图标）：会话 icon_mail。
-        let dmButton = UIButton(type: .system)
-        dmButton.translatesAutoresizingMaskIntoConstraints = false
-        dmButton.setImage(BearyIconImages.image(named: "icon_mail", pointSize: 24), for: .normal)
-        dmButton.tintColor = BearyColors.ink
-        dmButton.accessibilityLabel = "打开私信会话"
-        dmButton.addTarget(self, action: #selector(dmTapped), for: .touchUpInside)
-        dmButton.bearyAddPressFeedback()
-        topBar.addSubview(dmButton)
-        // 审计低风险项：私信入口未读角标（蓝底白字，与会话行角标同口径；0 时隐藏）。
-        dmUnreadBadge.translatesAutoresizingMaskIntoConstraints = false
-        dmUnreadBadge.font = .boldSystemFont(ofSize: 10)
-        dmUnreadBadge.adjustsFontForContentSizeCategory = false
-        dmUnreadBadge.textColor = .white
-        dmUnreadBadge.backgroundColor = BearyColors.blue
-        dmUnreadBadge.textAlignment = .center
-        dmUnreadBadge.layer.cornerRadius = 8.5
-        dmUnreadBadge.clipsToBounds = true
-        dmUnreadBadge.isHidden = true
-        topBar.addSubview(dmUnreadBadge)
-        NSLayoutConstraint.activate([
-            dmUnreadBadge.topAnchor.constraint(equalTo: dmButton.topAnchor, constant: 2),
-            dmUnreadBadge.trailingAnchor.constraint(equalTo: dmButton.trailingAnchor, constant: -2),
-            dmUnreadBadge.heightAnchor.constraint(equalToConstant: 17),
-            dmUnreadBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 17),
-        ])
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.backgroundColor = BearyColors.bg
@@ -162,8 +131,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             // V5：顶栏高改“下限 44”（紧凑档数值不动）＋标题底距兜底 ≥7：
             // 默认字号下 14（顶距）＋标题高＋7 ≈ 44，视觉与旧固定 44 一致；
             // 系统字号放大、标题变高时顶栏随之伸展，不再把标题底边裁在 44 内。
-            // 横向护栏（标题右缘 ≤ 私信钮左缘 −8）不动。
-            // 第 7 轮属实项 2 同款：顶栏不再钉死 44，只定最小高度。
+            // 横向护栏：标题右缘 ≤ 顶栏右缘 −16（私信钮已去除）。
             topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             backButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             backButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
@@ -174,13 +142,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             titleLeading,
             titleLabel.topAnchor.constraint(equalTo: topBar.topAnchor, constant: 14),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -7),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: dmButton.leadingAnchor, constant: -8),
-            dmButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),
-            // 私信入口改跟顶栏实际行高中对齐：原先跟标题中心对齐，标题增高
-            // 后入口会偏上；顶栏撑高后仍居中于顶栏，44 高入口不越界。
-            dmButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            dmButton.widthAnchor.constraint(equalToConstant: 44),
-            dmButton.heightAnchor.constraint(equalToConstant: 44),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBar.trailingAnchor, constant: -16),
             refreshFailedBanner.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             refreshFailedBanner.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             refreshFailedBanner.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -264,43 +226,6 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         load()
     }
 
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        refreshDMUnreadBadge()
-    }
-
-    /// 私信入口未读角标：通知总未读含点赞等类型，不能直接当私信角标，
-    /// 故本页单独拉会话列表求和（与会话页 load 同口径的单次 GET）。
-    /// 切号时角标先清、在途回包凭代次丢弃，不写回新号。
-    func refreshDMUnreadBadge() {
-        guard SessionManager.shared.isLoggedIn else {
-            dmUnreadBadge.isHidden = true
-            return
-        }
-        guard !dmUnreadLoading else { return }
-        dmUnreadLoading = true
-        let gen = dmUnreadGen
-        BearyAPI.shared.fetchDMConversations { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.dmUnreadLoading = false
-                guard gen == self.dmUnreadGen else { return }
-                switch result {
-                case .success(let list):
-                    let total = list.resolvedConversations.reduce(0) { $0 + ($1.unreadCount ?? 0) }
-                    self.dmUnreadBadge.isHidden = total <= 0
-                    self.dmUnreadBadge.text = total > 99 ? "99+" : "\(total)"
-                case .failure:
-                    break // 角标失败静默：不拿旧数误导，也不弹 toast 打断好友页。
-                }
-            }
-        }
-    }
-
-    @objc private func dmTapped() {
-        onOpenConversations?()
-    }
-
     @objc private func refreshPulled() {
         load()
     }
@@ -319,9 +244,6 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     @objc private func userChanged() {
         // 账号切换：旧号列表不得残留。已登录重拉新号；已退出只清空、不弹登录门
         //（容器在退出翻转时自会处理页跳转，本页不抢弹）。
-        // 角标同步作废：清角标、在途会话未读回包凭代次丢弃。
-        dmUnreadGen += 1
-        dmUnreadBadge.isHidden = true
         if SessionManager.shared.isLoggedIn {
             friends = []
             loadFailed = false
