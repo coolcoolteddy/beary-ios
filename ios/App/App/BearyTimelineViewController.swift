@@ -1189,7 +1189,8 @@ final class BearyTimelineCell: UITableViewCell {
         cardStack.axis = .vertical
         cardStack.spacing = 0
         cardStack.setCustomSpacing(12, after: metaStack)
-        cardStack.setCustomSpacing(4, after: titleLabel)
+        // 标题→正文 6（2026-11-05 ChatGPT 间距跟进，与卡片/详情一致，#904 为 4）。
+        cardStack.setCustomSpacing(6, after: titleLabel)
         cardStack.setCustomSpacing(9, after: contentLabel)
         cardStack.setCustomSpacing(9, after: thumbsScrollView)
         cardStack.setCustomSpacing(10, after: quoteCard)
