@@ -3,9 +3,10 @@ import Photos
 
 // ===== BearyDiaryCardCell 共享日记卡片（B 批卡片合并）=====
 // 首页 BearyFeedCell 与个人主页 BearyProfileEntryCell 的合并体，两页共用一处
-// 实现。两页卡片骨架相同（头像 40 + 右列：写给行 / 标题行 / 正文 / 折叠 /
-// 图片条 216 / 引用卡 / 操作行 / 回应行 / 底线 2），但互动架构与若干视觉
-// 本就不同，合并时以 cardMode 区分，不擅自统一：
+// 实现。两页卡片骨架相同（2026-11-05 日记布局统一：头行独占一行——头像 40 +
+// 写给行 / 标题行；其下正文栈全宽——标题 / 正文 / 折叠 / 图片条 216 / 引用卡 /
+// 操作行 / 回应行 / 底线 2），但互动架构与若干视觉本就不同，合并时以 cardMode
+// 区分，不擅自统一：
 //  - 标题行对齐（Li 2026-10-27 定：两页统一 .firstBaseline，按文字基线对齐）。
 //  - 互动架构：feed 模式 cell 内直发 API（点赞/收藏/回应，成功失败路径
 //    就地同步）；profile 模式 cell 只转发回调（onLike/onBookmark/onEmoteTap
@@ -588,10 +589,15 @@ class BearyDiaryCardCell: UITableViewCell {
     /// configure 前置 true；其余行、首页模式一律不动；复用时复位。
     var suppressBottomSeparator = false
     private var separatorHeightConstraint: NSLayoutConstraint?
-    private var rightStackTopConstraint: NSLayoutConstraint?
+    private var headerStackTopConstraint: NSLayoutConstraint?
     private var avatarTopConstraint: NSLayoutConstraint?
-    /// 右列右缩进恒 −16；⋯ 留位走标题行末 titleMoreSpacer，不再按本人／他人改右缩进。
-    private var rightStackTrailingConstraint: NSLayoutConstraint?
+    /// 头行右缩进恒 −16；⋯ 留位走标题行末 titleMoreSpacer，不再按本人／他人改右缩进。
+    private var headerStackTrailingConstraint: NSLayoutConstraint?
+    /// 正文栈顶：取头像底与头行底两者较大者 + 间距（有标题 12、无标题 8）；
+    /// 两条 required ≥ 约束定下限，一条 999 的 = 约束把栈顶拉回头行底 + 间距。
+    private var bodyStackTopFromAvatarConstraint: NSLayoutConstraint?
+    private var bodyStackTopFromHeaderConstraint: NSLayoutConstraint?
+    private var bodyStackTopPinConstraint: NSLayoutConstraint?
     /// L21（91 包，个人主页模式）：本卡正文是否超过 300 字（折叠按钮是否适用），
     /// configure 时记下，供 setFoldDisplay 就地切换显示用，不再每次重算。
     private var foldApplies = false
@@ -649,7 +655,7 @@ class BearyDiaryCardCell: UITableViewCell {
         return bearyFeedRetryButton(target: self, action: #selector(feedRetryTapped(_:)))
     }()
 
-    // MARK: 右列
+    // MARK: 头行
 
     // 112 视觉扫查：@ 行图标用 icon_at（编辑器/草稿箱/消息页 @ 同款），不用 icon_mail 信封。
     private let recipientIconView: UIImageView = {
@@ -984,7 +990,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 2026-10-31 卡片 ⋯ 菜单钮（时间线风格）：官方 icon_more 横向三点 21pt 灰色、
     /// 28×28 帧（BearyHit44Button 扩后热区仍 44），挂 contentView 右上角、对齐标题行；
     /// 本人卡与他人公开卡均显（本人：编辑／修改权限／删除；他人：举报），其余藏。
-    /// 标题行末的 titleMoreSpacer（28 宽 + 8 间距）给 ⋯ 留位，右列右缩进恒 −16，
+    /// 标题行末的 titleMoreSpacer（28 宽 + 8 间距）给 ⋯ 留位，头行右缩进恒 −16，
     /// 操作行不再随本人／他人左移（旧小地球 −52 口径随本批废止）。
     private lazy var moreButton: UIButton = {
         let btn = BearyHit44Button(type: .custom)
@@ -1022,7 +1028,7 @@ class BearyDiaryCardCell: UITableViewCell {
         // 中心距 = 10.5+24+10.5 = 45，热区重叠 44-45 = -1，即两 44pt 热区
         // 之间留 1pt 间隙、严格不交（不用 23：23 只让两热区边缘相切，相切
         // 点仍同时属于两钮）。视觉尺寸不动：两钮仍 21×21，右组右沿仍钉
-        // 在右列右缘，增量 8pt 全部由收藏钮左移吸收，点赞钮不动（spacer
+        // 在行右缘，增量 8pt 全部由收藏钮左移吸收，点赞钮不动（spacer
         // 吸宽）；分享隐藏时同间距落在收藏—占位 spacer 之间，无热区影响。
         let actionSpacer = UIView()
         actionSpacer.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
@@ -1061,16 +1067,32 @@ class BearyDiaryCardCell: UITableViewCell {
         onRequireLogin?()
     }
 
-    private lazy var rightStack: BearyPassThroughStackView = {
+    /// 头行栈（2026-11-05 日记布局统一：头像 + 昵称行独占一行，标题/正文不再侵入）：
+    /// 只放置顶行、写给行、作者行、限时行；左缘贴头像右缘（间距 12），右缩进 16。
+    private lazy var headerStack: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [pinRow, recipientRow, titleStack, ephemeralRow])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .vertical
+        st.alignment = .fill
+        st.distribution = .fill
+        // 两栈共用 spacing 0 + 一张对照表（见 updateDiaryStackSpacing）。
+        st.spacing = 0
+        return st
+    }()
+
+    /// 正文栈（2026-11-05 日记布局统一）：标题、折叠正文、图片条、引用卡、
+    /// 位置行、操作行、游客提示条、回应行一律全宽——左缘与内容左缘齐平（16），
+    /// 不再缩进到昵称位置；顶缘取头像底与头行底较大者 + 间距（见 setupConstraints）。
+    private lazy var bodyStack: BearyPassThroughStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = BearyPassThroughStackView(arrangedSubviews: [pinRow, recipientRow, titleStack, ephemeralRow, entryTitleLabel, contentLabel, foldButton, imagesScrollView, quoteView, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
+        let st = BearyPassThroughStackView(arrangedSubviews: [entryTitleLabel, contentLabel, foldButton, imagesScrollView, quoteView, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
         // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
         st.passThroughRoot = emoteFlowView
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.alignment = .fill
         st.distribution = .fill
-        // fixall-cell 2-2：两模式共用 spacing 0 + 一张对照表（见 updateRightStackSpacing），
+        // fixall-cell 2-2：两模式共用 spacing 0 + 一张对照表（见 updateDiaryStackSpacing），
         // 不再靠个人页的基底 spacing 10 补 quote/images/action 三处空缺。
         st.spacing = 0
         return st
@@ -1083,7 +1105,7 @@ class BearyDiaryCardCell: UITableViewCell {
         return v
     }()
 
-    /// 限时倒计时行（右列作者行下方、标题上方；仅存活期显示，灰字 12pt）。
+    /// 限时倒计时行（头行作者行下方、正文栈标题上方；仅存活期显示，灰字 12pt）。
     private let ephemeralLabel: UILabel = {
         let l = UILabel()
         l.translatesAutoresizingMaskIntoConstraints = false
@@ -1144,7 +1166,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private var imageHeightConstraint: NSLayoutConstraint?
     private var separatorTopGap: CGFloat {
-        // 底线距右列：首页 12（右列底 -14 减线高 2）、个人主页 14，各保各的。
+        // 底线距正文栈：首页 12（正文栈底 -14 减线高 2）、个人主页 14，各保各的。
         return cardMode == .feed ? 12 : 14
     }
 
@@ -1325,7 +1347,8 @@ class BearyDiaryCardCell: UITableViewCell {
         avatarContainer.addSubview(avatarImageView)
         avatarContainer.addSubview(avatarRetryButton)
         contentView.addSubview(avatarContainer)
-        contentView.addSubview(rightStack)
+        contentView.addSubview(headerStack)
+        contentView.addSubview(bodyStack)
         imagesScrollView.addSubview(imagesStack)
         contentView.addSubview(separatorView)
         // 限时虚线边框视图（插最底层、不挡内容；平时隐藏，不影响普通卡）。
@@ -1383,9 +1406,9 @@ class BearyDiaryCardCell: UITableViewCell {
         likeButtonWidthConstraint = likeWidth
         let emoteHeight = emoteFlowView.heightAnchor.constraint(equalToConstant: 0)
         emoteRowHeightConstraint = emoteHeight
-        let rightTop = rightStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14)
-        rightStackTopConstraint = rightTop
-        // 110：头像顶约束显式持有，首卡与右列同值跟移（见 updateRightStackSpacing）。
+        let headerTop = headerStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14)
+        headerStackTopConstraint = headerTop
+        // 110：头像顶约束显式持有，首卡与头行同值跟移（见 updateDiaryStackSpacing）。
         let avatarTop = avatarContainer.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14)
         avatarTopConstraint = avatarTop
         var extraConstraints: [NSLayoutConstraint] = []
@@ -1449,9 +1472,19 @@ class BearyDiaryCardCell: UITableViewCell {
         locationIconHeight.priority = UILayoutPriority(999)
         extraConstraints.append(locationIconWidth)
         extraConstraints.append(locationIconHeight)
-        if rightStackTrailingConstraint == nil {
-            rightStackTrailingConstraint = rightStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
+        if headerStackTrailingConstraint == nil {
+            headerStackTrailingConstraint = headerStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
         }
+        // 正文栈顶（2026-11-05 日记布局统一）：取头像底与头行底较大者 + 间距。
+        // 初始间距按无标题 8 取，configure 经 updateDiaryStackSpacing 按标题显隐重定；
+        // 两条 required ≥ 定下限，999 的 = 把栈顶拉回头行底 + 间距（头像更高时该条自动断开）。
+        let bodyTopFromAvatar = bodyStack.topAnchor.constraint(greaterThanOrEqualTo: avatarContainer.bottomAnchor, constant: 8)
+        bodyStackTopFromAvatarConstraint = bodyTopFromAvatar
+        let bodyTopFromHeader = bodyStack.topAnchor.constraint(greaterThanOrEqualTo: headerStack.bottomAnchor, constant: 8)
+        bodyStackTopFromHeaderConstraint = bodyTopFromHeader
+        let bodyTopPin = bodyStack.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 8)
+        bodyTopPin.priority = UILayoutPriority(999)
+        bodyStackTopPinConstraint = bodyTopPin
         if separatorHeightConstraint == nil {
             separatorHeightConstraint = separatorView.heightAnchor.constraint(equalToConstant: 2)
         }
@@ -1470,9 +1503,14 @@ class BearyDiaryCardCell: UITableViewCell {
             avatarRetryButton.centerYAnchor.constraint(equalTo: avatarContainer.centerYAnchor),
             avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
             avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
-            rightTop,
-            rightStack.leadingAnchor.constraint(equalTo: avatarContainer.trailingAnchor, constant: 12),
-            rightStackTrailingConstraint!,
+            headerTop,
+            headerStack.leadingAnchor.constraint(equalTo: avatarContainer.trailingAnchor, constant: 12),
+            headerStackTrailingConstraint!,
+            bodyStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            bodyStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            bodyTopFromAvatar,
+            bodyTopFromHeader,
+            bodyTopPin,
             imageHeight,
             emoteHeight,
             imagesStack.topAnchor.constraint(equalTo: imagesScrollView.contentLayoutGuide.topAnchor),
@@ -1480,7 +1518,7 @@ class BearyDiaryCardCell: UITableViewCell {
             imagesStack.leadingAnchor.constraint(equalTo: imagesScrollView.contentLayoutGuide.leadingAnchor),
             imagesStack.trailingAnchor.constraint(equalTo: imagesScrollView.contentLayoutGuide.trailingAnchor),
             imagesStack.heightAnchor.constraint(equalTo: imagesScrollView.frameLayoutGuide.heightAnchor),
-            separatorView.topAnchor.constraint(equalTo: rightStack.bottomAnchor, constant: separatorTopGap),
+            separatorView.topAnchor.constraint(equalTo: bodyStack.bottomAnchor, constant: separatorTopGap),
             separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             separatorHeightConstraint!,
@@ -1525,7 +1563,7 @@ class BearyDiaryCardCell: UITableViewCell {
             if overflow != foldOverflow {
                 foldOverflow = overflow
                 applyFoldVisibility(overflow: overflow)
-                updateRightStackSpacing()
+                updateDiaryStackSpacing()
             }
         }
     }
@@ -1693,7 +1731,7 @@ class BearyDiaryCardCell: UITableViewCell {
         likeButton.setTitle(nil, for: .normal)
         moreButton.isHidden = true
         titleMoreSpacer.isHidden = true
-        rightStackTrailingConstraint?.constant = -16
+        headerStackTrailingConstraint?.constant = -16
         // 游客详情复位：提示条默认藏、操作行与回应行默认显，防游客展开态
         // 串位到复用的下一张卡；下一次 configure 的游客分支会重新定显隐。
         guestLoginPromptButton.isHidden = true
@@ -1875,40 +1913,44 @@ class BearyDiaryCardCell: UITableViewCell {
     /// - 顶距：feed 22（写给行可见 23）/ profile 14，代码内无网页口径引文，
     ///   且 feed 顶距牵动已上线标题基线视觉，不擅自统一为 14；保留为唯一
     ///   模式差异，列入真机清单（两页同屏对比顶距）待视觉确认后再定。
-    private func updateRightStackSpacing() {
-        rightStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 22 : 23) : (profileFirstRow ? 30 : 14)
+    private func updateDiaryStackSpacing() {
+        headerStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 22 : 23) : (profileFirstRow ? 30 : 14)
         // 首卡虚线框顶 6→22（底边仍距 cell 底 6，不整体下移），tab 视觉底边
         // （首卡顶 +14）到框顶留 8pt；其余一律 6。
         ephemeralBorderTopConstraint?.constant = (cardMode == .profile && profileFirstRow) ? 22 : 6
-        // 110：头像顶与右列顶同值（个人页首卡 30、其余 14；首页恒 14）——
+        // 110：头像顶与头行顶同值（个人页首卡 30、其余 14；首页恒 14）——
         // 头像顶与作者行顶对齐，首卡限时框（顶 22）完整包住头像（30..70，
         // 框顶留 8pt）；框路径一字不动，不用框迁就错位头像。
         // 置顶时头像同步下移置顶行高（15）＋行间距（10）＝ 25，使头像仍与作者行对齐、
         // 置顶行落在卡片最上方（预览口径：标识在作者行之上）；未置顶时一字不动。
         let pinOffset: CGFloat = pinRow.isHidden ? 0 : 25
         avatarTopConstraint?.constant = (cardMode == .feed ? 14 : (profileFirstRow ? 30 : 14)) + pinOffset
-        rightStack.setCustomSpacing(10, after: pinRow)
-        rightStack.setCustomSpacing(4, after: recipientRow)
-        rightStack.setCustomSpacing(4, after: titleStack)
-        rightStack.setCustomSpacing(4, after: ephemeralRow)
-        // R4 App：作者行→标题 4、标题→正文 4，均与原作者行→正文 4 一致；
-        // 标题隐藏时其后间距置 0（无论 stack 按前一可见项还是按累计算间距，
-        // 作者行→正文均为上行 4，不留空行高度）。
-        rightStack.setCustomSpacing(entryTitleLabel.isHidden ? 0 : 4, after: entryTitleLabel)
-        rightStack.setCustomSpacing(foldButton.isHidden ? 10 : 6, after: contentLabel)
-        rightStack.setCustomSpacing(10, after: foldButton)
-        rightStack.setCustomSpacing(10, after: imagesScrollView)
-        rightStack.setCustomSpacing(10, after: quoteView)
+        headerStack.setCustomSpacing(10, after: pinRow)
+        headerStack.setCustomSpacing(4, after: recipientRow)
+        headerStack.setCustomSpacing(4, after: titleStack)
+        // 2026-11-05 日记布局统一：头行→正文栈间距不再走栈内 spacing，
+        // 改由正文栈顶三条约束定——有标题 12（标题与作者行拉开，不再像昵称第二排）、
+        // 无标题 8；限时行是头行末行，其后间距即该值。
+        let headerBodyGap: CGFloat = entryTitleLabel.isHidden ? 8 : 12
+        bodyStackTopFromAvatarConstraint?.constant = headerBodyGap
+        bodyStackTopFromHeaderConstraint?.constant = headerBodyGap
+        bodyStackTopPinConstraint?.constant = headerBodyGap
+        // 标题贴着正文走：标题→正文 4；标题隐藏时其后间距置 0，正文直接贴头行间距。
+        bodyStack.setCustomSpacing(entryTitleLabel.isHidden ? 0 : 4, after: entryTitleLabel)
+        bodyStack.setCustomSpacing(foldButton.isHidden ? 10 : 6, after: contentLabel)
+        bodyStack.setCustomSpacing(10, after: foldButton)
+        bodyStack.setCustomSpacing(10, after: imagesScrollView)
+        bodyStack.setCustomSpacing(10, after: quoteView)
         // 批 E：位置行→操作行 8；位置行隐藏时 stack 自动忽略该间距，不留空隙。
-        rightStack.setCustomSpacing(8, after: locationStack)
-        rightStack.setCustomSpacing(10, after: actionStack)
+        bodyStack.setCustomSpacing(8, after: locationStack)
+        bodyStack.setCustomSpacing(10, after: actionStack)
     }
 
-    /// 右列内容宽：头像左 16 + 40 + 间距 12 + 右 16，共 84（此前误写 92，
-    /// 回应行高初算偏窄、多 chip 时会多算一行，落位后行高回缩、滑动中抖动）。
-    private func rightColumnWidthEstimate() -> CGFloat {
+    /// 正文列内容宽：左右各 16，共 32（2026-11-05 日记布局统一后标题/正文/
+    /// 回应行一律全宽；旧右列宽屏宽 −84 已作废）。
+    private func bodyColumnWidthEstimate() -> CGFloat {
         let cellWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width
-        return max(0, cellWidth - 84)
+        return max(0, cellWidth - 32)
     }
 
     /// 批 E 卡片位置行刷新：文案与脱敏全走 BearyLocationDisplay.display（展示层实时判定，
@@ -2111,9 +2153,9 @@ class BearyDiaryCardCell: UITableViewCell {
         updateActionInteractivity()
         refreshMoreRow()
         refreshEphemeralState(entry: entry)
-        // 回应行：操作行下方、行上边距 10（见 updateRightStackSpacing）。
+        // 回应行：操作行下方、行上边距 10（见 updateDiaryStackSpacing）。
         renderEmotes()
-        updateRightStackSpacing()
+        updateDiaryStackSpacing()
     }
 
     // MARK: - configure（个人主页模式）
@@ -2225,7 +2267,7 @@ class BearyDiaryCardCell: UITableViewCell {
         emoteFlowView.isHidden = guestExpanded
         guestLoginPromptButton.isHidden = !guestExpanded
         refreshEphemeralState(entry: entry)
-        updateRightStackSpacing()
+        updateDiaryStackSpacing()
     }
 
     /// 皇冠显隐唯一入口：容器与皇冠同藏同显，容器留在栈内时不留 19pt 空位。
@@ -2395,7 +2437,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private func updateContentAndFold() {
         let fullText = currentEntry?.content ?? ""
         contentLabel.attributedText = bodyWithTrailingMood(fullText, fontSize: 16, moodKey: currentEntry?.mood)
-        let width = contentLabel.bounds.width > 0 ? contentLabel.bounds.width : rightColumnWidthEstimate()
+        let width = contentLabel.bounds.width > 0 ? contentLabel.bounds.width : bodyColumnWidthEstimate()
         let overflow = measuredFoldOverflow(contentWidth: width)
         foldOverflow = overflow
         applyFoldVisibility(overflow: overflow)
@@ -2447,7 +2489,7 @@ class BearyDiaryCardCell: UITableViewCell {
         UIView.transition(with: contentLabel, duration: 0.22, options: .transitionCrossDissolve, animations: {
             self.updateContentAndFold()
         })
-        updateRightStackSpacing()
+        updateDiaryStackSpacing()
         onNeedsFoldAnimation?()
     }
 
@@ -2526,7 +2568,7 @@ class BearyDiaryCardCell: UITableViewCell {
                             authorHandle: authorHandle,
                             quoteVisibility: quoteVisibility
                         )
-                        strongSelf.updateRightStackSpacing()
+                        strongSelf.updateDiaryStackSpacing()
                         strongSelf.onNeedsRowReload?()
                     }
                 }
@@ -2601,7 +2643,7 @@ class BearyDiaryCardCell: UITableViewCell {
                   waiter.quoteAwaitingId == quoteId,
                   let waiterEntry = waiter.currentEntry else { continue }
             waiter.configureQuoteFeed(for: waiterEntry)
-            waiter.updateRightStackSpacing()
+            waiter.updateDiaryStackSpacing()
             waiter.onNeedsRowReload?()
         }
     }
@@ -2720,7 +2762,7 @@ class BearyDiaryCardCell: UITableViewCell {
                         authorHandle: fetchedEntry.authorHandle,
                         quoteVisibility: fetchedEntry.visibility
                     )
-                    strongSelf.updateRightStackSpacing()
+                    strongSelf.updateDiaryStackSpacing()
                     strongSelf.onNeedsRowReload?()
                 case .failure:
                     BearyDiaryCardCell.quoteFailedIds.insert(quoteIdValue)
@@ -2734,7 +2776,7 @@ class BearyDiaryCardCell: UITableViewCell {
                     strongSelf.quoteTapLoadFailed = true
                     strongSelf.quoteView.showLoadFailed(message: "引用加载失败，重试")
                     strongSelf.quoteView.isHidden = false
-                    strongSelf.updateRightStackSpacing()
+                    strongSelf.updateDiaryStackSpacing()
                     strongSelf.onNeedsRowReload?()
                 }
             }
@@ -2943,7 +2985,7 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     /// 2026-10-31 卡片 ⋯ 显隐（时间线风格）：本人卡或他人公开卡显，其余藏；
-    /// 右列右缩进恒 −16，⋯ 留位走标题行末 titleMoreSpacer。
+    /// 头行右缩进恒 −16，⋯ 留位走标题行末 titleMoreSpacer。
     func refreshPublishRow() {
         refreshMoreRow()
     }
@@ -2982,7 +3024,7 @@ class BearyDiaryCardCell: UITableViewCell {
         let show = entry.isMine == true || BearyEphemeral.isEffectivelyPublic(entry)
         moreButton.isHidden = !show
         titleMoreSpacer.isHidden = !show
-        rightStackTrailingConstraint?.constant = -16
+        headerStackTrailingConstraint?.constant = -16
     }
 
     @objc private func moreTapped() {
@@ -3366,7 +3408,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     // MARK: - 回应行（网页 .emote-row 口径；两页统一流式换行）
 
-    /// 回应行高（首页模式）：flow 实测换行高；行宽取 flow 实测宽，落位前用右列宽估算。
+    /// 回应行高（首页模式）：flow 实测换行高；行宽取 flow 实测宽，落位前用正文列宽估算。
     /// fixall-cell 5-18（cell 侧）：行高约束只在变化超 0.5pt 时写（原判等保留并
     /// 收紧为 0.5pt 门限，与引用卡同款，防布局抖动反复写约束）。
     /// 注意：height(forWidth:) 与 BearyEmoteFlowView.layoutSubviews 的双份换行
@@ -3376,7 +3418,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 返回本轮是否改写了行高约束（调用方据此决定是否通知控制器重算行高）。
     @discardableResult
     private func updateEmoteRowHeight() -> Bool {
-        let width = emoteFlowView.bounds.width > 0 ? emoteFlowView.bounds.width : rightColumnWidthEstimate()
+        let width = emoteFlowView.bounds.width > 0 ? emoteFlowView.bounds.width : bodyColumnWidthEstimate()
         let height = emoteFlowView.height(forWidth: width)
         if let current = emoteRowHeightConstraint?.constant, abs(current - height) > 0.5 {
             emoteRowHeightConstraint?.constant = height

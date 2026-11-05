@@ -5,20 +5,22 @@
 // 版式骨架照搬首页日记卡片 BearyDiaryCardCell（mode=.feed），唯一有意偏离是
 // 标题放开换行（首页单行截断；详情是全文页）与正文全文不折叠（首页折叠钮不出现）。
 // 单层内容列（#213 保留）：宽 ≤820 时安全区宽−32（竖屏安全区横向 inset 为 0，393 宽即 361pt 不变），宽 ≥821 时 600 居中。
-// 列内：头像 40 + 间距 12 + 右列；@ 行（12 粗体橙 + 13 图标）在作者行上方；
-// 作者行（名 16.5 粗体、徽章 17、皇冠 19 带 drop-shadow、垫片吸宽、时间 13 灰、
-// 天气 15 灰、心情 13 灰 + 20 熊图，按文字基线对齐）；标题 16.5 粗体；正文 16/1.6；
+// 列内（2026-11-05 日记布局统一，与卡片同一套）：头像 40 + 间距 12 + 头行
+// （@ 行 12 粗体橙 + 13 图标在作者行上方；作者行名 16.5 粗体、徽章 17、皇冠 19
+// 带 drop-shadow、垫片吸宽、时间 13 灰、天气 15 灰、心情 13 灰 + 20 熊图，按文字
+// 基线对齐）；头行之下是全宽正文栈：标题 16.5 粗体（放开换行）→正文 16/1.6，
+// 标题与正文同左缘、同宽，左右与内容列齐平，不再缩进到昵称位置。
 // 引用卡（BearyQuoteCardView，viewer 实时判定）；横向 216 图片条（间距 8、圆角 12、
 // 宽按宽高比 0.55–2.22 倍高夹取、无尺寸默认 280、无图高 0）；操作行赞左 + 收藏分享右组
 // （无回应钮）；回应在下方流式 chip 行（BearyEmoteFlowView + 34 虚线 + 钮，
 // 仅熊脸 key 显示，服务端数据不动）；篇末一条 2pt 全宽线收尾（限时存活期藏线改虚线框）。
-// 本人卡右上角 21pt 灰色小地球（28 框、44 热区，对齐作者行；右列右缩进让出 28+8，
-// 以内容列为基准即 −36，等价于首页以整屏为基准的 −52，屏上几何一致）；
+// 本人卡右上角 21pt 灰色小地球（28 框、44 热区，对齐作者行；头行右缩进让出 28+8，
+// 以内容列为基准即 −36，等价于首页以整屏为基准的 −52，屏上几何一致；正文栈右缩进恒 0）；
 // 编辑／删除走长按系统上下文菜单（C6 同款，卡片内无 ⋯ 钮，关闭钮保留）。
-// 限时：1.5pt 虚线框圆角 16、左右内缩 8／顶 +6／底按右列底 +16 + 倒计时灰字行（作者行下方、标题上方）。
-// 纵向间距（右列内）：@→作者 4、作者→限时 4、限时→标题 4、标题→正文 4、
-// 正文→引用 10、引用→图片 10、图片→操作行 10、操作行→回应行 10、右列底→底线 12、
-// 底线下 24 留白；右列顶：无 @ 行 22、有 @ 行 23。
+// 限时：1.5pt 虚线框圆角 16、左右内缩 8／顶 +6／底按正文栈底 +16 + 倒计时灰字行（作者行下方、标题上方）。
+// 纵向间距（头行 + 正文栈）：@→作者 4、作者→限时 4、头行→正文栈 12（有标题）／8（无标题）、
+// 标题→正文 4、正文→引用 10、引用→图片 10、图片→操作行 10、操作行→回应行 10、
+// 正文栈底→底线 12、底线下 24 留白；头行顶：无 @ 行 22、有 @ 行 23。
 // 旧详情口径的差异（本批改掉）：心情／天气／@ 不再用 faint 底 chip 行（心情天气
 // 进作者行、@ 独占首行）；操作行不再左置四钮（回应钮删除、收藏去中文标签、
 // 分享非公开隐藏时留 21pt 槽位占位）；回应不再用“回应”标题 + “写回应…”实心钮；
@@ -34,7 +36,7 @@ import UIKit
 import Photos
 
 /// 详情限时虚线边框视图（116 详情框修）：自身按 bounds 重画虚线路径，
-/// 不再由控制器在布局时手动算矩形——右列高度落定（引用加载、回应行出现）
+/// 不再由控制器在布局时手动算矩形——正文栈高度落定（引用加载、回应行出现）
 /// 后 bounds 一变就重画，框底不再切穿“＋”回应钮。
 /// 口径不变：1.5pt、虚线 [4,3]、圆角 16、line 色；不拦截点按；深浅切换自刷描边色。
 final class BearyDetailDashedBorderView: UIView {
@@ -133,11 +135,20 @@ final class BearyDetailViewController: UIViewController {
 
     private let scrollView = UIScrollView()
     private let contentColumnView = UIView()
-    /// 批 B 右列：首页卡片 rightStack 同款（spacing 0 + setCustomSpacing 对照表，
-    /// 见 updateRightStackSpacing；顶距由 rightStackTopConstraint 动态定 22/23）。
-    private let rightStack = BearyPassThroughStackView()
-    private var rightStackTopConstraint: NSLayoutConstraint?
-    private var rightStackTrailingConstraint: NSLayoutConstraint?
+    /// 批 B 头行栈：首页卡片 headerStack 同款（spacing 0 + setCustomSpacing 对照表，
+    /// 见 updateDiaryStackSpacing；顶距由 headerStackTopConstraint 动态定 22/23）。
+    /// 只放 @ 行、作者行、限时行；标题/正文一律在下方的 bodyStack 全宽排布。
+    private let headerStack = UIStackView()
+    /// 批 B 正文栈：标题、正文、图片条、引用卡、位置行、操作行、游客提示条、
+    /// 回应行一律全宽（左右与内容列齐平），不再缩进到昵称位置。
+    private let bodyStack = BearyPassThroughStackView()
+    private var headerStackTopConstraint: NSLayoutConstraint?
+    private var headerStackTrailingConstraint: NSLayoutConstraint?
+    /// 正文栈顶：取头像底与头行底两者较大者 + 间距（有标题 12、无标题 8）；
+    /// 两条 required ≥ 约束定下限，一条 999 的 = 约束把栈顶拉回头行底 + 间距。
+    private var bodyStackTopFromAvatarConstraint: NSLayoutConstraint?
+    private var bodyStackTopFromHeaderConstraint: NSLayoutConstraint?
+    private var bodyStackTopPinConstraint: NSLayoutConstraint?
     private let separatorView = UIView()
     // 审计-编辑器详情：关闭钮视觉仍为 15pt 文字、高 52，宽按标题固有宽
     // （约 30pt）不足 44——改 Hit44 扩热区，视觉一字不动。
@@ -283,7 +294,7 @@ final class BearyDetailViewController: UIViewController {
         return st
     }()
     /// 右上角 ⋯ 钮：时间线 moreButton 同款（21pt 灰色、28 框、44 热区），
-    /// 不挂作者行内，挂 contentColumnView 右上角、对齐作者行；右列右缩进见
+    /// 不挂作者行内，挂 contentColumnView 右上角、对齐作者行；头行右缩进见
     /// refreshAuthorActions（⋯ 显时 −36、藏时 0，以内容列为基准）。
     private let moreButton = BearyHit44Button(type: .custom)
     private let bodyLabel = UILabel()
@@ -501,8 +512,8 @@ final class BearyDetailViewController: UIViewController {
     }()
 
     /// 限时详情虚线边框视图（116 详情框修，取代旧 CAShapeLayer 手动算矩形）：
-    /// 约束钉在内容列上（顶 +6、左右内缩 8、底按右列底 +16），
-    /// 自身 layoutSubviews 按 bounds 重画，右列高度落定后框底跟着走；
+    /// 约束钉在内容列上（顶 +6、左右内缩 8、底按正文栈底 +16），
+    /// 自身 layoutSubviews 按 bounds 重画，正文栈高度落定后框底跟着走；
     /// 插在 contentColumnView 最底层，不盖内容、不拦截点按；存活期底线藏、边框代之。
     private let ephemeralBorderView: BearyDetailDashedBorderView = {
         let v = BearyDetailDashedBorderView()
@@ -643,9 +654,9 @@ final class BearyDetailViewController: UIViewController {
             columnWideWidth?.isActive = wantWide
             columnWideCenterX?.isActive = wantWide
         }
-        // 批 B：回应行宽 = 右列宽（旧详情按整列宽算，右列窄 52pt 时会少算换行、
-        // 行高偏矮；现按 rightStack 实测宽算，与首页卡片同口径）。
-        let width = rightStack.bounds.width
+        // 批 B：回应行宽 = 正文栈宽（旧详情按整列宽算，右列窄 52pt 时会少算换行、
+        // 行高偏矮；现按 bodyStack 实测宽算，与首页卡片同口径）。
+        let width = bodyStack.bounds.width
         guard width > 0, width != lastFlowWidth else { return }
         lastFlowWidth = width
         emoteFlowHeight?.constant = emoteFlowView.height(forWidth: width)
@@ -677,14 +688,21 @@ final class BearyDetailViewController: UIViewController {
         contentColumnView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentColumnView)
 
-        rightStack.translatesAutoresizingMaskIntoConstraints = false
-        rightStack.axis = .vertical
-        rightStack.spacing = 0
-        rightStack.alignment = .fill
-        rightStack.distribution = .fill
+        headerStack.translatesAutoresizingMaskIntoConstraints = false
+        headerStack.axis = .vertical
+        headerStack.spacing = 0
+        headerStack.alignment = .fill
+        headerStack.distribution = .fill
+        contentColumnView.addSubview(headerStack)
+
+        bodyStack.translatesAutoresizingMaskIntoConstraints = false
+        bodyStack.axis = .vertical
+        bodyStack.spacing = 0
+        bodyStack.alignment = .fill
+        bodyStack.distribution = .fill
         // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
-        rightStack.passThroughRoot = emoteFlowView
-        contentColumnView.addSubview(rightStack)
+        bodyStack.passThroughRoot = emoteFlowView
+        contentColumnView.addSubview(bodyStack)
 
         separatorView.translatesAutoresizingMaskIntoConstraints = false
         separatorView.backgroundColor = BearyColors.line
@@ -710,13 +728,24 @@ final class BearyDetailViewController: UIViewController {
         // 一旦某一路异常即全崩，故改本地常量激活、彻底去掉强制解包，行为不变。
         let narrowLeading = columnNarrowLeading
         let narrowTrailing = columnNarrowTrailing
-        // 批 B：头像顶 14、右列顶 22（有 @ 行时 23，见 updateRightStackSpacing）；
-        // 右列右缩进：他人 0、本人 −36（让出小地球 28 + 间隙 8；以内容列为基准，
-        // 等价于首页以整屏为基准的 −52，屏上几何一致）。
-        let rightTop = rightStack.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 22)
-        let rightTrailing = rightStack.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor, constant: 0)
-        rightStackTopConstraint = rightTop
-        rightStackTrailingConstraint = rightTrailing
+        // 批 B：头像顶 14、头行顶 22（有 @ 行时 23，见 updateDiaryStackSpacing）；
+        // 头行右缩进：他人 0、本人 −36（让出小地球 28 + 间隙 8；以内容列为基准，
+        // 等价于首页以整屏为基准的 −52，屏上几何一致）；正文栈左右与内容列齐平、
+        // 右缩进恒 0（小地球只占头行高度，正文不让位）。
+        let headerTop = headerStack.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 22)
+        let headerTrailing = headerStack.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor, constant: 0)
+        headerStackTopConstraint = headerTop
+        headerStackTrailingConstraint = headerTrailing
+        // 正文栈顶（2026-11-05 日记布局统一）：取头像底与头行底较大者 + 间距。
+        // 初始间距按无标题 8 取，render 时经 updateDiaryStackSpacing 按标题显隐重定；
+        // 两条 required ≥ 定下限，999 的 = 把栈顶拉回头行底 + 间距（头像更高时该条自动断开）。
+        // 注意：贴头像底那条约束涉 avatarButton，须等 buildCardHeader() 里
+        // avatarButton 入层级后再激活（#106 同款无共同祖先崩溃），此处只建头行侧两条。
+        let bodyTopFromHeader = bodyStack.topAnchor.constraint(greaterThanOrEqualTo: headerStack.bottomAnchor, constant: 8)
+        bodyStackTopFromHeaderConstraint = bodyTopFromHeader
+        let bodyTopPin = bodyStack.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 8)
+        bodyTopPin.priority = UILayoutPriority(999)
+        bodyStackTopPinConstraint = bodyTopPin
         guard let narrowLeading = narrowLeading, let narrowTrailing = narrowTrailing else { return }
         NSLayoutConstraint.activate([
             closeButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
@@ -730,15 +759,19 @@ final class BearyDetailViewController: UIViewController {
             contentColumnView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
             narrowLeading,
             narrowTrailing,
-            rightTop,
+            headerTop,
             // 106 闪退根因（2026-10-31 .ips 实证）：本行原先在此激活，但
             // avatarButton 要到后面的 buildCardHeader() 才 addSubview 到
             // contentColumnView——激活时两端无共同祖先，NSLayoutConstraint
             // 直接抛 AutoLayout 异常 → SIGABRT，全入口进详情必崩。
             // 故本约束改到 buildCardHeader() 内、avatarButton 入层级后再激活，
-            // 几何（右列左缘 = 头像右缘 + 12）一字不变。
-            rightTrailing,
-            separatorView.topAnchor.constraint(equalTo: rightStack.bottomAnchor, constant: 12),
+            // 几何（头行左缘 = 头像右缘 + 12）一字不变。
+            headerTrailing,
+            bodyStack.leadingAnchor.constraint(equalTo: contentColumnView.leadingAnchor),
+            bodyStack.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor),
+            bodyTopFromHeader,
+            bodyTopPin,
+            separatorView.topAnchor.constraint(equalTo: bodyStack.bottomAnchor, constant: 12),
             separatorView.leadingAnchor.constraint(equalTo: contentColumnView.leadingAnchor),
             separatorView.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor),
             separatorView.heightAnchor.constraint(equalToConstant: 2),
@@ -758,7 +791,7 @@ final class BearyDetailViewController: UIViewController {
         // UIContextMenuInteraction；管理类操作一律走 ⋯，点赞／收藏／分享仍在操作行。
     }
 
-    /// 首页卡片头部同款：左列头像 40 + 右列（@ 行、作者行）；⋯ 钮不进作者行，
+    /// 首页卡片头部同款：左列头像 40 + 头行（@ 行、作者行）；⋯ 钮不进作者行，
     /// 挂内容列右上角、对齐作者行（见 buildLayout 末尾外的约束，此处一次设好）。
     private func buildCardHeader() {
         avatarImageView.translatesAutoresizingMaskIntoConstraints = false
@@ -791,18 +824,22 @@ final class BearyDetailViewController: UIViewController {
         avatarButton.addTarget(self, action: #selector(authorTapped), for: .touchUpInside)
         avatarButton.bearyAddPressFeedback()
 
-        // 106 闪退修复：右列左缘约束必须在此激活——此前它在 buildLayout()
+        // 106 闪退修复：头行左缘约束必须在此激活——此前它在 buildLayout()
         // 的大激活列表里、avatarButton 尚未入层级时就被激活，必抛异常。
         // avatarButton 已在上面 addSubview 到 contentColumnView，两端现已
         // 同属 contentColumnView 层级，激活安全；几何与旧值一致（+12）。
+        // 正文栈贴头像底那条 ≥ 约束同样涉 avatarButton，一并在此激活。
+        let bodyTopFromAvatar = bodyStack.topAnchor.constraint(greaterThanOrEqualTo: avatarButton.bottomAnchor, constant: 8)
+        bodyStackTopFromAvatarConstraint = bodyTopFromAvatar
         NSLayoutConstraint.activate([
-            rightStack.leadingAnchor.constraint(equalTo: avatarButton.trailingAnchor, constant: 12),
+            headerStack.leadingAnchor.constraint(equalTo: avatarButton.trailingAnchor, constant: 12),
+            bodyTopFromAvatar,
         ])
 
         // @ 行：有 mentionedName 才显（见 renderHeaderMeta），点按进被 @ 者主页。
         recipientRow.isUserInteractionEnabled = true
         recipientRow.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(mentionTapped)))
-        rightStack.addArrangedSubview(recipientRow)
+        headerStack.addArrangedSubview(recipientRow)
 
         // 118 闪退修复（.ips 实证）：作者行必须是懒初始化的 authorRow，
         // 它的 arrangedSubviews（nameButton、crownWrapView 等）只有在
@@ -812,7 +849,7 @@ final class BearyDetailViewController: UIViewController {
         // 异常 → SIGABRT，全入口进详情必崩（与 106 同类）。故 authorRow
         // 必须在此先入栈（顺序不变：仍在 recipientRow 之后、⋯ 钮之前），
         // 让两端先同属 authorRow 层级，再激活皇冠约束才安全。
-        rightStack.addArrangedSubview(authorRow)
+        headerStack.addArrangedSubview(authorRow)
 
         nameButton.titleLabel?.font = BearyDynamicType.cardTitleFont()
         nameButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -886,30 +923,30 @@ final class BearyDetailViewController: UIViewController {
     private func buildEphemeralRow() {
         // 限时倒计时行：只留倒计时灰字，位置在作者行下方、标题上方（与卡片同口径）；
         // 虚线边框视图挂 contentColumnView 最底层，约束钉住内容列矩形
-        // （顶 +6、左右内缩 8、底按右列底 +16），右列高度一变框就跟着变，
+        // （顶 +6、左右内缩 8、底按正文栈底 +16），正文栈高度一变框就跟着变，
         // 不再依赖布局时手动算矩形的旧时机（旧时机下回应行高度落定后框底
         // 仍停在旧位置，正好切穿“＋”回应钮）。
-        rightStack.addArrangedSubview(ephemeralRow)
+        headerStack.addArrangedSubview(ephemeralRow)
         contentColumnView.insertSubview(ephemeralBorderView, at: 0)
         NSLayoutConstraint.activate([
             ephemeralBorderView.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 6),
             ephemeralBorderView.leadingAnchor.constraint(equalTo: contentColumnView.leadingAnchor, constant: 8),
             ephemeralBorderView.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor, constant: -8),
-            ephemeralBorderView.bottomAnchor.constraint(equalTo: rightStack.bottomAnchor, constant: 16),
+            ephemeralBorderView.bottomAnchor.constraint(equalTo: bodyStack.bottomAnchor, constant: 16),
         ])
     }
 
     private func buildBody() {
-        rightStack.addArrangedSubview(titleLabel)
+        bodyStack.addArrangedSubview(titleLabel)
         bodyLabel.translatesAutoresizingMaskIntoConstraints = false
         bodyLabel.numberOfLines = 0
         bodyLabel.lineBreakMode = .byCharWrapping
         bodyLabel.textColor = BearyColors.ink
-        rightStack.addArrangedSubview(bodyLabel)
+        bodyStack.addArrangedSubview(bodyLabel)
     }
 
     private func buildImages() {
-        rightStack.addArrangedSubview(imagesScrollView)
+        bodyStack.addArrangedSubview(imagesScrollView)
         imagesScrollView.addSubview(imagesStack)
         let imageHeight = imagesScrollView.heightAnchor.constraint(equalToConstant: 0)
         imageHeightConstraint = imageHeight
@@ -970,12 +1007,12 @@ final class BearyDetailViewController: UIViewController {
         installImageStripPinch()
     }
 
-    /// 批 E 详情位置行（rebase 落点：新骨架右列 rightStack，引用卡之后、操作行之前；
-    /// 旧详情挂在 chips 行后、引用卡之前，批 B 已删 chips 行与旧 stackView，故改挂右列）：
+    /// 批 E 详情位置行（rebase 落点：新骨架正文栈 bodyStack，引用卡之后、操作行之前；
+    /// 旧详情挂在 chips 行后、引用卡之前，批 B 已删 chips 行与旧 stackView，故改挂正文栈）：
     /// 官方 icon_location 13 灰 + 位置文案，作者本人看自己公开篇时下方挂橙色提示；
     /// 无位置/他人视角无区级时整组隐藏，不留空行（与卡片同口径）。
     private func buildLocation() {
-        rightStack.addArrangedSubview(detailLocationStack)
+        bodyStack.addArrangedSubview(detailLocationStack)
         NSLayoutConstraint.activate([
             detailLocationIconView.widthAnchor.constraint(equalToConstant: 13),
             detailLocationIconView.heightAnchor.constraint(equalToConstant: 13),
@@ -987,7 +1024,7 @@ final class BearyDetailViewController: UIViewController {
         // 引用卡点按走共享卡 onTapped（卡片内手势 + 来源行按钮同一路，见 BearyQuoteCardView）；
         // gone/locked 不导航的守卫仍在 quoteTapped 内，不凭渲染快照放行。
         quoteView.onTapped = { [weak self] in self?.quoteTapped() }
-        rightStack.addArrangedSubview(quoteView)
+        bodyStack.addArrangedSubview(quoteView)
     }
 
     private func buildActionRow() {
@@ -1044,7 +1081,7 @@ final class BearyDetailViewController: UIViewController {
         actionStack.addArrangedSubview(bookmarkButton)
         actionStack.addArrangedSubview(shareButton)
         actionStack.addArrangedSubview(shareSlotSpacer)
-        rightStack.addArrangedSubview(actionStack)
+        bodyStack.addArrangedSubview(actionStack)
 
         // 游客提示条：与卡片游客展开态同文案，点按走登录提示；整行 44pt 可点。
         guestPromptButton.translatesAutoresizingMaskIntoConstraints = false
@@ -1058,43 +1095,52 @@ final class BearyDetailViewController: UIViewController {
         guestPromptButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
         guestPromptButton.addTarget(self, action: #selector(guestPromptTapped), for: .touchUpInside)
         guestPromptButton.bearyAddPressFeedback()
-        rightStack.addArrangedSubview(guestPromptButton)
+        bodyStack.addArrangedSubview(guestPromptButton)
     }
 
     private func buildEmoteRow() {
         // 回应行：首页同款——操作行下方流式 chip 行 + 行末 34 虚线 + 钮，
         // 不再设“回应”标题行与“写回应…”实心钮；行高由 emoteFlowHeight 驱动。
         emoteFlowView.translatesAutoresizingMaskIntoConstraints = false
-        rightStack.addArrangedSubview(emoteFlowView)
+        bodyStack.addArrangedSubview(emoteFlowView)
         emoteFlowHeight = emoteFlowView.heightAnchor.constraint(equalToConstant: 0)
         emoteFlowHeight?.isActive = true
     }
 
-    /// 首页 updateRightStackSpacing 同款对照表（详情无折叠钮，故正文后恒取 10）：
-    /// @→作者 4、作者→限时 4、限时→标题 4、标题→正文 4（标题隐藏时 0，
-    /// 作者行→正文仍为上行 4）、正文→引用 10、引用→图片 10、图片→操作行 10、
-    /// 操作行→回应行 10；批 E 位置行插在引用卡与操作行之间，引用→位置 10、
-    /// 位置→操作行 10（无位置时整组隐藏、不留空行）；右列顶：无 @ 行 22、有 @ 行 23。
-    private func updateRightStackSpacing() {
-        rightStackTopConstraint?.constant = recipientRow.isHidden ? 22 : 23
-        rightStack.setCustomSpacing(4, after: recipientRow)
-        rightStack.setCustomSpacing(4, after: authorRow)
-        rightStack.setCustomSpacing(4, after: ephemeralRow)
-        rightStack.setCustomSpacing(titleLabel.isHidden ? 0 : 4, after: titleLabel)
-        rightStack.setCustomSpacing(10, after: bodyLabel)
-        rightStack.setCustomSpacing(10, after: quoteView)
-        rightStack.setCustomSpacing(10, after: imagesScrollView)
-        rightStack.setCustomSpacing(10, after: detailLocationStack)
-        rightStack.setCustomSpacing(10, after: actionStack)
-        rightStack.setCustomSpacing(10, after: guestPromptButton)
+    /// 首页 updateDiaryStackSpacing 同款对照表（详情无折叠钮，故正文后恒取 10）：
+    /// @→作者 4、作者→限时 4；头行→正文栈 12（有标题）/ 8（无标题），由正文栈顶
+    /// 三条约束定（见 buildLayout／buildCardHeader）；标题→正文 4（标题隐藏时 0）、
+    /// 正文→引用 10、引用→图片 10、图片→操作行 10、操作行→回应行 10；批 E 位置行
+    /// 插在引用卡与操作行之间，引用→位置 10、位置→操作行 10（无位置时整组隐藏、
+    /// 不留空行）；头行顶：无 @ 行 22、有 @ 行 23。
+    private func updateDiaryStackSpacing() {
+        headerStackTopConstraint?.constant = recipientRow.isHidden ? 22 : 23
+        headerStack.setCustomSpacing(4, after: recipientRow)
+        headerStack.setCustomSpacing(4, after: authorRow)
+        // 2026-11-05 日记布局统一：头行→正文栈间距不再走栈内 spacing，
+        // 改由正文栈顶三条约束定——有标题 12（标题与作者行拉开，不再像昵称第二排）、
+        // 无标题 8；限时行是头行末行，其后间距即该值。
+        let headerBodyGap: CGFloat = titleLabel.isHidden ? 8 : 12
+        bodyStackTopFromAvatarConstraint?.constant = headerBodyGap
+        bodyStackTopFromHeaderConstraint?.constant = headerBodyGap
+        bodyStackTopPinConstraint?.constant = headerBodyGap
+        // 标题贴着正文走：标题→正文 4；标题隐藏时其后间距置 0，正文直接贴头行间距。
+        bodyStack.setCustomSpacing(titleLabel.isHidden ? 0 : 4, after: titleLabel)
+        bodyStack.setCustomSpacing(10, after: bodyLabel)
+        bodyStack.setCustomSpacing(10, after: quoteView)
+        bodyStack.setCustomSpacing(10, after: imagesScrollView)
+        bodyStack.setCustomSpacing(10, after: detailLocationStack)
+        bodyStack.setCustomSpacing(10, after: actionStack)
+        bodyStack.setCustomSpacing(10, after: guestPromptButton)
     }
 
-    /// 内容区（头像 + 右列 + 小地球 + 底线）整体显隐：占位／失败态整藏，
-    /// 恢复时小地球显隐与右列缩进由 refreshAuthorActions、底线显隐由
+    /// 内容区（头像 + 头行 + 正文栈 + 小地球 + 底线）整体显隐：占位／失败态整藏，
+    /// 恢复时小地球显隐与头行缩进由 refreshAuthorActions、底线显隐由
     /// refreshEphemeralViews 按限时态重算（不由本函数定）。
     private func setContentVisible(_ visible: Bool) {
         avatarButton.isHidden = !visible
-        rightStack.isHidden = !visible
+        headerStack.isHidden = !visible
+        bodyStack.isHidden = !visible
         if visible {
             refreshAuthorActions()
             refreshEphemeralViews()
@@ -1223,7 +1269,7 @@ final class BearyDetailViewController: UIViewController {
         renderQuote()
         refreshActionRow()
         renderEmotes()
-        updateRightStackSpacing()
+        updateDiaryStackSpacing()
     }
 
     /// 首页卡片头部渲染同款：头像（含首字母兜底）+ @ 行 + 名／徽章／皇冠／
@@ -1520,9 +1566,9 @@ final class BearyDetailViewController: UIViewController {
             refreshActionRow()
             renderQuote()
         }
-        // 标题／@ 行显隐变化时重算右列间距与顶距（标题隐藏时其后间距置 0、
+        // 标题／@ 行显隐变化时重算头行／正文栈间距与顶距（标题隐藏时其后间距置 0、
         // @ 行显隐改顶距 22/23），其余字段变化不影响间距。
-        updateRightStackSpacing()
+        updateDiaryStackSpacing()
         // 限时到期重排：回包可能带来新的 ephemeralUntil（或已过期），按新模型复核一次。
         if !applyEphemeralExpiryIfNeeded() {
             scheduleEphemeralExpiry()
@@ -1578,7 +1624,7 @@ final class BearyDetailViewController: UIViewController {
         guard !locallyHiddenByModeration else { return false }
         guard entry.placeholder != true else { return false }
         // 内容区藏起时（私密占位等）不动：占位文案不得被到期刷新改写。
-        guard !rightStack.isHidden else { return false }
+        guard !bodyStack.isHidden else { return false }
         guard entry.ephemeralUntil != nil, !BearyEphemeral.isLive(entry) else { return false }
         ephemeralExpiryTimer?.invalidate()
         ephemeralExpiryTimer = nil
@@ -1624,8 +1670,8 @@ final class BearyDetailViewController: UIViewController {
         separatorView.isHidden = live
     }
 
-    /// 作者行右侧显隐：本人卡显小地球、右列右缩进 −36 让位；他人／游客无地球、
-    /// 右列恢复 0。游客永非作者，到不了本人分支。
+    /// 作者行右侧显隐：本人卡显小地球、头行右缩进 −36 让位；他人／游客无地球、
+    /// 头行恢复 0。游客永非作者，到不了本人分支。
     /// 皇冠显隐唯一入口：容器与皇冠同藏同显，不留 19pt 空位。
     private func setCrownHidden(_ hidden: Bool) {
         crownWrapView.isHidden = hidden
@@ -1635,11 +1681,11 @@ final class BearyDetailViewController: UIViewController {
 
     private func refreshAuthorActions() {
         // 2026-10-31：⋯ 显隐——本人卡（编辑／修改权限／删除）或他人公开卡
-        // （举报／拉黑）显；游客与占位态（他人私密）无菜单项，藏；右列右缩进
+        // （举报／拉黑）显；游客与占位态（他人私密）无菜单项，藏；头行右缩进
         // −36 给 ⋯（28 框）留位，藏时恢复 0。
         let showMore = !isGuest && (isAuthor || BearyEphemeral.isEffectivelyPublic(entry))
         moreButton.isHidden = !showMore
-        rightStackTrailingConstraint?.constant = showMore ? -36 : 0
+        headerStackTrailingConstraint?.constant = showMore ? -36 : 0
     }
 
     /// 首页图片条同款（F5）：高 216、间距 8、圆角 12、槽底色 line、横向滚动、
@@ -1746,7 +1792,7 @@ final class BearyDetailViewController: UIViewController {
     }
 
     /// 批 E 详情位置行渲染：刷新点为 renderAll 与字段合并路径（批 B 已删 chips 行，
-    /// 位置行改挂右列，见 buildLocation），
+    /// 位置行改挂正文栈，见 buildLocation），
     /// 可见性翻转时位置行随 isPublic 变化同步变（公开→私密恢复精确，他人视角反之）。
     private func renderLocation() {
         guard let display = BearyLocationDisplay.display(entry: entry) else {
