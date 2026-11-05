@@ -9,9 +9,12 @@ import UIKit
 // 调用方（SceneDelegate）必须强持有本对象直到 dismiss 完成，否则手势中途失效。
 // 注意：只接全屏 modal。
 // 完成模式（onEdgeSwipeCompleted）：编辑器取消要先存草稿/清临时文件、不能由手势
-// 直接 dismiss，故本页不走交互式过渡——边缘滑过阈值后只调回调，由回调走原取消
-// 流程（发布在途只 toast、引用面板开着只退面板、其余走存草稿后关页）；没滑够则
-// 什么都不做。完成模式下视图不跟手滑走，这是为保草稿有意为之，不是手势失效。
+// 直接 dismiss，故本页不走交互式过渡。审计 M2（用户亲定改成 1:1 跟手）：
+// 开拖先过 shouldAllowCompletionSwipe 预检（发布在途／引用面板开着／已有弹层
+// 均不启动跟手）；允许时 .changed 按手指位移 1:1 更新视图 transform；松手滑过
+// 阈值后走 onEdgeSwipeCompleted 原取消流程（存草稿后关页）。取舍：草稿保存失败
+// 只能在松手走流程时才知道，预检拦不住——松手时取消被拒（拖动中途状态变了，
+// 或保存失败），视图滑回原位，不假装已离开。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningDelegate {
@@ -22,7 +25,16 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
 
     /// 完成模式回调：设置后本控制器不再驱动交互式过渡，只在边缘滑过阈值
     /// （35% 宽度或右滑速度 >800）时调一次回调，关闭由回调方自己的流程完成。
-    var onEdgeSwipeCompleted: (() -> Void)?
+    /// 返回值：true 表示退出已在进行（即将关页，或草稿保存已提交、关页随后发生）；
+    /// false 表示本次取消被拒（拖动中途状态变了），本控制器把跟手滑走的视图滑回原位。
+    var onEdgeSwipeCompleted: (() -> Bool)?
+
+    /// 完成模式开拖前的预检：返回 false 时不启动 1:1 跟手、不 dismiss，
+    /// 调用方自行处理（例如发布在途只 toast）。未设置时沿旧口径直接允许。
+    /// 判断发生在手势 .began，而不是滑完 .ended 后补确认——先拦截，视图才不会
+    /// 在拒绝时已滑走。注意：草稿保存失败只能在松手走原流程时才知道，预检拦不住，
+    /// 那条由 onEdgeSwipeCompleted 返回 false 后滑回兜底。
+    var shouldAllowCompletionSwipe: (() -> Bool)?
 
     /// 交互式退出开始前的统一判断：返回 false 时不启动交互式过渡、不 dismiss，
     /// 调用方自行处理（例如未保存时弹确认，确认后走正常 dismiss 路径）。
@@ -69,7 +81,14 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
                 return
             }
             if onEdgeSwipeCompleted != nil {
-                // 完成模式：不启动交互式过渡，只记下本次手势，阈值在 .ended 判。
+                // 完成模式：先过预检门控（发布在途／面板开着／已有弹层），被拒不启动
+                // 跟手；允许时只记下本次手势，.changed 按手指 1:1 更新 transform，
+                // 阈值在 .ended 判。
+                if let shouldAllowCompletion = shouldAllowCompletionSwipe, !shouldAllowCompletion() {
+                    completionMode = false
+                    interaction = nil
+                    return
+                }
                 completionMode = true
                 interaction = nil
                 return
@@ -78,10 +97,20 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
             interaction = UIPercentDrivenInteractiveTransition()
             presented.dismiss(animated: true)
         case .changed:
-            interaction?.update(progress)
+            if completionMode {
+                // 完成模式 1:1 跟手：视图随手指右移（只向右，不向左出屏）。
+                view.transform = CGAffineTransform(translationX: max(pan.translation(in: view).x, 0))
+            } else {
+                interaction?.update(progress)
+            }
         case .cancelled, .failed:
-            // U24：.failed 与 .cancelled 同处理——清理交互式过渡对象，不留悬空态。
-            interaction?.cancel()
+            // U24：.failed 与 .cancelled 同处理——清理交互式过渡对象，不留悬空态；
+            // 完成模式下视图滑回原位。
+            if completionMode {
+                resetCompletionFollow(view: view)
+            } else {
+                interaction?.cancel()
+            }
             interaction = nil
             completionMode = false
         case .ended:
@@ -91,18 +120,35 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
                 BearyHaptics.press()
                 if completionMode {
                     completionMode = false
-                    onEdgeSwipeCompleted?()
+                    // 松手确认退出仍走原保存流程；被拒（拖动中途状态变了）时滑回原位。
+                    let proceeding = onEdgeSwipeCompleted?() ?? false
+                    if !proceeding {
+                        resetCompletionFollow(view: view)
+                    }
                 } else {
                     interaction?.finish()
                 }
             } else {
-                interaction?.cancel()
+                if completionMode {
+                    resetCompletionFollow(view: view)
+                } else {
+                    interaction?.cancel()
+                }
             }
             interaction = nil
             completionMode = false
         default:
             break
         }
+    }
+
+    /// 完成模式跟手取消／被拒：视图滑回原位（0.25s easeOut，与进场同曲线；
+    /// 减动效时瞬时归位）。
+    private func resetCompletionFollow(view: UIView) {
+        guard view.transform != .identity else { return }
+        UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.25, delay: 0, options: .curveEaseOut, animations: {
+            view.transform = .identity
+        })
     }
 }
 

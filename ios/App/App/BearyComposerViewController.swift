@@ -6707,10 +6707,25 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 取消与发布
 
+    /// 边缘右滑开拖前的预检谓词（与 didTapCancel 的三道即时拒绝门控同口径，
+    /// 供 BearyEdgeDismiss 在手势 .began 调用）：发布/保存进行中、引用面板
+    /// 开着、已有弹层在上时都返回 false，此时手势不启动跟手。
+    /// 草稿保存失败只能在松手走原流程时才知道，预检拦不住——松手时被拒，
+    /// 视图滑回原位（见 didTapCancel 保存失败分支的 transform 复位）。
+    func canBeginEdgeCancel() -> Bool {
+        if isPublishing { return false }
+        if quotePanelOpen { return false }
+        if presentedViewController != nil { return false }
+        return true
+    }
+
     /// 供容器边缘手势调用：与取消钮同一流程（发布在途只 toast、引用面板
     /// 开着只退面板、其余存草稿/清临时文件后经 onCancelled 关页），不得另起
     /// 一条直接 dismiss 的关闭路径。
-    @objc func didTapCancel() {
+    /// 返回值：true 表示退出已在进行（即将关页，或草稿保存已提交、关页随后发生），
+    /// false 表示本次取消被拒，边缘手势应在 false 时把跟手滑走的视图滑回原位。
+    /// 审计 M2：三道即时拒绝门控另见 canBeginEdgeCancel（手势 .began 预检同口径）。
+    @objc func didTapCancel() -> Bool {
         // P1-7：发布/保存进行中时取消键不走取消流程，给进行中提示（与 didTapPublish
         // 首行 isPublishing 守卫同口径；真取消在途请求属结构改动，本批不做）。
         // quote-freeze：isPublishing 在“一并公开”点按瞬间即置（见
@@ -6720,15 +6735,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 只从本函数触发，故不存在另一条在途关闭路径。
         if isPublishing {
             showToast(message: isEditMode ? "保存中…" : "发布中…")
-            return
+            return false
         }
         // qp-mode 下取消键是“返回”，只退面板，不走整编取消流程（网页同款）。
         if quotePanelOpen {
             setQuotePanelOpen(false)
-            return
+            return false
         }
         // presented 守卫（选人器/裁剪/草稿箱同款）：已有弹层在上时不动作。
-        if presentedViewController != nil { return }
+        if presentedViewController != nil { return false }
         // B 修法：取消退场前先收起未收的弹出框（无动画，退场不带它滑）；到此已确定退出
         //（编辑态与新建态两分支随后都走 onCancelled），守卫分支（发布在途／面板态／已有弹层）已在上文返回。
         hideCallout(animated: false)
@@ -6737,7 +6752,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             commitPendingRemoval()
             deleteEditLocalFiles()
             onCancelled?()
-            return
+            return true
         }
         // 决议第 4 项 B：取消不再弹三选、无丢弃路径，直接关 + 静默存草稿。
         // 草稿规则不动：saveDraftNow 原样走分级保存、纯心情不保存的现有逻辑。
@@ -6768,6 +6783,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     shake.duration = 0.4
                     self.cancelButton.layer.add(shake, forKey: "bearyDenyShake")
                 }
+                // 审计 M2：保存失败留页——边缘跟手若已把视图滑出，滑回原位
+                //（0.25s easeOut，与 BearyEdgeDismiss 的复位同口径；减动效瞬时归位）。
+                if self.view.transform != .identity {
+                    UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.25, delay: 0, options: .curveEaseOut, animations: {
+                        self.view.transform = .identity
+                    })
+                }
                 self.showToast(message: result.hadPreviousSavedVersion
                     ? "草稿保存失败，本次修改没存上，旧版还在，再点一次关闭重试"
                     : "草稿保存失败，这篇草稿还没存上，再点一次关闭重试")
@@ -6778,6 +6800,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             self.onCancelled?()
         }
+        return true
     }
 
     @objc private func didTapPublish() {

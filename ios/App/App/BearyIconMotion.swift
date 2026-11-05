@@ -122,25 +122,30 @@ enum BearyIconMotion {
 
     /// 审计第 30 项：重新滑入的视觉恢复——与 pressDown 同款 0.95 缩放、
     /// 同时长同曲线，唯独不发触感。pressDown 复用本方法，视觉行为单点。
+    /// 审计 M1：两项动画选项补齐 .allowUserInteraction（回弹窗口内的下一按
+    /// 不被吞）与 .beginFromCurrentState（新按压从当前态起播，中断旧回弹）；
+    /// 缩放与时长仍是预览 v3 定版，不动。
     static func pressDownVisual(on button: UIButton) {
         let pressed = CGAffineTransform(scaleX: 0.95, y: 0.95)
         guard BearyMotion.animated(true) else {
             button.transform = pressed
             return
         }
-        UIView.animate(withDuration: 0.1, delay: 0, options: .curveEaseOut, animations: {
+        UIView.animate(withDuration: 0.1, delay: 0, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState], animations: {
             button.transform = pressed
         })
     }
 
     /// 松手弹簧回 1（预览 v3 定版）：1.03 → 0.99 → 1，0.32s，分段线性。
     /// 减动效关时瞬时回 1（普通按压）。
+    /// 审计 M1：同 pressDownVisual，补 .allowUserInteraction 与
+    /// .beginFromCurrentState——回弹中途再按不从模型值起跳、不吞下一按。
     static func pressUp(on button: UIButton) {
         guard BearyMotion.animated(true) else {
             button.transform = .identity
             return
         }
-        UIView.animateKeyframes(withDuration: 0.32, delay: 0, options: .calculationModeLinear, animations: {
+        UIView.animateKeyframes(withDuration: 0.32, delay: 0, options: [.calculationModeLinear, .allowUserInteraction, .beginFromCurrentState], animations: {
             UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.45) {
                 button.transform = CGAffineTransform(scaleX: 1.03, y: 1.03)
             }

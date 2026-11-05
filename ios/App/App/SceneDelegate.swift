@@ -3705,11 +3705,16 @@ final class BearyChromeViewController: UIViewController {
         // 全站返回手势补齐（完成模式，见 BearyEdgeDismiss）：编辑器取消不能由
         // 手势直接 dismiss——新建态要先存草稿、编辑态要先清临时文件，且发布在途
         // 只 toast、引用面板开着只退面板；故边缘滑过阈值后走 didTapCancel 原流程，
-        // 由它存草稿/清文件后再经 onCancelled 关页，视图不跟手滑走。
+        // 由它存草稿/清文件后再经 onCancelled 关页。审计 M2：开拖先过
+        // canBeginEdgeCancel 预检，允许时视图按手指 1:1 跟手；松手时取消被拒
+        // （拖动中途状态变了，或草稿保存失败），视图滑回原位。
         let composerEdgeDismiss = BearyEdgeDismissController()
         composerEdgeDismiss.attach(to: composer)
+        composerEdgeDismiss.shouldAllowCompletionSwipe = { [weak composer] in
+            composer?.canBeginEdgeCancel() ?? false
+        }
         composerEdgeDismiss.onEdgeSwipeCompleted = { [weak composer] in
-            composer?.didTapCancel()
+            composer?.didTapCancel() ?? false
         }
         composer.transitioningDelegate = composerEdgeDismiss
         self.composerEdgeDismiss = composerEdgeDismiss
