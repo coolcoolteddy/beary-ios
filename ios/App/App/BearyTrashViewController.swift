@@ -117,7 +117,14 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         title = "回收站"
         buildViews()
         buildConstraints()
+        // 第六轮 03：监听账号切换——切号时立即清空旧号回收站 UI，
+        // 在途旧号回包凭发起时捕获的账号 ID＋鉴权代次丢弃（见 isStaleTrashRequest）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleUserChanged), name: .bearyUserDidChange, object: nil)
         loadFirstPage()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -167,6 +174,42 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     /// 调用方重进本页时可手动刷新（首屏重置，不滚顶由调用方呈现方式保证）。
     func reloadTrash() {
         loadFirstPage()
+    }
+
+    /// 第六轮 03：账号切换时立即清空当前 UI、作废在途结果。
+    /// 旧号回收站行不得残留到新号眼前；在途旧号请求回包已由切号时
+    /// bump 的 authEpoch 代次丢弃（各加载回调的 isStaleTrashRequest 门）。
+    /// 切号时容器不关回收站 modal，故本页当场为新身份重拉；已退出登录
+    /// 时只显“请先登录”空态，不弹登录门（不替新身份做登录决定）。
+    /// 在途确认框（彻底删除）一并收掉：框内标识属于旧号，切号后确认
+    /// 会对着新号发旧号条目请求，宁可让用户重进再点。
+    @objc private func handleUserChanged() {
+        if presentedViewController != nil {
+            dismiss(animated: false, completion: nil)
+        }
+        trashDraggingRow = nil
+        trashItems = []
+        trashHasMore = false
+        trashFirstLoadFailed = false
+        trashLoginEmpty = false
+        trashLoadMoreFailed = false
+        trashLoading = false
+        trashLoadingMore = false
+        trashSilentRefreshing = false
+        trashBucketLoading = false
+        trashSilentRefreshStartSequence = nil
+        trashRemovedDuringSilentRefresh.removeAll()
+        trashSilentRefreshDeferred = false
+        moreSpinner.stopSpinning()
+        moreSpinner.isHidden = true
+        loadMoreRetryWrap.isHidden = true
+        updateListRowsIncrementally()
+        if SessionManager.shared.currentUser?.id != nil {
+            loadFirstPage()
+        } else {
+            trashLoginEmpty = true
+            renderStateViews()
+        }
     }
 
     // MARK: - 视图搭建
@@ -445,10 +488,18 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         trashLoginEmpty = false
         trashHasMore = false
         renderStateViews()
+        // 第六轮 03：在途切号门（恢复/彻底删除同款口径）：发起时捕获
+        // 账号 ID 与鉴权代际，回包先验身份再写 UI；失配即旧号回包，
+        // 连 401 登录门也不走，免得旧号 401 把新号界面踢向登录页。
+        let requestAccountId = SessionManager.shared.currentUser?.id
+        let requestAuthEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchTrash(before: nil, beforeId: nil) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.trashLoading = false
+                if self.isStaleTrashRequest(requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch) {
+                    return
+                }
                 switch result {
                 case .success(let list):
                     self.trashItems = list.items
@@ -500,13 +551,24 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // kick 时同款记法）；终态比对，期间有写盘即旧快照过期。
         trashSilentRefreshStartSequence = BearyTrashSyncStore.currentWriteSequence()
         trashRemovedDuringSilentRefresh.removeAll()
-        fetchTrashSilentPage(accountId: uid, before: nil, beforeId: nil, accumulated: [])
+        // 第六轮 03：鉴权代次随账号一路透传进分页回调（写盘用的
+        // accountId 只守磁盘桶，界面写 UI 另凭此代次守门）。
+        fetchTrashSilentPage(accountId: uid, requestAuthEpoch: BearyAPI.shared.authEpoch, before: nil, beforeId: nil, accumulated: [])
     }
 
-    private func fetchTrashSilentPage(accountId: Int, before: String?, beforeId: String?, accumulated: [TrashItem]) {
+    private func fetchTrashSilentPage(accountId: Int, requestAuthEpoch: Int, before: String?, beforeId: String?, accumulated: [TrashItem]) {
         BearyAPI.shared.fetchTrash(before: before, beforeId: beforeId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                // 第六轮 03：每页回包先验身份再处理——中途切号即停链，
+                // 不续翻、不写 UI、不弹 401 登录门；落盘那路本就用捕获的
+                // accountId 写对应桶，界面隔离不能靠分桶代替。
+                if self.isStaleTrashRequest(requestAccountId: accountId, requestAuthEpoch: requestAuthEpoch) {
+                    self.trashSilentRefreshing = false
+                    self.trashSilentRefreshStartSequence = nil
+                    self.trashRemovedDuringSilentRefresh.removeAll()
+                    return
+                }
                 switch result {
                 case .failure(let error):
                     self.trashSilentRefreshing = false
@@ -559,7 +621,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                             self.trashRemovedDuringSilentRefresh.removeAll()
                             return
                         }
-                        self.fetchTrashSilentPage(accountId: accountId, before: "\(lastDeletedAt)", beforeId: last.id, accumulated: all)
+                        self.fetchTrashSilentPage(accountId: accountId, requestAuthEpoch: requestAuthEpoch, before: "\(lastDeletedAt)", beforeId: last.id, accumulated: all)
                     }
                 }
             }
@@ -590,12 +652,19 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         trashLoadingMore = true
         moreSpinner.isHidden = false
         moreSpinner.startSpinning()
+        // 第六轮 03：在途切号门（首拉同款口径）：发起时捕获账号 ID 与
+        // 鉴权代际，回包先验身份再追加行；失配即旧号回包，旧页不进新号列表。
+        let requestAccountId = SessionManager.shared.currentUser?.id
+        let requestAuthEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchTrash(before: "\(lastDeletedAt)", beforeId: lastItem.entryIdentifier) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.trashLoadingMore = false
                 self.moreSpinner.stopSpinning()
                 self.moreSpinner.isHidden = true
+                if self.isStaleTrashRequest(requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch) {
+                    return
+                }
                 switch result {
                 case .success(let list):
                     var seenIdentifiers: Set<String> = []
