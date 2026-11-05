@@ -72,26 +72,37 @@ enum BearyEntrySyncStore {
         return true
     }
 
-    /// 按北京日分组（createdAt 缺失的条目无法归日，跳过——服务端恒下发 created_at）。
-    /// 组内按服务端序重排：created_at DESC, id DESC。
-    static func groupByDay(_ entries: [Entry]) -> [String: [Entry]] {
+    /// 按北京日分组的结果。skippedCount = 无法归日的条目数（缺 createdAt、
+    /// 缺 id、或时间戳算不出北京日）——第四轮增量 04：有跳过即数据异常，
+    /// 编排层据此终止带删除行为的收尾（不重写精确集合、不清旧日文件、
+    /// 不记已同步），只保留已落盘的有效页。
+    struct GroupedDays {
         var grouped: [String: [Entry]] = [:]
+        var skippedCount: Int = 0
+    }
+
+    /// 按北京日分组（无法归日的条目跳过并计数，不静默丢弃）。
+    /// 组内按服务端序重排：created_at DESC, id DESC。
+    static func groupByDay(_ entries: [Entry]) -> GroupedDays {
+        var result = GroupedDays()
         for entry in entries {
-            guard let createdAt = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt) else {
+            guard let createdAt = entry.createdAt, entry.id != nil,
+                  let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt) else {
                 // 5-30：静默丢条改记一条日志——若服务端某天漏发或改名字段，
                 // 联调时能从日志发现，而不是无声少篇。
-                NSLog("[BearyEntrySync] groupByDay dropped entry without createdAt: id=%@", entry.id ?? "-")
+                NSLog("[BearyEntrySync] groupByDay dropped entry without createdAt or id: id=%@", entry.id ?? "-")
+                result.skippedCount += 1
                 continue
             }
-            grouped[dayKey, default: []].append(entry)
+            result.grouped[dayKey, default: []].append(entry)
         }
-        for key in grouped.keys {
-            grouped[key]?.sort { (a, b) in
+        for key in result.grouped.keys {
+            result.grouped[key]?.sort { (a, b) in
                 if a.createdAt != b.createdAt { return (a.createdAt ?? 0) > (b.createdAt ?? 0) }
                 return (a.id ?? "") > (b.id ?? "")
             }
         }
-        return grouped
+        return result
     }
 
     /// 全量同步提交：仅在整批翻页成功后调用——先写全部日文件，
@@ -123,6 +134,119 @@ enum BearyEntrySyncStore {
             }
         }
         return true
+    }
+
+    /// 第四轮增量 01：分批持久化——把一页已分组的日记按 id 并入落盘日文件
+    /// （服务端为准、同 id 覆盖），只做 additive 合并，绝不删任何旧条目
+    /// （删帖/失效条目由收尾的 finalizeDay 清理）。任一日写盘失败即返回
+    /// false（已并入的日照常保留，下次重跑再对齐）；返回 true 不代表本轮
+    /// 已同步（收尾与完整性校验在编排层另做）。
+    @discardableResult
+    static func mergeDayPage(accountId: Int, grouped: [String: [Entry]]) -> Bool {
+        for (dayKey, entries) in grouped {
+            let existing = loadDay(accountId: accountId, dayKey: dayKey) ?? []
+            var byId: [String: Entry] = [:]
+            for entry in existing { if let id = entry.id { byId[id] = entry } }
+            for entry in entries {
+                guard let id = entry.id else { continue }
+                byId[id] = entry
+            }
+            var merged = Array(byId.values)
+            // 无 id 的旧条目（历史写盘遗留）原样保留，不参与去重。
+            merged.append(contentsOf: existing.filter { $0.id == nil })
+            merged.sort { (a, b) in
+                if a.createdAt != b.createdAt { return (a.createdAt ?? 0) > (b.createdAt ?? 0) }
+                return (a.id ?? "") > (b.id ?? "")
+            }
+            if !saveDay(accountId: accountId, dayKey: dayKey, entries: merged) { return false }
+        }
+        return true
+    }
+
+    /// 收尾：把某日文件重写为本次同步拉到的精确集合（清掉服务端已删的旧条目）。
+    /// 集合为空时删掉该日文件。写盘失败或文件里缺拉到的 id 时返回 false
+    /// （编排层据此不记已同步、下次重跑）。
+    @discardableResult
+    static func finalizeDay(accountId: Int, dayKey: String, entryIds: Set<String>) -> Bool {
+        guard let url = dayFileURL(accountId: accountId, dayKey: dayKey) else { return false }
+        if entryIds.isEmpty {
+            if FileManager.default.fileExists(atPath: url.path) {
+                do { try FileManager.default.removeItem(at: url) } catch { return false }
+            }
+            return true
+        }
+        guard var entries = loadDay(accountId: accountId, dayKey: dayKey) else { return false }
+        entries = entries.filter { entry in
+            guard let id = entry.id else { return false }
+            return entryIds.contains(id)
+        }
+        guard entries.count == entryIds.count else { return false }
+        return saveDay(accountId: accountId, dayKey: dayKey, entries: entries)
+    }
+
+    /// 收尾清理：删掉不在本次同步拉到集合里的旧日文件（只认 YYYY-MM-DD.json
+    /// 文件名，进度文件等其他文件不动）。任一删除失败即返回 false。
+    /// 账号桶不存在（本轮零日记）即无可清理，返回 true。
+    @discardableResult
+    static func cleanupDaysNotIn(accountId: Int, seenDayKeys: Set<String>) -> Bool {
+        guard let dir = accountDir(accountId: accountId) else { return false }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else { return true }
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return false }
+        var ok = true
+        for name in names {
+            guard name.hasSuffix(".json") else { continue }
+            let dayKey = String(name.dropLast(".json".count))
+            guard isDayKey(dayKey), !seenDayKeys.contains(dayKey) else { continue }
+            do { try FileManager.default.removeItem(at: dir.appendingPathComponent(name)) } catch { ok = false }
+        }
+        return ok
+    }
+
+    /// 文件名是不是 YYYY-MM-DD 形的日文件。
+    private static func isDayKey(_ key: String) -> Bool {
+        guard key.count == 10 else { return false }
+        let chars = Array(key)
+        return chars[4] == "-" && chars[7] == "-"
+            && key.prefix(4).allSatisfy({ $0.isNumber })
+            && key.dropFirst(5).prefix(2).allSatisfy({ $0.isNumber })
+            && key.suffix(2).allSatisfy({ $0.isNumber })
+    }
+
+    // MARK: - 分批同步进度（第四轮增量 01：可恢复分页游标）
+
+    /// 日记分批进度文件名（放账号桶内；cleanupDaysNotIn 只认 YYYY-MM-DD.json，
+    /// 不会误删；commitFullSync 的旧文件清理仍会删它——删了只丢续跑游标，
+    /// 下次 kick 从头重跑即可，不丢日记数据）。
+    private static let diaryProgressFileName = "beary_sync_progress.json"
+
+    private static func diaryProgressURL(accountId: Int) -> URL? {
+        accountDir(accountId: accountId)?.appendingPathComponent(diaryProgressFileName)
+    }
+
+    /// 读日记分批进度（无文件/损坏返回 nil——损坏按从头重跑处理，不拦同步）。
+    static func loadDiaryProgress(accountId: Int) -> DiarySyncProgress? {
+        guard let url = diaryProgressURL(accountId: accountId),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(DiarySyncProgress.self, from: data)
+    }
+
+    /// 存日记分批进度（写失败返回 false；编排层只记日志、不因此失败同步——
+    /// 下次 kick 从头重跑即可，数据安全不受影响）。
+    @discardableResult
+    static func saveDiaryProgress(accountId: Int, progress: DiarySyncProgress) -> Bool {
+        guard let url = diaryProgressURL(accountId: accountId),
+              let data = try? JSONEncoder().encode(progress) else { return false }
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch { return false }
+    }
+
+    static func clearDiaryProgress(accountId: Int) {
+        guard let url = diaryProgressURL(accountId: accountId) else { return }
+        try? FileManager.default.removeItem(at: url)
     }
 
     /// 审计 P2-22：退出/注销时清该账号全部日记落盘（整目录删；草稿桶不在此列，见 signOutLocally）。
@@ -225,14 +349,11 @@ enum BearyTrashSyncStore {
         return writeSequence
     }
 
-    /// 整桶写（全量同步提交与静默刷新对齐均走这里：服务端派生数据，整批覆盖）。
-    /// 先记写盘代际（见 noteTrashWrite）：全量同步自身的提交写也在提交
-    /// 守卫比对之后发生，不影响本次判定。
-    /// 返回写盘是否成功（回读校验 id 序列一致才算成功）；失败时调用方
-    /// 不记已同步标记，下次重跑。
-    @discardableResult
-    static func saveAll(accountId: Int, items: [TrashItem]) -> Bool {
-        noteTrashWrite()
+    /// 写回收站全量文件并回读校验 id 序列。noteWrite=true 时先记一次写盘代际
+    /// （外部写盘口径，与原来 saveAll 一致）；分批合并的中间写不记代际——
+    /// 否则收尾的提交守卫会被自己的写触发（第四轮增量 01）。
+    private static func writeTrashFile(accountId: Int, items: [TrashItem], noteWrite: Bool) -> Bool {
+        if noteWrite { noteTrashWrite() }
         guard let url = fileURL(accountId: accountId),
               let data = try? makeEncoder().encode(items) else { return false }
         do {
@@ -244,6 +365,74 @@ enum BearyTrashSyncStore {
         guard let roundTripped = loadAll(accountId: accountId),
               roundTripped.map({ $0.id }) == items.map({ $0.id }) else { return false }
         return true
+    }
+
+    /// 整桶写（全量同步提交与静默刷新对齐均走这里：服务端派生数据，整批覆盖）。
+    /// 先记写盘代际（见 noteTrashWrite）：全量同步自身的提交写也在提交
+    /// 守卫比对之后发生，不影响本次判定。
+    /// 返回写盘是否成功（回读校验 id 序列一致才算成功）；失败时调用方
+    /// 不记已同步标记，下次重跑。
+    @discardableResult
+    static func saveAll(accountId: Int, items: [TrashItem]) -> Bool {
+        writeTrashFile(accountId: accountId, items: items, noteWrite: true)
+    }
+
+    /// 第四轮增量 01：回收站分批持久化——把一页回收站条目按 id 并入 trash.json
+    /// （服务端为准、同 id 覆盖），只做 additive 合并、不记写盘代际；失效条目
+    /// 由收尾的 finalizeTrash 清理。写盘失败返回 false。
+    @discardableResult
+    static func mergeTrashPage(accountId: Int, items: [TrashItem]) -> Bool {
+        let existing = loadAll(accountId: accountId) ?? []
+        var byId: [String: TrashItem] = [:]
+        for item in existing { byId[item.id] = item }
+        for item in items { byId[item.id] = item }
+        var merged = Array(byId.values)
+        merged.sort { ($0.deletedAt ?? 0) > ($1.deletedAt ?? 0) }
+        return writeTrashFile(accountId: accountId, items: merged, noteWrite: false)
+    }
+
+    /// 收尾：把 trash.json 重写为本次同步拉到的精确集合（清掉已恢复/已过期
+    /// 的旧条目）；集合为空时写空数组文件（“已同步、回收站为空”）。
+    /// 写盘失败或文件里缺拉到的 id 时返回 false（编排层据此不记已同步、下次重跑）。
+    @discardableResult
+    static func finalizeTrash(accountId: Int, seenIds: Set<String>) -> Bool {
+        let existing = loadAll(accountId: accountId) ?? []
+        let filtered = existing.filter { seenIds.contains($0.id) }
+        guard filtered.count == seenIds.count else { return false }
+        return saveAll(accountId: accountId, items: filtered)
+    }
+
+    // MARK: - 回收站分批同步进度（第四轮增量 01：可恢复分页游标）
+
+    /// 回收站分批进度文件名（放回收站桶内，与 trash.json 平行）。
+    private static let trashProgressFileName = "beary_trash_sync_progress.json"
+
+    private static func trashProgressURL(accountId: Int) -> URL? {
+        accountDir(accountId: accountId)?.appendingPathComponent(trashProgressFileName)
+    }
+
+    /// 读回收站分批进度（无文件/损坏返回 nil——损坏按从头重跑处理，不拦同步）。
+    static func loadTrashProgress(accountId: Int) -> TrashSyncProgress? {
+        guard let url = trashProgressURL(accountId: accountId),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(TrashSyncProgress.self, from: data)
+    }
+
+    /// 存回收站分批进度（写失败返回 false；编排层只记日志、不因此失败同步）。
+    @discardableResult
+    static func saveTrashProgress(accountId: Int, progress: TrashSyncProgress) -> Bool {
+        guard let url = trashProgressURL(accountId: accountId),
+              let data = try? JSONEncoder().encode(progress) else { return false }
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch { return false }
+    }
+
+    static func clearTrashProgress(accountId: Int) {
+        guard let url = trashProgressURL(accountId: accountId) else { return }
+        try? FileManager.default.removeItem(at: url)
     }
 
     /// 恢复/彻底删除：按 id 清桶（桶不存在时不建桶；空桶保留空数组文件）。
