@@ -55,7 +55,7 @@ final class BearyLoginViewController: UIViewController {
     var sheetMode = false
     /// Sheet transitioningDelegate 强持有（UIViewController.transitioningDelegate 为弱引用，
     /// 调用方不另持有；随本页释放）。
-    var loginSheetDelegate: BearyLoginSheetTransitioningDelegate?
+    var loginSheetDelegate: BearyBottomSheetTransitioningDelegate?
     /// 法律文字页的 EdgeDismiss 强持有（transitioningDelegate 弱引用）。
     private var legalTextEdgeDismiss: BearyEdgeDismissController?
 
