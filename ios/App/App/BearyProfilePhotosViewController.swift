@@ -11,8 +11,12 @@ import UIKit
 final class BearyProfilePhotosViewController: UIViewController {
 
     private let authorIdValue: Int?
-    private let ownProfileValue: Bool
-    private let mutualFriendValue: Bool
+    /// 第七轮审计 08：权限值不再是创建时冻结的 let——互关撤销／切号／切后台
+    /// 回来后旧值会过期，已加载的仅好友照片会继续留在页上。两值由
+    /// revalidatePermissions() 在回前台／账号变化／好友关系变化时重算，
+    /// 续拉页（fetchNextPageIfNeeded）直接用最新值重滤。
+    private var ownProfileValue: Bool
+    private var mutualFriendValue: Bool
     private var diaryEntriesValue: [Entry]
     private var photosValue: [BearyProfilePhotoItem]
     private var photosHasMore: Bool
@@ -27,6 +31,14 @@ final class BearyProfilePhotosViewController: UIViewController {
     /// viewDidLayoutSubviews 里按实宽更新，见 updatePhotosGridWidth。
     private var collectionViewWidthConstraint: NSLayoutConstraint?
     var onOpenEntry: ((Entry) -> Void)?
+
+    /// 第七轮审计 08：权限重验在途守门——防同一时刻重复拉 /friends/state；
+    /// permissionsGeneration＋发起时 viewer id 守旧回包（与设置页
+    /// meGeneration、通知页 snapshotGeneration 同款口径）；在途时又来的
+    /// 触发只记 pending，本轮结束后再跑一遍，防切号窗口漏验。
+    private var permissionsLoading = false
+    private var permissionsGeneration = 0
+    private var permissionsRevalidationPending = false
 
     /// 审计-个人页设置：全量照片页同样走互关过滤（调用方按实时 followState 传；
     /// 默认 false，与旧行为一致——旧行为下初始 entries 已由调用方过滤，
@@ -44,6 +56,12 @@ final class BearyProfilePhotosViewController: UIViewController {
 
     required init?(coder: NSCoder) {
         return nil
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self, name: .bearyUserDidChange, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .bearyFriendsChanged, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIApplication.willEnterForegroundNotification, object: nil)
     }
 
     private let topBarView = UIView()
@@ -159,6 +177,12 @@ final class BearyProfilePhotosViewController: UIViewController {
             emptyRetryButton.topAnchor.constraint(equalTo: emptyLabel.bottomAnchor, constant: 12),
         ])
         updateTitleAndEmpty()
+        // 第七轮审计 08：权限重验订阅——回前台（对方可能在页开着时取关）、
+        // 账号变化、好友关系变化时都重算 own／mutual；值在打开时是新的，
+        // 过期窗口只限一次打开会话内，触发频率低，不另加节流。
+        NotificationCenter.default.addObserver(self, selector: #selector(handlePermissionsMayHaveChanged), name: .bearyUserDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handlePermissionsMayHaveChanged), name: .bearyFriendsChanged, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handlePermissionsMayHaveChanged), name: UIApplication.willEnterForegroundNotification, object: nil)
         // 空相册自动续拉：首批无可见照片但仍有下一页时，零格使 willDisplay
         // 永不触发，必须在此主动拉起首轮续拉（见 fetchMoreWhileEmptyIfNeeded）。
         fetchMoreWhileEmptyIfNeeded()
@@ -180,6 +204,81 @@ final class BearyProfilePhotosViewController: UIViewController {
 
     @objc private func emptyRetryButtonTapped() {
         retryNextPage()
+    }
+
+    @objc private func handlePermissionsMayHaveChanged() {
+        revalidatePermissions()
+    }
+
+    /// 第七轮审计 08：权限重验——own 按当前登录账号同步重算（作者 id 与
+    /// 当前账号一致才是本人，未登录即非本人）；他人页的互关态实时拉
+    /// /friends/state（与个人页 refreshFollowState 同接口同口径），
+    /// fail-closed：拉取失败不清空、不扩权，沿用旧态，下次触发时再试。
+    /// 本人页不拉互关态（仅好友篇本来就可见）。新状态一到立即重滤。
+    private func revalidatePermissions() {
+        guard !permissionsLoading else {
+            permissionsRevalidationPending = true
+            return
+        }
+        let viewerId = SessionManager.shared.currentUser?.id
+        if let authorId = authorIdValue {
+            ownProfileValue = (viewerId != nil && authorId == viewerId)
+        }
+        guard let viewerId = viewerId, !ownProfileValue, let authorId = authorIdValue else {
+            // 未登录时互关态直接按非互关重滤（游客只看公开篇）；本人页／
+            // 无作者 id 时不拉 state，只按同步重算后的 own 值重滤。
+            if viewerId == nil { mutualFriendValue = false }
+            applyPermissionsFilter()
+            return
+        }
+        permissionsLoading = true
+        permissionsGeneration += 1
+        let requestGeneration = permissionsGeneration
+        let viewerIdAtRequest = viewerId
+        BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.permissionsLoading = false
+                // 旧回包／切号后回包不得覆盖新态；本轮若又有触发等着，跑完再补一遍。
+                defer {
+                    if strongSelf.permissionsRevalidationPending {
+                        strongSelf.permissionsRevalidationPending = false
+                        strongSelf.revalidatePermissions()
+                    }
+                }
+                guard requestGeneration == strongSelf.permissionsGeneration,
+                      viewerIdAtRequest == SessionManager.shared.currentUser?.id else { return }
+                switch result {
+                case .success(let state):
+                    let newState = BearyFollowState(response: state)
+                    if case .mutual = newState {
+                        strongSelf.mutualFriendValue = true
+                    } else {
+                        strongSelf.mutualFriendValue = false
+                    }
+                    strongSelf.applyPermissionsFilter()
+                case .failure:
+                    // 刷新失败不清空、不扩权：沿用旧态（与个人页 refreshFollowState
+                    // “已有态时刷新失败仍不清空”同口径），下次触发时再试。
+                    break
+                }
+            }
+        }
+    }
+
+    /// 按当前权限值重滤已加载内容：丢掉查看资格的照片立即消失（仅重算
+    /// photosValue，diaryEntriesValue 保留全量——互关恢复后重滤即回，
+    /// 不用重新拉网）。过滤结果有变且灯箱正开着时关掉灯箱：灯箱按打开时
+    /// 的快照导航，“查看日记”再按旧下标取 photosValue 会串到别篇。
+    private func applyPermissionsFilter() {
+        let refiltered = BearyProfileViewController.profilePhotoItems(from: diaryEntriesValue, isOwnProfile: ownProfileValue, isMutualFriend: mutualFriendValue)
+        guard refiltered.map({ $0.imageKey }) != photosValue.map({ $0.imageKey }) else { return }
+        photosValue = refiltered
+        collectionView.reloadData()
+        updateTitleAndEmpty()
+        if presentedViewController is BearyEntryImageViewerViewController {
+            presentedViewController?.dismiss(animated: BearyMotion.animated(true), completion: nil)
+        }
     }
 
     /// 116 数据填入动效：标题计数变化时只淡入标题本身（alpha 0→1、
@@ -359,6 +458,12 @@ final class BearyProfilePhotosViewController: UIViewController {
 
     private func presentLightbox(startIndex: Int, originFrame: CGRect? = nil, thumbnail: UIImage? = nil) {
         guard !photosValue.isEmpty, startIndex >= 0, startIndex < photosValue.count else { return }
+        // 第七轮审计 08：打开前重验权限——点按与重滤之间权限可能已变，
+        // 该篇若已不再可见，先重滤再放弃本次打开，灯箱入口同步失效。
+        guard BearyProfileViewController.isProfileDiaryDisplayable(entry: photosValue[startIndex].entry, isOwnProfile: ownProfileValue, isMutualFriend: mutualFriendValue) else {
+            applyPermissionsFilter()
+            return
+        }
         guard presentedViewController == nil else { return }
         let keys = photosValue.map { $0.imageKey }
         var wallLiveVideos: [String: String] = [:]
