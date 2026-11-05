@@ -52,6 +52,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     /// 未确认待发（401/403/超时撤行后留下的记录）：行留在列表里、时间旁标
     /// “未确认”，无重发入口（免重复发出），长按可复制正文核对。
     private var unconfirmedSendKeys = Set<String>()
+    /// 本地库损坏提示只弹一次（损坏时原文件已保留备份，不再被覆盖）。
+    private var didShowCorruptStoreToast = false
     /// 输入框高度约束：跟内容走（空态一行、上限五行），替代旧的 36~160 区间约束。
     private var inputTextViewHeightConstraint: NSLayoutConstraint?
     private var messages: [BearyAPI.DMMessage] = []
@@ -367,7 +369,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         if let userId = peer.id {
             // 读盘走后台串行队列，结果回主线程（与 loadLatest 的落盘同队列、保顺序）。
             BearyDMStore.messages(accountId: storeAccountId, peerId: userId) { [weak self] local in
-                guard let self = self, !local.isEmpty else { return }
+                guard let self = self else { return }
+                self.showCorruptStoreToastIfNeeded()
+                guard !local.isEmpty else { return }
                 // 只补尚无记录的服务端行；在途待发留在末尾不动。
                 let existingIds = Set(self.messages.compactMap { $0.id })
                 let missing = local.filter { m in !(m.id.map { existingIds.contains($0) } ?? false) }
@@ -385,6 +389,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+    }
+
+    /// 审计四轮 01：本地库损坏时弹一次提示——原文件已保留备份，不再被覆盖；
+    /// 恢复/丢弃入口在 BearyDMStore（restoreCorruptBackup/discardCorruptStore）。
+    private func showCorruptStoreToastIfNeeded() {
+        guard !didShowCorruptStoreToast, BearyDMStore.isStoreCorrupt(accountId: storeAccountId) else { return }
+        didShowCorruptStoreToast = true
+        BearyToast.show(in: view, message: "本地聊天记录读取失败，原始文件已保留备份")
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -1158,6 +1170,8 @@ private final class BearyDMMessageCell: UITableViewCell {
         failButton.translatesAutoresizingMaskIntoConstraints = false
         failButton.backgroundColor = .clear
         failButton.isHidden = true
+        // 审计四轮 11：失败按钮补无障碍名称（否则 VoiceOver 只读到一个无名按钮）。
+        failButton.accessibilityLabel = "消息发送失败，重试"
         failButton.addTarget(self, action: #selector(failTapped), for: .touchUpInside)
         failBadge.translatesAutoresizingMaskIntoConstraints = false
         failBadge.backgroundColor = BearyColors.red
@@ -1214,6 +1228,8 @@ private final class BearyDMMessageCell: UITableViewCell {
         theirsStack.isHidden = isMine
         // 失败叹号只挂本人行；对方行、成功行一律不画。
         failButton.isHidden = !(isMine && showFail)
+        // 审计四轮 11：失败态变化时同步更新无障碍说明（复用 cell 不得串行）。
+        failButton.accessibilityLabel = (isMine && showFail) ? "消息发送失败，重试" : nil
         self.onRetry = onRetry
         let body = message.body ?? ""
         // 气泡时间口径与通知行一致（相对时间：刚刚/X分钟前/X小时前/X天前）。
