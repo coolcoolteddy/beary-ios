@@ -1393,7 +1393,16 @@ extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
                 aspectRatio = columnWidth > 0 ? columnWidth / 180 : 2
             }
         }
-        let cropVC = BearyImageCropViewController(image: image, aspectRatio: aspectRatio)
+        let cropVC: BearyImageCropViewController
+        if target == .avatar {
+            // 头像下游只取 256px（dataURLForAvatar 内 resizeImage 上限 256），
+            // 裁剪输出长边 256 即够，归一化重绘不必按原图全尺寸画。
+            cropVC = BearyImageCropViewController(image: image, aspectRatio: aspectRatio, maxOutputSide: 256)
+        } else {
+            // 封面下游首档 1280px（dataURLForCover 首档 maxWidth 1280），
+            // 裁剪输出长边 1280 即够。
+            cropVC = BearyImageCropViewController(image: image, aspectRatio: aspectRatio, maxOutputSide: 1280)
+        }
         cropVC.modalPresentationStyle = .fullScreen
         cropVC.onConfirm = { [weak self] cropped in
             guard let strongSelf = self else { return }

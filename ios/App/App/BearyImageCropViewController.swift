@@ -26,6 +26,11 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
 
     private let sourceImage: UIImage
     private let aspectRatio: CGFloat
+    /// 裁剪输出长边上限（像素）：调用方按下游实际要用的尺寸给——头像 256、
+    /// 封面 1280、编辑器 1600；缺省 1600（现行三路里最大的下游口径）。
+    /// 裁剪输出本就要在下游再缩到这个尺寸，先缩再裁与先裁再缩是同一倍率、
+    /// 同一结果，像素只少不多；超出部分本来就是下游直接丢掉的像素。
+    private let maxOutputSide: CGFloat
     private let topBar = UIView()
     private let cancelButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
@@ -46,9 +51,10 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         let zoomRatio: CGFloat
     }
 
-    init(image: UIImage, aspectRatio: CGFloat) {
+    init(image: UIImage, aspectRatio: CGFloat, maxOutputSide: CGFloat = 1600) {
         self.sourceImage = image
         self.aspectRatio = aspectRatio > 0 ? aspectRatio : 1
+        self.maxOutputSide = maxOutputSide > 0 ? maxOutputSide : 1600
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -323,7 +329,8 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
     /// 按窗裁：窗（view 坐标）→ 滚动区坐标 → 图视图坐标（convert 计入缩放变换）
     /// → 点坐标 → 像素坐标；先把原图方向归一化再裁，避免朝向图的像素坐标错位。
     /// 主线程快照裁剪几何：只做坐标换算，不碰像素重绘。
-    /// 归一化后图尺寸与原图一致（size/scale 不变），故像素框可先算好。
+    /// 像素框在原图点坐标系下算好；归一化重绘可能按 maxOutputSide 先下采样
+    /// （见 cropWithGeometry），像素框按同一倍率换算，不另算。
     private func cropGeometry() -> (pixelRect: CGRect, scale: CGFloat)? {
         guard cropRect.width > 0 && cropRect.height > 0 else { return nil }
         guard imageView.bounds.width > 0 && imageView.bounds.height > 0 else { return nil }
@@ -343,10 +350,19 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         return (pixelRect, sourceImage.scale)
     }
 
-    /// 后台裁剪：非 .up 图先全尺寸方向归一化重绘再按像素裁；.up 图
-    /// 本身已是正向，直接对原 cgImage 按同一套像素矩形裁，跳过无用重绘
-    /// （UIGraphicsImageRenderer 可离主线程用；几何已在主线程快照，
-    /// 本函数不读任何 view 状态）。
+    /// 后台裁剪：.up 图直接对原 cgImage 按像素裁，跳过重绘；非 .up 图
+    /// 先方向归一化重绘再按像素裁（UIGraphicsImageRenderer 可离主线程用；
+    /// 几何已在主线程快照，本函数不读任何 view 状态）。
+    /// 峰值内存：旧实现先按原图全尺寸重绘一张归一化位图（12MP 原图
+    /// 4032×3024 约 48.8MB，原图 CGImage 另算，峰值 100MB＋），再裁；
+    /// 而三路下游最终都要的不过是头像 256px / 封面 1280px / 编辑器
+    /// 1600px 长边，超出部分在下游直接缩掉。现非 .up 图先按裁剪框长边与
+    /// maxOutputSide 的比值定下采样倍率 f（≤1，永不放大），在 f 倍
+    /// 的小画布上做同一道归一化重绘、再按同一倍率换算像素框裁剪：
+    /// 方向处理一字未动（仍是 draw 进 renderer 归一化，朝向图不会裁错
+    /// 位置），只是画布先缩到下游真正要的尺寸。12MP 原图头像路中间位图
+    /// 由约 48.8MB 降到约 0.35MB（341×256），封面路约 4.9MB，编辑器路
+    /// 约 13.7MB；小图或裁剪框已小于上限时 f = 1，走旧的全尺寸路径。
     private func cropWithGeometry(_ geometry: (pixelRect: CGRect, scale: CGFloat), source: UIImage) -> UIImage? {
         if source.imageOrientation == .up {
             guard let cgImage = source.cgImage else { return nil }
@@ -361,13 +377,33 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
             guard let croppedCG = cgImage.cropping(to: cgRect) else { return nil }
             return UIImage(cgImage: croppedCG, scale: source.scale, orientation: .up)
         }
+        // 裁剪框像素长边（cgImage 像素 = 点坐标 × scale）。
+        let scale = geometry.scale > 0 ? geometry.scale : 1
+        let cropPixelWidth = geometry.pixelRect.width * scale
+        let cropPixelHeight = geometry.pixelRect.height * scale
+        let cropLongest = max(cropPixelWidth, cropPixelHeight)
+        guard cropLongest > 0 else { return nil }
+        // 下采样倍率：只缩不放；裁剪框已小于上限时 f = 1，行为与旧实现一致。
+        let factor = min(1, maxOutputSide / cropLongest)
+        let workingSize = CGSize(width: source.size.width * factor, height: source.size.height * factor)
+        guard workingSize.width > 0 && workingSize.height > 0 else { return nil }
         let format = UIGraphicsImageRendererFormat()
         format.scale = source.scale
-        let normalized = UIGraphicsImageRenderer(size: source.size, format: format).image { _ in
-            source.draw(in: CGRect(origin: .zero, size: source.size))
+        let normalized = UIGraphicsImageRenderer(size: workingSize, format: format).image { _ in
+            source.draw(in: CGRect(origin: .zero, size: workingSize))
         }
         guard let cgImage = normalized.cgImage else { return nil }
-        let pixelRect = geometry.pixelRect
+        // 像素框按同一倍率换算到下采样后的坐标系，再取整、夹到工作图内
+        // （与 cropGeometry 的取整＋交集口径一致，防 1px 越界导致裁剪失败）。
+        var pixelRect = CGRect(
+            x: geometry.pixelRect.minX * factor,
+            y: geometry.pixelRect.minY * factor,
+            width: geometry.pixelRect.width * factor,
+            height: geometry.pixelRect.height * factor
+        )
+        pixelRect = pixelRect.integral
+        pixelRect = pixelRect.intersection(CGRect(origin: .zero, size: workingSize))
+        guard pixelRect.width > 0 && pixelRect.height > 0 else { return nil }
         // cgImage 按像素裁：点坐标须乘 scale（size 是 pt，cgImage 是像素）。
         let cgRect = CGRect(
             x: pixelRect.minX * normalized.scale,
