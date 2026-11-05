@@ -239,8 +239,9 @@ enum BearyDraftImageStore {
         let now = Date()
         for name in names {
             if !keep.contains(name) {
-                if let modified = (try? FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent(name).path))?[.modificationDate] as? Date,
-                   now.timeIntervalSince(modified) < sweepGracePeriod {
+                // 读属性失败时也跳过（不删），下轮再清。
+                guard let modified = (try? FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent(name).path))?[.modificationDate] as? Date else { continue }
+                if now.timeIntervalSince(modified) < sweepGracePeriod {
                     continue
                 }
                 delete(name)
