@@ -686,12 +686,19 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             return
         }
         setStep(.loading)
+        // 第八轮审计 03/04：发起时拍下账号与北京时间日期键；回包先校验，
+        // 任一失配（切号或跨日）即丢弃旧结果、重新为当前账号/新一天拉一次，
+        // 不写旧桶、不路由旧状态。
+        let identity = BlindBoxRequestIdentity.capture()
         BearyAPI.shared.fetchBlindBoxToday { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 switch result {
                 case .success(let body):
-                    BlindBoxState.shared.applyServerState(body)
+                    guard BlindBoxState.shared.applyServerState(body, for: identity) else {
+                        self.loadInitial()
+                        return
+                    }
                     self.routeFromToday(body)
                 case .failure(let error):
                     self.setStep(.error(self.todayErrorText(error)))
