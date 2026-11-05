@@ -118,7 +118,8 @@ private final class BearySlideTransitionAnimator: NSObject, UIViewControllerAnim
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return UIAccessibility.isReduceMotionEnabled ? 0 : 0.25
+        // 拖拽收尾统一弹簧：退场 0.30s，入场仍 0.25s；减动效门控原已有（时长 0）。
+        return UIAccessibility.isReduceMotionEnabled ? 0 : (isPresenting ? 0.25 : 0.30)
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -148,7 +149,9 @@ private final class BearySlideTransitionAnimator: NSObject, UIViewControllerAnim
             container.insertSubview(toView, belowSubview: fromView)
             toView.frame = transitionContext.finalFrame(for: toVC)
             let width = container.bounds.width
-            UIView.animate(withDuration: duration, delay: 0, options: .curveEaseIn, animations: {
+            // 拖拽收尾统一弹簧 0.30s／damping 0.7：交互式过渡的 animator
+            // 实例在手势开始时已建、无松手速度可传，故初速度取 0。
+            UIView.animate(withDuration: duration, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
                 fromView.transform = CGAffineTransform(translationX: width, y: 0)
             }, completion: { _ in
                 // 115 设置页空白守卫（根因未证实）：转场取消 / 中断时显式

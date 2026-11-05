@@ -249,7 +249,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
 
     /// 5-23：下滑关闭，与草稿箱 handlePan 同口径——下滑跟手（只动
     /// transform，不改约束）、超过 80pt 或快速下滑（速度 > 600）时走
-    /// closeTapped，否则 0.25s 弹回原位，减动效直接落位；取消/失败同样弹回。
+    /// closeTapped，否则统一弹簧（0.30s／damping 0.7＋松手速度）弹回原位，减动效直接落位；取消/失败同样弹回。
     /// 2026-10-30 抓手批：核对过，列表区不盖住抓手行（列表顶约 y58–60，
     /// 抓手在 y10–14），且 pan 是手势而非覆盖视图，不会吞列表点按；
     /// 故此处只补上滑统一口径（阻尼微移后回弹，不扩高、不关闭），
@@ -274,7 +274,8 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
                 if UIAccessibility.isReduceMotionEnabled {
                     restore()
                 } else {
-                    UIView.animate(withDuration: 0.25, animations: restore)
+                    let offset = BearySheetDrag.offset(for: translation.y)
+                    UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore)
                 }
             }
         case .cancelled, .failed:
@@ -285,7 +286,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
             } else {
-                UIView.animate(withDuration: 0.25, animations: restore)
+                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore)
             }
         default:
             break
@@ -394,7 +395,8 @@ final class BearyEmoteSheetTransition: NSObject, UIViewControllerTransitioningDe
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
         if UIAccessibility.isReduceMotionEnabled { return 0 }
-        return 0.25
+        // 入场仍 0.25s；退场走拖拽收尾统一弹簧 0.30s。
+        return presenting ? 0.25 : 0.30
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -433,7 +435,7 @@ final class BearyEmoteSheetTransition: NSObject, UIViewControllerTransitioningDe
             transitionContext.completeTransition(true)
             return
         }
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseIn], animations: {
+        UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
             sheet.transitionSetSheetOffset(height)
         }, completion: { _ in transitionContext.completeTransition(true) })
         // 第 30 项：关闭时遮罩 0.25s 单独淡出（与打开同口径；此前与面板下滑合写在 0.3s 块里）。

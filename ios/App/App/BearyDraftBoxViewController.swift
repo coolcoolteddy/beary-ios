@@ -1383,7 +1383,7 @@ final class BearyDraftBoxViewController: UIViewController {
     }
 
     /// 弹窗审计 E1-18 统一退场完成回调：关闭、打开、新建三路共用同一
-    /// 0.25s 退场（原 closeBox 的遮罩淡出 + 面板滑出，减动效直 dismiss），
+    /// 退场（遮罩 0.25s 淡出 + 面板滑出走拖拽收尾统一弹簧 0.30s／damping 0.7，减动效直 dismiss），
     /// dismiss 完成后才调 completion（即原 onNew/onOpen 回调）。
     /// 退场在途时再点按一律忽略：不重复播动画，也不让“关闭后又打开”
     /// 的回调在关闭完成后再执行；先到的一路为准。
@@ -1407,12 +1407,11 @@ final class BearyDraftBoxViewController: UIViewController {
             dismiss(animated: false, completion: wrappedCompletion)
             return
         }
-        let duration: TimeInterval = 0.25
-        // 第 30 项：遮罩 0.25s 单独淡出（与面板滑出解耦；面板走视觉清单第 8 项统一 0.25s）。
+        // 第 30 项：遮罩 0.25s 单独淡出（与面板滑出解耦；面板滑出走拖拽收尾统一弹簧 0.30s／damping 0.7）。
         UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
             self.backdropButton.alpha = 0
         })
-        UIView.animate(withDuration: duration, delay: 0, options: .curveEaseIn, animations: {
+        UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
             if self.isPadLayout {
                 self.sheetView.alpha = 0
                 self.sheetView.transform = CGAffineTransform(translationX: 0, y: self.sheetView.bounds.height * 0.04)
@@ -1446,7 +1445,7 @@ final class BearyDraftBoxViewController: UIViewController {
     }
 
     /// U18：把手下滑关闭——下滑跟手，超过 80pt 或快速下滑时走 closeBox 同动画；
-    /// 否则 0.25s 弹回原位，减动效直接落位（不播回弹动画）。遮罩点按关闭不受影响。
+    /// 否则统一弹簧（0.30s／damping 0.7＋松手速度）弹回原位，减动效直接落位（不播回弹动画）。遮罩点按关闭不受影响。
     /// 2026-10-30 抓手批：上滑按统一口径阻尼微移后回弹，不扩高、不关闭。
     @objc private func handlePanGesture(_ gesture: UIPanGestureRecognizer) {
         guard !isDismissing else { return }
@@ -1476,7 +1475,8 @@ final class BearyDraftBoxViewController: UIViewController {
                     restore()
                     UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
                 } else {
-                    UIView.animate(withDuration: 0.25, animations: restore) { _ in
+                    let offset = BearySheetDrag.offset(for: translation.y)
+                    UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore) { _ in
                         UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
                     }
                 }
@@ -1491,7 +1491,7 @@ final class BearyDraftBoxViewController: UIViewController {
                 restore()
                 UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
             } else {
-                UIView.animate(withDuration: 0.25, animations: restore) { _ in
+                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore) { _ in
                     UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
                 }
             }

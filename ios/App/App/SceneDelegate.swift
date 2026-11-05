@@ -4109,12 +4109,13 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
                 if UIAccessibility.isReduceMotionEnabled {
                     restore()
                 } else {
-                    UIView.animate(withDuration: 0.25, animations: restore)
+                    let drag = BearySheetDrag.offset(for: translation)
+                    UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: drag), options: [], animations: restore)
                 }
             }
         case .cancelled, .failed:
             // 审计 B 组 8：系统取消与手势失败时跟手位移可能已产生，
-            // 0.25s 弹回原位，不触发关闭（此前 .cancelled 与 .ended 共用
+            // 统一弹簧（0.30s／damping 0.7）弹回原位，不触发关闭（此前 .cancelled 与 .ended 共用
             // 关闭分支，系统取消也可能关掉编辑器/邀请弹层）。
             let restore = {
                 presentedView.transform = .identity
@@ -4124,7 +4125,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
             } else {
-                UIView.animate(withDuration: 0.25, animations: restore)
+                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore)
             }
         default:
             break
@@ -4143,7 +4144,8 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return UIAccessibility.isReduceMotionEnabled ? 0 : 0.25
+        // 入场仍 0.25s；退场走拖拽收尾统一弹簧 0.30s。
+        return UIAccessibility.isReduceMotionEnabled ? 0 : (isPresenting ? 0.25 : 0.30)
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -4199,7 +4201,8 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
                 return
             }
             let height = container.bounds.height
-            UIView.animate(withDuration: duration, delay: 0, options: .curveEaseIn, animations: {
+            // duration 在减动效时为 0（本 animator 无单独早退分支，靠时长 0 瞬时完成），故仍用 duration 变量。
+            UIView.animate(withDuration: duration, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
                 // 临时诊断（86 包，定根因后删除）：关闭闭包入口。
                 DiagFile.mark("animator-dismiss-closure-enter")
                 fromView.transform = CGAffineTransform(translationX: 0, y: height)

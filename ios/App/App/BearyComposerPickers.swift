@@ -606,7 +606,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     }
 
     /// 2026-10-30 抓手批：@ 选人 sheet 抓手下滑跟手——下滑超 80pt
-    /// 或快速下滑（速度 > 600）关闭，否则 0.25s 弹回原位；上滑阻尼
+    /// 或快速下滑（速度 > 600）关闭，否则统一弹簧（0.30s／damping 0.7＋松手速度）弹回原位；上滑阻尼
     /// 微移后回弹，不扩高、不关闭。遮罩点按关闭与关闭钮均不动。
     /// 注意：键盘抬升走约束（phoneBottomConstraint / padCenterY），
     /// 本处理只动 transform，不改约束，两者不打架。
@@ -630,7 +630,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                 if UIAccessibility.isReduceMotionEnabled {
                     restore()
                 } else {
-                    UIView.animate(withDuration: 0.25, animations: restore)
+                    let offset = BearySheetDrag.offset(for: translation.y)
+                    UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore)
                 }
             }
         case .cancelled, .failed:
@@ -641,7 +642,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
             } else {
-                UIView.animate(withDuration: 0.25, animations: restore)
+                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore)
             }
         default:
             break
@@ -1226,7 +1227,8 @@ final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioni
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
         if UIAccessibility.isReduceMotionEnabled { return 0 }
-        return 0.25
+        // 入场仍 0.25s；退场走拖拽收尾统一弹簧 0.30s。
+        return presenting ? 0.25 : 0.30
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -1265,7 +1267,7 @@ final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioni
             transitionContext.completeTransition(true)
             return
         }
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseIn], animations: {
+        UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
             sheet.transitionSetSheetOffset(height)
         }, completion: { _ in transitionContext.completeTransition(true) })
         // 遮罩 0.25s 单独淡出（与面板下滑解耦，遮罩本身不位移、不瞬间消失）。
