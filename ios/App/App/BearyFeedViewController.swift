@@ -1526,7 +1526,7 @@ class BearyFeedViewController: UIViewController {
     private func feedDisplayFingerprint(_ e: Entry) -> String {
         let images = (e.images ?? []).joined(separator: ",")
         let dims = (e.imgDims ?? [:]).map { "\($0.key):\($0.value.map(String.init).joined(separator: "x"))" }.sorted().joined(separator: ",")
-        return [e.content ?? "", images, dims, e.mood ?? "", e.weather ?? "", e.temperatureC.map(String.init) ?? "", e.title ?? "", e.quoteId ?? "", e.authorName ?? "", e.authorAvatar ?? "", e.authorBadge ?? "", "\(e.authorPlus ?? 0)", "\(e.publishedAt ?? 0)", "\(e.isPublic ?? false)", "\(e.ephemeralUntil ?? 0)", e.mentionedName ?? "", e.locationName ?? "", e.locationDistrict ?? ""].joined(separator: "|")
+        return [e.content ?? "", images, dims, e.mood ?? "", e.weather ?? "", e.temperatureC.map(String.init) ?? "", e.title ?? "", e.quoteId ?? "", e.authorName ?? "", e.authorAvatar ?? "", "\(e.authorPlus ?? 0)", "\(e.publishedAt ?? 0)", "\(e.isPublic ?? false)", "\(e.ephemeralUntil ?? 0)", e.mentionedName ?? "", e.locationName ?? "", e.locationDistrict ?? ""].joined(separator: "|")
     }
 
     /// 互动字段指纹（赞数/已赞/已收藏/收藏数/回应）：只变这些时，

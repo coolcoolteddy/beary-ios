@@ -95,7 +95,6 @@ struct Quote: Codable {
     var locked: Bool?
     var authorName: String?
     var authorAvatar: String?
-    var authorBadge: String?
     var authorPlus: Int?
     /// iCity viewer 判定用：被引篇作者 id / 是否为当前查看者本人（服务端按 viewer 下发；
     /// 缺失时调用方按 fail-closed 处理，不凭正文非空推断作者身份）。
@@ -136,7 +135,6 @@ struct Entry: Codable {
     var authorName: String?
     var authorAvatar: String?
     var authorCover: String?
-    var authorBadge: String?
     var authorPlus: Int?
     var content: String?
     /// A4-App（App 端标题，不依赖卡片渲染子项）：服务端 title 字段透传用；

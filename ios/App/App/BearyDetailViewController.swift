@@ -202,7 +202,7 @@ final class BearyDetailViewController: UIViewController {
         st.isHidden = true
         return st
     }()
-    /// 作者行：首页 titleStack 同款（名 + 徽章 + 皇冠 + 垫片 + 时间 + 天气 + 心情，
+    /// 作者行：首页 titleStack 同款（名 + 皇冠 + 垫片 + 时间 + 天气 + 心情，
     /// 间距 8、.firstBaseline 对齐）。
     private let nameButton = UIButton(type: .custom)
     private let crownView: BearyCrownView = {
@@ -1468,10 +1468,10 @@ final class BearyDetailViewController: UIViewController {
         let timeChanged = old.createdAt != merged.createdAt
         let recipientChanged = old.mentionedName != merged.mentionedName
         let weatherChanged = old.weather != merged.weather || old.temperatureC != merged.temperatureC
-        let headerMetaChanged = nameChanged || timeChanged || old.authorAvatar != merged.authorAvatar || old.authorBadge != merged.authorBadge || old.authorPlus != merged.authorPlus || recipientChanged || old.mentionedUserId != merged.mentionedUserId
+        let headerMetaChanged = nameChanged || timeChanged || old.authorAvatar != merged.authorAvatar || old.authorPlus != merged.authorPlus || recipientChanged || old.mentionedUserId != merged.mentionedUserId
         if headerMetaChanged {
             renderHeaderMeta()
-            // 116：头信息文案变化时只淡入真正变化的元素（头像图与徽章／
+            // 116：头信息文案变化时只淡入真正变化的元素（头像图与
             // 天气图标为图片，到达即显，不在此淡入；气温是文字，变了才淡入）。
             if nameChanged { fadeButtonTitle(nameButton) }
             if timeChanged { fadeLabel(timeLabel) }

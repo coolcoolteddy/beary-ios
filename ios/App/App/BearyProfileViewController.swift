@@ -8,8 +8,8 @@ import CoreImage
 //   meta 13 灰（上距 8）、stats 13 灰（上距 13、gap 22、数字 16 ink）、
 //   tabs（margin 16/20/0、tab padding 9/10、14/700、选中 ink + 2px ink 下划线）、
 //   他人模式隐藏编辑资料与收藏页签（网页 PF_MODE 表）。
-// - 个人主页头部：封面带 / 头像 / 统计 / 小熊回应墙 / 徽章架 / 三标签；
-//   回应墙与徽章架的服务端口径见下方实现（均以 worker.js 为准）。
+// - 个人主页头部：封面带 / 头像 / 统计 / 小熊回应墙 / 三标签；
+//   回应墙的服务端口径见下方实现（均以 worker.js 为准）。
 // - 后端 ~/workspace/teddy_beary/worker.js（以它为准，见下方接口对照）。
 // 批 C（2026-10-30）：三 tab 原位不动；日记 tab 只显最新 3 篇 + “更多日记”按钮
 // （本人页跳时间线页；他人页无本人时间线可跳，故不显示该按钮，见 diaryMoreButtonVisible）；
@@ -24,7 +24,7 @@ import CoreImage
 // - GET /beary/api/users/:id/profile 与 GET /beary/api/users/by-handle/:handle 共用
 //   profilePayload，返回 {id, display_name, handle, avatar_url, cover_url, created_at,
 //   diary_count, likes_received, emotes_received, emotes_total, plus, plus_free,
-//   worn_badge}；by-handle 另可能带 moved_from / moved_to（30 天内改名信号）。
+//   signature}；by-handle 另可能带 moved_from / moved_to（30 天内改名信号）。
 //   两接口均为公开数据、免登录；查不到人返回 404。
 // - 三标签列表接 GET /beary/api/entries（BearyAPI.fetchEntries 既有方法）：
 //   日记 scope=author + author_id、赞过 scope=author_liked + author_id（两者公开、免登录）、
@@ -47,9 +47,6 @@ import CoreImage
 //   回应墙顶部入口“昨夜小熊来过 · N 枚脚印”，点脚印弹该夜短评；仅本人
 //   主页且 Plus 有效时显示现行夜，Plus 到期后只显示旧脚印停跑态，非会员
 //   与他人主页一律无入口；脚印数不计入回应墙“共收到 N 只”。
-// - 徽章架（仅本人）：GET /beary/api/my-badges 取 unlocked / worn，
-//   点徽章 POST /beary/api/wear {badge} 切换佩戴（传 null = 取消佩戴；
-//   （2026-10-31 起 BETA 已下线：服务端不再下发 beta，worn 一律 null。）
 // - C2：齿轮直达设置页，退出登录改走设置页独立按钮（仍是 BearyAPI.logout，
 //   /api/account/logout，见文末注记；设置页内逻辑一字不动）。
 // - 分享：优先 https://teddyhn.com/beary/@<handle>（取不到 handle 才回退
@@ -72,7 +69,6 @@ struct BearyUserProfile: Decodable {
     var emotesTotal: Int?
     var plus: Bool?
     var plusFree: Bool?
-    var wornBadge: String?
     var movedFrom: String?
     var movedTo: String?
     /// 批 D 个人签名：users 表 signature 列，beary Worker 公开资料读口下发
@@ -109,7 +105,6 @@ struct BearyUserProfile: Decodable {
         case emotesTotal
         case plus
         case plusFree
-        case wornBadge
         case movedFrom
         case movedTo
         case signature
@@ -130,34 +125,6 @@ extension BearyAPI {
         let safeHandle = handleValue.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? handleValue
         request("/beary/api/users/by-handle/\(safeHandle)", completion: completion)
     }
-
-    /// GET /beary/api/my-badges（仅登录本人）：已解锁徽章 + 当前佩戴。
-    func fetchMyBadges(completion: @escaping (Result<BearyMyBadgesResponse, APIError>) -> Void) {
-        request("/beary/api/my-badges", completion: completion)
-    }
-
-    /// POST /beary/api/wear：badge 为 nil = 取消佩戴；否则佩戴该徽章（须已解锁）。
-    func postWear(badgeKey: String?, completion: @escaping (Result<BearyWearResponse, APIError>) -> Void) {
-        var body: [String: Any] = [:]
-        if let key = badgeKey {
-            body["badge"] = key
-        } else {
-            body["badge"] = NSNull()
-        }
-        request("/beary/api/wear", method: "POST", jsonBody: body, completion: completion)
-    }
-}
-
-// MARK: - 徽章架响应（GET /beary/api/my-badges；POST /beary/api/wear 回 worn）
-
-struct BearyMyBadgesResponse: Decodable {
-    var unlocked: [String]?
-    var worn: String?
-}
-
-struct BearyWearResponse: Decodable {
-    var ok: Bool?
-    var worn: String?
 }
 
 // MARK: - 个人主页
@@ -980,25 +947,16 @@ class BearyProfileViewController: UIViewController {
         return labelValue
     }()
 
-    private let badgeImageView: UIImageView = {
-        let imageViewValue = UIImageView()
-        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
-        imageViewValue.contentMode = .scaleAspectFit
-        return imageViewValue
-    }()
-
     private let crownView: BearyCrownView = {
         let imageViewValue = BearyCrownView()
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
         // 皇冠会员标按 plus 数据显示（网页 pfPlusPill 口径：d.plus 才显示）；
-        // 工厂态先隐藏，避免资料加载前首帧闪出皇冠，applyProfile / refreshWornBadge 按 plus 复核。
+        // 工厂态先隐藏，避免资料加载前首帧闪出皇冠，applyProfile 按 plus 复核。
         imageViewValue.isHidden = true
         return imageViewValue
     }()
 
-    /// 皇冠左缘二选一：有佩戴徽章时贴徽章、无徽章时直接贴名字；
-    /// 隐藏的徽章视图仍占布局位，固定贴徽章会在无徽章时多出 39pt 空隙。
-    private var crownLeadingToBadgeConstraint: NSLayoutConstraint?
+    /// 皇冠左缘：直接贴名字（徽章系统已删，不再有贴徽章的分支）。
     private var crownLeadingToNameConstraint: NSLayoutConstraint?
     /// 皇冠中心锚点：原口径 centerY = 名字整块中心，单行名时约齐、多行名时
     /// 会被整块中心拖到首行之下。改按首行基线算：中心 = 基线 − capHeight/2，
@@ -1290,7 +1248,7 @@ class BearyProfileViewController: UIViewController {
     //
     // 位置排法（预览定版）：封面 → 头像 → 名字 → 签名 → 统计 → 回应墙 →
     // 写作统计 → 那年今日 → 随机漫步 → 年度回顾入口 → 日记区（标签 + 列表）。
-    // （2026-10-30 Li 明令：徽章架与情绪月历模块已删，见本文件删除记录；签名展示、写作统计、那年今日、随机漫步、年度回顾入口不动。）
+    // （2026-10-30 Li 明令：情绪月历模块已删，见本文件删除记录；签名展示、写作统计、那年今日、随机漫步、年度回顾入口不动。）
     // 本基线（063b162）尚无批 C 的三 tab / 最新 3 篇 / 照片区，故「日记区」即现有
     // 标签 + 列表；模块容器插在回应墙与标签之间，标签与列表本身一字不动。
     // 图标铁律：以下只用官方包已有资产（icon_edit / icon_chevron_right /
@@ -1981,7 +1939,7 @@ class BearyProfileViewController: UIViewController {
     private lazy var avatarTopWithoutCoverConstraint: NSLayoutConstraint = avatarContainerView.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 20)
     /// tab 区挪位（2026-10-30）：标签顶改贴回应墙底——墙隐藏时高为 0，
     /// 标签距上一可见元素（夜巡 / 统计）仍为 16，与 F17 间隙规矩一致；
-    /// 徽章架已由 #250 删除；模块容器已由本批搬到脚部，不再顺延到标签下方。
+    /// 模块容器已由本批搬到脚部，不再顺延到标签下方。
     private lazy var tabsTopConstraint: NSLayoutConstraint = tabsContainer.topAnchor.constraint(equalTo: wallContainer.bottomAnchor, constant: 16)
     /// tab 与卡片贴在一起（2026-10-31）：模块容器已不在 header，改由
     /// refreshFooter 放进 tableFooterView（表格行下方、照片区之前），故
@@ -2713,10 +2671,10 @@ class BearyProfileViewController: UIViewController {
     /// 墙内容下移后会压进不动的容器框（顶压统计数字、底裁表情行），故容器必须同值移；
     /// 入场动画只在墙初现时跑一次（此时位移≈0），且以当前位移为基准收尾，
     /// 滚动会重新贴合位移，故不打架。
-    /// 重叠根因（2026-10-30 用户报“情绪月历与徽章随滑动重叠”）：旧封顶误用标签顶
-    /// （tabsTop − 末位底，含中间模块高度），徽章架下移最大 20pt 时先吃掉 16pt 间隙、
-    /// 再压进情绪月历卡顶 4pt；且 transform 只改视觉、不改布局，header 高不变，
-    /// 故重叠只在滚动中出现、静止量高量不出来。#250 删徽章架与情绪月历、
+    /// 重叠根因（2026-10-30 用户报模块随滑动重叠）：旧封顶误用标签顶
+    /// （tabsTop − 末位底，含中间模块高度），下移元素先吃掉 16pt 间隙、
+    /// 再压进下一卡顶 4pt；且 transform 只改视觉、不改布局，header 高不变，
+    /// 故重叠只在滚动中出现、静止量高量不出来。#250 删情绪月历、
     /// #246 把 tab 区挪到墙下方后，封顶改按首个未位移元素算：合并后顺序为
     /// 墙→标签，首个未位移元素恒为标签顶（模块已搬到脚部，不再作封顶）；
     /// 墙／夜巡／统计三分支的位移均以到标签顶的布局间隙为上限（现行 16），
@@ -2763,7 +2721,6 @@ class BearyProfileViewController: UIViewController {
         gearButton.transform = fullShift
         headerShareButton.transform = fullShift
         nameLabel.transform = fullShift
-        badgeImageView.transform = fullShift
         crownView.transform = fullShift
         // 签名松动修法（2026-10-31 真机报）：签名容器必须与名字同值平移。
         // 漏移根因：v22（#197）先有名字以下整段位移，批 D（#228）后加签名时只改了
@@ -2965,7 +2922,6 @@ class BearyProfileViewController: UIViewController {
         headerView.addSubview(gearButton)
         headerView.addSubview(headerShareButton)
         headerView.addSubview(nameLabel)
-        headerView.addSubview(badgeImageView)
         headerView.addSubview(crownView)
         // Plus 页入口①：名字旁皇冠点按进 Plus 页（本人页非 Plus 时皇冠为未点亮态仍可点，见 updateCrownDisplay）。
         let crownTap = UITapGestureRecognizer(target: self, action: #selector(crownTapped))
@@ -3026,10 +2982,9 @@ class BearyProfileViewController: UIViewController {
         // buildPersonalModuleCards 内一次搭好，render 时只改文案与显隐。
         buildPersonalModuleCards()
 
-        crownLeadingToBadgeConstraint = crownView.leadingAnchor.constraint(equalTo: badgeImageView.trailingAnchor, constant: 8)
         crownLeadingToNameConstraint = crownView.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 8)
-        crownLeadingToBadgeConstraint?.isActive = true
-        // L16：名字右缘上限不再固定预留 90pt，改由该约束按徽章/皇冠实际显隐
+        crownLeadingToNameConstraint?.isActive = true
+        // L16：名字右缘上限不再固定预留 90pt，改由该约束按皇冠实际显隐
         // 动态取值（见 updateNameTrailingLimit）。
         nameTrailingConstraint = nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -16)
         nameTrailingConstraint?.isActive = true
@@ -3091,12 +3046,8 @@ class BearyProfileViewController: UIViewController {
 
             nameLabel.topAnchor.constraint(equalTo: avatarImageView.bottomAnchor, constant: 14),
             nameLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
-            badgeImageView.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 8),
-            // F16：徽章 / 皇冠改贴名字整块中心（网页 .pf-name flex align-items:center 口径），
+            // F16：皇冠改贴名字整块中心（网页 .pf-name flex align-items:center 口径），
             // 不再贴首行中心；单行时与旧 top+14 差 0.4pt 内，已齐。
-            badgeImageView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
-            badgeImageView.widthAnchor.constraint(equalToConstant: 23),
-            badgeImageView.heightAnchor.constraint(equalToConstant: 23),
             crownCenterYConstraint!,
             crownView.widthAnchor.constraint(equalToConstant: 23),
             crownView.heightAnchor.constraint(equalToConstant: 23),
@@ -3312,7 +3263,7 @@ class BearyProfileViewController: UIViewController {
     // MARK: - 本人 / 他人模式
 
     /// 唯一显隐规则：他人主页隐藏编辑资料、齿轮菜单，收藏页签仅本人可见。
-    /// （网页 PF_MODE 表同口径：self 全显、other 藏编辑资料与收藏；徽章架已删，不再有本人专属头模块。）
+    /// （网页 PF_MODE 表同口径：self 全显、other 藏编辑资料与收藏。）
     private func applyMode() {
         let own = isOwnProfile
         editButton.isHidden = !own
@@ -3649,13 +3600,10 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    /// L16：名字右缘上限 = 右边距 16 + 徽章位（23 + 间隙 8）+ 皇冠位（23 + 间隙 8），
-    /// 仅按实际显隐计入；两项皆无时名字可伸到距右缘 16pt。
+    /// L16：名字右缘上限 = 右边距 16 + 皇冠位（23 + 间隙 8），
+    /// 仅按实际显隐计入；无皇冠时名字可伸到距右缘 16pt。
     private func updateNameTrailingLimit() {
         var reserve: CGFloat = 16
-        if badgeImageView.isHidden == false {
-            reserve += 31
-        }
         if crownView.isHidden == false {
             reserve += 31
         }
@@ -3768,7 +3716,7 @@ class BearyProfileViewController: UIViewController {
             // 私信钮 can 同点查（目标 id 已知；失败一律隐藏）。
             refreshDMCan()
             if isOwnProfile {
-                // 夜巡为本人专属：资料回包后另拉夜巡（失败即隐藏，不 toast）；徽章架已删，不再拉徽章。
+                // 夜巡为本人专属：资料回包后另拉夜巡（失败即隐藏，不 toast）。
                 // 提速：本轮已在 viewDidLoad 先起时此处由代次守卫跳过，不重发。
                 loadNightPatrol(fromProfileResult: true)
             }
@@ -3932,16 +3880,8 @@ class BearyProfileViewController: UIViewController {
         avatarTopWithoutCoverConstraint.isActive = false
         avatarImageView.layer.borderWidth = 3.5
 
-        // 佩戴徽章已下线（恒隐藏）；皇冠按 plus 显示（网页 pfPlusPill 口径）。
-        // BETA 徽章已下线：用户名右边不再显示佩戴徽章，皇冠改贴名字（下方约束已按 badgeVisible=false 走）。
-        badgeImageView.image = nil
-        badgeImageView.isHidden = true
         // 皇冠按 plus 显示（见 updateCrownDisplay：本人页非 Plus 时改显未点亮态、不再隐藏）。
         updateCrownDisplay()
-        // 无佩戴徽章时皇冠改贴名字，避免隐藏徽章占位造成的 39pt 空隙。
-        let badgeVisible = badgeImageView.isHidden == false
-        crownLeadingToBadgeConstraint?.isActive = badgeVisible
-        crownLeadingToNameConstraint?.isActive = !badgeVisible
         updateNameTrailingLimit()
         topNameLabel.text = displayNameValue
 
@@ -4321,21 +4261,6 @@ class BearyProfileViewController: UIViewController {
                 }
             }
         }
-    }
-
-    /// 只刷新名字旁的佩戴徽章位（不重拉整个头部，避免滚动跳动）。
-    private func refreshWornBadge() {
-        guard let profileValue = profile else { return }
-        // BETA 徽章已下线：用户名右边不再显示佩戴徽章，皇冠改贴名字（下方约束已按 badgeVisible=false 走）。
-        badgeImageView.image = nil
-        badgeImageView.isHidden = true
-        let badgeVisible = badgeImageView.isHidden == false
-        crownLeadingToBadgeConstraint?.isActive = badgeVisible
-        crownLeadingToNameConstraint?.isActive = !badgeVisible
-        // 佩戴刷新时皇冠仍按 plus 显示（见 updateCrownDisplay，不复活/不写死隐藏）。
-        updateCrownDisplay()
-        updateNameTrailingLimit()
-        layoutHeaderForced(widthValue: headerWidthValue)
     }
 
     private func presentSimpleAlert(message: String) {
@@ -6284,7 +6209,6 @@ class BearyProfileViewController: UIViewController {
             quotePart,
             entryValue.authorName ?? "",
             entryValue.authorAvatar ?? "",
-            entryValue.authorBadge ?? "",
             "\(entryValue.authorPlus ?? 0)",
             entryValue.mentionedName ?? "",
             "\(entryValue.createdAt ?? 0)",
@@ -8367,7 +8291,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     /// FAB 随栏同隐同现由容器 helper 内部负责，本页不直接碰 FAB。
     /// 回调触发依据：tableView 懒初始化时已设 delegate = self（本文件列表节），
     /// 且本扩展遵循 UITableViewDelegate，故 UIScrollViewDelegate 的
-    /// scrollViewDidScroll 由主表滚动触发；横滑墙（wall/badges）未设 delegate，
+    /// scrollViewDidScroll 由主表滚动触发；横滑墙（wall）未设 delegate，
     /// 即便触发也被 `=== tableView` 守卫挡下。
     /// 弹性封面（transform 版，2026-11-01 第 4 项）：下拉超滚时封面顶边上伸、
     /// 底边不动（视觉高 = 180 + 下拉量），2026-10-29 第 5 项：左右同步外扩

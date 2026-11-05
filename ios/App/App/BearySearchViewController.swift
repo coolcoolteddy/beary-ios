@@ -31,7 +31,7 @@ import CoreText
 //     users 按 id 升序只传 before_id（LIMIT 8）。三组共用同一套游标参，
 //     故翻页按组各发一请求、只取本组结果合并（见 loadMore），不混用游标。
 //     字段 id/content/images/created_at/author_id/author_name/author_avatar/
-//     author_badge（仅 'beta' 才给）/like_count。
+//     like_count。
 //   - mine：仅登录会话返回（未登录为 null），本人全部日记按正文匹配，LIMIT 20，
  //     翻页同 entries 口径（before + before_id）；
 //     字段 id/content/images/created_at/publish_at/is_public；

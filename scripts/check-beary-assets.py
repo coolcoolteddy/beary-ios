@@ -32,8 +32,6 @@ What is checked (code -> catalog, one direction only):
        (covers UIImage(named: "emote_\\(key)") / "..._dark").
      - icon_wx_<key> for every key in BearyComposerViewController.weatherOrder
        (covers "icon_wx_\\(key)" / "icon_wx_" + weatherKey).
-     - badge_<key> for every key in BearyBadgeImages.displayName's `known`
-       map (covers "badge_" + key).
      If a key list cannot be found, the script FAILS (fail-closed) instead
      of silently skipping that family: a refactor that moves the list must
      update this script, not silently drop coverage.
