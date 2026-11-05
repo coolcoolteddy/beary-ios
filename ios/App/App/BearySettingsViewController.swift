@@ -267,7 +267,7 @@ final class BearySettingsViewController: UIViewController {
     /// 内容列宽：直接由 view.bounds 派生的必需约束（替代旧的
     /// frameLayoutGuide 750 宽约束 + 600 上限开关两约束协商）。列宽是
     /// view.bounds 的纯函数，首个布局轮次即最终值，不再经多轮约束收敛
-    /// 分段变宽；最终口径不变（iPhone 屏宽 -40，宽 ≥821 锁 600 居中）。
+    /// 分段变宽；最终口径不变（iPhone 屏宽 -32，宽 ≥821 锁 600 居中）。
     private var contentColumnWidth: NSLayoutConstraint?
     /// 审计第 1 项：主设置页顶栏与正文列共用同一宽度入口（见 columnWidth(forViewWidth:)）。
     /// 旧口径是顶栏 width = view − 40（priority 750）+ width ≤ 600（必需），
@@ -954,22 +954,23 @@ final class BearySettingsViewController: UIViewController {
         view.addSubview(scrollView)
         scrollView.addSubview(contentStack)
         // 审计第 1 项：主页顶栏与内容列同宽居中，宽度由 updateColumnWidth
-        // 经 columnWidth(forViewWidth:) 统一算出（≥821pt 时 600、其余屏宽 −40），
+        // 经 columnWidth(forViewWidth:) 统一算出（≥821pt 时 600、其余屏宽 −32），
         // 不再用 view − 40（priority 750）+ ≤600（必需）两约束协商——后者在
-        // 641…820pt 区间会把顶栏卡在 600pt、与正文列错开。左右 ≥20 不等式保留作兜底。
+        // 641…820pt 区间会把顶栏卡在 600pt、与正文列错开。左右 ≥16 不等式保留作兜底
+        // （与 w−32 居中时边距 16 一致，不再冲突）。
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            topBar.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
-            topBar.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
+            topBar.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            topBar.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
             scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 12),
             contentStack.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
-            contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.leadingAnchor, constant: 20),
-            contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.trailingAnchor, constant: -20),
+            contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.leadingAnchor, constant: 16),
+            contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.trailingAnchor, constant: -16),
             contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -20),
         ])
         contentColumnWidth = contentStack.widthAnchor.constraint(equalToConstant: 0)
