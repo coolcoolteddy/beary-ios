@@ -1211,8 +1211,8 @@ class BearyDiaryCardCell: UITableViewCell {
             if gesture.state == .ended && wasJoined != stripPinchJoined {
                 BearyHaptics.press()
             }
-            // 捏合拼图落点走拖拽收尾统一弹簧 0.30s／damping 0.7（捏合手势
-            // 无速度属性，初速度取 0）；减动效直接落终值，不播弹簧。
+            // 捏合拼图落点走拖拽收尾统一弹簧 0.30s／damping 0.7（落点动画
+            // 属性是间距／圆角、非缩放量，捏合速度无直接映射，初速度取 0）；减动效直接落终值，不播弹簧。
             if UIAccessibility.isReduceMotionEnabled {
                 self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
                 self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
