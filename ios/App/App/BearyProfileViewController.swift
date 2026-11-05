@@ -8789,9 +8789,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         let picker = BearyDepthBackgroundViewController(
             currentTheme: festivalTheme,
             isPlus: profile?.plus == true,
-            onPick: { [weak self] theme in
+            onPick: { [weak self] theme, isPlus in
                 guard let strongSelf = self else { return false }
-                return strongSelf.handleFestivalThemePicked(theme)
+                return strongSelf.handleFestivalThemePicked(theme, isPlus: isPlus)
             })
         // 全站返回手势补齐：窄屏（iPhone）时本页是自动全屏，没有左边缘
         // 滑，改走 EdgeDismiss；宽屏（iPad）时本页是居中 sheet，自带下滑
@@ -8849,10 +8849,14 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
 
     /// 景深背景应用。返回 true 仅表示已应用；Plus 门控或加载失败时 toast
     /// 并返回 false（存量不动，新页停留）。
-    private func handleFestivalThemePicked(_ option: FestivalTheme) -> Bool {
+    private func handleFestivalThemePicked(_ option: FestivalTheme, isPlus: Bool? = nil) -> Bool {
         // Plus 门控（皇冠同口径 profile.plus，资料未到按非 Plus 计、不静默放行；
         // beary 无内购，只提示不卖）：默认档人人可回，非 Plus 选节日档只提示。
-        if option != .none, profile?.plus != true {
+        // 第十一轮 04：优先用选择页回前台时刚拉到的 fresh 值，兜底才用
+        // profile.plus——邀请发 Plus 后 profile 未必已刷新，只认 profile
+        // 会把刚到账的 Plus 挡在门外。
+        let plus = isPlus ?? (profile?.plus == true)
+        if option != .none, !plus {
             BearyToast.show(in: view, message: "仅 Plus 会员可使用景深背景")
             return false
         }
