@@ -1811,9 +1811,10 @@ final class BearySettingsViewController: UIViewController {
     @objc private func addAccountButtonTapped() {
         SessionManager.shared.snapshotCurrentAccount()
         if effectiveAccountCount() >= BearyAccountVault.maxAccounts {
-            let alert = UIAlertController(title: "添加账号", message: "最多 3 个账号，先移除一个", preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "知道了", style: .default))
-            present(alert, animated: BearyMotion.animated(true))
+            // 第四轮审计 12：居中 Alert 改底部弹窗（文案不变）。
+            BearyConfirmSheet.show(from: self, title: "添加账号", message: "最多 3 个账号，先移除一个", actions: [
+                BearyConfirmSheet.Action(title: "知道了", style: .default),
+            ])
             return
         }
         openLoginForAccountSwitch()
@@ -1862,32 +1863,33 @@ final class BearySettingsViewController: UIViewController {
         let isCurrent = SessionManager.shared.currentUser?.id == accountIdValue
         let title = isCurrent ? "移除当前账号" : "移除账号"
         let message = "该账号将在本设备退出登录，其他账号不受影响。"
-        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "移除", style: .destructive) { [weak self] _ in
-            guard let self = self else { return }
-            self.isRemovingAccount = true
-            SessionManager.shared.removeAccount(userId: accountIdValue) { [weak self] result in
+        // 第四轮审计 12：居中 Alert 改底部弹窗（文案与移除流程不变）。
+        BearyConfirmSheet.show(from: self, title: title, message: message, actions: [
+            BearyConfirmSheet.Action(title: "移除", style: .destructive) { [weak self] in
                 guard let self = self else { return }
-                self.isRemovingAccount = false
-                switch result {
-                case .removed:
-                    self.refreshAccountSwitchSection()
-                case .removedAndSwitched:
-                    self.loadAll()
-                    self.refreshAccountSwitchSection()
-                case .removedAndLoggedOut:
-                    if let handler = self.onLoggedOut {
-                        handler()
-                    } else {
-                        self.onClose?()
+                self.isRemovingAccount = true
+                SessionManager.shared.removeAccount(userId: accountIdValue) { [weak self] result in
+                    guard let self = self else { return }
+                    self.isRemovingAccount = false
+                    switch result {
+                    case .removed:
+                        self.refreshAccountSwitchSection()
+                    case .removedAndSwitched:
+                        self.loadAll()
+                        self.refreshAccountSwitchSection()
+                    case .removedAndLoggedOut:
+                        if let handler = self.onLoggedOut {
+                            handler()
+                        } else {
+                            self.onClose?()
+                        }
+                    case .failed:
+                        self.showToast("退出失败，请重试")
                     }
-                case .failed:
-                    self.showToast("退出失败，请重试")
                 }
-            }
-        })
-        present(alert, animated: BearyMotion.animated(true))
+            },
+            BearyConfirmSheet.Action(title: "取消", style: .cancel),
+        ])
     }
 
     /// 2026-10-29 第 12 项（合并 B）：退出登录 + 注销账户并入「账号操作」卡片，
@@ -2464,12 +2466,13 @@ final class BearySettingsViewController: UIViewController {
 
     @objc private func logoutOthersButtonTapped() {
         guard !isLoggingOutOthers else { return }
-        let alert = UIAlertController(title: "退出其他设备", message: "将退出除当前设备外的所有登录，确定继续？", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        alert.addAction(UIAlertAction(title: "退出", style: .destructive, handler: { [weak self] _ in
-            self?.confirmLogoutOthers()
-        }))
-        present(alert, animated: BearyMotion.animated(true))
+        // 第四轮审计 12：居中 Alert 改底部弹窗（文案与退出流程不变）。
+        BearyConfirmSheet.show(from: self, title: "退出其他设备", message: "将退出除当前设备外的所有登录，确定继续？", actions: [
+            BearyConfirmSheet.Action(title: "退出", style: .destructive, handler: { [weak self] in
+                self?.confirmLogoutOthers()
+            }),
+            BearyConfirmSheet.Action(title: "取消", style: .cancel),
+        ])
     }
 
     /// 审计 E2 第 23 项：请求期原入口忙碌外观——钮禁用 + 半透明 + 既有
@@ -2514,25 +2517,22 @@ final class BearySettingsViewController: UIViewController {
 
     @objc private func deleteButtonTapped() {
         guard !isDeleting else { return }
-        let first = UIAlertController(
-            title: "注销账户",
-            message: "7 天冷静期内登录可取消注销。7 天后账户正式注销，日记保留但作者显示为“用户已注销”。\n\n注销后，你的 Plus、未到账的邀请奖励和收藏会一并作废。",
-            preferredStyle: .alert
-        )
-        first.addAction(UIAlertAction(title: "再想想", style: .cancel, handler: nil))
-        first.addAction(UIAlertAction(title: "继续注销", style: .destructive, handler: { [weak self] _ in
-            self?.showDeleteSecondConfirm()
-        }))
-        present(first, animated: BearyMotion.animated(true))
+        // 第四轮审计 12：居中 Alert 改底部弹窗（两步确认文案与流程不变；措辞取主线现行「用户已注销」）。
+        BearyConfirmSheet.show(from: self, title: "注销账户", message: "7 天冷静期内登录可取消注销。7 天后账户正式注销，日记保留但作者显示为“用户已注销”。\n\n注销后，你的 Plus、未到账的邀请奖励和收藏会一并作废。", actions: [
+            BearyConfirmSheet.Action(title: "继续注销", style: .destructive, handler: { [weak self] in
+                self?.showDeleteSecondConfirm()
+            }),
+            BearyConfirmSheet.Action(title: "再想想", style: .cancel),
+        ])
     }
 
     private func showDeleteSecondConfirm() {
-        let second = UIAlertController(title: "最后确认", message: "真的要注销吗？此操作 7 天后不可撤销。", preferredStyle: .alert)
-        second.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        second.addAction(UIAlertAction(title: "确认注销", style: .destructive, handler: { [weak self] _ in
-            self?.confirmDeleteAccount()
-        }))
-        present(second, animated: BearyMotion.animated(true))
+        BearyConfirmSheet.show(from: self, title: "最后确认", message: "真的要注销吗？此操作 7 天后不可撤销。", actions: [
+            BearyConfirmSheet.Action(title: "确认注销", style: .destructive, handler: { [weak self] in
+                self?.confirmDeleteAccount()
+            }),
+            BearyConfirmSheet.Action(title: "取消", style: .cancel),
+        ])
     }
 
     private func confirmDeleteAccount() {
@@ -2729,12 +2729,14 @@ final class BearySettingsViewController: UIViewController {
                 self.exportRowButton.isEnabled = true
                 self.setExportProgress(nil)
                 let totalCount = mineEntries.count + mailboxEntries.count + likedEntries.count
-                let alert = UIAlertController(title: "部分导出", message: "本次仅导出 \(totalCount) 篇，未包含全部数据。是否继续分享这部分数据？", preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-                alert.addAction(UIAlertAction(title: "继续分享", style: .default, handler: { [weak self] _ in
-                    self?.buildAndShareExport(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries)
-                }))
-                self.present(alert, animated: BearyMotion.animated(true))
+                // 第四轮审计 12：居中 Alert 改底部弹窗（文案不变；点“继续分享”
+                // 先关 sheet 再拼文件出分享面板，不叠层）。
+                BearyConfirmSheet.show(from: self, title: "部分导出", message: "本次仅导出 \(totalCount) 篇，未包含全部数据。是否继续分享这部分数据？", actions: [
+                    BearyConfirmSheet.Action(title: "继续分享", style: .default, handler: { [weak self] in
+                        self?.buildAndShareExport(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries)
+                    }),
+                    BearyConfirmSheet.Action(title: "取消", style: .cancel),
+                ])
                 return
             }
             self.buildAndShareExport(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries)
@@ -5028,13 +5030,14 @@ private final class BearyDiagnosticsViewController: UIViewController {
     }
 
     @objc private func clearTapped() {
-        let alert = UIAlertController(title: "确定清空诊断日志？", message: "清空后无法恢复。", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "清空", style: .destructive) { [weak self] _ in
-            DiagFile.clear()
-            self?.reloadLog()
-        })
-        present(alert, animated: BearyMotion.animated(true))
+        // 第四轮审计 12：居中 Alert 改底部弹窗（文案与清空流程不变）。
+        BearyConfirmSheet.show(from: self, title: "确定清空诊断日志？", message: "清空后无法恢复。", actions: [
+            BearyConfirmSheet.Action(title: "清空", style: .destructive, handler: { [weak self] in
+                DiagFile.clear()
+                self?.reloadLog()
+            }),
+            BearyConfirmSheet.Action(title: "取消", style: .cancel),
+        ])
     }
 }
 
@@ -5042,7 +5045,7 @@ private final class BearyDiagnosticsViewController: UIViewController {
 /// 故行内资料另调既有公开资料读口 GET /beary/api/users/:id/profile 补齐
 /// （头像＋名字＋handle，复用好友列表行同款 44 头像＋名字/handle 布局；
 /// BearyFriendCell 为好友文件私有且带 ⋯ 菜单接线，本页另起同款 cell，不跨文件改好友组）。
-/// 资料拉不到时行内回落“用户 + id”，不阻塞解除；解除前弹系统 Alert 二次确认。
+/// 资料拉不到时行内回落“用户 + id”，不阻塞解除；解除前弹底部弹窗二次确认。
 /// 解除成功同时发 bearyDidBlockUser 广播？不——解除是反向操作，不触发各页清理；
 /// 各页的拉黑清理只由拉黑广播驱动，解除后下次拉取即恢复显示。
 final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
@@ -5199,18 +5202,19 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
         return cell
     }
 
-    /// 审计-个人页设置：解除前弹系统 Alert 二次确认（确认后才调解除接口；
+    /// 审计-个人页设置：解除前弹底部弹窗二次确认（确认后才调解除接口；
     /// 防重入仍由 unblockingIds 守，确认框本身不改防重入口径）。
     private func confirmUnblock(userId: Int) {
         guard !unblockingIds.contains(userId) else { return }
         let name = blockedProfiles[userId]?.displayName
         let title = (name?.isEmpty == false) ? "解除对“\(name!)”的拉黑？" : "解除拉黑？"
-        let alert = UIAlertController(title: title, message: "解除后对方的日记将不再被屏蔽。", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "解除拉黑", style: .destructive) { [weak self] _ in
-            self?.performUnblock(userId: userId)
-        })
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        present(alert, animated: BearyMotion.animated(true))
+        // 第四轮审计 12：居中 Alert 改底部弹窗（文案与解除流程不变）。
+        BearyConfirmSheet.show(from: self, title: title, message: "解除后对方的日记将不再被屏蔽。", actions: [
+            BearyConfirmSheet.Action(title: "解除拉黑", style: .destructive, handler: { [weak self] in
+                self?.performUnblock(userId: userId)
+            }),
+            BearyConfirmSheet.Action(title: "取消", style: .cancel),
+        ])
     }
 
     private func performUnblock(userId: Int) {
