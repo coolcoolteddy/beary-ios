@@ -543,9 +543,14 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         guard locating, let coordinate = locations.last else { return }
         locating = false
         // 坐标只进这一次逆地理编码，取地名后即弃，不存、不传、不缓存。
+        // 第九轮审计 04：逆地理编码也捕获代次——关气泡重开或切手动输入
+        // 都会让 interactionGeneration +1（cancelRequests），旧回调即使在
+        // 新气泡可见时投递也被丢弃，不把上一次的位置或失败态写进新一轮
+        // 定位界面；与两处 MKLocalSearch 回调同口径。
+        let generation = interactionGeneration
         geocoder.reverseGeocodeLocation(coordinate) { [weak self] placemarks, _ in
-            // 气泡已关（isHidden）时在途回调一律丢弃：不转手动态、不弹键盘、不落定。
-            guard let self = self, !self.isHidden else { return }
+            // 气泡已关（isHidden）或代次已变时在途回调一律丢弃：不转手动态、不弹键盘、不落定。
+            guard let self = self, !self.isHidden, self.interactionGeneration == generation else { return }
             guard let placemark = placemarks?.first else {
                 // 逆地理编码失败：不持久化“已定位（暂未解析地名）”这类占位文本，
                 // 直接转手动输入，让用户 typed 的地名成为真实位置值。
