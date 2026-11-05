@@ -1202,18 +1202,18 @@ final class BearyTimelineCell: UITableViewCell {
         actsStack.addArrangedSubview(editStatusGroup)
         actsStack.addArrangedSubview(actsSpacer)
 
-        // 批 E 补漏：位置行落点 = 引用卡 → 位置行 → 足行（操作行一带），与卡片
+        // 批 E 补漏：位置行落点 = 图片条 → 引用卡 → 位置行 → 足行（操作行一带），与卡片
         // “图片条之后、操作行之前”同序；图片条后的动态间距（configure 内按有图
-        // 9 / 无图 0）现为图片条→位置行间距，位置行隐藏时栈自动塌掉不留空行。
-        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleLabel, contentLabel, quoteCard, thumbsScrollView, timelineLocationStack, footStack, actsStack])
+        // 9 / 无图 0）现为图片条→引用卡间距，位置行隐藏时栈自动塌掉不留空行。
+        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleLabel, contentLabel, thumbsScrollView, quoteCard, timelineLocationStack, footStack, actsStack])
         cardStack.translatesAutoresizingMaskIntoConstraints = false
         cardStack.axis = .vertical
         cardStack.spacing = 0
         cardStack.setCustomSpacing(6, after: metaStack)
         cardStack.setCustomSpacing(4, after: titleLabel)
         cardStack.setCustomSpacing(9, after: contentLabel)
-        cardStack.setCustomSpacing(10, after: quoteCard)
         cardStack.setCustomSpacing(9, after: thumbsScrollView)
+        cardStack.setCustomSpacing(10, after: quoteCard)
         cardStack.setCustomSpacing(9, after: timelineLocationStack)
         cardStack.setCustomSpacing(9, after: footStack)
         cardStackReference = cardStack
@@ -1761,7 +1761,7 @@ final class BearyTimelineCell: UITableViewCell {
                 bearyFeedLoadImage(into: imageView, url: url, retryButton: thumbRetry, downsampleToWidth: strip * UIScreen.main.scale)
             }
         }
-        // 批 E 补漏：位置行（引用卡 → 位置行 → 足行）；无位置、或他人视角下
+        // 批 E 补漏：位置行（图片条 → 引用卡 → 位置行 → 足行）；无位置、或他人视角下
         // 无区级时整组隐藏，不留空行（文案与脱敏走 BearyLocationDisplay，
         // 与首页/个人页卡片、详情同一函数，时间线本只列本人日记，故实效为
         // 私密精确、公开精确 + 橙色提示两态，他人态由 display 兜底）。
