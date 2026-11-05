@@ -3138,21 +3138,21 @@ class BearyNotificationCell: UITableViewCell {
         label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
         label.textColor = BearyColors.ink
         label.adjustsFontForContentSizeCategory = true
-        label.numberOfLines = 1
-        // P3-6：标题显式截断 + 横向低压缩先缩标题，timeLabel 保持 required 不被挤。
-        label.lineBreakMode = .byTruncatingTail
+        label.numberOfLines = 0
+        // 通知标题改完整显示：多行换行不截断；横向低压缩先缩标题，timeLabel 保持 required 不被挤。
+        label.lineBreakMode = .byCharWrapping
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return label
     }()
 
-    /// 标题行：仅标题 label（表情改用 NSTextAttachment 内联进标题文本，见 configure；
-    /// 长标题截断时表情一并被截掉，与网页 .nt-act 同行为）。
+    /// 标题行：标题 label + 时间 label（表情改用 NSTextAttachment 内联进标题文本，
+    /// 见 configure；标题多行完整显示、时间跟标题首行基线对齐，落在第一排）。
     private let titleRowStack: UIStackView = {
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .horizontal
-        stack.spacing = 4
-        stack.alignment = .center
+        stack.spacing = 8
+        stack.alignment = .firstBaseline
         return stack
     }()
 
@@ -3238,6 +3238,7 @@ class BearyNotificationCell: UITableViewCell {
         clipsToBounds = true
         let bodyStack = UIStackView(arrangedSubviews: [titleRowStack, excerptLabel])
         titleRowStack.addArrangedSubview(titleLabel)
+        titleRowStack.addArrangedSubview(timeLabel)
         bodyStack.translatesAutoresizingMaskIntoConstraints = false
         bodyStack.axis = .vertical
         bodyStack.spacing = 2
@@ -3251,7 +3252,6 @@ class BearyNotificationCell: UITableViewCell {
         contentView.addSubview(kindBadgeView)
         contentView.addSubview(avatarRetryButton)
         contentView.addSubview(bodyStack)
-        contentView.addSubview(timeLabel)
         contentView.addSubview(unreadDotView)
         contentView.addSubview(chevronView)
         contentView.addSubview(separatorView)
@@ -3312,8 +3312,9 @@ class BearyNotificationCell: UITableViewCell {
             followActionStack.leadingAnchor.constraint(equalTo: bodyStack.leadingAnchor),
             followActionStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
             followActionStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
-            timeLabel.leadingAnchor.constraint(equalTo: bodyStack.trailingAnchor, constant: 12),
-            timeLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 19),
+            // 标题行右缘钉到未读点左缘 -12：时间在标题行内，标题列撑满整宽，
+            // 标题在（整宽 - 时间宽 - 间距）内换行，未读点位置由自身约束定，不依赖此式。
+            bodyStack.trailingAnchor.constraint(equalTo: unreadDotView.leadingAnchor, constant: -12),
             unreadDotView.leadingAnchor.constraint(equalTo: timeLabel.trailingAnchor, constant: 12),
             unreadDotView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
             unreadDotView.widthAnchor.constraint(equalToConstant: 8),
@@ -3491,7 +3492,7 @@ class BearyNotificationCell: UITableViewCell {
         avatarFallbackLabel.isHidden = true
         kindBadgeView.isHidden = true
         nestedLineView.isHidden = true
-        titleLabel.attributedText = BearyNotificationCell.lineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink)
+        titleLabel.attributedText = BearyNotificationCell.lineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping)
         excerptLabel.attributedText = BearyNotificationCell.lineHeightText(excerpt, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray)
         timeLabel.text = BearyNotificationCell.timeText(ms: timeMs)
         chevronView.isHidden = false
@@ -3506,10 +3507,10 @@ class BearyNotificationCell: UITableViewCell {
 
     /// 网页 .nt-body line-height 1.5：标题 16→24、摘要 14→21，
     /// 与上下 16 padding 合计行高约 78（现行无行高倍数被压到 74）。
-    private static func lineHeightText(_ string: String, font: UIFont, color: UIColor) -> NSAttributedString {
+    private static func lineHeightText(_ string: String, font: UIFont, color: UIColor, lineBreakMode: NSLineBreakMode = .byTruncatingTail) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.5
-        paragraph.lineBreakMode = .byTruncatingTail
+        paragraph.lineBreakMode = lineBreakMode
         return NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
     }
 
@@ -3528,10 +3529,16 @@ class BearyNotificationCell: UITableViewCell {
         return formatter
     }()
 
-    /// 网页时间口径：fmtDate 一律 M月d日 H:mm——小时不补零（9:40），分钟补零。
+    /// 通知时间口径（2026-11-05 Li 定）：24 小时内相对时间——不到 1 分钟“刚刚”，
+    /// 不到 1 小时“X分钟前”，不到 24 小时“X小时前”；超过 24 小时沿用网页
+    /// fmtDate 口径 M月d日 H:mm——小时不补零（9:40），分钟补零。
     private static func timeText(ms: Int?) -> String {
         guard let msValue = ms else { return "" }
         let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
+        let diff = Date().timeIntervalSince(date)
+        if diff < 60 { return "刚刚" }
+        if diff < 3600 { return "\(Int(diff / 60))分钟前" }
+        if diff < 86400 { return "\(Int(diff / 3600))小时前" }
         return monthDayTimeFormatter.string(from: date)
     }
 
@@ -3622,7 +3629,7 @@ class BearyNotificationCell: UITableViewCell {
             }
             avatarFallbackLabel.isHidden = true
             kindBadgeView.isHidden = true
-            titleLabel.attributedText = BearyNotificationCell.lineHeightText(titleText, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink)
+            titleLabel.attributedText = BearyNotificationCell.lineHeightText(titleText, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping)
         } else {
             // 互动行：42 圆头像（无图回退首字母 15/700 灰）+ 右下角 19 号类型角标。
             avatarImageView.backgroundColor = BearyColors.line
@@ -3677,7 +3684,7 @@ class BearyNotificationCell: UITableViewCell {
                 ]
             ))
             // 网页 .nt-act 口径：emote 仅作内联附件贴进标题文本流（20x20、
-            // vertical-align -5），长标题截断时表情一并被截掉，不再是行末固定视图。
+            // vertical-align -5），标题换行时表情随文本流换行，不再是行末固定视图。
             // 静态 PNG（BearyEmoteImages）与网页 <img> 同为静态图，不走 Lottie 播放器。
             if itemType == "emote", let emoteKey = item.emote, !emoteKey.isEmpty {
                 let isDark = traitCollection.userInterfaceStyle == .dark
@@ -3691,7 +3698,7 @@ class BearyNotificationCell: UITableViewCell {
             }
             let titleParagraph = NSMutableParagraphStyle()
             titleParagraph.lineHeightMultiple = 1.5
-            titleParagraph.lineBreakMode = .byTruncatingTail
+            titleParagraph.lineBreakMode = .byCharWrapping
             title.addAttribute(.paragraphStyle, value: titleParagraph, range: NSRange(location: 0, length: title.length))
             titleLabel.attributedText = title
         }
