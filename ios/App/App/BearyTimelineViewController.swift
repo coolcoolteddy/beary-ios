@@ -5237,6 +5237,11 @@ class BearyTimelineViewController: UIViewController {
         selectDay(key: day.key)
     }
 
+    /// 热力图点某天 → 时间线跳到该日（公开入口，容器在切页之后调；视图已加载）。
+    func openDay(key: String) {
+        selectDay(key: key)
+    }
+
     /// TL-8：点已选中日不取消筛选，只重渲 + 重拉当日；
     /// E4-5：同日在途拉取未完成时不重复发请求。
     private func selectDay(key: String) {

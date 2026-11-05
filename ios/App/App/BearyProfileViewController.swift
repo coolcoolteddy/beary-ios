@@ -160,6 +160,9 @@ class BearyProfileViewController: UIViewController {
     /// 批 C：日记 tab“更多日记”点按，容器接线到时间线页（仅本人页触发，见下）。
     var onOpenTimeline: (() -> Void)?
 
+    /// 热力图点某天：传北京日 key，容器接线到时间线该日（仅本人页触发）。
+    var onOpenTimelineDay: ((String) -> Void)?
+
     /// 自己主页未登录时调用：容器接线到登录页。
     var onRequireLogin: (() -> Void)?
 
@@ -1314,6 +1317,8 @@ class BearyProfileViewController: UIViewController {
 
     /// 写作统计卡：2×2 小数字格 + 最常用心情 / 天气行（小数字，不做报表）。
     private let statsCard = BearyProfilePersonalModulesCard(title: "写作统计")
+    /// 写作热力图模块：GitHub 式 27 周 × 7 天格子，放写作统计卡上方（预览 v5 定版）。
+    private let heatmapView = BearyHeatmapView()
     private let statsTotalValueLabel = BearyProfilePersonalModulesCard.statValueLabel()
     private let statsCharsValueLabel = BearyProfilePersonalModulesCard.statValueLabel()
     private let statsSlotValueLabel = BearyProfilePersonalModulesCard.statValueLabel()
@@ -4359,6 +4364,9 @@ class BearyProfileViewController: UIViewController {
         let statsTap = UITapGestureRecognizer(target: self, action: #selector(statsCardTapped))
         statsCard.addGestureRecognizer(statsTap)
 
+        // —— 写作热力图：格子 + 月份名/星期名/图例/提示都在视图内；点某天走 onOpenTimelineDay 到时间线该日。
+        heatmapView.onSelectDay = { [weak self] dayKey in self?.onOpenTimelineDay?(dayKey) }
+
         // —— 那年今日：内容栈（点按进主显篇）+ 展开钮 + 同年多篇列表（展开钮在内容栈外，
         // 避免手势与按钮双触发）。
         thisDayContentStack.addArrangedSubview(thisDayMetaLabel)
@@ -4421,6 +4429,7 @@ class BearyProfileViewController: UIViewController {
         ])
 
         modulesStack.addArrangedSubview(pastSelfDeliveryCard)
+        modulesStack.addArrangedSubview(heatmapView)
         modulesStack.addArrangedSubview(statsCard)
         modulesStack.addArrangedSubview(thisDayCard)
         modulesStack.addArrangedSubview(randomCard)
@@ -4615,11 +4624,12 @@ class BearyProfileViewController: UIViewController {
             // （旧“半截不画”是防撒谎，现以明示替代隐藏）。加载中时重试行
             // 显“加载中…”、钮禁用；停稳后显“只加载了部分日记，请重试”。
             if modulesCorpus.isEmpty {
-                for card in [pastSelfDeliveryCard, statsCard, thisDayCard, randomCard, yearCard] {
+                for card in [pastSelfDeliveryCard, heatmapView, statsCard, thisDayCard, randomCard, yearCard] {
                     card.isHidden = true
                 }
             } else {
                 let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
+                renderHeatmap(visible: visible)
                 renderStats(visible: visible)
                 renderThisDay(visible: visible)
                 renderPastSelf(visible: visible)
@@ -4662,12 +4672,13 @@ class BearyProfileViewController: UIViewController {
             return
         }
         let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
+        renderHeatmap(visible: visible)
         renderStats(visible: visible)
         renderThisDay(visible: visible)
         renderPastSelf(visible: visible)
         renderRandom(visible: visible)
         renderYear(visible: visible)
-        let anyVisible = [pastSelfDeliveryCard, statsCard, thisDayCard, randomCard, yearCard].contains { !$0.isHidden }
+        let anyVisible = [pastSelfDeliveryCard, heatmapView, statsCard, thisDayCard, randomCard, yearCard].contains { !$0.isHidden }
         let modulesWasHidden = modulesContainer.isHidden
         modulesContainer.isHidden = !anyVisible
         modulesHeightConstraint.isActive = !anyVisible
@@ -4802,6 +4813,17 @@ class BearyProfileViewController: UIViewController {
                 }
             }
         }
+    }
+
+    /// 写作热力图：与写作统计卡同一口径——只算可见篇；无篇时整模块隐藏。
+    /// 部分语料（失败态）下按已加载部分画，重试行明示未完整，不冒充全量。
+    private func renderHeatmap(visible: [Entry]) {
+        guard !visible.isEmpty else {
+            heatmapView.isHidden = true
+            return
+        }
+        heatmapView.isHidden = false
+        heatmapView.configure(entries: visible)
     }
 
     // MARK: 词汇指纹 —— 点写作统计卡进年度回顾（本人与他人均可）
