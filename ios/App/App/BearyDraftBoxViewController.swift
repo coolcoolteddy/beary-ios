@@ -73,7 +73,7 @@ final class BearyDraftMetaFlowView: UIView {
     }
 }
 
-final class BearyDraftBoxViewController: UIViewController {
+final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDelegate {
 
     // MARK: - 对外 API（编辑器代理按此调用，勿改名）
 
@@ -96,6 +96,13 @@ final class BearyDraftBoxViewController: UIViewController {
     private let boxTransitionDelegate = BearyDraftBoxTransitionDelegate()
     private var drafts: [BearyDraft] = []
     private var cardEntries: [(button: UIButton, draftValue: BearyDraft)] = []
+    /// 草稿卡左滑跟手拖动：当前正在被手指拖动的卡片（同一时刻只可能有一张在拖）；
+    /// 新卡开始拖时，上一张若还停在偏移处先瞬间复位，避免两张同偏（复用回收站口径）。
+    private var draftDraggingCard: UIButton?
+    /// 松手执行删除的左滑距离（回收站 trashDragMenuThreshold 同值：卡片左移满此值才删，不满弹回原位）。
+    private let draftDragDeleteThreshold: CGFloat = 60
+    /// 手指跟手的最大左移量（回收站 trashDragMaxOffset 同值：再往左拖也不跟，防卡片被拖出屏）。
+    private let draftDragMaxOffset: CGFloat = 140
     /// 新规矩 (b)：草稿列表入场动效只播一次（首渲），后续重渲不重播已有卡片。
     /// 审计第 12 项起由 tryPlayEntrance 统一置位（原 renderDrafts 首轮置位已移走）。
     private var draftCardsAnimatedOnce = false
@@ -1029,12 +1036,18 @@ final class BearyDraftBoxViewController: UIViewController {
             metaColumn.trailingAnchor.constraint(equalTo: metaWrap.trailingAnchor),
         ])
         inner.addArrangedSubview(metaWrap)
-        // C7：左滑删除复用删除钮路径（直接删卡 + 6 秒撤销条，与按钮一致，
-        // 无确认框；删除钮本身保留；草稿箱为 stack 卡片、无 tableView 滑动
-        // API，故左滑只换触发方式，不新增执行逻辑）。
-        let swipe = UISwipeGestureRecognizer(target: self, action: #selector(draftCardSwiped(_:)))
-        swipe.direction = .left
-        card.addGestureRecognizer(swipe)
+        // C7 改跟手拖动（视觉批 4-4，复用回收站拖拽模式）：草稿箱为 stack
+        // 卡片、无 tableView 滑动 API，故左滑删除不用系统侧滑，改用每卡一个
+        // UIPanGestureRecognizer 做 1:1 跟手拖动——手指左移卡片即左移，松手
+        // 够 60pt 执行删除（复用删除钮路径：直接删卡 + 6 秒撤销条，与按钮
+        // 一致，无确认框）、不够弹簧弹回原位。删除钮本身保留；点按打开
+        // 不动。与上下滚动抢手势见 gestureRecognizerShouldBegin：横滑才
+        // 接管，竖滑与滚动进行中一律放行给滚动视图（另见滚动视图的 pan
+        // 须等本手势失败才启动，避免滚动半途被横滑抢走）。
+        let drag = UIPanGestureRecognizer(target: self, action: #selector(draftCardDragged(_:)))
+        drag.delegate = self
+        card.addGestureRecognizer(drag)
+        sheetScrollView.panGestureRecognizer.require(toFail: drag)
         // 审计第三轮无障碍：整卡是唯一打开入口，卡名须区分各卡——含标题、
         // 摘要、时间、保存状态；摘要过长时截断，读屏名不念全文。
         var nameParts = ["草稿"]
@@ -1048,11 +1061,70 @@ final class BearyDraftBoxViewController: UIViewController {
         return card
     }
 
-    @objc private func draftCardSwiped(_ sender: UISwipeGestureRecognizer) {
+    /// 手势仲裁（复用回收站口径）：只有左横滑才让卡片拖动手势接管；竖滑
+    /// （|vy| ≥ |vx|）与右滑放行给滚动视图；滚动进行中（拖动/减速）不抢，
+    /// 避免手指刚松开滚势未消时误触一张卡把它拖偏。
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer is UIPanGestureRecognizer else { return true }
+        if sheetScrollView.isDragging || sheetScrollView.isDecelerating { return false }
+        let velocity = (gestureRecognizer as? UIPanGestureRecognizer)?.velocity(in: view) ?? .zero
+        return velocity.x < 0 && abs(velocity.x) > abs(velocity.y)
+    }
+
+    @objc private func draftCardDragged(_ sender: UIPanGestureRecognizer) {
         guard let card = sender.view as? UIButton,
-              let draftValue = cardEntries.first(where: { $0.button === card })?.draftValue,
-              let button = deleteEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button else { return }
-        deleteTapped(button)
+              let draftValue = cardEntries.first(where: { $0.button === card })?.draftValue else { return }
+        switch sender.state {
+        case .began:
+            if let previous = draftDraggingCard, previous !== card {
+                previous.transform = .identity
+            }
+            draftDraggingCard = card
+            // 入场错峰动画若还在跑（transform/alpha 在途），先停掉它：
+            // 动画模型值本就是终值（alpha 1、transform identity），停动画
+            // 不会闪回，手指接管后 transform 只由拖动写（回收站同款处理）。
+            card.layer.removeAllAnimations()
+        case .changed:
+            let translation = sender.translation(in: view).x
+            let offset = max(-draftDragMaxOffset, min(0, translation))
+            card.transform = CGAffineTransform(translationX: offset, y: 0)
+        case .ended:
+            draftDraggingCard = nil
+            let offset = card.transform.tx
+            if offset <= -draftDragDeleteThreshold {
+                // 拖过阈值执行删除：复用删除钮路径（删卡 + 6 秒撤销条），
+                // 拖动 transform 不先复位——复位会让卡片先跳回原位再收起，
+                // 直接交接给 deleteTapped 的收起动画，视觉上连续。
+                guard let button = deleteEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button else {
+                    resetDraftDragCard(card)
+                    return
+                }
+                deleteTapped(button)
+            } else {
+                // 未过阈值弹簧复位：松手速度归一化后传弹簧（松手速度 ÷ 回程
+                // 距离），慢拖速度近 0 即约等于 0，快甩则带上真实松手速度。
+                let distance = abs(offset)
+                let springVelocity = distance > 0 ? sender.velocity(in: view).x / distance : 0
+                resetDraftDragCard(card, initialSpringVelocity: springVelocity)
+            }
+        case .cancelled, .failed:
+            draftDraggingCard = nil
+            resetDraftDragCard(card)
+        default:
+            break
+        }
+    }
+
+    /// 拖动结束/取消后卡片归位：减动效直设（回收站 resetTrashDragRow 同款
+    /// 门控），其余以统一弹簧弹回（0.30s／damping 0.7，只走 transform）。
+    private func resetDraftDragCard(_ card: UIButton, initialSpringVelocity: CGFloat = 0) {
+        if UIAccessibility.isReduceMotionEnabled {
+            card.transform = .identity
+            return
+        }
+        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
+            card.transform = .identity
+        }, completion: nil)
     }
 
     private func chipShell() -> UIView {
