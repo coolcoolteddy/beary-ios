@@ -77,6 +77,32 @@ enum BearySyncState {
         case .failed: return "同步失败"
         }
     }
+
+    /// 新一轮 06：本地已同步日记全量快照——读账号目录下全部 <YYYY-MM-DD>.json
+    /// 日文件并合并，按服务端序重排（created_at DESC, id DESC），按 id 去重。
+    /// 损坏/缺失的日文件跳过；返回空数组 = 本地无任何已同步日记（调用方走网络）。
+    /// 同步读盘，调用方须在后台队列调。
+    static func loadAllEntries(accountId: Int) -> [Entry] {
+        guard let dir = accountDir(accountId: accountId) else { return [] }
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        var all: [Entry] = []
+        for name in names where name.hasSuffix(".json") {
+            let dayKey = String(name.dropLast(".json".count))
+            guard let entries = loadDay(accountId: accountId, dayKey: dayKey) else { continue }
+            all.append(contentsOf: entries)
+        }
+        all.sort { (a, b) in
+            if a.createdAt != b.createdAt { return (a.createdAt ?? 0) > (b.createdAt ?? 0) }
+            return (a.id ?? "") > (b.id ?? "")
+        }
+        var seenIds = Set<String>()
+        return all.filter { entry in
+            guard let id = entry.id else { return true }
+            if seenIds.contains(id) { return false }
+            seenIds.insert(id)
+            return true
+        }
+    }
 }
 
 extension Notification.Name {
