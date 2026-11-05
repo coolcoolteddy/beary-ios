@@ -1889,12 +1889,12 @@ class BearyProfileViewController: UIViewController {
     /// header 用户名：左对齐 17pt 粗体（与内容用户名同文案）；v22 转移时机——
     /// 内容用户名顶边碰到 header 底边时起，往后 20px 内淡入 0→1＋上浮 6→0 到位，
     /// 往回滑反向淡出＋下落；转移前 header 只有主题底色、无用户名（视觉清单第 6 项后无封面跟踪图）。
-    /// x 与内容用户名同列（表框左 + 28，iPad 600 居中列下自动对齐）。
+    /// x 与内容用户名同列（表框左 + 16，iPad 600 居中列下自动对齐）。
     /// 视觉清单第 6 项（已定设计，推翻 #508）：吸顶用户名固定主题底色
     /// （stickyHeaderView 本身的 BearyColors.bg）+ ink 字，不再按封面亮度取色；
     /// 背景跟踪图已恢复（见 syncStickyHeaderCover）；wordmark 仍隐藏。
     /// 不重新增加文字阴影或光晕（2026-10-31 删阴影的决定不动）、不另加底色块。
-    /// 位置与显隐时机不动：label 高 22 居中于 60 条带、左右各留 28/16pt，
+    /// 位置与显隐时机不动：label 高 22 居中于 60 条带、左右各留 16pt，
     /// 转移淡入/上浮 alpha 逻辑见 updateProfileCoverScroll。ink 为动态色，
     /// 深浅切换自动跟随主题底色，无需重判。
     private let stickyHeaderNameLabel: UILabel = {
@@ -2003,10 +2003,10 @@ class BearyProfileViewController: UIViewController {
     /// F17：头模块间距链（网页口径：墙 margin-top 10、模块 margin-top 16、标签 margin-top 16）。
     /// 隐藏容器仍占顶部间隙是旧 bug：updateHeaderSpacing 在每次强制布局前按显隐把
     /// 隐藏项的顶部间隙归零，使标签距上一可见元素恒为 16。
-    /// F18：无 handle 时日历图标改贴头左缘 28（网页 pf-meta flex 口径：handle
+    /// F18：无 handle 时日历图标改贴头左缘 16（网页 pf-meta flex 口径：handle
     /// display:none 时日历即首项）；有 handle 时贴 handle 后 5。两约束二选一。
     private lazy var joinedIconLeadingWithHandleConstraint: NSLayoutConstraint = joinedIconView.leadingAnchor.constraint(equalTo: handleLabel.trailingAnchor, constant: 5)
-    private lazy var joinedIconLeadingWithoutHandleConstraint: NSLayoutConstraint = joinedIconView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28)
+    private lazy var joinedIconLeadingWithoutHandleConstraint: NSLayoutConstraint = joinedIconView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16)
     /// 夜巡入口贴统计行下方、回应墙上方（F17 同款：隐藏时顶间隙归零）。
     private lazy var nightTopConstraint: NSLayoutConstraint = nightContainer.topAnchor.constraint(equalTo: publicCountLabel.bottomAnchor, constant: 10)
     private lazy var wallTopConstraint: NSLayoutConstraint = wallContainer.topAnchor.constraint(equalTo: nightContainer.bottomAnchor, constant: 10)
@@ -2029,7 +2029,7 @@ class BearyProfileViewController: UIViewController {
     /// 算无封面头像顶距；默认容器态。
     private var isModalTopBar = false
     private lazy var headerShareToGearConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: gearButton.leadingAnchor, constant: -8)
-    private lazy var headerShareToHeaderConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28)
+    private lazy var headerShareToHeaderConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16)
     /// 统计行顶约束二选一（邮箱行已按 1:1 移除，withEmail 恒不激活、
     /// 仅保留作锚点；统计行恒贴 handle 下 13，与旧无邮箱间距一致）。
     private lazy var statsTopWithEmailConstraint: NSLayoutConstraint = publicCountLabel.topAnchor.constraint(equalTo: emailLabel.bottomAnchor, constant: 13)
@@ -2496,9 +2496,9 @@ class BearyProfileViewController: UIViewController {
         // header 用户名发光已删（#459）：不再按条带亮度算阴影；
         // 2026-11-02：跟踪图已恢复，模糊层源图随封面同步（见 syncStickyHeaderCover）。
         refreshStickyHeaderBlurImage()
-        // 用户名：x 与内容用户名同列（表框左 + 28，iPad 600 居中列下自动对齐），
+        // 用户名：x 与内容用户名同列（表框左 + 16，iPad 600 居中列下自动对齐），
         // 垂直居中于 60 条带；文案同步（赋值点同步 + 此处兜底）。
-        let nameX = tableFrame.minX + 28
+        let nameX = tableFrame.minX + 16
         if stickyHeaderNameLeadingConstraint.constant != nameX {
             stickyHeaderNameLeadingConstraint.constant = nameX
         }
@@ -3026,7 +3026,7 @@ class BearyProfileViewController: UIViewController {
         crownLeadingToBadgeConstraint?.isActive = true
         // L16：名字右缘上限不再固定预留 90pt，改由该约束按徽章/皇冠实际显隐
         // 动态取值（见 updateNameTrailingLimit）。
-        nameTrailingConstraint = nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28)
+        nameTrailingConstraint = nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -16)
         nameTrailingConstraint?.isActive = true
         crownCenterYConstraint = crownView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor)
         NSLayoutConstraint.activate([
@@ -3042,9 +3042,9 @@ class BearyProfileViewController: UIViewController {
             coverViewButton.leadingAnchor.constraint(equalTo: coverClipView.leadingAnchor),
             coverViewButton.trailingAnchor.constraint(equalTo: coverClipView.trailingAnchor),
             coverViewButton.bottomAnchor.constraint(equalTo: coverClipView.bottomAnchor),
-            // v22：头像约束全落容器上（顶 -28／左 28／84×84 不变）；内层图与首字母
+            // v22：头像约束全落容器上（顶 -28／左 16／84×84）；内层图与首字母
             // 贴满容器、只做缩放；热区钮贴满容器、重试钮居中容器——两者跟位移、不跟缩放。
-            avatarContainerView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
+            avatarContainerView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
             avatarContainerView.widthAnchor.constraint(equalToConstant: 84),
             avatarContainerView.heightAnchor.constraint(equalToConstant: 84),
             avatarImageView.topAnchor.constraint(equalTo: avatarContainerView.topAnchor),
@@ -3064,11 +3064,11 @@ class BearyProfileViewController: UIViewController {
             avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
             avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
 
-            editButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28),
+            editButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
             editButton.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
             editButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
-            // 好友钮锚点改为名字行中心（v5 定版）、右缘 -28 不变：本人页隐藏、他人页独占该位。
-            followButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28),
+            // 好友钮锚点改为名字行中心（v5 定版）、右缘 -16：本人页隐藏、他人页独占该位。
+            followButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
             followButton.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             followButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
             // 私信钮贴关注钮左侧同中心线（隐藏钮仍参与布局，锚点有效，见好友钮注释）。
@@ -3085,7 +3085,7 @@ class BearyProfileViewController: UIViewController {
             headerShareButton.heightAnchor.constraint(equalToConstant: 44),
 
             nameLabel.topAnchor.constraint(equalTo: avatarImageView.bottomAnchor, constant: 14),
-            nameLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
+            nameLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
             badgeImageView.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 8),
             // F16：徽章 / 皇冠改贴名字整块中心（网页 .pf-name flex align-items:center 口径），
             // 不再贴首行中心；单行时与旧 top+14 差 0.4pt 内，已齐。
@@ -3095,41 +3095,41 @@ class BearyProfileViewController: UIViewController {
             crownCenterYConstraint!,
             crownView.widthAnchor.constraint(equalToConstant: 23),
             crownView.heightAnchor.constraint(equalToConstant: 23),
-            crownView.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
+            crownView.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -16),
 
             // 批 D：handle 改贴签名底。间距算式：容器顶贴名字底（0 间隙），
             // 签名行内顶留 10 作名字与签名间的空隙；签名隐藏时容器高被 0 约束压住，
             // handle 距名字 = 0 + 8，与改动前（名字底 +8）一字不差，不整体下跳。
             signatureContainer.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 0),
-            signatureContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
-            signatureContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28),
+            signatureContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+            signatureContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
             signatureLabel.topAnchor.constraint(equalTo: signatureContainer.topAnchor, constant: 10),
             signatureLabel.leadingAnchor.constraint(equalTo: signatureContainer.leadingAnchor),
             signatureLabelTrailingConstraint,
             signatureLabel.bottomAnchor.constraint(equalTo: signatureContainer.bottomAnchor),
             handleLabel.topAnchor.constraint(equalTo: signatureContainer.bottomAnchor, constant: 8),
-            handleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
+            handleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
             // I7：加入时间前补 14px 日历图标，图标与加入时间同显隐（见 applyProfile）。
             joinedIconView.centerYAnchor.constraint(equalTo: handleLabel.centerYAnchor),
             joinedIconLeadingWithHandleConstraint,
             joinedLabel.centerYAnchor.constraint(equalTo: handleLabel.centerYAnchor),
             // F18：图标与加入时间 gap 4 → 5（网页 pf-meta gap:5px）。
             joinedLabel.leadingAnchor.constraint(equalTo: joinedIconView.trailingAnchor, constant: 5),
-            joinedLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
+            joinedLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -16),
 
             emailLabel.topAnchor.constraint(equalTo: handleLabel.bottomAnchor, constant: 8),
-            emailLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
-            emailLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
+            emailLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+            emailLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -16),
 
             statsTopWithoutEmailConstraint,
-            publicCountLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
+            publicCountLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
             publicTextLabelValue.centerYAnchor.constraint(equalTo: publicCountLabel.centerYAnchor),
             publicTextLabelValue.leadingAnchor.constraint(equalTo: publicCountLabel.trailingAnchor, constant: 4),
             likesCountLabel.centerYAnchor.constraint(equalTo: publicCountLabel.centerYAnchor),
             likesCountLabel.leadingAnchor.constraint(equalTo: publicTextLabelValue.trailingAnchor, constant: 22),
             likesTextLabelValue.centerYAnchor.constraint(equalTo: publicCountLabel.centerYAnchor),
             likesTextLabelValue.leadingAnchor.constraint(equalTo: likesCountLabel.trailingAnchor, constant: 4),
-            likesTextLabelValue.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
+            likesTextLabelValue.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -16),
 
             // 夜巡入口：与墙同列（左右各 20）；入口行盖满标题区保证热区，
             // 脚印条在标题行下方独占一行横滑（脚印钮 44pt，见 renderNightPatrol）。
@@ -3644,10 +3644,10 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    /// L16：名字右缘上限 = 右边距 28 + 徽章位（23 + 间隙 8）+ 皇冠位（23 + 间隙 8），
-    /// 仅按实际显隐计入；两项皆无时名字可伸到距右缘 28pt。
+    /// L16：名字右缘上限 = 右边距 16 + 徽章位（23 + 间隙 8）+ 皇冠位（23 + 间隙 8），
+    /// 仅按实际显隐计入；两项皆无时名字可伸到距右缘 16pt。
     private func updateNameTrailingLimit() {
-        var reserve: CGFloat = 28
+        var reserve: CGFloat = 16
         if badgeImageView.isHidden == false {
             reserve += 31
         }
