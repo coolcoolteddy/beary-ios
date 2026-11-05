@@ -33,22 +33,22 @@ enum BearyBurstParticles {
         let stretch: CGFloat
     }
 
-    /// 点赞红液滴：7 滴、4–8pt、18–38pt、480–620ms、沿飞行方向拉伸 1.3、不旋转。
+    /// 点赞红液滴：7 滴、2–4pt、9–19pt、480–620ms、沿飞行方向拉伸 1.3、不旋转。
     private static let likeStyle = Style(
         colors: [UIColor(red: 1, green: 59.0 / 255.0, blue: 48.0 / 255.0, alpha: 1),
                  UIColor(red: 1, green: 90.0 / 255.0, blue: 78.0 / 255.0, alpha: 1),
                  UIColor(red: 1, green: 138.0 / 255.0, blue: 122.0 / 255.0, alpha: 1),
                  UIColor(red: 1, green: 196.0 / 255.0, blue: 184.0 / 255.0, alpha: 1)],
-        count: 7, sizeMin: 4, sizeMax: 8, distMin: 18, distMax: 38,
+        count: 7, sizeMin: 2, sizeMax: 4, distMin: 9, distMax: 19,
         durMin: 0.48, durMax: 0.62, spin: false, stretch: 1.3)
 
-    /// 收藏星星：7 颗、5–9pt、20–42pt、500–660ms、带旋转。
+    /// 收藏星星：7 颗、2.5–4.5pt、10–21pt、500–660ms、带旋转。
     private static let starStyle = Style(
         colors: [UIColor(red: 1, green: 149.0 / 255.0, blue: 0, alpha: 1),
                  UIColor(red: 1, green: 169.0 / 255.0, blue: 77.0 / 255.0, alpha: 1),
                  UIColor(red: 1, green: 197.0 / 255.0, blue: 61.0 / 255.0, alpha: 1),
                  UIColor(red: 1, green: 224.0 / 255.0, blue: 138.0 / 255.0, alpha: 1)],
-        count: 7, sizeMin: 5, sizeMax: 9, distMin: 20, distMax: 42,
+        count: 7, sizeMin: 2.5, sizeMax: 4.5, distMin: 10, distMax: 21,
         durMin: 0.50, durMax: 0.66, spin: true, stretch: 1.0)
 
     /// 点赞变红时炸（只在变红时调；取消点赞调 clear(from:)）。
