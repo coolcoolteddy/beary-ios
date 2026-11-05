@@ -35,7 +35,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     private var topBarTopConstraint: NSLayoutConstraint?
     private var backButton: UIButton?
     private var conversations: [BearyAPI.DMConversation] = []
-    private var loading = false
+    fileprivate var loading = false
     private var needsReloadAfterUserChange = false
     private var loadFailed = false
     // 第 7 轮属实项 6：已有内容时刷新失败的非阻断提示条。只在
@@ -335,8 +335,8 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         }
         let requestUid = SessionManager.shared.currentUser?.id
         BearyAPI.shared.fetchDMConversations { [weak self] result in
+            guard let self = self else { return }
             DispatchQueue.main.async {
-                guard let self = self else { return }
                 self.loading = false
                 self.tableView.refreshControl?.endRefreshing()
                 self.firstLoadStateView.isHidden = true
@@ -623,7 +623,7 @@ enum BearyDMConversationsCache {
 
     struct Snapshot: Codable {
         var savedAt: TimeInterval
-        var conversations: [DMConversation]
+        var conversations: [BearyAPI.DMConversation]
     }
 
     private static func fileURL(bucket: String) -> URL? {
@@ -662,7 +662,7 @@ enum BearyDMConversationsCache {
         }
     }
 
-    static func save(bucket: String?, conversations: [DMConversation]) {
+    static func save(bucket: String?, conversations: [BearyAPI.DMConversation]) {
         guard let bucket = bucket, !bucket.isEmpty else { return }
         let capturedGeneration = generation(for: bucket)
         ioQueue.async {
