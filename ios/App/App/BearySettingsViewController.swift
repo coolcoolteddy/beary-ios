@@ -309,6 +309,16 @@ final class BearySettingsViewController: UIViewController {
     private let accountActionWrap = UIView()
     private var accountActionDeleteSeparator: UIView?
     private var accountActionDeleteWrap: UIView?
+    /// 视觉批：设置页渐进披露（规范 §3）——三组折叠的持有者，由
+    /// makeDisclosureCard 建、toggle 方法翻转；默认收起。
+    private var diagDisclosure: SettingsDisclosure?
+    private var plusDisclosure: SettingsDisclosure?
+    private var accountDisclosure: SettingsDisclosure?
+    /// 导出行：仍在 buildSecuritySection 内建（导出按钮与副文案属性
+    /// 的接线不动），只改承载位置——不再进安全组，改交账号披露组；
+    /// buildLayout 先调 buildSecuritySection、后调 buildAccountActionSection，
+    /// 故账号披露组建时本值必已就位。
+    private var exportRowForDisclosure: UIView?
     /// 2026-10-29 第 10 项：页底版本脚注（通用组版本行移至页底，Bundle 动态读）。
     private let versionFooterWrap = UIView()
 
@@ -553,6 +563,9 @@ final class BearySettingsViewController: UIViewController {
 
     private func makeRow(title: String, detailLabel: UILabel, iconName: String? = nil) -> UIView {
         let titleLabelValue = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        // 视觉批：行标题归位 smallBodyFont（15 regular scaled；入口本身已
+        // scaled，覆写而非经工厂再缩放，避免二次缩放）。
+        titleLabelValue.font = BearyDynamicType.smallBodyFont()
         titleLabelValue.text = title
         // P1-7：行正文标题与行尾辅助文案均可多行，行高由栈自动撑开。
         titleLabelValue.numberOfLines = 0
@@ -577,6 +590,8 @@ final class BearySettingsViewController: UIViewController {
     /// 「邮箱验证码登录」「登录设备」两行（网页 account.html 安全组同款）。
     private func makeInfoRow(title: String, detailLabel: UILabel, iconName: String) -> UIView {
         let titleLabelValue = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
+        titleLabelValue.font = BearyDynamicType.smallBodyFont()
         titleLabelValue.text = title
         // P1-7：两行式行的标题多行、辅助文案走动态字体（工厂标题已接入口，
         // 直建的 detail 在此接入口，不在工厂外重复缩放已缩放过的字）。
@@ -717,6 +732,178 @@ final class BearySettingsViewController: UIViewController {
         stack.spacing = spacing
         stack.alignment = .fill
         return stack
+    }
+
+    /// 视觉批：设置页渐进披露的一组折叠（规范 §3：点按展开，展开动效走
+    /// 局部状态 0.18s、箭头旋转指示）。卡内结构 = 标题行 + 可折叠体：
+    /// 标题行走组标题口径（12 灰 kern 1，见 makeSectionTitle）+ 行尾下箭头
+    /// （官方包 icon_chevron_down 16 灰，通知卡同款）；体是行栈，初始收起
+    /// （isHidden，栈自动归零高度），行包容器与分隔线口径与 makeGroupCard
+    /// 一致（行上下 14、左右 16、行间 1pt 细线），可点行的覆盖按钮按
+    /// makeGroupCard 的审计口径改钉包容器四边（只扩留白区，不盖同行控件）。
+    private final class SettingsDisclosure {
+        let card: UIView
+        let headerButton: UIButton
+        let bodyStack: UIStackView
+        let bodyWrappers: [UIView]
+        let chevron: UIImageView
+        var isExpanded = false
+        init(card: UIView, headerButton: UIButton, bodyStack: UIStackView, bodyWrappers: [UIView], chevron: UIImageView) {
+            self.card = card
+            self.headerButton = headerButton
+            self.bodyStack = bodyStack
+            self.bodyWrappers = bodyWrappers
+            self.chevron = chevron
+        }
+    }
+
+    private func makeDisclosureCard(title: String, rows: [UIView]) -> SettingsDisclosure {
+        let card = makeCardView()
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 0
+        stack.alignment = .fill
+        card.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: card.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+        ])
+        // 标题行：组标题 + 吸宽 spacer + 下箭头，可点区域盖满整行留白。
+        let titleLabelValue = makeSectionTitle(title)
+        titleLabelValue.translatesAutoresizingMaskIntoConstraints = false
+        let chevron = UIImageView(image: BearyIconImages.image(named: "icon_chevron_down", pointSize: 16))
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.tintColor = BearyColors.gray
+        chevron.contentMode = .scaleAspectFit
+        NSLayoutConstraint.activate([
+            chevron.widthAnchor.constraint(equalToConstant: 16),
+            chevron.heightAnchor.constraint(equalToConstant: 16),
+        ])
+        let headerContent = UIStackView(arrangedSubviews: [titleLabelValue, makeRowSpacer(), chevron])
+        headerContent.translatesAutoresizingMaskIntoConstraints = false
+        headerContent.axis = .horizontal
+        headerContent.spacing = 12
+        headerContent.alignment = .center
+        let headerWrap = UIView()
+        headerWrap.translatesAutoresizingMaskIntoConstraints = false
+        headerWrap.addSubview(headerContent)
+        let headerButton = UIButton(type: .custom)
+        headerButton.translatesAutoresizingMaskIntoConstraints = false
+        headerButton.accessibilityLabel = title
+        headerButton.accessibilityValue = "已收起"
+        headerButton.bearyAddPressHaptic()
+        headerWrap.addSubview(headerButton)
+        headerButton.addTarget(self, action: #selector(settingsRowPressDown(_:)), for: .touchDown)
+        headerButton.addTarget(self, action: #selector(settingsRowPressUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        NSLayoutConstraint.activate([
+            headerContent.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 14),
+            headerContent.leadingAnchor.constraint(equalTo: headerWrap.leadingAnchor, constant: 16),
+            headerContent.trailingAnchor.constraint(equalTo: headerWrap.trailingAnchor, constant: -16),
+            headerContent.bottomAnchor.constraint(equalTo: headerWrap.bottomAnchor, constant: -14),
+            headerButton.topAnchor.constraint(equalTo: headerWrap.topAnchor),
+            headerButton.leadingAnchor.constraint(equalTo: headerWrap.leadingAnchor),
+            headerButton.trailingAnchor.constraint(equalTo: headerWrap.trailingAnchor),
+            headerButton.bottomAnchor.constraint(equalTo: headerWrap.bottomAnchor),
+        ])
+        stack.addArrangedSubview(headerWrap)
+        // 体：首位是标题行与体之间的分隔线，随体一并显隐，收起时不留 stray 线。
+        let bodyStack = UIStackView()
+        bodyStack.translatesAutoresizingMaskIntoConstraints = false
+        bodyStack.axis = .vertical
+        bodyStack.spacing = 0
+        bodyStack.alignment = .fill
+        bodyStack.isHidden = true
+        let headerSeparator = UIView()
+        headerSeparator.translatesAutoresizingMaskIntoConstraints = false
+        headerSeparator.backgroundColor = BearyColors.line
+        NSLayoutConstraint.activate([
+            headerSeparator.heightAnchor.constraint(equalToConstant: 1),
+        ])
+        bodyStack.addArrangedSubview(headerSeparator)
+        var wrappers: [UIView] = []
+        for (index, row) in rows.enumerated() {
+            if index > 0 {
+                let separator = UIView()
+                separator.translatesAutoresizingMaskIntoConstraints = false
+                separator.backgroundColor = BearyColors.line
+                NSLayoutConstraint.activate([
+                    separator.heightAnchor.constraint(equalToConstant: 1),
+                ])
+                bodyStack.addArrangedSubview(separator)
+            }
+            let wrap = UIView()
+            wrap.translatesAutoresizingMaskIntoConstraints = false
+            row.translatesAutoresizingMaskIntoConstraints = false
+            wrap.addSubview(row)
+            NSLayoutConstraint.activate([
+                row.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 14),
+                row.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 16),
+                row.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -16),
+                row.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -14),
+            ])
+            // 与 makeGroupCard 同款：整行覆盖钮改钉包容器四边。
+            let coverButtons = row.subviews.compactMap { $0 as? UIButton }.filter { button in
+                let edgeAttrs: [NSLayoutConstraint.Attribute] = [.top, .leading, .trailing, .bottom]
+                return edgeAttrs.allSatisfy { attr in
+                    row.constraints.contains { c in
+                        (c.firstItem as? UIButton) === button && c.firstAttribute == attr
+                            && (c.secondItem as? UIView) === row && c.constant == 0
+                    }
+                }
+            }
+            if coverButtons.count == 1, let button = coverButtons.first {
+                NSLayoutConstraint.deactivate(row.constraints.filter { ($0.firstItem as? UIButton) === button || ($0.secondItem as? UIButton) === button })
+                wrap.addSubview(button)
+                NSLayoutConstraint.activate([
+                    button.topAnchor.constraint(equalTo: wrap.topAnchor),
+                    button.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
+                    button.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+                    button.bottomAnchor.constraint(equalTo: wrap.bottomAnchor),
+                ])
+            }
+            bodyStack.addArrangedSubview(wrap)
+            wrappers.append(wrap)
+        }
+        stack.addArrangedSubview(bodyStack)
+        return SettingsDisclosure(card: card, headerButton: headerButton, bodyStack: bodyStack, bodyWrappers: wrappers, chevron: chevron)
+    }
+
+    /// 视觉批：折叠翻转——体显隐 + 箭头旋转 π（通知卡 setChevronExpanded
+    /// 同款）同在局部状态 0.18s 内完成；减动效时直落终态（BearyMotion 门控）。
+    private func setDisclosureExpanded(_ disclosure: SettingsDisclosure, _ expanded: Bool, animated: Bool) {
+        disclosure.isExpanded = expanded
+        disclosure.headerButton.accessibilityValue = expanded ? "已展开" : "已收起"
+        let apply = {
+            disclosure.bodyStack.isHidden = !expanded
+            disclosure.chevron.transform = expanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : CGAffineTransform.identity
+        }
+        guard animated, BearyMotion.animated(true) else {
+            apply()
+            view.layoutIfNeeded()
+            return
+        }
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: {
+            apply()
+            self.view.layoutIfNeeded()
+        })
+    }
+
+    @objc private func diagDisclosureTapped() {
+        guard let disclosure = diagDisclosure else { return }
+        setDisclosureExpanded(disclosure, !disclosure.isExpanded, animated: true)
+    }
+
+    @objc private func plusDisclosureTapped() {
+        guard let disclosure = plusDisclosure else { return }
+        setDisclosureExpanded(disclosure, !disclosure.isExpanded, animated: true)
+    }
+
+    @objc private func accountDisclosureTapped() {
+        guard let disclosure = accountDisclosure else { return }
+        setDisclosureExpanded(disclosure, !disclosure.isExpanded, animated: true)
     }
 
     private func buildLayout() {
@@ -1021,6 +1208,8 @@ final class BearySettingsViewController: UIViewController {
         // Plus 页入口行（组内首行）：标题“Plus 会员”＋行尾状态（未开通／到期日／
         // 永久有效），点按进 Plus 展示页；到期日只留 Plus 组，不进 ID 卡（全修 3-2）。
         let plusEntryTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
+        plusEntryTitle.font = BearyDynamicType.smallBodyFont()
         plusEntryTitle.text = "Plus 会员"
         plusEntryTitle.numberOfLines = 0
         plusEntryTitle.setContentHuggingPriority(.defaultHigh, for: .horizontal)
@@ -1037,6 +1226,8 @@ final class BearySettingsViewController: UIViewController {
         // 2026-10-29 第 7 项：来源明细抽成独立页——组内只留一行（标题 + 行尾
         // 官方包右箭头），点击进 BearyPlusGrantsViewController；原内联发放卡已删。
         let grantsTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
+        grantsTitle.font = BearyDynamicType.smallBodyFont()
         grantsTitle.text = "来源明细"
         grantsTitle.numberOfLines = 0 // P1-7：行正文标题多行
         grantsTitle.setContentHuggingPriority(.defaultHigh, for: .horizontal)
@@ -1051,17 +1242,26 @@ final class BearySettingsViewController: UIViewController {
         grantsButton.bearyAddPressHaptic()
         let grantsRow = makeSettingsTappableRow(content: grantsContent, button: grantsButton)
         // F4：标题入卡内（网页 Plus 会员 group-title 口径）；Plus 组网页行本身无图标，不补。
+        // 视觉批：渐进披露——一级只留入口／状态／专属会员，内测限免与
+        // 来源明细收进紧随其后的「Plus 更多」折叠（点按展开；两行原相对
+        // 顺序不变：限免在前、来源明细在后）。
         let plusGroup = makeGroupCard(title: "Plus 会员", rows: [
             plusEntryRow,
             makeRow(title: "当前状态", detailLabel: plusStatusLabel, iconName: "icon_info"),
-            plusFreeRow,
             makeRow(title: "专属会员", detailLabel: plusPersonalLabel, iconName: "icon_star"),
-            grantsRow,
         ])
-        if plusGroup.wrappers.count > 1 {
-            plusFreeWrapper = plusGroup.wrappers[1]
-        }
         contentWrap.addArrangedSubview(plusGroup.card)
+        let plusDisclosureValue = makeDisclosureCard(title: "Plus 更多", rows: [plusFreeRow, grantsRow])
+        plusDisclosureValue.headerButton.addTarget(self, action: #selector(plusDisclosureTapped), for: .touchUpInside)
+        // 视觉批：限免行显隐（freeUntil 为 0 时藏整行）改指披露体内的限免行
+        // 包容器；旧索引 wrappers[1] 实际指向「当前状态」行（Plus 组行序为
+        // 入口／状态／限免／专属／来源明细），藏它会误藏状态行、限免行只藏
+        // 内容留 28pt 空位，故此处一并纠为限免行本身。
+        if plusDisclosureValue.bodyWrappers.count > 0 {
+            plusFreeWrapper = plusDisclosureValue.bodyWrappers[0]
+        }
+        plusDisclosure = plusDisclosureValue
+        contentWrap.addArrangedSubview(plusDisclosureValue.card)
     }
 
     // C4：旧「账户」组整组删除——显示名称 / 用户名 / 邮箱 / 注册时间四行
@@ -1124,6 +1324,8 @@ final class BearySettingsViewController: UIViewController {
         // 验证失败/取消时开关视觉回滚，不写存档。
         let lockAvailability = BearyAppLockSettings.availability
         let lockTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
+        lockTitle.font = BearyDynamicType.smallBodyFont()
         lockTitle.text = "\(BearyAppLockSettings.biometryName)解锁"
         lockTitle.numberOfLines = 0
         let lockDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
@@ -1151,6 +1353,8 @@ final class BearySettingsViewController: UIViewController {
         // 2026-11-04 隐私遮罩开关：独立于锁开关；默认开（保持现行行为），
         // 关了切后台不再显示仅官方 logo 纯色遮罩。开关即时生效，无需验证。
         let maskTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
+        maskTitle.font = BearyDynamicType.smallBodyFont()
         maskTitle.text = "隐私遮罩"
         maskTitle.numberOfLines = 0
         let maskDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
@@ -1169,9 +1373,12 @@ final class BearySettingsViewController: UIViewController {
         maskRow.axis = .horizontal
         maskRow.spacing = 12
         maskRow.alignment = .center
-        // C2：导出我的数据归入账户与安全模块（原动作卡行，视觉与行为不动，
-        // 仅换组；exportRowButton 的 isEnabled 仍由导出流程控制）。
+        // C2：导出我的数据行仍在此建（视觉与行为不动；exportRowButton 的
+        // isEnabled 仍由导出流程控制），视觉批起承载改账号披露组（与注销
+        // 同组），不再进安全组，见 buildAccountActionSection。
         let exportTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
+        exportTitle.font = BearyDynamicType.smallBodyFont()
         exportTitle.text = "导出我的数据"
         exportTitle.numberOfLines = 0 // P1-7：行正文标题多行
         let exportDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
@@ -1206,13 +1413,15 @@ final class BearySettingsViewController: UIViewController {
         ])
         // 全修 8-17：标题收进卡内，与其余四组一致（旧“卡外标题 + 卡内 nil”
         // 口径已废，卡外标题行随之删除）。
+        // 视觉批：导出行交账号披露组承载（见上），安全组一级只留验证码
+        // 登录／登录设备／生物识别锁／隐私遮罩／退出其他设备。
+        exportRowForDisclosure = exportRowWrap
         let securityGroup = makeGroupCard(title: "账号与安全", rows: [
             codeLoginRow,
             deviceRow,
             lockRow,
             maskRow,
             logoutOthersButton,
-            exportRowWrap,
         ])
         accountSecurityWrap.addArrangedSubview(securityGroup.card)
     }
@@ -1366,6 +1575,8 @@ final class BearySettingsViewController: UIViewController {
             avatarImageView.bearySetImage(url: url)
         }
         let nameLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
+        nameLabel.font = BearyDynamicType.smallBodyFont()
         nameLabel.text = model.title
         var detailText: String
         if let handle = model.handle, !handle.isEmpty {
@@ -1437,6 +1648,8 @@ final class BearySettingsViewController: UIViewController {
 
     private func makeAddAccountRow() -> UIView {
         let titleLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
+        titleLabel.font = BearyDynamicType.smallBodyFont()
         titleLabel.text = "添加账号"
         let detailLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
         detailLabel.text = "登录另一个账号，当前账号保持登录"
@@ -1607,6 +1820,8 @@ final class BearySettingsViewController: UIViewController {
     /// logoutButtonTapped（BearyAPI.logout + 清 cookie + 本地退出）；注销仍走
     /// deleteButtonTapped（两步确认 + 7 天冷静期软删除）；管理员隐藏注销行
     /// （连同其前分隔线一并藏，不留 stray 线，见 setAccountActionDeleteHidden）。
+    /// 视觉批：账号操作卡一级只留退出登录，导出数据与注销收进其后
+    /// 的「账号更多」折叠（点按展开）；退出／注销行为与管理员隐藏口径不动。
     private func buildAccountActionSection() {
         accountActionWrap.translatesAutoresizingMaskIntoConstraints = false
         accountActionWrap.isHidden = true
@@ -1645,17 +1860,29 @@ final class BearySettingsViewController: UIViewController {
             deleteSpinner.leadingAnchor.constraint(equalTo: deleteRowButton.trailingAnchor, constant: 8),
             deleteSpinner.centerYAnchor.constraint(equalTo: deleteRowButton.centerYAnchor),
         ])
-        let group = makeGroupCard(title: "账号操作", rows: [logoutRow, deleteRow])
-        accountActionDeleteWrap = group.wrappers.count > 1 ? group.wrappers[1] : nil
-        // 注销行前的分隔线：卡内栈里注销包容器前一位即分隔线，管理员隐藏时一并藏。
-        if let stack = group.card.subviews.first(where: { $0 is UIStackView }) as? UIStackView,
-           let deleteWrap = accountActionDeleteWrap,
-           let deleteIndex = stack.arrangedSubviews.firstIndex(of: deleteWrap),
-           deleteIndex > 0 {
-            accountActionDeleteSeparator = stack.arrangedSubviews[deleteIndex - 1]
-        }
+        let group = makeGroupCard(title: "账号操作", rows: [logoutRow])
         group.card.translatesAutoresizingMaskIntoConstraints = false
         accountActionWrap.addSubview(group.card)
+        // 视觉批：账号披露组——导出数据（安全组建、此处承载）＋注销，
+        // 体内排布为 [分隔线，导出行包容器，分隔线，注销行包容器]。
+        var disclosureRows: [UIView] = []
+        if let exportRow = exportRowForDisclosure {
+            disclosureRows.append(exportRow)
+        }
+        disclosureRows.append(deleteRow)
+        let accountDisclosureValue = makeDisclosureCard(title: "账号更多", rows: disclosureRows)
+        accountDisclosureValue.headerButton.addTarget(self, action: #selector(accountDisclosureTapped), for: .touchUpInside)
+        // 注销行前的分隔线：披露体栈里注销包容器前一位即分隔线，管理员隐藏时一并藏。
+        if let deleteWrap = accountDisclosureValue.bodyWrappers.last {
+            accountActionDeleteWrap = deleteWrap
+            if let deleteIndex = accountDisclosureValue.bodyStack.arrangedSubviews.firstIndex(of: deleteWrap),
+               deleteIndex > 0 {
+                accountActionDeleteSeparator = accountDisclosureValue.bodyStack.arrangedSubviews[deleteIndex - 1]
+            }
+        }
+        accountDisclosure = accountDisclosureValue
+        accountDisclosureValue.card.translatesAutoresizingMaskIntoConstraints = false
+        accountActionWrap.addSubview(accountDisclosureValue.card)
         // 审计 P2-22：退出后本机残留明示——日记/回收站/图片缓存随退出清除，
         // 未发布草稿仍保存在本设备（按账号分桶，换号不可见），登录同一账号可继续编辑。
         let logoutFootnote = UILabel()
@@ -1671,7 +1898,10 @@ final class BearySettingsViewController: UIViewController {
             group.card.topAnchor.constraint(equalTo: accountActionWrap.topAnchor),
             group.card.leadingAnchor.constraint(equalTo: accountActionWrap.leadingAnchor),
             group.card.trailingAnchor.constraint(equalTo: accountActionWrap.trailingAnchor),
-            logoutFootnote.topAnchor.constraint(equalTo: group.card.bottomAnchor, constant: 8),
+            accountDisclosureValue.card.topAnchor.constraint(equalTo: group.card.bottomAnchor, constant: 20),
+            accountDisclosureValue.card.leadingAnchor.constraint(equalTo: accountActionWrap.leadingAnchor),
+            accountDisclosureValue.card.trailingAnchor.constraint(equalTo: accountActionWrap.trailingAnchor),
+            logoutFootnote.topAnchor.constraint(equalTo: accountDisclosureValue.card.bottomAnchor, constant: 8),
             logoutFootnote.leadingAnchor.constraint(equalTo: accountActionWrap.leadingAnchor, constant: 16),
             logoutFootnote.trailingAnchor.constraint(equalTo: accountActionWrap.trailingAnchor, constant: -16),
             logoutFootnote.bottomAnchor.constraint(equalTo: accountActionWrap.bottomAnchor),
@@ -2792,6 +3022,8 @@ final class BearySettingsViewController: UIViewController {
         rows.append(makeSettingsTappableRow(content: tutorialContent, button: tutorialButton))
         // 2026-10-29 音效包接入：音效开关行（默认开，关后全部音效静默；只门控音效，不动震动）。
         let soundSwitchTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
+        soundSwitchTitle.font = BearyDynamicType.smallBodyFont()
         soundSwitchTitle.text = "音效"
         soundSwitchTitle.numberOfLines = 0 // P1-7：开关行正文标题多行
         let soundSwitchDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
@@ -2816,6 +3048,8 @@ final class BearySettingsViewController: UIViewController {
         // D2：诊断日志开关行（复用消息角标开关行样式：标题 + 说明 + UISwitch；
         // 放在诊断日志查看行正上方，开关关闭时 DiagFile 不再写入，默认开）。
         let diagSwitchTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
+        diagSwitchTitle.font = BearyDynamicType.smallBodyFont()
         diagSwitchTitle.text = "记录诊断日志"
         diagSwitchTitle.numberOfLines = 0 // P1-7：开关行正文标题多行
         let diagSwitchDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
@@ -2848,8 +3082,12 @@ final class BearySettingsViewController: UIViewController {
         // 2026-10-29 第 12 项（合并 A）：诊断日志两行（开关 + 查看）主题相关、
         // 原在通用组内零散成行，抽出并成独立的「诊断日志」卡片，仍列在设置页内
         // （通用卡之后、消息与通知卡之前，顺序由 buildLayout 的 wrap 顺序定）。
-        let diagGroup = makeGroupCard(title: "诊断日志", rows: [diagSwitchRow, diagRow])
-        generalNotifyWrap.addArrangedSubview(diagGroup.card)
+        // 视觉批：渐进披露——该卡改点按展开的折叠（标题沿用原卡名，两行
+        // 本身与跳转／开关行为一字不动）。
+        let diagDisclosureValue = makeDisclosureCard(title: "诊断日志", rows: [diagSwitchRow, diagRow])
+        diagDisclosureValue.headerButton.addTarget(self, action: #selector(diagDisclosureTapped), for: .touchUpInside)
+        diagDisclosure = diagDisclosureValue
+        generalNotifyWrap.addArrangedSubview(diagDisclosureValue.card)
     }
 
     // 私信权限档位行（四档开放）：当前档位、行内文案与按钮引用，刷新走 refreshDMLevelRow。
