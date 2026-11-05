@@ -2128,6 +2128,7 @@ class BearyProfileViewController: UIViewController {
         }
         applyMode()
         loadProfile()
+        loadProfileSnapshot()
         if targetUserIdValue != nil {
             // id 目标的标签列表不需要等 profile：日记 / 赞过按 id 直接拉。
             loadTab(forceReload: true)
@@ -3784,6 +3785,9 @@ class BearyProfileViewController: UIViewController {
                 return
             }
             applyProfile()
+            // handle 目标的本人页在资料解析后才确定是本人：此时再试一次快照
+            // （viewDidLoad 时 isOwnProfile 仍为假，快照没贴上）。
+            loadProfileSnapshot()
             applyMode()
             // 好友第一期：资料解析出目标 id 后才拉关注态（handle 目标此前无 id）。
             refreshFollowState()
@@ -5568,6 +5572,46 @@ class BearyProfileViewController: UIViewController {
 
     // MARK: - 数据：标签列表
 
+    /// 本人三 tab 磁盘快照：冷启动先显旧列表、再静默刷新、失败保留旧内容
+    /// （与广场 BearyFeedCache 同口径）。只缓存本人页：他人页不读不写，
+    /// 桶按当前账号隔离；快照只补空槽，网络已回包的 tab 不用旧快照回写。
+    private func profileCacheBucket() -> String? {
+        guard let uid = SessionManager.shared.currentUser?.id else { return nil }
+        return "\(uid)"
+    }
+
+    private func loadProfileSnapshot() {
+        guard let bucket = profileCacheBucket() else { return }
+        BearyProfileCache.load(bucket: bucket) { [weak self] snap in
+            guard let self = self, let snap = snap else { return }
+            self.applyProfileSnapshot(snap)
+        }
+    }
+
+    private func applyProfileSnapshot(_ snap: BearyProfileCache.Snapshot) {
+        guard isOwnProfile, !profileDeleted else { return }
+        var didApply = false
+        if diaryEntries.isEmpty, !snap.diary.isEmpty {
+            diaryEntries = snap.diary
+            diaryHasMore = snap.diaryHasMore
+            BearyDiaryPin.noteEntries(snap.diary)
+            didApply = true
+        }
+        if likedEntries.isEmpty, !snap.liked.isEmpty {
+            likedEntries = snap.liked
+            likedHasMore = snap.likedHasMore
+            didApply = true
+        }
+        if savedEntries.isEmpty, !snap.saved.isEmpty {
+            savedEntries = snap.saved
+            savedHasMore = snap.savedHasMore
+            didApply = true
+        }
+        guard didApply else { return }
+        tableView.reloadData()
+        refreshFooter()
+    }
+
     private func scopeForTab(tab: ProfileTab) -> BearyAPI.Scope? {
         switch tab {
         case .diary:
@@ -5838,6 +5882,10 @@ class BearyProfileViewController: UIViewController {
             }
             if freshEntries.count < tabPageLimit {
                 setHasMore(hasMore: false)
+            }
+            // 本人页快照：首屏成功回包即写盘（分页追加不写——快照只存首屏窗口）。
+            if !appending, isOwnProfile, let bucket = profileCacheBucket() {
+                BearyProfileCache.save(bucket: bucket, tab: requestTab, entries: freshEntries, hasMore: currentHasMore)
             }
             // 80 包 A6-2：分页追加走 insertRows（与首页/时间线同口径），表行数对不上
             // 回落 reloadData；首屏/失败仍 reloadData（见下）。
@@ -8956,5 +9004,102 @@ private extension UIImage {
         let context = CIContext(options: nil)
         guard let cgImage = context.createCGImage(outputImage, from: inputImage.extent) else { return nil }
         return UIImage(cgImage: cgImage, scale: scale, orientation: imageOrientation)
+    }
+}
+
+// MARK: - 个人页首屏磁盘缓存（与 BearyFeedCache 同口径，不新增文件）
+///
+/// 本人三 tab（日记/赞过/收藏）首屏 20 条 + hasMore，按账号分桶；冷启动
+/// 先显快照、再静默刷新、失败保留旧内容。只缓存本人页：他人页不读不写
+/// （diary/liked 是目标作者的篇，saved 是观看者自己的篇——三者都只在
+/// 本人页落盘，避免他人篇落进本人桶）。退出/401 时由 SessionManager 清桶。
+enum BearyProfileCache {
+    private static let filePrefix = "beary_profile_cache_"
+    static let snapshotEntryLimit = 20
+
+    struct Snapshot: Codable {
+        var savedAt: TimeInterval
+        var diary: [Entry]
+        var liked: [Entry]
+        var saved: [Entry]
+        var diaryHasMore: Bool
+        var likedHasMore: Bool
+        var savedHasMore: Bool
+    }
+
+    private static func fileURL(bucket: String) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return base.appendingPathComponent("\(filePrefix)\(bucket).json")
+    }
+
+    private static let ioQueue = DispatchQueue(label: "beary.profileCache.io", qos: .utility)
+
+    private static let generationLock = NSLock()
+    private static var generations: [String: UInt64] = [:]
+
+    private static func generation(for bucket: String) -> UInt64 {
+        generationLock.lock()
+        defer { generationLock.unlock() }
+        return generations[bucket] ?? 0
+    }
+
+    private static func bumpGeneration(for bucket: String) {
+        generationLock.lock()
+        generations[bucket, default: 0] += 1
+        generationLock.unlock()
+    }
+
+    static func load(bucket: String, completion: @escaping (Snapshot?) -> Void) {
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            var snap: Snapshot?
+            if let url = fileURL(bucket: bucket), let data = try? Data(contentsOf: url) {
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                snap = try? decoder.decode(Snapshot.self, from: data)
+            }
+            let result = capturedGeneration == generation(for: bucket) ? snap : nil
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    /// 写单个 tab 槽：串行队列内读-改-写，跨 tab 写盘不互相冲掉。
+    static func save(bucket: String?, tab: BearyProfileViewController.ProfileTab, entries: [Entry], hasMore: Bool) {
+        guard let bucket = bucket, !bucket.isEmpty else { return }
+        let capped = Array(entries.prefix(snapshotEntryLimit))
+        let storedHasMore = hasMore || entries.count > snapshotEntryLimit
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            guard capturedGeneration == generation(for: bucket) else { return }
+            guard let url = fileURL(bucket: bucket) else { return }
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            var snap: Snapshot
+            if let data = try? Data(contentsOf: url),
+               let decoded = try? decoder.decode(Snapshot.self, from: data) {
+                snap = decoded
+            } else {
+                snap = Snapshot(savedAt: Date().timeIntervalSince1970, diary: [], liked: [], saved: [], diaryHasMore: false, likedHasMore: false, savedHasMore: false)
+            }
+            snap.savedAt = Date().timeIntervalSince1970
+            switch tab {
+            case .diary: snap.diary = capped; snap.diaryHasMore = storedHasMore
+            case .liked: snap.liked = capped; snap.likedHasMore = storedHasMore
+            case .saved: snap.saved = capped; snap.savedHasMore = storedHasMore
+            }
+            let encoder = JSONEncoder()
+            encoder.keyEncodingStrategy = .convertToSnakeCase
+            guard let data = try? encoder.encode(snap) else { return }
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    static func purge(bucket: String) {
+        bumpGeneration(for: bucket)
+        ioQueue.async {
+            guard let url = fileURL(bucket: bucket) else { return }
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }

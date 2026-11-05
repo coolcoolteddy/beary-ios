@@ -92,6 +92,8 @@ enum BearyFriends {
     static func clearDiaryCachesAndNotify() {
         let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id)
         BearyFeedCache.purge(bucket: bucket)
+        // 个人页赞过 tab 快照同样含仅好友篇：断友后旧快照不得再秒显。
+        BearyProfileCache.purge(bucket: bucket)
         BearyDiaryCardCell.quoteCache.removeAll()
         NotificationCenter.default.post(name: .bearyFriendsChanged, object: nil)
     }
