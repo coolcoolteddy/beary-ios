@@ -6,7 +6,7 @@
 // 标题放开换行（首页单行截断；详情是全文页）与正文全文不折叠（首页折叠钮不出现）。
 // 单层内容列（#213 保留）：宽 ≤820 时安全区宽−32（竖屏安全区横向 inset 为 0，393 宽即 361pt 不变），宽 ≥821 时 600 居中。
 // 列内（2026-11-05 日记布局统一，与卡片同一套）：头像 40 + 间距 12 + 头行
-// （@ 行 12 粗体橙 + 13 图标在作者行上方；作者行名 16.5 粗体、徽章 17、皇冠 19
+// （@ 行 12 粗体橙 + 13 图标在作者行上方；作者行名 16.5 粗体、皇冠 19
 // 带 drop-shadow、垫片吸宽、时间 13 灰、天气 15 灰、心情 13 灰 + 20 熊图，按文字
 // 基线对齐）；头行之下是全宽正文栈：标题 16.5 粗体（放开换行）→正文 16/1.6，
 // 标题与正文同左缘、同宽，左右与内容列齐平，不再缩进到昵称位置。
@@ -18,9 +18,10 @@
 // 以内容列为基准即 −36，等价于首页以整屏为基准的 −52，屏上几何一致；正文栈右缩进恒 0）；
 // 编辑／删除走长按系统上下文菜单（C6 同款，卡片内无 ⋯ 钮，关闭钮保留）。
 // 限时：1.5pt 虚线框圆角 16、左右内缩 8／顶 +6／底按正文栈底 +16 + 倒计时灰字行（作者行下方、标题上方）。
-// 纵向间距（头行 + 正文栈）：@→作者 4、作者→限时 4、头行→正文栈 12（有标题）／8（无标题）、
-// 标题→正文 4、正文→引用 10、引用→图片 10、图片→操作行 10、操作行→回应行 10、
-// 正文栈底→底线 12、底线下 24 留白；头行顶：无 @ 行 22、有 @ 行 23。
+// 纵向间距（头行 + 正文栈，2026-11-05 ChatGPT 间距跟进）：@→作者 4、作者→限时 4、
+// 头行→正文栈 16（有标题）／14（无标题）、标题→正文 6、正文→图片 14、
+// 图片→引用 12、引用→定位 12、定位→操作行 14、操作行→回应行 12、
+// 正文栈底→底线 16、底线下 24 留白；头行顶：无 @ 行 16、有 @ 行 17。
 // 旧详情口径的差异（本批改掉）：心情／天气／@ 不再用 faint 底 chip 行（心情天气
 // 进作者行、@ 独占首行）；操作行不再左置四钮（回应钮删除、收藏去中文标签、
 // 分享非公开隐藏时留 21pt 槽位占位）；回应不再用“回应”标题 + “写回应…”实心钮；
@@ -204,13 +205,6 @@ final class BearyDetailViewController: UIViewController {
     /// 作者行：首页 titleStack 同款（名 + 徽章 + 皇冠 + 垫片 + 时间 + 天气 + 心情，
     /// 间距 8、.firstBaseline 对齐）。
     private let nameButton = UIButton(type: .custom)
-    private let badgeImageView: UIImageView = {
-        let v = UIImageView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.contentMode = .scaleAspectFit
-        v.isHidden = true
-        return v
-    }()
     private let crownView: BearyCrownView = {
         let v = BearyCrownView()
         v.translatesAutoresizingMaskIntoConstraints = false
@@ -285,10 +279,12 @@ final class BearyDetailViewController: UIViewController {
     }()
     private var moodEmoteView: BearyEmoteView?
     private lazy var authorRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameButton, badgeImageView, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, weatherTempLabel, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameButton, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, weatherTempLabel, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
-        st.spacing = 8
+        // 姓名→皇冠间距 6（2026-11-05 ChatGPT 间距跟进；徽章已下线摘掉，
+        // 皇冠直接贴名字；整行统一间距，名字→皇冠、皇冠→时间等同值）。
+        st.spacing = 6
         st.alignment = .firstBaseline
         st.distribution = .fill
         return st
@@ -456,7 +452,8 @@ final class BearyDetailViewController: UIViewController {
         let st = UIStackView(arrangedSubviews: [detailLocationLineRow, detailLocationNoteLabel])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
-        st.spacing = 2
+        // 定位说明距地址 4（2026-11-05 ChatGPT 间距跟进，原 2）。
+        st.spacing = 4
         st.isHidden = true
         return st
     }()
@@ -728,22 +725,23 @@ final class BearyDetailViewController: UIViewController {
         // 一旦某一路异常即全崩，故改本地常量激活、彻底去掉强制解包，行为不变。
         let narrowLeading = columnNarrowLeading
         let narrowTrailing = columnNarrowTrailing
-        // 批 B：头像顶 14、头行顶 22（有 @ 行时 23，见 updateDiaryStackSpacing）；
+        // 批 B：头像顶 16、头行顶 16（有 @ 行时 17，见 updateDiaryStackSpacing；
+        // @ 行显隐的 1pt 差值保留，只改基线不改相对行为）；
         // 头行右缩进：他人 0、本人 −36（让出小地球 28 + 间隙 8；以内容列为基准，
         // 等价于首页以整屏为基准的 −52，屏上几何一致）；正文栈左右与内容列齐平、
         // 右缩进恒 0（小地球只占头行高度，正文不让位）。
-        let headerTop = headerStack.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 22)
+        let headerTop = headerStack.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 16)
         let headerTrailing = headerStack.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor, constant: 0)
         headerStackTopConstraint = headerTop
         headerStackTrailingConstraint = headerTrailing
         // 正文栈顶（2026-11-05 日记布局统一）：取头像底与头行底较大者 + 间距。
-        // 初始间距按无标题 8 取，render 时经 updateDiaryStackSpacing 按标题显隐重定；
+        // 初始间距按无标题 14 取，render 时经 updateDiaryStackSpacing 按标题显隐重定；
         // 两条 required ≥ 定下限，999 的 = 把栈顶拉回头行底 + 间距（头像更高时该条自动断开）。
         // 注意：贴头像底那条约束涉 avatarButton，须等 buildCardHeader() 里
         // avatarButton 入层级后再激活（#106 同款无共同祖先崩溃），此处只建头行侧两条。
-        let bodyTopFromHeader = bodyStack.topAnchor.constraint(greaterThanOrEqualTo: headerStack.bottomAnchor, constant: 8)
+        let bodyTopFromHeader = bodyStack.topAnchor.constraint(greaterThanOrEqualTo: headerStack.bottomAnchor, constant: 14)
         bodyStackTopFromHeaderConstraint = bodyTopFromHeader
-        let bodyTopPin = bodyStack.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 8)
+        let bodyTopPin = bodyStack.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 14)
         bodyTopPin.priority = UILayoutPriority(999)
         bodyStackTopPinConstraint = bodyTopPin
         guard let narrowLeading = narrowLeading, let narrowTrailing = narrowTrailing else { return }
@@ -771,7 +769,7 @@ final class BearyDetailViewController: UIViewController {
             bodyStack.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor),
             bodyTopFromHeader,
             bodyTopPin,
-            separatorView.topAnchor.constraint(equalTo: bodyStack.bottomAnchor, constant: 12),
+            separatorView.topAnchor.constraint(equalTo: bodyStack.bottomAnchor, constant: 16),
             separatorView.leadingAnchor.constraint(equalTo: contentColumnView.leadingAnchor),
             separatorView.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor),
             separatorView.heightAnchor.constraint(equalToConstant: 2),
@@ -816,7 +814,7 @@ final class BearyDetailViewController: UIViewController {
             avatarImageView.leadingAnchor.constraint(equalTo: avatarButton.leadingAnchor),
             avatarImageView.trailingAnchor.constraint(equalTo: avatarButton.trailingAnchor),
             avatarImageView.bottomAnchor.constraint(equalTo: avatarButton.bottomAnchor),
-            avatarButton.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 14),
+            avatarButton.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 16),
             avatarButton.leadingAnchor.constraint(equalTo: contentColumnView.leadingAnchor),
             avatarButton.widthAnchor.constraint(equalToConstant: 40),
             avatarButton.heightAnchor.constraint(equalToConstant: 40),
@@ -829,7 +827,7 @@ final class BearyDetailViewController: UIViewController {
         // avatarButton 已在上面 addSubview 到 contentColumnView，两端现已
         // 同属 contentColumnView 层级，激活安全；几何与旧值一致（+12）。
         // 正文栈贴头像底那条 ≥ 约束同样涉 avatarButton，一并在此激活。
-        let bodyTopFromAvatar = bodyStack.topAnchor.constraint(greaterThanOrEqualTo: avatarButton.bottomAnchor, constant: 8)
+        let bodyTopFromAvatar = bodyStack.topAnchor.constraint(greaterThanOrEqualTo: avatarButton.bottomAnchor, constant: 14)
         bodyStackTopFromAvatarConstraint = bodyTopFromAvatar
         NSLayoutConstraint.activate([
             headerStack.leadingAnchor.constraint(equalTo: avatarButton.trailingAnchor, constant: 12),
@@ -866,7 +864,6 @@ final class BearyDetailViewController: UIViewController {
         timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         titleSpacerLabel.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
         titleSpacerLabel.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
-        badgeImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         crownView.setContentCompressionResistancePriority(.required, for: .horizontal)
         crownWrapView.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 皇冠在等高容器内居中（容器底边钉基线，中心即 cap 中心）。
@@ -886,8 +883,6 @@ final class BearyDetailViewController: UIViewController {
         // 隐藏子视图的固定尺寸用 999 优先级，避免与 stack 压零冲突（首页同款）。
         let recipientIconHeight = recipientIconView.heightAnchor.constraint(equalToConstant: 13)
         recipientIconHeight.priority = UILayoutPriority(999)
-        let badgeWidth = badgeImageView.widthAnchor.constraint(equalToConstant: 17)
-        badgeWidth.priority = UILayoutPriority(999)
         let crownWidth = crownView.widthAnchor.constraint(equalToConstant: 19)
         crownWidth.priority = UILayoutPriority(999)
         let weatherWidth = weatherImageView.widthAnchor.constraint(equalToConstant: 15)
@@ -895,8 +890,6 @@ final class BearyDetailViewController: UIViewController {
         NSLayoutConstraint.activate([
             recipientIconView.widthAnchor.constraint(equalToConstant: 13),
             recipientIconHeight,
-            badgeWidth,
-            badgeImageView.heightAnchor.constraint(equalToConstant: 17),
             crownWidth,
             crownView.heightAnchor.constraint(equalToConstant: 19),
             weatherWidth,
@@ -1107,30 +1100,37 @@ final class BearyDetailViewController: UIViewController {
         emoteFlowHeight?.isActive = true
     }
 
-    /// 首页 updateDiaryStackSpacing 同款对照表（详情无折叠钮，故正文后恒取 10）：
-    /// @→作者 4、作者→限时 4；头行→正文栈 12（有标题）/ 8（无标题），由正文栈顶
-    /// 三条约束定（见 buildLayout／buildCardHeader）；标题→正文 4（标题隐藏时 0）、
-    /// 正文→引用 10、引用→图片 10、图片→操作行 10、操作行→回应行 10；批 E 位置行
-    /// 插在引用卡与操作行之间，引用→位置 10、位置→操作行 10（无位置时整组隐藏、
-    /// 不留空行）；头行顶：无 @ 行 22、有 @ 行 23。
+    /// 首页 updateDiaryStackSpacing 同款对照表（详情无折叠钮，故正文后恒取 14）：
+    /// @→作者 4、作者→限时 4；头行→正文栈 16（有标题）/ 14（无标题），由正文栈顶
+    /// 三条约束定（见 buildLayout／buildCardHeader）；标题→正文 6（标题隐藏时 0）、
+    /// 正文→图片 14、图片→引用 12、引用→定位 12、定位→操作行 14、操作行→回应行 12；
+    /// 批 E 位置行插在引用卡与操作行之间（无位置时整组隐藏、不留空行）；
+    /// 头行顶：无 @ 行 16、有 @ 行 17。
     private func updateDiaryStackSpacing() {
-        headerStackTopConstraint?.constant = recipientRow.isHidden ? 22 : 23
+        // 作者行顶部统一 16（2026-11-05 ChatGPT 间距跟进）：@ 行显隐的 1pt
+        // 差值保留（16／17），只改基线不改相对行为。
+        headerStackTopConstraint?.constant = recipientRow.isHidden ? 16 : 17
         headerStack.setCustomSpacing(4, after: recipientRow)
         headerStack.setCustomSpacing(4, after: authorRow)
         // 2026-11-05 日记布局统一：头行→正文栈间距不再走栈内 spacing，
-        // 改由正文栈顶三条约束定——有标题 12（标题与作者行拉开，不再像昵称第二排）、
-        // 无标题 8；限时行是头行末行，其后间距即该值。
-        let headerBodyGap: CGFloat = titleLabel.isHidden ? 8 : 12
+        // 改由正文栈顶三条约束定——有标题 16、无标题 14（ChatGPT 间距跟进，
+        // 在 #904 的 12／8 基础上放宽）；限时行是头行末行，其后间距即该值。
+        let headerBodyGap: CGFloat = titleLabel.isHidden ? 14 : 16
         bodyStackTopFromAvatarConstraint?.constant = headerBodyGap
         bodyStackTopFromHeaderConstraint?.constant = headerBodyGap
         bodyStackTopPinConstraint?.constant = headerBodyGap
-        // 标题贴着正文走：标题→正文 4；标题隐藏时其后间距置 0，正文直接贴头行间距。
-        bodyStack.setCustomSpacing(titleLabel.isHidden ? 0 : 4, after: titleLabel)
-        bodyStack.setCustomSpacing(10, after: bodyLabel)
-        bodyStack.setCustomSpacing(10, after: quoteView)
-        bodyStack.setCustomSpacing(10, after: imagesScrollView)
-        bodyStack.setCustomSpacing(10, after: detailLocationStack)
-        bodyStack.setCustomSpacing(10, after: actionStack)
+        // 标题贴着正文走：标题→正文 6（ChatGPT 间距跟进，#904 为 4）；标题隐藏时其后间距置 0，正文直接贴头行间距。
+        bodyStack.setCustomSpacing(titleLabel.isHidden ? 0 : 6, after: titleLabel)
+        // 正文→图片 14（ChatGPT 间距跟进，#904 为 10）：正文与图片条直接相邻。
+        bodyStack.setCustomSpacing(14, after: bodyLabel)
+        // 图片→定位 12（ChatGPT 间距跟进）：图片条与定位行中间隔着引用卡，
+        // 两段相邻间距（图片→引用、引用→定位）各取 12。
+        bodyStack.setCustomSpacing(12, after: imagesScrollView)
+        bodyStack.setCustomSpacing(12, after: quoteView)
+        // 定位→操作行 14（ChatGPT 间距跟进，#904 为 10）。
+        bodyStack.setCustomSpacing(14, after: detailLocationStack)
+        // 操作行→回应行 12（ChatGPT 间距跟进，#904 为 10）。
+        bodyStack.setCustomSpacing(12, after: actionStack)
         bodyStack.setCustomSpacing(10, after: guestPromptButton)
     }
 
@@ -1333,9 +1333,7 @@ final class BearyDetailViewController: UIViewController {
             recipientRow.isHidden = true
             recipientLabel.text = nil
         }
-        // BETA 徽章已下线：用户名右边不再显示佩戴徽章（Plus 皇冠不受影响）。
-        badgeImageView.image = nil
-        badgeImageView.isHidden = true
+        // Plus 皇冠按 authorPlus 显示（徽章已下线摘掉，皇冠不受影响）。
         setCrownHidden((entry.authorPlus ?? 0) != 1 || !crownView.hasCrown)
         renderWeatherTemp()
         moodStack.isHidden = true

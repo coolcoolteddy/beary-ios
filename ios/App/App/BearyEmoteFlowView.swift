@@ -12,7 +12,9 @@ import UIKit
 final class BearyEmoteFlowView: UIView {
 
     var itemSpacing: CGFloat = 8
-    var lineSpacing: CGFloat = 8
+    // 行间距 10（2026-11-05 ChatGPT 间距跟进，原 8；注释已写行距 8–10pt 时
+    // 上下行扩区在行间重叠可接受，height(forWidth:) 与 layoutSubviews 同读该值）。
+    var lineSpacing: CGFloat = 10
 
     /// 唯一换行布局算法（5-18）：height(forWidth:) 与 layoutSubviews 同调此处。
     /// gap（itemSpacing / lineSpacing）、最小高 32、换行条件只在此一处定义，
