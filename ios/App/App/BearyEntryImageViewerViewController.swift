@@ -78,6 +78,12 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private var panTy0: CGFloat = 0
     private var pinchScale0: CGFloat = 1
     private var pinchActive: Bool = false
+    /// 审计三轮 11：捏合锚点基线——.began 时记下双指中心与当时的
+    /// tx/ty/scale，.changed 时按当前双指中心重算平移，让捏合中心
+    /// 的内容始终留在手指下（旧写法只改缩放、不补偿平移）。
+    private var pinchCenter0: CGPoint = .zero
+    private var pinchTx0: CGFloat = 0
+    private var pinchTy0: CGFloat = 0
     /// 拖动手势引用：旋转中途重算相邻图位置时，凭它判断手指是否仍在拖动
     /// （回弹/翻页动画中的 transform 由动画自身驱动，不干扰）。
     private var panGesture: UIPanGestureRecognizer?
@@ -798,9 +804,15 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         if scale > 1 {
             resetZoom(animated: true)
         } else {
+            // 审计三轮 11：双击以点击位置为中心放大——点下的内容留在
+            // 手指下（旧写法 tx/ty 清零，点下的细节会被推离手指）。
+            // transform = 先缩放后平移（见 applyTransform），t' = C − P；
+            // 再 clampPan 限幅，点在边缘附近时尽量靠近手指。
             scale = 2
-            tx = 0
-            ty = 0
+            let point = sender.location(in: view)
+            tx = view.bounds.midX - point.x
+            ty = view.bounds.midY - point.y
+            clampPan()
             applyTransform(animated: true)
         }
         // 审计 15 项第 8 项：双击放大后按需升级清晰度（缩回时内部守卫直接返回）。
@@ -817,9 +829,22 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             suppressNextStageTapAfterLive = false
             hideNeighbor()
             pinchScale0 = scale
+            pinchCenter0 = sender.location(in: view)
+            pinchTx0 = tx
+            pinchTy0 = ty
         } else if sender.state == .changed {
             pinchActive = true
-            scale = max(1, min(4, pinchScale0 * sender.scale))
+            // 审计三轮 11：按双指中心同步补偿平移——以 .began 时双指
+            // 中心下的内容为锚点，t' = P − C − (s'/s0)·(P0 − C − t0)；
+            // 双指整体移动时图跟着走（pan 手势在捏合期早退，不冲突），
+            // 再 clampPan 限幅。1～4 倍范围与旧口径一致。
+            let newScale = max(1, min(4, pinchScale0 * sender.scale))
+            let center = sender.location(in: view)
+            let viewCenter = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
+            let ratio = newScale / pinchScale0
+            tx = center.x - viewCenter.x - ratio * (pinchCenter0.x - viewCenter.x - pinchTx0)
+            ty = center.y - viewCenter.y - ratio * (pinchCenter0.y - viewCenter.y - pinchTy0)
+            scale = newScale
             clampPan()
             applyTransform(animated: false)
         } else if sender.state == .ended || sender.state == .cancelled {
@@ -1001,19 +1026,16 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             return
         }
         let next = currentIndex + direction
-        let isWrap = next < 0 || next >= imageKeys.count
         let wrapped = (next + imageKeys.count) % imageKeys.count
-        if isWrap == true {
-            // 回绕瞬时归位：不做长距离倒带动效（网页 trackTo(!wrap) 口径）。
-            currentIndex = wrapped
-            resetZoom(animated: false)
-            updateCounter()
-            loadCurrent()
-            return
-        }
+        // 审计三轮 05：回绕不再瞬时归位——旧路径先改下标/页码再加载，
+        // 弱网下页码与“查看日记”已指新图、画面仍是旧图。现与普通翻页
+        // 同走相邻槽位交接（拖动时 updateNeighbor 已按取模贴好回绕目标）：
+        // 目标就绪走快速交接、未就绪走回落路径（先空＋加载圈，旧图不冒充
+        // 新图）；页码与代次/loadingKey/isNavigating 都在 commit 里同步。
+        // 动画与普通翻页同为沿滑动方向的一页滑入，不是长距离倒带。
         // 连续翻页：拖动时相邻图已贴在边上跟手（updateNeighbor），直接把两图
         // 一次动画到终位再交接——当前图出屏、相邻图正好居中，全程相邻无间隙。
-        // 相邻图未就绪时回落旧的两段式路径（行为不变）。
+        // 相邻图未就绪时走回落路径（目标槽位先空＋加载圈，见下方 110 注释）。
         if neighborIndex == wrapped && neighborImageView.image != nil {
             isNavigating = true
             let width = pageWidthValue()
