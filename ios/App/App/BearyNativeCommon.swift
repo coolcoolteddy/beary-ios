@@ -269,12 +269,16 @@ final class BearyProgressiveBlurView: UIVisualEffectView {
             maskLayer.startPoint = CGPoint(x: 0.5, y: 1)
             maskLayer.endPoint = CGPoint(x: 0.5, y: 0)
         case .outward:
+            // CAGradientLayer 没有 startRadius/endRadius（编译失败）：
+            // 径向半径由圆心 startPoint → endPoint 的距离决定；内圈不透明、
+            // 外圈 12pt 渐隐改用三段 colors/locations 表达，与原内外径意图一致。
             maskLayer.type = .radial
             maskLayer.startPoint = CGPoint(x: 0.5, y: 0.5)
-            maskLayer.endPoint = CGPoint(x: 0.5, y: 0.5)
+            maskLayer.endPoint = CGPoint(x: 0.5, y: 0)
             let halfMin = min(size.width, size.height) / 2
-            maskLayer.startRadius = max(0, halfMin - BearyProgressiveBlur.band)
-            maskLayer.endRadius = halfMin
+            let inner = halfMin > 0 ? max(0, halfMin - BearyProgressiveBlur.band) / halfMin : 0
+            maskLayer.colors = [UIColor.white.cgColor, UIColor.white.cgColor, UIColor.clear.cgColor]
+            maskLayer.locations = [0, NSNumber(value: Double(inner)), 1]
         }
     }
 }
