@@ -112,7 +112,18 @@ final class BearyLivePhotoLoader {
 
     /// 退出/401 清态：清该账号实况内存 + 磁盘桶（SessionManager 退出路径调用，
     /// 与图片桶 purgeAccount 同口径；切换账号不走这里，旧桶保留、切回可复用）。
+    /// 第七轮审计 06：先推进代次、取消在途下载，再清内存、删目录。代次屏障使
+    /// 删除前已在途、删除后才到写盘点的旧下载在完成回调守卫处即被丢弃，不再
+    /// 调 writeDisk 重新创建刚删除的目录；取消任务使仍在途的网络任务不再跑
+    /// 完整个回调链。只删目录不做这两件，迟到回包会把缓存目录重新建回来
+    /// （writeDisk 经 fileURL 先 createDirectory 再写盘）。
     func purgeAccount(_ id: Int) {
+        stateLock.lock()
+        generation += 1
+        let stale = inFlightTasks
+        inFlightTasks.removeAll()
+        stateLock.unlock()
+        stale.forEach { $0.cancel() }
         cache.removeAllObjects()
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
         let dir = caches.appendingPathComponent("BearyLiveCache").appendingPathComponent("\(id)")
@@ -134,7 +145,11 @@ final class BearyLivePhotoLoader {
         return data
     }
 
-    private func writeDisk(data: Data, key: String, ext: String, bucket: String) {
+    /// 第七轮审计 06：写盘前再验一次代次——下载完成回调的守卫与真正落盘之间
+    /// 仍有一道窗口（purge 可能正好夹在中间），这里是最后一道门；代次已变
+    /// 即弃写，不重新创建刚删除的缓存目录。
+    private func writeDisk(data: Data, key: String, ext: String, bucket: String, generation gen: Int) {
+        guard isCurrentGeneration(gen) else { return }
         guard let file = fileURL(key: key, ext: ext, bucket: bucket) else { return }
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         let oldSize = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
@@ -199,7 +214,7 @@ final class BearyLivePhotoLoader {
                 completion(nil)
                 return
             }
-            self.writeDisk(data: data, key: key, ext: ext, bucket: bucket)
+            self.writeDisk(data: data, key: key, ext: ext, bucket: bucket, generation: gen)
             completion(data)
         }
         guard let task = task else {
