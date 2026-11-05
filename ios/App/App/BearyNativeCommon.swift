@@ -634,8 +634,9 @@ final class BearyImageLoader {
     /// 视为未命中、重新走网络，服务端此时按最新可见性 404，旧图即停。
     /// 私密图服务端给的是 private 1 年，但本加载器无法从 URL 区分
     /// 公开/私密（key 不含可见性），故统一 24 小时、向 fail-closed
-    /// 取严；代价只是私密图 24 小时后多一次下载。
-    private static let diskCacheMaxAge: TimeInterval = 24 * 3600
+    /// 取严；代价只是私密图 24 小时后多一次下载。预热记录的 TTL 复用
+    /// 此值（BearyImagePrefetcher.warmedTTL），同一文件内单源。
+    fileprivate static let diskCacheMaxAge: TimeInterval = 24 * 3600
 
     private func diskData(for url: URL, bucket: Int?) -> Data? {
         guard let file = diskFileURL(for: url, bucket: bucket) else { return nil }
@@ -1165,10 +1166,13 @@ struct BearyImagePrefetchBudget {
 /// 集合双双清零，且 loadDetailed 发起时已固定 bucket，夹在请求与回包
 /// 之间的切号不会把图写进新号桶（与 loader 的 S2 同口径）。
 /// 排队与完成分开记：pending = 已排队未出结果（错峰待起或在途），
-/// warmed = 已成功预热完成。建任务前只记 pending，成功回调才移入
-/// warmed；取消或失败只清 pending，warmed 里的已完成项不受影响。
-/// 因此取消/失败的 URL 下次触发可重新排队，而不再是永久“已预热”；
-/// 本进程内同一 URL 不重复排队靠 pending + warmed 两集合共同保证。
+/// warmed = 已成功预热完成（键 → 成功完成时间）。建任务前只记 pending，
+/// 成功回调才移入 warmed；取消或失败只清 pending，warmed 里的已完成项
+/// 不受影响。warmed 带 24 小时过期与 500 条上限（见 warmedTTL／
+/// warmedMaxEntries）：过期或超限淘汰后，下次触发重新排队，不再永久
+/// “已预热”。因此取消/失败的 URL 下次触发可重新排队，而不再是永久
+/// “已预热”；本进程内同一 URL 不重复排队靠 pending + warmed 两集合
+/// 共同保证（warmed 的“已见过”以未过期为准）。
 /// 卡片键对齐：预热传卡片同款下采样宽度（strip × scale，见
 /// cardStripWidth，与 BearyDiaryCardCell.stripWidth 同口径），使预热
 /// 解码图与卡片显示走同一内存键，不再全尺寸解码后仍命中不了。
@@ -1185,9 +1189,43 @@ final class BearyImagePrefetcher {
     private var generation = 0
     private var inFlight: [URLSessionDataTask] = []
     private var pending: Set<String> = []
-    private var warmed: Set<String> = []
+    /// 第十轮 04：warmed 是带过期与上限的近期成功记录，不是永久集合。
+    /// TTL 与图片缓存本身的有效期同口径（BearyImageLoader.diskCacheMaxAge，
+    /// 24 小时）：预热记录不比它跟踪的数据活得久——内存条目 expiresAt
+    /// 与磁盘 mtime 校验都以 24 小时为准，过期即视为未预热，下次触发
+    /// 重新排队。容量上限 500：单次触发最多 16 个 URL（见
+    /// BearyImagePrefetchBudget），500 条覆盖数十屏的浏览量、同时给
+    /// 无界增长封顶；键是短字符串＋时间戳，总量在几十 KB 级。超限时
+    /// 先清过期、再按时间最旧淘汰。残留窗口：内存被系统逐出或磁盘
+    /// 触顶淘汰仍可能早于 TTL 失效，代价只是错过一次提前预热，滑到
+    /// 该屏时 cell 仍按需加载，不缺图。
+    private static let warmedTTL: TimeInterval = BearyImageLoader.diskCacheMaxAge
+    private static let warmedMaxEntries = 500
+    private var warmed: [String: Date] = []
     private var warmedBucketKey: String?
     private let queue = DispatchQueue(label: "com.beary.image-prefetch", qos: .utility)
+
+    /// 以下两处均要求调用方已持 lock（warmed 只在锁内读写）。
+    /// 过期即视为未预热：命中时若已过期，顺手清掉、当未见过。
+    private func isWarmed(_ key: String) -> Bool {
+        guard let at = warmed[key] else { return false }
+        if Date().timeIntervalSince(at) >= Self.warmedTTL {
+            warmed.removeValue(forKey: key)
+            return false
+        }
+        return true
+    }
+
+    /// 记一次成功预热：先清过期，再记入当前时间，超限时按时间最旧淘汰。
+    private func noteWarmed(_ key: String) {
+        let now = Date()
+        warmed = warmed.filter { now.timeIntervalSince($0.value) < Self.warmedTTL }
+        warmed[key] = now
+        while warmed.count > Self.warmedMaxEntries {
+            guard let oldest = warmed.min(by: { $0.value < $1.value })?.key else { break }
+            warmed.removeValue(forKey: oldest)
+        }
+    }
 
     private func ensureMonitor() {
         lock.lock()
@@ -1265,7 +1303,7 @@ final class BearyImagePrefetcher {
                 guard let url = BearyImageURLs.imageURL(key: key, thumb: true) else { continue }
                 let warmedKey = bucketKey + "|" + url.absoluteString
                 lock.lock()
-                let seen = warmed.contains(warmedKey) || pending.contains(warmedKey)
+                let seen = isWarmed(warmedKey) || pending.contains(warmedKey)
                 lock.unlock()
                 if seen { continue }
                 let strip = cardStripWidth(forKey: key, dims: entry.imgDims, height: 216)
@@ -1314,7 +1352,7 @@ final class BearyImagePrefetcher {
                     // 成功才记完成；失败（含取消）只清排队记录。
                     // 切号后到的旧桶回包不记入新桶（键含桶前缀，兼防串桶）。
                     if case .success = result, self.warmedBucketKey == bucketKey {
-                        self.warmed.insert(item.warmedKey)
+                        self.noteWarmed(item.warmedKey)
                     }
                     self.lock.unlock()
                     // 预热失败静默丢弃：不 toast、不重试；滑到该屏时 cell
