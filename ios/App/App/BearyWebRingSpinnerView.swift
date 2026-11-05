@@ -37,6 +37,14 @@ final class BearyWebRingSpinnerView: UIView {
         arcLayer.lineWidth = 2
         arcLayer.lineCap = .butt
         updateColors()
+        // 2026-11-05 转圈恢复：回前台时重加旋转动画（与 BearyRefreshIconView
+        // 同口径；系统切后台会剥掉图层动画，spinning 仍为真时不补就一直静态）。
+        NotificationCenter.default.addObserver(self, selector: #selector(foregroundResume), name: UIApplication.willEnterForegroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(foregroundResume), name: UIApplication.didBecomeActiveNotification, object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     required init?(coder: NSCoder) {
@@ -80,12 +88,36 @@ final class BearyWebRingSpinnerView: UIView {
 
     /// 与 BearyRefreshIconView 同款调用口径：start/stop 即显/藏。
     func startSpinning() {
-        guard !spinning else { return }
+        // 2026-11-05 转圈恢复：去掉“已在转就直接返回”的短路——动画丢了
+        // （上屏前起转、切后台被剥）之后再调 startSpinning 也会被 guard 吞掉，
+        // 图标永久静态。改成先清掉旧动画再重加（与 BearyIconMotion.startSpin
+        // 同口径）；重复调只会替换同 key 动画，不叠加。
         spinning = true
         isHidden = false
         alpha = 1
         layer.removeAnimation(forKey: "web-ring-spin")
         guard !UIAccessibility.isReduceMotionEnabled else { return }
+        addSpinAnimation()
+    }
+
+    /// 进窗口时若仍在转态，重加旋转动画：viewDidLoad 同步链路里起转时
+    /// 视图还没进窗口，动画加不上且 spinning 已真，后续 startSpinning
+    /// 也补不上；进窗口即补（与 BearyRefreshIconView 同口径）。
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil, spinning, !UIAccessibility.isReduceMotionEnabled else { return }
+        addSpinAnimation()
+    }
+
+    /// 回前台时若仍在转态，重加旋转动画（切后台/拉通知中心回来时
+    /// 系统会剥掉图层动画）。
+    @objc private func foregroundResume() {
+        guard spinning, !UIAccessibility.isReduceMotionEnabled else { return }
+        addSpinAnimation()
+    }
+
+    private func addSpinAnimation() {
+        layer.removeAnimation(forKey: "web-ring-spin")
         let anim = CABasicAnimation(keyPath: "transform.rotation.z")
         anim.fromValue = 0
         anim.toValue = Double.pi * 2
