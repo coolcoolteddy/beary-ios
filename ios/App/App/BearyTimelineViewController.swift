@@ -503,7 +503,7 @@ final class BearyCalendarCardView: UIView {
         toggleButton.translatesAutoresizingMaskIntoConstraints = false
         toggleButton.backgroundColor = BearyColors.faint
         toggleButton.layer.cornerRadius = BearyCorners.single
-        toggleButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12.5))
+        toggleButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
         toggleButton.titleLabel?.adjustsFontForContentSizeCategory = true
         toggleButton.setTitleColor(BearyColors.ink, for: .normal)
         // 第 7 轮属实项 1：切换钮按内容撑宽、不被相邻钮挤压（宽度下限见约束处）。
@@ -514,12 +514,12 @@ final class BearyCalendarCardView: UIView {
         toggleButton.bearyAddPressFeedback()
 
         // C10 回到今天：轻量 pill“今”，与翻页钮同款（faint 底、32×32、
-        // 圆角 16、12.5 粗体），默认隐藏，只由 VC 的 setTodayButtonVisible
+        // 圆角 16、12 粗体），默认隐藏，只由 VC 的 setTodayButtonVisible
         // 在显示月份/周不含今天或选中日不是今天时浮现；无障碍名“回到今天”。
         todayButton.translatesAutoresizingMaskIntoConstraints = false
         todayButton.backgroundColor = BearyColors.faint
         todayButton.layer.cornerRadius = BearyCorners.single
-        todayButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12.5))
+        todayButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
         todayButton.titleLabel?.adjustsFontForContentSizeCategory = true
         todayButton.setTitleColor(BearyColors.ink, for: .normal)
         todayButton.setTitle("今", for: .normal)
@@ -1102,8 +1102,8 @@ final class BearyTimelineCell: UITableViewCell {
         moodLabel.lineBreakMode = .byTruncatingTail
         moodLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         // 112 视觉扫查：同行时间/天气/心情均已走 scaledFont（见上方 8-3），@ 行此前独漏；
-        // 默认档仍为 12.5 粗体，仅跟随系统字号，170 上限与单行截断口径不动。
-        recipientLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12.5))
+        // 默认档仍为 12 粗体，仅跟随系统字号，170 上限与单行截断口径不动。
+        recipientLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
         recipientLabel.adjustsFontForContentSizeCategory = true
         recipientLabel.textColor = BearyColors.ink
         // B-G12 (web .tl-to): max-width 170 + single-line ellipsis, never wrap.
@@ -3849,14 +3849,14 @@ class BearyTimelineViewController: UIViewController {
 
         countsLabel.translatesAutoresizingMaskIntoConstraints = false
         // R8：统计行文字（正文类）走 scaledFont + adjusts。
-        countsLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5))
+        countsLabel.font = BearyDynamicType.captionFont()
         countsLabel.adjustsFontForContentSizeCategory = true
         countsLabel.textColor = BearyColors.gray
 
         statsButton.translatesAutoresizingMaskIntoConstraints = false
         statsButton.contentHorizontalAlignment = .left
         // R8：统计行按钮走 scaledFont + adjusts（富文本各段见 updateStatsLine）。
-        statsButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5))
+        statsButton.titleLabel?.font = BearyDynamicType.secondaryFont()
         statsButton.titleLabel?.adjustsFontForContentSizeCategory = true
         statsButton.addTarget(self, action: #selector(didTapStats), for: .touchUpInside)
         statsButton.bearyAddPressFeedback()
@@ -4018,7 +4018,7 @@ class BearyTimelineViewController: UIViewController {
     /// 数值变时只动“ N篇”数字段，静态段“回收站”不动，见 updateTrashSuffixOnly）。
     private var lastTrashCount: Int?
     /// 回收站 pill 宽度下限约束：按钮 intrinsic 会把双段富文本标题算短约 2pt
-    /// （13.5/12.5 双字号，浮点尾巴），标题在 68pt 标签里差 2pt 即中部截断；
+    /// （13/12 双字号，浮点尾巴），标题在 68pt 标签里差 2pt 即中部截断；
     /// 本约束按标题实测宽重算，保证按钮永远不比内容窄（≥ 约束，只扩不缩）。
     private var trashButtonMinWidthConstraint: NSLayoutConstraint?
 
@@ -4058,12 +4058,12 @@ class BearyTimelineViewController: UIViewController {
             return
         }
         let base = NSMutableAttributedString(string: "回收站", attributes: [
-            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5)),
+            .font: BearyDynamicType.secondaryFont(),
             .foregroundColor: BearyColors.ink,
         ])
         if trashCountValue > 0 {
             base.append(NSAttributedString(string: " \(trashCountValue)篇", attributes: [
-                .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5)),
+                .font: BearyDynamicType.captionFont(),
                 .foregroundColor: BearyColors.gray,
             ]))
         }
@@ -4087,7 +4087,7 @@ class BearyTimelineViewController: UIViewController {
         let mutable = NSMutableAttributedString(attributedString: current)
         if newCount > 0 {
             let suffixAttributes: [NSAttributedString.Key: Any] = [
-                .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5)),
+                .font: BearyDynamicType.captionFont(),
                 .foregroundColor: BearyColors.gray,
             ]
             if oldCount > 0 {
@@ -4293,11 +4293,11 @@ class BearyTimelineViewController: UIViewController {
         statsButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         // R8：统计行富文本各段走 scaledFont（按钮 adjusts 开关见 buildHeader）。
         let baseAttributes: [NSAttributedString.Key: Any] = [
-            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5)),
+            .font: BearyDynamicType.secondaryFont(),
             .foregroundColor: BearyColors.gray,
         ]
         let boldAttributes: [NSAttributedString.Key: Any] = [
-            .font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13.5)),
+            .font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13)),
             .foregroundColor: BearyColors.ink,
         ]
         let text = NSMutableAttributedString(string: "已连续写 ", attributes: baseAttributes)
@@ -4338,7 +4338,7 @@ class BearyTimelineViewController: UIViewController {
         guard Int(nsFull.substring(with: streakRange)) != nil,
               Int(nsFull.substring(with: totalRange)) != nil else { return false }
         let boldAttributes: [NSAttributedString.Key: Any] = [
-            .font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13.5)),
+            .font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13)),
             .foregroundColor: BearyColors.ink,
         ]
         let mutable = NSMutableAttributedString(attributedString: current)
@@ -5711,10 +5711,10 @@ class BearyTimelineViewController: UIViewController {
 
     /// TL-7 当日面板表头（第 7 项两段式 + 第 15 项网页口径）：
     /// 日期一段（15pt 加粗墨色，如“10 月 25 日”，星期不在此段）；
-    /// 星期·篇数·状态一段（12.5pt 灰色，如“周日 · 1 篇 · 都私密”，篇数带空格）。
+    /// 星期·篇数·状态一段（12pt 灰色，如“周日 · 1 篇 · 都私密”，篇数带空格）。
     /// 失败时只写“加载失败，点一下日期再试”，重试靠再点日期（无头旁重试钮）；
     /// 加载中/未加载时不写“加载中…”，只出日期一段。
-    /// head/suffix 分段供表头富文本使用（日期加粗 15 + 后段灰色 12.5）。
+    /// head/suffix 分段供表头富文本使用（日期加粗 15 + 后段灰色 12）。
     private func dayPanelTitleParts(key: String) -> (head: String, suffix: String) {
         let parts = key.split(separator: "-")
         guard parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) else { return (key, "") }
@@ -5730,7 +5730,7 @@ class BearyTimelineViewController: UIViewController {
         if dayState == .failed {
             // B-G8: web replaces the whole day segment with the failure text
             // (beary.html 4216/4223); the date segment is NOT kept. Empty head
-            // leaves only the 12.5 gray failure text in viewForHeader.
+            // leaves only the 12 gray failure text in viewForHeader.
             return ("", "加载失败，点一下日期再试")
         }
         if dayState != .loaded {
@@ -6270,7 +6270,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         guard section < sections.count else { return nil }
         let isDayPanel = (section == 0 && selectedDayKey != nil)
         let label = UILabel()
-        // L13：当日面板头拆日期加粗 + 计数灰色 12.5 两段富文本；时间线分区头不变。
+        // L13：当日面板头拆日期加粗 + 计数灰色 12 两段富文本；时间线分区头不变。
         if isDayPanel, let dayKey = selectedDayKey {
             let parts = dayPanelTitleParts(key: dayKey)
             // R8：日组标题（正文类）走 scaledFont + adjusts。
@@ -6280,7 +6280,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
             ])
             if parts.suffix.isEmpty == false {
                 attributed.append(NSAttributedString(string: parts.suffix, attributes: [
-                    .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5)),
+                    .font: BearyDynamicType.captionFont(),
                     .foregroundColor: BearyColors.gray,
                 ]))
             }
