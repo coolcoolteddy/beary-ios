@@ -42,8 +42,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     // 审计：发送钮视觉高 32 不变，热区用 Hit44 扩到 44（读“全部已读”钮同款口径）。
     private let sendButton = BearyHit44Button(type: .system)
     private let newMessagePill = BearyHit44Button(type: .system)
-    /// 渐进模糊垫（规范 §6）：新消息 pill 的光晕，挂 pill 同容器、跟 pill 约束走；pill 布局一字不动。
-    private var newMessagePillFadePad: BearyProgressiveBlurView?
     // U5：加载失败态（空消息时）复用 BearyStateView 的动作入口（重试钮），
     // 与 #685 的 firstLoadStateView（仅 loading 形态）分开，不动它。
     private let loadFailedStateView = BearyStateView()
@@ -213,19 +211,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         newMessagePill.addTarget(self, action: #selector(newMessagePillTapped), for: .touchUpInside)
         newMessagePill.bearyAddPressFeedback()
         view.addSubview(newMessagePill)
-        // 渐进模糊（规范 §6）：新消息 pill 的光晕垫，插 pill 之下、尺寸跟 pill 走（每边大出 12pt）；
-        // pill 纵向走底约束，垫片中心锚 pill 中心即同移。
-        let pillPad = BearyProgressiveBlur.pad(fade: .outward)
-        pillPad.translatesAutoresizingMaskIntoConstraints = false
-        pillPad.isHidden = true
-        view.insertSubview(pillPad, belowSubview: newMessagePill)
-        newMessagePillFadePad = pillPad
-        NSLayoutConstraint.activate([
-            pillPad.centerXAnchor.constraint(equalTo: newMessagePill.centerXAnchor),
-            pillPad.centerYAnchor.constraint(equalTo: newMessagePill.centerYAnchor),
-            pillPad.widthAnchor.constraint(equalTo: newMessagePill.widthAnchor, constant: BearyProgressiveBlur.band * 2),
-            pillPad.heightAnchor.constraint(equalTo: newMessagePill.heightAnchor, constant: BearyProgressiveBlur.band * 2),
-        ])
         NSLayoutConstraint.activate([
             countLabel.bottomAnchor.constraint(equalTo: inputBar.topAnchor, constant: -4),
             countLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
@@ -477,7 +462,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         if newMessagePill.isHidden != !visible {
             newMessagePill.isHidden = !visible
         }
-        newMessagePillFadePad?.isHidden = !visible
         updateNewMessagePillLayout()
     }
 

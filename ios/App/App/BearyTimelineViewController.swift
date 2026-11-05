@@ -469,8 +469,6 @@ final class BearyCalendarCardView: UIView {
 
     private let titleLabel = UILabel()
     private let todayButton = BearyHit44Button(type: .system)
-    /// 渐进模糊垫（规范 §6）：“今”pill 的光晕，挂日历卡同容器、跟 pill 走；pill 布局一字不动。
-    private var todayButtonFadePad: BearyProgressiveBlurView?
     private let toggleButton = BearyHit44Button(type: .system)
     private let prevButton = BearyHit44Button(type: .system)
     private let nextButton = BearyHit44Button(type: .system)
@@ -600,19 +598,6 @@ final class BearyCalendarCardView: UIView {
         outer.setCustomSpacing(8, after: controlsRow)
         outer.setCustomSpacing(BearySpace.sm, after: weekdayRow)
         addSubview(outer)
-        // 渐进模糊（规范 §6）：“今”pill 的光晕垫，插卡内最底层（钮之下、卡底色之上）、尺寸跟 pill 走（每边大出 12pt）。
-        let todayPad = BearyProgressiveBlur.pad(fade: .outward)
-        todayPad.translatesAutoresizingMaskIntoConstraints = false
-        todayPad.isHidden = true
-        todayPad.alpha = 0
-        insertSubview(todayPad, at: 0)
-        todayButtonFadePad = todayPad
-        NSLayoutConstraint.activate([
-            todayPad.centerXAnchor.constraint(equalTo: todayButton.centerXAnchor),
-            todayPad.centerYAnchor.constraint(equalTo: todayButton.centerYAnchor),
-            todayPad.widthAnchor.constraint(equalTo: todayButton.widthAnchor, constant: BearyProgressiveBlur.band * 2),
-            todayPad.heightAnchor.constraint(equalTo: todayButton.heightAnchor, constant: BearyProgressiveBlur.band * 2),
-        ])
         NSLayoutConstraint.activate([
             outer.topAnchor.constraint(equalTo: topAnchor, constant: BearySpace.lg),
             outer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: BearySpace.lg),
@@ -718,14 +703,11 @@ final class BearyCalendarCardView: UIView {
         if visible {
             guard todayButton.isHidden || todayButton.alpha < 1 else { return }
             todayButton.isHidden = false
-            todayButtonFadePad?.isHidden = false
             if UIAccessibility.isReduceMotionEnabled {
                 todayButton.alpha = 1
-                todayButtonFadePad?.alpha = 1
             } else {
                 UIView.animate(withDuration: 0.2, animations: {
                     self.todayButton.alpha = 1
-                    self.todayButtonFadePad?.alpha = 1
                 })
             }
         } else {
@@ -733,15 +715,11 @@ final class BearyCalendarCardView: UIView {
             if UIAccessibility.isReduceMotionEnabled {
                 todayButton.alpha = 0
                 todayButton.isHidden = true
-                todayButtonFadePad?.alpha = 0
-                todayButtonFadePad?.isHidden = true
             } else {
                 UIView.animate(withDuration: 0.2, animations: {
                     self.todayButton.alpha = 0
-                    self.todayButtonFadePad?.alpha = 0
                 }, completion: { _ in
                     self.todayButton.isHidden = true
-                    self.todayButtonFadePad?.isHidden = true
                 })
             }
         }

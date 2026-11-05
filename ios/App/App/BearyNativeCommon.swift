@@ -201,11 +201,8 @@ enum BearyGlass {
 
 /// 渐进模糊（规范 §6 滚动交界）：毛玻璃＋渐变遮罩，模糊从贴体处最强、向内容方向渐弱至透明。
 /// 渐变带统一 12pt（规范 8–20pt 内取中值）；强度取轻量（无 tint 液态玻璃／超薄材质，内容隐约可见、不断层）。
-/// 两种挂法，调用点不自创做法：
-/// - 条带（.down／.up）：垫片高即渐变带，贴在条的底边（.down，向下方内容渐弱）或顶边（.up，向上方内容渐弱）；
-///   遮罩从贴体边满强度线性淡到透明。
-/// - 光晕（.outward）：垫片比本体每边大出渐变带，径向遮罩在本体半宽内满强度、向外一带内淡到透明；
-///   宽 pill 的光晕只沿短轴量 12pt，长轴端不另伸光晕（垫片四角超出径向范围处自然透明）。
+/// 现行只剩底栏一处垫片（.up）：垫片高即渐变带，贴在底栏顶边、向上方内容渐弱；
+/// 遮罩从贴体边满强度线性淡到透明。其余 10 处垫片已随 125 移除，不再新增。
 /// 垫片永不拦截触摸（与 BearyGlass 同口径）；遮罩只用白／透明，不缓存主题色；
 /// 尺寸变化（转屏／大字号）时 layoutSubviews 重算遮罩，不依赖调用点手动刷新。
 /// 124 实证（iOS 27 真机）：渐变遮罩绝不能直接挂毛玻璃自己身上——layer.mask 不裁
@@ -216,12 +213,8 @@ enum BearyProgressiveBlur {
     static let band: CGFloat = 12
 
     enum Fade {
-        /// 贴体边在上、向下方内容渐弱（顶栏／吸顶条／搜索框／裁剪顶栏的下沿）。
-        case down
-        /// 贴体边在下、向上方内容渐弱（底栏的上沿）。
+        /// 贴体边在下、向上方内容渐弱（底栏的上沿）。现行唯一方向。
         case up
-        /// 向本体四周渐弱（悬浮钮／pill 的光晕）。
-        case outward
     }
 
     static func pad(fade: Fade) -> BearyProgressiveBlurView {
@@ -254,7 +247,7 @@ final class BearyProgressiveBlurView: UIView {
     }
 
     required init?(coder: NSCoder) {
-        self.fade = .down
+        self.fade = .up
         let effectView = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
         effectView.isUserInteractionEnabled = false
         self.effectView = effectView
@@ -283,25 +276,10 @@ final class BearyProgressiveBlurView: UIView {
         maskLayer.colors = [UIColor.white.cgColor, UIColor.clear.cgColor]
         maskLayer.locations = [0, 1]
         switch fade {
-        case .down:
-            maskLayer.type = .axial
-            maskLayer.startPoint = CGPoint(x: 0.5, y: 0)
-            maskLayer.endPoint = CGPoint(x: 0.5, y: 1)
         case .up:
             maskLayer.type = .axial
             maskLayer.startPoint = CGPoint(x: 0.5, y: 1)
             maskLayer.endPoint = CGPoint(x: 0.5, y: 0)
-        case .outward:
-            // CAGradientLayer 没有 startRadius/endRadius（编译失败）：
-            // 径向半径由圆心 startPoint → endPoint 的距离决定；内圈不透明、
-            // 外圈 12pt 渐隐改用三段 colors/locations 表达，与原内外径意图一致。
-            maskLayer.type = .radial
-            maskLayer.startPoint = CGPoint(x: 0.5, y: 0.5)
-            maskLayer.endPoint = CGPoint(x: 0.5, y: 0)
-            let halfMin = min(size.width, size.height) / 2
-            let inner = halfMin > 0 ? max(0, halfMin - BearyProgressiveBlur.band) / halfMin : 0
-            maskLayer.colors = [UIColor.white.cgColor, UIColor.white.cgColor, UIColor.clear.cgColor]
-            maskLayer.locations = [0, NSNumber(value: Double(inner)), 1]
         }
     }
 }

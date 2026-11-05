@@ -172,16 +172,6 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             pushedBackButton.addTarget(self, action: #selector(didTapPushedBack), for: .touchUpInside)
             pushedBackButton.bearyAddPressFeedback()
             view.addSubview(pushedBackButton)
-            // 渐进模糊（规范 §6）：返回钮的光晕垫，插钮之下、尺寸跟钮走（每边大出 12pt）；钮布局一字不动。
-            let backPad = BearyProgressiveBlur.pad(fade: .outward)
-            backPad.translatesAutoresizingMaskIntoConstraints = false
-            view.insertSubview(backPad, belowSubview: pushedBackButton)
-            NSLayoutConstraint.activate([
-                backPad.centerXAnchor.constraint(equalTo: pushedBackButton.centerXAnchor),
-                backPad.centerYAnchor.constraint(equalTo: pushedBackButton.centerYAnchor),
-                backPad.widthAnchor.constraint(equalTo: pushedBackButton.widthAnchor, constant: BearyProgressiveBlur.band * 2),
-                backPad.heightAnchor.constraint(equalTo: pushedBackButton.heightAnchor, constant: BearyProgressiveBlur.band * 2),
-            ])
             NSLayoutConstraint.activate([
                 pushedBackButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
                 pushedBackButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
