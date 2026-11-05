@@ -7193,7 +7193,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                 locked: nil,
                                 authorName: locked.authorName,
                                 authorAvatar: locked.authorAvatar,
-                                authorBadge: nil,
                                 authorPlus: nil,
                                 authorId: locked.authorId,
                                 isMine: locked.isMine,

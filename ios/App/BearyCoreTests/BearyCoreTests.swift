@@ -45,7 +45,7 @@ final class BearyDecodingTests: XCTestCase {
     func testFullEntry() throws {
         let json = """
         {"id":"b_test1","author_id":27,"author_name":"乐乐","author_avatar":"/beary/api/users/27/avatar?v=3",
-        "author_cover":null,"author_badge":"beta","author_plus":1,"content":"今天写的第一篇",
+        "author_cover":null,"author_plus":1,"content":"今天写的第一篇",
         "images":["img1.jpg"],"img_dims":{"img1.jpg":[1200,900]},"mood":"love","weather":"sunny",
         "quote_id":null,"quote":null,"created_at":1761000000000,"publish_at":1761604800000,
         "edit_deadline":1761000900000,"is_public":true,"is_locked":true,"is_mine":false,
@@ -55,7 +55,6 @@ final class BearyDecodingTests: XCTestCase {
         let e = try bearyDecoder().decode(Entry.self, from: Data(json.utf8))
         XCTAssertEqual(e.id, "b_test1")
         XCTAssertEqual(e.authorId, 27)
-        XCTAssertEqual(e.authorBadge, "beta")
         XCTAssertEqual(e.images, ["img1.jpg"])
         XCTAssertEqual(e.imgDims?["img1.jpg"], [1200, 900])
         XCTAssertEqual(e.likeCount, 5)
@@ -68,7 +67,7 @@ final class BearyDecodingTests: XCTestCase {
         // 搜索返回的瘦条目只有 9 个字段，解码不能因为缺字段而失败
         let json = """
         {"id":"b_s1","content":"带猫的一天","images":[],"created_at":1761000000000,
-        "author_id":1,"author_name":"Teddy","author_avatar":null,"author_badge":null,"like_count":3}
+        "author_id":1,"author_name":"Teddy","author_avatar":null,"like_count":3}
         """
         let e = try bearyDecoder().decode(Entry.self, from: Data(json.utf8))
         XCTAssertEqual(e.id, "b_s1")
