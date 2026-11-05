@@ -1938,6 +1938,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// renderResults（同关键词时按 key 复用已有行、只增删变化的行；
     /// 换关键词时全量重建）——增量追加无法表达“删行”。
     private func appendResultRows(data: SearchResult, mine: [Entry], publicEntries: [Entry], users freshUsers: [SearchUser], query: String) {
+        // 第十一轮 05（短期）：分页追加耗时测量起点——建行＋插栈同步耗时与到
+        // 下一轮 runloop（布局完成）总耗时，随行数与常驻内存打日志；100/300/500
+        // 条下的耗时与内存对比见 PR 描述（Instruments），迁移 UITableView 前的基线。
+        let appendStart = Date()
         lastRenderedData = data
         lastRenderedQuery = query
         // 锚点丢失的防御：栈里有行却三个分区头全无（理论上只可能
@@ -1956,6 +1960,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateRingView.isHidden = true
         BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
         var mineRows: [UIView] = []
+        var newEntryIds: [String] = []
         for entry in mine {
             // 与 renderResults 逐字一致：只取确认为私密篇（is_public == false）
             // 与存活限时篇；缺失字段（nil）不进私密组。
@@ -1963,6 +1968,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             guard let entryId = entry.id, rowEntryIds.contains(entryId) == false else { continue }
             if let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
                 mineRows.append(row)
+                newEntryIds.append(entryId)
             }
         }
         var publicRows: [UIView] = []
@@ -1972,20 +1978,33 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             guard let entryId = entry.id, rowEntryIds.contains(entryId) == false else { continue }
             if let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
                 publicRows.append(row)
+                newEntryIds.append(entryId)
             }
         }
         var userRows: [UIView] = []
+        var newUserKeys: [String] = []
         for user in freshUsers {
             if isBlockedForSearch(userId: user.id) { continue }
             if let key = userKey(for: user), userRowByKey[key] != nil { continue }
+            if let key = userKey(for: user) { newUserKeys.append(key) }
             userRows.append(makeUserRow(user: user, query: query))
         }
         insertSectionRows(mineRows, section: 0, title: "我的日记")
         insertSectionRows(publicRows, section: 1, title: "公开日记")
         insertSectionRows(userRows, section: 2, title: "用户")
-        // 同关键词追加：animateResultRows 按 key 查表，只让本批新行
-        // 错峰滑入，已有行不动（与 renderResults 末尾同一入口）。
-        animateResultRows(query: query)
+        // 同关键词追加：animateResultRows 只遍历本批新行 key 错峰滑入，
+        // 已有行不动（与 renderResults 末尾同一入口；旧路全量查表见该函数）。
+        animateResultRows(query: query, newEntryIds: newEntryIds, newUserKeys: newUserKeys)
+        // 耗时日志：build 为建行＋插栈同步主线程耗时；async 块在下一轮
+        // runloop 执行、布局已完成，total 即 build＋整栈布局耗时。
+        let newRowCount = mineRows.count + publicRows.count + userRows.count
+        let buildMs = Date().timeIntervalSince(appendStart) * 1000
+        let totalRows = rowEntryIds.count + rowUsers.count
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let totalMs = Date().timeIntervalSince(appendStart) * 1000
+            NSLog("[BearySearch] append page: +\(newRowCount) rows, total \(totalRows), build \(String(format: "%.1f", buildMs)) ms, build+layout \(String(format: "%.1f", totalMs)) ms, mem \(String(format: "%.1f", self.searchResidentMemoryMB())) MB")
+        }
         // S5：新行帧已定，可见行（+下一屏）的关注状态优先请求。
         requestFollowStatesForVisibleRows()
     }
@@ -2032,6 +2051,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     /// M11 入场口径：换关键词（新一批）→ 全部行错峰滑入；同关键词重渲
     /// （同一批仅内容变化）→ 仅新出现的行淡入，已有行不动。减动效直设终值。
+    /// 第十一轮 05（短期）：分页追加传本批新行 key（newEntryIds/newUserKeys），
+    /// 同批只遍历新行、不再全量扫 rowEntryIds/rowUsers；未传时（renderResults）
+    /// 走旧路全量查表，行为一字不动。lastResultRowKeys 在快路上增量并入新 key。
     private var lastResultQuery: String?
     private var lastResultRowKeys: Set<String> = []
 
@@ -2042,25 +2064,38 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         return 0.6
     }
 
-    private func animateResultRows(query: String) {
+    private func animateResultRows(query: String, newEntryIds: [String]? = nil, newUserKeys: [String]? = nil) {
         let isNewBatch = lastResultQuery != query
+        // 快路只在同批且调用方给了本批新行 key 时走；新批一律全量。
+        var fastEntryIds: [String]? = nil
+        var fastUserKeys: [String]? = nil
         var nextKeys: Set<String> = []
-        for entryId in rowEntryIds {
-            nextKeys.insert("entry:" + entryId)
-        }
-        for user in rowUsers {
-            if let key = userKey(for: user) {
-                nextKeys.insert(key)
+        if isNewBatch == false, let entryIds = newEntryIds, let userKeys = newUserKeys {
+            fastEntryIds = entryIds
+            fastUserKeys = userKeys
+        } else {
+            for entryId in rowEntryIds {
+                nextKeys.insert("entry:" + entryId)
+            }
+            for user in rowUsers {
+                if let key = userKey(for: user) {
+                    nextKeys.insert(key)
+                }
             }
         }
-        let rowViews: [UIView] = entryButtons + userButtons
         if UIAccessibility.isReduceMotionEnabled {
             lastResultQuery = query
-            lastResultRowKeys = nextKeys
+            if let fastEntryIds = fastEntryIds, let fastUserKeys = fastUserKeys {
+                lastResultRowKeys.formUnion(fastEntryIds.map { "entry:" + $0 })
+                lastResultRowKeys.formUnion(fastUserKeys)
+            } else {
+                lastResultRowKeys = nextKeys
+            }
             return
         }
         if isNewBatch {
             // 审计：新批错峰延迟封顶 0.24s（此前 48 行末行约 1.41s＋0.25s，与同批分支同口径）。
+            let rowViews: [UIView] = entryButtons + userButtons
             for (index, rowView) in rowViews.enumerated() {
                 // 审计三轮 09：终值按业务状态恢复，已举报行 0.6、其余行 1。
                 let targetAlpha: CGFloat = index < entryButtons.count && index < rowEntryIds.count
@@ -2080,33 +2115,62 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             // 新旧区分走 lastResultRowKeys（Profile animatedRowIds 同款集合口径），
             // 故 6-9 不需“无法区分则不加”的兜底：区分在静态上已证实。
             var order = 0
-            for entryId in rowEntryIds {
-                let key = "entry:" + entryId
-                if !lastResultRowKeys.contains(key), let rowView = entryRowById[entryId] {
-                    rowView.alpha = 0
-                    rowView.transform = CGAffineTransform(translationX: 0, y: 8)
-                    let delay = min(Double(order) * 0.03, 0.24)
-                    order += 1
-                    UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
-                        rowView.alpha = self.entranceTargetAlpha(forEntryId: entryId)
-                        rowView.transform = .identity
-                    })
-                }
-            }
-            for user in rowUsers {
-                guard let key = userKey(for: user), !lastResultRowKeys.contains(key), let rowView = userRowByKey[key] else { continue }
+            let staggerIn: (UIView, CGFloat) -> Void = { rowView, targetAlpha in
                 rowView.alpha = 0
                 rowView.transform = CGAffineTransform(translationX: 0, y: 8)
                 let delay = min(Double(order) * 0.03, 0.24)
                 order += 1
                 UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
-                    rowView.alpha = 1
+                    rowView.alpha = targetAlpha
                     rowView.transform = .identity
                 })
             }
+            if let fastEntryIds = fastEntryIds, let fastUserKeys = fastUserKeys {
+                for entryId in fastEntryIds {
+                    let key = "entry:" + entryId
+                    if lastResultRowKeys.contains(key) == false, let rowView = entryRowById[entryId] {
+                        staggerIn(rowView, self.entranceTargetAlpha(forEntryId: entryId))
+                    }
+                }
+                for key in fastUserKeys {
+                    if lastResultRowKeys.contains(key) == false, let rowView = userRowByKey[key] {
+                        staggerIn(rowView, 1)
+                    }
+                }
+            } else {
+                for entryId in rowEntryIds {
+                    let key = "entry:" + entryId
+                    if !lastResultRowKeys.contains(key), let rowView = entryRowById[entryId] {
+                        staggerIn(rowView, self.entranceTargetAlpha(forEntryId: entryId))
+                    }
+                }
+                for user in rowUsers {
+                    guard let key = userKey(for: user), !lastResultRowKeys.contains(key), let rowView = userRowByKey[key] else { continue }
+                    staggerIn(rowView, 1)
+                }
+            }
         }
         lastResultQuery = query
-        lastResultRowKeys = nextKeys
+        if let fastEntryIds = fastEntryIds, let fastUserKeys = fastUserKeys {
+            lastResultRowKeys.formUnion(fastEntryIds.map { "entry:" + $0 })
+            lastResultRowKeys.formUnion(fastUserKeys)
+        } else {
+            lastResultRowKeys = nextKeys
+        }
+    }
+
+    /// 第十一轮 05（短期）：进程常驻内存 MB（task_info），供分页追加的耗时日志
+    /// 对照行数看内存增长趋势；精确值以 Instruments Allocations 为准。
+    private func searchResidentMemoryMB() -> Double {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return -1 }
+        return Double(info.resident_size) / 1024 / 1024
     }
 
     /// 分区头：网页 .srch-sec——13 bold gray、padding 12/6/4。
