@@ -2,6 +2,8 @@ import UIKit
 import Photos
 import PhotosUI
 import CryptoKit
+import AVFoundation
+import ImageIO
 
 // ===== 实况（Live Photos）App 端 =====
 // 统一对接口径（与后端并行分支一致）：
@@ -18,6 +20,13 @@ import CryptoKit
 // 不动），本覆盖层只在实况就绪后才显现（其静态帧即服务端原图，与槽位图同
 // 内容），长按播实况；点图进灯箱等原有交互不动（长按后的抬手点按由调用方
 // 凭 suppressTapUntil 压住一次，见各调用点）。
+// 标识对齐（实况不播根因，2026-11-06）：服务端静帧是重编码后上传的 JPEG
+// （BearyImagePrep.jpegData：UIGraphicsImageRenderer 重绘 + UIImage.jpegData），
+// 元数据全丢，包括 Live Photo 配对用的 content identifier；视频是
+// PHAssetResource 导出的原始 MOV，仍带原始标识。PHLivePhoto.request 要求
+// 两者标识一致，否则返回 nil——组装前把视频的标识写进静帧 JPEG
+// （MakerApple 字典 key "17"），再调 request；已上传的老图也因此能播，
+// 不用重传、不改上传接口与服务端。
 
 enum BearyLivePhoto {
     /// App 端实况视频单条上限：10MB（原始 mov 大小，base64 之前算）。
@@ -284,6 +293,53 @@ final class BearyLivePhotoLoader {
         }
     }
 
+    /// 从视频文件读 Live Photo content identifier：QuickTime 元数据
+    /// com.apple.quicktime.content-identifier（原始 MOV 由 PHAssetResource
+    /// 导出，标识原样保留；个别写入器把它放在视频轨元数据里，一并扫）。
+    /// 本地文件用 loadValuesAsynchronously + 信号量同步取，限时 5 秒；
+    /// 超时/无标识返回 nil，调用方走旧路（request 仍会失败并记日志）。
+    private static func livePhotoIdentifier(fromVideoFile videoFile: URL) -> String? {
+        let asset = AVURLAsset(url: videoFile)
+        let semaphore = DispatchSemaphore(value: 0)
+        var identifier: String?
+        asset.loadValuesAsynchronously(forKeys: ["metadata", "tracks"]) {
+            defer { semaphore.signal() }
+            var error: NSError?
+            guard asset.statusOfValue(forKey: "metadata", error: &error) == .loaded else { return }
+            let wanted = AVMetadataIdentifier.quickTimeMetadataContentIdentifier.rawValue
+            let candidates: [[AVMetadataItem]] = [asset.metadata] + asset.tracks.map { $0.metadata }
+            for items in candidates {
+                for item in items {
+                    let key = item.identifier?.rawValue ?? (item.key as? String) ?? ""
+                    if key == wanted, let value = item.stringValue, !value.isEmpty {
+                        identifier = value
+                        return
+                    }
+                }
+            }
+        }
+        _ = semaphore.wait(timeout: .now() + 5)
+        return identifier
+    }
+
+    /// 把 content identifier 写进 JPEG 元数据：EXIF MakerApple 字典 key "17"
+    /// 即 Live Photo 配对标识的存放位置（与视频 MOV 里的
+    /// com.apple.quicktime.content-identifier 同值）。源图无任何 EXIF 时
+    /// 也能写（新建 MakerApple 字典）；失败返回 nil。
+    private static func jpegDataByStampingIdentifier(_ stillData: Data, identifier: String) -> Data? {
+        guard let source = CGImageSourceCreateWithData(stillData as CFData, nil),
+              let uttype = CGImageSourceGetType(source) else { return nil }
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, uttype, 1, nil) else { return nil }
+        var properties = (CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any]) ?? [:]
+        var makerApple = (properties[kCGImagePropertyMakerAppleDictionary as String] as? [String: Any]) ?? [:]
+        makerApple["17"] = identifier
+        properties[kCGImagePropertyMakerAppleDictionary as String] = makerApple
+        CGImageDestinationAddImageFromSource(destination, source, 0, properties as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return data as Data
+    }
+
     private func buildLivePhoto(stillData: Data, bucket: String, liveKey: String, staticKey: String, generation gen: Int, contentMode: PHImageContentMode, completion: @escaping (PHLivePhoto?) -> Void) {
         guard let videoFile = self.fileURL(key: liveKey, ext: "mov", bucket: bucket),
               let stillFile = self.fileURL(key: staticKey, ext: "jpg", bucket: bucket),
@@ -293,6 +349,22 @@ final class BearyLivePhotoLoader {
             DispatchQueue.main.async { completion(nil) }
             return
         }
+        // 标识对齐：服务端静帧是重编码后上传的 JPEG，元数据（含 content
+        // identifier）已丢；视频是原始 MOV，仍带原始标识。PHLivePhoto.request
+        // 要求两者标识一致，否则返回 nil。组装前把视频的标识写进静帧 JPEG，
+        // 再调 request；已上传的老图也因此能播，不用重传。
+        if let identifier = Self.livePhotoIdentifier(fromVideoFile: videoFile) {
+            if let stamped = Self.jpegDataByStampingIdentifier(stillData, identifier: identifier) {
+                // 覆盖写回同一缓存文件：本文件只供实况组装用（图片加载器另有
+                // 自己的缓存），带标识的 JPEG 仍是同一张图的有效 JPEG，下次
+                // 加载直接复用，不用重复盖章；重复盖章同值亦无害。
+                try? stamped.write(to: stillFile, options: .atomic)
+            } else {
+                NSLog("[BearyLivePhoto] stamp identifier failed liveKey=%@ staticKey=%@", liveKey, staticKey)
+            }
+        } else {
+            NSLog("[BearyLivePhoto] no content identifier in video liveKey=%@ staticKey=%@", liveKey, staticKey)
+        }
         let scale = UIScreen.main.scale
         let targetSize = CGSize(width: placeholder.size.width * scale, height: placeholder.size.height * scale)
         _ = PHLivePhoto.request(
@@ -300,7 +372,12 @@ final class BearyLivePhotoLoader {
             placeholderImage: placeholder,
             targetSize: targetSize,
             contentMode: contentMode
-        ) { [weak self] photo, _ in
+        ) { [weak self] photo, error in
+            if let error = error {
+                // 组装失败不再静默：此前 error 直接丢弃（photo, _ in），
+                // 标识对不上时静默退化成静态帧，用户只看到“不播放”。
+                NSLog("[BearyLivePhoto] PHLivePhoto.request failed liveKey=%@ staticKey=%@: %@", liveKey, staticKey, error.localizedDescription)
+            }
             DispatchQueue.main.async {
                 // 桶已切换的回包直接丢弃、不进新桶内存缓存（视图层 token 同样守门）。
                 guard let photo = photo, let self = self, self.isCurrentGeneration(gen) else {
@@ -317,17 +394,33 @@ final class BearyLivePhotoLoader {
 /// 实况覆盖层：盖在原 UIImageView 槽位之上，平时隐藏（原静态帧可见），
 /// 实况就绪后显现，长按由调用方调 startPlayback；自身不接任何手势，
 /// 点按/滑动/缩放等原有交互一律透传给下层视图。
+/// 角标与加载态：只要配了 liveKey 就亮左上“实况”角标（网页版同款：
+/// 黑底 55%、白字 11pt bold、左上 6pt），加载中/加载失败都亮——用户
+/// 能分清“是实况但没加载出来”还是“根本不是实况”；加载中另有居中转圈，
+/// 长按不是空操作（加载中转圈可见，失败时长按重试一次）。
 final class BearyLivePhotoView: UIView {
     private let liveView = PHLivePhotoView()
     private let photoContentMode: PHImageContentMode
     private var currentLiveKey: String?
     private var loadToken = 0
+    /// 失败后长按重试要用的 key（configure 时记下，clear 时清掉）。
+    private var pendingStaticKey: String?
+    private var pendingLiveKey: String?
+    private var isLoading = false
+    private let badgeView = UIView()
+    private let badgeLabel = UILabel()
+    private let spinner = UIActivityIndicatorView(style: .medium)
 
     /// 长按播完抬手时，调用方凭此压住紧随其后的那次点按（防长按变进灯箱）。
     var suppressTapUntil: Date?
 
     var hasLivePhoto: Bool {
         return liveView.livePhoto != nil
+    }
+
+    /// 已配实况 key（加载中/失败都为真）：角标可见时为真，长按可重试。
+    var hasLiveKey: Bool {
+        return pendingLiveKey != nil
     }
 
     init(contentMode: PHImageContentMode) {
@@ -347,14 +440,52 @@ final class BearyLivePhotoView: UIView {
             liveView.leadingAnchor.constraint(equalTo: leadingAnchor),
             liveView.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
+        // “实况”角标（网页版 liveBadgeHtml 同款）：黑底 55%、白字 11pt bold、
+        // pill 圆角、左上 6pt；只在配了 liveKey 时显现。
+        badgeView.translatesAutoresizingMaskIntoConstraints = false
+        badgeView.backgroundColor = UIColor(white: 0, alpha: 0.55)
+        badgeView.clipsToBounds = true
+        badgeView.isHidden = true
+        badgeLabel.translatesAutoresizingMaskIntoConstraints = false
+        badgeLabel.text = "实况"
+        badgeLabel.font = UIFont.systemFont(ofSize: 11, weight: .bold)
+        badgeLabel.textColor = .white
+        badgeLabel.isAccessibilityElement = true
+        badgeLabel.accessibilityLabel = "实况照片"
+        badgeView.addSubview(badgeLabel)
+        addSubview(badgeView)
+        NSLayoutConstraint.activate([
+            badgeView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            badgeView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            badgeLabel.topAnchor.constraint(equalTo: badgeView.topAnchor, constant: 3),
+            badgeLabel.bottomAnchor.constraint(equalTo: badgeView.bottomAnchor, constant: -3),
+            badgeLabel.leadingAnchor.constraint(equalTo: badgeView.leadingAnchor, constant: 8),
+            badgeLabel.trailingAnchor.constraint(equalTo: badgeView.trailingAnchor, constant: -8),
+        ])
+        // 加载圈：居中、白、加载中才转；静态帧仍在下层可见，转圈只表示
+        // “实况视频还在下”，不是整图加载。
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.color = .white
+        spinner.hidesWhenStopped = true
+        addSubview(spinner)
+        NSLayoutConstraint.activate([
+            spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        badgeView.layer.cornerRadius = badgeView.bounds.height / 2
+    }
+
     /// staticKey/liveKey 任一为空即按无实况处理（旧静态图、非实况图走这里）。
     /// 同一 liveKey 重复调用不重复加载；换 key 时旧加载回包凭 token 丢弃。
+    /// 有 liveKey 即亮角标＋转圈（加载中/失败都亮角标，见类注释）。
     func configure(staticKey: String?, liveKey: String?) {
         guard let staticKey = staticKey, !staticKey.isEmpty,
               let liveKey = liveKey, !liveKey.isEmpty else {
@@ -366,20 +497,25 @@ final class BearyLivePhotoView: UIView {
         }
         clear()
         currentLiveKey = liveKey
+        pendingStaticKey = staticKey
+        pendingLiveKey = liveKey
+        badgeView.isHidden = false
+        isLoading = true
+        spinner.startAnimating()
+        isHidden = false
         loadToken += 1
         let token = loadToken
         BearyLivePhotoLoader.shared.load(staticKey: staticKey, liveKey: liveKey, contentMode: photoContentMode) { [weak self] photo in
             guard let self = self, token == self.loadToken, self.currentLiveKey == liveKey else { return }
+            self.isLoading = false
+            self.spinner.stopAnimating()
             if let photo = photo {
                 self.liveView.livePhoto = photo
-                self.isHidden = false
             } else {
-                // 失败不留 currentLiveKey：否则下次同 key 再 configure 会命中
-                // 「同 key 不重复加载」直接 return，弱网抖动后实况永远不再出现，
-                // 只能靠滑走复用清掉；清掉后下次 configure 重新加载（加载中
-                // 的同 key 调用仍由 token＋currentLiveKey 守门，不会重复拉）。
+                // 失败仍亮角标（不静默退化成纯静态），currentLiveKey 清掉，
+                // 下次 configure 或长按重试可重新加载；加载中的同 key 调用
+                // 仍由 token＋currentLiveKey 守门，不会重复拉。
                 self.currentLiveKey = nil
-                self.isHidden = true
             }
         }
     }
@@ -387,14 +523,32 @@ final class BearyLivePhotoView: UIView {
     func clear() {
         loadToken += 1
         currentLiveKey = nil
+        pendingStaticKey = nil
+        pendingLiveKey = nil
+        isLoading = false
+        spinner.stopAnimating()
+        badgeView.isHidden = true
         liveView.livePhoto = nil
         isHidden = true
         suppressTapUntil = nil
     }
 
-    func startPlayback() {
+    /// 长按播实况：已就绪即播；加载中已有转圈可见（不是空操作）；加载
+    /// 失败时长按重试一次。返回 true 表示播了或触发了重试，false 表示
+    /// 正在加载中（调用方不立抬手压制窗，点按照常）。
+    @discardableResult
+    func startPlayback() -> Bool {
         if liveView.livePhoto != nil {
             liveView.startPlayback(with: .full)
+            return true
         }
+        if isLoading {
+            return false
+        }
+        guard let staticKey = pendingStaticKey, let liveKey = pendingLiveKey else {
+            return false
+        }
+        configure(staticKey: staticKey, liveKey: liveKey)
+        return true
     }
 }

@@ -370,9 +370,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             // 只有当前图确有可播实况才响应：普通图上 startPlayback 本就是空操作
             // （livePhoto 为 nil 时不播），旧代码却无条件立起 3 秒压制窗，导致
             // 普通图长按后 3 秒内舞台点按全部失灵（点按关闭无反应）。
-            guard liveOverlay?.hasLivePhoto == true else { return }
-            liveOverlay?.startPlayback()
-            livePlaybackStarted = true
+            // 有 liveKey 但未就绪时也响应：加载中转圈可见，失败时长按重试；
+            // startPlayback 返回 false（正在加载中）时不立压制窗，点按照常。
+            guard liveOverlay?.hasLivePhoto == true || liveOverlay?.hasLiveKey == true else { return }
+            livePlaybackStarted = liveOverlay?.startPlayback() ?? false
         } else if sender.state == .ended || sender.state == .cancelled {
             // 抬手后只屏蔽一次误触，不持续屏蔽后续主动点击。旧的 3 秒窗 +
             // ended 0.35 秒缩短分支一并删除：该分支对常规长按（按住 < 2.65 秒）
