@@ -305,12 +305,12 @@ final class BearyNotificationsViewController: UIViewController {
         header.addSubview(titleLabel)
         header.addSubview(readAllButton)
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 20),
+            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 16),
             titleLabel.topAnchor.constraint(equalTo: header.topAnchor, constant: 14),
             titleLabel.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -4),
             // 审计：标题加右侧限位，大字体时不与“全部已读”钮重叠（超长截断）。
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: readAllButton.leadingAnchor, constant: -8),
-            readAllButton.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -20),
+            readAllButton.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -16),
             readAllButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
         ])
         return header
@@ -359,9 +359,9 @@ final class BearyNotificationsViewController: UIViewController {
 
     /// 内容列：页内不再二次收窄——宽 = 视图宽（750 优先级）+ 居中 + 两侧 ≥0；
     /// 600 上限只在宽 ≥821 时激活（Feed 断点模式，开关在 viewDidLayoutSubviews），
-    /// 宽 ≤820 时 750 全宽等式生效、列走满屏宽。行内 20 边距改由行 cell 与顶栏
+    /// 宽 ≤820 时 750 全宽等式生效、列走满屏宽。行内 16 边距改由行 cell 与顶栏
     /// 自身承担（网页 .nt-item padding 16/20、.tl-head padding 14/20/4 同口径），
-    /// 窄屏下行内边距仍是 20，不随列宽变化。
+    /// 窄屏下行内边距仍是 16，不随列宽变化。
     private lazy var contentView: UIView = {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -478,11 +478,11 @@ final class BearyNotificationsViewController: UIViewController {
             centralSpinner.widthAnchor.constraint(equalToConstant: 32),
             centralSpinner.heightAnchor.constraint(equalToConstant: 32),
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
             errorStateView.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
-            errorStateView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
-            errorStateView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            errorStateView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            errorStateView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
         ])
         self.stateStackView = stack
         return container
@@ -3242,12 +3242,12 @@ class BearyNotificationCell: UITableViewCell {
         followActionsHeightConstraint = followActionStack.heightAnchor.constraint(equalToConstant: 0)
         followActionsTopConstraint?.isActive = true
         followActionsHeightConstraint?.isActive = true
-        // 行内边距 20/14 由 cell 自身承担（列宽已是满 600，见 contentView 注释；
-        // 32 清单第 5 项：头像 x 与未读点/箭头右距统一 20，与网页 .nt-item 对齐）：
-        // 顶层行头像 x=20、未读点右 -20、箭头右 -20；嵌套行在此基础上再缩进（见 configure）。
-        avatarLeadingConstraint = avatarImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20)
+        // 行内边距 16/14 由 cell 自身承担（列宽已是满 600，见 contentView 注释；
+        // 32 清单第 5 项：头像 x 与未读点/箭头右距统一 16，与规范 §3 内容列 16 对齐）：
+        // 顶层行头像 x=16、未读点右 -16、箭头右 -16；嵌套行在此基础上再缩进（见 configure）。
+        avatarLeadingConstraint = avatarImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16)
         separatorLeadingConstraint = separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 0)
-        dotTrailingToContentConstraint = unreadDotView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20)
+        dotTrailingToContentConstraint = unreadDotView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
         dotTrailingToChevronConstraint = unreadDotView.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -12)
         avatarLeadingConstraint?.isActive = true
         separatorLeadingConstraint?.isActive = true
@@ -3288,7 +3288,7 @@ class BearyNotificationCell: UITableViewCell {
             bodyStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
             bodyStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
             followActionStack.leadingAnchor.constraint(equalTo: bodyStack.leadingAnchor),
-            followActionStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -20),
+            followActionStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
             followActionStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
             timeLabel.leadingAnchor.constraint(equalTo: bodyStack.trailingAnchor, constant: 12),
             timeLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 19),
@@ -3296,7 +3296,7 @@ class BearyNotificationCell: UITableViewCell {
             unreadDotView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
             unreadDotView.widthAnchor.constraint(equalToConstant: 8),
             unreadDotView.heightAnchor.constraint(equalToConstant: 8),
-            chevronView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            chevronView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             chevronView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 18),
             chevronView.widthAnchor.constraint(equalToConstant: 16),
             chevronView.heightAnchor.constraint(equalToConstant: 16),
@@ -3354,7 +3354,7 @@ class BearyNotificationCell: UITableViewCell {
         chevronView.isHidden = true
         chevronView.transform = CGAffineTransform.identity
         chevronView.image = nil
-        avatarLeadingConstraint?.constant = 20
+        avatarLeadingConstraint?.constant = 16
         separatorLeadingConstraint?.constant = 0
         nestedLineView.isHidden = true
         unreadBgView.backgroundColor = .clear
@@ -3477,7 +3477,7 @@ class BearyNotificationCell: UITableViewCell {
         chevronView.transform = expanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : CGAffineTransform.identity
         dotTrailingToContentConstraint?.isActive = false
         dotTrailingToChevronConstraint?.isActive = true
-        avatarLeadingConstraint?.constant = 20
+        avatarLeadingConstraint?.constant = 16
         separatorLeadingConstraint?.constant = 0
         nestedLineView.isHidden = true
     }
@@ -3559,7 +3559,7 @@ class BearyNotificationCell: UITableViewCell {
         // 竖线本身 x=20（margin 起点）不变。
         // 补缺 P3-37：嵌套头像 x 按文件头注释口径（网页 .nt-sysin：头像 x=50、分隔线起于 30）统一为 50；
         // 真实像素未经真机截图量取，待 Li 真机核实（不得以本值冒充实测值）。
-        avatarLeadingConstraint?.constant = nested ? 50 : 20
+        avatarLeadingConstraint?.constant = nested ? 50 : 16
         separatorLeadingConstraint?.constant = nested ? 30 : 0
         nestedLineView.isHidden = !nested
         chevronView.isHidden = true
@@ -4339,7 +4339,7 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
             return UITableViewCell()
         }
         let item = items[indexPath.row]
-        // 详情页行是顶层行（非嵌套）：头像 x=20、分隔线起于行左缘，
+        // 详情页行是顶层行（非嵌套）：头像 x=16、分隔线起于行左缘，
         // 与展开卡内嵌套行（头像 x=50）不同。
         cell.configure(with: item, nested: false, highlight: notifSource.highlightForDetail(item))
         if item.type == "follow", let actorId = item.actorId {
