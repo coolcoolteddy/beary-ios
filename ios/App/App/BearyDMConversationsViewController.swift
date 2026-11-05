@@ -28,6 +28,8 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     private var firstLoadPending = true
     /// 快照回填代次：切号即变，旧号在途快照回包凭此丢弃。
     private var snapshotGeneration: UInt64 = 0
+    /// 新一轮 01：相对时间分钟边界刷新定时器（页面统一持有，不进 Cell）。
+    private var relativeTimeTimer: Timer?
     // 新行首次出现透明度过渡的已播记账（按对方 id/handle 键，已有行更新不重播）。
     private var fadedRowKeys = Set<String>()
     private let titleLabel = UILabel()
@@ -177,12 +179,55 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         // 审计四轮增量 10：拉黑后列表连重拉都不会触发——订阅拉黑广播，
         // 到达时当场把该对方从可见列表撤掉（本地记录不动，解除后恢复显示）。
         NotificationCenter.default.addObserver(self, selector: #selector(blockedUserChanged), name: .bearyDidBlockUser, object: nil)
+        // 新一轮 01：回前台刷新可见行的时间标签（相对时间分钟边界外，前台恢复即刷新）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleForegroundForRelativeTime), name: UIApplication.willEnterForegroundNotification, object: nil)
         loadConversationsSnapshot()
         load()
     }
 
     deinit {
+        relativeTimeTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        startRelativeTimeTimer()
+        refreshVisibleTimeLabels()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        stopRelativeTimeTimer()
+    }
+
+    /// 新一轮 01：相对时间只由页面统一刷新——首拍对齐下一分钟边界，之后每 60 秒
+    /// 一拍（自调度，计时漂移自动纠回边界）。不要每个 Cell 各开一个 Timer。
+    private func startRelativeTimeTimer() {
+        relativeTimeTimer?.invalidate()
+        let delay = 60.0 - Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 60.0)
+        relativeTimeTimer = Timer.scheduledTimer(withTimeInterval: max(delay, 1.0), repeats: false) { [weak self] _ in
+            self?.refreshVisibleTimeLabels()
+            self?.startRelativeTimeTimer()
+        }
+    }
+
+    private func stopRelativeTimeTimer() {
+        relativeTimeTimer?.invalidate()
+        relativeTimeTimer = nil
+    }
+
+    /// 新一轮 01：只更新可见行的时间 Label（滚动位置、入场动效均不动），不 reloadData。
+    private func refreshVisibleTimeLabels() {
+        guard view.window != nil && !view.isHidden else { return }
+        for cell in tableView.visibleCells {
+            (cell as? BearyDMConversationCell)?.refreshTimeLabel()
+        }
+    }
+
+    @objc private func handleForegroundForRelativeTime() {
+        refreshVisibleTimeLabels()
+        startRelativeTimeTimer()
     }
 
     override func viewDidLayoutSubviews() {
@@ -497,13 +542,24 @@ final class BearyDMConversationCell: UITableViewCell {
     private let separatorView = UIView()
     private var unreadBadgeMinWidthConstraint: NSLayoutConstraint?
     private var unreadBadgeZeroWidthConstraint: NSLayoutConstraint?
+    /// 新一轮 01：本行会话的最后消息时间（毫秒），供页面分钟边界刷新时重算时间标签。
+    private var lastAtMs: Int?
+
+    /// 新一轮 01：只刷新本行的时间标签（页面分钟边界定时器调），不触其他内容。
+    func refreshTimeLabel() {
+        guard let ms = lastAtMs else { return }
+        timeLabel.text = Self.relativeTimeText(ms: ms)
+    }
 
     /// 通知时间口径（2026-11-05 Li 定）：不到 1 分钟“刚刚”，不到 1 小时“X分钟前”，
     /// 不到 24 小时“X小时前”，超过 24 小时写天数“X天前”。
+    /// 新一轮 01：几秒内的时钟偏差仍算“刚刚”；明显未来（> 5 秒）不误报为刚发送，
+    /// 改走绝对时间显示。
     private static func relativeTimeText(ms: Int?) -> String {
         guard let msValue = ms else { return "" }
         let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
         let diff = Date().timeIntervalSince(date)
+        if diff < -5 { return BearyText.timeString(ms: msValue) }
         if diff < 60 { return "刚刚" }
         if diff < 3600 { return "\(Int(diff / 60))分钟前" }
         if diff < 86400 { return "\(Int(diff / 3600))小时前" }
@@ -591,6 +647,7 @@ final class BearyDMConversationCell: UITableViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         avatarView.reset()
+        lastAtMs = nil
     }
 
     func configure(conversation: BearyAPI.DMConversation) {
@@ -603,8 +660,10 @@ final class BearyDMConversationCell: UITableViewCell {
         snippetLabel.isHidden = snippet.isEmpty
         // 时间口径与通知行一致（相对时间：刚刚/X分钟前/X小时前/X天前）。
         if let lastAt = conversation.lastAt {
+            lastAtMs = lastAt
             timeLabel.text = Self.relativeTimeText(ms: lastAt)
         } else {
+            lastAtMs = nil
             timeLabel.text = ""
         }
         let unread = conversation.unreadCount ?? 0

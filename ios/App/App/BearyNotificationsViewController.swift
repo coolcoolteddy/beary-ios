@@ -747,11 +747,17 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     /// 60 秒轮询：只做轻量刷新（见 refreshUnreadCountLightly），cadence 不变。
+    /// 新一轮 01：轮询兼作相对时间刷新节拍——首拍对齐下一分钟边界，之后每 60 秒
+    /// 一拍（自调度，计时漂移自动纠回边界）；回调里顺带刷新可见行的时间标签，
+    /// 只改 Label，不 reloadData、不动滚动位置。
     private func startPolling() {
         pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
+        let delay = 60.0 - Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 60.0)
+        pollTimer = Timer.scheduledTimer(withTimeInterval: max(delay, 1.0), repeats: false) { [weak self] _ in
+            self?.startPolling()
             guard let strongSelf = self, strongSelf.isNotifPageVisible else { return }
             strongSelf.refreshUnreadCountLightly()
+            strongSelf.refreshVisibleTimeLabels()
         }
     }
 
@@ -760,9 +766,19 @@ final class BearyNotificationsViewController: UIViewController {
         pollTimer = nil
     }
 
+    /// 新一轮 01：只更新可见行的时间 Label（分钟边界轮询拍 / 回前台调），
+    /// 滚动位置、入场动效均不动。
+    private func refreshVisibleTimeLabels() {
+        guard isNotifPageVisible else { return }
+        for cell in tableView.visibleCells {
+            (cell as? BearyNotificationCell)?.refreshTimeLabel()
+        }
+    }
+
     @objc private func handleForeground() {
         guard isNotifPageVisible else { return }
         refreshUnreadCountLightly()
+        refreshVisibleTimeLabels()
     }
 
     /// P1-21：在途请求代次校验——各请求发起时捕获 BearyAPI.authEpoch，
@@ -3267,6 +3283,15 @@ class BearyNotificationCell: UITableViewCell {
         return label
     }()
 
+    /// 新一轮 01：本行通知的创建时间（毫秒），供页面分钟边界/轮询节拍刷新时重算时间标签。
+    private var lastTimeMs: Int?
+
+    /// 新一轮 01：只刷新本行的时间标签（页面分钟边界/轮询节拍调），不触其他内容、不 reloadData。
+    func refreshTimeLabel() {
+        guard let ms = lastTimeMs else { return }
+        timeLabel.text = Self.timeText(ms: ms)
+    }
+
     private let unreadDotView: UIView = {
         let dot = UIView()
         dot.translatesAutoresizingMaskIntoConstraints = false
@@ -3462,6 +3487,7 @@ class BearyNotificationCell: UITableViewCell {
         alpha = 1
         transform = CGAffineTransform.identity
         timeLabel.text = nil
+        lastTimeMs = nil
         unreadDotView.isHidden = true
         chevronView.isHidden = true
         chevronView.transform = CGAffineTransform.identity
@@ -3583,6 +3609,7 @@ class BearyNotificationCell: UITableViewCell {
         nestedLineView.isHidden = true
         titleLabel.attributedText = BearyNotificationCell.lineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping)
         excerptLabel.attributedText = BearyNotificationCell.lineHeightText(excerpt, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray)
+        lastTimeMs = timeMs
         timeLabel.text = BearyNotificationCell.timeText(ms: timeMs)
         chevronView.isHidden = false
         chevronView.image = BearyIconImages.image(named: "icon_chevron_down", pointSize: 16)
@@ -3614,10 +3641,13 @@ class BearyNotificationCell: UITableViewCell {
 
     /// 通知时间口径（2026-11-05 Li 定）：24 小时内相对时间——不到 1 分钟“刚刚”，
     /// 不到 1 小时“X分钟前”，不到 24 小时“X小时前”；超过 24 小时写天数“X天前”。
+    /// 新一轮 01：几秒内的时钟偏差仍算“刚刚”；明显未来（> 5 秒）不误报为刚发送，
+    /// 改走绝对时间显示。
     private static func timeText(ms: Int?) -> String {
         guard let msValue = ms else { return "" }
         let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
         let diff = Date().timeIntervalSince(date)
+        if diff < -5 { return BearyText.timeString(ms: msValue) }
         if diff < 60 { return "刚刚" }
         if diff < 3600 { return "\(Int(diff / 60))分钟前" }
         if diff < 86400 { return "\(Int(diff / 3600))小时前" }
@@ -3786,6 +3816,7 @@ class BearyNotificationCell: UITableViewCell {
         }
 
         excerptLabel.attributedText = BearyNotificationCell.lineHeightText(item.excerpt ?? "", font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray)
+        lastTimeMs = item.createdAt
         timeLabel.text = BearyNotificationCell.timeText(ms: item.createdAt)
     }
 
