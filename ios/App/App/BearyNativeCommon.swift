@@ -148,6 +148,17 @@ enum BearySheetDrag {
         guard sheetHeight > 0 else { return 1 }
         return max(0, 1 - max(0, offset) / sheetHeight)
     }
+
+    /// 拖拽收尾统一弹簧初速度（规格 §6：快甩松手把手势结束速度归一化后传
+    /// initialSpringVelocity，慢拖为 0）：回弹从 offset 回 0，动画方向与拖动
+    /// 方向相反，故沿动画方向的速度为 -velocity，再按行程归一化（UIKit 口径：
+    /// 1.0 = 一秒走完全部行程）；慢拖速度小、算出值自然接近 0；行程 ≤1pt
+    /// 时归 0；行程极小而速度大时封顶 ±2，防弹簧冲过头。取消/失败无有效
+    /// 松手速度，调用方传 0。
+    static func restoreSpringVelocity(velocity: CGFloat, offset: CGFloat) -> CGFloat {
+        guard abs(offset) > 1 else { return 0 }
+        return max(-2, min(2, -velocity / offset))
+    }
 }
 
 // MARK: - 液态玻璃（与 SceneDelegate.makeGlassView 同配方，勿另起 tint）
