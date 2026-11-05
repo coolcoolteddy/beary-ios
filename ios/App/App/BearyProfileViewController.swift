@@ -1941,8 +1941,9 @@ class BearyProfileViewController: UIViewController {
     private lazy var stickyHeaderBlurWidthConstraint: NSLayoutConstraint = stickyHeaderBlurImageView.widthAnchor.constraint(equalToConstant: 0)
     /// 预模糊图对应的源图（identity 比对：源图变了才重算，不逐帧现算）。
     private var stickyHeaderBlurSourceImage: UIImage?
-    /// 景深封面吸顶跟踪图缓存：海报图按主题缓存一次，滚动回调不再读盘；
-    /// 主题变了才重载（与静态图同引用比对口径，见 syncStickyHeaderCover）。
+    /// 景深封面吸顶跟踪图缓存：海报图／节日款快照按主题缓存一次，滚动回调不再读盘；
+    /// 主题变了才重载（与静态图同引用比对口径，见 syncStickyHeaderCover；
+    /// 节日款快照失败时缓存留空、下次同步再试）。
     private var stickyHeaderDepthPosterImage: UIImage?
     private var stickyHeaderDepthPosterTheme: String?
     /// 模糊起止的锚点（见 updateProfileCoverScroll 内注释）：头像被 header 盖住
@@ -2373,6 +2374,28 @@ class BearyProfileViewController: UIViewController {
                 stickyHeaderBgImageView.isHidden = true
                 stickyHeaderBgImageView.image = nil
             }
+        } else if festivalTheme.wallpaperTheme != nil {
+            // 节日款（万圣节／春节）走节日墙纸视图，coverTheme 为 nil，#850 的
+            // 海报分支覆盖不到，跟踪图一直是空的——123 上节日款仍有白块即由此来。
+            // 改用墙纸视图当前画面快照作跟踪图（与海报图同做法：静态底片＋
+            // 同一套 1:1 跟随＋锁定几何）；主题变了先清旧图，快照失败（视图未
+            // 布局好）时下次同步再试，不留错主题的旧图。
+            if stickyHeaderDepthPosterTheme != festivalTheme.rawValue {
+                stickyHeaderDepthPosterTheme = festivalTheme.rawValue
+                stickyHeaderDepthPosterImage = nil
+            }
+            if stickyHeaderDepthPosterImage == nil {
+                stickyHeaderDepthPosterImage = snapshotStickyHeaderFestivalWallpaper()
+            }
+            if let snapshot = stickyHeaderDepthPosterImage {
+                if stickyHeaderBgImageView.image !== snapshot {
+                    stickyHeaderBgImageView.image = snapshot
+                }
+                stickyHeaderBgImageView.isHidden = false
+            } else {
+                stickyHeaderBgImageView.isHidden = true
+                stickyHeaderBgImageView.image = nil
+            }
         } else if let coverImage = coverImageView.image, !coverImageView.isHidden {
             if stickyHeaderBgImageView.image !== coverImage {
                 stickyHeaderBgImageView.image = coverImage
@@ -2393,6 +2416,21 @@ class BearyProfileViewController: UIViewController {
         guard let url = Bundle.main.url(forResource: themeRaw + "-poster", withExtension: "png"),
               let data = try? Data(contentsOf: url) else { return nil }
         return UIImage(data: data)
+    }
+
+    /// 节日款吸顶跟踪图取图：节日款（万圣节／春节）无海报图资源，coverTheme
+    /// 为 nil，#850 的海报分支覆盖不到——123 上节日款仍是白块即由此来。
+    /// 改用墙纸视图当前画面快照（与海报图同做法：静态底片＋同一套跟随几何）；
+    /// 视图未布局好时 bounds 为空、返回 nil，下次同步再试。
+    private func snapshotStickyHeaderFestivalWallpaper() -> UIImage? {
+        guard let wallpaperView = festivalWallpaperView,
+              wallpaperView.bounds.width > 0, wallpaperView.bounds.height > 0 else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = UIScreen.main.scale
+        let renderer = UIGraphicsImageRenderer(bounds: wallpaperView.bounds, format: format)
+        return renderer.image { context in
+            wallpaperView.layer.render(in: context.cgContext)
+        }
     }
 
     /// 视觉清单第 6 项：吸顶用户名固定 ink 字（动态色，跟随主题底色），
