@@ -136,7 +136,7 @@ public final class BearyEmoteView: UIView {
     /// 即 cacheKey，见 cacheKey(for:dark:)）；先到者解析、后到者登记等待、共用
     /// 同一次解析结果，不重复读盘解析。只在持 cacheLock 时读写；发起者解析时
     /// 不持锁，完成后在锁内取走等待者再逐一回调，表内不留过期条目。
-    private static var inFlightParses: [String: [(CachedEmote?) -> Void]] = []
+    private static var inFlightParses: [String: [(CachedEmote?) -> Void]] = [:]
 
     /// G24：失败 key 的负缓存（key → 过期时间，TTL 300 秒）：文件缺失/
     /// 解析失败不再每次重复读盘；过期后自动失效、可重试。
