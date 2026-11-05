@@ -3230,6 +3230,10 @@ final class BearyLegalTextViewController: UIViewController {
     private let versionLabel = UILabel()
     private var versionTopConstraint: NSLayoutConstraint?
     private var versionHeightConstraint: NSLayoutConstraint?
+    /// 审计第 2 项：顶栏与正文列共用同一等值宽度约束，宽度由
+    /// updateSubpageColumnWidths 按当前屏宽算出（见 columnWidth(forViewWidth:)）。
+    private var topBarColumnWidth: NSLayoutConstraint?
+    private var contentColumnWidth: NSLayoutConstraint?
     /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
     private let subpageLayoutGuard = BearySubpageLayoutGuard()
     private var topBarView: UIView?
@@ -3289,19 +3293,16 @@ final class BearyLegalTextViewController: UIViewController {
         view.addSubview(versionLabel)
         view.addSubview(textView)
         topBarView = topBar
-        // 补缺 P2-17：子页内容列 600 居中、顶栏同宽居中（iPhone 全宽不变）。
+        // 审计第 2 项：顶栏与正文列同宽居中，宽度由 updateSubpageColumnWidths
+        // 经 columnWidth(forViewWidth:) 统一算出，不再用全宽（priority 750）
+        // ＋ ≤600（必需）两约束协商——后者在 601…820pt 区间会把两列都提前
+        // 卡在 600pt，顶栏与正文列的 600 上限只在 ≥821pt 时由计算入口给出。
         versionTopConstraint = versionLabel.topAnchor.constraint(equalTo: topBar.bottomAnchor)
         versionHeightConstraint = versionLabel.heightAnchor.constraint(equalToConstant: 0)
         applyVersionText(currentVersionText)
-        let legalTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
-        legalTopBarWidthEquality.priority = UILayoutPriority(750)
-        let legalTextWidthEquality = textView.widthAnchor.constraint(equalTo: view.widthAnchor)
-        legalTextWidthEquality.priority = UILayoutPriority(750)
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
-            legalTopBarWidthEquality,
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
@@ -3316,10 +3317,13 @@ final class BearyLegalTextViewController: UIViewController {
             versionLabel.trailingAnchor.constraint(equalTo: textView.trailingAnchor, constant: -16),
             textView.topAnchor.constraint(equalTo: versionLabel.bottomAnchor),
             textView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            textView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
-            legalTextWidthEquality,
             textView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
         ] + BearySubpageTopBarHeight.constraints(for: topBar))
+        topBarColumnWidth = topBar.widthAnchor.constraint(equalToConstant: 0)
+        topBarColumnWidth?.isActive = true
+        contentColumnWidth = textView.widthAnchor.constraint(equalToConstant: 0)
+        contentColumnWidth?.isActive = true
+        updateSubpageColumnWidths()
     }
 
     @objc private func closeTapped() {
@@ -3360,7 +3364,30 @@ final class BearyLegalTextViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateSubpageColumnWidths()
         subpageLayoutGuard.applyIfNeeded(page: pageTitle, view: view, topView: topBarView, contentViews: [textView], presentation: "fullScreen+fadeRise")
+    }
+
+    /// 列宽唯一计算入口：BearySettingsSubpages.updateSubpageColumnWidths
+    /// 同款 ≥821 门禁——宽 ≥821 锁 600 居中，≤820 全宽减 32（规范 §3 内容列）。
+    /// 本页顶栏与正文列原即同宽居中，故共用此值；600 上限不再以独立约束形式存在。
+    private func columnWidth(forViewWidth w: CGFloat) -> CGFloat {
+        w >= 821 ? 600 : max(w - 32, 0)
+    }
+
+    /// 列宽只由 view.bounds 定；顶栏与正文列在同一入口算出同一目标值、
+    /// 写入各自等值约束；bounds 为 0 时跳过不钉死；值不变时不写，避免布局环。
+    /// viewDidLayoutSubviews 每轮调用，故分屏 / 旋转改宽时两列同步跟进。
+    private func updateSubpageColumnWidths() {
+        let w = view.bounds.width
+        guard w > 0 else { return }
+        let target = columnWidth(forViewWidth: w)
+        if topBarColumnWidth?.constant != target {
+            topBarColumnWidth?.constant = target
+        }
+        if contentColumnWidth?.constant != target {
+            contentColumnWidth?.constant = target
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -3991,6 +4018,10 @@ private final class BearyDiagnosticsViewController: UIViewController {
     // 颜色/间距）不动，仅热区扩到 44pt（旧约 20pt 高）。
     private let copyButton = BearyHit44Button(type: .system)
     private let clearButton = BearyHit44Button(type: .system)
+    /// 审计第 2 项：顶栏与正文列共用同一等值宽度约束，宽度由
+    /// updateSubpageColumnWidths 按当前屏宽算出（见 columnWidth(forViewWidth:)）。
+    private var topBarColumnWidth: NSLayoutConstraint?
+    private var contentColumnWidth: NSLayoutConstraint?
     /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
     private let subpageLayoutGuard = BearySubpageLayoutGuard()
     private var topBarView: UIView?
@@ -4063,24 +4094,24 @@ private final class BearyDiagnosticsViewController: UIViewController {
         view.addSubview(actionRow)
         view.addSubview(textView)
         topBarView = topBar
-        // 补缺 P2-17：子页内容列 600 居中、顶栏同宽居中（iPhone 全宽不变；操作行跟顶栏左缘 +20）。
-        let logTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
-        logTopBarWidthEquality.priority = UILayoutPriority(750)
-        let logTextWidthEquality = textView.widthAnchor.constraint(equalTo: view.widthAnchor)
-        logTextWidthEquality.priority = UILayoutPriority(750)
+        // 审计第 2 项：顶栏与正文列同宽居中，宽度由 updateSubpageColumnWidths
+        // 经 columnWidth(forViewWidth:) 统一算出，不再用全宽（priority 750）
+        // ＋ ≤600（必需）两约束协商——后者在 601…820pt 区间会把两列都提前
+        // 卡在 600pt；操作行跟顶栏左缘 +20 不变。
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
-            logTopBarWidthEquality,
             actionRow.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 8),
             actionRow.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 20),
             textView.topAnchor.constraint(equalTo: actionRow.bottomAnchor, constant: 8),
             textView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            textView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
-            logTextWidthEquality,
             textView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
         ])
+        topBarColumnWidth = topBar.widthAnchor.constraint(equalToConstant: 0)
+        topBarColumnWidth?.isActive = true
+        contentColumnWidth = textView.widthAnchor.constraint(equalToConstant: 0)
+        contentColumnWidth?.isActive = true
+        updateSubpageColumnWidths()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -4090,7 +4121,30 @@ private final class BearyDiagnosticsViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateSubpageColumnWidths()
         subpageLayoutGuard.applyIfNeeded(page: "诊断日志", view: view, topView: topBarView, contentViews: [textView], presentation: "fullScreen+fadeRise")
+    }
+
+    /// 列宽唯一计算入口：BearySettingsSubpages.updateSubpageColumnWidths
+    /// 同款 ≥821 门禁——宽 ≥821 锁 600 居中，≤820 全宽减 32（规范 §3 内容列）。
+    /// 本页顶栏与正文列原即同宽居中，故共用此值；600 上限不再以独立约束形式存在。
+    private func columnWidth(forViewWidth w: CGFloat) -> CGFloat {
+        w >= 821 ? 600 : max(w - 32, 0)
+    }
+
+    /// 列宽只由 view.bounds 定；顶栏与正文列在同一入口算出同一目标值、
+    /// 写入各自等值约束；bounds 为 0 时跳过不钉死；值不变时不写，避免布局环。
+    /// viewDidLayoutSubviews 每轮调用，故分屏 / 旋转改宽时两列同步跟进。
+    private func updateSubpageColumnWidths() {
+        let w = view.bounds.width
+        guard w > 0 else { return }
+        let target = columnWidth(forViewWidth: w)
+        if topBarColumnWidth?.constant != target {
+            topBarColumnWidth?.constant = target
+        }
+        if contentColumnWidth?.constant != target {
+            contentColumnWidth?.constant = target
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -4160,6 +4214,10 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
     // C5：空态/失败态走统一 BearyStateView（旧 emptyLabel＋blockedRetryButton
     // 退役；空态无动作、失败态“重新加载”动作仍调 reloadBlocked，失败 toast 保留）。
     private let blockedStateView = BearyStateView()
+    /// 审计第 2 项：顶栏与列表列共用同一等值宽度约束，宽度由
+    /// updateSubpageColumnWidths 按当前屏宽算出（见 columnWidth(forViewWidth:)）。
+    private var topBarColumnWidth: NSLayoutConstraint?
+    private var contentColumnWidth: NSLayoutConstraint?
     /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
     private let subpageLayoutGuard = BearySubpageLayoutGuard()
     private var topBarView: UIView?
@@ -4206,14 +4264,13 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
         view.addSubview(tableView)
         view.addSubview(blockedStateView)
         topBarView = topBar
-        // 补缺 P2-17：拉黑列表顶栏与内容列同宽居中（iPhone 全宽不变）。
-        let blockedTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
-        blockedTopBarWidthEquality.priority = UILayoutPriority(750)
+        // 审计第 2 项：顶栏与列表列同宽居中，宽度由 updateSubpageColumnWidths
+        // 经 columnWidth(forViewWidth:) 统一算出，不再用全宽（priority 750）
+        // ＋ ≤600（必需）两约束协商——后者在 601…820pt 区间会把两列都提前
+        // 卡在 600pt，600 上限只在 ≥821pt 时由计算入口给出。
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
-            blockedTopBarWidthEquality,
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
@@ -4224,18 +4281,17 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
             tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            tableView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
-            {
-                let c = tableView.widthAnchor.constraint(equalTo: view.widthAnchor)
-                c.priority = UILayoutPriority(750)
-                return c
-            }(),
             tableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             blockedStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             blockedStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             blockedStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
             blockedStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
         ] + BearySubpageTopBarHeight.constraints(for: topBar))
+        topBarColumnWidth = topBar.widthAnchor.constraint(equalToConstant: 0)
+        topBarColumnWidth?.isActive = true
+        contentColumnWidth = tableView.widthAnchor.constraint(equalToConstant: 0)
+        contentColumnWidth?.isActive = true
+        updateSubpageColumnWidths()
         reloadBlocked()
     }
 
@@ -4353,7 +4409,30 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateSubpageColumnWidths()
         subpageLayoutGuard.applyIfNeeded(page: "已拉黑用户", view: view, topView: topBarView, contentViews: [tableView], presentation: "fullScreen+fadeRise")
+    }
+
+    /// 列宽唯一计算入口：BearySettingsSubpages.updateSubpageColumnWidths
+    /// 同款 ≥821 门禁——宽 ≥821 锁 600 居中，≤820 全宽减 32（规范 §3 内容列）。
+    /// 本页顶栏与列表列原即同宽居中，故共用此值；600 上限不再以独立约束形式存在。
+    private func columnWidth(forViewWidth w: CGFloat) -> CGFloat {
+        w >= 821 ? 600 : max(w - 32, 0)
+    }
+
+    /// 列宽只由 view.bounds 定；顶栏与列表列在同一入口算出同一目标值、
+    /// 写入各自等值约束；bounds 为 0 时跳过不钉死；值不变时不写，避免布局环。
+    /// viewDidLayoutSubviews 每轮调用，故分屏 / 旋转改宽时两列同步跟进。
+    private func updateSubpageColumnWidths() {
+        let w = view.bounds.width
+        guard w > 0 else { return }
+        let target = columnWidth(forViewWidth: w)
+        if topBarColumnWidth?.constant != target {
+            topBarColumnWidth?.constant = target
+        }
+        if contentColumnWidth?.constant != target {
+            contentColumnWidth?.constant = target
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
