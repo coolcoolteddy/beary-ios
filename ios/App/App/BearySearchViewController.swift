@@ -179,6 +179,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 点按时若状态仍为空即提示加载中并重拉）。
     private var followStates: [Int: BearyFollowState] = [:]
     private var followStateLoadingIds: Set<Int> = []
+    /// S5：关注状态请求排队——建行时不再立即请求；可见行（+下一屏）优先，
+    /// 其余排队；同时在途上限 3。结果区失效时待办整批丢弃（见 clearResultRows）。
+    private var followStatePendingIds: [Int] = []
+    private var followStateInFlightCount = 0
+    private let followStateMaxConcurrent = 3
     private var followButtonUserIds: [UIButton: Int] = [:]
     private var followButtonsByUserId: [Int: UIButton] = [:]
     // 按钮普查（#672 同款口径）：搜索关注钮乐观更新＋定宽＋代次防过期回包。
@@ -415,6 +420,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         updateStickyBoxPosition()
+        // S5：滚动露出新行时，屏外排队的关注状态按可见优先重排队头；
+        // 无待办时不做帧量算。
+        if !followStatePendingIds.isEmpty {
+            requestFollowStatesForVisibleRows()
+        }
     }
 
     /// sticky 框体吸顶（6-2）：顶约束固定 48（栈顶 4 + 返回行 44，见 1-4），
@@ -1606,6 +1616,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         followButtonsByUserId = [:]
         followStates = [:]
         followStateLoadingIds = []
+        // S5：结果区失效时取消待办——排队的关注状态请求整批丢弃；
+        // 在途请求无取消句柄，回包由 searchSeq/账号代次守卫丢弃。
+        followStatePendingIds = []
         followActionSeqByUserId = [:]
         confirmedFollowStates = [:]
         followButtonWidthConstraints = [:]
@@ -1723,6 +1736,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         // M11：结果区首次出现/换批时行错峰滑入；同一批仅内容变化的行淡入。
         animateResultRows(query: query)
+        // S5：渲染完成、行帧已定，可见行（+下一屏）的关注状态优先请求。
+        requestFollowStatesForVisibleRows()
         // sweep32-2：尾行由 updateSearchFooter 按翻页态算（有下一批即亮“加载更多”）。
         updateSearchFooter()
     }
@@ -1923,6 +1938,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 同关键词追加：animateResultRows 按 key 查表，只让本批新行
         // 错峰滑入，已有行不动（与 renderResults 末尾同一入口）。
         animateResultRows(query: query)
+        // S5：新行帧已定，可见行（+下一屏）的关注状态优先请求。
+        requestFollowStatesForVisibleRows()
     }
 
     /// 把一组新行插到指定分区的末尾（分区头之后、下个分区头之前）；
@@ -2159,9 +2176,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             followButtonsByUserId[userId] = followButton
             applyFollowButtonState(followButton, userId: userId)
             applyFollowButtonFixedWidth(followButton)
-            if followStates[userId] == nil {
-                loadFollowState(userId: userId)
-            }
+            // S5：建行时不再立即请求关注状态——行帧尚未布局，是否可见未知；
+            // 渲染末尾由 requestFollowStatesForVisibleRows 按可见行优先排队发出。
         }
         userButtons.append(row)
         rowUsers.append(user)
@@ -2417,14 +2433,49 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         showInitialState()
     }
 
+    /// S5：关注状态只进排队，不立即发请求——可见行优先由
+    /// requestFollowStatesForVisibleRows 排队头，空闲时按队头逐个发出；
+    /// 已有状态 / 已在途 / 已排队的都不重复进队。
     private func loadFollowState(userId: Int) {
-        guard SessionManager.shared.currentUser?.id != nil,
-              !followStateLoadingIds.contains(userId) else { return }
+        guard followStates[userId] == nil,
+              !followStateLoadingIds.contains(userId),
+              !followStatePendingIds.contains(userId) else { return }
+        followStatePendingIds.append(userId)
+        pumpFollowStateQueue()
+    }
+
+    /// S5：按并发上限（3）从队头放行；行已被摘除（结果区失效）时不发请求，
+    /// 直接跳过。代次校验在发出时捕获、回调里再验（见 fireFollowStateRequest）。
+    private func pumpFollowStateQueue() {
+        while followStateInFlightCount < followStateMaxConcurrent,
+              let userId = followStatePendingIds.first {
+            followStatePendingIds.removeFirst()
+            guard followButtonsByUserId[userId] != nil else { continue }
+            fireFollowStateRequest(userId: userId)
+        }
+    }
+
+    private func fireFollowStateRequest(userId: Int) {
+        guard SessionManager.shared.currentUser?.id != nil else { return }
         followStateLoadingIds.insert(userId)
+        followStateInFlightCount += 1
+        // 账号/搜索代次在发出时捕获：搜索已换批、已切号、行已摘除时，
+        // 旧回包直接丢弃，不写 followStates、不碰按钮。
+        // fetchFollowState 无取消句柄，在途请求只能靠这道守卫失效，
+        // 待办则由 clearResultRows 直接清队（见该函数注释）。
+        let seq = searchSeq
+        let accountId = SessionManager.shared.currentUser?.id
         BearyAPI.shared.fetchFollowState(userId: userId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.followStateLoadingIds.remove(userId)
+                self.followStateInFlightCount = max(0, self.followStateInFlightCount - 1)
+                guard seq == self.searchSeq,
+                      accountId == SessionManager.shared.currentUser?.id,
+                      self.followButtonsByUserId[userId] != nil else {
+                    self.pumpFollowStateQueue()
+                    return
+                }
                 if case .success(let state) = result {
                     self.followStates[userId] = BearyFollowState(response: state)
                     self.confirmedFollowStates[userId] = BearyFollowState(response: state)
@@ -2434,8 +2485,35 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 }
                 // 失败时状态保持缺失：按钮仍是“关注”占位，点按只提示并重拉，
                 // 不把失败画成确定态。
+                self.pumpFollowStateQueue()
             }
         }
+    }
+
+    /// S5：可见行（+下一屏）的关注状态优先请求，其余排队等空闲。
+    /// 渲染末尾与滚动中调用；布局未算时先 layoutIfNeeded 再量帧。
+    /// 队头重排：可见+下一屏在前（按屏上从上到下），屏外在后；在途的不动。
+    private func requestFollowStatesForVisibleRows() {
+        guard !followButtonsByUserId.isEmpty else { return }
+        scrollView.layoutIfNeeded()
+        let visible = scrollView.bounds
+        let ahead = visible.union(CGRect(x: visible.minX, y: visible.maxY, width: visible.width, height: visible.height))
+        var ordered: [(frame: CGRect, id: Int)] = []
+        for (userId, button) in followButtonsByUserId {
+            guard followStates[userId] == nil,
+                  !followStateLoadingIds.contains(userId),
+                  let row = button.superview else { continue }
+            let frame = row.convert(row.bounds, to: scrollView)
+            ordered.append((frame: frame, id: userId))
+        }
+        ordered.sort { a, b in
+            let aAhead = ahead.intersects(a.frame)
+            let bAhead = ahead.intersects(b.frame)
+            if aAhead != bAhead { return aAhead }
+            return a.frame.minY < b.frame.minY
+        }
+        followStatePendingIds = ordered.map { $0.id }
+        pumpFollowStateQueue()
     }
 
     private func refreshFollowButtons() {

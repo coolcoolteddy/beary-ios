@@ -580,6 +580,9 @@ final class BearyImageLoader {
     private static let maxConcurrentDownloads = 6
     /// B1 后台解码队列：磁盘读 + ImageIO 解码只走这里，不占主线程。
     private static let diskAndDecodeQueue = DispatchQueue(label: "com.beary.image-disk-decode", qos: .userInitiated, attributes: .concurrent)
+    /// S4：网络解码并发上限——解码进 diskAndDecodeQueue，信号量限 2 路并发，
+    /// 大图并发解码不冲内存；串行回调队列只做必要检查、不等解码。
+    private static let networkDecodeSemaphore = DispatchSemaphore(value: 2)
 
     init(session: URLSession = .shared) {
         if session === URLSession.shared {
@@ -1039,20 +1042,43 @@ final class BearyImageLoader {
                 return
             }
             // S1：验 HTTP 状态与 MIME，不符走失败分支（错误页/HTML 误当图片不再入库）。
+            // S4：这里只做必要检查，解码不在串行回调队列上做（见下）。
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
                   let mime = http.mimeType, mime.hasPrefix("image/"),
-                  let data = data, let img = BearyImageLoader.decodedImage(data: data, downsampleToWidth: downsampleToWidth) else {
+                  let data = data else {
                 self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .failure(.invalidData))
                 return
             }
-            // 审计 22 项：写盘前再次验证代次——purge/evict 后旧写入
-            // 弃写（内存与磁盘双双不落）；分发走 finishDelivery，其内另按
-            // 逐出戳核对，不再是无条件交付。
-            if capturedGeneration == self.generation(for: bucket) {
-                self.storeMemory(img, forKey: key, bucket: bucket, generation: capturedGeneration)
-                self.writeDisk(data: data, for: url, bucket: bucket)
+            // S4：解码进后台队列（与磁盘解码共用 diskAndDecodeQueue，信号量限 2 路
+            // 并发）；串行回调队列立即释放，一张图的解码不再拖住后续完成回调。
+            // entry.finishing 已在上面置位，解码期间同键新订阅仍挂同一记录、
+            // 交付时一并分发，不再因摘表过早另起加载链。
+            Self.diskAndDecodeQueue.async { [weak self, weak entry] in
+                guard let self = self, let entry = entry else { return }
+                _ = Self.networkDecodeSemaphore.wait()
+                let img = BearyImageLoader.decodedImage(data: data, downsampleToWidth: downsampleToWidth)
+                Self.networkDecodeSemaphore.signal()
+                guard let img = img else {
+                    self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .failure(.invalidData))
+                    return
+                }
+                // 审计 22 项：写盘前再次验证代次——purge/evict 后旧写入
+                // 弃写（内存与磁盘双双不落）；分发走 finishDelivery，其内另按
+                // 逐出戳核对，不再是无条件交付。
+                // S3：内存缓存后先交付 UI，磁盘写另行排队，不再等写盘＋容量检查。
+                if capturedGeneration == self.generation(for: bucket) {
+                    self.storeMemory(img, forKey: key, bucket: bucket, generation: capturedGeneration)
+                }
+                self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .success(img))
+                if capturedGeneration == self.generation(for: bucket) {
+                    Self.diskAndDecodeQueue.async { [weak self] in
+                        guard let self = self else { return }
+                        // 落盘时重验代次：排队期间 purge/evict 推进代次后弃写。
+                        guard capturedGeneration == self.generation(for: bucket) else { return }
+                        self.writeDisk(data: data, for: url, bucket: bucket)
+                    }
+                }
             }
-            self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .success(img))
         }
         entry.task = task
         entry.subscribers.append((id: subscriberId, completion: completion))
