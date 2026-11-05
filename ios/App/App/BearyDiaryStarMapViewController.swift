@@ -1083,6 +1083,39 @@ private final class StarMapSkyView: UIView {
     private var selectedStarId: String?
     private var selectedEdgeId: String?
 
+    /// 第十一轮 02：未选中时连线显示预算——模型本身的边一字不动（后台建模仍
+    /// 算全部关联），只限制画布每帧实际绘制的边数。420pt 高的画布上 600 条
+    /// 线已是密网，再多也分辨不出，反而拖慢每帧绘制（200 篇同心情理论
+    /// 最多 19,900 条）。选中某颗星时，与该星相连的边全部画出，其余仍受
+    /// 预算约束；选中某条线时该线必画。draw 与点按命中都走同一 displayedEdges，
+    /// 看不见的线也点不到。
+    private static let maxDisplayedEdges = 600
+
+    private var displayedEdges: [StarMapSkyEdge] {
+        guard edges.count > Self.maxDisplayedEdges else { return edges }
+        if let selectedStarId {
+            let selected = edges.filter { $0.firstId == selectedStarId || $0.secondId == selectedStarId }
+            let rest = edges.filter { $0.firstId != selectedStarId && $0.secondId != selectedStarId }
+            return selected + Array(rest.prefix(max(0, Self.maxDisplayedEdges - selected.count)))
+        }
+        if let selectedEdgeId {
+            let selected = edges.filter { $0.id == selectedEdgeId }
+            let rest = edges.filter { $0.id != selectedEdgeId }
+            return selected + Array(rest.prefix(max(0, Self.maxDisplayedEdges - selected.count)))
+        }
+        return Array(edges.prefix(Self.maxDisplayedEdges))
+    }
+
+    /// 第十一轮 01：星图日期共用一个格式化器——setStars 在主线程遍历全部星星，
+    /// 每颗星新建 DateFormatter 是重复开销（200 篇即约 200 个/次）；格式一字
+    /// 不动（M月d日）。setStars 只在主线程调用（见 applyModelToSky），
+    /// DateFormatter 非线程安全，此处单线程使用无虞。
+    private static let starDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "M月d日"
+        return formatter
+    }()
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = BearyStarMapNight.background
@@ -1103,7 +1136,11 @@ private final class StarMapSkyView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         // 布局落定后按真实 bounds 重算星的无障碍命中框（setStars 时 bounds 可能仍为 0）。
-        refreshAccessibilityElements()
+        // 第十一轮 08：只有尺寸真的变了才重算——layoutSubviews 调用频繁，
+        // 尺寸不变时命中框一字不动，不再每次重建整套元素。
+        if bounds.size != lastAccessibilitySize {
+            syncAccessibilityElements()
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -1115,9 +1152,7 @@ private final class StarMapSkyView: UIView {
             let dateText: String
             if let ms = star.entry.createdAt, ms > 0 {
                 let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-                let formatter = DateFormatter()
-                formatter.dateFormat = "M月d日"
-                dateText = formatter.string(from: date)
+                dateText = Self.starDateFormatter.string(from: date)
             } else {
                 dateText = ""
             }
@@ -1135,30 +1170,53 @@ private final class StarMapSkyView: UIView {
         self.selectedStarId = selectedStarId
         self.selectedEdgeId = selectedEdgeId
         setNeedsDisplay()
-        refreshAccessibilityElements()
+        syncAccessibilityElements()
     }
 
     func setSelected(starId: String?, edgeId: String?) {
+        let previousStarId = selectedStarId
         selectedStarId = starId
         selectedEdgeId = edgeId
         setNeedsDisplay()
-        refreshAccessibilityElements()
+        // 第十一轮 08：选中变化只更新受影响元素的 .selected 状态，不重建整套元素。
+        updateAccessibilitySelection(previousStarId: previousStarId, newStarId: starId)
     }
+
+    /// 第十一轮 08：按星 ID 缓存无障碍元素——模型变化时才增删元素，尺寸变化
+    /// 时只更新命中框，选中变化只更新受影响元素的 .selected 状态（见
+    /// updateAccessibilitySelection）。VoiceOver 的完整操作能力保留，只是不再
+    /// 每次布局/点击都重建全部元素对象。元素对象本身复用，label/frame/
+    /// onActivate 随模型同步更新；accessibilityElements 数组每次按星序重建，
+    /// 顺序与旧实现一致。
+    private var starAccessibilityElements: [String: StarMapStarAccessibilityElement] = [:]
+    private var lastAccessibilitySize: CGSize = .zero
 
     /// 审计登录杂项：按当前 stars 生成 VoiceOver 元素——每颗星一个 button，
     /// label 为“日期＋篇名 / 字数”，frame 为星心命中框；点按走现有 didTapStar
     /// 路径（经 onStarTap 回调），视觉绘制一字不动。
-    private func refreshAccessibilityElements() {
+    private func syncAccessibilityElements() {
         guard !stars.isEmpty, bounds.width > 0, bounds.height > 0 else {
             accessibilityElements = nil
+            lastAccessibilitySize = bounds.size
             return
         }
+        let currentIds = Set(stars.map(\.id))
+        for id in starAccessibilityElements.keys where !currentIds.contains(id) {
+            starAccessibilityElements.removeValue(forKey: id)
+        }
         var elements: [UIAccessibilityElement] = []
+        elements.reserveCapacity(stars.count)
         for star in stars {
             guard let entry = entriesById[star.id] else { continue }
+            let element: StarMapStarAccessibilityElement
+            if let cached = starAccessibilityElements[star.id] {
+                element = cached
+            } else {
+                element = StarMapStarAccessibilityElement(accessibilityContainer: self)
+                starAccessibilityElements[star.id] = element
+            }
             let center = point(for: (x: star.x, y: star.y), in: bounds)
             let hit = max(24, star.radius + 10)
-            let element = StarMapStarAccessibilityElement(accessibilityContainer: self)
             let title = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let name = title.isEmpty ? "日记" : title
             let datePart = star.dateText.isEmpty ? "" : star.dateText + " "
@@ -1174,6 +1232,31 @@ private final class StarMapSkyView: UIView {
             elements.append(element)
         }
         accessibilityElements = elements
+        lastAccessibilitySize = bounds.size
+    }
+
+    /// 选中变化只动两颗星的 .selected 状态；缓存里没有对应元素时
+    /// （setStars 时 bounds 仍为 0 等）回落全量同步，元素仍复用。
+    private func updateAccessibilitySelection(previousStarId: String?, newStarId: String?) {
+        guard previousStarId != newStarId else { return }
+        var needsSync = false
+        if let oldId = previousStarId {
+            if let old = starAccessibilityElements[oldId] {
+                old.accessibilityTraits.remove(.selected)
+            } else {
+                needsSync = true
+            }
+        }
+        if let newId = newStarId {
+            if let current = starAccessibilityElements[newId] {
+                current.accessibilityTraits.insert(.selected)
+            } else {
+                needsSync = true
+            }
+        }
+        if needsSync {
+            syncAccessibilityElements()
+        }
     }
 
     private func point(for normalized: (x: Double, y: Double), in bounds: CGRect) -> CGPoint {
@@ -1195,8 +1278,8 @@ private final class StarMapSkyView: UIView {
             context.setFillColor(BearyStarMapNight.dust.cgColor)
             context.fillEllipse(in: CGRect(x: x, y: y, width: 1.5, height: 1.5))
         }
-        // 连线：未选中细蓝灰，选中橙粗。
-        for edge in edges {
+        // 连线：未选中细蓝灰，选中橙粗（只画 displayedEdges，见预算注释）。
+        for edge in displayedEdges {
             guard let a = pointsById[edge.firstId], let b = pointsById[edge.secondId] else { continue }
             let p1 = point(for: a, in: bounds)
             let p2 = point(for: b, in: bounds)
@@ -1257,9 +1340,9 @@ private final class StarMapSkyView: UIView {
             onOverlapTap?(starHits.map { $0.entry })
             return
         }
-        // 后线：点到线段 16pt 内取最近一条。
+        // 后线：点到线段 16pt 内取最近一条（只认画出来的线，见预算注释）。
         var best: (distance: CGFloat, edge: StarMapEdge)?
-        for edge in edges {
+        for edge in displayedEdges {
             guard let a = pointsById[edge.firstId], let b = pointsById[edge.secondId] else { continue }
             let p1 = point(for: a, in: bounds)
             let p2 = point(for: b, in: bounds)
