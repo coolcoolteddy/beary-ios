@@ -480,7 +480,7 @@ private final class CoverBackdropCache {
     /// 才糊成这样（主体是单独贴的高清图，所以只有背景糊）。改回全幅解码，仍在
     /// 后台队列做、不碰主线程；帧切分按底图实际尺寸动态算，不用改 drawBackdrop。
     private static func decoded(theme: ProfileCoverTheme) -> CGImage? {
-        guard let url = Bundle.main.url(forResource: theme.rawValue + "-depth", withExtension: "jpg"),
+        guard let url = Bundle.main.url(forResource: theme.rawValue + "-depth", withExtension: "png"),
               let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
         return CGImageSourceCreateImageAtIndex(source, 0, nil)
     }

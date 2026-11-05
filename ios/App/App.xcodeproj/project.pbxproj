@@ -106,12 +106,12 @@
 		9472B5CCFE207ADBF3F56CAB /* germany-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = E3723A3C311893D5090357E2 /* germany-poster.png */; };
 		D237566290B7035BF1928EB8 /* canada-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = B80A1FE89536993709074D35 /* canada-poster.png */; };
 		0CDBFAF1BD16A7D96367D9AA /* korea-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = C122ACFC0449BFB0CD560F16 /* korea-poster.png */; };
-		E195462EA07695771B3C456A /* china-depth.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 30B9BE4B1A189F1C3036A24B /* china-depth.jpg */; };
-		0804FD06C2B72198488BD522 /* usa-depth.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 1EE7FA01AEFC0B5C394BC29F /* usa-depth.jpg */; };
-		CA5EE08874CB2253D5FC3F69 /* japan-depth.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 81F460D717BD906DBBF8CBA3 /* japan-depth.jpg */; };
-		A2CB1D4E382EED3BF5A8EE7E /* germany-depth.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 78C6A4971A877FDBD8E0653A /* germany-depth.jpg */; };
-		6EA6ECC42050DD64A2895C03 /* canada-depth.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 69A120940CE160ACACCA9806 /* canada-depth.jpg */; };
-		77F1221CD9C6C1E13D4C4259 /* korea-depth.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 0B2FFD30A24FCA590BAD30D8 /* korea-depth.jpg */; };
+		E195462EA07695771B3C456A /* china-depth.png in Resources */ = {isa = PBXBuildFile; fileRef = 30B9BE4B1A189F1C3036A24B /* china-depth.png */; };
+		0804FD06C2B72198488BD522 /* usa-depth.png in Resources */ = {isa = PBXBuildFile; fileRef = 1EE7FA01AEFC0B5C394BC29F /* usa-depth.png */; };
+		CA5EE08874CB2253D5FC3F69 /* japan-depth.png in Resources */ = {isa = PBXBuildFile; fileRef = 81F460D717BD906DBBF8CBA3 /* japan-depth.png */; };
+		A2CB1D4E382EED3BF5A8EE7E /* germany-depth.png in Resources */ = {isa = PBXBuildFile; fileRef = 78C6A4971A877FDBD8E0653A /* germany-depth.png */; };
+		6EA6ECC42050DD64A2895C03 /* canada-depth.png in Resources */ = {isa = PBXBuildFile; fileRef = 69A120940CE160ACACCA9806 /* canada-depth.png */; };
+		77F1221CD9C6C1E13D4C4259 /* korea-depth.png in Resources */ = {isa = PBXBuildFile; fileRef = 0B2FFD30A24FCA590BAD30D8 /* korea-depth.png */; };
 		190B2D0AA30CE264CCA0E977 /* boat.png in Resources */ = {isa = PBXBuildFile; fileRef = 41B514EADF31F3D6AE10BAC3 /* boat.png */; };
 		A36BB4FD6B072F7829122386 /* train.png in Resources */ = {isa = PBXBuildFile; fileRef = 67EB47AE89807E9A7D4FB299 /* train.png */; };
 		34D81CE53D07D80B333D610B /* chime.png in Resources */ = {isa = PBXBuildFile; fileRef = 7B6FFDB773A6B5E22E02923E /* chime.png */; };
@@ -370,12 +370,12 @@
 		E3723A3C311893D5090357E2 /* germany-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/germany-poster.png; sourceTree = "<group>"; };
 		B80A1FE89536993709074D35 /* canada-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/canada-poster.png; sourceTree = "<group>"; };
 		C122ACFC0449BFB0CD560F16 /* korea-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/korea-poster.png; sourceTree = "<group>"; };
-		30B9BE4B1A189F1C3036A24B /* china-depth.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = ProfileCovers/china-depth.jpg; sourceTree = "<group>"; };
-		1EE7FA01AEFC0B5C394BC29F /* usa-depth.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = ProfileCovers/usa-depth.jpg; sourceTree = "<group>"; };
-		81F460D717BD906DBBF8CBA3 /* japan-depth.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = ProfileCovers/japan-depth.jpg; sourceTree = "<group>"; };
-		78C6A4971A877FDBD8E0653A /* germany-depth.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = ProfileCovers/germany-depth.jpg; sourceTree = "<group>"; };
-		69A120940CE160ACACCA9806 /* canada-depth.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = ProfileCovers/canada-depth.jpg; sourceTree = "<group>"; };
-		0B2FFD30A24FCA590BAD30D8 /* korea-depth.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = ProfileCovers/korea-depth.jpg; sourceTree = "<group>"; };
+		30B9BE4B1A189F1C3036A24B /* china-depth.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/china-depth.png; sourceTree = "<group>"; };
+		1EE7FA01AEFC0B5C394BC29F /* usa-depth.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/usa-depth.png; sourceTree = "<group>"; };
+		81F460D717BD906DBBF8CBA3 /* japan-depth.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/japan-depth.png; sourceTree = "<group>"; };
+		78C6A4971A877FDBD8E0653A /* germany-depth.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/germany-depth.png; sourceTree = "<group>"; };
+		69A120940CE160ACACCA9806 /* canada-depth.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/canada-depth.png; sourceTree = "<group>"; };
+		0B2FFD30A24FCA590BAD30D8 /* korea-depth.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/korea-depth.png; sourceTree = "<group>"; };
 		41B514EADF31F3D6AE10BAC3 /* boat.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/boat.png; sourceTree = "<group>"; };
 		67EB47AE89807E9A7D4FB299 /* train.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/train.png; sourceTree = "<group>"; };
 		7B6FFDB773A6B5E22E02923E /* chime.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/chime.png; sourceTree = "<group>"; };
@@ -814,12 +814,12 @@
 				E3723A3C311893D5090357E2 /* germany-poster.png */,
 				B80A1FE89536993709074D35 /* canada-poster.png */,
 				C122ACFC0449BFB0CD560F16 /* korea-poster.png */,
-				30B9BE4B1A189F1C3036A24B /* china-depth.jpg */,
-				1EE7FA01AEFC0B5C394BC29F /* usa-depth.jpg */,
-				81F460D717BD906DBBF8CBA3 /* japan-depth.jpg */,
-				78C6A4971A877FDBD8E0653A /* germany-depth.jpg */,
-				69A120940CE160ACACCA9806 /* canada-depth.jpg */,
-				0B2FFD30A24FCA590BAD30D8 /* korea-depth.jpg */,
+				30B9BE4B1A189F1C3036A24B /* china-depth.png */,
+				1EE7FA01AEFC0B5C394BC29F /* usa-depth.png */,
+				81F460D717BD906DBBF8CBA3 /* japan-depth.png */,
+				78C6A4971A877FDBD8E0653A /* germany-depth.png */,
+				69A120940CE160ACACCA9806 /* canada-depth.png */,
+				0B2FFD30A24FCA590BAD30D8 /* korea-depth.png */,
 				41B514EADF31F3D6AE10BAC3 /* boat.png */,
 				67EB47AE89807E9A7D4FB299 /* train.png */,
 				7B6FFDB773A6B5E22E02923E /* chime.png */,
@@ -1077,12 +1077,12 @@
 				9472B5CCFE207ADBF3F56CAB /* germany-poster.png in Resources */,
 				D237566290B7035BF1928EB8 /* canada-poster.png in Resources */,
 				0CDBFAF1BD16A7D96367D9AA /* korea-poster.png in Resources */,
-				E195462EA07695771B3C456A /* china-depth.jpg in Resources */,
-				0804FD06C2B72198488BD522 /* usa-depth.jpg in Resources */,
-				CA5EE08874CB2253D5FC3F69 /* japan-depth.jpg in Resources */,
-				A2CB1D4E382EED3BF5A8EE7E /* germany-depth.jpg in Resources */,
-				6EA6ECC42050DD64A2895C03 /* canada-depth.jpg in Resources */,
-				77F1221CD9C6C1E13D4C4259 /* korea-depth.jpg in Resources */,
+				E195462EA07695771B3C456A /* china-depth.png in Resources */,
+				0804FD06C2B72198488BD522 /* usa-depth.png in Resources */,
+				CA5EE08874CB2253D5FC3F69 /* japan-depth.png in Resources */,
+				A2CB1D4E382EED3BF5A8EE7E /* germany-depth.png in Resources */,
+				6EA6ECC42050DD64A2895C03 /* canada-depth.png in Resources */,
+				77F1221CD9C6C1E13D4C4259 /* korea-depth.png in Resources */,
 				190B2D0AA30CE264CCA0E977 /* boat.png in Resources */,
 				A36BB4FD6B072F7829122386 /* train.png in Resources */,
 				34D81CE53D07D80B333D610B /* chime.png in Resources */,
