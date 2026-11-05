@@ -335,6 +335,9 @@ final class BearySettingsViewController: UIViewController {
     private let heroEmailLabel = UILabel()
     private let idCreatedLabel = UILabel()
     private let idPlusLabel = UILabel()
+    /// 第四轮审计 15：同步状态行尾文案（使用本地内容／正在同步／已同步／同步失败，
+    /// 随 BearyEntrySync.currentSyncState 更新；失败不弹提示，只改本行）。
+    private let syncStateLabel = UILabel()
     private let idValueLabel = UILabel()
 
     // Plus 分组
@@ -407,6 +410,9 @@ final class BearySettingsViewController: UIViewController {
         // 于是新号要退出重进才出现。这里补上切换卡刷新（指纹守卫保证无变
         // 化时不重建；切换／移除的直接刷新路径不受影响）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleUserChangedForAccountSwitch), name: .bearyUserDidChange, object: nil)
+        // 第四轮审计 15：同步进行中状态变迁时刷新 ID 卡同步状态行
+        // （广播在主线程发出；本页关掉时 deinit 统一移除监听）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleSyncStateChanged), name: .bearySyncStateDidChange, object: nil)
     }
 
     deinit {
@@ -1139,6 +1145,13 @@ final class BearySettingsViewController: UIViewController {
         idPlusLabel.textColor = BearyColors.gray
         idPlusLabel.numberOfLines = 0
         idPlusLabel.textAlignment = .right
+        // 第四轮审计 15：同步状态行尾文案与注册时间／会员行同款式。
+        syncStateLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        syncStateLabel.adjustsFontForContentSizeCategory = true
+        syncStateLabel.textColor = BearyColors.gray
+        syncStateLabel.numberOfLines = 0
+        syncStateLabel.textAlignment = .right
+        syncStateLabel.text = BearyEntrySync.shared.currentSyncState.displayText
         // F5：ID 值 mono 15/700 + 字距 2（网页 id-val 口径）；ID 标签 mono 10 + 字距 3。
         idValueLabel.font = UIFont.monospacedSystemFont(ofSize: 15, weight: .bold)
         idValueLabel.textColor = BearyColors.ink
@@ -1153,6 +1166,9 @@ final class BearySettingsViewController: UIViewController {
 
         let createdRow = makeRow(title: "注册时间", detailLabel: idCreatedLabel, iconName: "icon_clock")
         let plusRow = makeRow(title: "会员", detailLabel: idPlusLabel, iconName: "icon_sparkles")
+        // 第四轮审计 15：同步状态行（ID 卡内，会员行之下）：只读展示四态，
+        // 不可点按、不弹提示；失败时本行只改文案，下次触发重跑后自动更新。
+        let syncStateRow = makeRow(title: "同步状态", detailLabel: syncStateLabel, iconName: "icon_info")
         // F5：ID 区顶边线（网页 id-badge border-top 口径：线上 18、线下 18）。
         let idSeparator = UIView()
         idSeparator.translatesAutoresizingMaskIntoConstraints = false
@@ -1164,6 +1180,7 @@ final class BearySettingsViewController: UIViewController {
         cardStack.addArrangedSubview(heroRow)
         cardStack.addArrangedSubview(createdRow)
         cardStack.addArrangedSubview(plusRow)
+        cardStack.addArrangedSubview(syncStateRow)
         cardStack.addArrangedSubview(idSeparator)
         cardStack.addArrangedSubview(idRow)
         cardStack.setCustomSpacing(18, after: plusRow)
@@ -2171,6 +2188,16 @@ final class BearySettingsViewController: UIViewController {
         }
     }
 
+    /// 第四轮审计 15：同步状态行只按 BearyEntrySync.currentSyncState 写文案；
+    /// 变化时只淡入本 label（与 ID 卡其他行同口径）。
+    private func refreshSyncStateRow() {
+        setLabelTextFaded(syncStateLabel, BearyEntrySync.shared.currentSyncState.displayText)
+    }
+
+    @objc private func handleSyncStateChanged() {
+        refreshSyncStateRow()
+    }
+
     private func fillIdCard(user: MeUser) {
         let name = user.displayName ?? ""
         let emailPrefix = (user.email ?? "").components(separatedBy: "@").first ?? ""
@@ -2202,6 +2229,9 @@ final class BearySettingsViewController: UIViewController {
         // ID 卡会员行：只留状态词（Plus 会员 / 普通用户），不走 plus-detail；
         // 全修 3-2：到期日、永久、内测限免一律只留在 Plus 组，不在此重复。
         setLabelTextFaded(idPlusLabel, user.plus == true ? "Plus 会员" : "普通用户")
+        // 第四轮审计 15：同步状态行跟 /me 到达一起刷新（进页时 buildIdCard
+        // 已按快照写过初值；同步进行中变迁靠广播补刷，见 viewDidLoad）。
+        refreshSyncStateRow()
         // ID 行：现行 /me 无 serial_id 时不编造；有则优先显示，否则 @handle，再无则数字 id。
         // F5：字距 2（网页 id-val letter-spacing:2px）走 attributedText。
         let idText: String
