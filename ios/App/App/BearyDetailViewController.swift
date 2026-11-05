@@ -1125,7 +1125,7 @@ final class BearyDetailViewController: UIViewController {
     /// 拉黑/举报本地转占位仍走默认私密句（调用方不传参， moderation 占位口径不变）。
     private func showPlaceholder(visibility: String? = "private") {
         // 私密占位：仅一句文案，不带标题／封面／时间／作者名；内容栈整藏。
-        // 文案每次显式配齐：失败态（showFetchFailed）改过同一视图文案，复位防串味。
+        // 文案每次显式配齐：同一视图多态共用，配齐防串味。
         // 副文案灰色多行居中（原 16pt 灰字 → 组件 12.5pt 灰色副文案，统一组件口径）；
         // 无插图、无动作钮（关闭重进即重试的约定不变）。
         let subtitle: String
@@ -1139,29 +1139,23 @@ final class BearyDetailViewController: UIViewController {
         placeholderStateView.isHidden = false
     }
 
-    /// 2026-10-29 Li 定（P0-3 包括项，推翻第 17 项“弱网/失败先出页面仍可看”）：
-    /// 后台补齐失败时清为无正文态——内容栈整藏，居中一句失败文案，不留卡片旧内容；
-    /// 不用私密占位文案（失败不是私密）。
+    /// 2026-11-05 Li 定（推翻 2026-10-29「失败清内容」）：后台补齐失败时
+    /// 保留已显示的卡片旧内容，只给轻提示；重试走 toast 动作钮。
     /// 页内已因拉黑/举报转占位时不动（隐私占位优先于失败态）。
-    /// 与占位共用 BearyStateView 布局（P1-2 一并受益）。
-    /// 审计-编辑器详情：失败态补时间线空态同款重试钮（高 44，regular 档），
-    /// 点按重拉详情（retryFetchDetail），不再要求关闭重进。
     func showFetchFailed() {
         if locallyHiddenByModeration { return }
-        setContentVisible(false)
-        placeholderStateView.configure(kind: .error, title: nil, subtitle: "加载失败，请稍后再试", iconName: nil, actionTitle: "重试", actionStyle: .secondaryOutline(.regular), onAction: { [weak self] in self?.retryFetchDetail() })
-        placeholderStateView.isHidden = false
+        BearyToast.show(in: view, message: "加载失败，请稍后再试", actionTitle: "重试", action: { [weak self] in self?.retryFetchDetail() })
     }
 
     /// 详情失败重试：与 SceneDelegate 后台补齐同一可见性门（作者直更、
     /// 占位直更、拉黑转占位、公开且作者可定直更、公开但定不出作者不动、
-    /// 私密非作者转私密占位）；失败则回失败态（重试钮仍在）。
+                        // 轻提示，toast 重试钮仍在。
+    /// 内容始终保留，不回全页失败态。
     private func retryFetchDetail() {
         guard !locallyHiddenByModeration, let entryId = entry.id, !entryId.isEmpty else {
             showFetchFailed()
             return
         }
-        placeholderStateView.configure(kind: .loading, title: nil, subtitle: nil, iconName: nil, actionTitle: nil)
         BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -1190,8 +1184,8 @@ final class BearyDetailViewController: UIViewController {
                     if fetched.authorId != nil {
                         self.update(with: fetched)
                     } else {
-                        // 公开但定不出作者：与补齐口径一致，不更新；此处页已在
-                        // 失败态，故回到失败态（重试钮仍在），不得停在加载态。
+                        // 公开但定不出作者：与补齐口径一致，不更新；回到失败
+                        // 轻提示，toast 重试钮仍在。
                         self.showFetchFailed()
                     }
                     return
@@ -1327,7 +1321,7 @@ final class BearyDetailViewController: UIViewController {
 
     /// 2026-10-29 第 17 项：后台补齐入口——卡片点按即时呈现后，后台 fetch 回包调它。
     /// 只更新变化处（字段级比对，变了才刷对应区），不重建栈、不重播已有元素的
-    /// 动效、不闪 skeleton；弱网/失败时不调本函数，改走 showFetchFailed 清为无正文态。
+    /// 动效、不闪 skeleton；弱网/失败时不调本函数，改走 showFetchFailed（保留旧内容＋轻提示）。
     /// 审计三轮第二批 10：按字段合并，不再整体覆盖——在途乐观互动的字段
     /// （点赞 likedByMe/likeCount、收藏 bookmarkedByMe/bookmarkCount、回应 emotes、
     /// 可见性 isPublic/publishedAt/ephemeralUntil）保留本地值，模型不再被回包
@@ -1572,8 +1566,7 @@ final class BearyDetailViewController: UIViewController {
     private func applyEphemeralExpiryIfNeeded() -> Bool {
         guard !locallyHiddenByModeration else { return false }
         guard entry.placeholder != true else { return false }
-        // 失败态（showFetchFailed 藏了内容区）不动：失败态本身不露内容，
-        // 且文案约定是“关闭重进即重试”，到期刷新不得把它改写成私密文案。
+        // 内容区藏起时（私密占位等）不动：占位文案不得被到期刷新改写。
         guard !rightStack.isHidden else { return false }
         guard entry.ephemeralUntil != nil, !BearyEphemeral.isLive(entry) else { return false }
         ephemeralExpiryTimer?.invalidate()
