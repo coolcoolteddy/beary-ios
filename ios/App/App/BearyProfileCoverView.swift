@@ -445,7 +445,7 @@ public final class ProfileCoverView: UIView {
     private func unit(_ x: CGFloat) -> CGFloat { min(1, max(0, x)) }
 }
 
-/// 封面底图缩略图缓存：读盘＋解码＋缩放只在后台串行队列做，主线程只贴图。
+/// 封面底图缓存：读盘＋解码只在后台串行队列做，主线程只贴图。
 private final class CoverBackdropCache {
     static let shared = CoverBackdropCache()
     private let queue = DispatchQueue(label: "com.beary.cover-backdrop", qos: .userInitiated)
