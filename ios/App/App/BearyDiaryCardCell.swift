@@ -4,7 +4,7 @@ import Photos
 // ===== BearyDiaryCardCell 共享日记卡片（B 批卡片合并）=====
 // 首页 BearyFeedCell 与个人主页 BearyProfileEntryCell 的合并体，两页共用一处
 // 实现。两页卡片骨架相同（头像 40 + 右列：写给行 / 标题行 / 正文 / 折叠 /
-// 引用卡 / 图片条 216 / 操作行 / 回应行 / 底线 2），但互动架构与若干视觉
+// 图片条 216 / 引用卡 / 操作行 / 回应行 / 底线 2），但互动架构与若干视觉
 // 本就不同，合并时以 cardMode 区分，不擅自统一：
 //  - 标题行对齐（Li 2026-10-27 定：两页统一 .firstBaseline，按文字基线对齐）。
 //  - 互动架构：feed 模式 cell 内直发 API（点赞/收藏/回应，成功失败路径
@@ -1062,7 +1062,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private lazy var rightStack: BearyPassThroughStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = BearyPassThroughStackView(arrangedSubviews: [pinRow, recipientRow, titleStack, ephemeralRow, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
+        let st = BearyPassThroughStackView(arrangedSubviews: [pinRow, recipientRow, titleStack, ephemeralRow, entryTitleLabel, contentLabel, foldButton, imagesScrollView, quoteView, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
         // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
         st.passThroughRoot = emoteFlowView
         st.translatesAutoresizingMaskIntoConstraints = false
@@ -1877,8 +1877,8 @@ class BearyDiaryCardCell: UITableViewCell {
         rightStack.setCustomSpacing(entryTitleLabel.isHidden ? 0 : 4, after: entryTitleLabel)
         rightStack.setCustomSpacing(foldButton.isHidden ? 10 : 6, after: contentLabel)
         rightStack.setCustomSpacing(10, after: foldButton)
-        rightStack.setCustomSpacing(10, after: quoteView)
         rightStack.setCustomSpacing(10, after: imagesScrollView)
+        rightStack.setCustomSpacing(10, after: quoteView)
         // 批 E：位置行→操作行 8；位置行隐藏时 stack 自动忽略该间距，不留空隙。
         rightStack.setCustomSpacing(8, after: locationStack)
         rightStack.setCustomSpacing(10, after: actionStack)
