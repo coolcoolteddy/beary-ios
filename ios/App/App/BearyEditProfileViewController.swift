@@ -93,6 +93,16 @@ class BearyEditProfileViewController: UIViewController {
     }
     private var pendingPickTarget: PickTarget?
     private var isSaving = false
+    /// 第八轮审计 06：裁剪确认后的压缩在后台跑，期间的并发守门。
+    /// 压缩是异步的，确认回调返回后、压缩完成前存在窗口：保存点按会读到
+    /// 旧的待存标记（新图被静默丢出本次保存），后一次确认会与前一次
+    /// 压缩重叠。isCompressingImage 冻结保存钮（见 updateSaveButtonState），
+    /// imageCompressGeneration 只让最后一次确认的压缩结果落地。
+    private var isCompressingImage = false
+    private var imageCompressGeneration = 0
+    /// 压缩专用串行队列（与编辑器 imagePrepQueue 同口径：userInitiated，
+    /// 后台算、主线程落结果）。
+    private let imageCompressQueue = DispatchQueue(label: "beary.editProfile.imageCompress", qos: .userInitiated)
     /// 提交快照（保存三件套第 2 项）：点保存时一次性定格全部提交值，
     /// 后续 handle / profile 两步只读快照，不再读输入框与待存标记——
     /// 弱网等待中界面即使能改（现已冻结，见 updateSaveButtonState），
@@ -932,7 +942,11 @@ class BearyEditProfileViewController: UIViewController {
     // MARK: - 保存（网页 edSaveAll 顺序：先 handle、后 profile）
 
     @objc private func saveButtonTapped() {
-        guard !isSaving else { return }
+        // 第八轮审计 06：压缩在途时也不接保存点按——保存快照在点按时
+        // 一次性定格待存标记，压缩未完成时点保存会把新图静默丢出本次
+        // 保存；保存钮在压缩期间已禁用（见 updateSaveButtonState），
+        // 这里是同一口径的兜底。
+        guard !isSaving, !isCompressingImage else { return }
         let nameValue = (nameField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let handleValue = (handleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if !nameValue.isEmpty && nameValue.utf16.count > 30 {
@@ -1000,7 +1014,8 @@ class BearyEditProfileViewController: UIViewController {
     /// 编辑会与快照脱节）；关闭钮不禁用，点按走统一退出判断（保存中弹提示，
     /// 见 requestExit），不静默无反应；复制链接是只读操作，不冻结。
     private func updateSaveButtonState() {
-        saveButton.isEnabled = !isSaving
+        // 第八轮审计 06：压缩在途时保存钮也禁用（其余冻结项仍只看 isSaving）。
+        saveButton.isEnabled = !isSaving && !isCompressingImage
         saveButton.setTitle("保存", for: .normal)
         nameField.isEnabled = !isSaving
         signatureField.isEnabled = !isSaving
@@ -1418,23 +1433,50 @@ extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
             // 冻结期不接受裁剪确认：裁剪页确认时自己 dismiss，本页只须
             // 忽略回调，待存标记与预览都不动（与 presentCropEditor 的丢弃同口径）。
             guard !strongSelf.isSaving else { return }
-            if target == .avatar {
-                guard let dataURL = strongSelf.dataURLForAvatar(image: cropped) else {
-                    strongSelf.presentSimpleAlert(message: "头像太大了，换一张小一点的吧")
-                    return
+            // 第八轮审计 06：压缩放后台，主线程只更新按钮与最终预览。
+            // dataURLForAvatar/dataURLForCover 在主线程连续做缩放、JPEG 编码、
+            // Base64（封面最坏三档全尺寸重绘＋编码），确认点按后界面会卡一下。
+            // 压缩本身只碰像素数据（normalize/resize 各自新建
+            // UIGraphicsImageRenderer，裁剪页的 cropWithGeometry 已是同款后台
+            // 口径），可以离主线程；待存标记与预览仍在主线程落结果。
+            strongSelf.imageCompressGeneration += 1
+            let generation = strongSelf.imageCompressGeneration
+            strongSelf.isCompressingImage = true
+            strongSelf.updateSaveButtonState()
+            strongSelf.imageCompressQueue.async { [weak strongSelf] in
+                guard let strongSelf = strongSelf else { return }
+                let dataURL = target == .avatar
+                    ? strongSelf.dataURLForAvatar(image: cropped)
+                    : strongSelf.dataURLForCover(image: cropped)
+                DispatchQueue.main.async { [weak strongSelf] in
+                    guard let strongSelf = strongSelf else { return }
+                    // 只让最后一次确认的压缩结果落地；已过期的压缩直接丢弃，
+                    // isCompressingImage 由在途的最新一次压缩复位。
+                    guard generation == strongSelf.imageCompressGeneration else { return }
+                    strongSelf.isCompressingImage = false
+                    strongSelf.updateSaveButtonState()
+                    // 保存冻结期：压缩完成时已在保存中，按冻结口径丢弃
+                    // （与 presentCropEditor 的丢弃同口径），不改待存标记、不换预览。
+                    guard !strongSelf.isSaving else { return }
+                    if target == .avatar {
+                        guard let dataURL = dataURL else {
+                            strongSelf.presentSimpleAlert(message: "头像太大了，换一张小一点的吧")
+                            return
+                        }
+                        strongSelf.pendingAvatarDataURL = dataURL
+                        strongSelf.avatarChanged = true
+                        strongSelf.avatarImageView.image = cropped
+                    } else {
+                        guard let dataURL = dataURL else {
+                            strongSelf.presentSimpleAlert(message: "这张图太大了，换一张小一点的吧")
+                            return
+                        }
+                        strongSelf.pendingCoverDataURL = dataURL
+                        strongSelf.coverChanged = true
+                        strongSelf.coverRemoved = false
+                        strongSelf.coverImageView.image = cropped
+                    }
                 }
-                strongSelf.pendingAvatarDataURL = dataURL
-                strongSelf.avatarChanged = true
-                strongSelf.avatarImageView.image = cropped
-            } else {
-                guard let dataURL = strongSelf.dataURLForCover(image: cropped) else {
-                    strongSelf.presentSimpleAlert(message: "这张图太大了，换一张小一点的吧")
-                    return
-                }
-                strongSelf.pendingCoverDataURL = dataURL
-                strongSelf.coverChanged = true
-                strongSelf.coverRemoved = false
-                strongSelf.coverImageView.image = cropped
             }
         }
         present(cropVC, animated: BearyMotion.animated(true))
