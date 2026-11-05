@@ -166,7 +166,8 @@ def main():
 
     composer = (swift_dir / "BearyComposerViewController.swift").read_text(encoding="utf-8")
     picker = (swift_dir / "BearyEmotePickerSheet.swift").read_text(encoding="utf-8")
-    badges = (swift_dir / "BearyBadgeImages.swift").read_text(encoding="utf-8")
+    # BearyBadgeImages.swift 已随徽章系统全删（#905），徽章族校验早已退役，
+    # 此处旧的读文件是死代码（badges 读后无处使用），删掉，免得文件不存在时整个检查崩掉。
 
     emote_keys = set(
         parse_key_array(
