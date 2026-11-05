@@ -295,8 +295,12 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             locating = true
             locationManager.requestLocation()
         case .denied, .restricted:
+            // 审计二轮 02：权限被拒不关面板——先转手动态给手动输入入口，
+            // 再发 delegate 回调只 toast（调用方不再关闭面板）。
+            setManualMode(message: "定位权限未开启，请在“设置 → beary → 位置”中开启后重试，或自己输入")
             delegate?.locationPopoverDidFail(self, message: "定位权限未开启，请在“设置 → beary → 位置”中开启后重试")
         @unknown default:
+            setManualMode(message: "定位失败，请重试或自己输入")
             delegate?.locationPopoverDidFail(self, message: "定位失败，请重试或自己输入")
         }
     }
@@ -431,12 +435,18 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         // district 留空——他人视角展示层 fail-closed（不显示），不拿精确名冒充区级。
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = text
+        // 审计二轮 04：同模式内连续两次确认要递增代次，否则第一次的晚到回包
+        // 仍能通过代次检查；回调再按请求对象同一性 + 确认时文本双重校验。
+        interactionGeneration += 1
         let generation = interactionGeneration
+        let confirmedText = text
         activeSearch?.cancel()
         let search = MKLocalSearch(request: request)
         activeSearch = search
         search.start { [weak self] response, _ in
-            guard let self = self, !self.isHidden, self.interactionGeneration == generation else { return }
+            guard let self = self, !self.isHidden, self.interactionGeneration == generation,
+                  self.activeSearch === search,
+                  (self.inputField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines) == confirmedText else { return }
             if self.activeSearch === search { self.activeSearch = nil }
             let district = response?.mapItems.first.map { BearyLocationDisplay.district(from: $0.placemark) } ?? nil
             self.delegate?.locationPopover(self, didConfirm: DiaryLocation(name: text, district: district))
@@ -448,12 +458,16 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         guard index < suggestions.count else { return }
         let completion = suggestions[index]
         let request = MKLocalSearch.Request(completion: completion)
+        // 审计二轮 04：同 439 行——连续两次点建议也要递增代次，回调按请求对象
+        // 同一性 + 代次双重校验，旧回包不提交旧地点。
+        interactionGeneration += 1
         let generation = interactionGeneration
         activeSearch?.cancel()
         let search = MKLocalSearch(request: request)
         activeSearch = search
         search.start { [weak self] response, _ in
-            guard let self = self, !self.isHidden, self.interactionGeneration == generation else { return }
+            guard let self = self, !self.isHidden, self.interactionGeneration == generation,
+                  self.activeSearch === search else { return }
             if self.activeSearch === search { self.activeSearch = nil }
             let placemark = response?.mapItems.first?.placemark
             let name = placemark?.name ?? completion.title
@@ -543,9 +557,12 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         guard locating, let coordinate = locations.last else { return }
         locating = false
         // 坐标只进这一次逆地理编码，取地名后即弃，不存、不传、不缓存。
+        // 审计二轮 04：逆地理编码回调补代次校验——cancelGeocode 后回调仍会投递，
+        // 仅靠 isHidden 拦不住重开面板/切手动态后的旧回调覆盖新状态。
+        let geocodeGeneration = interactionGeneration
         geocoder.reverseGeocodeLocation(coordinate) { [weak self] placemarks, _ in
             // 气泡已关（isHidden）时在途回调一律丢弃：不转手动态、不弹键盘、不落定。
-            guard let self = self, !self.isHidden else { return }
+            guard let self = self, !self.isHidden, self.interactionGeneration == geocodeGeneration else { return }
             guard let placemark = placemarks?.first else {
                 // 逆地理编码失败：不持久化“已定位（暂未解析地名）”这类占位文本，
                 // 直接转手动输入，让用户 typed 的地名成为真实位置值。
