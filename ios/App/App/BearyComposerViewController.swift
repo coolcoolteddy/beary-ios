@@ -3515,6 +3515,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // [24] 小项 2：气温步进器以附属行身份挂进天气框（不进 chip 行），
         // 框内点按步进器不触发框外收起（附属行在收起层之上、与框同层级）。
         weatherCallout.setAccessoryView(tempStepperStack)
+        // 审计四轮 09：天气框脚注——精确位置只用于本次天气查询，会发给
+        // 服务接口；日记本身只保存地点文字。位置权限说明（Info.plist）
+        // 同步补了同一层意思；服务端是否存储坐标客户端看不出来，不断言。
+        weatherCallout.setFooterNote("精确位置只用于本次天气查询，会发送至服务接口；日记本身只保存地点文字。")
         // 收起层先加、框后加：框在收起层之上，框内点按不触发框外收起。
         view.addSubview(calloutDismissView)
         view.addSubview(moodCallout)

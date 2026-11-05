@@ -139,13 +139,73 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     private static let accessoryGap: CGFloat = 8
     private static let accessoryRowHeight: CGFloat = 36
 
+    /// 审计四轮 09：脚注行（仅天气框用，写清精确位置的去向）。附属行是
+    /// 气温步进器，脚注是另一行说明文字：有附属行时贴在附属行下方，无附
+    /// 属行（未选天气、步进器藏起）时直接贴框顶；两种落点都不占图标条
+    /// 的位置，框高增量由 accessoryExtraHeight 统一算，调用方不用另算。
+    /// 固定两行 12pt（与框体固定几何同口径，不跟随动态字号），文案须
+    /// 控制在两行内。
+    private var footerNoteLabel: UILabel?
+    private var footerTopConstraint: NSLayoutConstraint?
+    private static let footerNoteHeight: CGFloat = 34
+    private static let footerGap: CGFloat = 8
+
     /// 附属行显时框体比基准高出的部分（调用方据此定框高约束）。
     /// 附属行在图标条上方、图标条贴框底（箭头上方）：显隐只往上长，
     /// 图标条屏上位置不动（框底钉在工具栏上方，框高变化全由顶部吸收）。
-    /// 增量 = 顶部内边距 + 附属行高 + 行间距。
+    /// 增量 = 顶部内边距 + 附属行高 + 行间距；脚注另加一行（有附属行时
+    /// 贴附属行下方，无附属行时贴框顶，两种情形各补一份顶部内边距）。
     var accessoryExtraHeight: CGFloat {
-        guard let accessory = accessoryView, !accessory.isHidden else { return 0 }
-        return Self.verticalPadding + Self.accessoryGap + Self.accessoryRowHeight
+        var extra: CGFloat = 0
+        if let accessory = accessoryView, !accessory.isHidden {
+            extra += Self.verticalPadding + Self.accessoryGap + Self.accessoryRowHeight
+        }
+        if footerNoteLabel != nil {
+            let accessoryHidden = accessoryView?.isHidden ?? true
+            if accessoryHidden {
+                extra += Self.verticalPadding
+            }
+            extra += Self.footerNoteHeight + Self.footerGap
+        }
+        return extra
+    }
+
+    /// 脚注行：nil 即撤掉。落点随附属行显隐走（见 updateFooterLayout），
+    /// 调用方只在搭建时调一次；附属行显隐变化时本框自行跟调，不用调用方管。
+    func setFooterNote(_ text: String?) {
+        footerNoteLabel?.removeFromSuperview()
+        footerNoteLabel = nil
+        footerTopConstraint = nil
+        guard let text = text else { return }
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = UIFont.systemFont(ofSize: 12)
+        label.textColor = BearyColors.gray
+        label.numberOfLines = 2
+        label.text = text
+        addSubview(label)
+        footerNoteLabel = label
+        let top = label.topAnchor.constraint(equalTo: topAnchor, constant: Self.verticalPadding)
+        footerTopConstraint = top
+        NSLayoutConstraint.activate([
+            top,
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.horizontalPadding),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.horizontalPadding),
+            label.heightAnchor.constraint(equalToConstant: Self.footerNoteHeight),
+        ])
+        updateFooterLayout()
+        setNeedsLayout()
+    }
+
+    /// 脚注落点：有附属行时贴附属行下方，无附属行时贴框顶（附属行藏起
+    /// 时不留 36pt 空洞）。附属行显隐变化与脚注设置时都调一次。
+    private func updateFooterLayout() {
+        guard let top = footerTopConstraint else { return }
+        if let accessory = accessoryView, !accessory.isHidden {
+            top.constant = Self.verticalPadding + Self.accessoryRowHeight + Self.accessoryGap
+        } else {
+            top.constant = Self.verticalPadding
+        }
     }
 
     /// 附属行只在框内出现，不进调用方的 chip 行等外部布局；调用方须在
@@ -172,6 +232,8 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
         guard accessoryView?.isHidden == visible else { return }
         accessoryView?.isHidden = !visible
         accessoryView?.setNeedsLayout()
+        // 审计四轮 09：附属行显隐翻转时脚注落点跟着走（贴附属行下方 ↔ 贴框顶）。
+        updateFooterLayout()
         setNeedsLayout()
     }
 

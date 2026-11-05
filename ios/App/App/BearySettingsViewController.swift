@@ -269,6 +269,9 @@ final class BearySettingsViewController: UIViewController {
     private var isDeleting = false
     private var isExporting = false
     private var exportDetailLabel: UILabel? // 2026-10-29：导出进度提示落点（导出行副文案）
+    /// 审计四轮 10：完整备份进行态（与导出同款：行按钮禁用＋副文案轮换进度）。
+    private var isBackingUp = false
+    private var backupDetailLabel: UILabel? // 完整备份进度提示落点（备份行副文案）
     /// 内容列宽：直接由 view.bounds 派生的必需约束（替代旧的
     /// frameLayoutGuide 750 宽约束 + 600 上限开关两约束协商）。列宽是
     /// view.bounds 的纯函数，首个布局轮次即最终值，不再经多轮约束收敛
@@ -324,6 +327,9 @@ final class BearySettingsViewController: UIViewController {
     /// buildLayout 先调 buildSecuritySection、后调 buildAccountActionSection，
     /// 故账号披露组建时本值必已就位。
     private var exportRowForDisclosure: UIView?
+    /// 审计四轮 10：完整备份行与导出行同款——安全组建、账号披露组承载，
+    /// 排在导出行之后、注销行之前。
+    private var backupRowForDisclosure: UIView?
     /// 2026-10-29 第 10 项：页底版本脚注（通用组版本行移至页底，Bundle 动态读）。
     private let versionFooterWrap = UIView()
 
@@ -385,6 +391,9 @@ final class BearySettingsViewController: UIViewController {
     // 注销账户复用 deleteRowButton，改弱化灰字文本钮置于页底（行为一字不动）。
     private let logoutStandaloneButton = BearyButton(style: .secondaryOutline(.regular))
     private let exportRowButton = UIButton(type: .custom)
+    /// 审计四轮 10：完整备份行复用 backupRowButton（与导出行同款全行覆盖
+    /// 透明钮，isEnabled 由备份流程控制）。
+    private let backupRowButton = UIButton(type: .custom)
     private let deleteRowButton = UIButton(type: .custom)
 
     init() {
@@ -1439,6 +1448,44 @@ final class BearySettingsViewController: UIViewController {
         // 视觉批：导出行交账号披露组承载（见上），安全组一级只留验证码
         // 登录／登录设备／生物识别锁／隐私遮罩／退出其他设备。
         exportRowForDisclosure = exportRowWrap
+        // 审计四轮 10：完整备份行（与导出行同款结构：图标＋标题＋副文案，
+        // 全行覆盖透明钮）。副文案只写包含项，缺失项、私信说明与“暂不
+        // 支持一键恢复”在点按后的确认框里一次讲清；导出行副文案不动。
+        let backupTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        backupTitle.font = BearyDynamicType.smallBodyFont()
+        backupTitle.text = "完整备份"
+        backupTitle.numberOfLines = 0
+        let backupDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
+        backupDetail.text = "备份日记原图、本地草稿与私信到一个文件"
+        backupDetailLabel = backupDetail
+        let backupStack = UIStackView(arrangedSubviews: [backupTitle, backupDetail])
+        backupStack.axis = .vertical
+        backupStack.spacing = 4
+        backupRowButton.translatesAutoresizingMaskIntoConstraints = false
+        backupRowButton.accessibilityLabel = "完整备份"
+        backupRowButton.addTarget(self, action: #selector(backupButtonTapped), for: .touchUpInside)
+        backupRowButton.bearyAddPressHaptic()
+        let backupRow = UIStackView(arrangedSubviews: [makeRowIcon("icon_archive"), backupStack])
+        backupRow.translatesAutoresizingMaskIntoConstraints = false
+        backupRow.axis = .horizontal
+        backupRow.spacing = 12
+        backupRow.alignment = .center
+        let backupRowWrap = UIView()
+        backupRowWrap.translatesAutoresizingMaskIntoConstraints = false
+        backupRowWrap.addSubview(backupRow)
+        backupRowWrap.addSubview(backupRowButton)
+        backupRow.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            backupRow.topAnchor.constraint(equalTo: backupRowWrap.topAnchor),
+            backupRow.leadingAnchor.constraint(equalTo: backupRowWrap.leadingAnchor),
+            backupRow.trailingAnchor.constraint(equalTo: backupRowWrap.trailingAnchor),
+            backupRow.bottomAnchor.constraint(equalTo: backupRowWrap.bottomAnchor),
+            backupRowButton.topAnchor.constraint(equalTo: backupRowWrap.topAnchor),
+            backupRowButton.leadingAnchor.constraint(equalTo: backupRowWrap.leadingAnchor),
+            backupRowButton.trailingAnchor.constraint(equalTo: backupRowWrap.trailingAnchor),
+            backupRowButton.bottomAnchor.constraint(equalTo: backupRowWrap.bottomAnchor),
+        ])
+        backupRowForDisclosure = backupRowWrap
         let securityGroup = makeGroupCard(title: "账号与安全", rows: [
             codeLoginRow,
             deviceRow,
@@ -1896,6 +1943,10 @@ final class BearySettingsViewController: UIViewController {
         var disclosureRows: [UIView] = []
         if let exportRow = exportRowForDisclosure {
             disclosureRows.append(exportRow)
+        }
+        // 审计四轮 10：完整备份行排导出行之后、注销行之前。
+        if let backupRow = backupRowForDisclosure {
+            disclosureRows.append(backupRow)
         }
         disclosureRows.append(deleteRow)
         let accountDisclosureValue = makeDisclosureCard(title: "账号更多", rows: disclosureRows)
@@ -2828,6 +2879,460 @@ final class BearySettingsViewController: UIViewController {
                 self.present(activity, animated: BearyMotion.animated(true))
             }
         }
+    }
+
+    // MARK: - 审计四轮 10：完整备份（与 JSON 导出并存，互不替代）
+
+    /// 审计四轮 16：启动时清掉过期导出临时文件——只认 teddyhn-data- 前缀、
+    /// 只清超过 24 小时的文件，不碰 tmp 里其他东西。分享收起即删仍是主路径，
+    /// 本处只兜中途退出残留。完整备份文件同前缀（…-backup.json），一并覆盖。
+    /// AppDelegate 启动时在后台调一次。
+    enum BearyExportTempFileCleanup {
+        private static let staleInterval: TimeInterval = 24 * 60 * 60
+
+        static func cleanStaleExportFiles() {
+            DispatchQueue.global(qos: .utility).async {
+                let fileManager = FileManager.default
+                let tmp = fileManager.temporaryDirectory
+                guard let names = try? fileManager.contentsOfDirectory(atPath: tmp.path) else { return }
+                let now = Date()
+                for name in names where name.hasPrefix("teddyhn-data-") {
+                    let url = tmp.appendingPathComponent(name)
+                    var isDirectory: ObjCBool = false
+                    guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                          !isDirectory.boolValue else { continue }
+                    let attributes = try? fileManager.attributesOfItem(atPath: url.path)
+                    let stamp = (attributes?[.creationDate] as? Date)
+                        ?? (attributes?[.modificationDate] as? Date)
+                    if let stamp = stamp, now.timeIntervalSince(stamp) > staleInterval {
+                        try? fileManager.removeItem(at: url)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 完整备份入口：先弹确认框一次讲清包含项、缺失项与私信说明，点“开始备份”
+    /// 才走导出同款链路（钉住账号 → /me 确认 → 串行四步拉数 → 后台拼文件出分享面板）。
+    /// 确认框本身不置进行态，取消即什么都没发生。
+    @objc private func backupButtonTapped() {
+        guard !isBackingUp else { return }
+        let alert = UIAlertController(
+            title: "完整备份",
+            message: "备份将包含：账户、日记（含原图）、点赞记录、本地草稿、私信记录。\n\n私信包含他人发来的消息，这只是本机数据的备份，请妥善保管。\n\n不含回收站内容与头像原图。暂不支持一键恢复，恢复方式后续提供。",
+            preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        alert.addAction(UIAlertAction(title: "开始备份", style: .default, handler: { [weak self] _ in
+            self?.startBackupAfterConfirm()
+        }))
+        present(alert, animated: BearyMotion.animated(true))
+    }
+
+    /// 确认后的备份链路：与 exportButtonTapped 同款账号钉住（token + epoch），
+    /// 无会话时直接走登录门、不留“备份失败”的误导 toast。
+    private func startBackupAfterConfirm() {
+        guard !isBackingUp else { return }
+        guard let token = SessionManager.shared.currentSessionToken(), !token.isEmpty else {
+            onRequireLogin?()
+            return
+        }
+        let startEpoch = BearyAPI.shared.authEpoch
+        isBackingUp = true
+        backupRowButton.isEnabled = false
+        showToast("正在备份…")
+        setBackupProgress("正在备份…")
+        BearyAPI.shared.fetchMeWithToken(token) { [weak self] result in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                if BearyAPI.shared.authEpoch != startEpoch {
+                    self.cancelBackupForAccountChange()
+                    return
+                }
+                switch result {
+                case .success(let user):
+                    guard let userValue = user, let userId = userValue.id else {
+                        self.finishBackupFailed()
+                        self.onRequireLogin?()
+                        return
+                    }
+                    self.backupWithUser(userValue, pin: (userId: userId, token: token, epoch: startEpoch))
+                case .failure(let error):
+                    self.finishBackupFailed()
+                    if case .unauthorized = error { self.onRequireLogin?() }
+                }
+            }
+        }
+    }
+
+    /// 账号变化取消整次备份：只 toast、不拼文件、不出分享面板（与导出同口径）。
+    private func cancelBackupForAccountChange() {
+        isBackingUp = false
+        backupRowButton.isEnabled = true
+        setBackupProgress(nil)
+        showToast("账号已切换，备份已取消")
+    }
+
+    private func finishBackupFailed() {
+        isBackingUp = false
+        backupRowButton.isEnabled = true
+        setBackupProgress(nil)
+        showToast("备份失败，请重试")
+    }
+
+    /// 完整备份进度提示——副文案轮换，结束复原；只改副文案文字，不重建行。
+    private func setBackupProgress(_ text: String?) {
+        DispatchQueue.main.async { [weak self] in
+            self?.backupDetailLabel?.text = text ?? "备份日记原图、本地草稿与私信到一个文件"
+        }
+    }
+
+    /// 串行四步拉数（会话 → 我的 → 信箱 → 赞过），与 exportWithUser 同款
+    /// fail-closed：任一步失败即整单取消、不拼文件；触顶（20 页上限）同样
+    /// 不出文件——备份不做部分标注，要么完整、要么不出（与导出确认后出部分
+    /// 文件的口径不同，备份文件缺页却自称完整更危险）。
+    private func backupWithUser(_ user: MeUser, pin: BearyExportPin) {
+        var sessionsResp: BearyAccountSessionsResponse?
+        var mineEntries: [Entry] = []
+        var mailboxEntries: [Entry] = []
+        var likedEntries: [Entry] = []
+        var backupFailedReason: String?
+        var sessionsFailed = false
+        var backupTruncated = false
+        let applyScopeResult: (BearyExportPageResult, inout [Entry]) -> Void = { result, entries in
+            entries = result.entries
+            if !result.complete {
+                if result.reason == "已达 20 页上限" {
+                    backupTruncated = true
+                } else {
+                    backupFailedReason = result.reason ?? "分页失败"
+                }
+            }
+        }
+        let finish: () -> Void = { [weak self] in
+            guard let self = self else { return }
+            if self.exportPinChanged(pin) {
+                self.cancelBackupForAccountChange()
+                return
+            }
+            if sessionsFailed || backupFailedReason != nil || backupTruncated {
+                self.isBackingUp = false
+                self.backupRowButton.isEnabled = true
+                self.setBackupProgress(nil)
+                if sessionsFailed {
+                    self.showToast("备份失败（登录设备拉取失败），未生成文件")
+                } else if backupTruncated {
+                    self.showToast("备份失败（日记太多，未能一次取完），未生成文件")
+                } else {
+                    self.showToast("备份失败（\(backupFailedReason ?? "分页失败")），未生成文件")
+                }
+                return
+            }
+            self.buildAndShareBackup(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries)
+        }
+        setBackupProgress("正在备份（1/4）登录设备…")
+        BearyAPI.shared.fetchAccountSessionsWithToken(pin.token) { [weak self] result in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                if self.exportPinChanged(pin) {
+                    self.cancelBackupForAccountChange()
+                    return
+                }
+                if case .success(let resp) = result {
+                    sessionsResp = resp
+                } else {
+                    sessionsFailed = true
+                }
+                self.setBackupProgress("正在备份（2/4）我的日记…")
+                self.fetchAllEntries(scope: .mine, pin: pin) { result in
+                    DispatchQueue.main.async {
+                        if self.exportPinChanged(pin) || result.reason == "账号已切换" {
+                            self.cancelBackupForAccountChange()
+                            return
+                        }
+                        applyScopeResult(result, &mineEntries)
+                        self.setBackupProgress("正在备份（3/4）私密日记…")
+                        self.fetchAllEntries(scope: .mailbox, pin: pin) { result in
+                            DispatchQueue.main.async {
+                                if self.exportPinChanged(pin) || result.reason == "账号已切换" {
+                                    self.cancelBackupForAccountChange()
+                                    return
+                                }
+                                applyScopeResult(result, &mailboxEntries)
+                                self.setBackupProgress("正在备份（4/4）赞过…")
+                                self.fetchAllEntries(scope: .liked, pin: pin) { result in
+                                    DispatchQueue.main.async {
+                                        if self.exportPinChanged(pin) || result.reason == "账号已切换" {
+                                            self.cancelBackupForAccountChange()
+                                            return
+                                        }
+                                        applyScopeResult(result, &likedEntries)
+                                        finish()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 备份文件拼装 + 分享面板：草稿与私信只读本机（钉住账号）、日记原图
+    /// 现下载现嵌 base64，全程后台队列；主线程只做进度文案、复原与 present。
+    /// 单张图下载失败不拖垮整单：key 进 missing_images、文件里只留链接，
+    /// 分享完成后 toast 一次讲清张数。
+    private func buildAndShareBackup(user: MeUser, pin: BearyExportPin, sessionsResp: BearyAccountSessionsResponse?, mineEntries: [Entry], mailboxEntries: [Entry], likedEntries: [Entry]) {
+        if exportPinChanged(pin) {
+            cancelBackupForAccountChange()
+            return
+        }
+        isBackingUp = true
+        backupRowButton.isEnabled = false
+        setBackupProgress("正在生成备份文件…")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            // 草稿读钉住账号（loadAll(forAccount:)），失败（损坏）即整单
+            // fail-closed，不拿空草稿冒充“没有草稿”；lastLoadError 是读后
+            // 检查标记（与草稿箱同款用法）。
+            let drafts = BearyDraftFiles.loadAll(forAccount: pin.userId)
+            if BearyDraftFiles.lastLoadError != nil {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.finishBackupFailed()
+                }
+                return
+            }
+            let conversations = BearyDMStore.allConversations(accountId: pin.userId)
+            // 待下载原图：三 scope 日记图 key ＋ 草稿里只有服务端 key 的图。
+            var imageKeys: [String] = []
+            var seenKeys = Set<String>()
+            let collectKeys: ([Entry]) -> Void = { entries in
+                for entry in entries {
+                    for key in entry.images ?? [] where !key.isEmpty && !seenKeys.contains(key) {
+                        seenKeys.insert(key)
+                        imageKeys.append(key)
+                    }
+                }
+            }
+            collectKeys(mineEntries)
+            collectKeys(mailboxEntries)
+            collectKeys(likedEntries)
+            for draft in drafts {
+                for item in draft.images where item.localFile == nil {
+                    if let key = item.serverKey, !key.isEmpty && !seenKeys.contains(key) {
+                        seenKeys.insert(key)
+                        imageKeys.append(key)
+                    }
+                }
+            }
+            var imageDataByKey: [String: String] = [:]
+            var missingImageKeys: [String] = []
+            let downloadGroup = DispatchGroup()
+            downloadGroup.enter()
+            self.downloadBackupImages(keys: imageKeys) { dataByKey, missing in
+                imageDataByKey = dataByKey
+                missingImageKeys = missing
+                downloadGroup.leave()
+            }
+            downloadGroup.wait()
+            var data: [String: Any] = [:]
+            data["backup_format"] = "beary-backup-v1"
+            data["exported_at"] = ISO8601DateFormatter().string(from: Date())
+            data["site"] = "teddyhn.com"
+            data["profile"] = self.exportProfileDict(user: user)
+            if let resp = sessionsResp, let list = resp.sessions {
+                data["sessions"] = list.map { self.exportSessionDict(session: $0) }
+            }
+            data["diaries"] = mineEntries.map { self.backupEntryDict(entry: $0, isPrivate: false, imageDataByKey: imageDataByKey) } +
+                mailboxEntries.map { self.backupEntryDict(entry: $0, isPrivate: true, imageDataByKey: imageDataByKey) }
+            data["liked_entries"] = likedEntries.map { self.backupEntryDict(entry: $0, isPrivate: false, imageDataByKey: imageDataByKey) }
+            var draftDicts: [[String: Any]] = []
+            for draft in drafts {
+                draftDicts.append(self.backupDraftDict(draft: draft, imageDataByKey: imageDataByKey, missingKeys: &missingImageKeys))
+            }
+            data["drafts"] = draftDicts
+            data["direct_messages"] = conversations.map { self.backupConversationDict(conversation: $0) }
+            data["missing_images"] = missingImageKeys
+            data["not_included"] = ["回收站里的日记", "头像与封面原图（只保留了链接）", "App 设置"]
+            guard let jsonData = try? JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys]) else {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.finishBackupFailed()
+                }
+                return
+            }
+            let fmt = DateFormatter()
+            fmt.locale = Locale(identifier: "en_US_POSIX")
+            fmt.dateFormat = "yyyy-MM-dd-HHmmss"
+            // 与 JSON 导出同前缀（teddyhn-data-），启动清理（审计四轮 16）
+            // 一并覆盖过期备份文件；-backup 后缀区分两者。
+            let fileName = "teddyhn-data-" + fmt.string(from: Date()) + "-" + String(UUID().uuidString.prefix(8)) + "-backup.json"
+            let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+            var text = "\u{feff}"
+            text += String(data: jsonData, encoding: .utf8) ?? ""
+            guard let fileData = text.data(using: .utf8), (try? fileData.write(to: fileURL)) != nil else {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.finishBackupFailed()
+                }
+                return
+            }
+            let missingCount = missingImageKeys.count
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                if self.exportPinChanged(pin) {
+                    try? FileManager.default.removeItem(at: fileURL)
+                    self.cancelBackupForAccountChange()
+                    return
+                }
+                self.isBackingUp = false
+                self.backupRowButton.isEnabled = true
+                self.setBackupProgress(nil)
+                let activity = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+                if let pop = activity.popoverPresentationController {
+                    pop.sourceView = self.backupRowButton
+                    pop.sourceRect = self.backupRowButton.bounds
+                }
+                // 分享结束即删本次临时文件——完成、取消、失败路径都清，
+                // 不留备份 JSON 在 tmp 里；中途退出残留由启动清理兜底（审计四轮 16）。
+                activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+                    try? FileManager.default.removeItem(at: fileURL)
+                    if completed {
+                        if missingCount == 0 {
+                            self?.showToast("备份完成")
+                        } else {
+                            self?.showToast("备份完成，\(missingCount) 张图片没下载下来，已列在文件里")
+                        }
+                    }
+                }
+                self.present(activity, animated: BearyMotion.animated(true))
+            }
+        }
+    }
+
+    /// 日记原图批量下载：后台队列、4 路并发、每路 30 秒超时；失败的 key
+    /// 进 missing，不抛错、不重试——重试语义（幂等/去重）不在本项做。
+    /// 回包在调用队列（后台）执行。
+    private func downloadBackupImages(keys: [String], completion: @escaping ([String: String], [String]) -> Void) {
+        if keys.isEmpty {
+            completion([:], [])
+            return
+        }
+        var dataByKey: [String: String] = [:]
+        var missing: [String] = []
+        let lock = NSLock()
+        let group = DispatchGroup()
+        let semaphore = DispatchSemaphore(value: 4)
+        for key in keys {
+            let encoded = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key
+            guard let url = URL(string: BearyImageURLs.base + "/beary/api/images/" + encoded) else {
+                lock.lock()
+                missing.append(key)
+                lock.unlock()
+                continue
+            }
+            semaphore.wait()
+            group.enter()
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.timeoutInterval = 30
+            URLSession.shared.dataTask(with: request) { data, response, _ in
+                defer {
+                    semaphore.signal()
+                    group.leave()
+                }
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                if status == 200, let data = data, !data.isEmpty {
+                    lock.lock()
+                    dataByKey[key] = "data:image/jpeg;base64," + data.base64EncodedString()
+                    lock.unlock()
+                } else {
+                    lock.lock()
+                    missing.append(key)
+                    lock.unlock()
+                }
+            }.resume()
+        }
+        group.notify(queue: DispatchQueue.global(qos: .userInitiated)) {
+            completion(dataByKey, missing)
+        }
+    }
+
+    /// 备份版日记字典：exportEntryDict 的字段全留，images 由 URL 串换成
+    /// {key, url, data}（data 只在下载成功时出现，缺图只留链接、另进
+    /// missing_images）。
+    private func backupEntryDict(entry: Entry, isPrivate: Bool, imageDataByKey: [String: String]) -> [String: Any] {
+        var dict = exportEntryDict(entry: entry, isPrivate: isPrivate)
+        if let images = entry.images {
+            dict["images"] = images.map { key -> [String: Any] in
+                let encoded = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key
+                var item: [String: Any] = [
+                    "key": key,
+                    "url": BearyImageURLs.base + "/beary/api/images/" + encoded,
+                ]
+                if let dataURI = imageDataByKey[key] {
+                    item["data"] = dataURI
+                }
+                return item
+            }
+        }
+        return dict
+    }
+
+    /// 备份版草稿字典：草稿原样编码，images 换成本地/服务端来源＋原图
+    /// base64（本地文件优先读盘，读不到且有服务端 key 时走已下载的原图；
+    /// 两头都没有即记 missing，不让草稿静默丢图）。
+    private func backupDraftDict(draft: BearyDraft, imageDataByKey: [String: String], missingKeys: inout [String]) -> [String: Any] {
+        var dict: [String: Any] = [:]
+        if let encoded = try? JSONEncoder().encode(draft),
+           let obj = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any] {
+            dict = obj
+        }
+        var imageItems: [[String: Any]] = []
+        for item in draft.images {
+            var imageDict: [String: Any] = [:]
+            if let local = item.localFile { imageDict["local_file"] = local }
+            if let serverKey = item.serverKey { imageDict["server_key"] = serverKey }
+            var embedded: String?
+            if let local = item.localFile,
+               let url = BearyDraftFiles.fileURL(for: local),
+               let data = try? Data(contentsOf: url), !data.isEmpty {
+                embedded = "data:image/jpeg;base64," + data.base64EncodedString()
+            } else if let serverKey = item.serverKey {
+                embedded = imageDataByKey[serverKey]
+            }
+            if let embedded = embedded {
+                imageDict["data"] = embedded
+            } else {
+                let missingKey = item.serverKey ?? item.localFile ?? draft.draftId
+                if !missingKeys.contains(missingKey) {
+                    missingKeys.append(missingKey)
+                }
+            }
+            imageItems.append(imageDict)
+        }
+        dict["images"] = imageItems
+        return dict
+    }
+
+    /// 备份版会话字典：对方信息＋全部本地消息（服务端只存 7 天，本地
+    /// 是唯一长期副本，故整段消息都进备份，不只留最后一条）。
+    private func backupConversationDict(conversation: BearyDMStore.StoredConversation) -> [String: Any] {
+        var peerDict: [String: Any] = [:]
+        if let id = conversation.peer.id { peerDict["id"] = id }
+        if let name = conversation.peer.displayName { peerDict["display_name"] = name }
+        if let handle = conversation.peer.handle { peerDict["handle"] = handle }
+        if let avatar = conversation.peer.avatarUrl { peerDict["avatar_url"] = avatar }
+        var messageDicts: [[String: Any]] = []
+        for message in conversation.messages {
+            var messageDict: [String: Any] = [:]
+            if let id = message.id { messageDict["id"] = id }
+            if let senderId = message.senderId { messageDict["sender_id"] = senderId }
+            if let body = message.body { messageDict["body"] = body }
+            if let createdAt = message.createdAt { messageDict["created_at"] = createdAt }
+            messageDicts.append(messageDict)
+        }
+        return ["peer": peerDict, "messages": messageDicts]
     }
 
     /// 第 7 项分页结果：entries=已取条目；complete=true 时 reason 恒为 nil；
