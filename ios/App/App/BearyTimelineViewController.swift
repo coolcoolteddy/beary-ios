@@ -936,7 +936,7 @@ final class BearyTimelineCell: UITableViewCell {
         cardView.translatesAutoresizingMaskIntoConstraints = false
         // 2026-10-31 对称分割线式：#254 卡片外框整组去掉——无边线、无阴影、
         // 无圆角，底色即页面底（bg），行间分隔只靠底缘的 dividerView 横线
-        // （线宽 2pt、线色 BearyColors.line 动态色，浅 #dbdbdb／深 #3a3a40，
+        // （线宽 1pt、线色 BearyColors.line 动态色，浅 #dbdbdb／深 #3a3a40，
         // 深浅切换自动跟随，无需手动重刷）。
         // 限时虚线边框视图（ephemeralBorderView）是独立语义指示，不动。
         cardView.backgroundColor = BearyColors.bg
@@ -1143,7 +1143,7 @@ final class BearyTimelineCell: UITableViewCell {
             dividerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 36),
             dividerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -36),
             dividerView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            dividerView.heightAnchor.constraint(equalToConstant: 2),
+            dividerView.heightAnchor.constraint(equalToConstant: 1),
             cardStack.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 14),
             cardStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 16),
             cardStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
