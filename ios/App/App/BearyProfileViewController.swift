@@ -1670,6 +1670,8 @@ class BearyProfileViewController: UIViewController {
         viewValue.translatesAutoresizingMaskIntoConstraints = false
         viewValue.backgroundColor = BearyColors.bg
         viewValue.layer.cornerRadius = 12
+        viewValue.layer.borderWidth = 1
+        viewValue.layer.bearyDynamicBorderColor = BearyColors.line
         viewValue.clipsToBounds = true
         return viewValue
     }()
@@ -1723,6 +1725,8 @@ class BearyProfileViewController: UIViewController {
         viewValue.translatesAutoresizingMaskIntoConstraints = false
         viewValue.backgroundColor = BearyColors.bg
         viewValue.layer.cornerRadius = 12
+        viewValue.layer.borderWidth = 1
+        viewValue.layer.bearyDynamicBorderColor = BearyColors.line
         viewValue.clipsToBounds = true
         return viewValue
     }()
