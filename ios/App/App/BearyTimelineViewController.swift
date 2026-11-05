@@ -1738,7 +1738,7 @@ final class BearyTimelineCell: UITableViewCell {
                 thumbRetry.heightAnchor.constraint(equalToConstant: 28),
             ])
             if let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                bearyFeedLoadImage(into: imageView, url: url, retryButton: thumbRetry, downsampleToWidth: strip * UIScreen.main.scale)
+                bearyFeedLoadImage(into: imageView, url: url, retryButton: thumbRetry, downsampleToWidth: strip * UIScreen.main.scale, blurUp: true)
             }
         }
         // 批 E 补漏：位置行（图片条 → 引用卡 → 位置行 → 足行）；无位置、或他人视角下
@@ -2205,6 +2205,36 @@ class BearyTimelineViewController: UIViewController {
     // M2：分页新增行的错峰滑入队列（willDisplay 时按原始序号起播，播过即摘；
     // 用序号字典而非数组，避免摘除后后续序号前移导致错峰失效）。
     private var staggerInsertOrder: [IndexPath: Int] = [:]
+    /// 加载三件套·错峰口径：staggerInsertOrder 本次队列是首屏/筛子切换
+    /// （60ms 步进、8px 上移）还是分页追加（50ms 步进、24px 下滑入）。
+    private var staggerInsertFirstLoad = false
+    /// 加载三件套·骨架屏：首屏加载（timelineState == .loading 且无行）时，
+    /// 背景视图出 3 张骨架卡（与真实卡片同布局），取代中央转圈；下拉刷新
+    /// 进行中（isCustomPullRefreshing）仍按现行口径不挂背景视图。
+    private lazy var timelineSkeletonView: UIView = {
+        let container = UIView()
+        container.backgroundColor = BearyColors.bg
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+        ])
+        for _ in 0..<3 {
+            stack.addArrangedSubview(BearySkeletonCardView())
+        }
+        return container
+    }()
+    /// 骨架是否实际出过屏：首屏回包时内容按 60ms/8px 入场，骨架背景视图
+    /// 0.25s 淡出再摘（见 updateChrome）。
+    private var didShowTimelineSkeleton = false
+    /// 加载三件套·底部脚部（加载中 3 个跳动圆点 / 没有更多了 / 失败重试）。
+    private let timelineLoadMoreFooterView = BearyLoadMoreFooterView()
+    private var lastTimelineFooterSignature = ""
     /// 80 包 A2-3②：错峰队列代际——切日/清选区时 +1，队列写入时记录当时
     /// 代际；willDisplay 发现代际不符即丢弃残留条目，不在新数据行上重播。
     private var staggerGeneration = 0
@@ -2215,6 +2245,7 @@ class BearyTimelineViewController: UIViewController {
     ///（新行首显仍需滑入；willDisplay 播过即摘，不影响正常路径）。
     func clearStaggerEntries() {
         staggerInsertOrder.removeAll()
+        staggerInsertFirstLoad = false
         // N3：切日错峰队列与组头淡入标志同生命周期，一并清掉，
         // 防旧队列在新数据行上重播（已有元素不重播）。
         daySwitchStagger.removeAll()
@@ -2444,12 +2475,6 @@ class BearyTimelineViewController: UIViewController {
     private var headerStack: UIStackView?
     private var lastHeaderWidth: CGFloat = 0
 
-    // 112：脚部“加载更多”改 BearyHit44Button——旧 plain UIButton 无高度约束，
-    // 实际可点高度仅标题约 20pt，holder 上下各约 12pt 点按无反应。
-    // 视觉字号/文案不动（viewDidLoad 里 14pt 与颜色原样保留）。
-    private let loadMoreButton = BearyHit44Button(type: .system)
-    private let footerSpinner = BearyRefreshIconView()
-
     // MARK: - 生命周期
 
     override func viewDidLoad() {
@@ -2465,19 +2490,11 @@ class BearyTimelineViewController: UIViewController {
         ])
         setupStickyHeader()
         setupCalendarFailedBanner()
-        // R8：控制器自有按钮类走 scaledFont + adjusts（卡片内文字由卡片组负责，不碰）。
-        loadMoreButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        loadMoreButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        loadMoreButton.setTitleColor(BearyColors.gray, for: .normal)
-        loadMoreButton.addTarget(self, action: #selector(didTapFooter), for: .touchUpInside)
-        loadMoreButton.bearyAddPressHaptic()
         // 审计 P2-20：时间线监听拉黑/举报即时清行并清 quoteCache。
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
         // 审计-时间线：前台复核（详情页同口径）——后台期间 1 秒 tick 未跑时，到期在回前台时补位。
         NotificationCenter.default.addObserver(self, selector: #selector(handleForegroundEphemeralCheck(_:)), name: UIApplication.willEnterForegroundNotification, object: nil)
-        // 2026-10-30 全 App 统一 icon_refresh：脚部圈取 20pt 图，栈内固有尺寸与旧 medium 圈一致。
-        footerSpinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
         // G15 toast 已委托 B 批统一 BearyToast（见 showTimelineToast），
         // 此处不再建常驻 toast 容器。
         // 第 2 项 A 调用点 1/2（初次进入）：置守卫挂起；2026-11-04 不跳日口径：
@@ -3760,6 +3777,15 @@ class BearyTimelineViewController: UIViewController {
         guard scrollView === tableView else { return }
         updateCustomPullIndicator()
         updateStickyHeader()
+        // 加载三件套·加载更多：滑到离底部一屏时预加载下一页（复用现有
+        // loadTimelineNextPage；loading/失败/无更多时守卫拦住）。
+        if !timelineLoadingMore, timelineHasMore, !timelinePageFailed, !timelineEntries.isEmpty {
+            let y = scrollView.contentOffset.y
+            let remaining = scrollView.contentSize.height - (y + scrollView.bounds.height - scrollView.adjustedContentInset.bottom)
+            if remaining <= scrollView.bounds.height {
+                loadTimelineNextPage()
+            }
+        }
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
@@ -4437,6 +4463,8 @@ class BearyTimelineViewController: UIViewController {
                                 }
                             }
                             strongSelf.staggerInsertOrder = queue
+                            // 加载三件套·错峰口径：筛子切换的新行按首屏 60ms/8px 入场。
+                            strongSelf.staggerInsertFirstLoad = true
                             strongSelf.staggerQueueGeneration = strongSelf.staggerGeneration
                         }
                     }
@@ -4489,6 +4517,13 @@ class BearyTimelineViewController: UIViewController {
             // diff 已插删改，跳过整表重载。
         } else {
             tableView.reloadData()
+            if didShowTimelineSkeleton {
+                // 加载三件套·骨架淡出后内容入场：首屏行从上到下每块错开 60ms、
+                // 依次淡入并上移 8px（骨架背景视图由 updateChrome 0.25s 淡出）。
+                tableView.layoutIfNeeded()
+                let cells = (tableView.indexPathsForVisibleRows ?? []).sorted().compactMap { tableView.cellForRow(at: $0) }
+                BearyLoadingUX.staggerIn(cells: cells, delayStep: 0.06, yOffset: 8)
+            }
         }
         updateChrome()
         if isCustomPullRefreshing {
@@ -4650,6 +4685,8 @@ class BearyTimelineViewController: UIViewController {
         let staggerFirstPage = UIAccessibility.isReduceMotionEnabled == false && !inserts.isEmpty
         if staggerFirstPage {
             staggerInsertOrder = Dictionary(uniqueKeysWithValues: inserts.enumerated().map { ($0.element, $0.offset) })
+            // 加载三件套·错峰口径：首屏 diff 新增行按首屏 60ms/8px 入场。
+            staggerInsertFirstLoad = true
             staggerQueueGeneration = staggerGeneration
         }
         tableView.performBatchUpdates({
@@ -4724,6 +4761,8 @@ class BearyTimelineViewController: UIViewController {
                         // 减动效时不排错峰队列，直接插行终值。
                         if UIAccessibility.isReduceMotionEnabled == false {
                             strongSelf.staggerInsertOrder = Dictionary(uniqueKeysWithValues: diff.stagger.enumerated().map { ($0.element, $0.offset) })
+                            // 加载三件套·错峰口径：分页追加行按 50ms 步进、24px 下滑入。
+                            strongSelf.staggerInsertFirstLoad = false
                             strongSelf.staggerQueueGeneration = strongSelf.staggerGeneration
                         }
                         strongSelf.tableView.performBatchUpdates({
@@ -5813,9 +5852,10 @@ class BearyTimelineViewController: UIViewController {
                 tableView.backgroundView = nil
                 newBackgroundKind = "none"
             } else {
-                // M2：首屏加载态（此前 backgroundView 置 nil，只有下拉才有 spinner）。
-                tableView.backgroundView = timelineLoadingView()
-                newBackgroundKind = "loading"
+                // 加载三件套·骨架屏：首屏加载出 3 张骨架卡（减动效静态、不扫光）。
+                tableView.backgroundView = timelineSkeletonView
+                didShowTimelineSkeleton = true
+                newBackgroundKind = "loading-skeleton"
             }
         } else if timelineState == .failed && timelineEntries.isEmpty && !hasRows {
             if isLoginEmpty {
@@ -5849,7 +5889,23 @@ class BearyTimelineViewController: UIViewController {
                 newBackgroundKind = "empty"
             }
         } else {
-            tableView.backgroundView = nil
+            // 加载三件套·骨架淡出：首屏骨架出过屏时，背景视图 0.25s 淡出再摘；
+            // 减动效或非骨架背景时直接摘（骨架淡出与内容 60ms/8px 入场同步）。
+            if didShowTimelineSkeleton, let oldBackground = tableView.backgroundView, BearyMotion.animated(true) {
+                didShowTimelineSkeleton = false
+                UIView.animate(withDuration: 0.25, animations: {
+                    oldBackground.alpha = 0
+                }, completion: { [weak self] _ in
+                    guard let self = self, self.tableView.backgroundView === oldBackground else { return }
+                    self.tableView.backgroundView = nil
+                    oldBackground.alpha = 1
+                })
+            } else if let bg = tableView.backgroundView, bg === timelineSkeletonView, bg.alpha < 1 {
+                // 骨架正在淡出中（0.25s 内 updateChrome 重入）：不动，等淡出完成自摘。
+            } else {
+                didShowTimelineSkeleton = false
+                tableView.backgroundView = nil
+            }
         }
         // 本批 4b：空态切换补入场动效——种类变化且新背景非空时淡入
         // （6-7 收敛到 0.25s alpha 过渡；只动 backgroundView 的 alpha，
@@ -5882,34 +5938,6 @@ class BearyTimelineViewController: UIViewController {
         updateFooter()
     }
 
-    /// M2 首屏加载视图：居中 spinner + “加载中…”（仅首屏无行时作 backgroundView）。
-    private func timelineLoadingView() -> UIView {
-        let container = UIView()
-        container.backgroundColor = BearyColors.bg
-        let spinner = BearyRefreshIconView()
-        // 栈内固有尺寸须与旧 medium 圈一致（20），故图取 20pt。
-        spinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
-        spinner.startSpinning()
-        let label = UILabel()
-        label.text = "加载中…"
-        // R8：首屏加载文字（正文类）走 scaledFont + adjusts。
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        label.adjustsFontForContentSizeCategory = true
-        label.textColor = BearyColors.gray
-        label.translatesAutoresizingMaskIntoConstraints = false
-        let stack = UIStackView(arrangedSubviews: [spinner, label])
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .vertical
-        stack.alignment = .center
-        stack.spacing = 8
-        container.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 40),
-        ])
-        return container
-    }
-
     /// G15 分页失败 toast：委托统一 BearyToast。时间线是 Chrome 主 tab，
     /// FAB 常驻（下滑藏栏已拆除；搜索藏栏只针对搜索页），落点由组件按
     /// Chrome 实际 chrome 态算；展示时长由旧 1.6s 统一为 2.0s，
@@ -5920,67 +5948,26 @@ class BearyTimelineViewController: UIViewController {
 
     private func updateFooter() {
         // 脚部只属于时间线翻页；当日面板的加载/失败态在面板表头里。
-        // M18：脚部 spinner 不再是死代码——加载时进脚部层级与文案并排。
-        footerSpinner.stopSpinning()
-        footerSpinner.removeFromSuperview()
-        if timelineLoadingMore {
-            tableView.tableFooterView = footerLoadingHolder()
-        } else if timelinePageFailed && timelineHasMore {
-            // G15：分页失败后脚部保持可重试。
-            loadMoreButton.setTitle("加载失败，重试", for: .normal)
-            loadMoreButton.isEnabled = true
-            tableView.tableFooterView = footerHolder(button: loadMoreButton)
-        } else if timelineHasMore {
-            loadMoreButton.setTitle("加载更多", for: .normal)
-            loadMoreButton.isEnabled = true
-            tableView.tableFooterView = footerHolder(button: loadMoreButton)
-        } else {
+        // 加载三件套·底部脚部：加载中 3 个跳动圆点、末页“没有更多了”、
+        // 分页失败重试；手动“加载更多”按钮已由离底部一屏自动预加载取代。
+        let state: BearyLoadMoreFooterView.State = {
+            if timelineLoadingMore { return .loading }
+            if timelinePageFailed && timelineHasMore { return .failed }
+            if !timelineHasMore && !timelineEntries.isEmpty { return .end }
+            return .hidden
+        }()
+        timelineLoadMoreFooterView.setState(state)
+        timelineLoadMoreFooterView.onRetry = { [weak self] in self?.loadTimelineNextPage() }
+        let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
+        let signature = "\(state)-\(Int(width))"
+        if signature == lastTimelineFooterSignature, tableView.tableFooterView != nil { return }
+        lastTimelineFooterSignature = signature
+        guard state != .hidden else {
             tableView.tableFooterView = nil
+            return
         }
-    }
-
-    /// M18 脚部加载态：spinner + “加载中…”居中行（高 44，与按钮脚部同高）。
-    private func footerLoadingHolder() -> UIView {
-        let holder = UIView(frame: CGRect(x: 0, y: 0, width: tableView.bounds.width, height: 44))
-        let label = UILabel()
-        label.text = "加载中…"
-        // R8：脚部加载文字（正文类）走 scaledFont + adjusts。
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        label.adjustsFontForContentSizeCategory = true
-        label.textColor = BearyColors.gray
-        footerSpinner.isHidden = false
-        footerSpinner.startSpinning()
-        let stack = UIStackView(arrangedSubviews: [footerSpinner, label])
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .horizontal
-        stack.spacing = 6
-        stack.alignment = .center
-        holder.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.centerXAnchor.constraint(equalTo: holder.centerXAnchor),
-            stack.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
-        ])
-        return holder
-    }
-
-    private func footerHolder(button: UIButton) -> UIView {
-        let holder = UIView(frame: CGRect(x: 0, y: 0, width: tableView.bounds.width, height: 44))
-        button.translatesAutoresizingMaskIntoConstraints = false
-        holder.addSubview(button)
-        // 112：按钮本身铺满脚部行——高钉死 44、左右贴 holder 边缘，标题仍居中。
-        // 只换类不够：BearyHit44Button 只扩 <44 的轴，标题宽已超 44 时横向不扩，
-        // 标题外左右区域仍点不到；holder 高度不动（不是只把 holder 加高糊弄）。
-        NSLayoutConstraint.activate([
-            button.leadingAnchor.constraint(equalTo: holder.leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: holder.trailingAnchor),
-            button.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
-            button.heightAnchor.constraint(equalToConstant: 44),
-        ])
-        return holder
-    }
-
-    @objc private func didTapFooter() {
-        loadTimelineNextPage()
+        timelineLoadMoreFooterView.frame = CGRect(x: 0, y: 0, width: width, height: BearyLoadMoreFooterView.height)
+        tableView.tableFooterView = timelineLoadMoreFooterView
     }
 
     @objc private func didTapTrash() {
@@ -6405,11 +6392,13 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         staggerInsertOrder[indexPath] = nil
         // 80 包 A2-3②：队列代际不符时丢弃残留条目，不在新数据行上重播旧错峰。
         guard staggerQueueGeneration == staggerGeneration else { return }
-        // 80 包 A2-3④/A3-3：分页/首屏入场统一口径——cell 级 alpha + y+6、
-        // 0.25s、0.03 步进封顶 0.24s、可交互（与首页/主页一致）。
+        // 加载三件套·错峰口径：首屏/筛子切换 60ms 步进、8px 上移；
+        // 分页追加 50ms 步进、24px 下滑入；0.25s、封顶 0.24s、可交互。
+        let delayStep = staggerInsertFirstLoad ? 0.06 : 0.05
+        let yOffset: CGFloat = staggerInsertFirstLoad ? 8 : 24
         cell.alpha = 0
-        cell.transform = CGAffineTransform(translationX: 0, y: 6)
-        let delay = min(Double(order) * 0.03, 0.24)
+        cell.transform = CGAffineTransform(translationX: 0, y: yOffset)
+        let delay = min(Double(order) * delayStep, 0.24)
         UIView.animate(withDuration: 0.25, delay: delay, options: [.curveEaseOut, .allowUserInteraction], animations: {
             cell.alpha = 1
             cell.transform = .identity

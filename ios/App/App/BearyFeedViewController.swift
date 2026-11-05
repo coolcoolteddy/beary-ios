@@ -160,6 +160,18 @@ class BearyFeedViewController: UIViewController {
     private var pubBusyIds: Set<String> = []
 
     private var isFirstLoad = true
+    /// 加载三件套·骨架屏：只覆盖无缓存首屏加载（isFirstLoad 且首拉未回包、
+    /// 且表里尚无内容）；有缓存/后台重拉/下拉刷新/分页一律不走这里。
+    /// 骨架只盖内容列表区，页面框架（顶栏/tab/分区）仍框架先行先出。
+    private var showingSkeleton: Bool {
+        isFirstLoad && !plazaFirstDone && plazaEntries().isEmpty && !plazaError
+    }
+    /// 骨架是否实际出过屏：首拉回包时若出过屏，走骨架淡出＋内容 60ms/8px 入场。
+    private var didShowSkeleton = false
+    private let skeletonRowCount = 3
+    /// 加载三件套·底部脚部：游客 logo 与加载更多脚部共用一个 tableFooterView。
+    private let loadMoreFooterView = BearyLoadMoreFooterView()
+    private var lastFeedFooterSignature = ""
     /// 80 包 B2：viewDidLoad 首拉已发起的标记（引导预加载步骤据此去重，不复发第二拉）。
     var initialLoadStarted = false
     /// 80 包 A11：空态退出淡出代际，退出中重入空态即作废旧退出动画。
@@ -456,16 +468,18 @@ class BearyFeedViewController: UIViewController {
     private var headerTopInsetVisible = true
     private var centralSpinnerTopConstraint: NSLayoutConstraint?
 
-    /// C9 首屏骨架屏：只覆盖无缓存首屏加载（isFirstLoad 且首拉未回包）。
-    /// 已有内容/后台重拉/下拉刷新/分页一律不走这里；显隐只由 updateOverlayState
-    /// 根据 plazaFirstDone 决定，与数据到达回调严格对应，
-    /// 骨架与真实卡片不叠加（隐藏时先 reloadData 落真实行，再交叉溶解）。
+    /// 加载三件套·骨架屏：只覆盖无缓存首屏加载（isFirstLoad 且首拉未回包、
+    /// 且表里尚无内容）。已有内容/后台重拉/下拉刷新/分页一律不走这里；显隐
+    /// 只由 updateOverlayState 根据 plazaFirstDone 决定，与数据到达回调严格
+    /// 对应；骨架与真实卡片不叠加（隐藏时先 reloadData 落真实行，再交叉溶解）。
     // MARK: - 生命周期
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
         view.addSubview(tableView)
+        // 加载三件套·离屏 300px 预加载（见 tableView(_:prefetchRowsAt:)）。
+        tableView.prefetchDataSource = self
         view.addSubview(centralSpinner)
         view.addSubview(newContentPill)
         // P2-1：内容列走网页 821 断点——宽 ≥821 时 600 居中，宽 ≤820 时 iPhone 式全宽
@@ -814,8 +828,8 @@ class BearyFeedViewController: UIViewController {
         // feedfast：刷新不再同步重建可见行（旧代码这里 reloadData 把可见行
         // 全部重建一遍——图片重取、表情播放器重启——再叠加中央菊花）。
         // 新数据回来前旧行原样展示，回包后走 diff 定向更新；只有确实无内容
-        // 可 show 时才转菊花。
-        if showCentralSpinner && plazaRaw.isEmpty {
+        // 可 show 时才转菊花。骨架屏期间不转中央菊花（骨架行即加载态）。
+        if showCentralSpinner && plazaRaw.isEmpty && !showingSkeleton {
             centralSpinner.startSpinning()
         }
         if loginFlippedBypass {
@@ -854,44 +868,61 @@ class BearyFeedViewController: UIViewController {
 
     // MARK: - 游客底部 logo（F19）
 
+    /// 游客底部 logo（F19）与加载更多脚部共用一个 tableFooterView（上下叠放）。
+    /// 加载三件套·底部脚部：分页加载中亮 3 个跳动圆点、末页显示“没有更多了”；
+    /// 首屏骨架期间不挂脚部；签名不变不重建。
     private func updateFootLogo() {
-        if isFirstLoad {
-            if tableView.tableFooterView != nil {
-                tableView.tableFooterView = nil
-            }
-            footLogoContainer = nil
-            footLogoImageView = nil
-            return
-        }
+        let footerState: BearyLoadMoreFooterView.State = {
+            if isFirstLoad || plazaEntries().isEmpty { return .hidden }
+            if plazaLoading && plazaHasMore { return .loading }
+            if plazaReachedEnd { return .end }
+            return .hidden
+        }()
+        loadMoreFooterView.setState(footerState)
         // G26：登录态未知（网络失败）时不按游客态渲染游客脚标——与已登录同处理（隐藏脚标）。
         // 64 包反馈修（第 17 项）：本地有有效会话 cookie 时首帧亦按缓存登录态（不闪游客脚标），
         // 后台 /me 验出 401 后 isLoggedIn 翻游客、缓存过期失效，脚标自然恢复。
-        if SessionManager.shared.isLoggedIn || SessionManager.shared.authUnknown || SessionManager.shared.hasCachedSession {
-            if tableView.tableFooterView != nil {
-                tableView.tableFooterView = nil
-            }
+        let showLogo = !(isFirstLoad || SessionManager.shared.isLoggedIn || SessionManager.shared.authUnknown || SessionManager.shared.hasCachedSession)
+        let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
+        let signature = "\(showLogo)-\(footerState)-\(Int(width))"
+        if signature == lastFeedFooterSignature, tableView.tableFooterView != nil { return }
+        lastFeedFooterSignature = signature
+        if !showLogo && footerState == .hidden {
+            tableView.tableFooterView = nil
             footLogoContainer = nil
             footLogoImageView = nil
             return
         }
-        let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
-        if let container = footLogoContainer, tableView.tableFooterView === container, container.frame.width == width {
-            return
-        }
-        let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 90))
+        var height: CGFloat = 0
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 0))
         container.backgroundColor = BearyColors.bg
-        let logoImageValue = UIImage(named: "LogoHorizontal")
-        var logoWidth: CGFloat = 0
-        if let logoImageValue = logoImageValue, logoImageValue.size.height > 0 {
-            logoWidth = 26 * logoImageValue.size.width / logoImageValue.size.height
+        if showLogo {
+            let logo = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 90))
+            logo.backgroundColor = BearyColors.bg
+            let logoImageValue = UIImage(named: "LogoHorizontal")
+            var logoWidth: CGFloat = 0
+            if let logoImageValue = logoImageValue, logoImageValue.size.height > 0 {
+                logoWidth = 26 * logoImageValue.size.width / logoImageValue.size.height
+            }
+            let imgView = UIImageView(frame: CGRect(x: (width - logoWidth) / 2, y: 30, width: logoWidth, height: 26))
+            imgView.image = logoImageValue
+            imgView.contentMode = .scaleAspectFit
+            imgView.alpha = 0.45
+            logo.addSubview(imgView)
+            footLogoContainer = logo
+            footLogoImageView = imgView
+            container.addSubview(logo)
+            height += 90
+        } else {
+            footLogoContainer = nil
+            footLogoImageView = nil
         }
-        let imgView = UIImageView(frame: CGRect(x: (width - logoWidth) / 2, y: 30, width: logoWidth, height: 26))
-        imgView.image = logoImageValue
-        imgView.contentMode = .scaleAspectFit
-        imgView.alpha = 0.45
-        container.addSubview(imgView)
-        footLogoContainer = container
-        footLogoImageView = imgView
+        if footerState != .hidden {
+            loadMoreFooterView.frame = CGRect(x: 0, y: height, width: width, height: BearyLoadMoreFooterView.height)
+            container.addSubview(loadMoreFooterView)
+            height += BearyLoadMoreFooterView.height
+        }
+        container.frame.size.height = height
         tableView.tableFooterView = container
     }
 
@@ -1036,7 +1067,11 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaError = false
                     strongSelf.lastFeedLoadAt = Date()
                     // 审计 13：界面先应用（落表 + 状态），写盘异步在后、不卡首帧。
-                    strongSelf.tableView.reloadData()
+                    // 加载三件套·骨架淡出：骨架出过屏时不直接 reloadData，
+                    // 由 finishFirstLoadIfNeeded 经 0.25s 交叉溶解换上真实行。
+                    if !strongSelf.didShowSkeleton {
+                        strongSelf.tableView.reloadData()
+                    }
                     // 正在关注段不写广场磁盘快照（快照只含公开，写了会
                     // 把关注流数据混进广场桶；关注流每次进段/重拉都走网络）。
                     if !strongSelf.feedFollowingSegment {
@@ -1057,7 +1092,11 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.plazaHasMore = false
                         strongSelf.plazaError = true
                         strongSelf.plazaFirstDone = true
-                        strongSelf.tableView.reloadData()
+                        // 加载三件套·骨架淡出：骨架出过屏时不直接 reloadData，
+                        // 由 finishFirstLoadIfNeeded 经 0.25s 交叉溶解换上失败行。
+                        if !strongSelf.didShowSkeleton {
+                            strongSelf.tableView.reloadData()
+                        }
                         strongSelf.finishFirstLoadIfNeeded()
                         strongSelf.updateOverlayState()
                     } else if !silent {
@@ -1173,7 +1212,8 @@ class BearyFeedViewController: UIViewController {
             // 下一行 reloadData 立即清掉失败行，回包前为空白期。回包后由
             // updateOverlayState 在 plazaLoading 落袋时停圈，失败行或内容接替。
             // 非空表分页重试分支不动（plazaError 保持 true、失败行留守）。
-            centralSpinner.startSpinning()
+            // 骨架屏期间不转中央菊花（骨架行即加载态）。
+            if !showingSkeleton { centralSpinner.startSpinning() }
             loadPlazaFirstPage()
         } else {
             loadPlazaNextPage()
@@ -1198,6 +1238,9 @@ class BearyFeedViewController: UIViewController {
         // 期间若有 refreshAll，旧分页回包只复位 loading，不覆盖新首拉的 hasMore。
         let nextPageGeneration = revalidateGeneration
         plazaLoading = true
+        // 加载三件套·底部脚部：分页一启动即亮 3 个跳动圆点（回包后由
+        // updateOverlayState → updateFootLogo 按 hasMore/末页刷新）。
+        updateFootLogo()
         // iCity：广场服务端按 published_at DESC 排序，分页游标同步用 publishedAt（缺失时回退 createdAt）。
         // 正在关注段按 created_at DESC，游标同步用 createdAt。
         BearyAPI.shared.fetchEntries(scope: feedScope, limit: pageLimit, before: feedSortKey(last), beforeId: lastEntryIdValue) { [weak self] result in
@@ -1790,17 +1833,18 @@ class BearyFeedViewController: UIViewController {
     ///（oldCount..<newCount）、重校验走 diff 出的 newPaths（旧 id 集过滤）、首屏走
     /// isFirstLoad 一次性可见行；其余 reloadData 路径不调本函数。故无需
     /// animatedRowIds 防重播集合，stagger 现状无问题。
-    private func staggerFadeCells(at paths: [IndexPath]) {
+    private func staggerFadeCells(at paths: [IndexPath], delayStep: TimeInterval = 0.03, yOffset: CGFloat = 6) {
         if UIAccessibility.isReduceMotionEnabled { return }
         let visible = tableView.indexPathsForVisibleRows ?? []
         var order = 0
         for path in paths where visible.contains(path) {
             guard let cell = tableView.cellForRow(at: path) else { continue }
-            // 80 包 A3-3：分页/首屏入场统一口径——cell 级 alpha + y+6、0.25s、
-            // 0.03 步进封顶 0.24s、可交互（与时间线/主页一致）。
+            // 80 包 A3-3：分页/首屏入场统一口径——cell 级 alpha + y 偏移、0.25s、
+            // 步进封顶 0.24s、可交互（与时间线/主页一致）。步进与位移由调用方按
+            // 场景给：首屏 60ms/8px、分页 50ms/24px，默认 30ms/6px。
             cell.alpha = 0
-            cell.transform = CGAffineTransform(translationX: 0, y: 6)
-            let delay = min(Double(order) * 0.03, 0.24)
+            cell.transform = CGAffineTransform(translationX: 0, y: yOffset)
+            let delay = min(Double(order) * delayStep, 0.24)
             order += 1
             UIView.animate(withDuration: 0.25, delay: delay, options: [.allowUserInteraction], animations: {
                 cell.alpha = 1
@@ -1819,7 +1863,10 @@ class BearyFeedViewController: UIViewController {
         let inserted = (oldCount..<newCount).map { IndexPath(row: $0, section: section) }
         tableView.performBatchUpdates({
             self.tableView.insertRows(at: inserted, with: .none)
-        }, completion: { [weak self] _ in self?.staggerFadeCells(at: inserted) })
+        }, completion: { [weak self] _ in
+            // 加载三件套·分页新卡：每张错开 50ms、从下方 24px 滑入淡入。
+            self?.staggerFadeCells(at: inserted, delayStep: 0.05, yOffset: 24)
+        })
         return true
     }
 
@@ -1835,8 +1882,27 @@ class BearyFeedViewController: UIViewController {
     private func finishFirstLoadIfNeeded() {
         if plazaFirstDone && isFirstLoad {
             isFirstLoad = false
+            let visible = (tableView.indexPathsForVisibleRows ?? []).sorted()
+            if didShowSkeleton {
+                didShowSkeleton = false
+                // 加载三件套·骨架淡出＋内容入场：整表 0.25s 交叉溶解（骨架同步
+                // 淡出），内容再从上到下每块错开 60ms、依次淡入并上移 8px。
+                if BearyMotion.animated(true) {
+                    UIView.transition(with: tableView, duration: 0.25, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
+                        self.tableView.reloadData()
+                    }, completion: { [weak self] _ in
+                        guard let self = self else { return }
+                        let paths = (self.tableView.indexPathsForVisibleRows ?? []).sorted()
+                        let cells = paths.compactMap { self.tableView.cellForRow(at: $0) }
+                        BearyLoadingUX.staggerIn(cells: cells, delayStep: 0.06, yOffset: 8)
+                    })
+                } else {
+                    staggerFadeCells(at: visible)
+                }
+                return
+            }
             // M1：首拉完成时可见行错峰淡入一次（后续重拉/后台换新不再重播）。
-            staggerFadeCells(at: (tableView.indexPathsForVisibleRows ?? []).sorted())
+            staggerFadeCells(at: visible)
         }
     }
 
@@ -1999,7 +2065,9 @@ class BearyFeedViewController: UIViewController {
     /// 任一流失败时由失败行承担，不叠加空态；加载中不闪空态。
     private func updateOverlayState() {
         if isFirstLoad && !plazaFirstDone {
-            // 骨架屏已删：首拉完成前不留占位块，等数据到后直接显。
+            // 加载三件套·骨架屏：首拉完成前骨架行占位，中央转圈不叠加；
+            // 空态不闪（数据到了再定空态/内容/失败行）。
+            if showingSkeleton { centralSpinner.stopSpinning() }
             setEmptyVisible(false)
             updateFootLogo()
             return
@@ -2467,19 +2535,31 @@ class BearyFeedViewController: UIViewController {
 
 // MARK: - UITableViewDataSource / UITableViewDelegate
 
-extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
+extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate, UITableViewDataSourcePrefetching {
 
     func numberOfSections(in tableView: UITableView) -> Int {
         return 1
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        // 加载三件套·骨架屏：无缓存首屏加载时先出 3 张骨架卡（与真实卡片同布局）。
+        if showingSkeleton {
+            didShowSkeleton = true
+            return skeletonRowCount
+        }
         let count = plazaEntries().count
         if plazaError { return count + 1 }
         return count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        // 加载三件套·骨架行（扫光在 cell 内自启动，减动效静态）。
+        if showingSkeleton {
+            if let cell = tableView.dequeueReusableCell(withIdentifier: BearySkeletonCell.reuseIdentifier) as? BearySkeletonCell {
+                return cell
+            }
+            return BearySkeletonCell(style: .default, reuseIdentifier: BearySkeletonCell.reuseIdentifier)
+        }
         // iCity：最近公开模块已删，行序 = [广场正流][失败行]；末页无文字行。
         let entries = plazaEntries()
         if indexPath.row >= 0, indexPath.row < entries.count {
@@ -2546,6 +2626,22 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
         BearyImagePrefetcher.shared.prefetch(entries: entries, lastVisibleIndex: last, viewerId: SessionManager.shared.currentUser?.id)
     }
 
+    // MARK: - 加载三件套·离屏 300px 预加载
+
+    func tableView(_ tableView: UITableView, prefetchRowsAt indexPaths: [IndexPath]) {
+        guard !plazaEntries().isEmpty else { return }
+        BearyLoadingUX.prefetchNearViewport(tableView: tableView, indexPaths: indexPaths, entryForRow: { [weak self] path in
+            guard let self = self else { return nil }
+            let entries = self.plazaEntries()
+            guard path.row < entries.count else { return nil }
+            return entries[path.row]
+        }, viewerId: SessionManager.shared.currentUser?.id)
+    }
+
+    func tableView(_ tableView: UITableView, cancelPrefetchingForRowsAt indexPaths: [IndexPath]) {
+        // 预取只暖缓存、无取消语义（在途预取由 BearyImagePrefetcher 预算管理）。
+    }
+
     private func resumeVisibleEmotesCore() {
         func resume(_ view: UIView) {
             if let emote = view as? BearyEmoteView { emote.play() }
@@ -2576,6 +2672,14 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
             if feedChromeHidden {
                 feedChromeHidden = false
                 SceneDelegate.chrome?.setChromeHidden(false, animated: true)
+            }
+        }
+        // 加载三件套·加载更多：滑到离底部一屏时预加载下一页（willDisplay
+        // 距末尾 3 行是兜底，滚动触发更早一屏；loading/失败/无更多时守卫拦住）。
+        if !plazaLoading, plazaHasMore, !plazaError, !plazaEntries().isEmpty {
+            let remaining = tableView.contentSize.height - (y + tableView.bounds.height - tableView.adjustedContentInset.bottom)
+            if remaining <= tableView.bounds.height {
+                loadPlazaNextPage()
             }
         }
     }

@@ -1720,7 +1720,7 @@ final class BearyDetailViewController: UIViewController {
             let slot = imageSlots[imageIndex]
             slot.tag = imageIndex
             let strip = stripWidth(forKey: imageKey, dims: entry.imgDims, height: 216)
-            bearyFeedLoadImage(into: slot, url: BearyImageURLs.imageURL(key: imageKey, thumb: true), retryButton: imageSlotRetryButtons[imageIndex], downsampleToWidth: strip * UIScreen.main.scale)
+            bearyFeedLoadImage(into: slot, url: BearyImageURLs.imageURL(key: imageKey, thumb: true), retryButton: imageSlotRetryButtons[imageIndex], downsampleToWidth: strip * UIScreen.main.scale, blurUp: true)
             imageSlotWidthConstraints[imageIndex].constant = strip
             slot.isHidden = false
             setLiveOverlay(index: imageIndex, staticKey: imageKey, liveKey: entry.liveVideos?[imageKey])
