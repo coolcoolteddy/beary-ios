@@ -343,9 +343,24 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         return (pixelRect, sourceImage.scale)
     }
 
-    /// 后台裁剪：全尺寸方向归一化重绘 + 按像素裁（UIGraphicsImageRenderer
-    /// 可离主线程用；几何已在主线程快照，本函数不读任何 view 状态）。
+    /// 后台裁剪：非 .up 图先全尺寸方向归一化重绘再按像素裁；.up 图
+    /// 本身已是正向，直接对原 cgImage 按同一套像素矩形裁，跳过无用重绘
+    /// （UIGraphicsImageRenderer 可离主线程用；几何已在主线程快照，
+    /// 本函数不读任何 view 状态）。
     private func cropWithGeometry(_ geometry: (pixelRect: CGRect, scale: CGFloat), source: UIImage) -> UIImage? {
+        if source.imageOrientation == .up {
+            guard let cgImage = source.cgImage else { return nil }
+            let pixelRect = geometry.pixelRect
+            // cgImage 按像素裁：点坐标须乘 scale（size 是 pt，cgImage 是像素）。
+            let cgRect = CGRect(
+                x: pixelRect.minX * source.scale,
+                y: pixelRect.minY * source.scale,
+                width: pixelRect.width * source.scale,
+                height: pixelRect.height * source.scale
+            )
+            guard let croppedCG = cgImage.cropping(to: cgRect) else { return nil }
+            return UIImage(cgImage: croppedCG, scale: source.scale, orientation: .up)
+        }
         let format = UIGraphicsImageRendererFormat()
         format.scale = source.scale
         let normalized = UIGraphicsImageRenderer(size: source.size, format: format).image { _ in
