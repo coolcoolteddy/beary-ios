@@ -447,6 +447,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
 final class BearyDMConversationCell: UITableViewCell {
 
     // C3：头像走统一 BearyAvatarView（44 圆角 22、首字母占位、失败重试内含）。
+    // 审计-性能：头像代次已随 BearyAvatarView 内化（见该组件），本 cell 不再自持。
     private let avatarView = BearyAvatarView()
     private let nameLabel = UILabel()
     private let snippetLabel = UILabel()
@@ -456,13 +457,17 @@ final class BearyDMConversationCell: UITableViewCell {
     private var unreadBadgeMinWidthConstraint: NSLayoutConstraint?
     private var unreadBadgeZeroWidthConstraint: NSLayoutConstraint?
 
-    /// 审计-性能：头像代次已随 BearyAvatarView 内化（见该组件），本 cell 不再自持。
-    private static let conversationTimeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月d日 H:mm"
-        return formatter
-    }()
+    /// 通知时间口径（2026-11-05 Li 定）：不到 1 分钟“刚刚”，不到 1 小时“X分钟前”，
+    /// 不到 24 小时“X小时前”，超过 24 小时写天数“X天前”。
+    private static func relativeTimeText(ms: Int?) -> String {
+        guard let msValue = ms else { return "" }
+        let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
+        let diff = Date().timeIntervalSince(date)
+        if diff < 60 { return "刚刚" }
+        if diff < 3600 { return "\(Int(diff / 60))分钟前" }
+        if diff < 86400 { return "\(Int(diff / 3600))小时前" }
+        return "\(Int(diff / 86400))天前"
+    }
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -555,11 +560,9 @@ final class BearyDMConversationCell: UITableViewCell {
         let snippet = (conversation.lastBody ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         snippetLabel.text = snippet
         snippetLabel.isHidden = snippet.isEmpty
-        // 时间口径与通知行一致（M月d日 H:mm）；逐行新建 DateFormatter 改静态复用
-        //（本 cell 只在主线程 configure，静态 formatter 不跨线程用）。
+        // 时间口径与通知行一致（相对时间：刚刚/X分钟前/X小时前/X天前）。
         if let lastAt = conversation.lastAt {
-            let date = Date(timeIntervalSince1970: TimeInterval(lastAt) / 1000.0)
-            timeLabel.text = Self.conversationTimeFormatter.string(from: date)
+            timeLabel.text = Self.relativeTimeText(ms: lastAt)
         } else {
             timeLabel.text = ""
         }
