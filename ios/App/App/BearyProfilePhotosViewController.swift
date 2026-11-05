@@ -18,8 +18,14 @@ final class BearyProfilePhotosViewController: UIViewController {
     private var photosHasMore: Bool
     private var photosFetching = false
     /// 翻页失败持续态：true 时尾部多一节重试入口；只由显式点按清掉，
-    /// 绝不由 willDisplay 自动重拉（见 fetchNextPageIfNeeded 失败分支）。
+    /// fetchNextPageIfNeeded 有本旗守门，willDisplay 不自动重拉（见守门处注释）。
     private var photosPageLoadFailed = false
+    /// 03：空相册续拉失败持续态——照片为 0 时重试节插进已被隐藏的网格里
+    /// 看不见，改由空态区的重试按钮承载；只由显式点按清掉，不走第 1 节。
+    private var photosEmptyLoadFailed = false
+    /// 08：iPad 内容列 600 居中（≥821）／全宽（≤820）的网格宽约束，
+    /// viewDidLayoutSubviews 里按实宽更新，见 updatePhotosGridWidth。
+    private var collectionViewWidthConstraint: NSLayoutConstraint?
     var onOpenEntry: ((Entry) -> Void)?
 
     /// 审计-个人页设置：全量照片页同样走互关过滤（调用方按实时 followState 传；
@@ -95,6 +101,22 @@ final class BearyProfilePhotosViewController: UIViewController {
         return labelValue
     }()
 
+    /// 03：空相册失败时的重试按钮——重试节在网格里，照片为 0 时网格整个
+    /// 隐藏、节看不见，空态下只能由这个按钮承载重试入口。
+    private lazy var emptyRetryButton: UIButton = {
+        let buttonValue = UIButton(type: .custom)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("重试", for: .normal)
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
+        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
+        buttonValue.accessibilityLabel = "照片没加载出来，点按重试"
+        buttonValue.isHidden = true
+        buttonValue.addTarget(self, action: #selector(emptyRetryButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
@@ -105,6 +127,10 @@ final class BearyProfilePhotosViewController: UIViewController {
         topBarView.addSubview(titleLabel)
         view.addSubview(collectionView)
         view.addSubview(emptyLabel)
+        view.addSubview(emptyRetryButton)
+        // 08：网格不再左右钉满页面——宽约束由 updatePhotosGridWidth 按实宽
+        // 定（≥821 取 600 居中，≤820 取全宽），见 viewDidLayoutSubviews。
+        collectionViewWidthConstraint = collectionView.widthAnchor.constraint(equalToConstant: view.bounds.width)
         NSLayoutConstraint.activate([
             topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -124,16 +150,36 @@ final class BearyProfilePhotosViewController: UIViewController {
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: backButton.trailingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBarView.trailingAnchor, constant: -52),
             collectionView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
-            collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            collectionView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            collectionViewWidthConstraint!,
             collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            emptyRetryButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            emptyRetryButton.topAnchor.constraint(equalTo: emptyLabel.bottomAnchor, constant: 12),
         ])
         updateTitleAndEmpty()
         // 空相册自动续拉：首批无可见照片但仍有下一页时，零格使 willDisplay
         // 永不触发，必须在此主动拉起首轮续拉（见 fetchMoreWhileEmptyIfNeeded）。
         fetchMoreWhileEmptyIfNeeded()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updatePhotosGridWidth()
+    }
+
+    /// 08：网格宽按实宽定——页面宽度 ≥821 时 600 居中、≤820 时全宽，与全站
+    /// iPad 口径一致；只在目标宽变化时改约束并失效布局，不反复触发。
+    private func updatePhotosGridWidth() {
+        let targetWidth: CGFloat = view.bounds.width >= 821 ? 600 : view.bounds.width
+        guard collectionViewWidthConstraint?.constant != targetWidth else { return }
+        collectionViewWidthConstraint?.constant = targetWidth
+        collectionView.collectionViewLayout.invalidateLayout()
+    }
+
+    @objc private func emptyRetryButtonTapped() {
+        retryNextPage()
     }
 
     /// 116 数据填入动效：标题计数变化时只淡入标题本身（alpha 0→1、
@@ -173,10 +219,30 @@ final class BearyProfilePhotosViewController: UIViewController {
         }
     }
 
+    /// 03：空态按状态分流渲染——照片为 0 时：
+    /// 续拉中显“加载中…”；失败显“照片没加载出来”＋空态重试按钮；
+    /// 确认取尽（无更多页）才显“还没有照片”。失败分支也要调本函数，
+    /// 不能只往隐藏的网格里插重试节。
     private func updateTitleAndEmpty() {
         setTitleTextFaded("照片 · \(photosValue.count) 张")
-        emptyLabel.isHidden = !photosValue.isEmpty
-        collectionView.isHidden = photosValue.isEmpty
+        guard photosValue.isEmpty else {
+            emptyLabel.isHidden = true
+            emptyRetryButton.isHidden = true
+            collectionView.isHidden = false
+            return
+        }
+        collectionView.isHidden = true
+        emptyLabel.isHidden = false
+        if photosEmptyLoadFailed {
+            emptyLabel.text = "照片没加载出来"
+            emptyRetryButton.isHidden = false
+        } else if photosHasMore {
+            emptyLabel.text = "加载中…"
+            emptyRetryButton.isHidden = true
+        } else {
+            emptyLabel.text = "还没有照片"
+            emptyRetryButton.isHidden = true
+        }
     }
 
     /// 空相册自动续拉：照片为空且仍有下一页时继续取页，直到出现照片或
@@ -189,7 +255,9 @@ final class BearyProfilePhotosViewController: UIViewController {
     }
 
     private func fetchNextPageIfNeeded() {
-        guard photosHasMore, !photosFetching, let authorId = authorIdValue else { return }
+        // 04：失败后自动入口守门——失败态下 willDisplay 不再自动重拉，只留
+        // 手动重试（尾部重试节 / 空态重试按钮）；点“重试”清掉失败态后才再拉。
+        guard photosHasMore, !photosFetching, !photosPageLoadFailed, !photosEmptyLoadFailed, let authorId = authorIdValue else { return }
         guard let lastEntry = diaryEntriesValue.last, let lastCreated = lastEntry.createdAt, let lastId = lastEntry.id else {
             photosHasMore = false
             return
@@ -222,29 +290,49 @@ final class BearyProfilePhotosViewController: UIViewController {
                     let oldPhotoCount = strongSelf.photosValue.count
                     strongSelf.diaryEntriesValue.append(contentsOf: appended)
                     strongSelf.photosValue = BearyProfileViewController.profilePhotoItems(from: strongSelf.diaryEntriesValue, isOwnProfile: strongSelf.ownProfileValue, isMutualFriend: strongSelf.mutualFriendValue)
-                    // 成功即清持续失败态：本次 reloadData 会把尾部重试节一并撤掉。
+                    // 07：批量更新只插新增格——reloadData 会让所有可见已有格重走
+                    // configure（清图＋转圈再加载），改 insertItems 后已有格保留不重配；
+                    // 新页照片只追加在末尾，新增项即 oldPhotoCount..<新总数。
+                    // 成功即清持续失败态：尾部重试节（如有）在同一批更新里删掉。
+                    let newPhotoCount = strongSelf.photosValue.count
+                    let hadRetrySection = strongSelf.photosPageLoadFailed
                     strongSelf.photosPageLoadFailed = false
-                    strongSelf.collectionView.reloadData()
+                    strongSelf.photosEmptyLoadFailed = false
                     strongSelf.updateTitleAndEmpty()
-                    // 116：续拉新格错峰滑入（已有格不重播）。
-                    strongSelf.staggerNewCells(from: oldPhotoCount)
-                    // 空相册续拉：本页仍无可见照片时继续取下一页；仅当本页
-                    // 确实推进了游标（去重后有新增）才续拉，去重后零新增时
-                    // 不续拉，避免同一游标重复取页死循环。
-                    if strongSelf.photosValue.isEmpty, !appended.isEmpty {
-                        strongSelf.fetchMoreWhileEmptyIfNeeded()
-                    }
+                    strongSelf.collectionView.performBatchUpdates({
+                        if hadRetrySection {
+                            strongSelf.collectionView.deleteSections(IndexSet(integer: 1))
+                        }
+                        if newPhotoCount > oldPhotoCount {
+                            let newPaths = (oldPhotoCount..<newPhotoCount).map { IndexPath(item: $0, section: 0) }
+                            strongSelf.collectionView.insertItems(at: newPaths)
+                        }
+                    }, completion: { _ in
+                        // 116：续拉新格错峰滑入（已有格不重播）；放完成回调里，
+                        // 此时新格已建好，可见判断才准。
+                        strongSelf.staggerNewCells(from: oldPhotoCount)
+                        // 空相册续拉：本页仍无可见照片时继续取下一页；仅当本页
+                        // 确实推进了游标（去重后有新增）才续拉，去重后零新增时
+                        // 不续拉，避免同一游标重复取页死循环。
+                        if strongSelf.photosValue.isEmpty, !appended.isEmpty {
+                            strongSelf.fetchMoreWhileEmptyIfNeeded()
+                        }
+                    })
                 case .failure:
-                    // 109：续拉失败不再封死 hasMore——末项再次进入视野时 willDisplay
-                    // 可再触发 fetchNextPageIfNeeded；同时给一次失败提示（toast，
-                    // 与全 App 失败提示口径一致），已有照片照常看。原“不 toast”
-                    // 口径改为提示，因为静默断流会让用户误以为后面没有照片；
-                    // 失败时不 reload，不会因重建触发 willDisplay 循环重拉。
-                    // 本轮新增：除 toast 外再立一节持续尾部重试入口——只插一节，
-                    // 不 reload 已有照片（保留照片与滚动位置）；末格留屏时用户
-                    // 点尾部按钮即可重试，不再只靠末项重入视野。
+                    // 109：续拉失败不再封死 hasMore，但失败态下 willDisplay 不再
+                    // 自动重拉（fetchNextPageIfNeeded 有失败态守门）；同时给一次
+                    // 失败提示（toast，与全 App 失败提示口径一致），已有照片照常看。
+                    // 原“不 toast”口径改为提示，因为静默断流会让用户误以为后面
+                    // 没有照片；失败时不 reload，不会因重建触发 willDisplay 循环重拉。
+                    // 尾部重试入口——有照片时只插一节，不 reload 已有照片（保留照片
+                    // 与滚动位置）；末格留屏时用户点尾部按钮即可重试。空相册时网格
+                    // 整个隐藏、节插进去也看不见，改由空态重试按钮承载（见 03），
+                    // 不插节。
                     BearyToast.show(in: strongSelf.view, message: "照片加载失败，请稍后重试")
-                    if !strongSelf.photosPageLoadFailed {
+                    if strongSelf.photosValue.isEmpty {
+                        strongSelf.photosEmptyLoadFailed = true
+                        strongSelf.updateTitleAndEmpty()
+                    } else if !strongSelf.photosPageLoadFailed {
                         strongSelf.photosPageLoadFailed = true
                         strongSelf.collectionView.insertSections(IndexSet(integer: 1))
                     }
@@ -255,11 +343,16 @@ final class BearyProfilePhotosViewController: UIViewController {
 
     /// 尾部重试唯一入口：先撤重试节（不 reload，保滚动位置），再走已有
     /// 翻页入口；photosFetching 守门保证点按只触发一次，不自动循环重拉。
+    /// 空相册失败走空态重试按钮进同一入口：只清空态失败态、不删节（没插过节）。
     private func retryNextPage() {
         guard photosHasMore, !photosFetching, authorIdValue != nil else { return }
         if photosPageLoadFailed {
             photosPageLoadFailed = false
             collectionView.deleteSections(IndexSet(integer: 1))
+        }
+        if photosEmptyLoadFailed {
+            photosEmptyLoadFailed = false
+            updateTitleAndEmpty()
         }
         fetchNextPageIfNeeded()
     }
