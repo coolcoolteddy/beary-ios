@@ -48,30 +48,11 @@ enum BearyFollowState {
 
 enum BearyFriends {
 
-    /// 取关二次确认 alert（仅弹框，不发请求）：确认回调由调用方接乐观更新＋请求。
-    /// 文案与 confirmUnfollow 同款（同一 builder，不另起一套 copy）。
+    /// 取关二次确认 alert（仅弹框，不发请求）：确认回调由调用方接乐观更新＋请求
+    ///（搜索页/好友页同款：确认瞬间即显最终态，失败回滚＋拒绝动效）。
+    /// 文案与取关确认框同款（同一 builder，不另起一套 copy）。
     static func confirmUnfollowAlert(from vc: UIViewController, displayName: String, mutual: Bool, onConfirmed: @escaping () -> Void) {
         vc.present(unfollowConfirmAlert(displayName: displayName, mutual: mutual, onConfirmed: onConfirmed), animated: BearyMotion.animated(true))
-    }
-
-    /// 取关二次确认（alert，系统官方样式；确认后才发请求，失败只 toast、不改态；
-    /// 取关不给震动）。mutual 与单向关注的文案分开：互关取关会断双向可见性，
-    /// 单向取关只断自己的关注流。
-    static func confirmUnfollow(from vc: UIViewController, displayName: String, userId: Int, mutual: Bool, onRemoved: @escaping () -> Void) {
-        let alert = unfollowConfirmAlert(displayName: displayName, mutual: mutual) {
-            BearyAPI.shared.unfollowFriend(userId: userId) { result in
-                DispatchQueue.main.async {
-                    switch result {
-                    case .success:
-                        clearDiaryCachesAndNotify()
-                        onRemoved()
-                    case .failure:
-                        BearyToast.show(in: vc.view, message: "取消关注失败，请重试")
-                    }
-                }
-            }
-        }
-        vc.present(alert, animated: BearyMotion.animated(true))
     }
 
     private static func unfollowConfirmAlert(displayName: String, mutual: Bool, onConfirmed: @escaping () -> Void) -> UIAlertController {

@@ -314,8 +314,8 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         // 只有空列表时只显“好友”，不把失败画成 0 人。
         titleLabel.text = friends.isEmpty ? "好友" : "好友 · \(friends.count)人"
         if loadFailed && friends.isEmpty {
-            // 失败态无动作钮（原口径：重试靠下拉），只换承载体。
-            emptyStateView.configure(kind: .error, title: "加载失败", subtitle: "下拉重试", iconName: nil, actionTitle: nil)
+            // 审计 U3：失败态给重试钮（与消息页同款）：点按即重拉；下拉手势仍可用。
+            emptyStateView.configure(kind: .error, title: "加载失败", subtitle: "下拉重试", iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.refresh() })
             emptyStateView.isHidden = false
             setRefreshFailedBannerVisible(false)
         } else if friends.isEmpty {
@@ -351,25 +351,34 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         return cell
     }
 
-    // 审计第 19 项：新行首次出现只做透明度过渡（0.22s，减动效直设终值）；
-    // 已播过的行再次出现（滚动回 / reloadData 更新）只复位 alpha，不重播。
-    // 复用 cell 的 alpha 必须显式复位，否则上行动画中途的 cell 会带着半透明进新行。
+    // 审计 M4：新行首次出现错峰滑入（0.22s、6pt 位移、0.03s 步进、最多延迟 0.24s，
+    // 广场同款；减动效直设终值）；已播过的行再次出现（滚动回 / reloadData 更新）
+    // 只复位 alpha 与 transform，不重播。复用 cell 的 alpha 与 transform 必须显式
+    // 复位，否则上行动画中途的 cell 会带着半透明/位移进新行。
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
         guard indexPath.row < friends.count else { return }
         let user = friends[indexPath.row]
         let key = user.id.map { "friend-\($0)" } ?? "friend-\(user.handle ?? user.displayName ?? "")"
         if fadedRowKeys.contains(key) {
             cell.alpha = 1
+            cell.transform = .identity
             return
         }
         fadedRowKeys.insert(key)
         guard BearyMotion.animated(true) else {
             cell.alpha = 1
+            cell.transform = .identity
             return
         }
+        // 序号取当前可见行中的位置（未计入时退回行号），与广场 stagger 同口径。
         cell.alpha = 0
-        UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: {
+        cell.transform = CGAffineTransform(translationX: 0, y: 6)
+        let visible = (tableView.indexPathsForVisibleRows ?? []).sorted()
+        let order = visible.firstIndex(of: indexPath) ?? indexPath.row
+        let delay = min(Double(order) * 0.03, 0.24)
+        UIView.animate(withDuration: 0.22, delay: delay, options: [.curveEaseOut, .allowUserInteraction], animations: {
             cell.alpha = 1
+            cell.transform = .identity
         })
     }
 
@@ -378,17 +387,46 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         onOpenUser?(friends[indexPath.row])
     }
 
-    /// 行内 ⋯ 菜单：取关为红字 destructive；点取关后再弹一次确认框才发请求
-    ///（取关静默解除，不发通知；成功后清缓存并广播，各列表页据此重拉）。
+    /// 行内 ⋯ 菜单：取关为红字 destructive；点取关后再弹一次确认框，
+    /// 确认瞬间即删行（乐观更新，搜索页同款），失败按原位置恢复＋摇头＋toast，
+    /// 成功后清缓存并广播，各列表页据此重拉（取关静默解除，不发通知）。
     private func presentFriendMenu(user: BearyAPI.FriendUser, sourceButton: UIButton) {
         guard let userId = user.id else { return }
         let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
         sheet.addAction(UIAlertAction(title: "取消关注", style: .destructive) { [weak self] _ in
             guard let self = self else { return }
-            BearyFriends.confirmUnfollow(from: self, displayName: user.displayName ?? "", userId: userId, mutual: true) { [weak self] in
-                self?.friends.removeAll { $0.id == userId }
-                self?.updateTitleAndEmptyState()
-                self?.tableView.reloadData()
+            BearyFriends.confirmUnfollowAlert(from: self, displayName: user.displayName ?? "", mutual: true) { [weak self] in
+                guard let self = self else { return }
+                guard let index = self.friends.firstIndex(where: { $0.id == userId }) else { return }
+                let removed = self.friends[index]
+                self.friends.remove(at: index)
+                self.updateTitleAndEmptyState()
+                self.tableView.deleteRows(at: [IndexPath(row: index, section: 0)], with: .fade)
+                BearyAPI.shared.unfollowFriend(userId: userId) { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        switch result {
+                        case .success:
+                            BearyFriends.clearDiaryCachesAndNotify()
+                        case .failure:
+                            // 失败回滚到原位置；期间重拉已把人带回时只给拒绝动效，不重复插行。
+                            if let currentIndex = self.friends.firstIndex(where: { $0.id == userId }) {
+                                if let cell = self.tableView.cellForRow(at: IndexPath(row: currentIndex, section: 0)) {
+                                    self.playDenyShake(on: cell)
+                                }
+                            } else {
+                                let insertIndex = min(index, self.friends.count)
+                                self.friends.insert(removed, at: insertIndex)
+                                self.updateTitleAndEmptyState()
+                                self.tableView.insertRows(at: [IndexPath(row: insertIndex, section: 0)], with: .none)
+                                if let cell = self.tableView.cellForRow(at: IndexPath(row: insertIndex, section: 0)) {
+                                    self.playDenyShake(on: cell)
+                                }
+                            }
+                            BearyToast.show(in: self.view, message: "取消关注失败，请重试")
+                        }
+                    }
+                }
             }
         })
         sheet.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
@@ -401,6 +439,20 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             popover.permittedArrowDirections = [.up, .down]
         }
         present(sheet, animated: BearyMotion.animated(true))
+    }
+
+    /// 取关失败拒绝动效（点赞同款：摇头＋warning 震动＋拒绝音效，toast 由调用方发；
+    /// 减动效时只跳过视觉抖动，震动与音效照常给）。
+    private func playDenyShake(on view: UIView) {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+        if UIAccessibility.isReduceMotionEnabled { return }
+        view.layer.removeAnimation(forKey: "bearyDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = 0.4
+        view.layer.add(shake, forKey: "bearyDenyShake")
     }
 }
 
