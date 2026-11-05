@@ -481,7 +481,7 @@ final class BearyDraftBoxViewController: UIViewController {
         // 抓手热区仍压在最上层（居中 120 宽，关闭钮在其范围外，不被挡）。
         sheetView.bringSubviewToFront(grabHitView)
 
-        subLabel.font = UIFont.systemFont(ofSize: 12.5)
+        subLabel.font = UIFont.systemFont(ofSize: 12)
         subLabel.textColor = BearyColors.gray
         subLabel.textAlignment = .center
         subLabel.numberOfLines = 0
@@ -498,14 +498,14 @@ final class BearyDraftBoxViewController: UIViewController {
 
         newButton.setTitle("新建日记", for: .normal)
         newButton.setTitleColor(BearyColors.gray, for: .normal)
-        newButton.titleLabel?.font = UIFont.systemFont(ofSize: 13.5)
+        newButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         newButton.tintColor = BearyColors.gray
         if let editImage = BearyIconImages.image(named: "icon_edit", pointSize: 15) {
             newButton.setImage(editImage, for: .normal)
         }
         newButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         newButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 0, bottom: 10, right: 0)
-        // 弹窗审计 E1-10：新建钮原视觉高约 37（13.5pt 字 + 上下各 10 内边距），
+        // 弹窗审计 E1-10：新建钮原视觉高约 37（13pt 字 + 上下各 10 内边距），
         // 未达 44。最小 44 高约束补足热区；
         // 外包 wrap 上缘 = 钮上缘、下缘留 12pt 底边距，44 帧完整落在 wrap 内，
         // 不被父容器截断；文案与位置不变，只虚线框高一档。
@@ -525,12 +525,12 @@ final class BearyDraftBoxViewController: UIViewController {
         undoBar.layer.masksToBounds = true
         undoBar.translatesAutoresizingMaskIntoConstraints = false
         undoLabel.text = "草稿已删除"
-        undoLabel.font = UIFont.systemFont(ofSize: 13.5)
+        undoLabel.font = UIFont.systemFont(ofSize: 13)
         undoLabel.textColor = BearyColors.ink
         undoLabel.translatesAutoresizingMaskIntoConstraints = false
         undoButton.setTitle("撤销", for: .normal)
         undoButton.setTitleColor(BearyColors.ink, for: .normal)
-        undoButton.titleLabel?.font = UIFont.systemFont(ofSize: 13.5, weight: .semibold)
+        undoButton.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
         undoButton.translatesAutoresizingMaskIntoConstraints = false
         undoButton.addTarget(self, action: #selector(undoDeleteTapped), for: .touchUpInside)
         undoButton.bearyAddPressFeedback()
@@ -969,7 +969,7 @@ final class BearyDraftBoxViewController: UIViewController {
             // D-G13：网页 .df-chip.df-lost 为 faint 底 + 灰字 + 500 字重；
             // 原 App 红底红字 semibold 改齐。
             lostButton.setTitleColor(BearyColors.gray, for: .normal)
-            lostButton.titleLabel?.font = UIFont.systemFont(ofSize: 11.5, weight: .medium)
+            lostButton.titleLabel?.font = UIFont.systemFont(ofSize: 12, weight: .medium)
             lostButton.backgroundColor = BearyColors.faint
             lostButton.layer.cornerRadius = 999
             lostButton.layer.masksToBounds = true
@@ -994,7 +994,7 @@ final class BearyDraftBoxViewController: UIViewController {
         let statusLabel = UILabel()
         // L7：状态文案必保全，不被长 chip 挤走。
         statusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        statusLabel.font = UIFont.systemFont(ofSize: 12.5, weight: .semibold)
+        statusLabel.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
         statusLabel.text = saveStatusText(status)
         switch status {
         case .saved, .partial:
@@ -1095,7 +1095,7 @@ final class BearyDraftBoxViewController: UIViewController {
         }
         let label = UILabel()
         label.text = name
-        label.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
+        label.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
         label.textColor = BearyColors.ink
         // L7：chip label 省略号 + 低压缩，chip 本身设最大宽，不挤走状态文案。
         label.numberOfLines = 1
@@ -1136,13 +1136,13 @@ final class BearyDraftBoxViewController: UIViewController {
         // 状态文案的 required 抗压缩不动。chip 整体 180 上限保留作兜底。
         let prefixLabel = UILabel()
         prefixLabel.text = "@"
-        prefixLabel.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
+        prefixLabel.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
         prefixLabel.textColor = BearyColors.ink
         prefixLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         row.addArrangedSubview(prefixLabel)
         let label = UILabel()
         label.text = name
-        label.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
+        label.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
         label.textColor = BearyColors.ink
         label.numberOfLines = 1
         label.lineBreakMode = .byTruncatingTail
