@@ -275,18 +275,25 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 分页中断并解（#784）：中断且续拉游标还在时从游标续拉，已收页
     /// 与去重集保留、成功后整批成表，不从头重拉、不丢已收页；无游标
     /// 时（首页面失败）仍从头重拉。
+    /// 触顶续拉（审计新一轮 03）：触顶且游标还在时从第 10 页末尾游标续拉
+    /// 新一批（page 从 1 重新计、最多再 10 页），已收页与去重集保留、
+    /// 成功后整批成表；失败时走失败分支保留已加载内容（fetchInterrupted
+    /// 优先于 fetchCapped，下次点按即从中断处续拉）。
     @objc private func didTapInlineRetry() {
         inlineRetryButton.isHidden = true
         if fetchInterrupted, let before = fetchResumeBefore, let beforeId = fetchResumeBeforeId {
             loadGeneration += 1
             fetchEntriesPage(before: before, beforeId: beforeId, page: fetchResumePage, generation: loadGeneration)
+        } else if fetchCapped, let before = fetchResumeBefore, let beforeId = fetchResumeBeforeId {
+            loadGeneration += 1
+            fetchEntriesPage(before: before, beforeId: beforeId, page: 1, generation: loadGeneration)
         } else {
             setStatusTextFaded("加载中…")
             fetchAllEntries()
         }
     }
 
-    // MARK: - 数据：游标分页拉全量（上限 10 页防无界；不是轮询）
+    // MARK: - 数据：游标分页拉全量（每批上限 10 页防无界；触顶可按需续拉新一批；不是轮询）
     // 分页状态放属性里、不用嵌套递归逃逸闭包：重拉时 generation +1，旧页回包一律丢弃。
 
     private var fetchCollected: [Entry] = []
@@ -297,6 +304,10 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     private var fetchResumeBeforeId: String?
     private var fetchResumePage: Int = 1
     private var fetchInterrupted: Bool = false
+    /// 是否触及分页上限（审计新一轮 03，星图同款口径）：本批 10 页已满、
+    /// 末页仍满页，后面可能还有——状态行须明示部分数据，不能把截断后
+    /// 的 500 篇当总数报；为 true 时状态行旁留“加载更多”入口供按需续拉。
+    private var fetchCapped: Bool = false
     /// 本轮拉取开始时是否已有数据（调用方初始日记或上一轮成功数据）：
     /// 有旧数据时失败只保留旧表、不拿部分页替换整表；无旧数据时
     /// 部分页才成表（星图 #732 同款口径）。
@@ -311,6 +322,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         fetchResumeBeforeId = nil
         fetchResumePage = 1
         fetchInterrupted = false
+        fetchCapped = false
+        inlineRetryButton.setTitle("重试", for: .normal)
         inlineRetryButton.isHidden = true
         fetchEntriesPage(before: nil, beforeId: nil, page: 1, generation: loadGeneration)
     }
@@ -350,6 +363,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                         } else {
                             self.fetchInterrupted = true
                             self.setStatusTextFaded("仅展示已加载的部分，点按重试")
+                            self.inlineRetryButton.setTitle("重试", for: .normal)
                             self.inlineRetryButton.isHidden = false
                         }
                     } else {
@@ -359,6 +373,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                         // 不从头重拉、不丢已收页。
                         self.fetchInterrupted = self.fetchResumeBefore != nil
                         self.setStatusTextFaded("网络失败，显示已加载的日记")
+                        self.inlineRetryButton.setTitle("重试", for: .normal)
                         self.inlineRetryButton.isHidden = false
                     }
                 case .success(let list):
@@ -378,9 +393,24 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                         self.fetchEntriesPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
                         return
                     }
+                    // 触顶（审计新一轮 03，星图同款口径）：本批 10 页已满、末页仍满页，
+                    // 后面可能还有——记 fetchCapped，状态行明示部分数据（见 regroupAndGeocode），
+                    // 并留下游标供按需续拉（didTapInlineRetry 触顶分支：新一批从 page 1 重新计，
+                    // 最多再 10 页；失败重试仍走原 fetchInterrupted 分支，游标与页码不动）。
+                    self.fetchCapped = pageEntries.count >= 50 && page >= 10
+                    if self.fetchCapped, let cursor = last?.createdAt, let lastId = last?.id {
+                        self.fetchResumeBefore = cursor
+                        self.fetchResumeBeforeId = lastId
+                        self.fetchResumePage = 1
+                    } else if self.fetchCapped {
+                        // 末页满页却无游标：无法续拉，清掉旧游标、不留“加载更多”入口。
+                        self.fetchResumeBefore = nil
+                        self.fetchResumeBeforeId = nil
+                    }
                     self.failureStateView.isHidden = true
                     self.fetchInterrupted = false
-                    self.inlineRetryButton.isHidden = true
+                    self.inlineRetryButton.isHidden = !(self.fetchCapped && self.fetchResumeBefore != nil)
+                    self.inlineRetryButton.setTitle(self.fetchCapped ? "加载更多" : "重试", for: .normal)
                     self.allEntries = self.fetchCollected
                     self.regroupAndGeocode()
                 }
@@ -411,7 +441,14 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             tableView.reloadData()
             return
         }
-        statusLabel.text = "共 \(allEntries.filter { !DiaryLocation(entry: $0).isEmpty }.count) 篇带位置日记 · \(groups.count) 个地点"
+        var status = "共 \(allEntries.filter { !DiaryLocation(entry: $0).isEmpty }.count) 篇带位置日记 · \(groups.count) 个地点"
+        if fetchCapped {
+            // 触顶明示（审计新一轮 03，星图同款口径）：“篇数较多，仅展示最近拉取的
+            // 500 篇”——续拉后总数会变，故用实际已加载数，不写死 500；500 篇时与
+            // 星图文案一字相同。
+            status += " · 篇数较多，仅展示最近拉取的 \(allEntries.count) 篇"
+        }
+        statusLabel.text = status
         // 先展示已有列表与已命中的坐标缓存：清掉上一轮标记、列表即时刷新，
         // 缓存组一次成图；未缓存的组随后串行编码、逐批补标记。
         unlocatedGroups = []
