@@ -880,8 +880,20 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                     hideNeighbor()
                     tx = 0
                     ty = 0
-                    resetDismissDragAppearance()
-                    applyTransform(animated: true)
+                    if UIAccessibility.isReduceMotionEnabled {
+                        resetDismissDragAppearance()
+                        applyTransform(animated: false)
+                    } else {
+                        // 审计残留第 10 项：背景/chrome 复位原在动画块外
+                        // 同步调用，瞬间跳回、图片却随后滑回，视觉错位；
+                        // 现与图片回弹放进同一动画块，时长/目标态与原
+                        // applyTransform(animated: true) 一致（0.25s），
+                        // 阈值与弹簧参数均不动。
+                        UIView.animate(withDuration: 0.25, animations: {
+                            self.resetDismissDragAppearance()
+                            self.applyTransform(animated: false)
+                        })
+                    }
                 }
                 return
             }
