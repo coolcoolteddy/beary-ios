@@ -182,7 +182,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var followButtonUserIds: [UIButton: Int] = [:]
     private var followButtonsByUserId: [Int: UIButton] = [:]
     // 按钮普查（#672 同款口径）：搜索关注钮乐观更新＋定宽＋代次防过期回包。
-    private var followActionSeqByUserId: [Int: Int] = [:]
+    // 第十一轮 06：关注/取关写操作每次分配唯一请求标识（UUID），不复用按用户
+    // 递增的 Int 序号——旧序号在 clearResultRows 里归零后，新操作序号又从 1
+    // 开始，旧操作迟到回包恰好通过序号检查、错误更新确认态甚至回滚新乐观态；
+    // UUID 永不重复，归零撞号从根上消失；回调同时校验账号，切号后旧回包不得
+    // 更新新号确认态。只允许当前操作更新确认态。
+    private var followActionRequestByUserId: [Int: UUID] = [:]
     private var confirmedFollowStates: [Int: BearyFollowState] = [:]
     private var followButtonWidthConstraints: [Int: NSLayoutConstraint] = [:]
     private var followButtonMeasuredCategory: UIContentSizeCategory?
@@ -1606,7 +1611,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         followButtonsByUserId = [:]
         followStates = [:]
         followStateLoadingIds = []
-        followActionSeqByUserId = [:]
+        // 第十一轮 06：清表照常——请求标识是 UUID，旧回包的标识永不与新操作
+        // 相同，清表后旧回包直接丢弃（与本文件其他守卫同口径），不存在归零撞号。
+        followActionRequestByUserId = [:]
         confirmedFollowStates = [:]
         followButtonWidthConstraints = [:]
         entryButtons = []
@@ -2490,8 +2497,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             // 快连点按最后一次点按的态显示，过期在途回包直接丢弃。
             let wasFollowedBy = state == .followedBy
             let target: BearyFollowState = wasFollowedBy ? .mutual : .following
-            followActionSeqByUserId[userId, default: 0] += 1
-            let requestSeq = followActionSeqByUserId[userId] ?? 0
+            // 第十一轮 06：每次操作分配唯一请求标识并捕获账号；回调同时校验
+            // 标识与账号，只允许当前操作更新确认态。
+            let requestId = UUID()
+            followActionRequestByUserId[userId] = requestId
+            let requestAccountId = SessionManager.shared.currentUser?.id
             followStates[userId] = target
             if let button = followButtonsByUserId[userId] {
                 applyFollowButtonState(button, userId: userId)
@@ -2499,7 +2509,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             BearyAPI.shared.followFriend(userId: userId) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
-                    guard requestSeq == self.followActionSeqByUserId[userId] else { return }
+                    guard requestId == self.followActionRequestByUserId[userId],
+                          requestAccountId == SessionManager.shared.currentUser?.id else { return }
                     switch result {
                     case .success:
                         self.confirmedFollowStates[userId] = target
@@ -2524,8 +2535,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             BearyFriends.confirmUnfollowAlert(from: self, displayName: "", mutual: state == .mutual) { [weak self] in
                 guard let self = self else { return }
                 let target: BearyFollowState = state == .mutual ? .followedBy : .none
-                self.followActionSeqByUserId[userId, default: 0] += 1
-                let requestSeq = self.followActionSeqByUserId[userId] ?? 0
+                // 第十一轮 06：同关注路——唯一请求标识＋账号双重校验。
+                let requestId = UUID()
+                self.followActionRequestByUserId[userId] = requestId
+                let requestAccountId = SessionManager.shared.currentUser?.id
                 self.followStates[userId] = target
                 if let button = self.followButtonsByUserId[userId] {
                     self.applyFollowButtonState(button, userId: userId)
@@ -2533,7 +2546,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 BearyAPI.shared.unfollowFriend(userId: userId) { [weak self] result in
                     DispatchQueue.main.async {
                         guard let self = self else { return }
-                        guard requestSeq == self.followActionSeqByUserId[userId] else { return }
+                        guard requestId == self.followActionRequestByUserId[userId],
+                              requestAccountId == SessionManager.shared.currentUser?.id else { return }
                         switch result {
                         case .success:
                             self.confirmedFollowStates[userId] = target
