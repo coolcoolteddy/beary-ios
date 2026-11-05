@@ -75,6 +75,10 @@ final class BearyInviteViewController: UIViewController {
         return code.range(of: "^[A-Z0-9]{8}$", options: .regularExpression) != nil
     }
     private var isLoading = false
+    /// 第六轮 04：邀请码跨账号回填——每次 load() 发起时 +1 的请求代次。
+    /// 切号（.bearyUserDidChange）时再 +1 作废在途回包；回包先比代次，
+    /// 失配直接丢弃，不写邀请码/统计/plusUntil、不碰 isLoading（新请求已接管）。
+    private var inviteLoadGeneration = 0
     private var isBinding = false
     private var copyTimer: Timer?
     /// 上次写入的弹窗高度（updatePreferredSheetHeight 的幂等守卫）。
@@ -102,6 +106,9 @@ final class BearyInviteViewController: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(inviteKeyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(inviteKeyboardWillShow(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(inviteKeyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+        // 第六轮 04：页开着切号时清旧邀请码——在途回包凭代次丢弃，
+        // 已画好的旧码/统计/plusUntil 立即清除后按新账号重拉。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleUserChanged), name: .bearyUserDidChange, object: nil)
         // 52 批：先定一次非 0 首帧高，避免呈现层首帧以 preferred=0 走 88%/80% 满高封顶；
         // 布局落定后 viewDidLayoutSubviews 再按真实宽与安全区纠正。
         updatePreferredSheetHeight()
@@ -450,6 +457,14 @@ final class BearyInviteViewController: UIViewController {
     private func load(afterRender: (() -> Void)? = nil) {
         guard !isLoading else { return }
         isLoading = true
+        // 第六轮 04：发起时同时拍本地代次、会话代次与账号（通知页／编辑器
+        // 引用面板／设置页 meGeneration 同款口径）；回包先比三者，任一失配
+        // 说明回包属于旧账号，直接丢弃。光靠 isLoading 防重复不够——
+        // 它只拦并发新请求，拦不住已在途的旧请求回包。
+        inviteLoadGeneration += 1
+        let requestGeneration = inviteLoadGeneration
+        let requestEpoch = BearyAPI.shared.authEpoch
+        let requestAccountId = BearyAPI.shared.authAccountId
         retryButton.isHidden = true
         // U6：加载中统计区显示“加载中…”，复制钮在拿到码之前禁用。
         setLabelTextFaded(statsLabel, "加载中…")
@@ -457,6 +472,11 @@ final class BearyInviteViewController: UIViewController {
         BearyAPI.shared.fetchMe { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
+                // 第六轮 04：旧账号回包丢弃——不写邀请码/统计/plusUntil，
+                // 不清 isLoading（新请求已接管转圈）、不跑 afterRender。
+                guard requestGeneration == strongSelf.inviteLoadGeneration,
+                      requestEpoch == BearyAPI.shared.authEpoch,
+                      requestAccountId == BearyAPI.shared.authAccountId else { return }
                 strongSelf.isLoading = false
                 switch result {
                 case .success(let user):
@@ -505,6 +525,25 @@ final class BearyInviteViewController: UIViewController {
                 }
             }
         }
+    }
+
+    /// 第六轮 04：切号后清除旧邀请码——旧码/统计/plusUntil 与旧账号的
+    /// 绑定成功文案均为旧账号数据，立即清掉、不留一帧；代次 +1 让在途
+    /// 旧回包到达时被 load() 回包守卫丢弃；isLoading 复位后按新账号重拉
+    /// （未登录时走现行 onRequireLogin 路径）。render() 先把清空态画出来
+    /// （码回“—”、统计回“加载中…”、绑定区收起），再发新请求，中间不闪旧码。
+    /// 绑定输入框是用户刚 typed 的好友邀请码，与账号无关，不动；
+    /// 容器是否关邀请弹窗不在本页管辖，不动。
+    @objc private func handleUserChanged() {
+        inviteLoadGeneration += 1
+        isLoading = false
+        inviteCode = nil
+        referral = nil
+        plusUntil = nil
+        pendingBindMessage = nil
+        pendingBindMessageOK = false
+        render()
+        load()
     }
 
     /// 网页 ivRender 同口径：先画码与统计，再按 bound/bind_open 画绑定区，并清空消息。
