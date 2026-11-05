@@ -218,7 +218,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     private let textView = UITextView()
     private let placeholderLabel = UILabel()
     private let attachLabelButton = UIButton(type: .custom)
-    private let attachClearButton = UIButton(type: .system)
+    // Hit44：行高由左钮 44 钉死、居中对齐，清除钮纵向扩区恰填满行高；横向各扩约 7，不及左间距 8 与右 inset 14，不抢左钮热区。
+    private let attachClearButton = BearyHit44Button(type: .system)
     private let submitButton = BearyButton.make(style: .primaryPill(.ink), title: "撰写反馈邮件")
     private let shareButton = BearyButton.make(style: .secondaryOutline(.regular), title: "分享诊断日志")
     private let logOnlyButton = BearyButton.make(style: .secondaryOutline(.regular), title: "仅发送日志")

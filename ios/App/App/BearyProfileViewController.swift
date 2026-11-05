@@ -4906,7 +4906,8 @@ class BearyProfileViewController: UIViewController {
             thisDayExpandButton.setImage(BearyIconImages.image(named: thisDayExpanded ? "icon_chevron_up" : "icon_chevron_down", pointSize: 14), for: .normal)
             for entry in history.entries {
                 guard let entryId = entry.id else { continue }
-                let rowButton = UIButton(type: .system)
+                // Hit44：行高 ≥32、栈间距 8，上下各扩 6 不及间距，不抢邻行热区；视觉不动。
+                let rowButton = BearyHit44Button(type: .system)
                 rowButton.translatesAutoresizingMaskIntoConstraints = false
                 rowButton.setTitle(personalTitle(entry: entry), for: .normal)
                 rowButton.setTitleColor(BearyColors.ink, for: .normal)
