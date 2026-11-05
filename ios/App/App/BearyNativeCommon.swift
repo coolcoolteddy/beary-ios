@@ -469,8 +469,10 @@ final class BearyImageLoader {
 
     /// 审计 22/23 项：按账号桶的缓存代次。purgeAccount 与
     /// evictEntryImages（权限变化）推进对应桶代次；在途写入在落盘
-    /// （内存 + 磁盘）前再次校验代次，代次已变即弃写不落盘。切换账号
-    /// 不推进代次（旧桶磁盘保留、切回可复用，见 setAccount 注释）。
+    /// （内存 + 磁盘）前再次校验代次，代次已变即弃写不落盘。磁盘落盘的
+    /// 校验与写入在 diskWriteLock 同一临界区内完成（见 writeDisk），
+    /// purge 的代次推进与目录删除在同一锁内，两者互斥、窗口闭合。
+    /// 切换账号不推进代次（旧桶磁盘保留、切回可复用，见 setAccount 注释）。
     private let generationLock = NSLock()
     private var generations: [String: UInt64] = [:]
 
@@ -555,19 +557,30 @@ final class BearyImageLoader {
 
     /// 账号隔离 4 号：退出/会话失效时清掉该账号的全部缓存——内存全清
     ///（NSCache 不可按 key 枚举，故全清；重建成本低）+ 该账号磁盘目录删除。
-    /// 审计 22 项：先推进该桶代次、取消该桶旧订阅，再清内存、删目录。
-    /// 代次屏障使删除前已在途、删除后才到写盘点的旧写入被弃写，
-    /// 不再重新创建刚删除的旧账号缓存；取消订阅使仍在途的网络任务
-    /// 在完成回调守卫处即被丢弃（不再分发、不再落盘）。
+    /// 审计 22 项：取消该桶旧订阅、清内存，再在锁内推进代次并删目录。
+    /// 取消订阅使仍在途的网络任务在完成回调守卫处即被丢弃（不再分发、
+    /// 不再落盘）。
+    /// 第十轮 08：代次推进与目录删除须与写盘的“代次校验＋落盘”在同一把
+    /// 锁（diskWriteLock）下原子完成——只在写盘点之前校验代次是不够的，
+    /// 旧写入通过校验后、purge 删目录后才写盘，就会重建刚删除的目录；
+    /// 此前注释所谓“代次屏障使旧写入被弃写”承诺大于代码保证。现写盘侧
+    /// 在同一锁内先验代次再落盘，本方法在同一锁内先推进代次再删目录，
+    /// 两者任一先行，最终状态都是目录已删、旧写入未落盘。
     func purgeAccount(_ id: Int) {
-        bumpGeneration(for: id)
         // 审计 r1-images 第 2 项：整桶逐出戳，交付时核对（见 finishDelivery）。
         recordEvictionStamps(prefixes: ["\(bucketName(id))|"], bucket: id)
         cancelInFlight(forBucket: id)
         cache.removeAllObjects()
-        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
-        let dir = caches.appendingPathComponent("BearyImageCache").appendingPathComponent("\(id)")
-        try? FileManager.default.removeItem(at: dir)
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("BearyImageCache").appendingPathComponent("\(id)")
+        // 代次推进与目录删除在 diskWriteLock 内原子完成（见本方法注释）；
+        // 写盘侧的校验＋落盘在同一锁内，两者互斥，旧写入不再重建目录。
+        diskWriteLock.lock()
+        bumpGeneration(for: id)
+        if let dir = dir {
+            try? FileManager.default.removeItem(at: dir)
+        }
+        diskWriteLock.unlock()
         // 审计三轮 23 项：目录已删，累计字节随之作废（下次写该桶时重新校准一次）。
         diskCacheLock.lock()
         diskCacheTotals["\(id)"] = nil
@@ -749,12 +762,24 @@ final class BearyImageLoader {
     /// （两次 oldSize 均为 0、两次 delta 均为 N，累计多算 N）。
     /// 与 diskCacheLock 分开：本锁释放后才调 enforceDiskCacheCap（其内
     /// 持 diskCacheLock），两锁永不嵌套，无死锁。
+    /// 第十轮 08：本锁同时是写盘与清理的共享锁——代次校验与落盘在同一
+    /// 临界区内完成（调用方传入发起时代次，过期即弃写、不建目录、不调
+    /// 用量淘汰）；purgeAccount 在同一锁内先推进代次再删目录。网络回调
+    /// 处的校验仍保留作廉价前置过滤，权威门控在本函数内。
+    /// 锁顺序：本锁 → generationLock（校验时代次读），与 purgeAccount
+    /// 一致；generationLock 内不取任何其他锁，无反向嵌套，无死锁。
     private let diskWriteLock = NSLock()
 
-    private func writeDisk(data: Data, for url: URL, bucket: Int?) {
+    private func writeDisk(data: Data, for url: URL, bucket: Int?, generation: UInt64) {
         guard let file = diskFileURL(for: url, bucket: bucket) else { return }
-        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         diskWriteLock.lock()
+        // 第十轮 08：权威代次门控——校验与落盘同一临界区，过期写入在
+        // 建目录之前即被丢弃，不会重建刚被 purge 删掉的桶目录。
+        guard generation == self.generation(for: bucket) else {
+            diskWriteLock.unlock()
+            return
+        }
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         let oldSize = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
         try? data.write(to: file, options: .atomic)
         // 原子写失败时旧文件仍在，newSize == oldSize，delta 为 0，不污染累计值。
@@ -1074,9 +1099,11 @@ final class BearyImageLoader {
                 if capturedGeneration == self.generation(for: bucket) {
                     Self.diskAndDecodeQueue.async { [weak self] in
                         guard let self = self else { return }
-                        // 落盘时重验代次：排队期间 purge/evict 推进代次后弃写。
+                        // 第十轮 08：此处校验是廉价前置过滤；权威门控在 writeDisk 内——
+                        // 同一 diskWriteLock 临界区里先验代次再落盘，purge 在同一锁内
+                        // 先推进代次再删目录，校验与写盘之间不再有窗口。
                         guard capturedGeneration == self.generation(for: bucket) else { return }
-                        self.writeDisk(data: data, for: url, bucket: bucket)
+                        self.writeDisk(data: data, for: url, bucket: bucket, generation: capturedGeneration)
                     }
                 }
             }
