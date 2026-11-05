@@ -5065,6 +5065,11 @@ class BearyProfileViewController: UIViewController {
                 BearyToast.show(in: view, message: "留话已满 200 条，等待中的留话不能丢，撤回一句或等送达后再写")
                 return
             }
+            // 审计新一轮 05：本地存储读不出来，旧留话还保留着，先别写新的。
+            if store.lastRejection == .storeCorrupt {
+                BearyToast.show(in: view, message: "留话暂时读不出来，旧的还留着，等恢复后再写")
+                return
+            }
             BearyToast.show(in: view, message: "这篇已留过话，明年见")
             pastSelfComposingThisDay = false
             renderPastSelf(visible: pastSelfVisibleEntries())
@@ -5400,6 +5405,11 @@ class BearyProfileViewController: UIViewController {
             // 审计登录杂项：同上，等待中超限时只提示、不清回复态与草稿。
             if store.lastRejection == .waitingCapped {
                 BearyToast.show(in: view, message: "留话已满 200 条，等待中的留话不能丢，撤回一句或等送达后再写")
+                return
+            }
+            // 审计新一轮 05：本地存储读不出来，旧留话还保留着，先别写新的。
+            if store.lastRejection == .storeCorrupt {
+                BearyToast.show(in: view, message: "留话暂时读不出来，旧的还留着，等恢复后再写")
                 return
             }
             BearyToast.show(in: view, message: "这串已留过话，明年见")
