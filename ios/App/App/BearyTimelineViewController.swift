@@ -2228,13 +2228,10 @@ class BearyTimelineViewController: UIViewController {
             }
         }
     }
-    /// 落盘读：命中则同步回填内存（调用方按内存命中同款处理 + 静默刷新）。
-    private func diskCachedDayEntries(key: String) -> [Entry]? {
-        guard let uid = SessionManager.shared.currentUser?.id,
-              let disk = BearyEntrySyncStore.loadDay(accountId: uid, dayKey: key) else { return nil }
-        dayEntriesCache[key] = disk
-        return disk
-    }
+    /// 审计四轮增量 06：切日落盘读专用串行队列——单日落盘文件通常不大，
+    /// 但 Data(contentsOf:)＋JSON 解码仍在切日首帧上；内存未命中时读盘
+    /// 改走这里，回主线程后按代次/选中日/账号复核再更新面板。
+    private let dayDiskReadQueue = DispatchQueue(label: "beary.timeline.day-disk-read")
     /// 账号切换时清日缓存：内存日缓存与预取在途集合都不跨账号（落盘已按 uid
     /// 分桶，不动）；由 SceneDelegate onUserChanged 的 userChanged 分支在
     /// reloadTimeline 之前调用，登录与退出两个方向都覆盖。时间线 VC 换账号
@@ -5201,6 +5198,41 @@ class BearyTimelineViewController: UIViewController {
 
     // MARK: - 当日面板（TL-7/TL-8）
 
+    /// 审计四轮增量 06：缓存命中面板（内存命中与落盘回填后共用）——
+    /// 整表重载仍保留：换日整表重载是 66 包闪退修法，缓存使重载直接渲染
+    /// 出数据，不再有“空面板等网络”的白屏，时间线行因数据未变不闪
+    /// （reloadData 本身不播入场动效；新面板行走 N3 错峰）。
+    /// 后台静默刷新：不清面板、不闪，数据变了才对齐（见回包分支）。
+    private func showCachedDayPanel(entries: [Entry], key: String, reduceMotion: Bool) {
+        dayEntries = entries
+        dayEntriesKey = key
+        dayState = .loaded
+        tableView.reloadData()
+        updateChrome()
+        refreshHeaderHeight()
+        if reduceMotion == false {
+            daySwitchStagger = Dictionary(uniqueKeysWithValues: entries.indices.map { (IndexPath(row: $0, section: 0), $0) })
+            daySwitchGeneration = staggerGeneration
+            daySwitchTitleFade = true
+        }
+        fetchDayEntries(key: key, clear: false)
+    }
+
+    /// 审计四轮增量 06：缓存未命中面板（与缓存命中分支对称抽出）——
+    /// 切日闪退修：换日分支不再走 reloadSections——点按驱动的更新
+    /// 上下文里分段数守卫也挡不住 UIKit Invalid Batch Updates，改整表重载。
+    /// N3：换日回包到达时给新行错峰（见 fetchDayEntries 回包分支）。
+    private func showNetworkDayPanel(key: String, reduceMotion: Bool) {
+        tableView.reloadData()
+        updateChrome()
+        refreshHeaderHeight()
+        if reduceMotion == false {
+            daySwitchTitleFade = true
+        }
+        daySwitchArrivalKey = key
+        fetchDayEntries(key: key, clear: true)
+    }
+
     private func didSelectCalendarDay(_ day: BearyCalendarDay) {
         selectDay(key: day.key)
     }
@@ -5250,41 +5282,40 @@ class BearyTimelineViewController: UIViewController {
         let reduceMotion = UIAccessibility.isReduceMotionEnabled
         let commitDaySwitch = { [weak self] in
             guard let self = self, self.staggerGeneration == switchGeneration, self.selectedDayKey == key else { return }
-            // 缓存分两层：内存命中，或落盘命中（全量同步/既往日拉取已落盘；
-            // 落盘命中时同步回填内存，同款处理 + 静默刷新）。
+            // 缓存分两层：内存命中即时显示，落盘命中异步读盘后回填内存、
+            // 再按内存命中同款处理 + 静默刷新。
             // 筛子档不读日缓存：缓存是全部档行，命中会先闪出非本档行、
             // 再由带 vis 的静默刷新纠正——“只出对应篇”不容这一帧。
             // 筛子档直接走下方网络分支（带 vis）。
-            if self.timelineVisFilter == .all, let cached = self.dayEntriesCache[key] ?? self.diskCachedDayEntries(key: key) {
-                // N2 缓存命中：整表重载仍保留——换日整表重载是 66 包闪退修法，
-                // 本批不动该回归点；缓存使重载直接渲染出数据，不再有
-                // “空面板等网络”的白屏，时间线行因数据未变不闪（reloadData
-                // 本身不播入场动效；新面板行走下方 N3 错峰）。
-                self.dayEntries = cached
-                self.dayEntriesKey = key
-                self.dayState = .loaded
-                self.tableView.reloadData()
-                self.updateChrome()
-                self.refreshHeaderHeight()
-                if reduceMotion == false {
-                    self.daySwitchStagger = Dictionary(uniqueKeysWithValues: cached.indices.map { (IndexPath(row: $0, section: 0), $0) })
-                    self.daySwitchGeneration = self.staggerGeneration
-                    self.daySwitchTitleFade = true
+            if self.timelineVisFilter == .all, let cached = self.dayEntriesCache[key] {
+                self.showCachedDayPanel(entries: cached, key: key, reduceMotion: reduceMotion)
+            } else if self.timelineVisFilter == .all {
+                // 审计四轮增量 06：内存未命中时落盘读改异步——Data(contentsOf:)
+                // ＋JSON 解码不再占切日首帧。面板先不动（旧日行已退场淡出），
+                // 读完回主线程复核代次/选中日/账号，通过才回填内存并按命中/
+                // 未命中分流；期间用户又切日/清选区/切号/改筛子（筛子改动
+                // 同样 +1 代际），过期结果直接丢弃，由新的 selectDay 流程接管。
+                let requestAccountId = SessionManager.shared.currentUser?.id
+                self.dayDiskReadQueue.async { [weak self] in
+                    let disk: [Entry]? = {
+                        guard let uid = requestAccountId else { return nil }
+                        return BearyEntrySyncStore.loadDay(accountId: uid, dayKey: key)
+                    }()
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self,
+                              self.staggerGeneration == switchGeneration,
+                              self.selectedDayKey == key,
+                              SessionManager.shared.currentUser?.id == requestAccountId else { return }
+                        if let disk = disk {
+                            self.dayEntriesCache[key] = disk
+                            self.showCachedDayPanel(entries: disk, key: key, reduceMotion: reduceMotion)
+                        } else {
+                            self.showNetworkDayPanel(key: key, reduceMotion: reduceMotion)
+                        }
+                    }
                 }
-                // 后台静默刷新：不清面板、不闪，数据变了才对齐（见回包分支）。
-                self.fetchDayEntries(key: key, clear: false)
             } else {
-                // 切日闪退修：换日分支不再走 reloadSections——点按驱动的更新
-                // 上下文里分段数守卫也挡不住 UIKit Invalid Batch Updates，改整表重载。
-                self.tableView.reloadData()
-                self.updateChrome()
-                self.refreshHeaderHeight()
-                if reduceMotion == false {
-                    self.daySwitchTitleFade = true
-                }
-                // N3：换日回包到达时给新行错峰（见 fetchDayEntries 回包分支）。
-                self.daySwitchArrivalKey = key
-                self.fetchDayEntries(key: key, clear: true)
+                self.showNetworkDayPanel(key: key, reduceMotion: reduceMotion)
             }
         }
         // N3：旧日卡片退场（仅非减动效、表已入窗、旧面板存在且有可见行时）：
