@@ -2400,6 +2400,18 @@ class BearyDiaryCardCell: UITableViewCell {
         applyFoldVisibility(overflow: overflow)
     }
 
+    /// 展开态（只读，供控制器判断本次点按是展开还是收起）。
+    var isFoldExpanded: Bool { isExpanded }
+
+    /// 收起锚点：折叠钮中心在指定视图坐标系里的 Y（传表即内容坐标）。
+    /// 控制器在收起时用它锚定滚动——钮在屏幕上的位置不动，日记就不被顶到上面。
+    /// 钮隐藏时返回 nil，调用方回落原口径。
+    func foldButtonCenterY(in view: UIView) -> CGFloat? {
+        guard !foldButton.isHidden else { return nil }
+        let center = CGPoint(x: foldButton.bounds.midX, y: foldButton.bounds.midY)
+        return foldButton.convert(center, to: view).y
+    }
+
     /// L21（91 包，个人主页模式）：展开/收起显示切换（标题/箭头/行数三件与 configure 原口径一致）。
     /// animated 时正文 0.22s 交叉淡入，行高由控制器 performBatchUpdates 平滑伸缩。
     func setFoldDisplay(expanded: Bool, animated: Bool) {

@@ -3163,3 +3163,50 @@ extension BearyQuoteGate {
         return ("该日记已设为私密", nil)
     }
 }
+
+// MARK: - 折叠行高批更新（收起锚定）
+
+extension UITableView {
+
+    /// 展开/收起行高批更新。展开时行高向下伸、行顶不动，走原口径。
+    /// 收起时锚定折叠钮的屏幕位置：展开的 cell 可能比一屏高，用户为点「收起」
+    /// 已滚进 cell 中部；行高骤缩后旧 offset 落在收起后的行之外，批更新会把
+    /// 行顶贴到视口顶，日记被顶到上面。按新旧行高差同步回补 offset，与行高
+    /// 伸缩同事务同 dur，钮在屏上不动、日记留在原地。
+    /// - foldButtonContentY：折叠钮中心在表内容坐标系里的 Y（cell.foldButtonCenterY(in:)）。
+    ///   拿不到、或行高没变矮时回落原口径。
+    func performFoldHeightUpdate(collapsing: Bool, cell: UITableViewCell, at indexPath: IndexPath, foldButtonContentY: CGFloat?) {
+        guard collapsing, let buttonY = foldButtonContentY else {
+            performBatchUpdates(nil)
+            return
+        }
+        let oldHeight = rectForRow(at: indexPath).height
+        let newHeight = cell.systemLayoutSizeFitting(
+            CGSize(width: bounds.width, height: 0),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        let delta = newHeight - oldHeight
+        guard delta < -0.5, newHeight > 0 else {
+            performBatchUpdates(nil)
+            return
+        }
+        // 钮在 cell 内的相对位置不变：行高缩 delta，钮的内容坐标同向移 delta；
+        // offset 跟着移，钮的屏幕位置就不动。
+        let oldOffsetY = contentOffset.y
+        let buttonScreenY = buttonY - oldOffsetY
+        let newButtonY = buttonY + delta
+        let targetOffsetY = newButtonY - buttonScreenY
+        let minOffsetY = -contentInset.top
+        let maxOffsetY = contentSize.height + delta - bounds.height + contentInset.bottom
+        let clampedTargetY = min(max(targetOffsetY, minOffsetY), max(maxOffsetY, minOffsetY))
+        let targetOffset = CGPoint(x: 0, y: clampedTargetY)
+        UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState], animations: {
+            self.performBatchUpdates(nil, completion: { _ in
+                // 兜底：若批更新内系统又动了 offset，这里一次复位（与目标一致时 no-op）。
+                self.contentOffset = targetOffset
+            })
+            self.contentOffset = targetOffset
+        })
+    }
+}

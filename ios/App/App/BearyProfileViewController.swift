@@ -7963,7 +7963,14 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
               let cell = tableView.cellForRow(at: IndexPath(row: index, section: 0)) as? BearyDiaryCardCell,
               cell.cellEntryId == entryId else { return }
         cell.setFoldDisplay(expanded: expanded, animated: BearyMotion.animated(true))
-        tableView.performBatchUpdates(nil)
+        // 收起走 performFoldHeightUpdate 锚定折叠钮（见 BearyNativeCommon），
+        // 否则收起后日记会被顶到上面；展开行高向下伸、顶不动，走原口径。
+        tableView.performFoldHeightUpdate(
+            collapsing: !expanded,
+            cell: cell,
+            at: IndexPath(row: index, section: 0),
+            foldButtonContentY: cell.foldButtonCenterY(in: tableView)
+        )
     }
 
     private func handleCellQuoteTap(entry: Entry) {
