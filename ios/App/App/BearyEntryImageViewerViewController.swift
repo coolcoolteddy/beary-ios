@@ -1001,16 +1001,14 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             return
         }
         let next = currentIndex + direction
-        let isWrap = next < 0 || next >= imageKeys.count
         let wrapped = (next + imageKeys.count) % imageKeys.count
-        if isWrap == true {
-            // 回绕瞬时归位：不做长距离倒带动效（网页 trackTo(!wrap) 口径）。
-            currentIndex = wrapped
-            resetZoom(animated: false)
-            updateCounter()
-            loadCurrent()
-            return
-        }
+        // 第九轮 02：首尾回绕不再瞬时归位——旧路直接改 currentIndex 调
+        // loadCurrent()，计数先变、旧图留到新图到达（加载慢即串图、失败即
+        // 旧图留在错误序号下）。现与普通翻页走同一相邻图交接：拖动时邻槽
+        // 已贴好回绕目标（updateNeighbor 按取模算目标），就绪即快通道换图，
+        // 未就绪则 imageView 先空 + 加载圈、loadCurrent 回包填图，旧图绝不
+        // 留到新序号下。仍不做长距离倒带动效（网页 trackTo(!wrap) 口径）：
+        // 相邻槽只滑一页宽。计数与图同在交接时更新。
         // 连续翻页：拖动时相邻图已贴在边上跟手（updateNeighbor），直接把两图
         // 一次动画到终位再交接——当前图出屏、相邻图正好居中，全程相邻无间隙。
         // 相邻图未就绪时回落旧的两段式路径（行为不变）。
