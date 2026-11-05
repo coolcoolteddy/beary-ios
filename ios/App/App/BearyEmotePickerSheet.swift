@@ -159,7 +159,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
             titleLabel.topAnchor.constraint(equalTo: grabView.bottomAnchor, constant: 14),
             titleLabel.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 18),
             closeButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            closeButton.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -18),
+            closeButton.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -16),
             closeButton.widthAnchor.constraint(equalToConstant: 32),
             closeButton.heightAnchor.constraint(equalToConstant: 32),
             collection.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),

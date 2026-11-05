@@ -451,7 +451,7 @@ final class BearyDraftBoxViewController: UIViewController {
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: headerWrap.bottomAnchor, constant: -4),
             closeButton.widthAnchor.constraint(equalToConstant: 32),
             closeButton.heightAnchor.constraint(equalToConstant: 32),
-            closeButton.trailingAnchor.constraint(equalTo: headerWrap.trailingAnchor, constant: -14),
+            closeButton.trailingAnchor.constraint(equalTo: headerWrap.trailingAnchor, constant: -16),
             closeButton.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 6),
             closeButton.bottomAnchor.constraint(equalTo: headerWrap.bottomAnchor, constant: -6),
         ])
