@@ -29,6 +29,27 @@ enum BearyEmoteKeys {
     static let bearFaces: [String] = all.filter { !nonBearFaceKeys.contains($0) }
 }
 
+// MARK: - 视觉批 2-2：表情选择器首行“最近使用”
+// 本机记忆，不走后端：UserDefaults 里只存一份有序 key 列表，首位即最近一次
+// 使用（点选即把该 key 移到首位），最多 8 个；读时过滤掉已不在熊脸列表里的
+// 旧 key（如资产调整后），不做时间戳字段——顺序本身就是最近使用时间倒序。
+private enum BearyEmoteRecentStore {
+    static let defaultsKey = "beary.recentEmoteKeys"
+    static let maxCount = 8
+
+    static func load() -> [String] {
+        let stored = UserDefaults.standard.stringArray(forKey: defaultsKey) ?? []
+        return Array(stored.filter { BearyEmoteKeys.bearFaces.contains($0) }.prefix(maxCount))
+    }
+
+    static func record(_ key: String) {
+        guard BearyEmoteKeys.bearFaces.contains(key) else { return }
+        var list = load().filter { $0 != key }
+        list.insert(key, at: 0)
+        UserDefaults.standard.set(Array(list.prefix(maxCount)), forKey: defaultsKey)
+    }
+}
+
 final class BearyEmotePickerSheetViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UIGestureRecognizerDelegate {
 
     var onPick: ((String) -> Void)?
@@ -62,6 +83,15 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     private let closeButton = BearyHit44Button(type: .system)
     /// 审计 D-7：手势门控按布局后实测帧划分，需持有 collection 引用（见 gestureRecognizerShouldBegin）。
     private var emoteCollectionView: UICollectionView?
+    /// 视觉批 2-2：本次打开时读到的最近使用列表（倒序、最多 8 个）；空时不建
+    /// 最近节，collection 退回单节全量网格，不留空行占位。
+    private var recentEmoteKeys: [String] = BearyEmoteRecentStore.load()
+    /// 最近节存在时为第 0 节，全量网格顺延为第 1 节；无最近记录时只有全量一节。
+    private var hasRecentSection: Bool { !recentEmoteKeys.isEmpty }
+    private func emoteKeys(forSection section: Int) -> [String] {
+        if hasRecentSection, section == 0 { return recentEmoteKeys }
+        return BearyEmoteKeys.bearFaces
+    }
     private var sheetHeightConstraint: NSLayoutConstraint?
     private var sheetBottomConstraint: NSLayoutConstraint?
     /// VoiceOver 焦点返回：与通知弹层同口径（BearyNotificationsViewController），
@@ -131,6 +161,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         collection.dataSource = self
         collection.delegate = self
         collection.register(BearyEmotePickerSheetCell.self, forCellWithReuseIdentifier: "bearyEmotePickerSheetCell")
+        collection.register(BearyEmotePickerSectionHeaderView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader, withReuseIdentifier: "bearyEmotePickerSectionHeader")
         emoteCollectionView = collection
         sheetView.addSubview(collection)
         let heightConstraint = sheetView.heightAnchor.constraint(equalToConstant: 480)
@@ -308,15 +339,34 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         return sheetView.bounds.height
     }
 
+    func numberOfSections(in collectionView: UICollectionView) -> Int {
+        return hasRecentSection ? 2 : 1
+    }
+
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        return BearyEmoteKeys.bearFaces.count
+        return emoteKeys(forSection: section).count
+    }
+
+    func collectionView(_ collectionView: UICollectionView, viewForSupplementaryElementOfKind kind: String, at indexPath: IndexPath) -> UICollectionReusableView {
+        guard kind == UICollectionView.elementKindSectionHeader,
+              hasRecentSection, indexPath.section == 0,
+              let header = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: "bearyEmotePickerSectionHeader", for: indexPath) as? BearyEmotePickerSectionHeaderView else {
+            return UICollectionReusableView()
+        }
+        header.configure(title: "最近使用")
+        return header
+    }
+
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, referenceSizeForHeaderInSection section: Int) -> CGSize {
+        guard hasRecentSection, section == 0 else { return .zero }
+        return CGSize(width: collectionView.bounds.width, height: 28)
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "bearyEmotePickerSheetCell", for: indexPath) as? BearyEmotePickerSheetCell else {
             return UICollectionViewCell()
         }
-        let key = BearyEmoteKeys.bearFaces[indexPath.item]
+        let key = emoteKeys(forSection: indexPath.section)[indexPath.item]
         cell.configure(key: key)
         return cell
     }
@@ -328,7 +378,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         // 格宽减左右各 2 内边距量取，允许多行；默认字号下 46 + 4 + 单行高 + 8
         // 仍为 72，与原固定高一致；放大后名称换行，行高随之长高，不裁字。
         // 列数（4 列）与排列顺序不动；字号档变化时 traitCollectionDidChange 刷布局重算。
-        let key = BearyEmoteKeys.bearFaces[indexPath.item]
+        let key = emoteKeys(forSection: indexPath.section)[indexPath.item]
         let name = BearyText.moodNames[key] ?? key
         let nameFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
         let nameWidth = max(width - 4, 0)
@@ -353,7 +403,9 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         guard !didPickEmote else { return }
         didPickEmote = true
         collectionView.isUserInteractionEnabled = false
-        let pickedKey = BearyEmoteKeys.bearFaces[indexPath.item]
+        let pickedKey = emoteKeys(forSection: indexPath.section)[indexPath.item]
+        // 视觉批 2-2：最近行与全量区点选走同一回调前先记最近使用——不另写回应逻辑。
+        BearyEmoteRecentStore.record(pickedKey)
         BearySoundPlayer.play(.emoteChirp)
         onPick?(pickedKey)
     }
@@ -440,6 +492,36 @@ final class BearyEmoteSheetTransition: NSObject, UIViewControllerTransitioningDe
         UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
             sheet.transitionSetScrimAlpha(0)
         })
+    }
+}
+
+// MARK: - 视觉批 2-2：最近使用节标题
+/// 只在最近节存在时出现（referenceSizeForHeaderInSection 其余情况回 .zero，
+/// 故最近行为空时不留占位）。样式沿用搜索页“最近搜索”标题口径：13 半粗
+/// scaled、灰字、左 inset 18 与网格 sectionInset 左边对齐；不新增图标与按钮。
+final class BearyEmotePickerSectionHeaderView: UICollectionReusableView {
+
+    private let titleLabel = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textColor = BearyColors.gray
+        addSubview(titleLabel)
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(title: String) {
+        titleLabel.text = title
     }
 }
 
