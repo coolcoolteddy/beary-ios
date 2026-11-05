@@ -3259,6 +3259,15 @@ final class BearySettingsViewController: UIViewController {
                     editVC?.requestExit(interactive: true) ?? true
                 }
             }
+            if let feedbackVC = vc as? BearyFeedbackViewController {
+                // 反馈页无 requestExit：shouldAllowInteractiveDismiss 只有允许/
+                // 拒绝两种语义，返回 false 时手势在 .began 即被拦下、不弹确认；
+                // 有内容（文字或附件）时拒绝滑走，用户走顶栏关闭钮弹
+                // “放弃这份反馈？”确认（与编辑资料页同款取舍，见 PR 描述）。
+                settingsPageEdgeDismiss.shouldAllowInteractiveDismiss = { [weak feedbackVC] in
+                    !(feedbackVC?.hasFeedbackContent ?? false)
+                }
+            }
             settingsPageEdgeDismiss.attach(to: vc)
             vc.transitioningDelegate = settingsPageEdgeDismiss
             self.settingsPageEdgeDismiss = settingsPageEdgeDismiss
