@@ -671,7 +671,9 @@ final class BearyChromeViewController: UIViewController {
             blur.widthAnchor.constraint(equalToConstant: 288),
             blur.heightAnchor.constraint(equalToConstant: 58),
         ])
-        // 渐进模糊（规范 §6）：底栏顶边向内容方向渐弱的 12pt 毛玻璃带，与衬底同宽；分段器本身不动。
+        // 渐进模糊（规范 §6，2026-11-05 Li 定：自屏幕底缘向上渐弱）：全宽毛玻璃带，
+        // 底缘贴 view 底边（屏幕底缘，不走安全区）、顶缘在衬底顶沿上方 12pt；
+        // 渐变仍 .up（底强顶弱）；垫片在衬底之下（见 bringChromeToFront），分段器本身不动。
         // 垫片为衬底的兄弟视图，显隐与衬底同进退（见 setBarsVisible）。
         let bottomPad = BearyProgressiveBlur.pad(fade: .up)
         bottomPad.translatesAutoresizingMaskIntoConstraints = false
@@ -679,10 +681,10 @@ final class BearyChromeViewController: UIViewController {
         view.addSubview(bottomPad)
         bottomFadePad = bottomPad
         NSLayoutConstraint.activate([
-            bottomPad.bottomAnchor.constraint(equalTo: blur.topAnchor),
-            bottomPad.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            bottomPad.widthAnchor.constraint(equalToConstant: 288),
-            bottomPad.heightAnchor.constraint(equalToConstant: BearyProgressiveBlur.band),
+            bottomPad.topAnchor.constraint(equalTo: blur.topAnchor, constant: -BearyProgressiveBlur.band),
+            bottomPad.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            bottomPad.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bottomPad.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
         // 消息页（Li 2026-11-03 定）：底栏第 2 段由“好友”改叫“消息”、图标换气泡
         //（icon_comment），顺序不变：首页、消息、时间线、我的。
@@ -841,11 +843,12 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// L3：挂页后把栏覆盖层一次提齐——页 view 在栏之后加入会盖住栏，
-    /// 顺序须为：页 < 顶栏 < 模糊衬底 < 底栏分段器 < FAB。
+    /// 顺序须为：页 < 顶栏 < 底部渐变垫片 < 模糊衬底 < 底栏分段器 < FAB。
+    /// 垫片在衬底之下，防双重模糊（2026-11-05 底部渐变改全宽后）。
     private func bringChromeToFront() {
         if let top = topGlass { view.bringSubviewToFront(top) }
-        if let blur = bottomBlurView { view.bringSubviewToFront(blur) }
         if let bottomPad = bottomFadePad { view.bringSubviewToFront(bottomPad) }
+        if let blur = bottomBlurView { view.bringSubviewToFront(blur) }
         if let seg = bottomSegmented { view.bringSubviewToFront(seg) }
         if let fab = fabContainerView { view.bringSubviewToFront(fab) }
     }
