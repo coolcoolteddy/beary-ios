@@ -880,7 +880,7 @@ class BearyProfileViewController: UIViewController {
         // content 12 + 图宽 + titleEdge 6 + 实测标题宽 + content 12，防标题被裁。
         // R8：宽改下限（默认尺寸不变），大字号时可生长。
         let editImageWidth = buttonValue.image(for: .normal)?.size.width ?? 15
-        let editTitleWidth = ceil(("编辑资料" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
+        let editTitleWidth = ceil(("编辑资料" as NSString).size(withAttributes: [NSAttributedString.Key.font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
         buttonValue.widthAnchor.constraint(greaterThanOrEqualToConstant: 12 + editImageWidth + 6 + editTitleWidth + 12).isActive = true
         return buttonValue
     }()
@@ -2077,7 +2077,7 @@ class BearyProfileViewController: UIViewController {
         // P2-4：同点赞钮修法——显式宽 = content 10 + 图宽 + titleEdge 6 + 实测标题宽 + content 10。
         // R8：宽改下限（默认尺寸不变），大字号时可生长。
         let tabImageWidth = buttonValue.image(for: .normal)?.size.width ?? 16
-        let tabTitleWidth = ceil((title as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14, weight: .bold)]).width)
+        let tabTitleWidth = ceil((title as NSString).size(withAttributes: [NSAttributedString.Key.font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))]).width)
         buttonValue.widthAnchor.constraint(greaterThanOrEqualToConstant: 10 + tabImageWidth + 6 + tabTitleWidth + 10).isActive = true
         return buttonValue
     }
@@ -6890,7 +6890,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         let profileRetryImageWidth = retryButton.currentImage?.size.width ?? 15
         // 变基合解：标题取本批“重试”（P2 文案统一），宽约束取 main 的 R8 下限
         // （greaterThanOrEqualToConstant，大字号可生长），两者逻辑全保留。
-        let profileRetryTitleWidth = ceil(("重试" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
+        let profileRetryTitleWidth = ceil(("重试" as NSString).size(withAttributes: [NSAttributedString.Key.font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
         retryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 12 + profileRetryImageWidth + 6 + profileRetryTitleWidth + 12).isActive = true
         profileErrorRetryButton = retryButton
         // 80 包重试统一：失败脚部补“网络好像不太顺”副标题（与时间线失败态同文案），
