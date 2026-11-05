@@ -116,17 +116,6 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         topBar.addSubview(titleLabel)
         topBar.addSubview(confirmButton)
         view.addSubview(scrollView)
-        // 渐进模糊（规范 §6）：顶栏底边向内容方向渐弱的 12pt 毛玻璃带；顶栏本身不动。
-        // 垫片为顶栏的兄弟视图、盖在滚动图之上（遮罩四块之下）；裁剪页底色恒黑，带在深色上仍走统一轻量垫。
-        let topFadePad = BearyProgressiveBlur.pad(fade: .down)
-        topFadePad.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(topFadePad)
-        NSLayoutConstraint.activate([
-            topFadePad.topAnchor.constraint(equalTo: topBar.bottomAnchor),
-            topFadePad.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            topFadePad.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topFadePad.heightAnchor.constraint(equalToConstant: BearyProgressiveBlur.band),
-        ])
         scrollView.addSubview(imageView)
         view.addSubview(hintLabel)
         // 遮罩四块先加、白框最后加（白框须在遮罩之上；两者均按帧定位，不走约束）。

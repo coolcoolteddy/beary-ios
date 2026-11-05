@@ -1957,8 +1957,6 @@ class BearyProfileViewController: UIViewController {
     private lazy var stickyHeaderNameCenterYConstraint: NSLayoutConstraint = stickyHeaderNameLabel.centerYAnchor.constraint(equalTo: stickyHeaderView.topAnchor, constant: 30)
     /// 布局时算一次、滚动回调只读：header 底边（view 坐标）与 modal 禁用态。
     private var stickyHeaderBottom: CGFloat = 0
-    /// 渐进模糊垫（规范 §6）：吸顶条底边向内容方向渐弱的 12pt 带；条内按钮本身不动，跟条的 alpha／isHidden 同进退。
-    private var stickyHeaderFadePad: BearyProgressiveBlurView?
     private var stickyHeaderModalDisabled = false
     /// v22 封面自然高（2026-10-30）：代码现行封面高恒 180（applyProfile／resetCoverStretch／
     /// updateCoverStretch 同值），滚动回调取此常量、不取拉伸中的 live transform（下拉复位动画
@@ -2325,20 +2323,6 @@ class BearyProfileViewController: UIViewController {
     private func buildStickyHeader() {
         view.addSubview(stickyHeaderView)
         stickyHeaderView.addSubview(stickyHeaderBgImageView)
-        // 渐进模糊（规范 §6）：吸顶条底边向内容方向渐弱的 12pt 毛玻璃带；条本身不动。
-        // 垫片为条的兄弟视图（条 clipsToBounds，不可挂其内），显隐跟条走（见 updateStickyHeaderFadePad）。
-        let stickyPad = BearyProgressiveBlur.pad(fade: .down)
-        stickyPad.translatesAutoresizingMaskIntoConstraints = false
-        stickyPad.isHidden = true
-        stickyPad.alpha = 0
-        view.addSubview(stickyPad)
-        stickyHeaderFadePad = stickyPad
-        NSLayoutConstraint.activate([
-            stickyPad.topAnchor.constraint(equalTo: stickyHeaderView.bottomAnchor),
-            stickyPad.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            stickyPad.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            stickyPad.heightAnchor.constraint(equalToConstant: BearyProgressiveBlur.band),
-        ])
         stickyHeaderView.addSubview(stickyHeaderBlurImageView)
         stickyHeaderBgImageView.addSubview(stickyWordmarkView)
         stickyHeaderView.addSubview(stickyHeaderNameLabel)
@@ -2532,14 +2516,7 @@ class BearyProfileViewController: UIViewController {
         // modal 顶栏可见时新 header 全程隐藏（顶栏已自带名字）。
         if stickyHeaderModalDisabled {
             stickyHeaderView.isHidden = true
-            updateStickyHeaderFadePad()
         }
-    }
-
-    /// 渐进模糊垫跟吸顶条同进退：条的 alpha／isHidden 由滚动量 1:1 驱动，垫片只镜像，不自算。
-    private func updateStickyHeaderFadePad() {
-        stickyHeaderFadePad?.alpha = stickyHeaderView.alpha
-        stickyHeaderFadePad?.isHidden = stickyHeaderView.isHidden
     }
 
     /// v22 封面滚动态（2026-10-30，取代视差 0.3＋上滑模糊 header＋旧名字淡入）：
@@ -2566,7 +2543,6 @@ class BearyProfileViewController: UIViewController {
             resetProfileCoverScroll()
             stickyHeaderView.alpha = 0
             stickyHeaderView.isHidden = true
-            updateStickyHeaderFadePad()
             return
         }
         let up = y - topBaseline
@@ -2646,7 +2622,6 @@ class BearyProfileViewController: UIViewController {
         if up <= 0 {
             stickyHeaderView.alpha = 0
             stickyHeaderView.isHidden = true
-            updateStickyHeaderFadePad()
             stickyHeaderNameLabel.alpha = 0
             stickyHeaderNameLabel.transform = .identity
             setStickyHeaderBlurProgress(0)
@@ -2657,7 +2632,6 @@ class BearyProfileViewController: UIViewController {
         let stickyHeaderFade = min(max(up / 24, 0), 1)
         stickyHeaderView.alpha = stickyHeaderFade
         stickyHeaderView.isHidden = (stickyHeaderFade == 0)
-        updateStickyHeaderFadePad()
         // header 用户名转移：内容用户名顶边（已含 belowShift 位移的实时屏坐标）
         // 碰到 header 底边时起，往后 20px 内淡入 0→1＋上浮 6→0，往回滑反向恢复。
         let nameTop = nameLabel.convert(nameLabel.bounds, to: view).origin.y

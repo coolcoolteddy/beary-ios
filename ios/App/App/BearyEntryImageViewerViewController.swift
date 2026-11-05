@@ -43,8 +43,6 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private let retryButton = BearyHit44Button(type: .custom)
     private let counterLabel = UILabel()
     private let closeButton = BearyButton.closeButton()
-    /// 渐进模糊垫（规范 §6）：关闭钮的光晕，挂灯箱同容器、跟钮走；钮布局一字不动。
-    private var closeButtonFadePad: BearyProgressiveBlurView?
     private let dotsStack = UIStackView()
     /// 批 C：照片页灯箱专用——非 nil 时底部出现“查看日记”钮，点按回传当前图序号
     /// （调用方凭序号找所属日记进详情）；nil 时钮不出现，旧调用方行为一字不动。
@@ -232,17 +230,6 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         view.addSubview(closeButton)
-        // 渐进模糊（规范 §6）：关闭钮的光晕垫，插钮之下、尺寸跟钮走（每边大出 12pt）。
-        let closePad = BearyProgressiveBlur.pad(fade: .outward)
-        closePad.translatesAutoresizingMaskIntoConstraints = false
-        view.insertSubview(closePad, belowSubview: closeButton)
-        closeButtonFadePad = closePad
-        NSLayoutConstraint.activate([
-            closePad.centerXAnchor.constraint(equalTo: closeButton.centerXAnchor),
-            closePad.centerYAnchor.constraint(equalTo: closeButton.centerYAnchor),
-            closePad.widthAnchor.constraint(equalTo: closeButton.widthAnchor, constant: BearyProgressiveBlur.band * 2),
-            closePad.heightAnchor.constraint(equalTo: closeButton.heightAnchor, constant: BearyProgressiveBlur.band * 2),
-        ])
         let singleTap = UITapGestureRecognizer(target: self, action: #selector(stageTapped(_:)))
         singleTap.numberOfTapsRequired = 1
         let doubleTap = UITapGestureRecognizer(target: self, action: #selector(stageDoubleTapped(_:)))
@@ -698,7 +685,6 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         counterLabel.isHidden = hidden ? true : imageKeys.count <= 1
         dotsStack.isHidden = hidden ? true : (imageKeys.count <= 1 || imageKeys.count > 20)
         closeButton.isHidden = hidden
-        closeButtonFadePad?.isHidden = hidden
         viewEntryButton.isHidden = hidden
         retryButton.isHidden = hidden ? true : !isFailed
         if hidden {
@@ -716,7 +702,6 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         counterLabel.alpha = 1 - p
         dotsStack.alpha = 1 - p
         closeButton.alpha = 1 - p
-        closeButtonFadePad?.alpha = 1 - p
         // 审计 15 项第 11 项：底部“查看日记”钮同套渐隐，取消时由下
         // 方 resetDismissDragAppearance 一并恢复。
         viewEntryButton.alpha = 1 - p
@@ -727,7 +712,6 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         counterLabel.alpha = 1
         dotsStack.alpha = 1
         closeButton.alpha = 1
-        closeButtonFadePad?.alpha = 1
         viewEntryButton.alpha = 1
     }
 
