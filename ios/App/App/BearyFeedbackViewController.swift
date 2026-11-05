@@ -286,8 +286,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             guard let self = self else { return }
             self.initialZipInFlight = false
             if let urlValue = url {
-                self.zipURL = urlValue
-                self.zipReady = true
+                self.replaceZipURL(urlValue)
                 // 116：本地 zip 完成时状态文案只淡入本身、绿点徽标由隐藏
                 // 变可见时只淡入本身（alpha 0→1、0.25s，不动 transform／
                 // 布局；同值不重播；减动效或未进窗口直设终值）。
@@ -687,7 +686,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     // MARK: - zip 生成（进页时生成一次；分享 / 仅发送日志按需重生成）
 
     private func generateZip(completion: @escaping (URL?) -> Void) {
-        DispatchQueue.global(qos: .utility).async {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
             let infoData = BearyFeedbackDeviceInfo.text().data(using: .utf8) ?? Data()
             var files: [(name: String, data: Data)] = [("device-info.txt", infoData)]
             if let appData = BearyAppLog.readData() {
@@ -700,10 +699,25 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 DispatchQueue.main.async { completion(nil) }
                 return
             }
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("beary-feedback-logs.zip")
+            // 第七轮审计 04：每次生成用唯一文件名。固定名会被串行的下一次
+            // 生成覆盖，两个反馈页实例也会互相干扰；UUID 后缀保证各次生成
+            // 互不覆盖。邮件附件名仍是 beary-feedback-logs.zip（那是附件
+            // 显示名，与磁盘路径无关，不动）。
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("beary-feedback-logs-\(UUID().uuidString).zip")
             do {
                 try zipData.write(to: url, options: .atomic)
-                DispatchQueue.main.async { completion(url) }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else {
+                        // 页面已在生成中途释放：本次生成的文件无人持有，立即
+                        // 删掉，否则它会以孤儿形态留在 tmp（此前固定名 +
+                        // zipURL 未保存正是孤儿来源；退页取消生成没有现成
+                        // 取消句柄——打包是 utility 队列上一次同步 build，
+                        // 完成后清理是等价的兜底）。
+                        try? FileManager.default.removeItem(at: url)
+                        return
+                    }
+                    completion(url)
+                }
             } catch {
                 DispatchQueue.main.async { completion(nil) }
             }
@@ -717,6 +731,19 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         }
         zipURL = nil
         zipReady = false
+    }
+
+    /// 第七轮审计 04：换新 zip 时先删旧文件。进页首次生成与 ensureZip
+    /// 重生成可能重叠（首次生成不经过 zipInFlight 排队标记），两次生成
+    /// 各写唯一文件名，旧文件不再被新文件覆盖，必须显式删掉，否则旧
+    /// 文件成孤儿。分享/邮件流程不受影响：分享面板打开期间 zipReady
+    /// 为真、ensureZip 不重生成；邮件附件是读进内存的数据副本。
+    private func replaceZipURL(_ url: URL) {
+        if let old = zipURL, old != url {
+            try? FileManager.default.removeItem(at: old)
+        }
+        zipURL = url
+        zipReady = true
     }
 
     private func ensureZip(completion: @escaping (Bool) -> Void) {
@@ -736,8 +763,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             guard let self = self else { return }
             let ready: Bool
             if let urlValue = url {
-                self.zipURL = urlValue
-                self.zipReady = true
+                self.replaceZipURL(urlValue)
                 self.statusLabel.text = "反馈数据已准备就绪"
                 self.statusBadge.isHidden = false
                 ready = true
