@@ -131,6 +131,13 @@ public final class BearyEmoteView: UIView {
     /// 每种外观（light/dark）只预热一次；复用 cacheLock 保护。
     private static var prewarmScheduled: Set<String> = []
 
+    /// 第十一轮 07：在途解析任务表（缓存 key → 等待同一次解析结果的回调）。
+    /// parseQueue 与 prewarmQueue 两条队列可能同时解析同一文件（key + 深浅模式
+    /// 即 cacheKey，见 cacheKey(for:dark:)）；先到者解析、后到者登记等待、共用
+    /// 同一次解析结果，不重复读盘解析。只在持 cacheLock 时读写；发起者解析时
+    /// 不持锁，完成后在锁内取走等待者再逐一回调，表内不留过期条目。
+    private static var inFlightParses: [String: [(CachedEmote?) -> Void]] = []
+
     /// G24：失败 key 的负缓存（key → 过期时间，TTL 300 秒）：文件缺失/
     /// 解析失败不再每次重复读盘；过期后自动失效、可重试。
     private static var negativeCache: [String: Date] = [:]
@@ -644,14 +651,41 @@ public final class BearyEmoteView: UIView {
         fallbackImageView = imageView
     }
 
+    /// 第十一轮 07：同 key 解析合并入口——按缓存 key（表情 key + 深浅模式）
+    /// 合并在途解析。先到者成为发起者（在当前队列上复用 cachedEmoteEntry
+    /// 解析并写缓存），后到者登记等待、共用同一次解析结果；发起者完成后
+    /// 在锁内取走等待者逐一回调。发起者注册在途后不会再有第二个发起者；
+    /// 若此前已有发起者完成并写缓存，cachedEmoteEntry 直接命中，不重复解析。
+    /// completion 的调用线程与发起者所在队列一致（按需路径随后回主线程，
+    /// 见 loadEmoteInBackground；预热路径直接丢弃）。
+    private static func loadEmoteEntryCoalesced(for key: String, dark: Bool, completion: @escaping (CachedEmote?) -> Void) {
+        let cacheKey = Self.cacheKey(for: key, dark: dark)
+        cacheLock.lock()
+        if inFlightParses[cacheKey] != nil {
+            inFlightParses[cacheKey]?.append(completion)
+            cacheLock.unlock()
+            return
+        }
+        inFlightParses[cacheKey] = []
+        cacheLock.unlock()
+        let loaded = Self.cachedEmoteEntry(for: key, dark: dark)
+        cacheLock.lock()
+        let waiters = inFlightParses.removeValue(forKey: cacheKey) ?? []
+        cacheLock.unlock()
+        completion(loaded)
+        waiters.forEach { $0(loaded) }
+    }
+
     /// ①后台解析入口（静态方法，不持有任何视图）：parseQueue 上同步解析并写缓存，
     /// 再回主线程调 completion。视图是否已释放、是否已换批内容，由调用方在 completion
     /// 里用 [weak self] + loadGeneration 验——本方法本身不判断视图存活。
+    /// 同 key 的在途解析合并，见 loadEmoteEntryCoalesced。
     private static func loadEmoteInBackground(for key: String, dark: Bool, completion: @escaping (CachedEmote?) -> Void) {
         parseQueue.async {
-            let loaded = Self.cachedEmoteEntry(for: key, dark: dark)
-            DispatchQueue.main.async {
-                completion(loaded)
+            Self.loadEmoteEntryCoalesced(for: key, dark: dark) { loaded in
+                DispatchQueue.main.async {
+                    completion(loaded)
+                }
             }
         }
     }
@@ -664,7 +698,8 @@ public final class BearyEmoteView: UIView {
 
     /// ②预热调度：先占位标记防重复，再在 utility 队列上延迟 1 秒顺序解析。
     /// 延迟是给按需解析让路：首个视图自己的解析走 userInitiated 队列先跑，1 秒内大概率已写缓存，
-    /// 预热循环里 cachedEmoteEntry 命中缓存即跳过，不重复解析同一只。
+    /// 预热循环里命中缓存即跳过；与按需解析同时在途时登记等待、共用同一次解析结果，
+    /// 不重复解析同一只（见 loadEmoteEntryCoalesced）。
     private static func schedulePrewarm(dark: Bool) {
         let variant = dark ? "dark" : "light"
         cacheLock.lock()
@@ -676,7 +711,7 @@ public final class BearyEmoteView: UIView {
         guard !already else { return }
         prewarmQueue.asyncAfter(deadline: .now() + 1.0) {
             for key in Self.prewarmEmoteKeys {
-                _ = Self.cachedEmoteEntry(for: key, dark: dark)
+                Self.loadEmoteEntryCoalesced(for: key, dark: dark) { _ in }
             }
         }
     }
