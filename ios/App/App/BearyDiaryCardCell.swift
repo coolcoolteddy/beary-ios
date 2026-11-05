@@ -1437,6 +1437,17 @@ class BearyDiaryCardCell: UITableViewCell {
             extraConstraints.append(weatherWidth)
             extraConstraints.append(weatherImageView.heightAnchor.constraint(equalToConstant: 15))
         }
+        // 批 E 位置行图钉：与详情/时间线同款 13×13。之前没钉尺寸，.fill 行里
+        // 图钉框（hugging 250）比文案（251）先吸满多余宽度，scaleAspectFit 把
+        // 针居中在拉宽的框里，针落列中、地址贴右缘。位置行按篇目隐藏，固定尺寸
+        // 用 999 优先级，免与 stack 的零尺寸约束冲突出警告（同 recipientIconView
+        // 首页分支口径）。
+        let locationIconWidth = locationIconView.widthAnchor.constraint(equalToConstant: 13)
+        locationIconWidth.priority = UILayoutPriority(999)
+        let locationIconHeight = locationIconView.heightAnchor.constraint(equalToConstant: 13)
+        locationIconHeight.priority = UILayoutPriority(999)
+        extraConstraints.append(locationIconWidth)
+        extraConstraints.append(locationIconHeight)
         if rightStackTrailingConstraint == nil {
             rightStackTrailingConstraint = rightStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
         }
