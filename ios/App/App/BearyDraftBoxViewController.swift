@@ -964,7 +964,9 @@ final class BearyDraftBoxViewController: UIViewController {
         // （本地文件与服务端 key 皆无，网页 imgs_lost 的等价情形）；点一下清掉
         // 这些图项与提示，可续传的失败图仍走原有“文字已保存，图片未保存”状态行。
         if hasUnrecoverableImage(for: draftValue) {
-            let lostButton = UIButton(type: .custom)
+            // Hit44：视觉约 19 高不动；纵向扩区以流式容器 bounds 为限（独占一行时到不了满 44），
+            // 横向已够宽不扩；同行／邻行均为非交互 label／chip，不抢其他按钮热区。
+            let lostButton = BearyHit44Button(type: .custom)
             lostButton.setTitle("忽略丢失图片", for: .normal)
             // D-G13：网页 .df-chip.df-lost 为 faint 底 + 灰字 + 500 字重；
             // 原 App 红底红字 semibold 改齐。

@@ -726,8 +726,9 @@ final class BearyYearReviewViewController: UIViewController {
         return label
     }()
 
-    private lazy var prevYearButton: UIButton = {
-        let buttonValue = UIButton(type: .system)
+    // Hit44：两钮已有 44×44 约束，point(inside:) 不再外扩（零行为变化）；类型统一为 Hit44 以防约束日后收窄。
+    private lazy var prevYearButton: BearyHit44Button = {
+        let buttonValue = BearyHit44Button(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setImage(BearyIconImages.image(named: "icon_arrow_left", pointSize: 16), for: .normal)
         buttonValue.tintColor = BearyColors.ink
@@ -737,8 +738,8 @@ final class BearyYearReviewViewController: UIViewController {
         return buttonValue
     }()
 
-    private lazy var nextYearButton: UIButton = {
-        let buttonValue = UIButton(type: .system)
+    private lazy var nextYearButton: BearyHit44Button = {
+        let buttonValue = BearyHit44Button(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setImage(BearyIconImages.image(named: "icon_arrow_right", pointSize: 16), for: .normal)
         buttonValue.tintColor = BearyColors.ink
