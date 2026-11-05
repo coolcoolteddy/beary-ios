@@ -4,7 +4,7 @@ import UIKit
 // 来源二合一：首页的独立 BearyFeedQuoteView（F11 lite 卡：左侧 3pt 线、
 // faint 底、圆角 8、15px 引号图标、日期行内末位、42px 缩略图条
 // flex 分配、gone/locked/加载失败三态）＋个人主页 cell 内 quoteContainer
-// 手写卡（同款 faint 底、9/12 内边距、15px 图标、13.5 正文、42px 缩略图、
+// 手写卡（同款 faint 底、9/12 内边距、15px 图标、13 正文、42px 缩略图、
 // 日期、gone 两文案）。统一后两页视觉以 Feed 卡为准（个人主页侧圆角
 // 12→8、补左侧线，内边距与字号一字不动）；个人主页侧的 gone 卡点按仍
 // 透传（allowGoneTap，控制器弹提示），首页侧 gone 卡点按仍无动作。
@@ -40,7 +40,7 @@ final class BearyQuoteCardView: UIView {
     private let contentLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5))
+        lb.font = BearyDynamicType.secondaryFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.ink
         lb.numberOfLines = 3
@@ -49,7 +49,7 @@ final class BearyQuoteCardView: UIView {
         return lb
     }()
 
-    /// 引用规则简化来源行（2026-10-31）：内容上方一行，12px 灰字（比正文 13.5 小一档），
+    /// 引用规则简化来源行（2026-10-31）：内容上方一行，12px 灰字（比正文 13 小一档），
     /// 格式“引用自 @handle · 日期”（日期走现行卡片 feedTimeString 口径）。
     /// 可点条件由调用方按 viewer 权限给（sourceTappable）：有权限看原文时点按走 onTapped
     /// 进原日记详情；占位态（已私密/已删除）下只展示、不点按、不泄露正文。
@@ -554,7 +554,7 @@ final class BearyQuoteCardView: UIView {
             // P3-3：引用正文富文本同步按字符断行（字号行高不动）。
             paragraph.lineBreakMode = .byCharWrapping
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5)),
+                .font: BearyDynamicType.secondaryFont(),
                 .foregroundColor: BearyColors.ink,
                 .paragraphStyle: paragraph,
             ]

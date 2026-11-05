@@ -4,7 +4,7 @@ import UIKit
 // 空态 / 加载态 / 错误重试态 / 未登录引导态共用一处组件，后续各页接入时只换本视图，
 // 不动各页自身的显隐逻辑（本批示范接入见 BearyTrashViewController 的失败态）。
 // 结构（竖向居中栈）：图标圆（54 圈：橙 18% 底 + 1pt 25% 橙圈，选人 sheet 空态圆同款；
-// 无图标时整行隐藏）＋标题（15 粗体 ink）＋副文案（12.5 gray，多行居中）＋
+// 无图标时整行隐藏）＋标题（15 粗体 ink）＋副文案（12 gray，多行居中）＋
 // 动作钮（BearyButton，默认 secondaryOutline 常规 44/12；调用方可传其他工厂样式）。
 // 加载态：图标圆内改转圈（官方 icon_refresh 20pt，2026-10-30 全 App 统一，
 // 不再用 UIActivityIndicatorView medium 圈）；加载时动作钮隐藏。
@@ -130,7 +130,7 @@ final class BearyStateView: UIView {
         titleLabel.lineBreakMode = .byCharWrapping
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5))
+        subtitleLabel.font = BearyDynamicType.captionFont()
         subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.textAlignment = .center

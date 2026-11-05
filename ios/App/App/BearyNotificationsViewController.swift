@@ -3,7 +3,7 @@ import UIKit
 // ===== beary 原生消息页 =====
 // 对照源：
 // - 行形态与文案：~/workspace/teddy_site/beary.html 的 notifPage / renderNtItems
-//   （.nt-item：左右 20、上下 16、gap 12、头像 42、标题 15.5、摘要 14 灰、时间 13 灰、
+//   （.nt-item：左右 20、上下 16、gap 12、头像 42、标题 16、摘要 14 灰、时间 13 灰、
 //   未读蓝点 8；信件行与系统信行共用 sys 样式：头像为橙 14% 底 + 19 号 mail 图，
 //   未读底为蓝 9%；互动行未读底为蓝 7%；已读行无底无点）。
 // - 设计帧：~/workspace/previews/layout_rest.html 的消息帧（未读蓝点 + 全部已读 +
@@ -3113,7 +3113,7 @@ class BearyNotificationCell: UITableViewCell {
     private let titleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15.5))
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
         label.textColor = BearyColors.ink
         label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = 1
@@ -3469,7 +3469,7 @@ class BearyNotificationCell: UITableViewCell {
         avatarFallbackLabel.isHidden = true
         kindBadgeView.isHidden = true
         nestedLineView.isHidden = true
-        titleLabel.attributedText = BearyNotificationCell.lineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15.5)), color: BearyColors.ink)
+        titleLabel.attributedText = BearyNotificationCell.lineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink)
         excerptLabel.attributedText = BearyNotificationCell.lineHeightText(excerpt, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray)
         timeLabel.text = BearyNotificationCell.timeText(ms: timeMs)
         chevronView.isHidden = false
@@ -3482,7 +3482,7 @@ class BearyNotificationCell: UITableViewCell {
         nestedLineView.isHidden = true
     }
 
-    /// 网页 .nt-body line-height 1.5：标题 15.5→23.3、摘要 14→21，
+    /// 网页 .nt-body line-height 1.5：标题 16→24、摘要 14→21，
     /// 与上下 16 padding 合计行高约 78（现行无行高倍数被压到 74）。
     private static func lineHeightText(_ string: String, font: UIFont, color: UIColor) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
@@ -3600,7 +3600,7 @@ class BearyNotificationCell: UITableViewCell {
             }
             avatarFallbackLabel.isHidden = true
             kindBadgeView.isHidden = true
-            titleLabel.attributedText = BearyNotificationCell.lineHeightText(titleText, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15.5)), color: BearyColors.ink)
+            titleLabel.attributedText = BearyNotificationCell.lineHeightText(titleText, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink)
         } else {
             // 互动行：42 圆头像（无图回退首字母 15/700 灰）+ 右下角 19 号类型角标。
             avatarImageView.backgroundColor = BearyColors.line
@@ -3642,7 +3642,7 @@ class BearyNotificationCell: UITableViewCell {
             title.append(NSAttributedString(
                 string: actorName,
                 attributes: [
-                    .font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15.5)),
+                    .font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)),
                     .foregroundColor: BearyColors.ink,
                 ]
             ))
@@ -3650,7 +3650,7 @@ class BearyNotificationCell: UITableViewCell {
             title.append(NSAttributedString(
                 string: " " + verbText,
                 attributes: [
-                    .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15.5)),
+                    .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)),
                     .foregroundColor: BearyColors.ink,
                 ]
             ))

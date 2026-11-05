@@ -3220,7 +3220,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftStatusBanner.spacing = 8
         draftStatusBanner.alignment = .center
         draftStatusBanner.translatesAutoresizingMaskIntoConstraints = false
-        draftStatusBannerLabel.font = UIFont.systemFont(ofSize: 12.5)
+        draftStatusBannerLabel.font = UIFont.systemFont(ofSize: 12)
         draftStatusBannerLabel.numberOfLines = 1
         draftStatusBannerLabel.lineBreakMode = .byTruncatingTail
         draftStatusBannerLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -4379,7 +4379,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         editTimerLabel.font = BearyDynamicType.numberFont()
         editTimerLabel.textColor = BearyColors.gray
         editTimerLabel.isHidden = true
-        draftStatusLabel.font = UIFont.systemFont(ofSize: 12.5)
+        draftStatusLabel.font = UIFont.systemFont(ofSize: 12)
         draftStatusLabel.textColor = BearyColors.blue
         // 109：压缩阻力默认值仍 749（lvl1/失败长文案窄屏受压时先截断）；lvl2 已保存态在
         // updateDraftStatusLabel 里拉到 required、走 applyDraftStatusToolbarFit 的保全/只留对勾口径。

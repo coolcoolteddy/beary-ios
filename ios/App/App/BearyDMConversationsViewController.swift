@@ -202,14 +202,14 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     /// 大字号下空文案换行变高，底线随之撑高、不钉死 160。
     /// #711 修红：#706 已退役旧 emptyLabel，空／失败态现由 conversationStateView
     /// 承载（其标题／副文案为内部 label，外部量不到）；此处按状态视图的实际字号
-    /// （标题 15 粗体、副文案 12.5）与空态文案重算——空态文案比失败态长，取空态
+    /// （标题 15 粗体、副文案 12）与空态文案重算——空态文案比失败态长，取空态
     /// 作上限，两态共用同一底线，与旧 emptyLabel 的覆盖口径一致。
     private var adaptiveEmptyMinHeight: CGFloat {
         guard view.bounds.width > 0 else { return 160 }
         let textWidth = max(0, view.bounds.width - 64)
         let size = CGSize(width: textWidth, height: CGFloat.greatestFiniteMagnitude)
         let titleFont = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
-        let subtitleFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5))
+        let subtitleFont = BearyDynamicType.captionFont()
         let titleHeight = ("还没有私信" as NSString).boundingRect(with: size, options: [.usesLineFragmentOrigin], attributes: [.font: titleFont], context: nil).height
         let subtitleHeight = ("发第一条纯文字消息吧" as NSString).boundingRect(with: size, options: [.usesLineFragmentOrigin], attributes: [.font: subtitleFont], context: nil).height
         return max(160, titleHeight + 4 + subtitleHeight + 48)

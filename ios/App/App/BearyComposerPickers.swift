@@ -249,7 +249,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         resultsLabel.textColor = BearyColors.gray
         resultsLabelWrap.isHidden = true
         // v2 黑白灰：空态圆去掉橙底＋橙描边，改浅灰底（faint）无描边、墨色 @
-        // （圆 54、标题 15 bold、副标题 12.5 灰均不动；转圈态仍由 setCenterBusy
+        // （圆 54、标题 15 bold、副标题 12 灰均不动；转圈态仍由 setCenterBusy
         // 换灰色刷新图标，停转后 showState 重置图标、tint 回墨色见 showState）。
         stateCircle.backgroundColor = BearyColors.faint
         stateCircle.layer.cornerRadius = 27
@@ -261,7 +261,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateTitle.adjustsFontForContentSizeCategory = true
         stateTitle.textColor = BearyColors.ink
         stateTitle.textAlignment = .center
-        stateSubtitle.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5))
+        stateSubtitle.font = BearyDynamicType.captionFont()
         stateSubtitle.adjustsFontForContentSizeCategory = true
         stateSubtitle.textColor = BearyColors.gray
         stateSubtitle.textAlignment = .center
@@ -885,7 +885,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         nameLabel.textColor = BearyColors.ink
         let handleLabel = UILabel()
         handleLabel.translatesAutoresizingMaskIntoConstraints = false
-        handleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5))
+        handleLabel.font = BearyDynamicType.secondaryFont()
         handleLabel.adjustsFontForContentSizeCategory = true
         handleLabel.textColor = BearyColors.gray
         let chevron = UIImageView(image: BearyIconImages.image(named: "icon_chevron_right", pointSize: 16))

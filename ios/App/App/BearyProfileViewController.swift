@@ -841,7 +841,7 @@ class BearyProfileViewController: UIViewController {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
         labelValue.backgroundColor = BearyColors.line
-        labelValue.font = UIFont.systemFont(ofSize: 32, weight: .bold)
+        labelValue.font = UIFont.systemFont(ofSize: 28, weight: .bold)
         labelValue.textColor = BearyColors.gray
         labelValue.textAlignment = .center
         return labelValue
@@ -968,7 +968,7 @@ class BearyProfileViewController: UIViewController {
     private let nameLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 23, weight: .heavy))
+        labelValue.font = BearyDynamicType.heroNameFont()
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.ink
         labelValue.numberOfLines = 0
@@ -4239,7 +4239,7 @@ class BearyProfileViewController: UIViewController {
                     let badgeLabel = UILabel()
                     badgeLabel.translatesAutoresizingMaskIntoConstraints = false
                     badgeLabel.text = "AI"
-                    badgeLabel.font = UIFont.systemFont(ofSize: 9, weight: .bold)
+                    badgeLabel.font = UIFont.systemFont(ofSize: 10, weight: .bold)
                     badgeLabel.textColor = BearyColors.ink
                     badgeLabel.backgroundColor = BearyColors.bg
                     badgeLabel.layer.cornerRadius = 4
