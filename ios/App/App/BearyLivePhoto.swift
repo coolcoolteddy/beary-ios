@@ -238,7 +238,14 @@ final class BearyLivePhotoLoader {
             return
         }
         Self.diskQueue.async { [weak self] in
-            guard let self = self, self.isCurrentGeneration(gen) else { return }
+            guard let self = self, self.isCurrentGeneration(gen) else {
+                // 第七轮审计 07：过期任务也要结束回调——直接 return 会丢掉
+                // completion，BearyLivePhotoView 的 currentLiveKey 永久残留，
+                // 同一张图再 configure 会被「同 key 不重复加载」跳过，实况
+                // 永远不再出现；主线程回 nil，让视图清掉失败态。
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
             if let videoData = self.diskData(key: liveKey, ext: "mov", bucket: bucket),
                let stillData = self.diskData(key: staticKey, ext: "jpg", bucket: bucket) {
                 // 磁盘双命中：数据已落盘，build 只凭文件 URL 组装，不再读盘。
