@@ -308,6 +308,10 @@ final class BearyWishWallViewController: UIViewController {
         confirmedDown[wishId] = item.downCount ?? 0
     }
     private var isLoading = false
+    /// 第八轮审计 07：加载在途时又有刷新请求（创建愿望成功、登录后补投），
+    /// 旧请求结束后立即补刷一次——否则 guard 直接丢弃，旧回包渲染创建前
+    /// 的服务端快照，新愿望不出现，用户不离页重进就看不到。
+    private var needsReloadAfterCurrentRequest = false
     /// 13：600 上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews；Feed 断点同款）。
     private var colCapConstraints: [NSLayoutConstraint] = []
     /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
@@ -493,7 +497,12 @@ final class BearyWishWallViewController: UIViewController {
     }
 
     private func loadWishes() {
-        guard !isLoading else { return }
+        guard !isLoading else {
+            // 第八轮审计 07：加载在途时不丢弃本次刷新请求，记下来等旧请求
+            // 结束后再补刷一次（创建愿望成功、登录后补投都走这里）。
+            needsReloadAfterCurrentRequest = true
+            return
+        }
         isLoading = true
         // P2-18：加载态走 BearyStateView（转圈 + “加载中…”）；成功/失败回包时统一收起。
         wishStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
@@ -519,6 +528,13 @@ final class BearyWishWallViewController: UIViewController {
                     // P2-18：失败态走 BearyStateView（“加载失败”+“重试”，动作复用 retryTapped）。
                     self.wishStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
                     self.showStateViewFaded()
+                }
+                // 第八轮审计 07：旧请求结束时若有待补刷的刷新请求，立即再拉一次。
+                // 旗先清后调，避免补刷本身在途时又被记下导致循环；成功失败都补刷，
+                // 最多多拉一轮（失败再失败时照常显失败态，不再自动重试）。
+                if self.needsReloadAfterCurrentRequest {
+                    self.needsReloadAfterCurrentRequest = false
+                    self.loadWishes()
                 }
             }
         }
