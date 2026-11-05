@@ -222,4 +222,85 @@ final class BearyDMStoreTests: XCTestCase {
         waitForExpectations(timeout: 30)
         XCTAssertFalse(discardedAgain)
     }
+
+    // MARK: - 待发存储（审计四轮增量 12）
+
+    private func pendingFile(accountId: Int) -> URL {
+        tmpDir.appendingPathComponent("beary_dm_pending_\(accountId).json")
+    }
+
+    private func pendingBackupFiles(accountId: Int) -> [URL] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: tmpDir.path)) ?? []
+        return names.filter { $0.hasPrefix("beary_dm_pending_\(accountId).json.corrupt-") && $0.hasSuffix(".bak") }
+            .sorted().map { tmpDir.appendingPathComponent($0) }
+    }
+
+    /// 同一 ioQueue 串行执行：先排队的 savePending 一定先于本次 loadPendings 落盘。
+    private func loadPendings(accountId: Int, peerId: Int) -> [BearyDMStore.PendingSend] {
+        let exp = expectation(description: "loadPendings")
+        var result: [BearyDMStore.PendingSend] = []
+        BearyDMStore.loadPendings(accountId: accountId, peerId: peerId) { list in
+            result = list
+            exp.fulfill()
+        }
+        waitForExpectations(timeout: 5)
+        return result
+    }
+
+    func testPendingCoreRoundTrip() {
+        let p1 = BearyDMStore.PendingSend(localKey: "k1", peerId: 5, body: "你好", createdAt: 1000, status: .sending)
+        let p2 = BearyDMStore.PendingSend(localKey: "k2", peerId: 5, body: "在吗", createdAt: 2000, status: .failed)
+        guard let data = BearyDMStoreCore.encodePendings([p1, p2]),
+              let decoded = BearyDMStoreCore.decodePendings(data) else {
+            XCTFail("待发编解码应成功")
+            return
+        }
+        XCTAssertEqual(decoded.map { $0.localKey }, ["k1", "k2"])
+        // 同 localKey 覆盖（改状态不增行）。
+        let p1Failed = BearyDMStore.PendingSend(localKey: "k1", peerId: 5, body: "你好", createdAt: 1000, status: .failed)
+        let upserted = BearyDMStoreCore.upsertPending(decoded, p1Failed)
+        XCTAssertEqual(upserted.count, 2)
+        XCTAssertEqual(upserted.first(where: { $0.localKey == "k1" })?.status, .failed)
+        // 删指定 key，不动其他。
+        let kept = BearyDMStoreCore.removePending(upserted, localKey: "k1")
+        XCTAssertEqual(kept.map { $0.localKey }, ["k2"])
+        // 坏 JSON → nil（调用方改名保留原文件）。
+        XCTAssertNil(BearyDMStoreCore.decodePendings(Data("不是 json".utf8)))
+    }
+
+    func testPendingFileSurvivesMainStoreCorruption() {
+        let accountId = 9010
+        // 主库先写坏：待发是独立文件，仍可读写、不被损坏保护锁住。
+        try? Data("坏了".utf8).write(to: storeFile(accountId: accountId))
+        if case .corrupt = BearyDMStore.loadAll(accountId: accountId) {} else {
+            XCTFail("主库应为 corrupt")
+        }
+        BearyDMStore.savePending(.init(localKey: "k1", peerId: 5, body: "待发", createdAt: 1000, status: .sending), accountId: accountId)
+        let list = loadPendings(accountId: accountId, peerId: 5)
+        XCTAssertEqual(list.map { $0.body }, ["待发"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: pendingFile(accountId: accountId).path))
+    }
+
+    func testPendingFileCorruptIsPreservedAsBak() {
+        let accountId = 9011
+        try? Data("坏了".utf8).write(to: pendingFile(accountId: accountId))
+        // 损坏待发文件 → 读回空，原文件改名 .bak 保留（不丢记录、不阻塞）。
+        XCTAssertEqual(loadPendings(accountId: accountId, peerId: 5).count, 0)
+        XCTAssertEqual(pendingBackupFiles(accountId: accountId).count, 1)
+        XCTAssertEqual(try? Data(contentsOf: pendingBackupFiles(accountId: accountId)[0]), Data("坏了".utf8))
+        // 损坏后仍可正常写待发。
+        BearyDMStore.savePending(.init(localKey: "k1", peerId: 5, body: "新待发", createdAt: 1000, status: .sending), accountId: accountId)
+        XCTAssertEqual(loadPendings(accountId: accountId, peerId: 5).map { $0.body }, ["新待发"])
+    }
+
+    func testPendingAccountIsolation() {
+        BearyDMStore.savePending(.init(localKey: "k1", peerId: 5, body: "A 的", createdAt: 1000, status: .sending), accountId: 9020)
+        BearyDMStore.savePending(.init(localKey: "k2", peerId: 5, body: "B 的", createdAt: 1000, status: .sending), accountId: 9021)
+        XCTAssertEqual(loadPendings(accountId: 9020, peerId: 5).map { $0.body }, ["A 的"])
+        XCTAssertEqual(loadPendings(accountId: 9021, peerId: 5).map { $0.body }, ["B 的"])
+        // 同账号不同对方也互不干扰。
+        BearyDMStore.savePending(.init(localKey: "k3", peerId: 7, body: "另一人", createdAt: 1000, status: .sending), accountId: 9020)
+        XCTAssertEqual(loadPendings(accountId: 9020, peerId: 5).map { $0.localKey }, ["k1"])
+        XCTAssertEqual(loadPendings(accountId: 9020, peerId: 7).map { $0.localKey }, ["k3"])
+    }
 }

@@ -49,8 +49,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private let countLabel = UILabel()
     /// 2026-11-04 乐观发送：失败待发行的本地键集合（行侧边出红叹号、点按重发）。
     private var failedSendKeys = Set<String>()
-    /// 未确认待发（401/403/超时撤行后留下的记录）：行留在列表里、时间旁标
-    /// “未确认”，无重发入口（免重复发出），长按可复制正文核对。
+    /// 审计四轮增量 03：重发在途集合——同一条消息在请求结束前只允许一次重发，
+    /// 回调时清除（失败叹号隐藏不等于底层有锁）。
+    private var retryingKeys = Set<String>()
+    /// 未确认待发（401/403/超时撤行后留下的记录，或重启后恢复的待发）：行留在列表里、
+    /// 时间旁标“未确认”，无重发入口（免重复发出），长按可复制正文核对。
     private var unconfirmedSendKeys = Set<String>()
     /// 本地库损坏提示只弹一次（损坏时原文件已保留备份，不再被覆盖）。
     private var didShowCorruptStoreToast = false
@@ -382,6 +385,23 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 self.tableView.reloadData()
                 self.scrollToBottomIfNeeded()
             }
+            // 审计四轮增量 12：恢复上次未落盘的待发——重启后以“未确认”态回显
+            //（可查看、长按复制，不自动重发；服务端已有该行时 loadLatest 认领即清掉）。
+            BearyDMStore.loadPendings(accountId: storeAccountId, peerId: userId) { [weak self] pendings in
+                guard let self = self, !pendings.isEmpty else { return }
+                let existingKeys = Set(self.messages.compactMap { $0.localKey })
+                var restored: [BearyAPI.DMMessage] = []
+                for p in pendings where !existingKeys.contains(p.localKey) {
+                    restored.append(BearyAPI.DMMessage(id: nil, senderId: self.storeAccountId, fromMe: true, body: p.body, createdAt: p.createdAt, localKey: p.localKey))
+                    self.unconfirmedSendKeys.insert(p.localKey)
+                    self.fadedRowKeys.insert("msg-pending-\(p.localKey)")
+                }
+                guard !restored.isEmpty else { return }
+                self.messages += restored
+                self.updateEmptyState()
+                self.tableView.reloadData()
+                self.scrollToBottomIfNeeded()
+            }
         }
         loadLatest()
         checkDMPermission()
@@ -573,15 +593,24 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         messages.filter { $0.localKey != nil }
     }
 
+    /// 认领窗口（审计四轮增量 05）：服务端时间须落在待发时间前后窗口内——
+    /// 下限 5 秒容时钟偏差，上限 60 秒防晚到的同文案行被旧待发误认领
+    ///（A 先失败、B 后成功时 A 不得认领 B 的行）。完整精确认领须后端在
+    /// 历史接口透传客户端消息 ID，见 PR 描述待办。
+    private static let claimWindowBeforeMs = 5000
+    private static let claimWindowAfterMs = 60000
+
     /// 待发行与服务端行配对认领：按发送顺序，服务端行须是本人、正文相同、
-    /// 服务端时间不早于发送时间 5 秒前（容时钟偏差）；一条服务端行只认领
-    /// 一条待发（同文案连发不串位）。认领到的待发丢弃（服务端行已在列表里，
-    /// 不闪动、不重播）；未认领的待发重新拼到末尾（失败态跟随 localKey 保留）。
+    /// 服务端时间落在待发时间前后窗口内（前 5 秒容时钟偏差、后 60 秒防晚到
+    /// 同文案行被旧待发误认领）；一条服务端行只认领一条待发（同文案连发不串位）。
+    /// 认领到的待发丢弃（服务端行已在列表里，不闪动、不重播）；未认领的待发
+    /// 重新拼到末尾（失败态跟随 localKey 保留）。
     private func reconcilePendingSends(_ pending: [BearyAPI.DMMessage]) {
         guard !pending.isEmpty else { return }
         let myId = SessionManager.shared.currentUser?.id
         var usedServer = Set<Int>()
         var remaining: [BearyAPI.DMMessage] = []
+        var claimedKeys: [String] = []
         for temp in pending {
             guard let key = temp.localKey else { continue }
             if let idx = messages.indices.first(where: { i in
@@ -589,11 +618,13 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 messages[i].localKey == nil &&
                 messages[i].senderId == myId &&
                 messages[i].body == temp.body &&
-                (messages[i].createdAt ?? 0) >= (temp.createdAt ?? 0) - 5000
+                (messages[i].createdAt ?? 0) >= (temp.createdAt ?? 0) - Self.claimWindowBeforeMs &&
+                (messages[i].createdAt ?? 0) <= (temp.createdAt ?? 0) + Self.claimWindowAfterMs
             }) {
                 usedServer.insert(idx)
                 failedSendKeys.remove(key)
                 unconfirmedSendKeys.remove(key)
+                claimedKeys.append(key)
                 // 认领成功：服务端行继承待发的已播标记，免得 willDisplay 再淡入一次。
                 if let serverId = messages[idx].id {
                     fadedRowKeys.insert("msg-\(serverId)")
@@ -603,24 +634,34 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             }
         }
         messages += remaining
+        // 认领到的待发已在服务端落袋，待发存储里同步清掉（重启后不再恢复）。
+        for claimed in claimedKeys {
+            BearyDMStore.removePending(localKey: claimed, accountId: storeAccountId)
+        }
     }
 
     /// 待发行重发：失败红叹号点按入口。重发期先清失败态（叹号消失），
     /// 成功靠重拉认领；再失败则叹号回来；超时/未知与 401/403 走撤行口径
     ///（见 removePendingSend），不给会重复发出的重试。
+    /// 审计四轮增量 03：同一条消息在请求结束前只允许一次重发（retryingKeys
+    /// 按 localKey 区分，连点只发一次；回调时清除在途状态）。
     private func retrySend(key: String) {
         guard let userId = peer.id,
               let temp = messages.first(where: { $0.localKey == key }),
               let body = temp.body,
               !sessionClosed, !dmNotAllowed,
+              !retryingKeys.contains(key),
               SessionManager.shared.isLoggedIn else { return }
+        retryingKeys.insert(key)
         failedSendKeys.remove(key)
         reloadPendingRow(key: key)
         BearyAPI.shared.sendDM(userId: userId, body: body) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                self.retryingKeys.remove(key)
                 switch result {
                 case .success:
+                    BearyDMStore.removePending(localKey: key, accountId: self.storeAccountId)
                     self.dmNotAllowed = false
                     self.updatePermBanner()
                     self.loadLatest()
@@ -644,6 +685,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         BearyToast.show(in: self.view, message: "发送结果未知，请确认对方是否已收到后再重发")
                     } else {
                         self.failedSendKeys.insert(key)
+                        BearyDMStore.updatePendingStatus(localKey: key, status: .failed, accountId: self.storeAccountId)
                         self.reloadPendingRow(key: key)
                     }
                 }
@@ -659,6 +701,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         let body = message.body ?? ""
         unconfirmedSendKeys.insert(key)
         failedSendKeys.remove(key)
+        // 审计四轮增量 12：待发存储里同步记为未确认（重启后恢复查看、只看不自动重发）。
+        BearyDMStore.updatePendingStatus(localKey: key, status: .unconfirmed, accountId: storeAccountId)
         if restoreDraft, !body.isEmpty {
             if inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 inputTextView.text = body
@@ -814,11 +858,13 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     // 2026-11-04 乐观发送：先留住待发行，再用服务端行覆盖，
                     // 最后配对认领——已送达的待发丢弃（服务端行已在列表里），
                     // 未认领的（在途/失败）重新拼到末尾，刷新不得吞掉它们。
-                    let pending = self.pendingTemps()
+                    // 审计四轮增量 12：待发在回包时刻才取——请求在途时新建或
+                    // 恢复的待发也须留住，请求前取值会被整表覆盖吞掉。
                     let fetched = self.resolvedSenders(Array(history.resolvedMessages.reversed()))
                     // 读改写走后台串行队列：save 直接回合并后的本会话消息，不再重读一次。
                     BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched) { [weak self] merged in
                         guard let self = self else { return }
+                        let pending = self.pendingTemps()
                         self.messages = merged
                         self.reconcilePendingSends(pending)
                         self.hasMoreOlder = history.resolvedMessages.count >= 30
@@ -900,10 +946,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.hasMoreOlder = history.resolvedMessages.count >= 30
                     // 2026-11-04 乐观发送：翻旧回包同样先留住待发行再拼回末尾，
                     // 否则在途/失败的待发会被整表覆盖吞掉（翻旧取的是更早页，
-                    // 不可能含待发，无需配对认领、直接拼回）。
-                    let pending = self.pendingTemps()
+                    // 不可能含待发，无需配对认领、直接拼回）。待发在回包时刻才取，
+                    // 见 loadLatest（审计四轮增量 12）。
                     BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older) { [weak self] merged in
                         guard let self = self else { return }
+                        let pending = self.pendingTemps()
                         self.messages = merged
                         self.messages += pending
                         self.tableView.reloadData()
@@ -963,6 +1010,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         let key = UUID().uuidString
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         let temp = BearyAPI.DMMessage(id: nil, senderId: myId, fromMe: true, body: body, createdAt: nowMs, localKey: key)
+        // 审计四轮增量 12：待发先落盘（独立待发文件，与主库损坏保护互不干扰）——
+        // 发送中/失败态被系统终止，重启后仍能恢复查看、长按复制，不自动重发。
+        BearyDMStore.savePending(.init(localKey: key, peerId: userId, body: body, createdAt: nowMs, status: .sending), accountId: storeAccountId)
         messages.append(temp)
         // 入场动效归 animateLastMineRow——先记已播，免得 willDisplay
         // 的通用淡入与上浮动画抢 alpha。
@@ -981,6 +1031,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 switch result {
                 case .success:
                     // 发送成功即权限无问题：横幅清掉（进页 can 误判时靠此恢复）。
+                    BearyDMStore.removePending(localKey: key, accountId: self.storeAccountId)
                     self.dmNotAllowed = false
                     self.updatePermBanner()
                     self.loadLatest()
@@ -1011,6 +1062,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     } else {
                         // 确认未送达的失败：行留在原地、侧边出红叹号，点按重发。
                         self.failedSendKeys.insert(key)
+                        BearyDMStore.updatePendingStatus(localKey: key, status: .failed, accountId: self.storeAccountId)
                         self.reloadPendingRow(key: key)
                     }
                 }

@@ -174,6 +174,9 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
 
         NotificationCenter.default.addObserver(self, selector: #selector(friendsChanged), name: .bearyFriendsChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(userChanged), name: .bearyUserDidChange, object: nil)
+        // 审计四轮增量 10：拉黑后列表连重拉都不会触发——订阅拉黑广播，
+        // 到达时当场把该对方从可见列表撤掉（本地记录不动，解除后恢复显示）。
+        NotificationCenter.default.addObserver(self, selector: #selector(blockedUserChanged), name: .bearyDidBlockUser, object: nil)
         loadConversationsSnapshot()
         load()
     }
@@ -273,6 +276,21 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     @objc private func friendsChanged() {
         // 取关/拉黑后会话自动消失：关系变化即重拉，不靠旧列表。
         load()
+    }
+
+    /// 审计四轮增量 10：拉黑广播到达即把该对方从可见列表撤掉（本地记录不动；
+    /// 解除拉黑后下次合并即恢复显示）。只做显示层过滤，不重拉网络。
+    @objc private func blockedUserChanged() {
+        guard SessionManager.shared.isLoggedIn else { return }
+        let before = conversations.count
+        conversations.removeAll { conv in
+            guard let pid = conv.peer?.id else { return false }
+            return BearyBlockedStore.isBlocked(pid)
+        }
+        guard conversations.count != before else { return }
+        updateEmptyState()
+        tableView.reloadData()
+        notifyDMConversationsMergeChanged()
     }
 
     @objc private func userChanged() {
