@@ -4750,9 +4750,9 @@ class BearyProfileViewController: UIViewController {
         // 紧凑版词汇指纹：当年 top 4；当年无词条目时取最近有词条目的年，
         // 年份由词视图标题行明示；当年有篇但无可计词时整节隐藏，不留空标题。
         // 口径与年报首屏同源：visible 已过滤，wordprint 内部再过滤一次。
-        // 不在此处同步算（NLTokenizer 逐篇分词会卡住个人页渲染）：先藏旧词
-        // ——旧年 / 旧号的词绝不在新年份名下多留一帧；缓存命中时下方同步
-        // 回填，无闪烁；未命中时后台算完回主线程一次性呈现。
+        // 不在此处同步算（NLTokenizer 逐篇分词与语料指纹都会卡住个人页
+        // 渲染）：先藏旧词——旧年 / 旧号的词绝不在新年份名下多留一帧；
+        // 指纹、查表、计算全在后台队列，命中与未命中都回主线程一次性呈现。
         let currentYear = Calendar.current.component(.year, from: Date())
         let availableYears = BearyProfilePersonalLogic.availableYears(entries: visible, isOwn: isOwnProfile, calendar: .current)
         let resolvedYear = availableYears.contains(currentYear) ? currentYear : availableYears.first
