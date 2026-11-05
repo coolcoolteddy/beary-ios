@@ -401,7 +401,7 @@ final class BearyPlusPageViewController: UIViewController {
             mainButton.isEnabled = false
             let agreementText = NSAttributedString(
                 string: "《Plus 会员服务协议》",
-                attributes: [.font: BearyDynamicType.captionFont(), .foregroundColor: BearyColors.blue])
+                attributes: [.font: BearyDynamicType.captionFont(), .foregroundColor: BearyColors.blue, .underlineStyle: NSUnderlineStyle.single.rawValue])
             agreementButton.setAttributedTitle(agreementText, for: .normal)
             foot.addSubview(agreementButton)
             NSLayoutConstraint.activate([
@@ -427,7 +427,7 @@ final class BearyPlusPageViewController: UIViewController {
                 attributes: [.font: BearyDynamicType.captionFont(), .foregroundColor: BearyColors.gray])
             agreementText.append(NSAttributedString(
                 string: "《Plus 会员服务协议》",
-                attributes: [.font: BearyDynamicType.captionFont(), .foregroundColor: BearyColors.blue]))
+                attributes: [.font: BearyDynamicType.captionFont(), .foregroundColor: BearyColors.blue, .underlineStyle: NSUnderlineStyle.single.rawValue]))
             agreementButton.setAttributedTitle(agreementText, for: .normal)
             foot.addSubview(agreementButton)
             NSLayoutConstraint.activate([

@@ -27,10 +27,13 @@ import UIKit
 // MARK: - 动效与布局常量（文件内私有）
 
 private enum OnboardingAnim {
-    /// 切页总时长（出 0.14 + 入 0.14，落在 0.25–0.32 秒口径内）。
-    static let pageHalfDuration: TimeInterval = 0.14
-    /// 切页横移幅度（轻微横移＋淡入淡出）。
-    static let pageSlide: CGFloat = 20
+    /// 互动翻页落点弹簧（规范 §6 引导专属档，取代旧 0.14＋0.14 两段切）：
+    /// 0.30s／damping 0.7；快甩把松手速度按页宽归一化后传 initialSpringVelocity，慢拖为 0。
+    static let pageSpringDuration: TimeInterval = 0.30
+    static let pageSpringDamping: CGFloat = 0.7
+    /// 松手判据：拖过页宽 1/3，或沿翻页方向速度 ＞600pt/s。
+    static let pageCommitFraction: CGFloat = 1.0 / 3.0
+    static let pageFlingVelocity: CGFloat = 600
     /// 入场错峰间隔；总入场 0.5 秒内（0.09 末位延迟 + 0.25 播长 = 0.34）。
     static let staggerStep: TimeInterval = 0.03
     static let entranceDuration: TimeInterval = 0.25
@@ -105,7 +108,7 @@ private enum OnboardingVisibilityDemo: Int, CaseIterable {
 
 // MARK: - 引导容器
 
-final class BearyOnboardingViewController: UIViewController {
+final class BearyOnboardingViewController: UIViewController, UIGestureRecognizerDelegate {
     static let seenKey = "beary_onboarding_v3_seen"
 
     enum Mode { case firstLaunch, replay }
@@ -116,11 +119,15 @@ final class BearyOnboardingViewController: UIViewController {
     var onRequestCompose: (() -> Void)?
     var onRequestBrowse: (() -> Void)?
 
-    // MARK: - 翻页状态机（按钮与左右滑动共用；动画只改 transform 与 opacity）
+    // MARK: - 翻页状态机（按钮与互动拖动共用；动画只改 transform 与 opacity）
 
     private var currentPage = 0
     private var isTransitioning = false
     private var pendingPage: Int?
+    // 互动拖动进行态：nil＝未开始／已结束；等于 currentPage＝越界方向
+    // （首尾页外拖），其余值＝拖向的目标页。
+    private var dragTargetPage: Int?
+    private var dragTranslation: CGFloat = 0
     private var finished = false
     private var entrancePlayedPages: Set<Int> = []
     private var chipAppeared = false
@@ -353,15 +360,14 @@ final class BearyOnboardingViewController: UIViewController {
         bottomStack.setCustomSpacing(4, after: primaryButton)
         secondaryButton.isHidden = true
 
-        // 左右滑动与按钮共用翻页状态机（UISwipe 手势，不拦截点按）。
-        let swipeLeft = UISwipeGestureRecognizer(target: self, action: #selector(swipedLeft))
-        swipeLeft.direction = .left
-        swipeLeft.cancelsTouchesInView = false
-        view.addGestureRecognizer(swipeLeft)
-        let swipeRight = UISwipeGestureRecognizer(target: self, action: #selector(swipedRight))
-        swipeRight.direction = .right
-        swipeRight.cancelsTouchesInView = false
-        view.addGestureRecognizer(swipeRight)
+        // 互动翻页与按钮共用翻页状态机（UIPan 手势 1:1 跟手；点按仍走按钮，
+        // 横滑接管后按钮触摸自动取消，不会误触）。竖滑留给 heroScroll：
+        // 方向仲裁见 gestureRecognizerShouldBegin，heroScroll 的 pan 须等
+        // 本手势失败才启动，避免横滑被滚动抢走（同回收站行拖动模式）。
+        let pagePan = UIPanGestureRecognizer(target: self, action: #selector(onboardingPanned(_:)))
+        pagePan.delegate = self
+        view.addGestureRecognizer(pagePan)
+        heroScroll.panGestureRecognizer.require(toFail: pagePan)
 
         heroContent.addLayoutGuide(heroAreaGuide)
         topCap = topWrap.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
@@ -878,6 +884,52 @@ final class BearyOnboardingViewController: UIViewController {
         view.layoutIfNeeded()
     }
 
+    /// 当前页宽（互动跟手与按钮滑切共用；columnView 即页宽）。
+    private func pageWidth() -> CGFloat {
+        let width = columnView.bounds.width
+        return width > 0 ? width : view.bounds.width
+    }
+
+    /// 把目标页摆到屏外待命：与当前页同框（边缘约束与当前页相同，可
+    /// 同时激活），transform 偏一页宽；先布局一次再设位移，避免布局
+    /// 后 transform 被冲掉。入场错峰随摆位即播（已播过即空操作），
+    /// 拖动中目标页内容随页滑入，不留空白页。
+    private func stageTargetPage(_ target: Int, forward: Bool) {
+        let width = pageWidth()
+        for constraint in pageEdgeConstraints[target] { constraint.isActive = true }
+        pageViews[target].isHidden = false
+        pageViews[target].alpha = 1
+        view.layoutIfNeeded()
+        pageViews[target].transform = CGAffineTransform(translationX: forward ? width : -width, y: 0)
+        playEntranceIfNeeded(target)
+    }
+
+    /// 转场收尾（按钮滑切与互动松手共用）：落到终页、清转场与拖动旗标、
+    /// 播目标页入场（已播过即空操作），再处理转场中挂起的页码。
+    /// 转场中已跳过／已走完：直接收尾，不落终页、不处理挂起页码。
+    private func completeTransition(to target: Int) {
+        if finished {
+            isTransitioning = false
+            pendingPage = nil
+            dragTargetPage = nil
+            dragTranslation = 0
+            return
+        }
+        showPageImmediately(target)
+        isTransitioning = false
+        dragTargetPage = nil
+        dragTranslation = 0
+        playEntranceIfNeeded(target)
+        if let pending = pendingPage {
+            pendingPage = nil
+            if pending != currentPage && !finished {
+                goTo(pending, animated: true)
+            }
+        }
+    }
+
+    /// 按钮翻页：整页宽滑切＋落点弹簧（与互动松手同档），不再走旧
+    /// 0.14＋0.14 两段淡入淡出；减动效时直切终态。
     private func goTo(_ page: Int, animated: Bool) {
         let target = max(0, min(3, page))
         guard !finished else { return }
@@ -894,37 +946,131 @@ final class BearyOnboardingViewController: UIViewController {
             playEntranceIfNeeded(target)
             return
         }
+        if currentPage == 3 { stopAllEmotes() }
         isTransitioning = true
-        UIView.animate(withDuration: OnboardingAnim.pageHalfDuration, animations: {
-            fromView.transform = CGAffineTransform(translationX: forward ? -OnboardingAnim.pageSlide : OnboardingAnim.pageSlide, y: 0)
-            fromView.alpha = 0
+        let width = pageWidth()
+        stageTargetPage(target, forward: forward)
+        let toView = pageViews[target]
+        UIView.animate(withDuration: OnboardingAnim.pageSpringDuration, delay: 0, usingSpringWithDamping: OnboardingAnim.pageSpringDamping, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+            fromView.transform = CGAffineTransform(translationX: forward ? -width : width, y: 0)
+            toView.transform = .identity
         }, completion: { [weak self] _ in
             guard let self = self else { return }
-            // 转场中已跳过／已走完：直接收尾，不再续播、不再处理挂起页码。
-            if self.finished {
-                self.isTransitioning = false
-                self.pendingPage = nil
-                return
-            }
-            if self.currentPage == 3 { self.stopAllEmotes() }
-            self.showPageImmediately(target)
-            let toView = self.pageViews[target]
-            toView.transform = CGAffineTransform(translationX: forward ? OnboardingAnim.pageSlide : -OnboardingAnim.pageSlide, y: 0)
-            toView.alpha = 0
-            UIView.animate(withDuration: OnboardingAnim.pageHalfDuration, animations: {
-                toView.transform = .identity
-                toView.alpha = 1
-            }, completion: { [weak self] _ in
-                guard let self = self else { return }
-                self.isTransitioning = false
-                self.playEntranceIfNeeded(target)
-                if let pending = self.pendingPage {
-                    self.pendingPage = nil
-                    if pending != self.currentPage && !self.finished {
-                        self.goTo(pending, animated: true)
-                    }
+            self.completeTransition(to: target)
+        })
+    }
+
+    // MARK: - 互动翻页（1:1 跟手拖动＋松手弹簧落点，规范 §6 引导专属档）
+
+    /// 手势仲裁：只接横向主导的拖动；竖滑、竖滚进行中、转场中、
+    /// 已走完时一律不接管（竖滑留给 heroScroll）。
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer is UIPanGestureRecognizer else { return true }
+        guard !finished, !isTransitioning else { return false }
+        if heroScroll.isDragging || heroScroll.isDecelerating { return false }
+        guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
+        let velocity = pan.velocity(in: view)
+        if velocity == .zero {
+            let translation = pan.translation(in: view)
+            return abs(translation.x) > abs(translation.y)
+        }
+        return abs(velocity.x) > abs(velocity.y)
+    }
+
+    @objc private func onboardingPanned(_ sender: UIPanGestureRecognizer) {
+        switch sender.state {
+        case .began:
+            // 方向待首个 .changed 判定；转场中或已走完不接管。
+            guard !finished, !isTransitioning else { return }
+            dragTargetPage = nil
+            dragTranslation = 0
+        case .changed:
+            guard !finished else { return }
+            // 按钮转场在途且本次未建拖动：不接管，防两路转场叠加。
+            guard dragTargetPage != nil || !isTransitioning else { return }
+            let width = pageWidth()
+            guard width > 0 else { return }
+            let translation = sender.translation(in: view).x
+            if dragTargetPage == nil {
+                guard translation != 0 else { return }
+                let target = translation < 0 ? currentPage + 1 : currentPage - 1
+                if target < 0 || target > 3 {
+                    // 首尾越界方向：第 0 页右拖、第 3 页左拖不摆目标页、
+                    // 不移动，松手即弹回原页。
+                    dragTargetPage = currentPage
+                    dragTranslation = 0
+                    isTransitioning = true
+                    return
                 }
-            })
+                if currentPage == 3 { stopAllEmotes() }
+                dragTargetPage = target
+                isTransitioning = true
+                stageTargetPage(target, forward: target > currentPage)
+            }
+            guard let target = dragTargetPage else { return }
+            guard target != currentPage else { return }
+            // 1:1 跟手，夹在起止之间：拖回起点外不反向翻目标，避免中途换向。
+            let clamped: CGFloat
+            if target > currentPage {
+                clamped = min(0, max(-width, translation))
+            } else {
+                clamped = max(0, min(width, translation))
+            }
+            dragTranslation = clamped
+            pageViews[currentPage].transform = CGAffineTransform(translationX: clamped, y: 0)
+            pageViews[target].transform = CGAffineTransform(translationX: clamped + (target > currentPage ? width : -width), y: 0)
+        case .ended:
+            guard let target = dragTargetPage else { return }
+            let width = pageWidth()
+            let velocity = sender.velocity(in: view).x
+            let commit: Bool
+            if target == currentPage {
+                commit = false
+            } else if target > currentPage {
+                commit = -dragTranslation > width * OnboardingAnim.pageCommitFraction
+                    || velocity < -OnboardingAnim.pageFlingVelocity
+            } else {
+                commit = dragTranslation > width * OnboardingAnim.pageCommitFraction
+                    || velocity > OnboardingAnim.pageFlingVelocity
+            }
+            settleInteractiveDrag(to: target, commit: commit, velocity: velocity)
+        case .cancelled, .failed:
+            guard let target = dragTargetPage else { return }
+            settleInteractiveDrag(to: target, commit: false, velocity: 0)
+        default:
+            break
+        }
+    }
+
+    /// 互动松手落点：提交则目标页弹簧滑入、当前页滑出；否则弹回原页。
+    /// 快甩把松手速度按页宽归一化后传 initialSpringVelocity，慢拖为 0；
+    /// 减动效开时直切终态，不播弹簧（拖动跟手本身是手指直驱，不属播放动效）。
+    private func settleInteractiveDrag(to target: Int, commit: Bool, velocity: CGFloat) {
+        let width = pageWidth()
+        let finalPage = commit ? target : currentPage
+        guard BearyMotion.animated(true) else {
+            completeTransition(to: finalPage)
+            return
+        }
+        let flung = abs(velocity) > OnboardingAnim.pageFlingVelocity
+        let springVelocity: CGFloat = flung ? abs(velocity) / max(width, 1) : 0
+        let fromPage = currentPage
+        let fromView = pageViews[fromPage]
+        let toView = pageViews[target]
+        let forward = target > fromPage
+        UIView.animate(withDuration: OnboardingAnim.pageSpringDuration, delay: 0, usingSpringWithDamping: OnboardingAnim.pageSpringDamping, initialSpringVelocity: springVelocity, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+            if commit {
+                fromView.transform = CGAffineTransform(translationX: forward ? -width : width, y: 0)
+                toView.transform = .identity
+            } else {
+                fromView.transform = .identity
+                if target != fromPage {
+                    toView.transform = CGAffineTransform(translationX: forward ? width : -width, y: 0)
+                }
+            }
+        }, completion: { [weak self] _ in
+            guard let self = self else { return }
+            self.completeTransition(to: finalPage)
         })
     }
 
@@ -1078,14 +1224,6 @@ final class BearyOnboardingViewController: UIViewController {
 
     @objc private func skipTapped() {
         finish()
-    }
-
-    @objc private func swipedLeft() {
-        goTo(currentPage + 1, animated: true)
-    }
-
-    @objc private func swipedRight() {
-        goTo(currentPage - 1, animated: true)
     }
 
     @objc private func primaryTapped() {

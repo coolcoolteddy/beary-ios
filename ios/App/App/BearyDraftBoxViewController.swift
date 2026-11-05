@@ -73,7 +73,7 @@ final class BearyDraftMetaFlowView: UIView {
     }
 }
 
-final class BearyDraftBoxViewController: UIViewController {
+final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDelegate {
 
     // MARK: - 对外 API（编辑器代理按此调用，勿改名）
 
@@ -96,6 +96,13 @@ final class BearyDraftBoxViewController: UIViewController {
     private let boxTransitionDelegate = BearyDraftBoxTransitionDelegate()
     private var drafts: [BearyDraft] = []
     private var cardEntries: [(button: UIButton, draftValue: BearyDraft)] = []
+    /// 草稿卡左滑跟手拖动：当前正在被手指拖动的卡片（同一时刻只可能有一张在拖）；
+    /// 新卡开始拖时，上一张若还停在偏移处先瞬间复位，避免两张同偏（复用回收站口径）。
+    private var draftDraggingCard: UIButton?
+    /// 松手执行删除的左滑距离（回收站 trashDragMenuThreshold 同值：卡片左移满此值才删，不满弹回原位）。
+    private let draftDragDeleteThreshold: CGFloat = 60
+    /// 手指跟手的最大左移量（回收站 trashDragMaxOffset 同值：再往左拖也不跟，防卡片被拖出屏）。
+    private let draftDragMaxOffset: CGFloat = 140
     /// 新规矩 (b)：草稿列表入场动效只播一次（首渲），后续重渲不重播已有卡片。
     /// 审计第 12 项起由 tryPlayEntrance 统一置位（原 renderDrafts 首轮置位已移走）。
     private var draftCardsAnimatedOnce = false
@@ -481,7 +488,7 @@ final class BearyDraftBoxViewController: UIViewController {
         // 抓手热区仍压在最上层（居中 120 宽，关闭钮在其范围外，不被挡）。
         sheetView.bringSubviewToFront(grabHitView)
 
-        subLabel.font = UIFont.systemFont(ofSize: 12.5)
+        subLabel.font = UIFont.systemFont(ofSize: 12)
         subLabel.textColor = BearyColors.gray
         subLabel.textAlignment = .center
         subLabel.numberOfLines = 0
@@ -498,14 +505,14 @@ final class BearyDraftBoxViewController: UIViewController {
 
         newButton.setTitle("新建日记", for: .normal)
         newButton.setTitleColor(BearyColors.gray, for: .normal)
-        newButton.titleLabel?.font = UIFont.systemFont(ofSize: 13.5)
+        newButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         newButton.tintColor = BearyColors.gray
         if let editImage = BearyIconImages.image(named: "icon_edit", pointSize: 15) {
             newButton.setImage(editImage, for: .normal)
         }
         newButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         newButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 0, bottom: 10, right: 0)
-        // 弹窗审计 E1-10：新建钮原视觉高约 37（13.5pt 字 + 上下各 10 内边距），
+        // 弹窗审计 E1-10：新建钮原视觉高约 37（13pt 字 + 上下各 10 内边距），
         // 未达 44。最小 44 高约束补足热区；
         // 外包 wrap 上缘 = 钮上缘、下缘留 12pt 底边距，44 帧完整落在 wrap 内，
         // 不被父容器截断；文案与位置不变，只虚线框高一档。
@@ -525,12 +532,12 @@ final class BearyDraftBoxViewController: UIViewController {
         undoBar.layer.masksToBounds = true
         undoBar.translatesAutoresizingMaskIntoConstraints = false
         undoLabel.text = "草稿已删除"
-        undoLabel.font = UIFont.systemFont(ofSize: 13.5)
+        undoLabel.font = UIFont.systemFont(ofSize: 13)
         undoLabel.textColor = BearyColors.ink
         undoLabel.translatesAutoresizingMaskIntoConstraints = false
         undoButton.setTitle("撤销", for: .normal)
         undoButton.setTitleColor(BearyColors.ink, for: .normal)
-        undoButton.titleLabel?.font = UIFont.systemFont(ofSize: 13.5, weight: .semibold)
+        undoButton.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
         undoButton.translatesAutoresizingMaskIntoConstraints = false
         undoButton.addTarget(self, action: #selector(undoDeleteTapped), for: .touchUpInside)
         undoButton.bearyAddPressFeedback()
@@ -969,7 +976,7 @@ final class BearyDraftBoxViewController: UIViewController {
             // D-G13：网页 .df-chip.df-lost 为 faint 底 + 灰字 + 500 字重；
             // 原 App 红底红字 semibold 改齐。
             lostButton.setTitleColor(BearyColors.gray, for: .normal)
-            lostButton.titleLabel?.font = UIFont.systemFont(ofSize: 11.5, weight: .medium)
+            lostButton.titleLabel?.font = UIFont.systemFont(ofSize: 12, weight: .medium)
             lostButton.backgroundColor = BearyColors.faint
             lostButton.layer.cornerRadius = 999
             lostButton.layer.masksToBounds = true
@@ -994,7 +1001,7 @@ final class BearyDraftBoxViewController: UIViewController {
         let statusLabel = UILabel()
         // L7：状态文案必保全，不被长 chip 挤走。
         statusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        statusLabel.font = UIFont.systemFont(ofSize: 12.5, weight: .semibold)
+        statusLabel.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
         statusLabel.text = saveStatusText(status)
         switch status {
         case .saved, .partial:
@@ -1029,12 +1036,18 @@ final class BearyDraftBoxViewController: UIViewController {
             metaColumn.trailingAnchor.constraint(equalTo: metaWrap.trailingAnchor),
         ])
         inner.addArrangedSubview(metaWrap)
-        // C7：左滑删除复用删除钮路径（直接删卡 + 6 秒撤销条，与按钮一致，
-        // 无确认框；删除钮本身保留；草稿箱为 stack 卡片、无 tableView 滑动
-        // API，故左滑只换触发方式，不新增执行逻辑）。
-        let swipe = UISwipeGestureRecognizer(target: self, action: #selector(draftCardSwiped(_:)))
-        swipe.direction = .left
-        card.addGestureRecognizer(swipe)
+        // C7 改跟手拖动（视觉批 4-4，复用回收站拖拽模式）：草稿箱为 stack
+        // 卡片、无 tableView 滑动 API，故左滑删除不用系统侧滑，改用每卡一个
+        // UIPanGestureRecognizer 做 1:1 跟手拖动——手指左移卡片即左移，松手
+        // 够 60pt 执行删除（复用删除钮路径：直接删卡 + 6 秒撤销条，与按钮
+        // 一致，无确认框）、不够弹簧弹回原位。删除钮本身保留；点按打开
+        // 不动。与上下滚动抢手势见 gestureRecognizerShouldBegin：横滑才
+        // 接管，竖滑与滚动进行中一律放行给滚动视图（另见滚动视图的 pan
+        // 须等本手势失败才启动，避免滚动半途被横滑抢走）。
+        let drag = UIPanGestureRecognizer(target: self, action: #selector(draftCardDragged(_:)))
+        drag.delegate = self
+        card.addGestureRecognizer(drag)
+        sheetScrollView.panGestureRecognizer.require(toFail: drag)
         // 审计第三轮无障碍：整卡是唯一打开入口，卡名须区分各卡——含标题、
         // 摘要、时间、保存状态；摘要过长时截断，读屏名不念全文。
         var nameParts = ["草稿"]
@@ -1048,11 +1061,70 @@ final class BearyDraftBoxViewController: UIViewController {
         return card
     }
 
-    @objc private func draftCardSwiped(_ sender: UISwipeGestureRecognizer) {
+    /// 手势仲裁（复用回收站口径）：只有左横滑才让卡片拖动手势接管；竖滑
+    /// （|vy| ≥ |vx|）与右滑放行给滚动视图；滚动进行中（拖动/减速）不抢，
+    /// 避免手指刚松开滚势未消时误触一张卡把它拖偏。
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer is UIPanGestureRecognizer else { return true }
+        if sheetScrollView.isDragging || sheetScrollView.isDecelerating { return false }
+        let velocity = (gestureRecognizer as? UIPanGestureRecognizer)?.velocity(in: view) ?? .zero
+        return velocity.x < 0 && abs(velocity.x) > abs(velocity.y)
+    }
+
+    @objc private func draftCardDragged(_ sender: UIPanGestureRecognizer) {
         guard let card = sender.view as? UIButton,
-              let draftValue = cardEntries.first(where: { $0.button === card })?.draftValue,
-              let button = deleteEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button else { return }
-        deleteTapped(button)
+              let draftValue = cardEntries.first(where: { $0.button === card })?.draftValue else { return }
+        switch sender.state {
+        case .began:
+            if let previous = draftDraggingCard, previous !== card {
+                previous.transform = .identity
+            }
+            draftDraggingCard = card
+            // 入场错峰动画若还在跑（transform/alpha 在途），先停掉它：
+            // 动画模型值本就是终值（alpha 1、transform identity），停动画
+            // 不会闪回，手指接管后 transform 只由拖动写（回收站同款处理）。
+            card.layer.removeAllAnimations()
+        case .changed:
+            let translation = sender.translation(in: view).x
+            let offset = max(-draftDragMaxOffset, min(0, translation))
+            card.transform = CGAffineTransform(translationX: offset, y: 0)
+        case .ended:
+            draftDraggingCard = nil
+            let offset = card.transform.tx
+            if offset <= -draftDragDeleteThreshold {
+                // 拖过阈值执行删除：复用删除钮路径（删卡 + 6 秒撤销条），
+                // 拖动 transform 不先复位——复位会让卡片先跳回原位再收起，
+                // 直接交接给 deleteTapped 的收起动画，视觉上连续。
+                guard let button = deleteEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button else {
+                    resetDraftDragCard(card)
+                    return
+                }
+                deleteTapped(button)
+            } else {
+                // 未过阈值弹簧复位：松手速度归一化后传弹簧（松手速度 ÷ 回程
+                // 距离），慢拖速度近 0 即约等于 0，快甩则带上真实松手速度。
+                let distance = abs(offset)
+                let springVelocity = distance > 0 ? sender.velocity(in: view).x / distance : 0
+                resetDraftDragCard(card, initialSpringVelocity: springVelocity)
+            }
+        case .cancelled, .failed:
+            draftDraggingCard = nil
+            resetDraftDragCard(card)
+        default:
+            break
+        }
+    }
+
+    /// 拖动结束/取消后卡片归位：减动效直设（回收站 resetTrashDragRow 同款
+    /// 门控），其余以统一弹簧弹回（0.30s／damping 0.7，只走 transform）。
+    private func resetDraftDragCard(_ card: UIButton, initialSpringVelocity: CGFloat = 0) {
+        if UIAccessibility.isReduceMotionEnabled {
+            card.transform = .identity
+            return
+        }
+        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
+            card.transform = .identity
+        }, completion: nil)
     }
 
     private func chipShell() -> UIView {
@@ -1095,7 +1167,7 @@ final class BearyDraftBoxViewController: UIViewController {
         }
         let label = UILabel()
         label.text = name
-        label.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
+        label.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
         label.textColor = BearyColors.ink
         // L7：chip label 省略号 + 低压缩，chip 本身设最大宽，不挤走状态文案。
         label.numberOfLines = 1
@@ -1136,13 +1208,13 @@ final class BearyDraftBoxViewController: UIViewController {
         // 状态文案的 required 抗压缩不动。chip 整体 180 上限保留作兜底。
         let prefixLabel = UILabel()
         prefixLabel.text = "@"
-        prefixLabel.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
+        prefixLabel.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
         prefixLabel.textColor = BearyColors.ink
         prefixLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         row.addArrangedSubview(prefixLabel)
         let label = UILabel()
         label.text = name
-        label.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
+        label.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
         label.textColor = BearyColors.ink
         label.numberOfLines = 1
         label.lineBreakMode = .byTruncatingTail
@@ -1383,7 +1455,7 @@ final class BearyDraftBoxViewController: UIViewController {
     }
 
     /// 弹窗审计 E1-18 统一退场完成回调：关闭、打开、新建三路共用同一
-    /// 0.25s 退场（原 closeBox 的遮罩淡出 + 面板滑出，减动效直 dismiss），
+    /// 退场（遮罩 0.25s 淡出 + 面板滑出走拖拽收尾统一弹簧 0.30s／damping 0.7，减动效直 dismiss），
     /// dismiss 完成后才调 completion（即原 onNew/onOpen 回调）。
     /// 退场在途时再点按一律忽略：不重复播动画，也不让“关闭后又打开”
     /// 的回调在关闭完成后再执行；先到的一路为准。
@@ -1407,12 +1479,11 @@ final class BearyDraftBoxViewController: UIViewController {
             dismiss(animated: false, completion: wrappedCompletion)
             return
         }
-        let duration: TimeInterval = 0.25
-        // 第 30 项：遮罩 0.25s 单独淡出（与面板滑出解耦；面板走视觉清单第 8 项统一 0.25s）。
+        // 第 30 项：遮罩 0.25s 单独淡出（与面板滑出解耦；面板滑出走拖拽收尾统一弹簧 0.30s／damping 0.7）。
         UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
             self.backdropButton.alpha = 0
         })
-        UIView.animate(withDuration: duration, delay: 0, options: .curveEaseIn, animations: {
+        UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
             if self.isPadLayout {
                 self.sheetView.alpha = 0
                 self.sheetView.transform = CGAffineTransform(translationX: 0, y: self.sheetView.bounds.height * 0.04)
@@ -1446,7 +1517,7 @@ final class BearyDraftBoxViewController: UIViewController {
     }
 
     /// U18：把手下滑关闭——下滑跟手，超过 80pt 或快速下滑时走 closeBox 同动画；
-    /// 否则 0.25s 弹回原位，减动效直接落位（不播回弹动画）。遮罩点按关闭不受影响。
+    /// 否则统一弹簧（0.30s／damping 0.7＋松手速度）弹回原位，减动效直接落位（不播回弹动画）。遮罩点按关闭不受影响。
     /// 2026-10-30 抓手批：上滑按统一口径阻尼微移后回弹，不扩高、不关闭。
     @objc private func handlePanGesture(_ gesture: UIPanGestureRecognizer) {
         guard !isDismissing else { return }
@@ -1476,7 +1547,8 @@ final class BearyDraftBoxViewController: UIViewController {
                     restore()
                     UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
                 } else {
-                    UIView.animate(withDuration: 0.25, animations: restore) { _ in
+                    let offset = BearySheetDrag.offset(for: translation.y)
+                    UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore) { _ in
                         UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
                     }
                 }
@@ -1491,7 +1563,7 @@ final class BearyDraftBoxViewController: UIViewController {
                 restore()
                 UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
             } else {
-                UIView.animate(withDuration: 0.25, animations: restore) { _ in
+                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore) { _ in
                     UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
                 }
             }

@@ -263,7 +263,7 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
                 // 避免先回弹再下滑的跳变。
                 (presentedViewController as? BearyLoginViewController)?.cancelFromSheet()
             } else {
-                restoreDrag()
+                restoreDrag(velocity: velocity)
             }
         case .cancelled, .failed:
             restoreDrag()
@@ -282,7 +282,7 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
         scrimView.alpha = BearySheetDrag.scrimAlpha(forDragOffset: offset, sheetHeight: sheetHeight)
     }
 
-    private func restoreDrag() {
+    private func restoreDrag(velocity: CGFloat = 0) {
         let restore = {
             self.presentedView?.transform = .identity
             self.shadowView.transform = .identity
@@ -303,7 +303,9 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
             restore()
             relayout()
         } else {
-            UIView.animate(withDuration: 0.25, animations: restore, completion: { _ in relayout() })
+            // 拖拽收尾统一弹簧 0.30s／damping 0.7＋松手速度（取消/失败时速度为 0）。
+            let offset = presentedView?.transform.ty ?? 0
+            UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore, completion: { _ in relayout() })
         }
     }
 
@@ -353,8 +355,8 @@ private final class BearyLoginSheetAnimator: NSObject, UIViewControllerAnimatedT
 
     private let isPresenting: Bool
     // 2026-11-04：chrome 与内容同一动画块——animator 块内同时驱动
-    // presentedView 与 chrome（同 0.25s、同 curveEaseOut/curveEaseIn），
-    // 不再由 coordinator alongside 另起一套曲线。
+    // presentedView 与 chrome（入场 0.25s curveEaseOut；退场走拖拽收尾
+    // 统一弹簧 0.30s／damping 0.7），不再由 coordinator alongside 另起一套曲线。
     private weak var presentationController: BearyLoginSheetPresentationController?
 
     init(isPresenting: Bool, presentationController: BearyLoginSheetPresentationController? = nil) {
@@ -364,7 +366,7 @@ private final class BearyLoginSheetAnimator: NSObject, UIViewControllerAnimatedT
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return UIAccessibility.isReduceMotionEnabled ? 0 : 0.25
+        return UIAccessibility.isReduceMotionEnabled ? 0 : (isPresenting ? 0.25 : 0.30)
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -404,7 +406,7 @@ private final class BearyLoginSheetAnimator: NSObject, UIViewControllerAnimatedT
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
                 return
             }
-            UIView.animate(withDuration: duration, delay: 0, options: [.curveEaseIn, .beginFromCurrentState], animations: {
+            UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [.beginFromCurrentState], animations: {
                 fromView.transform = CGAffineTransform(translationX: 0, y: offset)
                 self.presentationController?.setChromePresented(false)
             }, completion: { _ in
