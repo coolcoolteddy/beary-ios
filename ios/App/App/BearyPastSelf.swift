@@ -397,7 +397,7 @@ final class PastSelfIconView: UIView {
             layer.bearyDynamicBorderColor = BearyColors.line
             let label = UILabel()
             label.translatesAutoresizingMaskIntoConstraints = false
-            label.font = UIFont.systemFont(ofSize: 9)
+            label.font = UIFont.systemFont(ofSize: 10)
             label.textColor = BearyColors.gray
             label.text = imagesetName + " 待注册"
             label.textAlignment = .center

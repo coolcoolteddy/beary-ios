@@ -245,7 +245,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     // 不再每次重渲都拆掉全部行重建；翻页改增量追加（见 appendResultRows）。
     private let resultsStack = UIStackView()
 
-    // 状态区：网页 .addr-state——容器 padding 28/20/20；圆 54、图标 25、标题 15、副文案 12.5。
+    // 状态区：网页 .addr-state——容器 padding 28/20/20；圆 54、图标 25、标题 15、副文案 12。
     private let stateWrap = UIView()
     private let stateStack = UIStackView()
     private let stateCircle = UIView()
@@ -658,7 +658,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateStack.addArrangedSubview(stateTitleLabel)
 
         stateSubLabel.translatesAutoresizingMaskIntoConstraints = false
-        stateSubLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5))
+        stateSubLabel.font = BearyDynamicType.captionFont()
         stateSubLabel.adjustsFontForContentSizeCategory = true
         stateSubLabel.textColor = BearyColors.gray
         stateSubLabel.textAlignment = .center
@@ -2034,13 +2034,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         lastResultRowKeys = nextKeys
     }
 
-    /// 分区头：网页 .srch-sec——12.5 bold gray、padding 12/6/4。
+    /// 分区头：网页 .srch-sec——13 bold gray、padding 12/6/4。
     private func makeSectionHeader(title: String) -> UIView {
         let wrap = UIView()
         wrap.translatesAutoresizingMaskIntoConstraints = false
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12.5))
+        label.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13))
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         label.text = title
@@ -2171,7 +2171,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         return row
     }
 
-    /// 日记行：网页 .srch-entry——padding 14/16（Q1 行内边距统一）、底边 1 line；meta 行 gap 7（作者 13.5 bold、
+    /// 日记行：网页 .srch-entry——padding 14/16（Q1 行内边距统一）、底边 1 line；meta 行 gap 7（作者 14 bold、
     /// 日期 13 gray）；正文 16、行高 1.6、最多 3 行；首图 44×44 圆角 12 居右。
     /// 私密组 meta 为“日期 + 私密 pill”（2-3：只留 pill，“· 未公开”文字已删）；
     /// 公开组 meta 为“作者 + 日期 + · 我的（本人时）”。
@@ -2267,12 +2267,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         } else {
             let authorLabel = BearyRoundedMarkLabel()
             authorLabel.translatesAutoresizingMaskIntoConstraints = false
-            authorLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13.5))
+            authorLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 14))
             authorLabel.textColor = BearyColors.ink
             authorLabel.numberOfLines = 1
             authorLabel.clipsToBounds = true
             authorLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            authorLabel.attributedText = highlightedText(entry.authorName ?? "", query: query, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13.5)), color: BearyColors.ink)
+            authorLabel.attributedText = highlightedText(entry.authorName ?? "", query: query, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 14)), color: BearyColors.ink)
             metaStack.addArrangedSubview(authorLabel)
             metaStack.addArrangedSubview(dateLabel)
             if let authorId = entry.authorId, let myUserId = SessionManager.shared.currentUser?.id, authorId == myUserId {
@@ -2351,7 +2351,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         lock.contentMode = .scaleAspectFit
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
+        label.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
         label.textColor = friendsOnly ? BearyColors.ink : BearyColors.blue
         label.text = ephemeralLive ? "限时" : (friendsOnly ? "仅好友" : "私密")
         pill.addSubview(lock)

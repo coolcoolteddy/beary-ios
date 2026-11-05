@@ -210,13 +210,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
 
-        noteLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5))
+        noteLabel.font = BearyDynamicType.captionFont()
         noteLabel.adjustsFontForContentSizeCategory = true
         noteLabel.textColor = BearyColors.gray
         noteLabel.numberOfLines = 0
         noteLabel.attributedText = TrashText.lineSpaced(
             text: "删除的日记在这里保留 30 天，到期自动彻底删除。",
-            font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5)),
+            font: BearyDynamicType.captionFont(),
             lineHeightMultiple: 1.6,
             color: BearyColors.gray
         )
