@@ -1017,8 +1017,9 @@ final class BearyTimelineCell: UITableViewCell {
     var onQuoteEntry: ((String) -> Void)?
     /// N7 时间线图片灯箱：主图条点按回调（keys=本条过滤后图 key，index=点按位置），
     /// VC 侧复用独立文件内的 BearyEntryImageViewerViewController 全屏弹出；
+    /// 另传被点缩略图已显示的 UIImage，灯箱打开先显它。
     /// 引用卡小图不走此路（点按引用卡仍走 onQuoteEntry 打开被引用日记）。
-    var onTapImages: (([String], Int, CGRect?) -> Void)?
+    var onTapImages: (([String], Int, CGRect?, UIImage?) -> Void)?
     private let actsStack = UIStackView()
     private let editStatusLabel = UILabel()
     /// 2026-10-29 Li 定编辑态口径：无图标、只留文字；可编辑期内左侧为倒计时灰字 +
@@ -1846,7 +1847,7 @@ final class BearyTimelineCell: UITableViewCell {
         let keys = (entry.images ?? []).filter { !$0.isEmpty }
         let index = sender.view?.tag ?? 0
         guard index >= 0 && index < keys.count else { return }
-        onTapImages?(keys, index, sender.view.map { $0.convert($0.bounds, to: nil) })
+        onTapImages?(keys, index, sender.view.map { $0.convert($0.bounds, to: nil) }, (sender.view as? UIImageView)?.image)
     }
 
     /// 2026-10-29 Li 定编辑态口径（无图标、只留文字、状态会变）：
@@ -6252,12 +6253,13 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         cell.onMoreEntry = { [weak self] entry, sourceView in self?.presentTimelineMoreMenu(entry: entry, sourceView: sourceView) }
         // N7：复用独立文件内的查看器，全屏模态弹出（已弹出时不叠加、减动效直显）。
         let viewerEntry = sections[indexPath.section].entries[indexPath.row]
-        cell.onTapImages = { [weak self] keys, index, originFrame in
+        cell.onTapImages = { [weak self] keys, index, originFrame, thumbnail in
             guard let self = self, self.presentedViewController == nil else { return }
             let now = Date()
             if let last = self.lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
             self.lastImageViewerAt = now
             let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: viewerEntry.liveVideos, startIndex: index)
+            viewer.initialThumbnail = thumbnail
             viewer.originFrameInWindow = originFrame
             viewer.modalPresentationStyle = .fullScreen
             self.present(viewer, animated: UIAccessibility.isReduceMotionEnabled == false, completion: nil)

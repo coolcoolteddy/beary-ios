@@ -264,7 +264,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         fetchNextPageIfNeeded()
     }
 
-    private func presentLightbox(startIndex: Int, originFrame: CGRect? = nil) {
+    private func presentLightbox(startIndex: Int, originFrame: CGRect? = nil, thumbnail: UIImage? = nil) {
         guard !photosValue.isEmpty, startIndex >= 0, startIndex < photosValue.count else { return }
         guard presentedViewController == nil else { return }
         let keys = photosValue.map { $0.imageKey }
@@ -275,6 +275,7 @@ final class BearyProfilePhotosViewController: UIViewController {
             }
         }
 let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wallLiveVideos.isEmpty ? nil : wallLiveVideos, startIndex: startIndex)
+        viewer.initialThumbnail = thumbnail
         viewer.originFrameInWindow = originFrame
         viewer.modalPresentationStyle = .fullScreen
         viewer.onViewEntryAtIndex = { [weak self, weak viewer] tappedIndex in
@@ -352,7 +353,8 @@ extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollec
             return
         }
         let originFrame = collectionView.cellForItem(at: indexPath).map { $0.convert($0.bounds, to: nil) }
-        presentLightbox(startIndex: indexPath.item, originFrame: originFrame)
+        let thumbnail = (collectionView.cellForItem(at: indexPath) as? BearyProfilePhotoCell)?.displayedThumbnail
+        presentLightbox(startIndex: indexPath.item, originFrame: originFrame, thumbnail: thumbnail)
     }
 }
 
@@ -369,6 +371,9 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
     }()
 
     private var loadingKey: String?
+
+    /// 灯箱先显缩略图：只读露出当前格已显示的图（未加载出为 nil，走转圈口径）。
+    var displayedThumbnail: UIImage? { photoImageView.image }
 
     /// 单张三态（加载中／成功／失败）：失败格不留淡色空白，见 configure。
     /// VC 的 didSelectItemAt 读它判定“失败格点按重试、不进灯箱”。
