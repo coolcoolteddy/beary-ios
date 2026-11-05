@@ -11,7 +11,7 @@
 // 基线对齐）；头行之下是全宽正文栈：标题 16.5 粗体（放开换行）→正文 16/1.6，
 // 标题与正文同左缘、同宽，左右与内容列齐平，不再缩进到昵称位置。
 // 引用卡（BearyQuoteCardView，viewer 实时判定）；横向 216 图片条（间距 8、圆角 12、
-// 宽按宽高比 0.55–2.22 倍高夹取、无尺寸默认 280、无图高 0）；操作行赞左 + 收藏分享右组
+// 宽按宽高比 0.55–2.22 倍高夹取、无尺寸默认 280、无图高 0）；操作行赞左、收藏紧邻赞右、分享钉右缘
 // （无回应钮）；回应在下方流式 chip 行（BearyEmoteFlowView + 34 虚线 + 钮，
 // 仅熊脸 key 显示，服务端数据不动）；篇末一条 2pt 全宽线收尾（限时存活期藏线改虚线框）。
 // 本人卡右上角 21pt 灰色小地球（28 框、44 热区，对齐作者行；头行右缩进让出 28+8，
@@ -458,8 +458,9 @@ final class BearyDetailViewController: UIViewController {
         return st
     }()
     private let quoteView = BearyQuoteCardView(frame: .zero)
-    /// 操作行：首页 actionStack 同款（赞左 + spacer 吸宽 + 收藏分享右组，组内 16；
-    /// 无回应钮；分享非公开隐藏时 shareSlotSpacer 占位 21pt，防收藏钮滑位）。
+    /// 操作行：首页 actionStack 同款（赞左、收藏紧邻赞右、分享钉右缘，
+    /// 点赞—收藏间距 BearySpace.xxl（24，规范 §3）；无回应钮；分享非公开
+    /// 隐藏时 shareSlotSpacer 占位 24pt，行尾槽位不随分享显隐变化）。
     private let actionStack = UIStackView()
     private let likeButton = BearyHit44Button(type: .custom)
     /// 赞钮显式宽约束（卡片同款）：按钮固有宽不含标题边距，栈按固有宽给帧时
@@ -1064,16 +1065,21 @@ final class BearyDetailViewController: UIViewController {
             shareButton.heightAnchor.constraint(equalToConstant: 24),
         ])
 
-        // 中部 spacer（最低 hugging / 最低抗压）吸掉全部剩余宽度，赞左、
-        // 收藏分享右组、每篇位置固定一致（首页 actionStack 同款）。
+        // 收藏紧邻点赞右侧（首页 actionStack 同款）：顺序 [点赞， 收藏，
+        // spacer， 分享， 占位 spacer]；中部 spacer 吸掉全部剩余宽度，分享
+        // 仍钉右缘。点赞—收藏间距 BearySpace.xxl（24，规范 §3）：两钮框
+        // 均为 24，BearyHit44Button 各向外扩 10，24 间距留 4pt 热区间隙、
+        // 严格不交（详情栈是普通 UIStackView、没有卡片的 hitTest 兜底，
+        // 更不能用 16）；其余间距仍栈 spacing 16，被 spacer 吸收。
         let actionSpacer = UIView()
         actionSpacer.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
         actionSpacer.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
         actionStack.addArrangedSubview(likeButton)
-        actionStack.addArrangedSubview(actionSpacer)
         actionStack.addArrangedSubview(bookmarkButton)
+        actionStack.addArrangedSubview(actionSpacer)
         actionStack.addArrangedSubview(shareButton)
         actionStack.addArrangedSubview(shareSlotSpacer)
+        actionStack.setCustomSpacing(BearySpace.xxl, after: likeButton)
         bodyStack.addArrangedSubview(actionStack)
 
         // 游客提示条：与卡片游客展开态同文案，点按走登录提示；整行 44pt 可点。
@@ -1898,7 +1904,7 @@ final class BearyDetailViewController: UIViewController {
     // MARK: - 操作行
 
     /// 点赞点亮走红色、收藏点亮走橙色，与现有先行反馈口径；数字只 setTitle，不重建行。
-    /// 批 B 操作行（首页同款）：赞左 + spacer + 收藏分享右组，无回应钮；
+    /// 批 B 操作行（首页同款）：赞左、收藏紧邻赞右、分享钉右缘，无回应钮；
     /// 收藏纯图标（无中文标签）；赞数口径（2026-10-31 Li 纠正，取代旧“详情页
     /// 0 赞恒显 0”例外）：0 赞时数字整段隐藏、只留爱心图标可点，与卡片
     /// 空数字位隐藏一致；有赞时显完整数字，宽度显式算（卡片同款）。
@@ -1945,7 +1951,7 @@ final class BearyDetailViewController: UIViewController {
 
         // 卡片互动门控同口径：2026-10-31 私密自互动口径——点赞／收藏为“有效公开 或 作者本人”
         // 时正常显示，非作者看非公开篇仍压暗；分享不动，仍仅有效公开才有（私密不交出正文与链接），
-        // 分享隐藏时留 21pt 槽位占位（首页 shareSlotSpacer 同款），防收藏钮滑到最右边缘。
+        // 分享隐藏时留 24pt 槽位占位（首页 shareSlotSpacer 同款），行尾槽位不随分享显隐变化。
         // 限时已到期按私密算（与卡片同口径）。
         // 注意：按钮不禁用（首页卡片禁用），点按仍走详情原有拒绝动效 + toast
         // （审计 P2-11 口径），非作者的非公开互动有明确反馈而非静默无反应。
