@@ -26,6 +26,8 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     // 只在“首次请求且尚无旧数据”时出现；有旧数据时保留内容后台刷新。
     private let firstLoadStateView = BearyStateView()
     private var firstLoadPending = true
+    /// 快照回填代次：切号即变，旧号在途快照回包凭此丢弃。
+    private var snapshotGeneration: UInt64 = 0
     // 新行首次出现透明度过渡的已播记账（按对方 id/handle 键，已有行更新不重播）。
     private var fadedRowKeys = Set<String>()
     private let titleLabel = UILabel()
@@ -212,7 +214,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         let titleFont = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
         let subtitleFont = BearyDynamicType.captionFont()
         let titleHeight = ("还没有私信" as NSString).boundingRect(with: size, options: [.usesLineFragmentOrigin], attributes: [.font: titleFont], context: nil).height
-        let subtitleHeight = ("发第一条纯文字消息吧" as NSString).boundingRect(with: size, options: [.usesLineFragmentOrigin], attributes: [.font: subtitleFont], context: nil).height
+        let subtitleHeight = ("发条消息吧" as NSString).boundingRect(with: size, options: [.usesLineFragmentOrigin], attributes: [.font: subtitleFont], context: nil).height
         return max(160, titleHeight + 4 + subtitleHeight + 48)
     }
 
@@ -274,6 +276,8 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     }
 
     @objc private func userChanged() {
+        // 回填代次+1：在途旧号快照回包凭此丢弃。
+        snapshotGeneration += 1
         // 账号切换：旧号会话不得残留。先清表再重拉；在途旧号请求回包凭
         // 请求时账号丢弃（见 load），在途时新号重拉挂起、旧回包到后补发。
         if SessionManager.shared.isLoggedIn {
@@ -305,8 +309,17 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     /// （与广场 BearyFeedCache 同口径）。只补空槽，网络已回包时不用旧快照回写。
     private func loadConversationsSnapshot() {
         guard let uid = SessionManager.shared.currentUser?.id else { return }
+        // 回填代次：切号即变，旧号在途快照回包时凭此丢弃（只比账号不够——
+        // 切走又切回同一账号时 uid 相同，代次仍能拦住旧会话）。
+        let generation = snapshotGeneration
         BearyDMConversationsCache.load(bucket: "\(uid)") { [weak self] snap in
             guard let self = self, let snap = snap, !snap.conversations.isEmpty else { return }
+            // 回填三重门禁：账号须与请求时一致；页面代次须未变；
+            // 本轮网络已回包（firstLoadPending 已清）时不用旧快照回写——
+            // 否则旧快照会覆盖网络返回的空结果。
+            guard SessionManager.shared.currentUser?.id == uid else { return }
+            guard generation == self.snapshotGeneration else { return }
+            guard self.firstLoadPending else { return }
             guard self.conversations.isEmpty else { return }
             self.conversations = BearyDMStore.mergedConversations(server: snap.conversations, accountId: uid)
             // 快照已显内容：首拉转圈遮层随即收起，不再盖住旧会话等网络回包。
@@ -385,7 +398,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             conversationStateView.isHidden = false
             setRefreshFailedBannerVisible(false)
         } else if conversations.isEmpty {
-            conversationStateView.configure(kind: .empty, title: "还没有私信", subtitle: "发第一条纯文字消息吧", iconName: nil, actionTitle: nil, onAction: nil)
+            conversationStateView.configure(kind: .empty, title: "还没有私信", subtitle: "发条消息吧", iconName: nil, actionTitle: nil, onAction: nil)
             conversationStateView.isHidden = false
             setRefreshFailedBannerVisible(false)
         } else {
