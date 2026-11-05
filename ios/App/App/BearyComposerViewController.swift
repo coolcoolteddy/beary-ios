@@ -423,6 +423,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 再手动关闭。正常到点（无在途请求）不置位，直接走原关闭路径；
     /// 新建发布没有编辑计时器，不受影响。
     private var editSaveBlockedAfterDeadline = false
+    /// 审计四轮增量 09：编辑检查点恢复提示状态（每编辑器实例只弹一次）。
+    /// pending 由回填末尾的检查点查到后挂起，viewDidAppear 后才弹
+    /// （存量引用提示同款 composerDidAppear 守卫）；弹层挡住时 1 秒
+    /// 重试、最多 3 次，仍被挡时留盘、下次进编辑器再问。
+    private var editCheckpointPromptShown = false
+    private var pendingEditCheckpoint: BearyDraftStore.BearyEditCheckpoint?
+    private var editCheckpointPromptRetries = 0
     /// 一并公开引用发布流程代次（quote-freeze）：每次点发布（新建态）即 +1，
     /// setVisibility 与 publishEntry 的回调只认创建时的代次；过期回调直接
     /// 丢弃，不碰 isPublishing、不 toast、不覆盖新一轮流程的状态。
@@ -1063,6 +1070,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         super.viewDidAppear(animated)
         composerDidAppear = true
         maybePresentStoredQuotePrompt()
+        maybePresentEditCheckpointPrompt()
         NSLog("[Diag] composer-viewDidAppear")
         // 临时诊断（81 包，定根因后删除）。
         DiagFile.mark("viewDidAppear")
@@ -4514,7 +4522,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             draftStatusLabel.textColor = BearyColors.blue
             draftStatusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         } else if level == 1 {
-            draftStatusLabel.text = "文字已保存，图片未保存"
+            draftStatusLabel.text = "已保存，图片还没上传完"
             draftStatusLabel.textColor = BearyColors.blue
             draftStatusLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
         } else {
@@ -5931,6 +5939,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 扫一遍同款（4c）：补拉单篇后的第二次回填是 viewDidLoad 之后唯一的正文
         // 填充点，此前不调 updatePublishState，保存钮会留在空态灰直到用户输入。
         updatePublishState()
+        // 审计四轮增量 09：回填完成后查一次编辑检查点（引用缺失补拉时提前
+        // return，钩子只在完整回填后跑；每实例只弹一次见 maybeOfferEditCheckpointRestore）。
+        maybeOfferEditCheckpointRestore()
     }
 
     /// 编辑回填补拉单篇（详情同款 fetchEntry），首次自动补拉与失败行“重试”共用：
@@ -6005,8 +6016,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 草稿
 
     private func scheduleDraftSave() {
-        // 编辑模式不走草稿流：任何编辑中的改动都不写 beary_draft_v3。
-        if isEditMode { return }
+        // 审计四轮增量 09：编辑模式不走草稿流，但走独立检查点（防崩溃丢修改，
+        // 见 saveEditCheckpointNow；防抖 400ms 与新建态同款）。
+        if isEditMode {
+            draftTimer?.invalidate()
+            draftTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
+                guard let self = self else { return }
+                self.saveEditCheckpointNow()
+            }
+            return
+        }
         // 防抖等待期先显“保存中…”（网页 queueSaveDraft 同款），落盘后由保存级别覆盖。
         // D-G14：网页保存中态带 15px beary-loading 转圈图标（queueSaveDraft 的
         // spin 图标 + “保存中…”），原 App 只出文字无图标；此处换 icon_refresh 图并转圈，
@@ -6036,8 +6055,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 不重做保存链路）。后台执行时间不足时用后台任务兜底：保存完成（或系统
     /// 到期）即结束任务；版本未变说明冲刷后无新输入，不重复写盘。
     @objc private func flushDraftBeforeBackground() {
-        // 编辑模式不写草稿（与 scheduleDraftSave/saveDraftNow 同口径）。
-        if isEditMode { return }
+        // 审计四轮增量 09：编辑模式不写草稿，但冲刷检查点（防最后 400ms
+        // 窗口内切后台/被杀丢修改；与新建态同款后台任务兜底）。
+        if isEditMode {
+            flushEditCheckpointBeforeBackground()
+            return
+        }
         guard editorEditVersion != lastBackgroundFlushVersion else { return }
         lastBackgroundFlushVersion = editorEditVersion
         draftTimer?.invalidate()
@@ -6060,9 +6083,35 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
+    /// 编辑检查点入后台冲刷：取消防抖 timer、直接写一次检查点；版本未变
+    /// 说明冲刷后无新输入，不重复写盘（与新建态 flush 同款守卫）。
+    private func flushEditCheckpointBeforeBackground() {
+        guard editorEditVersion != lastBackgroundFlushVersion else { return }
+        lastBackgroundFlushVersion = editorEditVersion
+        draftTimer?.invalidate()
+        draftTimer = nil
+        if backgroundDraftTask == .invalid {
+            backgroundDraftTask = UIApplication.shared.beginBackgroundTask(withName: "beary-edit-checkpoint-flush") { [weak self] in
+                guard let self = self else { return }
+                if self.backgroundDraftTask != .invalid {
+                    UIApplication.shared.endBackgroundTask(self.backgroundDraftTask)
+                    self.backgroundDraftTask = .invalid
+                }
+            }
+        }
+        saveEditCheckpointNow { [weak self] _ in
+            guard let self = self else { return }
+            if self.backgroundDraftTask != .invalid {
+                UIApplication.shared.endBackgroundTask(self.backgroundDraftTask)
+                self.backgroundDraftTask = .invalid
+            }
+        }
+    }
+
     /// saveDraftNow 完成结果（主线程回调）。
-    /// - succeeded：本次落盘是否成功。编辑模式不写草稿、无内容删篇成功均记成功
-    ///   （无新输入待保存，关闭不拦）；删篇失败、写盘失败、回读不到本篇均记失败。
+    /// - succeeded：本次落盘是否成功。编辑模式走检查点（见 saveEditCheckpointNow），
+    ///   检查点写成功/与原文一致无可写均记成功（无新输入待保存，关闭不拦）；
+    ///   无内容删篇成功亦记成功；删篇失败、写盘失败、回读不到本篇均记失败。
     /// - hadPreviousSavedVersion：只在失败时用于文案区分——写盘前库里是否已有本篇旧版。
     ///   save 是原子写，失败时旧文件原样保留，故失败后回读仍命中本篇即等价于旧版在；
     ///   成功时该位恒真、无意义，调用方只在失败时读它。
@@ -6076,11 +6125,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 回调带 DraftSaveResult：关闭路径须按 succeeded 决定是否走 onCancelled，
     /// 失败时不关闭、留页提示重试（P0：此前无条件关闭，失败红字随页面消失）。
     private func saveDraftNow(completion: ((DraftSaveResult) -> Void)? = nil) {
-        // 编辑模式不写草稿（scheduleDraftSave 已拦，这里再拦一道，防以后新增调用点漏拦）。
-        // 编辑态 saveDraftNow 是空操作、无草稿文件可串账号，故本支的跨账号
-        // 修复只针对新建发布；编辑保存的账号问题不在本支范围。
+        // 审计四轮增量 09：编辑模式不写草稿，但写独立检查点（防崩溃丢修改）。
+        // 此处不再假装成功——回传检查点的真实成败，关闭/保留路径按它决定
+        // 是否留页重试（新建态同款口径）；写盘按入队账号分桶（见 saveEditCheckpointNow）。
         if isEditMode {
-            completion?(DraftSaveResult(succeeded: true, hadPreviousSavedVersion: false))
+            saveEditCheckpointNow { succeeded in
+                completion?(DraftSaveResult(succeeded: succeeded, hadPreviousSavedVersion: false))
+            }
             return
         }
         // 发布发起账号失配：不写盘、不生成新 draftId/clientReq、不碰
@@ -6110,19 +6161,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             completion?(DraftSaveResult(succeeded: true, hadPreviousSavedVersion: false))
             return
         }
-        // C10 空判定（心情不算内容）：正文 trim 为空、且无已上传图、无天气、无 @、
+        // C10 空判定（心情不算内容）：正文 trim 为空、且无图、无天气、无 @、
         // 无引用时，整篇视为空——已有草稿删篇并隐藏状态，不新建空草稿。
-        // 上传中/失败图不进草稿（网页 draftImgList 同款：up_ 占位一律排除），故空判定
-        // 与落盘图片都只看已上传图；内存里的上传中/失败项仍留在图片条里可续传/重试。
-        var uploadedItems: [ComposerImageItem] = []
-        for item in imageItems {
-            if item.key != nil {
-                uploadedItems.append(item)
-            }
-        }
-        let hasRealContent = !trimmedContent().isEmpty || !uploadedItems.isEmpty
+        // 审计四轮增量 08（新口径）：本地文件完整的未上传图也算内容、也进草稿
+        // （pending 态，重进时续传/重试），故空判定与落盘图片都看“有 key 或有
+        // 本地文件”的图；连本地文件都没有的内存项仍不进草稿。
+        var hasRealContent = !trimmedContent().isEmpty
             || selectedWeather != nil || selectedRecipient != nil || selectedQuote != nil
             || selectedLocation != nil || !headlineText.isEmpty
+        if !hasRealContent {
+            for item in imageItems {
+                if item.key != nil || item.localFile != nil {
+                    hasRealContent = true
+                    break
+                }
+            }
+        }
         if !hasRealContent {
             let deletingId = draftIdValue
             currentDraftId = nil
@@ -6146,11 +6200,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         var images: [BearyDraftImageItem] = []
-        for item in uploadedItems {
+        for item in imageItems {
+            guard item.key != nil || item.localFile != nil else { continue }
+            // 审计四轮增量 08：已上传图 state .uploaded；本地文件完整、未上传
+            // 成功的图 state .pending（失败态 .failed），随 localFile 进草稿，
+            // 重进时按 state 续传/重试（见 restoreDraft/loadDraftFromBox）。
             // 实况已上传项随 liveVideoKey 进草稿：杀 App 后恢复仍能重建
-            // live_videos 映射；未上传/上传中的项本来就不进草稿（旧口径），
-            // 实况待传视频只留内存，杀 App 后按旧口径丢弃、不静默变静态。
-            images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: .uploaded, liveVideoKey: item.liveVideoKey))
+            // live_videos 映射；待传实况的 liveVideoData 只在内存，杀 App 后
+            // 静态图可续传、实况视频部分无法恢复，不静默变静态。
+            let state: BearyDraftImageState
+            if item.key != nil {
+                state = .uploaded
+            } else if item.failed {
+                state = .failed
+            } else {
+                state = .pending
+            }
+            images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: state, liveVideoKey: item.liveVideoKey))
         }
         // @ 展示名口径与 refreshRecipientRow 一致（展示名 / @handle / “用户”兜底），
         // 只为恢复 chip 显示；发布仍以 mentioned_user_id 为准。
@@ -6213,7 +6279,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let saveBaselineVersion = editorEditVersion
         BearyDraftStore.ioQueue.async { [weak self] in
             let writeSucceeded = BearyDraftStore.save(draft, forAccount: saveAccountId)
-            // 保存级别跟随图片状态：有失败/未上传的图 = 1（文字已保存，图片未保存），否则 2；
+            // 保存级别跟随图片状态：有失败/未上传的图 = 1（已保存，图片还没上传完），否则 2；
             // 落盘失败 = 0（失败红字）。saveAll 是原子写，失败时旧库原样保留，
             // 故已有草稿更新失败时回读仍命中旧版本——必须以 save 的 Bool 为准，
             // 回读只作辅助确认（save 成功仍回读不到本篇同样判失败），不得以回读
@@ -6778,6 +6844,227 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshImageStripVisibility()
     }
 
+    // MARK: - 编辑检查点（审计四轮增量 09）
+
+    /// 当前编辑与服务端原文是否不一致（正文/标题/心情/天气/气温/位置/图片/实况）。
+    /// 与原文一致时不写检查点（已有的也清掉），避免无意义的恢复提示。
+    private func isEditDirtyVsOriginal() -> Bool {
+        guard let entry = editingEntry else { return false }
+        if committedContent() != (entry.content ?? "") { return true }
+        if headlineText != (entry.title ?? "") { return true }
+        if selectedMood != entry.mood { return true }
+        if selectedWeather != entry.weather { return true }
+        if selectedTemperature != entry.temperatureC { return true }
+        if selectedLocation != originalLocation { return true }
+        if uploadedImageKeys() != (entry.images ?? []) { return true }
+        if imageItems.contains(where: { $0.key == nil && $0.localFile != nil }) { return true }
+        if uploadedLiveVideos() != (entry.liveVideos ?? [:]) { return true }
+        return false
+    }
+
+    /// 按当前编辑器状态拍检查点快照（图片条按 08 同款口径：有 key 或有本地文件
+    /// 的项都进快照，未上传图 pending 态、失败图 failed 态）。
+    private func buildEditCheckpoint(entryId: String, accountId: Int) -> BearyDraftStore.BearyEditCheckpoint {
+        var images: [BearyDraftImageItem] = []
+        for item in imageItems {
+            guard item.key != nil || item.localFile != nil else { continue }
+            let state: BearyDraftImageState
+            if item.key != nil {
+                state = .uploaded
+            } else if item.failed {
+                state = .failed
+            } else {
+                state = .pending
+            }
+            images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: state, liveVideoKey: item.liveVideoKey))
+        }
+        return BearyDraftStore.BearyEditCheckpoint(
+            entryId: entryId,
+            accountId: accountId,
+            content: committedContent(),
+            title: headlineText.isEmpty ? nil : headlineText,
+            mood: selectedMood,
+            weather: selectedWeather,
+            temperature: selectedTemperature,
+            locationName: selectedLocation?.name,
+            locationDistrict: selectedLocation?.district,
+            images: images,
+            updatedAt: Date().timeIntervalSince1970)
+    }
+
+    /// 立即写检查点（主线程只拍快照，写盘走 BearyDraftStore.ioQueue，主线程回传
+    /// 真实成败）。与原文一致时不写盘、清掉旧检查点并回传成功。
+    private func saveEditCheckpointNow(completion: ((Bool) -> Void)? = nil) {
+        guard let entryId = editingEntry?.id, !entryId.isEmpty else {
+            completion?(false)
+            return
+        }
+        guard isEditDirtyVsOriginal() else {
+            BearyDraftStore.clearEditCheckpointAsync(entryId: entryId)
+            completion?(true)
+            return
+        }
+        guard let accountId = BearyDraftStore.currentAccountId else {
+            completion?(false)
+            return
+        }
+        let checkpoint = buildEditCheckpoint(entryId: entryId, accountId: accountId)
+        BearyDraftStore.ioQueue.async {
+            let ok = BearyDraftStore.saveEditCheckpoint(checkpoint, forAccount: accountId)
+            DispatchQueue.main.async {
+                completion?(ok)
+            }
+        }
+    }
+
+    /// 编辑器回填完成后查一次检查点（每实例只弹一次；补拉二次调用时回填
+    /// 未完成不查，末尾钩子天然只在完整回填后跑）。检查点与服务端原文
+    /// 一致时不提示、直接清掉；不一致才挂起提示（viewDidAppear 后弹）。
+    /// 回包时若用户已开始改（editorEditVersion 已变），不再提示——新改动
+    /// 已由防抖检查点接管，旧检查点已被覆盖，提示只会问用户自己的新输入。
+    private func maybeOfferEditCheckpointRestore() {
+        guard isEditMode, !editCheckpointPromptShown, pendingEditCheckpoint == nil,
+              let entryId = editingEntry?.id, !entryId.isEmpty else { return }
+        let accountId = BearyDraftStore.currentAccountId
+        let baselineVersion = editorEditVersion
+        BearyDraftStore.ioQueue.async { [weak self] in
+            let checkpoint = BearyDraftStore.loadEditCheckpoint(entryId: entryId, forAccount: accountId)
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, let checkpoint = checkpoint else { return }
+                guard self.isEditMode, self.editingEntry?.id == entryId,
+                      self.editorEditVersion == baselineVersion,
+                      self.pendingEditCheckpoint == nil else { return }
+                guard self.editCheckpointDiffersFromOriginal(checkpoint) else {
+                    BearyDraftStore.clearEditCheckpointAsync(entryId: entryId)
+                    return
+                }
+                self.editCheckpointPromptRetries = 0
+                self.pendingEditCheckpoint = checkpoint
+                self.maybePresentEditCheckpointPrompt()
+            }
+        }
+    }
+
+    /// 检查点与当前服务端原文是否不一致（与 isEditDirtyVsOriginal 同口径，
+    /// 只是比对对象是检查点快照而非编辑器现场值）。
+    private func editCheckpointDiffersFromOriginal(_ checkpoint: BearyDraftStore.BearyEditCheckpoint) -> Bool {
+        guard let entry = editingEntry else { return false }
+        if checkpoint.content != (entry.content ?? "") { return true }
+        if (checkpoint.title ?? "") != (entry.title ?? "") { return true }
+        if checkpoint.mood != entry.mood { return true }
+        if checkpoint.weather != entry.weather { return true }
+        if checkpoint.temperature != entry.temperatureC { return true }
+        let checkpointLocation = DiaryLocation(name: checkpoint.locationName, district: checkpoint.locationDistrict)
+        let checkpointLocationValue: DiaryLocation? = checkpointLocation.isEmpty ? nil : checkpointLocation
+        if checkpointLocationValue != originalLocation { return true }
+        let checkpointKeys = checkpoint.images.compactMap { $0.serverKey }
+        if checkpointKeys != (entry.images ?? []) { return true }
+        if checkpoint.images.contains(where: { $0.serverKey == nil && $0.localFile != nil }) { return true }
+        let checkpointLiveVideos = Dictionary(uniqueKeysWithValues: checkpoint.images.compactMap { img -> (String, String)? in
+            guard let key = img.serverKey, let liveKey = img.liveVideoKey else { return nil }
+            return (key, liveKey)
+        })
+        if checkpointLiveVideos != (entry.liveVideos ?? [:]) { return true }
+        return false
+    }
+
+    /// 弹恢复提示（viewDidAppear 后；存量引用提示在上时等 1 秒重试、最多 3 次，
+    /// 仍被挡时放弃本次提示、检查点留盘，下次进编辑器再问）。
+    private func maybePresentEditCheckpointPrompt() {
+        guard isEditMode, !editCheckpointPromptShown, let checkpoint = pendingEditCheckpoint else { return }
+        guard composerDidAppear else { return }
+        guard presentedViewController == nil else {
+            guard editCheckpointPromptRetries < 3 else { return }
+            editCheckpointPromptRetries += 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                guard let self = self else { return }
+                self.maybePresentEditCheckpointPrompt()
+            }
+            return
+        }
+        editCheckpointPromptShown = true
+        pendingEditCheckpoint = nil
+        let deadlinePassed = editSaveBlockedAfterDeadline
+        let message = deadlinePassed
+            ? "上次编辑这篇日记时还没保存，找到了当时的修改。编辑时间已结束，只能查看和复制，不能再保存。"
+            : "上次编辑这篇日记时还没保存，找到了当时的修改，要恢复吗？"
+        let alert = UIAlertController(title: "恢复未提交的修改？", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "恢复", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            self.applyEditCheckpoint(checkpoint)
+        })
+        alert.addAction(UIAlertAction(title: "放弃", style: .destructive) { [weak self] _ in
+            guard let self = self else { return }
+            if let entryId = self.editingEntry?.id, !entryId.isEmpty {
+                BearyDraftStore.clearEditCheckpointAsync(entryId: entryId)
+            }
+        })
+        present(alert, animated: BearyMotion.animated(true))
+    }
+
+    /// 把检查点内容应用回编辑器（正文/标题/心情/天气/气温/位置/图片条）。
+    /// 期限已过时由已跑起的计时器冻结为只读（见 startEditTimer），应用后
+    /// updatePublishState 会再次冻结；检查点本身不清——仍是未提交的修改，
+    /// 再崩溃仍可恢复；提交成功（performUpdate）或取消时才清。
+    private func applyEditCheckpoint(_ checkpoint: BearyDraftStore.BearyEditCheckpoint) {
+        setBodyAttributedText(checkpoint.content)
+        setHeadlineText(checkpoint.title)
+        selectedMood = checkpoint.mood
+        selectedWeather = checkpoint.weather
+        selectedTemperature = checkpoint.temperature
+        let checkpointLocation = DiaryLocation(name: checkpoint.locationName, district: checkpoint.locationDistrict)
+        selectedLocation = checkpointLocation.isEmpty ? nil : checkpointLocation
+        syncWeatherToolButton()
+        refreshSelectedChips()
+        refreshLocationRow()
+        rebuildImageItemsFromCheckpoint(checkpoint.images)
+        refreshImageStripVisibility()
+        updateTextViewHeight()
+        updatePublishState()
+        showToast(message: "已恢复上次没保存的修改")
+    }
+
+    /// 按检查点重建图片条：原图与未上传本地图都建项；本地缩略图后台解码后
+    /// 贴回，随后按草稿恢复同款 resumePendingUploads（有本地文件、无 key、
+    /// 非失败态自动重传；失败态等用户点图重试）。
+    private func rebuildImageItemsFromCheckpoint(_ images: [BearyDraftImageItem]) {
+        removeAllImageViews()
+        for img in images {
+            let item = createImageItem(localImage: nil, key: img.serverKey, uploading: false, localFile: img.localFile, failed: img.state == .failed)
+            item.liveVideoKey = img.liveVideoKey
+            insertImageItem(item)
+            if img.localFile == nil, let key = img.serverKey, let url = BearyImageURLs.imageURL(key: key, thumb: true) {
+                item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 84 * UIScreen.main.scale)
+            }
+        }
+        let decodingImages = images
+        imagePrepQueue.async { [weak self] in
+            var decoded: [(name: String, image: UIImage?)] = []
+            for img in decodingImages {
+                if img.state == .failed { continue }
+                if let name = img.localFile {
+                    decoded.append((name: name, image: BearyDraftImageStore.image(for: name)))
+                }
+            }
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                for entry in decoded {
+                    for item in self.imageItems {
+                        if item.localFile == entry.name {
+                            if let image = entry.image {
+                                item.imageView.image = image
+                            } else if let key = item.key, let url = BearyImageURLs.imageURL(key: key, thumb: true) {
+                                item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 84 * UIScreen.main.scale)
+                            }
+                        }
+                    }
+                }
+                self.resumePendingUploads()
+                self.updatePublishState()
+            }
+        }
+    }
+
     // MARK: - 取消与发布
 
     /// 边缘右滑开拖前的预检谓词（与 didTapCancel 的三道即时拒绝门控同口径，
@@ -6822,17 +7109,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         hideCallout(animated: false)
         if isEditMode {
             // 决议第 4 项 B：取消直接关，不弹确认；只清本地临时图文件，不删原日记、不碰草稿。
+            // 审计四轮增量 09：用户明确放弃编辑，检查点一并清掉（不留恢复提示）。
             commitPendingRemoval()
             deleteEditLocalFiles()
+            if let entryId = editingEntry?.id, !entryId.isEmpty {
+                BearyDraftStore.clearEditCheckpointAsync(entryId: entryId)
+            }
             onCancelled?()
             return true
         }
         // 决议第 4 项 B：取消不再弹三选、无丢弃路径，直接关 + 静默存草稿。
         // 草稿规则不动：saveDraftNow 原样走分级保存、纯心情不保存的现有逻辑。
         // C10：关闭时仍有图片在上传（失败图不算）——toast 挂 presenting 方，
-        // 关编辑器后仍可见。旧文案“这次没存进草稿”范围过大：紧接着仍调
-        // saveDraftNow，正文与已上传图等按原逻辑照常落盘，只有 key 为空的
-        // 上传中图被落盘过滤排除；故新文案只说上传中的图片没存进草稿。
+        // 关编辑器后仍可见。审计四轮增量 08：上传中的图现已随 localFile 进草稿
+        // （pending 态，重进续传），文案同步改口——不说“不会存进草稿”。
         // 该 toast 只在真正关闭时发（见成功分支）：保存失败留页时不发到
         // 看不见的 presenting 方，失败提示另由本页 toast 给。
         // 关闭即提交缓冲删除（草稿随即按删除后状态落盘，见 saveDraftNow）。
@@ -6869,7 +7159,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 return
             }
             if self.hasUploadingImage() {
-                self.showToastAfterClose(message: "图片还没上传完，不会存进草稿")
+                self.showToastAfterClose(message: "图片还没上传完，已存进草稿")
             }
             self.onCancelled?()
         }
@@ -7250,6 +7540,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 case .success:
                     self.deleteEditLocalFiles()
                     self.commitPendingRemoval()
+                    // 审计四轮增量 09：提交成功，检查点已无意义，清掉。
+                    BearyDraftStore.clearEditCheckpointAsync(entryId: entryId)
                     // D2：把编辑器终态写回原 Entry 副本传给容器（引用已清时 quoteId/quote
                     /// 均为 nil，容器据此清行内引用卡；已删引用不按正常 quote 回传）。
                     if var updated = self.editingEntry {

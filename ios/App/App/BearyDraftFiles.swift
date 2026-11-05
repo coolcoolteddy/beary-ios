@@ -897,4 +897,98 @@ enum BearyDraftStore {
         }
         UserDefaults.standard.removeObject(forKey: v1Key)
     }
+
+    // MARK: - 编辑检查点（审计四轮增量 09）
+
+    /// 编辑中日记的本地临时检查点：只存未提交的修改，不进正常草稿箱、
+    /// 不改变服务器上的原文。崩溃/进程被杀后重进编辑器可恢复；15 分钟
+    /// 期限只由服务端判定，检查点不碰该限制（过期后恢复仍走现行到 0 冻结）。
+    struct BearyEditCheckpoint: Codable {
+        var entryId: String
+        var accountId: Int
+        var content: String
+        var title: String?
+        var mood: String?
+        var weather: String?
+        var temperature: Int?
+        var locationName: String?
+        var locationDistrict: String?
+        var images: [BearyDraftImageItem]
+        var updatedAt: TimeInterval
+    }
+
+    /// 检查点文件名：entryId 只留字母/数字/-/_，其余字符换成 "-"，防路径穿越；
+    /// 按账号分桶，与草稿 v3 文件同目录（Application Support）。
+    private static func editCheckpointFileURL(entryId: String, forAccount accountId: Int?) -> URL? {
+        guard let accountId = accountId, !entryId.isEmpty else { return nil }
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        if !FileManager.default.fileExists(atPath: base.path) {
+            try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true, attributes: nil)
+        }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        var safeEntryId = ""
+        for scalar in entryId.unicodeScalars {
+            safeEntryId.append(allowed.contains(scalar) ? Character(scalar) : "-")
+        }
+        let fileName = "beary_edit_checkpoint_\(accountId)_\(safeEntryId).json"
+        let url = base.appendingPathComponent(fileName)
+        let dirPath = base.standardized.path
+        let filePath = url.standardized.path
+        guard filePath.hasPrefix(dirPath + "/") else { return nil }
+        return url
+    }
+
+    /// 同步写检查点（原子替换，调用方在 ioQueue 上调；false = 编码/写盘失败）。
+    static func saveEditCheckpoint(_ checkpoint: BearyEditCheckpoint, forAccount accountId: Int?) -> Bool {
+        guard let url = editCheckpointFileURL(entryId: checkpoint.entryId, forAccount: accountId),
+              let data = try? JSONEncoder().encode(checkpoint) else { return false }
+        let tmp = url.appendingPathExtension("tmp")
+        do {
+            try data.write(to: tmp, options: .atomic)
+            if FileManager.default.fileExists(atPath: url.path) {
+                _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)
+            } else {
+                try FileManager.default.moveItem(at: tmp, to: url)
+            }
+            return true
+        } catch {
+            try? FileManager.default.removeItem(at: tmp)
+            return false
+        }
+    }
+
+    /// 同步读检查点（调用方在 ioQueue 上调）。无文件/解码失败/账号不符均返 nil；
+    /// 解码失败或身份不符时删掉该文件（检查点只是临时快照，原文在服务端，不留死文件）。
+    static func loadEditCheckpoint(entryId: String, forAccount accountId: Int?) -> BearyEditCheckpoint? {
+        guard let url = editCheckpointFileURL(entryId: entryId, forAccount: accountId),
+              let data = try? Data(contentsOf: url) else { return nil }
+        guard let checkpoint = try? JSONDecoder().decode(BearyEditCheckpoint.self, from: data),
+              checkpoint.entryId == entryId,
+              checkpoint.accountId == accountId else {
+            try? FileManager.default.removeItem(at: url)
+            return nil
+        }
+        return checkpoint
+    }
+
+    /// 同步清检查点（文件不存在也算成功）。
+    @discardableResult
+    static func clearEditCheckpoint(entryId: String, forAccount accountId: Int?) -> Bool {
+        guard let url = editCheckpointFileURL(entryId: entryId, forAccount: accountId) else { return false }
+        if !FileManager.default.fileExists(atPath: url.path) { return true }
+        do {
+            try FileManager.default.removeItem(at: url)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// 后台清检查点（主线程调用，入队时捕获账号，防排队期间切号串桶）。
+    static func clearEditCheckpointAsync(entryId: String) {
+        let accountId = currentAccountId
+        ioQueue.async {
+            clearEditCheckpoint(entryId: entryId, forAccount: accountId)
+        }
+    }
 }
