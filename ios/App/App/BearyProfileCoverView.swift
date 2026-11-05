@@ -56,7 +56,7 @@ public final class ProfileCoverView: UIView {
             name: UIApplication.willResignActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(activityChanged(_:)),
             name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
-        // 底图在后台线程下采样后回填主线程；没到之前 draw() 走 poster 兜底
+        // 底图在后台线程全幅解码后回填主线程；没到之前 draw() 走 poster 兜底
         //（与原来 backdrop == nil 的分支一致），个人页首帧不阻塞。
         CoverBackdropCache.shared.load(theme: theme) { [weak self] image in
             guard let self, let image else { return }
@@ -66,9 +66,12 @@ public final class ProfileCoverView: UIView {
         }
     }
 
-    /// 景深设置页进页时预热：六张底图在后台线程读盘＋下采样，cell 出现时直接贴缓存。
-    static func prewarmBackdrops() {
-        CoverBackdropCache.shared.preload(themes: ProfileCoverTheme.allCases)
+    /// 景深设置页进页时预热：只解当前已应用主题（个人页封面已在用，多半已缓存）；
+    /// 其余行由 cell 创建与 table prefetch 按需触发，六张不再一次全幅解码
+    ///（第十轮 01：六张全幅图集约 113 MiB，#846 的 720 封顶曾糊帧，故不降画质、
+    /// 只改加载时机＋内存预算）。
+    static func prewarmBackdrops(for themes: [ProfileCoverTheme]) {
+        CoverBackdropCache.shared.preload(themes: themes)
     }
 
     @available(*, unavailable)
@@ -452,6 +455,8 @@ public final class ProfileCoverView: UIView {
 /// 入库时；已显示的封面持有自己的 backdrop 强引用，清库/逐出不会让首屏
 /// 变空白；未命中时 draw() 走 poster 兜底（与原来 backdrop == nil 的分支
 /// 一致）。#846 的 720 缩略图方案不恢复。
+/// 第十轮 01：按需预热——进页只解当前已应用主题，其余行由 cell 创建与
+/// table prefetch 按需触发，不再六张一次全解。
 private final class CoverBackdropCache: NSObject {
     static let shared = CoverBackdropCache()
     /// 上限 3 张：当前主题＋最近切过的两张；再多逐出最久未用的。
@@ -526,10 +531,14 @@ private final class CoverBackdropCache: NSObject {
     /// 封顶——#846 用 720 封顶整张 5120×969 图集，每帧只剩 144×45，行里放大 7 倍多
     /// 才糊成这样（主体是单独贴的高清图，所以只有背景糊）。改回全幅解码，仍在
     /// 后台队列做、不碰主线程；帧切分按底图实际尺寸动态算，不用改 drawBackdrop。
+    /// 第十轮 07：显式立即解码（kCGImageSourceShouldCacheImmediately），像素在
+    /// 后台队列解完再交付主线程，首帧绘制不回主线程解压；须配合按需加载＋内存
+    /// 预算，六张不一次全解。
     private static func decoded(theme: ProfileCoverTheme) -> CGImage? {
         guard let url = Bundle.main.url(forResource: theme.rawValue + "-depth", withExtension: "png"),
               let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+        let options: [CFString: Any] = [kCGImageSourceShouldCacheImmediately: true]
+        return CGImageSourceCreateImageAtIndex(source, 0, options as CFDictionary)
     }
 }
 

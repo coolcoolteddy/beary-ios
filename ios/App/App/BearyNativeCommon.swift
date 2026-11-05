@@ -867,6 +867,10 @@ final class BearyImageLoader {
                 kCGImageSourceCreateThumbnailFromImageIfAbsent: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
                 kCGImageSourceThumbnailMaxPixelSize: Int(width),
+                // 第十轮 07：下采样分支也显式立即解码，与完整图片分支同口径——
+                // 像素在后台解完再交付，首帧绘制不回主线程解压。两处调用点
+                //（网络回调、diskAndDecodeQueue）都不在主线程。
+                kCGImageSourceShouldCacheImmediately: true,
             ]
             guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
             return UIImage(cgImage: cgImage)
