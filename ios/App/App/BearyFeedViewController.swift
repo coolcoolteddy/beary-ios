@@ -196,6 +196,8 @@ class BearyFeedViewController: UIViewController {
     /// 有新内容 pill（网页 #newPill 口径：ink 底、bg 字、13 semibold、999 圆角、padding 9/16，
     /// 阴影 0 6px 18px rgba(0,0,0,.22)，
     /// 底部 92 + 安全区上方，点按应用待定内容并回顶）。
+    /// 渐进模糊垫（规范 §6）：新内容 pill 的光晕，挂 pill 同容器、跟 pill 约束走；pill 布局／底距安全区＋92 一字不动。
+    private var newContentPillFadePad: BearyProgressiveBlurView?
     private lazy var newContentPill: UIButton = {
         // 按钮普查：悬浮 pill 视觉高约 34（13pt 字＋上下 9 内边距），热区用 Hit44 扩到 44；
         // 居中悬浮、无相邻按钮，视觉不动。
@@ -486,6 +488,18 @@ class BearyFeedViewController: UIViewController {
         view.addSubview(tableView)
         view.addSubview(centralSpinner)
         view.addSubview(newContentPill)
+        // 渐进模糊（规范 §6）：新内容 pill 的光晕垫，插 pill 之下、尺寸跟 pill 走（每边大出 12pt）。
+        let pillPad = BearyProgressiveBlur.pad(fade: .outward)
+        pillPad.translatesAutoresizingMaskIntoConstraints = false
+        pillPad.isHidden = true
+        view.insertSubview(pillPad, belowSubview: newContentPill)
+        newContentPillFadePad = pillPad
+        NSLayoutConstraint.activate([
+            pillPad.centerXAnchor.constraint(equalTo: newContentPill.centerXAnchor),
+            pillPad.centerYAnchor.constraint(equalTo: newContentPill.centerYAnchor),
+            pillPad.widthAnchor.constraint(equalTo: newContentPill.widthAnchor, constant: BearyProgressiveBlur.band * 2),
+            pillPad.heightAnchor.constraint(equalTo: newContentPill.heightAnchor, constant: BearyProgressiveBlur.band * 2),
+        ])
         // P2-1：内容列走网页 821 断点——宽 ≥821 时 600 居中，宽 ≤820 时 iPhone 式全宽
         //（600 上限只在 ≥821 激活，开关在 viewDidLayoutSubviews；容器层 SceneDelegate 同断点开关，
         // 本文件不再常驻 600 上限，避免 633–820 档被双重收窄）。
@@ -1753,19 +1767,28 @@ class BearyFeedViewController: UIViewController {
             newContentPill.layer.removeAllAnimations()
             newContentPill.alpha = 1
             newContentPill.transform = .identity
+            newContentPillFadePad?.alpha = 1
+            newContentPillFadePad?.transform = .identity
             return
         }
         newContentPill.isHidden = false
+        newContentPillFadePad?.isHidden = false
         if UIAccessibility.isReduceMotionEnabled {
             newContentPill.alpha = 1
             newContentPill.transform = .identity
+            newContentPillFadePad?.alpha = 1
+            newContentPillFadePad?.transform = .identity
             return
         }
         newContentPill.alpha = 0
         newContentPill.transform = CGAffineTransform(translationX: 0, y: 8)
+        newContentPillFadePad?.alpha = 0
+        newContentPillFadePad?.transform = CGAffineTransform(translationX: 0, y: 8)
         UIView.animate(withDuration: 0.25) {
             self.newContentPill.alpha = 1
             self.newContentPill.transform = .identity
+            self.newContentPillFadePad?.alpha = 1
+            self.newContentPillFadePad?.transform = .identity
         }
     }
 
@@ -1775,15 +1798,23 @@ class BearyFeedViewController: UIViewController {
             newContentPill.isHidden = true
             newContentPill.alpha = 1
             newContentPill.transform = .identity
+            newContentPillFadePad?.isHidden = true
+            newContentPillFadePad?.alpha = 1
+            newContentPillFadePad?.transform = .identity
             return
         }
         UIView.animate(withDuration: 0.25, animations: {
             self.newContentPill.alpha = 0
             self.newContentPill.transform = CGAffineTransform(translationX: 0, y: -8)
+            self.newContentPillFadePad?.alpha = 0
+            self.newContentPillFadePad?.transform = CGAffineTransform(translationX: 0, y: -8)
         }, completion: { [weak self] _ in
             self?.newContentPill.isHidden = true
             self?.newContentPill.alpha = 1
             self?.newContentPill.transform = .identity
+            self?.newContentPillFadePad?.isHidden = true
+            self?.newContentPillFadePad?.alpha = 1
+            self?.newContentPillFadePad?.transform = .identity
         })
     }
 

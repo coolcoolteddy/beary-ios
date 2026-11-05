@@ -212,6 +212,10 @@ final class BearyChromeViewController: UIViewController {
     /// 保证盖住分段器全幅与边缘抗锯齿；永不拦截触摸（isUserInteractionEnabled 恒 false，
     /// 不会吞触摸），藏显与位移只跟 setBarsVisible 走。
     private var bottomBlurView: UIVisualEffectView?
+    /// 渐进模糊垫（规范 §6，统一 12pt 带）：顶栏下沿带、底栏上沿带、FAB 光晕；本体布局／尺寸一字不动。
+    private var topFadePad: BearyProgressiveBlurView?
+    private var bottomFadePad: BearyProgressiveBlurView?
+    private var fabFadePad: BearyProgressiveBlurView?
     /// 分段器 touchDown 瞬间记录的旧选段（供重拍手势与 valueChanged 时序竞态判定用）。
     private var segmentIndexAtTouchDown: Int = -1
     /// 同 tab 连点刷新：上一拍重拍的页、时间、上一拍是否只回了顶（未刷新）。
@@ -553,6 +557,19 @@ final class BearyChromeViewController: UIViewController {
             top.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             topHeight,
         ])
+        // 渐进模糊（规范 §6）：顶栏底边向内容方向渐弱的 12pt 毛玻璃带；顶栏本身不动。
+        // 垫片为顶栏玻璃的兄弟视图（顶栏 clipsToBounds，不可挂其内），显隐与顶栏同进退（见 setHeaderVisible）。
+        let topPad = BearyProgressiveBlur.pad(fade: .down)
+        topPad.translatesAutoresizingMaskIntoConstraints = false
+        topPad.alpha = 0
+        view.addSubview(topPad)
+        topFadePad = topPad
+        NSLayoutConstraint.activate([
+            topPad.topAnchor.constraint(equalTo: top.bottomAnchor),
+            topPad.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            topPad.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topPad.heightAnchor.constraint(equalToConstant: BearyProgressiveBlur.band),
+        ])
         // R9-A：logo 图-only、高仅 28（宽 79 已超 44，只扩竖向）：换 Hit44 后
         // 热区竖向扩到 44（上下各 8pt），仍落在 60 高顶栏栈内、不被裁剪；
         // 右侧为弹性 spacer，无邻钮重叠；视觉帧 79×28 不动。
@@ -669,6 +686,19 @@ final class BearyChromeViewController: UIViewController {
             blur.widthAnchor.constraint(equalToConstant: 288),
             blur.heightAnchor.constraint(equalToConstant: 58),
         ])
+        // 渐进模糊（规范 §6）：底栏顶边向内容方向渐弱的 12pt 毛玻璃带，与衬底同宽；分段器本身不动。
+        // 垫片为衬底的兄弟视图，显隐与衬底同进退（见 setBarsVisible）。
+        let bottomPad = BearyProgressiveBlur.pad(fade: .up)
+        bottomPad.translatesAutoresizingMaskIntoConstraints = false
+        bottomPad.alpha = 0
+        view.addSubview(bottomPad)
+        bottomFadePad = bottomPad
+        NSLayoutConstraint.activate([
+            bottomPad.bottomAnchor.constraint(equalTo: blur.topAnchor),
+            bottomPad.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            bottomPad.widthAnchor.constraint(equalToConstant: 288),
+            bottomPad.heightAnchor.constraint(equalToConstant: BearyProgressiveBlur.band),
+        ])
         // 消息页（Li 2026-11-03 定）：底栏第 2 段由“好友”改叫“消息”、图标换气泡
         //（icon_comment），顺序不变：首页、消息、时间线、我的。
         // 好友列表页仍保留，由消息页顶栏用户列表钮进入。
@@ -769,6 +799,18 @@ final class BearyChromeViewController: UIViewController {
         fab.translatesAutoresizingMaskIntoConstraints = false
         fabContainer.addSubview(fab)
         fabButton = fab
+        // 渐进模糊（规范 §6）：FAB 光晕垫挂同容器（容器 transform 跟手平移时垫片同行；本体 54×54、位置、底距安全区＋92 一字不动）。
+        // 垫片插容器最底层（阴影／本体／按钮之下），容器不裁剪，78×78 垫片四边各探出 12pt。
+        let fabPad = BearyProgressiveBlur.pad(fade: .outward)
+        fabPad.translatesAutoresizingMaskIntoConstraints = false
+        fabContainer.insertSubview(fabPad, at: 0)
+        fabFadePad = fabPad
+        NSLayoutConstraint.activate([
+            fabPad.centerXAnchor.constraint(equalTo: fabContainer.centerXAnchor),
+            fabPad.centerYAnchor.constraint(equalTo: fabContainer.centerYAnchor),
+            fabPad.widthAnchor.constraint(equalToConstant: 54 + BearyProgressiveBlur.band * 2),
+            fabPad.heightAnchor.constraint(equalToConstant: 54 + BearyProgressiveBlur.band * 2),
+        ])
         fabContainer.alpha = 0
         fabContainer.isUserInteractionEnabled = false
         // 长按拖动变形：单用长按手势跟手指（.changed 直接给位移），不用“长按后启用 pan”
@@ -829,7 +871,9 @@ final class BearyChromeViewController: UIViewController {
     /// 顺序须为：页 < 顶栏 < 模糊衬底 < 底栏分段器 < FAB。
     private func bringChromeToFront() {
         if let top = topGlass { view.bringSubviewToFront(top) }
+        if let topPad = topFadePad { view.bringSubviewToFront(topPad) }
         if let blur = bottomBlurView { view.bringSubviewToFront(blur) }
+        if let bottomPad = bottomFadePad { view.bringSubviewToFront(bottomPad) }
         if let seg = bottomSegmented { view.bringSubviewToFront(seg) }
         if let fab = fabContainerView { view.bringSubviewToFront(fab) }
     }
@@ -1482,10 +1526,14 @@ final class BearyChromeViewController: UIViewController {
             UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
                 self.topGlass.transform = targetTransform
                 self.topGlass.alpha = visible ? 1 : 0
+                self.topFadePad?.transform = targetTransform
+                self.topFadePad?.alpha = visible ? 1 : 0
             })
         } else {
             topGlass.transform = targetTransform
             topGlass.alpha = visible ? 1 : 0
+            topFadePad?.transform = targetTransform
+            topFadePad?.alpha = visible ? 1 : 0
         }
     }
 
@@ -1532,6 +1580,8 @@ final class BearyChromeViewController: UIViewController {
             }
             self.bottomBlurView?.alpha = visible ? 1 : 0
             self.bottomBlurView?.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
+            self.bottomFadePad?.alpha = visible ? 1 : 0
+            self.bottomFadePad?.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
             self.fabContainerView?.alpha = fabVisible ? 1 : 0
             self.fabContainerView?.transform = fabVisible ? .identity : CGAffineTransform(translationX: 0, y: 80)
         }
@@ -1701,6 +1751,7 @@ final class BearyChromeViewController: UIViewController {
             if heightConstraint.constant != corrected { heightConstraint.constant = corrected }
             if !headerVisible {
                 topGlass.transform = CGAffineTransform(translationX: 0, y: -corrected)
+                topFadePad?.transform = topGlass.transform
             }
         }
         // 顶栏透度批：安全区顶变了，Feed/时间线的属性内边距（含安全区顶）必须跟变；
