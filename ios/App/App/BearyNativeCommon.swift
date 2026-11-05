@@ -1929,6 +1929,10 @@ final class BearyRefreshIconView: UIImageView {
         alpha = 0
         // 审计 15 项第 13 项：响应减动效设置变化，在转的动画要能停掉。
         NotificationCenter.default.addObserver(self, selector: #selector(reduceMotionChanged), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
+        // 2026-11-05 转圈恢复：回前台时重加旋转动画（系统切后台会剥掉图层
+        // 动画，spinning 仍为真时不补就会一直静态亮着）。
+        NotificationCenter.default.addObserver(self, selector: #selector(foregroundResume), name: UIApplication.willEnterForegroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(foregroundResume), name: UIApplication.didBecomeActiveNotification, object: nil)
     }
 
     deinit {
@@ -1951,13 +1955,36 @@ final class BearyRefreshIconView: UIImageView {
     }
 
     func startSpinning() {
-        guard !spinning else { return }
+        // 2026-11-05 转圈恢复：去掉“已在转就直接返回”的短路——动画丢了
+        // （上屏前起转、切后台被剥）之后再调 startSpinning 也会被 guard 吞掉，
+        // 图标永久静态。改成先清掉旧动画再重加（与 BearyIconMotion.startSpin
+        // 同口径）；重复调 startSpinning 只会替换同 key 动画，不叠加。
         spinning = true
+        isHidden = false
         alpha = 1
         transform = .identity
+        layer.removeAnimation(forKey: "refresh-spin")
         // 审计 15 项第 13 项：减动效时只显静态图标，不加无限旋转
         //（与 BearyWebRingSpinnerView 的减动效处理同口径）。
         guard !UIAccessibility.isReduceMotionEnabled else { return }
+        addSpinAnimation()
+    }
+
+    /// 进窗口时若仍在转态，重加旋转动画：viewDidLoad 同步链路里起转时
+    /// 视图还没进窗口，动画加不上且 spinning 已真，后续 startSpinning
+    /// 也补不上；进窗口即补（灯箱页同款修法，全仓统一到类内部）。
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil, spinning, !UIAccessibility.isReduceMotionEnabled else { return }
+        layer.removeAnimation(forKey: "refresh-spin")
+        addSpinAnimation()
+    }
+
+    /// 回前台时若仍在转态，重加旋转动画（与 didMoveToWindow 同理，
+    /// 切后台/拉通知中心回来时系统会剥掉图层动画）。
+    @objc private func foregroundResume() {
+        guard spinning, !UIAccessibility.isReduceMotionEnabled else { return }
+        layer.removeAnimation(forKey: "refresh-spin")
         addSpinAnimation()
     }
 
