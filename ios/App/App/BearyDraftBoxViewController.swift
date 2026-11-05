@@ -808,7 +808,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             // 两种失败态文案分开：损坏态讲清清除结果（删坏 v3 文件、只留 .bak，
             // 清除后重读回空态）；非损坏态沿用原话 +“重新读取”，确认框口径不动。
             if draftsLoadCorrupt {
-                failedStateView.configure(kind: .error, title: "草稿库已损坏", subtitle: "损坏的草稿无法恢复，.bak 备份保留在手机里。清除后重新读取会回到空态，新草稿可以正常保存。", iconName: nil, actionTitle: "清除损坏的草稿数据", actionStyle: .destructiveOutline(.regular), onAction: { [weak self] in self?.clearCorruptStoreTapped() })
+                failedStateView.configure(kind: .error, title: "草稿库已损坏", subtitle: "这些草稿暂时读不出来。清除会移除当前草稿数据，已有备份会保留。", iconName: nil, actionTitle: "清除损坏的草稿数据", actionStyle: .destructiveOutline(.regular), onAction: { [weak self] in self?.clearCorruptStoreTapped() })
             } else {
                 failedStateView.configure(kind: .error, title: "草稿读取失败", subtitle: "原文件已保留，请稍后再试", iconName: nil, actionTitle: "重新读取", onAction: { [weak self] in self?.retryLoadDraftsTapped() })
             }

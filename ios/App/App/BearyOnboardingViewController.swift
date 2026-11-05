@@ -819,7 +819,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
 
     private func pageTitle(_ page: Int) -> String {
         switch page {
-        case 0: return "把日子留在这里"
+        case 0: return "在这里写日记"
         case 1: return "写下来，也选好谁能看。"
         case 2: return "用小熊回应日记。"
         default: return "从今天的一小件事开始。"
@@ -837,7 +837,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
 
     private func pagePrimaryTitle(_ page: Int) -> String {
         switch page {
-        case 0: return "认识 beary"
+        case 0: return "下一步"
         case 1: return "继续"
         case 2: return "继续"
         default: return SessionManager.shared.isLoggedIn ? "写下第一篇" : "登录，开始记录"
