@@ -388,10 +388,19 @@ final class PastSelfStore {
     /// 服务端旧态冲掉（撤回先落本地、后台再补推，见 ProfileVC 同步）。
     /// 本地未同步行（localOnly）原样保留。
     func mergeServerRows(_ server: [PastSelfMessage]) {
-        // 审计新一轮 05：本地存储读取失败时不合并——服务端并集覆盖会抹掉
+        // 审计新一轮 05：本地存储损坏时不合并——服务端并集覆盖会抹掉
         // 损坏的本地库（含未同步行）；跳过本次同步，下次再试。
-        guard case .loaded(let rows) = loadOutcome() else { return }
-        var all = rows
+        // 回炉：空库（.empty）不是损坏，按 [] 处理继续合并——新设备
+        // 首次同步要能从服务端拉回留话；只拦 .corrupt。
+        var all: [PastSelfMessage]
+        switch loadOutcome() {
+        case .corrupt:
+            return
+        case .empty:
+            all = []
+        case .loaded(let rows):
+            all = rows
+        }
         var byId: [String: PastSelfMessage] = [:]
         for row in all { byId[row.id] = row }
         // 审计登录杂项：过滤他人行（服务端混入的非本人 authorId 行不进本用户存储）。

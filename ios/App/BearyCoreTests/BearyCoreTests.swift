@@ -415,6 +415,23 @@ final class BearyPastSelfTests: XCTestCase {
         suite.removePersistentDomain(forName: "beary.pastself.tests")
     }
 
+    func testMergeIntoEmptyStoreImportsServerRows() throws {
+        // 回炉：空库（.empty）与损坏（.corrupt）走不同路——空库时服务端
+        // 行能正常合进来（新设备首次同步从服务端拉回留话），损坏时才拦。
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let store = PastSelfStore(userId: 94, defaults: suite)
+        let created = ms(year: 2025, month: 10, day: 30)
+        if case .empty = store.loadOutcome() {} else {
+            XCTFail("空库应判为 empty")
+        }
+        var serverRow = message(id: "ps_s1", chain: "b_2", createdMs: created, deliverOn: "2026-10-30")
+        serverRow.authorId = 94
+        store.mergeServerRows([serverRow])
+        XCTAssertEqual(store.loadAll().map { $0.id }, ["ps_s1"])
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
     func testBackupKeepsLastGoodAndRestores() throws {
         // 审计新一轮 05：每次成功写入前，上一份好数据进独立备份 key；
         // 主 key 损坏后可从备份恢复，无备份时恢复失败、主 key 不动。
