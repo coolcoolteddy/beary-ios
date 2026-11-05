@@ -2133,12 +2133,18 @@ class BearyFeedViewController: UIViewController {
         }
         // L21（91 包）：展开/收起专用——cell 内容已在 foldTapped 里就地改好，
         // 这里只重算行高并平滑伸缩，不 reload（reload 会丢掉正文淡入且闪一下）。
+        // 收起走 performFoldHeightUpdate 锚定折叠钮（见 BearyNativeCommon），
+        // 否则收起后日记会被顶到上面。
         cell.onNeedsFoldAnimation = { [weak self, weak cell] in
             guard let strongSelf = self, let targetCell = cell else { return }
             guard let path = strongSelf.tableView.indexPath(for: targetCell) else { return }
-            if strongSelf.tableView.indexPathsForVisibleRows?.contains(path) == true {
-                strongSelf.tableView.performBatchUpdates(nil)
-            }
+            guard strongSelf.tableView.indexPathsForVisibleRows?.contains(path) == true else { return }
+            strongSelf.tableView.performFoldHeightUpdate(
+                collapsing: !targetCell.isFoldExpanded,
+                cell: targetCell,
+                at: path,
+                foldButtonContentY: targetCell.foldButtonCenterY(in: strongSelf.tableView)
+            )
         }
         // fixall-cell 6-4 集成接线：回应行高变化走 batch（折叠同款口径），
         // cell 内不再播 flow 位移动画，防双动画叠加；未接线时 cell 保留 0.25s 兜底。
