@@ -325,17 +325,22 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// springVelocityAlongReturn 归一化后由 initialSpringVelocity 传入，
     /// 慢拖（松手速度≈0）归一化结果即 0。减动效门控走 BearyMotion.animated，
     /// 与原直接判 UIAccessibility.isReduceMotionEnabled 等效，减动效开时
-    /// 直切终态不播动画。
-    private func applyTransform(animated: Bool, initialSpringVelocity: CGFloat = 0) {
+    /// 直切终态不播动画。additionalAnimations 与图片回弹放进同一动画块
+    /// （审计残留第 10 项：灯箱下拉未过阈值回弹时，背景/chrome 复位须与
+    /// 图片同块动，否则瞬间跳回、图片却随后滑回，视觉错位）；无附加
+    /// 动画时默认 nil，其余调用点一律不动。
+    private func applyTransform(animated: Bool, initialSpringVelocity: CGFloat = 0, additionalAnimations: (() -> Void)? = nil) {
         let transform = CGAffineTransform(translationX: tx, y: ty).scaledBy(x: scale, y: scale)
         if BearyMotion.animated(animated) {
             UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
                 self.imageView.transform = transform
                 self.liveOverlay?.transform = transform
+                additionalAnimations?()
             })
         } else {
             imageView.transform = transform
             liveOverlay?.transform = transform
+            additionalAnimations?()
         }
     }
 
@@ -919,8 +924,11 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                     hideNeighbor()
                     tx = 0
                     ty = 0
-                    resetDismissDragAppearance()
-                    applyTransform(animated: true, initialSpringVelocity: springVelocity)
+                    // 审计残留第 10 项：背景/chrome 复位原在动画块外同步调用，
+                    // 瞬间跳回、图片却随后滑回，视觉错位；现经 additionalAnimations
+                    // 与图片回弹放进同一弹簧块（0.30s／damping 0.7＋松手速度归一化，
+                    // 减动效开时直切终态），阈值与弹簧参数均不动。
+                    applyTransform(animated: true, initialSpringVelocity: springVelocity, additionalAnimations: { self.resetDismissDragAppearance() })
                 }
                 return
             }
