@@ -163,6 +163,7 @@ final class BearyNotificationsViewController: UIViewController {
     /// 自动失效，退出后旧号消息不得残留）。
     static func purgeAccount(_ id: Int) {
         cachedPages[id] = nil
+        BearyNotificationCache.purge(bucket: "\(id)")
     }
 
     private var items: [NotificationItem] = []
@@ -539,24 +540,11 @@ final class BearyNotificationsViewController: UIViewController {
         // 缓存秒显（网页 openNotifs ntItemsCache 口径）：已打开过先原样显旧列表，
         // 后台 loadFirstPage 刷新、变了才重绘；首次打开才走转圈。
         if let uid = SessionManager.shared.currentUser?.id, let cached = Self.cachedPages[uid] {
-            items = cached.items
-            unreadTotal = cached.unread
-            sysUnreadTotal = cached.sysUnread
-            totalCount = cached.total
-            isSysExpanded = cached.isSysExpanded
-            isActExpanded = cached.isActExpanded
-            // C-G3：缓存秒显即恢复 hasMore，哨兵行不丢。
-            hasMore = cached.hasMore
-            hasDisplayedPage = true
-            hasSuccessfulLoad = true
-            rebuildDisplayRows()
-            tableView.reloadData()
-            refreshVisibleState()
-            publishUnread(unreadTotal)
-            updateReadAllButton()
-            // 缓存即上次整页成功加载的结果：门控快照与缓存未读数同值，
-            // 之后轻量拉取比对它，变了才整页重拉。
-            recordFullLoadUnread()
+            applyCachedNotificationPage(items: cached.items, unread: cached.unread, sysUnread: cached.sysUnread, total: cached.total, isSysExpanded: cached.isSysExpanded, isActExpanded: cached.isActExpanded, hasMore: cached.hasMore)
+        } else {
+            // 内存无缓存时读磁盘快照（上次成功加载整页的结果）：冷启动先显
+            // 旧列表、再静默刷新、失败保留旧内容。
+            loadNotificationSnapshot()
         }
         startPolling()
         loadFirstPage()
@@ -657,6 +645,38 @@ final class BearyNotificationsViewController: UIViewController {
         reportEmbeddedContentHeight()
     }
 
+    /// 缓存秒显共用：把一页已加载结果铺到界面（内存缓存与磁盘快照同入口）。
+    private func applyCachedNotificationPage(items: [NotificationItem], unread: Int, sysUnread: Int, total: Int?, isSysExpanded: Bool, isActExpanded: Bool, hasMore: Bool) {
+        self.items = items
+        unreadTotal = unread
+        sysUnreadTotal = sysUnread
+        totalCount = total
+        self.isSysExpanded = isSysExpanded
+        self.isActExpanded = isActExpanded
+        // C-G3：缓存秒显即恢复 hasMore，哨兵行不丢。
+        self.hasMore = hasMore
+        hasDisplayedPage = true
+        hasSuccessfulLoad = true
+        rebuildDisplayRows()
+        tableView.reloadData()
+        refreshVisibleState()
+        publishUnread(unreadTotal)
+        updateReadAllButton()
+        // 缓存即上次整页成功加载的结果：门控快照与缓存未读数同值，
+        // 之后轻量拉取比对它，变了才整页重拉。
+        recordFullLoadUnread()
+    }
+
+    /// 磁盘快照秒显：只补尚未显示的页（内存已有缓存或网络已回包时不重复贴）。
+    private func loadNotificationSnapshot() {
+        guard let uid = SessionManager.shared.currentUser?.id else { return }
+        BearyNotificationCache.load(bucket: "\(uid)") { [weak self] snap in
+            guard let self = self, let snap = snap, !snap.items.isEmpty else { return }
+            guard !self.hasDisplayedPage else { return }
+            self.applyCachedNotificationPage(items: snap.items, unread: snap.unread, sysUnread: snap.sysUnread, total: snap.total, isSysExpanded: snap.isSysExpanded, isActExpanded: snap.isActExpanded, hasMore: snap.hasMore)
+        }
+    }
+
     /// 缓存写回：仅成功加载过才存（失败/未加载不以空列表覆盖旧缓存）。
     private func saveNotificationCache() {
         if !hasSuccessfulLoad {
@@ -672,6 +692,8 @@ final class BearyNotificationsViewController: UIViewController {
                 isActExpanded: isActExpanded,
                 hasMore: hasMore
             )
+            // 磁盘快照：与内存缓存同内容同写回，冷启动先显旧列表。
+            BearyNotificationCache.save(bucket: "\(uid)", items: items, unread: unreadTotal, sysUnread: sysUnreadTotal, total: totalCount, isSysExpanded: isSysExpanded, isActExpanded: isActExpanded, hasMore: hasMore)
         }
     }
 
@@ -4359,5 +4381,85 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
         // 不另给人名／头像加独立按钮）；entry 行 → 日记详情；dm 行 →
         // 会话页；无 entry 的系统／信件行 → 信件模态（挂本页 view）。
         notifSource.openItemForDetail(items[indexPath.row])
+    }
+}
+
+// MARK: - 通知页磁盘缓存（与 BearyFeedCache 同口径，不新增文件）
+///
+/// 上次成功加载的整页（通知条目 + 未读数 + 展开态 + hasMore）按账号分桶；
+/// 冷启动先显快照、再静默刷新、失败保留旧内容。仅成功加载过才写
+/// （与 saveNotificationCache 同门控，失败/未加载不以空列表覆盖旧缓存）。
+/// 退出/401 时由 purgeAccount 清桶。
+enum BearyNotificationCache {
+    private static let filePrefix = "beary_notification_cache_"
+
+    struct Snapshot: Codable {
+        var savedAt: TimeInterval
+        var items: [NotificationItem]
+        var unread: Int
+        var sysUnread: Int
+        var total: Int?
+        var isSysExpanded: Bool
+        var isActExpanded: Bool
+        var hasMore: Bool
+    }
+
+    private static func fileURL(bucket: String) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return base.appendingPathComponent("\(filePrefix)\(bucket).json")
+    }
+
+    private static let ioQueue = DispatchQueue(label: "beary.notificationCache.io", qos: .utility)
+
+    private static let generationLock = NSLock()
+    private static var generations: [String: UInt64] = [:]
+
+    private static func generation(for bucket: String) -> UInt64 {
+        generationLock.lock()
+        defer { generationLock.unlock() }
+        return generations[bucket] ?? 0
+    }
+
+    private static func bumpGeneration(for bucket: String) {
+        generationLock.lock()
+        generations[bucket, default: 0] += 1
+        generationLock.unlock()
+    }
+
+    static func load(bucket: String, completion: @escaping (Snapshot?) -> Void) {
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            var snap: Snapshot?
+            if let url = fileURL(bucket: bucket), let data = try? Data(contentsOf: url) {
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                snap = try? decoder.decode(Snapshot.self, from: data)
+            }
+            let result = capturedGeneration == generation(for: bucket) ? snap : nil
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    static func save(bucket: String?, items: [NotificationItem], unread: Int, sysUnread: Int, total: Int?, isSysExpanded: Bool, isActExpanded: Bool, hasMore: Bool) {
+        guard let bucket = bucket, !bucket.isEmpty else { return }
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            guard capturedGeneration == generation(for: bucket) else { return }
+            guard let url = fileURL(bucket: bucket) else { return }
+            let snap = Snapshot(savedAt: Date().timeIntervalSince1970, items: items, unread: unread, sysUnread: sysUnread, total: total, isSysExpanded: isSysExpanded, isActExpanded: isActExpanded, hasMore: hasMore)
+            let encoder = JSONEncoder()
+            encoder.keyEncodingStrategy = .convertToSnakeCase
+            guard let data = try? encoder.encode(snap) else { return }
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    static func purge(bucket: String) {
+        bumpGeneration(for: bucket)
+        ioQueue.async {
+            guard let url = fileURL(bucket: bucket) else { return }
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }

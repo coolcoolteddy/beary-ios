@@ -297,7 +297,7 @@ struct RestoreResponse: Decodable {
     var visibility: String?
 }
 
-struct NotificationItem: Decodable {
+struct NotificationItem: Codable {
     var id: Int?
     var type: String?
     var emote: String?
@@ -1395,7 +1395,7 @@ final class BearyAPI {
 
     /// 好友用户行：服务端 GET /friends/list、/following、/followers 的用户形状
     /// （handle/显示名/头像）。
-    struct FriendUser: Decodable {
+    struct FriendUser: Codable {
         var id: Int?
         var displayName: String?
         var handle: String?
@@ -1468,7 +1468,7 @@ final class BearyAPI {
     /// friend，扁平时取 user_id/display_name/handle/avatar_url；最后一条取
     /// last_body/last_message/body/snippet；最后时间取 last_at/last_time/
     /// updated_at（秒级值统一换算为毫秒）；未读取 unread_count/unread。
-    struct DMConversation: Decodable {
+    struct DMConversation: Codable {
         var peer: FriendUser?
         var lastBody: String?
         var lastAt: Int?
@@ -1523,6 +1523,16 @@ final class BearyAPI {
             self.lastBody = lastBody
             self.lastAt = lastAt
             self.unreadCount = unreadCount
+        }
+
+        /// 会话列表磁盘快照用：只写规范键（对方对象走 user 键，解码时 user
+        /// 优先命中；lastBody/lastAt/unreadCount 走主鍵），与 init(from:) 互逆。
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: Keys.self)
+            try container.encodeIfPresent(peer, forKey: .user)
+            try container.encodeIfPresent(lastBody, forKey: .lastBody)
+            try container.encodeIfPresent(lastAt, forKey: .lastAt)
+            try container.encodeIfPresent(unreadCount, forKey: .unreadCount)
         }
     }
 

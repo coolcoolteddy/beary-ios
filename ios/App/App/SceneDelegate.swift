@@ -3392,7 +3392,15 @@ final class BearyChromeViewController: UIViewController {
                     self.routeFetchedEntry(fetched)
                 case .failure(let apiError):
                     if case .network = apiError {
-                        self.showToast(message: "网络不稳定，请稍后再试")
+                        // 网络失败：先试磁盘快照（看过的旧正文先显），无快照才 toast。
+                        BearyDetailCache.load(bucket: BearyDetailCache.bucket(), entryId: entryId) { [weak self] snap in
+                            guard let self = self else { return }
+                            if let cached = snap?.entry {
+                                self.routeFetchedEntry(cached)
+                            } else {
+                                self.showToast(message: "网络不稳定，请稍后再试")
+                            }
+                        }
                     } else {
                         self.showToast(message: "这篇日记不存在或已被删除")
                     }

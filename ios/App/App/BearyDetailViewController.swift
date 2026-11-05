@@ -543,6 +543,9 @@ final class BearyDetailViewController: UIViewController {
             showPlaceholder(visibility: entry.visibility)
         } else {
             renderAll()
+            // 单篇快照：进页即写盘（卡片/已拉数据都算看过的内容），弱网 id 直达
+            // 时先显这份旧正文。
+            saveDetailSnapshot()
         }
         DiagFile.mark("detail.rendered id=\(entry.id ?? "?")")
         // 审计 P2-20：详情页监听拉黑/举报——页内命中时转占位（不得继续出全文）。
@@ -1413,6 +1416,8 @@ final class BearyDetailViewController: UIViewController {
             merged.ephemeralUntil = old.ephemeralUntil
         }
         entry = merged
+        // 单篇快照：后台补齐的新鲜数据即写盘（占位/拉黑态不写，见 saveDetailSnapshot）。
+        saveDetailSnapshot()
         // 内容页本身被占位过时（本路径不会发生：卡片数据恒为内容态），先恢复内容区。
         setContentVisible(true)
         placeholderStateView.isHidden = true
@@ -1528,6 +1533,12 @@ final class BearyDetailViewController: UIViewController {
         if !applyEphemeralExpiryIfNeeded() {
             scheduleEphemeralExpiry()
         }
+    }
+
+    /// 单篇磁盘快照写盘：占位/拉黑态与无 id 的篇不写（快照只存看过的内容态），
+    /// 桶按当前账号隔离、未登录记 guest 桶。
+    private func saveDetailSnapshot() {
+        BearyDetailCache.save(bucket: BearyDetailCache.bucket(), entry: entry)
     }
 
     // MARK: - 限时到期（审计三轮第二批 9）
@@ -2688,5 +2699,96 @@ extension BearyDetailViewController: UIGestureRecognizerDelegate {
         // 该 delegate 只挂在捏合手势上，不影响点赞、点图等其他手势。
         return otherGestureRecognizer is UIPanGestureRecognizer
             && otherGestureRecognizer.view === imagesScrollView
+    }
+}
+
+// MARK: - 单篇详情磁盘缓存（与 BearyFeedCache 同口径，不新增文件）
+///
+/// 看过单篇的正文按账号分桶、按篇分文件；id 直达（搜索/消息/深链/引用卡）
+/// 网络拉不到时先显这份旧正文。占位/拉黑态不写盘；进详情的可见性门仍由
+/// routeFetchedEntry 把关（仅好友篇离线直达时仍重验互关、失败落占位）。
+/// 退出/401 时由 SessionManager 清桶。
+enum BearyDetailCache {
+    private static let filePrefix = "beary_detail_cache_"
+
+    struct Snapshot: Codable {
+        var savedAt: TimeInterval
+        var entry: Entry
+    }
+
+    /// 桶：登录账号 id，未登录记 guest 桶（游客看过的公开篇也能离线再看）。
+    static func bucket() -> String {
+        if let uid = SessionManager.shared.currentUser?.id { return "\(uid)" }
+        return "guest"
+    }
+
+    private static func safeEntryId(_ id: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        return id.unicodeScalars.map { allowed.contains($0) ? String($0) : "_" }.joined()
+    }
+
+    private static func fileURL(bucket: String, entryId: String) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return base.appendingPathComponent("\(filePrefix)\(bucket)_\(safeEntryId(entryId)).json")
+    }
+
+    private static let ioQueue = DispatchQueue(label: "beary.detailCache.io", qos: .utility)
+
+    private static let generationLock = NSLock()
+    private static var generations: [String: UInt64] = [:]
+
+    private static func generation(for bucket: String) -> UInt64 {
+        generationLock.lock()
+        defer { generationLock.unlock() }
+        return generations[bucket] ?? 0
+    }
+
+    private static func bumpGeneration(for bucket: String) {
+        generationLock.lock()
+        generations[bucket, default: 0] += 1
+        generationLock.unlock()
+    }
+
+    static func load(bucket: String, entryId: String, completion: @escaping (Snapshot?) -> Void) {
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            var snap: Snapshot?
+            if let url = fileURL(bucket: bucket, entryId: entryId), let data = try? Data(contentsOf: url) {
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                snap = try? decoder.decode(Snapshot.self, from: data)
+            }
+            let result = capturedGeneration == generation(for: bucket) ? snap : nil
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    /// 只写内容态：占位/无 id 的篇不写盘。
+    static func save(bucket: String, entry: Entry) {
+        guard let entryId = entry.id, !entryId.isEmpty, entry.placeholder != true else { return }
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            guard capturedGeneration == generation(for: bucket) else { return }
+            guard let url = fileURL(bucket: bucket, entryId: entryId) else { return }
+            let snap = Snapshot(savedAt: Date().timeIntervalSince1970, entry: entry)
+            let encoder = JSONEncoder()
+            encoder.keyEncodingStrategy = .convertToSnakeCase
+            guard let data = try? encoder.encode(snap) else { return }
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    /// 清某账号桶下全部单篇快照（按文件名前缀枚举删除）。
+    static func purge(bucket: String) {
+        bumpGeneration(for: bucket)
+        ioQueue.async {
+            guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+            let prefix = "\(filePrefix)\(bucket)_"
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: base.path) else { return }
+            for name in names where name.hasPrefix(prefix) {
+                try? FileManager.default.removeItem(at: base.appendingPathComponent(name))
+            }
+        }
     }
 }

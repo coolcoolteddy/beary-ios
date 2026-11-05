@@ -172,6 +172,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
 
         NotificationCenter.default.addObserver(self, selector: #selector(friendsChanged), name: .bearyFriendsChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(userChanged), name: .bearyUserDidChange, object: nil)
+        loadConversationsSnapshot()
         load()
     }
 
@@ -300,6 +301,22 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         }
     }
 
+    /// 会话列表磁盘快照：冷启动先显旧会话、再静默刷新、失败保留旧内容
+    /// （与广场 BearyFeedCache 同口径）。只补空槽，网络已回包时不用旧快照回写。
+    private func loadConversationsSnapshot() {
+        guard let uid = SessionManager.shared.currentUser?.id else { return }
+        BearyDMConversationsCache.load(bucket: "\(uid)") { [weak self] snap in
+            guard let self = self, let snap = snap, !snap.conversations.isEmpty else { return }
+            guard self.conversations.isEmpty else { return }
+            self.conversations = BearyDMStore.mergedConversations(server: snap.conversations, accountId: uid)
+            // 快照已显内容：首拉转圈遮层随即收起，不再盖住旧会话等网络回包。
+            self.firstLoadStateView.isHidden = true
+            self.tableView.reloadData()
+            self.updateEmptyState()
+            self.notifyDMConversationsMergeChanged()
+        }
+    }
+
     private func load() {
         guard SessionManager.shared.isLoggedIn else {
             tableView.refreshControl?.endRefreshing()
@@ -338,9 +355,18 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                     self.conversations = BearyDMStore.mergedConversations(
                         server: list.resolvedConversations,
                         accountId: SessionManager.shared.currentUser?.id)
+                    // 会话列表快照：成功回包即写盘（按账号分桶），冷启动先显旧会话。
+                    if let uid = SessionManager.shared.currentUser?.id {
+                        BearyDMConversationsCache.save(bucket: "\(uid)", conversations: self.conversations)
+                    }
                     self.loadFailed = false
                 case .failure:
                     self.loadFailed = true
+                    // 服务端失败：本地 BearyDMStore 会话先显（仅本地有消息的对方），
+                    // 与成功回包时的并入口径一致；快照里的旧会话也一并参与合并。
+                    self.conversations = BearyDMStore.mergedConversations(
+                        server: self.conversations,
+                        accountId: SessionManager.shared.currentUser?.id)
                 }
                 self.updateEmptyState()
                 self.tableView.reloadData()
@@ -585,5 +611,77 @@ extension BearyDMConversationsViewController {
     /// 无变化时不调；friendsChanged 走 load() 完成回调覆盖）。
     func notifyDMConversationsMergeChanged() {
         onMergeSnapshotChanged?()
+    }
+}
+
+// MARK: - 私信会话列表磁盘缓存（与 BearyFeedCache 同口径，不新增文件）
+///
+/// 会话列表（对方资料 + 最后一条 + 未读数）按账号分桶；冷启动先显快照、
+/// 再静默刷新、失败保留旧内容。退出/401 时由 SessionManager 清桶。
+enum BearyDMConversationsCache {
+    private static let filePrefix = "beary_dm_conversations_cache_"
+
+    struct Snapshot: Codable {
+        var savedAt: TimeInterval
+        var conversations: [DMConversation]
+    }
+
+    private static func fileURL(bucket: String) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return base.appendingPathComponent("\(filePrefix)\(bucket).json")
+    }
+
+    private static let ioQueue = DispatchQueue(label: "beary.dmConversationsCache.io", qos: .utility)
+
+    private static let generationLock = NSLock()
+    private static var generations: [String: UInt64] = [:]
+
+    private static func generation(for bucket: String) -> UInt64 {
+        generationLock.lock()
+        defer { generationLock.unlock() }
+        return generations[bucket] ?? 0
+    }
+
+    private static func bumpGeneration(for bucket: String) {
+        generationLock.lock()
+        generations[bucket, default: 0] += 1
+        generationLock.unlock()
+    }
+
+    static func load(bucket: String, completion: @escaping (Snapshot?) -> Void) {
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            var snap: Snapshot?
+            if let url = fileURL(bucket: bucket), let data = try? Data(contentsOf: url) {
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                snap = try? decoder.decode(Snapshot.self, from: data)
+            }
+            let result = capturedGeneration == generation(for: bucket) ? snap : nil
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    static func save(bucket: String?, conversations: [DMConversation]) {
+        guard let bucket = bucket, !bucket.isEmpty else { return }
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            guard capturedGeneration == generation(for: bucket) else { return }
+            guard let url = fileURL(bucket: bucket) else { return }
+            let snap = Snapshot(savedAt: Date().timeIntervalSince1970, conversations: conversations)
+            let encoder = JSONEncoder()
+            encoder.keyEncodingStrategy = .convertToSnakeCase
+            guard let data = try? encoder.encode(snap) else { return }
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    static func purge(bucket: String) {
+        bumpGeneration(for: bucket)
+        ioQueue.async {
+            guard let url = fileURL(bucket: bucket) else { return }
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }

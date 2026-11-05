@@ -306,6 +306,9 @@ final class SessionManager {
         BearyTimelineCache.purge(bucket: "\(id)")
         // 审计-性能：通知页分键缓存同样在退出/401 时清掉该账号槽位。
         BearyNotificationsViewController.purgeAccount(id)
+        BearyProfileCache.purge(bucket: "\(id)")
+        BearyDMConversationsCache.purge(bucket: "\(id)")
+        BearyDetailCache.purge(bucket: "\(id)")
         BearyEntrySyncStore.purgeAccount(accountId: id)
         BearyTrashSyncStore.purgeAccount(accountId: id)
         BearyFeedCache.forgetUserId()
