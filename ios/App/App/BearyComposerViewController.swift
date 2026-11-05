@@ -855,10 +855,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         NSLog("[Diag] composer-viewDidLoad-enter")
         // 临时诊断（81 包，定根因后删除）。
         DiagFile.mark("viewDidLoad-enter")
-        // 视觉清单第 12 项：view 自身即 modal 卡片，玻璃背板已撤，改实色 surface 底
-        //（卡片标准底色；玻璃范围 Token 只允许栏/菜单，弹窗不在内）；后续 build*
-        // 加的子视图自然在其上；呈现层文件不动，卡片内按钮点亮色与功能全不动。
-        view.backgroundColor = BearyColors.surface
+        // 编辑器页底改与首页（广场）同色：玻璃背板已撤，实色 bg 底（浅白／深纯黑）；
+        // 顶栏／标题／正文／工具栏均为 clear，自动跟页底走；后续 build* 加的
+        // 子视图自然在其上；呈现层文件不动，卡片内按钮点亮色与功能全不动。
+        view.backgroundColor = BearyColors.bg
         buildLayout()
         buildTopBar()
         buildMentionTopRow()
@@ -1854,7 +1854,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientChipAvatar.layer.masksToBounds = true
         recipientChipFallback.font = UIFont.boldSystemFont(ofSize: 12)
         recipientChipFallback.textColor = BearyColors.ink
-        recipientChipFallback.backgroundColor = BearyColors.surface
+        // 首字头像占位与页底同色（跟首页 bg 走，深纯黑／浅白），不再铺 surface 灰块。
+        recipientChipFallback.backgroundColor = BearyColors.bg
         recipientChipFallback.textAlignment = .center
         recipientChipFallback.layer.cornerRadius = 11
         recipientChipFallback.layer.masksToBounds = true
