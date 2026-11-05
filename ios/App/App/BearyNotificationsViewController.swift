@@ -8,7 +8,8 @@ import UIKit
 //   未读底为蓝 9%；互动行未读底为蓝 7%；已读行无底无点）。
 // - 设计帧：~/workspace/previews/layout_rest.html 的消息帧（未读蓝点 + 全部已读 +
 //   信件与系统信区分）。帧里时间写“今天 09:40 / 昨天”仅为示意，网页代码的
-//   fmtDate 一律是 M月d日 H:mm（小时不补零），本页以网页代码为准。
+//   fmtDate 一律是 M月d日 H:mm（小时不补零）。App 端时间已改相对口径
+//   （2026-11-05 Li 定：刚刚/X分钟前/X小时前/X天前），与网页不再同口径。
 // - 后端：~/workspace/teddy_beary/worker.js（GET /beary/api/notifications、
 //   POST /beary/api/notifications/read，均已在 BearyAPI.swift 里有现成方法，
 //   本文件不新增网络层、不改 BearyAPI.swift）。

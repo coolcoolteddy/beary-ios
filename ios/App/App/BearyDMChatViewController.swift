@@ -1178,13 +1178,15 @@ private final class BearyDMMessageCell: UITableViewCell {
         failButton.isHidden = !(isMine && showFail)
         self.onRetry = onRetry
         let body = message.body ?? ""
+        // 气泡时间口径与通知行一致（相对时间：刚刚/X分钟前/X小时前/X天前）。
         let timeText: String = {
             guard let createdAt = message.createdAt else { return "" }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000.0)
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "zh_CN")
-            formatter.dateFormat = "M月d日 H:mm"
-            return formatter.string(from: date)
+            let diff = Date().timeIntervalSince(date)
+            if diff < 60 { return "刚刚" }
+            if diff < 3600 { return "\(Int(diff / 60))分钟前" }
+            if diff < 86400 { return "\(Int(diff / 3600))小时前" }
+            return "\(Int(diff / 86400))天前"
         }()
         if isMine {
             mineTextLabel.text = body
