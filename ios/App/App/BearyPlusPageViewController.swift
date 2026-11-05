@@ -160,10 +160,10 @@ final class BearyPlusPageViewController: UIViewController {
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            contentStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-            contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            contentNarrowLeading,
+            contentNarrowTrailing,
             contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+            contentNarrowWidth,
             // 内容不足一屏时把栈撑满可视高，按钮沉底（预览 margin-top:auto 的等效布局）；
             // 内容超一屏时栈自然伸长、整页可滚。
             contentStack.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.heightAnchor),
@@ -178,6 +178,30 @@ final class BearyPlusPageViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         crownView.stop()
+    }
+
+    // MARK: - 内容列（详情页同款两分支互斥）
+    /// 宽 ≤820：现行全宽约束原样；宽 ≥821：600 居中。两组只激活一组，
+    /// 切换在 viewDidLayoutSubviews 里整组开关，状态不变不开关，避免布局循环。
+    private lazy var contentNarrowLeading: NSLayoutConstraint = contentStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor)
+    private lazy var contentNarrowTrailing: NSLayoutConstraint = contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor)
+    private lazy var contentNarrowWidth: NSLayoutConstraint = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor)
+    private lazy var contentWideWidth: NSLayoutConstraint = contentStack.widthAnchor.constraint(equalToConstant: 600)
+    private lazy var contentWideCenterX: NSLayoutConstraint = contentStack.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor)
+    private var contentIsWide = false
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 宽 ≥821 用 600 居中，宽 ≤820 用现行全宽；切换时重算一次。
+        let wantWide = view.bounds.width >= 821
+        if wantWide != contentIsWide {
+            contentIsWide = wantWide
+            contentNarrowLeading.isActive = !wantWide
+            contentNarrowTrailing.isActive = !wantWide
+            contentNarrowWidth.isActive = !wantWide
+            contentWideWidth.isActive = wantWide
+            contentWideCenterX.isActive = wantWide
+        }
     }
 
     // MARK: - 区块
@@ -196,12 +220,12 @@ final class BearyPlusPageViewController: UIViewController {
             crownView.heightAnchor.constraint(equalToConstant: 36),
             statusLabel.topAnchor.constraint(equalTo: crownView.bottomAnchor, constant: 10),
             statusLabel.centerXAnchor.constraint(equalTo: hero.centerXAnchor),
-            statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: hero.leadingAnchor, constant: 32),
-            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: hero.trailingAnchor, constant: -32),
+            statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: hero.leadingAnchor, constant: 16),
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: hero.trailingAnchor, constant: -16),
             subLabel.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 8),
             subLabel.centerXAnchor.constraint(equalTo: hero.centerXAnchor),
-            subLabel.leadingAnchor.constraint(equalTo: hero.leadingAnchor, constant: 32),
-            subLabel.trailingAnchor.constraint(equalTo: hero.trailingAnchor, constant: -32),
+            subLabel.leadingAnchor.constraint(equalTo: hero.leadingAnchor, constant: 16),
+            subLabel.trailingAnchor.constraint(equalTo: hero.trailingAnchor, constant: -16),
             subLabel.bottomAnchor.constraint(equalTo: hero.bottomAnchor, constant: -8),
         ])
         contentStack.addArrangedSubview(hero)
