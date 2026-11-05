@@ -44,10 +44,6 @@ class BearyFeedViewController: UIViewController {
     /// 参数：条目 id、是否取消了点赞、是否取消了收藏。
     var onInteractionRemoved: ((String, Bool, Bool) -> Void)?
 
-    /// Q5 空态“写一篇”：容器接线到编辑器（与 FAB 写按钮同去向），本文件只通知。
-    /// 容器未接线时按钮不动作，不在本文件内 present 编辑器（导航归容器）。
-    var onComposeRequested: (() -> Void)?
-
     /// C6 卡片上下文菜单编辑/删除：容器接线到编辑器与删除确认流程
     /// （与时间线 onEditEntry/onDeleteEntry 同口径，本文件只通知）。
     var onEditEntry: ((Entry) -> Void)?
@@ -427,21 +423,7 @@ class BearyFeedViewController: UIViewController {
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.textAlignment = .center
         subtitleLabel.numberOfLines = 0
-        // Q5 空态 CTA：高 44、圆角走工厂 single 12、左右内边距 20；点按只回调
-        // onComposeRequested，导航归容器（与 FAB 同去向），本文件不 present。
-        // Q5 空态 CTA 走 BearyButton 工厂（secondaryOutline 常规 44/12 与原口径
-        // 一致：surface 底 + line 边框 + ink 字；字号事后覆为原 14 semibold；
-        // 边框深浅切换由工厂 trait 重刷，不再停留旧主题色）。
-        let writeButton = BearyButton(style: .secondaryOutline(.regular))
-        writeButton.translatesAutoresizingMaskIntoConstraints = false
-        writeButton.setTitle("写一篇", for: .normal)
-        writeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
-        writeButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        writeButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
-        writeButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-        writeButton.addTarget(self, action: #selector(emptyWriteTapped), for: .touchUpInside)
-        writeButton.bearyAddPressFeedback()
-        let stack = UIStackView(arrangedSubviews: [pencilView, titleLabel, subtitleLabel, writeButton])
+        let stack = UIStackView(arrangedSubviews: [pencilView, titleLabel, subtitleLabel])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
         stack.alignment = .center
@@ -2034,14 +2016,6 @@ class BearyFeedViewController: UIViewController {
         blindBoxEntryView.refresh()
         // 计数/副文案变了，入口可能换行——立即重算表头高度与转圈落点。
         layoutFeedBlindBoxHeader()
-    }
-
-    /// Q5 空态 CTA：只转发 onComposeRequested，导航归容器。
-    /// 审计-广场复核（空态游客门，未证实→已证伪，不修）：容器接线
-    /// presentComposer 内有登录门（未登录弹原生登录页，见 SceneDelegate
-    /// presentComposer），与段切换处的游客门同口径，空态 CTA 无需本页再设门。
-    @objc private func emptyWriteTapped() {
-        onComposeRequested?()
     }
 
     /// 审计-广场（引用缓存无上限）：内存警告即清空引用缓存（正文重拉即可恢复，

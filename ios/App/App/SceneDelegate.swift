@@ -1886,10 +1886,6 @@ final class BearyChromeViewController: UIViewController {
         f.onRequireLogin = { [weak self] in
             self?.presentLoginGate()
         }
-        // Q5 空态 CTA 接线：Feed 空态“写一篇”与 FAB 同去向（未登录时 presentComposer 内弹原生登录页）。
-        f.onComposeRequested = { [weak self] in
-            self?.presentComposer()
-        }
         // 收尾接线：引用卡可点定位（F2）；赞过/收藏页签取消摘卡（F8）。
         f.onQuoteEntrySelected = { [weak self] quoteId in
             self?.gotoEntry(entryId: quoteId)
