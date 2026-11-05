@@ -3516,12 +3516,6 @@ class BearyNotificationCell: UITableViewCell {
 
     /// 审计-性能：逐行新建 DateFormatter 改静态复用（每种格式一个静态实例，
     /// 不复用同一实例改 dateFormat；调用方只在主线程做行渲染，不跨线程用）。
-    private static let monthDayTimeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月d日 H:mm"
-        return formatter
-    }()
     private static let monthDayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
@@ -3530,8 +3524,7 @@ class BearyNotificationCell: UITableViewCell {
     }()
 
     /// 通知时间口径（2026-11-05 Li 定）：24 小时内相对时间——不到 1 分钟“刚刚”，
-    /// 不到 1 小时“X分钟前”，不到 24 小时“X小时前”；超过 24 小时沿用网页
-    /// fmtDate 口径 M月d日 H:mm——小时不补零（9:40），分钟补零。
+    /// 不到 1 小时“X分钟前”，不到 24 小时“X小时前”；超过 24 小时写天数“X天前”。
     private static func timeText(ms: Int?) -> String {
         guard let msValue = ms else { return "" }
         let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
@@ -3539,7 +3532,7 @@ class BearyNotificationCell: UITableViewCell {
         if diff < 60 { return "刚刚" }
         if diff < 3600 { return "\(Int(diff / 60))分钟前" }
         if diff < 86400 { return "\(Int(diff / 3600))小时前" }
-        return monthDayTimeFormatter.string(from: date)
+        return "\(Int(diff / 86400))天前"
     }
 
     /// 网页 fmtDay 口径：M月d日（无空格，信件引用 meta 用它）。
