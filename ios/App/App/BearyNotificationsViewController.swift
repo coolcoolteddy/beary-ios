@@ -191,6 +191,11 @@ final class BearyNotificationsViewController: UIViewController {
     private var firstLoadFailed = false
     private var isMarkingAllRead = false
     private var markingReadIds: Set<Int> = []
+    /// 第三轮审计 01：单条与全部已读共用的操作代次——全部已读成功时 +1，
+    /// 在途单条的失败回滚凭发起时代次校验，代次已变即作废，不把已清零的
+    /// 未读数加回来。只认本代次，不认账号代次（同账号内全部已读不会 bump
+    /// 全局代次，旧单条回滚拦不住）。
+    private var readOperationGeneration = 0
     /// 好友第一期（关注/回关模型）：关注提醒卡状态（按关注方 id 持有；同一人
     /// 的多条 follow 行共享同一态，cell 复用与整页重拉都不丢“已互关”态）。
     /// 未拉取时无条目，configure 时按行拉 state 接口。
@@ -1079,7 +1084,9 @@ final class BearyNotificationsViewController: UIViewController {
                 }
                 switch result {
                 case .success(let list):
-                    let oldSignatures = Set(strongSelf.items.map({ strongSelf.itemSignature($0) }))
+                    // 第三轮审计 10：入场身份用通知 ID 集（旧签名含已读／标题等可变
+                    // 字段，仅改已读或昵称也会被判成新行重播滑入）。
+                    let oldIds = Set(strongSelf.items.compactMap({ $0.id }))
                     // C-G4：整页成功加载即新账号数据已落袋，清掉 401 遗留的重拉旗。
                     strongSelf.needsReloadAfterUnauthorized = false
                     strongSelf.items = list.items ?? []
@@ -1107,7 +1114,7 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.hasDisplayedPage = true
                     strongSelf.hasSuccessfulLoad = true
                     strongSelf.saveNotificationCache()
-                    strongSelf.playStaggeredEntrance(oldSignatures: oldSignatures)
+                    strongSelf.playStaggeredEntrance(oldIds: oldIds)
                 case .failure(let apiError):
                     if strongSelf.items.isEmpty {
                         strongSelf.firstLoadFailed = true
@@ -1229,15 +1236,13 @@ final class BearyNotificationsViewController: UIViewController {
 
     // MARK: - 入场动效与自定义下拉
 
-    /// 行签名（id + 已读 + 类型 + 文案 + 时间）：刷新后只对签名不在旧集里的
-    /// 行播错峰入场，已有行不重播（网页 staggerIn / 对账口径）。
-    private func itemSignature(_ item: NotificationItem) -> String {
-        return "\(item.id ?? -1):\(item.read ?? false):\(item.type ?? ""):\(item.title ?? ""):\(item.excerpt ?? ""):\(item.actorName ?? ""):\(item.emote ?? ""):\(item.entryId ?? ""):\(item.createdAt ?? 0)"
-    }
-
     /// 逐行错峰入场（网页 staggerIn 口径）：slideDown 0.25s、步进 0.03、
     /// 总延迟封顶 0.24、仅可视区前 24 行、减动效不播。
-    private func playStaggeredEntrance(oldSignatures: Set<String>) {
+    /// 第三轮审计 10：入场身份只认通知 ID（分组卡认组内最新一条的 ID）——
+    /// 已读／标题／昵称等内容变化不改变身份，已有行不重播；内容更新本就
+    /// 由 reloadData 重配 cell 负责，不再用内容签名决定是不是新行。
+    /// （旧 itemSignature 含已读／标题等可变字段，已删，不再使用。）
+    private func playStaggeredEntrance(oldIds: Set<Int>) {
         if UIAccessibility.isReduceMotionEnabled {
             return
         }
@@ -1251,28 +1256,28 @@ final class BearyNotificationsViewController: UIViewController {
                 continue
             }
             let row = displayRows[path.row]
-            let signature: String?
+            let rowId: Int?
             switch row.kind {
             case .letter, .sysItem, .actItem:
                 if let itemIndex = row.itemIndex, itemIndex < items.count {
-                    signature = itemSignature(items[itemIndex])
+                    rowId = items[itemIndex].id
                 } else {
-                    signature = nil
+                    rowId = nil
                 }
             case .sysCard:
                 if let latestIndex = items.indices.first(where: { items[$0].type == "system" }) {
-                    signature = itemSignature(items[latestIndex])
+                    rowId = items[latestIndex].id
                 } else {
-                    signature = nil
+                    rowId = nil
                 }
             case .actCard:
                 if let latestIndex = items.indices.first(where: { (items[$0].type ?? "") != "system" && (items[$0].type ?? "") != "letter" }) {
-                    signature = itemSignature(items[latestIndex])
+                    rowId = items[latestIndex].id
                 } else {
-                    signature = nil
+                    rowId = nil
                 }
             }
-            guard let rowSignature = signature, !oldSignatures.contains(rowSignature) else {
+            guard let rowId = rowId, !oldIds.contains(rowId) else {
                 continue
             }
             guard let cell = tableView.cellForRow(at: path) else {
@@ -1651,9 +1656,9 @@ final class BearyNotificationsViewController: UIViewController {
                 }
                 switch result {
                 case .success(let list):
-                    // C-G1：翻页追加也要错峰入场——先记旧签名集，成功后只对
+                    // C-G1：翻页追加也要错峰入场——先记旧 ID 集，成功后只对
                     // 不在旧集里的新行播 stagger（与首屏 playStaggeredEntrance 同口径）。
-                    let oldSignatures = Set(strongSelf.items.map({ strongSelf.itemSignature($0) }))
+                    let oldIds = Set(strongSelf.items.compactMap({ $0.id }))
                     var knownIds: Set<Int> = []
                     for existing in strongSelf.items {
                         if let existingId = existing.id {
@@ -1699,8 +1704,8 @@ final class BearyNotificationsViewController: UIViewController {
                     } else {
                         strongSelf.tableView.reloadData()
                     }
-                    // C-G1：追加成功后播新行 stagger（旧行签名在旧集里、不重播）。
-                    strongSelf.playStaggeredEntrance(oldSignatures: oldSignatures)
+                    // C-G1：追加成功后播新行 stagger（旧行 ID 在旧集里、不重播）。
+                    strongSelf.playStaggeredEntrance(oldIds: oldIds)
                 case .failure:
                     // 401 不清列表（全局 onUnauthorized 已由容器接管）；其余失败只 toast，
                     // 不产生新行，哨兵留位、滚出再滚回才重触（见 scrollViewDidScroll 重 arm）。
@@ -1790,7 +1795,23 @@ final class BearyNotificationsViewController: UIViewController {
         if let buttonImageView = readAllButton.imageView {
             BearyIconMotion.startSpin(on: buttonImageView, duration: 1.0, key: "bearyReadAllSpin")
         }
-        // 全部已读不等乐观更新：成功后才整批置已读（网页 ntReadAll 同款）。
+        // 第三轮审计 01：全部已读改乐观更新——先拍快照（未读 id 集＋未读数），
+        // 立即显示最终态（整批置已读、未读清零）；成功时递增操作代次（在途
+        // 单条失败回滚随即作废），失败时按快照恢复。按钮仍显“处理中…”转圈，
+        // 请求落定前不隐藏（updateReadAllButton 只在成功/失败分支调）。
+        let snapshotUnreadIds = Set(items.filter({ ($0.read ?? true) == false }).compactMap({ $0.id }))
+        let snapshotUnreadTotal = unreadTotal
+        let snapshotSysUnreadTotal = sysUnreadTotal
+        for index in items.indices {
+            items[index].read = true
+        }
+        unreadTotal = 0
+        sysUnreadTotal = 0
+        publishUnread(0)
+        recordFullLoadUnread()
+        rebuildDisplayRows()
+        applyReadAppearanceToVisibleRows()
+        // 请求已发出：落定前按钮保持“处理中…”转圈（见回调内复位）。
         let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.markNotificationRead(id: nil) { [weak self] result in
             DispatchQueue.main.async {
@@ -1809,6 +1830,9 @@ final class BearyNotificationsViewController: UIViewController {
                 }
                 switch result {
                 case .success:
+                    // 第三轮审计 01：全部已读成功，操作代次 +1——此前在途单条的
+                    // 失败回滚凭发起时代次校验到代次已变，随即作废。
+                    strongSelf.readOperationGeneration += 1
                     for index in strongSelf.items.indices {
                         strongSelf.items[index].read = true
                     }
@@ -1823,7 +1847,21 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.applyReadAppearanceToVisibleRows()
                     strongSelf.updateReadAllButton()
                 case .failure(let apiError):
-                    // 401 由容器全局处理，不再提示；其余失败 toast + 全量重拉。
+                    // 第三轮审计 01：失败先按快照恢复本地已读态与未读数（乐观更新
+                    // 已把列表写成全读，失败不能留着假状态）；401 由容器全局处理，
+                    // 不再提示、不重拉，其余失败 toast + 全量重拉（服务端真相兜底）。
+                    for index in strongSelf.items.indices {
+                        if let id = strongSelf.items[index].id, snapshotUnreadIds.contains(id) {
+                            strongSelf.items[index].read = false
+                        }
+                    }
+                    strongSelf.unreadTotal = snapshotUnreadTotal
+                    strongSelf.sysUnreadTotal = snapshotSysUnreadTotal
+                    strongSelf.publishUnread(snapshotUnreadTotal)
+                    strongSelf.recordFullLoadUnread()
+                    strongSelf.rebuildDisplayRows()
+                    strongSelf.applyReadAppearanceToVisibleRows()
+                    strongSelf.updateReadAllButton()
                     if case APIError.unauthorized = apiError {
                         return
                     }
@@ -2133,6 +2171,8 @@ final class BearyNotificationsViewController: UIViewController {
         }
         markingReadIds.insert(notificationId)
         let requestEpoch = BearyAPI.shared.authEpoch
+        // 第三轮审计 01：拍下发起时的已读操作代次，供失败回滚校验。
+        let operationGen = readOperationGeneration
         BearyAPI.shared.markNotificationRead(id: notificationId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -2142,10 +2182,19 @@ final class BearyNotificationsViewController: UIViewController {
                     return
                 }
                 if case .failure = result {
+                    // 第三轮审计 01：全部已读已成功（操作代次已变）→ 旧单条回滚
+                    // 作废，服务端已全部已读，不把清零的未读数加回来。
+                    guard operationGen == strongSelf.readOperationGeneration else { return }
+                    // 全部已读在途 → 由它结算状态（成功全读、失败快照恢复＋重拉），
+                    // 旧单条不插手、不弹失败提示。
+                    guard !strongSelf.isMarkingAllRead else { return }
                     // 失败回滚：恢复未读点与未读数（401 也回滚，全局登录处理归容器）。
-                    if let rollbackIndex = strongSelf.items.firstIndex(where: { $0.id == notificationId }) {
-                        strongSelf.items[rollbackIndex].read = false
-                    }
+                    // 只有该条当前仍显示已读时才回滚——全部已读失败后的快照恢复／
+                    // 整页重拉可能已按服务端真相写回未读态，重复 +1 会把未读数顶高；
+                    // 行已不在列表时不写行、不加数（重拉已按服务端真相结算未读数）。
+                    guard let rollbackIndex = strongSelf.items.firstIndex(where: { $0.id == notificationId }),
+                          (strongSelf.items[rollbackIndex].read ?? true) == true else { return }
+                    strongSelf.items[rollbackIndex].read = false
                     strongSelf.unreadTotal += 1
                     if item.type == "system" {
                         strongSelf.sysUnreadTotal += 1
@@ -2156,9 +2205,29 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.recordFullLoadUnread()
                     strongSelf.applyReadAppearanceToVisibleRows()
                     strongSelf.notifyMergeSnapshotChanged()
+                    // 失败有反馈：摇头＋warning 震动＋拒绝音效＋toast（此前静默
+                    // 回滚，用户不知道标已读没成）。
+                    strongSelf.playDenyShakeForRow(notificationId: notificationId)
+                    strongSelf.showToast(message: "标为已读失败，请重试")
                 }
             }
         }
+    }
+
+    /// 单条标已读失败：对可见行摇头（行不可见时只给震动＋音效），配 toast 说明。
+    private func playDenyShakeForRow(notificationId: Int) {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+        if UIAccessibility.isReduceMotionEnabled { return }
+        guard let index = items.firstIndex(where: { $0.id == notificationId }),
+              let rowIndex = displayRows.firstIndex(where: { $0.itemIndex == index }),
+              let cell = tableView.cellForRow(at: IndexPath(row: rowIndex, section: 0)) else { return }
+        cell.layer.removeAnimation(forKey: "bearyNotifDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = 0.4
+        cell.layer.add(shake, forKey: "bearyNotifDenyShake")
     }
 
     // MARK: - 角标与顶栏
