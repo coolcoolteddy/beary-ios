@@ -325,11 +325,20 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
     }
 
     /// 只跟停靠键盘：浮动/分屏键盘（底边未贴容器底）不动 sheet，页内滚动 inset 已处理遮挡。
+    /// 停靠→悬浮只发 keyboardWillChangeFrame、不发 keyboardWillHide：键盘不再贴底时
+    /// 在这里把旧的停靠顶边清掉、落回容器底，否则 sheet 一直停在旧高度。
     private func updateKeyboardTop(from note: Notification) {
         guard let container = containerView,
               let value = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
         let frameInContainer = container.convert(value.cgRectValue, from: nil)
-        guard frameInContainer.maxY >= container.bounds.height - 1 else { return }
+        guard frameInContainer.maxY >= container.bounds.height - 1 else {
+            // 键盘不再贴底（iPad 悬浮/分屏）：清掉旧的停靠顶边并重算落点；
+            // 已是 nil 时不重复布局。
+            guard keyboardTopY != nil else { return }
+            keyboardTopY = nil
+            animateLayoutForKeyboard(note)
+            return
+        }
         keyboardTopY = frameInContainer.minY
         animateLayoutForKeyboard(note)
     }
@@ -341,11 +350,43 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
         let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
         if UIAccessibility.isReduceMotionEnabled {
             container.layoutIfNeeded()
-        } else {
-            UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: {
-                container.layoutIfNeeded()
-            })
+            return
         }
+        // 2026-11-05 M5：布局一次落到目标，视觉过渡只用 transform。
+        // 拖拽/进退场期间 chrome 与内容正用 transform（见 applyDrag /
+        // setChromePresented），不叠加键盘 transform，直接落布局；
+        // 拖动中的键盘帧变化仍由 restoreDrag 后的 relayout 补上。
+        guard let presentedView = presentedView,
+              presentedView.transform.isIdentity,
+              shadowView.transform.isIdentity,
+              glassView.transform.isIdentity,
+              grabberView.transform.isIdentity,
+              dragStripView.transform.isIdentity else {
+            container.layoutIfNeeded()
+            return
+        }
+        // 先读当前视觉位置（presentation 层含在途动画），再落布局、
+        // 由旧位置起播回 0；连续键盘事件每次都从实际视觉位置重算，
+        // 中断也不留残余偏移。模型值起播时即为 .identity，播完自然清零。
+        let hadFrame = shadowView.frame.height > 0
+        let oldVisualY = shadowView.layer.presentation()?.frame.minY ?? shadowView.frame.minY
+        container.layoutIfNeeded()
+        guard hadFrame else { return }
+        let dy = oldVisualY - shadowView.frame.minY
+        guard dy != 0 else { return }
+        let offset = CGAffineTransform(translationX: 0, y: dy)
+        presentedView.transform = offset
+        shadowView.transform = offset
+        glassView.transform = offset
+        grabberView.transform = offset
+        dragStripView.transform = offset
+        UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: { [weak self] in
+            self?.presentedView?.transform = .identity
+            self?.shadowView.transform = .identity
+            self?.glassView.transform = .identity
+            self?.grabberView.transform = .identity
+            self?.dragStripView.transform = .identity
+        })
     }
 }
 

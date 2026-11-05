@@ -209,11 +209,23 @@ private final class BearyToastView: UIView {
             applyKeyboardAvoidance()
             container.layoutIfNeeded()
         } else {
+            // 2026-11-05 M5：布局一次落到目标，视觉过渡只用 transform。
+            // 先读当前视觉位置（presentation 层含在途动画），再落布局、
+            // 由旧位置起播回 0；连续键盘事件每次都从实际视觉位置重算，
+            // 中断也不留残余偏移。模型值起播时即为 .identity，播完自然清零。
+            // 本体出入场只动 alpha，不与这里的 transform 冲突。
+            let hadFrame = frame.height > 0
+            let oldVisualY = layer.presentation()?.frame.minY ?? frame.minY
+            applyKeyboardAvoidance()
+            container.layoutIfNeeded()
+            guard hadFrame else { return }
+            let dy = oldVisualY - frame.minY
+            guard dy != 0 else { return }
+            transform = CGAffineTransform(translationX: 0, y: dy)
             let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
             UIView.animate(withDuration: duration, delay: 0,
                            options: [options, .beginFromCurrentState], animations: { [weak self] in
-                self?.applyKeyboardAvoidance()
-                container.layoutIfNeeded()
+                self?.transform = .identity
             })
         }
     }
