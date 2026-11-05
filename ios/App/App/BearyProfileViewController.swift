@@ -331,8 +331,12 @@ class BearyProfileViewController: UIViewController {
     private var confirmedBookmarkedById: [String: Bool] = [:]
     private var emoteBusyIds: Set<String> = []
     private var pubBusyIds: Set<String> = []
-    /// 置顶在途去重（pubBusyIds 同款口径；确认弹窗期间不占位，确认后发请求时才占位）。
-    private var pinBusyIds: Set<String> = []
+    /// 置顶全局互斥（第九轮 06）：同一时刻只允许一篇置顶／取消置顶在途。
+    /// 旧 pinBusyIds 只按单篇防重复，两篇不同日记可同时在途、后回包会把先
+    /// 成功的顶掉，个人页可同时显示两篇置顶；现改为整页一把锁，在途期间
+    /// 其他置顶／取消置顶点按一律忽略（pubBusyIds 同款静默忽略口径）。
+    /// 确认弹窗期间不占位，确认后发请求时才占位。
+    private var pinBusy = false
     // MARK: - 批 D 个性化模块状态（语料 = 作者 scope 全量分页结果，只走已有字段聚合）
     /// 模块语料所属 profile id；与当前 profile 不一致即视为切账号/换目标，语料与
     /// 随机上一次 id 全复位（scheduleModulesRefresh 内处理，不靠调用方记得清）。
@@ -7584,7 +7588,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
     private func handlePinToggle(entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         guard BearyDiaryPin.isOwn(entry) else { return }
-        guard !pinBusyIds.contains(entryId) else { return }
+        guard !pinBusy else { return }
         if entry.isPinned {
             performPinToggle(entry: entry, pinning: false, previousPinnedId: nil)
         } else if let oldId = BearyDiaryPin.existingPinnedId(excluding: entryId, in: diaryEntries) {
@@ -7604,7 +7608,10 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
     /// 单行 reload 覆盖不了换位；已播过入场的行不重播，见 willDisplay 守卫）。
     private func performPinToggle(entry: Entry, pinning: Bool, previousPinnedId: String?) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
-        pinBusyIds.insert(entryId)
+        // 第九轮 01：发起时捕获账号，回包先复核仍是同一账号——切号后旧号的
+        // 置顶回包不得改新号页面的列表与置顶记忆。
+        let requestAccountId = SessionManager.shared.currentUser?.id
+        pinBusy = true
         let originalTarget = entry
         let originalPrevious = previousPinnedId.flatMap { id in diaryEntries.first(where: { $0.id == id }) }
         var optimistic = entry
@@ -7621,12 +7628,19 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         let completion: (Result<BearyAPI.PinResponse, APIError>) -> Void = { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
-                strongSelf.pinBusyIds.remove(entryId)
+                strongSelf.pinBusy = false
+                guard SessionManager.shared.currentUser?.id == requestAccountId else { return }
                 switch result {
                 case .success(let resp):
                     var updated = optimistic
                     if let pinned = resp.pinned { updated.pinned = pinned ? 1 : 0 }
                     if let pinnedAt = resp.pinnedAt { updated.pinnedAt = pinnedAt } else if !pinning { updated.pinnedAt = nil }
+                    if updated.isPinned {
+                        // 第九轮 06：成功后以本次置顶为准统一整页状态——服务端单槽位，
+                        // 本次置顶成功即表示目标篇是唯一置顶篇，把列表里其他残留的
+                        // 置顶标识一并清掉（旧记忆缺失／并发残留都收敛到这里）。
+                        strongSelf.clearOtherPinnedEntries(except: entryId)
+                    }
                     strongSelf.updateEntryInAllTabs(entry: updated)
                     BearyDiaryPin.notePinResult(entryId: entryId, pinned: updated.isPinned)
                     strongSelf.tableView.reloadData()
@@ -7652,6 +7666,21 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             BearyAPI.shared.pinEntry(id: entryId, completion: completion)
         } else {
             BearyAPI.shared.unpinEntry(id: entryId, completion: completion)
+        }
+    }
+
+    /// 第九轮 06：清掉除目标篇外所有列表里的置顶标识（日记／赞过／收藏三 tab）。
+    /// 服务端单槽位，一次置顶成功即表示目标篇是唯一置顶篇；旧记忆缺失或并发
+    /// 残留导致的多置顶显示都收敛到这里。先快照再清（updateEntryInAllTabs
+    /// 会改三张表，循环内不直接改正在遍历的表）；同一篇出现在多 tab 时重复
+    /// 清是等值操作，无害。
+    private func clearOtherPinnedEntries(except entryId: String) {
+        let snapshot = diaryEntries + likedEntries + savedEntries
+        for entry in snapshot where entry.id != entryId && entry.isPinned {
+            var cleared = entry
+            cleared.pinned = 0
+            cleared.pinnedAt = nil
+            updateEntryInAllTabs(entry: cleared)
         }
     }
 
