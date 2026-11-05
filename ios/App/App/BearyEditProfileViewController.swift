@@ -425,6 +425,9 @@ class BearyEditProfileViewController: UIViewController {
         updateDynamicLayerColors()
         // F12：id 不在 init 入参里（不改容器调用点），页内调既有 /me 补齐；
         // C4：邮箱行已删，/me 不再为本页补邮箱（邮箱只在设置页 ID 卡呈现）。
+        // 13：本地已有当前账号 ID 时先用它拉签名初值，不等 /me；/me 回来
+        // 再并行校正链接行（fetchInitialSignature 只取一次，见该函数注释）。
+        fetchInitialSignature()
         refreshLinkRowFromMe()
     }
 
@@ -488,12 +491,15 @@ class BearyEditProfileViewController: UIViewController {
         }
     }
 
-    /// 批 D 签名初值：/me 不下发 signature，故用 /me 拿到的 id 调既有公开资料
+    /// 批 D 签名初值：/me 不下发 signature，故用账号 id 调既有公开资料
     /// 读口（beary Worker profilePayload 已下发 signature，未设为 null）自取；
     /// 只取一次；回包前用户已动手输入时不覆盖已打内容（以 signatureEdited 为准）。
     /// 拉取失败不锁死：占位保留，用户现打的非空内容仍可按改动发。
+    /// 13：id 优先取本地会话（SessionManager.shared.currentUser），不等 /me；
+    /// 本地无 id 时仍等 /me 补齐（refreshLinkRowFromMe 成功后会再调一次本函数）。
     private func fetchInitialSignature() {
-        guard !signatureFetchStarted, let id = fetchedUserId else { return }
+        guard !signatureFetchStarted else { return }
+        guard let id = fetchedUserId ?? SessionManager.shared.currentUser?.id else { return }
         signatureFetchStarted = true
         BearyAPI.shared.fetchUserProfile(userIdValue: id) { [weak self] result in
             DispatchQueue.main.async {
@@ -1078,9 +1084,9 @@ class BearyEditProfileViewController: UIViewController {
         // 快照缺失时（理论上到不了：两步入口都先置快照）只做原有成功路径。
         // 审计-个人页设置（签名“假成功”诚实口径，根治在后端 PUT 分支）：
         // 签名有改动时，只有回包原样带回提交值才算确认落库；未确认时不写
-        // 签名已提交态（initialSignature 不动、输入框原样保留）、不调 onSaved，
-        // 只给中性提示——不写“签名暂未保存”定论（回包没给证据，不能断言
-        // 服务端没存；后端补分支回显后本分支自动转确认，无需再改 App）。
+        // 签名已提交态（initialSignature 不动、输入框原样保留），先由
+        // verifySignatureAfterSave 后台读一次公开资料核对：核对上即按确认
+        // 处理并调 onSaved，核对不上/读失败才提示——不再让用户回个人页确认。
         // 名字 / 头像 / 封面仍按原口径写已提交态（不在本条审计范围内）。
         if let snapshot = savingSnapshot {
             // 静态性能修复：头像替换落库成功即逐出旧头像的本机缓存（此前只靠
@@ -1119,7 +1125,7 @@ class BearyEditProfileViewController: UIViewController {
             isSaving = false
             updateSaveButtonState()
             if snapshot.signatureChanged && !signatureConfirmed {
-                BearyToast.show(in: view, message: "资料已提交，签名是否同步请返回个人页确认")
+                verifySignatureAfterSave(expected: snapshot.signatureValue.isEmpty ? nil : snapshot.signatureValue)
                 return
             }
             onSaved?()
@@ -1129,6 +1135,35 @@ class BearyEditProfileViewController: UIViewController {
         isSaving = false
         updateSaveButtonState()
         onSaved?()
+    }
+
+    /// 18：PUT 回包未确认签名时，后台读一次公开资料核对，不再让用户回个人页确认。
+    /// 核对上（读回值与提交值一致）即按确认处理并调 onSaved；读回值不一致时提示
+    /// “签名尚未同步”，读失败或无账号 id 时给中性提示；两种情况输入框都原样保留、
+    /// 不调 onSaved，可直接重试。
+    private func verifySignatureAfterSave(expected: String?) {
+        guard let id = fetchedUserId ?? SessionManager.shared.currentUser?.id else {
+            BearyToast.show(in: view, message: "资料已提交，签名同步状态未确认，请稍后查看")
+            return
+        }
+        BearyAPI.shared.fetchUserProfile(userIdValue: id) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                switch result {
+                case .success(let profile):
+                    if profile.signature == expected {
+                        strongSelf.initialSignature = expected
+                        strongSelf.signatureLoaded = true
+                        strongSelf.signatureEdited = false
+                        strongSelf.onSaved?()
+                    } else {
+                        BearyToast.show(in: strongSelf.view, message: "签名尚未同步，请稍后再试")
+                    }
+                case .failure:
+                    BearyToast.show(in: strongSelf.view, message: "资料已提交，签名同步状态未确认，请稍后查看")
+                }
+            }
+        }
     }
 
     private func finishSavingWithError(message: String) {
@@ -1166,7 +1201,7 @@ class BearyEditProfileViewController: UIViewController {
         case .server(let code, _):
             switch code {
             case "taken": return "这个用户名已被占用"
-            case "cooldown": return "改名冷却中，还不能改"
+            case "cooldown": return "用户名修改后，7 天内不能再改"
             case "bad_handle": return "用户名需 3–20 位小写字母、数字或下划线"
             default: return "用户名修改失败"
             }

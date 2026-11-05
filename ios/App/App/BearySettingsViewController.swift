@@ -1573,7 +1573,12 @@ final class BearySettingsViewController: UIViewController {
             avatarInitialLabel.centerYAnchor.constraint(equalTo: avatarContainer.centerYAnchor),
         ])
         if let avatarURL = model.avatarURL, let url = BearyImageURLs.avatarURL(avatarURL) {
-            avatarImageView.bearySetImage(url: url)
+            // 06：有头像 URL 时先藏首字母（图到了只显图）；bearySetImage 无成功
+            // 回调，加载失败时靠 onFailure 把字母放回来继续兜底。
+            avatarInitialLabel.isHidden = true
+            avatarImageView.bearySetImage(url: url, onFailure: { [weak avatarInitialLabel] _ in
+                avatarInitialLabel?.isHidden = false
+            })
         }
         let nameLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
