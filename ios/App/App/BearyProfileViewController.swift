@@ -6701,11 +6701,11 @@ class BearyProfileViewController: UIViewController {
                 return
             }
         }
-        presentPhotosLightbox(startIndex: sender.tag, originFrame: sender.convert(sender.bounds, to: nil))
+        presentPhotosLightbox(startIndex: sender.tag, originFrame: sender.convert(sender.bounds, to: nil), thumbnail: sender.currentImage)
     }
 
     /// 批 C：照片墙点按直进大图灯箱（全量照片、左右滑动；灯箱内“查看日记”进详情）。
-    private func presentPhotosLightbox(startIndex: Int, originFrame: CGRect? = nil) {
+    private func presentPhotosLightbox(startIndex: Int, originFrame: CGRect? = nil, thumbnail: UIImage? = nil) {
         let allPhotos = photoWallPhotosValue
         guard !allPhotos.isEmpty, startIndex >= 0, startIndex < allPhotos.count else { return }
         guard presentedViewController == nil else { return }
@@ -6720,6 +6720,7 @@ class BearyProfileViewController: UIViewController {
             }
         }
 let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.imageKey }, liveVideos: wallLiveVideos.isEmpty ? nil : wallLiveVideos, startIndex: startIndex)
+        viewer.initialThumbnail = thumbnail
         viewer.originFrameInWindow = originFrame
         viewer.modalPresentationStyle = .fullScreen
         viewer.onViewEntryAtIndex = { [weak self, weak viewer] tappedIndex in
@@ -8228,12 +8229,13 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
             }
         }
         // N7 主页图片灯箱：复用独立文件内的查看器，全屏模态弹出，弹出方式与时间线同款（已弹出时不叠加、减动效直显）。
-        cellValue.onTapImages = { [weak self] keys, index, originFrame in
+        cellValue.onTapImages = { [weak self] keys, index, originFrame, thumbnail in
             guard let self = self, self.presentedViewController == nil else { return }
             let now = Date()
             if let last = self.lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
             self.lastImageViewerAt = now
 let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: entryValue.liveVideos, startIndex: index)
+            viewer.initialThumbnail = thumbnail
             viewer.originFrameInWindow = originFrame
             viewer.modalPresentationStyle = .fullScreen
             self.present(viewer, animated: BearyMotion.animated(true), completion: nil)

@@ -92,6 +92,12 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 避免旧图或旧升级覆盖新图。升级回包另有清晰度优先级（见
     /// maybeUpgradeZoomResolution），代次只管“是不是这张图这一轮”。
     private var imageLoadGeneration = 0
+    /// 先显缩略图：调用方把被点缩略图上已显示的 UIImage 传进来（零网络），
+    /// 打开即铺满显示，高清到了再换；拿不到时为 nil，走现有转圈等高清口径。
+    /// 与 liveVideos／originFrameInWindow 同口径：present 前赋值。
+    var initialThumbnail: UIImage?
+    /// 当前屏上这张是不是先显的缩略图（高清换上时用短淡入、只换一次）。
+    private var showingInitialThumbnail = false
     /// 关场回到原处：调用方在 present 前传入被点缩略图在 window 坐标下的
     /// 矩形（未传时关场走淡出兜底，同样不闪）；全屏模态下底层表无法滚动，
     /// present 时 captured 的矩形在关场时仍然有效。
@@ -467,6 +473,16 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         zoomHiResWidth = 0
         isFailed = false
         retryButton.isHidden = true
+        // 先显缩略图：只在打开那张、屏上无图时用一次（零网络，打开即见图、
+        // 不转圈）；高清回包后即清标记；切到别的图时标记同步清零，旧缩略图
+        // 绝不复活到别的图上。缩略图拿不到（nil）时走现有转圈等高清口径。
+        if currentIndex == initialIndex, imageView.image == nil, let thumb = initialThumbnail {
+            imageView.image = thumb
+            showingInitialThumbnail = true
+            initialThumbnail = nil
+        } else if currentIndex != initialIndex {
+            showingInitialThumbnail = false
+        }
         // 审计 P2-25：切图/重试时不再先置 nil 回落黑屏——旧图保留到新图到达
         // （首张加载时 imageView 本就为空，无变化；失败时旧图仍在、重试文案在上）。
         // imageView.image = nil（旧写法，已删）
@@ -498,10 +514,20 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 return
             }
             if let img = img {
-                self.imageView.image = img
+                // 高清到了：正显缩略图时短淡入换上（未放大时走局部状态时长；
+                // 已放大直接换，transform 一字不动；减动效开时直接换）。
+                if self.showingInitialThumbnail, self.scale == 1, BearyMotion.animated(true) {
+                    UIView.transition(with: self.imageView, duration: BearyMotion.localStateDuration, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
+                        self.imageView.image = img
+                    }, completion: nil)
+                } else {
+                    self.imageView.image = img
+                }
+                self.showingInitialThumbnail = false
                 self.isFailed = false
                 self.retryButton.isHidden = true
             } else {
+                // 高清失败：缩略图仍在屏（上一步未清图），只亮重试入口。
                 self.isFailed = true
                 self.retryButton.isHidden = false
             }
@@ -598,6 +624,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                   generation == self.imageLoadGeneration else { return }
             if self.zoomHiResKey == key && targetWidth <= self.zoomHiResWidth { return }
             self.imageView.image = img
+            self.showingInitialThumbnail = false
             self.zoomHiResKey = key
             self.zoomHiResWidth = targetWidth
         }
@@ -999,6 +1026,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 self.tx = 0
                 self.ty = 0
                 self.imageView.image = self.neighborImageView.image
+                self.showingInitialThumbnail = false
                 self.imageView.transform = .identity
                 self.liveOverlay?.transform = .identity
                 self.hideNeighbor()
@@ -1082,6 +1110,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 // 目标未到：先空 + 加载圈，loadCurrent 回包填图（不留旧图）。
                 self.imageView.image = nil
             }
+            self.showingInitialThumbnail = false
             self.hideNeighbor()
             self.updateCounter()
             self.loadCurrent()
