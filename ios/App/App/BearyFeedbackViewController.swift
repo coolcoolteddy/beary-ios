@@ -770,8 +770,11 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     /// 编辑资料页 hasUnsavedChanges／requestExit 口径的反馈页照抄版
     /// （只抄口径，不跨页调用）：有内容 = 描述去空白后非空（与
     /// updateSubmitEnabled 的 hasText 同算式），或附件非空。反馈页
-    /// 只有顶栏关闭钮、没有边缘滑动退出，故无 interactive 分支。
-    private var hasFeedbackContent: Bool {
+    /// 只有顶栏关闭钮；左缘右滑由设置页 presentSettingsPage 的 EdgeDismiss
+    /// 守卫拦（本函数自身无 interactive 分支）。
+    /// 注意：internal 而非 private——设置页 presentSettingsPage 的 EdgeDismiss
+    /// 守卫要读它（有内容时拒绝左缘右滑，改走顶栏关闭钮的放弃确认）。
+    var hasFeedbackContent: Bool {
         let hasText = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return hasText || !attachments.isEmpty
     }
