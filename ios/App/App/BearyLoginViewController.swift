@@ -126,6 +126,9 @@ final class BearyLoginViewController: UIViewController {
     private var countdownTimer: Timer?
     /// 审计登录杂项：验证码墙钟截止点（startCountdown 时记死，计时器每次按墙钟重算）。
     private var countdownDeadline: Date?
+    /// 第六轮 07：验证码实际发给了哪只邮箱。倒计时与成功提示都绑在这只邮箱上；
+    /// 邮箱一改就作废（见 textChanged），不让旧倒计时挡住新邮箱重发。
+    private var sentCodeEmail: String?
     /// 审计登录杂项：发码 / 验码各走自己的任务，互不覆盖，关闭时各自取消。
     private var sendCodeTask: URLSessionDataTask?
     private var verifyTask: URLSessionDataTask?
@@ -787,6 +790,14 @@ final class BearyLoginViewController: UIViewController {
     /// 不传 = 不标字段（网络/服务端/通用失败），只留行内红字。
     private enum LoginErrorField { case email, code, invite }
 
+    /// 第六轮 07：脱敏邮箱，只露首字符与域名，如 teddy@example.com → t***@example.com，
+    /// 让用户一眼看出验证码发去了哪只邮箱。
+    private func maskedEmail(_ email: String) -> String {
+        let parts = email.split(separator: "@", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2, let first = parts[0].first else { return email }
+        return "\(first)***@\(parts[1])"
+    }
+
     private func showMessage(_ text: String, ok: Bool = false, errorField: LoginErrorField? = nil) {
         messageLabel.text = text
         messageLabel.isHidden = text.isEmpty
@@ -857,9 +868,12 @@ final class BearyLoginViewController: UIViewController {
         }
     }
 
-    private func startCountdown() {
+    /// 第六轮 07：倒计时绑在发码那只邮箱上（sentCodeEmail），不记邮箱的旧倒计时
+    /// 会挡住新邮箱重发。
+    private func startCountdown(for email: String) {
         // 审计登录杂项：墙钟口径——记死截止点，每次按墙钟重算剩余秒（切后台
         // 回来不再沿用切后台前的值）；计时器加 .common mode，手指拖动滚动容器时不暂停。
+        sentCodeEmail = email
         countdownDeadline = Date().addingTimeInterval(30)
         countdownRemaining = 30
         updateButtonStates()
@@ -873,6 +887,7 @@ final class BearyLoginViewController: UIViewController {
             if remaining <= 0 {
                 strongSelf.countdownRemaining = nil
                 strongSelf.countdownDeadline = nil
+                strongSelf.sentCodeEmail = nil
                 timer.invalidate()
                 strongSelf.countdownTimer = nil
             } else {
@@ -887,6 +902,19 @@ final class BearyLoginViewController: UIViewController {
     // MARK: - 动作
 
     @objc private func textChanged() {
+        // 第六轮 07：邮箱一旦改动，旧发送状态即作废——清掉旧倒计时，新邮箱可立即
+        // 重发；旧成功提示是发给旧邮箱的，一并清掉，免得用户以为码发去了新邮箱。
+        // 码框/邀请码框的编辑不走这条（邮箱没变）。
+        if let sent = sentCodeEmail, normalizedEmail() != sent {
+            countdownTimer?.invalidate()
+            countdownTimer = nil
+            countdownDeadline = nil
+            countdownRemaining = nil
+            sentCodeEmail = nil
+            if messageLabel.text?.hasPrefix("验证码已发送至") == true {
+                showMessage("")
+            }
+        }
         updateButtonStates()
     }
 
@@ -894,6 +922,7 @@ final class BearyLoginViewController: UIViewController {
         countdownTimer?.invalidate()
         countdownTimer = nil
         countdownDeadline = nil
+        sentCodeEmail = nil
         sendCodeTask?.cancel()
         sendCodeTask = nil
         verifyTask?.cancel()
@@ -923,6 +952,7 @@ final class BearyLoginViewController: UIViewController {
         countdownTimer?.invalidate()
         countdownTimer = nil
         countdownDeadline = nil
+        sentCodeEmail = nil
         onGuestMode?()
     }
 
@@ -942,9 +972,14 @@ final class BearyLoginViewController: UIViewController {
                 strongSelf.isSendingCode = false
                 switch result {
                 case .success:
-                    strongSelf.showMessage("验证码已发送，请查收邮件", ok: true)
-                    strongSelf.startCountdown()
-                    strongSelf.codeField.becomeFirstResponder()
+                    // 第六轮 07：成功提示只对应发起时那只邮箱，带脱敏地址；请求在途
+                    // 用户已改邮箱时不启动倒计时、不抢码框焦点——倒计时只绑当前邮箱，
+                    // 新邮箱可立即重发。
+                    strongSelf.showMessage("验证码已发送至 \(strongSelf.maskedEmail(email))，请查收", ok: true)
+                    if strongSelf.normalizedEmail() == email {
+                        strongSelf.startCountdown(for: email)
+                        strongSelf.codeField.becomeFirstResponder()
+                    }
                 case .failure(.cancelled):
                     strongSelf.updateButtonStates()
                 case .failure(.server(let message, _)):
