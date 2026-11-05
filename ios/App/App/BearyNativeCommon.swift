@@ -208,8 +208,9 @@ enum BearyGlass {
 ///   宽 pill 的光晕只沿短轴量 12pt，长轴端不另伸光晕（垫片四角超出径向范围处自然透明）。
 /// 垫片永不拦截触摸（与 BearyGlass 同口径）；遮罩只用白／透明，不缓存主题色；
 /// 尺寸变化（转屏／大字号）时 layoutSubviews 重算遮罩，不依赖调用点手动刷新。
-/// 注意：UIVisualEffectView 的 layer.mask 裁的是最终合成的模糊结果，本地无 Xcode 无法编译验证，
-/// 真机须复核 11 处垫片均正常出模糊（见本支提交说明）。
+/// 124 实证（iOS 27 真机）：渐变遮罩绝不能直接挂毛玻璃自己身上——layer.mask 不裁
+/// UIVisualEffectView 的 backdrop 模糊，垫片整块硬边显示（顶栏条／底栏条／FAB 方块）；
+/// 本类改普通容器包毛玻璃、遮罩挂容器层上，容器遮罩裁的是合成后的整棵子树，渐变才生效。
 enum BearyProgressiveBlur {
     /// 渐变带：规范 8–20pt，统一取 12。
     static let band: CGFloat = 12
@@ -228,9 +229,12 @@ enum BearyProgressiveBlur {
     }
 }
 
-final class BearyProgressiveBlurView: UIVisualEffectView {
+/// 渐进模糊垫片：普通容器 UIView 包一层毛玻璃，渐变遮罩挂容器层上。
+/// 结构不可改回毛玻璃子类（见上方 124 实证：遮罩挂毛玻璃身上不生效）。
+final class BearyProgressiveBlurView: UIView {
     let fade: BearyProgressiveBlur.Fade
     private let maskLayer = CAGradientLayer()
+    private let effectView: UIVisualEffectView
 
     init(fade: BearyProgressiveBlur.Fade) {
         self.fade = fade
@@ -240,16 +244,35 @@ final class BearyProgressiveBlurView: UIVisualEffectView {
         } else {
             effect = UIBlurEffect(style: .systemUltraThinMaterial)
         }
-        super.init(effect: effect)
+        let effectView = UIVisualEffectView(effect: effect)
+        effectView.isUserInteractionEnabled = false
+        self.effectView = effectView
+        super.init(frame: .zero)
         isUserInteractionEnabled = false
+        pinEffectView()
         layer.mask = maskLayer
     }
 
     required init?(coder: NSCoder) {
         self.fade = .down
+        let effectView = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
+        effectView.isUserInteractionEnabled = false
+        self.effectView = effectView
         super.init(coder: coder)
         isUserInteractionEnabled = false
+        pinEffectView()
         layer.mask = maskLayer
+    }
+
+    private func pinEffectView() {
+        addSubview(effectView)
+        effectView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            effectView.topAnchor.constraint(equalTo: topAnchor),
+            effectView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            effectView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            effectView.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
     }
 
     override func layoutSubviews() {
