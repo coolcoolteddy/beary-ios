@@ -16,7 +16,7 @@ public final class ProfileCoverView: UIView {
 
     private static let artSize = CGSize(width: 1230, height: 385)
     private let art: [String: UIImage]
-    /// 底图：不再同步读 5120×969 原图，改后台下采样约 720 宽后回填；没到之前 draw() 走 poster 兜底。
+    /// 底图：后台全幅解码后回填主线程；没到之前 draw() 走 poster 兜底。
     private var backdrop: CGImage?
     private var backdropFrames: [Int: UIImage] = [:]
     private var egg: CGFloat = 0
@@ -365,7 +365,7 @@ public final class ProfileCoverView: UIView {
     }
     private func drawBackdrop(in destination: CGRect, depth: CGFloat) {
         guard let backdrop else { return }
-        // 底图已是约 720 宽的缩略图：按 5 列 × 3 行切帧，与原图 1024×323 的 13 帧一一对应。
+        // 底图为全幅图集：按 5 列 × 3 行切帧，每帧 1024×323。
         let tileWidth = CGFloat(backdrop.width) / 5
         let tileHeight = CGFloat(backdrop.height) / 3
         let position = (depth + 1) * 6
@@ -445,7 +445,7 @@ public final class ProfileCoverView: UIView {
     private func unit(_ x: CGFloat) -> CGFloat { min(1, max(0, x)) }
 }
 
-/// 封面底图缩略图缓存：读盘＋解码＋缩放只在后台串行队列做，主线程只贴图。
+/// 封面底图缓存：读盘＋解码只在后台串行队列做，主线程只贴图。
 private final class CoverBackdropCache {
     static let shared = CoverBackdropCache()
     private let queue = DispatchQueue(label: "com.beary.cover-backdrop", qos: .userInitiated)
@@ -467,7 +467,7 @@ private final class CoverBackdropCache {
             self.pending[key, default: []].append(completion)
             guard !self.loading.contains(key) else { return }
             self.loading.insert(key)
-            let image = Self.downsampled(theme: theme)
+            let image = Self.decoded(theme: theme)
             if let image { self.images[key] = image }
             self.loading.remove(key)
             let callbacks = self.pending.removeValue(forKey: key) ?? []
@@ -475,16 +475,14 @@ private final class CoverBackdropCache {
         }
     }
 
-    /// ImageIO 缩略图：解码＋缩放到约 720 宽一步完成，不经过 UIImage、不碰主线程。
-    private static func downsampled(theme: ProfileCoverTheme) -> CGImage? {
+    /// 全幅解码：底图是 5×3 帧条图集，ImageIO 缩略图的 maxPixelSize 按整图最长边
+    /// 封顶——#846 用 720 封顶整张 5120×969 图集，每帧只剩 144×45，行里放大 7 倍多
+    /// 才糊成这样（主体是单独贴的高清图，所以只有背景糊）。改回全幅解码，仍在
+    /// 后台队列做、不碰主线程；帧切分按底图实际尺寸动态算，不用改 drawBackdrop。
+    private static func decoded(theme: ProfileCoverTheme) -> CGImage? {
         guard let url = Bundle.main.url(forResource: theme.rawValue + "-depth", withExtension: "jpg"),
               let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: 720,
-        ]
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 }
 
