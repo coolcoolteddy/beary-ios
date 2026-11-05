@@ -1188,7 +1188,7 @@ final class BearyTimelineCell: UITableViewCell {
         cardStack.translatesAutoresizingMaskIntoConstraints = false
         cardStack.axis = .vertical
         cardStack.spacing = 0
-        cardStack.setCustomSpacing(6, after: metaStack)
+        cardStack.setCustomSpacing(12, after: metaStack)
         cardStack.setCustomSpacing(4, after: titleLabel)
         cardStack.setCustomSpacing(9, after: contentLabel)
         cardStack.setCustomSpacing(9, after: thumbsScrollView)
