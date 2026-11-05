@@ -558,6 +558,17 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 阴影须画出框外，masksToBounds 必须关；框内元素均有内边距，不会溢出圆角。
         searchBoxView.layer.masksToBounds = false
         view.addSubview(searchBoxView)
+        // 渐进模糊（规范 §6）：框下沿向内容方向渐弱的 12pt 毛玻璃带；框本身（实心 bg＋描边）不动。
+        // 垫片挂框内（框不裁剪），随框的 sticky transform 同移。
+        let boxFadePad = BearyProgressiveBlur.pad(fade: .down)
+        boxFadePad.translatesAutoresizingMaskIntoConstraints = false
+        searchBoxView.insertSubview(boxFadePad, at: 0)
+        NSLayoutConstraint.activate([
+            boxFadePad.topAnchor.constraint(equalTo: searchBoxView.bottomAnchor),
+            boxFadePad.leadingAnchor.constraint(equalTo: searchBoxView.leadingAnchor),
+            boxFadePad.trailingAnchor.constraint(equalTo: searchBoxView.trailingAnchor),
+            boxFadePad.heightAnchor.constraint(equalToConstant: BearyProgressiveBlur.band),
+        ])
 
         searchIconView.translatesAutoresizingMaskIntoConstraints = false
         searchIconView.image = BearyIconImages.image(named: "icon_search", pointSize: 21)
