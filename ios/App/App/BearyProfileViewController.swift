@@ -346,6 +346,10 @@ class BearyProfileViewController: UIViewController {
     /// 不在用户眼皮底下换卡；单篇池换不出新篇时换篇按钮只提示、不跳空卡）。
     private var currentWalkEntry: Entry?
     private var lastWalkId: String?
+    /// 随机漫步换篇过渡令牌：正在淡变的目标篇 id。连续点按时新点按改写
+    /// 该令牌，旧过渡完成回调凭此丢弃，绝不把旧篇内容写进新卡；
+    /// beginFromCurrentState 使新过渡从当前呈现态接手，可随时打断。
+    private var randomWalkSwapEntryId: String?
     /// 那年今日同年多篇展开态（默认收起）。
     private var thisDayExpanded = false
     private var tabBackgroundTab: ProfileTab?
@@ -5382,17 +5386,74 @@ class BearyProfileViewController: UIViewController {
 
     @objc private func randomShuffleTapped() {
         let pool = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
-        guard !pool.isEmpty else { return }
+        guard !pool.isEmpty else {
+            // 池空：旧代码静默返回、无任何提示；明示并藏卡，不留旧篇空壳。
+            BearyToast.show(in: view, message: "这里还没有日记")
+            renderRandom(visible: pool)
+            return
+        }
         if pool.count <= 1 {
             // 单篇池换不出新篇：保留当前卡、明示原因，不跳空卡、不假装换了一篇。
-            BearyToast.show(in: view, message: "只有一篇日记，换不了下一篇")
+            BearyToast.show(in: view, message: "这里只有一篇")
             return
         }
         guard let next = BearyProfilePersonalLogic.randomEntry(pool: pool, excludingId: currentWalkEntry?.id) else { return }
         currentWalkEntry = next
         lastWalkId = next.id
-        renderRandom(visible: pool)
+        animateRandomSwap(to: next)
         if headerWidthValue > 0 { layoutHeaderForced(widthValue: headerWidthValue) }
+    }
+
+    /// 换篇内容过渡：新篇在原卡内 0.18 秒淡变（0.09 淡出换文 + 0.09 淡入），
+    /// 按钮本身的按压反馈不动（bearyAddPressFeedback 已接在按钮上）。
+    /// 以目标篇 id 为令牌：连续点按改写令牌，旧过渡完成时凭令牌丢弃，
+    /// beginFromCurrentState 让新过渡从当前呈现态接手，随时可打断、不串内容。
+    private func animateRandomSwap(to entry: Entry) {
+        guard let entryId = entry.id, !entryId.isEmpty else {
+            renderRandom(visible: BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend))
+            return
+        }
+        randomWalkSwapEntryId = entryId
+        guard !UIAccessibility.isReduceMotionEnabled, randomContentStack.window != nil else {
+            applyRandomEntryContent(entry)
+            randomContentStack.alpha = 1
+            randomWalkSwapEntryId = nil
+            return
+        }
+        UIView.animate(withDuration: 0.09, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.randomContentStack.alpha = 0
+        }, completion: { [weak self] _ in
+            guard let self = self, self.randomWalkSwapEntryId == entryId else { return }
+            self.applyRandomEntryContent(entry)
+            UIView.animate(withDuration: 0.09, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+                self.randomContentStack.alpha = 1
+            }, completion: { [weak self] _ in
+                guard let self = self, self.randomWalkSwapEntryId == entryId else { return }
+                self.randomWalkSwapEntryId = nil
+            })
+        })
+    }
+
+    /// 随机卡内容赋值（日期 / 标题 / 正文三行）：换篇过渡与直接渲染共用，
+    /// 直接渲染（语料刷新、切号复位等）不走淡变，见 renderRandom。
+    private func applyRandomEntryContent(_ entry: Entry) {
+        var meta = personalDateString(timestampMs: entry.createdAt)
+        if isOwnProfile {
+            // 可见性三档实标（与那年今日主卡、星图底卡同口径，不再用公开／私密二值）；
+            // 存活限时篇追加倒计时（与 #696 第 2 项同款）。
+            meta += " · " + BearyVisibility.title(for: BearyVisibility.current(for: entry))
+            if BearyEphemeral.isLive(entry), let until = entry.ephemeralUntil {
+                meta += " · " + BearyEphemeral.remainingText(until: until)
+            }
+        }
+        randomMetaLabel.text = meta
+        // 空标题时整行标题不渲染（同那年今日主卡；不再用摘要回退充当标题）。
+        let randomTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        randomTitleLabel.text = randomTitle.isEmpty ? nil : randomTitle
+        randomTitleLabel.isHidden = randomTitle.isEmpty
+        let body = personalExcerpt(entry: entry, limit: 120)
+        randomBodyLabel.text = body
+        randomBodyLabel.isHidden = body.isEmpty
     }
 
     private func renderRandom(visible: [Entry]) {
@@ -5419,23 +5480,12 @@ class BearyProfileViewController: UIViewController {
             randomCard.isHidden = true
             return
         }
-        var meta = personalDateString(timestampMs: entry.createdAt)
-        if isOwnProfile {
-            // 可见性三档实标（与那年今日主卡、星图底卡同口径，不再用公开／私密二值）；
-            // 存活限时篇追加倒计时（与 #696 第 2 项同款）。
-            meta += " · " + BearyVisibility.title(for: BearyVisibility.current(for: entry))
-            if BearyEphemeral.isLive(entry), let until = entry.ephemeralUntil {
-                meta += " · " + BearyEphemeral.remainingText(until: until)
-            }
-        }
-        randomMetaLabel.text = meta
-        // 空标题时整行标题不渲染（同那年今日主卡；不再用摘要回退充当标题）。
-        let randomTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        randomTitleLabel.text = randomTitle.isEmpty ? nil : randomTitle
-        randomTitleLabel.isHidden = randomTitle.isEmpty
-        let body = personalExcerpt(entry: entry, limit: 120)
-        randomBodyLabel.text = body
-        randomBodyLabel.isHidden = body.isEmpty
+        // 直接渲染路径（语料刷新、切号复位、卡片点按重抽）：立即赋值、不淡变；
+        // 若此前有换篇过渡在途，令牌清零使其完成回调丢弃、不再覆写此处内容，
+        // alpha 归 1 防止过渡半途的淡出态残留。
+        randomWalkSwapEntryId = nil
+        applyRandomEntryContent(entry)
+        randomContentStack.alpha = 1
     }
 
     // MARK: 批 D —— 年度回顾入口
