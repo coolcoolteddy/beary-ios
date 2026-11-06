@@ -97,6 +97,15 @@ struct NightPatrolFootprint: Decodable {
         return true
     }
 
+    /// 脚印身份（B7/M4 共用）：有日记以 entryId 为准；无日记之夜以脚印时间 +
+    /// 来源 + 文案区分——刷新 diff 与打开短评校验都按此键，不按行号。
+    var identityKey: String {
+        if let entryIdValue = entryId, !entryIdValue.isEmpty {
+            return "entry-\(entryIdValue)"
+        }
+        return "nodary-\(patrolledAt ?? 0)-\(source ?? "")-\(note ?? "")"
+    }
+
     enum CodingKeys: String, CodingKey {
         case entryId
         case source
