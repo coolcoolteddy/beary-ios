@@ -2234,6 +2234,7 @@ class BearyTimelineViewController: UIViewController {
     /// r17-C1：已尝试过落盘恢复的月份 key（无文件时不再重复读盘；
     /// 账号切换清掉；invalidateStatsLine 不清——删缓存后走网络重拉，
     /// 不得用旧落盘把刚失效的缓存顶回去）。
+    private var calendarSnapshotRestoreTried: Set<String> = []
     /// 64 包反馈修（第 3 项）+ 本批新规矩：统计行已渲染数值（streak|monthTotal，
     /// 失败/空态另计）。签名故意不含月份 key——切月时数值不变即一字不碰按钮，
     /// 旧签名含月份 key 是闪的根因（数值未变仍整行 setAttributedTitle 重建）。
