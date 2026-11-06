@@ -7469,6 +7469,28 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         return true
     }
 
+    /// R14 P2-13：边缘返回的保存等待反馈入口（SceneDelegate 的
+    /// onEdgeSwipeCompleted 改走这里，不再直调 didTapCancel）。
+    /// 松手过阈值后编辑器维持偏移等写盘回包，旧流程等待期无任何可读反馈；
+    /// 此处先立退出保存态（setDraftExitSaving，P1-6 的冻结＋状态一体：
+    /// 边缘等待期间同样锁住输入，状态行“保存中…”＋转圈），成功时随关页
+    /// 消失，失败时由 saveDraftForCancelAndClose 的终态分支清态、按保存
+    /// 级别刷新状态行（停转、红字“草稿保存失败”）；多轮重存（#1002 式
+    /// 版本复核）的等待同样覆盖，因为状态只在最终回包时才被刷新。
+    /// 编辑态取消是同步的（清临时文件后立即 onCancelled），无等待、不立反馈。
+    /// 被拒（发布在途／面板开着／已有弹层）时没进保存流程，清态、不留反馈。
+    @objc func didTapCancelFromEdgeSwipe() -> Bool {
+        if !isEditMode {
+            setDraftExitSaving(true)
+        }
+        let proceeding = didTapCancel()
+        if !proceeding && isDraftExitSaving {
+            // 被拒（发布在途／面板开着／已有弹层）：没进保存流程，不留反馈。
+            setDraftExitSaving(false)
+        }
+        return proceeding
+    }
+
     /// 供容器边缘手势调用：与取消钮同一流程（发布在途只 toast、引用面板
     /// 开着只退面板、其余存草稿/清临时文件后经 onCancelled 关页），不得另起
     /// 一条直接 dismiss 的关闭路径。
