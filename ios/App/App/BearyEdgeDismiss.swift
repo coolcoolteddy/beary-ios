@@ -104,8 +104,11 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
         case .changed:
             guard !gestureRejected else { return }
             if completionMode {
-                // 完成模式 1:1 跟手：视图随手指右移（只向右，不向左出屏）。
-                view.transform = CGAffineTransform(translationX: max(pan.translation(in: view).x, 0), y: 0)
+                // 大幅位移在减动效下禁用；手势仍保留关闭能力。
+                if !UIAccessibility.isReduceMotionEnabled {
+                    // 完成模式 1:1 跟手：视图随手指右移（只向右，不向左出屏）。
+                    view.transform = CGAffineTransform(translationX: max(pan.translation(in: view).x, 0), y: 0)
+                }
             } else {
                 interaction?.update(progress)
             }
