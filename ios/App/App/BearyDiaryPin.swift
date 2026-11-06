@@ -49,7 +49,7 @@ enum BearyDiaryPin {
     }
 
     /// 替换旧置顶篇的确认：系统 UIAlertController .alert（取关确认
-    /// BearyFriends.confirmUnfollow 同款式，不自造新弹窗样式；动效走 BearyMotion）。
+    /// BearyFriends.confirmUnfollowAlert 同款式，不自造新弹窗样式；动效走 BearyMotion）。
     /// 取消只调 completion(false)，调用方此时绝不发请求、不改本地态。
     static func confirmReplacement(from vc: UIViewController, completion: @escaping (Bool) -> Void) {
         let alert = UIAlertController(title: "置顶这篇日记？", message: "已有置顶日记，置顶这篇会取消上一篇的置顶。", preferredStyle: .alert)
