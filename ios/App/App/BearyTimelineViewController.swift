@@ -2017,7 +2017,16 @@ class BearyTimelineViewController: UIViewController {
     /// 12 条已覆盖当日 10 篇/天上限 + 翻页余量）；后续分页仍用 pageLimit=20，不多发请求。
     private let firstPageLimit = 12
 
-    private var timelineEntries: [Entry] = []
+    /// R15 P2-8：分区快照——currentSections() 的构建结果缓存。
+    /// 表格数据源（numberOfSections/rows/cellForRow、组头/高度/滑动操作/
+    /// willDisplay 等约 20 处调用点）在一次数据不变的窗口内读同一份快照，
+    /// 不再每次全量遍历 timelineEntries 按日分组重建；输入
+    /// （dayEntries/timelineEntries/selectedDayKey）任一变化都经 didSet
+    /// 同步清掉快照，下一次读取时重建一次——失效与改写同一步完成，
+    /// 故任何一次读取都不可能读到过期快照。
+    private var cachedSections: [DaySection]?
+
+    private var timelineEntries: [Entry] = [] { didSet { cachedSections = nil } }
     private var timelineHasMore = false
     private var timelineState = LoadState.idle
     /// 80 包 B2：viewDidLoad 首拉已发起的标记（引导预加载步骤据此去重，不复发第二拉）。
@@ -2176,7 +2185,7 @@ class BearyTimelineViewController: UIViewController {
     private var calendarMode: BearyCalendarCardView.ViewMode = .week
     private var calendarAnchor: (year: Int, month: Int, day: Int)?
     private var calendarDisplayedMonth: (year: Int, month: Int)?
-    private var selectedDayKey: String?
+    private var selectedDayKey: String? { didSet { cachedSections = nil } }
     /// 第 3 项翻周/翻月选区跟随：新视图月份缓存未到齐时挂起，到达后在
     /// fetchCalendarMonth 回包里重试（tryStepFollowSelection）。
     private var pendingStepFollow = false
@@ -2199,7 +2208,7 @@ class BearyTimelineViewController: UIViewController {
     /// 第 5 项公开/取消在途去重（同篇重复点按只发一次请求）。
     private var publishBusyIds: Set<String> = []
 
-    private var dayEntries: [Entry] = []
+    private var dayEntries: [Entry] = [] { didSet { cachedSections = nil } }
     private var dayState = LoadState.idle
     private var dayKeyForLoad: String?
     /// 按日请求递增序号：快速切日 A→B→A 时，切回 A 的新请求会把 dayKeyForLoad
@@ -5780,7 +5789,19 @@ class BearyTimelineViewController: UIViewController {
 
     // MARK: - 列表分区与空态/脚部
 
+    /// R15 P2-8：分区快照读取点——有缓存直接返回同一份 [DaySection]，
+    /// 无缓存（输入刚变、快照已被 didSet 清掉）时重建一次并缓存。
+    /// 数据、选中日期或当日状态改变时快照即失效，下一次读取即新快照；
+    /// 同一窗口内的所有读取点（数据源、组头、高度、滑动操作、willDisplay、
+    /// diff 新旧快照等）读的是同一份结果。
     private func currentSections() -> [DaySection] {
+        if let cached = cachedSections { return cached }
+        let built = buildSections()
+        cachedSections = built
+        return built
+    }
+
+    private func buildSections() -> [DaySection] {
         var sections: [DaySection] = []
         // TL-7：当日面板是第一个分区，时间线分区紧随其后，不替换时间线。
         if let key = selectedDayKey {
