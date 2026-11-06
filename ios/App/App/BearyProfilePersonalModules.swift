@@ -1133,7 +1133,9 @@ final class BearyProfilePersonalModulesCard: UIView {
     static func statValueLabel() -> UILabel {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .bold))
+        label.adjustsFontForContentSizeCategory = true
+        label.numberOfLines = 0
         label.textColor = BearyColors.ink
         return label
     }
@@ -1141,7 +1143,9 @@ final class BearyProfilePersonalModulesCard: UIView {
     static func statKeyLabel(text: String) -> UILabel {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 12)
+        label.font = BearyDynamicType.captionFont()
+        label.adjustsFontForContentSizeCategory = true
+        label.numberOfLines = 0
         label.textColor = BearyColors.gray
         label.text = text
         return label
@@ -1150,7 +1154,9 @@ final class BearyProfilePersonalModulesCard: UIView {
     static func metaLabel() -> UILabel {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 12)
+        label.font = BearyDynamicType.captionFont()
+        label.adjustsFontForContentSizeCategory = true
+        label.numberOfLines = 0
         label.textColor = BearyColors.gray
         return label
     }
@@ -1158,7 +1164,8 @@ final class BearyProfilePersonalModulesCard: UIView {
     static func entryTitleLabel() -> UILabel {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .bold))
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         label.numberOfLines = 0
         return label
@@ -1167,7 +1174,8 @@ final class BearyProfilePersonalModulesCard: UIView {
     static func bodyLabel() -> UILabel {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 15)
+        label.font = BearyDynamicType.smallBodyFont()
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         label.numberOfLines = 0
         return label
