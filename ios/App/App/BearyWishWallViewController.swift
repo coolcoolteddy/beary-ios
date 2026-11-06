@@ -21,6 +21,12 @@ private final class WishRowView: UIView {
     private let detailLabel = UILabel()
     private let metaLabel = UILabel()
     private let netLabel = UILabel()
+    // 08：投票区换行——voteRow 提为属性，另备一行 voteRowWrapped（仅换行态显形，内为弹性
+    // spacer + netLabel，净数贴右缘）；换行态由 layoutSubviews 的 updateVoteWrap 判定。
+    private var voteRow: UIStackView!
+    private let voteRowWrapped = UIStackView()
+    private let voteWrapSpacer = UIView()
+    private var isVoteWrapped = false
     private let donePill = UILabel()
     // 展开/收起钮：视觉仍为 13pt 文字固有高，热区由 BearyHit44Button 的 point(inside:) 向外扩到 44pt（不改约束、不改文案）。
     private let expandButton = BearyHit44Button(type: .system)
@@ -95,10 +101,18 @@ private final class WishRowView: UIView {
         let voteSpacer = UIView()
         voteSpacer.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
         voteSpacer.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
-        let voteRow = UIStackView(arrangedSubviews: [upButton, downButton, voteSpacer, netLabel])
+        voteRow = UIStackView(arrangedSubviews: [upButton, downButton, voteSpacer, netLabel])
         voteRow.axis = .horizontal
         voteRow.spacing = 8
         voteRow.alignment = .center
+        // 08：换行行的第二行——弹性 spacer 把净数顶到右缘；默认隐藏，UIStackView 不为隐藏行占位。
+        voteWrapSpacer.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
+        voteWrapSpacer.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
+        voteRowWrapped.addArrangedSubview(voteWrapSpacer)
+        voteRowWrapped.axis = .horizontal
+        voteRowWrapped.spacing = 8
+        voteRowWrapped.alignment = .center
+        voteRowWrapped.isHidden = true
         // 15：标题与 donePill 放同一横向容器——pill 占 56 宽时标题只剩剩余宽换行，
         // 首行不再被右上角悬浮 pill 盖住；未完成时 pill 隐藏，stack 自动不占位，标题回满宽。
         titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -110,7 +124,7 @@ private final class WishRowView: UIView {
         titleRow.alignment = .top
         // 15：竖向栈减一层——netLabel 已随 voteRow 进操作行，不再单列；作者时间
         // metaLabel 仍为单独弱信息行，标题与 donePill 的同容器（titleRow）原样不动。
-        let stack = UIStackView(arrangedSubviews: [titleRow, detailLabel, expandButton, metaLabel, voteRow, doneButton])
+        let stack = UIStackView(arrangedSubviews: [titleRow, detailLabel, expandButton, metaLabel, voteRow, voteRowWrapped, doneButton])
         stack.axis = .vertical
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -181,6 +195,33 @@ private final class WishRowView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         updateExpandVisibility()
+        updateVoteWrap()
+    }
+
+    /// 08：投票区宽度不足时净赞成自动换行——单行最少需要两票钮 + 净数 + 三处 8 间距
+    /// （spacer 可压到 0）；超宽才换行，正常字号横向布局一字不动。两票钮始终同行相邻，
+    /// 只挪净数；仅在换行态变化时才在两行之间搬 label，避免 layoutSubviews 内改布局引发循环。
+    private func updateVoteWrap() {
+        let availWidth = bounds.width - 32
+        guard availWidth > 0 else { return }
+        let needed = upButton.intrinsicContentSize.width
+            + downButton.intrinsicContentSize.width
+            + netLabel.intrinsicContentSize.width
+            + 8 * 3
+        let shouldWrap = needed > availWidth
+        guard shouldWrap != isVoteWrapped else { return }
+        isVoteWrapped = shouldWrap
+        if shouldWrap {
+            voteRow.removeArrangedSubview(netLabel)
+            netLabel.removeFromSuperview()
+            voteRowWrapped.addArrangedSubview(netLabel)
+            voteRowWrapped.isHidden = false
+        } else {
+            voteRowWrapped.removeArrangedSubview(netLabel)
+            netLabel.removeFromSuperview()
+            voteRow.addArrangedSubview(netLabel)
+            voteRowWrapped.isHidden = true
+        }
     }
 
     private func updateExpandVisibility() {
