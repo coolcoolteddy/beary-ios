@@ -10,7 +10,7 @@ import MapKit
 // ✅ 在自动定位态确认已定位地点，在自己输入态确认手动输入的地名（同一钮，不另起确认钮）；
 // 长地名不得挤压右边两钮：状态文案横向抗压最低、两钮抗压/抱紧均为 required，✅ 固定 32×32。
 // 自己输入边输边出 MapKit 搜索建议（MKLocalSearchCompleter），点建议直接定位；
-// 权限被拒/定位失败不留空地点，走 delegate 失败口径（调用方 toast 后回未定位态）。
+// 权限被拒/定位失败不留空地点：原地转手动输入，气泡不关（调用方只 toast，不关气泡）。
 // 隐私：坐标只在内存里走一次逆地理编码取地名，用完即弃；本视图不写盘、不缓存坐标，
 // 也不把坐标传给调用方——调用方只拿到 DiaryLocation（两段文本）。
 
@@ -295,9 +295,13 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             locating = true
             locationManager.requestLocation()
         case .denied, .restricted:
-            delegate?.locationPopoverDidFail(self, message: "定位权限未开启，请在“设置 → beary → 位置”中开启后重试")
+            // 权限被拒：原地转手动输入，气泡不关——用户当场就能自己输；
+            // delegate 回调只 toast，不关气泡（见 Composer locationPopoverDidFail）。
+            setManualMode(message: "位置权限没开，可以自己输")
+            delegate?.locationPopoverDidFail(self, message: "位置权限没开，可以自己输")
         @unknown default:
-            delegate?.locationPopoverDidFail(self, message: "定位失败，请重试或自己输入")
+            setManualMode(message: "取不到当前位置，可以自己输")
+            delegate?.locationPopoverDidFail(self, message: "取不到当前位置，可以自己输")
         }
     }
 
@@ -532,8 +536,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             // 气泡，气泡会一直转圈且确认钮永久禁用）；delegate 回调照常发。
             spinner.stopSpinning()
             spinner.isHidden = true
-            setManualMode(message: "定位权限未开启，请在“设置 → beary → 位置”中开启后重试，或自己输入")
-            delegate?.locationPopoverDidFail(self, message: "定位权限未开启，请在“设置 → beary → 位置”中开启后重试")
+            setManualMode(message: "位置权限没开，可以自己输")
+            delegate?.locationPopoverDidFail(self, message: "位置权限没开，可以自己输")
         default:
             break
         }
@@ -568,8 +572,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         // 审计登录杂项：同 denied 分支——先停转圈并隐藏，再转手动模式；delegate 回调照常发。
         spinner.stopSpinning()
         spinner.isHidden = true
-        setManualMode(message: "定位失败，请重试或自己输入")
-        delegate?.locationPopoverDidFail(self, message: "定位失败，请重试或自己输入")
+        setManualMode(message: "取不到当前位置，可以自己输")
+        delegate?.locationPopoverDidFail(self, message: "取不到当前位置，可以自己输")
     }
 
     // MARK: - MKLocalSearchCompleterDelegate
