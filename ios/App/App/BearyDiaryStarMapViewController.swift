@@ -76,6 +76,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private let monthStack = UIStackView()
     private let filterScrollView = UIScrollView()
     private let filterStack = UIStackView()
+    /// P2-11：筛选行旁的「查看连线」入口——连线原因的列表入口，VoiceOver
+    /// 用户与列表操作不用在画布上找细线（见 showEdgeListSheet）。
+    private var edgeListButton: UIButton!
     private let skyView = StarMapSkyView()
     private let statusLabel = UILabel()
     private let sheetCard = UIView()
@@ -356,6 +359,11 @@ final class BearyDiaryStarMapViewController: UIViewController {
             ])
         }
 
+        // P2-11：筛选行旁的「查看连线」入口（药丸样式，见 pillButton）。
+        edgeListButton = pillButton(title: "查看连线", selected: false, action: #selector(didTapEdgeList))
+        edgeListButton.accessibilityHint = "按条读出连线原因和两篇日记"
+        contentView.addSubview(edgeListButton)
+
         skyView.translatesAutoresizingMaskIntoConstraints = false
         skyView.layer.cornerRadius = BearyCorners.single
         skyView.clipsToBounds = true
@@ -478,8 +486,12 @@ final class BearyDiaryStarMapViewController: UIViewController {
             monthScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
             filterScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            filterScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            filterScrollView.trailingAnchor.constraint(equalTo: edgeListButton.leadingAnchor, constant: -8),
             filterScrollView.heightAnchor.constraint(equalToConstant: 44),
+
+            // P2-11：「查看连线」入口贴在筛选行右侧，与筛选行同高居中。
+            edgeListButton.centerYAnchor.constraint(equalTo: filterScrollView.centerYAnchor),
+            edgeListButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
             skyView.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 12),
             skyView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
@@ -1026,6 +1038,80 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let rows = [first, second].compactMap { $0 }
         rebuildSheet(title: "连线 · \(reasons)", rows: rows)
         sheetStack.addArrangedSubview(sheetBodyLabel("点篇名进详情；连线只表示关系，不改原文。"))
+    }
+
+    /// P2-11：连线列表——沿用当前连线筛选，按条读出连线原因和两篇日记。
+    /// 现行连线原因唯一入口是手势点中画布线段 16pt 内（基线 didTap :1239 起），
+    /// 画布本身 isAccessibilityElement = false、无障碍元素只含星（基线 :1151–1178），
+    /// VoiceOver 用户够不到连线；此列表让关系可读、可点。
+    @objc private func didTapEdgeList() {
+        showEdgeListSheet()
+    }
+
+    /// 当前筛选下的连线（与 applyModelToSky 的可见边同口径：只滤线，不滤星；
+    /// 两端篇都须在模型里，否则行无名可读）。
+    private func listedEdges() -> [StarMapEdge] {
+        model.edges.filter { edge in
+            if let filter = edgeFilter, !edge.reasons.contains(where: { $0.kind == filter }) { return false }
+            return model.entryById[edge.firstId] != nil && model.entryById[edge.secondId] != nil
+        }
+    }
+
+    private func showEdgeListSheet() {
+        let edges = listedEdges()
+        sheetStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        if edges.isEmpty {
+            sheetStack.addArrangedSubview(sheetTitleLabel("暂无连线"))
+            sheetStack.addArrangedSubview(sheetBodyLabel("当前筛选下没有连线。"))
+            return
+        }
+        sheetStack.addArrangedSubview(sheetTitleLabel("连线 · \(edges.count) 条"))
+        for edge in edges {
+            let row = UIStackView()
+            row.axis = .horizontal
+            row.spacing = 8
+            row.addArrangedSubview(edgeListRowButton(edge))
+            let chevron = UIImageView()
+            chevron.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 16)
+            chevron.tintColor = BearyStarMapNight.secondaryText
+            chevron.contentMode = .scaleAspectFit
+            chevron.setContentHuggingPriority(.required, for: .horizontal)
+            row.addArrangedSubview(chevron)
+            sheetStack.addArrangedSubview(row)
+        }
+    }
+
+    /// 连线列表的一行：标题与读屏文案都一次读出原因和两篇日记；点按进
+    /// 该条连线的底卡（showEdgeSheet）。
+    private func edgeListRowButton(_ edge: StarMapEdge) -> UIButton {
+        let button = UIButton(type: .custom)
+        button.contentHorizontalAlignment = .left
+        button.titleLabel?.numberOfLines = 2
+        button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        button.titleLabel?.adjustsFontForContentSizeCategory = true
+        button.setTitleColor(BearyStarMapNight.primaryText, for: .normal)
+        let reasons = edge.reasons.map { reasonText($0) }.joined(separator: "；")
+        let firstName = edgeEntryName(model.entryById[edge.firstId])
+        let secondName = edgeEntryName(model.entryById[edge.secondId])
+        button.setTitle("\(reasons)：\(firstName) 与 \(secondName)", for: .normal)
+        button.accessibilityLabel = "连线：\(reasons)，连接 \(firstName) 与 \(secondName)"
+        button.accessibilityIdentifier = edge.id
+        button.addTarget(self, action: #selector(didTapEdgeListRow(_:)), for: .touchUpInside)
+        return button
+    }
+
+    private func edgeEntryName(_ entry: Entry?) -> String {
+        guard let entry = entry else { return "日记" }
+        let title = sheetEntryTitle(entry)
+        if !title.isEmpty { return title }
+        let date = sheetDateString(entry)
+        return date.isEmpty ? "日记" : date
+    }
+
+    @objc private func didTapEdgeListRow(_ sender: UIButton) {
+        guard let id = sender.accessibilityIdentifier,
+              let edge = model.edges.first(where: { $0.id == id }) else { return }
+        didTapEdge(edge)
     }
 
     private func reasonText(_ reason: StarMapEdgeReason) -> String {
