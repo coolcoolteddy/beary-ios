@@ -1243,6 +1243,11 @@ class BearyProfileViewController: UIViewController {
     private var nightDateText: String?
     private var nightIsPaused = false
     private var nightHasAnimated = false
+    /// M4：已渲染脚印的身份键（与 nightTrailWrappers 一一对应）与所属夜巡日期——
+    /// 刷新时按夜巡日期 + 脚印身份 diff，只让新增脚印播入场，已有脚印复用原位。
+    private var nightTrailKeys: [String] = []
+    private var nightTrailWrappers: [UIView] = []
+    private var nightPatrolRenderedNightDate: String?
 
     // MARK: - 批 D：个人签名（名字下方一句话）与个性化模块容器
     //
@@ -4023,6 +4028,10 @@ class BearyProfileViewController: UIViewController {
         nightFootprints = []
         nightDateText = nil
         nightIsPaused = false
+        // M4：入口藏起时 diff 基线一并清掉——下次渲染全按新脚印处理，不复用已撤的 view。
+        nightTrailKeys = []
+        nightTrailWrappers = []
+        nightPatrolRenderedNightDate = nil
         for arrangedView in nightTrailStack.arrangedSubviews {
             nightTrailStack.removeArrangedSubview(arrangedView)
             arrangedView.removeFromSuperview()
@@ -4104,10 +4113,9 @@ class BearyProfileViewController: UIViewController {
         nightFootprints = footprints
         nightDateText = BearyNightPatrolTemplate.nightLabel(for: night.nightDate)
         nightIsPaused = paused
-        for arrangedView in nightTrailStack.arrangedSubviews {
-            nightTrailStack.removeArrangedSubview(arrangedView)
-            arrangedView.removeFromSuperview()
-        }
+        // M4：容器首现与否先定——首现时整块播入场，不再逐枚播脚印。
+        let wasHidden = nightContainer.isHidden
+        let playContainerEntrance = wasHidden && !nightHasAnimated
         let count = footprints.count
         if paused {
             nightTitleLabel.text = "小熊夜巡已停跑"
@@ -4124,71 +4132,70 @@ class BearyProfileViewController: UIViewController {
                 ?? BearyIconImages.image(named: "icon_paw", pointSize: 22)
             nightEntryButton.accessibilityLabel = "昨夜小熊来过，\(count) 枚脚印，点按查看脚印短评"
         }
-        for (index, footprint) in footprints.enumerated() {
-            let wrapper = UIView()
-            wrapper.translatesAutoresizingMaskIntoConstraints = false
-            let buttonValue = UIButton(type: .custom)
-            buttonValue.translatesAutoresizingMaskIntoConstraints = false
-            buttonValue.backgroundColor = BearyColors.hov
-            buttonValue.layer.cornerRadius = BearyCorners.single
-            buttonValue.clipsToBounds = true
-            buttonValue.tag = index
-            buttonValue.setImage(BearyIconImages.image(named: "icon_paw", pointSize: 24), for: .normal)
-            buttonValue.tintColor = BearyColors.ink
-            buttonValue.addTarget(self, action: #selector(nightFootprintTapped(_:)), for: .touchUpInside)
-            buttonValue.bearyAddPressFeedback()
-            var accessText = "第 \(index + 1) 枚脚印"
-            if footprint.isAI { accessText += "，AI 短评" }
-            if footprint.isPrivate == true { accessText += "，仅你可见" }
-            buttonValue.accessibilityLabel = accessText + "，点按查看短评"
-            wrapper.addSubview(buttonValue)
-            if footprint.isAI {
-                // AI 角标套在脚印右上角：新图标 icon_ai_paw 未到货时回退
-                // 9pt 橙色“AI”文字角标（文字不是图标，不冒充官方资产）。
-                if let aiImage = NightPatrolIcons.image(named: NightPatrolIcons.aiPaw, pointSize: 16) {
-                    let badgeView = UIImageView(image: aiImage)
-                    badgeView.translatesAutoresizingMaskIntoConstraints = false
-                    badgeView.tintColor = BearyColors.ink
-                    badgeView.contentMode = .scaleAspectFit
-                    wrapper.addSubview(badgeView)
-                    NSLayoutConstraint.activate([
-                        badgeView.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-                        badgeView.topAnchor.constraint(equalTo: wrapper.topAnchor),
-                        badgeView.widthAnchor.constraint(equalToConstant: 16),
-                        badgeView.heightAnchor.constraint(equalToConstant: 16),
-                    ])
-                } else {
-                    let badgeLabel = UILabel()
-                    badgeLabel.translatesAutoresizingMaskIntoConstraints = false
-                    badgeLabel.text = "AI"
-                    badgeLabel.font = UIFont.systemFont(ofSize: 10, weight: .bold)
-                    badgeLabel.textColor = BearyColors.ink
-                    badgeLabel.backgroundColor = BearyColors.bg
-                    badgeLabel.layer.cornerRadius = 4
-                    badgeLabel.clipsToBounds = true
-                    wrapper.addSubview(badgeLabel)
-                    NSLayoutConstraint.activate([
-                        badgeLabel.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-                        badgeLabel.topAnchor.constraint(equalTo: wrapper.topAnchor),
-                    ])
-                }
+        // M4：按夜巡日期 + 脚印身份 diff——夜变了整夜皆新，旧 wrapper 全撤；
+        // 同夜只增新键；已有脚印复用原 wrapper、原位不动（展开的短评不移位），
+        // 新脚印按现有排列顺序插入、短距滑入 + 淡入（通用 0.25s / 步进 0.03s /
+        // 封顶 0.24s，只动 transform 与 opacity；减动效直接落终态）。
+        let newKeys = footprints.map { $0.identityKey }
+        let nightChanged = night.nightDate != nightPatrolRenderedNightDate
+        var reusedViews: [String: UIView] = [:]
+        if nightChanged {
+            for arrangedView in nightTrailStack.arrangedSubviews {
+                nightTrailStack.removeArrangedSubview(arrangedView)
+                arrangedView.removeFromSuperview()
             }
-            NSLayoutConstraint.activate([
-                buttonValue.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
-                buttonValue.topAnchor.constraint(equalTo: wrapper.topAnchor),
-                buttonValue.widthAnchor.constraint(equalToConstant: 44),
-                buttonValue.heightAnchor.constraint(equalToConstant: 44),
-                wrapper.widthAnchor.constraint(equalToConstant: 44),
-                wrapper.heightAnchor.constraint(equalToConstant: 44),
-            ])
-            nightTrailStack.addArrangedSubview(wrapper)
+        } else {
+            for (key, wrapper) in zip(nightTrailKeys, nightTrailWrappers) {
+                reusedViews[key] = wrapper
+            }
+            let newKeySet = Set(newKeys)
+            for (key, wrapper) in zip(nightTrailKeys, nightTrailWrappers) where !newKeySet.contains(key) {
+                nightTrailStack.removeArrangedSubview(wrapper)
+                wrapper.removeFromSuperview()
+            }
+        }
+        var alignedWrappers: [UIView] = []
+        var newWrappers: [UIView] = []
+        for (index, footprint) in footprints.enumerated() {
+            let key = newKeys[index]
+            // 同键只复用一次——服务端万一发来两枚同身份脚印，第二枚新建，不共用一个 view。
+            if let existing = reusedViews.removeValue(forKey: key) {
+                if index >= nightTrailStack.arrangedSubviews.count
+                    || nightTrailStack.arrangedSubviews[index] !== existing {
+                    // 位置已对上就不动（展开的短评维持原位）；顺序真变时才换位。
+                    nightTrailStack.removeArrangedSubview(existing)
+                    nightTrailStack.insertArrangedSubview(existing, at: index)
+                }
+                configureNightFootprintButton(in: existing, footprint: footprint, index: index)
+                alignedWrappers.append(existing)
+            } else {
+                let wrapper = makeNightFootprintWrapper(footprint: footprint, index: index)
+                nightTrailStack.insertArrangedSubview(wrapper, at: index)
+                alignedWrappers.append(wrapper)
+                newWrappers.append(wrapper)
+            }
+        }
+        nightTrailKeys = newKeys
+        nightTrailWrappers = alignedWrappers
+        nightPatrolRenderedNightDate = night.nightDate
+        // 只播新增脚印——容器首现时整块已播入场，不再逐枚播；减动效直接落终态。
+        if !newWrappers.isEmpty, !playContainerEntrance, !UIAccessibility.isReduceMotionEnabled {
+            var animIndex = 0
+            for wrapper in newWrappers {
+                wrapper.alpha = 0
+                wrapper.transform = CGAffineTransform(translationX: 0, y: 8)
+                UIView.animate(withDuration: 0.25, delay: min(Double(animIndex) * 0.03, 0.24), options: [.curveEaseOut], animations: {
+                    wrapper.alpha = 1
+                    wrapper.transform = .identity
+                }, completion: nil)
+                animIndex += 1
+            }
         }
         // 脚印数与回应墙总数严格分开：这里只改夜巡标题，不碰 wallTotalLabel。
-        let wasHidden = nightContainer.isHidden
         nightContainer.isHidden = false
         nightHeightConstraint.isActive = false
         layoutHeaderForced(widthValue: headerWidthValue)
-        if wasHidden && !nightHasAnimated {
+        if playContainerEntrance {
             nightHasAnimated = true
             // 与墙同款：入场收尾与滚动逻辑同口径，夜巡与统计／墙／标签／行
             // 一律拿同一个整段位移（applyProfileBelowShift 的 fullShift）；
@@ -4206,6 +4213,74 @@ class BearyProfileViewController: UIViewController {
                 nightContainer.transform = CGAffineTransform(translationX: 0, y: endShift)
             }
         }
+    }
+
+    /// M4：新建一枚脚印的 wrapper（44pt 脚印钮 + AI 角标）；复用旧 wrapper 时不走这里。
+    private func makeNightFootprintWrapper(footprint: NightPatrolFootprint, index: Int) -> UIView {
+        let wrapper = UIView()
+        wrapper.translatesAutoresizingMaskIntoConstraints = false
+        let buttonValue = UIButton(type: .custom)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.backgroundColor = BearyColors.hov
+        buttonValue.layer.cornerRadius = BearyCorners.single
+        buttonValue.clipsToBounds = true
+        buttonValue.setImage(BearyIconImages.image(named: "icon_paw", pointSize: 24), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.addTarget(self, action: #selector(nightFootprintTapped(_:)), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        wrapper.addSubview(buttonValue)
+        configureNightFootprintButton(in: wrapper, footprint: footprint, index: index)
+        if footprint.isAI {
+            // AI 角标套在脚印右上角：新图标 icon_ai_paw 未到货时回退
+            // 9pt 橙色“AI”文字角标（文字不是图标，不冒充官方资产）。
+            if let aiImage = NightPatrolIcons.image(named: NightPatrolIcons.aiPaw, pointSize: 16) {
+                let badgeView = UIImageView(image: aiImage)
+                badgeView.translatesAutoresizingMaskIntoConstraints = false
+                badgeView.tintColor = BearyColors.ink
+                badgeView.contentMode = .scaleAspectFit
+                wrapper.addSubview(badgeView)
+                NSLayoutConstraint.activate([
+                    badgeView.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+                    badgeView.topAnchor.constraint(equalTo: wrapper.topAnchor),
+                    badgeView.widthAnchor.constraint(equalToConstant: 16),
+                    badgeView.heightAnchor.constraint(equalToConstant: 16),
+                ])
+            } else {
+                let badgeLabel = UILabel()
+                badgeLabel.translatesAutoresizingMaskIntoConstraints = false
+                badgeLabel.text = "AI"
+                badgeLabel.font = UIFont.systemFont(ofSize: 10, weight: .bold)
+                badgeLabel.textColor = BearyColors.ink
+                badgeLabel.backgroundColor = BearyColors.bg
+                badgeLabel.layer.cornerRadius = 4
+                badgeLabel.clipsToBounds = true
+                wrapper.addSubview(badgeLabel)
+                NSLayoutConstraint.activate([
+                    badgeLabel.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+                    badgeLabel.topAnchor.constraint(equalTo: wrapper.topAnchor),
+                ])
+            }
+        }
+        NSLayoutConstraint.activate([
+            buttonValue.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+            buttonValue.topAnchor.constraint(equalTo: wrapper.topAnchor),
+            buttonValue.widthAnchor.constraint(equalToConstant: 44),
+            buttonValue.heightAnchor.constraint(equalToConstant: 44),
+            wrapper.widthAnchor.constraint(equalToConstant: 44),
+            wrapper.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        return wrapper
+    }
+
+    /// M4：脚印钮的序号 / 无障碍文案随排列实时校准——插入新脚印后旧钮序号会变，
+    /// 点按仍按最新序号取短评。
+    private func configureNightFootprintButton(in wrapper: UIView, footprint: NightPatrolFootprint, index: Int) {
+        guard let button = wrapper.subviews.compactMap({ $0 as? UIButton }).first else { return }
+        button.tag = index
+        var accessText = "第 \(index + 1) 枚脚印"
+        if footprint.isAI { accessText += "，AI 短评" }
+        if footprint.isPrivate == true { accessText += "，仅你可见" }
+        button.accessibilityLabel = accessText + "，点按查看短评"
     }
 
     @objc private func nightEntryTapped() {
