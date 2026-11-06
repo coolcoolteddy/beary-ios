@@ -226,6 +226,18 @@ final class BearyProfilePhotosViewController: UIViewController {
                     strongSelf.photosPageLoadFailed = false
                     strongSelf.collectionView.reloadData()
                     strongSelf.updateTitleAndEmpty()
+                    // C1：灯箱订阅同一分页结果——新页按片 key 追加到灯箱末尾；
+                    // 灯箱未打开时 presentedViewController 不是灯箱，自然跳过。
+                    if let viewer = strongSelf.presentedViewController as? BearyEntryImageViewerViewController {
+                        let newPhotos = Array(strongSelf.photosValue.suffix(from: min(oldPhotoCount, strongSelf.photosValue.count)))
+                        var newLiveVideos: [String: String] = [:]
+                        for photo in newPhotos {
+                            if let liveKey = photo.entry.liveVideos?[photo.imageKey] {
+                                newLiveVideos[photo.imageKey] = liveKey
+                            }
+                        }
+                        viewer.appendImageKeys(newPhotos.map { $0.imageKey }, liveVideos: newLiveVideos.isEmpty ? nil : newLiveVideos, hasMorePages: strongSelf.photosHasMore)
+                    }
                     // 116：续拉新格错峰滑入（已有格不重播）。
                     strongSelf.staggerNewCells(from: oldPhotoCount)
                     // 空相册续拉：本页仍无可见照片时继续取下一页；仅当本页
@@ -244,6 +256,10 @@ final class BearyProfilePhotosViewController: UIViewController {
                     // 不 reload 已有照片（保留照片与滚动位置）；末格留屏时用户
                     // 点尾部按钮即可重试，不再只靠末项重入视野。
                     BearyToast.show(in: strongSelf.view, message: "照片加载失败，请稍后重试")
+                    // C1：灯箱正等着这页时，把失败态同步给灯箱（边缘提示切失败文案）。
+                    if let viewer = strongSelf.presentedViewController as? BearyEntryImageViewerViewController {
+                        viewer.notifyMorePagesFailed()
+                    }
                     if !strongSelf.photosPageLoadFailed {
                         strongSelf.photosPageLoadFailed = true
                         strongSelf.collectionView.insertSections(IndexSet(integer: 1))
@@ -277,6 +293,10 @@ final class BearyProfilePhotosViewController: UIViewController {
 let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wallLiveVideos.isEmpty ? nil : wallLiveVideos, startIndex: startIndex)
         viewer.initialThumbnail = thumbnail
         viewer.originFrameInWindow = originFrame
+        // C1：网格和灯箱订阅同一个分页结果——网格续拉的新页追加进灯箱；
+        // 灯箱翻到末尾要下一页时由这里触发网格续拉。
+        viewer.hasMorePages = photosHasMore
+        viewer.onRequestMorePages = { [weak self] in self?.fetchNextPageIfNeeded() }
         viewer.modalPresentationStyle = .fullScreen
         viewer.onViewEntryAtIndex = { [weak self, weak viewer] tappedIndex in
             guard let strongSelf = self, let viewerValue = viewer else { return }

@@ -6,7 +6,7 @@ import Photos
 
 class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizerDelegate, UIViewControllerTransitioningDelegate {
 
-    private let imageKeys: [String]
+    private var imageKeys: [String]
     /// 实况映射（静态图 key → 视频 key；nil = 无实况，灯箱纯静态，与旧版一致）。
     /// 调用方在创建时传入本篇 entry.liveVideos（详情/卡片容器/照片墙均已接线）。
     var liveVideos: [String: String]?
@@ -68,6 +68,23 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private var viewEntryBottomToDotsConstraint: NSLayoutConstraint?
     private var viewEntryBottomToSafeConstraint: NSLayoutConstraint?
     private var dotViews: [UIView] = []
+    /// C1 相册分页共享：网格续拉的新页追加到灯箱末尾（见 appendImageKeys）。
+    /// hasMorePages 由网格在打开时与每次续拉后同步；onRequestMorePages
+    /// 由网格接 fetchNextPageIfNeeded。未接线的调用方（详情／时间线）
+    /// 两值保持默认，翻页与回绕行为一字不动。
+    var hasMorePages = false
+    var onRequestMorePages: (() -> Void)?
+    /// C1：已向网格要过下一页、在等回包（防重复请求）。
+    private var isRequestingMorePages = false
+    /// C1：最近一次续拉失败（提示文案切到失败态，下次越过末尾再请求一次）。
+    private var loadMoreFailed = false
+    /// C1：越过已加载末尾时记下的下标——新页到了且仍停在该下标时，
+    /// 自动往前翻一页（接上用户“继续往后看”的意图）。
+    private var pendingAdvanceFromIndex: Int?
+    /// C1：边缘加载提示（计数下方）：「正在加载更多照片」／失败文案。
+    private let loadMoreSpinner = UIActivityIndicatorView(style: .medium)
+    private let loadMoreLabel = UILabel()
+    private let loadMoreStack = UIStackView()
     private var scale: CGFloat = 1
     /// 审计 15 项第 8 项：放大后已升级到的高清解码宽度（同图同宽不再重复加载）。
     private var zoomHiResKey: String?
@@ -206,6 +223,22 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         counterLabel.translatesAutoresizingMaskIntoConstraints = false
         counterLabel.isHidden = imageKeys.count <= 1
         view.addSubview(counterLabel)
+        // C1：边缘加载提示（计数下方）：翻到已加载末尾、还有后续页时显
+        //「正在加载更多照片」，失败时切失败文案；平时隐藏。
+        loadMoreSpinner.translatesAutoresizingMaskIntoConstraints = false
+        loadMoreSpinner.color = .white
+        loadMoreLabel.translatesAutoresizingMaskIntoConstraints = false
+        loadMoreLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        loadMoreLabel.adjustsFontForContentSizeCategory = true
+        loadMoreLabel.textColor = UIColor(white: 1, alpha: 0.75)
+        loadMoreStack.translatesAutoresizingMaskIntoConstraints = false
+        loadMoreStack.axis = .horizontal
+        loadMoreStack.alignment = .center
+        loadMoreStack.spacing = 6
+        loadMoreStack.isHidden = true
+        loadMoreStack.addArrangedSubview(loadMoreSpinner)
+        loadMoreStack.addArrangedSubview(loadMoreLabel)
+        view.addSubview(loadMoreStack)
         // 批 C：照片页灯箱可能一次带几十张图，圆点全画会溢出屏宽——
         // 超 20 张时只留顶部计数“n / N”，圆点隐藏（旧单篇灯箱 ≤9 张不受影响）。
         if onViewEntryAtIndex != nil {
@@ -216,20 +249,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         dotsStack.spacing = 8
         dotsStack.alignment = .center
         dotsStack.translatesAutoresizingMaskIntoConstraints = false
-        dotsStack.isHidden = imageKeys.count <= 1 || imageKeys.count > 20
-        for _ in imageKeys {
-            let dot = UIView()
-            dot.translatesAutoresizingMaskIntoConstraints = false
-            dot.backgroundColor = UIColor(white: 1, alpha: 0.35)
-            dot.layer.cornerRadius = 3
-            dot.clipsToBounds = true
-            NSLayoutConstraint.activate([
-                dot.widthAnchor.constraint(equalToConstant: 6),
-                dot.heightAnchor.constraint(equalToConstant: 6),
-            ])
-            dotsStack.addArrangedSubview(dot)
-            dotViews.append(dot)
-        }
+        rebuildDots()
         view.addSubview(dotsStack)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.accessibilityLabel = "关闭"
@@ -281,6 +301,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             // 32 清单第 17 项：计数跟随放大后不得压到右上关闭钮之下（文案短，平时不触发；极端字号下宁可截尾不断钮）。
             counterLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
             counterLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -8),
+            loadMoreStack.topAnchor.constraint(equalTo: counterLabel.bottomAnchor, constant: 8),
+            loadMoreStack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             dotsStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
             dotsStack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
@@ -302,6 +324,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
         updateCounter()
         loadCurrent()
+        maybeRequestMorePages()
     }
 
     @objc private func viewEntryButtonTapped() {
@@ -413,6 +436,113 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         counterLabel.accessibilityLabel = "第 \(currentIndex + 1) 张，共 \(imageKeys.count) 张"
         for (dotIndex, dot) in dotViews.enumerated() {
             dot.backgroundColor = (dotIndex == currentIndex) ? .white : UIColor(white: 1, alpha: 0.35)
+        }
+    }
+
+    /// C1：圆点与总数同步（打开时与追加新页后都走这里）：≤20 张画圆点，
+    /// 超 20 张只留顶部计数；「查看日记」钮的底部锚点随圆点显隐切换。
+    private func rebuildDots() {
+        for dot in dotViews {
+            dot.removeFromSuperview()
+        }
+        dotViews.removeAll()
+        dotsStack.isHidden = imageKeys.count <= 1 || imageKeys.count > 20
+        for _ in imageKeys {
+            let dot = UIView()
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.backgroundColor = UIColor(white: 1, alpha: 0.35)
+            dot.layer.cornerRadius = 3
+            dot.clipsToBounds = true
+            NSLayoutConstraint.activate([
+                dot.widthAnchor.constraint(equalToConstant: 6),
+                dot.heightAnchor.constraint(equalToConstant: 6),
+            ])
+            dotsStack.addArrangedSubview(dot)
+            dotViews.append(dot)
+        }
+        if onViewEntryAtIndex != nil {
+            viewEntryBottomToDotsConstraint?.isActive = !dotsStack.isHidden
+            viewEntryBottomToSafeConstraint?.isActive = dotsStack.isHidden
+        }
+    }
+
+    /// C1：网格和灯箱订阅同一个分页结果——网格续拉的新页按照片 key
+    /// 追加到灯箱末尾（去重：已在灯箱里的 key 不重复加）。调用方在
+    /// 主线程调；新页到了且用户仍停在越过末尾那张时，自动往前翻一页。
+    func appendImageKeys(_ keys: [String], liveVideos newLiveVideos: [String: String]?, hasMorePages: Bool) {
+        self.hasMorePages = hasMorePages
+        isRequestingMorePages = false
+        loadMoreFailed = false
+        let oldCount = imageKeys.count
+        var seen = Set(imageKeys)
+        var added = 0
+        for key in keys {
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            imageKeys.append(key)
+            added += 1
+        }
+        if let newLiveVideos = newLiveVideos, !newLiveVideos.isEmpty {
+            if liveVideos == nil {
+                liveVideos = newLiveVideos
+            } else {
+                for (key, value) in newLiveVideos {
+                    liveVideos?[key] = value
+                }
+            }
+        }
+        rebuildDots()
+        updateCounter()
+        updateLoadMoreHint()
+        if added > 0 {
+            prefetchAdjacent()
+        }
+        guard let from = pendingAdvanceFromIndex else { return }
+        pendingAdvanceFromIndex = nil
+        // 仍停在越过末尾那张、手指已离开、且新页确实到了，才自动往前翻；
+        // 用户已翻走或手指还在拖动时不抢方向，留给下次滑动。
+        guard from == currentIndex, from == oldCount - 1,
+              imageKeys.count > oldCount, !isNavigating,
+              panGesture?.state != .began, panGesture?.state != .changed else { return }
+        navigate(direction: 1)
+    }
+
+    /// C1：续拉失败时由网格通知——提示切到失败文案，下次越过末尾再请求一次。
+    func notifyMorePagesFailed() {
+        isRequestingMorePages = false
+        loadMoreFailed = true
+        updateLoadMoreHint()
+    }
+
+    /// C1：落到已加载最后一张、还有后续页时向网格要下一页（只发一次，
+    /// 回包／失败前不再重复要）。打开即在末尾时同样触发，先把下一页暖好。
+    private func maybeRequestMorePages() {
+        updateLoadMoreHint()
+        guard onRequestMorePages != nil, hasMorePages, !isRequestingMorePages,
+              !imageKeys.isEmpty, currentIndex == imageKeys.count - 1 else { return }
+        isRequestingMorePages = true
+        loadMoreFailed = false
+        onRequestMorePages?()
+        updateLoadMoreHint()
+    }
+
+    /// C1：边缘提示——只在已加载末尾、还有后续页时显（「正在加载更多照片」，
+    /// 失败时为「更多照片加载失败，继续滑动重试」）；其余位置隐藏。
+    private func updateLoadMoreHint() {
+        let show = onRequestMorePages != nil && hasMorePages && !imageKeys.isEmpty
+            && currentIndex == imageKeys.count - 1
+        loadMoreStack.isHidden = !show
+        guard show else {
+            loadMoreSpinner.stopAnimating()
+            return
+        }
+        let text = loadMoreFailed ? "更多照片加载失败，继续滑动重试" : "正在加载更多照片"
+        loadMoreLabel.text = text
+        loadMoreLabel.accessibilityLabel = text
+        if loadMoreFailed {
+            loadMoreSpinner.stopAnimating()
+        } else {
+            loadMoreSpinner.startAnimating()
         }
     }
 
@@ -637,6 +767,12 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         guard imageKeys.count > 1, scale == 1 else { hideNeighbor(); return }
         if dragX == 0 { hideNeighbor(); return }
         let direction = dragX < 0 ? 1 : -1
+        // C1：已到已加载末尾、还有后续页时，往前没有相邻图可贴——
+        // 不把回绕首张贴上来（新页到了才有下一张），当前图跟手即可。
+        if direction == 1, currentIndex == imageKeys.count - 1, (hasMorePages || isRequestingMorePages) {
+            hideNeighbor()
+            return
+        }
         let target = (currentIndex + direction + imageKeys.count) % imageKeys.count
         if neighborIndex != target || neighborDirection != direction {
             neighborIndex = target
@@ -1004,6 +1140,21 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         let isWrap = next < 0 || next >= imageKeys.count
         let wrapped = (next + imageKeys.count) % imageKeys.count
         if isWrap == true {
+            // C1：还有后续页时不回绕——先请网格续拉，等新页到了再往前翻；
+            // 确认末页（hasMorePages 为 false）后才走原有回绕。
+            // navigate 只在 pan .ended 调，手指已离开，直接弹回当前图
+            //（相邻槽里是回绕首张，不留；减动效时 resetZoom 直切终态）。
+            if hasMorePages || isRequestingMorePages {
+                pendingAdvanceFromIndex = currentIndex
+                if !isRequestingMorePages {
+                    isRequestingMorePages = true
+                    loadMoreFailed = false
+                    onRequestMorePages?()
+                }
+                updateLoadMoreHint()
+                resetZoom(animated: true)
+                return
+            }
             // 回绕瞬时归位：不做长距离倒带动效（网页 trackTo(!wrap) 口径）。
             currentIndex = wrapped
             resetZoom(animated: false)
@@ -1050,6 +1201,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 self.prefetchAdjacent()
                 self.updateLiveOverlay()
                 self.isNavigating = false
+                self.maybeRequestMorePages()
             }
             if reduceMotion == true {
                 commit()
@@ -1115,6 +1267,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             self.updateCounter()
             self.loadCurrent()
             self.isNavigating = false
+            self.maybeRequestMorePages()
         }
         if reduceMotion == true {
             commitFallback()
