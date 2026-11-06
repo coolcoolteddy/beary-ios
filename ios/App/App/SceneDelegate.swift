@@ -960,7 +960,9 @@ final class BearyChromeViewController: UIViewController {
         if let cachedUser = SessionManager.shared.restoreCachedUserFromVault() {
             loginButton.isHidden = true
             loginButton.alpha = 0
-            _ = BearyDraftStore.setAccount(cachedUser.id)
+            // S1：setAccount 只在主线程提交账号，旧文件迁移在后台排队；
+            // 迁移提示仍由 /me 回包的 onUserChanged 按原口径弹，不在这里重复。
+            BearyDraftStore.setAccount(cachedUser.id)
             BearyImageLoader.shared.setAccount(cachedUser.id)
         }
         // 秒开-启动瘦身：先注册首屏信号观察再亮首页——Feed 在 showPage 建页时即可能
@@ -994,11 +996,14 @@ final class BearyChromeViewController: UIViewController {
             // 账号隔离 1/4 号：登录态每次变化先切草稿桶与图片桶（分桶路径
             // 随账号自动切换，内存态不跨账号）；旧全局草稿首启迁移到当前
             // 账号时 toast 明示一次（迁移后旧文件消失，不再触发）。
-            let draftMigrated = BearyDraftStore.setAccount(user?.id)
-            BearyImageLoader.shared.setAccount(user?.id)
-            if draftMigrated {
-                self.showToast(message: "旧草稿已归到当前账号")
+            // S1：setAccount 只在主线程提交账号，旧文件迁移在后台排队；
+            // 同步 Bool 返回已取消，迁移 toast 改由完成回调驱动。
+            BearyDraftStore.setAccount(user?.id) { [weak self] migrated in
+                if migrated {
+                    self?.showToast(message: "旧草稿已归到当前账号")
+                }
             }
+            BearyImageLoader.shared.setAccount(user?.id)
             // 登录后全量同步落盘：登录成功与冷启动的 refreshMe 都汇到本回调；
             // user != nil 时 kick（同一启动同一账号只跑一次，在途不重复），
             // nil 时复位（下次登录重跑）；放 sessionFlipArmed 早退之前，冷启动也不跳过。

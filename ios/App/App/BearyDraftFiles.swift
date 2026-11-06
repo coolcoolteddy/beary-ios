@@ -139,7 +139,9 @@ enum BearyDraftImageStore {
 
     /// 捕获账号版图片目录：后台写任务归一化时按入队账号查图，
     /// 执行中不再重读全局 currentAccountId；其余调用方仍用 directory()。
-    private static func directory(forAccount accountId: Int?) -> URL? {
+    /// fileprivate：同文件 BearyDraftStore 的后台迁移（mergeLegacyImageDir）
+    /// 按捕获账号算目标目录。
+    fileprivate static func directory(forAccount accountId: Int?) -> URL? {
         guard let accountId = accountId else { return nil }
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         let dir = base.appendingPathComponent("\(directoryName)_\(accountId)", isDirectory: true)
@@ -387,33 +389,49 @@ enum BearyDraftStore {
     /// 该账号名下（调用方据此首启一次 toast 明示，之后旧文件已消失不再触发）。
     /// 旧全局图片目录一并合并进该账号图片目录（全部移走且目录为空才删旧目录，
     /// 任一失败/重名跳过即保留旧目录 + 记诊断日志，不在登录流程弹 toast）。
-    @discardableResult
-    static func setAccount(_ id: Int?) -> Bool {
+    /// S1：主线程只提交账号（同步改内存态 currentAccountId），旧文件迁移
+    ///（旧图排除属性 sweep + 旧图目录合并 + 旧全局 v3 文件迁移）按捕获账号
+    /// 进入后台串行队列 ioQueue，完成后主线程回调 onLegacyMigrated（true =
+    /// 本次把旧全局 v3 文件迁移到了该账号名下，调用方据此 toast 一次；未迁
+    /// 移时不回调）。同步 Bool 返回已取消：旧签名在主线程同步做文件迁移才
+    /// 需要它；现迁移在后台排队，toast 改由完成回调驱动，调用方不得再按返
+    /// 回值判断。迁移未完成时草稿入口由读路径兜底：loadAllResult 在目标文
+    /// 件缺失时先读穿旧全局 v3 文件，旧草稿不会在窗口内误显为空；迁移任务
+    /// 与 ioQueue 内写任务同队列串行，不插队。
+    static func setAccount(_ id: Int?, onLegacyMigrated: ((Bool) -> Void)? = nil) {
         currentAccountId = id
-        guard let id = id else { return false }
+        guard let id = id else { return }
+        ioQueue.async {
+            let migrated = Self.migrateLegacyFiles(for: id)
+            if migrated {
+                DispatchQueue.main.async { onLegacyMigrated?(true) }
+            }
+        }
+    }
+
+    /// 后台迁移本体（ioQueue 内执行，调用方须已捕获账号）：
+    /// sweep（幂等）→ 旧图目录合并 → 旧全局 v3 文件迁移。
+    /// 审计三轮第 2 项（setAccount 协调）：已排队写任务在 ioQueue 内持 writeLock
+    /// 做读改写；本函数的文件迁移持同一把锁执行，不插队到同账号排队写任务之前。
+    /// 捕获账号已使跨账号任务互不干扰，本锁只补同账号同文件的竞态；目录与文件
+    /// 路径一律用捕获账号算，执行中不再重读 currentAccountId。
+    private static func migrateLegacyFiles(for accountId: Int) -> Bool {
         // 审计 A 批：登录/切号时跑一次旧图排除备份属性 sweep（幂等，见函数注释）。
         BearyDraftImageStore.sweepClearExcludedFromBackupIfNeeded()
-        // 审计三轮第 2 项（setAccount 协调）：已排队写任务在 ioQueue 内持 writeLock
-        // 做读改写；本函数的文件迁移（旧图合并 + 旧全局 JSON 迁移）持同一把锁执行，
-        // 不插队到同账号排队写任务之前。未改走 ioQueue.sync：setAccount 须同步返回
-        // Bool 供调用方决定迁移 toast，async 会破坏该语义；sync 则会让登录态回调
-        // （主线程）阻塞等排队写任务排空。捕获账号已使跨账号任务互不干扰，
-        // 本锁只补同账号同文件的竞态；mergeLegacyImageDir 每次切号重试旧图片目录
-        // 的语义不变（仍逐个移、重名跳过、非空保留旧目录待下次重试）。
         writeLock.lock()
         defer { writeLock.unlock() }
         // 2026-10-29 修：图片目录合并从 JSON 迁移条件里拆出来——每次切号都跑，旧目录存在就重试，
         // 不再因 JSON 已迁走而跳过（此前失败留下的旧图再无重试机会）。
-        mergeLegacyImageDir()
+        mergeLegacyImageDir(for: accountId)
         guard let legacyURL = legacyGlobalFileURL(),
               FileManager.default.fileExists(atPath: legacyURL.path) else { return false }
-        guard let targetURL = fileURL(), !FileManager.default.fileExists(atPath: targetURL.path) else { return false }
+        guard let targetURL = fileURL(for: accountId), !FileManager.default.fileExists(atPath: targetURL.path) else { return false }
         do {
             try FileManager.default.moveItem(at: legacyURL, to: targetURL)
         } catch {
             guard let data = try? Data(contentsOf: legacyURL),
                   let drafts = try? JSONDecoder().decode([BearyDraft].self, from: data),
-                  saveAll(drafts) else { return false }
+                  saveAll(drafts, forAccount: accountId) else { return false }
             try? FileManager.default.removeItem(at: legacyURL)
         }
         return true
@@ -422,11 +440,11 @@ enum BearyDraftStore {
     /// 旧全局图片目录合并（2026-10-29 从 setAccount 拆出独立函数）：旧全局目录文件逐个移入账号目录；
     /// 审计 A 批：仅当旧目录已空（全部移走）才删旧目录——重名跳过与移走失败的文件都会留在旧目录，
     /// 此时保留旧目录 + 记诊断日志，不在登录流程弹 toast；下次切号再跑即重试。
-    private static func mergeLegacyImageDir() {
+    private static func mergeLegacyImageDir(for accountId: Int) {
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
         let legacyDir = base.appendingPathComponent(BearyDraftImageStore.directoryName, isDirectory: true)
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: legacyDir.path),
-              let targetDir = BearyDraftImageStore.directory() else { return }
+              let targetDir = BearyDraftImageStore.directory(forAccount: accountId) else { return }
         try? FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true, attributes: nil)
         for name in names {
             let src = legacyDir.appendingPathComponent(name)
@@ -543,6 +561,23 @@ enum BearyDraftStore {
             }
             let backup = backupCorruptFile(at: url)
             NSLog("[BearyDraft] corrupt v3 store, original kept")
+            let err = LoadError.corruptStore(backupURL: backup)
+            lastLoadError = err
+            return .failure(err)
+        }
+        // S1：迁移窗口读穿——setAccount 的旧全局 v3 迁移在后台排队，窗口内
+        // 目标文件尚未建好时，直接读旧全局 v3 文件返回（只读不搬不删，搬文件
+        // 仍归后台迁移任务）；窗口外旧文件已搬走，本分支永不命中。v3 比 v2/v1
+        // 新，本分支在旧源迁移之前。旧文件损坏时与目标文件同口径：备份后返
+        // 回失败，不以空数组冒充无草稿。
+        if let legacyURL = legacyGlobalFileURL(), FileManager.default.fileExists(atPath: legacyURL.path) {
+            if let data = try? Data(contentsOf: legacyURL),
+               let drafts = try? JSONDecoder().decode([BearyDraft].self, from: data) {
+                lastLoadError = nil
+                return .success(sortedNormalized(drafts, forAccount: accountId))
+            }
+            let backup = backupCorruptFile(at: legacyURL)
+            NSLog("[BearyDraft] corrupt legacy global v3 store, original kept")
             let err = LoadError.corruptStore(backupURL: backup)
             lastLoadError = err
             return .failure(err)
