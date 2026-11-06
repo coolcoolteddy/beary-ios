@@ -2202,6 +2202,12 @@ class BearyTimelineViewController: UIViewController {
     private var deferredSecondaryFallback: DispatchWorkItem?
     // G15：分页失败标记——脚部保持“加载失败，重试”可重试。
     private var timelinePageFailed = false
+    /// 审计 r16 第 17 项：分页失败退避——连续失败次数与下次可重试的最早时刻；
+    /// 指数退避 2s 起、翻倍、上限 30s；分页成功或首拉重开即清零。拦在
+    /// loadTimelineNextPage 入口，自动触发与手动重试同拦，防低速网络下
+    /// 滑动中连续触发分页；手动点按被拦时给 toast 提示，自动触发被拦时静默。
+    private var timelinePageFailureCount = 0
+    private var timelinePageRetryNotBefore: Date?
     // M2：分页新增行的错峰滑入队列（willDisplay 时按原始序号起播，播过即摘；
     // 用序号字典而非数组，避免摘除后后续序号前移导致错峰失效）。
     private var staggerInsertOrder: [IndexPath: Int] = [:]
@@ -2982,6 +2988,9 @@ class BearyTimelineViewController: UIViewController {
         }
         timelineState = .loaded
         timelinePageFailed = false
+        // 审计 r16 第 17 项：缓存快照落表即新一轮列表，清分页退避。
+        timelinePageFailureCount = 0
+        timelinePageRetryNotBefore = nil
         timelineUnauthorized = false
         loginNotified = false
         // 当日面板先用缓存首屏里今天的篇顶上（静默刷新随后对齐），
@@ -4360,6 +4369,9 @@ class BearyTimelineViewController: UIViewController {
             return
         }
         timelineFirstPageSeq += 1
+        // 审计 r16 第 17 项：首拉重开即清分页退避（新一轮分页从头计）。
+        timelinePageFailureCount = 0
+        timelinePageRetryNotBefore = nil
         let seq = timelineFirstPageSeq
         timelineFirstPageInFlight = true
         timelineState = .loading
@@ -4686,8 +4698,15 @@ class BearyTimelineViewController: UIViewController {
         return "\(entry.content ?? "")|\(entry.isPublic ?? false)|\(entry.visibility ?? "")|\(entry.likeCount ?? 0)|\(entry.likedByMe ?? false)|\(entry.bookmarkedByMe ?? false)|\(entry.bookmarkCount ?? 0)|\(emoteParts.joined(separator: ","))|\(entry.locationName ?? "")|\(entry.locationDistrict ?? "")|\(images)|\(dims)|\(live)|\(entry.weather ?? "")|\(entry.temperatureC.map(String.init) ?? "")|\(entry.mood ?? "")|\(entry.title ?? "")|\(quotePart)|\(entry.authorName ?? "")|\(entry.authorAvatar ?? "")|\(entry.authorPlus ?? 0)|\(entry.mentionedName ?? "")|\(entry.createdAt ?? 0)|\(entry.publishedAt ?? 0)|\(entry.ephemeralUntil ?? 0)"
     }
 
-    private func loadTimelineNextPage() {
+    private func loadTimelineNextPage(manual: Bool = false) {
         if timelineLoadingMore || !timelineHasMore { return }
+        // 审计 r16 第 17 项：失败退避窗口内不发新请求（自动触发与手动重试同拦，
+        // 防低速网络下滑动中连续触发分页；窗口到时自动恢复）。
+        if let notBefore = timelinePageRetryNotBefore, Date() < notBefore {
+            // 手动点按被拦时给一句提示；自动触发被拦时静默，不刷 toast。
+            if manual { showTimelineToast(message: "网络较慢，稍后再试") }
+            return
+        }
         guard let last = timelineEntries.last else { return }
         guard let lastEntryIdValue = last.id, let lastCreated = last.createdAt else { return }
         timelineLoadingMore = true
@@ -4719,6 +4738,9 @@ class BearyTimelineViewController: UIViewController {
                     }
                     strongSelf.timelineHasMore = fresh.count >= strongSelf.pageLimit
                     strongSelf.timelinePageFailed = false
+                    // 审计 r16 第 17 项：分页成功即清退避计数与窗口。
+                    strongSelf.timelinePageFailureCount = 0
+                    strongSelf.timelinePageRetryNotBefore = nil
                     if let diff = strongSelf.appendedPageDiff(oldSections: oldSections),
                        strongSelf.tableView.window != nil {
                         // 减动效时不排错峰队列，直接插行终值。
@@ -4737,6 +4759,10 @@ class BearyTimelineViewController: UIViewController {
                     // G15：分页失败 toast，并保持脚部可重试（hasMore 不动、
                     // updateFooter 出“加载失败，重试”）。
                     strongSelf.timelinePageFailed = true
+                    // 审计 r16 第 17 项：指数退避 2s 起、翻倍、上限 30s。
+                    strongSelf.timelinePageFailureCount += 1
+                    let backoff = min(2.0 * pow(2.0, Double(strongSelf.timelinePageFailureCount - 1)), 30.0)
+                    strongSelf.timelinePageRetryNotBefore = Date().addingTimeInterval(backoff)
                     strongSelf.showTimelineToast(message: "加载失败")
                 }
                 strongSelf.updateChrome()
@@ -5980,7 +6006,7 @@ class BearyTimelineViewController: UIViewController {
     }
 
     @objc private func didTapFooter() {
-        loadTimelineNextPage()
+        loadTimelineNextPage(manual: true)
     }
 
     @objc private func didTapTrash() {
