@@ -442,6 +442,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 同账号重登 id 不变，校验通过、同一草稿可续写；编辑模式不设它
     /// （saveDraftNow 在编辑态本就是空操作，见 saveDraftNow 首行守卫）。
     private var publishOriginAccountId: Int?
+    /// 打开编辑器时绑定的账号（P0-1）：viewDidLoad 即记下打开时的账号，
+    /// 此后草稿保存一律写该账号的桶，不随重登改写；发布前校验亦认它
+    /// （见 isPublishOriginMismatch）。与 publishOriginAccountId 的区别：
+    /// 后者只在首次点发布时才定（#761），定之前存在“重登后自动保存
+    /// 先把旧内容写进新号桶”的窗口，本绑定堵的就是这个窗口。
+    /// 切篇（loadDraftFromBox）时按箱内草稿所属的当前账号重绑；
+    /// 发布成功/丢弃/重置空白时随 publishOriginAccountId 一并清掉，
+    /// 下一篇再按打开时账号重绑。编辑态不写草稿，绑定无实际作用。
+    private var composerOriginAccountId: Int?
     /// 一并公开部分成功态：setVisibility 已成功、原日记已公开的原日记 id。
     /// 此后新篇发布失败不再回滚原日记（见 performPublish 部分成功分支），
     /// 重试（弹框按钮或再点发布）只发新篇，不再走门禁/setVisibility。
@@ -458,8 +467,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 发起账号是否已失配：发起账号已定、且当前账号已定、两者不同。
     /// 当前账号未定（如 401 刚清态、尚未重登）不算失配，沿旧口径走
     /// 登录入口，不在此处误拦。
+    /// P0-1：首次点发布前 publishOriginAccountId 尚未定，此时认打开编辑器
+    /// 时绑定的 composerOriginAccountId——重登成另一账号后自动保存与
+    /// 发布都在四处旧校验点（saveDraftNow/didTapPublish/beginPublishTogether/
+    /// performPublish）被同一函数拦下，不另起校验。
     private func isPublishOriginMismatch() -> Bool {
-        guard let origin = publishOriginAccountId,
+        guard let origin = publishOriginAccountId ?? composerOriginAccountId,
               let current = currentAccountIdForPublish() else { return false }
         return origin != current
     }
@@ -906,6 +919,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         buildRecipientRow()
         buildQuoteSection()
         buildQuotePanel()
+        // P0-1：打开编辑器即绑定原账号（先于 restoreDraft 记下，恢复读盘
+        // 与后续自动保存都认它，不随重登改写；见 composerOriginAccountId）。
+        composerOriginAccountId = currentAccountIdForPublish()
         if isEditMode {
             setupEditContent()
         } else {
@@ -6244,6 +6260,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 挡不住 401 重登后再次调用 saveDraftNow（此时当前账号已是新号，
         // 捕获到的就是新号，旧内容会原样写进新号文件）。失配时按失败回传，
         // 关闭/保留路径沿旧口径留页重试；状态行置红，不谎称已保存。
+        // P0-1：首次发布前 publishOriginAccountId 未定，此时
+        // isPublishOriginMismatch 认打开时绑定的 composerOriginAccountId，
+        // 同样拦下——重登后自动保存不再把旧内容写进新号桶。
         // hadPreviousSavedVersion 计真：发布起点 didTapPublish 已落盘一次，
         // 原账号桶里已有本次发布前的版本，旧版未被本次调用覆盖。
         if isPublishOriginMismatch() {
@@ -6378,7 +6397,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 传验证结果，故这里直接用同一队列；与草稿箱的写删串行，不会旧读回写复活
         // 已删草稿；快照本身只是单篇 struct，不含整库旧状态）。
         // 审计三轮第 2 项：入队前捕获账号，写与回读一律用捕获值，排队期间切号不串桶。
-        let saveAccountId = BearyDraftStore.currentAccountId
+        // P0-1：优先用打开编辑器时绑定的账号（composerOriginAccountId），
+        // 未绑定（老路径/游客）时退回全局当前账号；失配已在函数开头拦下，
+        // 到这里的绑定账号与当前账号一致或当前账号未定。
+        let saveAccountId = composerOriginAccountId ?? BearyDraftStore.currentAccountId
         // 审计二轮 05：保存发起时拍下编辑版本，落盘期间继续输入会使版本 +1；
         // 完成回调须同时校验版本，旧保存不把新内容提前标成“已保存”。
         let saveBaselineVersion = editorEditVersion
@@ -6430,8 +6452,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let restoreBaselineVersion = editorEditVersion
         let restoreBaselineDraftId = currentDraftId
         let restoreBaselineClearedDraftId = clearedCurrentDraftId
+        // P0-1：恢复读盘认打开时绑定的账号（入队前捕获，执行中不再重读
+        // 全局值，与 saveDraftNow 的捕获口径一致）；两次读都用同一捕获值，
+        // 重登后不把新号桶的草稿恢复进旧编辑器。
+        let restoreAccountId = composerOriginAccountId ?? BearyDraftStore.currentAccountId
         BearyDraftStore.ioQueue.async { [weak self] in
-            guard let draft = BearyDraftStore.load() else { return }
+            guard let draft = BearyDraftStore.loadAll(forAccount: restoreAccountId).first else { return }
             // 回收无主文件（杀 App 后、首存前产生的孤文件）：多槽下必须保留全部草稿的
             // 引用并集，只留本篇会误删其他篇的本地图片。
             var referenced = Set<String>()
@@ -6440,7 +6466,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     referenced.insert(name)
                 }
             }
-            for otherDraft in BearyDraftStore.loadAll() {
+            for otherDraft in BearyDraftStore.loadAll(forAccount: restoreAccountId) {
                 for img in otherDraft.images {
                     if let name = img.localFile {
                         referenced.insert(name)
@@ -6643,9 +6669,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         currentDraftId = nil
         clearedCurrentDraftId = nil
         draftClientReq = nil
-        // 发布绑定随篇清掉：丢弃/发布成功后不再有“本篇发起账号”，
+        // 发布绑定与打开时绑定随篇清掉：丢弃/发布成功后不再有“本篇发起账号”，
         // 下一篇发布重新捕获，不被旧绑定误拦。
         publishOriginAccountId = nil
+        composerOriginAccountId = nil
         publishTogetherPublishedSourceId = nil
         draftStatusLevel = nil
         updateDraftStatusLabel()
@@ -6690,6 +6717,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         clearedCurrentDraftId = nil
         draftClientReq = nil
         publishOriginAccountId = nil
+        // P0-1（变基整合）：打开时绑定随发布绑定一并清掉——与
+        // clearDraftAndFiles／resetEditorToBlank 同款口径，否则成功后
+        // 同一编辑器再写新篇会沿用旧绑定。
+        composerOriginAccountId = nil
         publishTogetherPublishedSourceId = nil
         draftStatusLevel = nil
         updateDraftStatusLabel()
@@ -6876,6 +6907,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftClientReq = nil
         // 空白新篇不再继承上一篇的发布绑定与部分成功态。
         publishOriginAccountId = nil
+        composerOriginAccountId = nil
         publishTogetherPublishedSourceId = nil
         draftStatusLevel = nil
         updateCountLabel()
@@ -6914,6 +6946,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 切篇即换发布绑定：上一篇的发起账号与部分成功态不带到新篇，
         // 新篇首次点发布时重新捕获。
         publishOriginAccountId = nil
+        // P0-1：切篇即按箱内草稿所属的当前账号重绑打开时绑定——箱内
+        // 草稿来自当前账号桶，之后自动保存写该账号的桶，不沿用旧绑定。
+        composerOriginAccountId = currentAccountIdForPublish()
         publishTogetherPublishedSourceId = nil
         currentDraftId = draft.draftId
         draftClientReq = draft.clientReq
