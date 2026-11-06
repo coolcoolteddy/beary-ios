@@ -347,6 +347,9 @@ final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
     private var personalText: String
     private var grants: [BearyPlusGrant]?
     private var loadFailed: Bool
+    /// A2：设置页的 Plus 共享加载结果（同会话在途结果共用）；为 nil 时
+    /// 退回旧口径自拉（防御性兜底，设置页现行必传）。
+    private var sharedLoad: BearySharedLoad<BearyPlusDetailResponse>?
     /// 109：重试在途锁 + 代次——重试只置空数据发请求时，连点会多发请求、
     /// 后到失败回包还会覆盖先到成功回包；在途重试直接忽略，代次再拦过期回包。
     private var isRetrying = false
@@ -357,12 +360,13 @@ final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
     private var grantsRowsAnimated = false
 
     /// 设置页已拉到的 plusDetail 经 status/personal 文案与 grants 传入；
-    /// grants 为 nil 且未失败时本页自己拉一次（设置页首拉未完成即点入的兜底）。
-    init(statusText: String, personalText: String, grants: [BearyPlusGrant]?, failed: Bool) {
+    /// grants 为 nil 且未失败时本页接设置页同一份在途结果（A2），不再自己另发请求。
+    init(statusText: String, personalText: String, grants: [BearyPlusGrant]?, failed: Bool, sharedLoad: BearySharedLoad<BearyPlusDetailResponse>? = nil) {
         self.statusText = statusText
         self.personalText = personalText
         self.grants = grants
         self.loadFailed = failed
+        self.sharedLoad = sharedLoad
         super.init(title: "会员来源明细")
     }
 
@@ -373,19 +377,39 @@ final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         if grants == nil && !loadFailed {
-            BearyAPI.shared.fetchPlusDetail { [weak self] result in
-                DispatchQueue.main.async {
+            if let sharedLoad = sharedLoad {
+                // A2：接设置页同会话在途结果——在途则等同一份回包，已取到
+                // 则直接用缓存；失败则走失败态。回包已在主线程（见 loader）。
+                sharedLoad.load { [weak self] result in
                     guard let self = self else { return }
                     switch result {
                     case .success(let detail):
                         self.statusText = Self.statusText(detail: detail)
                         self.personalText = Self.personalText(detail: detail)
-                        self.grants = detail.grants
+                        // 服务端 grants 为 nil 即确认无发放记录，落 [] 显空态，
+                        // 不留 nil 致 render 误判为“加载中”。
+                        self.grants = detail.grants ?? []
                         self.loadFailed = false
                     case .failure:
                         self.loadFailed = true
                     }
                     self.render()
+                }
+            } else {
+                BearyAPI.shared.fetchPlusDetail { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        switch result {
+                        case .success(let detail):
+                            self.statusText = Self.statusText(detail: detail)
+                            self.personalText = Self.personalText(detail: detail)
+                            self.grants = detail.grants
+                            self.loadFailed = false
+                        case .failure:
+                            self.loadFailed = true
+                        }
+                        self.render()
+                    }
                 }
             }
         }
@@ -545,6 +569,9 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
     private var sessions: [BearyAccountSession]?
     private var loadFailed: Bool
     private var countText: String?
+    /// A2：设置页的设备共享加载结果（同会话在途结果共用）；为 nil 时
+    /// 退回旧口径自拉（防御性兜底，设置页现行必传）。
+    private var sharedLoad: BearySharedLoad<BearyAccountSessionsResponse>?
     /// 109：同会员来源明细页——重试在途锁 + 代次，防连点多发与过期回包覆盖。
     private var isRetrying = false
     private var retryGeneration = 0
@@ -553,12 +580,14 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
     /// 加载态 render 不置位，重试成功后仍可播一次。
     private var deviceRowsAnimated = false
 
-    /// 设置页已拉到的 sessions 传入；为 nil 且未失败时本页自己拉一次。
+    /// 设置页已拉到的 sessions 传入（A2：nil = 还没取到，[] = 确认是空，
+    /// 两者不再混同）；为 nil 且未失败时本页接设置页同一份在途结果，不再自己另发请求。
     /// 退出其他设备钮不进本页，仍留在设置页（任务只说列表另做一页）。
-    init(sessions: [BearyAccountSession]?, failed: Bool, countText: String?) {
+    init(sessions: [BearyAccountSession]?, failed: Bool, countText: String?, sharedLoad: BearySharedLoad<BearyAccountSessionsResponse>? = nil) {
         self.sessions = sessions
         self.loadFailed = failed
         self.countText = countText
+        self.sharedLoad = sharedLoad
         super.init(title: "登录设备")
     }
 
@@ -569,8 +598,10 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         if sessions == nil && !loadFailed {
-            BearyAPI.shared.fetchAccountSessions { [weak self] result in
-                DispatchQueue.main.async {
+            if let sharedLoad = sharedLoad {
+                // A2：接设置页同会话在途结果——在途则等同一份回包，已取到
+                // 则直接用缓存；失败则走失败态。回包已在主线程（见 loader）。
+                sharedLoad.load { [weak self] result in
                     guard let self = self else { return }
                     switch result {
                     case .success(let resp):
@@ -585,6 +616,25 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
                         self.loadFailed = true
                     }
                     self.render()
+                }
+            } else {
+                BearyAPI.shared.fetchAccountSessions { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        switch result {
+                        case .success(let resp):
+                            self.sessions = resp.sessions ?? []
+                            if let active = resp.activeCount {
+                                self.countText = "共 \(active) 台设备（活跃）"
+                            } else {
+                                self.countText = "共 \((resp.sessions ?? []).count) 台设备"
+                            }
+                            self.loadFailed = false
+                        case .failure:
+                            self.loadFailed = true
+                        }
+                        self.render()
+                    }
                 }
             }
         }

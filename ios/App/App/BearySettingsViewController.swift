@@ -211,6 +211,70 @@ enum BearyAccountText {
     }
 }
 
+/// A2：同会话内共用的一份在途加载结果（Plus / 登录设备各一份）。
+/// 并发调用只发一次网络请求，回包后逐个通知等候方；成功结果在本轮内
+/// 缓存复用（设置主页 loadAll 的两次调用点——缓存路径先拉 + /me 成功
+/// 后再拉——与两明细子页都接同一份结果，同账号同轮次内各只发一次请求）；
+/// 失败不缓存，下次调用重新拉取；新一轮 loadAll / 账号切换 / 撤销后刷新
+/// 时由调用方 invalidate 丢弃旧结果，旧代次回包按代次丢弃（不通知本轮
+/// 等候方、不写入缓存）。回包一律回主线程再通知等候方
+/// （BearyAPI.request 的 completion 不在主线程，见各调用点的既有转主线程）。
+/// 注：invalidate 的调用点全在设置主页自身动作（loadAll 开头、撤销后刷新），
+/// 子页 present 期间不会触发，故不存在子页等候方被丢弃后转圈卡住的情况。
+final class BearySharedLoad<Value> {
+    private struct InFlight {
+        let generation: Int
+        var waiters: [(Result<Value, APIError>) -> Void]
+    }
+    private var loadedValue: Value?
+    private var inFlight: InFlight?
+    private var generation = 0
+    private let fetch: (@escaping (Result<Value, APIError>) -> Void) -> Void
+
+    init(fetch: @escaping (@escaping (Result<Value, APIError>) -> Void) -> Void) {
+        self.fetch = fetch
+    }
+
+    /// 本轮已取到的成功结果（无则为 nil）；子页凭它区分「还没取到」
+    /// 与「确认是空」（取到空列表时这里是 []，不是 nil）。
+    var currentValue: Value? { loadedValue }
+
+    /// 取一份结果：在途则排队等同一份回包；本轮已取到则直接回缓存；
+    /// 未取或上次失败则发一次请求。
+    func load(completion: @escaping (Result<Value, APIError>) -> Void) {
+        if let value = loadedValue {
+            completion(.success(value))
+            return
+        }
+        if var flight = inFlight, flight.generation == generation {
+            flight.waiters.append(completion)
+            inFlight = flight
+            return
+        }
+        let gen = generation
+        inFlight = InFlight(generation: gen, waiters: [completion])
+        fetch { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard let flight = self.inFlight, flight.generation == gen else { return }
+                self.inFlight = nil
+                if case .success(let value) = result {
+                    self.loadedValue = value
+                }
+                for waiter in flight.waiters { waiter(result) }
+            }
+        }
+    }
+
+    /// 丢弃本轮已缓存的成功结果并作废在途旧请求（新一轮 loadAll、账号切换、
+    /// 撤销后刷新时调用）；新轮次调用 load 时另发请求，不接旧代次回包。
+    func invalidate() {
+        loadedValue = nil
+        generation += 1
+        inFlight = nil
+    }
+}
+
 // MARK: - 账户设置页
 
 final class BearySettingsViewController: UIViewController {
@@ -234,6 +298,11 @@ final class BearySettingsViewController: UIViewController {
     private var meUser: MeUser?
     private var plusDetail: BearyPlusDetailResponse?
     private var accountSessions: [BearyAccountSession] = []
+    /// A2：Plus / 登录设备各一份同会话在途结果（见 BearySharedLoad）——
+    /// 设置主页 loadAll 的两次调用点（缓存路径先拉 + /me 成功后再拉）与
+    /// 两明细子页都接同一份结果，同账号同轮次内各只发一次请求。
+    private let plusDetailLoad = BearySharedLoad<BearyPlusDetailResponse>(fetch: { BearyAPI.shared.fetchPlusDetail(completion: $0) })
+    private let accountSessionsLoad = BearySharedLoad<BearyAccountSessionsResponse>(fetch: { BearyAPI.shared.fetchAccountSessions(completion: $0) })
     private var isLoadingMe = false
     /// /me 代次：切换账号成功时 +1 作废旧请求，旧回包凭代次丢弃，
     /// 不再把旧账号写回 ID 卡（旧请求发在切换前，回包体仍是旧账号）。
@@ -2064,6 +2133,10 @@ final class BearySettingsViewController: UIViewController {
         isLoadingMe = true
         meLoadGeneration += 1
         let meGeneration = meLoadGeneration
+        // A2：新一轮 loadAll 丢弃上一轮的 Plus/设备缓存结果（账号切换后
+        // 不复用旧号数据）；本轮内 loadPlusDetail/loadSessions 的两次调用点
+        // （缓存路径先拉 + /me 成功后再拉）共用 loader 的同一份在途结果，
+        // 各只发一次请求。
         // 缓存优先：登录态下本机已有同一份用户信息（SessionManager.currentUser），
         // 先显缓存、不转菊花，随后静默 fetchMe 对齐；无缓存时走现行加载态路径。
         if let cached = SessionManager.shared.currentUser {
@@ -2223,24 +2296,24 @@ final class BearySettingsViewController: UIViewController {
             plusPersonalLabel.text = "–"
             rebuildGrants(grants: nil, failed: false)
         }
-        BearyAPI.shared.fetchPlusDetail { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                switch result {
-                case .success(let detail):
-                    self.plusDetail = detail
-                    self.fillPlusDetail(detail: detail)
-                case .failure(let error):
-                    if case .unauthorized = error {
-                        self.onRequireLogin?()
-                        return
-                    }
-                    if case .cancelled = error { return }
-                    if self.plusDetail != nil { return }
-                    self.setLabelTextFaded(self.plusStatusLabel, "加载失败")
-                    self.grantsLoadFailed = true
-                    self.rebuildGrants(grants: nil, failed: true)
+        // A2：同轮次内第二次调用（/me 成功后）不再另发请求——在途则排队
+        // 等同一份回包，已取到则直接回缓存填表；失败不缓存，下次可重拉。
+        plusDetailLoad.load { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let detail):
+                self.plusDetail = detail
+                self.fillPlusDetail(detail: detail)
+            case .failure(let error):
+                if case .unauthorized = error {
+                    self.onRequireLogin?()
+                    return
                 }
+                if case .cancelled = error { return }
+                if self.plusDetail != nil { return }
+                self.setLabelTextFaded(self.plusStatusLabel, "加载失败")
+                self.grantsLoadFailed = true
+                self.rebuildGrants(grants: nil, failed: true)
             }
         }
     }
@@ -2315,37 +2388,39 @@ final class BearySettingsViewController: UIViewController {
         grantsLoadFailed = failed
     }
 
-    private func loadSessions() {
+    /// A2：force 仅撤销其他设备成功后用（现行单独刷新口径不变）——
+    /// 先丢弃本轮缓存再拉取；其余调用点（loadAll 两次调用）共用同一份
+    /// 在途结果，同轮次内只发一次请求。
+    private func loadSessions(force: Bool = false) {
         // 首拉前不再预先 rebuildSessions(nil)：空标签只在拉取返回空后出现，
         // 失败态只在拉取失败后出现（现行失败分支不动）；静默刷新不再先清旧内容。
-        BearyAPI.shared.fetchAccountSessions { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                switch result {
-                case .success(let resp):
-                    let list = resp.sessions ?? []
-                    self.accountSessions = list
-                    self.sessionsLoadFailed = false
-                    // 全修 4-4（二选一取“计数文案标活跃、列表不过滤”）：/api/account/sessions
-                    // 下发 activeCount（与 sessions 全量分开的字段，过期行以 expired 另标灰化），
-                    // 故计数用 activeCount 并标“（活跃）”，列表仍含过期行（灰化 + “已过期”注，
-                    // 用户可见完整登录史，不过滤）；activeCount 缺失时才回落全量计数，此时不标
-                    // “（活跃）”（回落值含过期行，标活跃会误导）。
-                    if let active = resp.activeCount {
-                        self.setLabelTextFaded(self.deviceCountLabel, "共 \(active) 台设备（活跃）")
-                    } else {
-                        self.setLabelTextFaded(self.deviceCountLabel, "共 \(list.count) 台设备")
-                    }
-                    self.rebuildSessions(sessions: list, failed: false)
-                case .failure(let error):
-                    if case .unauthorized = error {
-                        self.onRequireLogin?()
-                        return
-                    }
-                    if case .cancelled = error { return }
-                    self.sessionsLoadFailed = true
-                    self.rebuildSessions(sessions: nil, failed: true)
+        if force { accountSessionsLoad.invalidate() }
+        accountSessionsLoad.load { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let resp):
+                let list = resp.sessions ?? []
+                self.accountSessions = list
+                self.sessionsLoadFailed = false
+                // 全修 4-4（二选一取“计数文案标活跃、列表不过滤”）：/api/account/sessions
+                // 下发 activeCount（与 sessions 全量分开的字段，过期行以 expired 另标灰化），
+                // 故计数用 activeCount 并标“（活跃）”，列表仍含过期行（灰化 + “已过期”注，
+                // 用户可见完整登录史，不过滤）；activeCount 缺失时才回落全量计数，此时不标
+                // “（活跃）”（回落值含过期行，标活跃会误导）。
+                if let active = resp.activeCount {
+                    self.setLabelTextFaded(self.deviceCountLabel, "共 \(active) 台设备（活跃）")
+                } else {
+                    self.setLabelTextFaded(self.deviceCountLabel, "共 \(list.count) 台设备")
                 }
+                self.rebuildSessions(sessions: list, failed: false)
+            case .failure(let error):
+                if case .unauthorized = error {
+                    self.onRequireLogin?()
+                    return
+                }
+                if case .cancelled = error { return }
+                self.sessionsLoadFailed = true
+                self.rebuildSessions(sessions: nil, failed: true)
             }
         }
     }
@@ -2397,7 +2472,7 @@ final class BearySettingsViewController: UIViewController {
                 switch result {
                 case .success:
                     self.showToast("已退出其他设备")
-                    self.loadSessions()
+                    self.loadSessions(force: true)
                 case .failure(let error):
                     if case .unauthorized = error {
                         self.onRequireLogin?()
@@ -3404,25 +3479,31 @@ final class BearySettingsViewController: UIViewController {
     }
 
     /// 2026-10-29 第 7 项：会员来源明细独立页——优先用设置页已拉到的
-    /// plusDetail（状态文案取现行标签值、发放取缓存）；未拉到时子页自己拉一次。
+    /// plusDetail（状态文案取现行标签值、发放取缓存）；未拉到时子页接
+    /// 设置页同一份在途结果（A2：不再自己另发请求）。
     @objc private func openPlusGrantsPage() {
         let vc = BearyPlusGrantsViewController(
             statusText: plusStatusLabel.text ?? "–",
             personalText: plusPersonalLabel.text ?? "–",
             grants: cachedGrants,
-            failed: grantsLoadFailed)
+            failed: grantsLoadFailed,
+            sharedLoad: plusDetailLoad)
         vc.modalPresentationStyle = .fullScreen
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         presentSettingsPage(vc)
     }
 
     /// 2026-10-29 第 11 项：登录设备独立页——优先用设置页已拉到的
-    /// accountSessions；未拉到时子页自己拉一次；退出其他设备钮仍留在设置页。
+    /// accountSessions；未拉到时子页接设置页同一份在途结果（A2：不再
+    /// 自己另发请求）。A2：sessions 凭 loader 的 currentValue 区分「还没
+    /// 取到」（nil，子页接在途结果）与「确认是空」（[]，子页直接显空态，
+    /// 不再因空数组被当成 nil 而自发请求）；退出其他设备钮仍留在设置页。
     @objc private func openDevicesPage() {
         let vc = BearyDevicesViewController(
-            sessions: accountSessions.isEmpty ? nil : accountSessions,
+            sessions: accountSessionsLoad.currentValue.map { $0.sessions ?? [] },
             failed: sessionsLoadFailed,
-            countText: deviceCountLabel.text)
+            countText: deviceCountLabel.text,
+            sharedLoad: accountSessionsLoad)
         vc.modalPresentationStyle = .fullScreen
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         presentSettingsPage(vc)
