@@ -1510,6 +1510,12 @@ class BearyProfileViewController: UIViewController {
     /// 送达卡内正在「再回一句」的链 id（nil = 无展开）；草稿按链 id 存，防多串互串。
     private var pastSelfReplyingChainId: String?
     private var pastSelfReplyDrafts: [String: String] = [:]
+    /// 已送达留话 id（已在送达卡里出现过）：回前台 / 时间显著变化时复核
+    /// 日期，只有此前没出现过的刚到期 id 才滑入；旧行不再重复动画。
+    private var pastSelfKnownDeliveredIds: Set<String> = []
+    /// 送达卡当前栈内各节的链 id（与 pastSelfDeliveryStack 子视图一一对应，
+    /// 供刚到期单节定点插入 / 原位替换时算位置；切目标时与展开态一起复位）。
+    private var pastSelfDeliveredChainIds: [String] = []
 
     /// 随机漫步卡：点卡片进详情；「换一篇」只换卡片不跳转（文字按钮——
     /// 洗牌图标官方包缺失，见本批缺图标清单，不用 icon_refresh 顶替）。
@@ -2052,6 +2058,8 @@ class BearyProfileViewController: UIViewController {
         // 审计-个人页设置：补注销 bearyFriendsChanged（viewDidLoad 注册、
         // 此前 deinit 漏注销；广播到达已释放实例不再投递）。
         NotificationCenter.default.removeObserver(self, name: .bearyFriendsChanged, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIApplication.willEnterForegroundNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIApplication.significantTimeChangeNotification, object: nil)
     }
 
     override func viewDidLoad() {
@@ -2075,6 +2083,10 @@ class BearyProfileViewController: UIViewController {
         // 好友第一期：别处接受/删友后，本页关系态与日记列表同步重拉（断友后
         // 对方仅好友篇立即消失，不靠旧缓存）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleFollowChangedNotification(_:)), name: .bearyFriendsChanged, object: nil)
+        // 给明年的自己：回前台或系统时间显著变化（跨日 / 改时间）时复核送达日，
+        // 刚到期的那句滑入「已送达」（见 pastSelfRecheckDue，不走全量重建）。
+        NotificationCenter.default.addObserver(self, selector: #selector(pastSelfRecheckDue(_:)), name: UIApplication.willEnterForegroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(pastSelfRecheckDue(_:)), name: UIApplication.significantTimeChangeNotification, object: nil)
         if selfGate && viewerUserIdValue == nil {
             // U7：二选一取“只铺页脚”：不拉任何本人数据、不直接弹登录，
             // 弹登录交给页脚“去登录”按钮（loginButtonTapped → onRequireLogin）。
@@ -4458,6 +4470,8 @@ class BearyProfileViewController: UIViewController {
             pastSelfThisDayDraft = ""
             pastSelfReplyingChainId = nil
             pastSelfReplyDrafts = [:]
+            pastSelfKnownDeliveredIds = []
+            pastSelfDeliveredChainIds = []
             renderModules()
         }
         modulesGeneration += 1
@@ -5004,6 +5018,34 @@ class BearyProfileViewController: UIViewController {
         renderPastSelf(visible: pastSelfVisibleEntries())
     }
 
+    /// 单链的送达节数据：有已送达行才返回；纯等待串返回 nil（只在那年今日卡内出现）。
+    /// 全量渲染与回前台定点插入共用同一份算口，不各写一套状态机。
+    private func pastSelfDeliveredSectionData(chainId: String, all: [PastSelfMessage], today: String, visible: [Entry]) -> (messages: [PastSelfMessage], latestDelivered: PastSelfMessage, origin: Entry?, visibility: PastSelfContentVisibility, isAnswered: Bool, waiting: PastSelfMessage?)? {
+        let state = PastSelfLogic.threadState(all, chainId: chainId, today: today)
+        let messages: [PastSelfMessage]
+        let isAnswered: Bool
+        let waiting: PastSelfMessage?
+        switch state {
+        case .due(let chainMessages, _):
+            messages = chainMessages
+            isAnswered = false
+            waiting = nil
+        case .answered(let waitingMessage, let chainMessages):
+            messages = chainMessages
+            isAnswered = true
+            waiting = waitingMessage
+        case .none, .waiting:
+            return nil
+        }
+        // 送达卡只放已送达过的串；纯等待串只在那年今日卡内出现。
+        let delivered = messages.filter { PastSelfLogic.isDue(deliverOn: $0.deliverOn, today: today) }
+        guard let latestDelivered = delivered.last else { return nil }
+        // 原篇在到齐语料里找不到 = 已删（占位态，不渲染任何正文与留话）。
+        let origin = visible.first { $0.id == chainId }
+        let visibility = PastSelfVisibility.viewerVisibility(origin: origin, viewerIsAuthor: true, corpusComplete: true) ?? .deleted
+        return (messages, latestDelivered, origin, visibility, isAnswered, waiting)
+    }
+
     private func renderPastSelfDelivery(visible: [Entry]) {
         for arrangedView in pastSelfDeliveryStack.arrangedSubviews {
             pastSelfDeliveryStack.removeArrangedSubview(arrangedView)
@@ -5011,6 +5053,7 @@ class BearyProfileViewController: UIViewController {
         }
         guard let store = pastSelfStore() else {
             pastSelfDeliveryCard.isHidden = true
+            pastSelfDeliveredChainIds = []
             return
         }
         let all = store.loadAll()
@@ -5020,37 +5063,100 @@ class BearyProfileViewController: UIViewController {
             chainIds.append(message.chainId)
         }
         var sections: [UIView] = []
+        var deliveredChainIds: [String] = []
         for chainId in chainIds {
-            let state = PastSelfLogic.threadState(all, chainId: chainId, today: today)
-            let messages: [PastSelfMessage]
-            let isAnswered: Bool
-            let waiting: PastSelfMessage?
-            switch state {
-            case .due(let chainMessages, _):
-                messages = chainMessages
-                isAnswered = false
-                waiting = nil
-            case .answered(let waitingMessage, let chainMessages):
-                messages = chainMessages
-                isAnswered = true
-                waiting = waitingMessage
-            case .none, .waiting:
-                continue
-            }
-            // 送达卡只放已送达过的串；纯等待串只在那年今日卡内出现。
-            let delivered = messages.filter { PastSelfLogic.isDue(deliverOn: $0.deliverOn, today: today) }
-            guard let latestDelivered = delivered.last else { continue }
-            // 原篇在到齐语料里找不到 = 已删（占位态，不渲染任何正文与留话）。
-            let origin = visible.first { $0.id == chainId }
-            let visibility = PastSelfVisibility.viewerVisibility(origin: origin, viewerIsAuthor: true, corpusComplete: true) ?? .deleted
+            guard let data = pastSelfDeliveredSectionData(chainId: chainId, all: all, today: today, visible: visible) else { continue }
             sections.append(pastSelfDeliverySection(
-                chainId: chainId, messages: messages, latestDelivered: latestDelivered,
-                origin: origin, visibility: visibility, isAnswered: isAnswered, waiting: waiting))
+                chainId: chainId, messages: data.messages, latestDelivered: data.latestDelivered,
+                origin: data.origin, visibility: data.visibility, isAnswered: data.isAnswered, waiting: data.waiting))
+            deliveredChainIds.append(chainId)
+            // 已送达基线：全量重建时见过的到期行都记下，回前台复核时只有
+            // 新到期的行才滑入，旧行不再重复动画。
+            for message in data.messages where PastSelfLogic.isDue(deliverOn: message.deliverOn, today: today) {
+                pastSelfKnownDeliveredIds.insert(message.id)
+            }
         }
         for section in sections {
             pastSelfDeliveryStack.addArrangedSubview(section)
         }
+        pastSelfDeliveredChainIds = deliveredChainIds
         pastSelfDeliveryCard.isHidden = sections.isEmpty
+        pastSelfRefreshLayout()
+    }
+
+    // MARK: 过去的自己对话 —— 回前台 / 时间显著变化时复核送达日
+    //
+    // 此前 renderPastSelfDelivery 是全量销毁重建（每次渲染重读日期、重建已送达
+    // 列表），回前台或系统时间显著变化时从不复核日期（viewWillAppear /
+    // pageDidReturn 均不调 renderModules / renderPastSelf），跨过送达日回来
+    // 也不会出现那句话。此处只复核日期：按留话 id 找出刚到期的那条，定点插入
+    // 它的节并 0.25 秒短距滑入；其余节不动，正在「再回一句」的串留在原位。
+
+    @objc private func pastSelfRecheckDue(_ notification: Notification) {
+        guard modulesCorpusComplete, isOwnProfile, let store = pastSelfStore() else { return }
+        let all = store.loadAll()
+        let today = pastSelfToday()
+        // 刚到期：今天已送达、且此前从未在送达卡里出现过的留话 id。
+        let newlyDue = all.filter { PastSelfLogic.isDue(deliverOn: $0.deliverOn, today: today) && !pastSelfKnownDeliveredIds.contains($0.id) }
+        guard !newlyDue.isEmpty else { return }
+        for message in newlyDue { pastSelfKnownDeliveredIds.insert(message.id) }
+        // 那年今日卡的状态也可能翻了（等待中 → 已送达提示），一并重算；
+        // 送达卡本身只定点插新节 / 原位换旧节，不整栈重建。
+        renderPastSelfThisDay(visible: pastSelfVisibleEntries())
+        let visible = pastSelfVisibleEntries()
+        var chainIds: [String] = []
+        for message in all where !chainIds.contains(message.chainId) {
+            chainIds.append(message.chainId)
+        }
+        // 已送达链的顺序与全量渲染一致（首次出现序）；新节按此顺序插到栈内对应位置。
+        var deliveredChainIds: [String] = []
+        for chainId in chainIds {
+            guard pastSelfDeliveredSectionData(chainId: chainId, all: all, today: today, visible: visible) != nil else { continue }
+            deliveredChainIds.append(chainId)
+        }
+        var newlyDueChainIds: [String] = []
+        for message in newlyDue where !newlyDueChainIds.contains(message.chainId) {
+            newlyDueChainIds.append(message.chainId)
+        }
+        for chainId in newlyDueChainIds {
+            guard let data = pastSelfDeliveredSectionData(chainId: chainId, all: all, today: today, visible: visible) else { continue }
+            let section = pastSelfDeliverySection(
+                chainId: chainId, messages: data.messages, latestDelivered: data.latestDelivered,
+                origin: data.origin, visibility: data.visibility, isAnswered: data.isAnswered, waiting: data.waiting)
+            if let existingIndex = pastSelfDeliveredChainIds.firstIndex(of: chainId) {
+                // 该串已在卡内（再回一句的跟进到期）：只换本节，旧节原位替换，
+                // 其余串不动；草稿仍在 pastSelfReplyDrafts 里，重建时恢复。
+                let old = pastSelfDeliveryStack.arrangedSubviews[existingIndex]
+                pastSelfDeliveryStack.removeArrangedSubview(old)
+                old.removeFromSuperview()
+                pastSelfDeliveryStack.insertArrangedSubview(section, at: existingIndex)
+            } else {
+                let index = deliveredChainIds.firstIndex(of: chainId) ?? pastSelfDeliveryStack.arrangedSubviews.count
+                let clamped = min(index, pastSelfDeliveryStack.arrangedSubviews.count)
+                pastSelfDeliveryStack.insertArrangedSubview(section, at: clamped)
+                pastSelfDeliveredChainIds.insert(chainId, at: clamped)
+            }
+            // 刚到期那条单节滑入：0.25 秒短距（只走 transform / opacity 合成层，
+            // 不触发布局）；减动效开启时直接出现，不做位移动画。
+            if UIAccessibility.isReduceMotionEnabled {
+                section.alpha = 1
+            } else {
+                section.alpha = 0
+                section.transform = CGAffineTransform(translationX: 0, y: 8)
+                UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
+                    section.alpha = 1
+                    section.transform = .identity
+                })
+            }
+        }
+        pastSelfDeliveryCard.isHidden = pastSelfDeliveryStack.arrangedSubviews.isEmpty
+        // 送达卡从空变有、且模块容器此前因各卡全空而塌掉时，把容器一并恢复，
+        // 否则新节插进了隐藏的容器里、用户仍看不见（与 renderModules 的显隐口径一致）。
+        if !pastSelfDeliveryCard.isHidden, modulesContainer.isHidden {
+            modulesContainer.isHidden = false
+            modulesHeightConstraint.isActive = false
+            if headerWidthValue > 0 { layoutHeaderForced(widthValue: headerWidthValue) }
+        }
         pastSelfRefreshLayout()
     }
 
