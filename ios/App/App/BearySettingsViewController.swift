@@ -3094,8 +3094,8 @@ final class BearySettingsViewController: UIViewController {
             // 草稿读钉住账号（loadAll(forAccount:)），失败（损坏）即整单
             // fail-closed，不拿空草稿冒充“没有草稿”；lastLoadError 是读后
             // 检查标记（与草稿箱同款用法）。
-            let drafts = BearyDraftFiles.loadAll(forAccount: pin.userId)
-            if BearyDraftFiles.lastLoadError != nil {
+            let drafts = BearyDraftStore.loadAll(forAccount: pin.userId)
+            if BearyDraftStore.lastLoadError != nil {
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
                     self.finishBackupFailed()
@@ -3295,7 +3295,7 @@ final class BearySettingsViewController: UIViewController {
             if let serverKey = item.serverKey { imageDict["server_key"] = serverKey }
             var embedded: String?
             if let local = item.localFile,
-               let url = BearyDraftFiles.fileURL(for: local),
+               let url = BearyDraftImageStore.fileURL(for: local),
                let data = try? Data(contentsOf: url), !data.isEmpty {
                 embedded = "data:image/jpeg;base64," + data.base64EncodedString()
             } else if let serverKey = item.serverKey {
