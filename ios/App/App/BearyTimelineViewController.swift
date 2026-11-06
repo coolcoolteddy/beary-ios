@@ -2255,6 +2255,7 @@ class BearyTimelineViewController: UIViewController {
     /// r17-C1：已尝试过落盘恢复的月份 key（无文件时不再重复读盘；
     /// 账号切换清掉；invalidateStatsLine 不清——删缓存后走网络重拉，
     /// 不得用旧落盘把刚失效的缓存顶回去）。
+    private var calendarSnapshotRestoreTried: Set<String> = []
     /// 64 包反馈修（第 3 项）+ 本批新规矩：统计行已渲染数值（streak|monthTotal，
     /// 失败/空态另计）。签名故意不含月份 key——切月时数值不变即一字不碰按钮，
     /// 旧签名含月份 key 是闪的根因（数值未变仍整行 setAttributedTitle 重建）。
@@ -5068,7 +5069,7 @@ class BearyTimelineViewController: UIViewController {
                 self.calendarCache[key] = response
                 self.renderCalendar()
                 self.updateStatsLine()
-                // 恢复即强制刷新确认（失败则留旧圆点 + 横条写上次的数据）。
+                // 恢复即强制刷新确认（失败则留旧圆点 + 卡内失败行写上次的数据）。
                 self.fetchCalendarMonth(key: key, force: true)
             }
         }
@@ -6483,7 +6484,7 @@ class BearyTimelineViewController: UIViewController {
     @objc private func didTapStats() {
         // G14：重试全部可视失败月份（周视图跨月时次要月份也有入口，不只主月份）。
         // r17-C1：失败月即使已有落盘旧数据也要强制重拉——旧圆点只是上次的，
-        // 横条「显示的是上次的数据」的重试必须真发请求，否则点按无反应。
+        // 卡内失败行「显示的是上次的数据」的重试必须真发请求，否则点按无反应。
         for key in monthKeysForCurrentView() {
             if calendarFailed.contains(key) {
                 fetchCalendarMonth(key: key, force: true)
