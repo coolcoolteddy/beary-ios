@@ -1510,6 +1510,14 @@ class BearyProfileViewController: UIViewController {
     /// 送达卡内正在「再回一句」的链 id（nil = 无展开）；草稿按链 id 存，防多串互串。
     private var pastSelfReplyingChainId: String?
     private var pastSelfReplyDrafts: [String: String] = [:]
+    /// 创建在途守卫（按本地 id）：同步扫描与手动提交共用同一条创建任务——
+    /// 现行两者调同一函数、无守卫，每调一次即发一次 POST，同一行会重复
+    /// 创建；在途时后调者直接返回，等回包。
+    private var pastSelfCreateInFlight: Set<String> = []
+    /// 待撤回的本地 id：创建未回包时点的撤回，服务端从未签发该 id，不能拿
+    /// 本地 ps_… id 发撤回（无行可撤）；先记下，创建回包一到即按服务端
+    /// id 补发（见 pastSelfPushCreate 成功分支）。
+    private var pastSelfPendingRevokeLocalIds: Set<String> = []
 
     /// 随机漫步卡：点卡片进详情；「换一篇」只换卡片不跳转（文字按钮——
     /// 洗牌图标官方包缺失，见本批缺图标清单，不用 icon_refresh 顶替）。
@@ -4996,8 +5004,16 @@ class BearyProfileViewController: UIViewController {
             return
         }
         if store.revoke(messageId: waiting.id, nowMs: pastSelfNowMs(), today: today) {
-            pastSelfPushRevoke(waiting.id)
-            BearyToast.show(in: view, message: "已撤回")
+            if waiting.localOnly {
+                // 服务端从未签发该 id：不拿本地 ps_… id 发撤回（无行可撤），
+                // 先记待撤回；创建回包一到即按服务端 id 补发（见 pastSelfPushCreate）。
+                // 界面先收起留话（见下 render），只提示正在同步，不谎称已撤回。
+                pastSelfPendingRevokeLocalIds.insert(waiting.id)
+                BearyToast.show(in: view, message: "正在同步撤回")
+            } else {
+                pastSelfPushRevoke(waiting.id)
+                BearyToast.show(in: view, message: "已撤回")
+            }
         } else {
             BearyToast.show(in: view, message: "这句话已送达，撤回不了了")
         }
@@ -5304,9 +5320,11 @@ class BearyProfileViewController: UIViewController {
                 case .success(let response):
                     store.mergeServerRows(response.messages ?? [])
                     // 补推：未同步行创建、已撤回行撤回；失败静默，本地仍是事实来源。
-                    // 已撤回的本地未同步行不创建（不复活）。
+                    // 已撤回的本地未同步行也创建——创建回包一到即按服务端 id
+                    // 补发撤回（见 pastSelfPushCreate），不复活、不丢撤回；
+                    // 在途守卫保证手动创建在途时同步不对同一行再发一次创建。
                     let all = store.loadAll()
-                    for row in all where row.localOnly && row.revokedAtMs == nil {
+                    for row in all where row.localOnly {
                         strongSelf.pastSelfPushCreate(row)
                     }
                     for row in all where row.revokedAtMs != nil && !row.localOnly {
@@ -5324,13 +5342,32 @@ class BearyProfileViewController: UIViewController {
 
     private func pastSelfPushCreate(_ message: PastSelfMessage) {
         let localId = message.id
+        // 在途守卫：同一本地行只发一次创建（同步扫描与手动提交共用一条任务）。
+        guard !pastSelfCreateInFlight.contains(localId) else { return }
+        pastSelfCreateInFlight.insert(localId)
         BearyAPI.shared.createPastSelfMessage(originEntryId: message.originEntryId, body: message.body, deliverOn: message.deliverOn) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self, let store = strongSelf.pastSelfStore() else { return }
+                strongSelf.pastSelfCreateInFlight.remove(localId)
                 switch result {
                 case .success(let response):
                     if let serverRow = response.message {
                         store.replaceLocalRow(localId: localId, with: serverRow)
+                        // 创建回包到了：本地已撤回过的行（replaceLocalRow 保留了
+                        // revokedAtMs）即按服务端 id 补发撤回，不复活；撤回
+                        // POST 失败也无妨——该行现已是服务端已知 + 已撤回态，
+                        // 下次同步的撤回补推会再发一次。
+                        let revoked = store.loadAll().first(where: { $0.id == serverRow.id })?.revokedAtMs != nil
+                        if revoked {
+                            // 撤回确认提示只给本会话正在等的这次撤回（pending 集里有
+                            // 该本地 id）：几天前离线撤回的行由同步默默补推，不弹旧 toast。
+                            let awaitingConfirmation = strongSelf.pastSelfPendingRevokeLocalIds.contains(localId)
+                            strongSelf.pastSelfPendingRevokeLocalIds.remove(localId)
+                            strongSelf.pastSelfPushRevoke(serverRow.id)
+                            if awaitingConfirmation, strongSelf.isOwnProfile {
+                                BearyToast.show(in: strongSelf.view, message: "已撤回")
+                            }
+                        }
                         if strongSelf.isOwnProfile {
                             strongSelf.renderPastSelf(visible: strongSelf.pastSelfVisibleEntries())
                         }
