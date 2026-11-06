@@ -1434,6 +1434,71 @@ extension UIImageView {
         }
         objc_setAssociatedObject(self, &bearyImageTaskKey, task, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
     }
+
+    /// 图片模糊到清晰（加载三件套第 2 项）：先用 32px 下采样小图当同色调
+    /// 模糊占位（小图放大即模糊，不另起下载——与原图共用一份磁盘字节、
+    /// 同一内存键族），原图到后从模糊变清晰，同时从 1.04 倍缩到 1 倍
+    /// （transform + opacity，0.3s）；瞬时命中缓存时直设不闪。
+    /// 容器尺寸由调用方预先固定（卡片图片条 216 高、宽按宽高比预留），
+    /// 本方法不改布局、不跳动；小图失败不挡原图加载。
+    func bearySetImageWithBlurUp(url: URL?, downsampleToWidth: CGFloat? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil) {
+        if let old = objc_getAssociatedObject(self, &bearyImageTaskKey) as? URLSessionDataTask {
+            old.cancel()
+        }
+        bearyRemoveWebRingSpinner()
+        objc_setAssociatedObject(self, &bearyImageURLKey, url, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        transform = .identity
+        alpha = 1
+        self.image = nil
+        guard let url = url else {
+            objc_setAssociatedObject(self, &bearyImageTaskKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            return
+        }
+        // 占位图未到之前挂转圈（占位图一到即摘，与 bearySetImage 同口径）。
+        bearyAttachWebRingSpinner()
+        let startedAt = Date()
+        let tinyTask = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: 32) { [weak self] result in
+            guard let self = self else { return }
+            let current = objc_getAssociatedObject(self, &bearyImageURLKey) as? URL
+            guard current == url else { return }
+            if case .failure(let err) = result, case .cancelled = err { return }
+            if case .success(let tiny) = result {
+                self.image = tiny
+                self.bearyRemoveWebRingSpinner()
+            }
+            self.bearyLoadFullForBlurUp(url: url, downsampleToWidth: downsampleToWidth, startedAt: startedAt, onFailure: onFailure)
+        }
+        objc_setAssociatedObject(self, &bearyImageTaskKey, tinyTask, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+
+    private func bearyLoadFullForBlurUp(url: URL, downsampleToWidth: CGFloat?, startedAt: Date, onFailure: ((BearyImageLoadError) -> Void)?) {
+        let task = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: downsampleToWidth) { [weak self] result in
+            guard let self = self else { return }
+            let current = objc_getAssociatedObject(self, &bearyImageURLKey) as? URL
+            guard current == url else { return }
+            if case .failure(let err) = result, case .cancelled = err { return }
+            self.bearyRemoveWebRingSpinner()
+            switch result {
+            case .success(let img):
+                let slowLoad = Date().timeIntervalSince(startedAt) >= 0.15
+                if slowLoad && self.alpha == 1 && BearyMotion.animated(true) {
+                    self.image = img
+                    self.alpha = 0
+                    self.transform = CGAffineTransform(scaleX: 1.04, y: 1.04)
+                    UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: {
+                        self.alpha = 1
+                        self.transform = .identity
+                    })
+                } else {
+                    self.transform = .identity
+                    self.image = img
+                }
+            case .failure(let err):
+                onFailure?(err)
+            }
+        }
+        objc_setAssociatedObject(self, &bearyImageTaskKey, task, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
 }
 
 // MARK: - 时间与名字

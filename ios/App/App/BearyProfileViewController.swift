@@ -280,6 +280,19 @@ class BearyProfileViewController: UIViewController {
     /// 50 口径，不在本常量内，见各处注释）。
     private let tabPageLimit = 20
     private var tabLoading = false
+    /// 加载三件套·骨架屏：当前 tab 加载中且尚无展示行时，行区先出 3 张
+    /// 骨架卡（与真实卡片同布局）；有缓存/有行/下拉刷新时不走这里。
+    /// 本人页空 tab 占位行只在加载完成后才出现（showsOwnEmptyPlaceholder
+    /// 本身要求 !tabLoading），与骨架不冲突。
+    private var showingProfileSkeleton: Bool {
+        tabLoading && displayedEntries.isEmpty && !profileDeleted
+    }
+    /// 骨架是否实际出过屏：首拉回包时走骨架淡出＋内容 60ms/8px 入场。
+    private var didShowProfileSkeleton = false
+    private let profileSkeletonRowCount = 3
+    /// 加载三件套·底部脚部（加载中 3 个跳动圆点 / 没有更多了），
+    /// 复用于 makeLoadingFooter / makeEndFooter。
+    private let profileLoadMoreFooterView = BearyLoadMoreFooterView()
     /// 审计第 7 项残留：权限变化（取关/互关翻转）待全量重拉标记。
     /// 置位后下一次真正跑起来的 loadTab(forceReload:) 不走 since、直接
     /// 全量首拉并先清当前 tab 模型；普通刷新不置位，since 口径不动。
@@ -3619,7 +3632,10 @@ class BearyProfileViewController: UIViewController {
 
     /// M9/M10：仅对从未播过入场动画的可见行做错峰滑入（每行递增 0.03s）；
     /// 已有行一律不动。减动效时直设终值（即不播）。
-    private func animateNewRows() {
+    /// 加载三件套·错峰口径：首屏/切 tab/后台回填 60ms 步进、8px 上移；
+    /// 分页追加 50ms 步进、24px 下滑入；0.25s、封顶 0.24s、可交互。
+    /// 只针对未播过的新行（animatedRowIds），已有行不重播。
+    private func animateNewRows(delayStep: TimeInterval = 0.06, yOffset: CGFloat = 8) {
         guard !UIAccessibility.isReduceMotionEnabled else { return }
         tableView.layoutIfNeeded()
         guard let visiblePaths = tableView.indexPathsForVisibleRows else { return }
@@ -3630,12 +3646,12 @@ class BearyProfileViewController: UIViewController {
             guard let cell = tableView.cellForRow(at: path) else { continue }
             animatedRowIds.insert(entryId)
             cell.alpha = 0
-            cell.transform = CGAffineTransform(translationX: 0, y: 6)
+            cell.transform = CGAffineTransform(translationX: 0, y: yOffset)
             UIView.animate(withDuration: 0.25, delay: delay, options: [.curveEaseOut, .allowUserInteraction], animations: {
                 cell.alpha = 1
                 cell.transform = .identity
             })
-            delay = min(delay + 0.03, 0.24)
+            delay = min(delay + delayStep, 0.24)
         }
     }
 
@@ -5893,12 +5909,27 @@ class BearyProfileViewController: UIViewController {
                 let inserted = (oldRowCount..<oldRowCount + appendedRowCount).map { IndexPath(row: $0, section: 0) }
                 tableView.performBatchUpdates({
                     self.tableView.insertRows(at: inserted, with: .none)
-                }, completion: { [weak self] _ in self?.animateNewRows() })
+                }, completion: { [weak self] _ in self?.animateNewRows(delayStep: 0.05, yOffset: 24) })
+            } else if didShowProfileSkeleton, BearyMotion.animated(true) {
+                // 加载三件套·骨架淡出＋内容入场：整表 0.25s 交叉溶解（骨架同步
+                // 淡出），内容再从上到下每块错开 60ms、依次淡入并上移 8px。
+                didShowProfileSkeleton = false
+                UIView.transition(with: tableView, duration: 0.25, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
+                    self.tableView.reloadData()
+                }, completion: { [weak self] _ in
+                    guard let self = self else { return }
+                    let cells = (self.tableView.indexPathsForVisibleRows ?? []).sorted().compactMap { self.tableView.cellForRow(at: $0) }
+                    BearyLoadingUX.staggerIn(cells: cells, delayStep: 0.06, yOffset: 8)
+                })
             } else {
+                didShowProfileSkeleton = false
                 tableView.reloadData()
             }
         case .failure:
             tabError = true
+            // 加载三件套·骨架屏：失败时骨架随 reloadData 直接撤，不留
+            // didShowProfileSkeleton 给下次回包（下次成功不再走骨架过渡）。
+            didShowProfileSkeleton = false
             tableView.reloadData()
         }
         refreshFooter()
@@ -6383,6 +6414,11 @@ class BearyProfileViewController: UIViewController {
         } else if tabLoadMore {
             stateView = makeLoadingFooter()
             kind = "loading"
+        } else if currentTab != .diary, !currentHasMore, !displayedEntries.isEmpty {
+            // 加载三件套·底部脚部：赞过/收藏 tab 到末页时显示“没有更多了”
+            //（日记 tab 只显最新 3 篇、不翻页，不出此行）。
+            stateView = makeEndFooter()
+            kind = "end"
         } else {
             stateView = nil
             kind = "none"
@@ -6579,7 +6615,7 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    /// 批 C：脚部视图的落地高度——已有 frame 高度的直接用（loading 脚部 80、
+    /// 批 C：脚部视图的落地高度——已有 frame 高度的直接用（加载/末页脚部 56、
     /// 空态脚部已算好 fitting 高）；error 脚部改前未设 frame，叠加时才按宽
     /// 算一次 fitting 高（不改无照片时的原行为，原路径仍直接赋值）。
     private func footerFittingHeight(view: UIView, width: CGFloat) -> CGFloat {
@@ -6806,18 +6842,18 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }
 
+    /// 加载三件套·底部脚部：加载中 3 个跳动小圆点（0.45s 错峰 0.15s）。
     private func makeLoadingFooter() -> UIView {
-        let container = UIView(frame: CGRect(x: 0, y: 0, width: headerWidthValue, height: 80))
-        let spinner = BearyRefreshIconView()
-        spinner.startSpinning()
-        container.addSubview(spinner)
-        NSLayoutConstraint.activate([
-            spinner.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            spinner.topAnchor.constraint(equalTo: container.topAnchor, constant: 40),
-            spinner.widthAnchor.constraint(equalToConstant: 20),
-            spinner.heightAnchor.constraint(equalToConstant: 20),
-        ])
-        return container
+        profileLoadMoreFooterView.setState(.loading)
+        profileLoadMoreFooterView.frame = CGRect(x: 0, y: 0, width: headerWidthValue, height: BearyLoadMoreFooterView.height)
+        return profileLoadMoreFooterView
+    }
+
+    /// 加载三件套·底部脚部：末页“没有更多了”。
+    private func makeEndFooter() -> UIView {
+        profileLoadMoreFooterView.setState(.end)
+        profileLoadMoreFooterView.frame = CGRect(x: 0, y: 0, width: headerWidthValue, height: BearyLoadMoreFooterView.height)
+        return profileLoadMoreFooterView
     }
 
     private func makeEmptyFooter() -> UIView {
@@ -8209,6 +8245,11 @@ final class BearyProfileEmptyPlaceholderCell: UITableViewCell {
 
 extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        // 加载三件套·骨架屏：tab 首载无行时先出 3 张骨架卡（与真实卡片同布局）。
+        if showingProfileSkeleton {
+            didShowProfileSkeleton = true
+            return profileSkeletonRowCount
+        }
         // 批 C：日记 tab = 最新 3 篇 + 1 行“更多日记”按钮（本人页才有）；
         // 赞过/收藏 tab 行数一字不动。
         // 109：本人页空 tab 另加 1 行占位（空时 displayedEntries.count 为 0、
@@ -8217,6 +8258,13 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        // 加载三件套·骨架行（扫光在 cell 内自启动，减动效静态）。
+        if showingProfileSkeleton {
+            if let cell = tableView.dequeueReusableCell(withIdentifier: BearySkeletonCell.reuseIdentifier) as? BearySkeletonCell {
+                return cell
+            }
+            return BearySkeletonCell(style: .default, reuseIdentifier: BearySkeletonCell.reuseIdentifier)
+        }
         // 109：占位行优先返回——不走日记卡创建与更多按钮分支；点按时
         // didSelectRowAt 的 row < displayedEntries.count 守卫会直接返回，无动作。
         if showsOwnEmptyPlaceholder {
@@ -8950,6 +8998,15 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             setProfileChromeHidden(true)
         } else if y < profileLastScrollOffsetY && profileChromeHidden {
             setProfileChromeHidden(false)
+        }
+        // 加载三件套·加载更多：滑到离底部一屏时预加载下一页（复用现有
+        // loadMoreIfNeeded；日记 tab 不翻页、loading/失败/无更多时守卫拦住，
+        // willDisplay 距末行触发是兜底，滚动触发更早一屏）。
+        if currentTab != .diary {
+            let remaining = scrollView.contentSize.height - (y + scrollView.bounds.height - scrollView.adjustedContentInset.bottom)
+            if remaining <= scrollView.bounds.height {
+                loadMoreIfNeeded()
+            }
         }
     }
 

@@ -67,6 +67,9 @@ enum BearyFeedIconCache {
 final class BearyFeedRetryButton: UIButton {
     weak var targetImageView: UIImageView?
     var retryURL: URL?
+    /// 重试沿用首次加载口径：图片槽走模糊到清晰（见 bearyFeedLoadImage），
+    /// 头像等不走。本标志由 bearyFeedLoadImage 在挂重试钮时写入。
+    var retryBlurUp = false
     // B 组：帧 28 时 point 外扩至 44（头像帧另改 44 后本扩不生效，图片重试仍靠它）。
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         let dx: CGFloat = bounds.width < 44 ? (44 - bounds.width) / 2 : 0
@@ -92,10 +95,19 @@ func bearyFeedRetryButton(target: Any?, action: Selector) -> BearyFeedRetryButto
 }
 
 /// 经 bearySetImage 的 onFailure 钩子加载：失败（取消除外，复用取消不算失败）时亮重试图标。
-func bearyFeedLoadImage(into imageView: UIImageView, url: URL?, retryButton: BearyFeedRetryButton, downsampleToWidth: CGFloat? = nil) {
+/// blurUp=true 时走模糊到清晰（32px 小图占位 → 原图 1.04→1 缩放淡入），
+/// 只用于卡片/详情图片槽；头像等传 false，走原口径。
+func bearyFeedLoadImage(into imageView: UIImageView, url: URL?, retryButton: BearyFeedRetryButton, downsampleToWidth: CGFloat? = nil, blurUp: Bool = false) {
     retryButton.targetImageView = imageView
     retryButton.retryURL = url
+    retryButton.retryBlurUp = blurUp
     retryButton.isHidden = true
+    if blurUp {
+        imageView.bearySetImageWithBlurUp(url: url, downsampleToWidth: downsampleToWidth, onFailure: { [weak retryButton] _ in
+            retryButton?.isHidden = false
+        })
+        return
+    }
     imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: downsampleToWidth, onFailure: { [weak retryButton] _ in
         retryButton?.isHidden = false
     })
@@ -106,6 +118,12 @@ func bearyFeedPerformRetry(_ button: BearyFeedRetryButton) {
     button.isHidden = true
     // 80 包 B3-2：重试时图框已布局，按实测框宽下采样（未布局时传 nil 走原路）。
     let retryDownsample = imageView.bounds.width > 0 ? imageView.bounds.width * UIScreen.main.scale : nil
+    if button.retryBlurUp {
+        imageView.bearySetImageWithBlurUp(url: url, downsampleToWidth: retryDownsample, onFailure: { [weak button] _ in
+            button?.isHidden = false
+        })
+        return
+    }
     imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: retryDownsample, onFailure: { [weak button] _ in
         button?.isHidden = false
     })
@@ -2304,7 +2322,7 @@ class BearyDiaryCardCell: UITableViewCell {
             let slot = imageSlots[imageIndex]
             slot.tag = imageIndex
             let strip = stripWidth(forKey: imageKey, dims: dims, height: 216)
-            bearyFeedLoadImage(into: slot, url: BearyImageURLs.imageURL(key: imageKey, thumb: true), retryButton: imageSlotRetryButtons[imageIndex], downsampleToWidth: strip * UIScreen.main.scale)
+            bearyFeedLoadImage(into: slot, url: BearyImageURLs.imageURL(key: imageKey, thumb: true), retryButton: imageSlotRetryButtons[imageIndex], downsampleToWidth: strip * UIScreen.main.scale, blurUp: true)
             imageSlotWidthConstraints[imageIndex].constant = strip
             slot.isHidden = false
             setLiveOverlay(index: imageIndex, staticKey: imageKey, liveKey: liveVideos?[imageKey])
