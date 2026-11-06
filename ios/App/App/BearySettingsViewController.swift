@@ -503,7 +503,8 @@ final class BearySettingsViewController: UIViewController {
         buildLayout()
         loadAll()
         // 切号后私信权限行跟新账号走（设置页内切换账号时 viewWillAppear 不触发）。
-        NotificationCenter.default.addObserver(self, selector: #selector(refreshDMLevelRow), name: .bearyUserDidChange, object: nil)
+        // r25-4：切号先清空旧档位、文案回“加载中…”、在途请求代次作废，再按新号重读。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleUserChangedForDMLevel), name: .bearyUserDidChange, object: nil)
         // 添加账号回设置页时 viewWillAppear 跑在 refreshMe 完成之前（dismiss 动画
         // 起始即触发，refreshMe 在 dismiss 完成回调里才跑），当时 currentUser 仍是
         // 旧号、快照不变、指纹不变，旧卡被保留；refreshMe 完成后 id 真变才广播
@@ -3850,6 +3851,11 @@ final class BearySettingsViewController: UIViewController {
     /// 第三轮审计 02：私信档位本地修改代次——保存时 +1，GET 回包先校验代次，
     /// 晚到的旧 GET 不得覆写已保存的新档位。
     private var dmLevelGeneration = 0
+    // r25-4：私信权限回包账号守卫——拉取与提交各拍代次＋账号＋鉴权代次，
+    // 切号后旧回包丢弃；在途请求被切号作废时新请求不被 loading 标志挡掉。
+    private var dmLevelFetchGeneration = 0
+    private var dmLevelPostGeneration = 0
+    private var dmLevelRequestAccountId: Int?
 
     private func buildPrivacySection() {
         let privacyDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
@@ -3894,16 +3900,49 @@ final class BearySettingsViewController: UIViewController {
 
     /// 私信权限行刷新：打开/切号时 GET 当前档位并刷新行文案；失败时已有值保持，
     /// 从未拿到值则文案置“获取失败，点按重试”（点按仍可进档位选择重发 POST）。
+    /// r25-4：账号真变时先清空旧档位、文案回“加载中…”、在途拉取/提交代次
+    /// 作废（旧回包由守卫丢弃），再按新号重读；切号后新请求不被旧 loading 挡掉。
+    @objc private func handleUserChangedForDMLevel() {
+        // 同一账号的重复广播（/me 成功也会发）不清空、不重读，行文案保持；
+        // 账号真变或首次加载时才清空重读。
+        if dmLevel != nil, SessionManager.shared.currentUser?.id == dmLevelRequestAccountId {
+            return
+        }
+        dmLevel = nil
+        if SessionManager.shared.isLoggedIn {
+            dmLevelDetailLabel?.text = "加载中…"
+        }
+        dmLevelFetchGeneration += 1
+        dmLevelPostGeneration += 1
+        dmLevelLoading = false
+        dmLevelPosting = false
+        dmLevelRequestAccountId = nil
+        dmLevelRowButton?.isEnabled = true
+        refreshDMLevelRow()
+    }
+
     @objc private func refreshDMLevelRow() {
-        guard SessionManager.shared.isLoggedIn, !dmLevelLoading else { return }
+        guard SessionManager.shared.isLoggedIn,
+              let accountId = SessionManager.shared.currentUser?.id else { return }
+        // 同一账号在途时不重复发；切号后（账号变了）允许重发，旧回包由代次守卫丢弃。
+        if dmLevelLoading, dmLevelRequestAccountId == accountId { return }
+        dmLevelFetchGeneration += 1
+        let fetchGeneration = dmLevelFetchGeneration
+        // 第三轮审计 02：记下发出时的保存代次；保存已递增代次时，晚到回包直接丢弃。
+        let saveGeneration = dmLevelGeneration
+        let epoch = BearyAPI.shared.authEpoch
+        dmLevelRequestAccountId = accountId
         dmLevelLoading = true
-        // 第三轮审计 02：记下发出时的代次；保存已递增代次时，晚到回包直接丢弃。
-        let generation = dmLevelGeneration
         BearyAPI.shared.fetchDMLevel { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                // 三重门：代次（切号/重发已作废）＋账号＋鉴权代次，任一不符即旧回包，丢弃。
+                guard fetchGeneration == self.dmLevelFetchGeneration,
+                      accountId == SessionManager.shared.currentUser?.id,
+                      epoch == BearyAPI.shared.authEpoch else { return }
                 self.dmLevelLoading = false
-                guard generation == self.dmLevelGeneration else { return }
+                // 第三轮审计 02：保存已递增代次时，晚到的旧 GET 不得覆写已保存的新档位。
+                guard saveGeneration == self.dmLevelGeneration else { return }
                 switch result {
                 case .success(let resp):
                     if let level = resp.dmLevel {
@@ -3953,7 +3992,13 @@ final class BearySettingsViewController: UIViewController {
     }
 
     private func saveDMLevel(_ level: String) {
-        guard level != dmLevel, !dmLevelPosting, SessionManager.shared.isLoggedIn else { return }
+        guard level != dmLevel, !dmLevelPosting, SessionManager.shared.isLoggedIn,
+              let accountId = SessionManager.shared.currentUser?.id else { return }
+        // r25-4：提交回包账号守卫——拍代次＋账号＋鉴权代次，切号后旧回包
+        // 不写新号行；posting 标志只由最新提交的回包复位。
+        dmLevelPostGeneration += 1
+        let generation = dmLevelPostGeneration
+        let epoch = BearyAPI.shared.authEpoch
         dmLevelPosting = true
         dmLevelRowButton?.isEnabled = false
         // 第三轮审计 02：乐观更新——先显新档位并递增代次，此前在途的 GET
@@ -3965,6 +4010,9 @@ final class BearySettingsViewController: UIViewController {
         BearyAPI.shared.saveDMLevel(level) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                guard generation == self.dmLevelPostGeneration,
+                      accountId == SessionManager.shared.currentUser?.id,
+                      epoch == BearyAPI.shared.authEpoch else { return }
                 self.dmLevelPosting = false
                 self.dmLevelRowButton?.isEnabled = true
                 switch result {
