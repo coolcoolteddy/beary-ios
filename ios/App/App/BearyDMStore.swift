@@ -269,10 +269,12 @@ enum BearyDMStore {
     /// 损坏时禁止覆盖：只回本次服务端新消息，不写盘、不动原文件。
     /// 第七轮 #4：整库取自内存索引（cachedAll），不再每次读盘解码；写回时同步更新索引。
     /// completion 为空时仍照常落盘（只不要回包结果的调用方可省回调）。
-    static func saveMessages(accountId: Int?, peer: BearyAPI.FriendUser, messages: [BearyAPI.DMMessage], completion: (([BearyAPI.DMMessage]) -> Void)? = nil) {
+    /// completion 第二个参数为写盘成败：失败时合并结果仍是内存值（可展示），
+    /// 但磁盘未落下，调用方须置失败态、不得按已保存展示。
+    static func saveMessages(accountId: Int?, peer: BearyAPI.FriendUser, messages: [BearyAPI.DMMessage], completion: (([BearyAPI.DMMessage], Bool) -> Void)? = nil) {
         ioQueue.async {
             guard let accountId = accountId, let peerId = peer.id else {
-                DispatchQueue.main.async { completion?([]) }
+                DispatchQueue.main.async { completion?([], false) }
                 return
             }
             let (base, corrupt) = cachedAll(accountId: accountId)
@@ -280,14 +282,14 @@ enum BearyDMStore {
                 let fresh = dmMessages(from: messages.map {
                     StoredMessage(id: $0.id, senderId: $0.senderId, body: $0.body, createdAt: $0.createdAt)
                 })
-                DispatchQueue.main.async { completion?(fresh) }
+                DispatchQueue.main.async { completion?(fresh, false) }
                 return
             }
             let mergedAll = BearyDMStoreCore.merge(base, peer: peer, messages: messages)
             memoryIndex[accountId] = mergedAll
-            saveAll(mergedAll, accountId: accountId)
+            let saved = saveAll(mergedAll, accountId: accountId)
             let merged = dmMessages(from: mergedAll["\(peerId)"]?.messages ?? [])
-            DispatchQueue.main.async { completion?(merged) }
+            DispatchQueue.main.async { completion?(merged, saved) }
         }
     }
 

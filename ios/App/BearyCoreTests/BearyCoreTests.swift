@@ -729,7 +729,7 @@ final class BearyDMStoreBackgroundTests: XCTestCase {
     private func save(_ messages: [BearyAPI.DMMessage], peerId: Int) -> [BearyAPI.DMMessage] {
         let exp = expectation(description: "saveMessages")
         var saved: [BearyAPI.DMMessage] = []
-        BearyDMStore.saveMessages(accountId: accountId, peer: peer(peerId), messages: messages) { result in
+        BearyDMStore.saveMessages(accountId: accountId, peer: peer(peerId), messages: messages) { result, _ in
             saved = result
             exp.fulfill()
         }
@@ -771,7 +771,7 @@ final class BearyDMStoreBackgroundTests: XCTestCase {
         var completed = false
         let exp = expectation(description: "save-async")
         let start = CFAbsoluteTimeGetCurrent()
-        BearyDMStore.saveMessages(accountId: accountId, peer: peer(13), messages: batch) { result in
+        BearyDMStore.saveMessages(accountId: accountId, peer: peer(13), messages: batch) { result, _ in
             completed = true
             XCTAssertEqual(result.count, 2000)
             exp.fulfill()
@@ -794,7 +794,7 @@ final class BearyDMStoreBackgroundTests: XCTestCase {
                 let peerId = i < 5 ? 14 : 100 + i
                 let base = i < 5 ? i * 20 : 0
                 let batch = (1...20).map { self.msg(base + $0) }
-                BearyDMStore.saveMessages(accountId: self.accountId, peer: self.peer(peerId), messages: batch) { _ in
+                BearyDMStore.saveMessages(accountId: self.accountId, peer: self.peer(peerId), messages: batch) { _, _ in
                     exp.fulfill()
                 }
             }
@@ -852,7 +852,7 @@ final class BearyDMStoreBackgroundTests: XCTestCase {
             exp1.fulfill()
         }
         let exp2 = expectation(description: "nil-save")
-        BearyDMStore.saveMessages(accountId: nil, peer: peer(19), messages: [msg(1)]) { result in
+        BearyDMStore.saveMessages(accountId: nil, peer: peer(19), messages: [msg(1)]) { result, _ in
             XCTAssertTrue(result.isEmpty)
             exp2.fulfill()
         }

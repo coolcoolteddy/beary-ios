@@ -1138,9 +1138,16 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         BearyToast.show(in: self.view, message: "手机里的旧消息暂时读不出来")
                     } else {
                         // 读改写走后台串行队列：save 直接回合并后的本会话消息，不再重读一次。
-                        BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched) { [weak self] merged in
+                        // 写盘失败不再静默：服务端数据仍展示（内存值），但置失败态＋toast，
+                        // 下拉刷新可重试（重拉即重写盘）；空消息时失败态走加载失败重试入口。
+                        BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched) { [weak self] merged, saved in
                             guard let self = self else { return }
                             applyMerged(merged)
+                            if !saved {
+                                self.loadFailed = true
+                                self.updateEmptyState()
+                                BearyToast.show(in: self.view, message: "本地保存失败，下拉刷新可重试")
+                            }
                         }
                     }
                 case .failure(let error):
@@ -1262,9 +1269,15 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         BearyToast.show(in: self.view, message: "手机里的旧消息暂时读不出来")
                     } else {
                         // 待发在回包时刻才取，见 loadLatest（审计四轮增量 12）。
-                        BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older) { [weak self] merged in
+                        // 写盘失败不再静默：服务端数据仍展示（内存值），但翻旧浮标切失败态＋toast，
+                        // 点按浮标或再次滚动到顶部即重试（重拉即重写盘）。
+                        BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older) { [weak self] merged, saved in
                             guard let self = self else { return }
                             applyMerged(merged)
+                            if !saved {
+                                self.setOlderLoadingState(loading: false, failed: true)
+                                BearyToast.show(in: self.view, message: "本地保存失败，滚动可重试")
+                            }
                         }
                     }
                 case .failure:
