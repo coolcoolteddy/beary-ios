@@ -400,6 +400,39 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// saveAsync/deleteAsync 同一串行队列），旧读回写不再跨队列交错、不会把已删
     /// 草稿复活；写盘本身已是原子替换。
     private let imagePrepQueue = DispatchQueue(label: "beary.composer.imagePrep", qos: .userInitiated)
+    /// R22-#6：上传状态统一同步边界。uploadGeneration / uploadAccountId /
+    /// uploadTask 的一切读写都走这把锁：主线程取消与后台队列递增不再各改
+    /// 各的；编码完成后的起传门控（校验 + 建任务）在同一把锁内原子完成，
+    /// 取消无法插进校验与建任务之间。锁内只做整数校验与任务创建，不调用
+    /// 任何会回主线程或重入本锁的代码；authAccountId 的读（authStateQueue
+    /// 的 sync）不回调编辑器，无死锁环。
+    private let uploadStateLock = NSLock()
+
+    /// 发起一次上传：发新令牌（代次 +1）并绑定当前鉴权账号，返回发起时
+    /// 捕获的（代次，账号）。调用方把令牌带进编码闭包，编码完成后传给
+    /// uploadPrepared 作起传门控；令牌在编码期间被取消作废即不起传。
+    private func issueUploadToken(for item: ComposerImageItem) -> (generation: Int, accountId: Int?) {
+        let accountId = BearyAPI.shared.authAccountId
+        uploadStateLock.lock()
+        defer { uploadStateLock.unlock() }
+        item.uploadGeneration += 1
+        item.uploadAccountId = accountId
+        return (item.uploadGeneration, accountId)
+    }
+
+    /// 锁内读当代次（回包认领用）。
+    private func lockedUploadGeneration(of item: ComposerImageItem) -> Int {
+        uploadStateLock.lock()
+        defer { uploadStateLock.unlock() }
+        return item.uploadGeneration
+    }
+
+    /// 锁内清任务句柄（回包认领后）。
+    private func lockedClearUploadTask(of item: ComposerImageItem) {
+        uploadStateLock.lock()
+        defer { uploadStateLock.unlock() }
+        item.uploadTask = nil
+    }
     private var draftClientReq: String?
     /// 当前正在写的草稿篇 id（v3 多槽键）：恢复/从箱打开时取该篇 draftId，
     /// 首次保存时生成；发布成功与丢弃只删这一篇，不碰其他篇。
@@ -5215,13 +5248,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
 
     /// 审计-编辑器详情：取消在途上传——cancel 任务 + 代次 +1（迟到回包
-    /// 由代次守卫丢弃）+ 清任务句柄。上传中缩略图的 × 即取消入口
+    /// 由代次守卫丢弃）+ 清任务句柄与发起账号。上传中缩略图的 × 即取消入口
     /// （进度区，见 markUploading 的无障碍文案）；撤销恢复时
     /// didTapUndoRemovedImage 已会为仍上传态的项重起上传，故取消不丢图。
+    /// R22-#6：任务取消、代次 +1、发起账号清掉三者在同一把锁内原子完成；
+    /// 仍在后台编码的任务尚未建出，编码完成后的起传门控只认发起时捕获的
+    /// 令牌，令牌已作废即不起传。
     private func cancelUpload(for item: ComposerImageItem) {
+        uploadStateLock.lock()
+        defer { uploadStateLock.unlock() }
         item.uploadTask?.cancel()
         item.uploadTask = nil
         item.uploadGeneration += 1
+        item.uploadAccountId = nil
     }
 
     private func removeImageItem(_ item: ComposerImageItem) {
@@ -5437,8 +5476,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.markUploading(item)
                 self.saveDraftNow()
                 self.updatePublishState()
+                // R22-#6：裁剪重传同样先发令牌：编码期间删图作废令牌后，
+                // 编码完成也不起传。
+                let token = self.issueUploadToken(for: item)
                 self.imagePrepQueue.async { [weak self, weak item] in
-                    self?.uploadPrepared(for: item, full: full, thumbData: thumb, image: cropped)
+                    self?.uploadPrepared(for: item, token: token, full: full, thumbData: thumb, image: cropped)
                 }
             }
         }
@@ -5545,6 +5587,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                         return
                                     }
                                     item.imageView.image = image
+                                    // R22-#6：实况路先发令牌再编码：编码期间删图
+                                    // 作废令牌后，编码完成也不起传。
+                                    let token = self.issueUploadToken(for: item)
                                     self.imagePrepQueue.async { [weak self, weak item] in
                                         guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
                                               let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
@@ -5573,7 +5618,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                             }
                                             self.saveDraftNow()
                                         }
-                                        self?.uploadPrepared(for: item, full: full, thumbData: thumb, image: image, liveVideoData: item?.liveVideoData)
+                                        self?.uploadPrepared(for: item, token: token, full: full, thumbData: thumb, image: image, liveVideoData: item?.liveVideoData)
                                     }
                                 }
                             }
@@ -5612,6 +5657,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // 落盘失败则按无本地文件降级（与旧行为一致，草稿里只有 key）。
                     // 编码 + 落盘 + 上传序列化全走后台队列，只编一次（旧写法落盘编一次、
                     // startUpload 又编一次）；主线程只填图与更新 UI。
+                    // R22-#6：静态路先发令牌再编码：编码期间删图作废令牌后，
+                    // 编码完成也不起传。
+                    let token = self.issueUploadToken(for: item)
                     self.imagePrepQueue.async { [weak self, weak item] in
                         guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
                               let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
@@ -5642,7 +5690,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         }
                         // 上传用同一份编码结果，不再重编（uploadPrepared 内 base64 与
                         // BearyAPI 的 JSON 序列化都在本后台线程上，不占主线程）。
-                        self?.uploadPrepared(for: item, full: full, thumbData: thumb, image: image)
+                        self?.uploadPrepared(for: item, token: token, full: full, thumbData: thumb, image: image)
                     }
                 }
             }
@@ -5655,6 +5703,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 扫一遍同款（4c）：置上传态即改发布启用态，旧代码只在上传完成回调里
         // 同步，续传/重试起传后到完成前发布态是陈旧的（应禁用时仍显可用）。
         updatePublishState()
+        // R22-#6：重试/续传入口同样先发令牌：编码期间删图作废令牌后，
+        // 编码完成也不起传。
+        let token = issueUploadToken(for: item)
         imagePrepQueue.async { [weak self, weak item] in
             guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
                   let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
@@ -5668,14 +5719,32 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             // 重试/续传：实况项带上内存里的 liveVideoData 一起重传；静态项
             // liveVideoData 为 nil，uploadPrepared 内不附带视频，路径不动。
-            self?.uploadPrepared(for: item, full: full, thumbData: thumb, image: image, liveVideoData: item?.liveVideoData)
+            self?.uploadPrepared(for: item, token: token, full: full, thumbData: thumb, image: image, liveVideoData: item?.liveVideoData)
         }
     }
 
     /// 用已编好的数据上传（调用方已在后台线程上；base64 与 BearyAPI 的 JSON 序列化
     /// 都发生在本线程，回调回主线程后只更新 UI 与落盘）。
-    private func uploadPrepared(for item: ComposerImageItem?, full: (data: Data, w: Int, h: Int), thumbData: Data, image: UIImage, liveVideoData: Data? = nil) {
+    /// R22-#6：起传门控——编码完成后、建网络任务前，先校验发起时捕获的
+    /// 令牌（代次）与所属账号（发起时绑定的鉴权账号 vs 当前鉴权账号）：
+    /// 删图/取消已作废令牌、或切号后账号已变时一律不起传。校验与建任务
+    /// 在上传锁内原子完成，取消无法插进两者之间；代次认领改在发起时
+    /// （issueUploadToken），此处不再递增。
+    private func uploadPrepared(for item: ComposerImageItem?, token: (generation: Int, accountId: Int?), full: (data: Data, w: Int, h: Int), thumbData: Data, image: UIImage, liveVideoData: Data? = nil) {
         guard let item = item else { return }
+        let dataUrl = BearyImagePrep.dataURL(full.data)
+        let thumbDataUrl = BearyImagePrep.dataURL(thumbData)
+        let videoDataUrl = liveVideoData.map { BearyLivePhoto.videoDataURL($0) }
+        // 门控 + 建任务原子段：锁内校验令牌与当前鉴权账号，通过才建任务
+        // 并持有句柄；取消（同锁内作废令牌 + cancel 任务）无法插进校验与
+        // 建任务之间，故删图后编码完成必不发起上传。实况超限口径在门控
+        // 之后：已取消的项先由门控静默拦下，不再 toast、不改态。
+        // 锁内只做整数校验与任务创建（authAccountId 的读走 authStateQueue，
+        // 不回调编辑器，无死锁环；uploadImage 只建任务，不同步回主线程）。
+        uploadStateLock.lock()
+        defer { uploadStateLock.unlock() }
+        guard token.generation == item.uploadGeneration,
+              token.accountId == nil || BearyAPI.shared.authAccountId == token.accountId else { return }
         // 实况上传失败口径（防静默降级）：视频超限在选图时已拒收，这里再守
         // 一道；上传失败、或回包缺 live_key（后端未上线/不匹配）时一律按失败
         // 处理——亮红底重试块 + toast，发布亦被失败图拦截，绝不把实况当静态
@@ -5692,13 +5761,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             return
         }
-        // 审计-编辑器详情：起传即认领代次并持有任务（本函数恒跑在串行
-        // imagePrepQueue 上，递增与认领不与另一路起传交错；离条项的回包
-        // 由下方 stillThere 守卫丢弃，不在此处跨线程读 imageItems）。
-        item.uploadGeneration += 1
-        let uploadGeneration = item.uploadGeneration
-        let videoDataUrl = liveVideoData.map { BearyLivePhoto.videoDataURL($0) }
-        item.uploadTask = BearyAPI.shared.uploadImage(dataUrl: BearyImagePrep.dataURL(full.data), width: full.w, height: full.h, thumbDataUrl: BearyImagePrep.dataURL(thumbData), videoDataUrl: videoDataUrl) { [weak self, weak item] result in
+        let uploadGeneration = token.generation
+        item.uploadTask = BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: full.w, height: full.h, thumbDataUrl: thumbDataUrl, videoDataUrl: videoDataUrl) { [weak self, weak item] result in
             DispatchQueue.main.async {
                 guard let self = self, let item = item else { return }
                 var stillThere = false
@@ -5708,11 +5772,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     }
                 }
                 // 代次门控：取消/删图/重传已推高代次时，过期回包直接丢弃，
-                // 不得把旧 key 写回新一轮上传的项（9 图竞态即此类）。
-                if !stillThere || uploadGeneration != item.uploadGeneration {
+                // 不得把旧 key 写回新一轮上传的项（9 图竞态即此类）。代次
+                // 在上传锁内读、任务句柄在上传锁内清，与主线程取消/后台
+                // 认领走同一同步边界。
+                if !stillThere || uploadGeneration != self.lockedUploadGeneration(of: item) {
                     return
                 }
-                item.uploadTask = nil
+                self.lockedClearUploadTask(of: item)
                 switch result {
                 case .success(let resp):
                     if let key = resp.key {
@@ -7568,10 +7634,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 private final class ComposerImageItem {
     var key: String?
     var uploading: Bool
-    /// 审计-编辑器详情：上传代次 + 在途任务。每次起传（uploadPrepared 入口）
-    /// 代次 +1 并由回包认领；取消/删图时再 +1 并 cancel 任务，过期回包
-    /// （代次不符或已不在条里）一律丢弃，不得覆盖更新的上传态。
+    /// 审计-编辑器详情：上传代次 + 在途任务 + 发起账号。每次发起上传
+    /// （编码开始）代次 +1 并绑定当前鉴权账号，由回包认领；取消/删图
+    /// 时再 +1 并 cancel 任务，过期回包（代次不符或已不在条里）一律丢弃，
+    /// 不得覆盖更新的上传态。代次与发起账号只在上传锁内读写（见
+    /// BearyComposerViewController.uploadStateLock），编码完成后的起传
+    /// 门控只认发起时捕获的（代次，账号），两者任一不符即不起传。
     var uploadGeneration = 0
+    /// 本次上传发起时绑定的鉴权账号（BearyAPI.authAccountId 快照）；
+    /// 取消时清掉。只在上传锁内读写。
+    var uploadAccountId: Int?
     var uploadTask: URLSessionTask?
     var localFile: String?
     var failed: Bool
