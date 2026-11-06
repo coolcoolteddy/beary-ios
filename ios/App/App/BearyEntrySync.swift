@@ -1,7 +1,10 @@
 import Foundation
 
-// ===== 登录后全量同步落盘 =====
+// ===== 登录后全量同步编排 =====
 // 用户原话：登录后立即读取云端的所有日记，存到本地。
+//
+// 纯存储核（日文件读写、回收站整桶读写、写盘成败报告）见 BearyEntrySyncStore.swift；
+// 本文件只做编排：后台翻页拉取 + 整批提交，不碰任何 UI。
 //
 // scope 选择（服务端实证，teddy_beary/worker.js GET /beary/api/entries）：
 //   - .timeline：仅以 author_id = session.id 过滤，不限 publish_at——
@@ -26,6 +29,8 @@ import Foundation
 //
 // 失败静默：任一页失败、401、游标缺失即中止，不写盘、不弹 toast、不阻塞，
 // 下次触发重跑；半截页绝不进本地（整批拉完才分组提交）。
+// 第四轮审计 15：静默仍是设计意图，另加只读状态模型（见 BearySyncState）
+// 供设置页展示四态，失败只改状态、不弹打扰性提示。
 //
 // 登出：同步桶按草稿口径保留（现行登出只清当前账号图片缓存，草稿与搜索桶均保留；
 // 同步桶只含本账号自己的日记，与草稿同级敏感度；下次登录全量覆盖写入，
@@ -45,227 +50,32 @@ import Foundation
 //   - 提交守卫（5-26）：与日记腿同款写盘代际——同步拉取开始后发生过任何
 //     trash.json 写盘，本次提交跳过保旧盘（不抹同步途中删帖进桶的记录），下次 kick 重跑。
 
-/// 时间线日缓存的磁盘持久层：按账号分桶、按北京日归档。
-/// 目录：Application Support / beary_entry_sync_<uid>/，文件 <YYYY-MM-DD>.json（Entry 数组）。
-enum BearyEntrySyncStore {
-    static let directoryPrefix = "beary_entry_sync"
+/// 第四轮审计 15：只读同步状态模型——设置页据此展示四态，不弹打扰性提示。
+/// 状态由日记腿与回收站腿共同决定（取较差者）：任一腿在途即正在同步，
+/// 任一腿失败即同步失败，两腿都已提交成功才算已同步。
+enum BearySyncState {
+    /// 使用本地内容：本启动尚未同步成功过（首启、未登录、或同步从未跑完）。
+    case usingLocal
+    /// 正在同步：任一腿在途。
+    case syncing
+    /// 已同步：日记腿与回收站腿本启动都已提交成功。
+    case synced
+    /// 同步失败：任一腿失败（拉取失败、写盘失败、超限、游标缺失），下次触发重跑。
+    case failed
 
-    private static func makeEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        // 与 BearyAPI 解码端配对：解码用 convertFromSnakeCase，编码用 convertToSnakeCase，
-        // 落盘 JSON 与服务端字段口径一致，往返不丢字段。
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        return encoder
-    }
-
-    private static func makeDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return decoder
-    }
-
-    static func accountDir(accountId: Int) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
-        return base.appendingPathComponent("\(directoryPrefix)_\(accountId)", isDirectory: true)
-    }
-
-    static func dayFileURL(accountId: Int, dayKey: String) -> URL? {
-        guard let dir = accountDir(accountId: accountId) else { return nil }
-        return dir.appendingPathComponent("\(dayKey).json")
-    }
-
-    /// 读某日落盘：命中返回数组（含空数组文件），缺失/损坏返回 nil（调用方走网络）。
-    static func loadDay(accountId: Int, dayKey: String) -> [Entry]? {
-        guard let url = dayFileURL(accountId: accountId, dayKey: dayKey),
-              let data = try? Data(contentsOf: url) else { return nil }
-        return try? makeDecoder().decode([Entry].self, from: data)
-    }
-
-    /// 写某日落盘（单日写透：时间线日拉取/预取成功、发布/编辑 upsert 均走这里）。
-    static func saveDay(accountId: Int, dayKey: String, entries: [Entry]) {
-        guard let url = dayFileURL(accountId: accountId, dayKey: dayKey),
-              let data = try? makeEncoder().encode(entries) else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
-    }
-
-    /// 按北京日分组（createdAt 缺失的条目无法归日，跳过——服务端恒下发 created_at）。
-    /// 组内按服务端序重排：created_at DESC, id DESC。
-    static func groupByDay(_ entries: [Entry]) -> [String: [Entry]] {
-        var grouped: [String: [Entry]] = [:]
-        for entry in entries {
-            guard let createdAt = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt) else {
-                // 5-30：静默丢条改记一条日志——若服务端某天漏发或改名字段，
-                // 联调时能从日志发现，而不是无声少篇。
-                NSLog("[BearyEntrySync] groupByDay dropped entry without createdAt: id=%@", entry.id ?? "-")
-                continue
-            }
-            grouped[dayKey, default: []].append(entry)
+    var displayText: String {
+        switch self {
+        case .usingLocal: return "使用本地内容"
+        case .syncing: return "正在同步"
+        case .synced: return "已同步"
+        case .failed: return "同步失败"
         }
-        for key in grouped.keys {
-            grouped[key]?.sort { (a, b) in
-                if a.createdAt != b.createdAt { return (a.createdAt ?? 0) > (b.createdAt ?? 0) }
-                return (a.id ?? "") > (b.id ?? "")
-            }
-        }
-        return grouped
-    }
-
-    /// 全量同步提交：仅在整批翻页成功后调用——先写全部日文件，
-    /// 再删不在新集合里的旧日文件（已删光的日与空日文件都会被清掉；
-    /// 下次切到该日走网络重拉，静默刷新会重建文件）。
-    static func commitFullSync(accountId: Int, grouped: [String: [Entry]]) {
-        guard let dir = accountDir(accountId: accountId) else { return }
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        for (dayKey, entries) in grouped {
-            saveDay(accountId: accountId, dayKey: dayKey, entries: entries)
-        }
-        let existing = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        for name in existing where name.hasSuffix(".json") {
-            let dayKey = String(name.dropLast(".json".count))
-            if grouped[dayKey] == nil {
-                try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
-            }
-        }
-    }
-
-    /// 审计 P2-22：退出/注销时清该账号全部日记落盘（整目录删；草稿桶不在此列，见 signOutLocally）。
-    static func purgeAccount(accountId: Int) {
-        guard let dir = accountDir(accountId: accountId) else { return }
-        try? FileManager.default.removeItem(at: dir)
-    }
-
-    /// 删帖：从全部落盘日里清除该 id（空了的日文件直接删掉）。
-    static func removeEntry(accountId: Int, entryId: String) {
-        guard let dir = accountDir(accountId: accountId) else { return }
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        for name in names where name.hasSuffix(".json") {
-            let dayKey = String(name.dropLast(".json".count))
-            guard var entries = loadDay(accountId: accountId, dayKey: dayKey) else { continue }
-            let beforeCount = entries.count
-            entries.removeAll { $0.id == entryId }
-            guard entries.count != beforeCount else { continue }
-            if entries.isEmpty {
-                if let url = dayFileURL(accountId: accountId, dayKey: dayKey) {
-                    try? FileManager.default.removeItem(at: url)
-                }
-            } else {
-                saveDay(accountId: accountId, dayKey: dayKey, entries: entries)
-            }
-        }
-    }
-
-    /// 发布/编辑 upsert：按 createdAt 定北京日，日文件内同 id 替换、否则追加并按服务端序重排。
-    /// 编辑不改 createdAt，故日归属恒定；发布的新篇 createdAt 即当日。
-    static func upsertEntry(accountId: Int, entry: Entry) {
-        guard let createdAt = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt) else { return }
-        var entries = loadDay(accountId: accountId, dayKey: dayKey) ?? []
-        if let idx = entries.firstIndex(where: { $0.id == entry.id }) {
-            entries[idx] = entry
-        } else {
-            entries.append(entry)
-        }
-        entries.sort { (a, b) in
-            if a.createdAt != b.createdAt { return (a.createdAt ?? 0) > (b.createdAt ?? 0) }
-            return (a.id ?? "") > (b.id ?? "")
-        }
-        saveDay(accountId: accountId, dayKey: dayKey, entries: entries)
     }
 }
 
-/// 回收站落盘：与日记桶平行、绝不混写。
-/// 目录：Application Support / beary_trash_sync_<uid>/，单文件 trash.json（[TrashItem]，服务端序 deleted_at DESC, id DESC）。
-/// 空数组文件是有意义的“已同步、回收站为空”，只有文件缺失/损坏才回网络；空了不删文件。
-enum BearyTrashSyncStore {
-    static let directoryPrefix = "beary_trash_sync"
-
-    private static func makeEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        return encoder
-    }
-
-    private static func makeDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return decoder
-    }
-
-    static func accountDir(accountId: Int) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
-        return base.appendingPathComponent("\(directoryPrefix)_\(accountId)", isDirectory: true)
-    }
-
-    static func fileURL(accountId: Int) -> URL? {
-        guard let dir = accountDir(accountId: accountId) else { return nil }
-        return dir.appendingPathComponent("trash.json")
-    }
-
-    /// 读整桶：命中返回数组（含空数组），缺失/损坏返回 nil（调用方走网络）。
-    static func loadAll(accountId: Int) -> [TrashItem]? {
-        guard let url = fileURL(accountId: accountId),
-              let data = try? Data(contentsOf: url) else { return nil }
-        return try? makeDecoder().decode([TrashItem].self, from: data)
-    }
-
-    /// 5-26 回收站写盘代际（与日记腿同款守卫的计数端）：任何 trash.json 写
-    /// （删帖进桶、恢复/彻底删除清桶、回收站页静默刷新对齐）都先 +1；
-    /// 全量回收站同步开始时记基线，提交前比对——拉取开始后发生过写盘
-    /// 即旧快照已过期，跳过本次提交保旧盘，下次 kick 重跑。
-    /// 计数放桶上而不用同步实例的队列：删帖进桶 prependDeleted 是桶的静态
-    /// 入口、调用方在主线程，锁内计数保证主线程写与同步队列提交读之间
-    /// 不丢代际；静默刷新写盘同样记代际（其数据更新鲜，跳过旧快照提交
-    /// 是正确的保守选择，下次 kick 再对齐）。
-    private static let writeSequenceLock = NSLock()
-    private static var writeSequence = 0
-    static func noteTrashWrite() {
-        writeSequenceLock.lock()
-        writeSequence += 1
-        writeSequenceLock.unlock()
-    }
-    static func currentWriteSequence() -> Int {
-        writeSequenceLock.lock()
-        defer { writeSequenceLock.unlock() }
-        return writeSequence
-    }
-
-    /// 整桶写（全量同步提交与静默刷新对齐均走这里：服务端派生数据，整批覆盖）。
-    /// 先记写盘代际（见 noteTrashWrite）：全量同步自身的提交写也在提交
-    /// 守卫比对之后发生，不影响本次判定。
-    static func saveAll(accountId: Int, items: [TrashItem]) {
-        noteTrashWrite()
-        guard let url = fileURL(accountId: accountId),
-              let data = try? makeEncoder().encode(items) else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
-    }
-
-    /// 恢复/彻底删除：按 id 清桶（桶不存在时不建桶；空桶保留空数组文件）。
-    /// 审计 P2-22：退出/注销时清该账号全部回收站落盘（整目录删）。
-    static func purgeAccount(accountId: Int) {
-        guard let dir = accountDir(accountId: accountId) else { return }
-        try? FileManager.default.removeItem(at: dir)
-    }
-
-    static func removeItem(accountId: Int, entryId: String) {
-        guard var items = loadAll(accountId: accountId) else { return }
-        let beforeCount = items.count
-        items.removeAll { $0.id == entryId }
-        guard items.count != beforeCount else { return }
-        saveAll(accountId: accountId, items: items)
-    }
-
-    /// 删帖进桶：新删的 deletedAt 最大，按服务端序插到头部。
-    /// 桶不存在时不建半截桶（进回收站页走网络首拉，登录同步会建整桶）；下次静默刷新用服务端值纠正残差。
-    static func prependDeleted(accountId: Int, entry: Entry) {
-        guard let entryId = entry.id else { return }
-        guard var items = loadAll(accountId: accountId) else { return }
-        items.removeAll { $0.id == entryId }
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-        let item = TrashItem(id: entryId, content: entry.content, createdAt: entry.createdAt, publishAt: entry.publishAt, deletedAt: nowMs, daysLeft: 30)
-        items.insert(item, at: 0)
-        saveAll(accountId: accountId, items: items)
-    }
+extension Notification.Name {
+    /// 第四轮审计 15：同步状态变迁广播（主线程发出；设置页据此刷新同步状态行）。
+    static let bearySyncStateDidChange = Notification.Name("bearySyncStateDidChange")
 }
 
 /// 登录后全量同步编排：后台翻页拉取 + 整批提交，不碰任何 UI。
@@ -278,6 +88,13 @@ final class BearyEntrySync {
     // 回收站腿（与日记腿同批触发、各自独立成败：日记已同步不影响回收站重试，反之亦然）。
     private var trashSyncingAccountId: Int?
     private var trashSyncedAccountIdThisLaunch: Int?
+    /// 第四轮审计 15：各腿失败账号（拉取失败、写盘失败、超限、游标缺失时记；
+    /// 重跑 kick 与提交成功时清）。只读状态模型据此算失败态。
+    private var diaryFailedAccountId: Int?
+    private var trashFailedAccountId: Int?
+    /// 第四轮审计 15：只读同步状态快照（主线程读）——设置页据此展示四态。
+    /// 各腿状态变迁时由同步串行队列算好、dispatch 到主线程更新并广播。
+    private(set) var currentSyncState: BearySyncState = .usingLocal
     /// 日记写盘代际：每次日记落盘写（发布/编辑 upsert、删帖、日加载写透）
     /// 都在同步串行队列上 +1；全量同步开始时记下基线，提交前比对——
     /// 拉取开始后发生过写盘即旧快照已过期，跳过本次提交保旧盘，下次 kick 重跑。
@@ -319,6 +136,28 @@ final class BearyEntrySync {
         }
     }
 
+    /// 第四轮审计 15：按当前账号算组合状态并推到主线程快照＋广播。
+    /// 在同步串行队列上调用；切号后到达的旧账号状态不覆盖新账号快照。
+    private func publishCombinedSyncState(for accountId: Int) {
+        let state: BearySyncState
+        if syncingAccountId == accountId || trashSyncingAccountId == accountId {
+            state = .syncing
+        } else if diaryFailedAccountId == accountId || trashFailedAccountId == accountId {
+            state = .failed
+        } else if syncedAccountIdThisLaunch == accountId && trashSyncedAccountIdThisLaunch == accountId {
+            state = .synced
+        } else {
+            state = .usingLocal
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            guard SessionManager.shared.currentUser?.id == accountId else { return }
+            guard self.currentSyncState != state else { return }
+            self.currentSyncState = state
+            NotificationCenter.default.post(name: .bearySyncStateDidChange, object: nil)
+        }
+    }
+
     /// 5-27 重跑入口：前台恢复 / 时间线下拉刷新时调本方法即可补一次 kick。
     /// 内部去重已覆盖：已同步（synced 标志）→ 不跑；在途 → 不重复；
     /// 曾被写盘守卫挡下（未置 synced）→ 重跑。无登录态时不做任何事。
@@ -338,6 +177,8 @@ final class BearyEntrySync {
             // 日记腿（守卫口径与原来完全一致：同一启动同一账号只跑一次，在途不重复）。
             if self.syncingAccountId != userId && self.syncedAccountIdThisLaunch != userId {
                 self.syncingAccountId = userId
+                // 重跑清掉上次的失败态，状态行先显“正在同步”。
+                self.diaryFailedAccountId = nil
                 // 提交守卫基线：记下拉取开始时的写盘代际。
                 self.diarySyncStartSequence[userId] = self.diaryWriteSequence
                 self.fetchPage(accountId: userId, before: nil, beforeId: nil, accumulated: [])
@@ -345,21 +186,31 @@ final class BearyEntrySync {
             // 回收站腿：同批触发，失败不拖日记腿，下次 kick 独立重跑。
             if self.trashSyncingAccountId != userId && self.trashSyncedAccountIdThisLaunch != userId {
                 self.trashSyncingAccountId = userId
+                self.trashFailedAccountId = nil
                 // 5-26 提交守卫基线：记下拉取开始时的回收站写盘代际。
                 self.trashSyncStartSequence[userId] = BearyTrashSyncStore.currentWriteSequence()
                 self.fetchTrashPage(accountId: userId, before: nil, beforeId: nil, accumulated: [])
             }
+            self.publishCombinedSyncState(for: userId)
         }
     }
 
     func noteLoggedOut() {
         queue.async { [weak self] in
-            self?.syncingAccountId = nil
-            self?.syncedAccountIdThisLaunch = nil
-            self?.trashSyncingAccountId = nil
-            self?.trashSyncedAccountIdThisLaunch = nil
-            self?.diarySyncStartSequence.removeAll()
-            self?.trashSyncStartSequence.removeAll()
+            guard let self = self else { return }
+            self.syncingAccountId = nil
+            self.syncedAccountIdThisLaunch = nil
+            self.trashSyncingAccountId = nil
+            self.trashSyncedAccountIdThisLaunch = nil
+            self.diaryFailedAccountId = nil
+            self.trashFailedAccountId = nil
+            self.diarySyncStartSequence.removeAll()
+            self.trashSyncStartSequence.removeAll()
+            DispatchQueue.main.async {
+                guard self.currentSyncState != .usingLocal else { return }
+                self.currentSyncState = .usingLocal
+                NotificationCenter.default.post(name: .bearySyncStateDidChange, object: nil)
+            }
         }
     }
 
@@ -393,9 +244,13 @@ final class BearyEntrySync {
             guard let self = self else { return }
             switch result {
             case .failure:
-                // 静默中止：不写盘，下次触发重跑。
+                // 静默中止：不写盘，下次触发重跑；只记失败态供设置页展示，不弹提示。
                 self.queue.async {
-                    if self.syncingAccountId == accountId { self.syncingAccountId = nil }
+                    if self.syncingAccountId == accountId {
+                        self.syncingAccountId = nil
+                        self.diaryFailedAccountId = accountId
+                        self.publishCombinedSyncState(for: accountId)
+                    }
                 }
             case .success(let list):
                 let page = list.entries ?? []
@@ -406,14 +261,22 @@ final class BearyEntrySync {
                     // 宽松上限：超限中止且不覆写落盘（保旧盘、下次重跑，不静默丢数据）。
                     if pageCount + 1 >= Self.maxSyncPages || all.count >= Self.maxSyncItems {
                         self.queue.async {
-                            if self.syncingAccountId == accountId { self.syncingAccountId = nil }
+                            if self.syncingAccountId == accountId {
+                                self.syncingAccountId = nil
+                                self.diaryFailedAccountId = accountId
+                                self.publishCombinedSyncState(for: accountId)
+                            }
                         }
                         return
                     }
                     guard let last = page.last, let lastCreated = last.createdAt, let lastId = last.id else {
                         // 游标缺失无法续翻：中止且不写盘（半截页不进本地）。
                         self.queue.async {
-                            if self.syncingAccountId == accountId { self.syncingAccountId = nil }
+                            if self.syncingAccountId == accountId {
+                                self.syncingAccountId = nil
+                                self.diaryFailedAccountId = accountId
+                                self.publishCombinedSyncState(for: accountId)
+                            }
                         }
                         return
                     }
@@ -429,7 +292,10 @@ final class BearyEntrySync {
             guard let self = self else { return }
             guard SessionManager.shared.currentUser?.id == accountId else {
                 self.queue.async {
-                    if self.syncingAccountId == accountId { self.syncingAccountId = nil }
+                    if self.syncingAccountId == accountId {
+                        self.syncingAccountId = nil
+                        self.publishCombinedSyncState(for: accountId)
+                    }
                 }
                 return
             }
@@ -440,13 +306,22 @@ final class BearyEntrySync {
                 if let start = self.diarySyncStartSequence[accountId], start != self.diaryWriteSequence {
                     self.diarySyncStartSequence[accountId] = nil
                     self.syncingAccountId = nil
+                    self.publishCombinedSyncState(for: accountId)
                     return
                 }
                 self.diarySyncStartSequence[accountId] = nil
                 let grouped = BearyEntrySyncStore.groupByDay(entries)
-                BearyEntrySyncStore.commitFullSync(accountId: accountId, grouped: grouped)
+                // 第四轮审计 02：写盘失败不记已同步——只有全部日期写盘成功
+                // 才置 synced 标志；失败时记失败态，下次 kick 重跑。
+                let committed = BearyEntrySyncStore.commitFullSync(accountId: accountId, grouped: grouped)
                 self.syncingAccountId = nil
-                self.syncedAccountIdThisLaunch = accountId
+                if committed {
+                    self.diaryFailedAccountId = nil
+                    self.syncedAccountIdThisLaunch = accountId
+                } else {
+                    self.diaryFailedAccountId = accountId
+                }
+                self.publishCombinedSyncState(for: accountId)
             }
         }
     }
@@ -457,9 +332,13 @@ final class BearyEntrySync {
             guard let self = self else { return }
             switch result {
             case .failure:
-                // 静默中止：不写盘，下次触发重跑。
+                // 静默中止：不写盘，下次触发重跑；只记失败态供设置页展示，不弹提示。
                 self.queue.async {
-                    if self.trashSyncingAccountId == accountId { self.trashSyncingAccountId = nil }
+                    if self.trashSyncingAccountId == accountId {
+                        self.trashSyncingAccountId = nil
+                        self.trashFailedAccountId = accountId
+                        self.publishCombinedSyncState(for: accountId)
+                    }
                 }
             case .success(let page):
                 let items = page.items
@@ -470,14 +349,22 @@ final class BearyEntrySync {
                     // 宽松上限（与日记腿同款）：超限中止且不覆写落盘，保旧盘、下次重跑。
                     if pageCount + 1 >= Self.maxSyncPages || all.count >= Self.maxSyncItems {
                         self.queue.async {
-                            if self.trashSyncingAccountId == accountId { self.trashSyncingAccountId = nil }
+                            if self.trashSyncingAccountId == accountId {
+                                self.trashSyncingAccountId = nil
+                                self.trashFailedAccountId = accountId
+                                self.publishCombinedSyncState(for: accountId)
+                            }
                         }
                         return
                     }
                     guard let last = items.last, let lastDeletedAt = last.deletedAt else {
                         // 游标缺失无法续翻：中止且不写盘（半截不进本地；无 before 时服务端回第一页，续拉只会原地打转）。
                         self.queue.async {
-                            if self.trashSyncingAccountId == accountId { self.trashSyncingAccountId = nil }
+                            if self.trashSyncingAccountId == accountId {
+                                self.trashSyncingAccountId = nil
+                                self.trashFailedAccountId = accountId
+                                self.publishCombinedSyncState(for: accountId)
+                            }
                         }
                         return
                     }
@@ -493,7 +380,10 @@ final class BearyEntrySync {
             guard let self = self else { return }
             guard SessionManager.shared.currentUser?.id == accountId else {
                 self.queue.async {
-                    if self.trashSyncingAccountId == accountId { self.trashSyncingAccountId = nil }
+                    if self.trashSyncingAccountId == accountId {
+                        self.trashSyncingAccountId = nil
+                        self.publishCombinedSyncState(for: accountId)
+                    }
                 }
                 return
             }
@@ -506,15 +396,23 @@ final class BearyEntrySync {
                 if let start = self.trashSyncStartSequence[accountId], start != BearyTrashSyncStore.currentWriteSequence() {
                     self.trashSyncStartSequence[accountId] = nil
                     self.trashSyncingAccountId = nil
+                    self.publishCombinedSyncState(for: accountId)
                     return
                 }
                 self.trashSyncStartSequence[accountId] = nil
                 // 去重保底（游标页理论上不交叠；重复 id 进桶会在页内渲染成两行，故先清掉）。
                 var seen: Set<String> = []
                 let deduped = items.filter { seen.insert($0.id).inserted }
-                BearyTrashSyncStore.saveAll(accountId: accountId, items: deduped)
+                // 第四轮审计 02：回收站整桶写盘失败同样不记已同步。
+                let saved = BearyTrashSyncStore.saveAll(accountId: accountId, items: deduped)
                 self.trashSyncingAccountId = nil
-                self.trashSyncedAccountIdThisLaunch = accountId
+                if saved {
+                    self.trashFailedAccountId = nil
+                    self.trashSyncedAccountIdThisLaunch = accountId
+                } else {
+                    self.trashFailedAccountId = accountId
+                }
+                self.publishCombinedSyncState(for: accountId)
             }
         }
     }
