@@ -398,7 +398,19 @@ final class BearyEntrySync {
                     if self.syncingAccountId == accountId { self.syncingAccountId = nil }
                 }
             case .success(let list):
-                let page = list.entries ?? []
+                // R16-4：entries 字段必须明确存在才允许继续全量同步——字段缺失
+                // 是异常响应，不是“没有日记”，中止且不写盘、不进 commitFullSync
+                // 删旧日文件，保旧快照、下次触发重跑。此前 list.entries ?? []
+                // 会把缺失当成空页，一路走到 commitFullSync 删光旧日文件。
+                // 注意：BearyAPI.fetchEntriesSince 的 gap-fill 两处 ?? [] 是
+                // 补洞路径，只返回已收集数据、不触发 commitFullSync，不在危险
+                // 路径内，不动。
+                guard let page = list.entries else {
+                    self.queue.async {
+                        if self.syncingAccountId == accountId { self.syncingAccountId = nil }
+                    }
+                    return
+                }
                 let all = accumulated + page
                 if page.count < 50 {
                     self.finishSync(accountId: accountId, entries: all)
