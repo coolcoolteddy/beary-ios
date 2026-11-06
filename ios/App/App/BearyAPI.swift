@@ -542,6 +542,18 @@ final class BearyAPI {
         authStateQueue.sync { _authEpoch += 1 }
     }
 
+    /// 第 7 轮 #7：加载回包过期判定（账号 ID + 鉴权代次双重校验）。
+    /// 只比账号 ID 不够：A→B→A 快切后旧 A 请求回包时账号 ID 再次
+    /// 相等，会通过旧校验、把过期数据写回新列表；authEpoch 在每次
+    /// 权威登录态变迁时单调 +1（见 SessionManager），两次切号后
+    /// 代次已变，旧回包凭代次丢弃。调用方在请求发起时同时捕获
+    /// （账号 ID，authEpoch），回包时凭本方法判定；纯函数，可用
+    /// 可控代次单测复现（见 BearyCoreTests 的
+    /// BearyAccountLoadStalenessTests）。
+    static func isStaleAccountLoad(requestAccountId: Int?, requestEpoch: Int, currentAccountId: Int?, currentEpoch: Int) -> Bool {
+        requestAccountId != currentAccountId || requestEpoch != currentEpoch
+    }
+
     /// 权威登录态提交/清态时同步更新账号身份（SessionManager 调用，
     /// 与 bumpAuthEpoch 同队列；nil = 无当前账号）。不走本方法只 bump
     /// epoch 的旧路径一律补上本调用，否则重试前的账号比对永远对不上。
