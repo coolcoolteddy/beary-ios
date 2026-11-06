@@ -544,7 +544,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         // uid 启动时捕获一路透传：中途切号也不把旧账号数据写进新账号桶。
                         // 落盘写走同步队列（不卡主线程）；内存态已同步更新，UI 不等落盘。
                         BearyEntrySync.shared.runDiskWrite {
-                            BearyTrashSyncStore.saveAll(accountId: accountId, items: deduped)
+                            // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
+                            let ok = BearyTrashSyncStore.saveAll(accountId: accountId, items: deduped)
+                            if !ok { NSLog("[BearyEntrySync] trash saveAll failed account=%d", accountId) }
                         }
                         // 增量更新：无变化时各行原地不动（见 updateListRowsIncrementally）。
                         self.trashItems = deduped
@@ -1107,7 +1109,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     // 但发起值才是本次请求的归属，避免校验与写盘之间再被切号钻空）。
                     if let uid = requestAccountId {
                         BearyEntrySync.shared.runDiskWrite {
-                            BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
+                            // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
+                            let ok = BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
+                            if !ok { NSLog("[BearyEntrySync] trash removeItem failed account=%d entry=%@", uid, identifier) }
                         }
                     }
                     self.onRestored?(trashValue)
@@ -1180,7 +1184,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         // 清桶用发起账号，口径与恢复成功处一致。
                         if let uid = requestAccountId {
                             BearyEntrySync.shared.runDiskWrite {
-                                BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
+                                // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
+                                let ok = BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
+                                if !ok { NSLog("[BearyEntrySync] trash removeItem failed account=%d entry=%@", uid, identifier) }
                             }
                         }
                         self.onPurged?(trashValue)
