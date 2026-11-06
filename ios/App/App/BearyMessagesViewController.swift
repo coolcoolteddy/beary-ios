@@ -366,7 +366,7 @@ final class BearyMessagesViewController: UIViewController {
     /// 失败行在后），排在数据行之后、哨兵行之前；哨兵行仅当通知组
     /// hasMore || isLoadingMore 时出现。本函数是唯一拼装点——不留
     /// “先通知后会话”的旧拼装路径。
-    private func rebuildMergedRows() {
+    private func rebuildMergedRows() -> [MergedRow] {
         let notif = notifChild.mergeSnapshot
         let dm = conversationsChild.mergeSnapshot
         var dataRows: [MergedRow] = []
@@ -396,7 +396,7 @@ final class BearyMessagesViewController: UIViewController {
         if notif.hasMore || notif.isLoadingMore {
             rows.append(.sentinel)
         }
-        mergedRows = rows
+        return rows
     }
 
     /// 表与态互斥显隐＋顶部唯一转圈显隐。
@@ -465,12 +465,156 @@ final class BearyMessagesViewController: UIViewController {
         }
     }
 
+    /// B3：在途 batch 的串行化——两组快照回调可能在一次 batch 动画未完
+    /// 时又到：先到的 batch 未完时只把最新行集暂存（pendingMergedRows），
+    /// 完结回调里再应用，保证同一时刻只有一个 batch 在飞、表内态与模型
+    /// 始终一一对应。
+    private var mergedBatchInFlight = false
+    private var pendingMergedRows: [MergedRow]?
+
     private func updateMergedRows() {
-        rebuildMergedRows()
-        tableView.reloadData()
-        updateMergedVisibility()
-        playStaggeredEntranceIfNeeded()
-        checkNotifSeenIfVisible()
+        let newRows = rebuildMergedRows()
+        if mergedBatchInFlight {
+            pendingMergedRows = newRows
+            return
+        }
+        applyMergedRows(newRows)
+    }
+
+    private func applyMergedRows(_ newRows: [MergedRow]) {
+        let oldRows = mergedRows
+        mergedRows = newRows
+        // B3：锚点只按行 ID 记——首个可见行的 key + 视口内偏移；
+        // 旧表为空即首拉，不记锚点、不动偏移。
+        let anchor = anchorForVisibleTopRow(in: oldRows)
+        let oldHeight = tableView.contentSize.height
+        let responseOffsetY = tableView.contentOffset.y
+        if let batch = diffBatch(from: oldRows, to: newRows) {
+            // 小改动：按行更新——删/插/移/重载各走各的口径；模型已是新态，
+            // batch 内只做视图侧的对应操作（删用旧下标、插用新下标）。
+            mergedBatchInFlight = true
+            tableView.performBatchUpdates({
+                self.tableView.deleteRows(at: batch.deletions, with: .fade)
+                self.tableView.insertRows(at: batch.insertions, with: .fade)
+                for move in batch.moves {
+                    self.tableView.moveRow(at: move.from, to: move.to)
+                }
+                self.tableView.reloadRows(at: batch.reloads, with: .none)
+            }, completion: { _ in
+                self.mergedBatchInFlight = false
+                self.restoreAnchor(anchor, oldHeight: oldHeight, responseOffsetY: responseOffsetY)
+                self.updateMergedVisibility()
+                self.playStaggeredEntranceIfNeeded()
+                self.checkNotifSeenIfVisible()
+                if let pending = self.pendingMergedRows {
+                    self.pendingMergedRows = nil
+                    self.applyMergedRows(pending)
+                }
+            })
+        } else {
+            // 大改动 / key 冲突：全量重建仍走 reloadData，但同样按锚点保位。
+            tableView.reloadData()
+            tableView.layoutIfNeeded()
+            restoreAnchor(anchor, oldHeight: oldHeight, responseOffsetY: responseOffsetY)
+            updateMergedVisibility()
+            playStaggeredEntranceIfNeeded()
+            checkNotifSeenIfVisible()
+        }
+    }
+
+    /// B3：行内容签名——只由 cell 实际画出的字段组成。卡面：标题/摘要/
+    /// 时间/未读/高亮；信件：类型/发送方/标题/正文/摘要/时间/已读；
+    /// 会话：对方名/摘要/时间/未读数；哨兵行由分页态定；失败行内容恒定。
+    /// 头像 URL 不入签名（异步加载，不属行内容）。key 相同且签名相同
+    /// 即同一行未变，不动它；签名变了只 reload 该行。
+    private func contentSignature(for row: MergedRow) -> String {
+        switch row {
+        case .notifCard(let card):
+            return "card|\(card.title)|\(card.excerpt)|\(card.timeMs ?? 0)|\(card.anyUnread)|\(card.highlight)"
+        case .notifLetter(let item):
+            return "letter|\(item.type ?? "")|\(item.actorId ?? 0)|\(item.actorName ?? "")|\(item.title ?? "")|\(item.body ?? "")|\(item.excerpt ?? "")|\(item.createdAt ?? 0)|\(item.read ?? false)"
+        case .conversation(let conv):
+            return "dm|\(conv.peer?.displayName ?? "")|\(conv.lastBody ?? "")|\(conv.lastAt ?? 0)|\(conv.unreadCount ?? 0)"
+        case .notifFailure:
+            return "notif-failure"
+        case .dmFailure:
+            return "dm-failure"
+        case .sentinel:
+            let snap = notifChild.mergeSnapshot
+            return "sentinel|\(snap.isLoadingMore)|\(snap.loadMoreFailed)"
+        }
+    }
+
+    /// B3：新旧行集 diff 结果。删用旧下标、插用新下标；移只含内容未变行
+    /// （内容变了的移位行走删＋插，不与 moveRow 叠加重载）；重载只含
+    /// 同位内容变行。
+    private struct MergedRowsBatch {
+        var deletions: [IndexPath] = []
+        var insertions: [IndexPath] = []
+        var moves: [(from: IndexPath, to: IndexPath)] = []
+        var reloads: [IndexPath] = []
+    }
+
+    /// B3：先用现成行 ID（key）比较位置和内容。nil = 退回全量重建：
+    /// key 冲突（按行定位不可信），或改动面过大（整页重排/批量已读等，
+    /// 按行更新无收益）。小改动才走 batch——一次新通知、一次已读/
+    /// 摘要变化都在此列。
+    private func diffBatch(from oldRows: [MergedRow], to newRows: [MergedRow]) -> MergedRowsBatch? {
+        let oldKeys = oldRows.map { key(for: $0) }
+        let newKeys = newRows.map { key(for: $0) }
+        guard Set(oldKeys).count == oldKeys.count, Set(newKeys).count == newKeys.count else { return nil }
+        let oldIndexByKey = Dictionary(uniqueKeysWithValues: zip(oldKeys, oldKeys.indices))
+        let newIndexByKey = Dictionary(uniqueKeysWithValues: zip(newKeys, newKeys.indices))
+        var batch = MergedRowsBatch()
+        var opCount = 0
+        for (oldIndex, oldKey) in oldKeys.enumerated() {
+            guard let newIndex = newIndexByKey[oldKey] else {
+                batch.deletions.append(IndexPath(row: oldIndex, section: 0))
+                opCount += 1
+                continue
+            }
+            if oldIndex != newIndex {
+                if contentSignature(for: oldRows[oldIndex]) != contentSignature(for: newRows[newIndex]) {
+                    batch.deletions.append(IndexPath(row: oldIndex, section: 0))
+                    batch.insertions.append(IndexPath(row: newIndex, section: 0))
+                    opCount += 2
+                } else {
+                    batch.moves.append((from: IndexPath(row: oldIndex, section: 0), to: IndexPath(row: newIndex, section: 0)))
+                    opCount += 1
+                }
+            } else if contentSignature(for: oldRows[oldIndex]) != contentSignature(for: newRows[newIndex]) {
+                batch.reloads.append(IndexPath(row: oldIndex, section: 0))
+                opCount += 1
+            }
+        }
+        for (newIndex, newKey) in newKeys.enumerated() where oldIndexByKey[newKey] == nil {
+            batch.insertions.append(IndexPath(row: newIndex, section: 0))
+            opCount += 1
+        }
+        guard opCount <= 10 else { return nil }
+        return batch
+    }
+
+    /// B3：首个可见行的锚点（key + 视口内偏移）——保位按行 ID，不只保偏移数值。
+    private func anchorForVisibleTopRow(in rows: [MergedRow]) -> (key: String, viewportOffset: CGFloat)? {
+        guard let path = tableView.indexPathsForVisibleRows?.sorted().first,
+              path.row < rows.count else { return nil }
+        let rect = tableView.rectForRow(at: path)
+        return (key: key(for: rows[path.row]), viewportOffset: rect.origin.y - tableView.contentOffset.y)
+    }
+
+    /// B3：有插入/移动时把锚点行放回原视口位置；锚点行已消失时按插入
+    /// 高度平移当刻视口；无锚点（首拉/旧表为空）时不动偏移。
+    private func restoreAnchor(_ anchor: (key: String, viewportOffset: CGFloat)?, oldHeight: CGFloat, responseOffsetY: CGFloat) {
+        guard let anchor = anchor else { return }
+        tableView.layoutIfNeeded()
+        if let newIndex = mergedRows.firstIndex(where: { key(for: $0) == anchor.key }) {
+            let rect = tableView.rectForRow(at: IndexPath(row: newIndex, section: 0))
+            tableView.contentOffset = CGPoint(x: 0, y: rect.origin.y - anchor.viewportOffset)
+        } else {
+            let delta = tableView.contentSize.height - oldHeight
+            tableView.contentOffset = CGPoint(x: 0, y: responseOffsetY + delta)
+        }
     }
 
     /// 通知行错峰入场：重建后对可见新行播（前 24 行、alpha 0、y -24、
