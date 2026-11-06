@@ -64,9 +64,9 @@ enum BearyDMStore {
         return decoded
     }
 
-    private static func saveAll(_ all: [String: StoredConversation], accountId: Int?) {
+    private static func saveAll(_ all: [String: StoredConversation], accountId: Int?) -> Bool {
         guard let url = fileURL(forAccount: accountId),
-              let data = try? JSONEncoder().encode(all) else { return }
+              let data = try? JSONEncoder().encode(all) else { return false }
         let tmp = url.appendingPathExtension("tmp")
         do {
             try data.write(to: tmp, options: .atomic)
@@ -75,8 +75,10 @@ enum BearyDMStore {
             } else {
                 try FileManager.default.moveItem(at: tmp, to: url)
             }
+            return true
         } catch {
             try? FileManager.default.removeItem(at: tmp)
+            return false
         }
     }
 
@@ -99,10 +101,12 @@ enum BearyDMStore {
 
     /// 按 id 去重并入本地（服务端回包与本地旧行同 id 时服务端为准），对方展示信息同步最新。
     /// 读改写在后台串行队列一次完成，直接回合并后的本会话消息，不再重读一次。
-    static func saveMessages(accountId: Int?, peer: BearyAPI.FriendUser, messages: [BearyAPI.DMMessage], completion: @escaping ([BearyAPI.DMMessage]) -> Void) {
+    /// completion 第二个参数为写盘成败：失败时合并结果仍是内存值（可展示），
+    /// 但磁盘未落下，调用方须置失败态、不得按已保存展示。
+    static func saveMessages(accountId: Int?, peer: BearyAPI.FriendUser, messages: [BearyAPI.DMMessage], completion: @escaping ([BearyAPI.DMMessage], Bool) -> Void) {
         ioQueue.async {
             guard let peerId = peer.id else {
-                DispatchQueue.main.async { completion([]) }
+                DispatchQueue.main.async { completion([], false) }
                 return
             }
             var all = loadAll(accountId: accountId)
@@ -118,9 +122,9 @@ enum BearyDMStore {
             }
             conv.messages = byId.values.sorted { ($0.id ?? 0) < ($1.id ?? 0) }
             all["\(peerId)"] = conv
-            saveAll(all, accountId: accountId)
+            let saved = saveAll(all, accountId: accountId)
             let merged = dmMessages(from: conv.messages)
-            DispatchQueue.main.async { completion(merged) }
+            DispatchQueue.main.async { completion(merged, saved) }
         }
     }
 
