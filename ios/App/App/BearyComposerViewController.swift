@@ -6186,17 +6186,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let restoreBaselineVersion = editorEditVersion
         let restoreBaselineDraftId = currentDraftId
         let restoreBaselineClearedDraftId = clearedCurrentDraftId
+        // P2-10：恢复读盘账号入队前捕获（与 saveDraftNow 的捕获口径一致，
+        // 执行中不再重读全局值）；P0-1 的打开时绑定（composerOriginAccountId）
+        // 合入后此处捕获源改为该绑定，本支不假设它已存在。
+        let restoreAccountId = BearyDraftStore.currentAccountId
         BearyDraftStore.ioQueue.async { [weak self] in
-            guard let draft = BearyDraftStore.load() else { return }
+            // P2-10：一次 loadAll 同时取最新草稿与引用集合——旧代码先 load()
+            // （内部又是一次完整 loadAll 再取首项）再 loadAll()，两次读盘
+            // 两倍成本；且两份结果独立，第二次读失败时 sweep 只保留最新一
+            // 篇的图片、误删其他篇图片。恢复与清理现用同一份数据。
+            let allDrafts = BearyDraftStore.loadAll(forAccount: restoreAccountId)
+            guard let draft = allDrafts.first else { return }
             // 回收无主文件（杀 App 后、首存前产生的孤文件）：多槽下必须保留全部草稿的
             // 引用并集，只留本篇会误删其他篇的本地图片。
             var referenced = Set<String>()
-            for img in draft.images {
-                if let name = img.localFile {
-                    referenced.insert(name)
-                }
-            }
-            for otherDraft in BearyDraftStore.loadAll() {
+            for otherDraft in allDrafts {
                 for img in otherDraft.images {
                     if let name = img.localFile {
                         referenced.insert(name)
