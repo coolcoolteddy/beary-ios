@@ -394,6 +394,8 @@ final class SessionManager {
         BearyFeedCache.purge(bucket: "\(id)")
         // r17 C5：星图建图内存缓存按账号桶清（该账号看过的所有作者星图）。
         BearyStarMapCache.purge(viewerBucket: "\(id)")
+        // B1：正在关注段快照是独立桶，退出/401 时同清，不留旧身份行。
+        BearyFeedCache.purge(bucket: BearyFeedCache.followingBucket(userId: id))
         BearyTimelineCache.purge(bucket: "\(id)")
         // 审计-性能：通知页分键缓存同样在退出/401 时清掉该账号槽位。
         BearyNotificationsViewController.purgeAccount(id)

@@ -99,6 +99,9 @@ enum BearyFriends {
     static func clearDiaryCachesAndNotify(userId: Int? = nil) {
         let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id)
         BearyFeedCache.purge(bucket: bucket)
+        // B1：取关后正在关注段快照失效（旧快照含已取关作者的公开篇，
+        // 不得再秒显进关注流），与广场桶同清。
+        BearyFeedCache.purge(bucket: BearyFeedCache.followingBucket(userId: SessionManager.shared.currentUser?.id))
         // 个人页赞过 tab 快照同样含仅好友篇：断友后旧快照不得再秒显。
         BearyProfileCache.purge(bucket: bucket)
         BearyDiaryCardCell.quoteCache.removeAll()
