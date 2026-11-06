@@ -21,6 +21,18 @@ final class BearyProfilePhotosViewController: UIViewController {
     /// 绝不由 willDisplay 自动重拉（见 fetchNextPageIfNeeded 失败分支）。
     private var photosPageLoadFailed = false
     var onOpenEntry: ((Entry) -> Void)?
+    /// r17-C6：容器提供的最新日记（返回时按日记 ID 重算照片索引用）——
+    /// 个人页点“更多照片”时接线，返回当前 photoWallSourceEntries 排序后
+    /// 的展示日记与 hasMore；未接线时返回不刷新（旧行为）。
+    var onRefreshEntries: (() -> (entries: [Entry], hasMore: Bool))?
+    /// r17-C6：当前照片是否来自磁盘快照（未被新回包确认前）、是否已有
+    /// 新回包确认、刷新失败时是否只拉到一部分。
+    private var photosFromCache = false
+    private var photosFreshConfirmed = false
+    private var photosPartialFailed = false
+    /// r17-C6：正显快照时后台刷新失败——此时才标“显示的是上次的数据”，
+    /// 刷新尚未失败前不标（快照只是先恢复，不等于已失败）。
+    private var photosRefreshFailed = false
 
     /// 审计-个人页设置：全量照片页同样走互关过滤（调用方按实时 followState 传；
     /// 默认 false，与旧行为一致——旧行为下初始 entries 已由调用方过滤，
@@ -33,6 +45,8 @@ final class BearyProfilePhotosViewController: UIViewController {
         self.photosValue = BearyProfileViewController.profilePhotoItems(from: initialEntries, isOwnProfile: isOwnProfileValue, isMutualFriend: isMutualFriendValue)
         self.photosHasMore = diaryHasMoreValue && authorIdValue != nil
         self.onOpenEntry = onOpenEntryValue
+        // r17-C6：首屏照片来自调用方新拉的日记，已是新回包确认态。
+        self.photosFreshConfirmed = !self.photosValue.isEmpty
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -95,6 +109,21 @@ final class BearyProfilePhotosViewController: UIViewController {
         return labelValue
     }()
 
+    /// r17-C6：快照态提示行——有旧结果且刷新失败时“显示的是上次的数据”，
+    /// 只拉到部分时“只加载了一部分”；确认结果为空时不显本行、只显空态。
+    /// 高度约束为 0 时塌掉，不占位。
+    private let photosStatusLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        labelValue.adjustsFontForContentSizeCategory = true
+        labelValue.textColor = BearyColors.gray
+        labelValue.textAlignment = .center
+        return labelValue
+    }()
+
+    private var photosStatusHeightConstraint: NSLayoutConstraint?
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
@@ -105,6 +134,9 @@ final class BearyProfilePhotosViewController: UIViewController {
         topBarView.addSubview(titleLabel)
         view.addSubview(collectionView)
         view.addSubview(emptyLabel)
+        view.addSubview(photosStatusLabel)
+        photosStatusHeightConstraint = photosStatusLabel.heightAnchor.constraint(equalToConstant: 0)
+        photosStatusHeightConstraint?.isActive = true
         NSLayoutConstraint.activate([
             topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -123,7 +155,10 @@ final class BearyProfilePhotosViewController: UIViewController {
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBarView.bottomAnchor, constant: -7),
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: backButton.trailingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBarView.trailingAnchor, constant: -52),
-            collectionView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
+            photosStatusLabel.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
+            photosStatusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            photosStatusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            collectionView.topAnchor.constraint(equalTo: photosStatusLabel.bottomAnchor),
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -134,6 +169,117 @@ final class BearyProfilePhotosViewController: UIViewController {
         // 空相册自动续拉：首批无可见照片但仍有下一页时，零格使 willDisplay
         // 永不触发，必须在此主动拉起首轮续拉（见 fetchMoreWhileEmptyIfNeeded）。
         fetchMoreWhileEmptyIfNeeded()
+        // r17-C6：首屏照片是新回包确认的即落快照；首屏无照片时先恢复上次
+        // 已确认的照片列表（前几篇没图时不再空白等续拉），后台续拉回包后替换。
+        if ownProfileValue, !photosValue.isEmpty {
+            savePhotosSnapshotIfNeeded()
+        }
+        restoreCachedPhotosIfNeeded()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // r17-C6：删图/换图后返回本页——向容器取最新日记，按日记 ID 重算
+        // 照片索引（删掉的图不再显示、换图后新 key 生效）；索引无变化时
+        // 不 reload、不闪。旧行为无 viewWillAppear，删图后本页一直残留旧图。
+        guard let fresh = onRefreshEntries?() else { return }
+        let newPhotos = BearyProfileViewController.profilePhotoItems(from: fresh.entries, isOwnProfile: ownProfileValue, isMutualFriend: mutualFriendValue)
+        guard photosSignature(newPhotos) != photosSignature(photosValue) else { return }
+        diaryEntriesValue = fresh.entries
+        photosHasMore = fresh.hasMore && authorIdValue != nil
+        photosValue = newPhotos
+        photosFromCache = false
+        photosFreshConfirmed = true
+        photosPartialFailed = false
+        photosRefreshFailed = false
+        photosPageLoadFailed = false
+        collectionView.reloadData()
+        updateTitleAndEmpty()
+        updatePhotosStatusLabel()
+        if ownProfileValue, !newPhotos.isEmpty {
+            savePhotosSnapshotIfNeeded()
+        }
+    }
+
+    /// r17-C6：照片索引签名（日记 ID＋图片 key 顺序）——返回时比对，
+    /// 任一增删换图即变，触发重建。
+    private func photosSignature(_ photos: [BearyProfilePhotoItem]) -> String {
+        photos.map { "\($0.entry.id ?? "")|\($0.imageKey)" }.joined(separator: ";")
+    }
+
+    /// r17-C6：快照态提示行——缓存+刷新失败显“显示的是上次的数据”，
+    /// 新数据只拉到一部分显“只加载了一部分”，其余塌掉不占位。
+    private func updatePhotosStatusLabel() {
+        let text: String?
+        if photosFromCache, photosRefreshFailed {
+            text = "显示的是上次的数据"
+        } else if photosPartialFailed {
+            text = "只加载了一部分"
+        } else {
+            text = nil
+        }
+        if let text = text {
+            photosStatusLabel.text = text
+            photosStatusHeightConstraint?.constant = 20
+        } else {
+            photosStatusLabel.text = nil
+            photosStatusHeightConstraint?.constant = 0
+        }
+    }
+
+    /// r17-C6：首屏照片索引落盘——日记 ID＋图片 key＋顺序（上限 60 张），
+    /// 索引指向的日记一并存（只为灯箱“查看日记”解析 Entry）；缩略图
+    /// 本身不落盘，走现有 BearyImageLoader 图片缓存。只缓存本人页。
+    private func savePhotosSnapshotIfNeeded() {
+        guard ownProfileValue, let accountId = SessionManager.shared.currentUser?.id,
+              let authorId = authorIdValue, !photosValue.isEmpty else { return }
+        let capped = Array(photosValue.prefix(BearyProfilePhotosCache.snapshotPhotoLimit))
+        let items = capped.compactMap { photo -> BearyProfilePhotosCache.PhotoIndexItem? in
+            guard let entryId = photo.entry.id, !entryId.isEmpty else { return nil }
+            return BearyProfilePhotosCache.PhotoIndexItem(entryId: entryId, imageKey: photo.imageKey)
+        }
+        guard !items.isEmpty else { return }
+        var seenIds = Set<String>()
+        var entries: [Entry] = []
+        for photo in capped {
+            guard let entryId = photo.entry.id, !entryId.isEmpty, !seenIds.contains(entryId) else { continue }
+            seenIds.insert(entryId)
+            entries.append(photo.entry)
+        }
+        BearyProfilePhotosCache.save(
+            accountId: accountId,
+            sessionGeneration: SessionManager.shared.currentSessionGeneration,
+            authorId: authorId,
+            items: items,
+            entries: entries,
+            hasMore: photosHasMore
+        )
+    }
+
+    /// r17-C6：首屏无照片时先恢复上次已确认的照片列表——只有新回包尚未
+    /// 确认时才贴快照；新回包一到即以新索引为准，旧快照不再贴。
+    private func restoreCachedPhotosIfNeeded() {
+        guard ownProfileValue, photosValue.isEmpty, !photosFreshConfirmed,
+              let accountId = SessionManager.shared.currentUser?.id,
+              let authorId = authorIdValue else { return }
+        BearyProfilePhotosCache.load(accountId: accountId, sessionGeneration: SessionManager.shared.currentSessionGeneration, authorId: authorId) { [weak self] snap in
+            guard let self = self, let snap = snap, !self.photosFreshConfirmed, self.photosValue.isEmpty else { return }
+            var entriesById: [String: Entry] = [:]
+            for entry in snap.entries {
+                if let entryId = entry.id, !entryId.isEmpty { entriesById[entryId] = entry }
+            }
+            var restored: [BearyProfilePhotoItem] = []
+            for item in snap.items {
+                if let entry = entriesById[item.entryId] {
+                    restored.append(BearyProfilePhotoItem(entry: entry, imageKey: item.imageKey))
+                }
+            }
+            guard !restored.isEmpty else { return }
+            self.photosValue = restored
+            self.photosFromCache = true
+            self.collectionView.reloadData()
+            self.updateTitleAndEmpty()
+        }
     }
 
     /// 116 数据填入动效：标题计数变化时只淡入标题本身（alpha 0→1、
@@ -228,6 +374,23 @@ final class BearyProfilePhotosViewController: UIViewController {
                     strongSelf.updateTitleAndEmpty()
                     // 116：续拉新格错峰滑入（已有格不重播）。
                     strongSelf.staggerNewCells(from: oldPhotoCount)
+                    // r17-C6：新回包确认后缓存态解除、按新索引落快照；
+                    // 确认结果为空（已翻到尾仍无照片）时旧快照失效，下次
+                    // 不再先恢复已删的照片，空态由 updateTitleAndEmpty 显。
+                    strongSelf.photosFromCache = false
+                    strongSelf.photosFreshConfirmed = true
+                    strongSelf.photosPartialFailed = false
+                    strongSelf.photosRefreshFailed = false
+                    strongSelf.updatePhotosStatusLabel()
+                    if strongSelf.ownProfileValue {
+                        if strongSelf.photosValue.isEmpty, !strongSelf.photosHasMore {
+                            if let accountId = SessionManager.shared.currentUser?.id {
+                                BearyProfilePhotosCache.purge(bucket: "\(accountId)")
+                            }
+                        } else if !strongSelf.photosValue.isEmpty {
+                            strongSelf.savePhotosSnapshotIfNeeded()
+                        }
+                    }
                     // 空相册续拉：本页仍无可见照片时继续取下一页；仅当本页
                     // 确实推进了游标（去重后有新增）才续拉，去重后零新增时
                     // 不续拉，避免同一游标重复取页死循环。
@@ -244,6 +407,15 @@ final class BearyProfilePhotosViewController: UIViewController {
                     // 不 reload 已有照片（保留照片与滚动位置）；末格留屏时用户
                     // 点尾部按钮即可重试，不再只靠末项重入视野。
                     BearyToast.show(in: strongSelf.view, message: "照片加载失败，请稍后重试")
+                    // r17-C6：失败时已有照片照常看；正显快照时标“显示的是
+                    // 上次的数据”，新数据只拉到一部分时标“只加载了一部分”。
+                    if strongSelf.photosFromCache {
+                        strongSelf.photosRefreshFailed = true
+                        strongSelf.updatePhotosStatusLabel()
+                    } else if !strongSelf.photosValue.isEmpty {
+                        strongSelf.photosPartialFailed = true
+                        strongSelf.updatePhotosStatusLabel()
+                    }
                     if !strongSelf.photosPageLoadFailed {
                         strongSelf.photosPageLoadFailed = true
                         strongSelf.collectionView.insertSections(IndexSet(integer: 1))
@@ -515,5 +687,95 @@ final class BearyProfilePhotosLoadMoreFooterCell: UICollectionViewCell {
 
     @objc private func retryButtonTapped() {
         onRetry?()
+    }
+}
+
+// MARK: - 本人相册首屏照片索引快照（r17-C6，与 BearyFeedCache 同口径，不新增文件）
+//
+// 缓存首屏的「日记 ID＋图片 key＋顺序」＋索引指向的日记（只为灯箱
+// “查看日记”解析 Entry；缩略图本身不落盘，走现有 BearyImageLoader
+// 图片缓存）。只缓存本人页；按账号分桶，读取时校验账号 id 与会话代次
+// （退出/401/换号后代次推进，旧快照弃用）；退出/401 时由 SessionManager 清桶。
+enum BearyProfilePhotosCache {
+    private static let filePrefix = "beary_profile_photos_cache_"
+    static let snapshotPhotoLimit = 60
+
+    struct PhotoIndexItem: Codable {
+        var entryId: String
+        var imageKey: String
+    }
+
+    struct Snapshot: Codable {
+        var savedAt: TimeInterval
+        var accountId: Int
+        var sessionGeneration: Int
+        var authorId: Int
+        var items: [PhotoIndexItem]
+        var entries: [Entry]
+        var hasMore: Bool
+    }
+
+    private static func fileURL(bucket: String) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return base.appendingPathComponent("\(filePrefix)\(bucket).json")
+    }
+
+    private static let ioQueue = DispatchQueue(label: "beary.profilePhotosCache.io", qos: .utility)
+
+    private static let generationLock = NSLock()
+    private static var generations: [String: UInt64] = [:]
+
+    private static func generation(for bucket: String) -> UInt64 {
+        generationLock.lock()
+        defer { generationLock.unlock() }
+        return generations[bucket] ?? 0
+    }
+
+    private static func bumpGeneration(for bucket: String) {
+        generationLock.lock()
+        generations[bucket, default: 0] += 1
+        generationLock.unlock()
+    }
+
+    /// 读取：账号 id 与会话代次双重校验——任一不符即弃用，不递出旧号/旧会话快照。
+    static func load(accountId: Int, sessionGeneration: Int, authorId: Int, completion: @escaping (Snapshot?) -> Void) {
+        let bucket = "\(accountId)"
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            var snap: Snapshot?
+            if let url = fileURL(bucket: bucket), let data = try? Data(contentsOf: url) {
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                snap = try? decoder.decode(Snapshot.self, from: data)
+            }
+            let valid = snap?.accountId == accountId
+                && snap?.sessionGeneration == sessionGeneration
+                && snap?.authorId == authorId
+            let result = (capturedGeneration == generation(for: bucket) && valid) ? snap : nil
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    static func save(accountId: Int, sessionGeneration: Int, authorId: Int, items: [PhotoIndexItem], entries: [Entry], hasMore: Bool) {
+        let bucket = "\(accountId)"
+        let snap = Snapshot(savedAt: Date().timeIntervalSince1970, accountId: accountId, sessionGeneration: sessionGeneration, authorId: authorId, items: items, entries: entries, hasMore: hasMore)
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            guard capturedGeneration == generation(for: bucket) else { return }
+            guard let url = fileURL(bucket: bucket) else { return }
+            let encoder = JSONEncoder()
+            encoder.keyEncodingStrategy = .convertToSnakeCase
+            guard let data = try? encoder.encode(snap) else { return }
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    static func purge(bucket: String) {
+        bumpGeneration(for: bucket)
+        ioQueue.async {
+            guard let url = fileURL(bucket: bucket) else { return }
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }

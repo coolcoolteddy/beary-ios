@@ -53,6 +53,10 @@ final class SessionManager {
     /// refreshMe 成功且用户 id 变化）+1；refreshMe 回包与 BearyAPI 的 401
     /// 回调只认当前代际，过期回包一律丢弃，不得覆盖当前态。
     private var sessionGeneration = 0
+    /// 会话代次只读口径（r17 首屏快照）：磁盘快照读取时校验——与账号 id
+    /// 一起构成账号+会话双重校验；代次推进（退出/401/换号）即旧会话
+    /// 快照失效。快照保存时记下当时代次，读取时比对，不一致即弃用。
+    var currentSessionGeneration: Int { sessionGeneration }
     /// refreshMe 请求序号：每次调用 +1，回包只认最新一次，旧请求回包
     /// （含成功与 401 映射的 success(nil)）直接丢弃、不调 completion。
     /// 显式退出时同样 +1（见 signOutLocally），使退出时在途的旧 /me
@@ -307,6 +311,8 @@ final class SessionManager {
         // 审计-性能：通知页分键缓存同样在退出/401 时清掉该账号槽位。
         BearyNotificationsViewController.purgeAccount(id)
         BearyProfileCache.purge(bucket: "\(id)")
+        // r17-C6：本人相册首屏照片索引快照同样在退出/401 时清掉该账号槽位。
+        BearyProfilePhotosCache.purge(bucket: "\(id)")
         BearyDMConversationsCache.purge(bucket: "\(id)")
         BearyDetailCache.purge(bucket: "\(id)")
         BearyEntrySyncStore.purgeAccount(accountId: id)
