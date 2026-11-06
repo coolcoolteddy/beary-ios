@@ -785,6 +785,21 @@ class BearyDiaryCardCell: UITableViewCell {
         return v
     }()
 
+    /// 天气图标的对齐包：与 timeLabel 同字号（13pt）的空 label。
+    /// .firstBaseline 栈里 UIImageView 以底边贴基线，图标中心会比时间文字中心
+    /// 高约 5pt（详情页更大，实测约 11pt）；包的基线与 timeLabel 基线相同、
+    /// 框与 timeLabel 框等高，图标在包内居中 → 图标中心恒等于时间文字中心，
+    /// 各字号档都成立。空 UILabel 自带基线（titleSpacerLabel 同款口径），
+    /// 同款皇冠包口径（crownWrapView 等高 nameLabel、crownView 包内居中）。
+    private let weatherWrapLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.isHidden = true
+        return lb
+    }()
+
     /// 卡片作者行气温（跟天气图标走同一处：有后端 temperature_c 才显，无值不留空位）。
     private let weatherTempLabel: UILabel = {
         let lb = UILabel()
@@ -825,7 +840,7 @@ class BearyDiaryCardCell: UITableViewCell {
     }()
 
     private lazy var titleStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameLabel, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, weatherTempLabel, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameLabel, crownWrapView, titleSpacerLabel, timeLabel, weatherWrapLabel, weatherTempLabel, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         // 姓名→皇冠间距 6（2026-11-05 ChatGPT 间距跟进；徽章已下线摘掉，
@@ -1391,7 +1406,16 @@ class BearyDiaryCardCell: UITableViewCell {
             crownView.centerXAnchor.constraint(equalTo: crownWrapView.centerXAnchor),
             crownView.centerYAnchor.constraint(equalTo: crownWrapView.centerYAnchor),
         ])
-        weatherImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 天气图标在对齐包内居中（15×15 不变；包与 timeLabel 等高同基线，
+        // 包中心即时间文字中心）。
+        weatherWrapLabel.addSubview(weatherImageView)
+        NSLayoutConstraint.activate([
+            weatherImageView.centerXAnchor.constraint(equalTo: weatherWrapLabel.centerXAnchor),
+            weatherImageView.centerYAnchor.constraint(equalTo: weatherWrapLabel.centerYAnchor),
+            weatherImageView.widthAnchor.constraint(equalToConstant: 15),
+            weatherImageView.heightAnchor.constraint(equalToConstant: 15),
+        ])
+        weatherWrapLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         moodStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         let imageHeight = imagesScrollView.heightAnchor.constraint(equalToConstant: 0)
         imageHeightConstraint = imageHeight
@@ -1419,8 +1443,8 @@ class BearyDiaryCardCell: UITableViewCell {
             extraConstraints.append(crownView.heightAnchor.constraint(equalToConstant: 19))
             extraConstraints.append(crownWrapView.widthAnchor.constraint(equalToConstant: 19))
             extraConstraints.append(crownWrapView.heightAnchor.constraint(equalTo: nameLabel.heightAnchor))
-            extraConstraints.append(weatherImageView.widthAnchor.constraint(equalToConstant: 15))
-            extraConstraints.append(weatherImageView.heightAnchor.constraint(equalToConstant: 15))
+            extraConstraints.append(weatherWrapLabel.widthAnchor.constraint(equalToConstant: 15))
+            extraConstraints.append(weatherWrapLabel.heightAnchor.constraint(equalTo: timeLabel.heightAnchor))
         } else {
             // fixall-cell 8-12：首页收藏/分享与个人页同款 21×21 尺寸约束，
             // 原 2pt 内边距依赖删除（内边距 + 无约束曾使图标框随内容浮动）。
@@ -1440,14 +1464,16 @@ class BearyDiaryCardCell: UITableViewCell {
             crownWrapHeight.priority = UILayoutPriority(999)
             extraConstraints.append(crownWrapWidth)
             extraConstraints.append(crownWrapHeight)
-            let weatherWidth = weatherImageView.widthAnchor.constraint(equalToConstant: 15)
+            let weatherWidth = weatherWrapLabel.widthAnchor.constraint(equalToConstant: 15)
             weatherWidth.priority = UILayoutPriority(999)
             extraConstraints.append(recipientIconView.widthAnchor.constraint(equalToConstant: 13))
             extraConstraints.append(recipientIconHeight)
             extraConstraints.append(crownWidth)
             extraConstraints.append(crownView.heightAnchor.constraint(equalToConstant: 19))
             extraConstraints.append(weatherWidth)
-            extraConstraints.append(weatherImageView.heightAnchor.constraint(equalToConstant: 15))
+            let weatherWrapHeight = weatherWrapLabel.heightAnchor.constraint(equalTo: timeLabel.heightAnchor)
+            weatherWrapHeight.priority = UILayoutPriority(999)
+            extraConstraints.append(weatherWrapHeight)
         }
         // 批 E 位置行图钉：与详情/时间线同款 13×13。之前没钉尺寸，.fill 行里
         // 图钉框（hugging 250）比文案（251）先吸满多余宽度，scaleAspectFit 把
@@ -1768,6 +1794,7 @@ class BearyDiaryCardCell: UITableViewCell {
         stopWeatherLottie()
         weatherImageView.image = nil
         weatherImageView.isHidden = true
+        weatherWrapLabel.isHidden = true
         weatherTempLabel.text = nil
         weatherTempLabel.isHidden = true
         moodStack.isHidden = true
@@ -2098,13 +2125,16 @@ class BearyDiaryCardCell: UITableViewCell {
             if let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
                 weatherImageView.image = weatherImage
                 weatherImageView.isHidden = false
+                weatherWrapLabel.isHidden = false
             } else {
                 weatherImageView.image = nil
                 weatherImageView.isHidden = true
+                weatherWrapLabel.isHidden = true
             }
         } else {
             weatherImageView.image = nil
             weatherImageView.isHidden = true
+            weatherWrapLabel.isHidden = true
         }
         // 气温跟天气图标走同一处：有值显“18°”，无值隐藏、不留空位。
         if let temp = entry.temperatureC, entry.weather != nil, !entry.weather!.isEmpty {
@@ -2193,9 +2223,11 @@ class BearyDiaryCardCell: UITableViewCell {
         if let weatherKey = entry.weather, !weatherKey.isEmpty, let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
             weatherImageView.image = weatherImage
             weatherImageView.isHidden = false
+            weatherWrapLabel.isHidden = false
         } else {
             weatherImageView.image = nil
             weatherImageView.isHidden = true
+            weatherWrapLabel.isHidden = true
         }
         // #427 的气温显示保留；作者行心情位按 #421 新模型一律隐藏
         // （refreshMoodView），心情缀正文末尾，不恢复旧心情标签。
