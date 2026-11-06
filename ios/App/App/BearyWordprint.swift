@@ -81,6 +81,18 @@ func bearyMakeWordprintScopeBadge(scope: BearyWordprintScope) -> UIView {
 /// 词行 = 词（字号按出现篇数缩放）+ 篇数 / 总次数 + 按出现篇数定长的橙条。
 final class BearyWordprintView: UIView {
 
+    /// 词行（hero）：裸 UIView 无法逐实例 override accessibilityActivate，
+    /// 故用小型私有子类承载——VoiceOver 双击走 accessibilityActivate，
+    /// 默认不触发 UITapGestureRecognizer，须由它镜像点按的选择动作
+    /// （同款模式见 BearyQuoteCardView）。
+    private final class RowView: UIView {
+        var onActivate: (() -> Bool)?
+
+        override func accessibilityActivate() -> Bool {
+            onActivate?() ?? false
+        }
+    }
+
     private let mode: BearyWordprintMode
     private var shownItems: [BearyProfilePersonalLogic.WordprintItem] = []
     var onSelect: ((BearyProfilePersonalLogic.WordprintItem) -> Void)?
@@ -198,7 +210,7 @@ final class BearyWordprintView: UIView {
     }
 
     private func makeRow(item: BearyProfilePersonalLogic.WordprintItem, maxDocCount: Int, index: Int) -> UIView {
-        let row = UIView()
+        let row = RowView()
         row.translatesAutoresizingMaskIntoConstraints = false
         row.tag = index
         let ratio: CGFloat
@@ -271,19 +283,35 @@ final class BearyWordprintView: UIView {
             row.isUserInteractionEnabled = true
             let tap = UITapGestureRecognizer(target: self, action: #selector(rowTapped(_:)))
             row.addGestureRecognizer(tap)
+            row.isAccessibilityElement = true
             row.accessibilityTraits = .button
             row.accessibilityLabel = "\(item.word)，出现 \(item.docCount) 篇，总计 \(item.totalCount) 次"
             row.accessibilityHint = "点按查看篇数与月份分布"
+            // VoiceOver 双击走 accessibilityActivate，默认不触发 UITapGestureRecognizer：
+            // 与点按共用同一选择动作，进相同月份详情。
+            row.onActivate = { [weak self] in self?.selectItem(at: index) ?? false }
+            // 词行自身已朗读完整信息，装饰性子元素不再单独聚焦，避免重复朗读。
+            wordLabel.isAccessibilityElement = false
+            countLabel.isAccessibilityElement = false
+            barBackground.isAccessibilityElement = false
+            barFill.isAccessibilityElement = false
         }
         return row
     }
 
     @objc private func rowTapped(_ sender: UITapGestureRecognizer) {
+        guard let row = sender.view else { return }
+        selectItem(at: row.tag)
+    }
+
+    /// 点按与 VoiceOver 双击共用的选择动作：进该词的月份详情。
+    @discardableResult
+    private func selectItem(at index: Int) -> Bool {
         guard mode == .hero,
-              let row = sender.view,
-              row.tag >= 0,
-              row.tag < shownItems.count else { return }
-        onSelect?(shownItems[row.tag])
+              index >= 0,
+              index < shownItems.count else { return false }
+        onSelect?(shownItems[index])
+        return true
     }
 }
 
