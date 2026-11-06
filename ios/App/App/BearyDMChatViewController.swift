@@ -805,12 +805,17 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     let pending = self.pendingTemps()
                     let fetched = self.resolvedSenders(Array(history.resolvedMessages.reversed()))
                     // 读改写走后台串行队列：save 直接回合并后的本会话消息，不再重读一次。
-                    BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched) { [weak self] merged in
+                    // 写盘失败不再静默：服务端数据仍展示（内存值），但置失败态＋toast，
+                    // 下拉刷新可重试（重拉即重写盘）；空消息时失败态走加载失败重试入口。
+                    BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched) { [weak self] merged, saved in
                         guard let self = self else { return }
                         self.messages = merged
                         self.reconcilePendingSends(pending)
                         self.hasMoreOlder = history.resolvedMessages.count >= 30
-                        self.loadFailed = false
+                        self.loadFailed = !saved
+                        if !saved {
+                            BearyToast.show(in: self.view, message: "本地保存失败，下拉刷新可重试")
+                        }
                         self.firstLoadPending = false
                         self.firstLoadStateView.isHidden = true
                         self.updateEmptyState()
@@ -890,13 +895,18 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     // 否则在途/失败的待发会被整表覆盖吞掉（翻旧取的是更早页，
                     // 不可能含待发，无需配对认领、直接拼回）。
                     let pending = self.pendingTemps()
-                    BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older) { [weak self] merged in
+                    // 写盘失败不再静默：服务端数据仍展示（内存值），但翻旧浮标切失败态＋toast，
+                    // 点按浮标或再次滚动到顶部即重试（重拉即重写盘）。
+                    BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older) { [weak self] merged, saved in
                         guard let self = self else { return }
                         self.messages = merged
                         self.messages += pending
                         self.tableView.reloadData()
                         self.tableView.layoutIfNeeded()
-                        self.setOlderLoadingState(loading: false, failed: false)
+                        self.setOlderLoadingState(loading: false, failed: !saved)
+                        if !saved {
+                            BearyToast.show(in: self.view, message: "本地保存失败，滚动可重试")
+                        }
                         let delta = self.tableView.contentSize.height - oldHeight
                         if userMovedAway {
                             // 不用发请求时的锚点覆盖当前位置：按插入高度平移当前视口。
