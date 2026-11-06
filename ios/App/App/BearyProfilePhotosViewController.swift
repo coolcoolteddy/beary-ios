@@ -175,8 +175,11 @@ final class BearyProfilePhotosViewController: UIViewController {
 
     private func updateTitleAndEmpty() {
         setTitleTextFaded("照片 · \(photosValue.count) 张")
-        emptyLabel.isHidden = !photosValue.isEmpty
-        collectionView.isHidden = photosValue.isEmpty
+        // r27-6：空态且有持续翻页失败重试节时不隐藏列表——重试节在
+        // 列表里，藏列表等于藏重试入口；失败态下空文案也不显示，
+        // 不是“没有照片”，是下一页没拉到。
+        emptyLabel.isHidden = !photosValue.isEmpty || photosPageLoadFailed
+        collectionView.isHidden = photosValue.isEmpty && !photosPageLoadFailed
     }
 
     /// 空相册自动续拉：照片为空且仍有下一页时继续取页，直到出现照片或
@@ -246,6 +249,10 @@ final class BearyProfilePhotosViewController: UIViewController {
                     BearyToast.show(in: strongSelf.view, message: "照片加载失败，请稍后重试")
                     if !strongSelf.photosPageLoadFailed {
                         strongSelf.photosPageLoadFailed = true
+                        // r27-6：先按新显隐口径现出列表（空态下列表本是
+                        // 隐藏的），再插重试节；否则重试节藏在被隐藏的
+                        // 列表里，用户只见 toast、无可点入口。
+                        strongSelf.updateTitleAndEmpty()
                         strongSelf.collectionView.insertSections(IndexSet(integer: 1))
                     }
                 }
