@@ -3,7 +3,7 @@ import UIKit
 // ===== 编辑器 @ 选人（网页对齐批）=====
 // @ 选人：调 GET /beary/api/search?q=，只取 users 组（display_name/handle 匹配，≤8 条，
 // 与网页搜索同口径），结果过滤掉本人；点行即回传 SearchUser，调用方负责 @ chip。
-// 呈现：自定义底 sheet（文件内自包含，不碰 SceneDelegate）：手机端 max-height 82vh 底 sheet、
+// 呈现：自定义底 sheet（文件内自包含，不碰 SceneDelegate）：手机端固定高 82vh 底 sheet、
 // 圆角 20/20/0/0、阴影 0 −12 32 rgba(0,0,0,.22)；宽 ≥821 时居中 440
 // 全圆角 20 + 边框 1 + 阴影 0 24 60 rgba(0,0,0,.30)；自定义抓手 40×4（不用系统抓手）。
 // 遮罩为通用 0.45 黑遮罩（网页 .modal .backdrop 口径），点遮罩关闭；第 30 项起遮罩与面板
@@ -61,7 +61,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let notifyLabel = UILabel()
     /// 搜索框配色（编辑器批）：原 A2 自定义动态底色/边框已删——96 包真机上搜索框
     /// 整棵子树不画（帧 44pt 证实存在、预测区像素纯白），v2 黑白灰改走
-    /// BearyColors.bg 白底＋line 边，圆角取精确半高 22（见 buildViews）。
+    /// BearyColors.bg 白底＋line 边，圆角取精确半高 24（见 buildViews）。
     private let listContainer = UIView()
     // 审计第 9 项：滚动取消走共享类（见 BearyNativeCommon.BearyCancellableScrollView）——
     // 从选人行按钮上起滑时滚动视图能抢到 pan，点按行为不变；搜索输入框不在本滚动区内。
@@ -83,6 +83,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// 审计二轮 03：在途搜索任务——清空或换词时取消，防晚到回包；seq 守卫仍保留。
     private var searchTask: URLSessionDataTask?
     private var lastQuery = ""
+    /// R13 方案 B：搜索框焦点态（聚焦＝蓝边、失焦＝line 边，搜索页同口径）；
+    /// 边框色只归 updateSearchBoxBorder 管。
+    private var searchBoxFocused = false
     private var isPadLayout = false
     private var keyboardHeight: CGFloat = 0
     /// 编辑器打开选人器时键盘已弹起的高度（编辑器 currentKeyboardHeight 传进来；
@@ -156,7 +159,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 边框与搜索框描边。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             applySheetChrome()
-            searchBox.layer.bearyDynamicBorderColor = BearyColors.line
+            // R13 方案 B：深浅切换重刷描边时走焦点态（聚焦仍蓝、失焦回 line），
+            // 不再无条件写回 line 丢掉焦点态。
+            updateSearchBoxBorder()
             notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
         }
     }
@@ -197,11 +202,11 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // 编辑器批搜索框去 exotic 化：原自定义动态底色/边框 + 999 圆角在 96 包真机上
         // 整棵子树不画（帧 44pt 证实存在、预测区像素纯白；静态查不到隐藏/透明/遮挡路径）。
         // v2 黑白灰：底由 faint 改 bg（白底＋line 边，草稿箱卡片同款组合），圆角
-        // 仍取精确半高 22；显式 44 高、18 图标、16 占位均不动。注意：96 包的 faint
+        // 仍取精确半高 24；显式 48 高、18 图标、16 占位均不动。注意：96 包的 faint
         // 底是当时已证实可见的方案，白底组合须真机确认后再算数；若真机仍不可见，
         // 下一步须诊断包记录 searchBox.frame/alpha/isHidden，而非继续盲改。
         searchBox.backgroundColor = BearyColors.bg
-        searchBox.layer.cornerRadius = 22
+        searchBox.layer.cornerRadius = 24
         searchBox.layer.masksToBounds = true
         searchBox.layer.borderWidth = 1
         searchBox.layer.bearyDynamicBorderColor = BearyColors.line
@@ -339,9 +344,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             searchBox.topAnchor.constraint(equalTo: headerTitle.bottomAnchor, constant: 12),
             searchBox.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
             searchBox.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -16),
-            // A2：搜索框显式高度 44pt（不再内容驱动，避免 sheet fitting 压高导致图标/占位看不见）。
-            // 32 清单第 25 项：搜索框改 ≥44——16pt 输入字跟随放大时框随字长高、不裁字；默认字号下仍为 44。
-            searchBox.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            // R13 方案 B：搜索框显式高度 48pt（不再内容驱动，避免 sheet fitting 压高导致图标/占位看不见）。
+            // 32 清单第 25 项：搜索框改 ≥48——16pt 输入字跟随放大时框随字长高、不裁字；默认字号下仍为 48。
+            searchBox.heightAnchor.constraint(greaterThanOrEqualToConstant: 48),
             searchIcon.leadingAnchor.constraint(equalTo: searchBox.leadingAnchor, constant: 14),
             searchIcon.centerYAnchor.constraint(equalTo: searchBox.centerYAnchor),
             searchIcon.widthAnchor.constraint(equalToConstant: 18),
@@ -458,7 +463,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         }
     }
 
-    /// sheet 高 = 内容高，上限 82vh（键盘弹出时手机端上限改按键盘上方的可见高计）。
+    /// R13 方案 B：固定标题区——sheet 高固定为上限（可用高 82%，键盘弹出时
+    /// 手机端上限改按键盘上方的可见高计），不再随内容高伸缩；标题＋搜索框
+    /// 的屏上位置自此固定，不再随结果数上下移动，内容多少只由列表区内部
+    /// 滚动承担（列表区已是滚动容器，行不裁；空态时列表区下方留白）。
     private func updateSheetHeight() {
         let containerHeight = view.bounds.height
         guard containerHeight > 0 else { return }
@@ -470,33 +478,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             let pad = 14 + (isPadLayout ? 0 : view.safeAreaInsets.bottom)
             listBottom.constant = -pad
         }
-        let searchHeight = searchBox.systemLayoutSizeFitting(
-            CGSize(width: max(sheetWidth - 32, 0), height: 0),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        ).height
-        // iCity：通知行已隐藏，不计入 sheet 高（列表直接贴搜索框下 10pt，见下方约束）。
-        let listWidth = max(sheetWidth - 20, 0)
-        let listHeight: CGFloat
-        if !listScrollView.isHidden {
-            listHeight = rowsStack.systemLayoutSizeFitting(
-                CGSize(width: listWidth, height: 0),
-                withHorizontalFittingPriority: .required,
-                verticalFittingPriority: .fittingSizeLevel
-            ).height
-        } else {
-            listHeight = stateView.systemLayoutSizeFitting(
-                CGSize(width: listWidth, height: 0),
-                withHorizontalFittingPriority: .required,
-                verticalFittingPriority: .fittingSizeLevel
-            ).height
-        }
-        let bottomPad = 14 + (isPadLayout ? 0 : view.safeAreaInsets.bottom)
-        // 抓手 14 + 标题顶 14 + 标题高 + 标题到搜索 12 + 搜索框高 + 搜索到列表 10
-        // + 列表高 + 底 padding（iCity：通知行隐藏后不再占 8 + 行高 + 10；
-        // v2：标题行橙圈已删，行高由标题本身定，标题高取 intrinsic，首帧为 0 时兜底 20）。
-        let titleHeight = max(headerTitle.intrinsicContentSize.height, 20)
-        let fittingHeight = 14 + 14 + titleHeight + 12 + searchHeight + 10 + listHeight + bottomPad
         // 审计 D-4：可用高按键盘顶沿计——手机端键盘顶沿即为可见高（此前 iPad 直接
         // 不扣键盘高度，浮动/分屏键盘会盖住居中卡片）；iPad 另受“上抬后卡片顶不得
         // 顶出安全区”约束：卡片底 = 键盘顶 - 14，故高上限 = 键盘顶 - 14 - 安全区顶。
@@ -513,7 +494,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             let keyboardFitHeight = keyboardTop - 14 - view.safeAreaInsets.top
             maxHeight = min(maxHeight, max(keyboardFitHeight, 0))
         }
-        let target = min(fittingHeight, maxHeight)
+        let target = maxHeight
         if let heightConstraint = sheetHeightConstraint, abs(heightConstraint.constant - target) > 0.5 {
             heightConstraint.constant = target
         }
@@ -690,6 +671,22 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         return true
     }
 
+    /// R13 方案 B：输入框焦点变化仅切换边框状态（聚焦＝蓝、失焦＝line，
+    /// 搜索页同口径）；不动底色、不动圆角、不抢焦点。
+    func textFieldDidBeginEditing(_ textField: UITextField) {
+        searchBoxFocused = true
+        updateSearchBoxBorder()
+    }
+
+    func textFieldDidEndEditing(_ textField: UITextField) {
+        searchBoxFocused = false
+        updateSearchBoxBorder()
+    }
+
+    private func updateSearchBoxBorder() {
+        searchBox.layer.bearyDynamicBorderColor = searchBoxFocused ? BearyColors.blue : BearyColors.line
+    }
+
     /// 四态：init（未搜）/ loading（中央大 @ 旋转 + 列表态文案，见第 22 项规则）/ none / fail；有结果时态视图隐藏。
     /// 审计二轮 16：搜索失败文案按错误类型分流（APIError 自带分类，不猜原因）。
     private static func searchFailureMessage(for error: APIError) -> String {
@@ -787,8 +784,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private func runSearch(query: String) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            // 审计二轮 03：清空即作废在途搜索——代次 +1 让晚到回包被守卫丢弃，
-            // 再取消在途请求、清结果，不让旧结果回填进已清空的搜索框下。
+            // R13-03：清空即新一轮——递增序号使在途旧请求失效（旧回包凭序号
+            // 与发起词双重守卫丢弃），并立即停转、清结果回初始态；不留旧请求
+            // 迟到复现旧结果的窗口。
             searchSeq += 1
             searchTask?.cancel()
             searchTask = nil
@@ -803,6 +801,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         lastQuery = trimmed
         searchSeq += 1
         let seq = searchSeq
+        let requestQuery = trimmed
         // 2026-10-29 第 22 项（搜索日记页同规则）：同一时间只转一个——
         // 结果已在屏（stateView 已藏、中央态被结果盖住）时转框里放大镜，
         // 结果区保持可见、不调 showState(loading)（它会把结果区换走）；
@@ -818,7 +817,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         searchTask?.cancel()
         searchTask = BearyAPI.shared.search(q: trimmed) { [weak self] result in
             DispatchQueue.main.async {
-                guard let self = self, seq == self.searchSeq else { return }
+                // R13-03：双重守卫——序号须为最新一轮，且当前输入词须与发起时一致；
+                // 搜 A 后立刻清空（或改搜 B），A 的迟到回包到此即丢弃，不碰 UI。
+                guard let self = self, seq == self.searchSeq, self.lastQuery == requestQuery else { return }
                 self.setSearchBusy(false)
                 self.setCenterBusy(false)
                 switch result {
@@ -1154,7 +1155,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                 guard !animatedRowKeys.contains(key) else { continue }
                 animatedRowKeys.insert(key)
                 button.alpha = 0
-                UIView.animate(withDuration: 0.25, delay: min(Double(animIndex) * 0.03, 0.24), options: [], animations: {
+                // R13 方案 B：新增行错峰淡入 0.18s（步进 0.03、封顶 0.24 不动）。
+                UIView.animate(withDuration: 0.18, delay: min(Double(animIndex) * 0.03, 0.24), options: [], animations: {
                     button.alpha = 1
                 }, completion: nil)
                 animIndex += 1
