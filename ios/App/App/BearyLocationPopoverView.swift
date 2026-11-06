@@ -6,9 +6,10 @@ import MapKit
 // 形态沿用心情/天气尖角弹出框的既有语言：框体贴工具栏上方、左右与工具栏同宽、
 // 底边小尖角指向触发钮（框在工具栏上方，故尖角在框底、向下指钮；预览 HTML 把尖角画在
 // 框顶是示意画法，真实编辑器里框顶尖角会指向空白，与心情/天气框的底尖角口径也不一致）。
-// 行为：打开即自动定位（定位中确认钮禁用，防存空位置）；右边 ✅ 图标确认钮（官方 icon_check）+ 自己输入；
+// 行为：打开即自动定位（定位中确认钮禁用，防存空位置）；已有地点时先展示
+// 已确认的地名与区级，点「重新定位」才重新取当前位置；右边 ✅ 图标确认钮（官方 icon_check）+ 自己输入；
 // ✅ 在自动定位态确认已定位地点，在自己输入态确认手动输入的地名（同一钮，不另起确认钮）；
-// 长地名不得挤压右边两钮：状态文案横向抗压最低、两钮抗压/抱紧均为 required，✅ 固定 32×32。
+// 长地名不得挤压右边三钮：状态文案横向抗压最低、三钮抗压/抱紧均为 required，✅ 固定 32×32。
 // 自己输入边输边出 MapKit 搜索建议（MKLocalSearchCompleter），点建议直接定位；
 // 权限被拒/定位失败不留空地点，走 delegate 失败口径（调用方 toast 后回未定位态）。
 // 隐私：坐标只在内存里走一次逆地理编码取地名，用完即弃；本视图不写盘、不缓存坐标，
@@ -56,6 +57,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     private let statusLabel = UILabel()
     private let confirmButton = BearyHit44Button(type: .system)
     private let manualButton = BearyHit44Button(type: .system)
+    private let relocateButton = BearyHit44Button(type: .system)
     private let subLabel = UILabel()
     private let inputField = UITextField()
     // 审计 E2 第 6 项：建议区包进滚动视图——气泡总高不再随建议条数无上限长，
@@ -138,6 +140,22 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         manualButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         manualButton.accessibilityLabel = "自己输入地点"
         manualButton.addTarget(self, action: #selector(didTapManual), for: .touchUpInside)
+        // 「重新定位」：与“自己输入”同款描边 pill，只在已定位态出现；
+        // 点按才重新取当前位置（不复用自己输入／确认钮）。
+        relocateButton.translatesAutoresizingMaskIntoConstraints = false
+        relocateButton.setTitle("重新定位", for: .normal)
+        relocateButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 13))
+        relocateButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        relocateButton.setTitleColor(BearyColors.ink, for: .normal)
+        relocateButton.layer.cornerRadius = 999
+        relocateButton.layer.borderWidth = 1
+        relocateButton.layer.bearyDynamicBorderColor = BearyColors.line
+        relocateButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
+        relocateButton.setContentHuggingPriority(.required, for: .horizontal)
+        relocateButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        relocateButton.accessibilityLabel = "重新定位到当前位置"
+        relocateButton.isHidden = true
+        relocateButton.addTarget(self, action: #selector(didTapRelocate), for: .touchUpInside)
 
         headerRow.axis = .horizontal
         headerRow.spacing = 10
@@ -148,6 +166,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         headerRow.addArrangedSubview(statusLabel)
         headerRow.addArrangedSubview(confirmButton)
         headerRow.addArrangedSubview(manualButton)
+        headerRow.addArrangedSubview(relocateButton)
 
         subLabel.translatesAutoresizingMaskIntoConstraints = false
         subLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
@@ -282,6 +301,18 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
 
     // MARK: - 对外入口
 
+    /// 已有地点时先展示已确认的地点，不重新定位：恢复草稿／已确认的地名与
+    /// 区级（setLocated），点「重新定位」才走 startAutoLocate 取当前位置。
+    /// 空地点时退回自动定位，不展示空态。
+    func showPrefilled(_ location: DiaryLocation) {
+        guard !location.isEmpty else {
+            startAutoLocate()
+            return
+        }
+        cancelRequests()
+        setLocated(location)
+    }
+
     /// 打开即自动定位：每次打开都重新跑一遍，不复用上次结果（位置可能已变）。
     func startAutoLocate() {
         cancelRequests()
@@ -340,6 +371,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             self.setConfirmEnabled(false)
             self.inputField.isHidden = true
             self.suggestionsScrollView.isHidden = true
+            self.relocateButton.isHidden = true
         }
     }
 
@@ -360,6 +392,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             self.setConfirmEnabled(true)
             self.inputField.isHidden = true
             self.suggestionsScrollView.isHidden = true
+            self.relocateButton.isHidden = false
         }
     }
 
@@ -380,6 +413,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             // 不再另起“使用这个地点”钮，避免两个确认入口。
             self.inputField.isHidden = false
             self.suggestionsScrollView.isHidden = false
+            self.relocateButton.isHidden = true
             self.refreshManualConfirmState()
             self.inputField.becomeFirstResponder()
         }
@@ -412,6 +446,10 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     @objc private func didTapManual() {
         cancelRequests()
         setManualMode()
+    }
+
+    @objc private func didTapRelocate() {
+        startAutoLocate()
     }
 
     @objc private func didChangeInput() {

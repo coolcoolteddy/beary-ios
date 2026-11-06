@@ -3726,9 +3726,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 定位行刷新：行文案 = 精确地点名；公开段位且有区级时加橙色副行
     /// “公开后他人仅见区级（X）”。可见性段位切换时也要调本函数（见
     /// restoreVisibility/可见性切换调用点），否则副行会滞后于段位。
-    private func refreshLocationRow() {
+    /// animated 只在确认新地点时传 true：只让位置行 0.18 秒淡入／淡变，
+    /// 其余刷新（草稿恢复、可见性切换、清除）直接换字，不带动效。
+    private func refreshLocationRow(animated: Bool = false) {
         guard let location = selectedLocation, !location.isEmpty, let name = location.name ?? location.district else {
             locationRowStack.isHidden = true
+            locationRowStack.alpha = 1
             locationLabel.text = nil
             locationNoteLabel.text = nil
             locationNoteLabel.isHidden = true
@@ -3744,6 +3747,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             locationNoteLabel.isHidden = true
         }
         updatePreferredContentSize()
+        guard animated, !UIAccessibility.isReduceMotionEnabled, view.window != nil else {
+            locationRowStack.alpha = 1
+            return
+        }
+        locationRowStack.alpha = 0
+        UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+            self.locationRowStack.alpha = 1
+        })
     }
 
     @objc private func didTapClearLocation() {
@@ -3822,8 +3833,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.locationPopover.transform = .identity
             })
         }
-        // 打开即自动定位（不用再点一次获取），定位中确认钮由气泡内部禁用。
-        locationPopover.startAutoLocate()
+        // 已有已确认的地点时先展示它（草稿／已确认的地名与区级），不重新定位；
+        // 没有时才自动定位；点气泡里的「重新定位」才取当前位置。
+        if let location = selectedLocation, !location.isEmpty {
+            locationPopover.showPrefilled(location)
+        } else {
+            locationPopover.startAutoLocate()
+        }
     }
 
     /// 无障碍：restoreFocus 只在用户主动关闭时传 true（框外点按、同钮再点、
@@ -7730,7 +7746,7 @@ extension BearyComposerViewController: BearyLocationPopoverDelegate {
         // 确认即落定（点建议也是直接落定，不再等头部确认钮）；气泡关闭、行显示、草稿跟随保存。
         selectedLocation = location
         hideLocationPopover(animated: true, restoreFocus: true)
-        refreshLocationRow()
+        refreshLocationRow(animated: true)
         scheduleDraftSave()
     }
 
