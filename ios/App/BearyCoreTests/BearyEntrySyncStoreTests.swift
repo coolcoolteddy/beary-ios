@@ -27,7 +27,7 @@ final class BearyEntrySyncStoreTests: XCTestCase {
 
     private func makeTrashItem(id: String, deletedAtMs: Int) -> TrashItem {
         TrashItem(id: id, content: "trash \(id)", createdAt: nil, publishAt: nil,
-                  published: nil, deletedAt: deletedAtMs, daysLeft: 30)
+                  deletedAt: deletedAtMs, daysLeft: 30)
     }
 
     override func setUp() {
