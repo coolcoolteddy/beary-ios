@@ -2288,7 +2288,9 @@ class BearyTimelineViewController: UIViewController {
             // 落盘写走同步队列（不卡主线程，同时记写盘代际供全量同步提交守卫判断）；
             // 内存态已同步更新，UI 不等落盘。
             BearyEntrySync.shared.runDiaryDiskWrite {
-                BearyEntrySyncStore.saveDay(accountId: uid, dayKey: key, entries: entries)
+                // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
+                let ok = BearyEntrySyncStore.saveDay(accountId: uid, dayKey: key, entries: entries)
+                if !ok { NSLog("[BearyEntrySync] saveDay failed account=%d day=%@", uid, key) }
             }
         }
     }
@@ -2831,7 +2833,9 @@ class BearyTimelineViewController: UIViewController {
         }
         if let uid = SessionManager.shared.currentUser?.id {
             BearyEntrySync.shared.runDiaryDiskWrite {
-                BearyEntrySyncStore.removeEntry(accountId: uid, entryId: entryId)
+                // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
+                let ok = BearyEntrySyncStore.removeEntry(accountId: uid, entryId: entryId)
+                if !ok { NSLog("[BearyEntrySync] removeEntry failed account=%d entry=%@", uid, entryId) }
             }
         }
     }
@@ -3129,11 +3133,16 @@ class BearyTimelineViewController: UIViewController {
         // 删帖落盘写走同步队列（不卡主线程，同时记写盘代际）。
         if let uid = SessionManager.shared.currentUser?.id {
             BearyEntrySync.shared.runDiaryDiskWrite {
-                BearyEntrySyncStore.removeEntry(accountId: uid, entryId: entryId)
+                // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
+                let ok = BearyEntrySyncStore.removeEntry(accountId: uid, entryId: entryId)
+                if !ok { NSLog("[BearyEntrySync] removeEntry failed account=%d entry=%@", uid, entryId) }
             }
             // 回收站桶同增：删帖即进回收站，下次进回收站页先读本地就能看到该条
             //（桶不存在时不建半截桶，进页走网络首拉；下次静默刷新用服务端值纠正残差）。
-            BearyTrashSyncStore.prependDeleted(accountId: uid, entry: entry)
+            // r17-C2：进桶写返回结果，失败记日志（无桶可写时返回 true，不记日志）。
+            if !BearyTrashSyncStore.prependDeleted(accountId: uid, entry: entry) {
+                NSLog("[BearyEntrySync] prependDeleted failed account=%d entry=%@", uid, entry.id ?? "-")
+            }
         }
         let newSections = currentSections()
         var rowDeletes: [IndexPath] = []
