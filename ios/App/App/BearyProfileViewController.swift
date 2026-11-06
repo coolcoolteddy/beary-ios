@@ -3643,8 +3643,10 @@ class BearyProfileViewController: UIViewController {
         // 第三轮第 3 项：本轮次快照随请求走，资料回调先比轮次——旧轮回包
         // （换目标/下拉刷新后先到的旧资料）直接丢弃，不再覆盖新轮资料头。
         let cycle = profileLoadCycle
-        // 夜巡先清后拉：换目标 / 换号时不闪上一位用户的脚印（私密夜巡尤其不可残留）。
-        hideNightPatrol()
+        // B7：本轮不再先清夜巡——目标 / 账号在本 VC 实例内不变（均为 let），
+        // 先清后拉只会在弱网刷新时闪掉已确认的入口；刷新失败保留旧入口、
+        // 成功用新数据覆盖，与模块 G12「失败不清空已显内容」同哲学。
+        // 换目标 / 换号由新 VC 实例承接；他人模式由 applyMode 的 hide 兜底。
         if let targetId = targetUserIdValue {
             BearyAPI.shared.fetchUserProfile(userIdValue: targetId) { [weak self] result in
                 DispatchQueue.main.async {
@@ -3716,7 +3718,7 @@ class BearyProfileViewController: UIViewController {
             // 私信钮 can 同点查（目标 id 已知；失败一律隐藏）。
             refreshDMCan()
             if isOwnProfile {
-                // 夜巡为本人专属：资料回包后另拉夜巡（失败即隐藏，不 toast）。
+                // 夜巡为本人专属：资料回包后另拉夜巡（B7：刷新失败保留已确认入口，不 toast）。
                 // 提速：本轮已在 viewDidLoad 先起时此处由代次守卫跳过，不重发。
                 loadNightPatrol(fromProfileResult: true)
             }
@@ -4017,7 +4019,7 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    // MARK: - 小熊夜巡（回应墙顶部；仅本人主页；失败静默隐藏，绝不编造脚印）
+    // MARK: - 小熊夜巡（回应墙顶部；仅本人主页；B7：刷新失败保留上次确认的入口）
 
     private func hideNightPatrol() {
         nightFootprints = []
@@ -4053,7 +4055,12 @@ class BearyProfileViewController: UIViewController {
                           let footprints = latest.footprints, !footprints.isEmpty else {
                         // 无记录 = 不显示入口（非会员、未跑夜巡、空夜均同此态；
                         // 不留“0 枚脚印”空行，与回应墙空墙隐藏同哲学）。
+                        // B7：服务端确认无记录，已确认的旧入口随之失效——清掉按账号
+                        // 存的快照，免得下次弱网又把已失效的旧夜复活。
                         strongSelf.hideNightPatrol()
+                        if let bucket = strongSelf.profileCacheBucket() {
+                            BearyProfileCache.saveNightPatrol(bucket: bucket, nightDate: nil, footprints: [], paused: false)
+                        }
                         strongSelf.layoutHeaderForced(widthValue: strongSelf.headerWidthValue)
                         return
                     }
@@ -4062,12 +4069,15 @@ class BearyProfileViewController: UIViewController {
                     let paused = response.patrolPaused ?? !(strongSelf.profile?.plus ?? false)
                     strongSelf.renderNightPatrol(night: latest, footprints: footprints, paused: paused)
                 case .failure(let error):
-                    // 后端未上线（404）/ 401 / 网络失败：静默隐藏，不 toast、不造假数据。
-                    strongSelf.hideNightPatrol()
-                    strongSelf.layoutHeaderForced(widthValue: strongSelf.headerWidthValue)
-                    // 10 项补起（失败后自动补拉，本轮最多一次）：弱网瞬时失败
-                    // 时入口若就此消失，用户本轮再无入口、须手动下拉刷新才回得来，
-                    // 且失败态与“无夜巡记录”长得一模一样、无从察觉。补拉只补瞬时类
+                    // B7：刷新失败不再静默隐藏——已有确认入口时原样保留（弱网入口
+                    // 不消失）；当前无渲染时从按账号的快照恢复最近一次确认的夜巡，
+                    // 仍无确认记录才隐藏，不 toast、不造假数据。
+                    if strongSelf.nightFootprints.isEmpty {
+                        strongSelf.restoreNightPatrolFromCache()
+                    }
+                    // 10 项补起（失败后自动补拉，本轮最多一次）：弱网瞬时失败时
+                    // 补一次，拿到新数据即覆盖 B7 保留的旧入口；补拉再失败则旧
+                    // 入口继续留着，不逼用户手动下拉刷新才回得来。补拉只补瞬时类
                     // 失败（.network 与 5xx）；404（后端未上线）、401（登录态问题）、
                     // 取消、解码与服务端业务错不补——补了也成功不了，徒增请求。
                     // 补拉是失败回调内直接再调一次 loadNightPatrol（此时在途旗已
@@ -4100,10 +4110,30 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
+    /// B7：从按账号分的磁盘快照恢复最近一次确认的夜巡（弱网刷新失败时入口不消失）。
+    /// 只在当前无渲染时恢复，不覆盖网络刚拉到的新数据；快照无夜巡记录时不动作、
+    /// 入口保持隐藏。恢复走 renderNightPatrol，副标题显示快照里的具体日期。
+    private func restoreNightPatrolFromCache() {
+        guard isOwnProfile, nightFootprints.isEmpty, let bucket = profileCacheBucket() else { return }
+        BearyProfileCache.load(bucket: bucket) { [weak self] snap in
+            guard let self = self, let snap = snap else { return }
+            guard self.isOwnProfile, self.nightFootprints.isEmpty,
+                  let snapshotFootprints = snap.nightFootprints, !snapshotFootprints.isEmpty else { return }
+            self.renderNightPatrol(
+                night: NightPatrolNight(nightDate: snap.nightDate, footprints: snapshotFootprints),
+                footprints: snapshotFootprints,
+                paused: snap.nightPaused ?? !(self.profile?.plus ?? false))
+        }
+    }
+
     private func renderNightPatrol(night: NightPatrolNight, footprints: [NightPatrolFootprint], paused: Bool) {
         nightFootprints = footprints
         nightDateText = BearyNightPatrolTemplate.nightLabel(for: night.nightDate)
         nightIsPaused = paused
+        // B7：确认一次即按账号落盘——下次弱网刷新失败时入口可凭此恢复（显示具体日期）。
+        if let bucket = profileCacheBucket() {
+            BearyProfileCache.saveNightPatrol(bucket: bucket, nightDate: night.nightDate, footprints: footprints, paused: paused)
+        }
         for arrangedView in nightTrailStack.arrangedSubviews {
             nightTrailStack.removeArrangedSubview(arrangedView)
             arrangedView.removeFromSuperview()
@@ -4220,7 +4250,16 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 点脚印弹该夜短评（系统 UIAlertController；iOS 26 下即官方玻璃观感）。
+    /// B7：打开时校验当前数据——刷新后脚印已换位 / 消失时，不拿点按瞬间的旧
+    /// 副本展示；按身份在当前数据里重找，找不到则提示、不展示旧短评。
     private func presentNightFootprintSheet(footprint: NightPatrolFootprint, index: Int) {
+        let key = footprint.identityKey
+        guard let currentIndex = nightFootprints.firstIndex(where: { $0.identityKey == key }) else {
+            BearyToast.show(in: view, message: "这枚脚印已更新，再点一次看看")
+            return
+        }
+        let footprint = nightFootprints[currentIndex]
+        let index = currentIndex
         let sourceText = footprint.isAI ? "AI 短评" : "小熊短评"
         let titleText = "第 \(index + 1) 枚脚印 · \(sourceText)"
         var messageText = ""
@@ -5505,6 +5544,15 @@ class BearyProfileViewController: UIViewController {
             savedEntries = snap.saved
             savedHasMore = snap.savedHasMore
             didApply = true
+        }
+        // B7：快照里的夜巡（最近一次确认）先恢复——弱网时入口不消失，显示具体日期；
+        // 只在当前无渲染时贴，不覆盖网络已拉到的新数据。
+        if nightFootprints.isEmpty,
+           let snapshotFootprints = snap.nightFootprints, !snapshotFootprints.isEmpty {
+            renderNightPatrol(
+                night: NightPatrolNight(nightDate: snap.nightDate, footprints: snapshotFootprints),
+                footprints: snapshotFootprints,
+                paused: snap.nightPaused ?? !(profile?.plus ?? false))
         }
         guard didApply else { return }
         tableView.reloadData()
@@ -8932,6 +8980,11 @@ enum BearyProfileCache {
         var diaryHasMore: Bool
         var likedHasMore: Bool
         var savedHasMore: Bool
+        /// B7：最近一次确认的夜巡（仅本人页落盘，与三 tab 同桶、按账号分桶）。
+        /// 三字段全 optional——旧快照缺键时 decodeIfPresent 得 nil，不丢旧三 tab。
+        var nightDate: String?
+        var nightFootprints: [NightPatrolFootprint]?
+        var nightPaused: Bool?
     }
 
     private static func fileURL(bucket: String) -> URL? {
@@ -8986,7 +9039,7 @@ enum BearyProfileCache {
                let decoded = try? decoder.decode(Snapshot.self, from: data) {
                 snap = decoded
             } else {
-                snap = Snapshot(savedAt: Date().timeIntervalSince1970, diary: [], liked: [], saved: [], diaryHasMore: false, likedHasMore: false, savedHasMore: false)
+                snap = Snapshot(savedAt: Date().timeIntervalSince1970, diary: [], liked: [], saved: [], diaryHasMore: false, likedHasMore: false, savedHasMore: false, nightDate: nil, nightFootprints: nil, nightPaused: nil)
             }
             snap.savedAt = Date().timeIntervalSince1970
             switch tab {
@@ -8994,6 +9047,35 @@ enum BearyProfileCache {
             case .liked: snap.liked = capped; snap.likedHasMore = storedHasMore
             case .saved: snap.saved = capped; snap.savedHasMore = storedHasMore
             }
+            let encoder = JSONEncoder()
+            encoder.keyEncodingStrategy = .convertToSnakeCase
+            guard let data = try? encoder.encode(snap) else { return }
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    /// B7：只写夜巡三字段——与 save(tab:) 同读-改-写口径，不冲掉三 tab 槽。
+    /// 服务端确认无记录时以 nightDate nil + 空脚印调用，清掉旧夜巡。
+    static func saveNightPatrol(bucket: String?, nightDate: String?, footprints: [NightPatrolFootprint], paused: Bool) {
+        guard let bucket = bucket, !bucket.isEmpty else { return }
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            guard capturedGeneration == generation(for: bucket) else { return }
+            guard let url = fileURL(bucket: bucket) else { return }
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            var snap: Snapshot
+            if let data = try? Data(contentsOf: url),
+               let decoded = try? decoder.decode(Snapshot.self, from: data) {
+                snap = decoded
+            } else {
+                snap = Snapshot(savedAt: Date().timeIntervalSince1970, diary: [], liked: [], saved: [], diaryHasMore: false, likedHasMore: false, savedHasMore: false, nightDate: nil, nightFootprints: nil, nightPaused: nil)
+            }
+            snap.savedAt = Date().timeIntervalSince1970
+            snap.nightDate = nightDate
+            snap.nightFootprints = footprints
+            snap.nightPaused = paused
             let encoder = JSONEncoder()
             encoder.keyEncodingStrategy = .convertToSnakeCase
             guard let data = try? encoder.encode(snap) else { return }

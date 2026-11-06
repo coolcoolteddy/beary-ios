@@ -23,9 +23,12 @@ import UIKit
 //   走已有 DeepSeek-V3 省 token 口径；不要全量会员每晚随机读旧篇。
 //   App 端只渲染服务端下发的 source（template / ai），不自己发起 AI 调用。
 //
-// 失败与占位：
-// - 后端接口未上线（404）/ 401 / 网络失败 / 解码失败时入口静默隐藏，
-//   不编造脚印、不留“0 枚脚印”空行（与回应墙“空墙隐藏”同哲学）。
+// 失败与占位（B7 审计修法）：
+// - 刷新失败（网络 / 5xx 等）时保留最近一次确认的入口：按账号落盘的快照
+//   （BearyProfileCache.Snapshot 的夜巡三字段）先恢复，入口显示具体日期；
+//   从无确认记录时才隐藏，不编造脚印、不留“0 枚脚印”空行
+//   （与回应墙“空墙隐藏”同哲学）。
+// - 服务端回包确认无记录时入口隐藏，同时清掉快照里的旧夜巡，免得弱网复活。
 // - 模板短评缺文案时才用本地模板匹配补文案（见 displayNote）；App 端
 //   永远不凭空合成一条脚印记录——没有服务端记录就没有入口。
 //
@@ -81,7 +84,9 @@ import UIKit
 // MARK: - 模型
 
 /// 单枚脚印（一条夜巡短评）。entryId 兼容服务端下发 String / Int 两种写法。
-struct NightPatrolFootprint: Decodable {
+/// Codable：B7 按账号落盘最近一次确认的夜巡（BearyProfileCache.Snapshot），
+/// 自定义 init(from:) 只影响解码，编码由编译器合成。
+struct NightPatrolFootprint: Codable {
     var entryId: String?
     var source: String?
     var note: String?
@@ -95,6 +100,15 @@ struct NightPatrolFootprint: Decodable {
     var hasDiary: Bool {
         guard let entryIdValue = entryId, !entryIdValue.isEmpty else { return false }
         return true
+    }
+
+    /// 脚印身份（B7/M4 共用）：有日记以 entryId 为准；无日记之夜以脚印时间 +
+    /// 来源 + 文案区分——刷新 diff 与打开短评校验都按此键，不按行号。
+    var identityKey: String {
+        if let entryIdValue = entryId, !entryIdValue.isEmpty {
+            return "entry-\(entryIdValue)"
+        }
+        return "nodary-\(patrolledAt ?? 0)-\(source ?? "")-\(note ?? "")"
     }
 
     enum CodingKeys: String, CodingKey {
