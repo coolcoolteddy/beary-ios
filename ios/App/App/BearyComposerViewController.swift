@@ -522,6 +522,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     //（#219 只覆盖打字时、长草稿光标在末尾进页拉回故意不执行那 case 本就未解决；
     // 本批不修可见性、直接去掉标题行根除该问题，进页聚焦默认只走正文）。
     private var draftTimer: Timer?
+    /// R14 P1-7：在途草稿写盘计数（save/delete 两路入队时 +1，主线程回包时 −1；
+    /// 只在主线程读写，与 saveDraftNow 的调用方同线程）。退后台补存时若
+    /// 计时器已空、但仍有写盘在途，补存完成回调排进 draftSaveDrainCompletions，
+    /// 等计数归零再回（调用方据此持后台任务，不让写盘在后台被挂起）。
+    private var draftSaveInFlightCount = 0
+    private var draftSaveDrainCompletions: [() -> Void] = []
     private var editTimer: Timer?
     private var imageItems: [ComposerImageItem] = [] {
         didSet { editorEditVersion += 1 }
@@ -5986,8 +5992,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftStatusLabel.textColor = BearyColors.blue
         draftTimer?.invalidate()
         // 网页 queueSaveDraft 防抖 400ms（原先 500ms）。
+        // R14 P1-7：发火即清引用——此前一次性计时器发火后引用仍非空，
+        // draftTimer != nil 不能当“有待保存输入”的信号；清掉后它才是
+        // 真正的待保存标志（退后台补存只看它，见 flushPendingDraftSaveForBackground）。
         draftTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
             guard let self = self else { return }
+            self.draftTimer = nil
             self.saveDraftNow()
         }
     }
@@ -6001,6 +6011,48 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     struct DraftSaveResult {
         let succeeded: Bool
         let hadPreviousSavedVersion: Bool
+    }
+
+    /// R14 P1-7：记一笔草稿写盘在途（入队时调）；回包时调 endDraftSaveFlight，
+    /// 计数归零即放行排队等候的退后台补存回调。计数只在主线程读写。
+    private func beginDraftSaveFlight() {
+        draftSaveInFlightCount += 1
+    }
+
+    private func endDraftSaveFlight() {
+        draftSaveInFlightCount = max(0, draftSaveInFlightCount - 1)
+        guard draftSaveInFlightCount == 0 else { return }
+        let waiting = draftSaveDrainCompletions
+        draftSaveDrainCompletions = []
+        waiting.forEach { $0() }
+    }
+
+    /// R14 P1-7：退后台前立即提交待保存版本（SceneDelegate 的
+    /// sceneWillResignActive / sceneDidEnterBackground 调）。
+    /// 只丢最后 400ms 防抖窗口内、计时器还没触发的那一段：计时器待触发
+    /// 时当场失效并立即拍快照落盘（快照在 saveDraftNow 调用时主线程同步建，
+    /// 已落字全在里面）；计时器已空、但写盘仍在途时不重复写，只等在途那笔
+    /// 回包；无待保存内容时同步回调用。完成回调一律主线程。
+    /// 注意：计时器发火后 draftTimer 已置 nil（见 scheduleDraftSave），
+    /// 故 draftTimer != nil 即等价于“有待保存输入”；编辑模式不走草稿流，
+    /// 直接回调用。调用方（SceneDelegate）持后台任务等完成回调，过期
+    /// handler 兜底；编辑器已释放时回包不触发、由过期 handler 收尾。
+    func flushPendingDraftSaveForBackground(completion: @escaping () -> Void) {
+        guard !isEditMode else {
+            completion()
+            return
+        }
+        if draftTimer != nil {
+            draftTimer?.invalidate()
+            draftTimer = nil
+            saveDraftNow { _ in completion() }
+            return
+        }
+        if draftSaveInFlightCount > 0 {
+            draftSaveDrainCompletions.append(completion)
+            return
+        }
+        completion()
     }
 
     /// 立即落盘（主线程只拍快照，整库读/写走 BearyDraftStore.ioQueue；写盘本身已是原子替换）。
@@ -6064,6 +6116,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 并回传成败——此前 deleteAsync 不回传，删篇失败会被关闭路径当成功关掉）。
             // 状态只在仍是空篇时清：删盘期间用户已开始写新篇（currentDraftId 已换）
             // 时不碰新篇的状态行，pill 宽度刷新无妨（审计第 25 项：纯图标固定 44，无计数）；删篇失败时置红，与写盘失败同口径。
+            // R14 P1-7：在途计数（回包时 endDraftSaveFlight，退后台补存据此等）。
+            self.beginDraftSaveFlight()
             BearyDraftStore.deleteAsyncReporting(draftId: deletingId) { [weak self] deleted in
                 guard let self = self else { return }
                 if self.currentDraftId == nil {
@@ -6073,6 +6127,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.refreshDraftPillWidth()
                 // 删篇失败时旧文件原样保留（见 deleteAsyncReporting 注释），
                 // 故失败即按“旧版还在”计，关闭文案不夸大成整篇已丢。
+                self.endDraftSaveFlight()
                 completion?(DraftSaveResult(succeeded: deleted, hadPreviousSavedVersion: !deleted))
             }
             return
@@ -6140,6 +6195,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 已删草稿；快照本身只是单篇 struct，不含整库旧状态）。
         // 审计三轮第 2 项：入队前捕获账号，写与回读一律用捕获值，排队期间切号不串桶。
         let saveAccountId = BearyDraftStore.currentAccountId
+        // R14 P1-7：在途计数（回包时 endDraftSaveFlight，退后台补存据此等）。
+        beginDraftSaveFlight()
         BearyDraftStore.ioQueue.async { [weak self] in
             let writeSucceeded = BearyDraftStore.save(draft, forAccount: saveAccountId)
             // 保存级别跟随图片状态：有失败/未上传的图 = 1（文字已保存，图片未保存），否则 2；
@@ -6172,6 +6229,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.refreshDraftPillWidth()
                 // 原子写：失败时旧文件原样保留，故失败后回读仍命中本篇
                 // 即等价于写盘前已有旧版；成功时该位恒真、无意义，关闭文案只在失败时读它。
+                self.endDraftSaveFlight()
                 completion?(DraftSaveResult(succeeded: savedCurrentDraft, hadPreviousSavedVersion: foundCurrentDraft))
             }
         }
