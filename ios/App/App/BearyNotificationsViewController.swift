@@ -196,6 +196,12 @@ final class BearyNotificationsViewController: UIViewController {
     /// 未拉取时无条目，configure 时按行拉 state 接口。
     private var followCardStates: [Int: BearyNotificationCell.FollowCardState] = [:]
     private var followCardLoadingIds: Set<Int> = []
+    /// B2：关注卡状态上次成功取态的时间（按关注方 id）与过期阈值——
+    /// 进页重验只复核可见且已过期的卡；60s 与广场加载门控同口径。
+    /// 失败（.loadFailed）与未取过的不记时间，视为已过期、进页重试；
+    /// 回关/关注确认后直接写态处同样打戳（那一刻的态即最新确认态）。
+    private var followCardStateUpdatedAt: [Int: Date] = [:]
+    private let followCardStateTTL: TimeInterval = 60
     /// 审计：回关卡请求代次——切号时 +1，在途回包凭代次丢弃，不写回新号。
     private var followCardGeneration = 0
     /// 第 7 轮属实项 5：按关注方计的操作代次——发起一次关注／回关就 +1，
@@ -537,7 +543,7 @@ final class BearyNotificationsViewController: UIViewController {
         // 否则旧号水印会压住新号的高亮；行刷新走既有出现/回前台路径。
         NotificationCenter.default.addObserver(self, selector: #selector(handleUserChanged), name: .bearyUserDidChange, object: nil)
         // 关注变化即时重验：个人页关注／取关成功后，通知页的关注卡不等下次进页才变。
-        NotificationCenter.default.addObserver(self, selector: #selector(handleFriendsChanged), name: .bearyFriendsChanged, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleFriendsChanged(_:)), name: .bearyFriendsChanged, object: nil)
         // 缓存秒显（网页 openNotifs ntItemsCache 口径）：已打开过先原样显旧列表，
         // 后台 loadFirstPage 刷新、变了才重绘；首次打开才走转圈。
         if let uid = SessionManager.shared.currentUser?.id, let cached = Self.cachedPages[uid] {
@@ -1190,6 +1196,7 @@ final class BearyNotificationsViewController: UIViewController {
         displayHighlightWatermarkMs = nil
         notifPageEntered = false
         followCardStates.removeAll()
+        followCardStateUpdatedAt.removeAll()
         followCardLoadingIds.removeAll()
         followCardOperationGeneration.removeAll()
         followCardGeneration += 1
@@ -1899,6 +1906,8 @@ final class BearyNotificationsViewController: UIViewController {
                     case .following:
                         self.followCardStates[actorId] = .following
                     }
+                    // B2：成功取态即打戳——进页重验凭此判过期。
+                    self.followCardStateUpdatedAt[actorId] = Date()
                 case .failure:
                     if silentFailure {
                         // 旧缓存态原样保留（重验调用点只对已有缓存态发请求）。
@@ -1914,23 +1923,46 @@ final class BearyNotificationsViewController: UIViewController {
         }
     }
 
-    /// 关注卡实时状态重验：进通知页（pageDidEnter／viewWillAppear）与关注变化
-    /// 广播（.bearyFriendsChanged）到达时，对已有缓存态的关注方逐一重拉 state。
-    /// 只重验动作区（refreshFollowCardRows 就地重配，不 reloadRows、不碰列表），
-    /// 不触发整页重拉（切 tab 不重复拉取规矩不受影响）。在途（.busy 跟单在途、
+    /// 关注卡实时状态重验：进通知页（pageDidEnter／viewWillAppear）时，
+    /// B2 只复核当前可见且已过期的关系——不可见的卡不查（滑到时 configure
+    /// 按需拉取），60s 内成功取过的态不重复查。在途（.busy 跟单在途、
     /// .loading 拉取在途）的不碰；重验失败静默保留旧态（见 fetchFollowCardState
     /// 的 silentFailure），不 toast、不降级。
     private func revalidateFollowCardStates() {
-        for (actorId, state) in followCardStates {
+        let now = Date()
+        var visibleActorIds = Set<Int>()
+        for path in tableView.indexPathsForVisibleRows ?? [] {
+            guard path.row < displayRows.count,
+                  let itemIndex = displayRows[path.row].itemIndex,
+                  itemIndex < items.count,
+                  items[itemIndex].type == "follow",
+                  let actorId = items[itemIndex].actorId else { continue }
+            visibleActorIds.insert(actorId)
+        }
+        for actorId in visibleActorIds {
+            let state = followCardStates[actorId]
             if case .busy = state { continue }
             if case .loading = state { continue }
+            if let updatedAt = followCardStateUpdatedAt[actorId],
+               now.timeIntervalSince(updatedAt) < followCardStateTTL { continue }
             fetchFollowCardState(actorId: actorId, silentFailure: true)
         }
     }
 
-    /// 关注变化广播（个人页关注／取关成功时 BearyFriends.clearDiaryCachesAndNotify
-    /// 发出）：通知页的关注卡实时状态可能已变，重验一次。
-    @objc private func handleFriendsChanged() {
+    /// 关注变化广播（个人页／搜索页／好友列表关注／取关成功时
+    /// BearyFriends.clearDiaryCachesAndNotify 发出）：B2 带了变动的
+    /// 对方 id 时只更新那一个人的卡片——有卡才查（无卡说明本页无此人
+    /// 关注行，不发请求）；无 id 的旧广播才退回全量重验。
+    /// 在途（.busy／.loading）的不碰；失败静默保留旧态，不 toast。
+    @objc private func handleFriendsChanged(_ notification: Notification) {
+        if let userId = notification.userInfo?[BearyFriends.friendsChangedUserIdKey] as? Int {
+            guard followCardStates[userId] != nil else { return }
+            let state = followCardStates[userId]
+            if case .busy = state { return }
+            if case .loading = state { return }
+            fetchFollowCardState(actorId: userId, silentFailure: true)
+            return
+        }
         revalidateFollowCardStates()
     }
 
@@ -1971,8 +2003,13 @@ final class BearyNotificationsViewController: UIViewController {
                     // 成功后态由点按前关系直定：回关（对方关注我）→ 互关；
                     // 关注（对方没关注我）→ 已关注。不再成功就一律写互关。
                     self.followCardStates[actorId] = wasFollowBack ? .mutual : .following
+                    // B2：本页刚确认的态即最新，打戳——进页重验 60s 内不再重复查。
+                    self.followCardStateUpdatedAt[actorId] = Date()
                     // 关注成功给 light 震动（点赞轻震动口径）；取关不给震动。
                     BearyHaptics.press()
+                    // B2：本页卡片已直接更新，不带 id 发广播——带 id 会让本页
+                    // 自己的 handleFriendsChanged 再查一次刚确认的态，白发请求；
+                    // 其他页只需清缓存信号，无 id 的广播已够。
                     BearyFriends.clearDiaryCachesAndNotify()
                     self.markFollowCardRead(notificationId: notificationId)
                     self.refreshFollowCardRows(actorId: actorId)
