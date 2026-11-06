@@ -5658,6 +5658,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         if !stillThere { return }
         let oldName = item.localFile
+        // A6：裁剪确认时固定账号与草稿 ID——后台落盘、删旧对与回填一律用这份身份。
+        let pickAccountId = BearyDraftStore.currentAccountId
+        let pickDraftId = currentDraftId
         imagePrepQueue.async { [weak self, weak item] in
             guard let full = BearyImagePrep.jpegData(cropped, maxSide: 1600, quality: 0.85),
                   let thumb = BearyImagePrep.thumbData(cropped, maxSide: 480) else {
@@ -5666,9 +5669,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
                 return
             }
-            let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb)
+            let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb, forAccount: pickAccountId)
             DispatchQueue.main.async {
-                guard let self = self, let item = item else { return }
+                guard let self = self, let item = item else {
+                    // 项已不在：本次落盘的临时文件清掉，不留孤文件。
+                    if let saved = saved {
+                        BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                    }
+                    return
+                }
                 var stillThere = false
                 for existing in self.imageItems {
                     if existing === item {
@@ -5676,9 +5685,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     }
                 }
                 if !stillThere {
+                    if let saved = saved {
+                        BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                    }
                     return
                 }
                 if let saved = saved {
+                    // A6：回填只认裁剪时固定的身份——切号/切篇后不把新图引用写进别的草稿，
+                    // 本次临时文件直接清理（旧图、旧 key、旧预览一律不动）。
+                    if BearyDraftStore.currentAccountId != pickAccountId || (pickDraftId != nil && self.currentDraftId != pickDraftId) {
+                        BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                        return
+                    }
                     // 落盘成功才替换预览、清旧 key、删旧本地对（旧 key 指向未裁剪
                     // 原图，不可复用；孤 key 残留与移除同款已知可接受）。
                     // 裁剪同样丢实况：帧已变，旧视频不再对应新帧，继续带旧视频
@@ -5815,6 +5833,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                         return
                                     }
                                     item.imageView.image = image
+                                    // A6：选图时固定账号与草稿 ID——后台落盘与回填一律用这份身份。
+                                    let pickAccountId = BearyDraftStore.currentAccountId
+                                    let pickDraftId = currentDraftId
                                     self.imagePrepQueue.async { [weak self, weak item] in
                                         guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
                                               let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
@@ -5826,7 +5847,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                             }
                                             return
                                         }
-                                        let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb)
+                                        let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb, forAccount: pickAccountId)
                                         // B1：实况视频随静图落盘（与静图同 stem 的 <uuid>.mov，
                                         // 在 imagePrepQueue 上写盘，不占主线程；只写一次，
                                         // 之后 saveDraftNow 即带上 liveVideoFile，杀 App
@@ -5839,7 +5860,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                             videoFile = nil
                                         }
                                         DispatchQueue.main.async {
-                                            guard let self = self, let item = item else { return }
+                                            guard let self = self, let item = item else {
+                                                if let saved = saved {
+                                                    BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                                                }
+                                                return
+                                            }
                                             var stillThere = false
                                             for existing in self.imageItems {
                                                 if existing === item {
@@ -5847,9 +5873,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                                 }
                                             }
                                             if !stillThere {
+                                                if let saved = saved {
+                                                    BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                                                }
                                                 return
                                             }
                                             if let saved = saved {
+                                                // A6：回填只认选图时固定的身份——切号/切篇后不把引用写进别的草稿，
+                                                // 本次临时文件直接清理。
+                                                if BearyDraftStore.currentAccountId != pickAccountId || (pickDraftId != nil && self.currentDraftId != pickDraftId) {
+                                                    BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                                                    return
+                                                }
                                                 item.localFile = saved
                                             }
                                             if let videoFile = videoFile {
@@ -5892,6 +5927,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         return
                     }
                     item.imageView.image = image
+                    // A6：选图时固定账号与草稿 ID——后台落盘与回填一律用这份身份。
+                    let pickAccountId = BearyDraftStore.currentAccountId
+                    let pickDraftId = currentDraftId
                     // 先落盘再上传：选完图立刻有本地文件，杀 App 也不丢图。
                     // 落盘失败则按无本地文件降级（与旧行为一致，草稿里只有 key）。
                     // 编码 + 落盘 + 上传序列化全走后台队列，只编一次（旧写法落盘编一次、
@@ -5907,9 +5945,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             }
                             return
                         }
-                        let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb)
+                        let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb, forAccount: pickAccountId)
                         DispatchQueue.main.async {
-                            guard let self = self, let item = item else { return }
+                            guard let self = self, let item = item else {
+                                if let saved = saved {
+                                    BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                                }
+                                return
+                            }
                             var stillThere = false
                             for existing in self.imageItems {
                                 if existing === item {
@@ -5917,9 +5960,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                 }
                             }
                             if !stillThere {
+                                if let saved = saved {
+                                    BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                                }
                                 return
                             }
                             if let saved = saved {
+                                // A6：回填只认选图时固定的身份——切号/切篇后不把引用写进别的草稿，
+                                // 本次临时文件直接清理。
+                                if BearyDraftStore.currentAccountId != pickAccountId || (pickDraftId != nil && self.currentDraftId != pickDraftId) {
+                                    BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                                    return
+                                }
                                 item.localFile = saved
                             }
                             self.saveDraftNow()

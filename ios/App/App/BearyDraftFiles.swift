@@ -240,9 +240,16 @@ enum BearyDraftImageStore {
     /// 原图与缩略图一起落盘；任一失败返回 nil（调用方按无本地文件降级处理）。
     /// G19：双写任一失败即删已写的一半，不留孤文件供后续误认已保存。
     static func save(fullData: Data, thumbData: Data) -> String? {
+        return save(fullData: fullData, thumbData: thumbData, forAccount: BearyDraftStore.currentAccountId)
+    }
+
+    /// A6：捕获账号版落盘——原图与缩略图路径一律用选图时捕获的账号解析，
+    /// 后台执行中不再重读 currentAccountId；切号刚好遇上图片准备时，
+    /// 两份文件仍落进同一账号桶，不与文字草稿的归属错开。
+    static func save(fullData: Data, thumbData: Data, forAccount accountId: Int?) -> String? {
         let fullName = newFileName()
         let thumbName = thumbFileName(for: fullName)
-        guard let fullURL = fileURL(for: fullName), let thumbURL = fileURL(for: thumbName) else { return nil }
+        guard let fullURL = fileURL(for: fullName, accountId: accountId), let thumbURL = fileURL(for: thumbName, accountId: accountId) else { return nil }
         do {
             try fullData.write(to: fullURL, options: .atomic)
             try thumbData.write(to: thumbURL, options: .atomic)
