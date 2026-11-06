@@ -3295,6 +3295,44 @@ final class BearyChromeViewController: UIViewController {
         dismiss(animated: BearyMotion.animated(true))
     }
 
+    /// R22-A1：详情单篇请求的发起身份快照——日记 ID、账号、会话代次。
+    /// 切号／退出／重登都会推 BearyAPI.authEpoch 或换 authAccountId；回包时
+    /// 三者任一失配即丢弃，旧账号回包绝不进新账号页面与快照。传输层只门控
+    /// 401 与重试、不丢弃成功回包，比对只在调用方做（见 BearyAPI.request）。
+    private struct DetailFetchRequest {
+        let entryId: String
+        let accountId: Int?
+        let epoch: Int
+        let bucket: String
+    }
+
+    private func captureDetailFetchRequest(entryId: String) -> DetailFetchRequest {
+        DetailFetchRequest(
+            entryId: entryId,
+            accountId: BearyAPI.shared.authAccountId,
+            epoch: BearyAPI.shared.authEpoch,
+            bucket: BearyDetailCache.bucket()
+        )
+    }
+
+    /// 发起会话仍是当前会话：代次与账号均未变，且与 SessionManager 当前
+    /// 用户一致（含游客 nil == nil；快照恢复的账号同样经 authAccountId 对齐）。
+    private func isStillSameDetailSession(_ request: DetailFetchRequest) -> Bool {
+        request.epoch == BearyAPI.shared.authEpoch
+            && request.accountId == BearyAPI.shared.authAccountId
+            && request.accountId == SessionManager.shared.currentUser?.id
+    }
+
+    /// 作者判定：authorId 在时以它为准；isMine 只在同一已验证会话且缺
+    /// 作者 ID 时兜底——旧会话的 isMine=true 绝不能给新账号放行私密篇。
+    /// 调用方须先验过 isStillSameDetailSession，viewerId 传发起时账号。
+    private func isAuthorOfEntry(_ entry: Entry, viewerId: Int?) -> Bool {
+        if let authorId = entry.authorId {
+            return viewerId != nil && authorId == viewerId
+        }
+        return entry.isMine == true
+    }
+
     // MARK: - 6A gotoEntry（卡片点开的唯一落点）
     /// 2026-10-29 第 17 项：卡片点按即时呈现——用卡片已有数据（作者、正文、
     /// 图片、计数）先渲染详情页，后台静默拉取最新数据补齐（回应、计数对齐），
@@ -3308,6 +3346,8 @@ final class BearyChromeViewController: UIViewController {
     /// gotoEntry(entryId:) 不变；旧 fetch-first 的 gotoEntry(entry:) 已随本项退役。
     private func gotoEntryImmediately(entry: Entry, skipSupplement: Bool = false) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
+        // R22-A1：发起时固定账号、会话代次与日记 ID，回包逐一复核。
+        let request = captureDetailFetchRequest(entryId: entryId)
         if skipSupplement {
             // 提速：调用方刚为可见性校验拉过同一单篇，详情直接用这份新鲜数据渲染，
             // 不再后台补拉一次（计数 / 回应无需再等一次往返对齐）。
@@ -3318,13 +3358,16 @@ final class BearyChromeViewController: UIViewController {
         BearyAPI.shared.fetchEntry(id: entryId) { [weak self, weak detail] result in
             DispatchQueue.main.async {
                 guard let self = self, let detail = detail else { return }
+                // R22-A1：慢网切号后旧账号回包直接丢弃——失败态也不 toast，
+                // 不更新、不写快照，卡片旧内容原样保留。
+                guard isStillSameDetailSession(request) else { return }
                 guard case .success(let fetched) = result else {
                     // 2026-11-05 Li 定（推翻 2026-10-29）：失败保留卡片旧内容＋轻提示。
                     detail.showFetchFailed()
                     return
                 }
-                let viewerId = SessionManager.shared.currentUser?.id
-                let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && viewerId != nil && fetched.authorId == viewerId)
+                guard fetched.id == request.entryId else { return }
+                let viewerIsAuthor = isAuthorOfEntry(fetched, viewerId: request.accountId)
                 if viewerIsAuthor {
                     detail.update(with: fetched)
                     return
@@ -3351,6 +3394,9 @@ final class BearyChromeViewController: UIViewController {
                     BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self, weak detail] stateResult in
                         DispatchQueue.main.async {
                             guard let detail = detail else { return }
+                            // R22-A1：互关校验回包同样复核会话与日记 ID，旧会话的
+                            // 互关结论不得把旧篇放进新账号页面。
+                            guard fetched.id == request.entryId, isStillSameDetailSession(request) else { return }
                             switch stateResult {
                             case .success(let state)
                                 where (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false)):
@@ -3387,19 +3433,27 @@ final class BearyChromeViewController: UIViewController {
     private func gotoEntry(entryId: String) {
         guard !entryId.isEmpty else { return }
         showToast(message: "正在打开…")
+        // R22-A1：发起时固定账号、会话代次、日记 ID 与快照桶，回包逐一复核。
+        let request = captureDetailFetchRequest(entryId: entryId)
         BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                // R22-A1：切号后旧请求整单丢弃——不路由、不读快照、不 toast。
+                guard isStillSameDetailSession(request) else { return }
                 switch result {
                 case .success(let fetched):
-                    self.routeFetchedEntry(fetched)
+                    self.routeFetchedEntry(fetched, request: request)
                 case .failure(let apiError):
                     if case .network = apiError {
                         // 网络失败：先试磁盘快照（看过的旧正文先显），无快照才 toast。
-                        BearyDetailCache.load(bucket: BearyDetailCache.bucket(), entryId: entryId) { [weak self] snap in
+                        // 桶用发起时钉住的桶，不按回包时当前账号取桶。
+                        BearyDetailCache.load(bucket: request.bucket, entryId: entryId) { [weak self] snap in
                             guard let self = self else { return }
+                            // R22-A1：磁盘回包展示前同样复核会话——慢网切号后
+                            // 旧桶快照不得进新账号页面。
+                            guard isStillSameDetailSession(request) else { return }
                             if let cached = snap?.entry {
-                                self.routeFetchedEntry(cached)
+                                self.routeFetchedEntry(cached, request: request)
                             } else {
                                 self.showToast(message: "网络不稳定，请稍后再试")
                             }
@@ -3415,13 +3469,16 @@ final class BearyChromeViewController: UIViewController {
     /// fetch 后的统一路由（可见性门）：作者判定优先 authorId，缺失时回退 isMine。
     /// 2026-10-28 详情页批：全部入口进详情（替代现行定位＋高亮）；私密非作者进
     /// 详情私密占位（原 presentPrivatePlaceholder 子页随之停用）。
-    private func routeFetchedEntry(_ fetched: Entry) {
+    /// R22-A1：request 为发起时钉住的身份——日记 ID 与会话任一失配即静默丢弃
+    /// （不 toast：用户可能已切号，旧请求的“不存在”提示不属于新账号）；
+    /// authorId 在时以它为准，isMine 只在同一已验证会话且缺作者 ID 时兜底。
+    private func routeFetchedEntry(_ fetched: Entry, request: DetailFetchRequest) {
         guard let entryId = fetched.id, !entryId.isEmpty else {
             showToast(message: "这篇日记不存在或已被删除")
             return
         }
-        let viewerId = SessionManager.shared.currentUser?.id
-        let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && viewerId != nil && fetched.authorId == viewerId)
+        guard fetched.id == request.entryId, isStillSameDetailSession(request) else { return }
+        let viewerIsAuthor = isAuthorOfEntry(fetched, viewerId: request.accountId)
         if viewerIsAuthor {
             presentDetail(entry: fetched)
             return
@@ -3450,6 +3507,9 @@ final class BearyChromeViewController: UIViewController {
             BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self] stateResult in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
+                    // R22-A1：互关校验回包同样复核会话与日记 ID，旧会话的
+                    // 互关结论不得把旧篇放进新账号页面。
+                    guard fetched.id == request.entryId, isStillSameDetailSession(request) else { return }
                     switch stateResult {
                     case .success(let state)
                         where (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false)):
