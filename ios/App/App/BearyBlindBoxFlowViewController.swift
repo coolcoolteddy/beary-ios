@@ -206,6 +206,10 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     private var step: Step = .loading
     private var poolEntries: [Entry] = []
+    /// R22 #10：入池分页上限与“够选即停”目标——每页 50 篇；集满 20 篇可入池篇
+    /// 即停（常见账号 1~2 页收尾），否则续拉到 40 页（2000 篇）或服务端短页为止。
+    private static let poolMaxPages = 40
+    private static let poolEligibleTarget = 20
     /// 审计登录杂项：入池分页代次 / 收集集 / 去重集（照搬星图页游标分页口径）。
     private var poolLoadGeneration = 0
     private var poolCollected: [Entry] = []
@@ -716,10 +720,14 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     }
 
     private func loadPoolEntries() {
-        // 审计登录杂项：入池不再只拉 50 篇一页（50 篇之后的旧公开日记此前
-        // 永远进不了池）：照搬星图页游标分页（before / beforeId、去重、代次
-        // 门控，上限 10 页）拉全量；行内仍按入池资格显 pill（公开 / 私密 /
-        // 今日公开），选中时再按资格过滤（见 renderPoolRows onTap）。
+        // R22 #10：入池不再 10 页（500 篇）即停——前 500 篇含私密、仅好友、
+        // 今日公开等不可入池篇时，真正可选的旧公开篇可能在更后面。改为增量
+        // 分页按需续拉：每页 50 篇照旧，集满 20 篇可入池篇即停（常见账号
+        // 1~2 页收尾），否则一直续拉到 40 页（2000 篇）或服务端短页为止；
+        // 行内仍按入池资格显 pill（公开 / 私密 / 今日公开），选中时再按
+        // 资格过滤（见 renderPoolRows onTap）。代次门控与去重、分页中途断网
+        // “已收集到的页不作废，照常进池”口径均不动。服务端「可入池日记」
+        // 筛选接口是后续优化，不在本支改后端接口。
         poolLoadGeneration += 1
         poolCollected = []
         poolSeenIds = []
@@ -741,7 +749,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                         self.poolCollected.append(entry)
                     }
                     let last = pageEntries.last
-                    if pageEntries.count >= 50, page < 10, let cursor = last?.createdAt, let lastId = last?.id {
+                    let eligibleCount = self.poolCollected.filter { BlindBoxPool.eligibility(for: $0) == .eligible }.count
+                    if pageEntries.count >= 50, page < Self.poolMaxPages, eligibleCount < Self.poolEligibleTarget, let cursor = last?.createdAt, let lastId = last?.id {
                         self.loadPoolEntriesPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
                         return
                     }
