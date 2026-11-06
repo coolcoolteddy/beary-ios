@@ -2205,6 +2205,10 @@ class BearyTimelineViewController: UIViewController {
     // M2：分页新增行的错峰滑入队列（willDisplay 时按原始序号起播，播过即摘；
     // 用序号字典而非数组，避免摘除后后续序号前移导致错峰失效）。
     private var staggerInsertOrder: [IndexPath: Int] = [:]
+    /// 审计 r16 第 10 项：staggerInsertOrder 本次队列是首屏／筛子切换
+    ///（60ms 步进、8pt 上移）还是分页追加（50ms 步进、24pt 下滑入），
+    ///见 BearyEntranceConfig；减动效时队列为空，不播。
+    private var staggerInsertFirstLoad = false
     /// 80 包 A2-3②：错峰队列代际——切日/清选区时 +1，队列写入时记录当时
     /// 代际；willDisplay 发现代际不符即丢弃残留条目，不在新数据行上重播。
     private var staggerGeneration = 0
@@ -2215,6 +2219,7 @@ class BearyTimelineViewController: UIViewController {
     ///（新行首显仍需滑入；willDisplay 播过即摘，不影响正常路径）。
     func clearStaggerEntries() {
         staggerInsertOrder.removeAll()
+        staggerInsertFirstLoad = false
         // N3：切日错峰队列与组头淡入标志同生命周期，一并清掉，
         // 防旧队列在新数据行上重播（已有元素不重播）。
         daySwitchStagger.removeAll()
@@ -2313,7 +2318,8 @@ class BearyTimelineViewController: UIViewController {
     private var dayPrefetchInFlight: Set<String> = []
     /// N3：切日入场错峰队列（willDisplay 起播，播过即摘；代际见
     /// daySwitchGeneration，与分页 staggerInsertOrder 同机制不同队列，
-    /// 步进 0.05s、封顶 0.5s）。selectDay / 清选区 / 整表重载时清掉。
+    /// 步进 0.03s、封顶 0.24s，下偏 6pt）。selectDay / 清选区 / 整表重载时清掉。
+    /// 切日行仍走本口径（与月历一致），不套首屏入场配置。
     private var daySwitchStagger: [IndexPath: Int] = [:]
     private var daySwitchGeneration = 0
     /// N3：切日组头淡入一次性标志（willDisplayHeaderView 消费一次，不重播）。
@@ -4437,6 +4443,8 @@ class BearyTimelineViewController: UIViewController {
                                 }
                             }
                             strongSelf.staggerInsertOrder = queue
+                            // 审计 r16 第 10 项：筛子切换的新行按首屏档入场（60ms／8pt）。
+                            strongSelf.staggerInsertFirstLoad = true
                             strongSelf.staggerQueueGeneration = strongSelf.staggerGeneration
                         }
                     }
@@ -4650,6 +4658,8 @@ class BearyTimelineViewController: UIViewController {
         let staggerFirstPage = UIAccessibility.isReduceMotionEnabled == false && !inserts.isEmpty
         if staggerFirstPage {
             staggerInsertOrder = Dictionary(uniqueKeysWithValues: inserts.enumerated().map { ($0.element, $0.offset) })
+            // 审计 r16 第 10 项：首屏 diff 新增行按首屏档入场（60ms／8pt）。
+            staggerInsertFirstLoad = true
             staggerQueueGeneration = staggerGeneration
         }
         tableView.performBatchUpdates({
@@ -4724,6 +4734,8 @@ class BearyTimelineViewController: UIViewController {
                         // 减动效时不排错峰队列，直接插行终值。
                         if UIAccessibility.isReduceMotionEnabled == false {
                             strongSelf.staggerInsertOrder = Dictionary(uniqueKeysWithValues: diff.stagger.enumerated().map { ($0.element, $0.offset) })
+                            // 审计 r16 第 10 项：分页追加行按分页档入场（50ms／24pt）。
+                            strongSelf.staggerInsertFirstLoad = false
                             strongSelf.staggerQueueGeneration = strongSelf.staggerGeneration
                         }
                         strongSelf.tableView.performBatchUpdates({
@@ -6383,7 +6395,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
             }
         }
         // N3：切日新行错峰滑入——cell 即将上屏时从透明 + 下偏 6 起播，
-        // 按面板行序号错峰（步进 0.05s、封顶 0.24s，与月历一致；减动效时队列为空，不播）。
+        // 按面板行序号错峰（步进 0.03s、封顶 0.24s，下偏 6pt，与月历一致；减动效时队列为空，不播）。
         // 与 M2 同机制：播过即摘、代际不符即弃；仅新日行播，已有行不重播。
         // 只动 transform/opacity，严禁逐帧改 height。
         if let dayOrder = daySwitchStagger[indexPath] {
@@ -6399,18 +6411,20 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
                 return
             }
         }
-        // M2：分页新增行错峰滑入——cell 即将上屏时从透明 + 下偏 6 起播，
+        // M2：分页新增行错峰滑入——cell 即将上屏时从透明 + 下偏起播，
         // 按原始序号错峰（减动效时队列为空，不播）。
         guard let order = staggerInsertOrder[indexPath] else { return }
         staggerInsertOrder[indexPath] = nil
         // 80 包 A2-3②：队列代际不符时丢弃残留条目，不在新数据行上重播旧错峰。
         guard staggerQueueGeneration == staggerGeneration else { return }
-        // 80 包 A2-3④/A3-3：分页/首屏入场统一口径——cell 级 alpha + y+6、
-        // 0.25s、0.03 步进封顶 0.24s、可交互（与首页/主页一致）。
+        // 审计 r16 第 10 项：步进／位移走 BearyEntranceConfig（首屏／筛子切换
+        // 60ms／8pt、分页追加 50ms／24pt），与广场共用一套配置；0.25s、
+        // 封顶 0.24s、可交互。减动效时队列为空，不播。
+        let entranceKind: BearyEntranceConfig.Kind = staggerInsertFirstLoad ? .firstLoad : .pagination
         cell.alpha = 0
-        cell.transform = CGAffineTransform(translationX: 0, y: 6)
-        let delay = min(Double(order) * 0.03, 0.24)
-        UIView.animate(withDuration: 0.25, delay: delay, options: [.curveEaseOut, .allowUserInteraction], animations: {
+        cell.transform = CGAffineTransform(translationX: 0, y: BearyEntranceConfig.yOffset(for: entranceKind))
+        let delay = BearyEntranceConfig.delay(for: entranceKind, order: order)
+        UIView.animate(withDuration: BearyEntranceConfig.duration, delay: delay, options: [.curveEaseOut, .allowUserInteraction], animations: {
             cell.alpha = 1
             cell.transform = .identity
         }, completion: nil)
