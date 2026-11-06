@@ -6644,6 +6644,14 @@ class BearyProfileViewController: UIViewController {
             isMutualFriendValue: isMutualFriend
         )
         photosVC.modalPresentationStyle = .fullScreen
+        // r17-C6：返回本页时按日记 ID 重算照片索引（删图/换图后不再显示已删的图）。
+        photosVC.onRefreshEntries = { [weak self] in
+            guard let self = self else { return (entries: [], hasMore: false) }
+            return (
+                entries: BearyProfileViewController.sortedDisplayableDiaryEntries(from: self.photoWallSourceEntries, isOwnProfile: self.isOwnProfile, isMutualFriend: self.isMutualFriend),
+                hasMore: self.photoOverflowEntries.isEmpty ? self.diaryHasMore : self.photoOverflowHasMore
+            )
+        }
         // 全站返回手势补齐：照片页此前只有返回钮、没有左边缘右滑；改走 EdgeDismiss。
         let photosEdgeDismiss = BearyEdgeDismissController()
         photosEdgeDismiss.attach(to: photosVC)
