@@ -50,6 +50,18 @@ enum BearyDMStore {
         return decoded
     }
 
+    /// A2：本地缓存是否已损坏（纯检查，不备份、不改写）：文件存在却读不出/解不出。
+    /// 供聊天页在呈现已拉到的消息前区分“新库（无文件）／读到了／暂时读不出”：
+    /// 只有无文件才是新库、可直接创建；已损坏时不得调 saveMessages（空字典重建
+    /// 会抹掉其他会话的本地历史），也不得从损坏的库重读（会把刚拉到的消息读丢）。
+    static func isCorrupt(accountId: Int?) -> Bool {
+        guard let url = fileURL(forAccount: accountId),
+              FileManager.default.fileExists(atPath: url.path) else { return false }
+        guard let data = try? Data(contentsOf: url),
+              (try? JSONDecoder().decode([String: StoredConversation].self, from: data)) != nil else { return true }
+        return false
+    }
+
     private static func saveAll(_ all: [String: StoredConversation], accountId: Int?) {
         guard let url = fileURL(forAccount: accountId),
               let data = try? JSONEncoder().encode(all) else { return }
