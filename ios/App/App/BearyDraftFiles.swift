@@ -323,23 +323,42 @@ enum BearyDraftStore {
     /// corruptStore 时删当前账号的 v3 文件；.bak 备份文件一律不动；删后
     /// lastLoadError 清零，后续读取回到空态（无文件 → 无旧源 → 空数组）。
     /// false = 非损坏态（拒绝删，防误删健康库）或删文件失败。
+    /// R23-#3：全局标记不再单独授权删除——清除须同时满足：(1) 标记绑定的
+    /// 账号就是当前账号；(2) 标记绑定的文件就是待删文件；(3) 现场重读目标
+    /// 文件确实解不出（健康库拒绝删）。A 账号草稿损坏留标记、切到 B 后点
+    /// 清除，不会删掉 B 的健康草稿库；绑定不一致时标记原样保留，切回 A
+    /// 仍可正常清除。
     static func clearCorruptStoreAsync(completion: @escaping (Bool) -> Void) {
         let accountId = currentAccountId
         ioQueue.async {
             var ok = false
             if let err = lastLoadError, case .corruptStore(_) = err,
-               let url = fileURL(for: accountId) {
-                if FileManager.default.fileExists(atPath: url.path) {
-                    ok = (try? FileManager.default.removeItem(at: url)) != nil
-                } else {
+               let url = fileURL(for: accountId),
+               lastLoadErrorAccountId == accountId,
+               lastLoadErrorFileURL?.path == url.path {
+                if !FileManager.default.fileExists(atPath: url.path) {
                     ok = true
+                } else if isCorruptStoreFile(at: url) {
+                    ok = (try? FileManager.default.removeItem(at: url)) != nil
                 }
-                if ok { lastLoadError = nil }
+                if ok { recordLoadError(nil, forAccount: accountId, fileURL: nil) }
             }
             DispatchQueue.main.async {
                 completion(ok)
             }
         }
+    }
+
+    /// R23-#3：现场验证目标文件是否真的损坏——读得出且能解成草稿数组即
+    /// 健康（返回 false），读不出或解不出才算损坏（返回 true）。只读不写；
+    /// 个别条目坏、整体仍是合法数组的“部分损坏”由读取侧的部分恢复处理，
+    /// 不归清除管——此处只认“整库解不出”。
+    private static func isCorruptStoreFile(at url: URL) -> Bool {
+        guard let data = try? Data(contentsOf: url),
+              (try? JSONDecoder().decode([BearyDraft].self, from: data)) != nil else {
+            return true
+        }
+        return false
     }
 
     /// 后台增改一篇：整库 loadAll + saveAll 都在 ioQueue 上，完成后回主线程。
@@ -489,7 +508,24 @@ enum BearyDraftStore {
     /// loadAll() 为兼容老调用方仍返回数组，失败时返回 [] 但同时置本标记；
     /// 草稿箱等调用方须在 loadAll() 后检查本标记，失败时出“草稿读取失败”态，
     /// 不得出“暂无草稿”空态；或直接改用 loadAllResult()（见 G4 交接说明）。
+    /// R23-#3：标记与账号、文件路径绑定（下两行，见 recordLoadError）——
+    /// 清除损坏库时须标记账号/文件与当前待删一致，不只凭全局标记删文件。
     private(set) static var lastLoadError: LoadError?
+
+    /// R23-#3：lastLoadError 是哪个账号的哪份 v3 文件读出来的；成功读取后
+    /// 与标记一起清零。legacy 损坏（v2/v1）不绑定 v3 文件，本值为 nil，
+    /// 清除本就只认 corruptStore，不会误删 v3 库。
+    private static var lastLoadErrorAccountId: Int?
+    private static var lastLoadErrorFileURL: URL?
+
+    /// R23-#3：统一记录读取结果——标记、账号、文件路径三者同写同清，
+    /// 不留“标记是 A 的、账号已切到 B”的错位窗口。成功读取传 nil；
+    /// corruptStore 传损坏的 v3 文件 URL；legacy 损坏传 nil。
+    private static func recordLoadError(_ error: LoadError?, forAccount accountId: Int?, fileURL: URL?) {
+        lastLoadError = error
+        lastLoadErrorAccountId = error == nil ? nil : accountId
+        lastLoadErrorFileURL = error == nil ? nil : fileURL
+    }
 
     /// 读全部（带失败区分）：v3 文件优先（updatedAt 倒序）；无 v3 时走一次旧数据迁移。
     /// 启动时首次读取即触发迁移，调用方无需另调迁移入口。
@@ -509,13 +545,13 @@ enum BearyDraftStore {
         // 入队时未登录则写任务按失败处理（见 save/delete 捕获版），不因
         // 执行时已登录而改写进新登录的账号。
         guard accountId != nil else {
-            lastLoadError = nil
+            recordLoadError(nil, forAccount: accountId, fileURL: nil)
             return .success([])
         }
         if let url = fileURL(for: accountId), FileManager.default.fileExists(atPath: url.path) {
             if let data = try? Data(contentsOf: url),
                let drafts = try? JSONDecoder().decode([BearyDraft].self, from: data) {
-                lastLoadError = nil
+                recordLoadError(nil, forAccount: accountId, fileURL: nil)
                 return .success(sortedNormalized(drafts, forAccount: accountId))
             }
             // 单条坏数据不再拖垮整库：整库解码失败时逐条解码，好的留下、
@@ -536,7 +572,7 @@ enum BearyDraftStore {
                     let backup = backupCorruptFile(at: url)
                     if saveAll(good, forAccount: accountId) {
                         NSLog("[BearyDraft] partial v3 store recovered: kept \(good.count), skipped \(skipped), backup=\(backup?.path ?? "nil")")
-                        lastLoadError = nil
+                        recordLoadError(nil, forAccount: accountId, fileURL: nil)
                         return .success(sortedNormalized(good, forAccount: accountId))
                     }
                 }
@@ -544,7 +580,7 @@ enum BearyDraftStore {
             let backup = backupCorruptFile(at: url)
             NSLog("[BearyDraft] corrupt v3 store, original kept")
             let err = LoadError.corruptStore(backupURL: backup)
-            lastLoadError = err
+            recordLoadError(err, forAccount: accountId, fileURL: url)
             return .failure(err)
         }
         let migrated = migrateLegacyDrafts()
@@ -555,22 +591,22 @@ enum BearyDraftStore {
                 removeLegacySources()
             }
             // 写盘失败：保留旧源，下次启动重试迁移，不丢数据。
-            lastLoadError = nil
+            recordLoadError(nil, forAccount: accountId, fileURL: nil)
             return .success(sortedNormalized(migrated.drafts, forAccount: accountId))
         }
         if let v2url = legacyV2FileURL(), FileManager.default.fileExists(atPath: v2url.path) {
             let backup = backupCorruptFile(at: v2url)
             NSLog("[BearyDraft] corrupt legacy v2 store, original kept")
             let err = LoadError.legacyCorrupt(backupURL: backup)
-            lastLoadError = err
+            recordLoadError(err, forAccount: accountId, fileURL: nil)
             return .failure(err)
         }
         if UserDefaults.standard.data(forKey: v1Key) != nil {
             let err = LoadError.legacyCorrupt(backupURL: nil)
-            lastLoadError = err
+            recordLoadError(err, forAccount: accountId, fileURL: nil)
             return .failure(err)
         }
-        lastLoadError = nil
+        recordLoadError(nil, forAccount: accountId, fileURL: nil)
         return .success([])
     }
 
