@@ -397,6 +397,63 @@ final class BearyStarMapTests: XCTestCase {
         XCTAssertNil(BearyStarMapCache.lookup(key: otherKey))
         BearyStarMapCache.purgeAll()
     }
+
+    // MARK: - r17 M2：新旧模型差分（星 id / 边 id）
+
+    func testDiffFindsNewStarsAndEdges() throws {
+        let a = try entry("{\"id\":\"b_d1\",\"content\":\"湖边桂花开了。\",\"mood\":\"happy\",\"is_public\":true}")
+        let b = try entry("{\"id\":\"b_d2\",\"content\":\"桂花香满路。\",\"mood\":\"happy\",\"is_public\":true}")
+        let old = BearyStarMap.buildModel(entries: [a, b], viewerIsAuthor: true)
+        XCTAssertEqual(old.edges.count, 1)
+        // 新增一篇：同心情 + 同词，与旧两篇各连一条新线。
+        let c = try entry("{\"id\":\"b_d3\",\"content\":\"桂花落在湖边。\",\"mood\":\"happy\",\"is_public\":true}")
+        let new = BearyStarMap.buildModel(entries: [a, b, c], viewerIsAuthor: true)
+        let diff = BearyStarMap.diff(old: old, new: new)
+        XCTAssertEqual(diff.newStarIds, ["b_d3"])
+        XCTAssertTrue(diff.removedStarIds.isEmpty)
+        XCTAssertEqual(diff.newEdgeIds.count, 2)
+        XCTAssertTrue(diff.newEdgeIds.allSatisfy { $0.contains("b_d3") })
+        XCTAssertTrue(diff.removedEdgeIds.isEmpty)
+        // 旧 a–b 边仍在，但“桂花”文档频率升到 3、超上限 max(2, 3/2)=2，
+        // 同词理由被抑制，只剩同心情——算理由变，不算新线。
+        XCTAssertEqual(diff.changedEdgeIds, [old.edges[0].id])
+    }
+
+    func testDiffChangedEdgeReasonsOnly() throws {
+        // 两篇同心情 + 同词：边带 mood 与 word 两条理由。
+        let a = try entry("{\"id\":\"b_r1\",\"content\":\"湖边桂花开了。\",\"mood\":\"happy\",\"is_public\":true}")
+        let b = try entry("{\"id\":\"b_r2\",\"content\":\"桂花香满路。\",\"mood\":\"happy\",\"is_public\":true}")
+        let old = BearyStarMap.buildModel(entries: [a, b], viewerIsAuthor: true)
+        XCTAssertEqual(old.edges.count, 1)
+        XCTAssertEqual(old.edges[0].reasons.count, 2)
+        // 只改一篇心情：边还在（同词），理由少一条 mood——只算理由变，
+        // 不算新线、不算新星。
+        var moodEdited = b
+        moodEdited.mood = "cry"
+        let new = BearyStarMap.buildModel(entries: [a, moodEdited], viewerIsAuthor: true)
+        let diff = BearyStarMap.diff(old: old, new: new)
+        XCTAssertEqual(diff.newStarIds, [])
+        XCTAssertEqual(diff.newEdgeIds, [])
+        XCTAssertEqual(diff.changedEdgeIds, [old.edges[0].id])
+        XCTAssertEqual(new.edges[0].reasons.count, 1)
+        XCTAssertEqual(new.edges[0].reasons[0].kind, .word)
+    }
+
+    func testDiffRemovedStarsAndFirstLoad() throws {
+        let a = try entry("{\"id\":\"b_x1\",\"content\":\"湖边桂花开了。\",\"mood\":\"happy\",\"is_public\":true}")
+        let b = try entry("{\"id\":\"b_x2\",\"content\":\"桂花香满路。\",\"mood\":\"happy\",\"is_public\":true}")
+        let old = BearyStarMap.buildModel(entries: [a, b], viewerIsAuthor: true)
+        // 删一篇：星与边一起消失。
+        let new = BearyStarMap.buildModel(entries: [a], viewerIsAuthor: true)
+        let diff = BearyStarMap.diff(old: old, new: new)
+        XCTAssertEqual(diff.removedStarIds, ["b_x2"])
+        XCTAssertEqual(diff.removedEdgeIds, [old.edges[0].id])
+        XCTAssertTrue(diff.newStarIds.isEmpty && diff.newEdgeIds.isEmpty)
+        // 首次建图（old 为 nil）：全部星与边都是新的。
+        let first = BearyStarMap.diff(old: nil, new: old)
+        XCTAssertEqual(first.newStarIds, ["b_x1", "b_x2"])
+        XCTAssertEqual(first.newEdgeIds, [old.edges[0].id])
+    }
 }
 
 // ===== 与过去的自己对话：日期 / 串状态 / 可见性 / 存储（纯逻辑；UI 在 ProfileVC）=====

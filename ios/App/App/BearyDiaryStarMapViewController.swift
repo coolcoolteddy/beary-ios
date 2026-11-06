@@ -114,6 +114,10 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var slice: StarMapSlice = .all
     private var edgeFilter: StarMapEdgeKind? = nil
     private var model = StarMapModel(stars: [], edges: [], entryById: [:])
+    /// r17 M2：上一次已上屏的模型——applyModelToSky 每次拿它与新 model 做
+    /// 差分，只让新星 / 新线入场；旧星保留位置与选中态。缓存模型换入
+    /// （C5）同样走 applyModelToSky，差分照常生效。
+    private var lastAppliedModel: StarMapModel?
     private var modelGeneration = 0
     private var selectedStarId: String?
     private var selectedEdgeId: String?
@@ -829,7 +833,30 @@ final class BearyDiaryStarMapViewController: UIViewController {
             guard pointsById[edge.firstId] != nil, pointsById[edge.secondId] != nil else { continue }
             skyEdges.append(edge)
         }
-        skyView.setStars(model.stars, edges: skyEdges, pointsById: pointsById, selectedStarId: selectedStarId, selectedEdgeId: selectedEdgeId)
+        // r17 M2：与上屏模型做差分——新星先到、新线随后，旧星不动。
+        // 注意：星图此前无任何入场动画（新星随 setNeedsDisplay 与旧星
+        // 同一帧出现），本项是从零新建差分 + 入场动效。
+        // - 同一条边只改理由（id 不变）：不重播入场；若正选中它，只更新
+        //   底部理由文案（showEdgeSheet 用新 reasons 重建底卡）。
+        // - 差分在 applyModelToSky 里算：重建、缓存换入（C5）、重拉回包
+        //   都走这里，任一换入路径都带差分；切连线类型不换 model，
+        //   差分恒空，不误播入场。
+        let diff = BearyStarMap.diff(old: lastAppliedModel, new: model)
+        lastAppliedModel = model
+        if let eid = selectedEdgeId, diff.changedEdgeIds.contains(eid),
+           let newEdge = model.edges.first(where: { $0.id == eid }) {
+            showEdgeSheet(newEdge)
+        }
+        let entrance: StarMapEntrance? = {
+            guard BearyMotion.animated(true) else { return nil }
+            guard !diff.newStarIds.isEmpty || !diff.newEdgeIds.isEmpty else { return nil }
+            var delays: [String: TimeInterval] = [:]
+            for (index, id) in diff.newStarIds.enumerated() {
+                delays[id] = min(TimeInterval(index) * StarMapEntrance.stagger, StarMapEntrance.maxDelay)
+            }
+            return StarMapEntrance(starDelays: delays, edgeIds: Set(diff.newEdgeIds))
+        }()
+        skyView.setStars(model.stars, edges: skyEdges, pointsById: pointsById, selectedStarId: selectedStarId, selectedEdgeId: selectedEdgeId, entrance: entrance)
         // P2-12：新范围、新画面与命中数据经 setStars 一起提交后，才恢复
         // 画布点按与无障碍激活；新月份为空时 recompute 的空态先行分支同步
         // 走到这里（空模型当即提交、旧星当即消失），同样恢复。
@@ -1289,7 +1316,30 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 }
 
+// r17 M2 差分入场：每次换入模型时 applyModelToSky 按星 id / 边 id 与上屏
+// 模型做差分；新星 0.25 秒、间隔 0.03 秒、最多延后 0.24 秒错峰入场，
+// 对应新线在两端可见后淡入；旧星保留位置与选中态；同一条边只改理由时
+// 只更新底部理由。动效只走 transform / opacity（画布内以半径缩放 +
+// alpha 表达），减弱动态效果时直接呈现终态。
+
 // MARK: - 星空画布：线 → 星 → 日期，点按先星后线
+
+/// r17 M2 差分入场参数：新星按 starDelays 错峰出现（0.25 秒、间隔
+/// 0.03 秒、最多延后 0.24 秒），新线（edgeIds）在两端星可见后淡入。
+/// 画布是单块 draw(_:) 画布，无逐星 UIView——入场以逐帧重绘表达：
+/// 星用半径缩放（transform 等价）+ alpha，线用 alpha；动效只走
+/// transform / opacity，不改位置与布局。减动效时调用方不传 entrance，
+/// 直接呈现终态（BearyMotion.animated 门控在 VC 侧）。
+struct StarMapEntrance {
+    /// 新星 id → 入场延后（秒，已按 0.03 间隔、0.24 上限算好）。
+    let starDelays: [String: TimeInterval]
+    /// 新线 id：两端星入场完成后淡入。
+    let edgeIds: Set<String>
+    static let starDuration: TimeInterval = 0.25
+    static let stagger: TimeInterval = 0.03
+    static let maxDelay: TimeInterval = 0.24
+    static let edgeFadeDuration: TimeInterval = 0.25
+}
 
 private struct StarMapSkyStar {
     let id: String
@@ -1358,6 +1408,13 @@ private final class StarMapSkyView: UIView {
         return formatter
     }()
 
+    /// r17 M2 入场态：新星延后表 + 新线集合 + 入场起始时刻（CACurrentMediaTime）。
+    /// 无入场时延后表为空、起始为 0，draw 按终态画，不多一帧重绘。
+    private var entranceStarDelays: [String: TimeInterval] = [:]
+    private var entranceEdgeIds: Set<String> = []
+    private var entranceStart: CFTimeInterval = 0
+    private var entranceDisplayLink: CADisplayLink?
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = BearyStarMapNight.background
@@ -1389,7 +1446,11 @@ private final class StarMapSkyView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func setStars(_ stars: [StarMapStar], edges: [StarMapSkyEdge], pointsById: [String: (x: Double, y: Double)], selectedStarId: String?, selectedEdgeId: String?) {
+    deinit {
+        entranceDisplayLink?.invalidate()
+    }
+
+    func setStars(_ stars: [StarMapStar], edges: [StarMapSkyEdge], pointsById: [String: (x: Double, y: Double)], selectedStarId: String?, selectedEdgeId: String?, entrance: StarMapEntrance? = nil) {
         self.stars = stars.map { star in
             let dateText: String
             if let ms = star.entry.createdAt, ms > 0 {
@@ -1411,8 +1472,60 @@ private final class StarMapSkyView: UIView {
         self.pointsById = pointsById
         self.selectedStarId = selectedStarId
         self.selectedEdgeId = selectedEdgeId
+        // r17 M2：有入场参数即起 displayLink 逐帧重绘（星 0.25s + 最多 0.24s
+        // 延后 + 线 0.25s 淡入，跑完即停）；无参数 / 减动效（调用方不传）
+        // 直接终态。旧 link 先停，新入场不叠两条 link。
+        entranceDisplayLink?.invalidate()
+        entranceDisplayLink = nil
+        if let entrance = entrance, !entrance.starDelays.isEmpty || !entrance.edgeIds.isEmpty {
+            entranceStarDelays = entrance.starDelays
+            entranceEdgeIds = entrance.edgeIds
+            entranceStart = CACurrentMediaTime()
+            let link = CADisplayLink(target: self, selector: #selector(entranceTick))
+            link.add(to: .main, forMode: .common)
+            entranceDisplayLink = link
+        } else {
+            entranceStarDelays = [:]
+            entranceEdgeIds = []
+            entranceStart = 0
+        }
         setNeedsDisplay()
         syncAccessibilityElements()
+    }
+
+    /// r17 M2 入场逐帧：入场总时长 = 最多延后 0.24 + 星 0.25 + 线 0.25；
+    /// 跑完停 link、清入场态、最后一帧按终态重绘，不留逐帧重绘。
+    /// link 与 target 的互持有 tick 末的 invalidate 打断；deinit 再保一层。
+    @objc private func entranceTick() {
+        let elapsed = CACurrentMediaTime() - entranceStart
+        if elapsed >= StarMapEntrance.maxDelay + StarMapEntrance.starDuration + StarMapEntrance.edgeFadeDuration {
+            entranceDisplayLink?.invalidate()
+            entranceDisplayLink = nil
+            entranceStarDelays = [:]
+            entranceEdgeIds = []
+            entranceStart = 0
+        }
+        setNeedsDisplay()
+    }
+
+    /// r17 M2：星入场进度——easeOut（1-(1-t)²），alpha 0→1、半径 0.6→1；
+    /// 旧星 / 无入场时 (1, 1)。
+    private func entranceState(forStarId id: String, now: CFTimeInterval) -> (alpha: CGFloat, scale: CGFloat) {
+        guard entranceStart > 0, let delay = entranceStarDelays[id] else { return (1, 1) }
+        let t = max(0, min(1, (now - entranceStart - delay) / StarMapEntrance.starDuration))
+        let eased = 1 - (1 - t) * (1 - t)
+        return (CGFloat(eased), CGFloat(0.6 + 0.4 * eased))
+    }
+
+    /// r17 M2：新线淡入进度——两端星都可见（延后较大者 + 0.25s）后 0.25s
+    /// 线性淡入；旧线 / 无入场时 1；端点其一是旧星时延后按 0 计。
+    private func entranceAlpha(forEdge edge: StarMapSkyEdge, now: CFTimeInterval) -> CGFloat {
+        guard entranceStart > 0, entranceEdgeIds.contains(edge.id) else { return 1 }
+        let firstDelay = entranceStarDelays[edge.firstId] ?? 0
+        let secondDelay = entranceStarDelays[edge.secondId] ?? 0
+        let start = entranceStart + max(firstDelay, secondDelay) + StarMapEntrance.starDuration
+        let t = max(0, min(1, (now - start) / StarMapEntrance.edgeFadeDuration))
+        return CGFloat(t)
     }
 
     func setSelected(starId: String?, edgeId: String?) {
@@ -1522,6 +1635,8 @@ private final class StarMapSkyView: UIView {
     override func draw(_ rect: CGRect) {
         super.draw(rect)
         guard let context = UIGraphicsGetCurrentContext() else { return }
+        // r17 M2：本帧入场时刻（同一帧内星与线用同一 now，不逐项取时）。
+        let now = CACurrentMediaTime()
         // 背景装饰星尘：固定哈希点、只装饰，不代表任何日记（数量少、色暗）。
         for i in 0..<40 {
             let h = UInt64(i) &* 2_862_933_555_777_037_127 &+ 11
@@ -1535,10 +1650,13 @@ private final class StarMapSkyView: UIView {
             guard let a = pointsById[edge.firstId], let b = pointsById[edge.secondId] else { continue }
             let p1 = point(for: a, in: bounds)
             let p2 = point(for: b, in: bounds)
+            // r17 M2：新线在两端星可见后淡入；未到起播时刻（alpha 0）不画线。
+            let edgeAlpha = entranceAlpha(forEdge: edge, now: now)
+            guard edgeAlpha > 0 else { continue }
             let selected = edge.id == selectedEdgeId
             context.setStrokeColor(selected
-                ? BearyStarMapNight.selected.cgColor
-                : BearyStarMapNight.edge.cgColor)
+                ? BearyStarMapNight.selected.withAlphaComponent(edgeAlpha).cgColor
+                : BearyStarMapNight.edge.withAlphaComponent(0.65 * edgeAlpha).cgColor)
             context.setLineWidth(selected ? 2 : 1)
             context.move(to: p1)
             context.addLine(to: p2)
@@ -1547,15 +1665,20 @@ private final class StarMapSkyView: UIView {
         // 星：光晕 + 星核（alpha = 亮度）+ 日期小字；选中描橙圈。
         for star in stars {
             let center = point(for: (x: star.x, y: star.y), in: bounds)
-            let haloColor = BearyStarMapNight.star.withAlphaComponent(star.brightness * 0.12).cgColor
+            // r17 M2：新星入场——半径 0.6→1（transform 等价）+ alpha 0→1；
+            // 未到延后时刻（alpha 0）不画星与日期。
+            let (starAlpha, starScale) = entranceState(forStarId: star.id, now: now)
+            guard starAlpha > 0 else { continue }
+            let radius = star.radius * starScale
+            let haloColor = BearyStarMapNight.star.withAlphaComponent(star.brightness * 0.12 * starAlpha).cgColor
             context.setFillColor(haloColor)
-            context.fillEllipse(in: CGRect(x: center.x - star.radius - 7, y: center.y - star.radius - 7, width: (star.radius + 7) * 2, height: (star.radius + 7) * 2))
-            context.setFillColor(BearyStarMapNight.star.withAlphaComponent(star.brightness).cgColor)
-            context.fillEllipse(in: CGRect(x: center.x - star.radius, y: center.y - star.radius, width: star.radius * 2, height: star.radius * 2))
+            context.fillEllipse(in: CGRect(x: center.x - radius - 7, y: center.y - radius - 7, width: (radius + 7) * 2, height: (radius + 7) * 2))
+            context.setFillColor(BearyStarMapNight.star.withAlphaComponent(star.brightness * starAlpha).cgColor)
+            context.fillEllipse(in: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
             if star.id == selectedStarId {
                 context.setStrokeColor(BearyStarMapNight.selected.cgColor)
                 context.setLineWidth(2)
-                context.strokeEllipse(in: CGRect(x: center.x - star.radius - 3, y: center.y - star.radius - 3, width: (star.radius + 3) * 2, height: (star.radius + 3) * 2))
+                context.strokeEllipse(in: CGRect(x: center.x - radius - 3, y: center.y - radius - 3, width: (radius + 3) * 2, height: (radius + 3) * 2))
             }
             if !star.dateText.isEmpty {
                 // 审计登录杂项：画布日期字不再写死 9pt，按当前字号档位缩放；
@@ -1563,10 +1686,10 @@ private final class StarMapSkyView: UIView {
                 let datePointSize = UIFontMetrics.default.scaledFont(for: UIFont.systemFont(ofSize: 9)).pointSize
                 let attributes: [NSAttributedString.Key: Any] = [
                     .font: UIFont.systemFont(ofSize: datePointSize),
-                    .foregroundColor: BearyStarMapNight.dateText,
+                    .foregroundColor: BearyStarMapNight.dateText.withAlphaComponent(starAlpha),
                 ]
                 let size = star.dateText.size(withAttributes: attributes)
-                star.dateText.draw(at: CGPoint(x: center.x - size.width / 2, y: center.y + star.radius + 3), withAttributes: attributes)
+                star.dateText.draw(at: CGPoint(x: center.x - size.width / 2, y: center.y + radius + 3), withAttributes: attributes)
             }
         }
     }
