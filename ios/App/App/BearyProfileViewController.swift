@@ -247,6 +247,10 @@ class BearyProfileViewController: UIViewController {
     // MARK: - 状态
 
     private var profile: BearyUserProfile?
+    /// A7：本人主页已有的签名（编辑资料入口的初值来源；/me 不下发签名，
+    /// 故入口直接从主页已拉到的公开资料里取；主页未拉到时为 nil，
+    /// 编辑页再按已知 ID 补查）。
+    var currentSignature: String? { profile?.signature }
     /// 头像重试目标：applyProfile 写入，失败回退与重试共用（旧失败不覆盖
     /// 新图靠 onFailure 内的 URL 比对）。
     private var headerAvatarURL: URL?
