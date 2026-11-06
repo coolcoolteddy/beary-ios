@@ -264,11 +264,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         /// 已删态：原日记已删时只剩 id，恢复时不按正常 lite 卡显示，见 refreshQuoteSection。
         /// 发布时已删引用不传 quoteId（服务端会拒），只作展示态保留到用户清除或发布。
         let isDeleted: Bool
+        /// B6 暂时看不到态：回包占位/明确无权限时只剩 id，不按正常 lite 卡显示，
+        /// 见 refreshQuoteSection；下次恢复重新校验，可恢复（不落盘标记）。
+        let isUnavailable: Bool
 
         /// 修红（#632 合入后 CI 红）：合成逐成员 init 只含 13 个无默认值字段，
-        /// 不含带默认值的 visibility/ephemeralUntil，故 #632 新增的 5 处 15 参构造
-        /// 编译不过；此处显式 init 把两字段放末尾并给默认值，新旧 6 处构造全兼容。
-        init(entryId: String, content: String, createdAt: Int?, authorName: String?, authorAvatar: String?, authorId: Int?, isMine: Bool?, authorHandle: String?, images: [String], isPublic: Bool?, publishAt: Int?, imgDims: [String: [Int]]?, isDeleted: Bool, visibility: String? = nil, ephemeralUntil: Int? = nil) {
+        /// 不含带默认值的 visibility/ephemeralUntil/isUnavailable，故 #632 新增的
+        /// 5 处 15 参构造编译不过；此处显式 init 把三字段放末尾并给默认值，新旧
+        /// 6 处构造全兼容。
+        init(entryId: String, content: String, createdAt: Int?, authorName: String?, authorAvatar: String?, authorId: Int?, isMine: Bool?, authorHandle: String?, images: [String], isPublic: Bool?, publishAt: Int?, imgDims: [String: [Int]]?, isDeleted: Bool, visibility: String? = nil, ephemeralUntil: Int? = nil, isUnavailable: Bool = false) {
             self.entryId = entryId
             self.content = content
             self.createdAt = createdAt
@@ -284,6 +288,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             self.publishAt = publishAt
             self.imgDims = imgDims
             self.isDeleted = isDeleted
+            self.isUnavailable = isUnavailable
         }
     }
 
@@ -827,6 +832,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let quoteDeletedRow = UIStackView()
     private let quoteDeletedLabel = UILabel()
     private let quoteDeletedRemoveButton = BearyHit44Button(type: .system)
+    /// B6 暂时看不到态行：灰字“引用的日记暂时看不到”+ 右端“移除”钮（已删行同款布局，
+    /// 见 buildQuoteSection）；回包占位/明确无权限时露，旧预览正文/缩略图已清。
+    private let quoteUnavailableRow = UIStackView()
+    private let quoteUnavailableLabel = UILabel()
+    private let quoteUnavailableRemoveButton = BearyHit44Button(type: .system)
     /// 编辑回填补拉失败行：灰字“引用的日记加载失败”+ 右端“重试”钮（已删行同款
     /// 布局，见 buildQuoteSection）；失败态才露，在途时暂隐防重复点按。
     private let quoteFetchFailedRow = UIStackView()
@@ -2082,7 +2092,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteCardRemoveButton.tintColor = BearyColors.gray
         quoteCardRemoveButton.addTarget(self, action: #selector(didTapRemoveQuote), for: .touchUpInside)
         quoteCardRemoveButton.bearyAddPressFeedback()
-        for v in [quoteSection, quoteCardWrap, quoteCard, quoteCardRemoveButton, quoteDeletedRow, quoteDeletedLabel, quoteDeletedRemoveButton, quoteFetchFailedRow, quoteFetchFailedLabel, quoteFetchFailedRetryButton] {
+        for v in [quoteSection, quoteCardWrap, quoteCard, quoteCardRemoveButton, quoteDeletedRow, quoteDeletedLabel, quoteDeletedRemoveButton, quoteUnavailableRow, quoteUnavailableLabel, quoteUnavailableRemoveButton, quoteFetchFailedRow, quoteFetchFailedLabel, quoteFetchFailedRetryButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
         // 已删态行（恢复用）：灰字 + “移除”钮，默认隐藏；见 refreshQuoteSection。
@@ -2106,6 +2116,26 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteDeletedRow.addArrangedSubview(deletedSpacer)
         quoteDeletedRow.addArrangedSubview(quoteDeletedRemoveButton)
         quoteDeletedRow.isHidden = true
+        // 暂时看不到行（B6，已删行同款布局）：灰字 + “移除”钮，默认隐藏；见 refreshQuoteSection。
+        quoteUnavailableRow.axis = .horizontal
+        quoteUnavailableRow.spacing = 8
+        quoteUnavailableRow.alignment = .center
+        quoteUnavailableRow.isLayoutMarginsRelativeArrangement = true
+        quoteUnavailableRow.layoutMargins = UIEdgeInsets(top: 16, left: 2, bottom: 14, right: 2)
+        quoteUnavailableLabel.text = "引用的日记暂时看不到"
+        quoteUnavailableLabel.font = UIFont.systemFont(ofSize: 13)
+        quoteUnavailableLabel.textColor = BearyColors.gray
+        quoteUnavailableRemoveButton.setTitle("移除", for: .normal)
+        quoteUnavailableRemoveButton.setTitleColor(BearyColors.ink, for: .normal)
+        quoteUnavailableRemoveButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        quoteUnavailableRemoveButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        quoteUnavailableRemoveButton.addTarget(self, action: #selector(didTapRemoveQuote), for: .touchUpInside)
+        quoteUnavailableRemoveButton.bearyAddPressFeedback()
+        quoteUnavailableRow.addArrangedSubview(quoteUnavailableLabel)
+        let unavailableSpacer = UIView()
+        quoteUnavailableRow.addArrangedSubview(unavailableSpacer)
+        quoteUnavailableRow.addArrangedSubview(quoteUnavailableRemoveButton)
+        quoteUnavailableRow.isHidden = true
         // 补拉失败行（已删行同款布局）：灰字 + “重试”钮，默认隐藏；见 refreshQuoteSection。
         quoteFetchFailedRow.axis = .horizontal
         quoteFetchFailedRow.spacing = 8
@@ -2128,6 +2158,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.addArrangedSubview(quoteSection)
         quoteSection.addArrangedSubview(quoteCardWrap)
         quoteSection.addArrangedSubview(quoteDeletedRow)
+        quoteSection.addArrangedSubview(quoteUnavailableRow)
         quoteSection.addArrangedSubview(quoteFetchFailedRow)
         quoteCardWrap.addSubview(quoteCard)
         quoteCardWrap.addSubview(quoteCardRemoveButton)
@@ -2158,6 +2189,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard let shown = quote else {
             quoteCardWrap.isHidden = true
             quoteDeletedRow.isHidden = true
+            quoteUnavailableRow.isHidden = true
             // 补拉失败态（lockedQuote 尚未回填）才露失败行；在途时暂隐防重复点按，
             // 非失败态（新建未选 / 编辑已删引用已清）本行塌掉不留空位。
             quoteFetchFailedRow.isHidden = !(editQuoteFetchFailed && !editQuoteFetchInFlight)
@@ -2170,10 +2202,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quoteCardWrap.isHidden = true
             quoteDeletedRow.isHidden = false
             quoteFetchFailedRow.isHidden = true
+            quoteUnavailableRow.isHidden = true
+            updatePreferredContentSize()
+            return
+        }
+        if shown.isUnavailable {
+            // B6 暂时看不到：不画共享卡（旧预览正文/缩略图已清），只留灰字行 + “移除”钮；
+            // 引用 ID 仍占槽位（清除后才可经工具栏引用钮再选；下次恢复重新校验，可恢复）。
+            quoteCardWrap.isHidden = true
+            quoteDeletedRow.isHidden = true
+            quoteFetchFailedRow.isHidden = true
+            quoteUnavailableRow.isHidden = false
             updatePreferredContentSize()
             return
         }
         quoteDeletedRow.isHidden = true
+        quoteUnavailableRow.isHidden = true
         quoteFetchFailedRow.isHidden = true
         quoteCardWrap.isHidden = false
         // allowThumbs: true 沿用旧编辑器行为——已选引用在本地草稿预览中恒出图；
@@ -6359,6 +6403,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 只读单篇接口；仅 notFound 才翻为已删态并落盘标记（下次恢复直接显已删，
     /// 不再请求），其他失败（离线/未登录/服务端错）一律保留快照，不误判已删。
     /// 回包时若引用已被用户换掉或清除，不碰当前引用。
+    /// B6：回包占位/明确无权限时收起旧预览（清正文/缩略图，ID 与移除入口保留）。
     private func verifyRestoredQuote() {
         guard let quote = selectedQuote, quote.isDeleted == false else { return }
         let quoteEntryId = quote.entryId
@@ -6368,11 +6413,41 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 guard let currentQuote = self.selectedQuote, currentQuote.entryId == quoteEntryId, currentQuote.isDeleted == false else { return }
                 switch result {
                 case .success(let fetched):
-                    // 补缺 P3-41：恢复后以最新有效可见性刷新快照并重算角标（原直接 return，快照恒旧）；
-                    // 落盘使刷新跨杀 App 生效（已删分支同款 saveDraftNow）。
-                    self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: currentQuote.content, createdAt: currentQuote.createdAt, authorName: currentQuote.authorName, authorAvatar: currentQuote.authorAvatar, authorId: fetched.authorId, isMine: fetched.isMine, authorHandle: fetched.authorHandle, images: currentQuote.images, isPublic: BearyEphemeral.isEffectivelyPublic(fetched), publishAt: currentQuote.publishAt, imgDims: currentQuote.imgDims, isDeleted: false, visibility: fetched.visibility, ephemeralUntil: fetched.ephemeralUntil)
-                    self.refreshQuoteSection()
-                    self.saveDraftNow()
+                    // B6：回包占位或明确无权限时收起旧预览；仅好友档走互关校验
+                    // （与详情门 / BearyQuoteGate 同口径）；可预览时仍按原口径
+                    // 只刷新可见性等字段、沿用快照正文和图片。
+                    let viewerId = SessionManager.shared.currentUser?.id
+                    let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && viewerId != nil && fetched.authorId == viewerId)
+                    if fetched.placeholder == true || (!viewerIsAuthor && !BearyEphemeral.isEffectivelyPublic(fetched) && !fetched.isFriendsOnly) {
+                        self.applyRestoredQuoteUnavailable(currentQuote: currentQuote, fetched: fetched)
+                        return
+                    }
+                    if fetched.isFriendsOnly, !viewerIsAuthor {
+                        if SessionManager.shared.isLoggedIn, let authorId = fetched.authorId {
+                            BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self] stateResult in
+                                DispatchQueue.main.async {
+                                    guard let self = self else { return }
+                                    guard let currentQuote = self.selectedQuote, currentQuote.entryId == quoteEntryId, currentQuote.isDeleted == false else { return }
+                                    let mutual: Bool = {
+                                        if case .success(let state) = stateResult {
+                                            return (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false))
+                                        }
+                                        return false
+                                    }()
+                                    if mutual {
+                                        self.applyRestoredQuoteVerified(currentQuote: currentQuote, fetched: fetched)
+                                    } else {
+                                        self.applyRestoredQuoteUnavailable(currentQuote: currentQuote, fetched: fetched)
+                                    }
+                                }
+                            }
+                        } else {
+                            // 未登录看不到仅好友篇（与详情门同口径 fail-closed）。
+                            self.applyRestoredQuoteUnavailable(currentQuote: currentQuote, fetched: fetched)
+                        }
+                        return
+                    }
+                    self.applyRestoredQuoteVerified(currentQuote: currentQuote, fetched: fetched)
                     return
                 case .failure(let fetchError):
                     if case .notFound = fetchError {
@@ -6384,6 +6459,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
             }
         }
+    }
+
+    /// 恢复校验：回包可预览时按原口径刷新可见性等字段（仍沿用快照正文/图片）。
+    /// 补缺 P3-41：恢复后以最新有效可见性刷新快照并重算角标（原直接 return，快照恒旧）；
+    /// 落盘使刷新跨杀 App 生效（已删分支同款 saveDraftNow）。
+    private func applyRestoredQuoteVerified(currentQuote: SelectedQuote, fetched: Entry) {
+        selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: currentQuote.content, createdAt: currentQuote.createdAt, authorName: currentQuote.authorName, authorAvatar: currentQuote.authorAvatar, authorId: fetched.authorId, isMine: fetched.isMine, authorHandle: fetched.authorHandle, images: currentQuote.images, isPublic: BearyEphemeral.isEffectivelyPublic(fetched), publishAt: currentQuote.publishAt, imgDims: currentQuote.imgDims, isDeleted: false, visibility: fetched.visibility, ephemeralUntil: fetched.ephemeralUntil)
+        refreshQuoteSection()
+        saveDraftNow()
+    }
+
+    /// B6 恢复校验：回包占位或明确无权限时收起旧预览——清掉正文和缩略图，
+    /// 保留引用 ID 与移除入口（isDeleted 仍 false，下次恢复重新校验，可恢复）。
+    private func applyRestoredQuoteUnavailable(currentQuote: SelectedQuote, fetched: Entry) {
+        selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: "", createdAt: currentQuote.createdAt, authorName: currentQuote.authorName, authorAvatar: currentQuote.authorAvatar, authorId: fetched.authorId, isMine: fetched.isMine, authorHandle: fetched.authorHandle, images: [], isPublic: BearyEphemeral.isEffectivelyPublic(fetched), publishAt: currentQuote.publishAt, imgDims: nil, isDeleted: false, visibility: fetched.visibility, ephemeralUntil: fetched.ephemeralUntil, isUnavailable: true)
+        refreshQuoteSection()
+        refreshToolStrip()
+        saveDraftNow()
     }
 
     /// 发布成功 / 丢弃草稿时：只清本篇草稿 + 本篇全部本地图片文件 + 换掉 clientReq。
