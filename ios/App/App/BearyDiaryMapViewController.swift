@@ -3,8 +3,9 @@ import MapKit
 import CoreLocation
 
 // ===== 日记地图（批 E，2026-10-30；预览 v3 第 2/3 节，方案 A）=====
-// 入口：我的页（他人主页同款行）→ 更多照片区下方独立行“日记地图”（批 C 新版
-// 我的页尚未合入，入口先以独立行实现、不改 C 的 tab 结构；与 C 合入时以 C 为准对齐）。
+// 入口：仅本人页（openDiaryMap 有 guard isOwnProfile，他人页入口行
+// 已去除）→ 更多照片区下方独立行“日记地图”（批 C 新版我的页尚未合入，
+// 入口先以独立行实现、不改 C 的 tab 结构；与 C 合入时以 C 为准对齐）。
 // 聚合：本人按精确地点文本聚合、私密 + 公开都进；他人只按区级聚合、私密不进不计入；
 // 无位置不进地图、不留空点（聚合逻辑见 BearyLocationMap.groups，本页只渲染结果）。
 // 坐标：地图渲染时按文本现场地理编码，坐标只存在本页实例的内存缓存里（随页销毁），
@@ -196,10 +197,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             // 旧 viewer 的内存地理编码缓存一并清掉，不跨账号复用。
             viewerIdAtOpen = currentViewerId
             viewerIsAuthor = (currentViewerId != nil && currentViewerId == authorId)
-            geocodeCache.removeAll()
-            selectedGroup = nil
-            // 切账号先取消旧身份在途的编码：重拉完成前旧回调不得写回新身份的页面。
-            cancelGeocoding()
+            // 先立即撤下旧身份地图数据，再用新身份重拉（见 clearMapDataForIdentityChange）。
+            clearMapDataForIdentityChange()
             fetchAllEntries()
         } else if needsRefreshAfterDetail {
             // 从本页进详情回来：只重拉一次，不是每次 appear 都拉、更不是轮询。
@@ -220,6 +219,29 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     deinit {
         activeGeocoder?.cancelGeocode()
+    }
+
+    /// 身份变化时立即撤下旧身份地图数据（R15 P1-3）：先清旧标记、列表
+    /// 和选中项，地图外框保留，再用新身份重拉。旧标记不等新一轮拉取
+    /// 成功走到 regroupAndGeocode() 才消失；拉取失败也不留旧身份数据——
+    /// 本函数已先清空 allEntries／groups，fetchEntriesPage“已有数据时
+    /// 网络失败不清空地图”的口径（:355–363）在此路径下无旧数据可保留，
+    /// 失败即走空态失败页。切账号先取消旧身份在途的编码：重拉完成前
+    /// 旧回调不得写回新身份的页面。
+    private func clearMapDataForIdentityChange() {
+        cancelGeocoding()
+        mapView.removeAnnotations(mapView.annotations)
+        allEntries = []
+        groups = []
+        unlocatedGroups = []
+        transientFailedGroups = []
+        selectedGroup = nil
+        geocodeCache.removeAll()
+        didInitialGeocode = false
+        failureStateView.isHidden = true
+        inlineRetryButton.isHidden = true
+        setStatusTextFaded("加载中…")
+        tableView.reloadData()
     }
 
     /// 取消当前轮地理编码并换代，返回新代次。重算与切账号入口共用。
