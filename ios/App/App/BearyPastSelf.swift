@@ -47,6 +47,9 @@ struct PastSelfMessage: Codable, Equatable {
     /// 仅本地：true = 尚未同步到服务端（后端 404 / 断网时先落本地）。
     /// 服务端不下发该字段，缺失时按 false 计。
     var localOnly: Bool = false
+    /// 仅本地：撤回已获服务端确认（撤回回包成功，或服务端下发已带 revoked_at）。
+    /// 确认后同步循环不再重发该行的撤回请求；服务端不下发该字段，缺失时按 false 计。
+    var revokeSynced: Bool = false
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -59,6 +62,7 @@ struct PastSelfMessage: Codable, Equatable {
         case revokedAtMs = "revoked_at"
         case replyToMessageId = "reply_to_message_id"
         case localOnly = "local_only"
+        case revokeSynced = "revoke_synced"
     }
 }
 
@@ -84,6 +88,7 @@ extension PastSelfMessage {
         revokedAtMs = try container.decodeIfPresent(Int.self, forKey: .revokedAtMs)
         replyToMessageId = try container.decodeIfPresent(String.self, forKey: .replyToMessageId)
         localOnly = try container.decodeIfPresent(Bool.self, forKey: .localOnly) ?? false
+        revokeSynced = try container.decodeIfPresent(Bool.self, forKey: .revokeSynced) ?? false
     }
 }
 
@@ -329,9 +334,13 @@ final class PastSelfStore {
         // 审计登录杂项：过滤他人行（服务端混入的非本人 authorId 行不进本用户存储）。
         for var row in server where row.authorId == userId {
             row.localOnly = false
+            // 服务端下发已带 revoked_at = 撤回已确认；本地此前已确认的同样保留。
+            // 注意：本地撤回标记被保留进来的行不算确认——服务端尚未见过该撤回。
+            let serverConfirmedRevoke = row.revokedAtMs != nil
             if let local = byId[row.id], local.revokedAtMs != nil, row.revokedAtMs == nil {
                 row.revokedAtMs = local.revokedAtMs
             }
+            row.revokeSynced = serverConfirmedRevoke || (byId[row.id]?.revokeSynced ?? false)
             byId[row.id] = row
         }
         // 服务端已删的行不在回包里时不主动清本地（服务端未承诺全量下发），
@@ -347,7 +356,16 @@ final class PastSelfStore {
         row.localOnly = false
         // 本地已撤回过的行不被创建回包复活。
         if all[index].revokedAtMs != nil { row.revokedAtMs = all[index].revokedAtMs }
+        // revokeSynced 不继承：新服务端 id 的撤回尚未推送，须由同步循环补推。
         all[index] = row
+        save(all)
+    }
+
+    /// 撤回回包成功：记该行撤回已确认，同步循环不再重发。
+    func markRevokeSynced(id: String) {
+        var all = loadAll()
+        guard let index = all.firstIndex(where: { $0.id == id }), !all[index].revokeSynced else { return }
+        all[index].revokeSynced = true
         save(all)
     }
 
