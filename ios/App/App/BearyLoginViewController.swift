@@ -1245,3 +1245,11 @@ enum BearyReferralFeedback {
         return base + "，Plus 至 " + formatter.string(from: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0))
     }
 }
+
+// MARK: - BearyBottomSheetVoiceOver（r29-14：底部弹窗出现时首焦点）
+
+extension BearyLoginViewController: BearyBottomSheetVoiceOver {
+    /// 出现时 VoiceOver 聚焦 sheet 专属标题“欢迎回来”（EmotePicker/DraftBox/
+    /// Notifications 三处先例一律聚焦标题；全屏页不走本容器，钩子不生效）。
+    var bottomSheetInitialAccessibilityElement: AnyObject? { welcomeTitleLabel }
+}
