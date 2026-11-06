@@ -184,7 +184,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var followStateFailedIds: Set<Int> = []
     /// r29-10：骨架态定高约束（按钮无文案时按字号算高，下限 28；离开骨架态
     /// 即撤掉，行重建/清表时随表清空）。
-    private var followButtonSkeletonHeightConstraints: [Int: NSLayoutConstraint] = []
+    private var followButtonSkeletonHeightConstraints: [Int: NSLayoutConstraint] = [:]
     private var followStateLoadingIds: Set<Int> = []
     /// S5：关注状态请求排队——建行时不再立即请求；可见行（+下一屏）优先，
     /// 其余排队；同时在途上限 3。结果区失效时待办整批丢弃（见 clearResultRows）。
