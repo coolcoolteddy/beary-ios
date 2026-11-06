@@ -72,11 +72,18 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     private let completer = MKLocalSearchCompleter()
     private var suggestions: [MKLocalSearchCompletion] = []
     private var activeSearch: MKLocalSearch?
-    /// 交互代次：每次打开（startAutoLocate → cancelRequests）与每次关闭
-    /// （cancelRequests）都 +1；MKLocalSearch 回调只作用于捕获时的那次气泡。
+    /// 交互代次：每次用户操作都 +1——打开／关闭（cancelRequests）、改词
+    /// （didChangeInput）、点建议（didTapSuggestion）、手动确认
+    /// （didConfirmManualText）、切手动（didTapManual → cancelRequests）；
+    /// 异步回调（MKLocalSearch、逆地理编码、搜索建议）只在捕获的代次仍是
+    /// 当前代次、且回包的搜索对象仍是当前搜索对象时才落定，旧回包一律丢弃。
     /// 仅靠 !isHidden 不够：调用方关闭动画 0.20s 后才置 isHidden=true，动画期间
     /// 或重开后旧回调仍能通过 isHidden 检查并经 didConfirm 落定旧地点。
     private var interactionGeneration = 0
+    /// 搜索建议代次：与 interactionGeneration 同步——didChangeInput 发新查询时
+    /// 记下当时代次；completer 回包只在该代次仍是当前代次时才渲染，改词后的
+    /// 旧查询回包不再把旧建议写进新输入框下方。
+    private var completerGeneration = 0
     private var located: DiaryLocation?
     private var locating = false
     private var manualMode = false
@@ -425,6 +432,9 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             clearSuggestions()
             return
         }
+        // 改词即新操作：在途的手动确认／点建议搜索与旧建议回包一律过期作废。
+        interactionGeneration += 1
+        completerGeneration = interactionGeneration
         completer.queryFragment = text
     }
 
@@ -593,6 +603,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
 
     func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
         guard !isHidden else { return }
+        // 旧查询的建议回包：改词／确认／切手动后代次已变，直接丢弃，不渲染。
+        guard completerGeneration == interactionGeneration else { return }
         // 扫荡 D：输入已清空后，旧查询的建议回包仍会到达——此时若照常渲染，
         // 空输入框下方会冒出与当前输入无关的旧建议。输入为空时直接清掉，不渲染。
         // （@ 选人搜索有序号守卫，旧回包会被丢弃；本气泡的 completer 回包此前无此守卫。）
@@ -608,6 +620,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         // 扫荡 D：与上同口径——气泡已关或输入已空时不把“没有找到相关位置”
         // 写进建议栈，否则下次打开手动态会先看到一条过期空态。
         guard !isHidden else { return }
+        // 旧查询的失败回包：代次已变即丢弃，不清新查询的建议。
+        guard completerGeneration == interactionGeneration else { return }
         guard !(inputField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             clearSuggestions()
             return
