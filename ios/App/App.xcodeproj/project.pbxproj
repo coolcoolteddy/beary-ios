@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
+		925D172940F3988068B7F344 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 1E35E2E363DA1FD3B0941CE4 /* PrivacyInfo.xcprivacy */; };
 		99060793831946979576E79C /* BearyEntryImageViewerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F509C857697461EBD1A11F9 /* BearyEntryImageViewerViewController.swift */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
@@ -271,6 +272,7 @@
 
 /* Begin PBXFileReference section */
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
+		1E35E2E363DA1FD3B0941CE4 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		504EC3071FED79650016851F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		504EC30C1FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
@@ -658,6 +660,7 @@
 				504EC3131FED79650016851F /* Info.plist */,
 				A8E41C2F9B574D01A2C3E5F7 /* App.entitlements */,
 				2FAD9762203C412B000D30F8 /* config.xml */,
+				1E35E2E363DA1FD3B0941CE4 /* PrivacyInfo.xcprivacy */,
 				DAE48A2C16A1E3B2821093EB /* agree.json */,
 				37B9943EDEF2C3A792782E9E /* agree_dark.json */,
 				4ED6BF206A0F34DF117D855A /* crown.json */,
@@ -922,6 +925,7 @@
 				E62E1D3165F7930CF044FD16 /* AppIcon.icon in Resources */,
 				504EC30D1FED79650016851F /* Main.storyboard in Resources */,
 				2FAD9763203C412B000D30F8 /* config.xml in Resources */,
+				925D172940F3988068B7F344 /* PrivacyInfo.xcprivacy in Resources */,
 				93F45F628E22C5045A1EF58F /* agree.json in Resources */,
 				3A970A89A5411DB05EA8D92C /* BearyFestivalWallpapers.json in Resources */,
 				4497343DBC967B83178641E1 /* agree_dark.json in Resources */,
