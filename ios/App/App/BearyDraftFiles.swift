@@ -609,7 +609,7 @@ enum BearyDraftStore {
             }
             let backup = backupCorruptFile(at: legacyURL)
             NSLog("[BearyDraft] corrupt legacy global v3 store, original kept")
-            let err = LoadError.corruptStore(backupURL: backup)
+            let err = LoadError.corruptStore(backupURL: backup, accountId: accountId, fileURL: legacyURL, fingerprint: fileFingerprint(at: legacyURL), generation: loadGeneration)
             lastLoadError = err
             return .failure(err)
         }
