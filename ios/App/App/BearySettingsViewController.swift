@@ -3136,7 +3136,7 @@ final class BearySettingsViewController: UIViewController {
             }
             downloadGroup.wait()
             var data: [String: Any] = [:]
-            data["backup_format"] = "beary-backup-v1"
+            data["backup_format"] = "beary_backup_v1"
             data["exported_at"] = ISO8601DateFormatter().string(from: Date())
             data["site"] = "teddyhn.com"
             data["profile"] = self.exportProfileDict(user: user)
