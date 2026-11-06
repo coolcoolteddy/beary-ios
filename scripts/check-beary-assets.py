@@ -40,6 +40,9 @@ What is checked (code -> catalog, one direction only):
      disk (guards against an empty placeholder set).
 
 What is NOT checked (documented limits, not oversights):
+  - CAAnimation keys passed as the forKey: argument of
+    CALayer.add(_:forKey:) / removeAnimation(forKey:) -- they are not
+    image set names, even when shaped like beary-*.
   - Server-driven keys with no code-side list (e.g. a future authorBadge
     key not yet in the `known` map) cannot be statically enumerated.
   - Unreferenced sets in the catalog are fine; the check is referenced
@@ -150,14 +153,20 @@ def main():
                 continue  # interpolated / escaped: covered by family expansion
             if not LITERAL_RE.match(literal):
                 continue
-            # Two narrow exclusions, both verified against real code:
+            # Three narrow exclusions, all verified against real code:
             # - concatenation fragment: "icon_wx_" + weatherKey is a prefix,
             #   not a set name (a complete name is never followed by +).
             # - enum raw value: case emoteChirp = "emote_chirp" is a sound
             #   key in BearySoundPlayer, never passed to UIImage(named:).
+            # - animation key: a literal passed as the forKey: argument of
+            #   CALayer.add(_:forKey:) / removeAnimation(forKey:) is a
+            #   CAAnimation key, never an image set name (BearyLoadingUX
+            #   "beary-dot-bounce" / "beary-shimmer-sweep", #924).
             if re.match(r"\s*\+", code[m.end() : m.end() + 8]):
                 continue
             if re.search(r"case\s+[A-Za-z0-9_]+\s*=\s*$", code[max(0, m.start() - 40) : m.start()]):
+                continue
+            if re.search(r"forKey:\s*$", code[max(0, m.start() - 20) : m.start()]):
                 continue
             literal_count += 1
             required.setdefault(literal, f"literal in {path.name}")
