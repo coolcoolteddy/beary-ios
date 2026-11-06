@@ -6370,7 +6370,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 case .success(let fetched):
                     // 补缺 P3-41：恢复后以最新有效可见性刷新快照并重算角标（原直接 return，快照恒旧）；
                     // 落盘使刷新跨杀 App 生效（已删分支同款 saveDraftNow）。
-                    self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: currentQuote.content, createdAt: currentQuote.createdAt, authorName: currentQuote.authorName, authorAvatar: currentQuote.authorAvatar, authorId: fetched.authorId, isMine: fetched.isMine, authorHandle: fetched.authorHandle, images: currentQuote.images, isPublic: BearyEphemeral.isEffectivelyPublic(fetched), publishAt: currentQuote.publishAt, imgDims: currentQuote.imgDims, isDeleted: false, visibility: fetched.visibility, ephemeralUntil: fetched.ephemeralUntil)
+                    // #6（第十轮）：成功回包同步刷新正文/图片/createdAt——引用是实时引用，
+                    // 草稿预览与发布后一致；来源后来改了正文或图片，草稿里不再留旧预览。
+                    // 占位回包（content/images 为 nil）时 ?? 兜底保留旧快照，占位口径不动；
+                    // notFound→已删、离线→保留快照的口径不动。图片尺寸随图片同刷（缺省留旧）。
+                    self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: fetched.content ?? currentQuote.content, createdAt: fetched.createdAt ?? currentQuote.createdAt, authorName: currentQuote.authorName, authorAvatar: currentQuote.authorAvatar, authorId: fetched.authorId, isMine: fetched.isMine, authorHandle: fetched.authorHandle, images: fetched.images ?? currentQuote.images, isPublic: BearyEphemeral.isEffectivelyPublic(fetched), publishAt: currentQuote.publishAt, imgDims: fetched.imgDims ?? currentQuote.imgDims, isDeleted: false, visibility: fetched.visibility, ephemeralUntil: fetched.ephemeralUntil)
                     self.refreshQuoteSection()
                     self.saveDraftNow()
                     return
