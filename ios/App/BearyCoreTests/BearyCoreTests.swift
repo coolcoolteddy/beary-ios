@@ -419,3 +419,165 @@ final class BearyNetworkTests: XCTestCase {
         XCTAssertTrue(session.configuration.httpShouldSetCookies)
     }
 }
+
+// ===== 第七轮 #4：私信持久化后台化回归 =====
+// BearyDMStore 的磁盘读写只走专用串行后台队列；调用方只拿回调结果，
+// 不再同步返回值。测试用随机账号 id（内存索引按账号隔离、互不干扰），
+// 每个用例结束删掉自己账号的本地文件，不碰真实账号数据。
+final class BearyDMStoreTests: XCTestCase {
+    private var accountId: Int = 0
+
+    override func setUp() {
+        super.setUp()
+        accountId = Int.random(in: 1_000_000...9_999_999)
+    }
+
+    override func tearDown() {
+        if let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            try? FileManager.default.removeItem(at: base.appendingPathComponent("beary_dm_\(accountId).json"))
+        }
+        super.tearDown()
+    }
+
+    private func peer(_ id: Int) -> BearyAPI.FriendUser {
+        BearyAPI.FriendUser(id: id, displayName: "对方\(id)", handle: "peer\(id)", avatarUrl: nil, createdAt: nil)
+    }
+
+    private func msg(_ id: Int, sender: Int = 7, body: String? = nil) -> BearyAPI.DMMessage {
+        BearyAPI.DMMessage(id: id, senderId: sender, body: body ?? "消息\(id)", createdAt: id * 1000)
+    }
+
+    /// 同步等 save 完成并返回回调里的排序结果（回调必在主线程派发）。
+    private func save(_ messages: [BearyAPI.DMMessage], peerId: Int) -> [BearyAPI.DMMessage] {
+        let exp = expectation(description: "saveMessages")
+        var saved: [BearyAPI.DMMessage] = []
+        BearyDMStore.saveMessages(accountId: accountId, peer: peer(peerId), messages: messages) { result in
+            saved = result
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 10)
+        return saved
+    }
+
+    private func load(peerId: Int) -> [BearyAPI.DMMessage] {
+        let exp = expectation(description: "messages")
+        var loaded: [BearyAPI.DMMessage] = []
+        BearyDMStore.messages(accountId: accountId, peerId: peerId) { result in
+            loaded = result
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 10)
+        return loaded
+    }
+
+    func testSaveThenLoadRoundTripSorted() {
+        let saved = save([msg(3), msg(1), msg(2)], peerId: 11)
+        XCTAssertEqual(saved.map { $0.id ?? -1 }, [1, 2, 3])
+        XCTAssertEqual(load(peerId: 11).map { $0.id ?? -1 }, [1, 2, 3])
+        XCTAssertEqual(load(peerId: 11).map { $0.body ?? "" }, ["消息1", "消息2", "消息3"])
+    }
+
+    /// 历史保留：两批重叠写入后旧批不丢、同 id 服务端（后一批）为准。
+    func testOverlappingBatchesRetainHistoryServerWins() {
+        _ = save((1...5).map { msg($0, body: "旧\($0)") }, peerId: 12)
+        let saved = save((4...8).map { msg($0, body: "新\($0)") }, peerId: 12)
+        XCTAssertEqual(saved.map { $0.id ?? -1 }, [1, 2, 3, 4, 5, 6, 7, 8])
+        XCTAssertEqual(saved.filter { $0.id == 4 || $0.id == 5 }.map { $0.body ?? "" }, ["新4", "新5"])
+        XCTAssertEqual(saved.filter { $0.id == 1 }.map { $0.body ?? "" }, ["旧1"])
+        XCTAssertEqual(load(peerId: 12).map { $0.id ?? -1 }, [1, 2, 3, 4, 5, 6, 7, 8])
+    }
+
+    /// 调用线程不被挡：save 只入队即返回，回调必异步到达（不在调用栈内同步触发）。
+    func testSaveReturnsImmediatelyAndCompletesAsync() {
+        let batch = (1...2000).map { msg($0) }
+        var completed = false
+        let exp = expectation(description: "save-async")
+        let start = CFAbsoluteTimeGetCurrent()
+        BearyDMStore.saveMessages(accountId: accountId, peer: peer(13), messages: batch) { result in
+            completed = true
+            XCTAssertEqual(result.count, 2000)
+            exp.fulfill()
+        }
+        let enqueueElapsed = CFAbsoluteTimeGetCurrent() - start
+        XCTAssertFalse(completed, "saveMessages 回调不得同步触发：整库编码写盘必须已离队到后台")
+        XCTAssertLessThan(enqueueElapsed, 0.5, "2000 条入队只应是微秒级：调用线程不得做整库编码写盘")
+        wait(for: [exp], timeout: 10)
+        XCTAssertTrue(completed)
+        XCTAssertEqual(load(peerId: 13).count, 2000)
+    }
+
+    /// 并发读写：多路并发 save 不丢批、不串号；串行队列排队后结果为全集。
+    func testConcurrentSavesDoNotLoseMessages() {
+        let exp = expectation(description: "concurrent-saves")
+        exp.expectedFulfillmentCount = 10
+        for i in 0..<10 {
+            DispatchQueue.global(qos: .userInitiated).async {
+                // 同一对方 5 路（id 段不重叠）＋ 5 个不同对方各 1 路。
+                let peerId = i < 5 ? 14 : 100 + i
+                let base = i < 5 ? i * 20 : 0
+                let batch = (1...20).map { self.msg(base + $0) }
+                BearyDMStore.saveMessages(accountId: self.accountId, peer: self.peer(peerId), messages: batch) { _ in
+                    exp.fulfill()
+                }
+            }
+        }
+        wait(for: [exp], timeout: 10)
+        XCTAssertEqual(load(peerId: 14).map { $0.id ?? -1 }, Array(1...100))
+        for i in 5..<10 {
+            XCTAssertEqual(load(peerId: 100 + i).count, 20)
+        }
+    }
+
+    /// 不同大小本地文件：调用线程耗时只与入队有关，与文件大小无关；
+    /// 大文件同样完整读回（滚动帧率的真机部分见 PR 真机验点）。
+    func testEnqueueCostIndependentOfStoreSize() {
+        for (peerId, count) in [(15, 100), (16, 5000)] {
+            let batch = (1...count).map { msg($0, body: String(repeating: "x", count: 80)) }
+            XCTAssertEqual(save(batch, peerId: peerId).count, count)
+            let start = CFAbsoluteTimeGetCurrent()
+            let exp = expectation(description: "messages-\(count)")
+            var loaded: [BearyAPI.DMMessage] = []
+            BearyDMStore.messages(accountId: accountId, peerId: peerId) { result in
+                loaded = result
+                exp.fulfill()
+            }
+            let enqueueElapsed = CFAbsoluteTimeGetCurrent() - start
+            XCTAssertLessThan(enqueueElapsed, 0.5, "本地文件 \(count) 条时调用线程仍只应入队")
+            wait(for: [exp], timeout: 10)
+            XCTAssertEqual(loaded.count, count)
+        }
+    }
+
+    /// 会话列表合并：仅本地有的对方追加、服务端为准、未读数不由本地推断。
+    func testMergedConversationsKeepsLocalOnlyPeer() {
+        _ = save([msg(1, body: "本地话")], peerId: 17)
+        let serverPeer = BearyAPI.FriendUser(id: 18, displayName: "服务端方", handle: "srv", avatarUrl: nil, createdAt: nil)
+        let server = [BearyAPI.DMConversation(peer: serverPeer, lastBody: "服务端话", lastAt: 9000, unreadCount: 3)]
+        let exp = expectation(description: "merged")
+        var merged: [BearyAPI.DMConversation] = []
+        BearyDMStore.mergedConversations(server: server, accountId: accountId) { result in
+            merged = result
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 10)
+        XCTAssertEqual(merged.map { $0.peer?.id ?? -1 }, [18, 17])
+        XCTAssertEqual(merged.first?.unreadCount, 3)
+        XCTAssertNil(merged.last?.unreadCount)
+        XCTAssertEqual(merged.last?.lastBody, "本地话")
+    }
+
+    /// 游客/无账号：不读写任何文件，回调空结果、不崩。
+    func testNilAccountIsNoop() {
+        let exp1 = expectation(description: "nil-messages")
+        BearyDMStore.messages(accountId: nil, peerId: 19) { result in
+            XCTAssertTrue(result.isEmpty)
+            exp1.fulfill()
+        }
+        let exp2 = expectation(description: "nil-save")
+        BearyDMStore.saveMessages(accountId: nil, peer: peer(19), messages: [msg(1)]) { result in
+            XCTAssertTrue(result.isEmpty)
+            exp2.fulfill()
+        }
+        wait(for: [exp1, exp2], timeout: 10)
+    }
+}
