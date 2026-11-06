@@ -23,7 +23,7 @@ private final class WishRowView: UIView {
     private let netLabel = UILabel()
     // 08：投票区换行——voteRow 提为属性，另备一行 voteRowWrapped（仅换行态显形，内为弹性
     // spacer + netLabel，净数贴右缘）；换行态由 layoutSubviews 的 updateVoteWrap 判定。
-    private let voteRow: UIStackView
+    private var voteRow: UIStackView!
     private let voteRowWrapped = UIStackView()
     private let voteWrapSpacer = UIView()
     private var isVoteWrapped = false
