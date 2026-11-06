@@ -53,11 +53,22 @@ final class SessionManager {
     /// refreshMe 成功且用户 id 变化）+1；refreshMe 回包与 BearyAPI 的 401
     /// 回调只认当前代际，过期回包一律丢弃，不得覆盖当前态。
     private var sessionGeneration = 0
+    /// 会话代次只读口径（r17 首屏快照）：磁盘快照读取时校验——与账号 id
+    /// 一起构成账号+会话双重校验；代次推进（退出/401/换号）即旧会话
+    /// 快照失效。快照保存时记下当时代次，读取时比对，不一致即弃用。
+    var currentSessionGeneration: Int { sessionGeneration }
     /// refreshMe 请求序号：每次调用 +1，回包只认最新一次，旧请求回包
     /// （含成功与 401 映射的 success(nil)）直接丢弃、不调 completion。
     /// 显式退出时同样 +1（见 signOutLocally），使退出时在途的旧 /me
     /// 成功回包被 seq 守卫丢弃，不得把旧用户写回。
     private var meSeq = 0
+    /// 在途 /me 合并（r17-C8）：refreshMe 发起后未回包前再次调用时，
+    /// 不再另发一次 /me（不推 meSeq、不作废在途请求），调用方以 waiter
+    /// 身份订阅同一次回包；回包到达时全体 waiter 按序收到同一结果。
+    /// 邀请页等“刚登录就打开”的场景靠它不再多发 /me；显式退出/切号
+    /// 仍推 meSeq，旧回包按原口径丢弃，waiter 以 .cancelled 释放、不永久挂起。
+    private var meInflight = false
+    private var meWaiters: [(Result<MeUser?, APIError>) -> Void] = []
 
     /// 账号隔离改造：会话状态写回统一到主线程。本类所有公开入口
     /// （refreshMe/switchToAccount/removeAccount/signOutLocally）只在主
@@ -113,6 +124,14 @@ final class SessionManager {
             DispatchQueue.main.async { [weak self] in self?.refreshMe(completion: completion) }
             return
         }
+        // r17-C8 在途合并：已有 /me 在途时订阅同一结果，不另发请求、
+        // 不推 meSeq（在途请求不被作废，旧回包丢弃口径不受影响）。
+        if meInflight {
+            if let completion = completion { meWaiters.append(completion) }
+            return
+        }
+        meInflight = true
+        if let completion = completion { meWaiters.append(completion) }
         meSeq += 1
         let seq = meSeq
         let previousUserId = currentUser?.id
@@ -125,8 +144,23 @@ final class SessionManager {
             DispatchQueue.main.async {
                 // 账号隔离 3 号：旧 refreshMe 回包直接丢弃（新登录后的旧请求
                 // 成功回包不得把旧用户写回，旧 401 映射的 nil 也不得清掉新态）。
-                guard seq == self.meSeq else { return }
-                self.applyRefreshMeResult(result, previousUserId: previousUserId, completion: completion)
+                guard seq == self.meSeq else {
+                    // r17-C8：旧请求被新会话取代（退出/切号推过 meSeq）时，
+                    // waiter 以 .cancelled 释放，不永久挂起；调用方按当前会话重定。
+                    self.meInflight = false
+                    let waiters = self.meWaiters
+                    self.meWaiters = []
+                    for waiter in waiters { waiter(.failure(.cancelled)) }
+                    return
+                }
+                self.applyRefreshMeResult(result, previousUserId: previousUserId, completion: { drained in
+                    // r17-C8：全体 waiter 共收同一次回包；先清在途旗，
+                    // waiter 内再调 refreshMe 时可正常发起新请求。
+                    self.meInflight = false
+                    let waiters = self.meWaiters
+                    self.meWaiters = []
+                    for waiter in waiters { waiter(drained) }
+                })
             }
         }
     }
@@ -307,6 +341,8 @@ final class SessionManager {
         // 审计-性能：通知页分键缓存同样在退出/401 时清掉该账号槽位。
         BearyNotificationsViewController.purgeAccount(id)
         BearyProfileCache.purge(bucket: "\(id)")
+        // r17-C9：心愿墙首屏快照同样在退出/401 时清掉该账号槽位。
+        BearyWishWallCache.purge(bucket: "\(id)")
         BearyDMConversationsCache.purge(bucket: "\(id)")
         BearyDetailCache.purge(bucket: "\(id)")
         BearyEntrySyncStore.purgeAccount(accountId: id)

@@ -277,6 +277,19 @@ final class BearyWishWallViewController: UIViewController {
     // P2-18：加载/失败态迁入已有 BearyStateView（不新建组件）；空态走新增的
     // wishEmptyStateView（同样不传 iconName，不强迫空态套同一插图）。
     private let wishStateView = BearyStateView()
+    /// r17-C9：快照态提示行——有旧结果且刷新失败时“显示的是上次的数据”；
+    /// 确认结果为空时不显、只显空态。
+    private let wishStaleLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        labelValue.adjustsFontForContentSizeCategory = true
+        labelValue.textColor = BearyColors.gray
+        labelValue.textAlignment = .center
+        labelValue.text = "显示的是上次的数据"
+        labelValue.isHidden = true
+        return labelValue
+    }()
     /// 许愿新建页的 EdgeDismiss 强持有（transitioningDelegate 弱引用）。
     private var wishCreateEdgeDismiss: BearyEdgeDismissController?
     private var wishes: [BearyAPI.WishItem] = []
@@ -305,6 +318,11 @@ final class BearyWishWallViewController: UIViewController {
         confirmedDown[wishId] = item.downCount ?? 0
     }
     private var isLoading = false
+    /// r17-C9：当前列表是否来自磁盘快照（未被新回包确认前）、是否已有新回包确认。
+    private var showingCachedWishes = false
+    private var wishesFreshConfirmed = false
+    /// r17-C9：在途投票的 wish id——回包按 ID 替换时保留这些条目的本地乐观票态。
+    private var voteInflight: Set<Int> = []
     /// 13：600 上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews；Feed 断点同款）。
     private var colCapConstraints: [NSLayoutConstraint] = []
     /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
@@ -380,7 +398,7 @@ final class BearyWishWallViewController: UIViewController {
             contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
         ])
         createButton.addTarget(self, action: #selector(createTapped), for: .touchUpInside)
-        createButton.isHidden = !isCurrentUserPlus()
+        refreshPlusGate()
         wishEmptyStateView.translatesAutoresizingMaskIntoConstraints = false
         wishEmptyStateView.configure(kind: .empty, title: "还没有愿望", subtitle: "Plus 会员可以发起第一个", iconName: nil, actionTitle: nil)
         wishEmptyStateView.isHidden = true
@@ -389,11 +407,14 @@ final class BearyWishWallViewController: UIViewController {
         wishStateView.translatesAutoresizingMaskIntoConstraints = false
         wishStateView.isHidden = true
         contentStack.addArrangedSubview(createButton)
+        contentStack.addArrangedSubview(wishStaleLabel)
         contentStack.addArrangedSubview(wishStateView)
         contentStack.addArrangedSubview(wishEmptyStateView)
         NSLayoutConstraint.activate([
             createButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
         ])
+        // r17-C9：冷开进心愿墙先看到上次确认的首屏，再静默刷新。
+        restoreCachedWishesIfNeeded()
         loadWishes()
     }
 
@@ -402,7 +423,7 @@ final class BearyWishWallViewController: UIViewController {
         subpageLayoutGuard.resetForAppearance()
         // 审计登录杂项：本页外获得 / 失去 Plus 后返回，发起钮显隐跟最新 Plus 态
         //（此前只在 viewDidLoad 与游客投票登录回调里刷新，旧态会滞留）。
-        createButton.isHidden = !isCurrentUserPlus()
+        refreshPlusGate()
     }
 
     override func viewDidLayoutSubviews() {
@@ -425,11 +446,31 @@ final class BearyWishWallViewController: UIViewController {
     @objc private func closeTapped() { dismiss(animated: BearyMotion.animated(true), completion: nil) }
     @objc private func retryTapped() { loadWishes() }
 
-    /// App 侧 Plus 门：仅决定发起钮显隐，真正校验在服务端（plus_until > now 或永久阈值）。
-    private func isCurrentUserPlus() -> Bool {
-        guard let until = SessionManager.shared.currentUser?.plusUntil else { return false }
+    /// App 侧 Plus 门三态（r17-C9）：仅决定发起钮显隐，真正校验在服务端
+    ///（plus_until > now 或永久阈值）。true 已确认是 Plus；false 已确认不是；
+    /// nil 未确认——冷启动快照的 plusUntil 为 nil，不得直接判非 Plus，须等
+    /// /me（见 refreshPlusGate）。
+    private func plusState() -> Bool? {
+        guard let until = SessionManager.shared.currentUser?.plusUntil else { return nil }
         let now = Int(Date().timeIntervalSince1970 * 1000)
         return until >= 4102444800000 || until > now
+    }
+
+    /// Plus 门刷新：已确认按结果显隐；未确认时先隐藏发起钮、等一次 /me
+    ///（同会话在途时订阅结果，不多发请求），回包后再定。
+    private func refreshPlusGate() {
+        if let plus = plusState() {
+            createButton.isHidden = !plus
+            return
+        }
+        createButton.isHidden = true
+        guard !isGuest, SessionManager.shared.currentUser != nil else { return }
+        SessionManager.shared.refreshMe { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.createButton.isHidden = !(self.plusState() ?? false)
+            }
+        }
     }
 
     private var isAdmin: Bool { SessionManager.shared.currentUser?.isAdmin == true }
@@ -492,9 +533,15 @@ final class BearyWishWallViewController: UIViewController {
     private func loadWishes() {
         guard !isLoading else { return }
         isLoading = true
-        // P2-18：加载态走 BearyStateView（转圈 + “加载中…”）；成功/失败回包时统一收起。
-        wishStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
-        showStateViewFaded()
+        // r17-C9：有快照首屏时静默刷新，不盖加载态；无快照时走原有加载态。
+        // 重试时先收起旧失败态（失败回包会重显），不让它在刷新期间继续占位。
+        if showingCachedWishes {
+            wishStateView.isHidden = true
+        } else {
+            // P2-18：加载态走 BearyStateView（转圈 + “加载中…”）；成功/失败回包时统一收起。
+            wishStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
+            showStateViewFaded()
+        }
         BearyAPI.shared.fetchWishes { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -502,23 +549,83 @@ final class BearyWishWallViewController: UIViewController {
                 switch result {
                 case .success(let resp):
                     self.wishStateView.isHidden = true
+                    self.wishesFreshConfirmed = true
                     // 审计登录杂项：与 viewWillAppear 同款，列表成功回包时也刷新 Plus 门。
-                    self.createButton.isHidden = !self.isCurrentUserPlus()
-                    self.wishes = resp.wishes ?? []
-                    for item in self.wishes where item.id != nil {
+                    self.refreshPlusGate()
+                    let serverWishes = resp.wishes ?? []
+                    // r17-C9：回包后按 ID 替换——在途投票的条目保留本地乐观票态
+                    //（选中态与票数），其余以服务端为准；行按 ID 复用，展开态不丢。
+                    var merged: [BearyAPI.WishItem] = []
+                    for var server in serverWishes {
+                        if let id = server.id, self.voteInflight.contains(id),
+                           let localIndex = self.indexOfWish(id) {
+                            let local = self.wishes[localIndex]
+                            server.myVote = local.myVote
+                            server.upCount = local.upCount
+                            server.downCount = local.downCount
+                        }
+                        merged.append(server)
+                    }
+                    self.wishes = merged
+                    for item in self.wishes where item.id != nil && !self.voteInflight.contains(item.id!) {
                         self.confirmedSeeded.insert(item.id!)
                         self.confirmedVote[item.id!] = item.myVote
                         self.confirmedUp[item.id!] = item.upCount ?? 0
                         self.confirmedDown[item.id!] = item.downCount ?? 0
                     }
+                    self.showingCachedWishes = false
+                    self.wishStaleLabel.isHidden = true
                     self.renderWishes()
+                    // 确认结果为空时旧快照失效，下次不再先恢复已撤的愿望；非空则落快照。
+                    if let accountId = SessionManager.shared.currentUser?.id {
+                        if merged.isEmpty {
+                            BearyWishWallCache.purge(bucket: "\(accountId)")
+                        } else {
+                            self.saveWishesSnapshotIfNeeded(items: merged)
+                        }
+                    }
                 case .failure:
-                    // P2-18：失败态走 BearyStateView（“加载失败”+“重试”，动作复用 retryTapped）。
-                    self.wishStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
-                    self.showStateViewFaded()
+                    // r17-C9：有旧结果且刷新失败时保留快照列表、标“显示的是上次的数据”；
+                    // 失败态仍给重试入口（置于快照列表上方），不盖住已有行；无快照时走原有失败态。
+                    if self.showingCachedWishes {
+                        self.wishStaleLabel.isHidden = false
+                        self.wishStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
+                        self.showStateViewFaded()
+                    } else {
+                        // P2-18：失败态走 BearyStateView（“加载失败”+“重试”，动作复用 retryTapped）。
+                        self.wishStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
+                        self.showStateViewFaded()
+                    }
                 }
             }
         }
+    }
+
+    /// r17-C9：冷开进心愿墙先看到上次确认的首屏——只有新回包尚未确认时才贴快照。
+    private func restoreCachedWishesIfNeeded() {
+        guard !isGuest, let accountId = SessionManager.shared.currentUser?.id else { return }
+        BearyWishWallCache.load(accountId: accountId, sessionGeneration: SessionManager.shared.currentSessionGeneration) { [weak self] snap in
+            guard let self = self, let snap = snap, !snap.items.isEmpty else { return }
+            guard self.wishes.isEmpty, !self.wishesFreshConfirmed else { return }
+            self.wishes = snap.items.map { $0.toWishItem() }
+            for item in self.wishes where item.id != nil {
+                self.confirmedSeeded.insert(item.id!)
+                self.confirmedVote[item.id!] = item.myVote
+                self.confirmedUp[item.id!] = item.upCount ?? 0
+                self.confirmedDown[item.id!] = item.downCount ?? 0
+            }
+            self.showingCachedWishes = true
+            self.wishStateView.isHidden = true
+            self.renderWishes()
+        }
+    }
+
+    /// r17-C9：最近确认的首屏落盘——标题、状态和票数（按 ID 存）；只存当前账号。
+    private func saveWishesSnapshotIfNeeded(items: [BearyAPI.WishItem]) {
+        guard let accountId = SessionManager.shared.currentUser?.id, !items.isEmpty else { return }
+        let snapItems = items.compactMap { BearyWishWallCache.WishSnapshotItem(item: $0) }
+        guard !snapItems.isEmpty else { return }
+        BearyWishWallCache.save(accountId: accountId, sessionGeneration: SessionManager.shared.currentSessionGeneration, items: snapItems)
     }
 
     /// P0-9：按 wish ID 复用行——已有行只 configure 改文案，不重建、不重播入场动效；
@@ -609,11 +716,14 @@ final class BearyWishWallViewController: UIViewController {
         voteGeneration[wishId, default: 0] += 1
         let gen = voteGeneration[wishId] ?? 0
         let sendVote = newVote ?? 0
+        // r17-C9：记下在途投票——列表回包按 ID 替换时保留本条的本地乐观票态。
+        voteInflight.insert(wishId)
         BearyAPI.shared.voteWish(id: wishId, vote: sendVote) { [weak self] result in
             DispatchQueue.main.async {
                 // 代次守卫（点赞 likeSeq 同款）：已有更新点按时过期回包直接丢弃，
                 // 不回滚、不摇头、不弹 toast，屏幕只反映最后一次点按。
                 guard let self = self, let idx = self.indexOfWish(wishId), self.voteGeneration[wishId] == gen else { return }
+                self.voteInflight.remove(wishId)
                 switch result {
                 case .success(let resp):
                     // 审计登录杂项：成功音只在服务端成功回包后播。
@@ -677,7 +787,7 @@ final class BearyWishWallViewController: UIViewController {
             self?.dismiss(animated: BearyMotion.animated(true), completion: nil)
             SessionManager.shared.refreshMe { _ in
                 DispatchQueue.main.async {
-                    self?.createButton.isHidden = !(self?.isCurrentUserPlus() ?? false)
+                    self?.refreshPlusGate()
                     // 审计登录杂项：登录成功后补投待重放的那一票并 toast；登录页
                     // 带来的邀请绑定文案（若有）与补投提示合为一次 toast（新 toast
                     // 会盖掉旧 toast，分开发会丢一条）。补投后重拉列表以服务端为准。
@@ -1052,6 +1162,118 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
                     BearyToast.show(in: self.view, message: message)
                 }
             }
+        }
+    }
+}
+
+// MARK: - 心愿墙首屏磁盘缓存（r17-C9，与 BearyFeedCache 同口径，不新增文件）
+//
+// 保存当前账号最近确认的首屏标题、状态和票数；按账号分桶，读取时校验
+// 账号 id 与会话代次（退出/401/换号后代次推进，旧快照弃用）；退出/401
+// 时由 SessionManager 清桶。投票选中态与发布资格按当前会话确认，不进快照。
+enum BearyWishWallCache {
+    private static let filePrefix = "beary_wish_wall_cache_"
+
+    /// 首屏条目快照（WishItem 本身只有 Decodable，另存可编码形态）。
+    struct WishSnapshotItem: Codable {
+        var id: Int
+        var title: String?
+        var detail: String?
+        var authorName: String?
+        var status: String?
+        var upCount: Int
+        var downCount: Int
+        var myVote: Int?
+        var createdAt: Int?
+
+        init?(item: BearyAPI.WishItem) {
+            guard let id = item.id else { return nil }
+            self.id = id
+            self.title = item.title
+            self.detail = item.detail
+            self.authorName = item.authorName
+            self.status = item.status
+            self.upCount = item.upCount ?? 0
+            self.downCount = item.downCount ?? 0
+            self.myVote = item.myVote
+            self.createdAt = item.createdAt
+        }
+
+        func toWishItem() -> BearyAPI.WishItem {
+            BearyAPI.WishItem(
+                id: id, authorId: nil, authorName: authorName, authorAvatar: nil,
+                title: title, detail: detail, status: status,
+                upCount: upCount, downCount: downCount, myVote: myVote, createdAt: createdAt
+            )
+        }
+    }
+
+    struct Snapshot: Codable {
+        var savedAt: TimeInterval
+        var accountId: Int
+        var sessionGeneration: Int
+        var items: [WishSnapshotItem]
+    }
+
+    private static func fileURL(bucket: String) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return base.appendingPathComponent("\(filePrefix)\(bucket).json")
+    }
+
+    private static let ioQueue = DispatchQueue(label: "beary.wishWallCache.io", qos: .utility)
+
+    private static let generationLock = NSLock()
+    private static var generations: [String: UInt64] = [:]
+
+    private static func generation(for bucket: String) -> UInt64 {
+        generationLock.lock()
+        defer { generationLock.unlock() }
+        return generations[bucket] ?? 0
+    }
+
+    private static func bumpGeneration(for bucket: String) {
+        generationLock.lock()
+        generations[bucket, default: 0] += 1
+        generationLock.unlock()
+    }
+
+    /// 读取：账号 id 与会话代次双重校验——任一不符即弃用，不递出旧号/旧会话快照。
+    static func load(accountId: Int, sessionGeneration: Int, completion: @escaping (Snapshot?) -> Void) {
+        let bucket = "\(accountId)"
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            var snap: Snapshot?
+            if let url = fileURL(bucket: bucket), let data = try? Data(contentsOf: url) {
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                snap = try? decoder.decode(Snapshot.self, from: data)
+            }
+            let valid = snap?.accountId == accountId && snap?.sessionGeneration == sessionGeneration
+            let result = (capturedGeneration == generation(for: bucket) && valid) ? snap : nil
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    static func save(accountId: Int, sessionGeneration: Int, items: [WishSnapshotItem]) {
+        let bucket = "\(accountId)"
+        let snap = Snapshot(savedAt: Date().timeIntervalSince1970, accountId: accountId, sessionGeneration: sessionGeneration, items: items)
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            guard capturedGeneration == generation(for: bucket) else { return }
+            guard let url = fileURL(bucket: bucket) else { return }
+            let encoder = JSONEncoder()
+            encoder.keyEncodingStrategy = .convertToSnakeCase
+            guard let data = try? encoder.encode(snap) else { return }
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    static func purge(bucket: String) {
+        bumpGeneration(for: bucket)
+        ioQueue.async {
+            guard let url = fileURL(bucket: bucket) else { return }
+            try? FileManager.default.removeItem(at: url)
         }
     }
 }
