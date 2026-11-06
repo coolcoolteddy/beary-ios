@@ -785,6 +785,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
         selectedStarId = nil
         skyView.setSelected(starId: nil, edgeId: edge.id)
         showEdgeSheet(edge)
+        // r17-m1：点下立即高亮（上行）并显示关系（上行底卡），再放光点往返。
+        skyView.startEdgeRoundTrip(edge)
     }
 
     private func showOverlapSheet(_ entries: [Entry]) {
@@ -913,11 +915,13 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 
     private func showEdgeSheet(_ edge: StarMapEdge) {
+        // r17-m1：底卡标题不再是笼统的「连线 · …」，直接收成具体关系
+        //（如「同心情：开心；同地点：宁波」）；原因文案本身一字不动。
         let reasons = edge.reasons.map { reasonText($0) }.joined(separator: "；")
         let first = model.entryById[edge.firstId]
         let second = model.entryById[edge.secondId]
         let rows = [first, second].compactMap { $0 }
-        rebuildSheet(title: "连线 · \(reasons)", rows: rows)
+        rebuildSheet(title: reasons.isEmpty ? "连线" : reasons, rows: rows)
         sheetStack.addArrangedSubview(sheetBodyLabel("点篇名进详情；连线只表示关系，不改原文。"))
     }
 
@@ -1070,6 +1074,10 @@ struct StarMapSkyEdge {
 
 private final class StarMapSkyView: UIView {
 
+    // r17-m1：draw(_:) 一遍画完无法做光点动效，拆成独立图层——
+    // 星尘一层、每条边一层、每颗星一组（光晕／闪亮／星核／选中圈／日期），
+    // 光点单独一层走 transform；选中边与光晕闪亮走 opacity。
+    // 动效只走 transform 与 opacity，不动布局、不改星位与连线模型。
 
     var onStarTap: ((Entry) -> Void)?
     var onOverlapTap: (([Entry]) -> Void)?
@@ -1083,26 +1091,82 @@ private final class StarMapSkyView: UIView {
     private var selectedStarId: String?
     private var selectedEdgeId: String?
 
+    private let dustLayer = CAShapeLayer()
+    private var edgeLayers: [String: CAShapeLayer] = [:]
+    /// 每颗星的一组图层：光晕 halo（常亮弱）／闪亮 flash（光点经过时短暂亮起，
+    /// 平时 opacity 0）／星核 core／选中圈 ring／日期 date。
+    private struct StarLayers {
+        let halo: CALayer
+        let flash: CALayer
+        let core: CALayer
+        let ring: CALayer
+        let date: CATextLayer
+    }
+    private var starLayers: [String: StarLayers] = [:]
+    /// 往返光点：独立图层，沿线走 transform.translation。
+    private let dotLayer = CALayer()
+    private var lastBuiltSize: CGSize = .zero
+
+    /// 光点往返状态：去程 .out（第一篇→另一篇）＋回程 .back，各 0.25 秒。
+    private enum FlightPhase { case out, back }
+    private var flightEdgeId: String?
+    private var flightFirstId: String?
+    private var flightSecondId: String?
+    private var flightPhase: FlightPhase = .out
+    private var flightLegStart: CFTimeInterval = 0
+    /// 往返代次：切线／切范围／旋转时 +1，旧段的完成回调凭代次丢弃，
+    /// 快速连点不残留旧光点。
+    private var flightGeneration = 0
+    private static let flightLegDuration: CFTimeInterval = 0.25
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = BearyStarMapNight.background
         // 审计登录杂项：画布本身不是无障碍元素，星由 accessibilityElements 逐颗暴露。
         isAccessibilityElement = false
+        dustLayer.zPosition = 0
+        layer.addSublayer(dustLayer)
+        dotLayer.bounds = CGRect(x: 0, y: 0, width: 10, height: 10)
+        dotLayer.cornerRadius = 5
+        dotLayer.backgroundColor = BearyStarMapNight.selected.cgColor
+        dotLayer.shadowColor = BearyStarMapNight.selected.cgColor
+        dotLayer.shadowRadius = 6
+        dotLayer.shadowOpacity = 0.9
+        dotLayer.shadowOffset = .zero
+        dotLayer.zPosition = 3
+        dotLayer.isHidden = true
+        layer.addSublayer(dotLayer)
         let tap = UITapGestureRecognizer(target: self, action: #selector(didTap(_:)))
         addGestureRecognizer(tap)
     }
 
-    /// 字号档位变化时画布日期字重算（draw 内按当前档位取值），只重绘不重建模型。
+    /// 字号档位变化时画布日期字重算（图层按当前档位取值），只重建图层不重建模型。
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
-            setNeedsDisplay()
+            lastBuiltSize = .zero
+            rebuildLayers()
         }
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         // 布局落定后按真实 bounds 重算星的无障碍命中框（setStars 时 bounds 可能仍为 0）。
+        guard bounds.size != lastBuiltSize, bounds.width > 0, bounds.height > 0 else {
+            refreshAccessibilityElements()
+            return
+        }
+        // 尺寸变了：旋转（高也变）立刻结束上一段；只改宽度（iPad 分屏拖动）
+        // 则光点贴住重算后的线、按原进度续跑当前段。
+        let flightWasActive = flightEdgeId != nil
+        let heightChanged = abs(bounds.height - lastBuiltSize.height) > 0.5
+        if flightWasActive, heightChanged {
+            endTravellingDot()
+        }
+        rebuildLayers()
+        if flightWasActive, flightEdgeId != nil, !heightChanged {
+            resumeFlightAfterWidthChange()
+        }
         refreshAccessibilityElements()
     }
 
@@ -1134,15 +1198,166 @@ private final class StarMapSkyView: UIView {
         self.pointsById = pointsById
         self.selectedStarId = selectedStarId
         self.selectedEdgeId = selectedEdgeId
-        setNeedsDisplay()
+        // 切范围即换模型：上一段光点立刻结束，不留旧线上的残影。
+        endTravellingDot()
+        rebuildLayers()
         refreshAccessibilityElements()
     }
 
     func setSelected(starId: String?, edgeId: String?) {
+        // 任何一次重选（点另一条线／点星／清选择）都先立刻结束上一段光点；
+        // 点线后的新一段由 didTapEdge 经 startEdgeRoundTrip 另起。
+        endTravellingDot()
         selectedStarId = starId
         selectedEdgeId = edgeId
-        setNeedsDisplay()
+        updateSelectionVisuals(edgeFadeIn: edgeId != nil)
         refreshAccessibilityElements()
+    }
+
+    /// 选中态只改图层属性：选中边橙粗、其余细蓝灰，选中星描橙圈；
+    /// 新选中的边 opacity 0.35→1 淡入 0.25 秒（减动效直设终值）。
+    private func updateSelectionVisuals(edgeFadeIn: Bool) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (id, edgeLayer) in edgeLayers {
+            let selected = id == selectedEdgeId
+            edgeLayer.strokeColor = (selected ? BearyStarMapNight.selected : BearyStarMapNight.edge).cgColor
+            edgeLayer.lineWidth = selected ? 2 : 1
+            edgeLayer.zPosition = selected ? 1.5 : 1
+            edgeLayer.opacity = 1
+        }
+        for (id, layers) in starLayers {
+            layers.ring.isHidden = id != selectedStarId
+        }
+        CATransaction.commit()
+        guard edgeFadeIn, BearyMotion.animated(true),
+              let id = selectedEdgeId, let edgeLayer = edgeLayers[id] else { return }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0.35
+        fade.toValue = 1
+        fade.duration = 0.25
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        edgeLayer.add(fade, forKey: "r17-edge-in")
+    }
+
+    // MARK: - 光点往返（r17-m1）
+
+    /// 点线后立即高亮（setSelected 已做）并显示关系（VC 底卡已做），
+    /// 再放一个光点：从第一篇对应的星出发，抵达另一颗星，折返一次，
+    /// 去 0.25 秒、回 0.25 秒；经过星点时只让该星光晕短暂亮一下，
+    /// 星核与连线本身不动。减动效时不放光点，只留选中线与关系说明。
+    func startEdgeRoundTrip(_ edge: StarMapEdge) {
+        endTravellingDot()
+        guard BearyMotion.animated(true) else { return }
+        guard let a = pointsById[edge.firstId], let b = pointsById[edge.secondId] else { return }
+        let p1 = point(for: a, in: bounds)
+        let p2 = point(for: b, in: bounds)
+        guard p1 != p2 else { return }
+        flightEdgeId = edge.id
+        flightFirstId = edge.firstId
+        flightSecondId = edge.secondId
+        flightPhase = .out
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        dotLayer.position = p1
+        dotLayer.transform = CATransform3DIdentity
+        dotLayer.isHidden = false
+        CATransaction.commit()
+        flashHalo(starId: edge.firstId)
+        runFlightLeg(from: p1, to: p2, phase: .out, duration: Self.flightLegDuration)
+    }
+
+    /// 立刻结束上一段：代次 +1 让在途段的完成回调失效，光点隐藏。
+    /// 点另一条线、切范围、旋转、清选择时都走这里。
+    func endTravellingDot() {
+        flightGeneration += 1
+        flightEdgeId = nil
+        flightFirstId = nil
+        flightSecondId = nil
+        dotLayer.removeAnimation(forKey: "r17-roundtrip")
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        dotLayer.isHidden = true
+        dotLayer.transform = CATransform3DIdentity
+        CATransaction.commit()
+    }
+
+    /// 一段（去或回）：光点图层走 transform.translation；完成时把
+    /// 光点钉到终点、让终点星光晕亮一下，再续下一段或收尾。
+    private func runFlightLeg(from: CGPoint, to: CGPoint, phase: FlightPhase, duration: CFTimeInterval) {
+        flightPhase = phase
+        flightLegStart = CACurrentMediaTime()
+        flightGeneration += 1
+        let generation = flightGeneration
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self = self, generation == self.flightGeneration, self.flightEdgeId != nil else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            self.dotLayer.position = to
+            self.dotLayer.transform = CATransform3DIdentity
+            CATransaction.commit()
+            switch phase {
+            case .out:
+                self.flashHalo(starId: self.flightSecondId ?? "")
+                self.runFlightLeg(from: to, to: from, phase: .back, duration: Self.flightLegDuration)
+            case .back:
+                self.flashHalo(starId: self.flightFirstId ?? "")
+                self.endTravellingDot()
+            }
+        }
+        let anim = CABasicAnimation(keyPath: "transform.translation")
+        anim.fromValue = NSValue(cgVector: CGVector(dx: 0, dy: 0))
+        anim.toValue = NSValue(cgVector: CGVector(dx: to.x - from.x, dy: to.y - from.y))
+        anim.duration = duration
+        anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        dotLayer.add(anim, forKey: "r17-roundtrip")
+        CATransaction.commit()
+    }
+
+    /// 仅改宽度（iPad 分屏拖动）：按当前段已走进度把光点贴到重算后的线上，
+    /// 剩下的路程按剩余时间续跑，不从头重走、不偏离线。
+    private func resumeFlightAfterWidthChange() {
+        guard let firstId = flightFirstId, let secondId = flightSecondId,
+              let a = pointsById[firstId], let b = pointsById[secondId] else {
+            endTravellingDot()
+            return
+        }
+        let p1 = point(for: a, in: bounds)
+        let p2 = point(for: b, in: bounds)
+        guard p1 != p2 else {
+            endTravellingDot()
+            return
+        }
+        let legFrom = flightPhase == .out ? p1 : p2
+        let legTo = flightPhase == .out ? p2 : p1
+        let elapsed = CACurrentMediaTime() - flightLegStart
+        let progress = max(0, min(0.999, elapsed / Self.flightLegDuration))
+        let current = CGPoint(
+            x: legFrom.x + (legTo.x - legFrom.x) * CGFloat(progress),
+            y: legFrom.y + (legTo.y - legFrom.y) * CGFloat(progress)
+        )
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        dotLayer.position = current
+        dotLayer.transform = CATransform3DIdentity
+        CATransaction.commit()
+        runFlightLeg(from: current, to: legTo, phase: flightPhase, duration: Self.flightLegDuration * (1 - progress))
+    }
+
+    /// 经过星点时只让光晕短暂亮一下：单独的闪亮层 opacity 0→1→0，
+    /// 星核、连线与选中圈一律不动。
+    private func flashHalo(starId: String) {
+        guard let layers = starLayers[starId] else { return }
+        let flash = layers.flash
+        flash.removeAnimation(forKey: "r17-halo-flash")
+        let anim = CABasicAnimation(keyPath: "opacity")
+        anim.fromValue = 0
+        anim.toValue = 1
+        anim.duration = 0.15
+        anim.autoreverses = true
+        anim.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        flash.add(anim, forKey: "r17-halo-flash")
     }
 
     /// 审计登录杂项：按当前 stars 生成 VoiceOver 元素——每颗星一个 button，
@@ -1184,45 +1399,103 @@ private final class StarMapSkyView: UIView {
         )
     }
 
-    override func draw(_ rect: CGRect) {
-        super.draw(rect)
-        guard let context = UIGraphicsGetCurrentContext() else { return }
+    // MARK: - 图层化渲染（r17-m1，替代原 draw(_:) 一遍画完）
+
+    /// 按当前 bounds 重建全部图层：星尘、每条边、每颗星；不触发布局、
+    /// 不改模型。重建时关掉隐式动画（布局变化不带淡入淡出），
+    /// 选中态由 updateSelectionVisuals 收尾（不做淡入）。
+    private func rebuildLayers() {
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         // 背景装饰星尘：固定哈希点、只装饰，不代表任何日记（数量少、色暗）。
+        let dustPath = CGMutablePath()
         for i in 0..<40 {
             let h = UInt64(i) &* 2_862_933_555_777_037_127 &+ 11
             let x = CGFloat(h % 1000) / 1000.0 * bounds.width
             let y = CGFloat((h >> 16) % 1000) / 1000.0 * bounds.height
-            context.setFillColor(BearyStarMapNight.dust.cgColor)
-            context.fillEllipse(in: CGRect(x: x, y: y, width: 1.5, height: 1.5))
+            dustPath.addEllipse(in: CGRect(x: x, y: y, width: 1.5, height: 1.5))
         }
-        // 连线：未选中细蓝灰，选中橙粗。
+        dustLayer.path = dustPath
+        dustLayer.fillColor = BearyStarMapNight.dust.cgColor
+        dustLayer.frame = bounds
+        // 连线：每条边独立图层（选中橙粗、其余细蓝灰，见 updateSelectionVisuals）。
+        var seenEdgeIds = Set<String>()
         for edge in edges {
             guard let a = pointsById[edge.firstId], let b = pointsById[edge.secondId] else { continue }
+            seenEdgeIds.insert(edge.id)
             let p1 = point(for: a, in: bounds)
             let p2 = point(for: b, in: bounds)
-            let selected = edge.id == selectedEdgeId
-            context.setStrokeColor(selected
-                ? BearyStarMapNight.selected.cgColor
-                : BearyStarMapNight.edge.cgColor)
-            context.setLineWidth(selected ? 2 : 1)
-            context.move(to: p1)
-            context.addLine(to: p2)
-            context.strokePath()
+            let edgeLayer: CAShapeLayer
+            if let existing = edgeLayers[edge.id] {
+                edgeLayer = existing
+            } else {
+                edgeLayer = CAShapeLayer()
+                edgeLayer.fillColor = nil
+                edgeLayers[edge.id] = edgeLayer
+                layer.addSublayer(edgeLayer)
+            }
+            let linePath = CGMutablePath()
+            linePath.move(to: p1)
+            linePath.addLine(to: p2)
+            edgeLayer.path = linePath
+            edgeLayer.frame = bounds
+        }
+        for (id, edgeLayer) in edgeLayers where !seenEdgeIds.contains(id) {
+            edgeLayer.removeFromSuperlayer()
+            edgeLayers.removeValue(forKey: id)
         }
         // 星：光晕 + 星核（alpha = 亮度）+ 日期小字；选中描橙圈。
+        // 闪亮层平时 opacity 0，只在光点经过时短暂亮起。
+        var seenStarIds = Set<String>()
         for star in stars {
+            seenStarIds.insert(star.id)
             let center = point(for: (x: star.x, y: star.y), in: bounds)
-            let haloColor = BearyStarMapNight.star.withAlphaComponent(star.brightness * 0.12).cgColor
-            context.setFillColor(haloColor)
-            context.fillEllipse(in: CGRect(x: center.x - star.radius - 7, y: center.y - star.radius - 7, width: (star.radius + 7) * 2, height: (star.radius + 7) * 2))
-            context.setFillColor(BearyStarMapNight.star.withAlphaComponent(star.brightness).cgColor)
-            context.fillEllipse(in: CGRect(x: center.x - star.radius, y: center.y - star.radius, width: star.radius * 2, height: star.radius * 2))
-            if star.id == selectedStarId {
-                context.setStrokeColor(BearyStarMapNight.selected.cgColor)
-                context.setLineWidth(2)
-                context.strokeEllipse(in: CGRect(x: center.x - star.radius - 3, y: center.y - star.radius - 3, width: (star.radius + 3) * 2, height: (star.radius + 3) * 2))
+            let layers: StarLayers
+            if let existing = starLayers[star.id] {
+                layers = existing
+            } else {
+                let halo = CALayer()
+                let flash = CALayer()
+                let core = CALayer()
+                let ring = CALayer()
+                ring.borderWidth = 2
+                ring.borderColor = BearyStarMapNight.selected.cgColor
+                ring.backgroundColor = UIColor.clear.cgColor
+                let date = CATextLayer()
+                date.contentsScale = UIScreen.main.scale
+                date.alignmentMode = .center
+                halo.zPosition = 2
+                flash.zPosition = 2.1
+                core.zPosition = 2.2
+                ring.zPosition = 2.3
+                date.zPosition = 2.4
+                layer.addSublayer(halo)
+                layer.addSublayer(flash)
+                layer.addSublayer(core)
+                layer.addSublayer(ring)
+                layer.addSublayer(date)
+                layers = StarLayers(halo: halo, flash: flash, core: core, ring: ring, date: date)
+                starLayers[star.id] = layers
             }
-            if !star.dateText.isEmpty {
+            let haloRect = CGRect(x: center.x - star.radius - 7, y: center.y - star.radius - 7, width: (star.radius + 7) * 2, height: (star.radius + 7) * 2)
+            layers.halo.frame = haloRect
+            layers.halo.cornerRadius = star.radius + 7
+            layers.halo.backgroundColor = BearyStarMapNight.star.withAlphaComponent(star.brightness * 0.12).cgColor
+            layers.flash.frame = haloRect
+            layers.flash.cornerRadius = star.radius + 7
+            layers.flash.backgroundColor = BearyStarMapNight.star.withAlphaComponent(0.45).cgColor
+            layers.flash.opacity = 0
+            let coreRect = CGRect(x: center.x - star.radius, y: center.y - star.radius, width: star.radius * 2, height: star.radius * 2)
+            layers.core.frame = coreRect
+            layers.core.cornerRadius = star.radius
+            layers.core.backgroundColor = BearyStarMapNight.star.withAlphaComponent(star.brightness).cgColor
+            let ringRect = CGRect(x: center.x - star.radius - 3, y: center.y - star.radius - 3, width: (star.radius + 3) * 2, height: (star.radius + 3) * 2)
+            layers.ring.frame = ringRect
+            layers.ring.cornerRadius = star.radius + 3
+            if star.dateText.isEmpty {
+                layers.date.isHidden = true
+            } else {
                 // 审计登录杂项：画布日期字不再写死 9pt，按当前字号档位缩放；
                 // 固定夜色主题本身不动（颜色仍走 dateText）。
                 let datePointSize = UIFontMetrics.default.scaledFont(for: UIFont.systemFont(ofSize: 9)).pointSize
@@ -1230,10 +1503,22 @@ private final class StarMapSkyView: UIView {
                     .font: UIFont.systemFont(ofSize: datePointSize),
                     .foregroundColor: BearyStarMapNight.dateText,
                 ]
-                let size = star.dateText.size(withAttributes: attributes)
-                star.dateText.draw(at: CGPoint(x: center.x - size.width / 2, y: center.y + star.radius + 3), withAttributes: attributes)
+                layers.date.string = NSAttributedString(string: star.dateText, attributes: attributes)
+                layers.date.isHidden = false
+                layers.date.frame = CGRect(x: center.x - 30, y: center.y + star.radius + 3, width: 60, height: 14)
             }
         }
+        for (id, layers) in starLayers where !seenStarIds.contains(id) {
+            layers.halo.removeFromSuperlayer()
+            layers.flash.removeFromSuperlayer()
+            layers.core.removeFromSuperlayer()
+            layers.ring.removeFromSuperlayer()
+            layers.date.removeFromSuperlayer()
+            starLayers.removeValue(forKey: id)
+        }
+        updateSelectionVisuals(edgeFadeIn: false)
+        CATransaction.commit()
+        lastBuiltSize = bounds.size
     }
 
     @objc private func didTap(_ gesture: UITapGestureRecognizer) {
