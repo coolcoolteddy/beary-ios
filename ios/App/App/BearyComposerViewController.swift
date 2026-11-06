@@ -7225,6 +7225,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 看不见的 presenting 方，失败提示另由本页 toast 给。
         // 关闭即提交缓冲删除（草稿随即按删除后状态落盘，见 saveDraftNow）。
         commitPendingRemoval()
+        saveDraftForCancelAndClose()
+        return true
+    }
+
+    /// 审计 R13-02：取消退出保存草稿前复核编辑版本。
+    /// 取消保存是异步落盘（快照主线程拍、写盘走 ioQueue），写盘期间编辑器
+    /// 未冻结，用户继续输入会使首拍快照过期；旧代码成功回包即 onCancelled，
+    /// 期间的新输入既没进快照、又随关页丢失。
+    /// 修法以版本复核为主：每次保存前记下 editorEditVersion（正文/标题/
+    /// 心情/天气/位置/@/引用/可见性/图片变化均已递增，见第 26 项；saveDraftNow
+    /// 自身只改无 didSet 的草稿身份与状态字段，不递增、不误触发），成功回包
+    /// 时再比对；版本变了说明保存期间有新输入，以最新内容再存一次再关；
+    /// 失败仍留页，拒绝动效 + toast 不变（再点关闭即重试）。
+    /// 再存只发生在异步完成回调里，不占调用栈；用户停笔后即收敛关页。
+    /// 发布冻结逻辑不动：本方法不碰 refreshPublishingInputFreeze。
+    private func saveDraftForCancelAndClose() {
+        let snapshotVersion = editorEditVersion
         saveDraftNow { [weak self] result in
             guard let self = self else { return }
             guard result.succeeded else {
@@ -7257,12 +7274,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     : "草稿保存失败，这篇草稿还没存上，再点一次关闭重试")
                 return
             }
+            // 保存期间有新输入：首拍快照已过期，以最新内容再存一次再关，
+            // 不丢期间的新输入；新一轮保存前重记版本，停笔后即收敛。
+            guard self.editorEditVersion == snapshotVersion else {
+                self.saveDraftForCancelAndClose()
+                return
+            }
             if self.hasUploadingImage() {
                 self.showToastAfterClose(message: "图片还没上传完，已存进草稿")
             }
             self.onCancelled?()
         }
-        return true
     }
 
     @objc private func didTapPublish() {
