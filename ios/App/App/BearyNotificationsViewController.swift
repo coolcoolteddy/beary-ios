@@ -147,6 +147,9 @@ final class BearyNotificationsViewController: UIViewController {
     /// C-G3：快照补 hasMore——缓存秒显后哨兵行按旧 hasMore 占位，直到后台
     /// 首拉成功后 computeHasMore 重算，不再因快照缺 hasMore 而漏哨兵。
     private struct CachedNotificationPage {
+        /// 第 7 轮 #2：快照所属账号——写盘与秒显时都凭它核对，不只凭
+        /// 当前登录 ID（切号后旧快照回填再写盘会污染新号缓存）。
+        let accountId: Int
         let items: [NotificationItem]
         let unread: Int
         let sysUnread: Int
@@ -227,6 +230,16 @@ final class BearyNotificationsViewController: UIViewController {
     private var visibleState: VisibleState = .loading
     private var hasDisplayedPage = false
     private var hasSuccessfulLoad = false
+    /// 第 7 轮 #2：磁盘快照加载代次——handleUserChanged() 与
+    /// clearItemsAfterUnauthorized() 清页时 +1，使清页前已发起的
+    /// 旧快照回调失效（只凭 hasDisplayedPage 不够：清页后
+    /// hasDisplayedPage 已复位 false，旧快照仍会贴回来并把
+    /// hasSuccessfulLoad 置 true，随后写盘污染新号缓存）。
+    private var notificationSnapshotGeneration = 0
+    /// 第 7 轮 #2：当前已显示页所属账号——applyCachedNotificationPage
+    /// 与整页成功加载时落袋；saveNotificationCache 只凭它写盘，
+    /// 写盘时再核对一次与当前登录账号一致，不直接用当前登录 ID。
+    private var displayedPageAccountId: Int?
     private var isCustomPullRefreshing = false
     /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
     private var customPullEndInFlight = false
@@ -540,8 +553,8 @@ final class BearyNotificationsViewController: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(handleFriendsChanged), name: .bearyFriendsChanged, object: nil)
         // 缓存秒显（网页 openNotifs ntItemsCache 口径）：已打开过先原样显旧列表，
         // 后台 loadFirstPage 刷新、变了才重绘；首次打开才走转圈。
-        if let uid = SessionManager.shared.currentUser?.id, let cached = Self.cachedPages[uid] {
-            applyCachedNotificationPage(items: cached.items, unread: cached.unread, sysUnread: cached.sysUnread, total: cached.total, isSysExpanded: cached.isSysExpanded, isActExpanded: cached.isActExpanded, hasMore: cached.hasMore)
+        if let uid = SessionManager.shared.currentUser?.id, let cached = Self.cachedPages[uid], cached.accountId == uid {
+            applyCachedNotificationPage(accountId: uid, items: cached.items, unread: cached.unread, sysUnread: cached.sysUnread, total: cached.total, isSysExpanded: cached.isSysExpanded, isActExpanded: cached.isActExpanded, hasMore: cached.hasMore)
         } else {
             // 内存无缓存时读磁盘快照（上次成功加载整页的结果）：冷启动先显
             // 旧列表、再静默刷新、失败保留旧内容。
@@ -647,7 +660,7 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     /// 缓存秒显共用：把一页已加载结果铺到界面（内存缓存与磁盘快照同入口）。
-    private func applyCachedNotificationPage(items: [NotificationItem], unread: Int, sysUnread: Int, total: Int?, isSysExpanded: Bool, isActExpanded: Bool, hasMore: Bool) {
+    private func applyCachedNotificationPage(accountId: Int, items: [NotificationItem], unread: Int, sysUnread: Int, total: Int?, isSysExpanded: Bool, isActExpanded: Bool, hasMore: Bool) {
         self.items = items
         unreadTotal = unread
         sysUnreadTotal = sysUnread
@@ -658,6 +671,8 @@ final class BearyNotificationsViewController: UIViewController {
         self.hasMore = hasMore
         hasDisplayedPage = true
         hasSuccessfulLoad = true
+        // 第 7 轮 #2：已显示页归属落袋，写盘时凭它核对（见 saveNotificationCache）。
+        displayedPageAccountId = accountId
         rebuildDisplayRows()
         tableView.reloadData()
         refreshVisibleState()
@@ -671,10 +686,21 @@ final class BearyNotificationsViewController: UIViewController {
     /// 磁盘快照秒显：只补尚未显示的页（内存已有缓存或网络已回包时不重复贴）。
     private func loadNotificationSnapshot() {
         guard let uid = SessionManager.shared.currentUser?.id else { return }
+        // 第 7 轮 #2：发起时捕获账号 ID 与加载代次（本页快照代次 +
+        // BearyAPI.authEpoch）：磁盘 IO 在后台队列，回包时任一已变
+        // 即说明其间切过号，旧快照直接丢弃；只查 hasDisplayedPage
+        // 的旧口径会在切号清页后把旧号通知贴回新号页面，并经
+        // applyCachedNotificationPage 置 hasSuccessfulLoad=true 后
+        // 由 saveNotificationCache 写进新号缓存。
+        let snapshotGeneration = notificationSnapshotGeneration
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyNotificationCache.load(bucket: "\(uid)") { [weak self] snap in
             guard let self = self, let snap = snap, !snap.items.isEmpty else { return }
             guard !self.hasDisplayedPage else { return }
-            self.applyCachedNotificationPage(items: snap.items, unread: snap.unread, sysUnread: snap.sysUnread, total: snap.total, isSysExpanded: snap.isSysExpanded, isActExpanded: snap.isActExpanded, hasMore: snap.hasMore)
+            guard SessionManager.shared.currentUser?.id == uid,
+                  snapshotGeneration == self.notificationSnapshotGeneration,
+                  requestEpoch == BearyAPI.shared.authEpoch else { return }
+            self.applyCachedNotificationPage(accountId: uid, items: snap.items, unread: snap.unread, sysUnread: snap.sysUnread, total: snap.total, isSysExpanded: snap.isSysExpanded, isActExpanded: snap.isActExpanded, hasMore: snap.hasMore)
         }
     }
 
@@ -683,8 +709,12 @@ final class BearyNotificationsViewController: UIViewController {
         if !hasSuccessfulLoad {
             return
         }
-        if let uid = SessionManager.shared.currentUser?.id {
+        // 第 7 轮 #2：只凭已显示页归属写盘，写盘时再核对一次当前
+        // 登录账号——归属与当前账号不一致（切号后旧页残留）时不写，
+        // 旧号列表不得写进新号缓存；直接用当前登录 ID 是本轮要堵的口。
+        if let uid = displayedPageAccountId, uid == SessionManager.shared.currentUser?.id {
             Self.cachedPages[uid] = CachedNotificationPage(
+                accountId: uid,
                 items: items,
                 unread: unreadTotal,
                 sysUnread: sysUnreadTotal,
@@ -1106,6 +1136,9 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.tableView.reloadData()
                     strongSelf.hasDisplayedPage = true
                     strongSelf.hasSuccessfulLoad = true
+                    // 第 7 轮 #2：整页成功加载的归属落袋（代次校验已过，
+                    // 当前账号即请求账号），写盘时凭它核对。
+                    strongSelf.displayedPageAccountId = SessionManager.shared.currentUser?.id
                     strongSelf.saveNotificationCache()
                     strongSelf.playStaggeredEntrance(oldSignatures: oldSignatures)
                 case .failure(let apiError):
@@ -1168,6 +1201,10 @@ final class BearyNotificationsViewController: UIViewController {
         isActExpanded = false
         hasSuccessfulLoad = false
         hasDisplayedPage = false
+        // 第 7 轮 #2：401 清场同样让在途旧快照失效（代次 +1），已显示页
+        // 归属清掉——迟到的旧快照不得贴回已清的页。
+        notificationSnapshotGeneration += 1
+        displayedPageAccountId = nil
         loadMoreFailed = false
         lastFullLoadUnread = nil
         lastFullLoadSysUnread = nil
@@ -1207,6 +1244,11 @@ final class BearyNotificationsViewController: UIViewController {
         isActExpanded = false
         hasSuccessfulLoad = false
         hasDisplayedPage = false
+        // 第 7 轮 #2：清页即让在途旧快照请求失效（代次 +1），已显示页
+        // 归属同步清掉——旧快照回包凭代次丢弃，不再贴回；写盘守卫
+        // （displayedPageAccountId）也不再指向旧号。
+        notificationSnapshotGeneration += 1
+        displayedPageAccountId = nil
         loadMoreFailed = false
         needsReloadAfterUnauthorized = true
         publishUnread(0)
