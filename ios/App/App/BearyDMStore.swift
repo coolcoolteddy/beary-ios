@@ -34,6 +34,20 @@ enum BearyDMStore {
         var lastAt: Int?
     }
 
+    // 全仓私信文件读写唯一串行队列：读改写都在这里排队，主线程只发任务；
+    // 同步入口（会话列表合并）经 syncOnIO，队列内重入直接执行不死锁。
+    private static let ioQueueKey = DispatchSpecificKey<Void>()
+    private static let ioQueue: DispatchQueue = {
+        let queue = DispatchQueue(label: "beary.dmStore.io", qos: .utility)
+        queue.setSpecific(key: ioQueueKey, value: ())
+        return queue
+    }()
+
+    private static func syncOnIO<T>(_ work: () -> T) -> T {
+        if DispatchQueue.getSpecific(key: ioQueueKey) != nil { return work() }
+        return ioQueue.sync(execute: work)
+    }
+
     private static func fileURL(forAccount accountId: Int?) -> URL? {
         guard let accountId = accountId,
               let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
@@ -67,36 +81,53 @@ enum BearyDMStore {
     }
 
     /// 该会话本地消息（按 id 升序；无 id/无 senderId 的脏行跳过）。
-    static func messages(accountId: Int?, peerId: Int) -> [BearyAPI.DMMessage] {
-        let stored = loadAll(accountId: accountId)["\(peerId)"]?.messages ?? []
-        return stored.compactMap { m -> BearyAPI.DMMessage? in
+    /// 异步读盘：文件 I/O 走后台串行队列，结果回主线程。
+    static func messages(accountId: Int?, peerId: Int, completion: @escaping ([BearyAPI.DMMessage]) -> Void) {
+        ioQueue.async {
+            let result = dmMessages(from: loadAll(accountId: accountId)["\(peerId)"]?.messages ?? [])
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    /// StoredMessage → DMMessage（按 id 升序；无 id/无 senderId 的脏行跳过）。
+    private static func dmMessages(from stored: [StoredMessage]) -> [BearyAPI.DMMessage] {
+        stored.compactMap { m -> BearyAPI.DMMessage? in
             guard let id = m.id, let senderId = m.senderId else { return nil }
             return BearyAPI.DMMessage(id: id, senderId: senderId, body: m.body ?? "", createdAt: m.createdAt)
         }.sorted { ($0.id ?? 0) < ($1.id ?? 0) }
     }
 
     /// 按 id 去重并入本地（服务端回包与本地旧行同 id 时服务端为准），对方展示信息同步最新。
-    static func saveMessages(accountId: Int?, peer: BearyAPI.FriendUser, messages: [BearyAPI.DMMessage]) {
-        guard let peerId = peer.id else { return }
-        var all = loadAll(accountId: accountId)
-        var conv = all["\(peerId)"] ?? StoredConversation(
-            peer: StoredPeer(id: peer.id, displayName: peer.displayName, handle: peer.handle, avatarUrl: peer.avatarUrl),
-            messages: [])
-        conv.peer = StoredPeer(id: peer.id, displayName: peer.displayName, handle: peer.handle, avatarUrl: peer.avatarUrl)
-        var byId: [Int: StoredMessage] = [:]
-        for m in conv.messages { if let id = m.id { byId[id] = m } }
-        for m in messages {
-            guard let id = m.id, let senderId = m.senderId else { continue }
-            byId[id] = StoredMessage(id: id, senderId: senderId, body: m.body ?? "", createdAt: m.createdAt)
+    /// 读改写在后台串行队列一次完成，直接回合并后的本会话消息，不再重读一次。
+    static func saveMessages(accountId: Int?, peer: BearyAPI.FriendUser, messages: [BearyAPI.DMMessage], completion: @escaping ([BearyAPI.DMMessage]) -> Void) {
+        ioQueue.async {
+            guard let peerId = peer.id else {
+                DispatchQueue.main.async { completion([]) }
+                return
+            }
+            var all = loadAll(accountId: accountId)
+            var conv = all["\(peerId)"] ?? StoredConversation(
+                peer: StoredPeer(id: peer.id, displayName: peer.displayName, handle: peer.handle, avatarUrl: peer.avatarUrl),
+                messages: [])
+            conv.peer = StoredPeer(id: peer.id, displayName: peer.displayName, handle: peer.handle, avatarUrl: peer.avatarUrl)
+            var byId: [Int: StoredMessage] = [:]
+            for m in conv.messages { if let id = m.id { byId[id] = m } }
+            for m in messages {
+                guard let id = m.id, let senderId = m.senderId else { continue }
+                byId[id] = StoredMessage(id: id, senderId: senderId, body: m.body ?? "", createdAt: m.createdAt)
+            }
+            conv.messages = byId.values.sorted { ($0.id ?? 0) < ($1.id ?? 0) }
+            all["\(peerId)"] = conv
+            saveAll(all, accountId: accountId)
+            let merged = dmMessages(from: conv.messages)
+            DispatchQueue.main.async { completion(merged) }
         }
-        conv.messages = byId.values.sorted { ($0.id ?? 0) < ($1.id ?? 0) }
-        all["\(peerId)"] = conv
-        saveAll(all, accountId: accountId)
     }
 
     /// 仅本地有消息的会话（供会话列表与服务端列表合并；无消息的空会话不算）。
     static func localConversations(accountId: Int?) -> [LocalConversation] {
-        loadAll(accountId: accountId).values.compactMap { conv -> LocalConversation? in
+        // 同步入口也走同一串行队列：与后台读改写互斥，读不到半新半旧的文件。
+        syncOnIO { loadAll(accountId: accountId) }.values.compactMap { conv -> LocalConversation? in
             guard let peerId = conv.peer.id, let last = conv.messages.last else { return nil }
             let peer = BearyAPI.FriendUser(id: peerId, displayName: conv.peer.displayName, handle: conv.peer.handle, avatarUrl: conv.peer.avatarUrl, createdAt: nil)
             return LocalConversation(peer: peer, lastBody: last.body, lastAt: last.createdAt)
