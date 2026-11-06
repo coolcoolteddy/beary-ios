@@ -1510,6 +1510,10 @@ class BearyProfileViewController: UIViewController {
     /// 送达卡内正在「再回一句」的链 id（nil = 无展开）；草稿按链 id 存，防多串互串。
     private var pastSelfReplyingChainId: String?
     private var pastSelfReplyDrafts: [String: String] = [:]
+    /// 09：送达卡回复输入框按 chainId 缓存——服务端回包重建各节时复用
+    /// 同一个框，不再新建（新建会丢焦点与选区；正文由 pastSelfReplyDrafts 保住）。
+    /// 只留仍有节的串，renderPastSelfDelivery 末尾过滤。
+    private var pastSelfReplyComposeViews: [String: PastSelfComposeView] = [:]
 
     /// 随机漫步卡：点卡片进详情；「换一篇」只换卡片不跳转（文字按钮——
     /// 洗牌图标官方包缺失，见本批缺图标清单，不用 icon_refresh 顶替）。
@@ -4443,6 +4447,10 @@ class BearyProfileViewController: UIViewController {
         // （代次已变）仍正常重起；其他调用点（改动后刷新）一律照常重起。
         if fromProfileResult, modulesStartedCycle == profileLoadCycle, modulesProfileId == profileId { return }
         modulesStartedCycle = profileLoadCycle
+        // 14：本轮加载中（含首次加载）置加载旗，加载行据此显“加载中…”；
+        // 完成 / 失败时 loadModulesPage 各分支复位。renderModules 未到齐
+        // 分支据此先显容器＋加载行，不整组隐藏。
+        modulesRetrying = true
         if modulesProfileId != profileId {
             // 切账号 / 换目标：语料、随机上一次 id、展开态全复位，
             // 旧目标的随机卡绝不带到新目标首帧。113：失败态一并复位。
@@ -4450,7 +4458,9 @@ class BearyProfileViewController: UIViewController {
             modulesCorpus = []
             modulesCorpusComplete = false
             modulesLoadFailed = false
-            modulesRetrying = false
+            // 14：新目标加载紧随其后即开始，加载旗保持 true（不复位为 false），
+            // 下方 renderModules 的未到齐分支才显“加载中…”而非失败文案。
+            modulesRetrying = true
             currentWalkEntry = nil
             lastWalkId = nil
             thisDayExpanded = false
@@ -4461,10 +4471,10 @@ class BearyProfileViewController: UIViewController {
             renderModules()
         }
         modulesGeneration += 1
-        loadModulesPage(before: nil, beforeId: nil, accumulated: [], generation: modulesGeneration)
+        loadModulesPage(before: nil, beforeId: nil, accumulated: [], seenIds: [], generation: modulesGeneration)
     }
 
-    private func loadModulesPage(before: Int?, beforeId: String?, accumulated: [Entry], generation: Int) {
+    private func loadModulesPage(before: Int?, beforeId: String?, accumulated: [Entry], seenIds: Set<String>, generation: Int) {
         guard let profileId = modulesProfileId, generation == modulesGeneration else { return }
         BearyAPI.shared.fetchEntries(scope: .author(profileId), limit: 50, before: before, beforeId: beforeId) { [weak self] result in
             DispatchQueue.main.async {
@@ -4474,8 +4484,9 @@ class BearyProfileViewController: UIViewController {
                 switch result {
                 case .success(let listValue):
                     let fresh = listValue.entries ?? []
-                    var seenIds = Set<String>()
-                    for entry in accumulated { if let id = entry.id { seenIds.insert(id) } }
+                    // 11：seenIds 跨页复用，不再每页从头重建全量集合；
+                    // 与 accumulated 同步维护（只进新页条目），代次守卫不动。
+                    var seenIds = seenIds
                     var merged = accumulated
                     for entry in fresh {
                         if let id = entry.id, !seenIds.contains(id) {
@@ -4492,7 +4503,7 @@ class BearyProfileViewController: UIViewController {
                         strongSelf.renderModules()
                         strongSelf.pastSelfSyncFromServer(generation: generation)
                     } else if let last = fresh.last, let lastCreatedAt = last.createdAt, let lastId = last.id {
-                        strongSelf.loadModulesPage(before: lastCreatedAt, beforeId: lastId, accumulated: merged, generation: generation)
+                        strongSelf.loadModulesPage(before: lastCreatedAt, beforeId: lastId, accumulated: merged, seenIds: seenIds, generation: generation)
                     } else {
                         // 末页游标缺失（理论上不应发生）：按到齐处理，宁可少一页尾巴
                         // 也不在分页里死循环；游标缺失本身已是服务端异常形态。
@@ -4564,8 +4575,22 @@ class BearyProfileViewController: UIViewController {
         }
         modulesRetryRow.isHidden = true
         guard modulesCorpusComplete else {
-            modulesContainer.isHidden = true
-            modulesHeightConstraint.isActive = true
+            // 14：首次加载先显容器＋加载行，不整组隐藏；各卡无数据仍藏，
+            // 只留加载行占位。半截统计不画——数字只在语料到齐后填。
+            // 模块组无独立组标题行，各卡标题随数据到齐一起出现，不画空卡。
+            for card in [pastSelfDeliveryCard, statsCard, thisDayCard, randomCard, yearCard] {
+                card.isHidden = true
+            }
+            updateModulesRetryRow()
+            modulesRetryRow.isHidden = false
+            let modulesWasHidden = modulesContainer.isHidden
+            modulesContainer.isHidden = false
+            modulesHeightConstraint.isActive = false
+            if headerWidthValue > 0 {
+                layoutHeaderForced(widthValue: headerWidthValue)
+            }
+            refreshFooter()
+            fadeInViewIfAppearing(modulesContainer, wasHidden: modulesWasHidden)
             return
         }
         let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
@@ -4595,13 +4620,13 @@ class BearyProfileViewController: UIViewController {
     /// 部分语料文案明示“未完整”，不冒充全量聚合。
     private func updateModulesRetryRow() {
         if modulesRetrying {
-            modulesRetryLabel.text = "正在加载个人模块…"
+            modulesRetryLabel.text = "加载中…"
             modulesRetryButton.isEnabled = false
         } else if modulesCorpus.isEmpty {
-            modulesRetryLabel.text = "个人模块加载失败"
+            modulesRetryLabel.text = "加载失败，请重试"
             modulesRetryButton.isEnabled = true
         } else {
-            modulesRetryLabel.text = "模块未加载完整，已保留已加载的部分"
+            modulesRetryLabel.text = "只加载了部分日记，请重试"
             modulesRetryButton.isEnabled = true
         }
     }
@@ -4675,9 +4700,9 @@ class BearyProfileViewController: UIViewController {
         // 紧凑版词汇指纹：当年 top 4；当年无词条目时取最近有词条目的年，
         // 年份由词视图标题行明示；当年有篇但无可计词时整节隐藏，不留空标题。
         // 口径与年报首屏同源：visible 已过滤，wordprint 内部再过滤一次。
-        // 不在此处同步算（NLTokenizer 逐篇分词会卡住个人页渲染）：先藏旧词
-        // ——旧年 / 旧号的词绝不在新年份名下多留一帧；缓存命中时下方同步
-        // 回填，无闪烁；未命中时后台算完回主线程一次性呈现。
+        // 不在此处同步算（指纹遍历与 NLTokenizer 逐篇分词会卡住个人页渲染）：
+        // 先藏旧词——旧年 / 旧号的词绝不在新年份名下多留一帧；命中与未命中
+        // 一律后台算完回主线程一次性呈现。
         let currentYear = Calendar.current.component(.year, from: Date())
         let availableYears = BearyProfilePersonalLogic.availableYears(entries: visible, isOwn: isOwnProfile, calendar: .current)
         let resolvedYear = availableYears.contains(currentYear) ? currentYear : availableYears.first
@@ -4742,7 +4767,10 @@ class BearyProfileViewController: UIViewController {
         let count = thisDayExpandStack.arrangedSubviews.count
         thisDayExpandButton.setTitle(thisDayExpanded ? "收起" : "展开同年 \(count) 篇", for: .normal)
         thisDayExpandButton.setImage(BearyIconImages.image(named: thisDayExpanded ? "icon_chevron_up" : "icon_chevron_down", pointSize: 14), for: .normal)
-        if headerWidthValue > 0 { layoutHeaderForced(widthValue: headerWidthValue) }
+        // 01：展开 / 收起改的是脚部容器内的卡片高度，只调 layoutHeaderForced
+        // （只重算表头）脚部高度钉住旧值——走 pastSelfRefreshLayout 一并
+        // 重算表头与脚部（内含输入焦点保护）。
+        pastSelfRefreshLayout()
     }
 
     @objc private func thisDayEntryTapped(_ sender: UIButton) {
@@ -4871,6 +4899,39 @@ class BearyProfileViewController: UIViewController {
 
     private func pastSelfRefreshLayout() {
         if headerWidthValue > 0 { layoutHeaderForced(widthValue: headerWidthValue) }
+        // 01：留话区 / 那年今日卡住在脚部容器内，只重算表头会让旧脚部
+        // 高度钉住（见 2922 行注释）——变化后重算脚部。
+        refreshFooterPreservingInputFocus()
+    }
+
+    /// 脚部容器内正在输入的文本框（那年今日留话框 / 送达卡回复框）：
+    /// 递归找 firstResponder 的 UITextView；没有则返回 nil。
+    private func firstResponderTextView(in view: UIView) -> UITextView? {
+        if view.isFirstResponder, let textView = view as? UITextView {
+            return textView
+        }
+        for subview in view.subviews {
+            if let found = firstResponderTextView(in: subview) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    /// 脚部重建会把模块容器摘到新容器（短暂离窗），正在输入的框会被迫
+    /// resign：先记下焦点与选区，重建后恢复，键盘不断。
+    private func refreshFooterPreservingInputFocus() {
+        let editingTextView = firstResponderTextView(in: modulesContainer)
+        let editingSelection = editingTextView?.selectedRange
+        refreshFooter()
+        if let editingTextView = editingTextView,
+           let selection = editingSelection,
+           editingTextView.window != nil {
+            editingTextView.becomeFirstResponder()
+            let length = (editingTextView.text ?? "").count
+            let location = min(selection.location, length)
+            editingTextView.selectedRange = NSRange(location: location, length: min(selection.length, max(length - location, 0)))
+        }
     }
 
     private func pastSelfDenyShake(_ view: UIView) {
@@ -4914,7 +4975,10 @@ class BearyProfileViewController: UIViewController {
         case .none:
             if pastSelfComposingThisDay {
                 pastSelfComposeSection.isHidden = false
-                pastSelfComposeView.text = pastSelfThisDayDraft
+                // 09：只在草稿真变了时重设 text——打字中触发渲染时重设会扰动光标。
+                if pastSelfComposeView.text != pastSelfThisDayDraft {
+                    pastSelfComposeView.text = pastSelfThisDayDraft
+                }
                 pastSelfComposeHintLabel.text = "明年同一天（\(pastSelfDisplayDate(pastSelfThisDayDeliverOn))）会和这篇日记一起送达。在此之前仅你可见。"
             } else {
                 pastSelfEntryRow.isHidden = false
@@ -5005,6 +5069,15 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func renderPastSelfDelivery(visible: [Entry]) {
+        // 09：重建前记下正在输入的串与选区——各节重建会把输入框摘出
+        // 窗口（丢焦点），重建后凭缓存的同一个框恢复。
+        let editingChainId = pastSelfReplyingChainId
+        var editingSelection: NSRange?
+        if let editingChainId = editingChainId,
+           let editingCompose = pastSelfReplyComposeViews[editingChainId],
+           editingCompose.textView.isFirstResponder {
+            editingSelection = editingCompose.textView.selectedRange
+        }
         for arrangedView in pastSelfDeliveryStack.arrangedSubviews {
             pastSelfDeliveryStack.removeArrangedSubview(arrangedView)
             arrangedView.removeFromSuperview()
@@ -5020,6 +5093,7 @@ class BearyProfileViewController: UIViewController {
             chainIds.append(message.chainId)
         }
         var sections: [UIView] = []
+        var sectionChainIds: [String] = []
         for chainId in chainIds {
             let state = PastSelfLogic.threadState(all, chainId: chainId, today: today)
             let messages: [PastSelfMessage]
@@ -5046,12 +5120,25 @@ class BearyProfileViewController: UIViewController {
             sections.append(pastSelfDeliverySection(
                 chainId: chainId, messages: messages, latestDelivered: latestDelivered,
                 origin: origin, visibility: visibility, isAnswered: isAnswered, waiting: waiting))
+            sectionChainIds.append(chainId)
         }
         for section in sections {
             pastSelfDeliveryStack.addArrangedSubview(section)
         }
         pastSelfDeliveryCard.isHidden = sections.isEmpty
         pastSelfRefreshLayout()
+        // 09：输入框已随新节回到窗口（同一对象），焦点与选区恢复；
+        // 串已不在（删串 / 已回过）时不恢复。缓存只留仍有节的串。
+        if let editingChainId = editingChainId,
+           let selection = editingSelection,
+           let compose = pastSelfReplyComposeViews[editingChainId],
+           compose.window != nil {
+            compose.textView.becomeFirstResponder()
+            let length = (compose.textView.text ?? "").count
+            let location = min(selection.location, length)
+            compose.textView.selectedRange = NSRange(location: location, length: min(selection.length, max(length - location, 0)))
+        }
+        pastSelfReplyComposeViews = pastSelfReplyComposeViews.filter { sectionChainIds.contains($0.key) }
     }
 
     private func pastSelfSideColumn(title: String, body: String, barColor: UIColor) -> UIView {
@@ -5196,9 +5283,22 @@ class BearyProfileViewController: UIViewController {
             answeredNote.text = "已回一句 · 明年 \(pastSelfDisplayMonthDay(waiting.deliverOn))再见"
             section.addArrangedSubview(answeredNote)
         } else if pastSelfReplyingChainId == chainId {
-            let compose = PastSelfComposeView(placeholder: "再回一句，给明年的自己…")
+            // 09：按 chainId 复用输入框——服务端回包重建各节时不再新建
+            // （新建会丢焦点与选区）；复用时只在草稿真变了时重设 text，
+            // 避免重设扰动光标。焦点与选区由 renderPastSelfDelivery 在
+            // 重建前后恢复。
+            let compose: PastSelfComposeView
+            if let cached = pastSelfReplyComposeViews[chainId] {
+                compose = cached
+            } else {
+                compose = PastSelfComposeView(placeholder: "再回一句，给明年的自己…")
+                pastSelfReplyComposeViews[chainId] = compose
+            }
             compose.accessibilityIdentifier = chainId
-            compose.text = pastSelfReplyDrafts[chainId] ?? ""
+            let draft = pastSelfReplyDrafts[chainId] ?? ""
+            if compose.text != draft {
+                compose.text = draft
+            }
             compose.onTextChange = { [weak self] text in
                 self?.pastSelfReplyDrafts[chainId] = text
             }

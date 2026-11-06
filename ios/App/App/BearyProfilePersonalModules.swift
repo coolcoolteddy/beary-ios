@@ -510,9 +510,10 @@ enum BearyProfilePersonalLogic {
         return hasher.finalize()
     }
 
-    /// 后台算 wordprint：缓存命中同步回调，未命中则在后台队列算完、
-    /// 写缓存、回主线程回调。调用方必须在回调里凭自己的代次号与年份
-    /// 复核“仍是当前请求”，过期结果一律丢弃。
+    /// 后台算 wordprint：指纹与缓存查键都在后台队列，命中 / 未命中一律
+    /// 回主线程回调。调用方必须在回调里凭自己的代次号与年份复核“仍是
+    /// 当前请求”，过期结果一律丢弃。缓存键字段（accountKey / 年 /
+    /// limit / isOwn / 指纹）与失效语义与同步版一字不差。
     static func wordprintAsync(
         accountKey: String,
         entries: [Entry],
@@ -522,23 +523,29 @@ enum BearyProfilePersonalLogic {
         calendar: Calendar,
         completion: @escaping (Wordprint) -> Void
     ) {
-        let key = WordprintCacheKey(
-            accountKey: accountKey,
-            year: year,
-            limit: limit,
-            isOwn: isOwn,
-            fingerprint: wordprintFingerprint(entries: entries, year: year, isOwn: isOwn, calendar: calendar)
-        )
-        wordprintCacheLock.lock()
-        let cached = wordprintCache[key]
-        wordprintCacheLock.unlock()
-        if let cached = cached {
-            completion(cached)
-            return
-        }
-        // Entry 是值类型、wordprint 内 tokenizer 现建现用不共享，
-        // 后台只读语料，故跨线程安全；结果同样是值类型。
+        // 12：指纹遍历（逐篇哈希）不再在主线程同步做——连同缓存查键一起
+        // 进后台队列；键组成与失效语义不变，只是回填改为一律异步回主线程
+        // （调用方本就按异步回调守卫代次与年份）。entries 是值类型数组，
+        // 闭包捕获即快照，后台只读快照，调用方后续改动不影响本次计算。
         wordprintQueue.async {
+            let key = WordprintCacheKey(
+                accountKey: accountKey,
+                year: year,
+                limit: limit,
+                isOwn: isOwn,
+                fingerprint: wordprintFingerprint(entries: entries, year: year, isOwn: isOwn, calendar: calendar)
+            )
+            wordprintCacheLock.lock()
+            let cached = wordprintCache[key]
+            wordprintCacheLock.unlock()
+            if let cached = cached {
+                DispatchQueue.main.async {
+                    completion(cached)
+                }
+                return
+            }
+            // Entry 是值类型、wordprint 内 tokenizer 现建现用不共享，
+            // 后台只读语料，故跨线程安全；结果同样是值类型。
             let value = wordprint(entries: entries, year: year, isOwn: isOwn, limit: limit, calendar: calendar)
             wordprintCacheLock.lock()
             if wordprintCache[key] == nil {
@@ -1037,9 +1044,9 @@ final class BearyYearReviewViewController: UIViewController {
 
         dynamicStack.addArrangedSubview(makeYearReviewFootnote())
 
-        // 词汇指纹后台算：缓存命中时同步回调、直接插在栈顶；未命中时
-        // 后台算完回主线程一次性插回，最终顺序与同步版一致。代次 + 年份
-        // 双重守卫，旧年结果不得覆盖新年。
+        // 词汇指纹后台算：指纹与分词都在后台，命中 / 未命中一律回主线程
+        // 一次性插回栈顶，最终顺序与同步版一致。代次 + 年份双重守卫，
+        // 旧年结果不得覆盖新年。
         let year = selectedYear
         BearyProfilePersonalLogic.wordprintAsync(
             accountKey: wordprintAccountKey,
