@@ -13,8 +13,11 @@ import CoreLocation
 // 永不写盘、不进日记行、不进任何持久化缓存——与“经纬度不持久化”一致。
 // 代价（方案 A 已定取舍）：本人地图也只能做到文本级聚合点，不是 POI 米级精确打点；
 // 文本歧义/离线时点位可能漂移，编不到的组进“未能在地图上定位”列表，仍可点进日记。
-// 同步：本页不轮询、不另建地图缓存——每次打开重拉日记并重算聚合；
-// 清单第 7 项：本人拉取改走 timeline scope（见 fetchEntriesPage 的 entriesScope），
+// 同步（C3）：本页不轮询、不另建地图缓存——全量日记走地图/星图共用入口
+// （BearySharedEntryLoader：内存短缓存 → 完整按日存档 → 网络，同一账号
+// 同一 scope 的在途请求共用一批回包；存档不完整时回落网络，不认半截盘）；
+// 取数回来只重算聚合，展示范围（地点组）仍归本页；截断时状态行明示。
+// 清单第 7 项：本人拉取改走 timeline scope（见 entriesScope），
 // 他人仍走 author scope；首帧即时成图仍用调用方 diaryEntries，后台替换后才为 timeline 口径。
 // 从本页进详情改了可见性后返回，本页只重拉一次（needsRefreshAfterDetail 门控，
 // 不是每次 appear 都拉）；删除/回收站/注销走服务端列表变化，下次打开自然同步。
@@ -332,42 +335,57 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     @objc private func didTapInlineRetry() {
         inlineRetryButton.isHidden = true
         if fetchInterrupted, let before = fetchResumeBefore, let beforeId = fetchResumeBeforeId {
+            // 中断续拉走共用入口的 resume（从游标续翻，合并已收页，不从头重拉）。
             loadGeneration += 1
-            fetchEntriesPage(before: before, beforeId: beforeId, page: fetchResumePage, generation: loadGeneration)
+            let generation = loadGeneration
+            BearySharedEntryLoader.shared.loadResuming(
+                scope: entriesScope, resumeBefore: before, resumeBeforeId: beforeId,
+                resumePage: fetchResumePage, existing: fetchCollected
+            ) { [weak self] load in
+                DispatchQueue.main.async {
+                    guard let self = self, generation == self.loadGeneration else { return }
+                    self.applySharedLoad(load)
+                }
+            }
         } else if fetchCapped, let before = fetchResumeBefore, let beforeId = fetchResumeBeforeId {
+            // 触顶续拉走共用入口的 resume（从第 10 页末尾游标续拉新一批，
+            // page 从 1 重新计、最多再 10 页；已收页保留，不从头重拉）。
             loadGeneration += 1
-            fetchEntriesPage(before: before, beforeId: beforeId, page: 1, generation: loadGeneration)
+            let generation = loadGeneration
+            BearySharedEntryLoader.shared.loadResuming(
+                scope: entriesScope, resumeBefore: before, resumeBeforeId: beforeId,
+                resumePage: 1, existing: fetchCollected
+            ) { [weak self] load in
+                DispatchQueue.main.async {
+                    guard let self = self, generation == self.loadGeneration else { return }
+                    self.applySharedLoad(load)
+                }
+            }
         } else {
             setStatusTextFaded("加载中…")
             fetchAllEntries()
         }
     }
 
-    // MARK: - 数据：游标分页拉全量（每批上限 10 页防无界；触顶可按需续拉新一批；不是轮询）
-    // 分页状态放属性里、不用嵌套递归逃逸闭包：重拉时 generation +1，旧页回包一律丢弃。
+    // MARK: - 数据：全量取数走共用入口（上限 10 页防无界；不是轮询）
+    // 分页与去重在加载器内；本页只持结果与续拉游标，重拉时 generation +1，
+    // 旧回包一律丢弃。
 
     private var fetchCollected: [Entry] = []
-    private var fetchSeenIds = Set<String>()
     /// 分页中断续拉状态：上轮成功页的游标与页码；失败时原地重试
     /// 从该游标续拉，不从头重拉、不动已展示的列表与视角。
     private var fetchResumeBefore: Int?
     private var fetchResumeBeforeId: String?
     private var fetchResumePage: Int = 1
     private var fetchInterrupted: Bool = false
-    /// 是否触及分页上限（审计新一轮 03，星图同款口径）：本批 10 页已满、
-    /// 末页仍满页，后面可能还有——状态行须明示部分数据，不能把截断后
-    /// 的 500 篇当总数报；为 true 时状态行旁留“加载更多”入口供按需续拉。
+    /// 是否触及分页上限（审计新一轮 03，星图同款口径；C3 与星图统一口径）：
+    /// 本批 10 页已满、末页仍满页，后面可能还有——状态行须明示部分数据，
+    /// 不能把截断后的 500 篇当总数报；为 true 时状态行旁留“加载更多”入口供按需续拉。
     private var fetchCapped: Bool = false
-    /// 本轮拉取开始时是否已有数据（调用方初始日记或上一轮成功数据）：
-    /// 有旧数据时失败只保留旧表、不拿部分页替换整表；无旧数据时
-    /// 部分页才成表（星图 #732 同款口径）。
-    private var fetchHadBaseContent: Bool = false
 
     private func fetchAllEntries() {
         loadGeneration += 1
-        fetchHadBaseContent = !allEntries.isEmpty
         fetchCollected = []
-        fetchSeenIds = []
         fetchResumeBefore = nil
         fetchResumeBeforeId = nil
         fetchResumePage = 1
@@ -375,7 +393,72 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         fetchCapped = false
         inlineRetryButton.setTitle("重试", for: .normal)
         inlineRetryButton.isHidden = true
-        fetchEntriesPage(before: nil, beforeId: nil, page: 1, generation: loadGeneration)
+        // C3：全量取数走共用入口（内存 → 完整存档 → 网络，在途共用）；
+        // 本页只消费结果（成表/部分成表/失败态），分页与截断口径归加载器。
+        let generation = loadGeneration
+        BearySharedEntryLoader.shared.load(scope: entriesScope) { [weak self] load in
+            DispatchQueue.main.async {
+                guard let self = self, generation == self.loadGeneration else { return }
+                self.applySharedLoad(load)
+            }
+        }
+    }
+
+    /// 共用取数回包应用（与旧 fetchEntriesPage 的终态分支一一对应）：
+    /// 完整 → 整批成表；部分 → 按有无旧数据成表或保旧表 + 续拉游标；
+    /// nil（首页面失败）→ 无数据走失败页、有数据保旧表。
+    private func applySharedLoad(_ load: BearySharedEntryLoader.SharedEntryLoad?) {
+        guard let load = load else {
+            if allEntries.isEmpty {
+                inlineRetryButton.isHidden = true
+                showFailureState()
+                setStatusTextFaded("日记加载失败")
+            } else {
+                fetchInterrupted = fetchResumeBefore != nil
+                setStatusTextFaded("网络失败，显示已加载的日记")
+                inlineRetryButton.isHidden = false
+            }
+            return
+        }
+        fetchCollected = load.entries
+        fetchResumeBefore = load.resumeBefore
+        fetchResumeBeforeId = load.resumeBeforeId
+        fetchResumePage = load.resumePage
+        if load.isPartial {
+            fetchInterrupted = true
+            if allEntries.isEmpty {
+                // 无旧数据、中途断了：部分页成表，不丢已收页；展示集是部分
+                // 结果、不是截断的 500 篇，清截断标记。暂存结果里若一个
+                // 可展示的地点组都没有，则仍走可重试的失败页。
+                fetchCapped = false
+                failureStateView.isHidden = true
+                allEntries = fetchCollected
+                regroupAndGeocode()
+                if groups.isEmpty {
+                    inlineRetryButton.isHidden = true
+                    showFailureState()
+                    setStatusTextFaded("日记加载失败")
+                } else {
+                    setStatusTextFaded("仅展示已加载的部分，点按重试")
+                    inlineRetryButton.isHidden = false
+                }
+            } else {
+                // 已有数据时网络失败不清空地图：保留已加载聚合，状态行明示；
+                // 有内容时同样给状态行旁就近重试，列表与视角位置不动。
+                setStatusTextFaded("网络失败，显示已加载的日记")
+                inlineRetryButton.isHidden = false
+            }
+            return
+        }
+        failureStateView.isHidden = true
+        fetchInterrupted = false
+        fetchCapped = load.isCapped
+        // 触顶时状态行旁留“加载更多”入口（审计新一轮 03）：有续拉游标才显，
+        // 无游标（末页满页却无 createdAt/id）不留入口。
+        inlineRetryButton.isHidden = !(fetchCapped && fetchResumeBefore != nil)
+        inlineRetryButton.setTitle(fetchCapped ? "加载更多" : "重试", for: .normal)
+        allEntries = fetchCollected
+        regroupAndGeocode()
     }
 
     /// 拉取 scope（清单第 7 项，Li 拍板）：本人走 timeline scope（服务端按
@@ -386,86 +469,6 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// viewerIsAuthor 已先更新，fetchAllEntries 自动按新身份选 scope。
     private var entriesScope: BearyAPI.Scope {
         return viewerIsAuthor ? .timeline : .author(authorId)
-    }
-
-    private func fetchEntriesPage(before: Int?, beforeId: String?, page: Int, generation: Int) {
-        BearyAPI.shared.fetchEntries(scope: entriesScope, limit: 50, before: before, beforeId: beforeId) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self, generation == self.loadGeneration else { return }
-                switch result {
-                case .failure:
-                    if self.fetchCollected.isEmpty && self.allEntries.isEmpty {
-                        self.inlineRetryButton.isHidden = true
-                        self.showFailureState()
-                        self.setStatusTextFaded("日记加载失败")
-                    } else if !self.fetchCollected.isEmpty && !self.fetchHadBaseContent {
-                        // 无旧数据、中途断了：部分页成表，不丢已收页；
-                        // 视角不动：首批已缩放过的不再抢区域（didInitialGeocode 门控）。
-                        // 同构修正（主线已有）：暂存结果里若一个可展示的地点组
-                        // 都没有，则仍走可重试的失败页，不谎称已显示部分结果。
-                        self.failureStateView.isHidden = true
-                        self.allEntries = self.fetchCollected
-                        self.regroupAndGeocode()
-                        if self.groups.isEmpty {
-                            self.inlineRetryButton.isHidden = true
-                            self.showFailureState()
-                            self.setStatusTextFaded("日记加载失败")
-                        } else {
-                            self.fetchInterrupted = true
-                            self.setStatusTextFaded("仅展示已加载的部分，点按重试")
-                            self.inlineRetryButton.setTitle("重试", for: .normal)
-                            self.inlineRetryButton.isHidden = false
-                        }
-                    } else {
-                        // 已有数据时网络失败不清空地图：保留已加载聚合，状态行明示；
-                        // 有内容时同样给状态行旁就近重试，列表与视角位置不动。
-                        // 续拉游标还在时点重试从游标续拉（见 didTapInlineRetry），
-                        // 不从头重拉、不丢已收页。
-                        self.fetchInterrupted = self.fetchResumeBefore != nil
-                        self.setStatusTextFaded("网络失败，显示已加载的日记")
-                        self.inlineRetryButton.setTitle("重试", for: .normal)
-                        self.inlineRetryButton.isHidden = false
-                    }
-                case .success(let list):
-                    let pageEntries = list.entries ?? []
-                    for entry in pageEntries {
-                        if let id = entry.id, !id.isEmpty {
-                            if self.fetchSeenIds.contains(id) { continue }
-                            self.fetchSeenIds.insert(id)
-                        }
-                        self.fetchCollected.append(entry)
-                    }
-                    let last = pageEntries.last
-                    if pageEntries.count >= 50, page < 10, let cursor = last?.createdAt, let lastId = last?.id {
-                        self.fetchResumeBefore = cursor
-                        self.fetchResumeBeforeId = lastId
-                        self.fetchResumePage = page + 1
-                        self.fetchEntriesPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
-                        return
-                    }
-                    // 触顶（审计新一轮 03，星图同款口径）：本批 10 页已满、末页仍满页，
-                    // 后面可能还有——记 fetchCapped，状态行明示部分数据（见 regroupAndGeocode），
-                    // 并留下游标供按需续拉（didTapInlineRetry 触顶分支：新一批从 page 1 重新计，
-                    // 最多再 10 页；失败重试仍走原 fetchInterrupted 分支，游标与页码不动）。
-                    self.fetchCapped = pageEntries.count >= 50 && page >= 10
-                    if self.fetchCapped, let cursor = last?.createdAt, let lastId = last?.id {
-                        self.fetchResumeBefore = cursor
-                        self.fetchResumeBeforeId = lastId
-                        self.fetchResumePage = 1
-                    } else if self.fetchCapped {
-                        // 末页满页却无游标：无法续拉，清掉旧游标、不留“加载更多”入口。
-                        self.fetchResumeBefore = nil
-                        self.fetchResumeBeforeId = nil
-                    }
-                    self.failureStateView.isHidden = true
-                    self.fetchInterrupted = false
-                    self.inlineRetryButton.isHidden = !(self.fetchCapped && self.fetchResumeBefore != nil)
-                    self.inlineRetryButton.setTitle(self.fetchCapped ? "加载更多" : "重试", for: .normal)
-                    self.allEntries = self.fetchCollected
-                    self.regroupAndGeocode()
-                }
-            }
-        }
     }
 
     // MARK: - 聚合 + 现场地理编码（串行编未缓存的组键，不按篇编）
@@ -485,7 +488,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             selectedGroup = groups.first(where: { $0.id == selected.id })
         }
         if groups.isEmpty {
-            statusLabel.text = allEntries.isEmpty ? "还没有日记" : "还没有带位置的日记"
+            statusLabel.text = (allEntries.isEmpty ? "还没有日记" : "还没有带位置的日记")
+                + (fetchCapped ? " · 篇数较多，仅展示最近拉取的 \(allEntries.count) 篇" : "")
             mapView.removeAnnotations(mapView.annotations)
             locatedAnnotations.removeAll()
             unlocatedGroups = []

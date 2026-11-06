@@ -4623,15 +4623,16 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 新一轮 06：读本地已同步日记快照（BearyEntrySyncStore 全量日文件），
-    /// 首次进个人页且屏上无语料时先画模块。快照只是“已加载部分”（可能
-    /// 滞后 / 不全），置部分态、重试行明示未完整；网络全量到齐后替换。
-    /// 读盘走后台，落地时凭代次 / 目标 / 未到齐三重守卫，网络已到齐时
-    /// 快照直接丢弃；网络先失败时快照仍可显（失败分支继续渲染它＋重试行）。
+    /// 首次进个人页且屏上无语料时先画模块。快照以最近一次完整同步为准
+    /// （C3 门控：不认半截盘，不完整时不返回）；可能滞后于服务端，置部分态、
+    /// 重试行明示未完整；网络全量到齐后替换。读盘走后台，落地时凭代次 /
+    /// 目标 / 未到齐三重守卫，网络已到齐时快照直接丢弃；网络先失败时快照仍可显
+    /// （失败分支继续渲染它＋重试行）。
     private func showModulesCacheSnapshotIfNeeded(generation: Int, profileId: Int) {
         guard modulesCorpus.isEmpty else { return }
         guard let accountId = SessionManager.shared.currentUser?.id, accountId == profileId else { return }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let snapshot = BearyEntrySyncStore.loadAllEntries(accountId: accountId)
+            guard let snapshot = BearyEntrySyncStore.loadAllEntries(accountId: accountId) else { return }
             DispatchQueue.main.async { [weak self] in
                 guard let strongSelf = self,
                       generation == strongSelf.modulesGeneration,
