@@ -105,10 +105,17 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 无障碍：关闭后焦点返回的原缩略图视图（由调用方在 present 前传入；
     /// 未传入时不发焦点通知）。只传视图引用，不改关场动画与矩形逻辑。
     var focusReturnElement: UIView?
+    /// C3 关场回当前照片：调用方按下标提供该照片当前在 window 下的
+    /// 缩略图矩形与焦点视图（网格格未在视口内时返回 nil，走淡出兜底）。
+    /// 提供方存在时它全权决定关场原处与焦点（见 dismissOriginFrame 与
+    /// dismissViewer）；未提供时沿用 originFrameInWindow／focusReturnElement
+    /// 的旧口径。
+    var dismissOriginProvider: ((Int) -> (frame: CGRect, element: UIView?)?)?
     /// 无障碍：打开首焦点只发一次。
     private var didPostViewerOpenFocus = false
-    /// 关场动画只在“当前图就是打开时那张”时走回到原处；翻页后关场走淡出
-    /// 兜底（原处已不是当前图对应的缩略图，硬缩回去反而错位）。
+    /// 关场回到原处：无 dismissOriginProvider 时，只在“当前图就是打开时
+    /// 那张”时走回到原处；翻页后关场走淡出兜底（原处已不是当前图对应
+    /// 的缩略图，硬缩回去反而错位）。有提供方时由它按当前下标给原处。
     var initialIndex: Int = 0
     /// 下甩关闭拖动态：竖向为主且向下时进入，横向翻页不再接管本次手势。
     private var dismissDragActive: Bool = false
@@ -561,8 +568,18 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 无障碍：统一关场入口——关闭钮与纵向甩关闭都走这里；dismiss 完成
     /// 后若调用方传入的原缩略图仍在窗口内，焦点回到它；未传入时不发。
     /// 失败图「图片加载失败，点按重试」本身不是问题，本支不动它。
+    /// C3：有关场回当前照片的提供方时，焦点回当前照片对应的格
+    ///（格不在视口内时提供方给 nil，不发焦点通知）；没有提供方时
+    /// 沿用调用方传入的 focusReturnElement。
     private func dismissViewer() {
-        let returnElement = focusReturnElement
+        var returnElement = focusReturnElement
+        if let provider = dismissOriginProvider {
+            if let info = provider(currentIndex) {
+                returnElement = info.element
+            } else {
+                returnElement = nil
+            }
+        }
         dismiss(animated: UIAccessibility.isReduceMotionEnabled == false) {
             if let element = returnElement, !element.isHidden, element.window != nil {
                 UIAccessibility.post(notification: .layoutChanged, argument: element)
@@ -697,8 +714,17 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         return (image, imageView.convert(fitRect, to: view))
     }
 
-    /// 关场动画器读当前下标（currentIndex 本身是 private）。
-    var currentIndexForDismiss: Int { currentIndex }
+    /// C3 关场原处矩形：优先问调用方要当前下标那张的原处（网格格在
+    /// 视口内才给得出，画面用 transform 和 opacity 缩回它）；提供方
+    /// 存在但给不出（格不在视口内）时不回落旧原处，走淡出兜底。
+    /// 没有提供方时沿用旧口径——只在当前图就是打开时那张时回原处。
+    func dismissOriginFrame() -> CGRect? {
+        if let provider = dismissOriginProvider {
+            return provider(currentIndex)?.frame
+        }
+        guard currentIndex == initialIndex else { return nil }
+        return originFrameInWindow
+    }
 
     /// 回到原处路径专用：原图藏起，改由 container 里的临时图做主角；
     /// 淡出兜底路径不调它，旧图随 fromView 一起淡出。
@@ -1194,8 +1220,7 @@ private final class BearyImageViewerReturnAnimator: NSObject, UIViewControllerAn
         let reduceMotion = UIAccessibility.isReduceMotionEnabled
         guard reduceMotion == false,
               let viewer = viewer,
-              viewer.currentIndexForDismiss == viewer.initialIndex,
-              let origin = viewer.originFrameInWindow,
+              let origin = viewer.dismissOriginFrame(),
               let start = viewer.dismissStartInfo() else {
             // 兜底：减动效、无图、无原处、翻页后关场——走 0.25s 淡出，
             // 但 toView 已在位，同样不闪。
