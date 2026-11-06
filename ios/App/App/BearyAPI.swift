@@ -439,7 +439,12 @@ struct TrashItem: Codable {
         } else if let numericId = try? container.decode(Int.self, forKey: .id) {
             id = "\(numericId)"
         } else {
-            id = ""
+            // R16-14（收窄口径）：既不是字符串也不是整数的 id 不再回退为 ""，
+            // 改为抛出 DecodingError，阻止无效记录进入缓存（整页解码失败 →
+            // 请求走 failure，旧缓存保留、下次重拉，不写脏盘）。
+            // 空 id 发起恢复/删除已有入口守卫（BearyTrashViewController
+            // 1052–1055、1128–1131），此处不重复加。
+            throw DecodingError.dataCorruptedError(forKey: .id, in: container, debugDescription: "TrashItem id 既不是字符串也不是整数，拒绝无效记录进缓存")
         }
         content = try container.decodeIfPresent(String.self, forKey: .content)
         createdAt = try container.decodeIfPresent(Int.self, forKey: .createdAt)
