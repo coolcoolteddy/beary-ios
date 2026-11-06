@@ -133,6 +133,14 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var isFetching = false
     private var fetchCapped = false
     private var needsRefreshAfterDetail = false
+    /// r17-m3：从详情回到原处的专用记忆——进入详情的星／线 ID、滚动位置、
+    /// 打开那篇的展示快照（标题／正文／可见性）。只读返回时恢复选中态与
+    /// 展开位置；快照变了（删篇／翻私密／改内容）才给底卡一次 0.18 秒淡变。
+    private var returnStarId: String?
+    private var returnEdgeId: String?
+    private var returnScrollOffset: CGPoint?
+    private var returnEntrySnapshot: (id: String, title: String?, content: String?, visibility: String)?
+    private var pendingReturnRestore = false
     private var yearRowHeight: NSLayoutConstraint?
     private var monthRowHeight: NSLayoutConstraint?
     /// 审计 15 项第 2 项：图例→年行→月行→筛选行的三段间距单独持有，
@@ -243,6 +251,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
             viewerIdAtOpen = currentViewerId
             viewerIsAuthor = (currentViewerId != nil && currentViewerId == authorId)
             clearSelection()
+            clearReturnContext()
             recompute()
             fetchAllEntries()
         } else if needsRefreshAfterDetail {
@@ -906,6 +915,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
             status += " · 篇数较多，仅展示最近拉取的 500 篇"
         }
         statusLabel.text = status
+        // r17-m3：从详情回来后的恢复统一收在这里（模型已落定，选中态与
+        // 滚动位置按记忆恢复；无返回记忆时不做任何事）。
+        restoreDetailReturnContextIfNeeded()
     }
 
     // MARK: - 点按：星 / 线 / 重叠 / 背景
@@ -1212,8 +1224,95 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 
     private func openEntry(_ entry: Entry) {
+        // r17-m3：记住进入详情的星／线 ID 与滚动位置、打开那篇的快照；
+        // 返回时由 applyModelToSky 恢复（只读返回保留选中态与展开位置）。
+        returnStarId = selectedStarId
+        returnEdgeId = selectedEdgeId
+        returnScrollOffset = scrollView.contentOffset
+        if let id = entry.id {
+            returnEntrySnapshot = (id: id, title: entry.title, content: entry.content, visibility: BearyVisibility.current(for: entry))
+        } else {
+            returnEntrySnapshot = nil
+        }
+        pendingReturnRestore = true
         needsRefreshAfterDetail = true
         onOpenEntry?(entry)
+    }
+
+    /// 切账号后旧身份的返回记忆作废，不带到新身份。
+    private func clearReturnContext() {
+        returnStarId = nil
+        returnEdgeId = nil
+        returnScrollOffset = nil
+        returnEntrySnapshot = nil
+        pendingReturnRestore = false
+    }
+
+    /// r17-m3：从详情只读返回后的恢复——选中态与滚动位置按记忆恢复；
+    /// 确有变化时只给底卡一次 0.18 秒淡变（其余星点不动、不重播）。
+    private func restoreDetailReturnContextIfNeeded() {
+        guard pendingReturnRestore else { return }
+        pendingReturnRestore = false
+        guard let offset = returnScrollOffset else { return }
+        // 滚动位置：先恢复（内容高可能随底卡重建变化，下一帧再校一次）。
+        let restoreOffset = { [weak self] in
+            guard let self = self else { return }
+            self.scrollView.setContentOffset(offset, animated: false)
+        }
+        restoreOffset()
+        DispatchQueue.main.async(execute: restoreOffset)
+        if let starId = returnStarId, let entry = model.entryById[starId] {
+            // 星还在：恢复选中与底卡；打开那篇变了才淡变一次。
+            var changed = false
+            if let snapshot = returnEntrySnapshot, snapshot.id == starId {
+                changed = snapshot.title != entry.title
+                    || snapshot.content != entry.content
+                    || snapshot.visibility != BearyVisibility.current(for: entry)
+            }
+            selectedStarId = starId
+            selectedEdgeId = nil
+            skyView.setSelected(starId: starId, edgeId: nil)
+            showStarSheet(entry)
+            if changed { fadeSheetCardOnce() }
+            return
+        }
+        if let edgeId = returnEdgeId, let edge = model.edges.first(where: { $0.id == edgeId }) {
+            // 线还在：恢复选中与底卡；端点篇变了才淡变一次。
+            var changed = false
+            if let snapshot = returnEntrySnapshot {
+                for endpointId in [edge.firstId, edge.secondId] where endpointId == snapshot.id {
+                    if let endpoint = model.entryById[endpointId],
+                       snapshot.title != endpoint.title
+                        || snapshot.content != endpoint.content
+                        || snapshot.visibility != BearyVisibility.current(for: endpoint) {
+                        changed = true
+                    }
+                }
+            }
+            selectedEdgeId = edgeId
+            selectedStarId = nil
+            skyView.setSelected(starId: nil, edgeId: edgeId)
+            showEdgeSheet(edge)
+            if changed { fadeSheetCardOnce() }
+            return
+        }
+        if returnStarId != nil || returnEdgeId != nil {
+            // 记住的星／线没了（删篇／翻私密）：选中态已由 applyModelToSky
+            // 收回默认态，底卡淡变一次提示变化，不动其他星点。
+            fadeSheetCardOnce()
+        }
+    }
+
+    /// 只给底卡一次 0.18 秒淡变（alpha 0→1）；减动效或未进窗口时直设终值。
+    private func fadeSheetCardOnce() {
+        guard BearyMotion.animated(true), sheetCard.window != nil else {
+            sheetCard.alpha = 1
+            return
+        }
+        sheetCard.alpha = 0
+        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.sheetCard.alpha = 1
+        })
     }
 
     // MARK: - 数据：游标分页拉全量（上限 10 页防无界；与地图同 cap）
