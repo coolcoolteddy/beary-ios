@@ -548,14 +548,34 @@ final class BearyImageLoader {
 
     /// 账号隔离 4 号：当前账号（容器 onUserChanged 写入）。缓存键与磁盘
     /// 目录均含该维度，未登录为 nil 时走 guest 桶，与任何账号桶互不命中。
-    var currentAccountId: Int?
+    /// 第七轮 #6：NSLock 保护——loadDetailed 入口、后台预热与 setAccount
+    /// 跨线程读写同一份账号 id，旧普通 var 在切号瞬间会读到新旧混杂值。
+    private let accountLock = NSLock()
+    private var _currentAccountId: Int?
+    var currentAccountId: Int? {
+        get {
+            accountLock.lock()
+            defer { accountLock.unlock() }
+            return _currentAccountId
+        }
+        set {
+            accountLock.lock()
+            defer { accountLock.unlock() }
+            _currentAccountId = newValue
+        }
+    }
 
     /// 账号隔离 4 号：切换账号桶。键变化后旧账号内存条目即不可达，
     /// 此处再全清内存，避免旧图残留；旧账号磁盘目录保留（切回可复用），
     /// 退出时的磁盘删除走 purgeAccount(_:)（SessionManager 退出/401 路径）。
     func setAccount(_ id: Int?) {
-        if currentAccountId != id {
-            currentAccountId = id
+        // 第七轮 #6：读-改-写在同一把锁内完成；cache.removeAllObjects()
+        // 放锁外（NSCache 本身线程安全，不拉长临界区）。
+        accountLock.lock()
+        let changed = _currentAccountId != id
+        if changed { _currentAccountId = id }
+        accountLock.unlock()
+        if changed {
             cache.removeAllObjects()
         }
     }
@@ -858,8 +878,10 @@ final class BearyImageLoader {
     /// 内存键：账号隔离 4 号——键首含账号维度（未登录为 guest），同 URL
     /// 在不同账号下绝不互通；下采样时后缀下采样宽度，避免下采样图占用
     /// 完整图的内存键、后续完整请求误取缩略图。
-    private func memoryKey(for url: URL, downsampleToWidth: CGFloat?) -> NSString {
-        let bucket = currentAccountId.map(String.init) ?? "guest"
+    /// 第七轮 #6：bucket 由调用方传入——入口单次快照后整条链路用同一
+    /// 个值，不再在键生成处重读当前账号（切号瞬间会读到新旧混杂值）。
+    private func memoryKey(for url: URL, downsampleToWidth: CGFloat?, bucket: Int?) -> NSString {
+        let bucket = bucket.map(String.init) ?? "guest"
         if let width = downsampleToWidth {
             return "\(bucket)|\(url.absoluteString)|downsample:\(width)" as NSString
         }
@@ -920,8 +942,11 @@ final class BearyImageLoader {
     /// 过期／代次已变视为未命中，与 cachedMemoryEntry 同口径）。
     /// 目标图已被相邻预取暖过缓存时，调用方直接用它交接，不等一次异步回包。
     func cachedImage(url: URL, downsampleToWidth: CGFloat? = nil) -> UIImage? {
-        let key = memoryKey(for: url, downsampleToWidth: downsampleToWidth)
-        return cachedMemoryEntry(forKey: key, bucket: currentAccountId)?.image
+        // 第七轮 #6：与 loadDetailed 同口径——入口只读一次账号快照，
+        // 键生成与内存读共用它（主线后加的 B5 调用方，分支基线时没有）。
+        let accountSnapshot = currentAccountId
+        let key = memoryKey(for: url, downsampleToWidth: downsampleToWidth, bucket: accountSnapshot)
+        return cachedMemoryEntry(forKey: key, bucket: accountSnapshot)?.image
     }
 
     /// 审计三轮 23 项：在途合并表。键 = memoryKey（已含账号桶与下采样宽度，
@@ -1221,10 +1246,14 @@ final class BearyImageLoader {
     /// 按尺寸键存内存；磁盘文件本身早已按 URL 共享。
     @discardableResult
     func loadDetailed(url: URL, downsampleToWidth: CGFloat? = nil, completion: @escaping (Result<UIImage, BearyImageLoadError>) -> Void) -> URLSessionDataTask? {
-        let key = memoryKey(for: url, downsampleToWidth: downsampleToWidth)
+        // 第七轮 #6：入口只读一次账号快照，整条链路（键生成、内存读、
+        // 磁盘读 / 网络写盘）都用它；后台预热与主线程 setAccount 交错
+        // 时，一次加载内不再出现新旧两个桶。
+        let accountSnapshot = currentAccountId
+        let key = memoryKey(for: url, downsampleToWidth: downsampleToWidth, bucket: accountSnapshot)
         // S2：请求发起时固定 bucket，整条链路（磁盘读 / 网络写盘）都用它；
         // 内存快路的交付复核同样认它。
-        let bucket = currentAccountId
+        let bucket = accountSnapshot
         // 审计 22 项：发起时固定该桶代次，落盘前再次校验（见网络与
         // 磁盘两支的写盘点）；purge/evict 推进代次后，旧写入弃写不落盘。
         // A5：代次先于内存读固定——逐出夹在读与取代次之间时，戳代次
