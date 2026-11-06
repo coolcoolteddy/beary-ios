@@ -1132,17 +1132,18 @@ final class BearyImageLoader {
 // MARK: - 图片预热（秒开批：只预热缩略图）
 
 /// 预热窗口口径（纯值类型，与 NWPathMonitor 解耦，便于按口径复核）：
-/// Wi-Fi 积极、蜂窝收敛、昂贵/受限/无网为零；未知网络先按蜂窝收敛算，
+/// Wi-Fi 积极、蜂窝收敛、受限/无网为零；未知网络先按蜂窝收敛算，
 /// 绝不在 monitor 首报前按 Wi-Fi 放量。
-/// 受限档：isConstrained（低数据模式）与 isExpensive 同档、一律为零——
-/// 受限 Wi-Fi 不再拿 Wi-Fi 积极预算；三档数值本身不动。
+/// 蜂窝按接口类型判定：常规蜂窝 isExpensive 为 true 仍走轻量档，不再
+/// 因昂贵归零；低数据模式（isConstrained）保持零预算——受限 Wi-Fi
+/// 不再拿 Wi-Fi 积极预算；三档数值本身不动。
 struct BearyImagePrefetchBudget {
     let maxEntries: Int
     let maxThumbsPerEntry: Int
     let maxURLs: Int
     static let none = BearyImagePrefetchBudget(maxEntries: 0, maxThumbsPerEntry: 0, maxURLs: 0)
-    static func forNetwork(isSatisfied: Bool, isExpensive: Bool, isConstrained: Bool, isWiFi: Bool, pathKnown: Bool) -> BearyImagePrefetchBudget {
-        if !isSatisfied || isExpensive || isConstrained { return .none }
+    static func forNetwork(isSatisfied: Bool, isConstrained: Bool, isWiFi: Bool, pathKnown: Bool) -> BearyImagePrefetchBudget {
+        if !isSatisfied || isConstrained { return .none }
         if isWiFi { return BearyImagePrefetchBudget(maxEntries: 10, maxThumbsPerEntry: 2, maxURLs: 16) }
         // 蜂窝（含路径未知，pathKnown 仅作口径标注、预算同蜂窝档）：
         // 下一屏只取前 4 篇、每篇首图，合计不超过 4 张。
@@ -1179,7 +1180,6 @@ final class BearyImagePrefetcher {
     private var monitorStarted = false
     private var pathKnown = false
     private var pathSatisfied = false
-    private var pathExpensive = true
     private var pathConstrained = false
     private var pathWiFi = false
     private var generation = 0
@@ -1200,7 +1200,6 @@ final class BearyImagePrefetcher {
             self.lock.lock()
             self.pathKnown = true
             self.pathSatisfied = path.status == .satisfied
-            self.pathExpensive = path.isExpensive
             self.pathConstrained = path.isConstrained
             self.pathWiFi = path.usesInterfaceType(.wifi)
             self.lock.unlock()
@@ -1214,7 +1213,7 @@ final class BearyImagePrefetcher {
 
     private func currentBudget() -> BearyImagePrefetchBudget {
         lock.lock()
-        let budget = BearyImagePrefetchBudget.forNetwork(isSatisfied: pathSatisfied, isExpensive: pathExpensive, isConstrained: pathConstrained, isWiFi: pathWiFi, pathKnown: pathKnown)
+        let budget = BearyImagePrefetchBudget.forNetwork(isSatisfied: pathSatisfied, isConstrained: pathConstrained, isWiFi: pathWiFi, pathKnown: pathKnown)
         lock.unlock()
         return budget
     }
