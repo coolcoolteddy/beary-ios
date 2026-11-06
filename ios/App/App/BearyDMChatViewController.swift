@@ -59,6 +59,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private var olderLoading = false
     private var refreshQueued = false
     private var newMessagePillBottomConstraint: NSLayoutConstraint?
+    /// A6：未读新消息计数——用户读旧消息时回包新到的对方消息数累积于此，
+    /// pill 文案即由此出（"N 条新消息"）；回到到底部/点按 pill 即清零。
+    private var pendingNewMessageCount = 0
     /// 翻旧加载态浮标：加载中显“正在加载更早消息…”（转圈），失败显
     /// “加载失败，点按重试”（点按即重试）；平时隐藏。浮在列表顶部，
     /// 不占表高、不进 contentSize，锚点计算不受影响。
@@ -452,6 +455,15 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         scrollToBottomIfNeeded()
     }
 
+    /// A6：新消息入口——只在用户读旧消息（不在底部）且回包带了新到的对方消息时出现；
+    /// 文案带计数（"N 条新消息"），点按才跳到底；已在底部时不出现（直接接上）。
+    private func showNewMessagePill(count: Int) {
+        guard count > 0 else { return }
+        pendingNewMessageCount = count
+        newMessagePill.setTitle("\(count) 条新消息", for: .normal)
+        setNewMessagePillVisible(true)
+    }
+
     /// “新消息”pill 显隐唯一入口：显隐之外同步两件事——
     /// (1) 列表底部预留：pill 出现时 tableView.contentInset.bottom 预留 pill 所占高度
     /// （视觉高 32 + 与输入条的间距），底部一条消息不再被 pill 盖住；收起即清零。
@@ -459,6 +471,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     /// 纵向不再互叠；字数提示收起即回到底部 -8。视觉高 32、圆角、颜色、字号一律不动；
     /// 操作区扩到 44 靠 BearyHit44Button 的 point(inside:)（视觉帧不动）。
     private func setNewMessagePillVisible(_ visible: Bool) {
+        // A6：收起即消费——计数与文案一起清零，下次出现重新计数；
+        // 显隐本身仍是唯一入口，调用点不动。
+        if !visible {
+            pendingNewMessageCount = 0
+            if newMessagePill.title(for: .normal) != "新消息" {
+                newMessagePill.setTitle("新消息", for: .normal)
+            }
+        }
         if newMessagePill.isHidden != !visible {
             newMessagePill.isHidden = !visible
         }
@@ -769,7 +789,19 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             firstLoadStateView.isHidden = false
             loadFailedStateView.isHidden = true
         }
-        let wasAtBottom = isNearBottom()
+        // A6：位置只在回包时复查——请求在途期间用户可能滑离底部，
+        // 发请求前拍的旧值不能再决定是否滚到底。锚点（首个可见行 + 视口内偏移）
+        // 只在已有消息时记，首拉/空表不记、不弹 pill；新消息计数以请求前
+        // 的最大服务端 id 为界，待发行无 id、不计入。
+        let hadMessagesBeforeFetch = !messages.isEmpty
+        let previousMaxMessageId = messages.compactMap(\.id).max()
+        let anchorIndexPath = tableView.indexPathsForVisibleRows?.sorted().first
+        let anchorMessageId = anchorIndexPath.flatMap { $0.row < messages.count ? messages[$0.row].id : nil }
+        let anchorViewportOffset: CGFloat = {
+            guard let anchorIndexPath = anchorIndexPath else { return 0 }
+            let rect = tableView.rectForRow(at: anchorIndexPath)
+            return rect.origin.y - tableView.contentOffset.y
+        }()
         BearyAPI.shared.fetchDMHistory(userId: userId, limit: 30) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -795,10 +827,39 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.firstLoadPending = false
                     self.firstLoadStateView.isHidden = true
                     self.updateEmptyState()
+                    // A6：回包时复查位置（发请求前不拍板）：先记回包当刻的偏移与表高，
+                    // 再 reloadData；reload 后 layout，再按当刻位置定去向。
+                    let responseOffsetY = self.tableView.contentOffset.y
+                    let oldHeight = self.tableView.contentSize.height
                     self.tableView.reloadData()
-                    if wasAtBottom {
+                    self.tableView.layoutIfNeeded()
+                    // 新到的对方消息数（相对请求前最大 id）：只读旧消息时才进 pill。
+                    let freshNewCount: Int = {
+                        guard hadMessagesBeforeFetch, let prevMax = previousMaxMessageId else { return 0 }
+                        let myId = SessionManager.shared.currentUser?.id
+                        return self.messages.filter {
+                            ($0.id ?? Int.min) > prevMax && $0.senderId != nil && $0.senderId != myId
+                        }.count
+                    }()
+                    // 首拉/空表（沿用旧口径：空表 isNearBottom 恒真，首拉即到底）
+                    // 或回包当刻仍在底部：直接接上，不动 pill 之外任何东西。
+                    let atBottomNow = !hadMessagesBeforeFetch || self.isNearBottom()
+                    if atBottomNow {
                         self.scrollToBottomIfNeeded()
                         self.setNewMessagePillVisible(false)
+                    } else if let anchorId = anchorMessageId,
+                              let anchorIndex = self.messages.firstIndex(where: { $0.id == anchorId }) {
+                        // 读旧消息：锚点行复位，视口内容原地不动——不滚、不打断待发气泡。
+                        let rect = self.tableView.rectForRow(at: IndexPath(row: anchorIndex, section: 0))
+                        self.tableView.contentOffset = CGPoint(x: 0, y: rect.origin.y - anchorViewportOffset)
+                    } else {
+                        // 锚点行已不在新表里：按插入高度平移当刻视口，内容仍原地不动。
+                        let delta = self.tableView.contentSize.height - oldHeight
+                        self.tableView.contentOffset = CGPoint(x: 0, y: responseOffsetY + delta)
+                    }
+                    if !atBottomNow, freshNewCount > 0 {
+                        // 读旧消息且有新到的对方消息：出带计数的入口，点按才跳。
+                        self.showNewMessagePill(count: self.pendingNewMessageCount + freshNewCount)
                     }
                     // 对方发了新消息时重标已读：以最新一条对方消息 id 为准，
                     // 变了才放行再标（旧 didMarkRead 本页只标一次，之后的新消息永不清未读）。
