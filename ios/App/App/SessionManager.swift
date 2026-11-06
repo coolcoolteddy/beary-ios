@@ -311,6 +311,10 @@ final class SessionManager {
         BearyDetailCache.purge(bucket: "\(id)")
         BearyEntrySyncStore.purgeAccount(accountId: id)
         BearyTrashSyncStore.purgeAccount(accountId: id)
+        // C3：地图/星图共用入口的内存短缓存与在途表只活内存，退出/401 时同口径清掉；
+        // 盘上按日存档走上面的 BearyEntrySyncStore.purgeAccount。切账号不走这里，
+        // 靠请求键里的 viewerId 与会话代次校验隔离。
+        BearySharedEntryLoader.shared.invalidateAll()
         BearyFeedCache.forgetUserId()
     }
 
