@@ -2828,4 +2828,15 @@ enum BearyDetailCache {
             }
         }
     }
+
+    /// R22-B2：单篇失效——删除成功后按账号＋日记 ID 删该篇快照；代次＋1 使
+    /// 删除前已排队的写盘／读盘一律作废（写盘不再把旧正文写回来），恢复后
+    /// 新回包经 save 重建快照；与 purge 同走串行 ioQueue，删与写顺序有保证。
+    static func invalidate(bucket: String, entryId: String) {
+        bumpGeneration(for: bucket)
+        ioQueue.async {
+            guard let url = fileURL(bucket: bucket, entryId: entryId) else { return }
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
 }

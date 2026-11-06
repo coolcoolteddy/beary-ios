@@ -2325,6 +2325,9 @@ final class BearyChromeViewController: UIViewController {
             guard let self = self else { return }
             // 在途即丢弃：不重发、不 toast（首请求回包自带成功／失败反馈）。
             guard self.deletingEntryIds.insert(entryId).inserted else { return }
+            // R22-B2：删除发起时钉住账号桶——快照住在删除者桶里，成功时按
+            // 该桶失效，不按回包时当前账号取桶（其间切号也不错桶）。
+            let deleteBucket = BearyDetailCache.bucket()
             BearyAPI.shared.deleteEntry(id: entryId) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
@@ -2352,6 +2355,10 @@ final class BearyChromeViewController: UIViewController {
                         // 审计 2026-11-02 第十节：被引篇删除时定向失效引用缓存，
                         // 旧引用卡不再按删除前拉到的全文渲染。
                         BearyDiaryCardCell.invalidateQuote(id: entryId)
+                        // R22-B2：删除成功即失效该篇详情快照（发起时账号桶＋
+                        // 日记 ID），代次＋1 同时拦住删除前已排队的写盘；断网
+                        // 再点原链接不再读回旧正文，恢复后新回包重建快照。
+                        BearyDetailCache.invalidate(bucket: deleteBucket, entryId: entryId)
                         if let uid = SessionManager.shared.currentUser?.id {
                             let bucket = BearyFeedCache.bucket(userId: uid)
                             // 审计 13：快照读盘异步化后的机械适配——读 + 过滤 +
