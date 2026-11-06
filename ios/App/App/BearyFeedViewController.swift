@@ -350,6 +350,11 @@ class BearyFeedViewController: UIViewController {
             restoreLiveFeedState()
             tableView.reloadData()
             updateOverlayState()
+        } else if wantFollowing {
+            // B1：正在关注段首次进段先读本段磁盘快照（只含有效公开篇），
+            // 有内容即先显再静默刷新；快照为空/未覆盖整页时保持加载态，
+            // 等网络结果再判断空态（见 loadFollowingSnapshotOrRefresh）。
+            loadFollowingSnapshotOrRefresh()
         } else {
             plazaRaw = []
             firstPageIds = []
@@ -359,6 +364,87 @@ class BearyFeedViewController: UIViewController {
             tableView.reloadData()
             refreshAllBypassInFlight = true
             refreshAll()
+        }
+    }
+
+    /// 当前账号的正在关注快照桶（feedCacheOwnerKey 为广场桶；为 nil 时无快照可读写）。
+    private var followingCacheBucket: String? {
+        feedCacheOwnerKey.map { $0 + "-following" }
+    }
+
+    /// 段守卫写盘：当前段的 live 首屏写回本段桶，绝不跨段混桶。
+    /// save 内部只存有效公开篇，故正在关注段的仅好友篇永不落盘、
+    /// 只由网络实时校验；广场段口径不动。
+    private func saveCurrentFeedHead(entries: [Entry], hasMore: Bool) {
+        if feedFollowingSegment {
+            BearyFeedCache.save(bucket: followingCacheBucket, entries: entries, hasMore: hasMore)
+        } else {
+            BearyFeedCache.save(bucket: feedCacheOwnerKey, entries: entries, hasMore: hasMore)
+        }
+    }
+
+    /// 正在关注段首次进段：先读本段磁盘快照（只含有效公开篇），有内容即
+    /// 先显再静默刷新（仅好友篇由网络实时补齐、viewer 字段随之纠正）；
+    /// 快照为空/未覆盖整页（hasMore）时保持加载态（转圈、不判空态），
+    /// 等网络结果再判断空态。调用点须在段翻转之后、live 已清表。
+    private func loadFollowingSnapshotOrRefresh() {
+        guard let bucket = followingCacheBucket else {
+            refreshAllBypassInFlight = true
+            refreshAll()
+            return
+        }
+        let generation = revalidateGeneration
+        let ownerKey = feedCacheOwnerKey
+        // 读盘前即置加载态：快照回包前不判空态、不闪空态文案。
+        plazaRaw = []
+        firstPageIds = []
+        plazaHasMore = true
+        plazaReachedEnd = false
+        plazaError = false
+        plazaLoading = true
+        tableView.reloadData()
+        centralSpinner.startSpinning()
+        updateOverlayState()
+        BearyFeedCache.load(bucket: bucket) { [weak self] snap in
+            guard let strongSelf = self,
+                  generation == strongSelf.revalidateGeneration,
+                  strongSelf.feedFollowingSegment,
+                  strongSelf.feedCacheOwnerKey == ownerKey else { return }
+            if let snap = snap {
+                let head = BearyFeedCache.visibleHead(snap.entries)
+                if !head.isEmpty {
+                    strongSelf.plazaRaw = head
+                    strongSelf.firstPageIds = head.compactMap { $0.id }
+                    strongSelf.plazaHasMore = snap.hasMore
+                    strongSelf.plazaReachedEnd = !snap.hasMore
+                    strongSelf.plazaError = false
+                    strongSelf.plazaFirstDone = true
+                    strongSelf.isFirstLoad = false
+                    strongSelf.lastFeedLoadAt = Date(timeIntervalSince1970: snap.savedAt)
+                    // 快照落盘即算本段拉过：写回内存槽，切段回来直接显，不重读盘。
+                    strongSelf.followingSegmentLoaded = true
+                    strongSelf.followingSegmentCache = FeedSegmentCache(
+                        entries: head,
+                        firstPageIds: strongSelf.firstPageIds,
+                        hasMore: snap.hasMore,
+                        reachedEnd: !snap.hasMore,
+                        error: false,
+                        lastLoadAt: strongSelf.lastFeedLoadAt
+                    )
+                    strongSelf.plazaLoading = false
+                    strongSelf.tableView.reloadData()
+                    strongSelf.updateOverlayState()
+                    // 快照未覆盖整页（hasMore）时仍须等网络结果再判空态：
+                    // 静默刷新在途即置 plazaLoading，空态由回包后的
+                    // updateOverlayState 决定；整页已覆盖时同样静默刷新
+                    // （纠正 viewer 字段、补仅好友篇），但不转圈。
+                    strongSelf.silentRefreshFirstPage()
+                    return
+                }
+            }
+            // 快照为空/无快照：保持加载态走网络首拉，结果到后才判空态。
+            strongSelf.refreshAllBypassInFlight = true
+            strongSelf.refreshAll()
         }
     }
 
@@ -1037,11 +1123,9 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.lastFeedLoadAt = Date()
                     // 审计 13：界面先应用（落表 + 状态），写盘异步在后、不卡首帧。
                     strongSelf.tableView.reloadData()
-                    // 正在关注段不写广场磁盘快照（快照只含公开，写了会
-                    // 把关注流数据混进广场桶；关注流每次进段/重拉都走网络）。
-                    if !strongSelf.feedFollowingSegment {
-                        BearyFeedCache.save(bucket: strongSelf.feedCacheOwnerKey, entries: entries, hasMore: strongSelf.plazaHasMore)
-                    }
+                    // B1：段守卫写盘——当前段首屏写回本段桶；save 内部只存
+                    // 有效公开篇，正在关注段的仅好友篇不落盘、只走网络实时校验。
+                    strongSelf.saveCurrentFeedHead(entries: entries, hasMore: strongSelf.plazaHasMore)
                     // 80 包 A2-2：先落表再结束首屏标记。
                     strongSelf.finishFirstLoadIfNeeded()
                     strongSelf.updateOverlayState()
@@ -1142,10 +1226,8 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaError = false
                     strongSelf.lastFeedLoadAt = Date()
                     BearyTimelinePrefetch.maybePrefetch()
-                    // 正在关注段不写广场磁盘快照（同首拉守卫）。
-                    if !strongSelf.feedFollowingSegment {
-                        BearyFeedCache.save(bucket: strongSelf.feedCacheOwnerKey, entries: strongSelf.plazaRaw, hasMore: strongSelf.plazaHasMore)
-                    }
+                    // B1：段守卫写盘（同首拉守卫），仅好友篇不落盘。
+                    strongSelf.saveCurrentFeedHead(entries: strongSelf.plazaRaw, hasMore: strongSelf.plazaHasMore)
                     if strongSelf.tableView.numberOfRows(inSection: 0) == oldCount {
                         let indexPaths = (0..<newItems.count).map { IndexPath(row: $0, section: 0) }
                         strongSelf.tableView.performBatchUpdates({
@@ -1514,10 +1596,16 @@ class BearyFeedViewController: UIViewController {
     /// 结构变化后把当前首屏头写回缓存（删篇/举报/拉黑/翻私密）。
     /// 只存首屏窗口内仍有效公开的篇；翻私密的篇会被过滤掉，
     /// 下次冷启动绝不从缓存里把它露给他人视角。
+    /// B1：段守卫写盘——当前段 live 写回本段桶，正在关注段的
+    /// 仅好友篇不落盘（save 内部过滤），广场段口径不动。
     private func persistFeedHead() {
         guard let bucket = feedCacheOwnerKey else { return }
         let head = Array(plazaRaw.prefix(firstPageLimit))
-        BearyFeedCache.save(bucket: bucket, entries: head, hasMore: plazaHasMore)
+        if feedFollowingSegment {
+            BearyFeedCache.save(bucket: followingCacheBucket, entries: head, hasMore: plazaHasMore)
+        } else {
+            BearyFeedCache.save(bucket: bucket, entries: head, hasMore: plazaHasMore)
+        }
     }
 
     /// 展示字段指纹（内容/图片/心情/天气/气温/标题/引用/作者/公开态/限时）：
@@ -1556,7 +1644,8 @@ class BearyFeedViewController: UIViewController {
             plazaReachedEnd = !(hasMoreOverride ?? (fresh.count >= firstPageLimit))
             plazaError = false
             lastFeedLoadAt = Date()
-            BearyFeedCache.save(bucket: feedCacheOwnerKey, entries: fresh, hasMore: plazaHasMore)
+            // B1：段守卫写盘——正在关注段公开篇不得混入广场桶。
+            saveCurrentFeedHead(entries: fresh, hasMore: plazaHasMore)
             plazaLoading = false
             tableView.reloadData()
             updateOverlayState()
@@ -1627,7 +1716,8 @@ class BearyFeedViewController: UIViewController {
         plazaReachedEnd = !(hasMoreOverride ?? (deduped.count >= firstPageLimit))
         plazaError = false
         lastFeedLoadAt = Date()
-        BearyFeedCache.save(bucket: feedCacheOwnerKey, entries: deduped, hasMore: plazaHasMore)
+        // B1：段守卫写盘——正在关注段公开篇不得混入广场桶。
+        saveCurrentFeedHead(entries: deduped, hasMore: plazaHasMore)
         plazaLoading = false
         // 删+增一批做（删用旧下标、增用新下标）；随后按模拟出的视觉顺序
         // 逐行 move 到新顺序，最后只刷内容变了的可见行。
@@ -2728,6 +2818,13 @@ enum BearyFeedCache {
     static func bucket(userId: Int?) -> String {
         if let id = userId { return "\(id)" }
         return "guest"
+    }
+
+    /// 正在关注段快照桶：与广场桶同账号隔离、文件名独立（"-following"
+    /// 后缀）；只存有效公开篇（save 的 visibleHead 过滤），仅好友篇
+    /// 永不落盘，每次进段都由网络实时校验补齐。
+    static func followingBucket(userId: Int?) -> String {
+        return bucket(userId: userId) + "-following"
     }
 
     /// 上次已知登录用户 id（仅作冷启动桶提示：/me 回包前 currentUser
