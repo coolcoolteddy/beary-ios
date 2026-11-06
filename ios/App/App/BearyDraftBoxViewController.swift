@@ -1754,10 +1754,18 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     /// 与撤销条行为不变，只是移除/出条改到删盘成功回调里（本地写盘，
     /// 延迟毫秒级，视觉上与原来无差）。
     private func finishDelete(draftValue: BearyDraft) {
+        // r28-3：动画期内已点撤销 → 该笔已从 pendingUndos 移除、恢复写盘
+        // 已先入队；此时再入队删盘，串行 ioQueue 下先存后删确定发生，
+        // 刚恢复的草稿会被静默删掉，故直接跳过（不删盘、不出条、不计时）。
+        guard pendingUndos.contains(where: { $0.draft.draftId == draftValue.draftId }) else { return }
         // 失败恢复用：记下当前下标；删盘失败且内存里已没它时按此插回原位。
         let restoreIndex = drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) ?? pendingUndos.first(where: { $0.draft.draftId == draftValue.draftId })?.index ?? 0
         BearyDraftStore.deleteAsyncReporting(draftId: draftValue.draftId) { [weak self] ok in
             guard let strongSelf = self else { return }
+            // r28-3：删盘在途时点了撤销（恢复写盘排在删盘之后入队，磁盘上
+            // 先删后存、草稿仍在）——回调不再从内存移除，也不再报删除失败；
+            // 恢复成败由撤销自己的 save 回调汇报。
+            guard strongSelf.pendingUndos.contains(where: { $0.draft.draftId == draftValue.draftId }) else { return }
             if !ok {
                 // 失败：只清本笔的暂存与计时器（撤销条尚未出），不动队列里其余笔。
                 if let idx = strongSelf.pendingUndos.firstIndex(where: { $0.draft.draftId == draftValue.draftId }) {
