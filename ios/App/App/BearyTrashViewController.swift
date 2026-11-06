@@ -445,10 +445,16 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         trashLoginEmpty = false
         trashHasMore = false
         renderStateViews()
+        // r25-2：首拉回包账号守卫——请求开始时拍账号与鉴权代次，
+        // 切号后旧回包丢弃，不写新号列表、不触发新号失败态。
+        let requestAccountId = SessionManager.shared.currentUser?.id
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchTrash(before: nil, beforeId: nil) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.trashLoading = false
+                guard requestAccountId == SessionManager.shared.currentUser?.id,
+                      requestEpoch == BearyAPI.shared.authEpoch else { return }
                 switch result {
                 case .success(let list):
                     self.trashItems = list.items
@@ -500,10 +506,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // kick 时同款记法）；终态比对，期间有写盘即旧快照过期。
         trashSilentRefreshStartSequence = BearyTrashSyncStore.currentWriteSequence()
         trashRemovedDuringSilentRefresh.removeAll()
-        fetchTrashSilentPage(accountId: uid, before: nil, beforeId: nil, accumulated: [])
+        // r25-1：静默刷新回包账号守卫——epoch 与 uid 一路透传进分页递归，
+        // 终态写内存前双门校验（落盘仍走捕获的 accountId，桶隔离不动）。
+        fetchTrashSilentPage(accountId: uid, epoch: BearyAPI.shared.authEpoch, before: nil, beforeId: nil, accumulated: [])
     }
 
-    private func fetchTrashSilentPage(accountId: Int, before: String?, beforeId: String?, accumulated: [TrashItem]) {
+    private func fetchTrashSilentPage(accountId: Int, epoch: Int, before: String?, beforeId: String?, accumulated: [TrashItem]) {
         BearyAPI.shared.fetchTrash(before: before, beforeId: beforeId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -513,7 +521,11 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     self.trashSilentRefreshStartSequence = nil
                     self.trashRemovedDuringSilentRefresh.removeAll()
                     if case .unauthorized = error {
-                        self.notifyTrashLoginOnce()
+                        // 旧账号在途请求的 401 不得触发新账号的登录态。
+                        if accountId == SessionManager.shared.currentUser?.id,
+                           epoch == BearyAPI.shared.authEpoch {
+                            self.notifyTrashLoginOnce()
+                        }
                     }
                     // 其他失败静默：保留本地显示，下次进页重刷。
                 case .success(let page):
@@ -546,6 +558,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         BearyEntrySync.shared.runDiskWrite {
                             BearyTrashSyncStore.saveAll(accountId: accountId, items: deduped)
                         }
+                        // r25-1：终态写内存前核对账号与代次——切号后旧账号整桶
+                        // 不得写进新账号页面（落盘已按捕获的 accountId 隔离，不动）。
+                        guard accountId == SessionManager.shared.currentUser?.id,
+                              epoch == BearyAPI.shared.authEpoch else { return }
                         // 增量更新：无变化时各行原地不动（见 updateListRowsIncrementally）。
                         self.trashItems = deduped
                         self.trashHasMore = false
@@ -559,7 +575,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                             self.trashRemovedDuringSilentRefresh.removeAll()
                             return
                         }
-                        self.fetchTrashSilentPage(accountId: accountId, before: "\(lastDeletedAt)", beforeId: last.id, accumulated: all)
+                        self.fetchTrashSilentPage(accountId: accountId, epoch: epoch, before: "\(lastDeletedAt)", beforeId: last.id, accumulated: all)
                     }
                 }
             }
@@ -590,12 +606,18 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         trashLoadingMore = true
         moreSpinner.isHidden = false
         moreSpinner.startSpinning()
+        // r25-1：翻页回包账号守卫——请求开始时拍账号与鉴权代次，
+        // 切号后旧回包丢弃，不追加进新号列表。
+        let requestAccountId = SessionManager.shared.currentUser?.id
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchTrash(before: "\(lastDeletedAt)", beforeId: lastItem.entryIdentifier) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.trashLoadingMore = false
                 self.moreSpinner.stopSpinning()
                 self.moreSpinner.isHidden = true
+                guard requestAccountId == SessionManager.shared.currentUser?.id,
+                      requestEpoch == BearyAPI.shared.authEpoch else { return }
                 switch result {
                 case .success(let list):
                     var seenIdentifiers: Set<String> = []
