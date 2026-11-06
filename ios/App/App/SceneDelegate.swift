@@ -3360,14 +3360,14 @@ final class BearyChromeViewController: UIViewController {
                 guard let self = self, let detail = detail else { return }
                 // R22-A1：慢网切号后旧账号回包直接丢弃——失败态也不 toast，
                 // 不更新、不写快照，卡片旧内容原样保留。
-                guard isStillSameDetailSession(request) else { return }
+                guard self.isStillSameDetailSession(request) else { return }
                 guard case .success(let fetched) = result else {
                     // 2026-11-05 Li 定（推翻 2026-10-29）：失败保留卡片旧内容＋轻提示。
                     detail.showFetchFailed()
                     return
                 }
                 guard fetched.id == request.entryId else { return }
-                let viewerIsAuthor = isAuthorOfEntry(fetched, viewerId: request.accountId)
+                let viewerIsAuthor = self.isAuthorOfEntry(fetched, viewerId: request.accountId)
                 if viewerIsAuthor {
                     detail.update(with: fetched)
                     return
@@ -3396,7 +3396,7 @@ final class BearyChromeViewController: UIViewController {
                             guard let detail = detail else { return }
                             // R22-A1：互关校验回包同样复核会话与日记 ID，旧会话的
                             // 互关结论不得把旧篇放进新账号页面。
-                            guard fetched.id == request.entryId, isStillSameDetailSession(request) else { return }
+                            guard fetched.id == request.entryId, self.isStillSameDetailSession(request) else { return }
                             switch stateResult {
                             case .success(let state)
                                 where (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false)):
@@ -3439,7 +3439,7 @@ final class BearyChromeViewController: UIViewController {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 // R22-A1：切号后旧请求整单丢弃——不路由、不读快照、不 toast。
-                guard isStillSameDetailSession(request) else { return }
+                guard self.isStillSameDetailSession(request) else { return }
                 switch result {
                 case .success(let fetched):
                     self.routeFetchedEntry(fetched, request: request)
@@ -3509,7 +3509,7 @@ final class BearyChromeViewController: UIViewController {
                     guard let self = self else { return }
                     // R22-A1：互关校验回包同样复核会话与日记 ID，旧会话的
                     // 互关结论不得把旧篇放进新账号页面。
-                    guard fetched.id == request.entryId, isStillSameDetailSession(request) else { return }
+                    guard fetched.id == request.entryId, self.isStillSameDetailSession(request) else { return }
                     switch stateResult {
                     case .success(let state)
                         where (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false)):
