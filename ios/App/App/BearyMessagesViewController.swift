@@ -439,7 +439,7 @@ final class BearyMessagesViewController: UIViewController {
                 stateView.configure(
                     kind: .empty,
                     title: "还没有消息",
-                    subtitle: "赞、收藏、回应和系统消息都会出现在这里",
+                    subtitle: "私信、赞、收藏、回应和系统消息会出现在这里",
                     iconName: nil,
                     actionTitle: "刷新",
                     onAction: { [weak self] in self?.refresh() }
@@ -656,20 +656,30 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
         guard indexPath.row < mergedRows.count else { return }
         let row = mergedRows[indexPath.row]
-        // 会话行淡入（私信子页原口径：新行首次出现只做透明度过渡 0.22s，
-        // 减动效直设终值；已播行重现只复位 alpha，不重播）。
+        // 会话行错峰淡入（广场同款：alpha + y+6、0.22s、0.03 步进封顶
+        // 0.24s；按稳定 ID 已播行不重播，减动效直设终值）。
         if case .conversation = row {
             let k = key(for: row)
             if fadedDMKeys.contains(k) {
                 cell.alpha = 1
+                cell.transform = .identity
             } else {
+                // 错峰序号：本轮上方尚未淡入的会话行数（首屏自上而下
+                // 依次出现即 0/1/2…；分页新行上方已播完，从 0 起算）。
+                let order = mergedRows[..<indexPath.row].filter {
+                    guard case .conversation = $0 else { return false }
+                    return !fadedDMKeys.contains(key(for: $0))
+                }.count
                 fadedDMKeys.insert(k)
                 if UIAccessibility.isReduceMotionEnabled {
                     cell.alpha = 1
+                    cell.transform = .identity
                 } else {
                     cell.alpha = 0
-                    UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut], animations: {
+                    cell.transform = CGAffineTransform(translationX: 0, y: 6)
+                    UIView.animate(withDuration: 0.22, delay: min(Double(order) * 0.03, 0.24), options: [.curveEaseOut], animations: {
                         cell.alpha = 1
+                        cell.transform = .identity
                     })
                 }
             }

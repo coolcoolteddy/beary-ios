@@ -2288,7 +2288,7 @@ final class BearyNotificationsViewController: UIViewController {
             stateTitleLabel.isHidden = false
             stateTitleLabel.text = "还没有消息"
             stateSubtitleLabel.isHidden = false
-            stateSubtitleLabel.text = "赞、收藏、回应和系统消息都会出现在这里"
+            stateSubtitleLabel.text = "私信、赞、收藏、回应和系统消息会出现在这里"
             // 5-8：空态加失败态同款重试/刷新按钮——空态下态容器盖住表区、
             // 下拉手势到不了列表，空态恢复此前只靠轮询/回前台/切 tab。
             // 按钮样式与失败态同款（13 灰字、1px 描边、左右 24、上 9、
