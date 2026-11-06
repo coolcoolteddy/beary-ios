@@ -233,11 +233,6 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     /// 审计反馈分享防重：zip 生成进行中标记与排队回调。ensureZip 已在途时
     /// 后续调用只排队、不另起生成任务，生成完成时按序回放同一结果。
     private var zipInFlight = false
-    /// 进页首次 zip 生成在途标记：viewDidLoad 直接调 generateZip，不经过
-    /// ensureZip 的 zipInFlight 排队标记；关闭守卫须同时查这一项，否则
-    /// 最常见的首次生成窗口会被漏拦。本标记只供关闭守卫读，不参与
-    /// ensureZip 的排队逻辑，避免首次生成完成时排队回调无人回放。
-    private var initialZipInFlight = false
     private var pendingZipCompletions: [(Bool) -> Void] = []
     private var pendingMailKind: PendingMailKind = .submit
 
@@ -281,25 +276,11 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         buildContent()
         updateSubmitEnabled()
         refreshAttachUI()
-        initialZipInFlight = true
-        generateZip { [weak self] url in
-            guard let self = self else { return }
-            self.initialZipInFlight = false
-            if let urlValue = url {
-                self.zipURL = urlValue
-                self.zipReady = true
-                // 116：本地 zip 完成时状态文案只淡入本身、绿点徽标由隐藏
-                // 变可见时只淡入本身（alpha 0→1、0.25s，不动 transform／
-                // 布局；同值不重播；减动效或未进窗口直设终值）。
-                self.setStatusTextFaded("反馈数据已准备就绪")
-                self.showStatusBadgeFaded()
-            } else {
-                self.zipReady = false
-                self.setStatusTextFaded("反馈数据准备失败")
-                self.statusBadge.isHidden = true
-                BearyAppLog.event("feedback zip failed")
-            }
-        }
+        // r24-#6：首次生成统一走 ensureZip，与分享/提交按需生成共享同一
+        // 在途标记 zipInFlight；在途时点分享只排队，不另起重复生成。
+        // ensureZip 回调内已更新 zipURL / zipReady 与状态文案（含失败态），
+        // 与此前直接调 generateZip 的终态一致。
+        ensureZip { _ in }
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
@@ -781,10 +762,10 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     }
 
     @objc private func closeTapped() {
-        // zip 生成在途（首次生成或 ensureZip 重生成）时先拦：与编辑
-        // 资料页“保存中拦截、不弹放弃确认”同口径；提示走本页已有的
-        // BearyToast，不另起 alert。已有弹层时不叠弹。
-        if zipInFlight || initialZipInFlight {
+        // zip 生成在途（首次生成与按需重生成共用同一 zipInFlight 标记，
+        // 见 r24-#6）时先拦：与编辑资料页“保存中拦截、不弹放弃确认”
+        // 同口径；提示走本页已有的 BearyToast，不另起 alert。已有弹层时不叠弹。
+        if zipInFlight {
             if presentedViewController == nil {
                 BearyToast.show(in: view, message: "正在准备附件，请稍候")
             }
