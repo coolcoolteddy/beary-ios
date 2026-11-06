@@ -71,7 +71,18 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private var sessionClosed = false
     private var didMarkRead = false
     /// 本页私信本地文件的账号（进页时捕获，切号后仍写原账号文件，不串号）。
+    /// 只固定写盘位置不够：拉取用的当前会话在切号后已是新号，旧回包仍会
+    /// 按原账号写盘——故本页另钉住会话代次（见 identityGeneration），
+    /// 拉取/发送/标已读的每次请求与回包都校验页面身份。
     private let storeAccountId: Int?
+    /// 建页时钉住的会话代次（BearyAPI.authEpoch，与 SessionManager 的
+    /// sessionGeneration 同步推进：退出/401 清态/切号/同号重登均 +1）。
+    /// 与 storeAccountId 共同构成页面身份：账号不可变；同一账号重登或
+    /// 取消恢复造成代次变化时只续绑代次（见 ensureIdentityCurrent），
+    /// 账号变化则关页。
+    private var identityGeneration: Int
+    /// 切号关页进行中（防通知与入口守卫重复触发两次关页）。
+    private var isClosingForIdentityChange = false
     /// 对方不接受私信（can=false 或 403 dm_not_allowed）：页顶横幅 + 禁用输入。
     private var dmNotAllowed = false
     private let permBannerView = UIView()
@@ -84,6 +95,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     init(peer: BearyAPI.FriendUser) {
         self.peer = peer
         self.storeAccountId = SessionManager.shared.currentUser?.id
+        self.identityGeneration = BearyAPI.shared.authEpoch
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -368,6 +380,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 scrollToBottomIfNeeded()
             }
         }
+        // 账号变化即关页（见 handleUserChanged）：切号后本页身份失效，
+        // 旧内容不得残留、旧回包不得写盘；deinit 已清观察者。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleUserChanged), name: .bearyUserDidChange, object: nil)
         loadLatest()
         checkDMPermission()
     }
@@ -397,6 +412,61 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     @objc private func refreshPulled() {
         loadLatest()
+    }
+
+    /// 请求回包身份校验（发起时捕获账号 + 代次，回包时任一不匹配即丢弃）：
+    /// 切号夹在请求与回包之间时，旧号回包绝不碰界面、不写盘、不触发后续拉取。
+    private func isRequestCurrent(accountId: Int?, epoch: Int) -> Bool {
+        accountId == SessionManager.shared.currentUser?.id
+            && accountId == storeAccountId
+            && epoch == BearyAPI.shared.authEpoch
+    }
+
+    /// 入口守卫：账号已变即关页（返回 false，调用方直接 return）；
+    /// 同号仅代次变了（重登/取消恢复）则续绑代次后放行；
+    /// 未登录由各入口原有的 onRequireLogin 路径处理，本处不拦、不关页。
+    @discardableResult
+    private func ensureIdentityCurrent() -> Bool {
+        guard SessionManager.shared.isLoggedIn else { return false }
+        guard SessionManager.shared.currentUser?.id == storeAccountId else {
+            closeForIdentityChange()
+            return false
+        }
+        if BearyAPI.shared.authEpoch != identityGeneration {
+            identityGeneration = BearyAPI.shared.authEpoch
+        }
+        return true
+    }
+
+    /// 切号关页：先清旧页面内容（表与失败态），再关页。登录弹层若正盖在
+    /// 本页之上，先收弹层再关本页——直接调 onBack 会只关掉弹层而留下本页
+    ///（dismiss 关的是被本页 present 出的页）。
+    private func closeForIdentityChange() {
+        guard !isClosingForIdentityChange else { return }
+        isClosingForIdentityChange = true
+        messages = []
+        failedSendKeys = []
+        tableView.reloadData()
+        if presentedViewController != nil {
+            presentedViewController?.dismiss(animated: false) { [weak self] in self?.onBack?() }
+        } else {
+            onBack?()
+        }
+    }
+
+    /// 账号变化广播：切到另一账号即清旧内容关页；同号重登/取消恢复只续绑
+    /// 代次（本页仍是该账号的页，在途旧回包凭请求时捕获的代次丢弃）；
+    /// 退出/过期（当前无账号）不关页——下次动作走原有登录门，重登同号
+    /// 仍留本页，重登他号再由此关页。
+    @objc private func handleUserChanged() {
+        guard let currentId = SessionManager.shared.currentUser?.id else { return }
+        guard currentId == storeAccountId else {
+            closeForIdentityChange()
+            return
+        }
+        if BearyAPI.shared.authEpoch != identityGeneration {
+            identityGeneration = BearyAPI.shared.authEpoch
+        }
     }
 
     func textViewDidChange(_ textView: UITextView) {
@@ -528,7 +598,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private func animateLastMineRow() {
         guard let last = messages.last,
               last.senderId != nil,
-              last.senderId == SessionManager.shared.currentUser?.id else { return }
+              last.senderId == storeAccountId else { return }
         tableView.layoutIfNeeded()
         let path = IndexPath(row: messages.count - 1, section: 0)
         guard let cell = tableView.cellForRow(at: path) else { return }
@@ -556,7 +626,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     /// 不闪动、不重播）；未认领的待发重新拼到末尾（失败态跟随 localKey 保留）。
     private func reconcilePendingSends(_ pending: [BearyAPI.DMMessage]) {
         guard !pending.isEmpty else { return }
-        let myId = SessionManager.shared.currentUser?.id
+        let myId = storeAccountId
         var usedServer = Set<Int>()
         var remaining: [BearyAPI.DMMessage] = []
         for temp in pending {
@@ -586,11 +656,17 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
               let body = temp.body,
               !sessionClosed, !dmNotAllowed,
               SessionManager.shared.isLoggedIn else { return }
+        guard ensureIdentityCurrent() else { return }
         failedSendKeys.remove(key)
         reloadPendingRow(key: key)
+        let requestAccountId = SessionManager.shared.currentUser?.id
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.sendDM(userId: userId, body: body) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                // 切号夹在发送与回包之间时旧回包直接丢弃：不撤行、不 toast、
+                // 不重拉（关页由账号变化广播负责）。
+                guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else { return }
                 switch result {
                 case .success:
                     self.dmNotAllowed = false
@@ -676,13 +752,20 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     private func markReadIfNeeded() {
         guard let userId = peer.id, !didMarkRead else { return }
+        guard ensureIdentityCurrent() else { return }
         // 审计：已读失败不再“本页永不重试”——失败时不置 didMarkRead，
         // 下次 loadLatest 成功时再试，并 toast 说明（重试入口即下拉刷新）。
         // 标哪条：调用时最新对方消息 id；成功才记，下次以此为准判断有无新消息。
-        let markId = messages.last(where: { $0.senderId != nil && $0.senderId != SessionManager.shared.currentUser?.id })?.id
+        // 对方判定用本页账号（storeAccountId），不用当前登录账号——切号后
+        // 当前账号已变，仍按旧号比对才会把新号的消息当成对方消息误标。
+        let markId = messages.last(where: { $0.senderId != nil && $0.senderId != storeAccountId })?.id
+        let requestAccountId = SessionManager.shared.currentUser?.id
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.markDMRead(userId: userId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                // 标已读回包同样校验身份：切号后的旧回包不得把已读态记到新号会话上。
+                guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else { return }
                 switch result {
                 case .success:
                     self.didMarkRead = true
@@ -708,9 +791,13 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     /// 进页查一次 can：false 即横幅 + 禁用；查不到不挡路（历史/发送的 403 再定）。
     private func checkDMPermission() {
         guard let userId = peer.id, SessionManager.shared.isLoggedIn else { return }
+        guard ensureIdentityCurrent() else { return }
+        let requestAccountId = SessionManager.shared.currentUser?.id
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchDMCan(userId: userId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else { return }
                 switch result {
                 case .success(let can):
                     self.dmNotAllowed = !(can.allowed ?? false)
@@ -727,7 +814,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     /// senderId 补全（自己发 = 本人 id，否则 = 对方 id），否则本地 store
     /// 会把无 senderId 的行当脏行跳过，整页历史永远显空态。
     private func resolvedSenders(_ messages: [BearyAPI.DMMessage]) -> [BearyAPI.DMMessage] {
-        let myId = SessionManager.shared.currentUser?.id
+        let myId = storeAccountId
         let peerId = peer.id
         return messages.map { m in
             guard m.senderId == nil else { return m }
@@ -744,6 +831,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             onRequireLogin?()
             return
         }
+        guard ensureIdentityCurrent() else { return }
         // 分开加载态：翻旧在途时下拉刷新不再被共用锁静默吞掉——排队，
         // 刷新控件保持转圈（可见反馈），翻旧结束即跑这次刷新；
         // 翻旧在途蕴含 hasMoreOlder（loadOlder 守卫），无更早消息时翻旧根本跑不起来，
@@ -770,9 +858,19 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             loadFailedStateView.isHidden = true
         }
         let wasAtBottom = isNearBottom()
+        // 请求时捕获账号 + 代次：回包时任一不匹配即丢弃（见 isRequestCurrent）。
+        let requestAccountId = SessionManager.shared.currentUser?.id
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchDMHistory(userId: userId, limit: 30) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                // 切号夹在拉取与回包之间时，旧回包不得写盘、不得改表：
+                // 只复位加载态即返回，关页由账号变化广播负责。
+                guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else {
+                    self.latestLoading = false
+                    self.tableView.refreshControl?.endRefreshing()
+                    return
+                }
                 self.latestLoading = false
                 self.tableView.refreshControl?.endRefreshing()
                 switch result {
@@ -802,7 +900,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     }
                     // 对方发了新消息时重标已读：以最新一条对方消息 id 为准，
                     // 变了才放行再标（旧 didMarkRead 本页只标一次，之后的新消息永不清未读）。
-                    let latestPeerId = self.messages.last(where: { $0.senderId != nil && $0.senderId != SessionManager.shared.currentUser?.id })?.id
+                    let latestPeerId = self.messages.last(where: { $0.senderId != nil && $0.senderId != storeAccountId })?.id
                     if let latestPeerId = latestPeerId, latestPeerId != self.lastMarkedReadMessageId {
                         self.didMarkRead = false
                     }
@@ -840,6 +938,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         // 避免两路回包交错改表；反向（翻旧在途时下拉刷新）不再静默吞，见 loadLatest 的排队。
         guard let userId = peer.id, !olderLoading, !latestLoading, hasMoreOlder,
               let oldestId = messages.first?.id else { return }
+        guard ensureIdentityCurrent() else { return }
         olderLoading = true
         setOlderLoadingState(loading: true, failed: false)
         let anchorId = oldestId
@@ -849,9 +948,23 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }()
         let oldHeight = tableView.contentSize.height
         let oldOffsetY = tableView.contentOffset.y
+        // 请求时捕获账号 + 代次：回包时任一不匹配即丢弃（见 isRequestCurrent）。
+        let requestAccountId = SessionManager.shared.currentUser?.id
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchDMHistory(userId: userId, beforeId: oldestId, limit: 30) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                // 旧回包丢弃：只复位加载态（浮标收起）；排队过的下拉刷新照常补跑
+                //（loadLatest 入口会再校验身份），不写盘、不改表。
+                guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else {
+                    self.olderLoading = false
+                    self.setOlderLoadingState(loading: false, failed: false)
+                    if self.refreshQueued {
+                        self.refreshQueued = false
+                        self.loadLatest()
+                    }
+                    return
+                }
                 self.olderLoading = false
                 switch result {
                 case .success(let history):
@@ -922,7 +1035,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             onRequireLogin?()
             return
         }
-        guard let myId = SessionManager.shared.currentUser?.id else {
+        guard ensureIdentityCurrent() else { return }
+        guard let myId = storeAccountId else {
             onRequireLogin?()
             return
         }
@@ -941,9 +1055,15 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         tableView.reloadData()
         scrollToBottomIfNeeded()
         animateLastMineRow()
+        // 请求时捕获账号 + 代次：回包时任一不匹配即丢弃（见 isRequestCurrent）。
+        let requestAccountId = SessionManager.shared.currentUser?.id
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.sendDM(userId: userId, body: body) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                // 切号夹在发送与回包之间时旧回包直接丢弃：不撤行、不 toast、
+                // 不重拉（关页由账号变化广播负责）。
+                guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else { return }
                 switch result {
                 case .success:
                     // 发送成功即权限无问题：横幅清掉（进页 can 误判时靠此恢复）。
@@ -993,7 +1113,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "dmMessageCell", for: indexPath) as! BearyDMMessageCell
         let message = messages[indexPath.row]
-        let isMine = message.senderId != nil && message.senderId == SessionManager.shared.currentUser?.id
+        let isMine = message.senderId != nil && message.senderId == storeAccountId
         // 2026-11-04 乐观发送：仅本人待发行可带失败态；失败时叹号点按重发该条。
         let showFail = isMine && message.localKey.map { failedSendKeys.contains($0) } == true
         let retryKey = message.localKey
