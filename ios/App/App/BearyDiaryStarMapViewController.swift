@@ -106,6 +106,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var selectedStarId: String?
     private var selectedEdgeId: String?
     private var loadGeneration = 0
+    /// P1-4：本轮拉取是否在途——加载／空白／有内容／失败共用一个展示
+    /// 状态的门控：请求未结束且尚无可展示数据时只出加载态，不下空态结论。
+    private var isFetching = false
     private var fetchCapped = false
     private var needsRefreshAfterDetail = false
     private var yearRowHeight: NSLayoutConstraint?
@@ -125,6 +128,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var sheetBottom: NSLayoutConstraint?
     private var emptyBottom: NSLayoutConstraint?
     private var failureBottom: NSLayoutConstraint?
+    /// P1-4：加载态独占时的内容底锚（与扫荡 C 的三选一底部约束同款，
+    /// 同一时刻只激活一个；其余三态恢复时由 applyModelToSky 关掉）。
+    private var loadingBottom: NSLayoutConstraint?
 
     init(authorId: Int, viewerIsAuthor: Bool, initialEntries: [Entry], onOpenEntry: ((Entry) -> Void)?) {
         self.authorId = authorId
@@ -265,7 +271,28 @@ final class BearyDiaryStarMapViewController: UIViewController {
         sheetBottom?.isActive = false
         emptyBottom?.isActive = false
         failureBottom?.isActive = true
+        loadingBottom?.isActive = false
         failureView.isHidden = false
+    }
+
+    /// P1-4：加载态独占——加载／空白／有内容／失败同一时刻只显示一种。
+    /// 根因：四个视图各自在不同函数里独立开关 isHidden——加载开始只开
+    /// loadingView（不藏空态），而 recompute 的“空态先行”与后台重算回包
+    /// 又把空态（340 高）顶回来，与加载态（200 高）同锚点同时可见。
+    /// 此后加载态只经这里出、只经 applyModelToSky／showFailureState 收。
+    private func showLoadingState() {
+        loadingView.isHidden = false
+        loadingSpinner.startSpinning()
+        skyHeight?.constant = 0
+        skyView.isHidden = true
+        emptyView.isHidden = true
+        failureView.isHidden = true
+        statusLabel.isHidden = true
+        sheetCard.isHidden = true
+        sheetBottom?.isActive = false
+        emptyBottom?.isActive = false
+        failureBottom?.isActive = false
+        loadingBottom?.isActive = true
     }
 
     // MARK: - 布局
@@ -499,6 +526,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
         emptyBottom?.isActive = false
         failureBottom = failureView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24)
         failureBottom?.isActive = false
+        loadingBottom = loadingView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24)
+        loadingBottom?.isActive = false
         // 年/月行高约束单独持有：不分片时高置 0（isHidden 本身不塌约束，
         // 否则不分片页会在图例与过滤行之间留两行空白）。
         yearRowHeight = yearScrollView.heightAnchor.constraint(equalToConstant: 44)
@@ -690,14 +719,27 @@ final class BearyDiaryStarMapViewController: UIViewController {
                 self.applyModelToSky()
             }
         }
-        // 空态先行：不等后台模型也先出空态（0 篇时模型恒空，文案不闪）。
-        if filteredEntries.isEmpty || sliceEntries.isEmpty {
+        // P1-4：空态先行只在请求未在途时成立——拉取在途且尚无可展示数据
+        // 时不等后台模型也不先出空态（0 篇时模型恒空，文案不闪；但在途时
+        // 出空态会与加载态同锚点重叠）。在途时加载态已由 fetchAllEntries
+        // 出示，待回包终态再由 applyModelToSky 定空／有内容／失败。
+        if !isFetching, filteredEntries.isEmpty || sliceEntries.isEmpty {
             model = StarMapModel(stars: [], edges: [], entryById: [:])
             applyModelToSky()
         }
     }
 
     private func applyModelToSky() {
+        // P1-4：请求未结束且尚无可展示数据时不下空态／有内容结论——加载态
+        // 独占，后台重算的空模型回包也只许回到加载态，不许把空态叠到转圈上。
+        // 空模型无需重复提交：本函数在途时直接返回，终态回包后再算一次。
+        if isFetching && allEntries.isEmpty {
+            showLoadingState()
+            return
+        }
+        // 非在途终态：加载态收起、内容底改回三选一（见下方分支）。
+        hideLoadingState()
+        loadingBottom?.isActive = false
         // 选中态失效回收：选中的星/线若因重算消失（删篇/翻私密/切账号），
         // 底卡不留指向旧篇的入口，直接回默认态（不展示已不可见的篇名）。
         if let sid = selectedStarId, model.entryById[sid] == nil {
@@ -962,16 +1004,20 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     private func fetchAllEntries() {
         loadGeneration += 1
+        // P1-4：加载开始同时作废已发出的后台重算——此前只递增 loadGeneration
+        // 不递增 modelGeneration，已发出的重算回主线程时 generation 仍对得上，
+        // 即调 applyModelToSky() 把空态顶回加载态上。递增后立即 recompute()
+        // 一次：调用方已加载的日记仍即时成图（不丢首帧），只是换新 generation。
+        modelGeneration += 1
+        isFetching = true
         fetchCollected = []
         fetchSeenIds = []
         // 审计登录杂项：无已有数据时先出加载态（此前首帧直接走空态“这里还没有星星”，
         // 回包后星星突然出现）；有数据时不遮旧星图。
         if allEntries.isEmpty {
-            emptyView.isHidden = true
-            failureView.isHidden = true
-            loadingView.isHidden = false
-            loadingSpinner.startSpinning()
+            showLoadingState()
         }
+        recompute()
         fetchEntriesPage(before: nil, beforeId: nil, page: 1, generation: loadGeneration)
     }
 
@@ -998,6 +1044,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
                 switch result {
                 case .failure:
                     self.hideLoadingState()
+                    // P1-4：请求结束（失败也是终态），门控放开，后续 recompute／
+                    // showFailureState 才能下空／有内容／失败结论。
+                    self.isFetching = false
                     // 分批中断：失败判断只看已展示数据（allEntries），不再把
                     // 本轮暂存（fetchCollected）算作已有数据——recompute 只
                     // 渲染 allEntries，暂存算数会让“首批成功、后续页失败”
@@ -1041,6 +1090,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
                     self.fetchStaleNote = false
                     self.fetchPartialNote = false
                     self.hideLoadingState()
+                    // P1-4：请求结束，门控放开再 recompute——确认没有可显示内容
+                    // 后才出空态（applyModelToSky 的在途门控此时已失效）。
+                    self.isFetching = false
                     self.allEntries = self.fetchCollected
                     self.recompute()
                 }
