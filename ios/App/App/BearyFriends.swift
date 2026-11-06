@@ -48,11 +48,34 @@ enum BearyFollowState {
 
 enum BearyFriends {
 
-    /// 取关二次确认 alert（仅弹框，不发请求）：确认回调由调用方接乐观更新＋请求
-    ///（搜索页/好友页同款：确认瞬间即显最终态，失败回滚＋拒绝动效）。
-    /// 文案与取关确认框同款（同一 builder，不另起一套 copy）。
+    /// B2：关注变化广播里变动的对方 id 的 userInfo 键——通知页收到后只
+    /// 更新那一个人的卡片，不全量重验；无 id 的旧广播仍走全量重验。
+    static let friendsChangedUserIdKey = "userId"
+
+    /// 取关二次确认 alert（仅弹框，不发请求）：确认回调由调用方接乐观更新＋请求。
+    /// 文案与 confirmUnfollow 同款（同一 builder，不另起一套 copy）。
     static func confirmUnfollowAlert(from vc: UIViewController, displayName: String, mutual: Bool, onConfirmed: @escaping () -> Void) {
         vc.present(unfollowConfirmAlert(displayName: displayName, mutual: mutual, onConfirmed: onConfirmed), animated: BearyMotion.animated(true))
+    }
+
+    /// 取关二次确认（alert，系统官方样式；确认后才发请求，失败只 toast、不改态；
+    /// 取关不给震动）。mutual 与单向关注的文案分开：互关取关会断双向可见性，
+    /// 单向取关只断自己的关注流。
+    static func confirmUnfollow(from vc: UIViewController, displayName: String, userId: Int, mutual: Bool, onRemoved: @escaping () -> Void) {
+        let alert = unfollowConfirmAlert(displayName: displayName, mutual: mutual) {
+            BearyAPI.shared.unfollowFriend(userId: userId) { result in
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success:
+                        clearDiaryCachesAndNotify(userId: userId)
+                        onRemoved()
+                    case .failure:
+                        BearyToast.show(in: vc.view, message: "取消关注失败，请重试")
+                    }
+                }
+            }
+        }
+        vc.present(alert, animated: BearyMotion.animated(true))
     }
 
     private static func unfollowConfirmAlert(displayName: String, mutual: Bool, onConfirmed: @escaping () -> Void) -> UIAlertController {
@@ -70,12 +93,19 @@ enum BearyFriends {
     /// 回关/取关成功后的本地清理：广场磁盘快照（只含公开，本就无仅好友篇，
     /// 但清掉可防旧 viewer 字段残留）按当前身份桶清；引用单篇内存缓存同清
     ///（取关后旧缓存里的仅好友引用全文不得再出）；各列表页收到广播后重拉。
-    static func clearDiaryCachesAndNotify() {
+    /// B2：确认时带上变动的对方 id（userId）：通知页只更新那一个人的卡片；
+    /// 不传（nil）时广播不带 id，通知页退回全量重验。单向关注仍不发广播
+    /// （不产生可见内容变化），见文件头契约。
+    static func clearDiaryCachesAndNotify(userId: Int? = nil) {
         let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id)
         BearyFeedCache.purge(bucket: bucket)
         // 个人页赞过 tab 快照同样含仅好友篇：断友后旧快照不得再秒显。
         BearyProfileCache.purge(bucket: bucket)
         BearyDiaryCardCell.quoteCache.removeAll()
-        NotificationCenter.default.post(name: .bearyFriendsChanged, object: nil)
+        var userInfo: [AnyHashable: Any]?
+        if let userId = userId {
+            userInfo = [friendsChangedUserIdKey: userId]
+        }
+        NotificationCenter.default.post(name: .bearyFriendsChanged, object: nil, userInfo: userInfo)
     }
 }
