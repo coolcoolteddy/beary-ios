@@ -340,6 +340,7 @@ final class BearyWishWallViewController: UIViewController {
     /// 每条愿望写请求串行执行——voteInFlight（同一愿望同时只允许一个写请求）
     /// ＋ votePendingTarget（请求期间只记最后一次点按的绝对值票态，0 = 取消；
     /// 前一请求结束后再提交）。代次仍只守 UI（旧回包不覆盖新点按态），不管顺序。
+    /// 注意：pendingVote 是游客登录待重放意图，与串行化无关，不复用。
     private var voteInFlight: Set<Int> = []
     private var votePendingTarget: [Int: Int] = [:]
     /// 审计登录杂项：游客投票时存下的待重放意图（wishId, target），登录成功后补投。
@@ -817,6 +818,10 @@ final class BearyWishWallViewController: UIViewController {
     /// 在途，再看请求期间有没有新点按——有则提交最后目标票态（旧回包不应用，
     /// 屏幕早已按最后一次点按渲染；新请求带最新代次），无则按代次守卫正常
     /// 处理回包。同一愿望的请求只会按点按顺序依次发出，服务端不再乱序写入。
+    /// R22 #8：回包结算顺序——先清在途标记（两套标记都清，本条已不在列表时
+    /// 也要结算，否则脏标记永久拦住后续快照确认态）；有待发目标时本次回包是
+    /// 中间态，成功只刷新确认态（待发请求失败时回滚到它）、不碰界面、不播
+    /// 音效，失败静默，随即发出最新目标。
     private func sendVoteRequest(wishId: Int, sendVote: Int, gen: Int) {
         voteInFlight.insert(wishId)
         voteInflight.insert(wishId)
@@ -824,16 +829,26 @@ final class BearyWishWallViewController: UIViewController {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.voteInFlight.remove(wishId)
+                // R22 #8：先清快照在途标记——本条已不在列表时也要结算，
+                // 否则 voteInflight 脏标记永久拦住后续快照确认态。
+                self.voteInflight.remove(wishId)
                 // 串行：请求期间又有新点按——只提交最后目标票态。
                 if let pending = self.votePendingTarget[wishId] {
                     self.votePendingTarget.removeValue(forKey: wishId)
+                    // R22 #8：中间态成功回包只刷新确认态（待发请求失败时回滚
+                    // 到它）、不碰界面、不播音效。
+                    if case .success(let resp) = result {
+                        self.confirmedSeeded.insert(wishId)
+                        self.confirmedVote[wishId] = resp.myVote
+                        self.confirmedUp[wishId] = resp.up ?? self.confirmedUp[wishId] ?? 0
+                        self.confirmedDown[wishId] = resp.down ?? self.confirmedDown[wishId] ?? 0
+                    }
                     self.sendVoteRequest(wishId: wishId, sendVote: pending, gen: self.voteGeneration[wishId] ?? gen)
                     return
                 }
                 // 代次守卫（点赞 likeSeq 同款）：已有更新点按时过期回包直接丢弃，
                 // 不回滚、不摇头、不弹 toast，屏幕只反映最后一次点按。
                 guard let idx = self.indexOfWish(wishId), self.voteGeneration[wishId] == gen else { return }
-                self.voteInflight.remove(wishId)
                 switch result {
                 case .success(let resp):
                     // 审计登录杂项：成功音只在服务端成功回包后播。
