@@ -334,14 +334,20 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             firstLoadStateView.isHidden = false
         }
         let requestUid = SessionManager.shared.currentUser?.id
+        // 第 7 轮 #7：发起时同时捕获鉴权代次——只比账号 ID 时，
+        // A→B→A 快切后旧 A 请求回包的账号 ID 再次相等，会通过
+        // 校验；authEpoch 每次切号单调 +1，旧回包凭代次丢弃。
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchDMConversations { [weak self] result in
             guard let self = self else { return }
             DispatchQueue.main.async {
                 self.loading = false
                 self.tableView.refreshControl?.endRefreshing()
                 self.firstLoadStateView.isHidden = true
-                // 切号后到达的旧号回包直接丢弃；若新号重拉挂起，补发一次。
-                if SessionManager.shared.currentUser?.id != requestUid {
+                // 切号后到达的旧回包直接丢弃（账号 ID + 代次双重校验；
+                // A→B→A 时账号 ID 再次相等，代次不等仍丢弃）；若新号
+                // 重拉挂起，补发一次。
+                if BearyAPI.isStaleAccountLoad(requestAccountId: requestUid, requestEpoch: requestEpoch, currentAccountId: SessionManager.shared.currentUser?.id, currentEpoch: BearyAPI.shared.authEpoch) {
                     if self.needsReloadAfterUserChange {
                         self.needsReloadAfterUserChange = false
                         self.load()
