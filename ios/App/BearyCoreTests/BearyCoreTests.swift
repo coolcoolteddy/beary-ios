@@ -662,3 +662,34 @@ final class BearyNetworkTests: XCTestCase {
         XCTAssertTrue(session.configuration.httpShouldSetCookies)
     }
 }
+
+// ===== 第 7 轮 #7：会话列表 A→B→A 快切，旧请求回包过期判定 =====
+// 只比账号 ID 的旧口径下，A→B→A 后旧 A 请求回包时账号 ID 再次相等，
+// 会通过校验、把过期会话写回新列表；本测试用可控的代次推进复现：
+// 不发真实网络，只推进 (账号 ID, authEpoch) 这一对判定输入——
+// 旧请求发起时捕获 (A, 5)，切到 B 再切回 A 后当前为 (A, 7)，
+// 账号 ID 相同但代次已变，判定必须为过期。
+final class BearyAccountLoadStalenessTests: XCTestCase {
+    func testSameAccountSameEpochIsFresh() {
+        XCTAssertFalse(BearyAPI.isStaleAccountLoad(requestAccountId: 1, requestEpoch: 5, currentAccountId: 1, currentEpoch: 5))
+    }
+
+    func testAccountChangedIsStale() {
+        XCTAssertTrue(BearyAPI.isStaleAccountLoad(requestAccountId: 1, requestEpoch: 5, currentAccountId: 2, currentEpoch: 6))
+    }
+
+    func testABABackToAWithAdvancedEpochIsStale() {
+        // 复现：A 发起加载 (A, epoch 5) 后切到 B (epoch 6)，再切回 A (epoch 7)；
+        // 旧 A 请求此时回包——账号 ID 再次相等（旧口径会放行），代次不等必须丢弃。
+        let requestAccountId = 1
+        let requestEpoch = 5
+        let currentAccountId = 1
+        let currentEpoch = 7
+        XCTAssertEqual(currentAccountId, requestAccountId, "旧口径只比账号 ID：此时相等，会误放行旧回包")
+        XCTAssertTrue(BearyAPI.isStaleAccountLoad(requestAccountId: requestAccountId, requestEpoch: requestEpoch, currentAccountId: currentAccountId, currentEpoch: currentEpoch))
+    }
+
+    func testLoggedOutIsStale() {
+        XCTAssertTrue(BearyAPI.isStaleAccountLoad(requestAccountId: 1, requestEpoch: 5, currentAccountId: nil, currentEpoch: 6))
+    }
+}
