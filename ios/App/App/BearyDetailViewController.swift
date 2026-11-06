@@ -245,6 +245,20 @@ final class BearyDetailViewController: UIViewController {
         v.isHidden = true
         return v
     }()
+    /// 天气图标的对齐包：与 timeLabel 同字号（13pt）的空 label。
+    /// .firstBaseline 栈里 UIImageView 以底边贴基线，图标中心会比时间文字中心
+    /// 高一截（实测约 11pt）；包的基线与 timeLabel 基线相同、框与 timeLabel
+    /// 框等高，图标在包内居中 → 图标中心恒等于时间文字中心，各字号档都成立。
+    /// 空 UILabel 自带基线（卡片 titleSpacerLabel 同款口径），同款皇冠包口径
+    /// （crownWrapView 等高 nameButton、crownView 包内居中）。
+    private let weatherWrapLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.isHidden = true
+        return lb
+    }()
     /// 详情作者行气温（卡片同款口径：有后端 temperature_c 且有天气类型才显，
     /// 无值隐藏、不留空位；详情此前只显天气图标、气温丢了，卡片/详情不一致）。
     private let weatherTempLabel: UILabel = {
@@ -279,7 +293,7 @@ final class BearyDetailViewController: UIViewController {
     }()
     private var moodEmoteView: BearyEmoteView?
     private lazy var authorRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameButton, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, weatherTempLabel, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameButton, crownWrapView, titleSpacerLabel, timeLabel, weatherWrapLabel, weatherTempLabel, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         // 姓名→皇冠间距 6（2026-11-05 ChatGPT 间距跟进；徽章已下线摘掉，
@@ -879,22 +893,33 @@ final class BearyDetailViewController: UIViewController {
             crownWrapWidth,
             crownWrapHeight,
         ])
-        weatherImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 天气图标在对齐包内居中（15×15 不变；包与 timeLabel 等高同基线，
+        // 包中心即时间文字中心）。
+        weatherWrapLabel.addSubview(weatherImageView)
+        NSLayoutConstraint.activate([
+            weatherImageView.centerXAnchor.constraint(equalTo: weatherWrapLabel.centerXAnchor),
+            weatherImageView.centerYAnchor.constraint(equalTo: weatherWrapLabel.centerYAnchor),
+            weatherImageView.widthAnchor.constraint(equalToConstant: 15),
+            weatherImageView.heightAnchor.constraint(equalToConstant: 15),
+        ])
+        weatherWrapLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         moodStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 隐藏子视图的固定尺寸用 999 优先级，避免与 stack 压零冲突（首页同款）。
         let recipientIconHeight = recipientIconView.heightAnchor.constraint(equalToConstant: 13)
         recipientIconHeight.priority = UILayoutPriority(999)
         let crownWidth = crownView.widthAnchor.constraint(equalToConstant: 19)
         crownWidth.priority = UILayoutPriority(999)
-        let weatherWidth = weatherImageView.widthAnchor.constraint(equalToConstant: 15)
+        let weatherWidth = weatherWrapLabel.widthAnchor.constraint(equalToConstant: 15)
         weatherWidth.priority = UILayoutPriority(999)
+        let weatherWrapHeight = weatherWrapLabel.heightAnchor.constraint(equalTo: timeLabel.heightAnchor)
+        weatherWrapHeight.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
             recipientIconView.widthAnchor.constraint(equalToConstant: 13),
             recipientIconHeight,
             crownWidth,
             crownView.heightAnchor.constraint(equalToConstant: 19),
             weatherWidth,
-            weatherImageView.heightAnchor.constraint(equalToConstant: 15),
+            weatherWrapHeight,
         ])
         // authorRow 入栈已移到皇冠块之前（见上，118 闪退修复），此处不再重复添加。
         // 右上角 ⋯ 钮：时间线 moreButton 同款（21pt 灰色、28 框、44 热区），图标恒为三点。
@@ -1355,9 +1380,11 @@ final class BearyDetailViewController: UIViewController {
            let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
             weatherImageView.image = weatherImage
             weatherImageView.isHidden = false
+            weatherWrapLabel.isHidden = false
         } else {
             weatherImageView.image = nil
             weatherImageView.isHidden = true
+            weatherWrapLabel.isHidden = true
         }
         // 气温跟天气图标走同一处（卡片同款门：有气温且有天气类型才显）。
         // #427 的气温显示保留；作者行心情位按 #421 新模型一律隐藏，
