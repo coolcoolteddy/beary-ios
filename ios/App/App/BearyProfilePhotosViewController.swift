@@ -13,6 +13,11 @@ final class BearyProfilePhotosViewController: UIViewController {
     private let authorIdValue: Int?
     private let ownProfileValue: Bool
     private let mutualFriendValue: Bool
+    /// 第 22 轮 B5：互关实时来源——调用方按当前 followState 回传；未传时
+    /// 回落进页时固定的 mutualFriendValue。续拉与重滤一律走实时值。
+    private let mutualFriendProvider: (() -> Bool)?
+    /// 本次过滤用的互关态：优先实时值，绝不沿用进页旧值。
+    private var currentMutualFriend: Bool { mutualFriendProvider?() ?? mutualFriendValue }
     private var diaryEntriesValue: [Entry]
     private var photosValue: [BearyProfilePhotoItem]
     private var photosHasMore: Bool
@@ -20,17 +25,22 @@ final class BearyProfilePhotosViewController: UIViewController {
     /// 翻页失败持续态：true 时尾部多一节重试入口；只由显式点按清掉，
     /// 绝不由 willDisplay 自动重拉（见 fetchNextPageIfNeeded 失败分支）。
     private var photosPageLoadFailed = false
+    /// 第 22 轮 B5：最近一篇限时到期的单次定时（只排最近的一篇，到点重滤）。
+    private var expiryRefilterTimer: Timer?
+    /// 第 22 轮 B5：当前打开的灯箱（弱引用；重滤撤下失效照片时用）。
+    private weak var presentedViewer: BearyEntryImageViewerViewController?
     var onOpenEntry: ((Entry) -> Void)?
 
     /// 审计-个人页设置：全量照片页同样走互关过滤（调用方按实时 followState 传；
     /// 默认 false，与旧行为一致——旧行为下初始 entries 已由调用方过滤，
     /// 续拉页此前漏传互关态，本处补上）。
-    init(authorIdValue: Int?, isOwnProfileValue: Bool, initialEntries: [Entry], diaryHasMoreValue: Bool, onOpenEntryValue: ((Entry) -> Void)?, isMutualFriendValue: Bool = false) {
+    init(authorIdValue: Int?, isOwnProfileValue: Bool, initialEntries: [Entry], diaryHasMoreValue: Bool, onOpenEntryValue: ((Entry) -> Void)?, isMutualFriendValue: Bool = false, isMutualFriendProvider: (() -> Bool)? = nil) {
         self.authorIdValue = authorIdValue
         self.ownProfileValue = isOwnProfileValue
         self.mutualFriendValue = isMutualFriendValue
+        self.mutualFriendProvider = isMutualFriendProvider
         self.diaryEntriesValue = initialEntries
-        self.photosValue = BearyProfileViewController.profilePhotoItems(from: initialEntries, isOwnProfile: isOwnProfileValue, isMutualFriend: isMutualFriendValue)
+        self.photosValue = BearyProfileViewController.profilePhotoItems(from: initialEntries, isOwnProfile: isOwnProfileValue, isMutualFriend: isMutualFriendProvider?() ?? isMutualFriendValue)
         self.photosHasMore = diaryHasMoreValue && authorIdValue != nil
         self.onOpenEntry = onOpenEntryValue
         super.init(nibName: nil, bundle: nil)
@@ -134,6 +144,26 @@ final class BearyProfilePhotosViewController: UIViewController {
         // 空相册自动续拉：首批无可见照片但仍有下一页时，零格使 willDisplay
         // 永不触发，必须在此主动拉起首轮续拉（见 fetchMoreWhileEmptyIfNeeded）。
         fetchMoreWhileEmptyIfNeeded()
+        // 第 22 轮 B5：回前台重滤（后台期间关系／限时可能已变）；最近一篇
+        // 到期时由单次定时重滤，不轮询。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleForegroundRefilter), name: UIApplication.willEnterForegroundNotification, object: nil)
+        scheduleExpiryRefilter()
+    }
+
+    deinit {
+        expiryRefilterTimer?.invalidate()
+        NotificationCenter.default.removeObserver(self, name: UIApplication.willEnterForegroundNotification, object: nil)
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // 第 22 轮 B5：从详情／灯箱回来时关系可能已变（个人页关注态翻转），
+        // 按实时互关态与有效公开态重滤一次；无变化时不 reload、不动滚动位置。
+        refilterPhotosForCurrentVisibility()
+    }
+
+    @objc private func handleForegroundRefilter() {
+        refilterPhotosForCurrentVisibility()
     }
 
     /// 116 数据填入动效：标题计数变化时只淡入标题本身（alpha 0→1、
@@ -188,6 +218,41 @@ final class BearyProfilePhotosViewController: UIViewController {
         fetchNextPageIfNeeded()
     }
 
+    /// 第 22 轮 B5：按最近一篇限时到期排一次单次定时；本人相册不过滤
+    /// 限时，不排；无未到期限时篇时不排，不轮询。
+    private func scheduleExpiryRefilter() {
+        expiryRefilterTimer?.invalidate()
+        expiryRefilterTimer = nil
+        guard !ownProfileValue else { return }
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        guard let next = diaryEntriesValue.compactMap({ $0.ephemeralUntil }).filter({ $0 > nowMs }).min() else { return }
+        let interval = TimeInterval(next - nowMs) / 1000.0 + 0.5
+        expiryRefilterTimer = Timer.scheduledTimer(withTimeInterval: max(interval, 0.5), repeats: false) { [weak self] _ in
+            self?.refilterPhotosForCurrentVisibility()
+        }
+    }
+
+    /// 第 22 轮 B5：按实时互关态与有效公开态重滤（回前台／关系变化／
+    /// 最近一篇到期／续拉后触发）；照片集合无变化时不 reload、不碰滚动位置。
+    /// 同步撤下灯箱里已失效的照片（灯箱持有的照片数组是打开时的快照）。
+    private func refilterPhotosForCurrentVisibility() {
+        let oldKeys = photosValue.map { $0.imageKey }
+        let freshPhotos = BearyProfileViewController.profilePhotoItems(from: diaryEntriesValue, isOwnProfile: ownProfileValue, isMutualFriend: currentMutualFriend)
+        let freshKeys = freshPhotos.map { $0.imageKey }
+        guard freshKeys != oldKeys else {
+            scheduleExpiryRefilter()
+            return
+        }
+        photosValue = freshPhotos
+        collectionView.reloadData()
+        updateTitleAndEmpty()
+        let removedKeys = Set(oldKeys).subtracting(freshKeys)
+        if !removedKeys.isEmpty {
+            presentedViewer?.pruneImageKeys(removedKeys)
+        }
+        scheduleExpiryRefilter()
+    }
+
     private func fetchNextPageIfNeeded() {
         guard photosHasMore, !photosFetching, let authorId = authorIdValue else { return }
         guard let lastEntry = diaryEntriesValue.last, let lastCreated = lastEntry.createdAt, let lastId = lastEntry.id else {
@@ -221,13 +286,15 @@ final class BearyProfilePhotosViewController: UIViewController {
                     // 续拉页同样按创建时间倒序并案：新页全部更旧，直接追加即可保持倒序。
                     let oldPhotoCount = strongSelf.photosValue.count
                     strongSelf.diaryEntriesValue.append(contentsOf: appended)
-                    strongSelf.photosValue = BearyProfileViewController.profilePhotoItems(from: strongSelf.diaryEntriesValue, isOwnProfile: strongSelf.ownProfileValue, isMutualFriend: strongSelf.mutualFriendValue)
+                    strongSelf.photosValue = BearyProfileViewController.profilePhotoItems(from: strongSelf.diaryEntriesValue, isOwnProfile: strongSelf.ownProfileValue, isMutualFriend: strongSelf.currentMutualFriend)
                     // 成功即清持续失败态：本次 reloadData 会把尾部重试节一并撤掉。
                     strongSelf.photosPageLoadFailed = false
                     strongSelf.collectionView.reloadData()
                     strongSelf.updateTitleAndEmpty()
                     // 116：续拉新格错峰滑入（已有格不重播）。
                     strongSelf.staggerNewCells(from: oldPhotoCount)
+                    // 第 22 轮 B5：新页可能带更近的限时到期点，重排单次定时。
+                    strongSelf.scheduleExpiryRefilter()
                     // 空相册续拉：本页仍无可见照片时继续取下一页；仅当本页
                     // 确实推进了游标（去重后有新增）才续拉，去重后零新增时
                     // 不续拉，避免同一游标重复取页死循环。
@@ -275,6 +342,7 @@ final class BearyProfilePhotosViewController: UIViewController {
             }
         }
 let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wallLiveVideos.isEmpty ? nil : wallLiveVideos, startIndex: startIndex)
+        presentedViewer = viewer
         viewer.initialThumbnail = thumbnail
         viewer.originFrameInWindow = originFrame
         viewer.modalPresentationStyle = .fullScreen
