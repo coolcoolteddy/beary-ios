@@ -3482,6 +3482,8 @@ final class BearyChromeViewController: UIViewController {
             return
         }
         guard let detail = presentDetail(entry: entry) else { return }
+        // B3：发补拉时记下各互动字段当前值；回包合并时只合并期间没有变化的字段。
+        let supplementBaseline = detail.captureSupplementBaseline()
         BearyAPI.shared.fetchEntry(id: entryId) { [weak self, weak detail] result in
             DispatchQueue.main.async {
                 guard let self = self, let detail = detail else { return }
@@ -3507,9 +3509,9 @@ final class BearyChromeViewController: UIViewController {
                         guard fetched.id == request.entryId, self.isStillSameDetailSession(request) else { return }
                         switch decision {
                         case .show(let updatedEntry):
-                            detail.update(with: updatedEntry)
+                            detail.update(with: updatedEntry, baseline: supplementBaseline)
                         case .showPlaceholder(let placeholderEntry):
-                            detail.update(with: placeholderEntry)
+                            detail.update(with: placeholderEntry, baseline: supplementBaseline)
                         case .keepContent:
                             // 公开但定不出作者：保持卡片页（不更新、不 toast）。
                             break
