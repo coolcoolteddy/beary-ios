@@ -281,6 +281,76 @@ final class BearyStarMapTests: XCTestCase {
         }
         XCTAssertEqual(BearyStarMap.defaultSlice(for: many), .month(year: 2026, month: 11))
     }
+
+    // MARK: - r17 C5：日记版本指纹 + 建图内存缓存
+
+    func testDiaryVersionStableAcrossReorderAndSensitiveToEdits() throws {
+        let a = try entry("{\"id\":\"b_v1\",\"title\":\"甲\",\"content\":\"湖边桂花开了。\",\"mood\":\"happy\",\"is_public\":true,\"created_at\":\(ms(year: 2026, month: 11, day: 5))}")
+        let b = try entry("{\"id\":\"b_v2\",\"title\":\"乙\",\"content\":\"桂花香满路。\",\"mood\":\"cry\",\"is_public\":true,\"created_at\":\(ms(year: 2026, month: 11, day: 4))}")
+        let base = BearyStarMap.diaryVersion(entries: [a, b], viewerIsAuthor: true)
+        // 同一集合换顺序，指纹不变（fetch 顺序不触发重建）。
+        XCTAssertEqual(BearyStarMap.diaryVersion(entries: [b, a], viewerIsAuthor: true), base)
+        // 改正文：整片词频都可能变，指纹必须变。
+        var edited = b
+        edited.content = "桂花落了一地。"
+        XCTAssertNotEqual(BearyStarMap.diaryVersion(entries: [a, edited], viewerIsAuthor: true), base)
+        // 改心情：亮度与同心情边都变，指纹必须变。
+        var moodEdited = b
+        moodEdited.mood = "happy"
+        XCTAssertNotEqual(BearyStarMap.diaryVersion(entries: [a, moodEdited], viewerIsAuthor: true), base)
+        // 改公开态：过滤集合变，指纹必须变。
+        var visEdited = b
+        visEdited.isPublic = false
+        XCTAssertNotEqual(BearyStarMap.diaryVersion(entries: [a, visEdited], viewerIsAuthor: true), base)
+    }
+
+    func testDiaryVersionDiffersByViewerRole() throws {
+        let a = try entry("{\"id\":\"b_vr1\",\"content\":\"甲篇内容甲。\",\"is_public\":true,\"location_name\":\"示例咖啡馆\",\"location_district\":\"甲区\"}")
+        let b = try entry("{\"id\":\"b_vr2\",\"content\":\"乙篇内容乙。\",\"is_public\":true,\"location_name\":\"示例咖啡馆\",\"location_district\":\"甲区\"}")
+        // 同一片、本人与他人地点键不同（精确名 vs 区级），指纹必须区分。
+        XCTAssertNotEqual(
+            BearyStarMap.diaryVersion(entries: [a, b], viewerIsAuthor: true),
+            BearyStarMap.diaryVersion(entries: [a, b], viewerIsAuthor: false))
+    }
+
+    func testModelCacheHitMissPurgeAndEviction() throws {
+        BearyStarMapCache.purgeAll()
+        let a = try entry("{\"id\":\"b_c1\",\"content\":\"湖边桂花开了。\",\"mood\":\"happy\",\"is_public\":true}")
+        let b = try entry("{\"id\":\"b_c2\",\"content\":\"桂花香满路。\",\"mood\":\"happy\",\"is_public\":true}")
+        let model = BearyStarMap.buildModel(entries: [a, b], viewerIsAuthor: true)
+        let account = BearyStarMapCache.accountKey(viewerId: 7, authorId: 7, viewerIsAuthor: true)
+        let version = BearyStarMap.diaryVersion(entries: [a, b], viewerIsAuthor: true)
+        let key = BearyStarMapCache.key(account: account, slice: .all, diaryVersion: version)
+        XCTAssertNil(BearyStarMapCache.lookup(key: key))
+        BearyStarMapCache.store(key: key, model: model)
+        // 命中：同一键取回同一模型（星数与边数一致）。
+        let hit = BearyStarMapCache.lookup(key: key)
+        XCTAssertEqual(hit?.stars.count, 2)
+        XCTAssertEqual(hit?.edges.count, 1)
+        // 改一篇正文 → 版本变 → miss，不取回旧模型。
+        var edited = b
+        edited.content = "换了内容。"
+        let newVersion = BearyStarMap.diaryVersion(entries: [a, edited], viewerIsAuthor: true)
+        XCTAssertNil(BearyStarMapCache.lookup(key: BearyStarMapCache.key(account: account, slice: .all, diaryVersion: newVersion)))
+        // 切分片 → 另一键 → miss。
+        XCTAssertNil(BearyStarMapCache.lookup(key: BearyStarMapCache.key(account: account, slice: .month(year: 2026, month: 11), diaryVersion: version)))
+        // 算法版本变 → 旧键失效（key 默认取当前算法版本；显式旧版本查不到）。
+        XCTAssertNil(BearyStarMapCache.lookup(key: BearyStarMapCache.key(account: account, slice: .all, diaryVersion: version, algorithmVersion: BearyStarMap.algorithmVersion + 1)))
+        // 退出 / 401 按账号桶清：该账号的槽位全清，别人的不动。
+        let otherAccount = BearyStarMapCache.accountKey(viewerId: 8, authorId: 8, viewerIsAuthor: true)
+        let otherKey = BearyStarMapCache.key(account: otherAccount, slice: .all, diaryVersion: version)
+        BearyStarMapCache.store(key: otherKey, model: model)
+        BearyStarMapCache.purge(viewerBucket: "7")
+        XCTAssertNil(BearyStarMapCache.lookup(key: key))
+        XCTAssertNotNil(BearyStarMapCache.lookup(key: otherKey))
+        // 超容逐出最久未用：再存 4 个新键（上限 4），最早的 otherKey 被逐出。
+        for i in 0..<4 {
+            let k = BearyStarMapCache.key(account: otherAccount, slice: .year(2020 + i), diaryVersion: version)
+            BearyStarMapCache.store(key: k, model: model)
+        }
+        XCTAssertNil(BearyStarMapCache.lookup(key: otherKey))
+        BearyStarMapCache.purgeAll()
+    }
 }
 
 // ===== 与过去的自己对话：日期 / 串状态 / 可见性 / 存储（纯逻辑；UI 在 ProfileVC）=====
