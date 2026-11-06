@@ -495,9 +495,14 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 照片项：按所属日记时间倒序，同日记多图按原顺序；无图日记跳过。
+    /// 他人相册按有效公开态过滤：限时篇到期后 isPublic 仍为 true 的旧数据
+    /// 不再出图（BearyEphemeral.isEffectivelyPublic）；本人相册按作者权限
+    /// 处理，不过滤；仅好友篇与限时互斥，只按互关门控，不查过期。
+    /// 日记筛选（isProfileDiaryDisplayable）一字不动。
     static func profilePhotoItems(from entries: [Entry], isOwnProfile: Bool, isMutualFriend: Bool = false) -> [BearyProfilePhotoItem] {
         var items: [BearyProfilePhotoItem] = []
         for entryValue in sortedDisplayableDiaryEntries(from: entries, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend) {
+            if !isOwnProfile, !entryValue.isFriendsOnly, !BearyEphemeral.isEffectivelyPublic(entryValue) { continue }
             for imageKey in entryValue.images ?? [] {
                 if imageKey.isEmpty == false {
                     items.append(BearyProfilePhotoItem(entry: entryValue, imageKey: imageKey))
@@ -7402,7 +7407,8 @@ class BearyProfileViewController: UIViewController {
             initialEntries: BearyProfileViewController.sortedDisplayableDiaryEntries(from: photoWallSourceEntries, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend),
             diaryHasMoreValue: photoOverflowEntries.isEmpty ? diaryHasMore : photoOverflowHasMore,
             onOpenEntryValue: { [weak self] entryValue in self?.onOpenEntry?(entryValue) },
-            isMutualFriendValue: isMutualFriend
+            isMutualFriendValue: isMutualFriend,
+            isMutualFriendProvider: { [weak self] in self?.isMutualFriend ?? false }
         )
         photosVC.modalPresentationStyle = .fullScreen
         // r17-C6：返回本页时按日记 ID 重算照片索引（删图/换图后不再显示已删的图）。
