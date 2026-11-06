@@ -2222,6 +2222,9 @@ class BearyTimelineViewController: UIViewController {
         daySwitchArrivalKey = nil
     }
     private var trashCountValue = 0
+    /// B5：回收站计数是否已知——首屏/增量刷新取到服务端值或缓存恢复后为真；
+    /// 为假时彻底删除不做本地 -1，回落整页重拉校验，不谎报。
+    private var trashCountKnown = false
     private var countsValue: TlCounts?
     private var loginNotified = false
 
@@ -2977,6 +2980,7 @@ class BearyTimelineViewController: UIViewController {
         timelineEntries = snap.entries
         timelineHasMore = snap.hasMore
         trashCountValue = snap.trashCount
+        trashCountKnown = true
         if let total = snap.total, let priv = snap.priv, let pub = snap.pub {
             countsValue = TlCounts(total: total, priv: priv, pub: pub, nextPub: nil)
         }
@@ -3204,6 +3208,23 @@ class BearyTimelineViewController: UIViewController {
         for key in monthKeysForCurrentView() {
             fetchCalendarMonth(key: key, force: true)
         }
+    }
+
+    /// B5：彻底删除成功后只更新回收站计数（与删帖进回收站的 +1 对称）：
+    /// 被删篇早已不在时间线/个人页，彻底删除除计数外不改变任何模型，
+    /// 故不再整页重拉时间线与个人页。计数已知时本地 -1、刷新回收站钮、
+    /// 同步写回时间线快照（仅全部档写盘，快照只代表全部档）；
+    /// 计数未知时返回 false，调用方回落原有整页重拉校验，不谎报。
+    /// - Returns: 计数是否已本地更新。
+    @discardableResult
+    func applyTrashPurged() -> Bool {
+        guard trashCountKnown else { return false }
+        trashCountValue = max(0, trashCountValue - 1)
+        updateTrashTitle()
+        if timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
+            BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
+        }
+        return true
     }
 
     func refreshAfterDetailChange() {
@@ -4410,6 +4431,7 @@ class BearyTimelineViewController: UIViewController {
                     // before diff/reload, so both copies render the same state.
                     strongSelf.dayEntries = strongSelf.patchedEntries(strongSelf.dayEntries, withFresh: strongSelf.timelineEntries)
                     strongSelf.trashCountValue = list.trashCount ?? 0
+                    strongSelf.trashCountKnown = true
                     strongSelf.countsValue = list.tlCounts
                     strongSelf.timelineHasMore = (list.entries ?? []).count >= strongSelf.firstPageLimit
                     // 110：首屏成功即写时间线缓存（下次冷启动缓存优先；
@@ -4569,7 +4591,10 @@ class BearyTimelineViewController: UIViewController {
                             }
                         }
                     }
-                    if let trashCount = firstList.trashCount { strongSelf.trashCountValue = trashCount }
+                    if let trashCount = firstList.trashCount {
+                        strongSelf.trashCountValue = trashCount
+                        strongSelf.trashCountKnown = true
+                    }
                     if let counts = firstList.tlCounts { strongSelf.countsValue = counts }
                     // hasMore 不动：since 只补头部，旧页分页游标不受影响。
                     // 筛子档不写盘（快照只代表全部档，见首屏同款守卫）。
