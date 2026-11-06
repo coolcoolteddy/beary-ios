@@ -484,7 +484,7 @@ final class BearyWishWallViewController: UIViewController {
             return
         }
         wishStateView.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             self.wishStateView.alpha = 1
         })
     }
