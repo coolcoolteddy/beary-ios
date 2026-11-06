@@ -5166,8 +5166,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 if item.failed {
                     if let name = item.localFile {
                         // 失败图重试：读盘解码也走后台队列，解完回主线程再起上传。
+                        let ownerAccountId = draftOwnerAccountId
                         imagePrepQueue.async { [weak self, weak item] in
-                            let image = BearyDraftImageStore.image(for: name, accountId: self.draftOwnerAccountId)
+                            let image = BearyDraftImageStore.image(for: name, accountId: ownerAccountId)
                             DispatchQueue.main.async {
                                 guard let self = self, let item = item else { return }
                                 var stillThere = false
@@ -5204,8 +5205,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func openCropEditorForImageItem(_ item: ComposerImageItem) {
         if presentedViewController != nil { return }
         if let name = item.localFile {
+            let ownerAccountId = draftOwnerAccountId
             imagePrepQueue.async { [weak self, weak item] in
-                let diskImage = BearyDraftImageStore.image(for: name, accountId: self.draftOwnerAccountId)
+                let diskImage = BearyDraftImageStore.image(for: name, accountId: ownerAccountId)
                 DispatchQueue.main.async {
                     guard let self = self, let item = item else { return }
                     var stillThere = false
@@ -5335,8 +5337,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func restartUploadForRestoredItem(_ item: ComposerImageItem) {
         if let name = item.localFile {
+            let ownerAccountId = draftOwnerAccountId
             imagePrepQueue.async { [weak self, weak item] in
-                let image = BearyDraftImageStore.image(for: name, accountId: self.draftOwnerAccountId)
+                let image = BearyDraftImageStore.image(for: name, accountId: ownerAccountId)
                 DispatchQueue.main.async {
                     guard let self = self, let item = item else { return }
                     var stillThere = false
@@ -5425,6 +5428,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         if !stillThere { return }
         let oldName = item.localFile
+        let ownerAccountId = draftOwnerAccountId
         imagePrepQueue.async { [weak self, weak item] in
             guard let full = BearyImagePrep.jpegData(cropped, maxSide: 1600, quality: 0.85),
                   let thumb = BearyImagePrep.thumbData(cropped, maxSide: 480) else {
@@ -5433,7 +5437,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
                 return
             }
-            let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb, accountId: self.draftOwnerAccountId)
+            let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb, accountId: ownerAccountId)
             DispatchQueue.main.async {
                 guard let self = self, let item = item else { return }
                 var stillThere = false
@@ -5576,6 +5580,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                         return
                                     }
                                     item.imageView.image = image
+                                    let ownerAccountId = draftOwnerAccountId
                                     self.imagePrepQueue.async { [weak self, weak item] in
                                         guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
                                               let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
@@ -5587,7 +5592,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                             }
                                             return
                                         }
-                                        let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb, accountId: self.draftOwnerAccountId)
+                                        let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb, accountId: ownerAccountId)
                                         DispatchQueue.main.async {
                                             guard let self = self, let item = item else { return }
                                             var stillThere = false
@@ -5643,6 +5648,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // 落盘失败则按无本地文件降级（与旧行为一致，草稿里只有 key）。
                     // 编码 + 落盘 + 上传序列化全走后台队列，只编一次（旧写法落盘编一次、
                     // startUpload 又编一次）；主线程只填图与更新 UI。
+                    let ownerAccountId = draftOwnerAccountId
                     self.imagePrepQueue.async { [weak self, weak item] in
                         guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
                               let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
@@ -5654,7 +5660,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             }
                             return
                         }
-                        let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb, accountId: self.draftOwnerAccountId)
+                        let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb, accountId: ownerAccountId)
                         DispatchQueue.main.async {
                             guard let self = self, let item = item else { return }
                             var stillThere = false
@@ -5793,8 +5799,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 continue
             }
             guard let name = item.localFile else { continue }
+            let ownerAccountId = draftOwnerAccountId
             imagePrepQueue.async { [weak self, weak item] in
-                let image = BearyDraftImageStore.image(for: name, accountId: self.draftOwnerAccountId)
+                let image = BearyDraftImageStore.image(for: name, accountId: ownerAccountId)
                 DispatchQueue.main.async {
                     guard let self = self, let item = item else { return }
                     var stillThere = false
@@ -6700,12 +6707,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshImageStripVisibility()
         // 本地图后台解码（失败态不解码，重试点图时再读盘），解完再续传。
         let decodingImages = draft.images
+        let ownerAccountId = draftOwnerAccountId
         imagePrepQueue.async { [weak self] in
             var decoded: [(name: String, image: UIImage?)] = []
             for img in decodingImages {
                 if img.state == .failed { continue }
                 if let name = img.localFile {
-                    decoded.append((name: name, image: BearyDraftImageStore.image(for: name, accountId: self.draftOwnerAccountId)))
+                    decoded.append((name: name, image: BearyDraftImageStore.image(for: name, accountId: ownerAccountId)))
                 }
             }
             DispatchQueue.main.async {
