@@ -5419,10 +5419,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // 原图，不可复用；孤 key 残留与移除同款已知可接受）。
                     // 裁剪同样丢实况：帧已变，旧视频不再对应新帧，继续带旧视频
                     // 会播出与静态帧对不上的实况，故两字段同清、裁后按纯静态重传。
+                    // B1：待传视频文件随旧本地对一起删（deletePair 按同 stem
+                    // 删 mov，见 BearyDraftImageStore），字段与缺失旗标同清。
                     item.imageView.image = cropped
                     item.key = nil
                     item.liveVideoData = nil
                     item.liveVideoKey = nil
+                    item.liveVideoFile = nil
+                    item.liveVideoMissing = false
                     item.failed = false
                     item.localFile = saved
                     if let oldName = oldName, oldName != saved {
@@ -5557,6 +5561,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                             return
                                         }
                                         let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb)
+                                        // B1：实况视频随静图落盘（与静图同 stem 的 <uuid>.mov，
+                                        // 在 imagePrepQueue 上写盘，不占主线程；只写一次，
+                                        // 之后 saveDraftNow 即带上 liveVideoFile，杀 App
+                                        // 后仍可从草稿读回续传。写盘失败时 liveVideoFile
+                                        // 留空，本轮仍凭内存 liveVideoData 上传。
+                                        let videoFile: String?
+                                        if let saved = saved, let videoData = item?.liveVideoData {
+                                            videoFile = BearyDraftImageStore.saveVideo(data: videoData, forStill: saved)
+                                        } else {
+                                            videoFile = nil
+                                        }
                                         DispatchQueue.main.async {
                                             guard let self = self, let item = item else { return }
                                             var stillThere = false
@@ -5570,6 +5585,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                             }
                                             if let saved = saved {
                                                 item.localFile = saved
+                                            }
+                                            if let videoFile = videoFile {
+                                                item.liveVideoFile = videoFile
                                             }
                                             self.saveDraftNow()
                                         }
@@ -5651,6 +5669,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 上传入口（重试/续传）：主线程只置上传态，编码 + base64 + 上传序列化走后台队列。
     private func startUpload(for item: ComposerImageItem, image: UIImage) {
+        // B1：实况视频已丢的项不起传——无视频重传会把实况静默降级为静态，
+        // 须用户重新选择；续传入口已跳过本态，此处是点图重试的第二道守卫。
+        if item.liveVideoMissing {
+            showToast(message: "这张实况需重新选择")
+            return
+        }
         markUploading(item)
         // 扫一遍同款（4c）：置上传态即改发布启用态，旧代码只在上传完成回调里
         // 同步，续传/重试起传后到完成前发布态是陈旧的（应禁用时仍显可用）。
@@ -5727,6 +5751,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             self.markUploaded(item, key: key)
                             item.liveVideoKey = resp.liveKey
                             item.liveVideoData = nil
+                            // B1：视频已在服务端，本地 mov 不再需要，随即删掉；
+                            // 草稿随 scheduleDraftSave 重存为 liveVideoKey、
+                            // 不再引用该文件。重存恰好失败又杀 App 的极窄
+                            // 窗口里，旧版草稿仍指已删的 mov，恢复时按
+                            // “视频已丢”提示重新选择，不静默变静态。
+                            if let videoFile = item.liveVideoFile {
+                                item.liveVideoFile = nil
+                                BearyDraftImageStore.deleteVideo(videoFile)
+                            }
                             item.imageView.image = image
                             self.scheduleDraftSave()
                             self.updatePublishState()
@@ -5751,14 +5784,74 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
+    /// B1：恢复草稿的后台解码（restoreDraft 与 loadDraftFromBox 共用）：
+    /// 静图按 localFile 解码（失败态不解码，重试点图时再读盘）；待传实况
+    /// 视频按 liveVideoFile 读回内存——失败态的视频也要读（点图重试须带
+    /// 上视频重传，否则失败的实况会被静默降级为静态重传）。
+    /// liveVideoKey 已有时视频已在服务端，不读本地 mov。回调在主线程。
+    private func decodeRestoredImages(_ images: [BearyDraftImageItem], completion: @escaping (_ decodedStills: [(name: String, image: UIImage?)], _ liveVideos: [(videoName: String, data: Data?)]) -> Void) {
+        imagePrepQueue.async {
+            var decoded: [(name: String, image: UIImage?)] = []
+            var liveVideos: [(videoName: String, data: Data?)] = []
+            for img in images {
+                if img.state != .failed, let name = img.localFile {
+                    decoded.append((name: name, image: BearyDraftImageStore.image(for: name)))
+                }
+                if img.liveVideoKey == nil, let videoName = img.liveVideoFile {
+                    liveVideos.append((videoName: videoName, data: BearyDraftImageStore.videoData(for: videoName)))
+                }
+            }
+            DispatchQueue.main.async {
+                completion(decoded, liveVideos)
+            }
+        }
+    }
+
+    /// B1：把解码结果填回图片条：静图填预览（解码失败且有 key 时退回远程
+    /// 缩略图）；实况视频填回内存供续传，读不到的记 liveVideoMissing
+    ///（保留预览、不自动续传、不静默降级）并提示重新选择。
+    /// 调用方在填完后再调 resumePendingUploads。
+    private func applyRestoredImages(decoded: [(name: String, image: UIImage?)], liveVideos: [(videoName: String, data: Data?)]) {
+        for entry in decoded {
+            for item in imageItems {
+                if item.localFile == entry.name {
+                    if let image = entry.image {
+                        item.imageView.image = image
+                    } else if let key = item.key,
+                              let url = BearyImageURLs.imageURL(key: key, thumb: true) {
+                        item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 84 * UIScreen.main.scale)
+                    }
+                }
+            }
+        }
+        var missing = false
+        for entry in liveVideos {
+            for item in imageItems {
+                if item.liveVideoFile == entry.videoName {
+                    if let data = entry.data {
+                        item.liveVideoData = data
+                    } else {
+                        item.liveVideoMissing = true
+                        missing = true
+                    }
+                }
+            }
+        }
+        if missing {
+            showLiveVideoMissingToast()
+        }
+    }
+
     /// 重开编辑器时续传：有本地文件、无 key、非失败态的项自动重新上传。
     /// 失败态的项不自动续传，等用户点图重试；本地文件读不出的项置失败态。
+    /// B1：实况视频已丢的项（liveVideoMissing）不自动续传——无视频重传
+    /// 会把实况静默降级为静态，须用户重新选择。
     /// 一律后台读盘解码（不复用条内图：解码失败时条内可能是远程缩略图，复用会把
     /// 缩略图当原图上传）。
     private func resumePendingUploads() {
         let pending = imageItems
         for item in pending {
-            if item.key != nil || item.uploading || item.failed {
+            if item.key != nil || item.uploading || item.failed || item.liveVideoMissing {
                 continue
             }
             guard let name = item.localFile else { continue }
@@ -6042,17 +6135,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             completion?(DraftSaveResult(succeeded: true, hadPreviousSavedVersion: false))
             return
         }
-        // C10 空判定（心情不算内容）：正文 trim 为空、且无已上传图、无天气、无 @、
+        // C10 空判定（心情不算内容）：正文 trim 为空、且无图、无天气、无 @、
         // 无引用时，整篇视为空——已有草稿删篇并隐藏状态，不新建空草稿。
-        // 上传中/失败图不进草稿（网页 draftImgList 同款：up_ 占位一律排除），故空判定
-        // 与落盘图片都只看已上传图；内存里的上传中/失败项仍留在图片条里可续传/重试。
-        var uploadedItems: [ComposerImageItem] = []
+        // B1：上传中/失败图也进草稿（已落盘的附件按原顺序保存引用和
+        // pending/failed 状态；只有 key 的已上传项仍为 uploaded）。
+        // 只选了尚未传完的图时，本分支不再把整篇当空草稿删掉——有 localFile
+        // 的附件即算内容；仍在读图/编码、连本地文件都没有的占位项不算
+        // （无物可存，杀 App 后本就无从恢复），见下文 persistableItems。
+        var persistableItems: [ComposerImageItem] = []
         for item in imageItems {
-            if item.key != nil {
-                uploadedItems.append(item)
+            if item.key != nil || item.localFile != nil {
+                persistableItems.append(item)
             }
         }
-        let hasRealContent = !trimmedContent().isEmpty || !uploadedItems.isEmpty
+        let hasRealContent = !trimmedContent().isEmpty || !persistableItems.isEmpty
             || selectedWeather != nil || selectedRecipient != nil || selectedQuote != nil
             || selectedLocation != nil || !headlineText.isEmpty
         if !hasRealContent {
@@ -6078,11 +6174,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         var images: [BearyDraftImageItem] = []
-        for item in uploadedItems {
-            // 实况已上传项随 liveVideoKey 进草稿：杀 App 后恢复仍能重建
-            // live_videos 映射；未上传/上传中的项本来就不进草稿（旧口径），
-            // 实况待传视频只留内存，杀 App 后按旧口径丢弃、不静默变静态。
-            images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: .uploaded, liveVideoKey: item.liveVideoKey))
+        for item in persistableItems {
+            // B1：已落盘的附件按原顺序保存引用和状态——有 key 即 uploaded，
+            // 无 key 有本地文件即 pending（失败态即 failed）；实况已上传项
+            // 随 liveVideoKey 进草稿，待传实况随 liveVideoFile 进草稿
+            //（视频已落盘，杀 App 后恢复仍可从同一格续传）。
+            let state: BearyDraftImageState
+            if item.key != nil {
+                state = .uploaded
+            } else if item.failed {
+                state = .failed
+            } else {
+                state = .pending
+            }
+            images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: state, liveVideoKey: item.liveVideoKey, liveVideoFile: item.liveVideoFile))
         }
         // @ 展示名口径与 refreshRecipientRow 一致（展示名 / @handle / “用户”兜底），
         // 只为恢复 chip 显示；发布仍以 mentioned_user_id 为准。
@@ -6253,6 +6358,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     let failed = (img.state == .failed)
                     let item = self.createImageItem(localImage: nil, key: img.serverKey, uploading: false, localFile: img.localFile, failed: failed)
                     item.liveVideoKey = img.liveVideoKey
+                    // B1：待传实况才带本地视频文件名（已上传项只留 liveVideoKey，
+                    // 视频已在服务端，不再读本地 mov）；pending/failed 项按
+                    // state 原样建项，续传/重试走下文解码后的同一格。
+                    if img.liveVideoKey == nil {
+                        item.liveVideoFile = img.liveVideoFile
+                    }
                     self.insertImageItem(item)
                     // 只有 key 的老项（v1 迁移而来）走远程缩略图；有本地文件的项等后台解码后填图。
                     if img.localFile == nil, let key = img.serverKey,
@@ -6275,36 +6386,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.showToast(message: "已恢复上次的草稿")
                 }
                 // 本地图后台解码：失败态不解码（重试时再读盘）；解码失败且有 key 时退回远程缩略图。
+                // B1：待传实况视频同批读回内存（见 decodeRestoredImages），
+                // 读不到的记 liveVideoMissing，续传时跳过、不静默变静态。
                 let decodingImages = draft.images
-                self.imagePrepQueue.async { [weak self] in
-                    var decoded: [(name: String, image: UIImage?)] = []
-                    for img in decodingImages {
-                        if img.state == .failed { continue }
-                        if let name = img.localFile {
-                            decoded.append((name: name, image: BearyDraftImageStore.image(for: name)))
-                        }
-                    }
-                    DispatchQueue.main.async {
-                        guard let self = self else { return }
-                        for entry in decoded {
-                            for item in self.imageItems {
-                                if item.localFile == entry.name {
-                                    if let image = entry.image {
-                                        item.imageView.image = image
-                                    } else if let key = item.key,
-                                              let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                                        item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 84 * UIScreen.main.scale)
-                                    }
-                                }
-                            }
-                        }
-                        self.resumePendingUploads()
-                        self.verifyRestoredQuote()
-                        // 录屏批 (c) 同款：异步解码/续传完成后也同步一次发布态，
-                        // 续传起的上传态经 startUpload 的同步 + 上传完成回调覆盖，
-                        // 这里只保证恢复流程收尾时发布态与当前内容一致。
-                        self.updatePublishState()
-                    }
+                self.decodeRestoredImages(decodingImages) { [weak self] decoded, liveVideos in
+                    guard let self = self else { return }
+                    self.applyRestoredImages(decoded: decoded, liveVideos: liveVideos)
+                    self.resumePendingUploads()
+                    self.verifyRestoredQuote()
+                    // 录屏批 (c) 同款：异步解码/续传完成后也同步一次发布态，
+                    // 续传起的上传态经 startUpload 的同步 + 上传完成回调覆盖，
+                    // 这里只保证恢复流程收尾时发布态与当前内容一致。
+                    self.updatePublishState()
                 }
             }
         }
@@ -6640,6 +6733,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             let failed = (img.state == .failed)
             let item = createImageItem(localImage: nil, key: img.serverKey, uploading: false, localFile: img.localFile, failed: failed)
             item.liveVideoKey = img.liveVideoKey
+            // B1：待传实况才带本地视频文件名（已上传项只留 liveVideoKey，
+            // 视频已在服务端，不再读本地 mov）；pending/failed 项按
+            // state 原样建项，续传/重试走下文解码后的同一格。
+            if img.liveVideoKey == nil {
+                item.liveVideoFile = img.liveVideoFile
+            }
             insertImageItem(item)
             // 只有 key 的老项走远程缩略图；有本地文件的项等后台解码后填图。
             if img.localFile == nil, let key = img.serverKey,
@@ -6649,33 +6748,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         refreshImageStripVisibility()
         // 本地图后台解码（失败态不解码，重试点图时再读盘），解完再续传。
+        // B1：待传实况视频同批读回内存（见 decodeRestoredImages），
+        // 读不到的记 liveVideoMissing，续传时跳过、不静默变静态。
         let decodingImages = draft.images
-        imagePrepQueue.async { [weak self] in
-            var decoded: [(name: String, image: UIImage?)] = []
-            for img in decodingImages {
-                if img.state == .failed { continue }
-                if let name = img.localFile {
-                    decoded.append((name: name, image: BearyDraftImageStore.image(for: name)))
-                }
-            }
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                for entry in decoded {
-                    for item in self.imageItems {
-                        if item.localFile == entry.name {
-                            if let image = entry.image {
-                                item.imageView.image = image
-                            } else if let key = item.key,
-                                      let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                                item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 84 * UIScreen.main.scale)
-                            }
-                        }
-                    }
-                }
-                self.resumePendingUploads()
-                // 录屏批 (c) 同款：草稿箱恢复的异步解码收尾时同步一次发布态。
-                self.updatePublishState()
-            }
+        decodeRestoredImages(decodingImages) { [weak self] decoded, liveVideos in
+            guard let self = self else { return }
+            self.applyRestoredImages(decoded: decoded, liveVideos: liveVideos)
+            self.resumePendingUploads()
+            // 录屏批 (c) 同款：草稿箱恢复的异步解码收尾时同步一次发布态。
+            self.updatePublishState()
         }
         updateCountLabel()
         syncWeatherToolButton()
@@ -6757,9 +6838,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 决议第 4 项 B：取消不再弹三选、无丢弃路径，直接关 + 静默存草稿。
         // 草稿规则不动：saveDraftNow 原样走分级保存、纯心情不保存的现有逻辑。
         // C10：关闭时仍有图片在上传（失败图不算）——toast 挂 presenting 方，
-        // 关编辑器后仍可见。旧文案“这次没存进草稿”范围过大：紧接着仍调
-        // saveDraftNow，正文与已上传图等按原逻辑照常落盘，只有 key 为空的
-        // 上传中图被落盘过滤排除；故新文案只说上传中的图片没存进草稿。
+        // 关编辑器后仍可见。B1 起上传中的图只要已落盘（有本地文件）就随
+        // 草稿存下、重开后续传，成功分支的文案已改“已存进草稿”；只有
+        // 连本地文件都没有的占位项（仍在读图/编码）才存不进草稿。
         // 该 toast 只在真正关闭时发（见成功分支）：保存失败留页时不发到
         // 看不见的 presenting 方，失败提示另由本页 toast 给。
         // 关闭即提交缓冲删除（草稿随即按删除后状态落盘，见 saveDraftNow）。
@@ -6795,7 +6876,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     : "草稿保存失败，这篇草稿还没存上，再点一次关闭重试")
                 return
             }
-            if self.hasUploadingImage() {
+            // B1：上传中的图已随草稿存下（有本地文件即进草稿），重开后
+            // 从同一格续传，不再是旧文案的“不会存进草稿”；只有连本地
+            // 文件都没有的占位项（仍在读图/编码）才存不进草稿。
+            let uploadingSaved = self.imageItems.contains { $0.uploading && $0.localFile != nil }
+            let uploadingUnsaved = self.imageItems.contains { $0.uploading && $0.localFile == nil }
+            if uploadingSaved {
+                self.showToastAfterClose(message: "图片还没上传完，已存进草稿，打开后继续上传")
+            } else if uploadingUnsaved {
                 self.showToastAfterClose(message: "图片还没上传完，不会存进草稿")
             }
             self.onCancelled?()
@@ -6850,6 +6938,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 文案逐字取自网页拦截 toast），出 toast 并停留在编辑器，不发请求。
         if hasFailedImage() {
             showToast(message: "有图片上传失败，点失败的图重试或移除后再发布")
+            return
+        }
+        // B1：实况视频已丢的图拦截不发（与失败图同口径）：视频不在了还发，
+        // 等于把用户明确选中的实况静默降级为静态图；须重新选择后再发布。
+        if hasLiveVideoMissingImage() {
+            showToast(message: "有实况视频已丢失，重新选择该图片后再发布")
             return
         }
         // 决议第 3 项 B：去掉发布/保存确认弹框，点发布/保存直接发（网页口径：
@@ -7003,6 +7097,27 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         return false
+    }
+
+    /// B1：条里是否有实况视频已丢的图（草稿里有 liveVideoFile 但磁盘文件
+    /// 不在）：发布须拦截，不静默降级为静态（见 didTapPublish）。
+    private func hasLiveVideoMissingImage() -> Bool {
+        for item in imageItems {
+            if item.liveVideoMissing {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// B1：实况视频已丢的提示——恢复流程的“已恢复上次的草稿”toast 在
+    /// 0.35s 后才发，直接当场发会被它盖掉，故延后 0.5s 再发；草稿箱
+    /// 打开路径无此竞争，同款延后无害。
+    private func showLiveVideoMissingToast() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self, self.view.window != nil else { return }
+            self.showToast(message: "这张实况需重新选择")
+        }
     }
 
     /// 新建发布（quote-freeze）：提交载荷只读 snapshot，不再重读正文、
@@ -7575,12 +7690,18 @@ private final class ComposerImageItem {
     var uploadTask: URLSessionTask?
     var localFile: String?
     var failed: Bool
-    /// 实况（仅内存 + 已上传 key，不进图片文件本身）：
+    /// 实况（待传视频已落盘 + 已上传 key）：
     /// liveVideoData = 本轮新选实况待上传的 mov（上传成功后清掉，只留 key）；
     /// liveVideoKey = 服务端视频 key（上传回包 live_key，或编辑回填的原实况）。
-    /// 裁剪会清掉两者（帧已变，旧视频不再对应，见 applyCroppedImage）。
+    /// liveVideoFile = 待传 mov 的本地文件名（<uuid>.mov，静图同 stem，
+    /// B1：随静图一起落盘，杀 App 后从草稿读回 liveVideoData 再续传）；
+    /// 上传成功/裁剪/删图时随静图一起清（见 deletePair）。
+    /// liveVideoMissing = 草稿里有 liveVideoFile 但磁盘文件不在：静图预览
+    /// 保留，不自动续传、不随发布静默降级为静态，须用户重新选择。
     var liveVideoData: Data?
     var liveVideoKey: String?
+    var liveVideoFile: String?
+    var liveVideoMissing = false
     let container: UIView
     let imageView: UIImageView
     let spinner: BearyWebRingSpinnerView
