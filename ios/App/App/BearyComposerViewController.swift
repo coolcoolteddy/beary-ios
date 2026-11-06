@@ -5496,14 +5496,44 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         }
                         return
                     }
-                    var videoData = Data()
+                    // R22 #9：实况视频流式写临时文件 + 提前截断——dataReceivedHandler
+                    // 每收到一块就追加写盘、只记字节数，整段视频不再常驻内存；
+                    // 累计超 10MB 立即取消资源请求，不等读完；临时文件只活到本次
+                    // 读取结束，各出口都删。10MB 上限本身不动（仍是上传接受上限）。
+                    let videoTempURL = FileManager.default.temporaryDirectory.appendingPathComponent("beary-live-\(UUID().uuidString).mov")
+                    guard FileManager.default.createFile(atPath: videoTempURL.path, contents: nil),
+                          let videoHandle = try? FileHandle(forWritingTo: videoTempURL) else {
+                        DispatchQueue.main.async {
+                            guard let self = self, let item = item else { return }
+                            self.removeImageItem(item)
+                            self.showToast(message: "实况视频读取失败，未添加")
+                        }
+                        return
+                    }
+                    var videoBytes = 0
+                    var videoOverLimit = false
+                    var videoRequestID: PHAssetResourceDataRequestID = 0
                     // iCloud 照片：默认 options 不允许联网，原图只在本地时才
                     // 读得出；开了「优化储存空间」的实况会直接读失败、整张图被
                     // 移除。显式允许联网（PHPicker 的 loadObject 本就自动下载，
                     // 这里须手动开），失败口径与 toast 不变。
                     let videoOptions = PHAssetResourceRequestOptions()
                     videoOptions.isNetworkAccessAllowed = true
-                    PHAssetResourceManager.default().requestData(for: videoResource, options: videoOptions, dataReceivedHandler: { videoData.append($0) }, completionHandler: { [weak self, weak item] error in
+                    videoRequestID = PHAssetResourceManager.default().requestData(for: videoResource, options: videoOptions, dataReceivedHandler: { chunk in
+                        guard !videoOverLimit else { return }
+                        videoHandle.write(chunk)
+                        videoBytes += chunk.count
+                        if videoBytes > BearyLivePhoto.maxVideoBytes {
+                            videoOverLimit = true
+                            try? FileManager.default.removeItem(at: videoTempURL)
+                            PHAssetResourceManager.default().cancelDataRequest(videoRequestID)
+                        }
+                    }, completionHandler: { [weak self, weak item] error in
+                        // 读盘在后台线程做（completionHandler 本就不在主线程）：
+                        // 先关句柄再读文件，超限/失败/读完都删临时文件。
+                        try? videoHandle.close()
+                        let videoData: Data? = videoOverLimit ? nil : try? Data(contentsOf: videoTempURL)
+                        try? FileManager.default.removeItem(at: videoTempURL)
                         DispatchQueue.main.async {
                             guard let self = self, let item = item else { return }
                             var stillThere = false
@@ -5515,7 +5545,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             if !stillThere {
                                 return
                             }
-                            if error != nil || videoData.isEmpty {
+                            if videoOverLimit {
+                                self.removeImageItem(item)
+                                self.showToast(message: "实况视频超过 10MB，未添加")
+                                return
+                            }
+                            if error != nil {
+                                self.removeImageItem(item)
+                                self.showToast(message: "实况视频读取失败，未添加")
+                                return
+                            }
+                            guard let videoData = videoData, !videoData.isEmpty else {
                                 self.removeImageItem(item)
                                 self.showToast(message: "实况视频读取失败，未添加")
                                 return
