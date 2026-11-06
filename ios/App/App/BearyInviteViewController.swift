@@ -15,8 +15,9 @@ import UIKit
 //     “注册后 30 天内可补绑（还剩 N 天 / 还剩不到 1 天）”；其余 → 不显示绑定区。
 //   - 绑定结果文案与网页 ivDoBind 同款（granted/flagged/其他成功态、cancelled、
 //     服务端 message 透传、网络异常）。
-// 数据来源：BearyAPI.fetchMe（user.invite_code + user.referral），与网页 openInvite
-// 的 fetchMe 刷新同口径；绑定走 BearyAPI.bindReferral。
+// 数据来源：SessionManager.refreshMe（复用本次会话的 /me：已确认字段
+// 先渲染，在途 /me 订阅结果、不多发请求，字段缺失再等待请求），与网页
+// openInvite 的 fetchMe 刷新同口径；绑定走 BearyAPI.bindReferral。
 // 呈现方式：容器以弹窗呈现（宽 ≥821 居中卡片 / 宽 ≤820 底 sheet，与编辑器
 // 模态同款）；本页不决定呈现，只定内容与弹窗高度（见 updatePreferredSheetHeight）。
 // 容器接线：
@@ -456,6 +457,23 @@ final class BearyInviteViewController: UIViewController {
 
     private func load(afterRender: (() -> Void)? = nil) {
         guard !isLoading else { return }
+        // r17-C8：先用本次会话已确认的字段渲染——冷启动快照恢复的 MeUser
+        // 三字段全为 nil（SessionManager.restoreCachedUserFromVault），
+        // “会话对象已经有”只在 /me 成功回包后成立；故三字段（inviteCode /
+        // referral / plusUntil）齐全才走快路径，缺任一字段都等一次 /me。
+        // 同会话已有 /me 在途时订阅结果（SessionManager.refreshMe 在途
+        // 合并），不再多发一次 /me；字段缺失再等待请求，不直接给缺省态。
+        if let user = SessionManager.shared.currentUser,
+           let code = user.inviteCode,
+           let ref = user.referral,
+           let until = user.plusUntil {
+            inviteCode = code
+            referral = ref
+            plusUntil = until
+            render()
+            afterRender?()
+            return
+        }
         isLoading = true
         // 第六轮 04：发起时同时拍本地代次、会话代次与账号（通知页／编辑器
         // 引用面板／设置页 meGeneration 同款口径）；回包先比三者，任一失配
@@ -466,10 +484,12 @@ final class BearyInviteViewController: UIViewController {
         let requestEpoch = BearyAPI.shared.authEpoch
         let requestAccountId = BearyAPI.shared.authAccountId
         retryButton.isHidden = true
-        // U6：加载中统计区显示“加载中…”，复制钮在拿到码之前禁用。
+        // U6：加载中统计区显示“加载中…”，复制钮在拿到码之前禁用；码区
+        // 等待期间同样先显“加载中…”，不再直接给缺省态“—”。
+        setLabelTextFaded(codeLabel, "加载中…")
         setLabelTextFaded(statsLabel, "加载中…")
         updateCopyButton()
-        BearyAPI.shared.fetchMe { [weak self] result in
+        SessionManager.shared.refreshMe { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // 第六轮 04：旧账号回包丢弃——不写邀请码/统计/plusUntil，
@@ -499,10 +519,22 @@ final class BearyInviteViewController: UIViewController {
                     } else {
                         strongSelf.showMessage("请先登录")
                     }
+                case .failure(.cancelled):
+                    // 在途 /me 被新会话取代（退出/切号）：按当前会话重定——
+                    // 有用户则重走 load（新会话字段可能已确认），无用户则走登录门。
+                    if SessionManager.shared.currentUser != nil {
+                        strongSelf.load(afterRender: afterRender)
+                    } else if let onRequireLogin = strongSelf.onRequireLogin {
+                        onRequireLogin()
+                    } else {
+                        strongSelf.showMessage("请先登录")
+                    }
                 case .failure(.network):
                     // 清单第 14 项：网络失败时统计区不许继续停在“加载中…”——
                     // 改写明确文案“加载失败”，不清空（消息行的绑定成功文案优先规则不动，
-                    // 只改统计区这一行）。
+                    // 只改统计区这一行）。码区失败时回缺省态“—”——已等过一次
+                    // /me，不是未等先给。
+                    strongSelf.codeLabel.text = "—"
                     strongSelf.statsLabel.text = "加载失败"
                     // 审计 P2：绑定后二次刷新失败时，成功文案优先于加载失败文案。
                     if let pending = strongSelf.pendingBindMessage {
@@ -514,6 +546,7 @@ final class BearyInviteViewController: UIViewController {
                     strongSelf.retryButton.isHidden = false
                 case .failure:
                     // 清单第 14 项：同上，非网络类加载失败统计区亦显“加载失败”，不清空。
+                    strongSelf.codeLabel.text = "—"
                     strongSelf.statsLabel.text = "加载失败"
                     if let pending = strongSelf.pendingBindMessage {
                         strongSelf.showMessage(pending, ok: strongSelf.pendingBindMessageOK)
@@ -560,6 +593,8 @@ final class BearyInviteViewController: UIViewController {
         let bindWasHidden = bindRow.isHidden
         let hintWasHidden = bindHintLabel.isHidden
         setLabelTextFaded(codeLabel, inviteCode ?? "—")
+        // r17-C8：render 只在已确认字段或一次 /me 回包后调用，inviteCode
+        // 至此仍为 nil 即服务端确实未下发，不是未等先给的缺省态。
         updateCopyButton()
         // 审计 P2：referral 尚未回包时统计区保留“加载中…”，不回落假零值。
         if let ref = referral {
@@ -654,6 +689,9 @@ final class BearyInviteViewController: UIViewController {
 
     /// 5-12：granted 文案补“Plus 至 YYYY/M/d”。plusUntil 为 /me 下发的毫秒 epoch；
     /// 永久阈值与设置页 BearyAccountText.permanentThreshold 同值（该 enum 为设置页私有，此处不跨文件引用）。
+    /// r17-C8：plusUntil 缺失时本守卫直接 return——缺失态已由 load() 先等
+    /// 一次 /me 解决（快路径三字段齐全、慢路径回包后再 render），走到这里
+    /// 仍为 nil 即服务端确实未下发，不再另起请求。
     private func appendGrantedPlusUntil(baseText: String) {
         guard messageLabel.text == baseText else { return }
         guard let until = plusUntil, until > 0 else { return }
