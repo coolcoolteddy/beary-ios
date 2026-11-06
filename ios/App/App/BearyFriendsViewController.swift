@@ -279,14 +279,21 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             firstLoadStateView.isHidden = false
         }
         let requestUid = SessionManager.shared.currentUser?.id
+        // r28-2：发起时同时捕获鉴权代次——只比账号 ID 时，A→B→A
+        // 快切后旧 A 请求回包的账号 ID 再次相等，会通过校验、把切号前
+        // 的陈旧快照当作有效回包渲染；authEpoch 每次权威登录态变迁
+        // 单调 +1，旧回包凭代次丢弃（同款修法见 #1126 DM 会话页）。
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchFriends { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.loading = false
                 self.tableView.refreshControl?.endRefreshing()
                 self.firstLoadStateView.isHidden = true
-                // 切号后到达的旧号回包直接丢弃；若新号重拉挂起，补发一次。
-                if SessionManager.shared.currentUser?.id != requestUid {
+                // 切号后到达的旧回包直接丢弃（账号 ID + 代次双重校验；
+                // A→B→A 时账号 ID 再次相等，代次不等仍丢弃）；若新号重拉挂起，补发一次。
+                if SessionManager.shared.currentUser?.id != requestUid
+                    || BearyAPI.shared.authEpoch != requestEpoch {
                     if self.needsReloadAfterUserChange {
                         self.needsReloadAfterUserChange = false
                         self.load()
@@ -304,6 +311,14 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                 }
                 self.updateTitleAndEmptyState()
                 self.tableView.reloadData()
+                // r28-2：匹配分支同样消费切号挂起旗——此前只在不匹配
+                // 分支清旗，匹配分支既不清旗也不补拉，应补拉的新请求
+                // 会被静默吞掉、旗标残留。先渲染本次有效回包，再清旗
+                // 补拉一次；旗已在补拉前清掉，不会循环触发。
+                if self.needsReloadAfterUserChange {
+                    self.needsReloadAfterUserChange = false
+                    self.load()
+                }
             }
         }
     }
