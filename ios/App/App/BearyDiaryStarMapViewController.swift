@@ -690,6 +690,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private func selectSlice(_ newSlice: StarMapSlice) {
         slice = newSlice
         clearSelection()
+        beginSliceTransition()
         recompute()
     }
 
@@ -702,6 +703,15 @@ final class BearyDiaryStarMapViewController: UIViewController {
         )
         alert.addAction(UIAlertAction(title: "知道了", style: .default))
         present(alert, animated: BearyMotion.animated(true))
+    }
+
+    /// P2-12：切分片时先暂停旧图点按与无障碍激活——recompute 只同步重建
+    /// 药丸（基线 :680），新模型要等后台任务回主线程才经 applyModelToSky 提交；
+    /// 窗口期内画布仍用旧命中数据，旧星可点、VoiceOver 也能激活旧篇。
+    /// 与月药丸同路径的年／全年／未标日期共用此门（同一竞态）。
+    /// 按压反馈不另加：药丸经 pillButton 已有 bearyAddPressFeedback（）。
+    private func beginSliceTransition() {
+        skyView.setInteractionPaused(true)
     }
 
     @objc private func didTapFilterPill(_ sender: UIButton) {
@@ -797,6 +807,10 @@ final class BearyDiaryStarMapViewController: UIViewController {
             skyEdges.append(edge)
         }
         skyView.setStars(model.stars, edges: skyEdges, pointsById: pointsById, selectedStarId: selectedStarId, selectedEdgeId: selectedEdgeId)
+        // P2-12：新范围、新画面与命中数据经 setStars 一起提交后，才恢复
+        // 画布点按与无障碍激活；新月份为空时 recompute 的空态先行分支同步
+        // 走到这里（空模型当即提交、旧星当即消失），同样恢复。
+        skyView.setInteractionPaused(false)
         let isEmpty = filteredEntries.isEmpty || BearyStarMap.entries(in: filteredEntries, slice: slice).isEmpty
         // 扫荡 C：空态塌掉 sky 高、藏状态行、内容底改锚空视图——否则隐藏的
         // sky（420 高）与状态行仍撑内容高，空视图下方留空白、状态行透在
@@ -1285,6 +1299,8 @@ private final class StarMapSkyView: UIView {
     private var pointsById: [String: (x: Double, y: Double)] = [:]
     private var selectedStarId: String?
     private var selectedEdgeId: String?
+    /// P2-12：切分片过渡期是否暂停旧图交互（点按＋无障碍激活同停）。
+    private var interactionPaused = false
 
     /// 第十一轮 02：未选中时连线显示预算——模型本身的边一字不动（后台建模仍
     /// 算全部关联），只限制画布每帧实际绘制的边数。420pt 高的画布上 600 条
@@ -1394,11 +1410,21 @@ private final class StarMapSkyView: UIView {
     private var starAccessibilityElements: [String: StarMapStarAccessibilityElement] = [:]
     private var lastAccessibilitySize: CGSize = .zero
 
+    /// P2-12：切分片过渡期暂停／恢复旧图交互——暂停时手势收不到点按
+    /// （isUserInteractionEnabled = false），无障碍元素同步清空，VoiceOver
+    /// 也激活不了旧星；恢复时按当前（已提交的新）模型重建无障碍元素。
+    func setInteractionPaused(_ paused: Bool) {
+        interactionPaused = paused
+        isUserInteractionEnabled = !paused
+        syncAccessibilityElements()
+    }
+
     /// 审计登录杂项：按当前 stars 生成 VoiceOver 元素——每颗星一个 button，
     /// label 为“日期＋篇名 / 字数”，frame 为星心命中框；点按走现有 didTapStar
     /// 路径（经 onStarTap 回调），视觉绘制一字不动。
     private func syncAccessibilityElements() {
-        guard !stars.isEmpty, bounds.width > 0, bounds.height > 0 else {
+        // P2-12：过渡期暂停时不暴露任何星元素（旧 onActivate 仍回调旧 Entry）。
+        guard !interactionPaused, !stars.isEmpty, bounds.width > 0, bounds.height > 0 else {
             accessibilityElements = nil
             lastAccessibilitySize = bounds.size
             return
