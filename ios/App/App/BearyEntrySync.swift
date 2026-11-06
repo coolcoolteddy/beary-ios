@@ -45,6 +45,13 @@ import Foundation
 //   - 提交守卫（5-26）：与日记腿同款写盘代际——同步拉取开始后发生过任何
 //     trash.json 写盘，本次提交跳过保旧盘（不抹同步途中删帖进桶的记录），下次 kick 重跑。
 
+/// 同步落盘写失败（R16-2）：saveDay / saveAll / commitFullSync 以 Result
+/// 回传，调用方（全量同步提交）仅在全部成功时记已同步；写盘失败绝不
+/// 记同步成功，旧快照保留、下次 kick 重跑。
+enum BearySyncStoreError: Error {
+    case directoryUnavailable
+}
+
 /// 时间线日缓存的磁盘持久层：按账号分桶、按北京日归档。
 /// 目录：Application Support / beary_entry_sync_<uid>/，文件 <YYYY-MM-DD>.json（Entry 数组）。
 enum BearyEntrySyncStore {
@@ -82,11 +89,27 @@ enum BearyEntrySyncStore {
     }
 
     /// 写某日落盘（单日写透：时间线日拉取/预取成功、发布/编辑 upsert 均走这里）。
-    static func saveDay(accountId: Int, dayKey: String, entries: [Entry]) {
-        guard let url = dayFileURL(accountId: accountId, dayKey: dayKey),
-              let data = try? makeEncoder().encode(entries) else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+    /// R16-2：返回 Result——编码/建目录/原子写任一失败都回传 .failure，
+    /// 调用方（全量同步提交）据此决定是否记已同步；此前返回 Void、失败
+    /// 被 try? 静默吞掉，同步成功标记照记，缺失的日就永久丢了。
+    /// 原子写保证失败时旧日文件原样保留。
+    static func saveDay(accountId: Int, dayKey: String, entries: [Entry]) -> Result<Void, Error> {
+        guard let url = dayFileURL(accountId: accountId, dayKey: dayKey) else {
+            return .failure(BearySyncStoreError.directoryUnavailable)
+        }
+        let data: Data
+        do {
+            data = try makeEncoder().encode(entries)
+        } catch {
+            return .failure(error)
+        }
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            return .failure(error)
+        }
+        return .success(())
     }
 
     /// 按北京日分组（createdAt 缺失的条目无法归日，跳过——服务端恒下发 created_at）。
@@ -114,19 +137,35 @@ enum BearyEntrySyncStore {
     /// 全量同步提交：仅在整批翻页成功后调用——先写全部日文件，
     /// 再删不在新集合里的旧日文件（已删光的日与空日文件都会被清掉；
     /// 下次切到该日走网络重拉，静默刷新会重建文件）。
-    static func commitFullSync(accountId: Int, grouped: [String: [Entry]]) {
-        guard let dir = accountDir(accountId: accountId) else { return }
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    /// R16-2：返回 Result——任一日写盘失败或旧日文件删失败即回传 .failure，
+    /// 调用方不记已同步、下次 kick 重跑（已写好的日幂等重写，失败的日
+    /// 因原子写仍是旧内容，旧快照保留）。
+    static func commitFullSync(accountId: Int, grouped: [String: [Entry]]) -> Result<Void, Error> {
+        guard let dir = accountDir(accountId: accountId) else {
+            return .failure(BearySyncStoreError.directoryUnavailable)
+        }
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        } catch {
+            return .failure(error)
+        }
         for (dayKey, entries) in grouped {
-            saveDay(accountId: accountId, dayKey: dayKey, entries: entries)
+            if case .failure(let error) = saveDay(accountId: accountId, dayKey: dayKey, entries: entries) {
+                return .failure(error)
+            }
         }
         let existing = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
         for name in existing where name.hasSuffix(".json") {
             let dayKey = String(name.dropLast(".json".count))
             if grouped[dayKey] == nil {
-                try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+                do {
+                    try FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+                } catch {
+                    return .failure(error)
+                }
             }
         }
+        return .success(())
     }
 
     /// 审计 P2-22：退出/注销时清该账号全部日记落盘（整目录删；草稿桶不在此列，见 signOutLocally）。
@@ -150,7 +189,9 @@ enum BearyEntrySyncStore {
                     try? FileManager.default.removeItem(at: url)
                 }
             } else {
-                saveDay(accountId: accountId, dayKey: dayKey, entries: entries)
+                // 删帖清缓存：尽力写，失败由下次静默刷新/重跑纠正（R16-2 的
+                // Result 口径只卡全量同步提交的已同步标记，不卡这里）。
+                _ = saveDay(accountId: accountId, dayKey: dayKey, entries: entries)
             }
         }
     }
@@ -169,7 +210,9 @@ enum BearyEntrySyncStore {
             if a.createdAt != b.createdAt { return (a.createdAt ?? 0) > (b.createdAt ?? 0) }
             return (a.id ?? "") > (b.id ?? "")
         }
-        saveDay(accountId: accountId, dayKey: dayKey, entries: entries)
+        // 发布/编辑 upsert：尽力写，失败由下次静默刷新/重跑纠正（R16-2 的
+        // Result 口径只卡全量同步提交的已同步标记，不卡这里）。
+        _ = saveDay(accountId: accountId, dayKey: dayKey, entries: entries)
     }
 }
 
@@ -209,7 +252,8 @@ enum BearyTrashSyncStore {
     }
 
     /// 5-26 回收站写盘代际（与日记腿同款守卫的计数端）：任何 trash.json 写
-    /// （删帖进桶、恢复/彻底删除清桶、回收站页静默刷新对齐）都先 +1；
+    /// （删帖进桶、恢复/彻底删除清桶、回收站页静默刷新对齐）成功后 +1
+    /// （R16-2：失败的写没动磁盘，不记代际——否则提交守卫会误判快照过期）；
     /// 全量回收站同步开始时记基线，提交前比对——拉取开始后发生过写盘
     /// 即旧快照已过期，跳过本次提交保旧盘，下次 kick 重跑。
     /// 计数放桶上而不用同步实例的队列：删帖进桶 prependDeleted 是桶的静态
@@ -230,14 +274,30 @@ enum BearyTrashSyncStore {
     }
 
     /// 整桶写（全量同步提交与静默刷新对齐均走这里：服务端派生数据，整批覆盖）。
-    /// 先记写盘代际（见 noteTrashWrite）：全量同步自身的提交写也在提交
-    /// 守卫比对之后发生，不影响本次判定。
-    static func saveAll(accountId: Int, items: [TrashItem]) {
+    /// R16-2：返回 Result——编码/建目录/原子写任一失败都回传 .failure，
+    /// 调用方（全量回收站同步提交）据此决定是否记已同步；此前返回 Void、
+    /// 失败被 try? 静默吞掉，同步成功标记照记，本地回收站快照就无声丢了。
+    /// 原子写保证失败时旧 trash.json 原样保留。
+    /// 写盘代际只在真正写成功后记（见 noteTrashWrite）：失败的写没动磁盘，
+    /// 不应让提交守卫误判快照过期；此前先记代际再写，失败也 bump。
+    static func saveAll(accountId: Int, items: [TrashItem]) -> Result<Void, Error> {
+        guard let url = fileURL(accountId: accountId) else {
+            return .failure(BearySyncStoreError.directoryUnavailable)
+        }
+        let data: Data
+        do {
+            data = try makeEncoder().encode(items)
+        } catch {
+            return .failure(error)
+        }
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            return .failure(error)
+        }
         noteTrashWrite()
-        guard let url = fileURL(accountId: accountId),
-              let data = try? makeEncoder().encode(items) else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+        return .success(())
     }
 
     /// 恢复/彻底删除：按 id 清桶（桶不存在时不建桶；空桶保留空数组文件）。
@@ -252,7 +312,9 @@ enum BearyTrashSyncStore {
         let beforeCount = items.count
         items.removeAll { $0.id == entryId }
         guard items.count != beforeCount else { return }
-        saveAll(accountId: accountId, items: items)
+        // 恢复/彻底删除清桶：尽力写，失败由下次静默刷新/重跑纠正（R16-2 的
+        // Result 口径只卡全量同步提交的已同步标记，不卡这里）。
+        _ = saveAll(accountId: accountId, items: items)
     }
 
     /// 删帖进桶：新删的 deletedAt 最大，按服务端序插到头部。
@@ -264,7 +326,9 @@ enum BearyTrashSyncStore {
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         let item = TrashItem(id: entryId, content: entry.content, createdAt: entry.createdAt, publishAt: entry.publishAt, deletedAt: nowMs, daysLeft: 30)
         items.insert(item, at: 0)
-        saveAll(accountId: accountId, items: items)
+        // 删帖进桶：尽力写，失败由下次静默刷新/重跑纠正（R16-2 的 Result
+        // 口径只卡全量同步提交的已同步标记，不卡这里）。
+        _ = saveAll(accountId: accountId, items: items)
     }
 }
 
@@ -444,9 +508,16 @@ final class BearyEntrySync {
                 }
                 self.diarySyncStartSequence[accountId] = nil
                 let grouped = BearyEntrySyncStore.groupByDay(entries)
-                BearyEntrySyncStore.commitFullSync(accountId: accountId, grouped: grouped)
-                self.syncingAccountId = nil
-                self.syncedAccountIdThisLaunch = accountId
+                switch BearyEntrySyncStore.commitFullSync(accountId: accountId, grouped: grouped) {
+                case .success:
+                    self.syncingAccountId = nil
+                    self.syncedAccountIdThisLaunch = accountId
+                case .failure:
+                    // R16-2：任一日写盘失败即不记已同步（旧快照保留——原子写
+                    // 保证失败的日文件仍是旧内容），只清在途标志，下次 kick
+                    // 重跑；失败静默，不弹 toast。
+                    self.syncingAccountId = nil
+                }
             }
         }
     }
@@ -512,9 +583,16 @@ final class BearyEntrySync {
                 // 去重保底（游标页理论上不交叠；重复 id 进桶会在页内渲染成两行，故先清掉）。
                 var seen: Set<String> = []
                 let deduped = items.filter { seen.insert($0.id).inserted }
-                BearyTrashSyncStore.saveAll(accountId: accountId, items: deduped)
-                self.trashSyncingAccountId = nil
-                self.trashSyncedAccountIdThisLaunch = accountId
+                switch BearyTrashSyncStore.saveAll(accountId: accountId, items: deduped) {
+                case .success:
+                    self.trashSyncingAccountId = nil
+                    self.trashSyncedAccountIdThisLaunch = accountId
+                case .failure:
+                    // R16-2：整桶写盘失败即不记已同步（旧 trash.json 保留——
+                    // 原子写保证失败时旧文件原样），只清在途标志，下次 kick
+                    // 重跑；失败静默，不弹 toast。
+                    self.trashSyncingAccountId = nil
+                }
             }
         }
     }
