@@ -173,6 +173,10 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     private let spinner = BearyRefreshIconView()
     private let spinnerWrap = UIView()
+    /// r17-m4：加载态文案——只有交换 ID、还没拿到正文时写「已换到，
+    /// 正在加载」；其余加载写默认「加载中…」。由 setStep(.loading) 消费一次。
+    private let loadingLabel = UILabel()
+    private var loadingStatusText: String?
     private let receivedPillWrap = UIView()
     private let introLabel = UILabel()
     private let poolStack = UIStackView()
@@ -387,12 +391,25 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         spinner.heightAnchor.constraint(equalToConstant: 20).isActive = true
         // 填充式竖栈（.fill）会把子视图横向拉满整行，固定 20pt 的转圈不能
         // 直接进栈：改由普通容器承接，容器填满整行、转圈在容器内居中。
+        // r17-m4：容器内再加一行加载文案（默认「加载中…」；只有交换 ID 时
+        // 由 refreshExchangeDetail 改写「已换到，正在加载」），容器随之加高。
         spinnerWrap.translatesAutoresizingMaskIntoConstraints = false
         spinnerWrap.addSubview(spinner)
+        loadingLabel.translatesAutoresizingMaskIntoConstraints = false
+        loadingLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        loadingLabel.adjustsFontForContentSizeCategory = true
+        loadingLabel.textColor = BearyColors.gray
+        loadingLabel.textAlignment = .center
+        loadingLabel.text = "加载中…"
+        spinnerWrap.addSubview(loadingLabel)
         NSLayoutConstraint.activate([
+            spinner.topAnchor.constraint(equalTo: spinnerWrap.topAnchor, constant: 4),
             spinner.centerXAnchor.constraint(equalTo: spinnerWrap.centerXAnchor),
-            spinner.centerYAnchor.constraint(equalTo: spinnerWrap.centerYAnchor),
-            spinnerWrap.heightAnchor.constraint(equalToConstant: 20),
+            loadingLabel.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 6),
+            loadingLabel.leadingAnchor.constraint(equalTo: spinnerWrap.leadingAnchor),
+            loadingLabel.trailingAnchor.constraint(equalTo: spinnerWrap.trailingAnchor),
+            loadingLabel.bottomAnchor.constraint(equalTo: spinnerWrap.bottomAnchor, constant: -2),
+            spinnerWrap.heightAnchor.constraint(equalToConstant: 50),
         ])
 
         introLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -640,7 +657,10 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     // MARK: - 步骤渲染
 
-    private func setStep(_ next: Step) {
+    /// r17-m4：receivedTransition 为真且开盒区正在显示时，开盒区短距退场、
+    /// 收到日记短距入场，共用 0.25 秒（减动效时直切）；其余步骤沿用原直切，
+    /// 再次进页、静默校验与撤回分支直接显示对应状态，一字不动。
+    private func setStep(_ next: Step, receivedTransition: Bool = false) {
         // 审计新一轮 02：撤回是当日终态——已撤回的页不再回 .received；
         // 旧详情回包倒退界面的最后一道防线（回调侧已有代次＋终态校验）。
         // 本页实例内 .mineWithdrawn → .received 没有合法路径（开盒只在
@@ -648,13 +668,20 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         if case .mineWithdrawn = step, case .received = next { return }
         step = next
         hasLoadedOnce = true
+        // 开盒→收到一步过渡时，开盒区先留着退场（动画结束再藏），其余情况直藏。
+        let exitOpenSection: Bool
+        if case .received = next, receivedTransition, !openSection.isHidden, BearyMotion.animated(true) {
+            exitOpenSection = true
+        } else {
+            exitOpenSection = false
+        }
         spinnerWrap.isHidden = true
         spinner.stopSpinning()
         introLabel.isHidden = true
         poolStack.isHidden = true
         poolButton.isHidden = true
         poolLoadMoreButton.isHidden = true
-        openSection.isHidden = true
+        openSection.isHidden = !exitOpenSection
         receivedView.isHidden = true
         placeholderView.isHidden = true
         mineWithdrawnView.isHidden = true
@@ -664,6 +691,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         case .loading:
             spinnerWrap.isHidden = false
             spinner.startSpinning()
+            // 只有交换 ID 时先写「已换到，正在加载」，其余加载写默认文案。
+            loadingLabel.text = loadingStatusText ?? "加载中…"
+            loadingStatusText = nil
         case .login:
             loginView.isHidden = false
         case .pool:
@@ -678,6 +708,26 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             updatePoolLoadMoreButton()
         case .received:
             receivedView.isHidden = false
+            if exitOpenSection {
+                // 一出一进共用 0.25 秒：开盒区短距上退＋淡出，收到日记短距下入＋淡入；
+                // 动效只走 transform 与 opacity，不动布局。
+                receivedView.alpha = 0
+                receivedView.transform = CGAffineTransform(translationX: 0, y: 12)
+                UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+                    self.openSection.alpha = 0
+                    self.openSection.transform = CGAffineTransform(translationX: 0, y: -8)
+                    self.receivedView.alpha = 1
+                    self.receivedView.transform = .identity
+                }, completion: { [weak self] _ in
+                    guard let self = self else { return }
+                    self.openSection.isHidden = true
+                    self.openSection.alpha = 1
+                    self.openSection.transform = .identity
+                })
+            } else {
+                receivedView.alpha = 1
+                receivedView.transform = .identity
+            }
         case .placeholder(let text):
             placeholderLabel.text = text
             placeholderView.isHidden = false
@@ -968,6 +1018,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     private func refreshExchangeDetail(id: String, silent: Bool) {
         if silent == false {
+            // r17-m4：只有交换 ID、还没拿到正文时，先写「已换到，正在加载」
+            //（setStep(.loading) 消费这行文案；静默校验不显示加载态，不动）。
+            loadingStatusText = "已换到，正在加载"
             setStep(.loading)
         }
         // 审计新一轮 02：拍下请求代次与发起账号——每次新请求即让旧请求失效，
@@ -1028,6 +1081,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         }
     }
 
+    /// 拿到有效正文后进收到页：从开盒区来（开盒区正在显示）时一出一进
+    /// 共用 0.25 秒；再次进页／静默校验时开盒区本就隐藏，直接显示。
     private func showReceived(_ received: BlindBoxReceivedEntry) {
         self.received = received
         receivedEmotes = received.emotes ?? []
@@ -1039,7 +1094,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         renderReceivedContent()
         renderReceivedImages(keys: received.images ?? [])
         renderEmoteChips()
-        setStep(.received)
+        setStep(.received, receivedTransition: true)
     }
 
     /// 正文走共享内联小熊解析器（详情 / 卡片同款）：`[mood:<key>]` 记号转回
