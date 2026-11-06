@@ -220,6 +220,12 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private var withdrawBusy = false
     private var reactBusy = false
     private var hasLoadedOnce = false
+    /// 盲盒请求代次（第九轮 #1＋#3）：每次新发盲盒请求（today / 详情 /
+    /// 入池 / 开盒 / 撤回 / 回应）递增；回包先核对发起账号与代次，过期
+    /// 回包一律丢弃，不更新 UI、不写 BlindBoxState。
+    private var blindBoxGeneration = 0
+    /// 当前交换被举报 / 撤回后置 true：旧详情回包不得再把页面翻回 .received。
+    private var exchangeHidden = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -671,18 +677,35 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         present(login, animated: BearyMotion.animated(true), completion: nil)
     }
 
+    /// 新发一轮盲盒请求前调用：递增代次，返回（发起账号， 代次）。
+    private func beginBlindBoxRequest() -> (accountId: Int?, generation: Int) {
+        blindBoxGeneration += 1
+        return (SessionManager.shared.currentUser?.id, blindBoxGeneration)
+    }
+
+    /// 回包守卫：发起账号仍是当前账号、且代次仍是最新一轮，才允许更新
+    /// UI 或 BlindBoxState；切号 / 新请求发出后，旧回包一律丢弃。
+    private func isCurrentBlindBoxResponse(accountId: Int?, generation: Int) -> Bool {
+        guard let accountId = accountId, accountId == SessionManager.shared.currentUser?.id else { return false }
+        return generation == blindBoxGeneration
+    }
+
     private func loadInitial() {
         guard SessionManager.shared.isLoggedIn else {
             setStep(.login)
             return
         }
+        // 新一轮载入：此前交换的举报 / 撤回占位不带到新交换。
+        exchangeHidden = false
         setStep(.loading)
+        let request = beginBlindBoxRequest()
         BearyAPI.shared.fetchBlindBoxToday { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                guard let accountId = request.accountId, self.isCurrentBlindBoxResponse(accountId: accountId, generation: request.generation) else { return }
                 switch result {
                 case .success(let body):
-                    BlindBoxState.shared.applyServerState(body)
+                    BlindBoxState.shared.applyServerState(body, forAccountId: accountId)
                     self.routeFromToday(body)
                 case .failure(let error):
                     self.setStep(.error(self.todayErrorText(error)))
@@ -797,20 +820,34 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         if silent == false {
             setStep(.loading)
         }
+        let request = beginBlindBoxRequest()
         BearyAPI.shared.fetchBlindBoxExchange(id: id) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                guard let accountId = request.accountId, self.isCurrentBlindBoxResponse(accountId: accountId, generation: request.generation) else { return }
+                // 渲染前再校验：页面已切到别的交换、或本交换已举报 / 撤回占位，
+                // 旧回包不得复活正文与图片（第九轮 #3）。
+                guard id == self.exchangeId, self.exchangeHidden == false else { return }
                 switch result {
                 case .success(let body):
-                    BlindBoxState.shared.applyServerState(body)
+                    BlindBoxState.shared.applyServerState(body, forAccountId: accountId)
                     if body.myWithdrawn == true {
-                        BlindBoxState.shared.markMyWithdrawn()
+                        BlindBoxState.shared.markMyWithdrawn(forAccountId: accountId)
+                        self.exchangeHidden = true
                         self.setStep(.mineWithdrawn)
                         return
                     }
                     if body.receivedWithdrawn == true {
-                        BlindBoxState.shared.markReceivedWithdrawn()
+                        BlindBoxState.shared.markReceivedWithdrawn(forAccountId: accountId)
+                        self.exchangeHidden = true
                         self.setStep(.placeholder("对方撤回了交换，这篇日记不再显示。"))
+                        return
+                    }
+                    if let bodyExchangeId = body.exchangeId, bodyExchangeId.isEmpty == false, bodyExchangeId != id {
+                        if silent {
+                            return
+                        }
+                        self.setStep(.error("交换记录已变化，请重新进入。"))
                         return
                     }
                     guard let received = body.received, let entryId = received.entryId, entryId.isEmpty == false else {
@@ -821,7 +858,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                         return
                     }
                     self.exchangeId = body.exchangeId ?? id
-                    self.showReceived(received)
+                    self.showReceived(received, forExchangeId: id)
                 case .failure(let error):
                     if silent {
                         return
@@ -832,7 +869,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         }
     }
 
-    private func showReceived(_ received: BlindBoxReceivedEntry) {
+    private func showReceived(_ received: BlindBoxReceivedEntry, forExchangeId exchangeId: String) {
+        // 渲染前最后一次校验：交换已变、或已举报 / 撤回占位，不渲染、不翻页。
+        guard exchangeId == self.exchangeId, exchangeHidden == false else { return }
         self.received = received
         receivedEmotes = received.emotes ?? []
         let title = (received.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -905,10 +944,12 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         guard poolBusy == false, let entryId = selectedEntryId else { return }
         poolBusy = true
         setStep(.pool)
+        let request = beginBlindBoxRequest()
         BearyAPI.shared.poolBlindBoxEntry(entryId: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.poolBusy = false
+                guard let accountId = request.accountId, self.isCurrentBlindBoxResponse(accountId: accountId, generation: request.generation) else { return }
                 switch result {
                 case .success(let resp):
                     self.pooledEntryId = resp.pooledEntryId ?? entryId
@@ -945,22 +986,25 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         }
         openBusy = true
         setStep(.pool)
+        let request = beginBlindBoxRequest()
         BearyAPI.shared.openBlindBox { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.openBusy = false
+                guard let accountId = request.accountId, self.isCurrentBlindBoxResponse(accountId: accountId, generation: request.generation) else { return }
                 switch result {
                 case .success(let body):
                     if body.receivedWithdrawn == true {
+                        self.exchangeHidden = true
                         self.setStep(.placeholder("对方撤回了交换，这篇日记不再显示。"))
                         return
                     }
                     if let exchangeId = body.exchangeId {
-                        BlindBoxState.shared.markOpened(exchangeId: exchangeId)
+                        BlindBoxState.shared.markOpened(exchangeId: exchangeId, forAccountId: accountId)
                         self.exchangeId = exchangeId
                     }
-                    if let received = body.received {
-                        self.showReceived(received)
+                    if let received = body.received, let exchangeId = self.exchangeId {
+                        self.showReceived(received, forExchangeId: exchangeId)
                         return
                     }
                     if let exchangeId = self.exchangeId {
@@ -1039,10 +1083,12 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         receivedEmotes = toggledEmotes(previous, key: key)
         renderEmoteChips()
         reactBusy = true
+        let request = beginBlindBoxRequest()
         BearyAPI.shared.reactBlindBoxExchange(id: exchangeId, emote: key) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.reactBusy = false
+                guard self.isCurrentBlindBoxResponse(accountId: request.accountId, generation: request.generation) else { return }
                 switch result {
                 case .success(let resp):
                     if let emotes = resp.emotes {
@@ -1096,11 +1142,13 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 self.receivedEmotes = self.toggledEmotes(previous, key: pickedKey)
                 self.renderEmoteChips()
                 self.reactBusy = true
+                let request = self.beginBlindBoxRequest()
                 // 审计登录杂项：API 回调改 [weak self]，离页后 VC 不再被留存到回包结束。
                 BearyAPI.shared.reactBlindBoxExchange(id: exchangeId, emote: pickedKey) { [weak self] result in
                     DispatchQueue.main.async {
                         guard let self = self else { return }
                         self.reactBusy = false
+                        guard self.isCurrentBlindBoxResponse(accountId: request.accountId, generation: request.generation) else { return }
                         switch result {
                         case .success(let resp):
                             if let emotes = resp.emotes {
@@ -1135,6 +1183,10 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     @objc private func handleReported(_ note: Notification) {
         guard case .received = step else { return }
         guard let reportedId = note.object as? String, reportedId == received?.entryId else { return }
+        // 举报即让在途的详情请求失效，并标记本交换已隐藏：迟到的旧回包
+        // 不得把已占位的页面翻回 .received（第九轮 #3）。
+        blindBoxGeneration += 1
+        exchangeHidden = true
         setStep(.placeholder("已举报，这篇日记不再显示。"))
     }
 
@@ -1145,12 +1197,16 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         alert.addAction(UIAlertAction(title: "撤回", style: .destructive) { [weak self] _ in
             guard let self = self else { return }
             self.withdrawBusy = true
+            // 撤回即让此前在途的详情请求失效：旧回包不得再翻回 .received。
+            let request = self.beginBlindBoxRequest()
             BearyAPI.shared.withdrawBlindBoxExchange(id: exchangeId) { result in
                 DispatchQueue.main.async {
                     self.withdrawBusy = false
+                    guard let accountId = request.accountId, self.isCurrentBlindBoxResponse(accountId: accountId, generation: request.generation) else { return }
                     switch result {
                     case .success:
-                        BlindBoxState.shared.markMyWithdrawn()
+                        BlindBoxState.shared.markMyWithdrawn(forAccountId: accountId)
+                        self.exchangeHidden = true
                         self.setStep(.mineWithdrawn)
                     case .failure(let error):
                         BearyToast.show(in: self.view, message: self.actionErrorText(error, fallback: "撤回失败，请重试"))
