@@ -77,6 +77,16 @@ enum StarMapSlice: Equatable {
         case .undated: return "未标日期"
         }
     }
+
+    /// 缓存键用分片键（与展示标题解耦，标题文案改了不使缓存失效）。
+    var cacheKey: String {
+        switch self {
+        case .all: return "all"
+        case .year(let y): return "year-\(y)"
+        case .month(let y, let m): return "month-\(y)-\(m)"
+        case .undated: return "undated"
+        }
+    }
 }
 
 enum BearyStarMap {
@@ -84,6 +94,48 @@ enum BearyStarMap {
     /// 分片阈值：过滤后总数 ≤ 该值时不分片、直接画全部；超过则强制按年/月分片，
     /// 不提供“全部”选项（不一次性铺全量；年内全年仍受 500 篇拉取上限约束，见 VC）。
     static let sliceThreshold = 80
+
+    /// 建模算法版本：buildModel / 过滤 / 关键词 / 地点键任一口径改了即 +1，
+    /// 旧缓存键随之失效，不用手动清盘。缓存键里只认本值，不认 App 版本号。
+    static let algorithmVersion = 1
+
+    /// 日记版本指纹：分片内可见篇的建模输入摘要。覆盖 buildModel 消费的
+    /// 全部字段——过滤（id / 占位 / 公开态 / 限时到期 / 标题 / 正文 /
+    /// 图片 / 引用）、字数与亮度（标题 / 正文 / 心情）、地点键
+    /// （精确名 / 区级）、同词（标题 / 正文）与分片归属（createdAt），
+    /// 另含 viewer 角色（本人 / 他人地点键与过滤口径不同）。
+    /// 改正文会改整片的词频与文档频率上限，故指纹按整片算，不按单篇失效：
+    /// 片内任一篇改了即整片重建。篇按 id 排序后再拼串，同一集合换顺序
+    /// 指纹不变；空片指纹固定（空串哈希），不与任何有篇片撞键。
+    static func diaryVersion(entries: [Entry], viewerIsAuthor: Bool) -> String {
+        let visible = visibleEntries(entries, viewerIsAuthor: viewerIsAuthor)
+            .sorted { ($0.id ?? "") < ($1.id ?? "") }
+        var joined = viewerIsAuthor ? "own|" : "other|"
+        joined += "n=\(visible.count)|"
+        for entry in visible {
+            let pub: String
+            switch entry.isPublic {
+            case true: pub = "1"
+            case false: pub = "0"
+            case nil: pub = "?"
+            }
+            joined += (entry.id ?? "")
+                + "\u{1}" + (entry.title ?? "")
+                + "\u{1}" + (entry.content ?? "")
+                + "\u{1}" + (entry.mood ?? "")
+                + "\u{1}" + (entry.locationName ?? "")
+                + "\u{1}" + (entry.locationDistrict ?? "")
+                + "\u{1}" + pub
+                + "\u{1}" + (entry.visibility ?? "")
+                + "\u{1}" + String(entry.ephemeralUntil ?? -1)
+                + "\u{1}" + String(entry.createdAt ?? -1)
+                + "\u{1}" + (entry.images ?? []).joined(separator: ",")
+                + "\u{1}" + (entry.quoteId ?? "")
+                + "\u{1}" + (entry.placeholder == true ? "1" : "0")
+                + "\u{2}"
+        }
+        return String(format: "%016llx", fnv1a(joined))
+    }
 
     // MARK: - 过滤（fail-closed；调用方漏过滤时 buildModel 会再滤一次）
 
@@ -367,5 +419,80 @@ enum BearyStarMap {
             }
         }
         return StarMapModel(stars: stars, edges: edges, entryById: entryById)
+    }
+}
+
+// MARK: - 建图结果内存缓存（r17 C5；纯逻辑，Foundation only，可进测试 target）
+//
+// 只缓存近期访问过的范围（内存，不落盘）：
+// - 键 = 账号桶 + 作者 + 角色 + 分片 + 日记版本 + 算法版本；任一分量变了
+//   即 miss 重建，不存在“旧模型配新数据”。切连线类型不走这里——
+//   didTapFilterPill 只改 edgeFilter 后调 applyModelToSky，在已有
+//   model.edges 上按 kind 过滤，模型本身不重建（见 VC）。
+// - 冷开落盘未做：是否值得落盘（存星点与边的 ID、关系类型）待真机实测
+//   建图耗时后再定；内存缓存已覆盖「本月 → 去年 → 本月」直接复用。
+// - 退出 / 401 清理：SessionManager.purgeLocalSnapshotsForCurrentAccount
+//   调 purge(viewerBucket:) 按账号桶清掉该账号的全部槽位；切账号不走
+//   清理，旧桶保留、桶隔离防串号（与 BearyFeedCache 同口径）。
+// - 容量：最近 4 个键，超了逐出最久未用；单模型 ≤ 500 星、边数有界，
+//   内存占用可控。读写只在主线程发生（VC recompute / 建图回包），
+//   仍加一把 NSLock，防以后有后台调用方。
+enum BearyStarMapCache {
+    static let maxEntries = 4
+
+    private static let lock = NSLock()
+    private static var memory: [String: StarMapModel] = [:]
+    /// 最近使用顺序（队尾最新）；命中时移到队尾，超容时逐队首。
+    private static var order: [String] = []
+
+    /// 账号桶：当前查看者 id；游客为 "guest"。作者 id 与角色另拼进键，
+    /// 同一查看者看不同作者的星图不撞键。
+    static func accountKey(viewerId: Int?, authorId: Int, viewerIsAuthor: Bool) -> String {
+        let viewerBucket = viewerId.map { "\($0)" } ?? "guest"
+        return "\(viewerBucket)|\(authorId)|\(viewerIsAuthor ? "own" : "other")"
+    }
+
+    static func key(account: String, slice: StarMapSlice, diaryVersion: String, algorithmVersion: Int = BearyStarMap.algorithmVersion) -> String {
+        "\(account)|\(slice.cacheKey)|\(diaryVersion)|v\(algorithmVersion)"
+    }
+
+    static func lookup(key: String) -> StarMapModel? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let model = memory[key] else { return nil }
+        order.removeAll { $0 == key }
+        order.append(key)
+        return model
+    }
+
+    static func store(key: String, model: StarMapModel) {
+        lock.lock()
+        defer { lock.unlock() }
+        memory[key] = model
+        order.removeAll { $0 == key }
+        order.append(key)
+        while order.count > maxEntries, let oldest = order.first {
+            order.removeFirst()
+            memory.removeValue(forKey: oldest)
+        }
+    }
+
+    /// 按账号桶清：键以 "\(viewerBucket)|" 开头（accountKey 的第一段），
+    /// 该查看者看过的所有作者星图一并清掉。
+    static func purge(viewerBucket: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        let prefix = "\(viewerBucket)|"
+        for key in memory.keys where key.hasPrefix(prefix) {
+            memory.removeValue(forKey: key)
+        }
+        order.removeAll { $0.hasPrefix(prefix) }
+    }
+
+    static func purgeAll() {
+        lock.lock()
+        defer { lock.unlock() }
+        memory.removeAll()
+        order.removeAll()
     }
 }

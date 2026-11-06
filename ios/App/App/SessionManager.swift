@@ -303,6 +303,8 @@ final class SessionManager {
     private func purgeLocalSnapshotsForCurrentAccount() {
         guard let id = currentUser?.id else { return }
         BearyFeedCache.purge(bucket: "\(id)")
+        // r17 C5：星图建图内存缓存按账号桶清（该账号看过的所有作者星图）。
+        BearyStarMapCache.purge(viewerBucket: "\(id)")
         BearyTimelineCache.purge(bucket: "\(id)")
         // 审计-性能：通知页分键缓存同样在退出/401 时清掉该账号槽位。
         BearyNotificationsViewController.purgeAccount(id)
