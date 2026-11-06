@@ -554,6 +554,11 @@ final class BearyAPI {
     private let session: URLSession
     private let decoder: JSONDecoder
 
+    /// B2：查关系在途去重表（见 fetchFollowState）与串行队列——主页、
+    /// 通知卡等各处同时查同一人时只发一条请求，回包分发给所有等在途者。
+    private var inFlightFollowStates: [Int: [(Result<FollowStateResponse, APIError>) -> Void]] = [:]
+    private let followStateQueue = DispatchQueue(label: "beary.followState")
+
     /// 秒开-网络层：API 专用会话（不再用 URLSession.shared）。
     /// 同一会话对象全 App 复用，同一 host（teddyhn.com）上的请求共享
     /// keep-alive 连接池与 HTTP/2 多路复用，不再每类请求各建连接；
@@ -1450,8 +1455,30 @@ final class BearyAPI {
         request("/beary/api/friends/followers", completion: completion)
     }
 
+    /// B2：同会话在途去重——主页、通知卡等各处同时查同一人时只发一条
+    /// 请求，回包后把结果分发给所有等在途的 completion；失败同样分发
+    /// （各调用方按自己的失败态处理）。只去重“在途”，不缓存结果：
+    /// 关系是实时态，不得用旧回包代替新查；回包队列口径不动（request
+    /// 的回调在哪个队列，本分发就在哪个队列，调用方照常自行切 main）。
     func fetchFollowState(userId: Int, completion: @escaping (Result<FollowStateResponse, APIError>) -> Void) {
-        request("/beary/api/friends/state", query: ["user_id": "\(userId)"], completion: completion)
+        var isFirst = false
+        followStateQueue.sync {
+            if inFlightFollowStates[userId] != nil {
+                inFlightFollowStates[userId]?.append(completion)
+            } else {
+                inFlightFollowStates[userId] = [completion]
+                isFirst = true
+            }
+        }
+        guard isFirst else { return }
+        request("/beary/api/friends/state", query: ["user_id": "\(userId)"]) { [weak self] (result: Result<FollowStateResponse, APIError>) in
+            guard let self = self else { return }
+            var waiters: [(Result<FollowStateResponse, APIError>) -> Void] = []
+            self.followStateQueue.sync {
+                waiters = self.inFlightFollowStates.removeValue(forKey: userId) ?? []
+            }
+            for waiter in waiters { waiter(result) }
+        }
     }
 
     // MARK: - 好友私信第一期（后端并行施工中；接口未上线前非 200 一律走调用方失败态）

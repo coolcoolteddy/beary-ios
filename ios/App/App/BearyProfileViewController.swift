@@ -3481,7 +3481,8 @@ class BearyProfileViewController: UIViewController {
                     case .success:
                         self.confirmedFollowState = target
                         if wasFollowedBy {
-                            BearyFriends.clearDiaryCachesAndNotify()
+                            // B2：回关确认带上对方 id——通知页只更新此人卡片。
+                            BearyFriends.clearDiaryCachesAndNotify(userId: targetId)
                             self.reloadProfile()
                         }
                         BearyToast.show(in: self.view, message: wasFollowedBy ? "已互关" : "已关注")
@@ -3525,7 +3526,8 @@ class BearyProfileViewController: UIViewController {
                         switch result {
                         case .success:
                             self.confirmedFollowState = target
-                            BearyFriends.clearDiaryCachesAndNotify()
+                            // B2：取关确认带上对方 id——通知页只更新此人卡片。
+                            BearyFriends.clearDiaryCachesAndNotify(userId: targetId)
                             self.reloadProfile()
                         case .failure(let error):
                             // 失败回滚到最后确认态；401 与关注分支同款走登录入口

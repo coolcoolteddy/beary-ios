@@ -2504,7 +2504,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                     case .success:
                         self.confirmedFollowStates[userId] = target
                         if wasFollowedBy {
-                            BearyFriends.clearDiaryCachesAndNotify()
+                            // B2：回关确认带上对方 id——通知页只更新此人卡片。
+                            BearyFriends.clearDiaryCachesAndNotify(userId: userId)
                         }
                         BearyToast.show(in: self.view, message: wasFollowedBy ? "已互关" : "已关注")
                     case .failure:
@@ -2537,7 +2538,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                         switch result {
                         case .success:
                             self.confirmedFollowStates[userId] = target
-                            BearyFriends.clearDiaryCachesAndNotify()
+                            // B2：取关确认带上对方 id——通知页只更新此人卡片。
+                            BearyFriends.clearDiaryCachesAndNotify(userId: userId)
                         case .failure:
                             self.followStates[userId] = self.confirmedFollowStates[userId] ?? state
                             if let button = self.followButtonsByUserId[userId] {
