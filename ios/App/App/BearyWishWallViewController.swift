@@ -474,7 +474,7 @@ final class BearyWishWallViewController: UIViewController {
     }
 
     /// 116 数据填入动效：状态视图由隐藏变可见时只淡入本身（alpha
-    /// 0→1、0.25s，不动 transform／布局）；已可见时不重播；减动效或
+    /// 0→1、0.18s，不动 transform／布局）；已可见时不重播；减动效或
     /// 未进窗口时直设终值。成功时状态视图直接隐藏、行走已有错峰。
     private func showStateViewFaded() {
         let wasHidden = wishStateView.isHidden
@@ -484,7 +484,7 @@ final class BearyWishWallViewController: UIViewController {
             return
         }
         wishStateView.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             self.wishStateView.alpha = 1
         })
     }
