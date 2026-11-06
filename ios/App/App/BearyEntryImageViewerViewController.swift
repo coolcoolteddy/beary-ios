@@ -25,6 +25,21 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// imageKeys.count > 1 守门，本地模式自然不翻页；计数/圆点按 count ≤ 1 隐藏。
     private let localImages: [UIImage]
     private var currentIndex: Int
+    /// B5 画面与入口的同一 ID：当前屏上这张图对应的照片 key（本地图模式
+    /// 为 "local:<下标>"）；nil = 屏上无图（加载中／失败）。「查看日记」
+    /// 只在它等于当前下标的 key 时启用，弱网回绕不再出现“看着末张、
+    /// 点进首张”。只在 imageView.image 被赋值／清空处同步维护，
+    /// 失败回包不碰它（旧图仍在屏时 ID 不变）。
+    private var displayedImageKey: String?
+    /// 当前下标对应的照片 key（与 displayedImageKey 同口径比对）。
+    private var currentPhotoKey: String? {
+        if !localImages.isEmpty {
+            guard currentIndex >= 0, currentIndex < localImages.count else { return nil }
+            return "local:\(currentIndex)"
+        }
+        guard currentIndex >= 0, currentIndex < imageKeys.count else { return nil }
+        return imageKeys[currentIndex]
+    }
     private let imageView = UIImageView()
     // 灯箱相邻图：拖动时贴在当前图边上同步跟手的那一张（见 updateNeighbor）。
     // 单图轨道没有分页容器，旧路径是当前图先滑出、再换图滑入，两图从不同时
@@ -54,6 +69,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("查看日记", for: .normal)
         buttonValue.setTitleColor(.white, for: .normal)
+        // B5：入口未就绪时只置灰文案（背景不动），与 isEnabled 门同口径。
+        buttonValue.setTitleColor(UIColor(white: 1, alpha: 0.45), for: .disabled)
         buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.backgroundColor = UIColor(white: 1, alpha: 0.16)
@@ -302,9 +319,13 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
         updateCounter()
         loadCurrent()
+        updateViewEntryAvailability()
     }
 
     @objc private func viewEntryButtonTapped() {
+        // B5：入口与画面同 ID 兜底——屏上图不是当前下标那张时不发
+        //（按钮禁用态本已不发点按，此处防任何旁路调用）。
+        guard displayedImageKey != nil, displayedImageKey == currentPhotoKey else { return }
         // 主动操作即表示抬手误触期已过，待挡的一次点按不再生效。
         suppressNextStageTapAfterLive = false
         onViewEntryAtIndex?(currentIndex)
@@ -416,6 +437,16 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
     }
 
+    /// B5：「查看日记」启用门——屏上图与当前下标是同一张照片、且不在
+    /// 翻页动画中途时才启用；未到图／动画中途／无此入口时禁用（文案
+    /// 不变，只置灰防误点）。无入口的调用方（详情／时间线）直接返回，
+    /// 不实例化懒加载按钮。
+    private func updateViewEntryAvailability() {
+        guard onViewEntryAtIndex != nil else { return }
+        let ready = !isNavigating && displayedImageKey != nil && displayedImageKey == currentPhotoKey
+        viewEntryButton.isEnabled = ready
+    }
+
     /// 110：加载圈显隐。只在“无图可显且有在途加载”时转：首张/切图
     /// 未加载时屏上是加载圈而非纯黑中场；旧图仍在（P2-25 保留）时不转，
     /// 旧图即过渡占位；失败时停并走重试文案；本地图模式恒有图，不转。
@@ -457,6 +488,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             isFailed = false
             retryButton.isHidden = true
             imageView.image = localImages[currentIndex]
+            displayedImageKey = currentPhotoKey
             updateLoadingSpinner()
             updateLiveOverlay()
             return
@@ -478,6 +510,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         // 绝不复活到别的图上。缩略图拿不到（nil）时走现有转圈等高清口径。
         if currentIndex == initialIndex, imageView.image == nil, let thumb = initialThumbnail {
             imageView.image = thumb
+            displayedImageKey = currentPhotoKey
             showingInitialThumbnail = true
             initialThumbnail = nil
         } else if currentIndex != initialIndex {
@@ -523,6 +556,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 } else {
                     self.imageView.image = img
                 }
+                // B5：高清到了，屏上图即当前 key，入口随之放行。
+                self.displayedImageKey = key
                 self.showingInitialThumbnail = false
                 self.isFailed = false
                 self.retryButton.isHidden = true
@@ -532,6 +567,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 self.retryButton.isHidden = false
             }
             self.updateLoadingSpinner()
+            self.updateViewEntryAvailability()
         }
         // 110：发出加载后立即按“无图可显且在途”判定圈显隐（首张/切图
         // 未加载时圈即转，不等回包；旧图仍在时不转，旧图即过渡）。
@@ -996,6 +1032,34 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
     }
 
+    /// B5 回绕即时交接：目标图已在手（相邻槽／内存缓存）时直接换上，
+    /// 与快路径 commit 同口径清失败态、跟进 loadingKey 与代次，
+    /// 不再走 loadCurrent 重新异步取图（回包只是同一张图）。
+    private func handoverWrapTarget(image: UIImage) {
+        let targetKey = imageKeys[currentIndex]
+        imageView.image = image
+        displayedImageKey = targetKey
+        showingInitialThumbnail = false
+        isFailed = false
+        retryButton.isHidden = true
+        loadingKey = targetKey
+        imageLoadGeneration += 1
+        zoomHiResKey = nil
+        zoomHiResWidth = 0
+        hideNeighbor()
+        updateLoadingSpinner()
+        updateLiveOverlay()
+        prefetchAdjacent()
+    }
+
+    /// B5：目标图内存缓存同步取图（只读内存，不读磁盘、不发网络）——
+    /// 预取已暖过的全尺寸图（与 loadCurrent 同下采样宽）可直接交接。
+    private func cachedWrapTargetImage() -> UIImage? {
+        guard currentIndex >= 0, currentIndex < imageKeys.count else { return nil }
+        guard let url = BearyImageURLs.imageURL(key: imageKeys[currentIndex], thumb: false) else { return nil }
+        return BearyImageLoader.shared.cachedImage(url: url, downsampleToWidth: pageWidthValue() * UIScreen.main.scale)
+    }
+
     private func navigate(direction: Int) {
         if imageKeys.count <= 1 || isNavigating == true {
             return
@@ -1004,11 +1068,32 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         let isWrap = next < 0 || next >= imageKeys.count
         let wrapped = (next + imageKeys.count) % imageKeys.count
         if isWrap == true {
-            // 回绕瞬时归位：不做长距离倒带动效（网页 trackTo(!wrap) 口径）。
+            // B5 回绕交接：画面与「查看日记」必须用同一个照片 ID。
+            // 旧口径 currentIndex 立刻切到首张、旧图留到新图高清回包才换，
+            // 弱网下看着末张、点进去却是首张那篇。现：目标图手头已有
+            // （拖动时相邻槽已载入，或预取已暖进内存缓存）即直接用它交接；
+            // 没有时先清空旧图、显本页真实加载态，「查看日记」等画面与
+            // 目标 ID 一致后再启用（见 displayedImageKey）。
+            // resetZoom 会清相邻槽索引，先把槽里那张目标图取出来。
+            let readyImage = (neighborIndex == wrapped) ? neighborImageView.image : nil
             currentIndex = wrapped
             resetZoom(animated: false)
             updateCounter()
-            loadCurrent()
+            if let readyImage = readyImage {
+                handoverWrapTarget(image: readyImage)
+            } else if let cached = cachedWrapTargetImage() {
+                handoverWrapTarget(image: cached)
+            } else {
+                // 目标未到：旧图不留，先空 + 加载圈（loadCurrent 内
+                // updateLoadingSpinner 按 imageView.image == nil 显圈），
+                // 高清回包到达即填图并放行「查看日记」。
+                hideNeighbor()
+                imageView.image = nil
+                displayedImageKey = nil
+                showingInitialThumbnail = false
+                loadCurrent()
+            }
+            updateViewEntryAvailability()
             return
         }
         // 连续翻页：拖动时相邻图已贴在边上跟手（updateNeighbor），直接把两图
@@ -1016,6 +1101,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         // 相邻图未就绪时回落旧的两段式路径（行为不变）。
         if neighborIndex == wrapped && neighborImageView.image != nil {
             isNavigating = true
+            updateViewEntryAvailability()
             let width = pageWidthValue()
             let offX: CGFloat = direction > 0 ? -width : width
             let reduceMotion = UIAccessibility.isReduceMotionEnabled
@@ -1026,6 +1112,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 self.tx = 0
                 self.ty = 0
                 self.imageView.image = self.neighborImageView.image
+                self.displayedImageKey = self.imageKeys[wrapped]
                 self.showingInitialThumbnail = false
                 self.imageView.transform = .identity
                 self.liveOverlay?.transform = .identity
@@ -1050,6 +1137,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 self.prefetchAdjacent()
                 self.updateLiveOverlay()
                 self.isNavigating = false
+                self.updateViewEntryAvailability()
             }
             if reduceMotion == true {
                 commit()
@@ -1074,6 +1162,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         // imageView 先空 + 加载圈（见 updateLoadingSpinner），loadCurrent
         // 回包到达即填图，旧图绝不滑回来。减动效时瞬时交接，不播动画。
         isNavigating = true
+        updateViewEntryAvailability()
         let width = pageWidthValue()
         let offX: CGFloat = direction > 0 ? -width : width
         let hadNeighborSlot = (neighborIndex == wrapped)
@@ -1103,18 +1192,21 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             self.liveOverlay?.transform = .identity
             if let targetImage = self.neighborImageView.image {
                 self.imageView.image = targetImage
+                self.displayedImageKey = self.imageKeys[wrapped]
                 self.isFailed = false
                 self.retryButton.isHidden = true
                 self.loadingKey = self.imageKeys[wrapped]
             } else {
                 // 目标未到：先空 + 加载圈，loadCurrent 回包填图（不留旧图）。
                 self.imageView.image = nil
+                self.displayedImageKey = nil
             }
             self.showingInitialThumbnail = false
             self.hideNeighbor()
             self.updateCounter()
             self.loadCurrent()
             self.isNavigating = false
+            self.updateViewEntryAvailability()
         }
         if reduceMotion == true {
             commitFallback()
