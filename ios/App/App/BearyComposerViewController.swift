@@ -4471,7 +4471,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 草稿状态文案跟随保存级别：2 草稿已保存 / 1 文字已保存，图片未保存 / 0 失败红字。
     /// 编辑模式不显示（网页编辑态同款：状态行只留倒计时与字数）。
-    private func updateDraftStatusLabel() {
+    /// animated 为真时，图标与文字在原位淡变 0.18s——只在最新一版落盘
+    /// 的回包里传真，平时调用不重播。
+    private func updateDraftStatusLabel(animated: Bool = false) {
         if isEditMode {
             draftStatusGroup.isHidden = true
             draftStatusIcon.isHidden = true
@@ -4511,6 +4513,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftStatusBannerLabel.text = draftStatusLabel.text
         draftStatusBannerLabel.textColor = draftStatusLabel.textColor
         applyDraftStatusToolbarFit()
+        if animated {
+            // A4：最新一版落盘后，图标与文字原位淡变 0.18s（与 :3820/:3847
+            // 同款缓动；beginFromCurrentState 使新输入改写状态行时不与淡入打架）。
+            draftStatusIcon.alpha = 0
+            draftStatusLabel.alpha = 0
+            draftStatusBannerLabel.alpha = 0
+            UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+                self.draftStatusIcon.alpha = 1
+                self.draftStatusLabel.alpha = 1
+                self.draftStatusBannerLabel.alpha = 1
+            })
+        }
     }
 
     /// 窄屏 5 项之 3：独立行显隐＋工具行顶锚两档切换。只在翻转时改约束，
@@ -6139,6 +6153,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 传验证结果，故这里直接用同一队列；与草稿箱的写删串行，不会旧读回写复活
         // 已删草稿；快照本身只是单篇 struct，不含整库旧状态）。
         // 审计三轮第 2 项：入队前捕获账号，写与回读一律用捕获值，排队期间切号不串桶。
+        // A4：同款快照口径再捕获编辑版本（复用 editorEditVersion，不新造
+        // 版本号）——回包须草稿 id、账号、版本三项全对才更新状态行，
+        // 上一版回包不得把新一轮输入的“保存中…”改成“已保存”。
+        let saveEditVersion = editorEditVersion
         let saveAccountId = BearyDraftStore.currentAccountId
         BearyDraftStore.ioQueue.async { [weak self] in
             let writeSucceeded = BearyDraftStore.save(draft, forAccount: saveAccountId)
@@ -6159,15 +6177,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             let savedCurrentDraft = writeSucceeded && foundCurrentDraft
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                // 状态只在仍是本篇时写：落盘期间编辑器已切篇（如保留后新建）时，
-                // 旧篇的完成回调不把“草稿已保存”写到空白新篇上；pill 宽度刷新无妨（审计第 25 项：纯图标固定 44，无计数）。
-                if self.currentDraftId == draftIdValue {
+                // 状态只在三项全对时写：仍是本篇、仍是入队时的账号、入队后
+                // 无新输入（版本未变）。任一失配都说明这份回包已过期——
+                // 新一轮保存已入队/在途，或排队期间已切号；旧回包不碰状态行，
+                // “保存中…”留给新一轮的回包去覆盖成“已保存”。
+                // pill 宽度刷新与 completion 照常：pill 与内容无关，本次落盘
+                // 本身的成败关闭路径仍须知道。
+                if self.currentDraftId == draftIdValue,
+                   BearyDraftStore.currentAccountId == saveAccountId,
+                   self.editorEditVersion == saveEditVersion {
                     if savedCurrentDraft == false {
                         self.draftStatusLevel = 0
                     } else {
                         self.draftStatusLevel = hasUnsavedImageSnapshot ? 1 : 2
                     }
-                    self.updateDraftStatusLabel()
+                    self.updateDraftStatusLabel(animated: true)
                 }
                 self.refreshDraftPillWidth()
                 // 原子写：失败时旧文件原样保留，故失败后回读仍命中本篇
