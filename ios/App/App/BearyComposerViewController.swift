@@ -413,6 +413,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 仍在草稿箱，不丢数据。恢复自身的回填发生在门通过之后，不影响门。
     private var editorEditVersion = 0
     private var isPublishing = false
+    /// P1-4：本篇已发布成功标记——成功回包后待执行的自动保存计时器
+    /// 若触发，saveDraftNow 不得把内存里已发布的内容当新草稿落盘。
+    /// 只在切篇/重置为空白时清掉（新篇重新计）；用户输入不经过它清，
+    /// 发布成功后编辑器即退场，残留输入本就不应再落盘。
+    private var publishedCurrentDraft = false
     /// 编辑期到点时正好有保存 PUT 在途：计时器不自动关编辑器，改由服务端
     /// 结果定去留（见 startEditTimer / performUpdate 失败分支）。置位后即便
     /// 请求失败也不再允许重发——期限已过，服务端同样会以 edit window
@@ -6015,6 +6020,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             completion?(DraftSaveResult(succeeded: true, hadPreviousSavedVersion: false))
             return
         }
+        // P1-4：已发布守卫——成功回包后待执行的自动保存若触发，
+        // 不得把已发布内容当新草稿落盘；按成功回传（内容已发布，无新输入待保存）。
+        if publishedCurrentDraft {
+            completion?(DraftSaveResult(succeeded: true, hadPreviousSavedVersion: false))
+            return
+        }
         // 发布发起账号失配：不写盘、不生成新 draftId/clientReq、不碰
         // 当前账号的草稿桶。旧代码只在入队时捕获账号防“排队期间切号”，
         // 挡不住 401 重登后再次调用 saveDraftNow（此时当前账号已是新号，
@@ -6582,6 +6593,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 删本篇，保留路径先调 saveDraftNow 落盘本篇）；这里再整库清会误删其他篇。
         currentDraftId = nil
         draftClientReq = nil
+        // P1-4：空白新篇重新计，已发布标记清掉。
+        publishedCurrentDraft = false
         // 空白新篇不再继承上一篇的发布绑定与部分成功态。
         publishOriginAccountId = nil
         publishTogetherPublishedSourceId = nil
@@ -6617,6 +6630,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 新篇首次点发布时重新捕获。
         publishOriginAccountId = nil
         publishTogetherPublishedSourceId = nil
+        // P1-4：切到新篇，已发布标记清掉。
+        publishedCurrentDraft = false
         currentDraftId = draft.draftId
         draftClientReq = draft.clientReq
         setBodyAttributedText(draft.content)
@@ -7043,6 +7058,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 case .success(let resp):
                     if let entryId = resp.id {
                         // 只有拿到 entry id 才清草稿与本地图片。
+                        // P1-4：先使待执行的自动保存失效，再清理并退场——
+                        // 否则清理后、析构前计时器触发会把内存里已发布的内容
+                        // 当全新草稿落盘（saveDraftNow 的已发布守卫是第二道）。
+                        self.draftTimer?.invalidate()
+                        self.draftTimer = nil
+                        self.publishedCurrentDraft = true
                         self.clearDraftAndFiles()
                         self.commitPendingRemoval()
                         // iCity：成功 toast 按目标态动态（创建响应不带可见性字段，
