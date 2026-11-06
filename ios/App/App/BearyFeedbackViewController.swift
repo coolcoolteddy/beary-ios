@@ -226,8 +226,15 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
     private var attachments: [Attachment] = []
     /// 审计反馈清除回填：附件选择代次。每轮选择占一个代次，清除或重选时
-    /// 代次 +1 使旧轮在途读取失效，旧轮 group.notify 到达时直接丢弃。
+    /// 代次 +1 使旧轮在途读取失效，旧轮完成时直接丢弃（审计 N5：读取已改
+    /// 串行链式，旧轮完成回调到达时同样直接丢弃）。
     private var attachmentGeneration = 0
+    /// 审计 N5：本代次在途附件读取的 Progress。重选/清除时 cancel() 它们，
+    /// 使失效批次的读取尽早停下，而不只是等回调跑完再丢弃结果。
+    /// Progress.cancel() 是否真能中断 NSItemProvider 的底层读取需真机验证，
+    /// 回调内的代次检查仍作第二道防线。
+    private var attachmentLoadProgresses: [(generation: Int, progress: Progress)] = []
+    private let attachmentLoadLock = NSLock()
     private var zipURL: URL?
     private var zipReady = false
     /// 审计反馈分享防重：zip 生成进行中标记与排队回调。ensureZip 已在途时
@@ -307,7 +314,31 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        cancelInFlightAttachmentLoads()
         cleanupZip()
+    }
+
+    /// 审计 N5：保存一项附件读取的 Progress，供重选/清除时取消。
+    private func trackAttachmentLoad(_ progress: Progress, generation: Int) {
+        attachmentLoadLock.lock()
+        attachmentLoadProgresses.append((generation: generation, progress: progress))
+        attachmentLoadLock.unlock()
+    }
+
+    /// 审计 N5：清掉指定代次已完成的读取记录（只清该代次，不碰新代次）。
+    private func clearTrackedAttachmentLoads(for generation: Int) {
+        attachmentLoadLock.lock()
+        attachmentLoadProgresses.removeAll { $0.generation == generation }
+        attachmentLoadLock.unlock()
+    }
+
+    /// 审计 N5：取消全部在途附件读取（重选/清除/页面释放时调用）。
+    private func cancelInFlightAttachmentLoads() {
+        attachmentLoadLock.lock()
+        let progresses = attachmentLoadProgresses
+        attachmentLoadProgresses = []
+        attachmentLoadLock.unlock()
+        progresses.forEach { $0.progress.cancel() }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -815,6 +846,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
     @objc private func clearAttachmentsTapped() {
         // 审计反馈清除回填：代次 +1 使在途读取失效，旧轮结果不再回填。
+        // 审计 N5：先 cancel() 在途读取，再递增代次。
+        cancelInFlightAttachmentLoads()
         attachmentGeneration += 1
         attachments = []
         refreshAttachUI()
@@ -1028,21 +1061,55 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         picker.dismiss(animated: BearyMotion.animated(true))
         guard !results.isEmpty else { return }
+        // 审计 N5：先取消旧轮在途读取，再占新代次。Progress.cancel() 是否真能
+        // 中断 NSItemProvider 的底层读取需真机验证，代次丢弃仍作第二道防线。
+        cancelInFlightAttachmentLoads()
         // 审计反馈清除回填：本轮选择占一个新代次，旧轮在途读取即失效。
         attachmentGeneration += 1
         let generation = attachmentGeneration
-        let group = DispatchGroup()
         let lock = NSLock()
         var loaded: [Attachment?] = Array(repeating: nil, count: results.count)
         var failedCount = 0
         /// 审计 P2-26：超限视频计数（单视频上限 50MB，见 movie 分支先查大小再读）。
         var oversizedCount = 0
-        for (index, result) in results.enumerated() {
-            let provider = result.itemProvider
-            group.enter()
+        var nextIndex = 0
+        // 审计 N5：有界读取——一次只读一个附件，读完再读下一个，避免 5 个大视频
+        // 同时在途、同时分配 Data 冲高峰值内存。本支不做整批字节预算（待 Li 定口径）。
+        var loadNext: (() -> Void)?
+        loadNext = { [weak self] in
+            guard let self = self else { return }
+            lock.lock()
+            guard nextIndex < results.count else {
+                lock.unlock()
+                // 全部读完：代次已失效则直接丢弃，不回填、不弹失败提示。
+                let finished = loaded
+                let failures = failedCount
+                let oversized = oversizedCount
+                self.clearTrackedAttachmentLoads(for: generation)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, self.attachmentGeneration == generation else { return }
+                    self.attachments = finished.compactMap { $0 }
+                    self.refreshAttachUI()
+                    if failures > 0 {
+                        let message = oversized > 0
+                            ? "有 \(failures) 个附件未能加载，其中 \(oversized) 个视频超过 50MB"
+                            : "有 \(failures) 个附件未能加载"
+                        BearyToast.show(in: self.view, message: message)
+                    }
+                }
+                return
+            }
+            let index = nextIndex
+            nextIndex += 1
+            lock.unlock()
+            // 代次已失效时不再发起新的读取；在途的那一项由回调内的代次检查拦截。
+            guard self.attachmentGeneration == generation else { return }
+            let provider = results[index].itemProvider
             if provider.canLoadObject(ofClass: UIImage.self) {
-                provider.loadObject(ofClass: UIImage.self) { object, _ in
-                    defer { group.leave() }
+                let progress = provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+                    defer { loadNext?() }
+                    // 审计 N5：代次已失效时不做 jpeg 转换，避免为已丢弃的批次分配内存。
+                    guard let self = self, self.attachmentGeneration == generation else { return }
                     guard let image = object as? UIImage,
                           let jpeg = BearyImagePrep.jpegData(image) else {
                         lock.lock()
@@ -1054,9 +1121,11 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                     loaded[index] = Attachment(data: jpeg.data, mimeType: "image/jpeg", fileName: "feedback-image-\(index + 1).jpg")
                     lock.unlock()
                 }
+                self.trackAttachmentLoad(progress, generation: generation)
             } else if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
-                provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, _ in
-                    defer { group.leave() }
+                let progress = provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { [weak self] url, _ in
+                    defer { loadNext?() }
+                    guard let self = self, self.attachmentGeneration == generation else { return }
                     guard let urlValue = url else {
                         lock.lock()
                         failedCount += 1
@@ -1073,6 +1142,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                         lock.unlock()
                         return
                     }
+                    // 审计 N5：读文件前再查一次代次，避免为已失效批次分配 Data。
+                    guard self.attachmentGeneration == generation else { return }
                     guard let data = try? Data(contentsOf: urlValue) else {
                         lock.lock()
                         failedCount += 1
@@ -1093,25 +1164,15 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                     loaded[index] = Attachment(data: data, mimeType: mime, fileName: name)
                     lock.unlock()
                 }
+                self.trackAttachmentLoad(progress, generation: generation)
             } else {
                 lock.lock()
                 failedCount += 1
                 lock.unlock()
-                group.leave()
+                loadNext?()
             }
         }
-        group.notify(queue: .main) { [weak self] in
-            // 审计反馈清除回填：旧代次结果直接丢弃，不回填、不弹失败提示。
-            guard let self = self, self.attachmentGeneration == generation else { return }
-            self.attachments = loaded.compactMap { $0 }
-            self.refreshAttachUI()
-            if failedCount > 0 {
-                let message = oversizedCount > 0
-                    ? "有 \(failedCount) 个附件未能加载，其中 \(oversizedCount) 个视频超过 50MB"
-                    : "有 \(failedCount) 个附件未能加载"
-                BearyToast.show(in: self.view, message: message)
-            }
-        }
+        loadNext?()
     }
 
     // MARK: - UITextViewDelegate / 键盘
