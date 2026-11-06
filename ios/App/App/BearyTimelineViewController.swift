@@ -2934,8 +2934,9 @@ class BearyTimelineViewController: UIViewController {
     // 注意：本函数保持 internal（非 private）——SceneDelegate 切号时直接调
     // 用它（秒开-本地持久化），#456 原支的 private 会断该调用，特此保留。
     func loadTimelineCachedOrRefresh() {
-        // 秒开-启动瘦身：自己的首载若与在途预取撞车，预取不再另发一份时间线
-        // 首拉（时间线自己的首拉已覆盖，预取只写缓存、无需重复请求）。
+        // 秒开-启动瘦身：自己的首载若与预取撞车，待发预取取消（自己的首拉
+        // 已覆盖，不再重复发一份）；已发出的预取由首拉接手复用（见
+        // fetchTimelineFirstPageFull 的 adoptFirstPageIfInFlight）。
         // 账号翻转/冷启动即 fresh entry：筛子回到全部（缓存快照只存全部档，
         // 带筛子读缓存会把全部档快照画在筛子名下），不另发请求（本函数随后即重拉）。
         if timelineVisFilter != .all {
@@ -4388,7 +4389,9 @@ class BearyTimelineViewController: UIViewController {
     /// 113：首屏全量取数（原 loadTimelineFirstPage 的取数体，不动口径；
     /// since 失败/无新条目时同一 seq/在途标记内续发本函数，不再过在途守卫）。
     private func fetchTimelineFirstPageFull(seq: Int, oldSections: [DaySection], hadOldRows: Bool, completion: (() -> Void)? = nil) {
-        BearyAPI.shared.fetchTimelineFirstPage(vis: timelineVisFilter.queryValue) { [weak self] result in
+        // A4：回包处理（自发请求与接手预取共用；BearyAPI 回调不在主线程，
+        // 先回主线程；旧回包凭 seq 丢弃，丢弃时仍结束刷新指示）。
+        let handleResult: (Result<EntryList, APIError>) -> Void = { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // 旧回包直接丢弃（见 timelineFirstPageSeq 注释）：表与模型均已由新加载接管。
@@ -4478,6 +4481,14 @@ class BearyTimelineViewController: UIViewController {
                 )
             }
         }
+        // A4：接手在途预取——同账号、同筛选（全部档）的首屏请求已在途时
+        // 不再另发一份，复用同一份回包走同一套首拉渲染；seq 与在途标记
+        // 归本函数所有，预取回包到时按首拉口径渲染并清标记。
+        if timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id,
+           BearyTimelinePrefetch.adoptFirstPageIfInFlight(userId: uid, vis: nil, completion: handleResult) {
+            return
+        }
+        BearyAPI.shared.fetchTimelineFirstPage(vis: timelineVisFilter.queryValue, completion: handleResult)
     }
 
     /// 113：首屏收尾（原 loadTimelineFirstPage 的尾巴，全量与 since 共用）——
@@ -6559,6 +6570,56 @@ enum BearyTimelinePrefetch {
     /// 回包不再排队新任务（见 cancelPendingPrefetch）。
     private static var freshnessCheckInFlight = false
     private static var prefetchGeneration = 0
+    /// A4：在途首屏请求（预取发出）：同账号、同筛选的时间线首拉可接手，
+    /// 不再另发一份；预取自己的回包处理（写缓存）也挂在这里，与接手方
+    /// 共享同一份回包。锁只护注册表读写，回包分发在锁外。
+    private final class InFlightFirstPage {
+        let userId: Int
+        let vis: String?
+        var handlers: [(Result<EntryList, APIError>) -> Void] = []
+        init(userId: Int, vis: String?) {
+            self.userId = userId
+            self.vis = vis
+        }
+    }
+    private static var inFlightFirstPage: InFlightFirstPage?
+    private static let inFlightLock = NSLock()
+
+    /// A4：预取发首屏请求——与时间线首屏统一走轻量入口
+    /// fetchTimelineFirstPage（scope=timeline + limit=12 + slim=1），
+    /// 两条路径请求同一份首屏；发出前先登记在途，同账号、同筛选的
+    /// 首拉可接手，不再另发。
+    private static func fetchFirstPageForPrefetch(userId: Int, bucket: String) {
+        let flight = InFlightFirstPage(userId: userId, vis: nil)
+        // 预取自己的回包处理：成功写缓存、置 didPrefetch；失败不置位，
+        // 下次广场首拉成功时可再排队；接手方各按首拉口径自行处理成败。
+        flight.handlers.append { result in
+            guard case .success(let list) = result, let entries = list.entries, !entries.isEmpty else { return }
+            BearyTimelineCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= 12, trashCount: list.trashCount ?? 0, counts: list.tlCounts)
+            didPrefetch = true
+        }
+        inFlightLock.lock()
+        inFlightFirstPage = flight
+        inFlightLock.unlock()
+        BearyAPI.shared.fetchTimelineFirstPage(vis: nil) { result in
+            inFlightLock.lock()
+            if inFlightFirstPage === flight { inFlightFirstPage = nil }
+            let handlers = flight.handlers
+            inFlightLock.unlock()
+            for handler in handlers { handler(result) }
+        }
+    }
+
+    /// A4：时间线首拉接手在途预取——同账号、同筛选（vis 相等，全部档为
+    /// nil）且预取首屏请求已在途时，把首拉回包处理挂上去，不再另发请
+    /// 求；返回 false 时调用方照常自发请求。
+    static func adoptFirstPageIfInFlight(userId: Int, vis: String?, completion: @escaping (Result<EntryList, APIError>) -> Void) -> Bool {
+        inFlightLock.lock()
+        defer { inFlightLock.unlock() }
+        guard let flight = inFlightFirstPage, flight.userId == userId, flight.vis == vis else { return false }
+        flight.handlers.append(completion)
+        return true
+    }
 
     static func maybePrefetch() {
         guard didPrefetch == false, pendingWorkItem == nil, freshnessCheckInFlight == false,
@@ -6581,23 +6642,23 @@ enum BearyTimelinePrefetch {
             // 触发点仍在首屏回包之后。触发时重查登录态与缓存新鲜度：期间用户
             // 已开时间线（取消）或缓存已新（命中）时不再发；失败不置 didPrefetch，
             // 下次广场首拉成功时可再排队。取数口径跟随秒开·首屏再瘦（只拉 12 条，
-            // #456 原文 50 已过期，不跟），hasMore 阈值同步 12。
+            // #456 原文 50 已过期，不跟），与时间线首屏同一轻量入口（slim=1），
+            // hasMore 阈值同步 12。
             let item = DispatchWorkItem {
                 pendingWorkItem = nil
                 guard didPrefetch == false, let uid = SessionManager.shared.currentUser?.id else { return }
+                // A4：第二次查缓存后、发请求前也复核代次——查盘期间时间线
+                // 自己开页（cancelPendingPrefetch 代次 +1）时不再发请求。
+                let generation = prefetchGeneration
                 let bucket = BearyFeedCache.bucket(userId: uid)
                 BearyTimelineCache.load(bucket: bucket) { snap in
-                    guard didPrefetch == false else { return }
+                    guard generation == prefetchGeneration, didPrefetch == false else { return }
                     if let snap = snap, !snap.entries.isEmpty,
                        Date().timeIntervalSince1970 - snap.savedAt < 600 {
                         didPrefetch = true
                         return
                     }
-                    BearyAPI.shared.fetchEntries(scope: .timeline, limit: 12) { result in
-                        guard case .success(let list) = result, let entries = list.entries, !entries.isEmpty else { return }
-                        BearyTimelineCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= 12, trashCount: list.trashCount ?? 0, counts: list.tlCounts)
-                        didPrefetch = true
-                    }
+                    fetchFirstPageForPrefetch(userId: uid, bucket: bucket)
                 }
             }
             pendingWorkItem = item
@@ -6606,7 +6667,8 @@ enum BearyTimelinePrefetch {
     }
 
     /// 秒开-启动瘦身：时间线自己的首载接管时取消待发预取（在途请求不取消，
-    /// 只写缓存、无界面副作用，与首拉并存无害）。审计 13：同时代际 +1，
+    /// 只写缓存、无界面副作用；时间线首拉会接手在途请求，不再另发一份，
+    /// 见 adoptFirstPageIfInFlight）。审计 13：同时代际 +1，
     /// 让在途新鲜度检查的回包不再排队新任务。
     static func cancelPendingPrefetch() {
         prefetchGeneration += 1
