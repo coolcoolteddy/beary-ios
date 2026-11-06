@@ -213,12 +213,16 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     private var step: Step = .loading
     private var poolEntries: [Entry] = []
+    /// R22 #10：入池分页上限与“够选即停”目标——每页 50 篇；集满 20 篇可入池篇
+    /// 即停（常见账号 1~2 页收尾），否则续拉到 40 页（2000 篇）或服务端短页为止。
+    private static let poolMaxPages = 40
+    private static let poolEligibleTarget = 20
     /// 审计登录杂项：入池分页代次 / 收集集 / 去重集（照搬星图页游标分页口径）。
     private var poolLoadGeneration = 0
     private var poolCollected: [Entry] = []
     private var poolSeenIds = Set<String>()
     /// 选篇分页触顶/中断状态（第八轮审计 02，地图 #944 同款口径）：每批上限
-    /// 10 页防无界；触顶时记 poolCapped 并留游标，页内留“加载更多”入口供按需
+    /// 40 页（poolMaxPages）防无界；触顶时记 poolCapped 并留游标，页内留“加载更多”入口供按需
     /// 续拉新一批；分页中途失败时记 poolInterrupted 并留失败页游标，页内留
     /// “重试”入口从中断处续拉，不直接把部分结果当完整。
     private var poolCapped = false
@@ -867,8 +871,14 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         // B1：候选列表先从本人日记存档（时间线缓存，本账号桶）生成小索引、
         // 立即渲染；存档缺数据（无快照 / 还有更多页）时再补页，不再每次都
         // 从第 1 页全量拉起。网络补页仍照搬星图页游标分页（before / beforeId、
-        // 去重、代次门控，上限 10 页）；行内仍按入池资格显 pill（公开 / 私密 /
+        // 去重、代次门控）；行内仍按入池资格显 pill（公开 / 私密 /
         // 今日公开），选中时再按资格过滤（见 renderPoolRows onTap）。
+        // R22 #10：网络补页不再 10 页（500 篇）即停——前 500 篇含私密、仅好友、
+        // 今日公开等不可入池篇时，真正可选的旧公开篇可能在更后面。改为增量
+        // 分页按需续拉：每页 50 篇照旧，集满 20 篇可入池篇即停（常见账号
+        // 1~2 页收尾），否则一直续拉到 40 页（2000 篇）或服务端短页为止；
+        // 代次门控与去重、分页中途断网“已收集到的页不作废，照常进池”口径均不动。
+        // 服务端「可入池日记」筛选接口是后续优化，不在本支改后端接口。
         poolLoadGeneration += 1
         poolCollected = []
         poolSeenIds = []
@@ -941,8 +951,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     }
 
     /// 选篇分页续拉入口（第八轮审计 02，地图 #944 同款口径）：中断时从失败页
-    /// 游标续拉（页码不动），触顶时从第 10 页末尾游标续拉新一批（page 从 1
-    /// 重新计、最多再 10 页）；已收页与去重集保留、成功后整批成表；点按后先
+    /// 游标续拉（页码不动），触顶时从触顶页末尾游标续拉新一批（page 从 1
+    /// 重新计、最多再 40 页）；已收页与去重集保留、成功后整批成表；点按后先
     /// 藏入口防重复点按，代次 +1 作废旧回包。
     @objc private func didTapPoolLoadMore() {
         poolLoadMoreButton.isHidden = true
@@ -967,12 +977,13 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                         self.poolCollected.append(entry)
                     }
                     let last = pageEntries.last
-                    if pageEntries.count >= 50, page < 10, let cursor = last?.createdAt, let lastId = last?.id {
+                    let eligibleCount = self.poolCollected.filter { BlindBoxPool.eligibility(for: $0) == .eligible }.count
+                    if pageEntries.count >= 50, page < Self.poolMaxPages, eligibleCount < Self.poolEligibleTarget, let cursor = last?.createdAt, let lastId = last?.id {
                         self.loadPoolEntriesPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
                         return
                     }
-                    // 触顶（第八轮审计 02，地图 #944 同款口径）：本批 10 页已满、
-                    // 末页仍满页，后面可能还有——记 poolCapped，留第 10 页末尾游标
+                    // 触顶（第八轮审计 02，地图 #944 同款口径）：本批 40 页已满、
+                    // 末页仍满页，后面可能还有——记 poolCapped，留触顶页末尾游标
                     // 供按需续拉新一批；末页满页却无游标时清旧游标、不留入口。
                     // 本批拉完即清中断态（续拉成功说明链已接上）。
                     self.poolInterrupted = false
