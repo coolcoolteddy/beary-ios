@@ -91,6 +91,10 @@ final class BearyDepthBackgroundViewController: UIViewController {
         return labelValue
     }()
 
+    /// 内容列：宽 ≥821 时 600 居中，≤820 时屏宽减 32（许愿墙同款口径）；
+    /// cap 只在宽屏激活，窄屏不收窄到 600。
+    private var tableCapConstraint: NSLayoutConstraint?
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
@@ -101,6 +105,13 @@ final class BearyDepthBackgroundViewController: UIViewController {
         topBarView.addSubview(titleLabel)
         view.addSubview(tableView)
         updatePlusFooter()
+        // 内容列：centerX ＋ defaultHigh 的屏宽减 32 撑满（只靠 centerX＋两侧
+        // 不等式列宽会跟着内容走，见 2026-11-02 居中列布局陷阱）；宽 ≥821 时
+        // cap 600 生效居中，窄屏 cap 关掉、不收窄。
+        let tableViewWidth = tableView.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -32)
+        tableViewWidth.priority = .defaultHigh
+        let tableCap = tableView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        tableCapConstraint = tableCap
         NSLayoutConstraint.activate([
             topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -115,8 +126,11 @@ final class BearyDepthBackgroundViewController: UIViewController {
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: backButton.trailingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBarView.trailingAnchor, constant: -52),
             tableView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            tableViewWidth,
+            tableCap,
+            tableView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            tableView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         // 进页预热：只解当前已应用主题（个人页封面已在用，多半已缓存）；
@@ -124,6 +138,14 @@ final class BearyDepthBackgroundViewController: UIViewController {
         //（第十轮 01：六张约 113 MiB，画质不降、只改加载时机＋内存预算）。
         if let currentCoverTheme = currentThemeValue.coverTheme {
             ProfileCoverView.prewarmBackdrops(for: [currentCoverTheme])
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        let wantCap = view.bounds.width >= 821
+        if let cap = tableCapConstraint, cap.isActive != wantCap {
+            cap.isActive = wantCap
         }
     }
 
