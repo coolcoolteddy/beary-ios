@@ -72,11 +72,18 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     private let completer = MKLocalSearchCompleter()
     private var suggestions: [MKLocalSearchCompletion] = []
     private var activeSearch: MKLocalSearch?
-    /// 交互代次：每次打开（startAutoLocate → cancelRequests）与每次关闭
-    /// （cancelRequests）都 +1；MKLocalSearch 回调只作用于捕获时的那次气泡。
+    /// 交互代次：每次用户操作都 +1——打开／关闭（cancelRequests）、改词
+    /// （didChangeInput）、点建议（didTapSuggestion）、手动确认
+    /// （didConfirmManualText）、切手动（didTapManual → cancelRequests）；
+    /// 异步回调（MKLocalSearch、逆地理编码、搜索建议）只在捕获的代次仍是
+    /// 当前代次、且回包的搜索对象仍是当前搜索对象时才落定，旧回包一律丢弃。
     /// 仅靠 !isHidden 不够：调用方关闭动画 0.20s 后才置 isHidden=true，动画期间
     /// 或重开后旧回调仍能通过 isHidden 检查并经 didConfirm 落定旧地点。
     private var interactionGeneration = 0
+    /// 搜索建议代次：与 interactionGeneration 同步——didChangeInput 发新查询时
+    /// 记下当时代次；completer 回包只在该代次仍是当前代次时才渲染，改词后的
+    /// 旧查询回包不再把旧建议写进新输入框下方。
+    private var completerGeneration = 0
     private var located: DiaryLocation?
     private var locating = false
     private var manualMode = false
@@ -421,6 +428,9 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             clearSuggestions()
             return
         }
+        // 改词即新操作：在途的手动确认／点建议搜索与旧建议回包一律过期作废。
+        interactionGeneration += 1
+        completerGeneration = interactionGeneration
         completer.queryFragment = text
     }
 
@@ -431,13 +441,15 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         // district 留空——他人视角展示层 fail-closed（不显示），不拿精确名冒充区级。
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = text
+        // 手动确认即新操作：先 +1 再捕获代次，旧确认搜索的回包代次即过期。
+        interactionGeneration += 1
         let generation = interactionGeneration
         activeSearch?.cancel()
         let search = MKLocalSearch(request: request)
         activeSearch = search
         search.start { [weak self] response, _ in
-            guard let self = self, !self.isHidden, self.interactionGeneration == generation else { return }
-            if self.activeSearch === search { self.activeSearch = nil }
+            guard let self = self, !self.isHidden, self.interactionGeneration == generation, self.activeSearch === search else { return }
+            self.activeSearch = nil
             let district = response?.mapItems.first.map { BearyLocationDisplay.district(from: $0.placemark) } ?? nil
             self.delegate?.locationPopover(self, didConfirm: DiaryLocation(name: text, district: district))
         }
@@ -448,13 +460,15 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         guard index < suggestions.count else { return }
         let completion = suggestions[index]
         let request = MKLocalSearch.Request(completion: completion)
+        // 点建议即新操作：先 +1 再捕获代次——连点 A 再点 B，两次回包不再是同一代次。
+        interactionGeneration += 1
         let generation = interactionGeneration
         activeSearch?.cancel()
         let search = MKLocalSearch(request: request)
         activeSearch = search
         search.start { [weak self] response, _ in
-            guard let self = self, !self.isHidden, self.interactionGeneration == generation else { return }
-            if self.activeSearch === search { self.activeSearch = nil }
+            guard let self = self, !self.isHidden, self.interactionGeneration == generation, self.activeSearch === search else { return }
+            self.activeSearch = nil
             let placemark = response?.mapItems.first?.placemark
             let name = placemark?.name ?? completion.title
             // flatMap 把 String?? 压到一层 String?，与 DiaryLocation(district:) 入参对齐；
@@ -543,9 +557,12 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         guard locating, let coordinate = locations.last else { return }
         locating = false
         // 坐标只进这一次逆地理编码，取地名后即弃，不存、不传、不缓存。
+        // 自动定位回包走同一套代次守卫：捕获发起时的代次，用户改词／点建议／
+        // 切手动后旧逆地理编码回包一律丢弃，不再把旧地名写进已切走的气泡。
+        let generation = interactionGeneration
         geocoder.reverseGeocodeLocation(coordinate) { [weak self] placemarks, _ in
-            // 气泡已关（isHidden）时在途回调一律丢弃：不转手动态、不弹键盘、不落定。
-            guard let self = self, !self.isHidden else { return }
+            // 气泡已关（isHidden）或代次已变时在途回调一律丢弃：不转手动态、不弹键盘、不落定。
+            guard let self = self, !self.isHidden, self.interactionGeneration == generation else { return }
             guard let placemark = placemarks?.first else {
                 // 逆地理编码失败：不持久化“已定位（暂未解析地名）”这类占位文本，
                 // 直接转手动输入，让用户 typed 的地名成为真实位置值。
@@ -576,6 +593,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
 
     func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
         guard !isHidden else { return }
+        // 旧查询的建议回包：改词／确认／切手动后代次已变，直接丢弃，不渲染。
+        guard completerGeneration == interactionGeneration else { return }
         // 扫荡 D：输入已清空后，旧查询的建议回包仍会到达——此时若照常渲染，
         // 空输入框下方会冒出与当前输入无关的旧建议。输入为空时直接清掉，不渲染。
         // （@ 选人搜索有序号守卫，旧回包会被丢弃；本气泡的 completer 回包此前无此守卫。）
@@ -591,6 +610,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         // 扫荡 D：与上同口径——气泡已关或输入已空时不把“没有找到相关位置”
         // 写进建议栈，否则下次打开手动态会先看到一条过期空态。
         guard !isHidden else { return }
+        // 旧查询的失败回包：代次已变即丢弃，不清新查询的建议。
+        guard completerGeneration == interactionGeneration else { return }
         guard !(inputField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             clearSuggestions()
             return
