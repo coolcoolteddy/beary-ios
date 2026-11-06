@@ -5580,7 +5580,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                         return
                                     }
                                     item.imageView.image = image
-                                    let ownerAccountId = draftOwnerAccountId
+                                    let ownerAccountId = self.draftOwnerAccountId
                                     self.imagePrepQueue.async { [weak self, weak item] in
                                         guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
                                               let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
@@ -5648,7 +5648,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // 落盘失败则按无本地文件降级（与旧行为一致，草稿里只有 key）。
                     // 编码 + 落盘 + 上传序列化全走后台队列，只编一次（旧写法落盘编一次、
                     // startUpload 又编一次）；主线程只填图与更新 UI。
-                    let ownerAccountId = draftOwnerAccountId
+                    let ownerAccountId = self.draftOwnerAccountId
                     self.imagePrepQueue.async { [weak self, weak item] in
                         guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
                               let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
