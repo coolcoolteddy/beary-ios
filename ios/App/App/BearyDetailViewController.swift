@@ -1191,9 +1191,104 @@ final class BearyDetailViewController: UIViewController {
     /// 2026-11-05 Li 定（推翻 2026-10-29「失败清内容」）：后台补齐失败时
     /// 保留已显示的卡片旧内容，只给轻提示；重试走 toast 动作钮。
     /// 页内已因拉黑/举报转占位时不动（隐私占位优先于失败态）。
+    /// B1：详情取数统一裁决——首开补拉与手动重试共用（与 routeFetchedEntry 同口径）。
+    enum DetailFetchDecision {
+        case show(Entry)
+        case showPlaceholder(Entry)
+        case keepContent
+    }
+
+    /// B1：拉黑作者判定（作者本人永不命中；游客不承接拉黑表；与 SceneDelegate 同口径）。
+    static func isBlockedAuthor(_ entry: Entry) -> Bool {
+        if SessionManager.shared.isGuestMode { return false }
+        guard let authorId = entry.authorId else { return false }
+        if let viewerId = SessionManager.shared.currentUser?.id, viewerId == authorId { return false }
+        return BearyBlockedStore.isBlocked(authorId)
+    }
+
+    /// B1：取数失败分流——明确无权限/找不到即已不可见（撤下全文）；
+    /// 其余（弱网/服务端错/解码失败）沿用旧内容（见 showFetchFailed）。
+    /// 401 不在此列：会话失效走全局未登录处理，旧内容先保留。
+    static func isExplicitlyGone(_ error: APIError) -> Bool {
+        if case .notFound = error { return true }
+        return error.isPermissionDenied
+    }
+
+    /// B1：详情取数成功回包的统一裁决（首开补拉 gotoEntryImmediately 与
+    /// 手动重试 retryFetchDetail 共用；与 routeFetchedEntry 同口径）：
+    /// 作者直更、占位直更、拉黑转占位、有效公开直更、仅好友走服务端互关
+    /// 校验、私密或过期公开转占位、公开但定不出作者保留旧内容。
+    /// 仅好友档需一次互关请求，裁决经 completion 异步返回（主线程）。
+    static func decideFetchedDetail(_ fetched: Entry, completion: @escaping (DetailFetchDecision) -> Void) {
+        let viewerId = SessionManager.shared.currentUser?.id
+        let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && viewerId != nil && fetched.authorId == viewerId)
+        if viewerIsAuthor {
+            completion(.show(fetched))
+            return
+        }
+        if isBlockedAuthor(fetched) {
+            var placeholderEntry = fetched
+            placeholderEntry.placeholder = true
+            completion(.showPlaceholder(placeholderEntry))
+            return
+        }
+        if BearyEphemeral.isEffectivelyPublic(fetched), fetched.authorId != nil {
+            completion(.show(fetched))
+            return
+        }
+        if fetched.placeholder == true {
+            completion(.show(fetched))
+            return
+        }
+        if fetched.isFriendsOnly, let authorId = fetched.authorId, SessionManager.shared.isLoggedIn {
+            BearyAPI.shared.fetchFollowState(userId: authorId) { stateResult in
+                DispatchQueue.main.async {
+                    switch stateResult {
+                    case .success(let state)
+                        where (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false)):
+                        completion(.show(fetched))
+                    default:
+                        var placeholderEntry = fetched
+                        placeholderEntry.placeholder = true
+                        completion(.showPlaceholder(placeholderEntry))
+                    }
+                }
+            }
+            return
+        }
+        if fetched.isPublic == true {
+            if fetched.authorId != nil {
+                // stored 公开但已过期：有效态为私密，切占位（不留卡片旧全文）。
+                var placeholderEntry = fetched
+                placeholderEntry.placeholder = true
+                completion(.showPlaceholder(placeholderEntry))
+            } else {
+                // 公开但定不出作者：保留旧内容。
+                completion(.keepContent)
+            }
+            return
+        }
+        var placeholderEntry = fetched
+        placeholderEntry.placeholder = true
+        completion(.showPlaceholder(placeholderEntry))
+    }
+
     func showFetchFailed() {
         if locallyHiddenByModeration { return }
         BearyToast.show(in: view, message: "加载失败，请稍后再试", actionTitle: "重试", action: { [weak self] in self?.retryFetchDetail() })
+    }
+
+    /// B1：回包/失败已明确本篇不可见（无权限/找不到）时撤下全文：
+    /// 模型立占位旗、内容栈整藏、显过渡占位“这篇日记现在看不到了”。
+    /// 弱网失败不走这里（见 showFetchFailed，保留旧内容）。
+    func showBecameInvisible() {
+        if locallyHiddenByModeration { return }
+        ephemeralExpiryTimer?.invalidate()
+        ephemeralExpiryTimer = nil
+        entry.placeholder = true
+        placeholderStateView.configure(kind: .empty, title: nil, subtitle: "这篇日记现在看不到了", iconName: nil, actionTitle: nil)
+        setContentVisible(false)
+        placeholderStateView.isHidden = false
     }
 
     /// 详情失败重试：与 SceneDelegate 后台补齐同一可见性门（作者直更、
@@ -1208,40 +1303,31 @@ final class BearyDetailViewController: UIViewController {
         BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                guard case .success(let fetched) = result else {
-                    self.showFetchFailed()
-                    return
-                }
-                if self.locallyHiddenByModeration { return }
-                let viewerId = SessionManager.shared.currentUser?.id
-                let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && viewerId != nil && fetched.authorId == viewerId)
-                if viewerIsAuthor {
-                    self.update(with: fetched)
-                    return
-                }
-                if fetched.placeholder == true {
-                    self.update(with: fetched)
-                    return
-                }
-                if !SessionManager.shared.isGuestMode, let authorId = fetched.authorId, viewerId != authorId, BearyBlockedStore.isBlocked(authorId) {
-                    var placeholderEntry = fetched
-                    placeholderEntry.placeholder = true
-                    self.update(with: placeholderEntry)
-                    return
-                }
-                if fetched.isPublic == true {
-                    if fetched.authorId != nil {
-                        self.update(with: fetched)
+                switch result {
+                case .failure(let error):
+                    // B1：明确无权限/找不到即撤下全文；弱网等失败保留旧内容＋轻提示。
+                    if Self.isExplicitlyGone(error) {
+                        self.showBecameInvisible()
                     } else {
-                        // 公开但定不出作者：与补齐口径一致，不更新；回到失败
-                        // 轻提示，toast 重试钮仍在。
                         self.showFetchFailed()
                     }
                     return
+                case .success(let fetched):
+                    if self.locallyHiddenByModeration { return }
+                    // B1：与首开补拉同一裁决（有效公开＋互关；仅好友仍有权限时可恢复）。
+                    Self.decideFetchedDetail(fetched) { [weak self] decision in
+                        guard let self = self else { return }
+                        switch decision {
+                        case .show(let updatedEntry):
+                            self.update(with: updatedEntry)
+                        case .showPlaceholder(let placeholderEntry):
+                            self.update(with: placeholderEntry)
+                        case .keepContent:
+                            // 公开但定不出作者：保留旧内容，回到失败轻提示，toast 重试钮仍在。
+                            self.showFetchFailed()
+                        }
+                    }
                 }
-                var placeholderEntry = fetched
-                placeholderEntry.placeholder = true
-                self.update(with: placeholderEntry)
             }
         }
     }
@@ -1421,10 +1507,16 @@ final class BearyDetailViewController: UIViewController {
         if fetched.placeholder == true {
             // 占位优先：只立占位旗，不整体覆盖模型（在途先行态不受占位回包冲掉；
             // 内容栈已整藏，占位期间模型其余字段不可见；后续内容回包再按合并恢复）。
-            ephemeralExpiryTimer?.invalidate()
-            ephemeralExpiryTimer = nil
-            entry.placeholder = true
-            showPlaceholder(visibility: fetched.visibility)
+            // B1：曾有内容在屏时，回包明确不可见即撤下全文并显过渡占位
+            // “这篇日记现在看不到了”；已是占位时仍走 visibility 文案。
+            if entry.placeholder != true {
+                showBecameInvisible()
+            } else {
+                ephemeralExpiryTimer?.invalidate()
+                ephemeralExpiryTimer = nil
+                entry.placeholder = true
+                showPlaceholder(visibility: fetched.visibility)
+            }
             return
         }
         // 按字段合并：先取服务端全量，再把在途字段写回本地值。
