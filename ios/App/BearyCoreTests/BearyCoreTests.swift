@@ -388,6 +388,33 @@ final class BearyPastSelfTests: XCTestCase {
         suite.removePersistentDomain(forName: "beary.pastself.tests")
     }
 
+    func testStoreCorruptAddRevokeMergePreserveRaw() {
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let key = "beary.pastSelf.v1.97"
+        let garbage = Data("not-json{{".utf8)
+        suite.set(garbage, forKey: key)
+        let store = PastSelfStore(userId: 97, defaults: suite)
+        // 损坏不冒充空库：loadAll 给 [] 的同时 loadAllResult 报失败。
+        XCTAssertTrue(store.loadAll().isEmpty)
+        if case .failure = store.loadAllResult() { } else {
+            XCTFail("corrupt store should fail loadAllResult")
+        }
+        // 原值进了备份槽位。
+        XCTAssertEqual(suite.data(forKey: key + ".corrupt"), garbage)
+        // 新增拒绝为存储损坏，且原值未被覆盖。
+        XCTAssertNil(store.add(originEntryId: "b_1", body: "新留话", createdAtMs: ms(year: 2025, month: 10, day: 30), calendar: calendar))
+        if case .storeCorrupt = store.lastRejection { } else {
+            XCTFail("corrupt store add should reject with .storeCorrupt")
+        }
+        XCTAssertEqual(suite.data(forKey: key), garbage)
+        // 撤回与服务端合并同样不覆盖原值。
+        XCTAssertFalse(store.revoke(messageId: "ps_x", nowMs: 0, today: "2026-01-01"))
+        store.mergeServerRows([])
+        XCTAssertEqual(suite.data(forKey: key), garbage)
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
     func testMessageDecoding() throws {
         let json = """
         {"id":"ps_1","origin_entry_id":"b_1","chain_id":"b_1","author_id":1,"body":"少熬一点夜",
