@@ -95,6 +95,9 @@ enum BearyLocationDisplay {
 /// 聚合是 Entry 列表的纯函数（不另建缓存、不轮询），可见性翻转/删除/
  /// 回收站/注销的同步由调用方重拉列表后重算自然达成，不存在过期地图缓存。
 struct BearyLocationMapGroup {
+    /// 组 ID：与分组键相同（本人 = 精确地点名、无名退区级；他人 = 区级）。
+    /// 地图标记按 id 增删改（P2-9）：同一 id 的标记对象常驻地图、就地更新。
+    var id: String { key }
     /// 聚合键：本人 = 精确地点名（无名退区级），他人 = 区级。
     let key: String
     let entries: [Entry]

@@ -42,6 +42,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     private var selectedGroup: BearyLocationMapGroup?
     /// 文本 → 坐标的本页内存缓存（只活在本页实例里，deinit 即丢；绝不写盘）。
     private var geocodeCache: [String: CLLocationCoordinate2D] = [:]
+    /// 组 ID → 在图标记（P2-9）：标记对象常驻地图、按组 ID 增删改，
+    /// 不随整批解析拆建；随页销毁。切账号时随标记一并清掉。
+    private var locatedAnnotations: [String: MKPointAnnotation] = [:]
     private var loadGeneration = 0
     /// 地理编码代次（审计 24）：每次重算、切账号、页面退出都换代并取消在途请求，
     /// 旧编码回调凭代次一律丢弃，不得写回本页。
@@ -195,6 +198,10 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             viewerIsAuthor = (currentViewerId != nil && currentViewerId == authorId)
             geocodeCache.removeAll()
             selectedGroup = nil
+            // 切账号：旧身份的标记一并清掉并忘掉映射（新身份按新口径
+            // 重算重拉；平时重算走增量 diff、不清标记——见 regroupAndGeocode）。
+            mapView.removeAnnotations(mapView.annotations)
+            locatedAnnotations.removeAll()
             // 切账号先取消旧身份在途的编码：重拉完成前旧回调不得写回新身份的页面。
             cancelGeocoding()
             fetchAllEntries()
@@ -406,17 +413,26 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         if groups.isEmpty {
             statusLabel.text = allEntries.isEmpty ? "还没有日记" : "还没有带位置的日记"
             mapView.removeAnnotations(mapView.annotations)
+            locatedAnnotations.removeAll()
             unlocatedGroups = []
             transientFailedGroups = []
             tableView.reloadData()
             return
         }
         statusLabel.text = "共 \(allEntries.filter { !DiaryLocation(entry: $0).isEmpty }.count) 篇带位置日记 · \(groups.count) 个地点"
-        // 先展示已有列表与已命中的坐标缓存：清掉上一轮标记、列表即时刷新，
+        // 先展示已有列表与已命中的坐标缓存：按组 ID 增量 diff（只摘新分组
+        // 里已没有的组，留下的标记对象常驻、标题/篇数就地刷），列表即时刷新，
         // 缓存组一次成图；未缓存的组随后串行编码、逐批补标记。
         unlocatedGroups = []
         transientFailedGroups = []
-        mapView.removeAnnotations(mapView.annotations)
+        removeLocatedAnnotations(notIn: Set(groups.map { $0.id }))
+        for group in groups {
+            if let annotation = locatedAnnotations[group.id] {
+                annotation.title = group.key
+                annotation.subtitle = "\(group.count) 篇"
+                refreshGlyph(for: annotation, count: group.count)
+            }
+        }
         var cachedLocated: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)] = []
         var pendingGroups: [BearyLocationMapGroup] = []
         for group in groups {
@@ -548,30 +564,65 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         }
     }
 
-    /// 补一批标记（缓存批或单组编出）：只加本批、不清已有标记；
+    /// 补一批标记（缓存批或单组编出）：按组 ID 增量更新（P2-9）——
+    /// 已在地图上的组只就地更新坐标/标题/篇数，标记对象不重建，
+    /// 选中态与气泡因此保持；新组才新建标记。
     /// 首批成图时缩放到本批标记，之后批次不再抢用户正在看的区域。
     private func addLocatedAnnotations(_ items: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)]) {
         guard !items.isEmpty else { return }
-        var annotations: [MKPointAnnotation] = []
+        var newAnnotations: [MKPointAnnotation] = []
+        var batchAnnotations: [MKPointAnnotation] = []
         for item in items {
-            let annotation = MKPointAnnotation()
-            annotation.coordinate = item.coordinate
-            annotation.title = item.group.key
-            annotation.subtitle = "\(item.group.count) 篇"
-            annotations.append(annotation)
+            if let existing = locatedAnnotations[item.group.id] {
+                existing.coordinate = item.coordinate
+                existing.title = item.group.key
+                existing.subtitle = "\(item.group.count) 篇"
+                refreshGlyph(for: existing, count: item.group.count)
+                batchAnnotations.append(existing)
+            } else {
+                let annotation = MKPointAnnotation()
+                annotation.coordinate = item.coordinate
+                annotation.title = item.group.key
+                annotation.subtitle = "\(item.group.count) 篇"
+                locatedAnnotations[item.group.id] = annotation
+                newAnnotations.append(annotation)
+                batchAnnotations.append(annotation)
+            }
         }
-        mapView.addAnnotations(annotations)
+        if !newAnnotations.isEmpty {
+            mapView.addAnnotations(newAnnotations)
+        }
         if !didInitialGeocode {
             didInitialGeocode = true
-            mapView.showAnnotations(annotations, animated: false)
+            mapView.showAnnotations(batchAnnotations, animated: false)
         }
     }
 
-    /// 终态对齐（与旧行为一致的收口）：清掉全部标记后按最终 located 重建，
-    /// 保证逐批渲染后终态与原来整批渲染的终态相同；已首批缩放过的不再抢区域。
+    /// 摘掉不在 wantedIds 里的标记（P2-9 增量 diff 的删的一半）：
+    /// 先收键再删，删字典时不遍历字典本身。
+    private func removeLocatedAnnotations(notIn wantedIds: Set<String>) {
+        let staleIds = locatedAnnotations.keys.filter { !wantedIds.contains($0) }
+        for id in staleIds {
+            if let annotation = locatedAnnotations.removeValue(forKey: id) {
+                mapView.removeAnnotation(annotation)
+            }
+        }
+    }
+
+    /// 就地更新后刷大头针字形（篇数）：视图已存在时 viewFor 不会
+    /// 重走，字形须手动跟上新篇数；视图尚未建好时 viewFor 会按新组取值。
+    private func refreshGlyph(for annotation: MKPointAnnotation, count: Int) {
+        if let marker = mapView.view(for: annotation) as? MKMarkerAnnotationView {
+            marker.glyphText = "\(count)"
+        }
+    }
+
+    /// 终态对齐：按组 ID 增量更新（P2-9）——只摘掉最终 located 里
+    /// 已没有的组的标记，其余标记就地更新、不拆建；已首批缩放过的
+    /// 不再抢区域。整批解析完成时用户正在看的选中点与气泡保持不动。
     private func applyGeocodedGroups(located: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)], unlocated: [BearyLocationMapGroup]) {
         unlocatedGroups = unlocated
-        mapView.removeAnnotations(mapView.annotations)
+        removeLocatedAnnotations(notIn: Set(located.map { $0.group.id }))
         addLocatedAnnotations(located)
         tableView.reloadData()
     }
