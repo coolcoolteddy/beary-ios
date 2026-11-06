@@ -402,6 +402,8 @@ final class SessionManager {
         BearyProfileStatsCache.purge(bucket: "\(id)")
         // r17-C9：心愿墙首屏快照同样在退出/401 时清掉该账号槽位。
         BearyWishWallCache.purge(bucket: "\(id)")
+        // r17-C6：本人相册首屏照片索引快照同样在退出/401 时清掉该账号槽位。
+        BearyProfilePhotosCache.purge(bucket: "\(id)")
         BearyDMConversationsCache.purge(bucket: "\(id)")
         BearyDetailCache.purge(bucket: "\(id)")
         BearyEntrySyncStore.purgeAccount(accountId: id)
