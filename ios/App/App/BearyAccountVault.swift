@@ -25,6 +25,11 @@ struct BearyStoredAccount: Codable {
     var tokenExpiresAtMs: Double?
     var savedAtMs: Double
 
+    /// r25-7：Keychain 删除失败后置旗——凭据删不掉、账号无法移除，
+    /// 冷启动不再把它当有效账号；下次 save 成功重建记录时清掉标记（自愈）。
+    /// 合成 Codable 对带默认值的属性用 decodeIfPresent，旧 JSON 无此键可解出 false。
+    var unrecoverable: Bool = false
+
     /// 列表行展示名：显示名 → 邮箱前缀 → @handle → ID。
     var displayTitle: String {
         if let name = displayName, !name.isEmpty { return name }
@@ -101,7 +106,8 @@ final class BearyAccountVault {
            existing.email == stored.email,
            existing.avatarURL == stored.avatarURL,
            existing.token == stored.token,
-           existing.tokenExpiresAtMs == stored.tokenExpiresAtMs {
+           existing.tokenExpiresAtMs == stored.tokenExpiresAtMs,
+           existing.unrecoverable == stored.unrecoverable {
             return true
         }
         guard let data = try? JSONEncoder().encode(stored) else { return false }
@@ -143,6 +149,25 @@ final class BearyAccountVault {
         if SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecSuccess {
             generation += 1
         }
+    }
+
+    /// r25-7：删除失败时把该凭据标记为不可恢复（冷启动不再把它当有效账号）。
+    /// 沿用 updateTokenExpiry 的 SecItemUpdate 写法；成功返回 true。
+    /// 注意：标记成功后 generation +1；下次 save 成功重建记录时清掉标记（自愈）。
+    func markUnrecoverable(userId: Int) -> Bool {
+        guard var stored = load(userId: userId) else { return false }
+        stored.unrecoverable = true
+        guard let data = try? JSONEncoder().encode(stored) else { return false }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: accountName(for: userId),
+        ]
+        if SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecSuccess {
+            generation += 1
+            return true
+        }
+        return false
     }
 
     func load(userId: Int) -> BearyStoredAccount? {
