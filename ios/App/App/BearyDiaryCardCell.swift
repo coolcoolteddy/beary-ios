@@ -1902,19 +1902,32 @@ class BearyDiaryCardCell: UITableViewCell {
         // 作者行顶部统一 16（2026-11-05 ChatGPT 间距跟进）：@ 行显隐的 1pt
         // 差值保留（16／17），只改基线不改相对行为；个人页首卡 30 与置顶 +25
         // 是例外，一字不动。
-        headerStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 16 : 17) : (profileFirstRow ? 30 : 16)
+        // 名字行偏下（126 真机实测：名字比头像中心低约 10pt，时间约 11.5pt，
+        // 天气图标同行跟走——整行 titleStack 被往下顶）：UIStackView 会把
+        // setCustomSpacing 的值算在隐藏行之后——pinRow、recipientRow 藏了，
+        // 10 + 4 还在占位。隐藏行的尾随间距归零，显示时恢复原值；两行都藏
+        // （头行只剩作者行）时作者行改为与头像垂直居中：头行顶 = 头像顶 +
+        // (头像高 40 − 作者行高) / 2，作者行高取名字字体行高（动态字号变大
+        // 时偏移跟着缩小）。有行在作者行之上时保持顶对齐不动。
+        let avatarTopBase: CGFloat = cardMode == .feed ? 16 : (profileFirstRow ? 30 : 16)
+        if pinRow.isHidden && recipientRow.isHidden {
+            headerStackTopConstraint?.constant = avatarTopBase + (40 - BearyDynamicType.cardTitleFont().lineHeight) / 2
+        } else {
+            headerStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 16 : 17) : (profileFirstRow ? 30 : 16)
+        }
         // 首卡虚线框顶 6→22（底边仍距 cell 底 6，不整体下移），tab 视觉底边
         // （首卡顶 +14）到框顶留 8pt；其余一律 6。
         ephemeralBorderTopConstraint?.constant = (cardMode == .profile && profileFirstRow) ? 22 : 6
         // 110：头像顶与头行顶同值（个人页首卡 30、其余 16；首页恒 16）——
-        // 头像顶与作者行顶对齐，首卡限时框（顶 22）完整包住头像（30..70，
-        // 框顶留 8pt）；框路径一字不动，不用框迁就错位头像。
+        // 有行在作者行之上时头像顶与作者行顶对齐；两行都藏时作者行改为与
+        // 头像垂直居中（见上），头像顶不动，首卡限时框（顶 22）仍完整包住
+        // 头像（30..70，框顶留 8pt）；框路径一字不动，不用框迁就错位头像。
         // 置顶时头像同步下移置顶行高（15）＋行间距（10）＝ 25，使头像仍与作者行对齐、
         // 置顶行落在卡片最上方（预览口径：标识在作者行之上）；未置顶时一字不动。
         let pinOffset: CGFloat = pinRow.isHidden ? 0 : 25
         avatarTopConstraint?.constant = (cardMode == .feed ? 16 : (profileFirstRow ? 30 : 16)) + pinOffset
-        headerStack.setCustomSpacing(10, after: pinRow)
-        headerStack.setCustomSpacing(4, after: recipientRow)
+        headerStack.setCustomSpacing(pinRow.isHidden ? 0 : 10, after: pinRow)
+        headerStack.setCustomSpacing(recipientRow.isHidden ? 0 : 4, after: recipientRow)
         headerStack.setCustomSpacing(4, after: titleStack)
         // 2026-11-05 日记布局统一：头行→正文栈间距不再走栈内 spacing，
         // 改由正文栈顶三条约束定——有标题 16、无标题 14（ChatGPT 间距跟进，

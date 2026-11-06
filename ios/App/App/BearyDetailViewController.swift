@@ -725,8 +725,8 @@ final class BearyDetailViewController: UIViewController {
         // 一旦某一路异常即全崩，故改本地常量激活、彻底去掉强制解包，行为不变。
         let narrowLeading = columnNarrowLeading
         let narrowTrailing = columnNarrowTrailing
-        // 批 B：头像顶 16、头行顶 16（有 @ 行时 17，见 updateDiaryStackSpacing；
-        // @ 行显隐的 1pt 差值保留，只改基线不改相对行为）；
+        // 批 B：头像顶 16、头行顶 16（无 @ 行时加作者行居中偏移、有 @ 行时 17，
+        // 见 updateDiaryStackSpacing；@ 行显隐的 1pt 差值保留，只改基线不改相对行为）；
         // 头行右缩进：他人 0、本人 −36（让出小地球 28 + 间隙 8；以内容列为基准，
         // 等价于首页以整屏为基准的 −52，屏上几何一致）；正文栈左右与内容列齐平、
         // 右缩进恒 0（小地球只占头行高度，正文不让位）。
@@ -1109,8 +1109,12 @@ final class BearyDetailViewController: UIViewController {
     private func updateDiaryStackSpacing() {
         // 作者行顶部统一 16（2026-11-05 ChatGPT 间距跟进）：@ 行显隐的 1pt
         // 差值保留（16／17），只改基线不改相对行为。
-        headerStackTopConstraint?.constant = recipientRow.isHidden ? 16 : 17
-        headerStack.setCustomSpacing(4, after: recipientRow)
+        // 名字行偏下（卡片同款，126 真机实测：整行 authorRow 被往下顶，
+        // 时间比头像中心低约 11.5pt）：隐藏的 @ 行尾随 4pt 间距仍占位。
+        // 隐藏时归零，显示时恢复；@ 行藏时作者行与头像（40 高、顶 16）
+        // 垂直居中，作者行高取名字字体行高（动态字号变大时偏移跟着缩小）。
+        headerStackTopConstraint?.constant = recipientRow.isHidden ? 16 + (40 - BearyDynamicType.cardTitleFont().lineHeight) / 2 : 17
+        headerStack.setCustomSpacing(recipientRow.isHidden ? 0 : 4, after: recipientRow)
         headerStack.setCustomSpacing(4, after: authorRow)
         // 2026-11-05 日记布局统一：头行→正文栈间距不再走栈内 spacing，
         // 改由正文栈顶三条约束定——有标题 16、无标题 14（ChatGPT 间距跟进，
