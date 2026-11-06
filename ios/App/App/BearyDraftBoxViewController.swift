@@ -146,6 +146,9 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     private var draftsLoadFailed = false
     /// 草稿库损坏态（lastLoadError 为 corruptStore 时）：失败态下出清除按钮；v2/v1 旧源损坏不属此态。
     private var draftsLoadCorrupt = false
+    /// R23-#1：草稿读取的账号绑定——每次 loadDrafts 自增代次；入队时捕获
+    /// 的账号只在回包核对时用（不另存，见 loadDrafts）。
+    private var draftsLoadGeneration = 0
     /// U18：把手外包容器（原 buildViews 内局部变量），下滑关闭手势挂在这里。
     private let handleWrapView = UIView()
 
@@ -204,6 +207,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         // （无卡片可点时提示会误导），renderDrafts 按实际态（列表/空态/失败态）
         // 再决定显隐；加载占位由 renderDrafts 清空 listStack 时一并摘掉。
         showLoadingState()
+        NotificationCenter.default.addObserver(self, selector: #selector(handleDraftBoxUserChanged), name: .bearyUserDidChange, object: nil)
         loadDrafts { [weak self] in
             self?.hideLoadingState()
             self?.renderDrafts()
@@ -739,11 +743,21 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     /// 旧 23：读盘 + 解码在 BearyDraftStore.ioQueue（串行后台队列，与
     /// save/deleteAsync 同队列，读不到写一半的库）上执行；状态赋值与
     /// completion 一律回主线程，调用方在 completion 里做 UI 渲染。
+    /// R23-#1：入队时（主线程）捕获当前账号与代次；ioQueue 内改用捕获
+    /// 账号版 loadAllResult(forAccount:)，执行中不再重读 currentAccountId；
+    /// 回主线程双核对（代次仍最新 且 会话账号仍为捕获账号），否则丢弃、
+    /// 不调 completion——排队后切号读不到 B 的草稿，已读到 A 的结果也
+    /// 不会在切号后贴到 B 的箱里。
     private func loadDrafts(completion: (() -> Void)? = nil) {
+        let accountId = BearyDraftStore.currentAccountId
+        draftsLoadGeneration += 1
+        let generation = draftsLoadGeneration
         BearyDraftStore.ioQueue.async { [weak self] in
-            let result = BearyDraftStore.loadAllResult()
+            let result = BearyDraftStore.loadAllResult(forAccount: accountId)
             DispatchQueue.main.async { [weak self] in
                 guard let strongSelf = self else { return }
+                guard generation == strongSelf.draftsLoadGeneration,
+                      BearyDraftStore.currentAccountId == accountId else { return }
                 switch result {
                 case .success(let loaded):
                     strongSelf.drafts = loaded
@@ -759,6 +773,34 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                     }
                 }
                 completion?()
+            }
+        }
+    }
+
+    /// R23-#1：账号切换——旧号模型立即清掉（在途旧读由 loadDrafts 的
+    /// 代次 + 账号双核对丢弃；这里再把代次 +1，使已排队未执行的旧读
+    /// 连主线程回包都进不来）。撤销队列一并清掉：旧号草稿不得经撤销
+    /// 写盘进新号（saveAsyncReporting 按调用时账号写）。随后下一
+    /// runloop 按新会话重读——此时容器 onUserChanged 已跑完 setAccount，
+    /// loadDrafts 捕获的即新账号；若箱已在关闭则不重读。
+    @objc private func handleDraftBoxUserChanged() {
+        guard isViewLoaded else { return }
+        draftsLoadGeneration += 1
+        drafts = []
+        draftsLoadFailed = false
+        draftsLoadCorrupt = false
+        currentDraftId = nil
+        for pending in pendingUndos { pending.timer?.invalidate() }
+        pendingUndos = []
+        refreshUndoBar()
+        renderDrafts()
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, !self.isDismissing else { return }
+            self.loadDrafts { [weak self] in
+                self?.hideLoadingState()
+                self?.renderDrafts()
+                self?.draftsInitialLoaded = true
+                self?.tryPlayEntrance()
             }
         }
     }
@@ -1786,6 +1828,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     }
 
     deinit {
+        NotificationCenter.default.removeObserver(self, name: .bearyUserDidChange, object: nil)
         for pending in pendingUndos { pending.timer?.invalidate() }
     }
 }
