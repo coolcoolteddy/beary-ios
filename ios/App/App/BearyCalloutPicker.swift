@@ -465,22 +465,34 @@ final class BearyBubbleMenuView: UIView {
             onTap?(key)
         }
 
+        /// 自绘菜单行由手势处理触摸；VoiceOver 激活使用同一选择回调。
+        override func accessibilityActivate() -> Bool {
+            onTap?(key)
+            return true
+        }
+
         // 按压反馈：轻震＋微缩，松手/取消回弹（UIButton 版按压反馈是
         // UIControl 专属，视图行自带同款手感）。
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
             super.touchesBegan(touches, with: event)
             BearyHaptics.press()
-            UIView.animate(withDuration: BearyMotion.animated(true) ? 0.13 : 0) { self.transform = CGAffineTransform(scaleX: 0.98, y: 0.98) }
+            UIView.animate(withDuration: BearyMotion.animated(true) ? 0.13 : 0,
+                           delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
+                           animations: { self.transform = CGAffineTransform(scaleX: 0.98, y: 0.98) })
         }
 
         override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
             super.touchesEnded(touches, with: event)
-            UIView.animate(withDuration: BearyMotion.animated(true) ? 0.13 : 0) { self.transform = .identity }
+            UIView.animate(withDuration: BearyMotion.animated(true) ? 0.13 : 0,
+                           delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
+                           animations: { self.transform = .identity })
         }
 
         override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
             super.touchesCancelled(touches, with: event)
-            UIView.animate(withDuration: BearyMotion.animated(true) ? 0.13 : 0) { self.transform = .identity }
+            UIView.animate(withDuration: BearyMotion.animated(true) ? 0.13 : 0,
+                           delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
+                           animations: { self.transform = .identity })
         }
     }
 
