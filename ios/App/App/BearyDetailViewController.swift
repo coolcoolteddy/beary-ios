@@ -551,9 +551,9 @@ final class BearyDetailViewController: UIViewController {
             showPlaceholder(visibility: entry.visibility)
         } else {
             renderAll()
-            // 单篇快照：进页即写盘（卡片/已拉数据都算看过的内容），弱网 id 直达
-            // 时先显这份旧正文。
-            saveDetailSnapshot()
+            // 单篇快照：进页只记浏览（卡片/已拉数据都算看过的内容），弱网 id 直达
+            // 时先显这份旧正文；旧快照的确认时间与正文一字不动。
+            markDetailSnapshotViewed()
         }
         DiagFile.mark("detail.rendered id=\(entry.id ?? "?")")
         // 审计 P2-20：详情页监听拉黑/举报——页内命中时转占位（不得继续出全文）。
@@ -1575,8 +1575,15 @@ final class BearyDetailViewController: UIViewController {
 
     /// 单篇磁盘快照写盘：占位/拉黑态与无 id 的篇不写（快照只存看过的内容态），
     /// 桶按当前账号隔离、未登录记 guest 桶。
+    /// 确认态写盘：只在后台补齐的新鲜数据到达时调（见 update(with:)）。
     private func saveDetailSnapshot() {
         BearyDetailCache.save(bucket: BearyDetailCache.bucket(), entry: entry)
+    }
+
+    /// 浏览记次：进页只刷新快照的上次浏览，确认时间与正文不动；
+    /// 回看旧快照不再换成新的保存时间。
+    private func markDetailSnapshotViewed() {
+        BearyDetailCache.markViewed(bucket: BearyDetailCache.bucket(), entry: entry)
     }
 
     // MARK: - 限时到期（审计三轮第二批 9）
@@ -2749,8 +2756,20 @@ enum BearyDetailCache {
     private static let filePrefix = "beary_detail_cache_"
 
     struct Snapshot: Codable {
+        /// 保留字段：旧文件只有它；新写盘时与 confirmedAt 同值（旧读者仍可读到确认时间）。
         var savedAt: TimeInterval
+        /// 上次服务端确认（后台补齐／重试成功时刷新；浏览不刷新）。
+        /// 旧文件缺失时回落 savedAt。
+        var confirmedAt: TimeInterval? = nil
+        /// 上次浏览（进页只刷新它；清理按它挑最久未看的快照）。
+        /// 旧文件缺失时回落 savedAt。
+        var lastViewedAt: TimeInterval? = nil
         var entry: Entry
+
+        /// 有效确认时间（旧文件 confirmedAt 缺失时取 savedAt）。
+        var effectiveConfirmedAt: TimeInterval { confirmedAt ?? savedAt }
+        /// 有效上次浏览（旧文件 lastViewedAt 缺失时取 savedAt）。
+        var effectiveLastViewedAt: TimeInterval { lastViewedAt ?? savedAt }
     }
 
     /// 桶：登录账号 id，未登录记 guest 桶（游客看过的公开篇也能离线再看）。
@@ -2801,18 +2820,87 @@ enum BearyDetailCache {
     }
 
     /// 只写内容态：占位/无 id 的篇不写盘。
+    /// 确认态写盘（后台补齐／重试成功时调）：刷新确认时间与正文；上次浏览
+    /// 原样保留（后台补齐未必是用户在看，浏览时间只由 markViewed 刷新）。
     static func save(bucket: String, entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty, entry.placeholder != true else { return }
         let capturedGeneration = generation(for: bucket)
         ioQueue.async {
             guard capturedGeneration == generation(for: bucket) else { return }
             guard let url = fileURL(bucket: bucket, entryId: entryId) else { return }
-            let snap = Snapshot(savedAt: Date().timeIntervalSince1970, entry: entry)
-            let encoder = JSONEncoder()
-            encoder.keyEncodingStrategy = .convertToSnakeCase
-            guard let data = try? encoder.encode(snap) else { return }
-            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? data.write(to: url, options: .atomic)
+            let now = Date().timeIntervalSince1970
+            let lastViewed = loadSnapshot(at: url)?.effectiveLastViewedAt ?? now
+            let snap = Snapshot(savedAt: now, confirmedAt: now, lastViewedAt: lastViewed, entry: entry)
+            writeSnapshot(snap, to: url)
+            enforceLimits(bucket: bucket)
+        }
+    }
+
+    /// 浏览记次（进页时调）：只刷新上次浏览，确认时间与正文一字不动；
+    /// 无快照时才建一份（首看即确认时间，之后再看只动 lastViewedAt）。
+    static func markViewed(bucket: String, entry: Entry) {
+        guard let entryId = entry.id, !entryId.isEmpty, entry.placeholder != true else { return }
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            guard capturedGeneration == generation(for: bucket) else { return }
+            guard let url = fileURL(bucket: bucket, entryId: entryId) else { return }
+            let now = Date().timeIntervalSince1970
+            if var existing = loadSnapshot(at: url) {
+                existing.lastViewedAt = now
+                writeSnapshot(existing, to: url)
+            } else {
+                let snap = Snapshot(savedAt: now, confirmedAt: now, lastViewedAt: now, entry: entry)
+                writeSnapshot(snap, to: url)
+                enforceLimits(bucket: bucket)
+            }
+        }
+    }
+
+    /// 读盘解码（ioQueue 内同步用；失败即 nil，不抛）。
+    private static func loadSnapshot(at url: URL) -> Snapshot? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try? decoder.decode(Snapshot.self, from: data)
+    }
+
+    /// 编码写盘（ioQueue 内同步用）。
+    private static func writeSnapshot(_ snap: Snapshot, to url: URL) {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        guard let data = try? encoder.encode(snap) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+    }
+
+    /// 单账号桶上限：200 篇／20MB；超限先清最久未看的快照（按
+    /// lastViewedAt 升序删，直到计数与体积都回落到上限内）。
+    static let maxSnapshotsPerBucket = 200
+    static let maxSnapshotBytesPerBucket = 20 * 1024 * 1024
+
+    /// 桶内清理（只在 ioQueue 内调用，与 save/markViewed 同队列串行）。
+    private static func enforceLimits(bucket: String) {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        let prefix = "\(filePrefix)\(bucket)_"
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: base.path) else { return }
+        var files: [(url: URL, size: Int, lastViewed: TimeInterval)] = []
+        var totalBytes = 0
+        for name in names where name.hasPrefix(prefix) {
+            let url = base.appendingPathComponent(name)
+            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+            let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
+            let lastViewed = loadSnapshot(at: url)?.effectiveLastViewedAt
+                ?? (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+            files.append((url: url, size: size, lastViewed: lastViewed))
+            totalBytes += size
+        }
+        guard files.count > maxSnapshotsPerBucket || totalBytes > maxSnapshotBytesPerBucket else { return }
+        files.sort { $0.lastViewed < $1.lastViewed }
+        var index = 0
+        while (files.count - index > maxSnapshotsPerBucket || totalBytes > maxSnapshotBytesPerBucket) && index < files.count {
+            try? FileManager.default.removeItem(at: files[index].url)
+            totalBytes -= files[index].size
+            index += 1
         }
     }
 
