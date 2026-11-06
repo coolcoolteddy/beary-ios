@@ -384,6 +384,12 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             conversationStateView.configure(kind: .error, title: "加载失败", subtitle: "下拉重试", iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.load() })
             conversationStateView.isHidden = false
             setRefreshFailedBannerVisible(false)
+        } else if conversations.isEmpty && BearyDMStore.isCorrupt(accountId: SessionManager.shared.currentUser?.id) {
+            // 本地缓存损坏：不呈“还没有私信”空态；仅本地有的会话暂不可见，
+            // 旧数据保留在原文件与备份里，未被覆盖。重试只重拉服务端列表。
+            conversationStateView.configure(kind: .error, title: "本地私信损坏", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.load() })
+            conversationStateView.isHidden = false
+            setRefreshFailedBannerVisible(false)
         } else if conversations.isEmpty {
             conversationStateView.configure(kind: .empty, title: "还没有私信", subtitle: "发第一条纯文字消息吧", iconName: nil, actionTitle: nil, onAction: nil)
             conversationStateView.isHidden = false
