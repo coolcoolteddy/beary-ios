@@ -361,6 +361,15 @@ class BearyProfileViewController: UIViewController {
     /// 各卡，重试行明示“只加载了部分日记，请重试”；网络全量到齐 / 失败态
     /// 接管时复位（失败态自带同款明示，不再需要本旗）。
     private var modulesCorpusPartial = false
+    /// r17-C7：统计卡磁盘快照——最近一次完整语料算出的数字、年度分组与
+    /// 那年今日条目；语料未到齐时先显快照，新语料到齐后替换。只缓存本人页。
+    private var cachedStatsSnapshot: BearyProfileStatsCache.Snapshot?
+    /// r17-C7：当前统计卡是否正显快照（刷新失败时保留快照数字并标明
+    /// “显示的是上次的数据”，不清空）。
+    private var showingCachedStats = false
+    /// r17-C7：上次渲染「那年今天」的北京时间日期（yyyy-MM-dd）——跨
+    /// 0 点停留本页时与今日比对，变了即藏旧卡、重拉新语料。
+    private var lastBeijingDateRendered: String?
     /// 113 模块分页失败态：失败不再静默全灭——本轮已拉到的页（或旧全量语料）
     /// 照常渲染，另加重试行明示失败；从未拉到页时只显重试行。
     private var modulesLoadFailed = false
@@ -2108,6 +2117,7 @@ class BearyProfileViewController: UIViewController {
         // 审计-个人页设置：补注销 bearyFriendsChanged（viewDidLoad 注册、
         // 此前 deinit 漏注销；广播到达已释放实例不再投递）。
         NotificationCenter.default.removeObserver(self, name: .bearyFriendsChanged, object: nil)
+        // r17-C7：补注销跨日通知（与 viewDidLoad 注册配对）。
         NotificationCenter.default.removeObserver(self, name: UIApplication.willEnterForegroundNotification, object: nil)
         NotificationCenter.default.removeObserver(self, name: UIApplication.significantTimeChangeNotification, object: nil)
     }
@@ -2137,6 +2147,10 @@ class BearyProfileViewController: UIViewController {
         // 刚到期的那句滑入「已送达」（见 pastSelfRecheckDue，不走全量重建）。
         NotificationCenter.default.addObserver(self, selector: #selector(pastSelfRecheckDue(_:)), name: UIApplication.willEnterForegroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(pastSelfRecheckDue(_:)), name: UIApplication.significantTimeChangeNotification, object: nil)
+        // r17-C7：跨 0 点停留本页时「那年今天」按北京时间换日——系统跨日
+        // 通知与回前台时都复核一次（见 checkBeijingDayRollover）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleBeijingDayRollover), name: UIApplication.significantTimeChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleBeijingDayRollover), name: UIApplication.willEnterForegroundNotification, object: nil)
         if selfGate && viewerUserIdValue == nil {
             // U7：二选一取“只铺页脚”：不拉任何本人数据、不直接弹登录，
             // 弹登录交给页脚“去登录”按钮（loginButtonTapped → onRequireLogin）。
@@ -2147,6 +2161,8 @@ class BearyProfileViewController: UIViewController {
         applyMode()
         loadProfile()
         loadProfileSnapshot()
+        // r17-C7：冷开个人页先显上次的统计数字（语料未到齐前的快照首屏）。
+        loadStatsSnapshot()
         if targetUserIdValue != nil {
             // id 目标的标签列表不需要等 profile：日记 / 赞过按 id 直接拉。
             loadTab(forceReload: true)
@@ -2229,6 +2245,8 @@ class BearyProfileViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        // r17-C7：回到本页时复核北京时间日期——跨 0 点后「那年今天」换日。
+        checkBeijingDayRollover()
         // 批 C（#220 补口）：容器切页只改 isHidden 时 viewWillAppear 不触发，
         // 封面复位不能只依赖这里——见 pageDidReturn（容器切回时显式调）。
         // modal 栈回页仍走这里，同样复位（已在自然态时 resetCoverStretch 是 no-op）。
@@ -4543,6 +4561,21 @@ class BearyProfileViewController: UIViewController {
 
     // MARK: 批 D —— 模块语料（作者 scope 全量分页）
 
+    /// r17-C7：北京时间日历（Asia/Shanghai）——「那年今天」按北京时间换日，
+    /// 不跟设备时区；设备时区≠北京时，0 点分界仍以北京时间为准。
+    private static var beijingCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+        return calendar
+    }
+
+    /// r17-C7：北京时间日期串（yyyy-MM-dd）——快照存它，跨日失效凭它比对。
+    private static func beijingDateString(from date: Date) -> String {
+        let parts = beijingCalendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = parts.year, let month = parts.month, let day = parts.day else { return "" }
+        return String(format: "%04d-%02d-%02d", year, month, day)
+    }
+
     private func scheduleModulesRefresh(fromProfileResult: Bool = false) {
         // 112 他人页口径：日记下方模块全去（写作统计／那年今日／随机漫步／
         // 地图／星图），故他人页不拉模块语料——作者 scope 分页请求一律不发；
@@ -4640,6 +4673,8 @@ class BearyProfileViewController: UIViewController {
                         strongSelf.modulesLoadFailed = false
                         strongSelf.modulesRetrying = false
                         strongSelf.renderModules()
+                        // r17-C7：确认到尾才覆盖快照（失败/部分语料分支不调）。
+                        strongSelf.saveStatsSnapshotIfNeeded(entries: merged)
                         strongSelf.pastSelfSyncFromServer(generation: generation)
                     } else if let last = fresh.last, let lastCreatedAt = last.createdAt, let lastId = last.id {
                         strongSelf.loadModulesPage(before: lastCreatedAt, beforeId: lastId, accumulated: merged, seenIds: seenIds, generation: generation)
@@ -4654,6 +4689,8 @@ class BearyProfileViewController: UIViewController {
                         strongSelf.modulesLoadFailed = false
                         strongSelf.modulesRetrying = false
                         strongSelf.renderModules()
+                        // r17-C7：本分支现行即按到齐处理，快照同口径覆盖。
+                        strongSelf.saveStatsSnapshotIfNeeded(entries: merged)
                         strongSelf.pastSelfSyncFromServer(generation: generation)
                     }
                 case .failure:
@@ -4691,11 +4728,17 @@ class BearyProfileViewController: UIViewController {
             // 数字是“已加载部分”的聚合，重试行文案明示未完整，不冒充全量
             // （旧“半截不画”是防撒谎，现以明示替代隐藏）。加载中时重试行
             // 显“加载中…”、钮禁用；停稳后显“只加载了部分日记，请重试”。
+            // r17-C7：从未拉到页但有快照时快照卡继续显（数字是上次的，文案标明），
+            // 不清空；部分语料到齐时新聚合覆盖快照（见下）。
             if modulesCorpus.isEmpty {
-                for card in [pastSelfDeliveryCard, heatmapView, statsCard, thisDayCard, randomCard, yearCard] {
-                    card.isHidden = true
+                if !showingCachedStats {
+                    for card in [pastSelfDeliveryCard, heatmapView, statsCard, thisDayCard, randomCard, yearCard] {
+                        card.isHidden = true
+                    }
                 }
             } else {
+                showingCachedStats = false
+                cachedStatsSnapshot = nil
                 let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
                 renderHeatmap(visible: visible)
                 renderStats(visible: visible)
@@ -4739,6 +4782,10 @@ class BearyProfileViewController: UIViewController {
             fadeInViewIfAppearing(modulesContainer, wasHidden: modulesWasHidden)
             return
         }
+        // r17-C7：新语料到齐，快照使命结束；记下今日北京时间日期供跨日比对。
+        showingCachedStats = false
+        cachedStatsSnapshot = nil
+        lastBeijingDateRendered = Self.beijingDateString(from: Date())
         let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
         renderHeatmap(visible: visible)
         renderStats(visible: visible)
@@ -4770,7 +4817,9 @@ class BearyProfileViewController: UIViewController {
             modulesRetryLabel.text = "加载中…"
             modulesRetryButton.isEnabled = false
         } else if modulesCorpus.isEmpty {
-            modulesRetryLabel.text = "加载失败，请重试"
+            // r17-C7：有旧结果且刷新失败时标“显示的是上次的数据”，不清空；
+            // 无快照时才显加载失败。
+            modulesRetryLabel.text = showingCachedStats ? "显示的是上次的数据" : "加载失败，请重试"
             modulesRetryButton.isEnabled = true
         } else {
             modulesRetryLabel.text = "只加载了部分日记，请重试"
@@ -4851,32 +4900,7 @@ class BearyProfileViewController: UIViewController {
             }
             return
         }
-        statsCard.isHidden = false
-        statsTotalValueLabel.text = "\(stats.total) 篇"
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        let charsText = formatter.string(from: NSNumber(value: stats.totalChars)) ?? "\(stats.totalChars)"
-        statsCharsValueLabel.text = "\(charsText) 字"
-        if let slot = stats.bestSlotStartHour {
-            statsSlotValueLabel.text = String(format: "%02d:00–%02d:00", slot, slot + 2)
-        } else {
-            statsSlotValueLabel.text = "—"
-        }
-        statsStreakValueLabel.text = "连续 \(stats.currentStreakDays) 天"
-        var parts: [String] = []
-        if let moodKey = stats.topMoodKey, let moodName = BearyText.moodNames[moodKey] {
-            parts.append("最常用心情：\(moodName)")
-        }
-        if let weatherKey = stats.topWeatherKey, let weatherName = BearyText.weatherNames[weatherKey] {
-            parts.append("最常用天气：\(weatherName)")
-        }
-        if parts.isEmpty {
-            statsMoodWeatherLabel.isHidden = true
-        } else {
-            statsMoodWeatherLabel.isHidden = false
-            statsMoodWeatherLabel.text = parts.joined(separator: " · ")
-        }
-        updateStatsCardAccessibilityLabel(stats: stats, charsText: charsText, moodWeatherParts: parts)
+        applyStatsLabels(stats)
         // 紧凑版词汇指纹：当年 top 4；当年无词条目时取最近有词条目的年，
         // 年份由词视图标题行明示；当年有篇但无可计词时整节隐藏，不留空标题。
         // 口径与年报首屏同源：visible 已过滤，wordprint 内部再过滤一次。
@@ -4977,6 +5001,39 @@ class BearyProfileViewController: UIViewController {
         heatmapView.configure(entries: visible)
     }
 
+    /// 统计数字 label 赋值（新语料 renderStats 与快照 renderStatsFromSnapshot 共用；
+    /// 词行不在内：词行须等新语料重算，快照不带词表）。
+    private func applyStatsLabels(_ stats: BearyProfilePersonalLogic.WritingStats) {
+        statsCard.isHidden = false
+        statsTotalValueLabel.text = "\(stats.total) 篇"
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        let charsText = formatter.string(from: NSNumber(value: stats.totalChars)) ?? "\(stats.totalChars)"
+        statsCharsValueLabel.text = "\(charsText) 字"
+        if let slot = stats.bestSlotStartHour {
+            statsSlotValueLabel.text = String(format: "%02d:00–%02d:00", slot, slot + 2)
+        } else {
+            statsSlotValueLabel.text = "—"
+        }
+        statsStreakValueLabel.text = "连续 \(stats.currentStreakDays) 天"
+        var parts: [String] = []
+        if let moodKey = stats.topMoodKey, let moodName = BearyText.moodNames[moodKey] {
+            parts.append("最常用心情：\(moodName)")
+        }
+        if let weatherKey = stats.topWeatherKey, let weatherName = BearyText.weatherNames[weatherKey] {
+            parts.append("最常用天气：\(weatherName)")
+        }
+        if parts.isEmpty {
+            statsMoodWeatherLabel.isHidden = true
+        } else {
+            statsMoodWeatherLabel.isHidden = false
+            statsMoodWeatherLabel.text = parts.joined(separator: " · ")
+        }
+        // 主线后加的无障碍标签更新：分支抽 helper 时基线还没有这行，
+        // 放进 helper 里，两路（新算 / 快照）都带上。
+        updateStatsCardAccessibilityLabel(stats: stats, charsText: charsText, moodWeatherParts: parts)
+    }
+
     // MARK: 词汇指纹 —— 点写作统计卡进年度回顾（本人与他人均可）
 
     @objc private func statsCardTapped() {
@@ -5018,11 +5075,19 @@ class BearyProfileViewController: UIViewController {
 
     @objc private func thisDayEntryTapped(_ sender: UIButton) {
         guard let entryId = sender.accessibilityIdentifier, !entryId.isEmpty else { return }
-        guard let entry = modulesCorpus.first(where: { $0.id == entryId }) else { return }
+        // r17-C7：语料未到齐时展开行指向快照条目，回落快照里找。
+        guard let entry = modulesCorpus.first(where: { $0.id == entryId })
+            ?? cachedStatsSnapshot?.thisDayEntries.first(where: { $0.id == entryId }) else { return }
         onOpenEntry?(entry)
     }
 
     private func renderThisDay(visible: [Entry]) {
+        // r17-C7：今天按北京时间算（设备时区≠北京时，0 点分界仍以北京时间为准）。
+        renderThisDayWithEntries(visible: visible, today: Date(), calendar: Self.beijingCalendar)
+    }
+
+    /// 那年今天渲染体：today/calendar 由调用方定——新语料与快照都走北京时间。
+    private func renderThisDayWithEntries(visible: [Entry], today: Date, calendar: Calendar) {
         // 语料为 0 时整卡隐藏；语料非空但往年今天没写时显示解释性空态（预览定版），
         // 不编造、不拿别的日子顶替。
         guard !visible.isEmpty else {
@@ -5031,12 +5096,12 @@ class BearyProfileViewController: UIViewController {
             return
         }
         thisDayCard.isHidden = false
-        let todayParts = Calendar.current.dateComponents([.month, .day], from: Date())
+        let todayParts = calendar.dateComponents([.month, .day], from: today)
         guard let month = todayParts.month, let day = todayParts.day else {
             thisDayCard.isHidden = true
             return
         }
-        let history = BearyProfilePersonalLogic.thisDayInHistory(entries: visible, today: Date(), calendar: Calendar.current)
+        let history = BearyProfilePersonalLogic.thisDayInHistory(entries: visible, today: today, calendar: calendar)
         for arrangedView in thisDayExpandStack.arrangedSubviews {
             thisDayExpandStack.removeArrangedSubview(arrangedView)
             arrangedView.removeFromSuperview()
@@ -6027,6 +6092,151 @@ class BearyProfileViewController: UIViewController {
         guard didApply else { return }
         tableView.reloadData()
         refreshFooter()
+    }
+
+    // MARK: - r17-C7：统计卡磁盘快照（冷开先显上次数字）
+
+    /// 冷开先显快照：只在语料尚未到齐时贴；语料已到齐则新数据为准。
+    private func loadStatsSnapshot() {
+        guard isOwnProfile, let bucket = profileCacheBucket(),
+              let accountId = SessionManager.shared.currentUser?.id else { return }
+        BearyProfileStatsCache.load(bucket: bucket, accountId: accountId, sessionGeneration: SessionManager.shared.currentSessionGeneration) { [weak self] snap in
+            guard let self = self, let snap = snap else { return }
+            guard !self.modulesCorpusComplete else { return }
+            self.applyStatsSnapshot(snap)
+        }
+    }
+
+    private func applyStatsSnapshot(_ snap: BearyProfileStatsCache.Snapshot) {
+        guard isOwnProfile else { return }
+        cachedStatsSnapshot = snap
+        showingCachedStats = true
+        lastBeijingDateRendered = snap.beijingDate
+        renderStatsFromSnapshot(snap)
+        renderYearFromSnapshot(snap)
+        // 那年今天只在快照日期仍是今天（北京时间）时才贴；跨日后不贴旧日，等新语料。
+        if snap.beijingDate == Self.beijingDateString(from: Date()) {
+            renderThisDayFromSnapshot(snap)
+        } else {
+            thisDayCard.isHidden = true
+            thisDayMainEntry = nil
+        }
+        // 随机卡与过去的自己送达卡需要语料池，快照不渲染；重试行此时不显（刷新在途）。
+        // 卡片默认可见，不显式藏会在快照首屏带出空卡。
+        randomCard.isHidden = true
+        pastSelfDeliveryCard.isHidden = true
+        modulesRetryRow.isHidden = true
+        let anyVisible = [statsCard, thisDayCard, yearCard].contains { !$0.isHidden }
+        let modulesWasHidden = modulesContainer.isHidden
+        modulesContainer.isHidden = !anyVisible
+        modulesHeightConstraint.isActive = !anyVisible
+        if headerWidthValue > 0 {
+            layoutHeaderForced(widthValue: headerWidthValue)
+        }
+        refreshFooter()
+        fadeInViewIfAppearing(modulesContainer, wasHidden: modulesWasHidden)
+    }
+
+    /// 快照渲染统计数字（不含词汇指纹：词行须等新语料重算，快照不带词表，先藏，不留旧年词）。
+    private func renderStatsFromSnapshot(_ snap: BearyProfileStatsCache.Snapshot) {
+        guard snap.total > 0 else {
+            statsCard.isHidden = true
+            statsWordprintYear = nil
+            return
+        }
+        let stats = BearyProfilePersonalLogic.WritingStats(
+            total: snap.total,
+            totalChars: snap.totalChars,
+            bestSlotStartHour: snap.bestSlotStartHour,
+            currentStreakDays: snap.currentStreakDays,
+            topMoodKey: snap.topMoodKey,
+            topWeatherKey: snap.topWeatherKey
+        )
+        applyStatsLabels(stats)
+        statsWordprintView.isHidden = true
+        statsWordprintYear = nil
+    }
+
+    /// 快照渲染年度回顾入口（今年篇数取年度分组，连续天数取统计 streak，与 renderYear 同源）。
+    private func renderYearFromSnapshot(_ snap: BearyProfileStatsCache.Snapshot) {
+        guard isOwnProfile else {
+            yearCard.isHidden = true
+            return
+        }
+        let year = Calendar.current.component(.year, from: Date())
+        let count = snap.yearCounts["\(year)"] ?? 0
+        guard count > 0 else {
+            yearCard.isHidden = true
+            return
+        }
+        yearCard.isHidden = false
+        yearSummaryLabel.text = "今年已写 \(count) 篇 · 连续 \(snap.currentStreakDays) 天"
+        yearCard.accessibilityLabel = "\(year) 年度回顾"
+    }
+
+    /// 快照渲染那年今日：条目来自快照（带 ID 与正文），按北京时间算今天；展开行点按
+    /// 经 thisDayEntryTapped 回落快照条目（语料未到齐时 modulesCorpus 里还没有它）。
+    private func renderThisDayFromSnapshot(_ snap: BearyProfileStatsCache.Snapshot) {
+        guard snap.thisDayEntries.isEmpty == false else {
+            thisDayCard.isHidden = true
+            thisDayMainEntry = nil
+            return
+        }
+        renderThisDayWithEntries(visible: snap.thisDayEntries, today: Date(), calendar: Self.beijingCalendar)
+    }
+
+    /// 语料到齐才覆盖：只在两个“到齐”分支（末页不足 50、末页游标缺失按到齐处理）
+    /// 调用；失败/部分语料分支不调，不拿半截聚合覆盖已确认的快照。
+    private func saveStatsSnapshotIfNeeded(entries: [Entry]) {
+        guard isOwnProfile, let bucket = profileCacheBucket(),
+              let accountId = SessionManager.shared.currentUser?.id else { return }
+        let visible = BearyProfilePersonalLogic.visibleEntries(entries, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
+        let stats = BearyProfilePersonalLogic.writingStats(entries: visible, now: Date(), calendar: .current)
+        let history = BearyProfilePersonalLogic.thisDayInHistory(entries: visible, today: Date(), calendar: Self.beijingCalendar)
+        var yearCounts: [String: Int] = [:]
+        for entry in visible {
+            guard let createdAt = entry.createdAt else { continue }
+            let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
+            let year = Calendar.current.component(.year, from: date)
+            yearCounts["\(year)", default: 0] += 1
+        }
+        let snap = BearyProfileStatsCache.Snapshot(
+            savedAt: Date().timeIntervalSince1970,
+            accountId: accountId,
+            sessionGeneration: SessionManager.shared.currentSessionGeneration,
+            beijingDate: Self.beijingDateString(from: Date()),
+            total: stats.total,
+            totalChars: stats.totalChars,
+            bestSlotStartHour: stats.bestSlotStartHour,
+            currentStreakDays: stats.currentStreakDays,
+            topMoodKey: stats.topMoodKey,
+            topWeatherKey: stats.topWeatherKey,
+            yearCounts: yearCounts,
+            thisDayYear: history?.year,
+            thisDayEntries: history?.entries ?? []
+        )
+        BearyProfileStatsCache.save(bucket: bucket, snapshot: snap)
+    }
+
+    /// 跨日复核（北京时间）：系统跨日通知、回前台、回到本页时都调。
+    /// 统计数字本身不按日失效，只「那年今天」换日——旧卡先藏、重拉新语料，
+    /// 新语料到齐后 renderModules 按新日期重算；统计数字在重拉期间继续显旧值。
+    @objc private func handleBeijingDayRollover() {
+        checkBeijingDayRollover()
+    }
+
+    private func checkBeijingDayRollover() {
+        let today = Self.beijingDateString(from: Date())
+        guard let last = lastBeijingDateRendered else {
+            lastBeijingDateRendered = today
+            return
+        }
+        guard last != today else { return }
+        lastBeijingDateRendered = today
+        thisDayCard.isHidden = true
+        thisDayMainEntry = nil
+        cachedStatsSnapshot = nil
+        scheduleModulesRefresh()
     }
 
     private func scopeForTab(tab: ProfileTab) -> BearyAPI.Scope? {
@@ -9518,6 +9728,96 @@ enum BearyProfileCache {
             let encoder = JSONEncoder()
             encoder.keyEncodingStrategy = .convertToSnakeCase
             guard let data = try? encoder.encode(snap) else { return }
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    static func purge(bucket: String) {
+        bumpGeneration(for: bucket)
+        ioQueue.async {
+            guard let url = fileURL(bucket: bucket) else { return }
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+}
+
+// MARK: - 个人页统计卡首屏磁盘缓存（r17-C7，与 BearyProfileCache 同口径，不新增文件）
+//
+// 缓存最近一次完整语料算出的数字、年度分组与那年今日条目 ID（条目带正文，
+// 冷开即可渲染）；只有确认到尾（末页不足 50，或末页游标缺失按到齐处理）
+// 才覆盖，失败/部分语料不写。按账号分桶，读取时校验账号 id 与会话代次
+// （退出/401/换号后代次推进，旧快照弃用）；退出/401 时由 SessionManager 清桶。
+// 「那年今天」按北京时间日期失效：快照存 beijingDate（Asia/Shanghai），
+// 冷开比对当日，跨日不贴旧日；跨 0 点停留本页时由跨日复核藏旧卡、重拉新语料。
+enum BearyProfileStatsCache {
+    private static let filePrefix = "beary_profile_stats_cache_"
+
+    struct Snapshot: Codable {
+        var savedAt: TimeInterval
+        var accountId: Int
+        var sessionGeneration: Int
+        /// 北京时间日期（yyyy-MM-dd，Asia/Shanghai）。
+        var beijingDate: String
+        var total: Int
+        var totalChars: Int
+        var bestSlotStartHour: Int?
+        var currentStreakDays: Int
+        var topMoodKey: String?
+        var topWeatherKey: String?
+        /// 年度分组：年份 → 当年篇数。
+        var yearCounts: [String: Int]
+        var thisDayYear: Int?
+        /// 那年今日条目（最近一年，createdAt 降序；带 ID 与正文）。
+        var thisDayEntries: [Entry]
+    }
+
+    private static func fileURL(bucket: String) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return base.appendingPathComponent("\(filePrefix)\(bucket).json")
+    }
+
+    private static let ioQueue = DispatchQueue(label: "beary.profileStatsCache.io", qos: .utility)
+
+    private static let generationLock = NSLock()
+    private static var generations: [String: UInt64] = [:]
+
+    private static func generation(for bucket: String) -> UInt64 {
+        generationLock.lock()
+        defer { generationLock.unlock() }
+        return generations[bucket] ?? 0
+    }
+
+    private static func bumpGeneration(for bucket: String) {
+        generationLock.lock()
+        generations[bucket, default: 0] += 1
+        generationLock.unlock()
+    }
+
+    /// 读取：账号 id 与会话代次双重校验——任一不符即弃用，不递出旧号/旧会话快照。
+    static func load(bucket: String, accountId: Int, sessionGeneration: Int, completion: @escaping (Snapshot?) -> Void) {
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            var snap: Snapshot?
+            if let url = fileURL(bucket: bucket), let data = try? Data(contentsOf: url) {
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                snap = try? decoder.decode(Snapshot.self, from: data)
+            }
+            let valid = snap?.accountId == accountId && snap?.sessionGeneration == sessionGeneration
+            let result = (capturedGeneration == generation(for: bucket) && valid) ? snap : nil
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    static func save(bucket: String, snapshot: Snapshot) {
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            guard capturedGeneration == generation(for: bucket) else { return }
+            guard let url = fileURL(bucket: bucket) else { return }
+            let encoder = JSONEncoder()
+            encoder.keyEncodingStrategy = .convertToSnakeCase
+            guard let data = try? encoder.encode(snapshot) else { return }
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: url, options: .atomic)
         }
