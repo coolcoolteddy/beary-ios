@@ -95,6 +95,10 @@ final class BearyProfilePhotosViewController: UIViewController {
         return labelValue
     }()
 
+    /// 内容列：宽 ≥821 时 600 居中，≤820 时屏宽减 32（许愿墙同款口径）；
+    /// cap 只在宽屏激活，窄屏不收窄到 600。
+    private var collectionCapConstraint: NSLayoutConstraint?
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
@@ -105,6 +109,13 @@ final class BearyProfilePhotosViewController: UIViewController {
         topBarView.addSubview(titleLabel)
         view.addSubview(collectionView)
         view.addSubview(emptyLabel)
+        // 内容列：centerX ＋ defaultHigh 的屏宽减 32 撑满（只靠 centerX＋两侧
+        // 不等式列宽会跟着内容走，见 2026-11-02 居中列布局陷阱）；宽 ≥821 时
+        // cap 600 生效居中，窄屏 cap 关掉、不收窄。
+        let collectionViewWidth = collectionView.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -32)
+        collectionViewWidth.priority = .defaultHigh
+        let collectionCap = collectionView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        collectionCapConstraint = collectionCap
         NSLayoutConstraint.activate([
             topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -124,8 +135,11 @@ final class BearyProfilePhotosViewController: UIViewController {
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: backButton.trailingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBarView.trailingAnchor, constant: -52),
             collectionView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
-            collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            collectionView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            collectionViewWidth,
+            collectionCap,
+            collectionView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            collectionView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
             collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
@@ -134,6 +148,14 @@ final class BearyProfilePhotosViewController: UIViewController {
         // 空相册自动续拉：首批无可见照片但仍有下一页时，零格使 willDisplay
         // 永不触发，必须在此主动拉起首轮续拉（见 fetchMoreWhileEmptyIfNeeded）。
         fetchMoreWhileEmptyIfNeeded()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        let wantCap = view.bounds.width >= 821
+        if let cap = collectionCapConstraint, cap.isActive != wantCap {
+            cap.isActive = wantCap
+        }
     }
 
     /// 116 数据填入动效：标题计数变化时只淡入标题本身（alpha 0→1、
