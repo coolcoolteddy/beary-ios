@@ -1673,7 +1673,7 @@ private final class StarMapSkyView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = BearyStarMapNight.background
-        // 审计登录杂项：画布本身不是无障碍元素，星由 accessibilityElements 逐颗暴露。
+        // 审计登录杂项：画布本身不是无障碍元素，星与连线由 accessibilityElements 逐个暴露。
         isAccessibilityElement = false
         dustLayer.zPosition = 0
         layer.addSublayer(dustLayer)
@@ -1994,9 +1994,12 @@ private final class StarMapSkyView: UIView {
         flash.add(anim, forKey: "r17-halo-flash")
     }
 
-    /// 审计登录杂项：按当前 stars 生成 VoiceOver 元素——每颗星一个 button，
-    /// label 为“日期＋篇名 / 字数”，frame 为星心命中框；点按走现有 didTapStar
-    /// 路径（经 onStarTap 回调），视觉绘制一字不动。
+    /// 审计登录杂项＋审计 r16 第 12 项：按当前 stars/edges 生成 VoiceOver 元素——每颗星一个
+    /// button，label 为“日期＋篇名 / 字数”，frame 为星心命中框；每条可点连线一个 button，
+    /// label 为“连线：A 与 B，原因”，frame 为线段包围框（两侧各扩 12pt、短边补足 44pt
+    /// 命中高）；星激活走现有 didTapStar 路径（经 onStarTap 回调），连线激活走现有
+    /// didTapEdge 路径（经 onEdgeTap 回调、与点按同一条 showEdgeSheet），视觉绘制一字不动。
+    /// r15 P2-11 的筛选行「查看连线」列表入口与本项互补（列表 vs 连线本身），不重复。
     private func syncAccessibilityElements() {
         // P2-12：过渡期暂停时不暴露任何星元素（旧 onActivate 仍回调旧 Entry）。
         guard !interactionPaused, !stars.isEmpty, bounds.width > 0, bounds.height > 0 else {
@@ -2035,6 +2038,34 @@ private final class StarMapSkyView: UIView {
             }
             elements.append(element)
         }
+        // 只暴露画得出来的连线：建层与点按命中都走 displayedEdges（600 条预算），
+        // 看不见的线也点不到，VoiceOver 里同样不出现。
+        for edge in displayedEdges {
+            guard let a = pointsById[edge.firstId], let b = pointsById[edge.secondId],
+                  let first = entriesById[edge.firstId], let second = entriesById[edge.secondId] else { continue }
+            let p1 = point(for: a, in: bounds)
+            let p2 = point(for: b, in: bounds)
+            var frame = CGRect(x: min(p1.x, p2.x), y: min(p1.y, p2.y),
+                               width: abs(p2.x - p1.x), height: abs(p2.y - p1.y))
+                .insetBy(dx: -12, dy: -12)
+            if frame.width < 44 { frame = frame.insetBy(dx: -(44 - frame.width) / 2, dy: 0) }
+            if frame.height < 44 { frame = frame.insetBy(dx: 0, dy: -(44 - frame.height) / 2) }
+            frame = frame.intersection(bounds)
+            guard !frame.isNull, !frame.isEmpty else { continue }
+            let element = StarMapStarAccessibilityElement(accessibilityContainer: self)
+            let reasons = edge.reasons.map { edgeReasonText($0) }.joined(separator: "；")
+            element.accessibilityLabel = "连线：\(edgeEntryName(first)) 与 \(edgeEntryName(second))，\(reasons)"
+            element.accessibilityHint = "双击查看连线原因"
+            element.accessibilityTraits = [.button]
+            if edge.id == selectedEdgeId {
+                element.accessibilityTraits.insert(.selected)
+            }
+            element.accessibilityFrameInContainerSpace = frame
+            element.onActivate = { [weak self] in
+                self?.onEdgeTap?(StarMapEdge(firstId: edge.firstId, secondId: edge.secondId, reasons: edge.reasons))
+            }
+            elements.append(element)
+        }
         accessibilityElements = elements
         lastAccessibilitySize = bounds.size
     }
@@ -2060,6 +2091,29 @@ private final class StarMapSkyView: UIView {
         }
         if needsSync {
             syncAccessibilityElements()
+        }
+    }
+
+    /// 连线端点在 VoiceOver 里的名字：与星元素同口径（日期＋篇名，无标题为“日记”）。
+    private func edgeEntryName(_ entry: Entry) -> String {
+        let title = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = title.isEmpty ? "日记" : title
+        if let id = entry.id, let star = stars.first(where: { $0.id == id }), !star.dateText.isEmpty {
+            return "\(star.dateText) \(name)"
+        }
+        return name
+    }
+
+    /// 连线原因文案：与 VC.showEdgeSheet 经 reasonText 拼的标题同文案（同三档），
+    /// 两处改动须同步。
+    private func edgeReasonText(_ reason: StarMapEdgeReason) -> String {
+        switch reason.kind {
+        case .mood:
+            return "同心情：\(BearyText.moodNames[reason.detail] ?? reason.detail)"
+        case .place:
+            return "同地点：\(reason.detail)"
+        case .word:
+            return "同词：\(reason.tokens.prefix(3).joined(separator: "、"))"
         }
     }
 
@@ -2277,10 +2331,10 @@ private final class StarMapSkyView: UIView {
     }
 }
 
-// MARK: - 审计登录杂项：星图画布 VoiceOver 星元素
+// MARK: - 审计登录杂项：星图画布 VoiceOver 元素（星＋连线）
 
 /// UIAccessibilityElement 本身无点按回调：子类以 accessibilityActivate 转发现有
-/// didTapStar 路径（经 StarMapSkyView.onStarTap），不改视觉绘制与手势逻辑。
+/// 点按路径（星经 onStarTap、连线经 onEdgeTap），不改视觉绘制与手势逻辑。
 private final class StarMapStarAccessibilityElement: UIAccessibilityElement {
     var onActivate: (() -> Void)?
 
