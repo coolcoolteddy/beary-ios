@@ -1486,6 +1486,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 样式与动作复用失败态 retryButton（工厂紧凑描边 pill：标题“重试”/
     /// 36 高/圆角 18/14 semibold/surface 底/1 line 边框，点按走同一 retryTapped 立即重跑
     /// lastQuery，不走防抖。成功/清状态时尾行隐藏。
+    /// B2：旧结果属于上一词时，列表头亮横幅写清出处（见 updateStaleResultsBanner），
+    /// 不让上一词的结果被误读成当前词的结果。
     private func showFailedStateKeepingResults() {
         showingResults = true
         stateWrap.isHidden = true
@@ -1496,6 +1498,55 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         resultsStack.isHidden = false
         // 88 包 M13：失败重试改走结果区尾行（原行内重试行已并入尾行）。
         setSearchFooter(failed: true)
+        updateStaleResultsBanner()
+    }
+
+    /// B2：旧结果保留提示横幅——换词搜索失败、旧结果仍在屏时，列表头写清
+    /// 旧结果所属的词（“下方是「旧词」的结果”）。横幅是 resultsStack 的首个
+    /// arranged 子视图，与分区头同字号/同灰；成功重渲/清结果时随
+    /// clearResultRows 一并摘掉（引用见 removeStaleResultsBanner）。
+    private var staleResultsBanner: UIView?
+
+    private func updateStaleResultsBanner() {
+        // 旧结果所属词与当前搜索词不同时才亮横幅；同词重试失败不亮（结果即当前词的）。
+        guard showingResults,
+              let rendered = lastRenderedQuery, !rendered.isEmpty,
+              rendered != lastQuery else {
+            removeStaleResultsBanner()
+            return
+        }
+        let text = "下方是「\(rendered)」的结果"
+        if let banner = staleResultsBanner, banner.superview == resultsStack,
+           let label = banner.subviews.first as? UILabel {
+            label.text = text
+            return
+        }
+        removeStaleResultsBanner()
+        let wrap = UIView()
+        wrap.translatesAutoresizingMaskIntoConstraints = false
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.gray
+        label.numberOfLines = 0
+        label.text = text
+        wrap.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 12),
+            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 6),
+            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -6),
+            label.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -4),
+        ])
+        staleResultsBanner = wrap
+        resultsStack.insertArrangedSubview(wrap, at: 0)
+    }
+
+    private func removeStaleResultsBanner() {
+        guard let banner = staleResultsBanner else { return }
+        staleResultsBanner = nil
+        resultsStack.removeArrangedSubview(banner)
+        banner.removeFromSuperview()
     }
 
     /// 尾行四态（与时间线/个人主页尾行同形态；搜索进行时不显示尾行，只转框内圈）：
@@ -1607,6 +1658,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             resultsStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
+        // B2：旧结果提示横幅随结果区一并摘掉（视图已在上循环里移除）。
+        staleResultsBanner = nil
         mineSectionHeader = nil
         publicSectionHeader = nil
         usersSectionHeader = nil
@@ -1734,6 +1787,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 }
             }
         }
+        // B2：拉黑/举报过滤后按旧词重渲时，旧结果提示横幅须重新亮起
+        // （clearResultRows / syncResultRowsReuse 已摘旧横幅；新词成功渲染时
+        // 本调用自行摘横幅）。放行入场动画之前，横幅先占位、行在其下入场。
+        updateStaleResultsBanner()
         // M11：结果区首次出现/换批时行错峰滑入；同一批仅内容变化的行淡入。
         animateResultRows(query: query)
         // S5：渲染完成、行帧已定，可见行（+下一屏）的关注状态优先请求。
