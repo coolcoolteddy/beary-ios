@@ -17,6 +17,9 @@ import CoreLocation
 // 从本页进详情改了可见性后返回，本页只重拉一次（needsRefreshAfterDetail 门控，
 // 不是每次 appear 都拉）；删除/回收站/注销走服务端列表变化，下次打开自然同步。
 // 切账号：appear 时发现 viewer 变了即按新身份重算（本人↔他人口径切换）并重拉。
+// 列表：未选中时 main 区即地点列表（地点名＋篇数，含尚在编码中的组，
+// 编不出坐标的组走“未能在地图上定位”专区）；点地点行与点地图标记
+// 进同一组日记（selectGroup），标题旁「所有地点」清除选中回列表。
 
 final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UITableViewDataSource, UITableViewDelegate {
     private let authorId: Int
@@ -585,6 +588,27 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         }
     }
 
+    /// 标题旁「所有地点」：清除选中、回到地点列表。点标记／点地点行
+    /// 进入同一组日记（selectGroup），这是唯一的返回入口——此前
+    /// selectedGroup = nil 只在切账号时出现，无用户可点的清除选中。
+    @objc private func didTapShowAllLocations() {
+        selectedGroup = nil
+        tableView.reloadData()
+        if tableView.numberOfSections > 0, tableView.numberOfRows(inSection: 0) > 0 {
+            tableView.scrollToRow(at: IndexPath(row: 0, section: 0), at: .top, animated: BearyMotion.animated(true))
+        }
+    }
+
+    /// 未选中时 main 区列出的地点组：已定位 + 尚在编码中的组；已判为
+    /// 未定位／暂时失败的组走各自专区，不在这里重复。编码完成前组就
+    /// 在列表里，可点进日记，不必等坐标解析出来。
+    private var listedGroups: [BearyLocationMapGroup] {
+        groups.filter { group in
+            !unlocatedGroups.contains(where: { $0.key == group.key })
+                && !transientFailedGroups.contains(where: { $0.key == group.key })
+        }
+    }
+
     // MARK: - MKMapViewDelegate
 
     func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
@@ -646,7 +670,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             return unlocatedGroups.count
         case .main:
             if let selected = selectedGroup { return selected.entries.count }
-            return 1
+            // 未选中时 main 区是地点列表（每行一地点）；无组时只留一行提示。
+            if groups.isEmpty { return 1 }
+            return listedGroups.count
         }
     }
 
@@ -660,6 +686,41 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             if let selected = selectedGroup { return "\(selected.key) · \(selected.count) 篇" }
             return nil
         }
+    }
+
+    /// 选中组时 main 区头：标题（组名＋篇数）旁给「所有地点」返回入口；
+    /// 未选中与其他区走默认标题头（返回 nil 即用 titleForHeaderInSection）。
+    func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
+        guard diaryMapSections[section] == .main, let selected = selectedGroup else { return nil }
+        let container = UIView()
+        let titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = UIFont.systemFont(ofSize: 13)
+        titleLabel.textColor = BearyColors.gray
+        titleLabel.text = "\(selected.key) · \(selected.count) 篇"
+        let backButton = UIButton(type: .system)
+        backButton.translatesAutoresizingMaskIntoConstraints = false
+        backButton.setTitle("所有地点", for: .normal)
+        backButton.setTitleColor(BearyColors.ink, for: .normal)
+        backButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        backButton.accessibilityLabel = "所有地点"
+        backButton.addTarget(self, action: #selector(didTapShowAllLocations), for: .touchUpInside)
+        container.addSubview(titleLabel)
+        container.addSubview(backButton)
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            titleLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: backButton.leadingAnchor, constant: -8),
+            backButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            backButton.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            backButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        return container
+    }
+
+    func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {
+        if diaryMapSections[section] == .main, selectedGroup != nil { return 44 }
+        return UITableView.automaticDimension
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -706,12 +767,23 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 cell.accessoryType = .disclosureIndicator
                 return cell
             }
-            let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapCell", for: indexPath)
+            if groups.isEmpty {
+                let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapCell", for: indexPath)
+                var config = cell.defaultContentConfiguration()
+                config.text = "还没有带位置的日记"
+                config.secondaryText = nil
+                cell.contentConfiguration = config
+                cell.selectionStyle = .none
+                return cell
+            }
+            // 未选中：地点列表行——地点名＋篇数，点行与点地图标记进同一组日记。
+            let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapGroupCell", for: indexPath)
+            let group = listedGroups[indexPath.row]
             var config = cell.defaultContentConfiguration()
-            config.text = groups.isEmpty ? "还没有带位置的日记" : "点地图上的标记点，这里出现该地点日记列表"
-            config.secondaryText = nil
+            config.text = group.key
+            config.secondaryText = "\(group.count) 篇"
             cell.contentConfiguration = config
-            cell.selectionStyle = .none
+            cell.accessoryType = .disclosureIndicator
             return cell
         }
     }
@@ -728,9 +800,15 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             selectGroup(unlocatedGroups[indexPath.row])
             return
         case .main:
-            guard let selected = selectedGroup, indexPath.row < selected.entries.count else { return }
-            needsRefreshAfterDetail = true
-            onOpenEntry?(selected.entries[indexPath.row])
+            if let selected = selectedGroup {
+                guard indexPath.row < selected.entries.count else { return }
+                needsRefreshAfterDetail = true
+                onOpenEntry?(selected.entries[indexPath.row])
+            } else {
+                // 地点列表行：与点地图标记同一入口（selectGroup），进同一组日记。
+                guard indexPath.row < listedGroups.count else { return }
+                selectGroup(listedGroups[indexPath.row])
+            }
         }
     }
 }
