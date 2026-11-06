@@ -870,6 +870,14 @@ final class BearyImageLoader {
         }
     }
 
+    /// B5 灯箱回绕交接：同步读内存缓存（只读内存，不读磁盘、不发网络；
+    /// 过期／代次已变视为未命中，与 cachedMemoryImage 同口径）。
+    /// 目标图已被相邻预取暖过缓存时，调用方直接用它交接，不等一次异步回包。
+    func cachedImage(url: URL, downsampleToWidth: CGFloat? = nil) -> UIImage? {
+        let key = memoryKey(for: url, downsampleToWidth: downsampleToWidth)
+        return cachedMemoryImage(forKey: key, bucket: currentAccountId)
+    }
+
     /// 审计三轮 23 项：在途合并表。键 = memoryKey（已含账号桶与下采样宽度，
     /// 同 URL 不同桶/不同下采样宽度绝不合并）；一条在途记录只建一个网络任务、
     /// 只做一次磁盘读与写盘，结果分发给全部订阅者。订阅者表只在 inFlightLock
