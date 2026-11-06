@@ -54,7 +54,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private var messages: [BearyAPI.DMMessage] = []
     // 审计：下拉刷新与翻旧消息分开加载态，不再共用同一 busy 锁静默吞刷新：
     // latestLoading = 最新页在途；olderLoading = 翻旧消息在途；
-    // refreshQueued = 翻旧在途时用户下拉刷新排队（翻旧结束即跑，不静默丢）。
+    // refreshQueued = 在途时攒下的刷新（翻旧在途时的下拉刷新、或最新页在途时
+    // 的发送确认/下拉刷新），在途那次结束即补跑，不静默丢。
     private var latestLoading = false
     private var olderLoading = false
     private var refreshQueued = false
@@ -615,8 +616,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         self.removePendingSend(key: key, restoreDraft: true)
                         BearyToast.show(in: self.view, message: "发送结果未知，请确认对方是否已收到后再重发")
                     } else {
+                        // M3：确认未送达的失败只让这一条摇头并提示「没发出去」，其余行不动。
                         self.failedSendKeys.insert(key)
                         self.reloadPendingRow(key: key)
+                        DispatchQueue.main.async { [weak self] in self?.shakeFailedRow(key: key) }
+                        BearyToast.show(in: self.view, message: "没发出去")
                     }
                 }
             }
@@ -648,6 +652,23 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private func reloadPendingRow(key: String) {
         guard let row = messages.firstIndex(where: { $0.localKey == key }) else { return }
         tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
+    }
+
+    /// M3：确认未送达的失败只让这一条摇头（标准拒绝动效 values [0,-8,8,-5,5,0]/0.4s，
+    /// 与 BearyEditProfileViewController.playDenyShake 同口径；减动效时只跳视觉抖动），
+    /// 其余行不动。reloadRows 后下一 runloop 再取 cell，取到的是刷新后的新 cell。
+    private func shakeFailedRow(key: String) {
+        guard let row = messages.firstIndex(where: { $0.localKey == key }) else { return }
+        let indexPath = IndexPath(row: row, section: 0)
+        tableView.layoutIfNeeded()
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        guard BearyMotion.animated(true) else { return }
+        cell.layer.removeAnimation(forKey: "bearyDMFailShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = 0.4
+        cell.layer.add(shake, forKey: "bearyDMFailShake")
     }
 
     private func updateEmptyState() {
@@ -753,10 +774,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             refreshQueued = true
             return
         }
-        // 最新页在途时跳过、不 endRefreshing——在途那次结束时会 endRefreshing
-        //（#727“最新页在途同样不断刷新控件”口径）；翻旧在途的跳过走上面排队路，
-        // 同样不断刷新控件。
-        guard !latestLoading else { return }
+        // 最新页在途时记一次待补刷新、不 endRefreshing——在途那次结束时
+        // endRefreshing 并补跑这次刷新（#727“最新页在途同样不断刷新控件”口径；
+        // M3：否则发送成功调 loadLatest 会被静默吞掉，待发一直挂发送态）。
+        // 翻旧在途的跳过走上面排队路，同样不断刷新控件。
+        if latestLoading {
+            refreshQueued = true
+            return
+        }
         latestLoading = true
         loadFailed = false
         // 审计第 19 项：首次无本地消息才显加载态；有本地消息时先显旧消息、
@@ -807,6 +832,12 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         self.didMarkRead = false
                     }
                     self.markReadIfNeeded()
+                    // M3 待补刷新：在途期间攒下的那次刷新现在补跑（发送成功撞上
+                    // 在途最新页、或下拉刷新撞上在途最新页，都靠它不丢）。
+                    if self.refreshQueued {
+                        self.refreshQueued = false
+                        self.loadLatest()
+                    }
                 case .failure(let error):
                     if error.isDMNotAllowed {
                         // 档位不允许：横幅 + 禁用，不走“会话已关闭”（那是拉黑路径）。
@@ -825,6 +856,12 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.firstLoadPending = false
                     self.firstLoadStateView.isHidden = true
                     self.updateEmptyState()
+                    // 在途加载失败也不吞排队的刷新：用户要的是最新页，照常跑
+                    //（与 loadOlder 失败口径一致）。
+                    if self.refreshQueued {
+                        self.refreshQueued = false
+                        self.loadLatest()
+                    }
                 }
             }
         }
@@ -975,9 +1012,12 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         self.removePendingSend(key: key, restoreDraft: true)
                         BearyToast.show(in: self.view, message: "发送结果未知，请确认对方是否已收到后再重发")
                     } else {
-                        // 确认未送达的失败：行留在原地、侧边出红叹号，点按重发。
+                        // 确认未送达的失败：行留在原地、侧边出红叹号，点按重发；
+                        // M3：只让这一条摇头并提示「没发出去」，其余行不动。
                         self.failedSendKeys.insert(key)
                         self.reloadPendingRow(key: key)
+                        DispatchQueue.main.async { [weak self] in self?.shakeFailedRow(key: key) }
+                        BearyToast.show(in: self.view, message: "没发出去")
                     }
                 }
             }
