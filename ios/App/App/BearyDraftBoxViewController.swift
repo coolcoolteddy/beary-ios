@@ -749,13 +749,27 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                     strongSelf.drafts = loaded
                     strongSelf.draftsLoadFailed = false
                     strongSelf.draftsLoadCorrupt = false
+                    // A1：部分恢复写实际结果——好草稿已回写、坏的只留备份时，
+                    // 报实际找回数，不报“全部找回”也不报“全部丢失”。
+                    if let recovered = BearyDraftStore.lastPartialRecovery, recovered.skipped > 0 {
+                        strongSelf.showDraftToast(message: "找回了 \(recovered.kept) 份，还有 \(recovered.skipped) 份没读出来")
+                    }
                 case .failure(let err):
-                    strongSelf.drafts = []
-                    strongSelf.draftsLoadFailed = true
-                    if case .corruptStore(_) = err {
-                        strongSelf.draftsLoadCorrupt = true
-                    } else {
+                    if case .partialSaveFailed(let recovered, let kept, let skipped, _) = err {
+                        // A1：回写失败——原文件与备份都在，好草稿先预览，
+                        // 不进失败态、不把好草稿藏起来；报实际找回数。
+                        strongSelf.drafts = recovered
+                        strongSelf.draftsLoadFailed = false
                         strongSelf.draftsLoadCorrupt = false
+                        strongSelf.showDraftToast(message: "找回了 \(kept) 份，还有 \(skipped) 份没读出来")
+                    } else {
+                        strongSelf.drafts = []
+                        strongSelf.draftsLoadFailed = true
+                        if case .corruptStore(_) = err {
+                            strongSelf.draftsLoadCorrupt = true
+                        } else {
+                            strongSelf.draftsLoadCorrupt = false
+                        }
                     }
                 }
                 completion?()
@@ -766,7 +780,12 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     /// 草稿库损坏态清除：先弹系统确认框（App 现有确认口径），确认后删当前
     /// 账号的坏 v3 文件（.bak 备份不动），成功后重读 → 空态；失败则留失败态＋toast。
     @objc private func clearCorruptStoreTapped() {
-        let alert = UIAlertController(title: "清除无法读取的草稿？", message: "这些草稿目前无法读取。清除后草稿箱会变空，备份会保留在手机里，新草稿可以正常保存。", preferredStyle: .alert)
+        // A1：清除前先确认 .bak 真的存在；不存在时不承诺备份、文案如实说。
+        let backupKept = BearyDraftStore.hasCorruptBackup()
+        let message = backupKept
+            ? "这些草稿目前无法读取。清除后草稿箱会变空，备份会保留在手机里，新草稿可以正常保存。"
+            : "这些草稿目前无法读取。清除后草稿箱会变空，没有可保留的备份，新草稿可以正常保存。"
+        let alert = UIAlertController(title: "清除无法读取的草稿？", message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
         alert.addAction(UIAlertAction(title: "清除", style: .destructive) { [weak self] _ in
             BearyDraftStore.clearCorruptStoreAsync { [weak self] ok in
@@ -808,7 +827,12 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             // 两种失败态文案分开：损坏态讲清清除结果（删坏 v3 文件、只留 .bak，
             // 清除后重读回空态）；非损坏态沿用原话 +“重新读取”，确认框口径不动。
             if draftsLoadCorrupt {
-                failedStateView.configure(kind: .error, title: "草稿库已损坏", subtitle: "损坏的草稿无法恢复，.bak 备份保留在手机里。清除后重新读取会回到空态，新草稿可以正常保存。", iconName: nil, actionTitle: "清除损坏的草稿数据", actionStyle: .destructiveOutline(.regular), onAction: { [weak self] in self?.clearCorruptStoreTapped() })
+                // A1：损坏态副文案同样先确认 .bak 真的存在；没有备份时
+                // 不谎称“.bak 备份保留在手机里”，文案如实说。
+                let corruptSubtitle = BearyDraftStore.hasCorruptBackup()
+                    ? "损坏的草稿无法恢复，.bak 备份保留在手机里。清除后重新读取会回到空态，新草稿可以正常保存。"
+                    : "损坏的草稿无法恢复，没有可保留的备份。清除后重新读取会回到空态，新草稿可以正常保存。"
+                failedStateView.configure(kind: .error, title: "草稿库已损坏", subtitle: corruptSubtitle, iconName: nil, actionTitle: "清除损坏的草稿数据", actionStyle: .destructiveOutline(.regular), onAction: { [weak self] in self?.clearCorruptStoreTapped() })
             } else {
                 failedStateView.configure(kind: .error, title: "草稿读取失败", subtitle: "原文件已保留，请稍后再试", iconName: nil, actionTitle: "重新读取", onAction: { [weak self] in self?.retryLoadDraftsTapped() })
             }
