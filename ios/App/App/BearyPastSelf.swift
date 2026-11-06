@@ -219,10 +219,25 @@ final class PastSelfStore {
         case alreadyWaiting
         /// 存储已满且只剩等待中行（无已撤回 / 已送达行可丢）。
         case waitingCapped
+        /// 存储已损坏（旧留话保留在原键与备份里，新增拒绝、不覆盖）。
+        case storeCorrupt
+        /// 保存失败（编码失败或存量已损坏；新留话未落盘，不得报成功）。
+        case saveFailed
     }
 
     /// 最近一次 add 返回 nil 的原因（成功时为 nil）。
     private(set) var lastRejection: AddRejection?
+
+    /// 留话库读取失败类型。键不存在不是错误（首启即无留话），只有键存在
+    /// 却解不出才算损坏，且绝不以空数组冒充无留话。
+    enum LoadError: Error {
+        case corruptStore(backupKey: String?)
+    }
+
+    /// 最近一次 loadAll/loadAllResult 的失败；成功读取后清零。
+    /// loadAll() 为兼容老调用方仍返回数组，失败时返回 [] 但同时置本标记；
+    /// 调用方不得把该 [] 当成“无留话”，写路径也不得以它覆盖原值。
+    private(set) var lastLoadError: LoadError?
 
     init(userId: Int, defaults: UserDefaults = .standard) {
         self.userId = userId
@@ -231,10 +246,35 @@ final class PastSelfStore {
 
     private var storageKey: String { "beary.pastSelf.v1.\(userId)" }
 
+    /// 损坏备份槽位（单槽位，已有相同备份时不重复写；原值始终保留在原键）。
+    private var corruptBackupKey: String { storageKey + ".corrupt" }
+
+    /// 读全部（带失败区分）：无键返回空数组；键存在却解不出时原值保留不动、
+    /// 另存一份备份、返回失败。
+    func loadAllResult() -> Result<[PastSelfMessage], LoadError> {
+        guard let data = defaults.data(forKey: storageKey) else {
+            lastLoadError = nil
+            return .success([])
+        }
+        if let decoded = try? JSONDecoder().decode([PastSelfMessage].self, from: data) {
+            lastLoadError = nil
+            return .success(decoded)
+        }
+        if defaults.data(forKey: corruptBackupKey) != data {
+            defaults.set(data, forKey: corruptBackupKey)
+        }
+        let err = LoadError.corruptStore(backupKey: corruptBackupKey)
+        lastLoadError = err
+        return .failure(err)
+    }
+
     func loadAll() -> [PastSelfMessage] {
-        guard let data = defaults.data(forKey: storageKey) else { return [] }
-        guard let decoded = try? JSONDecoder().decode([PastSelfMessage].self, from: data) else { return [] }
-        return decoded
+        switch loadAllResult() {
+        case .success(let messages):
+            return messages
+        case .failure:
+            return []
+        }
     }
 
     /// 存储已满且无可丢行（只剩等待中）时为 true，新增应拒绝并行内提示。
@@ -245,7 +285,16 @@ final class PastSelfStore {
         return !all.contains { $0.revokedAtMs != nil || PastSelfLogic.isDue(deliverOn: $0.deliverOn, today: today) }
     }
 
-    private func save(_ messages: [PastSelfMessage]) {
+    /// 写盘，返回可确认的持久化结果：编码失败返回 false；当前存量已损坏
+    /// 时同样返回 false 且绝不覆盖（调用方 loadAllResult 失败已先挡，此处
+    /// 再验一次，防漏网调用把空数组写进已损坏的键）。内存构造值的编码失败
+    /// 实践中几乎不可能，可实际触发的是解码损坏后的覆写，本守卫即堵它。
+    @discardableResult
+    private func save(_ messages: [PastSelfMessage]) -> Bool {
+        if let raw = defaults.data(forKey: storageKey),
+           (try? JSONDecoder().decode([PastSelfMessage].self, from: raw)) == nil {
+            return false
+        }
         var capped = messages
         if capped.count > Self.maxStoredMessages {
             let today = PastSelfLogic.localDateString(from: Date(), calendar: .current)
@@ -265,18 +314,23 @@ final class PastSelfStore {
             }
             capped = capped.enumerated().filter { !drop.contains($0.offset) }.map { $0.element }
         }
-        guard let data = try? JSONEncoder().encode(capped) else { return }
+        guard let data = try? JSONEncoder().encode(capped) else { return false }
         defaults.set(data, forKey: storageKey)
+        return true
     }
 
     /// 新增留话。nil = 拒绝：正文空 / 超 500 字 / 原篇 id 空 / 该链已有等待中的留话
-    /// （一链同一时间只留一句，防同一天堆出两条同日送达）。
+    /// （一链同一时间只留一句，防同一天堆出两条同日送达）/ 存储损坏 / 保存失败。
+    /// 保存失败时返回 nil（lastRejection 置 .saveFailed），调用方不得报新增成功。
     func add(originEntryId: String, body: String, createdAtMs: Int, calendar: Calendar) -> PastSelfMessage? {
         lastRejection = nil
         let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !originEntryId.isEmpty, !text.isEmpty, text.count <= PastSelfLogic.maxBodyLength else { return nil }
         guard let deliverOn = PastSelfLogic.nextYearDateString(fromMs: createdAtMs, calendar: calendar) else { return nil }
-        var all = loadAll()
+        guard case .success(var all) = loadAllResult() else {
+            lastRejection = .storeCorrupt
+            return nil
+        }
         let today = PastSelfLogic.localDateString(fromMs: createdAtMs, calendar: calendar)
         if PastSelfLogic.waitingMessage(all, chainId: originEntryId, today: today) != nil {
             lastRejection = .alreadyWaiting
@@ -301,29 +355,31 @@ final class PastSelfStore {
             localOnly: true
         )
         all.append(message)
-        save(all)
+        guard save(all) else {
+            lastRejection = .saveFailed
+            return nil
+        }
         return message
     }
 
     /// 撤回：仅限该链最新一条、且未到送达日的留话（送达后已成链，不撤回旧年；
-    /// 要改写只能「再回一句」往后接）。成功返回 true。
+    /// 要改写只能「再回一句」往后接）。成功返回 true；存储损坏或保存失败返回 false。
     func revoke(messageId: String, nowMs: Int, today: String) -> Bool {
-        var all = loadAll()
+        guard case .success(var all) = loadAllResult() else { return false }
         // 审计登录杂项：补 authorId == userId 校验（防御性缺口：越界混入的行不得撤回他人留话）。
         guard let index = all.firstIndex(where: { $0.id == messageId && $0.authorId == userId && $0.revokedAtMs == nil }) else { return false }
         let message = all[index]
         guard PastSelfLogic.liveChainMessages(all, chainId: message.chainId).last?.id == messageId else { return false }
         guard !PastSelfLogic.isDue(deliverOn: message.deliverOn, today: today) else { return false }
         all[index].revokedAtMs = nowMs
-        save(all)
-        return true
+        return save(all)
     }
 
     /// 服务端同步合并：服务端行覆盖同 id 本地行，但本地已撤回的标记不被
     /// 服务端旧态冲掉（撤回先落本地、后台再补推，见 ProfileVC 同步）。
-    /// 本地未同步行（localOnly）原样保留。
+    /// 本地未同步行（localOnly）原样保留。本地存储损坏时不合并、不覆盖。
     func mergeServerRows(_ server: [PastSelfMessage]) {
-        var all = loadAll()
+        guard case .success(let all) = loadAllResult() else { return }
         var byId: [String: PastSelfMessage] = [:]
         for row in all { byId[row.id] = row }
         // 审计登录杂项：过滤他人行（服务端混入的非本人 authorId 行不进本用户存储）。
