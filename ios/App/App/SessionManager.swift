@@ -53,6 +53,11 @@ final class SessionManager {
     /// refreshMe 成功且用户 id 变化）+1；refreshMe 回包与 BearyAPI 的 401
     /// 回调只认当前代际，过期回包一律丢弃，不得覆盖当前态。
     private var sessionGeneration = 0
+    /// r17-C1：会话代次的只读口径——缓存读取用它校验快照是否属于当前会话
+    /// （登出/401/切号都会 +1）。各缓存自带的进程内静态 generations 字典
+    /// 只能拦 purge 前的旧读写，拦不住跨会话的旧快照，故读盘回包必须以
+    /// 此代次为准（见 BearyCalendarSnapshotStore.load）。
+    var currentSessionGeneration: Int { sessionGeneration }
     /// refreshMe 请求序号：每次调用 +1，回包只认最新一次，旧请求回包
     /// （含成功与 401 映射的 success(nil)）直接丢弃、不调 completion。
     /// 显式退出时同样 +1（见 signOutLocally），使退出时在途的旧 /me
@@ -295,7 +300,8 @@ final class SessionManager {
     /// 与图片缓存同口径；切换账号不走这里，旧账号磁盘保留、仅由
     /// 桶隔离，切回可复用（见 BearyFeedCache 说明）。
     /// 清单（缺一即私密内容留盘）：广场快照、时间线快照（含私密日记，
-    /// 此前无 purge 入口是本批补的缺口）、日落盘、回收站落盘，另加
+    /// 此前无 purge 入口是本批补的缺口）、日落盘、回收站落盘、月历快照
+    /// （r17-C1：按账号+年月落盘，含私密计数），另加
     /// 冷启动桶提示（forgetUserId，避免下次冷启动先画旧号桶）。
     /// 401 口径变化（特意统一，不再只清广场）：401 即会话已死，与显式
     /// 退出同等对待；唯一保留的区别仍是保管库 token 不删（见
@@ -311,6 +317,8 @@ final class SessionManager {
         BearyDetailCache.purge(bucket: "\(id)")
         BearyEntrySyncStore.purgeAccount(accountId: id)
         BearyTrashSyncStore.purgeAccount(accountId: id)
+        // r17-C1：月历快照同口径清该账号的桶（只清当前账号，其他账号不动）。
+        BearyCalendarSnapshotStore.purge(accountId: id)
         BearyFeedCache.forgetUserId()
     }
 
