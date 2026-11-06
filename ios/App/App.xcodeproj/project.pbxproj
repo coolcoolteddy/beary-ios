@@ -15,6 +15,9 @@
 		E62E1D3165F7930CF044FD16 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 471835DB5BDE5F7ECC34A331 /* AppIcon.icon */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		147711CB4F24122B8270E75F /* BearyCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5402B22C53F47BC0E5260A35 /* BearyCoreTests.swift */; };
+		1B778424598B7B93E2BCAA0B /* BearyDraftFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55657C85F900B6AAC4EBF6D1 /* BearyDraftFiles.swift */; };
+		8EC60A5B6163F157E9B114BF /* BearyEntrySync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93AA4EE6DE8A068A6BC825BB /* BearyEntrySync.swift */; };
+		2F0A688FB40C0D7E1E6D3A12 /* BearyDiaryPin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */; };
 		A8BEBC6E5F94AF59F6C14DDC /* BearyAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AECBDBF45A4EEB200061613F /* BearyAPI.swift */; };
 		46A75137107D74DC8B449314 /* BearyPastSelf.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57E941A106787A04C8C1EAA /* BearyPastSelf.swift */; };
 		8A1420F6FBFE89D95C582248 /* BearyDynamicBorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F0056EF4785D1AB4F29064A /* BearyDynamicBorder.swift */; };
@@ -1192,6 +1195,9 @@
 				B448177CB1834F02BE24580B /* BearyDynamicType.swift in Sources */,
 				8A1420F6FBFE89D95C582248 /* BearyDynamicBorder.swift in Sources */,
 				850D32A1A4CA4E3D088DA61F /* BearyNavigator.swift in Sources */,
+				1B778424598B7B93E2BCAA0B /* BearyDraftFiles.swift in Sources */,
+				8EC60A5B6163F157E9B114BF /* BearyEntrySync.swift in Sources */,
+				2F0A688FB40C0D7E1E6D3A12 /* BearyDiaryPin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -2782,8 +2782,9 @@ final class BearySettingsViewController: UIViewController {
     }
 
     /// 第 7 项分页结果：entries=已取条目；complete=true 时 reason 恒为 nil；
-    /// complete=false 仅两种情形——某页请求失败（reason="第 X 页失败"，X=depth+1，
-    /// depth 从 0 计故首失败页为“第 1 页失败”）或已取满 20 页仍可能有下一页
+    /// complete=false 的情形——某页请求失败（reason="第 X 页失败"，X=depth+1，
+    /// depth 从 0 计故首失败页为“第 1 页失败”；回包缺 entries 键、满页末条缺
+    /// createdAt 游标均视同本页失败，同 reason）或已取满 20 页仍可能有下一页
     /// （reason="已达 20 页上限”）。调用方据此 fail-closed（失败）/ 部分标注（触顶），
     /// 再不允许静默拿已取数据当完整备份出文件。
     private typealias BearyExportPageResult = (entries: [Entry], complete: Bool, reason: String?)
@@ -2795,7 +2796,7 @@ final class BearySettingsViewController: UIViewController {
     /// 账号变化，以 reason="账号已切换" 回包，调用方（主线程边界）据
     /// 此取消整单。epoch 读取走 BearyAPI 的串行队列，分页后台线程读
     /// 安全；id 比对留给主线程边界（exportPinChanged），不在此做。
-    /// complete=false 新增第三种情形——账号已切换（reason 如上），
+    /// complete=false 另有情形——账号已切换（reason 如上），
     /// 调用方不得把它当失败/触顶处理（见 exportWithUser 链）。
     private func fetchAllEntries(scope: BearyAPI.Scope, pin: BearyExportPin, completion: @escaping (BearyExportPageResult) -> Void) {
         fetchScopePage(scope: scope, pin: pin, before: nil, beforeId: nil, accumulated: [], depth: 0, completion: completion)
@@ -2821,14 +2822,24 @@ final class BearySettingsViewController: UIViewController {
             }
             switch result {
             case .success(let list):
-                let entries = list.entries ?? []
+                // 第 7 项（审计三轮）：entries 键缺失 ≠ 空页——服务端回包结构异常，
+                // 视同本页失败（reason="第 X 页失败"），调用方 fail-closed 整单
+                // 不出文件；不得以 `?? []` 视为空页出“完整”备份。
+                guard let entries = list.entries else {
+                    completion((entries: accumulated, complete: false, reason: "第 \(depth + 1) 页失败"))
+                    return
+                }
                 let all = accumulated + entries
                 if entries.count < 50 {
                     completion((entries: all, complete: true, reason: nil))
                     return
                 }
+                // 第 7 项（审计三轮）：满 50 条且末条缺 createdAt 时无游标可续翻，
+                // 视同本页失败、整单 fail-closed；与日记腿／回收站腿
+                // （BearyEntrySync.fetchPage／fetchTrashPage）“游标缺失中止且不写盘”同口径，
+                // 不得当完整页收尾出文件。
                 guard let last = entries.last, let lastCreated = last.createdAt else {
-                    completion((entries: all, complete: true, reason: nil))
+                    completion((entries: all, complete: false, reason: "第 \(depth + 1) 页失败"))
                     return
                 }
                 self.fetchScopePage(scope: scope, pin: pin, before: lastCreated, beforeId: last.id, accumulated: all, depth: depth + 1, completion: completion)

@@ -2288,7 +2288,9 @@ class BearyTimelineViewController: UIViewController {
             // 落盘写走同步队列（不卡主线程，同时记写盘代际供全量同步提交守卫判断）；
             // 内存态已同步更新，UI 不等落盘。
             BearyEntrySync.shared.runDiaryDiskWrite {
-                BearyEntrySyncStore.saveDay(accountId: uid, dayKey: key, entries: entries)
+                // 日写透：尽力写，失败由下次静默刷新/重跑纠正（R16-2 的
+                // Result 口径只卡全量同步提交的已同步标记，不卡这里）。
+                _ = BearyEntrySyncStore.saveDay(accountId: uid, dayKey: key, entries: entries)
             }
         }
     }
