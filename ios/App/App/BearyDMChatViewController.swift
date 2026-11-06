@@ -787,8 +787,17 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     // 未认领的（在途/失败）重新拼到末尾，刷新不得吞掉它们。
                     let pending = self.pendingTemps()
                     let fetched = self.resolvedSenders(Array(history.resolvedMessages.reversed()))
-                    BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched)
-                    self.messages = BearyDMStore.messages(accountId: self.storeAccountId, peerId: userId)
+                    if BearyDMStore.isCorrupt(accountId: self.storeAccountId) {
+                        // A2：旧库暂时读不出——不调 saveMessages（空字典重建整份
+                        // 账号档案会抹掉其他会话的本地历史），也不从损坏的库重读
+                        //（读失败返空字典会把刚拉到的消息读丢）；已拉到的消息先在
+                        // 会话里显示，原件留给后续恢复。
+                        self.messages = fetched
+                        BearyToast.show(in: self.view, message: "手机里的旧消息暂时读不出来")
+                    } else {
+                        BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched)
+                        self.messages = BearyDMStore.messages(accountId: self.storeAccountId, peerId: userId)
+                    }
                     self.reconcilePendingSends(pending)
                     self.hasMoreOlder = history.resolvedMessages.count >= 30
                     self.loadFailed = false
@@ -870,9 +879,19 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     // 否则在途/失败的待发会被整表覆盖吞掉（翻旧取的是更早页，
                     // 不可能含待发，无需配对认领、直接拼回）。
                     let pending = self.pendingTemps()
-                    BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older)
-                    self.messages = BearyDMStore.messages(accountId: self.storeAccountId, peerId: userId)
-                    self.messages += pending
+                    if BearyDMStore.isCorrupt(accountId: self.storeAccountId) {
+                        // A2：同最新页——旧库损坏时不调 saveMessages、不从损坏的
+                        // 库重读；已拉到的更早消息直接并入内存会话（待发行先摘
+                        // 出再拼回，防重复），原件留给后续恢复。
+                        let base = self.messages.filter { $0.localKey == nil }
+                        self.messages = (older + base).sorted { ($0.id ?? 0) < ($1.id ?? 0) }
+                        self.messages += pending
+                        BearyToast.show(in: self.view, message: "手机里的旧消息暂时读不出来")
+                    } else {
+                        BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older)
+                        self.messages = BearyDMStore.messages(accountId: self.storeAccountId, peerId: userId)
+                        self.messages += pending
+                    }
                     self.tableView.reloadData()
                     self.tableView.layoutIfNeeded()
                     self.setOlderLoadingState(loading: false, failed: false)
