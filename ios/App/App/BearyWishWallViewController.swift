@@ -353,6 +353,17 @@ final class BearyWishWallViewController: UIViewController {
     /// 旧请求结束后立即补刷一次——否则 guard 直接丢弃，旧回包渲染创建前
     /// 的服务端快照，新愿望不出现，用户不离页重进就看不到。
     private var needsReloadAfterCurrentRequest = false
+    /// R13-06：列表请求代次与发起时账号身份——登录后废弃旧访客请求用。
+    /// fetchWishes 本身不带账号参数，身份核对只在调用层做：发起时记下
+    /// currentUser.id（游客为 nil）与代次；回包时代次或身份对不上即丢弃，
+    /// 不得把旧账号的 wishes 与确认态写回；身份变了则立即重拉一次，
+    /// 保证当前账号至少完成一次属于自己的列表加载（登录路径的 loadWishes
+    /// 曾被 isLoading 拦下时，正是由回包处的重拉补上；不移除 isLoading 门控，
+    /// 避免制造重复请求）。
+    private var wishListGeneration = 0
+    private var wishListAccountId: Int?
+    /// 当前账号身份：登录用户为 currentUser.id，游客为 nil。
+    private var currentAccountId: Int? { SessionManager.shared.currentUser?.id }
     /// 13：600 上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews；Feed 断点同款）。
     private var colCapConstraints: [NSLayoutConstraint] = []
     /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
@@ -545,12 +556,28 @@ final class BearyWishWallViewController: UIViewController {
             return
         }
         isLoading = true
+        // R13-06：发起时记录代次与账号身份，供回包时核对。
+        wishListGeneration += 1
+        wishListAccountId = currentAccountId
+        let generation = wishListGeneration
         // P2-18：加载态走 BearyStateView（转圈 + “加载中…”）；成功/失败回包时统一收起。
         wishStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
         showStateViewFaded()
         BearyAPI.shared.fetchWishes { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                // R13-06：代次／身份守卫——游客请求在途时登录成功，旧访客回包
+                // 直接丢弃，不得把访客版 wishes 与确认态写回、覆盖登录账号
+                // 的补投状态；身份已变说明当前账号还欠一次自己的列表加载，
+                // 立即重拉一次（登录时那次 loadWishes 被 isLoading 拦下过，
+                // 正是由这里补上）；代次对不上但身份没变时只丢弃不重拉。
+                guard generation == self.wishListGeneration, self.wishListAccountId == self.currentAccountId else {
+                    self.isLoading = false
+                    if self.wishListAccountId != self.currentAccountId {
+                        self.loadWishes()
+                    }
+                    return
+                }
                 self.isLoading = false
                 switch result {
                 case .success(let resp):
