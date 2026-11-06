@@ -543,8 +543,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         }
                         // uid 启动时捕获一路透传：中途切号也不把旧账号数据写进新账号桶。
                         // 落盘写走同步队列（不卡主线程）；内存态已同步更新，UI 不等落盘。
+                        // 静默刷新对齐：尽力写，失败由下次刷新纠正（R16-2 的 Result
+                        // 口径只卡全量同步提交的已同步标记，不卡这里）。
                         BearyEntrySync.shared.runDiskWrite {
-                            BearyTrashSyncStore.saveAll(accountId: accountId, items: deduped)
+                            _ = BearyTrashSyncStore.saveAll(accountId: accountId, items: deduped)
                         }
                         // 增量更新：无变化时各行原地不动（见 updateListRowsIncrementally）。
                         self.trashItems = deduped
