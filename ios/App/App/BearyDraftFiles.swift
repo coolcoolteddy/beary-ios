@@ -211,13 +211,60 @@ enum BearyDraftImageStore {
     }
 
     static func delete(_ name: String) {
-        guard let url = fileURL(for: name) else { return }
+        delete(name, accountId: BearyDraftStore.currentAccountId)
+    }
+
+    /// 捕获账号版（后台删图专用）：路径只由入队时捕获的账号决定，
+    /// 执行中不再重读 currentAccountId（与 BearyDraftStore.deleteAsync 同款）。
+    static func delete(_ name: String, accountId: Int?) {
+        guard let url = fileURL(for: name, accountId: accountId) else { return }
         try? FileManager.default.removeItem(at: url)
     }
 
     static func deletePair(fullName: String) {
-        delete(fullName)
-        delete(thumbFileName(for: fullName))
+        deletePair(fullName: fullName, accountId: BearyDraftStore.currentAccountId)
+    }
+
+    /// 捕获账号版（后台删图专用）。
+    static func deletePair(fullName: String, accountId: Int?) {
+        delete(fullName, accountId: accountId)
+        delete(thumbFileName(for: fullName), accountId: accountId)
+    }
+
+    /// P2-11 后台删图：主线程只捕获账号与文件名，实际删除走
+    /// BearyDraftStore.ioQueue（与草稿记录读写同一串行队列），退场／
+    /// onPublished／onUpdated／onCancelled 不再等删图完成（最多 9 图 ×
+    /// 原图＋缩略图＝18 次 removeItem，原先全堵在退场开始之前）。
+    /// 删前按 sweep(keeping:) 同款口径核对引用：读捕获账号全部草稿记录的
+    /// localFile 并集，仍被引用的文件跳过不删；excludingDraftId 的那篇除外——
+    /// 它的记录正在同批删除／重写，内存态里待删文件已不在其引用中，不因
+    /// 磁盘记录尚未落盘而把本次删除漏掉。失败不回调、不 toast：删图只是
+    /// 收尾清理，残留文件由下次 restoreDraft 的 sweep 回收；调用方不得
+    /// 依赖删完时序。
+    static func deletePairsIfUnreferencedAsync(_ names: [String], excludingDraftId: String? = nil) {
+        let accountId = BearyDraftStore.currentAccountId
+        let candidates = Array(Set(names)).filter { !$0.isEmpty }
+        guard !candidates.isEmpty else { return }
+        BearyDraftStore.ioQueue.async {
+            deletePairsIfUnreferenced(candidates, accountId: accountId, excludingDraftId: excludingDraftId)
+        }
+    }
+
+    /// ioQueue 内执行：核对引用后删原图＋缩略图对。只供 ioQueue 任务调，
+    /// 调用方不得在主线程同步调（会读盘＋删文件，堵退场）。
+    private static func deletePairsIfUnreferenced(_ names: [String], accountId: Int?, excludingDraftId: String?) {
+        var referenced = Set<String>()
+        for draft in BearyDraftStore.loadAll(forAccount: accountId) {
+            if let excluded = excludingDraftId, draft.draftId == excluded { continue }
+            for img in draft.images {
+                if let name = img.localFile {
+                    referenced.insert(name)
+                }
+            }
+        }
+        for name in names where !referenced.contains(name) {
+            deletePair(fullName: name, accountId: accountId)
+        }
     }
 
     /// 清理无主文件：只保留给定草稿引用的原图与缩略图（调用方须传入全部草稿的
