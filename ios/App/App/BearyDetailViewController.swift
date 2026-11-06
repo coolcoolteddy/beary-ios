@@ -2405,7 +2405,7 @@ final class BearyDetailViewController: UIViewController {
                             DispatchQueue.main.async {
                                 switch setResult {
                                 case .success:
-                                    self.performVisibilityToggle(targetVisibility: targetVisibility)
+                                    self.performVisibilityToggle(targetVisibility: targetVisibility, publishTogetherSourceId: sourceId)
                                 case .failure:
                                     self.isVisibilityBusy = false
                                     BearyToast.show(in: self.view, message: "原日记公开失败，请重试")
@@ -2431,7 +2431,7 @@ final class BearyDetailViewController: UIViewController {
         }
     }
 
-    private func performVisibilityToggle(targetVisibility: String) {
+    private func performVisibilityToggle(targetVisibility: String, publishTogetherSourceId: String? = nil) {
         guard isAuthor else { return }
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         // 游客永非作者，到不了这里；未登录同样到不了（作者必登录）。
@@ -2489,13 +2489,29 @@ final class BearyDetailViewController: UIViewController {
                     self.refreshVisibilityViews()
                     // 失败回滚原态：原限时标记若在，按原到期点重排单次定时。
                     self.scheduleEphemeralExpiry()
-                    // 失败原因透传：限流时服务端 message 比通用文案有用（entry_write
-                    // 120/小时打满即 429）；其余失败仍走通用文案。
-                    let message: String
-                    if case .server(let code, _) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
-                    else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
-                    else { message = "切换失败，请重试" }
-                    BearyToast.show(in: self.view, message: message)
+                    // r29-2：一并公开第二步失败时源篇已公开，尝试恢复回私密；
+                    // toast 按恢复结果区分，不用泛化“切换失败”。
+                    if let sourceId = publishTogetherSourceId {
+                        BearyAPI.shared.setVisibility(id: sourceId, visibility: "private") { [weak self] restoreResult in
+                            DispatchQueue.main.async {
+                                guard let self = self else { return }
+                                switch restoreResult {
+                                case .success:
+                                    BearyToast.show(in: self.view, message: "公开失败，原日记已恢复私密")
+                                case .failure:
+                                    BearyToast.show(in: self.view, message: "公开失败，原日记恢复失败，请检查")
+                                }
+                            }
+                        }
+                    } else {
+                        // 失败原因透传：限流时服务端 message 比通用文案有用（entry_write
+                        // 120/小时打满即 429）；其余失败仍走通用文案。
+                        let message: String
+                        if case .server(let code, _) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
+                        else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
+                        else { message = "切换失败，请重试" }
+                        BearyToast.show(in: self.view, message: message)
+                    }
                     BearyHaptics.rejectionWarning()
                     BearySoundPlayer.play(.refuseBonk)
                     if UIAccessibility.isReduceMotionEnabled == false {

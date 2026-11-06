@@ -6020,7 +6020,7 @@ class BearyTimelineViewController: UIViewController {
                             DispatchQueue.main.async {
                                 switch setResult {
                                 case .success:
-                                    strongSelf.performPublishEntry(entry, targetVisibility: targetVisibility)
+                                    strongSelf.performPublishEntry(entry, targetVisibility: targetVisibility, publishTogetherSourceId: sourceId)
                                 case .failure:
                                     strongSelf.publishBusyIds.remove(entryId)
                                     strongSelf.showTimelineToast(message: "原日记公开失败，请重试")
@@ -6046,7 +6046,7 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
-    private func performPublishEntry(_ entry: Entry, targetVisibility: String) {
+    private func performPublishEntry(_ entry: Entry, targetVisibility: String, publishTogetherSourceId: String? = nil) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         let viewerId = SessionManager.shared.currentUser?.id
         guard entry.isMine == true || (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId) else { return }
@@ -6079,11 +6079,27 @@ class BearyTimelineViewController: UIViewController {
                 case .failure(let err):
                     strongSelf.applyVisibilityLocally(entryId: entryId, isPublic: originalPublic, publishedAt: originalPublishedAt, visibility: originalVisibility, ephemeralUntil: originalEphemeralUntil)
                     strongSelf.reloadVisibleTimelineRow(entryId: entryId)
-                    let message: String
-                    if case .server(let code, _) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
-                    else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
-                    else { message = "切换失败，请重试" }
-                    strongSelf.showTimelineToast(message: message)
+                    // r29-2：一并公开第二步失败时源篇已公开，尝试恢复回私密；
+                    // toast 按恢复结果区分，不用泛化“切换失败”。
+                    if let sourceId = publishTogetherSourceId {
+                        BearyAPI.shared.setVisibility(id: sourceId, visibility: "private") { [weak self] restoreResult in
+                            DispatchQueue.main.async {
+                                guard let strongSelf = self else { return }
+                                switch restoreResult {
+                                case .success:
+                                    strongSelf.showTimelineToast(message: "公开失败，原日记已恢复私密")
+                                case .failure:
+                                    strongSelf.showTimelineToast(message: "公开失败，原日记恢复失败，请检查")
+                                }
+                            }
+                        }
+                    } else {
+                        let message: String
+                        if case .server(let code, _) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
+                        else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
+                        else { message = "切换失败，请重试" }
+                        strongSelf.showTimelineToast(message: message)
+                    }
                     strongSelf.shakeVisibleTimelinePublishButton(entryId: entryId)
                 }
             }
