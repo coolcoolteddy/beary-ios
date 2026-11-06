@@ -1078,9 +1078,11 @@ final class BearyChromeViewController: UIViewController {
                 // S10：礼物门控已由 applyLoginState 从 refreshMe 结果复用，此处不再单独拉。
                 // 账号隔离 2 号：我页按建造时账号钉死，账号变化时重建
                 //（不限当前页与 gated 态；重建后非我页保持隐藏，见 rebuildProfileVC）。
-                // G11 登录翻转刷新：gated 我页重建（新页自拉），其余已建页各走已存在的方法，
-                // 已开详情重拉单篇；方法均经 grep 核实存在（Feed.refreshFeed / Timeline.reloadTimeline /
-                // Notifications.refresh / Profile.reloadProfile / Detail.refreshEntry），只调已存在的。
+                // G11 登录翻转刷新：gated 我页重建（新页自拉），其余已建页各走已存在的方法
+                //（Feed.refreshFeed / Timeline.reloadTimeline / Notifications.refresh / Profile.reloadProfile，
+                // 均经 grep 核实存在，只调已存在的）。已开详情页此处不重拉（无 Detail.refreshEntry
+                // 方法，旧注释误写已订正）；详情仅好友引用的异步解锁由 BearyQuoteGate.resolveQuoteFullAccess
+                // 回包时复核查看者身份（r29-5），切号后旧回包保持占位、不解锁。
                 if self.profileVC != nil, self.profileBuiltForUserId != user?.id {
                     self.rebuildProfileVC()
                 } else if self.currentPage == .me && self.profileGated {
