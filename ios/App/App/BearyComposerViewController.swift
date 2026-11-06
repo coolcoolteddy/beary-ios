@@ -500,6 +500,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         /// 快照拍定时的发起账号：performPublish 入口再校验一次，防门禁/
         /// setVisibility 在途期间账号已变仍把旧篇以新账号发出。
         let originAccountId: Int?
+        /// P0-2：提交时记录的草稿 id 与账号：成功回包只清理这一篇。
+        /// 回包时 currentDraftId 可能已切到另一篇，绝不能按现值删。
+        let draftId: String?
+        let accountId: Int?
+        /// P0-2：提交时本篇图片的本地文件名：成功后只删这些文件，
+        /// 不碰切篇后新篇的图片。
+        let imageLocalFiles: [String]
     }
     /// 新建发布快照（quote-freeze）：在 didTapPublish 校验通过后、门禁弹出
     /// 前调用。clientReq 在此创建（原 performPublish 首步），调用方随后 saveDraftNow
@@ -507,6 +514,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func makePublishSnapshot(trimmed: String) -> PublishSnapshot? {
         if draftClientReq == nil {
             draftClientReq = BearyDraftStore.newClientReq()
+        }
+        // P0-2：快照同时记下提交时的草稿 id——saveDraftNow 复用同一 id 落盘，
+        // 成功回包只删这一篇，不按回包时刻的现值删。
+        if currentDraftId == nil {
+            currentDraftId = BearyDraftStore.newDraftId()
+            clearedCurrentDraftId = nil
         }
         guard let req = draftClientReq else { return nil }
         return PublishSnapshot(
@@ -525,7 +538,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             locationName: selectedLocation?.name,
             locationDistrict: selectedLocation?.district,
             clientReq: req,
-            originAccountId: currentAccountIdForPublish())
+            originAccountId: currentAccountIdForPublish(),
+            draftId: currentDraftId,
+            accountId: currentAccountIdForPublish(),
+            imageLocalFiles: imageItems.compactMap { $0.localFile })
     }
     private var didAutoFocus = false
     // 标题行已去掉：进页拉回旗标与 ensureTitleRowVisibleOnEntry 已整段删除
@@ -6654,6 +6670,31 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
+    /// P0-2：发布成功只清理提交时快照记录的那一篇（草稿 id、账号、附件）。
+    /// 回包时编辑器可能已切到另一篇：按现值清会删掉新篇的草稿与图片。
+    /// 内存槽位（currentDraftId / draftClientReq / 发布绑定 / 状态行）只在
+    /// 仍是提交的那篇时清；已切篇时原样保留新篇状态。
+    private func clearPublishedDraft(snapshot: PublishSnapshot) {
+        for name in snapshot.imageLocalFiles {
+            BearyDraftImageStore.deletePair(fullName: name)
+        }
+        if let draftIdValue = snapshot.draftId {
+            BearyDraftStore.deleteAsync(draftId: draftIdValue, forAccount: snapshot.accountId) { [weak self] in
+                self?.refreshDraftPillWidth()
+            }
+        } else {
+            refreshDraftPillWidth()
+        }
+        guard currentDraftId == snapshot.draftId else { return }
+        currentDraftId = nil
+        clearedCurrentDraftId = nil
+        draftClientReq = nil
+        publishOriginAccountId = nil
+        publishTogetherPublishedSourceId = nil
+        draftStatusLevel = nil
+        updateDraftStatusLabel()
+    }
+
     // MARK: - 草稿箱（BearyDraftBoxViewController 由草稿箱代理新建文件提供，只调用不定义）
 
     @objc private func didTapDraftBox() {
@@ -6674,6 +6715,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 落盘已走后台队列，开箱等存完回调再 present，计数不滞后。
         let openBox: () -> Void = { [weak self] in
             guard let self = self else { return }
+            // P0-2：落盘排队期间用户已点发布（发布在途），此时不开箱——
+            // 箱内切篇会换掉在途发布的那篇，之后回包清理就与新篇交错。
+            if self.isPublishing {
+                self.showToast(message: "发布中…")
+                return
+            }
             if self.presentedViewController != nil || self.isDraftBoxPresenting { return }
             self.isDraftBoxPresenting = true
             // 弹窗审计 E1-18：草稿箱内部已统一退场——新建/打开先播同一
@@ -6730,6 +6777,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 当前篇留在箱里不删；取消与发布逻辑不在这里，不动。
     private func openBlankDraftFromBox() {
         if isEditMode { return }
+        // P0-2：发布在途不切篇，等回包后再切。
+        if isPublishing {
+            showToast(message: "发布中…")
+            return
+        }
         if hasEditorContent() {
             let sheet = UIAlertController(title: nil, message: "当前内容还没发布，换成空白新日记吗？", preferredStyle: .actionSheet)
             sheet.addAction(UIAlertAction(title: "继续写", style: .cancel, handler: nil))
@@ -6845,6 +6897,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 发布、丢弃都只针对这一篇（currentDraftId 已切到该篇）。
     private func loadDraftFromBox(_ draft: BearyDraft) {
         if isEditMode { return }
+        // P0-2：发布在途不切篇，等回包后再切——在途发布成功后只清提交的那篇，
+        // 切篇本身须等回包，否则清理与新篇状态交错。
+        if isPublishing {
+            showToast(message: "发布中…")
+            return
+        }
         // 109：切篇先重置草稿状态——此前全程不碰 draftStatusLevel、不调
         // updateDraftStatusLabel()，工具栏状态行残留上一篇文案；对照组
         // resetEditorToBlank()/clearDraftAndFiles() 都会清状态并刷新。
@@ -7533,8 +7591,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         // 只有拿到 entry id 才清草稿与本地图片。发布已成功，删库
                         // 失败时不弹 toast（会与“已发布”冲突），残留草稿仍在草稿
                         // 箱可见、可手动删；图片随记录保留，不丢。
-                        self.clearDraftAndFiles(notifyOnDeleteFailure: false)
-                        self.commitPendingRemoval()
+                        // P0-2：只清提交时快照记录的那一篇；切篇后 pending 撤销
+                        // 属于新篇，不在此提交。
+                        let stillOnPublishedDraft = self.currentDraftId == snapshot.draftId
+                        self.clearPublishedDraft(snapshot: snapshot)
+                        if stillOnPublishedDraft {
+                            self.commitPendingRemoval()
+                        }
                         // iCity：成功 toast 按目标态动态（创建响应不带可见性字段，
                         // 以本次发送的可见性值为准）；toast 挂在 presenting 方视图上
                         //（showToastAfterClose），容器随后 dismiss 本页 + 切时间线时
