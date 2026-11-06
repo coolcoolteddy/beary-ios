@@ -48,17 +48,18 @@ enum BearyFollowState {
 
 enum BearyFriends {
 
-    /// 取关二次确认 alert（仅弹框，不发请求）：确认回调由调用方接乐观更新＋请求。
+    /// 取关二次确认 sheet（仅弹框，不发请求）：确认回调由调用方接乐观更新＋请求。
     /// 文案与 confirmUnfollow 同款（同一 builder，不另起一套 copy）。
     static func confirmUnfollowAlert(from vc: UIViewController, displayName: String, mutual: Bool, onConfirmed: @escaping () -> Void) {
-        vc.present(unfollowConfirmAlert(displayName: displayName, mutual: mutual, onConfirmed: onConfirmed), animated: BearyMotion.animated(true))
+        presentUnfollowSheet(from: vc, displayName: displayName, mutual: mutual, onConfirmed: onConfirmed)
     }
 
-    /// 取关二次确认（alert，系统官方样式；确认后才发请求，失败只 toast、不改态；
+    /// 取关二次确认（共享确认底 sheet，审计 r16 第 16 项；原系统 UIAlertController
+    /// .alert，标题/正文/按钮文案一字不动；确认后才发请求，失败只 toast、不改态；
     /// 取关不给震动）。mutual 与单向关注的文案分开：互关取关会断双向可见性，
-    /// 单向取关只断自己的关注流。
+    /// 单向取关只断自己的关注流。叉叉/遮罩/下滑关闭与点“取消”同义（不发请求）。
     static func confirmUnfollow(from vc: UIViewController, displayName: String, userId: Int, mutual: Bool, onRemoved: @escaping () -> Void) {
-        let alert = unfollowConfirmAlert(displayName: displayName, mutual: mutual) {
+        presentUnfollowSheet(from: vc, displayName: displayName, mutual: mutual) {
             BearyAPI.shared.unfollowFriend(userId: userId) { result in
                 DispatchQueue.main.async {
                     switch result {
@@ -71,19 +72,23 @@ enum BearyFriends {
                 }
             }
         }
-        vc.present(alert, animated: BearyMotion.animated(true))
     }
 
-    private static func unfollowConfirmAlert(displayName: String, mutual: Bool, onConfirmed: @escaping () -> Void) -> UIAlertController {
+    private static func presentUnfollowSheet(from vc: UIViewController, displayName: String, mutual: Bool, onConfirmed: @escaping () -> Void) {
         let message = mutual
             ? "取消关注后，你们不再是互关好友，对方将看不到你的仅好友日记，你也看不到对方的仅好友日记。"
             : "对方的日记将不再出现在‘正在关注’中"
         // displayName 一直透传却未用：标题改为带昵称；调用方传空串时只用「取消关注」，避免“取消关注 ？”。
         let title = displayName.isEmpty ? "取消关注" : "取消关注 \(displayName)？"
-        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消关注", style: .destructive) { _ in onConfirmed() })
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        return alert
+        BearyConfirmSheet.present(
+            from: vc,
+            title: title,
+            message: message,
+            actions: [
+                BearyConfirmSheetAction(title: "取消关注", style: .destructive) { onConfirmed() },
+                BearyConfirmSheetAction(title: "取消", style: .cancel, handler: nil),
+            ]
+        )
     }
 
     /// 回关/取关成功后的本地清理：广场磁盘快照（只含公开，本就无仅好友篇，
