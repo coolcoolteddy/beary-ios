@@ -3221,13 +3221,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftStatusBanner.spacing = 8
         draftStatusBanner.alignment = .center
         draftStatusBanner.translatesAutoresizingMaskIntoConstraints = false
-        draftStatusBannerLabel.font = UIFont.systemFont(ofSize: 12)
-        draftStatusBannerLabel.numberOfLines = 1
-        draftStatusBannerLabel.lineBreakMode = .byTruncatingTail
-        draftStatusBannerLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // P2-12：说明行跟随系统字号（captionFont = 12 regular scaled，规范 §11），
+        // 宽度不足时换行、不截尾；横向抗压降到 749（与 draftStatusLabel 同款），
+        // 大字号下说明先让宽换行、重试钮（required）另排保全——两者同为 required
+        // 时超宽无解、系统任意破一条。横幅高约束显示时即停用（见
+        // setDraftStatusBannerVisible），换行可长高。
+        draftStatusBannerLabel.font = BearyDynamicType.captionFont()
+        draftStatusBannerLabel.adjustsFontForContentSizeCategory = true
+        draftStatusBannerLabel.numberOfLines = 0
+        draftStatusBannerLabel.lineBreakMode = .byWordWrapping
+        draftStatusBannerLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
         draftStatusRetryButton.setTitle("重试", for: .normal)
         draftStatusRetryButton.setTitleColor(BearyColors.ink, for: .normal)
-        draftStatusRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        // P2-12：重试钮 13 semibold 跟随系统字号（原字号为默认基准）。
+        draftStatusRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        draftStatusRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         draftStatusRetryButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
         draftStatusRetryButton.accessibilityLabel = "重试保存草稿"
         draftStatusRetryButton.addTarget(self, action: #selector(didTapDraftStatusRetry), for: .touchUpInside)
@@ -4380,12 +4388,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         editTimerLabel.font = BearyDynamicType.numberFont()
         editTimerLabel.textColor = BearyColors.gray
         editTimerLabel.isHidden = true
-        draftStatusLabel.font = UIFont.systemFont(ofSize: 12)
+        // P2-12：工具栏内联状态行同缺陷一并改——captionFont（12 regular scaled，
+        // 规范 §11）＋跟随系统字号，宽度不足时换行、不截尾。
+        draftStatusLabel.font = BearyDynamicType.captionFont()
+        draftStatusLabel.adjustsFontForContentSizeCategory = true
         draftStatusLabel.textColor = BearyColors.blue
-        // 109：压缩阻力默认值仍 749（lvl1/失败长文案窄屏受压时先截断）；lvl2 已保存态在
-        // updateDraftStatusLabel 里拉到 required、走 applyDraftStatusToolbarFit 的保全/只留对勾口径。
-        draftStatusLabel.numberOfLines = 1
-        draftStatusLabel.lineBreakMode = .byTruncatingTail
+        // 109：压缩阻力默认值仍 749（lvl1/失败长文案窄屏受压时先换行，见 P2-12）；
+        // lvl2 已保存态在 updateDraftStatusLabel 里拉到 required、走
+        // applyDraftStatusToolbarFit 的保全/只留对勾口径。
+        draftStatusLabel.numberOfLines = 0
+        draftStatusLabel.lineBreakMode = .byWordWrapping
         draftStatusLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
         // 草稿状态组：lvl2 时图标 + 文案 gap 5（网页 draft-status：15×15 对勾 + gap 5，蓝色继承）。
         draftStatusIcon.image = BearyIconImages.image(named: "icon_check", pointSize: 15)
