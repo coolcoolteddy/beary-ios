@@ -6,7 +6,9 @@ import Photos
 
 class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizerDelegate, UIViewControllerTransitioningDelegate {
 
-    private let imageKeys: [String]
+    /// 第 22 轮 B5：灯箱持有的照片数组是打开时的快照；相册重滤撤下失效
+    /// 照片时经 pruneImageKeys 同步更新，故须为 var（旧 let 只读）。
+    private var imageKeys: [String]
     /// 实况映射（静态图 key → 视频 key；nil = 无实况，灯箱纯静态，与旧版一致）。
     /// 调用方在创建时传入本篇 entry.liveVideos（详情/卡片容器/照片墙均已接线）。
     var liveVideos: [String: String]?
@@ -413,6 +415,61 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         counterLabel.accessibilityLabel = "第 \(currentIndex + 1) 张，共 \(imageKeys.count) 张"
         for (dotIndex, dot) in dotViews.enumerated() {
             dot.backgroundColor = (dotIndex == currentIndex) ? .white : UIColor(white: 1, alpha: 0.35)
+        }
+    }
+
+    /// 第 22 轮 B5：撤下已失效的照片（限时到期／互关解除后相册重滤时调用）。
+    /// 只删 invalid 里的 key、其余顺序不变；当前图被撤时就近留下一张
+    /// （优先同位、否则末张）；全部撤完即关闭灯箱；本地图模式不走 key，不动。
+    /// 在途加载凭 loadCurrent 的代次守门丢弃，不会把已撤的图盖回来。
+    func pruneImageKeys(_ invalidKeys: Set<String>) {
+        guard localImages.isEmpty else { return }
+        guard !invalidKeys.isEmpty else { return }
+        let currentKey = (currentIndex >= 0 && currentIndex < imageKeys.count) ? imageKeys[currentIndex] : nil
+        let keptKeys = imageKeys.filter { !invalidKeys.contains($0) }
+        guard keptKeys != imageKeys else { return }
+        guard !keptKeys.isEmpty else {
+            dismiss(animated: BearyMotion.animated(true), completion: nil)
+            return
+        }
+        imageKeys = keptKeys
+        if let currentKey = currentKey, let keptIndex = keptKeys.firstIndex(of: currentKey) {
+            currentIndex = keptIndex
+        } else {
+            currentIndex = min(currentIndex, keptKeys.count - 1)
+            showingInitialThumbnail = false
+        }
+        initialIndex = min(initialIndex, keptKeys.count - 1)
+        zoomHiResKey = nil
+        zoomHiResWidth = 0
+        resetZoom(animated: false)
+        rebuildDots()
+        updateCounter()
+        loadCurrent()
+    }
+
+    /// 圆点按当前总数重建（与 viewDidLoad 开场同口径：≤1 张藏计数与圆点，
+    /// >20 张只留计数）。
+    private func rebuildDots() {
+        for dot in dotViews {
+            dotsStack.removeArrangedSubview(dot)
+            dot.removeFromSuperview()
+        }
+        dotViews.removeAll()
+        counterLabel.isHidden = imageKeys.count <= 1
+        dotsStack.isHidden = imageKeys.count <= 1 || imageKeys.count > 20
+        for _ in imageKeys {
+            let dot = UIView()
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.backgroundColor = UIColor(white: 1, alpha: 0.35)
+            dot.layer.cornerRadius = 3
+            dot.clipsToBounds = true
+            NSLayoutConstraint.activate([
+                dot.widthAnchor.constraint(equalToConstant: 6),
+                dot.heightAnchor.constraint(equalToConstant: 6),
+            ])
+            dotsStack.addArrangedSubview(dot)
+            dotViews.append(dot)
         }
     }
 
