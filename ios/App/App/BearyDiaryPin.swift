@@ -68,14 +68,22 @@ enum BearyDiaryPin {
         return nil
     }
 
-    /// 替换旧置顶篇的确认：系统 UIAlertController .alert（取关确认
-    /// BearyFriends.confirmUnfollowAlert 同款式，不自造新弹窗样式；动效走 BearyMotion）。
-    /// 取消只调 completion(false)，调用方此时绝不发请求、不改本地态。
+    /// 替换旧置顶篇的确认：共享确认底 sheet（BearyConfirmSheet，审计 r16
+    /// 第 16 项；原系统 UIAlertController .alert，标题/正文/按钮文案一字不动；
+    /// 行顺序按底 sheet 口径：确认行在上、取消行单独在下）。取消只调
+    /// completion(false)，调用方此时绝不发请求、不改本地态；叉叉/遮罩/下滑
+    /// 关闭与点“取消”同义（走 onDismissWithoutAction）。
     static func confirmReplacement(from vc: UIViewController, completion: @escaping (Bool) -> Void) {
-        let alert = UIAlertController(title: "置顶这篇日记？", message: "已有置顶日记，置顶这篇会取消上一篇的置顶。", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in completion(false) })
-        alert.addAction(UIAlertAction(title: "置顶", style: .default) { _ in completion(true) })
-        vc.present(alert, animated: BearyMotion.animated(true))
+        BearyConfirmSheet.show(
+            from: vc,
+            title: "置顶这篇日记？",
+            message: "已有置顶日记，置顶这篇会取消上一篇的置顶。",
+            actions: [
+                BearyConfirmSheet.Action(title: "置顶", style: .default) { completion(true) },
+                BearyConfirmSheet.Action(title: "取消", style: .cancel) { completion(false) },
+            ],
+            onDismissWithoutAction: { completion(false) }
+        )
     }
 
     /// 置顶失败 toast 文案：401／404／403／503 按接口口径分流，其余走通用失败文案；

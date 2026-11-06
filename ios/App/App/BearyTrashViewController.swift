@@ -1219,13 +1219,15 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         }
         let summary = trashSummary(trashValue)
         let shortSummary = summary.count > 60 ? String(summary.prefix(60)) + "…" : summary
-        let alert = UIAlertController(
+        // 审计 r16 第 16 项：改走共享确认底 sheet（原系统 UIAlertController
+        // .alert，标题/正文/按钮文案一字不动；“彻底删除”为危险动作红底）。
+        // 叉叉/遮罩/下滑关闭与点“取消”同义（不发请求）。
+        BearyConfirmSheet.show(
+            from: self,
             title: "彻底删除？",
             message: "\(shortSummary)\n这篇日记和它的图片会被永久删除，无法恢复。",
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        alert.addAction(UIAlertAction(title: "彻底删除", style: .destructive) { [weak self] _ in
+            actions: [
+                BearyConfirmSheet.Action(title: "彻底删除", style: .destructive) { [weak self] in
             guard let self = self else { return }
             // 扫荡 B：确认时再验一次 busy。入口处守卫拦不住已弹出的确认框：
             // 框在屏时点恢复可正常在途，确认后若不复验，恢复与彻底删除
@@ -1283,10 +1285,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     }
                 }
             }
-        })
+                },
+                BearyConfirmSheet.Action(title: "取消", style: .cancel, handler: nil),
+            ]
+        )
         // 审计-时间线：此处不加 presentedViewController 守卫——本确认框可由左滑菜单的 action 回调触发，
         // 回调执行时菜单尚未完成 dismiss，守卫会误拦；菜单本身已有守卫，叠页风险已由调用链控制。
-        present(alert, animated: BearyMotion.animated(true), completion: nil)
+        // （BearyConfirmSheet.show 本身亦不另加守卫，与原 alert 同口径。）
     }
 
     /// 成功后原地移除该行：只动该行视图，不重建列表、不滚顶；空了则出空态。
