@@ -413,6 +413,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 仍在草稿箱，不丢数据。恢复自身的回填发生在门通过之后，不影响门。
     private var editorEditVersion = 0
     private var isPublishing = false
+    /// R14 P2-13：边缘返回的保存等待进行态。松手过阈值后编辑器维持偏移等
+    /// 写盘回包，等待期状态行显“保存中…”＋转圈（见 didTapCancelFromEdgeSwipe）；
+    /// 成功随关页消失，失败由 saveDraftNow 的完成回调按保存级别刷新状态行。
+    /// 只在新建态的边缘退出里置位，编辑态取消是同步的、不用它。
+    private var isEdgeDismissSaving = false
     /// 编辑期到点时正好有保存 PUT 在途：计时器不自动关编辑器，改由服务端
     /// 结果定去留（见 startEditTimer / performUpdate 失败分支）。置位后即便
     /// 请求失败也不再允许重发——期限已过，服务端同样会以 edit window
@@ -6719,6 +6724,45 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         return true
     }
 
+    /// R14 P2-13：边缘返回的保存等待反馈入口（SceneDelegate 的
+    /// onEdgeSwipeCompleted 改走这里，不再直调 didTapCancel）。
+    /// 松手过阈值后编辑器维持偏移等写盘回包，旧流程等待期无任何可读反馈；
+    /// 此处先立“保存中…”状态行＋转圈（与防抖保存同款视觉），成功时随关页
+    /// 消失，失败时由 saveDraftNow 的完成回调按保存级别刷新状态行（停转、
+    /// 红字“草稿保存失败”）；多轮重存（#1002 式版本复核）的等待同样覆盖，
+    /// 因为状态只在最终回包时才被刷新。编辑态取消是同步的（清临时文件后
+    /// 立即 onCancelled），无等待、不立反馈。
+    /// 注意：P1-6 合入后本方法的立态应改为复用 setDraftExitSaving（冻结＋
+    /// 状态一体，边缘等待期间同样锁住输入），届时本方法只剩入口转发；
+    /// 本支基于 21b52b0，先以最小状态行反馈独立实现，不碰 #1000 的复位
+    /// 曲线与 #1002 的版本复核。
+    @objc func didTapCancelFromEdgeSwipe() -> Bool {
+        if !isEditMode {
+            isEdgeDismissSaving = true
+            showEdgeDismissSavingStatus()
+        }
+        let proceeding = didTapCancel()
+        if !proceeding && isEdgeDismissSaving {
+            // 被拒（发布在途／面板开着／已有弹层）：没进保存流程，不留反馈。
+            isEdgeDismissSaving = false
+            updateDraftStatusLabel()
+        }
+        return proceeding
+    }
+
+    /// R14 P2-13：边缘保存等待的状态行（“保存中…”＋转圈，与
+    /// scheduleDraftSave 的保存中态同款视觉；停转与文案刷新由保存完成
+    /// 回调的 updateDraftStatusLabel 负责）。
+    private func showEdgeDismissSavingStatus() {
+        draftStatusGroup.isHidden = false
+        draftStatusIcon.image = BearyIconImages.image(named: "icon_refresh", pointSize: 15)
+        draftStatusIcon.tintColor = BearyColors.gray
+        draftStatusIcon.isHidden = false
+        BearyIconMotion.startSpin(on: draftStatusIcon, duration: 0.9, key: "bearyDraftSavingSpin")
+        draftStatusLabel.text = "保存中…"
+        draftStatusLabel.textColor = BearyColors.blue
+    }
+
     /// 供容器边缘手势调用：与取消钮同一流程（发布在途只 toast、引用面板
     /// 开着只退面板、其余存草稿/清临时文件后经 onCancelled 关页），不得另起
     /// 一条直接 dismiss 的关闭路径。
@@ -6767,6 +6811,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         saveDraftNow { [weak self] result in
             guard let self = self else { return }
             guard result.succeeded else {
+                // R14 P2-13：边缘等待的失败收尾——saveDraftNow 的完成回调只在
+                // 仍是本篇时刷新状态行，等待期间若已切篇（极窄窗口），转圈会
+                // 残留；此处清旗标并按当前级别刷新状态行。P1-6 合入后由
+                // setDraftExitSaving(false) 统一接管，此行即删。
+                if self.isEdgeDismissSaving {
+                    self.isEdgeDismissSaving = false
+                    self.updateDraftStatusLabel()
+                }
                 // P0：保存失败不再无条件走 onCancelled——编辑器与输入原样保留，
                 // 状态行已由 saveDraftNow 置红（level 0），这里补拒绝动效 + toast
                 // 明示重试（再点一次关闭即重走保存）；文案按原子写语义区分，

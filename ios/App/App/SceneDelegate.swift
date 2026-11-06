@@ -3718,8 +3718,11 @@ final class BearyChromeViewController: UIViewController {
         composerEdgeDismiss.shouldAllowCompletionSwipe = { [weak composer] in
             composer?.canBeginEdgeCancel() ?? false
         }
+        // R14 P2-13：边缘返回改走 didTapCancelFromEdgeSwipe——松手过阈值后
+        // 先立“保存中…”状态行＋转圈再进原取消流程；拖动开始时底层画面已由
+        // BearyEdgeDismiss 提前准备（见 prepareUnderlyingView）。
         composerEdgeDismiss.onEdgeSwipeCompleted = { [weak composer] in
-            composer?.didTapCancel() ?? false
+            composer?.didTapCancelFromEdgeSwipe() ?? false
         }
         composer.transitioningDelegate = composerEdgeDismiss
         self.composerEdgeDismiss = composerEdgeDismiss
