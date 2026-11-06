@@ -1580,7 +1580,7 @@ class BearyDiaryCardCell: UITableViewCell {
         // 旧心情改位：主题切换时正文末尾心情附件需换深浅变体，故两模式
         // 都重建正文（仅换附件变体，折叠态与行数不动）。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle, let e = currentEntry {
-            contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: cardMode == .feed ? 16 : 15, moodKey: e.mood)
+            contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: 16, moodKey: e.mood)
         }
         // 审计第 27 项：内容字号档变化时立即重建可见卡片富文本——
         // attributed 字号不随 adjustsFont 自动跟随，旧口径要等下次 configure
@@ -1593,7 +1593,7 @@ class BearyDiaryCardCell: UITableViewCell {
             if cardMode == .feed {
                 updateContentAndFold()
             } else {
-                contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: 15, moodKey: e.mood)
+                contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: 16, moodKey: e.mood)
                 if foldApplies {
                     setFoldDisplay(expanded: isExpanded, animated: false)
                 } else {
@@ -1814,8 +1814,8 @@ class BearyDiaryCardCell: UITableViewCell {
         paragraph.lineHeightMultiple = 1.6
         // P3-3：富文本段落样式会覆盖 label 的 lineBreakMode，此处同步按字符断行（字号行高不动）。
         paragraph.lineBreakMode = .byCharWrapping
-        // C8 + R8 卡片内部分：正文字号一律走 scaledFont（feed 16 / profile 15，
-        // 默认档点数不变，profile 15 此前未缩放、本批补齐）；contentLabel 侧
+        // C8 + R8 卡片内部分：正文字号一律走 scaledFont（两模式统一
+        // diaryBodyFont 16，默认档点数不变）；contentLabel 侧
         // 已置 adjustsFontForContentSizeCategory，但富文本字号不随它自动重解，
         // 由 trait handler 在字号档变化时重建（审计第 27 项；离屏卡下次
         // configure 同样按新档重解）；装饰性小字不动。
@@ -2229,7 +2229,7 @@ class BearyDiaryCardCell: UITableViewCell {
         updateEntryTitle(entry.title)
         // 正文 + 300 字折叠（网页 renderPublic foldLong 口径；折叠态收起 6 行）。
         let bodyText = entry.content ?? ""
-        contentLabel.attributedText = bodyWithTrailingMood(bodyText, fontSize: 15, moodKey: entry.mood)
+        contentLabel.attributedText = bodyWithTrailingMood(bodyText, fontSize: 16, moodKey: entry.mood)
         foldApplies = bodyText.count > 300
         foldButton.isHidden = !foldApplies
         if foldApplies {
