@@ -985,11 +985,20 @@ final class BearyDraftBackupTests: XCTestCase {
     }
 
     private func writeCorruptDraftStore() throws -> Data {
-        // 一好一坏：好草稿可解码、坏条目不可解码，触发“逐条恢复”分支。
-        let good: [String: Any] = ["draftId": "d_good", "content": "好草稿正文", "images": [], "clientReq": "req-1", "updatedAt": 1762000000.0, "notifyRecipient": false, "quoteImages": [], "quoteDeleted": false]
+        // 用生产类型本身编码“好草稿”（与 saveAll 同款 JSONEncoder），再混一条
+        // 坏数据拼成损坏库——文件里的好草稿保证是 BearyDraft 能解出的形状；
+        // 写完当场自检：首条必须解出 BearyDraft，否则测试搭的库本身就不触发
+        // “逐条恢复”分支（自检失败会在此报错，而不是在 loadAllResult 处误报）。
+        let goodDraft = BearyDraft(draftId: "d_good", content: "好草稿正文", images: [], clientReq: "req-1", updatedAt: 1762000000, notifyRecipient: false, quoteImages: [], quoteDeleted: false)
+        let goodObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(goodDraft))
         let bad: [String: Any] = ["__notADraft": true]
-        let data = try JSONSerialization.data(withJSONObject: [good, bad])
+        let data = try JSONSerialization.data(withJSONObject: [goodObject, bad])
         try data.write(to: storeURL, options: .atomic)
+        let raw = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: storeURL)) as? [Any])
+        XCTAssertEqual(raw.count, 2)
+        let goodData = try JSONSerialization.data(withJSONObject: raw[0])
+        let probe = try JSONDecoder().decode(BearyDraft.self, from: goodData)
+        XCTAssertEqual(probe.draftId, "d_good")
         return data
     }
 
