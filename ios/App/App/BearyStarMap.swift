@@ -368,4 +368,42 @@ enum BearyStarMap {
         }
         return StarMapModel(stars: stars, edges: edges, entryById: entryById)
     }
+
+    // MARK: - 差分（r17 M2；纯逻辑，可进测试 target）
+
+    /// 两次模型间的差分：按星 id、边 id（firstId + "|" + secondId，字典序，
+    /// 跨缓存复用仍稳定）比对。星位由 id 确定性哈希，旧星在两次模型里同位，
+    /// 差分只决定“谁是新的、谁消失了”，不移动旧星。
+    static func diff(old: StarMapModel?, new: StarMapModel) -> StarMapDiff {
+        let oldStarIds = Set((old?.stars ?? []).compactMap { $0.entry.id })
+        let newStarIds = Set(new.stars.compactMap { $0.entry.id })
+        let oldEdgesById: [String: StarMapEdge] = (old?.edges ?? []).reduce(into: [:]) { $0[$1.id] = $1 }
+        let newEdgesById: [String: StarMapEdge] = new.edges.reduce(into: [:]) { $0[$1.id] = $1 }
+        let oldEdgeIds = Set(oldEdgesById.keys)
+        let newEdgeIds = Set(newEdgesById.keys)
+        // 同一条边只改理由（id 不变、reasons 变）：不算新线，调用方只更新
+        // 底部理由文案，不重播入场。
+        let changedEdgeIds = oldEdgeIds.intersection(newEdgeIds).filter {
+            oldEdgesById[$0]?.reasons != newEdgesById[$0]?.reasons
+        }.sorted()
+        return StarMapDiff(
+            newStarIds: newStarIds.subtracting(oldStarIds).sorted(),
+            removedStarIds: oldStarIds.subtracting(newStarIds).sorted(),
+            newEdgeIds: newEdgeIds.subtracting(oldEdgeIds).sorted(),
+            removedEdgeIds: oldEdgeIds.subtracting(newEdgeIds).sorted(),
+            changedEdgeIds: changedEdgeIds)
+    }
+}
+
+/// 两次星图模型间的差分结果（r17 M2）。id 列表均已排序，调用方按序
+/// 排入场节奏时顺序稳定；old 为 nil（首次建图）时全部星与边都是新的。
+struct StarMapDiff {
+    /// 新出现的星 id（按 id 排序，入场按此序错峰）。
+    let newStarIds: [String]
+    let removedStarIds: [String]
+    /// 新出现的边 id（按 id 排序）。
+    let newEdgeIds: [String]
+    let removedEdgeIds: [String]
+    /// id 不变、理由变了的边 id：只更新底部理由，不重播入场。
+    let changedEdgeIds: [String]
 }
