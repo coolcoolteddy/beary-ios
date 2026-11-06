@@ -5549,6 +5549,11 @@ class BearyTimelineViewController: UIViewController {
                 // 本批 4b 用：B-G7 补丁是否改动了时间线侧行（改动则当日面板
                 // 分区重载会丢时间线侧同步，必须回落整表重载；未改动则可分区重载）。
                 var timelinePatchChanged = false
+                // R15 P1-2：更新前分区身份快照（dayKey 序列）——当日面板由空变
+                // 非空时，普通列表里同日分区消失（currentSections :5770 continue），
+                // 分区总数减 1、其后分区序号前移，分区身份与数量同时变化；
+                // reloadSections(0) 只在快照一致时安全，否则回落整表重载。
+                let sectionsBeforeUpdate = strongSelf.currentSections().map { $0.dayKey }
                 switch result {
                 case .success(let list):
                     strongSelf.dayEntries = list.entries ?? []
@@ -5609,7 +5614,8 @@ class BearyTimelineViewController: UIViewController {
                 } else if isDaySwitchArrival && UIAccessibility.isReduceMotionEnabled == false
                             && strongSelf.tableView.window != nil && strongSelf.selectedDayKey != nil
                             && !timelinePatchChanged
-                            && strongSelf.tableView.numberOfSections == strongSelf.currentSections().count {
+                            && strongSelf.tableView.numberOfSections == strongSelf.currentSections().count
+                            && strongSelf.currentSections().map({ $0.dayKey }) == sectionsBeforeUpdate {
                     // N3：换日回包到达——分区走 .none（不动效），入场错峰
                     // 全权交给 willDisplay（与首屏 insertRows .none 同口径，
                     // 避免 .automatic 淡入与错峰叠播）；分区数守卫仍在，
@@ -5617,11 +5623,18 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.daySwitchStagger = Dictionary(uniqueKeysWithValues: strongSelf.dayEntries.indices.map { (IndexPath(row: $0, section: 0), $0) })
                     strongSelf.daySwitchGeneration = strongSelf.staggerGeneration
                     strongSelf.tableView.reloadSections(IndexSet(integer: 0), with: .none)
-                } else if clear == false && strongSelf.tableView.window != nil && strongSelf.selectedDayKey != nil {
+                } else if clear == false && strongSelf.tableView.window != nil && strongSelf.selectedDayKey != nil
+                            && strongSelf.tableView.numberOfSections == strongSelf.currentSections().count
+                            && strongSelf.currentSections().map({ $0.dayKey }) == sectionsBeforeUpdate {
+                    // R15 P1-2：此前本分支是唯一无守卫的 reloadSections——当日面板
+                    // 空变非空时分区总数减 1、序号前移，直接 reloadSections(0) 即
+                    // Invalid update。现与相邻分支同口径：分区数与分区身份
+                    // （dayKey 序列）双双一致才分区重载，否则回落整表。
                     strongSelf.tableView.reloadSections(IndexSet(integer: 0), with: .automatic)
                 } else if strongSelf.tableView.window != nil && strongSelf.selectedDayKey != nil
                             && !timelinePatchChanged
-                            && strongSelf.tableView.numberOfSections == strongSelf.currentSections().count {
+                            && strongSelf.tableView.numberOfSections == strongSelf.currentSections().count
+                            && strongSelf.currentSections().map({ $0.dayKey }) == sectionsBeforeUpdate {
                     strongSelf.tableView.reloadSections(IndexSet(integer: 0), with: .automatic)
                 } else {
                     strongSelf.daySwitchStagger.removeAll()
