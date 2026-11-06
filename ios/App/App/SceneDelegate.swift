@@ -2963,7 +2963,14 @@ final class BearyChromeViewController: UIViewController {
                 self?.feedVC?.refreshAll()
             }
         }
-        vc.onCancel = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
+        vc.onCancel = { [weak self, weak vc] in
+            vc?.dismiss(animated: BearyMotion.animated(true)) {
+                // 取消返回也重贴存量主题：编辑页里改了景深背景只写 UserDefaults，
+                // 不重拉资料时个人页仍是旧主题，这里补一次（保存返回走 reloadProfile，
+                // 资料回包后已有同款重贴，不重复）。
+                self?.profileVC?.refreshStoredFestivalTheme()
+            }
+        }
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         // G1：边缘返回（Li 批准的原生返回口径）：进出动画为 EdgeDismiss 自带的
         // slide 右滑入；attach 须在 present 之前，调用方强持有防手势中途失效。

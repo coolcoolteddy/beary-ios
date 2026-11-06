@@ -220,14 +220,13 @@ class BearyEditProfileViewController: UIViewController {
         return imageViewValue
     }()
 
-    /// F14：相机角标（网页 ed-ava-cam 口径：27 圆、ink 底、2pt bg 边、内 14 相机图）。
+    /// F14：相机角标（网页 ed-ava-cam 口径：27 圆、ink 底、内 14 相机图；
+    /// 2026-11-06 改令：去掉 2pt 白圈描边，角标直接贴底）。
     private let avatarCamBadge: UIView = {
         let badge = UIView()
         badge.translatesAutoresizingMaskIntoConstraints = false
         badge.backgroundColor = BearyColors.ink
         badge.layer.cornerRadius = 13.5
-        badge.layer.borderWidth = 2
-        badge.layer.bearyDynamicBorderColor = BearyColors.bg
         badge.clipsToBounds = true
         badge.isUserInteractionEnabled = false
         let icon = UIImageView()
@@ -247,10 +246,11 @@ class BearyEditProfileViewController: UIViewController {
 
     /// 2026-10-29 第 14 项：封面透明点按钮（avatarTapButton 同款模式）——
     /// 封面区被提到最上层的内容列间隙盖住时，点按仍能走到换封面。
+    /// 2026-11-06 改令：点封面先弹选择框（图库／景深背景），不再直进图库。
     private lazy var coverTapButton: UIButton = {
         let buttonValue = UIButton(type: .custom)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.addTarget(self, action: #selector(coverTapped), for: .touchUpInside)
+        buttonValue.addTarget(self, action: #selector(presentCoverSourcePicker), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         buttonValue.accessibilityLabel = "更换封面"
         return buttonValue
@@ -351,6 +351,8 @@ class BearyEditProfileViewController: UIViewController {
 
     /// /me 补到的用户 id（主页链接优先 @handle、无 handle 才回退 /beary/u/<id>）。
     private var fetchedUserId: Int?
+    /// /me 补到的 Plus 态（景深背景门控用；未到按非 Plus 计）。
+    private var fetchedPlus = false
     /// 5-4：/me 加载失败标记（与“未登录”区分：失败=success(nil) 之外的 failure）。
     private var meFetchFailed = false
 
@@ -439,6 +441,7 @@ class BearyEditProfileViewController: UIViewController {
                 case .success(let user):
                     strongSelf.meFetchFailed = false
                     strongSelf.fetchedUserId = user?.id
+                    strongSelf.fetchedPlus = user?.plus == true
                     strongSelf.updateLinkRow()
                     strongSelf.fetchInitialSignature()
                     if thenCopy {
@@ -552,7 +555,6 @@ class BearyEditProfileViewController: UIViewController {
 
     private func updateDynamicLayerColors() {
         copyLinkButton.layer.bearyDynamicBorderColor = BearyColors.line
-        avatarCamBadge.layer.bearyDynamicBorderColor = BearyColors.bg
     }
 
     /// F15：表单标签（网页 ed-rlabel 口径：宽 58、15/600）。
@@ -742,10 +744,10 @@ class BearyEditProfileViewController: UIViewController {
             handleField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
         ])
         // 封面通栏 + 点按：封面挂 scrollView、左右贴 frameLayoutGuide（与个人主页
-        // 封面同款通栏）；点封面走原更换流程（选图/裁剪/上传链路不变，见 coverTapped）。
+        // 封面同款通栏）；点封面弹选择框（图库／景深背景，见 presentCoverSourcePicker）。
         // 头像按钮后加（层级在封面之上），故头像区点按仍走换头像、不与封面冲突。
         coverImageView.isUserInteractionEnabled = true
-        coverImageView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(coverTapped)))
+        coverImageView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(presentCoverSourcePicker)))
         scrollView.addSubview(coverImageView)
         // 头像半压封面：封面后加会盖住头像的上半 40pt（内容列先加、封面后加，
         // 层级上封面在内容列之上），故内容列须提至封面之上，头像整圆才可见；
@@ -868,6 +870,80 @@ class BearyEditProfileViewController: UIViewController {
         guard !isSaving else { return }
         pendingPickTarget = .avatar
         presentImagePicker()
+    }
+
+    /// 景深背景新页的 EdgeDismiss 强持有（仅窄屏全屏路用，见 presentDepthBackgroundPicker）。
+    private var depthPickerEdgeDismiss: BearyEdgeDismissController?
+
+    /// 封面来源选择框（个人页 2026-11-06 改令后挪到本页，个人页旧款同款
+    /// UIAlertController actionSheet）：图库走既有换封面流程（选图／裁剪／
+    /// 上传链路不变，见 coverTapped）；景深背景进新页选主题；
+    /// iPad 走 popover、锚点封面图。
+    @objc private func presentCoverSourcePicker() {
+        let sheet = UIAlertController(title: "封面", message: nil, preferredStyle: .actionSheet)
+        sheet.addAction(UIAlertAction(title: "图库", style: .default) { [weak self] _ in
+            self?.coverTapped()
+        })
+        sheet.addAction(UIAlertAction(title: "景深背景", style: .default) { [weak self] _ in
+            self?.presentDepthBackgroundPicker()
+        })
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = coverImageView
+            popover.sourceRect = coverImageView.bounds
+        }
+        present(sheet, animated: BearyMotion.animated(true))
+    }
+
+    /// 景深背景新页：当前主题与 Plus 态传过去，点按回本页应用（门控／失败
+    /// 由 handleDepthThemePicked 弹 toast）；应用成功新页自行关闭。
+    /// 呈现口径与个人页旧款同款（窄屏全屏＋左边缘右滑，宽屏默认呈现）。
+    private func presentDepthBackgroundPicker() {
+        let picker = BearyDepthBackgroundViewController(
+            currentTheme: storedFestivalTheme(),
+            isPlus: fetchedPlus,
+            onPick: { [weak self] theme in
+                guard let strongSelf = self else { return false }
+                return strongSelf.handleDepthThemePicked(theme)
+            })
+        // 全站返回手势补齐：窄屏（iPhone）时本页是自动全屏，没有左边缘
+        // 滑，改走 EdgeDismiss；宽屏（iPad）时本页是居中 sheet，自带下滑
+        // 关闭，不改呈现方式、不接 EdgeDismiss（免得 slide 动画盖掉 sheet）。
+        if traitCollection.horizontalSizeClass == .compact {
+            picker.modalPresentationStyle = .fullScreen
+            let depthPickerEdgeDismiss = BearyEdgeDismissController()
+            depthPickerEdgeDismiss.attach(to: picker)
+            picker.transitioningDelegate = depthPickerEdgeDismiss
+            self.depthPickerEdgeDismiss = depthPickerEdgeDismiss
+        }
+        present(picker, animated: BearyMotion.animated(true))
+    }
+
+    /// 景深背景应用（个人页旧款 handleFestivalThemePicked 同款口径）：
+    /// 返回 true 仅表示已应用；Plus 门控时 toast 并返回 false（存量不动，
+    /// 新页停留）。本页只写 UserDefaults 存量、不直接贴主题视图；
+    /// 回个人页时由保存重拉或取消收口重贴。
+    private func handleDepthThemePicked(_ option: BearyProfileViewController.FestivalTheme) -> Bool {
+        // Plus 门控（/me 未到按非 Plus 计、不静默放行；beary 无内购，只提示不卖）：
+        // 默认档人人可回，非 Plus 选节日档只提示。
+        if option != .none, !fetchedPlus {
+            BearyToast.show(in: view, message: "仅 Plus 会员可使用景深背景")
+            return false
+        }
+        UserDefaults.standard.set(option.rawValue, forKey: festivalThemeDefaultsKey)
+        return true
+    }
+
+    /// 景深背景存量键（个人页同款：UserDefaults 按当前账号 id 分键；
+    /// /me 未到时落单键 -1，与个人页兜底一致）。
+    private var festivalThemeDefaultsKey: String {
+        "beary.festivalTheme.\(fetchedUserId ?? -1)"
+    }
+
+    private func storedFestivalTheme() -> BearyProfileViewController.FestivalTheme {
+        guard let raw = UserDefaults.standard.string(forKey: festivalThemeDefaultsKey),
+              let theme = BearyProfileViewController.FestivalTheme(rawValue: raw) else { return .none }
+        return theme
     }
 
     @objc private func coverTapped() {
