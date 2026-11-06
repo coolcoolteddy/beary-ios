@@ -189,12 +189,16 @@ final class BearyLivePhotoLoader {
         stateLock.unlock()
     }
 
-    private func download(url: URL, key: String, ext: String, bucket: String, generation gen: Int, completion: @escaping (Data?) -> Void) {
+    private func download(url: URL, key: String, ext: String, bucket: String, generation gen: Int, mimePrefix: String, completion: @escaping (Data?) -> Void) {
         var task: URLSessionDataTask?
         task = session.dataTask(with: url) { [weak self] data, response, _ in
             if let task = task { self?.untrackTask(task) }
+            // 与图片加载器同口径：验 HTTP 2xx + MIME 前缀，不符按脏数据失败、
+            // 不写缓存（错误页/HTML 误当视频或图片不再入库）。视频验 video/*、
+            // 静态图验 image/*，见两处调用点。
             guard let self = self, self.isCurrentGeneration(gen),
                   let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+                  let mime = http.mimeType, mime.hasPrefix(mimePrefix),
                   let data = data, !data.isEmpty else {
                 completion(nil)
                 return
@@ -246,12 +250,12 @@ final class BearyLivePhotoLoader {
                 self.buildLivePhoto(stillData: stillData, bucket: bucket, liveKey: liveKey, staticKey: staticKey, generation: gen, contentMode: contentMode, completion: completion)
                 return
             }
-            self.download(url: videoURL, key: liveKey, ext: "mov", bucket: bucket, generation: gen) { [weak self] videoData in
+            self.download(url: videoURL, key: liveKey, ext: "mov", bucket: bucket, generation: gen, mimePrefix: "video/") { [weak self] videoData in
                 guard let self = self, videoData != nil, self.isCurrentGeneration(gen) else {
                     DispatchQueue.main.async { completion(nil) }
                     return
                 }
-                self.download(url: stillURL, key: staticKey, ext: "jpg", bucket: bucket, generation: gen) { stillData in
+                self.download(url: stillURL, key: staticKey, ext: "jpg", bucket: bucket, generation: gen, mimePrefix: "image/") { stillData in
                     guard let stillData = stillData, self.isCurrentGeneration(gen) else {
                         DispatchQueue.main.async { completion(nil) }
                         return
@@ -266,8 +270,14 @@ final class BearyLivePhotoLoader {
         guard let videoFile = self.fileURL(key: liveKey, ext: "mov", bucket: bucket),
               let stillFile = self.fileURL(key: staticKey, ext: "jpg", bucket: bucket),
               FileManager.default.fileExists(atPath: videoFile.path),
-              FileManager.default.fileExists(atPath: stillFile.path),
-              let placeholder = UIImage(data: stillData) else {
+              FileManager.default.fileExists(atPath: stillFile.path) else {
+            DispatchQueue.main.async { completion(nil) }
+            return
+        }
+        guard let placeholder = UIImage(data: stillData) else {
+            // 静态数据解不出图：MIME 已验仍损坏的字节即无效缓存，删盘上下
+            // 次重下；视频文件已验 MIME 且与本失败无关，保留。
+            try? FileManager.default.removeItem(at: stillFile)
             DispatchQueue.main.async { completion(nil) }
             return
         }
@@ -282,6 +292,12 @@ final class BearyLivePhotoLoader {
             DispatchQueue.main.async {
                 // 桶已切换的回包直接丢弃、不进新桶内存缓存（视图层 token 同样守门）。
                 guard let photo = photo, let self = self, self.isCurrentGeneration(gen) else {
+                    // 组装失败且静态帧已验有效、代次仍有效：无效方在视频侧，
+                    // 删视频盘缓存以便下次重下；静态盘缓存保留，调用方仍可
+                    // 用原静态帧降级展示（本加载器只叠加实况层，不动原图）。
+                    if photo == nil, let self = self, self.isCurrentGeneration(gen) {
+                        try? FileManager.default.removeItem(at: videoFile)
+                    }
                     completion(nil)
                     return
                 }
