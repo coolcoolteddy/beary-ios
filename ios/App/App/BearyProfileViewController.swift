@@ -174,6 +174,14 @@ class BearyProfileViewController: UIViewController {
     /// 照片页 / 地图 / 星图 modal 的 EdgeDismiss 强持有（transitioningDelegate
     /// 弱引用；三页均由本页直接 present/push 入口开出，见各开页函数）。
     private var profileSubpageEdgeDismiss: BearyEdgeDismissController?
+    /// C4：当前打开的地图/星图子页弱引用（openDiaryMap/openStarMap 内赋值，
+    /// pop 后自动置空）。详情编辑/删除/可见性变化由容器扇到本页
+    /// applyEditedEntry/removeDeletedEntry 时，本页再按 id 转发给子页——
+    /// 容器不持有子页。
+    private weak var presentedMapVC: BearyDiaryMapViewController?
+    private weak var presentedStarVC: BearyDiaryStarMapViewController?
+    /// 景深背景新页的 EdgeDismiss 强持有（仅窄屏全屏路用，见 presentDepthBackgroundPicker）。
+    private var depthPickerEdgeDismiss: BearyEdgeDismissController?
     /// Plus 页的 EdgeDismiss 强持有（仅窄屏全屏路用，见 presentPlusPage）。
     private var plusPageEdgeDismiss: BearyEdgeDismissController?
 
@@ -7917,10 +7925,127 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
 
     /// 收尾跨页同步：首页/详情取消赞过或收藏后，对应页签摘卡（日记页签不受影响，
     /// 只摘赞过/收藏页签）。容器接线（Feed onInteractionRemoved → 本方法）。
+    /// C4 详情往返只传变化：编辑/可见性变化按 id 原地更新，不重走
+    /// loadProfile + loadTab 整页重拉（旧 reloadProfile）。diary/liked/
+    /// saved/照片溢出/模块语料五处模型同改；展示行只刷受影响的一行，
+    /// 滚动位置不动；公开 ↔ 非公开翻转时“公开日记”计数 ±1 并同步写回
+    /// 本人页快照；图片/可见性变了时照片墙基础重算；地图/星图子页在
+    /// 栈上时按 id 转发。只读返回不调本方法。
+    func applyEditedEntry(_ entry: Entry) {
+        guard let entryId = entry.id else { return }
+        func patched(_ old: Entry) -> Entry {
+            var copy = old
+            copy.title = entry.title
+            copy.content = entry.content
+            copy.images = entry.images
+            copy.mood = entry.mood
+            copy.weather = entry.weather
+            copy.locationName = entry.locationName
+            copy.locationDistrict = entry.locationDistrict
+            copy.quoteId = entry.quoteId
+            copy.quote = entry.quote
+            if let v = entry.publishedAt { copy.publishedAt = v }
+            if let v = entry.editDeadline { copy.editDeadline = v }
+            if let v = entry.isPublic { copy.isPublic = v }
+            if let v = entry.visibility { copy.visibility = v }
+            copy.ephemeralUntil = entry.ephemeralUntil
+            return copy
+        }
+        let oldEntry = diaryEntries.first(where: { $0.id == entryId })
+            ?? likedEntries.first(where: { $0.id == entryId })
+            ?? savedEntries.first(where: { $0.id == entryId })
+        var diaryChanged = false
+        var likedChanged = false
+        var savedChanged = false
+        if diaryEntries.contains(where: { $0.id == entryId }) {
+            diaryEntries = diaryEntries.map { $0.id == entryId ? patched($0) : $0 }
+            diaryChanged = true
+        }
+        if likedEntries.contains(where: { $0.id == entryId }) {
+            likedEntries = likedEntries.map { $0.id == entryId ? patched($0) : $0 }
+            likedChanged = true
+        }
+        if savedEntries.contains(where: { $0.id == entryId }) {
+            savedEntries = savedEntries.map { $0.id == entryId ? patched($0) : $0 }
+            savedChanged = true
+        }
+        if photoOverflowEntries.contains(where: { $0.id == entryId }) {
+            photoOverflowEntries = photoOverflowEntries.map { $0.id == entryId ? patched($0) : $0 }
+        }
+        if modulesCorpus.contains(where: { $0.id == entryId }) {
+            modulesCorpus = modulesCorpus.map { $0.id == entryId ? patched($0) : $0 }
+        }
+        guard diaryChanged || likedChanged || savedChanged else {
+            // 本页模型里没有本篇（只在溢出集/语料里）：仍转发子页，不动界面。
+            presentedMapVC?.applyEditedEntry(entry)
+            presentedStarVC?.applyEditedEntry(entry)
+            return
+        }
+        // 公开 ↔ 非公开翻转时“公开日记”计数 ±1（header 用 diaryCount；
+        // 限时过期按非公开算，与 BearyEphemeral.isEffectivelyPublic 同口径）。
+        if let old = oldEntry, !profileDeleted,
+           BearyEphemeral.isEffectivelyPublic(old) != BearyEphemeral.isEffectivelyPublic(entry),
+           var p = profile {
+            let delta = BearyEphemeral.isEffectivelyPublic(entry) ? 1 : -1
+            p.diaryCount = max(0, (p.diaryCount ?? 0) + delta)
+            profile = p
+            setLabelTextFaded(publicCountLabel, p.diaryCount.map { "\($0)" } ?? "—")
+        }
+        // 本人页快照同步写回（首屏成功回包即写盘同口径）：冷启动快照里的
+        // 旧字段不得复活；只写变了的 tab。
+        if isOwnProfile, let bucket = profileCacheBucket() {
+            if diaryChanged {
+                BearyProfileCache.save(bucket: bucket, tab: .diary, entries: diaryEntries, hasMore: diaryHasMore)
+            }
+            if likedChanged {
+                BearyProfileCache.save(bucket: bucket, tab: .liked, entries: likedEntries, hasMore: likedHasMore)
+            }
+            if savedChanged {
+                BearyProfileCache.save(bucket: bucket, tab: .saved, entries: savedEntries, hasMore: savedHasMore)
+            }
+        }
+        // 图片/可见性变了时照片墙基础重算（模型层，视图未加载也安全；
+        // 脚部重建须等视图加载，见下）。
+        let photoWallBaseChanged: Bool = {
+            guard let old = oldEntry else { return false }
+            return (old.images ?? []) != (entry.images ?? [])
+                || BearyEphemeral.isEffectivelyPublic(old) != BearyEphemeral.isEffectivelyPublic(entry)
+        }()
+        if photoWallBaseChanged {
+            syncPhotoWallBase()
+        }
+        // 子页转发（在栈上才有，pop 后弱引用已空）。
+        presentedMapVC?.applyEditedEntry(entry)
+        presentedStarVC?.applyEditedEntry(entry)
+        guard isViewLoaded else { return }
+        if photoWallBaseChanged {
+            refreshFooter()
+        }
+        // 展示行只刷受影响的一行；行号对不上（分页/占位行错位）时整表重载
+        // 兜底，不带病发 reloadRows；本篇不在展示行时不动表。
+        guard let row = displayedEntries.firstIndex(where: { $0.id == entryId }) else { return }
+        let expectedRows = displayedEntries.count + (diaryMoreButtonVisible ? 1 : 0) + (showsOwnEmptyPlaceholder ? 1 : 0)
+        if tableView.numberOfSections > 0, tableView.numberOfRows(inSection: 0) == expectedRows {
+            tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
+        } else {
+            tableView.reloadData()
+        }
+    }
+
     /// 删帖同步清模型：删帖成功后立即从个人页各页签模型摘掉本篇，
     /// 不只依赖随后重拉——重拉可能被 tabLoading 守卫跳过，跳过即复活。
     /// 个人页列表更新走 reloadData，不发行级批更新（无下标可错）。
     func removeDeletedEntry(entryId: String) {
+        // C4：删帖同步调“公开日记”计数（公开篇才 -1，私密篇不动），
+        // 与 applyEditedEntry 的翻转计数同口径；子页在栈上时按 id 转发。
+        if !profileDeleted, let deleted = diaryEntries.first(where: { $0.id == entryId }),
+           BearyEphemeral.isEffectivelyPublic(deleted), var p = profile {
+            p.diaryCount = max(0, (p.diaryCount ?? 0) - 1)
+            profile = p
+            setLabelTextFaded(publicCountLabel, p.diaryCount.map { "\($0)" } ?? "—")
+        }
+        presentedMapVC?.removeDeletedEntry(entryId: entryId)
+        presentedStarVC?.removeDeletedEntry(entryId: entryId)
         diaryEntries.removeAll { $0.id == entryId }
         likedEntries.removeAll { $0.id == entryId }
         savedEntries.removeAll { $0.id == entryId }
@@ -9498,6 +9623,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             initialEntries: diaryEntries,
             onOpenEntry: { [weak self] entry in self?.onOpenEntry?(entry) }
         )
+        // C4：记下子页，详情编辑/删除/可见性变化扇到本页时再按 id 转发。
+        presentedMapVC = mapVC
         if let nav = navigationController {
             // 已在导航栈内时 push 自带系统左边缘返回手势，不另接 EdgeDismiss。
             nav.pushViewController(mapVC, animated: BearyMotion.animated(true))
@@ -9533,6 +9660,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             initialEntries: diaryEntries,
             onOpenEntry: { [weak self] entry in self?.onOpenEntry?(entry) }
         )
+        // C4：记下子页，详情编辑/删除/可见性变化扇到本页时再按 id 转发。
+        presentedStarVC = starVC
         if let nav = navigationController {
             // 已在导航栈内时 push 自带系统左边缘返回手势，不另接 EdgeDismiss。
             nav.pushViewController(starVC, animated: BearyMotion.animated(true))
