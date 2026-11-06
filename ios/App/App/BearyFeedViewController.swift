@@ -2458,7 +2458,7 @@ class BearyFeedViewController: UIViewController {
                             DispatchQueue.main.async {
                                 switch setResult {
                                 case .success:
-                                    strongSelf.performVisibilityToggle(entryId: entryId, targetVisibility: targetVisibility)
+                                    strongSelf.performVisibilityToggle(entryId: entryId, targetVisibility: targetVisibility, publishTogetherSourceId: sourceId)
                                 case .failure:
                                     strongSelf.pubBusyIds.remove(entryId)
                                     BearyToast.show(in: strongSelf.view, message: "原日记公开失败，请重试")
@@ -2484,7 +2484,7 @@ class BearyFeedViewController: UIViewController {
         }
     }
 
-    private func performVisibilityToggle(entryId: String, targetVisibility: String) {
+    private func performVisibilityToggle(entryId: String, targetVisibility: String, publishTogetherSourceId: String? = nil) {
         guard !entryId.isEmpty, let entry = entryModel(for: entryId), entry.isMine == true else { return }
         let originalPublic = entry.isPublic ?? false
         let originalPublishedAt = entry.publishedAt
@@ -2528,13 +2528,29 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.tableView.reloadData()
                         strongSelf.updateOverlayState()
                     }
-                    // 失败原因透传：限流时服务端 message 比通用文案有用（entry_write
-                    // 120/小时打满即 429）；其余失败仍走通用文案。
-                    let message: String
-                    if case .server(let code, _) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
-                    else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
-                    else { message = "切换失败，请重试" }
-                    BearyToast.show(in: strongSelf.view, message: message)
+                    // r29-2：一并公开第二步失败时源篇已公开，尝试恢复回私密；
+                    // toast 按恢复结果区分，不用泛化“切换失败”。
+                    if let sourceId = publishTogetherSourceId {
+                        BearyAPI.shared.setVisibility(id: sourceId, visibility: "private") { [weak self] restoreResult in
+                            DispatchQueue.main.async {
+                                guard let strongSelf = self else { return }
+                                switch restoreResult {
+                                case .success:
+                                    BearyToast.show(in: strongSelf.view, message: "公开失败，原日记已恢复私密")
+                                case .failure:
+                                    BearyToast.show(in: strongSelf.view, message: "公开失败，原日记恢复失败，请检查")
+                                }
+                            }
+                        }
+                    } else {
+                        // 失败原因透传：限流时服务端 message 比通用文案有用（entry_write
+                        // 120/小时打满即 429）；其余失败仍走通用文案。
+                        let message: String
+                        if case .server(let code, _) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
+                        else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
+                        else { message = "切换失败，请重试" }
+                        BearyToast.show(in: strongSelf.view, message: message)
+                    }
                     for path in strongSelf.indexPaths(for: entryId) {
                         (strongSelf.tableView.cellForRow(at: path) as? BearyDiaryCardCell)?.playPublishDenyShake()
                     }
