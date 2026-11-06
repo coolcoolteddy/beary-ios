@@ -3,7 +3,7 @@ import UIKit
 // ===== 编辑器 @ 选人（网页对齐批）=====
 // @ 选人：调 GET /beary/api/search?q=，只取 users 组（display_name/handle 匹配，≤8 条，
 // 与网页搜索同口径），结果过滤掉本人；点行即回传 SearchUser，调用方负责 @ chip。
-// 呈现：自定义底 sheet（文件内自包含，不碰 SceneDelegate）：手机端固定高 82vh 底 sheet、
+// 呈现：自定义底 sheet（文件内自包含，不碰 SceneDelegate）：手机端 max-height 82vh 底 sheet、
 // 圆角 20/20/0/0、阴影 0 −12 32 rgba(0,0,0,.22)；宽 ≥821 时居中 440
 // 全圆角 20 + 边框 1 + 阴影 0 24 60 rgba(0,0,0,.30)；自定义抓手 40×4（不用系统抓手）。
 // 遮罩为通用 0.45 黑遮罩（网页 .modal .backdrop 口径），点遮罩关闭；第 30 项起遮罩与面板
@@ -461,10 +461,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         }
     }
 
-    /// R13 方案 B：固定标题区——sheet 高固定为上限（可用高 82%，键盘弹出时
-    /// 手机端上限改按键盘上方的可见高计），不再随内容高伸缩；标题＋搜索框
-    /// 的屏上位置自此固定，不再随结果数上下移动，内容多少只由列表区内部
-    /// 滚动承担（列表区已是滚动容器，行不裁；空态时列表区下方留白）。
+    /// sheet 高 = 内容高，上限 82vh（键盘弹出时手机端上限改按键盘上方的可见高计）。
     private func updateSheetHeight() {
         let containerHeight = view.bounds.height
         guard containerHeight > 0 else { return }
@@ -476,6 +473,33 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             let pad = 14 + (isPadLayout ? 0 : view.safeAreaInsets.bottom)
             listBottom.constant = -pad
         }
+        let searchHeight = searchBox.systemLayoutSizeFitting(
+            CGSize(width: max(sheetWidth - 32, 0), height: 0),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        // iCity：通知行已隐藏，不计入 sheet 高（列表直接贴搜索框下 10pt，见下方约束）。
+        let listWidth = max(sheetWidth - 20, 0)
+        let listHeight: CGFloat
+        if !listScrollView.isHidden {
+            listHeight = rowsStack.systemLayoutSizeFitting(
+                CGSize(width: listWidth, height: 0),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+        } else {
+            listHeight = stateView.systemLayoutSizeFitting(
+                CGSize(width: listWidth, height: 0),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+        }
+        let bottomPad = 14 + (isPadLayout ? 0 : view.safeAreaInsets.bottom)
+        // 抓手 14 + 标题顶 14 + 标题高 + 标题到搜索 12 + 搜索框高 + 搜索到列表 10
+        // + 列表高 + 底 padding（iCity：通知行隐藏后不再占 8 + 行高 + 10；
+        // v2：标题行橙圈已删，行高由标题本身定，标题高取 intrinsic，首帧为 0 时兜底 20）。
+        let titleHeight = max(headerTitle.intrinsicContentSize.height, 20)
+        let fittingHeight = 14 + 14 + titleHeight + 12 + searchHeight + 10 + listHeight + bottomPad
         // 审计 D-4：可用高按键盘顶沿计——手机端键盘顶沿即为可见高（此前 iPad 直接
         // 不扣键盘高度，浮动/分屏键盘会盖住居中卡片）；iPad 另受“上抬后卡片顶不得
         // 顶出安全区”约束：卡片底 = 键盘顶 - 14，故高上限 = 键盘顶 - 14 - 安全区顶。
@@ -492,7 +516,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             let keyboardFitHeight = keyboardTop - 14 - view.safeAreaInsets.top
             maxHeight = min(maxHeight, max(keyboardFitHeight, 0))
         }
-        let target = maxHeight
+        let target = min(fittingHeight, maxHeight)
         if let heightConstraint = sheetHeightConstraint, abs(heightConstraint.constant - target) > 0.5 {
             heightConstraint.constant = target
         }
