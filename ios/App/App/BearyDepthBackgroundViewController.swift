@@ -19,6 +19,8 @@ final class BearyDepthBackgroundViewController: UIViewController {
     private let onPickValue: (Theme) -> Bool
     /// 滚动中：willDisplay 不再重开动效，停稳后才由滚动结束回调统一评估。
     private var isScrollingPreviews = false
+    /// iPad 宽屏 600pt 内容列，窄屏沿用全宽列表与行内 16pt 留白。
+    private var wideTableWidthCap: NSLayoutConstraint?
     /// Plus 页的 EdgeDismiss 强持有（仅窄屏全屏路用，见 presentPlusPage）。
     private var plusPageEdgeDismiss: BearyEdgeDismissController?
 
@@ -73,17 +75,6 @@ final class BearyDepthBackgroundViewController: UIViewController {
         return tableValue
     }()
 
-    private lazy var plusFooterLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        labelValue.adjustsFontForContentSizeCategory = true
-        labelValue.textColor = BearyColors.gray
-        labelValue.textAlignment = .center
-        labelValue.numberOfLines = 0
-        labelValue.text = "Plus 会员可使用全部景深背景"
-        return labelValue
-    }()
-
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
@@ -93,18 +84,10 @@ final class BearyDepthBackgroundViewController: UIViewController {
         topBarView.addSubview(backButton)
         topBarView.addSubview(titleLabel)
         view.addSubview(tableView)
-        if !isPlusValue {
-            let footer = UIView(frame: CGRect(x: 0, y: 0, width: view.bounds.width, height: 44))
-            plusFooterLabel.translatesAutoresizingMaskIntoConstraints = false
-            footer.addSubview(plusFooterLabel)
-            NSLayoutConstraint.activate([
-                plusFooterLabel.centerXAnchor.constraint(equalTo: footer.centerXAnchor),
-                plusFooterLabel.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
-                plusFooterLabel.leadingAnchor.constraint(greaterThanOrEqualTo: footer.leadingAnchor, constant: 32),
-                plusFooterLabel.trailingAnchor.constraint(lessThanOrEqualTo: footer.trailingAnchor, constant: -32),
-            ])
-            tableView.tableFooterView = footer
-        }
+        // 锁定行已标“Plus 专属”，不再在页底重复解释会员权限。
+        let tableFullWidth = tableView.widthAnchor.constraint(equalTo: view.widthAnchor)
+        tableFullWidth.priority = .defaultHigh
+        wideTableWidthCap = tableView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
         NSLayoutConstraint.activate([
             topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -119,12 +102,23 @@ final class BearyDepthBackgroundViewController: UIViewController {
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: backButton.trailingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBarView.trailingAnchor, constant: -52),
             tableView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            tableFullWidth,
+            tableView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         // 进页预热：六张底图在后台线程读盘＋下采样，cell 出现时直接贴缓存，不在主线程首解码。
         ProfileCoverView.prewarmBackdrops()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 与全站内容列断点一致：仅宽 ≥821pt 时启用 600pt 上限。
+        let shouldCap = view.bounds.width >= 821
+        if let cap = wideTableWidthCap, cap.isActive != shouldCap {
+            cap.isActive = shouldCap
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
