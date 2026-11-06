@@ -3088,14 +3088,30 @@ enum BearyQuoteGate {
         guard BearyPresentGuard.canPresent(from: vc) else { return false }
         let sourceWord = sourceIsFriendsOnly ? "仅好友" : "私密"
         if sourceIsMine {
-            let alert = UIAlertController(title: "引用的日记还是\(sourceWord)", message: "公开本篇时，是否一并公开原日记？一并公开后，引用对所有人可见。", preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "一并公开原日记", style: .default) { _ in completion(true) })
-            alert.addAction(UIAlertAction(title: "放弃公开", style: .cancel) { _ in completion(false) })
-            vc.present(alert, animated: BearyMotion.animated(true))
+            // 审计 r16 第 16 项：改走共享确认底 sheet（原系统 UIAlertController
+            // .alert，标题/正文/按钮文案一字不动）。叉叉/遮罩/下滑关闭与点
+            // “放弃公开”同义（走 .cancel handler）。
+            BearyConfirmSheet.present(
+                from: vc,
+                title: "引用的日记还是\(sourceWord)",
+                message: "公开本篇时，是否一并公开原日记？一并公开后，引用对所有人可见。",
+                actions: [
+                    BearyConfirmSheetAction(title: "一并公开原日记", style: .normal) { completion(true) },
+                    BearyConfirmSheetAction(title: "放弃公开", style: .cancel) { completion(false) },
+                ]
+            )
         } else {
-            let alert = UIAlertController(title: "引用的日记还是\(sourceWord)", message: "这篇日记引用了他人的\(sourceWord)日记，无法一并公开原日记。放弃公开可继续保留引用。", preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "放弃公开", style: .default) { _ in completion(false) })
-            vc.present(alert, animated: BearyMotion.animated(true))
+            // 单行“放弃公开”：无 .cancel 动作，叉叉/遮罩/下滑关闭同样视为放弃公开
+            // （onDismissWithoutAction），不另补一个同义的“取消”行。
+            BearyConfirmSheet.present(
+                from: vc,
+                title: "引用的日记还是\(sourceWord)",
+                message: "这篇日记引用了他人的\(sourceWord)日记，无法一并公开原日记。放弃公开可继续保留引用。",
+                actions: [
+                    BearyConfirmSheetAction(title: "放弃公开", style: .normal) { completion(false) },
+                ],
+                onDismissWithoutAction: { completion(false) }
+            )
         }
         return true
     }
@@ -3109,14 +3125,22 @@ enum BearyQuoteGate {
         // “放弃公开”（不发请求）不同；标题／正文按来源私密／仅好友分。
         guard BearyPresentGuard.canPresent(from: vc) else { return }
         let sourceWord = sourceIsFriendsOnly ? "仅好友" : "私密"
-        let alert = UIAlertController(title: "引用的日记还是\(sourceWord)", message: "公开本篇时，引用的\(sourceWord)日记怎么办？", preferredStyle: .alert)
+        // 审计 r16 第 16 项：改走共享确认底 sheet（原系统 UIAlertController
+        // .alert，标题/正文/按钮文案一字不动；行顺序按底 sheet 口径：确认行
+        // 在上、取消行单独在下）。叉叉/遮罩/下滑关闭与点“取消”同义（不发请求）。
+        var actions: [BearyConfirmSheetAction] = []
         if sourceIsMine {
-            alert.addAction(UIAlertAction(title: "一并公开原日记", style: .default) { _ in onPublishTogether() })
+            actions.append(BearyConfirmSheetAction(title: "一并公开原日记", style: .normal) { onPublishTogether() })
         }
-        alert.addAction(UIAlertAction(title: "删除引用并公开", style: .default) { _ in onDeleteQuote() })
-        alert.addAction(UIAlertAction(title: "保持私密发布", style: .default) { _ in onKeepPrivate() })
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        vc.present(alert, animated: BearyMotion.animated(true))
+        actions.append(BearyConfirmSheetAction(title: "删除引用并公开", style: .normal) { onDeleteQuote() })
+        actions.append(BearyConfirmSheetAction(title: "保持私密发布", style: .normal) { onKeepPrivate() })
+        actions.append(BearyConfirmSheetAction(title: "取消", style: .cancel, handler: nil))
+        BearyConfirmSheet.present(
+            from: vc,
+            title: "引用的日记还是\(sourceWord)",
+            message: "公开本篇时，引用的\(sourceWord)日记怎么办？",
+            actions: actions
+        )
     }
 
     /// 存量公开篇含私密引用：作者下次打开编辑器时的三选一。自己来源三项
@@ -3129,13 +3153,22 @@ enum BearyQuoteGate {
         guard BearyPresentGuard.canPresent(from: vc) else { return }
         let sourceWord = sourceIsFriendsOnly ? "仅好友" : "私密"
         let detail = sourceIsFriendsOnly ? "原日记仍仅好友可见，非好友看这篇时引用只显示占位。" : "原日记仍是私密，他人看这篇时引用只显示占位。"
-        let alert = UIAlertController(title: "这篇已公开的日记引用了\(sourceWord)日记", message: detail, preferredStyle: .alert)
+        // 审计 r16 第 16 项：改走共享确认底 sheet（原系统 UIAlertController
+        // .alert，标题/正文/按钮文案一字不动）。“原日记保持私密”是 .cancel
+        // 动作：点按与叉叉/遮罩/下滑关闭同义（原日记不改、本篇已公开态不变，
+        // 下次打开编辑器仍会再提示）。
+        var actions: [BearyConfirmSheetAction] = []
         if sourceIsMine {
-            alert.addAction(UIAlertAction(title: "一并公开原日记", style: .default) { _ in onPublishTogether() })
+            actions.append(BearyConfirmSheetAction(title: "一并公开原日记", style: .normal) { onPublishTogether() })
         }
-        alert.addAction(UIAlertAction(title: "删除引用", style: .default) { _ in onDeleteQuote() })
-        alert.addAction(UIAlertAction(title: "原日记保持私密", style: .cancel) { _ in onKeepPrivate() })
-        vc.present(alert, animated: BearyMotion.animated(true))
+        actions.append(BearyConfirmSheetAction(title: "删除引用", style: .normal) { onDeleteQuote() })
+        actions.append(BearyConfirmSheetAction(title: "原日记保持私密", style: .cancel) { onKeepPrivate() })
+        BearyConfirmSheet.present(
+            from: vc,
+            title: "这篇已公开的日记引用了\(sourceWord)日记",
+            message: detail,
+            actions: actions
+        )
     }
 
     /// 改私密前提醒：本篇被 N 篇日记引用（N>0）时先弹确认，文案含改后口径；
@@ -3149,10 +3182,19 @@ enum BearyQuoteGate {
                         // 审计 2026-11-02 弹窗组：异步回包时再查守卫；未过时按提醒
                         // 非门控的既有口径放行（与拉取失败同款），不把用户卡在 busy。
                         guard BearyPresentGuard.canPresent(from: vc) else { completion(true); return }
-                        let alert = UIAlertController(title: nil, message: "这篇日记被 \(count) 篇日记引用，改私密后这些引用将显示“该日记已设为私密”。", preferredStyle: .alert)
-                        alert.addAction(UIAlertAction(title: "改私密", style: .destructive) { _ in completion(true) })
-                        alert.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in completion(false) })
-                        vc.present(alert, animated: BearyMotion.animated(true))
+                        // 审计 r16 第 16 项：改走共享确认底 sheet（原系统
+                        // UIAlertController .alert，标题/正文/按钮文案一字不动；
+                        // “改私密”为危险动作红底）。叉叉/遮罩/下滑关闭与点
+                        // “取消”同义（走 .cancel handler，不改态）。
+                        BearyConfirmSheet.present(
+                            from: vc,
+                            title: nil,
+                            message: "这篇日记被 \(count) 篇日记引用，改私密后这些引用将显示“该日记已设为私密”。",
+                            actions: [
+                                BearyConfirmSheetAction(title: "改私密", style: .destructive) { completion(true) },
+                                BearyConfirmSheetAction(title: "取消", style: .cancel) { completion(false) },
+                            ]
+                        )
                     } else {
                         completion(true)
                     }

@@ -2319,9 +2319,15 @@ final class BearyChromeViewController: UIViewController {
         // 审计 P2-23：删除是作者动作——非作者不弹确认（服务端同样校验作者，客户端先拦）。
         let viewerId = SessionManager.shared.currentUser?.id
         guard entry.isMine == true || (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId) else { return }
-        let alert = UIAlertController(title: "确认删除？", message: "删除后会移入回收站，30 天内可在「回收站」里恢复。", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        alert.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
+        // 审计 r16 第 16 项：删除确认改走共享确认底 sheet（原系统 UIAlertController
+        // .alert，标题/正文/按钮文案一字不动；行顺序按底 sheet 口径：删除行在上、
+        // 取消行单独在下）。叉叉/遮罩/下滑关闭与点“取消”同义（不发请求）。
+        BearyConfirmSheet.present(
+            from: self,
+            title: "确认删除？",
+            message: "删除后会移入回收站，30 天内可在「回收站」里恢复。",
+            actions: [
+                BearyConfirmSheetAction(title: "删除", style: .destructive) { [weak self] in
             guard let self = self else { return }
             // 在途即丢弃：不重发、不 toast（首请求回包自带成功／失败反馈）。
             guard self.deletingEntryIds.insert(entryId).inserted else { return }
@@ -2384,8 +2390,10 @@ final class BearyChromeViewController: UIViewController {
                     }
                 }
             }
-        })
-        present(alert, animated: BearyMotion.animated(true))
+                },
+                BearyConfirmSheetAction(title: "取消", style: .cancel, handler: nil),
+            ]
+        )
     }
 
     private func ensureTimelineVC() -> BearyTimelineViewController {
