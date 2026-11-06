@@ -5639,7 +5639,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     if let oldName = oldName, oldName != saved {
                         // P2-11：旧图走后台队列删（新图已替换进 imageItems，
                         // 随后 saveDraftNow 按替换后状态落盘）。
-                        BearyDraftImageStore.deletePairsIfUnreferencedAsync([oldName], excludingDraftId: currentDraftId)
+                        BearyDraftImageStore.deletePairsIfUnreferencedAsync([oldName], excludingDraftId: self.currentDraftId)
                     }
                 } else {
                     // P1-19：落盘失败时旧文件、旧 key、旧预览一律不动，只 toast，
