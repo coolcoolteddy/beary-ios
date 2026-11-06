@@ -310,7 +310,11 @@ final class SessionManager {
         // 分支、不调本函数，故 401 不删任何账号的 token，切回死会话时
         // 仍能走到“重新登录”而不是列表里直接消失。
         if let id = currentUser?.id {
-            BearyAccountVault.shared.remove(userId: id)
+            // r25-7：保管库删除失败不静默吞掉——标记该凭据不可恢复
+            // （冷启动不再把它当有效账号），退出流程继续。
+            if !BearyAccountVault.shared.remove(userId: id) {
+                _ = BearyAccountVault.shared.markUnrecoverable(userId: id)
+            }
         }
         purgeImageCacheForCurrentAccount()
         purgeLocalSnapshotsForCurrentAccount()
@@ -484,14 +488,14 @@ final class SessionManager {
             // 拿别的账号 token 覆盖它（例如网页登录后 App 内尚无快照时，
             // 覆盖会把活会话换成错号；此时返回 nil 走原口径，/me 会用活
             // cookie 自己恢复并顺带快照）。
-            target = accounts.first { $0.token == cookie.value }
+            target = accounts.first { $0.token == cookie.value && !$0.unrecoverable }
             guard target != nil else { return nil }
         } else {
             if let lastId = BearyFeedCache.lastKnownUserId() {
-                target = accounts.first { $0.userId == lastId && tokenAlive($0) }
+                target = accounts.first { $0.userId == lastId && tokenAlive($0) && !$0.unrecoverable }
             }
             if target == nil {
-                target = accounts.filter(tokenAlive).max { $0.savedAtMs < $1.savedAtMs }
+                target = accounts.filter { tokenAlive($0) && !$0.unrecoverable }.max { $0.savedAtMs < $1.savedAtMs }
             }
             needsCookieInstall = true
         }
@@ -780,7 +784,13 @@ final class SessionManager {
                             completion(.failed)
                             return
                         }
-                        _ = vault.remove(userId: userId)
+                        // r25-7：保管库删除失败不报“已移除”——标记不可恢复，
+                        // 账号留列表、报失败，调用方给 toast 与重试入口。
+                        guard vault.remove(userId: userId) else {
+                            _ = vault.markUnrecoverable(userId: userId)
+                            completion(.failed)
+                            return
+                        }
                         completion(.removed)
                     case .failure:
                         // 隔离登出失败：不删保管库项、不动当前 cookie 与
@@ -809,10 +819,17 @@ final class SessionManager {
                         completion(.failed)
                         return
                     }
+                    // r25-7：先删保管库项——失败则本次移除作废（不调
+                    // signOutLocally、不切号），账号留列表、报失败。
+                    guard vault.remove(userId: userId) else {
+                        _ = vault.markUnrecoverable(userId: userId)
+                        completion(.failed)
+                        return
+                    }
                     self.clearLocalCookies()
                     self.signOutLocally()
                     let remaining = vault.loadAll()
-                    if let next = remaining.first {
+                    if let next = remaining.first(where: { !$0.unrecoverable }) {
                         self.switchToAccount(userId: next.userId) { switchResult in
                             switch switchResult {
                             case .switched(let user):
