@@ -1923,20 +1923,19 @@ class BearyFeedViewController: UIViewController {
     ///（oldCount..<newCount）、重校验走 diff 出的 newPaths（旧 id 集过滤）、首屏走
     /// isFirstLoad 一次性可见行；其余 reloadData 路径不调本函数。故无需
     /// animatedRowIds 防重播集合，stagger 现状无问题。
-    private func staggerFadeCells(at paths: [IndexPath], delayStep: TimeInterval = 0.03, yOffset: CGFloat = 6) {
+    /// 审计 r16 第 10 项：步进／位移走 BearyEntranceConfig（首屏 60ms／8pt、
+    /// 分页 50ms／24pt），与时间线共用一套配置。
+    private func staggerFadeCells(at paths: [IndexPath], kind: BearyEntranceConfig.Kind) {
         if UIAccessibility.isReduceMotionEnabled { return }
         let visible = tableView.indexPathsForVisibleRows ?? []
         var order = 0
         for path in paths where visible.contains(path) {
             guard let cell = tableView.cellForRow(at: path) else { continue }
-            // 80 包 A3-3：分页/首屏入场统一口径——cell 级 alpha + y 偏移、0.25s、
-            // 步进封顶 0.24s、可交互（与时间线/主页一致）。步进与位移由调用方按
-            // 场景给：首屏 60ms/8px、分页 50ms/24px，默认 30ms/6px。
             cell.alpha = 0
-            cell.transform = CGAffineTransform(translationX: 0, y: yOffset)
-            let delay = min(Double(order) * delayStep, 0.24)
+            cell.transform = CGAffineTransform(translationX: 0, y: BearyEntranceConfig.yOffset(for: kind))
+            let delay = BearyEntranceConfig.delay(for: kind, order: order)
             order += 1
-            UIView.animate(withDuration: 0.25, delay: delay, options: [.allowUserInteraction], animations: {
+            UIView.animate(withDuration: BearyEntranceConfig.duration, delay: delay, options: [.allowUserInteraction], animations: {
                 cell.alpha = 1
                 cell.transform = .identity
             }, completion: nil)
@@ -1953,10 +1952,7 @@ class BearyFeedViewController: UIViewController {
         let inserted = (oldCount..<newCount).map { IndexPath(row: $0, section: section) }
         tableView.performBatchUpdates({
             self.tableView.insertRows(at: inserted, with: .none)
-        }, completion: { [weak self] _ in
-            // 加载三件套·分页新卡：每张错开 50ms、从下方 24px 滑入淡入。
-            self?.staggerFadeCells(at: inserted, delayStep: 0.05, yOffset: 24)
-        })
+        }, completion: { [weak self] _ in self?.staggerFadeCells(at: inserted, kind: .pagination) })
         return true
     }
 
@@ -1987,12 +1983,12 @@ class BearyFeedViewController: UIViewController {
                         BearyLoadingUX.staggerIn(cells: cells, delayStep: 0.06, yOffset: 8)
                     })
                 } else {
-                    staggerFadeCells(at: visible)
+                    staggerFadeCells(at: visible, kind: .firstLoad)
                 }
                 return
             }
             // M1：首拉完成时可见行错峰淡入一次（后续重拉/后台换新不再重播）。
-            staggerFadeCells(at: visible)
+            staggerFadeCells(at: (tableView.indexPathsForVisibleRows ?? []).sorted(), kind: .firstLoad)
         }
     }
 
