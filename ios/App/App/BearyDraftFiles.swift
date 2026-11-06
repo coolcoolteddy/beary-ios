@@ -519,8 +519,10 @@ enum BearyDraftStore {
                 return .success(sortedNormalized(drafts, forAccount: accountId))
             }
             // 单条坏数据不再拖垮整库：整库解码失败时逐条解码，好的留下、
-            // 坏的跳过；原文件先备份、好数据立即回写，坏数据只留在备份里。
-            // 回写失败则落回原损坏路径（原文件与备份都在，不丢数据）。
+            // 坏的跳过；备份成功才回写好数据（坏数据只留在备份里），备份失败
+            // 时不回写、返回恢复失败，原文件保留不动——否则“备份失败＋回写
+            // 成功”会丢掉被跳过的草稿。回写失败同样落回原损坏路径（原文件
+            // 与备份都在，不丢数据）；好草稿为空时不写盘。
             if let data = try? Data(contentsOf: url),
                let rawArray = try? JSONSerialization.jsonObject(with: data) as? [Any],
                !rawArray.isEmpty {
@@ -533,9 +535,14 @@ enum BearyDraftStore {
                     good.append(draft)
                 }
                 if !good.isEmpty {
-                    let backup = backupCorruptFile(at: url)
+                    guard let backup = backupCorruptFile(at: url) else {
+                        NSLog("[BearyDraft] partial v3 store recovery aborted: backup failed, original kept")
+                        let err = LoadError.corruptStore(backupURL: nil)
+                        lastLoadError = err
+                        return .failure(err)
+                    }
                     if saveAll(good, forAccount: accountId) {
-                        NSLog("[BearyDraft] partial v3 store recovered: kept \(good.count), skipped \(skipped), backup=\(backup?.path ?? "nil")")
+                        NSLog("[BearyDraft] partial v3 store recovered: kept \(good.count), skipped \(skipped), backup=\(backup.path)")
                         lastLoadError = nil
                         return .success(sortedNormalized(good, forAccount: accountId))
                     }
