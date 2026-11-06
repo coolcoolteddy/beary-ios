@@ -5309,7 +5309,7 @@ class BearyProfileViewController: UIViewController {
                     for row in all where row.localOnly && row.revokedAtMs == nil {
                         strongSelf.pastSelfPushCreate(row)
                     }
-                    for row in all where row.revokedAtMs != nil && !row.localOnly {
+                    for row in all where row.revokedAtMs != nil && !row.localOnly && !row.revokeSynced {
                         strongSelf.pastSelfPushRevoke(row.id)
                     }
                     strongSelf.renderPastSelf(visible: strongSelf.pastSelfVisibleEntries())
@@ -5343,7 +5343,14 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func pastSelfPushRevoke(_ id: String) {
-        BearyAPI.shared.revokePastSelfMessage(id: id) { _ in }
+        BearyAPI.shared.revokePastSelfMessage(id: id) { [weak self] result in
+            // 撤回成功即记确认：下次同步不再重发（服务端撤回已幂等，重发无副
+            // 作用、只浪费请求）；失败静默，下次同步再补推。
+            guard case .success = result else { return }
+            DispatchQueue.main.async {
+                self?.pastSelfStore()?.markRevokeSynced(id: id)
+            }
+        }
     }
 
     // MARK: 批 D —— 随机漫步
