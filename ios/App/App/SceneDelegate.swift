@@ -3305,8 +3305,13 @@ final class BearyChromeViewController: UIViewController {
             self?.profileVC?.reloadProfile()
         }
         vc.onPurged = { [weak self] _ in
-            self?.timelineVC?.refreshAfterDetailChange()
-            self?.profileVC?.reloadProfile()
+            // B5：彻底删除只影响回收站计数（被删篇早已不在时间线/个人页），
+            // 不再整页重拉时间线与个人页；计数已知时时间线本地 -1
+            // （回收站钮与快照同步更新），未知时回落原有整页重拉校验。
+            if self?.timelineVC?.applyTrashPurged() != true {
+                self?.timelineVC?.refreshAfterDetailChange()
+                self?.profileVC?.reloadProfile()
+            }
         }
         present(vc, animated: BearyMotion.animated(true))
     }
