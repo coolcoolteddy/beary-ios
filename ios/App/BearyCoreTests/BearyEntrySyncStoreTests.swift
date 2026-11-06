@@ -4,7 +4,9 @@ import XCTest
 //
 // 覆盖 BearyEntrySyncStore / BearyTrashSyncStore 的磁盘行为：
 //   - 写盘失败时 commitFullSync / saveAll 返回 false（不谎报成功）；
-//   - 部分日期写失败时好日期照常落盘、旧日文件不被清理，下次重跑仍能对齐；
+//   - r17-C2 全有或全无：commitFullSync 任一日写盘失败时好日期也不发布
+//     （活盘原样不动），而不是“好日期照常落盘”；旧日文件变空数组文件
+//     （= 已同步、该日为空），不再删文件；
 //   - 回读校验：写完 id 序列对不上即判失败。
 //
 // 口径说明：已同步标记（syncedAccountIdThisLaunch）由编排层 finishDiaryRun /
@@ -63,32 +65,37 @@ final class BearyEntrySyncStoreTests: XCTestCase {
 
     // MARK: - 全量提交
 
-    func testCommitFullSyncSuccessCleansStaleFiles() {
-        // 先留一个不在新集合里的旧日文件，提交成功后应被清理。
+    func testCommitFullSyncSuccessEmptiesStaleDays() {
+        // 先留一个不在新集合里的旧日文件，提交成功后该日应变空数组文件
+        // （= 已同步、该日为空），而不是被删掉（r17-C2 空日约定：文件缺失
+        // 只代表从未同步/写盘失败，与确认空可区分）。
         XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: testAccountId, dayKey: "2024-12-31", entries: [makeEntry(id: "old", createdAtMs: 1735657200000)]))
         let committed = BearyEntrySyncStore.commitFullSync(accountId: testAccountId, grouped: [
             "2025-01-01": [makeEntry(id: "e1", createdAtMs: 1735689600000)],
         ])
         XCTAssertTrue(committed)
-        XCTAssertNil(BearyEntrySyncStore.loadDay(accountId: testAccountId, dayKey: "2024-12-31"))
+        XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: testAccountId, dayKey: "2024-12-31")?.count, 0)
         XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: testAccountId, dayKey: "2025-01-01")?.first?.id, "e1")
+        // 换盘成功后完整性标记在位（总数 = 本批总篇数）。
+        XCTAssertTrue(BearyEntrySyncStore.isArchiveComplete(accountId: testAccountId))
+        XCTAssertEqual(BearyEntrySyncStore.loadCompletion(accountId: testAccountId)?.entryCount, 1)
     }
 
-    func testCommitFullSyncPartialFailureKeepsStaleFilesAndGoodDays() {
+    func testCommitFullSyncPartialFailurePublishesNothing() {
         // 旧日文件（不在新集合里）先落盘。
         XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: testAccountId, dayKey: "2024-12-31", entries: [makeEntry(id: "old", createdAtMs: 1735657200000)]))
-        // 其中一个目标日路径被目录堵住：该日写盘失败，其余日应照常写。
-        let blockedURL = BearyEntrySyncStore.dayFileURL(accountId: testAccountId, dayKey: "2025-01-01")!
-        try! FileManager.default.createDirectory(at: blockedURL, withIntermediateDirectories: true)
+        // 非法日键（带 /）让 staging 写盘失败：全有或全无——整体报 false，
+        // 好日期也不发布，活盘原样不动（旧日文件仍读得到旧内容），不写标记。
+        // 注：直接堵活盘日文件路径测不到失败——staging 是全新目录，换盘会把
+        // 堵路的目录整个搬进 .bak；故用非法日键做 staging 写盘失败的故障注入。
         let committed = BearyEntrySyncStore.commitFullSync(accountId: testAccountId, grouped: [
             "2025-01-01": [makeEntry(id: "e1", createdAtMs: 1735689600000)],
-            "2025-01-02": [makeEntry(id: "e2", createdAtMs: 1735776000000)],
+            "bad/key": [makeEntry(id: "e2", createdAtMs: 1735776000000)],
         ])
-        // 部分失败：整体报 false（编排层据此不记已同步标记，下次 kick 重跑）；
-        // 好日期已写，旧日文件未被清理（不因一次失败丢旧缓存）。
         XCTAssertFalse(committed)
-        XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: testAccountId, dayKey: "2025-01-02")?.first?.id, "e2")
-        XCTAssertNotNil(BearyEntrySyncStore.loadDay(accountId: testAccountId, dayKey: "2024-12-31"))
+        XCTAssertNil(BearyEntrySyncStore.loadDay(accountId: testAccountId, dayKey: "2025-01-01"))
+        XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: testAccountId, dayKey: "2024-12-31")?.first?.id, "old")
+        XCTAssertFalse(BearyEntrySyncStore.isArchiveComplete(accountId: testAccountId))
     }
 
     func testGroupByDayUsesBeijingDayBoundary() {

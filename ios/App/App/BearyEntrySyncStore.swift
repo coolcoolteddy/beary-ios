@@ -18,6 +18,41 @@ import Foundation
 // 调用方（removeEntry / upsertEntry 等单日写透）不关心成败，用
 // @discardableResult，不改它们的静默口径。
 
+/// r17-C2 同步状态记录：最近一次全量同步的完成情况（不是数据的完整度——
+/// 中断时盘上仍是上一份完整版本，状态记 partial 只是说明“最近一次同步
+/// 没跑完”，供下次重跑/排障判断，不代表盘上数据损坏）。
+/// status：complete = 最近一次全量同步分页到齐且写入校验成功并已发布；
+/// partial = 最近一次尝试中断（分页失败/超限/游标缺失/写盘校验失败），
+/// 盘上是上一份完整版本。
+/// 名字说明：与 BearyEntrySync.swift 里设置页展示用的 enum BearySyncState
+/// （usingLocal/syncing/synced/failed 四态）区分——enum 是内存快照，
+/// record 是落盘的状态文件内容。
+struct BearySyncStateRecord: Codable {
+    var status: String
+    var updatedAt: TimeInterval
+    var itemCount: Int
+}
+
+enum BearySyncStateStore {
+    static func save(stateURL: URL?, status: String, itemCount: Int) -> Bool {
+        guard let url = stateURL else { return false }
+        let state = BearySyncStateRecord(status: status, updatedAt: Date().timeIntervalSince1970, itemCount: itemCount)
+        guard let data = try? JSONEncoder().encode(state) else { return false }
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    static func load(stateURL: URL?) -> BearySyncStateRecord? {
+        guard let url = stateURL, let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(BearySyncStateRecord.self, from: data)
+    }
+}
+
 /// 时间线日缓存的磁盘持久层：按账号分桶、按北京日归档。
 /// 目录：Application Support / beary_entry_sync_<uid>/，文件 <YYYY-MM-DD>.json（Entry 数组）。
 enum BearyEntrySyncStore {
@@ -47,11 +82,60 @@ enum BearyEntrySyncStore {
         return dir.appendingPathComponent("\(dayKey).json")
     }
 
-    /// 读某日落盘：命中返回数组（含空数组文件），缺失/损坏返回 nil（调用方走网络）。
-    static func loadDay(accountId: Int, dayKey: String) -> [Entry]? {
-        guard let url = dayFileURL(accountId: accountId, dayKey: dayKey),
-              let data = try? Data(contentsOf: url) else { return nil }
+    // MARK: - r17-C2：staging 换盘与上一份完整版本（.bak）
+    //
+    // 发布路径是 staging → 校验 → 换盘：新版本先写进 staging 桶并逐文件
+    // 回读校验，任一写/校验失败即删 staging 返回 false，活盘（上一份完整
+    // 版本）原样不动；校验全过才换盘（活盘 → .bak 保留上一份完整版本，
+    // staging → 活盘）。换盘中途崩溃时活盘可能缺失，下次 commit/kick 先
+    // recoverIfNeeded：活盘缺失且 .bak 存在即把 .bak 搬回活盘。
+    // 空日约定（与回收站桶对齐）：旧活盘里有文件、当次同步里已无该日时，
+    // staging 里写空数组文件（= 已同步、该日为空），不再删文件——文件缺失
+    // 只代表从未同步/写盘失败，与确认空可区分。
+
+    /// staging 桶：新版本先写这里，校验通过后才换盘成活盘。
+    static func stagingDir(accountId: Int) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return base.appendingPathComponent("\(directoryPrefix)_\(accountId).staging", isDirectory: true)
+    }
+
+    /// 上一份完整版本：换盘时活盘整个搬过来的备份（commitFullSync 成功后保留，
+    /// 下次成功换盘时才被替换；loadDay 在活盘文件缺失/损坏时回落到这里）。
+    static func backupDir(accountId: Int) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return base.appendingPathComponent("\(directoryPrefix)_\(accountId).bak", isDirectory: true)
+    }
+
+    /// 同步状态文件（BearySyncStateRecord）：与日目录平行的单文件，不进日目录，
+    /// 以免被当成日文件枚举。
+    static func stateFileURL(accountId: Int) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return base.appendingPathComponent("\(directoryPrefix)_\(accountId)_state.json")
+    }
+
+    /// 目录里的日文件键（只认 YYYY-MM-DD.json；进度文件等其他文件不动）。
+    private static func dayKeys(in directory: URL) -> [String] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        return names.filter { $0.hasSuffix(".json") }
+            .map { String($0.dropLast(".json".count)) }
+            .filter { isDayKey($0) }
+    }
+
+    private static func loadDayFile(dayKey: String, directory: URL?) -> [Entry]? {
+        guard let dir = directory else { return nil }
+        let url = dir.appendingPathComponent("\(dayKey).json")
+        guard let data = try? Data(contentsOf: url) else { return nil }
         return try? makeDecoder().decode([Entry].self, from: data)
+    }
+
+    /// 读某日落盘：命中返回数组（含空数组文件），缺失/损坏返回 nil（调用方走网络）。
+    /// r17-C2：活盘文件缺失/损坏时回落到上一份完整版本（.bak 桶里的同日文件）；
+    /// 空数组文件仍是「已同步、该日为空」，只有活盘与 .bak 都无该日才算未同步。
+    static func loadDay(accountId: Int, dayKey: String) -> [Entry]? {
+        if let live = loadDayFile(dayKey: dayKey, directory: accountDir(accountId: accountId)) {
+            return live
+        }
+        return loadDayFile(dayKey: dayKey, directory: backupDir(accountId: accountId))
     }
 
     /// 新一轮 06：本地已同步日记全量快照——读账号目录下全部 <YYYY-MM-DD>.json
@@ -94,12 +178,7 @@ enum BearyEntrySyncStore {
         guard let url = dayFileURL(accountId: accountId, dayKey: dayKey),
               let data = try? makeEncoder().encode(entries) else { return false }
         let oldCount = loadDay(accountId: accountId, dayKey: dayKey)?.count ?? 0
-        do {
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try data.write(to: url, options: .atomic)
-        } catch {
-            return false
-        }
+        guard saveDayToDirectory(dayKey: dayKey, entries: entries, directory: accountDir(accountId: accountId)) else { return false }
         // 回读校验：id 序列与写入一致才算成功。
         guard let roundTripped = loadDay(accountId: accountId, dayKey: dayKey),
               roundTripped.map({ $0.id }) == entries.map({ $0.id }) else { return false }
@@ -107,6 +186,57 @@ enum BearyEntrySyncStore {
         let delta = entries.count - oldCount
         if delta != 0 { adjustCompletionCount(accountId: accountId, delta: delta) }
         return true
+    }
+
+    /// 往指定目录写一日文件（活盘与 staging 共用；不碰完整性标记——
+    /// 标记只在发布成功后由 commitFullSync / finishDiaryRun 统一写）。
+    private static func saveDayToDirectory(dayKey: String, entries: [Entry], directory: URL?) -> Bool {
+        guard let dir = directory else { return false }
+        guard let data = try? makeEncoder().encode(entries) else { return false }
+        let url = dir.appendingPathComponent("\(dayKey).json")
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// 写盘校验：回读解码并比对篇数（发布完整索引前的最后一道关）。
+    private static func verifyDayFile(dayKey: String, expectedCount: Int, directory: URL?) -> Bool {
+        guard let entries = loadDayFile(dayKey: dayKey, directory: directory) else { return false }
+        return entries.count == expectedCount
+    }
+
+    /// 崩溃恢复：活盘缺失且 .bak 存在时把上一份完整版本搬回活盘。
+    /// commit 前与 kick 时调用；读盘（loadDay）本身另有 .bak 回落，不依赖本恢复。
+    static func recoverIfNeeded(accountId: Int) {
+        guard let liveDir = accountDir(accountId: accountId),
+              let backup = backupDir(accountId: accountId) else { return }
+        guard !FileManager.default.fileExists(atPath: liveDir.path),
+              FileManager.default.fileExists(atPath: backup.path) else { return }
+        try? FileManager.default.moveItem(at: backup, to: liveDir)
+    }
+
+    /// 仍有可读数据（任一日文件能解码）——中断时状态记 partial 的前提；
+    /// 无可读数据时不记状态（无物可标，下次 kick 从头跑）。
+    static func hasReadableData(accountId: Int) -> Bool {
+        guard let liveDir = accountDir(accountId: accountId) else { return false }
+        for dayKey in dayKeys(in: liveDir) {
+            if loadDayFile(dayKey: dayKey, directory: liveDir) != nil { return true }
+        }
+        return false
+    }
+
+    /// 可读篇数（状态文件里的 itemCount；损坏文件不计）。
+    static func readableItemCount(accountId: Int) -> Int {
+        guard let liveDir = accountDir(accountId: accountId) else { return 0 }
+        var count = 0
+        for dayKey in dayKeys(in: liveDir) {
+            count += loadDayFile(dayKey: dayKey, directory: liveDir)?.count ?? 0
+        }
+        return count
     }
 
     // MARK: - 存档完整性标记（C3 门控；C2 完整度工作的消费侧）
@@ -119,8 +249,9 @@ enum BearyEntrySyncStore {
     //   - 退出/401 清盘（purgeAccount 整目录删）时标记随目录消失。
     // 没有标记、标记账号不符、任一日损坏、总数对不上——一律不认存档完整，
     // 调用方回落网络拉取，绝不把缺页/写盘失败当成“确实只有这些日记”。
-    // C2（#1069，全量同步完整索引）后到：若 C2 另立完整性信号，以 C2 为准
-    // 合并，保留本门控的“缺标记即回落网络”语义。
+    // r17-C2（#1069）已合入：状态文件（BearySyncStateStore，complete/partial）
+    // 与本标记并存——标记是“存档完整可读”的读侧凭证，状态文件是“最近一次
+    // 同步跑完没有”的排障记录；两者口径一致（complete 当且仅当标记在）。
     static let completionMarkerName = "complete.marker"
 
     /// 完整性标记内容（JSON，单文件原子写）。
@@ -211,37 +342,85 @@ enum BearyEntrySyncStore {
         return result
     }
 
-    /// 全量同步提交：仅在整批翻页成功后调用——先写全部日文件，
-    /// 再删不在新集合里的旧日文件（已删光的日与空日文件都会被清掉；
-    /// 下次切到该日走网络重拉，静默刷新会重建文件）。
-    /// 返回全部日期是否都写盘成功；任一日失败时不清理旧文件、不谎报成功。
+    /// 全量同步提交：仅在整批翻页成功后调用。发布路径是 staging → 校验 → 换盘：
+    /// 新版本先写进 staging 桶并逐文件回读校验，任一写/校验失败即删 staging
+    /// 返回 false，活盘（上一份完整版本）原样不动；校验全过才换盘
+    /// （活盘 → .bak 保留上一份完整版本，staging → 活盘）。
+    /// 空日约定（与回收站桶对齐）：旧活盘里有文件、当次同步里已无该日时，
+    /// staging 里写空数组文件（= 已同步、该日为空），不再删文件——文件缺失
+    /// 只代表从未同步/写盘失败，与确认空可区分。
+    /// 换盘中途崩溃时活盘可能缺失，下次 commit/kick 先 recoverIfNeeded：
+    /// 活盘缺失且 .bak 存在即把 .bak 搬回活盘。
+    /// 返回 false 时调用方不记已同步、状态记 partial，下次 kick 重跑。
+    /// r17-C2 契约变更（相对第四轮审计 02）：全有或全无——任一日写盘失败
+    /// 时好日期也不发布（活盘原样不动），而不是“好日期照常落盘”；完整性
+    /// 标记只在换盘成功后写（总数 = 本批总篇数），失败时删标记。
     @discardableResult
     static func commitFullSync(accountId: Int, grouped: [String: [Entry]]) -> Bool {
-        guard let dir = accountDir(accountId: accountId) else { return false }
+        recoverIfNeeded(accountId: accountId)
+        guard let liveDir = accountDir(accountId: accountId),
+              let staging = stagingDir(accountId: accountId),
+              let backup = backupDir(accountId: accountId) else { return false }
+        // 旧 staging 是上次中断的残留，先清掉。
+        try? FileManager.default.removeItem(at: staging)
         do {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         } catch {
-            return false
-        }
-        var allSucceeded = true
-        for (dayKey, entries) in grouped {
-            if !saveDay(accountId: accountId, dayKey: dayKey, entries: entries) {
-                allSucceeded = false
-            }
-        }
-        // 只有全部日期写盘成功才清理旧日文件；任一日失败时保旧盘，
-        // 下次重跑仍能对齐（其余已写好的日期照常保留），并删标记
-        // （半截盘不认完整，下次读存档回落网络）。
-        guard allSucceeded else {
             removeCompletion(accountId: accountId)
             return false
         }
-        let existing = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        for name in existing where name.hasSuffix(".json") {
-            let dayKey = String(name.dropLast(".json".count))
-            if grouped[dayKey] == nil {
-                try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+        // 旧活盘里有、当次无的日 = 本次同步已确认为空，写空数组文件保留约定。
+        let oldKeys = dayKeys(in: liveDir)
+        for (dayKey, entries) in grouped {
+            guard saveDayToDirectory(dayKey: dayKey, entries: entries, directory: staging) else {
+                try? FileManager.default.removeItem(at: staging)
+                removeCompletion(accountId: accountId)
+                return false
             }
+        }
+        for dayKey in oldKeys where grouped[dayKey] == nil {
+            guard saveDayToDirectory(dayKey: dayKey, entries: [], directory: staging) else {
+                try? FileManager.default.removeItem(at: staging)
+                removeCompletion(accountId: accountId)
+                return false
+            }
+        }
+        // 逐文件回读校验（解码成功且篇数一致）——写盘校验成功才发布。
+        for (dayKey, entries) in grouped {
+            guard verifyDayFile(dayKey: dayKey, expectedCount: entries.count, directory: staging) else {
+                try? FileManager.default.removeItem(at: staging)
+                removeCompletion(accountId: accountId)
+                return false
+            }
+        }
+        for dayKey in oldKeys where grouped[dayKey] == nil {
+            guard verifyDayFile(dayKey: dayKey, expectedCount: 0, directory: staging) else {
+                try? FileManager.default.removeItem(at: staging)
+                removeCompletion(accountId: accountId)
+                return false
+            }
+        }
+        // 换盘：活盘 → .bak（保留上一份完整版本），staging → 活盘。
+        try? FileManager.default.removeItem(at: backup)
+        let liveExists = FileManager.default.fileExists(atPath: liveDir.path)
+        if liveExists {
+            do {
+                try FileManager.default.moveItem(at: liveDir, to: backup)
+            } catch {
+                try? FileManager.default.removeItem(at: staging)
+                removeCompletion(accountId: accountId)
+                return false
+            }
+        }
+        do {
+            try FileManager.default.moveItem(at: staging, to: liveDir)
+        } catch {
+            // 换盘第二步失败：尽量把 .bak 搬回活盘，旧版本仍可读。
+            if liveExists {
+                try? FileManager.default.moveItem(at: backup, to: liveDir)
+            }
+            removeCompletion(accountId: accountId)
+            return false
         }
         // 整批写盘全部成功：写完整性标记（总数 = 本批总篇数）。
         let total = grouped.values.reduce(0) { $0 + $1.count }
@@ -362,42 +541,48 @@ enum BearyEntrySyncStore {
         try? FileManager.default.removeItem(at: url)
     }
 
-    /// 审计 P2-22：退出/注销时清该账号全部日记落盘（整目录删；草稿桶不在此列，见 signOutLocally）。
+    /// 审计 P2-22：退出/注销时清该账号全部日记落盘（活盘 + staging + .bak +
+    /// 状态文件全清；草稿桶不在此列，见 signOutLocally）。
     static func purgeAccount(accountId: Int) {
-        guard let dir = accountDir(accountId: accountId) else { return }
-        try? FileManager.default.removeItem(at: dir)
+        if let dir = accountDir(accountId: accountId) {
+            try? FileManager.default.removeItem(at: dir)
+        }
+        if let staging = stagingDir(accountId: accountId) {
+            try? FileManager.default.removeItem(at: staging)
+        }
+        if let backup = backupDir(accountId: accountId) {
+            try? FileManager.default.removeItem(at: backup)
+        }
+        if let stateURL = stateFileURL(accountId: accountId) {
+            try? FileManager.default.removeItem(at: stateURL)
+        }
     }
 
-    /// 删帖：从全部落盘日里清除该 id（空了的日文件直接删掉）。
-    static func removeEntry(accountId: Int, entryId: String) {
-        guard let dir = accountDir(accountId: accountId) else { return }
+    /// 删帖：从全部落盘日里清除该 id。空了的日写空数组文件（= 已同步、该日为空），
+    /// 不再删文件——文件缺失与确认空可区分（见 commitFullSync 的空日约定）。
+    /// 返回 false 仅当应写未写成（写盘失败）；无匹配文件/无匹配条目返回 true。
+    @discardableResult
+    static func removeEntry(accountId: Int, entryId: String) -> Bool {
+        guard let dir = accountDir(accountId: accountId) else { return false }
         let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        var ok = true
         for name in names where name.hasSuffix(".json") {
             let dayKey = String(name.dropLast(".json".count))
             guard var entries = loadDay(accountId: accountId, dayKey: dayKey) else { continue }
             let beforeCount = entries.count
             entries.removeAll { $0.id == entryId }
             guard entries.count != beforeCount else { continue }
-            if entries.isEmpty {
-                if let url = dayFileURL(accountId: accountId, dayKey: dayKey) {
-                    do {
-                        try FileManager.default.removeItem(at: url)
-                        // 空日文件整删不经 saveDay，标记计数手动减掉该日原篇数。
-                        adjustCompletionCount(accountId: accountId, delta: -beforeCount)
-                    } catch {
-                        // 删盘失败不改标记：文件还在、计数仍对得上，读侧不受影响。
-                    }
-                }
-            } else {
-                saveDay(accountId: accountId, dayKey: dayKey, entries: entries)
-            }
+            if !saveDay(accountId: accountId, dayKey: dayKey, entries: entries) { ok = false }
         }
+        return ok
     }
 
     /// 发布/编辑 upsert：按 createdAt 定北京日，日文件内同 id 替换、否则追加并按服务端序重排。
     /// 编辑不改 createdAt，故日归属恒定；发布的新篇 createdAt 即当日。
-    static func upsertEntry(accountId: Int, entry: Entry) {
-        guard let createdAt = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt) else { return }
+    /// 返回 false 仅当无法归日或写盘失败。
+    @discardableResult
+    static func upsertEntry(accountId: Int, entry: Entry) -> Bool {
+        guard let createdAt = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt) else { return false }
         var entries = loadDay(accountId: accountId, dayKey: dayKey) ?? []
         if let idx = entries.firstIndex(where: { $0.id == entry.id }) {
             entries[idx] = entry
@@ -408,7 +593,7 @@ enum BearyEntrySyncStore {
             if a.createdAt != b.createdAt { return (a.createdAt ?? 0) > (b.createdAt ?? 0) }
             return (a.id ?? "") > (b.id ?? "")
         }
-        saveDay(accountId: accountId, dayKey: dayKey, entries: entries)
+        return saveDay(accountId: accountId, dayKey: dayKey, entries: entries)
     }
 }
 
@@ -440,11 +625,41 @@ enum BearyTrashSyncStore {
         return dir.appendingPathComponent("trash.json")
     }
 
-    /// 读整桶：命中返回数组（含空数组），缺失/损坏返回 nil（调用方走网络）。
-    static func loadAll(accountId: Int) -> [TrashItem]? {
-        guard let url = fileURL(accountId: accountId),
-              let data = try? Data(contentsOf: url) else { return nil }
+    /// 上一份完整版本：replaceItemAt 换盘时留下的旧 trash.json。
+    static func backupFileURL(accountId: Int) -> URL? {
+        guard let dir = accountDir(accountId: accountId) else { return nil }
+        return dir.appendingPathComponent("trash.json.bak")
+    }
+
+    /// 同步状态文件（BearySyncStateRecord）：与回收站目录平行的单文件，不进桶目录。
+    static func stateFileURL(accountId: Int) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return base.appendingPathComponent("\(directoryPrefix)_\(accountId)_state.json")
+    }
+
+    private static func loadAllFile(url: URL?) -> [TrashItem]? {
+        guard let url = url, let data = try? Data(contentsOf: url) else { return nil }
         return try? makeDecoder().decode([TrashItem].self, from: data)
+    }
+
+    /// 读整桶：命中返回数组（含空数组），缺失/损坏返回 nil（调用方走网络）。
+    /// r17-C2：主文件缺失/损坏时回落到上一份完整版本（.bak）；空数组文件
+    /// 仍是「已同步、回收站为空」，只有主备都无才算未同步。
+    static func loadAll(accountId: Int) -> [TrashItem]? {
+        if let items = loadAllFile(url: fileURL(accountId: accountId)) {
+            return items
+        }
+        return loadAllFile(url: backupFileURL(accountId: accountId))
+    }
+
+    /// 仍有可读数据（主文件或 .bak 能解码，含空数组）——中断时状态记 partial 的前提。
+    static func hasReadableData(accountId: Int) -> Bool {
+        return loadAll(accountId: accountId) != nil
+    }
+
+    /// 可读条数（状态文件里的 itemCount）。
+    static func readableItemCount(accountId: Int) -> Int {
+        return loadAll(accountId: accountId)?.count ?? 0
     }
 
     /// 5-26 回收站写盘代际（与日记腿同款守卫的计数端）：任何 trash.json 写
@@ -489,11 +704,52 @@ enum BearyTrashSyncStore {
     /// 整桶写（全量同步提交与静默刷新对齐均走这里：服务端派生数据，整批覆盖）。
     /// 先记写盘代际（见 noteTrashWrite）：全量同步自身的提交写也在提交
     /// 守卫比对之后发生，不影响本次判定。
-    /// 返回写盘是否成功（回读校验 id 序列一致才算成功）；失败时调用方
-    /// 不记已同步标记，下次重跑。
+    /// r17-C2：发布走 tmp → 校验 → 原子替换：新内容先写唯一 tmp 文件并回读
+    /// 解码校验，再用 replaceItemAt 换上（旧版留 .bak，即上一份完整版本）；
+    /// 任一步失败返回 false、旧 trash.json 原样不动，调用方不记已同步、
+    /// 状态记 partial，下次 kick 重跑。tmp 文件名带 UUID——主线程删帖进桶与
+    /// 同步队列提交可能并发写盘，各自 tmp 互不干扰。
+    /// 返回 false 仅当应写未写成；调用方失败时记日志（静默刷新/同步处）。
     @discardableResult
     static func saveAll(accountId: Int, items: [TrashItem]) -> Bool {
-        writeTrashFile(accountId: accountId, items: items, noteWrite: true)
+        noteTrashWrite()
+        guard let url = fileURL(accountId: accountId),
+              let data = try? makeEncoder().encode(items) else { return false }
+        let dir = url.deletingLastPathComponent()
+        let tmpURL = dir.appendingPathComponent("trash.json.tmp.\(UUID().uuidString)")
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try data.write(to: tmpURL, options: .atomic)
+        } catch {
+            try? FileManager.default.removeItem(at: tmpURL)
+            return false
+        }
+        // 写盘校验：回读 tmp 解码成功才发布。
+        guard let checkData = try? Data(contentsOf: tmpURL),
+              (try? makeDecoder().decode([TrashItem].self, from: checkData)) != nil else {
+            try? FileManager.default.removeItem(at: tmpURL)
+            return false
+        }
+        do {
+            if FileManager.default.fileExists(atPath: url.path) {
+                // 旧版留 .bak（上一份完整版本）；先清旧 .bak，replaceItemAt 的
+                // 备份名已存在时行为不保证，显式清掉再换。
+                if let backupURL = backupFileURL(accountId: accountId) {
+                    try? FileManager.default.removeItem(at: backupURL)
+                }
+                _ = try FileManager.default.replaceItemAt(url, withItemAt: tmpURL, backupItemName: "trash.json.bak", options: [])
+            } else {
+                try FileManager.default.moveItem(at: tmpURL, to: url)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: tmpURL)
+            return false
+        }
+        // 终态校验：发布后的主文件须能解码且 id 序列与写入一致，否则返回
+        // false 供调用方记 partial（第四轮审计 02 的回读口径，C2 换盘版同款）。
+        guard let published = loadAllFile(url: url),
+              published.map({ $0.id }) == items.map({ $0.id }) else { return false }
+        return true
     }
 
     /// 第四轮增量 01：回收站分批持久化——把一页回收站条目按 id 并入 trash.json
@@ -555,29 +811,38 @@ enum BearyTrashSyncStore {
     }
 
     /// 恢复/彻底删除：按 id 清桶（桶不存在时不建桶；空桶保留空数组文件）。
-    /// 审计 P2-22：退出/注销时清该账号全部回收站落盘（整目录删）。
+    /// 审计 P2-22：退出/注销时清该账号全部回收站落盘（整目录删 + 状态文件）。
     static func purgeAccount(accountId: Int) {
-        guard let dir = accountDir(accountId: accountId) else { return }
-        try? FileManager.default.removeItem(at: dir)
+        if let dir = accountDir(accountId: accountId) {
+            try? FileManager.default.removeItem(at: dir)
+        }
+        if let stateURL = stateFileURL(accountId: accountId) {
+            try? FileManager.default.removeItem(at: stateURL)
+        }
     }
 
-    static func removeItem(accountId: Int, entryId: String) {
-        guard var items = loadAll(accountId: accountId) else { return }
+    /// 恢复/彻底删除：按 id 清桶。返回值：true = 桶状态已正确（无桶可清时
+    /// 同样 true，不是失败）；false = 应写未写成。
+    @discardableResult
+    static func removeItem(accountId: Int, entryId: String) -> Bool {
+        guard var items = loadAll(accountId: accountId) else { return true }
         let beforeCount = items.count
         items.removeAll { $0.id == entryId }
-        guard items.count != beforeCount else { return }
-        saveAll(accountId: accountId, items: items)
+        guard items.count != beforeCount else { return true }
+        return saveAll(accountId: accountId, items: items)
     }
 
     /// 删帖进桶：新删的 deletedAt 最大，按服务端序插到头部。
     /// 桶不存在时不建半截桶（进回收站页走网络首拉，登录同步会建整桶）；下次静默刷新用服务端值纠正残差。
-    static func prependDeleted(accountId: Int, entry: Entry) {
-        guard let entryId = entry.id else { return }
-        guard var items = loadAll(accountId: accountId) else { return }
+    /// 返回值：true = 桶状态已正确（无桶可写时同样 true，不是失败）；false = 应写未写成。
+    @discardableResult
+    static func prependDeleted(accountId: Int, entry: Entry) -> Bool {
+        guard let entryId = entry.id else { return true }
+        guard var items = loadAll(accountId: accountId) else { return true }
         items.removeAll { $0.id == entryId }
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         let item = TrashItem(id: entryId, content: entry.content, createdAt: entry.createdAt, publishAt: entry.publishAt, deletedAt: nowMs, daysLeft: 30)
         items.insert(item, at: 0)
-        saveAll(accountId: accountId, items: items)
+        return saveAll(accountId: accountId, items: items)
     }
 }
