@@ -1299,10 +1299,13 @@ class BearyProfileViewController: UIViewController {
     private let statsCharsValueLabel = BearyProfilePersonalModulesCard.statValueLabel()
     private let statsSlotValueLabel = BearyProfilePersonalModulesCard.statValueLabel()
     private let statsStreakValueLabel = BearyProfilePersonalModulesCard.statValueLabel()
+    private let statsRowTop = UIStackView()
+    private let statsRowBottom = UIStackView()
     private let statsMoodWeatherLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.font = BearyDynamicType.secondaryFont()
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.numberOfLines = 0
         return labelValue
@@ -1328,7 +1331,8 @@ class BearyProfileViewController: UIViewController {
         stackValue.isUserInteractionEnabled = false
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.ink
         labelValue.text = "进入年度回顾"
         let chevronView = UIImageView(image: BearyIconImages.image(named: "icon_chevron_right", pointSize: 14))
@@ -2880,6 +2884,7 @@ class BearyProfileViewController: UIViewController {
         // 字变大后照片区与模块卡溢出/重叠；深浅切换口径不动。
         if previousTraitCollection != nil,
            previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            updateStatsRowLayoutForContentSize()
             refreshFooter()
             // 关注钮定宽跟字号走：延后一帧重算，等系统字号传播到 label 字体后再量。
             DispatchQueue.main.async { [weak self] in self?.updateFollowButtonFixedWidth() }
@@ -4279,6 +4284,15 @@ class BearyProfileViewController: UIViewController {
     // 页内可见性翻转成功、举报 / 拉黑广播；点赞 / 收藏 / 回应不改日记语料，不触发。
     // 切账号 / 换目标：modulesProfileId 变化时语料、随机上一次 id、月历月份、展开态全复位。
 
+    /// 保持普通字号 2×2；辅助字号将数字格纵排，避免数字与标签互相挤压。
+    private func updateStatsRowLayoutForContentSize() {
+        let vertical = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
+        for row in [statsRowTop, statsRowBottom] {
+            row.axis = vertical ? .vertical : .horizontal
+            row.distribution = vertical ? .fill : .fillEqually
+        }
+    }
+
     private func buildPersonalModuleCards() {
         // —— 写作统计：2×2 小数字格 + 最常用心情 / 天气行。
         func makeStatTile(valueLabel: UILabel, keyText: String) -> UIView {
@@ -4300,20 +4314,13 @@ class BearyProfileViewController: UIViewController {
             ])
             return tile
         }
-        let statsRowTop = UIStackView(arrangedSubviews: [
-            makeStatTile(valueLabel: statsTotalValueLabel, keyText: "总篇数"),
-            makeStatTile(valueLabel: statsCharsValueLabel, keyText: "总字数"),
-        ])
-        statsRowTop.axis = .horizontal
-        statsRowTop.distribution = .fillEqually
+        statsRowTop.addArrangedSubview(makeStatTile(valueLabel: statsTotalValueLabel, keyText: "总篇数"))
+        statsRowTop.addArrangedSubview(makeStatTile(valueLabel: statsCharsValueLabel, keyText: "总字数"))
         statsRowTop.spacing = 10
-        let statsRowBottom = UIStackView(arrangedSubviews: [
-            makeStatTile(valueLabel: statsSlotValueLabel, keyText: "最常写时段"),
-            makeStatTile(valueLabel: statsStreakValueLabel, keyText: "当前连续写作"),
-        ])
-        statsRowBottom.axis = .horizontal
-        statsRowBottom.distribution = .fillEqually
+        statsRowBottom.addArrangedSubview(makeStatTile(valueLabel: statsSlotValueLabel, keyText: "最常写时段"))
+        statsRowBottom.addArrangedSubview(makeStatTile(valueLabel: statsStreakValueLabel, keyText: "当前连续写作"))
         statsRowBottom.spacing = 10
+        updateStatsRowLayoutForContentSize()
         statsCard.contentStack.addArrangedSubview(statsRowTop)
         statsCard.contentStack.addArrangedSubview(statsRowBottom)
         statsCard.contentStack.addArrangedSubview(statsMoodWeatherLabel)
