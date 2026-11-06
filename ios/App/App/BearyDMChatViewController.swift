@@ -362,10 +362,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         // 2026-11-04：键盘跟随改走 keyboardLayoutGuide，不再监听键盘通知。
         // 先显本地消息（服务端 7 天到期后本地仍可看），再拉服务端合并。
         if let userId = peer.id {
-            messages = BearyDMStore.messages(accountId: storeAccountId, peerId: userId)
-            if !messages.isEmpty {
-                tableView.reloadData()
-                scrollToBottomIfNeeded()
+            BearyDMStore.messages(accountId: storeAccountId, peerId: userId) { [weak self] local in
+                guard let self = self, !local.isEmpty else { return }
+                self.messages = local
+                self.tableView.reloadData()
+                self.scrollToBottomIfNeeded()
             }
         }
         loadLatest()
@@ -787,26 +788,30 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     // 未认领的（在途/失败）重新拼到末尾，刷新不得吞掉它们。
                     let pending = self.pendingTemps()
                     let fetched = self.resolvedSenders(Array(history.resolvedMessages.reversed()))
-                    BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched)
-                    self.messages = BearyDMStore.messages(accountId: self.storeAccountId, peerId: userId)
-                    self.reconcilePendingSends(pending)
                     self.hasMoreOlder = history.resolvedMessages.count >= 30
                     self.loadFailed = false
                     self.firstLoadPending = false
-                    self.firstLoadStateView.isHidden = true
-                    self.updateEmptyState()
-                    self.tableView.reloadData()
-                    if wasAtBottom {
-                        self.scrollToBottomIfNeeded()
-                        self.setNewMessagePillVisible(false)
+                    // 第七轮 #4：整库合并＋写盘只走后台队列；写完把排序好的
+                    // 结果回主线程再更新列表，不再主线程同步 save＋重读。
+                    BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched) { [weak self] saved in
+                        guard let self = self else { return }
+                        self.messages = saved
+                        self.reconcilePendingSends(pending)
+                        self.firstLoadStateView.isHidden = true
+                        self.updateEmptyState()
+                        self.tableView.reloadData()
+                        if wasAtBottom {
+                            self.scrollToBottomIfNeeded()
+                            self.setNewMessagePillVisible(false)
+                        }
+                        // 对方发了新消息时重标已读：以最新一条对方消息 id 为准，
+                        // 变了才放行再标（旧 didMarkRead 本页只标一次，之后的新消息永不清未读）。
+                        let latestPeerId = self.messages.last(where: { $0.senderId != nil && $0.senderId != SessionManager.shared.currentUser?.id })?.id
+                        if let latestPeerId = latestPeerId, latestPeerId != self.lastMarkedReadMessageId {
+                            self.didMarkRead = false
+                        }
+                        self.markReadIfNeeded()
                     }
-                    // 对方发了新消息时重标已读：以最新一条对方消息 id 为准，
-                    // 变了才放行再标（旧 didMarkRead 本页只标一次，之后的新消息永不清未读）。
-                    let latestPeerId = self.messages.last(where: { $0.senderId != nil && $0.senderId != SessionManager.shared.currentUser?.id })?.id
-                    if let latestPeerId = latestPeerId, latestPeerId != self.lastMarkedReadMessageId {
-                        self.didMarkRead = false
-                    }
-                    self.markReadIfNeeded()
                 case .failure(let error):
                     if error.isDMNotAllowed {
                         // 档位不允许：横幅 + 禁用，不走“会话已关闭”（那是拉黑路径）。
@@ -870,26 +875,30 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     // 否则在途/失败的待发会被整表覆盖吞掉（翻旧取的是更早页，
                     // 不可能含待发，无需配对认领、直接拼回）。
                     let pending = self.pendingTemps()
-                    BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older)
-                    self.messages = BearyDMStore.messages(accountId: self.storeAccountId, peerId: userId)
-                    self.messages += pending
-                    self.tableView.reloadData()
-                    self.tableView.layoutIfNeeded()
-                    self.setOlderLoadingState(loading: false, failed: false)
-                    let delta = self.tableView.contentSize.height - oldHeight
-                    if userMovedAway {
-                        // 不用发请求时的锚点覆盖当前位置：按插入高度平移当前视口。
-                        self.tableView.contentOffset = CGPoint(x: 0, y: responseOffsetY + delta)
-                    } else if let anchorIndex = self.messages.firstIndex(where: { $0.id == anchorId }) {
-                        let rect = self.tableView.rectForRow(at: IndexPath(row: anchorIndex, section: 0))
-                        self.tableView.contentOffset = CGPoint(x: 0, y: rect.origin.y - anchorViewportOffset)
-                    } else {
-                        self.tableView.contentOffset = CGPoint(x: 0, y: oldOffsetY + delta)
-                    }
-                    // 排队过的下拉刷新：翻旧结束即跑（刷新控件一直转圈未停）。
-                    if self.refreshQueued {
-                        self.refreshQueued = false
-                        self.loadLatest()
+                    // 第七轮 #4：整库合并＋写盘只走后台队列；写完把排序好的
+                    // 结果回主线程再更新列表与锚点，不再主线程同步 save＋重读。
+                    BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older) { [weak self] saved in
+                        guard let self = self else { return }
+                        self.messages = saved
+                        self.messages += pending
+                        self.tableView.reloadData()
+                        self.tableView.layoutIfNeeded()
+                        self.setOlderLoadingState(loading: false, failed: false)
+                        let delta = self.tableView.contentSize.height - oldHeight
+                        if userMovedAway {
+                            // 不用发请求时的锚点覆盖当前位置：按插入高度平移当前视口。
+                            self.tableView.contentOffset = CGPoint(x: 0, y: responseOffsetY + delta)
+                        } else if let anchorIndex = self.messages.firstIndex(where: { $0.id == anchorId }) {
+                            let rect = self.tableView.rectForRow(at: IndexPath(row: anchorIndex, section: 0))
+                            self.tableView.contentOffset = CGPoint(x: 0, y: rect.origin.y - anchorViewportOffset)
+                        } else {
+                            self.tableView.contentOffset = CGPoint(x: 0, y: oldOffsetY + delta)
+                        }
+                        // 排队过的下拉刷新：翻旧结束即跑（刷新控件一直转圈未停）。
+                        if self.refreshQueued {
+                            self.refreshQueued = false
+                            self.loadLatest()
+                        }
                     }
                 case .failure:
                     // 审计：翻旧失败不再静默——浮标切点按重试 + toast 说明，

@@ -308,12 +308,17 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         BearyDMConversationsCache.load(bucket: "\(uid)") { [weak self] snap in
             guard let self = self, let snap = snap, !snap.conversations.isEmpty else { return }
             guard self.conversations.isEmpty else { return }
-            self.conversations = BearyDMStore.mergedConversations(server: snap.conversations, accountId: uid)
-            // 快照已显内容：首拉转圈遮层随即收起，不再盖住旧会话等网络回包。
-            self.firstLoadStateView.isHidden = true
-            self.tableView.reloadData()
-            self.updateEmptyState()
-            self.notifyDMConversationsMergeChanged()
+            // 第七轮 #4：本地会话并入只走后台队列（取内存索引、不读盘），
+            // 结果回主线程再刷新；网络已回包时不用旧快照回写（完成时再验一次）。
+            BearyDMStore.mergedConversations(server: snap.conversations, accountId: uid) { [weak self] merged in
+                guard let self = self, self.conversations.isEmpty else { return }
+                self.conversations = merged
+                // 快照已显内容：首拉转圈遮层随即收起，不再盖住旧会话等网络回包。
+                self.firstLoadStateView.isHidden = true
+                self.tableView.reloadData()
+                self.updateEmptyState()
+                self.notifyDMConversationsMergeChanged()
+            }
         }
     }
 
@@ -352,29 +357,45 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                 switch result {
                 case .success(let list):
                     // 服务端为准，仅本地有的对方追加（未读数不由本地推断，置空）。
-                    self.conversations = BearyDMStore.mergedConversations(
+                    // 第七轮 #4：本地并入只走后台队列，结果回主线程再刷新。
+                    BearyDMStore.mergedConversations(
                         server: list.resolvedConversations,
-                        accountId: SessionManager.shared.currentUser?.id)
-                    // 会话列表快照：成功回包即写盘（按账号分桶），冷启动先显旧会话。
-                    if let uid = SessionManager.shared.currentUser?.id {
-                        BearyDMConversationsCache.save(bucket: "\(uid)", conversations: self.conversations)
+                        accountId: SessionManager.shared.currentUser?.id) { [weak self] merged in
+                        guard let self = self else { return }
+                        self.conversations = merged
+                        // 会话列表快照：成功回包即写盘（按账号分桶），冷启动先显旧会话。
+                        if let uid = SessionManager.shared.currentUser?.id {
+                            BearyDMConversationsCache.save(bucket: "\(uid)", conversations: self.conversations)
+                        }
+                        self.loadFailed = false
+                        self.finishConversationsLoad()
                     }
-                    self.loadFailed = false
                 case .failure:
-                    self.loadFailed = true
                     // 服务端失败：本地 BearyDMStore 会话先显（仅本地有消息的对方），
                     // 与成功回包时的并入口径一致；快照里的旧会话也一并参与合并。
-                    self.conversations = BearyDMStore.mergedConversations(
+                    // 第七轮 #4：本地并入只走后台队列，结果回主线程再刷新。
+                    BearyDMStore.mergedConversations(
                         server: self.conversations,
-                        accountId: SessionManager.shared.currentUser?.id)
+                        accountId: SessionManager.shared.currentUser?.id) { [weak self] merged in
+                        guard let self = self else { return }
+                        self.conversations = merged
+                        self.loadFailed = true
+                        self.finishConversationsLoad()
+                    }
                 }
-                self.updateEmptyState()
-                self.tableView.reloadData()
-                // 合并列表：首拉落定（成功或失败）即快照变化，容器重排并
-                // 按两组落定情况收顶部唯一转圈；旧号回包早退不调。
-                self.notifyDMConversationsMergeChanged()
             }
         }
+    }
+
+    /// 首拉落定（成功或失败）后的统一收尾：空态＋重载＋快照变化通知。
+    /// 第七轮 #4：成功/失败两支的合并都改异步后，收尾改由各支完成回调调，
+    /// 不再由 switch 后同步执行（旧同步 mergedConversations 已删）。
+    private func finishConversationsLoad() {
+        updateEmptyState()
+        tableView.reloadData()
+        // 合并列表：首拉落定（成功或失败）即快照变化，容器重排并
+        // 按两组落定情况收顶部唯一转圈；旧号回包早退不调。
+        notifyDMConversationsMergeChanged()
     }
 
     private func updateEmptyState() {
