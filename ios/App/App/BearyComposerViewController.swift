@@ -7138,7 +7138,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             case "image unavailable":
                 return "图片已失效，请重新添加"
             case "recipient_invalid", "mentioned_user_invalid":
-                return "提到的人无效，请重新选择"
+                return "无法提到这位用户，请重新选择"
             default:
                 return "发布失败，请重试"
             }
