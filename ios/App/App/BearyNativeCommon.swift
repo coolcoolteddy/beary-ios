@@ -2748,6 +2748,9 @@ enum BearyReportedStore {
 /// 桶；代次另防同号连续 refresh 时旧回包覆盖新回包。判断全在 NativeCommon
 /// 内部自包含（现取 SessionManager.currentUser.id），不依赖 SceneDelegate
 /// 调用点传参；单向语义不变：只查“我拉黑作者”，不查反向。
+/// R22-B7：本地确认拉黑／解除（markBlocked／removeBlocked）同样推进代次
+/// 并补一次 refresh——此前发出的全量查询回包整批作废，不得覆盖刚确认
+/// 的操作；补查询向服务端对齐（服务端已确认本次操作，新回包必含它）。
 enum BearyBlockedStore {
     private static let baseKey = "beary.blockedUserIds"
     private static var cached: Set<Int>?
@@ -2809,6 +2812,12 @@ enum BearyBlockedStore {
         if let bucket = cachedBucket {
             UserDefaults.standard.set(Array(cached ?? []), forKey: key(for: bucket))
         }
+        // R22-B7：本地确认即新版本——代次 +1 作废此前在途的全量查询回包，
+        // 旧回包不得整表覆盖刚确认的拉黑；随后补一次 refresh 向服务端对齐
+        // （服务端已确认本次拉黑，新回包必含它；补查询若被更晚的本地确认
+        // 超前，同样由代次丢弃、由那次确认的补查询收尾）。
+        refreshSeq += 1
+        refresh()
     }
 
     static func removeBlocked(_ userId: Int) {
@@ -2817,6 +2826,10 @@ enum BearyBlockedStore {
         if let bucket = cachedBucket {
             UserDefaults.standard.set(Array(cached ?? []), forKey: key(for: bucket))
         }
+        // R22-B7：同 markBlocked——本地确认解除即新版本，旧全量回包作废
+        // 并补一次 refresh，刚解除的人不因旧名单迟到被放回来。
+        refreshSeq += 1
+        refresh()
     }
 
     /// 退出/游客时清内存（SceneDelegate applyLoginState 调用点不动）：
