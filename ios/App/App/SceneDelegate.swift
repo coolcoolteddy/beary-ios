@@ -3318,66 +3318,30 @@ final class BearyChromeViewController: UIViewController {
         BearyAPI.shared.fetchEntry(id: entryId) { [weak self, weak detail] result in
             DispatchQueue.main.async {
                 guard let self = self, let detail = detail else { return }
-                guard case .success(let fetched) = result else {
-                    // 2026-11-05 Li 定（推翻 2026-10-29）：失败保留卡片旧内容＋轻提示。
-                    detail.showFetchFailed()
+                switch result {
+                case .failure(let error):
+                    // B1：明确无权限/找不到即撤下全文；弱网等失败保留卡片旧内容＋轻提示。
+                    if BearyDetailViewController.isExplicitlyGone(error) {
+                        detail.showBecameInvisible()
+                    } else {
+                        detail.showFetchFailed()
+                    }
                     return
-                }
-                let viewerId = SessionManager.shared.currentUser?.id
-                let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && viewerId != nil && fetched.authorId == viewerId)
-                if viewerIsAuthor {
-                    detail.update(with: fetched)
-                    return
-                }
-                // 审计 P0-1：后台补齐不得把拉黑作者全文顶回先出的页面——转占位。
-                if self.isBlockedAuthor(fetched) {
-                    var placeholderEntry = fetched
-                    placeholderEntry.placeholder = true
-                    detail.update(with: placeholderEntry)
-                    return
-                }
-                // 审计 2026-11-02 第十节：详情门按三档判定——公开走有效态（过期即私密），
-                // 仅好友只在服务端 state 确认互关时全见（App 侧不只认 isPublic），
-                // 其余一律占位（fail-closed；state 拉取失败同样占位）。
-                if BearyEphemeral.isEffectivelyPublic(fetched), fetched.authorId != nil {
-                    detail.update(with: fetched)
-                    return
-                }
-                if fetched.placeholder == true {
-                    detail.update(with: fetched)
-                    return
-                }
-                if fetched.isFriendsOnly, let authorId = fetched.authorId, SessionManager.shared.isLoggedIn {
-                    BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self, weak detail] stateResult in
-                        DispatchQueue.main.async {
-                            guard let detail = detail else { return }
-                            switch stateResult {
-                            case .success(let state)
-                                where (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false)):
-                                detail.update(with: fetched)
-                            default:
-                                var placeholderEntry = fetched
-                                placeholderEntry.placeholder = true
-                                detail.update(with: placeholderEntry)
-                            }
+                case .success(let fetched):
+                    // B1：与手动重试同一裁决（见 BearyDetailViewController.decideFetchedDetail）。
+                    BearyDetailViewController.decideFetchedDetail(fetched) { [weak detail] decision in
+                        guard let detail = detail else { return }
+                        switch decision {
+                        case .show(let updatedEntry):
+                            detail.update(with: updatedEntry)
+                        case .showPlaceholder(let placeholderEntry):
+                            detail.update(with: placeholderEntry)
+                        case .keepContent:
+                            // 公开但定不出作者：保持卡片页（不更新、不 toast）。
+                            break
                         }
                     }
-                    return
                 }
-                if fetched.isPublic == true {
-                    if fetched.authorId != nil {
-                        // stored 公开但已过期：有效态为私密，切占位（不留卡片旧全文）。
-                        var placeholderEntry = fetched
-                        placeholderEntry.placeholder = true
-                        detail.update(with: placeholderEntry)
-                    }
-                    // 公开但定不出作者：保持卡片页（见本函数注释），不更新、不 toast。
-                    return
-                }
-                // 私密非作者：切详情占位（文案按回包 visibility 区分，无字段时通用占位）。
-                var placeholderEntry = fetched
-                placeholderEntry.placeholder = true
-                detail.update(with: placeholderEntry)
             }
         }
     }
