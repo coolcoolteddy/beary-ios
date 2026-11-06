@@ -411,10 +411,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 此后任何草稿字段变化都 +1（各字段的 didSet、正文/标题变化入口），
     /// 异步恢复回包仅在版本与草稿身份均未变化时才应用；跳过时旧草稿
     /// 仍在草稿箱，不丢数据。恢复自身的回填发生在门通过之后，不影响门。
+    /// B2：关闭流程复用本版本绑定当前内容（见 performCloseSave）。
     private var editorEditVersion = 0
     /// 审计二轮 08：组词期间切主题被 refreshInlineMoodImages 跳过时记待刷新，
     /// 组词落字后补执行一次（textViewDidChange 里检测）。
     private var inlineMoodRefreshPending = false
+    /// B2：关闭进行中守卫——didTapCancel（取消钮）与边缘关闭共用同一入口，
+    /// 快速连点只接一次关闭流程；在途关闭再次点按直接忽略（返回 false，
+    /// 边缘手势把视图滑回原位）。成功关闭时随编辑器一起消失，不复位；
+    /// 失败/留页分支须复位（见 performCloseSave），否则再点关闭会被挡住。
+    private var isClosing = false
     private var isPublishing = false
     /// P1-4：本篇已发布成功标记——成功回包后待执行的自动保存计时器
     /// 若触发，saveDraftNow 不得把内存里已发布的内容当新草稿落盘。
@@ -5064,7 +5070,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 补拉在途/失败时禁发：此时 lockedQuote 与图片条尚未回填，PUT 会把原引用
         // 与原图误清掉（lockedQuote 为空即清 quote_id 的口径，见 didTapRemoveQuote
         // 注释）；重试成功后 setupEditContent 末尾重调此处即恢复。
-        publishButton.isEnabled = !isPublishing && !isDraftExitSaving && !hasUploadingImage() && !editSaveBlockedAfterDeadline && !editQuoteFetchFailed && !editQuoteFetchInFlight && !trimmedContent().isEmpty
+        // B2：关闭进行中时发布钮亦禁用——关闭保存与发布提交不得并发
+        //（发布会另起一条 saveDraftNow + 请求链，与关闭保存抢同一篇草稿）。
+        publishButton.isEnabled = !isPublishing && !isClosing && !isDraftExitSaving && !hasUploadingImage() && !editSaveBlockedAfterDeadline && !editQuoteFetchFailed && !editQuoteFetchInFlight && !trimmedContent().isEmpty
         refreshPublishAppearance()
         refreshPublishBusyState()
         refreshPublishingInputFreeze()
@@ -5081,11 +5089,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 发布成功后的清草稿逻辑（clearDraftAndFiles 仍只在 performPublish 成功分支里调）。
     /// 恢复时直接置回可用：上述控件在别处没有其他禁用逻辑（grep 无其他 isEnabled/
     /// isEditable 赋值），不会误解开本应禁用的项。
+    /// B2：关闭保存期间同款冻结（isClosing 进 frozen）：保存期间输入框不再可
+    /// 输入，点按入口同禁；冻结经 updatePublishState 统一施加/解除，关闭
+    /// 成功随编辑器消失、失败或留页时由 performCloseSave 复位 isClosing 后
+    /// 再调 updatePublishState() 恢复。版本核对仍保留（见 performCloseSave）：
+    /// 冻结只拦键盘与点按，上传完成回写 key、引用校验回填等异步回包仍可能
+    /// 在保存期间递增版本，那时接着保存最新版。
     private func refreshPublishingInputFreeze() {
         // 审计-编辑器详情：期限已过保留态与发布在途同冻——正文/标题只读
         // （UITextView 不可编辑时仍可选区复制），各入口钮同禁，保存钮已由
         // updatePublishState 持续禁用；本位只在期限已过后才为真，不影响常态。
-        let frozen = isPublishing || editSaveBlockedAfterDeadline || isDraftExitSaving
+        let frozen = isPublishing || editSaveBlockedAfterDeadline || isDraftExitSaving || isClosing
         textView.isEditable = !frozen
         headlineField.isEditable = !frozen
         // 100 包编辑器面修法：发布在途时可见性钮亦冻结——此前冻结清单
@@ -5329,6 +5343,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.key = key
         item.uploading = false
         item.failed = false
+        // B2：key 落袋即改草稿快照内容（上传完成是异步回包）：保存期间
+        // 到达时关闭流程须凭版本变化续存最新版（见 performCloseSave），
+        // 故这里递增编辑版本；紧随其后的 liveVideoKey 赋值是同一主线程
+        // turn，不另增。
+        editorEditVersion += 1
         item.failView.isHidden = true
         item.imageView.isHidden = false
         item.imageView.alpha = 1.0
@@ -5340,6 +5359,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func markFailed(_ item: ComposerImageItem) {
         item.uploading = false
         item.failed = true
+        // B2：与 markUploaded 同口径递增编辑版本，供关闭流程核对
+        //（上传失败同样是内容变化；与 B1 合入后失败态进草稿快照，
+        // 本支单看时重存一次只是幂等复写，无害）。
+        editorEditVersion += 1
         item.failView.isHidden = false
         item.imageView.isHidden = true
         item.spinner.stopSpinning()
@@ -6452,7 +6475,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// R14 P1-6：带版本＋身份复核的退出保存（保留并新建路径；关闭路径的
-    /// 版本复核由 #1002 的 saveDraftForCancelAndClose 负责，本支不重复，
+    /// 版本复核由 #1002 的 performCloseSave 负责，本支不重复，
     /// 合入 rebase 时把本方法的冻结／状态接入 #1002 的 helper 终态分支）。
     /// 调用前记下 editorEditVersion；身份以调用前确认的 currentDraftId 为
     /// 准（为空时按 saveDraftNow 同款当场生成，事后无法反推）。成功回包时：
@@ -7566,6 +7589,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 草稿保存失败只能在松手走原流程时才知道，预检拦不住——松手时被拒，
     /// 视图滑回原位（见 didTapCancel 保存失败分支的 transform 复位）。
     func canBeginEdgeCancel() -> Bool {
+        // B2：关闭已在途时不启动第二段边缘关闭（与 didTapCancel 的守卫同口径）。
+        if isClosing { return false }
         if isPublishing { return false }
         // R14 P1-6：退出保存进行中不另起一条边缘退出——第一笔退出已在等
         // 写盘回包，新手势进来只会与它抢同一篇快照；返回 false 让手势
@@ -7581,7 +7606,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 松手过阈值后编辑器维持偏移等写盘回包，旧流程等待期无任何可读反馈；
     /// 此处先立退出保存态（setDraftExitSaving，P1-6 的冻结＋状态一体：
     /// 边缘等待期间同样锁住输入，状态行“保存中…”＋转圈），成功时随关页
-    /// 消失，失败时由 saveDraftForCancelAndClose 的终态分支清态、按保存
+    /// 消失，失败时由 performCloseSave 的终态分支清态、按保存
     /// 级别刷新状态行（停转、红字“草稿保存失败”）；多轮重存（#1002 式
     /// 版本复核）的等待同样覆盖，因为状态只在最终回包时才被刷新。
     /// 编辑态取消是同步的（清临时文件后立即 onCancelled），无等待、不立反馈。
@@ -7604,7 +7629,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 返回值：true 表示退出已在进行（即将关页，或草稿保存已提交、关页随后发生），
     /// false 表示本次取消被拒，边缘手势应在 false 时把跟手滑走的视图滑回原位。
     /// 审计 M2：三道即时拒绝门控另见 canBeginEdgeCancel（手势 .began 预检同口径）。
+    /// B2：关闭进行中守卫（isClosing）与 canBeginEdgeCancel 同口径。
     @objc func didTapCancel() -> Bool {
+        // B2：关闭进行中守卫（取消钮与边缘关闭共用同一入口）：快速连点
+        // 只接一次关闭流程；在途关闭再次点按直接忽略，不重走保存、
+        // 不重复调 onCancelled。成功关闭随编辑器消失，不复位；失败或
+        // 留页时由 performCloseSave 复位，之后再点关闭可重走流程。
+        if isClosing { return false }
         // P1-7：发布/保存进行中时取消键不走取消流程，给进行中提示（与 didTapPublish
         // 首行 isPublishing 守卫同口径；真取消在途请求属结构改动，本批不做）。
         // quote-freeze：isPublishing 在“一并公开”点按瞬间即置（见
@@ -7631,6 +7662,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         // presented 守卫（选人器/裁剪/草稿箱同款）：已有弹层在上时不动作。
         if presentedViewController != nil { return false }
+        // B2：到此已确定退出，立下进行中标记（编辑态同步关、新建态异步
+        // 保存关，两分支都走本标记）。
+        isClosing = true
         // B 修法：取消退场前先收起未收的弹出框（无动画，退场不带它滑）；到此已确定退出
         //（编辑态与新建态两分支随后都走 onCancelled），守卫分支（发布在途／面板态／已有弹层）已在上文返回。
         hideCallout(animated: false)
@@ -7657,10 +7691,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 关闭即提交缓冲删除（草稿随即按删除后状态落盘，见 saveDraftNow）。
         commitPendingRemoval()
         // R14 P1-6：等待期间冻结输入＋状态行显“保存中…”；终态在
-        // saveDraftForCancelAndClose 的失败分支与版本复核通过后清，
+        // performCloseSave 的失败分支与版本复核通过后清，
         // 不在版本复核的重存中途清（重存期间用户已冻住）。
+        // B2：关闭绑定当前内容版本并冻结输入（updatePublishState 施加冻结，
+        // 见 refreshPublishingInputFreeze）：保存期间输入框不再可输入，
+        // 发布钮同禁；版本核对与续存在 performCloseSave 里。
         setDraftExitSaving(true)
-        saveDraftForCancelAndClose()
+        updatePublishState()
+        performCloseSave(closeVersion: editorEditVersion, retriesLeft: Self.closeSaveMaxRetries)
         return true
     }
 
@@ -7675,8 +7713,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 失败仍留页，拒绝动效 + toast 不变（再点关闭即重试）。
     /// 再存只发生在异步完成回调里，不占调用栈；用户停笔后即收敛关页。
     /// 发布冻结逻辑不动：本方法不碰 refreshPublishingInputFreeze。
-    private func saveDraftForCancelAndClose() {
-        let snapshotVersion = editorEditVersion
+    /// B2：关闭保存重试上限——保存期间内容连续变化时最多再保存 3 次；
+    /// 超过即留页（不再无声关掉丢新输入），由用户确认后再关。
+    private static let closeSaveMaxRetries = 3
+
+    /// B2：关闭流程的版本绑定保存。saveDraftNow 的快照在调用时拍下，
+    /// 完成时 editorEditVersion 变了说明保存期间有新内容到达（键盘输入
+    /// 已由冻结拦住，但上传完成回写 key、引用校验回填、天气自动填等
+    /// 异步回包仍会递增版本），接着保存最新版，直到版本稳定才走
+    /// onCancelled；失败沿旧口径留页重试；重试耗尽同样留页。
+    /// 留页分支一律复位 isClosing 并调 updatePublishState() 解冻输入，
+    /// 否则再点关闭会被守卫挡住；成功关闭随编辑器消失，不复位。
+    private func performCloseSave(closeVersion: Int, retriesLeft: Int) {
         saveDraftNow { [weak self] result in
             guard let self = self else { return }
             guard result.succeeded else {
@@ -7687,6 +7735,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 旧版在时只说“本次修改没存上”，不夸大成整篇已丢。
                 // 拒绝动效口径与详情页/卡片一致：摇头 + warning 震动 + refuse 音，
                 // 减动效只跳过视觉抖动，震动与音照常。
+                // B2：留页即复位关闭标记并解冻输入（见函数头）。
+                self.isClosing = false
+                self.updatePublishState()
                 BearyHaptics.rejectionWarning()
                 BearySoundPlayer.play(.refuseBonk)
                 if !UIAccessibility.isReduceMotionEnabled {
@@ -7710,10 +7761,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     : "草稿保存失败，这篇草稿还没存上，再点一次关闭重试")
                 return
             }
-            // 保存期间有新输入：首拍快照已过期，以最新内容再存一次再关，
-            // 不丢期间的新输入；新一轮保存前重记版本，停笔后即收敛。
-            guard self.editorEditVersion == snapshotVersion else {
-                self.saveDraftForCancelAndClose()
+            if self.editorEditVersion != closeVersion {
+                if retriesLeft > 0 {
+                    self.performCloseSave(closeVersion: self.editorEditVersion, retriesLeft: retriesLeft - 1)
+                    return
+                }
+                // 上限耗尽：留在编辑器，解冻输入，让用户确认后再关。
+                self.isClosing = false
+                self.updatePublishState()
+                self.showToast(message: "关闭时内容还在变化，已留在编辑器，再点一次关闭重试")
                 return
             }
             // P1-8：按未上传完的图片数提示：key 为空的图都还没上传完
@@ -7735,7 +7791,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
             }
             // R14 P1-6：版本复核通过后、关页前清退出保存态（解冻＋状态行
-            // 按保存级别刷新）；重存走递归 saveDraftForCancelAndClose 提前
+            // 按保存级别刷新）；重存走递归 performCloseSave 提前
             // return，不会在此清冻结。
             self.setDraftExitSaving(false)
             self.onCancelled?()
