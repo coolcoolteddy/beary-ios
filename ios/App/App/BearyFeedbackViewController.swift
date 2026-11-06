@@ -229,6 +229,9 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     /// 代次 +1 使旧轮在途读取失效，旧轮完成时直接丢弃（审计 N5：读取已改
     /// 串行链式，旧轮完成回调到达时同样直接丢弃）。
     private var attachmentGeneration = 0
+    /// 审计 N5 预算（Li 定 50MB）：本轮新选附件累计字节上限。超限项跳过不读／
+    /// 不存，已选的不动；单视频 50MiB 上限（P2-26）不动，另行先查。
+    private static let feedbackAttachmentBatchBudgetBytes = 50 * 1024 * 1024
     /// 审计 N5：本代次在途附件读取的 Progress。重选/清除时 cancel() 它们，
     /// 使失效批次的读取尽早停下，而不只是等回调跑完再丢弃结果。
     /// Progress.cancel() 是否真能中断 NSItemProvider 的底层读取需真机验证，
@@ -1072,9 +1075,13 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         var failedCount = 0
         /// 审计 P2-26：超限视频计数（单视频上限 50MB，见 movie 分支先查大小再读）。
         var oversizedCount = 0
+        /// 审计 N5 预算：本轮已接受附件累计字节数；超预算被拒的项数（只拒新项）。
+        var loadedBytes = 0
+        var budgetRejectedCount = 0
         var nextIndex = 0
         // 审计 N5：有界读取——一次只读一个附件，读完再读下一个，避免 5 个大视频
-        // 同时在途、同时分配 Data 冲高峰值内存。本支不做整批字节预算（待 Li 定口径）。
+        // 同时在途、同时分配 Data 冲高峰值内存。整批预算见
+        // feedbackAttachmentBatchBudgetBytes（Li 定 50MB），超限项跳过不存。
         var loadNext: (() -> Void)?
         loadNext = { [weak self] in
             guard let self = self else { return }
@@ -1085,16 +1092,23 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 let finished = loaded
                 let failures = failedCount
                 let oversized = oversizedCount
+                let budgetRejected = budgetRejectedCount
                 self.clearTrackedAttachmentLoads(for: generation)
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self, self.attachmentGeneration == generation else { return }
                     self.attachments = finished.compactMap { $0 }
                     self.refreshAttachUI()
-                    if failures > 0 {
-                        let message = oversized > 0
-                            ? "有 \(failures) 个附件未能加载，其中 \(oversized) 个视频超过 50MB"
-                            : "有 \(failures) 个附件未能加载"
-                        BearyToast.show(in: self.view, message: message)
+                    if failures > 0 || budgetRejected > 0 {
+                        var parts: [String] = []
+                        if failures > 0 {
+                            parts.append(oversized > 0
+                                ? "有 \(failures) 个附件未能加载，其中 \(oversized) 个视频超过 50MB"
+                                : "有 \(failures) 个附件未能加载")
+                        }
+                        if budgetRejected > 0 {
+                            parts.append("附件总大小超过 50MB，已跳过 \(budgetRejected) 个附件")
+                        }
+                        BearyToast.show(in: self.view, message: parts.joined(separator: "；"))
                     }
                 }
                 return
@@ -1118,7 +1132,13 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                         return
                     }
                     lock.lock()
-                    loaded[index] = Attachment(data: jpeg.data, mimeType: "image/jpeg", fileName: "feedback-image-\(index + 1).jpg")
+                    // 审计 N5 预算：本项加入后超 50MB 则跳过不存，已接受的不动。
+                    if loadedBytes + jpeg.data.count > Self.feedbackAttachmentBatchBudgetBytes {
+                        budgetRejectedCount += 1
+                    } else {
+                        loadedBytes += jpeg.data.count
+                        loaded[index] = Attachment(data: jpeg.data, mimeType: "image/jpeg", fileName: "feedback-image-\(index + 1).jpg")
+                    }
                     lock.unlock()
                 }
                 self.trackAttachmentLoad(progress, generation: generation)
@@ -1141,6 +1161,18 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                         oversizedCount += 1
                         lock.unlock()
                         return
+                    }
+                    // 审计 N5 预算：读入前先按文件大小算总账，超 50MB 则不读不存。
+                    if let attrs = try? FileManager.default.attributesOfItem(atPath: urlValue.path),
+                       let size = attrs[.size] as? NSNumber {
+                        lock.lock()
+                        if loadedBytes + size.intValue > Self.feedbackAttachmentBatchBudgetBytes {
+                            budgetRejectedCount += 1
+                            lock.unlock()
+                            return
+                        }
+                        loadedBytes += size.intValue
+                        lock.unlock()
                     }
                     // 审计 N5：读文件前再查一次代次，避免为已失效批次分配 Data。
                     guard self.attachmentGeneration == generation else { return }
