@@ -833,7 +833,8 @@ final class BearyYearReviewViewController: UIViewController {
     private let titleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 22, weight: .heavy)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 22, weight: .heavy))
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         return label
     }()
@@ -841,7 +842,8 @@ final class BearyYearReviewViewController: UIViewController {
     private let yearLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .bold))
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         return label
     }()
@@ -994,7 +996,8 @@ final class BearyYearReviewViewController: UIViewController {
     private func makeYearReviewFootnote() -> UILabel {
         let footnote = UILabel()
         footnote.numberOfLines = 0
-        footnote.font = UIFont.systemFont(ofSize: 12)
+        footnote.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        footnote.adjustsFontForContentSizeCategory = true
         footnote.textColor = BearyColors.gray
         footnote.text = "词汇指纹只按当年正文统计，不展示正文。完整年度报告年底再做。"
         return footnote
@@ -1077,7 +1080,8 @@ final class BearyYearReviewViewController: UIViewController {
             dynamicStack.addArrangedSubview(bearyMakeWordprintScopeBadge(scope: scopeValue))
             let emptyLabel = UILabel()
             emptyLabel.numberOfLines = 0
-            emptyLabel.font = UIFont.systemFont(ofSize: 15)
+            emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+            emptyLabel.adjustsFontForContentSizeCategory = true
             emptyLabel.textColor = BearyColors.gray
             emptyLabel.text = "这一年还没有日记"
             dynamicStack.addArrangedSubview(emptyLabel)
@@ -1106,7 +1110,8 @@ final class BearyYearReviewViewController: UIViewController {
         }
         let summaryLabel = UILabel()
         summaryLabel.numberOfLines = 0
-        summaryLabel.font = UIFont.systemFont(ofSize: 15)
+        summaryLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        summaryLabel.adjustsFontForContentSizeCategory = true
         summaryLabel.textColor = BearyColors.ink
         summaryLabel.text = aggregate.summaryText
         dynamicStack.addArrangedSubview(summaryLabel)
@@ -1127,7 +1132,8 @@ final class BearyYearReviewViewController: UIViewController {
         let distribution = aggregate.moodDistribution
         if let maxCount = distribution.first?.count, maxCount > 0 {
             let moodTitle = UILabel()
-            moodTitle.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+            moodTitle.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))
+            moodTitle.adjustsFontForContentSizeCategory = true
             moodTitle.textColor = BearyColors.ink
             moodTitle.text = "心情分布"
             dynamicStack.addArrangedSubview(moodTitle)
@@ -1137,7 +1143,8 @@ final class BearyYearReviewViewController: UIViewController {
                 row.spacing = 8
                 row.alignment = .center
                 let nameLabel = UILabel()
-                nameLabel.font = UIFont.systemFont(ofSize: 13)
+                nameLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+                nameLabel.adjustsFontForContentSizeCategory = true
                 nameLabel.textColor = BearyColors.ink
                 nameLabel.text = BearyText.moodNames[item.key] ?? item.key
                 nameLabel.widthAnchor.constraint(equalToConstant: 64).isActive = true
@@ -1170,7 +1177,8 @@ final class BearyYearReviewViewController: UIViewController {
         // 年度之最 + 每月字数趋势（底部；胶囊篇按 yearReviewExtras 内过滤排除）。
         let extras = aggregate.extras
         let extrasTitle = UILabel()
-        extrasTitle.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        extrasTitle.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))
+        extrasTitle.adjustsFontForContentSizeCategory = true
         extrasTitle.textColor = BearyColors.ink
         extrasTitle.text = "年度之最"
         dynamicStack.addArrangedSubview(extrasTitle)
@@ -1183,11 +1191,13 @@ final class BearyYearReviewViewController: UIViewController {
             row.spacing = 8
             row.alignment = .center
             let titleLabel = UILabel()
-            titleLabel.font = UIFont.systemFont(ofSize: 13)
+            titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            titleLabel.adjustsFontForContentSizeCategory = true
             titleLabel.textColor = BearyColors.gray
             titleLabel.text = title
             let valueLabel = UILabel()
-            valueLabel.font = UIFont.systemFont(ofSize: 13)
+            valueLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            valueLabel.adjustsFontForContentSizeCategory = true
             valueLabel.textColor = BearyColors.ink
             valueLabel.text = value
             valueLabel.numberOfLines = 0
@@ -1217,7 +1227,8 @@ final class BearyYearReviewViewController: UIViewController {
             extrasRow(title: "最常去的地方", value: "暂无定位日记")
         }
         let chartTitle = UILabel()
-        chartTitle.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        chartTitle.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))
+        chartTitle.adjustsFontForContentSizeCategory = true
         chartTitle.textColor = BearyColors.ink
         chartTitle.text = "每月字数趋势"
         dynamicStack.addArrangedSubview(chartTitle)
