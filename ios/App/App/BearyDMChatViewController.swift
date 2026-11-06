@@ -900,7 +900,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     }
                     // 对方发了新消息时重标已读：以最新一条对方消息 id 为准，
                     // 变了才放行再标（旧 didMarkRead 本页只标一次，之后的新消息永不清未读）。
-                    let latestPeerId = self.messages.last(where: { $0.senderId != nil && $0.senderId != storeAccountId })?.id
+                    let latestPeerId = self.messages.last(where: { $0.senderId != nil && $0.senderId != self.storeAccountId })?.id
                     if let latestPeerId = latestPeerId, latestPeerId != self.lastMarkedReadMessageId {
                         self.didMarkRead = false
                     }
