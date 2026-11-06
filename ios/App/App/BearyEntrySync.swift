@@ -549,10 +549,10 @@ final class BearyEntrySync {
     /// 回收站翻页链（第四轮增量 01：分批持久化——每页拉完即并入 trash.json，
     /// 不攒全量进内存，不设页数/篇数上限；与日记腿同款失败口径：任一页失败、
     /// 游标缺失即中止记失败态，已落盘的有效页保留，下次触发重跑）。
-    /// 注意：TrashPage 解码器把缺失的 items 字段吞成空数组（与回收站页共用
-    /// 模型），回收站腿无法像日记腿那样区分“字段缺失”与“明确空列表”——
-    /// 服务端恒下发 items 数组（worker GET /beary/api/trash），缺失只会是
-    /// 回包形状异常；模型改动会波及回收站页，另开一支再动，这里先记下来。
+    /// R16-13：TrashPage 解码器已收紧——items / hasMore 缺失即抛解码失败，
+    /// 经 request 走 .failure(.decoding) 到本函数的 .failure 分支静默中止
+    /// 记失败态，不再把异常回包当成“回收站为空”覆写本地快照；服务端恒下发
+    /// 两字段（worker GET /beary/api/trash），缺失只会是回包形状异常。
     private func fetchTrashPage(run: TrashSyncRun) {
         BearyAPI.shared.fetchTrash(before: run.before, beforeId: run.beforeId) { [weak self] result in
             guard let self = self else { return }
