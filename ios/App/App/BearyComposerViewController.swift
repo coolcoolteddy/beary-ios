@@ -5234,7 +5234,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         imageItems = kept
         if let name = item.localFile {
-            BearyDraftImageStore.deletePair(fullName: name)
+            // P2-11：删图走后台队列（本篇记录随后由 scheduleDraftSave 重写，
+            // 内存态里该文件已无引用，见 deletePairsIfUnreferencedAsync）。
+            BearyDraftImageStore.deletePairsIfUnreferencedAsync([name], excludingDraftId: currentDraftId)
         }
         imageStackView.removeArrangedSubview(item.container)
         item.container.removeFromSuperview()
@@ -5334,7 +5336,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 提交缓冲删除（彻底删除）：计时到期、新删除顶替、发布/保存成功、取消、
-    /// 切草稿时调用。本地文件删除、key 丢弃（不调服务端，与旧直接删除同款
+    /// 切草稿时调用。本地文件后台删除（不堵退场）、key 丢弃（不调服务端，与旧直接删除同款
     /// 孤 key 口径）；无缓冲时为空操作（只清计时器与撤销条）。
     private func commitPendingRemoval() {
         pendingUndoTimer?.invalidate()
@@ -5345,7 +5347,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         pendingRemovedImage = nil
         if let name = pending.item.localFile {
-            BearyDraftImageStore.deletePair(fullName: name)
+            // P2-11：删图走后台队列；本篇记录随后由 saveDraftNow 按删除后状态
+            // 重写，内存态里该文件已无引用，见 deletePairsIfUnreferencedAsync。
+            BearyDraftImageStore.deletePairsIfUnreferencedAsync([name], excludingDraftId: currentDraftId)
         }
         refreshImageUndoBar()
     }
@@ -5426,7 +5430,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     item.failed = false
                     item.localFile = saved
                     if let oldName = oldName, oldName != saved {
-                        BearyDraftImageStore.deletePair(fullName: oldName)
+                        // P2-11：旧图走后台队列删（新图已替换进 imageItems，
+                        // 随后 saveDraftNow 按替换后状态落盘）。
+                        BearyDraftImageStore.deletePairsIfUnreferencedAsync([oldName], excludingDraftId: self.currentDraftId)
                     }
                 } else {
                     // P1-19：落盘失败时旧文件、旧 key、旧预览一律不动，只 toast，
@@ -5958,12 +5964,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 编辑期内的本地文件（本轮新选的图）：取消/保存成功后删本地文件，不留孤文件；
     /// 原日记的图 localFile 为 nil，不受影响。失败时不删，留着给重试用。
+    /// P2-11：主线程只收文件名，删图走后台队列，不堵退场。
     private func deleteEditLocalFiles() {
-        for item in imageItems {
-            if let name = item.localFile {
-                BearyDraftImageStore.deletePair(fullName: name)
-            }
-        }
+        let names = imageItems.compactMap { $0.localFile }
+        BearyDraftImageStore.deletePairsIfUnreferencedAsync(names)
     }
 
     // P2：isEditDirty() 为死代码（无调用点），直接删除，不接入其比较口径。
@@ -6389,12 +6393,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 发布成功 / 丢弃草稿时：只清本篇草稿 + 本篇全部本地图片文件 + 换掉 clientReq。
     /// 多槽下绝不能整库清，否则会误删其他篇。服务端孤 key 无删除接口，残留是已知可接受项（见文末注）。
     /// 整库删除走 deleteAsync（ioQueue 内删，完成后回主线程刷新 pill；调用方不依赖删完时序）。
+    /// P2-11：图片删除同样走 ioQueue——记录删除先入队，图片删除随后入同一队列、
+    /// 删前再核对引用，退场不再等删图。
     private func clearDraftAndFiles() {
-        for item in imageItems {
-            if let name = item.localFile {
-                BearyDraftImageStore.deletePair(fullName: name)
-            }
-        }
+        let names = imageItems.compactMap { $0.localFile }
         let draftIdValue = currentDraftId
         currentDraftId = nil
         clearedCurrentDraftId = nil
@@ -6412,6 +6414,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         } else {
             refreshDraftPillWidth()
         }
+        BearyDraftImageStore.deletePairsIfUnreferencedAsync(names, excludingDraftId: nil)
     }
 
     // MARK: - 草稿箱（BearyDraftBoxViewController 由草稿箱代理新建文件提供，只调用不定义）
