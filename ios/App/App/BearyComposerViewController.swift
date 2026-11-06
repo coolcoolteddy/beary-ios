@@ -6472,16 +6472,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 重登后不把新号桶的草稿恢复进旧编辑器。
         let restoreAccountId = composerOriginAccountId ?? BearyDraftStore.currentAccountId
         BearyDraftStore.ioQueue.async { [weak self] in
-            guard let draft = BearyDraftStore.loadAll(forAccount: restoreAccountId).first else { return }
+            // P2-10：一次 loadAll 同时取最新草稿与引用集合——旧代码先 load()
+            // （内部又是一次完整 loadAll 再取首项）再 loadAll()，两次读盘
+            // 两倍成本；且两份结果独立，第二次读失败时 sweep 只保留最新一
+            // 篇的图片、误删其他篇图片。恢复与清理现用同一份数据。
+            let allDrafts = BearyDraftStore.loadAll(forAccount: restoreAccountId)
+            guard let draft = allDrafts.first else { return }
             // 回收无主文件（杀 App 后、首存前产生的孤文件）：多槽下必须保留全部草稿的
             // 引用并集，只留本篇会误删其他篇的本地图片。
             var referenced = Set<String>()
-            for img in draft.images {
-                if let name = img.localFile {
-                    referenced.insert(name)
-                }
-            }
-            for otherDraft in BearyDraftStore.loadAll(forAccount: restoreAccountId) {
+            for otherDraft in allDrafts {
                 for img in otherDraft.images {
                     if let name = img.localFile {
                         referenced.insert(name)
