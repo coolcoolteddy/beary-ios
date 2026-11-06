@@ -11,8 +11,17 @@ import UIKit
 final class BearyProfilePhotosViewController: UIViewController {
 
     private let authorIdValue: Int?
-    private let ownProfileValue: Bool
-    private let mutualFriendValue: Bool
+    /// r24-#2：切号后 own／互关须按新身份重算，let 改 var（只改本页）。
+    private var ownProfileValue: Bool
+    private var mutualFriendValue: Bool
+    /// r24-#2：打开本页时的 viewer 身份（Map 页 viewerIdAtOpen 同款口径）；
+    /// viewWillAppear 凭它核对当前登录用户，切号即清旧照重拉。
+    private var viewerIdAtOpen: Int?
+    /// r24-#2：照片拉取代次——切号即换代，在途旧身份分页／首拉回包一律丢弃，
+    /// 不得写回新身份的页面。
+    private var photosGeneration = 0
+    /// r24-#2：切号重拉进行中时空态显“加载中…”，而非“还没有照片”。
+    private var isReloadingPhotos = false
     private var diaryEntriesValue: [Entry]
     private var photosValue: [BearyProfilePhotoItem]
     private var photosHasMore: Bool
@@ -29,6 +38,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         self.authorIdValue = authorIdValue
         self.ownProfileValue = isOwnProfileValue
         self.mutualFriendValue = isMutualFriendValue
+        self.viewerIdAtOpen = SessionManager.shared.currentUser?.id
         self.diaryEntriesValue = initialEntries
         self.photosValue = BearyProfileViewController.profilePhotoItems(from: initialEntries, isOwnProfile: isOwnProfileValue, isMutualFriend: isMutualFriendValue)
         self.photosHasMore = diaryHasMoreValue && authorIdValue != nil
@@ -136,6 +146,88 @@ final class BearyProfilePhotosViewController: UIViewController {
         fetchMoreWhileEmptyIfNeeded()
     }
 
+    /// r24-#2：切号核对（与 #1103 的互关重滤同在 viewWillAppear，合入时
+    /// 顺序须为先本支的身份核对、再 #1103 的互关重滤——身份变了要清旧照
+    /// 重拉，互关重滤只对同身份的已拉数据重算，两者不可颠倒）。
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        let currentViewerId = SessionManager.shared.currentUser?.id
+        guard currentViewerId != viewerIdAtOpen else { return }
+        refreshPhotosForViewerChange(currentViewerId: currentViewerId)
+    }
+
+    /// r24-#2：身份已变——先隐藏旧照片（清空模型并刷新、显加载态），再按
+    /// 新身份重算权限（本人／互关）并从首拉取照片列表；旧身份在途请求凭
+    /// 代次丢弃。常规路径下切号前本页 modal 已关，本处是缺口兜底。
+    private func refreshPhotosForViewerChange(currentViewerId: Int?) {
+        viewerIdAtOpen = currentViewerId
+        photosGeneration += 1
+        let generation = photosGeneration
+        ownProfileValue = (currentViewerId != nil && currentViewerId == authorIdValue)
+        mutualFriendValue = false
+        diaryEntriesValue = []
+        photosValue = []
+        photosHasMore = false
+        photosFetching = false
+        photosPageLoadFailed = false
+        isReloadingPhotos = true
+        collectionView.reloadData()
+        updateTitleAndEmpty()
+        guard let authorId = authorIdValue else {
+            isReloadingPhotos = false
+            updateTitleAndEmpty()
+            return
+        }
+        guard !ownProfileValue, currentViewerId != nil else {
+            // 本人或游客：互关态即 false（本人不看互关，游客无关系），直接首拉。
+            reloadPhotosFirstPage(authorId: authorId, generation: generation)
+            return
+        }
+        // 他人页＋已登录：互关态须实时取（Profile 页 refreshFollowState 同款
+        // 接口）；失败按非互关 fail-closed，只拉公开篇，不把失败画成互关。
+        BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self, generation == strongSelf.photosGeneration else { return }
+                if case .success(let state) = result, case .mutual = BearyFollowState(response: state) {
+                    strongSelf.mutualFriendValue = true
+                }
+                strongSelf.reloadPhotosFirstPage(authorId: authorId, generation: generation)
+            }
+        }
+    }
+
+    /// r24-#2：按新身份从首拉取照片（Profile 页首拉同款：
+    /// fetchEntries(scope: .author, limit: 50)，不带 before 游标）。
+    private func reloadPhotosFirstPage(authorId: Int, generation: Int) {
+        photosHasMore = true
+        photosFetching = true
+        BearyAPI.shared.fetchEntries(scope: .author(authorId), limit: 50) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self, generation == strongSelf.photosGeneration else { return }
+                strongSelf.photosFetching = false
+                strongSelf.isReloadingPhotos = false
+                switch result {
+                case .success(let listValue):
+                    let fresh = listValue.entries ?? []
+                    strongSelf.photosHasMore = fresh.count >= 50
+                    strongSelf.diaryEntriesValue = fresh
+                    strongSelf.photosValue = BearyProfileViewController.profilePhotoItems(from: fresh, isOwnProfile: strongSelf.ownProfileValue, isMutualFriend: strongSelf.mutualFriendValue)
+                    strongSelf.photosPageLoadFailed = false
+                    strongSelf.collectionView.reloadData()
+                    strongSelf.updateTitleAndEmpty()
+                    strongSelf.fetchMoreWhileEmptyIfNeeded()
+                case .failure:
+                    BearyToast.show(in: strongSelf.view, message: "照片加载失败，请稍后重试")
+                    if !strongSelf.photosPageLoadFailed {
+                        strongSelf.photosPageLoadFailed = true
+                        strongSelf.collectionView.insertSections(IndexSet(integer: 1))
+                    }
+                    strongSelf.updateTitleAndEmpty()
+                }
+            }
+        }
+    }
+
     /// 116 数据填入动效：标题计数变化时只淡入标题本身（alpha 0→1、
     /// 0.25s，不动布局、不缩放弹一下）；同值不赋值不重播；减动效或
     /// 未进窗口时直设终值。续拉新格见 staggerNewCells。
@@ -175,6 +267,8 @@ final class BearyProfilePhotosViewController: UIViewController {
 
     private func updateTitleAndEmpty() {
         setTitleTextFaded("照片 · \(photosValue.count) 张")
+        // r24-#2：切号重拉进行中显加载态，不把“正在拉新账号照片”画成“没有照片”。
+        emptyLabel.text = isReloadingPhotos ? "加载中…" : "还没有照片"
         emptyLabel.isHidden = !photosValue.isEmpty
         collectionView.isHidden = photosValue.isEmpty
     }
@@ -195,9 +289,13 @@ final class BearyProfilePhotosViewController: UIViewController {
             return
         }
         photosFetching = true
+        // r24-#2：代次快照——切号换代后本页旧分页回包在写回前丢弃，
+        // 不得把旧账号的下一页追加进新身份的列表；photosFetching 也只由
+        // 同代回包复位，不由过期回包乱改。
+        let generation = photosGeneration
         BearyAPI.shared.fetchEntries(scope: .author(authorId), limit: 50, before: lastCreated, beforeId: lastId) { [weak self] result in
             DispatchQueue.main.async {
-                guard let strongSelf = self else { return }
+                guard let strongSelf = self, generation == strongSelf.photosGeneration else { return }
                 strongSelf.photosFetching = false
                 switch result {
                 case .success(let listValue):
@@ -265,6 +363,12 @@ final class BearyProfilePhotosViewController: UIViewController {
     }
 
     private func presentLightbox(startIndex: Int, originFrame: CGRect? = nil, thumbnail: UIImage? = nil) {
+        // r24-#2：开灯箱前核对身份——身份已变先刷新本页、不展示旧账号的
+        // 旧 key（尤其旧账号私密照）；刷新完成前不进灯箱。
+        if SessionManager.shared.currentUser?.id != viewerIdAtOpen {
+            refreshPhotosForViewerChange(currentViewerId: SessionManager.shared.currentUser?.id)
+            return
+        }
         guard !photosValue.isEmpty, startIndex >= 0, startIndex < photosValue.count else { return }
         guard presentedViewController == nil else { return }
         let keys = photosValue.map { $0.imageKey }
@@ -280,6 +384,12 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wa
         viewer.modalPresentationStyle = .fullScreen
         viewer.onViewEntryAtIndex = { [weak self, weak viewer] tappedIndex in
             guard let strongSelf = self, let viewerValue = viewer else { return }
+            // r24-#2：灯箱打开期间身份变了（返回后 viewWillAppear 会重拉），
+            // 此处不再按旧快照开旧账号的日记详情，只关灯箱。
+            guard SessionManager.shared.currentUser?.id == strongSelf.viewerIdAtOpen else {
+                viewerValue.dismiss(animated: BearyMotion.animated(true), completion: nil)
+                return
+            }
             guard tappedIndex >= 0, tappedIndex < strongSelf.photosValue.count else { return }
             let targetEntry = strongSelf.photosValue[tappedIndex].entry
             viewerValue.dismiss(animated: BearyMotion.animated(true)) {
