@@ -402,6 +402,10 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                 self.friends.remove(at: index)
                 self.updateTitleAndEmptyState()
                 self.tableView.deleteRows(at: [IndexPath(row: index, section: 0)], with: .fade)
+                // r28-4：取关失败回滚只认发起账号。发起时同拍账号 id＋代次
+                //（通知页／引用面板同款口径），切号后到达的旧号失败回包整单丢弃。
+                let requestAccountId = BearyAPI.shared.authAccountId
+                let requestEpoch = BearyAPI.shared.authEpoch
                 BearyAPI.shared.unfollowFriend(userId: userId) { [weak self] result in
                     DispatchQueue.main.async {
                         guard let self = self else { return }
@@ -409,6 +413,10 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                         case .success:
                             BearyFriends.clearDiaryCachesAndNotify()
                         case .failure:
+                            // r28-4：账号或代次已变，说明回包属于旧账号——整单丢弃，
+                            // 不插行、不 toast、不抖动，避免把旧账号好友插进新账号列表。
+                            guard requestAccountId == BearyAPI.shared.authAccountId,
+                                  requestEpoch == BearyAPI.shared.authEpoch else { return }
                             // 失败回滚到原位置；期间重拉已把人带回时只给拒绝动效，不重复插行。
                             if let currentIndex = self.friends.firstIndex(where: { $0.id == userId }) {
                                 if let cell = self.tableView.cellForRow(at: IndexPath(row: currentIndex, section: 0)) {
