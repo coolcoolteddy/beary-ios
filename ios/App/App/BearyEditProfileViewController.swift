@@ -67,11 +67,15 @@ class BearyEditProfileViewController: UIViewController {
     private let initialAvatarUrl: String?
     private let initialCoverUrl: String?
 
-    init(displayName: String?, handle: String?, avatarUrl: String?, coverUrl: String?) {
+    init(displayName: String?, handle: String?, avatarUrl: String?, coverUrl: String?, userId: Int? = nil, signature: String? = nil) {
         self.initialDisplayName = displayName
         self.initialHandle = handle
         self.initialAvatarUrl = avatarUrl
         self.initialCoverUrl = coverUrl
+        // A7：入口同时带已确认的账号 ID 与本人主页已有的签名（首屏直接带初值，
+        // 见 viewDidLoad）；签名缺失时按已知 ID 补查，不等 /me。
+        self.fetchedUserId = userId
+        self.initialSignature = signature
         self.committedDisplayName = displayName
         super.init(nibName: nil, bundle: nil)
     }
@@ -115,9 +119,11 @@ class BearyEditProfileViewController: UIViewController {
     /// 比较基线（容器不 dismiss 的兜底下，再点关闭不再误判未保存）。
     private var committedDisplayName: String?
     /// 批 D 签名行（2026-10-30：编辑统一到本页，个人页只做展示）：
-    /// 初值不走调用方（/me 不下发 signature），本页经 /me 取 id 后调既有
-    /// fetchUserProfile 自取（见 fetchInitialSignature）；拉不到初值时空输入
-    /// 不发（防把未知旧值误删成空），非空输入仍按改动发。
+    /// A7：入口已带已确认的账号 ID 与本人主页已有的签名时首屏直接带初值
+    /// （见 viewDidLoad）；签名缺失时按已知 ID 补查（fetchInitialSignature）；
+    /// 两者皆无才走旧口径（/me 取 id 再串行拉签名）。/me 本身不下发
+    /// signature，不改 /me；拉不到初值时空输入不发（防把未知旧值误删成空），
+    /// 非空输入仍按改动发。
     private var initialSignature: String?
     private var signatureLoaded = false
     private var signatureEdited = false
@@ -423,9 +429,24 @@ class BearyEditProfileViewController: UIViewController {
         // F14：网页编辑页本就没有移除封面入口，移除钮整组删除（保存逻辑的
         // cover=null 路径保留作将来入口复用，但本页不再提供移除操作）。
         updateDynamicLayerColors()
-        // F12：id 不在 init 入参里（不改容器调用点），页内调既有 /me 补齐；
-        // C4：邮箱行已删，/me 不再为本页补邮箱（邮箱只在设置页 ID 卡呈现）。
-        refreshLinkRowFromMe()
+        // A7：入口同时带已确认的账号 ID 与本人主页已有的签名——首屏直接带初值，
+        // 签名和链接一起显示，不等 /me；签名缺失时按已知 ID 立即补查；
+        // 两者皆无才走旧口径（/me 取 id 再串行拉签名；C4：邮箱行已删，
+        // /me 不再为本页补邮箱，邮箱只在设置页 ID 卡呈现）。
+        if let signature = initialSignature {
+            signatureField.text = signature
+            signatureLoaded = true
+        }
+        if fetchedUserId != nil {
+            // 已确认的 ID：链接行首屏即定稿（@handle 优先、否则 /u/id），
+            // 签名缺失时立即按已知 ID 补查。
+            updateLinkRow()
+            if initialSignature == nil {
+                fetchInitialSignature()
+            }
+        } else {
+            refreshLinkRowFromMe()
+        }
     }
 
     /// F12：/me 刷新链接行（首启与复制重试共用）：成功记 id、失败记

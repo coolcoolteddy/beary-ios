@@ -2947,6 +2947,8 @@ final class BearyChromeViewController: UIViewController {
     /// /beary/api/users/:id/cover?v=<coverVer> 并加 teddyhn.com 前缀；
     /// coverVer 为空或 0（或无 id）时仍传 nil，页内封面预览初始为空；
     /// 换封面/移除封面仍可走保存流程，保存只发改动字段。
+    /// A7：已确认的账号 ID 与本人主页已有的签名一并传入（首屏直接带初值，
+    /// 签名和链接一起显示）；主页未拉到签名时传 nil，页内按已知 ID 补查。
     private func presentEditProfile() {
         let user = SessionManager.shared.currentUser
         let coverUrl: String?
@@ -2955,7 +2957,7 @@ final class BearyChromeViewController: UIViewController {
         } else {
             coverUrl = nil
         }
-        let vc = BearyEditProfileViewController(displayName: user?.displayName, handle: user?.handle, avatarUrl: user?.avatar, coverUrl: coverUrl)
+        let vc = BearyEditProfileViewController(displayName: user?.displayName, handle: user?.handle, avatarUrl: user?.avatar, coverUrl: coverUrl, userId: user?.id, signature: profileVC?.currentSignature)
         vc.modalPresentationStyle = .fullScreen
         vc.onSaved = { [weak self, weak vc] in
             vc?.dismiss(animated: BearyMotion.animated(true)) {
