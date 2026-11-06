@@ -65,6 +65,17 @@ final class BearyLivePhotoLoader {
     private var inFlightTasks: [URLSessionDataTask] = []
     private var diskCacheTotals: [String: Int64] = [:]
 
+    /// 在途合并表：键 = memoryKey（已含账号桶与 liveKey，同资源不同桶绝不合并；
+    /// liveKey 即静态图 key + "_live"，同 liveKey 即同静态图）。
+    /// 一条在途记录只建一次下载链（磁盘读 + 视频 + 静态图 + 组装），结果分发给
+    /// 全部订阅者。订阅者表只在 stateLock 内读写；完成方先置 finishing 再取
+    /// 快照、摘表，交付回主线程逐个回调，锁内绝不回调。
+    private final class InFlightLiveLoad {
+        var subscribers: [(PHLivePhoto?) -> Void] = []
+        var finishing = false
+    }
+    private var inFlight: [NSString: InFlightLiveLoad] = [:]
+
     private init() {
         let config = URLSessionConfiguration.default
         // 审计-性能：只关 URLCache，不改 ephemeral。ephemeral 会丢共享
@@ -189,6 +200,25 @@ final class BearyLivePhotoLoader {
         stateLock.unlock()
     }
 
+    /// 统一交付口：首次完成者置 finishing、取订阅快照并摘表；其余完成支
+    /// （取消后到来的下载回调、重复的 build 回调）见 finishing 即退出，不双发。
+    /// 订阅者为空时不回调；交付一律回主线程。
+    private func finishLiveLoad(entry: InFlightLiveLoad, key: NSString, photo: PHLivePhoto?) {
+        stateLock.lock()
+        guard !entry.finishing else {
+            stateLock.unlock()
+            return
+        }
+        entry.finishing = true
+        let liveSubs = entry.subscribers
+        if inFlight[key] === entry { inFlight[key] = nil }
+        stateLock.unlock()
+        guard !liveSubs.isEmpty else { return }
+        DispatchQueue.main.async {
+            for sub in liveSubs { sub(photo) }
+        }
+    }
+
     private func download(url: URL, key: String, ext: String, bucket: String, generation gen: Int, completion: @escaping (Data?) -> Void) {
         var task: URLSessionDataTask?
         task = session.dataTask(with: url) { [weak self] data, response, _ in
@@ -237,26 +267,50 @@ final class BearyLivePhotoLoader {
             completion(nil)
             return
         }
+        // 在途合并：同桶同 liveKey 只建一条下载链，后到的订阅者挂到同一记录上；
+        // 内存命中与 URL 非法在建表前已返回，不进表。
+        let key = memoryKey(bucket: bucket, liveKey: liveKey)
+        let entry: InFlightLiveLoad
+        stateLock.lock()
+        if let existing = inFlight[key] {
+            existing.subscribers.append(completion)
+            stateLock.unlock()
+            return
+        }
+        entry = InFlightLiveLoad()
+        entry.subscribers.append(completion)
+        inFlight[key] = entry
+        stateLock.unlock()
+        // 整条链路的终点都走同一交付口：成功与失败各有且仅有一次交付；
+        // 代次已变的回包同样经此口向订阅者交 nil（原先静默丢弃，订阅者
+        // 悬着等不到回调，视图 currentLiveKey 残留、弱网后不再重试）。
+        let deliver: (PHLivePhoto?) -> Void = { [weak self] photo in
+            guard let self = self else { return }
+            self.finishLiveLoad(entry: entry, key: key, photo: photo)
+        }
         Self.diskQueue.async { [weak self] in
-            guard let self = self, self.isCurrentGeneration(gen) else { return }
+            guard let self = self, self.isCurrentGeneration(gen) else {
+                deliver(nil)
+                return
+            }
             if let videoData = self.diskData(key: liveKey, ext: "mov", bucket: bucket),
                let stillData = self.diskData(key: staticKey, ext: "jpg", bucket: bucket) {
                 // 磁盘双命中：数据已落盘，build 只凭文件 URL 组装，不再读盘。
                 _ = videoData
-                self.buildLivePhoto(stillData: stillData, bucket: bucket, liveKey: liveKey, staticKey: staticKey, generation: gen, contentMode: contentMode, completion: completion)
+                self.buildLivePhoto(stillData: stillData, bucket: bucket, liveKey: liveKey, staticKey: staticKey, generation: gen, contentMode: contentMode, completion: deliver)
                 return
             }
             self.download(url: videoURL, key: liveKey, ext: "mov", bucket: bucket, generation: gen) { [weak self] videoData in
                 guard let self = self, videoData != nil, self.isCurrentGeneration(gen) else {
-                    DispatchQueue.main.async { completion(nil) }
+                    deliver(nil)
                     return
                 }
                 self.download(url: stillURL, key: staticKey, ext: "jpg", bucket: bucket, generation: gen) { stillData in
                     guard let stillData = stillData, self.isCurrentGeneration(gen) else {
-                        DispatchQueue.main.async { completion(nil) }
+                        deliver(nil)
                         return
                     }
-                    self.buildLivePhoto(stillData: stillData, bucket: bucket, liveKey: liveKey, staticKey: staticKey, generation: gen, contentMode: contentMode, completion: completion)
+                    self.buildLivePhoto(stillData: stillData, bucket: bucket, liveKey: liveKey, staticKey: staticKey, generation: gen, contentMode: contentMode, completion: deliver)
                 }
             }
         }
