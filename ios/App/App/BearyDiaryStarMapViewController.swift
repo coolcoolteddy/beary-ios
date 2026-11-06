@@ -65,7 +65,10 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     private let scrollView = UIScrollView()
     private let contentView = UIView()
-    private let legendLabel = UILabel()
+    /// L3：顶部只留两个入口——日期范围（收纳年／月／全年／未标日期）与
+    /// 图例（点按弹说明）；长图例文本不再常驻顶部，星空成为首屏重点。
+    private let dateEntryButton = BearyHit44Button(type: .custom)
+    private let legendButton = BearyHit44Button(type: .custom)
     private let sliceCalendarIcon = UIImageView()
     private let yearScrollView = UIScrollView()
     private let yearStack = UIStackView()
@@ -105,6 +108,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var modelGeneration = 0
     private var selectedStarId: String?
     private var selectedEdgeId: String?
+    /// L3：重叠列表底卡的选中态（单星／单线用上面两个 id 表达，重叠列表
+    /// 两者皆空，另记一位；未选中时底卡不出现，见 showDefaultSheet）。
+    private var showingOverlapSheet = false
     private var loadGeneration = 0
     private var fetchCapped = false
     private var needsRefreshAfterDetail = false
@@ -276,13 +282,21 @@ final class BearyDiaryStarMapViewController: UIViewController {
         view.addSubview(scrollView)
         scrollView.addSubview(contentView)
 
-        legendLabel.translatesAutoresizingMaskIntoConstraints = false
-        legendLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
-        legendLabel.adjustsFontForContentSizeCategory = true
-        legendLabel.textColor = BearyStarMapNight.secondaryText
-        legendLabel.numberOfLines = 0
-        legendLabel.text = "星越大字越多，亮度代表心情；连线表示同心情、同地点或同词。点星进详情，点线看原因。"
-        contentView.addSubview(legendLabel)
+        // L3：日期范围与图例两个入口（药丸样式，见 topEntryButton）。
+        // 日期入口挂 UIMenu（年／月／全年／未标日期），菜单随数据在
+        // rebuildPills 里重建；图例入口点按弹说明，不常驻占顶部。
+        dateEntryButton.translatesAutoresizingMaskIntoConstraints = false
+        topEntryButtonStyle(dateEntryButton)
+        dateEntryButton.setTitle(sliceButtonTitle(), for: .normal)
+        dateEntryButton.accessibilityHint = "选择日期范围"
+        dateEntryButton.showsMenuAsPrimaryAction = true
+        contentView.addSubview(dateEntryButton)
+        legendButton.translatesAutoresizingMaskIntoConstraints = false
+        topEntryButtonStyle(legendButton)
+        legendButton.setTitle("图例", for: .normal)
+        legendButton.accessibilityHint = "查看图例说明"
+        legendButton.addTarget(self, action: #selector(didTapLegend), for: .touchUpInside)
+        contentView.addSubview(legendButton)
 
         // 分片行首日历图标（官方 icon_calendar）：只在分片时出现，与年行同显隐。
         sliceCalendarIcon.translatesAutoresizingMaskIntoConstraints = false
@@ -417,9 +431,10 @@ final class BearyDiaryStarMapViewController: UIViewController {
             contentView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
             contentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
 
-            legendLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
-            legendLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            legendLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            dateEntryButton.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+            dateEntryButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            legendButton.centerYAnchor.constraint(equalTo: dateEntryButton.centerYAnchor),
+            legendButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
             sliceCalendarIcon.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             sliceCalendarIcon.centerYAnchor.constraint(equalTo: yearScrollView.centerYAnchor),
@@ -506,7 +521,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
         yearRowHeight?.isActive = true
         monthRowHeight?.isActive = true
         // 审计 15 项第 2 项：三段间距与行高同款持有，隐藏时一起收起。
-        legendYearGap = yearScrollView.topAnchor.constraint(equalTo: legendLabel.bottomAnchor, constant: 12)
+        // L3：年／月行已收进日期入口、永久塌掉（见 rebuildPills），
+        // 此处三段间距只剩顶部入口→筛选行一段 12pt。
+        legendYearGap = yearScrollView.topAnchor.constraint(equalTo: dateEntryButton.bottomAnchor, constant: 0)
         yearMonthGap = monthScrollView.topAnchor.constraint(equalTo: yearScrollView.bottomAnchor, constant: 8)
         monthFilterGap = filterScrollView.topAnchor.constraint(equalTo: monthScrollView.bottomAnchor, constant: 8)
         legendYearGap?.isActive = true
@@ -543,65 +560,19 @@ final class BearyDiaryStarMapViewController: UIViewController {
         for stack in [yearStack, monthStack, filterStack] {
             stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         }
-        let needsSlicing = filteredEntries.count > BearyStarMap.sliceThreshold
-        yearScrollView.isHidden = !needsSlicing
-        monthScrollView.isHidden = !needsSlicing
-        sliceCalendarIcon.isHidden = !needsSlicing
-        yearRowHeight?.constant = needsSlicing ? 44 : 0
-        monthRowHeight?.constant = needsSlicing ? 44 : 0
-        // 审计 15 项第 2 项：隐藏行时三段间距收成图例→筛选行统一 12pt；
-        // 恢复分片时还原 12/8/8。
-        if needsSlicing {
-            legendYearGap?.constant = 12
-            yearMonthGap?.constant = 8
-            monthFilterGap?.constant = 8
-        } else {
-            legendYearGap?.constant = 12
-            yearMonthGap?.constant = 0
-            monthFilterGap?.constant = 0
-        }
-        if needsSlicing {
-            // 年：倒序；未标日期单独一颗药丸（只在有无日期篇时出现）。
-            for year in BearyStarMap.years(in: filteredEntries) {
-                let selected: Bool
-                switch slice {
-                case .year(let y), .month(let y, _): selected = (y == year)
-                default: selected = false
-                }
-                let button = pillButton(title: "\(year)年", selected: selected, action: #selector(didTapYearPill(_:)))
-                button.tag = year
-                yearStack.addArrangedSubview(button)
-            }
-            if BearyStarMap.hasUndated(in: filteredEntries) {
-                let button = pillButton(title: "未标日期", selected: slice == .undated, action: #selector(didTapUndatedPill))
-                yearStack.addArrangedSubview(button)
-            }
-            // 月：只在选中某年时出现；“全年”+ 该年各月倒序。
-            switch slice {
-            case .year(let year), .month(let year, _):
-                let allYearButton = pillButton(title: "全年", selected: slice == .year(year), action: #selector(didTapFullYearPill(_:)))
-                allYearButton.tag = year
-                monthStack.addArrangedSubview(allYearButton)
-                for month in BearyStarMap.months(in: filteredEntries, year: year) {
-                    let selected = slice == .month(year: year, month: month)
-                    let button = pillButton(title: "\(month)月", selected: selected, action: #selector(didTapMonthPill(_:)))
-                    button.tag = month
-                    // 年份经 tag 无法双传：用 accessibilityIdentifier 搭载，点按时再解析。
-                    button.accessibilityIdentifier = "\(year)"
-                    monthStack.addArrangedSubview(button)
-                }
-            default:
-                break
-            }
-        }
-        // 未标日期分片无月可切：月行直接塌掉，不留一行空白药丸栏。
-        // 审计 15 项第 2 项同款：年行→筛选行间距同样收成统一 12pt。
-        if slice == .undated {
-            monthScrollView.isHidden = true
-            monthRowHeight?.constant = 0
-            yearMonthGap?.constant = 0
-            monthFilterGap?.constant = 12
-        }
+        // L3：年／月行收进顶部日期入口、永久塌掉（只剩入口→筛选行一段 12pt）；
+        // 年／月／全年／未标日期的切换全走日期入口菜单（见 dateRangeMenu）。
+        yearScrollView.isHidden = true
+        monthScrollView.isHidden = true
+        sliceCalendarIcon.isHidden = true
+        yearRowHeight?.constant = 0
+        monthRowHeight?.constant = 0
+        legendYearGap?.constant = 0
+        yearMonthGap?.constant = 0
+        monthFilterGap?.constant = 12
+        // 日期入口标题与菜单随当前分片与数据刷新（拉取回包后年份会变）。
+        dateEntryButton.setTitle(sliceButtonTitle(), for: .normal)
+        dateEntryButton.menu = dateRangeMenu()
         // 连线过滤：全部 / 同心情 / 同地点 / 同词（只滤线，不滤星）。
         let filters: [(String, StarMapEdgeKind?)] = [
             ("全部连线", nil), ("同心情", .mood), ("同地点", .place), ("同词", .word),
@@ -618,35 +589,75 @@ final class BearyDiaryStarMapViewController: UIViewController {
         }
     }
 
-    @objc private func didTapYearPill(_ sender: UIButton) {
-        let year = sender.tag
-        let latestMonth = BearyStarMap.months(in: filteredEntries, year: year).first
-        if let month = latestMonth {
-            slice = .month(year: year, month: month)
-        } else {
-            slice = .year(year)
+    /// L3：顶部入口药丸样式（与筛选药丸同款：描边胶囊＋按压反馈）。
+    private func topEntryButtonStyle(_ button: BearyHit44Button) {
+        button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .regular))
+        button.titleLabel?.adjustsFontForContentSizeCategory = true
+        button.bearyAddPressFeedback()
+        button.setTitleColor(BearyStarMapNight.bodyText, for: .normal)
+        button.backgroundColor = .clear
+        button.layer.cornerRadius = BearyCorners.single
+        button.layer.borderWidth = 1
+        button.layer.bearyDynamicBorderColor = BearyStarMapNight.pillBorder
+        button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+    }
+
+    /// L3：日期入口标题——年分片写“全年”以区别于月份（slice.title 的
+    /// “2026年”不写全年，易与“2026年11月”混淆）。
+    private func sliceButtonTitle() -> String {
+        switch slice {
+        case .all: return "全部 ▾"
+        case .year(let y): return "\(y)年全年 ▾"
+        case .month(let y, let m): return "\(y)年\(m)月 ▾"
+        case .undated: return "未标日期 ▾"
         }
+    }
+
+    /// L3：日期范围菜单——年倒序，每年一个子菜单（全年＋该年各月倒序）；
+    /// 未标日期只在有无日期篇时出现；“全部”只在不分片时提供（分片时
+    /// recompute 会把 .all 弹回默认分片，不给选不到的项）。
+    private func dateRangeMenu() -> UIMenu {
+        var items: [UIMenuElement] = []
+        if filteredEntries.count <= BearyStarMap.sliceThreshold {
+            items.append(UIAction(title: "全部", state: slice == .all ? .on : .off) { [weak self] _ in
+                self?.selectSlice(.all)
+            })
+        }
+        for year in BearyStarMap.years(in: filteredEntries) {
+            var yearItems: [UIMenuElement] = []
+            yearItems.append(UIAction(title: "全年", state: slice == .year(year) ? .on : .off) { [weak self] _ in
+                self?.selectSlice(.year(year))
+            })
+            for month in BearyStarMap.months(in: filteredEntries, year: year) {
+                yearItems.append(UIAction(title: "\(month)月", state: slice == .month(year: year, month: month) ? .on : .off) { [weak self] _ in
+                    self?.selectSlice(.month(year: year, month: month))
+                })
+            }
+            items.append(UIMenu(title: "\(year)年", children: yearItems))
+        }
+        if BearyStarMap.hasUndated(in: filteredEntries) {
+            items.append(UIAction(title: "未标日期", state: slice == .undated ? .on : .off) { [weak self] _ in
+                self?.selectSlice(.undated)
+            })
+        }
+        return UIMenu(title: "日期范围", children: items)
+    }
+
+    private func selectSlice(_ newSlice: StarMapSlice) {
+        slice = newSlice
         clearSelection()
         recompute()
     }
 
-    @objc private func didTapUndatedPill() {
-        slice = .undated
-        clearSelection()
-        recompute()
-    }
-
-    @objc private func didTapFullYearPill(_ sender: UIButton) {
-        slice = .year(sender.tag)
-        clearSelection()
-        recompute()
-    }
-
-    @objc private func didTapMonthPill(_ sender: UIButton) {
-        guard let year = Int(sender.accessibilityIdentifier ?? "") else { return }
-        slice = .month(year: year, month: sender.tag)
-        clearSelection()
-        recompute()
+    /// L3：图例入口——原常驻顶部的长图例文本改点按弹说明。
+    @objc private func didTapLegend() {
+        let alert = UIAlertController(
+            title: "图例",
+            message: "星越大字越多，亮度代表心情；连线表示同心情、同地点或同词。点星进详情，点线看原因。",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "知道了", style: .default))
+        present(alert, animated: BearyMotion.animated(true))
     }
 
     @objc private func didTapFilterPill(_ sender: UIButton) {
@@ -746,10 +757,19 @@ final class BearyDiaryStarMapViewController: UIViewController {
                 : "公开的日记会变成这里的星星。"
             sheetCard.isHidden = true
         } else {
-            sheetCard.isHidden = false
+            // L3：底卡只在选中星／线／重叠列表时出现，未选中时不出现。
+            sheetCard.isHidden = selectedStarId == nil && selectedEdgeId == nil && !showingOverlapSheet
         }
         let sliceCount = BearyStarMap.entries(in: filteredEntries, slice: slice).count
-        var status = "共 \(filteredEntries.count) 颗星 · 本片 \(sliceCount) 篇"
+        // L3：状态行按实际范围写篇数，不再写死“本片”。
+        let rangeText: String
+        switch slice {
+        case .all: rangeText = "全部 \(sliceCount) 篇"
+        case .year: rangeText = "全年 \(sliceCount) 篇"
+        case .month: rangeText = "本月 \(sliceCount) 篇"
+        case .undated: rangeText = "未标日期 \(sliceCount) 篇"
+        }
+        var status = "共 \(filteredEntries.count) 颗星 · \(rangeText)"
         if fetchPartialNote {
             status += " · 仅展示已加载的部分，点按重试"
         } else if fetchStaleNote {
@@ -769,6 +789,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private func clearSelection() {
         selectedStarId = nil
         selectedEdgeId = nil
+        showingOverlapSheet = false
         skyView.setSelected(starId: nil, edgeId: nil)
         showDefaultSheet()
     }
@@ -776,6 +797,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private func didTapStar(_ entry: Entry) {
         selectedStarId = entry.id
         selectedEdgeId = nil
+        showingOverlapSheet = false
         skyView.setSelected(starId: entry.id, edgeId: nil)
         showStarSheet(entry)
     }
@@ -783,6 +805,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private func didTapEdge(_ edge: StarMapEdge) {
         selectedEdgeId = edge.id
         selectedStarId = nil
+        showingOverlapSheet = false
         skyView.setSelected(starId: nil, edgeId: edge.id)
         showEdgeSheet(edge)
     }
@@ -790,12 +813,17 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private func showOverlapSheet(_ entries: [Entry]) {
         selectedStarId = nil
         selectedEdgeId = nil
+        showingOverlapSheet = true
         skyView.setSelected(starId: nil, edgeId: nil)
+        sheetCard.isHidden = false
         rebuildSheet(title: "这里有 \(entries.count) 颗星重叠", rows: entries)
     }
 
     private func showDefaultSheet() {
-        rebuildSheet(title: "点星进详情，点线看原因", rows: [])
+        // L3：未选中时底卡不出现——默认底卡文案“点星进详情，点线看原因”
+        // 与图例末句一字重复，随去掉底卡一并去掉。
+        sheetStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        sheetCard.isHidden = true
     }
 
     private func sheetTitleLabel(_ text: String) -> UILabel {
@@ -860,6 +888,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 
     private func showStarSheet(_ entry: Entry) {
+        // L3：底卡默认隐藏，选中后由展示函数自己取消隐藏。
+        sheetCard.isHidden = false
         sheetStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         // 审计登录杂项：无标题篇底卡标题只显日期（与行按钮同口径）。
         let starTitle = sheetEntryTitle(entry)
@@ -913,6 +943,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 
     private func showEdgeSheet(_ edge: StarMapEdge) {
+        // L3：底卡默认隐藏，选中后由展示函数自己取消隐藏。
+        sheetCard.isHidden = false
         let reasons = edge.reasons.map { reasonText($0) }.joined(separator: "；")
         let first = model.entryById[edge.firstId]
         let second = model.entryById[edge.secondId]
