@@ -6470,6 +6470,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 if self.currentDraftId == nil, draft.draftId == self.clearedCurrentDraftId {
                     self.currentDraftId = draft.draftId
                     self.clearedCurrentDraftId = nil
+                    // 审计 P1-9：幂等键成对绑回——只绑 draftId 不绑 clientReq 时，
+                    // 下次自动保存（draftClientReq == nil 即生成新键）会以新键
+                    // 落盘，覆盖箱内撤销刚写回的旧键；与 loadDraftFromBox /
+                    // restoreDraft 的成对绑回一致。
+                    self.draftClientReq = draft.clientReq
                 }
             }
             self.present(box, animated: !UIAccessibility.isReduceMotionEnabled) { [weak self] in
