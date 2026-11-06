@@ -5565,7 +5565,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                     item.imageView.image = image
                                     // A6：选图时固定账号与草稿 ID——后台落盘与回填一律用这份身份。
                                     let pickAccountId = BearyDraftStore.currentAccountId
-                                    let pickDraftId = currentDraftId
+                                    let pickDraftId = self.currentDraftId
                                     self.imagePrepQueue.async { [weak self, weak item] in
                                         guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
                                               let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
@@ -5645,7 +5645,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     item.imageView.image = image
                     // A6：选图时固定账号与草稿 ID——后台落盘与回填一律用这份身份。
                     let pickAccountId = BearyDraftStore.currentAccountId
-                    let pickDraftId = currentDraftId
+                    let pickDraftId = self.currentDraftId
                     // 先落盘再上传：选完图立刻有本地文件，杀 App 也不丢图。
                     // 落盘失败则按无本地文件降级（与旧行为一致，草稿里只有 key）。
                     // 编码 + 落盘 + 上传序列化全走后台队列，只编一次（旧写法落盘编一次、
