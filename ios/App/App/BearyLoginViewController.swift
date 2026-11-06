@@ -21,8 +21,8 @@ import UIKit
 // 文案与尺寸：wordmark 为 LogoHorizontal 官方资产（高 28，全屏页左对齐、Sheet 弹窗居中）、
 // 全屏页副标题“邮箱验证码登录，无需密码；新邮箱登录即注册”14 灰（Sheet 弹窗无副标题，
 // 改标题“欢迎回来”17 半粗体居中）、字段 label 11/600、输入框高 48 圆角 12 faint 底、
-// 发码钮高 44（行高 48 内居中）圆角 12、登录钮高 44 圆角 12（全屏页墨底白字，
-// Sheet 弹窗品牌橙底墨字——全弹窗唯一重色）、Sheet 弹窗邀请码收起为“有邀请码？ ›”行。
+// 发码钮高 44（行高 48 内居中）圆角 12、登录钮高 44 圆角 12（墨底白字，
+// Sheet 弹窗橙底已删，登录钮统一墨底；U1 标题前景走 bg）。
 // 颜色一律走 BearyColors，不新增字面量颜色；
 // 图标走 icon_close/icon_check/icon_chevron_right/icon_chevron_down 资产；
 // 全屏页不使用液态玻璃效果，Sheet 弹窗的玻璃由 BearyLoginSheet 容器提供
@@ -110,6 +110,12 @@ final class BearyLoginViewController: UIViewController {
     /// 扫荡组 A：协议勾选框与文案首行居中的约束（首行中心随字号档位变，
     /// 档位变化时在 traitCollectionDidChange 里按新行高重算常量）。
     private var agreeCenterYConstraint: NSLayoutConstraint?
+    /// L1：验证码行横排/纵排两套约束——默认横排（验证码框 + 右侧发码钮）；
+    /// 无障碍大字号档或行宽摆不下时纵排（验证码框在上、发码钮整行在下），
+    /// 切换只在 viewDidLayoutSubviews / traitCollectionDidChange 里按需做一次。
+    private var codeRowHorizontalConstraints: [NSLayoutConstraint] = []
+    private var codeRowVerticalConstraints: [NSLayoutConstraint] = []
+    private var codeRowStacked = false
 
     private var isSendingCode = false
     private var isVerifying = false
@@ -152,6 +158,9 @@ final class BearyLoginViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // L1：验证码行横/纵排按实测宽与字号档切换（行宽在两种排布下不变，
+        // 判定翻转时才换约束，不会来回抖）。
+        updateCodeRowStackingIfNeeded()
         guard sheetMode else { return }
         // Sheet 高跟内容走：栈高 + 上下内边距（12/12）+ 安全区底（Home 条）；
         // 邀请展开/收起、字号档位变化时重算，presentation 控制器跟帧走。
@@ -176,7 +185,28 @@ final class BearyLoginViewController: UIViewController {
             agreeCenterYConstraint?.constant = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)).lineHeight / 2
             currentLoginTitle = nil
             updateButtonStates()
+            // L1：字号档变化可能改变验证码行横/纵排判定。
+            updateCodeRowStackingIfNeeded()
         }
+    }
+
+    /// L1：验证码行是否纵排——无障碍大字号档必纵排；其余档按实测行宽：
+    /// 发码钮实测宽 + 9 间距 + 验证码框至少 120 摆不下时纵排。
+    /// 行宽取 min(屏宽 − 44, 432)，与 stackView 的左右 22 边距、上限 432 同口径。
+    /// 只在判定翻转时才切换约束：纵/横排不改变行宽，判定稳定，不会来回抖；
+    /// 发码钮标题在倒计时中由“获取验证码”变“N 秒”，宽变化只在阈值带内
+    /// 才可能翻转一次（倒计时结束回长标题时），不来回跳。
+    private func updateCodeRowStackingIfNeeded() {
+        guard !codeRowHorizontalConstraints.isEmpty else { return }
+        let minCodeWidth: CGFloat = 120
+        let sendWidth = sendButton.intrinsicContentSize.width
+        let availableWidth = min(view.bounds.width - 44, 432)
+        let shouldStack = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
+            || (availableWidth > 0 && availableWidth < sendWidth + 9 + minCodeWidth)
+        guard shouldStack != codeRowStacked else { return }
+        codeRowStacked = shouldStack
+        NSLayoutConstraint.deactivate(shouldStack ? codeRowHorizontalConstraints : codeRowVerticalConstraints)
+        NSLayoutConstraint.activate(shouldStack ? codeRowVerticalConstraints : codeRowHorizontalConstraints)
     }
 
     // MARK: - 登出路径（供容器复用）
@@ -456,18 +486,12 @@ final class BearyLoginViewController: UIViewController {
             logoImageView.bottomAnchor.constraint(equalTo: logoRow.bottomAnchor),
             logoImageView.widthAnchor.constraint(equalTo: logoImageView.heightAnchor, multiplier: logoAspectRatio()),
             messageLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
-            loginButton.heightAnchor.constraint(equalToConstant: 44),
-            guestButton.heightAnchor.constraint(equalToConstant: 44),
-            codeRow.heightAnchor.constraint(equalToConstant: 48),
-            codeContainer.leadingAnchor.constraint(equalTo: codeRow.leadingAnchor),
-            codeContainer.topAnchor.constraint(equalTo: codeRow.topAnchor),
-            codeContainer.bottomAnchor.constraint(equalTo: codeRow.bottomAnchor),
-            sendButton.trailingAnchor.constraint(equalTo: codeRow.trailingAnchor),
-            // 1-7：发码钮有底色（ink/faint），不跟行高拉满 48；
-            // 删上下锚、只留居中 + 高 44，消除与行高 48 的过约束。
-            sendButton.centerYAnchor.constraint(equalTo: codeRow.centerYAnchor),
-            sendButton.heightAnchor.constraint(equalToConstant: 44),
-            codeContainer.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -9),
+            // L1：按钮与验证码行由固定高改最小高——大字号下由内容撑高，
+            // 默认字号仍为原值（登录/游客钮 44、验证码行 48、发码钮 44）。
+            loginButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            guestButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            codeRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 48),
+            sendButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             agreeButton.leadingAnchor.constraint(equalTo: agreeRow.leadingAnchor),
             // 2026-10-29 第 8 项：勾选框与文案首行垂直居中对齐。旧口径 top+11 /
             // bottom−11 把钮中心钉在行顶下 22pt，而文案首行中心在 label 顶下
@@ -481,6 +505,28 @@ final class BearyLoginViewController: UIViewController {
             agreeLabel.topAnchor.constraint(equalTo: agreeRow.topAnchor),
             agreeLabel.bottomAnchor.constraint(equalTo: agreeRow.bottomAnchor),
         ])
+        // L1：验证码行横排/纵排两套约束（默认横排；大字号档或行宽不够时
+        // 纵排，见 updateCodeRowStackingIfNeeded）。
+        codeRowHorizontalConstraints = [
+            codeContainer.leadingAnchor.constraint(equalTo: codeRow.leadingAnchor),
+            codeContainer.topAnchor.constraint(equalTo: codeRow.topAnchor),
+            codeContainer.bottomAnchor.constraint(equalTo: codeRow.bottomAnchor),
+            codeContainer.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -9),
+            sendButton.trailingAnchor.constraint(equalTo: codeRow.trailingAnchor),
+            // 1-7：发码钮有底色（ink/faint），不跟行高拉满 48；
+            // 删上下锚、只留居中 + 高 44，消除与行高 48 的过约束。
+            sendButton.centerYAnchor.constraint(equalTo: codeRow.centerYAnchor),
+        ]
+        codeRowVerticalConstraints = [
+            codeContainer.leadingAnchor.constraint(equalTo: codeRow.leadingAnchor),
+            codeContainer.trailingAnchor.constraint(equalTo: codeRow.trailingAnchor),
+            codeContainer.topAnchor.constraint(equalTo: codeRow.topAnchor),
+            sendButton.topAnchor.constraint(equalTo: codeContainer.bottomAnchor, constant: 8),
+            sendButton.leadingAnchor.constraint(equalTo: codeRow.leadingAnchor),
+            sendButton.trailingAnchor.constraint(equalTo: codeRow.trailingAnchor),
+            sendButton.bottomAnchor.constraint(equalTo: codeRow.bottomAnchor),
+        ]
+        NSLayoutConstraint.activate(codeRowHorizontalConstraints)
         // 协议勾选框与文案首行居中（见属性注释；档位变化时重算常量）。
         let agreeCenterY = agreeButton.centerYAnchor.constraint(equalTo: agreeLabel.topAnchor, constant: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)).lineHeight / 2)
         agreeCenterY.isActive = true
@@ -511,12 +557,18 @@ final class BearyLoginViewController: UIViewController {
     /// makeFieldContainer 逐字重复；faint 底 / 圆角 12 / 左右 14 / 48 高
     /// 均与原值一致，新增常态 line 边框与聚焦蓝边——字段字体 / 占位 /
     /// 键盘 / delegate / target 与校验逻辑均不动）。
+    /// L1：输入框 48 由固定高改最小高——字段字号解除封顶后，大字号下
+    /// 框高由字段内在高度撑起（默认字号仍为 48）；固定高会裁大字号文字。
     private func makeFieldContainer(field: UITextField) -> BearyInputContainer {
-        return BearyInputContainer(content: field, fixedHeight: 48)
+        let container = BearyInputContainer(content: field)
+        container.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
+        return container
     }
 
     private func configureEmailField() {
-        emailField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
+        // L1：输入字体解除 cappedFont 20 封顶（固定高容器已改最小高，
+        // 大字号不再被截断；默认字号下与原值一致）。
+        emailField.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
         emailField.adjustsFontForContentSizeCategory = true
         emailField.textColor = BearyColors.ink
         emailField.keyboardType = .emailAddress
@@ -529,7 +581,7 @@ final class BearyLoginViewController: UIViewController {
     }
 
     private func configureCodeField() {
-        codeField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
+        codeField.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
         codeField.adjustsFontForContentSizeCategory = true
         codeField.textColor = BearyColors.ink
         codeField.keyboardType = .numberPad
@@ -557,7 +609,7 @@ final class BearyLoginViewController: UIViewController {
     }
 
     private func configureInviteField() {
-        inviteField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
+        inviteField.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
         inviteField.adjustsFontForContentSizeCategory = true
         inviteField.textColor = BearyColors.ink
         inviteField.autocapitalizationType = .allCharacters
@@ -731,22 +783,31 @@ final class BearyLoginViewController: UIViewController {
         return email.range(of: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", options: .regularExpression) != nil
     }
 
-    private func showMessage(_ text: String, ok: Bool = false) {
+    /// U2：字段级错误只标对应框——showMessage 的 errorField 参数；
+    /// 不传 = 不标字段（网络/服务端/通用失败），只留行内红字。
+    private enum LoginErrorField { case email, code, invite }
+
+    private func showMessage(_ text: String, ok: Bool = false, errorField: LoginErrorField? = nil) {
         messageLabel.text = text
         messageLabel.isHidden = text.isEmpty
         messageLabel.textColor = ok ? BearyColors.deepGreenText : Self.loginErrorRed
         // 审计登录杂项：输入容器已实现 isError 红边，行内失败时同步点亮、
         // 成功 / 清空时复位（此前只写行内红字，从未设置 isError）。
+        // U2：字段错只标对应框，网络/服务端错不标字段——此前任意错误
+        // 三个框同时变红，用户看不出哪里填错。
         let failed = !text.isEmpty && !ok
-        emailInputContainer?.isError = failed
-        codeInputContainer?.isError = failed
-        inviteInputContainer?.isError = failed
+        emailInputContainer?.isError = failed && errorField == .email
+        codeInputContainer?.isError = failed && errorField == .code
+        inviteInputContainer?.isError = failed && errorField == .invite
     }
 
     private func setLoginTitle(_ text: String) {
+        // U1：登录钮底色已统一为 ink（sheet 橙已删，见 327 行），标题前景
+        // 不能再用 onBrand——onBrand 是固定纯黑，浅色下墨底黑字看不见；
+        // ink 底配 bg 字：浅色白字黑底、深色黑字近白底，两模式对比都够。
         let title = NSAttributedString(string: text, attributes: [
             .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .bold)),
-            .foregroundColor: sheetMode ? BearyColors.onBrand : BearyColors.bg,
+            .foregroundColor: BearyColors.bg,
             .kern: 5.43,
         ])
         loginButton.setAttributedTitle(title, for: .normal)
@@ -759,7 +820,8 @@ final class BearyLoginViewController: UIViewController {
         if isSendingCode {
             sendButton.setTitle("发送中…", for: .normal)
         } else if let remaining = countdownRemaining {
-            sendButton.setTitle("\(remaining)s", for: .normal)
+            // C5：倒计时用中文单位（全站中文表达一致）。
+            sendButton.setTitle("\(remaining) 秒", for: .normal)
         } else {
             sendButton.setTitle("获取验证码", for: .normal)
         }
@@ -867,7 +929,7 @@ final class BearyLoginViewController: UIViewController {
     @objc private func sendCodeTapped() {
         let email = normalizedEmail()
         guard isEmailValid(email) else {
-            showMessage("邮箱格式不正确")
+            showMessage("邮箱格式不正确", errorField: .email)
             return
         }
         showMessage("")
@@ -902,18 +964,18 @@ final class BearyLoginViewController: UIViewController {
     @objc private func loginTapped() {
         let email = normalizedEmail()
         guard isEmailValid(email) else {
-            showMessage("邮箱格式不正确")
+            showMessage("邮箱格式不正确", errorField: .email)
             return
         }
         let code = codeField.text ?? ""
         guard code.count == 6 else {
-            showMessage("请输入 6 位数字验证码")
+            showMessage("请输入 6 位数字验证码", errorField: .code)
             return
         }
         // 审计 P2：邀请码先行格式校验，不合规行内提示且不发请求。
         let inviteCode = normalizedInviteCode()
         guard inviteCode.isEmpty || isValidInviteCode(inviteCode) else {
-            showMessage("邀请码格式不正确，应为 8 位字母或数字")
+            showMessage("邀请码格式不正确，应为 8 位字母或数字", errorField: .invite)
             return
         }
         isVerifying = true
