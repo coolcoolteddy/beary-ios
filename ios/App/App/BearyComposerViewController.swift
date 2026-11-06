@@ -412,6 +412,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 异步恢复回包仅在版本与草稿身份均未变化时才应用；跳过时旧草稿
     /// 仍在草稿箱，不丢数据。恢复自身的回填发生在门通过之后，不影响门。
     private var editorEditVersion = 0
+    /// 审计二轮 08：组词期间切主题被 refreshInlineMoodImages 跳过时记待刷新，
+    /// 组词落字后补执行一次（textViewDidChange 里检测）。
+    private var inlineMoodRefreshPending = false
     private var isPublishing = false
     /// 编辑期到点时正好有保存 PUT 在途：计时器不自动关编辑器，改由服务端
     /// 结果定去留（见 startEditTimer / performUpdate 失败分支）。置位后即便
@@ -4684,6 +4687,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 正文与字数
 
     func textViewDidChange(_ textView: UITextView) {
+        // 审计二轮 08：组词落字后补执行被跳过的主题换色（两处 marked 都空才补；
+        // refresh 内已清标记，程序化重建不触发本回调，不会重入）。
+        if inlineMoodRefreshPending, textView.markedTextRange == nil, headlineField.markedTextRange == nil {
+            refreshInlineMoodImages()
+        }
         if textView === headlineField {
             headlineDidChange()
             return
@@ -4740,7 +4748,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 深浅切换时重建内联熊脸的深浅变体：先转记号再转回图，光标按可见格复位
     /// （组词中不做，免得打断输入法；下次打开编辑器自然是新变体）。
     private func refreshInlineMoodImages() {
-        guard textView.markedTextRange == nil, headlineField.markedTextRange == nil else { return }
+        guard textView.markedTextRange == nil, headlineField.markedTextRange == nil else {
+            // 审计二轮 08：组词期间跳过换色，记待刷新、落字后补执行（见 textViewDidChange）。
+            inlineMoodRefreshPending = true
+            return
+        }
+        inlineMoodRefreshPending = false
         // 无内联心情时不重建：重建会把非心情附件（如粘贴进来的图片）
         // 经 inlinePlainText 丢掉，还会把选区压成光标；只有真有熊脸附件
         // 时才需要换深浅变体（动态墨色本身随主题自动解析，无需重建）。
@@ -4750,8 +4763,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let headlineSelection = headlineField.selectedRange
         setBodyAttributedText(committedContent())
         setHeadlineText(headlineText)
-        textView.selectedRange = NSRange(location: min(bodySelection.location, textView.attributedText.length), length: 0)
-        headlineField.selectedRange = NSRange(location: min(headlineSelection.location, headlineField.attributedText.length), length: 0)
+        // 审计二轮 07：选区长度按新文本长度裁定、不写死 0，选中一段文字切主题后仍是选区。
+        textView.selectedRange = clampedSelection(bodySelection, in: textView.attributedText.length)
+        headlineField.selectedRange = clampedSelection(headlineSelection, in: headlineField.attributedText.length)
+    }
+
+    /// 选区按新文本长度裁定（位置与长度都夹在文本内；UTF-16 单位，与 selectedRange 一致）。
+    private func clampedSelection(_ selection: NSRange, in length: Int) -> NSRange {
+        let location = min(max(selection.location, 0), length)
+        let end = min(max(selection.location + selection.length, location), length)
+        return NSRange(location: location, length: end - location)
     }
 
     /// 是否含内联熊脸附件（主题切换重建的守门：无附件时跳过重建）。
@@ -5981,7 +6002,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftStatusIcon.image = BearyIconImages.image(named: "icon_refresh", pointSize: 15)
         draftStatusIcon.tintColor = BearyColors.gray
         draftStatusIcon.isHidden = false
-        BearyIconMotion.startSpin(on: draftStatusIcon, duration: 0.9, key: "bearyDraftSavingSpin")
+        // 审计二轮 10：该 key 的转圈已在转时不重加——每次输入都删了重起会把
+        // 旋转相位反复归零；落盘后 updateDraftStatusLabel 的 stopSpin 不动。
+        if draftStatusIcon.layer.animation(forKey: "bearyDraftSavingSpin") == nil {
+            BearyIconMotion.startSpin(on: draftStatusIcon, duration: 0.9, key: "bearyDraftSavingSpin")
+        }
         draftStatusLabel.text = "保存中…"
         draftStatusLabel.textColor = BearyColors.blue
         draftTimer?.invalidate()
@@ -6140,6 +6165,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 已删草稿；快照本身只是单篇 struct，不含整库旧状态）。
         // 审计三轮第 2 项：入队前捕获账号，写与回读一律用捕获值，排队期间切号不串桶。
         let saveAccountId = BearyDraftStore.currentAccountId
+        // 审计二轮 05：保存发起时拍下编辑版本，落盘期间继续输入会使版本 +1；
+        // 完成回调须同时校验版本，旧保存不把新内容提前标成“已保存”。
+        let saveBaselineVersion = editorEditVersion
         BearyDraftStore.ioQueue.async { [weak self] in
             let writeSucceeded = BearyDraftStore.save(draft, forAccount: saveAccountId)
             // 保存级别跟随图片状态：有失败/未上传的图 = 1（文字已保存，图片未保存），否则 2；
@@ -6159,9 +6187,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             let savedCurrentDraft = writeSucceeded && foundCurrentDraft
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                // 状态只在仍是本篇时写：落盘期间编辑器已切篇（如保留后新建）时，
-                // 旧篇的完成回调不把“草稿已保存”写到空白新篇上；pill 宽度刷新无妨（审计第 25 项：纯图标固定 44，无计数）。
-                if self.currentDraftId == draftIdValue {
+                // 状态只在仍是本篇且版本未变时写：落盘期间编辑器已切篇（如保留后新建）时，
+                // 旧篇的完成回调不把“草稿已保存”写到空白新篇上；落盘期间继续输入使版本
+                // +1 时，旧保存也不把新内容提前标成“已保存”，等新一轮保存完成再标。
+                // pill 宽度刷新无妨（审计第 25 项：纯图标固定 44，无计数）。
+                if self.currentDraftId == draftIdValue, self.editorEditVersion == saveBaselineVersion {
                     if savedCurrentDraft == false {
                         self.draftStatusLevel = 0
                     } else {
@@ -7735,9 +7765,9 @@ extension BearyComposerViewController: BearyLocationPopoverDelegate {
     }
 
     func locationPopoverDidFail(_ popover: BearyLocationPopoverView, message: String) {
-        // 权限被拒/定位失败：toast 后回未定位态——失败本身不产生位置值，
-        // 已确认过的位置不被失败清掉（见 selectedLocation 注释），从未确认过时行即隐藏。
-        hideLocationPopover(animated: false)
+        // 审计二轮 02：权限被拒/定位失败只 toast、不关面板——气泡侧已转手动态，
+        // 用户可直接自己输入地点；失败本身不产生位置值，已确认过的位置不被
+        // 失败清掉（见 selectedLocation 注释），从未确认过时行即隐藏。
         showToast(message: message)
     }
 }

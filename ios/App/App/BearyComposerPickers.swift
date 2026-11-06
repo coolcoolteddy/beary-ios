@@ -80,6 +80,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private var users: [SearchUser] = []
     private var searchTimer: Timer?
     private var searchSeq = 0
+    /// 审计二轮 03：在途搜索任务——清空或换词时取消，防晚到回包；seq 守卫仍保留。
+    private var searchTask: URLSessionDataTask?
     private var lastQuery = ""
     private var isPadLayout = false
     private var keyboardHeight: CGFloat = 0
@@ -689,7 +691,19 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     }
 
     /// 四态：init（未搜）/ loading（中央大 @ 旋转 + 列表态文案，见第 22 项规则）/ none / fail；有结果时态视图隐藏。
-    private func showState(kind: String, query: String) {
+    /// 审计二轮 16：搜索失败文案按错误类型分流（APIError 自带分类，不猜原因）。
+    private static func searchFailureMessage(for error: APIError) -> String {
+        switch error {
+        case .network:
+            return "网络好像不太顺"
+        case .decoding:
+            return "服务返回的内容不太对，请稍后再试"
+        default:
+            return "服务暂时有问题，请稍后再试"
+        }
+    }
+
+    private func showState(kind: String, query: String, failureMessage: String? = nil) {
         if kind == "results" {
             stateView.isHidden = true
             listScrollView.isHidden = false
@@ -719,7 +733,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         } else if kind == "fail" {
             stateIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 25)
             stateTitle.text = "搜索失败"
-            stateSubtitle.text = "网络好像不太顺"
+            stateSubtitle.text = failureMessage ?? "网络好像不太顺"
             stateRetryButton.isHidden = false
             stateRetryBottomConstraint?.isActive = true
         } else {
@@ -773,6 +787,11 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private func runSearch(query: String) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
+            // 审计二轮 03：清空即作废在途搜索——代次 +1 让晚到回包被守卫丢弃，
+            // 再取消在途请求、清结果，不让旧结果回填进已清空的搜索框下。
+            searchSeq += 1
+            searchTask?.cancel()
+            searchTask = nil
             users = []
             lastQuery = ""
             setSearchBusy(false)
@@ -796,7 +815,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             showState(kind: "loading", query: trimmed)
             setCenterBusy(true)
         }
-        BearyAPI.shared.search(q: trimmed) { [weak self] result in
+        searchTask?.cancel()
+        searchTask = BearyAPI.shared.search(q: trimmed) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self, seq == self.searchSeq else { return }
                 self.setSearchBusy(false)
@@ -819,10 +839,12 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                     } else {
                         self.showState(kind: "results", query: trimmed)
                     }
-                case .failure:
+                case .failure(let error):
                     self.users = []
                     self.renderRows()
-                    self.showState(kind: "fail", query: trimmed)
+                    // 审计二轮 16：按错误类型区分提示——只有网络错误才说网络不顺，
+                    // 服务端/解析错误不猜成网络问题。
+                    self.showState(kind: "fail", query: trimmed, failureMessage: Self.searchFailureMessage(for: error))
                 }
             }
         }
