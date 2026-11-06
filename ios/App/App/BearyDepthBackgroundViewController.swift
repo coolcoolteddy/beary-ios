@@ -210,12 +210,13 @@ extension BearyDepthBackgroundViewController: UITableViewDataSource, UITableView
             dismiss(animated: BearyMotion.animated(true), completion: nil)
             return
         }
-        // 锁定档点按进 Plus 页（入口③），本页停留；门控 toast 仍留 handleFestivalThemePicked 作兜底。
+        // 锁定档点按进 Plus 页（入口③），本页停留；门控 toast 仍留编辑资料页
+        // 的 handleDepthThemePicked 作兜底。
         if theme != .none && !isPlusValue {
             presentPlusPage()
             return
         }
-        // 门控／加载失败时个人页已弹 toast，本页停留；应用成功才关闭回个人页看效果。
+        // 门控／加载失败时编辑资料页已弹 toast，本页停留；应用成功才关闭回编辑页看效果。
         if onPickValue(theme) {
             dismiss(animated: BearyMotion.animated(true), completion: nil)
         }
