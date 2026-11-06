@@ -662,6 +662,13 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             emptyStateView.isHidden = true
             loadFailedStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.loadLatest() })
             loadFailedStateView.isHidden = false
+        } else if messages.isEmpty && BearyDMStore.isCorrupt(accountId: storeAccountId) {
+            // 本地缓存损坏：不呈“还没有消息”空态；旧消息已保留在原文件与备份里，
+            // 未被覆盖。重试只重拉服务端历史，损坏期间 saveMessages 拒绝回写。
+            emptyLabel.isHidden = true
+            emptyStateView.isHidden = true
+            loadFailedStateView.configure(kind: .error, title: "本地消息损坏", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.loadLatest() })
+            loadFailedStateView.isHidden = false
         } else if messages.isEmpty {
             emptyLabel.isHidden = true
             emptyStateView.configure(kind: .empty, title: "还没有消息", subtitle: "发第一条纯文字消息吧", iconName: nil, actionTitle: nil)
