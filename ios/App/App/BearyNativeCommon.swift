@@ -3067,8 +3067,8 @@ enum BearyQuoteGate {
     }
 
     /// 卡片切公开门禁（详情/首页/时间线/个人页共用）。宿主无私密来源时直接 proceed；
-    /// quote 体缺失但有 quoteId 时先 fetchEntry 补一次（补不到则 fail-open 直接 proceed，
-    /// 不因门禁拉取失败拦住公开）；他人来源弹窗里只有“保持私密”一项，不给一并公开、
+    /// quote 体缺失但有 quoteId 时先 fetchEntry 补一次（补不到则 fail-closed 拦截公开，
+    /// toast 提示重试后再公开，不因门禁拉取失败放行）；他人来源弹窗里只有“保持私密”一项，不给一并公开、
     /// 不弹 403 toast（调用方收到 aborted 时只做回滚/不发请求，不另 toast）。
     static func gatePublicToggle(from vc: UIViewController, entry: Entry, completion: @escaping (PublicToggleResult) -> Void) {
         if let quote = entry.quote, sourceIsPrivate(quote: quote), let sourceId = quote.id, !sourceId.isEmpty {
@@ -3095,7 +3095,10 @@ enum BearyQuoteGate {
                             completion(.proceed)
                         }
                     case .failure:
-                        completion(.proceed)
+                        // r29-3：拉取失败无法确认引用来源，fail-closed 拦截公开；
+                        // 调用方收到 .aborted 只清 busy、不发请求，当前权限不变。
+                        BearyToast.show(in: vc.view, message: "暂时无法确认引用来源，重试后再公开")
+                        completion(.aborted)
                     }
                 }
             }
