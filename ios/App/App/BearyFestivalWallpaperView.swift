@@ -64,11 +64,29 @@ public final class BearyFestivalWallpaperView: UIView {
     private var tilt = CGPoint.zero
     private var phase = 0.45
 
-    public init(theme: Theme, bundle: Bundle = .main) throws {
+    /// Parsed manifest, decoded once per bundle. The file is tiny (~7.5 KB,
+    /// 2 themes, 27 layers), so a synchronous read is fine; the cache only
+    /// avoids re-reading + re-decoding it on every view creation (the profile
+    /// header and the depth-picker preview both rebuild the view on every
+    /// theme switch / re-entry). Layer images still go through
+    /// `UIImage(named:)`, which the system already caches.
+    /// `@MainActor` on the class makes this main-actor isolated, so no lock
+    /// is needed: `init` always runs on the main thread.
+    private static var cachedManifests: [ObjectIdentifier: Manifest] = [:]
+
+    private static func manifest(for bundle: Bundle) throws -> Manifest {
+        let key = ObjectIdentifier(bundle)
+        if let cached = cachedManifests[key] { return cached }
         guard let url = bundle.url(forResource: "BearyFestivalWallpapers", withExtension: "json") else {
             throw LoadError.missingManifest
         }
         let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: url))
+        cachedManifests[key] = manifest
+        return manifest
+    }
+
+    public init(theme: Theme, bundle: Bundle = .main) throws {
+        let manifest = try Self.manifest(for: bundle)
         guard let art = manifest.themes[theme.rawValue],
               art.background.count == 3, manifest.size.count == 2,
                             manifest.size.allSatisfy({ $0 > 0 }), manifest.period > 0,
