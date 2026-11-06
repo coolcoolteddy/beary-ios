@@ -3315,6 +3315,8 @@ final class BearyChromeViewController: UIViewController {
             return
         }
         guard let detail = presentDetail(entry: entry) else { return }
+        // B3：发补拉时记下各互动字段当前值；回包合并时只合并期间没有变化的字段。
+        let supplementBaseline = detail.captureSupplementBaseline()
         BearyAPI.shared.fetchEntry(id: entryId) { [weak self, weak detail] result in
             DispatchQueue.main.async {
                 guard let self = self, let detail = detail else { return }
@@ -3326,25 +3328,25 @@ final class BearyChromeViewController: UIViewController {
                 let viewerId = SessionManager.shared.currentUser?.id
                 let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && viewerId != nil && fetched.authorId == viewerId)
                 if viewerIsAuthor {
-                    detail.update(with: fetched)
+                    detail.update(with: fetched, baseline: supplementBaseline)
                     return
                 }
                 // 审计 P0-1：后台补齐不得把拉黑作者全文顶回先出的页面——转占位。
                 if self.isBlockedAuthor(fetched) {
                     var placeholderEntry = fetched
                     placeholderEntry.placeholder = true
-                    detail.update(with: placeholderEntry)
+                    detail.update(with: placeholderEntry, baseline: supplementBaseline)
                     return
                 }
                 // 审计 2026-11-02 第十节：详情门按三档判定——公开走有效态（过期即私密），
                 // 仅好友只在服务端 state 确认互关时全见（App 侧不只认 isPublic），
                 // 其余一律占位（fail-closed；state 拉取失败同样占位）。
                 if BearyEphemeral.isEffectivelyPublic(fetched), fetched.authorId != nil {
-                    detail.update(with: fetched)
+                    detail.update(with: fetched, baseline: supplementBaseline)
                     return
                 }
                 if fetched.placeholder == true {
-                    detail.update(with: fetched)
+                    detail.update(with: fetched, baseline: supplementBaseline)
                     return
                 }
                 if fetched.isFriendsOnly, let authorId = fetched.authorId, SessionManager.shared.isLoggedIn {
@@ -3354,11 +3356,11 @@ final class BearyChromeViewController: UIViewController {
                             switch stateResult {
                             case .success(let state)
                                 where (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false)):
-                                detail.update(with: fetched)
+                                detail.update(with: fetched, baseline: supplementBaseline)
                             default:
                                 var placeholderEntry = fetched
                                 placeholderEntry.placeholder = true
-                                detail.update(with: placeholderEntry)
+                                detail.update(with: placeholderEntry, baseline: supplementBaseline)
                             }
                         }
                     }
@@ -3369,7 +3371,7 @@ final class BearyChromeViewController: UIViewController {
                         // stored 公开但已过期：有效态为私密，切占位（不留卡片旧全文）。
                         var placeholderEntry = fetched
                         placeholderEntry.placeholder = true
-                        detail.update(with: placeholderEntry)
+                        detail.update(with: placeholderEntry, baseline: supplementBaseline)
                     }
                     // 公开但定不出作者：保持卡片页（见本函数注释），不更新、不 toast。
                     return
@@ -3377,7 +3379,7 @@ final class BearyChromeViewController: UIViewController {
                 // 私密非作者：切详情占位（文案按回包 visibility 区分，无字段时通用占位）。
                 var placeholderEntry = fetched
                 placeholderEntry.placeholder = true
-                detail.update(with: placeholderEntry)
+                detail.update(with: placeholderEntry, baseline: supplementBaseline)
             }
         }
     }

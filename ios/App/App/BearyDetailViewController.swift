@@ -1205,6 +1205,8 @@ final class BearyDetailViewController: UIViewController {
             showFetchFailed()
             return
         }
+        // B3：发补拉时记下各互动字段当前值；回包合并时只合并期间没有变化的字段。
+        let retryBaseline = captureSupplementBaseline()
         BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -1216,22 +1218,22 @@ final class BearyDetailViewController: UIViewController {
                 let viewerId = SessionManager.shared.currentUser?.id
                 let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && viewerId != nil && fetched.authorId == viewerId)
                 if viewerIsAuthor {
-                    self.update(with: fetched)
+                    self.update(with: fetched, baseline: retryBaseline)
                     return
                 }
                 if fetched.placeholder == true {
-                    self.update(with: fetched)
+                    self.update(with: fetched, baseline: retryBaseline)
                     return
                 }
                 if !SessionManager.shared.isGuestMode, let authorId = fetched.authorId, viewerId != authorId, BearyBlockedStore.isBlocked(authorId) {
                     var placeholderEntry = fetched
                     placeholderEntry.placeholder = true
-                    self.update(with: placeholderEntry)
+                    self.update(with: placeholderEntry, baseline: retryBaseline)
                     return
                 }
                 if fetched.isPublic == true {
                     if fetched.authorId != nil {
-                        self.update(with: fetched)
+                        self.update(with: fetched, baseline: retryBaseline)
                     } else {
                         // 公开但定不出作者：与补齐口径一致，不更新；回到失败
                         // 轻提示，toast 重试钮仍在。
@@ -1241,7 +1243,7 @@ final class BearyDetailViewController: UIViewController {
                 }
                 var placeholderEntry = fetched
                 placeholderEntry.placeholder = true
-                self.update(with: placeholderEntry)
+                self.update(with: placeholderEntry, baseline: retryBaseline)
             }
         }
     }
@@ -1413,7 +1415,36 @@ final class BearyDetailViewController: UIViewController {
         })
     }
 
-    func update(with fetched: Entry) {
+    /// B3 补拉基线：发补拉时记下各互动字段的当前值；回包合并时只合并
+    /// 补拉期间没有变化的字段——期间已确认的操作（点赞/收藏/回应/可见性）
+    /// 不再被旧回包覆盖。seq 守卫只拦仍在途的操作，基线补的是“操作先
+    /// 成功、旧回包后到”的缺口；不另增代次字段（见 update(with:)）。
+    struct SupplementBaseline {
+        let likedByMe: Bool?
+        let likeCount: Int?
+        let bookmarkedByMe: Bool?
+        let emotesSignature: String
+        let isPublic: Bool?
+        let visibility: String?
+        let publishedAt: Int?
+        let ephemeralUntil: Int?
+    }
+
+    /// 发补拉前调用，记下各互动字段当前值（见 SupplementBaseline）。
+    func captureSupplementBaseline() -> SupplementBaseline {
+        SupplementBaseline(
+            likedByMe: entry.likedByMe,
+            likeCount: entry.likeCount,
+            bookmarkedByMe: entry.bookmarkedByMe,
+            emotesSignature: BearyEmoteOrder.signature(entry.emotes),
+            isPublic: entry.isPublic,
+            visibility: entry.visibility,
+            publishedAt: entry.publishedAt,
+            ephemeralUntil: entry.ephemeralUntil
+        )
+    }
+
+    func update(with fetched: Entry, baseline: SupplementBaseline? = nil) {
         // 审计 P2-20：页内已因拉黑/举报转占位时，后台补齐一律忽略，不得复活全文。
         if locallyHiddenByModeration { return }
         guard fetched.id == entry.id else { return }
@@ -1431,23 +1462,30 @@ final class BearyDetailViewController: UIViewController {
         var merged = fetched
         // 及时性口径：代次未确认（有在途请求）时护乐观字段；在途请求全部
         // 落定（代次已确认）时，合并后的服务端值即新确认态。
-        if likeSeq != likeConfirmedSeq {
+        // B3：基线在补拉发出时记下（见 captureSupplementBaseline）；字段在
+        // 补拉期间变化过（当前值 ≠ 发出时值）即视为已确认的新态，不取回包
+        // 旧值——操作先成功、旧回包后到时，确认值不再被覆盖。
+        let likeChangedDuringFetch = baseline.map { $0.likedByMe != old.likedByMe || $0.likeCount != old.likeCount } ?? false
+        if likeSeq != likeConfirmedSeq || likeChangedDuringFetch {
             merged.likedByMe = old.likedByMe
             merged.likeCount = old.likeCount
         } else {
             confirmedLiked = merged.likedByMe ?? false
             confirmedLikeCount = merged.likeCount ?? 0
         }
-        if bookmarkSeq != bookmarkConfirmedSeq {
+        let bookmarkChangedDuringFetch = baseline.map { $0.bookmarkedByMe != old.bookmarkedByMe } ?? false
+        if bookmarkSeq != bookmarkConfirmedSeq || bookmarkChangedDuringFetch {
             merged.bookmarkedByMe = old.bookmarkedByMe
             merged.bookmarkCount = old.bookmarkCount
         } else {
             confirmedBookmarked = merged.bookmarkedByMe ?? false
         }
-        if isEmoteBusy {
+        let emotesChangedDuringFetch = baseline.map { $0.emotesSignature != BearyEmoteOrder.signature(old.emotes) } ?? false
+        if isEmoteBusy || emotesChangedDuringFetch {
             merged.emotes = old.emotes
         }
-        if isVisibilityBusy {
+        let visibilityChangedDuringFetch = baseline.map { $0.isPublic != old.isPublic || $0.visibility != old.visibility || $0.publishedAt != old.publishedAt || $0.ephemeralUntil != old.ephemeralUntil } ?? false
+        if isVisibilityBusy || visibilityChangedDuringFetch {
             merged.isPublic = old.isPublic
             merged.visibility = old.visibility
             merged.publishedAt = old.publishedAt
@@ -1555,7 +1593,9 @@ final class BearyDetailViewController: UIViewController {
             refreshActionRow()
             renderEmotes()
         }
-        if old.isPublic != merged.isPublic || old.publishedAt != merged.publishedAt || old.ephemeralUntil != merged.ephemeralUntil {
+        // B3：可见性档位直接比对——私密与仅好友都可能是 isPublic == false，
+        // 只比 isPublic 会漏掉私密↔仅好友的翻转，操作行/引用卡/小地球停在旧态。
+        if old.isPublic != merged.isPublic || old.visibility != merged.visibility || old.publishedAt != merged.publishedAt || old.ephemeralUntil != merged.ephemeralUntil {
             refreshVisibilityViews()
             refreshEphemeralViews()
             refreshAuthorActions()
