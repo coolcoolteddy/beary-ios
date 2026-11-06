@@ -237,6 +237,26 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private var exchangeDetailGeneration: UInt64 = 0
     private var hasLoadedOnce = false
 
+    /// A2：请求快照——发请求时绑定账号、会话代次与北京日期；回包先比对，
+    /// 任一变化即旧回包作废、重查当前状态，不写进当前桶。只在调用方比对，
+    /// 不改传输层重试逻辑（BearyAPI 首发捕获的 epoch / 账号只用于重试与
+    /// 401 压制，成功路径的比对在这里做）。
+    private struct BlindBoxRequestSnapshot {
+        var epoch: Int
+        var accountId: Int?
+        var dateKey: String
+    }
+
+    private static func captureBlindBoxSnapshot() -> BlindBoxRequestSnapshot {
+        return BlindBoxRequestSnapshot(epoch: BearyAPI.shared.authEpoch, accountId: BearyAPI.shared.authAccountId, dateKey: BlindBoxDate.todayKey())
+    }
+
+    private func isStaleBlindBoxSnapshot(_ snapshot: BlindBoxRequestSnapshot) -> Bool {
+        return snapshot.epoch != BearyAPI.shared.authEpoch
+            || snapshot.accountId != BearyAPI.shared.authAccountId
+            || snapshot.dateKey != BlindBoxDate.todayKey()
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
@@ -713,9 +733,17 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         // 任一失配（切号或跨日）即丢弃旧结果、重新为当前账号/新一天拉一次，
         // 不写旧桶、不路由旧状态。
         let identity = BlindBoxRequestIdentity.capture()
+        // A2：再拍一份快照（账号 + 会话代次 + 北京日期）：代次变化也作废重查
+        //（identity 只看账号与日期）。
+        let snapshot = Self.captureBlindBoxSnapshot()
         BearyAPI.shared.fetchBlindBoxToday { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                if self.isStaleBlindBoxSnapshot(snapshot) {
+                    // 跨日 / 切号后旧回包作废：不写当前桶，重查当前状态。
+                    self.loadInitial()
+                    return
+                }
                 switch result {
                 case .success(let body):
                     guard BlindBoxState.shared.applyServerState(body, for: identity) else {
@@ -748,8 +776,12 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             setStep(.placeholder("今日已换过 1 次，明天再来"))
             return
         }
-        if let pooled = body.pooledEntryId {
+        if let pooled = body.pooledEntryId, pooled.isEmpty == false {
             pooledEntryId = pooled
+        } else {
+            // /today 未给入池 id 时清掉旧值：同一 VC 生命周期内再次拉取，
+            // 旧入池态不得保留到新回包里。
+            pooledEntryId = nil
         }
         loadPoolEntries()
     }
@@ -908,9 +940,17 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         exchangeDetailGeneration += 1
         let generation = exchangeDetailGeneration
         let requestAccountId = SessionManager.shared.currentUser?.id
+        // A2：再拍一份快照（账号 + 会话代次 + 北京日期）：跨日/切号的旧回包
+        // 作废重查；代次/交换 ID 的失配仍走下面的三重校验静默丢弃。
+        let snapshot = Self.captureBlindBoxSnapshot()
         BearyAPI.shared.fetchBlindBoxExchange(id: id) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                if self.isStaleBlindBoxSnapshot(snapshot) {
+                    // 跨日 / 切号后旧回包作废：不写当前桶，重查当前状态。
+                    self.loadInitial()
+                    return
+                }
                 guard generation == self.exchangeDetailGeneration else { return }
                 guard self.exchangeId == id else { return }
                 guard requestAccountId == SessionManager.shared.currentUser?.id else { return }
@@ -1065,18 +1105,27 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         }
         openBusy = true
         setStep(.pool)
+        let snapshot = Self.captureBlindBoxSnapshot()
         BearyAPI.shared.openBlindBox { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.openBusy = false
+                if self.isStaleBlindBoxSnapshot(snapshot) {
+                    // 跨日 / 切号后旧回包作废：不写当前桶，重查当前状态。
+                    self.loadInitial()
+                    return
+                }
                 switch result {
                 case .success(let body):
+                    // 开盒回包也走完整替换：入池 / 开盒 / 撤回态与 /today
+                    // 同口径一次写全，不再只调 markOpened 而丢掉回包体里
+                    // 的 myWithdrawn / receivedWithdrawn 与 pooledEntryId。
+                    BlindBoxState.shared.applyServerState(body)
                     if body.receivedWithdrawn == true {
                         self.setStep(.placeholder("对方撤回了交换，这篇日记不再显示。"))
                         return
                     }
                     if let exchangeId = body.exchangeId {
-                        BlindBoxState.shared.markOpened(exchangeId: exchangeId)
                         self.exchangeId = exchangeId
                     }
                     if let received = body.received {
