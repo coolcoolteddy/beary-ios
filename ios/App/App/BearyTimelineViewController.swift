@@ -2805,7 +2805,7 @@ class BearyTimelineViewController: UIViewController {
         tableView.reloadData()
         updateChrome()
         refreshHeaderHeight()
-        showTimelineToast("筛选没成功，请重试")
+        showTimelineToast(message: "筛选没成功，请重试")
     }
 
     /// 进页重置（切进时间线页时回到全部，modal 回落不走这里故不反复重置：
