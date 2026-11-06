@@ -6039,7 +6039,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftTimer?.invalidate()
         draftTimer = nil
         if backgroundDraftTask == .invalid {
-            backgroundDraftTask = UIApplication.shared.beginBackgroundTask(withName: "beary-draft-flush") { [weak self] in
+            backgroundDraftTask = UIApplication.shared.beginBackgroundTask(withName: "draft-flush") { [weak self] in
                 guard let self = self else { return }
                 if self.backgroundDraftTask != .invalid {
                     UIApplication.shared.endBackgroundTask(self.backgroundDraftTask)
