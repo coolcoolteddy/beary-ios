@@ -541,6 +541,9 @@ enum BearyDraftStore {
     /// 审计四轮 05：删前复核入队时那次诊断——账号、文件 URL、指纹、代次四项
     /// 须与当前诊断一致，且磁盘上的文件指纹仍与诊断时相同；任一不符都拒绝删
     /// （诊断过期、文件已被重写或账号已切时都不删，失败关闭）。
+    /// R23-#3：删前现场重验目标文件确实损坏——当前能解成草稿数组即健康，
+    /// 拒绝删；只有确实解不出才删。指纹一致时文件与诊断时同一份，重验必定
+    /// 解不出，此处是第二道防线（防指纹粒度/属性读不到等极端情况）。
     /// false = 非损坏态（拒绝删，防误删健康库）或复核不符或删文件失败。
     static func clearCorruptStoreAsync(completion: @escaping (Bool) -> Void) {
         let accountId = currentAccountId
@@ -557,7 +560,10 @@ enum BearyDraftStore {
                currentGeneration == errGeneration,
                let fingerprint = errFingerprint, fingerprint == fileFingerprint(at: url) {
                 if FileManager.default.fileExists(atPath: url.path) {
-                    ok = (try? FileManager.default.removeItem(at: url)) != nil
+                    // R23-#3：现场重验目标文件确实损坏才删，能解出即健康、拒绝删。
+                    if isCorruptStoreFile(at: url) {
+                        ok = (try? FileManager.default.removeItem(at: url)) != nil
+                    }
                 } else {
                     ok = true
                 }
@@ -571,6 +577,18 @@ enum BearyDraftStore {
                 completion(ok)
             }
         }
+    }
+
+    /// R23-#3：现场验证目标文件是否真的损坏——读得出且能解成草稿数组即
+    /// 健康（返回 false），读不出或解不出才算损坏（返回 true）。只读不写；
+    /// 个别条目坏、整体仍是合法数组的“部分损坏”由读取侧的部分恢复处理，
+    /// 不归清除管——此处只认“整库解不出”。
+    private static func isCorruptStoreFile(at url: URL) -> Bool {
+        guard let data = try? Data(contentsOf: url),
+              (try? JSONDecoder().decode([BearyDraft].self, from: data)) != nil else {
+            return true
+        }
+        return false
     }
 
     /// 后台增改一篇：整库 loadAll + saveAll 都在 ioQueue 上，完成后回主线程。
