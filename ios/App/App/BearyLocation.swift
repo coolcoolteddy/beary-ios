@@ -91,11 +91,18 @@ enum BearyLocationDisplay {
     }
 }
 
-/// 地图聚合组：本人按精确地点文本聚合，他人按区级聚合。
+/// 地图聚合组：本人按精确地点名 + 区级聚合（同名换区拆成不同组；
+/// 只有地点名的记录单独成组，不猜它属于哪个区），他人按区级聚合。
 /// 聚合是 Entry 列表的纯函数（不另建缓存、不轮询），可见性翻转/删除/
  /// 回收站/注销的同步由调用方重拉列表后重算自然达成，不存在过期地图缓存。
 struct BearyLocationMapGroup {
-    /// 聚合键：本人 = 精确地点名（无名退区级），他人 = 区级。
+    /// 稳定组 ID（P1-6）：本人组 = 名 + 区（同名换区是不同 ID）、
+    /// 只有地点名时 ID 只有名、无名退区级；他人组恒为区级。
+    /// n:/d: 前缀防名-only 与区-only 同文本撞 ID（如地点名恰好
+    /// 等于某区级文本）。查组、缓存键、编码查询一律按 id；
+    /// key 只作展示文本，不作身份——同名不同区的两组 key 可以相同。
+    let id: String
+    /// 展示文本：本人 = 精确地点名（无名退区级），他人 = 区级。
     let key: String
     let entries: [Entry]
     /// 他人组恒为真（键已是区级）；本人组为假（键是精确文本，见方案 A 漂移说明）。
@@ -112,25 +119,48 @@ enum BearyLocationMap {
     /// - 本人视角：私密 + 公开都进。
     static func groups(entries: [Entry], viewerIsAuthor: Bool) -> [BearyLocationMapGroup] {
         var buckets: [String: [Entry]] = [:]
-        var districtOnlyKeys = Set<String>()
+        var displayKeys: [String: String] = [:]
+        var districtOnlyIds = Set<String>()
         for entry in entries {
             if entry.placeholder == true { continue }
             let location = DiaryLocation(entry: entry)
             if location.isEmpty { continue }
             if viewerIsAuthor {
-                let key = location.name ?? location.district!
-                buckets[key, default: []].append(entry)
+                // P1-6：同名不同区拆组——ID 含区级；只有地点名时
+                // ID 只有名，不猜它属于哪个区（与有名有区的组互不合并）；
+                // 无名时退区级。区级与名相同时不再拼区（无增量信息）。
+                let id: String
+                let displayKey: String
+                if let name = location.name {
+                    displayKey = name
+                    if let district = location.district, district != name {
+                        id = "n:\(name)\u{1F}d:\(district)"
+                    } else {
+                        id = "n:\(name)"
+                    }
+                } else {
+                    // 走到这里 name 已为 nil；isEmpty 已排除，故 district 必非空。
+                    // 仍用 guard 收口：万一 district 为空则不进组。
+                    guard let district = location.district else { continue }
+                    displayKey = district
+                    id = "d:\(district)"
+                }
+                buckets[id, default: []].append(entry)
+                displayKeys[id] = displayKey
             } else {
                 guard BearyEphemeral.isEffectivelyPublic(entry), let district = location.district else { continue }
-                buckets[district, default: []].append(entry)
-                districtOnlyKeys.insert(district)
+                let id = "d:\(district)"
+                buckets[id, default: []].append(entry)
+                displayKeys[id] = district
+                districtOnlyIds.insert(id)
             }
         }
-        return buckets.map { key, list in
-            BearyLocationMapGroup(key: key, entries: list, isDistrictOnly: districtOnlyKeys.contains(key))
+        return buckets.map { id, list in
+            BearyLocationMapGroup(id: id, key: displayKeys[id] ?? id, entries: list, isDistrictOnly: districtOnlyIds.contains(id))
         }.sorted { a, b in
             if a.count != b.count { return a.count > b.count }
-            return a.key < b.key
+            if a.key != b.key { return a.key < b.key }
+            return a.id < b.id
         }
     }
 }

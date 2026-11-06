@@ -5,7 +5,8 @@ import CoreLocation
 // ===== 日记地图（批 E，2026-10-30；预览 v3 第 2/3 节，方案 A）=====
 // 入口：我的页（他人主页同款行）→ 更多照片区下方独立行“日记地图”（批 C 新版
 // 我的页尚未合入，入口先以独立行实现、不改 C 的 tab 结构；与 C 合入时以 C 为准对齐）。
-// 聚合：本人按精确地点文本聚合、私密 + 公开都进；他人只按区级聚合、私密不进不计入；
+// 聚合：本人按精确地点名 + 区级聚合（同名换区拆成不同组，只有地点名
+// 的记录单独成组、不猜区），私密 + 公开都进；他人只按区级聚合、私密不进不计入；
 // 无位置不进地图、不留空点（聚合逻辑见 BearyLocationMap.groups，本页只渲染结果）。
 // 坐标：地图渲染时按文本现场地理编码，坐标只存在本页实例的内存缓存里（随页销毁），
 // 永不写盘、不进日记行、不进任何持久化缓存——与“经纬度不持久化”一致。
@@ -17,6 +18,12 @@ import CoreLocation
 // 从本页进详情改了可见性后返回，本页只重拉一次（needsRefreshAfterDetail 门控，
 // 不是每次 appear 都拉）；删除/回收站/注销走服务端列表变化，下次打开自然同步。
 // 切账号：appear 时发现 viewer 变了即按新身份重算（本人↔他人口径切换）并重拉。
+
+/// 地图大头针（P1-6）：同名不同区的两组展示名（key）可以相同，
+/// 大头针不能再凭 title 认组；groupId 存组 ID，查组一律按它。
+final class DiaryMapAnnotation: MKPointAnnotation {
+    var groupId: String = ""
+}
 
 final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UITableViewDataSource, UITableViewDelegate {
     private let authorId: Int
@@ -397,11 +404,12 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         // 重新加载先换代并取消上一轮在途编码：旧回调不得写回新一轮。
         let generation = cancelGeocoding()
         groups = BearyLocationMap.groups(entries: allEntries, viewerIsAuthor: viewerIsAuthor)
-        // 已选组一律重绑到重算后的新分组对象：键还在时旧快照的篇目已过期
+        // 已选组一律重绑到重算后的新分组对象：组 ID 还在时旧快照的篇目已过期
         // （删篇/翻私密后列表仍是旧篇、大头针已是新分组，两版本对不上）；
-        // 键没了才回落到未选态，不留指向旧组的列表。
+        // 组 ID 没了才回落到未选态，不留指向旧组的列表。
+        // 按 id 不按 key 重绑：同名不同区的两组 key 相同，凭 key 会绑错组。
         if let selected = selectedGroup {
-            selectedGroup = groups.first(where: { $0.key == selected.key })
+            selectedGroup = groups.first(where: { $0.id == selected.id })
         }
         if groups.isEmpty {
             statusLabel.text = allEntries.isEmpty ? "还没有日记" : "还没有带位置的日记"
@@ -447,21 +455,18 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             located: located, unlocated: unlocated, generation: generation)
     }
 
-    /// 地理编码缓存键：组键 + 首个区级。作者组查询词依赖区级
-    /// （区级+名 → 裸名 → 区级），只用组键作缓存键时，同名换区后
-    /// 旧坐标会被复用、该组永不重编；他人组键本身就是区级，不用拼。
-    /// 取首个区级与 geocodeCandidates 的取法一致。
+    /// 地理编码缓存键：组 ID 本身。作者组 ID 已含区级
+    /// （名 + 区；只有地点名的组 ID 只有名），同名换区是不同 ID，
+    /// 各自编各自的坐标、旧坐标不再被复用；他人组 ID 本身就是区级。
     private func geocodeCacheKey(for group: BearyLocationMapGroup) -> String {
-        guard viewerIsAuthor else { return group.key }
-        for entry in group.entries {
-            let d = (entry.locationDistrict ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !d.isEmpty { return "\(group.key)|\(d)" }
-        }
-        return group.key
+        return group.id
     }
 
     /// 编码查询词（只活本页内存）：作者组 = 区级+名 → 裸名 → 区级；
     /// 他人组键已是区级，只编一格。
+    /// 分组已按区级拆开（见 BearyLocationMap.groups），组内区级至多一个，
+    /// districts.first 即本组唯一区级——同名换区后每组用自己的区拼查询词，
+    /// 不再只有首个区级能拼、其余区被丢掉。
     private func geocodeCandidates(for group: BearyLocationMapGroup) -> [String] {
         guard viewerIsAuthor else { return [group.key] }
         var seen = Set<String>()
@@ -550,11 +555,14 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     /// 补一批标记（缓存批或单组编出）：只加本批、不清已有标记；
     /// 首批成图时缩放到本批标记，之后批次不再抢用户正在看的区域。
+    /// 大头针带组 ID（P1-6）：title 是展示名，同名不同区的两组
+    /// title 相同，认组不靠 title（见 group(for:)）。
     private func addLocatedAnnotations(_ items: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)]) {
         guard !items.isEmpty else { return }
         var annotations: [MKPointAnnotation] = []
         for item in items {
-            let annotation = MKPointAnnotation()
+            let annotation = DiaryMapAnnotation()
+            annotation.groupId = item.group.id
             annotation.coordinate = item.coordinate
             annotation.title = item.group.key
             annotation.subtitle = "\(item.group.count) 篇"
@@ -574,6 +582,19 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         mapView.removeAnnotations(mapView.annotations)
         addLocatedAnnotations(located)
         tableView.reloadData()
+    }
+
+    /// 按大头针找组：先认 groupId（P1-6 同名换区后展示名可重名，
+    /// title 不再唯一）；无 groupId 的旧式大头针才退到 title 匹配。
+    private func group(for annotation: MKAnnotation) -> BearyLocationMapGroup? {
+        if let pin = annotation as? DiaryMapAnnotation, !pin.groupId.isEmpty,
+           let group = groups.first(where: { $0.id == pin.groupId }) {
+            return group
+        }
+        if let title = annotation.title ?? nil {
+            return groups.first(where: { $0.key == title })
+        }
+        return nil
     }
 
     private func selectGroup(_ group: BearyLocationMapGroup) {
@@ -602,8 +623,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         // 22a：大头针字形（篇数）由 MapKit 绘制、默认白色，落在橙色针体上；
         // 字形色是 App 可控属性，随橙底前景口径改 onBrand 恒墨色。
         marker.glyphTintColor = BearyColors.onBrand
-        if let title = annotation.title ?? nil,
-           let group = groups.first(where: { $0.key == title }) {
+        if let group = group(for: annotation) {
             marker.glyphText = "\(group.count)"
         } else {
             marker.glyphText = nil
@@ -612,8 +632,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     }
 
     func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
-        guard let title = view.annotation?.title ?? nil,
-              let group = groups.first(where: { $0.key == title }) else { return }
+        guard let annotation = view.annotation, let group = group(for: annotation) else { return }
         selectGroup(group)
     }
 
