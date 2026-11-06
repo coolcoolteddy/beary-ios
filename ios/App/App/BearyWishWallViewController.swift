@@ -282,6 +282,13 @@ final class BearyWishWallViewController: UIViewController {
     private var wishes: [BearyAPI.WishItem] = []
     private var rowViews: [Int: WishRowView] = [:]
     private var voteGeneration: [Int: Int] = [:] // 2026-10-29：每条许愿投票代次，旧回包丢弃用；
+    /// R22 #8：每条许愿投票串行化——同一愿望只允许一个投票请求在途
+    /// （voteInFlight），在途时新的点按不发请求，只把最新目标值（绝对票
+    /// 1/-1/0，0 = 取消本票）记进 votePendingTarget；上一请求结束（成功或
+    /// 失败）后立即发出最新目标。代次守卫（voteGeneration）仍保留作兜底。
+    /// 注意：pendingVote 是游客登录待重放意图，与串行化无关，不复用。
+    private var voteInFlight: Set<Int> = []
+    private var votePendingTarget: [Int: Int] = [:]
     /// 审计登录杂项：游客投票时存下的待重放意图（wishId, target），登录成功后补投。
     private var pendingVote: (wishId: Int, target: Int)?
     // 扫 bug 定版第 6 项（点赞同款代次口径）：代次不再只拦过期回包，
@@ -568,13 +575,18 @@ final class BearyWishWallViewController: UIViewController {
 
     private func indexOfWish(_ id: Int) -> Int? { wishes.firstIndex { $0.id == id } }
 
-    /// 投票（扫 bug 定版第 6 项，点赞同款代次口径，取代 109 在途锁）：
+    /// 投票（扫 bug 定版第 6 项，点赞同款代次口径，取代 109 在途锁；
+    /// R22 #8：同一愿望投票请求串行执行）：
     /// 游客走登录页；登录用户每次点按都立即按最后一次点按渲染（选中态 +
-    /// 赞成/反对数点按瞬间就变，不等服务端、不置灰、不禁用票钮），每次点按
-    /// 都发一次绝对值请求（vote: 1/-1/0，0 = 取消本票）；在途请求只带代次，
-    /// 过期回包（含过期失败）直接丢弃，不得覆盖更新的点按态、不得触发回滚；
-    /// 只有最新一代回包生效：成功以服务端计数对齐并刷新确认态，失败回滚到
-    /// 最后确认态（confirmedVote/confirmedUp/confirmedDown）+ 摇头 + toast。
+    /// 赞成/反对数点按瞬间就变，不等服务端、不置灰、不禁用票钮）；同一愿望
+    /// 只允许一个请求在途，在途时的点按只记最新目标值（绝对票 1/-1/0，
+    /// 0 = 取消本票），上一请求结束后立即发出，不再每次点按都发独立请求——
+    /// 服务端按点按顺序处理，最终态与界面最后一次点按一致；过期回包（含过
+    /// 期失败）直接丢弃，不得覆盖更新的点按态、不得触发回滚；只有结算最新
+    /// 点按的回包生效：成功以服务端计数对齐并刷新确认态、播 wishDing，
+    /// 失败回滚到最后确认态（confirmedVote/confirmedUp/confirmedDown）+
+    /// 摇头 + toast。中间态的成功回包（已有更新点按在等）只刷新确认态，
+    /// 不碰界面、不播音效，成败由待发请求的回包决定。
     private func voteTapped(wishId: Int, target: Int) {
         if isGuest {
             // 审计登录杂项：投票前先存待重放意图，登录成功后补投并 toast
@@ -606,14 +618,46 @@ final class BearyWishWallViewController: UIViewController {
         rowViews[wishId]?.configure(item: next, isAdmin: isAdmin)
         // 审计登录杂项：wishDing 不再点按瞬间播（失败才回滚时音效语义与结果
         // 相反），改到服务端成功回包后播放，见下方 success 分支。
+        let sendVote = newVote ?? 0
+        if voteInFlight.contains(wishId) {
+            // R22 #8：在途已有请求时不发新请求，只记最新目标值；界面已按
+            // 本次点按乐观更新，上一请求结束后立即发出最新目标。
+            votePendingTarget[wishId] = sendVote
+            return
+        }
+        sendVoteRequest(wishId: wishId, sendVote: sendVote)
+    }
+
+    /// R22 #8：发出一次投票请求（调用方保证同一愿望无在途请求）。
+    /// 回包结算顺序：先取待发目标并清在途标记——本条已不在列表时也要结算，
+    /// 否则重载后同一条许愿会被脏标记永久拦住；有待发目标时本次回包是中间态，
+    /// 成功只刷新确认态（待发请求失败时回滚到它）、不碰界面、不播音效，
+    /// 失败静默（不回滚、不摇头、不弹 toast），随即发出最新目标；
+    /// 无待发目标时才按原口径结算：成功对齐计数 + 刷新确认态 + 播 wishDing，
+    /// 失败回滚到最后确认态 + 摇头 + toast。
+    private func sendVoteRequest(wishId: Int, sendVote: Int) {
+        voteInFlight.insert(wishId)
         voteGeneration[wishId, default: 0] += 1
         let gen = voteGeneration[wishId] ?? 0
-        let sendVote = newVote ?? 0
         BearyAPI.shared.voteWish(id: wishId, vote: sendVote) { [weak self] result in
             DispatchQueue.main.async {
-                // 代次守卫（点赞 likeSeq 同款）：已有更新点按时过期回包直接丢弃，
+                guard let self = self else { return }
+                // 代次守卫（点赞 likeSeq 同款）：已有更新请求时过期回包直接丢弃，
                 // 不回滚、不摇头、不弹 toast，屏幕只反映最后一次点按。
-                guard let self = self, let idx = self.indexOfWish(wishId), self.voteGeneration[wishId] == gen else { return }
+                guard self.voteGeneration[wishId] == gen else { return }
+                let pending = self.votePendingTarget.removeValue(forKey: wishId)
+                self.voteInFlight.remove(wishId)
+                if let pending = pending {
+                    if case .success(let resp) = result {
+                        self.confirmedSeeded.insert(wishId)
+                        self.confirmedVote[wishId] = resp.myVote
+                        self.confirmedUp[wishId] = resp.up ?? self.confirmedUp[wishId] ?? 0
+                        self.confirmedDown[wishId] = resp.down ?? self.confirmedDown[wishId] ?? 0
+                    }
+                    self.sendVoteRequest(wishId: wishId, sendVote: pending)
+                    return
+                }
+                guard let idx = self.indexOfWish(wishId) else { return }
                 switch result {
                 case .success(let resp):
                     // 审计登录杂项：成功音只在服务端成功回包后播。
