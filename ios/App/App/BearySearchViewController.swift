@@ -174,10 +174,17 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var userButtons: [UIButton] = []
     private var rowUsers: [SearchUser] = []
     /// 好友第一期（关注/回关模型）：搜索用户行紧凑版状态机（关注/已关注/
-    /// 回关/互关）。状态按行实时调 state 接口取（不靠缓存）；失败时行内钮
-    /// 保持“关注”占位但点按只 toast、不发请求（不把失败画成可关注的确定态，
-    /// 点按时若状态仍为空即提示加载中并重拉）。
+    /// 回关/互关）。状态按行实时调 state 接口取（不靠缓存）；状态未到时
+    /// 行内钮画与按钮同宽同形的灰色圆角骨架块且不可点（r29-10，不再用可点
+    /// 「关注」冒充未知态，不用转圈、不用「加载中」文字）；读失败画「重试」，
+    /// 点按重拉。
     private var followStates: [Int: BearyFollowState] = [:]
+    /// r29-10：关注状态读失败的行（followStates 仍缺失）——按钮画「重试」，
+    /// 点按重拉；重发/成功/清表后清除，不把失败画成确定态。
+    private var followStateFailedIds: Set<Int> = []
+    /// r29-10：骨架态定高约束（按钮无文案时按字号算高，下限 28；离开骨架态
+    /// 即撤掉，行重建/清表时随表清空）。
+    private var followButtonSkeletonHeightConstraints: [Int: NSLayoutConstraint] = [:]
     private var followStateLoadingIds: Set<Int> = []
     /// S5：关注状态请求排队——建行时不再立即请求；可见行（+下一屏）优先，
     /// 其余排队；同时在途上限 3。结果区失效时待办整批丢弃（见 clearResultRows）。
@@ -507,6 +514,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         if followButtonMeasuredCategory != traitCollection.preferredContentSizeCategory {
             for button in followButtonsByUserId.values {
                 applyFollowButtonFixedWidth(button)
+                // r29-10：骨架态高度随字号档重算，态变不跳高。
+                if let userId = followButtonUserIds[button], followStates[userId] == nil, !followStateFailedIds.contains(userId) {
+                    setFollowButtonSkeletonHeight(button, userId: userId, show: true)
+                }
             }
         }
     }
@@ -1615,6 +1626,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         followButtonUserIds = [:]
         followButtonsByUserId = [:]
         followStates = [:]
+        followStateFailedIds = []
+        followButtonSkeletonHeightConstraints = [:]
         followStateLoadingIds = []
         // S5：结果区失效时取消待办——排队的关注状态请求整批丢弃；
         // 在途请求无取消句柄，回包由 searchSeq/账号代次守卫丢弃。
@@ -2148,7 +2161,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         row.accessibilityLabel = "用户：" + displayName
         // 好友第一期：紧凑版状态机钮（仅登录、非本人、未拉黑时出现；游客/本人/
         // 拉黑无钮；按钮是行内独立 UIControl，点按不触发整行点按）。状态未到
-        // 前先画“关注”占位，点按时若状态仍为空只提示、不发请求。
+        // 前画与按钮同宽同形的灰色圆角骨架块且不可点（r29-10），读失败画「重试」点按重拉。
         if let myId = SessionManager.shared.currentUser?.id, let userId = user.id, userId != myId, !isBlockedForSearch(userId: userId) {
             // 审计：关注钮视觉高约 28 不变，热区用 Hit44 扩到 44。
             let followButton = BearyHit44Button(type: .system)
@@ -2413,6 +2426,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     @objc private func handleFollowChangedNotification(_ note: Notification) {
         // 别处回关/取关后，当前结果行的状态缓存作废、按行重拉（不靠旧状态）。
         followStates = [:]
+        followStateFailedIds = []
         refreshFollowButtons()
     }
 
@@ -2459,6 +2473,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         guard SessionManager.shared.currentUser?.id != nil else { return }
         followStateLoadingIds.insert(userId)
         followStateInFlightCount += 1
+        // r29-10：重发即清失败标记，按钮回到骨架态。
+        followStateFailedIds.remove(userId)
+        if let button = followButtonsByUserId[userId] {
+            applyFollowButtonState(button, userId: userId)
+        }
         // 账号/搜索代次在发出时捕获：搜索已换批、已切号、行已摘除时，
         // 旧回包直接丢弃，不写 followStates、不碰按钮。
         // fetchFollowState 无取消句柄，在途请求只能靠这道守卫失效，
@@ -2482,9 +2501,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                     if let button = self.followButtonsByUserId[userId] {
                         self.applyFollowButtonState(button, userId: userId)
                     }
+                } else {
+                    // r29-10：读失败时状态保持缺失（不画成确定态），记失败，
+                    // 按钮改画「重试」，点按重拉。
+                    self.followStateFailedIds.insert(userId)
+                    if let button = self.followButtonsByUserId[userId] {
+                        self.applyFollowButtonState(button, userId: userId)
+                    }
                 }
-                // 失败时状态保持缺失：按钮仍是“关注”占位，点按只提示并重拉，
-                // 不把失败画成确定态。
                 self.pumpFollowStateQueue()
             }
         }
@@ -2525,8 +2549,60 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
     }
 
+    /// r29-10：骨架态定高——按钮无文案时无内在高度，按当前字号行高＋上下
+    /// 内边距算高，下限 28（与建行时的 height >= 28 同值），骨架与确认态
+    /// 之间不跳高；字号档变了重算（见 traitCollectionDidChange）。
+    private func setFollowButtonSkeletonHeight(_ button: UIButton, userId: Int, show: Bool) {
+        guard show else {
+            if let constraint = followButtonSkeletonHeightConstraints[userId] {
+                constraint.isActive = false
+                followButtonSkeletonHeightConstraints[userId] = nil
+            }
+            return
+        }
+        let font = button.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        let height = max(28, ceil(font.lineHeight) + button.contentEdgeInsets.top + button.contentEdgeInsets.bottom)
+        if let constraint = followButtonSkeletonHeightConstraints[userId],
+           constraint.firstItem as? UIButton == button {
+            constraint.constant = height
+        } else {
+            // 旧约束属于已摘除的行（复用重渲丢行时不同步清表，见
+            // syncResultRowsReuse；宽约束字典同款），丢弃旧约束、按新按钮重建。
+            followButtonSkeletonHeightConstraints[userId]?.isActive = false
+            let constraint = button.heightAnchor.constraint(equalToConstant: height)
+            constraint.isActive = true
+            followButtonSkeletonHeightConstraints[userId] = constraint
+        }
+    }
+
     private func applyFollowButtonState(_ button: UIButton, userId: Int) {
-        let state = followStates[userId] ?? .none
+        guard let state = followStates[userId] else {
+            // r29-10：未知态不再画成可点「关注」——读失败画「重试」（可点重拉），
+            // 其余画与按钮同宽同形的灰色圆角骨架块（静态，无转圈、无文字），
+            // 按钮 disabled，不弹 toast、不发关注请求。
+            setFollowButtonSkeletonHeight(button, userId: userId, show: !followStateFailedIds.contains(userId))
+            if followStateFailedIds.contains(userId) {
+                button.backgroundColor = .clear
+                button.setImage(nil, for: .normal)
+                button.setTitle("重试", for: .normal)
+                button.accessibilityLabel = "关注状态加载失败，点按重试"
+                button.isEnabled = true
+                button.isAccessibilityElement = true
+                button.alpha = 1
+            } else {
+                button.backgroundColor = BearyColors.line
+                button.setImage(nil, for: .normal)
+                button.setTitle(nil, for: .normal)
+                button.accessibilityLabel = nil
+                button.isEnabled = false
+                button.isAccessibilityElement = false
+                button.alpha = 1
+            }
+            return
+        }
+        setFollowButtonSkeletonHeight(button, userId: userId, show: false)
+        button.backgroundColor = .clear
+        button.isAccessibilityElement = true
         switch state {
         case .none:
             button.setImage(BearyIconImages.image(named: "icon_user_plus", pointSize: 13), for: .normal)
@@ -2558,8 +2634,17 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     @objc private func followButtonTapped(_ sender: UIButton) {
         guard let userId = followButtonUserIds[sender] else { return }
         guard let state = followStates[userId] else {
-            BearyToast.show(in: view, message: "关注状态加载中，稍后再试")
-            loadFollowState(userId: userId)
+            if followStateFailedIds.contains(userId) {
+                // r29-10：失败态点「重试」直接重拉，不弹 toast；
+                // 重拉即回到骨架态。
+                followStateFailedIds.remove(userId)
+                loadFollowState(userId: userId)
+                applyFollowButtonState(sender, userId: userId)
+            } else {
+                // 骨架态按钮已 disabled，此处只作兜底：静默重拉，不弹 toast、
+                // 不发关注请求。
+                loadFollowState(userId: userId)
+            }
             return
         }
         switch state {
@@ -2641,6 +2726,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             (nil, "已关注"),
             ("icon_user_plus", "回关"),
             ("icon_user_check", "互关"),
+            // r29-10：失败态「重试」同钉宽度，态变不顶名字行、不闪没；
+            // 骨架态无文案，与按钮同宽（定宽约束不变）。
+            (nil, "重试"),
         ]
         for config in states {
             var width = button.contentEdgeInsets.left + button.contentEdgeInsets.right
