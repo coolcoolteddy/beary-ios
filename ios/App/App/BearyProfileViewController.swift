@@ -540,11 +540,13 @@ class BearyProfileViewController: UIViewController {
         BearyAPI.shared.fetchEntries(scope: .author(authorId), limit: 50, before: lastCreated, beforeId: lastId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
-                strongSelf.photoOverflowFetching = false
                 // 第三轮第 4 项：基础已变（新一轮 sync 清过溢出页）时旧请求回包
                 // 直接丢弃，不再 append＋refreshFooter 写进新轮；现算签名比对，
                 // 不依赖存量（sync 未来得及跑时同样拦得住）。
+                // r24-#4：先验签名再清锁——旧回包若先清锁，会提前解除新请求
+                // 在途的加载锁，导致重复分页请求；签名不符直接丢弃、锁留给新请求。
                 guard baseSignature == strongSelf.photoWallBaseSignature() else { return }
+                strongSelf.photoOverflowFetching = false
                 switch result {
                 case .success(let listValue):
                     let fresh = listValue.entries ?? []
