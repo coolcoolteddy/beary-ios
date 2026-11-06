@@ -66,7 +66,10 @@ enum BearySoundPlayer {
 
     /// 审计动效组：启动时调用（见 AppDelegate），后台解码全部 11 音；
     /// 与 play 内的 schedulePrewarmIfNeeded 共用一次门控，重复调用无额外开销。
+    /// 第三轮审计 14：音效关闭时不排预热（门控在这里，任何调用点都安全）；
+    /// 用户重新开启音效时由开关回调再调一次（一次门控尚未消耗，仍可调度）。
     static func prewarmAll() {
+        guard isEnabled else { return }
         schedulePrewarmIfNeeded()
     }
 

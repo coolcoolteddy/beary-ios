@@ -238,6 +238,11 @@ final class BearySettingsViewController: UIViewController {
     /// /me 代次：切换账号成功时 +1 作废旧请求，旧回包凭代次丢弃，
     /// 不再把旧账号写回 ID 卡（旧请求发在切换前，回包体仍是旧账号）。
     private var meLoadGeneration = 0
+    /// 第三轮审计 13：Plus/设备列表已请求代次——同一次页面加载（同一
+    /// meLoadGeneration）各只请求一次，第二轮调用直接跳过；重进页/切号
+    /// 时 meLoadGeneration 递增，自然重拉。
+    private var plusDetailRequestedGeneration = -1
+    private var sessionsRequestedGeneration = -1
     /// 切换账号卡容器（buildAccountSwitchSection 建，refreshAccountSwitchSection
     /// 重建卡片；登录态无关的通用/隐私组不受影响）。
     private let accountSwitchWrap = UIView()
@@ -2218,7 +2223,12 @@ final class BearySettingsViewController: UIViewController {
     // C4：fillAccountRows 已随旧账户组删除（显示名称 / 用户名 / 邮箱 /
     // 注册时间四行不再渲染；ID 卡 fillIdCard 仍呈现名 / 邮箱 / 注册时间 / 会员）。
 
-    private func loadPlusDetail() {
+    private func loadPlusDetail(force: Bool = false) {
+        // 第三轮审计 13：同一代次内只请求一次（loadAll 缓存路径里 /me 成功
+        // 后的第二轮调用直接跳过，第二轮不依赖 /me 的任何字段）；force 供
+        // 明确变更后的刷新用。
+        guard force || plusDetailRequestedGeneration != meLoadGeneration else { return }
+        plusDetailRequestedGeneration = meLoadGeneration
         // 静默刷新：已有旧值时不先清标签/发放行，新值到了再覆盖；
         // 首拉（plusDetail 为 nil）才走现行置“–”+ 空发放态。
         if plusDetail == nil {
@@ -2320,7 +2330,11 @@ final class BearySettingsViewController: UIViewController {
         grantsLoadFailed = failed
     }
 
-    private func loadSessions() {
+    private func loadSessions(force: Bool = false) {
+        // 第三轮审计 13：与 loadPlusDetail 同款——同一代次内只请求一次；
+        // 退出其他设备成功后的刷新走 force: true。
+        guard force || sessionsRequestedGeneration != meLoadGeneration else { return }
+        sessionsRequestedGeneration = meLoadGeneration
         // 首拉前不再预先 rebuildSessions(nil)：空标签只在拉取返回空后出现，
         // 失败态只在拉取失败后出现（现行失败分支不动）；静默刷新不再先清旧内容。
         BearyAPI.shared.fetchAccountSessions { [weak self] result in
@@ -2402,7 +2416,7 @@ final class BearySettingsViewController: UIViewController {
                 switch result {
                 case .success:
                     self.showToast("已退出其他设备")
-                    self.loadSessions()
+                    self.loadSessions(force: true)
                 case .failure(let error):
                     if case .unauthorized = error {
                         self.onRequireLogin?()
@@ -3102,6 +3116,9 @@ final class BearySettingsViewController: UIViewController {
     private var dmLevel: String?
     private var dmLevelLoading = false
     private var dmLevelPosting = false
+    /// 第三轮审计 02：私信档位本地修改代次——保存时 +1，GET 回包先校验代次，
+    /// 晚到的旧 GET 不得覆写已保存的新档位。
+    private var dmLevelGeneration = 0
 
     private func buildPrivacySection() {
         let privacyDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
@@ -3149,10 +3166,13 @@ final class BearySettingsViewController: UIViewController {
     @objc private func refreshDMLevelRow() {
         guard SessionManager.shared.isLoggedIn, !dmLevelLoading else { return }
         dmLevelLoading = true
+        // 第三轮审计 02：记下发出时的代次；保存已递增代次时，晚到回包直接丢弃。
+        let generation = dmLevelGeneration
         BearyAPI.shared.fetchDMLevel { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.dmLevelLoading = false
+                guard generation == self.dmLevelGeneration else { return }
                 switch result {
                 case .success(let resp):
                     if let level = resp.dmLevel {
@@ -3205,6 +3225,12 @@ final class BearySettingsViewController: UIViewController {
         guard level != dmLevel, !dmLevelPosting, SessionManager.shared.isLoggedIn else { return }
         dmLevelPosting = true
         dmLevelRowButton?.isEnabled = false
+        // 第三轮审计 02：乐观更新——先显新档位并递增代次，此前在途的 GET
+        // 回包失效；保存失败才回滚并反馈（摇头＋toast）。
+        let previousLevel = dmLevel
+        dmLevel = level
+        dmLevelDetailLabel?.text = dmLevelText(level)
+        dmLevelGeneration += 1
         BearyAPI.shared.saveDMLevel(level) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -3216,10 +3242,29 @@ final class BearySettingsViewController: UIViewController {
                     self.dmLevel = saved
                     self.dmLevelDetailLabel?.text = self.dmLevelText(saved)
                 case .failure:
+                    self.dmLevel = previousLevel
+                    self.dmLevelDetailLabel?.text = previousLevel.map { self.dmLevelText($0) } ?? "获取失败，点按重试"
+                    if let button = self.dmLevelRowButton {
+                        self.playDenyShake(on: button)
+                    }
                     self.showToast("保存失败，请重试")
                 }
             }
         }
+    }
+
+    /// 保存失败拒绝动效（详情页同款：摇头＋warning 震动＋拒绝音效；
+    /// 减动效时只跳过视觉抖动，震动与音效照常给）。
+    private func playDenyShake(on button: UIButton) {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+        if UIAccessibility.isReduceMotionEnabled { return }
+        button.layer.removeAnimation(forKey: "bearySettingsDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = 0.4
+        button.layer.add(shake, forKey: "bearySettingsDenyShake")
     }
 
     /// 设置页点出新页的统一呈现口（117 终态偏离兜底，公共路径修法）：
@@ -3304,6 +3349,11 @@ final class BearySettingsViewController: UIViewController {
 
     @objc private func soundSwitchValueChanged(_ sender: UISwitch) {
         UserDefaults.standard.set(sender.isOn, forKey: BearySoundPlayer.enabledDefaultsKey)
+        // 第三轮审计 14：重新开启音效时补一次预热（启动时因关闭而跳过时，
+        // 一次门控尚未消耗；已预热过时本调用是空操作）。
+        if sender.isOn {
+            BearySoundPlayer.prewarmAll()
+        }
     }
 
     /// 2026-10-31 冷启动锁开关：先验身份再写档。开启/关闭都要验一次
