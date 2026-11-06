@@ -198,6 +198,15 @@ final class BearyMessagesViewController: UIViewController {
         // 但高度上报机制退役：容器不再设 onContentHeightChanged。
         notifChild.setEmbedded()
         notifChild.applyHeaderTopInset(visible: false)
+        // A5：合并模式子页 view 不进层级（见下 addChild 处），自身
+        // view.window 恒为 nil，通知轮询的可见门控永远判 false、每 60 秒
+        // 死在守卫处；宿主把自己的实际可见状态供过去（进窗口且未隐藏，
+        // 与容器切 tab 只改 isHidden 的口径一致），合并消息页停在屏上时
+        // 轮询正常跑；独立通知页不设本属性，不受影响。
+        notifChild.hostVisibilityProvider = { [weak self] in
+            guard let self = self, self.isViewLoaded else { return false }
+            return self.view.window != nil && !self.view.isHidden
+        }
 
         // 私信组接线与会话列表页同口径；嵌入态无返回钮、组头顶栏已在子页内折叠。
         conversationsChild.onRequireLogin = { [weak self] in self?.onRequireLogin?() }
