@@ -37,6 +37,12 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     private var conversations: [BearyAPI.DMConversation] = []
     fileprivate var loading = false
     private var needsReloadAfterUserChange = false
+    /// 第 7 轮 #1：磁盘快照加载代次——userChanged() 切号时 +1，使切号前
+    /// 已发起、尚在磁盘 IO 路上的旧快照回调失效（只凭账号 ID 不够：
+    /// 快照回调原先只查快照非空 + 当前列表为空，切号途中旧号快照
+    /// 会闪进新号页面；另与 BearyAPI.authEpoch 双重守卫，见
+    /// loadConversationsSnapshot）。
+    private var conversationsSnapshotGeneration = 0
     private var loadFailed = false
     // 第 7 轮属实项 6：已有内容时刷新失败的非阻断提示条。只在
     // loadFailed && !conversations.isEmpty 时显（空列表仍走居中空态文案，
@@ -274,6 +280,9 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     }
 
     @objc private func userChanged() {
+        // 第 7 轮 #1：切号即让在途旧快照请求失效（代次 +1；快照回调
+        // 凭代次丢弃，不再把旧号会话贴进新号页面）。
+        conversationsSnapshotGeneration += 1
         // 账号切换：旧号会话不得残留。先清表再重拉；在途旧号请求回包凭
         // 请求时账号丢弃（见 load），在途时新号重拉挂起、旧回包到后补发。
         if SessionManager.shared.isLoggedIn {
@@ -305,9 +314,18 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     /// （与广场 BearyFeedCache 同口径）。只补空槽，网络已回包时不用旧快照回写。
     private func loadConversationsSnapshot() {
         guard let uid = SessionManager.shared.currentUser?.id else { return }
+        // 第 7 轮 #1：发起时捕获账号 ID 与加载代次（本页快照代次 +
+        // BearyAPI.authEpoch）：磁盘 IO 在后台队列，回包时任一已变
+        // 即说明其间切过号，旧快照直接丢弃；只查“快照非空 + 列表
+        // 为空”的旧口径会在切号途中把旧号会话闪进新号页面。
+        let snapshotGeneration = conversationsSnapshotGeneration
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyDMConversationsCache.load(bucket: "\(uid)") { [weak self] snap in
             guard let self = self, let snap = snap, !snap.conversations.isEmpty else { return }
             guard self.conversations.isEmpty else { return }
+            guard SessionManager.shared.currentUser?.id == uid,
+                  snapshotGeneration == self.conversationsSnapshotGeneration,
+                  requestEpoch == BearyAPI.shared.authEpoch else { return }
             self.conversations = BearyDMStore.mergedConversations(server: snap.conversations, accountId: uid)
             // 快照已显内容：首拉转圈遮层随即收起，不再盖住旧会话等网络回包。
             self.firstLoadStateView.isHidden = true
