@@ -327,6 +327,9 @@ class BearyProfileViewController: UIViewController {
     /// 标记按代次去重：首屏 viewDidLoad 先起、资料回包到达时不再重起；
     /// 下拉刷新调 loadProfile 即换代次，回包仍正常重起。
     private var profileLoadCycle = 0
+    /// R23-#2：磁盘快照加载代次——每次 loadProfileSnapshot 自增；切号时
+    /// handleProfileUserChanged 再 +1，使在途旧快照回包失效。
+    private var profileSnapshotGeneration = 0
     private var nightPatrolStartedCycle: Int?
     private var nightPatrolLoading = false
     /// 10 项补起：本轮已用掉的夜巡自动补拉代次——每轮资料加载（profileLoadCycle）
@@ -2052,6 +2055,7 @@ class BearyProfileViewController: UIViewController {
         // 审计-个人页设置：补注销 bearyFriendsChanged（viewDidLoad 注册、
         // 此前 deinit 漏注销；广播到达已释放实例不再投递）。
         NotificationCenter.default.removeObserver(self, name: .bearyFriendsChanged, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .bearyUserDidChange, object: nil)
     }
 
     override func viewDidLoad() {
@@ -2075,6 +2079,8 @@ class BearyProfileViewController: UIViewController {
         // 好友第一期：别处接受/删友后，本页关系态与日记列表同步重拉（断友后
         // 对方仅好友篇立即消失，不靠旧缓存）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleFollowChangedNotification(_:)), name: .bearyFriendsChanged, object: nil)
+        // R23-#2：账号切换时清旧页面模型、在途快照失效（见 handleProfileUserChanged）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleProfileUserChanged), name: .bearyUserDidChange, object: nil)
         if selfGate && viewerUserIdValue == nil {
             // U7：二选一取“只铺页脚”：不拉任何本人数据、不直接弹登录，
             // 弹登录交给页脚“去登录”按钮（loginButtonTapped → onRequireLogin）。
@@ -5481,13 +5487,30 @@ class BearyProfileViewController: UIViewController {
 
     private func loadProfileSnapshot() {
         guard let bucket = profileCacheBucket() else { return }
+        // R23-#2：发起时捕获会话账号、目标主页 id 与加载代次；快照本身
+        // 亦带 accountId（落盘时按桶盖戳）。回包三核对缺一即丢弃，迟到
+        // 的旧账号快照绝不占新账号的空槽（见 applyProfileSnapshot）。
+        let accountId = SessionManager.shared.currentUser?.id
+        let targetId = profile?.profileIdValue ?? targetUserIdValue
+        profileSnapshotGeneration += 1
+        let generation = profileSnapshotGeneration
         BearyProfileCache.load(bucket: bucket) { [weak self] snap in
             guard let self = self, let snap = snap else { return }
-            self.applyProfileSnapshot(snap)
+            self.applyProfileSnapshot(snap, accountId: accountId, targetId: targetId, generation: generation)
         }
     }
 
-    private func applyProfileSnapshot(_ snap: BearyProfileCache.Snapshot) {
+    private func applyProfileSnapshot(_ snap: BearyProfileCache.Snapshot, accountId: Int?, targetId: Int?, generation: Int) {
+        // R23-#2：应用前核对——① 代次仍最新（切号/重发即失效）；② 快照
+        // 所属账号 == 发起时会话账号 == 当前会话账号；③ 快照所属账号 ==
+        // 发起时目标 id == 当前目标 id。旧文件无 accountId（nil）按不可信
+        // 丢弃，下次落盘即盖戳，冷启动多一次网络拉取而已。
+        guard generation == profileSnapshotGeneration else { return }
+        guard let snapAccountId = snap.accountId,
+              snapAccountId == accountId,
+              snapAccountId == SessionManager.shared.currentUser?.id,
+              snapAccountId == targetId,
+              snapAccountId == (profile?.profileIdValue ?? targetUserIdValue) else { return }
         guard isOwnProfile, !profileDeleted else { return }
         var didApply = false
         if diaryEntries.isEmpty, !snap.diary.isEmpty {
@@ -5509,6 +5532,30 @@ class BearyProfileViewController: UIViewController {
         guard didApply else { return }
         tableView.reloadData()
         refreshFooter()
+    }
+
+    /// R23-#2：账号切换——在途快照由代次失效；旧页面模型立即清掉。
+    /// 本人页清三列表 + hasMore；他人页的日记/赞过属目标作者仍有效，
+    /// 只清观看者自己的收藏 tab。当前 tab 为日记/赞过时按新身份重拉
+    /// （服务端按新会话过滤可见性）；收藏 tab 属观看者本人，不重拉进
+    /// 旧页。非当前 tab 切过去时由 switchTab 的既有加载路径拉取。
+    @objc private func handleProfileUserChanged() {
+        guard isViewLoaded else { return }
+        profileSnapshotGeneration += 1
+        let wasOwn = isOwnProfile
+        if wasOwn {
+            diaryEntries = []
+            likedEntries = []
+            diaryHasMore = true
+            likedHasMore = true
+        }
+        savedEntries = []
+        savedHasMore = true
+        tableView.reloadData()
+        refreshFooter()
+        if wasOwn, currentTab != .saved {
+            loadTab(forceReload: true)
+        }
     }
 
     private func scopeForTab(tab: ProfileTab) -> BearyAPI.Scope? {
@@ -8926,6 +8973,9 @@ enum BearyProfileCache {
 
     struct Snapshot: Codable {
         var savedAt: TimeInterval
+        /// R23-#2：快照所属账号（落盘时按桶盖戳）。旧文件无此键时解码为
+        /// nil，按不可信丢弃（见 applyProfileSnapshot）。
+        var accountId: Int? = nil
         var diary: [Entry]
         var liked: [Entry]
         var saved: [Entry]
@@ -8989,6 +9039,9 @@ enum BearyProfileCache {
                 snap = Snapshot(savedAt: Date().timeIntervalSince1970, diary: [], liked: [], saved: [], diaryHasMore: false, likedHasMore: false, savedHasMore: false)
             }
             snap.savedAt = Date().timeIntervalSince1970
+            // R23-#2：落盘即按桶盖戳所属账号；桶恒为 "\(uid)"，非数字桶
+            // 盖 nil，快照随后按不可信丢弃（fail-closed）。
+            snap.accountId = Int(bucket)
             switch tab {
             case .diary: snap.diary = capped; snap.diaryHasMore = storedHasMore
             case .liked: snap.liked = capped; snap.likedHasMore = storedHasMore
