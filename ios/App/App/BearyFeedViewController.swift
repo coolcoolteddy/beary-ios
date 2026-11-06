@@ -2385,6 +2385,12 @@ class BearyFeedViewController: UIViewController {
                 sheet.addAction(UIAlertAction(title: "编辑内容", style: .default) { [weak self] _ in
                     self?.onEditEntry?(entry)
                 })
+            } else {
+                // r29-11：过期（或 editDeadline 缺失即已锁）时编辑项不再直接消失，
+                // 与详情页同口径，置灰并附说明。
+                let expiredEdit = UIAlertAction(title: "编辑（已超 15 分钟不可编辑）", style: .default, handler: nil)
+                expiredEdit.isEnabled = false
+                sheet.addAction(expiredEdit)
             }
             sheet.addAction(UIAlertAction(title: "修改权限", style: .default) { [weak self] _ in
                 self?.handleVisibilityToggle(entryId: entry.id ?? "")
