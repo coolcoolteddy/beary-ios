@@ -324,13 +324,24 @@ enum BearyDraftStore {
     /// 清除损坏的 v3 草稿库（草稿箱读取失败态专用）：仅当 lastLoadError 为
     /// corruptStore 时删当前账号的 v3 文件；.bak 备份文件一律不动；删后
     /// lastLoadError 清零，后续读取回到空态（无文件 → 无旧源 → 空数组）。
-    /// false = 非损坏态（拒绝删，防误删健康库）或删文件失败。
+    /// 审计四轮 05：删前复核入队时那次诊断——账号、文件 URL、指纹、代次四项
+    /// 须与当前诊断一致，且磁盘上的文件指纹仍与诊断时相同；任一不符都拒绝删
+    /// （诊断过期、文件已被重写或账号已切时都不删，失败关闭）。
+    /// false = 非损坏态（拒绝删，防误删健康库）或复核不符或删文件失败。
     static func clearCorruptStoreAsync(completion: @escaping (Bool) -> Void) {
         let accountId = currentAccountId
+        // 入队时拍下诊断快照；队列内只认这份快照仍是最新诊断，防别路读取改写标志后误删。
+        let diagnosisAtEnqueue = lastLoadError
         ioQueue.async {
             var ok = false
-            if let err = lastLoadError, case .corruptStore(_) = err,
-               let url = fileURL(for: accountId) {
+            if let err = diagnosisAtEnqueue,
+               case let .corruptStore(_, errAccountId, errFileURL, errFingerprint, errGeneration) = err,
+               errAccountId == accountId,
+               let url = fileURL(for: accountId), url == errFileURL,
+               let currentErr = lastLoadError,
+               case let .corruptStore(_, _, _, _, currentGeneration) = currentErr,
+               currentGeneration == errGeneration,
+               let fingerprint = errFingerprint, fingerprint == fileFingerprint(at: url) {
                 if FileManager.default.fileExists(atPath: url.path) {
                     ok = (try? FileManager.default.removeItem(at: url)) != nil
                 } else {
@@ -499,7 +510,9 @@ enum BearyDraftStore {
     /// G4：草稿库读取失败类型。文件不存在不是错误（首启即无文件），
     /// 只有文件存在却读不出/解不出才算失败，且绝不以空数组冒充无草稿。
     enum LoadError: Error {
-        case corruptStore(backupURL: URL?)
+        /// 损坏诊断（审计四轮 05）：只记备份地址不够——清库前须复核当时那份文件，
+        /// 故同时绑定诊断时的账号、文件 URL、文件指纹（大小＋修改时间）与读取代次。
+        case corruptStore(backupURL: URL?, accountId: Int?, fileURL: URL?, fingerprint: String?, generation: Int)
         case legacyCorrupt(backupURL: URL?)
     }
 
@@ -509,6 +522,20 @@ enum BearyDraftStore {
     /// 不得出“暂无草稿”空态；或直接改用 loadAllResult()（见 G4 交接说明）。
     private(set) static var lastLoadError: LoadError?
 
+    /// 审计四轮 05：读取代次——每次 loadAllResult(forAccount:) 调用 +1，损坏诊断
+    /// 里记下当时代次；清除时复核诊断仍是最新一次读取留下的，旧诊断删不了新文件。
+    private static var loadGeneration = 0
+
+    /// 文件指纹（大小＋修改时间）：诊断时拍下，清除前重算比对——文件被重写过
+    /// （如已恢复写入健康内容）就指纹不符，拒绝删除。读不到属性时返回 nil，
+    /// 清除侧一律按无法复核处理。
+    private static func fileFingerprint(at url: URL) -> String? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? NSNumber,
+              let mtime = attrs[.modificationDate] as? Date else { return nil }
+        return "\(size.intValue)-\(mtime.timeIntervalSince1970)"
+    }
+
     /// 读全部（带失败区分）：v3 文件优先（updatedAt 倒序）；无 v3 时走一次旧数据迁移。
     /// 启动时首次读取即触发迁移，调用方无需另调迁移入口。
     /// v3 文件存在却读不出/解不出时：原文件保留不动、另存一份备份、返回失败；
@@ -517,11 +544,14 @@ enum BearyDraftStore {
         return loadAllResult(forAccount: currentAccountId)
     }
 
-    /// 捕获账号版读库（后台写任务专用）：读路径与归一化一律用捕获账号，
+    /// 捕获账号版读库（后台写任务与草稿箱读取专用）：读路径与归一化一律用捕获账号，
     /// 执行中不再重读 currentAccountId；迁移判定逻辑本身与读路径版一致
     /// （v3 优先、无 v3 走旧源迁移、损坏保原文件并返回失败）。
     /// 读路径 loadAll/loadAllResult() 保持现行语义（读当前账号），不受影响。
-    private static func loadAllResult(forAccount accountId: Int?) -> Result<[BearyDraft], LoadError> {
+    /// 审计四轮 06：草稿箱 loadDrafts 用本函数传捕获账号，不再读执行时刻的当前账号。
+    static func loadAllResult(forAccount accountId: Int?) -> Result<[BearyDraft], LoadError> {
+        // 审计四轮 05：每次读取代次 +1，损坏诊断记当时代次，供清除时复核。
+        loadGeneration += 1
         // 账号隔离 1 号：未登录不读任何账号文件（也不触发 v2/v1 迁移，
         // 迁移只在登录后的账号分桶里发生）。此处判的是入队时捕获的账号：
         // 入队时未登录则写任务按失败处理（见 save/delete 捕获版），不因
@@ -561,7 +591,8 @@ enum BearyDraftStore {
             }
             let backup = backupCorruptFile(at: url)
             NSLog("[BearyDraft] corrupt v3 store, original kept")
-            let err = LoadError.corruptStore(backupURL: backup)
+            // 审计四轮 05：诊断绑定账号＋文件＋指纹＋代次，供清除时复核。
+            let err = LoadError.corruptStore(backupURL: backup, accountId: accountId, fileURL: url, fingerprint: fileFingerprint(at: url), generation: loadGeneration)
             lastLoadError = err
             return .failure(err)
         }
@@ -578,7 +609,7 @@ enum BearyDraftStore {
             }
             let backup = backupCorruptFile(at: legacyURL)
             NSLog("[BearyDraft] corrupt legacy global v3 store, original kept")
-            let err = LoadError.corruptStore(backupURL: backup)
+            let err = LoadError.corruptStore(backupURL: backup, accountId: accountId, fileURL: legacyURL, fingerprint: fileFingerprint(at: legacyURL), generation: loadGeneration)
             lastLoadError = err
             return .failure(err)
         }

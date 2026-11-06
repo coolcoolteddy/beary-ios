@@ -525,6 +525,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     //（#219 只覆盖打字时、长草稿光标在末尾进页拉回故意不执行那 case 本就未解决；
     // 本批不修可见性、直接去掉标题行根除该问题，进页聚焦默认只走正文）。
     private var draftTimer: Timer?
+    /// 审计四轮 07：切后台冲刷用的后台任务句柄；.invalid = 未持有任务。
+    private var backgroundDraftTask: UIBackgroundTaskIdentifier = .invalid
+    /// 审计四轮 07：上次后台冲刷时的编辑版本——版本未变说明冲刷后无新输入，
+    /// willResignActive 与 didEnterBackground 两次触发只存一次，不重复写盘。
+    private var lastBackgroundFlushVersion = -1
     private var editTimer: Timer?
     private var imageItems: [ComposerImageItem] = [] {
         didSet { editorEditVersion += 1 }
@@ -895,6 +900,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        // 审计四轮 07：失活/入后台时冲刷未落盘的草稿——防抖只有 400ms 窗口，
+        // 进程若在窗口内被终止，最后输入会丢。deinit 已统一 removeObserver。
+        NotificationCenter.default.addObserver(self, selector: #selector(flushDraftBeforeBackground), name: UIApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(flushDraftBeforeBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NSLog("[Diag] composer-viewDidLoad-exit")
         // 临时诊断（81 包，定根因后删除）。
         DiagFile.mark("viewDidLoad-exit")
@@ -6014,6 +6023,36 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
             guard let self = self else { return }
             self.saveDraftNow()
+        }
+    }
+
+    /// 审计四轮 07：失活/入后台时立即冲刷一次未落盘的草稿——防抖 timer 只有
+    /// 400ms，进程若在窗口内被终止，最后输入会丢。防抖本身不动，只在这里把
+    /// 待触发的 timer 取消、直接调 saveDraftNow（已有串行队列＋原子写＋失败回传，
+    /// 不重做保存链路）。后台执行时间不足时用后台任务兜底：保存完成（或系统
+    /// 到期）即结束任务；版本未变说明冲刷后无新输入，不重复写盘。
+    @objc private func flushDraftBeforeBackground() {
+        // 编辑模式不写草稿（与 scheduleDraftSave/saveDraftNow 同口径）。
+        if isEditMode { return }
+        guard editorEditVersion != lastBackgroundFlushVersion else { return }
+        lastBackgroundFlushVersion = editorEditVersion
+        draftTimer?.invalidate()
+        draftTimer = nil
+        if backgroundDraftTask == .invalid {
+            backgroundDraftTask = UIApplication.shared.beginBackgroundTask(withName: "draft-flush") { [weak self] in
+                guard let self = self else { return }
+                if self.backgroundDraftTask != .invalid {
+                    UIApplication.shared.endBackgroundTask(self.backgroundDraftTask)
+                    self.backgroundDraftTask = .invalid
+                }
+            }
+        }
+        saveDraftNow { [weak self] _ in
+            guard let self = self else { return }
+            if self.backgroundDraftTask != .invalid {
+                UIApplication.shared.endBackgroundTask(self.backgroundDraftTask)
+                self.backgroundDraftTask = .invalid
+            }
         }
     }
 

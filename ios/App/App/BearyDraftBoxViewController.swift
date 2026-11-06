@@ -144,6 +144,9 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     private var bottomSpacerHeight: NSLayoutConstraint?
     /// G5：草稿库读取失败标记（loadAllResult 失败时置位，渲染时出失败态，不出空态）。
     private var draftsLoadFailed = false
+    /// 审计四轮 06：草稿箱读取代次——每次 loadDrafts +1；回包时校验代次与账号，
+    /// 旧结果直接舍弃，不应用到已切号或已有新一轮读取的界面上。
+    private var draftsLoadGeneration = 0
     /// 草稿库损坏态（lastLoadError 为 corruptStore 时）：失败态下出清除按钮；v2/v1 旧源损坏不属此态。
     private var draftsLoadCorrupt = false
     /// U18：把手外包容器（原 buildViews 内局部变量），下滑关闭手势挂在这里。
@@ -740,10 +743,19 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     /// save/deleteAsync 同队列，读不到写一半的库）上执行；状态赋值与
     /// completion 一律回主线程，调用方在 completion 里做 UI 渲染。
     private func loadDrafts(completion: (() -> Void)? = nil) {
+        // 审计四轮 06：入队时捕获账号与页面代次；后台读库直接用捕获账号，
+        // 不再读执行时刻的当前账号。回包时两项都校验，不匹配就舍弃旧结果。
+        let requestAccountId = BearyDraftStore.currentAccountId
+        draftsLoadGeneration += 1
+        let requestGeneration = draftsLoadGeneration
         BearyDraftStore.ioQueue.async { [weak self] in
-            let result = BearyDraftStore.loadAllResult()
+            let result = BearyDraftStore.loadAllResult(forAccount: requestAccountId)
             DispatchQueue.main.async { [weak self] in
                 guard let strongSelf = self else { return }
+                // 账号已切或已有新一轮读取发出时，旧结果直接舍弃、不碰界面、
+                // 不调 completion（新一轮读取会自己结算渲染）。
+                guard requestAccountId == BearyDraftStore.currentAccountId,
+                      requestGeneration == strongSelf.draftsLoadGeneration else { return }
                 switch result {
                 case .success(let loaded):
                     strongSelf.drafts = loaded
@@ -752,7 +764,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 case .failure(let err):
                     strongSelf.drafts = []
                     strongSelf.draftsLoadFailed = true
-                    if case .corruptStore(_) = err {
+                    if case .corruptStore(_, _, _, _, _) = err {
                         strongSelf.draftsLoadCorrupt = true
                     } else {
                         strongSelf.draftsLoadCorrupt = false
@@ -765,8 +777,9 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
 
     /// 草稿库损坏态清除：先弹系统确认框（App 现有确认口径），确认后删当前
     /// 账号的坏 v3 文件（.bak 备份不动），成功后重读 → 空态；失败则留失败态＋toast。
+    /// 审计四轮 13：确认框里把不可逆后果讲清——损坏的草稿删掉后在 App 里找不回来。
     @objc private func clearCorruptStoreTapped() {
-        let alert = UIAlertController(title: "清除无法读取的草稿？", message: "这些草稿目前无法读取。清除后草稿箱会变空，备份会保留在手机里，新草稿可以正常保存。", preferredStyle: .alert)
+        let alert = UIAlertController(title: "清除无法读取的草稿？", message: "这些草稿目前无法读取。清除后，损坏的草稿会被删掉，在 App 里找不回来；备份文件仍保留在手机里，新草稿可以正常保存。", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
         alert.addAction(UIAlertAction(title: "清除", style: .destructive) { [weak self] _ in
             BearyDraftStore.clearCorruptStoreAsync { [weak self] ok in
@@ -807,6 +820,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             failedStateView.translatesAutoresizingMaskIntoConstraints = false
             // 两种失败态文案分开：损坏态讲清清除结果（删坏 v3 文件、只留 .bak，
             // 清除后重读回空态）；非损坏态沿用原话 +“重新读取”，确认框口径不动。
+            // 审计四轮 13：损坏态不说“无法恢复”——只是本次读不出来，原始数据已保留；
+            // 也不提 .bak（用户不认这个词），清除的不可逆后果放在确认框里讲。
             if draftsLoadCorrupt {
                 failedStateView.configure(kind: .error, title: "草稿库已损坏", subtitle: "这些草稿暂时读不出来。清除会移除当前草稿数据，已有备份会保留。", iconName: nil, actionTitle: "清除损坏的草稿数据", actionStyle: .destructiveOutline(.regular), onAction: { [weak self] in self?.clearCorruptStoreTapped() })
             } else {
