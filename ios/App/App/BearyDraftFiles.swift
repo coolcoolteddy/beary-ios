@@ -190,9 +190,15 @@ enum BearyDraftImageStore {
     /// 原图与缩略图一起落盘；任一失败返回 nil（调用方按无本地文件降级处理）。
     /// G19：双写任一失败即删已写的一半，不留孤文件供后续误认已保存。
     static func save(fullData: Data, thumbData: Data) -> String? {
+        return save(fullData: fullData, thumbData: thumbData, accountId: BearyDraftStore.currentAccountId)
+    }
+
+    /// 捕获账号版落盘：写进指定账号的图片目录，不读全局当前账号；
+    /// 编辑器创建时绑定的草稿归属账号经此进入（切号后仍写原账号目录，不串桶）。
+    static func save(fullData: Data, thumbData: Data, accountId: Int?) -> String? {
         let fullName = newFileName()
         let thumbName = thumbFileName(for: fullName)
-        guard let fullURL = fileURL(for: fullName), let thumbURL = fileURL(for: thumbName) else { return nil }
+        guard let fullURL = fileURL(for: fullName, accountId: accountId), let thumbURL = fileURL(for: thumbName, accountId: accountId) else { return nil }
         do {
             try fullData.write(to: fullURL, options: .atomic)
             try thumbData.write(to: thumbURL, options: .atomic)
@@ -206,24 +212,44 @@ enum BearyDraftImageStore {
     }
 
     static func image(for name: String) -> UIImage? {
-        guard let url = fileURL(for: name) else { return nil }
+        return image(for: name, accountId: BearyDraftStore.currentAccountId)
+    }
+
+    /// 捕获账号版读图：从指定账号的图片目录读，不读全局当前账号。
+    static func image(for name: String, accountId: Int?) -> UIImage? {
+        guard let url = fileURL(for: name, accountId: accountId) else { return nil }
         return UIImage(contentsOfFile: url.path)
     }
 
     static func delete(_ name: String) {
-        guard let url = fileURL(for: name) else { return }
+        delete(name, accountId: BearyDraftStore.currentAccountId)
+    }
+
+    /// 捕获账号版删单图。
+    static func delete(_ name: String, accountId: Int?) {
+        guard let url = fileURL(for: name, accountId: accountId) else { return }
         try? FileManager.default.removeItem(at: url)
     }
 
     static func deletePair(fullName: String) {
-        delete(fullName)
-        delete(thumbFileName(for: fullName))
+        deletePair(fullName: fullName, accountId: BearyDraftStore.currentAccountId)
+    }
+
+    /// 捕获账号版删原图 + 缩略图对。
+    static func deletePair(fullName: String, accountId: Int?) {
+        delete(fullName, accountId: accountId)
+        delete(thumbFileName(for: fullName), accountId: accountId)
     }
 
     /// 清理无主文件：只保留给定草稿引用的原图与缩略图（调用方须传入全部草稿的
     /// 引用并集，只传当前篇会误删其他篇的图片，见编辑器 restoreDraft）。
     static func sweep(keeping referencedFullNames: Set<String>) {
-        guard let dir = directory() else { return }
+        sweep(keeping: referencedFullNames, accountId: BearyDraftStore.currentAccountId)
+    }
+
+    /// 捕获账号版清理无主文件：只清指定账号目录内的无主文件，不碰其他账号目录。
+    static func sweep(keeping referencedFullNames: Set<String>, accountId: Int?) {
+        guard let dir = directory(forAccount: accountId) else { return }
         var keep = Set<String>()
         for name in referencedFullNames {
             keep.insert(name)
@@ -232,7 +258,7 @@ enum BearyDraftImageStore {
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return }
         for name in names {
             if !keep.contains(name) {
-                delete(name)
+                delete(name, accountId: accountId)
             }
         }
     }
@@ -295,7 +321,12 @@ enum BearyDraftStore {
     // 执行中绝不再重读全局 currentAccountId——排队保存期间切号/退出，
     // 旧账号草稿仍写回旧账号目录，不会串到新账号。
     static func deleteAsync(draftId: String, completion: (() -> Void)? = nil) {
-        let accountId = currentAccountId
+        deleteAsync(draftId: draftId, forAccount: currentAccountId, completion: completion)
+    }
+
+    /// 捕获账号版后台删一篇：删指定账号的库，不读执行时全局当前账号；
+    /// 编辑器创建时绑定的归属账号经此进入（切号后仍删原账号的篇，不串桶）。
+    static func deleteAsync(draftId: String, forAccount accountId: Int?, completion: (() -> Void)? = nil) {
         ioQueue.async {
             delete(draftId: draftId, forAccount: accountId)
             if let completion = completion {
@@ -310,7 +341,11 @@ enum BearyDraftStore {
     /// 草稿库已损坏（此时原文件被保留、未被覆盖），调用方须按失败处理
     /// （草稿箱：卡片原地恢复 + toast，不得按成功出撤销条）。
     static func deleteAsyncReporting(draftId: String, completion: @escaping (Bool) -> Void) {
-        let accountId = currentAccountId
+        deleteAsyncReporting(draftId: draftId, forAccount: currentAccountId, completion: completion)
+    }
+
+    /// 捕获账号版带成败回传的后台删一篇（成败语义与 deleteAsyncReporting 一致）。
+    static func deleteAsyncReporting(draftId: String, forAccount accountId: Int?, completion: @escaping (Bool) -> Void) {
         ioQueue.async {
             let ok = delete(draftId: draftId, forAccount: accountId)
             DispatchQueue.main.async {
