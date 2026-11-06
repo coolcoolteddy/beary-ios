@@ -22,6 +22,8 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
     private weak var presentedVC: UIViewController?
     private var interaction: UIPercentDrivenInteractiveTransition?
     private var completionMode = false
+    /// 一次手势在开拖前已被拒绝时，后续 changed/ended 不得触发关闭或成功震动。
+    private var gestureRejected = false
 
     /// 完成模式回调：设置后本控制器不再驱动交互式过渡，只在边缘滑过阈值
     /// （35% 宽度或右滑速度 >800）时调一次回调，关闭由回调方自己的流程完成。
@@ -75,7 +77,9 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
         let progress = min(max(pan.translation(in: view).x / width, 0), 1)
         switch pan.state {
         case .began:
+            gestureRejected = false
             if let shouldAllow = shouldAllowInteractiveDismiss, !shouldAllow() {
+                gestureRejected = true
                 interaction = nil
                 completionMode = false
                 return
@@ -85,6 +89,7 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
                 // 跟手；允许时只记下本次手势，.changed 按手指 1:1 更新 transform，
                 // 阈值在 .ended 判。
                 if let shouldAllowCompletion = shouldAllowCompletionSwipe, !shouldAllowCompletion() {
+                    gestureRejected = true
                     completionMode = false
                     interaction = nil
                     return
@@ -97,6 +102,7 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
             interaction = UIPercentDrivenInteractiveTransition()
             presented.dismiss(animated: true)
         case .changed:
+            guard !gestureRejected else { return }
             if completionMode {
                 // 完成模式 1:1 跟手：视图随手指右移（只向右，不向左出屏）。
                 view.transform = CGAffineTransform(translationX: max(pan.translation(in: view).x, 0), y: 0)
@@ -104,6 +110,12 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
                 interaction?.update(progress)
             }
         case .cancelled, .failed:
+            if gestureRejected {
+                gestureRejected = false
+                interaction = nil
+                completionMode = false
+                return
+            }
             // U24：.failed 与 .cancelled 同处理——清理交互式过渡对象，不留悬空态；
             // 完成模式下视图滑回原位。
             if completionMode {
@@ -114,26 +126,31 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
             interaction = nil
             completionMode = false
         case .ended:
+            guard !gestureRejected else {
+                gestureRejected = false
+                interaction = nil
+                completionMode = false
+                return
+            }
             let velocity = pan.velocity(in: view).x
             if progress > 0.35 || velocity > 800 {
-                // U24：完成关闭时给轻触感（取消时无）。
-                BearyHaptics.press()
                 if completionMode {
                     completionMode = false
-                    // 松手确认退出仍走原保存流程；被拒（拖动中途状态变了）时滑回原位。
+                    // 保存/关闭门控可能在拖动期间变化：被拒时回弹，且不播成功震动。
                     let proceeding = onEdgeSwipeCompleted?() ?? false
-                    if !proceeding {
-                        resetCompletionFollow(view: view)
+                    if proceeding {
+                        BearyHaptics.press()
+                    } else {
+                        resetCompletionFollow(view: view, velocity: velocity)
                     }
-                } else {
+                } else if interaction != nil {
+                    BearyHaptics.press()
                     interaction?.finish()
                 }
+            } else if completionMode {
+                resetCompletionFollow(view: view, velocity: velocity)
             } else {
-                if completionMode {
-                    resetCompletionFollow(view: view)
-                } else {
-                    interaction?.cancel()
-                }
+                interaction?.cancel()
             }
             interaction = nil
             completionMode = false
@@ -142,11 +159,17 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
         }
     }
 
-    /// 完成模式跟手取消／被拒：视图滑回原位（0.25s easeOut，与进场同曲线；
-    /// 减动效时瞬时归位）。
-    private func resetCompletionFollow(view: UIView) {
+    /// 统一拖拽回弹：0.30s / damping 0.7；快甩速度归一化，减动效直接归位。
+    private func resetCompletionFollow(view: UIView, velocity: CGFloat = 0) {
         guard view.transform != .identity else { return }
-        UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.25, delay: 0, options: .curveEaseOut, animations: {
+        guard BearyMotion.animated(true) else {
+            view.transform = .identity
+            return
+        }
+        let offset = view.transform.tx
+        UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7,
+                       initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset),
+                       options: [.beginFromCurrentState, .allowUserInteraction], animations: {
             view.transform = .identity
         })
     }
