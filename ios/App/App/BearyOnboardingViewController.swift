@@ -188,6 +188,9 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
     private let responseChipCount = UILabel()
     private var emoteButtons: [String: UIButton] = [:]
     private var emoteViews: [String: BearyEmoteView] = [:]
+    /// 天气示例图标覆盖层（第 0 页两张示例卡＋第 2 页演示卡各一，均为太阳）：
+    /// 播／停由页面切换统一管（refreshWeatherEmotes），只播当前可见页的。
+    private var weatherEmoteViews: [BearyEmoteView] = []
 
     init(mode: Mode) {
         self.mode = mode
@@ -216,11 +219,15 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         playEntranceIfNeeded(0)
+        refreshWeatherEmotes()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         stopAllEmotes()
+        for weatherEmoteView in weatherEmoteViews {
+            weatherEmoteView.stop()
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -466,6 +473,19 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         weatherView.tintColor = BearyColors.ink
         dateRow.addArrangedSubview(dateLabel)
         dateRow.addArrangedSubview(weatherView)
+        // 示例卡太阳贴动态 Lottie（底层静态图作 fallback；播／停由页面切换统一管）。
+        if let sunImage = weatherView.image {
+            let sunEmote = BearyEmoteView(key: "sun", animated: true, fallbackImage: sunImage)
+            sunEmote.translatesAutoresizingMaskIntoConstraints = false
+            weatherView.addSubview(sunEmote)
+            NSLayoutConstraint.activate([
+                sunEmote.topAnchor.constraint(equalTo: weatherView.topAnchor),
+                sunEmote.leadingAnchor.constraint(equalTo: weatherView.leadingAnchor),
+                sunEmote.trailingAnchor.constraint(equalTo: weatherView.trailingAnchor),
+                sunEmote.bottomAnchor.constraint(equalTo: weatherView.bottomAnchor),
+            ])
+            weatherEmoteViews.append(sunEmote)
+        }
         stack.addArrangedSubview(dateRow)
         let body = makeLabel(size: 16, color: BearyColors.ink)
         body.text = bodyText
@@ -694,6 +714,19 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         weatherView.tintColor = BearyColors.ink
         dateRow.addArrangedSubview(dateLabel)
         dateRow.addArrangedSubview(weatherView)
+        // 演示卡太阳贴动态 Lottie（底层静态图作 fallback；播／停由页面切换统一管）。
+        if let sunImage = weatherView.image {
+            let sunEmote = BearyEmoteView(key: "sun", animated: true, fallbackImage: sunImage)
+            sunEmote.translatesAutoresizingMaskIntoConstraints = false
+            weatherView.addSubview(sunEmote)
+            NSLayoutConstraint.activate([
+                sunEmote.topAnchor.constraint(equalTo: weatherView.topAnchor),
+                sunEmote.leadingAnchor.constraint(equalTo: weatherView.leadingAnchor),
+                sunEmote.trailingAnchor.constraint(equalTo: weatherView.trailingAnchor),
+                sunEmote.bottomAnchor.constraint(equalTo: weatherView.bottomAnchor),
+            ])
+            weatherEmoteViews.append(sunEmote)
+        }
         demoStack.addArrangedSubview(pillWrap)
         demoStack.addArrangedSubview(demoBody)
         demoStack.addArrangedSubview(dateRow)
@@ -880,6 +913,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
             pageViews[index].transform = .identity
         }
         currentPage = page
+        refreshWeatherEmotes()
         updateChrome()
         view.layoutIfNeeded()
     }
@@ -901,6 +935,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         pageViews[target].alpha = 1
         view.layoutIfNeeded()
         pageViews[target].transform = CGAffineTransform(translationX: forward ? width : -width, y: 0)
+        refreshWeatherEmotes()
         playEntranceIfNeeded(target)
     }
 
@@ -1173,6 +1208,29 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         for emoteView in emoteViews.values {
             emoteView.stop()
         }
+    }
+
+    /// 天气示例图标只播当前可见页的：页切（直切／滑切／拖动摆位）与首现时按
+    /// 实际显隐播／停；隐藏页的播放器不空转（isHidden 不离窗，播放器自身不停）。
+    private func refreshWeatherEmotes() {
+        for weatherEmoteView in weatherEmoteViews {
+            if isEffectivelyVisible(weatherEmoteView) {
+                weatherEmoteView.play()
+            } else {
+                weatherEmoteView.stop()
+            }
+        }
+    }
+
+    /// 自身及全部祖先均未隐藏且已进窗口，才算真正可见。
+    private func isEffectivelyVisible(_ view: UIView) -> Bool {
+        guard view.window != nil else { return false }
+        var current: UIView? = view
+        while let node = current {
+            if node.isHidden { return false }
+            current = node.superview
+        }
+        return true
     }
 
     private func selectEmote(_ key: String) {

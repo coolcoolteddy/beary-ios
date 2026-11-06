@@ -2431,6 +2431,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.quoteTabStack.isHidden = true
                 self.scrollView.contentInset.top = 0
                 self.quotePanel.isHidden = true
+                // 面板关闭：行天气播放器停播摘掉（isHidden 不离窗，播放器自身不停）。
+                self.clearQuoteWeatherEmotes()
                 // 录屏批 (b/e)：关闭即停转圈、藏加载文案（在途请求的回包另有面板守卫，
                 // 不会把转圈顶回已关闭的面板），标题还原打开前存的那句。
                 self.quotePanelSpinner.stopSpinning()
@@ -2749,6 +2751,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quotePanelRows.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
+        // 行重渲染：旧行天气覆盖层随旧行一并离树，此处清掉持有、不留空转播放器。
+        clearQuoteWeatherEmotes()
         quotePanelRowEntries = []
         quotePanelRowButtons = []
         // 录屏批 (e/f)：行渲染即加载结束，转圈与加载文案到此为止，不留残影。
@@ -2890,7 +2894,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if let weather = entry.weather {
                 let weatherView = UIImageView()
                 weatherView.translatesAutoresizingMaskIntoConstraints = false
-                weatherView.image = BearyIconImages.image(named: "icon_wx_\(weather)", pointSize: 15)
+                weatherView.image = BearyIconImages.image(named: "icon_wx_\(BearyText.weatherStaticKey(for: weather))", pointSize: 15)
                 weatherView.tintColor = BearyColors.gray
                 weatherView.contentMode = .scaleAspectFit
                 weatherView.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -2899,6 +2903,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     weatherView.widthAnchor.constraint(equalToConstant: 15),
                     weatherView.heightAnchor.constraint(equalToConstant: 15),
                 ])
+                // 引用行天气图标贴动态 Lottie（底层静态图作 fallback；面板关闭／
+                // 行重渲染时由 clearQuoteWeatherEmotes 统一停播摘掉）。
+                if let staticImage = weatherView.image {
+                    let overlay = BearyEmoteView(key: BearyText.weatherLottieKey(for: weather), animated: true, fallbackImage: staticImage)
+                    overlay.translatesAutoresizingMaskIntoConstraints = false
+                    weatherView.addSubview(overlay)
+                    NSLayoutConstraint.activate([
+                        overlay.topAnchor.constraint(equalTo: weatherView.topAnchor),
+                        overlay.leadingAnchor.constraint(equalTo: weatherView.leadingAnchor),
+                        overlay.trailingAnchor.constraint(equalTo: weatherView.trailingAnchor),
+                        overlay.bottomAnchor.constraint(equalTo: weatherView.bottomAnchor),
+                    ])
+                    quoteWeatherEmoteViews.append(overlay)
+                }
             }
             // iCity 倒计时 pill 已废，但 112 v2 起选篇行挂状态 pill（见头行 statusPill，
             // 非倒计时）；私密与公开行此前无 pill，现按真实可见性补齐三态。
@@ -3498,6 +3516,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 if key == "none" { return self?.weatherNoneImage() }
                 return BearyIconImages.image(named: "icon_wx_\(key)", pointSize: 40)
             },
+            // 天气选项贴动态 Lottie（night→moon；"无"不贴，保持静态）。
+            emoteKeyProvider: { key in key == "none" ? nil : BearyText.weatherLottieKey(for: key) },
             selectedKey: selectedWeather
         )
         // [24] 小项 2：气温步进器以附属行身份挂进天气框（不进 chip 行），
@@ -3576,10 +3596,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let target = kind == .mood ? moodCallout : weatherCallout
         let other = kind == .mood ? weatherCallout : moodCallout
         other.isHidden = true
+        other.setEmoteOverlaysPlaying(false)
         other.alpha = 1
         other.transform = .identity
         calloutDismissView.isHidden = false
         target.isHidden = false
+        target.setEmoteOverlaysPlaying(true)
         // 审计第 31 项：收起层盖住编辑器全域（仅工具栏穿透），触摸上背景内容
         // 已不可达；但 VoiceOver 滑动不走 hitTest，不置 modal 仍能滑到被遮的
         // 编辑器内容，故打开时把框体置为模态、只限框内子树（含天气附属行步进器）。
@@ -3631,6 +3653,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         calloutAccessibilityTrigger = nil
         if !animated || UIAccessibility.isReduceMotionEnabled || view.window == nil {
             target.isHidden = true
+            target.setEmoteOverlaysPlaying(false)
             target.alpha = 1
             target.transform = .identity
             target.accessibilityViewIsModal = false
@@ -3651,6 +3674,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             completion: { [weak self] finished in
                 guard let self = self, finished, generation == self.calloutTransitionGeneration else { return }
                 target.isHidden = true
+                target.setEmoteOverlaysPlaying(false)
                 target.alpha = 1
                 target.transform = .identity
                 target.accessibilityViewIsModal = false
@@ -3961,6 +3985,47 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         present(alert, animated: BearyMotion.animated(true))
     }
 
+    /// 天气动态图标覆盖层（BearyEmoteView，底层静态图作 fallback；与落点行同款）。
+    private var weatherToolEmoteView: BearyEmoteView?
+    private var weatherChipEmoteView: BearyEmoteView?
+    private var quoteWeatherEmoteViews: [BearyEmoteView] = []
+
+    /// 在宿主视图上贴／刷新天气 Lottie 覆盖层（落点行同款）：同 key 只重播、
+    /// 不重建；key 为 nil 或无 fallback 图时摘掉覆盖层。
+    private func refreshWeatherEmoteOverlay(_ stored: inout BearyEmoteView?, on host: UIView, lottieKey: String?, fallbackImage: UIImage?) {
+        if let lottieKey = lottieKey, let fallbackImage = fallbackImage {
+            if let existing = stored, existing.superview === host, existing.emoteKey == lottieKey {
+                existing.play()
+                return
+            }
+            stored?.stop()
+            stored?.removeFromSuperview()
+            let overlay = BearyEmoteView(key: lottieKey, animated: true, fallbackImage: fallbackImage)
+            overlay.translatesAutoresizingMaskIntoConstraints = false
+            host.addSubview(overlay)
+            NSLayoutConstraint.activate([
+                overlay.topAnchor.constraint(equalTo: host.topAnchor),
+                overlay.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                overlay.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+                overlay.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            ])
+            stored = overlay
+        } else {
+            stored?.stop()
+            stored?.removeFromSuperview()
+            stored = nil
+        }
+    }
+
+    /// 引用面板行天气图标全部停播并摘掉（行重渲染／面板关闭时调）。
+    private func clearQuoteWeatherEmotes() {
+        for overlay in quoteWeatherEmoteViews {
+            overlay.stop()
+            overlay.removeFromSuperview()
+        }
+        quoteWeatherEmoteViews.removeAll()
+    }
+
     /// 工具栏天气钮图标随选中天气变（网页 syncWxBtn 同款）：未选回通用天气图标，
     /// 已选换该天气图标；两态均为墨色。这是旧 refreshWeatherButtons 里唯一现行
     /// 副作用（其余皆为已删旧天气条带的按钮样式），旧条带删除后抽为独立函数。
@@ -3970,11 +4035,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 weatherToolButton.setImage(icon, for: .normal)
             }
             weatherToolButton.tintColor = BearyColors.ink
+            // 已选态：天气图标贴动态 Lottie（底层静态图作 fallback）。
+            if let host = weatherToolButton.imageView {
+                refreshWeatherEmoteOverlay(&weatherToolEmoteView, on: host, lottieKey: BearyText.weatherLottieKey(for: weather), fallbackImage: weatherToolButton.image(for: .normal))
+            }
         } else {
             if let icon = BearyIconImages.image(named: "icon_weather_tool", pointSize: 24) {
                 weatherToolButton.setImage(icon, for: .normal)
             }
             weatherToolButton.tintColor = BearyColors.ink
+            // 未选态 icon_weather_tool 保持静态，摘掉覆盖层。
+            refreshWeatherEmoteOverlay(&weatherToolEmoteView, on: weatherToolButton, lottieKey: nil, fallbackImage: nil)
         }
     }
 
@@ -4052,11 +4123,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             weatherChipButton.setImage(icon, for: .normal)
             weatherChipButton.tintColor = BearyColors.ink
+            // 天气 chip 图标贴动态 Lottie（底层静态图作 fallback）。
+            if let host = weatherChipButton.imageView {
+                refreshWeatherEmoteOverlay(&weatherChipEmoteView, on: host, lottieKey: BearyText.weatherLottieKey(for: weather), fallbackImage: icon)
+            }
             weatherChipButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: icon == nil ? 0 : 5, bottom: 0, right: 0)
             weatherChipButton.accessibilityLabel = selectedTemperature != nil ? "天气：\(name) \(selectedTemperature!)°" : "天气：" + name
         } else {
             weatherChipButton.isHidden = true
             weatherChipButton.setImage(nil, for: .normal)
+            refreshWeatherEmoteOverlay(&weatherChipEmoteView, on: weatherChipButton, lottieKey: nil, fallbackImage: nil)
         }
         // 气温步进器只跟天气类型走：有类型才显，无类型（“无”）时连气温同清、不留孤气温。
         // [24] 小项 2：步进器在天气框附属行里（见 buildCallouts），此处只管
