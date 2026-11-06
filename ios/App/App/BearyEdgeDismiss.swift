@@ -20,6 +20,11 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
     private var interaction: UIPercentDrivenInteractiveTransition?
     private var completionMode = false
 
+    /// 本次手势是否在 .began 被 shouldAllowInteractiveDismiss 拒绝。
+    /// 被拒的手势在 .ended 时直接清理，不触发完成震动、不调完成回调、
+    /// 不 finish 交互式过渡（页面实际并未关闭）。
+    private var dismissRejected = false
+
     /// 完成模式回调：设置后本控制器不再驱动交互式过渡，只在边缘滑过阈值
     /// （35% 宽度或右滑速度 >800）时调一次回调，关闭由回调方自己的流程完成。
     var onEdgeSwipeCompleted: (() -> Void)?
@@ -66,8 +71,10 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
             if let shouldAllow = shouldAllowInteractiveDismiss, !shouldAllow() {
                 interaction = nil
                 completionMode = false
+                dismissRejected = true
                 return
             }
+            dismissRejected = false
             if onEdgeSwipeCompleted != nil {
                 // 完成模式：不启动交互式过渡，只记下本次手势，阈值在 .ended 判。
                 completionMode = true
@@ -84,7 +91,15 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
             interaction?.cancel()
             interaction = nil
             completionMode = false
+            dismissRejected = false
         case .ended:
+            // 被拒的手势直接清理：不震动、不调完成回调、不 finish（页面并未关闭）。
+            if dismissRejected {
+                dismissRejected = false
+                interaction = nil
+                completionMode = false
+                return
+            }
             let velocity = pan.velocity(in: view).x
             if progress > 0.35 || velocity > 800 {
                 // U24：完成关闭时给轻触感（取消时无）。
@@ -100,6 +115,7 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
             }
             interaction = nil
             completionMode = false
+            dismissRejected = false
         default:
             break
         }
