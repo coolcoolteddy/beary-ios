@@ -95,6 +95,8 @@ final class BearyWordprintView: UIView {
 
     private let mode: BearyWordprintMode
     private var shownItems: [BearyProfilePersonalLogic.WordprintItem] = []
+    /// 审计 N3：词行换行只在放不下时触发，layoutSubviews 里按实际宽度逐行判定。
+    private var wordRows: [(wordLabel: UILabel, countLabel: UILabel, wordRow: UIStackView, spacer: UIView)] = []
     var onSelect: ((BearyProfilePersonalLogic.WordprintItem) -> Void)?
 
     private let fingerprintImageView: UIImageView = {
@@ -179,6 +181,24 @@ final class BearyWordprintView: UIView {
         return nil
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // 审计 N3：只有词语＋计数确实放不下时才把计数换到下一行，平时布局不动。
+        // 放得下时换回横排；横／竖两种状态下判定用的宽度一致，不会来回抖动。
+        for entry in wordRows {
+            let availableWidth = entry.wordRow.bounds.width
+            guard availableWidth > 0 else { continue }
+            let needsWrap = entry.wordLabel.intrinsicContentSize.width
+                + entry.wordRow.spacing
+                + entry.countLabel.intrinsicContentSize.width > availableWidth
+            let isWrapped = entry.wordRow.axis == .vertical
+            guard needsWrap != isWrapped else { continue }
+            entry.wordRow.axis = needsWrap ? .vertical : .horizontal
+            entry.wordRow.alignment = needsWrap ? .leading : .center
+            entry.spacer.isHidden = needsWrap
+        }
+    }
+
     func configure(with wordprint: BearyProfilePersonalLogic.Wordprint, scope: BearyWordprintScope) {
         yearLabel.text = "\(wordprint.year) 年"
         for arrangedView in scopeContainer.subviews {
@@ -203,6 +223,7 @@ final class BearyWordprintView: UIView {
             shown = wordprint.items
         }
         shownItems = shown
+        wordRows = []
         let maxDocCount = shown.map { $0.docCount }.max() ?? 0
         for (index, item) in shown.enumerated() {
             rowsStack.addArrangedSubview(makeRow(item: item, maxDocCount: maxDocCount, index: index))
@@ -225,21 +246,27 @@ final class BearyWordprintView: UIView {
         wordLabel.lineBreakMode = .byTruncatingTail
         wordLabel.textColor = BearyColors.ink
         wordLabel.text = item.word
+        // 审计 N3：词语字号跟随系统字号（scaledFont，底数不变，默认外观一点不改）。
         if mode == .compact {
-            wordLabel.font = UIFont.systemFont(ofSize: 13 + 4 * ratio, weight: .semibold)
+            wordLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13 + 4 * ratio, weight: .semibold))
         } else {
-            wordLabel.font = UIFont.systemFont(ofSize: 15 + 7 * ratio, weight: .semibold)
+            wordLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15 + 7 * ratio, weight: .semibold))
         }
+        wordLabel.adjustsFontForContentSizeCategory = true
         let countLabel = UILabel()
         countLabel.translatesAutoresizingMaskIntoConstraints = false
         countLabel.font = BearyDynamicType.numberFont()
         countLabel.textColor = BearyColors.gray
         countLabel.text = "\(item.docCount) 篇 · \(item.totalCount) 次"
-        let wordRow = UIStackView(arrangedSubviews: [wordLabel, UIView(), countLabel])
+        // 审计 N3：计数已走 numberFont（scaled），补自动更新开关，与词语同行跟随。
+        countLabel.adjustsFontForContentSizeCategory = true
+        let wordRowSpacer = UIView()
+        let wordRow = UIStackView(arrangedSubviews: [wordLabel, wordRowSpacer, countLabel])
         wordRow.translatesAutoresizingMaskIntoConstraints = false
         wordRow.axis = .horizontal
         wordRow.spacing = 8
         wordRow.alignment = .center
+        wordRows.append((wordLabel: wordLabel, countLabel: countLabel, wordRow: wordRow, spacer: wordRowSpacer))
         let barBackground = UIView()
         barBackground.translatesAutoresizingMaskIntoConstraints = false
         barBackground.backgroundColor = BearyColors.faint
