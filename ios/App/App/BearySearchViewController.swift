@@ -11,7 +11,7 @@ import CoreText
 // 页结构（网页 #searchPage 同口径）：页顶返回行（返回钮 + “搜索”标题，随内容滚出）
 //   + 搜索框（sticky：滚出后贴在安全区顶 6px 处）+ 状态区 / 结果区。
 //   （2026-10-29 第 21 项：框下“正在搜索…”行已删；搜索进行时只转框内圈，尾行仅用于失败重试。）
-// 分区顺序（网页 renderSrchResults 同口径）：我的日记 · 私密 → 公开日记 → 用户。
+// 分区顺序（网页 renderSrchResults 同口径）：我的日记 → 公开日记 → 用户。
 // 约束：颜色只用 BearyColors；图标只走 icon_* 资产 + BearyIconImages；
 //   不新增 UIGlassEffect，不用 SF Symbol；部署目标 iOS 15.0、Swift 5.0——
 //   只用闭包回调，不用 async/await，不用 if-let 简写；无 force unwrap；
@@ -35,7 +35,7 @@ import CoreText
 //   - mine：仅登录会话返回（未登录为 null），本人全部日记按正文匹配，LIMIT 20，
  //     翻页同 entries 口径（before + before_id）；
 //     字段 id/content/images/created_at/publish_at/is_public；
-//     本页只取其中未公开（is_public != true）与存活限时篇进“我的日记 · 私密”组
+//     本页只取其中未公开（is_public != true）与存活限时篇进“我的日记”组
 //     （审计 2026-11-02 第十节：存活限时篇不再无处可寻；三档 pill 见 makePrivatePill），
 //     与网页 renderSrchResults 的 mine 过滤口径一致；未登录时服务端不给 mine，
 //     私密分组自然不出现，不靠客户端登录态再拦一道。
@@ -196,6 +196,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 5-20：行身份 -> 视图映射（同批动画按 key 查表，不按下标配对）。
     private var entryRowById: [String: UIButton] = [:]
     private var userRowByKey: [String: UIButton] = [:]
+    /// 审计三轮 06：行内容签名（与 entryRowById / userRowByKey 同步维护，
+    /// clearResultRows 时一并清空）——同关键词重渲复用旧行前先比对签名。
+    private var entryRowContentSignatures: [String: String] = [:]
+    private var userRowContentSignatures: [String: String] = [:]
     /// 用户行 key 口径与 animateResultRows 的 nextKeys 一致：id 优先，无 id 则 @handle，无两者则无 key。
     private func userKey(for user: SearchUser) -> String? {
         if let userId = user.id {
@@ -1626,6 +1630,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         rowEntryIds = []
         entryRowById = [:]
         userRowByKey = [:]
+        // 审计三轮 06：内容签名与行映射同步清空。
+        entryRowContentSignatures = [:]
+        userRowContentSignatures = [:]
         imageRetryHolders = []
         // 88 包 M13：尾行不属于结果区；成功重渲末尾尾行由 updateSearchFooter 按翻页态重算。
         setSearchFooter(failed: false)
@@ -1684,7 +1691,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         } else {
             clearResultRows()
             // G13：先建行、行数 >0 时再加分区头，避免全部行被跳过时空挂分区头。
-            // 分区顺序与标题按网页 renderSrchResults：我的日记 · 私密 → 公开日记 → 用户。
+            // 分区顺序与标题按网页 renderSrchResults：我的日记 → 公开日记 → 用户。
             var mineRows: [UIView] = []
             for entry in mineEntries {
                 if let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
@@ -1710,7 +1717,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 userRows.append(makeUserRow(user: user, query: query))
             }
             if !mineRows.isEmpty {
-                let header = makeSectionHeader(title: "我的日记 · 私密")
+                let header = makeSectionHeader(title: "我的日记")
                 mineSectionHeader = header
                 resultsStack.addArrangedSubview(header)
                 for row in mineRows {
@@ -1742,6 +1749,41 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         updateSearchFooter()
     }
 
+    /// 审计三轮 06：行内容签名——同关键词重渲复用旧行前先比对签名，内容
+    /// 未变才原地保留（图片加载态与入场态不丢）；签名变了说明行上可见
+    /// 内容变了，重建该行。签名覆盖行上全部可见字段（正文、日期、首图、
+    /// 作者/·我的、可见性 pill、已举报态、所属分组）；query 不变故高亮
+    /// 不在签名内（换关键词走全量重建）。行内子视图是建行时局部变量、
+    /// 无现成句柄可原地改字段，故内容变了走重建——重建只发生在内容真
+    /// 变的行上，未变行仍原地保留、不重播入场。
+    private func entryRowContentSignature(entry: Entry, isMineGroup: Bool) -> String {
+        let content = collapsedWhitespace(entry.content ?? "")
+        let firstImage = entry.images?.first ?? ""
+        let reported = entry.id.map { BearyReportedStore.isReported(entryId: $0) } ?? false
+        let isSelf = entry.authorId != nil && entry.authorId == SessionManager.shared.currentUser?.id
+        return [
+            isMineGroup ? "mine" : "public",
+            content,
+            entry.createdAt.map(String.init) ?? "",
+            firstImage,
+            entry.authorName ?? "",
+            isSelf ? "self" : "",
+            entry.isFriendsOnly ? "friends" : "",
+            BearyEphemeral.isLive(entry) ? "live" : "",
+            reported ? "reported" : "",
+        ].joined(separator: "\u{1F}")
+    }
+
+    /// 审计三轮 06：用户行内容签名（名字、handle、头像）；关注态由
+    /// 关注状态机另行维护，不在签名内——重建行时按现行 followStates 重画。
+    private func userRowContentSignature(user: SearchUser) -> String {
+        [
+            userDisplayName(user: user),
+            user.handle ?? "",
+            user.avatarUrl ?? "",
+        ].joined(separator: "\u{1F}")
+    }
+
     /// 同关键词重渲（拉黑／举报过滤后重渲）：按 key 复用已有行节点，不整体重建——
     /// 仍在的行原地不动（图片加载态与入场态不丢），消失的行摘除，新增的行新建；
     /// 顺序变化时先摘后按新顺序重挂（视图对象不变）。换关键词不走这里
@@ -1758,7 +1800,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         var mineRows: [UIButton] = []
         var mineRowIds: [String] = []
         for entry in mineEntries {
-            if let entryId = entry.id, reusedEntryIds.contains(entryId) == false, let row = oldEntryRows[entryId] {
+            if let entryId = entry.id, reusedEntryIds.contains(entryId) == false, let row = oldEntryRows[entryId],
+               entryRowContentSignatures[entryId] == entryRowContentSignature(entry: entry, isMineGroup: true) {
+                // 审计三轮 06：内容未变才复用旧行；签名变了（正文/首图/状态变了）
+                // 走下面的 makeEntryRow 重建该行，旧行随 keep 集摘除。
                 reusedEntryIds.insert(entryId)
                 mineRows.append(row)
                 mineRowIds.append(entryId)
@@ -1771,7 +1816,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         var publicRows: [UIButton] = []
         var publicRowIds: [String] = []
         for entry in publicEntries {
-            if let entryId = entry.id, reusedEntryIds.contains(entryId) == false, let row = oldEntryRows[entryId] {
+            if let entryId = entry.id, reusedEntryIds.contains(entryId) == false, let row = oldEntryRows[entryId],
+               entryRowContentSignatures[entryId] == entryRowContentSignature(entry: entry, isMineGroup: false) {
+                // 审计三轮 06：内容未变才复用旧行；签名变了重建该行（同我的组）。
                 reusedEntryIds.insert(entryId)
                 publicRows.append(row)
                 publicRowIds.append(entryId)
@@ -1785,7 +1832,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         var userRows: [UIButton] = []
         var rowUsersNew: [SearchUser] = []
         for user in users {
-            if let key = userKey(for: user), reusedUserKeys.contains(key) == false, let row = oldUserRows[key] {
+            if let key = userKey(for: user), reusedUserKeys.contains(key) == false, let row = oldUserRows[key],
+               userRowContentSignatures[key] == userRowContentSignature(user: user) {
                 reusedUserKeys.insert(key)
                 userRows.append(row)
                 rowUsersNew.append(user)
@@ -1821,7 +1869,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         if !mineRows.isEmpty {
             if mineSectionHeader == nil {
-                mineSectionHeader = makeSectionHeader(title: "我的日记 · 私密")
+                mineSectionHeader = makeSectionHeader(title: "我的日记")
             }
             if let header = mineSectionHeader {
                 resultsStack.addArrangedSubview(header)
@@ -1932,7 +1980,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             if let key = userKey(for: user), userRowByKey[key] != nil { continue }
             userRows.append(makeUserRow(user: user, query: query))
         }
-        insertSectionRows(mineRows, section: 0, title: "我的日记 · 私密")
+        insertSectionRows(mineRows, section: 0, title: "我的日记")
         insertSectionRows(publicRows, section: 1, title: "公开日记")
         insertSectionRows(userRows, section: 2, title: "用户")
         // 同关键词追加：animateResultRows 按 key 查表，只让本批新行
@@ -1987,6 +2035,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var lastResultQuery: String?
     private var lastResultRowKeys: Set<String> = []
 
+    /// 审计三轮 09：入场终值按业务状态恢复——已举报行终值 0.6（置灰数值不动），
+    /// 其余行终值 1；否则新批入场动画会把置灰抹掉。
+    private func entranceTargetAlpha(forEntryId entryId: String?) -> CGFloat {
+        guard let entryId = entryId, BearyReportedStore.isReported(entryId: entryId) else { return 1 }
+        return 0.6
+    }
+
     private func animateResultRows(query: String) {
         let isNewBatch = lastResultQuery != query
         var nextKeys: Set<String> = []
@@ -2007,11 +2062,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         if isNewBatch {
             // 审计：新批错峰延迟封顶 0.24s（此前 48 行末行约 1.41s＋0.25s，与同批分支同口径）。
             for (index, rowView) in rowViews.enumerated() {
+                // 审计三轮 09：终值按业务状态恢复，已举报行 0.6、其余行 1。
+                let targetAlpha: CGFloat = index < entryButtons.count && index < rowEntryIds.count
+                    ? entranceTargetAlpha(forEntryId: rowEntryIds[index]) : 1
                 rowView.alpha = 0
                 rowView.transform = CGAffineTransform(translationX: 0, y: 8)
                 let delay = min(Double(index) * 0.03, 0.24)
                 UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
-                    rowView.alpha = 1
+                    rowView.alpha = targetAlpha
                     rowView.transform = .identity
                 })
             }
@@ -2030,7 +2088,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                     let delay = min(Double(order) * 0.03, 0.24)
                     order += 1
                     UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
-                        rowView.alpha = 1
+                        rowView.alpha = self.entranceTargetAlpha(forEntryId: entryId)
                         rowView.transform = .identity
                     })
                 }
@@ -2183,6 +2241,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         rowUsers.append(user)
         if let key = userKey(for: user) {
             userRowByKey[key] = row
+            // 审计三轮 06：记下本行内容签名，供同关键词重渲比对复用。
+            userRowContentSignatures[key] = userRowContentSignature(user: user)
         }
         return row
     }
@@ -2339,6 +2399,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         NSLayoutConstraint.activate(constraints)
 
         entryRowById[entryId] = row
+        // 审计三轮 06：记下本行内容签名，供同关键词重渲比对复用。
+        entryRowContentSignatures[entryId] = entryRowContentSignature(entry: entry, isMineGroup: isMineGroup)
         row.addTarget(self, action: #selector(entryRowTapped(_:)), for: .touchUpInside)
         row.addTarget(self, action: #selector(rowTouchDown(_:)), for: .touchDown)
         row.addTarget(self, action: #selector(rowTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
