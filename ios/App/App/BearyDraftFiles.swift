@@ -499,11 +499,12 @@ enum BearyDraftStore {
         return loadAllResult(forAccount: currentAccountId)
     }
 
-    /// 捕获账号版读库（后台写任务专用）：读路径与归一化一律用捕获账号，
+    /// 捕获账号版读库（后台写任务与草稿箱读取共用）：读路径与归一化一律用捕获账号，
     /// 执行中不再重读 currentAccountId；迁移判定逻辑本身与读路径版一致
     /// （v3 优先、无 v3 走旧源迁移、损坏保原文件并返回失败）。
     /// 读路径 loadAll/loadAllResult() 保持现行语义（读当前账号），不受影响。
-    private static func loadAllResult(forAccount accountId: Int?) -> Result<[BearyDraft], LoadError> {
+    /// R23-#1：草稿箱 loadDrafts 经此函数按入队时捕获的账号读库（见 BearyDraftBoxViewController）。
+    static func loadAllResult(forAccount accountId: Int?) -> Result<[BearyDraft], LoadError> {
         // 账号隔离 1 号：未登录不读任何账号文件（也不触发 v2/v1 迁移，
         // 迁移只在登录后的账号分桶里发生）。此处判的是入队时捕获的账号：
         // 入队时未登录则写任务按失败处理（见 save/delete 捕获版），不因
