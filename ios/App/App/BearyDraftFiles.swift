@@ -308,6 +308,19 @@ enum BearyDraftStore {
         }
     }
 
+    /// 捕获账号版后台删一篇（P0-2：发布成功清理提交时的账号桶，
+    /// 回包时当前账号可能已变，不能按现值删）。
+    static func deleteAsync(draftId: String, forAccount accountId: Int?, completion: (() -> Void)? = nil) {
+        ioQueue.async {
+            delete(draftId: draftId, forAccount: accountId)
+            if let completion = completion {
+                DispatchQueue.main.async {
+                    completion()
+                }
+            }
+        }
+    }
+
     /// 带成败回传的后台删一篇（主线程回调）。false = 写盘/删文件失败或
     /// 草稿库已损坏（此时原文件被保留、未被覆盖），调用方须按失败处理
     /// （草稿箱：卡片原地恢复 + toast，不得按成功出撤销条）。
