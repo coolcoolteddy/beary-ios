@@ -446,12 +446,32 @@ public final class ProfileCoverView: UIView {
 }
 
 /// 封面底图缓存：读盘＋解码只在后台串行队列做，主线程只贴图。
-private final class CoverBackdropCache {
+/// 有界：最多留 3 张（最近用的），超了逐出最久未用的；收到内存警告时清库。
+/// 每张全幅图集 5120×969 ≈ 19 MiB，6 张全留理论约 113.6 MiB；封顶 3 张后
+/// 稳态约 57 MiB。preload 保留：设置页进页仍预热，逐出只发生在解码完成
+/// 入库时；已显示的封面持有自己的 backdrop 强引用，清库/逐出不会让首屏
+/// 变空白；未命中时 draw() 走 poster 兜底（与原来 backdrop == nil 的分支
+/// 一致）。#846 的 720 缩略图方案不恢复。
+private final class CoverBackdropCache: NSObject {
     static let shared = CoverBackdropCache()
+    /// 上限 3 张：当前主题＋最近切过的两张；再多逐出最久未用的。
+    private static let maxEntries = 3
     private let queue = DispatchQueue(label: "com.beary.cover-backdrop", qos: .userInitiated)
     private var images: [String: CGImage] = [:]
+    /// LRU 顺序：末尾为最近用过；与 images 同步增删，只在 queue 上改。
+    private var order: [String] = []
     private var loading: Set<String> = []
     private var pending: [String: [(CGImage?) -> Void]] = [:]
+
+    override init() {
+        super.init()
+        NotificationCenter.default.addObserver(self, selector: #selector(didReceiveMemoryWarning),
+            name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
 
     func preload(themes: [ProfileCoverTheme]) {
         for theme in themes { load(theme: theme) { _ in } }
@@ -461,6 +481,7 @@ private final class CoverBackdropCache {
         let key = theme.rawValue
         queue.async {
             if let cached = self.images[key] {
+                self.touch(key)
                 DispatchQueue.main.async { completion(cached) }
                 return
             }
@@ -468,10 +489,36 @@ private final class CoverBackdropCache {
             guard !self.loading.contains(key) else { return }
             self.loading.insert(key)
             let image = Self.decoded(theme: theme)
-            if let image { self.images[key] = image }
+            if let image { self.store(key, image: image) }
             self.loading.remove(key)
             let callbacks = self.pending.removeValue(forKey: key) ?? []
             DispatchQueue.main.async { callbacks.forEach { $0(image) } }
+        }
+    }
+
+    /// 内存警告清库：只清缓存字典；进行中的解码不受影响（解完仍按上限入库），
+    /// 已显示的封面持有自己的 backdrop，不会因此变空白；下次切到被清的主题
+    /// 时后台重新解码，期间 draw() 走 poster 兜底。
+    @objc private func didReceiveMemoryWarning() {
+        queue.async {
+            self.images.removeAll()
+            self.order.removeAll()
+        }
+    }
+
+    /// 记一次使用：移到队尾；只在 queue 上调用。
+    private func touch(_ key: String) {
+        order.removeAll { $0 == key }
+        order.append(key)
+    }
+
+    /// 入库并按上限逐出最久未用的；只在 queue 上调用。
+    private func store(_ key: String, image: CGImage) {
+        images[key] = image
+        touch(key)
+        while order.count > Self.maxEntries, let oldest = order.first {
+            order.removeFirst()
+            images.removeValue(forKey: oldest)
         }
     }
 
