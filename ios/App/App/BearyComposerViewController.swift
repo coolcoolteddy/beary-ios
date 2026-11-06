@@ -202,11 +202,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var isEditMode: Bool { editingEntry != nil }
 
     init() {
+        self.draftOwnerAccountId = SessionManager.shared.currentUser?.id ?? BearyDraftStore.currentAccountId
         super.init(nibName: nil, bundle: nil)
     }
 
     init(entry: Entry) {
         self.editingEntry = entry
+        self.draftOwnerAccountId = SessionManager.shared.currentUser?.id ?? BearyDraftStore.currentAccountId
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -432,6 +434,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 同账号重登 id 不变，校验通过、同一草稿可续写；编辑模式不设它
     /// （saveDraftNow 在编辑态本就是空操作，见 saveDraftNow 首行守卫）。
     private var publishOriginAccountId: Int?
+    /// 本篇草稿所属账号（创建时绑定，不可变）：新建与编辑共用。
+    /// 创建时取当前登录账号（取不到时退回草稿分桶账号，与
+    /// currentAccountIdForPublish 同口径）；之后全部自动保存、图片读写、
+    /// 删除、恢复都用它，不再读全局当前账号。当前会话变化后停止保存并
+    /// 提示回原账号（见 saveDraftNow 的归属守卫与 ensureDraftOwnerCurrent）。
+    private let draftOwnerAccountId: Int?
+    /// 归属失配提示只弹一次（自动保存是防抖定时器驱动，反复弹会刷屏；
+    /// 回到原账号后复位，下次再失配可再提示；清篇后同样复位）。
+    private var didShowOwnerMismatchAlert = false
     /// 一并公开部分成功态：setVisibility 已成功、原日记已公开的原日记 id。
     /// 此后新篇发布失败不再回滚原日记（见 performPublish 部分成功分支），
     /// 重试（弹框按钮或再点发布）只发新篇，不再走门禁/setVisibility。
@@ -452,6 +463,26 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard let origin = publishOriginAccountId,
               let current = currentAccountIdForPublish() else { return false }
         return origin != current
+    }
+    /// 草稿归属是否仍是当前会话：创建时绑定的账号与当前账号一致。
+    /// 未绑定（创建时未登录）时恒为 false——不向任何账号写盘。
+    private var isDraftOwnerCurrent: Bool {
+        guard let owner = draftOwnerAccountId else { return false }
+        return currentAccountIdForPublish() == owner
+    }
+    /// 归属守卫：失配时停止保存并提示回原账号（只提示一次）；返回 false
+    /// 调用方直接 return。编辑态不走这里（saveDraftNow 首行已拦编辑态，
+    /// “编辑模式不写草稿”口径不动）。
+    private func ensureDraftOwnerCurrent() -> Bool {
+        if isDraftOwnerCurrent {
+            didShowOwnerMismatchAlert = false
+            return true
+        }
+        if !didShowOwnerMismatchAlert {
+            didShowOwnerMismatchAlert = true
+            showAlert(message: "账号已变化，草稿已停止保存。请回到原账号后再继续编辑，或丢弃本篇重新开始。")
+        }
+        return false
     }
     /// 账号失配提示：只提示、不删不改任何草稿与已公开态。部分成功态
     /// （原日记已公开）另加一句，免得用户误以为什么都没发生。
@@ -5136,7 +5167,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     if let name = item.localFile {
                         // 失败图重试：读盘解码也走后台队列，解完回主线程再起上传。
                         imagePrepQueue.async { [weak self, weak item] in
-                            let image = BearyDraftImageStore.image(for: name)
+                            let image = BearyDraftImageStore.image(for: name, accountId: draftOwnerAccountId)
                             DispatchQueue.main.async {
                                 guard let self = self, let item = item else { return }
                                 var stillThere = false
@@ -5174,7 +5205,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if presentedViewController != nil { return }
         if let name = item.localFile {
             imagePrepQueue.async { [weak self, weak item] in
-                let diskImage = BearyDraftImageStore.image(for: name)
+                let diskImage = BearyDraftImageStore.image(for: name, accountId: draftOwnerAccountId)
                 DispatchQueue.main.async {
                     guard let self = self, let item = item else { return }
                     var stillThere = false
@@ -5234,7 +5265,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         imageItems = kept
         if let name = item.localFile {
-            BearyDraftImageStore.deletePair(fullName: name)
+            BearyDraftImageStore.deletePair(fullName: name, accountId: draftOwnerAccountId)
         }
         imageStackView.removeArrangedSubview(item.container)
         item.container.removeFromSuperview()
@@ -5305,7 +5336,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func restartUploadForRestoredItem(_ item: ComposerImageItem) {
         if let name = item.localFile {
             imagePrepQueue.async { [weak self, weak item] in
-                let image = BearyDraftImageStore.image(for: name)
+                let image = BearyDraftImageStore.image(for: name, accountId: draftOwnerAccountId)
                 DispatchQueue.main.async {
                     guard let self = self, let item = item else { return }
                     var stillThere = false
@@ -5345,7 +5376,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         pendingRemovedImage = nil
         if let name = pending.item.localFile {
-            BearyDraftImageStore.deletePair(fullName: name)
+            BearyDraftImageStore.deletePair(fullName: name, accountId: draftOwnerAccountId)
         }
         refreshImageUndoBar()
     }
@@ -5402,7 +5433,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
                 return
             }
-            let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb)
+            let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb, accountId: draftOwnerAccountId)
             DispatchQueue.main.async {
                 guard let self = self, let item = item else { return }
                 var stillThere = false
@@ -5426,7 +5457,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     item.failed = false
                     item.localFile = saved
                     if let oldName = oldName, oldName != saved {
-                        BearyDraftImageStore.deletePair(fullName: oldName)
+                        BearyDraftImageStore.deletePair(fullName: oldName, accountId: draftOwnerAccountId)
                     }
                 } else {
                     // P1-19：落盘失败时旧文件、旧 key、旧预览一律不动，只 toast，
@@ -5556,7 +5587,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                             }
                                             return
                                         }
-                                        let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb)
+                                        let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb, accountId: draftOwnerAccountId)
                                         DispatchQueue.main.async {
                                             guard let self = self, let item = item else { return }
                                             var stillThere = false
@@ -5623,7 +5654,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             }
                             return
                         }
-                        let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb)
+                        let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb, accountId: draftOwnerAccountId)
                         DispatchQueue.main.async {
                             guard let self = self, let item = item else { return }
                             var stillThere = false
@@ -5763,7 +5794,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             guard let name = item.localFile else { continue }
             imagePrepQueue.async { [weak self, weak item] in
-                let image = BearyDraftImageStore.image(for: name)
+                let image = BearyDraftImageStore.image(for: name, accountId: draftOwnerAccountId)
                 DispatchQueue.main.async {
                     guard let self = self, let item = item else { return }
                     var stillThere = false
@@ -5961,7 +5992,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func deleteEditLocalFiles() {
         for item in imageItems {
             if let name = item.localFile {
-                BearyDraftImageStore.deletePair(fullName: name)
+                BearyDraftImageStore.deletePair(fullName: name, accountId: draftOwnerAccountId)
             }
         }
     }
@@ -6015,6 +6046,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             completion?(DraftSaveResult(succeeded: true, hadPreviousSavedVersion: false))
             return
         }
+        // 草稿归属守卫（创建时绑定）：未发布过的编辑器 publishOriginAccountId
+        // 仍为空，发布路径守卫放行——此处按创建时绑定的归属账号校验，当前
+        // 会话已变即不写盘、不生成新 draftId/clientReq、不碰当前账号的草稿桶。
+        // 失配时按失败回传，关闭/保留路径沿旧口径留页重试；状态行置红，不谎称已保存。
+        // hadPreviousSavedVersion 计真：本次调用未碰原账号桶，之前落盘的旧版原样还在。
+        if !ensureDraftOwnerCurrent() {
+            draftStatusLevel = 0
+            updateDraftStatusLabel()
+            completion?(DraftSaveResult(succeeded: false, hadPreviousSavedVersion: true))
+            return
+        }
         // 发布发起账号失配：不写盘、不生成新 draftId/clientReq、不碰
         // 当前账号的草稿桶。旧代码只在入队时捕获账号防“排队期间切号”，
         // 挡不住 401 重登后再次调用 saveDraftNow（此时当前账号已是新号，
@@ -6064,7 +6106,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 并回传成败——此前 deleteAsync 不回传，删篇失败会被关闭路径当成功关掉）。
             // 状态只在仍是空篇时清：删盘期间用户已开始写新篇（currentDraftId 已换）
             // 时不碰新篇的状态行，pill 宽度刷新无妨（审计第 25 项：纯图标固定 44，无计数）；删篇失败时置红，与写盘失败同口径。
-            BearyDraftStore.deleteAsyncReporting(draftId: deletingId) { [weak self] deleted in
+            // 删指定归属账号的篇，不读执行时全局当前账号（见 deleteAsyncReporting 捕获版）。
+            BearyDraftStore.deleteAsyncReporting(draftId: deletingId, forAccount: draftOwnerAccountId) { [weak self] deleted in
                 guard let self = self else { return }
                 if self.currentDraftId == nil {
                     self.draftStatusLevel = deleted ? nil : 0
@@ -6139,7 +6182,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 传验证结果，故这里直接用同一队列；与草稿箱的写删串行，不会旧读回写复活
         // 已删草稿；快照本身只是单篇 struct，不含整库旧状态）。
         // 审计三轮第 2 项：入队前捕获账号，写与回读一律用捕获值，排队期间切号不串桶。
-        let saveAccountId = BearyDraftStore.currentAccountId
+        // 捕获值取创建时绑定的归属账号，不再读全局当前账号——排队期间切号，
+        // 旧账号草稿仍写回旧账号目录。
+        let saveAccountId = draftOwnerAccountId
         BearyDraftStore.ioQueue.async { [weak self] in
             let writeSucceeded = BearyDraftStore.save(draft, forAccount: saveAccountId)
             // 保存级别跟随图片状态：有失败/未上传的图 = 1（文字已保存，图片未保存），否则 2；
@@ -6186,8 +6231,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let restoreBaselineVersion = editorEditVersion
         let restoreBaselineDraftId = currentDraftId
         let restoreBaselineClearedDraftId = clearedCurrentDraftId
+        // 恢复读盘用创建时绑定的归属账号：读盘在后台队列，落地前切号也不改读桶，
+        // 不把新账号的最新草稿恢复进旧账号的编辑器；图片回收同样只清归属账号目录。
+        let restoreAccountId = draftOwnerAccountId
         BearyDraftStore.ioQueue.async { [weak self] in
-            guard let draft = BearyDraftStore.load() else { return }
+            guard let draft = BearyDraftStore.loadAll(forAccount: restoreAccountId).first else { return }
             // 回收无主文件（杀 App 后、首存前产生的孤文件）：多槽下必须保留全部草稿的
             // 引用并集，只留本篇会误删其他篇的本地图片。
             var referenced = Set<String>()
@@ -6196,14 +6244,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     referenced.insert(name)
                 }
             }
-            for otherDraft in BearyDraftStore.loadAll() {
+            for otherDraft in BearyDraftStore.loadAll(forAccount: restoreAccountId) {
                 for img in otherDraft.images {
                     if let name = img.localFile {
                         referenced.insert(name)
                     }
                 }
             }
-            BearyDraftImageStore.sweep(keeping: referenced)
+            BearyDraftImageStore.sweep(keeping: referenced, accountId: restoreAccountId)
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 // 52 批补充：恢复竞态门——恢复是异步读盘，落地时用户可能已经打过字；
@@ -6281,7 +6329,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     for img in decodingImages {
                         if img.state == .failed { continue }
                         if let name = img.localFile {
-                            decoded.append((name: name, image: BearyDraftImageStore.image(for: name)))
+                            decoded.append((name: name, image: BearyDraftImageStore.image(for: name, accountId: restoreAccountId)))
                         }
                     }
                     DispatchQueue.main.async {
@@ -6392,7 +6440,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func clearDraftAndFiles() {
         for item in imageItems {
             if let name = item.localFile {
-                BearyDraftImageStore.deletePair(fullName: name)
+                BearyDraftImageStore.deletePair(fullName: name, accountId: draftOwnerAccountId)
             }
         }
         let draftIdValue = currentDraftId
@@ -6403,10 +6451,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 下一篇发布重新捕获，不被旧绑定误拦。
         publishOriginAccountId = nil
         publishTogetherPublishedSourceId = nil
+        // 新篇新提示预算：归属失配提示的“只弹一次”随篇复位。
+        didShowOwnerMismatchAlert = false
         draftStatusLevel = nil
         updateDraftStatusLabel()
         if let draftIdValue = draftIdValue {
-            BearyDraftStore.deleteAsync(draftId: draftIdValue) { [weak self] in
+            BearyDraftStore.deleteAsync(draftId: draftIdValue, forAccount: draftOwnerAccountId) { [weak self] in
                 self?.refreshDraftPillWidth()
             }
         } else {
@@ -6655,7 +6705,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             for img in decodingImages {
                 if img.state == .failed { continue }
                 if let name = img.localFile {
-                    decoded.append((name: name, image: BearyDraftImageStore.image(for: name)))
+                    decoded.append((name: name, image: BearyDraftImageStore.image(for: name, accountId: draftOwnerAccountId)))
                 }
             }
             DispatchQueue.main.async {
