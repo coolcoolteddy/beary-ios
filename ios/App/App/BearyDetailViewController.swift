@@ -1752,6 +1752,78 @@ final class BearyDetailViewController: UIViewController {
         )
     }
 
+    /// 第 22 轮 C3：后台补齐时的阅读锚点——屏上可见的正文块／引用卡／
+    /// 图片（记 key）及其相对视口顶的偏移；补齐后布局落定再恢复，读到的
+    /// 位置不被上方高度变化顶走。只对实际变化的元素播已有淡入（见各分支
+    /// 的 fadeLabel/fadeView），锚点恢复本身不动 alpha、不播动效。
+    private struct ReadingAnchor {
+        let view: UIView
+        let key: String?
+        let offsetFromVisibleTop: CGFloat
+    }
+
+    /// 阅读顺序的锚点候选：标题、正文、首张可见图、引用卡。
+    private func readingAnchorCandidates() -> [(view: UIView, key: String?)] {
+        var candidates: [(view: UIView, key: String?)] = []
+        if !titleLabel.isHidden { candidates.append((titleLabel, nil)) }
+        if !bodyLabel.isHidden { candidates.append((bodyLabel, nil)) }
+        if let imageSlot = firstVisibleImageSlot() { candidates.append(imageSlot) }
+        if !quoteView.isHidden { candidates.append((quoteView, nil)) }
+        return candidates
+    }
+
+    /// 首张可见图片槽位及其 key（横向条内可见的第一格；无图时为 nil）。
+    private func firstVisibleImageSlot() -> (view: UIView, key: String?)? {
+        guard !imagesScrollView.isHidden else { return nil }
+        for (index, slot) in imageSlots.enumerated() {
+            guard !slot.isHidden else { continue }
+            let frameInStrip = slot.convert(slot.bounds, to: imagesScrollView)
+            guard frameInStrip.maxX > 0, frameInStrip.minX < imagesScrollView.bounds.width else { continue }
+            let key = index < imageKeys.count ? imageKeys[index] : nil
+            return (slot, key)
+        }
+        return nil
+    }
+
+    /// 更新前记住屏上最靠上的可见块及其相对视口顶的偏移；未进窗口、
+    /// 正在拖动／减速中、或无可见块时不锚（手势拥有 offset）。
+    private func captureReadingAnchor() -> ReadingAnchor? {
+        guard isViewLoaded, view.window != nil,
+              !scrollView.isDragging, !scrollView.isDecelerating else { return nil }
+        view.layoutIfNeeded()
+        let visibleTop = scrollView.contentOffset.y
+        let visibleBottom = visibleTop + scrollView.bounds.height
+        for candidate in readingAnchorCandidates() {
+            let frame = candidate.view.convert(candidate.view.bounds, to: contentColumnView)
+            guard frame.maxY > visibleTop, frame.minY < visibleBottom else { continue }
+            return ReadingAnchor(view: candidate.view, key: candidate.key, offsetFromVisibleTop: frame.minY - visibleTop)
+        }
+        return nil
+    }
+
+    /// 布局落定后把锚点放回同一屏上位置（只改 offset）；图片锚点按 key
+    /// 找现槽位，图被撤时退回整条图片区、再无则不动。
+    private func restoreReadingAnchor(_ anchor: ReadingAnchor?) {
+        guard let anchor = anchor else { return }
+        guard isViewLoaded, view.window != nil,
+              !scrollView.isDragging, !scrollView.isDecelerating else { return }
+        view.layoutIfNeeded()
+        let target: UIView?
+        if let key = anchor.key {
+            if let slotIndex = imageKeys.firstIndex(of: key), slotIndex < imageSlots.count {
+                target = imageSlots[slotIndex]
+            } else {
+                target = imagesScrollView.isHidden ? nil : imagesScrollView
+            }
+        } else {
+            target = anchor.view
+        }
+        guard let targetView = target, !targetView.isHidden else { return }
+        let frame = targetView.convert(targetView.bounds, to: contentColumnView)
+        let maxOffset = max(0, scrollView.contentSize.height - scrollView.bounds.height)
+        scrollView.contentOffset.y = min(max(0, frame.minY - anchor.offsetFromVisibleTop), maxOffset)
+    }
+
     func update(with fetched: Entry, baseline: SupplementBaseline? = nil) {
         // 审计 P2-20：页内已因拉黑/举报转占位时，后台补齐一律忽略，不得复活全文。
         if locallyHiddenByModeration { return }
@@ -1774,6 +1846,8 @@ final class BearyDetailViewController: UIViewController {
             hideStaleBanner()
             return
         }
+        // 第 22 轮 C3：记住屏上可见块再合并——上方内容高度变化时，补齐后按锚点恢复位置。
+        let readingAnchor = captureReadingAnchor()
         // 按字段合并：先取服务端全量，再把在途字段写回本地值。
         var merged = fetched
         // 及时性口径：代次未确认（有在途请求）时护乐观字段；在途请求全部
@@ -1923,6 +1997,8 @@ final class BearyDetailViewController: UIViewController {
         // 标题／@ 行显隐变化时重算头行／正文栈间距与顶距（标题隐藏时其后间距置 0、
         // @ 行显隐改顶距 22/23），其余字段变化不影响间距。
         updateDiaryStackSpacing()
+        // 第 22 轮 C3：布局落定后按锚点恢复阅读位置（只动 offset，不重播已有淡入）。
+        restoreReadingAnchor(readingAnchor)
         // 限时到期重排：回包可能带来新的 ephemeralUntil（或已过期），按新模型复核一次。
         if !applyEphemeralExpiryIfNeeded() {
             scheduleEphemeralExpiry()
