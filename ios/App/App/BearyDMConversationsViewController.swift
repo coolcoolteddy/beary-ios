@@ -456,6 +456,7 @@ final class BearyDMConversationCell: UITableViewCell {
     private let separatorView = UIView()
     private var unreadBadgeMinWidthConstraint: NSLayoutConstraint?
     private var unreadBadgeZeroWidthConstraint: NSLayoutConstraint?
+    private var unreadBadgeHeightConstraint: NSLayoutConstraint?
 
     /// 通知时间口径（2026-11-05 Li 定）：不到 1 分钟“刚刚”，不到 1 小时“X分钟前”，
     /// 不到 24 小时“X小时前”，超过 24 小时写天数“X天前”。
@@ -525,7 +526,9 @@ final class BearyDMConversationCell: UITableViewCell {
             timeLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             unreadBadge.topAnchor.constraint(equalTo: timeLabel.bottomAnchor, constant: 6),
             unreadBadge.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            unreadBadge.heightAnchor.constraint(equalToConstant: 17),
+            // 审计 N1：角标底边 ≤ 行底 -14——大字号下变高的角标能撑起行高，
+            // 而不是溢出到行外；默认字号下角标底 52.5 ≤ 58，不影响现行高。
+            unreadBadge.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
             // 审计低风险项：行底 1pt 分隔线。
             separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
@@ -541,10 +544,35 @@ final class BearyDMConversationCell: UITableViewCell {
         unreadBadgeZeroWidthConstraint = zeroWidth
         minWidth.isActive = false
         zeroWidth.isActive = true
+        // 审计 N1：角标高改可变约束（初值 17＝默认字号下几何，随后由
+        // updateUnreadBadgeGeometry 按当前字号重算，默认视觉不变）。
+        let badgeHeight = unreadBadge.heightAnchor.constraint(equalToConstant: 17)
+        unreadBadgeHeightConstraint = badgeHeight
+        badgeHeight.isActive = true
+        updateUnreadBadgeGeometry()
     }
 
     required init?(coder: NSCoder) {
         return nil
+    }
+
+    /// 审计 N1：未读角标几何跟随系统字号——实际高 = max(17, ceil(字体行高) + 4)，
+    /// 默认字号下 ceil(12.1) + 4 = 17，默认视觉不变；最小宽 ≥ 实际高、圆角 = 高 / 2
+    ///（规范 §1 半高类）；字号／颜色／文案均不动（字号 10 bold 见规范 §11、角标色
+    /// #0066CC 见 §7）。字体按当前 trait 重取：scaledFont 只在创建时按当前档
+    /// 取值，trait 变化后须重建，否则几何与渲染字体脱节。
+    private func updateUnreadBadgeGeometry() {
+        unreadBadge.font = BearyDynamicType.scaledFont(for: .boldSystemFont(ofSize: 10))
+        let badgeHeight = max(17, ceil(unreadBadge.font.lineHeight) + 4)
+        unreadBadgeHeightConstraint?.constant = badgeHeight
+        unreadBadgeMinWidthConstraint?.constant = badgeHeight
+        unreadBadge.layer.cornerRadius = badgeHeight / 2
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory else { return }
+        updateUnreadBadgeGeometry()
     }
 
     override func prepareForReuse() {
@@ -571,6 +599,9 @@ final class BearyDMConversationCell: UITableViewCell {
         unreadBadge.text = unread > 99 ? "99+" : "\(unread)"
         unreadBadgeMinWidthConstraint?.isActive = unread > 0
         unreadBadgeZeroWidthConstraint?.isActive = unread <= 0
+        // 审计 N1：复用行重配时按当前字号重算角标几何（行在字号变化后才
+        // 首次复用时，traitCollectionDidChange 可能未触发）。
+        updateUnreadBadgeGeometry()
         // C3：头像加载/占位/重试全走 BearyAvatarView（与旧 configure 同口径）。
         avatarView.configure(displayName: displayName, avatarURL: peer?.avatarUrl.flatMap { BearyImageURLs.avatarURL($0) }, ownerID: peer?.id)
     }
