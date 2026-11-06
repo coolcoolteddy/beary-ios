@@ -139,14 +139,18 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
                     // 松手确认退出仍走原保存流程；被拒（拖动中途状态变了）时滑回原位。
                     let proceeding = onEdgeSwipeCompleted?() ?? false
                     if !proceeding {
-                        resetCompletionFollow(view: view)
+                        // 被拒滑回：松手速度归一化后传弹簧初速度，快甩带 momentum、
+                        // 慢拖近 0（与底 sheet／灯箱复位同口径）。
+                        resetCompletionFollow(view: view, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: view.transform.tx))
                     }
                 } else {
                     interaction?.finish()
                 }
             } else {
                 if completionMode {
-                    resetCompletionFollow(view: view)
+                    // 未过阈值滑回：松手速度归一化后传弹簧初速度，快甩带 momentum、
+                    // 慢拖近 0（与底 sheet／灯箱复位同口径）。
+                    resetCompletionFollow(view: view, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: view.transform.tx))
                 } else {
                     interaction?.cancel()
                 }
@@ -159,11 +163,13 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
         }
     }
 
-    /// 完成模式跟手取消／被拒：视图滑回原位（0.25s easeOut，与进场同曲线；
-    /// 减动效时瞬时归位）。
-    private func resetCompletionFollow(view: UIView) {
+    /// 完成模式跟手取消／被拒：视图滑回原位（拖拽收尾统一弹簧 0.30s／
+    /// damping 0.7，与同文件退场动画同档；快甩松手把手势结束速度归一化后
+    /// 传 initialSpringVelocity，慢拖为 0；减动效时瞬时归位）。
+    /// 取消／失败无有效松手速度，调用方不传（默认 0）。
+    private func resetCompletionFollow(view: UIView, initialSpringVelocity: CGFloat = 0) {
         guard view.transform != .identity else { return }
-        UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.25, delay: 0, options: .curveEaseOut, animations: {
+        UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: [], animations: {
             view.transform = .identity
         })
     }
