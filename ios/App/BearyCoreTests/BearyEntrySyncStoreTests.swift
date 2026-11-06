@@ -7,8 +7,8 @@ import XCTest
 //   - 部分日期写失败时好日期照常落盘、旧日文件不被清理，下次重跑仍能对齐；
 //   - 回读校验：写完 id 序列对不上即判失败。
 //
-// 口径说明：已同步标记（syncedAccountIdThisLaunch）由编排层 finishSync /
-// finishTrashSync 在 commitFullSync / saveAll 返回 true 时才置——
+// 口径说明：已同步标记（syncedAccountIdThisLaunch）由编排层 finishDiaryRun /
+// finishTrashRun 在 finalizeDay / finalizeTrash 与完整性校验都通过时才置——
 // 本文件测的是它所依赖的存储核契约（false = 不可记已同步），编排层的
 // 三行门控由代码审查 + PR CI 覆盖，不在此用网络与 SessionManager 搭台测。
 // 测试桶用固定大号测试账号，setUp / tearDown 各清一次，不碰真实账号桶。
@@ -98,14 +98,16 @@ final class BearyEntrySyncStoreTests: XCTestCase {
         let noDateDecoder = JSONDecoder()
         noDateDecoder.keyDecodingStrategy = .convertFromSnakeCase
         let noDate = try! noDateDecoder.decode(Entry.self, from: Data("{\"id\": \"no-date\", \"content\": \"x\"}".utf8))
-        let grouped = BearyEntrySyncStore.groupByDay([
+        let result = BearyEntrySyncStore.groupByDay([
             makeEntry(id: "new-year", createdAtMs: 1735689600000),
             makeEntry(id: "eve", createdAtMs: 1735657200000),
             noDate,
         ])
-        XCTAssertEqual(grouped["2025-01-01"]?.map({ $0.id }), ["new-year"])
-        XCTAssertEqual(grouped["2024-12-31"]?.map({ $0.id }), ["eve"])
-        XCTAssertEqual(grouped.keys.count, 2)
+        XCTAssertEqual(result.grouped["2025-01-01"]?.map({ $0.id }), ["new-year"])
+        XCTAssertEqual(result.grouped["2024-12-31"]?.map({ $0.id }), ["eve"])
+        XCTAssertEqual(result.grouped.keys.count, 2)
+        // 无 createdAt 的条目丢弃并计数（第四轮增量 04：跳过数供编排层拦截提交）。
+        XCTAssertEqual(result.skippedCount, 1)
     }
 
     // MARK: - 回收站整桶写盘
