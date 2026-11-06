@@ -466,6 +466,9 @@ final class BearyCalendarCardView: UIView {
     var onPrevious: (() -> Void)?
     var onNext: (() -> Void)?
     var onGoToday: (() -> Void)?
+    /// R15-L1：日历失败重试入口（卡内行，见 setLoadFailed）。旧口径在统计行
+    /// 与顶部悬浮条各放一处，本支收掉两处、只留卡内一处。
+    var onRetry: (() -> Void)?
 
     private let titleLabel = UILabel()
     private let todayButton = BearyHit44Button(type: .system)
@@ -473,6 +476,11 @@ final class BearyCalendarCardView: UIView {
     private let prevButton = BearyHit44Button(type: .system)
     private let nextButton = BearyHit44Button(type: .system)
     private let gridStack = UIStackView()
+    /// R15-L1：日历失败行（文案 + 文字重试钮），默认隐藏；失败时由 VC 经
+    /// setLoadFailed 显隐。行内重试钮是 BearyHit44Button，视觉小、热区 44。
+    private let calendarFailedLabel = UILabel()
+    private let calendarFailedRetryButton = BearyButton.retryInline()
+    private let calendarFailedRow = UIStackView()
     private var dayButtons: [BearyCalendarDayButton] = []
     /// 按日期 key 复用的日期按钮（网页 calReuseGrid 口径）：切换视图/数据刷新时
     /// 只移动/新建格子，不整表重建；复用节点不重播月格入场错峰。
@@ -618,6 +626,29 @@ final class BearyCalendarCardView: UIView {
             nextButton.widthAnchor.constraint(equalToConstant: 32),
             nextButton.heightAnchor.constraint(equalToConstant: 32),
         ])
+
+        // R15-L1：失败行挂在网格下方（卡内最后一行），默认隐藏、不占位；
+        // 显隐只由 setLoadFailed 改，render 的格子签名不管它。
+        calendarFailedLabel.translatesAutoresizingMaskIntoConstraints = false
+        calendarFailedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        calendarFailedLabel.adjustsFontForContentSizeCategory = true
+        calendarFailedLabel.textColor = BearyColors.gray
+        calendarFailedLabel.text = "日历加载失败"
+        calendarFailedLabel.setContentHuggingPriority(.required, for: .horizontal)
+        calendarFailedRetryButton.translatesAutoresizingMaskIntoConstraints = false
+        calendarFailedRetryButton.addTarget(self, action: #selector(didTapCalendarRetry), for: .touchUpInside)
+        calendarFailedRetryButton.bearyAddPressFeedback()
+        calendarFailedRetryButton.accessibilityLabel = "日历加载失败，重试"
+        calendarFailedRow.translatesAutoresizingMaskIntoConstraints = false
+        calendarFailedRow.axis = .horizontal
+        calendarFailedRow.spacing = 8
+        calendarFailedRow.alignment = .center
+        calendarFailedRow.addArrangedSubview(calendarFailedLabel)
+        calendarFailedRow.addArrangedSubview(calendarFailedRetryButton)
+        calendarFailedRow.addArrangedSubview(UIView())
+        calendarFailedRow.isHidden = true
+        outer.addArrangedSubview(calendarFailedRow)
+        outer.setCustomSpacing(8, after: gridStack)
     }
 
     required init?(coder: NSCoder) {
@@ -723,6 +754,21 @@ final class BearyCalendarCardView: UIView {
                 })
             }
         }
+    }
+
+    /// R15-L1：日历失败行显隐（任一可视月份失败且无缓存即显，见 VC
+    /// updateStatsLine；成功/切走即藏）。返回是否真的改了显隐——VC 据此
+    /// 决定要不要重算表头高度（行高约 20pt，显隐即表头高度变化）。
+    @discardableResult
+    func setLoadFailed(_ failed: Bool) -> Bool {
+        let shouldHide = !failed
+        guard calendarFailedRow.isHidden != shouldHide else { return false }
+        calendarFailedRow.isHidden = shouldHide
+        return true
+    }
+
+    @objc private func didTapCalendarRetry() {
+        onRetry?()
     }
 
     /// weekKeys：月视图入场错峰时要跳过的本周日期 key（网页 calStaggerMonthCells
@@ -2420,27 +2466,10 @@ class BearyTimelineViewController: UIViewController {
     // 审计-时间线：表头统计/重试钮改 BearyHit44Button，视觉帧不动、热区扩至 44×44（正常态禁用，失败态可点时生效）。
     private let statsButton = BearyHit44Button(type: .system)
     private let calendarCard = BearyCalendarCardView()
-    /// 113 日历失败悬浮条：VC 视图层覆盖（不进 tableHeaderView，故不随表头滚走；
-    /// 不是骨架屏——失败时才出现的一行文案 + 重试钮）。重试复用统计行 didTapStats
-    ///（重拉全部可视失败月份）；在途月份不出加载态（既有口径不动），故本条只管失败态。
-    private let calendarFailedBanner = UIView()
-    private let calendarFailedLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        labelValue.adjustsFontForContentSizeCategory = true
-        labelValue.textColor = BearyColors.gray
-        labelValue.text = "日历加载失败"
-        return labelValue
-    }()
-    private lazy var calendarFailedRetryButton: BearyButton = {
-        let buttonValue = BearyButton.retryPill()
-        buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setTitle("重试", for: .normal)
-        buttonValue.addTarget(self, action: #selector(didTapStats), for: .touchUpInside)
-        buttonValue.bearyAddPressFeedback()
-        return buttonValue
-    }()
+    /// R15-L1：表头筛选行——筛子钮 + 选中日日期（窄屏/大字号时分行，
+    /// 见 updateFilterRowLayout；日期原文案在当日面板组头，见 dayPanelTitleParts）。
+    private let filterDateLabel = UILabel()
+    private let filterRow = UIStackView()
     private var headerStack: UIStackView?
     private var lastHeaderWidth: CGFloat = 0
 
@@ -2464,7 +2493,6 @@ class BearyTimelineViewController: UIViewController {
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         setupStickyHeader()
-        setupCalendarFailedBanner()
         // R8：控制器自有按钮类走 scaledFont + adjusts（卡片内文字由卡片组负责，不碰）。
         loadMoreButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         loadMoreButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -3840,8 +3868,8 @@ class BearyTimelineViewController: UIViewController {
         statsButton.titleLabel?.adjustsFontForContentSizeCategory = true
         statsButton.addTarget(self, action: #selector(didTapStats), for: .touchUpInside)
         statsButton.bearyAddPressFeedback()
-        // P2：统计行初态不可点（无文案、无重试可做）；失败态由
-        // updateStatsLine 重新启用，正常态保持禁用。
+        // R15-L1：统计行恒不可点（只作次要信息展示；日历失败重试在卡内，
+        // 不经本钮；初态无文案、失败态留空、正常态展示统计）。
         statsButton.isEnabled = false
 
         calendarCard.translatesAutoresizingMaskIntoConstraints = false
@@ -3859,6 +3887,10 @@ class BearyTimelineViewController: UIViewController {
         }
         calendarCard.onGoToday = { [weak self] in
             self?.goToToday()
+        }
+        // R15-L1：日历失败重试只留卡内一处（didTapStats 重拉全部可视失败月份）。
+        calendarCard.onRetry = { [weak self] in
+            self?.didTapStats()
         }
 
         // 时间线筛子入口（列表顶表头内，随表滚走，不常驻占位）：
@@ -3887,18 +3919,34 @@ class BearyTimelineViewController: UIViewController {
         visFilterButton.addTarget(self, action: #selector(didTapVisFilter), for: .touchUpInside)
         visFilterButton.bearyAddPressFeedback()
         updateVisFilterButton()
-        let filterRow = UIStackView(arrangedSubviews: [visFilterButton, UIView()])
+        // R15-L1：筛选行旁放选中日日期（与当日面板组头同值，见 updateFilterDateLabel）；
+        // 窄屏/大字号放不下时整行改竖排、日期另起一行（见 updateFilterRowLayout）。
+        filterDateLabel.translatesAutoresizingMaskIntoConstraints = false
+        filterDateLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
+        filterDateLabel.adjustsFontForContentSizeCategory = true
+        filterDateLabel.textColor = BearyColors.ink
+        filterDateLabel.numberOfLines = 0
+        filterDateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        filterRow.translatesAutoresizingMaskIntoConstraints = false
         filterRow.axis = .horizontal
         filterRow.alignment = .center
+        filterRow.spacing = 8
+        filterRow.addArrangedSubview(visFilterButton)
+        filterRow.addArrangedSubview(filterDateLabel)
+        filterRow.addArrangedSubview(UIView())
+        updateFilterDateLabel()
 
-        let stack = UIStackView(arrangedSubviews: [titleRow, countsLabel, statsButton, calendarCard, filterRow])
+        // R15-L1：表头顺序改为标题与回收站 → 日历 → 统计（次要信息，
+        // 在日历下面）→ 筛选和日期 → 日记；≥821pt 居中列 / ≤820pt 全宽列
+        // 与左右各 16 边距一律不动（见下方约束与 SceneDelegate 宽度口径）。
+        let stack = UIStackView(arrangedSubviews: [titleRow, calendarCard, countsLabel, statsButton, filterRow])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
         stack.spacing = 0
         stack.setCustomSpacing(4, after: titleRow)
+        stack.setCustomSpacing(12, after: calendarCard)
         stack.setCustomSpacing(2, after: countsLabel)
         stack.setCustomSpacing(12, after: statsButton)
-        stack.setCustomSpacing(12, after: calendarCard)
         headerStack = stack
         headerContainer.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -3914,12 +3962,58 @@ class BearyTimelineViewController: UIViewController {
     /// 宽一就绪即由 viewDidLayoutSubviews 消费重算，不静默丢弃。
     private var headerHeightNeedsRefresh = false
 
+    /// R15-L1：筛选行旁的选中日日期（与当日面板组头同值，只取日期段；
+    /// 未选日时隐藏整段）。文本变化本身触发内在尺寸失效，走布局通道
+    /// 重算表头高，本方法不直接调 refreshHeaderHeight（防重入循环）。
+    private func updateFilterDateLabel() {
+        guard let key = selectedDayKey else {
+            filterDateLabel.isHidden = true
+            filterDateLabel.text = nil
+            return
+        }
+        let head = dayPanelTitleParts(key: key).head
+        guard !head.isEmpty else {
+            filterDateLabel.isHidden = true
+            filterDateLabel.text = nil
+            return
+        }
+        if filterDateLabel.text != head {
+            filterDateLabel.text = head
+        }
+        filterDateLabel.isHidden = false
+    }
+
+    /// R15-L1：筛选与日期分行判定——筛子钮实宽 + 间距 + 日期实宽放不进
+    /// 表头可用宽（表宽 − 左右各 16）时整行改竖排（筛子在上、日期在下、
+    /// 左对齐），放得下时恢复横排。只在轴向真变时改，不触发布局抖动；
+    /// 大字号下筛子钮宽已由 updateVisFilterButton 按新字号重算（见
+    /// traitCollectionDidChange），本判定读到的即新宽。
+    private func updateFilterRowLayout() {
+        guard !filterDateLabel.isHidden else {
+            if filterRow.axis != .horizontal {
+                filterRow.axis = .horizontal
+                filterRow.alignment = .center
+            }
+            return
+        }
+        let available = tableView.bounds.width - 32
+        guard available > 0 else { return }
+        let buttonWidth = visFilterButtonWidthConstraint?.constant ?? visFilterButton.intrinsicContentSize.width
+        let dateWidth = filterDateLabel.intrinsicContentSize.width
+        let needsVertical = buttonWidth + filterRow.spacing + dateWidth > available
+        let newAxis: NSLayoutConstraint.Axis = needsVertical ? .vertical : .horizontal
+        guard filterRow.axis != newAxis else { return }
+        filterRow.axis = newAxis
+        filterRow.alignment = needsVertical ? .leading : .center
+    }
+
     private func refreshHeaderHeight() {
         let width = tableView.bounds.width
         guard width > 0 else {
             headerHeightNeedsRefresh = true
             return
         }
+        updateFilterRowLayout()
         headerHeightNeedsRefresh = false
         lastHeaderWidth = width
         headerContainer.frame = CGRect(x: 0, y: 0, width: width, height: 0)
@@ -3937,6 +4031,7 @@ class BearyTimelineViewController: UIViewController {
     private func fittingHeaderHeight() -> CGFloat {
         let width = tableView.bounds.width
         guard width > 0 else { return headerContainer.frame.height }
+        updateFilterRowLayout()
         headerContainer.frame = CGRect(x: 0, y: 0, width: width, height: 0)
         let size = headerContainer.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
@@ -4143,72 +4238,37 @@ class BearyTimelineViewController: UIViewController {
     private var lastStatsStreak: Int?
     private var lastStatsMonthTotal: Int?
 
-    // MARK: - 113 日历失败悬浮条
-    // 悬浮条搭建：VC 视图层、钉在安全区顶 +68（顶栏 60 之下 8pt，
-    // 顶栏收起时仍在原位不跟随滚动）；只在失败时显，平时 isHidden 不占位、不拦截。
-    private func setupCalendarFailedBanner() {
-        calendarFailedBanner.translatesAutoresizingMaskIntoConstraints = false
-        calendarFailedBanner.backgroundColor = BearyColors.surface
-        calendarFailedBanner.layer.borderWidth = 1
-        calendarFailedBanner.layer.bearyDynamicBorderColor = BearyColors.line
-        calendarFailedBanner.layer.cornerRadius = BearyCorners.single
-        calendarFailedBanner.clipsToBounds = true
-        calendarFailedBanner.isHidden = true
-        calendarFailedBanner.accessibilityLabel = "日历加载失败，重试"
-        let stackValue = UIStackView(arrangedSubviews: [calendarFailedLabel, calendarFailedRetryButton])
-        stackValue.translatesAutoresizingMaskIntoConstraints = false
-        stackValue.axis = .horizontal
-        stackValue.spacing = 8
-        stackValue.alignment = .center
-        calendarFailedBanner.addSubview(stackValue)
-        NSLayoutConstraint.activate([
-            stackValue.topAnchor.constraint(equalTo: calendarFailedBanner.topAnchor, constant: 8),
-            stackValue.leadingAnchor.constraint(equalTo: calendarFailedBanner.leadingAnchor, constant: 16),
-            stackValue.trailingAnchor.constraint(equalTo: calendarFailedBanner.trailingAnchor, constant: -12),
-            stackValue.bottomAnchor.constraint(equalTo: calendarFailedBanner.bottomAnchor, constant: -8),
-        ])
-        view.addSubview(calendarFailedBanner)
-        NSLayoutConstraint.activate([
-            calendarFailedBanner.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 68),
-            calendarFailedBanner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            calendarFailedBanner.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
-            calendarFailedBanner.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
-        ])
-    }
-
-    /// 113 悬浮条显隐：可视月份任一失败且无缓存即显（与统计行失败判定同口径）；
-    /// 切到已缓存月份、或重试成功后即藏。深浅切换时边框色同步重刷。
-    private func updateCalendarFailedBanner() {
-        let visibleKeys = monthKeysForCurrentView()
-        let anyVisibleFailed = visibleKeys.contains { calendarFailed.contains($0) && calendarCache[$0] == nil }
-        calendarFailedBanner.layer.bearyDynamicBorderColor = BearyColors.line
-        calendarFailedBanner.isHidden = !anyVisibleFailed
-    }
-
+    // MARK: - 统计行与日历失败态（R15-L1：悬浮条已收掉，重试只留卡内）
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        calendarFailedBanner.layer.bearyDynamicBorderColor = BearyColors.line
         // 字号变化时筛子钮显式宽度随新字号重算（否则标题仍按旧宽截断）。
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
             updateVisFilterButton()
+            // R15-L1：钮宽变了，分行判定重算（窄屏/大字号下筛子与日期分行）。
+            updateFilterRowLayout()
         }
     }
 
     /// 连续写作行：网页 .cal-stats（13.5 灰、数字墨色加粗、16pt 橙色火苗图标）。
     /// 火苗图为本批新建的 icon_fire 资产（beary.html #beary-fire sprite 路径渲染）。
-    /// 任一可视月份失败时整行变重试入口（G14）；在途/缺失月份不出加载态（无“日历加载中…”）。
+    /// R15-L1：日历失败重试只留卡内一处（BearyCalendarCardView.setLoadFailed，
+    /// 重试走 didTapStats）；统计行失败时只留空、不再变重试入口（旧 G14
+    /// 统计行重试与 113 顶部悬浮条随本支一并收掉）。在途/缺失月份不出加载态
+    ///（无“日历加载中…”）。
     private func updateStatsLine() {
-        // 113：悬浮失败条先于统计行签名守卫更新——失败签名不变时统计行提前返回，
-        // 但切月/重试后失败态可能已变，条的显隐必须每次重算（不靠签名守卫）。
-        updateCalendarFailedBanner()
         let primaryKey = primaryStatsMonthKey()
         let visibleKeys = monthKeysForCurrentView()
         let anyVisibleFailed = visibleKeys.contains { calendarFailed.contains($0) && calendarCache[$0] == nil }
+        // R15-L1：卡内失败行先于统计行签名守卫更新——失败签名不变时统计行
+        // 提前返回，但切月/重试后失败态可能已变，卡内行的显隐必须每次重算
+        //（不靠签名守卫）；显隐真变时重算表头高度（失败行约 20pt）。
+        if calendarCard.setLoadFailed(anyVisibleFailed) {
+            refreshHeaderHeight()
+        }
         if anyVisibleFailed {
-            // P2：失败态是唯一可点态（重试入口），保持启用 + 按压反馈；
-            // P1-26：按功能命名（与可见文案一致）。
-            statsButton.isEnabled = true
-            statsButton.accessibilityLabel = "日历加载失败，重试"
+            // R15-L1：失败态统计行留空、不可点（重试入口已移到日历卡内）。
+            statsButton.isEnabled = false
+            statsButton.accessibilityLabel = nil
             // 64 包反馈修（第 3 项）：失败态亦计签名，一致则不重碰按钮。
             let signature = "fail"
             guard signature != lastStatsLineSignature else { return }
@@ -4217,10 +4277,7 @@ class BearyTimelineViewController: UIViewController {
             lastStatsMonthTotal = nil
             statsButton.setImage(nil, for: .normal)
             statsButton.setAttributedTitle(nil, for: .normal)
-            statsButton.setTitle("日历加载失败，重试", for: .normal)
-            statsButton.setTitleColor(BearyColors.gray, for: .normal)
-            // 116：失败态文案出现时只淡入标题（无图标可动）。
-            fadeButtonTitle(statsButton)
+            statsButton.setTitle("", for: .normal)
             return
         }
         guard let primaryKey = primaryKey, let data = calendarCache[primaryKey] else {
@@ -4244,9 +4301,9 @@ class BearyTimelineViewController: UIViewController {
         // 数值真变时只换数字段（下分支），静态段与火苗图标一律不动。
         let streak = data.streak ?? 0
         let monthTotal = data.monthTotal ?? 0
-        // P2：正常态不可点——禁用即去掉按压反馈（touchDown 缩放/震动
-        // 只在启用钮上触发），didTapStats 的重试逻辑只在失败态可达；
-        // P1-26：无障碍名与可见统计文案一致。
+        // R15-L1：统计行恒不可点——禁用即去掉按压反馈（touchDown 缩放/震动
+        // 只在启用钮上触发）；didTapStats 的重试逻辑只由日历卡内失败行触发，
+        // 不再经统计行可达；P1-26：无障碍名与可见统计文案一致。
         statsButton.isEnabled = false
         statsButton.accessibilityLabel = "已连续写 \(streak) 天，本月共 \(monthTotal) 篇"
         if lastStatsLineSignature == "normal", lastStatsStreak == streak, lastStatsMonthTotal == monthTotal {
@@ -4952,6 +5009,8 @@ class BearyTimelineViewController: UIViewController {
             calendarCard.render(days: days, mode: .month, weekKeys: currentWeekKeys())
         }
         updateStatsLine()
+        // R15-L1：选日/切月后表头筛选行旁的日期同步（与当日面板组头同值）。
+        updateFilterDateLabel()
         updateCalendarTodayButton()
     }
 
@@ -5692,12 +5751,14 @@ class BearyTimelineViewController: UIViewController {
     /// TL-7 当日面板表头（第 7 项两段式 + 第 15 项网页口径）：
     /// 日期一段（15pt 加粗墨色，如“10 月 25 日”，星期不在此段）；
     /// 星期·篇数·状态一段（12pt 灰色，如“周日 · 1 篇 · 都私密”，篇数带空格）。
-    /// 失败时只写“加载失败，点一下日期再试”，重试靠再点日期（无头旁重试钮）；
-    /// 加载中/未加载时不写“加载中…”，只出日期一段。
-    /// head/suffix 分段供表头富文本使用（日期加粗 15 + 后段灰色 12）。
-    private func dayPanelTitleParts(key: String) -> (head: String, suffix: String) {
+    /// R15-L1：失败时日期段保留、后缀只写“ · 加载失败”，重试钮由组头在日期
+    /// 旁另出（见 viewForHeaderInSection）；旧口径整段替换日期（B-G8 注释
+    /// “日期段不保留”）已废止——失败文案本身不再兼重试入口。
+    /// head/suffix 分段供表头富文本使用（日期加粗 15 + 后段灰色 12）；
+    /// failed 供组头决定是否出日期旁重试钮。
+    private func dayPanelTitleParts(key: String) -> (head: String, suffix: String, failed: Bool) {
         let parts = key.split(separator: "-")
-        guard parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) else { return (key, "") }
+        guard parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) else { return (key, "", false) }
         var weekdayText = ""
         if let date = BearyBeijingDay.date(year: year, month: month, day: day) {
             let weekday = BearyBeijingDay.calendar.component(.weekday, from: date)
@@ -5708,13 +5769,10 @@ class BearyTimelineViewController: UIViewController {
         }
         let head = "\(month) 月 \(day) 日"
         if dayState == .failed {
-            // B-G8: web replaces the whole day segment with the failure text
-            // (beary.html 4216/4223); the date segment is NOT kept. Empty head
-            // leaves only the 12 gray failure text in viewForHeader.
-            return ("", "加载失败，点一下日期再试")
+            return (head, " · 加载失败", true)
         }
         if dayState != .loaded {
-            return (head, "")
+            return (head, "", false)
         }
         var suffix = ""
         if weekdayText.isEmpty {
@@ -5733,7 +5791,7 @@ class BearyTimelineViewController: UIViewController {
                 suffix += " · 都私密"
             }
         }
-        return (head, suffix)
+        return (head, suffix, false)
     }
 
     private func dayPanelTitle(key: String) -> String {
@@ -6196,6 +6254,13 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
+    /// R15-L1：当日面板组头日期旁重试——重拉选中日（clear:false，不清行；
+    /// 在途守卫在 fetchDayEntries 内，重复点按不重复发请求）。
+    @objc private func retryDayPanel() {
+        guard let key = selectedDayKey else { return }
+        fetchDayEntries(key: key, clear: false)
+    }
+
 }
 
 // MARK: - UITableViewDataSource / UITableViewDelegate
@@ -6251,9 +6316,12 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         guard section < sections.count else { return nil }
         let isDayPanel = (section == 0 && selectedDayKey != nil)
         let label = UILabel()
+        // R15-L1：当日面板失败时组头出日期旁重试钮（见下方约束分支）。
+        var dayPanelFailed = false
         // L13：当日面板头拆日期加粗 + 计数灰色 12 两段富文本；时间线分区头不变。
         if isDayPanel, let dayKey = selectedDayKey {
             let parts = dayPanelTitleParts(key: dayKey)
+            dayPanelFailed = parts.failed
             // R8：日组标题（正文类）走 scaledFont + adjusts。
             let attributed = NSMutableAttributedString(string: parts.head, attributes: [
                 .font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15)),
@@ -6284,14 +6352,33 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         // headers keep .date-h (top 18, bottom 8). They previously shared 18/8,
         // so the day header was 2/4pt too tall.
         var bottomConstant: CGFloat = isDayPanel ? -4 : -8
-        // 第 15 项：当日失败不再出头旁蓝色“重试”文字钮，重试靠再点日期
-        // （失败文案本身即“加载失败，点一下日期再试”）。
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: holder.topAnchor, constant: isDayPanel ? 16 : 18),
-            label.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: leading),
-            label.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -16),
-            bottomView.bottomAnchor.constraint(equalTo: holder.bottomAnchor, constant: bottomConstant),
-        ])
+        // R15-L1：当日失败时日期保留、日期旁出文字重试钮（重拉当日，
+        // 不清行）；第 15 项“失败文案本身即重试入口（再点日期）”已废止。
+        if isDayPanel && dayPanelFailed {
+            label.setContentCompressionResistancePriority(.init(749), for: .horizontal)
+            let retryButton = BearyButton.retryInline()
+            retryButton.translatesAutoresizingMaskIntoConstraints = false
+            retryButton.addTarget(self, action: #selector(retryDayPanel), for: .touchUpInside)
+            retryButton.bearyAddPressFeedback()
+            retryButton.accessibilityLabel = "当日列表加载失败，重试"
+            holder.addSubview(retryButton)
+            NSLayoutConstraint.activate([
+                label.topAnchor.constraint(equalTo: holder.topAnchor, constant: 16),
+                label.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: leading),
+                label.trailingAnchor.constraint(lessThanOrEqualTo: holder.trailingAnchor, constant: -16),
+                retryButton.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 8),
+                retryButton.centerYAnchor.constraint(equalTo: label.centerYAnchor),
+                retryButton.trailingAnchor.constraint(lessThanOrEqualTo: holder.trailingAnchor, constant: -16),
+                bottomView.bottomAnchor.constraint(equalTo: holder.bottomAnchor, constant: bottomConstant),
+            ])
+        } else {
+            NSLayoutConstraint.activate([
+                label.topAnchor.constraint(equalTo: holder.topAnchor, constant: isDayPanel ? 16 : 18),
+                label.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: leading),
+                label.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -16),
+                bottomView.bottomAnchor.constraint(equalTo: holder.bottomAnchor, constant: bottomConstant),
+            ])
+        }
         // 第 9 项：组头处无圆点、竖线不穿头——R1 补段已拆除，组头不再补
         // 14px 墨圆 + 17px line 色外环与满高竖线（网页 .date-h 在 .tl 组外同口径）。
         // 第 14 项 B：竖线按日通长连续——组内行按首/中/末拼线（见 TL-1 注释），
