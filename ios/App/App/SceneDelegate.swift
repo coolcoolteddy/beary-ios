@@ -3393,7 +3393,7 @@ final class BearyChromeViewController: UIViewController {
                 if fetched.isFriendsOnly, let authorId = fetched.authorId, SessionManager.shared.isLoggedIn {
                     BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self, weak detail] stateResult in
                         DispatchQueue.main.async {
-                            guard let detail = detail else { return }
+                            guard let self = self, let detail = detail else { return }
                             // R22-A1：互关校验回包同样复核会话与日记 ID，旧会话的
                             // 互关结论不得把旧篇放进新账号页面。
                             guard fetched.id == request.entryId, self.isStillSameDetailSession(request) else { return }
