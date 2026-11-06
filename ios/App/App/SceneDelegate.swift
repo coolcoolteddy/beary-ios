@@ -2365,7 +2365,9 @@ final class BearyChromeViewController: UIViewController {
                             }
                         }
                         self.feedVC?.refreshAll()
-                        self.profileVC?.reloadProfile()
+                        // C4：个人页不再整页重拉——removeDeletedEntry 已按 id 摘篇、
+                        // 调公开计数、转发地图/星图子页并刷表；广场 refreshAll
+                        // 保留（广场不在 C4 范围，其分页态仍靠重拉对齐）。
                     case .failure(let error):
                         if case .unauthorized = error {
                             // 401 走统一登录入口，不在此处另弹登录页、不自动重删：
@@ -3532,10 +3534,15 @@ final class BearyChromeViewController: UIViewController {
                 self?.gotoEntry(entryId: quoteId)
             }
         }
+        // C4：可见性变化按 id 定向同步各列表（广场/时间线/个人页 + 子页），
+        // 不再整页重拉；落盘由本路直接 upsert（旧靠时间线重拉写透）。
         detail.onVisibilityChanged = { [weak self] updated in
             self?.feedVC?.applyEditedEntry(updated)
-            self?.timelineVC?.refreshAfterDetailChange()
-            self?.profileVC?.reloadProfile()
+            self?.timelineVC?.applyEditedEntry(updated)
+            self?.profileVC?.applyEditedEntry(updated)
+            if let uid = SessionManager.shared.currentUser?.id {
+                BearyEntrySync.shared.upsertEdited(entry: updated, accountId: uid)
+            }
         }
         detail.onInteractionChanged = { [weak self] entryId, likeCount, liked, bookmarked, emotes in
             self?.feedVC?.applyInteraction(entryId: entryId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
@@ -3749,9 +3756,11 @@ final class BearyChromeViewController: UIViewController {
         c.onUpdated = { [weak self, weak c] updated in
             guard let self = self else { return }
             c?.dismiss(animated: BearyMotion.animated(true)) {
+                // C4：编辑保存按 id 定向同步各列表（广场/时间线/个人页 + 子页），
+                // 不再整页重拉；落盘仍走下面的 upsertEdited。
                 self.feedVC?.applyEditedEntry(updated)
-                self.timelineVC?.refreshAfterDetailChange()
-                self.profileVC?.reloadProfile()
+                self.timelineVC?.applyEditedEntry(updated)
+                self.profileVC?.applyEditedEntry(updated)
                 // 编辑成功落盘：完整 Entry 直接 upsert 到该北京日文件。
                 if let uid = SessionManager.shared.currentUser?.id {
                     BearyEntrySync.shared.upsertEdited(entry: updated, accountId: uid)

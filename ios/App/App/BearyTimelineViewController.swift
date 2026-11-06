@@ -3224,6 +3224,92 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
+    /// C4 详情往返只传变化：编辑/可见性变化按 id 原地更新，不重走首屏 +
+    /// 月份 + 当日三路重拉（旧 refreshAfterDetailChange）。timelineEntries /
+    /// dayEntries / 日缓存三处模型同改；可见行足数重渲，滚动位置不动。
+    /// 可见性翻转不改日归属（createdAt 不动），公私计数按新旧 isPublic 调
+    /// 整；日历月计数是月度聚合、篇数未变，不动。落盘由容器统一 upsert，
+    /// 本方法另把首屏快照同步写回（与 removeDeletedEntry 同口径），免得
+    /// 冷启动快照先复活旧字段。模型里没有本篇时只改命中处（日缓存）、不重拉。
+    func applyEditedEntry(_ entry: Entry) {
+        guard let entryId = entry.id else { return }
+        func patched(_ old: Entry) -> Entry {
+            var copy = old
+            copy.title = entry.title
+            copy.content = entry.content
+            copy.images = entry.images
+            copy.mood = entry.mood
+            copy.weather = entry.weather
+            copy.locationName = entry.locationName
+            copy.locationDistrict = entry.locationDistrict
+            copy.quoteId = entry.quoteId
+            copy.quote = entry.quote
+            if let v = entry.publishedAt { copy.publishedAt = v }
+            if let v = entry.editDeadline { copy.editDeadline = v }
+            if let v = entry.isPublic { copy.isPublic = v }
+            if let v = entry.visibility { copy.visibility = v }
+            copy.ephemeralUntil = entry.ephemeralUntil
+            return copy
+        }
+        // 旧公开态取第一个命中模型的值（首屏 → 当日面板 → 日缓存）；
+        // 三处都没有本篇时后面 guard 直接返回，不动计数。
+        let oldEntry = timelineEntries.first(where: { $0.id == entryId })
+            ?? dayEntries.first(where: { $0.id == entryId })
+            ?? dayEntriesCache.values.flatMap({ $0 }).first(where: { $0.id == entryId })
+        let oldPublic = oldEntry?.isPublic == true
+        var updated = false
+        for index in timelineEntries.indices where timelineEntries[index].id == entryId {
+            timelineEntries[index] = patched(timelineEntries[index])
+            updated = true
+        }
+        for index in dayEntries.indices where dayEntries[index].id == entryId {
+            dayEntries[index] = patched(dayEntries[index])
+            updated = true
+        }
+        for key in dayEntriesCache.keys {
+            var list = dayEntriesCache[key] ?? []
+            var listUpdated = false
+            for index in list.indices where list[index].id == entryId {
+                list[index] = patched(list[index])
+                listUpdated = true
+            }
+            if listUpdated {
+                dayEntriesCache[key] = list
+                updated = true
+            }
+        }
+        guard updated else { return }
+        // 公开 ↔ 非公开翻转时公私计数 ±1（与 removeDeletedEntry 同口径，
+        // isPublic==true 计公开、其余计私密；总量与月计数不变）。
+        let newPublic = entry.isPublic == true
+        if oldPublic != newPublic, var counts = countsValue {
+            if newPublic {
+                counts.pub = (counts.pub ?? 0) + 1
+                counts.priv = max(0, (counts.priv ?? 0) - 1)
+            } else {
+                counts.pub = max(0, (counts.pub ?? 0) - 1)
+                counts.priv = (counts.priv ?? 0) + 1
+            }
+            countsValue = counts
+            updateCountsLabel()
+            refreshHeaderHeight()
+        }
+        // 首屏快照同步写回（删帖同款）：冷启动先渲染快照，旧字段不得复活。
+        if let uid = SessionManager.shared.currentUser?.id {
+            BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
+        }
+        // 可见行足数重渲（applyInteraction 同款）：模型已改，滑回显示时
+        // configure 取新值，不整表重载、不动滚动位置。
+        let sections = currentSections()
+        for sectionIndex in sections.indices {
+            for rowIndex in sections[sectionIndex].entries.indices where sections[sectionIndex].entries[rowIndex].id == entryId {
+                if let cell = tableView.cellForRow(at: IndexPath(row: rowIndex, section: sectionIndex)) as? BearyTimelineCell {
+                    cell.configure(entry: sections[sectionIndex].entries[rowIndex])
+                }
+            }
+        }
+    }
+
     /// 113 详情互动同步：详情 onInteractionChanged 此前只推 feed，本方法补时间线一路——
     /// timelineEntries / dayEntries / 日缓存三处模型同改，可见行足数重渲；
     /// 详情侧失败回滚口径不动（本方法只写详情传来的确认值，不参与代次/回滚）。
