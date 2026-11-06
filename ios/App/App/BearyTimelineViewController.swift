@@ -1573,7 +1573,7 @@ final class BearyTimelineCell: UITableViewCell {
         if let weatherKey = entry.weather, let weatherName = BearyText.weatherNames[weatherKey] {
             weatherLabel.text = weatherName
             var weatherRowItems: [UIView] = []
-            if let weatherImage = BearyIconImages.image(named: "icon_wx_\(weatherKey)", pointSize: 14) {
+            if let weatherImage = BearyIconImages.image(named: "icon_wx_\(BearyText.weatherStaticKey(for: weatherKey))", pointSize: 14) {
                 let weatherIconView = UIImageView(image: weatherImage)
                 weatherIconView.translatesAutoresizingMaskIntoConstraints = false
                 weatherIconView.tintColor = BearyColors.gray
@@ -1583,6 +1583,8 @@ final class BearyTimelineCell: UITableViewCell {
                     weatherIconView.heightAnchor.constraint(equalToConstant: 14),
                 ])
                 self.weatherIconView = weatherIconView
+                // 天气标改动态 Lottie（落点行 playWeatherLottie 同款）。
+                playWeatherLottie()
                 weatherRowItems.append(weatherIconView)
             }
             weatherRowItems.append(weatherLabel)

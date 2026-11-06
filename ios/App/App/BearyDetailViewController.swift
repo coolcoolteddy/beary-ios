@@ -245,6 +245,8 @@ final class BearyDetailViewController: UIViewController {
         v.isHidden = true
         return v
     }()
+    /// 详情天气动态图标覆盖层（卡片落点行同款；底层静态图作 fallback）。
+    private var weatherEmoteView: BearyEmoteView?
     /// 详情作者行气温（卡片同款口径：有后端 temperature_c 且有天气类型才显，
     /// 无值隐藏、不留空位；详情此前只显天气图标、气温丢了，卡片/详情不一致）。
     private let weatherTempLabel: UILabel = {
@@ -1342,13 +1344,48 @@ final class BearyDetailViewController: UIViewController {
         moodEmoteView = nil
     }
 
+    /// 天气动态图标：底层静态图作 fallback（卡片落点行 playWeatherLottie 同款）。
+    private func playWeatherLottie() {
+        guard let weatherKey = entry.weather, !weatherKey.isEmpty, weatherImageView.isHidden == false else {
+            stopWeatherLottie()
+            return
+        }
+        let lottieKey = BearyText.weatherLottieKey(for: weatherKey)
+        if let existing = weatherEmoteView, existing.superview === weatherImageView, existing.emoteKey == lottieKey {
+            existing.play()
+            return
+        }
+        stopWeatherLottie()
+        guard let fallback = weatherImageView.image else { return }
+        let overlay = BearyEmoteView(key: lottieKey, animated: true, fallbackImage: fallback)
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        weatherImageView.addSubview(overlay)
+        NSLayoutConstraint.activate([
+            overlay.topAnchor.constraint(equalTo: weatherImageView.topAnchor),
+            overlay.leadingAnchor.constraint(equalTo: weatherImageView.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: weatherImageView.trailingAnchor),
+            overlay.bottomAnchor.constraint(equalTo: weatherImageView.bottomAnchor),
+        ])
+        weatherEmoteView = overlay
+    }
+
+    private func stopWeatherLottie() {
+        weatherEmoteView?.stop()
+        weatherEmoteView?.removeFromSuperview()
+        weatherEmoteView = nil
+    }
+
     /// 天气图标 + 气温标签（renderHeaderMeta 的一部分，审计 4/11 抽出）：
     /// 只变天气/气温时，后台补齐路径只调这里，不重走整段头部（含头像）。
     private func renderWeatherTemp() {
+        // 复用／重刷先停旧播放器（卡片 configure 同款），再按新天气重建。
+        stopWeatherLottie()
         if let weatherKey = entry.weather, !weatherKey.isEmpty,
-           let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
+           let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + BearyText.weatherStaticKey(for: weatherKey), pointSize: 15) {
             weatherImageView.image = weatherImage
             weatherImageView.isHidden = false
+            // 天气图标改动态 Lottie（卡片落点行同款）。
+            playWeatherLottie()
         } else {
             weatherImageView.image = nil
             weatherImageView.isHidden = true
