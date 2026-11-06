@@ -1,4 +1,5 @@
 import UIKit
+import ImageIO
 
 // ===== 原生编辑器草稿 v3（多槽）=====
 // v3 多槽按账号隔离：草稿文件与图片目录均按用户 ID 分桶
@@ -203,6 +204,25 @@ enum BearyDraftImageStore {
             try? FileManager.default.removeItem(at: thumbURL)
             return nil
         }
+    }
+
+    /// B4：复用已落盘的原图 + 缩略图字节（重试/续传不再重新编码）——两份文件
+    /// 都齐且原图可读出像素尺寸时直接返回已有字节；缺任一文件、读不出或
+    /// 尺寸非法时返回 nil，调用方走现有编码兜底（旧草稿缺文件即此路）。
+    /// 尺寸用 CGImageSource 只读图片头，不解码像素；返回的宽高即磁盘 JPEG
+    /// 的实际像素，与 jpegData 上报口径一致。
+    static func existingPreparedJPEG(fullName: String, accountId: Int?) -> (full: (data: Data, w: Int, h: Int), thumb: Data)? {
+        guard let fullURL = fileURL(for: fullName, accountId: accountId),
+              let thumbURL = fileURL(for: thumbFileName(for: fullName), accountId: accountId),
+              let fullData = try? Data(contentsOf: fullURL),
+              let thumbData = try? Data(contentsOf: thumbURL),
+              !fullData.isEmpty, !thumbData.isEmpty,
+              let source = CGImageSourceCreateWithData(fullData as CFData, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? Int,
+              let h = props[kCGImagePropertyPixelHeight] as? Int,
+              w > 0, h > 0 else { return nil }
+        return (full: (data: fullData, w: w, h: h), thumb: thumbData)
     }
 
     static func image(for name: String) -> UIImage? {
