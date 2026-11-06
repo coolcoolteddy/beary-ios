@@ -53,6 +53,10 @@ public final class BearyEmoteView: UIView {
     /// 幂等（已释放时两项均为 nil / 0），重复 teardown 不会把总数扣成负数。
     private var attachedCacheKey: String?
     private var attachedRenderCost: Int = 0
+    /// 主题跟随：本视图当前已挂内容的深浅版本（attach / showFallback 时记入，
+    /// teardown 时清空）。trait 通知投递不可靠时（离窗期间切换、复用池内创建、
+    /// previous 为 nil），didMoveToWindow 凭它与当前 trait 比对补刷。
+    private var attachedDark: Bool?
     /// 审计 29 项：离屏渲染被回收后、尚未回窗重载的标记（见 reclaimOffscreenRender）。
     /// 回窗时由 didMoveToWindow 凭它重载，帧与开场状态在回收时已快照保留。
     private var offscreenRenderReclaimed = false
@@ -392,6 +396,11 @@ public final class BearyEmoteView: UIView {
                 startLoadEmote()
             }
         }
+        // 主题跟随补刷：离窗期间错过深浅切换（或创建时不在窗内、trait 通知
+        // 的 previous 为 nil 被旧口径丢弃）的播放器，回窗时按当前 trait 把
+        // 已挂版本换成对应深浅版；已是当前版本时为空操作，不重载、不重播、
+        // 不改播放状态。回收重载已按当前 trait 取版时，此处同样为空操作。
+        refreshForCurrentTrait()
     }
 
     required init?(coder: NSCoder) {
@@ -404,10 +413,13 @@ public final class BearyEmoteView: UIView {
         fallbackImageView?.frame = bounds
     }
 
-    public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        guard let previous = previousTraitCollection else { return }
-        guard traitCollection.hasDifferentColorAppearance(comparedTo: previous) else { return }
+    /// 主题跟随：按当前 trait 把已挂内容换成对应深浅版本（只换版本，保留帧
+    /// 位置、循环阶段和播放状态，不重播开场描线）。已是当前版本时为空操作；
+    /// 尚未挂接任何内容时也为空操作（待挂的加载会直接用当前 trait 取版）。
+    /// 调用方：traitCollectionDidChange（通知到达时）与 didMoveToWindow
+    /// （离窗期间错过通知、回窗时补刷）。
+    private func refreshForCurrentTrait() {
+        guard let attached = attachedDark, attached != isDark else { return }
         // E4：延迟加载尚未触发时，深浅切换只换静态回退图，不因此提前解析。
         if isDeferredLoad && !loadStarted {
             fallbackImageView?.removeFromSuperview()
@@ -435,6 +447,18 @@ public final class BearyEmoteView: UIView {
         pausedFrame = preservedFrame
         startLoadEmote()
         Self.schedulePrewarm(dark: self.isDark)
+    }
+
+    public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // 外观未变（如仅字号档变化）不碰内容；previous 为 nil 是首次指派，
+        // 不能直接断定无变化，交给 refreshForCurrentTrait 按已挂版本比对
+        // （已是当前版本即为空操作）。
+        if let previous = previousTraitCollection,
+           !traitCollection.hasDifferentColorAppearance(comparedTo: previous) {
+            return
+        }
+        refreshForCurrentTrait()
     }
 
     /// 开始播放（首次 / 恢复共用，幂等）：
@@ -587,6 +611,7 @@ public final class BearyEmoteView: UIView {
         fallbackImageView?.removeFromSuperview()
         fallbackImageView = nil
         currentEmote = cached
+        attachedDark = self.isDark
         let view = LottieAnimationView(animation: cached.animation)
         // 审计 29 项：挂接即记账——模型成本已在缓存成本里（共享实例只计
         // 一次），这里只加持有数与本视图的渲染树 allowance；teardown /
@@ -649,6 +674,7 @@ public final class BearyEmoteView: UIView {
         imageView.image = fallbackImageOverride ?? BearyEmoteImages.image(for: emoteKey, dark: dark)
         addSubview(imageView)
         fallbackImageView = imageView
+        attachedDark = dark
     }
 
     /// 第十一轮 07：同 key 解析合并入口——按缓存 key（表情 key + 深浅模式）
@@ -732,6 +758,7 @@ public final class BearyEmoteView: UIView {
         fallbackImageView?.removeFromSuperview()
         fallbackImageView = nil
         currentEmote = nil
+        attachedDark = nil
     }
 
     private func startPlayback() {
