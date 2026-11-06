@@ -7,9 +7,10 @@ import CoreLocation
 // - 日记行只存两段文本：location_name（精确地点文本）、location_district（区级文本）。
 // - 经纬度永不持久化：定位/搜索时坐标只在内存里走一次逆地理编码取地名，用完即弃；
 //   地图渲染时按文本现场地理编码（见 BearyDiaryMapViewController，缓存只在内存、随页销毁）。
-// - 展示层实时脱敏：库里保留精确值，公开且 viewer 不是作者时只渲染区级；
-//   公开翻回私密，精确位置立即恢复（因为脱敏不在写库时做，翻转无需回写）。
-// - 他人视角 fail-closed：公开篇只有精确名、没有区级文本时，他人行直接不显示位置行，
+// - 展示层实时脱敏：库里保留精确值，非作者一律只渲染区级（公开、仅好友、
+//   私密不分，精确位置只有作者本人可见）；公开翻回私密，精确位置立即恢复
+//   （因为脱敏不在写库时做，翻转无需回写）。
+// - 他人视角 fail-closed：只有精确名、没有区级文本时，他人行直接不显示位置行，
 //   绝不把精确名当区级兜底露出。
 
 /// 编辑器/草稿/发布共用的位置值（只有文本，没有坐标）。
@@ -59,12 +60,14 @@ enum BearyLocationDisplay {
 
     static func display(location: DiaryLocation, isPublic: Bool, viewerIsAuthor: Bool) -> (line: String, note: String?)? {
         if location.isEmpty { return nil }
-        if isPublic && !viewerIsAuthor {
-            // 他人看公开篇：只到区级；没有区级就不显示，绝不回退到精确名。
+        if !viewerIsAuthor {
+            // 非作者一律只到区级：不依赖日记是否公开——仅好友篇 isPublic
+            // 为 false，旧口径会落进精确名分支；没有区级就不显示，绝不
+            // 回退到精确名。
             guard let district = location.district else { return nil }
             return (district, nil)
         }
-        // 作者本人（私密或公开）与私密态：精确名优先，无名时退区级。
+        // 作者本人（私密、仅好友或公开）：精确名优先，无名时退区级。
         if let name = location.name {
             var note: String?
             if isPublic && viewerIsAuthor, let district = location.district, district != name {
