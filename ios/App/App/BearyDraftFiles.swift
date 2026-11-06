@@ -190,9 +190,16 @@ enum BearyDraftImageStore {
     /// 原图与缩略图一起落盘；任一失败返回 nil（调用方按无本地文件降级处理）。
     /// G19：双写任一失败即删已写的一半，不留孤文件供后续误认已保存。
     static func save(fullData: Data, thumbData: Data) -> String? {
+        return save(fullData: fullData, thumbData: thumbData, forAccount: BearyDraftStore.currentAccountId)
+    }
+
+    /// A6：捕获账号版落盘——原图与缩略图路径一律用选图时捕获的账号解析，
+    /// 后台执行中不再重读 currentAccountId；切号刚好遇上图片准备时，
+    /// 两份文件仍落进同一账号桶，不与文字草稿的归属错开。
+    static func save(fullData: Data, thumbData: Data, forAccount accountId: Int?) -> String? {
         let fullName = newFileName()
         let thumbName = thumbFileName(for: fullName)
-        guard let fullURL = fileURL(for: fullName), let thumbURL = fileURL(for: thumbName) else { return nil }
+        guard let fullURL = fileURL(for: fullName, accountId: accountId), let thumbURL = fileURL(for: thumbName, accountId: accountId) else { return nil }
         do {
             try fullData.write(to: fullURL, options: .atomic)
             try thumbData.write(to: thumbURL, options: .atomic)
@@ -211,13 +218,23 @@ enum BearyDraftImageStore {
     }
 
     static func delete(_ name: String) {
-        guard let url = fileURL(for: name) else { return }
+        delete(name, forAccount: BearyDraftStore.currentAccountId)
+    }
+
+    /// A6：捕获账号版删除——失配清理（回填时身份已变，本次落盘的临时文件
+    /// 须从当初写入的账号桶里删，不按当前账号删了个空）。
+    static func delete(_ name: String, forAccount accountId: Int?) {
+        guard let url = fileURL(for: name, accountId: accountId) else { return }
         try? FileManager.default.removeItem(at: url)
     }
 
     static func deletePair(fullName: String) {
-        delete(fullName)
-        delete(thumbFileName(for: fullName))
+        deletePair(fullName: fullName, forAccount: BearyDraftStore.currentAccountId)
+    }
+
+    static func deletePair(fullName: String, forAccount accountId: Int?) {
+        delete(fullName, forAccount: accountId)
+        delete(thumbFileName(for: fullName), forAccount: accountId)
     }
 
     /// 清理无主文件：只保留给定草稿引用的原图与缩略图（调用方须传入全部草稿的
