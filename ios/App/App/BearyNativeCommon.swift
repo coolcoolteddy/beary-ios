@@ -1183,6 +1183,12 @@ final class BearyImagePrefetcher {
     private var pathConstrained = false
     private var pathWiFi = false
     private var generation = 0
+    /// 首报未到时被跳过的那一次预取请求（entries＋锚点＋viewerId），
+    /// 连同存入时代次一起记下；首报到达时重放一次，代次已变（滚动/
+    /// 离页调过 cancel，或已有新触发）则丢弃。只存一份：新触发到
+    /// 来时若仍跳过直接覆盖旧意图；已知路径下的零预算（断网/昂贵/
+    /// 受限）不存——重放预算仍为零，存了也无意义。
+    private var pendingIntent: (entries: [Entry], lastVisibleIndex: Int, viewerId: Int?, generation: Int)?
     private var inFlight: [URLSessionDataTask] = []
     private var pending: Set<String> = []
     private var warmed: Set<String> = []
@@ -1198,12 +1204,30 @@ final class BearyImagePrefetcher {
         monitor.pathUpdateHandler = { [weak self] path in
             guard let self = self else { return }
             self.lock.lock()
+            let firstReport = !self.pathKnown
             self.pathKnown = true
             self.pathSatisfied = path.status == .satisfied
             self.pathExpensive = path.isExpensive
             self.pathConstrained = path.isConstrained
             self.pathWiFi = path.usesInterfaceType(.wifi)
+            let intent = firstReport ? self.pendingIntent : nil
+            self.pendingIntent = nil
             self.lock.unlock()
+            // 首报到达：若首报前有一次预取因预算为零被跳过，重放一次。
+            // 重放走正常 prefetch 入口，按当时实际预算执行（仍为零则
+            // 其内守卫直接返回），绝不因等待而放量；代次已变说明意
+            // 图已离屏或被新触发取代，直接丢弃。主队列重放：prefetch
+            // 的收集阶段读 UIScreen.main.scale，与调用方同线程。
+            if let intent = intent {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.lock.lock()
+                    let stillCurrent = self.generation == intent.generation
+                    self.lock.unlock()
+                    guard stillCurrent else { return }
+                    self.prefetch(entries: intent.entries, lastVisibleIndex: intent.lastVisibleIndex, viewerId: intent.viewerId)
+                }
+            }
         }
         monitor.start(queue: queue)
         lock.lock()
@@ -1239,7 +1263,19 @@ final class BearyImagePrefetcher {
     func prefetch(entries: [Entry], lastVisibleIndex: Int, viewerId: Int?) {
         ensureMonitor()
         let budget = currentBudget()
-        guard budget.maxURLs > 0 else { return }
+        guard budget.maxURLs > 0 else {
+            // 首报未到（monitor 刚 start、pathUpdateHandler 尚未回调）：
+            // 此时预算恒为零，本次触发直接跳过会永久丢失——把请求存
+            // 为待处理意图，首报到达且预算非零时重放一次。已知路径
+            // 下的零预算不存；重放仍按当时实际预算执行，不因等待放量。
+            lock.lock()
+            let known = pathKnown
+            if !known {
+                pendingIntent = (entries: entries, lastVisibleIndex: lastVisibleIndex, viewerId: viewerId, generation: generation)
+            }
+            lock.unlock()
+            return
+        }
         let bucketKey = BearyImageLoader.shared.currentAccountId.map(String.init) ?? "guest"
         lock.lock()
         if warmedBucketKey != bucketKey {
@@ -1335,6 +1371,7 @@ final class BearyImagePrefetcher {
         let tasks = inFlight
         inFlight.removeAll()
         pending.removeAll()
+        pendingIntent = nil
         lock.unlock()
         for task in tasks { task.cancel() }
     }
