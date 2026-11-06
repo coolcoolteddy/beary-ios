@@ -147,7 +147,7 @@ final class BearyProfilePhotosViewController: UIViewController {
             return
         }
         titleLabel.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             self.titleLabel.alpha = 1
         })
     }
