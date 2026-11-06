@@ -875,16 +875,165 @@ final class BearyImageLoader {
     /// 只做一次磁盘读与写盘，结果分发给全部订阅者。订阅者表只在 inFlightLock
     /// 内读写；完成方先置 finishing 再校验/写盘，交付时在 finishDelivery 内
     /// 取实时订阅快照并摘表，再回主线程逐个回调，锁内绝不回调。
+    /// B4：尺寸记录本身不再持有下载任务——磁盘读与下载改由原始字节层
+    /// （inFlightRaw，键 = 账号桶 + 完整 URL）共享，同 URL 不同尺寸
+    /// 共用一次读与一次下载；尺寸记录只持有原始订阅（rawKey/rawId），
+    /// 取消时摘除它，原始任务只在最后一个尺寸订阅者取消时才取消。
     private let inFlightLock = NSLock()
     private var inFlight: [NSString: InFlightImageLoad] = [:]
 
     private final class InFlightImageLoad {
-        var task: URLSessionDataTask?
+        /// B4：本尺寸在原始字节层的订阅（键 + id），取消时凭它摘除；
+        /// 插表前已订好，故取消路径总能找到它。
+        var rawKey: NSString?
+        var rawId: UUID?
         var subscribers: [(id: UUID, completion: (Result<UIImage, BearyImageLoadError>) -> Void)] = []
-        /// 审计 r1-images 第 1 项：完成态标记。网络回调或磁盘支任一先到者
-        /// 置位并负责交付，另一支见此标记即退出，不双发；交付前加入的
-        /// 订阅者仍能赶上最终实时快照（见 finishDelivery）。
+        /// 审计 r1-images 第 1 项：完成态标记。原始字节回包先到者置位
+        /// 并负责解码与交付；交付前加入的订阅者仍能赶上最终实时快照
+        ///（见 finishDelivery）。
         var finishing = false
+    }
+
+    /// B4：原始字节在途表。键 = 账号桶 + 完整 URL（不含下采样宽度）——
+    /// 同 URL 不同尺寸共用一次磁盘读与一次下载；解码仍按尺寸各做各的，
+    /// 内存仍按尺寸键分别存。磁盘文件本身早已按 URL 共享（diskFileURL
+    /// 键 = SHA256(URL)，与宽度无关），这里共享的是读操作与下载链。
+    private let inFlightRawLock = NSLock()
+    private var inFlightRaw: [NSString: InFlightRawLoad] = [:]
+
+    private final class InFlightRawLoad {
+        var task: URLSessionDataTask?
+        var subscribers: [UUID: (Result<Data, BearyImageLoadError>) -> Void] = [:]
+        /// 原始字节完成态标记：磁盘支或网络支任一先到者置位并负责交付，
+        /// 另一支见此标记即退出，不双发。
+        var finishing = false
+    }
+
+    private func rawKey(for url: URL, bucket: Int?) -> NSString {
+        "\(bucketName(bucket))|\(url.absoluteString)" as NSString
+    }
+
+    /// B4：原始字节入库前的轻量可解码探针（64px 缩略图）：只确认字节是
+    /// 可解码的图片，避免损坏数据写盘后 24 小时内反复解码失败；各尺寸
+    /// 的正式解码仍由调用方按需做（见 loadDetailed 原始回包处）。
+    private static func isDecodableImageData(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return false }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageIfAbsent: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 64,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) != nil
+    }
+
+    /// B4：原始字节共享加载。同一账号桶 + 完整 URL 的多次调用合并为
+    /// 一次磁盘读与一次下载：磁盘命中直接回 Data；未命中则一次下载，
+    /// 入库前验 HTTP 200–299 + image/* MIME + 可解码探针，不符按脏数据
+    /// 失败、不写缓存。磁盘数据探针失败视为未命中（走网络重取，与旧
+    /// 磁盘支解码失败即 resume 的口径一致）。返回原始订阅（键 + id），
+    /// 供取消时摘除；最后一个订阅者取消时底层任务取消。
+    /// 完成回调在后台队列执行（磁盘队列或 URLSession 回调队列），调用方
+    /// 在其中解码——绝不在主线程解码。
+    private func loadRawData(for url: URL, bucket: Int?, completion: @escaping (Result<Data, BearyImageLoadError>) -> Void) -> (key: NSString, id: UUID) {
+        let key = rawKey(for: url, bucket: bucket)
+        let id = UUID()
+        inFlightRawLock.lock()
+        if let existing = inFlightRaw[key] {
+            existing.subscribers[id] = completion
+            inFlightRawLock.unlock()
+            return (key, id)
+        }
+        let raw = InFlightRawLoad()
+        raw.subscribers[id] = completion
+        inFlightRaw[key] = raw
+        inFlightRawLock.unlock()
+        let task = session.dataTask(with: url) { [weak self, weak raw] data, response, error in
+            guard let self = self, let raw = raw else { return }
+            self.inFlightRawLock.lock()
+            guard self.inFlightRaw[key] === raw, !raw.subscribers.isEmpty, !raw.finishing else {
+                self.inFlightRawLock.unlock()
+                return
+            }
+            // 审计 r1-images 第 1 项：完成方先置位、不摘表——校验/写盘
+            // 期间同键新加载挂到同一记录上，交付时一并分发。
+            raw.finishing = true
+            self.inFlightRawLock.unlock()
+            if let e = error as NSError?, e.code == NSURLErrorCancelled {
+                self.finishRawDelivery(raw: raw, key: key, result: .failure(.cancelled))
+                return
+            }
+            if let e = error {
+                self.finishRawDelivery(raw: raw, key: key, result: .failure(.network(e)))
+                return
+            }
+            // S1：验 HTTP 状态与 MIME，不符走失败分支（错误页/HTML 误当图片不再入库）。
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+                  let mime = http.mimeType, mime.hasPrefix("image/"),
+                  let data = data, Self.isDecodableImageData(data) else {
+                self.finishRawDelivery(raw: raw, key: key, result: .failure(.invalidData))
+                return
+            }
+            self.writeDisk(data: data, for: url, bucket: bucket)
+            self.finishRawDelivery(raw: raw, key: key, result: .success(data))
+        }
+        raw.task = task
+        // B1：磁盘读放后台线程，命中后直接交付 Data；未命中再 resume 网络任务。
+        // 调用方在后台队列 resume 前已全部取消则不再 resume。
+        Self.diskAndDecodeQueue.async { [weak self, weak raw] in
+            guard let self = self, let raw = raw else { return }
+            self.inFlightRawLock.lock()
+            let alive = self.inFlightRaw[key] === raw && !raw.subscribers.isEmpty && !raw.finishing
+            self.inFlightRawLock.unlock()
+            guard alive, task.state != .canceling, task.state != .completed else { return }
+            if let disk = self.diskData(for: url, bucket: bucket), Self.isDecodableImageData(disk) {
+                self.inFlightRawLock.lock()
+                guard self.inFlightRaw[key] === raw, !raw.subscribers.isEmpty, !raw.finishing else {
+                    self.inFlightRawLock.unlock()
+                    return
+                }
+                raw.finishing = true
+                self.inFlightRawLock.unlock()
+                self.finishRawDelivery(raw: raw, key: key, result: .success(disk))
+                return
+            }
+            self.inFlightRawLock.lock()
+            let stillAlive = self.inFlightRaw[key] === raw && !raw.subscribers.isEmpty && !raw.finishing
+            self.inFlightRawLock.unlock()
+            guard stillAlive, task.state != .canceling, task.state != .completed else { return }
+            task.resume()
+        }
+        return (key, id)
+    }
+
+    /// B4：原始字节统一交付口。交付时取实时订阅快照并摘表——校验/写盘
+    /// 期间加入的订阅者一并分发；已取消的订阅者自然不在快照里。
+    /// 调用方在后台队列解码，不回主线程。
+    private func finishRawDelivery(raw: InFlightRawLoad, key: NSString, result: Result<Data, BearyImageLoadError>) {
+        inFlightRawLock.lock()
+        let liveSubs = Array(raw.subscribers.values)
+        if inFlightRaw[key] === raw { inFlightRaw[key] = nil }
+        inFlightRawLock.unlock()
+        for sub in liveSubs { sub(result) }
+    }
+
+    /// B4：摘除一个原始订阅；最后一个订阅者取消时取消底层任务。
+    private func cancelRawData(key: NSString, id: UUID) {
+        inFlightRawLock.lock()
+        guard let raw = inFlightRaw[key] else {
+            inFlightRawLock.unlock()
+            return
+        }
+        raw.subscribers.removeValue(forKey: id)
+        guard raw.subscribers.isEmpty else {
+            inFlightRawLock.unlock()
+            return
+        }
+        inFlightRaw[key] = nil
+        let task = raw.task
+        inFlightRawLock.unlock()
+        // 锁外取消：底层任务的完成回调到时按对象身份核对，已摘除的表项
+        // 不再分发，恰在此时新建的同键原始记录也不会被旧回调误清。
+        task?.cancel()
     }
 
     /// 审计三轮 23 项：每订阅者的取消句柄。调用方只用它调 cancel()（存取与
@@ -920,17 +1069,19 @@ final class BearyImageLoader {
         // 先快照匹配键再删表：遍历中直接改字典会触发枚举期变异，
         // 故匹配与删除分两步。
         let matched = inFlight.keys.filter { prefix($0 as String) }
-        var tasks: [URLSessionDataTask] = []
+        var rawSubs: [(NSString, UUID)] = []
         for key in matched {
             guard let entry = inFlight[key] else { continue }
             entry.subscribers.removeAll()
-            if let task = entry.task {
-                tasks.append(task)
+            if let rawKey = entry.rawKey, let rawId = entry.rawId {
+                rawSubs.append((rawKey, rawId))
             }
             inFlight[key] = nil
         }
         inFlightLock.unlock()
-        for task in tasks { task.cancel() }
+        // 锁外摘除原始订阅：某尺寸的最后一个订阅者取消时，若原始层
+        // 仍有其他尺寸订阅者，下载继续；全部尺寸都无订阅者时才取消底层任务。
+        for (rawKey, rawId) in rawSubs { cancelRawData(key: rawKey, id: rawId) }
     }
 
     private func cancelInFlight(forBucket bucket: Int?) {
@@ -956,11 +1107,15 @@ final class BearyImageLoader {
             return
         }
         inFlight[key] = nil
-        let task = entry.task
+        let rawKey = entry.rawKey
+        let rawId = entry.rawId
         inFlightLock.unlock()
-        // 锁外取消：底层任务的完成回调到时按对象身份核对，已摘除的表项
-        // 不再分发，恰在此时新建的同键在途记录也不会被旧回调误清。
-        task?.cancel()
+        // 锁外摘除原始订阅：底层任务的完成回调到时按对象身份核对，已摘除
+        // 的表项不再分发，恰在此时新建的同键在途记录也不会被旧回调误清；
+        // 原始任务只在最后一个尺寸订阅者取消时才取消。
+        if let rawKey = rawKey, let rawId = rawId {
+            cancelRawData(key: rawKey, id: rawId)
+        }
     }
 
     /// 审计 r1-images 第 1/2 项：统一交付口。交付时才取实时订阅快照并
@@ -994,6 +1149,9 @@ final class BearyImageLoader {
     /// 方式不变）。同键在途时不再新建 dataTask、不再重复磁盘读与下载：
     /// 磁盘命中时底层任务永不 resume，磁盘未命中时由后台队列 resume 一次；
     /// 调用方在后台队列 resume 前已全部取消则不再 resume。
+    /// B4：同 URL 不同尺寸亦不再各起下载链——磁盘读与下载按账号 + 完整
+    /// URL 在原始字节层共享（见 loadRawData），各尺寸只各自解码、各自
+    /// 按尺寸键存内存；磁盘文件本身早已按 URL 共享。
     @discardableResult
     func loadDetailed(url: URL, downsampleToWidth: CGFloat? = nil, completion: @escaping (Result<UIImage, BearyImageLoadError>) -> Void) -> URLSessionDataTask? {
         let key = memoryKey(for: url, downsampleToWidth: downsampleToWidth)
@@ -1018,87 +1176,53 @@ final class BearyImageLoader {
         }
         inFlightLock.unlock()
         let entry = InFlightImageLoad()
-        let task = session.dataTask(with: url) { [weak self, weak entry] data, response, error in
+        entry.subscribers.append((id: subscriberId, completion: completion))
+        // B4：原始字节按账号 + 完整 URL 共享——先订原始字节（同 URL 不同
+        // 尺寸合并为一次磁盘读与一次下载），再把尺寸记录插表；解码与内存
+        // 仍按尺寸各做各的。原始订阅先于插表建立，取消路径总能找到它。
+        // 原始回包在后台队列执行，解码亦在此处做，不占主线程。
+        let (rawKey, rawId) = loadRawData(for: url, bucket: bucket) { [weak self, weak entry] result in
             guard let self = self, let entry = entry else { return }
             self.inFlightLock.lock()
-            guard self.inFlight[key] === entry, !entry.subscribers.isEmpty, !entry.finishing else {
-                self.inFlightLock.unlock()
-                return
-            }
-            // 审计 r1-images 第 1 项：完成方先置位、不摘表——校验/解码/
-            // 写盘期间同键新加载挂到同一记录上，交付时一并分发，不再因
-            // 摘表过早另起加载链；磁盘支见置位即退出，不双发。
+            let live = self.inFlight[key] === entry && !entry.subscribers.isEmpty && !entry.finishing
+            self.inFlightLock.unlock()
+            guard live else { return }
+            // 审计 r1-images 第 1 项：完成方先置位、不摘表——解码/交付
+            // 期间同键新加载挂到同一记录上，交付时一并分发。
+            self.inFlightLock.lock()
             entry.finishing = true
             self.inFlightLock.unlock()
-            if let e = error as NSError?, e.code == NSURLErrorCancelled {
-                self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .failure(.cancelled))
-                return
+            switch result {
+            case .failure(let err):
+                self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .failure(err))
+            case .success(let data):
+                guard let img = BearyImageLoader.decodedImage(data: data, downsampleToWidth: downsampleToWidth) else {
+                    self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .failure(.invalidData))
+                    return
+                }
+                // 审计 22 项：写内存前验代次，代次已变即不写内存（磁盘
+                // 文件本身已被 purge/evict 删掉或即将删掉，读到的是删除前
+                // 已解码在手的旧字节，不得再留存）；交付走 finishDelivery，
+                // 其内另按逐出戳核对。
+                if capturedGeneration == self.generation(for: bucket) {
+                    self.storeMemory(img, forKey: key, bucket: bucket, generation: capturedGeneration)
+                }
+                self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .success(img))
             }
-            if let e = error {
-                self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .failure(.network(e)))
-                return
-            }
-            // S1：验 HTTP 状态与 MIME，不符走失败分支（错误页/HTML 误当图片不再入库）。
-            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
-                  let mime = http.mimeType, mime.hasPrefix("image/"),
-                  let data = data, let img = BearyImageLoader.decodedImage(data: data, downsampleToWidth: downsampleToWidth) else {
-                self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .failure(.invalidData))
-                return
-            }
-            // 审计 22 项：写盘前再次验证代次——purge/evict 后旧写入
-            // 弃写（内存与磁盘双双不落）；分发走 finishDelivery，其内另按
-            // 逐出戳核对，不再是无条件交付。
-            if capturedGeneration == self.generation(for: bucket) {
-                self.storeMemory(img, forKey: key, bucket: bucket, generation: capturedGeneration)
-                self.writeDisk(data: data, for: url, bucket: bucket)
-            }
-            self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .success(img))
         }
-        entry.task = task
-        entry.subscribers.append((id: subscriberId, completion: completion))
+        entry.rawKey = rawKey
+        entry.rawId = rawId
         inFlightLock.lock()
         if let existing = inFlight[key] {
-            // 建任务与插表之间的竞态：已有后来者先插表，本次新建的任务直接丢弃
-            // （从未 resume，闭包弱引 entry，不形成循环），订阅挂到已有的记录上。
+            // 插表竞态：已有后来者先插表，本次的尺寸记录直接丢弃（订阅挂到
+            // 已有的记录上；本次的原始订阅成孤儿，其完成回调见 inFlight 已
+            // 不是本记录即退出，不解码、不交付，随原始加载完成即摘除）。
             existing.subscribers.append((id: subscriberId, completion: completion))
             inFlightLock.unlock()
             return proxy
         }
         inFlight[key] = entry
         inFlightLock.unlock()
-        // B1：磁盘读 + 解码放后台线程，命中后回主线程回调；未命中再 resume 网络任务。
-        // 线程归属不变：磁盘读与解码只走 diskAndDecodeQueue，枚举与写盘不在主线程。
-        Self.diskAndDecodeQueue.async { [weak self, weak entry] in
-            guard let self = self, let entry = entry, let task = entry.task else { return }
-            self.inFlightLock.lock()
-            let alive = self.inFlight[key] === entry && !entry.subscribers.isEmpty && !entry.finishing
-            self.inFlightLock.unlock()
-            guard alive, task.state != .canceling, task.state != .completed else { return }
-            if let disk = self.diskData(for: url, bucket: bucket),
-               let img = BearyImageLoader.decodedImage(data: disk, downsampleToWidth: downsampleToWidth) {
-                self.inFlightLock.lock()
-                guard self.inFlight[key] === entry, !entry.subscribers.isEmpty, !entry.finishing else {
-                    self.inFlightLock.unlock()
-                    return
-                }
-                entry.finishing = true
-                self.inFlightLock.unlock()
-                // 审计 22 项：磁盘命中写内存前同样验代次，代次已变即
-                // 不写内存（磁盘文件本身已被 purge/evict 删掉或即将删掉，
-                // 读到的是删除前已解码在手的旧字节，不得再留存）。
-                // 交付走 finishDelivery，其内另按逐出戳核对。
-                if capturedGeneration == self.generation(for: bucket) {
-                    self.storeMemory(img, forKey: key, bucket: bucket, generation: capturedGeneration)
-                }
-                self.finishDelivery(entry: entry, key: key, capturedGeneration: capturedGeneration, result: .success(img))
-                return
-            }
-            self.inFlightLock.lock()
-            let stillAlive = self.inFlight[key] === entry && !entry.subscribers.isEmpty && !entry.finishing
-            self.inFlightLock.unlock()
-            guard stillAlive, task.state != .canceling, task.state != .completed else { return }
-            task.resume()
-        }
         return proxy
     }
 }
