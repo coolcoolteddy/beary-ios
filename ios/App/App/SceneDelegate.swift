@@ -4400,10 +4400,16 @@ enum DiagFile {
     // 主线程 50ms Timer（common modes，滑动时也不停）只写时间戳、不碰 UI；
     // 后台线程每 100ms 查一次，心跳陈旧超 500ms 即记 watchdog-main-silent
     // （附最后心跳时间戳），同一静默段 2 秒时再补记一次。
+    // 停止路径：开关关后 Timer 与后台循环各自查 isEnabled 自行退出，
+    // watchdogStarted 复位，ensureWatchdogStarted 可重入（重开再起新一代）。
     // diagLock 只保护心跳/启动态等内存状态，不再罩文件 I/O（写全走 diagQueue）。
     static let diagLock = NSLock()
     private static var heartbeat: TimeInterval = 0
     private static var watchdogStarted = false
+    /// 看门狗代次（diagLock 保护）：每次启动 +1；Timer 闭包与后台循环各持
+    /// 自己启动时的代次，代次对不上即 stale 实例，自行退出且不碰当前态——
+    /// 关开关后重开的瞬间，旧实例的退出动作不会误杀新实例。
+    private static var watchdogGeneration = 0
     private static var heartbeatTimer: Timer?
     private static var silenceStart: TimeInterval?
     private static var silenceSupplementLogged = false
@@ -4411,15 +4417,33 @@ enum DiagFile {
     private static func ensureWatchdogStarted() {
         diagLock.lock()
         let already = watchdogStarted
+        var generation = watchdogGeneration
         if !already {
             watchdogStarted = true
             heartbeat = Date().timeIntervalSince1970
+            watchdogGeneration += 1
+            generation = watchdogGeneration
         }
         diagLock.unlock()
         guard !already else { return }
         let startTimer = {
-            heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
+            heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { t in
                 diagLock.lock()
+                // 关闭路径：开关关了（或已被新一代看门狗取代），本 Timer 在主线程
+                // 自行失效——Timer 必须在安装它的线程上 invalidate，后台线程做不安全，
+                // 所以不在循环里跨线程停它，等它自己下一次 tick（≤50ms）时停。
+                // 是当前代时把 watchdogStarted 复位，ensureWatchdogStarted 才能重开。
+                if !isEnabled || generation != watchdogGeneration {
+                    if generation == watchdogGeneration {
+                        watchdogStarted = false
+                        if heartbeatTimer === t { heartbeatTimer = nil }
+                        silenceStart = nil
+                        silenceSupplementLogged = false
+                    }
+                    diagLock.unlock()
+                    t.invalidate()
+                    return
+                }
                 heartbeat = Date().timeIntervalSince1970
                 diagLock.unlock()
             }
@@ -4430,15 +4454,28 @@ enum DiagFile {
         } else {
             DispatchQueue.main.async(execute: startTimer)
         }
-        DispatchQueue.global(qos: .background).async { watchdogLoop() }
+        DispatchQueue.global(qos: .background).async { watchdogLoop(generation: generation) }
     }
 
-    private static func watchdogLoop() {
+    private static func watchdogLoop(generation: Int) {
         while true {
             Thread.sleep(forTimeInterval: 0.1)
             let now = Date().timeIntervalSince1970
             // 锁内只读/写内存状态，文件写一律入 diagQueue。
             diagLock.lock()
+            // 关闭路径：开关关了（或已被新一代看门狗取代），本循环退出；
+            // 是当前代时把 watchdogStarted 复位，ensureWatchdogStarted 才能重开。
+            // 触发不靠设置页回调——开关只写 UserDefaults，本循环每 100ms 自查一次，
+            // 关后 ≤100ms 内退出；Timer 侧同理自查（≤50ms），不跨线程 invalidate。
+            if !isEnabled || generation != watchdogGeneration {
+                if generation == watchdogGeneration {
+                    watchdogStarted = false
+                    silenceStart = nil
+                    silenceSupplementLogged = false
+                }
+                diagLock.unlock()
+                return
+            }
             let beat = heartbeat
             var silenceBeat: TimeInterval? = nil
             var supplement = false
