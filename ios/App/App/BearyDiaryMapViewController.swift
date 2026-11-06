@@ -40,6 +40,13 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 不进“未能在地图上定位”，点按可重试；重算时随未定位列表一并清掉。
     private var transientFailedGroups: [BearyLocationMapGroup] = []
     private var selectedGroup: BearyLocationMapGroup?
+    /// r17-m3：从详情回到原处的专用记忆——进入详情的地点组 key、列表
+    /// 偏移、该组篇 id 快照。只读返回时恢复选中组与列表位置；组内篇变了
+    /// 才给该地点列表一次 0.18 秒淡变。
+    private var returnGroupKey: String?
+    private var returnTableOffset: CGPoint?
+    private var returnGroupEntryIds: [String]?
+    private var pendingMapReturnRestore = false
     /// 文本 → 坐标的本页内存缓存（只活在本页实例里，deinit 即丢；绝不写盘）。
     private var geocodeCache: [String: CLLocationCoordinate2D] = [:]
     private var loadGeneration = 0
@@ -195,6 +202,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             viewerIsAuthor = (currentViewerId != nil && currentViewerId == authorId)
             geocodeCache.removeAll()
             selectedGroup = nil
+            clearMapReturnContext()
             // 切账号先取消旧身份在途的编码：重拉完成前旧回调不得写回新身份的页面。
             cancelGeocoding()
             fetchAllEntries()
@@ -409,6 +417,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             unlocatedGroups = []
             transientFailedGroups = []
             tableView.reloadData()
+            restoreMapReturnContextIfNeeded()
             return
         }
         statusLabel.text = "共 \(allEntries.filter { !DiaryLocation(entry: $0).isEmpty }.count) 篇带位置日记 · \(groups.count) 个地点"
@@ -428,7 +437,58 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         }
         addLocatedAnnotations(cachedLocated)
         tableView.reloadData()
+        restoreMapReturnContextIfNeeded()
         geocodePendingGroups(pending: pendingGroups, index: 0, located: cachedLocated, unlocated: [], generation: generation)
+    }
+
+    /// 切账号后旧身份的返回记忆作废，不带到新身份。
+    private func clearMapReturnContext() {
+        returnGroupKey = nil
+        returnTableOffset = nil
+        returnGroupEntryIds = nil
+        pendingMapReturnRestore = false
+    }
+
+    /// r17-m3：从详情只读返回后的恢复——选中组（regroup 已按 key 重绑）
+    /// 与列表位置按记忆恢复；组内篇变了／组没了才给该地点列表一次
+    /// 0.18 秒淡变（其余组与地图不动、不重播）。
+    private func restoreMapReturnContextIfNeeded() {
+        guard pendingMapReturnRestore else { return }
+        pendingMapReturnRestore = false
+        guard let offset = returnTableOffset else { return }
+        // 列表位置：先恢复（reloadData 后内容高已定，下一帧再校一次）。
+        let restoreOffset = { [weak self] in
+            guard let self = self else { return }
+            self.tableView.setContentOffset(offset, animated: false)
+        }
+        restoreOffset()
+        DispatchQueue.main.async(execute: restoreOffset)
+        guard let key = returnGroupKey else { return }
+        if let group = groups.first(where: { $0.key == key }) {
+            selectedGroup = group
+            let currentIds = group.entries.compactMap { $0.id }
+            if currentIds != returnGroupEntryIds {
+                fadeMainSectionCellsOnce()
+            }
+        } else {
+            // 记住的地点组没了：选中态已回落，列表淡变一次提示变化。
+            fadeMainSectionCellsOnce()
+        }
+    }
+
+    /// 只给主 section 可见行一次 0.18 秒淡变；减动效或未进窗口时不动。
+    private func fadeMainSectionCellsOnce() {
+        guard BearyMotion.animated(true), tableView.window != nil else { return }
+        guard let mainSection = diaryMapSections.firstIndex(of: .main) else { return }
+        let cells = tableView.visibleCells.filter { cell in
+            guard let indexPath = tableView.indexPath(for: cell) else { return false }
+            return indexPath.section == mainSection
+        }
+        guard !cells.isEmpty else { return }
+        for cell in cells { cell.contentView.alpha = 0 }
+        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            for cell in cells { cell.contentView.alpha = 1 }
+        })
     }
 
     /// 串行编码未缓存的组：每组编出即补一个标记、编不出即进未定位列表，
@@ -662,6 +722,26 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         }
     }
 
+    func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
+        // r17-m3：点地图标记选中某地点组时，对应地点标题立即高亮（橙色
+        // 加粗），帮助视线从地图接到列表；选中态在，标题高亮就在，组切走
+        // 即恢复默认标题头。其他 section 返回 nil，仍走上方默认标题头。
+        guard diaryMapSections[section] == .main, let selected = selectedGroup else { return nil }
+        let container = UIView()
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = BearyColors.orange
+        label.text = "\(selected.key) · \(selected.count) 篇"
+        container.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -16),
+            label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
+        return container
+    }
+
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         switch diaryMapSections[indexPath.section] {
         case .transient:
@@ -729,6 +809,12 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             return
         case .main:
             guard let selected = selectedGroup, indexPath.row < selected.entries.count else { return }
+            // r17-m3：记住进入详情的地点组 ID 与列表位置、该组篇快照；
+            // 返回时由 regroupAndGeocode 恢复（只读返回保留选中组与列表位置）。
+            returnGroupKey = selected.key
+            returnTableOffset = tableView.contentOffset
+            returnGroupEntryIds = selected.entries.compactMap { $0.id }
+            pendingMapReturnRestore = true
             needsRefreshAfterDetail = true
             onOpenEntry?(selected.entries[indexPath.row])
         }
