@@ -584,6 +584,9 @@ enum BearyDraftStore {
         /// 故同时绑定诊断时的账号、文件 URL、文件指纹（大小＋修改时间）与读取代次。
         case corruptStore(backupURL: URL?, accountId: Int?, fileURL: URL?, fingerprint: String?, generation: Int)
         case legacyCorrupt(backupURL: URL?)
+        /// 部分恢复已读出好草稿、但回写失败：原文件与备份都在，好草稿随
+        /// 失败带回供草稿箱先预览，不把好草稿藏起来（见 A1）。
+        case partialSaveFailed(drafts: [BearyDraft], kept: Int, skipped: Int, backupURL: URL?)
     }
 
     /// G4：最近一次 loadAll/loadAllResult 的失败；成功读取后清零。
@@ -606,6 +609,11 @@ enum BearyDraftStore {
         return "\(size.intValue)-\(mtime.timeIntervalSince1970)"
     }
 
+    /// A1：最近一次部分恢复的实际结果（kept = 找回的好草稿数，
+    /// skipped = 没读出来的坏条数）；本次读取非部分恢复时为 nil，
+    /// 草稿箱据此写实际结果，不报“全部找回”也不报“全部丢失”。
+    private(set) static var lastPartialRecovery: (kept: Int, skipped: Int)?
+
     /// 读全部（带失败区分）：v3 文件优先（updatedAt 倒序）；无 v3 时走一次旧数据迁移。
     /// 启动时首次读取即触发迁移，调用方无需另调迁移入口。
     /// v3 文件存在却读不出/解不出时：原文件保留不动、另存一份备份、返回失败；
@@ -622,6 +630,9 @@ enum BearyDraftStore {
     static func loadAllResult(forAccount accountId: Int?) -> Result<[BearyDraft], LoadError> {
         // 审计四轮 05：每次读取代次 +1，损坏诊断记当时代次，供清除时复核。
         loadGeneration += 1
+        // A1：本次读取先清部分恢复记录，只在本次真的走部分恢复时再置位，
+        // 不让上一次的找回数漏到下一次干净读取的文案里。
+        lastPartialRecovery = nil
         // 账号隔离 1 号：未登录不读任何账号文件（也不触发 v2/v1 迁移，
         // 迁移只在登录后的账号分桶里发生）。此处判的是入队时捕获的账号：
         // 入队时未登录则写任务按失败处理（见 save/delete 捕获版），不因
@@ -653,14 +664,22 @@ enum BearyDraftStore {
                 if !good.isEmpty {
                     // 第九轮 03：备份是部分恢复的前提——备份失败时绝不以部分
                     // 数据覆盖原文件（被跳过草稿的原始数据只在备份里才有）。
-                    // 备份失败或回写失败都落回损坏路径：原文件不动，草稿箱按
-                    // corruptStore 出恢复失败态，用户可清除或重试，不丢数据。
+                    // A1：备份失败或回写失败都不再落回整库损坏——已读出的
+                    // 好草稿随 partialSaveFailed 带回供草稿箱先预览（见下）。
+                    lastPartialRecovery = (kept: good.count, skipped: skipped)
                     let backup = backupCorruptFile(at: url)
                     if backup != nil, saveAll(good, forAccount: accountId) {
                         NSLog("[BearyDraft] partial v3 store recovered: kept \(good.count), skipped \(skipped), backup=\(backup?.path ?? "nil")")
                         lastLoadError = nil
                         return .success(sortedNormalized(good, forAccount: accountId))
                     }
+                    // A1：回写失败——不落回“整库损坏、好草稿全藏”的旧口径。
+                    // 原文件与备份都在，不丢数据；已读出的好草稿随失败带回，
+                    // 草稿箱先预览，不把好草稿藏起来。
+                    NSLog("[BearyDraft] partial v3 store recovery save failed: kept \(good.count), skipped \(skipped), original kept")
+                    let err = LoadError.partialSaveFailed(drafts: sortedNormalized(good, forAccount: accountId), kept: good.count, skipped: skipped, backupURL: backup)
+                    lastLoadError = err
+                    return .failure(err)
                 }
             }
             let backup = backupCorruptFile(at: url)
@@ -738,6 +757,8 @@ enum BearyDraftStore {
 
     /// 损坏文件备份：复制一份（原文件保留不动），名如
     /// beary_draft_v3.json.corrupt-<unix 秒>.bak；复制失败返回 nil 但原文件仍在。
+    /// A1：只认“备份成功”——复制后回读比对整份字节，读不出或不完整都算
+    /// 备份失败（坏备份不如没有，调用方凭 nil 决定不回写、原件留原处）。
     private static func backupCorruptFile(at url: URL) -> URL? {
         let stamp = Int(Date().timeIntervalSince1970)
         let backup = url.deletingLastPathComponent().appendingPathComponent(url.lastPathComponent + ".corrupt-\(stamp).bak")
@@ -746,10 +767,26 @@ enum BearyDraftStore {
                 try FileManager.default.removeItem(at: backup)
             }
             try FileManager.default.copyItem(at: url, to: backup)
+            guard let original = try? Data(contentsOf: url),
+                  let copied = try? Data(contentsOf: backup),
+                  copied == original else {
+                try? FileManager.default.removeItem(at: backup)
+                return nil
+            }
             return backup
         } catch {
             return nil
         }
+    }
+
+    /// A1：清除前确认——当前账号 v3 库是否已有 .bak 备份（只查磁盘，不写盘）。
+    /// 备份复制失败时磁盘上无 .bak，清除弹窗不得谎称“备份会保留在手机里”。
+    static func hasCorruptBackup() -> Bool {
+        guard let url = fileURL() else { return false }
+        let dir = url.deletingLastPathComponent()
+        let prefix = url.lastPathComponent + ".corrupt-"
+        guard let items = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return false }
+        return items.contains { $0.lastPathComponent.hasPrefix(prefix) && $0.pathExtension == "bak" }
     }
 
     /// 启动自动恢复口径：最新一篇（updatedAt 最大者）；草稿箱用 loadAll 列全部。
