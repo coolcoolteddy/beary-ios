@@ -137,7 +137,7 @@ final class BearyProfilePhotosViewController: UIViewController {
     }
 
     /// 116 数据填入动效：标题计数变化时只淡入标题本身（alpha 0→1、
-    /// 0.25s，不动布局、不缩放弹一下）；同值不赋值不重播；减动效或
+    /// 0.18s，不动布局、不缩放弹一下）；同值不赋值不重播；减动效或
     /// 未进窗口时直设终值。续拉新格见 staggerNewCells。
     private func setTitleTextFaded(_ text: String) {
         guard titleLabel.text != text else { return }
@@ -147,7 +147,7 @@ final class BearyProfilePhotosViewController: UIViewController {
             return
         }
         titleLabel.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             self.titleLabel.alpha = 1
         })
     }
