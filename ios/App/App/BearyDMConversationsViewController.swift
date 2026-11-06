@@ -383,6 +383,9 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         // 回填代次：切号即变，旧号在途快照回包时凭此丢弃（只比账号不够——
         // 切走又切回同一账号时 uid 相同，代次仍能拦住旧会话）。
         let generation = snapshotGeneration
+        // 第 7 轮 #1：另捕获鉴权代际——磁盘 IO 在后台队列，回包时
+        // authEpoch 已变说明其间登录态变迁过，旧快照直接丢弃。
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyDMConversationsCache.load(bucket: "\(uid)") { [weak self] snap in
             guard let self = self, let snap = snap, !snap.conversations.isEmpty else { return }
             // 回填三重门禁：账号须与请求时一致；页面代次须未变；
@@ -390,6 +393,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             // 否则旧快照会覆盖网络返回的空结果。
             guard SessionManager.shared.currentUser?.id == uid else { return }
             guard generation == self.snapshotGeneration else { return }
+            guard requestEpoch == BearyAPI.shared.authEpoch else { return }
             guard self.firstLoadPending else { return }
             guard self.conversations.isEmpty else { return }
             self.conversations = BearyDMStore.mergedConversations(server: snap.conversations, accountId: uid, isBlocked: self.blockedFilter(for: uid))
