@@ -12,7 +12,8 @@ import UIKit
 /// bottom 10 / right 18、两侧留 20pt 上限、居中；pill 圆角取半高
 /// （layoutSubviews 跟 bounds 走，单行约 19pt，与“圆角 18”同口径）。
 /// 展示时长按文案长度分档（U9，见 displayDuration）：≤20 字 2.0s（与旧值一致）、
-/// 21–40 字 3.0s、>40 字 4.0s；淡入 0.25s、到点淡出 0.25s 后移除；减动效时直接现身、
+/// 21–40 字 3.0s、>40 字 4.0s；带动作入口时取字数档与动作档（保底 4.0s）的大值，
+/// 无动作提示的时长一字不动；淡入 0.25s、到点淡出 0.25s 后移除；减动效时直接现身、
 /// 到点直接移除，不播淡入淡出（与各页原 A5-3 口径一致）。
 /// 动作入口（U9）：show 的 actionTitle/action 均可选、默认 nil；两者都传时 toast
 /// 右侧显示动作入口、点按先撤 toast 再执行回调；任一缺省即无动作入口，现有
@@ -39,6 +40,9 @@ enum BearyToast {
             oldToast.removeFromSuperview()
         }
         let toast = BearyToastView(message: message, actionTitle: actionTitle, action: action)
+        // r27-10：动作入口是否真实存在（与 BearyToastView 建钮条件一致：
+        // actionTitle 与 action 双全才算有动作），决定时长是否取动作保底档。
+        let hasAction = actionTitle != nil && action != nil
         container.addSubview(toast)
         container.bringSubviewToFront(toast)
         let bottomConstraint = toast.bottomAnchor.constraint(
@@ -60,7 +64,7 @@ enum BearyToast {
         // 弱持有下旧视图提前移除后到点闭包为空操作。（阴影/描边不补，属样式 token。）
         if UIAccessibility.isReduceMotionEnabled {
             toast.alpha = 1
-            DispatchQueue.main.asyncAfter(deadline: .now() + displayDuration(for: message)) { [weak toast] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + displayDuration(for: message, hasAction: hasAction)) { [weak toast] in
                 toast?.removeFromSuperview()
             }
         } else {
@@ -68,7 +72,7 @@ enum BearyToast {
             UIView.animate(withDuration: 0.25) {
                 toast.alpha = 1
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + displayDuration(for: message)) { [weak toast] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + displayDuration(for: message, hasAction: hasAction)) { [weak toast] in
                 UIView.animate(withDuration: 0.25, animations: {
                     toast?.alpha = 0
                 }, completion: { _ in
@@ -79,15 +83,19 @@ enum BearyToast {
     }
 
     /// U9 展示时长分档（按文案字符数，CJK 每字计 1）：短文案沿用旧 2.0s，
-    /// 中长文案给足读完时间，长文案再延长一档；动作入口不另加时长。
-    private static func displayDuration(for message: String) -> TimeInterval {
+    /// 中长文案给足读完时间，长文案再延长一档；r27-10：带动作入口时取字数档
+    /// 与动作档（保底 4.0s）的大值——短文案的重试钮也有时间点到；无动作时
+    /// 各档数值与旧版逐字一致。
+    private static func displayDuration(for message: String, hasAction: Bool = false) -> TimeInterval {
+        let base: TimeInterval
         if message.count <= 20 {
-            return 2.0
+            base = 2.0
         } else if message.count <= 40 {
-            return 3.0
+            base = 3.0
         } else {
-            return 4.0
+            base = 4.0
         }
+        return hasAction ? max(base, 4.0) : base
     }
 
     /// 落点计算：只认“容器页是 Chrome 子页”这一条——模态页的 parent 链
