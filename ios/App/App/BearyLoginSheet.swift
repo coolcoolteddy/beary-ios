@@ -7,18 +7,21 @@ import UIKit
 // 唯一例外（见 BearyGlass 注释）；不要把本 sheet 的玻璃“统一”回实色底。
 // 容器：BearyLoginSheet.make() 只建 sheet 模式登录页、不 present；调用点按原样
 // 接回调后再 present（与原整页顺序一致，含 dismiss 调用方与会话守卫）。
-// 关闭：关闭钮 / 遮罩点按 / 抓手拖动一律走登录页 cancelFromSheet（= 关闭钮路径，
-// 先停倒计时与在途任务、再交 onCancelled），容器不得绕开它直接 dismiss，
-// 否则添加账号会话守卫 stays armed。
+// 呈现走共享底部弹窗容器 BearyBottomSheet（transitioningDelegate +
+// presentationController 工厂）：出现弹簧 0.4s / damping 0.8 从底部升起，
+// 背后页面同步缩 0.92 倍、圆角 16pt、遮罩压暗 0.45；拖动整张弹窗可拖，
+// 下滑 1:1 跟手、上滑按 0.3 阻力折算，松手下拖超高 1/3 或下甩速度 > 1000pt/s
+// 关闭、否则弹簧弹回；关闭时背后页面同步恢复。遮罩点按与拖动关闭都走
+// requestDismiss 重写 → cancelFromSheet（= 关闭钮路径，先停倒计时与在途任务、
+// 再交 onCancelled），容器不得绕开它直接 dismiss，否则添加账号会话守卫
+// stays armed。减动效开时出现/关闭瞬时、拖动关闭无动画直接关。
 // 尺寸：高跟内容走（登录页 preferredContentSize），顶留 56pt；宽：<821 全宽，
 // ≥821 居中 600（与 App 内容列同口径）；停靠键盘时 sheet 底贴键盘顶，
 // 浮动/分屏键盘不动 sheet（页内滚动 inset 已处理遮挡）。
-// 拖动：抓手区（sheet 顶 24pt）下滑跟手，超 80pt 或速度 > 600 关闭（BearySheetDrag
-// 同口径），否则 0.25s 弹回；动效只走 transform/opacity，减动效直显终值。
-// 进场：内容与 chrome（玻璃/抓手/遮罩）同一 animator 动画块 0.25s easeOut
-// 上滑（2026-11-04 改：此前 chrome 走 coordinator alongside、内容走 animator，
-// 两套曲线不同步、玻璃边与内容边错位，看着像从斜向“甩”上来）；退场同理
-// 同一 animator 块 0.25s easeIn 下滑；减动效直显终值。
+// 本文件只留登录弹窗自己的 chrome（玻璃/抓手/阴影）与键盘跟随逻辑；
+// 遮罩、背后页面、弹簧进退场、拖动手势一律走 BearyBottomSheet 容器。
+// 键盘逻辑（keyboardTopY / updateKeyboardTop / animateLayoutForKeyboard）
+// 保持现行 main 原样不动，L3/M5 相关改动另支 #913 在做，合入时再 rebase。
 // transitioningDelegate 由登录页自身强持有（loginSheetDelegate），随页释放。
 
 enum BearyLoginSheet {
@@ -27,7 +30,9 @@ enum BearyLoginSheet {
     static func make() -> BearyLoginViewController {
         let vc = BearyLoginViewController()
         vc.sheetMode = true
-        let delegate = BearyLoginSheetTransitioningDelegate()
+        let delegate = BearyBottomSheetTransitioningDelegate { presented, presenting, _ in
+            BearyLoginSheetPresentationController(presentedViewController: presented, presenting: presenting)
+        }
         vc.loginSheetDelegate = delegate
         vc.transitioningDelegate = delegate
         vc.modalPresentationStyle = .custom
@@ -40,31 +45,9 @@ enum BearyLoginSheet {
     }
 }
 
-// MARK: - Transitioning delegate
-
-final class BearyLoginSheetTransitioningDelegate: NSObject, UIViewControllerTransitioningDelegate {
-    // 2026-11-04：animator 需驱动 chrome——presentationController 由 UIKit
-    // 先于 animator 建好（同一次呈现），弱持有转交，不另建、不强持。
-    private weak var sheetPresentationController: BearyLoginSheetPresentationController?
-
-    func presentationController(forPresented presented: UIViewController, presenting: UIViewController?, source: UIViewController) -> UIPresentationController? {
-        let pc = BearyLoginSheetPresentationController(presentedViewController: presented, presenting: presenting)
-        sheetPresentationController = pc
-        return pc
-    }
-
-    func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
-        BearyLoginSheetAnimator(isPresenting: true, presentationController: sheetPresentationController)
-    }
-
-    func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
-        BearyLoginSheetAnimator(isPresenting: false, presentationController: sheetPresentationController)
-    }
-}
-
 // MARK: - Presentation controller
 
-private final class BearyLoginSheetPresentationController: UIPresentationController {
+private final class BearyLoginSheetPresentationController: BearyBottomSheetPresentationController {
 
     /// 抓手区高：sheet 顶部的玻璃 chrome 区（抓手 10–14 + 余量），登录页内容从其下开始。
     private static let chromeHeight: CGFloat = 24
@@ -76,11 +59,9 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
     /// 首帧未算出内容高时的回退内容高（随后 viewDidLayoutSubviews 会纠正）。
     private static let fallbackContentHeight: CGFloat = 666
 
-    private let scrimView = UIView()
     private let shadowView = UIView()
     private let glassView = BearyGlass.effectView(tint: BearyGlass.neutralTint)
     private let grabberView = UIView()
-    private let dragStripView = UIView()
     /// 停靠键盘顶边（容器坐标）；浮动/分屏键盘不置位，见 keyboard handlers。
     private var keyboardTopY: CGFloat?
     private var lastShadowBounds: CGRect = .zero
@@ -94,6 +75,27 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+    }
+
+    /// 遮罩点按与拖动关闭都走登录页取消路径（先停倒计时与在途任务），
+    /// 不得绕开它直接 dismiss（见文件头注释）。
+    override func requestDismiss() {
+        (presentedViewController as? BearyLoginViewController)?.cancelFromSheet()
+    }
+
+    /// 拖动/弹回时 chrome 与内容同一 transform（容器调本方法时已在动画块内）。
+    override func applySheetTransform(_ transform: CGAffineTransform) {
+        super.applySheetTransform(transform)
+        shadowView.transform = transform
+        glassView.transform = transform
+        grabberView.transform = transform
+    }
+
+    /// 出现/关闭终态：容器处理遮罩与背后页面，这里同步 chrome 终态
+    ///（animator 同一弹簧块内调，保证玻璃边与内容边不错位）。
+    override func setSheetPresented(_ presented: Bool) {
+        super.setSheetPresented(presented)
+        setChromePresented(presented)
     }
 
     /// Sheet 整框（含顶 chrome 区）：底贴容器底（或停靠键盘顶），高跟内容走、顶留白钳制。
@@ -126,7 +128,6 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
         super.containerViewWillLayoutSubviews()
         guard let container = containerView, let presentedView = presentedView else { return }
         let sheet = sheetFrame(for: container.bounds)
-        scrimView.frame = container.bounds
         // 拖动中不重算 chrome 与 presentedView 的帧：帧 + 平移 transform 混写会跳变；
         // 拖动只改 transform、不改帧，松手复位后帧仍是拖动前那套，无需补算。
         guard presentedView.transform.isIdentity else { return }
@@ -139,7 +140,6 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
                                    y: sheet.minY + BearySheetChrome.grabberTop,
                                    width: BearySheetChrome.grabberWidth,
                                    height: BearySheetChrome.grabberHeight)
-        dragStripView.frame = CGRect(x: sheet.minX, y: sheet.minY, width: sheet.width, height: Self.chromeHeight)
         presentedView.frame = frameOfPresentedViewInContainerView
         if shadowView.bounds != lastShadowBounds {
             lastShadowBounds = shadowView.bounds
@@ -151,11 +151,9 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
     }
 
     override func presentationTransitionWillBegin() {
+        // 先走容器：摆遮罩、挂拖动手势、置遮罩与背后页面初始态。
+        super.presentationTransitionWillBegin()
         guard let container = containerView else { return }
-        scrimView.backgroundColor = BearySheetChrome.scrimColor
-        scrimView.alpha = 0
-        scrimView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(scrimTapped)))
-        container.addSubview(scrimView)
         shadowView.backgroundColor = .clear
         BearyShadow.applyRaised(to: shadowView.layer)
         container.addSubview(shadowView)
@@ -163,53 +161,44 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
         grabberView.backgroundColor = BearyColors.line
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
         container.addSubview(grabberView)
-        dragStripView.backgroundColor = .clear
-        dragStripView.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(dragPan(_:))))
-        container.addSubview(dragStripView)
-        // 2026-11-04：这里只摆初始态（屏外 + 遮罩透明），不另起 coordinator
-        // alongside 动画——此前 chrome 走 coordinator、内容走 animator，两套
-        // 曲线不同步、滑动全程玻璃边与内容边错位，看着像“甩”。动画呈现时
-        // chrome 由 animator 与内容同一动画块驱动（见 setChromePresented）；
+        // 这里只摆 chrome 初始态（屏外），不另起 coordinator alongside 动画——
+        // 动画呈现时 chrome 由 animator 与内容同一弹簧块驱动（见 setSheetPresented）；
         // 非动画呈现（减动效等）无 animator，这里直接落终态。
         let offscreen = CGAffineTransform(translationX: 0, y: sheetFrame(for: container.bounds).height)
         shadowView.transform = offscreen
         glassView.transform = offscreen
         grabberView.transform = offscreen
-        dragStripView.transform = offscreen
-        scrimView.alpha = 0
         if presentedViewController.transitionCoordinator == nil {
             setChromePresented(true)
         }
     }
 
     /// chrome 进场/退场终态（只赋值、不自带动效，调用方须在动画块内调，
-    /// 否则 transform/alpha 直落终值无过渡）。
+    /// 否则 transform 直落终值无过渡）。
     func setChromePresented(_ presented: Bool) {
         if presented {
-            scrimView.alpha = 1
             shadowView.transform = .identity
             glassView.transform = .identity
             grabberView.transform = .identity
-            dragStripView.transform = .identity
         } else {
             guard let container = containerView else { return }
             let offscreen = CGAffineTransform(translationX: 0, y: sheetFrame(for: container.bounds).height)
-            scrimView.alpha = 0
             shadowView.transform = offscreen
             glassView.transform = offscreen
             grabberView.transform = offscreen
-            dragStripView.transform = offscreen
         }
     }
 
     override func presentationTransitionDidEnd(_ completed: Bool) {
+        super.presentationTransitionDidEnd(completed)
         if !completed {
             removeChrome()
         }
     }
 
     override func dismissalTransitionWillBegin() {
-        // 2026-11-04：动画退场时 chrome 由退场 animator 与内容同一动画块驱动，
+        super.dismissalTransitionWillBegin()
+        // 动画退场时 chrome 由退场 animator 与内容同一弹簧块驱动，
         // 这里不动；非动画退场无 animator，直接落终态。
         if presentedViewController.transitionCoordinator == nil {
             setChromePresented(false)
@@ -217,17 +206,16 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
     }
 
     override func dismissalTransitionDidEnd(_ completed: Bool) {
+        super.dismissalTransitionDidEnd(completed)
         if completed {
             removeChrome()
         }
     }
 
     private func removeChrome() {
-        scrimView.removeFromSuperview()
         shadowView.removeFromSuperview()
         glassView.removeFromSuperview()
         grabberView.removeFromSuperview()
-        dragStripView.removeFromSuperview()
     }
 
     override func preferredContentSizeDidChange(forChildContentContainer container: UIContentContainer) {
@@ -240,72 +228,6 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
             UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
                 containerView.layoutIfNeeded()
             })
-        }
-    }
-
-    // MARK: - 遮罩与拖动
-
-    @objc private func scrimTapped() {
-        (presentedViewController as? BearyLoginViewController)?.cancelFromSheet()
-    }
-
-    @objc private func dragPan(_ gesture: UIPanGestureRecognizer) {
-        guard let container = containerView, let presentedView = presentedView else { return }
-        let translation = gesture.translation(in: container).y
-        switch gesture.state {
-        case .changed:
-            let offset = BearySheetDrag.offset(for: translation)
-            applyDrag(offset: offset, sheetHeight: sheetFrame(for: container.bounds).height)
-        case .ended:
-            let velocity = gesture.velocity(in: container).y
-            if translation > 80 || velocity > 600 {
-                // 不清 transform：dismiss 动效从当前拖位滑下（beginFromCurrentState），
-                // 避免先回弹再下滑的跳变。
-                (presentedViewController as? BearyLoginViewController)?.cancelFromSheet()
-            } else {
-                restoreDrag(velocity: velocity)
-            }
-        case .cancelled, .failed:
-            restoreDrag()
-        default:
-            break
-        }
-    }
-
-    private func applyDrag(offset: CGFloat, sheetHeight: CGFloat) {
-        let transform = CGAffineTransform(translationX: 0, y: offset)
-        presentedView?.transform = transform
-        shadowView.transform = transform
-        glassView.transform = transform
-        grabberView.transform = transform
-        dragStripView.transform = transform
-        scrimView.alpha = BearySheetDrag.scrimAlpha(forDragOffset: offset, sheetHeight: sheetHeight)
-    }
-
-    private func restoreDrag(velocity: CGFloat = 0) {
-        let restore = {
-            self.presentedView?.transform = .identity
-            self.shadowView.transform = .identity
-            self.glassView.transform = .identity
-            self.grabberView.transform = .identity
-            self.dragStripView.transform = .identity
-            self.scrimView.alpha = 1
-        }
-        // 拖动结束时强制一次布局：拖动中 containerViewWillLayoutSubviews 为保跟手
-        // 提前返回，期间键盘帧变化只记了 keyboardTopY、未落帧；复位完成后再落一次帧，
-        // 否则 sheet 会停在拖动前的键盘位置，直到下一次布局才纠正。拖动中不改 chrome
-        // 帧：帧与平移 transform 混写会跳变（见 containerViewWillLayoutSubviews 注释）。
-        let relayout = { [weak self] in
-            self?.containerView?.setNeedsLayout()
-            self?.containerView?.layoutIfNeeded()
-        }
-        if UIAccessibility.isReduceMotionEnabled {
-            restore()
-            relayout()
-        } else {
-            // 拖拽收尾统一弹簧 0.30s／damping 0.7＋松手速度（取消/失败时速度为 0）。
-            let offset = presentedView?.transform.ty ?? 0
-            UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore, completion: { _ in relayout() })
         }
     }
 
@@ -353,15 +275,13 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
             return
         }
         // 2026-11-05 M5：布局一次落到目标，视觉过渡只用 transform。
-        // 拖拽/进退场期间 chrome 与内容正用 transform（见 applyDrag /
-        // setChromePresented），不叠加键盘 transform，直接落布局；
-        // 拖动中的键盘帧变化仍由 restoreDrag 后的 relayout 补上。
+        // 拖拽/进退场期间 chrome 与内容正用 transform（见 BearyBottomSheet
+        // 容器拖动 / setChromePresented），不叠加键盘 transform，直接落布局。
         guard let presentedView = presentedView,
               presentedView.transform.isIdentity,
               shadowView.transform.isIdentity,
               glassView.transform.isIdentity,
-              grabberView.transform.isIdentity,
-              dragStripView.transform.isIdentity else {
+              grabberView.transform.isIdentity else {
             container.layoutIfNeeded()
             return
         }
@@ -379,80 +299,11 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
         shadowView.transform = offset
         glassView.transform = offset
         grabberView.transform = offset
-        dragStripView.transform = offset
         UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: { [weak self] in
             self?.presentedView?.transform = .identity
             self?.shadowView.transform = .identity
             self?.glassView.transform = .identity
             self?.grabberView.transform = .identity
-            self?.dragStripView.transform = .identity
         })
-    }
-}
-
-// MARK: - Slide animator
-
-private final class BearyLoginSheetAnimator: NSObject, UIViewControllerAnimatedTransitioning {
-
-    private let isPresenting: Bool
-    // 2026-11-04：chrome 与内容同一动画块——animator 块内同时驱动
-    // presentedView 与 chrome（入场 0.25s curveEaseOut；退场走拖拽收尾
-    // 统一弹簧 0.30s／damping 0.7），不再由 coordinator alongside 另起一套曲线。
-    private weak var presentationController: BearyLoginSheetPresentationController?
-
-    init(isPresenting: Bool, presentationController: BearyLoginSheetPresentationController? = nil) {
-        self.isPresenting = isPresenting
-        self.presentationController = presentationController
-        super.init()
-    }
-
-    func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return UIAccessibility.isReduceMotionEnabled ? 0 : (isPresenting ? 0.25 : 0.30)
-    }
-
-    func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
-        let container = transitionContext.containerView
-        let duration = transitionDuration(using: transitionContext)
-        if isPresenting {
-            guard let toView = transitionContext.view(forKey: .to),
-                  let toVC = transitionContext.viewController(forKey: .to) else {
-                transitionContext.completeTransition(false)
-                return
-            }
-            container.addSubview(toView)
-            toView.frame = transitionContext.finalFrame(for: toVC)
-            let offset = toView.bounds.height
-            toView.transform = CGAffineTransform(translationX: 0, y: offset)
-            if duration == 0 {
-                toView.transform = .identity
-                presentationController?.setChromePresented(true)
-                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
-                return
-            }
-            UIView.animate(withDuration: duration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-                toView.transform = .identity
-                self.presentationController?.setChromePresented(true)
-            }, completion: { _ in
-                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
-            })
-        } else {
-            guard let fromView = transitionContext.view(forKey: .from) else {
-                transitionContext.completeTransition(false)
-                return
-            }
-            let offset = fromView.bounds.height
-            if duration == 0 {
-                fromView.transform = CGAffineTransform(translationX: 0, y: offset)
-                presentationController?.setChromePresented(false)
-                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
-                return
-            }
-            UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [.beginFromCurrentState], animations: {
-                fromView.transform = CGAffineTransform(translationX: 0, y: offset)
-                self.presentationController?.setChromePresented(false)
-            }, completion: { _ in
-                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
-            })
-        }
     }
 }
