@@ -778,6 +778,12 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         }
         if let pooled = body.pooledEntryId, pooled.isEmpty == false {
             pooledEntryId = pooled
+            // B1：已确认入池就立即显示开盒区，不等候选列表拉完；候选列表
+            // 随后在后台补（loadPoolEntries 先读本人日记存档，缺数据再补页）。
+            openHintLabel.text = "已放进池子，可以开盒了。"
+            setStep(.pool)
+            loadPoolEntries()
+            return
         } else {
             // /today 未给入池 id 时清掉旧值：同一 VC 生命周期内再次拉取，
             // 旧入池态不得保留到新回包里。
@@ -787,11 +793,11 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     }
 
     private func loadPoolEntries() {
-        // 审计登录杂项：入池不再只拉 50 篇一页（50 篇之后的旧公开日记此前
-        // 永远进不了池）：照搬星图页游标分页（before / beforeId、去重、代次
-        // 门控，每批上限 10 页）拉全量；触顶可按需续拉新一批（第八轮审计 02，
-        // 见 poolCapped / didTapPoolLoadMore）；行内仍按入池资格显 pill（公开 /
-        // 私密 / 今日公开），选中时再按资格过滤（见 renderPoolRows onTap）。
+        // B1：候选列表先从本人日记存档（时间线缓存，本账号桶）生成小索引、
+        // 立即渲染；存档缺数据（无快照 / 还有更多页）时再补页，不再每次都
+        // 从第 1 页全量拉起。网络补页仍照搬星图页游标分页（before / beforeId、
+        // 去重、代次门控，上限 10 页）；行内仍按入池资格显 pill（公开 / 私密 /
+        // 今日公开），选中时再按资格过滤（见 renderPoolRows onTap）。
         poolLoadGeneration += 1
         poolCollected = []
         poolSeenIds = []
@@ -800,7 +806,37 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         poolResumeBefore = nil
         poolResumeBeforeId = nil
         poolResumePage = 1
-        loadPoolEntriesPage(before: nil, beforeId: nil, page: 1, generation: poolLoadGeneration)
+        let generation = poolLoadGeneration
+        let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id ?? BearyFeedCache.lastKnownUserId())
+        BearyTimelineCache.load(bucket: bucket) { [weak self] snap in
+            guard let self = self, generation == self.poolLoadGeneration else { return }
+            var needsNetwork = true
+            if let snap = snap, snap.entries.isEmpty == false {
+                for entry in snap.entries {
+                    if let id = entry.id, id.isEmpty == false {
+                        if self.poolSeenIds.contains(id) { continue }
+                        self.poolSeenIds.insert(id)
+                    }
+                    self.poolCollected.append(entry)
+                }
+                self.poolEntries = self.poolCollected
+                self.renderPoolRows()
+                self.openHintLabel.text = self.pooledEntryId == nil
+                    ? "先放进池子，再开盒。私密篇与今日新公开篇不可入池。"
+                    : "已放进池子，可以开盒了。"
+                self.setStep(.pool)
+                // 存档已含全量（hasMore 为假）时不再发网络请求。
+                needsNetwork = snap.hasMore
+            }
+            if needsNetwork {
+                // 存档有内容时从窗口末条续拉，只补窗口外的旧篇，不重拉第 1 页。
+                if let last = self.poolCollected.last, let cursor = last.createdAt, let lastId = last.id, lastId.isEmpty == false {
+                    self.loadPoolEntriesPage(before: cursor, beforeId: lastId, page: 1, generation: generation)
+                } else {
+                    self.loadPoolEntriesPage(before: nil, beforeId: nil, page: 1, generation: generation)
+                }
+            }
+        }
     }
 
     /// 选篇分页入口显隐（第八轮审计 02）：触顶留“加载更多”、中断留“重试”，
@@ -1063,6 +1099,24 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     @objc private func poolTapped() {
         guard poolBusy == false, let entryId = selectedEntryId else { return }
+        // B1：点入池时重新校验资格——选中后条目状态可能已变（转私密 /
+        // 限时到期等），只靠选中时的一次检查不够；不合格就地拦截并清掉
+        // 选中态，不发请求、不靠服务端 409 兜底。
+        guard let entry = poolEntries.first(where: { $0.id == entryId }) else {
+            selectedEntryId = nil
+            renderPoolRows()
+            setStep(.pool)
+            BearyToast.show(in: self.view, message: "该日记已不在列表中，请重新选择")
+            return
+        }
+        let eligibility = BlindBoxPool.eligibility(for: entry)
+        guard eligibility == .eligible else {
+            selectedEntryId = nil
+            renderPoolRows()
+            setStep(.pool)
+            BearyToast.show(in: self.view, message: eligibility.disabledReason ?? "该日记现在不可入池")
+            return
+        }
         poolBusy = true
         setStep(.pool)
         BearyAPI.shared.poolBlindBoxEntry(entryId: entryId) { [weak self] result in
