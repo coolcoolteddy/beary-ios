@@ -685,7 +685,10 @@ final class BearyMonthlyCharsChartView: UIView {
 // 他人页通篇只按公开篇统计，首屏指纹徽标行明确标注「仅公开篇」。
 // 每年一张：年份选择器只列有词条目的年份（availableYears），切年份时
 // renderSelectedYear 先清空动态栈再重建——旧年词行绝不残留到新年；
-// 每次只算当选年份。词汇指纹走后台算 + 内存缓存（键 = 账号 / 年份 /
+// 每次只算当选年份。同一次打开内切回看过的年份，聚合结果取缓存、
+// 阅读位置恢复到上次离开处；年份选择器固定在顶部，不随内容滚动；
+// 首次进入另一年摘要按切换方向短距移入，词行后到时单独淡入并保住锚点。
+// 词汇指纹走后台算 + 内存缓存（键 = 账号 / 年份 /
 // 语料指纹，不写库）：其余各节同步建好立即呈现，词行算完后插回栈顶，
 // 顺序与同步版最终一致；快速连点年份时旧年结果凭代次丢弃。
 // 无词时指纹一节整节省略（不留空标题），但口径徽标行仍单独出现，
@@ -697,6 +700,22 @@ final class BearyYearReviewViewController: UIViewController {
     private let isOwnFlag: Bool
     private let availableYearValues: [Int]
     private var selectedYear: Int
+    /// 按年聚合结果缓存（同一次打开内有效）：摘要文案／心情分布／年度之最＋
+    /// 月趋势只算一次，切回看过的年份直接复用，不再从 filteredEntries 重算。
+    /// 词汇指纹不另造缓存——它已有静态缓存（上限 16，按年＋指纹查）。
+    private struct YearReviewAggregate {
+        let summaryText: String
+        let moodDistribution: [(key: String, count: Int)]
+        let extras: BearyProfilePersonalLogic.YearReviewExtras
+    }
+    private var yearAggregateCache: [Int: YearReviewAggregate] = [:]
+    /// 各年上次的阅读位置（contentOffset.y）：切年时保存离开的年份，
+    /// 切回时恢复；首次进入的年份无记录，回到顶部。
+    private var yearScrollOffsets: [Int: CGFloat] = [:]
+    /// 本次渲染已恢复到的偏移（nil = 本次渲染尚未恢复）：词汇指纹
+    /// 后到回调凭此判断恢复是否已跑过——跑过才做锚点补偿，未跑过
+    /// （缓存命中同步插回）则由渲染末尾的恢复一次到位，不再重复补。
+    private var yearRestoreAppliedOffset: CGFloat?
     /// 词汇指纹在途代次：renderSelectedYear 每调一次即 +1；过期回调
     /// （旧年 / 旧语料）到达时凭此丢弃，最终只留最后选中的年份。
     private var wordprintRequest = 0
@@ -766,6 +785,23 @@ final class BearyYearReviewViewController: UIViewController {
         return stack
     }()
 
+    /// 年份选择器固定头（标题＋年份行）：直接挂在 view 上，不随内容滚动；
+    /// 内容滚动视图顶边改锚到它底部，内容再长选择器也不被顶走。
+    private let yearHeaderStack: UIStackView = {
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 20
+        return stack
+    }()
+
+    /// 内容滚动视图：提为属性，供切年保存／恢复各年阅读位置用。
+    private let contentScrollView: UIScrollView = {
+        let scrollView = UIScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        return scrollView
+    }()
+
     private let wordprintView = BearyWordprintView(mode: .hero)
 
     init(year: Int, allEntries: [Entry], isOwn: Bool) {
@@ -796,31 +832,35 @@ final class BearyYearReviewViewController: UIViewController {
         closeButton.bearyAddPressFeedback()
         view.addSubview(closeButton)
 
-        let scrollView = UIScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(scrollView)
+        view.addSubview(contentScrollView)
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
         stack.spacing = 20
-        scrollView.addSubview(stack)
+        contentScrollView.addSubview(stack)
+        // 年份选择器固定头：标题＋年份行挂 view 上、不进滚动栈；
+        // 滚动视图顶边锚到头底部，首屏视觉位置与原来一致（标题仍在安全区 +56）。
+        view.addSubview(yearHeaderStack)
+        yearHeaderStack.addArrangedSubview(titleLabel)
+        yearHeaderStack.addArrangedSubview(pickerRow)
         NSLayoutConstraint.activate([
             closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
             closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             closeButton.widthAnchor.constraint(equalToConstant: 44),
             closeButton.heightAnchor.constraint(equalToConstant: 44),
-            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 56),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            stack.topAnchor.constraint(equalTo: scrollView.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -20),
-            stack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -32),
-            stack.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -40),
+            yearHeaderStack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 56),
+            yearHeaderStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            yearHeaderStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            contentScrollView.topAnchor.constraint(equalTo: yearHeaderStack.bottomAnchor, constant: 20),
+            contentScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            contentScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            contentScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            stack.topAnchor.constraint(equalTo: contentScrollView.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: contentScrollView.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: contentScrollView.trailingAnchor, constant: -20),
+            stack.bottomAnchor.constraint(equalTo: contentScrollView.bottomAnchor, constant: -32),
+            stack.widthAnchor.constraint(equalTo: contentScrollView.widthAnchor, constant: -40),
         ])
-
-        stack.addArrangedSubview(titleLabel)
 
         let calendarIconView = UIImageView(image: BearyIconImages.image(named: "icon_calendar", pointSize: 16))
         calendarIconView.translatesAutoresizingMaskIntoConstraints = false
@@ -841,7 +881,6 @@ final class BearyYearReviewViewController: UIViewController {
             nextYearButton.widthAnchor.constraint(equalToConstant: 44),
             nextYearButton.heightAnchor.constraint(equalToConstant: 44),
         ])
-        stack.addArrangedSubview(pickerRow)
         stack.addArrangedSubview(dynamicStack)
         renderSelectedYear()
     }
@@ -860,11 +899,55 @@ final class BearyYearReviewViewController: UIViewController {
         return footnote
     }
 
-    private func renderSelectedYear() {
+    /// 当年聚合计算（摘要文案／心情分布／年度之最＋月趋势）：纯计算，
+    /// 结果进 yearAggregateCache，同一次打开内切回该年直接复用。
+    private func yearAggregate(for yearEntriesValue: [Entry], year: Int, calendar: Calendar) -> YearReviewAggregate {
+        // 总篇数 / 最长连续 / 第一篇（当年）。
+        var writtenDays = Set<Date>()
+        for entry in yearEntriesValue {
+            if let createdAt = entry.createdAt {
+                let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
+                writtenDays.insert(calendar.startOfDay(for: date))
+            }
+        }
+        let longest = BearyProfilePersonalLogic.longestStreak(writtenDays: writtenDays, calendar: calendar)
+        let first = yearEntriesValue.min(by: { ($0.createdAt ?? 0) < ($1.createdAt ?? 0) })
+        var summary = "\(year) 年共写 \(yearEntriesValue.count) 篇 · 最长连续 \(longest) 天"
+        if let firstCreatedAt = first?.createdAt {
+            let date = Date(timeIntervalSince1970: TimeInterval(firstCreatedAt) / 1000)
+            let parts = calendar.dateComponents([.month, .day], from: date)
+            if let month = parts.month, let day = parts.day {
+                summary += "\n第一篇：\(month) 月 \(day) 日"
+            }
+        }
+        return YearReviewAggregate(
+            summaryText: summary,
+            moodDistribution: BearyProfilePersonalLogic.moodDistribution(entries: yearEntriesValue),
+            extras: BearyProfilePersonalLogic.yearReviewExtras(entries: yearEntriesValue, calendar: calendar)
+        )
+    }
+
+    /// 恢复当前年的阅读位置：有记录回上次离开处，无记录回顶部；
+    /// 超出内容高度时夹到可滚范围；记下本次恢复到的偏移，供词汇指纹
+    /// 后到回调判断用户是否已滚动（见 wordprint 回调）。
+    private func restoreYearScrollOffset() {
+        view.layoutIfNeeded()
+        let savedOffset = yearScrollOffsets[selectedYear] ?? 0
+        let maxOffset = max(0, contentScrollView.contentSize.height - contentScrollView.bounds.height)
+        let targetOffset = min(max(savedOffset, 0), maxOffset)
+        contentScrollView.setContentOffset(CGPoint(x: 0, y: targetOffset), animated: false)
+        yearRestoreAppliedOffset = targetOffset
+    }
+
+    /// 切年渲染。slideDirection：摘要首次移入方向（-1 = 左箭头进更早的年，
+    /// 从左来；+1 = 右箭头进更晚的年，从右来；0 = 不滑入，如首次打开）。
+    /// 摘要只在首次进入另一年时滑入；切回看过的年份走位置恢复，不再滑入。
+    private func renderSelectedYear(slideDirection: CGFloat = 0) {
         // 代次先 +1：空年提前返回的分支同样作废在途旧请求，旧词行
         // 绝不插进新年的栈。
         wordprintRequest += 1
         let request = wordprintRequest
+        yearRestoreAppliedOffset = nil
         titleLabel.text = "\(selectedYear) 年度回顾"
         yearLabel.text = "\(selectedYear) 年"
         // 只有一年时整行选择器隐藏（年份已在标题里）；多年前后箭头按年份数组
@@ -901,39 +984,46 @@ final class BearyYearReviewViewController: UIViewController {
             // 同一条脚注（同文案、同字号同灰色，见 makeYearReviewFootnote），
             // 避免空年页丢了“完整年度报告年底另做”的口径说明。
             dynamicStack.addArrangedSubview(makeYearReviewFootnote())
+            // 空年同样恢复该年上次的位置（无聚合结果可缓存，只恢复偏移）。
+            restoreYearScrollOffset()
             return
         }
 
         // 主视觉词汇指纹不在此处同步算（NLTokenizer 逐篇分词会卡住
         // 年份按钮事件）：其余各节先同步建好，词行在函数末尾后台请求，
         // 算完插回栈顶——最终顺序与同步版一致（词行在摘要之上）。
-        // 总篇数 / 最长连续 / 第一篇（当年）。
-        var writtenDays = Set<Date>()
-        for entry in yearEntriesValue {
-            if let createdAt = entry.createdAt {
-                let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
-                writtenDays.insert(calendar.startOfDay(for: date))
-            }
+        // 同一次打开内切回看过的年份：聚合结果直接取缓存，不重算；
+        // 首次进入才算并写入缓存（词汇指纹另有自己的静态缓存，不在此处）。
+        let isFirstEntryToYear = yearAggregateCache[selectedYear] == nil
+        let aggregate: YearReviewAggregate
+        if let cached = yearAggregateCache[selectedYear] {
+            aggregate = cached
+        } else {
+            let computed = yearAggregate(for: yearEntriesValue, year: selectedYear, calendar: calendar)
+            yearAggregateCache[selectedYear] = computed
+            aggregate = computed
         }
-        let longest = BearyProfilePersonalLogic.longestStreak(writtenDays: writtenDays, calendar: calendar)
-        let first = yearEntriesValue.min(by: { ($0.createdAt ?? 0) < ($1.createdAt ?? 0) })
         let summaryLabel = UILabel()
         summaryLabel.numberOfLines = 0
         summaryLabel.font = UIFont.systemFont(ofSize: 15)
         summaryLabel.textColor = BearyColors.ink
-        var summary = "\(selectedYear) 年共写 \(yearEntriesValue.count) 篇 · 最长连续 \(longest) 天"
-        if let firstCreatedAt = first?.createdAt {
-            let date = Date(timeIntervalSince1970: TimeInterval(firstCreatedAt) / 1000)
-            let parts = calendar.dateComponents([.month, .day], from: date)
-            if let month = parts.month, let day = parts.day {
-                summary += "\n第一篇：\(month) 月 \(day) 日"
-            }
-        }
-        summaryLabel.text = summary
+        summaryLabel.text = aggregate.summaryText
         dynamicStack.addArrangedSubview(summaryLabel)
+        // 首次进入另一年：摘要按切换方向短距移入 0.25 秒（左箭头进更早的年
+        // 从左来、右箭头进更晚的年从右来）；切回看过的年份走位置恢复，
+        // 不再滑入；首次打开与减动效直接落位。
+        if slideDirection != 0, isFirstEntryToYear,
+           !UIAccessibility.isReduceMotionEnabled, summaryLabel.window != nil {
+            summaryLabel.transform = CGAffineTransform(translationX: slideDirection * 16, y: 0)
+            summaryLabel.alpha = 0
+            UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+                summaryLabel.transform = .identity
+                summaryLabel.alpha = 1
+            })
+        }
 
         // 心情分布（条形按最大值归一，纯 UIView，不引图表库）。
-        let distribution = BearyProfilePersonalLogic.moodDistribution(entries: yearEntriesValue)
+        let distribution = aggregate.moodDistribution
         if let maxCount = distribution.first?.count, maxCount > 0 {
             let moodTitle = UILabel()
             moodTitle.font = UIFont.systemFont(ofSize: 14, weight: .bold)
@@ -977,7 +1067,7 @@ final class BearyYearReviewViewController: UIViewController {
         }
 
         // 年度之最 + 每月字数趋势（底部；胶囊篇按 yearReviewExtras 内过滤排除）。
-        let extras = BearyProfilePersonalLogic.yearReviewExtras(entries: yearEntriesValue, calendar: calendar)
+        let extras = aggregate.extras
         let extrasTitle = UILabel()
         extrasTitle.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         extrasTitle.textColor = BearyColors.ink
@@ -1051,28 +1141,71 @@ final class BearyYearReviewViewController: UIViewController {
             guard let self = self,
                   self.wordprintRequest == request,
                   self.selectedYear == wordprintValue.year else { return }
+            // 栈顶插入会把下方内容顶下去：先插行，再按插入高度补偿，
+            // 阅读锚点不动。恢复是否已跑过决定补法——
+            // · 同步插回（缓存命中、恢复未跑）：不补，渲染末尾的恢复
+            //   会按完整内容一次到位；
+            // · 异步后到（恢复已跑）且用户未滚动：按完整内容重算该年
+            //   保存的位置（插前恢复值在短内容上可能被夹过）；
+            // · 异步后到且用户已滚动：只补插入高度，保住当前阅读行。
+            let insertedRow: UIView
             if !wordprintValue.items.isEmpty {
                 self.wordprintView.configure(with: wordprintValue, scope: self.scopeValue)
-                self.dynamicStack.insertArrangedSubview(self.wordprintView, at: 0)
+                insertedRow = self.wordprintView
             } else {
                 // 无词时整节省略，只留口径行（与同步版一致）。
-                self.dynamicStack.insertArrangedSubview(bearyMakeWordprintScopeBadge(scope: self.scopeValue), at: 0)
+                insertedRow = bearyMakeWordprintScopeBadge(scope: self.scopeValue)
+            }
+            self.dynamicStack.insertArrangedSubview(insertedRow, at: 0)
+            self.view.layoutIfNeeded()
+            let insertedHeight = insertedRow.frame.height + self.dynamicStack.spacing
+            if let restoredOffset = self.yearRestoreAppliedOffset {
+                if self.contentScrollView.contentOffset.y == restoredOffset {
+                    let savedOffset = self.yearScrollOffsets[self.selectedYear] ?? 0
+                    let maxOffset = max(0, self.contentScrollView.contentSize.height - self.contentScrollView.bounds.height)
+                    let targetOffset = min(max(savedOffset, 0), maxOffset)
+                    self.contentScrollView.setContentOffset(CGPoint(x: 0, y: targetOffset), animated: false)
+                    self.yearRestoreAppliedOffset = targetOffset
+                } else {
+                    let maxOffset = max(0, self.contentScrollView.contentSize.height - self.contentScrollView.bounds.height)
+                    let compensatedOffset = min(self.contentScrollView.contentOffset.y + insertedHeight, maxOffset)
+                    self.contentScrollView.contentOffset.y = compensatedOffset
+                    self.yearRestoreAppliedOffset = compensatedOffset
+                }
+            }
+            // 词行单独淡入（减动效或尚未上屏时直接显形）；与偏移补偿互不干扰。
+            if UIAccessibility.isReduceMotionEnabled || insertedRow.window == nil {
+                insertedRow.alpha = 1
+            } else {
+                insertedRow.alpha = 0
+                UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+                    insertedRow.alpha = 1
+                })
             }
         }
+
+        // 切回看过的年份恢复上次阅读位置；首次进入的年份回到顶部。
+        // 词汇指纹若已同步插回（缓存命中），此时内容已完整，直接一次到位；
+        // 若还在后台算，回调里再按锚点补一次，见上。
+        restoreYearScrollOffset()
     }
 
     @objc private func prevYearTapped() {
         guard let index = availableYearValues.firstIndex(of: selectedYear),
               index + 1 < availableYearValues.count else { return }
+        // 切走前存下当年的阅读位置，同一次打开内切回时恢复。
+        yearScrollOffsets[selectedYear] = contentScrollView.contentOffset.y
         selectedYear = availableYearValues[index + 1]
-        renderSelectedYear()
+        renderSelectedYear(slideDirection: -1)
     }
 
     @objc private func nextYearTapped() {
         guard let index = availableYearValues.firstIndex(of: selectedYear),
               index > 0 else { return }
+        // 切走前存下当年的阅读位置，同一次打开内切回时恢复。
+        yearScrollOffsets[selectedYear] = contentScrollView.contentOffset.y
         selectedYear = availableYearValues[index - 1]
-        renderSelectedYear()
+        renderSelectedYear(slideDirection: 1)
     }
 
     private func presentWordDetail(item: BearyProfilePersonalLogic.WordprintItem) {
