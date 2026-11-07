@@ -69,6 +69,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
         tableValue.estimatedRowHeight = 206
         tableValue.delegate = self
         tableValue.dataSource = self
+        tableValue.prefetchDataSource = self
         tableValue.register(BearyDepthBackgroundCell.self, forCellReuseIdentifier: "BearyDepthBackgroundCell")
         return tableValue
     }()
@@ -123,8 +124,12 @@ final class BearyDepthBackgroundViewController: UIViewController {
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-        // 进页预热：六张底图在后台线程读盘＋下采样，cell 出现时直接贴缓存，不在主线程首解码。
-        ProfileCoverView.prewarmBackdrops()
+        // 进页预热：只解当前已应用主题（个人页封面已在用，多半已缓存）；
+        // 其余行由 cell 创建与 prefetch 按需触发，不再六张一次全幅解码
+        //（第十轮 01：六张约 113 MiB，画质不降、只改加载时机＋内存预算）。
+        if let currentCoverTheme = currentThemeValue.coverTheme {
+            ProfileCoverView.prewarmBackdrops(for: [currentCoverTheme])
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -234,6 +239,19 @@ extension BearyDepthBackgroundViewController: UITableViewDataSource, UITableView
             plusPageEdgeDismiss = edgeDismiss
         }
         present(page, animated: BearyMotion.animated(true))
+    }
+}
+
+extension BearyDepthBackgroundViewController: UITableViewDataSourcePrefetching {
+
+    func tableView(_ tableView: UITableView, prefetchRowsAt indexPaths: [IndexPath]) {
+        // 第十轮 01：即将出现的行先在后台解码（只暖封面行；节日行／默认行
+        // 不走此缓存）。可见行由 cell 创建时各自触发加载，不必另暖。
+        let themes = indexPaths.compactMap { indexPath -> ProfileCoverTheme? in
+            guard indexPath.row < themesValue.count else { return nil }
+            return themesValue[indexPath.row].coverTheme
+        }
+        if !themes.isEmpty { ProfileCoverView.prewarmBackdrops(for: themes) }
     }
 }
 
