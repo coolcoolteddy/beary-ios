@@ -373,7 +373,7 @@ final class BearyLivePhotoLoader {
             targetSize: targetSize,
             contentMode: contentMode
         ) { [weak self] photo, info in
-            if let infoError = info?[PHLivePhotoInfoErrorKey] as? Error {
+            if let infoError = info[PHLivePhotoInfoErrorKey] as? Error {
                 // 组装失败不再静默：此前 error 直接丢弃（photo, _ in），
                 // 标识对不上时静默退化成静态帧，用户只看到“不播放”。
                 NSLog("[BearyLivePhoto] PHLivePhoto.request failed liveKey=%@ staticKey=%@: %@", liveKey, staticKey, infoError.localizedDescription)
