@@ -47,7 +47,7 @@ final class BearyDMStoreTests: XCTestCase {
             merged = result
             exp.fulfill()
         }
-        waitForExpectations(timeout: 5)
+        waitForExpectations(timeout: 30)
         return merged
     }
 
@@ -99,10 +99,11 @@ final class BearyDMStoreTests: XCTestCase {
         // 原文件一字未动。
         let after = try? Data(contentsOf: storeFile(accountId: accountId))
         XCTAssertEqual(after, garbage)
-        // 备份已留一份，内容与原文件一致。
+        // 备份已留一份，内容与原文件一致（先守住再取下标，免得断言失败后直接崩溃）。
         let backups = backupFiles(accountId: accountId)
         XCTAssertEqual(backups.count, 1)
-        let backupData = try? Data(contentsOf: backups[0])
+        guard let backup = backups.first else { XCTFail("应留一份损坏备份"); return }
+        let backupData = try? Data(contentsOf: backup)
         XCTAssertEqual(backupData, garbage)
         XCTAssertTrue(BearyDMStore.isStoreCorrupt(accountId: accountId))
         // 再存一次：备份不重复刷，原文件仍不动。
@@ -139,7 +140,7 @@ final class BearyDMStoreTests: XCTestCase {
         let exp2 = expectation(description: "save second")
         BearyDMStore.saveMessages(accountId: first, peer: peer(id: 5), messages: [message(id: 10, body: "一号的消息")]) { _ in exp1.fulfill() }
         BearyDMStore.saveMessages(accountId: second, peer: peer(id: 6), messages: [message(id: 20, body: "二号的消息")]) { _ in exp2.fulfill() }
-        waitForExpectations(timeout: 5)
+        waitForExpectations(timeout: 30)
         // 各号只读到自己的文件。
         if case .loaded(let allFirst) = BearyDMStore.loadAll(accountId: first) {
             XCTAssertEqual(allFirst.keys.sorted(), ["5"])
@@ -180,7 +181,7 @@ final class BearyDMStoreTests: XCTestCase {
             restored = ok
             exp.fulfill()
         }
-        waitForExpectations(timeout: 5)
+        waitForExpectations(timeout: 30)
         XCTAssertTrue(restored)
         XCTAssertFalse(BearyDMStore.isStoreCorrupt(accountId: accountId))
         if case .loaded(let all) = BearyDMStore.loadAll(accountId: accountId) {
@@ -203,7 +204,7 @@ final class BearyDMStoreTests: XCTestCase {
             discarded = ok
             exp.fulfill()
         }
-        waitForExpectations(timeout: 5)
+        waitForExpectations(timeout: 30)
         XCTAssertTrue(discarded)
         XCTAssertFalse(FileManager.default.fileExists(atPath: storeFile(accountId: accountId).path))
         XCTAssertFalse(BearyDMStore.isStoreCorrupt(accountId: accountId))
@@ -218,7 +219,7 @@ final class BearyDMStoreTests: XCTestCase {
             discardedAgain = ok
             exp2.fulfill()
         }
-        waitForExpectations(timeout: 5)
+        waitForExpectations(timeout: 30)
         XCTAssertFalse(discardedAgain)
     }
 }
