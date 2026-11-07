@@ -31,8 +31,8 @@ enum BearyBottomSheet {
     static let dismissFraction: CGFloat = 1.0 / 3.0
     /// 下拖关闭速度阈值（pt/s）。
     static let dismissVelocity: CGFloat = 1000
-    /// 上拖阻力系数（超出静止位置的部分按 0.3 折算）。
-    static let upwardResistance: CGFloat = 0.3
+    /// 上拖阻力系数（超出静止位置的部分按 0.25 折算，与 BearySheetDrag 同口径）。
+    static let upwardResistance: CGFloat = 0.25
 }
 
 // MARK: - Transitioning delegate
@@ -209,10 +209,10 @@ class BearyBottomSheetPresentationController: UIPresentationController {
         requestDismiss()
     }
 
-    /// 拖动位移：下滑 1:1 跟手；上滑按 0.3 阻力折算（不扩高，只微移）。
+    /// 拖动位移：下滑 1:1 跟手；上滑按 0.25 阻力折算、上浮封顶 24pt（不扩高、不脱底，只微移）。
     private static func dragOffset(for translationY: CGFloat) -> CGFloat {
         if translationY >= 0 { return translationY }
-        return translationY * BearyBottomSheet.upwardResistance
+        return max(translationY * BearyBottomSheet.upwardResistance, -24)
     }
 
     /// 拖动进度：下滑位移占弹窗高比例（0 = 静止，1 = 完全滑出）；
