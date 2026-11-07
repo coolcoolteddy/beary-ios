@@ -275,20 +275,20 @@ enum BearyDMStore {
 
     /// 会话列表合并：服务端为准（对方信息与未读数都取服务端），仅本地有的对方追加，
     /// 统一按最后消息时间倒序。服务端未读数不由本地推断（本地行不置未读）。
-    static func mergedConversations(server: [BearyAPI.DMConversation], accountId: Int?) -> [BearyAPI.DMConversation] {
+    /// 审计四轮增量 10：显示层过滤已拉黑的对方（本地记录不动，解除后下次合并即恢复）。
+    /// 拉黑判断由调用方以闭包传入——BearyDMStore 不直接引用 SessionManager /
+    /// BearyBlockedStore（测试 target 不编那两个文件，直接引用会让 test job 编译失败）；
+    /// 调用方只在传入账号就是当前账号时才给闭包，旧号回调拿错拉黑表时不过滤、不误删。
+    static func mergedConversations(server: [BearyAPI.DMConversation], accountId: Int?, isBlocked: ((Int) -> Bool)? = nil) -> [BearyAPI.DMConversation] {
         var byPeer: [Int: BearyAPI.DMConversation] = [:]
         for c in server { if let pid = c.peer?.id { byPeer[pid] = c } }
         for local in localConversations(accountId: accountId) {
             guard let pid = local.peer.id, byPeer[pid] == nil else { continue }
             byPeer[pid] = BearyAPI.DMConversation(peer: local.peer, lastBody: local.lastBody, lastAt: local.lastAt, unreadCount: nil)
         }
-        // 审计四轮增量 10：显示层过滤已拉黑的对方（本地记录不动，解除后下次合并即恢复）。
-        // isBlocked 读调用时刻当前账号的桶——全部调用点都在账号守卫之后（主线程），
-        // 只有传入 accountId 与当前账号一致时才过滤；旧号回调拿错拉黑表时不过滤、不误删。
         let visible = byPeer.values.filter { conv in
-            guard let pid = conv.peer?.id else { return true }
-            guard accountId == SessionManager.shared.currentUser?.id else { return true }
-            return !BearyBlockedStore.isBlocked(pid)
+            guard let pid = conv.peer?.id, let isBlocked = isBlocked else { return true }
+            return !isBlocked(pid)
         }
         return visible.sorted { ($0.lastAt ?? 0) > ($1.lastAt ?? 0) }
     }

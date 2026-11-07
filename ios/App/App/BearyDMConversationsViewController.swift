@@ -323,6 +323,14 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         }
     }
 
+    /// 审计四轮增量 10：拉黑过滤闭包——只在传入账号就是当前账号时才给，
+    /// 旧号回调拿错拉黑表时不过滤、不误删；闭包由调用方传入，BearyDMStore
+    /// 不直接引用 SessionManager / BearyBlockedStore（测试 target 不编那两个文件）。
+    private func blockedFilter(for accountId: Int?) -> ((Int) -> Bool)? {
+        guard accountId == SessionManager.shared.currentUser?.id else { return nil }
+        return { BearyBlockedStore.isBlocked($0) }
+    }
+
     /// 会话列表磁盘快照：冷启动先显旧会话、再静默刷新、失败保留旧内容
     /// （与广场 BearyFeedCache 同口径）。只补空槽，网络已回包时不用旧快照回写。
     private func loadConversationsSnapshot() {
@@ -339,7 +347,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             guard generation == self.snapshotGeneration else { return }
             guard self.firstLoadPending else { return }
             guard self.conversations.isEmpty else { return }
-            self.conversations = BearyDMStore.mergedConversations(server: snap.conversations, accountId: uid)
+            self.conversations = BearyDMStore.mergedConversations(server: snap.conversations, accountId: uid, isBlocked: self.blockedFilter(for: uid))
             // 快照已显内容：首拉转圈遮层随即收起，不再盖住旧会话等网络回包。
             self.firstLoadStateView.isHidden = true
             self.tableView.reloadData()
@@ -385,7 +393,8 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                     // 服务端为准，仅本地有的对方追加（未读数不由本地推断，置空）。
                     self.conversations = BearyDMStore.mergedConversations(
                         server: list.resolvedConversations,
-                        accountId: SessionManager.shared.currentUser?.id)
+                        accountId: SessionManager.shared.currentUser?.id,
+                        isBlocked: self.blockedFilter(for: SessionManager.shared.currentUser?.id))
                     // 会话列表快照：成功回包即写盘（按账号分桶），冷启动先显旧会话。
                     if let uid = SessionManager.shared.currentUser?.id {
                         BearyDMConversationsCache.save(bucket: "\(uid)", conversations: self.conversations)
@@ -397,7 +406,8 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                     // 与成功回包时的并入口径一致；快照里的旧会话也一并参与合并。
                     self.conversations = BearyDMStore.mergedConversations(
                         server: self.conversations,
-                        accountId: SessionManager.shared.currentUser?.id)
+                        accountId: SessionManager.shared.currentUser?.id,
+                        isBlocked: self.blockedFilter(for: SessionManager.shared.currentUser?.id))
                 }
                 self.updateEmptyState()
                 self.tableView.reloadData()
