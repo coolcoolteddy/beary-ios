@@ -18,6 +18,9 @@ import UIKit
 // 回调语义：确认且裁剪成功时 onConfirm 回传裁剪图，调用方负责后续流程
 // （编辑器：替换原项与上传；编辑资料：压缩、替换预览与待保存标记）；
 // 取消不回调，调用方状态全程不动；确认时无论裁剪是否成功都 dismiss。
+// 第六轮审计 05：onConfirm 在退场完成后才回调——调用方可能在回调里
+// present 提示（编辑资料页压缩超限），回调时裁剪页若仍在 presented
+// 状态，那次 present 会被 UIKit 以 already-presenting 静默丢弃。
 
 final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate {
 
@@ -286,7 +289,8 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
 
     @objc private func didTapConfirm() {
         // 确认点按立即反馈：先改文案+禁用两钮（主线程只做这一件小事），
-        // 全尺寸重绘挪到后台做，界面不再卡一下才跳走；裁完回主线程再回调+关页。
+        // 全尺寸重绘挪到后台做，界面不再卡一下才跳走；裁完回主线程先关页、
+        // 退场完成后再回调（第六轮审计 05，见下方成功分支注释）。
         guard let geometry = cropGeometry() else {
             // 几何无效是失败不是取消：留在页内、给重试反馈，不直接退出。
             BearyToast.show(in: view, message: "裁剪失败，请调整裁剪框后重试")
@@ -307,8 +311,17 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 if let cropped = cropped {
-                    strongSelf.onConfirm?(cropped)
-                    strongSelf.dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
+                    // 第六轮审计 05：先退场、退场完成后再回调。旧顺序先回调后退场，
+                    // 回调里调用方若 present 提示（编辑资料页压缩超限时的
+                    // presentSimpleAlert），当时裁剪页仍是 presentedViewController，
+                    // UIKit 会打 already-presenting 警告并把那次弹出静默丢弃——用户
+                    // 回编辑页图片没换、无提示、无重试入口。退场完成后再回调，
+                    // 调用方的 present 才能正常出现，用户看到提示可重新选图。
+                    // 口径与 didFinishPicking 的退场 completion 协调、presentCropEditor
+                    // 的 presented 检查一致；编辑器那路失败只 toast，不受影响。
+                    strongSelf.dismiss(animated: !UIAccessibility.isReduceMotionEnabled) {
+                        strongSelf.onConfirm?(cropped)
+                    }
                 } else {
                     // 生成失败同样留在页内：恢复两钮与确认文案，给重试反馈。
                     strongSelf.confirmButton.isEnabled = true
