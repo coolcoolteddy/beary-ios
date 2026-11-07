@@ -219,6 +219,10 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private var openBusy = false
     private var withdrawBusy = false
     private var reactBusy = false
+    /// 审计新一轮 02：详情请求代次——每次发详情请求即 +1，撤回成功再 +1；
+    /// 在途旧回包凭代次丢弃，不再把已撤回的界面倒退回 .received
+    ///（只比交换 ID 不够——同一交换的旧回包仍可能带着撤回前的状态回来）。
+    private var exchangeDetailGeneration: UInt64 = 0
     private var hasLoadedOnce = false
 
     override func viewDidLoad() {
@@ -598,6 +602,11 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     // MARK: - 步骤渲染
 
     private func setStep(_ next: Step) {
+        // 审计新一轮 02：撤回是当日终态——已撤回的页不再回 .received；
+        // 旧详情回包倒退界面的最后一道防线（回调侧已有代次＋终态校验）。
+        // 本页实例内 .mineWithdrawn → .received 没有合法路径（开盒只在
+        // pool 态、静默刷新只在 received 态触发），故直接拦住。
+        if case .mineWithdrawn = step, case .received = next { return }
         step = next
         hasLoadedOnce = true
         spinnerWrap.isHidden = true
@@ -797,11 +806,26 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         if silent == false {
             setStep(.loading)
         }
+        // 审计新一轮 02：拍下请求代次与发起账号——每次新请求即让旧请求失效，
+        // 撤回成功还会再 +1；旧回包凭代次／交换 ID／账号三重校验丢弃，
+        // 不再把已撤回的界面倒退回 .received。
+        exchangeDetailGeneration += 1
+        let generation = exchangeDetailGeneration
+        let requestAccountId = SessionManager.shared.currentUser?.id
         BearyAPI.shared.fetchBlindBoxExchange(id: id) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                guard generation == self.exchangeDetailGeneration else { return }
+                guard self.exchangeId == id else { return }
+                guard requestAccountId == SessionManager.shared.currentUser?.id else { return }
                 switch result {
                 case .success(let body):
+                    // 终态守卫：本地已确认撤回时，只认同说已撤回的回包；旧回包
+                    //（myWithdrawn=false）直接丢弃——既不倒退界面，也不拿它
+                    // 的 false 覆掉本地撤回旗（applyServerState 在此之后才调）。
+                    if BlindBoxState.shared.myWithdrawn, body.myWithdrawn != true {
+                        return
+                    }
                     BlindBoxState.shared.applyServerState(body)
                     if body.myWithdrawn == true {
                         BlindBoxState.shared.markMyWithdrawn()
@@ -1150,6 +1174,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                     self.withdrawBusy = false
                     switch result {
                     case .success:
+                        // 审计新一轮 02：撤回成功即让此前全部在途详情请求失效
+                        //（代次 +1，旧回包凭代次丢弃），再置本地撤回旗、切终态。
+                        self.exchangeDetailGeneration += 1
                         BlindBoxState.shared.markMyWithdrawn()
                         self.setStep(.mineWithdrawn)
                     case .failure(let error):
