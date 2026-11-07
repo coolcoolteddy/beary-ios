@@ -202,7 +202,7 @@ enum BearyGlass {
 /// 渐进模糊（规范 §6 滚动交界）：毛玻璃＋渐变遮罩，模糊从贴体处最强、向内容方向渐弱至透明。
 /// 渐变带统一 12pt（规范 8–20pt 内取中值）；强度取轻量（无 tint 液态玻璃／超薄材质，内容隐约可见、不断层）。
 /// 现行只剩底栏一处垫片（.up）：垫片高即渐变带，贴在底栏顶边、向上方内容渐弱；
-/// 遮罩从贴体边满强度线性淡到透明。其余 10 处垫片已随 125 移除，不再新增。
+/// 遮罩从贴体边满强度保持到 45% 再柔和淡到透明（三段非线性，Stitch 审查第 2 项）。其余 10 处垫片已随 125 移除，不再新增。
 /// 垫片永不拦截触摸（与 BearyGlass 同口径）；遮罩只用白／透明，不缓存主题色；
 /// 尺寸变化（转屏／大字号）时 layoutSubviews 重算遮罩，不依赖调用点手动刷新。
 /// 124 实证（iOS 27 真机）：渐变遮罩绝不能直接挂毛玻璃自己身上——layer.mask 不裁
@@ -273,8 +273,8 @@ final class BearyProgressiveBlurView: UIView {
         let size = bounds.size
         guard size.width > 0, size.height > 0 else { return }
         maskLayer.frame = bounds
-        maskLayer.colors = [UIColor.white.cgColor, UIColor.clear.cgColor]
-        maskLayer.locations = [0, 1]
+        maskLayer.colors = [UIColor.white.cgColor, UIColor.white.cgColor, UIColor.clear.cgColor]
+        maskLayer.locations = [0, 0.45, 1]
         switch fade {
         case .up:
             maskLayer.type = .axial
