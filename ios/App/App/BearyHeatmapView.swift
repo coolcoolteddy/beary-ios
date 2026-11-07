@@ -34,7 +34,8 @@ final class BearyHeatmapView: UIView {
     private let titleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 17, weight: .bold)
+        label.font = BearyDynamicType.pageTitleFont()
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         label.text = "写日记热力图"
         return label
@@ -60,7 +61,8 @@ final class BearyHeatmapView: UIView {
     private let hintLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 13)
+        label.font = BearyDynamicType.secondaryFont()
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         label.textAlignment = .center
         label.text = "点某一天，看那天的日记"
@@ -89,7 +91,11 @@ final class BearyHeatmapView: UIView {
         // 月份名（每列首日换月时一个，最多 7 个，位置在 layoutSubviews 里按列算）。
         for _ in 0..<8 {
             let label = UILabel()
-            label.font = UIFont.systemFont(ofSize: 12)
+            label.font = BearyDynamicType.captionFont()
+            label.adjustsFontForContentSizeCategory = true
+            // 大字号下月份名（30pt 宽框）可能溢出：允许缩到 0.8 倍兜底。
+            label.adjustsFontSizeToFitWidth = true
+            label.minimumScaleFactor = 0.8
             label.textColor = BearyColors.gray
             label.isHidden = true
             gridArea.addSubview(label)
@@ -119,7 +125,8 @@ final class BearyHeatmapView: UIView {
         }
         // 图例：少 + 五档方块 + 多（右对齐）。
         let lessLabel = UILabel()
-        lessLabel.font = UIFont.systemFont(ofSize: 12)
+        lessLabel.font = BearyDynamicType.captionFont()
+        lessLabel.adjustsFontForContentSizeCategory = true
         lessLabel.textColor = BearyColors.gray
         lessLabel.text = "少"
         legendStack.addArrangedSubview(lessLabel)
@@ -136,7 +143,8 @@ final class BearyHeatmapView: UIView {
             legendStack.addArrangedSubview(swatch)
         }
         let moreLabel = UILabel()
-        moreLabel.font = UIFont.systemFont(ofSize: 12)
+        moreLabel.font = BearyDynamicType.captionFont()
+        moreLabel.adjustsFontForContentSizeCategory = true
         moreLabel.textColor = BearyColors.gray
         moreLabel.text = "多"
         legendStack.addArrangedSubview(moreLabel)
