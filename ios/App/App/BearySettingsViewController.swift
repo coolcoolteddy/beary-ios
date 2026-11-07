@@ -243,6 +243,29 @@ final class BearySettingsViewController: UIViewController {
     /// 时 meLoadGeneration 递增，自然重拉。
     private var plusDetailRequestedGeneration = -1
     private var sessionsRequestedGeneration = -1
+    /// 第七轮审计 02：附属加载（Plus 详情／设备会话）的回包守卫——
+    /// /me 只守自己的两处回包，这两处各拍自己的发起代次＋鉴权态，
+    /// 切号／退出后旧回包整单丢弃，不再把旧账号数据写回界面。
+    /// 同一账号内重拉（loadAll 缓存路径＋/me 成功路径各发一次）时，
+    /// 后发的一轮作废先发的一轮，只留最新回包写界面。
+    private var plusDetailGeneration = 0
+    private var sessionsGeneration = 0
+    /// 当前屏上 Plus／设备展示数据归属的账号（成功回包落盘时记）；
+    /// 切号广播到达时与当前账号比对，不一致即旧账号数据，立即清掉。
+    /// 注意：只凭这一项清展示，不在广播里 bump 上面两代次——广播是
+    /// async 投递，切换完成后 loadAll 刚发的新请求可能已先跑，
+    /// handler 里 bump 会把新请求一并作废；旧在途请求由发起时拍的
+    /// 鉴权代次＋账号 ID 拦（SessionManager 在身份提交时已同步 bump）。
+    private var auxDataAccountId: Int?
+
+    /// 第七轮审计 02：附属回包三重门——发起代次＋鉴权代次＋账号 ID，
+    /// 任一失配即旧账号／旧一轮的回包，整单丢弃（成功与失败分支同守，
+    /// 旧号 401 也不得触发新号的登录门）。
+    private func isCurrentAuxResponse(generation: Int, currentGeneration: Int, accountId: Int?, epoch: Int) -> Bool {
+        generation == currentGeneration
+            && accountId == BearyAPI.shared.authAccountId
+            && epoch == BearyAPI.shared.authEpoch
+    }
     /// 切换账号卡容器（buildAccountSwitchSection 建，refreshAccountSwitchSection
     /// 重建卡片；登录态无关的通用/隐私组不受影响）。
     private let accountSwitchWrap = UIView()
@@ -1519,7 +1542,27 @@ final class BearySettingsViewController: UIViewController {
 
     /// 账号真变广播到达时补刷切换卡（见 viewDidLoad 的注释：添加账号后
     /// viewWillAppear 跑早了，真正的新号要等这条广播才进卡）。
+    /// 第七轮审计 02：同账号的广播（/me 静默刷新成功、编辑资料改名改
+    /// 头像）不动展示；切号／退出时屏上若还挂着旧号的 Plus／设备数据，
+    /// 立即清掉，不等新请求返回。只清展示，不 bump 附属加载代次——
+    /// 见 auxDataAccountId 注释，旧在途请求由回包三重门拦。
     @objc private func handleUserChangedForAccountSwitch() {
+        let currentAccountId = SessionManager.shared.currentUser?.id
+        if let displayed = auxDataAccountId, displayed != currentAccountId {
+            plusDetail = nil
+            auxDataAccountId = nil
+            cachedGrants = nil
+            grantsLoadFailed = false
+            plusEntryLabel.text = "–"
+            plusStatusLabel.text = "–"
+            plusFreeLabel.text = "–"
+            plusPersonalLabel.text = "–"
+            accountSessions = []
+            sessionsLoadFailed = false
+            // 设备计数文案初始即空（未拉到时子页不渲染该行），清展示时
+            // 回空，不置“–”（子页会把 countText 原样当标题渲染）。
+            deviceCountLabel.text = nil
+        }
         refreshAccountSwitchSection()
     }
 
@@ -2332,12 +2375,20 @@ final class BearySettingsViewController: UIViewController {
             plusPersonalLabel.text = "–"
             rebuildGrants(grants: nil, failed: false)
         }
+        // 第七轮审计 02：发起时拍代次＋账号 ID＋鉴权代次，回包三重门
+        // 校验——切号／退出后旧回包整单丢弃，不写界面、不弹登录门。
+        plusDetailGeneration += 1
+        let requestGeneration = plusDetailGeneration
+        let requestAccountId = BearyAPI.shared.authAccountId
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchPlusDetail { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                guard self.isCurrentAuxResponse(generation: requestGeneration, currentGeneration: self.plusDetailGeneration, accountId: requestAccountId, epoch: requestEpoch) else { return }
                 switch result {
                 case .success(let detail):
                     self.plusDetail = detail
+                    self.auxDataAccountId = requestAccountId
                     self.fillPlusDetail(detail: detail)
                 case .failure(let error):
                     if case .unauthorized = error {
@@ -2431,13 +2482,21 @@ final class BearySettingsViewController: UIViewController {
         sessionsRequestedGeneration = meLoadGeneration
         // 首拉前不再预先 rebuildSessions(nil)：空标签只在拉取返回空后出现，
         // 失败态只在拉取失败后出现（现行失败分支不动）；静默刷新不再先清旧内容。
+        // 第七轮审计 02：发起时拍代次＋账号 ID＋鉴权代次，回包三重门
+        // 校验——切号／退出后旧回包整单丢弃，不写界面、不弹登录门。
+        sessionsGeneration += 1
+        let requestGeneration = sessionsGeneration
+        let requestAccountId = BearyAPI.shared.authAccountId
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchAccountSessions { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                guard self.isCurrentAuxResponse(generation: requestGeneration, currentGeneration: self.sessionsGeneration, accountId: requestAccountId, epoch: requestEpoch) else { return }
                 switch result {
                 case .success(let resp):
                     let list = resp.sessions ?? []
                     self.accountSessions = list
+                    self.auxDataAccountId = requestAccountId
                     self.sessionsLoadFailed = false
                     // 全修 4-4（二选一取“计数文案标活跃、列表不过滤”）：/api/account/sessions
                     // 下发 activeCount（与 sessions 全量分开的字段，过期行以 expired 另标灰化），
@@ -5078,6 +5137,10 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
     /// 资料拉不到时行内回落“用户 id”，不阻塞解除）；在途去重，避免复用抖动多发。
     private var blockedProfiles: [Int: BearyUserProfile] = [:]
     private var blockedProfileFetching: Set<Int> = []
+    /// 第七轮审计 02：拉黑列表的回包守卫——发起时拍代次＋账号 ID＋
+    /// 鉴权代次，回包三重门校验；切号／退出后旧回包整单丢弃。
+    /// 拉黑行资料逐行拉取共用同一代次：列表重拉即作废上一轮的行资料请求。
+    private var blockedLoadGeneration = 0
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -5143,7 +5206,37 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
         contentColumnWidth = tableView.widthAnchor.constraint(equalToConstant: 0)
         contentColumnWidth?.isActive = true
         updateSubpageColumnWidths()
+        // 第七轮审计 02：本页全屏 modal 盖在设置页上时切号／退出也可能
+        // 发生（401 清态），订阅账号变化：旧号列表立即清掉，仍登录时
+        // 为新号重拉，退出时只清不拉（全局未登录流程接管）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserChanged), name: .bearyUserDidChange, object: nil)
         reloadBlocked()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    /// 第七轮审计 02：拉黑列表回包三重门——发起代次＋鉴权代次＋账号 ID，
+    /// 任一失配即旧账号／旧一轮的回包，整单丢弃。
+    private func isCurrentBlockedResponse(generation: Int, accountId: Int?, epoch: Int) -> Bool {
+        generation == blockedLoadGeneration
+            && accountId == BearyAPI.shared.authAccountId
+            && epoch == BearyAPI.shared.authEpoch
+    }
+
+    /// 第七轮审计 02：账号变化时旧号的拉黑列表不得继续展示——先清
+    /// 列表与行资料缓存；仍登录时为新号重拉（reloadBlocked 自带三重门）。
+    /// 退出时只清不拉，不在本页再弹一次“加载失败”。
+    @objc private func handleBlockedUserChanged() {
+        blockedIds = []
+        blockedProfiles = [:]
+        blockedProfileFetching = []
+        blockedStateView.isHidden = true
+        tableView.reloadData()
+        if SessionManager.shared.currentUser?.id != nil {
+            reloadBlocked()
+        }
     }
 
     private func blockedRetryTapped() {
@@ -5163,9 +5256,16 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
     }
 
     private func reloadBlocked() {
+        // 第七轮审计 02：发起时拍代次＋账号 ID＋鉴权代次，回包三重门
+        // 校验——切号／退出后旧回包整单丢弃，不写列表、不弹失败态。
+        blockedLoadGeneration += 1
+        let requestGeneration = blockedLoadGeneration
+        let requestAccountId = BearyAPI.shared.authAccountId
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchBlocks { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                guard self.isCurrentBlockedResponse(generation: requestGeneration, accountId: requestAccountId, epoch: requestEpoch) else { return }
                 switch result {
                 case .success(let resp):
                     self.blockedIds = resp.blocked ?? []
@@ -5196,15 +5296,21 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
             onUnblock: { [weak self] in self?.confirmUnblock(userId: userId) })
         if blockedProfiles[userId] == nil, !blockedProfileFetching.contains(userId) {
             blockedProfileFetching.insert(userId)
+            // 第七轮审计 02：行资料回包同守三重门（列表重拉即作废上一轮
+            // 的行请求）；写缓存前再确认该行仍在当前列表里，否则旧号的
+            // 名字／头像会写进新号的行。
+            let requestGeneration = blockedLoadGeneration
+            let requestAccountId = BearyAPI.shared.authAccountId
+            let requestEpoch = BearyAPI.shared.authEpoch
             BearyAPI.shared.fetchUserProfile(userIdValue: userId) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     self.blockedProfileFetching.remove(userId)
+                    guard self.isCurrentBlockedResponse(generation: requestGeneration, accountId: requestAccountId, epoch: requestEpoch) else { return }
                     if case .success(let profile) = result {
+                        guard let row = self.blockedIds.firstIndex(of: userId) else { return }
                         self.blockedProfiles[userId] = profile
-                        if let row = self.blockedIds.firstIndex(of: userId) {
-                            self.tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
-                        }
+                        self.tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
                     }
                 }
             }
