@@ -346,10 +346,16 @@ class BearyProfileViewController: UIViewController {
     /// 最多补拉一次；代次一换自动恢复资格，不用在 loadProfile 里手动清。
     private var nightPatrolRetriedCycle: Int?
     private var modulesStartedCycle: Int?
-    /// 已拉到的作者条目（分页累积、按 id 去重）；未完成前 renderModules 全隐藏，
-    /// 不拿半截语料画「空白 = 没写」——半截语料的空白是假空白，会撒谎。
+    /// 已拉到的作者条目（分页累积、按 id 去重）；未完成且无部分态时 renderModules
+    /// 不画卡——半截语料的空白是假空白，会撒谎；部分态（缓存快照 / 游标缺失）
+    /// 时照常画已有语料，但重试行明示未完整，不冒充全量聚合。
     private var modulesCorpus: [Entry] = []
     private var modulesCorpusComplete = false
+    /// 新一轮 06：当前展示的语料是“未完整”的——本地缓存快照（未被网络核对）
+    /// 或游标缺失截断的已加载部分。renderModules 遇此旗时照常画已有语料
+    /// 各卡，重试行明示“只加载了部分日记，请重试”；网络全量到齐 / 失败态
+    /// 接管时复位（失败态自带同款明示，不再需要本旗）。
+    private var modulesCorpusPartial = false
     /// 113 模块分页失败态：失败不再静默全灭——本轮已拉到的页（或旧全量语料）
     /// 照常渲染，另加重试行明示失败；从未拉到页时只显重试行。
     private var modulesLoadFailed = false
@@ -2897,9 +2903,10 @@ class BearyProfileViewController: UIViewController {
         // 全修 6-3 同步点：大字号/深浅切换后页签钮宽可能变化，下划线直设终值重算一次。
         updateUnderlinePosition(animated: false)
         // 批 D：深浅切换时心情图需换深浅版（emote_<key> / emote_<key>_dark），
-        // 月历格重绘一次即可换版；语料不动、不重拉。
+        // 月历格重绘一次即可换版；语料不动、不重拉。部分态也在屏上画着卡，
+        // 同款重渲染。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle,
-           modulesCorpusComplete {
+           modulesCorpusComplete || modulesCorpusPartial {
             renderModules()
         }
         // 112：字号档变化时脚部高度重算。模块高度与照片区高度只在
@@ -4483,6 +4490,7 @@ class BearyProfileViewController: UIViewController {
             modulesProfileId = profileId
             modulesCorpus = []
             modulesCorpusComplete = false
+            modulesCorpusPartial = false
             modulesLoadFailed = false
             // 14：新目标加载紧随其后即开始，加载旗保持 true（不复位为 false），
             // 下方 renderModules 的未到齐分支才显“加载中…”而非失败文案。
@@ -4498,6 +4506,33 @@ class BearyProfileViewController: UIViewController {
         }
         modulesGeneration += 1
         loadModulesPage(before: nil, beforeId: nil, accumulated: [], seenIds: [], generation: modulesGeneration)
+        // 新一轮 06：缓存快照先显——网络已先踢出（不被读盘拖慢），本地已同步
+        // 日记随后在后台读到、屏上无语料时先画模块，后台网络核对。只在当前
+        // 无任何语料可显时读（同目标刷新时旧全量语料仍在屏上，不必再读快照）。
+        showModulesCacheSnapshotIfNeeded(generation: modulesGeneration, profileId: profileId)
+    }
+
+    /// 新一轮 06：读本地已同步日记快照（BearyEntrySyncStore 全量日文件），
+    /// 首次进个人页且屏上无语料时先画模块。快照只是“已加载部分”（可能
+    /// 滞后 / 不全），置部分态、重试行明示未完整；网络全量到齐后替换。
+    /// 读盘走后台，落地时凭代次 / 目标 / 未到齐三重守卫，网络已到齐时
+    /// 快照直接丢弃；网络先失败时快照仍可显（失败分支继续渲染它＋重试行）。
+    private func showModulesCacheSnapshotIfNeeded(generation: Int, profileId: Int) {
+        guard modulesCorpus.isEmpty else { return }
+        guard let accountId = SessionManager.shared.currentUser?.id, accountId == profileId else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let snapshot = BearyEntrySyncStore.loadAllEntries(accountId: accountId)
+            DispatchQueue.main.async { [weak self] in
+                guard let strongSelf = self,
+                      generation == strongSelf.modulesGeneration,
+                      profileId == strongSelf.modulesProfileId,
+                      !strongSelf.modulesCorpusComplete,
+                      !snapshot.isEmpty else { return }
+                strongSelf.modulesCorpus = snapshot
+                strongSelf.modulesCorpusPartial = true
+                strongSelf.renderModules()
+            }
+        }
     }
 
     private func loadModulesPage(before: Int?, beforeId: String?, accumulated: [Entry], seenIds: Set<String>, generation: Int) {
@@ -4524,6 +4559,7 @@ class BearyProfileViewController: UIViewController {
                         // 末页（不足 50 即无更多）：语料到齐才渲染，半截不画。
                         strongSelf.modulesCorpus = merged
                         strongSelf.modulesCorpusComplete = true
+                        strongSelf.modulesCorpusPartial = false
                         strongSelf.modulesLoadFailed = false
                         strongSelf.modulesRetrying = false
                         strongSelf.renderModules()
@@ -4531,10 +4567,13 @@ class BearyProfileViewController: UIViewController {
                     } else if let last = fresh.last, let lastCreatedAt = last.createdAt, let lastId = last.id {
                         strongSelf.loadModulesPage(before: lastCreatedAt, beforeId: lastId, accumulated: merged, seenIds: seenIds, generation: generation)
                     } else {
-                        // 末页游标缺失（理论上不应发生）：按到齐处理，宁可少一页尾巴
-                        // 也不在分页里死循环；游标缺失本身已是服务端异常形态。
+                        // 新一轮 06：末页游标缺失——不再静默标“已完整”：已加载
+                        // 的页只是“部分语料”，置部分态、渲染已有卡＋重试行明示
+                        // 未完整（文案沿用 #923「只加载了部分日记，请重试」），
+                        // 不冒充全量聚合；游标缺失本身仍是服务端异常形态。
                         strongSelf.modulesCorpus = merged
-                        strongSelf.modulesCorpusComplete = true
+                        strongSelf.modulesCorpusComplete = false
+                        strongSelf.modulesCorpusPartial = true
                         strongSelf.modulesLoadFailed = false
                         strongSelf.modulesRetrying = false
                         strongSelf.renderModules()
@@ -4546,6 +4585,7 @@ class BearyProfileViewController: UIViewController {
                     // + 重试行，从未拉到页时只显重试行；重试行由 renderModules 管显隐。
                     strongSelf.modulesRetrying = false
                     strongSelf.modulesLoadFailed = true
+                    strongSelf.modulesCorpusPartial = false
                     if !accumulated.isEmpty {
                         strongSelf.modulesCorpus = accumulated
                     }
@@ -4567,11 +4607,13 @@ class BearyProfileViewController: UIViewController {
             modulesRetryRow.isHidden = true
             return
         }
-        if modulesLoadFailed {
-            // 113 失败态：已有语料（本轮已拉页或旧全量）照常渲染各卡 + 重试行；
-            // 从未拉到页时各卡全藏、只留重试行——不再整组静默消失。
-            // 部分语料下的统计等数字是“已加载部分”的聚合，重试行文案明示未完整，
-            // 不冒充全量（旧“半截不画”是防撒谎，现以明示替代隐藏）。
+        if modulesLoadFailed || modulesCorpusPartial {
+            // 113 失败态 / 新一轮 06 部分态：已有语料（本轮已拉页、旧全量、
+            // 缓存快照、游标缺失截断）照常渲染各卡 + 重试行；从未拉到页时
+            // 各卡全藏、只留重试行——不再整组静默消失。部分语料下的统计等
+            // 数字是“已加载部分”的聚合，重试行文案明示未完整，不冒充全量
+            // （旧“半截不画”是防撒谎，现以明示替代隐藏）。加载中时重试行
+            // 显“加载中…”、钮禁用；停稳后显“只加载了部分日记，请重试”。
             if modulesCorpus.isEmpty {
                 for card in [pastSelfDeliveryCard, statsCard, thisDayCard, randomCard, yearCard] {
                     card.isHidden = true
