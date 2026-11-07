@@ -115,7 +115,6 @@
 		2B5FFB899357ED2A2FA2E05E /* BearySearchViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */; };
 		A23C53DAC03E8C03962E6498 /* BearyNotificationsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E158D917D57FA5831A2069F /* BearyNotificationsViewController.swift */; };
 		EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */ = {isa = PBXBuildFile; fileRef = B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */; };
-		248993E9EF7C4D73A470CCE9 /* BearyNightPatrol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F7AC7C7B59449186BD24AF /* BearyNightPatrol.swift */; };
 		93F45F628E22C5045A1EF58F /* agree.json in Resources */ = {isa = PBXBuildFile; fileRef = DAE48A2C16A1E3B2821093EB /* agree.json */; };
 		9472B5CCFE207ADBF3F56CAB /* germany-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = E3723A3C311893D5090357E2 /* germany-poster.png */; };
 		D237566290B7035BF1928EB8 /* canada-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = B80A1FE89536993709074D35 /* canada-poster.png */; };
@@ -389,7 +388,6 @@
 		EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySearchViewController.swift; sourceTree = "<group>"; };
 		5E158D917D57FA5831A2069F /* BearyNotificationsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyNotificationsViewController.swift; sourceTree = "<group>"; };
 		B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmoteImages.swift; sourceTree = "<group>"; };
-		60F7AC7C7B59449186BD24AF /* BearyNightPatrol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyNightPatrol.swift; sourceTree = "<group>"; };
 		DAE48A2C16A1E3B2821093EB /* agree.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree.json; sourceTree = "<group>"; };
 		E3723A3C311893D5090357E2 /* germany-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/germany-poster.png; sourceTree = "<group>"; };
 		B80A1FE89536993709074D35 /* canada-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/canada-poster.png; sourceTree = "<group>"; };
@@ -683,7 +681,6 @@
 				EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */,
 				5E158D917D57FA5831A2069F /* BearyNotificationsViewController.swift */,
 				B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */,
-				60F7AC7C7B59449186BD24AF /* BearyNightPatrol.swift */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
@@ -1221,7 +1218,6 @@
 				2B5FFB899357ED2A2FA2E05E /* BearySearchViewController.swift in Sources */,
 				A23C53DAC03E8C03962E6498 /* BearyNotificationsViewController.swift in Sources */,
 				EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */,
-				248993E9EF7C4D73A470CCE9 /* BearyNightPatrol.swift in Sources */,
 				3AA12B2885B64262BB5A9AD8 /* BearySoundPlayer.swift in Sources */,
 				AEA9D9D3FBCB5ACEDC623626 /* BearyProfileCoverView.swift in Sources */,
 			);
