@@ -954,7 +954,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private lazy var likeButton: UIButton = {
         let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        btn.titleLabel?.font = BearyDynamicType.tabularDigitsFont(ofSize: 14)
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
         btn.contentEdgeInsets = UIEdgeInsets.zero
         btn.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
