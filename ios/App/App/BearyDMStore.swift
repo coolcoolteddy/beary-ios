@@ -245,8 +245,13 @@ enum BearyDMStore {
     /// 按最后消息时间倒序）。只读，不改库；损坏文件时 loadAll 按现行
     /// 口径回空（损坏保护另见审计四轮 01，不在本项改）。
     static func allConversations(accountId: Int?) -> [StoredConversation] {
-        loadAll(accountId: accountId).values.sorted {
-            ($0.messages.last?.createdAt ?? 0) > ($1.messages.last?.createdAt ?? 0)
+        switch loadAll(accountId: accountId) {
+        case .loaded(let all):
+            return all.values.sorted {
+                ($0.messages.last?.createdAt ?? 0) > ($1.messages.last?.createdAt ?? 0)
+            }
+        case .missing, .corrupt:
+            return []
         }
     }
 
