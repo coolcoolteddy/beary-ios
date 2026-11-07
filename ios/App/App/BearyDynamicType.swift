@@ -91,9 +91,15 @@ extension BearyDynamicType {
         scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
     }
 
+    /// 等宽数字（tabular figures）：倒计时、剩余分钟、点赞数等会变的数字走本入口，
+    /// 数字进位宽度一致，跳字时不抖；字号字重与 Dynamic Type 缩放与原入口一致。
+    static func tabularDigitsFont(ofSize size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
+        scaledFont(for: UIFont.monospacedDigitSystemFont(ofSize: size, weight: weight))
+    }
+
     /// 语义：数值（行内计数）。定版值：12 semibold，scaled（规范第 11 节）。
     static func numberFont() -> UIFont {
-        scaledFont(for: UIFont.systemFont(ofSize: 12, weight: .semibold))
+        tabularDigitsFont(ofSize: 12, weight: .semibold)
     }
 
     /// 语义：小号粗体操作（登录钮、复制钮、账号行头像字）。定版值：15 bold，scaled（规范第 11 节，2026-11-04 Li 定）。
