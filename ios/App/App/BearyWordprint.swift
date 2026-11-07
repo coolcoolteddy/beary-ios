@@ -230,7 +230,7 @@ final class BearyWordprintView: UIView {
         wordRow.alignment = .center
         let barBackground = UIView()
         barBackground.translatesAutoresizingMaskIntoConstraints = false
-        barBackground.backgroundColor = BearyColors.faint
+        barBackground.backgroundColor = BearyColors.surface2
         barBackground.layer.cornerRadius = 3
         barBackground.clipsToBounds = true
         let barFill = UIView()
@@ -389,7 +389,7 @@ final class BearyWordprintDetailViewController: UIViewController {
             monthLabel.text = "\(month) 月"
             monthLabel.widthAnchor.constraint(equalToConstant: 36).isActive = true
             let barBackground = UIView()
-            barBackground.backgroundColor = BearyColors.faint
+            barBackground.backgroundColor = BearyColors.surface2
             barBackground.layer.cornerRadius = 4
             barBackground.clipsToBounds = true
             let barFill = UIView()

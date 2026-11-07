@@ -404,7 +404,7 @@ final class BearyCalendarCardView: UIView {
         titleLabel.lineBreakMode = .byCharWrapping
 
         toggleButton.translatesAutoresizingMaskIntoConstraints = false
-        toggleButton.backgroundColor = BearyColors.faint
+        toggleButton.backgroundColor = BearyColors.surface2
         toggleButton.layer.cornerRadius = BearyCorners.single
         toggleButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
         toggleButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -416,11 +416,11 @@ final class BearyCalendarCardView: UIView {
         toggleButton.addTarget(self, action: #selector(didTapToggle), for: .touchUpInside)
         toggleButton.bearyAddPressFeedback()
 
-        // C10 回到今天：轻量 pill“今”，与翻页钮同款（faint 底、32×32、
+        // C10 回到今天：轻量 pill“今”，与翻页钮同款（surface2 底、32×32、
         // 圆角 16、12 粗体），默认隐藏，只由 VC 的 setTodayButtonVisible
         // 在显示月份/周不含今天或选中日不是今天时浮现；无障碍名“回到今天”。
         todayButton.translatesAutoresizingMaskIntoConstraints = false
-        todayButton.backgroundColor = BearyColors.faint
+        todayButton.backgroundColor = BearyColors.surface2
         todayButton.layer.cornerRadius = BearyCorners.single
         todayButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
         todayButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -433,7 +433,7 @@ final class BearyCalendarCardView: UIView {
         todayButton.alpha = 0
 
         prevButton.translatesAutoresizingMaskIntoConstraints = false
-        prevButton.backgroundColor = BearyColors.faint
+        prevButton.backgroundColor = BearyColors.surface2
         prevButton.layer.cornerRadius = BearyCorners.single
         prevButton.tintColor = BearyColors.gray
         if let chevron = BearyIconImages.image(named: "icon_chevron_right", pointSize: 15) {
@@ -448,7 +448,7 @@ final class BearyCalendarCardView: UIView {
         prevButton.bearyAddPressHaptic()
 
         nextButton.translatesAutoresizingMaskIntoConstraints = false
-        nextButton.backgroundColor = BearyColors.faint
+        nextButton.backgroundColor = BearyColors.surface2
         nextButton.layer.cornerRadius = BearyCorners.single
         nextButton.tintColor = BearyColors.gray
         if let chevron = BearyIconImages.image(named: "icon_chevron_right", pointSize: 15) {
@@ -1208,13 +1208,13 @@ final class BearyTimelineCell: UITableViewCell {
         }
     }
 
-    /// U14：行点按给内容列短暂 faint 底色（selectionStyle 已是 .none，
+    /// U14：行点按给内容列短暂 surface2 底色（selectionStyle 已是 .none，
     /// 但 setHighlighted 仍由 tableView 在点按时调用；按钮上的点按不走此路）。
     override func setHighlighted(_ highlighted: Bool, animated: Bool) {
         super.setHighlighted(highlighted, animated: animated)
         let apply = {
             // 分割线式：未高亮回页面底 bg（内容列无卡片底色）。
-            self.cardView.backgroundColor = highlighted ? BearyColors.faint : BearyColors.bg
+            self.cardView.backgroundColor = highlighted ? BearyColors.surface2 : BearyColors.bg
         }
         if BearyMotion.animated(animated) {
             UIView.animate(withDuration: 0.13, animations: apply)
@@ -1259,12 +1259,12 @@ final class BearyTimelineCell: UITableViewCell {
         weatherEmoteView = nil
     }
 
-    /// 6A 定位高亮：内容列 faint 闪一下再回 bg（减动效下只滚动不闪）。
+    /// 6A 定位高亮：内容列 surface2 闪一下再回 bg（减动效下只滚动不闪）。
     /// 复用安全：prepareForReuse 已复位 bg；完成时再核对仍是同一篇才复位。
     func flashHighlight() {
         guard UIAccessibility.isReduceMotionEnabled == false else { return }
         let flashedId = currentEntry?.id
-        cardView.backgroundColor = BearyColors.faint
+        cardView.backgroundColor = BearyColors.surface2
         UIView.animate(withDuration: 0.6, delay: 0.5, options: [], animations: {
             self.cardView.backgroundColor = BearyColors.bg
         }, completion: { _ in
@@ -1618,7 +1618,7 @@ final class BearyTimelineCell: UITableViewCell {
             imageView.contentMode = .scaleAspectFill
             imageView.clipsToBounds = true
             imageView.layer.cornerRadius = 12
-            imageView.backgroundColor = BearyColors.faint
+            imageView.backgroundColor = BearyColors.surface2
             // N7：主图条点按接灯箱（UIImageView 默认不接收触摸，必须显式开启；
             // 手势会截获此次点按，行点按进详情不再触发）。tag 记下标，
             // didTapThumb 再从 currentEntry 重算 keys（与本循环同一过滤口径）。
@@ -3729,7 +3729,7 @@ class BearyTimelineViewController: UIViewController {
         titleLabel.textColor = BearyColors.ink
 
         trashButton.translatesAutoresizingMaskIntoConstraints = false
-        trashButton.backgroundColor = BearyColors.faint
+        trashButton.backgroundColor = BearyColors.surface2
         trashButton.layer.cornerRadius = 17
         trashButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
         if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 16) {
@@ -3791,9 +3791,9 @@ class BearyTimelineViewController: UIViewController {
         }
 
         // 时间线筛子入口（列表顶表头内，随表滚走，不常驻占位）：
-        // 回收站 pill 同款 faint 底 + 圆角 17 + 官方 chevron；标题即当前档位。
+        // 回收站 pill 同款 surface2 底 + 圆角 17 + 官方 chevron；标题即当前档位。
         visFilterButton.translatesAutoresizingMaskIntoConstraints = false
-        visFilterButton.backgroundColor = BearyColors.faint
+        visFilterButton.backgroundColor = BearyColors.surface2
         visFilterButton.layer.cornerRadius = 17
         // 右内边距 16（含补 6pt）：钮固有宽度不计 titleEdgeInsets.left 的 6pt
         // 间隙，实测钮宽 63pt、内容需 68pt，标题被压成“…”；右补 6 后固有宽
@@ -4077,9 +4077,8 @@ class BearyTimelineViewController: UIViewController {
     // 顶栏收起时仍在原位不跟随滚动）；只在失败时显，平时 isHidden 不占位、不拦截。
     private func setupCalendarFailedBanner() {
         calendarFailedBanner.translatesAutoresizingMaskIntoConstraints = false
-        calendarFailedBanner.backgroundColor = BearyColors.surface
-        calendarFailedBanner.layer.borderWidth = 1
-        calendarFailedBanner.layer.bearyDynamicBorderColor = BearyColors.line
+        calendarFailedBanner.backgroundColor = BearyColors.surface1
+        calendarFailedBanner.layer.borderWidth = 0
         calendarFailedBanner.layer.cornerRadius = BearyCorners.single
         calendarFailedBanner.clipsToBounds = true
         calendarFailedBanner.isHidden = true

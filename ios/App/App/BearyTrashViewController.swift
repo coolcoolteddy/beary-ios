@@ -236,7 +236,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         titleLabel.textColor = BearyColors.ink
         closeButton.isHidden = false
         // 全屏页左上角统一左箭头：此前是右上角 32 圆钮叉叉，现改左上角
-        // icon_back（圆钮 faint 底与 32 尺寸不动，见下方 headerRow 顺序调整）。
+        // icon_back（圆钮 surface2 底与 32 尺寸不动，见下方 headerRow 顺序调整）。
         if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 18) {
             closeButton.setImage(backImage, for: .normal)
         } else {
@@ -247,7 +247,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         }
         closeButton.tintColor = BearyColors.ink
-        closeButton.backgroundColor = BearyColors.faint
+        closeButton.backgroundColor = BearyColors.surface2
         closeButton.layer.cornerRadius = 16
         closeButton.accessibilityLabel = "返回"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)

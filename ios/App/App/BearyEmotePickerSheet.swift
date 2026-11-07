@@ -5,7 +5,7 @@ import UIKit
 // BearyProfileEmoteSheetViewController。两边共用同一选择器；可选列表
 // 用保序熊脸列表 BearyEmoteKeys.bearFaces（all 原顺序去掉 8 个物件）。统一参数一律取
 // 首页口径（任务定版）：动态 4 列（宽 - 54）/ 4 × 72、行距 10、槽位 46、
-// 按压高亮（faint 底）、遮罩 0.45、抓手顶距 10、iPad ≥821 宽屏分支
+// 按压高亮（surface2 底）、遮罩 0.45、抓手顶距 10、iPad ≥821 宽屏分支
 // （全圆角 20 + 1px line 边框 + 底部偏移 24 的浮起卡片；移动端顶部圆角
 // 20、无边框、贴底）。个人主页侧收敛点：遮罩 0.6→0.45、抓手顶距 12→10、
 // 行距 6→10、槽位 44→46、固定高 480→min(540, 70% 高) 动态高、补宽屏分支、
@@ -113,7 +113,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         let scrimTap = UITapGestureRecognizer(target: self, action: #selector(closeTapped))
         scrimView.addGestureRecognizer(scrimTap)
         view.addSubview(scrimView)
-        sheetView.backgroundColor = BearyColors.surface
+        sheetView.backgroundColor = BearyColors.surface3
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         // 2026-11-02 定版第 2 组：回应 Sheet 补 raised 阴影（0.12 / 8 / (0, 2)），此前无阴影。
@@ -141,7 +141,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         sheetView.addSubview(titleLabel)
         closeButton.setImage(BearyFeedIconCache.image(named: "icon_close", pointSize: 15), for: .normal)
         closeButton.tintColor = BearyColors.ink
-        closeButton.backgroundColor = BearyColors.faint
+        closeButton.backgroundColor = BearyColors.surface2
         closeButton.layer.cornerRadius = 16
         closeButton.clipsToBounds = true
         closeButton.translatesAutoresizingMaskIntoConstraints = false
@@ -155,7 +155,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         layout.sectionInset = UIEdgeInsets(top: 4, left: 18, bottom: 20, right: 18)
         let collection = UICollectionView(frame: .zero, collectionViewLayout: layout)
         collection.translatesAutoresizingMaskIntoConstraints = false
-        collection.backgroundColor = BearyColors.surface
+        collection.backgroundColor = BearyColors.surface3
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         collection.delaysContentTouches = false
         collection.dataSource = self
@@ -230,16 +230,15 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         }
     }
 
-    /// D-11：与详情 sheet 一致的宽屏形态（宽 ≥821）：全圆角 20 + 1px line 边框
-    /// + 底部偏移 24 的浮起卡片；移动端保持顶部圆角 20、无边框、贴底。
+    /// D-11：与详情 sheet 一致的宽屏形态（宽 ≥821）：全圆角 20 + 底部偏移 24 的浮起卡片；
+    /// 移动端保持顶部圆角 20、无边框、贴底。
     /// 审计 2026-11-02 弹窗组：注释原写 22 与代码（topCornerRadius=20）漂移，
     /// 只改注释统一为 20，不改代码数值（圆角属样式 token）。
     private func updateSheetChrome() {
         let isWide = view.bounds.width >= 821
         if isWide {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
-            sheetView.layer.borderWidth = 1
-            sheetView.layer.bearyDynamicBorderColor = BearyColors.line
+            sheetView.layer.borderWidth = 0
             sheetBottomConstraint?.constant = -24
         } else {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
@@ -574,11 +573,11 @@ final class BearyEmotePickerSheetCell: UICollectionViewCell {
         emoteView?.stop()
     }
 
-    /// U9：回应 sheet cell 按压态（faint 底），首页与个人主页统一都有。
+    /// U9：回应 sheet cell 按压态（surface2 底），首页与个人主页统一都有。
     /// 1-6：高亮只画在 46 槽位圆角底片上，不再铺满整格。
     override var isHighlighted: Bool {
         didSet {
-            highlightView.backgroundColor = isHighlighted ? BearyColors.faint : .clear
+            highlightView.backgroundColor = isHighlighted ? BearyColors.surface2 : .clear
         }
     }
 

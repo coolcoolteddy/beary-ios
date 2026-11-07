@@ -110,7 +110,7 @@ final class BearyStateView: UIView {
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
 
-        iconCircle.backgroundColor = BearyColors.faint
+        iconCircle.backgroundColor = BearyColors.surface2
         iconCircle.layer.borderWidth = 0
         iconCircle.layer.cornerRadius = 27
         iconCircle.layer.masksToBounds = true

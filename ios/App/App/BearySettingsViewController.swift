@@ -538,9 +538,6 @@ final class BearySettingsViewController: UIViewController {
         super.traitCollectionDidChange(previousTraitCollection)
         // CGColor 只在赋值时解析一次：深浅切换时重刷描边（背景色走动态色，自动跟随）。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            for card in cardViews {
-                card.layer.bearyDynamicBorderColor = BearyColors.line
-            }
             logoutOthersButton.layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.red, 0.45)
         }
     }
@@ -656,19 +653,14 @@ final class BearySettingsViewController: UIViewController {
         return row
     }
 
-    /// 深浅切换时需重刷描边的卡片（CGColor 赋值时解析一次，不自动跟随）。
-    private var cardViews: [UIView] = []
-
     private func makeCardView() -> UIView {
         let card = UIView()
         card.translatesAutoresizingMaskIntoConstraints = false
-        // 卡片底色与页面背景同色（深色纯黑），与周视图日历卡同口径。
-        card.backgroundColor = BearyColors.bg
-        card.layer.borderWidth = 1
-        card.layer.bearyDynamicBorderColor = BearyColors.line
+        // 卡片底色走 surface1（页上卡片层；2026-11-07 微明度定版：1px 外框已去掉）。
+        card.backgroundColor = BearyColors.surface1
+        card.layer.borderWidth = 0
         card.layer.cornerRadius = BearyCorners.single
         card.clipsToBounds = true
-        cardViews.append(card)
         return card
     }
 
@@ -1113,7 +1105,7 @@ final class BearySettingsViewController: UIViewController {
 
     private func buildIdCard() {
         avatarContainer.translatesAutoresizingMaskIntoConstraints = false
-        avatarContainer.backgroundColor = BearyColors.faint
+        avatarContainer.backgroundColor = BearyColors.surface2
         avatarContainer.layer.cornerRadius = 32
         avatarContainer.clipsToBounds = true
         avatarImageView.translatesAutoresizingMaskIntoConstraints = false
@@ -1658,7 +1650,7 @@ final class BearySettingsViewController: UIViewController {
     private func makeAccountSwitchRow(model: SwitchRowModel, isCurrent: Bool) -> UIView {
         let avatarContainer = UIView()
         avatarContainer.translatesAutoresizingMaskIntoConstraints = false
-        avatarContainer.backgroundColor = BearyColors.faint
+        avatarContainer.backgroundColor = BearyColors.surface2
         avatarContainer.layer.cornerRadius = 18
         avatarContainer.clipsToBounds = true
         let avatarImageView = UIImageView()

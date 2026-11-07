@@ -383,9 +383,9 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         backdropButton.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(backdropButton)
 
-        // 视觉清单第 12 项：sheet 玻璃背板已撤，改实色 surface 底（卡片标准底色；
+        // 视觉清单第 12 项：sheet 玻璃背板已撤，改实色 surface3 底（sheet 层底色；
         // 玻璃范围 Token 只允许栏/菜单，底 sheet 不在内）；sheetView 本身不裁剪，阴影保留。
-        sheetView.backgroundColor = BearyColors.surface
+        sheetView.backgroundColor = BearyColors.surface3
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         // 无障碍：面板是 overFullScreen 呈现，底层编辑器仍在视图层级里，
         // 不置 modal 则 VoiceOver 滑动能滑到被遮的编辑器内容；置 modal 后
@@ -447,7 +447,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         titleLabel.textAlignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         headerWrap.addSubview(titleLabel)
-        // 关闭钮视觉由 BearyButton.iconCircleClose 工厂定（faint 底 32 圆钮 + icon_close 15，
+        // 关闭钮视觉由 BearyButton.iconCircleClose 工厂定（surface2 底 32 圆钮 + icon_close 15，
         // 资产缺失时工厂自带“✕”文字兜底）；这里只保留动作与按压反馈。
         closeButton.addTarget(self, action: #selector(closeBox), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
@@ -469,7 +469,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         // 标题/关闭行移出滚动栈，钉在 sheetView 顶部的固定容器内；
         // 滚动区改为从容器下方起，余下内容（副标题起）按原顺序仍在
         // 滚动栈内。关闭动作、标题文案、抓手样式与头高均不动。
-        fixedHeaderView.backgroundColor = BearyColors.surface
+        fixedHeaderView.backgroundColor = BearyColors.surface3
         fixedHeaderView.translatesAutoresizingMaskIntoConstraints = false
         fixedHeaderView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         fixedHeaderView.layer.masksToBounds = true
@@ -530,7 +530,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         // 删除撤销条：删卡后出现，6 秒内点“撤销”恢复该篇，超时自动消失。
         undoWrap.isHidden = true
         undoWrap.translatesAutoresizingMaskIntoConstraints = false
-        undoBar.backgroundColor = BearyColors.faint
+        undoBar.backgroundColor = BearyColors.surface2
         undoBar.layer.cornerRadius = 12
         undoBar.layer.masksToBounds = true
         undoBar.translatesAutoresizingMaskIntoConstraints = false
@@ -680,8 +680,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     private func applySheetChrome() {
         if isPadLayout {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
-            sheetView.layer.borderWidth = 1
-            sheetView.layer.bearyDynamicBorderColor = BearyColors.line
+            sheetView.layer.borderWidth = 0
             BearyShadow.applyRaised(to: sheetView.layer)
             // 审计第 10 项：顶圆角归固定头部，底圆角归滚动区（圆角数值不动）。
             fixedHeaderView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
@@ -858,9 +857,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
 
     private func makeCard(for draftValue: BearyDraft) -> UIButton {
         let card = UIButton(type: .custom)
-        card.backgroundColor = UIColor.clear
-        card.layer.borderWidth = 1
-        card.layer.bearyDynamicBorderColor = BearyColors.line
+        card.backgroundColor = BearyColors.surface1
+        card.layer.borderWidth = 0
         card.layer.cornerRadius = BearyCorners.single
         card.addTarget(self, action: #selector(cardTouchDown(_:)), for: .touchDown)
         card.addTarget(self, action: #selector(cardTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
@@ -994,7 +992,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             // 原 App 红底红字 semibold 改齐。
             lostButton.setTitleColor(BearyColors.gray, for: .normal)
             lostButton.titleLabel?.font = UIFont.systemFont(ofSize: 12, weight: .medium)
-            lostButton.backgroundColor = BearyColors.faint
+            lostButton.backgroundColor = BearyColors.surface2
             lostButton.layer.cornerRadius = 999
             lostButton.layer.masksToBounds = true
             lostButton.contentEdgeInsets = UIEdgeInsets(top: 2.5, left: 9, bottom: 2.5, right: 9)
@@ -1146,7 +1144,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
 
     private func chipShell() -> UIView {
         let chip = UIView()
-        chip.backgroundColor = BearyColors.faint
+        chip.backgroundColor = BearyColors.surface2
         chip.layer.cornerRadius = 999
         chip.layer.masksToBounds = true
         return chip
@@ -1524,7 +1522,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
 
     // M19：新建钮按压底色（与卡片 cardTouchDown/cardTouchUp 同口径）。
     @objc private func newButtonTouchDown(_ sender: UIButton) {
-        sender.backgroundColor = BearyColors.faint
+        sender.backgroundColor = BearyColors.surface2
         // W6：已有底色按压反馈，只补 .light 轻震，不叠加缩放。
         BearyHaptics.press()
     }
@@ -1614,13 +1612,13 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     }
 
     @objc private func cardTouchDown(_ sender: UIButton) {
-        sender.backgroundColor = BearyColors.faint
+        sender.backgroundColor = BearyColors.surface2
         // W6：已有底色按压反馈，只补 .light 轻震，不叠加缩放。
         BearyHaptics.press()
     }
 
     @objc private func cardTouchUp(_ sender: UIButton) {
-        sender.backgroundColor = UIColor.clear
+        sender.backgroundColor = BearyColors.surface1
     }
 
     @objc private func cardTapped(_ sender: UIButton) {
