@@ -231,6 +231,10 @@ final class BearyNotificationsViewController: UIViewController {
     private var loginPromptShown = false
     private var visibleState: VisibleState = .loading
     private var hasDisplayedPage = false
+    /// 审计四轮增量 02：通知快照回填代次——切号／401 清场即 +1，在途旧号
+    /// 快照回包凭此丢弃（只比账号不够——切走又切回同一账号时 uid 相同，
+    /// 代次仍能拦住旧快照；与 #918 私信页 snapshotGeneration 同口径）。
+    private var snapshotGeneration: UInt64 = 0
     private var hasSuccessfulLoad = false
     private var isCustomPullRefreshing = false
     /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
@@ -676,8 +680,16 @@ final class BearyNotificationsViewController: UIViewController {
     /// 磁盘快照秒显：只补尚未显示的页（内存已有缓存或网络已回包时不重复贴）。
     private func loadNotificationSnapshot() {
         guard let uid = SessionManager.shared.currentUser?.id else { return }
+        // 审计四轮增量 02：回填代次——切号／清场即变，旧号在途快照回包时凭此丢弃
+        // （只比账号不够——切走又切回同一账号时 uid 相同，代次仍能拦住旧快照）。
+        let generation = snapshotGeneration
         BearyNotificationCache.load(bucket: "\(uid)") { [weak self] snap in
             guard let self = self, let snap = snap, !snap.items.isEmpty else { return }
+            // 回填三重门禁：账号须与请求时一致；页面代次须未变；尚未显示过页——
+            // 否则旧快照会贴到新账号界面上（handleUserChanged 复位 hasDisplayedPage
+            // 后，单凭该旗拦不住在途旧快照）。
+            guard SessionManager.shared.currentUser?.id == uid else { return }
+            guard generation == self.snapshotGeneration else { return }
             guard !self.hasDisplayedPage else { return }
             self.applyCachedNotificationPage(items: snap.items, unread: snap.unread, sysUnread: snap.sysUnread, total: snap.total, isSysExpanded: snap.isSysExpanded, isActExpanded: snap.isActExpanded, hasMore: snap.hasMore)
         }
@@ -1165,6 +1177,9 @@ final class BearyNotificationsViewController: UIViewController {
     /// false，deinit/viewWillDisappear 的写回守卫本身就不会以空列表覆缓存，
     /// 且静态缓存已在调用点先行置 nil。
     private func clearItemsAfterUnauthorized() {
+        // 审计四轮增量 02：401 清场同样复位 hasDisplayedPage，须同步 bump
+        // 快照代次——否则在途旧快照回包会贴到清场后的空页上。
+        snapshotGeneration += 1
         items = []
         displayRows = []
         totalCount = nil
@@ -1200,6 +1215,10 @@ final class BearyNotificationsViewController: UIViewController {
         followCardLoadingIds.removeAll()
         followCardOperationGeneration.removeAll()
         followCardGeneration += 1
+        // 审计四轮增量 02：快照回填代次 +1——在途旧号快照回包凭此丢弃；
+        // 单靠下面 hasDisplayedPage = false 的复位拦不住（复位会把门重新打开，
+        // 旧快照到后直接贴到新号界面上）。
+        snapshotGeneration += 1
         // 切号清列表：旧号通知不得残留；hasSuccessfulLoad 同步复位，
         // 否则离页写回（saveNotificationCache 按当前账号写）会把旧号
         // 列表存进新号缓存；重拉旗立起，新号首拉走 401 清场同款路径。
