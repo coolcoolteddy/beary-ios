@@ -275,14 +275,117 @@ enum BearyDMStore {
 
     /// 会话列表合并：服务端为准（对方信息与未读数都取服务端），仅本地有的对方追加，
     /// 统一按最后消息时间倒序。服务端未读数不由本地推断（本地行不置未读）。
-    static func mergedConversations(server: [BearyAPI.DMConversation], accountId: Int?) -> [BearyAPI.DMConversation] {
+    /// 审计四轮增量 10：显示层过滤已拉黑的对方（本地记录不动，解除后下次合并即恢复）。
+    /// 拉黑判断由调用方以闭包传入——BearyDMStore 不直接引用 SessionManager /
+    /// BearyBlockedStore（测试 target 不编那两个文件，直接引用会让 test job 编译失败）；
+    /// 调用方只在传入账号就是当前账号时才给闭包，旧号回调拿错拉黑表时不过滤、不误删。
+    static func mergedConversations(server: [BearyAPI.DMConversation], accountId: Int?, isBlocked: ((Int) -> Bool)? = nil) -> [BearyAPI.DMConversation] {
         var byPeer: [Int: BearyAPI.DMConversation] = [:]
         for c in server { if let pid = c.peer?.id { byPeer[pid] = c } }
         for local in localConversations(accountId: accountId) {
             guard let pid = local.peer.id, byPeer[pid] == nil else { continue }
             byPeer[pid] = BearyAPI.DMConversation(peer: local.peer, lastBody: local.lastBody, lastAt: local.lastAt, unreadCount: nil)
         }
-        return byPeer.values.sorted { ($0.lastAt ?? 0) > ($1.lastAt ?? 0) }
+        let visible = byPeer.values.filter { conv in
+            guard let pid = conv.peer?.id, let isBlocked = isBlocked else { return true }
+            return !isBlocked(pid)
+        }
+        return visible.sorted { ($0.lastAt ?? 0) > ($1.lastAt ?? 0) }
+    }
+
+    // MARK: - 待发送消息（审计四轮增量 12）
+
+    /// 待发送消息：正文、临时 ID、发送状态、创建时间。
+    /// 与主库独立文件（beary_dm_pending_<accountId>.json），主库损坏时不被锁住；
+    /// 主库损坏保护（审计四轮 01）只管主文件，不管本文件。
+    struct PendingSend: Codable {
+        enum Status: String, Codable {
+            case sending     // 已发出、等服务端确认
+            case failed      // 确认未送达，可重发
+            case unconfirmed // 结果未知（401/403/超时撤行，或重启后恢复），只看不自动重发
+        }
+        var localKey: String
+        var peerId: Int
+        var body: String
+        var createdAt: Int
+        var status: Status
+    }
+
+    private static func pendingFileURL(forAccount accountId: Int?) -> URL? {
+        guard let accountId = accountId,
+              let base = baseDirectory() else { return nil }
+        if !FileManager.default.fileExists(atPath: base.path) {
+            try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true, attributes: nil)
+        }
+        return base.appendingPathComponent("beary_dm_pending_\(accountId).json")
+    }
+
+    /// 待发文件读盘：缺文件 → []；损坏 → 原文件改名 .bak 保留、回 []（不阻塞主库）。
+    /// 只在 ioQueue 内调用。
+    private static func loadPendingList(accountId: Int?) -> [PendingSend] {
+        guard let url = pendingFileURL(forAccount: accountId),
+              FileManager.default.fileExists(atPath: url.path) else { return [] }
+        guard let data = try? Data(contentsOf: url),
+              let list = BearyDMStoreCore.decodePendings(data) else {
+            try? FileManager.default.moveItem(at: url, to: BearyDMStoreCore.pendingCorruptBackupURL(for: url))
+            return []
+        }
+        return list
+    }
+
+    private static func savePendingList(_ list: [PendingSend], accountId: Int?) -> Bool {
+        guard let url = pendingFileURL(forAccount: accountId),
+              let data = BearyDMStoreCore.encodePendings(list) else { return false }
+        let tmp = url.appendingPathExtension("tmp")
+        do {
+            try data.write(to: tmp, options: .atomic)
+            if FileManager.default.fileExists(atPath: url.path) {
+                _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)
+            } else {
+                try FileManager.default.moveItem(at: tmp, to: url)
+            }
+            return true
+        } catch {
+            try? FileManager.default.removeItem(at: tmp)
+            return false
+        }
+    }
+
+    /// 读某对方的待发（按创建时间升序）。
+    static func loadPendings(accountId: Int?, peerId: Int, completion: @escaping ([PendingSend]) -> Void) {
+        ioQueue.async {
+            let list = loadPendingList(accountId: accountId).filter { $0.peerId == peerId }.sorted { $0.createdAt < $1.createdAt }
+            DispatchQueue.main.async { completion(list) }
+        }
+    }
+
+    /// 新增或覆盖一条待发（同 localKey 覆盖）。
+    static func savePending(_ pending: PendingSend, accountId: Int?) {
+        ioQueue.async {
+            var list = loadPendingList(accountId: accountId)
+            list = BearyDMStoreCore.upsertPending(list, pending)
+            _ = savePendingList(list, accountId: accountId)
+        }
+    }
+
+    /// 改一条待发的状态（不存在即忽略）。
+    static func updatePendingStatus(localKey: String, status: PendingSend.Status, accountId: Int?) {
+        ioQueue.async {
+            var list = loadPendingList(accountId: accountId)
+            guard let idx = list.firstIndex(where: { $0.localKey == localKey }) else { return }
+            list[idx].status = status
+            _ = savePendingList(list, accountId: accountId)
+        }
+    }
+
+    /// 删一条待发（已送达认领/成功后调）。
+    static func removePending(localKey: String, accountId: Int?) {
+        ioQueue.async {
+            let list = loadPendingList(accountId: accountId)
+            let kept = BearyDMStoreCore.removePending(list, localKey: localKey)
+            guard kept.count != list.count else { return }
+            _ = savePendingList(kept, accountId: accountId)
+        }
     }
 }
 
@@ -329,6 +432,37 @@ enum BearyDMStoreCore {
 
     /// 损坏备份名：原文件不动，另存时间戳 .bak（与草稿 v3 同款后缀）。
     static func corruptBackupURL(for fileURL: URL) -> URL {
+        fileURL.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970)).bak")
+    }
+
+    // MARK: - 待发编解码（审计四轮增量 12，纯函数）
+
+    /// 待发编解码：nil/坏 JSON → nil（调用方改名保留原文件、不阻塞主库）。
+    static func decodePendings(_ data: Data?) -> [BearyDMStore.PendingSend]? {
+        guard let data = data else { return nil }
+        return try? JSONDecoder().decode([BearyDMStore.PendingSend].self, from: data)
+    }
+
+    static func encodePendings(_ list: [BearyDMStore.PendingSend]) -> Data? {
+        try? JSONEncoder().encode(list)
+    }
+
+    static func upsertPending(_ list: [BearyDMStore.PendingSend], _ pending: BearyDMStore.PendingSend) -> [BearyDMStore.PendingSend] {
+        var list = list
+        if let idx = list.firstIndex(where: { $0.localKey == pending.localKey }) {
+            list[idx] = pending
+        } else {
+            list.append(pending)
+        }
+        return list
+    }
+
+    static func removePending(_ list: [BearyDMStore.PendingSend], localKey: String) -> [BearyDMStore.PendingSend] {
+        list.filter { $0.localKey != localKey }
+    }
+
+    /// 待发损坏备份名。
+    static func pendingCorruptBackupURL(for fileURL: URL) -> URL {
         fileURL.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970)).bak")
     }
 }
