@@ -243,7 +243,8 @@ final class BearyDMStoreTests: XCTestCase {
             result = list
             exp.fulfill()
         }
-        waitForExpectations(timeout: 5)
+        // 审计四轮增量 12：超时 30 秒——#935 教训：CI 冷启动下纯同步用例也跑过 4.5 秒，5 秒太贴边。
+        waitForExpectations(timeout: 30)
         return result
     }
 
