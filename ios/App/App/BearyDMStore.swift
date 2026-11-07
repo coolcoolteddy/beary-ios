@@ -124,6 +124,15 @@ enum BearyDMStore {
         }
     }
 
+    /// 审计四轮 10（完整备份）：全部本地会话（含对方信息与全部消息，
+    /// 按最后消息时间倒序）。只读，不改库；损坏文件时 loadAll 按现行
+    /// 口径回空（损坏保护另见审计四轮 01，不在本项改）。
+    static func allConversations(accountId: Int?) -> [StoredConversation] {
+        loadAll(accountId: accountId).values.sorted {
+            ($0.messages.last?.createdAt ?? 0) > ($1.messages.last?.createdAt ?? 0)
+        }
+    }
+
     /// 仅本地有消息的会话（供会话列表与服务端列表合并；无消息的空会话不算）。
     static func localConversations(accountId: Int?) -> [LocalConversation] {
         // 同步入口也走同一串行队列：与后台读改写互斥，读不到半新半旧的文件。
