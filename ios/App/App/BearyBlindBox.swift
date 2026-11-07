@@ -205,6 +205,32 @@ extension BearyAPI {
 
 // MARK: - 当日状态（本地只做服务端状态的镜像，服务端永远是事实来源）
 //
+// 第八轮审计 03/04：/today 请求发起时必须同时拍下账号与北京时间日期键
+// （BlindBoxRequestIdentity），回包先校验、任一失配即丢弃并重拉——
+// 旧账号的回包绝不能写进新账号的桶，旧一天的回包绝不能写进新一天的桶。
+// 不要让状态管理器读回包时刻的当前账号来决定旧请求的归属。
+struct BlindBoxRequestIdentity {
+    /// 发起请求时的账号（未登录为 nil；/today 调用前本就要求登录）。
+    let accountId: Int?
+    /// 发起请求时的 Asia/Shanghai 日期键（yyyy-MM-dd）。
+    let dayKey: String
+
+    /// 发起时拍下身份。
+    static func capture() -> BlindBoxRequestIdentity {
+        BlindBoxRequestIdentity(
+            accountId: SessionManager.shared.currentUser?.id,
+            dayKey: BlindBoxDate.todayKey()
+        )
+    }
+
+    /// 发起时的账号与日期是否仍与当前一致（回包在主线程校验，与写入
+    /// 同在主线程，校验与写入之间不会被切号/跨日插队）。
+    var isCurrent: Bool {
+        return accountId == SessionManager.shared.currentUser?.id
+            && dayKey == BlindBoxDate.todayKey()
+    }
+}
+
 // 账号隔离（盲盒次数串账号修法）：旧实现用一组无账号维度的扁平键
 // （beary.blindbox.used / exchangeId 等），且 applyServerState 只有 true
 // 才写、false 不覆盖，signOutLocally 也不清——于是 A 当天开过盒后切到
@@ -314,6 +340,18 @@ final class BlindBoxState {
         NotificationCenter.default.post(name: .bearyBlindBoxDidChange, object: nil)
     }
 
+    /// 带发起时身份的服务端状态写入（第八轮审计 03/04）：
+    /// 只在发起时拍下的账号与日期键仍与当前一致时写入，返回 true；
+    /// 任一失配即返回 false 且一字不写——旧账号的回包不进新账号的桶，
+    /// 旧一天的回包不进新一天的桶。调用方在 false 时丢弃本次回包并
+    /// 重新发起请求（见 loadInitial / refreshFromServer），不要路由旧状态。
+    @discardableResult
+    func applyServerState(_ body: BlindBoxStateBody, for identity: BlindBoxRequestIdentity) -> Bool {
+        guard identity.isCurrent else { return false }
+        applyServerState(body)
+        return true
+    }
+
     func markOpened(exchangeId: String) {
         noteBucketChangeIfNeeded()
         defaults.set(true, forKey: usedKey())
@@ -348,17 +386,23 @@ final class BlindBoxState {
     }
 
     /// 进页刷新：成功即以服务端为准；失败保持本地镜像并回调失败（不谎报、不清零）。
+    /// 第八轮审计 03/04：发起时拍下账号与日期键，回包失配（切号或跨日）
+    /// 即丢弃旧结果、为当前账号/新一天重新拉一次，本次 completion 由重拉接力。
     func refreshFromServer(completion: ((Bool) -> Void)? = nil) {
         guard SessionManager.shared.isLoggedIn else {
             completion?(false)
             return
         }
+        let identity = BlindBoxRequestIdentity.capture()
         BearyAPI.shared.fetchBlindBoxToday { [weak self] result in
             DispatchQueue.main.async {
                 switch result {
                 case .success(let body):
-                    self?.applyServerState(body)
-                    completion?(true)
+                    if let self = self, !self.applyServerState(body, for: identity) {
+                        self.refreshFromServer(completion: completion)
+                    } else {
+                        completion?(true)
+                    }
                 case .failure:
                     completion?(false)
                 }
