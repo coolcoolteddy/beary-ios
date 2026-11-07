@@ -281,12 +281,15 @@ final class BearyWishWallViewController: UIViewController {
     private var wishCreateEdgeDismiss: BearyEdgeDismissController?
     private var wishes: [BearyAPI.WishItem] = []
     private var rowViews: [Int: WishRowView] = [:]
-    private var voteGeneration: [Int: Int] = [:] // 2026-10-29：每条许愿投票代次，旧回包丢弃用；
+    private var voteGeneration: [Int: Int] = [:] // 每条许愿投票代次，旧回包丢弃用；
+    /// 新一轮 04（2026-11-06 Li 改令，取代 2026-10-29“代次取代在途锁”定版）：
+    /// 每条愿望写请求串行执行——voteInFlight（同一愿望同时只允许一个写请求）
+    /// ＋ votePendingTarget（请求期间只记最后一次点按的绝对值票态，0 = 取消；
+    /// 前一请求结束后再提交）。代次仍只守 UI（旧回包不覆盖新点按态），不管顺序。
+    private var voteInFlight: Set<Int> = []
+    private var votePendingTarget: [Int: Int] = [:]
     /// 审计登录杂项：游客投票时存下的待重放意图（wishId, target），登录成功后补投。
     private var pendingVote: (wishId: Int, target: Int)?
-    // 扫 bug 定版第 6 项（点赞同款代次口径）：代次不再只拦过期回包，
-    // 而是取代在途锁——快连点每次都发请求、每次都立即按最后一次点按渲染，
-    // 过期回包（含过期失败）一律丢弃，不得覆盖更新的点按态。
     /// 每条许愿最后服务端确认态（点赞 confirmedLiked/confirmedLikeCount 同款）：
     /// 成功回包才刷新；最新一代请求失败时回滚到这里，不是回滚到本次点按前
     /// 的中间态（快连点下中间态早已被更新的点按覆盖，回滚到它即错）。
@@ -568,13 +571,14 @@ final class BearyWishWallViewController: UIViewController {
 
     private func indexOfWish(_ id: Int) -> Int? { wishes.firstIndex { $0.id == id } }
 
-    /// 投票（扫 bug 定版第 6 项，点赞同款代次口径，取代 109 在途锁）：
+    /// 投票（新一轮 04，2026-11-06 Li 改令，取代 2026-10-29“代次取代在途锁”定版）：
     /// 游客走登录页；登录用户每次点按都立即按最后一次点按渲染（选中态 +
-    /// 赞成/反对数点按瞬间就变，不等服务端、不置灰、不禁用票钮），每次点按
-    /// 都发一次绝对值请求（vote: 1/-1/0，0 = 取消本票）；在途请求只带代次，
-    /// 过期回包（含过期失败）直接丢弃，不得覆盖更新的点按态、不得触发回滚；
-    /// 只有最新一代回包生效：成功以服务端计数对齐并刷新确认态，失败回滚到
-    /// 最后确认态（confirmedVote/confirmedUp/confirmedDown）+ 摇头 + toast。
+    /// 赞成/反对数点按瞬间就变，不等服务端、不置灰、不禁用票钮）；写请求按愿望
+    /// 串行执行——在途时只记最后目标票态，前一请求结束后再提交最新目标（vote:
+    /// 1/-1/0，0 = 取消本票），服务端不再收到乱序写入；代次仍只守 UI，过期回包
+    /// （含过期失败）直接丢弃，不得覆盖更新的点按态、不得触发回滚；只有最新一代
+    /// 回包生效：成功以服务端计数对齐并刷新确认态，失败回滚到最后确认态
+    /// （confirmedVote/confirmedUp/confirmedDown）+ 摇头 + toast。
     private func voteTapped(wishId: Int, target: Int) {
         if isGuest {
             // 审计登录杂项：投票前先存待重放意图，登录成功后补投并 toast
@@ -609,11 +613,34 @@ final class BearyWishWallViewController: UIViewController {
         voteGeneration[wishId, default: 0] += 1
         let gen = voteGeneration[wishId] ?? 0
         let sendVote = newVote ?? 0
+        // 新一轮 04：写请求按愿望串行——在途时只记最后目标票态，不再发请求；
+        // 前一请求结束后再提交最新目标（见 sendVoteRequest 回调）。
+        if voteInFlight.contains(wishId) {
+            votePendingTarget[wishId] = sendVote
+            return
+        }
+        sendVoteRequest(wishId: wishId, sendVote: sendVote, gen: gen)
+    }
+
+    /// 发一次投票写请求（串行队列的唯一发请求入口）：记在途，回调结束时先清
+    /// 在途，再看请求期间有没有新点按——有则提交最后目标票态（旧回包不应用，
+    /// 屏幕早已按最后一次点按渲染；新请求带最新代次），无则按代次守卫正常
+    /// 处理回包。同一愿望的请求只会按点按顺序依次发出，服务端不再乱序写入。
+    private func sendVoteRequest(wishId: Int, sendVote: Int, gen: Int) {
+        voteInFlight.insert(wishId)
         BearyAPI.shared.voteWish(id: wishId, vote: sendVote) { [weak self] result in
             DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.voteInFlight.remove(wishId)
+                // 串行：请求期间又有新点按——只提交最后目标票态。
+                if let pending = self.votePendingTarget[wishId] {
+                    self.votePendingTarget.removeValue(forKey: wishId)
+                    self.sendVoteRequest(wishId: wishId, sendVote: pending, gen: self.voteGeneration[wishId] ?? gen)
+                    return
+                }
                 // 代次守卫（点赞 likeSeq 同款）：已有更新点按时过期回包直接丢弃，
                 // 不回滚、不摇头、不弹 toast，屏幕只反映最后一次点按。
-                guard let self = self, let idx = self.indexOfWish(wishId), self.voteGeneration[wishId] == gen else { return }
+                guard let idx = self.indexOfWish(wishId), self.voteGeneration[wishId] == gen else { return }
                 switch result {
                 case .success(let resp):
                     // 审计登录杂项：成功音只在服务端成功回包后播。
