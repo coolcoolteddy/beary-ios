@@ -1121,6 +1121,15 @@ class BearyEditProfileViewController: UIViewController {
                 displayName: snapshot.displayName,
                 handle: snapshot.handle,
                 avatarDataURL: snapshot.avatarChanged ? snapshot.avatarDataURL : nil)
+            // 第八轮审计 05：封面改动后立即刷新 /me 同步 coverVer——
+            // PUT 回包不下发新 ver，applyEditedProfile 也碰不到封面，
+            // 不刷的话下次进编辑页仍按旧 ver 拼封面 URL、显示旧封面。
+            // 只在封面真改动时刷一次（名字 / 头像 / 签名保存不触发）；
+            // refreshMe 成功即写回 currentUser（含新 coverVer）＋快照，
+            // 失败不影响已保存的资料（下次 refreshMe 再同步）。
+            if snapshot.coverChanged || snapshot.coverRemoved {
+                SessionManager.shared.refreshMe()
+            }
             savingSnapshot = nil
             isSaving = false
             updateSaveButtonState()

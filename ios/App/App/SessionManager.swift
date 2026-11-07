@@ -218,7 +218,8 @@ final class SessionManager {
     /// 信息流刷新仍由编辑页容器的 onSaved 接线负责）。保管库快照同步刷新，
     /// 使设置页账号列表里的名字 / 头像不滞后。封面不在 MeUser 字段里
     /// （只有 coverVer，且 PUT 回包不下发新 ver），故这里不碰封面——封面
-    /// ver 仍靠下一次 refreshMe 同步，见 PR 残留风险。
+    /// 改动时由 finishSavingSuccess 立即调 refreshMe 同步新 ver
+    /// （第八轮审计 05），不再等下一次 refreshMe。
     func applyEditedProfile(displayName: String, handle: String, avatarDataURL: String?) {
         guard var user = currentUser else { return }
         var changed = false
