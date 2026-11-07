@@ -645,6 +645,12 @@ final class SessionManager {
                     self.currentUser = user
                     self.authUnknown = false
                     self.isGuestMode = false
+                    // 第八轮审计 01：bearyPendingDeleteAt 是全局键（不按账号分桶），
+                    // 切号时清掉，免得 A 的冷静期截止日留在 B 的会话里。切回 A 后
+                    // 下次登录校验服务端会重报 pendingDelete/deleteAt；且该键
+                    // 全仓无读取方，清除无功能损失。退出时不清理（冷静期截止日
+                    // 要留到下次登录），登录成功取消注销时由登录页清除。
+                    UserDefaults.standard.removeObject(forKey: "bearyPendingDeleteAt")
                     _ = vault.save(user: user, token: target.token, tokenExpiresAtMs: target.tokenExpiresAtMs)
                     self.notifyUserChanged(user)
                     finish(.switched(user))

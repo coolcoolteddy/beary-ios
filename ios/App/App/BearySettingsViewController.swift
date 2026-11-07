@@ -1809,6 +1809,13 @@ final class BearySettingsViewController: UIViewController {
         if SessionManager.shared.currentUser?.id == accountIdValue {
             return
         }
+        // 第八轮审计 01：注销与切换互斥——注销 POST 在途或 1.2 秒提示窗口内
+        // 不许切号，否则注销成功回调会清当时当前账号（见 confirmDeleteAccount）。
+        // 放在同号早退之后：点自己当前行不是切换，不应弹提示。
+        guard !isDeleting else {
+            showToast("正在注销，请稍后再切换账号")
+            return
+        }
         if expiredSwitchUserIds.contains(accountIdValue) {
             // 该号会话已被上次切换预检证实失效：不再发注定 401 的预检，
             // 直走过期重登（与下面 .expired 分支同一入口）。
@@ -2608,11 +2615,25 @@ final class BearySettingsViewController: UIViewController {
     private func confirmDeleteAccount() {
         isDeleting = true
         setDeleteBusy(true)
+        // 第八轮审计 01：注销成功回调验证发起时身份——只拦切换入口不够，
+        // 1.2 秒提示窗口内仍可能切号；onAccountDeleted 清的是当时当前账号，
+        // 失配时放弃清理、只复位。代次只在登录/切号/退出/401 清态时推进，
+        // 同一登录态内日常 /me 成功不推进，不会误判。
+        let requestAccountId = SessionManager.shared.currentUser?.id
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.requestAccountDelete { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 switch result {
                 case .success(let resp):
+                    // 回包前已切号：A 的注销服务端已生效，但本地不再是 A 的
+                    // 会话——不写 A 的冷静期、不排清理定时器，只复位。
+                    guard SessionManager.shared.currentUser?.id == requestAccountId,
+                          BearyAPI.shared.authEpoch == requestEpoch else {
+                        self.isDeleting = false
+                        self.setDeleteBusy(false)
+                        return
+                    }
                     // 验证组④：注销返回的 delete_at 必须持久化——/me 不下发该字段，
                     // 不存则退出后冷静期截止日无从得知；登录成功（注销取消）时清除，见登录页。
                     if let deleteAt = resp.deleteAt {
@@ -2623,10 +2644,18 @@ final class BearySettingsViewController: UIViewController {
                     // 防止窗口内重复点注销。
                     self.showToast("已提交注销申请，7 天后正式注销")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                        self?.onAccountDeleted?()
-                        self?.isDeleting = false
+                        guard let self = self else { return }
+                        // 1.2 秒窗口内又切了号：同上，放弃清理，只复位。
+                        guard SessionManager.shared.currentUser?.id == requestAccountId,
+                              BearyAPI.shared.authEpoch == requestEpoch else {
+                            self.isDeleting = false
+                            self.setDeleteBusy(false)
+                            return
+                        }
+                        self.onAccountDeleted?()
+                        self.isDeleting = false
                         // 忙碌态与 isDeleting 同窗口复位（1.2 秒内仍防重入）。
-                        self?.setDeleteBusy(false)
+                        self.setDeleteBusy(false)
                     }
                 case .failure(let error):
                     self.isDeleting = false
