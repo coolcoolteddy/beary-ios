@@ -2919,15 +2919,14 @@ final class BearySettingsViewController: UIViewController {
     /// 确认框本身不置进行态，取消即什么都没发生。
     @objc private func backupButtonTapped() {
         guard !isBackingUp else { return }
-        let alert = UIAlertController(
-            title: "完整备份",
-            message: "备份将包含：账户、日记（含原图）、点赞记录、本地草稿、私信记录。\n\n私信包含他人发来的消息，这只是本机数据的备份，请妥善保管。\n\n不含回收站内容与头像原图。暂不支持一键恢复，恢复方式后续提供。",
-            preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        alert.addAction(UIAlertAction(title: "开始备份", style: .default, handler: { [weak self] _ in
-            self?.startBackupAfterConfirm()
-        }))
-        present(alert, animated: BearyMotion.animated(true))
+        // 第四轮审计 12：居中 Alert 改底部弹窗（#934 合入后新增的确认框，
+        // 变基时顺带同款迁移；文案与流程不变）。
+        BearyConfirmSheet.show(from: self, title: "完整备份", message: "备份将包含：账户、日记（含原图）、点赞记录、本地草稿、私信记录。\n\n私信包含他人发来的消息，这只是本机数据的备份，请妥善保管。\n\n不含回收站内容与头像原图。暂不支持一键恢复，恢复方式后续提供。", actions: [
+            BearyConfirmSheet.Action(title: "开始备份", style: .default, handler: { [weak self] in
+                self?.startBackupAfterConfirm()
+            }),
+            BearyConfirmSheet.Action(title: "取消", style: .cancel),
+        ])
     }
 
     /// 确认后的备份链路：与 exportButtonTapped 同款账号钉住（token + epoch），
