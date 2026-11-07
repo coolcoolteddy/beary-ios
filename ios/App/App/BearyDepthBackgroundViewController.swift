@@ -15,8 +15,14 @@ final class BearyDepthBackgroundViewController: UIViewController {
     typealias Theme = BearyProfileViewController.FestivalTheme
 
     private let currentThemeValue: Theme
-    private let isPlusValue: Bool
-    private let onPickValue: (Theme) -> Bool
+    /// 第十一轮 04：会员资格是可变快照，不再是 init 定值——Plus 可能在外层
+    /// Plus 页→邀请页拿到，init 时的值会过期；回前台时重读（见 refreshPlusStatus）。
+    private var isPlusValue: Bool
+    /// 点按回调带上选择页最新已知 Plus 态，供个人页应用时再次验证权限
+    ///（第十一轮 04：只认个人页 profile.plus 会把刚到账的 Plus 挡在门外）。
+    private let onPickValue: (Theme, Bool) -> Bool
+    /// 首次出现不拉 /me：值刚从个人页 profile.plus 传来；之后每次回前台再重读。
+    private var hasAppearedOnce = false
     /// 滚动中：willDisplay 不再重开动效，停稳后才由滚动结束回调统一评估。
     private var isScrollingPreviews = false
     /// Plus 页的 EdgeDismiss 强持有（仅窄屏全屏路用，见 presentPlusPage）。
@@ -24,7 +30,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
 
     private let themesValue: [Theme] = [.none, .halloween, .spring, .china, .usa, .japan, .germany, .canada, .korea]
 
-    init(currentTheme: Theme, isPlus: Bool, onPick: @escaping (Theme) -> Bool) {
+    init(currentTheme: Theme, isPlus: Bool, onPick: @escaping (Theme, Bool) -> Bool) {
         self.currentThemeValue = currentTheme
         self.isPlusValue = isPlus
         self.onPickValue = onPick
@@ -94,18 +100,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
         topBarView.addSubview(backButton)
         topBarView.addSubview(titleLabel)
         view.addSubview(tableView)
-        if !isPlusValue {
-            let footer = UIView(frame: CGRect(x: 0, y: 0, width: view.bounds.width, height: 44))
-            plusFooterLabel.translatesAutoresizingMaskIntoConstraints = false
-            footer.addSubview(plusFooterLabel)
-            NSLayoutConstraint.activate([
-                plusFooterLabel.centerXAnchor.constraint(equalTo: footer.centerXAnchor),
-                plusFooterLabel.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
-                plusFooterLabel.leadingAnchor.constraint(greaterThanOrEqualTo: footer.leadingAnchor, constant: 32),
-                plusFooterLabel.trailingAnchor.constraint(lessThanOrEqualTo: footer.trailingAnchor, constant: -32),
-            ])
-            tableView.tableFooterView = footer
-        }
+        updatePlusFooter()
         NSLayoutConstraint.activate([
             topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -134,7 +129,57 @@ final class BearyDepthBackgroundViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        refreshPlusStatus()
         refreshFullyVisiblePreviewAnimation()
+    }
+
+    /// 第十一轮 04：回前台重读会员资格——Plus 可能在外层 Plus 页→邀请页
+    /// 拿到（邀请绑定成功即发 Plus），init 时的快照会过期。首次出现不拉
+    ///（值刚从个人页 profile.plus 传来）；之后每次回前台拉一次 /me。
+    /// 失败静默保留旧值，不弹 toast、不把人判成非 Plus；/me 未下发 plus
+    ///（nil）时同样保留旧值。只在值真的变了时才刷新行与底栏。
+    private func refreshPlusStatus() {
+        guard hasAppearedOnce else { hasAppearedOnce = true; return }
+        BearyAPI.shared.fetchMe { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard case .success(let user) = result, let plus = user?.plus else { return }
+                guard plus != self.isPlusValue else { return }
+                self.isPlusValue = plus
+                self.updatePlusFooter()
+                self.refreshVisibleLockStates()
+            }
+        }
+    }
+
+    /// Plus 态变化时同步底栏提示：非 Plus 显示“Plus 会员可使用全部景深背景”，
+    /// 已开通则去掉；与 viewDidLoad 初始态同口径。
+    private func updatePlusFooter() {
+        if isPlusValue {
+            tableView.tableFooterView = nil
+        } else if tableView.tableFooterView == nil {
+            let footer = UIView(frame: CGRect(x: 0, y: 0, width: view.bounds.width, height: 44))
+            plusFooterLabel.translatesAutoresizingMaskIntoConstraints = false
+            footer.addSubview(plusFooterLabel)
+            NSLayoutConstraint.activate([
+                plusFooterLabel.centerXAnchor.constraint(equalTo: footer.centerXAnchor),
+                plusFooterLabel.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+                plusFooterLabel.leadingAnchor.constraint(greaterThanOrEqualTo: footer.leadingAnchor, constant: 32),
+                plusFooterLabel.trailingAnchor.constraint(lessThanOrEqualTo: footer.trailingAnchor, constant: -32),
+            ])
+            tableView.tableFooterView = footer
+        }
+    }
+
+    /// 资格变化时只重配可见行：configure 同主题复用只改文字状态、不重建
+    /// 预览视图、不重读图；滚动位置不动。
+    private func refreshVisibleLockStates() {
+        for cell in tableView.visibleCells {
+            guard let cell = cell as? BearyDepthBackgroundCell,
+                  let indexPath = tableView.indexPath(for: cell) else { continue }
+            let theme = themesValue[indexPath.row]
+            cell.configure(theme: theme, isCurrent: theme == currentThemeValue, isLocked: theme != .none && !isPlusValue)
+        }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -221,7 +266,8 @@ extension BearyDepthBackgroundViewController: UITableViewDataSource, UITableView
             return
         }
         // 门控／加载失败时个人页已弹 toast，本页停留；应用成功才关闭回个人页看效果。
-        if onPickValue(theme) {
+        // 应用时带上本页最新已知 Plus 态再验一次权限（第十一轮 04）。
+        if onPickValue(theme, isPlusValue) {
             dismiss(animated: BearyMotion.animated(true), completion: nil)
         }
     }
