@@ -665,12 +665,12 @@ class BearyProfileViewController: UIViewController {
     private let coverImageView: UIImageView = {
         let imageViewValue = UIImageView()
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
-        imageViewValue.backgroundColor = BearyColors.faint
+        imageViewValue.backgroundColor = BearyColors.surface2
         imageViewValue.contentMode = .scaleAspectFill
         imageViewValue.clipsToBounds = true
         // 初次加载态：先隐藏，资料到了由 applyProfile 按 hasCover 决定显隐；
         // 否则首布局的 resetCoverStretch 会按 isHidden=false 把高算成 180，
-        // 在图未到时直接露出一块 faint 灰方块（加载态封面灰块根因）。
+        // 在图未到时直接露出一块 surface2 灰方块（加载态封面灰块根因）。
         imageViewValue.isHidden = true
         return imageViewValue
     }()
@@ -683,7 +683,7 @@ class BearyProfileViewController: UIViewController {
     private let coverClipView: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
-        viewValue.backgroundColor = BearyColors.faint
+        viewValue.backgroundColor = BearyColors.surface2
         viewValue.clipsToBounds = true
         return viewValue
     }()
@@ -691,7 +691,7 @@ class BearyProfileViewController: UIViewController {
     private let avatarImageView: UIImageView = {
         let imageViewValue = UIImageView()
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
-        imageViewValue.backgroundColor = BearyColors.faint
+        imageViewValue.backgroundColor = BearyColors.surface2
         imageViewValue.contentMode = .scaleAspectFill
         imageViewValue.clipsToBounds = true
         return imageViewValue
@@ -1153,8 +1153,8 @@ class BearyProfileViewController: UIViewController {
     private let wallContainer: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
-        viewValue.backgroundColor = BearyColors.bg
-        viewValue.layer.borderWidth = 1
+        viewValue.backgroundColor = BearyColors.surface1
+        viewValue.layer.borderWidth = 0
         viewValue.layer.cornerRadius = BearyCorners.single
         viewValue.isHidden = true
         return viewValue
@@ -1576,7 +1576,7 @@ class BearyProfileViewController: UIViewController {
     /// 年度回顾入口卡：只本人可见；平时只显示今年已写篇数与连续天数，
     /// 点进年报首屏示意（BearyYearReviewViewController），年报本身年底另做。
     private let yearCard = BearyProfilePersonalModulesCard(title: "年度回顾")
-    /// 113 模块分页失败重试行：faint 底圆角行 + 灰字说明 + 现成重试 pill；
+    /// 113 模块分页失败重试行：surface2 底圆角行 + 灰字说明 + 现成重试 pill；
     /// 只在 modulesLoadFailed 时显，成功态永不进栈视觉（isHidden）。
     private lazy var modulesRetryLabel: UILabel = {
         let labelValue = UILabel()
@@ -1598,7 +1598,7 @@ class BearyProfileViewController: UIViewController {
     private lazy var modulesRetryRow: UIView = {
         let rowValue = UIView()
         rowValue.translatesAutoresizingMaskIntoConstraints = false
-        rowValue.backgroundColor = BearyColors.faint
+        rowValue.backgroundColor = BearyColors.surface2
         rowValue.layer.cornerRadius = 12
         rowValue.clipsToBounds = true
         rowValue.isHidden = true
@@ -1658,10 +1658,9 @@ class BearyProfileViewController: UIViewController {
     private let mapEntryRow: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
-        viewValue.backgroundColor = BearyColors.bg
+        viewValue.backgroundColor = BearyColors.surface1
         viewValue.layer.cornerRadius = 12
-        viewValue.layer.borderWidth = 1
-        viewValue.layer.bearyDynamicBorderColor = BearyColors.line
+        viewValue.layer.borderWidth = 0
         viewValue.clipsToBounds = true
         return viewValue
     }()
@@ -1713,10 +1712,9 @@ class BearyProfileViewController: UIViewController {
     private let starEntryRow: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
-        viewValue.backgroundColor = BearyColors.bg
+        viewValue.backgroundColor = BearyColors.surface1
         viewValue.layer.cornerRadius = 12
-        viewValue.layer.borderWidth = 1
-        viewValue.layer.bearyDynamicBorderColor = BearyColors.line
+        viewValue.layer.borderWidth = 0
         viewValue.clipsToBounds = true
         return viewValue
     }()
@@ -3292,15 +3290,9 @@ class BearyProfileViewController: UIViewController {
         profileErrorRetryButton?.layer.bearyDynamicBorderColor = BearyColors.line
         gearButton.layer.bearyDynamicBorderColor = BearyColors.line
         nightContainer.layer.bearyDynamicBorderColor = BearyColors.line
-        wallContainer.layer.bearyDynamicBorderColor = BearyColors.line
         // 审计-个人页设置：用户名阴影死代码已随 nameLabel 定义处整删，
         // 此处 trait 重赋分支同步删除（header 用户名发光 Li 2026-10-31 已删，
         // 同样不再重赋）。
-        // 批 D：模块卡边线同款重赋（深浅切换时 CGColor 不自动跟随）。
-        statsCard.layer.bearyDynamicBorderColor = BearyColors.line
-        thisDayCard.layer.bearyDynamicBorderColor = BearyColors.line
-        randomCard.layer.bearyDynamicBorderColor = BearyColors.line
-        yearCard.layer.bearyDynamicBorderColor = BearyColors.line
     }
 
     // MARK: - 本人 / 他人模式
@@ -3916,7 +3908,7 @@ class BearyProfileViewController: UIViewController {
             coverImageView.image = nil
         }
         coverImageView.isHidden = !hasCover
-        coverClipView.backgroundColor = profileShowsDefaultCover ? BearyColors.bg : BearyColors.faint
+        coverClipView.backgroundColor = profileShowsDefaultCover ? BearyColors.bg : BearyColors.surface2
         defaultWordmarkView.isHidden = !profileShowsDefaultCover
         coverHeightConstraint.constant = profileCoverHeight
         // 下拉模糊用预模糊图：缓存命中时直接复用；异步加载的新图在首次下拉时生成；
@@ -3947,7 +3939,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 头像加载（含失败回退）：起手先藏重试图标 + 藏首字母（与旧行为一致，
-    /// 加载中只露 faint 底）；bearySetImage 成功时无回调，图标保持隐藏即
+    /// 加载中只露 surface2 底）；bearySetImage 成功时无回调，图标保持隐藏即
     /// “成功后图标消失”；失败时 onFailure 显式恢复首字母并出重试图标。
     /// 层级注意：本文件先加头像视图后加首字母 label，失败时必须显式把
     /// label.isHidden 置回 false，否则 label 仍被加载前的隐藏态盖住。
@@ -4330,7 +4322,7 @@ class BearyProfileViewController: UIViewController {
         func makeStatTile(valueLabel: UILabel, keyText: String) -> UIView {
             let tile = UIView()
             tile.translatesAutoresizingMaskIntoConstraints = false
-            tile.backgroundColor = BearyColors.faint
+            tile.backgroundColor = BearyColors.surface2
             tile.layer.cornerRadius = 12
             tile.clipsToBounds = true
             let stack = UIStackView(arrangedSubviews: [valueLabel, BearyProfilePersonalModulesCard.statKeyLabel(text: keyText)])
@@ -5243,7 +5235,7 @@ class BearyProfileViewController: UIViewController {
     private func pastSelfSideColumn(title: String, body: String, barColor: UIColor) -> UIView {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = BearyColors.faint
+        container.backgroundColor = BearyColors.surface2
         container.layer.cornerRadius = 12
         container.clipsToBounds = true
         let bar = UIView()
@@ -6190,10 +6182,10 @@ class BearyProfileViewController: UIViewController {
                 }
                 if UIAccessibility.isReduceMotionEnabled { return }
                 // 审计 P2-18：定位高亮改 opacity 口径——背景色动画违背只走 transform/opacity；
-                // faint 底 overlay 淡出（alpha 1→0），动画结束自移除；复用时 overlay 随
+                // surface2 底 overlay 淡出（alpha 1→0），动画结束自移除；复用时 overlay 随
                 // 动画结束自动消失，不污染新行（旧 backgroundColor 写法复用后会残留）。
                 let flash = UIView()
-                flash.backgroundColor = BearyColors.faint
+                flash.backgroundColor = BearyColors.surface2
                 flash.translatesAutoresizingMaskIntoConstraints = false
                 flash.isUserInteractionEnabled = false
                 cell.contentView.addSubview(flash)
@@ -6774,7 +6766,7 @@ class BearyProfileViewController: UIViewController {
                 let photoIndex = rowIndex * 3 + colIndex
                 let photoButton = UIButton(type: .custom)
                 photoButton.translatesAutoresizingMaskIntoConstraints = false
-                photoButton.backgroundColor = BearyColors.faint
+                photoButton.backgroundColor = BearyColors.surface2
                 photoButton.layer.cornerRadius = 12
                 photoButton.clipsToBounds = true
                 photoButton.imageView?.contentMode = .scaleAspectFill

@@ -1826,7 +1826,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         textView.selectedRange = NSRange(location: location, length: length)
     }
 
-    // 顶部 @ 提示行：顶栏下方固定 44 高行，内一条与底部 chip 同款的 faint 条
+    // 顶部 @ 提示行：顶栏下方固定 44 高行，内一条与底部 chip 同款的 surface2 条
     //（13 字、“提到 昵称”、圆角 pill）；有收件人才出现，写字时不随正文滚动；
     //点按同底部 chip，走 openToolStrip(.recipient)，在选人条里清除/重选；
     //引用面板打开时同其他编辑器 chrome 一并隐藏。
@@ -1838,7 +1838,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         mentionTopPill.titleLabel?.numberOfLines = 1
         mentionTopPill.titleLabel?.lineBreakMode = .byTruncatingTail
         mentionTopPill.setTitleColor(BearyColors.ink, for: .normal)
-        mentionTopPill.backgroundColor = BearyColors.faint
+        mentionTopPill.backgroundColor = BearyColors.surface2
         mentionTopPill.layer.cornerRadius = 999
         mentionTopPill.layer.masksToBounds = true
         mentionTopPill.contentHorizontalAlignment = .left
@@ -1865,7 +1865,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientLine.spacing = 8
         recipientLine.alignment = .center
         // 已选 chip：黑白灰新标准改灰底（与内容区 chip 同口径）；原橙 13% 混色已删。
-        recipientChipView.backgroundColor = BearyColors.faint
+        recipientChipView.backgroundColor = BearyColors.surface2
         recipientChipView.layer.cornerRadius = 15
         recipientChipView.layer.masksToBounds = true
         recipientChipAvatar.contentMode = .scaleAspectFill
@@ -2089,7 +2089,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteSection.spacing = 0
         // 2-4+8-10：引用区复用共享 BearyQuoteCardView，自绘卡（圆角 14 单线框、
         // 正文 16.5、日期 14、图条高 118）已删；字号 13.5 / 图高 42 / 圆角 8 /
-        // 左 3pt 线 / faint 底随共享卡走。头像/名不加回（lite 卡去头像名口径不变）。
+        // 左 3pt 线 / surface2 底随共享卡走。头像/名不加回（lite 卡去头像名口径不变）。
         // 移除钮作为外层叠加：放在 wrap 层、不进共享卡内部；编辑模式引用仍可删
         // （PUT 清 quote_id，见 didTapRemoveQuote），引用面板入口在编辑态仍锁定
         // （见工具栏守卫），不动。位置注意：共享卡日期在行内右上角，若 × 叠在卡内
@@ -2258,13 +2258,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func buildQuotePanel() {
         quotePanel.translatesAutoresizingMaskIntoConstraints = false
-        // 自定义 tab 条（网页 qp-seg-in）：容器 padding 3、faint 底、圆角 999；
+        // 自定义 tab 条（网页 qp-seg-in）：容器 padding 3、surface2 底、圆角 999；
         // 钮 13.5/600、padding 6/16；选中墨字 + surface 底（网页滑块指示的静态等价），未选灰字无底。
         // R7(a)：tab 条此前无显式高度、高度全靠钮固有高撑开，任一固有高异常即帧
         // 塌陷成 0 高不可见；现给容器显式高度 36（padding 3×2 + 钮高 30，钮上下
-        // 内边距 6×2 + 13.5 字高，栈 fill 拉满不裁字）。faint 为不透明实色
+        // 内边距 6×2 + 13.5 字高，栈 fill 拉满不裁字）。surface2 为不透明实色
         // （alpha 1），不是透明/玻璃，选中态文字仍为深色 ink，排除渲染不可见。
-        // 预览口径：三段等宽 pill（全部 / 赞过 / 收藏），选中墨底白字、未选 faint 底灰字；
+        // 预览口径：三段等宽 pill（全部 / 赞过 / 收藏），选中墨底白字、未选 surface2 底灰字；
         // 栈直接挂根视图置顶（顶栏底 +10、左右 16、高 36），面板打开时才显示。
         quoteTabStack.translatesAutoresizingMaskIntoConstraints = false
         quoteTabStack.axis = .horizontal
@@ -2360,7 +2360,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 自定义 tab 选中态：选中墨字 + surface 底，未选灰字无底（与旧系统分段控件的
     /// 选中序号语义一一对应，tab 值仍走 quotePanelTab）。
-    /// R7(a) 复核：选中态文字为深色 ink（非灰/非透明），在 faint 实色条上可读。
+    /// R7(a) 复核：选中态文字为深色 ink（非灰/非透明），在 surface2 实色条上可读。
     /// D-G17：网页选中滑块带阴影（0 1px 6px 黑 12% + 0 0 0 1px 黑 4%）；
     /// App 选中钮补同值阴影（单层 shadow 画不出双层，故 1px 环用同色描边近似，
     /// 描边在内侧 1px）；选中态须关 masksToBounds 否则阴影被裁，未选恢复。
@@ -2368,8 +2368,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         for tabIndex in 0..<quoteTabButtons.count {
             let tabButton = quoteTabButtons[tabIndex]
             let isSelected = (tabIndex == 0 && quotePanelTab == "timeline") || (tabIndex == 1 && quotePanelTab == "liked") || (tabIndex == 2 && quotePanelTab == "saved")
-            // 预览口径：选中墨底 + 背景色字（深浅模式下自动反色），未选 faint 底灰字，无阴影无描边。
-            tabButton.backgroundColor = isSelected ? BearyColors.ink : BearyColors.faint
+            // 预览口径：选中墨底 + 背景色字（深浅模式下自动反色），未选 surface2 底灰字，无阴影无描边。
+            tabButton.backgroundColor = isSelected ? BearyColors.ink : BearyColors.surface2
             tabButton.setTitleColor(isSelected ? BearyColors.bg : BearyColors.gray, for: .normal)
             tabButton.layer.masksToBounds = true
             tabButton.layer.shadowOpacity = 0
@@ -2837,7 +2837,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             avatarFallback.translatesAutoresizingMaskIntoConstraints = false
             avatarFallback.font = UIFont.boldSystemFont(ofSize: 16)
             avatarFallback.textColor = BearyColors.gray
-            avatarFallback.backgroundColor = BearyColors.faint
+            avatarFallback.backgroundColor = BearyColors.surface2
             avatarFallback.textAlignment = .center
             avatarFallback.layer.cornerRadius = 20
             avatarFallback.layer.masksToBounds = true
@@ -4205,7 +4205,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             chip.button.titleLabel?.lineBreakMode = .byTruncatingTail
             chip.button.titleLabel?.adjustsFontSizeToFitWidth = false
             chip.button.setTitleColor(BearyColors.ink, for: .normal)
-            chip.button.backgroundColor = BearyColors.faint
+            chip.button.backgroundColor = BearyColors.surface2
             chip.button.layer.cornerRadius = 999
             chip.button.layer.masksToBounds = true
             chip.button.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
@@ -4220,7 +4220,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         tempStepperStack.axis = .horizontal
         tempStepperStack.spacing = 4
         tempStepperStack.alignment = .center
-        tempStepperStack.backgroundColor = BearyColors.faint
+        tempStepperStack.backgroundColor = BearyColors.surface2
         tempStepperStack.layer.cornerRadius = 999
         tempStepperStack.layer.masksToBounds = true
         tempStepperStack.translatesAutoresizingMaskIntoConstraints = false
@@ -4255,7 +4255,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// C11：删图撤销条（图片条下方）：文案 + 撤销钮；显隐与间距由 refreshImageUndoBar 管。
     private func buildImageUndoBar() {
-        imageUndoBar.backgroundColor = BearyColors.faint
+        imageUndoBar.backgroundColor = BearyColors.surface2
         imageUndoBar.layer.cornerRadius = 12
         imageUndoBar.layer.masksToBounds = true
         imageUndoLabel.text = "图片已删除"

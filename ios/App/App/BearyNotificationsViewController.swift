@@ -2759,7 +2759,7 @@ private class BearyLetterModal {
         // 浏览到底下的通知列表；视觉与关闭行为不变。
         overlayView.accessibilityViewIsModal = true
         overlayView.translatesAutoresizingMaskIntoConstraints = false
-        cardView.backgroundColor = BearyColors.surface
+        cardView.backgroundColor = BearyColors.surface3
         // Q1 对照表：卡片圆角 14（网页 .confirm-box 原 16 已按表统一）。
         cardView.layer.cornerRadius = BearyCorners.single
         cardView.clipsToBounds = true
@@ -2794,7 +2794,7 @@ private class BearyLetterModal {
         // C-G8：网页 .letter-body line-height 1.9，App 原无行高倍数。
         bodyLabel.attributedText = BearyLetterModal.lineHeightText(body, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.9)
         quoteWrap.translatesAutoresizingMaskIntoConstraints = false
-        quoteWrap.backgroundColor = BearyColors.faint
+        quoteWrap.backgroundColor = BearyColors.surface2
         quoteWrap.layer.cornerRadius = 12
         quoteWrap.clipsToBounds = true
         quoteBar.translatesAutoresizingMaskIntoConstraints = false

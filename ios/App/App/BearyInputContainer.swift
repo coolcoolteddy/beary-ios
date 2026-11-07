@@ -1,7 +1,7 @@
 import UIKit
 
 // ===== 审计 P2-14：共享输入容器 =====
-// 登录页与邀请页此前各写一份 makeFieldContainer（faint 底、圆角 12、
+// 登录页与邀请页此前各写一份 makeFieldContainer（surface2 底、圆角 12、
 // 左右 14 内边距、48 高，逐字重复），本组件收敛为一处：统一背景 /
 // 边框 / 内边距 / 聚焦态 / 错误态，内部仍是调用方传入的原生
 // UITextField / UITextView（不换自定义输入控件，文案与校验逻辑不动）。
@@ -15,10 +15,9 @@ import UIKit
 
 final class BearyInputContainer: UIView {
     private let content: UIView
-    private let normalBorderColor: UIColor
     private var contentEditingFocused = false
 
-    /// 错误态：红边优先于聚焦蓝边；复位后回到聚焦 / 常态。
+    /// 错误态：红边优先于聚焦阴影；复位后回到聚焦 / 常态。
     var isError = false {
         didSet { refreshBorder() }
     }
@@ -28,16 +27,15 @@ final class BearyInputContainer: UIView {
     /// - insets: 内容相对容器的内边距；登录 / 邀请单行框为左右 14、上下 0。
     /// - cornerRadius: 默认 12（登录 / 邀请原值）。
     /// - fixedHeight: 单行框传 48；多行框不传、由调用方约束定高。
-    /// - borderColor: 常态边框色，默认 line；需 ink 20% 等口径时调用方传入。
-    init(content: UIView, insets: UIEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14), cornerRadius: CGFloat = 12, fixedHeight: CGFloat? = nil, borderColor: UIColor = BearyColors.line) {
+    init(content: UIView, insets: UIEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14), cornerRadius: CGFloat = 12, fixedHeight: CGFloat? = nil) {
         self.content = content
-        self.normalBorderColor = borderColor
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        backgroundColor = BearyColors.faint
+        backgroundColor = BearyColors.surface2
         layer.cornerRadius = cornerRadius
-        layer.borderWidth = 1
-        layer.masksToBounds = true
+        layer.borderWidth = 0
+        // 聚焦阴影须画出框外，masksToBounds 必须关；内容均有 14 内边距，不会溢出圆角。
+        layer.masksToBounds = false
         refreshBorder()
         content.translatesAutoresizingMaskIntoConstraints = false
         addSubview(content)
@@ -78,11 +76,17 @@ final class BearyInputContainer: UIView {
 
     private func refreshBorder() {
         if isError {
+            // 错误态红边保留：边框 1，聚焦阴影清掉（红边即信号）。
+            layer.borderWidth = 1
             layer.bearyDynamicBorderColor = BearyColors.red
+            layer.shadowOpacity = 0
         } else if contentEditingFocused {
-            layer.bearyDynamicBorderColor = BearyColors.blue
+            // 2026-11-07 微明度定版：聚焦不再画蓝边，改走聚焦阴影；边框 0。
+            layer.borderWidth = 0
+            BearyShadow.applyFocused(to: layer)
         } else {
-            layer.bearyDynamicBorderColor = normalBorderColor
+            layer.borderWidth = 0
+            layer.shadowOpacity = 0
         }
     }
 

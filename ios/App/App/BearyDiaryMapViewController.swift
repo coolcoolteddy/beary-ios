@@ -153,7 +153,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
         // push 路悬浮返回钮：push 进他人主页 modal 导航栈那路，该栈隐藏
         // 了系统导航栏，既无系统返回钮、也无自定义顶栏，只有边缘手势；
-        // 补一个左上角悬浮左箭头钮（32 圆钮 faint 底，地图瓦片深浅不一、
+        // 补一个左上角悬浮左箭头钮（32 圆钮 surface2 底，地图瓦片深浅不一、
         // 纯图标易看不清），点按 pop 回上一页。根页路（新起导航栈）走
         // 上方 navigationItem，不进本分支。
         if navigationController?.viewControllers.count ?? 0 > 1 {
@@ -166,7 +166,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 pushedBackButton.setTitleColor(BearyColors.ink, for: .normal)
             }
             pushedBackButton.tintColor = BearyColors.ink
-            pushedBackButton.backgroundColor = BearyColors.faint
+            pushedBackButton.backgroundColor = BearyColors.surface2
             pushedBackButton.layer.cornerRadius = 16
             pushedBackButton.accessibilityLabel = "返回"
             pushedBackButton.addTarget(self, action: #selector(didTapPushedBack), for: .touchUpInside)

@@ -573,7 +573,7 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
         imageViewValue.contentMode = .scaleAspectFill
         imageViewValue.clipsToBounds = true
         imageViewValue.layer.cornerRadius = 12
-        imageViewValue.backgroundColor = BearyColors.faint
+        imageViewValue.backgroundColor = BearyColors.surface2
         return imageViewValue
     }()
 

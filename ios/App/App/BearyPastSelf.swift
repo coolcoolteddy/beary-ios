@@ -521,10 +521,9 @@ final class PastSelfComposeView: UIView, UITextViewDelegate {
         textView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         textView.adjustsFontForContentSizeCategory = true
         textView.textColor = BearyColors.ink
-        textView.backgroundColor = BearyColors.faint
+        textView.backgroundColor = BearyColors.surface2
         textView.layer.cornerRadius = 12
-        textView.layer.borderWidth = 1
-        textView.layer.bearyDynamicBorderColor = BearyColors.line
+        textView.layer.borderWidth = 0
         textView.textContainerInset = UIEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
         textView.delegate = self
         textView.isScrollEnabled = false

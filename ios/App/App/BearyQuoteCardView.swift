@@ -2,9 +2,9 @@ import UIKit
 
 // ===== BearyQuoteCardView 共享引用卡（B 批卡片合并）=====
 // 来源二合一：首页的独立 BearyFeedQuoteView（F11 lite 卡：左侧 3pt 线、
-// faint 底、圆角 8、15px 引号图标、日期行内末位、42px 缩略图条
+// surface2 底、圆角 8、15px 引号图标、日期行内末位、42px 缩略图条
 // flex 分配、gone/locked/加载失败三态）＋个人主页 cell 内 quoteContainer
-// 手写卡（同款 faint 底、9/12 内边距、15px 图标、13 正文、42px 缩略图、
+// 手写卡（同款 surface2 底、9/12 内边距、15px 图标、13 正文、42px 缩略图、
 // 日期、gone 两文案）。统一后两页视觉以 Feed 卡为准（个人主页侧圆角
 // 12→8、补左侧线，内边距与字号一字不动）；个人主页侧的 gone 卡点按仍
 // 透传（allowGoneTap，控制器弹提示），首页侧 gone 卡点按仍无动作。
@@ -293,7 +293,7 @@ final class BearyQuoteCardView: UIView {
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(quoteTapped(_:))))
         sourceButton.addTarget(self, action: #selector(sourceTapped), for: .touchUpInside)
         expandButton.addTarget(self, action: #selector(expandTapped), for: .touchUpInside)
-        backgroundColor = BearyColors.faint
+        backgroundColor = BearyColors.surface2
         layer.cornerRadius = 8
         clipsToBounds = true
         thumbsScrollView.addSubview(thumbsStack)
@@ -584,7 +584,7 @@ final class BearyQuoteCardView: UIView {
                 } else {
                     thumbView = UIImageView()
                     thumbView.translatesAutoresizingMaskIntoConstraints = false
-                    thumbView.backgroundColor = BearyColors.faint
+                    thumbView.backgroundColor = BearyColors.surface2
                     thumbView.contentMode = .scaleAspectFill
                     thumbView.clipsToBounds = true
                     thumbView.layer.cornerRadius = 8

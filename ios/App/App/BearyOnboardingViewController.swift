@@ -308,9 +308,9 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         columnView.translatesAutoresizingMaskIntoConstraints = false
         heroContent.addSubview(columnView)
 
-        // 底部圆角卡片：BearyColors faint 底、顶部圆角 28、通栏。
+        // 底部圆角卡片：BearyColors surface2 底、顶部圆角 28、通栏。
         bottomCard.translatesAutoresizingMaskIntoConstraints = false
-        bottomCard.backgroundColor = BearyColors.faint
+        bottomCard.backgroundColor = BearyColors.surface2
         bottomCard.layer.cornerRadius = BearyCorners.single
         bottomCard.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         heroContent.addSubview(bottomCard)
@@ -443,11 +443,11 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         }
     }
 
-    /// 示例日记卡片（faint 底、圆角 16）：日期行＋官方天气图标＋正文。
+    /// 示例日记卡片（surface2 底、圆角 16）：日期行＋官方天气图标＋正文。
     private func makeDiaryCard(dateText: String, bodyText: String) -> UIView {
         let card = UIView()
         card.translatesAutoresizingMaskIntoConstraints = false
-        card.backgroundColor = BearyColors.faint
+        card.backgroundColor = BearyColors.surface2
         card.layer.cornerRadius = BearyCorners.single
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -579,7 +579,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         // 下方示例日记：随点选同步变官方图标、状态标签、解释文字。
         let demoCard = UIView()
         demoCard.translatesAutoresizingMaskIntoConstraints = false
-        demoCard.backgroundColor = BearyColors.faint
+        demoCard.backgroundColor = BearyColors.surface2
         demoCard.layer.cornerRadius = BearyCorners.single
         let demoStack = UIStackView()
         demoStack.translatesAutoresizingMaskIntoConstraints = false
@@ -656,7 +656,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         // 中央示例公开日记（公开橙 pill＋日期＋官方天气图标）。
         let demoCard = UIView()
         demoCard.translatesAutoresizingMaskIntoConstraints = false
-        demoCard.backgroundColor = BearyColors.faint
+        demoCard.backgroundColor = BearyColors.surface2
         demoCard.layer.cornerRadius = BearyCorners.single
         let demoStack = UIStackView()
         demoStack.translatesAutoresizingMaskIntoConstraints = false
@@ -714,7 +714,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
 
         // 回应标签：点选后才出现；只让新增元素入场一次，后续改选只换内容、不重播。
         responseChip.translatesAutoresizingMaskIntoConstraints = false
-        responseChip.backgroundColor = BearyColors.faint
+        responseChip.backgroundColor = BearyColors.surface2
         responseChip.isHidden = true
         responseChipIcon.translatesAutoresizingMaskIntoConstraints = false
         responseChipCount.translatesAutoresizingMaskIntoConstraints = false
@@ -749,7 +749,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         for key in ["hug", "love", "cheer"] {
             let button = BearyHit44Button(type: .system)
             button.translatesAutoresizingMaskIntoConstraints = false
-            button.backgroundColor = BearyColors.faint
+            button.backgroundColor = BearyColors.surface2
             button.layer.cornerRadius = 42
             button.layer.borderWidth = 0
             button.accessibilityLabel = BearyText.moodNames[key] ?? key
@@ -800,7 +800,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         ])
         let promptCard = UIView()
         promptCard.translatesAutoresizingMaskIntoConstraints = false
-        promptCard.backgroundColor = BearyColors.faint
+        promptCard.backgroundColor = BearyColors.surface2
         promptCard.layer.cornerRadius = BearyCorners.single
         let prompt = makeLabel(size: 17, color: BearyColors.gray, alignment: .center)
         prompt.text = "今天，想记住什么？"
@@ -1189,7 +1189,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
             let selected = buttonKey == key
             button.layer.borderWidth = selected ? 2 : 0
             button.layer.bearyDynamicBorderColor = BearyColors.ink
-            button.backgroundColor = selected ? BearyColors.alpha(BearyColors.ink, 0.07) : BearyColors.faint
+            button.backgroundColor = selected ? BearyColors.alpha(BearyColors.ink, 0.07) : BearyColors.surface2
         }
         selectedEmote = key
         let isDark = traitCollection.userInterfaceStyle == .dark
@@ -1277,7 +1277,7 @@ private final class OnboardingOptionButton: BearyHit44Button {
         self.demo = demo
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        backgroundColor = BearyColors.surface
+        backgroundColor = BearyColors.surface1
         layer.cornerRadius = BearyCorners.single
         layer.borderWidth = 1.5
         layer.bearyDynamicBorderColor = BearyColors.line
@@ -1343,7 +1343,7 @@ private final class OnboardingOptionButton: BearyHit44Button {
 
     func setSelected(_ selected: Bool) {
         isOptionSelected = selected
-        backgroundColor = selected ? BearyColors.alpha(BearyColors.ink, 0.07) : BearyColors.surface
+        backgroundColor = selected ? BearyColors.alpha(BearyColors.ink, 0.07) : BearyColors.surface1
         checkView.backgroundColor = selected ? BearyColors.ink : .clear
         checkImageView.isHidden = !selected
         refreshBorder()

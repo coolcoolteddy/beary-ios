@@ -170,7 +170,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         inputTextView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         inputTextView.adjustsFontForContentSizeCategory = true
         inputTextView.textColor = BearyColors.ink
-        inputTextView.backgroundColor = BearyColors.faint
+        inputTextView.backgroundColor = BearyColors.surface2
         inputTextView.layer.cornerRadius = BearyCorners.single
         inputTextView.clipsToBounds = true
         inputTextView.textContainerInset = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
@@ -261,7 +261,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         // 上下内边距约束用 defaultHigh：隐藏时收起约束（=0，required）优先，横幅干净归零，
         // 显示时无竞争的定高约束，横幅由文字高度 + 上下各 8 撑起，不低于 36。
         permBannerView.translatesAutoresizingMaskIntoConstraints = false
-        permBannerView.backgroundColor = BearyColors.faint
+        permBannerView.backgroundColor = BearyColors.surface2
         permBannerView.isHidden = true
         view.addSubview(permBannerView)
         permBannerLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1234,7 +1234,7 @@ private final class BearyDMMessageCell: UITableViewCell {
             bubble.translatesAutoresizingMaskIntoConstraints = false
             bubble.layer.cornerRadius = BearyCorners.single
             bubble.clipsToBounds = true
-            bubble.backgroundColor = isMine ? BearyColors.ink : BearyColors.faint
+            bubble.backgroundColor = isMine ? BearyColors.ink : BearyColors.surface2
             textLabel.translatesAutoresizingMaskIntoConstraints = false
             textLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
             textLabel.adjustsFontForContentSizeCategory = true

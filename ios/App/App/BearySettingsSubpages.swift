@@ -236,35 +236,19 @@ class BearySettingsSubpageViewController: UIViewController {
         subpageLayoutGuard.applyAfterAppearance(page: pageTitle, view: view, topView: topBarView, contentViews: [contentScrollView, contentStack], presentation: "fullScreen+fadeRise")
     }
 
-    /// 审计第二波 4b 分诊结论：分组卡边框确认 stale——makeGroupCard 内
-    /// borderColor = line.cgColor（line 是动态色，CGColor 赋值即固化），
-    /// 本文件此前无 traitCollectionDidChange，卡片又是局部变量、无处重刷；
-    /// 故按设置页 cardViews + trait 刷新同口径修（追踪卡片、色貌变化时重赋）。
     /// 行间分隔线 backgroundColor 走动态 UIColor、自动跟随，不用重刷；
     /// 当前设备 curPill 绿边是固定绿，不动。
-    private var groupCards: [UIView] = []
 
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
-            for card in groupCards {
-                card.layer.bearyDynamicBorderColor = BearyColors.line
-            }
-        }
-    }
-
-    /// 分组卡（设置页 makeGroupCard 同款视觉：卡内标题、1px 边框、圆角 20、
+    /// 分组卡（设置页 makeGroupCard 同款视觉：卡内标题、圆角 20、
     /// 行间 1px 分隔线、行内容左右 16、上下 14）。
     func makeGroupCard(title: String?, rows: [UIView]) -> UIView {
         let card = UIView()
         card.translatesAutoresizingMaskIntoConstraints = false
-        // 卡片底色与页面背景同色（深色纯黑），与设置主页面卡片同口径。
-        card.backgroundColor = BearyColors.bg
-        card.layer.borderWidth = 1
-        card.layer.bearyDynamicBorderColor = BearyColors.line
+        // 卡片底色走 surface1（页上卡片层；2026-11-07 微明度定版：1px 外框已去掉）。
+        card.backgroundColor = BearyColors.surface1
+        card.layer.borderWidth = 0
         card.layer.cornerRadius = BearyCorners.single
         card.clipsToBounds = true
-        groupCards.append(card)
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
