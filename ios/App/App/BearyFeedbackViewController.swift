@@ -795,12 +795,14 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             return
         }
         guard presentedViewController == nil else { return }
-        let alert = UIAlertController(title: "放弃这份反馈？", message: nil, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "继续编辑", style: .cancel, handler: nil))
-        alert.addAction(UIAlertAction(title: "放弃反馈", style: .destructive, handler: { [weak self] _ in
-            self?.dismiss(animated: BearyMotion.animated(true))
-        }))
-        present(alert, animated: BearyMotion.animated(true), completion: nil)
+        // 第四轮审计 12：居中 Alert 改底部弹窗（文案不变；点“放弃反馈”
+        // 先关 sheet 再关反馈页，不叠层）。
+        BearyConfirmSheet.show(from: self, title: "放弃这份反馈？", message: nil, actions: [
+            BearyConfirmSheet.Action(title: "放弃反馈", style: .destructive, handler: { [weak self] in
+                self?.dismiss(animated: BearyMotion.animated(true))
+            }),
+            BearyConfirmSheet.Action(title: "继续编辑", style: .cancel),
+        ])
     }
 
     @objc private func pickTapped() {
