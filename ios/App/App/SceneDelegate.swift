@@ -1766,7 +1766,7 @@ final class BearyChromeViewController: UIViewController {
             container.transform = target
             return
         }
-        UIView.animate(withDuration: 0.15, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+        UIView.animate(withDuration: 0.13, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
             container.transform = target
         })
     }
