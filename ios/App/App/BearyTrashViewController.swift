@@ -1011,11 +1011,15 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         case .ended:
             trashDraggingRow = nil
             let offset = rowView.transform.tx
+            // 未过阈值弹簧复位：松手速度归一化后传弹簧（松手速度 ÷ 回程
+            // 距离），慢拖速度近 0 即约等于 0，快甩则带上真实松手速度（草稿箱同款）。
+            let distance = abs(offset)
+            let springVelocity = distance > 0 ? sender.velocity(in: view).x / distance : 0
             if offset <= -trashDragMenuThreshold {
-                resetTrashDragRow(rowView)
+                resetTrashDragRow(rowView, initialSpringVelocity: springVelocity)
                 presentTrashActionMenu(identifier: identifier, rowView: rowView)
             } else {
-                resetTrashDragRow(rowView)
+                resetTrashDragRow(rowView, initialSpringVelocity: springVelocity)
                 // 审计-时间线：拖动结束（未出菜单）时应用被冻结的静默刷新。
                 if trashSilentRefreshDeferred {
                     trashSilentRefreshDeferred = false
@@ -1036,12 +1040,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     }
 
     /// 拖动结束/取消后卡片归位：减动效直设，其余以弹簧弹回（只走 transform）。
-    private func resetTrashDragRow(_ rowView: UIView) {
+    private func resetTrashDragRow(_ rowView: UIView, initialSpringVelocity: CGFloat = 0) {
         if UIAccessibility.isReduceMotionEnabled {
             rowView.transform = .identity
             return
         }
-        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: .curveEaseOut, animations: {
+        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
             rowView.transform = .identity
         }, completion: nil)
     }
