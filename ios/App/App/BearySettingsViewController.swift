@@ -5220,12 +5220,17 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
         guard !unblockingIds.contains(userId) else { return }
         unblockingIds.insert(userId)
         tableView.reloadData()
+        // 第六轮审计 02：发起时拍身份快照，成功回包先校验——切号/退出/重登
+        // 夹在请求与回包之间时，旧回包不得从新账号的拉黑缓存里删人、不得改
+        // 本页 blockedIds、不得弹提示（在途标记照常清除，失败分支不动）。
+        let identity = BearyIdentityGuard.capture()
         BearyAPI.shared.unblockUser(userId: userId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.unblockingIds.remove(userId)
                 switch result {
                 case .success:
+                    guard BearyIdentityGuard.stillValid(identity) else { return }
                     BearyBlockedStore.removeBlocked(userId)
                     self.blockedIds.removeAll { $0 == userId }
                     self.updateBlockedEmptyState()

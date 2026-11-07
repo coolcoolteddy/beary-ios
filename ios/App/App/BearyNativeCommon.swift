@@ -2803,6 +2803,29 @@ enum BearyReportedStore {
     }
 }
 
+/// 第六轮审计 02：写操作身份守卫（小机制，供举报/拉黑/解除拉黑等调用点复用）。
+/// 发起时拍一张 (accountId, authEpoch)，回包时一行 stillValid 判断；
+/// 任一变化（切号/退出/重登）即判定过期，旧回包不得再写本地状态、发广播、弹提示。
+/// 只比对身份，不碰网络层、不做重试；不抽大一统 UIKit 异步框架。
+/// 依据：authEpoch 只在权威登录态变迁时推进（SessionManager 登录/切号/退出/
+/// 401 清态），日常 /me 成功不推进，故同一登录态内的正常回包不会被误判过期；
+/// authAccountId 与 epoch 同步维护（见 BearyAPI.swift authEpoch 处注释）。
+enum BearyIdentityGuard {
+    struct Snapshot {
+        let accountId: Int?
+        let epoch: Int
+    }
+
+    static func capture() -> Snapshot {
+        Snapshot(accountId: BearyAPI.shared.authAccountId, epoch: BearyAPI.shared.authEpoch)
+    }
+
+    static func stillValid(_ snapshot: Snapshot) -> Bool {
+        snapshot.accountId == BearyAPI.shared.authAccountId
+            && snapshot.epoch == BearyAPI.shared.authEpoch
+    }
+}
+
 /// 审计三轮第 7 项：拉黑 id 按账号分桶缓存（UserDefaults 持久化 + 内存集）。
 /// 服务端是拉黑真相源（列表/广场已由服务端过滤）；本缓存只用于详情/主页等
 /// 单点入口的同步比对（点按路径不发网络）。登录时 refresh 拉全量，拉黑/解除
@@ -2815,6 +2838,10 @@ enum BearyReportedStore {
 /// 桶；代次另防同号连续 refresh 时旧回包覆盖新回包。判断全在 NativeCommon
 /// 内部自包含（现取 SessionManager.currentUser.id），不依赖 SceneDelegate
 /// 调用点传参；单向语义不变：只查“我拉黑作者”，不查反向。
+/// 第六轮审计 01：本地改动（markBlocked/removeBlocked）同样 bump refreshSeq，
+/// 使在途旧刷新失效——本地改动本身就是比旧快照更新的真相，旧回包不得再把
+/// 刚保存的新状态整表覆掉（内存和磁盘同时抹掉）；再拉一次服务端名单是可选
+/// 加固，不是必需（服务端仍是真相源，下次登录重拉即对）。
 enum BearyBlockedStore {
     private static let baseKey = "beary.blockedUserIds"
     private static var cached: Set<Int>?
@@ -2876,6 +2903,9 @@ enum BearyBlockedStore {
         if let bucket = cachedBucket {
             UserDefaults.standard.set(Array(cached ?? []), forKey: key(for: bucket))
         }
+        // 第六轮审计 01：本地拉黑即最新真相，使在途旧刷新失效，旧回包不得
+        // 再把刚保存的状态整表覆掉（refresh 回包凭 seq == refreshSeq 守门）。
+        refreshSeq += 1
     }
 
     static func removeBlocked(_ userId: Int) {
@@ -2884,6 +2914,8 @@ enum BearyBlockedStore {
         if let bucket = cachedBucket {
             UserDefaults.standard.set(Array(cached ?? []), forKey: key(for: bucket))
         }
+        // 第六轮审计 01：同 markBlocked，本地解除即最新真相，旧刷新回包失效。
+        refreshSeq += 1
     }
 
     /// 退出/游客时清内存（SceneDelegate applyLoginState 调用点不动）：
@@ -3012,11 +3044,16 @@ enum BearyReportFlow {
         for reason in BearyReportReason.all {
             sheet.addAction(UIAlertAction(title: reason, style: .default) { _ in
                 let busy = BearyFlowBusy.show(in: vc.view)
+                // 第六轮审计 02：发起时拍身份快照，成功回包先校验——切号/退出/
+                // 重登夹在请求与回包之间时，旧回包不得写进新账号的举报缓存、
+                // 不得发广播、不得弹提示（网络层成功回包无条件透传，守门在调用点）。
+                let identity = BearyIdentityGuard.capture()
                 BearyAPI.shared.reportEntry(entryId: entryId, reason: reason) { result in
                     DispatchQueue.main.async {
                         BearyFlowBusy.hide(busy)
                         switch result {
                         case .success(let resp):
+                            guard BearyIdentityGuard.stillValid(identity) else { return }
                             BearyReportedStore.markReported(entryId: entryId)
                             NotificationCenter.default.post(name: .bearyDidReportEntry, object: entryId)
                             // 补缺 P3-39：重复举报（服务端 duplicate 成功态）按已举报处理并置灰下次菜单，
@@ -3049,11 +3086,16 @@ enum BearyBlockFlow {
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
         alert.addAction(UIAlertAction(title: "拉黑", style: .destructive) { _ in
             let busy = BearyFlowBusy.show(in: vc.view)
+            // 第六轮审计 02：发起时拍身份快照，成功回包先校验——旧账号的
+            // 拉黑回包不得写进新账号的拉黑缓存、不得发广播、不得弹提示；
+            // 身份已变时按未完成回调调用方（调用方只在 success 时清理）。
+            let identity = BearyIdentityGuard.capture()
             BearyAPI.shared.blockUser(userId: userId) { result in
                 DispatchQueue.main.async {
                     BearyFlowBusy.hide(busy)
                     switch result {
                     case .success:
+                        guard BearyIdentityGuard.stillValid(identity) else { onDone?(false); return }
                         BearyBlockedStore.markBlocked(userId)
                         NotificationCenter.default.post(name: .bearyDidBlockUser, object: userId)
                         BearyToast.show(in: vc.view, message: "已拉黑")
