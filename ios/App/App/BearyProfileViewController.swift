@@ -43,10 +43,6 @@ import CoreImage
 // - 小熊回应墙：标题“小熊回应”+ 横滑表情 × 计数 + “共收到 N 只”，
 //   emotes_total > 0 才显示，数据直接用 profile 下发的 emotes_received /
 //   emotes_total（profilePayload，own 与 other 均含，不另拉 /api/stats）。
-// - 小熊夜巡（本批新增，模型与接口在 BearyNightPatrol.swift，不改 BearyAPI.swift）：
-//   回应墙顶部入口“昨夜小熊来过 · N 枚脚印”，点脚印弹该夜短评；仅本人
-//   主页且 Plus 有效时显示现行夜，Plus 到期后只显示旧脚印停跑态，非会员
-//   与他人主页一律无入口；脚印数不计入回应墙“共收到 N 只”。
 // - C2：齿轮直达设置页，退出登录改走设置页独立按钮（仍是 BearyAPI.logout，
 //   /api/account/logout，见文末注记；设置页内逻辑一字不动）。
 // - 分享：优先 https://teddyhn.com/beary/@<handle>（取不到 handle 才回退
@@ -343,15 +339,10 @@ class BearyProfileViewController: UIViewController {
     private var modulesProfileId: Int?
     /// 语料代次：每次刷新 +1；在途旧代次回包直接丢弃，防切账号后旧页覆盖新语料。
     private var modulesGeneration = 0
-    /// 提速：资料加载代次——每次 loadProfile +1。夜巡 / 模块的“本轮已起”
+    /// 提速：资料加载代次——每次 loadProfile +1。模块的“本轮已起”
     /// 标记按代次去重：首屏 viewDidLoad 先起、资料回包到达时不再重起；
     /// 下拉刷新调 loadProfile 即换代次，回包仍正常重起。
     private var profileLoadCycle = 0
-    private var nightPatrolStartedCycle: Int?
-    private var nightPatrolLoading = false
-    /// 10 项补起：本轮已用掉的夜巡自动补拉代次——每轮资料加载（profileLoadCycle）
-    /// 最多补拉一次；代次一换自动恢复资格，不用在 loadProfile 里手动清。
-    private var nightPatrolRetriedCycle: Int?
     private var modulesStartedCycle: Int?
     /// 已拉到的作者条目（分页累积、按 id 去重）；未完成且无部分态时 renderModules
     /// 不画卡——半截语料的空白是假空白，会撒谎；部分态（缓存快照 / 游标缺失）
@@ -1194,82 +1185,6 @@ class BearyProfileViewController: UIViewController {
         return labelValue
     }()
 
-    // MARK: - 小熊夜巡入口（回应墙顶部；仅本人主页，见 BearyNightPatrol.swift 门控）
-
-    private let nightContainer: UIView = {
-        let viewValue = UIView()
-        viewValue.translatesAutoresizingMaskIntoConstraints = false
-        viewValue.backgroundColor = BearyColors.bg
-        viewValue.layer.borderWidth = 1
-        viewValue.layer.cornerRadius = BearyCorners.single
-        viewValue.isHidden = true
-        return viewValue
-    }()
-
-    private let nightIconView: UIImageView = {
-        let imageViewValue = UIImageView()
-        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
-        imageViewValue.tintColor = BearyColors.ink
-        imageViewValue.contentMode = .scaleAspectFit
-        return imageViewValue
-    }()
-
-    private let nightTitleLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))
-        labelValue.adjustsFontForContentSizeCategory = true
-        labelValue.textColor = BearyColors.ink
-        return labelValue
-    }()
-
-    private let nightSubtitleLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 12)
-        labelValue.textColor = BearyColors.gray
-        return labelValue
-    }()
-
-    private let nightChevronView: UIImageView = {
-        let imageViewValue = UIImageView()
-        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
-        imageViewValue.tintColor = BearyColors.gray
-        imageViewValue.contentMode = .scaleAspectFit
-        imageViewValue.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 16)
-        return imageViewValue
-    }()
-
-    private let nightEntryButton: UIButton = {
-        let buttonValue = UIButton(type: .custom)
-        buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.backgroundColor = .clear
-        buttonValue.accessibilityLabel = "昨夜小熊来过，点按查看脚印短评"
-        return buttonValue
-    }()
-
-    private let nightTrailScrollView: UIScrollView = {
-        let scrollViewValue = UIScrollView()
-        scrollViewValue.translatesAutoresizingMaskIntoConstraints = false
-        scrollViewValue.showsHorizontalScrollIndicator = false
-        return scrollViewValue
-    }()
-
-    private let nightTrailStack: UIStackView = {
-        let stackValue = UIStackView()
-        stackValue.translatesAutoresizingMaskIntoConstraints = false
-        stackValue.axis = .horizontal
-        stackValue.spacing = 8
-        stackValue.alignment = .center
-        return stackValue
-    }()
-
-    /// 当前渲染的最近一夜脚印（与服务端回包 nights[0] 对应；旧夜暂不设浏览入口）。
-    private var nightFootprints: [NightPatrolFootprint] = []
-    private var nightDateText: String?
-    private var nightIsPaused = false
-    private var nightHasAnimated = false
-
     // MARK: - 批 D：个人签名（名字下方一句话）与个性化模块容器
     //
     // 位置排法（预览定版）：封面 → 头像 → 名字 → 签名 → 统计 → 回应墙 →
@@ -1970,7 +1885,7 @@ class BearyProfileViewController: UIViewController {
     private lazy var avatarTopWithCoverConstraint: NSLayoutConstraint = avatarContainerView.topAnchor.constraint(equalTo: coverClipView.bottomAnchor, constant: -28)
     private lazy var avatarTopWithoutCoverConstraint: NSLayoutConstraint = avatarContainerView.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 20)
     /// tab 区挪位（2026-10-30）：标签顶改贴回应墙底——墙隐藏时高为 0，
-    /// 标签距上一可见元素（夜巡 / 统计）仍为 16，与 F17 间隙规矩一致；
+    /// 标签距上一可见元素（墙 / 统计）仍为 16，与 F17 间隙规矩一致；
     /// 模块容器已由本批搬到脚部，不再顺延到标签下方。
     private lazy var tabsTopConstraint: NSLayoutConstraint = tabsContainer.topAnchor.constraint(equalTo: wallContainer.bottomAnchor, constant: 16)
     /// tab 与卡片贴在一起（2026-10-31）：模块容器已不在 header，改由
@@ -2001,18 +1916,15 @@ class BearyProfileViewController: UIViewController {
     /// display:none 时日历即首项）；有 handle 时贴 handle 后 5。两约束二选一。
     private lazy var joinedIconLeadingWithHandleConstraint: NSLayoutConstraint = joinedIconView.leadingAnchor.constraint(equalTo: handleLabel.trailingAnchor, constant: 5)
     private lazy var joinedIconLeadingWithoutHandleConstraint: NSLayoutConstraint = joinedIconView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16)
-    /// 夜巡入口贴统计行下方、回应墙上方（F17 同款：隐藏时顶间隙归零）。
-    private lazy var nightTopConstraint: NSLayoutConstraint = nightContainer.topAnchor.constraint(equalTo: publicCountLabel.bottomAnchor, constant: 10)
-    private lazy var wallTopConstraint: NSLayoutConstraint = wallContainer.topAnchor.constraint(equalTo: nightContainer.bottomAnchor, constant: 10)
+    /// 回应墙贴统计行下方（F17 同款：隐藏时顶间隙归零）。
+    private lazy var wallTopConstraint: NSLayoutConstraint = wallContainer.topAnchor.constraint(equalTo: publicCountLabel.bottomAnchor, constant: 10)
 
     private func updateHeaderSpacing() {
-        nightTopConstraint.constant = nightContainer.isHidden ? 0 : 10
         wallTopConstraint.constant = wallContainer.isHidden ? 0 : 10
         // 模块容器已不在 header（见 refreshFooter），间距链里不再有它；
-        // 标签距上一可见元素（墙 / 夜巡 / 统计）恒为 16，见 tabsTopConstraint。
+        // 标签距上一可见元素（墙 / 统计）恒为 16，见 tabsTopConstraint。
         tabsTopConstraint.constant = 16
     }
-    private lazy var nightHeightConstraint: NSLayoutConstraint = nightContainer.heightAnchor.constraint(equalToConstant: 0)
     private lazy var wallHeightConstraint: NSLayoutConstraint = wallContainer.heightAnchor.constraint(equalToConstant: 0)
     private lazy var topBarHeightConstraint: NSLayoutConstraint = topBarView.heightAnchor.constraint(equalToConstant: 0)
     /// 顶栏顶锚二选一（2026-10-29 封面伸进状态栏）：容器态（tab 页）表顶改
@@ -2122,11 +2034,10 @@ class BearyProfileViewController: UIViewController {
             loadTab(forceReload: true)
         }
         if targetUserIdValue != nil, isOwnProfile {
-            // 提速：夜巡（只读会话身份）与模块语料（按 id 拉作者 scope）
-            // 均不依赖资料回包，与资料 / 标签三路并行，不再串在
-            // handleProfileResult 之后；资料回包到达时由代次守卫去重、
-            // 不再重起。handle 目标（id 未知、本人与否未定）仍走回包路径。
-            loadNightPatrol()
+            // 提速：模块语料（按 id 拉作者 scope）不依赖资料回包，与资料 /
+            // 标签三路并行，不再串在 handleProfileResult 之后；资料回包
+            // 到达时由代次守卫去重、不再重起。handle 目标（id 未知、本人
+            // 与否未定）仍走回包路径。
             scheduleModulesRefresh()
         }
     }
@@ -2719,7 +2630,7 @@ class BearyProfileViewController: UIViewController {
     /// 故重叠只在滚动中出现、静止量高量不出来。#250 删情绪月历、
     /// #246 把 tab 区挪到墙下方后，封顶改按首个未位移元素算：合并后顺序为
     /// 墙→标签，首个未位移元素恒为标签顶（模块已搬到脚部，不再作封顶）；
-    /// 墙／夜巡／统计三分支的位移均以到标签顶的布局间隙为上限（现行 16），
+    /// 墙／统计两分支的位移均以到标签顶的布局间隙为上限（现行 16），
     /// max(..., 0) 保底不为负，末位可见头元素下移不再压进标签。
     /// 间隙用 center／bounds 量布局位置（不受 transform 影响），故滚动中仍准。
     /// 墙下方间隙定死（2026-10-31 真机报“墙下方间隙随滑动变大变小”根因）：
@@ -2727,7 +2638,7 @@ class BearyProfileViewController: UIViewController {
     /// cappedShift、标签不动时，墙→标签视觉间隙 = 布局 16 − cappedShift，
     /// 上滑 ramp 内 cappedShift 从 0 走到 16，间隙就从 16 缩到 0，
     /// 回滑／回弹时再长回 16，看起来就是随滑动伸缩；三分支同理
-    /// （墙隐藏时夜巡／统计→标签也一样被吃掉）。修法：标签跟本分支
+    /// （墙隐藏时统计→标签也一样被吃掉）。修法：标签跟本分支
     /// 末位元素的封顶值同移，则墙→标签视觉间距恒等于布局值 16（模块已搬脚部，不再参与 header 间隙），
     /// 上滑／封面伸缩（位移 0）／回弹／墙隐藏可见切换各态下都不变；
     /// header 布局高不动（只改 transform）；残留边界：模块视觉底边在深滑时
@@ -2754,7 +2665,7 @@ class BearyProfileViewController: UIViewController {
     /// 新行在 willDisplay 时按当前跟移值落位，复用时 prepareForReuse
     /// 已把 diary 卡 contentView.transform 归零、willDisplay 再补上。
     /// 2026-11-01 统一位移（本函数内注释为准）：上文 #260／#112 的封顶口径
-    /// 已废——名字以下整段（统计／夜巡／墙／标签／行／脚部）一律拿同一个
+    /// 已废——名字以下整段（统计／墙／标签／行／脚部）一律拿同一个
     /// fullShift，不再分 capped／full 两档；统计→墙、墙→标签、标签→首卡
     /// 在任何滚动位置都恒等于布局值，封顶计算与 center 现算已整段删除。
     private func applyProfileBelowShift(_ shift: CGFloat) {
@@ -2780,7 +2691,7 @@ class BearyProfileViewController: UIViewController {
         // 标签跟移（见函数头注释）；模块容器已搬到脚部（表格行下方），滚动位移不跟移（见上）。
         modulesContainer.transform = .identity
         // 统一位移（2026-11-01 真机报 tab→首卡、墙→tab 间距随滑动呼吸的根治）：
-        // 旧口径是三分支各算一个 cappedShift（墙／夜巡／统计到标签顶的布局间隙，
+        // 旧口径是两分支各算一个 cappedShift（墙／统计到标签顶的布局间隙，
         // 用已被 transform 污染的 center 现算）：稳态下恒等于 16，但墙刚出现
         // （transform 还是 .identity）、入场动画在途、分支切换这几拍里，墙与标签
         // 的 transform 短暂脱节，封顶值先 overshoot、下一滚动事件再 snap 回，
@@ -2788,14 +2699,13 @@ class BearyProfileViewController: UIViewController {
         // 统计→墙本身就有 0→4pt 的差值。
         // #260 之后标签已跟移、#112 之后行已跟移，封顶的存在理由已消失：
         // 墙移多少、标签和行就移多少，墙永远压不到标签；故名字以下整段
-        // （统计／夜巡／墙／标签／行／脚部）一律拿同一个 fullShift，
+        // （统计／墙／标签／行／脚部）一律拿同一个 fullShift，
         // 统计→墙、墙→标签、标签→首卡、行间、末行→脚部在任何滚动位置都
         // 恒等于布局值（16／16／32／行距／脚距），不再有任何差值项。
         // 头像 lag（27）与名字位移（20）的 7pt 差是 v22 封面折叠编排本身，
         // 不在本修法内（顶栏与封面折叠不动）。
         let wallVisible = !wallContainer.isHidden && wallContainer.bounds.height > 0
         if wallVisible {
-            nightContainer.transform = fullShift
             wallContainer.transform = fullShift
             tabsContainer.transform = fullShift
             modulesContainer.transform = .identity  // #257 脚部模块不跟 header 位移
@@ -2806,15 +2716,6 @@ class BearyProfileViewController: UIViewController {
             likesCountLabel.transform = fullShift
             publicTextLabel?.transform = fullShift
             likesTextLabel?.transform = fullShift
-        } else if !nightContainer.isHidden && nightContainer.bounds.height > 0 {
-            nightContainer.transform = fullShift
-            tabsContainer.transform = fullShift
-            modulesContainer.transform = .identity  // #257 脚部模块不跟 header 位移
-            publicCountLabel.transform = fullShift
-            likesCountLabel.transform = fullShift
-            publicTextLabel?.transform = fullShift
-            likesTextLabel?.transform = fullShift
-            wallContainer.transform = fullShift
         } else {
             publicCountLabel.transform = fullShift
             likesCountLabel.transform = fullShift
@@ -2822,7 +2723,6 @@ class BearyProfileViewController: UIViewController {
             likesTextLabel?.transform = fullShift
             tabsContainer.transform = fullShift
             modulesContainer.transform = .identity  // #257 脚部模块不跟 header 位移
-            nightContainer.transform = fullShift
             wallContainer.transform = fullShift
             wallTitleLabel.transform = .identity
             wallScrollView.transform = .identity
@@ -2977,16 +2877,6 @@ class BearyProfileViewController: UIViewController {
         headerView.addSubview(likesCountLabel)
         headerView.addSubview(signatureContainer)
         signatureContainer.addSubview(signatureLabel)
-        headerView.addSubview(nightContainer)
-        nightContainer.addSubview(nightIconView)
-        nightContainer.addSubview(nightTitleLabel)
-        nightContainer.addSubview(nightSubtitleLabel)
-        nightContainer.addSubview(nightChevronView)
-        nightContainer.addSubview(nightTrailScrollView)
-        nightTrailScrollView.addSubview(nightTrailStack)
-        nightContainer.addSubview(nightEntryButton)
-        nightEntryButton.addTarget(self, action: #selector(nightEntryTapped), for: .touchUpInside)
-        nightEntryButton.bearyAddPressFeedback()
         headerView.addSubview(wallContainer)
         headerView.addSubview(tabsContainer)
         // 模块容器不在 header：tab 下方直接就是表格行，模块组改由
@@ -3016,7 +2906,6 @@ class BearyProfileViewController: UIViewController {
             coverHeightConstraint,
             avatarTopWithCoverConstraint,
             tabsTopConstraint,
-            nightHeightConstraint,
             wallHeightConstraint,
             modulesHeightConstraint,
             signatureHeightConstraint,
@@ -3129,40 +3018,6 @@ class BearyProfileViewController: UIViewController {
             likesTextLabelValue.centerYAnchor.constraint(equalTo: publicCountLabel.centerYAnchor),
             likesTextLabelValue.leadingAnchor.constraint(equalTo: likesCountLabel.trailingAnchor, constant: 4),
             likesTextLabelValue.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -16),
-
-            // 夜巡入口：与墙同列（左右各 20）；入口行盖满标题区保证热区，
-            // 脚印条在标题行下方独占一行横滑（脚印钮 44pt，见 renderNightPatrol）。
-            nightContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: BearySpace.lg),
-            nightContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -BearySpace.lg),
-            nightTopConstraint,
-            nightIconView.leadingAnchor.constraint(equalTo: nightContainer.leadingAnchor, constant: 14),
-            nightIconView.topAnchor.constraint(equalTo: nightContainer.topAnchor, constant: 12),
-            nightIconView.widthAnchor.constraint(equalToConstant: 22),
-            nightIconView.heightAnchor.constraint(equalToConstant: 22),
-            nightTitleLabel.leadingAnchor.constraint(equalTo: nightIconView.trailingAnchor, constant: 8),
-            nightTitleLabel.topAnchor.constraint(equalTo: nightContainer.topAnchor, constant: 12),
-            nightTitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: nightChevronView.leadingAnchor, constant: -8),
-            nightSubtitleLabel.leadingAnchor.constraint(equalTo: nightTitleLabel.leadingAnchor),
-            nightSubtitleLabel.topAnchor.constraint(equalTo: nightTitleLabel.bottomAnchor, constant: 2),
-            nightSubtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: nightContainer.trailingAnchor, constant: -14),
-            nightChevronView.trailingAnchor.constraint(equalTo: nightContainer.trailingAnchor, constant: -14),
-            nightChevronView.centerYAnchor.constraint(equalTo: nightTitleLabel.centerYAnchor),
-            nightChevronView.widthAnchor.constraint(equalToConstant: 16),
-            nightChevronView.heightAnchor.constraint(equalToConstant: 16),
-            nightEntryButton.leadingAnchor.constraint(equalTo: nightContainer.leadingAnchor),
-            nightEntryButton.trailingAnchor.constraint(equalTo: nightContainer.trailingAnchor),
-            nightEntryButton.topAnchor.constraint(equalTo: nightContainer.topAnchor),
-            nightEntryButton.bottomAnchor.constraint(equalTo: nightSubtitleLabel.bottomAnchor, constant: 10),
-            nightTrailScrollView.leadingAnchor.constraint(equalTo: nightContainer.leadingAnchor, constant: 14),
-            nightTrailScrollView.trailingAnchor.constraint(equalTo: nightContainer.trailingAnchor, constant: -14),
-            nightTrailScrollView.topAnchor.constraint(equalTo: nightEntryButton.bottomAnchor),
-            nightTrailScrollView.bottomAnchor.constraint(equalTo: nightContainer.bottomAnchor, constant: -12),
-            nightTrailScrollView.heightAnchor.constraint(equalToConstant: 44),
-            nightTrailStack.topAnchor.constraint(equalTo: nightTrailScrollView.topAnchor),
-            nightTrailStack.leadingAnchor.constraint(equalTo: nightTrailScrollView.leadingAnchor),
-            nightTrailStack.trailingAnchor.constraint(equalTo: nightTrailScrollView.trailingAnchor),
-            nightTrailStack.bottomAnchor.constraint(equalTo: nightTrailScrollView.bottomAnchor),
-            nightTrailStack.heightAnchor.constraint(equalTo: nightTrailScrollView.heightAnchor),
 
             wallContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: BearySpace.lg),
             wallContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -BearySpace.lg),
@@ -3291,7 +3146,6 @@ class BearyProfileViewController: UIViewController {
         editButton.layer.bearyDynamicBorderColor = BearyColors.line
         profileErrorRetryButton?.layer.bearyDynamicBorderColor = BearyColors.line
         gearButton.layer.bearyDynamicBorderColor = BearyColors.line
-        nightContainer.layer.bearyDynamicBorderColor = BearyColors.line
         wallContainer.layer.bearyDynamicBorderColor = BearyColors.line
         // 审计-个人页设置：用户名阴影死代码已随 nameLabel 定义处整删，
         // 此处 trait 重赋分支同步删除（header 用户名发光 Li 2026-10-31 已删，
@@ -3318,10 +3172,6 @@ class BearyProfileViewController: UIViewController {
         updateDMButton()
         // iCity：更多菜单只属他人主页（举报/拉黑均以他人为对象）。
         topMoreButton.isHidden = own
-        if !own {
-            // 夜巡只给本人看：他人模式下旧夜巡态一律清掉（不留上一位用户的脚印）。
-            hideNightPatrol()
-        }
         savedTabButton.isHidden = !own
         if !own && currentTab == .saved {
             currentTab = .diary
@@ -3329,7 +3179,7 @@ class BearyProfileViewController: UIViewController {
         applyTabSelection()
         applyEmailRow()
         updateTopBarVisibility()
-        // F17：他人主页夜巡在此隐藏，须立即重算间距链；宽未出时跳过，首布局会补算。
+        // F17：他人主页在此须立即重算间距链；宽未出时跳过，首布局会补算。
         if headerWidthValue > 0 {
             layoutHeaderForced(widthValue: headerWidthValue)
         }
@@ -3684,13 +3534,11 @@ class BearyProfileViewController: UIViewController {
     // MARK: - 数据：资料
 
     private func loadProfile() {
-        // 提速代次：每轮资料加载 +1，供夜巡 / 模块的本轮去重守卫用。
+        // 提速代次：每轮资料加载 +1，供模块的本轮去重守卫用。
         profileLoadCycle += 1
         // 第三轮第 3 项：本轮次快照随请求走，资料回调先比轮次——旧轮回包
         // （换目标/下拉刷新后先到的旧资料）直接丢弃，不再覆盖新轮资料头。
         let cycle = profileLoadCycle
-        // 夜巡先清后拉：换目标 / 换号时不闪上一位用户的脚印（私密夜巡尤其不可残留）。
-        hideNightPatrol()
         if let targetId = targetUserIdValue {
             BearyAPI.shared.fetchUserProfile(userIdValue: targetId) { [weak self] result in
                 DispatchQueue.main.async {
@@ -3761,11 +3609,6 @@ class BearyProfileViewController: UIViewController {
             refreshFollowState()
             // 私信钮 can 同点查（目标 id 已知；失败一律隐藏）。
             refreshDMCan()
-            if isOwnProfile {
-                // 夜巡为本人专属：资料回包后另拉夜巡（失败即隐藏，不 toast）。
-                // 提速：本轮已在 viewDidLoad 先起时此处由代次守卫跳过，不重发。
-                loadNightPatrol(fromProfileResult: true)
-            }
             // 批 D：签名（名字下方）与模块语料跟资料走同一回包；资料失败时
             // 不动旧模块（与 G12「保留整套旧头」同哲学，失败不清空已显内容）。
             renderSignature()
@@ -3810,7 +3653,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 116 数据填入动效（容器版）：分区首次出现时只淡入容器本身（alpha，
-    /// 不动 transform／布局）；已可见时不重播。夜巡／回应墙已有自己的
+    /// 不动 transform／布局）；已可见时不重播。回应墙已有自己的
     /// 入场动画，不走本函数。
     private func fadeInViewIfAppearing(_ view: UIView, wasHidden: Bool) {
         guard wasHidden, !view.isHidden else { return }
@@ -4059,252 +3902,6 @@ class BearyProfileViewController: UIViewController {
                 })
             } else {
                 wallContainer.transform = CGAffineTransform(translationX: 0, y: endShift)
-            }
-        }
-    }
-
-    // MARK: - 小熊夜巡（回应墙顶部；仅本人主页；失败静默隐藏，绝不编造脚印）
-
-    private func hideNightPatrol() {
-        nightFootprints = []
-        nightDateText = nil
-        nightIsPaused = false
-        for arrangedView in nightTrailStack.arrangedSubviews {
-            nightTrailStack.removeArrangedSubview(arrangedView)
-            arrangedView.removeFromSuperview()
-        }
-        nightContainer.isHidden = true
-        nightContainer.alpha = 1
-        nightContainer.transform = .identity
-        nightHeightConstraint.isActive = true
-    }
-
-    private func loadNightPatrol(fromProfileResult: Bool = false) {
-        guard isOwnProfile else { return }
-        // 提速去重：在途不重发；资料回包到达时若本轮已在 viewDidLoad 起过，不再重起。
-        if nightPatrolLoading { return }
-        if fromProfileResult, nightPatrolStartedCycle == profileLoadCycle { return }
-        nightPatrolStartedCycle = profileLoadCycle
-        nightPatrolLoading = true
-        BearyAPI.shared.fetchNightPatrol { [weak self] result in
-            DispatchQueue.main.async {
-                guard let strongSelf = self else { return }
-                strongSelf.nightPatrolLoading = false
-                guard strongSelf.isOwnProfile else { return }
-                switch result {
-                case .success(let response):
-                    // 防御过滤：本人视角原样；isOwnProfile 翻转的竞态下私密记录仍被滤掉。
-                    let nights = response.sanitized(isOwnProfile: strongSelf.isOwnProfile)
-                    guard let latest = nights.first,
-                          let footprints = latest.footprints, !footprints.isEmpty else {
-                        // 无记录 = 不显示入口（非会员、未跑夜巡、空夜均同此态；
-                        // 不留“0 枚脚印”空行，与回应墙空墙隐藏同哲学）。
-                        strongSelf.hideNightPatrol()
-                        strongSelf.layoutHeaderForced(widthValue: strongSelf.headerWidthValue)
-                        return
-                    }
-                    // 停跑态以服务端 patrol_paused 为准；缺失时以 profile.plus 回退
-                    // （plus 为 false 且有旧记录 = 已停跑、旧脚印可回看）。
-                    let paused = response.patrolPaused ?? !(strongSelf.profile?.plus ?? false)
-                    strongSelf.renderNightPatrol(night: latest, footprints: footprints, paused: paused)
-                case .failure(let error):
-                    // 后端未上线（404）/ 401 / 网络失败：静默隐藏，不 toast、不造假数据。
-                    strongSelf.hideNightPatrol()
-                    strongSelf.layoutHeaderForced(widthValue: strongSelf.headerWidthValue)
-                    // 10 项补起（失败后自动补拉，本轮最多一次）：弱网瞬时失败
-                    // 时入口若就此消失，用户本轮再无入口、须手动下拉刷新才回得来，
-                    // 且失败态与“无夜巡记录”长得一模一样、无从察觉。补拉只补瞬时类
-                    // 失败（.network 与 5xx）；404（后端未上线）、401（登录态问题）、
-                    // 取消、解码与服务端业务错不补——补了也成功不了，徒增请求。
-                    // 补拉是失败回调内直接再调一次 loadNightPatrol（此时在途旗已
-                    // 落，不与在途请求重叠；本轮补拉资格已记代次，补拉再失败不
-                    // 再补，不成循环）；成功路径一字不动。注意资料回包触发的
-                    // loadNightPatrol(fromProfileResult:) 仍受 startedCycle 去重，
-                    // 故本补拉不依赖“资料后到”的时序——资料先到、夜巡后失败的
-                    // 顺序同样能补上；下一轮 loadProfile（下拉刷新等）换代次后
-                    // 本来就会重拉，不在本支的补拉计数内。
-                    if strongSelf.nightPatrolRetriedCycle != strongSelf.profileLoadCycle,
-                       strongSelf.isNightPatrolRetryable(error) {
-                        strongSelf.nightPatrolRetriedCycle = strongSelf.profileLoadCycle
-                        strongSelf.loadNightPatrol()
-                    }
-                }
-            }
-        }
-    }
-
-    /// 10 项补起口径：只补瞬时类失败。429 不补（立即重发只会加重限流），
-    /// 解码错不补（回包形态问题、重发同错），其余一律不补。
-    private func isNightPatrolRetryable(_ error: APIError) -> Bool {
-        switch error {
-        case .network:
-            return true
-        case .http(let code, _):
-            return code >= 500
-        default:
-            return false
-        }
-    }
-
-    private func renderNightPatrol(night: NightPatrolNight, footprints: [NightPatrolFootprint], paused: Bool) {
-        nightFootprints = footprints
-        nightDateText = BearyNightPatrolTemplate.nightLabel(for: night.nightDate)
-        nightIsPaused = paused
-        for arrangedView in nightTrailStack.arrangedSubviews {
-            nightTrailStack.removeArrangedSubview(arrangedView)
-            arrangedView.removeFromSuperview()
-        }
-        let count = footprints.count
-        if paused {
-            nightTitleLabel.text = "小熊夜巡已停跑"
-            nightSubtitleLabel.text = "Plus 到期后不再产生新脚印 · 旧脚印仍可回看"
-            nightIconView.image = NightPatrolIcons.image(named: NightPatrolIcons.nightPaused, pointSize: 22)
-                ?? BearyIconImages.image(named: "icon_moon", pointSize: 22)
-            nightEntryButton.accessibilityLabel = "小熊夜巡已停跑，点按查看旧脚印短评"
-        } else {
-            nightTitleLabel.text = "昨夜小熊来过 · \(count) 枚脚印"
-            let dateText = BearyNightPatrolTemplate.nightLabel(for: night.nightDate) ?? "昨夜"
-            let hasPrivate = footprints.contains { $0.isPrivate == true }
-            nightSubtitleLabel.text = dateText + " · 点脚印看短评" + (hasPrivate ? " · 私密夜巡仅你可见" : "")
-            nightIconView.image = NightPatrolIcons.image(named: NightPatrolIcons.pawTrail, pointSize: 22)
-                ?? BearyIconImages.image(named: "icon_paw", pointSize: 22)
-            nightEntryButton.accessibilityLabel = "昨夜小熊来过，\(count) 枚脚印，点按查看脚印短评"
-        }
-        for (index, footprint) in footprints.enumerated() {
-            let wrapper = UIView()
-            wrapper.translatesAutoresizingMaskIntoConstraints = false
-            let buttonValue = UIButton(type: .custom)
-            buttonValue.translatesAutoresizingMaskIntoConstraints = false
-            buttonValue.backgroundColor = BearyColors.hov
-            buttonValue.layer.cornerRadius = BearyCorners.single
-            buttonValue.clipsToBounds = true
-            buttonValue.tag = index
-            buttonValue.setImage(BearyIconImages.image(named: "icon_paw", pointSize: 24), for: .normal)
-            buttonValue.tintColor = BearyColors.ink
-            buttonValue.addTarget(self, action: #selector(nightFootprintTapped(_:)), for: .touchUpInside)
-            buttonValue.bearyAddPressFeedback()
-            var accessText = "第 \(index + 1) 枚脚印"
-            if footprint.isAI { accessText += "，AI 短评" }
-            if footprint.isPrivate == true { accessText += "，仅你可见" }
-            buttonValue.accessibilityLabel = accessText + "，点按查看短评"
-            wrapper.addSubview(buttonValue)
-            if footprint.isAI {
-                // AI 角标套在脚印右上角：新图标 icon_ai_paw 未到货时回退
-                // 9pt 橙色“AI”文字角标（文字不是图标，不冒充官方资产）。
-                if let aiImage = NightPatrolIcons.image(named: NightPatrolIcons.aiPaw, pointSize: 16) {
-                    let badgeView = UIImageView(image: aiImage)
-                    badgeView.translatesAutoresizingMaskIntoConstraints = false
-                    badgeView.tintColor = BearyColors.ink
-                    badgeView.contentMode = .scaleAspectFit
-                    wrapper.addSubview(badgeView)
-                    NSLayoutConstraint.activate([
-                        badgeView.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-                        badgeView.topAnchor.constraint(equalTo: wrapper.topAnchor),
-                        badgeView.widthAnchor.constraint(equalToConstant: 16),
-                        badgeView.heightAnchor.constraint(equalToConstant: 16),
-                    ])
-                } else {
-                    let badgeLabel = UILabel()
-                    badgeLabel.translatesAutoresizingMaskIntoConstraints = false
-                    badgeLabel.text = "AI"
-                    badgeLabel.font = UIFont.systemFont(ofSize: 10, weight: .bold)
-                    badgeLabel.textColor = BearyColors.ink
-                    badgeLabel.backgroundColor = BearyColors.bg
-                    badgeLabel.layer.cornerRadius = 4
-                    badgeLabel.clipsToBounds = true
-                    wrapper.addSubview(badgeLabel)
-                    NSLayoutConstraint.activate([
-                        badgeLabel.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-                        badgeLabel.topAnchor.constraint(equalTo: wrapper.topAnchor),
-                    ])
-                }
-            }
-            NSLayoutConstraint.activate([
-                buttonValue.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
-                buttonValue.topAnchor.constraint(equalTo: wrapper.topAnchor),
-                buttonValue.widthAnchor.constraint(equalToConstant: 44),
-                buttonValue.heightAnchor.constraint(equalToConstant: 44),
-                wrapper.widthAnchor.constraint(equalToConstant: 44),
-                wrapper.heightAnchor.constraint(equalToConstant: 44),
-            ])
-            nightTrailStack.addArrangedSubview(wrapper)
-        }
-        // 脚印数与回应墙总数严格分开：这里只改夜巡标题，不碰 wallTotalLabel。
-        let wasHidden = nightContainer.isHidden
-        nightContainer.isHidden = false
-        nightHeightConstraint.isActive = false
-        layoutHeaderForced(widthValue: headerWidthValue)
-        if wasHidden && !nightHasAnimated {
-            nightHasAnimated = true
-            // 与墙同款：入场收尾与滚动逻辑同口径，夜巡与统计／墙／标签／行
-            // 一律拿同一个整段位移（applyProfileBelowShift 的 fullShift）；
-            // 减动效下不播动画、直接落位，免得夜巡以 .identity 残留到下一
-            // 滚动事件才 snap。
-            let endShift = self.currentBelowShift
-            if !UIAccessibility.isReduceMotionEnabled {
-                nightContainer.alpha = 0
-                nightContainer.transform = CGAffineTransform(translationX: 0, y: endShift + 8)
-                UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut, animations: {
-                    self.nightContainer.alpha = 1
-                    self.nightContainer.transform = CGAffineTransform(translationX: 0, y: endShift)
-                })
-            } else {
-                nightContainer.transform = CGAffineTransform(translationX: 0, y: endShift)
-            }
-        }
-    }
-
-    @objc private func nightEntryTapped() {
-        guard let first = nightFootprints.first else { return }
-        presentNightFootprintSheet(footprint: first, index: 0)
-    }
-
-    @objc private func nightFootprintTapped(_ sender: UIButton) {
-        let index = sender.tag
-        guard index >= 0, index < nightFootprints.count else { return }
-        presentNightFootprintSheet(footprint: nightFootprints[index], index: index)
-    }
-
-    /// 点脚印弹该夜短评（系统 UIAlertController；iOS 26 下即官方玻璃观感）。
-    private func presentNightFootprintSheet(footprint: NightPatrolFootprint, index: Int) {
-        let sourceText = footprint.isAI ? "AI 短评" : "小熊短评"
-        let titleText = "第 \(index + 1) 枚脚印 · \(sourceText)"
-        var messageText = ""
-        if footprint.isPrivate == true {
-            messageText += "仅你可见 · 这篇是私密日记的夜巡。\n\n"
-        }
-        messageText += BearyNightPatrolTemplate.displayNote(for: footprint)
-        messageText += "\n\n" + (nightDateText ?? "昨夜") + " · \(sourceText)"
-        let sheet = UIAlertController(title: titleText, message: messageText, preferredStyle: .alert)
-        if let entryIdValue = footprint.entryId, !entryIdValue.isEmpty {
-            sheet.addAction(UIAlertAction(title: "去看这篇日记", style: .default, handler: { [weak self] _ in
-                self?.openNightFootprintEntry(entryIdValue: entryIdValue)
-            }))
-        }
-        sheet.addAction(UIAlertAction(title: "知道了", style: .cancel))
-        present(sheet, animated: BearyMotion.animated(true))
-    }
-
-    private func openNightFootprintEntry(entryIdValue: String) {
-        BearyAPI.shared.fetchEntry(id: entryIdValue) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let strongSelf = self else { return }
-                switch result {
-                case .success(let fetched):
-                    // onOpenEntry 内部按 id 重拉并做可见性门；这里传回包的完整 Entry。
-                    strongSelf.onOpenEntry?(fetched)
-                case .failure(let error):
-                    // 404 = 被删；403 = 私密篇不可见——两者都不展开原因，仍走原句，
-                    // 不向他人泄露“存在但私密”。取消不弹 toast；其余加载失败可重试。
-                    if case .cancelled = error { return }
-                    if case .notFound = error {
-                        BearyToast.show(in: strongSelf.view, message: "这篇日记不存在或已被删除")
-                    } else if error.isPermissionDenied {
-                        BearyToast.show(in: strongSelf.view, message: "这篇日记不存在或已被删除")
-                    } else {
-                        BearyToast.show(in: strongSelf.view, message: "加载失败，请再试一次，可再次点脚印进入")
-                    }
-                }
             }
         }
     }
