@@ -5414,7 +5414,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func presentCropEditor(for item: ComposerImageItem, source: UIImage) {
         // 磁盘读图是异步的：回到主线程时若已有弹窗在上（草稿箱等），不再叠页。
         if presentedViewController != nil { return }
-        let cropVC = BearyImageCropViewController(image: source, aspectRatio: 1)
+        // 编辑器下游只取最长边 1600px（applyCroppedImage 内 BearyImagePrep
+        // jpegData maxSide 1600），裁剪输出长边 1600 即够，归一化重绘不必
+        // 按原图全尺寸画。
+        let cropVC = BearyImageCropViewController(image: source, aspectRatio: 1, maxOutputSide: 1600)
         cropVC.modalPresentationStyle = .fullScreen
         cropVC.onConfirm = { [weak self, weak item] cropped in
             guard let self = self, let item = item else { return }
