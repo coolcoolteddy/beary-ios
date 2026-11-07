@@ -35,6 +35,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     // 只在“首次请求且尚无本地/旧消息”时出现；有旧消息时保留内容后台刷新。
     private let firstLoadStateView = BearyStateView()
     private var firstLoadPending = true
+    /// 新一轮 01：相对时间分钟边界刷新定时器（页面统一持有，不进 Cell）。
+    private var relativeTimeTimer: Timer?
     // 新行首次出现透明度过渡的已播记账（按消息 id 键，已有行更新不重播）。
     private var fadedRowKeys = Set<String>()
     private let inputBar = UIView()
@@ -403,11 +405,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 self.scrollToBottomIfNeeded()
             }
         }
+        // 新一轮 01：回前台刷新可见行的时间标签（相对时间分钟边界外，前台恢复即刷新）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleForegroundForRelativeTime), name: UIApplication.willEnterForegroundNotification, object: nil)
         loadLatest()
         checkDMPermission()
     }
 
     deinit {
+        relativeTimeTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -417,6 +422,46 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         guard !didShowCorruptStoreToast, BearyDMStore.isStoreCorrupt(accountId: storeAccountId) else { return }
         didShowCorruptStoreToast = true
         BearyToast.show(in: view, message: "本地聊天记录读取失败，原始文件已保留备份")
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        startRelativeTimeTimer()
+        refreshVisibleTimeLabels()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        stopRelativeTimeTimer()
+    }
+
+    /// 新一轮 01：相对时间只由页面统一刷新——首拍对齐下一分钟边界，之后每 60 秒
+    /// 一拍（自调度，计时漂移自动纠回边界）。不要每个 Cell 各开一个 Timer。
+    private func startRelativeTimeTimer() {
+        relativeTimeTimer?.invalidate()
+        let delay = 60.0 - Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 60.0)
+        relativeTimeTimer = Timer.scheduledTimer(withTimeInterval: max(delay, 1.0), repeats: false) { [weak self] _ in
+            self?.refreshVisibleTimeLabels()
+            self?.startRelativeTimeTimer()
+        }
+    }
+
+    private func stopRelativeTimeTimer() {
+        relativeTimeTimer?.invalidate()
+        relativeTimeTimer = nil
+    }
+
+    /// 新一轮 01：只更新可见行的时间 Label（滚动位置、入场动效均不动），不 reloadData。
+    private func refreshVisibleTimeLabels() {
+        guard view.window != nil && !view.isHidden else { return }
+        for cell in tableView.visibleCells {
+            (cell as? BearyDMMessageCell)?.refreshTimeLabel()
+        }
+    }
+
+    @objc private func handleForegroundForRelativeTime() {
+        refreshVisibleTimeLabels()
+        startRelativeTimeTimer()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -1170,6 +1215,8 @@ private final class BearyDMMessageCell: UITableViewCell {
     private let failBadge = UIView()
     private let failMark = UILabel()
     private var onRetry: (() -> Void)?
+    /// 新一轮 01：本行消息的创建时间（毫秒），供页面分钟边界刷新时重算时间标签。
+    private var lastCreatedAtMs: Int?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -1270,9 +1317,35 @@ private final class BearyDMMessageCell: UITableViewCell {
         theirsTextLabel.text = nil
         mineTimeLabel.text = nil
         theirsTimeLabel.text = nil
+        lastCreatedAtMs = nil
         // 失败叹号与重发闭包不得串行（复用 cell 默认无叹号）。
         failButton.isHidden = true
         onRetry = nil
+    }
+
+    /// 气泡时间口径与通知行一致（相对时间：刚刚/X分钟前/X小时前/X天前）。
+    /// 新一轮 01：几秒内的时钟偏差仍算“刚刚”；明显未来（> 5 秒）不误报为刚发送，
+    /// 改走绝对时间显示。
+    private static func relativeTimeText(ms: Int?) -> String {
+        guard let msValue = ms else { return "" }
+        let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
+        let diff = Date().timeIntervalSince(date)
+        if diff < -5 { return BearyText.timeString(ms: msValue) }
+        if diff < 60 { return "刚刚" }
+        if diff < 3600 { return "\(Int(diff / 60))分钟前" }
+        if diff < 86400 { return "\(Int(diff / 3600))小时前" }
+        return "\(Int(diff / 86400))天前"
+    }
+
+    /// 新一轮 01：只刷新本行的时间标签（页面分钟边界定时器调），不触正文/动效。
+    func refreshTimeLabel() {
+        guard let ms = lastCreatedAtMs else { return }
+        let text = Self.relativeTimeText(ms: ms)
+        if mineStack.isHidden {
+            theirsTimeLabel.text = text
+        } else {
+            mineTimeLabel.text = text
+        }
     }
 
     func configure(message: BearyAPI.DMMessage, isMine: Bool, showFail: Bool = false, showUnconfirmed: Bool = false, onRetry: (() -> Void)? = nil) {
@@ -1285,15 +1358,8 @@ private final class BearyDMMessageCell: UITableViewCell {
         self.onRetry = onRetry
         let body = message.body ?? ""
         // 气泡时间口径与通知行一致（相对时间：刚刚/X分钟前/X小时前/X天前）。
-        let timeText: String = {
-            guard let createdAt = message.createdAt else { return "" }
-            let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000.0)
-            let diff = Date().timeIntervalSince(date)
-            if diff < 60 { return "刚刚" }
-            if diff < 3600 { return "\(Int(diff / 60))分钟前" }
-            if diff < 86400 { return "\(Int(diff / 3600))小时前" }
-            return "\(Int(diff / 86400))天前"
-        }()
+        lastCreatedAtMs = message.createdAt
+        let timeText = Self.relativeTimeText(ms: message.createdAt)
         if isMine {
             mineTextLabel.text = body
             mineTimeLabel.text = showUnconfirmed ? timeText + " · 未确认" : timeText
