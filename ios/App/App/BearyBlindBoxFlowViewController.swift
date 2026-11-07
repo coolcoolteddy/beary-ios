@@ -177,6 +177,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private let introLabel = UILabel()
     private let poolStack = UIStackView()
     private let poolButton = BearyButton.make(style: .primaryPill(.ink), title: "放进池子")
+    /// 选篇分页“加载更多 / 重试”入口（第八轮审计 02，地图 #944 同款口径）：
+    /// 触顶时标题“加载更多”、分页中途失败时标题“重试”，平时隐藏。
+    private let poolLoadMoreButton = BearyButton.make(style: .secondaryOutline(.compact), title: "加载更多")
     private let openSection = UIView()
     private let openButton = BearyButton.make(style: .primaryPill(.ink), title: "开盒")
     private let openHintLabel = UILabel()
@@ -210,6 +213,15 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private var poolLoadGeneration = 0
     private var poolCollected: [Entry] = []
     private var poolSeenIds = Set<String>()
+    /// 选篇分页触顶/中断状态（第八轮审计 02，地图 #944 同款口径）：每批上限
+    /// 10 页防无界；触顶时记 poolCapped 并留游标，页内留“加载更多”入口供按需
+    /// 续拉新一批；分页中途失败时记 poolInterrupted 并留失败页游标，页内留
+    /// “重试”入口从中断处续拉，不直接把部分结果当完整。
+    private var poolCapped = false
+    private var poolInterrupted = false
+    private var poolResumeBefore: Int?
+    private var poolResumeBeforeId: String?
+    private var poolResumePage = 1
     private var selectedEntryId: String?
     private var pooledEntryId: String?
     private var exchangeId: String?
@@ -378,6 +390,11 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         poolButton.addTarget(self, action: #selector(poolTapped), for: .touchUpInside)
         poolButton.bearyAddPressFeedback()
 
+        poolLoadMoreButton.translatesAutoresizingMaskIntoConstraints = false
+        poolLoadMoreButton.addTarget(self, action: #selector(didTapPoolLoadMore), for: .touchUpInside)
+        poolLoadMoreButton.bearyAddPressFeedback()
+        poolLoadMoreButton.isHidden = true
+
         // 交换流程图标：icon_exchange（#229 已注册，不画在按钮标题里，只挂图标位）。
         let (exchangeIcon, exchangePlaceholder) = BlindBoxIcons.exchange(pointSize: 20)
         openButton.setImage(exchangeIcon, for: .normal)
@@ -438,6 +455,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         contentStack.addArrangedSubview(spinnerWrap)
         contentStack.addArrangedSubview(introLabel)
         contentStack.addArrangedSubview(poolStack)
+        contentStack.addArrangedSubview(poolLoadMoreButton)
         contentStack.addArrangedSubview(poolButton)
         contentStack.addArrangedSubview(openSection)
         contentStack.addArrangedSubview(receivedView)
@@ -447,6 +465,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         contentStack.addArrangedSubview(errorStateView)
         NSLayoutConstraint.activate([
             poolButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
+            poolLoadMoreButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
         ])
     }
 
@@ -614,6 +633,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         introLabel.isHidden = true
         poolStack.isHidden = true
         poolButton.isHidden = true
+        poolLoadMoreButton.isHidden = true
         openSection.isHidden = true
         receivedView.isHidden = true
         placeholderView.isHidden = true
@@ -633,6 +653,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             openSection.isHidden = pooledEntryId == nil
             poolButton.isEnabled = selectedEntryId != nil && poolBusy == false
             openButton.isEnabled = openBusy == false
+            // 选篇分页入口按状态恢复（第八轮审计 02）：行点按也走 setStep(.pool)，
+            // 显隐不能只在分页完成处管，否则一点行入口就被藏起来。
+            updatePoolLoadMoreButton()
         case .received:
             receivedView.isHidden = false
         case .placeholder(let text):
@@ -734,12 +757,60 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private func loadPoolEntries() {
         // 审计登录杂项：入池不再只拉 50 篇一页（50 篇之后的旧公开日记此前
         // 永远进不了池）：照搬星图页游标分页（before / beforeId、去重、代次
-        // 门控，上限 10 页）拉全量；行内仍按入池资格显 pill（公开 / 私密 /
-        // 今日公开），选中时再按资格过滤（见 renderPoolRows onTap）。
+        // 门控，每批上限 10 页）拉全量；触顶可按需续拉新一批（第八轮审计 02，
+        // 见 poolCapped / didTapPoolLoadMore）；行内仍按入池资格显 pill（公开 /
+        // 私密 / 今日公开），选中时再按资格过滤（见 renderPoolRows onTap）。
         poolLoadGeneration += 1
         poolCollected = []
         poolSeenIds = []
+        poolCapped = false
+        poolInterrupted = false
+        poolResumeBefore = nil
+        poolResumeBeforeId = nil
+        poolResumePage = 1
         loadPoolEntriesPage(before: nil, beforeId: nil, page: 1, generation: poolLoadGeneration)
+    }
+
+    /// 选篇分页入口显隐（第八轮审计 02）：触顶留“加载更多”、中断留“重试”，
+    /// 游标不在时不留入口；其余时候隐藏。setStep(.pool) 与分页完成处共用。
+    private func updatePoolLoadMoreButton() {
+        let show = (poolCapped || poolInterrupted) && poolResumeBefore != nil && poolResumeBeforeId != nil
+        poolLoadMoreButton.isHidden = !show
+        poolLoadMoreButton.setTitle(poolInterrupted ? "重试" : "加载更多", for: .normal)
+    }
+
+    /// 选篇提示文案（第八轮审计 02）：基础文案不变；触顶时追加星图同款明示
+    /// “篇数较多，仅展示最近拉取的 N 篇”（续拉后总数会变，用实际已加载数，
+    /// 不写死 500）；中断时追加部分数据提醒。失败分支的“开盒后今日计数变为
+    /// 1/1”后缀保留（只在中断态出现）。
+    private func updatePoolHint() {
+        var text: String
+        if pooledEntryId == nil {
+            text = "先放进池子，再开盒。私密篇与今日新公开篇不可入池。"
+        } else if poolInterrupted {
+            text = "已放进池子，可以开盒了。开盒后今日计数变为 1/1。"
+        } else {
+            text = "已放进池子，可以开盒了。"
+        }
+        if poolCapped {
+            text += " · 篇数较多，仅展示最近拉取的 \(poolCollected.count) 篇"
+        }
+        if poolInterrupted {
+            text += "仅展示已加载的部分，点按重试可继续加载。"
+        }
+        openHintLabel.text = text
+    }
+
+    /// 选篇分页续拉入口（第八轮审计 02，地图 #944 同款口径）：中断时从失败页
+    /// 游标续拉（页码不动），触顶时从第 10 页末尾游标续拉新一批（page 从 1
+    /// 重新计、最多再 10 页）；已收页与去重集保留、成功后整批成表；点按后先
+    /// 藏入口防重复点按，代次 +1 作废旧回包。
+    @objc private func didTapPoolLoadMore() {
+        poolLoadMoreButton.isHidden = true
+        guard let before = poolResumeBefore, let beforeId = poolResumeBeforeId else { return }
+        poolLoadGeneration += 1
+        let page = poolInterrupted ? poolResumePage : 1
+        loadPoolEntriesPage(before: before, beforeId: beforeId, page: page, generation: poolLoadGeneration)
     }
 
     private func loadPoolEntriesPage(before: Int?, beforeId: String?, page: Int, generation: Int) {
@@ -761,20 +832,38 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                         self.loadPoolEntriesPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
                         return
                     }
+                    // 触顶（第八轮审计 02，地图 #944 同款口径）：本批 10 页已满、
+                    // 末页仍满页，后面可能还有——记 poolCapped，留第 10 页末尾游标
+                    // 供按需续拉新一批；末页满页却无游标时清旧游标、不留入口。
+                    // 本批拉完即清中断态（续拉成功说明链已接上）。
+                    self.poolInterrupted = false
+                    self.poolCapped = pageEntries.count >= 50 && page >= 10
+                    if self.poolCapped, let cursor = last?.createdAt, let lastId = last?.id {
+                        self.poolResumeBefore = cursor
+                        self.poolResumeBeforeId = lastId
+                        self.poolResumePage = 1
+                    } else {
+                        self.poolResumeBefore = nil
+                        self.poolResumeBeforeId = nil
+                    }
                     self.poolEntries = self.poolCollected
                     self.renderPoolRows()
-                    self.openHintLabel.text = self.pooledEntryId == nil
-                        ? "先放进池子，再开盒。私密篇与今日新公开篇不可入池。"
-                        : "已放进池子，可以开盒了。"
+                    self.updatePoolHint()
                     self.setStep(.pool)
                 case .failure(let error):
-                    // 分页中途断网：已收集到的页不作废，照常进池；一页未得才走失败态。
+                    // 分页中途断网（第八轮审计 02）：已收集到的页不作废，照常进池，
+                    // 但不再当作完整——记 poolInterrupted 并留失败页游标，页内留
+                    // “重试”入口从中断处续拉（失败页的 before / beforeId 即本次
+                    // 调用的入参）；一页未得才走失败态。
                     if !self.poolCollected.isEmpty {
+                        self.poolInterrupted = true
+                        self.poolCapped = false
+                        self.poolResumeBefore = before
+                        self.poolResumeBeforeId = beforeId
+                        self.poolResumePage = page
                         self.poolEntries = self.poolCollected
                         self.renderPoolRows()
-                        self.openHintLabel.text = self.pooledEntryId == nil
-                            ? "先放进池子，再开盒。私密篇与今日新公开篇不可入池。"
-                            : "已放进池子，可以开盒了。开盒后今日计数变为 1/1。"
+                        self.updatePoolHint()
                         self.setStep(.pool)
                     } else {
                         self.setStep(.error(self.todayErrorText(error)))
