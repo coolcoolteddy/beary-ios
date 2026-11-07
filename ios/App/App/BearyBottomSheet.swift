@@ -6,8 +6,8 @@ import UIKit
 // 供自定义子类，如登录弹窗的 chrome + 键盘逻辑）；容器负责其余全部：
 // 出现——弹窗弹簧 0.4s / damping 0.8 从底部升起，背后页面同步缩 0.92 倍、
 // 圆角 16pt、黑色遮罩压暗 0.45；拖动——弹窗可上下拖，下滑 1:1 跟手、上滑
-// 按 0.3 阻力折算，松手下拖超高 1/3 或下甩速度 > 1000pt/s 关闭、否则弹簧
-// 弹回；关闭——背后页面同步恢复。遮罩点按与拖动关闭都走 requestDismiss
+// 按 0.3 阻力折算，松手下拖超 80pt 或下甩速度 > 600pt/s 关闭、否则弹簧
+// （0.30s / damping 0.7）弹回；关闭——背后页面同步恢复。遮罩点按与拖动关闭都走 requestDismiss
 //（子类可重写，如登录弹窗改走 cancelFromSheet——先停倒计时与在途任务，
 // 容器不得绕开它直接 dismiss，否则添加账号会话守卫 stays armed）。
 // 减动效开时：出现/关闭瞬时、拖动关闭无动画直接关、背后页面瞬时恢复。
@@ -27,14 +27,18 @@ enum BearyBottomSheet {
     static let backgroundCornerRadius: CGFloat = 16
     /// 遮罩压暗（黑色，出现时 0 → 0.45，与 BearySheetChrome.scrimAlpha 同值）。
     static let dimAlpha: CGFloat = 0.45
-    /// 出现/关闭弹簧时长。
+    /// 出现/关闭弹簧时长（present/dismiss 用，D-1 待定前保持 0.4s）。
     static let springDuration: TimeInterval = 0.4
-    /// 出现/关闭弹簧阻尼。
+    /// 出现/关闭弹簧阻尼（present/dismiss 用，D-1 待定前保持 0.8）。
     static let springDamping: CGFloat = 0.8
-    /// 下拖关闭阈值：超过弹窗高度 1/3。
-    static let dismissFraction: CGFloat = 1.0 / 3.0
-    /// 下拖关闭速度阈值（pt/s）。
-    static let dismissVelocity: CGFloat = 1000
+    /// 拖拽收尾弹簧时长（规范 §6：拖拽收尾统一 0.30s，restoreDrag 用）。
+    static let dragSpringDuration: TimeInterval = 0.30
+    /// 拖拽收尾弹簧阻尼（规范 §6：拖拽收尾统一 damping 0.7，restoreDrag 用）。
+    static let dragSpringDamping: CGFloat = 0.7
+    /// 下拖关闭位移阈值（规范 §6：拖动关闭统一位移 ＞80pt）。
+    static let dismissDistance: CGFloat = 80
+    /// 下拖关闭速度阈值（规范 §6：拖动关闭统一速度 ＞600pt/s）。
+    static let dismissVelocity: CGFloat = 600
     /// 上拖阻力系数（超出静止位置的部分按 0.3 折算）。
     static let upwardResistance: CGFloat = 0.3
 }
@@ -292,8 +296,7 @@ class BearyBottomSheetPresentationController: UIPresentationController {
             applyPresentationProgress(dragProgress(for: translation))
         case .ended:
             let velocity = gesture.velocity(in: container).y
-            let height = frameOfPresentedViewInContainerView.height
-            if translation > height * BearyBottomSheet.dismissFraction || velocity > BearyBottomSheet.dismissVelocity {
+            if translation > BearyBottomSheet.dismissDistance || velocity > BearyBottomSheet.dismissVelocity {
                 // 不清 transform：dismiss 动效从当前拖位滑下（beginFromCurrentState），
                 // 避免先回弹再下滑的跳变；松手速度交给退场弹簧初速度。
                 dismissVelocity = velocity
@@ -327,7 +330,7 @@ class BearyBottomSheetPresentationController: UIPresentationController {
             relayout()
             postSheetRestoreFocus()
         } else {
-            // 弹回用出现同款弹簧 0.4s / damping 0.8，初速度按松手速度归一化
+            // 弹回用拖拽收尾弹簧 0.30s / damping 0.7（规范 §6 统一档），初速度按松手速度归一化
             //（沿动画方向与拖动方向相反，故取负；慢拖速度小、自然接近 0；
             // 行程 ≤1pt 时归 0；行程极小而速度大时封顶 ±2，防弹簧冲过头）。
             let offset = presentedView?.transform.ty ?? 0
@@ -337,7 +340,7 @@ class BearyBottomSheetPresentationController: UIPresentationController {
             } else {
                 initialVelocity = 0
             }
-            UIView.animate(withDuration: BearyBottomSheet.springDuration, delay: 0, usingSpringWithDamping: BearyBottomSheet.springDamping, initialSpringVelocity: initialVelocity, options: [.beginFromCurrentState], animations: restore, completion: { [weak self] _ in
+            UIView.animate(withDuration: BearyBottomSheet.dragSpringDuration, delay: 0, usingSpringWithDamping: BearyBottomSheet.dragSpringDamping, initialSpringVelocity: initialVelocity, options: [.beginFromCurrentState], animations: restore, completion: { [weak self] _ in
                 relayout()
                 self?.postSheetRestoreFocus()
             })
