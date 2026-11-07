@@ -121,6 +121,52 @@ final class BearyDecodingTests: XCTestCase {
     }
 }
 
+// ===== 第十轮 03：TrashItem 编码—解码往返 =====
+// saveAll 经 convertToSnakeCase 编码写 trash.json，loadAll 经
+// convertFromSnakeCase 解码读回；旧版 encode 漏了 title 与 imageKeys，
+// 往返即丢——回收站标题退化、彻底删除后图片缓存精确逐出失效。
+final class BearyTrashItemTests: XCTestCase {
+    func testRoundTripKeepsTitleAndImageKeys() throws {
+        let json = """
+        {"id":"b_trash1","content":"今天写的第一篇","title":"带猫的一天",
+        "images":["1/abc.jpg","1/def.jpg"],"created_at":1761000000000,
+        "publish_at":1761604800000,"published":1,"visibility":"public",
+        "deleted_at":1761700000000,"days_left":29}
+        """
+        let decoded = try bearyDecoder().decode(TrashItem.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.title, "带猫的一天")
+        XCTAssertEqual(decoded.imageKeys, ["1/abc.jpg", "1/def.jpg"])
+
+        // 与 BearyTrashSyncStore.makeEncoder 同口径：convertToSnakeCase
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try encoder.encode(decoded)
+        let raw = String(decoding: data, as: UTF8.self)
+        XCTAssertTrue(raw.contains("\"title\""))
+        XCTAssertTrue(raw.contains("\"images\""))
+
+        let roundTripped = try bearyDecoder().decode(TrashItem.self, from: data)
+        XCTAssertEqual(roundTripped.id, "b_trash1")
+        XCTAssertEqual(roundTripped.title, "带猫的一天")
+        XCTAssertEqual(roundTripped.imageKeys, ["1/abc.jpg", "1/def.jpg"])
+        XCTAssertEqual(roundTripped.content, "今天写的第一篇")
+        XCTAssertEqual(roundTripped.daysLeft, 29)
+    }
+
+    func testOldCacheWithoutTitleAndImagesStillDecodes() throws {
+        // 旧版 trash.json 缺 title 与 images 两键，仍须能解码（按 nil 读）
+        let json = """
+        {"id":"b_old1","content":"旧缓存的一篇","created_at":1761000000000,
+        "deleted_at":1761700000000,"days_left":12}
+        """
+        let decoded = try bearyDecoder().decode(TrashItem.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.id, "b_old1")
+        XCTAssertNil(decoded.title)
+        XCTAssertNil(decoded.imageKeys)
+        XCTAssertEqual(decoded.daysLeft, 12)
+    }
+}
+
 final class BearyScopeTests: XCTestCase {
     func testScopeValues() {
         XCTAssertEqual(BearyAPI.Scope.plaza.rawValue, "plaza")

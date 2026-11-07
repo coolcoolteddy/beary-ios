@@ -466,6 +466,9 @@ struct TrashItem: Codable {
 
     /// 落盘编码：id 固定写 String（解码端 String 分支命中）；其余字段与解码同名，
     /// 编码策略 convertToSnakeCase 与解码端 convertFromSnakeCase 配对。
+    /// 第十轮 03：title 与 imageKeys 也写回——旧版 encode 漏了这两字段，
+    /// trash.json 往返即丢（回收站标题退化成正文摘要、彻底删除后图片缓存
+    /// 精确逐出失效）；解码端已是 decodeIfPresent，旧缓存缺键仍能读。
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
@@ -476,6 +479,8 @@ struct TrashItem: Codable {
         try container.encodeIfPresent(visibility, forKey: .visibility)
         try container.encodeIfPresent(deletedAt, forKey: .deletedAt)
         try container.encodeIfPresent(daysLeft, forKey: .daysLeft)
+        try container.encodeIfPresent(title, forKey: .title)
+        try container.encodeIfPresent(imageKeys, forKey: .imageKeys)
     }
 }
 
