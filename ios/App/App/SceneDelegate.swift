@@ -1979,6 +1979,20 @@ final class BearyChromeViewController: UIViewController {
         lastRetapDidScrollToTop = true
     }
 
+    /// 审计四轮增量 07：离场页景深停表——只有个人主页（.me/.user，
+    /// 同为 BearyProfileViewController）有景深封面与节日墙纸，其余页无操作。
+    /// 必须在离场页 isHidden 之后调（淡入完成回调或直接显隐分支）：
+    /// updateProfileCoverVisibility 按 isHidden 算可见性，淡入中调是 no-op；
+    /// 切回由 pageDidReturn() 恢复。快速反向切回时离场页现为当前页，
+    /// 调用方须先守 currentPage != previousPage，本函数不再二次判断。
+    private func stopCoverMotionForLeavingPage(_ page: ContainerPage?) {
+        if page == .me {
+            profileVC?.pageDidLeave()
+        } else if page == .user {
+            userVC?.pageDidLeave()
+        }
+    }
+
     /// 原生页切换：首页与新页均为常驻子 VC（hide/show 保留滚动位置）。
     /// 重拍当前 tab：首页先回顶再刷新（与网页 topThen 同口径），消息页回顶再刷新，时间线重拉。
     private func showPage(_ page: ContainerPage) {
@@ -2170,6 +2184,9 @@ final class BearyChromeViewController: UIViewController {
             outgoingView?.isHidden = true
             outgoingView?.alpha = 1
             incomingView.alpha = 1
+            // 审计四轮增量 07：减动效/首亮无淡入，离场页已直接隐藏——
+            // 在此停景深封面与节日墙纸（淡入完成回调里同款调用）。
+            stopCoverMotionForLeavingPage(previousPage)
         } else if let outgoing = outgoingView, outgoing !== incomingView {
             incomingView.alpha = 0
             // 离场页交互：切换开始即禁用。动画仍带 .allowUserInteraction（入场页
@@ -2185,6 +2202,11 @@ final class BearyChromeViewController: UIViewController {
                 if self.currentPage != previousPage {
                     outgoing.isHidden = true
                     outgoing.alpha = 1
+                    // 审计四轮增量 07：淡入结束、离场页已隐藏才停景深封面与
+                    // 节日墙纸——淡入中途冻结会让淡出的封面定住；切回由
+                    // pageDidReturn() 恢复。快速反向切回时本分支不进，
+                    // 离场页现为当前页，不停。
+                    self.stopCoverMotionForLeavingPage(previousPage)
                     // 交互不复位：已隐藏的页收不到点按；它下次作为入场页时，
                     // 上方切换开始处统一恢复交互。刻意不在此复位——否则三连切
                     //（A→B→A→B）时旧动画完成回调会把新一段离场动画中的 A 提前

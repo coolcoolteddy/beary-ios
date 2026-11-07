@@ -2224,6 +2224,16 @@ class BearyProfileViewController: UIViewController {
         updateProfileCoverVisibility()
     }
 
+    /// 审计四轮增量 07：切 tab 离页钩子，与 pageDidReturn 对称——容器在
+    /// 0.25s 交叉淡入完成回调（或减动效直接显隐分支）里调，此时本页已
+    /// isHidden：updateProfileCoverVisibility / updateFestivalWallpaperVisibility
+    /// 按 isHidden 算可见性，停景深封面与节日墙纸的陀螺仪驱动；切回由
+    /// pageDidReturn() 恢复。切后台不走这里（封面自身监听 willResignActive 停表）。
+    func pageDidLeave() {
+        updateProfileCoverVisibility()
+        updateFestivalWallpaperVisibility()
+    }
+
     /// 顶栏透度批（容器调用，见 SceneDelegate.applyHeaderTopInsets）：主滚动视图即 tableView。
     /// 本页表框顶 = 顶栏（topBar）底，顶栏顶锚页安全区（容器页顶改 view.top 后，页安全区顶仍为
     /// 容器安全区顶，表框绝对位置不变），故属性内边距只需 60/0：显示 60、收起 0，视觉顶距即
