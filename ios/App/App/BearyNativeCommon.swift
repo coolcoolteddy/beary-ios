@@ -1201,7 +1201,7 @@ final class BearyImagePrefetcher {
     /// 该屏时 cell 仍按需加载，不缺图。
     private static let warmedTTL: TimeInterval = BearyImageLoader.diskCacheMaxAge
     private static let warmedMaxEntries = 500
-    private var warmed: [String: Date] = []
+    private var warmed: [String: Date] = [:]
     private var warmedBucketKey: String?
     private let queue = DispatchQueue(label: "com.beary.image-prefetch", qos: .utility)
 
