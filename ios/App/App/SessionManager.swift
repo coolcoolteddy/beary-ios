@@ -276,16 +276,57 @@ final class SessionManager {
         notifyUserChanged(nil)
     }
 
+    /// 第七轮审计 03：登出回包是否仍属于当前账号。两条登出入口（设置页
+    /// logoutButtonTapped、容器 vc.onLogout）发起登出时捕获账号 ID＋authEpoch，
+    /// 回包先调本方法：两者均与当前一致才返回 true；切号/退出/401 任一都会
+    /// 推进 epoch，账号 ID 是第二道比对。false 时调用方不得清 cookie、不得调
+    /// signOutLocally、不得走退出后 UI，改调 purgeLocalState(forAccountId:)
+    /// 定向清发起账号。只读判断，任意线程可调（currentUser 只在主线程写，
+    /// 两条入口的回调本就先回主线程再校验；authEpoch 走串行队列读）。
+    func isCurrentAuthSession(accountId: Int?, epoch: Int) -> Bool {
+        guard let accountId = accountId, let currentId = currentUser?.id else { return false }
+        return accountId == currentId && epoch == api.authEpoch
+    }
+
+    /// 第七轮审计 03：登出回包账号绑定——发起账号已切走时的定向清理。
+    /// 只清发起账号自己的保管库项与落盘（图片/实况缓存、日记快照、盲盒桶），
+    /// 不碰当前账号、不清共享 cookie、不翻转登录态、不 bump 代次；
+    /// 冷启动桶提示（forgetUserId）也不清——当前账号仍在，提示仍有效。
+    /// 服务端会话已由登出 POST 清掉，本地残留的死 token 若不删会留在账号
+    /// 列表里，故仍按原账号定向删掉。须在主线程调用（两条登出入口的回调
+    /// 本就先回主线程）；非主线程重派主线程再跑，与 signOutLocally 同口径。
+    func purgeLocalState(forAccountId id: Int) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.purgeLocalState(forAccountId: id) }
+            return
+        }
+        BearyAccountVault.shared.remove(userId: id)
+        purgeImageCache(forAccountId: id)
+        purgeLocalSnapshots(forAccountId: id)
+        BlindBoxState.shared.clearAccount(accountId: id)
+    }
+
     /// 账号隔离 4 号：退出/401 清态时清掉该账号的图片缓存（内存全清 +
     /// 该账号磁盘目录删除）。切换账号（不退出）不走这里，旧账号磁盘保留、
     /// 仅由容器 setAccount 切键 + 清内存，见 SceneDelegate onUserChanged。
     private func purgeImageCacheForCurrentAccount() {
+        guard let id = currentUser?.id else {
+            // 无当前账号时仍清共享 URLCache（旧行为）；账号定向缓存无账号可清。
+            URLCache.shared.removeAllCachedResponses()
+            return
+        }
+        purgeImageCache(forAccountId: id)
+    }
+
+    /// 账号定向的图片/实况缓存清理（第七轮审计 03：清理须明确指定原账号，
+    /// 不得再按调用时刻的当前账号推断）。共享 URLCache 的清理与账号无关、
+    /// 任何调用路径都做（见旧注释）；账号定向的两桶只清传入的账号。
+    private func purgeImageCache(forAccountId id: Int) {
         // 秒开-网络层：先清共享 URLCache（与当前用户无关，任何调用路径都清）。
         // API 与图片会话现已 urlCache=nil，理论上不再向它写；但历史版本 /
         // 其他 .shared 调用仍可能留有私密体，退出/401 时一并清掉，杜绝
         // 账号无关的共享缓存层在换号后命中旧图。
         URLCache.shared.removeAllCachedResponses()
-        guard let id = currentUser?.id else { return }
         BearyImageLoader.shared.purgeAccount(id)
         // 审计-性能：实况磁盘桶与图片桶同口径，退出/401 时一并清掉。
         BearyLivePhotoLoader.shared.purgeAccount(id)
@@ -302,6 +343,14 @@ final class SessionManager {
     /// signOutLocally 注释），切回死会话仍能走“重新登录”。
     private func purgeLocalSnapshotsForCurrentAccount() {
         guard let id = currentUser?.id else { return }
+        purgeLocalSnapshots(forAccountId: id)
+        BearyFeedCache.forgetUserId()
+    }
+
+    /// 账号定向的日记快照清理（第七轮审计 03：清理须明确指定原账号）。
+    /// 冷启动桶提示（forgetUserId）不在这里——只在当前账号退出/401 时清，
+    /// 发起账号已切走的定向清理不碰它（当前账号仍在，提示仍有效）。
+    private func purgeLocalSnapshots(forAccountId id: Int) {
         BearyFeedCache.purge(bucket: "\(id)")
         BearyTimelineCache.purge(bucket: "\(id)")
         // 审计-性能：通知页分键缓存同样在退出/401 时清掉该账号槽位。
@@ -311,7 +360,6 @@ final class SessionManager {
         BearyDetailCache.purge(bucket: "\(id)")
         BearyEntrySyncStore.purgeAccount(accountId: id)
         BearyTrashSyncStore.purgeAccount(accountId: id)
-        BearyFeedCache.forgetUserId()
     }
 
     private func isBearyCookie(_ cookie: HTTPCookie) -> Bool {

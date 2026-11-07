@@ -2892,11 +2892,22 @@ final class BearyChromeViewController: UIViewController {
         // B6：退出只发一次：成功才清本地态，
         // 失败 toast“退出失败，请重试”并保留会话（401 由 BearyAPI.logout 侧映射为成功，此处不另判）。
         vc.onLogout = { [weak self] in
+            // 第七轮审计 03：登出回包账号绑定——发起时捕获账号 ID＋authEpoch，
+            // 回包先校验；已切号时只定向清发起账号，不碰当前号、不清 cookie、
+            // 不做淡出动画（登录态未翻转，无需过渡）。
+            let accountId = SessionManager.shared.currentUser?.id
+            let epoch = BearyAPI.shared.authEpoch
             BearyAPI.shared.logout { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     switch result {
                     case .success:
+                        guard SessionManager.shared.isCurrentAuthSession(accountId: accountId, epoch: epoch) else {
+                            if let accountId = accountId {
+                                SessionManager.shared.purgeLocalState(forAccountId: accountId)
+                            }
+                            return
+                        }
                         // A6-2：退出登录的界面过渡（淡出/淡入两段各 0.14s、合计 0.28s，
                         // 已落在视觉清单第 8 项 0.24–0.28s 档内，故两段时长不动；
                         // 减动效直换）：当前页内容先淡出，态翻转后的原地刷新落在淡出中，
