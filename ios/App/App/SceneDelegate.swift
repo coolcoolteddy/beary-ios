@@ -2969,6 +2969,18 @@ final class BearyChromeViewController: UIViewController {
                 self?.showPage(.timeline)
             }
         }
+        // 热力图点某天 → 时间线该日：先切页（pageView 保底建时间线页），再选日。
+        vc.onOpenTimelineDay = { [weak self] dayKey in
+            if modal {
+                self?.dismiss(animated: BearyMotion.animated(true)) {
+                    self?.showPage(.timeline)
+                    self?.timelineVC?.openDay(key: dayKey)
+                }
+            } else {
+                self?.showPage(.timeline)
+                self?.timelineVC?.openDay(key: dayKey)
+            }
+        }
         // C2：齿轮不再弹菜单，直接开设置页；教程与外观改由设置页内入口承载
         // （设置页通用组：使用指南行走 onShowTutorial、主题三档行；外观 Popover
         // 已随 G3 删除，齿轮路径不再触发）。

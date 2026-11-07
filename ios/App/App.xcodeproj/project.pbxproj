@@ -81,6 +81,7 @@
 		B511484EFBB0FD7B264226AE /* BearyMantisCrop.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05C44E654CF84001B312F55B /* BearyMantisCrop.swift */; };
 		C7BB560646D1F3B2BF41E8CE /* BearyInviteViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC25E34F7F1469439164AB6F /* BearyInviteViewController.swift */; };
 		2A79C023905A6DE2078D5D28 /* BearyFeedbackViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 665D4F35E8824A24A86F9DB5 /* BearyFeedbackViewController.swift */; };
+		3DAF60FE15F9E3BACC3B3888 /* BearyHeatmapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42F1499DF09E9A785DA963AE /* BearyHeatmapView.swift */; };
 		F1A2B3C4D5E6F78901234567 /* BearyWishWallViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */; };
 		1FC91D33C400D730D6210457 /* BearyPastSelf.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57E941A106787A04C8C1EAA /* BearyPastSelf.swift */; };
 		07DA09CFD9D0EDC00E5B975B /* BearyColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 480F2905FC850A20929C2317 /* BearyColors.swift */; };
@@ -357,6 +358,7 @@
 		05C44E654CF84001B312F55B /* BearyMantisCrop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyMantisCrop.swift; sourceTree = "<group>"; };
 		BC25E34F7F1469439164AB6F /* BearyInviteViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyInviteViewController.swift; sourceTree = "<group>"; };
 		665D4F35E8824A24A86F9DB5 /* BearyFeedbackViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyFeedbackViewController.swift; sourceTree = "<group>"; };
+		42F1499DF09E9A785DA963AE /* BearyHeatmapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyHeatmapView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyWishWallViewController.swift; sourceTree = "<group>"; };
 		A57E941A106787A04C8C1EAA /* BearyPastSelf.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyPastSelf.swift; sourceTree = "<group>"; };
 		88BE577F3EF95C0FCAC2A3CD /* BearyBlindBoxFlowViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBlindBoxFlowViewController.swift; sourceTree = "<group>"; };
@@ -650,6 +652,7 @@
 				05C44E654CF84001B312F55B /* BearyMantisCrop.swift */,
 				BC25E34F7F1469439164AB6F /* BearyInviteViewController.swift */,
 				665D4F35E8824A24A86F9DB5 /* BearyFeedbackViewController.swift */,
+				42F1499DF09E9A785DA963AE /* BearyHeatmapView.swift */,
 				A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */,
 				A57E941A106787A04C8C1EAA /* BearyPastSelf.swift */,
 				88BE577F3EF95C0FCAC2A3CD /* BearyBlindBoxFlowViewController.swift */,
@@ -1187,6 +1190,7 @@
 				B511484EFBB0FD7B264226AE /* BearyMantisCrop.swift in Sources */,
 				C7BB560646D1F3B2BF41E8CE /* BearyInviteViewController.swift in Sources */,
 				2A79C023905A6DE2078D5D28 /* BearyFeedbackViewController.swift in Sources */,
+				3DAF60FE15F9E3BACC3B3888 /* BearyHeatmapView.swift in Sources */,
 				F1A2B3C4D5E6F78901234567 /* BearyWishWallViewController.swift in Sources */,
 				1FC91D33C400D730D6210457 /* BearyPastSelf.swift in Sources */,
 				11B6AB083B6F9CD81F675174 /* BearyBlindBoxFlowViewController.swift in Sources */,
