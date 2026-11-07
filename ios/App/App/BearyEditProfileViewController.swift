@@ -103,6 +103,9 @@ class BearyEditProfileViewController: UIViewController {
     /// 压缩专用串行队列（与编辑器 imagePrepQueue 同口径：userInitiated，
     /// 后台算、主线程落结果）。
     private let imageCompressQueue = DispatchQueue(label: "beary.editProfile.imageCompress", qos: .userInitiated)
+    /// Mantis 裁剪回调转接的持有：delegate 是 weak，须强持有直到回调跑完，
+    /// 回调结束由 onFinished 清掉（见下方 presentCropEditor）。
+    private var mantisCropHandler: BearyMantisCropHandler?
     /// 提交快照（保存三件套第 2 项）：点保存时一次性定格全部提交值，
     /// 后续 handle / profile 两步只读快照，不再读输入框与待存标记——
     /// 弱网等待中界面即使能改（现已冻结，见 updateSaveButtonState），
@@ -1377,7 +1380,7 @@ extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
             // 不再像以前那样直接用原图走压缩。裁剪确认才走原有换图/保存流程
             // （dataURL 压缩 + pending 标记 + 预览替换，保存仍走 PUT
             // /api/account/profile）；裁剪取消不回调、不碰任何待保存状态。
-            // 裁剪走通用 BearyImageCropViewController（B 批合并）：
+            // 裁剪走 Mantis（3.1.1，见下方 presentCropEditor）：
             // 头像 1:1、封面按本页预览比例，见下方 presentCropEditor。
             strongSelf.presentCropEditor(image: image, target: target)
         }
@@ -1417,18 +1420,10 @@ extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
                 aspectRatio = columnWidth > 0 ? columnWidth / 180 : 2
             }
         }
-        let cropVC: BearyImageCropViewController
-        if target == .avatar {
-            // 头像下游只取 256px（dataURLForAvatar 内 resizeImage 上限 256），
-            // 裁剪输出长边 256 即够，归一化重绘不必按原图全尺寸画。
-            cropVC = BearyImageCropViewController(image: image, aspectRatio: aspectRatio, maxOutputSide: 256)
-        } else {
-            // 封面下游首档 1280px（dataURLForCover 首档 maxWidth 1280），
-            // 裁剪输出长边 1280 即够。
-            cropVC = BearyImageCropViewController(image: image, aspectRatio: aspectRatio, maxOutputSide: 1280)
-        }
-        cropVC.modalPresentationStyle = .fullScreen
-        cropVC.onConfirm = { [weak self] cropped in
+        // Mantis 裁剪（3.1.1）：固定比例、确认先退场再回调（#952 同款口径），
+        // 回调体与旧裁剪页 onConfirm 一字未动；旧裁剪器留作兜底。
+        let cropVC = BearyMantisCrop.makeCropViewController(image: image, aspectRatio: aspectRatio)
+        let handler = BearyMantisCropHandler(onCrop: { [weak self] cropped in
             guard let strongSelf = self else { return }
             // 冻结期不接受裁剪确认：裁剪页确认时自己 dismiss，本页只须
             // 忽略回调，待存标记与预览都不动（与 presentCropEditor 的丢弃同口径）。
@@ -1478,7 +1473,11 @@ extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
                     }
                 }
             }
-        }
+        }, onFinished: { [weak self] in
+            self?.mantisCropHandler = nil
+        })
+        mantisCropHandler = handler
+        cropVC.delegate = handler
         present(cropVC, animated: BearyMotion.animated(true))
     }
 }

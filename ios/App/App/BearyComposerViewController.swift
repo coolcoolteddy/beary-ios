@@ -5411,18 +5411,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 裁剪调整（C11：点缩略图主体进页；确认替换、取消不动）
 
+    /// Mantis 裁剪回调转接的持有：delegate 是 weak，须强持有直到回调跑完，
+    /// 回调结束由 onFinished 清掉（见下方 presentCropEditor）。
+    private var mantisCropHandler: BearyMantisCropHandler?
+
     private func presentCropEditor(for item: ComposerImageItem, source: UIImage) {
         // 磁盘读图是异步的：回到主线程时若已有弹窗在上（草稿箱等），不再叠页。
         if presentedViewController != nil { return }
-        // 编辑器下游只取最长边 1600px（applyCroppedImage 内 BearyImagePrep
-        // jpegData maxSide 1600），裁剪输出长边 1600 即够，归一化重绘不必
-        // 按原图全尺寸画。
-        let cropVC = BearyImageCropViewController(image: source, aspectRatio: 1, maxOutputSide: 1600)
-        cropVC.modalPresentationStyle = .fullScreen
-        cropVC.onConfirm = { [weak self, weak item] cropped in
+        // Mantis 裁剪（3.1.1）：固定 1:1、确认先退场再回调；回调体与旧裁剪页
+        // onConfirm 一字未动（applyCroppedImage）；旧裁剪器留作兜底。
+        let cropVC = BearyMantisCrop.makeCropViewController(image: source, aspectRatio: 1)
+        let handler = BearyMantisCropHandler(onCrop: { [weak self, weak item] cropped in
             guard let self = self, let item = item else { return }
             self.applyCroppedImage(cropped, to: item)
-        }
+        }, onFinished: { [weak self] in
+            self?.mantisCropHandler = nil
+        })
+        mantisCropHandler = handler
+        cropVC.delegate = handler
         present(cropVC, animated: !UIAccessibility.isReduceMotionEnabled)
     }
 
