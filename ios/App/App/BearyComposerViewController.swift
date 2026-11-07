@@ -6091,7 +6091,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftTimer?.invalidate()
         draftTimer = nil
         if backgroundDraftTask == .invalid {
-            backgroundDraftTask = UIApplication.shared.beginBackgroundTask(withName: "beary-edit-checkpoint-flush") { [weak self] in
+            backgroundDraftTask = UIApplication.shared.beginBackgroundTask(withName: "beary_edit_checkpoint_flush") { [weak self] in
                 guard let self = self else { return }
                 if self.backgroundDraftTask != .invalid {
                     UIApplication.shared.endBackgroundTask(self.backgroundDraftTask)
@@ -6988,18 +6988,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let message = deadlinePassed
             ? "上次编辑这篇日记时还没保存，找到了当时的修改。编辑时间已结束，只能查看和复制，不能再保存。"
             : "上次编辑这篇日记时还没保存，找到了当时的修改，要恢复吗？"
-        let alert = UIAlertController(title: "恢复未提交的修改？", message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "恢复", style: .default) { [weak self] _ in
-            guard let self = self else { return }
-            self.applyEditCheckpoint(checkpoint)
-        })
-        alert.addAction(UIAlertAction(title: "放弃", style: .destructive) { [weak self] _ in
-            guard let self = self else { return }
-            if let entryId = self.editingEntry?.id, !entryId.isEmpty {
-                BearyDraftStore.clearEditCheckpointAsync(entryId: entryId)
-            }
-        })
-        present(alert, animated: BearyMotion.animated(true))
+        // 底部弹窗口径（#932）：新弹窗一律走通用确认底 sheet，不再新写居中 Alert。
+        BearyConfirmSheet.show(from: self, title: "恢复未提交的修改？", message: message, actions: [
+            BearyConfirmSheet.Action(title: "恢复", style: .default, handler: { [weak self] in
+                guard let self = self else { return }
+                self.applyEditCheckpoint(checkpoint)
+            }),
+            BearyConfirmSheet.Action(title: "放弃", style: .destructive, handler: { [weak self] in
+                guard let self = self else { return }
+                if let entryId = self.editingEntry?.id, !entryId.isEmpty {
+                    BearyDraftStore.clearEditCheckpointAsync(entryId: entryId)
+                }
+            }),
+        ])
     }
 
     /// 把检查点内容应用回编辑器（正文/标题/心情/天气/气温/位置/图片条）。
