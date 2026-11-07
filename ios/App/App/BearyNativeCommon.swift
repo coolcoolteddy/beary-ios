@@ -1512,7 +1512,9 @@ enum BearyText {
         formatter.dateFormat = "H:mm"
         return formatter
     }()
-    private static let monthDayHourMinuteFormatter: DateFormatter = {
+    /// 审计四轮 14：月日时分静态复用——聊天页行渲染与 timeString 共用，
+    /// 只在主线程用（DateFormatter 非线程安全，不跨线程用）。
+    static let monthDayHourMinuteFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "M月d日 H:mm"
