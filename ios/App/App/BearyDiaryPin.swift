@@ -14,7 +14,27 @@ enum BearyDiaryPin {
     /// 供个人页“当前列表未必含置顶篇”时判断替换确认用：
     /// 有记忆且与目标不同 → 弹确认；无记忆 → 直接置顶（后端单槽位仍会替换，见 PR 已知缺口）。
     /// 只在“见到置顶篇”时写入，缺失不清除（列表未必含置顶篇，缺失 ≠ 未置顶）。
-    static var currentPinnedEntryId: String?
+    /// 第九轮 01：按用户 id 分桶保存（草稿桶 BearyDraftStore.setAccount 同款口径，
+    /// 内存态不跨账号）。切号即重置：快照读的是当前登录账号的分桶，换号后读到
+    /// 的是新号的分桶（初始为空），A 的置顶 id 再也不会在 B 账号下弹替换确认；
+    /// 旧号分桶保留、切回即恢复。服务端仍是最终依据，记忆只作确认提示用。
+    private static var pinnedEntryIdByUserId: [Int: String] = [:]
+
+    /// 当前登录账号的置顶记忆；未登录时读 nil、写丢弃。
+    static var currentPinnedEntryId: String? {
+        get {
+            guard let userId = SessionManager.shared.currentUser?.id else { return nil }
+            return pinnedEntryIdByUserId[userId]
+        }
+        set {
+            guard let userId = SessionManager.shared.currentUser?.id else { return }
+            if let id = newValue {
+                pinnedEntryIdByUserId[userId] = id
+            } else {
+                pinnedEntryIdByUserId.removeValue(forKey: userId)
+            }
+        }
+    }
 
     /// 从作者 scope 列表同步记忆：只认 isPinned 的篇；他人页列表不得调（调用方以 isOwnProfile 守门）。
     static func noteEntries(_ entries: [Entry]) {
