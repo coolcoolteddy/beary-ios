@@ -101,7 +101,7 @@ final class BearyInviteViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.surface
+        view.backgroundColor = BearyColors.surface3
         buildLayout()
         // 审计 8 项：键盘避让（与反馈页同口径，见 inviteKeyboardWillShow）。
         NotificationCenter.default.addObserver(self, selector: #selector(inviteKeyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
@@ -157,7 +157,7 @@ final class BearyInviteViewController: UIViewController {
     // MARK: - 布局（与登录页同尺寸体系：左右 22、输入框高 48、内容列 ≤432）
 
     private func buildLayout() {
-        // 视觉清单第 12 项：弹窗玻璃背板已撤，改实色 surface 底（卡片标准底色；
+        // 视觉清单第 12 项：弹窗玻璃背板已撤，改实色 surface3 底（sheet 层底色；
         // 玻璃范围 Token 只允许栏/菜单，弹窗不在内）；外形圆角仍由呈现层
         // presentedView 的圆角 20 + 裁剪定（居中卡片/底 sheet 呈现层均已设，本文件不动）。
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -174,7 +174,7 @@ final class BearyInviteViewController: UIViewController {
         contentView.addSubview(stackView)
 
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.backgroundColor = BearyColors.faint
+        closeButton.backgroundColor = BearyColors.surface2
         closeButton.layer.cornerRadius = 16
         closeButton.tintColor = BearyColors.ink
         closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
@@ -198,7 +198,7 @@ final class BearyInviteViewController: UIViewController {
         subtitleLabel.numberOfLines = 0
 
         codeBox.translatesAutoresizingMaskIntoConstraints = false
-        codeBox.backgroundColor = BearyColors.faint
+        codeBox.backgroundColor = BearyColors.surface2
         codeBox.layer.cornerRadius = 12
         codeLabel.translatesAutoresizingMaskIntoConstraints = false
         codeLabel.text = "—"
@@ -207,8 +207,8 @@ final class BearyInviteViewController: UIViewController {
         codeLabel.textColor = BearyColors.ink
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         copyButton.layer.cornerRadius = 12
-        // C4：复制钮改用 surface 底，与码框 faint 底拉开对比（深色下不再融为一体）。
-        copyButton.backgroundColor = BearyColors.surface
+        // C4：复制钮改用 surface3 底，与码框 surface2 底拉开对比（深色下不再融为一体）。
+        copyButton.backgroundColor = BearyColors.surface3
         copyButton.setTitle("复制", for: .normal)
         copyButton.setTitleColor(BearyColors.ink, for: .normal)
         copyButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
@@ -380,7 +380,7 @@ final class BearyInviteViewController: UIViewController {
     }
 
     /// 审计 P2-14：绑定单行框改走共享输入容器（原内联实现与登录页
-    /// makeFieldContainer 逐字重复；faint 底 / 圆角 12 / 左右 14 / 48 高
+    /// makeFieldContainer 逐字重复；surface2 底 / 圆角 12 / 左右 14 / 48 高
     /// 均与原值一致，新增常态 line 边框与聚焦蓝边——字段字体 / 占位 /
     /// 键盘 / delegate / target 与校验逻辑均不动）。
     private func makeFieldContainer(field: UITextField) -> BearyInputContainer {

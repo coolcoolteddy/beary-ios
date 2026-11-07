@@ -58,7 +58,7 @@ final class BearyAvatarView: UIView {
         fallbackLabel.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 17))
         fallbackLabel.adjustsFontForContentSizeCategory = true
         fallbackLabel.textColor = BearyColors.ink // 2026-11-04 黑白灰：回退头像改浅灰底墨字，与选人器回退圈同口径（取代 #707 留橙口径）
-        fallbackLabel.backgroundColor = BearyColors.faint
+        fallbackLabel.backgroundColor = BearyColors.surface2
         fallbackLabel.textAlignment = .center
         fallbackLabel.layer.cornerRadius = 22
         fallbackLabel.layer.masksToBounds = true

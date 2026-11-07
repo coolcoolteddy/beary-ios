@@ -20,7 +20,7 @@ import UIKit
 // 6 位验证码输入 + 邀请码输入（选填）+ 隐私协议复选框 + 登录钮 + 游客钮 + 关闭钮。
 // 文案与尺寸：wordmark 为 LogoHorizontal 官方资产（高 28，全屏页左对齐、Sheet 弹窗居中）、
 // 全屏页副标题“邮箱验证码登录，无需密码；新邮箱登录即注册”14 灰（Sheet 弹窗无副标题，
-// 改标题“欢迎回来”17 半粗体居中）、字段 label 11/600、输入框高 48 圆角 12 faint 底、
+// 改标题“欢迎回来”17 半粗体居中）、字段 label 11/600、输入框高 48 圆角 12 surface2 底、
 // 发码钮高 44（行高 48 内居中）圆角 12、登录钮高 44 圆角 12（墨底白字，
 // Sheet 弹窗橙底已删，登录钮统一墨底；U1 标题前景走 bg）。
 // 颜色一律走 BearyColors，不新增字面量颜色；
@@ -253,7 +253,7 @@ final class BearyLoginViewController: UIViewController {
         contentView.addSubview(stackView)
 
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.backgroundColor = sheetMode ? UIColor.clear : BearyColors.faint
+        closeButton.backgroundColor = sheetMode ? UIColor.clear : BearyColors.surface2
         closeButton.layer.cornerRadius = 16
         closeButton.tintColor = BearyColors.ink
         closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
@@ -371,11 +371,11 @@ final class BearyLoginViewController: UIViewController {
             loginSpinner.heightAnchor.constraint(equalToConstant: 20),
         ])
 
-        // 游客次钮：全屏页为 sendButton 未启用态的次级口径（faint 底 + gray 字），
+        // 游客次钮：全屏页为 sendButton 未启用态的次级口径（surface2 底 + gray 字），
         // Sheet 弹窗改纯文字链（墨字、无底），全弹窗唯一重色仍是橙登录钮。
         // .custom 类型避免 system 钮的点按标题变暗；不受登录钮启用条件约束，任何时候可点。
         guestButton.translatesAutoresizingMaskIntoConstraints = false
-        guestButton.backgroundColor = sheetMode ? UIColor.clear : BearyColors.faint
+        guestButton.backgroundColor = sheetMode ? UIColor.clear : BearyColors.surface2
         guestButton.layer.cornerRadius = 12
         guestButton.setTitle("先逛逛（游客模式）", for: .normal)
         guestButton.setTitleColor(sheetMode ? BearyColors.ink : BearyColors.gray, for: .normal)
@@ -516,7 +516,7 @@ final class BearyLoginViewController: UIViewController {
             codeContainer.bottomAnchor.constraint(equalTo: codeRow.bottomAnchor),
             codeContainer.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -9),
             sendButton.trailingAnchor.constraint(equalTo: codeRow.trailingAnchor),
-            // 1-7：发码钮有底色（ink/faint），不跟行高拉满 48；
+            // 1-7：发码钮有底色（ink/surface2），不跟行高拉满 48；
             // 删上下锚、只留居中 + 高 44，消除与行高 48 的过约束。
             sendButton.centerYAnchor.constraint(equalTo: codeRow.centerYAnchor),
         ]
@@ -557,7 +557,7 @@ final class BearyLoginViewController: UIViewController {
     }
 
     /// 审计 P2-14：三处单行框改走共享输入容器（原内联实现与邀请页
-    /// makeFieldContainer 逐字重复；faint 底 / 圆角 12 / 左右 14 / 48 高
+    /// makeFieldContainer 逐字重复；surface2 底 / 圆角 12 / 左右 14 / 48 高
     /// 均与原值一致，新增常态 line 边框与聚焦蓝边——字段字体 / 占位 /
     /// 键盘 / delegate / target 与校验逻辑均不动）。
     /// L1：输入框 48 由固定高改最小高——字段字号解除封顶后，大字号下
@@ -628,7 +628,7 @@ final class BearyLoginViewController: UIViewController {
         agreeButton.layer.cornerRadius = 4
         agreeButton.layer.borderWidth = 1
         agreeButton.layer.bearyDynamicBorderColor = BearyColors.line
-        agreeButton.backgroundColor = BearyColors.faint
+        agreeButton.backgroundColor = BearyColors.surface2
         agreeButton.accessibilityLabel = "我已阅读并同意《隐私政策》和《用户协议》"
         // 读屏入口：agreeLabel 不在无障碍树里（不读两遍），两条协议各给勾选框
         // 一个自定义操作，VoiceOver 用户在勾选框上划动即可分别打开，不另占焦点位。
@@ -743,7 +743,7 @@ final class BearyLoginViewController: UIViewController {
             agreeButton.tintColor = BearyColors.bg
             agreeButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 13), for: .normal)
         } else {
-            agreeButton.backgroundColor = BearyColors.faint
+            agreeButton.backgroundColor = BearyColors.surface2
             agreeButton.layer.bearyDynamicBorderColor = BearyColors.line
             agreeButton.setImage(nil, for: .normal)
         }
@@ -840,10 +840,10 @@ final class BearyLoginViewController: UIViewController {
         sendButton.isEnabled = sendEnabled
         if sheetMode {
             // Sheet 弹窗：发码钮为浅色次级钮（全弹窗唯一重色是橙登录钮），
-            // 启用态墨字、未启用态灰字；底色恒 faint，不走墨底。
-            sendButton.backgroundColor = BearyColors.faint
+            // 启用态墨字、未启用态灰字；底色恒 surface2，不走墨底。
+            sendButton.backgroundColor = BearyColors.surface2
         } else {
-            sendButton.backgroundColor = sendEnabled ? BearyColors.ink : BearyColors.faint
+            sendButton.backgroundColor = sendEnabled ? BearyColors.ink : BearyColors.surface2
         }
         let sendTitleColor = sendEnabled ? (sheetMode ? BearyColors.ink : BearyColors.bg) : BearyColors.gray
         sendButton.setTitleColor(sendTitleColor, for: .normal)

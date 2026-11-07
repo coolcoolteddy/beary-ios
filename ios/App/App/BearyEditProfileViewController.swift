@@ -216,7 +216,7 @@ class BearyEditProfileViewController: UIViewController {
     private let coverImageView: UIImageView = {
         let imageViewValue = UIImageView()
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
-        imageViewValue.backgroundColor = BearyColors.faint
+        imageViewValue.backgroundColor = BearyColors.surface2
         imageViewValue.contentMode = .scaleAspectFill
         imageViewValue.clipsToBounds = true
         // F14：网页 ed-banner 口径——180 高、无圆角。
@@ -232,7 +232,7 @@ class BearyEditProfileViewController: UIViewController {
     private let avatarImageView: UIImageView = {
         let imageViewValue = UIImageView()
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
-        imageViewValue.backgroundColor = BearyColors.faint
+        imageViewValue.backgroundColor = BearyColors.surface2
         imageViewValue.contentMode = .scaleAspectFill
         imageViewValue.clipsToBounds = true
         imageViewValue.layer.cornerRadius = 40

@@ -658,7 +658,7 @@ enum BearyProfilePersonalLogic {
     }
 }
 
-/// 每月字数趋势图（纯 UIView，不引图表库；复用心情条形的 orange/faint 配色）。
+/// 每月字数趋势图（纯 UIView，不引图表库；复用心情条形的 orange/surface2 配色）。
 /// 12 根柱按当月正文总字数归一（最高月 = 满高），柱顶标当月字数，柱下标月份；
 /// 颜色全走 BearyColors 动态色，深浅切换自动跟走。
 final class BearyMonthlyCharsChartView: UIView {
@@ -730,7 +730,7 @@ final class BearyMonthlyCharsChartView: UIView {
             valueLabel.text = monthValueText(month: month, value: value, maxValue: maxValue)
             monthValueLabels.append((month, valueLabel))
             let track = UIView()
-            track.backgroundColor = BearyColors.faint
+            track.backgroundColor = BearyColors.surface2
             track.layer.cornerRadius = 3
             track.clipsToBounds = true
             track.heightAnchor.constraint(equalToConstant: 110).isActive = true
@@ -1149,7 +1149,7 @@ final class BearyYearReviewViewController: UIViewController {
                 nameLabel.text = BearyText.moodNames[item.key] ?? item.key
                 nameLabel.widthAnchor.constraint(equalToConstant: 64).isActive = true
                 let barBackground = UIView()
-                barBackground.backgroundColor = BearyColors.faint
+                barBackground.backgroundColor = BearyColors.surface2
                 barBackground.layer.cornerRadius = 4
                 barBackground.clipsToBounds = true
                 let barFill = UIView()
@@ -1362,9 +1362,8 @@ final class BearyProfilePersonalModulesCard: UIView {
     init(title: String) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        backgroundColor = BearyColors.bg
-        layer.borderWidth = 1
-        layer.bearyDynamicBorderColor = BearyColors.line
+        backgroundColor = BearyColors.surface1
+        layer.borderWidth = 0
         layer.cornerRadius = BearyCorners.single
         clipsToBounds = true
         let titleLabel = UILabel()

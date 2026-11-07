@@ -16,7 +16,7 @@ import Photos
 //    爱心与计数同灰；取消赞预态 feed ink / profile 灰；写给行字号 feed
 //    12 粗体 / profile 13 常规；心情行间距 feed 3 / profile 4；操作行
 //    feed 右上角公开小地球、profile 同款（A-2 补齐）；折叠 feed 实测溢出（300 字 +
-//    实测超 6 行）/ profile 只计 300 字；图片槽底色 feed line / profile faint。
+//    实测超 6 行）/ profile 只计 300 字；图片槽底色 feed line / profile surface2。
 //  - 统一项：回应流一律 Feed 流式换行 BearyEmoteFlowView（profile 单行横滑
 //    emoteScrollView 废弃）；图片失败重试一律 Feed 口径（头像/主图均有重试钮，
 //    profile 主图槽位补重试）；引用卡一律共享 BearyQuoteCardView（profile
@@ -217,7 +217,7 @@ final class BearyActionStackView: UIStackView {
 /// 赋值时固化，不重赋即停留在旧主题色）——个人主页 chip 边框深浅切换不
 /// 跟随的问题由此根治，cell 侧不再另起一套遍历重刷（二选一，只此一套）。
 /// 点击层为 BearyHit44Button（视觉仍为整 chip 尺寸，只扩热区）；mine 态：
-/// 底色 hov、边框 ink、计数 ink 粗体；非 mine：底色 faint、边框 line、计数 gray。
+/// 底色 hov、边框 ink、计数 ink 粗体；非 mine：底色 surface2、边框 line、计数 gray。
 final class BearyEmoteChipView: UIView {
 
     private let row = UIStackView()
@@ -304,7 +304,7 @@ final class BearyEmoteChipView: UIView {
     }
 
     private func applyChrome() {
-        backgroundColor = mineFlag ? BearyColors.hov : BearyColors.faint
+        backgroundColor = mineFlag ? BearyColors.hov : BearyColors.surface2
         layer.bearyDynamicBorderColor = (mineFlag ? BearyColors.ink : BearyColors.line)
     }
 
@@ -1290,8 +1290,8 @@ class BearyDiaryCardCell: UITableViewCell {
         for index in 0..<9 {
             let slot = UIImageView()
             slot.translatesAutoresizingMaskIntoConstraints = false
-            // 槽底色各保各的：首页 line、个人主页 faint。
-            slot.backgroundColor = cardMode == .feed ? BearyColors.line : BearyColors.faint
+            // 槽底色各保各的：首页 line、个人主页 surface2。
+            slot.backgroundColor = cardMode == .feed ? BearyColors.line : BearyColors.surface2
             slot.contentMode = .scaleAspectFill
             slot.clipsToBounds = true
             slot.layer.cornerRadius = 12

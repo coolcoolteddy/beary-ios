@@ -138,10 +138,10 @@ enum BearyToast {
 /// 统一 toast 视图本体：类型即身份（show 先清同容器旧 toast 时以此识别，
 /// 不占 tag、不与 Feed 的 991/992 号 tag 冲突）。
 /// 视觉清单第 12 项：玻璃已撤（玻璃范围 Token 只允许栏/菜单，Toast 不在内），
-/// 改实色 surface 底；文字仍走 ink（深浅两色下均可读）、字号与内边距不动；
+/// 改实色 surface3 底；文字仍走 ink（深浅两色下均可读）、字号与内边距不动；
 /// 容器不参与触摸（瞬时提示不应吞掉下方内容的点按）。注：2026-10-29 玻璃批
 /// 之前是实色 ink 底，本支未恢复 ink 底——动态 ink 在深色下近白，配 ink 文字
-/// 会看不清，surface 是两色下都可读的实色兜底。
+/// 会看不清，surface3 是两色下都可读的实色兜底。
 private final class BearyToastView: UIView {
 
     private let label = UILabel()
@@ -254,12 +254,11 @@ private final class BearyToastView: UIView {
 
     init(message: String, actionTitle: String? = nil, action: (() -> Void)? = nil) {
         super.init(frame: .zero)
-        backgroundColor = BearyColors.surface
-        // 2026-11-02 定版第 2 组：Toast 补 hairline 阴影（0.08 / 4 / (0, 1)）＋ 1px line 描边
-        // （沿用全站卡片 1px line 描边口径；动态色走 bearyDynamicBorderColor，深浅切换跟随）。
+        backgroundColor = BearyColors.surface3
+        // 2026-11-02 定版第 2 组：Toast 补 hairline 阴影（0.08 / 4 / (0, 1)）；
+        // 2026-11-07 微明度定版：1px line 描边已随分层改明度阶一并去掉，底改 surface3。
         BearyShadow.applyHairline(to: layer)
-        layer.borderWidth = 1
-        layer.bearyDynamicBorderColor = BearyColors.line
+        layer.borderWidth = 0
         // U9：有动作入口时容器须接点按（仅钮本身可点）；无动作时保持旧版
         // 不参与触摸，瞬时提示不吞下方内容的点按。
         if let actionTitle = actionTitle, let action = action {

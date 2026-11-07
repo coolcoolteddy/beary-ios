@@ -56,6 +56,14 @@ enum BearyShadow {
         layer.shadowRadius = 8
         layer.shadowOffset = CGSize(width: 0, height: 2)
     }
+    /// 聚焦阴影（2026-11-07 微明度定版：聚焦态不再画蓝边，改走本档外阴影，
+    /// 比 raised 强一档；与 applyRaised／applyHairline 同形）。
+    static func applyFocused(to layer: CALayer) {
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.16
+        layer.shadowRadius = 12
+        layer.shadowOffset = CGSize(width: 0, height: 4)
+    }
 }
 
 /// 6-10 减动效门控 helper（全修批统一口径，签名固定）：调用点把
