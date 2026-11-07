@@ -224,6 +224,10 @@ enum BearyDraftImageStore {
 
     /// 清理无主文件：只保留给定草稿引用的原图与缩略图（调用方须传入全部草稿的
     /// 引用并集，只传当前篇会误删其他篇的图片，见编辑器 restoreDraft）。
+    /// 第九轮 07：刚落盘的新图可能在草稿写库之前（图片准备走独立队列，落盘与
+    /// 写库之间有窗口），引用集合里还没有它；保护期内的文件一律不删——孤文件
+    /// 晚一轮清理无害，误删新图有害。读属性失败时也跳过（不删），下轮再清。
+    private static let sweepGracePeriod: TimeInterval = 60
     static func sweep(keeping referencedFullNames: Set<String>) {
         guard let dir = directory() else { return }
         var keep = Set<String>()
@@ -232,8 +236,14 @@ enum BearyDraftImageStore {
             keep.insert(thumbFileName(for: name))
         }
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return }
+        let now = Date()
         for name in names {
             if !keep.contains(name) {
+                // 读属性失败时也跳过（不删），下轮再清。
+                guard let modified = (try? FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent(name).path))?[.modificationDate] as? Date else { continue }
+                if now.timeIntervalSince(modified) < sweepGracePeriod {
+                    continue
+                }
                 delete(name)
             }
         }
@@ -568,7 +578,7 @@ enum BearyDraftStore {
             }
             // 单条坏数据不再拖垮整库：整库解码失败时逐条解码，好的留下、
             // 坏的跳过；原文件先备份、好数据立即回写，坏数据只留在备份里。
-            // 回写失败则落回原损坏路径（原文件与备份都在，不丢数据）。
+            // 回写失败或备份失败则落回原损坏路径（原文件与备份都在，不丢数据）。
             if let data = try? Data(contentsOf: url),
                let rawArray = try? JSONSerialization.jsonObject(with: data) as? [Any],
                !rawArray.isEmpty {
@@ -581,8 +591,12 @@ enum BearyDraftStore {
                     good.append(draft)
                 }
                 if !good.isEmpty {
+                    // 第九轮 03：备份是部分恢复的前提——备份失败时绝不以部分
+                    // 数据覆盖原文件（被跳过草稿的原始数据只在备份里才有）。
+                    // 备份失败或回写失败都落回损坏路径：原文件不动，草稿箱按
+                    // corruptStore 出恢复失败态，用户可清除或重试，不丢数据。
                     let backup = backupCorruptFile(at: url)
-                    if saveAll(good, forAccount: accountId) {
+                    if backup != nil, saveAll(good, forAccount: accountId) {
                         NSLog("[BearyDraft] partial v3 store recovered: kept \(good.count), skipped \(skipped), backup=\(backup?.path ?? "nil")")
                         lastLoadError = nil
                         return .success(sortedNormalized(good, forAccount: accountId))

@@ -6536,13 +6536,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 发布成功 / 丢弃草稿时：只清本篇草稿 + 本篇全部本地图片文件 + 换掉 clientReq。
     /// 多槽下绝不能整库清，否则会误删其他篇。服务端孤 key 无删除接口，残留是已知可接受项（见文末注）。
-    /// 整库删除走 deleteAsync（ioQueue 内删，完成后回主线程刷新 pill；调用方不依赖删完时序）。
-    private func clearDraftAndFiles() {
-        for item in imageItems {
-            if let name = item.localFile {
-                BearyDraftImageStore.deletePair(fullName: name)
-            }
-        }
+    /// 第九轮 05：删库走带成败回传的 deleteAsyncReporting，确认记录删除成功后
+    /// 再清图——删库失败时记录仍在，图片必须保留（未上传的草稿图没有服务端 key，
+    /// 删了无法恢复）；清理失败可留孤文件。发布成功路径传 notifyOnDeleteFailure: false：
+    /// 发布已成功，失败 toast 会与“已发布”冲突，残留草稿仍在草稿箱可见、可手动删。
+    private func clearDraftAndFiles(notifyOnDeleteFailure: Bool = true) {
+        // 本地文件名先快照：删库是异步的，回调时 imageItems 可能已被重置。
+        let localNames = imageItems.compactMap { $0.localFile }
         let draftIdValue = currentDraftId
         currentDraftId = nil
         clearedCurrentDraftId = nil
@@ -6554,10 +6554,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftStatusLevel = nil
         updateDraftStatusLabel()
         if let draftIdValue = draftIdValue {
-            BearyDraftStore.deleteAsync(draftId: draftIdValue) { [weak self] in
-                self?.refreshDraftPillWidth()
+            BearyDraftStore.deleteAsyncReporting(draftId: draftIdValue) { [weak self] deleted in
+                guard let self = self else { return }
+                if deleted {
+                    for name in localNames {
+                        BearyDraftImageStore.deletePair(fullName: name)
+                    }
+                } else if notifyOnDeleteFailure {
+                    self.showToast(message: "草稿删除失败，草稿仍在草稿箱，图片已保留")
+                }
+                self.refreshDraftPillWidth()
             }
         } else {
+            // 无草稿记录：只有未落盘的本地图，直接清掉。
+            for name in localNames {
+                BearyDraftImageStore.deletePair(fullName: name)
+            }
             refreshDraftPillWidth()
         }
     }
@@ -7415,8 +7427,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 switch result {
                 case .success(let resp):
                     if let entryId = resp.id {
-                        // 只有拿到 entry id 才清草稿与本地图片。
-                        self.clearDraftAndFiles()
+                        // 只有拿到 entry id 才清草稿与本地图片。发布已成功，删库
+                        // 失败时不弹 toast（会与“已发布”冲突），残留草稿仍在草稿
+                        // 箱可见、可手动删；图片随记录保留，不丢。
+                        self.clearDraftAndFiles(notifyOnDeleteFailure: false)
                         self.commitPendingRemoval()
                         // iCity：成功 toast 按目标态动态（创建响应不带可见性字段，
                         // 以本次发送的可见性值为准）；toast 挂在 presenting 方视图上
