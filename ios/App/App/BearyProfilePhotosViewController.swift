@@ -176,6 +176,15 @@ final class BearyProfilePhotosViewController: UIViewController {
             emptyRetryButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyRetryButton.topAnchor.constraint(equalTo: emptyLabel.bottomAnchor, constant: 12),
         ])
+        // 顶栏错位同根修（2026-11-06，裁剪页黑屏同根）：顶栏高此前只有
+        // required 下限 ≥44、无上界、无定值——高度在约束层面未定，solver
+        // 在异常组合下会把顶栏撑满整页（设置页 #115 同款实证），本页顶栏
+        // 下移约 478pt 即此所致。给定值等式（defaultHigh）：常规字号下顶栏
+        // 钉死 44；大字号时标题的 required 上下不等式把下限抬高，定值等式
+        // 让位、栏随字长高，“栏随字长高”意图不动，只把常态高度定下来。
+        let topBarHeight = topBarView.heightAnchor.constraint(equalToConstant: 44)
+        topBarHeight.priority = .defaultHigh
+        topBarHeight.isActive = true
         updateTitleAndEmpty()
         // 第七轮审计 08：权限重验订阅——回前台（对方可能在页开着时取关）、
         // 账号变化、好友关系变化时都重算 own／mutual；值在打开时是新的，
