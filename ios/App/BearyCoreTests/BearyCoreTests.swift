@@ -388,6 +388,76 @@ final class BearyPastSelfTests: XCTestCase {
         suite.removePersistentDomain(forName: "beary.pastself.tests")
     }
 
+    func testCorruptStoreBlocksAllWrites() throws {
+        // 审计新一轮 05：存储损坏后，add / revoke / merge / replace / remove
+        // 全都不覆盖，原始数据原样保留。
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let store = PastSelfStore(userId: 97, defaults: suite)
+        let created = ms(year: 2025, month: 10, day: 30)
+        let first = store.add(originEntryId: "b_6", body: "别丢我", createdAtMs: created, calendar: calendar)!
+        let mainKey = "beary.pastSelf.v1.97"
+        // 模拟损坏：主 key 写进解不出的字节。
+        suite.set(Data("坏了".utf8), forKey: mainKey)
+        if case .corrupt = store.loadOutcome() {} else {
+            XCTFail("损坏的存储应判为 corrupt")
+        }
+        XCTAssertTrue(store.isStoreCorrupt)
+        // 新增被拒，且原因可区分（不是“已有等待中”也不是“已满”）。
+        XCTAssertNil(store.add(originEntryId: "b_5", body: "新一句", createdAtMs: created, calendar: calendar))
+        XCTAssertEqual(store.lastRejection, .storeCorrupt)
+        // 其余写路径同样不覆盖：原始坏字节原样保留。
+        XCTAssertFalse(store.revoke(messageId: first.id, nowMs: created, today: "2026-01-01"))
+        store.mergeServerRows([first])
+        store.replaceLocalRow(localId: first.id, with: first)
+        store.removeLocalRow(id: first.id)
+        XCTAssertEqual(suite.data(forKey: mainKey), Data("坏了".utf8))
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
+    func testMergeIntoEmptyStoreImportsServerRows() throws {
+        // 回炉：空库（.empty）与损坏（.corrupt）走不同路——空库时服务端
+        // 行能正常合进来（新设备首次同步从服务端拉回留话），损坏时才拦。
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let store = PastSelfStore(userId: 94, defaults: suite)
+        let created = ms(year: 2025, month: 10, day: 30)
+        if case .empty = store.loadOutcome() {} else {
+            XCTFail("空库应判为 empty")
+        }
+        var serverRow = message(id: "ps_s1", chain: "b_2", createdMs: created, deliverOn: "2026-10-30")
+        serverRow.authorId = 94
+        store.mergeServerRows([serverRow])
+        XCTAssertEqual(store.loadAll().map { $0.id }, ["ps_s1"])
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
+    func testBackupKeepsLastGoodAndRestores() throws {
+        // 审计新一轮 05：每次成功写入前，上一份好数据进独立备份 key；
+        // 主 key 损坏后可从备份恢复，无备份时恢复失败、主 key 不动。
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let store = PastSelfStore(userId: 96, defaults: suite)
+        let created = ms(year: 2025, month: 10, day: 30)
+        let first = store.add(originEntryId: "b_4", body: "第一句", createdAtMs: created, calendar: calendar)!
+        // 首写无旧数据，备份 key 还是空的。
+        XCTAssertNil(suite.data(forKey: "beary.pastSelf.v1.96.bak"))
+        XCTAssertNotNil(store.add(originEntryId: "b_3", body: "第二句", createdAtMs: created, calendar: calendar))
+        // 第二次写入前，上一份好数据（只有第一句）已进备份 key。
+        let backup = try JSONDecoder().decode([PastSelfMessage].self, from: suite.data(forKey: "beary.pastSelf.v1.96.bak")!)
+        XCTAssertEqual(backup.map { $0.id }, [first.id])
+        // 主 key 损坏 → 从备份恢复，回到上一份好数据；损坏后新写被拒，备份不被坏数据污染。
+        suite.set(Data("坏了".utf8), forKey: "beary.pastSelf.v1.96")
+        XCTAssertNil(store.add(originEntryId: "b_2", body: "第三句", createdAtMs: created, calendar: calendar))
+        XCTAssertTrue(store.restoreFromBackup())
+        XCTAssertEqual(store.loadAll().map { $0.id }, [first.id])
+        // 无备份时恢复失败，主 key 原样不动。
+        suite.set(Data("坏了".utf8), forKey: "beary.pastSelf.v1.95")
+        XCTAssertFalse(PastSelfStore(userId: 95, defaults: suite).restoreFromBackup())
+        XCTAssertEqual(suite.data(forKey: "beary.pastSelf.v1.95"), Data("坏了".utf8))
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
     func testMessageDecoding() throws {
         let json = """
         {"id":"ps_1","origin_entry_id":"b_1","chain_id":"b_1","author_id":1,"body":"少熬一点夜",
