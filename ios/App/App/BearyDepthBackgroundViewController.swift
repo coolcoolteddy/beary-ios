@@ -23,6 +23,9 @@ final class BearyDepthBackgroundViewController: UIViewController {
     private let onPickValue: (Theme, Bool) -> Bool
     /// 首次出现不拉 /me：值刚从个人页 profile.plus 传来；之后每次回前台再重读。
     private var hasAppearedOnce = false
+    /// 审计四轮第 6 项：会员状态请求的代次——viewWillAppear 每次回前台都发
+    /// 一次 /me，旧回包乱序到达会覆盖新状态；只认最新一次请求的回包。
+    private var plusStatusRequestSequence = 0
     /// 滚动中：willDisplay 不再重开动效，停稳后才由滚动结束回调统一评估。
     private var isScrollingPreviews = false
     /// Plus 页的 EdgeDismiss 强持有（仅窄屏全屏路用，见 presentPlusPage）。
@@ -160,12 +163,21 @@ final class BearyDepthBackgroundViewController: UIViewController {
     ///（值刚从个人页 profile.plus 传来）；之后每次回前台拉一次 /me。
     /// 失败静默保留旧值，不弹 toast、不把人判成非 Plus；/me 未下发 plus
     ///（nil）时同样保留旧值。只在值真的变了时才刷新行与底栏。
+    /// 审计四轮第 6 项：发起时记下账号与请求序号，回调先校验——已有更新的
+    /// 请求发出、或发起后已切号、或 /me 回包的账号与发起账号不符时，过期
+    /// 回包直接丢弃，不写 isPlusValue。
     private func refreshPlusStatus() {
         guard hasAppearedOnce else { hasAppearedOnce = true; return }
+        plusStatusRequestSequence += 1
+        let sequence = plusStatusRequestSequence
+        let accountId = BearyDraftStore.currentAccountId
         BearyAPI.shared.fetchMe { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
+                guard sequence == self.plusStatusRequestSequence else { return }
+                guard BearyDraftStore.currentAccountId == accountId else { return }
                 guard case .success(let user) = result, let plus = user?.plus else { return }
+                if let userId = user?.id, let accountId, userId != accountId { return }
                 guard plus != self.isPlusValue else { return }
                 self.isPlusValue = plus
                 self.updatePlusFooter()
