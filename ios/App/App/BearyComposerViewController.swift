@@ -5953,17 +5953,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         } else {
             titleLabel.text = "编辑日记"
         }
-        setBodyAttributedText(entry.content)
-        applyBodyLineHeight()
-        // 109：编辑回填标题进新输入框（15 分钟内可改，见门控注释）；
-        // 无标题时字段留空。
-        setHeadlineText(entry.title)
-        selectedMood = entry.mood
-        selectedWeather = entry.weather
+        // 正文/标题/心情/天气只首次回填：补拉二次调用 setupEditContent 时用户可能已在
+        // 加载期间改过，补拉在途输入未冻结（见 refreshPublishingInputFreeze），无条件重填
+        // 会把手改静默盖回服务端旧值；与气温/位置/@ 的 editQuoteFetchAttempted 守卫同款口径。
+        if !editQuoteFetchAttempted {
+            setBodyAttributedText(entry.content)
+            applyBodyLineHeight()
+            // 109：编辑回填标题进新输入框（15 分钟内可改，见门控注释）；
+            // 无标题时字段留空。
+            setHeadlineText(entry.title)
+            selectedMood = entry.mood
+            selectedWeather = entry.weather
+        }
         // 气温只首次回填：补拉二次调用 setupEditContent 时用户可能已在加载
-        // 期间手改气温，无条件重填会把手改静默盖回服务端旧值；与位置/@ 的
-        // editQuoteFetchAttempted 守卫同款口径（天气类型沿用旧无条件口径，
-        // 本支不动，避免扩大范围）。
+        // 期间手改气温，无条件重填会把手改静默盖回服务端旧值；与正文/标题/
+        // 心情/天气/位置/@ 的 editQuoteFetchAttempted 守卫同款口径。
         if !editQuoteFetchAttempted {
             selectedTemperature = entry.temperatureC
         }
@@ -6031,8 +6035,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 编辑回填补拉单篇（详情同款 fetchEntry），首次自动补拉与失败行“重试”共用：
     /// 拉取中标题为“加载日记…”、失败行暂隐、保存钮禁用；成功后以新 entry 重填
-    /// （setupEditContent 二次调用，editQuoteFetchAttempted 仍为 true，故气温/位置/@
-    /// 的守卫口径不变，不覆盖用户在加载期间的手改）；失败则标题还原为“编辑日记”、
+    /// （setupEditContent 二次调用，editQuoteFetchAttempted 仍为 true，故正文/标题/心情/
+    /// 天气/气温/位置/@ 的守卫口径不变，不覆盖用户在加载期间的手改）；失败则标题还原为“编辑日记”、
     /// 置 editQuoteFetchFailed 并露失败行、保存钮继续禁用，编辑器不关闭——toast
     /// 直接指到页内重试入口，不再是无入口的“请重试”。重试不重置
     /// editQuoteFetchAttempted：已删引用补拉后仍无正文时走正常回填，不再自动重拉。
