@@ -7245,9 +7245,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.cancelButton.layer.add(shake, forKey: "bearyDenyShake")
                 }
                 // 审计 M2：保存失败留页——边缘跟手若已把视图滑出，滑回原位
-                //（0.25s easeOut，与 BearyEdgeDismiss 的复位同口径；减动效瞬时归位）。
+                //（与 BearyEdgeDismiss 的复位同口径：拖拽收尾统一弹簧 0.30s／
+                // damping 0.7；保存回调里无松手速度可传，初速度取 0；减动效瞬时归位）。
                 if self.view.transform != .identity {
-                    UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.25, delay: 0, options: .curveEaseOut, animations: {
+                    UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
                         self.view.transform = .identity
                     })
                 }
