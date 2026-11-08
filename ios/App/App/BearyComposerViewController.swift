@@ -5523,7 +5523,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     return
                 }
                 // C11：点缩略图主体直接进预览/裁剪页（左下角独立裁剪钮已删）；
-                // 上传中不进（裁剪源未落定），与旧裁剪钮守卫同款。
+                // 上传中不进（裁剪源未落定）。
                 if item.uploading { return }
                 openCropEditorForImageItem(item)
                 return
@@ -5531,7 +5531,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// C11：裁剪源解析（旧裁剪钮处理同款）：优先本地原图，其次条内图。
+    /// C11：裁剪源解析：优先本地原图，其次条内图。
     private func openCropEditorForImageItem(_ item: ComposerImageItem) {
         if presentedViewController != nil { return }
         if let name = item.localFile {
@@ -5750,8 +5750,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func presentCropEditor(for item: ComposerImageItem, source: UIImage) {
         // 磁盘读图是异步的：回到主线程时若已有弹窗在上（草稿箱等），不再叠页。
         if presentedViewController != nil { return }
-        // Mantis 裁剪（3.1.1）：固定 1:1、确认先退场再回调；回调体与旧裁剪页
-        // onConfirm 一字未动（applyCroppedImage）；旧裁剪器留作兜底。
+        // Mantis 裁剪（3.1.1）：固定 1:1、确认先退场再回调；回调体（applyCroppedImage）未动。
         let cropVC = BearyMantisCrop.makeCropViewController(image: source, aspectRatio: 1)
         let handler = BearyMantisCropHandler(onCrop: { [weak self, weak item] cropped in
             guard let self = self, let item = item else { return }
