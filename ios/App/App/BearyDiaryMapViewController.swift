@@ -798,20 +798,20 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 补一批标记（缓存批或单组编出）：按组 ID 增量更新（P2-9）——
     /// 已在地图上的组只就地更新坐标/标题/篇数，标记对象不重建，
     /// 选中态与气泡因此保持；新组才新建标记。
-    /// 首批成图时缩放到本批标记，之后批次不再抢用户正在看的区域。
+    /// 只补标记、不调视角：首次视野由 applyGeocodedGroups 在整批初始
+    /// 解析完成时对全部已定位标记整体调整一次（审计四轮第 3 项），
+    /// 此后不再抢用户正在看的区域。
     /// 大头针带组 ID（P1-6）：title 是展示名，同名不同区的两组
     /// title 相同，认组不靠 title（见 group(for:)）。
     private func addLocatedAnnotations(_ items: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)]) {
         guard !items.isEmpty else { return }
         var newAnnotations: [MKPointAnnotation] = []
-        var batchAnnotations: [MKPointAnnotation] = []
         for item in items {
             if let existing = locatedAnnotations[item.group.id] {
                 existing.coordinate = item.coordinate
                 existing.title = item.group.key
                 existing.subtitle = "\(item.group.count) 篇"
                 refreshGlyph(for: existing, count: item.group.count)
-                batchAnnotations.append(existing)
             } else {
                 let annotation = DiaryMapAnnotation()
                 annotation.groupId = item.group.id
@@ -820,15 +820,10 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 annotation.subtitle = "\(item.group.count) 篇"
                 locatedAnnotations[item.group.id] = annotation
                 newAnnotations.append(annotation)
-                batchAnnotations.append(annotation)
             }
         }
         if !newAnnotations.isEmpty {
             mapView.addAnnotations(newAnnotations)
-        }
-        if !didInitialGeocode {
-            didInitialGeocode = true
-            mapView.showAnnotations(batchAnnotations, animated: false)
         }
     }
 
@@ -852,12 +847,25 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     }
 
     /// 终态对齐：按组 ID 增量更新（P2-9）——只摘掉最终 located 里
-    /// 已没有的组的标记，其余标记就地更新、不拆建；已首批缩放过的
-    /// 不再抢区域。整批解析完成时用户正在看的选中点与气泡保持不动。
+    /// 已没有的组的标记，其余标记就地更新、不拆建；整批解析完成时
+    /// 用户正在看的选中点与气泡保持不动。
+    /// 审计四轮第 3 项：首次视野等整批初始解析完成后再整体调整一次——
+    /// 对全部已定位标记调一次 showAnnotations，而不是只看第一批编出的
+    /// 地点（此前首批通常只有一个地点，视野只围着它）；首次整体调整
+    /// 后不再动视角，保留「之后批次不再抢用户正在看的区域」的原意。
+    /// located 为空（整批都编不出）时不缩放、不立旗标，下次有定位结果
+    /// 的新一轮再调。
     private func applyGeocodedGroups(located: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)], unlocated: [BearyLocationMapGroup]) {
         unlocatedGroups = unlocated
         removeLocatedAnnotations(notIn: Set(located.map { $0.group.id }))
         addLocatedAnnotations(located)
+        if !didInitialGeocode, !located.isEmpty {
+            didInitialGeocode = true
+            let annotations = located.compactMap { locatedAnnotations[$0.group.id] }
+            if !annotations.isEmpty {
+                mapView.showAnnotations(annotations, animated: false)
+            }
+        }
         tableView.reloadData()
     }
 
