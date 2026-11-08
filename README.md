@@ -1,40 +1,23 @@
 # beary
 
-日子值得记得。
+## 下载
 
-beary 是一款个人日记 App。它不催你写，不给你派任务——写下来的日子，先属于你自己。
+- **iOS 安装包**：[GitHub Releases](https://github.com/coolcoolteddy/beary-ios/releases)（需要 iOS 15 或更高版本）
+- **产品页**：[teddyhn.com/app](https://teddyhn.com/app)
+- **网页版**：[teddyhn.com/beary](https://teddyhn.com/beary)——与 App 共用同一套账号与日记数据，在哪写都一样。
 
-## 写，给自己
+## 技术栈
 
-- 默认私密：写完不用先想给谁看，默认只对自己可见。
-- 可见性随时改：私密、仅好友、公开、限时四档，写完选，之后在卡片上随时可以双向切换。
-- 15 分钟编辑期：写完 15 分钟内可以改，过了就只能删；删掉的日记进回收站，30 天内可以找回。
-- 没有评论：日记下面没有评论区，不用应付评价。
+- iOS 端：Swift + UIKit，原生开发
+- 后端：Cloudflare Workers + D1，与网页版共用同一套接口与数据
 
-## 看，慢慢翻
+## 相关链接
 
-- 广场：看看别人公开的日子。
-- 正在关注：只看你在意的人。
-- 时间线：按日子翻自己的记录，带日历。
-- 那年今日：往年同一天写过什么，翻出来再看一眼。
-- 写给过去的自己：给明年的自己留一句话，到期送达。
-
-## 人，慢慢处
-
-- 关注不用对方同意，互关才算好友；仅好友可见只认互关。
-- 私信纯文字，权限四档可调：所有人、仅关注我的人、仅好友、任何人都不可。
-- 拉黑、举报都有；拉黑断一切关系。
-
-## 玩法
-
-- 日记盲盒、星图、年度回顾：把写过的日子换个方式再看一遍。
-
-## 一个账号，到处是 beary
-
-iOS App 与网页版共用同一套账号与日记数据：在 App 里写的日记，网页版也能看到。
-
-- 线上日记站：https://teddyhn.com/beary
-- iOS 安装包：本仓库 [Releases](https://github.com/coolcoolteddy/beary-ios/releases)（需要 iOS 15 或更高版本）
+- 主站：https://teddyhn.com
+- 产品页与下载：https://teddyhn.com/app
+- 网页版：https://teddyhn.com/beary
+- 交流群：https://t.me/Bearycommunity
+- 反馈：hi@teddyhn.com
 
 ## 开发者
 
@@ -43,5 +26,3 @@ git clone https://github.com/coolcoolteddy/beary-ios
 ```
 
 用 Xcode 打开 `ios/App/App.xcodeproj`，选模拟器或真机，点 ▶ 运行。
-
-主站：https://teddyhn.com
