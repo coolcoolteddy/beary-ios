@@ -1352,4 +1352,13 @@ enum BearyDraftStore {
             clearEditCheckpoint(entryId: entryId, forAccount: accountId)
         }
     }
+
+    /// 按指定账号清检查点（第三轮审计第 5 项）：调用方传打开编辑器时绑定的
+    /// 原账号，切号后清原号文件、不误删新号文件；无账号参数的老入口仍按
+    /// 全局当前账号，调用方未绑定时兜底。
+    static func clearEditCheckpointAsync(entryId: String, forAccount accountId: Int?) {
+        ioQueue.async {
+            clearEditCheckpoint(entryId: entryId, forAccount: accountId)
+        }
+    }
 }
