@@ -4065,25 +4065,20 @@ final class BearySettingsViewController: UIViewController {
             return
         }
         guard !dmLevelPosting else { return }
-        let sheet = UIAlertController(title: "谁可以私信我", message: nil, preferredStyle: .actionSheet)
         let options: [(value: String, title: String)] = [
             ("anyone", "所有人都可私信我"),
             ("followers", "仅关注我的人"),
             ("friends", "仅好友"),
             ("none", "任何人都不可私信我"),
         ]
-        for option in options {
+        var actions: [BearyConfirmSheet.Action] = options.map { option in
             let title = option.value == dmLevel ? "✓ " + option.title : option.title
-            sheet.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
+            return BearyConfirmSheet.Action(title: title, style: .default) { [weak self] in
                 self?.saveDMLevel(option.value)
-            })
+            }
         }
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = sheet.popoverPresentationController, let button = dmLevelRowButton {
-            popover.sourceView = button
-            popover.sourceRect = button.bounds
-        }
-        present(sheet, animated: BearyMotion.animated(true))
+        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
+        BearyConfirmSheet.show(from: self, title: "谁可以私信我", message: nil, actions: actions)
     }
 
     private func saveDMLevel(_ level: String) {
