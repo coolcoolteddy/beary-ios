@@ -4978,6 +4978,8 @@ class BearyProfileViewController: UIViewController {
         pastSelfPushCreate(message)
         BearyHaptics.publishSuccess()
         BearyToast.show(in: view, message: "已留给明年的自己")
+        // 本地通知：新留话排一条送达日早上 9:00 的提醒。
+        BearyLocalNotifications.shared.refreshAll(force: true)
         renderPastSelf(visible: pastSelfVisibleEntries())
     }
 
@@ -4999,6 +5001,8 @@ class BearyProfileViewController: UIViewController {
                 pastSelfPushRevoke(waiting.id)
                 BearyToast.show(in: view, message: "已撤回")
             }
+            // 本地通知：撤回即取消该留话的送达提醒。
+            BearyLocalNotifications.shared.refreshAll(force: true)
         } else {
             BearyToast.show(in: view, message: "这句话已送达，撤回不了了")
         }
@@ -5419,6 +5423,8 @@ class BearyProfileViewController: UIViewController {
         pastSelfPushCreate(message)
         BearyHaptics.publishSuccess()
         BearyToast.show(in: view, message: "已留给明年的自己")
+        // 本地通知：续一年留话排一条新送达日早上 9:00 的提醒。
+        BearyLocalNotifications.shared.refreshAll(force: true)
         renderPastSelf(visible: pastSelfVisibleEntries())
     }
 

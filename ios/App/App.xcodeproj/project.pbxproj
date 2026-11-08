@@ -87,6 +87,7 @@
 		3DAF60FE15F9E3BACC3B3888 /* BearyHeatmapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42F1499DF09E9A785DA963AE /* BearyHeatmapView.swift */; };
 		F1A2B3C4D5E6F78901234567 /* BearyWishWallViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */; };
 		1FC91D33C400D730D6210457 /* BearyPastSelf.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57E941A106787A04C8C1EAA /* BearyPastSelf.swift */; };
+		A18F72C3F038DEF72FAE3CD8 /* BearyLocalNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9698DE7FF6E3775C5D608E74 /* BearyLocalNotifications.swift */; };
 		07DA09CFD9D0EDC00E5B975B /* BearyColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 480F2905FC850A20929C2317 /* BearyColors.swift */; };
 		B448177CB1834F02BE24580B /* BearyDynamicType.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9DC0708952A4FAAA2FC5BA4 /* BearyDynamicType.swift */; };
 		11B6AB083B6F9CD81F675174 /* BearyBlindBoxFlowViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88BE577F3EF95C0FCAC2A3CD /* BearyBlindBoxFlowViewController.swift */; };
@@ -363,6 +364,7 @@
 		42F1499DF09E9A785DA963AE /* BearyHeatmapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyHeatmapView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyWishWallViewController.swift; sourceTree = "<group>"; };
 		A57E941A106787A04C8C1EAA /* BearyPastSelf.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyPastSelf.swift; sourceTree = "<group>"; };
+		9698DE7FF6E3775C5D608E74 /* BearyLocalNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLocalNotifications.swift; sourceTree = "<group>"; };
 		88BE577F3EF95C0FCAC2A3CD /* BearyBlindBoxFlowViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBlindBoxFlowViewController.swift; sourceTree = "<group>"; };
 		709353AF36E7A13EDE025E55 /* BearyBlindBoxEntryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBlindBoxEntryView.swift; sourceTree = "<group>"; };
 		CC0475BEA97002D2AB77651F /* BearyBlindBox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBlindBox.swift; sourceTree = "<group>"; };
@@ -655,6 +657,7 @@
 				42F1499DF09E9A785DA963AE /* BearyHeatmapView.swift */,
 				A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */,
 				A57E941A106787A04C8C1EAA /* BearyPastSelf.swift */,
+				9698DE7FF6E3775C5D608E74 /* BearyLocalNotifications.swift */,
 				88BE577F3EF95C0FCAC2A3CD /* BearyBlindBoxFlowViewController.swift */,
 				709353AF36E7A13EDE025E55 /* BearyBlindBoxEntryView.swift */,
 				CC0475BEA97002D2AB77651F /* BearyBlindBox.swift */,
@@ -1193,6 +1196,7 @@
 				3DAF60FE15F9E3BACC3B3888 /* BearyHeatmapView.swift in Sources */,
 				F1A2B3C4D5E6F78901234567 /* BearyWishWallViewController.swift in Sources */,
 				1FC91D33C400D730D6210457 /* BearyPastSelf.swift in Sources */,
+				A18F72C3F038DEF72FAE3CD8 /* BearyLocalNotifications.swift in Sources */,
 				11B6AB083B6F9CD81F675174 /* BearyBlindBoxFlowViewController.swift in Sources */,
 				DE8D64F180D2F1B435EBC1A8 /* BearyBlindBoxEntryView.swift in Sources */,
 				8390766731A0B87B6A936AFC /* BearyBlindBox.swift in Sources */,

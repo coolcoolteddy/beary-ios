@@ -1,0 +1,211 @@
+import Foundation
+import UserNotifications
+import UIKit
+
+/// 本地通知（2026-11-08 新增）：纯本机 UNUserNotificationCenter，不走后端、不需 $99 账号。
+/// 四种：每晚写日记提醒 / 限时日记到期 / 那年今日 / 过去的自己送达。
+/// 刷新幂等：按本地数据 + 开关重算，失效的待发送一律清掉再重排。
+/// 文案为初稿，Li 定夺后可改（见 PR 说明）。
+/// 已知局限：判定只读本机日文件；发布后单篇落盘是异步拉取（upsertPublished），
+/// 若 21:00 前一直没回前台，当晚提醒可能误弹一次；删除当天的唯一一篇后，
+/// 本机日文件要等同步才清，提醒可能少弹一次。回前台刷新是兜底。
+final class BearyLocalNotifications {
+    static let shared = BearyLocalNotifications()
+
+    enum Kind: String, CaseIterable {
+        case dailyReminder
+        case limitedExpiry
+        case pastDay
+        case pastSelfDelivery
+
+        var defaultsKey: String { "beary.localNotifications.\(rawValue)" }
+    }
+
+    private static let permissionRequestedKey = "beary.localNotifications.permissionRequested"
+    private static let dailyIdentifier = "beary.local.daily-reminder"
+    private static let pastDayIdentifier = "beary.local.past-day"
+    private static let limitedPrefix = "beary.local.limited-"
+    private static let pastSelfPrefix = "beary.local.pastself-"
+
+    private static let dailyHour = 21
+    private static let morningHour = 9
+
+    private var lastRefreshAt: Date?
+
+    private init() {
+        // 切号时按新号重算（SceneDelegate onUserChanged 在 id 真变时广播）。
+        NotificationCenter.default.addObserver(forName: .bearyUserDidChange, object: nil, queue: .main) { [weak self] _ in
+            self?.refreshAll(force: true)
+        }
+    }
+
+    // MARK: - 开关
+
+    func isEnabled(_ kind: Kind) -> Bool {
+        if UserDefaults.standard.object(forKey: kind.defaultsKey) == nil { return true }
+        return UserDefaults.standard.bool(forKey: kind.defaultsKey)
+    }
+
+    func setEnabled(_ enabled: Bool, for kind: Kind) {
+        UserDefaults.standard.set(enabled, forKey: kind.defaultsKey)
+        refreshAll(force: true)
+    }
+
+    // MARK: - 权限
+
+    /// 首次回到前台时问一次（系统弹窗）；问过就不再问。
+    func requestAuthorizationIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: Self.permissionRequestedKey) else { return }
+        UserDefaults.standard.set(true, forKey: Self.permissionRequestedKey)
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
+            if granted { self?.refreshAll(force: true) }
+        }
+    }
+
+    func fetchAuthorizationStatus(completion: @escaping (UNAuthorizationStatus) -> Void) {
+        UNUserNotificationCenter.current().getNotificationSettings { completion($0.authorizationStatus) }
+    }
+
+    func openSystemSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+
+    // MARK: - 刷新
+
+    /// 幂等重算。非强制时 5 分钟内只刷一次（回前台高频触发时不反复读盘）；
+    /// 发布 / 撤回 / 切号 / 开关翻转走强制。
+    func refreshAll(force: Bool = false) {
+        if !force, let last = lastRefreshAt, Date().timeIntervalSince(last) < 300 { return }
+        lastRefreshAt = Date()
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { [weak self] settings in
+            guard let self = self else { return }
+            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+                self.removeAllLocalPending(center: center)
+                return
+            }
+            DispatchQueue.main.async {
+                guard let accountId = SessionManager.shared.currentUser?.id else {
+                    self.removeAllLocalPending(center: center)
+                    return
+                }
+                let enabled = Dictionary(uniqueKeysWithValues: Kind.allCases.map { ($0, self.isEnabled($0)) })
+                DispatchQueue.global(qos: .utility).async {
+                    self.rebuild(center: center, accountId: accountId, enabled: enabled)
+                }
+            }
+        }
+    }
+
+    private func removeAllLocalPending(center: UNUserNotificationCenter) {
+        center.getPendingNotificationRequests { requests in
+            let ids = requests.map(\.identifier).filter { $0.hasPrefix("beary.local.") }
+            guard !ids.isEmpty else { return }
+            center.removePendingNotificationRequests(withIdentifiers: ids)
+        }
+    }
+
+    private struct DesiredRequest {
+        var identifier: String
+        var fireDate: Date
+        var body: String
+    }
+
+    private func rebuild(center: UNUserNotificationCenter, accountId: Int, enabled: [Kind: Bool]) {
+        let now = Date()
+        let nowMs = Int(now.timeIntervalSince1970 * 1000)
+        let calendar = BearyBeijingDay.calendar
+        let todayKey = BearyBeijingDay.dayKey(ofMs: nowMs) ?? ""
+        let entries = BearyEntrySyncStore.loadAllEntries(accountId: accountId)
+        let messages = PastSelfStore(userId: accountId).loadAll()
+        var desired: [DesiredRequest] = []
+
+        // 1. 每晚写日记提醒：下一个 21:00（北京）；今天已写则不排。
+        if enabled[.dailyReminder] == true {
+            let nextEvening = Self.nextOccurrence(hour: Self.dailyHour, after: now, calendar: calendar)
+            let isToday = calendar.isDate(nextEvening, inSameDayAs: now)
+            let hasEntryToday = entries.contains { entry in
+                guard let createdAt = entry.createdAt else { return false }
+                return BearyBeijingDay.dayKey(ofMs: createdAt) == todayKey
+            }
+            if !(isToday && hasEntryToday) {
+                desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: "今天还没有写日记，写一点，留一点。"))
+            }
+        }
+
+        // 2. 那年今日：下一个 9:00（北京）；那天往年有日记才排。
+        if enabled[.pastDay] == true {
+            let nextMorning = Self.nextOccurrence(hour: Self.morningHour, after: now, calendar: calendar)
+            if BearyProfilePersonalLogic.thisDayInHistory(entries: entries, today: nextMorning, calendar: calendar) != nil {
+                desired.append(DesiredRequest(identifier: Self.pastDayIdentifier, fireDate: nextMorning, body: "往年今天，你写过日记，打开看看吧。"))
+            }
+        }
+
+        // 3. 限时日记到期：每篇存活限时篇，到期时刻各排一条。
+        if enabled[.limitedExpiry] == true {
+            for entry in entries {
+                guard let id = entry.id, let until = entry.ephemeralUntil, BearyEphemeral.isLive(entry, nowMs: nowMs) else { continue }
+                desired.append(DesiredRequest(identifier: Self.limitedPrefix + id, fireDate: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0), body: "限时结束了，这篇日记已自动转回私密。"))
+            }
+        }
+
+        // 4. 过去的自己送达：每句未撤回留话，送达日 9:00 各排一条；
+        // 送达日当天 9:00 前也排（卡片已在页上，提醒是让人点进去看）。
+        if enabled[.pastSelfDelivery] == true {
+            for message in messages {
+                guard message.revokedAtMs == nil,
+                      let fireDate = Self.dateOf(dayKey: message.deliverOn, hour: Self.morningHour, calendar: calendar),
+                      fireDate > now else { continue }
+                desired.append(DesiredRequest(identifier: Self.pastSelfPrefix + message.id, fireDate: fireDate, body: "一年前留给自己的话到了，打开看看吧。"))
+            }
+        }
+
+        // 差分：清掉失效的（已关开关 / 已删篇 / 已撤回 / 已过期），补上新增的；
+        // 同 id 重排即覆盖（UNUserNotificationCenter 同 id 替换旧待发送）。
+        let desiredIds = Set(desired.map(\.identifier))
+        center.getPendingNotificationRequests { requests in
+            let pendingIds = Set(requests.map(\.identifier).filter { $0.hasPrefix("beary.local.") })
+            let stale = pendingIds.subtracting(desiredIds)
+            if !stale.isEmpty { center.removePendingNotificationRequests(withIdentifiers: Array(stale)) }
+            for item in desired {
+                let content = UNMutableNotificationContent()
+                content.body = item.body
+                content.sound = .default
+                var comps = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: item.fireDate)
+                comps.calendar = calendar
+                comps.timeZone = calendar.timeZone
+                let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
+                let request = UNNotificationRequest(identifier: item.identifier, content: content, trigger: trigger)
+                center.add(request)
+            }
+        }
+    }
+
+    // MARK: - 日期
+
+    /// 当天 hour:00 已过则取明天同一时刻（北京日历）。
+    private static func nextOccurrence(hour: Int, after date: Date, calendar: Calendar) -> Date {
+        var comps = calendar.dateComponents([.year, .month, .day], from: date)
+        comps.hour = hour
+        comps.minute = 0
+        comps.second = 0
+        guard let candidate = calendar.date(from: comps) else { return date }
+        if candidate > date { return candidate }
+        return calendar.date(byAdding: .day, value: 1, to: candidate) ?? candidate
+    }
+
+    private static func dateOf(dayKey: String, hour: Int, calendar: Calendar) -> Date? {
+        let parts = dayKey.split(separator: "-")
+        guard parts.count == 3,
+              let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) else { return nil }
+        var comps = DateComponents()
+        comps.year = year
+        comps.month = month
+        comps.day = day
+        comps.hour = hour
+        comps.minute = 0
+        comps.second = 0
+        return calendar.date(from: comps)
+    }
+}

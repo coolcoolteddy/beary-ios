@@ -527,6 +527,7 @@ final class BearySettingsViewController: UIViewController {
         settingsLayoutLogged = false
         refreshAccountSwitchSection()
         refreshDMLevelRow()
+        refreshNotificationHintRow()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -1130,6 +1131,9 @@ final class BearySettingsViewController: UIViewController {
         generalNotifyWrap.spacing = 20
         generalNotifyWrap.alignment = .fill
         buildGeneralSection()
+        // 本地通知（2026-11-08 新增）：四种开关 + 系统权限未开启提示行，
+        // 挂在「通用与通知」组之后（原消息与通知卡在诊断之后的位置）。
+        buildNotificationSection()
 
         accountSecurityWrap.translatesAutoresizingMaskIntoConstraints = false
         accountSecurityWrap.axis = .vertical
@@ -3832,6 +3836,90 @@ final class BearySettingsViewController: UIViewController {
         diagDisclosureValue.headerButton.addTarget(self, action: #selector(diagDisclosureTapped), for: .touchUpInside)
         diagDisclosure = diagDisclosureValue
         generalNotifyWrap.addArrangedSubview(diagDisclosureValue.card)
+    }
+
+    // 本地通知（2026-11-08 新增）：四种开关 + 系统权限未开启提示行。
+    // 开关行沿用音效 / 诊断日志行的样式（标题 15 + 说明 12 灰 + UISwitch，无图标）。
+    private var notificationSwitches: [BearyLocalNotifications.Kind: UISwitch] = [:]
+    private var notificationHintRow: UIView?
+
+    private func buildNotificationSection() {
+        let items: [(kind: BearyLocalNotifications.Kind, title: String, detail: String)] = [
+            (.dailyReminder, "写日记提醒", "每天 21:00，还没写才提醒"),
+            (.limitedExpiry, "限时日记到期", "限时结束、转回私密时提醒"),
+            (.pastDay, "那年今日", "早上 9:00，往年今天有日记才提醒"),
+            (.pastSelfDelivery, "留给明年的自己", "留言送达当天早上 9:00 提醒"),
+        ]
+        var rows: [UIView] = []
+        for (index, item) in items.enumerated() {
+            let titleLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+            titleLabel.font = BearyDynamicType.smallBodyFont()
+            titleLabel.text = item.title
+            titleLabel.numberOfLines = 0
+            let detailLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
+            detailLabel.text = item.detail
+            let textStack = UIStackView(arrangedSubviews: [titleLabel, detailLabel])
+            textStack.axis = .vertical
+            textStack.spacing = 2
+            textStack.alignment = .fill
+            let toggle = UISwitch()
+            toggle.isOn = BearyLocalNotifications.shared.isEnabled(item.kind)
+            toggle.setContentHuggingPriority(.required, for: .horizontal)
+            toggle.setContentCompressionResistancePriority(.required, for: .horizontal)
+            toggle.tag = index
+            toggle.addTarget(self, action: #selector(notificationSwitchValueChanged(_:)), for: .valueChanged)
+            notificationSwitches[item.kind] = toggle
+            let row = UIStackView(arrangedSubviews: [textStack, toggle])
+            row.translatesAutoresizingMaskIntoConstraints = false
+            row.axis = .horizontal
+            row.spacing = 12
+            row.alignment = .center
+            rows.append(row)
+        }
+        // 系统通知权限被拒时才显示的提示行（点按进系统设置）。
+        let hintDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
+        hintDetail.text = "去系统设置里打开"
+        let hintContent = makeRow(title: "通知权限未开启", detailLabel: hintDetail)
+        let hintButton = UIButton(type: .custom)
+        hintButton.accessibilityLabel = "通知权限未开启，去系统设置里打开"
+        hintButton.addTarget(self, action: #selector(notificationHintTapped), for: .touchUpInside)
+        hintButton.bearyAddPressHaptic()
+        let hintRow = makeSettingsTappableRow(content: hintContent, button: hintButton)
+        hintRow.isHidden = true
+        notificationHintRow = hintRow
+        rows.append(hintRow)
+        let group = makeGroupCard(title: "通知", rows: rows)
+        generalNotifyWrap.addArrangedSubview(group.card)
+        refreshNotificationHintRow()
+    }
+
+    @objc private func notificationSwitchValueChanged(_ sender: UISwitch) {
+        let kinds = BearyLocalNotifications.Kind.allCases
+        guard kinds.indices.contains(sender.tag) else { return }
+        let kind = kinds[sender.tag]
+        BearyLocalNotifications.shared.setEnabled(sender.isOn, for: kind)
+        // 权限被拒时开关照常记偏好，只提示一次：进系统打开后即生效。
+        if sender.isOn {
+            BearyLocalNotifications.shared.fetchAuthorizationStatus { [weak self] status in
+                guard status == .denied else { return }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    BearyToast.show(in: self.view, message: "通知权限未开启，去系统设置里打开才生效")
+                }
+            }
+        }
+    }
+
+    @objc private func notificationHintTapped() {
+        BearyLocalNotifications.shared.openSystemSettings()
+    }
+
+    private func refreshNotificationHintRow() {
+        BearyLocalNotifications.shared.fetchAuthorizationStatus { [weak self] status in
+            DispatchQueue.main.async { [weak self] in
+                self?.notificationHintRow?.isHidden = (status != .denied)
+            }
+        }
     }
 
     // 私信权限档位行（四档开放）：当前档位、行内文案与按钮引用，刷新走 refreshDMLevelRow。
