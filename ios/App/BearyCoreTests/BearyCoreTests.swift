@@ -168,6 +168,30 @@ final class BearyTrashItemTests: XCTestCase {
         XCTAssertNil(decoded.imageKeys)
         XCTAssertEqual(decoded.daysLeft, 12)
     }
+
+    // 质保三轮 T3-C1：本地构造（prependDeleted 入桶）须带齐 title/imageKeys/
+    // visibility/published 四字段；旧版只传 6 字段，同步完成前标题退化、图片逐出失效。
+    func testLocalInitKeepsTrashFields() throws {
+        let item = TrashItem(id: "b_local1", content: "本地删的一篇",
+                             createdAt: 1761000000000, publishAt: 1761604800000,
+                             deletedAt: 1761700000000, daysLeft: 30,
+                             published: 1, visibility: "public",
+                             title: "带猫的一天", imageKeys: ["1/abc.jpg", "1/def.jpg"])
+        XCTAssertEqual(item.title, "带猫的一天")
+        XCTAssertEqual(item.imageKeys, ["1/abc.jpg", "1/def.jpg"])
+        XCTAssertEqual(item.visibility, "public")
+        XCTAssertEqual(item.published, 1)
+
+        // 与 BearyTrashSyncStore.makeEncoder 同口径：convertToSnakeCase
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try encoder.encode(item)
+        let roundTripped = try bearyDecoder().decode(TrashItem.self, from: data)
+        XCTAssertEqual(roundTripped.title, "带猫的一天")
+        XCTAssertEqual(roundTripped.imageKeys, ["1/abc.jpg", "1/def.jpg"])
+        XCTAssertEqual(roundTripped.visibility, "public")
+        XCTAssertEqual(roundTripped.published, 1)
+    }
 }
 
 final class BearyScopeTests: XCTestCase {

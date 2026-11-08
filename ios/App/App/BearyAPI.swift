@@ -462,6 +462,8 @@ struct TrashItem: Codable {
     /// title / imageKeys / visibility 由调用方从原 Entry 透传（R16-3：此前
     /// memberwise init 不接收这三个字段，本地删帖进桶的条目从一开始就丢了
     /// 标题与图片数，离线重读后 trashSummary 只能回落到正文/“无文字”）。
+    /// 质保三轮 T3-C1：published 也随 Entry 原值带上（共四字段），彻底删除后
+    /// 图片缓存精确逐出才有效；缺失时按 nil 由服务端纠正。
     init(id: String, content: String?, createdAt: Int?, publishAt: Int?, deletedAt: Int?, daysLeft: Int?, published: Int? = nil, visibility: String? = nil, title: String? = nil, imageKeys: [String]? = nil) {
         self.id = id
         self.content = content
