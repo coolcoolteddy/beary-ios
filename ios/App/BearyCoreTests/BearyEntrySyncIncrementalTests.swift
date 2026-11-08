@@ -219,4 +219,37 @@ final class BearyEntrySyncIncrementalTests: XCTestCase {
         BearyTrashSyncStore.clearTrashProgress(accountId: testAccountId)
         XCTAssertNil(BearyTrashSyncStore.loadTrashProgress(accountId: testAccountId))
     }
+
+    // MARK: - 审计新一轮 P1-1：断点启动标识往返与旧版文件兼容
+
+    func testSyncProgressLaunchTokenRoundTripAndLegacyNil() {
+        // 新版：盖上启动标识的进度落盘再读回，标识原样保留（续跑时凭它认同启动）。
+        let token = BearySyncLaunchIdentity.token
+        XCTAssertFalse(token.isEmpty)
+        var diary = DiarySyncProgress(epoch: 7, writeSequence: 3, before: nil, beforeId: nil,
+                                      pageCount: 1, totalFetched: 1,
+                                      seenDayKeys: ["2025-01-01"], entryIdsByDay: ["2025-01-01": ["e1"]])
+        diary.launchToken = token
+        XCTAssertTrue(BearyEntrySyncStore.saveDiaryProgress(accountId: testAccountId, progress: diary))
+        XCTAssertEqual(BearyEntrySyncStore.loadDiaryProgress(accountId: testAccountId)?.launchToken, token)
+        var trash = TrashSyncProgress(epoch: 7, writeSequence: 3, before: "1735689600000", beforeId: "t1",
+                                      pageCount: 1, totalFetched: 50, seenIds: ["t1", "t2"])
+        trash.launchToken = token
+        XCTAssertTrue(BearyTrashSyncStore.saveTrashProgress(accountId: testAccountId, progress: trash))
+        XCTAssertEqual(BearyTrashSyncStore.loadTrashProgress(accountId: testAccountId)?.launchToken, token)
+        // 旧版：修法前落盘的文件没有 launchToken 键，解码为 nil——与本启动
+        // 标识比对不上，续跑时作废（正好清掉可能已误认的旧进度）。
+        let legacyDiaryJSON = """
+        {"epoch":7,"writeSequence":3,"before":null,"beforeId":null,"pageCount":1,"totalFetched":1,"seenDayKeys":["2025-01-01"],"entryIdsByDay":{"2025-01-01":["e1"]}}
+        """
+        let legacyDiary = try! JSONDecoder().decode(DiarySyncProgress.self, from: Data(legacyDiaryJSON.utf8))
+        XCTAssertNil(legacyDiary.launchToken)
+        let legacyTrashJSON = """
+        {"epoch":7,"writeSequence":3,"before":"1735689600000","beforeId":"t1","pageCount":1,"totalFetched":50,"seenIds":["t1","t2"]}
+        """
+        let legacyTrash = try! JSONDecoder().decode(TrashSyncProgress.self, from: Data(legacyTrashJSON.utf8))
+        XCTAssertNil(legacyTrash.launchToken)
+        BearyEntrySyncStore.clearDiaryProgress(accountId: testAccountId)
+        BearyTrashSyncStore.clearTrashProgress(accountId: testAccountId)
+    }
 }
