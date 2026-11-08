@@ -1311,6 +1311,8 @@ enum BearyDraftStore {
             } else {
                 try FileManager.default.moveItem(at: tmp, to: url)
             }
+            // 健康检查点已落盘，旧的损坏诊断不再有效。
+            if lastEditCheckpointError?.entryId == checkpoint.entryId { lastEditCheckpointError = nil }
             return true
         } catch {
             try? FileManager.default.removeItem(at: tmp)
@@ -1318,27 +1320,57 @@ enum BearyDraftStore {
         }
     }
 
-    /// 同步读检查点（调用方在 ioQueue 上调）。无文件/解码失败/账号不符均返 nil；
-    /// 解码失败或身份不符时删掉该文件（检查点只是临时快照，原文在服务端，不留死文件）。
+    /// 编辑检查点损坏诊断（审计三轮 03）：解码失败或身份不符时登记——原始文件与
+    /// 损坏备份都保留，只有用户明确放弃或提交成功才清检查点（见 clearEditCheckpoint）。
+    /// loadEditCheckpoint 返 nil 时调用方可凭此区分“无检查点”与“检查点已损坏”。
+    enum EditCheckpointLoadError {
+        case corrupt(backupURL: URL?, accountId: Int?, fileURL: URL, entryId: String)
+        case identityMismatch(backupURL: URL?, accountId: Int?, fileURL: URL, entryId: String)
+
+        var entryId: String {
+            switch self {
+            case .corrupt(_, _, _, let entryId): return entryId
+            case .identityMismatch(_, _, _, let entryId): return entryId
+            }
+        }
+    }
+
+    /// 最近一次 loadEditCheckpoint 的损坏诊断；成功读到健康检查点后清零。
+    private(set) static var lastEditCheckpointError: EditCheckpointLoadError?
+
+    /// 同步读检查点（调用方在 ioQueue 上调）。无文件时返 nil；解码失败或身份
+    /// 不符时也不再删文件——检查点是未提交修改的唯一持久化副本，服务端只有
+    /// 提交前的旧原文。原始文件保留，复制一份损坏备份并登记损坏状态；清理
+    /// 只走用户明确放弃或提交成功（见 clearEditCheckpoint）。
     static func loadEditCheckpoint(entryId: String, forAccount accountId: Int?) -> BearyEditCheckpoint? {
         guard let url = editCheckpointFileURL(entryId: entryId, forAccount: accountId),
               let data = try? Data(contentsOf: url) else { return nil }
-        guard let checkpoint = try? JSONDecoder().decode(BearyEditCheckpoint.self, from: data),
-              checkpoint.entryId == entryId,
-              checkpoint.accountId == accountId else {
-            try? FileManager.default.removeItem(at: url)
-            return nil
+        let checkpoint = try? JSONDecoder().decode(BearyEditCheckpoint.self, from: data)
+        if let checkpoint = checkpoint, checkpoint.entryId == entryId, checkpoint.accountId == accountId {
+            lastEditCheckpointError = nil
+            return checkpoint
         }
-        return checkpoint
+        let backup = backupCorruptFile(at: url)
+        NSLog("[BearyDraft] corrupt edit checkpoint, original kept, backup=\(backup?.path ?? "nil")")
+        if checkpoint == nil {
+            lastEditCheckpointError = .corrupt(backupURL: backup, accountId: accountId, fileURL: url, entryId: entryId)
+        } else {
+            lastEditCheckpointError = .identityMismatch(backupURL: backup, accountId: accountId, fileURL: url, entryId: entryId)
+        }
+        return nil
     }
 
-    /// 同步清检查点（文件不存在也算成功）。
+    /// 同步清检查点（文件不存在也算成功）。清掉的同时清掉该篇的损坏诊断。
     @discardableResult
     static func clearEditCheckpoint(entryId: String, forAccount accountId: Int?) -> Bool {
         guard let url = editCheckpointFileURL(entryId: entryId, forAccount: accountId) else { return false }
-        if !FileManager.default.fileExists(atPath: url.path) { return true }
+        if !FileManager.default.fileExists(atPath: url.path) {
+            if lastEditCheckpointError?.entryId == entryId { lastEditCheckpointError = nil }
+            return true
+        }
         do {
             try FileManager.default.removeItem(at: url)
+            if lastEditCheckpointError?.entryId == entryId { lastEditCheckpointError = nil }
             return true
         } catch {
             return false

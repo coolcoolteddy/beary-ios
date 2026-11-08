@@ -7845,8 +7845,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let baselineVersion = editorEditVersion
         BearyDraftStore.ioQueue.async { [weak self] in
             let checkpoint = BearyDraftStore.loadEditCheckpoint(entryId: entryId, forAccount: accountId)
+            let checkpointError = BearyDraftStore.lastEditCheckpointError
             DispatchQueue.main.async { [weak self] in
-                guard let self = self, let checkpoint = checkpoint else { return }
+                guard let self = self else { return }
+                guard let checkpoint = checkpoint else {
+                    // 审计三轮 03：检查点已损坏——原始文件与备份都保留，告诉用户，
+                    // 只有明确放弃才清掉，不自动删、不静默丢。
+                    if let error = checkpointError, error.entryId == entryId {
+                        self.editCheckpointPromptRetries = 0
+                        self.maybePresentCorruptCheckpointPrompt(error: error, entryId: entryId)
+                    }
+                    return
+                }
                 guard self.isEditMode, self.editingEntry?.id == entryId,
                       self.editorEditVersion == baselineVersion,
                       self.pendingEditCheckpoint == nil else { return }
@@ -7916,6 +7926,38 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: self.editCheckpointAccountId())
                 }
             }),
+        ])
+    }
+
+    /// 损坏检查点提示（审计三轮 03）：解码失败或身份不符时弹一次——原始文件与
+    /// 损坏备份都保留在盘上，用户明确点“放弃并清除”才清掉；点“暂不处理”则留盘，
+    /// 下次进编辑器再问。弹层被挡时与恢复提示同款 1 秒重试、最多 3 次。
+    private func maybePresentCorruptCheckpointPrompt(error: BearyDraftStore.EditCheckpointLoadError, entryId: String) {
+        guard isEditMode, !editCheckpointPromptShown else { return }
+        guard composerDidAppear else { return }
+        guard presentedViewController == nil else {
+            guard editCheckpointPromptRetries < 3 else { return }
+            editCheckpointPromptRetries += 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                guard let self = self else { return }
+                self.maybePresentCorruptCheckpointPrompt(error: error, entryId: entryId)
+            }
+            return
+        }
+        editCheckpointPromptShown = true
+        let message: String
+        switch error {
+        case .corrupt:
+            message = "上次编辑这篇日记时还没保存，但当时的修改已损坏，无法恢复。原始文件已保留备份。"
+        case .identityMismatch:
+            message = "上次编辑这篇日记时还没保存，但当时的修改不属于当前账号，无法恢复。原始文件已保留备份。"
+        }
+        BearyConfirmSheet.show(from: self, title: "上次的修改无法恢复", message: message, actions: [
+            BearyConfirmSheet.Action(title: "放弃并清除", style: .destructive, handler: { [weak self] in
+                guard let self = self else { return }
+                BearyDraftStore.clearEditCheckpointAsync(entryId: entryId)
+            }),
+            BearyConfirmSheet.Action(title: "暂不处理", style: .cancel, handler: nil),
         ])
     }
 
