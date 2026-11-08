@@ -174,8 +174,6 @@ class BearyProfileViewController: UIViewController {
     /// 照片页 / 地图 / 星图 modal 的 EdgeDismiss 强持有（transitioningDelegate
     /// 弱引用；三页均由本页直接 present/push 入口开出，见各开页函数）。
     private var profileSubpageEdgeDismiss: BearyEdgeDismissController?
-    /// 景深背景新页的 EdgeDismiss 强持有（仅窄屏全屏路用，见 presentDepthBackgroundPicker）。
-    private var depthPickerEdgeDismiss: BearyEdgeDismissController?
     /// Plus 页的 EdgeDismiss 强持有（仅窄屏全屏路用，见 presentPlusPage）。
     private var plusPageEdgeDismiss: BearyEdgeDismissController?
 
@@ -748,9 +746,9 @@ class BearyProfileViewController: UIViewController {
     /// 默认；Plus 专属（皇冠同口径 profile.plus）；深色模式压暗一档（黑遮罩）。
     /// 持久化本机先行：UserDefaults 按当前账号 id 分键，服务端同步待后端一支
     /// （accounts PUT /api/account/profile 无此字段，他人页暂不显示墙纸）。
-    /// 流程（Li 2026-11-03 定）：本人页点封面带弹选择框（图库／景深背景），
-    /// 景深背景进 BearyDepthBackgroundViewController 新页选主题；枚举放 internal
-    /// 供新页共用同一主题口径。
+    /// 流程（Li 2026-11-03 定，2026-11-06 改令）：本人页点封面带直接进
+    /// 大图灯箱，不再弹选择框；换封面（图库／景深背景）统一挪到编辑资料页，
+    /// 点编辑页封面弹选择框；枚举放 internal 供新页共用同一主题口径。
     /// 六地封面（2026-11-04 Li 定放同一选择页）与节日款同页、同 Plus
     /// 门控：封面款走 ProfileCoverView（陀螺仪分层视差），不走节日款的
     /// BearyFestivalWallpaperView、不压深色遮罩。
@@ -8718,12 +8716,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             reloadCoverImage()
             return
         }
-        // 本人页点封面带 = 封面来源选择框（Li 2026-11-03 定：图库／景深背景）；
-        // 他人页保持原样：有封面照片才进灯箱，无照片不响应。
-        if isOwnProfile {
-            presentCoverSourcePicker()
-            return
-        }
+        // 本人页／他人页点封面带都进大图灯箱（Li 2026-11-06 改令：本人页
+        // 不再弹封面来源选择框；有封面照片才进灯箱，无照片不响应）；
+        // 换封面统一走编辑资料页（点封面 → 图库／景深背景）。
         presentCoverLightbox()
     }
 
@@ -8744,34 +8739,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         })
     }
 
-    /// 封面来源选择框（卡片 ⋯ 菜单同款 UIAlertController actionSheet）：
-    /// 图库行恒显示（第四轮第 2 项：不再随封面加载成败消失）——有封面照片时
-    /// 进旧的封面大图灯箱；无照片时进编辑资料页走既有换封面流程（选图／裁剪／
-    /// 上传链路在编辑页，本页不新造）；景深背景进新页选主题；
-    /// iPad 走 popover、锚点封面带。
-    private func presentCoverSourcePicker() {
-        let sheet = UIAlertController(title: "封面", message: nil, preferredStyle: .actionSheet)
-        sheet.addAction(UIAlertAction(title: "图库", style: .default) { [weak self] _ in
-            if self?.coverImageView.image != nil {
-                self?.presentCoverLightbox()
-            } else {
-                // 无照片：进编辑资料页换封面（容器接线 onEditProfile；未接线时不做事）。
-                self?.onEditProfile?()
-            }
-        })
-        sheet.addAction(UIAlertAction(title: "景深背景", style: .default) { [weak self] _ in
-            self?.presentDepthBackgroundPicker()
-        })
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = coverClipView
-            popover.sourceRect = coverClipView.bounds
-        }
-        present(sheet, animated: BearyMotion.animated(true))
-    }
-
-    /// 封面大图灯箱（旧入口抽出：他人页点封面带与本人页图库共用；主题态下
-    /// 封面图虽被隐藏、image 仍在，图库行仍可进灯箱看原封面）。
+    /// 封面大图灯箱（本人页／他人页点封面带共用入口；主题态下
+    /// 封面图虽被隐藏、image 仍在，仍可进灯箱看原封面）。
     private func presentCoverLightbox() {
         guard let image = coverImageView.image else { return }
         guard presentedViewController == nil else { return }
@@ -8781,29 +8750,6 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         let viewer = BearyEntryImageViewerViewController(images: [image], startIndex: 0)
         viewer.originFrameInWindow = coverImageView.convert(coverImageView.bounds, to: nil)
         present(viewer, animated: BearyMotion.animated(true), completion: nil)
-    }
-
-    /// 景深背景新页：当前主题与 Plus 态传过去，点按回本页应用（门控／失败
-    /// 由 handleFestivalThemePicked 弹 toast）；应用成功新页自行关闭。
-    private func presentDepthBackgroundPicker() {
-        let picker = BearyDepthBackgroundViewController(
-            currentTheme: festivalTheme,
-            isPlus: profile?.plus == true,
-            onPick: { [weak self] theme, isPlus in
-                guard let strongSelf = self else { return false }
-                return strongSelf.handleFestivalThemePicked(theme, isPlus: isPlus)
-            })
-        // 全站返回手势补齐：窄屏（iPhone）时本页是自动全屏，没有左边缘
-        // 滑，改走 EdgeDismiss；宽屏（iPad）时本页是居中 sheet，自带下滑
-        // 关闭，不改呈现方式、不接 EdgeDismiss（免得 slide 动画盖掉 sheet）。
-        if traitCollection.horizontalSizeClass == .compact {
-            picker.modalPresentationStyle = .fullScreen
-            let depthPickerEdgeDismiss = BearyEdgeDismissController()
-            depthPickerEdgeDismiss.attach(to: picker)
-            picker.transitioningDelegate = depthPickerEdgeDismiss
-            self.depthPickerEdgeDismiss = depthPickerEdgeDismiss
-        }
-        present(picker, animated: BearyMotion.animated(true))
     }
 
     /// Plus 页入口①：皇冠显隐与点亮态。Plus 时点亮（播动＋全不透明）；
@@ -8847,26 +8793,11 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         present(page, animated: BearyMotion.animated(true))
     }
 
-    /// 景深背景应用。返回 true 仅表示已应用；Plus 门控或加载失败时 toast
-    /// 并返回 false（存量不动，新页停留）。
-    private func handleFestivalThemePicked(_ option: FestivalTheme, isPlus: Bool? = nil) -> Bool {
-        // Plus 门控（皇冠同口径 profile.plus，资料未到按非 Plus 计、不静默放行；
-        // beary 无内购，只提示不卖）：默认档人人可回，非 Plus 选节日档只提示。
-        // 第十一轮 04：优先用选择页回前台时刚拉到的 fresh 值，兜底才用
-        // profile.plus——邀请发 Plus 后 profile 未必已刷新，只认 profile
-        // 会把刚到账的 Plus 挡在门外。
-        let plus = isPlus ?? (profile?.plus == true)
-        if option != .none, !plus {
-            BearyToast.show(in: view, message: "仅 Plus 会员可使用景深背景")
-            return false
-        }
-        // 加载失败不落盘：墙纸 View 起不来（缺 JSON／缺图）时只 toast、不改存量，
-        // 下次进页仍是旧主题；成功才由 applyFestivalTheme 内持久化。
-        if !applyFestivalTheme(option, persist: true), option != .none {
-            BearyToast.show(in: view, message: "景深背景加载失败，请重试")
-            return false
-        }
-        return true
+    /// 编辑资料页改了景深背景后回页收口：编辑页只写 UserDefaults 存量，
+    /// 本页在取消返回时不重拉资料，用存量重贴一次即可（保存返回走
+    /// reloadProfile，资料回包后已有同款重贴，不重复）。
+    func refreshStoredFestivalTheme() {
+        applyFestivalTheme(storedFestivalTheme(), persist: false)
     }
 
     /// 景深背景贴／撤。返回 false 仅表示主题 View 创建失败（缺资源）。
@@ -8876,7 +8807,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     @discardableResult
     private func applyFestivalTheme(_ theme: FestivalTheme, persist: Bool) -> Bool {
         let effective = isOwnProfile ? theme : .none
-        coverViewButton.accessibilityLabel = isOwnProfile ? "景深背景" : "查看封面大图"
+        coverViewButton.accessibilityLabel = "查看封面大图"
         if effective == .none {
             if let oldView = festivalWallpaperView {
                 oldView.isAnimationEnabled = false
