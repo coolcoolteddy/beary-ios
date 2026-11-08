@@ -2104,6 +2104,23 @@ class BearyTimelineViewController: UIViewController {
         }
     }
     private var timelineVisFilter: TimelineVisFilter = .all
+    /// R15-P1-1：按筛子档的内存快照（首屏成功回包写，见 fetchTimelineFirstPageFull /
+    /// loadTimelineSince 成功分支；只活在内存里，不落盘——落盘快照仍只代表
+    /// 全部档，筛子档不写盘）。切档时有对应快照即直接显示（标签与列表一起换，
+    /// 不闪空）；无快照则清表、结果区走加载态。
+    private struct FilterSnapshot {
+        let entries: [Entry]
+        let hasMore: Bool
+        let trashCount: Int
+        let counts: TlCounts?
+    }
+    private var filterSnapshots: [TimelineVisFilter: FilterSnapshot] = [:]
+    /// R15-P1-1：上次成功拿到首屏的档位（切档失败回滚的目的地；冷启动读盘
+    /// 成功即为 .all，见 applyTimelineCacheSnapshot）。
+    private var lastSuccessfulFilter: TimelineVisFilter = .all
+    /// R15-P1-1：在途切档（from = 切档前上次成功的档位，to = 目标档位）；
+    /// 成功时清掉，失败时按它回滚；非切档刷新失败不触发回滚。
+    private var pendingFilterSwitch: (from: TimelineVisFilter, to: TimelineVisFilter)?
     /// 切筛子时的错峰来源：切档前已在列表里的 entry id 集合。
     /// 首屏回包后只给不在此集合里的新行排错峰——已有元素不重播。
     /// 失败/陈旧回包时清掉，不留残标志给下一次加载。
@@ -2714,22 +2731,75 @@ class BearyTimelineViewController: UIViewController {
 
     /// 切档：按新 vis 重取列表，分页游标随新筛子重置（首屏 force 全量，
     /// 不走 since 增量——since 只补新篇，旧档行会残留）。
-    /// 旧行不清表（新数据到前旧内容仍在，不闪白）；回顶后新行错峰滑入、
-    /// 已有元素不重播（见 pendingFilterSwitchOldIds）。
+    /// R15-P1-1：切档不再只换标签——标签与列表一起提交、一起回滚：
+    /// 新档有内存快照即直接显示（标签与列表一起换，不闪空）；无快照则清表、
+    /// 结果区走加载态（timelineState=.loading + updateChrome 出背景 spinner，
+    /// 当日面板同清、否则面板行会挡住加载态）；失败时按 pendingFilterSwitch
+    /// 回滚到上次成功的档位与结果（见 fetchTimelineFirstPageFull 失败分支）。
     private func applyVisFilter(_ newValue: TimelineVisFilter) {
         guard newValue != timelineVisFilter else { return }
-        pendingFilterSwitchOldIds = Set((timelineEntries + dayEntries).compactMap { $0.id })
+        if let snapshot = filterSnapshots[newValue] {
+            timelineEntries = snapshot.entries
+            timelineHasMore = snapshot.hasMore
+            trashCountValue = snapshot.trashCount
+            countsValue = snapshot.counts
+            timelineState = .loaded
+            timelinePageFailed = false
+            // 切筛子错峰：只给快照里没有的新行排队（快照行是已显示行，不重播）。
+            pendingFilterSwitchOldIds = Set((timelineEntries + dayEntries).compactMap { $0.id })
+            updateTrashTitle()
+            updateCountsLabel()
+        } else {
+            pendingFilterSwitchOldIds = nil
+            timelineEntries = []
+            // 当日面板同清（否则 updateChrome 的加载态被面板行挡住、出不了
+            // 背景 spinner）；面板随首屏回包派生/回落重拉（见 deferredDayKey）。
+            dayEntries = []
+            dayState = .idle
+            timelineState = .loading
+            timelinePageFailed = false
+        }
         timelineVisFilter = newValue
         updateVisFilterButton()
-        timelinePageFailed = false
+        pendingFilterSwitch = (from: lastSuccessfulFilter, to: newValue)
         staggerGeneration += 1
         clearStaggerEntries()
         scrollToTop()
-        // 当日面板随新筛子重取：首屏回包派生（已覆盖）或回落正向拉取（带 vis），
-        // 面板不先清——派生/回落到达前旧面板行仍在，不闪空。
+        // 当日面板随新筛子重取：首屏回包派生（已覆盖）或回落正向拉取（带 vis）。
+        // 有快照时面板旧行先留着（不闪空）；无快照时面板已随列表同清、走加载态，
+        // 派生/回落到达后再填回。
         deferredDayKeyForFirstPage = selectedDayKey
+        tableView.reloadData()
+        updateChrome()
         loadTimelineFirstPage(force: true)
         restoreChromeAfterTimelineAction()
+    }
+
+    /// R15-P1-1：切档失败回滚——标签与列表一起回到上次成功的档位：
+    /// 有该档快照即恢复其结果（state 回 .loaded，不出失败空态）；无快照
+    ///（此前从未成功过）只回标签，列表保持空失败态、由 updateChrome 出
+    /// 失败空态/登录态。随后 toast「筛选没成功，请重试」。
+    /// 调用方（fetchTimelineFirstPageFull 失败分支）在回滚后仍会走
+    /// deferredDayKey 回落，由 fetchDayEntries 按回滚后的档位重拉当日面板。
+    private func rollbackVisFilterAfterFailure(from fallback: TimelineVisFilter) {
+        timelineVisFilter = fallback
+        updateVisFilterButton()
+        if let snapshot = filterSnapshots[fallback] {
+            timelineEntries = snapshot.entries
+            timelineHasMore = snapshot.hasMore
+            trashCountValue = snapshot.trashCount
+            countsValue = snapshot.counts
+            timelineState = .loaded
+            timelinePageFailed = false
+            updateTrashTitle()
+            updateCountsLabel()
+        } else {
+            timelineState = .failed
+        }
+        tableView.reloadData()
+        updateChrome()
+        refreshHeaderHeight()
+        showTimelineToast(message: "筛选没成功，请重试")
     }
 
     /// 进页重置（切进时间线页时回到全部，modal 回落不走这里故不反复重置：
@@ -2978,6 +3048,10 @@ class BearyTimelineViewController: UIViewController {
         timelinePageFailed = false
         timelineUnauthorized = false
         loginNotified = false
+        // R15-P1-1：读盘快照即 .all 档的上次成功结果，记入内存快照——
+        // 切回全部时有快照直接显示，不必清表等网络。
+        filterSnapshots[.all] = FilterSnapshot(entries: snap.entries, hasMore: snap.hasMore, trashCount: snap.trashCount, counts: countsValue)
+        lastSuccessfulFilter = .all
         // 当日面板先用缓存首屏里今天的篇顶上（静默刷新随后对齐），
         // 避免面板空等网络；缓存里今天无篇时面板空态由静默刷新补，
         // 初次进入守卫挂起（viewDidLoad 已置位）照常消费，不再跳转。
@@ -4444,6 +4518,11 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.trashCountValue = list.trashCount ?? 0
                     strongSelf.countsValue = list.tlCounts
                     strongSelf.timelineHasMore = (list.entries ?? []).count >= strongSelf.firstPageLimit
+                    // R15-P1-1：首屏成功即写本档内存快照（切档时有快照直接显示）
+                    // 并记下上次成功档位、清掉在途切档标记。
+                    strongSelf.filterSnapshots[strongSelf.timelineVisFilter] = FilterSnapshot(entries: strongSelf.timelineEntries, hasMore: strongSelf.timelineHasMore, trashCount: strongSelf.trashCountValue, counts: strongSelf.countsValue)
+                    strongSelf.lastSuccessfulFilter = strongSelf.timelineVisFilter
+                    strongSelf.pendingFilterSwitch = nil
                     // 110：首屏成功即写时间线缓存（下次冷启动缓存优先；
                     // 只在已登录时写，避免游客态写 guest 桶；失败不写）。
                     // 筛子档不写盘：快照只代表全部档，筛后快照会污染下次冷启动。
@@ -4493,6 +4572,13 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.pendingFilterSwitchOldIds = nil
                     if case .unauthorized = error {
                         strongSelf.timelineUnauthorized = true
+                        strongSelf.pendingFilterSwitch = nil
+                    } else if let pending = strongSelf.pendingFilterSwitch, pending.to == strongSelf.timelineVisFilter {
+                        // R15-P1-1：切档失败回滚到上次成功的档位与结果（标签与
+                        // 列表一起回，不留“新标签＋旧日记”错配态），并 toast 提示重试。
+                        // 未授权不回滚：登录态失效时由 updateChrome 出登录空态。
+                        strongSelf.pendingFilterSwitch = nil
+                        strongSelf.rollbackVisFilterAfterFailure(from: pending.from)
                     }
                     // 112：首屏失败时暂存的当日面板仍需刷新——回落正向拉取，
                     // 面板失败态与旧口径一致（面板不被首屏失败拖空）。
@@ -4612,6 +4698,13 @@ class BearyTimelineViewController: UIViewController {
                     }
                     if let trashCount = firstList.trashCount { strongSelf.trashCountValue = trashCount }
                     if let counts = firstList.tlCounts { strongSelf.countsValue = counts }
+                    // R15-P1-1：since 增量成功同样刷新本档内存快照（首屏前插了新篇）；
+                    // 若本回包顶替了在途切档请求（seq 守卫已丢弃旧回包），切档即成功。
+                    strongSelf.filterSnapshots[strongSelf.timelineVisFilter] = FilterSnapshot(entries: strongSelf.timelineEntries, hasMore: strongSelf.timelineHasMore, trashCount: strongSelf.trashCountValue, counts: strongSelf.countsValue)
+                    if strongSelf.pendingFilterSwitch?.to == strongSelf.timelineVisFilter {
+                        strongSelf.lastSuccessfulFilter = strongSelf.timelineVisFilter
+                        strongSelf.pendingFilterSwitch = nil
+                    }
                     // hasMore 不动：since 只补头部，旧页分页游标不受影响。
                     // 筛子档不写盘（快照只代表全部档，见首屏同款守卫）。
                     if strongSelf.timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
