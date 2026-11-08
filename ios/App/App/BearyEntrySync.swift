@@ -574,13 +574,16 @@ final class BearyEntrySync {
                     self.abandonTrashRun(run, failed: true)
                 case .success(let page):
                     let items = page.items
-                    // 写盘代际守卫（同日记腿）：拉取开始后发生过本地回收站写盘，
-                    // 旧快照已过期——停止续拉、不做收尾、不记已同步。
-                    if let start = self.trashSyncStartSequence[run.accountId], start != BearyTrashSyncStore.currentWriteSequence() {
+                    // 审计新一轮 #4：写盘代际守卫与读-改-写同锁——锁外的预检拦不住
+                    // 检查与写盘之间的主线程删帖进桶（旧快照会覆盖刚进桶的条目），
+                    // 故基线直接传进 store，锁内验代际：过期报 stale 按过期放弃，
+                    // 写盘失败报 failed 记失败态。无基线记录时不拦截（只走正常提交）。
+                    let mergeOutcome = BearyTrashSyncStore.mergeTrashPage(accountId: run.accountId, items: items, unchangedSince: self.trashSyncStartSequence[run.accountId])
+                    if mergeOutcome == .stale {
                         self.abandonTrashRun(run, failed: false)
                         return
                     }
-                    guard BearyTrashSyncStore.mergeTrashPage(accountId: run.accountId, items: items) else {
+                    guard mergeOutcome == .done else {
                         self.abandonTrashRun(run, failed: true)
                         return
                     }
@@ -635,14 +638,19 @@ final class BearyEntrySync {
                 // saveAll 记代际），旧快照已过期——跳过本次提交保旧盘
                 // （不抹掉同步途中删帖进桶的记录），不记已同步，下次 kick
                 // 重跑；无基线记录时不拦截（只走正常提交）。
-                if let start = self.trashSyncStartSequence[run.accountId], start != BearyTrashSyncStore.currentWriteSequence() {
+                // 审计新一轮 #4：代际检查须与收尾的读-改-写同锁——收尾是过滤型
+                // 写盘，锁外预检拦不住的窗口会把同步途中删帖进桶的条目滤掉，
+                // 故基线传进 store 锁内验（stale 按过期放弃，failed 记失败态）。
+                let baseline = self.trashSyncStartSequence[run.accountId]
+                self.trashSyncStartSequence[run.accountId] = nil
+                let finalizeOutcome = BearyTrashSyncStore.finalizeTrash(accountId: run.accountId, seenIds: run.seenIds, unchangedSince: baseline)
+                if finalizeOutcome == .stale {
                     // r17-C2：写盘守卫挡下的提交同样是中断——旧桶仍是上一份完整版本，记 partial。
                     self.markTrashPartial(accountId: run.accountId)
                     self.abandonTrashRun(run, failed: false)
                     return
                 }
-                self.trashSyncStartSequence[run.accountId] = nil
-                var ok = BearyTrashSyncStore.finalizeTrash(accountId: run.accountId, seenIds: run.seenIds)
+                var ok = (finalizeOutcome == .done)
                 if ok {
                     ok = self.verifyTrashFinalState(run: run)
                 }
