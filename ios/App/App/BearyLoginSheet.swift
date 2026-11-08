@@ -62,6 +62,11 @@ private final class BearyLoginSheetPresentationController: BearyBottomSheetPrese
     private let shadowView = UIView()
     private let glassView = BearyGlass.effectView(tint: BearyGlass.neutralTint)
     private let grabberView = UIView()
+    /// 顶部 24pt chrome 条的拖动热区：玻璃不参与触摸（BearyGlass 口径）、
+    /// 抓手只有 40×4pt，整条都接不到拖动；透明热区盖住整条、挂同款拖动
+    /// 手势，抓手区也能拖（BearyGrabHitView，见 BearyComposerPickers 同款用法）。
+    /// 关闭钮在内容区（presentedView 内），不在本条内，无需透传。
+    private let chromeHitView = BearyGrabHitView()
     /// 停靠键盘顶边（容器坐标）；浮动/分屏键盘不置位，见 keyboard handlers。
     private var keyboardTopY: CGFloat?
     private var lastShadowBounds: CGRect = .zero
@@ -89,6 +94,7 @@ private final class BearyLoginSheetPresentationController: BearyBottomSheetPrese
         shadowView.transform = transform
         glassView.transform = transform
         grabberView.transform = transform
+        chromeHitView.transform = transform
     }
 
     /// 出现/关闭终态：容器处理遮罩与背后页面，这里同步 chrome 终态
@@ -140,6 +146,7 @@ private final class BearyLoginSheetPresentationController: BearyBottomSheetPrese
                                    y: sheet.minY + BearySheetChrome.grabberTop,
                                    width: BearySheetChrome.grabberWidth,
                                    height: BearySheetChrome.grabberHeight)
+        chromeHitView.frame = CGRect(x: sheet.minX, y: sheet.minY, width: sheet.width, height: Self.chromeHeight)
         presentedView.frame = frameOfPresentedViewInContainerView
         if shadowView.bounds != lastShadowBounds {
             lastShadowBounds = shadowView.bounds
@@ -161,6 +168,12 @@ private final class BearyLoginSheetPresentationController: BearyBottomSheetPrese
         grabberView.backgroundColor = BearyColors.line
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
         container.addSubview(grabberView)
+        // 顶部 24pt chrome 条在 presentedView 帧之外，容器主拖动手势挂不到它；
+        // 透明热区盖住整条、挂同款拖动手势，抓手区也能拖。grabberView 本身不交互，
+        // 触点落到热区上；关闭钮在内容区内，不在本条内，无需透传。
+        grabberView.isUserInteractionEnabled = false
+        installExtraDragPan(on: chromeHitView)
+        container.addSubview(chromeHitView)
         // 这里只摆 chrome 初始态（屏外），不另起 coordinator alongside 动画——
         // 动画呈现时 chrome 由 animator 与内容同一弹簧块驱动（见 setSheetPresented）；
         // 非动画呈现（减动效等）无 animator，这里直接落终态。
@@ -168,6 +181,7 @@ private final class BearyLoginSheetPresentationController: BearyBottomSheetPrese
         shadowView.transform = offscreen
         glassView.transform = offscreen
         grabberView.transform = offscreen
+        chromeHitView.transform = offscreen
         if presentedViewController.transitionCoordinator == nil {
             setChromePresented(true)
         }
@@ -180,12 +194,14 @@ private final class BearyLoginSheetPresentationController: BearyBottomSheetPrese
             shadowView.transform = .identity
             glassView.transform = .identity
             grabberView.transform = .identity
+            chromeHitView.transform = .identity
         } else {
             guard let container = containerView else { return }
             let offscreen = CGAffineTransform(translationX: 0, y: sheetFrame(for: container.bounds).height)
             shadowView.transform = offscreen
             glassView.transform = offscreen
             grabberView.transform = offscreen
+            chromeHitView.transform = offscreen
         }
     }
 
@@ -216,6 +232,7 @@ private final class BearyLoginSheetPresentationController: BearyBottomSheetPrese
         shadowView.removeFromSuperview()
         glassView.removeFromSuperview()
         grabberView.removeFromSuperview()
+        chromeHitView.removeFromSuperview()
     }
 
     override func preferredContentSizeDidChange(forChildContentContainer container: UIContentContainer) {
@@ -286,7 +303,8 @@ private final class BearyLoginSheetPresentationController: BearyBottomSheetPrese
               presentedView.transform.isIdentity,
               shadowView.transform.isIdentity,
               glassView.transform.isIdentity,
-              grabberView.transform.isIdentity else {
+              grabberView.transform.isIdentity,
+              chromeHitView.transform.isIdentity else {
             container.layoutIfNeeded()
             return
         }
@@ -304,11 +322,13 @@ private final class BearyLoginSheetPresentationController: BearyBottomSheetPrese
         shadowView.transform = offset
         glassView.transform = offset
         grabberView.transform = offset
+        chromeHitView.transform = offset
         UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: { [weak self] in
             self?.presentedView?.transform = .identity
             self?.shadowView.transform = .identity
             self?.glassView.transform = .identity
             self?.grabberView.transform = .identity
+            self?.chromeHitView.transform = .identity
         })
     }
 }
