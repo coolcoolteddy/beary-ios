@@ -106,6 +106,27 @@ final class BearyEntrySync {
     /// 拉取开始后发生过写盘即旧快照已过期，跳过本次提交保旧盘，下次 kick 重跑。
     private var diaryWriteSequence = 0
     private var diarySyncStartSequence: [Int: Int] = [:]
+    /// 退出清理代次（本支新增）：purge 某账号快照时该账号代次 +1；写盘
+    /// 投递时捕获、执行时复核——退出前已入队、退出后才执行的写盘一律
+    /// 丢弃，不重建已清缓存。按账号分桶：定向清 A 不影响 B 的在途写盘。
+    /// 只在内存里记（重启后队列本就为空，无需落盘）。
+    private let purgeGenerationLock = NSLock()
+    private var purgeGenerationByAccount: [Int: Int] = [:]
+
+    /// 退出/401 清理某账号快照时调：先令该账号排队写盘失效，再删文件
+    /// （调用方 SessionManager.purgeLocalSnapshots，须在删文件前调）。
+    func bumpPurgeGeneration(forAccountId accountId: Int) {
+        purgeGenerationLock.lock()
+        purgeGenerationByAccount[accountId, default: 0] += 1
+        purgeGenerationLock.unlock()
+    }
+
+    /// 当前清理代次（投递/回调守卫读；任意线程可调，锁保护）。
+    func purgeGeneration(forAccountId accountId: Int) -> Int {
+        purgeGenerationLock.lock()
+        defer { purgeGenerationLock.unlock() }
+        return purgeGenerationByAccount[accountId, default: 0]
+    }
     /// 5-26 回收站腿提交守卫基线：kick 时记下 BearyTrashSyncStore 的写盘
     /// 代际（见桶的 noteTrashWrite），finishTrashRun 提交前比对。
     private var trashSyncStartSequence: [Int: Int] = [:]
@@ -122,6 +143,9 @@ final class BearyEntrySync {
         var totalFetched = 0
         var seenDayKeys: Set<String> = []
         var entryIdsByDay: [String: Set<String>] = [:]
+        /// 退出清理代次（kick 时捕获）：回调/收尾执行时复核——快照已在退出时
+        /// 被清掉时，本轮回包不得再写盘重建，丢弃旧任务。
+        var purgeGeneration = 0
 
         init(accountId: Int, identity: BearySyncTaskIdentity) {
             self.accountId = accountId
@@ -153,6 +177,8 @@ final class BearyEntrySync {
         var pageCount = 0
         var totalFetched = 0
         var seenIds: Set<String> = []
+        /// 退出清理代次（kick 时捕获，同日记腿）。
+        var purgeGeneration = 0
 
         init(accountId: Int, identity: BearySyncTaskIdentity) {
             self.accountId = accountId
@@ -186,15 +212,23 @@ final class BearyEntrySync {
 
     /// 主线程落盘写统一投递口：JSON 编解码 + 写盘走同步串行队列，不卡主线程；
     /// 调用方内存态已同步更新，落盘随后跟进（下次静默刷新/重跑自对齐）。
-    func runDiskWrite(_ work: @escaping () -> Void) {
-        queue.async(execute: work)
+    /// 退出清理代次：投递时捕获、执行时复核——退出前已入队、退出后才执行
+    /// 的写盘一律丢弃，不重建已清缓存（见 bumpPurgeGeneration）。
+    func runDiskWrite(accountId: Int, _ work: @escaping () -> Void) {
+        let generation = purgeGeneration(forAccountId: accountId)
+        queue.async { [weak self] in
+            guard let self = self, generation == self.purgeGeneration(forAccountId: accountId) else { return }
+            work()
+        }
     }
 
     /// 日记落盘写投递口：与 runDiskWrite 同款走同步队列，另记写盘代际，
-    /// 供全量同步提交守卫判断快照是否过期。
-    func runDiaryDiskWrite(_ work: @escaping () -> Void) {
+    /// 供全量同步提交守卫判断快照是否过期。退出清理代次同款复核。
+    func runDiaryDiskWrite(accountId: Int, _ work: @escaping () -> Void) {
+        let generation = purgeGeneration(forAccountId: accountId)
         queue.async { [weak self] in
-            self?.diaryWriteSequence += 1
+            guard let self = self, generation == self.purgeGeneration(forAccountId: accountId) else { return }
+            self.diaryWriteSequence += 1
             work()
         }
     }
@@ -203,8 +237,11 @@ final class BearyEntrySync {
     /// 写盘代际，供回收站提交守卫判断。现行调用方（回收站页静默刷新走
     /// runDiskWrite、删帖进桶走 prependDeleted）均经 saveAll 记代际，
     /// 故本入口现阶段无调用方，供后续调用方统一走队列时用。
-    func runTrashDiskWrite(_ work: @escaping () -> Void) {
-        queue.async {
+    /// 退出清理代次同款复核。
+    func runTrashDiskWrite(accountId: Int, _ work: @escaping () -> Void) {
+        let generation = purgeGeneration(forAccountId: accountId)
+        queue.async { [weak self] in
+            guard let self = self, generation == self.purgeGeneration(forAccountId: accountId) else { return }
             BearyTrashSyncStore.noteTrashWrite()
             work()
         }
@@ -262,6 +299,7 @@ final class BearyEntrySync {
                 let diaryIdentity = BearySyncTaskIdentity(epoch: BearyAPI.shared.authEpoch, generation: self.diarySyncGeneration)
                 self.diarySyncIdentity[userId] = diaryIdentity
                 let diaryRun = DiarySyncRun(accountId: userId, identity: diaryIdentity)
+                diaryRun.purgeGeneration = self.purgeGeneration(forAccountId: userId)
                 // 第四轮增量 01：可恢复游标——同 epoch、其间无本地写盘且同启动
                 // 才续跑，否则丢弃旧进度从头拉（快照已过期，续跑会丢新发布/
                 // 复活已删帖）。审计新一轮 P1-1：epoch 与 writeSequence 都是
@@ -294,6 +332,7 @@ final class BearyEntrySync {
                 let trashIdentity = BearySyncTaskIdentity(epoch: BearyAPI.shared.authEpoch, generation: self.trashSyncGeneration)
                 self.trashSyncIdentity[userId] = trashIdentity
                 let trashRun = TrashSyncRun(accountId: userId, identity: trashIdentity)
+                trashRun.purgeGeneration = self.purgeGeneration(forAccountId: userId)
                 if let progress = BearyTrashSyncStore.loadTrashProgress(accountId: userId),
                    progress.epoch == trashIdentity.epoch,
                    progress.writeSequence == BearyTrashSyncStore.currentWriteSequence(),
@@ -358,7 +397,7 @@ final class BearyEntrySync {
             DispatchQueue.main.async {
                 guard SessionManager.shared.currentUser?.id == accountId else { return }
                 guard case .success(let entry) = result else { return }
-                BearyEntrySync.shared.runDiaryDiskWrite {
+                BearyEntrySync.shared.runDiaryDiskWrite(accountId: accountId) {
                     // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
                     let ok = BearyEntrySyncStore.upsertEntry(accountId: accountId, entry: entry)
                     if !ok { NSLog("[BearyEntrySync] upsertEntry failed account=%d entry=%@", accountId, entry.id ?? "-") }
@@ -371,7 +410,7 @@ final class BearyEntrySync {
     func upsertEdited(entry: Entry, accountId: Int) {
         DispatchQueue.main.async {
             guard SessionManager.shared.currentUser?.id == accountId else { return }
-            BearyEntrySync.shared.runDiaryDiskWrite {
+            BearyEntrySync.shared.runDiaryDiskWrite(accountId: accountId) {
                 let ok = BearyEntrySyncStore.upsertEntry(accountId: accountId, entry: entry)
                 if !ok { NSLog("[BearyEntrySync] upsertEntry failed account=%d entry=%@", accountId, entry.id ?? "-") }
             }
@@ -389,6 +428,12 @@ final class BearyEntrySync {
                 guard self.diaryRuns[run.accountId] === run,
                       self.diarySyncIdentity[run.accountId] == run.identity,
                       BearyAPI.shared.authEpoch == run.identity.epoch else { return }
+                // 退出清理代次：快照已在退出时被清掉——本轮回包不得再写盘
+                // 重建，丢弃旧任务（不记失败态，下次 kick 重跑）。
+                if self.purgeGeneration(forAccountId: run.accountId) != run.purgeGeneration {
+                    self.abandonDiaryRun(run, failed: false)
+                    return
+                }
                 switch result {
                 case .failure:
                     // 静默中止：只记失败态供设置页展示，不弹提示，下次触发重跑；
@@ -473,6 +518,12 @@ final class BearyEntrySync {
             self.queue.async {
                 guard self.diaryRuns[run.accountId] === run,
                       self.diarySyncIdentity[run.accountId] == run.identity else { return }
+                // 退出清理代次：收尾写盘前再验一次——主线程守卫在退出前跑过
+                // 时，提交块仍可能排在清理之后，不得重建已清缓存。
+                if self.purgeGeneration(forAccountId: run.accountId) != run.purgeGeneration {
+                    self.abandonDiaryRun(run, failed: false)
+                    return
+                }
                 // 提交守卫：拉取开始后发生过本地写盘（发布/编辑/删帖/日加载写透），
                 // 旧快照已过期——跳过本次提交保旧盘（不丢新发布、不复活已删帖），
                 // 不记已同步，下次 kick 重跑；无基线记录时不拦截（只走正常提交）。
@@ -568,6 +619,12 @@ final class BearyEntrySync {
                 guard self.trashRuns[run.accountId] === run,
                       self.trashSyncIdentity[run.accountId] == run.identity,
                       BearyAPI.shared.authEpoch == run.identity.epoch else { return }
+                // 退出清理代次：快照已在退出时被清掉——本轮回包不得再写盘
+                // 重建，丢弃旧任务（不记失败态，下次 kick 重跑）。
+                if self.purgeGeneration(forAccountId: run.accountId) != run.purgeGeneration {
+                    self.abandonTrashRun(run, failed: false)
+                    return
+                }
                 switch result {
                 case .failure:
                     // 静默中止：只记失败态供设置页展示，不弹提示，下次触发重跑。
@@ -633,6 +690,11 @@ final class BearyEntrySync {
             self.queue.async {
                 guard self.trashRuns[run.accountId] === run,
                       self.trashSyncIdentity[run.accountId] == run.identity else { return }
+                // 退出清理代次：收尾写盘前再验一次（同日记腿）。
+                if self.purgeGeneration(forAccountId: run.accountId) != run.purgeGeneration {
+                    self.abandonTrashRun(run, failed: false)
+                    return
+                }
                 // 5-26 提交守卫（与日记腿同款）：拉取开始后发生过回收站写盘
                 // （删帖进桶 prependDeleted、恢复/彻底删除、静默刷新对齐均经
                 // saveAll 记代际），旧快照已过期——跳过本次提交保旧盘
