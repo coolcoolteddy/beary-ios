@@ -3286,7 +3286,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 窄屏 5 项之 3：草稿状态独立行（工具栏上方、工具行之上）：文案＋重试钮，
         // 平时隐藏＋0 高（见 setDraftStatusBannerVisible），只在 level 0／1 时启用；
         // 文案与 draftStatusLabel 同源（见 updateDraftStatusLabel），重试只重跑
-        // saveDraftNow（见 didTapDraftStatusRetry），不另起保存语义。
+        // saveDraftNow（见 didTapDraftStatusRetry），不另起保存语义；重试钮只在
+        // 写盘失败（level 0）时显示，图片未保存（level 1）时隐藏（见
+        // applyDraftStatusToolbarFit，P1-8：重跑保存救不回图，失败图点图片重试）。
         draftStatusBanner.axis = .horizontal
         draftStatusBanner.spacing = 8
         draftStatusBanner.alignment = .center
@@ -4665,6 +4667,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// （成功则独立行自动收起、回到工具行已保存态），失败仍留页、独立行与
     /// 文案不变。唯一区别是本钮不关闭页面（用户点的是重试，不是关闭）；
     /// #495 的关闭重试路径本身一字不动。
+    /// P1-8：本钮只用于写盘失败（level 0，独立行只在该级别显示本钮）——
+    /// 图片未保存（level 1）时重跑 saveDraftNow 也救不回图（保存不上传，
+    /// key 为空的图仍未上传完），不声称重传图片；失败图点图片重试上传（见 didTapImageItem）。
     @objc private func didTapDraftStatusRetry() {
         saveDraftNow()
     }
@@ -4717,6 +4722,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 工具行间距恒 20（不再为挤文案而收间距）。文案本身在独立行
             // 独占整行宽（320 宽下 288，减重试钮后仍远超 11 字文案宽），不截断。
             setDraftStatusBannerVisible(true)
+            // P1-8：重试钮只用于写盘失败（level 0）。level 1（文字已保存，图片未保存）
+            // 时重跑 saveDraftNow 也救不回图（保存不上传，key 为空的图仍未上传完），不露重试钮；
+            // 失败图点图片重试上传（见 didTapImageItem），上传中图等传完自动进下一次保存。
+            draftStatusRetryButton.isHidden = (level != 0)
             if !draftStatusGroup.isHidden { draftStatusGroup.isHidden = true }
             setToolbarToolRowSpacing(20, in: toolRow)
             return
@@ -4975,6 +4984,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         return false
+    }
+
+    /// 未上传完的图片数：key 为空即还没上传完（上传中／失败同计；
+    /// 本地文件完整的图已随 localFile 进草稿，见 saveDraftNow 组装处）。
+    private func unsavedImageCount() -> Int {
+        imageItems.filter { $0.key == nil }.count
     }
 
     private func updatePublishState() {
@@ -7315,9 +7330,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         // 决议第 4 项 B：取消不再弹三选、无丢弃路径，直接关 + 静默存草稿。
         // 草稿规则不动：saveDraftNow 原样走分级保存、纯心情不保存的现有逻辑。
-        // C10：关闭时仍有图片在上传（失败图不算）——toast 挂 presenting 方，
-        // 关编辑器后仍可见。审计四轮增量 08：上传中的图现已随 localFile 进草稿
-        // （pending 态，重进续传），文案同步改口——不说“不会存进草稿”。
+        // C10：关闭时仍有 key 为空的图片（上传中／失败同算）——toast 挂 presenting 方，
+        // 关编辑器后仍可见。审计四轮增量 08：本地文件完整的未上传图已随 localFile
+        // 进草稿（pending／failed 态，重进续传／重试），故文案不说“没存进草稿”；
+        // 新文案按未上传完的图数提示（见成功分支，P1-8：失败图计入，有失败图时
+        // 指到点图重试上传）。
         // 该 toast 只在真正关闭时发（见成功分支）：保存失败留页时不发到
         // 看不见的 presenting 方，失败提示另由本页 toast 给。
         // 关闭即提交缓冲删除（草稿随即按删除后状态落盘，见 saveDraftNow）。
@@ -7377,8 +7394,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.saveDraftForCancelAndClose()
                 return
             }
-            if self.hasUploadingImage() {
-                self.showToastAfterClose(message: "图片还没上传完，已存进草稿")
+            // P1-8：按未上传完的图片数提示：key 为空的图都还没上传完
+            // （本地文件完整的图已随 localFile 进草稿，pending／failed 态，
+            // 重进续传／重试，见 saveDraftNow 组装处）；失败图与上传中图同计；
+            // 有失败图时指到页内现有重试入口（点失败的图重传，见 didTapImageItem），
+            // 纯上传中时只说还没传完（上传中点图不可重试）。
+            let unsavedImageCount = self.unsavedImageCount()
+            if unsavedImageCount > 0 {
+                if self.hasFailedImage() {
+                    self.showToastAfterClose(message: "有 \(unsavedImageCount) 张图片上传失败，点图片可重试上传")
+                } else {
+                    self.showToastAfterClose(message: "有 \(unsavedImageCount) 张图片还没上传完，已存进草稿")
+                }
             }
             self.onCancelled?()
         }
