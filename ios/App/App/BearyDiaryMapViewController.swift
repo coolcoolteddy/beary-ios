@@ -722,6 +722,49 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         return ["\(district)\(group.key)", group.key, district]
     }
 
+    /// 校验用期望区级（审计四轮第 4 项）：作者组 = 组内唯一的区级
+    /// （与 geocodeCandidates 同口径）；他人组键本身就是区级。
+    /// 组内完全没有区级记录时返回 nil，调用方沿旧口径不校验。
+    private func expectedDistrict(for group: BearyLocationMapGroup) -> String? {
+        guard viewerIsAuthor else { return group.key }
+        var seen = Set<String>()
+        for entry in group.entries {
+            let d = (entry.locationDistrict ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !d.isEmpty, seen.insert(d).inserted { return d }
+        }
+        return nil
+    }
+
+    /// 回包 placemark 的行政区划是否与日记记录的区级一致（审计四轮第 4 项）：
+    /// 去空白后精确比对回包的行政字段（名／区／市／省）中任一是否等于期望区级。
+    /// 期望区级为空时不校验（组内无区级记录）；回包没有任何行政字段等于期望区级
+    /// 时算不一致——不凭无校验的回包落钉。精确比对而不用包含匹配，避免“东区”
+    /// 误中“浦东新区”这类子串撞名；写入时区级本就取自同一派生口径
+    /// （BearyLocationDisplay.district(from:)），同区回包的字段应当能对上。
+    private func placemarkMatchesDistrict(_ placemark: CLPlacemark, expectedDistrict: String?) -> Bool {
+        guard let expected = expectedDistrict?.trimmingCharacters(in: .whitespacesAndNewlines), !expected.isEmpty else { return true }
+        let fields = [placemark.name, placemark.subLocality, placemark.subAdministrativeArea, placemark.locality, placemark.administrativeArea]
+        for field in fields {
+            guard let value = field?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { continue }
+            if value == expected { return true }
+        }
+        return false
+    }
+
+    /// 同一批回包里第一个区级一致且带坐标的候选（审计四轮第 4 项）：
+    /// 按回包顺序逐个校验，不一致的跳过；全部不一致时返回 nil，调用方
+    /// 改试下一级兜底，候选穷尽后不落钉、不凭空编坐标。
+    private func firstMatchingCoordinate(for group: BearyLocationMapGroup, in placemarks: [CLPlacemark]?) -> CLLocationCoordinate2D? {
+        guard let placemarks else { return nil }
+        let expected = expectedDistrict(for: group)
+        for placemark in placemarks {
+            guard let coordinate = placemark.location?.coordinate else { continue }
+            guard placemarkMatchesDistrict(placemark, expectedDistrict: expected) else { continue }
+            return coordinate
+        }
+        return nil
+    }
+
     /// 暂时失败判定：只认网络类错误（CLGeocoder 的 .network，底层
     /// URLError 的断网／超时／连接丢失）。无匹配（geocodeFoundNoResult、
     /// 空结果无错误）不是暂时失败，继续试下一候选；被取消的请求
@@ -739,7 +782,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         return false
     }
 
-    /// 逐级兜底编码：某一级编出坐标即进 located，全部编不出才进 unlocated。
+    /// 逐级兜底编码：某一级编出区级一致的坐标即进 located，全部编不出
+    /// 才进 unlocated。同一批回包按顺序逐个校验行政区划（审计四轮第 4 项），
+    /// 不一致的跳过、不直接取 first；本级全不一致才试下一级兜底。
     /// 代次门控：重算/切账号/退出后代次已变，旧回调（含被取消请求的回调）
     /// 到达时直接丢弃，不写缓存、不补标记、不续跑下一组。
     /// 查询词口径不动（见 geocodeCandidates）：作者组 = 区级+名 → 裸名 → 区级；
@@ -776,7 +821,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                     self.geocodePendingGroups(pending: pending, index: pendingIndex + 1, located: located, unlocated: unlocated, generation: generation)
                     return
                 }
-                if let coordinate = placemarks?.first?.location?.coordinate {
+                if let coordinate = self.firstMatchingCoordinate(for: group, in: placemarks) {
                     self.geocodeCache[self.geocodeCacheKey(for: group)] = coordinate
                     var nextLocated = located
                     nextLocated.append((group, coordinate))
