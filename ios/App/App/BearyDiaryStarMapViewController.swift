@@ -834,6 +834,13 @@ final class BearyDiaryStarMapViewController: UIViewController {
             showLoadingState()
             return
         }
+        // 审计二轮 #1：失败是终态——失败视图在时只认失败态，不下空／
+        // 有内容结论；迟到的后台建模回包、筛子点按等都不许把空态叠到
+        // 失败视图上。重试（didTapRetry）先藏失败视图再调本函数，
+        // 故不受影响；成功回包也在 recompute 前藏了失败视图。
+        if !failureView.isHidden {
+            return
+        }
         // 非在途终态：加载态收起、内容底改回三选一（见下方分支）。
         hideLoadingState()
         loadingBottom?.isActive = false
@@ -1462,6 +1469,13 @@ final class BearyDiaryStarMapViewController: UIViewController {
     /// nil（首页面失败）→ 无数据走失败页、有数据保旧图 + 弱提示。
     private func applySharedLoad(_ load: BearySharedEntryLoader.SharedEntryLoad?) {
         guard let load = load else {
+            // 审计二轮 #1：失败同样废弃本轮后台建模——fetchAllEntries
+            // 启动时 recompute 已发出的建模任务尚未回包时，失败不推
+            // 代次会让它的守卫仍通过、回包后调 applyModelToSky 把
+            // 空态叠到失败视图上；先推代次，旧任务回包即丢弃。
+            // （原 fetchEntriesPage 失败分支的同款处理，随共用取数
+            // 入口重构搬到这里。）
+            modelGeneration += 1
             hideLoadingState()
             // P1-4：请求结束（失败也是终态），门控放开，后续 recompute／
             // showFailureState 才能下空／有内容／失败结论。
