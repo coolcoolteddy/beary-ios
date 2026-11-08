@@ -2138,7 +2138,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
         // F10：天气图标 15px（icon_wx_<weatherKey>，取不到图时隐藏、不留空）。
         if let weatherKey = entry.weather, !weatherKey.isEmpty {
-            if let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
+            if let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + BearyText.weatherStaticKey(for: weatherKey), pointSize: 15) {
                 weatherImageView.image = weatherImage
                 weatherImageView.isHidden = false
                 weatherWrapLabel.isHidden = false
@@ -2152,6 +2152,8 @@ class BearyDiaryCardCell: UITableViewCell {
             weatherImageView.isHidden = true
             weatherWrapLabel.isHidden = true
         }
+        // 天气图标改动态 Lottie（落点行 playWeatherLottie 同款；无天气时其内守卫停播）。
+        playWeatherLottie()
         // 气温跟天气图标走同一处：有值显“18°”，无值隐藏、不留空位。
         if let temp = entry.temperatureC, entry.weather != nil, !entry.weather!.isEmpty {
             weatherTempLabel.text = "\(temp)°"
@@ -2236,7 +2238,7 @@ class BearyDiaryCardCell: UITableViewCell {
         // （1:1 复刻，推翻清单 14；authorPlus 为 Int，0/缺失 = 不显示）。
         rowCrownHiddenUpdate(entry: entry)
         // 天气图标（icon_wx_<key>，取不到图时隐藏、不留空）。
-        if let weatherKey = entry.weather, !weatherKey.isEmpty, let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
+        if let weatherKey = entry.weather, !weatherKey.isEmpty, let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + BearyText.weatherStaticKey(for: weatherKey), pointSize: 15) {
             weatherImageView.image = weatherImage
             weatherImageView.isHidden = false
             weatherWrapLabel.isHidden = false
@@ -2245,6 +2247,8 @@ class BearyDiaryCardCell: UITableViewCell {
             weatherImageView.isHidden = true
             weatherWrapLabel.isHidden = true
         }
+        // 天气图标改动态 Lottie（落点行 playWeatherLottie 同款；无天气时其内守卫停播）。
+        playWeatherLottie()
         // #427 的气温显示保留；作者行心情位按 #421 新模型一律隐藏
         // （refreshMoodView），心情缀正文末尾，不恢复旧心情标签。
         if let temp = entry.temperatureC, entry.weather != nil, !entry.weather!.isEmpty {

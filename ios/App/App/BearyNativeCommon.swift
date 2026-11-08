@@ -1710,6 +1710,23 @@ enum BearyText {
         "fog": "雾", "thunder": "雷阵雨", "wind": "风", "night": "夜晚",
     ]
 
+    /// 天气 key → Lottie 资源 key：night 对应 LottieWeather/moon；其余直通
+    /// （drizzle/hail/overcast 也有对应 json）。
+    static func weatherLottieKey(for weatherKey: String) -> String {
+        weatherKey == "night" ? "moon" : weatherKey
+    }
+
+    /// 天气 key → 就近静态图 key：drizzle→rain、hail→snow、overcast→cloudy；
+    /// 其余直通。三种只有 Lottie、没有 icon_wx_* 静态图，静态回退用就近图。
+    static func weatherStaticKey(for weatherKey: String) -> String {
+        switch weatherKey {
+        case "drizzle": return "rain"
+        case "hail": return "snow"
+        case "overcast": return "cloudy"
+        default: return weatherKey
+        }
+    }
+
     /// iCity：可见性切换无需确认（选择本身即确认，翻回即撤销），旧公开确认框常量已删除。
 }
 

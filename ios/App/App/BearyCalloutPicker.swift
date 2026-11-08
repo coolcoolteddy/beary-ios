@@ -95,6 +95,11 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     /// 取图闭包：(key, dark) -> 图。心情走 emote 静态 PNG（深色 _dark），
     /// 天气走 icon_wx_* 模板图（调用方 tint 墨色，深浅自适应）。
     var imageProvider: ((String, Bool) -> UIImage?)?
+    /// 动画图标 key 注入：返回 Lottie key 则该选项贴 BearyEmoteView 覆盖层
+    /// （底层静态图作 fallback）；返回 nil 的选项保持纯静态（心情框）。
+    /// 呼出框隐藏时播放器不自动停，须调用方 show/hide 时播／停。
+    var emoteKeyProvider: ((String) -> String?)?
+    private var emoteOverlays: [String: BearyEmoteView] = [:]
     /// 审计 E2 第 11 项：当前选中项的 key（天气单选用；心情是插入操作，
     /// 不套用本样式，调用方不传即无选中态）。“无”选项（key "none"）与
     /// 其他天气项沿用同一表现：轻量墨色描边 + selected 无障碍状态。
@@ -277,10 +282,17 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(options: [Option], onSelect: ((String) -> Void)?, imageProvider: ((String, Bool) -> UIImage?)?, selectedKey: String? = nil) {
+    func configure(options: [Option], onSelect: ((String) -> Void)?, imageProvider: ((String, Bool) -> UIImage?)?, emoteKeyProvider: ((String) -> String?)? = nil, selectedKey: String? = nil) {
         self.onSelect = onSelect
         self.imageProvider = imageProvider
+        self.emoteKeyProvider = emoteKeyProvider
         self.selectedKey = selectedKey
+        // 旧选项按钮重建时旧覆盖层一并摘掉（不留已离树的播放器）。
+        for (_, overlay) in emoteOverlays {
+            overlay.stop()
+            overlay.removeFromSuperview()
+        }
+        emoteOverlays.removeAll()
         // 32 清单第 31 项：先 removeArrangedSubview 再 removeFromSuperview（纯防御性；
         // 现状两实例 configure 各只调一次，旧按钮本就不会残留，收益为零，仍按拍板做）。
         for (_, button) in optionButtons {
@@ -343,6 +355,45 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
             let image = imageProvider?(key, dark)
             button.setImage(image, for: .normal)
             button.isHidden = (image == nil)
+            refreshEmoteOverlay(for: key, button: button, image: image)
+        }
+    }
+
+    /// 天气选项动画图标（落点行同款）：同 key 只重播、不重建；主题切换
+    /// 走播放器内部处理；框隐藏／未进窗口时停播，打开时由调用方统一播。
+    private func refreshEmoteOverlay(for key: String, button: UIButton, image: UIImage?) {
+        guard let lottieKey = emoteKeyProvider?(key), let image, let imageView = button.imageView else {
+            if let overlay = emoteOverlays.removeValue(forKey: key) {
+                overlay.stop()
+                overlay.removeFromSuperview()
+            }
+            return
+        }
+        if let existing = emoteOverlays[key], existing.superview === imageView, existing.emoteKey == lottieKey {
+            if isHidden || window == nil { existing.stop() } else { existing.play() }
+            return
+        }
+        if let old = emoteOverlays.removeValue(forKey: key) {
+            old.stop()
+            old.removeFromSuperview()
+        }
+        let overlay = BearyEmoteView(key: lottieKey, animated: true, fallbackImage: image)
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        imageView.addSubview(overlay)
+        NSLayoutConstraint.activate([
+            overlay.topAnchor.constraint(equalTo: imageView.topAnchor),
+            overlay.leadingAnchor.constraint(equalTo: imageView.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: imageView.trailingAnchor),
+            overlay.bottomAnchor.constraint(equalTo: imageView.bottomAnchor),
+        ])
+        emoteOverlays[key] = overlay
+        if isHidden || window == nil { overlay.stop() }
+    }
+
+    /// 呼出框显示／隐藏时由调用方播／停全部动画图标。
+    func setEmoteOverlaysPlaying(_ playing: Bool) {
+        for overlay in emoteOverlays.values {
+            if playing { overlay.play() } else { overlay.stop() }
         }
     }
 
