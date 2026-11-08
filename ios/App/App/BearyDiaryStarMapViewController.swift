@@ -851,6 +851,17 @@ final class BearyDiaryStarMapViewController: UIViewController {
         } else if let eid = selectedEdgeId, !model.edges.contains(where: { $0.id == eid }) {
             clearSelection()
         }
+        // 审计 R3-4：新模型生效后按 ID 重建选中底卡——星还在则按新
+        // Entry 重建单星卡（标题／心情／字数／地点／可见性都取新值），
+        // 线还在则按新 Edge + 新端点篇重建单线卡（端点篇名取新值）。
+        // ID 已不在时上面的存在性检查已清选择。只补一般重算路径
+        // （拉取／同步回包）；详情返回由 #1053 的恢复、#1073 的
+        // applyEditedEntry 覆盖，选中边理由变了由 #1048 的差分覆盖。
+        if let sid = selectedStarId, let entry = model.entryById[sid] {
+            showStarSheet(entry)
+        } else if let eid = selectedEdgeId, let edge = model.edges.first(where: { $0.id == eid }) {
+            showEdgeSheet(edge)
+        }
         // P1-5：重叠列表随新模型刷新（见 refreshOverlapSheet）——单星／
         // 单线已有基线 :703–708 的清选择逻辑，不重复改；只补重叠列表。
         refreshOverlapSheet()
