@@ -136,4 +136,9 @@ extension BearyDynamicType {
     static func smallSemiboldFont() -> UIFont {
         scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
     }
+
+    /// 语义：实况角标（照片上「实况」小标签）。定版值：11 bold，scaled（规范第 11 节，2026-11-08 Li 定，T3-D2；与网页版 liveBadgeHtml 同款 11pt）。
+    static func liveBadgeFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 11, weight: .bold))
+    }
 }

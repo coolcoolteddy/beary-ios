@@ -559,7 +559,9 @@ final class BearyLivePhotoView: UIView {
         badgeView.isHidden = true
         badgeLabel.translatesAutoresizingMaskIntoConstraints = false
         badgeLabel.text = "实况"
-        badgeLabel.font = UIFont.systemFont(ofSize: 11, weight: .bold)
+        // 2026-11-08 实况角标单列 11 bold 语义档（Li 定，T3-D2）：尺寸不变，跟系统字号。
+        badgeLabel.font = BearyDynamicType.liveBadgeFont()
+        badgeLabel.adjustsFontForContentSizeCategory = true
         badgeLabel.textColor = .white
         badgeLabel.isAccessibilityElement = true
         badgeLabel.accessibilityLabel = "实况照片"
