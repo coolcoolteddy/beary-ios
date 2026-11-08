@@ -1328,11 +1328,16 @@ class BearyProfileViewController: UIViewController {
     private let statsMoodWeatherLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.font = BearyDynamicType.secondaryFont()
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.numberOfLines = 0
         return labelValue
     }()
+
+    /// 写作统计 2×2 网格的两行：超大字号时改单列（见 updateStatsGridLayout）。
+    private var statsGridRowTop: UIStackView?
+    private var statsGridRowBottom: UIStackView?
 
     /// 写作统计卡内词汇指纹紧凑版：当年 top 4 + 口径徽标行（他人态「仅公开篇」）。
     /// 词行本身不点——整卡点按进年度回顾，避免词行手势与整卡手势双触发；
@@ -1344,6 +1349,9 @@ class BearyProfileViewController: UIViewController {
     /// 旧年份 / 旧账号）到达时凭此丢弃，绝不覆盖新结果。切号建新 VC 时
     /// 实例本身即换，代次另由 statsWordprintYear 复核年份。
     private var statsWordprintRequest = 0
+    /// 写作统计在途代次：renderStats 每调一次即 +1；过期回调（旧语料 /
+    /// 旧账号）到达时凭此丢弃，绝不覆盖新结果。
+    private var statsRequest = 0
     private let statsEnterRow: UIStackView = {
         let stackValue = UIStackView()
         stackValue.translatesAutoresizingMaskIntoConstraints = false
@@ -2921,6 +2929,9 @@ class BearyProfileViewController: UIViewController {
         // 字变大后照片区与模块卡溢出/重叠；深浅切换口径不动。
         if previousTraitCollection != nil,
            previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            // 超大字号单列：字号档变化时网格布局同步翻转（见 updateStatsGridLayout），
+            // 再重算脚部高度。
+            updateStatsGridLayout()
             refreshFooter()
             // 关注钮定宽跟字号走：延后一帧重算，等系统字号传播到 label 字体后再量。
             DispatchQueue.main.async { [weak self] in self?.updateFollowButtonFixedWidth() }
@@ -4351,6 +4362,7 @@ class BearyProfileViewController: UIViewController {
         statsRowTop.axis = .horizontal
         statsRowTop.distribution = .fillEqually
         statsRowTop.spacing = 10
+        statsGridRowTop = statsRowTop
         let statsRowBottom = UIStackView(arrangedSubviews: [
             makeStatTile(valueLabel: statsSlotValueLabel, keyText: "最常写时段"),
             makeStatTile(valueLabel: statsStreakValueLabel, keyText: "当前连续写作"),
@@ -4358,6 +4370,7 @@ class BearyProfileViewController: UIViewController {
         statsRowBottom.axis = .horizontal
         statsRowBottom.distribution = .fillEqually
         statsRowBottom.spacing = 10
+        statsGridRowBottom = statsRowBottom
         statsCard.contentStack.addArrangedSubview(statsRowTop)
         statsCard.contentStack.addArrangedSubview(statsRowBottom)
         statsCard.contentStack.addArrangedSubview(statsMoodWeatherLabel)
@@ -4365,6 +4378,16 @@ class BearyProfileViewController: UIViewController {
         statsCard.contentStack.addArrangedSubview(statsEnterRow)
         let statsTap = UITapGestureRecognizer(target: self, action: #selector(statsCardTapped))
         statsCard.addGestureRecognizer(statsTap)
+        // 05：整卡只有一个操作（进年度回顾），VoiceOver 下读作一个按钮：
+        // 子视图不再逐个读出，统计内容收进 accessibilityLabel（renderStats
+        // 每次填数后同步更新）；双击走 accessibilityActivate，与点按等价。
+        statsCard.isAccessibilityElement = true
+        statsCard.accessibilityTraits = .button
+        statsCard.accessibilityLabel = "写作统计"
+        statsCard.accessibilityActivateHandler = { [weak self] in
+            self?.openYearReview() ?? false
+        }
+        updateStatsGridLayout()
 
         // —— 写作热力图：格子 + 月份名/星期名/图例/提示都在视图内；点某天走 onOpenTimelineDay 到时间线该日。
         heatmapView.onSelectDay = { [weak self] dayKey in self?.onOpenTimelineDay?(dayKey) }
@@ -4437,6 +4460,21 @@ class BearyProfileViewController: UIViewController {
         modulesStack.addArrangedSubview(randomCard)
         modulesStack.addArrangedSubview(yearCard)
         modulesStack.addArrangedSubview(modulesRetryRow)
+    }
+
+    /// 超大字号单列：辅助功能字号档（accessibility sizes）下 2×2 网格改单列，
+    /// 每格全宽、上下排布；常规字号档恢复两行 fillEqually。信息顺序（总篇数／
+    /// 总字数／最常写时段／当前连续写作）与 12pt 格圆角一字不动——圆角在
+    /// makeStatTile 里定，本函数只改两行 stack 的 axis / distribution。
+    /// 字号档变化时由 traitCollectionDidChange 复核（见该函数内调用）。
+    private func updateStatsGridLayout() {
+        guard let top = statsGridRowTop, let bottom = statsGridRowBottom else { return }
+        let singleColumn = traitCollection.preferredContentSizeCategory >= .accessibilityMedium
+        for row in [top, bottom] {
+            row.axis = singleColumn ? .vertical : .horizontal
+            // 纵向时不用 fillEqually：各格按内容定高，字大换行不被等高裁掉。
+            row.distribution = singleColumn ? .fill : .fillEqually
+        }
     }
 
     /// 主题氛围开关点：默认墨色现行（= 现行底色，视觉零变化）；三档色值见
@@ -4747,10 +4785,42 @@ class BearyProfileViewController: UIViewController {
     // MARK: 批 D —— 写作统计
 
     private func renderStats(visible: [Entry]) {
-        let stats = BearyProfilePersonalLogic.writingStats(entries: visible, now: Date(), calendar: .current)
+        // 08：统计改后台算 + 按账号＋可见语料版本缓存（writingStatsAsync，
+        // 与 wordprintAsync 同款口径）；同步 writingStats() 一字不动。
+        // 缓存命中时同步回调，本次渲染内回填、无闪烁；未命中时先藏卡（不留
+        // 空数字卡），后台算完回主线程一次性呈现。代次号丢弃过期回调。
+        statsRequest += 1
+        let request = statsRequest
+        let accountKey = "profile:\(profile?.profileIdValue ?? targetUserIdValue ?? -1)"
+        // 未命中时先藏卡（不留空数字卡 / 旧数字卡），回填时再显；缓存命中时
+        // 下方同步回填立即恢复显隐，同一调用内无可见变化。
+        statsCard.isHidden = true
+        // 缓存命中时 completion 在本调用内同步执行（此时 renderModules 尚未
+        // 算容器显隐，容器复核须留给它）；未命中时 completion 在 renderStats
+        // 返回后才执行，容器显隐由回填侧复核。callReturned 即区分二者：
+        // 同步命中读到 false，异步回填读到 true。
+        var callReturned = false
+        BearyProfilePersonalLogic.writingStatsAsync(
+            accountKey: accountKey,
+            entries: visible,
+            isOwn: isOwnProfile,
+            calendar: .current
+        ) { [weak self] stats in
+            guard let self = self, self.statsRequest == request else { return }
+            self.applyWritingStats(stats, visible: visible, syncContainerVisibility: callReturned)
+        }
+        callReturned = true
+    }
+
+    /// 写作统计回填：填数、心情／天气行、VoiceOver 读出文案与词汇指纹。
+    /// syncContainerVisibility 只在异步回填时为真（见 renderStats 内说明）。
+    private func applyWritingStats(_ stats: BearyProfilePersonalLogic.WritingStats, visible: [Entry], syncContainerVisibility: Bool) {
         guard stats.total > 0 else {
             statsCard.isHidden = true
             statsWordprintYear = nil
+            if syncContainerVisibility {
+                syncModulesContainerVisibilityAfterAsyncStats()
+            }
             return
         }
         statsCard.isHidden = false
@@ -4778,6 +4848,7 @@ class BearyProfileViewController: UIViewController {
             statsMoodWeatherLabel.isHidden = false
             statsMoodWeatherLabel.text = parts.joined(separator: " · ")
         }
+        updateStatsCardAccessibilityLabel(stats: stats, charsText: charsText, moodWeatherParts: parts)
         // 紧凑版词汇指纹：当年 top 4；当年无词条目时取最近有词条目的年，
         // 年份由词视图标题行明示；当年有篇但无可计词时整节隐藏，不留空标题。
         // 口径与年报首屏同源：visible 已过滤，wordprint 内部再过滤一次。
@@ -4815,6 +4886,56 @@ class BearyProfileViewController: UIViewController {
                 }
             }
         }
+        if syncContainerVisibility {
+            syncModulesContainerVisibilityAfterAsyncStats()
+        }
+    }
+
+    /// 05：整卡是单个 VoiceOver 按钮，子视图不再逐个读出，统计内容收进
+    /// 卡片的 accessibilityLabel——数值与心情／天气行与可见文案逐字一致，
+    /// 末尾点明操作（进入年度回顾）。每次填数后同步更新。
+    private func updateStatsCardAccessibilityLabel(
+        stats: BearyProfilePersonalLogic.WritingStats,
+        charsText: String,
+        moodWeatherParts: [String]
+    ) {
+        var readParts: [String] = [
+            "写作统计",
+            "总篇数 \(stats.total) 篇",
+            "总字数 \(charsText) 字",
+        ]
+        if let slot = stats.bestSlotStartHour {
+            readParts.append("最常写时段 \(String(format: "%02d:00–%02d:00", slot, slot + 2))")
+        }
+        readParts.append("当前连续写作 \(stats.currentStreakDays) 天")
+        readParts.append(contentsOf: moodWeatherParts)
+        readParts.append("进入年度回顾")
+        statsCard.accessibilityLabel = readParts.joined(separator: "，")
+    }
+
+    /// 异步统计回填后复核脚部容器显隐：回填可能翻转统计卡显隐（未命中时
+    /// 先藏卡、算完再显；语料清空时反向塌掉），而 renderModules 只在同步
+    /// 渲染时算过一次容器显隐。失败态容器恒显（重试行所在），不动。
+    /// 同步回填（缓存命中）不走本函数，容器由 renderModules 统一算。
+    private func syncModulesContainerVisibilityAfterAsyncStats() {
+        guard !modulesLoadFailed else { return }
+        let anyVisible = [pastSelfDeliveryCard, statsCard, thisDayCard, randomCard, yearCard].contains { !$0.isHidden }
+        if anyVisible, modulesContainer.isHidden {
+            modulesContainer.isHidden = false
+            modulesHeightConstraint.isActive = false
+            if headerWidthValue > 0 {
+                layoutHeaderForced(widthValue: headerWidthValue)
+            }
+            refreshFooter()
+            fadeInViewIfAppearing(modulesContainer, wasHidden: true)
+        } else if !anyVisible, !modulesContainer.isHidden {
+            modulesContainer.isHidden = true
+            modulesHeightConstraint.isActive = true
+            refreshFooter()
+        } else {
+            // 卡内行显隐可能变（心情／天气行出现／消失），脚部高度重算一次。
+            refreshFooter()
+        }
     }
 
     /// 写作热力图：与写作统计卡同一口径——只算可见篇；无篇时整模块隐藏。
@@ -4834,16 +4955,18 @@ class BearyProfileViewController: UIViewController {
         openYearReview()
     }
 
-    private func openYearReview() {
+    @discardableResult
+    private func openYearReview() -> Bool {
         let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
-        guard !visible.isEmpty else { return }
+        guard !visible.isEmpty else { return false }
         let currentYear = Calendar.current.component(.year, from: Date())
         let availableYears = BearyProfilePersonalLogic.availableYears(entries: visible, isOwn: isOwnProfile, calendar: .current)
-        guard let resolvedYear = availableYears.contains(currentYear) ? currentYear : availableYears.first else { return }
-        guard presentedViewController == nil else { return }
+        guard let resolvedYear = availableYears.contains(currentYear) ? currentYear : availableYears.first else { return false }
+        guard presentedViewController == nil else { return false }
         let sheet = BearyYearReviewViewController(year: resolvedYear, allEntries: visible, isOwn: isOwnProfile)
         sheet.modalPresentationStyle = .pageSheet
         present(sheet, animated: BearyMotion.animated(true), completion: nil)
+        return true
     }
 
     // MARK: 批 D —— 那年今日

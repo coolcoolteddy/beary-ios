@@ -562,6 +562,100 @@ enum BearyProfilePersonalLogic {
             }
         }
     }
+
+    // MARK: - 写作统计后台计算与缓存（审计 08，与词汇指纹同款口径）
+    //
+    // 问题：renderStats 在主线程同步调 writingStats()，逐篇 reduce 算字符数
+    // ＋ 2 小时桶／心情／天气／连续天数，日记多时进个人页会卡住界面。本节只动
+    // 线程与缓存，同步 writingStats() 一字不动——口径的唯一事实来源仍是它；
+    // 后台算的是同一个函数、同一输入顺序，故结果与同步计算完全一致。
+    // 缓存键 = 账号 + isOwn + 当日起点 + 语料指纹。指纹喂影响结果的全部字段
+    // （可见条目的 id / createdAt / 正文 / 心情 / 天气 / 可见性字段）：内容改、
+    // 可见性翻转、删篇、恢复、限时过期都会换键；点赞／收藏字段（likeCount /
+    // likedByMe / bookmarkCount / bookmarkedByMe）不参与统计，故不喂入——
+    // 点赞／收藏变化不重新统计。连续天数依赖“今天”，故键内另含当日起点，
+    // 跨天后旧缓存不再命中。指纹只做 Hasher 哈希，不存正文、不写库、不落盘。
+    // 完成回调一律回主线程；缓存命中时同步回调（调用方在主线程时即本次渲染
+    // 内回填，无闪烁）。调用方另以代次号丢弃过期回调——本层不替调用方判定
+    // “当前账号”，因为本层不知道界面状态。
+
+    private static let writingStatsQueue = DispatchQueue(label: "com.beary.writingstats", qos: .userInitiated)
+    private static let writingStatsCacheLock = NSLock()
+    private static var writingStatsCache: [WritingStatsCacheKey: WritingStats] = [:]
+    private static var writingStatsCacheOrder: [WritingStatsCacheKey] = []
+    private static let writingStatsCacheLimit = 16
+
+    struct WritingStatsCacheKey: Hashable {
+        var accountKey: String
+        var isOwn: Bool
+        var dayStart: Date
+        var fingerprint: Int
+    }
+
+    /// 语料指纹：只喂 writingStats() 读到的字段与可见性字段；点赞／收藏
+    /// 字段不喂入（见上）。时区也喂入，设备时区变化导致时段桶／连续天数
+    /// 归属变化时同样换键。调用方传入的已是可见语料（renderStats 的 visible），
+    /// 故此处不再重复 visibleEntries 过滤。
+    static func writingStatsFingerprint(entries: [Entry], calendar: Calendar) -> Int {
+        var hasher = Hasher()
+        hasher.combine(calendar.timeZone.identifier)
+        hasher.combine(entries.count)
+        for entry in entries {
+            hasher.combine(entry.id)
+            hasher.combine(entry.createdAt)
+            hasher.combine(entry.content)
+            hasher.combine(entry.mood)
+            hasher.combine(entry.weather)
+            hasher.combine(entry.isPublic)
+            hasher.combine(entry.visibility)
+            hasher.combine(entry.ephemeralUntil)
+            hasher.combine(entry.placeholder)
+        }
+        return hasher.finalize()
+    }
+
+    /// 后台算 writingStats：缓存命中同步回调，未命中则在后台队列算完、
+    /// 写缓存、回主线程回调。调用方必须在回调里凭自己的代次号复核
+    /// “仍是当前请求”，过期结果一律丢弃。
+    static func writingStatsAsync(
+        accountKey: String,
+        entries: [Entry],
+        isOwn: Bool,
+        calendar: Calendar,
+        completion: @escaping (WritingStats) -> Void
+    ) {
+        let now = Date()
+        let key = WritingStatsCacheKey(
+            accountKey: accountKey,
+            isOwn: isOwn,
+            dayStart: calendar.startOfDay(for: now),
+            fingerprint: writingStatsFingerprint(entries: entries, calendar: calendar)
+        )
+        writingStatsCacheLock.lock()
+        let cached = writingStatsCache[key]
+        writingStatsCacheLock.unlock()
+        if let cached = cached {
+            completion(cached)
+            return
+        }
+        // Entry 与 WritingStats 均为值类型，后台只读语料，故跨线程安全。
+        writingStatsQueue.async {
+            let value = writingStats(entries: entries, now: now, calendar: calendar)
+            writingStatsCacheLock.lock()
+            if writingStatsCache[key] == nil {
+                writingStatsCacheOrder.append(key)
+                if writingStatsCacheOrder.count > writingStatsCacheLimit {
+                    let evicted = writingStatsCacheOrder.removeFirst()
+                    writingStatsCache.removeValue(forKey: evicted)
+                }
+            }
+            writingStatsCache[key] = value
+            writingStatsCacheLock.unlock()
+            DispatchQueue.main.async {
+                completion(value)
+            }
+        }
+    }
 }
 
 /// 每月字数趋势图（纯 UIView，不引图表库；复用心情条形的 orange/faint 配色）。
@@ -1101,6 +1195,18 @@ final class BearyYearReviewViewController: UIViewController {
 
 final class BearyProfilePersonalModulesCard: UIView {
 
+    /// 05：VoiceOver 激活回调（统计卡：等价于点按整卡进年度回顾，由调用方注入；
+    /// 其余卡不设，走默认行为）。UIView 的 accessibilityActivate 在此转发，
+    /// 调用方无需为卡片另建子类。
+    var accessibilityActivateHandler: (() -> Bool)?
+
+    override func accessibilityActivate() -> Bool {
+        if let handler = accessibilityActivateHandler {
+            return handler()
+        }
+        return super.accessibilityActivate()
+    }
+
     let contentStack: UIStackView = {
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -1137,10 +1243,16 @@ final class BearyProfilePersonalModulesCard: UIView {
         return nil
     }
 
+    // 04：四工厂全部改走 Dynamic Type 入口，字号数值一字不动。
+    // 12 / 15 有现成同值语义入口（captionFont / smallBodyFont）；16 bold
+    // 无同值语义入口，走卡片标题同款 scaledFont 保字号不变（不用 16.5 的
+    // cardTitleFont，避免悄悄改字号）。label 侧一律配
+    // adjustsFontForContentSizeCategory，字号档变化时自动跟随。
     static func statValueLabel() -> UILabel {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .bold))
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         return label
     }
@@ -1148,7 +1260,8 @@ final class BearyProfilePersonalModulesCard: UIView {
     static func statKeyLabel(text: String) -> UILabel {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 12)
+        label.font = BearyDynamicType.captionFont()
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         label.text = text
         return label
@@ -1157,7 +1270,8 @@ final class BearyProfilePersonalModulesCard: UIView {
     static func metaLabel() -> UILabel {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 12)
+        label.font = BearyDynamicType.captionFont()
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         return label
     }
@@ -1165,7 +1279,8 @@ final class BearyProfilePersonalModulesCard: UIView {
     static func entryTitleLabel() -> UILabel {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .bold))
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         label.numberOfLines = 0
         return label
@@ -1174,7 +1289,8 @@ final class BearyProfilePersonalModulesCard: UIView {
     static func bodyLabel() -> UILabel {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 15)
+        label.font = BearyDynamicType.smallBodyFont()
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         label.numberOfLines = 0
         return label
