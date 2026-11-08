@@ -2235,6 +2235,36 @@ class BearyTimelineViewController: UIViewController {
     /// 但 Data(contentsOf:)＋JSON 解码仍在切日首帧上；内存未命中时读盘
     /// 改走这里，回主线程后按代次/选中日/账号复核再更新面板。
     private let dayDiskReadQueue = DispatchQueue(label: "beary.timeline.day-disk-read")
+    /// R15 P2-7：切日磁盘预读在途集合（key=北京日；与正向单槽无关，
+    /// 同日只读一次，读完即摘，失败不留痕）。
+    private var dayDiskLoadInFlight: Set<String> = []
+    /// R15 P2-7：点日期即准备数据——内存未命中时把落盘读 + 解码放到后台
+    /// （BearyEntrySync.swift:78–81 的 loadDay 是纯同步实现，
+    /// Data(contentsOf:) + JSONDecoder.decode，旧路在主线程调它会卡住切日），
+    /// 与旧日退场动画并行；读到后回主线程回填内存缓存（与旧同步回填
+    /// 同款语义），退场结束的提交只读内存，永不在主线程碰磁盘。
+    /// 校验：只在全部档（.all）预读——日缓存是全部档行，筛子档不读缓存
+    /// （与提交分支同口径）；回填前比对账号（uid 分桶，中途切号的旧账号
+    /// 落盘绝不写进新账号缓存）与日期（按 key 回填）；筛子档位在提交处
+    /// 的内存查表时再校验（见 commitDaySwitch）。
+    private func prepareDayEntriesInBackground(key: String) {
+        guard timelineVisFilter == .all,
+              dayEntriesCache[key] == nil,
+              !dayDiskLoadInFlight.contains(key),
+              let uid = SessionManager.shared.currentUser?.id else { return }
+        dayDiskLoadInFlight.insert(key)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let disk = BearyEntrySyncStore.loadDay(accountId: uid, dayKey: key)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.dayDiskLoadInFlight.remove(key)
+                guard SessionManager.shared.currentUser?.id == uid else { return }
+                if let disk = disk {
+                    self.dayEntriesCache[key] = disk
+                }
+            }
+        }
+    }
     /// 账号切换时清日缓存：内存日缓存与预取在途集合都不跨账号（落盘已按 uid
     /// 分桶，不动）；由 SceneDelegate onUserChanged 的 userChanged 分支在
     /// reloadTimeline 之前调用，登录与退出两个方向都覆盖。时间线 VC 换账号
@@ -2243,6 +2273,9 @@ class BearyTimelineViewController: UIViewController {
         dayEntriesCache.removeAll()
         dayCacheVersions.removeAll()
         dayPrefetchInFlight.removeAll()
+        // R15 P2-7：磁盘预读在途集合同清——旧账号的读在回填前有 uid 校验
+        // 不会污染新账号，但不占位，新账号同日可立即重读。
+        dayDiskLoadInFlight.removeAll()
     }
     /// 相邻日预取在途集合（key=北京日）：独立通道专用，与正向单槽
     /// （dayKeyForLoad + dayState）完全分开；同日只发一次，失败不留痕。
@@ -5251,6 +5284,11 @@ class BearyTimelineViewController: UIViewController {
         // 80 包 A2-3③：切日先清错峰队列并 +1 代际，旧队列条目不得在新日数据行上重播。
         staggerGeneration += 1
         clearStaggerEntries()
+        // R15 P2-7：点日期即准备数据——动画开始前同步发起后台磁盘预读
+        // （内存命中 / 已在途 / 非全部档时内部直接返回），退场动画与取数
+        // 并行，不再等 0.18s 退场完成才在提交里碰磁盘；减动效 / 无可见旧行 /
+        // 无旧面板时直接提交的路径同样先预读，无等待。
+        prepareDayEntriesInBackground(key: key)
         // 6A 定位守卫：定位触发的切日保留 pending；用户手动切日即作废 pending。
         if locateDaySelection {
             locateDaySelection = false
@@ -5290,8 +5328,11 @@ class BearyTimelineViewController: UIViewController {
         let reduceMotion = UIAccessibility.isReduceMotionEnabled
         let commitDaySwitch = { [weak self] in
             guard let self = self, self.staggerGeneration == switchGeneration, self.selectedDayKey == key else { return }
-            // 缓存分两层：内存命中即时显示，落盘命中异步读盘后回填内存、
-            // 再按内存命中同款处理 + 静默刷新。
+            // 缓存分两层：内存命中即时显示；点按时 prepareDayEntriesInBackground
+            //（R15 P2-7）已在后台预读落盘，退场动画期间回填内存，提交时多半
+            // 已命中；仍未命中时落盘读改异步（审计四轮增量 06 的 dayDiskReadQueue），
+            // 回主线程复核通过才回填内存并按命中同款处理 + 静默刷新。
+            // 提交处永不在主线程碰磁盘。
             // 筛子档不读日缓存：缓存是全部档行，命中会先闪出非本档行、
             // 再由带 vis 的静默刷新纠正——“只出对应篇”不容这一帧。
             // 筛子档直接走下方网络分支（带 vis）。
