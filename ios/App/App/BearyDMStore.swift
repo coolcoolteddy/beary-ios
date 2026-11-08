@@ -371,7 +371,8 @@ enum BearyDMStore {
 
     /// 待发送消息：正文、临时 ID、发送状态、创建时间。
     /// 与主库独立文件（beary_dm_pending_<accountId>.json），主库损坏时不被锁住；
-    /// 主库损坏保护（审计四轮 01）只管主文件，不管本文件。
+    /// 本文件有自己的同款损坏保护（审计第二轮 6）：损坏登记＋复制备份＋禁写，
+    /// 见 noteCorruptPendingStore／loadPendingList／savePendingList。
     struct PendingSend: Codable {
         enum Status: String, Codable {
             case sending     // 已发出、等服务端确认
@@ -394,20 +395,41 @@ enum BearyDMStore {
         return base.appendingPathComponent("beary_dm_pending_\(accountId).json")
     }
 
-    /// 待发文件读盘：缺文件 → []；损坏 → 原文件改名 .bak 保留、回 []（不阻塞主库）。
+    /// 待发损坏登记（只在 ioQueue 内读写）：记下账号；原文件不动，复制一份 .bak。
+    /// 同一轮损坏只备一份，免得每次读取都刷一个新备份。复制失败不记已备份
+    /// （下次读重试），但损坏登记保留——写盘仍禁，防覆盖原文件。
+    private static var corruptPendingAccountIds: Set<Int> = []
+    private static var corruptPendingBackupAccountIds: Set<Int> = []
+
+    private static func noteCorruptPendingStore(accountId: Int?, fileURL url: URL) {
+        guard let accountId = accountId else { return }
+        corruptPendingAccountIds.insert(accountId)
+        guard !corruptPendingBackupAccountIds.contains(accountId) else { return }
+        do {
+            try FileManager.default.copyItem(at: url, to: BearyDMStoreCore.pendingCorruptBackupURL(for: url))
+            corruptPendingBackupAccountIds.insert(accountId)
+        } catch {
+            // 备份失败：不记已备份，下次读重试；损坏登记已留，写盘继续禁。
+        }
+    }
+
+    /// 待发文件读盘：缺文件 → .missing；损坏 → 原文件不动、复制一份 .bak、
+    /// 登记损坏态、回 .corrupt（不阻塞主库）；成功 → .loaded。
     /// 只在 ioQueue 内调用。
-    private static func loadPendingList(accountId: Int?) -> [PendingSend] {
+    private static func loadPendingList(accountId: Int?) -> BearyDMStoreCore.PendingLoadOutcome {
         guard let url = pendingFileURL(forAccount: accountId),
-              FileManager.default.fileExists(atPath: url.path) else { return [] }
+              FileManager.default.fileExists(atPath: url.path) else { return .missing }
         guard let data = try? Data(contentsOf: url),
               let list = BearyDMStoreCore.decodePendings(data) else {
-            try? FileManager.default.moveItem(at: url, to: BearyDMStoreCore.pendingCorruptBackupURL(for: url))
-            return []
+            noteCorruptPendingStore(accountId: accountId, fileURL: url)
+            return .corrupt
         }
-        return list
+        return .loaded(list)
     }
 
     private static func savePendingList(_ list: [PendingSend], accountId: Int?) -> Bool {
+        // 损坏态禁止覆盖：原文件（及 .bak）不动；损坏须由恢复／丢弃入口处理。
+        if let accountId = accountId, corruptPendingAccountIds.contains(accountId) { return false }
         guard let url = pendingFileURL(forAccount: accountId),
               let data = BearyDMStoreCore.encodePendings(list) else { return false }
         let tmp = url.appendingPathExtension("tmp")
@@ -428,7 +450,13 @@ enum BearyDMStore {
     /// 读某对方的待发（按创建时间升序）。
     static func loadPendings(accountId: Int?, peerId: Int, completion: @escaping ([PendingSend]) -> Void) {
         ioQueue.async {
-            let list = loadPendingList(accountId: accountId).filter { $0.peerId == peerId }.sorted { $0.createdAt < $1.createdAt }
+            // 损坏时回空数组（原文件已复制备份，见 noteCorruptPendingStore）。
+            let base: [PendingSend]
+            switch loadPendingList(accountId: accountId) {
+            case .loaded(let loaded): base = loaded
+            case .missing, .corrupt: base = []
+            }
+            let list = base.filter { $0.peerId == peerId }.sorted { $0.createdAt < $1.createdAt }
             DispatchQueue.main.async { completion(list) }
         }
     }
@@ -439,8 +467,18 @@ enum BearyDMStore {
     /// （测试等）不用改。
     static func savePending(_ pending: PendingSend, accountId: Int?, completion: @escaping (Bool) -> Void = { _ in }) {
         ioQueue.async {
-            var list = loadPendingList(accountId: accountId)
-            list = BearyDMStoreCore.upsertPending(list, pending)
+            // 损坏态不写盘：原文件与 .bak 不动，本次新待发不落盘（只走网络发送）。
+            // 须回 completion(false)：调用方（#1202 起）在等落盘确认，不回会挂起、
+            // 输入框不清、也不弹「暂时无法安全保存」。
+            let base: [PendingSend]
+            switch loadPendingList(accountId: accountId) {
+            case .corrupt:
+                DispatchQueue.main.async { completion(false) }
+                return
+            case .missing: base = []
+            case .loaded(let loaded): base = loaded
+            }
+            let list = BearyDMStoreCore.upsertPending(base, pending)
             let saved = savePendingList(list, accountId: accountId)
             DispatchQueue.main.async { completion(saved) }
         }
@@ -449,7 +487,8 @@ enum BearyDMStore {
     /// 改一条待发的状态（不存在即忽略）。
     static func updatePendingStatus(localKey: String, status: PendingSend.Status, accountId: Int?) {
         ioQueue.async {
-            var list = loadPendingList(accountId: accountId)
+            // 损坏／缺文件时无行可改，直接返回，不写盘。
+            guard case .loaded(var list) = loadPendingList(accountId: accountId) else { return }
             guard let idx = list.firstIndex(where: { $0.localKey == localKey }) else { return }
             list[idx].status = status
             _ = savePendingList(list, accountId: accountId)
@@ -459,7 +498,8 @@ enum BearyDMStore {
     /// 删一条待发（已送达认领/成功后调）。
     static func removePending(localKey: String, accountId: Int?) {
         ioQueue.async {
-            let list = loadPendingList(accountId: accountId)
+            // 损坏时不动原文件（不删行、不写盘）。
+            guard case .loaded(let list) = loadPendingList(accountId: accountId) else { return }
             let kept = BearyDMStoreCore.removePending(list, localKey: localKey)
             guard kept.count != list.count else { return }
             _ = savePendingList(kept, accountId: accountId)
@@ -475,6 +515,13 @@ enum BearyDMStoreCore {
     enum LoadOutcome {
         case missing
         case loaded([String: BearyDMStore.StoredConversation])
+        case corrupt
+    }
+
+    /// 待发文件读盘结果（审计第二轮 6）：缺文件／成功／损坏严格区分，损坏绝不能当成空库。
+    enum PendingLoadOutcome {
+        case missing
+        case loaded([BearyDMStore.PendingSend])
         case corrupt
     }
 
@@ -515,7 +562,7 @@ enum BearyDMStoreCore {
 
     // MARK: - 待发编解码（审计四轮增量 12，纯函数）
 
-    /// 待发编解码：nil/坏 JSON → nil（调用方改名保留原文件、不阻塞主库）。
+    /// 待发编解码：nil/坏 JSON → nil（调用方复制备份、登记损坏态，不阻塞主库）。
     static func decodePendings(_ data: Data?) -> [BearyDMStore.PendingSend]? {
         guard let data = data else { return nil }
         return try? JSONDecoder().decode([BearyDMStore.PendingSend].self, from: data)
@@ -539,8 +586,8 @@ enum BearyDMStoreCore {
         list.filter { $0.localKey != localKey }
     }
 
-    /// 待发损坏备份名。
+    /// 待发损坏备份名：秒级时间戳＋UUID，同秒内多次损坏也不撞名（草稿 #1133 同款）。
     static func pendingCorruptBackupURL(for fileURL: URL) -> URL {
-        fileURL.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970)).bak")
+        fileURL.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString).bak")
     }
 }

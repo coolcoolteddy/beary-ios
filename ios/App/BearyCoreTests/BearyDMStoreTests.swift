@@ -265,7 +265,7 @@ final class BearyDMStoreTests: XCTestCase {
         // 删指定 key，不动其他。
         let kept = BearyDMStoreCore.removePending(upserted, localKey: "k1")
         XCTAssertEqual(kept.map { $0.localKey }, ["k2"])
-        // 坏 JSON → nil（调用方改名保留原文件）。
+        // 坏 JSON → nil（调用方复制备份保留原文件）。
         XCTAssertNil(BearyDMStoreCore.decodePendings(Data("不是 json".utf8)))
     }
 
@@ -285,13 +285,29 @@ final class BearyDMStoreTests: XCTestCase {
     func testPendingFileCorruptIsPreservedAsBak() {
         let accountId = 9011
         try? Data("坏了".utf8).write(to: pendingFile(accountId: accountId))
-        // 损坏待发文件 → 读回空，原文件改名 .bak 保留（不丢记录、不阻塞）。
+        // 损坏待发文件 → 读回空，原文件不动、另存一份 .bak（不丢记录、不阻塞）。
         XCTAssertEqual(loadPendings(accountId: accountId, peerId: 5).count, 0)
         XCTAssertEqual(pendingBackupFiles(accountId: accountId).count, 1)
         XCTAssertEqual(try? Data(contentsOf: pendingBackupFiles(accountId: accountId)[0]), Data("坏了".utf8))
-        // 损坏后仍可正常写待发。
+        XCTAssertEqual(try? Data(contentsOf: pendingFile(accountId: accountId)), Data("坏了".utf8))
+        // 损坏后写盘禁：新待发不落盘，原文件与 .bak 都不动（审计第二轮 6）。
         BearyDMStore.savePending(.init(localKey: "k1", peerId: 5, body: "新待发", createdAt: 1000, status: .sending), accountId: accountId)
-        XCTAssertEqual(loadPendings(accountId: accountId, peerId: 5).map { $0.body }, ["新待发"])
+        XCTAssertEqual(loadPendings(accountId: accountId, peerId: 5).count, 0)
+        XCTAssertEqual(try? Data(contentsOf: pendingFile(accountId: accountId)), Data("坏了".utf8))
+        XCTAssertEqual(pendingBackupFiles(accountId: accountId).count, 1)
+        // 改状态／删行同样不动原文件。
+        BearyDMStore.updatePendingStatus(localKey: "k1", status: .failed, accountId: accountId)
+        BearyDMStore.removePending(localKey: "k1", accountId: accountId)
+        XCTAssertEqual(try? Data(contentsOf: pendingFile(accountId: accountId)), Data("坏了".utf8))
+    }
+
+    func testPendingCorruptBackupURLIsUnique() {
+        // 同秒内多次损坏也不撞名（审计第二轮 6：秒级时间戳会撞，须加 UUID）。
+        let url = pendingFile(accountId: 9012)
+        XCTAssertNotEqual(
+            BearyDMStoreCore.pendingCorruptBackupURL(for: url),
+            BearyDMStoreCore.pendingCorruptBackupURL(for: url)
+        )
     }
 
     func testPendingAccountIsolation() {
