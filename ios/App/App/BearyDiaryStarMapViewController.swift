@@ -111,6 +111,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
     /// L3：重叠列表底卡的选中态（单星／单线用上面两个 id 表达，重叠列表
     /// 两者皆空，另记一位；未选中时底卡不出现，见 showDefaultSheet）。
     private var showingOverlapSheet = false
+    /// P1-5：重叠列表的可核对选择——记 id，不记调用时传入的快照行；
+    /// 刷新后用新模型重填（已删的篇移出），单星／单线仍走上面两个 id。
+    private var overlapEntryIds: [String]?
     private var loadGeneration = 0
     /// P1-4：本轮拉取是否在途——加载／空白／有内容／失败共用一个展示
     /// 状态的门控：请求未结束且尚无可展示数据时只出加载态，不下空态结论。
@@ -758,6 +761,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
         } else if let eid = selectedEdgeId, !model.edges.contains(where: { $0.id == eid }) {
             clearSelection()
         }
+        // P1-5：重叠列表随新模型刷新（见 refreshOverlapSheet）——单星／
+        // 单线已有基线 :703–708 的清选择逻辑，不重复改；只补重叠列表。
+        refreshOverlapSheet()
         let visibleEdges: [StarMapSkyEdge]
         if let filter = edgeFilter {
             visibleEdges = model.edges
@@ -832,6 +838,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         selectedStarId = nil
         selectedEdgeId = nil
         showingOverlapSheet = false
+        overlapEntryIds = nil
         skyView.setSelected(starId: nil, edgeId: nil)
         showDefaultSheet()
     }
@@ -840,6 +847,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         selectedStarId = entry.id
         selectedEdgeId = nil
         showingOverlapSheet = false
+        overlapEntryIds = nil
         skyView.setSelected(starId: entry.id, edgeId: nil)
         showStarSheet(entry)
     }
@@ -848,6 +856,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         selectedEdgeId = edge.id
         selectedStarId = nil
         showingOverlapSheet = false
+        overlapEntryIds = nil
         skyView.setSelected(starId: nil, edgeId: edge.id)
         showEdgeSheet(edge)
     }
@@ -856,9 +865,24 @@ final class BearyDiaryStarMapViewController: UIViewController {
         selectedStarId = nil
         selectedEdgeId = nil
         showingOverlapSheet = true
+        // P1-5：只记 id——行数据是调用时传入的快照，刷新时按新模型重取。
+        overlapEntryIds = entries.compactMap { $0.id }
         skyView.setSelected(starId: nil, edgeId: nil)
         sheetCard.isHidden = false
         rebuildSheet(title: "这里有 \(entries.count) 颗星重叠", rows: entries)
+    }
+
+    /// P1-5：按新模型重填重叠列表——已不存在的篇移出列表、标题篇数同步；
+    /// 全删光了回默认底卡，不留指向已删篇的行。
+    private func refreshOverlapSheet() {
+        guard let ids = overlapEntryIds else { return }
+        let rows = ids.compactMap { model.entryById[$0] }
+        if rows.isEmpty {
+            clearSelection()
+        } else {
+            overlapEntryIds = ids.filter { model.entryById[$0] != nil }
+            rebuildSheet(title: "这里有 \(rows.count) 颗星重叠", rows: rows)
+        }
     }
 
     private func showDefaultSheet() {
@@ -907,7 +931,16 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 
     @objc private func didTapSheetEntry(_ sender: UIButton) {
-        guard let id = sender.accessibilityIdentifier, let entry = model.entryById[id] else { return }
+        guard let id = sender.accessibilityIdentifier, let entry = model.entryById[id] else {
+            // P1-5：行对应的篇已不在新模型里（详情删篇后返回）——此前静默
+            // return，旧重叠底卡原样留着、点按行是死路；改为刷新当前底卡。
+            if overlapEntryIds != nil {
+                refreshOverlapSheet()
+            } else {
+                clearSelection()
+            }
+            return
+        }
         openEntry(entry)
     }
 
