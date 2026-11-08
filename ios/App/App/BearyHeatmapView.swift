@@ -338,7 +338,7 @@ final class BearyHeatmapView: UIView {
             guard let self else { return nil }
             // 当前焦点所在周；转子刚打开尚无当前项时，按方向从一端起跳。
             let currentWeek: Int
-            if let current = predicate.currentItem?.targetElement as? UIButton,
+            if let current = predicate.currentItem.targetElement as? UIButton,
                let index = self.dayButtons.firstIndex(of: current) {
                 currentWeek = index / Self.daysPerWeek
             } else {
