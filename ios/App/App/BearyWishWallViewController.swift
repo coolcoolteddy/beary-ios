@@ -1199,12 +1199,12 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
             dismiss(animated: BearyMotion.animated(true), completion: nil)
             return
         }
-        let alert = UIAlertController(title: "放弃未保存的改动？", message: nil, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "继续编辑", style: .cancel, handler: nil))
-        alert.addAction(UIAlertAction(title: "放弃修改", style: .destructive, handler: { [weak self] _ in
-            self?.dismiss(animated: BearyMotion.animated(true), completion: nil)
-        }))
-        present(alert, animated: BearyMotion.animated(true), completion: nil)
+        BearyConfirmSheet.show(from: self, title: "放弃未保存的改动？", message: nil, actions: [
+            BearyConfirmSheet.Action(title: "继续编辑", style: .cancel),
+            BearyConfirmSheet.Action(title: "放弃修改", style: .destructive) { [weak self] in
+                self?.dismiss(animated: BearyMotion.animated(true), completion: nil)
+            },
+        ])
     }
 
     /// 30：字段级错误行显隐（显时松开 0 高约束，隐时压回 0 高，见属性注释）。
