@@ -143,12 +143,44 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     /// 气温步进器，脚注是另一行说明文字：有附属行时贴在附属行下方，无附
     /// 属行（未选天气、步进器藏起）时直接贴框顶；两种落点都不占图标条
     /// 的位置，框高增量由 accessoryExtraHeight 统一算，调用方不用另算。
-    /// 固定两行 12pt（与框体固定几何同口径，不跟随动态字号），文案须
-    /// 控制在两行内。
+    /// 跟随动态字号：12pt 语义入口（captionFont），大字号时允许多行、
+    /// 框高跟着长（见 footerNoteHeight／refreshFooterHeight）；常规字号
+    /// 下与旧 34pt 两行一致。
     private var footerNoteLabel: UILabel?
     private var footerTopConstraint: NSLayoutConstraint?
-    private static let footerNoteHeight: CGFloat = 34
+    private var footerHeightConstraint: NSLayoutConstraint?
     private static let footerGap: CGFloat = 8
+    /// 脚注高变化回调：脚注高随字号/宽度变化时，调用方刷新框高约束
+    ///（见 Composer updateWeatherCalloutHeight）。
+    var onFooterHeightChange: (() -> Void)?
+
+    /// 脚注实高（跟随动态字号）：按当前缩放字号与实际文案行数算；
+    /// 常规字号下与旧 34pt 一致（两行 12pt 文案约 29pt，留余量到 34）。
+    private var footerNoteHeight: CGFloat {
+        guard let text = footerNoteLabel?.text, !text.isEmpty else { return 0 }
+        let font = BearyDynamicType.captionFont()
+        let width = bounds.width - Self.horizontalPadding * 2
+        if width > 0 {
+            let size = (text as NSString).boundingRect(
+                with: CGSize(width: width, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin],
+                attributes: [.font: font],
+                context: nil).size
+            return max(34, ceil(size.height))
+        }
+        // 尚未布局（宽未知）：按缩放字号估两行；打开前调用方会重算框高。
+        return max(34, ceil(font.lineHeight * 2))
+    }
+
+    /// 脚注高随布局/字号同步：宽一定后按实际换行重算，变了才通知调用方
+    /// 刷新框高约束（约束值不变时不回调，不触发多余布局）。
+    private func refreshFooterHeight() {
+        guard let constraint = footerHeightConstraint else { return }
+        let height = footerNoteHeight
+        guard constraint.constant != height else { return }
+        constraint.constant = height
+        onFooterHeightChange?()
+    }
 
     /// 附属行显时框体比基准高出的部分（调用方据此定框高约束）。
     /// 附属行在图标条上方、图标条贴框底（箭头上方）：显隐只往上长，
@@ -165,7 +197,7 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
             if accessoryHidden {
                 extra += Self.verticalPadding
             }
-            extra += Self.footerNoteHeight + Self.footerGap
+            extra += footerNoteHeight + Self.footerGap
         }
         return extra
     }
@@ -176,22 +208,26 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
         footerNoteLabel?.removeFromSuperview()
         footerNoteLabel = nil
         footerTopConstraint = nil
+        footerHeightConstraint = nil
         guard let text = text else { return }
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 12)
+        label.font = BearyDynamicType.captionFont()
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
-        label.numberOfLines = 2
+        label.numberOfLines = 0
         label.text = text
         addSubview(label)
         footerNoteLabel = label
         let top = label.topAnchor.constraint(equalTo: topAnchor, constant: Self.verticalPadding)
         footerTopConstraint = top
+        let height = label.heightAnchor.constraint(equalToConstant: footerNoteHeight)
+        footerHeightConstraint = height
         NSLayoutConstraint.activate([
             top,
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.horizontalPadding),
             label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.horizontalPadding),
-            label.heightAnchor.constraint(equalToConstant: Self.footerNoteHeight),
+            height,
         ])
         updateFooterLayout()
         setNeedsLayout()
@@ -398,10 +434,14 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
             refreshImages()
             updateBackgroundColors()
         }
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            refreshFooterHeight()
+        }
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        refreshFooterHeight()
         let width = bounds.width
         let height = fullBoxHeight
         backgroundLayer.frame = bounds
