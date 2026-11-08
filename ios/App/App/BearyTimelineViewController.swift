@@ -2367,6 +2367,8 @@ class BearyTimelineViewController: UIViewController {
     /// 分桶，不动）；由 SceneDelegate onUserChanged 的 userChanged 分支在
     /// reloadTimeline 之前调用，登录与退出两个方向都覆盖。时间线 VC 换账号
     /// 不重建，故必须显式清，否则新账号当日面板会先闪出旧账号的日缓存。
+    /// 审计四轮第 7 项（P1）：筛选内存快照同款处理——filterSnapshots 键只
+    /// 有档位、无账号，不清会在新账号点旧档位时直接展示旧账号的快照。
     func clearDayCacheForAccountChange() {
         dayEntriesCache.removeAll()
         dayCacheVersions.removeAll()
@@ -2381,6 +2383,15 @@ class BearyTimelineViewController: UIViewController {
         calendarFailed.removeAll()
         calendarStreakUnknownKeys.removeAll()
         calendarSnapshotRestoreTried.removeAll()
+        // 审计四轮第 7 项（P1）：筛选内存快照按账号隔离——字典键只有档位、
+        // 无账号，时间线 VC 切号不重建，不清会在新账号点旧档位时直接展示
+        // 旧账号的快照（含私密日记）。切号即清空全部五档，并把上次成功档
+        // 位与在途切档标记一并复位；新账号各档由成功回包重写（.all 档另由
+        // applyTimelineCacheSnapshot 读盘覆写）。
+        filterSnapshots.removeAll()
+        lastSuccessfulFilter = .all
+        pendingFilterSwitch = nil
+        pendingFilterSwitchOldIds = nil
     }
     /// 相邻日预取在途集合（key=北京日）：独立通道专用，与正向单槽
     /// （dayKeyForLoad + dayState）完全分开；同日只发一次，失败不留痕。
