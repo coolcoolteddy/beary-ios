@@ -684,8 +684,10 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 在列表里，可点进日记，不必等坐标解析出来。
     private var listedGroups: [BearyLocationMapGroup] {
         groups.filter { group in
-            !unlocatedGroups.contains(where: { $0.key == group.key })
-                && !transientFailedGroups.contains(where: { $0.key == group.key })
+            // 按 id 不按 key：同名不同区的两组 key 相同，一组未定位
+            // 不能把同名的另一组也从列表里带走。
+            !unlocatedGroups.contains(where: { $0.id == group.id })
+                && !transientFailedGroups.contains(where: { $0.id == group.id })
         }
     }
 
