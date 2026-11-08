@@ -249,12 +249,17 @@ private final class BearyLoginSheetPresentationController: BearyBottomSheetPrese
     /// 只跟停靠键盘：浮动/分屏键盘（底边未贴容器底）不动 sheet，页内滚动 inset 已处理遮挡。
     /// 停靠→悬浮只发 keyboardWillChangeFrame、不发 keyboardWillHide：键盘不再贴底时
     /// 在这里把旧的停靠顶边清掉、落回容器底，否则 sheet 一直停在旧高度。
+    /// 与 Toast 同口径：帧须与容器相交且触到容器底边才认贴底；收起途中的
+    /// WillChangeFrame 终帧在屏外（minY 已过底边）同判为无，不再误认贴底。
     private func updateKeyboardTop(from note: Notification) {
         guard let container = containerView,
               let value = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
         let frameInContainer = container.convert(value.cgRectValue, from: nil)
-        guard frameInContainer.maxY >= container.bounds.height - 1 else {
-            // 键盘不再贴底（iPad 悬浮/分屏）：清掉旧的停靠顶边并重算落点；
+        let bounds = container.bounds
+        guard frameInContainer.minY < bounds.maxY - 1,
+              frameInContainer.maxY >= bounds.maxY - 1,
+              frameInContainer.intersects(bounds) else {
+            // 键盘不再贴底（iPad 悬浮/分屏／已移出屏幕）：清掉旧的停靠顶边并重算落点；
             // 已是 nil 时不重复布局。
             guard keyboardTopY != nil else { return }
             keyboardTopY = nil
