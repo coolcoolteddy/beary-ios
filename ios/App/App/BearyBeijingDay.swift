@@ -47,6 +47,8 @@ enum BearyBeijingDay {
     }
 
     static func todayComponents() -> (year: Int, month: Int, day: Int)? {
+        // 开发者模式时间旅行（仅内存）：假日优先；写路径一律不用本函数取真日期。
+        if let fake = BearyDevPreviewState.fakeDay { return fake }
         return components(ofMs: Int(Date().timeIntervalSince1970 * 1000.0))
     }
 

@@ -255,7 +255,8 @@ final class BearyMessagesViewController: UIViewController {
     /// 顶栏收起时顶距 0（与好友列表页的 applyHeaderTopInset 同口径；本页顶栏
     /// 是固定条而非滚动内边距，故改约束常量而非 contentInset）。
     func applyHeaderTopInset(visible: Bool) {
-        topBarTopConstraint?.constant = visible ? 60 : 0
+        // 开发者模式横幅（36pt，见 BearyDeveloperMode.devBannerInset）：开着时顶栏内容下移清过横幅。
+        topBarTopConstraint?.constant = (visible ? 60 : 0) + BearyDeveloperMode.shared.devBannerInset
     }
 
     /// 同 tab 重拍口径（容器 showPage 用）：回顶 + 刷新入口。

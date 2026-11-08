@@ -88,6 +88,10 @@
 		F1A2B3C4D5E6F78901234567 /* BearyWishWallViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */; };
 		1FC91D33C400D730D6210457 /* BearyPastSelf.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57E941A106787A04C8C1EAA /* BearyPastSelf.swift */; };
 		A18F72C3F038DEF72FAE3CD8 /* BearyLocalNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9698DE7FF6E3775C5D608E74 /* BearyLocalNotifications.swift */; };
+		5D2FD2FF5C7D291B2137C185 /* BearyDevPreviewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62185EA5A9463B3B9E1B409F /* BearyDevPreviewState.swift */; };
+		B99668F3B4F38B28D660E8CA /* BearyDevPreviewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62185EA5A9463B3B9E1B409F /* BearyDevPreviewState.swift */; };
+		53FA15F6301B7A5AE47882A2 /* BearyDeveloperMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81B7CB6E375BC1F0688281F3 /* BearyDeveloperMode.swift */; };
+		84D786F265A73D6217043F36 /* BearyDeveloperModeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE05F2F25207A427D2DA0575 /* BearyDeveloperModeViewController.swift */; };
 		07DA09CFD9D0EDC00E5B975B /* BearyColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 480F2905FC850A20929C2317 /* BearyColors.swift */; };
 		B448177CB1834F02BE24580B /* BearyDynamicType.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9DC0708952A4FAAA2FC5BA4 /* BearyDynamicType.swift */; };
 		11B6AB083B6F9CD81F675174 /* BearyBlindBoxFlowViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88BE577F3EF95C0FCAC2A3CD /* BearyBlindBoxFlowViewController.swift */; };
@@ -365,6 +369,9 @@
 		A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyWishWallViewController.swift; sourceTree = "<group>"; };
 		A57E941A106787A04C8C1EAA /* BearyPastSelf.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyPastSelf.swift; sourceTree = "<group>"; };
 		9698DE7FF6E3775C5D608E74 /* BearyLocalNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLocalNotifications.swift; sourceTree = "<group>"; };
+		62185EA5A9463B3B9E1B409F /* BearyDevPreviewState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDevPreviewState.swift; sourceTree = "<group>"; };
+		81B7CB6E375BC1F0688281F3 /* BearyDeveloperMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDeveloperMode.swift; sourceTree = "<group>"; };
+		AE05F2F25207A427D2DA0575 /* BearyDeveloperModeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDeveloperModeViewController.swift; sourceTree = "<group>"; };
 		88BE577F3EF95C0FCAC2A3CD /* BearyBlindBoxFlowViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBlindBoxFlowViewController.swift; sourceTree = "<group>"; };
 		709353AF36E7A13EDE025E55 /* BearyBlindBoxEntryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBlindBoxEntryView.swift; sourceTree = "<group>"; };
 		CC0475BEA97002D2AB77651F /* BearyBlindBox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBlindBox.swift; sourceTree = "<group>"; };
@@ -658,6 +665,9 @@
 				A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */,
 				A57E941A106787A04C8C1EAA /* BearyPastSelf.swift */,
 				9698DE7FF6E3775C5D608E74 /* BearyLocalNotifications.swift */,
+				62185EA5A9463B3B9E1B409F /* BearyDevPreviewState.swift */,
+				81B7CB6E375BC1F0688281F3 /* BearyDeveloperMode.swift */,
+				AE05F2F25207A427D2DA0575 /* BearyDeveloperModeViewController.swift */,
 				88BE577F3EF95C0FCAC2A3CD /* BearyBlindBoxFlowViewController.swift */,
 				709353AF36E7A13EDE025E55 /* BearyBlindBoxEntryView.swift */,
 				CC0475BEA97002D2AB77651F /* BearyBlindBox.swift */,
@@ -1197,6 +1207,9 @@
 				F1A2B3C4D5E6F78901234567 /* BearyWishWallViewController.swift in Sources */,
 				1FC91D33C400D730D6210457 /* BearyPastSelf.swift in Sources */,
 				A18F72C3F038DEF72FAE3CD8 /* BearyLocalNotifications.swift in Sources */,
+				5D2FD2FF5C7D291B2137C185 /* BearyDevPreviewState.swift in Sources */,
+				53FA15F6301B7A5AE47882A2 /* BearyDeveloperMode.swift in Sources */,
+				84D786F265A73D6217043F36 /* BearyDeveloperModeViewController.swift in Sources */,
 				11B6AB083B6F9CD81F675174 /* BearyBlindBoxFlowViewController.swift in Sources */,
 				DE8D64F180D2F1B435EBC1A8 /* BearyBlindBoxEntryView.swift in Sources */,
 				8390766731A0B87B6A936AFC /* BearyBlindBox.swift in Sources */,
@@ -1236,6 +1249,7 @@
 			files = (
 				147711CB4F24122B8270E75F /* BearyCoreTests.swift in Sources */,
 				49F9088AA0BEE72A92CEA33D /* BearyBeijingDay.swift in Sources */,
+				B99668F3B4F38B28D660E8CA /* BearyDevPreviewState.swift in Sources */,
 				649D01DBF721A0947AC482C9 /* BearyEntrySyncStore.swift in Sources */,
 				13FC1A9F34F131E29764A616 /* BearyEntrySyncStoreTests.swift in Sources */,
 				DED94DD2E4AA4932A3525D41 /* BearySyncProgress.swift in Sources */,

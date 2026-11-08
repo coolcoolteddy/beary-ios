@@ -528,6 +528,7 @@ final class BearySettingsViewController: UIViewController {
         refreshAccountSwitchSection()
         refreshDMLevelRow()
         refreshNotificationHintRow()
+        refreshDeveloperModeRow()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -2127,6 +2128,10 @@ final class BearySettingsViewController: UIViewController {
         let versionBuild = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
         label.text = "版本 \(versionShort)（构建号 \(versionBuild)）"
         versionFooterWrap.addSubview(label)
+        // 开发者模式入口（2026-11-08 新增）：版本号连点 5 次进入，平时完全看不见；
+        // 手势挂在 wrap 上（label 是局部变量，不存引用）。
+        let devTap = UITapGestureRecognizer(target: self, action: #selector(versionFooterTapped))
+        versionFooterWrap.addGestureRecognizer(devTap)
         NSLayoutConstraint.activate([
             label.topAnchor.constraint(equalTo: versionFooterWrap.topAnchor, constant: 8),
             label.leadingAnchor.constraint(equalTo: versionFooterWrap.leadingAnchor),
@@ -4002,6 +4007,11 @@ final class BearySettingsViewController: UIViewController {
     }
 
     @objc private func refreshDMLevelRow() {
+        // 开发者模式速切（仅内存，只改行文案）：不调接口、不改 dmLevel；点按改档已禁（见 dmLevelRowTapped）。
+        if let override = BearyDevPreviewState.dmLevelOverride {
+            dmLevelDetailLabel?.text = dmLevelText(override) + "（预览）"
+            return
+        }
         guard SessionManager.shared.isLoggedIn,
               let accountId = SessionManager.shared.currentUser?.id else { return }
         // 同一账号在途时不重复发；切号后（账号变了）允许重发，旧回包由代次守卫丢弃。
@@ -4049,6 +4059,11 @@ final class BearySettingsViewController: UIViewController {
     }
 
     @objc private func dmLevelRowTapped() {
+        // 开发者模式速切：预览态不弹档位选择、不调 saveDMLevel。
+        if BearyDevPreviewState.dmLevelOverride != nil {
+            showToast("预览态，档位切换已禁用")
+            return
+        }
         guard !dmLevelPosting else { return }
         let sheet = UIAlertController(title: "谁可以私信我", message: nil, preferredStyle: .actionSheet)
         let options: [(value: String, title: String)] = [
@@ -4261,6 +4276,42 @@ final class BearySettingsViewController: UIViewController {
 
     // MARK: - 数据与反馈（2026-10-28 反馈 v3，路线 A）
 
+    // 开发者模式入口：版本号 2 秒窗内连点 5 次进入（并打开总开关）；
+    // 已开启时连点只打开页面。平时设置页里没有任何入口行。
+    private var versionTapCount = 0
+    private var versionTapWindowStart: Date?
+
+    @objc private func versionFooterTapped() {
+        let now = Date()
+        if let start = versionTapWindowStart, now.timeIntervalSince(start) > 2.0 {
+            versionTapCount = 0
+        }
+        if versionTapCount == 0 {
+            versionTapWindowStart = now
+        }
+        versionTapCount += 1
+        guard versionTapCount >= 5 else { return }
+        versionTapCount = 0
+        versionTapWindowStart = nil
+        BearyDeveloperMode.shared.setEnabled(true, window: view.window)
+        refreshDeveloperModeRow()
+        openDeveloperModePage()
+    }
+
+    @objc private func openDeveloperModePage() {
+        let vc = BearyDeveloperModeViewController()
+        vc.modalPresentationStyle = .fullScreen
+        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        presentSettingsPage(vc)
+    }
+
+    // 开发者模式行（仅开启时可见）：开着时在「数据与反馈」组内出现，点按进开发者模式页。
+    private var developerModeRow: UIView?
+
+    private func refreshDeveloperModeRow() {
+        developerModeRow?.isHidden = !BearyDeveloperMode.shared.isEnabled
+    }
+
     private func buildDataFeedbackSection() {
         let feedbackDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         feedbackDetail.text = "查看"
@@ -4277,9 +4328,20 @@ final class BearySettingsViewController: UIViewController {
         wishButton.accessibilityLabel = "功能许愿墙"
         wishButton.addTarget(self, action: #selector(openWishWallPage), for: .touchUpInside)
         wishButton.bearyAddPressHaptic()
+        let devDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
+        devDetail.text = "已开启"
+        let devContent = makeRow(title: "开发者模式", detailLabel: devDetail, iconName: "icon_sliders")
+        let devButton = UIButton(type: .custom)
+        devButton.accessibilityLabel = "开发者模式，已开启"
+        devButton.addTarget(self, action: #selector(openDeveloperModePage), for: .touchUpInside)
+        devButton.bearyAddPressHaptic()
+        let devRow = makeSettingsTappableRow(content: devContent, button: devButton)
+        devRow.isHidden = !BearyDeveloperMode.shared.isEnabled
+        developerModeRow = devRow
         let rows: [UIView] = [
             makeSettingsTappableRow(content: feedbackContent, button: feedbackButton),
             makeSettingsTappableRow(content: wishContent, button: wishButton),
+            devRow,
         ]
         let group = makeGroupCard(title: "数据与反馈", rows: rows)
         dataFeedbackWrap.addArrangedSubview(group.card)

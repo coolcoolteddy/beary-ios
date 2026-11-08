@@ -3017,12 +3017,16 @@ enum BearyHaptics {
 enum BearyEphemeral {
     static func isLive(_ entry: Entry, nowMs: Int? = nil) -> Bool {
         guard let until = entry.ephemeralUntil else { return false }
-        let now = nowMs ?? Int(Date().timeIntervalSince1970 * 1000)
+        // 开发者模式：强制到期态只影响无显式 nowMs 的读路径；
+        // 通知重算传显式真实 nowMs，不受假日与强制到期影响。
+        if nowMs == nil && BearyDevPreviewState.forceLimitedExpired { return false }
+        let now = nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Int(Date().timeIntervalSince1970 * 1000)
         return until > now
     }
     static func isExpired(_ entry: Entry, nowMs: Int? = nil) -> Bool {
         guard let until = entry.ephemeralUntil else { return false }
-        let now = nowMs ?? Int(Date().timeIntervalSince1970 * 1000)
+        if nowMs == nil && BearyDevPreviewState.forceLimitedExpired { return true }
+        let now = nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Int(Date().timeIntervalSince1970 * 1000)
         return until <= now
     }
     static func isEffectivelyPublic(_ entry: Entry) -> Bool {
@@ -3030,7 +3034,7 @@ enum BearyEphemeral {
     }
     /// 存活期倒计时灰字（只留这一行，不另加“限时日记”小标签）。
     static func remainingText(until: Int, nowMs: Int? = nil) -> String {
-        let ms = until - (nowMs ?? Int(Date().timeIntervalSince1970 * 1000))
+        let ms = until - (nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Int(Date().timeIntervalSince1970 * 1000))
         if ms < 3_600_000 { return "限时 · 还剩不到 1 小时" }
         let hours = (ms + 3_599_999) / 3_600_000
         return "限时 · 还剩 \(hours) 小时"

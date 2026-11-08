@@ -2086,6 +2086,8 @@ class BearyProfileViewController: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(handleBeijingDayRollover), name: UIApplication.willEnterForegroundNotification, object: nil)
         // R23-#2：账号切换时清旧页面模型、在途快照失效（见 handleProfileUserChanged）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleProfileUserChanged), name: .bearyUserDidChange, object: nil)
+        // 开发者模式变化：日期 / 假日记 / 速切 / 预览 / 字号（见 handleDevModeChanged）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleDevModeChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
         if selfGate && viewerUserIdValue == nil {
             // U7：二选一取“只铺页脚”：不拉任何本人数据、不直接弹登录，
             // 弹登录交给页脚“去登录”按钮（loginButtonTapped → onRequireLogin）。
@@ -2240,7 +2242,7 @@ class BearyProfileViewController: UIViewController {
         headerTopInsetVisible = visible
         // 自定义下拉刷新进行中不改写（刷新中内边距 = 基线 +84，改写会打断指示器）。
         guard !isCustomPullRefreshing else { return }
-        let top: CGFloat = visible ? 60 : 0
+        let top: CGFloat = (visible ? 60 : 0) + BearyDeveloperMode.shared.devBannerInset
         if tableView.contentInset.top != top {
             tableView.contentInset.top = top
             tableView.scrollIndicatorInsets.top = top
@@ -3336,8 +3338,20 @@ class BearyProfileViewController: UIViewController {
         // 标题仍是“关注”，点按走重试（见 followButtonTapped 占位分支）。
         let isPlaceholder = followState == nil && followStateFirstLoadFailed
         let effectiveState = followState ?? (isPlaceholder ? .none : nil)
+        // 开发者模式关注态速切（仅内存，只改渲染）：0 未关注 / 1 已关注 / 2 被关注 / 3 互关。
+        // 真实态仍在 followState / confirmedFollowState 里，点按已禁（见 followButtonTapped）。
+        let overrideState: BearyFollowState? = {
+            switch BearyDevPreviewState.followStateOverride {
+            case 0: return .none
+            case 1: return .following
+            case 2: return .followedBy
+            case 3: return .mutual
+            default: return nil
+            }
+        }()
+        let displayState = overrideState ?? effectiveState
         guard !isOwnProfile, viewerUserIdValue != nil, !followBlockedByMe,
-              let state = effectiveState,
+              let state = displayState,
               let config = Self.followButtonConfigs[state] else {
             followButton.isHidden = true
             renderedFollowState = nil
@@ -3416,6 +3430,11 @@ class BearyProfileViewController: UIViewController {
     }
 
     @objc private func followButtonTapped() {
+        // 开发者模式预览态：只改显示，点按不发关注 / 取关请求。
+        if BearyDevPreviewState.followStateOverride != nil {
+            BearyToast.show(in: view, message: "预览态，关注操作已禁用")
+            return
+        }
         // 第三轮第 6 项：占位态点按 = 重试刷新状态，不发关注请求。
         if followState == nil && followStateFirstLoadFailed {
             refreshFollowState()
@@ -3629,6 +3648,29 @@ class BearyProfileViewController: UIViewController {
     /// （loadTab 自身的 tabLoading 守卫是第二道；资料头重拉本身幂等、无状态破坏）。
     var isRefreshingForRetap: Bool {
         tabLoading || isCustomPullRefreshing
+    }
+
+    /// 开发者模式变化：日期 / 假日记改动走整页重拉（模块按新假日重算）；
+    /// 关注与私信速切只重画按钮；那年今日 / 过去的自己预览只重渲染模块；
+    /// 字号只重载表与模块（字号在 configure 时重算）。
+    @objc private func handleDevModeChanged(_ note: Notification) {
+        let kind = (note.userInfo?["kind"] as? String) ?? ""
+        switch kind {
+        case "account":
+            applyFollowButton()
+            updateDMButton()
+        case "date", "fakeEntries":
+            reloadProfile()
+        case "preview":
+            renderThisDay(visible: modulesCorpus)
+            renderPastSelf(visible: pastSelfVisibleEntries())
+        case "font":
+            tableView.reloadData()
+            renderThisDay(visible: modulesCorpus)
+            renderPastSelf(visible: pastSelfVisibleEntries())
+        default:
+            break
+        }
     }
 
     /// 收尾跨页同步：详情/时间线/回收站改动后刷新本页（资料头 + 列表，与初次加载同路径）。
@@ -4712,12 +4754,22 @@ class BearyProfileViewController: UIViewController {
             return
         }
         thisDayCard.isHidden = false
-        let todayParts = calendar.dateComponents([.month, .day], from: today)
+        // 开发者模式时间旅行（仅内存）：标题月日与历史查询都跟假日；
+        // 写路径（留话 createdAtMs）保持真实，不读这里。
+        let fakeToday = BearyDevPreviewState.fakeTodayDate()
+        let todayParts = Calendar.current.dateComponents([.month, .day], from: fakeToday ?? Date())
         guard let month = todayParts.month, let day = todayParts.day else {
             thisDayCard.isHidden = true
             return
         }
-        let history = BearyProfilePersonalLogic.thisDayInHistory(entries: visible, today: today, calendar: calendar)
+        var history = BearyProfilePersonalLogic.thisDayInHistory(entries: visible, today: fakeToday ?? Date(), calendar: Calendar.current)
+        // 开发者模式假数据预览（仅内存）：往年今天无日记时也亮一张假卡；
+        // 假篇 id 带 dev- 前缀，点按进详情会被拦截、留话入口同样拦截。
+        if history == nil && BearyDevPreviewState.pastDayPreview {
+            let fakeYear = (Calendar.current.component(.year, from: fakeToday ?? Date())) - 1
+            let fakeEntry = BearyDeveloperMode.shared.makeFakePastDayEntry(fakeYear: fakeYear, month: month, day: day)
+            history = BearyProfilePersonalLogic.ThisDayHistory(year: fakeYear, entries: [fakeEntry])
+        }
         for arrangedView in thisDayExpandStack.arrangedSubviews {
             thisDayExpandStack.removeArrangedSubview(arrangedView)
             arrangedView.removeFromSuperview()
@@ -4800,7 +4852,8 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func pastSelfToday() -> String {
-        PastSelfLogic.localDateString(from: Date(), calendar: .current)
+        // 开发者模式时间旅行（仅内存）：读路径跟假日；写路径 pastSelfNowMs() 保持真实。
+        PastSelfLogic.localDateString(from: BearyDevPreviewState.fakeTodayDate() ?? Date(), calendar: .current)
     }
 
     private func pastSelfNowMs() -> Int {
@@ -4887,8 +4940,9 @@ class BearyProfileViewController: UIViewController {
         pastSelfWaitingSection.isHidden = true
         pastSelfDueNoteLabel.isHidden = true
         // 无主显篇 = 往年今天没写：不留入口、不硬推（一年没写不推的客户端一侧）。
+        // 开发者模式假篇（dev- 前缀）同样不留入口：留话会写真实存储，不能挂假篇上。
         guard let main = thisDayMainEntry, let mainId = main.id, !mainId.isEmpty,
-              let store = pastSelfStore() else {
+              !mainId.hasPrefix("dev-"), let store = pastSelfStore() else {
             pastSelfThisDaySection.isHidden = true
             return
         }
@@ -4941,6 +4995,11 @@ class BearyProfileViewController: UIViewController {
 
     @objc private func pastSelfComposeSubmitTapped() {
         guard let main = thisDayMainEntry, let mainId = main.id, let store = pastSelfStore() else { return }
+        // 开发者模式假篇（dev- 前缀）：纵深防御，留话不写真实存储。
+        guard !mainId.hasPrefix("dev-") else {
+            BearyToast.show(in: view, message: "预览数据，不能留话")
+            return
+        }
         let text = pastSelfComposeView.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             BearyHaptics.rejectionWarning()
@@ -5056,8 +5115,17 @@ class BearyProfileViewController: UIViewController {
             pastSelfDeliveredChainIds = []
             return
         }
-        let all = store.loadAll()
+        var all = store.loadAll()
         let today = pastSelfToday()
+        // 开发者模式模拟送达卡（仅内存）：在栈顶插一句今天送达的假留话；
+        // chainId 取首篇可见原篇 id，回复提交时凭它拦截写操作。
+        if BearyDevPreviewState.pastSelfDeliveryPreview,
+           let originId = visible.first?.id, !originId.isEmpty {
+            all.append(BearyDeveloperMode.shared.makeFakePastSelfMessage(chainId: originId, today: today))
+            BearyDevPreviewState.fakePastSelfChainId = originId
+        } else {
+            BearyDevPreviewState.fakePastSelfChainId = nil
+        }
         var chainIds: [String] = []
         for message in all where !chainIds.contains(message.chainId) {
             chainIds.append(message.chainId)
@@ -5386,6 +5454,13 @@ class BearyProfileViewController: UIViewController {
     @objc private func pastSelfReplySubmitTapped(_ sender: UIButton) {
         guard let chainId = sender.accessibilityIdentifier, !chainId.isEmpty,
               let store = pastSelfStore() else { return }
+        // 开发者模式模拟送达卡：假串的回复不写库（假留话只在内存里）。
+        if BearyDevPreviewState.pastSelfDeliveryPreview,
+           let fakeChainId = BearyDevPreviewState.fakePastSelfChainId,
+           chainId == fakeChainId {
+            BearyToast.show(in: view, message: "预览数据，不能回复")
+            return
+        }
         let text = (pastSelfReplyDrafts[chainId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             BearyHaptics.rejectionWarning()
@@ -6153,7 +6228,7 @@ class BearyProfileViewController: UIViewController {
             let freshEntries = listValue.entries ?? []
             var appendedRowCount = 0
             var oldRowCount = 0
-            if appending {
+            if appending, !(BearyDevPreviewState.fakeEntriesEnabled && requestTab == .diary) {
                 oldRowCount = currentEntries.count
                 var seenIds = Set<String>()
                 for existingEntry in currentEntries {
@@ -6170,8 +6245,15 @@ class BearyProfileViewController: UIViewController {
                 }
                 appendEntries(entries: appendedEntries)
                 appendedRowCount = appendedEntries.count
-            } else {
-                setEntries(entries: freshEntries)
+            } else if !appending {
+                // 开发者模式 1000 篇假日记（仅内存）：写内存模型、停分页；
+                // 磁盘快照仍存真实首屏（见下 save 处用的 freshEntries）。
+                if BearyDevPreviewState.fakeEntriesEnabled && requestTab == .diary {
+                    setEntries(entries: BearyDeveloperMode.shared.makeFakeEntries(count: 1000))
+                    setHasMore(hasMore: false)
+                } else {
+                    setEntries(entries: freshEntries)
+                }
                 // 113 照片墙：日记首屏重拉 = 溢出分页的新一次机会，清失败旗。
                 if requestTab == .diary {
                     photoOverflowFailed = false
@@ -8142,7 +8224,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
 
     /// 私信钮显隐：只属他人主页；本人/游客/我方拉黑/can 非真一律隐藏。
     private func updateDMButton() {
-        dmButton.isHidden = isOwnProfile || viewerUserIdValue == nil || followBlockedByMe || dmCan != true
+        // 开发者模式速切（仅内存，只改显隐）：真发送仍按服务端档位走，403 即失败回滚。
+        let can = BearyDevPreviewState.dmCanOverride ?? dmCan
+        dmButton.isHidden = isOwnProfile || viewerUserIdValue == nil || followBlockedByMe || can != true
     }
 
     /// can 重查：目标 id 已知才查；我方拉黑直接隐藏不发请求；查不到/失败一律隐藏。

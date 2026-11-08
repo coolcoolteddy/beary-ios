@@ -120,6 +120,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // 第六轮 03：监听账号切换——切号时立即清空旧号回收站 UI，
         // 在途旧号回包凭发起时捕获的账号 ID＋鉴权代次丢弃（见 isStaleTrashRequest）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleUserChanged), name: .bearyUserDidChange, object: nil)
+        // 开发者模式变化：强制空态 / 报错态 / 加载态（见 handleDevModeChanged）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleDevModeChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
         loadFirstPage()
     }
 
@@ -438,7 +440,49 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
 
     // MARK: - 加载
 
+    /// 开发者模式变化：强制态切换直接置态渲染；清除后走一次正常重拉。
+    @objc private func handleDevModeChanged(_ note: Notification) {
+        let kind = (note.userInfo?["kind"] as? String) ?? ""
+        guard kind == "forcedTrash" else { return }
+        applyDevForcedTrash()
+    }
+
+    /// 开发者模式回收站强制态（仅内存）：error / empty / loading 直接置旗渲染，不读桶、不发请求。
+    private func applyDevForcedTrash() {
+        switch BearyDevPreviewState.forcedTrash {
+        case .none:
+            loadFirstPage()
+        case .error:
+            trashLoading = false
+            trashBucketLoading = false
+            trashFirstLoadFailed = true
+            trashLoginEmpty = false
+            trashItems = []
+            updateListRowsIncrementally()
+            renderStateViews()
+        case .empty:
+            trashLoading = false
+            trashBucketLoading = false
+            trashFirstLoadFailed = false
+            trashLoginEmpty = false
+            trashItems = []
+            updateListRowsIncrementally()
+            renderStateViews()
+        case .loading:
+            trashLoading = true
+            trashBucketLoading = false
+            trashFirstLoadFailed = false
+            trashLoginEmpty = false
+            renderStateViews()
+        }
+    }
+
     private func loadFirstPage() {
+        // 开发者模式强制态（仅内存）：不读桶、不发请求，按强制态渲染。
+        if BearyDevPreviewState.forcedTrash != .none {
+            applyDevForcedTrash()
+            return
+        }
         if trashLoading || trashBucketLoading || trashSilentRefreshing {
             return
         }
@@ -460,6 +504,11 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
                     self.trashBucketLoading = false
+                    // 开发者模式强制态：在途读桶回包不接受，按强制态渲染。
+                    if BearyDevPreviewState.forcedTrash != .none {
+                        self.applyDevForcedTrash()
+                        return
+                    }
                     // 读桶期间切号：丢弃本桶结果，不渲染、不静默刷新，
                     // 防跨账号显错桶（静默刷新启动时捕获的 accountId 同理）。
                     guard SessionManager.shared.currentUser?.id == uid else { return }
@@ -609,6 +658,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                             return
                         }
                         // uid 启动时捕获一路透传：中途切号也不把旧账号数据写进新账号桶。
+                        // 开发者模式强制态：在途静默刷新回包不接受，按强制态渲染。
+                        if BearyDevPreviewState.forcedTrash != .none {
+                            self.trashSilentRefreshing = false
+                            self.applyDevForcedTrash()
+                            return
+                        }
                         // 落盘写走同步队列（不卡主线程）；内存态已同步更新，UI 不等落盘。
                         BearyEntrySync.shared.runDiskWrite {
                             // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
