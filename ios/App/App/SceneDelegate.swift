@@ -1321,6 +1321,8 @@ final class BearyChromeViewController: UIViewController {
         runLaunchVeilIfNeeded()
         if launchVeilView == nil {
             maybePresentOnboardingOnFirstLaunch()
+            // App 公告栏：veil 已去、引导已触发（或已见过）后检查；拉取失败静默。
+            BearyAnnouncementCenter.shared.checkOnLaunch(from: self)
         }
     }
 
@@ -1620,6 +1622,8 @@ final class BearyChromeViewController: UIViewController {
         // veil 仍在而未触发的自动引导，在此补触发；重复调用由
         // tutorialAutoPresented 守卫挡下。
         maybePresentOnboardingOnFirstLaunch()
+        // App 公告栏：与自动引导同一点触发，拉取每进程只发一次、重复调用走缓存。
+        BearyAnnouncementCenter.shared.checkOnLaunch(from: self)
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
