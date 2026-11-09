@@ -56,7 +56,8 @@ final class SessionManager {
     /// 会话代次只读口径：磁盘快照读取时校验——与账号 id 一起构成账号+会话
     /// 双重校验；代次推进（退出/401/换号）即旧会话快照失效。快照保存时记下
     /// 当时代次，读取时比对，不一致即弃用（r17 首屏快照；r17-C1 月历快照
-    /// 见 BearyCalendarSnapshotStore.load）。各缓存自带的进程内静态
+    /// 见 BearyCalendarSnapshotStore.load；r17-C9 心愿墙快照见
+    /// BearyWishWallCache.load）。各缓存自带的进程内静态
     /// generations 字典只能拦 purge 前的旧读写，拦不住跨会话的旧快照，
     /// 故读盘回包必须以此代次为准。
     var currentSessionGeneration: Int { sessionGeneration }
@@ -399,6 +400,8 @@ final class SessionManager {
         BearyProfileCache.purge(bucket: "\(id)")
         // r17-C7：个人页统计卡快照同样在退出/401 时清掉该账号槽位。
         BearyProfileStatsCache.purge(bucket: "\(id)")
+        // r17-C9：心愿墙首屏快照同样在退出/401 时清掉该账号槽位。
+        BearyWishWallCache.purge(bucket: "\(id)")
         BearyDMConversationsCache.purge(bucket: "\(id)")
         BearyDetailCache.purge(bucket: "\(id)")
         BearyEntrySyncStore.purgeAccount(accountId: id)
