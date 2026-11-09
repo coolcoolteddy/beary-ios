@@ -527,8 +527,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let imageLocalFiles: [String]
     }
     /// 新建发布快照（quote-freeze）：在 didTapPublish 校验通过后、门禁弹出
-    /// 前调用。clientReq 在此创建（原 performPublish 首步），调用方随后 saveDraftNow
-    /// 落盘，保证服务端幂等键在任何请求发出前已持久化。
+    /// 前调用。clientReq 在此创建（原 performPublish 首步），调用方随后等
+    /// saveDraftNow 落盘成功才发首个会改变服务端状态的请求（P1-5），
+    /// 保证服务端幂等键在任何请求发出前已持久化（不只是入队）。
     private func makePublishSnapshot(trimmed: String) -> PublishSnapshot? {
         if draftClientReq == nil {
             draftClientReq = BearyDraftStore.newClientReq()
@@ -7500,7 +7501,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         // quote-freeze：新建发布先拍完整快照（胶囊校验失败即返回，不进门禁）。
         // 快照后落盘一次草稿（原 performPublish 首步的 clientReq 落盘，现移到
-        // 请求链起点，使门禁路径的 setVisibility 之前幂等键已持久化）。
+        // 请求链起点）；P1-5：等落盘成功回调再走请求链，使门禁路径的
+        // setVisibility 之前幂等键已持久化（不只是入队）。
         guard let snapshot = makePublishSnapshot(trimmed: trimmed) else { return }
         // 发布发起账号校验（本支新增，须在落盘与代次递增之前）：已有发起
         // 绑定且当前账号已变时，中止发布、不落盘、不递增代次——旧弹框的
@@ -7515,52 +7517,66 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         publishGeneration += 1
         let generation = publishGeneration
-        saveDraftNow()
-        // 一并公开部分成功后重按发布：原日记已公开，不再走门禁与
-        // setVisibility，只发新篇（publishTogetherPublishedSourceId 在
-        // setVisibility 成功时记下，发布成功/清草稿/切篇时清掉）。
-        if selectedVisibilityPublished, let pendingQuote = selectedQuote,
-           let publishedSourceId = publishTogetherPublishedSourceId,
-           publishedSourceId == pendingQuote.entryId {
-            performPublish(snapshot: snapshot, generation: generation, sourceAlreadyPublished: true)
-            return
+        // P1-5：等本次快照的 clientReq 确认落盘，再发首个会改变服务端状态
+        // 的请求（门禁的 setVisibility / performPublish 的 publishEntry）。
+        // 落盘失败就停在编辑器、保留输入并提示重试，不发请求。
+        let proceedAfterPersist: () -> Void = { [weak self] in
+            guard let self = self else { return }
+            // 一并公开部分成功后重按发布：原日记已公开，不再走门禁与
+            // setVisibility，只发新篇（publishTogetherPublishedSourceId 在
+            // setVisibility 成功时记下，发布成功/清草稿/切篇时清掉）。
+            if self.selectedVisibilityPublished, let pendingQuote = self.selectedQuote,
+               let publishedSourceId = self.publishTogetherPublishedSourceId,
+               publishedSourceId == pendingQuote.entryId {
+                self.performPublish(snapshot: snapshot, generation: generation, sourceAlreadyPublished: true)
+                return
+            }
+            // 引用规则简化（2026-10-31）：新建将公开且含私密引用时先拦截，不直接发。
+            // 自己来源三选一、他人来源两项（见 BearyQuoteGate.gateEditorPublish）；
+            // 一并公开先发原日记 visibility=1，成功才发本篇；失败停在编辑器、不发本篇。
+            // 保持私密发布即把本篇改回私密再发（引用保留）；删除引用即清引用再公开。
+            // 门禁弹框本身是模态 alert，框在时编辑器动不了；三条出路提交的都是
+            // 本快照（删除/保持私密只改快照副本对应字段，现场值改动不进载荷）。
+            if self.selectedVisibilityPublished, let pendingQuote = self.selectedQuote, pendingQuote.isDeleted == false, pendingQuote.isPublic != true {
+                let mine = BearyQuoteGate.sourceIsMine(isMine: pendingQuote.isMine, authorId: pendingQuote.authorId)
+                BearyQuoteGate.gateEditorPublish(from: self, sourceIsMine: mine, sourceIsFriendsOnly: pendingQuote.visibility == "friends", onPublishTogether: { [weak self] in
+                    guard let self = self else { return }
+                    self.beginPublishTogether(snapshot: snapshot, generation: generation)
+                }, onDeleteQuote: { [weak self] in
+                    guard let self = self else { return }
+                    self.selectedQuote = nil
+                    self.refreshQuoteSection()
+                    var gated = snapshot
+                    gated.quoteId = nil
+                    self.performPublish(snapshot: gated, generation: generation)
+                }, onKeepPrivate: { [weak self] in
+                    guard let self = self else { return }
+                    self.selectedVisibilityPublished = false
+                    self.selectedVisibilityFriends = false
+                    self.isEphemeral = false
+                    self.refreshVisibilityButton()
+                    // 门禁改档与常规切档同口径：位置行副行（公开后他人仅见区级）
+                    // 须同步变，否则发布失败留在编辑器时位置行仍留公开说明。
+                    self.refreshLocationRow()
+                    var gated = snapshot
+                    gated.published = 0
+                    gated.visibility = "private"
+                    gated.ephemeral = nil
+                    self.performPublish(snapshot: gated, generation: generation)
+                })
+                return
+            }
+            self.performPublish(snapshot: snapshot, generation: generation)
         }
-        // 引用规则简化（2026-10-31）：新建将公开且含私密引用时先拦截，不直接发。
-        // 自己来源三选一、他人来源两项（见 BearyQuoteGate.gateEditorPublish）；
-        // 一并公开先发原日记 visibility=1，成功才发本篇；失败停在编辑器、不发本篇。
-        // 保持私密发布即把本篇改回私密再发（引用保留）；删除引用即清引用再公开。
-        // 门禁弹框本身是模态 alert，框在时编辑器动不了；三条出路提交的都是
-        // 本快照（删除/保持私密只改快照副本对应字段，现场值改动不进载荷）。
-        if selectedVisibilityPublished, let pendingQuote = selectedQuote, pendingQuote.isDeleted == false, pendingQuote.isPublic != true {
-            let mine = BearyQuoteGate.sourceIsMine(isMine: pendingQuote.isMine, authorId: pendingQuote.authorId)
-            BearyQuoteGate.gateEditorPublish(from: self, sourceIsMine: mine, sourceIsFriendsOnly: pendingQuote.visibility == "friends", onPublishTogether: { [weak self] in
-                guard let self = self else { return }
-                self.beginPublishTogether(snapshot: snapshot, generation: generation)
-            }, onDeleteQuote: { [weak self] in
-                guard let self = self else { return }
-                self.selectedQuote = nil
-                self.refreshQuoteSection()
-                var gated = snapshot
-                gated.quoteId = nil
-                self.performPublish(snapshot: gated, generation: generation)
-            }, onKeepPrivate: { [weak self] in
-                guard let self = self else { return }
-                self.selectedVisibilityPublished = false
-                self.selectedVisibilityFriends = false
-                self.isEphemeral = false
-                self.refreshVisibilityButton()
-                // 门禁改档与常规切档同口径：位置行副行（公开后他人仅见区级）
-                // 须同步变，否则发布失败留在编辑器时位置行仍留公开说明。
-                self.refreshLocationRow()
-                var gated = snapshot
-                gated.published = 0
-                gated.visibility = "private"
-                gated.ephemeral = nil
-                self.performPublish(snapshot: gated, generation: generation)
-            })
-            return
+        saveDraftNow { [weak self] result in
+            guard let self = self else { return }
+            guard result.succeeded else {
+                BearyHaptics.rejectionWarning()
+                self.showAlert(message: "草稿保存失败，本篇未发布，请重试")
+                return
+            }
+            proceedAfterPersist()
         }
-        performPublish(snapshot: snapshot, generation: generation)
     }
 
     /// 一并公开出路（quote-freeze）：用户点“一并公开”的瞬间即进入发布态——
