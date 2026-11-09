@@ -744,11 +744,19 @@ final class BearyNotificationsViewController: UIViewController {
         stateButton.refreshChrome()
     }
 
+    /// A5：合并模式宿主注入的实际可见状态。合并消息页里子页 view 不进
+    /// 层级（view.window 恒为 nil），自身可见状态永远判 false，60 秒轮询
+    /// 每拍死在守卫处；宿主把自己的可见状态供过来，轮询与回前台改以宿主
+    /// 状态门控。独立通知页不设本属性，继续用自身可见状态；通知是否已看
+    /// 仍以行可见性为准（本属性只影响轮询与回前台门控，不碰已看逻辑）。
+    var hostVisibilityProvider: (() -> Bool)?
+
     /// 审计-性能：页面可见性。容器切 tab 只改 view.isHidden，不走
     /// viewWillAppear/viewWillDisappear，故轮询不能只靠 appearance 回调；
     /// timer 回调与回前台入口统一凭本属性门控，隐藏时跳过本次请求、
     /// 不停表（切回后下一拍自动恢复，不依赖容器补调）。
     private var isNotifPageVisible: Bool {
+        if let provider = hostVisibilityProvider { return provider() }
         return view.window != nil && !view.isHidden
     }
 
