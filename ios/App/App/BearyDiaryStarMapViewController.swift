@@ -16,8 +16,14 @@ import UIKit
 //   清单第 7 项：本人拉取改走 timeline scope（见 fetchEntriesPage 的 entriesScope），
 //   他人仍走 author scope；后端 author scope 不动，与日记 tab 口径分裂拍板接受。
 // - 切账号 / 登录翻转：appear 时 viewer 变了即按新身份重算重拉，旧选择清掉；
-//   从详情回来（可见性可能已翻转）只重拉一次；不轮询、不另建星图缓存，
-//   下次打开自然同步。重算走后台队列 + generation 门控，旧回包一律丢弃。
+//   从详情回来（可见性可能已翻转）只重拉一次；不轮询，下次打开自然同步。
+//   重算走后台队列 + generation 门控，旧回包一律丢弃。
+// - 建图缓存（r17 C5）：recompute 先按「账号桶 + 作者 + 角色 + 分片 +
+//   日记版本 + 算法版本」查 BearyStarMapCache（内存、最近 4 个范围），
+//   命中直接复用模型；miss 才后台 buildModel，建好存回缓存。切连线类型
+//   不重建模型——didTapFilterPill 只改 edgeFilter 后调 applyModelToSky，
+//   在已有 model.edges 上按 kind 过滤。退出 / 401 由 SessionManager
+//   purgeLocalSnapshotsForCurrentAccount 按账号桶清缓存。
 // - 空态：过滤后 0 篇时整页只显示“这里还没有星星”，不画假星、不编示例篇；
 //   他人空态文案与作者有无私密篇无关（不做私密存在性预言机）。
 // - 分片：过滤后总数 ≤ 80 直接画全部；超过则强制按年/月分片（无“全部”
@@ -747,12 +753,29 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let viewerIsAuthor = viewerIsAuthor
         modelGeneration += 1
         let generation = modelGeneration
-        DispatchQueue.global(qos: .userInitiated).async {
-            let built = BearyStarMap.buildModel(entries: sliceEntries, viewerIsAuthor: viewerIsAuthor)
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self, generation == self.modelGeneration else { return }
-                self.model = built
-                self.applyModelToSky()
+        // r17 C5：先查建图缓存——键含账号桶 + 作者 + 角色 + 分片 + 日记版本
+        // + 算法版本；命中即复用模型，不进后台建图（「本月 → 去年 → 本月」
+        // 第二次进本月即命中）。miss 才后台建图，建好存回缓存。
+        let cacheKey = BearyStarMapCache.key(
+            account: BearyStarMapCache.accountKey(
+                viewerId: SessionManager.shared.currentUser?.id,
+                authorId: authorId,
+                viewerIsAuthor: viewerIsAuthor),
+            slice: slice,
+            diaryVersion: BearyStarMap.diaryVersion(entries: sliceEntries, viewerIsAuthor: viewerIsAuthor))
+        if let cached = BearyStarMapCache.lookup(key: cacheKey) {
+            // 同步命中：generation 刚 +1、无在途旧回包可冲掉它，直接换入。
+            model = cached
+            applyModelToSky()
+        } else {
+            DispatchQueue.global(qos: .userInitiated).async {
+                let built = BearyStarMap.buildModel(entries: sliceEntries, viewerIsAuthor: viewerIsAuthor)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, generation == self.modelGeneration else { return }
+                    BearyStarMapCache.store(key: cacheKey, model: built)
+                    self.model = built
+                    self.applyModelToSky()
+                }
             }
         }
         // P1-4：空态先行只在请求未在途时成立——拉取在途且尚无可展示数据
