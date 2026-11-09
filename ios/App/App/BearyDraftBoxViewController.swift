@@ -761,13 +761,27 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                     strongSelf.drafts = loaded
                     strongSelf.draftsLoadFailed = false
                     strongSelf.draftsLoadCorrupt = false
+                    // A1：部分恢复写实际结果——好草稿已回写、坏的只留备份时，
+                    // 报实际找回数，不报“全部找回”也不报“全部丢失”。
+                    if let recovered = BearyDraftStore.lastPartialRecovery, recovered.skipped > 0 {
+                        strongSelf.showDraftToast(message: "找回了 \(recovered.kept) 份，还有 \(recovered.skipped) 份没读出来")
+                    }
                 case .failure(let err):
-                    strongSelf.drafts = []
-                    strongSelf.draftsLoadFailed = true
-                    if case .corruptStore(_, _, _, _, _) = err {
-                        strongSelf.draftsLoadCorrupt = true
-                    } else {
+                    if case .partialSaveFailed(let recovered, let kept, let skipped, _) = err {
+                        // A1：回写失败——原文件与备份都在，好草稿先预览，
+                        // 不进失败态、不把好草稿藏起来；报实际找回数。
+                        strongSelf.drafts = recovered
+                        strongSelf.draftsLoadFailed = false
                         strongSelf.draftsLoadCorrupt = false
+                        strongSelf.showDraftToast(message: "找回了 \(kept) 份，还有 \(skipped) 份没读出来")
+                    } else {
+                        strongSelf.drafts = []
+                        strongSelf.draftsLoadFailed = true
+                        if case .corruptStore(_) = err {
+                            strongSelf.draftsLoadCorrupt = true
+                        } else {
+                            strongSelf.draftsLoadCorrupt = false
+                        }
                     }
                 }
                 completion?()
@@ -779,7 +793,13 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     /// 账号的坏 v3 文件（.bak 备份不动），成功后重读 → 空态；失败则留失败态＋toast。
     /// 审计四轮 13：确认框里把不可逆后果讲清——损坏的草稿删掉后在 App 里找不回来。
     @objc private func clearCorruptStoreTapped() {
-        let alert = UIAlertController(title: "清除无法读取的草稿？", message: "这些草稿目前无法读取。清除后，损坏的草稿会被删掉，在 App 里找不回来；备份文件仍保留在手机里，新草稿可以正常保存。", preferredStyle: .alert)
+        // A1：清除前先确认 .bak 真的存在；不存在时不承诺备份、文案如实说。
+        // 审计四轮 13：确认框里把不可逆后果讲清——损坏的草稿删掉后在 App 里找不回来。
+        let backupKept = BearyDraftStore.hasCorruptBackup()
+        let message = backupKept
+            ? "这些草稿目前无法读取。清除后，损坏的草稿会被删掉，在 App 里找不回来；备份会保留在手机里，新草稿可以正常保存。"
+            : "这些草稿目前无法读取。清除后，损坏的草稿会被删掉，在 App 里找不回来；没有可保留的备份，新草稿可以正常保存。"
+        let alert = UIAlertController(title: "清除无法读取的草稿？", message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
         alert.addAction(UIAlertAction(title: "清除", style: .destructive) { [weak self] _ in
             BearyDraftStore.clearCorruptStoreAsync { [weak self] ok in
@@ -823,7 +843,13 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             // 审计四轮 13：损坏态不说“无法恢复”——只是本次读不出来，原始数据已保留；
             // 也不提 .bak（用户不认这个词），清除的不可逆后果放在确认框里讲。
             if draftsLoadCorrupt {
-                failedStateView.configure(kind: .error, title: "草稿库已损坏", subtitle: "这些草稿暂时读不出来。清除会移除当前草稿数据，已有备份会保留。", iconName: nil, actionTitle: "清除损坏的草稿数据", actionStyle: .destructiveOutline(.regular), onAction: { [weak self] in self?.clearCorruptStoreTapped() })
+                // A1：损坏态副文案同样先确认 .bak 真的存在；没有备份时
+                // 不谎称备份保留在手机里，文案如实说。措辞沿审计四轮 13：
+                // 不说“无法恢复”，也不提 .bak（用户不认这个词）。
+                let corruptSubtitle = BearyDraftStore.hasCorruptBackup()
+                    ? "这些草稿暂时读不出来。清除会移除当前草稿数据，备份会保留在手机里。清除后重新读取会回到空态，新草稿可以正常保存。"
+                    : "这些草稿暂时读不出来。清除会移除当前草稿数据，没有可保留的备份。清除后重新读取会回到空态，新草稿可以正常保存。"
+                failedStateView.configure(kind: .error, title: "草稿库已损坏", subtitle: corruptSubtitle, iconName: nil, actionTitle: "清除损坏的草稿数据", actionStyle: .destructiveOutline(.regular), onAction: { [weak self] in self?.clearCorruptStoreTapped() })
             } else {
                 failedStateView.configure(kind: .error, title: "草稿读取失败", subtitle: "原文件已保留，请稍后再试", iconName: nil, actionTitle: "重新读取", onAction: { [weak self] in self?.retryLoadDraftsTapped() })
             }
