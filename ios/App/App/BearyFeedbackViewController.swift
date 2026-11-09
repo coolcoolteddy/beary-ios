@@ -218,6 +218,12 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     private let textView = UITextView()
     private let placeholderLabel = UILabel()
     private let attachLabelButton = UIButton(type: .custom)
+    // B6 附件读取进度（原位、附件卡内）：转圈 +「正在读取 N 个附件」，
+    // 初始隐藏且高度约束为 0，不占卡片高度。
+    private let attachProgressSpinner = UIActivityIndicatorView(style: .medium)
+    private let attachProgressLabel = UILabel()
+    private let attachProgressRow = UIStackView()
+    private var attachProgressHeight: NSLayoutConstraint?
     // Hit44：行高由左钮 44 钉死、居中对齐，清除钮纵向扩区恰填满行高；横向各扩约 7，不及左间距 8 与右 inset 14，不抢左钮热区。
     private let attachClearButton = BearyHit44Button(type: .system)
     private let submitButton = BearyButton.make(style: .primaryPill(.ink), title: "撰写反馈邮件")
@@ -228,6 +234,13 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     /// 审计反馈清除回填：附件选择代次。每轮选择占一个代次，清除或重选时
     /// 代次 +1 使旧轮在途读取失效，旧轮 group.notify 到达时直接丢弃。
     private var attachmentGeneration = 0
+    /// B6 当前批次读取态：true = 本批附件还在读取，邮件生成暂缓；
+    /// total/done 为本批总数与已完成数（成功与失败都算完成）。
+    private var attachmentReading = false
+    private var attachmentReadingTotal = 0
+    private var attachmentReadingDone = 0
+    /// B6 暂缓的提交：提交点按时本批未就绪，读完后用刚就绪的这批附件继续提交。
+    private var pendingSubmitAfterAttachments = false
     private var zipURL: URL?
     private var zipReady = false
     /// 审计反馈分享防重：zip 生成进行中标记与排队回调。ensureZip 已在途时
@@ -528,8 +541,31 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             attachRow.topAnchor.constraint(equalTo: attachCard.topAnchor, constant: 8),
             attachRow.leadingAnchor.constraint(equalTo: attachCard.leadingAnchor, constant: 14),
             attachRow.trailingAnchor.constraint(equalTo: attachCard.trailingAnchor, constant: -14),
-            attachRow.bottomAnchor.constraint(equalTo: attachCard.bottomAnchor, constant: -8),
             attachLabelButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        // B6：附件读取进度行（原位、附件卡内）：默认隐藏、高度 0；
+        // 选择器关闭即显，读完原位淡出。
+        attachProgressSpinner.translatesAutoresizingMaskIntoConstraints = false
+        attachProgressSpinner.color = BearyColors.gray
+        attachProgressLabel.translatesAutoresizingMaskIntoConstraints = false
+        attachProgressLabel.font = UIFont.systemFont(ofSize: 14)
+        attachProgressLabel.textColor = BearyColors.gray
+        attachProgressRow.translatesAutoresizingMaskIntoConstraints = false
+        attachProgressRow.axis = .horizontal
+        attachProgressRow.alignment = .center
+        attachProgressRow.spacing = 8
+        attachProgressRow.isHidden = true
+        attachProgressRow.addArrangedSubview(attachProgressSpinner)
+        attachProgressRow.addArrangedSubview(attachProgressLabel)
+        attachCard.addSubview(attachProgressRow)
+        let attachProgressHeightValue = attachProgressRow.heightAnchor.constraint(equalToConstant: 0)
+        attachProgressHeight = attachProgressHeightValue
+        NSLayoutConstraint.activate([
+            attachProgressRow.topAnchor.constraint(equalTo: attachRow.bottomAnchor, constant: 4),
+            attachProgressRow.leadingAnchor.constraint(equalTo: attachCard.leadingAnchor, constant: 14),
+            attachProgressRow.trailingAnchor.constraint(equalTo: attachCard.trailingAnchor, constant: -14),
+            attachProgressRow.bottomAnchor.constraint(equalTo: attachCard.bottomAnchor, constant: -8),
+            attachProgressHeightValue,
         ])
 
         let deviceLabel = makeSectionLabel("设备信息")
@@ -668,6 +704,52 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             attachLabelButton.accessibilityLabel = "已选 \(attachments.count) 个，点按重选"
             attachClearButton.isHidden = false
         }
+    }
+
+    /// B6：附件读取进度（原位、附件卡内）。选择器关闭即显「正在读取 N 个附件」，
+    /// 每完成一项按实际完成数更新「已读取 k/N」（成功与失败都算完成）。
+    /// 只在主线程调用；代次已变的旧轮调用一律忽略。
+    private func showAttachmentProgress(total: Int) {
+        attachmentReading = true
+        attachmentReadingTotal = total
+        attachmentReadingDone = 0
+        let text = "正在读取 \(total) 个附件"
+        attachProgressLabel.text = text
+        attachProgressLabel.accessibilityLabel = text
+        attachProgressRow.alpha = 1
+        attachProgressRow.isHidden = false
+        attachProgressHeight?.constant = 24
+        attachProgressSpinner.startAnimating()
+    }
+
+    private func noteAttachmentReadFinished(generation: Int) {
+        guard attachmentReading, generation == attachmentGeneration else { return }
+        attachmentReadingDone += 1
+        let done = attachmentReadingDone
+        let total = attachmentReadingTotal
+        let text = "已读取 \(done)/\(total)"
+        attachProgressLabel.text = text
+        attachProgressLabel.accessibilityLabel = text
+    }
+
+    /// B6：本批就绪后进度在原位淡出（减动效时直接隐藏）；淡出完成时若
+    /// 已有新一批在读，不碰新批的进度行（见 attachmentReading 守卫）。
+    private func hideAttachmentProgress() {
+        attachmentReading = false
+        attachProgressSpinner.stopAnimating()
+        guard !UIAccessibility.isReduceMotionEnabled else {
+            attachProgressRow.isHidden = true
+            attachProgressHeight?.constant = 0
+            return
+        }
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.attachProgressRow.alpha = 0
+        }, completion: { [weak self] _ in
+            guard let self = self, !self.attachmentReading else { return }
+            self.attachProgressRow.isHidden = true
+            self.attachProgressHeight?.constant = 0
+            self.attachProgressRow.alpha = 1
+        })
     }
 
     private func deviceInfoText() -> String {
@@ -845,6 +927,11 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         // 审计反馈清除回填：代次 +1 使在途读取失效，旧轮结果不再回填。
         attachmentGeneration += 1
         attachments = []
+        // B6：清除同时撤掉读取进度与暂缓的提交（本次提交不再继续）。
+        pendingSubmitAfterAttachments = false
+        if attachmentReading {
+            hideAttachmentProgress()
+        }
         refreshAttachUI()
     }
 
@@ -855,13 +942,34 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             BearyHaptics.rejectionWarning()
             return
         }
+        // B6：当前批次未就绪时暂缓生成邮件——先记下，等本批读完再用
+        // 刚就绪的这批附件继续提交，不带走上一批。
+        if attachmentReading {
+            pendingSubmitAfterAttachments = true
+            BearyToast.show(in: view, message: "附件正在读取，读完后继续发送")
+            return
+        }
+        proceedWithSubmit()
+    }
+
+    /// B6 提交续行：正文与附件在此刻定格为同一份提交数据（snapshot），
+    /// 之后再选附件、再读新批，都不再影响这次邮件组装。
+    private func proceedWithSubmit() {
+        let description = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !description.isEmpty else {
+            BearyToast.show(in: view, message: "请先填写问题描述")
+            BearyHaptics.rejectionWarning()
+            return
+        }
+        let body = submitBodyText()
+        let batch = attachments
         pendingMailKind = .submit
         if zipReady {
             // 113：双击提交守卫——zip 已就绪时直接弹撰写框，连点会叠 present；
             // 审计登录杂项：与 shareTapped / logOnlyTapped 同口径，统一守卫
             // view.window != nil 且 presentedViewController == nil。
             guard view.window != nil, presentedViewController == nil else { return }
-            presentMailComposer()
+            presentMailComposer(body: body, attachments: batch)
         } else {
             // 清理后二次提交先重生成（不直接判失败）；重生成失败才走无 zip 发送。
             ensureZip { [weak self] ready in
@@ -870,7 +978,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                     // 审计登录杂项：ensureZip 回调分支补 presented 守卫（此前无守卫，
                     // 页面已不在窗口或已有面板时仍 present，可能撞车）。
                     guard self.view.window != nil, self.presentedViewController == nil else { return }
-                    self.presentMailComposer()
+                    self.presentMailComposer(body: body, attachments: batch)
                 } else {
                     // zip 缺失时发送仍可继续（不带 zip）：先 toast 明说，待 toast 可见
                     // 后再弹出邮件撰写框，避免撰写框盖住 toast 导致说明不可见。
@@ -879,7 +987,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                         // 审计登录杂项：2.1 秒延迟分支补 view.window 守卫，与
                         // shareTapped / logOnlyTapped 同口径（此前只守 presented）。
                         guard let self = self, self.view.window != nil, self.presentedViewController == nil else { return }
-                        self.presentMailComposer()
+                        self.presentMailComposer(body: body, attachments: batch)
                     }
                 }
             }
@@ -937,7 +1045,9 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 邮件（系统 MFMailCompose；未配邮箱时按种类分流）
 
-    private func presentMailComposer() {
+    /// 邮件只带本次确认的附件：正文与附件由调用方在提交时定格为同一份
+    /// 提交数据（body/batch），组装时不再读 live 状态（B6）。
+    private func presentMailComposer(body: String, attachments batch: [Attachment]) {
         // 审计登录杂项：入口统一守卫（本方法所有调用点此前各守各的，现入口
         // 再拦一层：不在窗口或已有面板时不 present，防双击撞车）。
         guard view.window != nil, presentedViewController == nil else { return }
@@ -963,25 +1073,26 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                         BearyAppLog.event("feedback mail zip read failed")
                         return
                     }
-                    self.presentMailComposer(withZipData: zipData)
+                    self.presentMailComposer(withZipData: zipData, body: body, attachments: batch)
                 }
             }
             return
         }
-        presentMailComposer(withZipData: nil)
+        presentMailComposer(withZipData: nil, body: body, attachments: batch)
     }
 
-    /// 组装并弹出反馈撰写器（须在主线程调用）。zipData 为 nil 表示不带日志包。
-    private func presentMailComposer(withZipData zipData: Data?) {
+    /// 组装并弹出反馈撰写器（须在主线程调用）。zipData 为 nil 表示不带日志包；
+    /// body/batch 为提交时定格的同一份数据，不读 live 正文与附件数组（B6）。
+    private func presentMailComposer(withZipData zipData: Data?, body: String, attachments batch: [Attachment]) {
         let composer = MFMailComposeViewController()
         composer.mailComposeDelegate = self
         composer.setToRecipients([Self.recipient])
         composer.setSubject("\(typePrefix()) beary 反馈")
-        composer.setMessageBody(submitBodyText(), isHTML: false)
+        composer.setMessageBody(body, isHTML: false)
         if let zipData = zipData {
             composer.addAttachmentData(zipData, mimeType: "application/zip", fileName: "beary-feedback-logs.zip")
         }
-        for attachment in attachments {
+        for attachment in batch {
             composer.addAttachmentData(attachment.data, mimeType: attachment.mimeType, fileName: attachment.fileName)
         }
         present(composer, animated: BearyMotion.animated(true))
@@ -1059,6 +1170,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         // 审计反馈清除回填：本轮选择占一个新代次，旧轮在途读取即失效。
         attachmentGeneration += 1
         let generation = attachmentGeneration
+        // B6：选择器关闭即显读取进度（原位），每完成一项更新已读数。
+        showAttachmentProgress(total: results.count)
         let group = DispatchGroup()
         let lock = NSLock()
         var loaded: [Attachment?] = Array(repeating: nil, count: results.count)
@@ -1071,6 +1184,9 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             if provider.canLoadObject(ofClass: UIImage.self) {
                 provider.loadObject(ofClass: UIImage.self) { object, _ in
                     defer { group.leave() }
+                    // B6：每完成一项（成功与失败都算）回主线程计一次已读数；
+                    // 派发在 defer 的 leave 之前，计数一定先于整批就绪回调。
+                    DispatchQueue.main.async { [weak self] in self?.noteAttachmentReadFinished(generation: generation) }
                     guard let image = object as? UIImage,
                           let jpeg = BearyImagePrep.jpegData(image) else {
                         lock.lock()
@@ -1085,6 +1201,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             } else if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
                 provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, _ in
                     defer { group.leave() }
+                    // B6：同图片分支，每完成一项回主线程计一次已读数。
+                    DispatchQueue.main.async { [weak self] in self?.noteAttachmentReadFinished(generation: generation) }
                     guard let urlValue = url else {
                         lock.lock()
                         failedCount += 1
@@ -1122,6 +1240,9 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                     lock.unlock()
                 }
             } else {
+                // B6：不支持的类型也算完成一项（先派发计数，再 leave，
+                // 计数一定先于整批就绪回调）。
+                DispatchQueue.main.async { [weak self] in self?.noteAttachmentReadFinished(generation: generation) }
                 lock.lock()
                 failedCount += 1
                 lock.unlock()
@@ -1133,11 +1254,18 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             guard let self = self, self.attachmentGeneration == generation else { return }
             self.attachments = loaded.compactMap { $0 }
             self.refreshAttachUI()
+            // B6：本批就绪，进度在原位淡出。
+            self.hideAttachmentProgress()
             if failedCount > 0 {
                 let message = oversizedCount > 0
                     ? "有 \(failedCount) 个附件未能加载，其中 \(oversizedCount) 个视频超过 50MB"
                     : "有 \(failedCount) 个附件未能加载"
                 BearyToast.show(in: self.view, message: message)
+            }
+            // B6：提交点按时本批未就绪，现已就绪——用刚定格的这批附件继续提交。
+            if self.pendingSubmitAfterAttachments {
+                self.pendingSubmitAfterAttachments = false
+                self.proceedWithSubmit()
             }
         }
     }
