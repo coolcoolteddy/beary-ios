@@ -838,6 +838,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             showState(kind: "loading", query: trimmed)
             setCenterBusy(true)
         }
+        // B2：与全站搜索共用首屏 /search 短时缓存（BearyAPI.search 首屏重载）——
+        // 同一个词在全站搜过后、选人 60 秒内不再重发；本处只取回包的用户组，
+        // 日记组/我的组不消费。
         searchTask?.cancel()
         searchTask = BearyAPI.shared.search(q: trimmed) { [weak self] result in
             DispatchQueue.main.async {

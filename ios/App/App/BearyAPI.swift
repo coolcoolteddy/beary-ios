@@ -1178,9 +1178,47 @@ final class BearyAPI {
         requestVoid("/beary/api/notifications/read", method: "POST", jsonBody: body, completion: completion)
     }
 
+    /// B2：同会话首屏搜索复用——完全相同的首屏 /search 请求在短时内只发一次，
+    /// 全站搜索与编辑器选人共用同一份缓存（选人只取其中的用户组）。
+    /// 仅首屏（无游标）进缓存；翻页请求走另一重载、每次都走网络。
+    /// 内存缓存，随会话丢弃；命中须账号一致（authAccountId），不跨号复用
+    /// “我的”组等鉴权敏感内容。
+    private static let searchFirstPageTTL: TimeInterval = 60
+    private var searchFirstPageCache: [String: (at: Date, accountId: Int?, result: SearchResult)] = [:]
+    private let searchFirstPageCacheLock = NSLock()
+
+    private func cachedSearchFirstPage(q: String) -> SearchResult? {
+        searchFirstPageCacheLock.lock()
+        defer { searchFirstPageCacheLock.unlock() }
+        guard let entry = searchFirstPageCache[q] else { return nil }
+        guard entry.accountId == authAccountId,
+              Date().timeIntervalSince(entry.at) < Self.searchFirstPageTTL else {
+            searchFirstPageCache.removeValue(forKey: q)
+            return nil
+        }
+        return entry.result
+    }
+
+    private func storeSearchFirstPage(q: String, result: SearchResult) {
+        searchFirstPageCacheLock.lock()
+        defer { searchFirstPageCacheLock.unlock() }
+        searchFirstPageCache[q] = (at: Date(), accountId: authAccountId, result: result)
+    }
+
     @discardableResult
     func search(q: String, completion: @escaping (Result<SearchResult, APIError>) -> Void) -> URLSessionDataTask? {
-        return search(q: q, before: nil, beforeId: nil, completion: completion)
+        if let cached = cachedSearchFirstPage(q: q) {
+            // 与网络回包同一异步口径：调用方在回调里切主线程并凭序号守卫
+            // 丢弃旧回包，同步回包会打乱该时序，故仍异步回包；无在途任务可取消。
+            DispatchQueue.global(qos: .userInitiated).async { completion(.success(cached)) }
+            return nil
+        }
+        return search(q: q, before: nil, beforeId: nil) { [weak self] result in
+            if case .success(let data) = result {
+                self?.storeSearchFirstPage(q: q, result: data)
+            }
+            completion(result)
+        }
     }
 
     /// sweep32-2 搜索翻页：服务端游标与列表同口径——日记组（entries/mine）
