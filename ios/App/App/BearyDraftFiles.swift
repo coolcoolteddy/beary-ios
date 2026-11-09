@@ -424,6 +424,66 @@ enum BearyDraftStore {
     /// （saveAll 是原子替换，读到旧整库或新整库，不会读到一半）。
     private static let writeLock = NSLock()
 
+    /// B5：最近一次已确认的整库快照——按「账号 + 成功提交版本」共享。
+    /// 草稿箱每次打开、编辑器写后回读确认都要整库解码；版本未变时直接复用
+    /// 上次已确认的列表，跳过 JSON 解码。缓存只存解码前的原始草稿，
+    /// 每次命中仍重跑 sortedNormalized（图片在盘与否重查），故图片被
+    /// sweep/删图清掉后不会拿旧引用冒充在盘。首次打开缓存为空，仍读正式文件；
+    /// 写盘失败不 bump 版本、不动缓存，lastLoadError 原样保留。
+    /// cacheLock 只包版本计数与缓存本身的短临界区，不包任何磁盘 I/O，
+    /// 与 writeLock 不嵌套（两把锁从不同时持有）。
+    private static let cacheLock = NSLock()
+    private static var committedVersion: UInt64 = 0
+    private static var cachedDraftsAccountId: Int?
+    private static var cachedDraftsVersion: UInt64 = 0
+    private static var cachedDraftsRaw: [BearyDraft]?
+
+    /// 成功提交一次写盘即 bump 版本——旧快照随即失效，下次读重新解码。
+    /// 所有 v3 文件变更点都要经过这里（saveAll 成功、删空清文件、
+    /// clear、清损坏库、setAccount 旧全局迁移落盘）。
+    private static func noteCommittedWrite() {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        committedVersion += 1
+    }
+
+    private static func currentCommittedVersion() -> UInt64 {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return committedVersion
+    }
+
+    /// 命中则返回已确认的原始草稿（未归一化，调用方仍走 sortedNormalized）；
+    /// 未命中返回 nil，调用方读正式文件。
+    private static func cachedRawDrafts(forAccount accountId: Int?) -> [BearyDraft]? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        guard let raw = cachedDraftsRaw,
+              cachedDraftsAccountId == accountId,
+              cachedDraftsVersion == committedVersion else { return nil }
+        return raw
+    }
+
+    /// 回填缓存：只有自本次读开始版本未变时才存（其间有写提交则丢弃本次结果，
+    /// 下次读重新解码，不拿旧数据冒充新版本）。
+    private static func storeCachedRawDrafts(_ drafts: [BearyDraft], forAccount accountId: Int?, readVersion: UInt64) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        guard committedVersion == readVersion else { return }
+        cachedDraftsAccountId = accountId
+        cachedDraftsVersion = readVersion
+        cachedDraftsRaw = drafts
+    }
+
+    /// 读失败时清缓存：损坏的库不得用旧快照冒充成功，下次读重新走正式文件。
+    private static func clearCachedDrafts() {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        cachedDraftsRaw = nil
+        cachedDraftsAccountId = nil
+        cachedDraftsVersion = 0
+    }
+
     /// 后台删一篇：整库 loadAll + saveAll 都在 ioQueue 上，完成后回主线程。
     /// 老签名保留作兼容（编辑器两处调用仍用它，见 BearyComposerViewController）；
     /// 需成败回传的新调用方请用 deleteAsyncReporting（与 saveAsync /
@@ -496,7 +556,11 @@ enum BearyDraftStore {
                 } else {
                     ok = true
                 }
-                if ok { lastLoadError = nil }
+                if ok {
+                    lastLoadError = nil
+                    // B5：损坏库文件已清即一次提交，旧快照失效。
+                    noteCommittedWrite()
+                }
             }
             DispatchQueue.main.async {
                 completion(ok)
@@ -588,6 +652,8 @@ enum BearyDraftStore {
         guard let targetURL = fileURL(for: accountId), !FileManager.default.fileExists(atPath: targetURL.path) else { return false }
         do {
             try FileManager.default.moveItem(at: legacyURL, to: targetURL)
+            // B5：旧全局文件落进本账号桶即一次提交，旧快照失效。
+            noteCommittedWrite()
         } catch {
             guard let data = try? Data(contentsOf: legacyURL),
                   let drafts = try? JSONDecoder().decode([BearyDraft].self, from: data),
@@ -720,9 +786,16 @@ enum BearyDraftStore {
             lastLoadError = nil
             return .success([])
         }
+        // B5：账号 + 成功提交版本未变时，复用最近一次已确认的列表，跳过整库解码。
+        let readVersion = currentCommittedVersion()
+        if let cached = cachedRawDrafts(forAccount: accountId) {
+            lastLoadError = nil
+            return .success(sortedNormalized(cached, forAccount: accountId))
+        }
         if let url = fileURL(for: accountId), FileManager.default.fileExists(atPath: url.path) {
             if let data = try? Data(contentsOf: url),
                let drafts = try? JSONDecoder().decode([BearyDraft].self, from: data) {
+                storeCachedRawDrafts(drafts, forAccount: accountId, readVersion: readVersion)
                 lastLoadError = nil
                 return .success(sortedNormalized(drafts, forAccount: accountId))
             }
@@ -765,6 +838,8 @@ enum BearyDraftStore {
             NSLog("[BearyDraft] corrupt v3 store, original kept")
             // 审计四轮 05：诊断绑定账号＋文件＋指纹＋代次，供清除时复核。
             let err = LoadError.corruptStore(backupURL: backup, accountId: accountId, fileURL: url, fingerprint: fileFingerprint(at: url), generation: loadGeneration)
+            // B5：读失败时清缓存，损坏的库不得用旧快照冒充成功。
+            clearCachedDrafts()
             lastLoadError = err
             return .failure(err)
         }
@@ -782,6 +857,8 @@ enum BearyDraftStore {
             let backup = backupCorruptFile(at: legacyURL)
             NSLog("[BearyDraft] corrupt legacy global v3 store, original kept")
             let err = LoadError.corruptStore(backupURL: backup, accountId: accountId, fileURL: legacyURL, fingerprint: fileFingerprint(at: legacyURL), generation: loadGeneration)
+            // B5：读失败时清缓存（与 v3 损坏路径同口径）。
+            clearCachedDrafts()
             lastLoadError = err
             return .failure(err)
         }
@@ -793,6 +870,7 @@ enum BearyDraftStore {
                 removeLegacySources()
             }
             // 写盘失败：保留旧源，下次启动重试迁移，不丢数据。
+            storeCachedRawDrafts(migrated.drafts, forAccount: accountId, readVersion: readVersion)
             lastLoadError = nil
             return .success(sortedNormalized(migrated.drafts, forAccount: accountId))
         }
@@ -800,14 +878,17 @@ enum BearyDraftStore {
             let backup = backupCorruptFile(at: v2url)
             NSLog("[BearyDraft] corrupt legacy v2 store, original kept")
             let err = LoadError.legacyCorrupt(backupURL: backup)
+            clearCachedDrafts()
             lastLoadError = err
             return .failure(err)
         }
         if UserDefaults.standard.data(forKey: v1Key) != nil {
             let err = LoadError.legacyCorrupt(backupURL: nil)
+            clearCachedDrafts()
             lastLoadError = err
             return .failure(err)
         }
+        storeCachedRawDrafts([], forAccount: accountId, readVersion: readVersion)
         lastLoadError = nil
         return .success([])
     }
@@ -925,10 +1006,15 @@ enum BearyDraftStore {
         if kept.isEmpty {
             guard let url = fileURL(for: accountId) else { return false }
             if !FileManager.default.fileExists(atPath: url.path) {
+                // B5：库文件本就不存在也 bump——迁移写盘失败后缓存里可能仍有
+                // 该篇，删篇成功必须让旧快照失效，不凭空残留已删篇。
+                noteCommittedWrite()
                 return true
             }
             do {
                 try FileManager.default.removeItem(at: url)
+                // B5：删空清文件即一次提交，旧快照失效。
+                noteCommittedWrite()
                 return true
             } catch {
                 return false
@@ -942,6 +1028,8 @@ enum BearyDraftStore {
     static func clear() {
         guard let url = fileURL() else { return }
         try? FileManager.default.removeItem(at: url)
+        // B5：整库文件已删即一次提交，旧快照失效。
+        noteCommittedWrite()
     }
 
     /// 归一化 + 倒序：本地文件已不在磁盘的项——有 key 则退为纯 key 项（走远程图），
@@ -1020,6 +1108,8 @@ enum BearyDraftStore {
             } else {
                 try FileManager.default.moveItem(at: tmp, to: url)
             }
+            // B5：写盘成功即新提交版本，旧快照失效。
+            noteCommittedWrite()
             return true
         } catch {
             try? FileManager.default.removeItem(at: tmp)
