@@ -56,28 +56,35 @@ enum BearyEntrySyncStore {
 
     /// 新一轮 06：本地已同步日记全量快照——读账号目录下全部 <YYYY-MM-DD>.json
     /// 日文件并合并，按服务端序重排（created_at DESC, id DESC），按 id 去重。
-    /// 损坏/缺失的日文件跳过；返回空数组 = 本地无任何已同步日记（调用方走网络）。
+    /// 仅完整时返回：无标记、标记账号不符、任一日损坏、总数对不上时返回 nil，
+    /// 调用方走网络（不认半截盘）；标记总数为 0 时返回空数组 = 已同步、本地无日记。
+    /// 进度文件（beary_sync_progress.json）不是日文件，枚举时跳过。
     /// 同步读盘，调用方须在后台队列调。
-    static func loadAllEntries(accountId: Int) -> [Entry] {
-        guard let dir = accountDir(accountId: accountId) else { return [] }
+    static func loadAllEntries(accountId: Int) -> [Entry]? {
+        guard isArchiveComplete(accountId: accountId),
+              let marker = loadCompletion(accountId: accountId),
+              let dir = accountDir(accountId: accountId) else { return nil }
         let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        var all: [Entry] = []
+        var merged: [Entry] = []
         for name in names where name.hasSuffix(".json") {
             let dayKey = String(name.dropLast(".json".count))
-            guard let entries = loadDay(accountId: accountId, dayKey: dayKey) else { continue }
-            all.append(contentsOf: entries)
+            guard isDayKey(dayKey) else { continue }
+            guard let entries = loadDay(accountId: accountId, dayKey: dayKey) else { return nil }
+            merged.append(contentsOf: entries)
         }
-        all.sort { (a, b) in
+        merged.sort { (a, b) in
             if a.createdAt != b.createdAt { return (a.createdAt ?? 0) > (b.createdAt ?? 0) }
             return (a.id ?? "") > (b.id ?? "")
         }
         var seenIds = Set<String>()
-        return all.filter { entry in
+        let deduped = merged.filter { entry in
             guard let id = entry.id else { return true }
             if seenIds.contains(id) { return false }
             seenIds.insert(id)
             return true
         }
+        guard deduped.count == marker.entryCount else { return nil }
+        return deduped
     }
 
     /// 写某日落盘（单日写透：时间线日拉取/预取成功、发布/编辑 upsert 均走这里）。
@@ -86,6 +93,7 @@ enum BearyEntrySyncStore {
     static func saveDay(accountId: Int, dayKey: String, entries: [Entry]) -> Bool {
         guard let url = dayFileURL(accountId: accountId, dayKey: dayKey),
               let data = try? makeEncoder().encode(entries) else { return false }
+        let oldCount = loadDay(accountId: accountId, dayKey: dayKey)?.count ?? 0
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
@@ -95,7 +103,79 @@ enum BearyEntrySyncStore {
         // 回读校验：id 序列与写入一致才算成功。
         guard let roundTripped = loadDay(accountId: accountId, dayKey: dayKey),
               roundTripped.map({ $0.id }) == entries.map({ $0.id }) else { return false }
+        // 完整性标记计数随该日新旧篇数差维护（无标记时不建标记）。
+        let delta = entries.count - oldCount
+        if delta != 0 { adjustCompletionCount(accountId: accountId, delta: delta) }
         return true
+    }
+
+    // MARK: - 存档完整性标记（C3 门控；C2 完整度工作的消费侧）
+    //
+    // 完整性标记是“本次存档是一次成功全量同步的完整快照”的唯一凭证：
+    //   - 只在整批写盘全部成功后写（commitFullSync，或分批收尾 finishDiaryRun
+    //     经 verifyDiaryFinalState 校验通过后写；任一步失败即删标记，不写）；
+    //   - 标记含账号与总篇数；读存档时逐日解码并核对总数，对不上即视为不完整；
+    //   - upsert/remove/单日写透经 saveDay 的计数差自动维护标记计数；
+    //   - 退出/401 清盘（purgeAccount 整目录删）时标记随目录消失。
+    // 没有标记、标记账号不符、任一日损坏、总数对不上——一律不认存档完整，
+    // 调用方回落网络拉取，绝不把缺页/写盘失败当成“确实只有这些日记”。
+    // C2（#1069，全量同步完整索引）后到：若 C2 另立完整性信号，以 C2 为准
+    // 合并，保留本门控的“缺标记即回落网络”语义。
+    static let completionMarkerName = "complete.marker"
+
+    /// 完整性标记内容（JSON，单文件原子写）。
+    struct EntrySyncCompletion: Codable {
+        var accountId: Int
+        var entryCount: Int
+        var syncedAtMs: Int
+    }
+
+    static func completionMarkerURL(accountId: Int) -> URL? {
+        guard let dir = accountDir(accountId: accountId) else { return nil }
+        return dir.appendingPathComponent(completionMarkerName)
+    }
+
+    static func loadCompletion(accountId: Int) -> EntrySyncCompletion? {
+        guard let url = completionMarkerURL(accountId: accountId),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(EntrySyncCompletion.self, from: data)
+    }
+
+    /// 存档是否可确认为完整：标记存在且账号相符（篇数核对在 loadAllEntries 里做）。
+    static func isArchiveComplete(accountId: Int) -> Bool {
+        guard let marker = loadCompletion(accountId: accountId) else { return false }
+        return marker.accountId == accountId
+    }
+
+    /// 写完整性标记（分批收尾 finishDiaryRun 校验通过后调；commitFullSync 内调）。
+    static func writeCompletion(accountId: Int, entryCount: Int) {
+        guard let url = completionMarkerURL(accountId: accountId) else { return }
+        let marker = EntrySyncCompletion(
+            accountId: accountId,
+            entryCount: entryCount,
+            syncedAtMs: Int(Date().timeIntervalSince1970 * 1000)
+        )
+        guard let data = try? JSONEncoder().encode(marker) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+    }
+
+    /// 删完整性标记（收尾任一步失败时调；半截盘不认完整）。
+    static func removeCompletion(accountId: Int) {
+        guard let url = completionMarkerURL(accountId: accountId) else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    /// 标记计数增量维护（saveDay 的日计数差、删帖空日文件的减数都走这里）：
+    /// 无标记时不建标记（不完整存档不因局部写盘变成“完整”）；写回失败时
+    /// 计数可能滞后，读侧的总数核对会挡下，不会误认完整。
+    private static func adjustCompletionCount(accountId: Int, delta: Int) {
+        guard var marker = loadCompletion(accountId: accountId), delta != 0 else { return }
+        marker.entryCount = max(0, marker.entryCount + delta)
+        marker.syncedAtMs = Int(Date().timeIntervalSince1970 * 1000)
+        guard let url = completionMarkerURL(accountId: accountId),
+              let data = try? JSONEncoder().encode(marker) else { return }
+        try? data.write(to: url, options: .atomic)
     }
 
     /// 按北京日分组的结果。skippedCount = 无法归日的条目数（缺 createdAt、
@@ -150,8 +230,12 @@ enum BearyEntrySyncStore {
             }
         }
         // 只有全部日期写盘成功才清理旧日文件；任一日失败时保旧盘，
-        // 下次重跑仍能对齐（其余已写好的日期照常保留）。
-        guard allSucceeded else { return false }
+        // 下次重跑仍能对齐（其余已写好的日期照常保留），并删标记
+        // （半截盘不认完整，下次读存档回落网络）。
+        guard allSucceeded else {
+            removeCompletion(accountId: accountId)
+            return false
+        }
         let existing = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
         for name in existing where name.hasSuffix(".json") {
             let dayKey = String(name.dropLast(".json".count))
@@ -159,6 +243,9 @@ enum BearyEntrySyncStore {
                 try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
             }
         }
+        // 整批写盘全部成功：写完整性标记（总数 = 本批总篇数）。
+        let total = grouped.values.reduce(0) { $0 + $1.count }
+        writeCompletion(accountId: accountId, entryCount: total)
         return true
     }
 
@@ -293,7 +380,13 @@ enum BearyEntrySyncStore {
             guard entries.count != beforeCount else { continue }
             if entries.isEmpty {
                 if let url = dayFileURL(accountId: accountId, dayKey: dayKey) {
-                    try? FileManager.default.removeItem(at: url)
+                    do {
+                        try FileManager.default.removeItem(at: url)
+                        // 空日文件整删不经 saveDay，标记计数手动减掉该日原篇数。
+                        adjustCompletionCount(accountId: accountId, delta: -beforeCount)
+                    } catch {
+                        // 删盘失败不改标记：文件还在、计数仍对得上，读侧不受影响。
+                    }
                 }
             } else {
                 saveDay(accountId: accountId, dayKey: dayKey, entries: entries)

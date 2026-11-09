@@ -11,9 +11,12 @@ import UIKit
 // 可见性与同步（与日记地图同机制，不另起一套）：
 // - 过滤与连线全在 BearyStarMap.visibleEntries 后的集合上算：他人视角下
 //   私密篇不出星、其连线一并消失；他人地点键只用区级，原因文案不带精确名。
-// - 数据：先用调用方已加载的日记即时成图，再游标拉全量替换（上限 10 页 ×
-//   50 篇，与地图同 cap；触顶时状态行明示“仅展示最近拉取的 500 篇”）。
-//   清单第 7 项：本人拉取改走 timeline scope（见 fetchEntriesPage 的 entriesScope），
+// - 数据（C3）：先用调用方已加载的日记即时成图，再走地图/星图共用入口
+//   取全量替换（内存 → 完整按日存档 → 网络，同一账号同一 scope 的在途
+//   请求共用一批回包；存档不完整时回落网络，不认半截盘；上限 10 页 ×
+//   50 篇，与地图同 cap；触顶时状态行明示“仅展示最近拉取的 500 篇”，
+//   中断续拉游标与地图同口径）。
+//   清单第 7 项：本人拉取改走 timeline scope（见 entriesScope），
 //   他人仍走 author scope；后端 author scope 不动，与日记 tab 口径分裂拍板接受。
 // - 切账号 / 登录翻转：appear 时 viewer 变了即按新身份重算重拉，旧选择清掉；
 //   从详情回来（可见性可能已翻转）只重拉一次；不轮询，下次打开自然同步。
@@ -132,6 +135,13 @@ final class BearyDiaryStarMapViewController: UIViewController {
     /// 状态的门控：请求未结束且尚无可展示数据时只出加载态，不下空态结论。
     private var isFetching = false
     private var fetchCapped = false
+    /// 分批中断续拉状态（C3 与地图统一口径）：上轮成功页的游标与页码；
+    /// 此前星图无续拉游标，中断只能从头重拉。失败时点按重试从该游标续拉，
+    /// 不从头重拉、不丢已收页。
+    private var fetchResumeBefore: Int?
+    private var fetchResumeBeforeId: String?
+    private var fetchResumePage: Int = 1
+    private var fetchInterrupted: Bool = false
     private var needsRefreshAfterDetail = false
     /// r17-m3：从详情回到原处的专用记忆——进入详情的星／线 ID、滚动位置、
     /// 打开那篇的展示快照（标题／正文／可见性）。只读返回时恢复选中态与
@@ -286,7 +296,23 @@ final class BearyDiaryStarMapViewController: UIViewController {
         // failureBottom 与隐藏态不留到加载期），回包后再由成功分支或
         // showFailureState 定终态。
         applyModelToSky()
-        fetchAllEntries()
+        // C3：中断续拉（此前星图无续拉游标）：有游标时从游标续翻已收页，
+        // 不从头重拉；无游标时从头重拉。
+        if fetchInterrupted, let before = fetchResumeBefore, let beforeId = fetchResumeBeforeId {
+            loadGeneration += 1
+            let generation = loadGeneration
+            BearySharedEntryLoader.shared.loadResuming(
+                scope: entriesScope, resumeBefore: before, resumeBeforeId: beforeId,
+                resumePage: fetchResumePage, existing: fetchCollected
+            ) { [weak self] load in
+                DispatchQueue.main.async {
+                    guard let self = self, generation == self.loadGeneration else { return }
+                    self.applySharedLoad(load)
+                }
+            }
+        } else {
+            fetchAllEntries()
+        }
     }
 
     /// 扫荡 C：空数据加载失败的终态——失败视图独占（空视图 / 星空 /
@@ -1315,10 +1341,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
         })
     }
 
-    // MARK: - 数据：游标分页拉全量（上限 10 页防无界；与地图同 cap）
+    // MARK: - 数据：全量取数走共用入口（上限 10 页防无界；与地图同 cap）
 
     private var fetchCollected: [Entry] = []
-    private var fetchSeenIds = Set<String>()
 
     private func fetchAllEntries() {
         loadGeneration += 1
@@ -1329,14 +1354,89 @@ final class BearyDiaryStarMapViewController: UIViewController {
         modelGeneration += 1
         isFetching = true
         fetchCollected = []
-        fetchSeenIds = []
+        fetchResumeBefore = nil
+        fetchResumeBeforeId = nil
+        fetchResumePage = 1
+        fetchInterrupted = false
         // 审计登录杂项：无已有数据时先出加载态（此前首帧直接走空态“这里还没有星星”，
         // 回包后星星突然出现）；有数据时不遮旧星图。
         if allEntries.isEmpty {
             showLoadingState()
         }
         recompute()
-        fetchEntriesPage(before: nil, beforeId: nil, page: 1, generation: loadGeneration)
+        // C3：全量取数走共用入口（内存 → 完整存档 → 网络，在途共用）；
+        // 本页只消费结果（成图/部分成图/失败态），分页与截断口径归加载器。
+        let generation = loadGeneration
+        BearySharedEntryLoader.shared.load(scope: entriesScope) { [weak self] load in
+            DispatchQueue.main.async {
+                guard let self = self, generation == self.loadGeneration else { return }
+                self.applySharedLoad(load)
+            }
+        }
+    }
+
+    /// 共用取数回包应用（与旧 fetchEntriesPage 的终态分支一一对应）：
+    /// 完整 → 整批成图；部分 → 按有无已展示数据提升为部分结果或保旧图；
+    /// nil（首页面失败）→ 无数据走失败页、有数据保旧图 + 弱提示。
+    private func applySharedLoad(_ load: BearySharedEntryLoader.SharedEntryLoad?) {
+        guard let load = load else {
+            hideLoadingState()
+            // P1-4：请求结束（失败也是终态），门控放开，后续 recompute／
+            // showFailureState 才能下空／有内容／失败结论。
+            isFetching = false
+            if allEntries.isEmpty {
+                showFailureState()
+            } else {
+                // 已有可展示数据（含进入时带的 initialEntries）：保留旧星图，
+                // 状态行弱提示 + 点按重试，不清空、不弹失败视图。
+                fetchStaleNote = true
+                recompute()
+            }
+            return
+        }
+        fetchCollected = load.entries
+        fetchResumeBefore = load.resumeBefore
+        fetchResumeBeforeId = load.resumeBeforeId
+        fetchResumePage = load.resumePage
+        hideLoadingState()
+        // P1-4：请求结束，门控放开再 recompute——确认没有可显示内容
+        // 后才出空态（applyModelToSky 的在途门控此时已失效）。
+        isFetching = false
+        if load.isPartial {
+            fetchInterrupted = true
+            // 展示集被替换（暂存提升）时才清截断标记；保旧图时展示集仍是
+            // 旧的截断集，标记不动。
+            // 分批中断：失败判断只看已展示数据（allEntries），不再把
+            // 本轮暂存（fetchCollected）算作已有数据——recompute 只
+            // 渲染 allEntries，暂存算数会让“首批成功、后续页失败”时
+            // 出空星空加弱状态行后缀、失败视图却藏着、无重试入口。
+            if allEntries.isEmpty {
+                if BearyStarMap.visibleEntries(fetchCollected, viewerIsAuthor: viewerIsAuthor).isEmpty {
+                    // 暂存全被可见性滤掉时同样无可展示内容，走可重试失败态。
+                    showFailureState()
+                } else {
+                    // 只有暂存数据：提升为已展示，明确展示部分结果；
+                    // 状态行“点按重试”即重试入口（失败视图此时仍藏着）。
+                    // 展示集是部分结果，不是截断的 500 篇，清截断标记。
+                    fetchCapped = false
+                    allEntries = fetchCollected
+                    fetchPartialNote = true
+                    fetchStaleNote = true
+                    recompute()
+                }
+            } else {
+                fetchStaleNote = true
+                recompute()
+            }
+            return
+        }
+        fetchInterrupted = false
+        fetchCapped = load.isCapped
+        failureView.isHidden = true
+        fetchStaleNote = false
+        fetchPartialNote = false
+        allEntries = fetchCollected
+        recompute()
     }
 
     /// 加载态统一收起（成功 / 失败回包终态各调一次）。
@@ -1355,68 +1455,6 @@ final class BearyDiaryStarMapViewController: UIViewController {
         return viewerIsAuthor ? .timeline : .author(authorId)
     }
 
-    private func fetchEntriesPage(before: Int?, beforeId: String?, page: Int, generation: Int) {
-        BearyAPI.shared.fetchEntries(scope: entriesScope, limit: 50, before: before, beforeId: beforeId) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self, generation == self.loadGeneration else { return }
-                switch result {
-                case .failure:
-                    self.hideLoadingState()
-                    // P1-4：请求结束（失败也是终态），门控放开，后续 recompute／
-                    // showFailureState 才能下空／有内容／失败结论。
-                    self.isFetching = false
-                    // 分批中断：失败判断只看已展示数据（allEntries），不再把
-                    // 本轮暂存（fetchCollected）算作已有数据——recompute 只
-                    // 渲染 allEntries，暂存算数会让“首批成功、后续页失败”
-                    // 时出空星空加弱状态行后缀、失败视图却藏着、无重试入口。
-                    if self.allEntries.isEmpty {
-                        if self.fetchCollected.isEmpty {
-                            self.showFailureState()
-                        } else if BearyStarMap.visibleEntries(self.fetchCollected, viewerIsAuthor: self.viewerIsAuthor).isEmpty {
-                            // 暂存全被可见性滤掉时同样无可展示内容，走可重试失败态。
-                            self.showFailureState()
-                        } else {
-                            // 只有暂存数据：提升为已展示，明确展示部分结果；
-                            // 状态行“点按重试”即重试入口（失败视图此时仍藏着）。
-                            self.allEntries = self.fetchCollected
-                            self.fetchPartialNote = true
-                            self.fetchStaleNote = true
-                            self.recompute()
-                        }
-                    } else {
-                        // 已有可展示数据（含进入时带的 initialEntries）：保留旧星图，
-                        // 状态行弱提示 + 点按重试，不清空、不弹失败视图。
-                        self.fetchStaleNote = true
-                        self.recompute()
-                    }
-                case .success(let list):
-                    let pageEntries = list.entries ?? []
-                    for entry in pageEntries {
-                        if let id = entry.id, !id.isEmpty {
-                            if self.fetchSeenIds.contains(id) { continue }
-                            self.fetchSeenIds.insert(id)
-                        }
-                        self.fetchCollected.append(entry)
-                    }
-                    let last = pageEntries.last
-                    if pageEntries.count >= 50, page < 10, let cursor = last?.createdAt, let lastId = last?.id {
-                        self.fetchEntriesPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
-                        return
-                    }
-                    self.fetchCapped = pageEntries.count >= 50 && page >= 10
-                    self.failureView.isHidden = true
-                    self.fetchStaleNote = false
-                    self.fetchPartialNote = false
-                    self.hideLoadingState()
-                    // P1-4：请求结束，门控放开再 recompute——确认没有可显示内容
-                    // 后才出空态（applyModelToSky 的在途门控此时已失效）。
-                    self.isFetching = false
-                    self.allEntries = self.fetchCollected
-                    self.recompute()
-                }
-            }
-        }
-    }
 }
 
 // r17 M2 差分入场：每次换入模型时 applyModelToSky 按星 id / 边 id 与上屏

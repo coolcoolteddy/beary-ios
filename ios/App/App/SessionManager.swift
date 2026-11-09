@@ -405,6 +405,9 @@ final class SessionManager {
         BearyTrashSyncStore.purgeAccount(accountId: id)
         // r17-C1：月历快照同口径清该账号的桶（只清当前账号，其他账号不动）。
         BearyCalendarSnapshotStore.purge(accountId: id)
+        // C3：地图/星图共用入口的内存短缓存与在途表只活内存，退出/401 时同口径清掉；
+        // 盘上按日存档走上面的 BearyEntrySyncStore.purgeAccount。
+        BearySharedEntryLoader.shared.invalidateAll()
     }
 
     private func isBearyCookie(_ cookie: HTTPCookie) -> Bool {

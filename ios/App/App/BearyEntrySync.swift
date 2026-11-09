@@ -471,6 +471,14 @@ final class BearyEntrySync {
                 if ok {
                     ok = self.verifyDiaryFinalState(run: run)
                 }
+                // C3：收尾校验通过即存档完整，写完整性标记（总数 = 本轮拉到的
+                // 总篇数，verifyDiaryFinalState 已核对与落盘一致）；任一步
+                // 失败即删标记，半截盘不认完整，下次读存档回落网络重拉。
+                if ok {
+                    BearyEntrySyncStore.writeCompletion(accountId: run.accountId, entryCount: run.totalFetched)
+                } else {
+                    BearyEntrySyncStore.removeCompletion(accountId: run.accountId)
+                }
                 self.diaryRuns[run.accountId] = nil
                 self.diarySyncIdentity[run.accountId] = nil
                 BearyEntrySyncStore.clearDiaryProgress(accountId: run.accountId)
@@ -639,5 +647,292 @@ final class BearyEntrySync {
             trashFailedAccountId = run.accountId
         }
         publishCombinedSyncState(for: run.accountId)
+    }
+}
+
+/// C3 地图/星图共用日记入口（r17）：两页从同一份全量日记派生各自的展示
+/// （地图地点组、星图星点索引），展示范围各自保留；账号、数据范围、排序与
+/// 游标一致的请求共用在途结果，不重复发网络、不各持一份重复内存全文。
+///
+/// 措辞修正：两页现行都不写盘，只各持一份内存全文——本修法去掉的是重复
+/// 网络请求与重复内存全文，不是“去掉重复写盘”。存档读的是既有按日落盘
+/// （BearyEntrySyncStore），不新增写盘口。
+///
+/// 取数顺序（同一请求键内）：
+///   1. 内存短缓存：60 秒内同一账号同一 scope 的完整网络结果，直接复用；
+///   2. 按日存档：仅 timeline scope 且完整性门控通过（见 isArchiveComplete /
+///      loadAllEntries）时读盘；缺标记/损坏/总数对不上即回落网络；
+///   3. 网络游标分页：limit 50、上限 10 页（与两页现行 cap 同值），在途的
+///      同键请求挂到同一批回包上，不另发请求。
+/// 截断语义统一（落地前置）：两页此前各表一枝——星图 10 页满页置
+/// fetchCapped、地图截断直接成表无标记、地图有中断续拉、星图无续拉游标。
+/// 现统一由本加载器出 isCapped（第 10 页仍满 50 篇）与续拉游标
+/// （resumeBefore/resumeBeforeId/resumePage），两页同口径消费；
+/// 地图据此补截断标记，星图据此得续拉游标。
+///
+/// 校验与清理：每次交付前校验账号（当前登录 id == 发起时 id）与会话代次
+/// （BearyAPI.authEpoch，退出/401 时递增）；任一不符即丢弃，不写回页面。
+/// 内存短缓存与在途表只活内存，退出/401 时由 SessionManager 的
+/// purgeLocalSnapshotsForCurrentAccount 调 invalidateAll() 清掉（盘上按日
+/// 存档走既有的 BearyEntrySyncStore.purgeAccount）；切账号不走 purge，
+/// 靠请求键里的 viewerId 与代次校验隔离，旧账号结果不会递给新账号。
+/// 调用方须在主线程调 load/loadResuming/invalidateAll；回包一律回主线程。
+final class BearySharedEntryLoader {
+    static let shared = BearySharedEntryLoader()
+
+    /// 一次全量取数的结果（完整或中断后的部分结果）。
+    struct SharedEntryLoad {
+        /// 全量日记（服务端序 created_at DESC, id DESC；部分结果时为已收页）。
+        var entries: [Entry]
+        /// 是否触顶：10 页拉满且第 10 页仍满 50 篇（仅展示最近拉取的 500 篇）。
+        var isCapped: Bool
+        /// 是否中断后的部分结果（失败发生在已收页之后）。
+        var isPartial: Bool
+        /// 中断续拉游标（isPartial 时有效；触顶完整时亦带末页游标供按需续拉新一批）。
+        var resumeBefore: Int?
+        var resumeBeforeId: String?
+        var resumePage: Int
+        /// 来源：存档 / 网络 / 内存短缓存（仅用于区分，不作行为分支）。
+        var source: Source
+        enum Source { case archive, network, memory }
+    }
+
+    /// 请求键：数据范围（scope 文本 + 作者 id）+ 观看者账号。
+    /// timeline 与 author(authorId) 是不同范围，不共用；同一作者、同一
+    /// 观看者、同一排序与游标的请求才共用在途结果。
+    struct RequestKey: Hashable {
+        var scopeKey: String
+        var viewerId: Int?
+    }
+
+    private struct Waiter {
+        var epoch: Int
+        var viewerId: Int?
+        var completion: (SharedEntryLoad?) -> Void
+    }
+
+    private struct InFlight {
+        var waiters: [Waiter]
+    }
+
+    private struct MemoryEntry {
+        var load: SharedEntryLoad
+        var epoch: Int
+        var viewerId: Int?
+        var fetchedAt: Date
+    }
+
+    /// 分页常量：与两页现行 cap 同值（10 页 × 50 篇）。
+    static let pageLimit = 50
+    static let maxPages = 10
+    /// 内存短缓存有效期：连续打开地图/星图只同步一次；过期后重新取数，
+    /// 不拿旧内存当长期真相（长期真相仍是存档与网络）。
+    static let memoryTTL: TimeInterval = 60
+
+    private let archiveQueue = DispatchQueue(label: "com.beary.shared-entry-archive", qos: .utility)
+    private var memoryCache: [RequestKey: MemoryEntry] = [:]
+    private var inFlight: [RequestKey: InFlight] = [:]
+
+    private init() {}
+
+    /// 请求键：scope 文本 + 作者 id（timeline 无作者 id）。
+    static func key(for scope: BearyAPI.Scope, viewerId: Int?) -> RequestKey {
+        let authorPart = scope.authorId.map { "\($0)" } ?? "-"
+        return RequestKey(scopeKey: "\(scope.rawValue):\(authorPart)", viewerId: viewerId)
+    }
+
+    /// 全量取数：内存 → 存档（仅 timeline + 完整门控）→ 网络（在途共用）。
+    /// completion 在主线程调一次；nil 表示首页面失败（无任何数据可展示）。
+    func load(scope: BearyAPI.Scope, completion: @escaping (SharedEntryLoad?) -> Void) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.load(scope: scope, completion: completion) }
+            return
+        }
+        let viewerId = SessionManager.shared.currentUser?.id
+        let epoch = BearyAPI.shared.authEpoch
+        let key = Self.key(for: scope, viewerId: viewerId)
+        let waiter = Waiter(epoch: epoch, viewerId: viewerId, completion: completion)
+        if let cached = memoryCache[key],
+           cached.epoch == epoch,
+           cached.viewerId == viewerId,
+           Date().timeIntervalSince(cached.fetchedAt) < Self.memoryTTL {
+            var hit = cached.load
+            hit.source = .memory
+            deliver(waiter: waiter, load: hit)
+            return
+        }
+        if inFlight[key] != nil {
+            inFlight[key]?.waiters.append(waiter)
+            return
+        }
+        inFlight[key] = InFlight(waiters: [waiter])
+        // 存档路：仅本人 timeline scope 且能确认完整时读盘；否则走网络。
+        if case .timeline = scope, let uid = viewerId {
+            archiveQueue.async { [weak self] in
+                let archived = BearyEntrySyncStore.loadAllEntries(accountId: uid)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    if let entries = archived {
+                        let load = SharedEntryLoad(
+                            entries: entries, isCapped: false, isPartial: false,
+                            resumeBefore: nil, resumeBeforeId: nil, resumePage: 1, source: .archive
+                        )
+                        self.finish(key: key, load: load, cache: false)
+                    } else {
+                        self.startNetwork(key: key, scope: scope, fromPage: nil, existing: [], seenIds: [])
+                    }
+                }
+            }
+            return
+        }
+        startNetwork(key: key, scope: scope, fromPage: nil, existing: [], seenIds: [])
+    }
+
+    /// 中断续拉：从上轮成功页的游标继续翻页，existing 为已收页（调用方持有），
+    /// 回包为合并后的全量（完整或再次中断的部分结果）。不参与在途共用
+    /// （续拉是失败恢复路，极少并发），完整回包仍进内存短缓存。
+    func loadResuming(
+        scope: BearyAPI.Scope,
+        resumeBefore: Int,
+        resumeBeforeId: String,
+        resumePage: Int,
+        existing: [Entry],
+        completion: @escaping (SharedEntryLoad?) -> Void
+    ) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.loadResuming(scope: scope, resumeBefore: resumeBefore, resumeBeforeId: resumeBeforeId, resumePage: resumePage, existing: existing, completion: completion)
+            }
+            return
+        }
+        let viewerId = SessionManager.shared.currentUser?.id
+        let epoch = BearyAPI.shared.authEpoch
+        let key = Self.key(for: scope, viewerId: viewerId)
+        let waiter = Waiter(epoch: epoch, viewerId: viewerId, completion: completion)
+        var seenIds = Set<String>()
+        for entry in existing {
+            if let id = entry.id, !id.isEmpty { seenIds.insert(id) }
+        }
+        let page = (before: resumeBefore, beforeId: resumeBeforeId, number: resumePage)
+        fetchNetworkPage(key: key, scope: scope, page: page, collected: existing, seenIds: seenIds) { [weak self] load in
+            guard let self = self else { return }
+            if let load = load, !load.isPartial {
+                self.memoryCache[key] = MemoryEntry(load: load, epoch: epoch, viewerId: viewerId, fetchedAt: Date())
+            }
+            self.deliver(waiter: waiter, load: load)
+        }
+    }
+
+    /// 退出/401 清理：清内存短缓存与在途表；在途等待者按失败结算（nil），
+    /// 页面走既有失败态，不悬在加载态。
+    func invalidateAll() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.invalidateAll() }
+            return
+        }
+        memoryCache.removeAll()
+        let pending = inFlight
+        inFlight.removeAll()
+        for (_, flight) in pending {
+            for waiter in flight.waiters {
+                deliver(waiter: waiter, load: nil)
+            }
+        }
+    }
+
+    // MARK: - 内部分页（与两页现行分页同口径）
+
+    private func startNetwork(key: RequestKey, scope: BearyAPI.Scope, fromPage: (before: Int, beforeId: String, number: Int)?, existing: [Entry], seenIds: Set<String>) {
+        fetchNetworkPage(key: key, scope: scope, page: fromPage, collected: existing, seenIds: seenIds) { [weak self] load in
+            guard let self = self else { return }
+            if let load = load {
+                self.finish(key: key, load: load, cache: !load.isPartial)
+            } else {
+                self.finish(key: key, load: nil, cache: false)
+            }
+        }
+    }
+
+    /// 递归翻页：page == nil 时从头拉；page 有值时从游标续拉。
+    /// 末页不满 50 篇即收尾；满 50 篇且页数到 10 即截断（isCapped）；
+    /// 任一页失败时，已收页作部分结果回（isPartial + 续拉游标），
+    /// 首页面失败则整体失败（nil）。
+    private func fetchNetworkPage(
+        key: RequestKey,
+        scope: BearyAPI.Scope,
+        page: (before: Int, beforeId: String, number: Int)?,
+        collected: [Entry],
+        seenIds: Set<String>,
+        completion: @escaping (SharedEntryLoad?) -> Void
+    ) {
+        let pageNumber = page?.number ?? 1
+        BearyAPI.shared.fetchEntries(scope: scope, limit: Self.pageLimit, before: page?.before, beforeId: page?.beforeId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .failure:
+                    if collected.isEmpty {
+                        completion(nil)
+                    } else {
+                        completion(SharedEntryLoad(
+                            entries: collected, isCapped: false, isPartial: true,
+                            resumeBefore: page?.before, resumeBeforeId: page?.beforeId,
+                            resumePage: pageNumber, source: .network
+                        ))
+                    }
+                case .success(let list):
+                    let pageEntries = list.entries ?? []
+                    var nextCollected = collected
+                    var nextSeenIds = seenIds
+                    for entry in pageEntries {
+                        if let id = entry.id, !id.isEmpty {
+                            if nextSeenIds.contains(id) { continue }
+                            nextSeenIds.insert(id)
+                        }
+                        nextCollected.append(entry)
+                    }
+                    let last = pageEntries.last
+                    if pageEntries.count >= Self.pageLimit, pageNumber < Self.maxPages,
+                       let cursor = last?.createdAt, let lastId = last?.id {
+                        let nextPage = (before: cursor, beforeId: lastId, number: pageNumber + 1)
+                        self.fetchNetworkPage(key: key, scope: scope, page: nextPage, collected: nextCollected, seenIds: nextSeenIds, completion: completion)
+                        return
+                    }
+                    let capped = pageEntries.count >= Self.pageLimit && pageNumber >= Self.maxPages
+                    // 触顶时亦带末页游标：地图“加载更多”从该游标续拉新一批
+                    // （resumePage 从 1 重新计）；末页满页却无游标时不留入口。
+                    completion(SharedEntryLoad(
+                        entries: nextCollected, isCapped: capped, isPartial: false,
+                        resumeBefore: capped ? last?.createdAt : nil,
+                        resumeBeforeId: capped ? last?.id : nil, resumePage: 1, source: .network
+                    ))
+                }
+            }
+        }
+    }
+
+    /// 在途结算：发给全部等待者（逐个校验账号与会话代次），完整网络结果进内存短缓存。
+    private func finish(key: RequestKey, load: SharedEntryLoad?, cache: Bool) {
+        guard let flight = inFlight[key] else { return }
+        inFlight[key] = nil
+        if let load = load, cache, !load.isPartial, let first = flight.waiters.first {
+            // 缓存记发起者的账号与代次（不用结算时现值：中途换号后结算的旧
+            // 回包不得以新号名义入缓存）；下次命中时再由 load 的校验兜底。
+            memoryCache[key] = MemoryEntry(load: load, epoch: first.epoch, viewerId: first.viewerId, fetchedAt: Date())
+        }
+        for waiter in flight.waiters {
+            deliver(waiter: waiter, load: load)
+        }
+    }
+
+    /// 交付守卫：账号或会话代次已变（退出/切号/401 后）的旧回包一律丢弃，
+    /// 按失败结算（nil），不得写回新会话的页面。
+    private func deliver(waiter: Waiter, load: SharedEntryLoad?) {
+        guard waiter.epoch == BearyAPI.shared.authEpoch,
+              SessionManager.shared.currentUser?.id == waiter.viewerId else {
+            waiter.completion(nil)
+            return
+        }
+        waiter.completion(load)
     }
 }
