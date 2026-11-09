@@ -69,11 +69,14 @@ final class BearyLivePhotoLoader {
     private static let diskCacheCapBytes: Int64 = 200 * 1024 * 1024
 
     private let stateLock = NSLock()
-    /// 桶代次：load() 起始桶与上次不同即 +1，旧桶在途任务取消、旧桶回包丢弃。
+    /// 按账号桶的下载代次（与图片加载器 BearyImageLoader.generations 同口径）：
+    /// purgeAccount / 切桶只推进对应桶的代次，该桶在途写入（磁盘 / 内存 /
+    /// 交付）在落点前复核代次，代次已变即弃写；其他桶在途任务不受影响。
     /// 内存键本身也含桶（见 memoryKey），切号后旧号条目即不可达。
-    private var generation = 0
+    private var generations: [String: UInt64] = [:]
     private var activeBucket: String?
-    private var inFlightTasks: [URLSessionDataTask] = []
+    /// 在途网络任务按桶记：切桶 / purge 只取消对应桶的任务，不掐断其他桶。
+    private var inFlightTasks: [String: [URLSessionDataTask]] = [:]
     /// 同一资源对（桶 + liveKey）的在途加载共用一份：滚动复用或重复
     /// configure 撞上同一实况在途加载时只挂等待，不再另发下载，回包
     /// 分发给所有等待方（见 load 的 finish）。
@@ -118,36 +121,46 @@ final class BearyLivePhotoLoader {
         return dir.appendingPathComponent(name)
     }
 
-    private func currentGeneration() -> Int {
+    private func generation(for bucket: String) -> UInt64 {
         stateLock.lock()
         defer { stateLock.unlock() }
-        return generation
+        return generations[bucket] ?? 0
     }
 
-    private func isCurrentGeneration(_ gen: Int) -> Bool {
-        return gen == currentGeneration()
+    private func bumpGeneration(for bucket: String) {
+        stateLock.lock()
+        generations[bucket, default: 0] += 1
+        stateLock.unlock()
+    }
+
+    private func isCurrentGeneration(_ gen: UInt64, bucket: String) -> Bool {
+        return gen == generation(for: bucket)
     }
 
     /// 退出/401 清态：清该账号实况内存 + 磁盘桶（SessionManager 退出路径调用，
     /// 与图片桶 purgeAccount 同口径；切换账号不走这里，旧桶保留、切回可复用）。
+    /// 顺序与图片桶一致：先推进该桶代次（删除前已在途、删除后才到写盘点的
+    /// 旧写入凭代次弃写，不再把已删的私密实况写回来）、取消该桶在途下载，
+    /// 再清内存、串行删目录、清累计字节。
     /// 第七轮审计 06：先推进代次、取消在途下载，再清内存、删目录。代次屏障使
     /// 删除前已在途、删除后才到写盘点的旧下载在完成回调守卫处即被丢弃，不再
     /// 调 writeDisk 重新创建刚删除的目录；取消任务使仍在途的网络任务不再跑
     /// 完整个回调链。只删目录不做这两件，迟到回包会把缓存目录重新建回来
     /// （writeDisk 经 fileURL 先 createDirectory 再写盘）。
     func purgeAccount(_ id: Int) {
+        let bucket = "\(id)"
+        bumpGeneration(for: bucket)
         stateLock.lock()
-        generation += 1
-        let stale = inFlightTasks
-        inFlightTasks.removeAll()
+        let stale = inFlightTasks[bucket] ?? []
+        inFlightTasks[bucket] = nil
         stateLock.unlock()
         stale.forEach { $0.cancel() }
         cache.removeAllObjects()
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
-        let dir = caches.appendingPathComponent("BearyLiveCache").appendingPathComponent("\(id)")
+        let dir = caches.appendingPathComponent("BearyLiveCache").appendingPathComponent(bucket)
         try? FileManager.default.removeItem(at: dir)
         stateLock.lock()
-        diskCacheTotals["\(id)"] = nil
+        diskCacheTotals[bucket] = nil
         stateLock.unlock()
     }
 
@@ -180,8 +193,8 @@ final class BearyLivePhotoLoader {
     /// 第七轮审计 06：写盘前再验一次代次——下载完成回调的守卫与真正落盘之间
     /// 仍有一道窗口（purge 可能正好夹在中间），这里是最后一道门；代次已变
     /// 即弃写，不重新创建刚删除的缓存目录。
-    private func writeDisk(data: Data, key: String, ext: String, bucket: String, generation gen: Int) {
-        guard isCurrentGeneration(gen) else { return }
+    private func writeDisk(data: Data, key: String, ext: String, bucket: String, generation gen: UInt64) {
+        guard isCurrentGeneration(gen, bucket: bucket) else { return }
         guard let file = fileURL(key: key, ext: ext, bucket: bucket) else { return }
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         let oldSize = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
@@ -230,17 +243,17 @@ final class BearyLivePhotoLoader {
         diskCacheTotals[bucket] = total
     }
 
-    private func untrackTask(_ task: URLSessionDataTask) {
+    private func untrackTask(_ task: URLSessionDataTask, bucket: String) {
         stateLock.lock()
-        inFlightTasks.removeAll { $0 === task }
+        inFlightTasks[bucket]?.removeAll { $0 === task }
         stateLock.unlock()
     }
 
-    private func download(url: URL, key: String, ext: String, bucket: String, generation gen: Int, completion: @escaping (Data?) -> Void) {
+    private func download(url: URL, key: String, ext: String, bucket: String, generation gen: UInt64, completion: @escaping (Data?) -> Void) {
         var task: URLSessionDataTask?
         task = session.dataTask(with: url) { [weak self] data, response, _ in
-            if let task = task { self?.untrackTask(task) }
-            guard let self = self, self.isCurrentGeneration(gen),
+            if let task = task { self?.untrackTask(task, bucket: bucket) }
+            guard let self = self, self.isCurrentGeneration(gen, bucket: bucket),
                   let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
                   let data = data, !data.isEmpty else {
                 completion(nil)
@@ -254,7 +267,7 @@ final class BearyLivePhotoLoader {
             return
         }
         stateLock.lock()
-        inFlightTasks.append(task)
+        inFlightTasks[bucket, default: []].append(task)
         stateLock.unlock()
         task.resume()
     }
@@ -265,20 +278,31 @@ final class BearyLivePhotoLoader {
         let bucket = self.bucket()
         stateLock.lock()
         if activeBucket != bucket {
+            // 切桶只失效旧桶：推进旧桶代次、取消旧桶在途任务；新桶代次不动，
+            // 其旧任务早在离开该桶时已失效，切回不重复推进。
+            let oldBucket = activeBucket
+            let stale: [URLSessionDataTask]
+            if let oldBucket = oldBucket {
+                generations[oldBucket, default: 0] += 1
+                stale = inFlightTasks[oldBucket] ?? []
+                inFlightTasks[oldBucket] = nil
+            } else {
+                stale = []
+            }
             activeBucket = bucket
-            generation += 1
-            let stale = inFlightTasks
-            inFlightTasks.removeAll()
             // 旧桶在途加载的等待方仍由各自链路的 finish 分发 nil（任务取消即
             // 回包）；注册表只清旧桶条目，不让新桶同 key 误接旧链（finish
             // 清表时凭对象身份比对，新链不受旧链终结牵连）。
-            inFlightLoads.removeAll()
+            // 键含桶前缀（"桶|liveKey"），按旧桶前缀过滤，只清旧桶条目。
+            if let oldBucket = oldBucket {
+                inFlightLoads = inFlightLoads.filter { !($0.key as String).hasPrefix("\(oldBucket)|") }
+            }
             stateLock.unlock()
             stale.forEach { $0.cancel() }
         } else {
             stateLock.unlock()
         }
-        let gen = currentGeneration()
+        let gen = generation(for: bucket)
         if let cached = cache.object(forKey: memoryKey(bucket: bucket, liveKey: liveKey)) {
             completion(cached)
             return
@@ -310,7 +334,7 @@ final class BearyLivePhotoLoader {
             DispatchQueue.main.async { box.completions.forEach { $0(photo) } }
         }
         Self.diskQueue.async { [weak self] in
-            guard let self = self, self.isCurrentGeneration(gen) else {
+            guard let self = self, self.isCurrentGeneration(gen, bucket: bucket) else {
                 // 过期任务也要结束回调（第七轮审计 07）：finish 在主线程回 nil，
                 // 让视图清掉失败态；直接 return 会丢掉 completion，currentLiveKey
                 // 永久残留，同一张图再 configure 会被跳过、实况永远不再出现。
@@ -329,7 +353,7 @@ final class BearyLivePhotoLoader {
             if videoOnDisk {
                 // 视频已落盘，只下静图。
                 self.download(url: stillURL, key: staticKey, ext: "jpg", bucket: bucket, generation: gen) { [weak self] stillData in
-                    guard let self = self, let stillData = stillData, self.isCurrentGeneration(gen) else {
+                    guard let self = self, let stillData = stillData, self.isCurrentGeneration(gen, bucket: bucket) else {
                         finish(nil)
                         return
                     }
@@ -340,7 +364,7 @@ final class BearyLivePhotoLoader {
             if let stillData = stillData {
                 // 静图已落盘，只下视频。
                 self.download(url: videoURL, key: liveKey, ext: "mov", bucket: bucket, generation: gen) { [weak self] videoData in
-                    guard let self = self, videoData != nil, self.isCurrentGeneration(gen) else {
+                    guard let self = self, videoData != nil, self.isCurrentGeneration(gen, bucket: bucket) else {
                         finish(nil)
                         return
                     }
@@ -349,12 +373,12 @@ final class BearyLivePhotoLoader {
                 return
             }
             self.download(url: videoURL, key: liveKey, ext: "mov", bucket: bucket, generation: gen) { [weak self] videoData in
-                guard let self = self, videoData != nil, self.isCurrentGeneration(gen) else {
+                guard let self = self, videoData != nil, self.isCurrentGeneration(gen, bucket: bucket) else {
                     finish(nil)
                     return
                 }
                 self.download(url: stillURL, key: staticKey, ext: "jpg", bucket: bucket, generation: gen) { stillData in
-                    guard let stillData = stillData, self.isCurrentGeneration(gen) else {
+                    guard let stillData = stillData, self.isCurrentGeneration(gen, bucket: bucket) else {
                         finish(nil)
                         return
                     }
@@ -411,7 +435,7 @@ final class BearyLivePhotoLoader {
         return data as Data
     }
 
-    private func buildLivePhoto(stillData: Data, bucket: String, liveKey: String, staticKey: String, generation gen: Int, contentMode: PHImageContentMode, completion: @escaping (PHLivePhoto?) -> Void) {
+    private func buildLivePhoto(stillData: Data, bucket: String, liveKey: String, staticKey: String, generation gen: UInt64, contentMode: PHImageContentMode, completion: @escaping (PHLivePhoto?) -> Void) {
         guard let videoFile = self.fileURL(key: liveKey, ext: "mov", bucket: bucket),
               let stillFile = self.fileURL(key: staticKey, ext: "jpg", bucket: bucket),
               FileManager.default.fileExists(atPath: videoFile.path),
@@ -451,7 +475,7 @@ final class BearyLivePhotoLoader {
             }
             DispatchQueue.main.async {
                 // 桶已切换的回包直接丢弃、不进新桶内存缓存（视图层 token 同样守门）。
-                guard let photo = photo, let self = self, self.isCurrentGeneration(gen) else {
+                guard let photo = photo, let self = self, self.isCurrentGeneration(gen, bucket: bucket) else {
                     completion(nil)
                     return
                 }
