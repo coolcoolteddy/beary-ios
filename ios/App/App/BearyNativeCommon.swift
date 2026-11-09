@@ -3088,6 +3088,8 @@ enum BearyIdentityGuard {
 /// 使在途旧刷新失效——本地改动本身就是比旧快照更新的真相，旧回包不得再把
 /// 刚保存的新状态整表覆掉（内存和磁盘同时抹掉）；再拉一次服务端名单是可选
 /// 加固，不是必需（服务端仍是真相源，下次登录重拉即对）。
+/// R22-B7：补一次 refresh 向服务端对齐——服务端已确认本次操作，新回包必含
+/// 它；补查询若被更晚的本地确认超前，同样由代次丢弃、由那次确认的补查询收尾。
 enum BearyBlockedStore {
     private static let baseKey = "beary.blockedUserIds"
     private static var cached: Set<Int>?
@@ -3152,6 +3154,9 @@ enum BearyBlockedStore {
         // 第六轮审计 01：本地拉黑即最新真相，使在途旧刷新失效，旧回包不得
         // 再把刚保存的状态整表覆掉（refresh 回包凭 seq == refreshSeq 守门）。
         refreshSeq += 1
+        // R22-B7：补一次 refresh 向服务端对齐（服务端已确认本次拉黑，新回包
+        // 必含它；补查询若被更晚的本地确认超前，同样由代次丢弃）。
+        refresh()
     }
 
     static func removeBlocked(_ userId: Int) {
@@ -3162,6 +3167,9 @@ enum BearyBlockedStore {
         }
         // 第六轮审计 01：同 markBlocked，本地解除即最新真相，旧刷新回包失效。
         refreshSeq += 1
+        // R22-B7：同 markBlocked，补一次 refresh，刚解除的人不因旧名单迟到
+        // 被放回来。
+        refresh()
     }
 
     /// 退出/游客时清内存（SceneDelegate applyLoginState 调用点不动）：
