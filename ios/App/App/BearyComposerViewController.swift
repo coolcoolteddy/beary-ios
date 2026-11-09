@@ -6883,9 +6883,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 内存槽位（currentDraftId / draftClientReq / 发布绑定 / 状态行）只在
     /// 仍是提交的那篇时清；已切篇时原样保留新篇状态。
     private func clearPublishedDraft(snapshot: PublishSnapshot) {
-        for name in snapshot.imageLocalFiles {
-            BearyDraftImageStore.deletePair(fullName: name)
-        }
+        // #1033 收尾：删图走后台队列，不堵发布成功退场；被清记录正在删除，
+        // 引用核对时排除它（磁盘记录尚未落盘删除），其他篇引用仍保护文件。
+        BearyDraftImageStore.deletePairsIfUnreferencedAsync(snapshot.imageLocalFiles, excludingDraftId: snapshot.draftId)
         if let draftIdValue = snapshot.draftId {
             BearyDraftStore.deleteAsync(draftId: draftIdValue, forAccount: snapshot.accountId) { [weak self] in
                 self?.refreshDraftPillWidth()
