@@ -938,8 +938,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     // 审计四轮增量 12：待发在回包时刻才取——请求在途时新建或
                     // 恢复的待发也须留住，请求前取值会被整表覆盖吞掉。
                     let fetched = self.resolvedSenders(Array(history.resolvedMessages.reversed()))
-                    // 读改写走后台串行队列：save 直接回合并后的本会话消息，不再重读一次。
-                    BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched) { [weak self] merged in
+                    // 落盘与刷新分两路：本地库已损坏时（A2）不调 saveMessages，
+                    // 直接用已拉到的消息刷新；其余走原 saveMessages 回包合并；
+                    // 两路共享同一套刷新尾巴（锚点保位、新消息 pill、重标已读）。
+                    let applyMerged: ([BearyAPI.DMMessage]) -> Void = { [weak self] merged in
                         guard let self = self else { return }
                         let pending = self.pendingTemps()
                         self.messages = merged
@@ -990,6 +992,20 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                             self.didMarkRead = false
                         }
                         self.markReadIfNeeded()
+                    }
+                    if BearyDMStore.isCorrupt(accountId: self.storeAccountId) {
+                        // A2：旧库暂时读不出——不调 saveMessages（空字典重建整份
+                        // 账号档案会抹掉其他会话的本地历史），也不从损坏的库重读
+                        //（读失败返空字典会把刚拉到的消息读丢）；已拉到的消息先在
+                        // 会话里显示，原件留给后续恢复。
+                        applyMerged(fetched)
+                        BearyToast.show(in: self.view, message: "手机里的旧消息暂时读不出来")
+                    } else {
+                        // 读改写走后台串行队列：save 直接回合并后的本会话消息，不再重读一次。
+                        BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched) { [weak self] merged in
+                            guard let self = self else { return }
+                            applyMerged(merged)
+                        }
                     }
                 case .failure(let error):
                     if error.isDMNotAllowed {
@@ -1052,9 +1068,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.hasMoreOlder = history.resolvedMessages.count >= 30
                     // 2026-11-04 乐观发送：翻旧回包同样先留住待发行再拼回末尾，
                     // 否则在途/失败的待发会被整表覆盖吞掉（翻旧取的是更早页，
-                    // 不可能含待发，无需配对认领、直接拼回）。待发在回包时刻才取，
-                    // 见 loadLatest（审计四轮增量 12）。
-                    BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older) { [weak self] merged in
+                    // 不可能含待发，无需配对认领、直接拼回）。
+                    // 落盘分两路：本地库已损坏时（A2）不调 saveMessages，直接把
+                    // 已拉到的更早消息并入内存会话；其余走原 saveMessages 回包
+                    // 合并；两路共享同一套刷新尾巴（锚点保位、排队刷新）。
+                    let applyMerged: ([BearyAPI.DMMessage]) -> Void = { [weak self] merged in
                         guard let self = self else { return }
                         let pending = self.pendingTemps()
                         self.messages = merged
@@ -1076,6 +1094,20 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         if self.refreshQueued {
                             self.refreshQueued = false
                             self.loadLatest()
+                        }
+                    }
+                    if BearyDMStore.isCorrupt(accountId: self.storeAccountId) {
+                        // A2：同最新页——旧库损坏时不调 saveMessages、不从损坏的
+                        // 库重读；已拉到的更早消息直接并入内存会话（待发行先摘
+                        // 出再拼回，防重复），原件留给后续恢复。
+                        let base = self.messages.filter { $0.localKey == nil }
+                        applyMerged((older + base).sorted { ($0.id ?? 0) < ($1.id ?? 0) })
+                        BearyToast.show(in: self.view, message: "手机里的旧消息暂时读不出来")
+                    } else {
+                        // 待发在回包时刻才取，见 loadLatest（审计四轮增量 12）。
+                        BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older) { [weak self] merged in
+                            guard let self = self else { return }
+                            applyMerged(merged)
                         }
                     }
                 case .failure:
