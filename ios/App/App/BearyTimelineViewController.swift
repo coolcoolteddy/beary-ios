@@ -24,12 +24,12 @@ import UIKit
 
 // MARK: - 日历接口模型（BearyAPI.request + convertFromSnakeCase 解码）
 
-struct BearyCalendarDayCount: Decodable {
+struct BearyCalendarDayCount: Codable {
     var pub: Int?
     var priv: Int?
 }
 
-struct BearyCalendarMonthResponse: Decodable {
+struct BearyCalendarMonthResponse: Codable {
     var month: String?
     var days: [String: BearyCalendarDayCount]?
     var monthTotal: Int?
@@ -661,12 +661,19 @@ final class BearyCalendarCardView: UIView {
         }
     }
 
-    /// R15-L1：日历失败行显隐（任一可视月份失败且无缓存即显，见 VC
+    /// R15-L1：日历失败行显隐（任一可视月份失败即显，见 VC
     /// updateStatsLine；成功/切走即藏）。返回是否真的改了显隐——VC 据此
     /// 决定要不要重算表头高度（行高约 20pt，显隐即表头高度变化）。
+    /// r17-C1：文案三态由调用方按失败/缓存组合传入（无数据「日历加载失败」、
+    /// 有旧快照「显示的是上次的数据」、只到一部分「只加载了一部分」）；
+    /// 文案只在显行时写，藏行时不动（下次显时再写）。
     @discardableResult
-    func setLoadFailed(_ failed: Bool) -> Bool {
+    func setLoadFailed(_ failed: Bool, text: String = "日历加载失败") -> Bool {
         let shouldHide = !failed
+        if failed {
+            calendarFailedLabel.text = text
+            calendarFailedRetryButton.accessibilityLabel = text + "，重试"
+        }
         guard calendarFailedRow.isHidden != shouldHide else { return false }
         calendarFailedRow.isHidden = shouldHide
         return true
@@ -2242,6 +2249,13 @@ class BearyTimelineViewController: UIViewController {
     private var calendarCache: [String: BearyCalendarMonthResponse] = [:]
     private var calendarFetching: Set<String> = []
     private var calendarFailed: Set<String> = []
+    /// r17-C1：跨日恢复的月份 key——落盘 streak 是服务端按落盘当天算的，
+    /// 跨日后未重新确认，统计行不报该 streak（只报本月篇数），直至刷新到达。
+    private var calendarStreakUnknownKeys: Set<String> = []
+    /// r17-C1：已尝试过落盘恢复的月份 key（无文件时不再重复读盘；
+    /// 账号切换清掉；invalidateStatsLine 不清——删缓存后走网络重拉，
+    /// 不得用旧落盘把刚失效的缓存顶回去）。
+    private var calendarSnapshotRestoreTried: Set<String> = []
     /// 64 包反馈修（第 3 项）+ 本批新规矩：统计行已渲染数值（streak|monthTotal，
     /// 失败/空态另计）。签名故意不含月份 key——切月时数值不变即一字不碰按钮，
     /// 旧签名含月份 key 是闪的根因（数值未变仍整行 setAttributedTitle 重建）。
@@ -2348,9 +2362,16 @@ class BearyTimelineViewController: UIViewController {
         dayEntriesCache.removeAll()
         dayCacheVersions.removeAll()
         dayPrefetchInFlight.removeAll()
-        // R15 P2-7：磁盘预读在途集合同清——旧账号的读在回填前有 uid 校验
+        // R15 P2-7：磁盘预读在途集合同样清——旧账号的读在回填前有 uid 校验
         // 不会污染新账号，但不占位，新账号同日可立即重读。
         dayDiskLoadInFlight.removeAll()
+        // r17-C1：内存月历缓存同样不跨账号（此前只清日缓存；旧号的圆点/
+        // 统计会先闪在新号页上，直至网络回包纠正）。落盘按 uid 分桶不动，
+        // 切号后恢复走新号自己的落盘（见 fetchCalendarMonthsForCurrentView）。
+        calendarCache.removeAll()
+        calendarFailed.removeAll()
+        calendarStreakUnknownKeys.removeAll()
+        calendarSnapshotRestoreTried.removeAll()
     }
     /// 相邻日预取在途集合（key=北京日）：独立通道专用，与正向单槽
     /// （dayKeyForLoad + dayState）完全分开；同日只发一次，失败不留痕。
@@ -4301,6 +4322,10 @@ class BearyTimelineViewController: UIViewController {
         lastStatsMonthTotal = nil
         for key in monthKeysForCurrentView() {
             calendarCache.removeValue(forKey: key)
+            // r17-C1：落盘恢复的旧数据标记随缓存一起摘（统计不再认旧）；
+            // calendarSnapshotRestoreTried 故意不清——删缓存后走网络重拉，
+            // 不得用旧落盘把刚失效的缓存顶回去。
+            calendarStreakUnknownKeys.remove(key)
         }
     }
     private var lastStatsLineSignature: String?
@@ -4329,10 +4354,27 @@ class BearyTimelineViewController: UIViewController {
         let primaryKey = primaryStatsMonthKey()
         let visibleKeys = monthKeysForCurrentView()
         let anyVisibleFailed = visibleKeys.contains { calendarFailed.contains($0) && calendarCache[$0] == nil }
+        // r17-C1 三态（原横条文案，R15-L1 后改写进卡内失败行，位置仍只留卡内
+        // 一处）：可视月里有失败且全无数据 →「日历加载失败」；有失败但有旧快照
+        // 可画 →「显示的是上次的数据」；有失败且其余月已画出（周跨月只到一部
+        // 分）→「只加载了一部分」。任一可视月失败即显卡内失败行，重试走
+        // didTapStats 强制重拉失败月；其余月/落盘已有数据时统计行走正常统计，
+        // 不抢文案。
+        let failedUncached = visibleKeys.filter { calendarFailed.contains($0) && calendarCache[$0] == nil }
+        let failedStale = visibleKeys.filter { calendarFailed.contains($0) && calendarCache[$0] != nil }
+        let anyVisibleCached = visibleKeys.contains { calendarCache[$0] != nil }
+        let failedText: String
+        if !failedUncached.isEmpty, anyVisibleCached {
+            failedText = "只加载了一部分"
+        } else if !failedStale.isEmpty, failedUncached.isEmpty {
+            failedText = "显示的是上次的数据"
+        } else {
+            failedText = "日历加载失败"
+        }
         // R15-L1：卡内失败行先于统计行签名守卫更新——失败签名不变时统计行
         // 提前返回，但切月/重试后失败态可能已变，卡内行的显隐必须每次重算
         //（不靠签名守卫）；显隐真变时重算表头高度（失败行约 20pt）。
-        if calendarCard.setLoadFailed(anyVisibleFailed) {
+        if calendarCard.setLoadFailed(!failedUncached.isEmpty || !failedStale.isEmpty, text: failedText) {
             refreshHeaderHeight()
         }
         if anyVisibleFailed {
@@ -4369,6 +4411,24 @@ class BearyTimelineViewController: UIViewController {
         // 整行 setAttributedTitle 重建 → 闪；容器/表头在此路径下本就不重建，
         // 闪只来自本行标题重建，不是 stepCalendar/renderCalendar 重建容器）。
         // 数值真变时只换数字段（下分支），静态段与火苗图标一律不动。
+        // r17-C1：跨日恢复的 streak 未重新确认（nil）时不报连续天数，
+        // 只报本月篇数；刷新到达后恢复完整行（见 fetch 成功处摘未知态）。
+        // 服务端直接回 streak 缺失时未知态不含该月（见恢复体），走下方的 ?? 0 旧口径。
+        if data.streak == nil, calendarStreakUnknownKeys.contains(primaryKey) {
+            let signature = "month-only"
+            guard signature != lastStatsLineSignature else { return }
+            lastStatsLineSignature = signature
+            lastStatsStreak = nil
+            lastStatsMonthTotal = data.monthTotal ?? 0
+            statsButton.isEnabled = false
+            statsButton.accessibilityLabel = "本月共 \(data.monthTotal ?? 0) 篇，连续天数待刷新确认"
+            statsButton.setImage(nil, for: .normal)
+            statsButton.setAttributedTitle(nil, for: .normal)
+            statsButton.setTitle("本月共 \(data.monthTotal ?? 0) 篇", for: .normal)
+            statsButton.setTitleColor(BearyColors.gray, for: .normal)
+            fadeButtonTitle(statsButton)
+            return
+        }
         let streak = data.streak ?? 0
         let monthTotal = data.monthTotal ?? 0
         // R15-L1：统计行恒不可点——禁用即去掉按压反馈（touchDown 缩放/震动
@@ -4951,6 +5011,9 @@ class BearyTimelineViewController: UIViewController {
 
     private func fetchCalendarMonthsForCurrentView() {
         let keys = monthKeysForCurrentView()
+        // r17-C1：进页先恢复落盘圆点、再刷新当前月——内存未命中且未尝试过
+        // 恢复的月份先走落盘（恢复体里按需强制刷新，见 restoreCalendarSnapshots）。
+        restoreCalendarSnapshots(keys: keys)
         for key in keys {
             fetchCalendarMonth(key: key)
         }
@@ -4975,18 +5038,65 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
+    /// r17-C1 月历落盘恢复：对未命中内存且未尝试过的月份读落盘（见
+    /// BearyCalendarSnapshotStore）。恢复只填内存空缺——网络已先到时不覆盖；
+    /// 恢复当月（savedDayKey == 今天）原样用服务端响应；跨日恢复只用日计数
+    /// 与月总数，streak 丢掉待刷新确认（服务端 streak 按当天算，本地不重算）。
+    /// 恢复后立即强制刷新该月（SWR：先画上次的圆点，再用网络确认），刷新
+    /// 在途时 fetchCalendarMonth 的 calendarFetching 守卫会挡下重复请求。
+    /// 账号/会话代次校验在 store 的回包处做（见 load 的 completion 守卫），
+    /// 这里再验一次 uid 与代次——恢复期间切号则丢弃，不把旧号圆点画到新号页上。
+    private func restoreCalendarSnapshots(keys: [String]) {
+        guard let uid = SessionManager.shared.currentUser?.id else { return }
+        let generation = SessionManager.shared.currentSessionGeneration
+        for key in keys {
+            guard calendarCache[key] == nil, !calendarSnapshotRestoreTried.contains(key) else { continue }
+            calendarSnapshotRestoreTried.insert(key)
+            BearyCalendarSnapshotStore.load(accountId: uid, monthKey: key, sessionGeneration: generation) { [weak self] snapshot in
+                guard let self = self else { return }
+                guard let snapshot = snapshot else { return }
+                guard SessionManager.shared.currentUser?.id == uid,
+                      SessionManager.shared.currentSessionGeneration == generation else { return }
+                guard self.calendarCache[key] == nil else { return }
+                let todayKey = BearyBeijingDay.todayComponents().map { BearyBeijingDay.dayKey(year: $0.year, month: $0.month, day: $0.day) }
+                var response = snapshot.response
+                if snapshot.savedDayKey != todayKey {
+                    // 跨日：streak 未重新确认，丢掉（统计行只报本月篇数）；
+                    // 日计数与月总数是历史事实，保留。
+                    response.streak = nil
+                    self.calendarStreakUnknownKeys.insert(key)
+                }
+                self.calendarCache[key] = response
+                self.renderCalendar()
+                self.updateStatsLine()
+                // 恢复即强制刷新确认（失败则留旧圆点 + 卡内失败行写上次的数据）。
+                self.fetchCalendarMonth(key: key, force: true)
+            }
+        }
+    }
+
     private func fetchCalendarMonth(key: String, force: Bool = false) {
         if !force && calendarCache[key] != nil { return }
         if calendarFetching.contains(key) { return }
         calendarFetching.insert(key)
+        let requestUid = SessionManager.shared.currentUser?.id
         BearyAPI.shared.fetchCalendar(month: key) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.calendarFetching.remove(key)
+                // r17-C1：回包时账号已变（切号/登出）即丢弃——旧号月历不得写进
+                // 新号内存缓存，更不得落进新号的盘（落盘按 uid 分桶，见成功分支）。
+                guard SessionManager.shared.currentUser?.id == requestUid else { return }
                 switch result {
                 case .success(let data):
                     strongSelf.calendarCache[key] = data
                     strongSelf.calendarFailed.remove(key)
+                    // r17-C1：成功即落盘（原样存服务端响应，streak 不重算）；
+                    // 刷新到达后该月不再是「上次的数据」，streak 未知态一并摘掉。
+                    strongSelf.calendarStreakUnknownKeys.remove(key)
+                    if let uid = requestUid {
+                        BearyCalendarSnapshotStore.save(accountId: uid, monthKey: key, response: data)
+                    }
                 case .failure(let error):
                     strongSelf.calendarFailed.insert(key)
                     // 翻页失败清挂起：残留 pendingStepFollow 不得在之后某次
@@ -6373,9 +6483,11 @@ class BearyTimelineViewController: UIViewController {
 
     @objc private func didTapStats() {
         // G14：重试全部可视失败月份（周视图跨月时次要月份也有入口，不只主月份）。
+        // r17-C1：失败月即使已有落盘旧数据也要强制重拉——旧圆点只是上次的，
+        // 卡内失败行「显示的是上次的数据」的重试必须真发请求，否则点按无反应。
         for key in monthKeysForCurrentView() {
-            if calendarFailed.contains(key) && calendarCache[key] == nil {
-                fetchCalendarMonth(key: key)
+            if calendarFailed.contains(key) {
+                fetchCalendarMonth(key: key, force: true)
             }
         }
     }
@@ -6827,5 +6939,111 @@ enum BearyTimelinePrefetch {
         prefetchGeneration += 1
         pendingWorkItem?.cancel()
         pendingWorkItem = nil
+    }
+}
+
+/// r17-C1 月历快照落盘：按「账号 + 北京时间年月」存服务端月历响应原样
+/// （days 日计数 + monthTotal + streak，streak 是服务端算的、本地不重算）。
+/// 目录：Application Support / beary_calendar_snapshot_<uid>/，文件 <YYYY-MM>.json。
+/// 存在即「该月已确认」（days 为空/全 0 就是确认当月为空），缺失/损坏才是
+/// 「这个月没缓存」——圆点层用 calendarCache 有无区分，落盘层用文件有无区分。
+/// 退出/401 清理走 SessionManager.purgeLocalSnapshotsForCurrentAccount。
+enum BearyCalendarSnapshotStore {
+    static let directoryPrefix = "beary_calendar_snapshot"
+
+    private static let ioQueue = DispatchQueue(label: "beary.calendarSnapshot.io", qos: .utility)
+    /// 审计 22 项同款代次（见 BearyTimelineCache）：purge 推进代次、删除进
+    /// ioQueue；purge 前排队的写被弃写、读改发 nil。另有 SessionManager 的
+    /// 会话代次（load completion 处验），两者各司其职：本地代次拦 purge
+    /// 前的旧任务，会话代次拦跨会话（登出/切号/401）的旧回包。
+    private static let generationLock = NSLock()
+    private static var generations: [String: UInt64] = [:]
+
+    private static func generation(for bucket: String) -> UInt64 {
+        generationLock.lock()
+        defer { generationLock.unlock() }
+        return generations[bucket] ?? 0
+    }
+
+    private static func bumpGeneration(for bucket: String) {
+        generationLock.lock()
+        generations[bucket, default: 0] += 1
+        generationLock.unlock()
+    }
+
+    /// 快照体：服务端响应原样 + 落盘时的北京日（跨日恢复时 streak 作废的依据）
+    /// + 落盘时间戳。
+    struct Snapshot: Codable {
+        var savedAt: TimeInterval
+        var savedDayKey: String
+        var response: BearyCalendarMonthResponse
+    }
+
+    private static func fileURL(accountId: Int, monthKey: String) -> URL? {
+        guard let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return dir.appendingPathComponent("\(directoryPrefix)_\(accountId)").appendingPathComponent("\(monthKey).json")
+    }
+
+    /// 读盘（异步，ioQueue 上读 + 解码，主线程回包）：文件缺失/损坏发 nil；
+    /// 回包前验两道——本地 purge 代次（期间 purge 过即 nil）与调用方传入的
+    /// 会话代次（SessionManager.currentSessionGeneration，期间登出/切号/
+    /// 401 即 nil）。
+    static func load(accountId: Int, monthKey: String, sessionGeneration: Int, completion: @escaping (Snapshot?) -> Void) {
+        let bucket = "\(accountId)"
+        let capturedLocal = generation(for: bucket)
+        ioQueue.async {
+            var result: Snapshot?
+            if let url = fileURL(accountId: accountId, monthKey: monthKey),
+               let data = try? Data(contentsOf: url),
+               let snap = try? JSONDecoder().decode(Snapshot.self, from: data) {
+                result = snap
+            }
+            if capturedLocal != generation(for: bucket) { result = nil }
+            let captured = result
+            DispatchQueue.main.async {
+                // 会话代次是真凭据：读盘期间登出/切号/401 都会 +1，旧回包一律丢弃。
+                guard SessionManager.shared.currentUser?.id == accountId,
+                      SessionManager.shared.currentSessionGeneration == sessionGeneration else {
+                    completion(nil)
+                    return
+                }
+                completion(captured)
+            }
+        }
+    }
+
+    /// 写盘（异步，不卡主线程）：编码/建目录/原子写任一步失败记一条日志
+    /// （调用方在 fetch 成功处调，失败不影响内存态，下次成功再写）。
+    /// purge 前已排队的写被代次屏障弃写。
+    static func save(accountId: Int, monthKey: String, response: BearyCalendarMonthResponse) {
+        let bucket = "\(accountId)"
+        let capturedLocal = generation(for: bucket)
+        let dayKey = BearyBeijingDay.todayComponents().map { BearyBeijingDay.dayKey(year: $0.year, month: $0.month, day: $0.day) } ?? ""
+        let snap = Snapshot(savedAt: Date().timeIntervalSince1970, savedDayKey: dayKey, response: response)
+        ioQueue.async {
+            guard capturedLocal == generation(for: bucket) else { return }
+            guard let url = fileURL(accountId: accountId, monthKey: monthKey),
+                  let data = try? JSONEncoder().encode(snap) else {
+                NSLog("[BearyCalendarSnapshot] encode failed month=%@", monthKey)
+                return
+            }
+            do {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: url, options: .atomic)
+            } catch {
+                NSLog("[BearyCalendarSnapshot] write failed month=%@ error=%@", monthKey, error as NSError)
+            }
+        }
+    }
+
+    /// 退出/401 清理：只删传入账号的桶，不碰其他账号；删除进 ioQueue，
+    /// 代次屏障先弃写 purge 前排队的读写。
+    static func purge(accountId: Int) {
+        let bucket = "\(accountId)"
+        bumpGeneration(for: bucket)
+        ioQueue.async {
+            guard let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("\(directoryPrefix)_\(accountId)", isDirectory: true) else { return }
+            try? FileManager.default.removeItem(at: dir)
+        }
     }
 }
