@@ -11,6 +11,15 @@ import Foundation
 // 损坏绝不能当成空库。损坏时禁止覆盖：原文件不动，另存一份时间戳 .bak，
 // saveMessages 只回本次服务端新消息、不写盘；恢复/丢弃入口见
 // restoreCorruptBackup / discardCorruptStore。损坏态只在 ioQueue 内登记。
+// 第七轮 #4：持久化不再走主线程同步整库读写。旧路径在网络回包的主线程
+// 回调里调 saveMessages（整份 JSON 同步读、解码、合并、编码、原子写），
+// 紧接着 messages() 又把整份文件读解码一次；文件随服务端 7 天保留＋
+// 本地长期保留不断增长，主线程卡顿随之变长。
+// 现行：全部磁盘读写只走 ioQueue（主线原有串行队列）；每账号整库在内存
+// 里只保留一份索引（首次访问时懒加载一次，之后写只做合并＋编码＋原子
+// 写，不再重复读盘解码）；调用方只拿排序好的结果回调（主线程派发）。
+// 并发写由串行队列排队，绝不丢批、不串号。损坏不进索引（见 cachedAll），
+// 损坏时仍按审计四轮 01 禁止覆盖写盘。
 
 enum BearyDMStore {
 
@@ -42,7 +51,13 @@ enum BearyDMStore {
     // 读盘结果见 BearyDMStoreCore.LoadOutcome：缺文件（首次用）与文件损坏严格区分，损坏绝不能当成空库。
     /// 仅测试用：覆盖 ApplicationSupport 根目录（默认 nil 走系统目录）。
     /// 单测把它指到临时目录，直接跑真实文件的损坏/写盘失败/切号路径。
-    static var testBaseDirectory: URL?
+    static var testBaseDirectory: URL? {
+        didSet {
+            // 换目录即清内存索引：单测每测换临时目录，旧目录的数据不得串进新目录；
+            // 只在 ioQueue 内读写索引（syncOnIO 排队，队列内重入直接执行）。
+            syncOnIO { memoryIndex = [:] }
+        }
+    }
 
     // 全仓私信文件读写唯一串行队列：读改写都在这里排队，主线程只发任务；
     // 同步入口（会话列表合并）经 syncOnIO，队列内重入直接执行不死锁。
@@ -61,6 +76,31 @@ enum BearyDMStore {
     private static func baseDirectory() -> URL? {
         if let test = testBaseDirectory { return test }
         return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    }
+
+    /// 内存索引：账号 id → 整库会话字典。只在 ioQueue 上读写，锁外绝不触碰。
+    /// 首次访问某账号时从磁盘懒加载一次并缓存；之后每次 save 只在内存里
+    /// 合并、编码整库原子写回，不再读盘解码。账号键隔离：不同账号各占一条目，
+    /// 切号不串读；账号上限 3 个，常驻量与单文件量级一致（旧 loadAll 的整库
+    /// 字典本就是每次调用的临时常驻量，新索引只是把它留了下来，不另增量级）。
+    private static var memoryIndex: [Int: [String: StoredConversation]] = [:]
+
+    /// 取某账号整库（只在 ioQueue 上调）。返回整库与是否损坏：
+    /// .loaded 缓存并返回；.missing 缓存 [:] 返回 [:]；
+    /// .corrupt 返回 [:] 但不缓存——否则下次 save 会把损坏文件覆盖掉，
+    /// 这是相对审计四轮 01 的回归。损坏登记仍由 loadAll 完成。
+    private static func cachedAll(accountId: Int) -> (all: [String: StoredConversation], corrupt: Bool) {
+        if let cached = memoryIndex[accountId] { return (cached, false) }
+        switch loadAll(accountId: accountId) {
+        case .loaded(let all):
+            memoryIndex[accountId] = all
+            return (all, false)
+        case .missing:
+            memoryIndex[accountId] = [:]
+            return ([:], false)
+        case .corrupt:
+            return ([:], true)
+        }
     }
 
     private static func fileURL(forAccount accountId: Int?) -> URL? {
@@ -119,6 +159,7 @@ enum BearyDMStore {
                 try FileManager.default.copyItem(at: backup, to: url)
                 corruptAccountIds.remove(accountId)
                 corruptBackupAccountIds.remove(accountId)
+                memoryIndex.removeValue(forKey: accountId)
                 DispatchQueue.main.async { completion(true) }
             } catch {
                 DispatchQueue.main.async { completion(false) }
@@ -140,6 +181,7 @@ enum BearyDMStore {
                 try FileManager.default.removeItem(at: url)
                 corruptAccountIds.remove(accountId)
                 corruptBackupAccountIds.remove(accountId)
+                memoryIndex.removeValue(forKey: accountId)
                 DispatchQueue.main.async { completion(true) }
             } catch {
                 DispatchQueue.main.async { completion(false) }
@@ -201,17 +243,15 @@ enum BearyDMStore {
 
     /// 该会话本地消息（按 id 升序；无 id/无 senderId 的脏行跳过）。
     /// 异步读盘：文件 I/O 走后台串行队列，结果回主线程。
+    /// 第七轮 #4：整库取自内存索引，不再每次读盘解码。
     /// 损坏时回空数组（原文件已保留备份，见 isStoreCorrupt）。
     static func messages(accountId: Int?, peerId: Int, completion: @escaping ([BearyAPI.DMMessage]) -> Void) {
+        guard let accountId = accountId else {
+            DispatchQueue.main.async { completion([]) }
+            return
+        }
         ioQueue.async {
-            let stored: [StoredMessage]
-            switch loadAll(accountId: accountId) {
-            case .loaded(let all):
-                stored = all["\(peerId)"]?.messages ?? []
-            case .missing, .corrupt:
-                stored = []
-            }
-            let result = dmMessages(from: stored)
+            let result = dmMessages(from: cachedAll(accountId: accountId).all["\(peerId)"]?.messages ?? [])
             DispatchQueue.main.async { completion(result) }
         }
     }
@@ -227,58 +267,58 @@ enum BearyDMStore {
     /// 按 id 去重并入本地（服务端回包与本地旧行同 id 时服务端为准），对方展示信息同步最新。
     /// 读改写在后台串行队列一次完成，直接回合并后的本会话消息，不再重读一次。
     /// 损坏时禁止覆盖：只回本次服务端新消息，不写盘、不动原文件。
-    static func saveMessages(accountId: Int?, peer: BearyAPI.FriendUser, messages: [BearyAPI.DMMessage], completion: @escaping ([BearyAPI.DMMessage]) -> Void) {
+    /// 第七轮 #4：整库取自内存索引（cachedAll），不再每次读盘解码；写回时同步更新索引。
+    /// completion 为空时仍照常落盘（只不要回包结果的调用方可省回调）。
+    static func saveMessages(accountId: Int?, peer: BearyAPI.FriendUser, messages: [BearyAPI.DMMessage], completion: (([BearyAPI.DMMessage]) -> Void)? = nil) {
         ioQueue.async {
-            guard let peerId = peer.id else {
-                DispatchQueue.main.async { completion([]) }
+            guard let accountId = accountId, let peerId = peer.id else {
+                DispatchQueue.main.async { completion?([]) }
                 return
             }
-            let base: [String: StoredConversation]
-            switch loadAll(accountId: accountId) {
-            case .corrupt:
+            let (base, corrupt) = cachedAll(accountId: accountId)
+            if corrupt {
                 let fresh = dmMessages(from: messages.map {
                     StoredMessage(id: $0.id, senderId: $0.senderId, body: $0.body, createdAt: $0.createdAt)
                 })
-                DispatchQueue.main.async { completion(fresh) }
+                DispatchQueue.main.async { completion?(fresh) }
                 return
-            case .missing:
-                base = [:]
-            case .loaded(let all):
-                base = all
             }
             let mergedAll = BearyDMStoreCore.merge(base, peer: peer, messages: messages)
+            memoryIndex[accountId] = mergedAll
             saveAll(mergedAll, accountId: accountId)
             let merged = dmMessages(from: mergedAll["\(peerId)"]?.messages ?? [])
-            DispatchQueue.main.async { completion(merged) }
+            DispatchQueue.main.async { completion?(merged) }
         }
     }
 
     /// 审计四轮 10（完整备份）：全部本地会话（含对方信息与全部消息，
     /// 按最后消息时间倒序）。只读，不改库；损坏文件时 loadAll 按现行
     /// 口径回空（损坏保护另见审计四轮 01，不在本项改）。
+    /// 第七轮 #4：整库取自内存索引；同步入口经 syncOnIO 与后台读改写互斥。
     static func allConversations(accountId: Int?) -> [StoredConversation] {
-        switch loadAll(accountId: accountId) {
-        case .loaded(let all):
+        guard let accountId = accountId else { return [] }
+        return syncOnIO {
+            let (all, corrupt) = cachedAll(accountId: accountId)
+            guard !corrupt else { return [] }
             return all.values.sorted {
                 ($0.messages.last?.createdAt ?? 0) > ($1.messages.last?.createdAt ?? 0)
             }
-        case .missing, .corrupt:
-            return []
         }
     }
 
     /// 仅本地有消息的会话（供会话列表与服务端列表合并；无消息的空会话不算）。
     /// 损坏时按空库处理（原文件已保留备份，不拿坏数据拼会话）。
+    /// 第七轮 #4：整库取自内存索引（cachedAll）。
     static func localConversations(accountId: Int?) -> [LocalConversation] {
         // 同步入口也走同一串行队列：与后台读改写互斥，读不到半新半旧的文件。
-        let all: [String: StoredConversation]
-        switch syncOnIO { loadAll(accountId: accountId) } {
-        case .loaded(let loaded):
-            all = loaded
-        case .missing, .corrupt:
-            all = [:]
-        }
-        return all.values.compactMap { conv -> LocalConversation? in
+        guard let accountId = accountId else { return [] }
+        let all = syncOnIO { cachedAll(accountId: accountId).all }
+        return localConversations(from: all)
+    }
+
+    /// 仅本地有消息的会话（纯函数，无 IO；无消息的空会话不算）。
+    private static func localConversations(from all: [String: StoredConversation]) -> [LocalConversation] {
+        all.values.compactMap { conv -> LocalConversation? in
             guard let peerId = conv.peer.id, let last = conv.messages.last else { return nil }
             let peer = BearyAPI.FriendUser(id: peerId, displayName: conv.peer.displayName, handle: conv.peer.handle, avatarUrl: conv.peer.avatarUrl, createdAt: nil)
             return LocalConversation(peer: peer, lastBody: last.body, lastAt: last.createdAt)
@@ -292,9 +332,29 @@ enum BearyDMStore {
     /// BearyBlockedStore（测试 target 不编那两个文件，直接引用会让 test job 编译失败）；
     /// 调用方只在传入账号就是当前账号时才给闭包，旧号回调拿错拉黑表时不过滤、不误删。
     static func mergedConversations(server: [BearyAPI.DMConversation], accountId: Int?, isBlocked: ((Int) -> Bool)? = nil) -> [BearyAPI.DMConversation] {
+        mergedConversations(server: server, local: localConversations(accountId: accountId), isBlocked: isBlocked)
+    }
+
+    /// 会话列表合并（异步）：本地部分取自内存索引，不读盘；结果回主线程。
+    /// 拉黑过滤与同步版同口径（isBlocked 由调用方传入）。
+    static func mergedConversations(server: [BearyAPI.DMConversation], accountId: Int?, isBlocked: ((Int) -> Bool)? = nil, completion: @escaping ([BearyAPI.DMConversation]) -> Void) {
+        guard let accountId = accountId else {
+            DispatchQueue.main.async { completion(mergedConversations(server: server, local: [], isBlocked: isBlocked)) }
+            return
+        }
+        ioQueue.async {
+            let local = localConversations(from: cachedAll(accountId: accountId).all)
+            let result = mergedConversations(server: server, local: local, isBlocked: isBlocked)
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    /// 纯合并（无 IO）：服务端为准（对方信息与未读数都取服务端），仅本地有的对方追加，
+    /// 统一按最后消息时间倒序。服务端未读数不由本地推断（本地行不置未读）。
+    private static func mergedConversations(server: [BearyAPI.DMConversation], local: [LocalConversation], isBlocked: ((Int) -> Bool)? = nil) -> [BearyAPI.DMConversation] {
         var byPeer: [Int: BearyAPI.DMConversation] = [:]
         for c in server { if let pid = c.peer?.id { byPeer[pid] = c } }
-        for local in localConversations(accountId: accountId) {
+        for local in local {
             guard let pid = local.peer.id, byPeer[pid] == nil else { continue }
             byPeer[pid] = BearyAPI.DMConversation(peer: local.peer, lastBody: local.lastBody, lastAt: local.lastAt, unreadCount: nil)
         }
