@@ -6406,7 +6406,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         completion()
     }
-    }
 
     /// 立即落盘（主线程只拍快照，整库读/写走 BearyDraftStore.ioQueue；写盘本身已是原子替换）。
     /// completion 在主线程回调（存完才开草稿箱 / 保留后才关编辑器等顺序敏感路径用），
