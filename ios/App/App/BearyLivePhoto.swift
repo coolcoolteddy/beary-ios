@@ -47,9 +47,11 @@ extension BearyImageURLs {
     }
 }
 
-/// 实况加载：视频与静态原图各走一次服务端下载（与图片加载同款会话 +
-/// 重定向守门 + 会话 cookie），落系统 caches 目录按账号分桶，内存再缓存
-/// 一份 PHLivePhoto 供卡片复用滚动时复用；任一步失败返回 nil，调用方只
+/// 实况加载：视频与静态原图各只下缺的那一份（磁盘命中即复用、不重复
+/// 下载；双命中时视频只凭文件 URL 组装，不把整段 mov 读进内存），与
+/// 图片加载同款会话 + 重定向守门 + 会话 cookie，落系统 caches 目录按
+/// 账号分桶，内存再缓存一份 PHLivePhoto 供卡片复用滚动时复用；同一资
+/// 源对的在途加载共用一份，不另发下载；任一步失败返回 nil，调用方只
 /// 显示静态帧，不亮失败态（实况是静态图之上的加分项，失败不破坏原图）。
 final class BearyLivePhotoLoader {
     static let shared = BearyLivePhotoLoader()
@@ -72,6 +74,13 @@ final class BearyLivePhotoLoader {
     private var generation = 0
     private var activeBucket: String?
     private var inFlightTasks: [URLSessionDataTask] = []
+    /// 同一资源对（桶 + liveKey）的在途加载共用一份：滚动复用或重复
+    /// configure 撞上同一实况在途加载时只挂等待，不再另发下载，回包
+    /// 分发给所有等待方（见 load 的 finish）。
+    private final class InFlightLiveLoad {
+        var completions: [(PHLivePhoto?) -> Void] = []
+    }
+    private var inFlightLoads: [NSString: InFlightLiveLoad] = [:]
     private var diskCacheTotals: [String: Int64] = [:]
 
     private init() {
@@ -152,6 +161,20 @@ final class BearyLivePhotoLoader {
         }
         guard let data = try? Data(contentsOf: file), !data.isEmpty else { return nil }
         return data
+    }
+
+    /// 只判文件在不在且未过期（TTL 过期即清掉、按缺失算），不读内容：
+    /// 实况视频组装只凭文件 URL，命中时不必把整段 mov 读进内存。
+    private func diskFileValid(key: String, ext: String, bucket: String) -> Bool {
+        guard let file = fileURL(key: key, ext: ext, bucket: bucket) else { return false }
+        if let values = try? file.resourceValues(forKeys: [.contentModificationDateKey]),
+           let mtime = values.contentModificationDate,
+           Date().timeIntervalSince(mtime) > Self.diskCacheMaxAge {
+            try? FileManager.default.removeItem(at: file)
+            return false
+        }
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value, size > 0 else { return false }
+        return true
     }
 
     /// 第七轮审计 06：写盘前再验一次代次——下载完成回调的守卫与真正落盘之间
@@ -246,6 +269,10 @@ final class BearyLivePhotoLoader {
             generation += 1
             let stale = inFlightTasks
             inFlightTasks.removeAll()
+            // 旧桶在途加载的等待方仍由各自链路的 finish 分发 nil（任务取消即
+            // 回包）；注册表只清旧桶条目，不让新桶同 key 误接旧链（finish
+            // 清表时凭对象身份比对，新链不受旧链终结牵连）。
+            inFlightLoads.removeAll()
             stateLock.unlock()
             stale.forEach { $0.cancel() }
         } else {
@@ -261,33 +288,77 @@ final class BearyLivePhotoLoader {
             completion(nil)
             return
         }
+        // 同一资源对的在途加载共用：已在途时只挂等待，不再另发下载。
+        let key = memoryKey(bucket: bucket, liveKey: liveKey)
+        stateLock.lock()
+        if let existing = inFlightLoads[key] {
+            existing.completions.append(completion)
+            stateLock.unlock()
+            return
+        }
+        let box = InFlightLiveLoad()
+        box.completions.append(completion)
+        inFlightLoads[key] = box
+        stateLock.unlock()
+        // 终点唯一出口：清注册表、在主线程把同一份回包分发给所有等待方。
+        let finish: (PHLivePhoto?) -> Void = { [weak self, box] photo in
+            if let self = self {
+                self.stateLock.lock()
+                if self.inFlightLoads[key] === box { self.inFlightLoads.removeValue(forKey: key) }
+                self.stateLock.unlock()
+            }
+            DispatchQueue.main.async { box.completions.forEach { $0(photo) } }
+        }
         Self.diskQueue.async { [weak self] in
             guard let self = self, self.isCurrentGeneration(gen) else {
-                // 第七轮审计 07：过期任务也要结束回调——直接 return 会丢掉
-                // completion，BearyLivePhotoView 的 currentLiveKey 永久残留，
-                // 同一张图再 configure 会被「同 key 不重复加载」跳过，实况
-                // 永远不再出现；主线程回 nil，让视图清掉失败态。
-                DispatchQueue.main.async { completion(nil) }
+                // 过期任务也要结束回调（第七轮审计 07）：finish 在主线程回 nil，
+                // 让视图清掉失败态；直接 return 会丢掉 completion，currentLiveKey
+                // 永久残留，同一张图再 configure 会被跳过、实况永远不再出现。
+                finish(nil)
                 return
             }
-            if let videoData = self.diskData(key: liveKey, ext: "mov", bucket: bucket),
-               let stillData = self.diskData(key: staticKey, ext: "jpg", bucket: bucket) {
-                // 磁盘双命中：数据已落盘，build 只凭文件 URL 组装，不再读盘。
-                _ = videoData
-                self.buildLivePhoto(stillData: stillData, bucket: bucket, liveKey: liveKey, staticKey: staticKey, generation: gen, contentMode: contentMode, completion: completion)
+            // 只补缺的那一份：视频只凭文件存在性判定（TTL 过期即清掉、按缺失
+            // 算），不把整段 mov 读进内存；静图仍需读盘做占位图。
+            let videoOnDisk = self.diskFileValid(key: liveKey, ext: "mov", bucket: bucket)
+            let stillData = self.diskData(key: staticKey, ext: "jpg", bucket: bucket)
+            if videoOnDisk, let stillData = stillData {
+                // 磁盘双命中：视频只凭文件 URL 组装，不再读盘。
+                self.buildLivePhoto(stillData: stillData, bucket: bucket, liveKey: liveKey, staticKey: staticKey, generation: gen, contentMode: contentMode, completion: finish)
+                return
+            }
+            if videoOnDisk {
+                // 视频已落盘，只下静图。
+                self.download(url: stillURL, key: staticKey, ext: "jpg", bucket: bucket, generation: gen) { [weak self] stillData in
+                    guard let self = self, let stillData = stillData, self.isCurrentGeneration(gen) else {
+                        finish(nil)
+                        return
+                    }
+                    self.buildLivePhoto(stillData: stillData, bucket: bucket, liveKey: liveKey, staticKey: staticKey, generation: gen, contentMode: contentMode, completion: finish)
+                }
+                return
+            }
+            if let stillData = stillData {
+                // 静图已落盘，只下视频。
+                self.download(url: videoURL, key: liveKey, ext: "mov", bucket: bucket, generation: gen) { [weak self] videoData in
+                    guard let self = self, videoData != nil, self.isCurrentGeneration(gen) else {
+                        finish(nil)
+                        return
+                    }
+                    self.buildLivePhoto(stillData: stillData, bucket: bucket, liveKey: liveKey, staticKey: staticKey, generation: gen, contentMode: contentMode, completion: finish)
+                }
                 return
             }
             self.download(url: videoURL, key: liveKey, ext: "mov", bucket: bucket, generation: gen) { [weak self] videoData in
                 guard let self = self, videoData != nil, self.isCurrentGeneration(gen) else {
-                    DispatchQueue.main.async { completion(nil) }
+                    finish(nil)
                     return
                 }
                 self.download(url: stillURL, key: staticKey, ext: "jpg", bucket: bucket, generation: gen) { stillData in
                     guard let stillData = stillData, self.isCurrentGeneration(gen) else {
-                        DispatchQueue.main.async { completion(nil) }
+                        finish(nil)
                         return
                     }
-                    self.buildLivePhoto(stillData: stillData, bucket: bucket, liveKey: liveKey, staticKey: staticKey, generation: gen, contentMode: contentMode, completion: completion)
+                    self.buildLivePhoto(stillData: stillData, bucket: bucket, liveKey: liveKey, staticKey: staticKey, generation: gen, contentMode: contentMode, completion: finish)
                 }
             }
         }
