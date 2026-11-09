@@ -28,6 +28,15 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
     /// 不 finish 交互式过渡（页面实际并未关闭）。
     private var dismissRejected = false
 
+    /// R14 P2-13：提前准备好的返回目标底层画面。全屏 modal 下 presenting
+    /// 方的 view 在呈现完成后已不在窗口层级里，旧代码要等正式退场
+    /// （animator dismiss 分支）才 insertSubview(toView)，故拖动全程滑开
+    /// 的区域背后是空窗口底；拖动开始时即把它插到 presented view 下方，
+    /// 目标页全程可见。取消／被拒时在复位动画后撤掉；正式退场时转场容器
+    /// 接管它（见 animationController(forDismissed:)），不再碰。
+    private var underlyingViewPrepared = false
+    private weak var preparedUnderlyingView: UIView?
+
     /// 完成模式回调：设置后本控制器不再驱动交互式过渡，只在边缘滑过阈值
     /// （35% 宽度或右滑速度 >800）时调一次回调，关闭由回调方自己的流程完成。
     /// 返回值：true 表示退出已在进行（即将关页，或草稿保存已提交、关页随后发生）；
@@ -64,11 +73,53 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
     }
 
     func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        // R14 P2-13：正式退场开始，转场容器接管提前插入的底层画面——
+        // animator 的 dismiss 分支会把它 insertSubview 进容器；此处只把
+        // 所有权交出去（清旗标），让待撤的延迟清理不再碰它。
+        if underlyingViewPrepared {
+            underlyingViewPrepared = false
+            preparedUnderlyingView = nil
+        }
         return BearySlideTransitionAnimator(isPresenting: false)
     }
 
     func interactionControllerForDismissal(using animator: UIViewControllerAnimatedTransitioning) -> UIViewControllerInteractiveTransitioning? {
         return interaction
+    }
+
+    // MARK: - R14 P2-13：返回目标底层画面
+
+    /// 拖动开始即把返回目标页提前放进底层：presenting 方的 view 插到
+    /// presented view 下方（仅当它当前不在窗口里、且 presented view 未带
+    /// 位移时；上一轮复位动画未跑完就又开拖时跳过，本轮按旧口径走）。
+    /// 提前插入会触发 presenting 方的 appearance 回调，与正式退场时同一
+    /// 套回调（feed 只做本地复位、chrome 的启动 veil 与引导均有已播／已见
+    /// 守卫），只是时机从退场提前到开拖，不引入新副作用。
+    private func prepareUnderlyingView(for presented: UIViewController) {
+        guard let underlying = presented.presentingViewController?.view else { return }
+        guard underlying.window == nil, presented.view.transform == .identity else { return }
+        guard let superview = presented.view.superview else { return }
+        underlying.frame = presented.view.frame
+        superview.insertSubview(underlying, belowSubview: presented.view)
+        preparedUnderlyingView = underlying
+        underlyingViewPrepared = true
+    }
+
+    /// 取消／被拒／未过阈值：复位动画跑完后再撤提前插入的底层画面——
+    /// 动画期间仍露着它，撤早了复位过程露出的条带会变黑底。
+    /// 正式退场已把它接进转场容器时不再碰（见 animationController(forDismissed:)
+    /// 的交接；superview 已变的也一律不动，等转场自己收尾）。
+    private func removePreparedUnderlyingViewAfterReset() {
+        guard underlyingViewPrepared, let underlying = preparedUnderlyingView, let presented = presentedVC else { return }
+        // 延迟与复位动画同长（#1000 的 0.30s 弹簧复位）；减动效时复位是瞬时的，延迟取 0。
+        let delay = UIAccessibility.isReduceMotionEnabled ? 0 : 0.30
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak underlying, weak presented] in
+            guard let self = self, self.underlyingViewPrepared, let underlying = underlying, let presented = presented else { return }
+            guard underlying.superview == presented.view.superview, presented.view.window != nil else { return }
+            underlying.removeFromSuperview()
+            self.underlyingViewPrepared = false
+            self.preparedUnderlyingView = nil
+        }
     }
 
     // MARK: - 手势
@@ -99,6 +150,8 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
                 }
                 completionMode = true
                 interaction = nil
+                // R14 P2-13：拖动开始即准备好返回目标的底层画面，不等正式退场。
+                prepareUnderlyingView(for: presented)
                 return
             }
             completionMode = false
@@ -116,6 +169,9 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
             // 完成模式下视图滑回原位。
             if completionMode {
                 resetCompletionFollow(view: view)
+                // R14 P2-13：复位后撤提前插入的底层画面（复位曲线本身不动，
+                // 本支不碰 resetCompletionFollow——那是 #1000 的范围）。
+                removePreparedUnderlyingViewAfterReset()
             } else {
                 interaction?.cancel()
             }
@@ -142,6 +198,8 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
                         // 被拒滑回：松手速度归一化后传弹簧初速度，快甩带 momentum、
                         // 慢拖近 0（与底 sheet／灯箱复位同口径）。
                         resetCompletionFollow(view: view, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: view.transform.tx))
+                        // R14 P2-13：被拒滑回后撤提前插入的底层画面。
+                        removePreparedUnderlyingViewAfterReset()
                     }
                 } else {
                     interaction?.finish()
@@ -151,6 +209,8 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
                     // 未过阈值滑回：松手速度归一化后传弹簧初速度，快甩带 momentum、
                     // 慢拖近 0（与底 sheet／灯箱复位同口径）。
                     resetCompletionFollow(view: view, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: view.transform.tx))
+                    // R14 P2-13：未过阈值滑回后撤提前插入的底层画面。
+                    removePreparedUnderlyingViewAfterReset()
                 } else {
                     interaction?.cancel()
                 }
