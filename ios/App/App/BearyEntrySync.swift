@@ -253,6 +253,8 @@ final class BearyEntrySync {
                 self.diaryFailedAccountId = nil
                 // 提交守卫基线：记下拉取开始时的写盘代际。
                 self.diarySyncStartSequence[userId] = self.diaryWriteSequence
+                // r17-C2：换盘中途崩溃的恢复（活盘缺失且 .bak 存在即搬回）。
+                BearyEntrySyncStore.recoverIfNeeded(accountId: userId)
                 // 第四轮增量 11：kick 时捕获 authEpoch 与任务代次。
                 self.diarySyncGeneration += 1
                 let diaryIdentity = BearySyncTaskIdentity(epoch: BearyAPI.shared.authEpoch, generation: self.diarySyncGeneration)
@@ -329,6 +331,18 @@ final class BearyEntrySync {
         }
     }
 
+    /// r17-C2 中断记 partial（已在同步队列上调用）：仍有可读旧数据时把状态记为
+    /// partial（盘上是上一份完整版本，仍可读；无可读数据时不记状态，下次 kick 从头跑）。
+    private func markDiaryPartial(accountId: Int) {
+        guard BearyEntrySyncStore.hasReadableData(accountId: accountId) else { return }
+        _ = BearySyncStateStore.save(stateURL: BearyEntrySyncStore.stateFileURL(accountId: accountId), status: "partial", itemCount: BearyEntrySyncStore.readableItemCount(accountId: accountId))
+    }
+
+    private func markTrashPartial(accountId: Int) {
+        guard BearyTrashSyncStore.hasReadableData(accountId: accountId) else { return }
+        _ = BearySyncStateStore.save(stateURL: BearyTrashSyncStore.stateFileURL(accountId: accountId), status: "partial", itemCount: BearyTrashSyncStore.readableItemCount(accountId: accountId))
+    }
+
     /// 发布成功：onPublished 只给 entryId，单篇拉取后 upsert 落盘（失败静默）。
     func upsertPublished(entryId: String, accountId: Int) {
         BearyAPI.shared.fetchEntry(id: entryId) { result in
@@ -338,7 +352,9 @@ final class BearyEntrySync {
                 guard SessionManager.shared.currentUser?.id == accountId else { return }
                 guard case .success(let entry) = result else { return }
                 BearyEntrySync.shared.runDiaryDiskWrite {
-                    BearyEntrySyncStore.upsertEntry(accountId: accountId, entry: entry)
+                    // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
+                    let ok = BearyEntrySyncStore.upsertEntry(accountId: accountId, entry: entry)
+                    if !ok { NSLog("[BearyEntrySync] upsertEntry failed account=%d entry=%@", accountId, entry.id ?? "-") }
                 }
             }
         }
@@ -349,7 +365,8 @@ final class BearyEntrySync {
         DispatchQueue.main.async {
             guard SessionManager.shared.currentUser?.id == accountId else { return }
             BearyEntrySync.shared.runDiaryDiskWrite {
-                BearyEntrySyncStore.upsertEntry(accountId: accountId, entry: entry)
+                let ok = BearyEntrySyncStore.upsertEntry(accountId: accountId, entry: entry)
+                if !ok { NSLog("[BearyEntrySync] upsertEntry failed account=%d entry=%@", accountId, entry.id ?? "-") }
             }
         }
     }
@@ -453,6 +470,8 @@ final class BearyEntrySync {
                 // 旧快照已过期——跳过本次提交保旧盘（不丢新发布、不复活已删帖），
                 // 不记已同步，下次 kick 重跑；无基线记录时不拦截（只走正常提交）。
                 if let start = self.diarySyncStartSequence[run.accountId], start != self.diaryWriteSequence {
+                    // r17-C2：写盘守卫挡下的提交同样是中断——旧盘仍是上一份完整版本，记 partial。
+                    self.markDiaryPartial(accountId: run.accountId)
                     self.abandonDiaryRun(run, failed: false)
                     return
                 }
@@ -474,10 +493,13 @@ final class BearyEntrySync {
                 // C3：收尾校验通过即存档完整，写完整性标记（总数 = 本轮拉到的
                 // 总篇数，verifyDiaryFinalState 已核对与落盘一致）；任一步
                 // 失败即删标记，半截盘不认完整，下次读存档回落网络重拉。
+                // r17-C2：收尾成败同时记状态文件——成功记 complete，失败记 partial。
                 if ok {
                     BearyEntrySyncStore.writeCompletion(accountId: run.accountId, entryCount: run.totalFetched)
+                    _ = BearySyncStateStore.save(stateURL: BearyEntrySyncStore.stateFileURL(accountId: run.accountId), status: "complete", itemCount: run.totalFetched)
                 } else {
                     BearyEntrySyncStore.removeCompletion(accountId: run.accountId)
+                    self.markDiaryPartial(accountId: run.accountId)
                 }
                 self.diaryRuns[run.accountId] = nil
                 self.diarySyncIdentity[run.accountId] = nil
@@ -518,6 +540,8 @@ final class BearyEntrySync {
         if syncingAccountId == run.accountId { syncingAccountId = nil }
         if failed {
             diaryFailedAccountId = run.accountId
+            // r17-C2：分页/写盘中断记 partial（盘上是上一份完整版本，仍可读）。
+            self.markDiaryPartial(accountId: run.accountId)
         }
         publishCombinedSyncState(for: run.accountId)
     }
@@ -605,6 +629,8 @@ final class BearyEntrySync {
                 // （不抹掉同步途中删帖进桶的记录），不记已同步，下次 kick
                 // 重跑；无基线记录时不拦截（只走正常提交）。
                 if let start = self.trashSyncStartSequence[run.accountId], start != BearyTrashSyncStore.currentWriteSequence() {
+                    // r17-C2：写盘守卫挡下的提交同样是中断——旧桶仍是上一份完整版本，记 partial。
+                    self.markTrashPartial(accountId: run.accountId)
                     self.abandonTrashRun(run, failed: false)
                     return
                 }
@@ -612,6 +638,12 @@ final class BearyEntrySync {
                 var ok = BearyTrashSyncStore.finalizeTrash(accountId: run.accountId, seenIds: run.seenIds)
                 if ok {
                     ok = self.verifyTrashFinalState(run: run)
+                }
+                // r17-C2：收尾成败同时记状态文件——成功记 complete，失败记 partial。
+                if ok {
+                    _ = BearySyncStateStore.save(stateURL: BearyTrashSyncStore.stateFileURL(accountId: run.accountId), status: "complete", itemCount: run.totalFetched)
+                } else {
+                    self.markTrashPartial(accountId: run.accountId)
                 }
                 self.trashRuns[run.accountId] = nil
                 self.trashSyncIdentity[run.accountId] = nil
@@ -645,6 +677,8 @@ final class BearyEntrySync {
         if trashSyncingAccountId == run.accountId { trashSyncingAccountId = nil }
         if failed {
             trashFailedAccountId = run.accountId
+            // r17-C2：分页/写盘中断记 partial（桶里是上一份完整版本，仍可读）。
+            self.markTrashPartial(accountId: run.accountId)
         }
         publishCombinedSyncState(for: run.accountId)
     }
