@@ -5997,7 +5997,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 扫一遍同款（4c）：置上传态即改发布启用态，旧代码只在上传完成回调里
         // 同步，续传/重试起传后到完成前发布态是陈旧的（应禁用时仍显可用）。
         updatePublishState()
+        // B4：重试/续传先复用已落盘的 JPEG——账号在主线程捕获（与读图同一身份），
+        // 两份文件齐全时直接读已有字节与尺寸，不再对已压缩过的图重编一次。
+        let retryAccountId = BearyDraftStore.currentAccountId
+        let retryLocalFile = item.localFile
         imagePrepQueue.async { [weak self, weak item] in
+            if let retryLocalFile = retryLocalFile,
+               let prepared = BearyDraftImageStore.existingPreparedJPEG(fullName: retryLocalFile, accountId: retryAccountId) {
+                self?.uploadPrepared(for: item, full: prepared.full, thumbData: prepared.thumb, image: image, liveVideoData: item?.liveVideoData)
+                return
+            }
+            // 旧草稿缺文件/读不出时走现有编码兜底。
             guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
                   let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
                 DispatchQueue.main.async {
