@@ -2751,6 +2751,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 原先会进回调写缓存；现先校验代次与账号，失配整单丢弃、不渲染、不写缓存。
         let requestEpoch = BearyAPI.shared.authEpoch
         let requestAccountId = BearyAPI.shared.authAccountId
+        // B3：赞过/收藏 tab 先取个人页同范围快照作首批预览（见 loadQuotePanelPreview），
+        // 再走网络补齐到 50 条并刷新；本人日记 tab 仍只走 .timeline 网络拉取。
+        if tab == "liked" || tab == "saved" {
+            loadQuotePanelPreview(tab: tab, seq: seq, requestEpoch: requestEpoch, requestAccountId: requestAccountId)
+        }
         BearyAPI.shared.fetchEntries(scope: quotePanelScope(), limit: 50) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -2808,6 +2813,34 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     }
                 }
             }
+        }
+    }
+
+    /// B3：引用面板赞过/收藏 tab 的首批预览——读个人页同范围磁盘快照
+    /// （BearyProfileCache：本人页 liked/saved 各首屏 20 条，与面板
+    /// .liked/.saved 同范围；仅本人页落盘，他人篇不进桶）。有内容即先渲染、
+    /// 再等网络补齐到 50 条；快照为空/缺失时不动作，全程走网络。
+    /// 预览只渲染、不写 quotePanelCache：网络补齐回包仍是权威，失败时
+    /// 预览行保留、重试钮照常出现；网络已回包时预览不再覆盖。
+    /// 预览同样排除正在编的自身篇；选中、发布时仍走现有引用可见性检查。
+    private func loadQuotePanelPreview(tab: String, seq: Int, requestEpoch: Int, requestAccountId: Int?) {
+        guard let uid = SessionManager.shared.currentUser?.id else { return }
+        BearyProfileCache.load(bucket: "\(uid)") { [weak self] snap in
+            guard let self = self else { return }
+            guard seq == self.quotePanelSeq, tab == self.quotePanelTab, self.quotePanelOpen else { return }
+            guard requestEpoch == BearyAPI.shared.authEpoch,
+                  requestAccountId == BearyAPI.shared.authAccountId else { return }
+            // 网络补齐已到（本 tab 缓存已写）时不拿旧快照覆盖新鲜行。
+            guard self.quotePanelCache[tab] == nil else { return }
+            guard let snap = snap else { return }
+            var entries: [Entry] = (tab == "liked") ? snap.liked : snap.saved
+            if let selfId = self.editingEntry?.id, !selfId.isEmpty {
+                entries = entries.filter { $0.id != selfId }
+            }
+            guard !entries.isEmpty else { return }
+            self.quotePanelSpinner.stopSpinning()
+            self.quotePanelLoadingLabel.isHidden = true
+            self.renderQuotePanelRows(entries: entries)
         }
     }
 
