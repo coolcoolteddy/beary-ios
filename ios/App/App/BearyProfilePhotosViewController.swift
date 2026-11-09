@@ -504,6 +504,15 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wa
         // 灯箱翻到末尾要下一页时由这里触发网格续拉。
         viewer.hasMorePages = photosHasMore
         viewer.onRequestMorePages = { [weak self] in self?.fetchNextPageIfNeeded() }
+        // C3：关场回当前照片——按下标找网格里对应的格；在视口内才给
+        // 矩形与焦点视图，格不在视口内时返回 nil、走淡出兜底。
+        viewer.dismissOriginProvider = { [weak self] index in
+            guard let self = self, index >= 0, index < self.photosValue.count else { return nil }
+            let path = IndexPath(item: index, section: 0)
+            guard let cell = self.collectionView.cellForItem(at: path) else { return nil }
+            let frame = cell.convert(cell.bounds, to: nil)
+            return (frame: frame, element: cell)
+        }
         viewer.modalPresentationStyle = .fullScreen
         viewer.onViewEntryAtIndex = { [weak self, weak viewer] tappedIndex in
             guard let strongSelf = self, let viewerValue = viewer else { return }
