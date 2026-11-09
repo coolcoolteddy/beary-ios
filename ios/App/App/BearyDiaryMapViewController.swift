@@ -19,8 +19,9 @@ import CoreLocation
 // 取数回来只重算聚合，展示范围（地点组）仍归本页；截断时状态行明示。
 // 清单第 7 项：本人拉取改走 timeline scope（见 entriesScope），
 // 他人仍走 author scope；首帧即时成图仍用调用方 diaryEntries，后台替换后才为 timeline 口径。
-// 从本页进详情改了可见性后返回，本页只重拉一次（needsRefreshAfterDetail 门控，
-// 不是每次 appear 都拉）；删除/回收站/注销走服务端列表变化，下次打开自然同步。
+// 从本页进详情回来只传变化（C4）：只读返回不重拉，浏览位置与选中组接着用；
+// 编辑/删除/可见性变化由容器按 id 扇出 applyEditedEntry/removeDeletedEntry，
+// 本地原地更新，不重走全量分页。删除/回收站/注销走服务端列表变化，下次打开自然同步。
 // 切账号：appear 时发现 viewer 变了即按新身份重算（本人↔他人口径切换）并重拉。
 // 列表：未选中时 main 区即地点列表（地点名＋篇数，含尚在编码中的组，
 // 编不出坐标的组走“未能在地图上定位”专区）；点地点行与点地图标记
@@ -71,7 +72,6 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 旧编码回调凭代次一律丢弃，不得写回本页。
     private var geocodeGeneration = 0
     private var activeGeocoder: CLGeocoder?
-    private var needsRefreshAfterDetail = false
     private var didInitialGeocode = false
 
 
@@ -228,11 +228,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             // selectedGroup = nil／geocodeCache 清空，分支侧同款调用不再重复）。
             clearMapReturnContext()
             fetchAllEntries()
-        } else if needsRefreshAfterDetail {
-            // 从本页进详情回来：只重拉一次，不是每次 appear 都拉、更不是轮询。
-            needsRefreshAfterDetail = false
-            fetchAllEntries()
         }
+        // C4：只读返回不重拉（详情真有变化时容器按 id 扇出 applyEditedEntry /
+        // removeDeletedEntry）；切账号是唯一重拉路径，appear 不再无条件刷新。
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -459,6 +457,72 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         inlineRetryButton.setTitle(fetchCapped ? "加载更多" : "重试", for: .normal)
         allEntries = fetchCollected
         regroupAndGeocode()
+    }
+
+    /// C4 详情往返只传变化：编辑/可见性变化按 id 原地更新，不重拉网络。
+    /// 只改标题/正文等非地点字段 → 只换模型里的条目、刷表（地点组键与
+    /// 计数不动，地图视角与选中组接着用）；地点变了、或他人视角下可见性
+    /// 变了（进出地图的资格变了）→ 本地重算地点组（不发网络，地理编码
+    /// 缓存复用、已缩过放的视角不抢）。只读返回不调本方法。
+    func applyEditedEntry(_ entry: Entry) {
+        guard let entryId = entry.id,
+              let index = allEntries.firstIndex(where: { $0.id == entryId }) else { return }
+        let old = allEntries[index]
+        applyEditedFields(to: &allEntries[index], from: entry)
+        let updated = allEntries[index]
+        let locationChanged = DiaryLocation(entry: old) != DiaryLocation(entry: updated)
+        let visibilityChanged = BearyVisibility.current(for: old) != BearyVisibility.current(for: updated)
+        guard locationChanged || (!viewerIsAuthor && visibilityChanged) else {
+            patchEntryInGroups(entryId: entryId, updated: updated)
+            tableView.reloadData()
+            return
+        }
+        regroupAndGeocode()
+    }
+
+    /// C4 删除按 id 退场：本地摘篇、重算地点组，不重拉网络。
+    func removeDeletedEntry(entryId: String) {
+        guard allEntries.contains(where: { $0.id == entryId }) else { return }
+        allEntries.removeAll { $0.id == entryId }
+        regroupAndGeocode()
+    }
+
+    /// 编辑回传字段拷贝（广场 applyEditedFields 同款 + 标题/地点/可见性档）：
+    /// 标题与地点是地图列表的显示字段，必须跟上；其余未列字段沿用旧值，
+    /// 不拿详情侧可能滞后的副本覆盖。
+    private func applyEditedFields(to target: inout Entry, from updated: Entry) {
+        target.title = updated.title
+        target.content = updated.content
+        target.images = updated.images
+        target.mood = updated.mood
+        target.weather = updated.weather
+        target.locationName = updated.locationName
+        target.locationDistrict = updated.locationDistrict
+        target.quoteId = updated.quoteId
+        target.quote = updated.quote
+        if let v = updated.publishedAt { target.publishedAt = v }
+        if let v = updated.editDeadline { target.editDeadline = v }
+        if let v = updated.isPublic { target.isPublic = v }
+        if let v = updated.visibility { target.visibility = v }
+        target.ephemeralUntil = updated.ephemeralUntil
+    }
+
+    /// 轻量分支：地点组键与计数不动时，只把更新后的条目换进各组快照
+    /// （地点组/未定位组/暂时失败组/已选组皆为值拷贝，须逐组换）。
+    private func patchEntryInGroups(entryId: String, updated: Entry) {
+        func patched(_ list: [BearyLocationMapGroup]) -> [BearyLocationMapGroup] {
+            list.map { group in
+                guard group.entries.contains(where: { $0.id == entryId }) else { return group }
+                let entries = group.entries.map { $0.id == entryId ? updated : $0 }
+                return BearyLocationMapGroup(id: group.id, key: group.key, entries: entries, isDistrictOnly: group.isDistrictOnly)
+            }
+        }
+        groups = patched(groups)
+        unlocatedGroups = patched(unlocatedGroups)
+        transientFailedGroups = patched(transientFailedGroups)
+        if let selected = selectedGroup {
+            selectedGroup = patched([selected]).first
+        }
     }
 
     /// 拉取 scope（清单第 7 项，Li 拍板）：本人走 timeline scope（服务端按
@@ -1009,7 +1073,6 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 returnTableOffset = tableView.contentOffset
                 returnGroupEntryIds = selected.entries.compactMap { $0.id }
                 pendingMapReturnRestore = true
-                needsRefreshAfterDetail = true
                 onOpenEntry?(selected.entries[indexPath.row])
             } else {
                 // 地点列表行：与点地图标记同一入口（selectGroup），进同一组日记。

@@ -19,8 +19,10 @@ import UIKit
 //   清单第 7 项：本人拉取改走 timeline scope（见 entriesScope），
 //   他人仍走 author scope；后端 author scope 不动，与日记 tab 口径分裂拍板接受。
 // - 切账号 / 登录翻转：appear 时 viewer 变了即按新身份重算重拉，旧选择清掉；
-//   从详情回来（可见性可能已翻转）只重拉一次；不轮询，下次打开自然同步。
-//   重算走后台队列 + generation 门控，旧回包一律丢弃。
+//   从详情回来只传变化（C4）：只读返回不重拉，编辑/删除/可见性变化由容器
+//   按 id 扇出 applyEditedEntry/removeDeletedEntry，本地原地更新；不轮询、
+//   不另建星图缓存，下次打开自然同步。重算走后台队列 + generation 门控，
+//   旧回包一律丢弃。
 // - 建图缓存（r17 C5）：recompute 先按「账号桶 + 作者 + 角色 + 分片 +
 //   日记版本 + 算法版本」查 BearyStarMapCache（内存、最近 4 个范围），
 //   命中直接复用模型；miss 才后台 buildModel，建好存回缓存。切连线类型
@@ -142,7 +144,6 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var fetchResumeBeforeId: String?
     private var fetchResumePage: Int = 1
     private var fetchInterrupted: Bool = false
-    private var needsRefreshAfterDetail = false
     /// r17-m3：从详情回到原处的专用记忆——进入详情的星／线 ID、滚动位置、
     /// 打开那篇的展示快照（标题／正文／可见性）。只读返回时恢复选中态与
     /// 展开位置；快照变了（删篇／翻私密／改内容）才给底卡一次 0.18 秒淡变。
@@ -264,11 +265,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
             clearReturnContext()
             recompute()
             fetchAllEntries()
-        } else if needsRefreshAfterDetail {
-            // 从详情回来：只重拉一次（可见性翻转/删除在此同步），不是每次出现都拉。
-            needsRefreshAfterDetail = false
-            fetchAllEntries()
         }
+        // C4：只读返回不重拉（详情真有变化时容器按 id 扇出 applyEditedEntry /
+        // removeDeletedEntry）；切账号是唯一重拉路径，appear 不再无条件刷新。
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -946,6 +945,88 @@ final class BearyDiaryStarMapViewController: UIViewController {
         restoreDetailReturnContextIfNeeded()
     }
 
+    // MARK: - C4 详情往返只传变化
+
+    /// 编辑/可见性变化按 id 原地更新，不重拉网络。
+    /// 星图所用字段（标题/正文→字数、心情→亮度、地点→连线、创建日→分片、
+    /// 可见性→出星资格、图片/引用→出星资格）变了 → 重建受影响的范围
+    /// （recompute，后台重算模型；分片与滚动位置不动，选中星仍在时底卡
+    /// 即时按新 Entry 刷新）；其余字段（天气、互动数等）→ 只换模型里的
+    /// 条目，不重算。只读返回不调本方法。
+    func applyEditedEntry(_ entry: Entry) {
+        guard let entryId = entry.id,
+              let index = allEntries.firstIndex(where: { $0.id == entryId }) else { return }
+        let old = allEntries[index]
+        applyEditedFields(to: &allEntries[index], from: entry)
+        let updated = allEntries[index]
+        if !starFieldsChanged(old: old, updated: updated) {
+            // 轻量分支：星图渲染不用的字段，只换 entryById 里的副本。
+            if model.entryById[entryId] != nil {
+                var entryById = model.entryById
+                entryById[entryId] = updated
+                model = StarMapModel(stars: model.stars, edges: model.edges, entryById: entryById)
+            }
+            return
+        }
+        // 选中线涉及本篇时，编辑可能改了连线原因（心情/地点/同词）——
+        // 原因须等后台模型重算，底卡先回默认态，不留旧原因。
+        if let edgeId = selectedEdgeId,
+           model.edges.contains(where: { $0.id == edgeId && ($0.firstId == entryId || $0.secondId == entryId) }) {
+            clearSelection()
+        }
+        recompute()
+        // 选中星仍是本篇且仍可成星时，底卡即时按新 Entry 刷新（不等后台模型）。
+        if selectedStarId == entryId, BearyStarMap.isStarVisible(updated, viewerIsAuthor: viewerIsAuthor) {
+            showStarSheet(updated)
+        }
+    }
+
+    /// 删除按 id 退场：本地摘篇、重建模型，不重拉网络。
+    func removeDeletedEntry(entryId: String) {
+        guard allEntries.contains(where: { $0.id == entryId }) else { return }
+        allEntries.removeAll { $0.id == entryId }
+        if selectedStarId == entryId || (selectedEdgeId != nil && model.edges.contains(where: {
+            $0.id == selectedEdgeId && ($0.firstId == entryId || $0.secondId == entryId)
+        })) {
+            clearSelection()
+        }
+        recompute()
+    }
+
+    /// 星图所用字段是否变了：标题/正文（字数→星体大小）、心情（亮度）、
+    /// 地点（地点键→连线）、创建日（分片归属）、可见性档（出星资格）、
+    /// 图片/引用（纯心情项的出星资格）。天气、互动数、截止日等不在此列。
+    private func starFieldsChanged(old: Entry, updated: Entry) -> Bool {
+        if (old.title ?? "") != (updated.title ?? "") { return true }
+        if (old.content ?? "") != (updated.content ?? "") { return true }
+        if (old.mood ?? "") != (updated.mood ?? "") { return true }
+        if DiaryLocation(entry: old) != DiaryLocation(entry: updated) { return true }
+        if old.createdAt != updated.createdAt { return true }
+        if BearyVisibility.current(for: old) != BearyVisibility.current(for: updated) { return true }
+        if (old.images ?? []) != (updated.images ?? []) { return true }
+        if (old.quoteId ?? "") != (updated.quoteId ?? "") { return true }
+        return false
+    }
+
+    /// 编辑回传字段拷贝（与地图页同款：标题/地点/可见性档在内；其余未列
+    /// 字段沿用旧值，不拿详情侧可能滞后的副本覆盖）。
+    private func applyEditedFields(to target: inout Entry, from updated: Entry) {
+        target.title = updated.title
+        target.content = updated.content
+        target.images = updated.images
+        target.mood = updated.mood
+        target.weather = updated.weather
+        target.locationName = updated.locationName
+        target.locationDistrict = updated.locationDistrict
+        target.quoteId = updated.quoteId
+        target.quote = updated.quote
+        if let v = updated.publishedAt { target.publishedAt = v }
+        if let v = updated.editDeadline { target.editDeadline = v }
+        if let v = updated.isPublic { target.isPublic = v }
+        if let v = updated.visibility { target.visibility = v }
+        target.ephemeralUntil = updated.ephemeralUntil
+    }
+
     // MARK: - 点按：星 / 线 / 重叠 / 背景
 
     private func clearSelection() {
@@ -1089,8 +1170,10 @@ final class BearyDiaryStarMapViewController: UIViewController {
         if let moodKey = entry.mood, !moodKey.isEmpty {
             meta += " · 心情 \(BearyText.moodNames[moodKey] ?? moodKey)"
         }
-        if let star = model.stars.first(where: { $0.entry.id == entry.id }) {
-            meta += " · \(star.wordCount) 字"
+        // 字数直接按当前 Entry 算（与模型同口径 BearyStarMap.wordCount），
+        // 不读模型里的星副本：编辑后底卡即时刷新时，后台模型可能还没重算完。
+        if model.stars.contains(where: { $0.entry.id == entry.id }) {
+            meta += " · \(BearyStarMap.wordCount(entry)) 字"
         }
         // 地点行 viewer-aware：他人只见区级（placeKey 已兜底，缺失即不显示）。
         if let place = BearyStarMap.placeKey(entry, viewerIsAuthor: viewerIsAuthor) {
@@ -1261,7 +1344,6 @@ final class BearyDiaryStarMapViewController: UIViewController {
             returnEntrySnapshot = nil
         }
         pendingReturnRestore = true
-        needsRefreshAfterDetail = true
         onOpenEntry?(entry)
     }
 
