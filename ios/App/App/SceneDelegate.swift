@@ -72,6 +72,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         if let window = window {
             BearyAppLockManager.shared.installShield(on: window)
         }
+        // R14 P1-7：切后台的最早信号即补存草稿——400ms 防抖窗口内刚打的字
+        // 尚未落盘，计时器在后台不会触发；此处立即拍快照交后台写队列。
+        // 只是短暂打断（通知中心/控制中心/来电横幅）时补存也是幂等重写，
+        // 无副作用；随后真进后台时 sceneDidEnterBackground 再补一次（无
+        // 待保存内容时即同步返回，不重复写）。
+        flushComposerDraftForBackground()
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
@@ -100,6 +106,54 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         if let window = window {
             BearyAppLockManager.shared.installShield(on: window)
         }
+        // R14 P1-7：进后台再补存一次（resignActive 已补过时无待保存内容，
+        // 即同步返回；若 resignActive 被打断没跑到，此处兜底）。
+        flushComposerDraftForBackground()
+    }
+
+    /// R14 P1-7：退后台补存草稿的后台任务。写盘在 BearyDraftStore.ioQueue
+    /// 上进行，切后台后无后台任务会被挂起；任务只保这一笔补存，过期
+    /// handler 与完成回调都收尾（计数归零才 end，resignActive 与
+    /// didEnterBackground 两次补存重叠时不提前收）。
+    private var composerDraftFlushTask: UIBackgroundTaskIdentifier = .invalid
+    private var composerDraftFlushOutstanding = 0
+
+    /// R14 P1-7：沿 presented 链找正在写的编辑器（编辑器从 chrome 或详情
+    /// nav 上 present；其上若有 alert/sheet 也能找到，链上逐个比对）。
+    private func findPresentedComposer() -> BearyComposerViewController? {
+        var current = window?.rootViewController
+        while let vc = current {
+            if let composer = vc as? BearyComposerViewController { return composer }
+            current = vc.presentedViewController
+        }
+        return nil
+    }
+
+    /// R14 P1-7：退后台补存入口。无编辑器在栈上时直接返回；有未保存内容
+    /// 时持一个后台任务等补存完成回调，过期则由 handler 收尾。
+    private func flushComposerDraftForBackground() {
+        guard let composer = findPresentedComposer() else { return }
+        composerDraftFlushOutstanding += 1
+        if composerDraftFlushTask == .invalid {
+            composerDraftFlushTask = UIApplication.shared.beginBackgroundTask { [weak self] in
+                self?.endComposerDraftFlushTask()
+            }
+        }
+        composer.flushPendingDraftSaveForBackground { [weak self] in
+            DispatchQueue.main.async { [weak self] in self?.noteComposerDraftFlushFinished() }
+        }
+    }
+
+    private func noteComposerDraftFlushFinished() {
+        composerDraftFlushOutstanding = max(0, composerDraftFlushOutstanding - 1)
+        if composerDraftFlushOutstanding == 0 { endComposerDraftFlushTask() }
+    }
+
+    private func endComposerDraftFlushTask() {
+        guard composerDraftFlushTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(composerDraftFlushTask)
+        composerDraftFlushTask = .invalid
+        composerDraftFlushOutstanding = 0
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {
