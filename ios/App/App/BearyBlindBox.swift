@@ -283,6 +283,7 @@ final class BlindBoxState {
     private func exchangeKey() -> String { return bucketPrefix() + ".exchangeId" }
     private func receivedWithdrawnKey() -> String { return bucketPrefix() + ".receivedWithdrawn" }
     private func myWithdrawnKey() -> String { return bucketPrefix() + ".myWithdrawn" }
+    private func pooledEntryKey() -> String { return bucketPrefix() + ".pooledEntryId" }
 
     private func noteBucketChangeIfNeeded() {
         let bucket = bucketPrefix()
@@ -318,6 +319,14 @@ final class BlindBoxState {
         return defaults.bool(forKey: myWithdrawnKey())
     }
 
+    /// 当日已入池的日记 id（与 exchangeId 同口径的镜像字段）：/today、
+    /// 开盒、详情回包均经 applyServerState 完整替换；流程页局部变量
+    /// 失效时以此为准，不再只靠 VC 生命周期内的旧值。
+    var pooledEntryId: String? {
+        noteBucketChangeIfNeeded()
+        return defaults.string(forKey: pooledEntryKey())
+    }
+
     func countText() -> String {
         return usedToday ? "今日 1/1" : "今日 0/1"
     }
@@ -326,17 +335,20 @@ final class BlindBoxState {
     /// 成功回包一律完整替换当前桶：false 与空 exchangeId 也同步落盘，
     /// 不再是旧的“只有 true 才写”。nil 口径：used 缺失时以有无 exchangeId
     /// 推断（有交换即已换）；撤回两旗缺失即 false；空字符串 exchangeId 视
-    /// 为无交换并清掉旧 id。未登录时不写（防游客态写操作污染 guest 桶外
+    /// 为无交换并清掉旧 id；入池 id 缺失即清掉旧值（与 exchangeId 同口径）。
+    /// 未登录时不写（防游客态写操作污染 guest 桶外
     /// 的任何状态；流程页调用前本就要求登录，见 refreshFromServer 守卫）。
     func applyServerState(_ body: BlindBoxStateBody) {
         guard SessionManager.shared.isLoggedIn else { return }
         noteBucketChangeIfNeeded()
         let exchangeId = (body.exchangeId?.isEmpty == false) ? body.exchangeId : nil
+        let pooled = (body.pooledEntryId?.isEmpty == false) ? body.pooledEntryId : nil
         let used = body.used ?? (exchangeId != nil)
         defaults.set(used, forKey: usedKey())
         defaults.set(exchangeId, forKey: exchangeKey())
         defaults.set(body.receivedWithdrawn == true, forKey: receivedWithdrawnKey())
         defaults.set(body.myWithdrawn == true, forKey: myWithdrawnKey())
+        defaults.set(pooled, forKey: pooledEntryKey())
         NotificationCenter.default.post(name: .bearyBlindBoxDidChange, object: nil)
     }
 
@@ -350,15 +362,6 @@ final class BlindBoxState {
         guard identity.isCurrent else { return false }
         applyServerState(body)
         return true
-    }
-
-    func markOpened(exchangeId: String) {
-        noteBucketChangeIfNeeded()
-        defaults.set(true, forKey: usedKey())
-        defaults.set(exchangeId, forKey: exchangeKey())
-        defaults.set(false, forKey: receivedWithdrawnKey())
-        defaults.set(false, forKey: myWithdrawnKey())
-        NotificationCenter.default.post(name: .bearyBlindBoxDidChange, object: nil)
     }
 
     func markMyWithdrawn() {
