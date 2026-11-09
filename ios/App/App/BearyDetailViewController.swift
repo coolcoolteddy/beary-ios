@@ -92,6 +92,9 @@ final class BearyDetailViewController: UIViewController {
     private var entry: Entry
     private let isGuest: Bool
     private let isAuthor: Bool
+    /// R22-A1：详情落盘桶——进页时按当时账号钉住，不跟随后来的切号走；
+    /// 旧账号回包已由容器复核丢弃，此处再钉一次桶，防写盘时账号已变。
+    private let snapshotBucket: String
     /// 快连点代次（2026-10-29 及时性口径）：点按不再锁按钮丢点按，每次
     /// 点按代次 +1 并立即按本次点按态渲染；在途回包代次落后于最新代次
     /// 时直接丢弃，不得覆盖更新的点按态；失败回滚到最后确认态。
@@ -545,7 +548,15 @@ final class BearyDetailViewController: UIViewController {
         self.confirmedLikeCount = entry.likeCount ?? 0
         self.confirmedBookmarked = entry.bookmarkedByMe ?? false
         let viewerId = SessionManager.shared.currentUser?.id
-        self.isAuthor = entry.isMine == true || (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId)
+        // R22-A1：authorId 在时以它为准；isMine 只在同一已验证会话且缺
+        // 作者 ID 时兜底（进页前容器 routeFetchedEntry 已验过会话）。
+        if let authorId = entry.authorId {
+            self.isAuthor = viewerId != nil && authorId == viewerId
+        } else {
+            self.isAuthor = entry.isMine == true
+        }
+        // R22-A1：落盘桶按进页时账号钉住（let 属性须在 super.init 前初始化）。
+        self.snapshotBucket = BearyDetailCache.bucket()
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -1238,16 +1249,32 @@ final class BearyDetailViewController: UIViewController {
             showFetchFailed()
             return
         }
+        // R22-A1：发起时固定账号与会话代次（只读 BearyAPI.shared.authEpoch／
+        // authAccountId，不动 SessionManager 私有成员；传输层不丢弃成功回包，
+        // 比对只在调用方做）。回包先复核会话与日记 ID 再展示／落盘。
+        let requestEpoch = BearyAPI.shared.authEpoch
+        let requestAccountId = BearyAPI.shared.authAccountId
         BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                // R22-A1：切号后旧回包直接丢弃，不更新、不写盘、不 toast。
+                guard requestEpoch == BearyAPI.shared.authEpoch,
+                      requestAccountId == BearyAPI.shared.authAccountId,
+                      requestAccountId == SessionManager.shared.currentUser?.id else { return }
                 guard case .success(let fetched) = result else {
                     self.showFetchFailed()
                     return
                 }
+                guard fetched.id == entryId else { return }
                 if self.locallyHiddenByModeration { return }
-                let viewerId = SessionManager.shared.currentUser?.id
-                let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && viewerId != nil && fetched.authorId == viewerId)
+                // R22-A1：authorId 在时以它为准；isMine 只在同一已验证会话
+                // 且缺作者 ID 时兜底。
+                let viewerIsAuthor: Bool
+                if let authorId = fetched.authorId {
+                    viewerIsAuthor = requestAccountId != nil && authorId == requestAccountId
+                } else {
+                    viewerIsAuthor = fetched.isMine == true
+                }
                 if viewerIsAuthor {
                     self.update(with: fetched)
                     return
@@ -1256,7 +1283,7 @@ final class BearyDetailViewController: UIViewController {
                     self.update(with: fetched)
                     return
                 }
-                if !SessionManager.shared.isGuestMode, let authorId = fetched.authorId, viewerId != authorId, BearyBlockedStore.isBlocked(authorId) {
+                if !SessionManager.shared.isGuestMode, let authorId = fetched.authorId, requestAccountId != authorId, BearyBlockedStore.isBlocked(authorId) {
                     var placeholderEntry = fetched
                     placeholderEntry.placeholder = true
                     self.update(with: placeholderEntry)
@@ -1644,9 +1671,9 @@ final class BearyDetailViewController: UIViewController {
     }
 
     /// 单篇磁盘快照写盘：占位/拉黑态与无 id 的篇不写（快照只存看过的内容态），
-    /// 桶按当前账号隔离、未登录记 guest 桶。
+    /// 桶用进页时钉住的 snapshotBucket，不按写盘时当前账号取桶。
     private func saveDetailSnapshot() {
-        BearyDetailCache.save(bucket: BearyDetailCache.bucket(), entry: entry)
+        BearyDetailCache.save(bucket: snapshotBucket, entry: entry)
     }
 
     // MARK: - 限时到期（审计三轮第二批 9）
