@@ -945,13 +945,14 @@ final class BearyAPI {
     }
 
     /// 5-28 发布重试可重试的失败：网络失败（请求未达或回包丢失，服务端
-    /// 即使已落库也有 clientReq 幂等兜底）与 5xx。401 / 404 / 业务码
+    /// 即使已落库也有 clientReq 幂等兜底）、5xx，以及 408/429（移动网关
+    /// 伪超时/限流，稍后重发可成功）。401 / 404 / 业务码
     /// （create_dup 等）/ 解析失败不重试：前者重发无意义且 401 回调不得
     /// 重复触发，后者靠调用方手动重试（草稿 clientReq 全程复用）。
     private static func isTransientPublishError(_ error: APIError) -> Bool {
         switch error {
         case .network: return true
-        case .http(let status, _): return status >= 500
+        case .http(let status, _): return status >= 500 || status == 408 || status == 429
         default: return false
         }
     }
@@ -1028,8 +1029,8 @@ final class BearyAPI {
         return perform(path, query: query, method: method, jsonBody: jsonBody, timeout: timeout) { [weak self] data, status, error in
             guard let self = self else { return }
             if let apiErr = self.mapStatus(status, data: data, error: error, suppressUnauthorized: suppressUnauthorized, epoch: epoch) {
-                // 审计-性能：重试条件按通道分流——发布走网络错误与 5xx，
-                // GET 只走网络错误；退避只属于发布（1s→2s→4s，上限 4s），
+                // 审计-性能：重试条件按通道分流——发布走网络错误、5xx
+                // 与 408/429，GET 只走网络错误；退避只属于发布（1s→2s→4s，上限 4s），
                 // GET 重试立即发（单次、读请求，延迟收益低）。
                 let retryable: Bool
                 if retryBackoff {
