@@ -465,6 +465,15 @@ final class BearyProfilePhotosViewController: UIViewController {
     private func applyPermissionsFilter() {
         let refiltered = BearyProfileViewController.profilePhotoItems(from: diaryEntriesValue, isOwnProfile: ownProfileValue, isMutualFriend: mutualFriendValue)
         guard refiltered.map({ $0.imageKey }) != photosValue.map({ $0.imageKey }) else { return }
+        // 分页失败态转空态失败态：重滤把照片滤空时，尾部重试节随隐藏的
+        // 网格一起看不见、空态又只认 photosEmptyLoadFailed——不转会让
+        // “加载中…”卡死且无重试入口；两态须在 reloadData 之前一起转，
+        // 让数据源只报 1 节、空态现出重试按钮；重试走空态入口、不删节。
+        // 与 #1243 的限时重滤同款。
+        if refiltered.isEmpty, photosPageLoadFailed {
+            photosPageLoadFailed = false
+            photosEmptyLoadFailed = true
+        }
         photosValue = refiltered
         collectionView.reloadData()
         updateTitleAndEmpty()
