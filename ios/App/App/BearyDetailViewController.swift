@@ -508,6 +508,51 @@ final class BearyDetailViewController: UIViewController {
     /// 失败态与占位共用本视图布局，一并受益（P1-2），不另起一套。
     private let placeholderStateView = BearyStateView()
 
+    /// 第 22 轮 C2：失败横幅——“显示的是上次的内容”＋“重试”，挂正文栈首行
+    /// （作者头行正下方）；失败时常驻、不自动消失，成功后 0.18s 淡出。
+    private let staleBannerLabel: UILabel = {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.gray
+        label.text = "显示的是上次的内容"
+        label.setContentHuggingPriority(UILayoutPriority.defaultLow, for: .horizontal)
+        return label
+    }()
+
+    private lazy var staleBannerRetryButton: UIButton = {
+        let button = UIButton(type: .custom)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setTitle("重试", for: .normal)
+        button.setTitleColor(BearyColors.ink, for: .normal)
+        button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
+        button.titleLabel?.adjustsFontForContentSizeCategory = true
+        button.setContentHuggingPriority(UILayoutPriority.required, for: .horizontal)
+        button.accessibilityLabel = "重试加载"
+        button.addTarget(self, action: #selector(staleBannerRetryTapped), for: .touchUpInside)
+        button.bearyAddPressFeedback()
+        return button
+    }()
+
+    private lazy var staleBannerView: UIStackView = {
+        let stack = UIStackView(arrangedSubviews: [staleBannerLabel, staleBannerRetryButton])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .horizontal
+        stack.spacing = 8
+        stack.alignment = .center
+        stack.backgroundColor = BearyColors.faint
+        stack.layer.cornerRadius = 12
+        stack.clipsToBounds = true
+        stack.isLayoutMarginsRelativeArrangement = true
+        stack.layoutMargins = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
+        stack.isHidden = true
+        return stack
+    }()
+
+    private var staleBannerVisible = false
+    private var staleBannerRetrying = false
+
     private let ephemeralLabel: UILabel = {
         let l = UILabel()
         l.translatesAutoresizingMaskIntoConstraints = false
@@ -807,6 +852,7 @@ final class BearyDetailViewController: UIViewController {
         buildCardHeader()
         buildEphemeralRow()
         buildBody()
+        buildStaleBanner()
         buildImages()
         buildQuote()
         buildLocation()
@@ -966,6 +1012,12 @@ final class BearyDetailViewController: UIViewController {
             ephemeralBorderView.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor, constant: -8),
             ephemeralBorderView.bottomAnchor.constraint(equalTo: bodyStack.bottomAnchor, constant: 16),
         ])
+    }
+
+    /// 第 22 轮 C2：失败横幅挂正文栈首行（作者头行正下方、标题上方）；
+    /// 隐藏时栈自动压零，不留空隙、不动其余间距。
+    private func buildStaleBanner() {
+        bodyStack.insertArrangedSubview(staleBannerView, at: 0)
     }
 
     private func buildBody() {
@@ -1163,6 +1215,8 @@ final class BearyDetailViewController: UIViewController {
         bodyStackTopFromAvatarConstraint?.constant = headerBodyGap
         bodyStackTopFromHeaderConstraint?.constant = headerBodyGap
         bodyStackTopPinConstraint?.constant = headerBodyGap
+        // 失败横幅→标题 12：横幅隐藏时栈自动忽略，不留空隙。
+        bodyStack.setCustomSpacing(12, after: staleBannerView)
         // 标题贴着正文走：标题→正文 6（ChatGPT 间距跟进，#904 为 4）；标题隐藏时其后间距置 0，正文直接贴头行间距。
         bodyStack.setCustomSpacing(titleLabel.isHidden ? 0 : 6, after: titleLabel)
         // 正文→图片 14（ChatGPT 间距跟进，#904 为 10）：正文与图片条直接相邻。
@@ -1233,7 +1287,9 @@ final class BearyDetailViewController: UIViewController {
     }
 
     /// 2026-11-05 Li 定（推翻 2026-10-29「失败清内容」）：后台补齐失败时
-    /// 保留已显示的卡片旧内容，只给轻提示；重试走 toast 动作钮。
+    /// 保留已显示的卡片旧内容，只给轻提示。
+    /// 第 22 轮 C2：正文仍可读时，失败态留在详情头部（常驻横幅＋重试入口），
+    /// 不再只弹 toast；无可读内容（占位）时仍走 toast（无“上次的内容”可留）。
     /// 页内已因拉黑/举报转占位时不动（隐私占位优先于失败态）。
     /// B1：详情取数统一裁决——首开补拉与手动重试共用（与 routeFetchedEntry 同口径）。
     enum DetailFetchDecision {
@@ -1326,6 +1382,10 @@ final class BearyDetailViewController: UIViewController {
 
     func showFetchFailed() {
         if locallyHiddenByModeration { return }
+        if entry.placeholder != true {
+            showStaleBanner()
+            return
+        }
         BearyToast.show(in: view, message: "加载失败，请稍后再试", actionTitle: "重试", action: { [weak self] in self?.retryFetchDetail() })
     }
 
@@ -1340,6 +1400,65 @@ final class BearyDetailViewController: UIViewController {
         placeholderStateView.configure(kind: .empty, title: nil, subtitle: "这篇日记现在看不到了", iconName: nil, actionTitle: nil)
         setContentVisible(false)
         placeholderStateView.isHidden = false
+    }
+
+    /// 第 22 轮 C2：失败横幅显现（常驻，直到补齐成功）。已在显时只恢复
+    /// 可点按态（重试失败回来），不重播出现动效。顶部多出一条时保住阅读
+    /// 位置：在顶时不补，横幅把内容往下推、本就是要让用户看到它。
+    private func showStaleBanner() {
+        guard !locallyHiddenByModeration, entry.placeholder != true else { return }
+        if staleBannerVisible {
+            setStaleBannerRetrying(false)
+            return
+        }
+        staleBannerVisible = true
+        setStaleBannerRetrying(false)
+        let beforeHeight = scrollView.contentSize.height
+        staleBannerView.isHidden = false
+        staleBannerView.alpha = 0
+        view.layoutIfNeeded()
+        let grown = scrollView.contentSize.height - beforeHeight
+        if grown > 0, scrollView.contentOffset.y > 0 {
+            scrollView.contentOffset.y += grown
+        }
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.staleBannerView.alpha = 1
+        })
+    }
+
+    /// 第 22 轮 C2：补齐成功后横幅 0.18 秒淡出（BearyMotion.localStateDuration），
+    /// 再收起；收起后内容上移，同步回补 offset，读到的位置不动（在顶时不补）。
+    private func hideStaleBanner() {
+        guard staleBannerVisible else { return }
+        staleBannerVisible = false
+        setStaleBannerRetrying(false)
+        let beforeHeight = scrollView.contentSize.height
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.staleBannerView.alpha = 0
+        }, completion: { _ in
+            self.staleBannerView.isHidden = true
+            self.staleBannerView.alpha = 1
+            self.view.layoutIfNeeded()
+            let shrunk = beforeHeight - self.scrollView.contentSize.height
+            if shrunk > 0, self.scrollView.contentOffset.y > 0, !self.bodyStack.isHidden {
+                let maxOffset = max(0, self.scrollView.contentSize.height - self.scrollView.bounds.height)
+                self.scrollView.contentOffset.y = min(max(0, self.scrollView.contentOffset.y - shrunk), maxOffset)
+            }
+        })
+    }
+
+    /// 第 22 轮 C2：横幅重试——重试中只更新这条（按钮置灰、“重试中”），
+    /// 正文与其它区域一字不动；成功由 update(with:) 收横幅，失败回横幅可点按态。
+    @objc private func staleBannerRetryTapped() {
+        guard !staleBannerRetrying, !locallyHiddenByModeration else { return }
+        setStaleBannerRetrying(true)
+        retryFetchDetail()
+    }
+
+    private func setStaleBannerRetrying(_ retrying: Bool) {
+        staleBannerRetrying = retrying
+        staleBannerRetryButton.isEnabled = !retrying
+        staleBannerRetryButton.setTitle(retrying ? "重试中" : "重试", for: .normal)
     }
 
     /// 详情失败重试：与 SceneDelegate 后台补齐同一可见性门（作者直更、
@@ -1651,6 +1770,8 @@ final class BearyDetailViewController: UIViewController {
                 entry.placeholder = true
                 showPlaceholder(visibility: fetched.visibility)
             }
+            // 第 22 轮 C2：回包明确不可见，失败横幅一并收起（横幅只留给弱网旧内容）。
+            hideStaleBanner()
             return
         }
         // 按字段合并：先取服务端全量，再把在途字段写回本地值。
@@ -1806,6 +1927,8 @@ final class BearyDetailViewController: UIViewController {
         if !applyEphemeralExpiryIfNeeded() {
             scheduleEphemeralExpiry()
         }
+        // 第 22 轮 C2：补齐成功，失败横幅 0.18 秒淡出收起。
+        hideStaleBanner()
     }
 
     /// 单篇磁盘快照写盘：占位/拉黑态与无 id 的篇不写（快照只存看过的内容态），
