@@ -2333,10 +2333,12 @@ enum BearyIconImages {
 /// 下拉跟随旋转 progress 0...1 → 0...2π，刷新中连续旋转，结束复位。
 final class BearyRefreshIconView: UIImageView {
 
-    init() {
+    /// 渲染点尺寸，默认 32（下拉刷新与各页转圈同款）；BearyStateView 内 20×20
+    /// 显示框传 20，避免 32pt 图塞进 20 框再缩（126 审计 C-8）。
+    init(pointSize: CGFloat = 32) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        image = BearyIconImages.image(named: "icon_refresh", pointSize: 32)
+        image = BearyIconImages.image(named: "icon_refresh", pointSize: pointSize)
         tintColor = BearyColors.gray
         contentMode = .scaleAspectFit
         isUserInteractionEnabled = false
