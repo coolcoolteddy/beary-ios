@@ -232,7 +232,7 @@ final class BearyLoadMoreFooterView: UIView {
     private let dotsStack = UIStackView()
     private var dots: [UIView] = []
     private let endLabel = UILabel()
-    private let retryButton = UIButton(type: .system)
+    private let retryButton = BearyHit44Button(type: .system)
 
     private(set) var state: State = .hidden
 
