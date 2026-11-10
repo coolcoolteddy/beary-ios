@@ -1,8 +1,11 @@
 import XCTest
+import UIKit
 
 // ===== 第一阶段单测：路由解析 + 模型解码 + Scope =====
 // 注意：测试 target 不带宿主 App，直接把 BearyAPI.swift 与 BearyNavigator.swift 编进测试包，
 // 因此这里不 import App、不走 @testable；跑法见 workflow 的 test 任务。
+// 审计三轮第 18 项另把 BearyDraftFiles.swift、BearyEntrySync.swift、BearyDiaryPin.swift
+// 编进测试包（pbxproj 同款做法），替身说明见文件末尾“第 18 项”一节。
 
 private func bearyDecoder() -> JSONDecoder {
     let d = JSONDecoder()
@@ -854,5 +857,478 @@ final class BearyDMStoreBackgroundTests: XCTestCase {
             exp2.fulfill()
         }
         wait(for: [exp1, exp2], timeout: 10)
+    }
+}
+
+// ===== 审计三轮第 18 项：损坏与恢复路径回归测试（PR #1037 / #1034 / #1039 / #1043 / #1045）=====
+// 覆盖：草稿损坏保护（#1037）、回收站编解码往返（#1034）、离线同步写盘失败
+// （#1039）、导出缺失游标（#1043）、切号后置顶状态（#1045）。
+// 测试 target 不带宿主 App：为编进被测生产文件，本 PR 把 BearyDraftFiles.swift、
+// BearyEntrySync.swift、BearyDiaryPin.swift 加进 BearyCoreTests target（与
+// BearyAPI.swift 同款做法，见 project.pbxproj）；其余生产文件不动。
+// 上述三文件在 App target 内依赖的 SessionManager / DiagFile /
+// BearyConfirmSheet 不进测试 target，原因：SessionManager 是登录中枢
+// （signOut 时清十余个缓存与页面类型），整文件编进测试包会把近全 App 拖进来；
+// DiagFile 在 SceneDelegate.swift 内，BearyConfirmSheet 依赖底 sheet 容器与
+// 按钮工厂，同样整文件进包即近全 App。故本节给这三个符号各立一个最小测试替身，
+// 只镜像被测文件实际用到的 API 口径：
+//   - SessionManager.shared.currentUser（MeUser?，可写；生产侧为 private(set)，
+//     测试直接赋值模拟切号——替身口径与生产不一致时，被测文件随替身一起
+//     编译失败，不会静默通过）；
+//   - DiagFile.mark(_:)（空实现；被测路径只在有残留旧图时记诊断日志）；
+//   - BearyConfirmSheet.show(from:title:message:actions:)（空实现；只被不测的
+//     confirmReplacement 用，替身须与生产 API 同签名，否则被测文件编不过）。
+// BearyBeijingDay 已是独立文件且已编进测试包（第四轮审计 17），不用替身。
+// 2026-11-10 变基适配（主线已变，被测口径以现行主线为准）：#933 把 saveDay /
+// commitFullSync / TrashSyncStore.saveAll 由 Result 改成 Bool；#941 起回收站
+// 写盘代际先记后写（失败也 +1）；#1069 全量提交改 staging 换盘，旧日文件留
+// 空数组不删除；#1079 备份失败不再落回 corruptStore，改走 partialSaveFailed；
+// #1046 置顶替换确认改走 BearyConfirmSheet.show。原注 #1037 / #1039 / #1045
+// 未合入（分别被 #1079、#941、#975 覆盖），此处测的是现行主线的同款行为。
+// 替身行为不参与任何断言；生产侧改了这些 API 的签名，被测文件在测试包内
+// 编译即失败（大声失败，非静默通过）。
+// 未覆盖（诚实说明）：
+//   - #1043 的 fetchScopePage 是 BearySettingsViewController 的 private 方法，
+//     整页编进测试包不现实；此处只 pin 住它两道 guard 依赖的模型契约
+//     （缺 entries 键解成 nil、末条缺 createdAt 解成 nil），保证 guard
+//     不被未来的解码改动悄悄架空；
+//   - #1039 的 syncedAccountIdThisLaunch / trashSyncedAccountIdThisLaunch
+//     只在联网全量同步的成功分支里置位，无网测不到；此处测作为其门控的
+//     store 层 Bool 契约（失败即 false、旧快照保留；回收站代际先记后写，
+//     失败也 +1，见 #941）。
+// 所有落盘测试都用测试专用账号 id（987xxx），只读写测试运行器自己沙箱的
+// Application Support，不碰用户真实数据目录；用完即删。
+
+// MARK: - 第 18 项测试替身（test doubles，见节首说明）
+
+/// 生产 SessionManager（SessionManager.swift，不进测试 target）的最小口径：
+/// 只含 BearyEntrySync / BearyDiaryPin 用到的 shared + currentUser。
+/// 登录/切号/持久化等行为不在此替身内；测试直接置 currentUser 模拟切号。
+final class SessionManager {
+    static let shared = SessionManager()
+    var currentUser: MeUser?
+}
+
+/// 生产 DiagFile.mark（SceneDelegate.swift，不进测试 target）：被测路径只在
+/// 有残留旧图时记一条诊断日志；替身空实现，不参与断言。
+enum DiagFile {
+    static func mark(_ stage: String) {}
+}
+
+/// 生产 BearyConfirmSheet（BearyConfirmSheet.swift，不进测试 target）的最小口径：
+/// 只含 BearyDiaryPin.confirmReplacement 用到的 show + Action；空实现，不弹 sheet。
+/// 签名须与生产一致（含 onDismissWithoutAction 可选参数，#1046），否则被测文件编不过。
+enum BearyConfirmSheet {
+    struct Action {
+        enum Style { case `default`, cancel, destructive }
+        let title: String
+        let style: Style
+        let handler: (() -> Void)?
+        init(title: String, style: Style = .default, handler: (() -> Void)? = nil) {
+            self.title = title
+            self.style = style
+            self.handler = handler
+        }
+    }
+    static func show(from presenter: UIViewController, title: String, message: String?, actions: [Action], onDismissWithoutAction: (() -> Void)? = nil) {}
+}
+
+// MARK: - 第 18 项测试辅助
+
+private func bearyTestEntry(id: String, createdAt: Int?, title: String? = nil, images: [String]? = nil, visibility: String? = nil, pinned: Int? = nil) throws -> Entry {
+    var dict: [String: Any] = ["id": id, "content": "正文 \(id)", "is_public": true]
+    if let created = createdAt { dict["created_at"] = created }
+    if let t = title { dict["title"] = t }
+    if let imgs = images { dict["images"] = imgs }
+    if let v = visibility { dict["visibility"] = v }
+    if let p = pinned { dict["pinned"] = p }
+    return try bearyDecoder().decode(Entry.self, from: JSONSerialization.data(withJSONObject: dict))
+}
+
+private func bearyTestUser(id: Int) throws -> MeUser {
+    let me = try bearyDecoder().decode(MeResponse.self, from: Data("{\"user\":{\"id\":\(id)}}".utf8))
+    return try XCTUnwrap(me.user)
+}
+
+// MARK: - 第 18 项用例 1：草稿损坏保护（#1037）
+
+final class BearyDraftBackupTests: XCTestCase {
+    private let draftTestUid = 987001
+
+    private var baseURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+    }
+
+    private var storeURL: URL {
+        baseURL.appendingPathComponent("beary_draft_v3_\(draftTestUid).json")
+    }
+
+    private var backupURLs: [URL] {
+        let all = (try? FileManager.default.contentsOfDirectory(at: baseURL, includingPropertiesForKeys: nil)) ?? []
+        return all.filter { $0.lastPathComponent.hasPrefix("beary_draft_v3_\(draftTestUid).json.corrupt-") }
+    }
+
+    private func cleanupDraftTestFiles() {
+        // 先恢复目录权限（失败测试里改过），再删文件——删目录内文件要写权限。
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: baseURL.path)
+        try? FileManager.default.removeItem(at: storeURL)
+        for url in backupURLs { try? FileManager.default.removeItem(at: url) }
+    }
+
+    private func writeCorruptDraftStore() throws -> Data {
+        // 用生产类型本身编码“好草稿”（与 saveAll 同款 JSONEncoder），再混一条
+        // 坏数据拼成损坏库——文件里的好草稿保证是 BearyDraft 能解出的形状；
+        // 写完当场自检：首条必须解出 BearyDraft，否则测试搭的库本身就不触发
+        // “逐条恢复”分支（自检失败会在此报错，而不是在 loadAllResult 处误报）。
+        let goodDraft = BearyDraft(draftId: "d_good", content: "好草稿正文", images: [], clientReq: "req-1", updatedAt: 1762000000, notifyRecipient: false, quoteImages: [], quoteDeleted: false)
+        let goodObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(goodDraft))
+        let bad: [String: Any] = ["__notADraft": true]
+        let data = try JSONSerialization.data(withJSONObject: [goodObject, bad])
+        try data.write(to: storeURL, options: .atomic)
+        let raw = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: storeURL)) as? [Any])
+        XCTAssertEqual(raw.count, 2)
+        let goodData = try JSONSerialization.data(withJSONObject: raw[0])
+        let probe = try JSONDecoder().decode(BearyDraft.self, from: goodData)
+        XCTAssertEqual(probe.draftId, "d_good")
+        return data
+    }
+
+    func testPartialRecoveryAbortsWhenBackupFails() throws {
+        let previousAccount = BearyDraftStore.currentAccountId
+        defer { cleanupDraftTestFiles(); _ = BearyDraftStore.setAccount(previousAccount) }
+        cleanupDraftTestFiles()
+        _ = BearyDraftStore.setAccount(draftTestUid)
+        let original = try writeCorruptDraftStore()
+        // 备份写不进目录：备份失败（读权限还在，读库本身不受影响）。
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: baseURL.path)
+        let result = BearyDraftStore.loadAllResult()
+        guard case .failure(let error) = result else {
+            XCTFail("expected failure when backup fails, got \(result)")
+            return
+        }
+        // #1079（r19-A1）：备份失败不再落回 corruptStore，改走 partialSaveFailed，
+        // 好草稿随失败带回（backupURL 为 nil，备份没建成）。
+        guard case .partialSaveFailed(let drafts, let kept, let skipped, let backupURL) = error else {
+            XCTFail("expected partialSaveFailed, got \(error)")
+            return
+        }
+        XCTAssertNil(backupURL)
+        XCTAssertEqual(kept, 1)
+        XCTAssertEqual(skipped, 1)
+        XCTAssertEqual(drafts.count, 1)
+        XCTAssertEqual(drafts.first?.draftId, "d_good")
+        XCTAssertNotNil(BearyDraftStore.lastLoadError)
+        // 原文件不动：好草稿没被回写丢掉，坏条目仍在原文件里等下次恢复。
+        XCTAssertEqual(try Data(contentsOf: storeURL), original)
+        XCTAssertTrue(backupURLs.isEmpty)
+        // 兼容口径：失败时 loadAll() 返回 []，但 lastLoadError 置标记。
+        XCTAssertTrue(BearyDraftStore.loadAll().isEmpty)
+        XCTAssertNotNil(BearyDraftStore.lastLoadError)
+    }
+
+    func testPartialRecoverySucceedsWhenBackupWorks() throws {
+        let previousAccount = BearyDraftStore.currentAccountId
+        defer { cleanupDraftTestFiles(); _ = BearyDraftStore.setAccount(previousAccount) }
+        cleanupDraftTestFiles()
+        _ = BearyDraftStore.setAccount(draftTestUid)
+        let original = try writeCorruptDraftStore()
+        let result = BearyDraftStore.loadAllResult()
+        guard case .success(let drafts) = result else {
+            XCTFail("expected success when backup works, got \(result)")
+            return
+        }
+        XCTAssertEqual(drafts.count, 1)
+        XCTAssertEqual(drafts.first?.draftId, "d_good")
+        XCTAssertEqual(drafts.first?.content, "好草稿正文")
+        XCTAssertNil(BearyDraftStore.lastLoadError)
+        // 好数据已回写（坏条目出库），原损坏内容只留在备份里。
+        guard let backup = backupURLs.first else {
+            XCTFail("expected one backup file after recovery")
+            return
+        }
+        XCTAssertEqual(backupURLs.count, 1)
+        XCTAssertEqual(try Data(contentsOf: backup), original)
+        let rewritten = try JSONDecoder().decode([BearyDraft].self, from: Data(contentsOf: storeURL))
+        XCTAssertEqual(rewritten.count, 1)
+        XCTAssertEqual(rewritten.first?.draftId, "d_good")
+    }
+}
+
+// MARK: - 第 18 项用例 2：回收站编解码往返（#1034）
+
+final class BearyTrashRoundtripTests: XCTestCase {
+    private func trashRoundtrip(_ item: TrashItem) throws -> TrashItem {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(TrashItem.self, from: encoder.encode(item))
+    }
+
+    func testTrashItemRoundtripKeepsTitleAndImageKeys() throws {
+        let item = TrashItem(id: "b_t1", content: "正文", createdAt: 1761000000000, publishAt: nil, deletedAt: 1762000000000, daysLeft: 30, published: nil, visibility: "public", title: "标题", imageKeys: ["k1", "k2"])
+        let back = try trashRoundtrip(item)
+        XCTAssertEqual(back.id, "b_t1")
+        XCTAssertEqual(back.content, "正文")
+        XCTAssertEqual(back.visibility, "public")
+        XCTAssertEqual(back.title, "标题")
+        XCTAssertEqual(back.imageKeys, ["k1", "k2"])
+        XCTAssertEqual(back.daysLeft, 30)
+    }
+
+    func testTrashItemDecodesServerShape() throws {
+        // 服务端 trash 行：图片 keys 在 "images" 键下（CodingKeys 配对）。
+        let json = """
+        {"id":"b_t2","content":"正文","created_at":1761000000000,"deleted_at":1762000000000,
+        "days_left":30,"visibility":"friends","title":"标题","images":["k1","k2","k3"]}
+        """
+        let item = try bearyDecoder().decode(TrashItem.self, from: Data(json.utf8))
+        XCTAssertEqual(item.title, "标题")
+        XCTAssertEqual(item.imageKeys, ["k1", "k2", "k3"])
+        XCTAssertEqual(item.visibility, "friends")
+    }
+
+    func testTrashItemNilFieldsStayNil() throws {
+        // 旧缓存行无标题/图片：编解码不凭空补值。
+        let item = TrashItem(id: "b_t3", content: nil, createdAt: nil, publishAt: nil, deletedAt: 1, daysLeft: 30)
+        let back = try trashRoundtrip(item)
+        XCTAssertNil(back.title)
+        XCTAssertNil(back.imageKeys)
+        XCTAssertNil(back.visibility)
+    }
+
+    func testPrependDeletedCarriesTitleImageKeysVisibility() throws {
+        // #1034 全链路：删帖进桶 → 落盘 → 重读，标题/图片 keys/可见性都在。
+        let uid = 987003
+        let dir = try XCTUnwrap(BearyTrashSyncStore.accountDir(accountId: uid))
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try? FileManager.default.removeItem(at: dir)
+        let oldItem = TrashItem(id: "b_old", content: "旧篇", createdAt: 1761000000000, publishAt: nil, deletedAt: 1761000001000, daysLeft: 29, published: nil, visibility: "private", title: "旧标题", imageKeys: ["k0"])
+        XCTAssertTrue(BearyTrashSyncStore.saveAll(accountId: uid, items: [oldItem]), "seed bucket")
+        let entry = try bearyTestEntry(id: "b_pre1", createdAt: 1761000000000, title: "待删标题", images: ["k1", "k2"], visibility: "friends")
+        BearyTrashSyncStore.prependDeleted(accountId: uid, entry: entry)
+        let items = try XCTUnwrap(BearyTrashSyncStore.loadAll(accountId: uid))
+        XCTAssertEqual(items.count, 2)
+        XCTAssertEqual(items.first?.id, "b_pre1")
+        XCTAssertEqual(items.first?.title, "待删标题")
+        XCTAssertEqual(items.first?.imageKeys, ["k1", "k2"])
+        XCTAssertEqual(items.first?.visibility, "friends")
+        XCTAssertEqual(items.first?.daysLeft, 30)
+        XCTAssertNotNil(items.first?.deletedAt)
+        XCTAssertEqual(items.last?.id, "b_old")
+    }
+}
+
+// MARK: - 第 18 项用例 3：离线同步写盘失败（#1039）
+
+final class BearySyncWriteResultTests: XCTestCase {
+    func testSaveDaySuccessRoundtrip() throws {
+        let uid = 987002
+        let dir = try XCTUnwrap(BearyEntrySyncStore.accountDir(accountId: uid))
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try? FileManager.default.removeItem(at: dir)
+        let entry = try bearyTestEntry(id: "b_day1", createdAt: 1761000000000)
+        XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: uid, dayKey: "2026-10-21", entries: [entry]), "saveDay")
+        XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: uid, dayKey: "2026-10-21")?.map { $0.id }, ["b_day1"])
+    }
+
+    func testSaveDayFailureWhenDirectoryBlocked() throws {
+        let uid = 987012
+        let dir = try XCTUnwrap(BearyEntrySyncStore.accountDir(accountId: uid))
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try? FileManager.default.removeItem(at: dir)
+        // 用普通文件占住目录位：建目录失败 → saveDay 回 failure，不写盘。
+        _ = FileManager.default.createFile(atPath: dir.path, contents: Data("block".utf8))
+        let entry = try bearyTestEntry(id: "b_day2", createdAt: 1761000000000)
+        XCTAssertFalse(BearyEntrySyncStore.saveDay(accountId: uid, dayKey: "2026-10-21", entries: [entry]), "directory blocked by file")
+        XCTAssertNil(BearyEntrySyncStore.loadDay(accountId: uid, dayKey: "2026-10-21"))
+    }
+
+    func testSaveDayFailureKeepsOldSnapshot() throws {
+        let uid = 987042
+        let dir = try XCTUnwrap(BearyEntrySyncStore.accountDir(accountId: uid))
+        let dayURL = try XCTUnwrap(BearyEntrySyncStore.dayFileURL(accountId: uid, dayKey: "2026-10-21"))
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path); try? FileManager.default.removeItem(at: dir) }
+        try? FileManager.default.removeItem(at: dir)
+        let oldEntry = try bearyTestEntry(id: "b_old", createdAt: 1761000000000)
+        XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: uid, dayKey: "2026-10-21", entries: [oldEntry]), "seed old day file")
+        let oldData = try Data(contentsOf: dayURL)
+        // 目录只读：原子写建不出临时文件 → failure，旧日文件原样保留。
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)
+        let newEntry = try bearyTestEntry(id: "b_new", createdAt: 1761000000000)
+        XCTAssertFalse(BearyEntrySyncStore.saveDay(accountId: uid, dayKey: "2026-10-21", entries: [newEntry]), "read-only directory")
+        XCTAssertEqual(try Data(contentsOf: dayURL), oldData)
+        XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: uid, dayKey: "2026-10-21")?.map { $0.id }, ["b_old"])
+    }
+
+    func testCommitFullSyncSuccessEmptiesStaleDays() throws {
+        let uid = 987022
+        let dir = try XCTUnwrap(BearyEntrySyncStore.accountDir(accountId: uid))
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try? FileManager.default.removeItem(at: dir)
+        let staleURL = dir.appendingPathComponent("2026-10-20.json")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data("[]".utf8).write(to: staleURL)
+        let entry = try bearyTestEntry(id: "b_c1", createdAt: 1761000000000)
+        XCTAssertTrue(BearyEntrySyncStore.commitFullSync(accountId: uid, grouped: ["2026-10-21": [entry]]), "commit")
+        // #1069 staging 换盘：旧日文件不删除，留空数组占位（loadDay 读到 []）。
+        XCTAssertTrue(FileManager.default.fileExists(atPath: staleURL.path))
+        XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: uid, dayKey: "2026-10-20")?.count, 0)
+        XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: uid, dayKey: "2026-10-21")?.map { $0.id }, ["b_c1"])
+    }
+
+    func testCommitFullSyncRecoversWhenLiveDirBlockedByFile() throws {
+        let uid = 987032
+        let dir = try XCTUnwrap(BearyEntrySyncStore.accountDir(accountId: uid))
+        let backup = try XCTUnwrap(BearyEntrySyncStore.backupDir(accountId: uid))
+        let staging = try XCTUnwrap(BearyEntrySyncStore.stagingDir(accountId: uid))
+        defer {
+            try? FileManager.default.removeItem(at: dir)
+            try? FileManager.default.removeItem(at: backup)
+            try? FileManager.default.removeItem(at: staging)
+        }
+        try? FileManager.default.removeItem(at: dir)
+        try? FileManager.default.removeItem(at: backup)
+        try? FileManager.default.removeItem(at: staging)
+        _ = FileManager.default.createFile(atPath: dir.path, contents: Data("block".utf8))
+        let entry = try bearyTestEntry(id: "b_c2", createdAt: 1761000000000)
+        // #1069 staging 换盘：活盘路径被文件占住也不失败——换盘时旧文件搬进 .bak，新日照常落盘。
+        XCTAssertTrue(BearyEntrySyncStore.commitFullSync(accountId: uid, grouped: ["2026-10-21": [entry]]), "live dir blocked by file recovers via swap")
+        XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: uid, dayKey: "2026-10-21")?.map { $0.id }, ["b_c2"])
+        XCTAssertEqual(try? Data(contentsOf: backup), Data("block".utf8))
+    }
+
+    func testTrashSaveAllFailureKeepsOldSnapshotAndBumpsGeneration() throws {
+        let uid = 987013
+        let dir = try XCTUnwrap(BearyTrashSyncStore.accountDir(accountId: uid))
+        let fileURL = try XCTUnwrap(BearyTrashSyncStore.fileURL(accountId: uid))
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path); try? FileManager.default.removeItem(at: dir) }
+        try? FileManager.default.removeItem(at: dir)
+        let oldItem = TrashItem(id: "b_old", content: "旧快照", createdAt: 1761000000000, publishAt: nil, deletedAt: 1762000000000, daysLeft: 30, published: nil, visibility: "public", title: "旧标题", imageKeys: ["k9"])
+        XCTAssertTrue(BearyTrashSyncStore.saveAll(accountId: uid, items: [oldItem]), "seed old snapshot")
+        let oldData = try Data(contentsOf: fileURL)
+        let generationBefore = BearyTrashSyncStore.currentWriteSequence()
+        // 目录只读：写失败、旧 trash.json 原样保留；写盘代际先记后写（#941），失败也 +1。
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)
+        XCTAssertFalse(BearyTrashSyncStore.saveAll(accountId: uid, items: []), "read-only directory")
+        XCTAssertEqual(try Data(contentsOf: fileURL), oldData)
+        XCTAssertEqual(BearyTrashSyncStore.currentWriteSequence(), generationBefore + 1)
+        XCTAssertEqual(BearyTrashSyncStore.loadAll(accountId: uid)?.map { $0.id }, ["b_old"])
+    }
+
+    func testTrashSaveAllSuccessBumpsGeneration() throws {
+        let uid = 987023
+        let dir = try XCTUnwrap(BearyTrashSyncStore.accountDir(accountId: uid))
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try? FileManager.default.removeItem(at: dir)
+        let generationBefore = BearyTrashSyncStore.currentWriteSequence()
+        XCTAssertTrue(BearyTrashSyncStore.saveAll(accountId: uid, items: []), "save empty bucket")
+        XCTAssertEqual(BearyTrashSyncStore.currentWriteSequence(), generationBefore + 1)
+        XCTAssertEqual(BearyTrashSyncStore.loadAll(accountId: uid)?.count, 0)
+    }
+}
+
+// MARK: - 第 18 项用例 4：导出缺失游标（#1043，模型契约层）
+
+final class BearyExportCursorTests: XCTestCase {
+    func testEntryListWithoutEntriesKeyDecodesToNilNotEmpty() throws {
+        // #1043 第一道 guard 认的是“键缺失”：缺 entries 键必须解成 nil，
+        // 不能默认成 []——否则“空页”与“回包结构异常”无法区分，guard 恒不触发。
+        let list = try bearyDecoder().decode(EntryList.self, from: Data("{\"mailbox_count\":0,\"trash_count\":0}".utf8))
+        XCTAssertNil(list.entries)
+    }
+
+    func testEntryListWithEmptyEntriesIsEmptyPage() throws {
+        // 对照：entries 键在、数组为空，是合法空页（与缺失不同）。
+        let list = try bearyDecoder().decode(EntryList.self, from: Data("{\"entries\":[]}".utf8))
+        XCTAssertEqual(list.entries?.count, 0)
+    }
+
+    func testEntryWithoutCreatedAtDecodesToNil() throws {
+        let entry = try bearyTestEntry(id: "b_nocursor", createdAt: nil)
+        XCTAssertNil(entry.createdAt)
+    }
+
+    func testFullPageWithLastEntryMissingCreatedAt() throws {
+        // 满 50 条且末条缺 createdAt：正是 #1043 第二道 guard 匹配的形状——
+        // 末条无游标，无法续翻，不得按完整页收尾。
+        var dicts: [[String: Any]] = []
+        for i in 0..<50 {
+            var d: [String: Any] = ["id": "b_p\(i)", "content": "第\(i)篇", "created_at": 1761000000000 + i * 1000, "is_public": true]
+            if i == 49 { d.removeValue(forKey: "created_at") }
+            dicts.append(d)
+        }
+        let entries = try bearyDecoder().decode([Entry].self, from: JSONSerialization.data(withJSONObject: dicts))
+        XCTAssertEqual(entries.count, 50)
+        XCTAssertNotNil(entries.first?.createdAt)
+        XCTAssertNil(entries.last?.createdAt)
+    }
+}
+
+// MARK: - 第 18 项用例 5：切号后置顶状态（#1045）
+
+final class BearyDiaryPinAccountTests: XCTestCase {
+    private func setUser(_ id: Int?) throws {
+        SessionManager.shared.currentUser = try id.map { try bearyTestUser(id: $0) }
+    }
+
+    private func clearPin(for userId: Int) throws {
+        try setUser(userId)
+        BearyDiaryPin.currentPinnedEntryId = nil
+    }
+
+    func testPinnedMemoryIsIsolatedPerAccount() throws {
+        defer { try? clearPin(for: 1); try? clearPin(for: 27); SessionManager.shared.currentUser = nil }
+        try setUser(1)
+        BearyDiaryPin.currentPinnedEntryId = "b_pinA"
+        XCTAssertEqual(BearyDiaryPin.currentPinnedEntryId, "b_pinA")
+        // 切到 B：读不到 A 的记忆，不弹 A 的替换确认。
+        try setUser(27)
+        XCTAssertNil(BearyDiaryPin.currentPinnedEntryId)
+        XCTAssertNil(BearyDiaryPin.existingPinnedId(excluding: "b_other", in: []))
+        BearyDiaryPin.currentPinnedEntryId = "b_pinB"
+        XCTAssertEqual(BearyDiaryPin.currentPinnedEntryId, "b_pinB")
+        // 切回 A：A 的记忆还在。
+        try setUser(1)
+        XCTAssertEqual(BearyDiaryPin.currentPinnedEntryId, "b_pinA")
+        XCTAssertEqual(BearyDiaryPin.existingPinnedId(excluding: "b_other", in: []), "b_pinA")
+        try setUser(27)
+        XCTAssertEqual(BearyDiaryPin.currentPinnedEntryId, "b_pinB")
+    }
+
+    func testNoteEntriesOnlyAffectsCurrentAccount() throws {
+        defer { try? clearPin(for: 1); try? clearPin(for: 27); SessionManager.shared.currentUser = nil }
+        try setUser(1)
+        BearyDiaryPin.noteEntries([try bearyTestEntry(id: "b_pinA", createdAt: 1761000000000, pinned: 1)])
+        XCTAssertEqual(BearyDiaryPin.currentPinnedEntryId, "b_pinA")
+        try setUser(27)
+        XCTAssertNil(BearyDiaryPin.currentPinnedEntryId)
+        BearyDiaryPin.noteEntries([try bearyTestEntry(id: "b_pinB", createdAt: 1761000000000, pinned: 1)])
+        XCTAssertEqual(BearyDiaryPin.currentPinnedEntryId, "b_pinB")
+        try setUser(1)
+        XCTAssertEqual(BearyDiaryPin.currentPinnedEntryId, "b_pinA")
+    }
+
+    func testPinMemoryNotReadOrWrittenWhileLoggedOut() throws {
+        defer { try? clearPin(for: 1); SessionManager.shared.currentUser = nil }
+        try setUser(1)
+        BearyDiaryPin.currentPinnedEntryId = "b_pinA"
+        SessionManager.shared.currentUser = nil
+        XCTAssertNil(BearyDiaryPin.currentPinnedEntryId)
+        BearyDiaryPin.currentPinnedEntryId = "b_nope"
+        try setUser(1)
+        XCTAssertEqual(BearyDiaryPin.currentPinnedEntryId, "b_pinA")
+    }
+
+    func testUnpinClearsOnlyCurrentAccount() throws {
+        defer { try? clearPin(for: 1); try? clearPin(for: 27); SessionManager.shared.currentUser = nil }
+        try setUser(1)
+        BearyDiaryPin.currentPinnedEntryId = "b_pinA"
+        try setUser(27)
+        BearyDiaryPin.currentPinnedEntryId = "b_pinB"
+        BearyDiaryPin.notePinResult(entryId: "b_pinB", pinned: false)
+        XCTAssertNil(BearyDiaryPin.currentPinnedEntryId)
+        try setUser(1)
+        XCTAssertEqual(BearyDiaryPin.currentPinnedEntryId, "b_pinA")
     }
 }
