@@ -7175,6 +7175,19 @@ enum BearyTimelinePrefetch {
     private static var inFlightFirstPage: InFlightFirstPage?
     private static let inFlightLock = NSLock()
 
+    /// C2：didPrefetch 跨线程读写（主线程读、API 回包与缓存 IO 回调写），
+    /// 用 inFlightLock 保护每一次读与写，只补同步，不改预热逻辑。
+    private static func isPrefetched() -> Bool {
+        inFlightLock.lock()
+        defer { inFlightLock.unlock() }
+        return didPrefetch
+    }
+    private static func markPrefetched() {
+        inFlightLock.lock()
+        defer { inFlightLock.unlock() }
+        didPrefetch = true
+    }
+
     /// A4：预取发首屏请求——与时间线首屏统一走轻量入口
     /// fetchTimelineFirstPage（scope=timeline + limit=12 + slim=1），
     /// 两条路径请求同一份首屏；发出前先登记在途，同账号、同筛选的
@@ -7186,7 +7199,7 @@ enum BearyTimelinePrefetch {
         flight.handlers.append { result in
             guard case .success(let list) = result, let entries = list.entries, !entries.isEmpty else { return }
             BearyTimelineCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= 12, trashCount: list.trashCount ?? 0, counts: list.tlCounts)
-            didPrefetch = true
+            markPrefetched()
         }
         inFlightLock.lock()
         inFlightFirstPage = flight
@@ -7212,7 +7225,7 @@ enum BearyTimelinePrefetch {
     }
 
     static func maybePrefetch() {
-        guard didPrefetch == false, pendingWorkItem == nil, freshnessCheckInFlight == false,
+        guard isPrefetched() == false, pendingWorkItem == nil, freshnessCheckInFlight == false,
               let uid = SessionManager.shared.currentUser?.id else { return }
         let bucket = BearyFeedCache.bucket(userId: uid)
         // 审计 13：新鲜度检查的读盘 + 解码走缓存 IO 队列，不占主线程；
@@ -7221,10 +7234,10 @@ enum BearyTimelinePrefetch {
         freshnessCheckInFlight = true
         BearyTimelineCache.load(bucket: bucket) { snap in
             freshnessCheckInFlight = false
-            guard generation == prefetchGeneration, didPrefetch == false, pendingWorkItem == nil else { return }
+            guard generation == prefetchGeneration, isPrefetched() == false, pendingWorkItem == nil else { return }
             if let snap = snap, !snap.entries.isEmpty,
                Date().timeIntervalSince1970 - snap.savedAt < 600 {
-                didPrefetch = true
+                markPrefetched()
                 return
             }
             // 秒开-启动瘦身：此前在广场首拉成功当刻立即发时间线首拉，仍挤在
@@ -7236,16 +7249,16 @@ enum BearyTimelinePrefetch {
             // hasMore 阈值同步 12。
             let item = DispatchWorkItem {
                 pendingWorkItem = nil
-                guard didPrefetch == false, let uid = SessionManager.shared.currentUser?.id else { return }
+                guard isPrefetched() == false, let uid = SessionManager.shared.currentUser?.id else { return }
                 // A4：第二次查缓存后、发请求前也复核代次——查盘期间时间线
                 // 自己开页（cancelPendingPrefetch 代次 +1）时不再发请求。
                 let generation = prefetchGeneration
                 let bucket = BearyFeedCache.bucket(userId: uid)
                 BearyTimelineCache.load(bucket: bucket) { snap in
-                    guard generation == prefetchGeneration, didPrefetch == false else { return }
+                    guard generation == prefetchGeneration, isPrefetched() == false else { return }
                     if let snap = snap, !snap.entries.isEmpty,
                        Date().timeIntervalSince1970 - snap.savedAt < 600 {
-                        didPrefetch = true
+                        markPrefetched()
                         return
                     }
                     fetchFirstPageForPrefetch(userId: uid, bucket: bucket)
