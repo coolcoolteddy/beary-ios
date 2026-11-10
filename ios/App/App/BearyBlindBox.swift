@@ -272,8 +272,17 @@ final class BlindBoxState {
     /// 显示 0/1、不读镜像（见 BearyBlindBoxEntryView.refresh），该桶只
     /// 是防止未登录写操作误撞真实账号桶的隔离位。
     private func bucketPrefix() -> String {
+        return bucketPrefix(forAccountId: SessionManager.shared.currentUser?.id)
+    }
+
+    /// 显式账号的键前缀：回包写入一律走发起请求的账号，不再回包时重读
+    /// 当前用户（第九轮 #1：A 在途时切到 B，A 的旧回包不得写进 B 的桶）。
+    /// accountId 为 nil 时沿用旧口径（当前用户，未登录落 "guest" 桶）。
+    private func bucketPrefix(forAccountId accountId: Int?) -> String {
         var account = "guest"
-        if let id = SessionManager.shared.currentUser?.id {
+        if let accountId = accountId {
+            account = "\(accountId)"
+        } else if let id = SessionManager.shared.currentUser?.id {
             account = "\(id)"
         }
         return "beary.blindbox.\(account).\(BlindBoxDate.todayKey())"
@@ -329,15 +338,36 @@ final class BlindBoxState {
     /// 为无交换并清掉旧 id。
     /// 未登录时不写（防游客态写操作污染 guest 桶外
     /// 的任何状态；流程页调用前本就要求登录，见 refreshFromServer 守卫）。
+    /// 第九轮 #1：写入桶由显式账号决定（forAccountId 版），不再回包时重读
+    /// 当前用户；只有该账号仍是当前账号时才发 .bearyBlindBoxDidChange。
+    func applyServerState(_ body: BlindBoxStateBody, forAccountId accountId: Int) {
+        let prefix = bucketPrefix(forAccountId: accountId)
+        writeServerState(body, prefix: prefix)
+        notifyBlindBoxChangeIfCurrent(prefix: prefix)
+    }
+
+    /// 兼容旧调用点：按调用时刻的当前账号写（调用方应在回包前先核对账号与代次）。
     func applyServerState(_ body: BlindBoxStateBody) {
         guard SessionManager.shared.isLoggedIn else { return }
-        noteBucketChangeIfNeeded()
+        writeServerState(body, prefix: bucketPrefix())
+        notifyBlindBoxChangeIfCurrent(prefix: bucketPrefix())
+    }
+
+    /// 服务端状态写进指定前缀的桶（不读当前用户、不发通知，由调用方定）。
+    private func writeServerState(_ body: BlindBoxStateBody, prefix: String) {
         let exchangeId = (body.exchangeId?.isEmpty == false) ? body.exchangeId : nil
         let used = body.used ?? (exchangeId != nil)
-        defaults.set(used, forKey: usedKey())
-        defaults.set(exchangeId, forKey: exchangeKey())
-        defaults.set(body.receivedWithdrawn == true, forKey: receivedWithdrawnKey())
-        defaults.set(body.myWithdrawn == true, forKey: myWithdrawnKey())
+        defaults.set(used, forKey: prefix + ".used")
+        defaults.set(exchangeId, forKey: prefix + ".exchangeId")
+        defaults.set(body.receivedWithdrawn == true, forKey: prefix + ".receivedWithdrawn")
+        defaults.set(body.myWithdrawn == true, forKey: prefix + ".myWithdrawn")
+    }
+
+    /// 只有写进的桶仍是当前账号的桶时，才走桶变化通知与状态变化通知
+    ///（入口只读当前桶；旧号桶静默写，不惊动在线入口）。
+    private func notifyBlindBoxChangeIfCurrent(prefix: String) {
+        guard prefix == bucketPrefix() else { return }
+        noteBucketChangeIfNeeded()
         NotificationCenter.default.post(name: .bearyBlindBoxDidChange, object: nil)
     }
 
@@ -353,16 +383,49 @@ final class BlindBoxState {
         return true
     }
 
+    /// 开盒成功记本地镜像：显式账号版（第九轮 #1，同 applyServerState 口径）。
+    func markOpened(exchangeId: String, forAccountId accountId: Int) {
+        let prefix = bucketPrefix(forAccountId: accountId)
+        defaults.set(true, forKey: prefix + ".used")
+        defaults.set(exchangeId, forKey: prefix + ".exchangeId")
+        defaults.set(false, forKey: prefix + ".receivedWithdrawn")
+        defaults.set(false, forKey: prefix + ".myWithdrawn")
+        notifyBlindBoxChangeIfCurrent(prefix: prefix)
+    }
+
+    func markOpened(exchangeId: String) {
+        let prefix = bucketPrefix()
+        defaults.set(true, forKey: prefix + ".used")
+        defaults.set(exchangeId, forKey: prefix + ".exchangeId")
+        defaults.set(false, forKey: prefix + ".receivedWithdrawn")
+        defaults.set(false, forKey: prefix + ".myWithdrawn")
+        notifyBlindBoxChangeIfCurrent(prefix: prefix)
+    }
+
+    /// 我撤回记本地镜像：显式账号版（第九轮 #1）。
+    func markMyWithdrawn(forAccountId accountId: Int) {
+        let prefix = bucketPrefix(forAccountId: accountId)
+        defaults.set(true, forKey: prefix + ".myWithdrawn")
+        notifyBlindBoxChangeIfCurrent(prefix: prefix)
+    }
+
     func markMyWithdrawn() {
-        noteBucketChangeIfNeeded()
-        defaults.set(true, forKey: myWithdrawnKey())
-        NotificationCenter.default.post(name: .bearyBlindBoxDidChange, object: nil)
+        let prefix = bucketPrefix()
+        defaults.set(true, forKey: prefix + ".myWithdrawn")
+        notifyBlindBoxChangeIfCurrent(prefix: prefix)
+    }
+
+    /// 对方撤回记本地镜像：显式账号版（第九轮 #1）。
+    func markReceivedWithdrawn(forAccountId accountId: Int) {
+        let prefix = bucketPrefix(forAccountId: accountId)
+        defaults.set(true, forKey: prefix + ".receivedWithdrawn")
+        notifyBlindBoxChangeIfCurrent(prefix: prefix)
     }
 
     func markReceivedWithdrawn() {
-        noteBucketChangeIfNeeded()
-        defaults.set(true, forKey: receivedWithdrawnKey())
-        NotificationCenter.default.post(name: .bearyBlindBoxDidChange, object: nil)
+        let prefix = bucketPrefix()
+        defaults.set(true, forKey: prefix + ".receivedWithdrawn")
+        notifyBlindBoxChangeIfCurrent(prefix: prefix)
     }
 
     /// 删指定账号的全部盲盒桶（不限当日；键含日期，须按前缀扫）。
