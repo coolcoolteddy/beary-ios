@@ -1012,7 +1012,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 布局，见 buildQuoteSection）；失败态才露，在途时暂隐防重复点按。
     private let quoteFetchFailedRow = UIStackView()
     private let quoteFetchFailedLabel = UILabel()
-    private let quoteFetchFailedRetryButton = UIButton(type: .system)
+    // 审计：引用加载失败「重试」钮用 BearyHit44Button，视觉不变、命中扩到 44pt
+    //（行上下 16/14pt 边距内，扩区不越出父行）。
+    private let quoteFetchFailedRetryButton = BearyHit44Button(type: .system)
     private let quotePanel = UIView()
     // 选择引用置顶 tab 条（预览 preview-quote-select-redesign-20261031.html）：
     // 直接挂在根视图、锚顶栏底，不随滚动区滚动；旧的面板内 tab 条已废除
@@ -2608,6 +2610,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             selectedChipsRow.isHidden = true
             imageUndoBar.isHidden = true
             statusRow.isHidden = true
+            // 审计：定位行与引用面板互斥，打开面板时同藏（关闭时由 refreshLocationRow 按地点数据恢复）。
+            locationRowStack.isHidden = true
             // 顶部 @ 行同其他编辑器 chrome 一并隐藏（否则会与面板 tab 条重叠）。
             refreshMentionTopRow()
             updateScrollBottomAnchoring()
@@ -2697,6 +2701,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.refreshQuoteSection()
                 self.refreshImageStripVisibility()
                 self.refreshImageUndoBar()
+                // 审计：定位行按地点数据恢复（有地点才显示，无地点仍隐藏）。
+                self.refreshLocationRow()
                 if self.quotePanelSavedScrollValid {
                     self.quotePanelSavedScrollValid = false
                     self.view.layoutIfNeeded()
@@ -3989,7 +3995,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         locationIconView.tintColor = BearyColors.gray
         locationIconView.contentMode = .scaleAspectFit
         locationLabel.translatesAutoresizingMaskIntoConstraints = false
-        locationLabel.font = UIFont.systemFont(ofSize: 13)
+        locationLabel.font = BearyDynamicType.secondaryFont()
         locationLabel.textColor = BearyColors.gray
         locationLabel.numberOfLines = 1
         locationLabel.lineBreakMode = .byTruncatingTail
@@ -4031,6 +4037,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// animated 只在确认新地点时传 true：只让位置行 0.18 秒淡入／淡变，
     /// 其余刷新（草稿恢复、可见性切换、清除）直接换字，不带动效。
     private func refreshLocationRow(animated: Bool = false) {
+        // 审计：引用面板打开期间定位行保持隐藏——面板内异步地点刷新
+        // （草稿恢复／发布门禁／可见性切档）不得把它重新显示出来。
+        if quotePanelOpen {
+            locationRowStack.isHidden = true
+            return
+        }
         guard let location = selectedLocation, !location.isEmpty, let name = location.name ?? location.district else {
             locationRowStack.isHidden = true
             locationRowStack.alpha = 1
