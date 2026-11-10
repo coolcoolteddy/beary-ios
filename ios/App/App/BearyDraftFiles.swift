@@ -939,26 +939,75 @@ enum BearyDraftStore {
     }
 
     /// 损坏文件备份：复制一份（原文件保留不动），名如
-    /// beary_draft_v3.json.corrupt-<unix 秒>.bak；复制失败返回 nil 但原文件仍在。
+    /// beary_draft_v3.json.corrupt-<unix 秒>-<UUID>.bak；复制失败返回 nil 但原文件仍在。
     /// A1：只认“备份成功”——复制后回读比对整份字节，读不出或不完整都算
     /// 备份失败（坏备份不如没有，调用方凭 nil 决定不回写、原件留原处）。
+    /// R23-#4：文件名加 UUID，同一秒内重复备份也不覆盖旧备份；创建用
+    /// “目标已存在即换新 UUID 重试”，绝不先删同名文件；成功后裁剪同前缀
+    /// 旧备份（最多 maxCorruptBackups 份、总计 maxCorruptBackupTotalBytes），
+    /// 只删本文件的旧 .bak，不动其他账号或其他文件。
     private static func backupCorruptFile(at url: URL) -> URL? {
         let stamp = Int(Date().timeIntervalSince1970)
-        let backup = url.deletingLastPathComponent().appendingPathComponent(url.lastPathComponent + ".corrupt-\(stamp).bak")
-        do {
-            if FileManager.default.fileExists(atPath: backup.path) {
-                try FileManager.default.removeItem(at: backup)
-            }
-            try FileManager.default.copyItem(at: url, to: backup)
-            guard let original = try? Data(contentsOf: url),
-                  let copied = try? Data(contentsOf: backup),
-                  copied == original else {
-                try? FileManager.default.removeItem(at: backup)
+        let dir = url.deletingLastPathComponent()
+        let prefix = url.lastPathComponent + ".corrupt-"
+        // 不覆盖创建：UUID 撞名几无可能，仍以“已存在换新 UUID 重试”兜底。
+        var backupURL: URL?
+        for _ in 0..<3 {
+            let candidate = dir.appendingPathComponent(prefix + "\(stamp)-\(UUID().uuidString).bak")
+            guard !FileManager.default.fileExists(atPath: candidate.path) else { continue }
+            do {
+                try FileManager.default.copyItem(at: url, to: candidate)
+                backupURL = candidate
+                break
+            } catch {
+                // 复制失败：候选名是刚生成的 UUID、复制前确认不存在，失败后
+                // 若残留半份文件，删掉它，不留坏备份冒充备份成功。
+                try? FileManager.default.removeItem(at: candidate)
                 return nil
             }
-            return backup
-        } catch {
+        }
+        guard let backup = backupURL else { return nil }
+        guard let original = try? Data(contentsOf: url),
+              let copied = try? Data(contentsOf: backup),
+              copied == original else {
+            try? FileManager.default.removeItem(at: backup)
             return nil
+        }
+        pruneCorruptBackups(in: dir, prefix: prefix, keeping: backup)
+        return backup
+    }
+
+    /// R23-#4：损坏备份上限——同文件前缀（同一账号同一库文件；其他账号
+    /// 文件名前缀不同，不会误删）最多保留 maxCorruptBackups 份、总计不超
+    /// maxCorruptBackupTotalBytes；超了删最旧的，本次新备份永留。
+    /// 只删同目录、同前缀的 .bak；清理尽力而为，失败不影响本次备份成功。
+    private static let maxCorruptBackups = 10
+    private static let maxCorruptBackupTotalBytes: UInt64 = 5 * 1024 * 1024
+
+    private static func pruneCorruptBackups(in dir: URL, prefix: String, keeping latest: URL) {
+        guard let items = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey, .fileSizeKey]) else { return }
+        var entries: [(url: URL, date: Date, size: UInt64)] = []
+        var totalSize: UInt64 = 0
+        for item in items where item.lastPathComponent.hasPrefix(prefix) && item.pathExtension == "bak" {
+            guard let values = try? item.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey, .fileSizeKey]) else { continue }
+            let date = values.creationDate ?? values.contentModificationDate ?? Date.distantPast
+            let size = UInt64(max(0, values.fileSize ?? 0))
+            entries.append((url: item, date: date, size: size))
+            totalSize += size
+        }
+        entries.sort(by: { first, second in
+            if first.date != second.date { return first.date < second.date }
+            return first.url.lastPathComponent < second.url.lastPathComponent
+        })
+        var keptCount = entries.count
+        var keptSize = totalSize
+        for entry in entries {
+            guard keptCount > maxCorruptBackups || keptSize > maxCorruptBackupTotalBytes else { break }
+            guard entry.url != latest else { continue }
+            if (try? FileManager.default.removeItem(at: entry.url)) != nil {
+                keptCount -= 1
+                keptSize = keptSize >= entry.size ? keptSize - entry.size : 0
+            }
         }
     }
 
