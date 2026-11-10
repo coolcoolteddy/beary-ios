@@ -177,8 +177,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 回关/互关）。状态按行实时调 state 接口取（不靠缓存）；失败时行内钮
     /// 保持“关注”占位但点按只 toast、不发请求（不把失败画成可关注的确定态，
     /// 点按时若状态仍为空即提示加载中并重拉）。
-    private var followStates: [Int: BearyFollowState] = [:]
-    private var followStateLoadingIds: Set<Int> = []
+    private var followStates: [String: BearyFollowState] = [:]
+    private var followStateLoadingIds: Set<String> = []
     /// S5：关注状态请求排队——建行时不再立即请求；可见行（+下一屏）优先，
     /// 其余排队；同时在途上限 3。结果区失效时待办整批丢弃（见 clearResultRows）。
     private var followStatePendingIds: [Int] = []
@@ -188,7 +188,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var followButtonsByUserId: [Int: UIButton] = [:]
     // 按钮普查（#672 同款口径）：搜索关注钮乐观更新＋定宽＋代次防过期回包。
     private var followActionSeqByUserId: [Int: Int] = [:]
-    private var confirmedFollowStates: [Int: BearyFollowState] = [:]
+    private var confirmedFollowStates: [String: BearyFollowState] = [:]
+    /// r25-6：关注态缓存键含当前账号 ID 与目标用户 ID——切号后旧账号的
+    /// 迟到回包写不进新号缓存（切号清空已有，见 clearResultRows）。
+    private func followStateKey(userId: Int) -> String {
+        "\(SessionManager.shared.currentUser?.id ?? -1):\(userId)"
+    }
     private var followButtonWidthConstraints: [Int: NSLayoutConstraint] = [:]
     private var followButtonMeasuredCategory: UIContentSizeCategory?
     private var entryButtons: [UIButton] = []
@@ -2619,9 +2624,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// S5：关注状态只进排队，不立即发请求——可见行优先由
     /// requestFollowStatesForVisibleRows 排队头，空闲时按队头逐个发出；
     /// 已有状态 / 已在途 / 已排队的都不重复进队。
+    /// r25-6：缓存键含当前账号 ID 与目标用户 ID——切号后旧账号的迟到回包
+    /// 写不进新号缓存；在途请求拍账号＋鉴权代次，回包多门校验。
     private func loadFollowState(userId: Int) {
-        guard followStates[userId] == nil,
-              !followStateLoadingIds.contains(userId),
+        let key = followStateKey(userId: userId)
+        guard followStates[key] == nil,
+              !followStateLoadingIds.contains(key),
               !followStatePendingIds.contains(userId) else { return }
         followStatePendingIds.append(userId)
         pumpFollowStateQueue()
@@ -2639,29 +2647,33 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     private func fireFollowStateRequest(userId: Int) {
-        guard SessionManager.shared.currentUser?.id != nil else { return }
-        followStateLoadingIds.insert(userId)
+        guard let accountId = SessionManager.shared.currentUser?.id else { return }
+        let key = "\(accountId):\(userId)"
+        followStateLoadingIds.insert(key)
         followStateInFlightCount += 1
         // 账号/搜索代次在发出时捕获：搜索已换批、已切号、行已摘除时，
         // 旧回包直接丢弃，不写 followStates、不碰按钮。
         // fetchFollowState 无取消句柄，在途请求只能靠这道守卫失效，
         // 待办则由 clearResultRows 直接清队（见该函数注释）。
+        // r25-6：鉴权代次也拍一份——401 清态后旧回包同样丢弃；键含账号，
+        // 旧账号回包的在途标记清掉也不影响新账号同用户的请求。
         let seq = searchSeq
-        let accountId = SessionManager.shared.currentUser?.id
+        let epoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchFollowState(userId: userId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.followStateLoadingIds.remove(userId)
+                self.followStateLoadingIds.remove(key)
                 self.followStateInFlightCount = max(0, self.followStateInFlightCount - 1)
                 guard seq == self.searchSeq,
                       accountId == SessionManager.shared.currentUser?.id,
+                      epoch == BearyAPI.shared.authEpoch,
                       self.followButtonsByUserId[userId] != nil else {
                     self.pumpFollowStateQueue()
                     return
                 }
                 if case .success(let state) = result {
-                    self.followStates[userId] = BearyFollowState(response: state)
-                    self.confirmedFollowStates[userId] = BearyFollowState(response: state)
+                    self.followStates[key] = BearyFollowState(response: state)
+                    self.confirmedFollowStates[key] = BearyFollowState(response: state)
                     if let button = self.followButtonsByUserId[userId] {
                         self.applyFollowButtonState(button, userId: userId)
                     }
@@ -2683,8 +2695,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         let ahead = visible.union(CGRect(x: visible.minX, y: visible.maxY, width: visible.width, height: visible.height))
         var ordered: [(frame: CGRect, id: Int)] = []
         for (userId, button) in followButtonsByUserId {
-            guard followStates[userId] == nil,
-                  !followStateLoadingIds.contains(userId),
+            guard followStates[followStateKey(userId: userId)] == nil,
+                  !followStateLoadingIds.contains(followStateKey(userId: userId)),
                   let row = button.superview else { continue }
             let frame = row.convert(row.bounds, to: scrollView)
             ordered.append((frame: frame, id: userId))
@@ -2702,14 +2714,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private func refreshFollowButtons() {
         for (button, userId) in followButtonUserIds {
             applyFollowButtonState(button, userId: userId)
-            if followStates[userId] == nil {
+            if followStates[followStateKey(userId: userId)] == nil {
                 loadFollowState(userId: userId)
             }
         }
     }
 
     private func applyFollowButtonState(_ button: UIButton, userId: Int) {
-        let state = followStates[userId] ?? .none
+        let state = followStates[followStateKey(userId: userId)] ?? .none
         switch state {
         case .none:
             button.setImage(BearyIconImages.image(named: "icon_user_plus", pointSize: 13), for: .normal)
@@ -2740,7 +2752,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     @objc private func followButtonTapped(_ sender: UIButton) {
         guard let userId = followButtonUserIds[sender] else { return }
-        guard let state = followStates[userId] else {
+        guard let state = followStates[followStateKey(userId: userId)] else {
             BearyToast.show(in: view, message: "关注状态加载中，稍后再试")
             loadFollowState(userId: userId)
             return
@@ -2749,21 +2761,27 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         case .none, .followedBy:
             // 按钮普查（#672 同款口径）：点按瞬间即显最终态，服务端只确认；
             // 快连点按最后一次点按的态显示，过期在途回包直接丢弃。
+            // r25-6：关注操作回包同样拍账号＋代次，切号后旧回包不写新号缓存。
             let wasFollowedBy = state == .followedBy
             let target: BearyFollowState = wasFollowedBy ? .mutual : .following
+            let stateKey = followStateKey(userId: userId)
+            let requestAccountId = SessionManager.shared.currentUser?.id
+            let requestEpoch = BearyAPI.shared.authEpoch
             followActionSeqByUserId[userId, default: 0] += 1
             let requestSeq = followActionSeqByUserId[userId] ?? 0
-            followStates[userId] = target
+            followStates[stateKey] = target
             if let button = followButtonsByUserId[userId] {
                 applyFollowButtonState(button, userId: userId)
             }
             BearyAPI.shared.followFriend(userId: userId) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
-                    guard requestSeq == self.followActionSeqByUserId[userId] else { return }
+                    guard requestSeq == self.followActionSeqByUserId[userId],
+                          requestAccountId == SessionManager.shared.currentUser?.id,
+                          requestEpoch == BearyAPI.shared.authEpoch else { return }
                     switch result {
                     case .success:
-                        self.confirmedFollowStates[userId] = target
+                        self.confirmedFollowStates[stateKey] = target
                         if wasFollowedBy {
                             // B2：回关确认带上对方 id——通知页只更新此人卡片。
                             BearyFriends.clearDiaryCachesAndNotify(userId: userId)
@@ -2771,7 +2789,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                         BearyToast.show(in: self.view, message: wasFollowedBy ? "已互关" : "已关注")
                     case .failure:
                         // 失败回滚到最后确认态（不是点按前的中间态），再走拒绝动效。
-                        self.followStates[userId] = self.confirmedFollowStates[userId] ?? state
+                        self.followStates[stateKey] = self.confirmedFollowStates[stateKey] ?? state
                         if let button = self.followButtonsByUserId[userId] {
                             self.applyFollowButtonState(button, userId: userId)
                             self.playFollowDenyShake(on: button)
@@ -2786,23 +2804,29 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             BearyFriends.confirmUnfollowAlert(from: self, displayName: "", mutual: state == .mutual) { [weak self] in
                 guard let self = self else { return }
                 let target: BearyFollowState = state == .mutual ? .followedBy : .none
+                // r25-6：取关操作回包同样拍账号＋代次，切号后旧回包不写新号缓存。
+                let stateKey = self.followStateKey(userId: userId)
+                let requestAccountId = SessionManager.shared.currentUser?.id
+                let requestEpoch = BearyAPI.shared.authEpoch
                 self.followActionSeqByUserId[userId, default: 0] += 1
                 let requestSeq = self.followActionSeqByUserId[userId] ?? 0
-                self.followStates[userId] = target
+                self.followStates[stateKey] = target
                 if let button = self.followButtonsByUserId[userId] {
                     self.applyFollowButtonState(button, userId: userId)
                 }
                 BearyAPI.shared.unfollowFriend(userId: userId) { [weak self] result in
                     DispatchQueue.main.async {
                         guard let self = self else { return }
-                        guard requestSeq == self.followActionSeqByUserId[userId] else { return }
+                        guard requestSeq == self.followActionSeqByUserId[userId],
+                              requestAccountId == SessionManager.shared.currentUser?.id,
+                              requestEpoch == BearyAPI.shared.authEpoch else { return }
                         switch result {
                         case .success:
-                            self.confirmedFollowStates[userId] = target
+                            self.confirmedFollowStates[stateKey] = target
                             // B2：取关确认带上对方 id——通知页只更新此人卡片。
                             BearyFriends.clearDiaryCachesAndNotify(userId: userId)
                         case .failure:
-                            self.followStates[userId] = self.confirmedFollowStates[userId] ?? state
+                            self.followStates[stateKey] = self.confirmedFollowStates[stateKey] ?? state
                             if let button = self.followButtonsByUserId[userId] {
                                 self.applyFollowButtonState(button, userId: userId)
                                 self.playFollowDenyShake(on: button)
