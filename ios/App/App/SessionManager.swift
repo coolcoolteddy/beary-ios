@@ -13,7 +13,25 @@ import Foundation
 final class SessionManager {
     static let shared = SessionManager()
 
-    private(set) var currentUser: MeUser?
+    /// 审计 C4：currentUser 跨线程读写锁——写仍收敛主线程（见下 runOnMain
+    /// 注释），但 isCurrentAuthSession 等只读判断任意线程可调，后台读与
+    /// 主线程写并发时会读到旧值（stale read；Swift ARC 下不野指针）。
+    /// 读写同锁、每次访问各自加锁解锁；API 形状不变（仍 private(set)），
+    /// 调用方一字不动。写法同 BearyImageLoader.currentAccountId（第七轮 #6）。
+    private let currentUserLock = NSLock()
+    private var _currentUser: MeUser?
+    private(set) var currentUser: MeUser? {
+        get {
+            currentUserLock.lock()
+            defer { currentUserLock.unlock() }
+            return _currentUser
+        }
+        set {
+            currentUserLock.lock()
+            defer { currentUserLock.unlock() }
+            _currentUser = newValue
+        }
+    }
     var isLoggedIn: Bool { currentUser != nil }
     /// 游客模式（只读）：用户在登录页点“先逛逛”进入的无账号浏览态，只能看公开日记。
     /// 内存态，不持久化（重开 App 回登录页）；登录成功与显式退出时清零。
@@ -338,8 +356,8 @@ final class SessionManager {
     /// 回包先调本方法：两者均与当前一致才返回 true；切号/退出/401 任一都会
     /// 推进 epoch，账号 ID 是第二道比对。false 时调用方不得清 cookie、不得调
     /// signOutLocally、不得走退出后 UI，改调 purgeLocalState(forAccountId:)
-    /// 定向清发起账号。只读判断，任意线程可调（currentUser 只在主线程写，
-    /// 两条入口的回调本就先回主线程再校验；authEpoch 走串行队列读）。
+    /// 定向清发起账号。只读判断，任意线程可调（currentUser 读写经
+    /// currentUserLock 保护，写仍收敛主线程；authEpoch 走串行队列读）。
     func isCurrentAuthSession(accountId: Int?, epoch: Int) -> Bool {
         guard let accountId = accountId, let currentId = currentUser?.id else { return false }
         return accountId == currentId && epoch == api.authEpoch
