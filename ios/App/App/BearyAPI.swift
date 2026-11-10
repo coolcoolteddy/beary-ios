@@ -454,14 +454,20 @@ struct TrashItem: Codable {
 
     /// 本地构造（删帖进回收站桶）：id 即 entryIdentifier；deletedAt 为删除时刻毫秒，
     /// daysLeft 按服务端 30 天保留口径；下次静默刷新用服务端值纠正残差。
-    init(id: String, content: String?, createdAt: Int?, publishAt: Int?, deletedAt: Int?, daysLeft: Int?, published: Int? = nil) {
+    /// title / imageKeys / visibility 由调用方从原 Entry 透传（R16-3：此前
+    /// memberwise init 不接收这三个字段，本地删帖进桶的条目从一开始就丢了
+    /// 标题与图片数，离线重读后 trashSummary 只能回落到正文/“无文字”）。
+    init(id: String, content: String?, createdAt: Int?, publishAt: Int?, deletedAt: Int?, daysLeft: Int?, published: Int? = nil, visibility: String? = nil, title: String? = nil, imageKeys: [String]? = nil) {
         self.id = id
         self.content = content
         self.createdAt = createdAt
         self.publishAt = publishAt
         self.published = published
+        self.visibility = visibility
         self.deletedAt = deletedAt
         self.daysLeft = daysLeft
+        self.title = title
+        self.imageKeys = imageKeys
     }
 
     /// 落盘编码：id 固定写 String（解码端 String 分支命中）；其余字段与解码同名，
