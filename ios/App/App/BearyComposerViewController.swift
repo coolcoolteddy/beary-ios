@@ -8127,7 +8127,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // quote-freeze：isPublishing 在“一并公开”点按瞬间即置（见
         // beginPublishTogether），故 setVisibility 在途时取消键同样只 toast、
         // 不关编辑器——半截退出（原日记已公开、本篇未发）已被这道守卫堵死。
-        // 编辑器为全屏 present、无下滑关闭手势，容器侧 onCancelled 在新建态
+        // 编辑器现为底 sheet（试效果）：抓手下滑与左边缘右滑都经
+        // didTapCancelFromEdgeSwipe 走本函数，容器侧 onCancelled 在新建态
         // 只从本函数触发，故不存在另一条在途关闭路径。
         if isPublishing {
             showToast(message: isEditMode ? "保存中…" : "发布中…")
