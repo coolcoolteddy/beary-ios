@@ -302,6 +302,7 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         }
         confirmButton.isEnabled = false
         cancelButton.isEnabled = false
+        scrollView.isUserInteractionEnabled = false
         confirmButton.setTitle("处理中…", for: .normal)
         // 审计 13：处理态文案由 2 字变 4 字、右锚固定故向左生长；此处改走项目
         // 现有的固定容器字号策略 cappedFont（上限 20pt，见 BearyDynamicType）：
@@ -330,6 +331,7 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
                     // 生成失败同样留在页内：恢复两钮与确认文案，给重试反馈。
                     strongSelf.confirmButton.isEnabled = true
                     strongSelf.cancelButton.isEnabled = true
+                    strongSelf.scrollView.isUserInteractionEnabled = true
                     strongSelf.confirmButton.setTitle("确认", for: .normal)
                     strongSelf.confirmButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
                     BearyToast.show(in: strongSelf.view, message: "裁剪失败，请重试")
