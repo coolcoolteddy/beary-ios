@@ -191,8 +191,11 @@ enum BearyOneShotLocationResult {
 
 /// 天气钮专用一次定位：复用地点气泡同款权限流程（未决定→请求授权，已允许→
 /// requestLocation，拒绝/受限→直接回落），不持续定位、不缓存坐标、不碰日记。
-/// 完成回调恰好一次：成功、拒绝、失败、超时（10 秒）任一先到即结算；实例靠静态表
-/// 自持到结算，调用方无需持有。
+/// 完成回调恰好一次：成功、拒绝、失败、定位阶段超时（10 秒）任一先到即结算；
+/// 实例靠静态表自持到结算，调用方无需持有。
+/// R22 #11：授权等待与定位等待分阶段计时——等用户答权限框时不计时，授权通过
+/// 后发出 requestLocation 时才启动 10 秒定位超时；弹窗里停留再久，同意后本次
+/// 仍走 GPS，不直接回落 IP。拒绝/受限仍立即结算 .denied。
 final class BearyOneShotLocation: NSObject, CLLocationManagerDelegate {
     private static var active = [BearyOneShotLocation]()
     private static let timeout: TimeInterval = 10
@@ -200,6 +203,8 @@ final class BearyOneShotLocation: NSObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     private var completion: ((BearyOneShotLocationResult) -> Void)?
     private var finished = false
+    /// R22 #11：定位阶段是否已启动（requestLocation + 超时计时只做一次）。
+    private var locationPhaseStarted = false
 
     static func request(completion: @escaping (BearyOneShotLocationResult) -> Void) {
         let req = BearyOneShotLocation(completion: completion)
@@ -216,16 +221,24 @@ final class BearyOneShotLocation: NSObject, CLLocationManagerDelegate {
         manager.delegate = self
         switch CLLocationManager.authorizationStatus() {
         case .notDetermined:
+            // R22 #11：只等授权，不启动超时计时——用户读权限说明再久，
+            // 同意后仍进定位阶段；计时见 beginLocationPhase()。
             manager.requestWhenInUseAuthorization()
         case .authorizedWhenInUse, .authorizedAlways:
-            manager.requestLocation()
+            beginLocationPhase()
         case .denied, .restricted:
             finish(with: .denied)
         @unknown default:
             finish(with: .unavailable)
         }
-        // 兜底：授权框久不答复、或定位回调迟迟不到时，10 秒后按失败结算，
-        // 调用方走 IP 回落，不无限等。
+    }
+
+    /// 定位阶段：发出 requestLocation，并从此刻起 10 秒无结果即按失败结算，
+    /// 调用方走 IP 回落。只启动一次（授权回调可能多次触发）。
+    private func beginLocationPhase() {
+        guard !locationPhaseStarted else { return }
+        locationPhaseStarted = true
+        manager.requestLocation()
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.timeout) { [weak self] in
             self?.finish(with: .unavailable)
         }
@@ -245,7 +258,7 @@ final class BearyOneShotLocation: NSObject, CLLocationManagerDelegate {
         guard !finished else { return }
         switch manager.authorizationStatus {
         case .authorizedWhenInUse, .authorizedAlways:
-            manager.requestLocation()
+            beginLocationPhase()
         case .denied, .restricted:
             finish(with: .denied)
         default:
