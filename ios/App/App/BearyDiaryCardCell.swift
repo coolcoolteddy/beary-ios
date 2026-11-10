@@ -883,7 +883,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     /// R4 App：日记标题行（非作者行 titleStack）。16.5pt 粗体，走
     /// BearyDynamicType.cardTitleFont()（scaledFont）+ adjustsFontForContentSizeCategory；
-    /// 单行截断（与作者名行既有 1 行口径一致，不另发明文案）；空标题时
+    /// 两行截断（小屏及大字号下单行易截断，放宽至 2 行；仍截尾，不另发明文案）；空标题时
     /// isHidden，stack 不为其留高度、不留空行（见 updateEntryTitle）。
     private let entryTitleLabel: UILabel = {
         let lb = UILabel()
@@ -891,7 +891,7 @@ class BearyDiaryCardCell: UITableViewCell {
         lb.font = BearyDynamicType.cardTitleFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.ink
-        lb.numberOfLines = 1
+        lb.numberOfLines = 2
         lb.lineBreakMode = .byTruncatingTail
         lb.isHidden = true
         return lb
