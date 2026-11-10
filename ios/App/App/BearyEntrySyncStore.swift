@@ -843,9 +843,9 @@ enum BearyTrashSyncStore {
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         // R16-3：原 Entry 的标题/图片 keys/可见性一并进桶——此前 memberwise init
         // 不接收这三个字段，本地删帖进桶的条目从构造时就没有标题与图片数，
-        // 即便编码补齐也无从恢复；Entry 无 published Int 字段（只有 isPublic /
-        // publishedAt），故 published 仍留 nil，恢复文案走 visibility。
-        let item = TrashItem(id: entryId, content: entry.content, createdAt: entry.createdAt, publishAt: entry.publishAt, deletedAt: nowMs, daysLeft: 30, visibility: entry.visibility, title: entry.title, imageKeys: entry.images)
+        // 即便编码补齐也无从恢复；质保三轮 T3-C1：published 取 isPublic
+        //（nil 按私密 0，fail-closed），恢复文案走 visibility。
+        let item = TrashItem(id: entryId, content: entry.content, createdAt: entry.createdAt, publishAt: entry.publishAt, deletedAt: nowMs, daysLeft: 30, published: entry.isPublic == true ? 1 : 0, visibility: entry.visibility, title: entry.title, imageKeys: entry.images)
         items.insert(item, at: 0)
         return saveAll(accountId: accountId, items: items)
     }
