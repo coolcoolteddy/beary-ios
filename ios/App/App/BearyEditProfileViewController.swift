@@ -1520,7 +1520,7 @@ extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
             }
         }
         // Mantis 裁剪（3.1.1）：固定比例、确认先退场再回调（#952 同款口径），
-        // 回调体与旧裁剪页 onConfirm 一字未动；旧裁剪器留作兜底。
+        // 回调体未动。
         let cropVC = BearyMantisCrop.makeCropViewController(image: image, aspectRatio: aspectRatio)
         let handler = BearyMantisCropHandler(onCrop: { [weak self] cropped in
             guard let strongSelf = self else { return }
