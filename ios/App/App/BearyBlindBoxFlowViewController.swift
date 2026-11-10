@@ -172,8 +172,10 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     private let spinner = BearyRefreshIconView()
     private let spinnerWrap = UIView()
-    /// r17-m4：加载态文案——只有交换 ID、还没拿到正文时写「已换到，
-    /// 正在加载」；其余加载写默认「加载中…」。由 setStep(.loading) 消费一次。
+    /// 加载容器高度：有状态文案时 50（转圈 20＋文案行），只有转圈时 30。
+    private var spinnerWrapHeightConstraint: NSLayoutConstraint?
+    /// 加载态文案——只有交换 ID、还没拿到正文时写「已换到，
+    /// 正在加载」；其余加载不写文案、只有转圈。由 setStep(.loading) 消费一次。
     private let loadingLabel = UILabel()
     private var loadingStatusText: String?
     private let receivedPillWrap = UIView()
@@ -400,8 +402,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         spinner.heightAnchor.constraint(equalToConstant: 20).isActive = true
         // 填充式竖栈（.fill）会把子视图横向拉满整行，固定 20pt 的转圈不能
         // 直接进栈：改由普通容器承接，容器填满整行、转圈在容器内居中。
-        // r17-m4：容器内再加一行加载文案（默认「加载中…」；只有交换 ID 时
-        // 由 refreshExchangeDetail 改写「已换到，正在加载」），容器随之加高。
+        // r17-m4：容器内再加一行加载文案（只有交换 ID 时由
+        // refreshExchangeDetail 改写「已换到，正在加载」，其余加载不写文案、
+        // 只有转圈，容器随之收窄）；容器随之加高。
         spinnerWrap.translatesAutoresizingMaskIntoConstraints = false
         spinnerWrap.addSubview(spinner)
         loadingLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -409,8 +412,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         loadingLabel.adjustsFontForContentSizeCategory = true
         loadingLabel.textColor = BearyColors.gray
         loadingLabel.textAlignment = .center
-        loadingLabel.text = "加载中…"
+        loadingLabel.text = ""
         spinnerWrap.addSubview(loadingLabel)
+        spinnerWrapHeightConstraint = spinnerWrap.heightAnchor.constraint(equalToConstant: 50)
         NSLayoutConstraint.activate([
             spinner.topAnchor.constraint(equalTo: spinnerWrap.topAnchor, constant: 4),
             spinner.centerXAnchor.constraint(equalTo: spinnerWrap.centerXAnchor),
@@ -418,7 +422,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             loadingLabel.leadingAnchor.constraint(equalTo: spinnerWrap.leadingAnchor),
             loadingLabel.trailingAnchor.constraint(equalTo: spinnerWrap.trailingAnchor),
             loadingLabel.bottomAnchor.constraint(equalTo: spinnerWrap.bottomAnchor, constant: -2),
-            spinnerWrap.heightAnchor.constraint(equalToConstant: 50),
+            spinnerWrapHeightConstraint!,
         ])
 
         introLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -699,8 +703,16 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         case .loading:
             spinnerWrap.isHidden = false
             spinner.startSpinning()
-            // 只有交换 ID 时先写「已换到，正在加载」，其余加载写默认文案。
-            loadingLabel.text = loadingStatusText ?? "加载中…"
+            // 只有交换 ID 时留一行状态文案（「已换到，正在加载」）；其余加载
+            // 只有转圈、不再配「加载中…」文字（转圈本身即加载态），容器随之收窄。
+            if let status = loadingStatusText {
+                loadingLabel.text = status
+                loadingLabel.isHidden = false
+                spinnerWrapHeightConstraint?.constant = 50
+            } else {
+                loadingLabel.isHidden = true
+                spinnerWrapHeightConstraint?.constant = 30
+            }
             loadingStatusText = nil
         case .login:
             loginView.isHidden = false
