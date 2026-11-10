@@ -343,6 +343,9 @@ final class BearyWishWallViewController: UIViewController {
     /// 注意：pendingVote 是游客登录待重放意图，与串行化无关，不复用。
     private var voteInFlight: Set<Int> = []
     private var votePendingTarget: [Int: Int] = [:]
+    /// 2026-11-06（R23 #5）：每条许愿“标记完成”代次，投票 voteGeneration 同款；
+    /// 旧回包丢弃用；失败回滚只恢复 status 字段，其余字段以当前显示态为准。
+    private var markDoneGeneration: [Int: Int] = [:]
     /// 审计登录杂项：游客投票时存下的待重放意图（wishId, target），登录成功后补投。
     private var pendingVote: (wishId: Int, target: Int)?
     /// 每条许愿最后服务端确认态（点赞 confirmedLiked/confirmedLikeCount 同款）：
@@ -880,22 +883,33 @@ final class BearyWishWallViewController: UIViewController {
         }
     }
 
+    /// 标记完成（R23 #5，投票代次口径同款）：失败只回滚本次改的 status 字段，
+    /// 请求期间列表重载 / 票数变化带进来的新字段一律保留；代次守卫丢弃旧回包，
+    /// 已有更新标记请求时旧失败不得覆盖新状态、不得弹 toast。
     private func markDoneTapped(wishId: Int) {
         guard let index = indexOfWish(wishId) else { return }
-        let old = wishes[index]
-        var next = old
+        let oldStatus = wishes[index].status
+        var next = wishes[index]
         next.status = "done"
         wishes[index] = next
         rowViews[wishId]?.configure(item: next, isAdmin: isAdmin)
+        markDoneGeneration[wishId, default: 0] += 1
+        let gen = markDoneGeneration[wishId] ?? 0
         BearyAPI.shared.markWishDone(id: wishId) { [weak self] result in
             DispatchQueue.main.async {
-                guard let self = self, let idx = self.indexOfWish(wishId) else { return }
+                // 代次守卫（投票 voteGeneration 同款）：已有更新标记请求时
+                // 旧回包直接丢弃，不回滚、不弹 toast，屏幕只反映最后一次操作。
+                guard let self = self, let idx = self.indexOfWish(wishId), self.markDoneGeneration[wishId] == gen else { return }
                 switch result {
                 case .success:
                     BearyToast.show(in: self.view, message: "已标记完成")
                 case .failure:
-                    self.wishes[idx] = old
-                    self.rowViews[wishId]?.configure(item: old, isAdmin: self.isAdmin)
+                    // 只滚 status：其余字段（票数等）以当前显示态为准，
+                    // 请求期间重载 / 票数变化带进来的新值不得被旧快照盖掉。
+                    var rolledBack = self.wishes[idx]
+                    rolledBack.status = oldStatus
+                    self.wishes[idx] = rolledBack
+                    self.rowViews[wishId]?.configure(item: rolledBack, isAdmin: self.isAdmin)
                     BearyToast.show(in: self.view, message: "标记失败，请稍后再试")
                 }
             }
