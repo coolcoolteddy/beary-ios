@@ -842,10 +842,12 @@ final class BearyDetailViewController: UIViewController {
             bodyStack.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor),
             bodyTopFromHeader,
             bodyTopPin,
-            separatorView.topAnchor.constraint(equalTo: bodyStack.bottomAnchor, constant: 16),
+            // 2026-11-08 底线 2→1 与卡片统一（Li 定，T3-D1）：线高减 1pt，顶距 16→17 守恒，
+            // 内容列总高不变；底距 -24 不动。
+            separatorView.topAnchor.constraint(equalTo: bodyStack.bottomAnchor, constant: 17),
             separatorView.leadingAnchor.constraint(equalTo: contentColumnView.leadingAnchor),
             separatorView.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor),
-            separatorView.heightAnchor.constraint(equalToConstant: 2),
+            separatorView.heightAnchor.constraint(equalToConstant: 1),
             separatorView.bottomAnchor.constraint(equalTo: contentColumnView.bottomAnchor, constant: -24),
         ])
 
