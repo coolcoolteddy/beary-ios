@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 // ===== 第一阶段单测：路由解析 + 模型解码 + Scope =====
 // 注意：测试 target 不带宿主 App，直接把 BearyAPI.swift 与 BearyNavigator.swift 编进测试包，
@@ -865,20 +866,25 @@ final class BearyDMStoreBackgroundTests: XCTestCase {
 // 测试 target 不带宿主 App：为编进被测生产文件，本 PR 把 BearyDraftFiles.swift、
 // BearyEntrySync.swift、BearyDiaryPin.swift 加进 BearyCoreTests target（与
 // BearyAPI.swift 同款做法，见 project.pbxproj）；其余生产文件不动。
-// 上述三文件在 App target 内依赖的 SessionManager / BearyBeijingDay /
-// DiagFile / BearyMotion 不进测试 target，原因：SessionManager 是登录中枢
+// 上述三文件在 App target 内依赖的 SessionManager / DiagFile /
+// BearyConfirmSheet 不进测试 target，原因：SessionManager 是登录中枢
 // （signOut 时清十余个缓存与页面类型），整文件编进测试包会把近全 App 拖进来；
-// BearyBeijingDay 在 BearyTimelineViewController.swift 内、DiagFile 在
-// SceneDelegate.swift 内、BearyMotion 在 BearyNativeCommon.swift 内，同样
-// 整文件进包即近全 App。故本节给这四个符号各立一个最小测试替身，只镜像被测
-// 文件实际用到的 API 口径：
+// DiagFile 在 SceneDelegate.swift 内，BearyConfirmSheet 依赖底 sheet 容器与
+// 按钮工厂，同样整文件进包即近全 App。故本节给这三个符号各立一个最小测试替身，
+// 只镜像被测文件实际用到的 API 口径：
 //   - SessionManager.shared.currentUser（MeUser?，可写；生产侧为 private(set)，
 //     测试直接赋值模拟切号——替身口径与生产不一致时，被测文件随替身一起
 //     编译失败，不会静默通过）；
-//   - BearyBeijingDay.dayKey(ofMs:)（与生产实现同口径的北京日界；被测断言
-//     不经过它，只为 BearyEntrySync.swift 编译通过）；
 //   - DiagFile.mark(_:)（空实现；被测路径只在有残留旧图时记诊断日志）；
-//   - BearyMotion.animated(_:)（直传参数；只被不测的 confirmReplacement 用）。
+//   - BearyConfirmSheet.show(from:title:message:actions:)（空实现；只被不测的
+//     confirmReplacement 用，替身须与生产 API 同签名，否则被测文件编不过）。
+// BearyBeijingDay 已是独立文件且已编进测试包（第四轮审计 17），不用替身。
+// 2026-11-10 变基适配（主线已变，被测口径以现行主线为准）：#933 把 saveDay /
+// commitFullSync / TrashSyncStore.saveAll 由 Result 改成 Bool；#941 起回收站
+// 写盘代际先记后写（失败也 +1）；#1069 全量提交改 staging 换盘，旧日文件留
+// 空数组不删除；#1079 备份失败不再落回 corruptStore，改走 partialSaveFailed；
+// #1046 置顶替换确认改走 BearyConfirmSheet.show。原注 #1037 / #1039 / #1045
+// 未合入（分别被 #1079、#941、#975 覆盖），此处测的是现行主线的同款行为。
 // 替身行为不参与任何断言；生产侧改了这些 API 的签名，被测文件在测试包内
 // 编译即失败（大声失败，非静默通过）。
 // 未覆盖（诚实说明）：
@@ -888,7 +894,8 @@ final class BearyDMStoreBackgroundTests: XCTestCase {
 //     不被未来的解码改动悄悄架空；
 //   - #1039 的 syncedAccountIdThisLaunch / trashSyncedAccountIdThisLaunch
 //     只在联网全量同步的成功分支里置位，无网测不到；此处测作为其门控的
-//     store 层 Result 契约（失败即 .failure、旧快照保留、代际不记）。
+//     store 层 Bool 契约（失败即 false、旧快照保留；回收站代际先记后写，
+//     失败也 +1，见 #941）。
 // 所有落盘测试都用测试专用账号 id（987xxx），只读写测试运行器自己沙箱的
 // Application Support，不碰用户真实数据目录；用完即删。
 
@@ -902,47 +909,31 @@ final class SessionManager {
     var currentUser: MeUser?
 }
 
-/// 生产 BearyBeijingDay（BearyTimelineViewController.swift，不进测试 target）
-/// 的 dayKey 口径：毫秒时间戳 → 北京年月日（与服务端 (created_at + 8h)
-/// 日界同一口径）。被测断言不经过它，只为 BearyEntrySync.swift 编译通过。
-enum BearyBeijingDay {
-    static func dayKey(ofMs ms: Int) -> String? {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600) ?? TimeZone.current
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let comps = calendar.dateComponents([.year, .month, .day], from: date)
-        guard let year = comps.year, let month = comps.month, let day = comps.day else { return nil }
-        let monthString = month < 10 ? "0\(month)" : "\(month)"
-        let dayString = day < 10 ? "0\(day)" : "\(day)"
-        return "\(year)-\(monthString)-\(dayString)"
-    }
-}
-
 /// 生产 DiagFile.mark（SceneDelegate.swift，不进测试 target）：被测路径只在
 /// 有残留旧图时记一条诊断日志；替身空实现，不参与断言。
 enum DiagFile {
     static func mark(_ stage: String) {}
 }
 
-/// 生产 BearyMotion.animated（BearyNativeCommon.swift，不进测试 target）：
-/// 只被不测的 confirmReplacement 用；替身直传参数。
-enum BearyMotion {
-    static func animated(_ animated: Bool) -> Bool { animated }
+/// 生产 BearyConfirmSheet（BearyConfirmSheet.swift，不进测试 target）的最小口径：
+/// 只含 BearyDiaryPin.confirmReplacement 用到的 show + Action；空实现，不弹 sheet。
+/// 签名须与生产一致（含 onDismissWithoutAction 可选参数，#1046），否则被测文件编不过。
+enum BearyConfirmSheet {
+    struct Action {
+        enum Style { case `default`, cancel, destructive }
+        let title: String
+        let style: Style
+        let handler: (() -> Void)?
+        init(title: String, style: Style = .default, handler: (() -> Void)? = nil) {
+            self.title = title
+            self.style = style
+            self.handler = handler
+        }
+    }
+    static func show(from presenter: UIViewController, title: String, message: String?, actions: [Action], onDismissWithoutAction: (() -> Void)? = nil) {}
 }
 
 // MARK: - 第 18 项测试辅助
-
-private func bearyAssertSuccess(_ result: Result<Void, Error>, _ message: String = "", file: StaticString = #file, line: UInt = #line) {
-    if case .failure(let error) = result {
-        XCTFail("expected success\(message.isEmpty ? "" : " (\(message))"), got failure: \(error)", file: file, line: line)
-    }
-}
-
-private func bearyAssertFailure(_ result: Result<Void, Error>, _ message: String = "", file: StaticString = #file, line: UInt = #line) {
-    if case .success = result {
-        XCTFail("expected failure\(message.isEmpty ? "" : " (\(message))"), got success", file: file, line: line)
-    }
-}
 
 private func bearyTestEntry(id: String, createdAt: Int?, title: String? = nil, images: [String]? = nil, visibility: String? = nil, pinned: Int? = nil) throws -> Entry {
     var dict: [String: Any] = ["id": id, "content": "正文 \(id)", "is_public": true]
@@ -1015,11 +1006,17 @@ final class BearyDraftBackupTests: XCTestCase {
             XCTFail("expected failure when backup fails, got \(result)")
             return
         }
-        guard case .corruptStore(let backupURL) = error else {
-            XCTFail("expected corruptStore, got \(error)")
+        // #1079（r19-A1）：备份失败不再落回 corruptStore，改走 partialSaveFailed，
+        // 好草稿随失败带回（backupURL 为 nil，备份没建成）。
+        guard case .partialSaveFailed(let drafts, let kept, let skipped, let backupURL) = error else {
+            XCTFail("expected partialSaveFailed, got \(error)")
             return
         }
         XCTAssertNil(backupURL)
+        XCTAssertEqual(kept, 1)
+        XCTAssertEqual(skipped, 1)
+        XCTAssertEqual(drafts.count, 1)
+        XCTAssertEqual(drafts.first?.draftId, "d_good")
         XCTAssertNotNil(BearyDraftStore.lastLoadError)
         // 原文件不动：好草稿没被回写丢掉，坏条目仍在原文件里等下次恢复。
         XCTAssertEqual(try Data(contentsOf: storeURL), original)
@@ -1107,7 +1104,7 @@ final class BearyTrashRoundtripTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         try? FileManager.default.removeItem(at: dir)
         let oldItem = TrashItem(id: "b_old", content: "旧篇", createdAt: 1761000000000, publishAt: nil, deletedAt: 1761000001000, daysLeft: 29, published: nil, visibility: "private", title: "旧标题", imageKeys: ["k0"])
-        bearyAssertSuccess(BearyTrashSyncStore.saveAll(accountId: uid, items: [oldItem]), "seed bucket")
+        XCTAssertTrue(BearyTrashSyncStore.saveAll(accountId: uid, items: [oldItem]), "seed bucket")
         let entry = try bearyTestEntry(id: "b_pre1", createdAt: 1761000000000, title: "待删标题", images: ["k1", "k2"], visibility: "friends")
         BearyTrashSyncStore.prependDeleted(accountId: uid, entry: entry)
         let items = try XCTUnwrap(BearyTrashSyncStore.loadAll(accountId: uid))
@@ -1131,7 +1128,7 @@ final class BearySyncWriteResultTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         try? FileManager.default.removeItem(at: dir)
         let entry = try bearyTestEntry(id: "b_day1", createdAt: 1761000000000)
-        bearyAssertSuccess(BearyEntrySyncStore.saveDay(accountId: uid, dayKey: "2026-10-21", entries: [entry]), "saveDay")
+        XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: uid, dayKey: "2026-10-21", entries: [entry]), "saveDay")
         XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: uid, dayKey: "2026-10-21")?.map { $0.id }, ["b_day1"])
     }
 
@@ -1143,7 +1140,7 @@ final class BearySyncWriteResultTests: XCTestCase {
         // 用普通文件占住目录位：建目录失败 → saveDay 回 failure，不写盘。
         _ = FileManager.default.createFile(atPath: dir.path, contents: Data("block".utf8))
         let entry = try bearyTestEntry(id: "b_day2", createdAt: 1761000000000)
-        bearyAssertFailure(BearyEntrySyncStore.saveDay(accountId: uid, dayKey: "2026-10-21", entries: [entry]), "directory blocked by file")
+        XCTAssertFalse(BearyEntrySyncStore.saveDay(accountId: uid, dayKey: "2026-10-21", entries: [entry]), "directory blocked by file")
         XCTAssertNil(BearyEntrySyncStore.loadDay(accountId: uid, dayKey: "2026-10-21"))
     }
 
@@ -1154,17 +1151,17 @@ final class BearySyncWriteResultTests: XCTestCase {
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path); try? FileManager.default.removeItem(at: dir) }
         try? FileManager.default.removeItem(at: dir)
         let oldEntry = try bearyTestEntry(id: "b_old", createdAt: 1761000000000)
-        bearyAssertSuccess(BearyEntrySyncStore.saveDay(accountId: uid, dayKey: "2026-10-21", entries: [oldEntry]), "seed old day file")
+        XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: uid, dayKey: "2026-10-21", entries: [oldEntry]), "seed old day file")
         let oldData = try Data(contentsOf: dayURL)
         // 目录只读：原子写建不出临时文件 → failure，旧日文件原样保留。
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)
         let newEntry = try bearyTestEntry(id: "b_new", createdAt: 1761000000000)
-        bearyAssertFailure(BearyEntrySyncStore.saveDay(accountId: uid, dayKey: "2026-10-21", entries: [newEntry]), "read-only directory")
+        XCTAssertFalse(BearyEntrySyncStore.saveDay(accountId: uid, dayKey: "2026-10-21", entries: [newEntry]), "read-only directory")
         XCTAssertEqual(try Data(contentsOf: dayURL), oldData)
         XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: uid, dayKey: "2026-10-21")?.map { $0.id }, ["b_old"])
     }
 
-    func testCommitFullSyncSuccessPrunesStaleDays() throws {
+    func testCommitFullSyncSuccessEmptiesStaleDays() throws {
         let uid = 987022
         let dir = try XCTUnwrap(BearyEntrySyncStore.accountDir(accountId: uid))
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -1173,8 +1170,10 @@ final class BearySyncWriteResultTests: XCTestCase {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try Data("[]".utf8).write(to: staleURL)
         let entry = try bearyTestEntry(id: "b_c1", createdAt: 1761000000000)
-        bearyAssertSuccess(BearyEntrySyncStore.commitFullSync(accountId: uid, grouped: ["2026-10-21": [entry]]), "commit")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: staleURL.path))
+        XCTAssertTrue(BearyEntrySyncStore.commitFullSync(accountId: uid, grouped: ["2026-10-21": [entry]]), "commit")
+        // #1069 staging 换盘：旧日文件不删除，留空数组占位（loadDay 读到 []）。
+        XCTAssertTrue(FileManager.default.fileExists(atPath: staleURL.path))
+        XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: uid, dayKey: "2026-10-20")?.count, 0)
         XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: uid, dayKey: "2026-10-21")?.map { $0.id }, ["b_c1"])
     }
 
@@ -1185,24 +1184,24 @@ final class BearySyncWriteResultTests: XCTestCase {
         try? FileManager.default.removeItem(at: dir)
         _ = FileManager.default.createFile(atPath: dir.path, contents: Data("block".utf8))
         let entry = try bearyTestEntry(id: "b_c2", createdAt: 1761000000000)
-        bearyAssertFailure(BearyEntrySyncStore.commitFullSync(accountId: uid, grouped: ["2026-10-21": [entry]]), "directory blocked by file")
+        XCTAssertFalse(BearyEntrySyncStore.commitFullSync(accountId: uid, grouped: ["2026-10-21": [entry]]), "directory blocked by file")
     }
 
-    func testTrashSaveAllFailureKeepsOldSnapshotAndGeneration() throws {
+    func testTrashSaveAllFailureKeepsOldSnapshotAndBumpsGeneration() throws {
         let uid = 987013
         let dir = try XCTUnwrap(BearyTrashSyncStore.accountDir(accountId: uid))
         let fileURL = try XCTUnwrap(BearyTrashSyncStore.fileURL(accountId: uid))
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path); try? FileManager.default.removeItem(at: dir) }
         try? FileManager.default.removeItem(at: dir)
         let oldItem = TrashItem(id: "b_old", content: "旧快照", createdAt: 1761000000000, publishAt: nil, deletedAt: 1762000000000, daysLeft: 30, published: nil, visibility: "public", title: "旧标题", imageKeys: ["k9"])
-        bearyAssertSuccess(BearyTrashSyncStore.saveAll(accountId: uid, items: [oldItem]), "seed old snapshot")
+        XCTAssertTrue(BearyTrashSyncStore.saveAll(accountId: uid, items: [oldItem]), "seed old snapshot")
         let oldData = try Data(contentsOf: fileURL)
         let generationBefore = BearyTrashSyncStore.currentWriteSequence()
-        // 目录只读：写失败、旧 trash.json 原样保留、写盘代际不记。
+        // 目录只读：写失败、旧 trash.json 原样保留；写盘代际先记后写（#941），失败也 +1。
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)
-        bearyAssertFailure(BearyTrashSyncStore.saveAll(accountId: uid, items: []), "read-only directory")
+        XCTAssertFalse(BearyTrashSyncStore.saveAll(accountId: uid, items: []), "read-only directory")
         XCTAssertEqual(try Data(contentsOf: fileURL), oldData)
-        XCTAssertEqual(BearyTrashSyncStore.currentWriteSequence(), generationBefore)
+        XCTAssertEqual(BearyTrashSyncStore.currentWriteSequence(), generationBefore + 1)
         XCTAssertEqual(BearyTrashSyncStore.loadAll(accountId: uid)?.map { $0.id }, ["b_old"])
     }
 
@@ -1212,7 +1211,7 @@ final class BearySyncWriteResultTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         try? FileManager.default.removeItem(at: dir)
         let generationBefore = BearyTrashSyncStore.currentWriteSequence()
-        bearyAssertSuccess(BearyTrashSyncStore.saveAll(accountId: uid, items: []), "save empty bucket")
+        XCTAssertTrue(BearyTrashSyncStore.saveAll(accountId: uid, items: []), "save empty bucket")
         XCTAssertEqual(BearyTrashSyncStore.currentWriteSequence(), generationBefore + 1)
         XCTAssertEqual(BearyTrashSyncStore.loadAll(accountId: uid)?.count, 0)
     }
