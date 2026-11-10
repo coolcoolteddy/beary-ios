@@ -3466,8 +3466,18 @@ enum BearyQuoteGate {
         }
         if q.visibility == "friends", let authorId = q.authorId,
            SessionManager.shared.isLoggedIn {
+            // r29-5：发起时拍查看者身份快照（authEpoch＋authAccountId），回包时复核；
+            // 期间切号/登出/登录态变迁都会推代次或改账号，失配即 fail-closed 保持占位，
+            // 不把旧号算出的 mutual 解锁给新号看（BearyAPI 成功回包本身无身份门控）。
+            let requestEpoch = BearyAPI.shared.authEpoch
+            let requestAccountId = BearyAPI.shared.authAccountId
             BearyAPI.shared.fetchFollowState(userId: authorId) { result in
                 DispatchQueue.main.async {
+                    guard requestEpoch == BearyAPI.shared.authEpoch,
+                          requestAccountId == BearyAPI.shared.authAccountId else {
+                        completion(false)
+                        return
+                    }
                     switch result {
                     case .success(let state):
                         let mutual = state.mutual ?? false
