@@ -1072,6 +1072,10 @@ final class BearyDetailViewController: UIViewController {
             imageSlotLivePresses.append(nil)
             imagesStack.addArrangedSubview(slot)
             let widthConstraint = slot.widthAnchor.constraint(equalToConstant: 280)
+            // 隐藏槽位时 UIStackView 的 UISV-hiding 约束需压过槽位宽度：
+            // 宽约束降到 999（仍主导宽度、捏合改 constant 不受影响），
+            // 高度约束不动。
+            widthConstraint.priority = UILayoutPriority(999)
             imageSlotWidthConstraints.append(widthConstraint)
             NSLayoutConstraint.activate([
                 widthConstraint,
