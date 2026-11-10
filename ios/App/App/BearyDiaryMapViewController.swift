@@ -112,7 +112,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         view.addSubview(mapView)
 
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.font = UIFont.systemFont(ofSize: 13)
+        statusLabel.font = BearyDynamicType.secondaryFont()
+        statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.textColor = BearyColors.gray
         statusLabel.numberOfLines = 0
         // 骨架态不写“加载中…”：状态行留空，列表出骨架行；下行 min 高兜底，
@@ -125,7 +126,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         inlineRetryButton.translatesAutoresizingMaskIntoConstraints = false
         inlineRetryButton.setTitle("重试", for: .normal)
         inlineRetryButton.setTitleColor(BearyColors.ink, for: .normal)
-        inlineRetryButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 15)
+        inlineRetryButton.titleLabel?.font = BearyDynamicType.smallActionFont()
+        inlineRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         inlineRetryButton.addTarget(self, action: #selector(didTapInlineRetry), for: .touchUpInside)
         inlineRetryButton.isHidden = true
         inlineRetryButton.setContentHuggingPriority(.required, for: .horizontal)
@@ -1076,14 +1078,16 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         let container = UIView()
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.font = BearyDynamicType.buttonSmallFont()
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.text = "\(selected.key) · \(selected.count) 篇"
         let backButton = UIButton(type: .system)
         backButton.translatesAutoresizingMaskIntoConstraints = false
         backButton.setTitle("所有地点", for: .normal)
         backButton.setTitleColor(BearyColors.ink, for: .normal)
-        backButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        backButton.titleLabel?.font = BearyDynamicType.smallBodyFont()
+        backButton.titleLabel?.adjustsFontForContentSizeCategory = true
         backButton.accessibilityLabel = "所有地点"
         backButton.addTarget(self, action: #selector(didTapShowAllLocations), for: .touchUpInside)
         container.addSubview(titleLabel)
