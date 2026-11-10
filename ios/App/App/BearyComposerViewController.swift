@@ -5463,8 +5463,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 if item.failed {
                     if let name = item.localFile {
                         // 失败图重试：读盘解码也走后台队列，解完回主线程再起上传。
+                        let ownerAccountId = composerOriginAccountId ?? BearyDraftStore.currentAccountId
                         imagePrepQueue.async { [weak self, weak item] in
-                            let image = BearyDraftImageStore.image(for: name)
+                            let image = BearyDraftImageStore.image(for: name, accountId: ownerAccountId)
                             DispatchQueue.main.async {
                                 guard let self = self, let item = item else { return }
                                 var stillThere = false
@@ -5501,8 +5502,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func openCropEditorForImageItem(_ item: ComposerImageItem) {
         if presentedViewController != nil { return }
         if let name = item.localFile {
+            let ownerAccountId = composerOriginAccountId ?? BearyDraftStore.currentAccountId
             imagePrepQueue.async { [weak self, weak item] in
-                let diskImage = BearyDraftImageStore.image(for: name)
+                let diskImage = BearyDraftImageStore.image(for: name, accountId: ownerAccountId)
                 DispatchQueue.main.async {
                     guard let self = self, let item = item else { return }
                     var stillThere = false
@@ -5564,7 +5566,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if let name = item.localFile {
             // P2-11：删图走后台队列（本篇记录随后由 scheduleDraftSave 重写，
             // 内存态里该文件已无引用，见 deletePairsIfUnreferencedAsync）。
-            BearyDraftImageStore.deletePairsIfUnreferencedAsync([name], excludingDraftId: currentDraftId)
+            BearyDraftImageStore.deletePairsIfUnreferencedAsync([name], excludingDraftId: currentDraftId, forAccount: composerOriginAccountId ?? BearyDraftStore.currentAccountId)
         }
         imageStackView.removeArrangedSubview(item.container)
         item.container.removeFromSuperview()
@@ -5634,8 +5636,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func restartUploadForRestoredItem(_ item: ComposerImageItem) {
         if let name = item.localFile {
+            let ownerAccountId = composerOriginAccountId ?? BearyDraftStore.currentAccountId
             imagePrepQueue.async { [weak self, weak item] in
-                let image = BearyDraftImageStore.image(for: name)
+                let image = BearyDraftImageStore.image(for: name, accountId: ownerAccountId)
                 DispatchQueue.main.async {
                     guard let self = self, let item = item else { return }
                     var stillThere = false
@@ -5677,7 +5680,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if let name = pending.item.localFile {
             // P2-11：删图走后台队列；本篇记录随后由 saveDraftNow 按删除后状态
             // 重写，内存态里该文件已无引用，见 deletePairsIfUnreferencedAsync。
-            BearyDraftImageStore.deletePairsIfUnreferencedAsync([name], excludingDraftId: currentDraftId)
+            BearyDraftImageStore.deletePairsIfUnreferencedAsync([name], excludingDraftId: currentDraftId, forAccount: composerOriginAccountId ?? BearyDraftStore.currentAccountId)
         }
         refreshImageUndoBar()
     }
@@ -5791,7 +5794,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     if let oldName = oldName, oldName != saved {
                         // P2-11：旧图走后台队列删（新图已替换进 imageItems，
                         // 随后 saveDraftNow 按替换后状态落盘）。
-                        BearyDraftImageStore.deletePairsIfUnreferencedAsync([oldName], excludingDraftId: self.currentDraftId)
+                        BearyDraftImageStore.deletePairsIfUnreferencedAsync([oldName], excludingDraftId: self.currentDraftId, forAccount: self.composerOriginAccountId ?? BearyDraftStore.currentAccountId)
                     }
                 } else {
                     // P1-19：落盘失败时旧文件、旧 key、旧预览一律不动，只 toast，
@@ -6194,13 +6197,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 视频按 liveVideoFile 读回内存——失败态的视频也要读（点图重试须带
     /// 上视频重传，否则失败的实况会被静默降级为静态重传）。
     /// liveVideoKey 已有时视频已在服务端，不读本地 mov。回调在主线程。
-    private func decodeRestoredImages(_ images: [BearyDraftImageItem], completion: @escaping (_ decodedStills: [(name: String, image: UIImage?)], _ liveVideos: [(videoName: String, data: Data?)]) -> Void) {
+    private func decodeRestoredImages(_ images: [BearyDraftImageItem], accountId: Int? = BearyDraftStore.currentAccountId, completion: @escaping (_ decodedStills: [(name: String, image: UIImage?)], _ liveVideos: [(videoName: String, data: Data?)]) -> Void) {
         imagePrepQueue.async {
             var decoded: [(name: String, image: UIImage?)] = []
             var liveVideos: [(videoName: String, data: Data?)] = []
             for img in images {
                 if img.state != .failed, let name = img.localFile {
-                    decoded.append((name: name, image: BearyDraftImageStore.image(for: name)))
+                    decoded.append((name: name, image: BearyDraftImageStore.image(for: name, accountId: accountId)))
                 }
                 if img.liveVideoKey == nil, let videoName = img.liveVideoFile {
                     liveVideos.append((videoName: videoName, data: BearyDraftImageStore.videoData(for: videoName)))
@@ -6260,8 +6263,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 continue
             }
             guard let name = item.localFile else { continue }
+            let ownerAccountId = composerOriginAccountId ?? BearyDraftStore.currentAccountId
             imagePrepQueue.async { [weak self, weak item] in
-                let image = BearyDraftImageStore.image(for: name)
+                let image = BearyDraftImageStore.image(for: name, accountId: ownerAccountId)
                 DispatchQueue.main.async {
                     guard let self = self, let item = item else { return }
                     var stillThere = false
@@ -6466,7 +6470,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// P2-11：主线程只收文件名，删图走后台队列，不堵退场。
     private func deleteEditLocalFiles() {
         let names = imageItems.compactMap { $0.localFile }
-        BearyDraftImageStore.deletePairsIfUnreferencedAsync(names)
+        BearyDraftImageStore.deletePairsIfUnreferencedAsync(names, forAccount: composerOriginAccountId ?? BearyDraftStore.currentAccountId)
     }
 
     // P2：isEditDirty() 为死代码（无调用点），直接删除，不接入其比较口径。
@@ -6773,7 +6777,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 时不碰新篇的状态行，pill 宽度刷新无妨（审计第 25 项：纯图标固定 44，无计数）；删篇失败时置红，与写盘失败同口径。
             // R14 P1-7：在途计数（回包时 endDraftSaveFlight，退后台补存据此等）。
             self.beginDraftSaveFlight()
-            BearyDraftStore.deleteAsyncReporting(draftId: deletingId) { [weak self] deleted in
+            BearyDraftStore.deleteAsyncReporting(draftId: deletingId, forAccount: composerOriginAccountId ?? BearyDraftStore.currentAccountId) { [weak self] deleted in
                 guard let self = self else { return }
                 if self.currentDraftId == nil {
                     self.draftStatusLevel = deleted ? nil : 0
@@ -6945,7 +6949,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     }
                 }
             }
-            BearyDraftImageStore.sweep(keeping: referenced)
+            BearyDraftImageStore.sweep(keeping: referenced, accountId: restoreAccountId)
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 // 52 批补充：恢复竞态门——恢复是异步读盘，落地时用户可能已经打过字；
@@ -7026,7 +7030,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // B1：待传实况视频同批读回内存（见 decodeRestoredImages），
                 // 读不到的记 liveVideoMissing，续传时跳过、不静默变静态。
                 let decodingImages = draft.images
-                self.decodeRestoredImages(decodingImages) { [weak self] decoded, liveVideos in
+                self.decodeRestoredImages(decodingImages, accountId: restoreAccountId) { [weak self] decoded, liveVideos in
                     guard let self = self else { return }
                     self.applyRestoredImages(decoded: decoded, liveVideos: liveVideos)
                     self.resumePendingUploads()
@@ -7177,6 +7181,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 本地文件名先快照：删库是异步的，回调时 imageItems 可能已被重置。
         let localNames = imageItems.compactMap { $0.localFile }
         let draftIdValue = currentDraftId
+        // 归属账号先捕获再清绑定：删记录与删图须删打开时绑定账号的桶（清绑定后 composerOriginAccountId 已是 nil）。
+        let clearAccountId = composerOriginAccountId ?? BearyDraftStore.currentAccountId
         currentDraftId = nil
         clearedCurrentDraftId = nil
         draftClientReq = nil
@@ -7188,11 +7194,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftStatusLevel = nil
         updateDraftStatusLabel()
         if let draftIdValue = draftIdValue {
-            BearyDraftStore.deleteAsyncReporting(draftId: draftIdValue) { [weak self] deleted in
+            BearyDraftStore.deleteAsyncReporting(draftId: draftIdValue, forAccount: clearAccountId) { [weak self] deleted in
                 guard let self = self else { return }
                 if deleted {
                     // P2-11：记录已确认删除，删图走 ioQueue（删前再核对引用），不在主线程同步删。
-                    BearyDraftImageStore.deletePairsIfUnreferencedAsync(localNames, excludingDraftId: nil)
+                    BearyDraftImageStore.deletePairsIfUnreferencedAsync(localNames, excludingDraftId: nil, forAccount: clearAccountId)
                 } else if notifyOnDeleteFailure {
                     self.showToast(message: "草稿删除失败，草稿仍在草稿箱，图片已保留")
                 }
@@ -7200,7 +7206,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         } else {
             // 无草稿记录：只有未落盘的本地图，同样走后台队列清掉。
-            BearyDraftImageStore.deletePairsIfUnreferencedAsync(localNames, excludingDraftId: nil)
+            BearyDraftImageStore.deletePairsIfUnreferencedAsync(localNames, excludingDraftId: nil, forAccount: clearAccountId)
             refreshDraftPillWidth()
         }
     }
@@ -7512,7 +7518,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // B1：待传实况视频同批读回内存（见 decodeRestoredImages），
         // 读不到的记 liveVideoMissing，续传时跳过、不静默变静态。
         let decodingImages = draft.images
-        decodeRestoredImages(decodingImages) { [weak self] decoded, liveVideos in
+        decodeRestoredImages(decodingImages, accountId: composerOriginAccountId ?? BearyDraftStore.currentAccountId) { [weak self] decoded, liveVideos in
             guard let self = self else { return }
             self.applyRestoredImages(decoded: decoded, liveVideos: liveVideos)
             self.resumePendingUploads()

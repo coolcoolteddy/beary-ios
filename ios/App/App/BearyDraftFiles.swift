@@ -283,7 +283,12 @@ enum BearyDraftImageStore {
     }
 
     static func image(for name: String) -> UIImage? {
-        guard let url = fileURL(for: name) else { return nil }
+        return image(for: name, accountId: BearyDraftStore.currentAccountId)
+    }
+
+    /// 捕获账号版读图：从指定账号的图片目录读，不读全局当前账号。
+    static func image(for name: String, accountId: Int?) -> UIImage? {
+        guard let url = fileURL(for: name, accountId: accountId) else { return nil }
         return UIImage(contentsOfFile: url.path)
     }
 
@@ -320,8 +325,7 @@ enum BearyDraftImageStore {
     /// 磁盘记录尚未落盘而把本次删除漏掉。失败不回调、不 toast：删图只是
     /// 收尾清理，残留文件由下次 restoreDraft 的 sweep 回收；调用方不得
     /// 依赖删完时序。
-    static func deletePairsIfUnreferencedAsync(_ names: [String], excludingDraftId: String? = nil) {
-        let accountId = BearyDraftStore.currentAccountId
+    static func deletePairsIfUnreferencedAsync(_ names: [String], excludingDraftId: String? = nil, forAccount accountId: Int? = BearyDraftStore.currentAccountId) {
         let candidates = Array(Set(names)).filter { !$0.isEmpty }
         guard !candidates.isEmpty else { return }
         BearyDraftStore.ioQueue.async {
@@ -353,7 +357,12 @@ enum BearyDraftImageStore {
     /// 晚一轮清理无害，误删新图有害。读属性失败时也跳过（不删），下轮再清。
     private static let sweepGracePeriod: TimeInterval = 60
     static func sweep(keeping referencedFullNames: Set<String>) {
-        guard let dir = directory() else { return }
+        sweep(keeping: referencedFullNames, accountId: BearyDraftStore.currentAccountId)
+    }
+
+    /// 捕获账号版清理无主文件：只清指定账号目录内的无主文件，不碰其他账号目录。
+    static func sweep(keeping referencedFullNames: Set<String>, accountId: Int?) {
+        guard let dir = directory(forAccount: accountId) else { return }
         var keep = Set<String>()
         for name in referencedFullNames {
             keep.insert(name)
@@ -370,7 +379,7 @@ enum BearyDraftImageStore {
                 if now.timeIntervalSince(modified) < sweepGracePeriod {
                     continue
                 }
-                delete(name)
+                delete(name, accountId: accountId)
             }
         }
     }
@@ -493,15 +502,7 @@ enum BearyDraftStore {
     // 执行中绝不再重读全局 currentAccountId——排队保存期间切号/退出，
     // 旧账号草稿仍写回旧账号目录，不会串到新账号。
     static func deleteAsync(draftId: String, completion: (() -> Void)? = nil) {
-        let accountId = currentAccountId
-        ioQueue.async {
-            delete(draftId: draftId, forAccount: accountId)
-            if let completion = completion {
-                DispatchQueue.main.async {
-                    completion()
-                }
-            }
-        }
+        deleteAsync(draftId: draftId, forAccount: currentAccountId, completion: completion)
     }
 
     /// 捕获账号版后台删一篇（P0-2：发布成功清理提交时的账号桶，
@@ -521,7 +522,11 @@ enum BearyDraftStore {
     /// 草稿库已损坏（此时原文件被保留、未被覆盖），调用方须按失败处理
     /// （草稿箱：卡片原地恢复 + toast，不得按成功出撤销条）。
     static func deleteAsyncReporting(draftId: String, completion: @escaping (Bool) -> Void) {
-        let accountId = currentAccountId
+        deleteAsyncReporting(draftId: draftId, forAccount: currentAccountId, completion: completion)
+    }
+
+    /// 捕获账号版带成败回传的后台删一篇（成败语义与 deleteAsyncReporting 一致）。
+    static func deleteAsyncReporting(draftId: String, forAccount accountId: Int?, completion: @escaping (Bool) -> Void) {
         ioQueue.async {
             let ok = delete(draftId: draftId, forAccount: accountId)
             DispatchQueue.main.async {
