@@ -507,7 +507,7 @@ final class BearyCalendarCardView: UIView {
         outer.translatesAutoresizingMaskIntoConstraints = false
         outer.axis = .vertical
         outer.spacing = 0
-        outer.setCustomSpacing(6, after: titleRow)
+        outer.setCustomSpacing(8, after: titleRow)
         outer.setCustomSpacing(8, after: controlsRow)
         outer.setCustomSpacing(BearySpace.sm, after: weekdayRow)
         addSubview(outer)
@@ -1139,11 +1139,11 @@ final class BearyTimelineCell: UITableViewCell {
         cardStack.setCustomSpacing(12, after: metaStack)
         // 标题→正文 6（2026-11-05 ChatGPT 间距跟进，与卡片/详情一致，#904 为 4）。
         cardStack.setCustomSpacing(6, after: titleLabel)
-        cardStack.setCustomSpacing(9, after: contentLabel)
-        cardStack.setCustomSpacing(9, after: thumbsScrollView)
-        cardStack.setCustomSpacing(10, after: quoteCard)
-        cardStack.setCustomSpacing(9, after: timelineLocationStack)
-        cardStack.setCustomSpacing(9, after: footStack)
+        cardStack.setCustomSpacing(14, after: contentLabel)
+        cardStack.setCustomSpacing(12, after: thumbsScrollView)
+        cardStack.setCustomSpacing(12, after: quoteCard)
+        cardStack.setCustomSpacing(14, after: timelineLocationStack)
+        cardStack.setCustomSpacing(12, after: footStack)
         cardStackReference = cardStack
         cardView.addSubview(cardStack)
         contentView.addSubview(cardView)
@@ -1646,7 +1646,7 @@ final class BearyTimelineCell: UITableViewCell {
         let imageKeys = (entry.images ?? []).filter { !$0.isEmpty }
         thumbsScrollView.isHidden = imageKeys.isEmpty
         thumbsHeightConstraint?.constant = imageKeys.isEmpty ? 0 : 216
-        cardStackReference?.setCustomSpacing(imageKeys.isEmpty ? 0 : 9, after: thumbsScrollView)
+        cardStackReference?.setCustomSpacing(imageKeys.isEmpty ? 0 : 12, after: thumbsScrollView)
         for (thumbIndex, key) in imageKeys.enumerated() {
             let imageView = UIImageView()
             imageView.translatesAutoresizingMaskIntoConstraints = false
