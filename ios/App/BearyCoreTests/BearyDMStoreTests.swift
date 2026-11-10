@@ -43,7 +43,7 @@ final class BearyDMStoreTests: XCTestCase {
     private func saveMessages(accountId: Int, peer peerId: Int, messages: [BearyAPI.DMMessage]) -> [BearyAPI.DMMessage] {
         let exp = expectation(description: "saveMessages")
         var merged: [BearyAPI.DMMessage] = []
-        BearyDMStore.saveMessages(accountId: accountId, peer: peer(id: peerId), messages: messages) { result in
+        BearyDMStore.saveMessages(accountId: accountId, peer: peer(id: peerId), messages: messages) { result, _ in
             merged = result
             exp.fulfill()
         }
@@ -138,8 +138,8 @@ final class BearyDMStoreTests: XCTestCase {
         // 两号交错写入（模拟切号中先后回包），串行队列内按到达顺序落盘。
         let exp1 = expectation(description: "save first")
         let exp2 = expectation(description: "save second")
-        BearyDMStore.saveMessages(accountId: first, peer: peer(id: 5), messages: [message(id: 10, body: "一号的消息")]) { _ in exp1.fulfill() }
-        BearyDMStore.saveMessages(accountId: second, peer: peer(id: 6), messages: [message(id: 20, body: "二号的消息")]) { _ in exp2.fulfill() }
+        BearyDMStore.saveMessages(accountId: first, peer: peer(id: 5), messages: [message(id: 10, body: "一号的消息")]) { _, _ in exp1.fulfill() }
+        BearyDMStore.saveMessages(accountId: second, peer: peer(id: 6), messages: [message(id: 20, body: "二号的消息")]) { _, _ in exp2.fulfill() }
         waitForExpectations(timeout: 30)
         // 各号只读到自己的文件。
         if case .loaded(let allFirst) = BearyDMStore.loadAll(accountId: first) {
