@@ -4131,7 +4131,7 @@ class BearyTimelineViewController: UIViewController {
         visFilterButton.bearyAddPressFeedback()
         updateVisFilterButton()
         // R15-L1：筛选行旁放选中日日期（与当日面板组头同值，见 updateFilterDateLabel）；
-        // 窄屏/大字号放不下时整行改竖排、日期另起一行（见 updateFilterRowLayout）。
+        // 窄屏/大字号放不下时整行改竖排、日期藏掉（下方当日面板组头已显示同日，见 updateFilterRowLayout）。
         filterDateLabel.translatesAutoresizingMaskIntoConstraints = false
         filterDateLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
         filterDateLabel.adjustsFontForContentSizeCategory = true
@@ -4201,7 +4201,8 @@ class BearyTimelineViewController: UIViewController {
     private var headerHeightNeedsRefresh = false
 
     /// R15-L1：筛选行旁的选中日日期（与当日面板组头同值，只取日期段；
-    /// 未选日时隐藏整段）。文本变化本身触发内在尺寸失效，走布局通道
+    /// 未选日时隐藏整段；竖排时也隐藏——日期另起一行会与下方当日面板组头
+    /// 同日重复，面板组头已含日期＋星期＋篇数）。文本变化本身触发内在尺寸失效，走布局通道
     /// 重算表头高，本方法不直接调 refreshHeaderHeight（防重入循环）。
     private func updateFilterDateLabel() {
         guard let key = selectedDayKey else {
@@ -4218,7 +4219,7 @@ class BearyTimelineViewController: UIViewController {
         if filterDateLabel.text != head {
             filterDateLabel.text = head
         }
-        filterDateLabel.isHidden = false
+        filterDateLabel.isHidden = (filterRow.axis == .vertical)
     }
 
     /// R15-L1：筛选与日期分行判定——筛子钮实宽 + 间距 + 日期实宽放不进
@@ -4226,8 +4227,12 @@ class BearyTimelineViewController: UIViewController {
     /// 左对齐），放得下时恢复横排。只在轴向真变时改，不触发布局抖动；
     /// 大字号下筛子钮宽已由 updateVisFilterButton 按新字号重算（见
     /// traitCollectionDidChange），本判定读到的即新宽。
+    /// 竖排时日期藏掉：另起一行会与下方当日面板组头同日重复（面板组头已含
+    /// 日期＋星期＋篇数），不丢信息；横排时恢复显示。显隐判定只以轴向为准，
+    /// 不读 label.isHidden——没选中日时本方法开头即强制回横排（原 guard 以
+    /// isHidden 为条件，藏 label 会逼布局翻回横排，与竖排藏日期打架）。
     private func updateFilterRowLayout() {
-        guard !filterDateLabel.isHidden else {
+        guard selectedDayKey != nil else {
             if filterRow.axis != .horizontal {
                 filterRow.axis = .horizontal
                 filterRow.alignment = .center
@@ -4242,9 +4247,11 @@ class BearyTimelineViewController: UIViewController {
         // 须算两段 spacing，只算一段会在临界宽度下误判横排而实际超宽。
         let needsVertical = buttonWidth + filterRow.spacing * 2 + dateWidth > available
         let newAxis: NSLayoutConstraint.Axis = needsVertical ? .vertical : .horizontal
-        guard filterRow.axis != newAxis else { return }
-        filterRow.axis = newAxis
-        filterRow.alignment = needsVertical ? .leading : .center
+        if filterRow.axis != newAxis {
+            filterRow.axis = newAxis
+            filterRow.alignment = needsVertical ? .leading : .center
+        }
+        filterDateLabel.isHidden = needsVertical
     }
 
     private func refreshHeaderHeight() {
