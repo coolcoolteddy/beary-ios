@@ -644,12 +644,15 @@ final class BearyChromeViewController: UIViewController {
             logo.heightAnchor.constraint(equalToConstant: 28),
         ])
         // beta 徽标（2026-11-10 Li 定）：logo 紧右边小 pill，标明这是测试版（TF）；
-        // 商店版由 shouldShowBetaBadge 读 plist 门控隐藏。底色走 BearyColors.faint、
-        // 不加描边（比 line 边框更素）；字与登录 pill 同口径固定字号、不跟系统字号。
+        // 商店版由 shouldShowBetaBadge 读 plist 门控隐藏。底色 surface2＋1pt line 边框
+        // （Li 2026-11-10 追加：边框必须可见）；边框走 bearyDynamicBorderColor，
+        // 深浅切换时自动重解动态色。字与登录 pill 同口径固定字号、不跟系统字号。
         // 无点按动作；顶栏只在首页显示，徽标天然只出现在首页。
         let betaBadge = UIView()
-        betaBadge.backgroundColor = BearyColors.faint
+        betaBadge.backgroundColor = BearyColors.surface2
         betaBadge.layer.cornerRadius = 7
+        betaBadge.layer.borderWidth = 1
+        betaBadge.layer.bearyDynamicBorderColor = BearyColors.line
         betaBadge.clipsToBounds = true
         betaBadge.isUserInteractionEnabled = false
         betaBadge.translatesAutoresizingMaskIntoConstraints = false
