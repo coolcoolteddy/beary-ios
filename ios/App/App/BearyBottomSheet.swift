@@ -163,7 +163,7 @@ class BearyBottomSheetPresentationController: UIPresentationController {
         let x = (container.bounds.width - width) / 2
         let preferred = presentedViewController.preferredContentSize.height
         let height = preferred > 0 ? preferred : container.bounds.height * 0.5
-        let maxHeight = container.bounds.height - 56
+        let maxHeight = container.bounds.height * 0.88
         let h = max(0, min(height, maxHeight))
         return CGRect(x: x, y: container.bounds.height - h, width: width, height: h)
     }
