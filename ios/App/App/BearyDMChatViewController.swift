@@ -1490,6 +1490,8 @@ private final class BearyDMMessageCell: UITableViewCell {
     private var onRetry: (() -> Void)?
     /// 新一轮 01：本行消息的创建时间（毫秒），供页面分钟边界刷新时重算时间标签。
     private var lastCreatedAtMs: Int?
+    /// 第三轮审计 1：本行是否待确认（仅本人行），供分钟刷新时保留「未确认」后缀。
+    private var isUnconfirmed = false
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -1591,6 +1593,7 @@ private final class BearyDMMessageCell: UITableViewCell {
         mineTimeLabel.text = nil
         theirsTimeLabel.text = nil
         lastCreatedAtMs = nil
+        isUnconfirmed = false
         // 失败叹号与重发闭包不得串行（复用 cell 默认无叹号）。
         failButton.isHidden = true
         onRetry = nil
@@ -1610,10 +1613,16 @@ private final class BearyDMMessageCell: UITableViewCell {
         return "\(Int(diff / 86400))天前"
     }
 
+    /// 第三轮审计 1：相对时间 + 未确认后缀的统一组合（建行与分钟刷新共用）。
+    private func formattedTimeText(ms: Int, showUnconfirmed: Bool) -> String {
+        let timeText = Self.relativeTimeText(ms: ms)
+        return showUnconfirmed ? timeText + " · 未确认" : timeText
+    }
+
     /// 新一轮 01：只刷新本行的时间标签（页面分钟边界定时器调），不触正文/动效。
     func refreshTimeLabel() {
         guard let ms = lastCreatedAtMs else { return }
-        let text = Self.relativeTimeText(ms: ms)
+        let text = formattedTimeText(ms: ms, showUnconfirmed: isUnconfirmed)
         if mineStack.isHidden {
             theirsTimeLabel.text = text
         } else {
@@ -1632,13 +1641,13 @@ private final class BearyDMMessageCell: UITableViewCell {
         let body = message.body ?? ""
         // 气泡时间口径与通知行一致（相对时间：刚刚/X分钟前/X小时前/X天前）。
         lastCreatedAtMs = message.createdAt
-        let timeText = Self.relativeTimeText(ms: message.createdAt)
+        isUnconfirmed = showUnconfirmed
         if isMine {
             mineTextLabel.text = body
-            mineTimeLabel.text = showUnconfirmed ? timeText + " · 未确认" : timeText
+            mineTimeLabel.text = formattedTimeText(ms: message.createdAt, showUnconfirmed: showUnconfirmed)
         } else {
             theirsTextLabel.text = body
-            theirsTimeLabel.text = timeText
+            theirsTimeLabel.text = formattedTimeText(ms: message.createdAt, showUnconfirmed: false)
         }
     }
 }
