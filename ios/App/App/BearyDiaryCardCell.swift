@@ -1536,7 +1536,10 @@ class BearyDiaryCardCell: UITableViewCell {
             headerTop,
             headerStack.leadingAnchor.constraint(equalTo: avatarContainer.trailingAnchor, constant: 12),
             headerStackTrailingConstraint!,
-            bodyStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            // 2026-11-08 正文栈左缘对齐名字列：旧版取 16（与头像同左缘），正文/位置/
+            // 操作行全落在头像列下方；改走 headerStack 左缘（头像右 + 12），头像列下方不再有文字。
+            // 正文栈内图片、引用、回应行随栈同移，保持一列。
+            bodyStack.leadingAnchor.constraint(equalTo: headerStack.leadingAnchor),
             bodyStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             bodyTopFromAvatar,
             bodyTopFromHeader,
