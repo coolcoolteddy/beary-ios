@@ -1674,10 +1674,7 @@ class BearyProfileViewController: UIViewController {
     /// 日记星图入口行（2026-10-30）：排在日记地图行下一行，与地图行同几何
     /// （左右各 20、高 48、12pt 间隔），112 起仅本人页有此行（他人页脚部
     /// 只留照片区，见 refreshFooter）。
-    /// 图标：连线示意用新图标 constellation（imageset 名 "icon_constellation"，注册由
-    /// 另一工人做；此处只引用名，不自绘、不用 SF Symbol 顶替）。注册未到时
-    /// BearyIconImages 返回 nil，本行改放占位文字“待接图标”（行仍可点、星空页
-    /// 照常进）；图标到货后下次启动自动走官方图分支，布局与地图行对齐。
+    /// 图标：连线示意用新图标 constellation（imageset 名 "icon_constellation"）。
     /// 行内子视图与内部约束在 refreshFooter 里首次落位时一次接好（与地图行同机制）。
     private let starEntryRow: UIView = {
         let viewValue = UIView()
@@ -1696,16 +1693,6 @@ class BearyProfileViewController: UIViewController {
         v.tintColor = BearyColors.ink
         v.contentMode = .scaleAspectFit
         return v
-    }()
-
-    private let starEntryPlaceholderLabel: UILabel = {
-        let lb = UILabel()
-        lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.systemFont(ofSize: 10)
-        lb.textColor = BearyColors.gray
-        lb.textAlignment = .center
-        lb.text = "待接图标"
-        return lb
     }()
 
     private let starEntryLabel: UILabel = {
@@ -1990,9 +1977,9 @@ class BearyProfileViewController: UIViewController {
     private lazy var headerShareToGearConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: gearButton.leadingAnchor, constant: -8)
     private lazy var headerShareToHeaderConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16)
     /// 统计行顶约束二选一（邮箱行已按 1:1 移除，withEmail 恒不激活、
-    /// 仅保留作锚点；统计行恒贴 handle 下 13，与旧无邮箱间距一致）。
-    private lazy var statsTopWithEmailConstraint: NSLayoutConstraint = publicCountLabel.topAnchor.constraint(equalTo: emailLabel.bottomAnchor, constant: 13)
-    private lazy var statsTopWithoutEmailConstraint: NSLayoutConstraint = publicCountLabel.topAnchor.constraint(equalTo: handleLabel.bottomAnchor, constant: 13)
+    /// 仅保留作锚点；统计行恒贴 handle 下 12，与旧无邮箱间距一致）。
+    private lazy var statsTopWithEmailConstraint: NSLayoutConstraint = publicCountLabel.topAnchor.constraint(equalTo: emailLabel.bottomAnchor, constant: 12)
+    private lazy var statsTopWithoutEmailConstraint: NSLayoutConstraint = publicCountLabel.topAnchor.constraint(equalTo: handleLabel.bottomAnchor, constant: 12)
     private lazy var tableLeadingConstraint: NSLayoutConstraint = tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor)
     private lazy var tableTrailingConstraint: NSLayoutConstraint = tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
     private lazy var tableCenterXConstraint: NSLayoutConstraint = tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor)
@@ -6838,29 +6825,18 @@ class BearyProfileViewController: UIViewController {
                 mapEntryInternalConstraintsActivated = true
             }
             if isOwnProfile, !starEntryInternalConstraintsActivated {
-                // 星图行：图标已注册走地图行同款几何；未注册走占位文字分支
-                // （占位宽 56，文案随其后，不与文案重叠；图标到货后自动对齐）。
+                // 星图行：图标走地图行同款几何。
                 starEntryRow.addSubview(starEntryLabel)
                 starEntryRow.addSubview(starEntryChevronView)
                 starEntryRow.addSubview(starEntryButton)
-                if starEntryIconView.image != nil {
-                    starEntryRow.addSubview(starEntryIconView)
-                    NSLayoutConstraint.activate([
-                        starEntryIconView.leadingAnchor.constraint(equalTo: starEntryRow.leadingAnchor, constant: 14),
-                        starEntryIconView.centerYAnchor.constraint(equalTo: starEntryRow.centerYAnchor),
-                        starEntryIconView.widthAnchor.constraint(equalToConstant: 20),
-                        starEntryIconView.heightAnchor.constraint(equalToConstant: 20),
-                        starEntryLabel.leadingAnchor.constraint(equalTo: starEntryIconView.trailingAnchor, constant: 10),
-                    ])
-                } else {
-                    starEntryRow.addSubview(starEntryPlaceholderLabel)
-                    NSLayoutConstraint.activate([
-                        starEntryPlaceholderLabel.leadingAnchor.constraint(equalTo: starEntryRow.leadingAnchor, constant: 14),
-                        starEntryPlaceholderLabel.centerYAnchor.constraint(equalTo: starEntryRow.centerYAnchor),
-                        starEntryPlaceholderLabel.widthAnchor.constraint(equalToConstant: 56),
-                        starEntryLabel.leadingAnchor.constraint(equalTo: starEntryPlaceholderLabel.trailingAnchor, constant: 10),
-                    ])
-                }
+                starEntryRow.addSubview(starEntryIconView)
+                NSLayoutConstraint.activate([
+                    starEntryIconView.leadingAnchor.constraint(equalTo: starEntryRow.leadingAnchor, constant: 14),
+                    starEntryIconView.centerYAnchor.constraint(equalTo: starEntryRow.centerYAnchor),
+                    starEntryIconView.widthAnchor.constraint(equalToConstant: 20),
+                    starEntryIconView.heightAnchor.constraint(equalToConstant: 20),
+                    starEntryLabel.leadingAnchor.constraint(equalTo: starEntryIconView.trailingAnchor, constant: 10),
+                ])
                 NSLayoutConstraint.activate([
                     starEntryLabel.centerYAnchor.constraint(equalTo: starEntryRow.centerYAnchor),
                     starEntryChevronView.trailingAnchor.constraint(equalTo: starEntryRow.trailingAnchor, constant: -14),
@@ -7280,7 +7256,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         var constraints: [NSLayoutConstraint] = [
             graphicView.widthAnchor.constraint(equalToConstant: 40),
             graphicView.heightAnchor.constraint(equalToConstant: 40),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
         ]
@@ -7333,7 +7309,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         label.accessibilityLabel = "用户已注销"
         container.addSubview(label)
         NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
+            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
             label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
             label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
@@ -7405,7 +7381,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             iconView.widthAnchor.constraint(equalToConstant: 36),
             iconView.heightAnchor.constraint(equalToConstant: 36),
             retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
