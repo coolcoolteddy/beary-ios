@@ -3106,7 +3106,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             headerStack.isUserInteractionEnabled = false
             let nameLabel = UILabel()
             nameLabel.translatesAutoresizingMaskIntoConstraints = false
-            nameLabel.font = UIFont.boldSystemFont(ofSize: 16.5)
+            nameLabel.font = BearyDynamicType.cardTitleFont()
             nameLabel.textColor = BearyColors.ink
             nameLabel.numberOfLines = 1
             nameLabel.lineBreakMode = .byTruncatingTail
@@ -3183,11 +3183,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             let contentLabel = UILabel()
             contentLabel.translatesAutoresizingMaskIntoConstraints = false
             contentLabel.numberOfLines = 0
-            contentLabel.font = UIFont.systemFont(ofSize: 16.5)
+            contentLabel.font = BearyDynamicType.diaryBodyFont()
             contentLabel.textColor = BearyColors.ink
             let panelParagraph = NSMutableParagraphStyle()
             panelParagraph.lineHeightMultiple = 1.75
-            contentLabel.attributedText = NSAttributedString(string: entry.content ?? "", attributes: [.font: UIFont.systemFont(ofSize: 16.5), .foregroundColor: BearyColors.ink, .paragraphStyle: panelParagraph])
+            contentLabel.attributedText = NSAttributedString(string: entry.content ?? "", attributes: [.font: BearyDynamicType.diaryBodyFont(), .foregroundColor: BearyColors.ink, .paragraphStyle: panelParagraph])
             let separator = UIView()
             separator.translatesAutoresizingMaskIntoConstraints = false
             separator.backgroundColor = BearyColors.line
@@ -5473,7 +5473,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let failLabel = UILabel()
         failLabel.translatesAutoresizingMaskIntoConstraints = false
         failLabel.text = "上传失败，点按重试"
-        failLabel.font = UIFont.systemFont(ofSize: 10)
+        failLabel.font = BearyDynamicType.captionFont()
         failLabel.textColor = BearyColors.red
         failLabel.textAlignment = .center
         failStack.addArrangedSubview(failIcon)
