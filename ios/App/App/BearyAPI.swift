@@ -504,10 +504,20 @@ struct TrashPage: Decodable {
         case hasMore
     }
 
+    /// R16-13：必需字段严格解码——items / hasMore 缺失即抛解码失败，
+    /// 经 request 走 .failure(.decoding)，同步腿中止、UI 腿走失败态，
+    /// 原本地回收站快照保留，绝不默认 [] / false 后整桶覆写 trash.json。
+    /// 此前 decodeIfPresent ?? [] / ?? false 会把异常响应当成“回收站为空”。
+    /// 服务端 GET /beary/api/trash 恒下发 {items, has_more}（worker.js
+    /// 实证），正常响应不受影响。同步腿不读 hasMore（只用 items.count < 50
+    /// 作末页判断），UI 腿读它——缺失时两条腿都应失败，而非各取默认值。
+    /// 与 R16-4 同一类防护（分页响应缺失必需字段即失败、保旧快照）、
+    /// 不同数据桶：entries 字段在其他调用方处合法缺失故只能在同步调用
+    /// 点守卫，TrashPage 只被回收站两条腿消费故可直接在解码层收紧。
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        items = try container.decodeIfPresent([TrashItem].self, forKey: .items) ?? []
-        hasMore = try container.decodeIfPresent(Bool.self, forKey: .hasMore) ?? false
+        items = try container.decode([TrashItem].self, forKey: .items)
+        hasMore = try container.decode(Bool.self, forKey: .hasMore)
     }
 }
 
