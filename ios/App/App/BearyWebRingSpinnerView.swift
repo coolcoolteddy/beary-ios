@@ -41,6 +41,9 @@ final class BearyWebRingSpinnerView: UIView {
         // 同口径；系统切后台会剥掉图层动画，spinning 仍为真时不补就一直静态）。
         NotificationCenter.default.addObserver(self, selector: #selector(foregroundResume), name: UIApplication.willEnterForegroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(foregroundResume), name: UIApplication.didBecomeActiveNotification, object: nil)
+        // 审计 N4：实时响应减动效切换——运行中开启减动效时，已加上的无限
+        // 旋转动画无任何路径会被移除；关时若仍在加载中需恢复旋转。
+        NotificationCenter.default.addObserver(self, selector: #selector(reduceMotionChanged), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
     }
 
     deinit {
@@ -114,6 +117,20 @@ final class BearyWebRingSpinnerView: UIView {
     @objc private func foregroundResume() {
         guard spinning, !UIAccessibility.isReduceMotionEnabled else { return }
         addSpinAnimation()
+    }
+
+    /// 减动效开关变化（审计 N4，与 BearyRefreshIconView 同口径）：
+    /// 开→停掉在转的动画，spinning 保持 true、静态圆环仍可见；
+    /// 关→仅仍在加载且在窗口内时恢复旋转；离页或加载已完成均不重起
+    ///（未进窗口时由 didMoveToWindow 补加）。
+    @objc private func reduceMotionChanged() {
+        guard spinning else { return }
+        if UIAccessibility.isReduceMotionEnabled {
+            layer.removeAnimation(forKey: "web-ring-spin")
+        } else {
+            guard window != nil else { return }
+            addSpinAnimation()
+        }
     }
 
     private func addSpinAnimation() {
