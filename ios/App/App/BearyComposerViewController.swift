@@ -7886,10 +7886,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let checkpointKeys = checkpoint.images.compactMap { $0.serverKey }
         if checkpointKeys != (entry.images ?? []) { return true }
         if checkpoint.images.contains(where: { $0.serverKey == nil && $0.localFile != nil }) { return true }
-        let checkpointLiveVideos = Dictionary(uniqueKeysWithValues: checkpoint.images.compactMap { img -> (String, String)? in
+        let checkpointLiveVideos = Dictionary(checkpoint.images.compactMap { img -> (String, String)? in
             guard let key = img.serverKey, let liveKey = img.liveVideoKey else { return nil }
             return (key, liveKey)
-        })
+        }, uniquingKeysWith: { first, _ in first })
         if checkpointLiveVideos != (entry.liveVideos ?? [:]) { return true }
         return false
     }
