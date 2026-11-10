@@ -3444,7 +3444,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 重叠带按 hitTest 顺序归后一个钮。现间距 20 → 中心距 24+20=44、重叠 44+44−44=0。
         // 只动本行间距：视觉仍 24、Hit44 定义不动、不改全局样式 token、不收进菜单。
         // 109 的 16 是为挤草稿文案微收的旧值；窄屏文案保全改由 applyDraftStatusToolbarFit
-        // 只切文案显隐、不再反向收工具间距（收间距即重现重叠）。
+        // 只切文案显隐；D4：间距只在 20 装不下容器时自适应收窄（下限 12），
+        // cap 随间距同步收，故不重现热区重叠。
         toolRow.spacing = 20
         toolRow.alignment = .center
         imageToolButton.setImage(BearyIconImages.image(named: "icon_image", pointSize: 24), for: .normal)
@@ -3553,10 +3554,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let spacer = UIView()
         toolRow.addArrangedSubview(spacer)
         toolRow.addArrangedSubview(draftStatusGroup)
-        // 第 7 轮属实项 4：只有 5 段工具钮之间的间距参与热区重叠，须为 20（toolRow.spacing）。
+        // 第 7 轮属实项 4：只有 5 段工具钮之间的间距参与热区重叠，正常为 20（toolRow.spacing）。
         // 其余 3 段不夹两个热区，可收窄以保窄屏装得下，spacer 本身吸 slack：
         // 引用→圆环 8（圆环不可点），圆环→spacer 0、spacer→草稿组 0。
-        // 按此算：320 宽容器 288 时只留对勾态总宽 = 6×24 + 5×20 + 8 + 18 + 15 = 285 ≤ 288。
+        // 按此算：320 宽容器 288 时只留对勾态、字数未超限总宽 = 6×24 + 5×20 + 8 + 18 + 15 = 285 ≤ 288；
+        // 字数超限（圆环组约 59）时约 326 > 288，间距自适应收到约 12.4 刚好装下（见 D4）。
         toolRow.setCustomSpacing(8, after: quoteToolButton)
         toolRow.setCustomSpacing(0, after: charGroupStack)
         toolRow.setCustomSpacing(0, after: spacer)
@@ -3587,7 +3589,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 审计三轮第 1 项：工具行高至少 44——此前行高由 24pt 钮撑着只有 24，
             // Hit44 向外扩的 10pt 超出栈边界、命中测试到不了；行高 44 后扩区全在行内，
             // 图标仍 24；第 7 轮属实项 4：工具间距 16→20（见 buildToolbarRow 开头），
-            // 窄屏保全逻辑（applyDraftStatusToolbarFit）只切文案显隐、不再收间距。
+            // 窄屏保全逻辑（applyDraftStatusToolbarFit）只切文案显隐，间距只在装不下时自适应收窄（见 D4）。
             toolRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
         // 编辑模式：无草稿流，但 pill 可见（DF-3：网页 openDraftBox 在 editingId 时
@@ -4926,12 +4928,29 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         saveDraftNow()
     }
 
+    /// D4：工具行间距自适应。fixedWidth 是工具行里除 5 段工具间距外的固定总宽
+    /// （6×24 图标 + 引用→圆环 8 + 圆环组 + 尾部草稿组）；containerWidth 是容器宽。
+    /// 20 间距装得下就返回 20；装不下时收窄到刚好装下，下限 12——320 宽、字数超限
+    /// （圆环组约 59）只留对勾态时固定部分约 226，(288−226)/5 ≈ 12.4 ≥ 12，装得下。
+    private func adaptiveToolbarToolRowSpacing(fixedWidth: CGFloat, containerWidth: CGFloat) -> CGFloat {
+        let available = containerWidth - fixedWidth
+        guard available < 5 * 20 else { return 20 }
+        return max(12, available / 5)
+    }
+
+    /// D4：尾部草稿组当前实际占宽——隐藏时 0；只留对勾时 15；带文案时 15 + gap 5 + 文案宽。
+    private func draftStatusGroupWidth() -> CGFloat {
+        guard !draftStatusGroup.isHidden else { return 0 }
+        if draftStatusLabel.isHidden { return 15 }
+        return 15 + 5 + draftStatusLabel.intrinsicContentSize.width
+    }
+
     /// U3：工具行间距与六钮横向热区联动。热区横向扩量 = 间距 / 2 时，
     /// 相邻热区宽 = 24 + 间距 = 中心距，恰好相接、不互叠（间距 20 → 扩 10、
-    /// 热区 44）。只改热区 cap，不改视觉帧；间距每次变更都经本函数，
+    /// 热区 44；间距 12 → 扩 6、热区 36）。只改热区 cap，不改视觉帧；间距每次变更都经本函数，
     /// cap 与间距同步（cap 赋值不触发布局，可每轮直设）。
-    /// 第 7 轮属实项 4：工具间距恒为 20、永不为挤文案而收——收间距即重现
-    /// 工具热区重叠（旧口径曾收到 8～16，中心距 32～40、重叠 12～4pt）。
+    /// D4（2026-11-10，Li 新授权）：间距正常保持 20；仅当工具行在 20 间距下
+    /// 装不下容器时才收窄（下限 12），cap 随间距同步收，故不重现第 7 轮的热区重叠。
     private func setToolbarToolRowSpacing(_ spacing: CGFloat, in toolRow: UIStackView) {
         if toolRow.spacing != spacing { toolRow.spacing = spacing }
         let cap = max(0, spacing / 2)
@@ -4941,16 +4960,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 109：草稿状态在工具栏里的宽度适配（只动 lvl2 文案显隐，不动图标与圆环）。
-    /// 工具间距恒为 20、永不为挤文案而收，窄屏改由文案显隐兜底。
+    /// D4：工具间距正常 20；仅当 20 间距下装不下容器时自适应收窄（下限 12），
+    /// 字数环本身永不隐藏；窄屏仍由文案显隐兜底。
     /// 390 宽：容器 358，6×24 图标 + 5 段工具间距 20 + 引用→圆环 8 + 圆环 18
     /// + 状态组（对勾 15 + gap 5 + 文案约 39）= 约 329，spacer 吸剩余 slack，可完整排下「✓ 已保存」。
-    /// 320 宽：容器 288，只留对勾态 = 6×24 + 5×20 + 8 + 18 + 15 = 285 ≤ 288；
+    /// 320 宽：容器 288，只留对勾态、字数未超限 = 6×24 + 5×20 + 8 + 18 + 15 = 285 ≤ 288；
+    /// 字数超限（圆环组约 59）时 20 间距下约 326 > 288，间距自适应收到约 12.4 刚好装下；
     /// 文案排不下时兜底只留对勾（文案隐藏），绝不留半截字加省略号；
     /// 宽回升时文案自动恢复（viewDidLayoutSubviews 每轮重算，同值不重设、不成环）。
     /// 窄屏 5 项之 3：全部状态共用本函数分流，不再只有 level 2 走适配、
     /// level 1／0 直接恢复间距任由截断——level 0／1 改走工具栏上方独立行
-    /// （完整文案＋重试钮，工具行组同步隐藏、工具行间距恒 20），level 2
-    /// 仍走下方原口径；编辑态／无级别时独立行隐藏、间距恒 20。
+    /// （完整文案＋重试钮，工具行组同步隐藏、工具行间距按自适应口径），level 2
+    /// 仍走下方原口径；编辑态／无级别时独立行隐藏、间距按自适应口径。
     private func applyDraftStatusToolbarFit() {
         // 工具行改存引用（buildToolbarRow 赋值）；回退旧查找时须跳过独立行
         // （它也是 toolbarContainer 的 UIStackView 子项，first 会误取它）。
@@ -4964,34 +4985,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         let width = toolbarContainer.bounds.width
         guard width > 0 else { return }
-        guard let level = draftStatusLevel, !isEditMode else {
-            setDraftStatusBannerVisible(false)
-            setToolbarToolRowSpacing(20, in: toolRow)
-            return
-        }
-        if level == 0 || level == 1 {
-            // 独立行承载完整文案＋重试：工具行组不再与图标抢宽，隐藏它；
-            // 工具行间距恒 20（不再为挤文案而收间距）。文案本身在独立行
-            // 独占整行宽（320 宽下 288，减重试钮后仍远超 11 字文案宽），不截断。
-            setDraftStatusBannerVisible(true)
-            // P1-8：重试钮只用于写盘失败（level 0）。level 1（文字已保存，图片未保存）
-            // 时重跑 saveDraftNow 也救不回图（保存不上传，key 为空的图仍未上传完），不露重试钮；
-            // 失败图点图片重试上传（见 didTapImageItem），上传中图等传完自动进下一次保存。
-            draftStatusRetryButton.isHidden = (level != 0)
-            if !draftStatusGroup.isHidden { draftStatusGroup.isHidden = true }
-            setToolbarToolRowSpacing(20, in: toolRow)
-            return
-        }
-        // level 2：独立行收起，工具行组恢复显示，走原保全／只留对勾口径，
-        // 但间距不再参与保全——工具间距恒 20，只切文案显隐。
-        setDraftStatusBannerVisible(false)
-        if draftStatusGroup.isHidden { draftStatusGroup.isHidden = false }
-        setToolbarToolRowSpacing(20, in: toolRow)
-        let labelWidth = draftStatusLabel.intrinsicContentSize.width
         // 109-fix：CGFloat(整数算式) + CGFloat 的混合表达式曾让 CI 编译器报
         // “unable to type-check in reasonable time”——改拆成显式 CGFloat 分步算式。
         // 圆环组实测宽：空文案时圆环与数字双隐藏 → 0；未超限只留圆环 → 18；
         // 超限红字显形 → 18 + 组内 6 + 数字宽。旧口径恒按 18 算，空文案时多估、文案藏得偏早。
+        // D4：圆环组宽三路共用——间距自适应按它算固定部分，字数环本身永不隐藏。
         let charGroupWidth: CGFloat
         if charRingView.isHidden && charCountLabel.isHidden {
             charGroupWidth = 0
@@ -5000,6 +4998,29 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         } else {
             charGroupWidth = 18 + 6 + charCountLabel.intrinsicContentSize.width
         }
+        guard let level = draftStatusLevel, !isEditMode else {
+            setDraftStatusBannerVisible(false)
+            setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 6 * 24 + 8 + charGroupWidth + draftStatusGroupWidth(), containerWidth: width), in: toolRow)
+            return
+        }
+        if level == 0 || level == 1 {
+            // 独立行承载完整文案＋重试：工具行组不再与图标抢宽，隐藏它；
+            // 文案本身在独立行独占整行宽（320 宽下 288，减重试钮后仍远超 11 字文案宽），不截断。
+            // D4：组隐藏后固定部分只剩图标＋圆环，间距仍按自适应口径（超限时才收窄）。
+            setDraftStatusBannerVisible(true)
+            // P1-8：重试钮只用于写盘失败（level 0）。level 1（文字已保存，图片未保存）
+            // 时重跑 saveDraftNow 也救不回图（保存不上传，key 为空的图仍未上传完），不露重试钮；
+            // 失败图点图片重试上传（见 didTapImageItem），上传中图等传完自动进下一次保存。
+            draftStatusRetryButton.isHidden = (level != 0)
+            if !draftStatusGroup.isHidden { draftStatusGroup.isHidden = true }
+            setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 6 * 24 + 8 + charGroupWidth, containerWidth: width), in: toolRow)
+            return
+        }
+        // level 2：独立行收起，工具行组恢复显示，走原保全／只留对勾口径；
+        // 文案显隐仍按 20 间距判定（判定不变），间距再按自适应口径收窄兜底。
+        setDraftStatusBannerVisible(false)
+        if draftStatusGroup.isHidden { draftStatusGroup.isHidden = false }
+        let labelWidth = draftStatusLabel.intrinsicContentSize.width
         // 只留对勾态定宽：6×24 图标 + 5 段工具间距 20 + 引用→圆环 8 + 圆环组 + 对勾 15；
         // spacer 两侧自定义间距为 0、spacer 本身吸 slack，不进算式。
         let withoutLabel: CGFloat = 6 * 24 + 5 * 20 + 8 + charGroupWidth + 15
@@ -5008,6 +5029,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         } else {
             if !draftStatusLabel.isHidden { draftStatusLabel.isHidden = true }
         }
+        // D4：文案显隐定后，按实际尾部宽度算间距——文案在时 20 间距必装得下（上式已保证），
+        // 只留对勾且 20 装不下时收窄到刚好装下（下限 12）。
+        let trailingWidth: CGFloat = draftStatusLabel.isHidden ? 15 : 15 + 5 + labelWidth
+        setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 6 * 24 + 8 + charGroupWidth + trailingWidth, containerWidth: width), in: toolRow)
     }
 
     // MARK: - 编辑倒计时（从 editDeadline 算剩余，网页 edit-timer 口径“剩 M:SS”）
