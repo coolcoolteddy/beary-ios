@@ -1240,7 +1240,7 @@ final class BearyDetailViewController: UIViewController {
         bodyStack.setCustomSpacing(14, after: detailLocationStack)
         // 操作行→回应行 12（ChatGPT 间距跟进，#904 为 10）。
         bodyStack.setCustomSpacing(12, after: actionStack)
-        bodyStack.setCustomSpacing(10, after: guestPromptButton)
+        bodyStack.setCustomSpacing(12, after: guestPromptButton)
     }
 
     /// 内容区（头像 + 头行 + 正文栈 + 小地球 + 底线）整体显隐：占位／失败态整藏，
