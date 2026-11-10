@@ -95,10 +95,24 @@ final class SessionManager {
             guard let self = self else { return }
             // 401 回调来自 BearyAPI 回包后台线程：先回主线程再清态，
             // 不得在后台直接写 currentUser/sessionGeneration。
+            // r25-3：触发时先拍账号与代次——回主线程前登录态可能已变
+            // （切号/退出/重登），主线程块里再核对一次，变了就丢弃
+            // 本次清态，旧 401 不得清掉新账号的态。
+            let triggerEpoch = self.api.authEpoch
+            let triggerAccountId = self.api.authAccountId
             self.runOnMain {
+                guard triggerEpoch == self.api.authEpoch,
+                      triggerAccountId == self.api.authAccountId else { return }
                 self.purgeImageCacheForCurrentAccount()
                 self.purgeLocalSnapshotsForCurrentAccount()
                 self.sessionGeneration += 1
+                // r25-3：401 清态与显式退出（signOutLocally）同口径推进
+                // meSeq 与 authEpoch——此前只加 sessionGeneration，在途旧
+                // /me 成功回包会凭旧 seq 重新写回旧用户并重存旧 token；
+                // 补上后 401 即完整的鉴权代次变更。此修也让 #957 注释
+                // “401 也会推进 epoch”的假设成立。
+                self.meSeq += 1
+                self.api.bumpAuthEpoch()
                 self.api.setAuthAccountId(nil)
                 self.currentUser = nil
                 self.authUnknown = false
