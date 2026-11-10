@@ -277,12 +277,12 @@ final class BearyNotificationsViewController: UIViewController {
 
     // MARK: - 视图
 
-    /// 标题三档（2026-10-28 定）：弹窗 21 heavy / 全屏页 17 bold / tab 头 19 bold；消息头属 tab 头档，保留 19。
+    /// 标题三档（2026-10-28 定）：弹窗 21 heavy / 全屏页 17 bold / tab 头 19 bold；消息头 2026-11-10 Li 定调大为 21 bold，时间线头同改。
     private lazy var titleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
         label.text = "消息"
-        label.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 19))
+        label.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 21))
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         return label

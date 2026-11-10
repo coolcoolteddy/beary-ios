@@ -4033,7 +4033,8 @@ class BearyTimelineViewController: UIViewController {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "时间线"
         // R8：控制器自有正文类标签走 scaledFont + adjusts。
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 19))
+        // 2026-11-10 Li 定：时间线头由 tab 头档 19 调大为 21 bold，与消息头同改。
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 21))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
 
