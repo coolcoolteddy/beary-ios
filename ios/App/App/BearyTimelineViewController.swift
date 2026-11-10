@@ -875,8 +875,8 @@ final class BearyTimelineCell: UITableViewCell {
     /// 批 E 补漏（2026-10-30 定位卡片 bug）：时间线卡片此前根本没有位置行，
     /// 批 E 只做了 BearyDiaryCardCell（首页/个人页）与详情，时间线漏网——
     /// 作者在时间线看自己带定位的日记时位置行恒不出现，与字段/脱敏无关。
-    /// 本组与卡片同款：官方 icon_location 13 灰 + 13 灰文案，作者本人看自己
-    /// 公开篇时下方再挂一行 12 橙色提示；文案与脱敏全走 BearyLocationDisplay。
+    /// 本组与卡片同款：官方 icon_location 13 灰 + 13 灰文案；公开篇作者本人
+    /// 也只看区级，不再另附提示行；文案与脱敏全走 BearyLocationDisplay。
     private let timelineLocationIconView: UIImageView = {
         let v = UIImageView()
         v.translatesAutoresizingMaskIntoConstraints = false
@@ -895,16 +895,6 @@ final class BearyTimelineCell: UITableViewCell {
         lb.lineBreakMode = .byTruncatingTail
         return lb
     }()
-    private let timelineLocationNoteLabel: UILabel = {
-        let lb = UILabel()
-        lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
-        lb.adjustsFontForContentSizeCategory = true
-        lb.textColor = BearyColors.gray
-        lb.numberOfLines = 0
-        lb.isHidden = true
-        return lb
-    }()
     private lazy var timelineLocationLineRow: UIStackView = {
         let st = UIStackView(arrangedSubviews: [timelineLocationIconView, timelineLocationLabel])
         st.translatesAutoresizingMaskIntoConstraints = false
@@ -914,7 +904,7 @@ final class BearyTimelineCell: UITableViewCell {
         return st
     }()
     private lazy var timelineLocationStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [timelineLocationLineRow, timelineLocationNoteLabel])
+        let st = UIStackView(arrangedSubviews: [timelineLocationLineRow])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.spacing = 2
@@ -1381,8 +1371,6 @@ final class BearyTimelineCell: UITableViewCell {
         // 批 E 补漏：位置行复用复位，防上一行位置串到下一行无定位日记（#252 口径保留）。
         timelineLocationStack.isHidden = true
         timelineLocationLabel.text = nil
-        timelineLocationNoteLabel.text = nil
-        timelineLocationNoteLabel.isHidden = true
         // 对称分割线式复位：内容列回页面底 bg、无实线边（限时态只走虚线层）；
         // 分割线是静态约束 + 动态线色，无需复位。
         cardView.backgroundColor = BearyColors.bg
@@ -1409,24 +1397,16 @@ final class BearyTimelineCell: UITableViewCell {
     }
 
     /// 批 E 补漏：时间线位置行刷新，卡片 refreshLocationRow 同款口径
-    /// （display 返回 nil 时整组隐藏，不留空行；note 仅作者本人公开篇）。
+    /// （display 返回 nil 时整组隐藏，不留空行；公开篇作者本人也只看区级，不再附提示行；
+    /// 非公开篇作者本人看精确名；他人只到区级、无区级不显示）。
     private func refreshTimelineLocationRow(entry: Entry) {
-        guard let display = BearyLocationDisplay.display(entry: entry) else {
+        guard let line = BearyLocationDisplay.display(entry: entry) else {
             timelineLocationStack.isHidden = true
             timelineLocationLabel.text = nil
-            timelineLocationNoteLabel.text = nil
-            timelineLocationNoteLabel.isHidden = true
             return
         }
         timelineLocationStack.isHidden = false
-        timelineLocationLabel.text = display.line
-        if let note = display.note {
-            timelineLocationNoteLabel.text = note
-            timelineLocationNoteLabel.isHidden = false
-        } else {
-            timelineLocationNoteLabel.text = nil
-            timelineLocationNoteLabel.isHidden = true
-        }
+        timelineLocationLabel.text = line
     }
 
     /// 主图条定宽：广场卡 stripWidth 同口径（网页 stripW）——0.55–2.22 倍高夹取，

@@ -8,8 +8,10 @@ import CoreLocation
 // - 经纬度永不持久化：定位/搜索时坐标只在内存里走一次逆地理编码取地名，用完即弃；
 //   地图渲染时按文本现场地理编码（见 BearyDiaryMapViewController，缓存只在内存、随页销毁）。
 // - 展示层实时脱敏：库里保留精确值，非作者一律只渲染区级（公开、仅好友、
-//   私密不分，精确位置只有作者本人可见）；公开翻回私密，精确位置立即恢复
-//   （因为脱敏不在写库时做，翻转无需回写）。
+//   私密不分，精确位置只有作者本人在非公开篇可见）；公开翻回私密，精确位置
+//   立即恢复（因为脱敏不在写库时做，翻转无需回写）。
+// - 作者本人看自己的公开篇也只渲染区级（与他人所见文案一致，不再另附
+//   “公开后他人仅见区级”提示行，2026-11-10 Li 定）；非公开篇作者本人才看精确名。
 // - 他人视角 fail-closed：只有精确名、没有区级文本时，他人行直接不显示位置行，
 //   绝不把精确名当区级兜底露出。
 
@@ -47,10 +49,13 @@ enum BearyLocationDisplay {
         return false
     }
 
-    /// 卡片/详情/地图列表共用的位置行文案。
-    /// 返回 nil = 不显示位置行（无位置、或他人视角下只有精确名无区级）。
-    /// note 只有一种：作者本人看自己的公开篇时，提示他人视角只到区级。
-    static func display(entry: Entry) -> (line: String, note: String?)? {
+    /// 卡片/详情/时间线/地图列表共用的位置行文案。
+    /// 返回 nil = 不显示位置行（无位置、或他人视角下只有精确名无区级、
+    /// 或作者本人看自己的公开篇但无区级）。
+    /// 口径（2026-11-10 Li 定）：公开篇作者本人也只看区级（与他人视角
+    /// 看到的文案一致，不再另附“公开后他人仅见区级”提示行）；非公开篇
+    /// 作者本人看精确名；非作者一律只到区级。
+    static func display(entry: Entry) -> String? {
         return display(
             location: DiaryLocation(entry: entry),
             isPublic: BearyEphemeral.isEffectivelyPublic(entry),
@@ -58,27 +63,21 @@ enum BearyLocationDisplay {
         )
     }
 
-    static func display(location: DiaryLocation, isPublic: Bool, viewerIsAuthor: Bool) -> (line: String, note: String?)? {
+    static func display(location: DiaryLocation, isPublic: Bool, viewerIsAuthor: Bool) -> String? {
         if location.isEmpty { return nil }
         if !viewerIsAuthor {
             // 非作者一律只到区级：不依赖日记是否公开——仅好友篇 isPublic
             // 为 false，旧口径会落进精确名分支；没有区级就不显示，绝不
             // 回退到精确名。
-            guard let district = location.district else { return nil }
-            return (district, nil)
+            return location.district
         }
-        // 作者本人（私密、仅好友或公开）：精确名优先，无名时退区级。
-        if let name = location.name {
-            var note: String?
-            if isPublic && viewerIsAuthor, let district = location.district, district != name {
-                note = "公开后他人仅见区级（\(district)）"
-            }
-            return (name, note)
+        if isPublic {
+            // 作者本人看自己的公开篇：直接显示区级（与他人视角一致）；
+            // 无区级不显示，不回退到精确名。
+            return location.district
         }
-        // 走到这里 name 已为 nil；isEmpty 已排除，故 district 必非空。
-        // 仍用 guard 收口：万一 district 为空则不显示，绝不把 nil 当行文案。
-        guard let district = location.district else { return nil }
-        return (district, nil)
+        // 作者本人看自己的非公开篇（私密／仅好友／限时）：精确名优先，无名退区级。
+        return location.name ?? location.district
     }
 
     /// 区级文本派生（逆地理编码/搜索 placemark 共用）：
