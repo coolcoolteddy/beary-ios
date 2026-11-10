@@ -1962,6 +1962,15 @@ class BearyProfileViewController: UIViewController {
     /// display:none 时日历即首项）；有 handle 时贴 handle 后 5。两约束二选一。
     private lazy var joinedIconLeadingWithHandleConstraint: NSLayoutConstraint = joinedIconView.leadingAnchor.constraint(equalTo: handleLabel.trailingAnchor, constant: 5)
     private lazy var joinedIconLeadingWithoutHandleConstraint: NSLayoutConstraint = joinedIconView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16)
+    /// 第 6 轮第 8 项：无 handle 时加入日期行改锚点。纵向约束二选一：
+    /// 有 handle 时日期行居中贴 handle 行；无 handle 时日期行顶贴签名底 +8、
+    /// 图标居中贴日期行（不沿用已塌掉的 handle 行中心）；统计行锚点见 applyEmailRow。
+    private lazy var joinedIconCenterYWithHandleConstraint: NSLayoutConstraint = joinedIconView.centerYAnchor.constraint(equalTo: handleLabel.centerYAnchor)
+    private lazy var joinedLabelCenterYWithHandleConstraint: NSLayoutConstraint = joinedLabel.centerYAnchor.constraint(equalTo: handleLabel.centerYAnchor)
+    private lazy var joinedLabelTopWithoutHandleConstraint: NSLayoutConstraint = joinedLabel.topAnchor.constraint(equalTo: signatureContainer.bottomAnchor, constant: 8)
+    private lazy var joinedIconCenterYWithoutHandleConstraint: NSLayoutConstraint = joinedIconView.centerYAnchor.constraint(equalTo: joinedLabel.centerYAnchor)
+    /// 无 handle 且有加入日期时统计行贴日期行下 12（与 #1252 改后的统计行距 12 一致，原支写 13 是旧值）。
+    private lazy var statsTopAfterJoinedConstraint: NSLayoutConstraint = publicCountLabel.topAnchor.constraint(equalTo: joinedLabel.bottomAnchor, constant: 12)
     /// 回应墙贴统计行下方（F17 同款：隐藏时顶间隙归零）。
     private lazy var wallTopConstraint: NSLayoutConstraint = wallContainer.topAnchor.constraint(equalTo: publicCountLabel.bottomAnchor, constant: 10)
 
@@ -1983,7 +1992,8 @@ class BearyProfileViewController: UIViewController {
     private lazy var headerShareToGearConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: gearButton.leadingAnchor, constant: -8)
     private lazy var headerShareToHeaderConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16)
     /// 统计行顶约束二选一（邮箱行已按 1:1 移除，withEmail 恒不激活、
-    /// 仅保留作锚点；统计行恒贴 handle 下 12，与旧无邮箱间距一致）。
+    /// 仅保留作锚点；有 handle 时统计行贴 handle 下 12（#1252 改 12）；
+    /// 无 handle 且有加入日期时贴日期行下 12，见 applyEmailRow）。
     private lazy var statsTopWithEmailConstraint: NSLayoutConstraint = publicCountLabel.topAnchor.constraint(equalTo: emailLabel.bottomAnchor, constant: 12)
     private lazy var statsTopWithoutEmailConstraint: NSLayoutConstraint = publicCountLabel.topAnchor.constraint(equalTo: handleLabel.bottomAnchor, constant: 12)
     private lazy var tableLeadingConstraint: NSLayoutConstraint = tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor)
@@ -3067,9 +3077,9 @@ class BearyProfileViewController: UIViewController {
             handleLabel.topAnchor.constraint(equalTo: signatureContainer.bottomAnchor, constant: 8),
             handleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
             // I7：加入时间前补 14px 日历图标，图标与加入时间同显隐（见 applyProfile）。
-            joinedIconView.centerYAnchor.constraint(equalTo: handleLabel.centerYAnchor),
+            joinedIconCenterYWithHandleConstraint,
             joinedIconLeadingWithHandleConstraint,
-            joinedLabel.centerYAnchor.constraint(equalTo: handleLabel.centerYAnchor),
+            joinedLabelCenterYWithHandleConstraint,
             // F18：图标与加入时间 gap 4 → 5（网页 pf-meta gap:5px）。
             joinedLabel.leadingAnchor.constraint(equalTo: joinedIconView.trailingAnchor, constant: 5),
             joinedLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -16),
@@ -3787,12 +3797,22 @@ class BearyProfileViewController: UIViewController {
             setLabelTextFaded(handleLabel, "@" + handle)
             joinedIconLeadingWithHandleConstraint.isActive = true
             joinedIconLeadingWithoutHandleConstraint.isActive = false
+            joinedIconCenterYWithHandleConstraint.isActive = true
+            joinedLabelCenterYWithHandleConstraint.isActive = true
+            joinedLabelTopWithoutHandleConstraint.isActive = false
+            joinedIconCenterYWithoutHandleConstraint.isActive = false
         } else {
             setLabelTextFaded(handleLabel, nil)
             handleLabel.isHidden = true
             // F18：无 handle 时日历图标贴头左缘，不再沿用 handle 后 5pt 的约束右偏。
             joinedIconLeadingWithHandleConstraint.isActive = false
             joinedIconLeadingWithoutHandleConstraint.isActive = true
+            // 第 6 轮第 8 项：handle 行已塌掉，日期行不再居中贴它——顶贴签名底 +8，
+            // 图标居中贴日期行；统计行锚点在 applyEmailRow 里按日期行显隐定。
+            joinedIconCenterYWithHandleConstraint.isActive = false
+            joinedLabelCenterYWithHandleConstraint.isActive = false
+            joinedLabelTopWithoutHandleConstraint.isActive = true
+            joinedIconCenterYWithoutHandleConstraint.isActive = true
         }
         if let createdMs = profileValue.createdAt, createdMs > 0 {
             let dateValue = Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0)
@@ -3927,7 +3947,15 @@ class BearyProfileViewController: UIViewController {
         emailLabel.text = nil
         emailLabel.isHidden = true
         statsTopWithEmailConstraint.isActive = false
-        statsTopWithoutEmailConstraint.isActive = true
+        // 第 6 轮第 8 项：无 handle 且有加入日期时，统计行贴日期行下 12，
+        // 不再贴已塌掉的 handle 行下 12；其余情况仍贴 handle 下 12。
+        if handleLabel.isHidden && !joinedLabel.isHidden {
+            statsTopWithoutEmailConstraint.isActive = false
+            statsTopAfterJoinedConstraint.isActive = true
+        } else {
+            statsTopWithoutEmailConstraint.isActive = true
+            statsTopAfterJoinedConstraint.isActive = false
+        }
     }
 
     // MARK: - 小熊回应墙（P1）
@@ -7088,10 +7116,23 @@ class BearyProfileViewController: UIViewController {
             moreButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
             gridRows[0].topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
             gridRows[0].leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
-            gridRows[1].topAnchor.constraint(equalTo: gridRows[0].bottomAnchor, constant: 8),
-            gridRows[1].leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
-            gridRows[1].bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
         ]
+        if wall.count > 3 {
+            constraints += [
+                gridRows[1].topAnchor.constraint(equalTo: gridRows[0].bottomAnchor, constant: 8),
+                gridRows[1].leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+                gridRows[1].bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+            ]
+        } else {
+            // 第 6 轮第 5 项：1～3 张时第二行无可见照片，整行收起、行间间距归零，
+            // 第一行底直接贴容器底 −8，不留 8 + 8 = 16pt 空白；4～6 张时原样。
+            gridRows[1].isHidden = true
+            constraints += [
+                gridRows[1].topAnchor.constraint(equalTo: gridRows[0].bottomAnchor, constant: 0),
+                gridRows[1].leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+                gridRows[0].bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+            ]
+        }
         NSLayoutConstraint.activate(constraints)
         container.frame = CGRect(x: 0, y: 0, width: footerWidth, height: 0)
         let fitted = container.systemLayoutSizeFitting(
