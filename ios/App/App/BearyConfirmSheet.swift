@@ -8,6 +8,9 @@ import UIKit
 // 按钮顺序：非取消按钮按调用方顺序在上，取消按钮永远垫底（iOS 动作表口径）。
 // 点按按钮先关 sheet、关完再跑回调——回调里要再弹 sheet（如注销两步确认）
 // 或出分享面板时，调用方仍是原 presenter，不会叠在正在退场的 sheet 上。
+// 叉叉/遮罩/下滑关闭默认只关 sheet、不跑任何回调；调用方若有“必须给结论”
+// 的回调（如可见性切换的 busy 清理，见 r16-16 引用门禁），传
+// onDismissWithoutAction：未点任何按钮就关闭时调一次，且只调一次。
 // 危险操作仍走二次确认（调用方原语义不动），本 sheet 只换呈现容器。
 // 字号走规范语义入口：标题 sheet 档 15 bold（smallActionFont），
 // 说明 15 regular（smallBodyFont）；按钮走 BearyButton 工厂（常规 16 semibold）。
@@ -28,8 +31,10 @@ enum BearyConfirmSheet {
     }
 
     /// 从 presenter 弹出确认底 sheet（presenter 即原 alert 的 present 方）。
-    static func show(from presenter: UIViewController, title: String, message: String?, actions: [Action]) {
-        let sheet = BearyConfirmSheetViewController(title: title, message: message, actions: actions)
+    /// - Parameter onDismissWithoutAction: 未点任何按钮就关闭（叉叉/遮罩/下滑）
+    ///   时调一次；点过按钮后关闭不调；不传则关闭时什么都不做。
+    static func show(from presenter: UIViewController, title: String, message: String?, actions: [Action], onDismissWithoutAction: (() -> Void)? = nil) {
+        let sheet = BearyConfirmSheetViewController(title: title, message: message, actions: actions, onDismissWithoutAction: onDismissWithoutAction)
         let delegate = BearyBottomSheetTransitioningDelegate()
         sheet.sheetDelegate = delegate
         sheet.transitioningDelegate = delegate
@@ -52,6 +57,11 @@ final class BearyConfirmSheetViewController: UIViewController {
     private let sheetTitle: String
     private let sheetMessage: String?
     private let sheetActions: [BearyConfirmSheet.Action]
+    private let onDismissWithoutAction: (() -> Void)?
+
+    /// 只解析一次：点按行 / 关闭入口任一先到即定局，后到的直接丢弃，
+    /// 防 onDismissWithoutAction 与按钮回调双跑。
+    private var resolved = false
 
     /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页同款做法），
     /// 否则容器在呈现中途释放、进退场动画丢 delegate。
@@ -70,10 +80,11 @@ final class BearyConfirmSheetViewController: UIViewController {
         return nonCancel + cancel
     }
 
-    init(title: String, message: String?, actions: [BearyConfirmSheet.Action]) {
+    init(title: String, message: String?, actions: [BearyConfirmSheet.Action], onDismissWithoutAction: (() -> Void)? = nil) {
         self.sheetTitle = title
         self.sheetMessage = message
         self.sheetActions = actions
+        self.onDismissWithoutAction = onDismissWithoutAction
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -194,6 +205,7 @@ final class BearyConfirmSheetViewController: UIViewController {
         let index = sender.tag
         guard index >= 0 && index < orderedActions.count else { return }
         let action = orderedActions[index]
+        resolved = true
         // 先关 sheet、关完再跑回调（回调里再弹 sheet 或出分享面板时不叠层）。
         dismiss(animated: BearyMotion.animated(true)) {
             action.handler?()
@@ -202,5 +214,23 @@ final class BearyConfirmSheetViewController: UIViewController {
 
     @objc private func closeTapped() {
         dismiss(animated: BearyMotion.animated(true))
+        resolveDismissWithoutAction()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        // 遮罩点按/下滑关闭走容器 requestDismiss（程序化 dismiss），不经过
+        // closeTapped；退场完成时 isBeingDismissed 为真，在此补一次回调。
+        // 被其他弹窗盖住时 isBeingDismissed 为假，不触发。
+        if isBeingDismissed {
+            resolveDismissWithoutAction()
+        }
+    }
+
+    /// 未点任何按钮就关闭时调一次 onDismissWithoutAction；点过按钮后不调。
+    private func resolveDismissWithoutAction() {
+        guard !resolved else { return }
+        resolved = true
+        onDismissWithoutAction?()
     }
 }
