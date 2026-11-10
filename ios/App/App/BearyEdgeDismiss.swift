@@ -4,9 +4,12 @@ import UIKit
 // 全屏 modal、只能点按钮关闭的页，在这里加上 iOS 原生导航同款手势：
 // 从屏幕左边缘右滑 → 视图跟手右移；滑过 35% 宽度或右滑速度够快 → 松手完成关闭；
 // 没滑够 → 松手回弹取消。关闭按钮保留。
-// 实现：自定义 transitioningDelegate + slide 进出动画（进从右滑入、出向右滑出）+
-// UIPercentDrivenInteractiveTransition 驱动交互式关闭。transitioningDelegate 是弱引用，
-// 调用方（SceneDelegate）必须强持有本对象直到 dismiss 完成，否则手势中途失效。
+// 实现：自定义 transitioningDelegate + slide 进出动画（进从右滑入、出向右滑出）。
+// 手势 1:1 直驱：.changed 直接按手指位移改视图 transform，不再走
+// UIPercentDrivenInteractiveTransition（弹簧曲线前快后慢，手指 20% 时页面
+// 已跑 35%，比手快）；松手滑过阈值再走正常 dismiss，退场弹簧动画接管。
+// transitioningDelegate 是弱引用，调用方（SceneDelegate）必须强持有本对象
+// 直到 dismiss 完成，否则手势中途失效。
 // 注意：只接全屏 modal。
 // 完成模式（onEdgeSwipeCompleted）：编辑器取消要先存草稿/清临时文件、不能由手势
 // 直接 dismiss，故本页不走交互式过渡。审计 M2（用户亲定改成 1:1 跟手）：
@@ -155,26 +158,20 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
                 return
             }
             completionMode = false
-            interaction = UIPercentDrivenInteractiveTransition()
-            presented.dismiss(animated: true)
+            interaction = nil
+            // 1:1 跟手改版：不再启动交互式过渡（弹簧曲线会让页面比手快）；
+            // R14 P2-13：拖动开始即准备好返回目标的底层画面，不等正式退场。
+            // .changed 直接按手指位移改视图 transform，松手过阈值再走正常 dismiss。
+            prepareUnderlyingView(for: presented)
         case .changed:
-            if completionMode {
-                // 完成模式 1:1 跟手：视图随手指右移（只向右，不向左出屏）。
-                view.transform = CGAffineTransform(translationX: max(pan.translation(in: view).x, 0), y: 0)
-            } else {
-                interaction?.update(progress)
-            }
+            // 1:1 跟手：视图随手指右移（只向右，不向左出屏）。完成模式与普通模式同款。
+            view.transform = CGAffineTransform(translationX: max(pan.translation(in: view).x, 0), y: 0)
         case .cancelled, .failed:
-            // U24：.failed 与 .cancelled 同处理——清理交互式过渡对象，不留悬空态；
-            // 完成模式下视图滑回原位。
-            if completionMode {
-                resetCompletionFollow(view: view)
-                // R14 P2-13：复位后撤提前插入的底层画面（复位曲线本身不动，
-                // 本支不碰 resetCompletionFollow——那是 #1000 的范围）。
-                removePreparedUnderlyingViewAfterReset()
-            } else {
-                interaction?.cancel()
-            }
+            // U24：.failed 与 .cancelled 同处理——视图滑回原位＋撤底层画面，不留悬空态。
+            resetCompletionFollow(view: view)
+            // R14 P2-13：复位后撤提前插入的底层画面（复位曲线本身不动，
+            // 本支不碰 resetCompletionFollow——那是 #1000 的范围）。
+            removePreparedUnderlyingViewAfterReset()
             interaction = nil
             completionMode = false
             dismissRejected = false
@@ -202,18 +199,16 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
                         removePreparedUnderlyingViewAfterReset()
                     }
                 } else {
-                    interaction?.finish()
+                    // 1:1 跟手改版：松手过阈值走正常 dismiss，退场弹簧动画从手指
+                    // 停下的位置接管；提前插入的底层画面按 R14 交接口径由 animator 接管。
+                    presented.dismiss(animated: true)
                 }
             } else {
-                if completionMode {
-                    // 未过阈值滑回：松手速度归一化后传弹簧初速度，快甩带 momentum、
-                    // 慢拖近 0（与底 sheet／灯箱复位同口径）。
-                    resetCompletionFollow(view: view, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: view.transform.tx))
-                    // R14 P2-13：未过阈值滑回后撤提前插入的底层画面。
-                    removePreparedUnderlyingViewAfterReset()
-                } else {
-                    interaction?.cancel()
-                }
+                // 未过阈值滑回：松手速度归一化后传弹簧初速度，快甩带 momentum、
+                // 慢拖近 0（与底 sheet／灯箱复位同口径）。
+                resetCompletionFollow(view: view, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: view.transform.tx))
+                // R14 P2-13：未过阈值滑回后撤提前插入的底层画面。
+                removePreparedUnderlyingViewAfterReset()
             }
             interaction = nil
             completionMode = false
