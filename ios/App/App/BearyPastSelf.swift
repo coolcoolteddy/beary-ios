@@ -213,9 +213,10 @@ final class PastSelfStore {
     private let defaults: UserDefaults
     private let userId: Int
     /// 单用户留话上限（防无界增长）。
-    /// 审计登录杂项丢弃顺序：已撤回 → 已送达 → 绝不丢等待中（等待中的留话是
-    /// 未来的送达，丢了即静默丢未来留话）；若只剩等待中行仍超限，save 不再
-    /// 硬砍等待中行（宁可暂时超 cap），新增由 add 的超限拒绝挡下。
+    /// 审计登录杂项丢弃顺序：已撤回 → 已送达旧串 → 绝不丢等待中与各链最新
+    /// 已送达行（等待中的留话是未来的送达，丢了即静默丢未来留话；最新已送
+    /// 达行是待回复的锚点，裁掉即丢“去年的对话”展示）；若只剩不可丢行仍
+    /// 超限，save 不再硬砍（宁可暂时超 cap），新增由 add 的超限拒绝挡下。
     static let maxStoredMessages = 200
 
     /// 新增留话被拒的原因（调用方据此给行内提示，见 ProfileVC 两处提交）。
@@ -287,12 +288,37 @@ final class PastSelfStore {
         return decoded
     }
 
-    /// 存储已满且无可丢行（只剩等待中）时为 true，新增应拒绝并行内提示。
+    /// 存储已满且无可丢行时为 true，新增应拒绝并行内提示。可丢行 = 已撤回行，
+    /// 或已被取代的已送达旧串；只剩等待中行与各链最新已送达行（待回复锚点）
+    /// 时无行可丢——与 save() 的淘汰口径一致。
     var isWaitingCapped: Bool {
         let all = loadAll()
         guard all.count >= Self.maxStoredMessages else { return false }
         let today = PastSelfLogic.localDateString(from: Date(), calendar: .current)
-        return !all.contains { $0.revokedAtMs != nil || PastSelfLogic.isDue(deliverOn: $0.deliverOn, today: today) }
+        guard !all.contains(where: { $0.revokedAtMs != nil }) else { return false }
+        return Self.droppableDeliveredIndices(all, today: today).isEmpty
+    }
+
+    /// 各链最新一条已送达行之外的已送达行下标（按 createdAt 升序；即“已被
+    /// 后行取代的旧串”，淘汰时可丢）。最新一条已送达行是待回复的锚点——
+    /// 送达卡按它渲染“去年的对话”，裁掉即丢展示，故永不参与淘汰。
+    private static func droppableDeliveredIndices(_ messages: [PastSelfMessage], today: String) -> [Int] {
+        let delivered = messages.indices.filter {
+            messages[$0].revokedAtMs == nil && PastSelfLogic.isDue(deliverOn: messages[$0].deliverOn, today: today)
+        }
+        var latestByChain: [String: Int] = [:]
+        for index in delivered {
+            let chainId = messages[index].chainId
+            if let current = latestByChain[chainId],
+               (messages[index].createdAtMs, messages[index].id) <= (messages[current].createdAtMs, messages[current].id) {
+                continue
+            }
+            latestByChain[chainId] = index
+        }
+        let protected = Set(latestByChain.values)
+        return delivered.filter { !protected.contains($0) }.sorted {
+            messages[$0].createdAtMs < messages[$1].createdAtMs
+        }
     }
 
     private func save(_ messages: [PastSelfMessage]) {
@@ -300,18 +326,17 @@ final class PastSelfStore {
         if capped.count > Self.maxStoredMessages {
             let today = PastSelfLogic.localDateString(from: Date(), calendar: .current)
             let overflow = capped.count - Self.maxStoredMessages
-            // 先丢最旧的已撤回行，再丢最旧的已送达行；等待中行绝不丢——
-            // 若两类可丢行不够填 overflow，剩余超限部分原样保留（不砍等待中）。
+            // 先丢最旧的已撤回行，再丢最旧的、已被取代的已送达旧串；等待中行与
+            // 各链最新已送达行（待回复锚点）绝不丢——若可丢行不够填 overflow，
+            // 剩余超限部分原样保留（不砍等待中与待回复锚点）。
             let revoked = capped.indices.filter { capped[$0].revokedAtMs != nil }.sorted {
                 capped[$0].createdAtMs < capped[$1].createdAtMs
             }
             var drop = Set<Int>()
             for index in revoked.prefix(overflow) { drop.insert(index) }
             if drop.count < overflow {
-                let delivered = capped.indices.filter { !drop.contains($0) && capped[$0].revokedAtMs == nil && PastSelfLogic.isDue(deliverOn: capped[$0].deliverOn, today: today) }.sorted {
-                    capped[$0].createdAtMs < capped[$1].createdAtMs
-                }
-                for index in delivered.prefix(overflow - drop.count) { drop.insert(index) }
+                let droppable = Self.droppableDeliveredIndices(capped, today: today).filter { !drop.contains($0) }
+                for index in droppable.prefix(overflow - drop.count) { drop.insert(index) }
             }
             capped = capped.enumerated().filter { !drop.contains($0.offset) }.map { $0.element }
         }
