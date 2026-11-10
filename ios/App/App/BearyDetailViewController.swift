@@ -541,7 +541,7 @@ final class BearyDetailViewController: UIViewController {
         stack.axis = .horizontal
         stack.spacing = 8
         stack.alignment = .center
-        stack.backgroundColor = BearyColors.faint
+        stack.backgroundColor = BearyColors.surface2
         stack.layer.cornerRadius = 12
         stack.clipsToBounds = true
         stack.isLayoutMarginsRelativeArrangement = true

@@ -119,15 +119,10 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     private static let optionSpacing: CGFloat = 8
     private static let fadeWidth: CGFloat = 28
 
-    /// 浅色 faint 底、深色 #26262c 底（不用 BearyColors.faint 直代：
-    /// 其深色是 white.08，不是本框要的 #26262c）。
+    /// 浮层底走 surface3（2026-11-07 微明度定版：旧硬编码值深 #26262c／浅 #F5F5F5
+    /// 已随 surface 单值废止，改走 surface3 token）。
     private static var calloutBackgroundColor: UIColor {
-        UIColor { trait in
-            if trait.userInterfaceStyle == .dark {
-                return UIColor(red: 38.0 / 255.0, green: 38.0 / 255.0, blue: 44.0 / 255.0, alpha: 1)
-            }
-            return UIColor(white: 0.96, alpha: 1)
-        }
+        BearyColors.surface3
     }
 
     private let backgroundLayer = CAShapeLayer()
@@ -465,7 +460,7 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
 
 /// 时间线筛子尖角气泡（11b：筛子从系统 actionSheet 改回尖角气泡）。
 /// 壳口径 1:1 复用 BearyCalloutPickerView（编辑器心情/天气尖角框）：
-/// 框体圆角 16、尖角高 10/半宽 8、浅色 white .96 / 深色 #26262c、hairline 阴影；
+/// 框体圆角 16、尖角高 10/半宽 8、浅色 #F0F0F0 / 深色 #1E1E23（surface3）、hairline 阴影；
 /// 框外收起直接复用 BearyCalloutDismissView（不另写收起层）。
 /// CalloutPicker 本体是横向 48pt 图标排、渲不出文字，故只复用其壳常量与
 /// 路径画法，不硬套其本体。尖角改放框顶（筛子钮在表头、气泡朝下展开，

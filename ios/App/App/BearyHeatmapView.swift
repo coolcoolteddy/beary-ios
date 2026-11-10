@@ -6,7 +6,7 @@ import UIKit
 /// 今天在最右列，未来的格子不画、不可点。颜色橙色五档（0 篇为空格，
 /// 1 / 2 / 3 / 4+ 篇逐档加深）；右上角月份名、左侧星期名、右下“少 → 多”
 /// 图例、底部“点某一天，看那天的日记”提示；模块内不写篇数/天数/连续天。
-/// 模块本身 faint 底、无描边（与写作统计卡的白底描边卡区分，见预览 v5）。
+/// 模块本身 surface2 底、无描边（与写作统计卡的白底描边卡区分，见预览 v5）。
 ///
 /// HorizonCalendar 核实结论（2026-11-06，见 PR 描述）：该库按月分块布局，
 /// 行高 = 列宽 × 纵横比（下限 0.5，见其 FrameProvider.daySize），27 周会排成
@@ -78,7 +78,7 @@ final class BearyHeatmapView: UIView {
 
     private func setup() {
         translatesAutoresizingMaskIntoConstraints = false
-        backgroundColor = BearyColors.faint
+        backgroundColor = BearyColors.surface2
         layer.cornerRadius = BearyCorners.single
         clipsToBounds = true
 
@@ -181,7 +181,7 @@ final class BearyHeatmapView: UIView {
         return counts
     }
 
-    /// 橙色五档：0 篇为空格（line 灰，与 faint 卡底可区分），1 / 2 / 3 / 4+ 篇逐档加深（品牌橙 #ff9500）。
+    /// 橙色五档：0 篇为空格（line 灰，与 surface2 卡底可区分），1 / 2 / 3 / 4+ 篇逐档加深（品牌橙 #ff9500）。
     static func color(forLevel level: Int) -> UIColor {
         switch level {
         case 0: return BearyColors.line
@@ -204,7 +204,7 @@ final class BearyHeatmapView: UIView {
 
     /// 按可见日记重算每格颜色与文案；visible 为空时调用方直接藏卡，不调这里。
     /// 窗口：今天所在周的周一往前推 26 周（共 27 列），最早一周不丢——
-    /// 首列是完整一周（即使其中几天在账号首篇之前，也画 faint 空格，不截掉）。
+    /// 首列是完整一周（即使其中几天在账号首篇之前，也画 surface2 空格，不截掉）。
     func configure(entries: [Entry]) {
         let counts = Self.counts(from: entries)
         guard let today = BearyBeijingDay.todayComponents(),

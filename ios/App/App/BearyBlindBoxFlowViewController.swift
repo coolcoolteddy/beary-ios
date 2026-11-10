@@ -33,10 +33,9 @@ private final class BlindBoxPoolRowView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = BearyColors.surface
+        backgroundColor = BearyColors.surface1
         layer.cornerRadius = BearyCorners.single
-        layer.borderWidth = 1
-        layer.bearyDynamicBorderColor = BearyColors.line
+        layer.borderWidth = 0
         clipsToBounds = true
         translatesAutoresizingMaskIntoConstraints = false
 
@@ -518,10 +517,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     private func buildReceivedSection() {
         receivedView.translatesAutoresizingMaskIntoConstraints = false
-        receivedView.backgroundColor = BearyColors.surface
+        receivedView.backgroundColor = BearyColors.surface1
         receivedView.layer.cornerRadius = BearyCorners.single
-        receivedView.layer.borderWidth = 1
-        receivedView.layer.bearyDynamicBorderColor = BearyColors.line
+        receivedView.layer.borderWidth = 0
         receivedView.clipsToBounds = true
 
         receivedPill.translatesAutoresizingMaskIntoConstraints = false
@@ -529,7 +527,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         receivedPill.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 12, weight: .semibold), maximumPointSize: 14)
         receivedPill.adjustsFontForContentSizeCategory = true
         receivedPill.textColor = BearyColors.ink
-        receivedPill.backgroundColor = BearyColors.faint
+        receivedPill.backgroundColor = BearyColors.surface2
         receivedPill.layer.cornerRadius = 9
         receivedPill.clipsToBounds = true
         receivedPill.textAlignment = .center
@@ -1163,7 +1161,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             //点按就地重试该图（bearyFeedPerformRetry），不整页重拉。
             let frame = UIView()
             frame.translatesAutoresizingMaskIntoConstraints = false
-            frame.backgroundColor = BearyColors.faint
+            frame.backgroundColor = BearyColors.surface2
             frame.layer.cornerRadius = 12
             frame.clipsToBounds = true
             let imageView = UIImageView()

@@ -583,8 +583,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 搜索框：view 级视图（sticky 用，见 updateStickyBoxPosition），
         // 后于 scrollView 加入视图层级，滚动内容从它下方滑过时被盖住。
         searchBoxView.translatesAutoresizingMaskIntoConstraints = false
-        searchBoxView.backgroundColor = BearyColors.bg
-        searchBoxView.layer.borderWidth = 1.5
+        searchBoxView.backgroundColor = BearyColors.surface2
+        searchBoxView.layer.borderWidth = 0
         searchBoxView.layer.cornerRadius = 25
         // 阴影须画出框外，masksToBounds 必须关；框内元素均有内边距，不会溢出圆角。
         searchBoxView.layer.masksToBounds = false
@@ -625,7 +625,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         clearButton.backgroundColor = UIColor.clear
         let clearVisual = UIView()
         clearVisual.translatesAutoresizingMaskIntoConstraints = false
-        clearVisual.backgroundColor = BearyColors.faint
+        clearVisual.backgroundColor = BearyColors.surface2
         clearVisual.layer.cornerRadius = 13
         clearVisual.clipsToBounds = true
         clearVisual.isUserInteractionEnabled = false
@@ -656,7 +656,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateCircle.translatesAutoresizingMaskIntoConstraints = false
         // 空态圈视觉统一：与 BearyStateView 同款——浅灰底无描边墨图标
         //（黑白灰新标准，橙圈已删）。
-        stateCircle.backgroundColor = BearyColors.faint
+        stateCircle.backgroundColor = BearyColors.surface2
         stateCircle.layer.borderWidth = 0
         // 8-11：初值 27 = 54/2（首次布局前 bounds 未定时的正确帧；布局后由
         // viewDidLayoutSubviews 按高/2 重算，见该处注释）。
@@ -714,9 +714,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         clearSearchButton.setTitleColor(BearyColors.ink, for: .normal)
         clearSearchButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         clearSearchButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        clearSearchButton.backgroundColor = BearyColors.surface
-        clearSearchButton.layer.borderWidth = 1
-        clearSearchButton.layer.bearyDynamicBorderColor = BearyColors.line
+        clearSearchButton.backgroundColor = BearyColors.surface2
+        clearSearchButton.layer.borderWidth = 0
         clearSearchButton.layer.cornerRadius = BearyCorners.single
         clearSearchButton.layer.masksToBounds = true
         clearSearchButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
@@ -915,40 +914,31 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     /// CGColor 不跟随深浅模式自动变：边框色一律这里集中刷新。
+    /// 2026-11-07 微明度定版：搜索框聚焦不再画蓝边，改走聚焦阴影（见
+    /// updateSearchBoxShadow）；搜索框边框恒为 0，此处不再给它赋边框色。
     private func updateBorderColors() {
-        if searchBoxFocused {
-            // 聚焦边框收敛：旧代码两处打架（此处蓝 55% 混 line vs
-            // updateSearchBoxShadow 的实心蓝，布局刷新后实心蓝总会覆盖混色），
-            // 统一为实心蓝（聚焦＝蓝的小系统与输入容器同口径）；边框色只归此处管。
-            searchBoxView.layer.bearyDynamicBorderColor = BearyColors.blue
-        } else {
-            searchBoxView.layer.bearyDynamicBorderColor = BearyColors.line
-        }
         retryButton.layer.bearyDynamicBorderColor = BearyColors.line
-        clearSearchButton.layer.bearyDynamicBorderColor = BearyColors.line
         searchFooterRetryButton.layer.bearyDynamicBorderColor = BearyColors.line
         searchFooterLoadMoreButton.layer.bearyDynamicBorderColor = BearyColors.line
         updateSearchBoxShadow()
     }
 
-    /// 搜索框阴影（网页 .srch-box）：常态 0 4 14 黑 5%；聚焦时阴影清掉、
-    /// 改 1pt 实心蓝边框（边框色归 updateBorderColors 管，此处只清阴影、
-    /// 置 borderWidth；path 随 bounds 更新见 viewDidLayoutSubviews）。
+    /// 搜索框阴影（网页 .srch-box）：常态 hairline；聚焦时改走聚焦阴影
+    /// （2026-11-07 微明度定版：不再画蓝边）；边框恒为 0；
+    /// path 随 bounds 更新见 viewDidLayoutSubviews。
     private func updateSearchBoxShadow() {
         let bounds = searchBoxView.bounds
         guard bounds.width > 0 && bounds.height > 0 else { return }
+        searchBoxView.layer.borderWidth = 0
         if searchBoxFocused {
-            searchBoxView.layer.shadowOpacity = 0
-            searchBoxView.layer.shadowPath = nil
-            searchBoxView.layer.borderWidth = 1
+            BearyShadow.applyFocused(to: searchBoxView.layer)
         } else {
-            searchBoxView.layer.borderWidth = 0
             BearyShadow.applyHairline(to: searchBoxView.layer)
-            searchBoxView.layer.shadowPath = UIBezierPath(
-                roundedRect: bounds,
-                cornerRadius: 25
-            ).cgPath
         }
+        searchBoxView.layer.shadowPath = UIBezierPath(
+            roundedRect: bounds,
+            cornerRadius: 25
+        ).cgPath
     }
 
     // MARK: - 输入与搜索
@@ -1425,7 +1415,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             button.setTitleColor(BearyColors.ink, for: .normal)
             button.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
             button.titleLabel?.adjustsFontForContentSizeCategory = true
-            button.backgroundColor = BearyColors.surface
+            button.backgroundColor = BearyColors.surface2
             button.layer.cornerRadius = BearyCorners.single
             button.layer.masksToBounds = true
             button.contentHorizontalAlignment = .left
@@ -1505,7 +1495,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// S7：有旧结果时的失败处理——不调 showState（它会清结果区），
     /// 旧结果行原样保留，失败重试改走结果区尾行。
     /// 样式与动作复用失败态 retryButton（工厂紧凑描边 pill：标题“重试”/
-    /// 36 高/圆角 18/14 semibold/surface 底/1 line 边框，点按走同一 retryTapped 立即重跑
+    /// 36 高/圆角 18/14 semibold/surface1 底/1 line 边框，点按走同一 retryTapped 立即重跑
     /// lastQuery，不走防抖。成功/清状态时尾行隐藏。
     /// B2：旧结果属于上一词时，列表头亮横幅写清出处（见 updateStaleResultsBanner），
     /// 不让上一词的结果被误读成当前词的结果。
@@ -2558,7 +2548,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private func makePrivatePill(friendsOnly: Bool = false, ephemeralLive: Bool = false) -> UIView {
         let pill = UIView()
         pill.translatesAutoresizingMaskIntoConstraints = false
-        pill.backgroundColor = friendsOnly ? BearyColors.faint : BearyColors.alpha(BearyColors.blue, 0.13)
+        pill.backgroundColor = friendsOnly ? BearyColors.surface2 : BearyColors.alpha(BearyColors.blue, 0.13)
         pill.layer.cornerRadius = 11
         pill.layer.masksToBounds = true
         // 黑白灰新标准：仅好友 pill 改墨字灰底（与编辑器 chip 同口径）；

@@ -6,11 +6,11 @@ import UIKit
 //  .primaryPill：高 44、圆角 single（12）；墨底 + 反色字（bg 色，浅白深黑，与 ink 互为反色），
 //    或橙底 + onBrand 深墨字（视觉清单第 5 项：橙底前景固定深墨色，不用
 //    深色下会变白的 ink；引导/主操作，Onboarding 主钮同款口径）。
-//  .secondaryOutline：高 44/36、圆角 single（12）、1pt line 边框 + surface 底 + ink 字
+//  .secondaryOutline：高 44/36、圆角 single（12）、1pt line 边框 + surface1 底 + ink 字
 //    （搜索页“清空搜索”44/22 同款；36/18 为其紧凑版）。
-//  .destructiveOutline：高 36/44、圆角 single（12）、1pt 45% 红边框 + 红字 + surface 底
+//  .destructiveOutline：高 36/44、圆角 single（12）、1pt 45% 红边框 + 红字 + surface1 底
 //    （回收站“彻底删除”红字口径，边框按任务要求取 45% 红而非 line）。
-//  .iconCircleClose：视觉 32×32、圆角 16、faint 底、icon_close 15 + ink tint；
+//  .iconCircleClose：视觉 32×32、圆角 16、surface2 底、icon_close 15 + ink tint；
 //    热区 44×44 由父类 BearyHit44Button 的 point(inside:) 自动扩（视觉帧不动）。
 // 使用范围：只供后续与本批内新写处使用——各页已有按钮一律不动，不为统一而全量重写。
 // 约束约定：工厂只定视觉（底色/字色/边框/圆角/默认字号），不替调用方下尺寸约束；
@@ -118,7 +118,7 @@ class BearyButton: BearyHit44Button {
         return button
     }
 
-    /// 快捷构造：关闭圆钮（faint 底 32 圆钮 + icon_close 15；资产缺失时“✕”文字兜底）。
+    /// 快捷构造：关闭圆钮（surface2 底 32 圆钮 + icon_close 15；资产缺失时“✕”文字兜底）。
     /// 关闭口径（2026-11-04 定）：全屏页左上角左箭头返回、非全屏弹窗右上角叉叉关闭；本圆钮用于弹窗右上角关闭。
     static func closeButton() -> BearyButton {
         return BearyButton(style: .iconCircleClose)
@@ -131,7 +131,7 @@ class BearyButton: BearyHit44Button {
     ///    （原设置子页两处手写规格原样收进工厂；沿原写法用固定 14 bold，不走
     ///    cappedFont/scaledFont，与原视觉逐字一致；热区仍由 BearyHit44Button 扩到 44pt）。
     ///  整页档 retryPage()：整页/尾行失败态——即 retryPageStyle（secondaryOutline(.regular)：
-    ///    44 高/圆角 12/1pt line 边框 + surface 底 + ink 字、14 semibold；左右内边距 20
+    ///    44 高/圆角 12/1pt line 边框 + surface1 底 + ink 字、14 semibold；左右内边距 20
     ///    由调用方下，工厂只定底色/字色/边框/圆角/字号）。
     ///  两档只定视觉；target/回调/启用条件一律由调用方下，工厂不动行为语义。
     static let retryPageStyle: BearyButtonStyle = .secondaryOutline(.regular)
@@ -196,19 +196,19 @@ class BearyButton: BearyHit44Button {
                 tintColor = BearyColors.onBrand
             }
         case .secondaryOutline:
-            backgroundColor = BearyColors.surface
+            backgroundColor = BearyColors.surface1
             setTitleColor(BearyColors.ink, for: .normal)
             tintColor = BearyColors.ink
             layer.borderWidth = 1
             layer.bearyDynamicBorderColor = BearyColors.line
         case .destructiveOutline:
-            backgroundColor = BearyColors.surface
+            backgroundColor = BearyColors.surface1
             setTitleColor(BearyColors.red, for: .normal)
             tintColor = BearyColors.red
             layer.borderWidth = 1
             layer.bearyDynamicBorderColor = BearyColors.red.withAlphaComponent(0.45)
         case .iconCircleClose:
-            backgroundColor = BearyColors.faint
+            backgroundColor = BearyColors.surface2
             tintColor = BearyColors.ink
             accessibilityLabel = "关闭"
             if let closeImage = BearyIconImages.image(named: "icon_close", pointSize: 15) {

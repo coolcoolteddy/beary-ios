@@ -61,7 +61,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let notifyLabel = UILabel()
     /// 搜索框配色（编辑器批）：原 A2 自定义动态底色/边框已删——96 包真机上搜索框
     /// 整棵子树不画（帧 44pt 证实存在、预测区像素纯白），v2 黑白灰改走
-    /// BearyColors.bg 白底＋line 边，圆角取精确半高 24（见 buildViews）。
+    /// BearyColors.surface2 底＋line 边（R13 焦点态），圆角取精确半高 24（见 buildViews）。
     private let listContainer = UIView()
     // 审计第 9 项：滚动取消走共享类（见 BearyNativeCommon.BearyCancellableScrollView）——
     // 从选人行按钮上起滑时滚动视图能抢到 pan，点按行为不变；搜索输入框不在本滚动区内。
@@ -156,7 +156,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 边框与搜索框描边。
+        // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 形态与通知开关描边。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             applySheetChrome()
             // R13 方案 B：深浅切换重刷描边时走焦点态（聚焦仍蓝、失焦回 line），
@@ -177,9 +177,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         backdropButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
         backdropButton.bearyAddPressFeedback()
 
-        // 审计 D-16：浮层背景与回应 Sheet 一致走 surface（深色 #26262c，不再是 bg 的纯黑；
-        // 浅色下 surface 与 bg 同为白，观感不动）；全屏页面仍用 bg，不动。
-        sheetView.backgroundColor = BearyColors.surface
+        // 审计 D-16：浮层背景与回应 Sheet 一致走 surface3（深色 #1E1E23；
+        // 浅色下 surface3 #F0F0F0 略深于 bg 白，观感微分层）；全屏页面仍用 bg，不动。
+        sheetView.backgroundColor = BearyColors.surface3
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         // 阴影：手机端走底 sheet 档；iPad 卡片走 raised 档（2026-11-02 定版第 2 组，
         // 旧 0.30/30/(0, 24) 档已废弃），此处不再自写数值。
@@ -195,17 +195,18 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         headerTitle.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
         headerTitle.adjustsFontForContentSizeCategory = true
         headerTitle.textColor = BearyColors.ink
-        // 关闭钮视觉由 BearyButton.iconCircleClose 工厂定（faint 底 32 圆钮 + icon_close 15）；
+        // 关闭钮视觉由 BearyButton.iconCircleClose 工厂定（surface2 底 32 圆钮 + icon_close 15）；
         // 这里只保留动作与按压反馈，不再重复写底色/圆角。
         closeButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         // 编辑器批搜索框去 exotic 化：原自定义动态底色/边框 + 999 圆角在 96 包真机上
         // 整棵子树不画（帧 44pt 证实存在、预测区像素纯白；静态查不到隐藏/透明/遮挡路径）。
-        // v2 黑白灰：底由 faint 改 bg（白底＋line 边，草稿箱卡片同款组合），圆角
-        // 仍取精确半高 24；显式 48 高、18 图标、16 占位均不动。注意：96 包的 faint
+        // v2 黑白灰：底由 faint 改 surface2（输入框层底色），圆角
+        // 仍取精确半高 24；显式 48 高、18 图标、16 占位均不动。描边保留
+        // （R13 焦点态：聚焦蓝、失焦 line）。注意：96 包的 faint
         // 底是当时已证实可见的方案，白底组合须真机确认后再算数；若真机仍不可见，
         // 下一步须诊断包记录 searchBox.frame/alpha/isHidden，而非继续盲改。
-        searchBox.backgroundColor = BearyColors.bg
+        searchBox.backgroundColor = BearyColors.surface2
         searchBox.layer.cornerRadius = 24
         searchBox.layer.masksToBounds = true
         searchBox.layer.borderWidth = 1
@@ -255,10 +256,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         resultsLabel.adjustsFontForContentSizeCategory = true
         resultsLabel.textColor = BearyColors.gray
         resultsLabelWrap.isHidden = true
-        // v2 黑白灰：空态圆去掉橙底＋橙描边，改浅灰底（faint）无描边、墨色 @
+        // v2 黑白灰：空态圆去掉橙底＋橙描边，改浅灰底（surface2）无描边、墨色 @
         // （圆 54、标题 15 bold、副标题 12 灰均不动；转圈态仍由 setCenterBusy
         // 换灰色刷新图标，停转后 showState 重置图标、tint 回墨色见 showState）。
-        stateCircle.backgroundColor = BearyColors.faint
+        stateCircle.backgroundColor = BearyColors.surface2
         stateCircle.layer.cornerRadius = 27
         stateCircle.layer.masksToBounds = true
         stateCircle.layer.borderWidth = 0
@@ -453,8 +454,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private func applySheetChrome() {
         if isPadLayout {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
-            sheetView.layer.borderWidth = 1
-            sheetView.layer.bearyDynamicBorderColor = BearyColors.line
+            sheetView.layer.borderWidth = 0
             BearyShadow.applyRaised(to: sheetView.layer)
         } else {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
@@ -923,7 +923,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // 墨色首字母（与空态圆同口径；仅本弹窗内改，别页回退圈不动，
         // 是否全站跟进等全站风格审计结论）。
         fallbackLabel.textColor = BearyColors.ink
-        fallbackLabel.backgroundColor = BearyColors.faint
+        fallbackLabel.backgroundColor = BearyColors.surface2
         fallbackLabel.textAlignment = .center
         fallbackLabel.layer.cornerRadius = 22
         fallbackLabel.layer.masksToBounds = true

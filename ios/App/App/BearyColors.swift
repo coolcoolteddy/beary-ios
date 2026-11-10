@@ -36,21 +36,22 @@ enum BearyColors {
     static var deepGreenText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 52.0/255.0, green: 199.0/255.0, blue: 89.0/255.0, alpha: 1) : UIColor(red: 22.0/255.0, green: 101.0/255.0, blue: 52.0/255.0, alpha: 1) } }
     /// 网页 --line：浅 #dbdbdb / 深 #3a3a40（深色带蓝偏，单 white 值复现不了）。
     static var line: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 58.0/255.0, green: 58.0/255.0, blue: 64.0/255.0, alpha: 1) : UIColor(white: 0.86, alpha: 1) } }
-    /// 网页 --bg：浅 #fff / 深 #000000（Li 2026-10-27 点选纯黑，覆盖 10-26 去纯黑令）。
+    /// 网页 --bg：浅 #fff / 深 #0B0B0D（2026-11-07 微明度定版推翻 2026-10-27 纯黑决定：
+    /// 深色底由纯黑抬为 #0B0B0D，页面分层改走 surface0~3 的明度阶）。
     /// 全 App 深色面（页面底、窗口底、容器底、玻璃 tint 基色）均走本变量，改一处即全跟走。
     /// 注意：裁剪页/灯箱的纯黑底、遮罩 scrim、阴影色是故意的黑，不走本变量，一律不动。
-    static var bg: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? .black : .white } }
-    /// 网页 --surface：浅 #fff / 深 #26262c。
-    static var surface: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 38.0/255.0, green: 38.0/255.0, blue: 44.0/255.0, alpha: 1) : .white } }
-    /// 时间线卡片边线（B 方案，v3 预览值，2026-10-29 用户批 v3）：
-    /// 1px，浅 #c7c7cc／深 #48484e；色板既有 token 无贴近值（line 是被换掉的旧值，
-    /// gray 深太多），故用 v3 精确值，不凑既有 token。
-    static var timelineBorder: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 72.0/255.0, green: 72.0/255.0, blue: 78.0/255.0, alpha: 1) : UIColor(red: 199.0/255.0, green: 199.0/255.0, blue: 204.0/255.0, alpha: 1) } }
+    static var bg: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 11.0/255.0, green: 11.0/255.0, blue: 13.0/255.0, alpha: 1) : .white } }
+    /// 页面分层（2026-11-07 微明度定版：分层改走明度阶，取代旧 surface 单值＋1px 外框口径）：
+    /// surface0 页面底（与 bg 同值）、surface1 页上卡片、surface2 输入框／chip、surface3 sheet／弹窗。
+    /// 浅色 surface2 与已废 faint 同值 #F5F5F5；旧 surface（深 #26262c）与 faint、timelineBorder 已废止。
+    static var surface0: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 11.0/255.0, green: 11.0/255.0, blue: 13.0/255.0, alpha: 1) : .white } }
+    static var surface1: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 18.0/255.0, green: 18.0/255.0, blue: 21.0/255.0, alpha: 1) : UIColor(red: 250.0/255.0, green: 250.0/255.0, blue: 250.0/255.0, alpha: 1) } }
+    static var surface2: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 24.0/255.0, green: 24.0/255.0, blue: 28.0/255.0, alpha: 1) : UIColor(red: 245.0/255.0, green: 245.0/255.0, blue: 245.0/255.0, alpha: 1) } }
+    static var surface3: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 30.0/255.0, green: 30.0/255.0, blue: 35.0/255.0, alpha: 1) : UIColor(red: 240.0/255.0, green: 240.0/255.0, blue: 240.0/255.0, alpha: 1) } }
     /// 时间线可见性裸图标灰：浅色保持 v3 值 #8e8e93；深色纯黑底上该值
     /// 对比偏弱，改走 BearyColors.gray（深色约 0.66 白）。时间文字仍走
     /// BearyColors.gray，不跟这个值走（此处只是深色与它同值）。
     static var timelineIconGray: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? BearyColors.gray.resolvedColor(with: t) : UIColor(red: 142.0/255.0, green: 142.0/255.0, blue: 147.0/255.0, alpha: 1) } }
-    static var faint: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.08, alpha: 1) : UIColor(white: 0.96, alpha: 1) } }
     /// 网页 --hov：浅 rgba(17,17,20,.06) / 深 rgba(244,244,248,.08)（悬停/按压底色）。
     static var hov: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 244.0/255.0, green: 244.0/255.0, blue: 248.0/255.0, alpha: 0.08) : UIColor(red: 17.0/255.0, green: 17.0/255.0, blue: 20.0/255.0, alpha: 0.06) } }
 
