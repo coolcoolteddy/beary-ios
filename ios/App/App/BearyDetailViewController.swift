@@ -1118,7 +1118,7 @@ final class BearyDetailViewController: UIViewController {
         actionStack.alignment = .center
 
         likeButton.translatesAutoresizingMaskIntoConstraints = false
-        likeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        likeButton.titleLabel?.font = BearyDynamicType.tabularDigitsFont(ofSize: 14)
         // 扫查组：此前 scaledFont 却缺 adjusts，档位变化时赞数字号不跟、
         // 显式宽也不重算；补 adjusts，宽重算见 traitCollectionDidChange。
         likeButton.titleLabel?.adjustsFontForContentSizeCategory = true

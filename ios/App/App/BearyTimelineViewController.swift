@@ -1098,8 +1098,8 @@ final class BearyTimelineCell: UITableViewCell {
         // 不导航的守卫仍在 quoteTapped 内，不凭渲染快照放行。
         quoteCard.onTapped = { [weak self] in self?.quoteTapped() }
 
-        // 8-3：私密操作行状态文案（正文类）走 scaledFont + adjusts。
-        editStatusLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        // 8-3：私密操作行状态文案（正文类）走等宽数字 + adjusts（还剩 N 分钟按分钟跳字，宽度不抖）。
+        editStatusLabel.font = BearyDynamicType.tabularDigitsFont(ofSize: 12)
         editStatusLabel.adjustsFontForContentSizeCategory = true
         editStatusLabel.textColor = BearyColors.gray
         // 2026-10-29 编辑态口径：倒计时灰字 + 可点按的“编辑”二字（12pt 灰字按钮，
