@@ -11,6 +11,10 @@ import UIKit
 //（子类可重写，如登录弹窗改走 cancelFromSheet——先停倒计时与在途任务，
 // 容器不得绕开它直接 dismiss，否则添加账号会话守卫 stays armed）。
 // 减动效开时：出现/关闭瞬时、拖动关闭无动画直接关、背后页面瞬时恢复。
+// VoiceOver（r29-14）：出现前记 sheet 外焦点、置 presentedView isModal、出现完成
+// 聚焦首元素（BearyBottomSheetVoiceOver 钩子，默认 nil）、关闭完成还焦点、
+// 拖动取消焦点回 sheet 内；范式见 BearyEmotePickerSheet / BearyDraftBoxViewController /
+// BearyNotificationsViewController，真机仍需验 containment 是否如预期。
 // 右上角叉叉关闭由各弹窗自己保留，容器不管叉叉按钮本身。
 // 本文件只含容器；各弹窗的 chrome（玻璃/抓手/阴影）与内容逻辑留在各自文件。
 // 迁移范围：先登录弹窗当样板（见 BearyLoginSheet.swift），其余弹窗等 Li 看过
@@ -33,6 +37,20 @@ enum BearyBottomSheet {
     static let dismissVelocity: CGFloat = 1000
     /// 上拖阻力系数（超出静止位置的部分按 0.3 折算）。
     static let upwardResistance: CGFloat = 0.3
+}
+
+// MARK: - VoiceOver 焦点钩子（r29-14）
+
+/// 底部弹窗出现时 VoiceOver 首焦点元素：presented VC 可 conform 提供；
+/// 默认 nil（协议扩展）——未提供的 sheet 出现时不另发焦点，只声明模态。
+/// 按仓内先例（EmotePicker/DraftBox/Notifications）首选标题；
+/// 登录 sheet 已接线：BearyLoginViewController 返回 sheet 专属标题 welcomeTitleLabel。
+protocol BearyBottomSheetVoiceOver {
+    var bottomSheetInitialAccessibilityElement: AnyObject? { get }
+}
+
+extension BearyBottomSheetVoiceOver {
+    var bottomSheetInitialAccessibilityElement: AnyObject? { nil }
 }
 
 // MARK: - Transitioning delegate
@@ -77,6 +95,10 @@ class BearyBottomSheetPresentationController: UIPresentationController {
     private var backgroundOriginalMasksToBounds = false
     /// 拖动关闭时记下的松手速度（供退场弹簧初速度，animator 读；读完即清）。
     var dismissVelocity: CGFloat = 0
+    /// VoiceOver 焦点返回：presentationTransitionWillBegin 时记下 sheet 外当前焦点元素
+    ///（EmotePicker :97–101 / Notifications :2740–2746 同款写法：weak 持有，
+    /// iOS 17 起取焦点 API 作守门；旧系统无显式返回、走系统默认行为）。
+    private weak var previousFocusedElement: AnyObject?
 
     /// 关闭请求：默认直接 dismiss；子类重写改走自己的关闭路径
     ///（如登录弹窗的 cancelFromSheet——先停倒计时与在途任务）。
@@ -151,6 +173,13 @@ class BearyBottomSheetPresentationController: UIPresentationController {
 
     override func presentationTransitionWillBegin() {
         guard let container = containerView, let presentedView = presentedView else { return }
+        // VoiceOver：出现前先记 sheet 外焦点（此时焦点仍在触发控件上，出现后即被夺走）；
+        // 声明模态：背后页面仍在层级里（缩 0.92 倍、压暗，未移除），不置 modal 则
+        // VoiceOver 可从 sheet 内滑读到被遮的背后页面（DraftBox :387–390 同款注释）。
+        if #available(iOS 17.0, *) {
+            previousFocusedElement = UIAccessibility.focusedElement(using: nil) as? AnyObject
+        }
+        presentedView.accessibilityViewIsModal = true
         // 保存背后页面原样（每次呈现都重存，防上次残留）。
         if let backgroundView = presentingViewController.view {
             backgroundOriginalTransform = backgroundView.transform
@@ -176,7 +205,10 @@ class BearyBottomSheetPresentationController: UIPresentationController {
 
     override func presentationTransitionDidEnd(_ completed: Bool) {
         if !completed {
+            previousFocusedElement = nil
             cleanupAfterTransition()
+        } else {
+            postSheetOpenFocus()
         }
     }
 
@@ -192,6 +224,12 @@ class BearyBottomSheetPresentationController: UIPresentationController {
         dismissVelocity = 0
         if completed {
             cleanupAfterTransition()
+            // VoiceOver 焦点返回：关闭完成把焦点还给出现前记下的触发元素；
+            // weak 持有，触发控件复用/离屏失效即放弃返回（EmotePicker :415–425 同款）。
+            if let element = previousFocusedElement {
+                UIAccessibility.post(notification: .layoutChanged, argument: element)
+                previousFocusedElement = nil
+            }
         } else {
             // 退场被取消（本容器退场非交互式，理论上不发生）：回到出现态。
             setSheetPresented(true)
@@ -201,6 +239,27 @@ class BearyBottomSheetPresentationController: UIPresentationController {
     private func cleanupAfterTransition() {
         dimView.removeFromSuperview()
         applyPresentationProgress(1)
+    }
+
+    /// VoiceOver：sheet 出现完成即聚焦首元素（钩子，见 BearyBottomSheetVoiceOver；
+    /// 未提供时不发）。下一 runloop 再发，等布局与过渡落位后再取元素；
+    /// 若期间已关闭（presentedView 已离线）则不发。未开 VoiceOver 时 post 为空操作。
+    private func postSheetOpenFocus() {
+        guard let element = (presentedViewController as? BearyBottomSheetVoiceOver)?.bottomSheetInitialAccessibilityElement else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.presentedView?.window != nil else { return }
+            UIAccessibility.post(notification: .screenChanged, argument: element)
+        }
+    }
+
+    /// VoiceOver：拖动取消后 sheet 仍开着，焦点可能留在背后页面，post 回 sheet 内
+    ///（首元素；钩子未提供时落 presentedView 本身。DraftBox :1546–1554 同款钩子点）。
+    private func postSheetRestoreFocus() {
+        if let element = (presentedViewController as? BearyBottomSheetVoiceOver)?.bottomSheetInitialAccessibilityElement {
+            UIAccessibility.post(notification: .layoutChanged, argument: element)
+        } else if let presentedView = presentedView {
+            UIAccessibility.post(notification: .layoutChanged, argument: presentedView)
+        }
     }
 
     // MARK: - 遮罩与拖动
@@ -266,6 +325,7 @@ class BearyBottomSheetPresentationController: UIPresentationController {
         if UIAccessibility.isReduceMotionEnabled {
             restore()
             relayout()
+            postSheetRestoreFocus()
         } else {
             // 弹回用出现同款弹簧 0.4s / damping 0.8，初速度按松手速度归一化
             //（沿动画方向与拖动方向相反，故取负；慢拖速度小、自然接近 0；
@@ -277,7 +337,10 @@ class BearyBottomSheetPresentationController: UIPresentationController {
             } else {
                 initialVelocity = 0
             }
-            UIView.animate(withDuration: BearyBottomSheet.springDuration, delay: 0, usingSpringWithDamping: BearyBottomSheet.springDamping, initialSpringVelocity: initialVelocity, options: [.beginFromCurrentState], animations: restore, completion: { _ in relayout() })
+            UIView.animate(withDuration: BearyBottomSheet.springDuration, delay: 0, usingSpringWithDamping: BearyBottomSheet.springDamping, initialSpringVelocity: initialVelocity, options: [.beginFromCurrentState], animations: restore, completion: { [weak self] _ in
+                relayout()
+                self?.postSheetRestoreFocus()
+            })
         }
     }
 }
