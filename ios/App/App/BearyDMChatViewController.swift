@@ -15,6 +15,22 @@ import UIKit
 // 侧边出红色感叹号（44pt 热区），点按重发。超时/结果未知不认失败——
 // 无法确认是否已送达，谎称失败或谎称成功都会错，改走撤行 + 草稿回填 + toast。
 
+/// 翻旧加载态浮标的命中容器：视觉保持 32pt 胶囊不变；失败态点按重试时
+/// point(inside:) 把命中纵向扩到 44pt（规范 §5：失败重试 ≥44），加载态
+/// 不扩，避免多占列表的触摸区。扩区只扩命中、不改视觉，不遮挡下面的消息。
+private final class OlderLoadingHitView: UIView {
+    /// 仅失败态扩热区；加载中／平时保持视觉帧命中。
+    var expandsHitArea = false
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        guard expandsHitArea else { return super.point(inside: point, with: event) }
+        let dx: CGFloat = bounds.width < 44 ? (44 - bounds.width) / 2 : 0
+        let dy: CGFloat = bounds.height < 44 ? (44 - bounds.height) / 2 : 0
+        if dx == 0 && dy == 0 { return super.point(inside: point, with: event) }
+        return bounds.insetBy(dx: -dx, dy: -dy).contains(point)
+    }
+}
+
 final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UITableViewDataSource, UITextViewDelegate {
 
     /// 对方（id 必填；容器只在 id 存在时建页）。
@@ -76,7 +92,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     /// 翻旧加载态浮标：加载中显“正在加载更早消息…”（转圈），失败显
     /// “加载失败，点按重试”（点按即重试）；平时隐藏。浮在列表顶部，
     /// 不占表高、不进 contentSize，锚点计算不受影响。
-    private let olderLoadingView = UIView()
+    private let olderLoadingView = OlderLoadingHitView()
     private let olderLoadingSpinner = UIActivityIndicatorView(style: .medium)
     private let olderLoadingLabel = UILabel()
     private var olderLoadFailed = false
@@ -666,6 +682,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     /// 翻旧加载态浮标：加载中转圈、失败显点按重试、平时隐藏。
     private func setOlderLoadingState(loading: Bool, failed: Bool) {
         olderLoadFailed = failed
+        // 失败态才把重试命中扩到 44pt；加载中不扩，不多占列表触摸区。
+        olderLoadingView.expandsHitArea = failed
         olderLoadingView.isHidden = !loading && !failed
         if loading {
             olderLoadingLabel.text = "正在加载更早消息…"
@@ -1524,7 +1542,7 @@ private final class BearyDMMessageCell: UITableViewCell {
             textLabel.textColor = isMine ? BearyColors.bg : BearyColors.ink
             textLabel.numberOfLines = 0
             timeLabel.translatesAutoresizingMaskIntoConstraints = false
-            timeLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
+            timeLabel.font = BearyDynamicType.captionFont()
             timeLabel.adjustsFontForContentSizeCategory = true
             timeLabel.textColor = BearyColors.gray
             bubble.addSubview(textLabel)
