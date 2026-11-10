@@ -1614,7 +1614,7 @@ private final class BearyDMMessageCell: UITableViewCell {
     }
 
     /// 第三轮审计 1：相对时间 + 未确认后缀的统一组合（建行与分钟刷新共用）。
-    private func formattedTimeText(ms: Int, showUnconfirmed: Bool) -> String {
+    private func formattedTimeText(ms: Int?, showUnconfirmed: Bool) -> String {
         let timeText = Self.relativeTimeText(ms: ms)
         return showUnconfirmed ? timeText + " · 未确认" : timeText
     }
