@@ -1177,14 +1177,25 @@ final class BearySyncWriteResultTests: XCTestCase {
         XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: uid, dayKey: "2026-10-21")?.map { $0.id }, ["b_c1"])
     }
 
-    func testCommitFullSyncFailureWhenDirectoryBlocked() throws {
+    func testCommitFullSyncRecoversWhenLiveDirBlockedByFile() throws {
         let uid = 987032
         let dir = try XCTUnwrap(BearyEntrySyncStore.accountDir(accountId: uid))
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let backup = try XCTUnwrap(BearyEntrySyncStore.backupDir(accountId: uid))
+        let staging = try XCTUnwrap(BearyEntrySyncStore.stagingDir(accountId: uid))
+        defer {
+            try? FileManager.default.removeItem(at: dir)
+            try? FileManager.default.removeItem(at: backup)
+            try? FileManager.default.removeItem(at: staging)
+        }
         try? FileManager.default.removeItem(at: dir)
+        try? FileManager.default.removeItem(at: backup)
+        try? FileManager.default.removeItem(at: staging)
         _ = FileManager.default.createFile(atPath: dir.path, contents: Data("block".utf8))
         let entry = try bearyTestEntry(id: "b_c2", createdAt: 1761000000000)
-        XCTAssertFalse(BearyEntrySyncStore.commitFullSync(accountId: uid, grouped: ["2026-10-21": [entry]]), "directory blocked by file")
+        // #1069 staging 换盘：活盘路径被文件占住也不失败——换盘时旧文件搬进 .bak，新日照常落盘。
+        XCTAssertTrue(BearyEntrySyncStore.commitFullSync(accountId: uid, grouped: ["2026-10-21": [entry]]), "live dir blocked by file recovers via swap")
+        XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: uid, dayKey: "2026-10-21")?.map { $0.id }, ["b_c2"])
+        XCTAssertEqual(try? Data(contentsOf: backup), Data("block".utf8))
     }
 
     func testTrashSaveAllFailureKeepsOldSnapshotAndBumpsGeneration() throws {
