@@ -3064,18 +3064,17 @@ enum BearyVisibility {
 
     static func isPublicValue(_ visibility: String) -> Bool { visibility == "public" }
 
-    /// 三档选择器（alert 形态，iPad 无需 popover 锚点）：当前档带 ✓ 前缀；
+    /// 三档选择器（底部弹窗形态，iPad 无需 popover 锚点）：当前档带 ✓ 前缀；
     /// 选同档时调用方按无变化处理（不发请求、不清限时标记）。
     /// 限时与仅好友互斥规则不动：本选择器不提供限时档，手动改档恒清限时标记。
     static func presentPicker(from vc: UIViewController, entry: Entry, onPick: @escaping (String) -> Void) {
         let currentValue = current(for: entry)
-        let alert = UIAlertController(title: "修改权限", message: nil, preferredStyle: .alert)
-        for value in all {
+        var actions: [BearyConfirmSheet.Action] = all.map { value in
             let title = (value == currentValue ? "✓ " : "") + title(for: value)
-            alert.addAction(UIAlertAction(title: title, style: .default) { _ in onPick(value) })
+            return BearyConfirmSheet.Action(title: title, style: .default) { onPick(value) }
         }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        vc.present(alert, animated: BearyMotion.animated(true))
+        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
+        BearyConfirmSheet.show(from: vc, title: "修改权限", message: nil, actions: actions)
     }
 }
 
@@ -3405,9 +3404,8 @@ enum BearyReportFlow {
             return
         }
         let title = entryLabel == nil ? "举报这篇日记？" : "举报\(entryLabel!)？"
-        let sheet = UIAlertController(title: title, message: "举报后这篇日记将从你的信息流消失，不可撤销。", preferredStyle: .actionSheet)
-        for reason in BearyReportReason.all {
-            sheet.addAction(UIAlertAction(title: reason, style: .default) { _ in
+        var actions: [BearyConfirmSheet.Action] = BearyReportReason.all.map { reason in
+            BearyConfirmSheet.Action(title: reason, style: .default) {
                 let busy = BearyFlowBusy.show(in: vc.view)
                 // 第六轮审计 02：发起时拍身份快照，成功回包先校验——切号/退出/
                 // 重登夹在请求与回包之间时，旧回包不得写进新账号的举报缓存、
@@ -3429,14 +3427,10 @@ enum BearyReportFlow {
                         }
                     }
                 }
-            })
+            }
         }
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = vc.view
-            popover.sourceRect = CGRect(x: vc.view.bounds.midX, y: vc.view.bounds.midY, width: 0, height: 0)
-        }
-        vc.present(sheet, animated: BearyMotion.animated(true))
+        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
+        BearyConfirmSheet.show(from: vc, title: title, message: "举报后这篇日记将从你的信息流消失，不可撤销。", actions: actions)
     }
 }
 
@@ -3447,32 +3441,32 @@ enum BearyBlockFlow {
         // 按失败回调调用方（调用方只在 success 时清理，false 为空操作）。
         guard BearyPresentGuard.canPresent(from: vc) else { onDone?(false); return }
         let name = (userName ?? "").isEmpty ? "这位用户" : userName!
-        let alert = UIAlertController(title: "拉黑\(name)？", message: "拉黑后将不再看到 TA 的日记，可在设置页「已拉黑用户」里解除。", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        alert.addAction(UIAlertAction(title: "拉黑", style: .destructive) { _ in
-            let busy = BearyFlowBusy.show(in: vc.view)
-            // 第六轮审计 02：发起时拍身份快照，成功回包先校验——旧账号的
-            // 拉黑回包不得写进新账号的拉黑缓存、不得发广播、不得弹提示；
-            // 身份已变时按未完成回调调用方（调用方只在 success 时清理）。
-            let identity = BearyIdentityGuard.capture()
-            BearyAPI.shared.blockUser(userId: userId) { result in
-                DispatchQueue.main.async {
-                    BearyFlowBusy.hide(busy)
-                    switch result {
-                    case .success:
-                        guard BearyIdentityGuard.stillValid(identity) else { onDone?(false); return }
-                        BearyBlockedStore.markBlocked(userId)
-                        NotificationCenter.default.post(name: .bearyDidBlockUser, object: userId)
-                        BearyToast.show(in: vc.view, message: "已拉黑")
-                        onDone?(true)
-                    case .failure:
-                        BearyToast.show(in: vc.view, message: "拉黑失败，请重试")
-                        onDone?(false)
+        BearyConfirmSheet.show(from: vc, title: "拉黑\(name)？", message: "拉黑后将不再看到 TA 的日记，可在设置页「已拉黑用户」里解除。", actions: [
+            BearyConfirmSheet.Action(title: "取消", style: .cancel),
+            BearyConfirmSheet.Action(title: "拉黑", style: .destructive) {
+                let busy = BearyFlowBusy.show(in: vc.view)
+                // 第六轮审计 02：发起时拍身份快照，成功回包先校验——旧账号的
+                // 拉黑回包不得写进新账号的拉黑缓存、不得发广播、不得弹提示；
+                // 身份已变时按未完成回调调用方（调用方只在 success 时清理）。
+                let identity = BearyIdentityGuard.capture()
+                BearyAPI.shared.blockUser(userId: userId) { result in
+                    DispatchQueue.main.async {
+                        BearyFlowBusy.hide(busy)
+                        switch result {
+                        case .success:
+                            guard BearyIdentityGuard.stillValid(identity) else { onDone?(false); return }
+                            BearyBlockedStore.markBlocked(userId)
+                            NotificationCenter.default.post(name: .bearyDidBlockUser, object: userId)
+                            BearyToast.show(in: vc.view, message: "已拉黑")
+                            onDone?(true)
+                        case .failure:
+                            BearyToast.show(in: vc.view, message: "拉黑失败，请重试")
+                            onDone?(false)
+                        }
                     }
                 }
-            }
-        })
-        vc.present(alert, animated: BearyMotion.animated(true))
+            },
+        ])
     }
 }
 
