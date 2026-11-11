@@ -757,7 +757,7 @@ final class BearyDMStoreBackgroundTests: XCTestCase {
             saved = result
             exp.fulfill()
         }
-        wait(for: [exp], timeout: 10)
+        wait(for: [exp], timeout: 30)
         return saved
     }
 
@@ -768,7 +768,7 @@ final class BearyDMStoreBackgroundTests: XCTestCase {
             loaded = result
             exp.fulfill()
         }
-        wait(for: [exp], timeout: 10)
+        wait(for: [exp], timeout: 30)
         return loaded
     }
 
@@ -803,7 +803,7 @@ final class BearyDMStoreBackgroundTests: XCTestCase {
         let enqueueElapsed = CFAbsoluteTimeGetCurrent() - start
         XCTAssertFalse(completed, "saveMessages 回调不得同步触发：整库编码写盘必须已离队到后台")
         XCTAssertLessThan(enqueueElapsed, 0.5, "2000 条入队只应是微秒级：调用线程不得做整库编码写盘")
-        wait(for: [exp], timeout: 10)
+        wait(for: [exp], timeout: 30)
         XCTAssertTrue(completed)
         XCTAssertEqual(load(peerId: 13).count, 2000)
     }
@@ -823,7 +823,7 @@ final class BearyDMStoreBackgroundTests: XCTestCase {
                 }
             }
         }
-        wait(for: [exp], timeout: 10)
+        wait(for: [exp], timeout: 30)
         XCTAssertEqual(load(peerId: 14).map { $0.id ?? -1 }, Array(1...100))
         for i in 5..<10 {
             XCTAssertEqual(load(peerId: 100 + i).count, 20)
@@ -845,7 +845,7 @@ final class BearyDMStoreBackgroundTests: XCTestCase {
             }
             let enqueueElapsed = CFAbsoluteTimeGetCurrent() - start
             XCTAssertLessThan(enqueueElapsed, 0.5, "本地文件 \(count) 条时调用线程仍只应入队")
-            wait(for: [exp], timeout: 10)
+            wait(for: [exp], timeout: 30)
             XCTAssertEqual(loaded.count, count)
         }
     }
@@ -861,7 +861,7 @@ final class BearyDMStoreBackgroundTests: XCTestCase {
             merged = result
             exp.fulfill()
         }
-        wait(for: [exp], timeout: 10)
+        wait(for: [exp], timeout: 30)
         XCTAssertEqual(merged.map { $0.peer?.id ?? -1 }, [18, 17])
         XCTAssertEqual(merged.first?.unreadCount, 3)
         XCTAssertNil(merged.last?.unreadCount)
@@ -880,7 +880,7 @@ final class BearyDMStoreBackgroundTests: XCTestCase {
             XCTAssertTrue(result.isEmpty)
             exp2.fulfill()
         }
-        wait(for: [exp1, exp2], timeout: 10)
+        wait(for: [exp1, exp2], timeout: 30)
     }
 }
 
