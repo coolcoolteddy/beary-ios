@@ -609,6 +609,10 @@ class BearyDiaryCardCell: UITableViewCell {
     private var separatorHeightConstraint: NSLayoutConstraint?
     private var headerStackTopConstraint: NSLayoutConstraint?
     private var avatarTopConstraint: NSLayoutConstraint?
+    /// 作者行结构居中约束：titleStack.centerY == avatarContainer.centerY。
+    /// 只在 pinRow 与 recipientRow 都藏时激活（见 updateDiaryStackSpacing）；
+    /// 有行在作者行之上时停用、改走头行顶约束。
+    private var authorRowCenterYConstraint: NSLayoutConstraint?
     /// 头行右缩进恒 −16；⋯ 留位走标题行末 titleMoreSpacer，不再按本人／他人改右缩进。
     private var headerStackTrailingConstraint: NSLayoutConstraint?
     /// 正文栈顶：取头像底与头行底两者较大者 + 间距（有标题 16、无标题 14）；
@@ -1413,11 +1417,14 @@ class BearyDiaryCardCell: UITableViewCell {
         crownWrapView.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 皇冠在等高容器内居中（容器底边钉基线，中心即 cap 中心）。
         crownWrapView.addSubview(crownView)
-        // 置顶图钉固定 15×15（两模式同款，不靠 stack 固有尺寸浮动）。
-        NSLayoutConstraint.activate([
-            pinIconView.widthAnchor.constraint(equalToConstant: 15),
-            pinIconView.heightAnchor.constraint(equalToConstant: 15),
-        ])
+        // 置顶图钉固定 15×15（两模式同款，不靠 stack 固有尺寸浮动；可隐藏行内
+        // 固定尺寸用 999，免与 stack 的零尺寸约束冲突出警告——同 recipientIconView
+        // 首页分支口径，此前漏成 required，顶着 feed 下恒藏 pinRow 的压扁）。
+        let pinIconWidth = pinIconView.widthAnchor.constraint(equalToConstant: 15)
+        pinIconWidth.priority = UILayoutPriority(999)
+        let pinIconHeight = pinIconView.heightAnchor.constraint(equalToConstant: 15)
+        pinIconHeight.priority = UILayoutPriority(999)
+        NSLayoutConstraint.activate([pinIconWidth, pinIconHeight])
         NSLayoutConstraint.activate([
             crownView.centerXAnchor.constraint(equalTo: crownWrapView.centerXAnchor),
             crownView.centerYAnchor.constraint(equalTo: crownWrapView.centerYAnchor),
@@ -1445,6 +1452,9 @@ class BearyDiaryCardCell: UITableViewCell {
         // 110：头像顶约束显式持有，首卡与头行同值跟移（见 updateDiaryStackSpacing）。
         let avatarTop = avatarContainer.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16)
         avatarTopConstraint = avatarTop
+        // 作者行结构居中约束：初始不激活，只在两行都藏时启用（见 updateDiaryStackSpacing）。
+        // 建在此处：titleStack 与 avatarContainer 此时已同属 contentView 层级。
+        authorRowCenterYConstraint = titleStack.centerYAnchor.constraint(equalTo: avatarContainer.centerYAnchor)
         var extraConstraints: [NSLayoutConstraint] = []
         if cardMode == .profile {
             // 个人主页口径：点赞高 22、收藏/分享 21×21（原 required 约束）。
@@ -1948,17 +1958,23 @@ class BearyDiaryCardCell: UITableViewCell {
         // 作者行顶部统一 16（2026-11-05 ChatGPT 间距跟进）：@ 行显隐的 1pt
         // 差值保留（16／17），只改基线不改相对行为；个人页首卡 30 与置顶 +25
         // 是例外，一字不动。
-        // 名字行偏下（126 真机实测：名字比头像中心低约 10pt，时间约 11.5pt，
-        // 天气图标同行跟走——整行 titleStack 被往下顶）：UIStackView 会把
-        // setCustomSpacing 的值算在隐藏行之后——pinRow、recipientRow 藏了，
-        // 10 + 4 还在占位。隐藏行的尾随间距归零，显示时恢复原值；两行都藏
-        // （头行只剩作者行）时作者行改为与头像垂直居中：头行顶 = 头像顶 +
-        // (头像高 40 − 作者行高) / 2，作者行高取名字字体行高（动态字号变大
-        // 时偏移跟着缩小）。有行在作者行之上时保持顶对齐不动。
-        let avatarTopBase: CGFloat = cardMode == .feed ? 16 : (profileFirstRow ? 30 : 16)
+        // 名字行偏下（129 真机实测：名字比头像中心低约 10pt，时间约 11pt，
+        // 天气图标同行跟走——整行 titleStack 被往下顶）：#1145 的字体行高
+        // 算顶距没修动——126→129 名字 10→10pt、时间 11.5→11.4pt，+10pt
+        // 偏移恰被残余间距抵消。算式先天偏下：它假定作者行高 = 名字字体行高，
+        // 但作者行是 .firstBaseline 栈——皇冠包（纯 UIView、基线即底边）把栈顶
+        // 顶到名字上一截、空垫片（17pt）的下行距把栈底压到名字基线下一截，
+        // 行真高比字体行高多约 4pt、名字又落行顶下一截；且隐藏行残余间距
+        // （setCustomSpacing(0) 未完全清掉）另顶约 6pt，字体度量算不准这两笔。
+        // 改钉中心：两行都藏（头行只剩作者行）时作者行中心 == 头像中心，
+        // 行真高、基线几何、残余间距一律不再影响；顶约束本分支停用。
+        // 有行在作者行之上时恢复顶约束、保持顶对齐不动。
         if pinRow.isHidden && recipientRow.isHidden {
-            headerStackTopConstraint?.constant = avatarTopBase + (40 - BearyDynamicType.cardTitleFont().lineHeight) / 2
+            headerStackTopConstraint?.isActive = false
+            authorRowCenterYConstraint?.isActive = true
         } else {
+            authorRowCenterYConstraint?.isActive = false
+            headerStackTopConstraint?.isActive = true
             headerStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 16 : 17) : (profileFirstRow ? 30 : 16)
         }
         // 首卡虚线框顶 6→22（底边仍距 cell 底 6，不整体下移），tab 视觉底边
