@@ -2785,6 +2785,8 @@ class BearyTimelineViewController: UIViewController {
     /// 回滚到上次成功的档位与结果（见 fetchTimelineFirstPageFull 失败分支）。
     private func applyVisFilter(_ newValue: TimelineVisFilter) {
         guard newValue != timelineVisFilter else { return }
+        // 审计四轮第 8 项：命中缓存时面板也要按新筛子处理（见下方）。
+        let hadSnapshot = filterSnapshots[newValue] != nil
         if let snapshot = filterSnapshots[newValue] {
             timelineEntries = snapshot.entries
             timelineHasMore = snapshot.hasMore
@@ -2813,8 +2815,18 @@ class BearyTimelineViewController: UIViewController {
         clearStaggerEntries()
         scrollToTop()
         // 当日面板随新筛子重取：首屏回包派生（已覆盖）或回落正向拉取（带 vis）。
-        // 有快照时面板旧行先留着（不闪空）；无快照时面板已随列表同清、走加载态，
-        // 派生/回落到达后再填回。
+        // 审计四轮第 8 项：有快照时不再留旧档面板——快照已覆盖选中日时立即
+        // 按快照派生新档面板（不闪空）；未覆盖时先清面板，待首屏回包派生/
+        // 回落重拉，与无快照分支同口径。否则列表已是新档、面板仍是旧档，
+        // 两者在首屏回包前混排。
+        if hadSnapshot, let key = selectedDayKey {
+            if firstPageCoversDay(key: key) {
+                deriveDayPanelFromFirstPageIfCovered(key: key)
+            } else {
+                dayEntries = []
+                dayState = .idle
+            }
+        }
         deferredDayKeyForFirstPage = selectedDayKey
         tableView.reloadData()
         updateChrome()
@@ -6030,10 +6042,7 @@ class BearyTimelineViewController: UIViewController {
         // 无此守卫时派生会覆盖新日面板、失败回落还会抢走 dayKeyForLoad
         // 导致新日回包被丢弃）。
         guard selectedDayKey == key else { return }
-        let covered = timelineEntries.contains { entry in
-            guard let created = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: created) else { return false }
-            return dayKey < key
-        }
+        let covered = firstPageCoversDay(key: key)
         guard covered else {
             fetchDayEntries(key: key, clear: false)
             return
@@ -6057,6 +6066,17 @@ class BearyTimelineViewController: UIViewController {
             cacheDayEntries(key: key, entries: derived)
         }
         prefetchAdjacentDays(for: key)
+    }
+
+    /// 首屏是否已覆盖选中日：页内一旦出现早于选中日的篇，即证明选中日
+    /// 的全部篇都在页内（判定口径见 deriveDayPanelFromFirstPageIfCovered
+    /// 注释）。审计四轮第 8 项抽出共用：切档命中缓存时先判覆盖，再决定
+    /// 立即派生面板还是先清面板等首屏回包。
+    private func firstPageCoversDay(key: String) -> Bool {
+        timelineEntries.contains { entry in
+            guard let created = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: created) else { return false }
+            return dayKey < key
+        }
     }
 
     private func fetchDayEntries(key: String, clear: Bool) {
