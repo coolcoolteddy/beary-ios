@@ -150,7 +150,7 @@ private final class BlindBoxPoolRowView: UIView {
         }
         checkView.isHidden = !selected
         layer.bearyDynamicBorderColor = selected ? BearyColors.ink : BearyColors.line
-        layer.borderWidth = selected ? 2 : 1
+        layer.borderWidth = selected ? 2 : 0
     }
 }
 
@@ -627,10 +627,10 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     private func buildPlaceholderSections() {
         placeholderView.translatesAutoresizingMaskIntoConstraints = false
-        // 占位框：实线边框（CALayer 无虚线属性，虚线需 CAShapeLayer 另绘；
-        // 本页占位语义由文案承担，不为演示样式另起一层 shape 图层）。
+        // 占位框：无外框，靠 surface1 明度分层（§7）；不另起 shape 图层画虚线。
+        placeholderView.backgroundColor = BearyColors.surface1
         placeholderView.layer.cornerRadius = BearyCorners.single
-        placeholderView.layer.borderWidth = 1
+        placeholderView.layer.borderWidth = 0
         placeholderView.layer.bearyDynamicBorderColor = BearyColors.line
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         placeholderLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
@@ -943,6 +943,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             text += " · 篇数较多，仅展示最近拉取的 \(poolCollected.count) 篇"
         }
         if poolInterrupted {
+            if poolCapped { text += "。" }
             text += "仅展示已加载的部分，点按重试可继续加载。"
         }
         openHintLabel.text = text
@@ -1331,8 +1332,10 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             emoteStack.removeArrangedSubview(sub)
             sub.removeFromSuperview()
         }
+        var visibleEmoteCount = 0
         for count in receivedEmotes {
-            guard let key = count.emote, let total = count.count else { continue }
+            guard let key = count.emote, let total = count.count, total > 0 else { continue }
+            visibleEmoteCount += 1
             let chip = BlindBoxEmoteChipButton(style: .secondaryOutline(.compact))
             chip.setTitle("\(total)", for: .normal)
             chip.emoteKey = key
@@ -1355,7 +1358,20 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 chip.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
             ])
         }
-        emoteScroll.isHidden = receivedEmotes.isEmpty
+        emoteScroll.isHidden = visibleEmoteCount == 0
+    }
+
+    /// 盲盒回应失败的拒绝动效：0.4s 摇头＋warning 震动（与详情/卡片 playDenyShake 同口径；
+    /// 减动效时只跳视觉抖动，不补音效）。
+    private func playDenyShake(on view: UIView) {
+        BearyHaptics.rejectionWarning()
+        if UIAccessibility.isReduceMotionEnabled { return }
+        view.layer.removeAnimation(forKey: "bearyBlindBoxDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = 0.4
+        view.layer.add(shake, forKey: "bearyBlindBoxDenyShake")
     }
 
     @objc private func emoteChipTapped(_ sender: UIButton) {
@@ -1381,6 +1397,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 case .failure:
                     self.receivedEmotes = previous
                     self.renderEmoteChips()
+                    self.playDenyShake(on: chip)
                     BearyToast.show(in: self.view, message: "回应失败，请重试")
                 }
             }
@@ -1441,6 +1458,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                         case .failure:
                             self.receivedEmotes = previous
                             self.renderEmoteChips()
+                            self.playDenyShake(on: self.emoteScroll)
                             BearyToast.show(in: self.view, message: "回应失败，请重试")
                         }
                     }
