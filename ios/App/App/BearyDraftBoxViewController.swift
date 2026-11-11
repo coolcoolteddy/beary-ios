@@ -822,7 +822,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         }
     }
 
-    /// 草稿库损坏态清除：先弹系统确认框（App 现有确认口径），确认后删当前
+    /// 草稿库损坏态清除：先弹确认底 sheet（App 现有确认口径），确认后删当前
     /// 账号的坏 v3 文件（.bak 备份不动），成功后重读 → 空态；失败则留失败态＋toast。
     /// 审计四轮 13：确认框里把不可逆后果讲清——损坏的草稿删掉后在 App 里找不回来。
     @objc private func clearCorruptStoreTapped() {
@@ -832,21 +832,21 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         let message = backupKept
             ? "这些草稿目前无法读取。清除后，损坏的草稿会被删掉，在 App 里找不回来；备份会保留在手机里，新草稿可以正常保存。"
             : "这些草稿目前无法读取。清除后，损坏的草稿会被删掉，在 App 里找不回来；没有可保留的备份，新草稿可以正常保存。"
-        let alert = UIAlertController(title: "清除无法读取的草稿？", message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "清除", style: .destructive) { [weak self] _ in
-            BearyDraftStore.clearCorruptStoreAsync { [weak self] ok in
-                guard let self = self else { return }
-                if ok {
-                    self.loadDrafts { [weak self] in
-                        self?.renderDrafts()
+        BearyConfirmSheet.show(from: self, title: "清除无法读取的草稿？", message: message, actions: [
+            BearyConfirmSheet.Action(title: "取消", style: .cancel),
+            BearyConfirmSheet.Action(title: "清除", style: .destructive) { [weak self] in
+                BearyDraftStore.clearCorruptStoreAsync { [weak self] ok in
+                    guard let self = self else { return }
+                    if ok {
+                        self.loadDrafts { [weak self] in
+                            self?.renderDrafts()
+                        }
+                    } else {
+                        self.showDraftToast(message: "清除失败，请重试")
                     }
-                } else {
-                    self.showDraftToast(message: "清除失败，请重试")
                 }
-            }
-        })
-        present(alert, animated: BearyMotion.animated(true))
+            },
+        ])
     }
 
     /// 112：非损坏型读取失败的重试：只重读草稿库、不删任何文件；
@@ -1511,14 +1511,17 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     /// 时各路关闭路径一字不动。关闭路的提示文案与确认钮文案保持原样，
     /// 新建／点开路复用同一条提示文案，确认钮为“仍要继续”。
     private func exitWithUndoGuard(confirmTitle: String, confirmedExit: @escaping () -> Void) {
-        if presentedViewController is UIAlertController { return }
+        // 守卫原先只认 UIAlertController；确认改走底 sheet 后，有在途弹窗
+        // 即 presentedViewController 非 nil，一律不再叠弹（原意不变）。
+        if presentedViewController != nil { return }
         if !pendingUndos.isEmpty {
-            let alert = UIAlertController(title: nil, message: "关闭草稿箱后，刚删除的草稿将无法撤销", preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: confirmTitle, style: .destructive) { _ in
-                confirmedExit()
-            })
-            alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-            present(alert, animated: BearyMotion.animated(true))
+            // 原 alert 无标题，底 sheet 标题传空（只显说明＋按钮，不另起文案）。
+            BearyConfirmSheet.show(from: self, title: "", message: "关闭草稿箱后，刚删除的草稿将无法撤销", actions: [
+                BearyConfirmSheet.Action(title: confirmTitle, style: .destructive) {
+                    confirmedExit()
+                },
+                BearyConfirmSheet.Action(title: "取消", style: .cancel),
+            ])
             return
         }
         confirmedExit()
