@@ -11,7 +11,8 @@ import Darwin
 // 反色字，既定样式，不自造分段控件）+ 编辑器正文同款 UITextView；图片或视频
 // （可选，最多 5 个）添加卡（手绘 icon_image）；设备信息卡 8 行；底部依次为
 // 墨底主钮「撰写反馈邮件」、secondaryOutline「分享诊断日志」（手绘 icon_share）、
-// 「诊断」分组 + secondaryOutline「仅发送日志」、footnote。
+// 「诊断」分组 + secondaryOutline「仅发送日志」；发送说明收进提交提示旁
+// 的帮助入口（info 图标，点按底部弹窗展示，不常驻页底）。
 // 组件规矩（2026-10-28 Li 定，长期有效）：组件一律走 iOS 系统组件
 // （UIButton / UITextView / PHPicker / MFMailCompose / UIActivityViewController），
 // 图标只用手绘官方包（icon_image、icon_share 均取 89 包 xcassets；资产缺失时
@@ -260,6 +261,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     private var pendingMailKind: PendingMailKind = .submit
 
     private static let recipient = "hi@teddyhn.com"
+    /// 审计 r2 D4：原页底 footnote 全文，移入帮助入口展示（不是删除）。
+    private static let sendHelpText = "反馈发送走邮件到 hi@teddyhn.com。未配置邮箱时，仅复制反馈文字，附件不随复制发出。分享或仅发送日志时只发日志包，不含描述与附件。"
     private static let descriptionPlaceholder = "请描述遇到的问题：在哪个页面、做了什么操作、看到了什么…"
 
     /// 116 数据填入动效：状态文案变化时只淡入该 label 本身、徽标由
@@ -431,7 +434,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         ])
     }
 
-    // MARK: - 内容（自上而下：状态卡 → 描述 → 附件 → 设备 → 提交 → 分享 → 诊断 → footnote）
+    // MARK: - 内容（自上而下：状态卡 → 描述 → 附件 → 设备 → 提交 → 分享 → 诊断）
 
     private func buildContent() {
         let statusCard = makeCard()
@@ -440,7 +443,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         statusRow.axis = .horizontal
         statusRow.alignment = .center
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.font = UIFont.systemFont(ofSize: 16, weight: .medium)
+        statusLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .medium))
+        statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.textColor = BearyColors.ink
         statusLabel.text = "反馈数据准备中…"
         // 补缺 P3-34：绿勾走官方包 icon_check，不用“✓”文本。
@@ -478,8 +482,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         typeSegmented.translatesAutoresizingMaskIntoConstraints = false
         typeSegmented.selectedSegmentIndex = 0
         typeSegmented.selectedSegmentTintColor = BearyColors.ink
-        typeSegmented.setTitleTextAttributes([.font: UIFont.systemFont(ofSize: 15)], for: .normal)
-        typeSegmented.setTitleTextAttributes([.font: UIFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: BearyColors.bg], for: .selected)
+        typeSegmented.setTitleTextAttributes([.font: BearyDynamicType.smallBodyFont()], for: .normal)
+        typeSegmented.setTitleTextAttributes([.font: BearyDynamicType.smallSemiboldFont(), .foregroundColor: BearyColors.bg], for: .selected)
         let textContainer = UIView()
         textContainer.translatesAutoresizingMaskIntoConstraints = false
         textView.translatesAutoresizingMaskIntoConstraints = false
@@ -564,7 +568,10 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         attachProgressSpinner.translatesAutoresizingMaskIntoConstraints = false
         attachProgressSpinner.color = BearyColors.gray
         attachProgressLabel.translatesAutoresizingMaskIntoConstraints = false
-        attachProgressLabel.font = UIFont.systemFont(ofSize: 14)
+        // 审计 r2 ①-2：裸 14pt 改 scaled（规范 §11 footNoteFont 同值 14 regular；
+        // 代码侧尚无 footNoteFont 入口，本处用等值 scaledFont，不另开入口）。
+        attachProgressLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        attachProgressLabel.adjustsFontForContentSizeCategory = true
         attachProgressLabel.textColor = BearyColors.gray
         attachProgressRow.translatesAutoresizingMaskIntoConstraints = false
         attachProgressRow.axis = .horizontal
@@ -594,12 +601,14 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         for (index, row) in deviceRows.enumerated() {
             let keyLabel = UILabel()
             keyLabel.translatesAutoresizingMaskIntoConstraints = false
-            keyLabel.font = UIFont.systemFont(ofSize: 15)
+            keyLabel.font = BearyDynamicType.smallBodyFont()
+            keyLabel.adjustsFontForContentSizeCategory = true
             keyLabel.textColor = BearyColors.gray
             keyLabel.text = row.key
             let valueLabel = UILabel()
             valueLabel.translatesAutoresizingMaskIntoConstraints = false
-            valueLabel.font = UIFont.systemFont(ofSize: 15)
+            valueLabel.font = BearyDynamicType.smallBodyFont()
+            valueLabel.adjustsFontForContentSizeCategory = true
             valueLabel.textColor = BearyColors.ink
             valueLabel.textAlignment = .right
             valueLabel.text = row.value
@@ -609,7 +618,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             kvRow.alignment = .center
             deviceStack.addArrangedSubview(kvRow)
             NSLayoutConstraint.activate([
-                kvRow.heightAnchor.constraint(equalToConstant: 42),
+                // 审计 r2 ①-2：42 改为最小 42，大字号下随内容撑高。
+                kvRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 42),
             ])
             if index < deviceRows.count - 1 {
                 let separator = UIView()
@@ -632,16 +642,30 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         submitButton.translatesAutoresizingMaskIntoConstraints = false
         submitButton.addTarget(self, action: #selector(submitTapped), for: .touchUpInside)
         submitButton.bearyAddPressFeedback()
-        // 主按钮只打开邮件撰写框、本身不完成提交：footnote 已写“发送走
-        // 邮件到 hi@teddyhn.com”，这里只补后半句，不重复目的地与未配
-        // 邮箱 fallback。样式沿用 footnote 同款（13pt 灰字）。
+        // 主按钮只打开邮件撰写框、本身不完成提交：发送说明（目的地、
+        // 未配邮箱 fallback、附件与日志包范围）收进本行末的帮助入口，
+        // 这里只补后半句，不重复目的地与未配邮箱 fallback。
         let submitHint = UILabel()
         submitHint.translatesAutoresizingMaskIntoConstraints = false
-        submitHint.font = UIFont.systemFont(ofSize: 13)
+        submitHint.font = BearyDynamicType.secondaryFont()
+        submitHint.adjustsFontForContentSizeCategory = true
         submitHint.textColor = BearyColors.gray
         submitHint.numberOfLines = 0
         submitHint.textAlignment = .center
         submitHint.text = "将打开邮件撰写界面，还需在邮件里再按一次发送，取消即未提交。"
+        // 审计 r2 D4：帮助入口（info 图标，点按底部弹窗展示发送说明全文）。
+        let helpButton = BearyHit44Button(type: .system)
+        helpButton.translatesAutoresizingMaskIntoConstraints = false
+        helpButton.setImage(BearyIconImages.image(named: "icon_info", pointSize: 24), for: .normal)
+        helpButton.tintColor = BearyColors.gray
+        helpButton.accessibilityLabel = "反馈发送说明"
+        helpButton.addTarget(self, action: #selector(helpTapped), for: .touchUpInside)
+        helpButton.bearyAddPressFeedback()
+        let submitHintRow = UIStackView(arrangedSubviews: [submitHint, helpButton])
+        submitHintRow.translatesAutoresizingMaskIntoConstraints = false
+        submitHintRow.axis = .horizontal
+        submitHintRow.alignment = .center
+        submitHintRow.spacing = 4
         shareButton.translatesAutoresizingMaskIntoConstraints = false
         if let shareIcon = BearyIconImages.image(named: "icon_share", pointSize: 18) {
             shareButton.setImage(shareIcon, for: .normal)
@@ -654,29 +678,23 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         logOnlyButton.addTarget(self, action: #selector(logOnlyTapped), for: .touchUpInside)
         logOnlyButton.bearyAddPressFeedback()
 
-        let footnote = UILabel()
-        footnote.translatesAutoresizingMaskIntoConstraints = false
-        footnote.font = UIFont.systemFont(ofSize: 13)
-        footnote.textColor = BearyColors.gray
-        footnote.numberOfLines = 0
-        footnote.text = "反馈发送走邮件到 hi@teddyhn.com。未配置邮箱时，仅复制反馈文字，附件不随复制发出。分享或仅发送日志时只发日志包，不含描述与附件。"
-
-        let views: [UIView] = [statusCard, descLabel, descCard, mediaLabel, attachCard, deviceLabel, deviceCard, submitButton, submitHint, shareButton, diagLabel, logOnlyButton, footnote]
+        // 审计 r2 D4：页底 footnote 已移入 submitHint 旁的帮助入口（见 helpTapped），
+        // 此处不再常驻显示；fallback 与附件限制句是移入、不是删除。
+        let views: [UIView] = [statusCard, descLabel, descCard, mediaLabel, attachCard, deviceLabel, deviceCard, submitButton, submitHintRow, shareButton, diagLabel, logOnlyButton]
         for viewItem in views {
             contentStack.addArrangedSubview(viewItem)
         }
-        contentStack.setCustomSpacing(18, after: statusCard)
+        contentStack.setCustomSpacing(20, after: statusCard)
         contentStack.setCustomSpacing(8, after: descLabel)
-        contentStack.setCustomSpacing(18, after: descCard)
+        contentStack.setCustomSpacing(20, after: descCard)
         contentStack.setCustomSpacing(8, after: mediaLabel)
-        contentStack.setCustomSpacing(18, after: attachCard)
+        contentStack.setCustomSpacing(20, after: attachCard)
         contentStack.setCustomSpacing(8, after: deviceLabel)
         contentStack.setCustomSpacing(20, after: deviceCard)
         contentStack.setCustomSpacing(8, after: submitButton)
-        contentStack.setCustomSpacing(12, after: submitHint)
-        contentStack.setCustomSpacing(18, after: shareButton)
+        contentStack.setCustomSpacing(12, after: submitHintRow)
+        contentStack.setCustomSpacing(20, after: shareButton)
         contentStack.setCustomSpacing(8, after: diagLabel)
-        contentStack.setCustomSpacing(16, after: logOnlyButton)
         NSLayoutConstraint.activate([
             submitButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
             shareButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
@@ -697,7 +715,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     private func makeSectionLabel(_ text: String) -> UILabel {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 13)
+        label.font = BearyDynamicType.secondaryFont()
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         label.text = text
         return label
@@ -715,7 +734,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             attachLabelButton.accessibilityLabel = "添加图片或视频"
             attachClearButton.isHidden = true
         } else {
-            attachLabelButton.setTitle("已选 \(attachments.count) 个 · 点按重选", for: .normal)
+            // 审计 r2 D3：可见标题只留「已选 N 个」，点按重选的说明仍在无障碍名称里。
+            attachLabelButton.setTitle("已选 \(attachments.count) 个", for: .normal)
             attachLabelButton.accessibilityLabel = "已选 \(attachments.count) 个，点按重选"
             attachClearButton.isHidden = false
         }
@@ -925,6 +945,14 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 self?.dismiss(animated: BearyMotion.animated(true))
             }),
             BearyConfirmSheet.Action(title: "继续编辑", style: .cancel),
+        ])
+    }
+
+    /// 审计 r2 D4：帮助入口——以本页已用的底部弹窗样式展示发送说明全文。
+    @objc private func helpTapped() {
+        guard presentedViewController == nil else { return }
+        BearyConfirmSheet.show(from: self, title: "反馈发送说明", message: Self.sendHelpText, actions: [
+            BearyConfirmSheet.Action(title: "知道了", style: .cancel),
         ])
     }
 
