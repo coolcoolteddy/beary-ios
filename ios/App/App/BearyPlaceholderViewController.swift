@@ -31,11 +31,13 @@ final class BearyPlaceholderViewController: UIViewController {
         let titleLabel = UILabel()
         titleLabel.text = titleText
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         let label = UILabel()
         label.text = message
-        label.font = UIFont.systemFont(ofSize: 15)
+        label.font = BearyDynamicType.smallBodyFont()
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         // 长文案也要收进屏内换行居中：只定中心时超长文本会横向溢出屏幕。
         label.numberOfLines = 0
