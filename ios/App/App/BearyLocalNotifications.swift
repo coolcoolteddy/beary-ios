@@ -117,7 +117,9 @@ final class BearyLocalNotifications {
         let nowMs = Int(now.timeIntervalSince1970 * 1000)
         let calendar = BearyBeijingDay.calendar
         let todayKey = BearyBeijingDay.dayKey(ofMs: nowMs) ?? ""
-        let entries = BearyEntrySyncStore.loadAllEntries(accountId: accountId)
+        // 存档读盘失败则本轮不重算（保留已排提醒，下次重算补上）；
+        // 主线 loadAllEntries 自 #1069 起返回可选（读盘失败为 nil）。
+        guard let entries = BearyEntrySyncStore.loadAllEntries(accountId: accountId) else { return }
         let messages = PastSelfStore(userId: accountId).loadAll()
         var desired: [DesiredRequest] = []
 
