@@ -1,5 +1,6 @@
 # 埋进地图的时间胶囊 · 后端字段说明（2026-10-30）
 
+> 现状（2026-11-12）：App 端时间胶囊实现已撤回，当前 main 无 capsule 代码（`git grep capsule` 在 ios/App 为 0）；本文档字段口径以服务端实测为准（线上公开列表回包含 `is_capsule` / `capsule_unlock_at` / `capsule_district`）。
 > 本文件是 App 端时间胶囊批的后端对接说明，**不是已执行的迁移**。本仓库是 iOS 仓库，
 > 没有 worker.js；后端批拿到本文件后再执行。App 端已先行透传字段：后端上线前，
 > 服务端忽略未知键时胶囊不持久化，属于已知缺口（与批 E location 同款），见末尾“上线前缺口”。
@@ -10,26 +11,26 @@
 
 ```sql
 -- D1 迁移（后端批执行，本批不执行）：
-ALTER TABLE entries ADD COLUMN capsule_buried INTEGER DEFAULT 0;
-ALTER TABLE entries ADD COLUMN capsule_unlock_date TEXT;
+ALTER TABLE entries ADD COLUMN is_capsule INTEGER DEFAULT 0;
+ALTER TABLE entries ADD COLUMN capsule_unlock_at INTEGER;
 ALTER TABLE entries ADD COLUMN capsule_district TEXT;
 -- 注意：不要加 capsule_lat / capsule_lng / 任何坐标列。埋点只是区级文本快照。
 -- 更不要复用 location_district 当埋点：日记位置改选/清除会悄悄挪走胶囊，必须单独立字段。
 ```
 
-- `capsule_buried`：INT 0/1（不用布尔真值——与 `published` 同款 0/1 口径，App 端按 `== 1` 判定）。
-- `capsule_unlock_date`：文本 `YYYY-MM-DD`（日粒度；不要用毫秒时间戳，否则“当天”会因时区算错一天）。
+- `is_capsule`：INT 0/1（不用布尔真值——与 `published` 同款 0/1 口径，App 端按 `== 1` 判定）。
+- `capsule_unlock_at`：毫秒时间戳（整数，UTC 毫秒；线上实测口径，`YYYY-MM-DD` 文本已作废）。
 - `capsule_district`：埋点区级快照文本（发布时 App 端位置的区级，原样存；服务端只做 trim 与长度上限，建议 ≤200 字）。
-- 三列都可空/缺省：未埋胶囊时 buried=0、后两列 NULL；老日记缺字段时一律按未埋处理，不回填、不猜测。
+- 三列都可空/缺省：未埋胶囊时 is_capsule=0、后两列 NULL；老日记缺字段时一律按未埋处理，不回填、不猜测。
 
 ## 2. API
 
-- 新建 `POST /beary/api/entries`：body 可带 `capsule_buried` / `capsule_unlock_date` / `capsule_district`
-（三键只在埋胶囊时发；不埋时省略 = 缺省。服务端校验：buried=1 时后两键必填且日期格式须为 YYYY-MM-DD，
+- 新建 `POST /beary/api/entries`：body 可带 `is_capsule` / `capsule_unlock_at` / `capsule_district`
+（三键只在埋胶囊时发；不埋时省略 = 缺省。服务端校验：is_capsule=1 时后两键必填且 capsule_unlock_at 须为毫秒时间戳整数，
 否则 400；不要静默接受“埋了但没区级/没日期”的半吊子胶囊）。
 - 编辑 `PUT /beary/api/entries/:id`：**不碰胶囊字段**（App 端编辑 PUT 根本不发三键；服务端收到三键时也应忽略，
 否则 15 分钟内改正文会顺带改掉埋点）。取消埋藏走同一 PUT：body 为
-`{"capsule_buried": 0, "capsule_unlock_date": null, "capsule_district": null}`（App 端已实现 `cancelCapsule`）。
+`{"is_capsule": 0, "capsule_unlock_at": null, "capsule_district": null}`（App 端已实现 `cancelCapsule`）。
 - 列表与单篇响应：凡返回日记行处一律透传三字段（与 `location_name` / `location_district` 同款透传口径）；
 **不要在服务端做脱敏截断**：未解锁时他人只见占位是 App 端弹卡口径，服务端截断会让作者视角也丢区级。
 - 可见性切换（visibility 接口）不直接改三字段，但须执行第 3 节的下线规则。
@@ -51,7 +52,7 @@ ALTER TABLE entries ADD COLUMN capsule_district TEXT;
 
 ## 4. 解锁口径（App 端已实现，服务端不参与判定）
 
-- 双条件 AND：已到解锁日期（日粒度）**且**当前定位逆地理编码出的区级与 `capsule_district` 一致。
+- 双条件 AND：已到解锁时间（`capsule_unlock_at` 毫秒时间戳）**且**当前定位逆地理编码出的区级与 `capsule_district` 一致。
 - 判定只用“是否同一区级”这个 yes/no 在本机比对；服务端不得要求上传精确坐标、不得做服务端比对。
 - 区级比对是去空白后的精确相等，不做包含/模糊匹配（“鄞州”含于“鄞州区”不算一致）。
 - 解锁后向谁开放：本批暂按原可见性（公开篇向所有人、私密篇仅作者）。
