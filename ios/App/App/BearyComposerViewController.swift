@@ -7516,9 +7516,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         if hasEditorContent() {
-            // 完成回调现带 DraftSaveResult；开箱不依赖保存成败（箱在编辑器之上，
-            // 输入仍在编辑器里不丢），故忽略结果、行为不变。
-            saveDraftNow { _ in openBox() }
+            // 保存失败时不开箱：失败时当前内容只在内存，箱内切篇
+            // （loadDraftFromBox）无脏检查、直接覆盖编辑器，切篇即抹除。
+            // 留页提示重试；成功时走原路径不变。
+            saveDraftNow { [weak self] result in
+                guard let self = self else { return }
+                if result.succeeded {
+                    openBox()
+                } else {
+                    self.showToast(message: "草稿保存失败，请重试")
+                }
+            }
         } else {
             openBox()
         }
