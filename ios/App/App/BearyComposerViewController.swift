@@ -3183,7 +3183,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             headerStack.addArrangedSubview(dateLabel)
             // 112 引用列表 v2：状态 pill 放在作者名与时间之后、同一头行；
-            // 三态按真实可见性实时取（不写死）：存活期限时 → 虚线边橙字“限时”，
+            // 三态按真实可见性实时取（不写死）：存活期限时 → 虚线边蓝字“限时”，
             // 有效公开 → 实线边橙字“公开”，其余 → 实线边蓝字“私密”。
             // 颜色口径走现行三色制（公开橙 #ff9500、私密蓝 #007aff/#0a84ff），不自创新色；
             // 天气图标仍在 pill 之后，名截断优先、pill 不让步。
@@ -4913,14 +4913,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if animated {
             // A4：最新一版落盘后，图标与文字原位淡变 0.18s（与 :3820/:3847
             // 同款缓动；beginFromCurrentState 使新输入改写状态行时不与淡入打架）。
-            draftStatusIcon.alpha = 0
-            draftStatusLabel.alpha = 0
-            draftStatusBannerLabel.alpha = 0
-            UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
-                self.draftStatusIcon.alpha = 1
-                self.draftStatusLabel.alpha = 1
-                self.draftStatusBannerLabel.alpha = 1
-            })
+            // 减动效门控：减动效开时不播淡入，直接落终值 alpha = 1。
+            if BearyMotion.animated(true) {
+                draftStatusIcon.alpha = 0
+                draftStatusLabel.alpha = 0
+                draftStatusBannerLabel.alpha = 0
+                UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+                    self.draftStatusIcon.alpha = 1
+                    self.draftStatusLabel.alpha = 1
+                    self.draftStatusBannerLabel.alpha = 1
+                })
+            } else {
+                draftStatusIcon.alpha = 1
+                draftStatusLabel.alpha = 1
+                draftStatusBannerLabel.alpha = 1
+            }
         }
     }
 
@@ -9235,8 +9242,8 @@ private final class BearyQuoteStatusPillView: UIView {
     }
 
     private func applyColors() {
-        let color: UIColor = (style == .private) ? BearyColors.blue : BearyColors.orange
-        label.textColor = (style == .private) ? BearyColors.blue : BearyColors.deepOrangeText
+        let color: UIColor = (style == .public) ? BearyColors.orange : BearyColors.blue
+        label.textColor = (style == .public) ? BearyColors.deepOrangeText : BearyColors.blue
         if style == .limited {
             layer.borderWidth = 0
             dashedLayer.strokeColor = color.cgColor
