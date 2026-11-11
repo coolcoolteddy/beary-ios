@@ -2779,55 +2779,52 @@ final class BearyDetailViewController: UIViewController {
         presentDetailMoreMenu()
     }
 
-    /// 2026-10-31 详情 ⋯ 菜单（时间线风格 actionSheet）：本人篇 编辑（15 分钟内）／
-    /// 修改权限／删除；他人公开篇 举报（已举报置灰）／拉黑；游客无菜单（⋯ 已藏）。
-    /// 点赞／收藏／分享是互动，仍在底部操作行，不进菜单。
+    /// 2026-11-11 详情 ⋯ 菜单迁底部弹窗（BearyConfirmSheet；原 actionSheet 文案/
+    /// 顺序/语义全保留）：本人篇 编辑（15 分钟内）／修改权限／删除；他人公开篇
+    /// 举报（已举报置灰）／拉黑；游客无菜单（⋯ 已藏）。iPad popover 锚点随迁移
+    /// 删去，底部弹窗不再需要。点赞／收藏／分享是互动，仍在底部操作行，不进菜单。
     private func presentDetailMoreMenu() {
         if isGuest { return }
-        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        var actions: [BearyConfirmSheet.Action] = []
         if isAuthor {
             if let deadline = entry.editDeadline, nowMs < deadline {
-                sheet.addAction(UIAlertAction(title: "编辑", style: .default) { [weak self] _ in
+                actions.append(BearyConfirmSheet.Action(title: "编辑", style: .default) { [weak self] in
                     guard let self = self else { return }
                     self.onEdit?(self.entry)
                 })
             } else {
                 // 审计-编辑器详情：过期（或 editDeadline 缺失即已锁，见时间线
-                // 同口径注释）时编辑项不再直接消失，置灰并附说明。
-                let expiredEdit = UIAlertAction(title: "编辑（已超 15 分钟不可编辑）", style: .default, handler: nil)
-                expiredEdit.isEnabled = false
-                sheet.addAction(expiredEdit)
+                // 同口径注释）时编辑项不再直接消失，置灰并附说明；handler 为 nil。
+                actions.append(BearyConfirmSheet.Action(title: "编辑（已超 15 分钟不可编辑）", style: .default, isEnabled: false))
             }
-            sheet.addAction(UIAlertAction(title: "修改权限", style: .default) { [weak self] _ in
+            actions.append(BearyConfirmSheet.Action(title: "修改权限", style: .default) { [weak self] in
                 guard let self = self else { return }
                 self.visibilityTapped()
             })
-            sheet.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
+            actions.append(BearyConfirmSheet.Action(title: "删除", style: .destructive) { [weak self] in
                 guard let self = self else { return }
                 self.onDelete?(self.entry)
             })
         } else if BearyEphemeral.isEffectivelyPublic(entry), let entryId = entry.id {
             let reported = BearyReportedStore.isReported(entryId: entryId)
-            sheet.addAction(UIAlertAction(title: reported ? "已举报" : "举报", style: .default, handler: reported ? nil : { [weak self] _ in
-                guard let self = self else { return }
-                BearyReportFlow.present(from: self, entryId: entryId, entryLabel: nil)
-            }))
             if reported {
-                sheet.actions.last?.isEnabled = false
+                actions.append(BearyConfirmSheet.Action(title: "已举报", style: .default, isEnabled: false))
+            } else {
+                actions.append(BearyConfirmSheet.Action(title: "举报", style: .default) { [weak self] in
+                    guard let self = self else { return }
+                    BearyReportFlow.present(from: self, entryId: entryId, entryLabel: nil)
+                })
             }
-            sheet.addAction(UIAlertAction(title: "拉黑", style: .destructive) { [weak self] _ in
+            actions.append(BearyConfirmSheet.Action(title: "拉黑", style: .destructive) { [weak self] in
                 guard let self = self, let authorId = self.entry.authorId else { return }
                 BearyBlockFlow.block(from: self, userId: authorId, userName: self.entry.authorName, onDone: nil)
             })
         }
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = moreButton
-            popover.sourceRect = moreButton.bounds
-        }
-        // 审计 2026-11-02 弹窗组：present 不写死 animated，走减动效口径。
-        present(sheet, animated: BearyMotion.animated(true))
+        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
+        // 审计 2026-11-02 弹窗组：present 不写死 animated，走减动效口径
+        // （BearyConfirmSheet.show 内部已走 BearyMotion.animated）。
+        BearyConfirmSheet.show(from: self, title: "", message: nil, actions: actions)
     }
 
     @objc private func visibilityTapped() {
