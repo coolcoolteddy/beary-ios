@@ -121,8 +121,10 @@ final class SessionManager {
             self.runOnMain {
                 guard triggerEpoch == self.api.authEpoch,
                       triggerAccountId == self.api.authAccountId else { return }
-                self.purgeImageCacheForCurrentAccount()
-                self.purgeLocalSnapshotsForCurrentAccount()
+                // 401 只清登录态/会话（2026-11-10 新口径）：本地日记快照与
+                // 图片缓存不再物理删——服务端仍有数据，重登后可重同步；
+                // 弱网/离线时本地副本继续可看。物理清理只保留在显式退出
+                // （signOutLocally）与定向登出清理（purgeLocalState）路径。
                 self.sessionGeneration += 1
                 // r25-3：401 清态与显式退出（signOutLocally）同口径推进
                 // meSeq 与 authEpoch——此前只加 sessionGeneration，在途旧
@@ -381,7 +383,7 @@ final class SessionManager {
         BlindBoxState.shared.clearAccount(accountId: id)
     }
 
-    /// 账号隔离 4 号：退出/401 清态时清掉该账号的图片缓存（内存全清 +
+    /// 账号隔离 4 号：显式退出清态时清掉该账号的图片缓存（内存全清 +
     /// 该账号磁盘目录删除）。切换账号（不退出）不走这里，旧账号磁盘保留、
     /// 仅由容器 setAccount 切键 + 清内存，见 SceneDelegate onUserChanged。
     private func purgeImageCacheForCurrentAccount() {
@@ -399,23 +401,24 @@ final class SessionManager {
     private func purgeImageCache(forAccountId id: Int) {
         // 秒开-网络层：先清共享 URLCache（与当前用户无关，任何调用路径都清）。
         // API 与图片会话现已 urlCache=nil，理论上不再向它写；但历史版本 /
-        // 其他 .shared 调用仍可能留有私密体，退出/401 时一并清掉，杜绝
+        // 其他 .shared 调用仍可能留有私密体，退出时一并清掉，杜绝
         // 账号无关的共享缓存层在换号后命中旧图。
         URLCache.shared.removeAllCachedResponses()
         BearyImageLoader.shared.purgeAccount(id)
-        // 审计-性能：实况磁盘桶与图片桶同口径，退出/401 时一并清掉。
+        // 审计-性能：实况磁盘桶与图片桶同口径，退出时一并清掉。
         BearyLivePhotoLoader.shared.purgeAccount(id)
     }
 
-    /// 秒开-本地持久化：退出 / 401 清态时清掉该账号的全部日记快照，
+    /// 秒开-本地持久化：显式退出清态时清掉该账号的全部日记快照，
     /// 与图片缓存同口径；切换账号不走这里，旧账号磁盘保留、仅由
     /// 桶隔离，切回可复用（见 BearyFeedCache 说明）。
     /// 清单（缺一即私密内容留盘）：广场快照、时间线快照（含私密日记，
     /// 此前无 purge 入口是本批补的缺口）、日落盘、回收站落盘、月历快照
     /// （r17-C1：按账号+年月落盘，含私密计数），另加
     /// 冷启动桶提示（forgetUserId，避免下次冷启动先画旧号桶）。
-    /// 401 口径变化（特意统一，不再只清广场）：401 即会话已死，与显式
-    /// 退出同等对待；唯一保留的区别仍是保管库 token 不删（见
+    /// 2026-11-10 新口径：401 不再走这里（见 init 内 onUnauthorized，
+    /// 只清登录态、本地快照保留、重登后可重同步）；物理清理只走显式
+    /// 退出与定向登出清理。保管库 token 仍只在显式退出时删（见
     /// signOutLocally 注释），切回死会话仍能走“重新登录”。
     private func purgeLocalSnapshotsForCurrentAccount() {
         guard let id = currentUser?.id else { return }
@@ -424,28 +427,28 @@ final class SessionManager {
     }
 
     /// 账号定向的日记快照清理（第七轮审计 03：清理须明确指定原账号）。
-    /// 冷启动桶提示（forgetUserId）不在这里——只在当前账号退出/401 时清，
+    /// 冷启动桶提示（forgetUserId）不在这里——只在当前账号显式退出时清，
     /// 发起账号已切走的定向清理不碰它（当前账号仍在，提示仍有效）。
     private func purgeLocalSnapshots(forAccountId id: Int) {
         // 退出清理代次：先令该账号排队写盘失效，再删文件——退出前已入队、
         // 退出后才执行的写盘在执行时复核代次后丢弃，不重建已清缓存。
-        // 本函数是三条清理路径的唯一汇合点（显式退出、定向清理、401），
-        // 在此递增即三路全覆盖；按账号分桶，定向清 A 不影响 B。
+        // 本函数是两条清理路径的唯一汇合点（显式退出、定向清理），
+        // 在此递增即两路全覆盖；按账号分桶，定向清 A 不影响 B。
         BearyEntrySync.shared.bumpPurgeGeneration(forAccountId: id)
         BearyFeedCache.purge(bucket: "\(id)")
         // r17 C5：星图建图内存缓存按账号桶清（该账号看过的所有作者星图）。
         BearyStarMapCache.purge(viewerBucket: "\(id)")
-        // B1：正在关注段快照是独立桶，退出/401 时同清，不留旧身份行。
+        // B1：正在关注段快照是独立桶，退出时同清，不留旧身份行。
         BearyFeedCache.purge(bucket: BearyFeedCache.followingBucket(userId: id))
         BearyTimelineCache.purge(bucket: "\(id)")
-        // 审计-性能：通知页分键缓存同样在退出/401 时清掉该账号槽位。
+        // 审计-性能：通知页分键缓存同样在退出时清掉该账号槽位。
         BearyNotificationsViewController.purgeAccount(id)
         BearyProfileCache.purge(bucket: "\(id)")
-        // r17-C7：个人页统计卡快照同样在退出/401 时清掉该账号槽位。
+        // r17-C7：个人页统计卡快照同样在退出时清掉该账号槽位。
         BearyProfileStatsCache.purge(bucket: "\(id)")
-        // r17-C9：心愿墙首屏快照同样在退出/401 时清掉该账号槽位。
+        // r17-C9：心愿墙首屏快照同样在退出时清掉该账号槽位。
         BearyWishWallCache.purge(bucket: "\(id)")
-        // r17-C6：本人相册首屏照片索引快照同样在退出/401 时清掉该账号槽位。
+        // r17-C6：本人相册首屏照片索引快照同样在退出时清掉该账号槽位。
         BearyProfilePhotosCache.purge(bucket: "\(id)")
         BearyDMConversationsCache.purge(bucket: "\(id)")
         BearyDetailCache.purge(bucket: "\(id)")
@@ -453,7 +456,7 @@ final class SessionManager {
         BearyTrashSyncStore.purgeAccount(accountId: id)
         // r17-C1：月历快照同口径清该账号的桶（只清当前账号，其他账号不动）。
         BearyCalendarSnapshotStore.purge(accountId: id)
-        // C3：地图/星图共用入口的内存短缓存与在途表只活内存，退出/401 时同口径清掉；
+        // C3：地图/星图共用入口的内存短缓存与在途表只活内存，退出时同口径清掉；
         // 盘上按日存档走上面的 BearyEntrySyncStore.purgeAccount。
         BearySharedEntryLoader.shared.invalidateAll()
     }
