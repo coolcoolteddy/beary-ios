@@ -36,6 +36,9 @@ private final class WishRowView: UIView {
     private let upButton = BearyButton.make(style: .secondaryOutline(.compact), title: "赞成")
     private let downButton = BearyButton.make(style: .secondaryOutline(.compact), title: "反对")
     private var isDoneRow = false
+    /// 审计八轮第 3 项：上次票数——票数淡变只在数值真变时播；只比整数，
+    /// 不读按钮标题，与 #1302 的 setVoteTitle（attributed 标题）不冲突。
+    private var lastVoteCounts: (up: Int, down: Int)?
     private let doneButton = BearyButton.make(style: .secondaryOutline(.compact), title: "标记已完成")
     var onUp: (() -> Void)?
     var onDown: (() -> Void)?
@@ -274,9 +277,14 @@ private final class WishRowView: UIView {
         let up = item.upCount ?? 0
         let down = item.downCount ?? 0
         let net = up - down
-        netLabel.text = "净赞成 \(net >= 0 ? "+" : "")\(net)"
-        setVoteTitle(upButton, name: "赞成", count: up)
-        setVoteTitle(downButton, name: "反对", count: down)
+        let voteChanged = lastVoteCounts == nil || lastVoteCounts?.up != up || lastVoteCounts?.down != down
+        lastVoteCounts = (up, down)
+        let newNetText = "净赞成 \(net >= 0 ? "+" : "")\(net)"
+        fadeVoteCount(on: netLabel, changed: voteChanged) { netLabel.text = newNetText }
+        let newUpTitle = "赞成 \(up)"
+        fadeVoteCount(on: upButton, changed: voteChanged) { upButton.setTitle(newUpTitle, for: .normal) }
+        let newDownTitle = "反对 \(down)"
+        fadeVoteCount(on: downButton, changed: voteChanged) { downButton.setTitle(newDownTitle, for: .normal) }
         setVoteSelected(upButton, selected: item.myVote == 1)
         setVoteSelected(downButton, selected: item.myVote == -1)
         let done = item.status == "done"
@@ -290,6 +298,17 @@ private final class WishRowView: UIView {
         upButton.alpha = done ? 0.4 : 1
         downButton.alpha = done ? 0.4 : 1
         doneButton.isHidden = !(isAdmin && !done)
+    }
+
+    /// 审计八轮第 3 项（规范 §6）：票数变化时 0.18s opacity 交叉淡变
+    /// （BearyMotion.localStateDuration，点赞数同款 transitionCrossDissolve）；
+    /// 数值未变、减动效开、或视图未进窗口时直设终值。
+    private func fadeVoteCount(on view: UIView, changed: Bool, assign: () -> Void) {
+        guard changed, !UIAccessibility.isReduceMotionEnabled, view.window != nil else {
+            assign()
+            return
+        }
+        UIView.transition(with: view, duration: BearyMotion.localStateDuration, options: .transitionCrossDissolve, animations: assign)
     }
 
     /// 投票选中态走按钮公共样式（BearyButton.applyVoteSelected）；本处只转发，不再各写一套颜色。
