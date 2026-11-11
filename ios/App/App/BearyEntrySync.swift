@@ -133,6 +133,7 @@ final class BearyEntrySync {
             DiarySyncProgress(
                 epoch: identity.epoch,
                 writeSequence: writeSequence,
+                launchToken: BearySyncLaunchIdentity.token,
                 before: before,
                 beforeId: beforeId,
                 pageCount: pageCount,
@@ -162,6 +163,7 @@ final class BearyEntrySync {
             TrashSyncProgress(
                 epoch: identity.epoch,
                 writeSequence: writeSequence,
+                launchToken: BearySyncLaunchIdentity.token,
                 before: before,
                 beforeId: beforeId,
                 pageCount: pageCount,
@@ -260,11 +262,15 @@ final class BearyEntrySync {
                 let diaryIdentity = BearySyncTaskIdentity(epoch: BearyAPI.shared.authEpoch, generation: self.diarySyncGeneration)
                 self.diarySyncIdentity[userId] = diaryIdentity
                 let diaryRun = DiarySyncRun(accountId: userId, identity: diaryIdentity)
-                // 第四轮增量 01：可恢复游标——同 epoch 且其间无本地写盘才续跑，
-                // 否则丢弃旧进度从头拉（快照已过期，续跑会丢新发布/复活已删帖）。
+                // 第四轮增量 01：可恢复游标——同 epoch、其间无本地写盘且同启动
+                // 才续跑，否则丢弃旧进度从头拉（快照已过期，续跑会丢新发布/
+                // 复活已删帖）。审计新一轮 P1-1：epoch 与 writeSequence 都是
+                // 内存计数，重启后归零重取，单凭它们会误认跨重启的旧进度，
+                // 故再核 launchToken——跨启动一律作废、从第一页重核。
                 if let progress = BearyEntrySyncStore.loadDiaryProgress(accountId: userId),
                    progress.epoch == diaryIdentity.epoch,
-                   progress.writeSequence == self.diaryWriteSequence {
+                   progress.writeSequence == self.diaryWriteSequence,
+                   progress.launchToken == BearySyncLaunchIdentity.token {
                     diaryRun.before = progress.before
                     diaryRun.beforeId = progress.beforeId
                     diaryRun.pageCount = progress.pageCount
@@ -290,7 +296,8 @@ final class BearyEntrySync {
                 let trashRun = TrashSyncRun(accountId: userId, identity: trashIdentity)
                 if let progress = BearyTrashSyncStore.loadTrashProgress(accountId: userId),
                    progress.epoch == trashIdentity.epoch,
-                   progress.writeSequence == BearyTrashSyncStore.currentWriteSequence() {
+                   progress.writeSequence == BearyTrashSyncStore.currentWriteSequence(),
+                   progress.launchToken == BearySyncLaunchIdentity.token {
                     trashRun.before = progress.before
                     trashRun.beforeId = progress.beforeId
                     trashRun.pageCount = progress.pageCount
