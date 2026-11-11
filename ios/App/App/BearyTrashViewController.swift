@@ -911,8 +911,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
 
     private func makeRowView(trashValue: TrashItem) -> UIView {
         let rowView = UIView()
-        rowView.backgroundColor = BearyColors.bg
-        rowView.layer.borderWidth = 1
+        rowView.backgroundColor = BearyColors.surface1
+        rowView.layer.borderWidth = 0
         rowView.layer.bearyDynamicBorderColor = BearyColors.line
         rowView.layer.cornerRadius = BearyCorners.single
         rowView.translatesAutoresizingMaskIntoConstraints = false
