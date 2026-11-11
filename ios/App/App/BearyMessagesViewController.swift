@@ -440,7 +440,7 @@ final class BearyMessagesViewController: UIViewController {
                 stateView.configure(
                     kind: .error,
                     title: "加载失败",
-                    subtitle: "下拉重试",
+                    subtitle: "私信暂时加载失败",
                     iconName: nil,
                     actionTitle: "重试",
                     onAction: { [weak self] in self?.refresh() }
@@ -774,7 +774,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
             cell.stateView.configure(
                 kind: .error,
                 title: "加载失败",
-                subtitle: "下拉重试",
+                subtitle: "私信暂时加载失败",
                 iconName: nil,
                 actionTitle: "重试",
                 onAction: { [weak self] in self?.conversationsChild.refresh() }
