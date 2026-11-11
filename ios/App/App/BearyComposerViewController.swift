@@ -959,6 +959,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 窄屏 5 项之 4：状态行最低高约束（≥18）。无内容隐藏整行时须停用它，
     /// 否则隐藏的 arranged 子项仍被自身 ≥18 约束撑住、塌不掉。
     private var statusRowMinHeightConstraint: NSLayoutConstraint?
+    /// 第二轮增量审计第 6 项：图片条固定高约束（96）。无图隐藏整条时须停用它，
+    /// 否则隐藏的 arranged 子项仍被自身 96 必需高撑住、与 stack 的隐藏折叠冲突。
+    private var imageStripHeightConstraint: NSLayoutConstraint?
     private let editTimerLabel = UILabel()
     private let draftStatusGroup = UIStackView()
     private let draftStatusIcon = UIImageView()
@@ -2605,6 +2608,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             headlineWrap.isHidden = true
             textView.isHidden = true
             imageScrollView.isHidden = true
+            // 第二轮增量审计第 6 项：面板打开时图片条直接藏（不走 refreshImageStripVisibility），
+            // 96 必需高须同步停用；关闭时经 refreshImageStripVisibility 按有无图片恢复。
+            imageStripHeightConstraint?.isActive = false
             toolbarContainer.isHidden = true
             toolStripStack.isHidden = true
             selectedChipsRow.isHidden = true
@@ -3308,7 +3314,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 separator.trailingAnchor.constraint(equalTo: rowButton.trailingAnchor, constant: -2),
                 // 2026-10-29 第 26 项：行间分隔线按详情页口径用 2pt（原 1pt）；
                 // leading/trailing 不动（行内内容：头像、名字、时间、正文一字不动）。
-                separator.heightAnchor.constraint(equalToConstant: 2),
+                // 第二轮增量审计第 10 项：统一为 1pt（Li 点选）；只改高度，其余不动。
+                separator.heightAnchor.constraint(equalToConstant: 1),
                 separator.bottomAnchor.constraint(equalTo: rowButton.bottomAnchor),
             ])
             rowButton.addTarget(self, action: #selector(didTapQuotePanelRow(_:)), for: .touchUpInside)
@@ -3419,9 +3426,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageStackView.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(imageScrollView)
         imageScrollView.addSubview(imageStackView)
+        // 第二轮增量审计第 6 项：96 高约束单独存引用——无图隐藏整条时停用它，
+        // 有图时恢复；不存引用就无法在隐藏态停用（同 statusRow 先例）。
+        let imageStripHeight = imageScrollView.heightAnchor.constraint(equalToConstant: 96)
+        imageStripHeightConstraint = imageStripHeight
         NSLayoutConstraint.activate([
             // C11：条高 96 = 单项 84 + 下 padding 12（顶 0）。
-            imageScrollView.heightAnchor.constraint(equalToConstant: 96),
+            imageStripHeight,
             imageStackView.topAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.topAnchor),
             imageStackView.bottomAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.bottomAnchor, constant: -12),
             imageStackView.leadingAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.leadingAnchor),
@@ -3432,8 +3443,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 图片条显隐：有图才显示（网页 img-preview 空时 display:none）。
+    /// 第二轮增量审计第 6 项：96 必需高随显隐启停——隐藏时停用，否则隐藏的
+    /// arranged 子项仍被自身必需高撑住、与 stack 的隐藏折叠冲突（UISV-hiding）。
     private func refreshImageStripVisibility() {
         imageScrollView.isHidden = imageItems.isEmpty
+        imageStripHeightConstraint?.isActive = !imageItems.isEmpty
     }
 
     // MARK: - 工具栏（C1：左 [图片][心情][天气][@][引用]、右 [字数圆环]；
@@ -4785,7 +4799,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftStatusGroup.addArrangedSubview(draftStatusIcon)
         draftStatusGroup.addArrangedSubview(draftStatusLabel)
         draftStatusGroup.isHidden = true
-        charCountLabel.font = UIFont.systemFont(ofSize: 12)
+        charCountLabel.font = BearyDynamicType.numberFont()
         charCountLabel.textColor = BearyColors.gray
         charRingView.translatesAutoresizingMaskIntoConstraints = false
         statusRow.axis = .horizontal
