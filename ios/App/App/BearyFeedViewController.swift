@@ -528,7 +528,7 @@ class BearyFeedViewController: UIViewController {
         NSLayoutConstraint.activate([
             pencilView.widthAnchor.constraint(equalToConstant: 40),
             pencilView.heightAnchor.constraint(equalToConstant: 40),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
@@ -2923,7 +2923,7 @@ class BearyFeedErrorCell: UITableViewCell {
             stack.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             stack.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 16),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
-            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 26),
+            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
             stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
         ])
     }
