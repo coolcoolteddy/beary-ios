@@ -94,6 +94,9 @@ class BearyBottomSheetPresentationController: UIPresentationController {
 
     private let dimView = UIView()
     private var dragPan: UIPanGestureRecognizer?
+    /// 挂在 presentedView 之外的拖动手势（如登录弹窗顶部 chrome 条上的那只），
+    /// 与 dragPan 同 target/action、同仲裁；见 installExtraDragPan。
+    private var extraDragPans: [UIPanGestureRecognizer] = []
     private var backgroundOriginalTransform: CGAffineTransform = .identity
     private var backgroundOriginalCornerRadius: CGFloat = 0
     private var backgroundOriginalMasksToBounds = false
@@ -194,8 +197,7 @@ class BearyBottomSheetPresentationController: UIPresentationController {
         dimView.alpha = 0
         dimView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(dimTapped)))
         container.addSubview(dimView)
-        let pan = UIPanGestureRecognizer(target: self, action: #selector(dragPan(_:)))
-        pan.delegate = self
+        let pan = makeDragPan()
         presentedView.addGestureRecognizer(pan)
         dragPan = pan
         // 初始态：遮罩透明、背后原样；动画呈现时 animator 在同一弹簧块内
@@ -270,6 +272,27 @@ class BearyBottomSheetPresentationController: UIPresentationController {
 
     @objc private func dimTapped() {
         requestDismiss()
+    }
+
+    /// 建一只拖动手势（与主拖动手势同 target/action/仲裁）。
+    private func makeDragPan() -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(dragPan(_:)))
+        pan.delegate = self
+        return pan
+    }
+
+    /// 除 presentedView 之外再挂一只拖动手势，保证整张 sheet 任何位置起手都能拖。
+    /// 用于 presentedView 帧之外的区域，如登录弹窗顶部 24pt chrome 条
+    ///（玻璃不参与触摸、抓手只有 40×4pt，直接挂玻璃/抓手都接不到整条）。
+    func installExtraDragPan(on view: UIView) {
+        let pan = makeDragPan()
+        view.addGestureRecognizer(pan)
+        extraDragPans.append(pan)
+    }
+
+    private func isDragPan(_ gesture: UIGestureRecognizer) -> Bool {
+        guard let pan = gesture as? UIPanGestureRecognizer else { return false }
+        return pan === dragPan || extraDragPans.contains(pan)
     }
 
     /// 拖动位移：下滑 1:1 跟手；上滑按 0.25 阻力折算、上浮封顶 24pt（不扩高、不脱底，只微移）。
@@ -357,7 +380,7 @@ extension BearyBottomSheetPresentationController: UIGestureRecognizerDelegate {
     /// 无滚动内容时直接接手。避免整张拖动手势与页内滚动抢触摸。
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard let pan = gestureRecognizer as? UIPanGestureRecognizer,
-              pan === dragPan,
+              isDragPan(pan),
               let presentedView = presentedView else { return false }
         let translation = pan.translation(in: presentedView)
         guard abs(translation.y) > abs(translation.x) else { return false }
@@ -376,6 +399,21 @@ extension BearyBottomSheetPresentationController: UIGestureRecognizerDelegate {
             }
             view = candidate.superview
         }
+        return true
+    }
+
+    /// 拖动仲裁必须说了算：弹窗内的滚动视图自带 pan 手势，默认先认出来、
+    /// 把容器拖动手势挤掉，导致内容区拖不动。本方法让弹窗内的 pan 先等
+    /// 容器拖动手势的 verdict：gestureRecognizerShouldBegin 判能拖（滚到头）
+    /// 时容器手势先认、内容 pan 认输；判不能拖（内容还能往该方向滚）时容器
+    /// 手势立刻失败、内容 pan 正常接手。内容滚动只被拖后一个触摸采样，
+    /// 体感无延迟；点按不受影响（点按不经过 pan 认出）。
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard isDragPan(gestureRecognizer),
+              let otherPan = otherGestureRecognizer as? UIPanGestureRecognizer,
+              let otherView = otherPan.view,
+              let presentedView = presentedView,
+              otherView.isDescendant(of: presentedView) else { return false }
         return true
     }
 }
