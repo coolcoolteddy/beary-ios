@@ -169,6 +169,9 @@ private final class BearyBodyTextView: UITextView {
 /// 仅六个工具钮用本类，顶栏／重试等其余 Hit44 钮不受影响。
 /// 按压反馈仍走原 bearyAddPressFeedback（只走 transform／opacity），
 /// 本类不新增交互面，不涉及 tap 高亮与焦点描边。
+/// D6：向外（朝屏幕边缘）的扩量钳制在工具行边界内，不超出屏幕边缘；
+/// 向内（朝工具行中心）的扩量不变；cap（间距/2）不动。首钮左侧、末钮右侧
+/// 贴行边时该侧扩量收为行边到钮边的距离（首钮为 0），其余钮不受影响。
 private final class BearyComposerToolButton: BearyHit44Button {
     /// 横向单侧最大扩量，由 setToolbarToolRowSpacing 随工具行间距同步；
     /// 默认 8 = 默认间距 16 的一半。
@@ -177,7 +180,13 @@ private final class BearyComposerToolButton: BearyHit44Button {
         let dx: CGFloat = bounds.width < 44 ? min((44 - bounds.width) / 2, maxSideExpansion) : 0
         let dy: CGFloat = bounds.height < 44 ? (44 - bounds.height) / 2 : 0
         if dx == 0 && dy == 0 { return super.point(inside: point, with: event) }
-        return bounds.insetBy(dx: -dx, dy: -dy).contains(point)
+        var leftDx = dx
+        var rightDx = dx
+        if let row = superview {
+            leftDx = min(dx, max(0, frame.minX - row.bounds.minX))
+            rightDx = min(dx, max(0, row.bounds.maxX - frame.maxX))
+        }
+        return bounds.inset(by: UIEdgeInsets(top: -dy, left: -leftDx, bottom: -dy, right: -rightDx)).contains(point)
     }
 }
 
