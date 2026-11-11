@@ -43,11 +43,11 @@ enum BearyColors {
     static var bg: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 11.0/255.0, green: 11.0/255.0, blue: 13.0/255.0, alpha: 1) : .white } }
     /// 页面分层（2026-11-07 微明度定版：分层改走明度阶，取代旧 surface 单值＋1px 外框口径）：
     /// surface0 页面底（与 bg 同值）、surface1 页上卡片、surface2 输入框／chip、surface3 sheet／弹窗。
-    /// 浅色 surface2 与已废 faint 同值 #F5F5F5；旧 surface（深 #26262c）与 faint、timelineBorder 已废止。
+    /// 浅色 surface2 现为 #EAEAEA；旧 surface（深 #26262c）与 faint、timelineBorder 已废止。
     static var surface0: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 11.0/255.0, green: 11.0/255.0, blue: 13.0/255.0, alpha: 1) : .white } }
-    static var surface1: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 18.0/255.0, green: 18.0/255.0, blue: 21.0/255.0, alpha: 1) : UIColor(red: 250.0/255.0, green: 250.0/255.0, blue: 250.0/255.0, alpha: 1) } }
-    static var surface2: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 24.0/255.0, green: 24.0/255.0, blue: 28.0/255.0, alpha: 1) : UIColor(red: 245.0/255.0, green: 245.0/255.0, blue: 245.0/255.0, alpha: 1) } }
-    static var surface3: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 30.0/255.0, green: 30.0/255.0, blue: 35.0/255.0, alpha: 1) : UIColor(red: 240.0/255.0, green: 240.0/255.0, blue: 240.0/255.0, alpha: 1) } }
+    static var surface1: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 24.0/255.0, green: 24.0/255.0, blue: 28.0/255.0, alpha: 1) : UIColor(red: 245.0/255.0, green: 245.0/255.0, blue: 245.0/255.0, alpha: 1) } }
+    static var surface2: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 36.0/255.0, green: 36.0/255.0, blue: 42.0/255.0, alpha: 1) : UIColor(red: 234.0/255.0, green: 234.0/255.0, blue: 234.0/255.0, alpha: 1) } }
+    static var surface3: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 49.0/255.0, green: 49.0/255.0, blue: 56.0/255.0, alpha: 1) : UIColor(red: 223.0/255.0, green: 223.0/255.0, blue: 223.0/255.0, alpha: 1) } }
     /// 时间线可见性裸图标灰：浅色保持 v3 值 #8e8e93；深色纯黑底上该值
     /// 对比偏弱，改走 BearyColors.gray（深色约 0.66 白）。时间文字仍走
     /// BearyColors.gray，不跟这个值走（此处只是深色与它同值）。
