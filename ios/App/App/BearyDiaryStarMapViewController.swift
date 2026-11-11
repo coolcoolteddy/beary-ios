@@ -94,6 +94,30 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private let statusLabel = UILabel()
     private let sheetCard = UIView()
     private let sheetStack = UIStackView()
+    /// 审计三轮第 2 项：连线列表虚拟化——只建可见行，初始封顶＋加载更多。
+    /// 关联度 = 共享原因数（越多关系越强），同数按 id 排定、展示顺序稳定。
+    private var edgeListEdges: [StarMapEdge] = []
+    private var edgeListShownCount = 0
+    private let edgeListInitialCount = 30
+    private let edgeListPageStep = 50
+    private let edgeListMaxHeight: CGFloat = 352
+    private var edgeListTableHeight: NSLayoutConstraint?
+    private lazy var edgeListTableView: UITableView = {
+        let table = UITableView(frame: .zero, style: .plain)
+        table.translatesAutoresizingMaskIntoConstraints = false
+        table.backgroundColor = .clear
+        table.separatorStyle = .singleLine
+        table.separatorColor = BearyStarMapNight.sheetBorder
+        table.separatorInset = .zero
+        table.rowHeight = UITableView.automaticDimension
+        table.estimatedRowHeight = 48
+        table.dataSource = self
+        table.delegate = self
+        table.register(UITableViewCell.self, forCellReuseIdentifier: "EdgeListCell")
+        edgeListTableHeight = table.heightAnchor.constraint(equalToConstant: 0)
+        edgeListTableHeight?.isActive = true
+        return table
+    }()
     private let emptyView = UIView()
     private let emptyLabel = UILabel()
     private let emptySubLabel = UILabel()
@@ -1283,26 +1307,28 @@ final class BearyDiaryStarMapViewController: UIViewController {
         showingEdgeListSheet = true
         overlapEntryIds = nil
         skyView.setSelected(starId: nil, edgeId: nil)
-        let edges = listedEdges()
+        // 审计三轮第 2 项：列表改 UITableView 复用——只建可见行；按关联度
+        // （共享原因数）降序先展示少量，其余点“加载更多”按需续出。
+        // 本支不动显隐（显隐是第 1 项的范围）。
+        edgeListEdges = listedEdges().sorted { a, b in
+            if a.reasons.count != b.reasons.count { return a.reasons.count > b.reasons.count }
+            return a.id < b.id
+        }
+        edgeListShownCount = min(edgeListInitialCount, edgeListEdges.count)
         sheetStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        if edges.isEmpty {
+        if edgeListEdges.isEmpty {
             sheetStack.addArrangedSubview(sheetTitleLabel("暂无连线"))
             sheetStack.addArrangedSubview(sheetBodyLabel("当前筛选下没有连线。"))
         } else {
-            sheetStack.addArrangedSubview(sheetTitleLabel("连线 · \(edges.count) 条"))
-            for edge in edges {
-                let row = UIStackView()
-                row.axis = .horizontal
-                row.spacing = 8
-                row.addArrangedSubview(edgeListRowButton(edge))
-                let chevron = UIImageView()
-                chevron.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 16)
-                chevron.tintColor = BearyStarMapNight.secondaryText
-                chevron.contentMode = .scaleAspectFit
-                chevron.setContentHuggingPriority(.required, for: .horizontal)
-                row.addArrangedSubview(chevron)
-                sheetStack.addArrangedSubview(row)
-            }
+            sheetStack.addArrangedSubview(sheetTitleLabel("连线 · \(edgeListEdges.count) 条"))
+            sheetStack.addArrangedSubview(edgeListTableView)
+            // 先按估计行高给表一个真实高度，reload 时可见行才能按真实高度布局，
+            // 随后 updateEdgeListTableHeight 再按内容高精调。
+            edgeListTableHeight?.constant = min(CGFloat(edgeListShownCount) * 48, edgeListMaxHeight)
+            view.layoutIfNeeded()
+            edgeListTableView.reloadData()
+            updateEdgeListFooter()
+            updateEdgeListTableHeight()
         }
         // L3：底卡默认隐藏，展示函数自己取消隐藏（同 showStarSheet 等）——
         // 空连线的「暂无连线」两行同样要可见，故取消隐藏放在分支外。
@@ -1311,23 +1337,41 @@ final class BearyDiaryStarMapViewController: UIViewController {
         sheetCard.isHidden = false
     }
 
-    /// 连线列表的一行：标题与读屏文案都一次读出原因和两篇日记；点按进
-    /// 该条连线的底卡（showEdgeSheet）。
-    private func edgeListRowButton(_ edge: StarMapEdge) -> UIButton {
+    /// 连线列表“加载更多”脚部：还有未展示的行才留入口，全部展示后撤掉。
+    private func updateEdgeListFooter() {
+        guard edgeListShownCount < edgeListEdges.count else {
+            edgeListTableView.tableFooterView = nil
+            return
+        }
+        let remaining = edgeListEdges.count - edgeListShownCount
         let button = UIButton(type: .custom)
-        button.contentHorizontalAlignment = .left
-        button.titleLabel?.numberOfLines = 2
-        button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        button.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 15))
         button.titleLabel?.adjustsFontForContentSizeCategory = true
-        button.setTitleColor(BearyStarMapNight.primaryText, for: .normal)
-        let reasons = edge.reasons.map { reasonText($0) }.joined(separator: "；")
-        let firstName = edgeEntryName(model.entryById[edge.firstId])
-        let secondName = edgeEntryName(model.entryById[edge.secondId])
-        button.setTitle("\(reasons)：\(firstName) 与 \(secondName)", for: .normal)
-        button.accessibilityLabel = "连线：\(reasons)，连接 \(firstName) 与 \(secondName)"
-        button.accessibilityIdentifier = edge.id
-        button.addTarget(self, action: #selector(didTapEdgeListRow(_:)), for: .touchUpInside)
-        return button
+        button.setTitleColor(BearyColors.orange, for: .normal)
+        button.setTitle("加载更多（还剩 \(remaining) 条）", for: .normal)
+        button.addTarget(self, action: #selector(didTapEdgeListLoadMore), for: .touchUpInside)
+        let footer = UIView(frame: CGRect(x: 0, y: 0, width: edgeListTableView.bounds.width, height: 44))
+        footer.addSubview(button)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            button.centerXAnchor.constraint(equalTo: footer.centerXAnchor),
+            button.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+        ])
+        edgeListTableView.tableFooterView = footer
+    }
+
+    /// 表格按内容高伸缩，封顶 edgeListMaxHeight，超出部分在表内滚动。
+    private func updateEdgeListTableHeight() {
+        edgeListTableView.layoutIfNeeded()
+        edgeListTableHeight?.constant = min(edgeListTableView.contentSize.height, edgeListMaxHeight)
+        view.layoutIfNeeded()
+    }
+
+    @objc private func didTapEdgeListLoadMore() {
+        edgeListShownCount = min(edgeListEdges.count, edgeListShownCount + edgeListPageStep)
+        edgeListTableView.reloadData()
+        updateEdgeListFooter()
+        updateEdgeListTableHeight()
     }
 
     private func edgeEntryName(_ entry: Entry?) -> String {
@@ -1336,12 +1380,6 @@ final class BearyDiaryStarMapViewController: UIViewController {
         if !title.isEmpty { return title }
         let date = sheetDateString(entry)
         return date.isEmpty ? "日记" : date
-    }
-
-    @objc private func didTapEdgeListRow(_ sender: UIButton) {
-        guard let id = sender.accessibilityIdentifier,
-              let edge = model.edges.first(where: { $0.id == id }) else { return }
-        didTapEdge(edge)
     }
 
     private func reasonText(_ reason: StarMapEdgeReason) -> String {
@@ -1592,6 +1630,49 @@ final class BearyDiaryStarMapViewController: UIViewController {
 // 对应新线在两端可见后淡入；旧星保留位置与选中态；同一条边只改理由时
 // 只更新底部理由。动效只走 transform / opacity（画布内以半径缩放 +
 // alpha 表达），减弱动态效果时直接呈现终态。
+
+// MARK: - 审计三轮第 2 项：连线列表 UITableView（复用＋分页）
+
+extension BearyDiaryStarMapViewController: UITableViewDataSource, UITableViewDelegate {
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        min(edgeListShownCount, edgeListEdges.count)
+    }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "EdgeListCell", for: indexPath)
+        guard indexPath.row < edgeListEdges.count else { return cell }
+        let edge = edgeListEdges[indexPath.row]
+        let reasons = edge.reasons.map { reasonText($0) }.joined(separator: "；")
+        let firstName = edgeEntryName(model.entryById[edge.firstId])
+        let secondName = edgeEntryName(model.entryById[edge.secondId])
+        cell.textLabel?.numberOfLines = 2
+        cell.textLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        cell.textLabel?.adjustsFontForContentSizeCategory = true
+        cell.textLabel?.textColor = BearyStarMapNight.primaryText
+        cell.textLabel?.text = "\(reasons)：\(firstName) 与 \(secondName)"
+        cell.backgroundColor = .clear
+        cell.contentView.backgroundColor = .clear
+        cell.selectionStyle = .default
+        let pressedView = UIView()
+        pressedView.backgroundColor = UIColor(white: 1, alpha: 0.06)
+        cell.selectedBackgroundView = pressedView
+        cell.accessoryType = .disclosureIndicator
+        cell.tintColor = BearyStarMapNight.secondaryText
+        // 读屏口径与旧行按钮一致（#1035 画布连线元素同款提示）。
+        cell.accessibilityLabel = "连线：\(reasons)，连接 \(firstName) 与 \(secondName)"
+        cell.accessibilityTraits = .button
+        cell.accessibilityHint = "双击查看连线原因"
+        return cell
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        guard indexPath.row < edgeListEdges.count else { return }
+        let edge = edgeListEdges[indexPath.row]
+        // 按 id 在当前模型里重查：列表打开后模型可能已变，旧边不在了就不跳。
+        guard let current = model.edges.first(where: { $0.id == edge.id }) else { return }
+        didTapEdge(current)
+    }
+}
 
 // MARK: - 星空画布：线 → 星 → 日期，点按先星后线
 
