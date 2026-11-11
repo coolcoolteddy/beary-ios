@@ -9047,10 +9047,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
         UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: { [weak self] in
             guard let self = self else { return }
-            self.scrollView.contentInset.bottom = height
-            self.scrollView.scrollIndicatorInsets.bottom = height
+            // 2026-11-10 审计 A3：不再手动加键盘底 inset——scrollView 底已锚
+            // 工具栏顶、工具栏底锚 keyboardLayoutGuide 顶，滚动区帧底本就在
+            // 键盘上方；再加一份等于键盘高的底 inset 只会多出一段空白可滚
+            // 区、指示条上抬。contentInset.bottom / scrollIndicatorInsets.bottom
+            // 恒为 0（contentInsetAdjustmentBehavior = .never，系统也不补）。
             // 封顶重算走同一键盘曲线；layoutIfNeeded 使高度约束变化随键盘动画走，
-            // 而非下一布局帧跳变。外层 inset 保留不动（供其他内容外层滚动）。
+            // 而非下一布局帧跳变。
             // 6-3 例外：本 layoutIfNeeded 在键盘动画内、duration/curve 均取键盘通知，
             // 属系统曲线同步，保留不重写（不要当作通用约束动画口径扩散）。
             self.updateTextViewHeight()
@@ -9058,7 +9061,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 64 包反馈修（第 13 项）：不再给 textView 内层加键盘底 inset——旧代码内外两层
             // 同加 keyboardHeight，空态下内层可视高 =  bounds 高 − 键盘高成负值，caret
             // 可见性计算退化、contentOffset 自己往上跳（占位 label 随之下滑），即 Li 报的
-            // “什么都没写也会往上滑一下”。外层 inset 已把整区抬到键盘上方，内层 inset
+            // “什么都没写也会往上滑一下”。滚动区帧底已在键盘上方，内层 inset
             // 是冗余的；去掉后空态 caret 本就在可视区内，打开与空态 contentOffset 全程不动，
             // 长文 caret 仍走系统标准 caret 可见滚动（只在用户打到可视区外时动）。
         }, completion: { [weak self] _ in
