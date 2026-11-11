@@ -7441,50 +7441,47 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         if hasEditorContent() {
-            let sheet = UIAlertController(title: nil, message: "当前内容还没发布，换成空白新日记吗？", preferredStyle: .actionSheet)
-            sheet.addAction(UIAlertAction(title: "继续写", style: .cancel, handler: nil))
-            sheet.addAction(UIAlertAction(title: "保留并新建", style: .default) { [weak self] _ in
-                guard let self = self else { return }
-                // 落盘走后台队列：存完回调里再重置（快照在 saveDraftNow 调用时已拍，
-                // 存完前切篇的状态守卫见 saveDraftNow 完成回调）。
-                // R14 P1-6：走带版本＋身份复核的退出保存（saveDraftVersionedForExit）——
-                // 等待期间输入的字若没进首拍快照，回包时版本已变就以最新内容再存一轮
-                // 再清空，清空前再比对 currentDraftId，确认保存的是最新版本才清空；
-                // 等待期间编辑器冻结＋状态行显“保存中…”，冲突操作被锁住。
-                // 完成回调带 DraftSaveResult：失败时不重置、内容原样保留并 toast
-                // 明示重试（关闭路径同款口径：拒绝震动＋拒绝音＋状态行已置红）；
-                // 成功才开空白新篇。
-                self.saveDraftVersionedForExit { [weak self] result in
+            // 原 actionSheet 无标题，底 sheet 标题传空（只显说明＋按钮，不另起文案）。
+            BearyConfirmSheet.show(from: self, title: "", message: "当前内容还没发布，换成空白新日记吗？", actions: [
+                BearyConfirmSheet.Action(title: "继续写", style: .cancel),
+                BearyConfirmSheet.Action(title: "保留并新建", style: .default) { [weak self] in
                     guard let self = self else { return }
-                    guard result.succeeded else {
-                        BearyHaptics.rejectionWarning()
-                        BearySoundPlayer.play(.refuseBonk)
-                        if !UIAccessibility.isReduceMotionEnabled {
-                            self.cancelButton.layer.removeAnimation(forKey: "bearyDenyShake")
-                            let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-                            shake.values = [0, -8, 8, -5, 5, 0]
-                            shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-                            shake.duration = 0.4
-                            self.cancelButton.layer.add(shake, forKey: "bearyDenyShake")
+                    // 落盘走后台队列：存完回调里再重置（快照在 saveDraftNow 调用时已拍，
+                    // 存完前切篇的状态守卫见 saveDraftNow 完成回调）。
+                    // R14 P1-6：走带版本＋身份复核的退出保存（saveDraftVersionedForExit）——
+                    // 等待期间输入的字若没进首拍快照，回包时版本已变就以最新内容再存一轮
+                    // 再清空，清空前再比对 currentDraftId，确认保存的是最新版本才清空；
+                    // 等待期间编辑器冻结＋状态行显“保存中…”，冲突操作被锁住。
+                    // 完成回调带 DraftSaveResult：失败时不重置、内容原样保留并 toast
+                    // 明示重试（关闭路径同款口径：拒绝震动＋拒绝音＋状态行已置红）；
+                    // 成功才开空白新篇。
+                    self.saveDraftVersionedForExit { [weak self] result in
+                        guard let self = self else { return }
+                        guard result.succeeded else {
+                            BearyHaptics.rejectionWarning()
+                            BearySoundPlayer.play(.refuseBonk)
+                            if !UIAccessibility.isReduceMotionEnabled {
+                                self.cancelButton.layer.removeAnimation(forKey: "bearyDenyShake")
+                                let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+                                shake.values = [0, -8, 8, -5, 5, 0]
+                                shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+                                shake.duration = 0.4
+                                self.cancelButton.layer.add(shake, forKey: "bearyDenyShake")
+                            }
+                            self.showToast(message: result.hadPreviousSavedVersion
+                                ? "草稿保存失败，当前内容仍保留在此页，上次保存的草稿未受影响，再点一次保留并新建重试"
+                                : "草稿保存失败，当前内容仍保留在此页，再点一次保留并新建重试")
+                            return
                         }
-                        self.showToast(message: result.hadPreviousSavedVersion
-                            ? "草稿保存失败，当前内容仍保留在此页，上次保存的草稿未受影响，再点一次保留并新建重试"
-                            : "草稿保存失败，当前内容仍保留在此页，再点一次保留并新建重试")
-                        return
+                        self.resetEditorToBlank()
                     }
+                },
+                BearyConfirmSheet.Action(title: "丢弃并新建", style: .destructive) { [weak self] in
+                    guard let self = self else { return }
+                    self.clearDraftAndFiles()
                     self.resetEditorToBlank()
-                }
-            })
-            sheet.addAction(UIAlertAction(title: "丢弃并新建", style: .destructive) { [weak self] _ in
-                guard let self = self else { return }
-                self.clearDraftAndFiles()
-                self.resetEditorToBlank()
-            })
-            if let pop = sheet.popoverPresentationController {
-                pop.sourceView = draftPillButton
-                pop.sourceRect = draftPillButton.bounds
-            }
-            present(sheet, animated: !UIAccessibility.isReduceMotionEnabled)
+                },
+            ])
         } else {
             clearDraftAndFiles()
             resetEditorToBlank()
@@ -8303,22 +8300,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             isUnauthorized = false
             message += "，请只重试新篇"
         }
-        let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+        // 原 alert 无标题，底 sheet 标题传空（只显说明＋按钮，不另起文案）。
+        var actions: [BearyConfirmSheet.Action] = []
         if isUnauthorized {
-            alert.addAction(UIAlertAction(title: "重新登录", style: .default) { [weak self] _ in
+            actions.append(BearyConfirmSheet.Action(title: "重新登录", style: .default) { [weak self] in
                 self?.onRequireLogin?()
             })
         } else {
             // 同一代次内只重试新篇：不走门禁、不再 setVisibility。
             // 代次已变（用户已另起一轮发布）时 performPublish 入口守卫
             // 会丢弃本次回调，不碰在途流程。
-            alert.addAction(UIAlertAction(title: "只重试新篇", style: .default) { [weak self] _ in
+            actions.append(BearyConfirmSheet.Action(title: "只重试新篇", style: .default) { [weak self] in
                 guard let self = self else { return }
                 self.performPublish(snapshot: snapshot, generation: generation, sourceAlreadyPublished: true)
             })
         }
-        alert.addAction(UIAlertAction(title: "知道了", style: .cancel, handler: nil))
-        present(alert, animated: BearyMotion.animated(true))
+        actions.append(BearyConfirmSheet.Action(title: "知道了", style: .cancel))
+        BearyConfirmSheet.show(from: self, title: "", message: message, actions: actions)
     }
 
     private func hasFailedImage() -> Bool {
