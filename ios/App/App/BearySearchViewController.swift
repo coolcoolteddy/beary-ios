@@ -2580,10 +2580,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         return row
     }
 
-    /// 私密 pill：网页 .tl-pill.priv——11.5 semibold 蓝字、蓝 13% 底、圆角 11、
+    /// 私密 pill：网页 .tl-pill.priv——12 semibold 蓝字、蓝 13% 底、圆角 11、
     /// padding 2.5/9、锁图标 12、gap 4。圆角注（2-3 注释与代码对齐）：
-    /// 实测高约 19（11.5 字 + 上下 2.5），圆角 11 已超半高 9.5，视觉近似 pill，
-    /// 故代码保持 11、只改注释，不写 999。11.5 属装饰性小字，不走 Dynamic Type（8-3 豁免）。
+    /// 实测高约 19（默认字号下），圆角 11 已超半高 9.5，视觉近似 pill，
+    /// 故代码保持 11、只改注释，不写 999。字号注：旧注释称 11.5pt 有误，代码实为 12pt
+    /// （11.5＋2.5×2＝16.5 与实测约 19 也不符）；先前固定 12pt 是有意的偏离，规范并无
+    /// 「8-3 豁免」背书（规范全文查无此条），现改为跟随系统字号（scaled）。
     private func makePrivatePill(friendsOnly: Bool = false, ephemeralLive: Bool = false) -> UIView {
         let pill = UIView()
         pill.translatesAutoresizingMaskIntoConstraints = false
@@ -2598,7 +2600,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         lock.contentMode = .scaleAspectFit
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12, weight: .semibold))
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = friendsOnly ? BearyColors.ink : BearyColors.blue
         label.text = ephemeralLive ? "限时" : (friendsOnly ? "仅好友" : "私密")
         pill.addSubview(lock)
