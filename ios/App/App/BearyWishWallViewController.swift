@@ -303,7 +303,7 @@ private final class WishRowView: UIView {
     /// 审计八轮第 3 项（规范 §6）：票数变化时 0.18s opacity 交叉淡变
     /// （BearyMotion.localStateDuration，点赞数同款 transitionCrossDissolve）；
     /// 数值未变、减动效开、或视图未进窗口时直设终值。
-    private func fadeVoteCount(on view: UIView, changed: Bool, assign: () -> Void) {
+    private func fadeVoteCount(on view: UIView, changed: Bool, assign: @escaping () -> Void) {
         guard changed, !UIAccessibility.isReduceMotionEnabled, view.window != nil else {
             assign()
             return
