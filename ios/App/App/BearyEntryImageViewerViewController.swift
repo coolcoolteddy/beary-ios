@@ -57,6 +57,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// BearyColors.bg（浅白／深黑，随 trait 自动跟随），不是纯黑、不是
     /// 骨架屏；图到／失败即藏，旧图绝不滑回的口径不动。
     private let placeholderView = UIView()
+    /// ①-6：下甩遮罩——view 背景改透明后，由它承载 0.92→0.276 的底色
+    /// alpha（只改 opacity，合规范 §6；p=1 时有效 alpha 0.276，与旧
+    /// view.backgroundColor 0.92*(1-p*0.7) 的现行视觉一致）。
+    private let dismissScrimView = UIView()
     private let retryButton = BearyHit44Button(type: .custom)
     private let counterLabel = UILabel()
     private let closeButton = BearyButton.closeButton()
@@ -211,7 +215,15 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     override func viewDidLoad() {
         super.viewDidLoad()
         // 灯箱底色 0.92 黑为例外（2026-10-28 定）：透 8% 保留底层上下文，不改纯黑；深色背景纯黑定版不覆盖灯箱。
-        view.backgroundColor = UIColor(white: 0, alpha: 0.92)
+        // ①-6：view 背景改透明，底色改由最底层遮罩承载——下甩跟手只改
+        // 遮罩 opacity（规范 §6 只走 transform/opacity），不再改 backgroundColor；
+        // 遮罩 alpha 0.92→0.276，与旧口径现行视觉一致。审计原修法只加遮罩、
+        // 保留 0.92 背景不动，p=1 时会叠成 0.92＋遮罩、复现不了现行视觉，故不采用。
+        view.backgroundColor = .clear
+        dismissScrimView.backgroundColor = .black
+        dismissScrimView.alpha = 0.92
+        dismissScrimView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(dismissScrimView)
         placeholderView.backgroundColor = BearyColors.bg
         placeholderView.translatesAutoresizingMaskIntoConstraints = false
         placeholderView.isHidden = true
@@ -249,7 +261,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         view.addSubview(retryButton)
         counterLabel.textColor = .white
-        counterLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        // ①-10：会变的序号走等宽数字（规范 §11 tabularDigitsFont，现成入口，14 不变）。
+        counterLabel.font = BearyDynamicType.tabularDigitsFont(ofSize: 14)
         counterLabel.adjustsFontForContentSizeCategory = true
         counterLabel.textAlignment = .center
         counterLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -307,6 +320,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         view.addGestureRecognizer(pan)
         view.addGestureRecognizer(livePress)
         NSLayoutConstraint.activate([
+            dismissScrimView.topAnchor.constraint(equalTo: view.topAnchor),
+            dismissScrimView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            dismissScrimView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            dismissScrimView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             placeholderView.topAnchor.constraint(equalTo: view.topAnchor),
             placeholderView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             placeholderView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -466,11 +483,24 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 
     private func updateCounter() {
-        counterLabel.text = "\(currentIndex + 1) / \(imageKeys.count)"
+        // S2：总数取 max（本地图模式 imageKeys 为空时不再读成“/ 0”）。
+        let totalCount = max(imageKeys.count, localImages.count)
+        let newText = "\(currentIndex + 1) / \(totalCount)"
+        // ①-10：切图时序号 0.18s 交叉淡变（规范 §6 局部状态动效）；
+        // 文字不变时不播，减动效开时直换。
+        if counterLabel.text != newText {
+            if BearyMotion.animated(true) {
+                UIView.transition(with: counterLabel, duration: BearyMotion.localStateDuration, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
+                    self.counterLabel.text = newText
+                }, completion: nil)
+            } else {
+                counterLabel.text = newText
+            }
+        }
         // 无障碍：计数视觉文案是“1 / 9”，VoiceOver 直接读会含糊；补一句
         // 完整读法“第 1 张，共 9 张”，切图时 updateCounter 重算，焦点停在
         // 计数上即可读到当前页；底部圆点是纯装饰 UIView，不另做无障碍元素。
-        counterLabel.accessibilityLabel = "第 \(currentIndex + 1) 张，共 \(imageKeys.count) 张"
+        counterLabel.accessibilityLabel = "第 \(currentIndex + 1) 张，共 \(totalCount) 张"
         for (dotIndex, dot) in dotViews.enumerated() {
             dot.backgroundColor = (dotIndex == currentIndex) ? .white : UIColor(white: 1, alpha: 0.35)
         }
@@ -525,9 +555,11 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             dot.removeFromSuperview()
         }
         dotViews.removeAll()
-        counterLabel.isHidden = imageKeys.count <= 1
-        dotsStack.isHidden = imageKeys.count <= 1 || imageKeys.count > 20
-        for _ in imageKeys {
+        // S2：计数取 max（本地图模式 imageKeys 为空时，计数／圆点不再按 0 张隐藏）。
+        let totalCount = max(imageKeys.count, localImages.count)
+        counterLabel.isHidden = totalCount <= 1
+        dotsStack.isHidden = totalCount <= 1 || totalCount > 20
+        for _ in 0..<totalCount {
             let dot = UIView()
             dot.translatesAutoresizingMaskIntoConstraints = false
             dot.backgroundColor = UIColor(white: 1, alpha: 0.35)
@@ -965,7 +997,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 取消时传 0 恢复原样。
     private func applyDismissDragProgress(_ progress: CGFloat) {
         let p = max(0, min(1, progress))
-        view.backgroundColor = UIColor(white: 0, alpha: 0.92 * (1 - p * 0.7))
+        // ①-6：只改最底层遮罩的 opacity（0.92→0.276），现行视觉原样复现；
+        // view 背景已是透明，不再改 backgroundColor。
+        dismissScrimView.alpha = 0.92 * (1 - p * 0.7)
         counterLabel.alpha = 1 - p
         dotsStack.alpha = 1 - p
         closeButton.alpha = 1 - p
@@ -975,7 +1009,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 
     private func resetDismissDragAppearance() {
-        view.backgroundColor = UIColor(white: 0, alpha: 0.92)
+        // ①-6：复位同步改遮罩 alpha 回 0.92（与 applyDismissDragProgress 同口径）。
+        dismissScrimView.alpha = 0.92
         counterLabel.alpha = 1
         dotsStack.alpha = 1
         closeButton.alpha = 1
