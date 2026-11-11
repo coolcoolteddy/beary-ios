@@ -2423,7 +2423,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteCardWrap.isHidden = false
         // allowThumbs: true 沿用旧编辑器行为——已选引用在本地草稿预览中恒出图；
         // 列表侧的 isPublic/本人门控不适用于编辑器预览（预览不出公开发布）。
-        quoteCard.configure(authorName: shown.authorName ?? "", authorAvatar: shown.authorAvatar, content: shown.content, images: shown.images, dims: shown.imgDims, createdAt: shown.createdAt, allowThumbs: true, authorHandle: shown.authorHandle, sourceTappable: false, quoteId: shown.id)
+        quoteCard.configure(authorName: shown.authorName ?? "", authorAvatar: shown.authorAvatar, content: shown.content, images: shown.images, dims: shown.imgDims, createdAt: shown.createdAt, allowThumbs: true, authorHandle: shown.authorHandle, sourceTappable: false, quoteId: shown.entryId)
         updatePreferredContentSize()
     }
 
