@@ -858,7 +858,8 @@ class BearyProfileViewController: UIViewController {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
         labelValue.backgroundColor = BearyColors.line
-        labelValue.font = UIFont.systemFont(ofSize: 28, weight: .bold)
+        labelValue.font = BearyDynamicType.avatarInitialFont()
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.textAlignment = .center
         return labelValue
@@ -1016,7 +1017,8 @@ class BearyProfileViewController: UIViewController {
     private let handleLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.font = BearyDynamicType.secondaryFont()
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         // 初次加载占位：与名字／统计行的“—”同口径，占一行高度，
         // 使统计行在加载态就落在有 handle 时的最终位置（空文本会塌成 0 高，
@@ -1029,7 +1031,8 @@ class BearyProfileViewController: UIViewController {
     private let joinedLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.font = BearyDynamicType.secondaryFont()
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         return labelValue
     }()
@@ -1050,7 +1053,8 @@ class BearyProfileViewController: UIViewController {
     private let emailLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.font = BearyDynamicType.secondaryFont()
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.isHidden = true
         return labelValue
@@ -1059,7 +1063,8 @@ class BearyProfileViewController: UIViewController {
     private let publicCountLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.ink
         labelValue.text = "—"
         return labelValue
@@ -1068,7 +1073,8 @@ class BearyProfileViewController: UIViewController {
     private let likesCountLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.ink
         labelValue.text = "—"
         return labelValue
@@ -6998,7 +7004,7 @@ class BearyProfileViewController: UIViewController {
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.text = "照片"
-        let moreButton = UIButton(type: .custom)
+        let moreButton = BearyHit44Button(type: .custom)
         moreButton.translatesAutoresizingMaskIntoConstraints = false
         moreButton.setTitle("更多", for: .normal)
         moreButton.setTitleColor(BearyColors.gray, for: .normal)
