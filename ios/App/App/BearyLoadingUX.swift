@@ -66,7 +66,7 @@ final class BearySkeletonCardView: UIView {
         gradientLayer.locations = [0.42, 0.5, 0.58]
         gradientLayer.startPoint = CGPoint(x: 0, y: 0.5)
         gradientLayer.endPoint = CGPoint(x: 1, y: 0.5)
-        // 斜向光带：图层自身转 -20°，位置沿 x 扫过（transform 与 position 互不干扰）。
+        // 斜向光带：图层自身转 -20°，光带沿 x 扫过（只走 transform.translation.x，不动 position）。
         gradientLayer.transform = CATransform3DMakeRotation(-0.35, 0, 0, 1)
         shimmerContainer.layer.addSublayer(gradientLayer)
         NSLayoutConstraint.activate([
@@ -129,7 +129,7 @@ final class BearySkeletonCardView: UIView {
         maskLayer.path = path.cgPath
         maskLayer.frame = bounds
         // 图层放大两倍、绕中心转 -20° 后仍盖住全幅；光带在图层中央，
-        // 位置 x 从 -0.2W 扫到 1.2W 即完整扫过一次。
+        // translation.x 从 -0.7W 扫到 +0.7W（中心 x 从 -0.2W 到 1.2W）即完整扫过一次。
         let w = max(bounds.width, 1)
         let h = max(bounds.height, 1)
         gradientLayer.bounds = CGRect(x: 0, y: 0, width: w * 2, height: h * 2)
@@ -171,9 +171,11 @@ final class BearySkeletonCardView: UIView {
     private func restartShimmerAnimation() {
         gradientLayer.removeAnimation(forKey: "beary-shimmer-sweep")
         let w = max(bounds.width, 1)
-        let anim = CABasicAnimation(keyPath: "position.x")
-        anim.fromValue = -0.2 * w
-        anim.toValue = 1.2 * w
+        // 只走 transform（规范 §6）：图层中心固定在 0.5W，translation.x 从
+        // -0.7W 扫到 +0.7W，中心 x 轨迹与原来 position.x 的 -0.2W→1.2W 完全一致。
+        let anim = CABasicAnimation(keyPath: "transform.translation.x")
+        anim.fromValue = -0.7 * w
+        anim.toValue = 0.7 * w
         anim.duration = Self.shimmerDuration
         anim.repeatCount = .infinity
         anim.isRemovedOnCompletion = false
