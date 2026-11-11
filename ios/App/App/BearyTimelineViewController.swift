@@ -6696,38 +6696,33 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
-    /// 2026-10-29 改版：卡片右上角 ⋯ 菜单（actionSheet）——编辑内容／修改权限／删除。
-    /// 编辑内容仅 15 分钟内出现（与编辑文字钮、左滑编辑同口径：deadline 缺失即已锁）；
+    /// 2026-11-11 改版：卡片右上角 ⋯ 菜单迁底部弹窗（BearyConfirmSheet；原文案/
+    /// 顺序/语义全保留）——编辑内容／修改权限／删除。编辑内容仅 15 分钟内可点
+    /// （与编辑文字钮、左滑编辑同口径：deadline 缺失即已锁）；过期时置灰并附说明。
     /// 修改权限走原地球钮同一 handlePublishEntry 路径（含乐观落地、失败回滚、拒绝动效）；
-    /// 删除走原删除回调同一路（容器确认流程不变）；iPad 须设 popover 锚点，否则崩溃。
-    private func presentTimelineMoreMenu(entry: Entry, sourceView: UIView) {
-        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+    /// 删除走原删除回调同一路（容器确认流程不变）；iPad popover 锚点随迁移删去。
+    private func presentTimelineMoreMenu(entry: Entry) {
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        var actions: [BearyConfirmSheet.Action] = []
         if let deadline = entry.editDeadline, nowMs < deadline {
-            sheet.addAction(UIAlertAction(title: "编辑内容", style: .default) { [weak self] _ in
+            actions.append(BearyConfirmSheet.Action(title: "编辑内容", style: .default) { [weak self] in
                 self?.onEditEntry?(entry)
             })
         } else {
             // r29-11：过期（或 editDeadline 缺失即已锁）时编辑项不再直接消失，
-            // 与详情页同口径，置灰并附说明。
-            let expiredEdit = UIAlertAction(title: "编辑（已超 15 分钟不可编辑）", style: .default, handler: nil)
-            expiredEdit.isEnabled = false
-            sheet.addAction(expiredEdit)
+            // 与详情页同口径，置灰并附说明；handler 为 nil。
+            actions.append(BearyConfirmSheet.Action(title: "编辑（已超 15 分钟不可编辑）", style: .default, isEnabled: false))
         }
-        sheet.addAction(UIAlertAction(title: "修改权限", style: .default) { [weak self] _ in
+        actions.append(BearyConfirmSheet.Action(title: "修改权限", style: .default) { [weak self] in
             self?.handlePublishEntry(entry)
         })
-        sheet.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
+        actions.append(BearyConfirmSheet.Action(title: "删除", style: .destructive) { [weak self] in
             self?.onDeleteEntry?(entry)
         })
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = sourceView
-            popover.sourceRect = sourceView.bounds
-        }
+        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         // 审计-时间线：present 前统一守卫，已有弹窗时不叠页（筛子呈现留给 11b 气泡，本支不动）。
         guard presentedViewController == nil else { return }
-        present(sheet, animated: BearyMotion.animated(true))
+        BearyConfirmSheet.show(from: self, title: "", message: nil, actions: actions)
     }
 
     /// 可见行单行重刷（.none，不播行动画、不重播已有元素动效）：按 currentSections
@@ -6850,7 +6845,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         cell.onEditEntry = onEditEntry
         cell.onDeleteEntry = onDeleteEntry
         cell.onQuoteEntry = onQuoteEntry
-        cell.onMoreEntry = { [weak self] entry, sourceView in self?.presentTimelineMoreMenu(entry: entry, sourceView: sourceView) }
+        cell.onMoreEntry = { [weak self] entry, _ in self?.presentTimelineMoreMenu(entry: entry) }
         // N7：复用独立文件内的查看器，全屏模态弹出（已弹出时不叠加、减动效直显）。
         let viewerEntry = sections[indexPath.section].entries[indexPath.row]
         cell.onTapImages = { [weak self] keys, index, originFrame, thumbnail in
