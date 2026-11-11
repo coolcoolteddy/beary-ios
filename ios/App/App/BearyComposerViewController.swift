@@ -3735,6 +3735,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 服务接口；日记本身只保存地点文字。位置权限说明（Info.plist）
         // 同步补了同一层意思；服务端是否存储坐标客户端看不出来，不断言。
         weatherCallout.setFooterNote("精确位置只用于本次天气查询，会发送至服务接口；日记本身只保存地点文字。")
+        // 审计二轮 09：脚注高随字号/宽度变化时，框高约束跟着刷新。
+        weatherCallout.onFooterHeightChange = { [weak self] in self?.updateWeatherCalloutHeight() }
         // 收起层先加、框后加：框在收起层之上，框内点按不触发框外收起。
         view.addSubview(calloutDismissView)
         view.addSubview(moodCallout)
