@@ -447,7 +447,10 @@ final class BearySettingsViewController: UIViewController {
     private var grantsLoadFailed = false
 
     // ID 卡右侧编辑资料钮（C4：账户组四行删除后，个人资料唯一入口）。
-    private let editProfileButton = UIButton(type: .system)
+    // 第五轮审计：普通 UIButton 无 44pt 热区，改 BearyHit44Button——视觉
+    // 大小不动，仅 point(inside:) 把热区纵向扩到 44pt（按钮宽 >44 故横向
+    // 不扩；扩区落在 hero 行 64pt 头像高度内，不抢邻行点击）。
+    private let editProfileButton = BearyHit44Button(type: .system)
 
     // 设备分组
     private let deviceCountLabel = UILabel()
@@ -1273,7 +1276,7 @@ final class BearySettingsViewController: UIViewController {
         cardStack.addArrangedSubview(syncStateRow)
         cardStack.addArrangedSubview(idSeparator)
         cardStack.addArrangedSubview(idRow)
-        cardStack.setCustomSpacing(18, after: plusRow)
+        cardStack.setCustomSpacing(18, after: syncStateRow)
         cardStack.setCustomSpacing(18, after: idSeparator)
         let idCard = makeCard(cardStack)
         // F5：熊头水印（网页 idcard watermark 口径：account.html 官方熊头描边、
