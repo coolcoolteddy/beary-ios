@@ -257,6 +257,10 @@ final class BearyChromeViewController: UIViewController {
     /// 调用，各页懒建初值仍走页侧 helper。
     private var headerVisible = true
     private var topHeightConstraint: NSLayoutConstraint?
+    /// 开发者模式横幅（2026-11-08 新增）：开着时顶上挂一条 36pt 橙条防忘关；
+    /// 顶栏显示时贴顶栏下方（安全区顶 + 108），收起时贴安全区顶；位置跟 headerVisible 走。
+    private var devBannerView: UIView?
+    private var devBannerTopConstraint: NSLayoutConstraint?
     /// 顶栏玻璃顶边推出屏外的量（见上）：只推顶边，不动 tint、高度内容区与 Plan A 显隐。
     private let topGlassTopOvershoot: CGFloat = 12
     private var topTopConstraint: NSLayoutConstraint?
@@ -883,6 +887,95 @@ final class BearyChromeViewController: UIViewController {
             fabContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
             fabContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -92),
         ])
+        // 开发者模式横幅（2026-11-08 新增）：36pt 橙条，平时隐藏；见 buildDevBanner。
+        buildDevBanner()
+    }
+
+    /// 开发者模式横幅：36pt 全宽橙条，文案「开发者模式已开启」＋「进入」按钮＋关闭 ×。
+    /// 「进入」打开开发者模式页；× 直接退出开发者模式（清模拟态、恢复外观）。
+    /// 显隐与位置由 handleDevModeChanged / setHeaderVisible / viewDidLayoutSubviews 驱动；
+    /// 全屏 modal（如设置页）会盖住它，可接受（开发者模式页内自显开关态）。
+    private func buildDevBanner() {
+        let banner = UIView()
+        banner.backgroundColor = BearyColors.orange
+        banner.isHidden = !BearyDeveloperMode.shared.isEnabled
+        banner.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(banner)
+        devBannerView = banner
+
+        let label = UILabel()
+        label.text = "开发者模式已开启"
+        label.font = .systemFont(ofSize: 14, weight: .semibold)
+        label.textColor = .white
+        label.translatesAutoresizingMaskIntoConstraints = false
+        banner.addSubview(label)
+
+        let enterButton = UIButton(type: .system)
+        enterButton.setTitle("进入", for: .normal)
+        enterButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
+        enterButton.setTitleColor(.white, for: .normal)
+        enterButton.addTarget(self, action: #selector(devBannerEnterTapped), for: .touchUpInside)
+        enterButton.translatesAutoresizingMaskIntoConstraints = false
+        banner.addSubview(enterButton)
+
+        let closeButton = UIButton(type: .system)
+        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 16), for: .normal)
+        closeButton.tintColor = .white
+        closeButton.accessibilityLabel = "关闭开发者模式"
+        closeButton.addTarget(self, action: #selector(devBannerCloseTapped), for: .touchUpInside)
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        banner.addSubview(closeButton)
+
+        let top = banner.topAnchor.constraint(equalTo: view.topAnchor, constant: view.safeAreaInsets.top + (headerVisible ? 108 : 0))
+        devBannerTopConstraint = top
+        NSLayoutConstraint.activate([
+            top,
+            banner.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            banner.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            banner.heightAnchor.constraint(equalToConstant: 36),
+            label.leadingAnchor.constraint(equalTo: banner.leadingAnchor, constant: 16),
+            label.centerYAnchor.constraint(equalTo: banner.centerYAnchor),
+            enterButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -8),
+            enterButton.centerYAnchor.constraint(equalTo: banner.centerYAnchor),
+            closeButton.trailingAnchor.constraint(equalTo: banner.trailingAnchor, constant: -8),
+            closeButton.centerYAnchor.constraint(equalTo: banner.centerYAnchor),
+            closeButton.widthAnchor.constraint(equalToConstant: 36),
+            closeButton.heightAnchor.constraint(equalToConstant: 36),
+        ])
+    }
+
+    /// 开发者模式变化：横幅显隐＋位置＋各页内边距同步（各页的 devBannerInset 跟总开关走）。
+    @objc private func handleDevModeChanged(_ note: Notification) {
+        devBannerView?.isHidden = !BearyDeveloperMode.shared.isEnabled
+        updateDevBannerPosition()
+        applyHeaderTopInsets(visible: headerVisible)
+    }
+
+    /// 开发者模式横幅位置：顶栏显示时贴顶栏下方，收起时贴安全区顶。
+    private func updateDevBannerPosition(animated: Bool = false) {
+        guard let top = devBannerTopConstraint else { return }
+        let offset = view.safeAreaInsets.top + (headerVisible ? 108 : 0)
+        guard top.constant != offset else { return }
+        if animated && !UIAccessibility.isReduceMotionEnabled {
+            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+                top.constant = offset
+                self.view.layoutIfNeeded()
+            }
+        } else {
+            top.constant = offset
+            view.layoutIfNeeded()
+        }
+    }
+
+    @objc private func devBannerEnterTapped() {
+        let vc = BearyDeveloperModeViewController()
+        vc.modalPresentationStyle = .fullScreen
+        vc.transitioningDelegate = fadeRiseTransitionDelegate
+        present(vc, animated: true)
+    }
+
+    @objc private func devBannerCloseTapped() {
+        BearyDeveloperMode.shared.exit(window: view.window)
     }
 
 
@@ -905,6 +998,7 @@ final class BearyChromeViewController: UIViewController {
     /// 垫片在衬底之下，防双重模糊（2026-11-05 底部渐变改全宽后）。
     private func bringChromeToFront() {
         if let top = topGlass { view.bringSubviewToFront(top) }
+        if let banner = devBannerView { view.bringSubviewToFront(banner) }
         if let bottomPad = bottomFadePad { view.bringSubviewToFront(bottomPad) }
         if let blur = bottomBlurView { view.bringSubviewToFront(blur) }
         if let seg = bottomSegmented { view.bringSubviewToFront(seg) }
@@ -987,6 +1081,8 @@ final class BearyChromeViewController: UIViewController {
             window.overrideUserInterfaceStyle = bearyUserInterfaceStyle(forThemeMode: UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system")
         }
         buildChrome()
+        // 开发者模式变化：横幅显隐＋位置＋各页内边距同步（见 handleDevModeChanged）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleDevModeChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
         // 视觉清单第 4 项：两侧背景层已停用——buildSideDeco 现为空操作，
         // 调用保留仅为恢复口；布局由 viewDidLayoutSubviews 驱动的部分随之失效。
         buildSideDeco()
@@ -1571,6 +1667,8 @@ final class BearyChromeViewController: UIViewController {
             topGlass.transform = targetTransform
             topGlass.alpha = visible ? 1 : 0
         }
+        // 开发者模式横幅：跟顶栏显隐走（显示时贴顶栏下方，收起时贴安全区顶）。
+        updateDevBannerPosition(animated: animated)
     }
 
     /// 顶栏透度批：容器统一发内边距。只发已建页（常驻/已懒建），未建页在 ensure* 创建时
@@ -1789,6 +1887,8 @@ final class BearyChromeViewController: UIViewController {
                 topGlass.transform = CGAffineTransform(translationX: 0, y: -corrected)
             }
         }
+        // 开发者模式横幅：安全区顶变了（旋转/分屏），位置跟变。
+        updateDevBannerPosition()
         // 顶栏透度批：安全区顶变了，Feed/时间线的属性内边距（含安全区顶）必须跟变；
         // 各页 helper 自带“值不变跳过”，故此处全量重发是无害 no-op（消息页下拉刷新中被守卫挡下，见其 helper）。
         applyHeaderTopInsets(visible: headerVisible)
@@ -2058,7 +2158,8 @@ final class BearyChromeViewController: UIViewController {
     private func showPage(_ page: ContainerPage) {
         // 游客模式（只读）：时间线/我页/铃铛消息页/好友段/消息页不对游客开放，点按一律走登录弹窗，
         // 不进页、不弹原登录页；首页/搜索/他人主页（.user）游客可看，直放行。
-        if SessionManager.shared.isGuestMode {
+        // 开发者模式游客预览（仅内存，只改显示）：已登录用户也能复现游客门控；不碰 SessionManager。
+        if SessionManager.shared.isGuestMode || BearyDevPreviewState.guestPreview {
             switch page {
             case .timeline, .me, .notif, .friends, .conversations, .messages:
                 presentLoginGate()
@@ -3659,6 +3760,11 @@ final class BearyChromeViewController: UIViewController {
 
     @discardableResult
     private func presentDetail(entry: Entry) -> BearyDetailViewController? {
+        // 开发者模式假日记（仅内存）：点进详情被拦截——假篇没有真实后端记录，详情页的点赞等互动会发带假 id 的请求。
+        if entry.id?.hasPrefix("dev-") == true {
+            BearyToast.show(in: view.window ?? view, message: "预览数据，无法打开详情")
+            return nil
+        }
         if topmostViewController() is BearyDetailViewController { return nil }
         // 审计 P0-1：拉黑作者的卡片数据不得出全文——进详情前先转占位。
         var entry = entry

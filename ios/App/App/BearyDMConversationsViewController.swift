@@ -291,7 +291,8 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
 
     /// 容器顶栏显隐同步（与好友列表页同口径：固定条改约束常量）。
     func applyHeaderTopInset(visible: Bool) {
-        topBarTopConstraint?.constant = visible ? 60 : 0
+        // 开发者模式横幅（36pt，见 BearyDeveloperMode.devBannerInset）：开着时顶栏内容下移清过横幅。
+        topBarTopConstraint?.constant = (visible ? 60 : 0) + BearyDeveloperMode.shared.devBannerInset
     }
 
     /// 同 tab 重拍口径（消息页取两组并集用）：在途加载或下拉刷新在途都算刷新中。

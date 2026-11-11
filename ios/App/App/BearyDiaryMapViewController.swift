@@ -206,6 +206,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
         // 先用调用方已加载的日记即时成图，再后台拉全量分页替换（不空等）。
         regroupAndGeocode()
+        // 开发者模式变化：强制空态 / 报错态 / 加载态（见 handleDevModeChanged）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleDevModeChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
         fetchAllEntries()
     }
 
@@ -381,7 +383,35 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 不能把截断后的 500 篇当总数报；为 true 时状态行旁留“加载更多”入口供按需续拉。
     private var fetchCapped: Bool = false
 
+    /// 开发者模式变化：强制态切换直接置态渲染；清除后走一次正常重拉。
+    @objc private func handleDevModeChanged(_ note: Notification) {
+        let kind = (note.userInfo?["kind"] as? String) ?? ""
+        guard kind == "forcedMap" else { return }
+        applyDevForcedMap()
+    }
+
+    /// 开发者模式地图强制态（仅内存）：error 亮失败页、empty 走空回包路、
+    /// loading 只显“加载中…”；不发请求。
+    private func applyDevForcedMap() {
+        switch BearyDevPreviewState.forcedMap {
+        case .none:
+            fetchAllEntries()
+        case .error:
+            showFailureState()
+        case .empty:
+            allEntries = []
+            regroupAndGeocode()
+        case .loading:
+            setStatusTextFaded("加载中…")
+        }
+    }
+
     private func fetchAllEntries() {
+        // 开发者模式强制态（仅内存）：不发请求，按强制态渲染。
+        if BearyDevPreviewState.forcedMap != .none {
+            applyDevForcedMap()
+            return
+        }
         loadGeneration += 1
         fetchCollected = []
         fetchResumeBefore = nil

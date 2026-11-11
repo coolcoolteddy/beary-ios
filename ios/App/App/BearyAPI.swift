@@ -797,6 +797,22 @@ final class BearyAPI {
         timeout: TimeInterval? = nil,
         completion: @escaping (Result<T, APIError>) -> Void
     ) -> URLSessionDataTask? {
+        // 开发者模式网络模拟（仅内存）：断网 / 500 直接失败、不发请求（绕开重试）；
+        // 弱网把最终回包延迟 2.5 秒再调。登录验证码直调 perform，不在模拟内。
+        switch BearyDevPreviewState.networkSimulation {
+        case .offline:
+            completion(.failure(.network(URLError(.notConnectedToInternet))))
+            return nil
+        case .serverError:
+            completion(.failure(.http(500, "开发者模式模拟：接口报错")))
+            return nil
+        case .slow, .normal:
+            break
+        }
+        let outerCompletion = completion
+        let completion: (Result<T, APIError>) -> Void = BearyDevPreviewState.networkSimulation == .slow
+            ? { result in DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { outerCompletion(result) } }
+            : outerCompletion
         return performIsolated(path, query: query, method: method, jsonBody: jsonBody, token: token, timeout: timeout) { [weak self] data, status, error in
             guard let self = self else { return }
             if let e = error as NSError?, e.code == NSURLErrorCancelled { completion(.failure(.cancelled)); return }
@@ -953,6 +969,22 @@ final class BearyAPI {
     ) -> URLSessionDataTask? {
         let epoch = authEpoch
         let accountId = authAccountId
+        // 开发者模式网络模拟（仅内存）：断网 / 500 直接失败、不发请求（绕开重试）；
+        // 弱网把最终回包延迟 2.5 秒再调。登录验证码直调 perform，不在模拟内。
+        switch BearyDevPreviewState.networkSimulation {
+        case .offline:
+            completion(.failure(.network(URLError(.notConnectedToInternet))))
+            return nil
+        case .serverError:
+            completion(.failure(.http(500, "开发者模式模拟：接口报错")))
+            return nil
+        case .slow, .normal:
+            break
+        }
+        let outerCompletion = completion
+        let completion: (Result<T, APIError>) -> Void = BearyDevPreviewState.networkSimulation == .slow
+            ? { result in DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { outerCompletion(result) } }
+            : outerCompletion
         // 审计-性能：重试口径统一收进这里。
         // 发布（POST /beary/api/entries，publishEntry 唯一调用方）指数退避
         // 重试最多 3 次（1s→2s→4s，原“立即重试 1 次”改为退避序列）；
@@ -1061,6 +1093,22 @@ final class BearyAPI {
         completion: @escaping (Result<Void, APIError>) -> Void
     ) -> URLSessionDataTask? {
         let epoch = authEpoch
+        // 开发者模式网络模拟（仅内存）：断网 / 500 直接失败、不发请求；
+        // 弱网把最终回包延迟 2.5 秒再调。登录验证码直调 perform，不在模拟内。
+        switch BearyDevPreviewState.networkSimulation {
+        case .offline:
+            completion(.failure(.network(URLError(.notConnectedToInternet))))
+            return nil
+        case .serverError:
+            completion(.failure(.http(500, "开发者模式模拟：接口报错")))
+            return nil
+        case .slow, .normal:
+            break
+        }
+        let outerCompletion = completion
+        let completion: (Result<Void, APIError>) -> Void = BearyDevPreviewState.networkSimulation == .slow
+            ? { result in DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { outerCompletion(result) } }
+            : outerCompletion
         return perform(path, query: query, method: method, jsonBody: jsonBody) { [weak self] data, status, error in
             guard let self = self else { return }
             if let apiErr = self.mapStatus(status, data: data, error: error, suppressUnauthorized: suppressUnauthorized, epoch: epoch) {

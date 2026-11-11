@@ -1039,7 +1039,7 @@ final class BearyNotificationsViewController: UIViewController {
     func applyHeaderTopInset(visible: Bool) {
         headerTopInsetVisible = visible
         guard !isCustomPullRefreshing else { return }
-        let top: CGFloat = visible ? 60 : 0
+        let top: CGFloat = (visible ? 60 : 0) + BearyDeveloperMode.shared.devBannerInset
         if tableView.contentInset.top != top {
             tableView.contentInset.top = top
             tableView.scrollIndicatorInsets.top = top

@@ -19,6 +19,16 @@ final class BearyLocalNotifications {
         case pastSelfDelivery
 
         var defaultsKey: String { "beary.localNotifications.\(rawValue)" }
+
+        /// 设置页与开发者模式测试用的显示名。
+        var title: String {
+            switch self {
+            case .dailyReminder: return "写日记提醒"
+            case .limitedExpiry: return "限时日记到期"
+            case .pastDay: return "那年今日"
+            case .pastSelfDelivery: return "留给明年的自己"
+            }
+        }
     }
 
     private static let permissionRequestedKey = "beary.localNotifications.permissionRequested"
@@ -69,6 +79,31 @@ final class BearyLocalNotifications {
     func openSystemSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
+    }
+
+    /// 开发者模式测试：立即弹一条指定种类的提醒（1 秒后触发，不走重算、不改排程）。
+    /// 调用方须先确认已授权（未授权时系统静默丢弃，不报错）。
+    func testFire(kind: Kind) {
+        let center = UNUserNotificationCenter.current()
+        let content = UNMutableNotificationContent()
+        switch kind {
+        case .dailyReminder:
+            content.body = "今天还没有写日记，写一点，留一点。（测试）"
+        case .limitedExpiry:
+            content.body = "限时结束了，这篇日记已自动转回私密。（测试）"
+        case .pastDay:
+            content.body = "往年今天，你写过日记，打开看看吧。（测试）"
+        case .pastSelfDelivery:
+            content.body = "一年前留给自己的话到了，打开看看吧。（测试）"
+        }
+        content.sound = .default
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        let request = UNNotificationRequest(
+            identifier: "beary.local.test-\(kind.rawValue)-\(UUID().uuidString)",
+            content: content,
+            trigger: trigger
+        )
+        center.add(request)
     }
 
     // MARK: - 刷新

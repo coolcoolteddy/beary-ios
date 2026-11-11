@@ -22,7 +22,11 @@ enum BearyDynamicType {
     static let fixedContainerMaxPointSize: CGFloat = 20
 
     static func scaledFont(for base: UIFont) -> UIFont {
-        UIFontMetrics.default.scaledFont(for: base)
+        // 开发者模式大字号（仅内存倍率）：只放大走本入口的字号；
+        // 裸 UIFont.systemFont 不受影响，固定容器仍走 cappedFont 截断。
+        let scale = BearyDevPreviewState.fontScale
+        guard scale != 1.0 else { return UIFontMetrics.default.scaledFont(for: base) }
+        return UIFontMetrics.default.scaledFont(for: base.withSize(base.pointSize * CGFloat(scale)))
     }
 
     /// 日记正文 16pt（Feed/Timeline/Search 渲染态卡片正文）。
@@ -37,7 +41,9 @@ enum BearyDynamicType {
 
     /// 固定高度容器用：先缩放、超上限则截断到上限（withSize 保留原字重）。
     static func cappedFont(for base: UIFont, maximumPointSize: CGFloat = fixedContainerMaxPointSize) -> UIFont {
-        let scaled = UIFontMetrics.default.scaledFont(for: base)
+        let scale = BearyDevPreviewState.fontScale
+        let scaledBase = scale == 1.0 ? base : base.withSize(base.pointSize * CGFloat(scale))
+        let scaled = UIFontMetrics.default.scaledFont(for: scaledBase)
         guard scaled.pointSize > maximumPointSize else { return scaled }
         return base.withSize(maximumPointSize)
     }

@@ -302,6 +302,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
         // 好友第一期：别处回关/取关后，搜索行状态机同步重拉（不靠旧状态）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleFollowChangedNotification(_:)), name: .bearyFriendsChanged, object: nil)
+        // 开发者模式变化：强制空态 / 报错态 / 加载态（见 handleDevModeChanged）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleDevModeChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
         // 审计：监听账号切换，切号时清空搜索结果、关注态与私密行（见 handleUserChanged）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleUserChanged), name: .bearyUserDidChange, object: nil)
         // 扫荡组 A：键盘弹起时给滚动区补底部留白（见 keyboardWillShow /
@@ -405,7 +407,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 本页无公开回顶方法、无 contentOffset 在顶判定（容器回顶走 BFS 的 -contentInset.top，收起态为 0）。
     func applyHeaderTopInset(visible: Bool) {
         headerTopInsetVisible = visible
-        let top: CGFloat = visible ? 60 : 0
+        let top: CGFloat = (visible ? 60 : 0) + BearyDeveloperMode.shared.devBannerInset
         if scrollView.contentInset.top != top {
             scrollView.contentInset.top = top
             scrollView.scrollIndicatorInsets.top = top
@@ -1349,6 +1351,38 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         showState(title: nil, sub: sub, showRetry: false, loading: false)
         // Q9：初始态补最近搜索（无记录时整区隐藏）。
         renderRecentSearches()
+        // 开发者模式强制态（仅内存）：初始态即按强制态渲染。
+        if BearyDevPreviewState.forcedSearch != .none {
+            applyDevForcedSearch()
+        }
+    }
+
+    /// 开发者模式变化：强制态切换直接置态渲染；清除后回初始态。
+    @objc private func handleDevModeChanged(_ note: Notification) {
+        let kind = (note.userInfo?["kind"] as? String) ?? ""
+        guard kind == "forcedSearch" || kind == "account" else { return }
+        if kind == "account" {
+            // 关注态速切：用缓存数据重渲染搜索行关注钮（只改显示，见 applyFollowButtonState）。
+            if let data = lastRenderedData, let query = lastRenderedQuery {
+                renderResults(data: data, query: query)
+            }
+            return
+        }
+        applyDevForcedSearch()
+    }
+
+    /// 开发者模式搜索强制态（仅内存）：error / empty / loading 直接渲染，不发请求。
+    private func applyDevForcedSearch() {
+        switch BearyDevPreviewState.forcedSearch {
+        case .none:
+            showInitialState()
+        case .error:
+            showFailedState()
+        case .empty:
+            showState(title: "没有找到相关日记", sub: "换个关键词试试", showRetry: false, loading: false)
+        case .loading:
+            showLoadingState()
+        }
     }
 
     /// Q9 最近搜索：读本机记录，重建标题 + 行；点行直接搜（不走服务端）。
@@ -1706,6 +1740,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var lastRenderedQuery: String?
 
     private func renderResults(data: SearchResult, query: String) {
+        // 开发者模式强制态：在途搜索回包不接受，按强制态渲染。
+        if BearyDevPreviewState.forcedSearch != .none {
+            applyDevForcedSearch()
+            return
+        }
         lastRenderedData = data
         lastRenderedQuery = query
         // 补缺 P3-40：我的组只取确认为私密篇（is_public == false）；缺失字段（nil）不进私密组
@@ -2762,8 +2801,19 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     private func applyFollowButtonState(_ button: UIButton, userId: Int) {
+        // 开发者模式关注态速切（仅内存，只改渲染；点按已禁，见 followButtonTapped）。
+        // 有覆盖时直接取覆盖态（恒已知，不走未知态骨架）；无覆盖时走主线 r29-10 逻辑。
         let stateKey = followStateKey(userId: userId)
-        guard let state = followStates[stateKey] else {
+        let resolvedState: BearyFollowState? = {
+            switch BearyDevPreviewState.followStateOverride {
+            case 0: return .none
+            case 1: return .following
+            case 2: return .followedBy
+            case 3: return .mutual
+            default: return followStates[stateKey]
+            }
+        }()
+        guard let state = resolvedState else {
             // r29-10：未知态不再画成可点「关注」——读失败画「重试」（可点重拉），
             // 其余画与按钮同宽同形的灰色圆角骨架块（静态，无转圈、无文字），
             // 按钮 disabled，不弹 toast、不发关注请求。
@@ -2820,6 +2870,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     @objc private func followButtonTapped(_ sender: UIButton) {
         guard let userId = followButtonUserIds[sender] else { return }
+        // 开发者模式预览态：只改显示，点按不发关注 / 取关请求。
+        if BearyDevPreviewState.followStateOverride != nil {
+            BearyToast.show(in: view, message: "预览态，关注操作已禁用")
+            return
+        }
         let stateKey = followStateKey(userId: userId)
         guard let state = followStates[stateKey] else {
             if followStateFailedIds.contains(stateKey) {

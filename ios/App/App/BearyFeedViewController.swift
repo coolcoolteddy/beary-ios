@@ -598,6 +598,8 @@ class BearyFeedViewController: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlindBoxStateChanged), name: .bearyBlindBoxDidChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleFeedUserChanged), name: .bearyUserDidChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleFriendsChangedNotification(_:)), name: .bearyFriendsChanged, object: nil)
+        // 开发者模式变化：假日记 / 字号（见 handleDevModeChanged）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleDevModeChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
         blindBoxEntryView.onTap = { [weak self] in
             self?.presentBlindBoxFlow()
         }
@@ -765,7 +767,7 @@ class BearyFeedViewController: UIViewController {
         // 自定义下拉刷新进行中不改写（刷新中内边距 = 基线 +84，改写会打断指示器）。
         guard !isCustomPullRefreshing else { return }
         let safeTop = view.safeAreaInsets.top
-        let top = safeTop + (visible ? 108 : 0) + 8
+        let top = safeTop + (visible ? 108 : 0) + 8 + BearyDeveloperMode.shared.devBannerInset
         let bottom = BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
         if tableView.contentInset.top != top || tableView.contentInset.bottom != bottom {
             tableView.contentInset.top = top
@@ -1093,6 +1095,19 @@ class BearyFeedViewController: UIViewController {
 
     // MARK: - 广场流
 
+    /// 开发者模式变化：假日记改动走首屏重拉（成功分支注入假模型）；字号只重载表。
+    @objc private func handleDevModeChanged(_ note: Notification) {
+        let kind = (note.userInfo?["kind"] as? String) ?? ""
+        switch kind {
+        case "fakeEntries":
+            loadPlazaFirstPage()
+        case "font":
+            tableView.reloadData()
+        default:
+            break
+        }
+    }
+
     /// 清单第 7 项首页部分记为 deferred（不在此硬发明筛选）：网页端广场本无筛选入口，
     /// 服务端广场给 published_at DESC 顺序（fetchEntries 仅 scope/limit/before/before_id/author_id，
     /// 无 sort/filter 参数）；客户端自排会打断 before 分页游标、且与网页口径脱节。
@@ -1124,6 +1139,28 @@ class BearyFeedViewController: UIViewController {
                 }
                 switch result {
                 case .success(let list):
+                    // 开发者模式 1000 篇假日记（仅内存）：写内存模型、停分页；
+                    // 磁盘快照不写（本分支直接 return，不走下方的 BearyFeedCache.save）。
+                    if BearyDevPreviewState.fakeEntriesEnabled {
+                        let fakes = BearyDeveloperMode.shared.makeFakeEntries(count: 1000)
+                        strongSelf.plazaLoading = false
+                        strongSelf.plazaFirstPageInFlight = false
+                        strongSelf.plazaFirstDone = true
+                        strongSelf.plazaRaw = fakes
+                        strongSelf.firstPageIds = fakes.compactMap { $0.id }
+                        strongSelf.plazaHasMore = false
+                        strongSelf.plazaReachedEnd = true
+                        strongSelf.plazaError = false
+                        strongSelf.lastFeedLoadAt = Date()
+                        if !strongSelf.didShowSkeleton {
+                            strongSelf.tableView.reloadData()
+                        }
+                        strongSelf.finishFirstLoadIfNeeded()
+                        strongSelf.updateOverlayState()
+                        strongSelf.maybeEndRefreshing()
+                        strongSelf.notifyFirstScreenDoneOnce()
+                        return
+                    }
                     let rawEntries = list.entries ?? []
                     // 审计-广场（首拉过滤，已证实）：非 diff 首拉原先直接 plazaRaw = entries，
                     // 与缓存读写（visibleHead 过滤）口径分裂。广场段首拉先按有效公开

@@ -966,7 +966,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else { return }
                 switch result {
                 case .success(let can):
-                    self.dmNotAllowed = !(can.allowed ?? false)
+                    // 开发者模式速切（仅内存，只改发送门）：对方允许私信三态由开发者模式页定；
+                    // 真发送仍按服务端档位校验，403 时原地失败回滚（见 sendTapped）。
+                    self.dmNotAllowed = !(BearyDevPreviewState.dmCanOverride ?? can.allowed ?? false)
                     self.updatePermBanner()
                 case .failure:
                     break

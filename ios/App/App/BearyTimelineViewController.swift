@@ -2521,6 +2521,8 @@ class BearyTimelineViewController: UIViewController {
         // 审计 P2-20：时间线监听拉黑/举报即时清行并清 quoteCache。
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
+        // 开发者模式变化：日期 / 假日记 / 强制态 / 字号（见 handleDevModeChanged）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleDevModeChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
         // 审计-时间线：前台复核（详情页同口径）——后台期间 1 秒 tick 未跑时，到期在回前台时补位。
         NotificationCenter.default.addObserver(self, selector: #selector(handleForegroundEphemeralCheck(_:)), name: UIApplication.willEnterForegroundNotification, object: nil)
         // G15 toast 已委托 B 批统一 BearyToast（见 showTimelineToast），
@@ -2948,7 +2950,7 @@ class BearyTimelineViewController: UIViewController {
         // 自定义下拉刷新进行中不改写（消息页同款守卫）：刷新中内边距是基线 +84，
         // 容器重发顶距会打断指示器。
         guard !isCustomPullRefreshing else { return }
-        let top = view.safeAreaInsets.top + (visible ? 60 : 0)
+        let top = view.safeAreaInsets.top + (visible ? 60 : 0) + BearyDeveloperMode.shared.devBannerInset
         let bottom = BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
         if tableView.contentInset.top != top || tableView.contentInset.bottom != bottom {
             tableView.contentInset.top = top
@@ -4644,6 +4646,50 @@ class BearyTimelineViewController: UIViewController {
 
     // MARK: - 时间线拉取
 
+    /// 开发者模式变化：日期 / 假日记改动走整页重拉（锚点按假日重算）；
+    /// 强制态直接置态渲染；字号只重载表（字号在 configure 时重算）。
+    @objc private func handleDevModeChanged(_ note: Notification) {
+        let kind = (note.userInfo?["kind"] as? String) ?? ""
+        switch kind {
+        case "date", "fakeEntries":
+            reloadTimeline(keepSelectedDay: false)
+        case "forcedTimeline":
+            applyDevForcedTimeline()
+        case "font":
+            tableView.reloadData()
+        default:
+            break
+        }
+    }
+
+    /// 开发者模式时间线强制态（仅内存）：error / empty / loading 直接置态渲染，不发请求；
+    /// 清除后走一次正常重拉。
+    private func applyDevForcedTimeline() {
+        switch BearyDevPreviewState.forcedTimeline {
+        case .none:
+            reloadTimeline(keepSelectedDay: false)
+        case .error:
+            timelineState = .failed
+            timelineUnauthorized = false
+            timelineEntries = []
+            dayEntries = []
+            tableView.reloadData()
+            updateChrome()
+        case .empty:
+            timelineState = .loaded
+            timelineEntries = []
+            dayEntries = []
+            tableView.reloadData()
+            updateChrome()
+        case .loading:
+            timelineState = .loading
+            timelineEntries = []
+            dayEntries = []
+            tableView.reloadData()
+            updateChrome()
+        }
+    }
+
     private func loadTimelineFirstPage(completion: (() -> Void)? = nil, force: Bool = false) {
         // 112：在途跳过（force 除外）——跳过时不 bump seq、不改状态，
         // 在途回包自会渲染；completion 暂存、在途匹配完成时补调。
@@ -4651,6 +4697,12 @@ class BearyTimelineViewController: UIViewController {
             if let completion = completion {
                 timelineFirstPagePendingCompletions.append(completion)
             }
+            return
+        }
+        // 开发者模式强制态（仅内存）：不发请求，按强制态渲染。
+        if BearyDevPreviewState.forcedTimeline != .none {
+            applyDevForcedTimeline()
+            completion?()
             return
         }
         timelineFirstPageSeq += 1
@@ -4702,6 +4754,12 @@ class BearyTimelineViewController: UIViewController {
                     return
                 }
                 strongSelf.timelineFirstPageInFlight = false
+                // 开发者模式强制态（仅内存）：真实回包（成功或失败）一律不接受，按强制态渲染。
+                if BearyDevPreviewState.forcedTimeline != .none {
+                    strongSelf.applyDevForcedTimeline()
+                    strongSelf.finishTimelineFirstPage(diffEligible: false, oldSections: oldSections, hadOldRows: hadOldRows, completion: completion)
+                    return
+                }
                 switch result {
                 case .success(let list):
                     strongSelf.timelineEntries = list.entries ?? []
@@ -4722,6 +4780,15 @@ class BearyTimelineViewController: UIViewController {
                     // 筛子档不写盘：快照只代表全部档，筛后快照会污染下次冷启动。
                     if strongSelf.timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
                         BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: strongSelf.timelineEntries, hasMore: strongSelf.timelineHasMore, trashCount: strongSelf.trashCountValue, counts: strongSelf.countsValue)
+                    }
+                    // 开发者模式 1000 篇假日记（仅内存）：快照已存真实首屏，
+                    // 此处再替换内存模型、停分页；当日面板随假模型派生（不写日缓存，见 derive 内守卫）。
+                    if BearyDevPreviewState.fakeEntriesEnabled {
+                        strongSelf.timelineEntries = BearyDeveloperMode.shared.makeFakeEntries(count: 1000)
+                        strongSelf.timelineHasMore = false
+                        if let key = strongSelf.selectedDayKey {
+                            strongSelf.deriveDayPanelFromFirstPageIfCovered(key: key)
+                        }
                     }
                     // 切筛子错峰：只给切档前不在列表里的新行排队（已有元素不重播；
                     // 减动效时队列为空，不播；分页同款 willDisplay 起播机制）。
@@ -4857,12 +4924,26 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.endCustomPullRefresh()
                     return
                 }
+                // 开发者模式强制态（仅内存）：在途增量回包不接受，按强制态渲染。
+                if BearyDevPreviewState.forcedTimeline != .none {
+                    strongSelf.timelineFirstPageInFlight = false
+                    strongSelf.applyDevForcedTimeline()
+                    strongSelf.finishTimelineFirstPage(diffEligible: false, oldSections: oldSections, hadOldRows: hadOldRows, completion: completion)
+                    return
+                }
                 switch result {
                 case .failure:
                     strongSelf.fetchTimelineFirstPageFull(
                         seq: seq, oldSections: oldSections, hadOldRows: hadOldRows, completion: completion
                     )
                 case .success(let (fresh, firstList)):
+                    // 开发者模式 1000 篇假日记：增量前插不混入假模型，走全量由注入点统一处理。
+                    if BearyDevPreviewState.fakeEntriesEnabled {
+                        strongSelf.fetchTimelineFirstPageFull(
+                            seq: seq, oldSections: oldSections, hadOldRows: hadOldRows, completion: completion
+                        )
+                        return
+                    }
                     let newItems = fresh.filter { entry in
                         guard let entryId = entry.id else { return false }
                         return !knownIds.contains(entryId)
@@ -5958,7 +6039,8 @@ class BearyTimelineViewController: UIViewController {
         dayEntriesKey = key
         dayState = .loaded
         // 筛子档派生不写日缓存：派生行已按 vis 过滤，写盘会污染全部档日缓存。
-        if timelineVisFilter == .all {
+        // 开发者模式假日记同样不写盘（假数据只放内存）。
+        if timelineVisFilter == .all && !BearyDevPreviewState.fakeEntriesEnabled {
             cacheDayEntries(key: key, entries: derived)
         }
         prefetchAdjacentDays(for: key)

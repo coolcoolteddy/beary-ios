@@ -2035,6 +2035,9 @@ final class BearyDetailViewController: UIViewController {
         ephemeralExpiryTimer?.invalidate()
         ephemeralExpiryTimer = nil
         guard !locallyHiddenByModeration, entry.placeholder != true else { return }
+        // 开发者模式时间旅行（仅内存）：假日下不按真实时钟排到期定时器，
+        // 否则定时器会在真实到期点把假态显示翻回私密；退出开发者模式后回前台复核重排。
+        guard BearyDevPreviewState.fakeDay == nil else { return }
         guard BearyEphemeral.isLive(entry), let until = entry.ephemeralUntil else { return }
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         let interval = TimeInterval(until - nowMs) / 1000.0
