@@ -434,11 +434,15 @@ enum BearyDMStore {
     }
 
     /// 新增或覆盖一条待发（同 localKey 覆盖）。
-    static func savePending(_ pending: PendingSend, accountId: Int?) {
+    /// 审计新一轮 #3：写盘成败经 completion 回主线程——调用方须确认落盘后
+    /// 再清空输入框并发网请求；失败时不得按已落盘处理。默认空回调，旧调用
+    /// （测试等）不用改。
+    static func savePending(_ pending: PendingSend, accountId: Int?, completion: @escaping (Bool) -> Void = { _ in }) {
         ioQueue.async {
             var list = loadPendingList(accountId: accountId)
             list = BearyDMStoreCore.upsertPending(list, pending)
-            _ = savePendingList(list, accountId: accountId)
+            let saved = savePendingList(list, accountId: accountId)
+            DispatchQueue.main.async { completion(saved) }
         }
     }
 

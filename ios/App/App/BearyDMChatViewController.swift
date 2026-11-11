@@ -1323,67 +1323,75 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         let temp = BearyAPI.DMMessage(id: nil, senderId: myId, fromMe: true, body: body, createdAt: nowMs, localKey: key)
         // 审计四轮增量 12：待发先落盘（独立待发文件，与主库损坏保护互不干扰）——
         // 发送中/失败态被系统终止，重启后仍能恢复查看、长按复制，不自动重发。
-        BearyDMStore.savePending(.init(localKey: key, peerId: userId, body: body, createdAt: nowMs, status: .sending), accountId: storeAccountId)
-        messages.append(temp)
-        // 入场动效归 animateLastMineRow——先记已播，免得 willDisplay
-        // 的通用淡入与上浮动画抢 alpha。
-        fadedRowKeys.insert("msg-pending-\(key)")
-        inputTextView.text = ""
-        updateSendButton()
-        updateInputChrome()
-        updateInputTextViewHeight()
-        updateEmptyState()
-        tableView.reloadData()
-        scrollToBottomIfNeeded()
-        animateLastMineRow()
-        // 请求时捕获账号 + 代次：回包时任一不匹配即丢弃（见 isRequestCurrent）。
-        let requestAccountId = SessionManager.shared.currentUser?.id
-        let requestEpoch = BearyAPI.shared.authEpoch
-        BearyAPI.shared.sendDM(userId: userId, body: body) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                // 切号夹在发送与回包之间时旧回包直接丢弃：不撤行、不 toast、
-                // 不重拉（关页由账号变化广播负责）。
-                guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else { return }
-                switch result {
-                case .success:
-                    // 发送成功即权限无问题：横幅清掉（进页 can 误判时靠此恢复）。
-                    BearyDMStore.removePending(localKey: key, accountId: self.storeAccountId)
-                    self.dmNotAllowed = false
-                    self.updatePermBanner()
-                    self.loadLatest()
-                case .failure(let error):
-                    if case .unauthorized = error {
-                        self.removePendingSend(key: key, restoreDraft: true)
-                        self.onRequireLogin?()
-                    } else if error.isDMNotAllowed {
-                        // 档位不允许：横幅 + 禁用，撤行后草稿回填输入框。
-                        self.removePendingSend(key: key, restoreDraft: true)
-                        self.dmNotAllowed = true
+        // 审计新一轮 #3：确认落盘后再清空输入框并发网请求——写盘失败时正文
+        // 留在输入框，不把这次输入当作可恢复的待发消息。
+        BearyDMStore.savePending(.init(localKey: key, peerId: userId, body: body, createdAt: nowMs, status: .sending), accountId: storeAccountId) { [weak self] saved in
+            guard let self = self else { return }
+            guard saved else {
+                BearyToast.show(in: self.view, message: "暂时无法安全保存")
+                return
+            }
+            self.messages.append(temp)
+            // 入场动效归 animateLastMineRow——先记已播，免得 willDisplay
+            // 的通用淡入与上浮动画抢 alpha。
+            self.fadedRowKeys.insert("msg-pending-\(key)")
+            self.inputTextView.text = ""
+            self.updateSendButton()
+            self.updateInputChrome()
+            self.updateInputTextViewHeight()
+            self.updateEmptyState()
+            self.tableView.reloadData()
+            self.scrollToBottomIfNeeded()
+            self.animateLastMineRow()
+            // 请求时捕获账号 + 代次：回包时任一不匹配即丢弃（见 isRequestCurrent）。
+            let requestAccountId = SessionManager.shared.currentUser?.id
+            let requestEpoch = BearyAPI.shared.authEpoch
+            BearyAPI.shared.sendDM(userId: userId, body: body) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    // 切号夹在发送与回包之间时旧回包直接丢弃：不撤行、不 toast、
+                    // 不重拉（关页由账号变化广播负责）。
+                    guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else { return }
+                    switch result {
+                    case .success:
+                        // 发送成功即权限无问题：横幅清掉（进页 can 误判时靠此恢复）。
+                        BearyDMStore.removePending(localKey: key, accountId: self.storeAccountId)
+                        self.dmNotAllowed = false
                         self.updatePermBanner()
-                    } else if error.isPermissionDenied {
-                        // 审计第 9 项：带业务码的 403 同样进会话关闭；其余 .server
-                        // 错误不在此列，仍走下面失败叹号分支。
-                        self.removePendingSend(key: key, restoreDraft: true)
-                        self.sessionClosed = true
-                        self.inputTextView.isEditable = false
-                        self.updateSendButton()
-                        self.updateEmptyState()
-                        // 审计：403 即已关闭态，不再给自相矛盾的“请重试”。
-                        BearyToast.show(in: self.view, message: "该会话已关闭")
-                    } else if error.isTimeoutOrUnknownResult {
-                        // 超时／结果未知：可能已送达，不认失败、不给重发——撤行、
-                        // 草稿回填，让用户确认对方是否已收到再决定。
-                        self.removePendingSend(key: key, restoreDraft: true)
-                        BearyToast.show(in: self.view, message: "发送结果未知，请确认对方是否已收到后再重发")
-                    } else {
-                        // 确认未送达的失败：行留在原地、侧边出红叹号，点按重发；
-                        // M3：只让这一条摇头并提示「没发出去」，其余行不动。
-                        self.failedSendKeys.insert(key)
-                        BearyDMStore.updatePendingStatus(localKey: key, status: .failed, accountId: self.storeAccountId)
-                        self.reloadPendingRow(key: key)
-                        DispatchQueue.main.async { [weak self] in self?.shakeFailedRow(key: key) }
-                        BearyToast.show(in: self.view, message: "没发出去")
+                        self.loadLatest()
+                    case .failure(let error):
+                        if case .unauthorized = error {
+                            self.removePendingSend(key: key, restoreDraft: true)
+                            self.onRequireLogin?()
+                        } else if error.isDMNotAllowed {
+                            // 档位不允许：横幅 + 禁用，撤行后草稿回填输入框。
+                            self.removePendingSend(key: key, restoreDraft: true)
+                            self.dmNotAllowed = true
+                            self.updatePermBanner()
+                        } else if error.isPermissionDenied {
+                            // 审计第 9 项：带业务码的 403 同样进会话关闭；其余 .server
+                            // 错误不在此列，仍走下面失败叹号分支。
+                            self.removePendingSend(key: key, restoreDraft: true)
+                            self.sessionClosed = true
+                            self.inputTextView.isEditable = false
+                            self.updateSendButton()
+                            self.updateEmptyState()
+                            // 审计：403 即已关闭态，不再给自相矛盾的“请重试”。
+                            BearyToast.show(in: self.view, message: "该会话已关闭")
+                        } else if error.isTimeoutOrUnknownResult {
+                            // 超时／结果未知：可能已送达，不认失败、不给重发——撤行、
+                            // 草稿回填，让用户确认对方是否已收到再决定。
+                            self.removePendingSend(key: key, restoreDraft: true)
+                            BearyToast.show(in: self.view, message: "发送结果未知，请确认对方是否已收到后再重发")
+                        } else {
+                            // 确认未送达的失败：行留在原地、侧边出红叹号，点按重发；
+                            // M3：只让这一条摇头并提示「没发出去」，其余行不动。
+                            self.failedSendKeys.insert(key)
+                            BearyDMStore.updatePendingStatus(localKey: key, status: .failed, accountId: self.storeAccountId)
+                            self.reloadPendingRow(key: key)
+                            DispatchQueue.main.async { [weak self] in self?.shakeFailedRow(key: key) }
+                            BearyToast.show(in: self.view, message: "没发出去")
+                        }
                     }
                 }
             }
