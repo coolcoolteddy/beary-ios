@@ -595,6 +595,13 @@ final class BearyChromeViewController: UIViewController {
         return b
     }
 
+    /// beta 徽标门控（2026-11-10 Li 定）：测试版（TF）显示，商店版隐藏。
+    /// 打包时改 Info.plist 的 BearyDistributionChannel 为 "appstore" 即隐藏，不改代码；
+    /// 值缺失或未知时默认显示（当前所有包都是测试版）。
+    private var shouldShowBetaBadge: Bool {
+        (Bundle.main.object(forInfoDictionaryKey: "BearyDistributionChannel") as? String) != "appstore"
+    }
+
     private func buildChrome() {
         // ---- 顶栏：整宽玻璃，logo 行 60pt 贴安全区下方，其下再加首页切换行
         // （8pt 间隙 + 32pt 切换 + 8pt 底边距，玻璃总高 = 安全区顶 + 108）。
@@ -636,6 +643,35 @@ final class BearyChromeViewController: UIViewController {
             logo.widthAnchor.constraint(equalToConstant: 79),
             logo.heightAnchor.constraint(equalToConstant: 28),
         ])
+        // beta 徽标（2026-11-10 Li 定）：logo 紧右边小 pill，标明这是测试版（TF）；
+        // 商店版由 shouldShowBetaBadge 读 plist 门控隐藏。底色 surface2＋1pt line 边框
+        // （Li 2026-11-10 追加：边框必须可见）；边框走 bearyDynamicBorderColor，
+        // 深浅切换时自动重解动态色。字与登录 pill 同口径固定字号、不跟系统字号。
+        // 无点按动作；顶栏只在首页显示，徽标天然只出现在首页。
+        let betaBadge = UIView()
+        betaBadge.backgroundColor = BearyColors.surface2
+        betaBadge.layer.cornerRadius = 7
+        betaBadge.layer.borderWidth = 1
+        betaBadge.layer.bearyDynamicBorderColor = BearyColors.line
+        betaBadge.clipsToBounds = true
+        betaBadge.isUserInteractionEnabled = false
+        betaBadge.translatesAutoresizingMaskIntoConstraints = false
+        let betaLabel = UILabel()
+        betaLabel.text = "beta"
+        betaLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        betaLabel.adjustsFontForContentSizeCategory = false
+        betaLabel.textColor = BearyColors.ink
+        betaLabel.translatesAutoresizingMaskIntoConstraints = false
+        betaBadge.addSubview(betaLabel)
+        NSLayoutConstraint.activate([
+            betaLabel.leadingAnchor.constraint(equalTo: betaBadge.leadingAnchor, constant: 6),
+            betaLabel.trailingAnchor.constraint(equalTo: betaBadge.trailingAnchor, constant: -6),
+            betaLabel.topAnchor.constraint(equalTo: betaBadge.topAnchor, constant: 3),
+            betaLabel.bottomAnchor.constraint(equalTo: betaBadge.bottomAnchor, constant: -3),
+        ])
+        betaBadge.isAccessibilityElement = true
+        betaBadge.accessibilityLabel = "测试版"
+        betaBadge.isHidden = !shouldShowBetaBadge
         // 栏内按钮：顶栏登录 pill，玻璃范围 Token 允许（栏内），点亮橙色与功能不动。
         let login = BearyGlassButton(type: .custom)
         login.glassTint = BearyColors.ink
@@ -663,7 +699,7 @@ final class BearyChromeViewController: UIViewController {
         // 2026-11-03（Li 定）：首页顶栏铃铛已去除，消息入口只剩底栏消息段；
         // 顶栏右钮剩登录／礼物／搜索三钮，trailing 锚不变、三钮自动右移贴右边缘。
         let spacer = UIView()
-        let topStack = UIStackView(arrangedSubviews: [logo, spacer, login, gift, search])
+        let topStack = UIStackView(arrangedSubviews: [logo, betaBadge, spacer, login, gift, search])
         topStack.axis = .horizontal
         topStack.alignment = .center
         topStack.spacing = 18
