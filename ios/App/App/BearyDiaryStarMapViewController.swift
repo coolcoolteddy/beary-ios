@@ -129,6 +129,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
     /// L3：重叠列表底卡的选中态（单星／单线用上面两个 id 表达，重叠列表
     /// 两者皆空，另记一位；未选中时底卡不出现，见 showDefaultSheet）。
     private var showingOverlapSheet = false
+    /// 审计 R3-1：连线列表底卡的展示态（与重叠列表同款：单星／单线用
+    /// 上面两个 id 表达，连线列表两者皆空，另记一位；未打开时底卡不出现）。
+    private var showingEdgeListSheet = false
     /// P1-5：重叠列表的可核对选择——记 id，不记调用时传入的快照行；
     /// 刷新后用新模型重填（已删的篇移出），单星／单线仍走上面两个 id。
     private var overlapEntryIds: [String]?
@@ -931,10 +934,13 @@ final class BearyDiaryStarMapViewController: UIViewController {
             emptySubLabel.text = viewerIsAuthor
                 ? "写下第一篇日记，它就会成为你的第一颗星。"
                 : "公开的日记会变成这里的星星。"
+            // 审计 R3-1：空态下列表内容已无从谈起，展示态一并复位——否则
+            // 之后模型再非空时旧列表会借旧展示态重现。
+            showingEdgeListSheet = false
             sheetCard.isHidden = true
         } else {
-            // L3：底卡只在选中星／线／重叠列表时出现，未选中时不出现。
-            sheetCard.isHidden = selectedStarId == nil && selectedEdgeId == nil && !showingOverlapSheet
+            // L3：底卡只在选中星／线／重叠列表／连线列表时出现，未选中时不出现。
+            sheetCard.isHidden = selectedStarId == nil && selectedEdgeId == nil && !showingOverlapSheet && !showingEdgeListSheet
         }
         let sliceCount = BearyStarMap.entries(in: filteredEntries, slice: slice).count
         // L3：状态行按实际范围写篇数，不再写死“本片”。
@@ -1051,6 +1057,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         selectedStarId = nil
         selectedEdgeId = nil
         showingOverlapSheet = false
+        showingEdgeListSheet = false
         overlapEntryIds = nil
         skyView.setSelected(starId: nil, edgeId: nil)
         showDefaultSheet()
@@ -1060,6 +1067,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         selectedStarId = entry.id
         selectedEdgeId = nil
         showingOverlapSheet = false
+        showingEdgeListSheet = false
         overlapEntryIds = nil
         skyView.setSelected(starId: entry.id, edgeId: nil)
         showStarSheet(entry)
@@ -1069,6 +1077,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         selectedEdgeId = edge.id
         selectedStarId = nil
         showingOverlapSheet = false
+        showingEdgeListSheet = false
         overlapEntryIds = nil
         skyView.setSelected(starId: nil, edgeId: edge.id)
         showEdgeSheet(edge)
@@ -1080,6 +1089,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         selectedStarId = nil
         selectedEdgeId = nil
         showingOverlapSheet = true
+        showingEdgeListSheet = false
         // P1-5：只记 id——行数据是调用时传入的快照，刷新时按新模型重取。
         overlapEntryIds = entries.compactMap { $0.id }
         skyView.setSelected(starId: nil, edgeId: nil)
@@ -1265,27 +1275,40 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 
     private func showEdgeListSheet() {
+        // 审计 R3-1：连线列表是独立的底卡展示态（与重叠列表同款），打开时
+        // 明确切换过去，不借用选中星星的状态来间接控制显隐。
+        selectedStarId = nil
+        selectedEdgeId = nil
+        showingOverlapSheet = false
+        showingEdgeListSheet = true
+        overlapEntryIds = nil
+        skyView.setSelected(starId: nil, edgeId: nil)
         let edges = listedEdges()
         sheetStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         if edges.isEmpty {
             sheetStack.addArrangedSubview(sheetTitleLabel("暂无连线"))
             sheetStack.addArrangedSubview(sheetBodyLabel("当前筛选下没有连线。"))
-            return
+        } else {
+            sheetStack.addArrangedSubview(sheetTitleLabel("连线 · \(edges.count) 条"))
+            for edge in edges {
+                let row = UIStackView()
+                row.axis = .horizontal
+                row.spacing = 8
+                row.addArrangedSubview(edgeListRowButton(edge))
+                let chevron = UIImageView()
+                chevron.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 16)
+                chevron.tintColor = BearyStarMapNight.secondaryText
+                chevron.contentMode = .scaleAspectFit
+                chevron.setContentHuggingPriority(.required, for: .horizontal)
+                row.addArrangedSubview(chevron)
+                sheetStack.addArrangedSubview(row)
+            }
         }
-        sheetStack.addArrangedSubview(sheetTitleLabel("连线 · \(edges.count) 条"))
-        for edge in edges {
-            let row = UIStackView()
-            row.axis = .horizontal
-            row.spacing = 8
-            row.addArrangedSubview(edgeListRowButton(edge))
-            let chevron = UIImageView()
-            chevron.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 16)
-            chevron.tintColor = BearyStarMapNight.secondaryText
-            chevron.contentMode = .scaleAspectFit
-            chevron.setContentHuggingPriority(.required, for: .horizontal)
-            row.addArrangedSubview(chevron)
-            sheetStack.addArrangedSubview(row)
-        }
+        // L3：底卡默认隐藏，展示函数自己取消隐藏（同 showStarSheet 等）——
+        // 空连线的「暂无连线」两行同样要可见，故取消隐藏放在分支外。
+        // 不另滚：底卡紧贴状态行下方，按钮可点时卡片顶部已在可视区内，
+        // 列表余部随页面正常滚动可见。
+        sheetCard.isHidden = false
     }
 
     /// 连线列表的一行：标题与读屏文案都一次读出原因和两篇日记；点按进
