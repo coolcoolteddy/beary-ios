@@ -8130,15 +8130,43 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         //（编辑态与新建态两分支随后都走 onCancelled），守卫分支（发布在途／面板态／已有弹层）已在上文返回。
         hideCallout(animated: false)
         if isEditMode {
-            // 决议第 4 项 B：取消直接关，不弹确认；只清本地临时图文件，不删原日记、不碰草稿。
-            // 审计四轮增量 09：用户明确放弃编辑，检查点一并清掉（不留恢复提示）。
-            commitPendingRemoval()
-            deleteEditLocalFiles()
-            if let entryId = editingEntry?.id, !entryId.isEmpty {
-                BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: editCheckpointAccountId())
+            // A2（Notion 2026-11-10）：取消时有未保存修改先确认；无修改按旧口径直接关。
+            // 旧「决议第 4 项 B：取消直接关，不弹确认」已由 Li 2026-11-10 授权作废。
+            // 脏判断用 isEditDirtyVsOriginal（现场值比原文，与检查点版同口径）。
+            // 变基并集：清检查点走主线 forAccount 口径（#1215 第三轮审计第 5 项），
+            // 切号后清原号文件、不误删新号文件。
+            guard isEditDirtyVsOriginal() else {
+                commitPendingRemoval()
+                deleteEditLocalFiles()
+                if let entryId = editingEntry?.id, !entryId.isEmpty {
+                    BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: editCheckpointAccountId())
+                }
+                onCancelled?()
+                return true
             }
-            onCancelled?()
-            return true
+            // 有未保存修改：弹确认才丢弃；继续编辑／叉叉／遮罩／下滑关闭都留在编辑器。
+            // B2：isClosing 已在上文立下，留页路径必须复位＋解冻，否则取消钮再也点不动。
+            BearyConfirmSheet.show(from: self, title: "丢弃未保存的修改？", message: "现在退出，这次的修改就没了，原日记不受影响。", actions: [
+                BearyConfirmSheet.Action(title: "丢弃修改", style: .destructive, handler: { [weak self] in
+                    guard let self = self else { return }
+                    self.commitPendingRemoval()
+                    self.deleteEditLocalFiles()
+                    if let entryId = self.editingEntry?.id, !entryId.isEmpty {
+                        BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: self.editCheckpointAccountId())
+                    }
+                    self.onCancelled?()
+                }),
+                BearyConfirmSheet.Action(title: "继续编辑", style: .cancel, handler: { [weak self] in
+                    guard let self = self else { return }
+                    self.isClosing = false
+                    self.updatePublishState()
+                }),
+            ], onDismissWithoutAction: { [weak self] in
+                guard let self = self else { return }
+                self.isClosing = false
+                self.updatePublishState()
+            })
+            return false
         }
         // 决议第 4 项 B：取消不再弹三选、无丢弃路径，直接关 + 静默存草稿。
         // 草稿规则不动：saveDraftNow 原样走分级保存、纯心情不保存的现有逻辑。
