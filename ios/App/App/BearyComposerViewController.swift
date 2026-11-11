@@ -500,14 +500,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 同账号重登 id 不变，校验通过、同一草稿可续写；编辑模式不设它
     /// （saveDraftNow 在编辑态本就是空操作，见 saveDraftNow 首行守卫）。
     private var publishOriginAccountId: Int?
-    /// 打开编辑器时绑定的账号（P0-1）：viewDidLoad 即记下打开时的账号，
-    /// 此后草稿保存一律写该账号的桶，不随重登改写；发布前校验亦认它
-    /// （见 isPublishOriginMismatch）。与 publishOriginAccountId 的区别：
-    /// 后者只在首次点发布时才定（#761），定之前存在“重登后自动保存
-    /// 先把旧内容写进新号桶”的窗口，本绑定堵的就是这个窗口。
-    /// 切篇（loadDraftFromBox）时按箱内草稿所属的当前账号重绑；
-    /// 发布成功/丢弃/重置空白时随 publishOriginAccountId 一并清掉，
-    /// 下一篇再按打开时账号重绑。编辑态不写草稿，绑定无实际作用。
+    /// 打开编辑器时绑定的账号（#1009 P0-1 同款绑定，本支扩展到编辑态）：
+    /// viewDidLoad 即记下打开时的账号，之后检查点保存／恢复／清除与编辑
+    /// PUT 一律认它，不随重登改写。编辑态不写草稿、publishOriginAccountId
+    /// 又只在首次点发布时才定，故编辑态另用本绑定；#1009 合入后变基时与
+    /// 它统一成同一绑定（见 isEditOriginMismatch 注释）。
     private var composerOriginAccountId: Int?
     /// 一并公开部分成功态：setVisibility 已成功、原日记已公开的原日记 id。
     /// 此后新篇发布失败不再回滚原日记（见 performPublish 部分成功分支），
@@ -533,6 +530,59 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard let origin = publishOriginAccountId ?? composerOriginAccountId,
               let current = currentAccountIdForPublish() else { return false }
         return origin != current
+    }
+    /// 编辑原账号是否已失配（第三轮审计第 5 项）：绑定已定、且当前账号已定、
+    /// 两者不同。当前账号未定（如 401 刚清态、尚未重登）不算失配，沿旧口径
+    /// 走登录入口，不在此处误拦。publishOriginAccountId 在编辑态恒为 nil，
+    /// 故不用 isPublishOriginMismatch，另认打开时绑定的 composerOriginAccountId；
+    /// #1009 合入后变基时 isPublishOriginMismatch 改认
+    /// publishOriginAccountId ?? composerOriginAccountId，本函数可直接复用它。
+    private func isEditOriginMismatch() -> Bool {
+        guard isEditMode, let origin = composerOriginAccountId,
+              let current = currentAccountIdForPublish() else { return false }
+        return origin != current
+    }
+    /// 检查点所属账号：打开编辑器时绑定的原账号优先，未绑定（老路径／游客）
+    /// 时退回全局当前账号（与 #1009 的 saveDraftNow 捕获口径一致）。
+    private func editCheckpointAccountId() -> Int? {
+        composerOriginAccountId ?? BearyDraftStore.currentAccountId
+    }
+    /// 编辑中切到另一账号时的冻结态（第三轮审计第 5 项）：发布钮与全部输入
+    /// 入口随 refreshPublishingInputFreeze 一起禁，内容保留在原账号；切回
+    /// 原账号后自动解冻。
+    private var editOriginFrozen = false
+    private var editOriginMismatchAlertRetries = 0
+    /// 账号变化通知处理（.bearyUserDidChange）：只在编辑态响应；失配时冻结、
+    /// 切回时解冻，冻结态变化才调 updatePublishState（其内一并刷新输入冻结）。
+    @objc private func handleEditOriginAccountChanged() {
+        guard isEditMode else { return }
+        refreshEditOriginFreeze()
+    }
+    private func refreshEditOriginFreeze() {
+        guard isEditMode else { return }
+        let mismatched = isEditOriginMismatch()
+        guard mismatched != editOriginFrozen else { return }
+        editOriginFrozen = mismatched
+        updatePublishState()
+        if mismatched {
+            editOriginMismatchAlertRetries = 0
+            presentEditOriginMismatchAlert()
+        }
+    }
+    /// 账号已变化提示：内容保留在原账号，请切回原账号继续。登录页在上时
+    /// present 会失败，1 秒重试、最多 3 次（恢复提示同款守卫）；仍被挡时
+    /// 放弃本次提示，冻结态本身仍在，用户切回后自动解冻。
+    private func presentEditOriginMismatchAlert() {
+        guard isEditMode, isEditOriginMismatch() else { return }
+        guard presentedViewController == nil else {
+            guard editOriginMismatchAlertRetries < 3 else { return }
+            editOriginMismatchAlertRetries += 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.presentEditOriginMismatchAlert()
+            }
+            return
+        }
+        showAlert(message: "账号已变化，这篇编辑属于原账号，修改已保留在原账号。请回到原账号后再继续编辑。")
     }
     /// 账号失配提示：只提示、不删不改任何草稿与已公开态。部分成功态
     /// （原日记已公开）另加一句，免得用户误以为什么都没发生。
@@ -997,8 +1047,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         buildRecipientRow()
         buildQuoteSection()
         buildQuotePanel()
-        // P0-1：打开编辑器即绑定原账号（先于 restoreDraft 记下，恢复读盘
-        // 与后续自动保存都认它，不随重登改写；见 composerOriginAccountId）。
+        // 第三轮审计第 5 项：打开编辑器即绑定原账号（先于 setupEditContent /
+        // restoreDraft 记下，检查点读写与编辑 PUT 都认它，不随重登改写；
+        // 见 composerOriginAccountId，与 #1009 P0-1 同一绑定）。
         composerOriginAccountId = currentAccountIdForPublish()
         if isEditMode {
             setupEditContent()
@@ -1022,6 +1073,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         NotificationCenter.default.addObserver(self, selector: #selector(flushDraftBeforeBackground), name: UIApplication.willResignActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(flushDraftBeforeBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(presentBackgroundFlushFailureIfNeeded), name: UIApplication.willEnterForegroundNotification, object: nil)
+        // 第三轮审计第 5 项：编辑中切号立即冻结（见 handleEditOriginAccountChanged）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleEditOriginAccountChanged), name: .bearyUserDidChange, object: nil)
         NSLog("[Diag] composer-viewDidLoad-exit")
         // 临时诊断（81 包，定根因后删除）。
         DiagFile.mark("viewDidLoad-exit")
@@ -5193,7 +5246,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 注释）；重试成功后 setupEditContent 末尾重调此处即恢复。
         // B2：关闭进行中时发布钮亦禁用——关闭保存与发布提交不得并发
         //（发布会另起一条 saveDraftNow + 请求链，与关闭保存抢同一篇草稿）。
-        publishButton.isEnabled = !isPublishing && !isClosing && !isDraftExitSaving && !hasUploadingImage() && !editSaveBlockedAfterDeadline && !editQuoteFetchFailed && !editQuoteFetchInFlight && !trimmedContent().isEmpty
+        // 切到另一账号时冻结（editOriginFrozen，第三轮审计第 5 项），切回原账号即解冻。
+        publishButton.isEnabled = !isPublishing && !isClosing && !isDraftExitSaving && !hasUploadingImage() && !editSaveBlockedAfterDeadline && !editQuoteFetchFailed && !editQuoteFetchInFlight && !editOriginFrozen && !trimmedContent().isEmpty
         refreshPublishAppearance()
         refreshPublishBusyState()
         refreshPublishingInputFreeze()
@@ -5220,7 +5274,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 审计-编辑器详情：期限已过保留态与发布在途同冻——正文/标题只读
         // （UITextView 不可编辑时仍可选区复制），各入口钮同禁，保存钮已由
         // updatePublishState 持续禁用；本位只在期限已过后才为真，不影响常态。
-        let frozen = isPublishing || editSaveBlockedAfterDeadline || isDraftExitSaving || isClosing
+        let frozen = isPublishing || editSaveBlockedAfterDeadline || isDraftExitSaving || isClosing || editOriginFrozen
         textView.isEditable = !frozen
         headlineField.isEditable = !frozen
         // 100 包编辑器面修法：发布在途时可见性钮亦冻结——此前冻结清单
@@ -7753,12 +7807,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             completion?(false)
             return
         }
+        // 第三轮审计第 5 项：切到另一账号后不写检查点——不把原账号的修改
+        // 写进新号桶，内容仍在内存与原号检查点里；按失败回传，关闭／冲刷
+        // 路径沿旧口径留页重试。
+        guard !isEditOriginMismatch() else {
+            completion?(false)
+            return
+        }
         guard isEditDirtyVsOriginal() else {
-            BearyDraftStore.clearEditCheckpointAsync(entryId: entryId)
+            BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: editCheckpointAccountId())
             completion?(true)
             return
         }
-        guard let accountId = BearyDraftStore.currentAccountId else {
+        guard let accountId = editCheckpointAccountId() else {
             completion?(false)
             return
         }
@@ -7779,7 +7840,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func maybeOfferEditCheckpointRestore() {
         guard isEditMode, !editCheckpointPromptShown, pendingEditCheckpoint == nil,
               let entryId = editingEntry?.id, !entryId.isEmpty else { return }
-        let accountId = BearyDraftStore.currentAccountId
+        // 第三轮审计第 5 项：恢复读盘认打开时绑定的原账号，不随重登改读新号桶。
+        let accountId = editCheckpointAccountId()
         let baselineVersion = editorEditVersion
         BearyDraftStore.ioQueue.async { [weak self] in
             let checkpoint = BearyDraftStore.loadEditCheckpoint(entryId: entryId, forAccount: accountId)
@@ -7789,7 +7851,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                       self.editorEditVersion == baselineVersion,
                       self.pendingEditCheckpoint == nil else { return }
                 guard self.editCheckpointDiffersFromOriginal(checkpoint) else {
-                    BearyDraftStore.clearEditCheckpointAsync(entryId: entryId)
+                    BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: accountId)
                     return
                 }
                 self.editCheckpointPromptRetries = 0
@@ -7851,7 +7913,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             BearyConfirmSheet.Action(title: "放弃", style: .destructive, handler: { [weak self] in
                 guard let self = self else { return }
                 if let entryId = self.editingEntry?.id, !entryId.isEmpty {
-                    BearyDraftStore.clearEditCheckpointAsync(entryId: entryId)
+                    BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: self.editCheckpointAccountId())
                 }
             }),
         ])
@@ -8014,7 +8076,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             commitPendingRemoval()
             deleteEditLocalFiles()
             if let entryId = editingEntry?.id, !entryId.isEmpty {
-                BearyDraftStore.clearEditCheckpointAsync(entryId: entryId)
+                BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: editCheckpointAccountId())
             }
             onCancelled?()
             return true
@@ -8550,6 +8612,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             showAlert(message: "找不到要编辑的日记")
             return
         }
+        // 第三轮审计第 5 项：编辑 PUT 发前校验原账号——打开后切到另一账号时
+        // 不发请求，内容保留在原账号，提示切回原账号（冻结态的提示同款文案）。
+        guard !isEditOriginMismatch() else {
+            editOriginMismatchAlertRetries = 0
+            presentEditOriginMismatchAlert()
+            return
+        }
+        // PUT 按原账号发出；回包清理检查点时认它，不认回包时刻的当前账号。
+        let requestOriginAccountId = editCheckpointAccountId()
         isPublishing = true
         updatePublishState()
         // 109：编辑 PUT 带输入框标题（清空发显式空串，服务端归一化为 NULL 即清标题；
@@ -8574,8 +8645,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 case .success:
                     self.deleteEditLocalFiles()
                     self.commitPendingRemoval()
-                    // 审计四轮增量 09：提交成功，检查点已无意义，清掉。
-                    BearyDraftStore.clearEditCheckpointAsync(entryId: entryId)
+                    // 审计四轮增量 09：提交成功，检查点已无意义，清掉。第三轮审计
+                    // 第 5 项：按发出 PUT 时的原账号清，不按回包时刻的当前账号。
+                    BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: requestOriginAccountId)
+                    // 在途切号：PUT 已按原账号落盘，不把结果回传给容器（当前账号
+                    // 已不是原账号），冻结编辑器并提示切回原账号查看。
+                    if self.isEditOriginMismatch() {
+                        self.refreshEditOriginFreeze()
+                        return
+                    }
                     // D2：把编辑器终态写回原 Entry 副本传给容器（引用已清时 quoteId/quote
                     /// 均为 nil，容器据此清行内引用卡；已删引用不按正常 quote 回传）。
                     if var updated = self.editingEntry {
