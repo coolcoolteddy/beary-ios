@@ -1402,10 +1402,14 @@ final class BearyTimelineCell: UITableViewCell {
     private func refreshTimelineLocationRow(entry: Entry) {
         guard let line = BearyLocationDisplay.display(entry: entry) else {
             timelineLocationStack.isHidden = true
+            // 位置行隐藏时其后间距置 0（与标题行同款口径；不归零会多 9pt，
+            // 与 :1144 注释「栈自动塌掉不留空行」相左，以卡片 126 真机实测为准）。
+            cardStackReference?.setCustomSpacing(0, after: timelineLocationStack)
             timelineLocationLabel.text = nil
             return
         }
         timelineLocationStack.isHidden = false
+        cardStackReference?.setCustomSpacing(9, after: timelineLocationStack)
         timelineLocationLabel.text = line
     }
 
@@ -1581,6 +1585,9 @@ final class BearyTimelineCell: UITableViewCell {
         let trimmedTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
         titleLabel.isHidden = trimmedTitle.isEmpty
+        // 标题隐藏时其后间距置 0，正文直接贴头行间距（卡片／详情同款口径；
+        // UIStackView 会把 setCustomSpacing 的值算在隐藏行之后，不归零会多 6pt）。
+        cardStackReference?.setCustomSpacing(trimmedTitle.isEmpty ? 0 : 6, after: titleLabel)
         contentLabel.attributedText = BearyText.inlineAttributedText(from: body, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark)
         // TL-3 引用卡（C4 起复用公共 BearyQuoteCardView，不再自绘）：
         // 引用日记在时间线里必须有痕迹，卡内附 42px 引用缩略图行，无图不占位。
