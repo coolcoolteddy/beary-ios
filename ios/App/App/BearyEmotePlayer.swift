@@ -967,4 +967,28 @@ public final class BearyEmoteView: UIView {
         }
         return CachedEmote(animation: animation, loopStart: loopStart, loopEnd: loopEnd, endFrame: endFrame, estimatedCostBytes: estimatedCost)
     }
+
+    /// Lottie 静态帧渲染（供无 PNG 的节日心情做内联附件图）：
+    /// 用同一份模型缓存（cachedEmoteEntry，命中即零解析）；未命中时同步解析
+    /// （节日 JSON 仅 10–40KB，一次解析在点按链路上可接受）；
+    /// 取循环段末帧（与减动效静态帧同一落点 staticFrame），渲染进指定尺寸位图。
+    /// 只能在主线程调用（建 LottieAnimationView 并渲染图层）；渲染结果待真机复验。
+    public static func renderedStaticImage(for key: String, dark: Bool, size: CGSize) -> UIImage? {
+        guard Thread.isMainThread else { return nil }
+        guard size.width > 0, size.height > 0 else { return nil }
+        guard let cached = cachedEmoteEntry(for: key, dark: dark) else { return nil }
+        let view = LottieAnimationView(animation: cached.animation)
+        view.contentMode = .scaleAspectFit
+        view.backgroundColor = .clear
+        view.frame = CGRect(origin: .zero, size: size)
+        view.currentFrame = cached.staticFrame
+        view.layoutIfNeeded()
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = UIScreen.main.scale
+        format.opaque = false
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            guard let context = UIGraphicsGetCurrentContext() else { return }
+            view.layer.render(in: context)
+        }
+    }
 }
