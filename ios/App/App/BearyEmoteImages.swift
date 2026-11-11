@@ -10,6 +10,9 @@ import UIKit
 enum BearyEmoteImages {
     /// C3：深色缺失上报记录（首次缺失的 key 集合，供容器/诊断面读取上报；
     /// 当前 40 只深浅资产齐全，本集合正常为空）。
+    /// C6：读写经 missingDarkKeysLock 保护（查-插须原子完成，否则两路
+    /// 同时首遇同一 key 会重复上报）。
+    private static let missingDarkKeysLock = NSLock()
     private(set) static var missingDarkKeys: Set<String> = []
 
     /// C3：深色资产缺失通知（userInfo ["key": String]），容器可订阅后上报；
@@ -25,8 +28,15 @@ enum BearyEmoteImages {
             // 深色底上对比度骤降）。首次缺失时日志 + 记录 + 通知三路上报，
             // 并返回 nil（调用方显示空白占位），不让浅色版冒充深色版；
             // 同一 key 只上报一次，避免列表滚动时日志刷屏。
-            if !missingDarkKeys.contains(key) {
+            // 查-插在同一把锁内原子完成；日志与通知放锁外，避免观察者
+            // 回调 image(for:) 时重入同一把锁。
+            missingDarkKeysLock.lock()
+            let isFirstMissing = !missingDarkKeys.contains(key)
+            if isFirstMissing {
                 missingDarkKeys.insert(key)
+            }
+            missingDarkKeysLock.unlock()
+            if isFirstMissing {
                 NSLog("[BearyEmoteImages] missing dark asset for key=%@", key)
                 NotificationCenter.default.post(name: darkAssetMissingNotification, object: nil, userInfo: ["key": key])
             }
