@@ -665,10 +665,13 @@ final class BearyMonthlyCharsChartView: UIView {
     private var selectedMonth: Int?
     private var monthValueLabels: [(month: Int, label: UILabel)] = []
     private var monthValues: [Int] = []
+    /// 选中月完整数值行（图表上方，titleRow 内；无选中月时隐藏）。
+    private var selectedValueLabel: UILabel?
 
-    /// 柱顶数值文案：峰值与选中月永远完整；其余过万简写（1.2万），万以下完整。
+    /// 柱顶数值文案：仅选中月显示完整数字；其余过万简写（1.2万），万以下完整。
+    /// 峰值月不再在柱顶写完整数——选中月的完整数值见图表上方独立行。
     private func monthValueText(month: Int, value: Int, maxValue: Int) -> String {
-        if month == selectedMonth || (maxValue > 0 && value == maxValue) { return "\(value)" }
+        if month == selectedMonth { return "\(value)" }
         if value >= 10000 {
             let text = String(format: "%.1f", Double(value) / 10000.0)
             return (text.hasSuffix(".0") ? String(text.dropLast(2)) : text) + "万"
@@ -681,6 +684,13 @@ final class BearyMonthlyCharsChartView: UIView {
         for (month, label) in monthValueLabels {
             let value = month <= monthValues.count ? monthValues[month - 1] : 0
             label.text = monthValueText(month: month, value: value, maxValue: maxValue)
+        }
+        // R7-5：选中月的完整数值移到图表上方独立行显示。
+        if let selected = selectedMonth, selected >= 1, selected <= monthValues.count {
+            selectedValueLabel?.text = "\(selected)月 · \(monthValues[selected - 1]) 字"
+            selectedValueLabel?.isHidden = false
+        } else {
+            selectedValueLabel?.isHidden = true
         }
     }
 
@@ -705,6 +715,13 @@ final class BearyMonthlyCharsChartView: UIView {
         maxLabel.textColor = BearyColors.gray
         maxLabel.text = maxValue > 0 ? "最高 \(maxValue) 字" : "这一年还没有字数"
         titleRow.addArrangedSubview(maxLabel)
+        // R7-5：选中月完整数值行（与最高字同款 12pt 灰字），无选中月时隐藏。
+        let selectedLabel = UILabel()
+        selectedLabel.font = UIFont.systemFont(ofSize: 12)
+        selectedLabel.textColor = BearyColors.gray
+        selectedLabel.isHidden = true
+        selectedValueLabel = selectedLabel
+        titleRow.addArrangedSubview(selectedLabel)
         let columns = UIStackView()
         columns.axis = .horizontal
         columns.spacing = 2
@@ -724,7 +741,7 @@ final class BearyMonthlyCharsChartView: UIView {
             column.accessibilityTraits = .button
             let valueLabel = UILabel()
             // 12 列固定宽，字号不跟系统放大（放大会撑破列宽）：固定 9pt、
-            // 不再继续缩小；峰值与选中月显完整数，其余过万简写（见 monthValueText）。
+            // 不再继续缩小；仅选中月显完整数，其余过万简写（见 monthValueText）。
             valueLabel.font = UIFont.systemFont(ofSize: 9)
             valueLabel.textColor = BearyColors.gray
             valueLabel.text = monthValueText(month: month, value: value, maxValue: maxValue)
@@ -1147,7 +1164,8 @@ final class BearyYearReviewViewController: UIViewController {
                 nameLabel.adjustsFontForContentSizeCategory = true
                 nameLabel.textColor = BearyColors.ink
                 nameLabel.text = BearyText.moodNames[item.key] ?? item.key
-                nameLabel.widthAnchor.constraint(equalToConstant: 64).isActive = true
+                // R7-4：名称按内容自然定宽（原 64pt 必需宽在大字号下会截断）；
+                // 进度条留一条最小宽兜底，避免大字号名称把它挤到零宽。
                 let barBackground = UIView()
                 barBackground.backgroundColor = BearyColors.surface2
                 barBackground.layer.cornerRadius = 4
@@ -1163,6 +1181,7 @@ final class BearyYearReviewViewController: UIViewController {
                     barFill.widthAnchor.constraint(equalTo: barBackground.widthAnchor, multiplier: CGFloat(item.count) / CGFloat(maxCount)),
                 ])
                 barBackground.heightAnchor.constraint(equalToConstant: 8).isActive = true
+                barBackground.widthAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
                 let countLabel = UILabel()
                 countLabel.font = BearyDynamicType.numberFont()
                 countLabel.textColor = BearyColors.gray
@@ -1201,6 +1220,9 @@ final class BearyYearReviewViewController: UIViewController {
             valueLabel.textColor = BearyColors.ink
             valueLabel.text = value
             valueLabel.numberOfLines = 0
+            // R7-6：长地名先让右侧换行、不挤左侧标题。
+            titleLabel.setContentCompressionResistancePriority(UILayoutPriority(rawValue: 751), for: .horizontal)
+            valueLabel.setContentCompressionResistancePriority(UILayoutPriority(rawValue: 749), for: .horizontal)
             row.addArrangedSubview(titleLabel)
             row.addArrangedSubview(valueLabel)
             dynamicStack.addArrangedSubview(row)
