@@ -4041,9 +4041,11 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func presentSimpleAlert(message: String) {
-        let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "知道了", style: .default, handler: nil))
-        present(alert, animated: BearyMotion.animated(true), completion: nil)
+        // 底部弹窗迁移：原 UIAlertController(.alert)，无标题、message 原样、
+        // 单个「知道了」钮——文案与语义不变，只换呈现容器。
+        BearyConfirmSheet.show(from: self, title: "", message: message, actions: [
+            BearyConfirmSheet.Action(title: "知道了", style: .default),
+        ])
     }
 
     // MARK: - 批 D：个性化模块（签名 / 月历 / 统计 / 那年今日 / 随机漫步 / 年度回顾）
@@ -7965,51 +7967,48 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
     /// stored 仍公开，旧口径会把“公开”点成“私密”）。
     /// 即时反馈（2026-10-29 定版）：点按瞬间先按目标态同步可见行（图标与 pill
     /// 立即变），回包成功对齐服务端值；失败回滚原态 + 拒绝动效。
-    /// 2026-10-31 卡片 ⋯ 菜单（时间线风格 actionSheet）：本人篇 编辑内容（15 分钟内）／
+    /// 2026-10-31 卡片 ⋯ 菜单（时间线风格）：本人篇 编辑内容（15 分钟内）／
     /// 修改权限／删除；他人公开篇 举报（已举报置灰）；点赞／收藏／分享是互动，
     /// 仍在底部操作行，不进菜单；长按菜单已随 ⋯ 归并删除。
+    /// 2026-11-11 迁底部弹窗（BearyConfirmSheet；原 actionSheet 文案／顺序／
+    /// 语义全保留，iPad popover 锚点随迁移删去）。
     private func presentCardMoreMenu(entry: Entry, sourceView: UIView) {
-        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        var actions: [BearyConfirmSheet.Action] = []
         if entry.isMine == true {
-            // 置顶行（本人篇才有；菜单行一律纯文字——UIAlertAction 无公开 image 入参，
-            // 项目菜单行同款，图钉只出现在卡片置顶标识上）：未置顶显“置顶”，已置顶显“取消置顶”。
-            sheet.addAction(UIAlertAction(title: entry.isPinned ? "取消置顶" : "置顶", style: .default) { [weak self] _ in
+            // 置顶行（本人篇才有；菜单行一律纯文字——底 sheet 按钮同样纯文字，
+            // 图钉只出现在卡片置顶标识上）：未置顶显“置顶”，已置顶显“取消置顶”。
+            actions.append(BearyConfirmSheet.Action(title: entry.isPinned ? "取消置顶" : "置顶", style: .default) { [weak self] in
                 self?.handlePinToggle(entry: entry)
             })
             if let deadline = entry.editDeadline, nowMs < deadline {
-                sheet.addAction(UIAlertAction(title: "编辑内容", style: .default) { [weak self] _ in
+                actions.append(BearyConfirmSheet.Action(title: "编辑内容", style: .default) { [weak self] in
                     self?.onEditEntry?(entry)
                 })
             } else {
                 // r29-11：过期（或 editDeadline 缺失即已锁）时编辑项不再直接消失，
-                // 与详情页同口径，置灰并附说明。
-                let expiredEdit = UIAlertAction(title: "编辑（已超 15 分钟不可编辑）", style: .default, handler: nil)
-                expiredEdit.isEnabled = false
-                sheet.addAction(expiredEdit)
+                // 与详情页同口径，置灰并附说明；handler 为 nil。
+                actions.append(BearyConfirmSheet.Action(title: "编辑（已超 15 分钟不可编辑）", style: .default, isEnabled: false))
             }
-            sheet.addAction(UIAlertAction(title: "修改权限", style: .default) { [weak self] _ in
+            actions.append(BearyConfirmSheet.Action(title: "修改权限", style: .default) { [weak self] in
                 self?.handleCellVisibilityToggle(entry: entry)
             })
-            sheet.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
+            actions.append(BearyConfirmSheet.Action(title: "删除", style: .destructive) { [weak self] in
                 self?.onDeleteEntry?(entry)
             })
         } else if BearyEphemeral.isEffectivelyPublic(entry), let entryId = entry.id {
             let reported = BearyReportedStore.isReported(entryId: entryId)
-            sheet.addAction(UIAlertAction(title: reported ? "已举报" : "举报", style: .default, handler: reported ? nil : { [weak self] _ in
-                guard let strongSelf = self else { return }
-                BearyReportFlow.present(from: strongSelf, entryId: entryId, entryLabel: nil)
-            }))
             if reported {
-                sheet.actions.last?.isEnabled = false
+                actions.append(BearyConfirmSheet.Action(title: "已举报", style: .default, isEnabled: false))
+            } else {
+                actions.append(BearyConfirmSheet.Action(title: "举报", style: .default) { [weak self] in
+                    guard let strongSelf = self else { return }
+                    BearyReportFlow.present(from: strongSelf, entryId: entryId, entryLabel: nil)
+                })
             }
         }
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = sourceView
-            popover.sourceRect = sourceView.bounds
-        }
-        present(sheet, animated: BearyMotion.animated(true))
+        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
+        BearyConfirmSheet.show(from: self, title: "", message: nil, actions: actions)
     }
 
     // MARK: - 日记置顶（单槽位，乐观更新总口径）
@@ -8310,14 +8309,16 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         // 审计 P1-10：handle 直达时 targetUserIdValue 为 nil，更多菜单全死——
         // 改与 2040 行同口径：已加载的 profile id 优先，次取直达 id。
         guard isOwnProfile == false, let targetUserId = profile?.profileIdValue ?? targetUserIdValue else { return }
-        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        // 2026-11-11 他人页更多菜单迁底部弹窗（BearyConfirmSheet；原 actionSheet
+        // 文案／顺序／语义全保留，iPad popover 锚点随迁移删去）。
+        var actions: [BearyConfirmSheet.Action] = []
         if let target = reportTargetEntry, let targetId = target.id {
-            sheet.addAction(UIAlertAction(title: "举报", style: .default) { [weak self] _ in
+            actions.append(BearyConfirmSheet.Action(title: "举报", style: .default) { [weak self] in
                 guard let strongSelf = self else { return }
                 BearyReportFlow.present(from: strongSelf, entryId: targetId, entryLabel: nil)
             })
         }
-        sheet.addAction(UIAlertAction(title: "拉黑", style: .destructive) { [weak self] _ in
+        actions.append(BearyConfirmSheet.Action(title: "拉黑", style: .destructive) { [weak self] in
             guard let strongSelf = self else { return }
             BearyBlockFlow.block(from: strongSelf, userId: targetUserId, userName: strongSelf.topNameLabel.text) { [weak self] success in
                 guard success, let strongSelf = self else { return }
@@ -8335,12 +8336,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                 }
             }
         })
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = topMoreButton
-            popover.sourceRect = topMoreButton.bounds
-        }
-        present(sheet, animated: BearyMotion.animated(true))
+        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
+        BearyConfirmSheet.show(from: self, title: "", message: nil, actions: actions)
     }
 
     @objc private func handleReportedEntryNotification(_ note: Notification) {
