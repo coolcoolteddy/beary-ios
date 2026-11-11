@@ -1088,9 +1088,11 @@ class BearyFeedViewController: UIViewController {
 
     private func presentActionFailedAlert() {
         if presentedViewController != nil { return }
-        let alert = UIAlertController(title: nil, message: "操作失败，请重试", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "确定", style: .default, handler: nil))
-        present(alert, animated: !UIAccessibility.isReduceMotionEnabled, completion: nil)
+        // 原 UIAlertController(.alert) 单「确定」钮，改走共享底部弹窗
+        // （无标题确认框同款做法：标题传空，只显说明＋按钮）；文案原样。
+        BearyConfirmSheet.show(from: self, title: "", message: "操作失败，请重试", actions: [
+            BearyConfirmSheet.Action(title: "确定", style: .default),
+        ])
     }
 
     // MARK: - 广场流
@@ -2307,8 +2309,8 @@ class BearyFeedViewController: UIViewController {
             guard let strongSelf = self, let entryId = entryValue.id else { return }
             BearyReportFlow.present(from: strongSelf, entryId: entryId, entryLabel: nil)
         }
-        cell.onMoreRequested = { [weak self] entryValue, sourceView in
-            self?.presentCardMoreMenu(entry: entryValue, sourceView: sourceView)
+        cell.onMoreRequested = { [weak self] entryValue, _ in
+            self?.presentCardMoreMenu(entry: entryValue)
         }
         cell.onAuthorTapped = { [weak self] in
             if let authorId = entry.authorId {
@@ -2411,65 +2413,61 @@ class BearyFeedViewController: UIViewController {
     /// 到的仍是私密 = “实际没公开”）；详情页一直用有效态，三处与之对齐。
     /// 即时反馈（2026-10-29 定版）：点按瞬间先按目标态同步本地（图标与操作行
     /// 门控立即变），回包成功对齐服务端值；失败回滚原态 + 拒绝动效。
-    /// 2026-10-31 卡片 ⋯ 菜单（时间线风格 actionSheet）：本人篇 编辑内容（15 分钟内）／
-    /// 修改权限／删除；他人公开篇 举报（已举报置灰）；点赞／收藏／分享是互动，
-    /// 仍在底部操作行，不进菜单；长按菜单已随 ⋯ 归并删除。
-    private func presentCardMoreMenu(entry: Entry, sourceView: UIView) {
-        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+    /// 2026-11-11 广场卡片 ⋯ 菜单迁底部弹窗（BearyConfirmSheet；原 actionSheet 文案/
+    /// 顺序/语义全保留）：本人篇 编辑内容（15 分钟内）／修改权限／删除；他人公开篇
+    /// 举报（已举报置灰）；取消垫底。点赞／收藏／分享是互动，仍在底部操作行，
+    /// 不进菜单；长按菜单已随 ⋯ 归并删除。iPad popover 锚点随迁移删去，底部弹窗不再需要。
+    private func presentCardMoreMenu(entry: Entry) {
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        var actions: [BearyConfirmSheet.Action] = []
         if entry.isMine == true {
             if let deadline = entry.editDeadline, nowMs < deadline {
-                sheet.addAction(UIAlertAction(title: "编辑内容", style: .default) { [weak self] _ in
+                actions.append(BearyConfirmSheet.Action(title: "编辑内容", style: .default) { [weak self] in
                     self?.onEditEntry?(entry)
                 })
             } else {
                 // r29-11：过期（或 editDeadline 缺失即已锁）时编辑项不再直接消失，
-                // 与详情页同口径，置灰并附说明。
-                let expiredEdit = UIAlertAction(title: "编辑（已超 15 分钟不可编辑）", style: .default, handler: nil)
-                expiredEdit.isEnabled = false
-                sheet.addAction(expiredEdit)
+                // 与详情页同口径，置灰并附说明；handler 为 nil。
+                actions.append(BearyConfirmSheet.Action(title: "编辑（已超 15 分钟不可编辑）", style: .default, isEnabled: false))
             }
-            sheet.addAction(UIAlertAction(title: "修改权限", style: .default) { [weak self] _ in
+            actions.append(BearyConfirmSheet.Action(title: "修改权限", style: .default) { [weak self] in
                 self?.handleVisibilityToggle(entryId: entry.id ?? "")
             })
-            sheet.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
+            actions.append(BearyConfirmSheet.Action(title: "删除", style: .destructive) { [weak self] in
                 self?.onDeleteEntry?(entry)
             })
         } else if BearyEphemeral.isEffectivelyPublic(entry), let entryId = entry.id {
             let reported = BearyReportedStore.isReported(entryId: entryId)
-            sheet.addAction(UIAlertAction(title: reported ? "已举报" : "举报", style: .default, handler: reported ? nil : { [weak self] _ in
-                guard let strongSelf = self else { return }
-                // 扫荡 D：服务端举报要求登录（未登录调 POST /beary/api/reports 必 401）。
-                // 此前游客点 ⋯ → 举报 → 选完理由才收到“举报失败，请重试”，等于让用户
-                // 白走一趟理由选择；现与卡片点赞/收藏未登录口径对齐：登录态未知先给
-                // 网络不稳定 toast，未登录直接走容器登录门，登录后才进举报流程。
-                if SessionManager.shared.authUnknown {
-                    BearyToast.show(in: strongSelf.view, message: "网络不稳定，请稍后再试")
-                    return
-                }
-                if !SessionManager.shared.isLoggedIn {
-                    strongSelf.onRequireLogin?()
-                    return
-                }
-                BearyReportFlow.present(from: strongSelf, entryId: entryId, entryLabel: nil)
-            }))
             if reported {
-                sheet.actions.last?.isEnabled = false
+                actions.append(BearyConfirmSheet.Action(title: "已举报", style: .default, isEnabled: false))
+            } else {
+                actions.append(BearyConfirmSheet.Action(title: "举报", style: .default) { [weak self] in
+                    guard let strongSelf = self else { return }
+                    // 扫荡 D：服务端举报要求登录（未登录调 POST /beary/api/reports 必 401）。
+                    // 此前游客点 ⋯ → 举报 → 选完理由才收到“举报失败，请重试”，等于让用户
+                    // 白走一趟理由选择；现与卡片点赞/收藏未登录口径对齐：登录态未知先给
+                    // 网络不稳定 toast，未登录直接走容器登录门，登录后才进举报流程。
+                    if SessionManager.shared.authUnknown {
+                        BearyToast.show(in: strongSelf.view, message: "网络不稳定，请稍后再试")
+                        return
+                    }
+                    if !SessionManager.shared.isLoggedIn {
+                        strongSelf.onRequireLogin?()
+                        return
+                    }
+                    BearyReportFlow.present(from: strongSelf, entryId: entryId, entryLabel: nil)
+                })
             }
         }
         // 扫荡 D：除“取消”外无任何可点项时不 present——正常情况下到不了这里
         //（卡片 ⋯ 只在本人卡或他人公开卡上显示），但限时篇可在卡片渲染后、
         // 点 ⋯ 前过期，有效态翻私密后原菜单项全部落空，只剩一张空表。
         // 注意：他人公开卡本就只有“举报”1 项，故只拦“零项”，不拦“1 项”。
-        if sheet.actions.isEmpty {
+        if actions.isEmpty {
             return
         }
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = sourceView
-            popover.sourceRect = sourceView.bounds
-        }
-        present(sheet, animated: BearyMotion.animated(true))
+        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
+        BearyConfirmSheet.show(from: self, title: "", message: nil, actions: actions)
     }
 
     private func handleVisibilityToggle(entryId: String) {
