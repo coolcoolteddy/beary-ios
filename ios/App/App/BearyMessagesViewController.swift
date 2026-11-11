@@ -449,7 +449,7 @@ final class BearyMessagesViewController: UIViewController {
                 stateView.configure(
                     kind: .empty,
                     title: "还没有消息",
-                    subtitle: "私信、赞、收藏、回应和系统消息会出现在这里",
+                    subtitle: "私信、赞、回应和系统消息会出现在这里",
                     iconName: nil,
                     actionTitle: "刷新",
                     onAction: { [weak self] in self?.refresh() }
