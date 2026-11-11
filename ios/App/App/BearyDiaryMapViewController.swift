@@ -1057,7 +1057,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
         switch diaryMapSections[section] {
         case .transient:
-            return "定位失败（网络问题），点按重试"
+            return "定位失败（网络问题）"
         case .unlocated:
             return "未能在地图上定位"
         case .main:
@@ -1068,7 +1068,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     /// 选中组时 main 区头：标题（组名＋篇数）旁给「所有地点」返回入口；
     /// 未选中与其他区走默认标题头（返回 nil 即用 titleForHeaderInSection）。
-    /// r17-m3：点地图标记选中某地点组时，对应地点标题立即高亮（橙色
+    /// r17-m3：点地图标记选中某地点组时，对应地点标题立即高亮（墨色
     /// 加粗），帮助视线从地图接到列表；选中态在，标题高亮就在，组切走
     /// 即恢复默认标题头。
     func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
@@ -1077,7 +1077,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
-        titleLabel.textColor = BearyColors.orange
+        titleLabel.textColor = BearyColors.ink
         titleLabel.text = "\(selected.key) · \(selected.count) 篇"
         let backButton = UIButton(type: .system)
         backButton.translatesAutoresizingMaskIntoConstraints = false
