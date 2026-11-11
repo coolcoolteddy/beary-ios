@@ -23,10 +23,14 @@ enum BearyConfirmSheet {
         let title: String
         let style: Style
         let handler: (() -> Void)?
-        init(title: String, style: Style = .default, handler: (() -> Void)? = nil) {
+        /// 禁用态（默认 true）：详情页更多菜单的过期编辑／已举报两项置灰用；
+        /// 后续菜单支（Timeline/Feed/Profile 卡片菜单）复用本扩展。
+        let isEnabled: Bool
+        init(title: String, style: Style = .default, handler: (() -> Void)? = nil, isEnabled: Bool = true) {
             self.title = title
             self.style = style
             self.handler = handler
+            self.isEnabled = isEnabled
         }
     }
 
@@ -142,6 +146,11 @@ final class BearyConfirmSheetViewController: UIViewController {
             button.translatesAutoresizingMaskIntoConstraints = false
             button.setTitle(action.title, for: .normal)
             button.tag = index
+            button.isEnabled = action.isEnabled
+            // BearyButton 是 .custom 类型、只配了 .normal 态底色/字色，isEnabled=false
+            // 本身看不出置灰；禁用项另降 alpha（站内同款 0.4，见 BearyDiaryCardCell），
+            // 让置灰在视觉上成立。BearyButton 本身不动。
+            button.alpha = action.isEnabled ? 1.0 : 0.4
             button.addTarget(self, action: #selector(actionTapped(_:)), for: .touchUpInside)
             button.bearyAddPressFeedback()
             buttonStack.addArrangedSubview(button)
