@@ -4330,6 +4330,12 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         isTransitioning = false
         // 临时诊断（86 包，定根因后删除；UIKit 无 presentationTransitionDidComplete，此为最接近的结束点）。
         DiagFile.mark("sheet-didComplete")
+        if completed {
+            // 邀请弹窗根因修（2026-11-11）：转场进行中 /me 回来改了 preferredContentSize，
+            // 高度更新被 isTransitioning 守卫丢掉；转场结束后再重布局一次，按最新高度重算帧，
+            // 否则弹窗帧冻在初帧、绑定行被截。
+            containerView?.setNeedsLayout()
+        }
         if !completed {
             // 审计 2026-11-02 弹窗组：取消路径同时清遮罩与阴影（旧路径只清阴影）。
             dimmingView.removeFromSuperview()
