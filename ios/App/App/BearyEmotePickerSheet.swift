@@ -152,7 +152,10 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         let layout = UICollectionViewFlowLayout()
         layout.minimumInteritemSpacing = 6
         layout.minimumLineSpacing = 10
-        layout.sectionInset = UIEdgeInsets(top: 4, left: 18, bottom: 20, right: 18)
+        // D8：底部留白与 @ 选人 Sheet 统一为 14 + 安全区底（BearyComposerPickers
+        // 的 listBottom/bottomPad 同款公式）：collection 底已贴
+        // safeAreaLayoutGuide 底沿，sectionInset.bottom 即为安全区底沿之上的留白。
+        layout.sectionInset = UIEdgeInsets(top: 4, left: 18, bottom: 14, right: 18)
         let collection = UICollectionView(frame: .zero, collectionViewLayout: layout)
         collection.translatesAutoresizingMaskIntoConstraints = false
         collection.backgroundColor = BearyColors.surface3
