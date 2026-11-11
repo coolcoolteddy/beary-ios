@@ -60,7 +60,8 @@ private final class WishRowView: UIView {
         metaLabel.numberOfLines = 0
         // 15：净赞成缩为操作行末尾的辅助文字——弱化为 12 灰字（与作者时间弱信息行同档），
         // 不再独占一行；文案本身（“净赞成 ±N”）不变，见 configure。
-        netLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        // 审计视觉 12：净票数走 numberFont（12 semibold 等宽数字），票数变化时不抖。
+        netLabel.font = BearyDynamicType.numberFont()
         netLabel.adjustsFontForContentSizeCategory = true
         netLabel.textColor = BearyColors.gray
         // 28：donePill 文字与底色均走动态色（文字 BearyColors.deepGreenText，底色经
@@ -274,8 +275,8 @@ private final class WishRowView: UIView {
         let down = item.downCount ?? 0
         let net = up - down
         netLabel.text = "净赞成 \(net >= 0 ? "+" : "")\(net)"
-        upButton.setTitle("赞成 \(up)", for: .normal)
-        downButton.setTitle("反对 \(down)", for: .normal)
+        setVoteTitle(upButton, name: "赞成", count: up)
+        setVoteTitle(downButton, name: "反对", count: down)
         setVoteSelected(upButton, selected: item.myVote == 1)
         setVoteSelected(downButton, selected: item.myVote == -1)
         let done = item.status == "done"
@@ -294,6 +295,17 @@ private final class WishRowView: UIView {
     /// 投票选中态走按钮公共样式（BearyButton.applyVoteSelected）；本处只转发，不再各写一套颜色。
     private func setVoteSelected(_ button: BearyButton, selected: Bool) {
         button.applyVoteSelected(selected)
+    }
+
+    /// 审计视觉 13：按钮标题只留操作名，计数另起一段走 numberFont 等宽数字；
+    /// 计数段不写死前景色，跟随按钮 titleColor（选中态 applyVoteSelected 改色后仍生效）；
+    /// 无障碍读作「赞成 N 票」/「反对 N 票」，计数随 configure 实时更新。
+    private func setVoteTitle(_ button: BearyButton, name: String, count: Int) {
+        let nameFont = button.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        let title = NSMutableAttributedString(string: name, attributes: [.font: nameFont])
+        title.append(NSAttributedString(string: " \(count)", attributes: [.font: BearyDynamicType.numberFont()]))
+        button.setAttributedTitle(title, for: .normal)
+        button.accessibilityLabel = "\(name) \(count) 票"
     }
 
     /// 拒绝摇头（transform 平移关键帧，不动布局；与即时性总口径的拒绝动效同款）。
@@ -910,6 +922,9 @@ final class BearyWishWallViewController: UIViewController {
                     rolledBack.status = oldStatus
                     self.wishes[idx] = rolledBack
                     self.rowViews[wishId]?.configure(item: rolledBack, isAdmin: self.isAdmin)
+                    // 审计视觉 15：标记失败补摇头＋警告震动（toast 已有）；乐观 status＋失败回滚不动（R23 #5 定版）。
+                    self.rowViews[wishId]?.shake()
+                    BearyHaptics.rejectionWarning()
                     BearyToast.show(in: self.view, message: "标记失败，请稍后再试")
                 }
             }
@@ -1016,14 +1031,23 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         titleField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
         titleField.adjustsFontForContentSizeCategory = true
         titleField.textColor = BearyColors.ink
-        titleField.borderStyle = .roundedRect
+        // 审计视觉 10：标题框去系统描边，走 surface2 底＋12 圆角；聚焦走聚焦阴影（见 refreshTitleBorder）。
+        // .none 后系统内边距消失，左右各补 12pt 垫片，文字不贴圆角边。
+        titleField.borderStyle = .none
+        titleField.backgroundColor = BearyColors.surface2
+        titleField.layer.cornerRadius = 12
+        titleField.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 12, height: 0))
+        titleField.leftViewMode = .always
+        titleField.rightView = UIView(frame: CGRect(x: 0, y: 0, width: 12, height: 0))
+        titleField.rightViewMode = .always
         titleField.addTarget(self, action: #selector(titleChanged), for: .editingChanged)
         detailView.translatesAutoresizingMaskIntoConstraints = false
         detailView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         detailView.adjustsFontForContentSizeCategory = true
         detailView.textColor = BearyColors.ink
-        detailView.layer.bearyDynamicBorderColor = BearyColors.ink.withAlphaComponent(0.2)
-        detailView.layer.borderWidth = 1
+        // 审计视觉 04：详情框去 1pt 墨色边框，走 surface2 底＋12 圆角；聚焦走聚焦阴影（见 refreshDetailBorder）。
+        detailView.backgroundColor = BearyColors.surface2
+        detailView.layer.borderWidth = 0
         detailView.layer.cornerRadius = 12
         detailView.delegate = self
         detailPlaceholder.translatesAutoresizingMaskIntoConstraints = false
@@ -1122,16 +1146,14 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         NotificationCenter.default.removeObserver(self)
     }
 
-    /// 审计 P1-5：详情框边框主题刷新——detailView（发起页
-    /// BearyWishCreateViewController 的 UITextView，非按钮）创建时
-    /// borderColor = ink 20%（CGColor 赋值即固化），此前本文件无
-    /// traitCollectionDidChange，深浅切换后边框停留在旧主题色；
-    /// 色貌变化时按创建时原表达式重赋（复用 BearyButton.refreshChrome
-    /// 范式；只重赋边框色，不动占位 / 计数 / 校验）。
+    /// 审计视觉 04/10：详情框与标题框边框主题刷新——边框色走 bearyDynamicBorderColor
+    ///（CGColor 赋值即固化），深浅切换后按当前态（错误／聚焦／普通）重刷两框边框；
+    /// 只重刷边框，不动占位 / 计数 / 校验。
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
-            detailView.layer.bearyDynamicBorderColor = BearyColors.ink.withAlphaComponent(0.2)
+            refreshTitleBorder()
+            refreshDetailBorder()
         }
     }
 
@@ -1211,6 +1233,41 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     private func setFieldErrorVisible(_ visible: Bool) {
         fieldErrorLabel.isHidden = !visible
         fieldErrorHeight?.isActive = !visible
+        // 审计视觉 04/10：错误显隐即边框态变化，同步刷新两框边框。
+        refreshTitleBorder()
+        refreshDetailBorder()
+    }
+
+    /// 审计视觉 04/10：输入框边框三态（BearyInputContainer 同款）——错误态（字段级红字在显）
+    /// 才画 1pt 红边框并清掉阴影；聚焦走聚焦阴影、边框 0；其余态边框 0、无阴影。
+    private var fieldErrorShown: Bool { !fieldErrorLabel.isHidden }
+
+    private func refreshTitleBorder() {
+        if fieldErrorShown {
+            titleField.layer.borderWidth = 1
+            titleField.layer.bearyDynamicBorderColor = BearyColors.red
+            titleField.layer.shadowOpacity = 0
+        } else if activeField === titleField {
+            titleField.layer.borderWidth = 0
+            BearyShadow.applyFocused(to: titleField.layer)
+        } else {
+            titleField.layer.borderWidth = 0
+            titleField.layer.shadowOpacity = 0
+        }
+    }
+
+    private func refreshDetailBorder() {
+        if fieldErrorShown {
+            detailView.layer.borderWidth = 1
+            detailView.layer.bearyDynamicBorderColor = BearyColors.red
+            detailView.layer.shadowOpacity = 0
+        } else if activeField === detailView {
+            detailView.layer.borderWidth = 0
+            BearyShadow.applyFocused(to: detailView.layer)
+        } else {
+            detailView.layer.borderWidth = 0
+            detailView.layer.shadowOpacity = 0
+        }
     }
 
     /// 30：长度提示唯一刷新点——标题/详情计数与超限变红；超限时提交钮禁用
@@ -1241,11 +1298,24 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         titleChanged()
     }
 
-    @objc private func titleFieldDidBegin() { activeField = titleField }
-    @objc private func fieldDidEnd() { activeField = nil }
+    @objc private func titleFieldDidBegin() {
+        activeField = titleField
+        refreshTitleBorder()
+    }
+    @objc private func fieldDidEnd() {
+        activeField = nil
+        refreshTitleBorder()
+        refreshDetailBorder()
+    }
 
-    func textViewDidBeginEditing(_ textView: UITextView) { activeField = textView }
-    func textViewDidEndEditing(_ textView: UITextView) { activeField = nil }
+    func textViewDidBeginEditing(_ textView: UITextView) {
+        activeField = textView
+        refreshDetailBorder()
+    }
+    func textViewDidEndEditing(_ textView: UITextView) {
+        activeField = nil
+        refreshDetailBorder()
+    }
 
     /// 17：键盘弹出/变框后（keyboardLayoutGuide 已收缩滚动区），下一 runloop 待布局
     /// 完成后再把焦点框滚到可见区，避免按旧 bounds 算错；减动效时瞬时落位。
