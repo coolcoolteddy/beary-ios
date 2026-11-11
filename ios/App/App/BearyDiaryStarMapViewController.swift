@@ -1685,6 +1685,10 @@ extension BearyDiaryStarMapViewController: UITableViewDataSource, UITableViewDel
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        // 130 扫 bug（#1214 引入）：点按后须取消选中，否则该行一直亮着
+        // selectedBackgroundView；列表是常驻复用的表，再打开时旧行还亮着
+        //（旧按钮行无选中态，迁移时漏了这一步）。
+        tableView.deselectRow(at: indexPath, animated: true)
         guard indexPath.row < edgeListEdges.count else { return }
         let edge = edgeListEdges[indexPath.row]
         // 按 id 在当前模型里重查：列表打开后模型可能已变，旧边不在了就不跳。
