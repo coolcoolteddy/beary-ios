@@ -5243,7 +5243,7 @@ class BearyProfileViewController: UIViewController {
         stack.spacing = 6
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = UIFont.systemFont(ofSize: 11)
+        titleLabel.font = BearyDynamicType.captionFont()
         titleLabel.textColor = BearyColors.gray
         titleLabel.text = title
         let bodyLabel = UILabel()
