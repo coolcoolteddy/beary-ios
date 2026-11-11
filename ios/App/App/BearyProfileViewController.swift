@@ -1550,7 +1550,7 @@ class BearyProfileViewController: UIViewController {
     }()
 
     /// 年度回顾入口卡：只本人可见；平时只显示今年已写篇数与连续天数，
-    /// 点进年报首屏示意（BearyYearReviewViewController），年报本身年底另做。
+    /// 点进年报最小版（BearyYearReviewViewController）。
     private let yearCard = BearyProfilePersonalModulesCard(title: "年度回顾")
     /// 113 模块分页失败重试行：surface2 底圆角行 + 灰字说明 + 现成重试 pill；
     /// 只在 modulesLoadFailed 时显，成功态永不进栈视觉（isHidden）。
@@ -4170,7 +4170,7 @@ class BearyProfileViewController: UIViewController {
             randomShuffleButton.heightAnchor.constraint(equalToConstant: 44),
         ])
 
-        // —— 年度回顾入口：当年累计行 + 进入年报首屏示意的钮。
+        // —— 年度回顾入口：当年累计行 + 进入年报最小版的钮。
         yearCard.contentStack.addArrangedSubview(yearSummaryLabel)
         yearCard.contentStack.addArrangedSubview(yearOpenButton)
         NSLayoutConstraint.activate([
