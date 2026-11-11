@@ -91,7 +91,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     /// 用户与列表操作不用在画布上找细线（见 showEdgeListSheet）。
     private var edgeListButton: UIButton!
     private let skyView = StarMapSkyView()
-    private let statusLabel = UILabel()
+    private let statusLabel = StarMapStatusRetryLabel()
     private let sheetCard = UIView()
     private let sheetStack = UIStackView()
     /// 审计三轮第 2 项：连线列表虚拟化——只建可见行，初始封顶＋加载更多。
@@ -450,6 +450,16 @@ final class BearyDiaryStarMapViewController: UIViewController {
         // 下失败视图是藏着的）；无提示时不响应点按（见 applyModelToSky
         // 按 fetchStaleNote 开关 isUserInteractionEnabled）。
         statusLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(didTapRetry)))
+        // 审计九轮 B：状态行可点按重试时给读屏按钮语义——普通触摸走手势，
+        // VoiceOver 双击走 accessibilityActivate（UILabel 自身不把双击转
+        // 发给手势，见 StarMapStatusRetryLabel）；门控与点按一致，只在
+        // fetchStaleNote 时激活（见 applyModelToSky 同步特征与提示）。
+        statusLabel.isAccessibilityElement = true
+        statusLabel.accessibilityTraits = .staticText
+        statusLabel.onActivate = { [weak self] in
+            guard let self, self.fetchStaleNote else { return }
+            self.didTapRetry()
+        }
         contentView.addSubview(statusLabel)
 
         sheetCard.translatesAutoresizingMaskIntoConstraints = false
@@ -984,6 +994,19 @@ final class BearyDiaryStarMapViewController: UIViewController {
             status += " · 篇数较多，仅展示最近拉取的 500 篇"
         }
         statusLabel.text = status
+        // 审计九轮 B：状态行读屏语义与点按门控同步——只在带“未更新／部分
+        // 结果”提示（fetchStaleNote）时是按钮（.button＋“双击重试”提示，
+        // 双击经 StarMapStatusRetryLabel.accessibilityActivate 转发
+        // didTapRetry）；平时状态行仍是纯展示文本（.staticText、无提示）。
+        if fetchStaleNote {
+            statusLabel.accessibilityTraits = .button
+            statusLabel.accessibilityLabel = status
+            statusLabel.accessibilityHint = "双击重试"
+        } else {
+            statusLabel.accessibilityTraits = .staticText
+            statusLabel.accessibilityLabel = status
+            statusLabel.accessibilityHint = nil
+        }
         // r17-m3：从详情回来后的恢复统一收在这里（模型已落定，选中态与
         // 滚动位置按记忆恢复；无返回记忆时不做任何事）。
         restoreDetailReturnContextIfNeeded()
@@ -2465,6 +2488,20 @@ private final class StarMapStarAccessibilityElement: UIAccessibilityElement {
 
     override func accessibilityActivate() -> Bool {
         onActivate?()
+        return true
+    }
+}
+
+/// 审计九轮 B：星图状态行读屏激活——UILabel 自身不把 VoiceOver 双击转发给
+/// 手势，子类以 accessibilityActivate 转发现有 didTapRetry 路径（同星／连线
+/// 元素做法）；普通触摸仍走手势，不改视觉与布局。是否可激活由调用方按
+/// fetchStaleNote 门控（特征与提示见 applyModelToSky），这里只转发。
+private final class StarMapStatusRetryLabel: UILabel {
+    var onActivate: (() -> Void)?
+
+    override func accessibilityActivate() -> Bool {
+        guard let onActivate else { return false }
+        onActivate()
         return true
     }
 }
