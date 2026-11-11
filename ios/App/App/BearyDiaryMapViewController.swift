@@ -1110,8 +1110,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 if let created = entry.createdAt, created > 0 {
                     secondary = BearyDiaryCardCell.feedTimeString(ms: created)
                 }
-                if let display = BearyLocationDisplay.display(entry: entry) {
-                    secondary = secondary.isEmpty ? display.line : "\(secondary) · \(display.line)"
+                if let line = BearyLocationDisplay.display(entry: entry) {
+                    secondary = secondary.isEmpty ? line : "\(secondary) · \(line)"
                 }
                 config.secondaryText = secondary.isEmpty ? nil : secondary
                 cell.contentConfiguration = config
