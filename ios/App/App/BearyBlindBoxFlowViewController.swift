@@ -1475,32 +1475,32 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     @objc private func withdrawTapped() {
         guard withdrawBusy == false, let exchangeId = exchangeId else { return }
-        let alert = UIAlertController(title: "撤回交换？", message: "撤回后，对方将无法再查看你交换的这篇日记，今日交换次数不会恢复。", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        alert.addAction(UIAlertAction(title: "撤回", style: .destructive) { [weak self] _ in
-            guard let self = self else { return }
-            self.withdrawBusy = true
-            // 撤回即让此前在途的详情请求失效：旧回包不得再翻回 .received。
-            let request = self.beginBlindBoxRequest()
-            BearyAPI.shared.withdrawBlindBoxExchange(id: exchangeId) { result in
-                DispatchQueue.main.async {
-                    self.withdrawBusy = false
-                    guard let accountId = request.accountId, self.isCurrentBlindBoxResponse(accountId: accountId, generation: request.generation) else { return }
-                    switch result {
-                    case .success:
-                        // 审计新一轮 02：撤回成功即让此前全部在途详情请求失效
-                        //（代次 +1，旧回包凭代次丢弃），再置本地撤回旗、切终态。
-                        self.exchangeDetailGeneration += 1
-                        BlindBoxState.shared.markMyWithdrawn(forAccountId: accountId)
-                        self.exchangeHidden = true
-                        self.setStep(.mineWithdrawn)
-                    case .failure(let error):
-                        BearyToast.show(in: self.view, message: self.actionErrorText(error, fallback: "撤回失败，请重试"))
+        BearyConfirmSheet.show(from: self, title: "撤回交换？", message: "撤回后，对方将无法再查看你交换的这篇日记，今日交换次数不会恢复。", actions: [
+            BearyConfirmSheet.Action(title: "取消", style: .cancel),
+            BearyConfirmSheet.Action(title: "撤回", style: .destructive) { [weak self] in
+                guard let self = self else { return }
+                self.withdrawBusy = true
+                // 撤回即让此前在途的详情请求失效：旧回包不得再翻回 .received。
+                let request = self.beginBlindBoxRequest()
+                BearyAPI.shared.withdrawBlindBoxExchange(id: exchangeId) { result in
+                    DispatchQueue.main.async {
+                        self.withdrawBusy = false
+                        guard let accountId = request.accountId, self.isCurrentBlindBoxResponse(accountId: accountId, generation: request.generation) else { return }
+                        switch result {
+                        case .success:
+                            // 审计新一轮 02：撤回成功即让此前全部在途详情请求失效
+                            //（代次 +1，旧回包凭代次丢弃），再置本地撤回旗、切终态。
+                            self.exchangeDetailGeneration += 1
+                            BlindBoxState.shared.markMyWithdrawn(forAccountId: accountId)
+                            self.exchangeHidden = true
+                            self.setStep(.mineWithdrawn)
+                        case .failure(let error):
+                            BearyToast.show(in: self.view, message: self.actionErrorText(error, fallback: "撤回失败，请重试"))
+                        }
                     }
                 }
-            }
-        })
-        present(alert, animated: BearyMotion.animated(true), completion: nil)
+            },
+        ])
     }
 
     @objc private func refreshStateTapped() {
