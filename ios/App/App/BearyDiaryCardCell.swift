@@ -2893,6 +2893,23 @@ class BearyDiaryCardCell: UITableViewCell {
 
     // MARK: - 点赞 / 收藏 / 公开行（两模式各保语义）
 
+    /// D1（审计五轮第 6 项，规范 §6）：点赞数变化时 0.18s opacity 交叉淡变
+    /// （BearyMotion.localStateDuration，站内 contentLabel 同款 transitionCrossDissolve）；
+    /// 数字未变、减动效开、或按钮未进窗口时直设终值；宽度按现行算式直设、不参与淡变；
+    /// 0 仍走现行分支（setTitle(nil)＋宽只剩图标宽），语义不动。
+    private func setLikeTitle(_ title: String?, width: CGFloat) {
+        likeButtonWidthConstraint?.constant = width
+        guard likeButton.title(for: .normal) != title,
+              !UIAccessibility.isReduceMotionEnabled,
+              likeButton.window != nil else {
+            likeButton.setTitle(title, for: .normal)
+            return
+        }
+        UIView.transition(with: likeButton, duration: BearyMotion.localStateDuration, options: .transitionCrossDissolve, animations: {
+            self.likeButton.setTitle(title, for: .normal)
+        })
+    }
+
     private func updateLikeButton() {
         let liked = currentEntry?.likedByMe ?? false
         let countValue = currentEntry?.likeCount ?? 0
@@ -2904,13 +2921,11 @@ class BearyDiaryCardCell: UITableViewCell {
         // 宽度只剩图标宽，不留数字位；时间线按数显隐（图标＋数字同藏）的地方不动。
         let imageWidth = heartImage?.size.width ?? 22
         if countValue <= 0 {
-            likeButton.setTitle(nil, for: .normal)
-            likeButtonWidthConstraint?.constant = imageWidth
+            setLikeTitle(nil, width: imageWidth)
         } else {
             let titleText = "\(countValue)"
             let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))]).width)
-            likeButton.setTitle(titleText, for: .normal)
-            likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
+            setLikeTitle(titleText, width: imageWidth + 6 + titleWidth)
         }
         // 2026-10-29 100 包反馈第 6 项：卡片脚三钮未点亮统一为同一灰
         // （此前爱心未赞为墨色 ink、收藏/分享为灰，三钮色不一致；旧 fixall-cell
@@ -2934,13 +2949,11 @@ class BearyDiaryCardCell: UITableViewCell {
         likeButton.setImage(likedImage, for: .normal)
         let imageWidth = likedImage?.size.width ?? 22
         if count <= 0 {
-            likeButton.setTitle(nil, for: .normal)
-            likeButtonWidthConstraint?.constant = imageWidth
+            setLikeTitle(nil, width: imageWidth)
         } else {
             let titleText = "\(count)"
             let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))]).width)
-            likeButton.setTitle(titleText, for: .normal)
-            likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
+            setLikeTitle(titleText, width: imageWidth + 6 + titleWidth)
         }
         likeButton.tintColor = liked ? BearyColors.likeRed : BearyColors.gray
         likeButton.setTitleColor(liked ? BearyColors.likeRed : BearyColors.gray, for: .normal)
