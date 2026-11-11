@@ -68,6 +68,11 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 不随整批解析拆建；随页销毁。切账号时随标记一并清掉。
     private var locatedAnnotations: [String: MKPointAnnotation] = [:]
     private var loadGeneration = 0
+    /// 列表骨架态（无数据时的取数起步）：列表出 3 行骨架卡、状态行留空，
+    /// 替代“加载中…”文字；有数据时的后台刷新不进骨架，旧列表即占位。
+    /// applySharedLoad 回包即清旗（唯一终点，覆盖全部退出分支）。
+    private var isLoadingEntries = false
+    private let skeletonRowCount = 3
     /// 地理编码代次（审计 24）：每次重算、切账号、页面退出都换代并取消在途请求，
     /// 旧编码回调凭代次一律丢弃，不得写回本页。
     private var geocodeGeneration = 0
@@ -110,7 +115,10 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         statusLabel.font = UIFont.systemFont(ofSize: 13)
         statusLabel.textColor = BearyColors.gray
         statusLabel.numberOfLines = 0
-        statusLabel.text = "加载中…"
+        // 骨架态不写“加载中…”：状态行留空，列表出骨架行；下行 min 高兜底，
+        // 留空时行高不塌，回包后计数行出现不顶列表。
+        statusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 16).isActive = true
+        statusLabel.text = ""
         // 状态行旁的就近重试：只在已有内容刷新失败 / 仅有暂存部分结果时出现，
         // 平时隐藏；UIStackView 会自动收起隐藏的 arranged 子视图，状态行恢复满宽。
         // 字体与失败页重试钮同档，不引入新样式值；不改 statusLabel 自身的约束数值。
@@ -137,6 +145,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         tableView.delegate = self
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "DiaryMapCell")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "DiaryMapGroupCell")
+        tableView.register(BearySkeletonCell.self, forCellReuseIdentifier: BearySkeletonCell.reuseIdentifier)
         view.addSubview(tableView)
 
         failureStateView.translatesAutoresizingMaskIntoConstraints = false
@@ -268,7 +277,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         didInitialGeocode = false
         failureStateView.isHidden = true
         inlineRetryButton.isHidden = true
-        setStatusTextFaded("加载中…")
+        isLoadingEntries = true
+        statusLabel.text = ""
         tableView.reloadData()
     }
 
@@ -317,7 +327,6 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     @objc private func didTapRetry() {
         failureStateView.isHidden = true
         inlineRetryButton.isHidden = true
-        setStatusTextFaded("加载中…")
         fetchAllEntries()
     }
 
@@ -362,7 +371,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 }
             }
         } else {
-            setStatusTextFaded("加载中…")
+            // 有数据时才留“加载中…”作刷新提示（旧列表即占位）；无数据时
+            // fetchAllEntries 走骨架，状态行留空。
+            if !allEntries.isEmpty { setStatusTextFaded("加载中…") }
             fetchAllEntries()
         }
     }
@@ -406,6 +417,15 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         }
     }
 
+    /// 无数据时的取数起步：列表改出骨架行、状态行留空；有数据时只后台刷新，
+    /// 列表与状态行都不动（旧内容即占位）。
+    private func beginLoadingIfEmpty() {
+        guard allEntries.isEmpty else { return }
+        isLoadingEntries = true
+        statusLabel.text = ""
+        tableView.reloadData()
+    }
+
     private func fetchAllEntries() {
         // 开发者模式强制态（仅内存）：不发请求，按强制态渲染。
         if BearyDevPreviewState.forcedMap != .none {
@@ -413,6 +433,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             return
         }
         loadGeneration += 1
+        beginLoadingIfEmpty()
         fetchCollected = []
         fetchResumeBefore = nil
         fetchResumeBeforeId = nil
@@ -436,11 +457,15 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 完整 → 整批成表；部分 → 按有无旧数据成表或保旧表 + 续拉游标；
     /// nil（首页面失败）→ 无数据走失败页、有数据保旧表。
     private func applySharedLoad(_ load: BearySharedEntryLoader.SharedEntryLoad?) {
+        isLoadingEntries = false
         guard let load = load else {
             if allEntries.isEmpty {
                 inlineRetryButton.isHidden = true
                 showFailureState()
                 setStatusTextFaded("日记加载失败")
+                // 骨架已清旗，列表须重刷回“还没有带位置的日记”行（失败页在上层，
+                // 骨架行不可继续留在它后面）。
+                tableView.reloadData()
             } else {
                 fetchInterrupted = fetchResumeBefore != nil
                 setStatusTextFaded("网络失败，显示已加载的日记")
@@ -582,8 +607,11 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             selectedGroup = groups.first(where: { $0.id == selected.id })
         }
         if groups.isEmpty {
-            statusLabel.text = (allEntries.isEmpty ? "还没有日记" : "还没有带位置的日记")
-                + (fetchCapped ? " · 篇数较多，仅展示最近拉取的 \(allEntries.count) 篇" : "")
+            // 骨架态不写空态文案（取数中“还没有日记”是假空态），状态行留空。
+            if !isLoadingEntries {
+                statusLabel.text = (allEntries.isEmpty ? "还没有日记" : "还没有带位置的日记")
+                    + (fetchCapped ? " · 篇数较多，仅展示最近拉取的 \(allEntries.count) 篇" : "")
+            }
             mapView.removeAnnotations(mapView.annotations)
             locatedAnnotations.removeAll()
             unlocatedGroups = []
@@ -1018,6 +1046,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             return unlocatedGroups.count
         case .main:
             if let selected = selectedGroup { return selected.entries.count }
+            // 骨架态：无组时出骨架行，不留“还没有带位置的日记”假空态。
+            if isLoadingEntries, groups.isEmpty { return skeletonRowCount }
             // 未选中时 main 区是地点列表（每行一地点）；无组时只留一行提示。
             if groups.isEmpty { return 1 }
             return listedGroups.count
@@ -1117,6 +1147,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 cell.contentConfiguration = config
                 cell.accessoryType = .disclosureIndicator
                 return cell
+            }
+            if isLoadingEntries, groups.isEmpty {
+                return tableView.dequeueReusableCell(withIdentifier: BearySkeletonCell.reuseIdentifier, for: indexPath)
             }
             if groups.isEmpty {
                 let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapCell", for: indexPath)
