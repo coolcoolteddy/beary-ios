@@ -339,8 +339,6 @@ final class BearyChromeViewController: UIViewController {
     private var launchVeilPlayTimeout: DispatchWorkItem?
     /// 107 修复：最后一道兜底（install 里建，仅 viewDidAppear 始终没来时清 veil）。
     private var launchVeilLastResort: DispatchWorkItem?
-    /// 顶栏图标行（宽度相关间距：≤360 时 4、≤480 时 10，其余 18，见 layoutChromeOverlays）。
-    private var topStackView: UIStackView?
     /// 好友第一期·首页切换钉顶栏（Li 2026-11-01 定）：广场 / 正在关注分段，
     /// 放在顶栏玻璃内、logo 行下方 8pt、高 32，随顶栏显隐走（不随列表滚动）。
     /// 控件归容器所有，点按转发给首页 FeedVC 的 feedSegmentChanged；
@@ -699,11 +697,20 @@ final class BearyChromeViewController: UIViewController {
         // 2026-11-03（Li 定）：首页顶栏铃铛已去除，消息入口只剩底栏消息段；
         // 顶栏右钮剩登录／礼物／搜索三钮，trailing 锚不变、三钮自动右移贴右边缘。
         let spacer = UIView()
-        let topStack = UIStackView(arrangedSubviews: [logo, betaBadge, spacer, login, gift, search])
+        // 顶栏钮间距 8（规范 §3）：右侧登录／礼物／搜索三钮另建 8pt 水平栈；
+        // logo 与操作组之间只留弹性 spacer 吸宽，不再按屏宽改写整条栈间距。
+        // 320pt 宽核算：安全区内宽 288，固定项 logo 79＋登录约 60＋礼物 40＋搜索 40
+        // ＝约 219，组内两档 8pt 共 16，合计约 235 ≤ 288，spacer 吸约 53，不溢出。
+        // beta 标识仍挂在 logo 右边，与主线一致留 18pt（变基解冲突：不随顶栏钮间距改 8）。
+        let actionsStack = UIStackView(arrangedSubviews: [login, gift, search])
+        actionsStack.axis = .horizontal
+        actionsStack.alignment = .center
+        actionsStack.spacing = 8
+        let topStack = UIStackView(arrangedSubviews: [logo, betaBadge, spacer, actionsStack])
+        topStack.setCustomSpacing(18, after: logo)
         topStack.axis = .horizontal
         topStack.alignment = .center
-        topStack.spacing = 18
-        topStackView = topStack
+        topStack.spacing = 0
         topStack.translatesAutoresizingMaskIntoConstraints = false
         top.contentView.addSubview(topStack)
         // logo 行锚安全区顶（不再锚玻璃底边）：玻璃加高后 logo 行仍贴安全区顶，
@@ -1018,20 +1025,6 @@ final class BearyChromeViewController: UIViewController {
         BearyDeveloperMode.shared.exit(window: view.window)
     }
 
-
-    /// 栏覆盖层布局（viewDidLayoutSubviews 与 updateTabSelection 后调用）：
-    /// 顶栏图标间距随屏宽走（≤360 时 4、≤480 时 10，其余 18）。
-    /// 旧自绘 pill 的/阴影/高光已随分段器改造删除，选中 pill 由系统自绘。
-    /// S9 窄屏档：320pt 宽时固定项 79（logo）+ 约 60（登录 pill）+ 2×40（礼物/搜索）
-    /// + 两侧边距 32 = 约 251，4 档间距在 18 时共 72、合计约 323 微超；≤360 时间距 4，
-    /// 合计约 267 不超宽（不隐藏任何按钮，顶栏高仍 60）。
-    private func layoutChromeOverlays() {
-        if let stack = topStackView {
-            let width = view.bounds.width
-            let desired: CGFloat = width <= 360 ? 4 : (width <= 480 ? 10 : 18)
-            if stack.spacing != desired { stack.spacing = desired }
-        }
-    }
 
     /// L3：挂页后把栏覆盖层一次提齐——页 view 在栏之后加入会盖住栏，
     /// 顺序须为：页 < 顶栏 < 底部渐变垫片 < 模糊衬底 < 底栏分段器 < FAB。
@@ -1879,7 +1872,6 @@ final class BearyChromeViewController: UIViewController {
         if seg.selectedSegmentIndex != index {
             seg.selectedSegmentIndex = index
         }
-        layoutChromeOverlays()
     }
 
     /// 登录态 → 顶栏：已登录显礼物钮、藏登录钮；未登录反之（消息入口只剩底栏消息段）。
@@ -1919,7 +1911,6 @@ final class BearyChromeViewController: UIViewController {
         updateDesktopLayout()
         // 审计 2：两侧背景层随 bounds 重算（窄屏隐藏、宽屏定宽/重建）。
         updateSideDecoLayout()
-        layoutChromeOverlays()
         // 22(b) Plan A：顶栏高恒为安全区顶 + 108（显隐不再塌高）；安全区变化
         // （旋转/分屏）时恒纠正高度，收起态同步把上移量纠正为新高度，
         // 否则 transform 仍是旧高度、顶栏会露出半截。
