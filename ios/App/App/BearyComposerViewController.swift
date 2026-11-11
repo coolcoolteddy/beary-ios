@@ -4265,44 +4265,43 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         scheduleDraftSave()
     }
 
-    /// 点气温数值：系统输入框直输整数（-60…60°）；留空点确定即清除气温（只清气温、不动类型）。
+    /// 点气温数值：底 sheet 直输整数（-60…60°）；留空点确定即清除气温（只清气温、不动类型）。
     @objc private func didTapTempLabel() {
         guard selectedWeather != nil else { return }
-        let alert = UIAlertController(title: "气温", message: "输入摄氏度整数，留空即清除", preferredStyle: .alert)
-        alert.addTextField { field in
-            field.keyboardType = .numbersAndPunctuation
-            field.placeholder = "例如 18"
-            if let temp = self.selectedTemperature {
-                field.text = "\(temp)"
+        BearyInputSheet.show(
+            from: self,
+            title: "气温",
+            message: "输入摄氏度整数，留空即清除",
+            placeholder: "例如 18",
+            initialText: selectedTemperature.map { "\($0)" },
+            onConfirm: { [weak self] raw in
+                guard let self = self else { return }
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
+                    // 手改气温（直输清空亦算手改）：在途自动填回包过期作废。
+                    self.weatherFetchGeneration += 1
+                    self.selectedTemperature = nil
+                } else if let value = Int(trimmed) {
+                    // 手改气温（直输亦算手改）：在途自动填回包过期作废。
+                    self.weatherFetchGeneration += 1
+                    self.selectedTemperature = min(60, max(-60, value))
+                } else {
+                    // 非法输入：toast 后关闭 sheet、不保存不刷新（原 alert 点确定后
+                    // 无论如何都会关闭，新 sheet 同款：先关 sheet、关完再跑回调）。
+                    self.showToast(message: "气温请输入整数")
+                    return
+                }
+                self.refreshSelectedChips()
+                self.scheduleDraftSave()
+            },
+            onClear: { [weak self] in
+                // 手改气温（清除亦算手改）：在途自动填回包过期作废。
+                self?.weatherFetchGeneration += 1
+                self?.selectedTemperature = nil
+                self?.refreshSelectedChips()
+                self?.scheduleDraftSave()
             }
-        }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        alert.addAction(UIAlertAction(title: "清除", style: .destructive, handler: { [weak self] _ in
-            // 手改气温（清除亦算手改）：在途自动填回包过期作废。
-            self?.weatherFetchGeneration += 1
-            self?.selectedTemperature = nil
-            self?.refreshSelectedChips()
-            self?.scheduleDraftSave()
-        }))
-        alert.addAction(UIAlertAction(title: "确定", style: .default, handler: { [weak self] _ in
-            guard let self = self else { return }
-            let raw = alert.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if raw.isEmpty {
-                // 手改气温（直输清空亦算手改）：在途自动填回包过期作废。
-                self.weatherFetchGeneration += 1
-                self.selectedTemperature = nil
-            } else if let value = Int(raw) {
-                // 手改气温（直输亦算手改）：在途自动填回包过期作废。
-                self.weatherFetchGeneration += 1
-                self.selectedTemperature = min(60, max(-60, value))
-            } else {
-                self.showToast(message: "气温请输入整数")
-                return
-            }
-            self.refreshSelectedChips()
-            self.scheduleDraftSave()
-        }))
-        present(alert, animated: BearyMotion.animated(true))
+        )
     }
 
     /// 天气动态图标覆盖层（BearyEmoteView，底层静态图作 fallback；与落点行同款）。
@@ -9176,9 +9175,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func showAlert(message: String) {
-        let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "确定", style: .default, handler: nil))
-        present(alert, animated: BearyMotion.animated(true))
+        // 原 alert 无标题，底 sheet 标题传空（只显说明＋按钮，不另起文案）。
+        BearyConfirmSheet.show(from: self, title: "", message: message, actions: [
+            BearyConfirmSheet.Action(title: "确定", style: .default),
+        ])
     }
 }
 
