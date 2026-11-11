@@ -143,6 +143,11 @@ extension BearyDynamicType {
         scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
     }
 
+    /// 语义：小节标题。定版值：14 bold，scaled（规范第 11 节，2026-11-11 审计第二轮 ①-1 新增；词汇详情「月份分布」标题）。
+    static func sectionTitleFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))
+    }
+
     /// 语义：实况角标（照片上「实况」小标签）。定版值：11 bold，scaled（规范第 11 节，2026-11-08 Li 定，T3-D2；与网页版 liveBadgeHtml 同款 11pt）。
     static func liveBadgeFont() -> UIFont {
         scaledFont(for: UIFont.systemFont(ofSize: 11, weight: .bold))

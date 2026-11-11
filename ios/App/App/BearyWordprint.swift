@@ -70,7 +70,8 @@ func bearyMakeWordprintScopeBadge(scope: BearyWordprintScope) -> UIView {
     }
     let label = UILabel()
     label.translatesAutoresizingMaskIntoConstraints = false
-    label.font = UIFont.systemFont(ofSize: 12)
+    label.font = BearyDynamicType.captionFont()
+    label.adjustsFontForContentSizeCategory = true
     label.textColor = scope == .other ? BearyColors.blue : BearyColors.gray
     label.text = scope.labelText
     row.addArrangedSubview(label)
@@ -397,21 +398,23 @@ final class BearyWordprintDetailViewController: UIViewController {
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             stack.topAnchor.constraint(equalTo: scrollView.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -20),
+            stack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -16),
             stack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -32),
-            stack.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -40),
+            stack.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -32),
         ])
 
         let wordLabel = UILabel()
-        wordLabel.font = UIFont.systemFont(ofSize: 24, weight: .heavy)
+        wordLabel.font = BearyDynamicType.heroNameFont()
+        wordLabel.adjustsFontForContentSizeCategory = true
         wordLabel.textColor = BearyColors.ink
         wordLabel.numberOfLines = 0
         wordLabel.text = item.word
         stack.addArrangedSubview(wordLabel)
 
         let yearLabel = UILabel()
-        yearLabel.font = UIFont.systemFont(ofSize: 13)
+        yearLabel.font = BearyDynamicType.secondaryFont()
+        yearLabel.adjustsFontForContentSizeCategory = true
         yearLabel.textColor = BearyColors.gray
         yearLabel.text = "\(year) 年"
         stack.addArrangedSubview(yearLabel)
@@ -420,13 +423,15 @@ final class BearyWordprintDetailViewController: UIViewController {
 
         let countsLabel = UILabel()
         countsLabel.numberOfLines = 0
-        countsLabel.font = UIFont.systemFont(ofSize: 15)
+        countsLabel.font = BearyDynamicType.smallBodyFont()
+        countsLabel.adjustsFontForContentSizeCategory = true
         countsLabel.textColor = BearyColors.ink
         countsLabel.text = "出现 \(item.docCount) 篇 · 总计 \(item.totalCount) 次"
         stack.addArrangedSubview(countsLabel)
 
         let monthsTitle = UILabel()
-        monthsTitle.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        monthsTitle.font = BearyDynamicType.sectionTitleFont()
+        monthsTitle.adjustsFontForContentSizeCategory = true
         monthsTitle.textColor = BearyColors.ink
         monthsTitle.text = "月份分布（按篇数）"
         stack.addArrangedSubview(monthsTitle)
@@ -439,10 +444,12 @@ final class BearyWordprintDetailViewController: UIViewController {
             row.spacing = 8
             row.alignment = .center
             let monthLabel = UILabel()
-            monthLabel.font = UIFont.systemFont(ofSize: 13)
+            monthLabel.font = BearyDynamicType.secondaryFont()
+            monthLabel.adjustsFontForContentSizeCategory = true
             monthLabel.textColor = BearyColors.ink
             monthLabel.text = "\(month) 月"
-            monthLabel.widthAnchor.constraint(equalToConstant: 36).isActive = true
+            // S1：不定宽，内容自适应——XXXL／特大档下「12 月」也不截断，横条吸差。
+            monthLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
             let barBackground = UIView()
             barBackground.backgroundColor = BearyColors.surface2
             barBackground.layer.cornerRadius = 4
@@ -479,7 +486,8 @@ final class BearyWordprintDetailViewController: UIViewController {
 
         let footnote = UILabel()
         footnote.numberOfLines = 0
-        footnote.font = UIFont.systemFont(ofSize: 12)
+        footnote.font = BearyDynamicType.captionFont()
+        footnote.adjustsFontForContentSizeCategory = true
         footnote.textColor = BearyColors.gray
         footnote.text = "只显示篇数与月份分布，不展示正文。"
         stack.addArrangedSubview(footnote)
