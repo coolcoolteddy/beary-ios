@@ -241,7 +241,7 @@ final class BearyPlusPageViewController: UIViewController {
         return line
     }
 
-    private func benefitRow(title: String, desc: String, isLast: Bool) -> UIView {
+    private func benefitRow(title: String, desc: String?, isLast: Bool) -> UIView {
         let row = UIView()
         row.translatesAutoresizingMaskIntoConstraints = false
         let topLine = hairline()
@@ -265,8 +265,6 @@ final class BearyPlusPageViewController: UIViewController {
         descLabel.adjustsFontForContentSizeCategory = true
         descLabel.textColor = BearyColors.gray
         descLabel.numberOfLines = 0
-        descLabel.text = desc
-        row.addSubview(descLabel)
         var constraints: [NSLayoutConstraint] = [
             topLine.topAnchor.constraint(equalTo: row.topAnchor),
             topLine.leadingAnchor.constraint(equalTo: row.leadingAnchor),
@@ -278,11 +276,19 @@ final class BearyPlusPageViewController: UIViewController {
             titleLabelValue.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
             titleLabelValue.leadingAnchor.constraint(equalTo: check.trailingAnchor, constant: 12),
             titleLabelValue.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
-            descLabel.topAnchor.constraint(equalTo: titleLabelValue.bottomAnchor, constant: 4),
-            descLabel.leadingAnchor.constraint(equalTo: titleLabelValue.leadingAnchor),
-            descLabel.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
-            descLabel.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -14),
         ]
+        if let desc = desc {
+            descLabel.text = desc
+            row.addSubview(descLabel)
+            constraints.append(contentsOf: [
+                descLabel.topAnchor.constraint(equalTo: titleLabelValue.bottomAnchor, constant: 4),
+                descLabel.leadingAnchor.constraint(equalTo: titleLabelValue.leadingAnchor),
+                descLabel.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
+                descLabel.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -14),
+            ])
+        } else {
+            constraints.append(titleLabelValue.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -14))
+        }
         if isLast {
             let bottomLine = hairline()
             row.addSubview(bottomLine)
@@ -316,7 +322,7 @@ final class BearyPlusPageViewController: UIViewController {
         contentStack.addArrangedSubview(benefitRow(title: "九宫格版式", desc: "单篇 9 张照片以九宫格呈现", isLast: false))
         contentStack.addArrangedSubview(benefitRow(title: "节日墙纸", desc: "万圣节、春节等节日限定款，领到后永久收藏", isLast: false))
         contentStack.addArrangedSubview(benefitRow(title: "景深背景", desc: "中国、美国、日本、德国、加拿大、韩国六国封面，跟着手机倾斜动", isLast: false))
-        contentStack.addArrangedSubview(benefitRow(title: "未来节日款优先", desc: "新节日款第一时间拥有", isLast: true))
+        contentStack.addArrangedSubview(benefitRow(title: "未来节日款优先", desc: nil, isLast: true))
     }
 
     private func buildInviteRow() {
@@ -345,7 +351,7 @@ final class BearyPlusPageViewController: UIViewController {
         descLabel.adjustsFontForContentSizeCategory = true
         descLabel.textColor = BearyColors.gray
         descLabel.numberOfLines = 0
-        descLabel.text = "邀请好友绑定，双方各得 30 天 Plus"
+        descLabel.text = "好友绑定并通过审核后，双方各得 30 天 Plus"
         row.addSubview(descLabel)
         let inviteButton = UIButton(type: .custom)
         inviteButton.translatesAutoresizingMaskIntoConstraints = false
