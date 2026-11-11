@@ -2350,7 +2350,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         row.addSubview(chevron)
         NSLayoutConstraint.activate([
             avatarView.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
-            avatarView.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -14),
+            // R6-1：底部改为 ≤，行高不再锁死 72pt；大字号下由文字栈撑高，默认仍 72pt。
+            avatarView.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -14),
             avatarView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
             avatarView.widthAnchor.constraint(equalToConstant: 44),
             avatarView.heightAnchor.constraint(equalToConstant: 44),
