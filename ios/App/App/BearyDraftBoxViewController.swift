@@ -901,7 +901,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             subWrap.isHidden = false
             // Q10：App 草稿只存本机，副文案改“仅保存在本设备”
             //（原网页口径“仅保存在当前浏览器”不适用于 App 本机存储）。
-            subLabel.text = "共 \(drafts.count) 份 · 写的时候自动保存 · 仅保存在本设备"
+            subLabel.text = "共 \(drafts.count) 份 · 仅保存在本设备"
             hintWrap.isHidden = false
             for draftValue in drafts {
                 let card = makeCard(for: draftValue)
@@ -1803,7 +1803,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 strongSelf.cardEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
                 strongSelf.deleteEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
                 strongSelf.lostEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-                strongSelf.subLabel.text = "共 \(strongSelf.drafts.count) 份 · 写的时候自动保存 · 仅保存在本设备"
+                strongSelf.subLabel.text = "共 \(strongSelf.drafts.count) 份 · 仅保存在本设备"
             }
             // 本笔在队列里且计时未起时出条并起 6 秒计时；其余笔的计时互不干扰。
             if let idx = strongSelf.pendingUndos.firstIndex(where: { $0.draft.draftId == draftValue.draftId }),
