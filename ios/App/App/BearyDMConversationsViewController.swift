@@ -613,8 +613,8 @@ final class BearyDMConversationCell: UITableViewCell {
         timeLabel.text = Self.relativeTimeText(ms: ms)
     }
 
-    /// 通知时间口径（2026-11-05 Li 定）：不到 1 分钟“刚刚”，不到 1 小时“X分钟前”，
-    /// 不到 24 小时“X小时前”，超过 24 小时写天数“X天前”。
+    /// 通知时间口径（2026-11-11 定版带空格，取代 2026-11-05 口径）：不到 1 分钟“刚刚”，不到 1 小时“X 分钟前”，
+    /// 不到 24 小时“X 小时前”，超过 24 小时写天数“X 天前”。
     /// 新一轮 01：几秒内的时钟偏差仍算“刚刚”；明显未来（> 5 秒）不误报为刚发送，
     /// 改走绝对时间显示。
     private static func relativeTimeText(ms: Int?) -> String {
@@ -623,9 +623,9 @@ final class BearyDMConversationCell: UITableViewCell {
         let diff = Date().timeIntervalSince(date)
         if diff < -5 { return BearyText.timeString(ms: msValue) }
         if diff < 60 { return "刚刚" }
-        if diff < 3600 { return "\(Int(diff / 60))分钟前" }
-        if diff < 86400 { return "\(Int(diff / 3600))小时前" }
-        return "\(Int(diff / 86400))天前"
+        if diff < 3600 { return "\(Int(diff / 60)) 分钟前" }
+        if diff < 86400 { return "\(Int(diff / 3600)) 小时前" }
+        return "\(Int(diff / 86400)) 天前"
     }
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
