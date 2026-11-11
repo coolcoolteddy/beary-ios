@@ -147,8 +147,8 @@ final class BearyAvatarView: UIView {
     @objc private func retryTapped() {
         guard let url = currentURL else { return }
         retryButton.isHidden = true
-        imageView.isHidden = false
-        fallbackLabel.isHidden = true
+        // 重试等待期间保留首字母占位：imageView 保持隐藏、fallbackLabel
+        // 保持显示，成功回包再切头像，失败回包只恢复重试钮。
         load(url: url, displayName: fallbackName)
     }
 }
