@@ -229,6 +229,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     private let attachProgressLabel = UILabel()
     private let attachProgressRow = UIStackView()
     private var attachProgressHeight: NSLayoutConstraint?
+    private var attachProgressTopConstraint: NSLayoutConstraint?
     // Hit44：行高由左钮 44 钉死、居中对齐，清除钮纵向扩区恰填满行高；横向各扩约 7，不及左间距 8 与右 inset 14，不抢左钮热区。
     private let attachClearButton = BearyHit44Button(type: .system)
     private let submitButton = BearyButton.make(style: .primaryPill(.ink), title: "撰写反馈邮件")
@@ -610,8 +611,10 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         attachCard.addSubview(attachProgressRow)
         let attachProgressHeightValue = attachProgressRow.heightAnchor.constraint(equalToConstant: 0)
         attachProgressHeight = attachProgressHeightValue
+        let attachProgressTopValue = attachProgressRow.topAnchor.constraint(equalTo: attachRow.bottomAnchor, constant: 4)
+        attachProgressTopConstraint = attachProgressTopValue
         NSLayoutConstraint.activate([
-            attachProgressRow.topAnchor.constraint(equalTo: attachRow.bottomAnchor, constant: 4),
+            attachProgressTopValue,
             attachProgressRow.leadingAnchor.constraint(equalTo: attachCard.leadingAnchor, constant: 14),
             attachProgressRow.trailingAnchor.constraint(equalTo: attachCard.trailingAnchor, constant: -14),
             attachProgressRow.bottomAnchor.constraint(equalTo: attachCard.bottomAnchor, constant: -8),
@@ -780,6 +783,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         attachProgressLabel.accessibilityLabel = text
         attachProgressRow.alpha = 1
         attachProgressRow.isHidden = false
+        attachProgressTopConstraint?.constant = 4
         attachProgressHeight?.constant = 24
         attachProgressSpinner.startAnimating()
     }
@@ -801,6 +805,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         attachProgressSpinner.stopAnimating()
         guard !UIAccessibility.isReduceMotionEnabled else {
             attachProgressRow.isHidden = true
+            attachProgressTopConstraint?.constant = 0
             attachProgressHeight?.constant = 0
             return
         }
@@ -809,6 +814,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         }, completion: { [weak self] _ in
             guard let self = self, !self.attachmentReading else { return }
             self.attachProgressRow.isHidden = true
+            self.attachProgressTopConstraint?.constant = 0
             self.attachProgressHeight?.constant = 0
             self.attachProgressRow.alpha = 1
         })
