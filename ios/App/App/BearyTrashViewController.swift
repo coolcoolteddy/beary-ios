@@ -1127,23 +1127,27 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     /// 按钮路径一字不动）。
     private func presentTrashActionMenu(identifier: String, rowView: UIView) {
         if presentedViewController != nil { return }
-        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
-        sheet.addAction(UIAlertAction(title: "恢复", style: .default) { [weak self] _ in
-            guard let self = self,
-                  let button = self.restoreEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button else { return }
-            self.restoreTapped(button)
-        })
-        sheet.addAction(UIAlertAction(title: "彻底删除", style: .destructive) { [weak self] _ in
-            guard let self = self,
-                  let button = self.purgeEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button else { return }
-            self.purgeTapped(button)
-        })
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = rowView
-            popover.sourceRect = rowView.bounds
-        }
-        present(sheet, animated: BearyMotion.animated(true), completion: nil)
+        // 回收站操作菜单改走共享确认底 sheet（原 UIAlertController
+        // .actionSheet，标题/选项文案与回调一字不动；iPad popover 锚点
+        // 随容器走，不再单独设；rowView 参数保留以免改动调用方）。
+        BearyConfirmSheet.show(
+            from: self,
+            title: "",
+            message: nil,
+            actions: [
+                BearyConfirmSheet.Action(title: "恢复", style: .default) { [weak self] in
+                    guard let self = self,
+                          let button = self.restoreEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button else { return }
+                    self.restoreTapped(button)
+                },
+                BearyConfirmSheet.Action(title: "彻底删除", style: .destructive) { [weak self] in
+                    guard let self = self,
+                          let button = self.purgeEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button else { return }
+                    self.purgeTapped(button)
+                },
+                BearyConfirmSheet.Action(title: "取消", style: .cancel, handler: nil),
+            ]
+        )
     }
 
     /// 在途切号校验：发起时捕获的账号 ID 与鉴权代际，任一对不上即旧登录态回包。
