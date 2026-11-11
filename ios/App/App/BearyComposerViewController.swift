@@ -622,8 +622,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var draftTimer: Timer?
     /// 审计四轮 07：切后台冲刷用的后台任务句柄；.invalid = 未持有任务。
     private var backgroundDraftTask: UIBackgroundTaskIdentifier = .invalid
-    /// 审计四轮 07：上次后台冲刷时的编辑版本——版本未变说明冲刷后无新输入，
-    /// willResignActive 与 didEnterBackground 两次触发只存一次，不重复写盘。
+    /// 审计四轮 07：上次后台冲刷时成功持久化的编辑版本——只在保存成功后
+    /// 推进；版本未变说明冲刷后无新输入，willResignActive 与 didEnterBackground
+    /// 两次触发只存一次，不重复写盘。失败时标记不动，下次切后台再冲刷同一版本。
     private var lastBackgroundFlushVersion = -1
     /// R14 P1-7：在途草稿写盘计数（save/delete 两路入队时 +1，主线程回包时 −1；
     /// 只在主线程读写，与 saveDraftNow 的调用方同线程）。退后台补存时若
@@ -631,6 +632,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 等计数归零再回（调用方据此持后台任务，不让写盘在后台被挂起）。
     private var draftSaveInFlightCount = 0
     private var draftSaveDrainCompletions: [() -> Void] = []
+    /// 后台冲刷在途：willResignActive 与 didEnterBackground 会连续触发两次，
+    /// 标记只在保存成功后推进，保存进行中第二次调用不再重复写盘；后台任务
+    /// 到期也会清掉（保存回调若随后才到，仍按其成败推进标记）。
+    private var backgroundFlushInFlight = false
+    /// 后台冲刷失败待提示：保存回调在后台触发时 toast 用户看不到，记下来
+    /// 回前台时再提示；只记编辑模式——新建态失败已有失败红字状态行，不重复提示。
+    private var backgroundFlushFailed = false
     private var editTimer: Timer?
     private var imageItems: [ComposerImageItem] = [] {
         didSet { editorEditVersion += 1 }
@@ -1013,6 +1021,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 进程若在窗口内被终止，最后输入会丢。deinit 已统一 removeObserver。
         NotificationCenter.default.addObserver(self, selector: #selector(flushDraftBeforeBackground), name: UIApplication.willResignActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(flushDraftBeforeBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(presentBackgroundFlushFailureIfNeeded), name: UIApplication.willEnterForegroundNotification, object: nil)
         NSLog("[Diag] composer-viewDidLoad-exit")
         // 临时诊断（81 包，定根因后删除）。
         DiagFile.mark("viewDidLoad-exit")
@@ -6637,21 +6646,31 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             flushEditCheckpointBeforeBackground()
             return
         }
-        guard editorEditVersion != lastBackgroundFlushVersion else { return }
-        lastBackgroundFlushVersion = editorEditVersion
+        guard editorEditVersion != lastBackgroundFlushVersion, !backgroundFlushInFlight else { return }
+        // 只记“最后成功持久化的版本”：保存前不推进标记，成功后才记下本次
+        // 冲刷的版本；失败时标记不动，下次切后台再冲刷同一版本。
+        let flushedVersion = editorEditVersion
+        backgroundFlushInFlight = true
         draftTimer?.invalidate()
         draftTimer = nil
         if backgroundDraftTask == .invalid {
             backgroundDraftTask = UIApplication.shared.beginBackgroundTask(withName: "draft-flush") { [weak self] in
                 guard let self = self else { return }
+                self.backgroundFlushInFlight = false
                 if self.backgroundDraftTask != .invalid {
                     UIApplication.shared.endBackgroundTask(self.backgroundDraftTask)
                     self.backgroundDraftTask = .invalid
                 }
             }
         }
-        saveDraftNow { [weak self] _ in
+        saveDraftNow { [weak self] result in
             guard let self = self else { return }
+            self.backgroundFlushInFlight = false
+            if result.succeeded {
+                self.lastBackgroundFlushVersion = flushedVersion
+            }
+            // 失败时标记不动（下次切后台重试）；失败红字已由 saveDraftNow
+            // 经 draftStatusLevel 置 0 显示，回前台即见，无需另弹提示。
             if self.backgroundDraftTask != .invalid {
                 UIApplication.shared.endBackgroundTask(self.backgroundDraftTask)
                 self.backgroundDraftTask = .invalid
@@ -6662,26 +6681,45 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 编辑检查点入后台冲刷：取消防抖 timer、直接写一次检查点；版本未变
     /// 说明冲刷后无新输入，不重复写盘（与新建态 flush 同款守卫）。
     private func flushEditCheckpointBeforeBackground() {
-        guard editorEditVersion != lastBackgroundFlushVersion else { return }
-        lastBackgroundFlushVersion = editorEditVersion
+        guard editorEditVersion != lastBackgroundFlushVersion, !backgroundFlushInFlight else { return }
+        let flushedVersion = editorEditVersion
+        backgroundFlushInFlight = true
         draftTimer?.invalidate()
         draftTimer = nil
         if backgroundDraftTask == .invalid {
             backgroundDraftTask = UIApplication.shared.beginBackgroundTask(withName: "beary_edit_checkpoint_flush") { [weak self] in
                 guard let self = self else { return }
+                self.backgroundFlushInFlight = false
                 if self.backgroundDraftTask != .invalid {
                     UIApplication.shared.endBackgroundTask(self.backgroundDraftTask)
                     self.backgroundDraftTask = .invalid
                 }
             }
         }
-        saveEditCheckpointNow { [weak self] _ in
+        saveEditCheckpointNow { [weak self] succeeded in
             guard let self = self else { return }
+            self.backgroundFlushInFlight = false
+            if succeeded {
+                self.lastBackgroundFlushVersion = flushedVersion
+            } else {
+                // 失败时标记不动（下次切后台重试）；编辑模式没有状态行可置红，
+                // 记下来回前台时 toast 提示（见 presentBackgroundFlushFailureIfNeeded）。
+                self.backgroundFlushFailed = true
+            }
             if self.backgroundDraftTask != .invalid {
                 UIApplication.shared.endBackgroundTask(self.backgroundDraftTask)
                 self.backgroundDraftTask = .invalid
             }
         }
+    }
+
+    /// 后台冲刷失败的回前台提示：保存回调在后台触发时 toast 用户看不到，
+    /// 只在编辑模式记下来（新建态失败已有失败红字状态行，不重复提示），
+    /// 回前台时弹一次；继续编辑会经防抖重存检查点，提示只作告知。
+    @objc private func presentBackgroundFlushFailureIfNeeded() {
+        guard backgroundFlushFailed else { return }
+        backgroundFlushFailed = false
+        showToast(message: "修改保存失败，请重试")
     }
 
     /// saveDraftNow 完成结果（主线程回调）。
