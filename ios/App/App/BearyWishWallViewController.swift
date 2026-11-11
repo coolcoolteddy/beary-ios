@@ -280,11 +280,11 @@ private final class WishRowView: UIView {
         let voteChanged = lastVoteCounts == nil || lastVoteCounts?.up != up || lastVoteCounts?.down != down
         lastVoteCounts = (up, down)
         let newNetText = "净赞成 \(net >= 0 ? "+" : "")\(net)"
-        fadeVoteCount(on: netLabel, changed: voteChanged) { netLabel.text = newNetText }
+        fadeVoteCount(on: netLabel, changed: voteChanged) { self.netLabel.text = newNetText }
         let newUpTitle = "赞成 \(up)"
-        fadeVoteCount(on: upButton, changed: voteChanged) { upButton.setTitle(newUpTitle, for: .normal) }
+        fadeVoteCount(on: upButton, changed: voteChanged) { self.upButton.setTitle(newUpTitle, for: .normal) }
         let newDownTitle = "反对 \(down)"
-        fadeVoteCount(on: downButton, changed: voteChanged) { downButton.setTitle(newDownTitle, for: .normal) }
+        fadeVoteCount(on: downButton, changed: voteChanged) { self.downButton.setTitle(newDownTitle, for: .normal) }
         setVoteSelected(upButton, selected: item.myVote == 1)
         setVoteSelected(downButton, selected: item.myVote == -1)
         let done = item.status == "done"
