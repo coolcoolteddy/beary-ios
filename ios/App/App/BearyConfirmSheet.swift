@@ -34,11 +34,26 @@ enum BearyConfirmSheet {
         }
     }
 
+    /// 注销确认用的显式勾选项（第 5 条定版：默认不勾；只在调用方传 toggle
+    /// 时出现，其余确认弹窗不受影响）。
+    struct Toggle {
+        let title: String
+        let subtitle: String?
+        let isOn: Bool
+        let onChange: ((Bool) -> Void)?
+        init(title: String, subtitle: String? = nil, isOn: Bool = false, onChange: ((Bool) -> Void)? = nil) {
+            self.title = title
+            self.subtitle = subtitle
+            self.isOn = isOn
+            self.onChange = onChange
+        }
+    }
+
     /// 从 presenter 弹出确认底 sheet（presenter 即原 alert 的 present 方）。
     /// - Parameter onDismissWithoutAction: 未点任何按钮就关闭（叉叉/遮罩/下滑）
     ///   时调一次；点过按钮后关闭不调；不传则关闭时什么都不做。
-    static func show(from presenter: UIViewController, title: String, message: String?, actions: [Action], onDismissWithoutAction: (() -> Void)? = nil) {
-        let sheet = BearyConfirmSheetViewController(title: title, message: message, actions: actions, onDismissWithoutAction: onDismissWithoutAction)
+    static func show(from presenter: UIViewController, title: String, message: String?, actions: [Action], toggle: Toggle? = nil, onDismissWithoutAction: (() -> Void)? = nil) {
+        let sheet = BearyConfirmSheetViewController(title: title, message: message, actions: actions, toggle: toggle, onDismissWithoutAction: onDismissWithoutAction)
         let delegate = BearyBottomSheetTransitioningDelegate()
         sheet.sheetDelegate = delegate
         sheet.transitioningDelegate = delegate
@@ -61,6 +76,7 @@ final class BearyConfirmSheetViewController: UIViewController {
     private let sheetTitle: String
     private let sheetMessage: String?
     private let sheetActions: [BearyConfirmSheet.Action]
+    private let sheetToggle: BearyConfirmSheet.Toggle?
     private let onDismissWithoutAction: (() -> Void)?
 
     /// 只解析一次：点按行 / 关闭入口任一先到即定局，后到的直接丢弃，
@@ -76,6 +92,7 @@ final class BearyConfirmSheetViewController: UIViewController {
     private let titleLabel = UILabel()
     private let messageLabel = UILabel()
     private let buttonStack = UIStackView()
+    private var toggleRow: UIStackView?
 
     /// 非取消在上、取消垫底（iOS 动作表口径；原 alert 的按钮文案与顺序语义不变）。
     private var orderedActions: [BearyConfirmSheet.Action] {
@@ -84,10 +101,11 @@ final class BearyConfirmSheetViewController: UIViewController {
         return nonCancel + cancel
     }
 
-    init(title: String, message: String?, actions: [BearyConfirmSheet.Action], onDismissWithoutAction: (() -> Void)? = nil) {
+    init(title: String, message: String?, actions: [BearyConfirmSheet.Action], toggle: BearyConfirmSheet.Toggle? = nil, onDismissWithoutAction: (() -> Void)? = nil) {
         self.sheetTitle = title
         self.sheetMessage = message
         self.sheetActions = actions
+        self.sheetToggle = toggle
         self.onDismissWithoutAction = onDismissWithoutAction
         super.init(nibName: nil, bundle: nil)
     }
@@ -128,6 +146,39 @@ final class BearyConfirmSheetViewController: UIViewController {
             messageLabel.textColor = BearyColors.gray
             messageLabel.numberOfLines = 0
             view.addSubview(messageLabel)
+        }
+
+        // 显式勾选项（调用方传 toggle 时才出现）：标题＋说明＋系统开关，默认不勾。
+        if let toggle = sheetToggle {
+            let toggleTitleLabel = UILabel()
+            toggleTitleLabel.text = toggle.title
+            toggleTitleLabel.font = BearyDynamicType.smallBodyFont()
+            toggleTitleLabel.textColor = BearyColors.ink
+            toggleTitleLabel.numberOfLines = 0
+            let toggleTextStack = UIStackView(arrangedSubviews: [toggleTitleLabel])
+            toggleTextStack.axis = .vertical
+            toggleTextStack.spacing = 2
+            if let subtitle = toggle.subtitle, !subtitle.isEmpty {
+                let toggleSubtitleLabel = UILabel()
+                toggleSubtitleLabel.text = subtitle
+                toggleSubtitleLabel.font = BearyDynamicType.smallBodyFont()
+                toggleSubtitleLabel.textColor = BearyColors.gray
+                toggleSubtitleLabel.numberOfLines = 0
+                toggleTextStack.addArrangedSubview(toggleSubtitleLabel)
+            }
+            let toggleSwitch = UISwitch()
+            toggleSwitch.isOn = toggle.isOn
+            toggleSwitch.setContentHuggingPriority(.required, for: .horizontal)
+            toggleSwitch.setContentCompressionResistancePriority(.required, for: .horizontal)
+            toggleSwitch.accessibilityLabel = toggle.title
+            toggleSwitch.addTarget(self, action: #selector(toggleValueChanged(_:)), for: .valueChanged)
+            let row = UIStackView(arrangedSubviews: [toggleTextStack, toggleSwitch])
+            row.axis = .horizontal
+            row.spacing = 12
+            row.alignment = .center
+            row.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(row)
+            toggleRow = row
         }
 
         buttonStack.translatesAutoresizingMaskIntoConstraints = false
@@ -178,13 +229,20 @@ final class BearyConfirmSheetViewController: UIViewController {
                 messageLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
                 messageLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
                 messageLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-                buttonStack.topAnchor.constraint(equalTo: messageLabel.bottomAnchor, constant: 16),
-            ])
-        } else {
-            NSLayoutConstraint.activate([
-                buttonStack.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 16),
             ])
         }
+        // 按钮组顶缘：有勾选行时贴勾选行，否则贴说明（无说明贴标题）。
+        let aboveButtons: UIView = toggleRow ?? (hasMessage ? messageLabel : titleLabel)
+        if let row = toggleRow {
+            NSLayoutConstraint.activate([
+                row.topAnchor.constraint(equalTo: (hasMessage ? messageLabel.bottomAnchor : titleLabel.bottomAnchor), constant: 16),
+                row.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                row.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            ])
+        }
+        NSLayoutConstraint.activate([
+            buttonStack.topAnchor.constraint(equalTo: aboveButtons.bottomAnchor, constant: 16),
+        ])
         NSLayoutConstraint.activate([
             buttonStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             buttonStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
@@ -208,6 +266,10 @@ final class BearyConfirmSheetViewController: UIViewController {
         if preferredContentSize != preferred {
             preferredContentSize = preferred
         }
+    }
+
+    @objc private func toggleValueChanged(_ sender: UISwitch) {
+        sheetToggle?.onChange?(sender.isOn)
     }
 
     @objc private func actionTapped(_ sender: UIButton) {
