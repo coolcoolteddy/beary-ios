@@ -28,7 +28,8 @@ final class BearyProfilePhotosViewController: UIViewController {
     /// r24-#2：照片拉取代次——切号即换代，在途旧身份分页／首拉回包一律丢弃，
     /// 不得写回新身份的页面。
     private var photosGeneration = 0
-    /// r24-#2：切号重拉进行中时空态显“加载中…”，而非“还没有照片”。
+    /// r24-#2：切号重拉进行中时空态显加载占位（D5 3 列灰色缩略图），
+    /// 而非“还没有照片”。
     private var isReloadingPhotos = false
     private var diaryEntriesValue: [Entry]
     private var photosValue: [BearyProfilePhotoItem]
@@ -155,8 +156,10 @@ final class BearyProfilePhotosViewController: UIViewController {
 
     /// 03：空相册失败时的重试按钮——重试节在网格里，照片为 0 时网格整个
     /// 隐藏、节看不见，空态下只能由这个按钮承载重试入口。
-    private lazy var emptyRetryButton: UIButton = {
-        let buttonValue = UIButton(type: .custom)
+    /// 审计 r2 ①-8：改 BearyHit44Button（BearyNativeCommon.swift:383–390），
+    /// 热区外扩到 ≥44pt；15pt scaled 文字与按压反馈保留，视觉不动。
+    private lazy var emptyRetryButton: BearyHit44Button = {
+        let buttonValue = BearyHit44Button(type: .custom)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("重试", for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
@@ -167,6 +170,48 @@ final class BearyProfilePhotosViewController: UIViewController {
         buttonValue.addTarget(self, action: #selector(emptyRetryButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         return buttonValue
+    }()
+
+    /// D5（审计 r2）：加载期 3 列灰色缩略图占位——照片为 0 且仍在拉取时
+    /// 显 2 行 × 3 列灰色方块（锚在 collectionView 上，与真实网格同列宽／
+    /// 同间距 8／同圆角 12，宽屏跟 600 居中走），不写「加载中…」文字、
+    /// 不套日记卡骨架；失败／确认空态时隐藏。纯静态占位，无扫光动画。
+    private lazy var photosLoadingPlaceholderView: UIView = {
+        let containerValue = UIView()
+        containerValue.translatesAutoresizingMaskIntoConstraints = false
+        containerValue.isHidden = true
+        containerValue.isAccessibilityElement = false
+        containerValue.accessibilityElementsHidden = true
+        let outerStack = UIStackView()
+        outerStack.translatesAutoresizingMaskIntoConstraints = false
+        outerStack.axis = .vertical
+        outerStack.spacing = 8
+        outerStack.distribution = .fillEqually
+        for _ in 0..<2 {
+            let rowStack = UIStackView()
+            rowStack.translatesAutoresizingMaskIntoConstraints = false
+            rowStack.axis = .horizontal
+            rowStack.spacing = 8
+            rowStack.distribution = .fillEqually
+            for _ in 0..<3 {
+                let tileValue = UIView()
+                tileValue.translatesAutoresizingMaskIntoConstraints = false
+                tileValue.backgroundColor = BearyColors.surface2
+                tileValue.layer.cornerRadius = 12
+                tileValue.clipsToBounds = true
+                tileValue.heightAnchor.constraint(equalTo: tileValue.widthAnchor).isActive = true
+                rowStack.addArrangedSubview(tileValue)
+            }
+            outerStack.addArrangedSubview(rowStack)
+        }
+        containerValue.addSubview(outerStack)
+        NSLayoutConstraint.activate([
+            outerStack.topAnchor.constraint(equalTo: containerValue.topAnchor),
+            outerStack.leadingAnchor.constraint(equalTo: containerValue.leadingAnchor),
+            outerStack.trailingAnchor.constraint(equalTo: containerValue.trailingAnchor),
+            outerStack.bottomAnchor.constraint(equalTo: containerValue.bottomAnchor),
+        ])
+        return containerValue
     }()
 
     /// r17-C6：快照态提示行——有旧结果且刷新失败时“显示的是上次的数据”，
@@ -194,6 +239,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         view.addSubview(collectionView)
         view.addSubview(emptyLabel)
         view.addSubview(emptyRetryButton)
+        view.addSubview(photosLoadingPlaceholderView)
         view.addSubview(photosStatusLabel)
         photosStatusHeightConstraint = photosStatusLabel.heightAnchor.constraint(equalToConstant: 0)
         photosStatusHeightConstraint?.isActive = true
@@ -229,6 +275,16 @@ final class BearyProfilePhotosViewController: UIViewController {
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             emptyRetryButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyRetryButton.topAnchor.constraint(equalTo: emptyLabel.bottomAnchor, constant: 12),
+            // 审计 r2 ①-8：空态重试钮视觉帧本身未达 44，补 ≥44 宽高约束
+            //（BearyComposerPickers stateRetryButton 同款口径）；热区由
+            // BearyHit44Button 的 point(inside:) 外扩兜底，视觉不动。
+            emptyRetryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            emptyRetryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            // D5：占位锚在 collectionView 上（隐藏视图仍参与布局），与真实
+            // 网格同区：顶贴 sectionInset 16、左右各 inset 16。
+            photosLoadingPlaceholderView.topAnchor.constraint(equalTo: collectionView.topAnchor, constant: 16),
+            photosLoadingPlaceholderView.leadingAnchor.constraint(equalTo: collectionView.leadingAnchor, constant: 16),
+            photosLoadingPlaceholderView.trailingAnchor.constraint(equalTo: collectionView.trailingAnchor, constant: -16),
         ])
         // 顶栏错位同根修（2026-11-06，裁剪页黑屏同根）：顶栏高此前只有
         // required 下限 ≥44、无上界、无定值——高度在约束层面未定，solver
@@ -604,30 +660,37 @@ final class BearyProfilePhotosViewController: UIViewController {
     }
 
     /// 03：空态按状态分流渲染——照片为 0 时：
-    /// 续拉中显“加载中…”；失败显“照片没加载出来”＋空态重试按钮；
-    /// 确认取尽（无更多页）才显“还没有照片”。失败分支也要调本函数，
-    /// 不能只往隐藏的网格里插重试节。
+    /// 加载期（切号重拉中／仍有下一页）显 D5 的 3 列灰色缩略图占位，
+    /// 不写「加载中…」文字、不套日记卡骨架；失败显“照片没加载出来”
+    /// ＋空态重试按钮；确认取尽（无更多页）才显“还没有照片”。
+    /// 失败分支也要调本函数，不能只往隐藏的网格里插重试节。
     private func updateTitleAndEmpty() {
         setTitleTextFaded("照片 · \(photosValue.count) 张")
         guard photosValue.isEmpty else {
             emptyLabel.isHidden = true
             emptyRetryButton.isHidden = true
+            photosLoadingPlaceholderView.isHidden = true
             collectionView.isHidden = false
             return
         }
         collectionView.isHidden = true
-        emptyLabel.isHidden = false
-        // r24-#2：切号重拉进行中显加载态，不把“正在拉新账号照片”画成“没有照片”。
+        // r24-#2：切号重拉进行中显加载占位，不把“正在拉新账号照片”画成“没有照片”。
         if isReloadingPhotos {
-            emptyLabel.text = "加载中…"
+            emptyLabel.isHidden = true
             emptyRetryButton.isHidden = true
+            photosLoadingPlaceholderView.isHidden = false
         } else if photosEmptyLoadFailed {
+            photosLoadingPlaceholderView.isHidden = true
+            emptyLabel.isHidden = false
             emptyLabel.text = "照片没加载出来"
             emptyRetryButton.isHidden = false
         } else if photosHasMore {
-            emptyLabel.text = "加载中…"
+            emptyLabel.isHidden = true
             emptyRetryButton.isHidden = true
+            photosLoadingPlaceholderView.isHidden = false
         } else {
+            photosLoadingPlaceholderView.isHidden = true
+            emptyLabel.isHidden = false
             emptyLabel.text = "还没有照片"
             emptyRetryButton.isHidden = true
         }
