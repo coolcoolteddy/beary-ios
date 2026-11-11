@@ -947,22 +947,11 @@ final class BearyTimelineCell: UITableViewCell {
     /// 引用卡小图不走此路（点按引用卡仍走 onQuoteEntry 打开被引用日记）。
     var onTapImages: (([String], Int, CGRect?, UIImage?) -> Void)?
     private let actsStack = UIStackView()
-    private let editStatusLabel = UILabel()
-    /// 2026-10-29 Li 定编辑态口径：无图标、只留文字；可编辑期内左侧为倒计时灰字 +
-    /// 可点按的“编辑”二字（本行唯一的编辑入口，旧图标编辑钮已摘）；到期 live 翻转时
-    /// 同位置变“编辑已结束”，3 秒后先淡出、再带动画塌掉；首渲染已过期则直接不留。
-    /// 2026-11-01 Li 新口径取代 2026-10-30 外框定格的后半段：淡出后本行不再
-    /// 永久占位，须塌回正常高度；文字出现那一刻仍不跳变（见 updateEditRow）。
+    /// 2026-10-29 Li 定编辑态口径：无图标、只留文字；冲突清单第 4 条取消
+    /// 15 分钟锁后，本行只剩可点按的“编辑”二字（本行唯一的编辑入口，
+    /// 旧图标编辑钮已摘；倒计时文案与“编辑已结束”态随锁一并取消）。
     private let editStatusGroup = UIStackView()
-    /// 塌行用的临时高度约束：只在淡出后的塌行动画期间存在，动画结束即
-    /// 停用并随 isHidden=true 一起清掉；复用与重回可编辑态时同样复位，
-    /// 防止 0 高约束串到下一行。
-    private var editStatusHeightConstraint: NSLayoutConstraint?
-    private var editStatusCollapsing = false
     private let editTextButton = BearyHit44Button(type: .custom)
-    private var editRowSawEditable = false
-    private var editRowEndedShown = false
-    private var editRowEndTimer: Timer?
     // 时间线卡片 ⋯ 菜单钮（2026-10-29 改版）：卡片顶行右端（meta 行末），
     // 官方 icon_more 横向三点 21pt 灰色，44pt 热区由 BearyHit44Button 的 28 帧扩后保证；
     // 点开菜单：编辑内容／修改权限／删除（原 meta 行末地球切换钮与右下角删除钮均已摘除，
@@ -1088,11 +1077,7 @@ final class BearyTimelineCell: UITableViewCell {
         // 不导航的守卫仍在 quoteTapped 内，不凭渲染快照放行。
         quoteCard.onTapped = { [weak self] in self?.quoteTapped() }
 
-        // 8-3：私密操作行状态文案（正文类）走等宽数字 + adjusts（还剩 N 分钟按分钟跳字，宽度不抖）。
-        editStatusLabel.font = BearyDynamicType.tabularDigitsFont(ofSize: 12)
-        editStatusLabel.adjustsFontForContentSizeCategory = true
-        editStatusLabel.textColor = BearyColors.gray
-        // 2026-10-29 编辑态口径：倒计时灰字 + 可点按的“编辑”二字（12pt 灰字按钮，
+        // 2026-10-29 编辑态口径：可点按的“编辑”二字（12pt 灰字按钮，
         // BearyHit44Button 扩后热区 44；点按即进编辑器，与旧图标编辑钮同一回调）。
         editTextButton.translatesAutoresizingMaskIntoConstraints = false
         editTextButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
@@ -1124,7 +1109,6 @@ final class BearyTimelineCell: UITableViewCell {
         editStatusGroup.axis = .horizontal
         editStatusGroup.spacing = 8
         editStatusGroup.alignment = .center
-        editStatusGroup.addArrangedSubview(editStatusLabel)
         editStatusGroup.addArrangedSubview(editTextButton)
         actsStack.addArrangedSubview(editStatusGroup)
         actsStack.addArrangedSubview(actsSpacer)
@@ -1348,18 +1332,8 @@ final class BearyTimelineCell: UITableViewCell {
         // 按压缩放残留复位：通用按压反馈把按钮 imageView 缩到 .84，
         // 触摸序列异常打断时回弹没跑到，复用会把 .84 带到下一行。
         editTextButton.imageView?.transform = .identity
-        // 2026-10-29 编辑态复位：live 翻转计时与“已结束”态不得串位到下一行。
-        editRowEndTimer?.invalidate()
-        editRowEndTimer = nil
-        editRowSawEditable = false
-        editRowEndedShown = false
         editStatusGroup.alpha = 1
         editStatusGroup.accessibilityElementsHidden = false
-        // 塌行残留复位：动画在途的完成回调以 editStatusCollapsing 守卫，
-        // 此处先置 false，旧动画完成时不再把新行藏掉；约束同步停用。
-        editStatusCollapsing = false
-        editStatusHeightConstraint?.isActive = false
-        editStatusHeightConstraint = nil
         editStatusGroup.isHidden = false
         editTextButton.isHidden = true
         editTextButton.alpha = 1
@@ -1754,7 +1728,7 @@ final class BearyTimelineCell: UITableViewCell {
             actsStack.isHidden = false
         }
         // iCity：公开行与私密行共用操作行——公开行在计数足行之外同样出操作行
-        //（只剩编辑态文字组，编辑仅 15 分钟内；删除走 ⋯ 菜单，公开/私密均可）。
+        //（只剩编辑态文字组，编辑永久可改；删除走 ⋯ 菜单，公开/私密均可）。
         if published {
             updateEditRow(entry: entry)
             actsStack.isHidden = false
@@ -1777,135 +1751,19 @@ final class BearyTimelineCell: UITableViewCell {
         onTapImages?(keys, index, sender.view.map { $0.convert($0.bounds, to: nil) }, (sender.view as? UIImageView)?.image)
     }
 
-    /// 2026-10-29 Li 定编辑态口径（无图标、只留文字、状态会变）：
-    /// - 可编辑期内：左侧“还剩 N 分钟”灰字（按分钟刷新，向上取整，至少 1 分钟）+
-    ///   可点按的“编辑”二字（本行唯一的编辑入口）；数字变化只改 label 文本。
-    /// - 到期那一刻（本行此前已渲染过可编辑态，即看着它过期）：同位置变
-    ///   “编辑已结束”灰字，约 3 秒后先淡出、再带动画塌掉（减动效下直接塌掉）。
-    ///   2026-10-30 外框定格的前半段仍保留：文字出现那一刻只换文字、不增删
-    ///   视图，卡片高度与限时虚线框（cardView.bounds）不因文字翻转而跳变；
-    ///   2026-11-01 Li 新口径只取代后半段——淡出后本行不再永久占位，
-    ///   而是塌回首渲染已过期时的正常高度（actsStack 仅剩 9pt 栈间距与
-    ///   卡片底边距，与从未出过编辑行完全一致）。
-    /// - 首渲染已过期（含 deadline 缺失即已锁）：不闪“编辑已结束”，直接什么都不留。
-    /// - 小地球显隐与无障碍文案同在此定（已挪 meta 行末，恒灰色 21pt）。
+    /// 冲突清单第 4 条：编辑永久可改——本行只剩可点按的“编辑”二字（本人篇才有），
+    /// 不再算倒计时、不再翻转“编辑已结束”；⋯ 菜单钮常驻 meta 行末。
     private func updateEditRow(entry: Entry) {
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-        if let deadline = entry.editDeadline, nowMs < deadline {
-            editRowSawEditable = true
-            editRowEndTimer?.invalidate()
-            editRowEndTimer = nil
-            // 重回可编辑态：塌行在途的动画不再生效（完成回调以
-            // editStatusCollapsing 守卫），约束同步停用。
-            editStatusCollapsing = false
-            editStatusHeightConstraint?.isActive = false
-            editStatusHeightConstraint = nil
-            editStatusGroup.isHidden = false
-            editStatusGroup.alpha = 1
-            editStatusGroup.accessibilityElementsHidden = false
-            editStatusLabel.textColor = BearyColors.gray
-            let remainingSeconds = (deadline - nowMs) / 1000
-            let minutes = max(1, (remainingSeconds + 59) / 60)
-            let text = "还剩 \(minutes) 分钟"
-            if editStatusLabel.text != text {
-                editStatusLabel.text = text
-            }
-            editTextButton.isHidden = false
-            editTextButton.alpha = 1
-            editTextButton.isEnabled = true
-        } else if editRowSawEditable && !editRowEndedShown {
-            // live 翻转：此前见过可编辑态，才走“编辑已结束 → 3 秒消失”这一段。
-            editRowEndedShown = true
-            editStatusGroup.isHidden = false
-            editStatusGroup.alpha = 1
-            editStatusGroup.accessibilityElementsHidden = false
-            editStatusLabel.text = "编辑已结束"
-            editStatusLabel.textColor = BearyColors.gray
-            // 外框定格：只换文字、不增删视图——“编辑”钮只降 alpha 并禁用，
-            // 仍留在布局里占位，本行宽高与可编辑期完全一致，卡片不跳变。
-            editTextButton.isHidden = false
-            editTextButton.alpha = 0
-            editTextButton.isEnabled = false
-            editRowEndTimer?.invalidate()
-            editRowEndTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
-                self?.hideEditEndedRow()
-            }
-        } else if !editRowSawEditable && !editRowEndedShown {
-            // 首渲染已过期：不闪提示，直接什么都不留。
-            editRowEndTimer?.invalidate()
-            editRowEndTimer = nil
-            editStatusGroup.isHidden = true
-        }
-        // 已结束且已消失后：后续 tick 不再碰本行（editRowEndedShown 守卫）。
-        // 2026-10-29 改版：⋯ 菜单钮常驻 meta 行末，不再按行态显隐或改文案；
-        // 可见性切换走菜单“修改权限”，与原地球钮同一 handlePublishEntry 路径。
-    }
-
-    /// “编辑已结束”3 秒后的退场：先淡出、再带动画塌掉。
-    /// 根因（2026-11-01 Li 报“编辑结束后下方空隙过大”）：旧口径在淡出后
-    /// 绝不 isHidden，editStatusGroup 一直在 actsStack 里占一行高度，
-    /// 文字没了、空行还在，卡片下方就留了一大段空白。
-    /// 新口径分两段走：0.25s 淡出（文字消失那一刻仍不跳变），淡出完成
-    /// 后 0.3s ease 把行高塌到 0，卡片平滑缩回正常高度；限时虚线框
-    /// 由 layoutSubviews 按 cardView.bounds 逐帧重画，不闪跳。
-    private func hideEditEndedRow() {
-        editRowEndTimer = nil
-        if UIAccessibility.isReduceMotionEnabled {
-            editStatusGroup.alpha = 0
-            editStatusGroup.accessibilityElementsHidden = true
+        guard entry.isMine == true else {
             editStatusGroup.isHidden = true
             return
         }
-        UIView.animate(withDuration: 0.25, animations: { [weak self] in
-            self?.editStatusGroup.alpha = 0
-        }, completion: { [weak self] _ in
-            guard let self = self, self.editRowEndedShown else { return }
-            self.editStatusGroup.alpha = 0
-            self.editStatusGroup.accessibilityElementsHidden = true
-            self.collapseEditEndedRow()
-        })
-    }
-
-    /// 淡出后的塌行：用临时高度约束把本行从当前高度压到 0。
-    /// 表格行高由 tableView 决定，光改 cell 内约束不动行高、只会在下一
-    /// 布局帧跳变，故动画内同步 begin/endUpdates，让行高跟随同一动画走。
-    /// 完成时 isHidden=true 并停用临时约束，终态与首渲染已过期完全一致。
-    private func collapseEditEndedRow() {
-        guard !editStatusGroup.isHidden, !editStatusCollapsing else { return }
-        editStatusCollapsing = true
-        let currentHeight = editStatusGroup.bounds.height
-        guard currentHeight > 0 else {
-            editStatusGroup.isHidden = true
-            editStatusCollapsing = false
-            return
-        }
-        let heightConstraint = editStatusGroup.heightAnchor.constraint(equalToConstant: currentHeight)
-        heightConstraint.isActive = true
-        editStatusHeightConstraint = heightConstraint
-        contentView.layoutIfNeeded()
-        let tableView = enclosingTableView
-        UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState], animations: {
-            heightConstraint.constant = 0
-            self.contentView.layoutIfNeeded()
-            tableView?.beginUpdates()
-            tableView?.endUpdates()
-        }, completion: { [weak self] _ in
-            guard let self = self, self.editStatusCollapsing else { return }
-            self.editStatusHeightConstraint?.isActive = false
-            self.editStatusHeightConstraint = nil
-            self.editStatusGroup.isHidden = true
-            self.editStatusCollapsing = false
-        })
-    }
-
-    /// 沿 superview 链找宿主 tableView（cell 本身不持有 tableView 引用）。
-    private var enclosingTableView: UITableView? {
-        var view: UIView? = superview
-        while let current = view {
-            if let tableView = current as? UITableView { return tableView }
-            view = current.superview
-        }
-        return nil
+        editStatusGroup.isHidden = false
+        editStatusGroup.alpha = 1
+        editStatusGroup.accessibilityElementsHidden = false
+        editTextButton.isHidden = false
+        editTextButton.alpha = 1
+        editTextButton.isEnabled = true
     }
 
     @objc private func moreTapped() {
@@ -1928,13 +1786,6 @@ final class BearyTimelineCell: UITableViewCell {
         moreButton.layer.add(shake, forKey: "bearyDenyShake")
     }
 
-
-    /// TL-2/TL-3 的 1 秒 tick 入口：只改本行编辑倒计时文案，不重建行
-    ///（pill 现为静态两态，公开/私密行都跑编辑倒计时）。
-    func refreshCountdowns() {
-        guard let entry = currentEntry else { return }
-        updateEditRow(entry: entry)
-    }
 
     @objc private func editTapped() {
         guard let entry = currentEntry else { return }
@@ -2394,7 +2245,7 @@ class BearyTimelineViewController: UIViewController {
     /// N3：切日回包到达时的入场错峰归属（仅 clear:true 的换日回包设置，
     /// 回包消费后清掉；非换日回包不设，避免旧队列在刷新行上重播）。
     private var daySwitchArrivalKey: String?
-    /// TL-2 1 秒 tick（仅刷编辑倒计时文案）。
+    /// TL-2 1 秒 tick（仅限时到期复核；编辑倒计时已随锁取消）。
     private var countdownTimer: Timer?
     /// 审计-时间线：本 tick 内已翻转过的到期 id（防每秒重复重载同行；离表/重变存活即剪枝）。
     private var expiredEphemeralHandledIds: Set<String> = []
@@ -3721,7 +3572,7 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
-    // MARK: - TL-2 1 秒倒计时
+    // MARK: - TL-2 1 秒 tick（仅限时到期复核；编辑倒计时已随锁取消）
 
     private func startCountdownTimer() {
         if countdownTimer != nil { return }
@@ -3736,13 +3587,9 @@ class BearyTimelineViewController: UIViewController {
     }
 
     private func countdownTick() {
-        // 审计-时间线：先跑限时到期复核（到期的可见行原地重算有效态），再刷编辑倒计时文案；
-        // 不可见行下次 configure 时自然按有效态渲染，无需预刷。
+        // 审计-时间线：只跑限时到期复核（到期的可见行原地重算有效态）；
+        // 编辑倒计时已随 15 分钟锁取消（冲突清单第 4 条），不再每秒刷行。
         sweepEphemeralExpiry()
-        for cell in tableView.visibleCells {
-            guard let timelineCell = cell as? BearyTimelineCell else { continue }
-            timelineCell.refreshCountdowns()
-        }
     }
 
     /// 审计-时间线：限时到期复核（时间线页内版，详情页 Timer＋前台复核口径）：
@@ -6697,22 +6544,15 @@ class BearyTimelineViewController: UIViewController {
     }
 
     /// 2026-11-11 改版：卡片右上角 ⋯ 菜单迁底部弹窗（BearyConfirmSheet；原文案/
-    /// 顺序/语义全保留）——编辑内容／修改权限／删除。编辑内容仅 15 分钟内可点
-    /// （与编辑文字钮、左滑编辑同口径：deadline 缺失即已锁）；过期时置灰并附说明。
+    /// 顺序/语义全保留）——编辑内容／修改权限／删除。编辑永久可改，不再按
+    /// 15 分钟门控（冲突清单第 4 条）。
     /// 修改权限走原地球钮同一 handlePublishEntry 路径（含乐观落地、失败回滚、拒绝动效）；
     /// 删除走原删除回调同一路（容器确认流程不变）；iPad popover 锚点随迁移删去。
     private func presentTimelineMoreMenu(entry: Entry) {
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         var actions: [BearyConfirmSheet.Action] = []
-        if let deadline = entry.editDeadline, nowMs < deadline {
-            actions.append(BearyConfirmSheet.Action(title: "编辑内容", style: .default) { [weak self] in
-                self?.onEditEntry?(entry)
-            })
-        } else {
-            // r29-11：过期（或 editDeadline 缺失即已锁）时编辑项不再直接消失，
-            // 与详情页同口径，置灰并附说明；handler 为 nil。
-            actions.append(BearyConfirmSheet.Action(title: "编辑（已超 15 分钟不可编辑）", style: .default, isEnabled: false))
-        }
+        actions.append(BearyConfirmSheet.Action(title: "编辑内容", style: .default) { [weak self] in
+            self?.onEditEntry?(entry)
+        })
         actions.append(BearyConfirmSheet.Action(title: "修改权限", style: .default) { [weak self] in
             self?.handlePublishEntry(entry)
         })
@@ -6955,14 +6795,12 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         onOpenEntry?(sections[indexPath.section].entries[indexPath.row])
     }
 
-    /// C7 滑动操作资格（iCity）：删除公开/私密均可，编辑仅看 15 分钟编辑期
-    ///（与编辑钮显隐同口径：editDeadline 缺失即已锁），与可见性无关。
+    /// C7 滑动操作资格（iCity）：删除公开/私密均可；冲突清单第 4 条取消
+    /// 15 分钟锁后，编辑只看本人（时间线本就只列本人日记），与可见性无关。
     /// 触发后只复用 onDeleteEntry/onEditEntry（容器确认/编辑器流程），
     /// 不另写执行逻辑；不符资格的行返回 nil，即不可滑动。
     private static func isTimelineSwipeEditUnlocked(entry: Entry) -> Bool {
-        guard let deadline = entry.editDeadline else { return false }
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-        return nowMs < deadline
+        entry.isMine == true
     }
 
     func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {

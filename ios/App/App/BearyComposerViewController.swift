@@ -484,13 +484,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 保存不动它；setDraftExitSaving(false) 只走终态分支，不走 #1002 式
     /// 版本复核的重存中途（重存期间冻结保持，见 saveDraftVersionedForExit）。
     private var isDraftExitSaving = false
-    /// 编辑期到点时正好有保存 PUT 在途：计时器不自动关编辑器，改由服务端
-    /// 结果定去留（见 startEditTimer / performUpdate 失败分支）。置位后即便
-    /// 请求失败也不再允许重发——期限已过，服务端同样会以 edit window
-    /// expired 拒绝；编辑器保持打开、正文与标题原样保留，供用户复制后
-    /// 再手动关闭。正常到点（无在途请求）不置位，直接走原关闭路径；
-    /// 新建发布没有编辑计时器，不受影响。
-    private var editSaveBlockedAfterDeadline = false
     /// 审计四轮增量 09：编辑检查点恢复提示状态（每编辑器实例只弹一次）。
     /// pending 由回填末尾的检查点查到后挂起，viewDidAppear 后才弹
     /// （存量引用提示同款 composerDidAppear 守卫）；弹层挡住时 1 秒
@@ -740,10 +733,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     ///   列表行（那年今日/对话原篇、地图列表、星图 sheet）的“无标题又无
     ///   正文显日记”回退一并去掉，改为空串（只剩日期/副文案可读）。
     /// - 数据口径：只复用现行数据字段（Entry.title、BearyDraft.title、
-    ///   publish/update API 的 title 参数），不复用旧前端代码；编辑入口
-    ///   本就只在 15 分钟内出现（详情/卡片 ⋯ 菜单按 editDeadline 门控，
-    ///   服务端 PUT 同样按 edit_deadline 403），标题改动与正文同窗口，
-    ///   超时只能删不能改标题，无需另设标题门控。
+    ///   publish/update API 的 title 参数），不复用旧前端代码；编辑永久可改
+    ///   （冲突清单第 4 条取消 15 分钟锁），标题改动与正文同窗口，
+    ///   无需另设标题门控。
     /// - 清空语义：编辑时字段清空 → PUT 发显式空串，服务端归一化为空
     ///   标题 NULL（即清掉旧标题）；新建时空字段按省略不传（同为无标题）。
     private let headlineWrap = UIView()
@@ -1206,9 +1198,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         // 临时诊断（86 包，定根因后删除）。
         DiagFile.mark("composer-willAppear")
-        // B5-3 配套：viewWillDisappear 失效了编辑倒计时，回到页面时重起，
-        // 否则从选图/弹窗回来后倒计时永久停摆；startEditTimer 本身幂等
-        // （先 invalidate 旧计时器，非编辑态直接隐藏 label 返回）。
+        // 编辑模式回到页面时重调 startEditTimer（只藏倒计时 label + 刷新状态行），
+        // 从选图/弹窗回来后状态行显隐不错位；startEditTimer 本身幂等。
         if isEditMode {
             startEditTimer()
         }
@@ -1221,8 +1212,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if isBeingDismissed {
             reanchorToolbarForDismiss()
         }
-        // B5-3：重复计时器（编辑倒计时 1s）在页面关闭/被 modal 盖住时即失效，
-        // 不再只靠 deinit——否则切出后到点仍走 onCancelled 关编辑器。
+        // B5-3：编辑计时器（已取消倒计时，见 startEditTimer）在页面关闭/被 modal
+        // 盖住时即失效，不再只靠 deinit；editTimer 现恒为 nil，本处只作对称清理。
         // draftTimer 是 0.4s 一次性防抖，到点自释，不在这里失效（否则会丢
         // 一笔待保存的草稿）；deinit 仍保留作兜底。
         editTimer?.invalidate()
@@ -5027,67 +5018,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 6 * 24 + 8 + charGroupWidth + trailingWidth, containerWidth: width), in: toolRow)
     }
 
-    // MARK: - 编辑倒计时（从 editDeadline 算剩余，网页 edit-timer 口径“剩 M:SS”）
+    // MARK: - 编辑倒计时（已取消：冲突清单第 4 条取消 15 分钟锁，编辑永久可改。
+    // 本函数只剩隐藏倒计时 label + 刷新状态行显隐（调用点不动）；计时器不再启动。
 
     private func startEditTimer() {
         editTimer?.invalidate()
-        guard isEditMode, let deadline = editingEntry?.editDeadline else {
-            editTimerLabel.isHidden = true
-            // 窄屏 5 项之 4：倒计时显隐即状态行显隐，新建模式这里把整行藏掉。
-            refreshStatusRowVisibility()
-            return
-        }
-        editTimerLabel.isHidden = false
+        editTimer = nil
+        editTimerLabel.isHidden = true
+        // 窄屏 5 项之 4：倒计时显隐即状态行显隐，编辑模式这里把整行藏掉。
         refreshStatusRowVisibility()
-        // 已因在途保存暂停过关闭：期限已过、编辑器为“保留输入待复制”态，
-        // viewWillAppear 重起计时器时也不得再走关闭路径（否则失败后一次
-        // 弹窗/切出返回就会把保留的输入连同编辑器一起关掉）。
-        if editSaveBlockedAfterDeadline {
-            editTimerLabel.text = "编辑时间已结束"
-            updatePublishState()
-            return
-        }
-        let tickBlock: () -> Void = { [weak self] in
-            guard let self = self else { return }
-            let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-            let remain = max(0, Int(ceil(Double(deadline - nowMs) / 1000.0)))
-            if remain <= 0 {
-                if self.isPublishing {
-                    // 在途保存：PUT 请求体在发出前已拼好，删本地临时文件
-                    // 不会破坏已发出的请求，丢的是结果回传——容器 dismiss
-                    // 后 VC 可能释放，成功回传与失败提示都会因 weak self
-                    // 丢失。故暂停自动关闭：不删本地文件、不走 onCancelled、
-                    // 不收弹出框；计时器先停，置位后保存钮由
-                    // updatePublishState 持续禁用；结果到时成功走原
-                    // onUpdated 关闭，失败走 performUpdate 的过期分支。
-                    self.editTimerLabel.text = "编辑时间已结束"
-                    self.editTimer?.invalidate()
-                    self.editTimer = nil
-                    self.editSaveBlockedAfterDeadline = true
-                    self.updatePublishState()
-                    return
-                }
-                // 审计-编辑器详情：到 0 不再直接关编辑器丢内容。编辑模式不走
-                // 草稿流（scheduleDraftSave/saveDraftNow 均拦编辑态），故不虚构
-                // “已存为草稿”；改走在途保存失败同款保留态：编辑器留在页上、
-                // 输入冻结为只读（见 refreshPublishingInputFreeze 的
-                // editSaveBlockedAfterDeadline 分支）、保存钮持续禁用，15 分钟
-                // 规则本身不延长；用户可复制内容后手动关闭，关闭时本地临时图
-                // 仍按取消路径清理（见 didTapCancel 编辑分支）。
-                self.editTimerLabel.text = "编辑时间已结束"
-                self.editTimer?.invalidate()
-                self.editTimer = nil
-                self.editSaveBlockedAfterDeadline = true
-                // B 修法：退场前先收起弹出框（无动画）。
-                self.hideCallout(animated: false)
-                self.updatePublishState()
-                self.showToast(message: "编辑时间已结束，内容已保留，可复制后关闭")
-                return
-            }
-            self.editTimerLabel.text = "剩 \(remain / 60):\(String(format: "%02d", remain % 60))"
-        }
-        tickBlock()
-        editTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in tickBlock() }
     }
 
 
@@ -5266,14 +5205,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // U13 改真禁用（2026-11-03 Li 定，旧“视觉置灰但可点、点按给‘先写点什么’”口径作废）：
         // 去空白后正文为空时按钮真禁用，有图也一样；空态下点按无反应、无提示。
         // 超长时保持可用的口径不动。
-        // 期限已过且在途保存已失败：保存钮持续禁用（防重发），编辑器仅保留输入供复制。
         // 补拉在途/失败时禁发：此时 lockedQuote 与图片条尚未回填，PUT 会把原引用
         // 与原图误清掉（lockedQuote 为空即清 quote_id 的口径，见 didTapRemoveQuote
         // 注释）；重试成功后 setupEditContent 末尾重调此处即恢复。
         // B2：关闭进行中时发布钮亦禁用——关闭保存与发布提交不得并发
         //（发布会另起一条 saveDraftNow + 请求链，与关闭保存抢同一篇草稿）。
         // 切到另一账号时冻结（editOriginFrozen，第三轮审计第 5 项），切回原账号即解冻。
-        publishButton.isEnabled = !isPublishing && !isClosing && !isDraftExitSaving && !hasUploadingImage() && !editSaveBlockedAfterDeadline && !editQuoteFetchFailed && !editQuoteFetchInFlight && !editOriginFrozen && !trimmedContent().isEmpty
+        publishButton.isEnabled = !isPublishing && !isClosing && !isDraftExitSaving && !hasUploadingImage() && !editQuoteFetchFailed && !editQuoteFetchInFlight && !editOriginFrozen && !trimmedContent().isEmpty
         refreshPublishAppearance()
         refreshPublishBusyState()
         refreshPublishingInputFreeze()
@@ -5297,10 +5235,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 冻结只拦键盘与点按，上传完成回写 key、引用校验回填等异步回包仍可能
     /// 在保存期间递增版本，那时接着保存最新版。
     private func refreshPublishingInputFreeze() {
-        // 审计-编辑器详情：期限已过保留态与发布在途同冻——正文/标题只读
-        // （UITextView 不可编辑时仍可选区复制），各入口钮同禁，保存钮已由
-        // updatePublishState 持续禁用；本位只在期限已过后才为真，不影响常态。
-        let frozen = isPublishing || editSaveBlockedAfterDeadline || isDraftExitSaving || isClosing || editOriginFrozen
+        // 发布在途与关闭保存期间同冻——正文/标题只读
+        // （UITextView 不可编辑时仍可选区复制），各入口钮同禁。
+        let frozen = isPublishing || isDraftExitSaving || isClosing || editOriginFrozen
         textView.isEditable = !frozen
         headlineField.isEditable = !frozen
         // 100 包编辑器面修法：发布在途时可见性钮亦冻结——此前冻结清单
@@ -6530,7 +6467,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if !editQuoteFetchAttempted {
             setBodyAttributedText(entry.content)
             applyBodyLineHeight()
-            // 109：编辑回填标题进新输入框（15 分钟内可改，见门控注释）；
+            // 109：编辑回填标题进新输入框（编辑永久可改）；无标题时字段留空。
             // 无标题时字段留空。
             setHeadlineText(entry.title)
             selectedMood = entry.mood
@@ -7944,10 +7881,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         editCheckpointPromptShown = true
         pendingEditCheckpoint = nil
-        let deadlinePassed = editSaveBlockedAfterDeadline
-        let message = deadlinePassed
-            ? "上次编辑这篇日记时还没保存，找到了当时的修改。编辑时间已结束，只能查看和复制，不能再保存。"
-            : "上次编辑这篇日记时还没保存，找到了当时的修改，要恢复吗？"
+        let message = "上次编辑这篇日记时还没保存，找到了当时的修改，要恢复吗？"
         // 底部弹窗口径（#932）：新弹窗一律走通用确认底 sheet，不再新写居中 Alert。
         BearyConfirmSheet.show(from: self, title: "恢复未提交的修改？", message: message, actions: [
             BearyConfirmSheet.Action(title: "恢复", style: .default, handler: { [weak self] in
@@ -7996,8 +7930,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 把检查点内容应用回编辑器（正文/标题/心情/天气/气温/位置/图片条）。
-    /// 期限已过时由已跑起的计时器冻结为只读（见 startEditTimer），应用后
-    /// updatePublishState 会再次冻结；检查点本身不清——仍是未提交的修改，
+    /// 编辑永久可改，不再按期限冻结；检查点本身不清——仍是未提交的修改，
     /// 再崩溃仍可恢复；提交成功（performUpdate）或取消时才清。
     private func applyEditCheckpoint(_ checkpoint: BearyDraftStore.BearyEditCheckpoint) {
         setBodyAttributedText(checkpoint.content)
@@ -8313,12 +8246,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 禁用，此处再拦一道（防启用态竞态），免得发布流与退出保存抢同一篇。
         if isDraftExitSaving {
             showToast(message: "保存中…")
-            return
-        }
-        // 期限已过且在途保存已失败：保存钮已由 updatePublishState 禁用，
-        // 此处再拦一道（防按钮态竞态），不发 PUT、不清输入。
-        if isEditMode && editSaveBlockedAfterDeadline {
-            showAlert(message: "编辑时间已过，无法再保存，可复制内容后关闭")
             return
         }
         // 补拉在途/失败：保存钮已由 updatePublishState 禁用，此处再拦一道
@@ -8710,7 +8637,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         return "发布失败，请重试"
     }
 
-    // MARK: - 编辑保存（PUT；15 分钟规则只由服务端判定，App 只展示与转文案）
+    // MARK: - 编辑保存（PUT；编辑永久可改，App 只展示与转文案）
 
     private func performUpdate(trimmed: String) {
         guard let entryId = editingEntry?.id, !entryId.isEmpty else {
@@ -8763,6 +8690,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     /// 均为 nil，容器据此清行内引用卡；已删引用不按正常 quote 回传）。
                     if var updated = self.editingEntry {
                         updated.content = trimmed
+                        // 冲突清单第 4 条：编辑成功即本地记一笔编辑时刻（服务端 PUT 同步写
+                        // updated_at；列表行不靠重拉即显「编辑于 X」，重拉后以服务端值为准）。
+                        updated.updatedAt = Int(Date().timeIntervalSince1970 * 1000)
                         // 109：本地副本跟随输入框标题（空 = nil，与服务端归一化一致）。
                         updated.title = self.headlineText.isEmpty ? nil : self.headlineText
                         updated.images = self.uploadedImageKeys()
@@ -8811,33 +8741,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         self.onUpdated?(updated)
                     }
                 case .failure(let error):
-                    if self.editSaveBlockedAfterDeadline {
-                        // 在途保存赶上期限、服务端已判失败：不再允许重发
-                        // （期限已过，重发同样会被服务端拒绝；保存钮已由
-                        // updatePublishState 持续禁用，didTapPublish 亦拦）。
-                        // 不删本地文件、不关编辑器、不清正文/标题，输入原样
-                        // 保留供复制；关闭仍走用户手动取消（与正常取消同语义，
-                        // 关闭前请先复制）。注意：此处不走 onRequireLogin——
-                        // 登录页盖上来也救不回已过的期限，反而会挡住复制
-                        // 输入的机会；非过期态的登录失效仍走原分支。
-                        // 失败原因常驻 alert（不用一闪而过的 toast），确保看得到。
-                        if case .server(let code, _) = error, code == "edit window expired" {
-                            self.showAlert(message: "超过 15 分钟，已无法编辑；内容仍在编辑器里，可复制后关闭")
-                        } else if case .network = error {
-                            self.showAlert(message: "网络不可用，修改未保存；编辑时间已过，无法再保存，可复制内容后关闭")
-                        } else if case .unauthorized = error {
-                            self.showAlert(message: "登录已失效，修改未保存；编辑时间已过，无法再保存，可复制内容后关闭")
-                        } else {
-                            self.showAlert(message: "\(self.message(forUpdateError: error))；编辑时间已过，无法再保存，可复制内容后关闭")
-                        }
-                    } else if case .unauthorized = error {
+                    if case .unauthorized = error {
                         self.onRequireLogin?()
-                    } else if case .server(let code, _) = error, code == "edit window expired" {
-                        // C5：编辑期过期只 toast“超过 15 分钟，已无法编辑”，编辑器保持打开、
-                        // 不删本地文件、不关编辑器（网页 PUT 失败同款收尾）。
-                        // iCity：编辑锁只看 15 分钟、与可见性无关——旧“已公开”分支已删，
-                        // 万一服务端仍回该码，走通用失败文案，不擅自关编辑器。
-                        self.showToast(message: "超过 15 分钟，已无法编辑")
                     } else if case .network = error {
                         self.showAlert(message: "网络不可用，修改未保存，请联网后重试")
                     } else {
@@ -9212,8 +9117,7 @@ private final class ComposerImageItem {
 //    视为已删，不回填、保存时即丢弃（与网页编辑同款）。
 // 3. 编辑模式：init(entry:) 进入；正文/心情/天气/图片/引用/@ 可改；不读不写 beary_draft_v3（
 //    scheduleDraftSave/saveDraftNow 在编辑模式直接 return）；取消时不删原日记，直接关（决议第 4 项 B）；
-//    保存走 PUT，15 分钟规则只由服务端判定（edit window expired 只 toast 且编辑器保持打开，
-//    与可见性无关；旧 already public 分支已删）；
+//    保存走 PUT，编辑永久可改（冲突清单第 4 条取消 15 分钟锁），与可见性无关；
 //    成功后删本轮新选图的本地文件（原日记的图 localFile 为 nil，不受影响），失败不删、留着重试。
 // 4. 草稿 v3 多槽：正文/心情/图片/天气/@/引用全部进草稿，杀 App 后原样恢复；
 //    发布成功与丢弃只清本篇（currentDraftId），不碰其他篇。
@@ -9226,10 +9130,7 @@ private final class ComposerImageItem {
 //    工具栏贴键盘上方，心情/天气/@ 为工具栏上方单行选择条（旧附加选项栏已删）；
 //    草稿 pill 计数按 v3 多槽篇数，0 篇时只留“草稿”二字、计数段隐藏；
 //    引用面板为网页 qp-mode 整编形态（打开只留面板、发布钮隐藏、取消变“返回”只退面板、
-//    进出保存/恢复滚动位置、每 tab 缓存 + 序号守卫、选篇立即落盘）；
-//    编辑倒计时到 0 显示“编辑时间已结束”，编辑器留页保留内容、可复制后关闭，
-//    不走 onCancelled 关闭编辑器（旧“编辑已结束＋关闭”口径已废止；
-//    列表刷新需容器侧接线，本文件不碰 SceneDelegate）。
+//    进出保存/恢复滚动位置、每 tab 缓存 + 序号守卫、选篇立即落盘）。
 //    草稿箱弹层 BearyDraftBoxViewController 与熊图 BearyEmoteImages 均由其他代理新建文件提供，
 //    本文件只调用、不定义；两者未落地前本文件单独编译会缺符号，待齐套后由 CI 验证。
 // 3. 图片 × 只移除本地与 key 列表，不调服务端；未发布的孤 key 残留是已知可接受项；

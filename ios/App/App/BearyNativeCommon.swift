@@ -2173,8 +2173,8 @@ extension BearyAPI {
 
     /// 编辑已发日记：PUT /beary/api/entries/:id，字段与网页编辑同款（content/images/mood/weather/quote_id；
     /// iCity：@ 可改，mentioned_user_id 随 PUT 发出；clearMentioned 时显式发 null 清掉 @）。
-    /// 服务端 15 分钟规则：过编辑期 403 'edit window expired'；编辑锁只看时间，不看可见性
-    /// （公开后 15 分钟内仍可编辑；可见性只走 visibility 接口，不可经此接口改）。
+    /// 服务端不再设编辑期限（冲突清单第 4 条取消 15 分钟锁，编辑永久可改）；
+    /// 可见性只走 visibility 接口，不可经此接口改。
     /// 成功只返回 {ok: true}，调用方成功后自行重拉单篇。
     /// 图片须归属本人且存在，否则 400 'invalid image ownership' / 409 'image unavailable'。
     func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, mentionedUserId: Int? = nil, clearMentioned: Bool = false, locationName: String? = nil, locationDistrict: String? = nil, clearLocationName: Bool = false, clearLocationDistrict: Bool = false, temperature: Int? = nil, liveVideos: [String: String]? = nil, completion: @escaping (Result<Void, APIError>) -> Void) {
