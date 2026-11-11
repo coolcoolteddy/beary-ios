@@ -866,12 +866,12 @@ class BearyEditProfileViewController: UIViewController {
             return true
         }
         if presentedViewController == nil {
-            let alert = UIAlertController(title: "放弃未保存的改动？", message: nil, preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "继续编辑", style: .cancel, handler: nil))
-            alert.addAction(UIAlertAction(title: "放弃", style: .destructive, handler: { [weak self] _ in
-                self?.onCancel?()
-            }))
-            present(alert, animated: BearyMotion.animated(true), completion: nil)
+            BearyConfirmSheet.show(from: self, title: "放弃未保存的改动？", message: nil, actions: [
+                BearyConfirmSheet.Action(title: "继续编辑", style: .cancel),
+                BearyConfirmSheet.Action(title: "放弃", style: .destructive) { [weak self] in
+                    self?.onCancel?()
+                },
+            ])
         }
         return false
     }
@@ -916,23 +916,18 @@ class BearyEditProfileViewController: UIViewController {
     private var depthPickerEdgeDismiss: BearyEdgeDismissController?
 
     /// 封面来源选择框（个人页 2026-11-06 改令后挪到本页，个人页旧款同款
-    /// UIAlertController actionSheet）：图库走既有换封面流程（选图／裁剪／
-    /// 上传链路不变，见 coverTapped）；景深背景进新页选主题；
-    /// iPad 走 popover、锚点封面图。
+    /// 底部弹窗）：图库走既有换封面流程（选图／裁剪／
+    /// 上传链路不变，见 coverTapped）；景深背景进新页选主题。
     @objc private func presentCoverSourcePicker() {
-        let sheet = UIAlertController(title: "封面", message: nil, preferredStyle: .actionSheet)
-        sheet.addAction(UIAlertAction(title: "图库", style: .default) { [weak self] _ in
-            self?.coverTapped()
-        })
-        sheet.addAction(UIAlertAction(title: "景深背景", style: .default) { [weak self] _ in
-            self?.presentDepthBackgroundPicker()
-        })
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = coverImageView
-            popover.sourceRect = coverImageView.bounds
-        }
-        present(sheet, animated: BearyMotion.animated(true))
+        BearyConfirmSheet.show(from: self, title: "封面", message: nil, actions: [
+            BearyConfirmSheet.Action(title: "图库", style: .default) { [weak self] in
+                self?.coverTapped()
+            },
+            BearyConfirmSheet.Action(title: "景深背景", style: .default) { [weak self] in
+                self?.presentDepthBackgroundPicker()
+            },
+            BearyConfirmSheet.Action(title: "取消", style: .cancel),
+        ])
     }
 
     /// 景深背景新页：当前主题与 Plus 态传过去，点按回本页应用（门控／失败
@@ -1004,12 +999,13 @@ class BearyEditProfileViewController: UIViewController {
         } else if meFetchFailed {
             // 5-4：已登录但 /me 加载失败时不误报“请先登录”，给重试
             // （重新拉 /me 再刷新链接行，拿到 id/handle 即补复制）。
-            let alert = UIAlertController(title: nil, message: "主页链接加载失败", preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-            alert.addAction(UIAlertAction(title: "重试", style: .default, handler: { [weak self] _ in
-                self?.refreshLinkRowFromMe(thenCopy: true)
-            }))
-            present(alert, animated: BearyMotion.animated(true), completion: nil)
+            // 原 alert 无标题，底 sheet 标题传空（只显说明＋按钮，不另起文案）。
+            BearyConfirmSheet.show(from: self, title: "", message: "主页链接加载失败", actions: [
+                BearyConfirmSheet.Action(title: "取消", style: .cancel),
+                BearyConfirmSheet.Action(title: "重试", style: .default) { [weak self] in
+                    self?.refreshLinkRowFromMe(thenCopy: true)
+                },
+            ])
             return
         } else {
             presentSimpleAlert(message: "请先登录")
