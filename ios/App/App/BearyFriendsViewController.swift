@@ -408,61 +408,53 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     /// 成功后清缓存并广播，各列表页据此重拉（取关静默解除，不发通知）。
     private func presentFriendMenu(user: BearyAPI.FriendUser, sourceButton: UIButton) {
         guard let userId = user.id else { return }
-        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
-        sheet.addAction(UIAlertAction(title: "取消关注", style: .destructive) { [weak self] _ in
-            guard let self = self else { return }
-            BearyFriends.confirmUnfollowAlert(from: self, displayName: user.displayName ?? "", mutual: true) { [weak self] in
+        BearyConfirmSheet.show(from: self, title: "", message: nil, actions: [
+            BearyConfirmSheet.Action(title: "取消关注", style: .destructive) { [weak self] in
                 guard let self = self else { return }
-                guard let index = self.friends.firstIndex(where: { $0.id == userId }) else { return }
-                let removed = self.friends[index]
-                self.friends.remove(at: index)
-                self.updateTitleAndEmptyState()
-                self.tableView.deleteRows(at: [IndexPath(row: index, section: 0)], with: .fade)
-                // r28-4：取关失败回滚只认发起账号。发起时同拍账号 id＋代次
-                //（通知页／引用面板同款口径），切号后到达的旧号失败回包整单丢弃。
-                let requestAccountId = BearyAPI.shared.authAccountId
-                let requestEpoch = BearyAPI.shared.authEpoch
-                BearyAPI.shared.unfollowFriend(userId: userId) { [weak self] result in
-                    DispatchQueue.main.async {
-                        guard let self = self else { return }
-                        switch result {
-                        case .success:
-                            BearyFriends.clearDiaryCachesAndNotify()
-                        case .failure:
-                            // r28-4：账号或代次已变，说明回包属于旧账号——整单丢弃，
-                            // 不插行、不 toast、不抖动，避免把旧账号好友插进新账号列表。
-                            guard requestAccountId == BearyAPI.shared.authAccountId,
-                                  requestEpoch == BearyAPI.shared.authEpoch else { return }
-                            // 失败回滚到原位置；期间重拉已把人带回时只给拒绝动效，不重复插行。
-                            if let currentIndex = self.friends.firstIndex(where: { $0.id == userId }) {
-                                if let cell = self.tableView.cellForRow(at: IndexPath(row: currentIndex, section: 0)) {
-                                    self.playDenyShake(on: cell)
+                BearyFriends.confirmUnfollowAlert(from: self, displayName: user.displayName ?? "", mutual: true) { [weak self] in
+                    guard let self = self else { return }
+                    guard let index = self.friends.firstIndex(where: { $0.id == userId }) else { return }
+                    let removed = self.friends[index]
+                    self.friends.remove(at: index)
+                    self.updateTitleAndEmptyState()
+                    self.tableView.deleteRows(at: [IndexPath(row: index, section: 0)], with: .fade)
+                    // r28-4：取关失败回滚只认发起账号。发起时同拍账号 id＋代次
+                    //（通知页／引用面板同款口径），切号后到达的旧号失败回包整单丢弃。
+                    let requestAccountId = BearyAPI.shared.authAccountId
+                    let requestEpoch = BearyAPI.shared.authEpoch
+                    BearyAPI.shared.unfollowFriend(userId: userId) { [weak self] result in
+                        DispatchQueue.main.async {
+                            guard let self = self else { return }
+                            switch result {
+                            case .success:
+                                BearyFriends.clearDiaryCachesAndNotify()
+                            case .failure:
+                                // r28-4：账号或代次已变，说明回包属于旧账号——整单丢弃，
+                                // 不插行、不 toast、不抖动，避免把旧账号好友插进新账号列表。
+                                guard requestAccountId == BearyAPI.shared.authAccountId,
+                                      requestEpoch == BearyAPI.shared.authEpoch else { return }
+                                // 失败回滚到原位置；期间重拉已把人带回时只给拒绝动效，不重复插行。
+                                if let currentIndex = self.friends.firstIndex(where: { $0.id == userId }) {
+                                    if let cell = self.tableView.cellForRow(at: IndexPath(row: currentIndex, section: 0)) {
+                                        self.playDenyShake(on: cell)
+                                    }
+                                } else {
+                                    let insertIndex = min(index, self.friends.count)
+                                    self.friends.insert(removed, at: insertIndex)
+                                    self.updateTitleAndEmptyState()
+                                    self.tableView.insertRows(at: [IndexPath(row: insertIndex, section: 0)], with: .none)
+                                    if let cell = self.tableView.cellForRow(at: IndexPath(row: insertIndex, section: 0)) {
+                                        self.playDenyShake(on: cell)
+                                    }
                                 }
-                            } else {
-                                let insertIndex = min(index, self.friends.count)
-                                self.friends.insert(removed, at: insertIndex)
-                                self.updateTitleAndEmptyState()
-                                self.tableView.insertRows(at: [IndexPath(row: insertIndex, section: 0)], with: .none)
-                                if let cell = self.tableView.cellForRow(at: IndexPath(row: insertIndex, section: 0)) {
-                                    self.playDenyShake(on: cell)
-                                }
+                                BearyToast.show(in: self.view, message: "取消关注失败，请重试")
                             }
-                            BearyToast.show(in: self.view, message: "取消关注失败，请重试")
                         }
                     }
                 }
-            }
-        })
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        // 审计高风险：iPad 上 actionSheet 无 popover 锚点必崩溃，锚定 ⋯ 钮。
-        // iPhone 下 popoverPresentationController 为 nil，本段不生效，底 sheet 不变。
-        // 注：Linux 无 Xcode，iPad 真机复验仍待做（见 PR 描述）。
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = sourceButton
-            popover.sourceRect = sourceButton.bounds
-            popover.permittedArrowDirections = [.up, .down]
-        }
-        present(sheet, animated: BearyMotion.animated(true))
+            },
+            BearyConfirmSheet.Action(title: "取消", style: .cancel),
+        ])
     }
 
     /// 取关失败拒绝动效（点赞同款：摇头＋warning 震动＋拒绝音效，toast 由调用方发；
