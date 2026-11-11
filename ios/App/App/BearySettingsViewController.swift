@@ -439,6 +439,8 @@ final class BearySettingsViewController: UIViewController {
     private var plusFreeRow: UIView = UIView()
     /// F4：内测限免行的分组卡包容器（藏行须藏包容器，否则内边距仍占位）。
     private var plusFreeWrapper: UIView?
+    /// 内测限免行与来源明细行之间的分隔线（随限免行同隐同显，否则限免行藏后留双线）。
+    private var plusFreeSeparator: UIView?
     private let plusFreeLabel = UILabel()
     private let plusPersonalLabel = UILabel()
     /// 2026-10-29 第 7 项：来源明细已抽成独立页（BearyPlusGrantsViewController），
@@ -847,13 +849,16 @@ final class BearySettingsViewController: UIViewController {
         let headerButton: UIButton
         let bodyStack: UIStackView
         let bodyWrappers: [UIView]
+        /// 行间分隔线（与 bodyWrappers 平行：第 i 条位于 wrapper[i] 与 wrapper[i + 1] 之间）。
+        let bodySeparators: [UIView]
         let chevron: UIImageView
         var isExpanded = false
-        init(card: UIView, headerButton: UIButton, bodyStack: UIStackView, bodyWrappers: [UIView], chevron: UIImageView) {
+        init(card: UIView, headerButton: UIButton, bodyStack: UIStackView, bodyWrappers: [UIView], bodySeparators: [UIView], chevron: UIImageView) {
             self.card = card
             self.headerButton = headerButton
             self.bodyStack = bodyStack
             self.bodyWrappers = bodyWrappers
+            self.bodySeparators = bodySeparators
             self.chevron = chevron
         }
     }
@@ -925,6 +930,7 @@ final class BearySettingsViewController: UIViewController {
         ])
         bodyStack.addArrangedSubview(headerSeparator)
         var wrappers: [UIView] = []
+        var separators: [UIView] = []
         for (index, row) in rows.enumerated() {
             if index > 0 {
                 let separator = UIView()
@@ -934,6 +940,7 @@ final class BearySettingsViewController: UIViewController {
                     separator.heightAnchor.constraint(equalToConstant: 1),
                 ])
                 bodyStack.addArrangedSubview(separator)
+                separators.append(separator)
             }
             let wrap = UIView()
             wrap.translatesAutoresizingMaskIntoConstraints = false
@@ -969,7 +976,7 @@ final class BearySettingsViewController: UIViewController {
             wrappers.append(wrap)
         }
         stack.addArrangedSubview(bodyStack)
-        return SettingsDisclosure(card: card, headerButton: headerButton, bodyStack: bodyStack, bodyWrappers: wrappers, chevron: chevron)
+        return SettingsDisclosure(card: card, headerButton: headerButton, bodyStack: bodyStack, bodyWrappers: wrappers, bodySeparators: separators, chevron: chevron)
     }
 
     /// 视觉批：折叠翻转——体显隐 + 箭头旋转 π（通知卡 setChevronExpanded
@@ -1375,6 +1382,10 @@ final class BearySettingsViewController: UIViewController {
         // 内容留 28pt 空位，故此处一并纠为限免行本身。
         if plusDisclosureValue.bodyWrappers.count > 0 {
             plusFreeWrapper = plusDisclosureValue.bodyWrappers[0]
+        }
+        // 限免行与来源明细行之间的分隔线（bodySeparators[0]）随限免行同隐同显。
+        if plusDisclosureValue.bodySeparators.count > 0 {
+            plusFreeSeparator = plusDisclosureValue.bodySeparators[0]
         }
         plusDisclosure = plusDisclosureValue
         contentWrap.addArrangedSubview(plusDisclosureValue.card)
@@ -2476,6 +2487,7 @@ final class BearySettingsViewController: UIViewController {
         if freeUntil > 0 {
             let freeRowWasHidden = plusFreeRow.isHidden
             plusFreeWrapper?.isHidden = false
+            plusFreeSeparator?.isHidden = false
             plusFreeRow.isHidden = false
             if freeUntil > now {
                 setLabelTextFaded(plusFreeLabel, "全体内测用户免费 · 至 " + BearyAccountText.dateString(ms: freeUntil))
@@ -2485,7 +2497,9 @@ final class BearySettingsViewController: UIViewController {
             fadeViewIfAppearing(plusFreeRow, wasHidden: freeRowWasHidden)
         } else {
             // 网页口径：free_until 为 0 时整行隐藏（藏包容器，见 makeGroupCard）。
+            // 其与来源明细行之间的分隔线一并收起，否则展开态留双线。
             plusFreeWrapper?.isHidden = true
+            plusFreeSeparator?.isHidden = true
             plusFreeRow.isHidden = true
         }
         let personal = detail.personalUntil ?? 0
