@@ -48,6 +48,8 @@ final class BearyHeatmapView: UIView {
     private var dayButtons: [UIButton] = []
     /// 与 dayButtons 一一对应：该格的北京日 key；未来格为空串（按钮隐藏、不可点）。
     private var buttonDayKeys: [String] = []
+    /// layoutSubviews 算出的格边长（点按最近中心命中时算 pitch 用）。
+    private var gridCellSize: CGFloat = 0
 
     private let legendStack: UIStackView = {
         let stack = UIStackView()
@@ -122,6 +124,16 @@ final class BearyHeatmapView: UIView {
             dayButtons.append(button)
             buttonDayKeys.append("")
             gridArea.addSubview(button)
+        }
+        // 点按按最近格子中心命中：格子只有约 8.6pt，手指点不准，落在格间
+        // 缝隙也算最近那格；手势只接网格上的轻点，按钮自身的
+        // touchUpInside 留给 VoiceOver 激活（读屏点按不经过手势）。
+        let gridTap = UITapGestureRecognizer(target: self, action: #selector(gridTapped(_:)))
+        gridArea.addGestureRecognizer(gridTap)
+        // VoiceOver 按周浏览：转子“周”逐周跳到每周一，不用逐个滑过 189 个格。
+        let weekRotor = makeWeekRotor()
+        for button in dayButtons {
+            button.accessibilityCustomRotors = [weekRotor]
         }
         // 图例：少 + 五档方块 + 多（右对齐）。
         let lessLabel = UILabel()
@@ -243,6 +255,7 @@ final class BearyHeatmapView: UIView {
         let gridWidth = areaWidth - Self.weekdayWidth - Self.gridLeadingGap
         let cell = (gridWidth - CGFloat(Self.weeks - 1) * Self.gap) / CGFloat(Self.weeks)
         guard cell > 0 else { return }
+        gridCellSize = cell
         let gridHeight = Self.monthRowHeight + Self.monthGridGap + CGFloat(Self.daysPerWeek) * cell + CGFloat(Self.daysPerWeek - 1) * Self.gap
         if gridAreaHeightConstraint?.constant != gridHeight {
             gridAreaHeightConstraint?.constant = gridHeight
@@ -283,10 +296,64 @@ final class BearyHeatmapView: UIView {
     }
 
     @objc private func dayButtonTapped(_ sender: UIButton) {
-        guard let index = dayButtons.firstIndex(of: sender),
-              index < buttonDayKeys.count else { return }
+        guard let index = dayButtons.firstIndex(of: sender) else { return }
+        selectDay(at: index)
+    }
+
+    /// 网格轻点：取离触点最近的可见格中心。阈值 0.75 个 pitch：网格内任意点
+    /// 到最近中心的距离上限是半条对角线（≈0.71 pitch），阈值刚好盖住整个
+    /// 网格、再带一点点 fat-finger 余量；点到星期名／月份名区的按压离各格
+    /// 中心都超过阈值，不触发。
+    @objc private func gridTapped(_ gesture: UITapGestureRecognizer) {
+        let point = gesture.location(in: gridArea)
+        let pitch = gridCellSize + Self.gap
+        guard pitch > 0 else { return }
+        var bestIndex: Int?
+        var bestDistance = CGFloat.greatestFiniteMagnitude
+        for (index, button) in dayButtons.enumerated() {
+            guard !button.isHidden, !buttonDayKeys[index].isEmpty else { continue }
+            let dx = point.x - button.frame.midX
+            let dy = point.y - button.frame.midY
+            let distance = dx * dx + dy * dy
+            if distance < bestDistance {
+                bestDistance = distance
+                bestIndex = index
+            }
+        }
+        guard let index = bestIndex,
+              bestDistance <= (0.75 * pitch) * (0.75 * pitch) else { return }
+        selectDay(at: index)
+    }
+
+    private func selectDay(at index: Int) {
+        guard index < buttonDayKeys.count else { return }
         let key = buttonDayKeys[index]
         guard !key.isEmpty else { return }
         onSelectDay?(key)
+    }
+
+    /// VoiceOver 转子“周”：双指旋转切到“周”后上下滑，逐周跳到每周一。
+    private func makeWeekRotor() -> UIAccessibilityCustomRotor {
+        UIAccessibilityCustomRotor(name: "周") { [weak self] predicate in
+            guard let self else { return nil }
+            // 当前焦点所在周；转子刚打开尚无当前项时，按方向从一端起跳。
+            let currentWeek: Int
+            if let current = predicate.currentItem.targetElement as? UIButton,
+               let index = self.dayButtons.firstIndex(of: current) {
+                currentWeek = index / Self.daysPerWeek
+            } else {
+                currentWeek = predicate.searchDirection == .next ? -1 : Self.weeks
+            }
+            let targetWeek: Int
+            switch predicate.searchDirection {
+            case .next: targetWeek = currentWeek + 1
+            case .previous: targetWeek = currentWeek - 1
+            @unknown default: return nil
+            }
+            guard (0..<Self.weeks).contains(targetWeek) else { return nil }
+            // 每周一恒为过去或今天，一定可见、可达。
+            let target = self.dayButtons[targetWeek * Self.daysPerWeek]
+            return UIAccessibilityCustomRotorItemResult(targetElement: target, targetRange: nil)
+        }
     }
 }
