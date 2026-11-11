@@ -77,11 +77,11 @@ enum BearyMotion {
 }
 
 /// 新卡片入场统一配置（审计 r16 第 10 项，Li 定版 2026-11-06，规范 §6）：
-/// 首屏／筛子切换 60ms 步进、8pt 上移；分页追加 50ms 步进、24pt 下滑入；
+/// 首屏／筛子切换 60ms 步进、8pt 上移；分页追加 30ms 步进、8pt 上移；
 /// 0.25s、封顶 0.24s、可交互。广场（BearyFeedViewController.
 /// staggerFadeCells）与时间线（BearyTimelineViewController willDisplay
 /// M2 块）两处共用；减动效时调用方不播。
-/// 分页档 50ms／24pt 沿用 #924 在途值（未单独立版）；切日 N3 行仍走
+/// 分页档 30ms／8pt（2026-11-11 定版）；切日 N3 行仍走
 /// 旧 0.03s／6pt（见时间线 N3 注释），不在本配置内。
 /// 骨架交接：数据到达后骨架 0.25s 交叉溶解淡出，内容随即按首屏档错峰进入。
 enum BearyEntranceConfig {
@@ -94,13 +94,13 @@ enum BearyEntranceConfig {
     static func delayStep(for kind: Kind) -> TimeInterval {
         switch kind {
         case .firstLoad: return 0.06
-        case .pagination: return 0.05
+        case .pagination: return 0.03
         }
     }
     static func yOffset(for kind: Kind) -> CGFloat {
         switch kind {
         case .firstLoad: return 8
-        case .pagination: return 24
+        case .pagination: return 8
         }
     }
     static func delay(for kind: Kind, order: Int) -> TimeInterval {
