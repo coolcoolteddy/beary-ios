@@ -1501,7 +1501,7 @@ final class BearyAPI {
         request("/beary/api/entries/\(safe)/visibility", method: "POST", jsonBody: ["visibility": visibility], completion: completion)
     }
 
-    // MARK: - 日记置顶（后端并行施工中；接口未上线前非 200 一律走调用方失败态）
+    // MARK: - 日记置顶（路由已在线；非 200 一律走调用方失败态）
 
     /// 置顶／取消置顶响应：POST /pin → {ok, pinned: true, pinned_at}；
     /// POST /unpin → {ok, pinned: false}。错误：未登录 401、不存在 404、非作者 403、列不可用 503。
@@ -1524,7 +1524,7 @@ final class BearyAPI {
         request("/beary/api/entries/\(safe)/unpin", method: "POST", completion: completion)
     }
 
-    // MARK: - 好友第一期（后端并行施工中；接口未上线前非 200 一律走调用方失败态）
+    // MARK: - 好友第一期（路由已在线；非 200 一律走调用方失败态）
 
     /// 好友用户行：服务端 GET /friends/list、/following、/followers 的用户形状
     /// （handle/显示名/头像）。
@@ -1611,7 +1611,7 @@ final class BearyAPI {
         }
     }
 
-    // MARK: - 好友私信第一期（后端并行施工中；接口未上线前非 200 一律走调用方失败态）
+    // MARK: - 好友私信第一期（路由已在线；非 200 一律走调用方失败态）
     //
     // 路径口径：任务书与方案第七节写的是 /friends/dm/*，即 friends 命名空间下的
     // dm 子路径；App 沿用本文件好友接口的 /beary/api/friends/ 前缀，故全路径为
@@ -1860,7 +1860,7 @@ final class BearyAPI {
         request("/beary/api/blocks", completion: completion)
     }
 
-    // MARK: - 与过去的自己对话（后端契约；后端未上线时调用方静默走本地存储）
+    // MARK: - 与过去的自己对话（后端契约；非 200 时调用方静默走本地存储）
 
     /// 列表：GET /beary/api/past-self/messages → {messages: [...]}。
     /// 服务端约束（后端施工时必做）：仅作者本人可读；绝不进广场、不发通知；

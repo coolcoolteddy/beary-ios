@@ -9,8 +9,8 @@ import UIKit
 // （authorId / authorName / authorAvatar 全部不解码），即使服务端误发作者字段客户端也
 // 直接丢弃；卡片上没有头像、作者名、主页入口、分享、引用、点赞、收藏入口；评论钮只
 // 以置灰态出现，不可点。交换请求体只发 entry_id / exchange_id / emote，永不发正文标题。
-// 后端（本分支只写客户端，服务端接口尚未落地，见下方端点清单；接口未上线时客户端
-// 按“服务暂未上线”失败态处理，绝不编造假开盒结果）：
+// 后端（路由已在线：未登录探针 /blindbox/today 回 401 而非 404；见下方端点清单。
+// 失败态是鉴权／权限问题，调用方按失败态处理，绝不编造假开盒结果）：
 //   GET  /beary/api/blindbox/today                    → 当日状态（含已换 / 交换 id / 收到篇）
 //   POST /beary/api/blindbox/pool      {entry_id}     → 入池（仅旧公开篇，服务端再校验）
 //   POST /beary/api/blindbox/open      {}             → 开盒（服务端随机抽池、每日 1 次强校验）
@@ -171,7 +171,7 @@ struct BlindBoxReactResponse: Decodable {
     var emotes: [EmoteCount]?
 }
 
-// MARK: - API（服务端未落地前 404 即“服务暂未上线”，调用方按失败态处理）
+// MARK: - API（路由已在线；非 200 调用方按失败态处理）
 
 extension BearyAPI {
     func fetchBlindBoxToday(completion: @escaping (Result<BlindBoxStateBody, APIError>) -> Void) {
