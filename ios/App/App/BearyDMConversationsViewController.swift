@@ -747,7 +747,7 @@ final class BearyDMConversationCell: UITableViewCell {
         let snippet = (conversation.lastBody ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         snippetLabel.text = snippet
         snippetLabel.isHidden = snippet.isEmpty
-        // 时间口径与通知行一致（相对时间：刚刚/X分钟前/X小时前/X天前）。
+        // 时间口径与通知行一致（相对时间：刚刚/X 分钟前/X 小时前/X 天前；2026-11-11 定版带空格，取代 2026-11-05 无空格口径）。
         if let lastAt = conversation.lastAt {
             lastAtMs = lastAt
             timeLabel.text = Self.relativeTimeText(ms: lastAt)
