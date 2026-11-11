@@ -767,13 +767,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     /// L3：图例入口——原常驻顶部的长图例文本改点按弹说明。
     @objc private func didTapLegend() {
-        let alert = UIAlertController(
-            title: "图例",
-            message: "星越大字越多，亮度代表心情；连线表示同心情、同地点或同词。点星进详情，点线看原因。",
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: "知道了", style: .default))
-        present(alert, animated: BearyMotion.animated(true))
+        BearyConfirmSheet.show(from: self, title: "图例", message: "星越大字越多，亮度代表心情；连线表示同心情、同地点或同词。点星进详情，点线看原因。", actions: [
+            BearyConfirmSheet.Action(title: "知道了", style: .default),
+        ])
     }
 
     /// P2-12：切分片时先暂停旧图点按与无障碍激活——recompute 只同步重建
