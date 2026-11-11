@@ -2640,6 +2640,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 预览口径：选中墨底 + 背景色字（深浅模式下自动反色），未选 surface2 底灰字，无阴影无描边。
             tabButton.backgroundColor = isSelected ? BearyColors.ink : BearyColors.surface2
             tabButton.setTitleColor(isSelected ? BearyColors.bg : BearyColors.gray, for: .normal)
+            // 审计 R9 ⑥：视觉选中态同步读屏选中态（isSelected + .selected 特征）。
+            tabButton.isSelected = isSelected
+            if isSelected {
+                tabButton.accessibilityTraits.insert(.selected)
+            } else {
+                tabButton.accessibilityTraits.remove(.selected)
+            }
             tabButton.layer.masksToBounds = true
             tabButton.layer.shadowOpacity = 0
             tabButton.layer.borderWidth = 0
@@ -3404,7 +3411,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             ])
             rowButton.addTarget(self, action: #selector(didTapQuotePanelRow(_:)), for: .touchUpInside)
             rowButton.bearyAddPressHaptic()
-            rowButton.accessibilityLabel = entry.content ?? ""
+            // 审计 R9 ⑤：候选行无障碍名按「作者、标题、正文摘要、图片数量」组成，
+            // 纯图片无正文的日记也不再是空名；选中态同步读屏（isSelected + .selected 特征）。
+            rowButton.isSelected = isSelectedRow
+            if isSelectedRow {
+                rowButton.accessibilityTraits.insert(.selected)
+            } else {
+                rowButton.accessibilityTraits.remove(.selected)
+            }
+            rowButton.accessibilityLabel = quoteRowAccessibilityLabel(entry: entry, authorName: authorName, imageCount: entryImages.count)
+            rowButton.accessibilityHint = "选择这篇日记作为引用"
             quotePanelRows.addArrangedSubview(rowButton)
             // 行与日记的并行映射：渲染时同步重建，点行时按按钮身份取对应日记。
             quotePanelRowEntries.append(entry)
@@ -3488,6 +3504,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         setQuotePanelOpen(false)
         refreshQuoteSection()
+    }
+
+    /// 审计 R9 ⑤：引用候选行无障碍名，按「作者、标题、正文摘要、图片数量」
+    /// 顺序组成；正文只读摘要（换行压平、前 60 字，超长截断加省略号），
+    /// 不全文读出；无标题／无正文的段直接跳过，纯图片行仍有作者＋图片数。
+    private func quoteRowAccessibilityLabel(entry: Entry, authorName: String, imageCount: Int) -> String {
+        var parts: [String] = [authorName]
+        if let title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            parts.append(title)
+        }
+        if let content = entry.content?.trimmingCharacters(in: .whitespacesAndNewlines), !content.isEmpty {
+            let flattened = content.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+            parts.append(flattened.count > 60 ? String(flattened.prefix(60)) + "…" : flattened)
+        }
+        if imageCount > 0 {
+            parts.append("\(imageCount)张图片")
+        }
+        return parts.joined(separator: "，")
     }
 
     /// [24] 小项 6：面板行日期统一为项目主流口径 M月d日 H:mm（小时不补零；
