@@ -56,6 +56,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     // 反馈日志：前后台切换只记固定事件名（不含任何用户内容）。
     func sceneDidBecomeActive(_ scene: UIScene) {
         BearyAppLog.event("app foreground")
+        // 本地通知：首次回到前台问一次通知权限（系统弹窗，问过不再问）。
+        BearyLocalNotifications.shared.requestAuthorizationIfNeeded()
         // 隐私遮罩卡住修法：只在 willEnterForeground 撤遮罩不够——下拉通知中心/
         // 控制中心、系统权限弹框等只走 resignActive → becomeActive，根本不进后台，
         // willEnterForeground 不触发，resignActive 时盖上的遮罩就永远撤不掉
@@ -157,6 +159,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {
+        // 本地通知：回前台按最新本地数据 + 开关重算待发送（5 分钟内只刷一次）。
+        BearyLocalNotifications.shared.refreshAll()
         // 遮罩回前台无验证直接撤掉（回前台不锁的口径不变）。
         BearyAppLockManager.shared.removeShield()
         (window?.rootViewController as? BearyChromeViewController)?.resumeSideMatrixAnimation()
@@ -2464,6 +2468,8 @@ final class BearyChromeViewController: UIViewController {
                         // C4：个人页不再整页重拉——removeDeletedEntry 已按 id 摘篇、
                         // 调公开计数、转发地图/星图子页并刷表；广场 refreshAll
                         // 保留（广场不在 C4 范围，其分页态仍靠重拉对齐）。
+                        // 本地通知：删篇可能影响今晚提醒（删了当天唯一一篇）与限时到期提醒。
+                        BearyLocalNotifications.shared.refreshAll(force: true)
                     case .failure(let error):
                         if case .unauthorized = error {
                             // 401 走统一登录入口，不在此处另弹登录页、不自动重删：
@@ -3791,6 +3797,11 @@ final class BearyChromeViewController: UIViewController {
                 // 下次同步/切日刷新纠正）；内存日缓存由切日静默刷新接管，不在此处碰。
                 if let uid = SessionManager.shared.currentUser?.id {
                     BearyEntrySync.shared.upsertPublished(entryId: entryId, accountId: uid)
+                }
+                // 本地通知：落盘是异步拉取，2 秒后重算（当天已写则取消今晚提醒）；
+                // 回前台刷新是兜底。
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    BearyLocalNotifications.shared.refreshAll(force: true)
                 }
             }
         }
