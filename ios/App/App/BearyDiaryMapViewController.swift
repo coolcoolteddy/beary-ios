@@ -33,6 +33,13 @@ final class DiaryMapAnnotation: MKPointAnnotation {
     var groupId: String = ""
 }
 
+/// 时间胶囊大头针（v1）：一胶囊一标记，按 entryId 认篇，与地点组
+/// 标记并存、互不干扰；坐标按区级现场编码，与地点组共用本页内存
+/// geocodeCache（键加 "capsule:" 前缀防撞）。
+final class CapsuleMapAnnotation: MKPointAnnotation {
+    var entryId: String = ""
+}
+
 final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UITableViewDataSource, UITableViewDelegate {
     private let authorId: Int
     private var viewerIsAuthor: Bool
@@ -67,6 +74,13 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 组 ID → 在图标记（P2-9）：标记对象常驻地图、按组 ID 增删改，
     /// 不随整批解析拆建；随页销毁。切账号时随标记一并清掉。
     private var locatedAnnotations: [String: MKPointAnnotation] = [:]
+    /// 时间胶囊 v1：本页有效公开胶囊篇（isCapsule==1 且公开态）与
+    /// 其在图标记（entryId → 标记）；只活在本页实例里，随页销毁。
+    private var capsuleEntries: [Entry] = []
+    private var capsuleAnnotations: [String: CapsuleMapAnnotation] = [:]
+    /// 胶囊区级编码在途的 geocoder（与地点组 activeGeocoder 分开，
+    /// 两链互不取消；代次共用 geocodeGeneration，旧回调凭代次丢弃）。
+    private var activeCapsuleGeocoder: CLGeocoder?
     private var loadGeneration = 0
     /// 列表骨架态（无数据时的取数起步）：列表出 3 行骨架卡、状态行留空，
     /// 替代“加载中…”文字；有数据时的后台刷新不进骨架，旧列表即占位。
@@ -258,6 +272,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     deinit {
         activeGeocoder?.cancelGeocode()
+        activeCapsuleGeocoder?.cancelGeocode()
     }
 
     /// 身份变化时立即撤下旧身份地图数据（R15 P1-3）：先清旧标记、列表
@@ -274,6 +289,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         groups = []
         unlocatedGroups = []
         transientFailedGroups = []
+        capsuleEntries = []
+        capsuleAnnotations.removeAll()
         selectedGroup = nil
         geocodeCache.removeAll()
         didInitialGeocode = false
@@ -290,6 +307,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         geocodeGeneration += 1
         activeGeocoder?.cancelGeocode()
         activeGeocoder = nil
+        activeCapsuleGeocoder?.cancelGeocode()
+        activeCapsuleGeocoder = nil
         return geocodeGeneration
     }
 
@@ -529,7 +548,13 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         let updated = allEntries[index]
         let locationChanged = DiaryLocation(entry: old) != DiaryLocation(entry: updated)
         let visibilityChanged = BearyVisibility.current(for: old) != BearyVisibility.current(for: updated)
-        guard locationChanged || (!viewerIsAuthor && visibilityChanged) else {
+        // 时间胶囊 v1：胶囊态变了（埋／取消／解锁戳／区级）即进出地图资格
+        // 变了，走同一重算／刷新路径（公开转私密后标记随重算下线）。
+        let capsuleChanged = old.isCapsule != updated.isCapsule || old.capsuleUnlockAt != updated.capsuleUnlockAt || old.capsuleDistrict != updated.capsuleDistrict
+        // 作者本人翻可见性不走 (!viewerIsAuthor && visibilityChanged)，
+        // 但胶囊篇公开转私密即失资格，须同走重算，否则标记滞留到下次重拉。
+        let capsuleVisibilityChanged = (old.isCapsuleBuried || updated.isCapsuleBuried) && visibilityChanged
+        guard locationChanged || (!viewerIsAuthor && visibilityChanged) || capsuleChanged || capsuleVisibilityChanged else {
             patchEntryInGroups(entryId: entryId, updated: updated)
             tableView.reloadData()
             return
@@ -562,6 +587,10 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         if let v = updated.isPublic { target.isPublic = v }
         if let v = updated.visibility { target.visibility = v }
         target.ephemeralUntil = updated.ephemeralUntil
+        // 时间胶囊 v1：与地点字段同款无条件拷贝（详情侧副本与服务端同源）。
+        target.isCapsule = updated.isCapsule
+        target.capsuleUnlockAt = updated.capsuleUnlockAt
+        target.capsuleDistrict = updated.capsuleDistrict
     }
 
     /// 轻量分支：地点组键与计数不动时，只把更新后的条目换进各组快照
@@ -577,6 +606,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         groups = patched(groups)
         unlocatedGroups = patched(unlocatedGroups)
         transientFailedGroups = patched(transientFailedGroups)
+        capsuleEntries = capsuleEntries.map { $0.id == entryId ? updated : $0 }
         if let selected = selectedGroup {
             selectedGroup = patched([selected]).first
         }
@@ -614,7 +644,11 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 statusLabel.text = (allEntries.isEmpty ? "还没有日记" : "还没有带位置的日记")
                     + (fetchCapped ? " · 篇数较多，仅展示最近拉取的 \(allEntries.count) 篇" : "")
             }
-            mapView.removeAnnotations(mapView.annotations)
+            // 只撤地点组标记：胶囊标记另走 refreshCapsuleAnnotations
+            //（无地点组时胶囊仍可成图，不随本分支一并清掉）。
+            for annotation in locatedAnnotations.values {
+                mapView.removeAnnotation(annotation)
+            }
             locatedAnnotations.removeAll()
             unlocatedGroups = []
             transientFailedGroups = []
@@ -622,6 +656,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             // addLocatedAnnotations 再自动定位一次；非空刷新不碰它，视角不动。
             didInitialGeocode = false
             tableView.reloadData()
+            refreshCapsuleAnnotations(generation: generation)
             restoreMapReturnContextIfNeeded()
             return
         }
@@ -659,6 +694,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         tableView.reloadData()
         restoreMapReturnContextIfNeeded()
         geocodePendingGroups(pending: pendingGroups, index: 0, located: cachedLocated, unlocated: [], generation: generation)
+        refreshCapsuleAnnotations(generation: generation)
     }
 
     /// 切账号后旧身份的返回记忆作废，不带到新身份。
@@ -944,6 +980,114 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         tableView.reloadData()
     }
 
+    // MARK: - 时间胶囊 v1：与地点组并存的第二层标记
+
+    /// 胶囊层重算：与地点组走同一重算／刷新路径（entries 变化、返回重拉、
+    /// applyEditedEntry 均经 regroupAndGeocode 到此）。资格只认有效公开
+    /// 胶囊；公开转私密／取消埋藏／删篇后标记随本轮 diff 下线，只做 App
+    /// 端渲染下线，不改服务端。坐标只存本页内存 geocodeCache（键加
+    /// "capsule:" 前缀，与地点组缓存互不撞），随页销毁，永不写盘。
+    private func refreshCapsuleAnnotations(generation: Int) {
+        capsuleEntries = allEntries.filter { BearyTimeCapsule.isPublicCapsule($0) }
+        let wantedIds = Set(capsuleEntries.compactMap { $0.id })
+        let staleIds = capsuleAnnotations.keys.filter { !wantedIds.contains($0) }
+        for id in staleIds {
+            if let annotation = capsuleAnnotations.removeValue(forKey: id) {
+                mapView.removeAnnotation(annotation)
+            }
+        }
+        var pending: [Entry] = []
+        for entry in capsuleEntries {
+            guard let entryId = entry.id else { continue }
+            if let annotation = capsuleAnnotations[entryId] {
+                annotation.title = entry.capsuleDistrict
+                annotation.subtitle = BearyTimeCapsule.unlockDateText(entry)
+            } else if let district = entry.capsuleDistrict, let coordinate = geocodeCache[capsuleGeocodeCacheKey(district: district)] {
+                addCapsuleAnnotation(entry: entry, coordinate: coordinate)
+            } else {
+                pending.append(entry)
+            }
+        }
+        geocodeCapsules(pending: pending, index: 0, generation: generation)
+    }
+
+    private func capsuleGeocodeCacheKey(district: String) -> String {
+        return "capsule:\(district)"
+    }
+
+    /// 串行编码未缓存的胶囊区级：每区编出即补标记；编不出（无匹配／网络错）
+    /// 即无标记，不进未定位列表、不重试、不阻塞地点组链。代次不对
+    /// （重算／切账号／退出）时整条旧链直接停掉。
+    private func geocodeCapsules(pending: [Entry], index: Int, generation: Int) {
+        guard generation == geocodeGeneration, index < pending.count else { return }
+        let entry = pending[index]
+        guard let district = entry.capsuleDistrict, !district.isEmpty else {
+            geocodeCapsules(pending: pending, index: index + 1, generation: generation)
+            return
+        }
+        let cacheKey = capsuleGeocodeCacheKey(district: district)
+        if let coordinate = geocodeCache[cacheKey] {
+            addCapsuleAnnotation(entry: entry, coordinate: coordinate)
+            geocodeCapsules(pending: pending, index: index + 1, generation: generation)
+            return
+        }
+        let geocoder = CLGeocoder()
+        activeCapsuleGeocoder = geocoder
+        geocoder.geocodeAddressString(district) { [weak self] placemarks, _ in
+            DispatchQueue.main.async {
+                guard let self = self, generation == self.geocodeGeneration else { return }
+                if self.activeCapsuleGeocoder === geocoder { self.activeCapsuleGeocoder = nil }
+                if let coordinate = placemarks?.first?.location?.coordinate {
+                    self.geocodeCache[cacheKey] = coordinate
+                    self.addCapsuleAnnotation(entry: entry, coordinate: coordinate)
+                }
+                self.geocodeCapsules(pending: pending, index: index + 1, generation: generation)
+            }
+        }
+    }
+
+    /// 补一个胶囊标记：已在图只就地更新坐标／标题，标记对象不重建；
+    /// 新篇才新建上图。一胶囊一标记，同区多篇坐标相同、叠放。
+    private func addCapsuleAnnotation(entry: Entry, coordinate: CLLocationCoordinate2D) {
+        guard let entryId = entry.id else { return }
+        if let existing = capsuleAnnotations[entryId] {
+            existing.coordinate = coordinate
+            existing.title = entry.capsuleDistrict
+            existing.subtitle = BearyTimeCapsule.unlockDateText(entry)
+            return
+        }
+        let annotation = CapsuleMapAnnotation()
+        annotation.entryId = entryId
+        annotation.coordinate = coordinate
+        annotation.title = entry.capsuleDistrict
+        annotation.subtitle = BearyTimeCapsule.unlockDateText(entry)
+        capsuleAnnotations[entryId] = annotation
+        mapView.addAnnotation(annotation)
+    }
+
+    /// 取消埋藏成功后的本地去标记：只摘该篇的胶囊标记与胶囊资格，
+    /// 日记本身仍在列表里（变回普通篇），不重拉、不重算全图。
+    private func removeCapsuleAnnotation(entryId: String) {
+        if let index = allEntries.firstIndex(where: { $0.id == entryId }) {
+            allEntries[index].isCapsule = 0
+            allEntries[index].capsuleUnlockAt = nil
+            allEntries[index].capsuleDistrict = nil
+        }
+        capsuleEntries.removeAll { $0.id == entryId }
+        if let annotation = capsuleAnnotations.removeValue(forKey: entryId) {
+            mapView.removeAnnotation(annotation)
+        }
+    }
+
+    /// 点胶囊标记弹卡（只给卡片，不直接进详情；解锁判定在卡内做）。
+    private func openCapsuleCard(entry: Entry) {
+        BearyTimeCapsuleCardSheet.show(from: self, entry: entry, onOpenEntry: { [weak self] opened in
+            self?.onOpenEntry?(opened)
+        }, onUnburied: { [weak self] entryId in
+            self?.removeCapsuleAnnotation(entryId: entryId)
+        })
+    }
+
     /// 按大头针找组：先认 groupId（P1-6 同名换区后展示名可重名，
     /// title 不再唯一）；无 groupId 的旧式大头针才退到 title 匹配。
     private func group(for annotation: MKAnnotation) -> BearyLocationMapGroup? {
@@ -993,6 +1137,23 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
         guard annotation is MKPointAnnotation else { return nil }
+        // 时间胶囊 v1：胶囊标记用 time-capsule 图标（模板图＋墨字形），
+        // 与地点组标记（橙底＋篇数字形）区分；不弹系统气泡，点按只开胶囊卡。
+        if annotation is CapsuleMapAnnotation {
+            let reuseId = "CapsulePin"
+            let marker: MKMarkerAnnotationView
+            if let reused = mapView.dequeueReusableAnnotationView(withIdentifier: reuseId) as? MKMarkerAnnotationView {
+                marker = reused
+            } else {
+                marker = MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: reuseId)
+            }
+            marker.annotation = annotation
+            marker.canShowCallout = false
+            marker.markerTintColor = BearyColors.orange
+            marker.glyphTintColor = BearyColors.onBrand
+            marker.glyphImage = BearyIconImages.image(named: "time-capsule", pointSize: 24)
+            return marker
+        }
         let reuseId = "DiaryMapPin"
         let marker: MKMarkerAnnotationView
         if let reused = mapView.dequeueReusableAnnotationView(withIdentifier: reuseId) as? MKMarkerAnnotationView {
@@ -1015,7 +1176,16 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     }
 
     func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
-        guard let annotation = view.annotation, let group = group(for: annotation) else { return }
+        guard let annotation = view.annotation else { return }
+        // 时间胶囊 v1：胶囊标记点按开胶囊卡，不走地点组选中；选中态
+        // 立即撤下，卡关后地图不留选中针。
+        if let capsule = annotation as? CapsuleMapAnnotation,
+           let entry = capsuleEntries.first(where: { $0.id == capsule.entryId }) {
+            mapView.deselectAnnotation(annotation, animated: false)
+            openCapsuleCard(entry: entry)
+            return
+        }
+        guard let group = group(for: annotation) else { return }
         selectGroup(group)
     }
 
@@ -1203,5 +1373,326 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 selectGroup(listedGroups[indexPath.row])
             }
         }
+    }
+}
+
+// MARK: - 时间胶囊 v1：点标记弹卡（只在地图页内，不新文件）
+
+/// 胶囊卡底 sheet：走共享底部弹窗容器 BearyBottomSheet（与确认弹窗同款
+/// 呈现与关闭流程）。卡片用 district-range 图标，只显示区级、解锁日期、
+/// 解锁状态——未解锁只显示占位，不露正文、不露标题、不给进详情；
+/// 已解锁才给「查看日记」，走现有 onOpenEntry 进详情（公开篇向所有人、
+/// 私密篇仅作者，不改可见性，不做解锁即公开）。
+/// 解锁本地判定：时间到了 AND 当前区级与埋藏区级去空白后精确相等；
+/// 时间未到时不取定位（按需）；时间到了才按需取一次当前区级，取不到／
+/// 无权限按未解锁处理（fail-closed），卡上给一句提示。不上传精确坐标，
+/// 不存经纬度。作者自己的胶囊篇另给「取消埋藏」（二次确认后走 updateEntry
+/// 清三键；成功本地去标记，失败不乐观清除、标记保留、toast 提示失败）。
+enum BearyTimeCapsuleCardSheet {
+    static func show(from presenter: UIViewController, entry: Entry, onOpenEntry: @escaping (Entry) -> Void, onUnburied: @escaping (String) -> Void) {
+        let sheet = BearyTimeCapsuleCardViewController(entry: entry, onOpenEntry: onOpenEntry, onUnburied: onUnburied)
+        let delegate = BearyBottomSheetTransitioningDelegate()
+        sheet.sheetDelegate = delegate
+        sheet.transitioningDelegate = delegate
+        sheet.modalPresentationStyle = .custom
+        sheet.loadViewIfNeeded()
+        let presenterWidth = presenter.view.bounds.width
+        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
+        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
+        sheet.view.setNeedsLayout()
+        sheet.view.layoutIfNeeded()
+        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
+        presenter.present(sheet, animated: BearyMotion.animated(true))
+    }
+}
+
+final class BearyTimeCapsuleCardViewController: UIViewController {
+
+    /// transitioningDelegate 是弱引用，须由本页自己强持有（确认弹窗同款做法）。
+    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
+
+    private let entry: Entry
+    private let onOpenEntry: (Entry) -> Void
+    private let onUnburied: (String) -> Void
+
+    private let grabberView = UIView()
+    private let closeButton = BearyButton.closeButton()
+    private let districtIconView = UIImageView()
+    private let districtLabel = UILabel()
+    private let dateTitleLabel = UILabel()
+    private let dateValueLabel = UILabel()
+    private let statusTitleLabel = UILabel()
+    private let statusValueLabel = UILabel()
+    private let hintLabel = UILabel()
+    private let openButton = BearyButton(style: .primaryPill(.ink))
+    private let unburyButton = BearyButton(style: .destructiveOutline(.regular))
+    /// 下半区栈（提示行＋两钮）：栈内隐藏的 arrangedSubview 自动塌掉，
+    /// 不留空隙——isHidden 的普通视图仍占约束位，不能直接藏。
+    private let actionStack = UIStackView()
+
+    /// 解锁判定状态：nil = 尚未判定（时间未到不取定位直接判未解锁；
+    /// 时间到了才取定位，取回前为 locating）。
+    private var isLocating = false
+    private var currentDistrict: String?
+    private var districtFetchFailed = false
+    private var isUnburying = false
+
+    /// 是否为作者本人（服务端 isMine 优先，缺失时按作者 id 比对当前用户；
+    /// 判定不出按他人算，fail-closed，不给取消埋藏）。
+    private var viewerIsAuthor: Bool {
+        BearyLocationDisplay.viewerIsAuthor(entry: entry)
+    }
+
+    init(entry: Entry, onOpenEntry: @escaping (Entry) -> Void, onUnburied: @escaping (String) -> Void) {
+        self.entry = entry
+        self.onOpenEntry = onOpenEntry
+        self.onUnburied = onUnburied
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = BearyColors.bg
+        view.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        view.layer.masksToBounds = true
+
+        grabberView.translatesAutoresizingMaskIntoConstraints = false
+        grabberView.backgroundColor = BearyColors.line
+        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
+        view.addSubview(grabberView)
+
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
+        view.addSubview(closeButton)
+
+        districtIconView.translatesAutoresizingMaskIntoConstraints = false
+        districtIconView.image = BearyIconImages.image(named: "district-range", pointSize: 28)
+        districtIconView.tintColor = BearyColors.ink
+        districtIconView.contentMode = .scaleAspectFit
+        view.addSubview(districtIconView)
+
+        districtLabel.translatesAutoresizingMaskIntoConstraints = false
+        districtLabel.text = entry.capsuleDistrict
+        districtLabel.font = BearyDynamicType.smallActionFont()
+        districtLabel.textColor = BearyColors.ink
+        districtLabel.numberOfLines = 0
+        view.addSubview(districtLabel)
+
+        dateTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        dateTitleLabel.text = "解锁日期"
+        dateTitleLabel.font = BearyDynamicType.smallBodyFont()
+        dateTitleLabel.textColor = BearyColors.gray
+        view.addSubview(dateTitleLabel)
+
+        dateValueLabel.translatesAutoresizingMaskIntoConstraints = false
+        dateValueLabel.text = BearyTimeCapsule.unlockDateText(entry)
+        dateValueLabel.font = BearyDynamicType.smallBodyFont()
+        dateValueLabel.textColor = BearyColors.ink
+        view.addSubview(dateValueLabel)
+
+        statusTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusTitleLabel.text = "状态"
+        statusTitleLabel.font = BearyDynamicType.smallBodyFont()
+        statusTitleLabel.textColor = BearyColors.gray
+        view.addSubview(statusTitleLabel)
+
+        statusValueLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusValueLabel.font = BearyDynamicType.smallBodyFont()
+        statusValueLabel.textColor = BearyColors.ink
+        view.addSubview(statusValueLabel)
+
+        hintLabel.translatesAutoresizingMaskIntoConstraints = false
+        hintLabel.font = BearyDynamicType.smallBodyFont()
+        hintLabel.textColor = BearyColors.gray
+        hintLabel.numberOfLines = 0
+        hintLabel.isHidden = true
+
+        openButton.translatesAutoresizingMaskIntoConstraints = false
+        openButton.setTitle("查看日记", for: .normal)
+        openButton.addTarget(self, action: #selector(openTapped), for: .touchUpInside)
+        openButton.bearyAddPressFeedback()
+        openButton.isHidden = true
+
+        unburyButton.translatesAutoresizingMaskIntoConstraints = false
+        unburyButton.setTitle("取消埋藏", for: .normal)
+        unburyButton.addTarget(self, action: #selector(unburyTapped), for: .touchUpInside)
+        unburyButton.bearyAddPressFeedback()
+        unburyButton.isHidden = !viewerIsAuthor
+
+        actionStack.translatesAutoresizingMaskIntoConstraints = false
+        actionStack.axis = .vertical
+        actionStack.spacing = 8
+        actionStack.addArrangedSubview(hintLabel)
+        actionStack.addArrangedSubview(openButton)
+        actionStack.addArrangedSubview(unburyButton)
+        view.addSubview(actionStack)
+
+        NSLayoutConstraint.activate([
+            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop),
+            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
+            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
+
+            closeButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 16),
+            closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            closeButton.widthAnchor.constraint(equalToConstant: 32),
+            closeButton.heightAnchor.constraint(equalToConstant: 32),
+
+            districtIconView.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
+            districtIconView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            districtIconView.widthAnchor.constraint(equalToConstant: 28),
+            districtIconView.heightAnchor.constraint(equalToConstant: 28),
+
+            districtLabel.centerYAnchor.constraint(equalTo: districtIconView.centerYAnchor),
+            districtLabel.leadingAnchor.constraint(equalTo: districtIconView.trailingAnchor, constant: 12),
+            districtLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -12),
+
+            dateTitleLabel.topAnchor.constraint(equalTo: districtIconView.bottomAnchor, constant: 16),
+            dateTitleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            dateValueLabel.centerYAnchor.constraint(equalTo: dateTitleLabel.centerYAnchor),
+            dateValueLabel.leadingAnchor.constraint(equalTo: dateTitleLabel.trailingAnchor, constant: 12),
+            dateValueLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+
+            statusTitleLabel.topAnchor.constraint(equalTo: dateTitleLabel.bottomAnchor, constant: 12),
+            statusTitleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            statusValueLabel.centerYAnchor.constraint(equalTo: statusTitleLabel.centerYAnchor),
+            statusValueLabel.leadingAnchor.constraint(equalTo: statusTitleLabel.trailingAnchor, constant: 12),
+            statusValueLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+
+            actionStack.topAnchor.constraint(equalTo: statusTitleLabel.bottomAnchor, constant: 16),
+            actionStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            actionStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            actionStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+
+            openButton.heightAnchor.constraint(equalToConstant: openButton.style.height),
+            unburyButton.heightAnchor.constraint(equalToConstant: unburyButton.style.height),
+        ])
+
+        refreshStatus()
+        // 时间未到：未解锁已定，不取定位；时间到了才按需取一次当前区级。
+        guard timeReached else { return }
+        isLocating = true
+        refreshStatus()
+        BearyTimeCapsule.fetchCurrentDistrict { [weak self] district in
+            guard let self = self else { return }
+            self.isLocating = false
+            if let district = district, !district.isEmpty {
+                self.currentDistrict = district
+            } else {
+                self.districtFetchFailed = true
+            }
+            self.refreshStatus()
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updatePreferredContentSize()
+    }
+
+    /// 按当前宽度算内容高，推给容器当 sheet 高（确认弹窗同款）。
+    func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
+        let width = view.bounds.width > 0 ? view.bounds.width : 375
+        let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
+        let size = view.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+        let height = ceil(size.height) + extraBottomInset
+        let preferred = CGSize(width: width, height: height)
+        if preferredContentSize != preferred {
+            preferredContentSize = preferred
+        }
+    }
+
+    private var timeReached: Bool {
+        guard let unlockAt = entry.capsuleUnlockAt else { return false }
+        return Int(Date().timeIntervalSince1970 * 1000) >= unlockAt
+    }
+
+    private var isUnlocked: Bool {
+        BearyTimeCapsule.isUnlocked(entry, currentDistrict: currentDistrict)
+    }
+
+    private func refreshStatus() {
+        if isLocating {
+            statusValueLabel.text = "正在确认位置…"
+            statusValueLabel.textColor = BearyColors.gray
+            hintLabel.isHidden = true
+            openButton.isHidden = true
+        } else if isUnlocked {
+            statusValueLabel.text = "已解锁"
+            statusValueLabel.textColor = BearyColors.ink
+            hintLabel.isHidden = true
+            openButton.isHidden = false
+        } else {
+            statusValueLabel.text = "未解锁"
+            statusValueLabel.textColor = BearyColors.gray
+            openButton.isHidden = true
+            if timeReached {
+                hintLabel.isHidden = false
+                if districtFetchFailed {
+                    hintLabel.text = "需定位到该区级才能查看"
+                } else if let district = entry.capsuleDistrict {
+                    hintLabel.text = "需定位到\(district)才能查看"
+                } else {
+                    hintLabel.text = "需定位到该区级才能查看"
+                }
+            } else {
+                hintLabel.isHidden = true
+            }
+        }
+        // 取消埋藏钮只看作者身份：栈内隐藏行自动塌掉，不留空隙。
+        unburyButton.isHidden = !viewerIsAuthor
+        updatePreferredContentSize()
+    }
+
+    @objc private func openTapped() {
+        guard isUnlocked else { return }
+        dismiss(animated: BearyMotion.animated(true)) { [onOpenEntry, entry] in
+            onOpenEntry(entry)
+        }
+    }
+
+    @objc private func unburyTapped() {
+        guard !isUnburying, let entryId = entry.id else { return }
+        // 取消埋藏不可逆（已发日记无法重埋）：先给一次后果确认。
+        BearyConfirmSheet.show(from: self, title: "取消埋藏", message: "取消埋藏后，这篇日记不再是时间胶囊，地图上的标记会消失。", actions: [
+            BearyConfirmSheet.Action(title: "取消埋藏", style: .destructive) { [weak self] in
+                self?.performUnbury(entryId: entryId)
+            },
+            BearyConfirmSheet.Action(title: "取消", style: .cancel),
+        ])
+    }
+
+    private func performUnbury(entryId: String) {
+        guard !isUnburying else { return }
+        isUnburying = true
+        unburyButton.isEnabled = false
+        BearyAPI.shared.updateEntry(id: entryId, content: entry.content ?? "", images: entry.images ?? [], mood: entry.mood, weather: entry.weather, quoteId: entry.quoteId, title: entry.title, mentionedUserId: entry.mentionedUserId, clearCapsule: true) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isUnburying = false
+                self.unburyButton.isEnabled = true
+                switch result {
+                case .success:
+                    // 成功才本地去标记：先关卡、关完再回调（回调里再弹
+                    // sheet 或出分享面板时不叠层，确认弹窗同款顺序）。
+                    self.dismiss(animated: BearyMotion.animated(true)) { [onUnburied = self.onUnburied] in
+                        onUnburied(entryId)
+                    }
+                case .failure:
+                    // 失败不乐观清除：标记保留，卡内 toast 提示失败。
+                    BearyToast.show(in: self.view, message: "取消埋藏失败，请重试")
+                }
+            }
+        }
+    }
+
+    @objc private func closeTapped() {
+        dismiss(animated: BearyMotion.animated(true))
     }
 }

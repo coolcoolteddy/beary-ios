@@ -178,6 +178,62 @@ enum BearyLocationIcon {
     }
 }
 
+// MARK: - 时间胶囊 v1（2026-11-12，最小版）
+
+/// 胶囊判定与本地解锁口径（纯函数 + 一次定位取区级，不新文件）。
+/// 字段口径以后端已部署的为准：is_capsule / capsule_unlock_at（毫秒戳）/
+/// capsule_district（区级文本）；旧分支的 capsule_buried /
+/// capsule_unlock_date 是错名，绝不引用。
+enum BearyTimeCapsule {
+    /// 地图渲染资格：埋了（isCapsule==1）且公开态（visibility public 或
+    /// isPublic；限时过期按 BearyEphemeral 口径算不公开）。公开转私密
+    /// 后资格即失，标记随重算下线，不改服务端。
+    static func isPublicCapsule(_ entry: Entry) -> Bool {
+        guard entry.isCapsuleBuried else { return false }
+        guard entry.visibility == "public" || entry.isPublic == true else { return false }
+        return !BearyEphemeral.isExpired(entry)
+    }
+
+    /// 本地解锁判定：时间到了 AND 当前区级与埋藏区级去空白后精确相等。
+    /// 不做包含／模糊匹配；取不到当前区级时按未解锁处理（fail-closed）。
+    static func isUnlocked(_ entry: Entry, currentDistrict: String?, nowMs: Int? = nil) -> Bool {
+        guard let unlockAt = entry.capsuleUnlockAt else { return false }
+        let now = nowMs ?? Int(Date().timeIntervalSince1970 * 1000)
+        guard now >= unlockAt else { return false }
+        guard let current = currentDistrict?.trimmingCharacters(in: .whitespacesAndNewlines), !current.isEmpty,
+              let buried = entry.capsuleDistrict?.trimmingCharacters(in: .whitespacesAndNewlines), !buried.isEmpty else { return false }
+        return current == buried
+    }
+
+    /// 解锁日期文案：与现有日期文案同格式（yyyy年M月d日）。
+    static func unlockDateText(_ entry: Entry) -> String? {
+        guard let unlockAt = entry.capsuleUnlockAt else { return nil }
+        let date = Date(timeIntervalSince1970: TimeInterval(unlockAt) / 1000)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy年M月d日"
+        return formatter.string(from: date)
+    }
+
+    /// 当前区级一次定位＋逆地理编码：只取区级文本，不存坐标、不上传、
+    /// 不写盘。取不到／无权限时回 nil，调用方按未解锁处理。
+    static func fetchCurrentDistrict(completion: @escaping (String?) -> Void) {
+        BearyOneShotLocation.request { result in
+            switch result {
+            case .coordinate(let latitude, let longitude):
+                let geocoder = CLGeocoder()
+                geocoder.reverseGeocodeLocation(CLLocation(latitude: latitude, longitude: longitude)) { placemarks, _ in
+                    DispatchQueue.main.async {
+                        completion(placemarks?.first.flatMap { BearyLocationDisplay.district(from: $0) })
+                    }
+                }
+            case .denied, .unavailable:
+                DispatchQueue.main.async { completion(nil) }
+            }
+        }
+    }
+}
+
 // MARK: - 天气 GPS 一次定位（2026-11-04）
 
 /// 一次定位结果：只给调用方经纬度数值，不暴露 CLLocation 类型；
