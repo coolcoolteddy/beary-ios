@@ -510,6 +510,7 @@ private final class BearyFriendCell: UITableViewCell {
         avatarView.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.font = BearyDynamicType.cardTitleFont()
+        nameLabel.adjustsFontForContentSizeCategory = true
         nameLabel.textColor = BearyColors.ink
         nameLabel.numberOfLines = 1
         handleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -560,6 +561,7 @@ private final class BearyFriendCell: UITableViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         avatarView.reset()
+        handleLabel.text = nil
         moreHandler = nil
     }
 
@@ -571,6 +573,7 @@ private final class BearyFriendCell: UITableViewCell {
             handleLabel.text = "@\(handle)"
             handleLabel.isHidden = false
         } else {
+            handleLabel.text = nil
             handleLabel.isHidden = true
         }
         // C3：头像加载/占位/重试全走 BearyAvatarView（与旧 configure 同口径：
