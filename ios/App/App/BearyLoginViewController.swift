@@ -989,7 +989,7 @@ final class BearyLoginViewController: UIViewController {
                     strongSelf.showMessage("网络不稳定，请稍后再试")
                     strongSelf.updateButtonStates()
                 case .failure:
-                    strongSelf.showMessage("发送失败")
+                    strongSelf.showMessage("发送失败，请重试")
                     strongSelf.updateButtonStates()
                 }
             }
@@ -1048,7 +1048,7 @@ final class BearyLoginViewController: UIViewController {
                         strongSelf.handleLoginReferralFeedback(resp: resp)
                         BearySoundPlayer.play(.loginChime)
                     } else {
-                        strongSelf.showMessage(resp.message ?? resp.error ?? "验证失败")
+                        strongSelf.showMessage(resp.message ?? resp.error ?? "验证失败，请重试")
                     }
                 case .failure(.cancelled):
                     break
@@ -1057,7 +1057,7 @@ final class BearyLoginViewController: UIViewController {
                 case .failure(.network):
                     strongSelf.showMessage("网络不稳定，请稍后再试")
                 case .failure:
-                    strongSelf.showMessage("验证失败")
+                    strongSelf.showMessage("验证失败，请重试")
                 }
             }
         }
