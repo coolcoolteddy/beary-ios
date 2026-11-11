@@ -220,7 +220,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 注意：此处必须保持字面数组写法，不能改成 BearyText.bearMoodKeys 引用——
     /// CI 的 scripts/check-beary-assets.py 用正则直接抠本文件 moodOrder 的
     /// 字面数组校验 emote 资产，改引用会使该检查报 key source not found 而全红
-    /// （#421 合入后 CI 红的根因）。集合与 bearMoodKeys 逐项一致，改一处要同步另一处。
+    /// （#421 合入后 CI 红的根因）。moodOrder 32 只与 bearMoodKeys 前 32 项逐项一致，
+    /// 改默认组要同步两处；bearMoodKeys 另有节日 12 款（不进 moodOrder、不进资产检查）。
     private let moodOrder: [String] = [
         "agree", "happy", "applause", "cheer", "comfort", "confused", "love", "determined",
         "facepalm", "shy", "goodnight", "hug", "wink", "idea", "kiss", "thinking",
@@ -380,7 +381,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var quotePanelSavedScrollOffset = CGPoint.zero
     private var quotePanelSavedScrollValid = false
     /// C1：工具栏上方选择条：同一时刻最多展开一条（写给），nil=全部收起。
-    /// 心情/天气旧条带已删（见下），入口只走心情/天气尖角弹出框，不再走本值；
+    /// 心情/天气旧条带已删（见下），入口只走天气尖角弹出框（心情已迁底部弹窗），不再走本值；
     /// 旧附加栏三态随双重入口删除而整组拆除，不再有“附加栏撑着显示天气行”的压制状态机。
     private enum ToolStrip {
         case mood, weather, recipient
@@ -803,6 +804,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 批 E 定位钮：工具栏左组第 2 位（图片右边、心情之前，预览 v2 定版；v1 的心情/天气并列位置已作废）。
     private let locationToolButton = BearyComposerToolButton(type: .system)
     private let moodToolButton = BearyComposerToolButton(type: .system)
+    /// 心情入口钮（点开底部弹窗心情选择器，见 presentMoodPickerSheet）。
+    /// 2026-11-11：心情选择器由尖角弹出框迁为底部弹窗（BearyMoodPickerSheet），
+    /// 本文件只留天气尖角弹出框。
+    private weak var moodPickerSheet: BearyMoodPickerSheetViewController?
     private let weatherToolButton = BearyComposerToolButton(type: .system)
     private let recipientToolButton = BearyComposerToolButton(type: .system)
     private let quoteToolButton = BearyComposerToolButton(type: .system)
@@ -811,11 +816,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 时钟＝限时，点开系统 UIMenu 直选四档；取代正文区分段，为唯一可见性入口；
     /// 编辑模式隐藏（编辑不改可见性）；限时态即公开语义，不再另设锁定开关。
     private let visibilityButton = UIButton(type: .system)
-    // 编辑器改版（2026-10-29）：心情/天气尖角弹出框（取代旧选择条）+ 框外收起层。
-    private let moodCallout = BearyCalloutPickerView()
+    // 编辑器改版（2026-10-29）：天气尖角弹出框（取代旧选择条）+ 框外收起层。
+    // 心情选择器 2026-11-11 已迁底部弹窗（BearyMoodPickerSheet），不再走 callout。
     private let weatherCallout = BearyCalloutPickerView()
     private let calloutDismissView = BearyCalloutDismissView()
-    /// 批 E 定位气泡与专属框外收起层（不复用 calloutDismissView：心情/天气框与定位气泡
+    /// 批 E 定位气泡与专属框外收起层（不复用 calloutDismissView：天气框与定位气泡
     /// 的显隐状态机各自独立，复用会使一方收起时误关另一方）。
     private let locationPopover = BearyLocationPopoverView()
     private let locationDismissView = BearyCalloutDismissView()
@@ -828,8 +833,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // 按钮普查：视觉 24×24，热区用 Hit44 扩到 44（视觉不动；左右邻居为文字行，无互叠按钮）。
     private let locationClearButton = BearyHit44Button(type: .system)
     private let locationNoteLabel = UILabel()
-    private enum CalloutKind { case mood, weather }
-    private var activeCallout: CalloutKind?
+    /// 天气弹出框是否打开（心情选择器已迁底部弹窗，不再共用本状态机）。
+    private var weatherCalloutOpen = false
     /// 审计第 31 项：打开当前框的触发钮（工具钮或已选 chip，二选一的实际点按者）。
     /// 关闭还焦点只认它；程序性收起（换工具/面板/发布/取消等）不还焦点，故
     /// 本字段只在用户主动关闭时由 hideCallout(restoreFocus: true) 消费。
@@ -847,7 +852,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private static let calloutTransitionOffset: CGFloat = 6
     private static let calloutHeight: CGFloat = 78
     /// [24] 小项 2：天气框高约束（基准 78；步进器附属行显时 += 附属行高，
-    /// 见 updateWeatherCalloutHeight；心情框仍走固定 78，不受影响）。
+    /// 见 updateWeatherCalloutHeight）。
     private var weatherCalloutHeightConstraint: NSLayoutConstraint?
 
     /// [24] 小项 2：天气框高 = 基准 + 附属行显隐对应的增量；框未搭建时
@@ -1080,7 +1085,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 编辑器改版（2026-10-29）：弹出框打开时，尖角跟随工具栏图标中心；
         // 放宽门之前（键盘只动工具栏纵向时宽门会早退，但锚点仍需每轮重算；
         // 仅改尖角图层路径与收起层穿透区，不触发布局环）。
-        if activeCallout != nil {
+        if weatherCalloutOpen {
             updateCalloutArrowPositions()
         }
         // 审计 15 项第 9 项：定位气泡打开后，布局变化（键盘弹出、旋转、
@@ -3671,36 +3676,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updatePreferredContentSize()
     }
 
-    // MARK: - 编辑器改版（2026-10-29）：心情/天气尖角弹出框
+    // MARK: - 编辑器改版（2026-10-29）：天气尖角弹出框
 
     /// 弹出框搭建：框体与框外收起层常驻 view（隐藏时 isHidden），约束一次激活；
     /// 框左右与工具栏同宽（iPad 居中 608 列下自动跟随），框底贴工具栏顶 8pt 上方；
     /// 框是覆盖层（不推限时行、不改 sheet 高），打开时短暂盖住限时行，点框外即收起。
     private func buildCallouts() {
-        moodCallout.translatesAutoresizingMaskIntoConstraints = false
         weatherCallout.translatesAutoresizingMaskIntoConstraints = false
         calloutDismissView.translatesAutoresizingMaskIntoConstraints = false
-        moodCallout.isHidden = true
         weatherCallout.isHidden = true
         calloutDismissView.isHidden = true
         // 审计第 31 项：框外点按与 VoiceOver 逃离是同一用户主动关闭路径，
         // 关闭后把焦点还给触发钮（hideCallout 的 restoreFocus 分支定落点）。
         calloutDismissView.onTapOutside = { [weak self] in self?.hideCallout(animated: true, restoreFocus: true) }
-        moodCallout.onAccessibilityEscape = { [weak self] in self?.hideCallout(animated: true, restoreFocus: true) }
         weatherCallout.onAccessibilityEscape = { [weak self] in self?.hideCallout(animated: true, restoreFocus: true) }
-        // 23a：心情框与天气框同款，首位补“无”（清除旧心情）选项，键为 "none"，
-        // 图为官方 icon_close 原图（weatherNoneImage，40pt 同尺寸）；其余心情项
-        // 仍走插入式，不动。
-        moodCallout.configure(
-            options: [BearyCalloutPickerView.Option(key: "none", accessibilityLabel: "无")] + moodOrder.map { key in
-                BearyCalloutPickerView.Option(key: key, accessibilityLabel: "心情：" + (BearyText.moodNames[key] ?? key))
-            },
-            onSelect: { [weak self] key in self?.didSelectMoodFromCallout(key) },
-            imageProvider: { [weak self] key, dark in
-                if key == "none" { return self?.weatherNoneImage() }
-                return self?.calloutMoodImage(for: key, dark: dark)
-            }
-        )
+        // 心情选择器 2026-11-11 已迁底部弹窗（BearyMoodPickerSheet，首位“无”与
+        // 插入式口径随 didSelectMood 一并搬过去），此处不再配 moodCallout。
         // v6-8：天气框首位补“无”（清除）选项，键为 "none"，图为官方 icon_close 原图
         //（见 weatherNoneImage；大小与其它天气图标一致 40pt、同色墨色模板）。
         // 选中态口径（审计 E2 第 11 项）：已选天气在框内以 1pt 墨色描边标出
@@ -3728,7 +3719,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         weatherCallout.setFooterNote("精确位置只用于本次天气查询，会发送至服务接口；日记本身只保存地点文字。")
         // 收起层先加、框后加：框在收起层之上，框内点按不触发框外收起。
         view.addSubview(calloutDismissView)
-        view.addSubview(moodCallout)
         view.addSubview(weatherCallout)
         weatherCalloutHeightConstraint = weatherCallout.heightAnchor.constraint(equalToConstant: Self.calloutHeight)
         NSLayoutConstraint.activate([
@@ -3736,10 +3726,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             calloutDismissView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             calloutDismissView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             calloutDismissView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            moodCallout.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
-            moodCallout.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
-            moodCallout.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor, constant: -8),
-            moodCallout.heightAnchor.constraint(equalToConstant: Self.calloutHeight),
             weatherCallout.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             weatherCallout.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
             weatherCallout.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor, constant: -8),
@@ -3748,35 +3734,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updateWeatherCalloutHeight()
     }
 
-    /// 弹出框心情图：官方 emote 静态 PNG 按 44pt 重绘（与已选 chip 的 16pt 同款做法）；
-    /// 深色走 _dark 资产，缺失时 BearyEmoteImages 按 C3 上报并返回 nil（不回退浅色版）。
-    private func calloutMoodImage(for key: String, dark: Bool) -> UIImage? {
-        guard let base = BearyEmoteImages.image(for: key, dark: dark) else { return nil }
-        let size = CGSize(width: 44, height: 44)
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = UIScreen.main.scale
-        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
-            base.draw(in: CGRect(origin: .zero, size: size))
-        }
-    }
-
-    /// 工具栏钮：再点已打开的框即收起，点另一框直接切换（与旧 setToolStrip 同口径）。
-    private func toggleCallout(_ kind: CalloutKind) {
-        if activeCallout == kind {
-            hideCallout(animated: true, restoreFocus: true)
-        } else {
-            // 再点另一工具钮是切换：触发钮即该种类的工具钮（与尖角锚点同口径）。
-            showCallout(kind, trigger: kind == .mood ? moodToolButton : weatherToolButton)
-        }
-    }
-
-    /// Chip 行点按：只打开对应框（不做收起切换，Chip 本身就是“已选”指示；
+    /// 打开天气弹出框：Chip 行点按只打开对应框（不做收起切换，Chip 本身就是“已选”指示；
     /// 与旧 openToolStrip 同口径）。
-    /// 审计第 31 项：trigger 须传实际点按者（工具钮或 chip），关闭还焦点认它，
-    /// 不靠 kind 猜——心情/天气各有工具钮与 chip 两个入口，猜必错其一。
-    private func showCallout(_ kind: CalloutKind, trigger: UIView) {
+    /// 审计第 31 项：trigger 须传实际点按者（工具钮或 chip），关闭还焦点认它。
+    /// 心情选择器已迁底部弹窗（见 presentMoodPickerSheet），本函数只开天气框。
+    private func showCallout(trigger: UIView) {
         if quotePanelOpen { return }
-        if activeCallout == kind { return }
+        if weatherCalloutOpen { return }
         // 审计 1：本次显式展示即为最新意图，在途的天气展示意图作废。
         invalidatePendingCalloutPresentation()
         // 同一时刻只开一个选择器：写给条若开着，先关条再开框（旧时切条即关上一条）。
@@ -3785,23 +3749,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             refreshToolStrip()
         }
         calloutTransitionGeneration += 1
-        activeCallout = kind
+        weatherCalloutOpen = true
         calloutAccessibilityTrigger = trigger
         // 审计 E2 第 11 项补步：configure 只在搭建时调一次，编辑/草稿的天气
         // 晚于搭建才落定，故每次打开天气框都按当前 selectedWeather 同步一次，
         // 否则重开框或编辑带天气的草稿时选中态仍是旧的。
-        if kind == .weather {
-            weatherCallout.setSelectedKey(selectedWeather)
-            // [24] 小项 2：打开前按当前天气态定框高（有天气则含步进器行）。
-            weatherCallout.setAccessoryVisible(selectedWeather != nil)
-            updateWeatherCalloutHeight()
-        }
-        let target = kind == .mood ? moodCallout : weatherCallout
-        let other = kind == .mood ? weatherCallout : moodCallout
-        other.isHidden = true
-        other.setEmoteOverlaysPlaying(false)
-        other.alpha = 1
-        other.transform = .identity
+        weatherCallout.setSelectedKey(selectedWeather)
+        // [24] 小项 2：打开前按当前天气态定框高（有天气则含步进器行）。
+        weatherCallout.setAccessoryVisible(selectedWeather != nil)
+        updateWeatherCalloutHeight()
+        let target = weatherCallout
         calloutDismissView.isHidden = false
         target.isHidden = false
         target.setEmoteOverlaysPlaying(true)
@@ -3811,16 +3768,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // modal 只影响 VoiceOver 导航，不改触摸穿透，工具栏点按口径不变；
         // VoiceOver 用户出框走逃离手势（见 buildCallouts 的 onAccessibilityEscape）。
         target.accessibilityViewIsModal = true
-        other.accessibilityViewIsModal = false
         view.layoutIfNeeded()
         updateCalloutArrowPositions()
         // 审计第 31 项：打开后把 VoiceOver 焦点送进框内（已选优先、否则首个可见
         // 选项；框内出现是同屏布局变化，用 layoutChanged，不用 screenChanged）。
-        // 下一 runloop 再发：若期间已关闭（activeCallout 已变或框已隐藏）则不发，
+        // 下一 runloop 再发：若期间已关闭（weatherCalloutOpen 已变或框已隐藏）则不发，
         // 不把焦点送进已关的框。未开 VoiceOver 时 post 为空操作。
         DispatchQueue.main.async { [weak self, weak target] in
             guard let self = self, let target = target,
-                  self.activeCallout == kind, !target.isHidden,
+                  self.weatherCalloutOpen, !target.isHidden,
                   let element = target.initialAccessibilityElement else { return }
             UIAccessibility.post(notification: .layoutChanged, argument: element)
         }
@@ -3847,11 +3803,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 收起一律默认 false，不把焦点从新界面抢回触发钮。还焦点只在框真正
     /// 隐藏后发（动画路径走 completion，代次过期则不发旧焦点）。
     private func hideCallout(animated: Bool, restoreFocus: Bool = false) {
-        guard let kind = activeCallout else { return }
-        activeCallout = nil
+        guard weatherCalloutOpen else { return }
+        weatherCalloutOpen = false
         calloutTransitionGeneration += 1
         let generation = calloutTransitionGeneration
-        let target = kind == .mood ? moodCallout : weatherCallout
+        let target = weatherCallout
         let trigger = calloutAccessibilityTrigger
         calloutAccessibilityTrigger = nil
         if !animated || UIAccessibility.isReduceMotionEnabled || view.window == nil {
@@ -3861,7 +3817,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             target.transform = .identity
             target.accessibilityViewIsModal = false
             calloutDismissView.isHidden = true
-            if restoreFocus, let element = calloutFocusReturnElement(kind: kind, trigger: trigger) {
+            if restoreFocus, let element = calloutFocusReturnElement(trigger: trigger) {
                 UIAccessibility.post(notification: .layoutChanged, argument: element)
             }
             return
@@ -3882,7 +3838,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 target.transform = .identity
                 target.accessibilityViewIsModal = false
                 self.calloutDismissView.isHidden = true
-                if restoreFocus, let element = self.calloutFocusReturnElement(kind: kind, trigger: trigger) {
+                if restoreFocus, let element = self.calloutFocusReturnElement(trigger: trigger) {
                     UIAccessibility.post(notification: .layoutChanged, argument: element)
                 }
             }
@@ -3890,14 +3846,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 审计第 31 项：关闭还焦点落点。首选打开时的实际触发钮；触发钮已隐藏
-    /// 或离线时（例如经 chip 点“无”清掉心情/天气、chip 行随之隐藏）退到
-    /// 同种类的工具钮；两者都不可达时返回 nil，调用方不发焦点通知。
+    /// 或离线时（例如经 chip 点“无”清掉天气、chip 行随之隐藏）退到
+    /// 天气工具钮；两者都不可达时返回 nil，调用方不发焦点通知。
     /// 只读 isHidden/window，不改任何按钮显隐与业务态。
-    private func calloutFocusReturnElement(kind: CalloutKind, trigger: UIView?) -> UIView? {
+    private func calloutFocusReturnElement(trigger: UIView?) -> UIView? {
         if let trigger = trigger, !trigger.isHidden, trigger.window != nil {
             return trigger
         }
-        let fallback = kind == .mood ? moodToolButton : weatherToolButton
+        let fallback = weatherToolButton
         if !fallback.isHidden, fallback.window != nil {
             return fallback
         }
@@ -4113,30 +4069,41 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// （工具栏按钮仍可点按，其余区域点按收起）。iPad 居中列下框与工具栏同宽同列，
     /// 换算自动对齐，不另算居中偏移。
     private func updateCalloutArrowPositions() {
-        guard let kind = activeCallout else { return }
-        let callout = kind == .mood ? moodCallout : weatherCallout
-        let anchor = kind == .mood ? moodToolButton : weatherToolButton
+        guard weatherCalloutOpen else { return }
+        let callout = weatherCallout
+        let anchor = weatherToolButton
         let center = anchor.convert(CGPoint(x: anchor.bounds.midX, y: anchor.bounds.midY), to: callout)
         callout.arrowCenterX = center.x
         calloutDismissView.passthroughRects = [toolbarContainer.convert(toolbarContainer.bounds, to: calloutDismissView)]
     }
 
-    /// 弹出框点选心情：插入式（取代旧“再点已选项取消”口径）——把熊脸图
+    /// 底部弹窗点选心情：插入式（取代旧“再点已选项取消”口径）——把熊脸图
     /// 插进光标处；插完不收起，方便连着插多个（数量不限，见
     /// insertMoodImageAtCursor）；单独心情字段一字不动。
     /// 23a 例外：首位“无”（key "none"）不插图，只清单独心情字段（编辑回填 /
     /// 草稿恢复的旧心情）：selectedMood 置空、chip 行同步隐藏、草稿落盘；
-    /// 点选即收起（与天气“无”同口径，区别于插入式的不收起）。编辑保存时
+    /// 点选即关闭选择器（焦点由底部弹窗容器还给触发钮）。编辑保存时
     /// selectedMood 为 nil 即按 updateEntry 省略口径发出，与天气清除同款。
-    private func didSelectMoodFromCallout(_ key: String) {
+    private func didSelectMood(_ key: String) {
         if key == "none" {
             selectedMood = nil
             refreshSelectedChips()
             scheduleDraftSave()
-            hideCallout(animated: true, restoreFocus: true)
+            moodPickerSheet?.dismiss(animated: BearyMotion.animated(true))
             return
         }
         insertMoodImageAtCursor(key)
+    }
+
+    /// 弹出心情底部选择器（2026-11-11，取代心情尖角 callout）：
+    /// 默认组即 moodOrder 32 只（首位补“无”，见 BearyMoodPickerSheet），
+    /// 天气框若开着先收起；引用面板打开时不弹出（与旧 showCallout 同口径）。
+    private func presentMoodPickerSheet() {
+        if quotePanelOpen { return }
+        hideCallout(animated: false)
+        moodPickerSheet = BearyMoodPickerSheet.show(from: self, moodKeys: moodOrder) { [weak self] key in
+            self?.didSelectMood(key)
+        }
     }
 
     /// 弹出框点选天气：沿用旧条口径（点即选中、再点不取消）；点选即收起。
@@ -4560,7 +4527,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 审计 1：切到心情工具时，在途的天气展示意图作废。
         invalidatePendingCalloutPresentation()
         hideLocationPopover(animated: false)
-        toggleCallout(.mood)
+        presentMoodPickerSheet()
     }
 
     /// [24] 小项 1：天气钮点按即打开天气选择器，不再等自动取数回包才开
@@ -4574,7 +4541,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     @objc private func didTapWeatherTool() {
         DiagFile.mark("weather-diag didTapWeatherTool")
         hideLocationPopover(animated: false)
-        showCallout(.weather, trigger: weatherToolButton)
+        showCallout(trigger: weatherToolButton)
         weatherFetchGeneration += 1
         let generation = weatherFetchGeneration
         // 天气 GPS（2026-11-04）：点天气钮时才走定位，不在启动时弹权限；一次定位即可。
@@ -4611,7 +4578,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.refreshSelectedChips()
                     self.scheduleDraftSave()
                     // 框还开着时同步框内选中态与步进器显隐；框已关则不重开。
-                    if self.activeCallout == .weather {
+                    if self.weatherCalloutOpen {
                         self.weatherCallout.setSelectedKey(self.selectedWeather)
                     }
                     if let tip = fallbackTip {
@@ -4637,11 +4604,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     @objc private func didTapMoodChip() {
-        showCallout(.mood, trigger: moodChipButton)
+        presentMoodPickerSheet()
     }
 
     @objc private func didTapWeatherChip() {
-        showCallout(.weather, trigger: weatherChipButton)
+        showCallout(trigger: weatherChipButton)
     }
 
     @objc private func didTapRecipientChip() {

@@ -1870,7 +1870,8 @@ enum BearyText {
         return monthDayHourMinuteFormatter.string(from: date)
     }
 
-    /// 心情 key → 中文名（与网页 MOOD_DEFS 同集 40 种；前 32 带小熊、后 8 不带）。
+    /// 心情 key → 中文名（32 只熊脸＋节日 12 款；与网页 MOOD_DEFS 的 40 种不同集，
+    /// 节日款是 App 侧新增、网页暂无同款名，见 bearMoodKeys 注释）。
     static let moodNames: [String: String] = [
         "agree": "嗯嗯", "happy": "开心", "applause": "为你鼓掌", "cheer": "加油",
         "comfort": "安慰", "confused": "迷惑", "love": "心动", "determined": "加把劲",
@@ -1880,19 +1881,34 @@ enum BearyText {
         "surprised": "惊讶", "pat": "摸摸头", "peek": "偷偷看", "sleepy": "困倦",
         "proud": "骄傲", "shrug": "没办法", "sorry": "对不起", "cry": "想哭",
         "angry": "生气", "thanks": "谢谢你", "zap": "带电", "wave": "挥挥手",
+        "pumpkin": "南瓜灯", "ghost": "小幽灵", "bat": "蝙蝠", "witchhat": "女巫帽",
+        "candy": "糖果", "spider": "蜘蛛", "lantern": "红灯笼", "redenvelope": "红包",
+        "dumpling": "饺子", "firecracker": "鞭炮", "liondance": "舞狮", "ingot": "元宝",
     ]
+
+    /// 节日心情 key：只有 LottieEmotes/ 下深浅 JSON，无 PNG 静态图；
+    /// 不进 moodOrder（资产检查只认 PNG）、不进回应侧 BearyEmoteKeys.all；
+    /// 内联渲染走 Lottie 静态帧（见 inlineAttachment），不走 PNG 口径；
+    /// 现阶段不做领取门禁，人人可见可用。
+    static let halloweenMoodKeys: [String] = ["pumpkin", "ghost", "bat", "witchhat", "candy", "spider"]
+    static let springMoodKeys: [String] = ["lantern", "redenvelope", "dumpling", "firecracker", "liondance", "ingot"]
+    static let festivalMoodKeys: [String] = halloweenMoodKeys + springMoodKeys
 
     /// 内联心情记号（编辑器熊脸图 ↔ 落库纯文本的中间层）：
     /// 编辑器里心情是图片附件，正文/标题落库与后端都只存纯文本，故附件在
     /// 发出/存草稿时转成记号 `[mood:<key>]`，读回编辑器/卡片/详情时再转回图。
-    /// 只有熊脸 32 只在内（后 8 只非熊脸已删，不进记号集）；未知 key 的记号
-    /// 原样当文字，不凭空变图。用户手打的同形文字也会在读回时变图，
+    /// 前 32 只熊脸（后 8 只非熊脸已删，不进记号集）＋节日 12 款；
+    /// moodOrder 32 只与本集前 32 项逐项一致，改默认组要同步两处；
+    /// 节日款不在 moodOrder 里（资产检查只认 PNG），只进本集与 moodNames。
+    /// 未知 key 的记号原样当文字，不凭空变图。用户手打的同形文字也会在读回时变图，
     /// 这是记号方案固有的撞形口径，已在交回说明里写明。
     static let bearMoodKeys: [String] = [
         "agree", "happy", "applause", "cheer", "comfort", "confused", "love", "determined",
         "facepalm", "shy", "goodnight", "hug", "wink", "idea", "kiss", "thinking",
         "listening", "lonely", "speechless", "nope", "surprised", "pat", "peek", "sleepy",
         "proud", "shrug", "sorry", "cry", "angry", "thanks", "zap", "wave",
+        "pumpkin", "ghost", "bat", "witchhat", "candy", "spider",
+        "lantern", "redenvelope", "dumpling", "firecracker", "liondance", "ingot",
     ]
     static let inlineMoodKeyAttribute = NSAttributedString.Key(rawValue: "BearyInlineMoodKey")
     static func inlineMoodToken(for key: String) -> String? {
@@ -1918,10 +1934,19 @@ enum BearyText {
     /// 基线按 descender 对齐；1.2 倍是行高不被撑高的上限（系统字体
     /// ascent+descent 约为字号的 1.196 倍，再大就会把有表情的行顶高、行距不匀）。
     static func inlineAttachment(for key: String, font: UIFont, dark: Bool) -> NSAttributedString? {
-        guard bearMoodKeys.contains(key), let image = BearyEmoteImages.image(for: key, dark: dark) else { return nil }
+        guard bearMoodKeys.contains(key) else { return nil }
+        let emoteSize = font.pointSize * 1.2
+        let image: UIImage?
+        if BearyText.festivalMoodKeys.contains(key) {
+            // 节日款无 PNG：不走 BearyEmoteImages（深色缺失会进 C3 上报），
+            // 直接渲染 Lottie 循环段末帧当静态图。
+            image = BearyEmoteView.renderedStaticImage(for: key, dark: dark, size: CGSize(width: emoteSize, height: emoteSize))
+        } else {
+            image = BearyEmoteImages.image(for: key, dark: dark)
+        }
+        guard let image = image else { return nil }
         let attachment = NSTextAttachment()
         attachment.image = image
-        let emoteSize = font.pointSize * 1.2
         attachment.bounds = CGRect(x: 0, y: font.descender, width: emoteSize, height: emoteSize)
         attachment.accessibilityLabel = moodNames[key]
         let result = NSMutableAttributedString(attachment: attachment)
