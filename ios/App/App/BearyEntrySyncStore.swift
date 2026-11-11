@@ -683,9 +683,29 @@ enum BearyTrashSyncStore {
         return writeSequence
     }
 
+    /// 回收站文件写互斥（审计新一轮 #4）：trash.json 的全部写盘
+    /// （分批合并、收尾、删帖进桶、恢复/彻底删除清桶、静默刷新对齐、
+    /// 整目录清）共用同一把锁，锁内完成“检查代际 → 读 → 合并 → 写”
+    /// 全程。只锁计数器拦不住：锁外的代际预检与写盘之间，主线程删帖
+    /// 进桶会读到旧快照再写回，刚进桶的条目被同步侧旧快照覆盖。
+    /// 锁序固定为 trashFileLock → writeSequenceLock（写盘记代际与
+    /// 锁内读代际均经后者），反向不持锁，不会死锁；各写入口互不
+    /// 嵌套（读-改-写直接调 writeTrashFile，不经 saveAll）。
+    private static let trashFileLock = NSLock()
+
+    /// 同步提交写盘结果：done 已写盘；stale 拉取开始后有本地回收站
+    /// 写盘，本次提交跳过（调用方按过期放弃、不记失败态）；failed
+    /// 写盘失败（回读校验不一致等）。
+    enum TrashCommitOutcome: Equatable {
+        case done
+        case stale
+        case failed
+    }
+
     /// 写回收站全量文件并回读校验 id 序列。noteWrite=true 时先记一次写盘代际
     /// （外部写盘口径，与原来 saveAll 一致）；分批合并的中间写不记代际——
     /// 否则收尾的提交守卫会被自己的写触发（第四轮增量 01）。
+    /// 调用方须已持 trashFileLock（见上）；本函数自身不加锁。
     private static func writeTrashFile(accountId: Int, items: [TrashItem], noteWrite: Bool) -> Bool {
         if noteWrite { noteTrashWrite() }
         guard let url = fileURL(accountId: accountId),
@@ -701,18 +721,13 @@ enum BearyTrashSyncStore {
         return true
     }
 
-    /// 整桶写（全量同步提交与静默刷新对齐均走这里：服务端派生数据，整批覆盖）。
-    /// 先记写盘代际（见 noteTrashWrite）：全量同步自身的提交写也在提交
-    /// 守卫比对之后发生，不影响本次判定。
-    /// r17-C2：发布走 tmp → 校验 → 原子替换：新内容先写唯一 tmp 文件并回读
-    /// 解码校验，再用 replaceItemAt 换上（旧版留 .bak，即上一份完整版本）；
-    /// 任一步失败返回 false、旧 trash.json 原样不动，调用方不记已同步、
-    /// 状态记 partial，下次 kick 重跑。tmp 文件名带 UUID——主线程删帖进桶与
-    /// 同步队列提交可能并发写盘，各自 tmp 互不干扰。
-    /// 返回 false 仅当应写未写成；调用方失败时记日志（静默刷新/同步处）。
-    @discardableResult
-    static func saveAll(accountId: Int, items: [TrashItem]) -> Bool {
-        noteTrashWrite()
+    /// r17-C2 原子发布体（调用方须已持 trashFileLock；本函数自身不加锁）：
+    /// 新内容先写唯一 tmp 文件并回读解码校验，再用 replaceItemAt 换上
+    /// （旧版留 .bak，即上一份完整版本）；任一步失败返回 false、旧
+    /// trash.json 原样不动。tmp 文件名带 UUID。
+    /// 审计新一轮 #4：与直接写盘的 writeTrashFile 分开——分批合并的
+    /// 中间写仍走直接写盘；提交/进桶/清桶走这里（与原来 saveAll 同款）。
+    private static func publishTrashFileAtomically(accountId: Int, items: [TrashItem]) -> Bool {
         guard let url = fileURL(accountId: accountId),
               let data = try? makeEncoder().encode(items) else { return false }
         let dir = url.deletingLastPathComponent()
@@ -752,29 +767,74 @@ enum BearyTrashSyncStore {
         return true
     }
 
+    /// 整桶写（全量同步提交与静默刷新对齐均走这里：服务端派生数据，整批覆盖）。
+    /// 先记写盘代际（见 noteTrashWrite）：全量同步自身的提交写也在提交
+    /// 守卫比对之后发生，不影响本次判定。
+    /// r17-C2：发布走 tmp → 校验 → 原子替换：新内容先写唯一 tmp 文件并回读
+    /// 解码校验，再用 replaceItemAt 换上（旧版留 .bak，即上一份完整版本）；
+    /// 任一步失败返回 false、旧 trash.json 原样不动，调用方不记已同步、
+    /// 状态记 partial，下次 kick 重跑。tmp 文件名带 UUID——主线程删帖进桶与
+    /// 同步队列提交可能并发写盘，各自 tmp 互不干扰。
+    /// 返回 false 仅当应写未写成；调用方失败时记日志（静默刷新/同步处）。
+    @discardableResult
+    static func saveAll(accountId: Int, items: [TrashItem]) -> Bool {
+        trashFileLock.lock()
+        defer { trashFileLock.unlock() }
+        noteTrashWrite()
+        return publishTrashFileAtomically(accountId: accountId, items: items)
+    }
+
     /// 第四轮增量 01：回收站分批持久化——把一页回收站条目按 id 并入 trash.json
     /// （服务端为准、同 id 覆盖），只做 additive 合并、不记写盘代际；失效条目
     /// 由收尾的 finalizeTrash 清理。写盘失败返回 false。
+    /// 审计新一轮 #4：本入口不验代际（单测与直接调用沿用旧口径）；同步提交
+    /// 走下面的 unchangedSince 版，代际检查与读-改-写同锁。
     @discardableResult
     static func mergeTrashPage(accountId: Int, items: [TrashItem]) -> Bool {
+        mergeTrashPage(accountId: accountId, items: items, unchangedSince: nil) == .done
+    }
+
+    /// 分批合并（同步提交版）：锁内先验代际——baseline 与当前写盘代际
+    /// 不一致时不读不写、直接报 stale，调用方按过期放弃本次同步；
+    /// 一致时锁内完成读 → 合并 → 写，锁外的删帖进桶插不进来。
+    /// baseline 为 nil 时不拦截（无基线记录时只走正常提交）。
+    @discardableResult
+    static func mergeTrashPage(accountId: Int, items: [TrashItem], unchangedSince baseline: Int?) -> TrashCommitOutcome {
+        trashFileLock.lock()
+        defer { trashFileLock.unlock() }
+        if let baseline = baseline, baseline != currentWriteSequence() { return .stale }
         let existing = loadAll(accountId: accountId) ?? []
         var byId: [String: TrashItem] = [:]
         for item in existing { byId[item.id] = item }
         for item in items { byId[item.id] = item }
         var merged = Array(byId.values)
         merged.sort { ($0.deletedAt ?? 0) > ($1.deletedAt ?? 0) }
-        return writeTrashFile(accountId: accountId, items: merged, noteWrite: false)
+        return writeTrashFile(accountId: accountId, items: merged, noteWrite: false) ? .done : .failed
     }
 
     /// 收尾：把 trash.json 重写为本次同步拉到的精确集合（清掉已恢复/已过期
     /// 的旧条目）；集合为空时写空数组文件（“已同步、回收站为空”）。
     /// 写盘失败或文件里缺拉到的 id 时返回 false（编排层据此不记已同步、下次重跑）。
+    /// 审计新一轮 #4：本入口不验代际（单测沿用旧口径）；同步提交走下面的
+    /// unchangedSince 版——收尾是过滤型写盘，锁外代际预检拦不住的窗口
+    /// 会把同步途中删帖进桶的条目滤掉，须锁内验代际。
     @discardableResult
     static func finalizeTrash(accountId: Int, seenIds: Set<String>) -> Bool {
+        finalizeTrash(accountId: accountId, seenIds: seenIds, unchangedSince: nil) == .done
+    }
+
+    /// 收尾（同步提交版）：与 mergeTrashPage 同款锁内验代际；一致时锁内
+    /// 完成读 → 过滤 → 写。baseline 为 nil 时不拦截。
+    @discardableResult
+    static func finalizeTrash(accountId: Int, seenIds: Set<String>, unchangedSince baseline: Int?) -> TrashCommitOutcome {
+        trashFileLock.lock()
+        defer { trashFileLock.unlock() }
+        if let baseline = baseline, baseline != currentWriteSequence() { return .stale }
         let existing = loadAll(accountId: accountId) ?? []
         let filtered = existing.filter { seenIds.contains($0.id) }
-        guard filtered.count == seenIds.count else { return false }
-        return saveAll(accountId: accountId, items: filtered)
+        guard filtered.count == seenIds.count else { return .failed }
+        noteTrashWrite()
+        return publishTrashFileAtomically(accountId: accountId, items: filtered) ? .done : .failed
     }
 
     // MARK: - 回收站分批同步进度（第四轮增量 01：可恢复分页游标）
@@ -812,7 +872,11 @@ enum BearyTrashSyncStore {
 
     /// 恢复/彻底删除：按 id 清桶（桶不存在时不建桶；空桶保留空数组文件）。
     /// 审计 P2-22：退出/注销时清该账号全部回收站落盘（整目录删 + 状态文件）。
+    /// 审计新一轮 #4：整目录清同样进写锁——与在途的合并/进桶写盘串行，
+    /// 不与写盘途中的 createDirectory/write 撞车。
     static func purgeAccount(accountId: Int) {
+        trashFileLock.lock()
+        defer { trashFileLock.unlock() }
         if let dir = accountDir(accountId: accountId) {
             try? FileManager.default.removeItem(at: dir)
         }
@@ -825,18 +889,25 @@ enum BearyTrashSyncStore {
     /// 同样 true，不是失败）；false = 应写未写成。
     @discardableResult
     static func removeItem(accountId: Int, entryId: String) -> Bool {
+        trashFileLock.lock()
+        defer { trashFileLock.unlock() }
         guard var items = loadAll(accountId: accountId) else { return true }
         let beforeCount = items.count
         items.removeAll { $0.id == entryId }
         guard items.count != beforeCount else { return true }
-        return saveAll(accountId: accountId, items: items)
+        noteTrashWrite()
+        return publishTrashFileAtomically(accountId: accountId, items: items)
     }
 
     /// 删帖进桶：新删的 deletedAt 最大，按服务端序插到头部。
     /// 桶不存在时不建半截桶（进回收站页走网络首拉，登录同步会建整桶）；下次静默刷新用服务端值纠正残差。
     /// 返回值：true = 桶状态已正确（无桶可写时同样 true，不是失败）；false = 应写未写成。
+    /// 审计新一轮 #4：本入口在主线程同步调用，读-改-写进写锁——与同步
+    /// 队列的分批合并/收尾互斥，合并侧再读不到进桶前的旧快照。
     @discardableResult
     static func prependDeleted(accountId: Int, entry: Entry) -> Bool {
+        trashFileLock.lock()
+        defer { trashFileLock.unlock() }
         guard let entryId = entry.id else { return true }
         guard var items = loadAll(accountId: accountId) else { return true }
         items.removeAll { $0.id == entryId }
@@ -847,6 +918,7 @@ enum BearyTrashSyncStore {
         //（nil 按私密 0，fail-closed），恢复文案走 visibility。
         let item = TrashItem(id: entryId, content: entry.content, createdAt: entry.createdAt, publishAt: entry.publishAt, deletedAt: nowMs, daysLeft: 30, published: entry.isPublic == true ? 1 : 0, visibility: entry.visibility, title: entry.title, imageKeys: entry.images)
         items.insert(item, at: 0)
-        return saveAll(accountId: accountId, items: items)
+        noteTrashWrite()
+        return publishTrashFileAtomically(accountId: accountId, items: items)
     }
 }
