@@ -150,6 +150,9 @@ final class BearyDepthBackgroundViewController: UIViewController {
         if let cap = tableCapConstraint, cap.isActive != wantCap {
             cap.isActive = wantCap
         }
+        // 审计四轮第 5 项：页宽定下来后按实宽重算页脚高（宽屏 600 封顶时
+        // 标签可用宽与窄屏不同；viewDidLoad 时表宽未定，初算可能不准）。
+        updatePlusFooterHeight()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -192,7 +195,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
         if isPlusValue {
             tableView.tableFooterView = nil
         } else if tableView.tableFooterView == nil {
-            let footer = UIView(frame: CGRect(x: 0, y: 0, width: view.bounds.width, height: 44))
+            let footer = UIView(frame: CGRect(x: 0, y: 0, width: view.bounds.width, height: plusFooterHeight()))
             plusFooterLabel.translatesAutoresizingMaskIntoConstraints = false
             footer.addSubview(plusFooterLabel)
             NSLayoutConstraint.activate([
@@ -203,6 +206,26 @@ final class BearyDepthBackgroundViewController: UIViewController {
             ])
             tableView.tableFooterView = footer
         }
+    }
+
+    /// 审计四轮第 5 项：页脚高度按缩放后的文字实算，不再固定 44pt——
+    /// tableFooterView 取 frame 高、不随内部 Auto Layout 增高，超大字号下
+    /// 13pt 文字两行即超 44pt。常规字号仍为 44pt（文字高＋上下各 14pt）。
+    private func plusFooterHeight() -> CGFloat {
+        let tableWidth = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
+        let labelWidth = max(0, tableWidth - 64)
+        let textHeight = plusFooterLabel.sizeThatFits(CGSize(width: labelWidth, height: .greatestFiniteMagnitude)).height
+        return max(44, ceil(textHeight) + 28)
+    }
+
+    /// 字号档／页宽变化后重算页脚高；高度没变不重设（viewDidLayoutSubviews
+    /// 里重设 tableFooterView 会再触发一次布局，须防循环）。
+    private func updatePlusFooterHeight() {
+        guard let footer = tableView.tableFooterView, !isPlusValue else { return }
+        let height = plusFooterHeight()
+        guard abs(footer.frame.height - height) > 0.5 else { return }
+        footer.frame.size.height = height
+        tableView.tableFooterView = footer
     }
 
     /// 资格变化时只重配可见行：configure 同主题复用只改文字状态、不重建
@@ -227,6 +250,11 @@ final class BearyDepthBackgroundViewController: UIViewController {
         super.traitCollectionDidChange(previousTraitCollection)
         for cell in tableView.visibleCells {
             (cell as? BearyDepthBackgroundCell)?.updateDim()
+        }
+        // 审计四轮第 5 项：字号档变化时重算页脚高（标签字体随系统字号自动
+        // 缩放，但 tableFooterView 的 frame 高不会自己跟上去）。
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            updatePlusFooterHeight()
         }
     }
 
