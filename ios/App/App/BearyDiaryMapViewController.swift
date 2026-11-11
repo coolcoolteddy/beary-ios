@@ -588,6 +588,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             locatedAnnotations.removeAll()
             unlocatedGroups = []
             transientFailedGroups = []
+            // 审计第三轮 #6：变空时重置初始定位状态——下次由空恢复到非空时
+            // addLocatedAnnotations 再自动定位一次；非空刷新不碰它，视角不动。
+            didInitialGeocode = false
             tableView.reloadData()
             restoreMapReturnContextIfNeeded()
             return
