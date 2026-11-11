@@ -499,7 +499,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // 的行从旧桶里捞回内存，静默终态丢弃旧快照后它仍赖在内存里。
         if let uid = SessionManager.shared.currentUser?.id {
             trashBucketLoading = true
-            BearyEntrySync.shared.runDiskWrite { [weak self] in
+            BearyEntrySync.shared.runDiskWrite(accountId: uid) { [weak self] in
                 let localItems = BearyTrashSyncStore.loadAll(accountId: uid)
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
@@ -665,7 +665,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                             return
                         }
                         // 落盘写走同步队列（不卡主线程）；内存态已同步更新，UI 不等落盘。
-                        BearyEntrySync.shared.runDiskWrite {
+                        BearyEntrySync.shared.runDiskWrite(accountId: accountId) {
                             // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
                             let ok = BearyTrashSyncStore.saveAll(accountId: accountId, items: deduped)
                             if !ok { NSLog("[BearyEntrySync] trash saveAll failed account=%d", accountId) }
@@ -1251,7 +1251,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     // 清桶用发起账号，不再读回调时刻账号（已门控，两者此时相等，
                     // 但发起值才是本次请求的归属，避免校验与写盘之间再被切号钻空）。
                     if let uid = requestAccountId {
-                        BearyEntrySync.shared.runDiskWrite {
+                        BearyEntrySync.shared.runDiskWrite(accountId: uid) {
                             // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
                             let ok = BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
                             if !ok { NSLog("[BearyEntrySync] trash removeItem failed account=%d entry=%@", uid, identifier) }
@@ -1328,7 +1328,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         }
                         // 清桶用发起账号，口径与恢复成功处一致。
                         if let uid = requestAccountId {
-                            BearyEntrySync.shared.runDiskWrite {
+                            BearyEntrySync.shared.runDiskWrite(accountId: uid) {
                                 // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
                                 let ok = BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
                                 if !ok { NSLog("[BearyEntrySync] trash removeItem failed account=%d entry=%@", uid, identifier) }

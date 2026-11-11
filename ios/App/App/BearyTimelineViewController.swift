@@ -2322,7 +2322,7 @@ class BearyTimelineViewController: UIViewController {
         if let uid = SessionManager.shared.currentUser?.id {
             // 落盘写走同步队列（不卡主线程，同时记写盘代际供全量同步提交守卫判断）；
             // 内存态已同步更新，UI 不等落盘。
-            BearyEntrySync.shared.runDiaryDiskWrite {
+            BearyEntrySync.shared.runDiaryDiskWrite(accountId: uid) {
                 // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
                 let ok = BearyEntrySyncStore.saveDay(accountId: uid, dayKey: key, entries: entries)
                 if !ok { NSLog("[BearyEntrySync] saveDay failed account=%d day=%@", uid, key) }
@@ -2930,7 +2930,7 @@ class BearyTimelineViewController: UIViewController {
             dayEntriesCache[key]?.removeAll { $0.id == entryId }
         }
         if let uid = SessionManager.shared.currentUser?.id {
-            BearyEntrySync.shared.runDiaryDiskWrite {
+            BearyEntrySync.shared.runDiaryDiskWrite(accountId: uid) {
                 // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
                 let ok = BearyEntrySyncStore.removeEntry(accountId: uid, entryId: entryId)
                 if !ok { NSLog("[BearyEntrySync] removeEntry failed account=%d entry=%@", uid, entryId) }
@@ -3239,7 +3239,7 @@ class BearyTimelineViewController: UIViewController {
         // 落盘同清：否则切回该日会先闪出已删的旧行（静默刷新虽会纠正，但先闪后纠同样要修）。
         // 删帖落盘写走同步队列（不卡主线程，同时记写盘代际）。
         if let uid = SessionManager.shared.currentUser?.id {
-            BearyEntrySync.shared.runDiaryDiskWrite {
+            BearyEntrySync.shared.runDiaryDiskWrite(accountId: uid) {
                 // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
                 let ok = BearyEntrySyncStore.removeEntry(accountId: uid, entryId: entryId)
                 if !ok { NSLog("[BearyEntrySync] removeEntry failed account=%d entry=%@", uid, entryId) }

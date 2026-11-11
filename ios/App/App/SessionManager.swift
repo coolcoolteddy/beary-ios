@@ -409,6 +409,11 @@ final class SessionManager {
     /// 冷启动桶提示（forgetUserId）不在这里——只在当前账号退出/401 时清，
     /// 发起账号已切走的定向清理不碰它（当前账号仍在，提示仍有效）。
     private func purgeLocalSnapshots(forAccountId id: Int) {
+        // 退出清理代次：先令该账号排队写盘失效，再删文件——退出前已入队、
+        // 退出后才执行的写盘在执行时复核代次后丢弃，不重建已清缓存。
+        // 本函数是三条清理路径的唯一汇合点（显式退出、定向清理、401），
+        // 在此递增即三路全覆盖；按账号分桶，定向清 A 不影响 B。
+        BearyEntrySync.shared.bumpPurgeGeneration(forAccountId: id)
         BearyFeedCache.purge(bucket: "\(id)")
         // r17 C5：星图建图内存缓存按账号桶清（该账号看过的所有作者星图）。
         BearyStarMapCache.purge(viewerBucket: "\(id)")
