@@ -1619,7 +1619,8 @@ final class BearyTimelineCell: UITableViewCell {
                     createdAt: quote.createdAt,
                     allowThumbs: quote.isPublic == true || quote.isMine == true || (quote.authorId != nil && quote.authorId == SessionManager.shared.currentUser?.id),
                     authorHandle: quote.authorHandle,
-                    sourceTappable: true
+                    sourceTappable: true,
+                    quoteId: quote.id
                 )
                 quoteCard.isHidden = false
             }

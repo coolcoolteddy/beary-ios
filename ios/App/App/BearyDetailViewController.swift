@@ -2378,7 +2378,8 @@ final class BearyDetailViewController: UIViewController {
                 createdAt: quote.createdAt,
                 allowThumbs: quote.isEffectivelyPublic || quoteIsMine,
                 authorHandle: quote.authorHandle,
-                sourceTappable: true
+                sourceTappable: true,
+                quoteId: quote.id
             )
             quoteView.isHidden = false
             return
@@ -2397,7 +2398,8 @@ final class BearyDetailViewController: UIViewController {
                     createdAt: quote.createdAt,
                     allowThumbs: true,
                     authorHandle: quote.authorHandle,
-                    sourceTappable: true
+                    sourceTappable: true,
+                    quoteId: quote.id
                 )
                 self.quoteView.isHidden = false
             }

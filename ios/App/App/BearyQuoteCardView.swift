@@ -154,6 +154,11 @@ final class BearyQuoteCardView: UIView {
 
     private var quoteExpanded = false
 
+    /// 审计八轮第 1 项：当前引用 ID——同引用重配时保留展开态的判定键；
+    /// clear()（复用／失效占位）不碰它：判定只认 ID 相等，旧 ID 遇新引用
+    /// 自然不等即重置，不会串位。
+    private var currentQuoteId: String?
+
     private lazy var textStack: UIStackView = {
         let st = UIStackView(arrangedSubviews: [contentLabel, expandButton])
         st.translatesAutoresizingMaskIntoConstraints = false
@@ -538,8 +543,13 @@ final class BearyQuoteCardView: UIView {
     /// 引用规则简化（2026-10-31）：“仅你可见”角标随混合态取消而下线，本函数不再接受
     /// showOnlyYouBadge，调用点亦全部清掉。占位态（showGone）不带日期与缩略图：
     /// clear() 已把日期行与缩略图区藏起，showGone 只显图标 + 占位文案（+ 可选提醒句）。
-    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, allowThumbs: Bool = true, authorHandle: String? = nil, sourceTappable: Bool = false) {
+    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, allowThumbs: Bool = true, authorHandle: String? = nil, sourceTappable: Bool = false, quoteId: String? = nil) {
+        // 审计八轮第 1 项：同引用重配保留展开态——ID 不变且已展开时不折回三行；
+        // 换引用、首次配置、或 ID 未传时按旧口径重置。失效占位（showGone）与
+        // 复用（clear）仍走重置，保留逻辑只放本函数内。
+        let keepExpanded = quoteId != nil && quoteId == currentQuoteId && quoteExpanded
         clear()
+        currentQuoteId = quoteId
         // 32 注销口径：引用原作者已注销时，来源行与读屏文案统一显“用户已注销”。
         let authorName = bearyDeletedAuthorDisplayName(authorName) ?? authorName
         // 52 批：lite 卡不带头像名——authorName/authorAvatar 参数仅为调用点兼容保留，不再赋值给任何视图。
@@ -559,6 +569,12 @@ final class BearyQuoteCardView: UIView {
                 .paragraphStyle: paragraph,
             ]
             contentLabel.attributedText = NSAttributedString(string: content, attributes: attrs)
+        }
+        if keepExpanded {
+            // 同引用重配：恢复展开态（行数与展开钮随之恢复，不等下一轮布局）。
+            quoteExpanded = true
+            contentLabel.numberOfLines = 0
+            expandButton.isHidden = true
         }
         // D8c：缩略图只当 quote.is_public 或宿主本人时出（allowThumbs 门控）；
         // 网页 .quote-thumbs 口径：与正文同行、单张 42x42、圆角 8、间距 5（thumbsStack.spacing）。

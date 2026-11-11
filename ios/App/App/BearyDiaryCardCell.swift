@@ -2646,7 +2646,8 @@ class BearyDiaryCardCell: UITableViewCell {
             createdAt: createdAt,
             allowThumbs: isPublic == true || viewerIsAuthor,
             authorHandle: authorHandle,
-            sourceTappable: true
+            sourceTappable: true,
+            quoteId: quoteId
         )
         quoteView.isHidden = false
     }
@@ -2894,7 +2895,8 @@ class BearyDiaryCardCell: UITableViewCell {
             createdAt: quoteValue.createdAt,
             allowThumbs: quoteValue.isEffectivelyPublic || viewerIsAuthor,
             authorHandle: quoteValue.authorHandle,
-            sourceTappable: true
+            sourceTappable: true,
+            quoteId: quoteValue.id
         )
         quoteView.isHidden = false
     }
