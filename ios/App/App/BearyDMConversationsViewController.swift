@@ -680,7 +680,7 @@ final class BearyDMConversationCell: UITableViewCell {
             snippetLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
             snippetLabel.trailingAnchor.constraint(lessThanOrEqualTo: unreadBadge.leadingAnchor, constant: -8),
             snippetLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
-            timeLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 15),
+            timeLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
             timeLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             unreadBadge.topAnchor.constraint(equalTo: timeLabel.bottomAnchor, constant: 6),
             unreadBadge.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
