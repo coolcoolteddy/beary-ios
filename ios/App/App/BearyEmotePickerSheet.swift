@@ -446,8 +446,8 @@ final class BearyEmoteSheetTransition: NSObject, UIViewControllerTransitioningDe
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
         if UIAccessibility.isReduceMotionEnabled { return 0 }
-        // 入场仍 0.25s；退场走拖拽收尾统一弹簧 0.30s。
-        return presenting ? 0.25 : 0.30
+        // 进退场均走底 sheet 统一弹簧 0.4s／damping 0.8（规范 §6）。
+        return 0.4
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -472,7 +472,7 @@ final class BearyEmoteSheetTransition: NSObject, UIViewControllerTransitioningDe
                 transitionContext.completeTransition(true)
                 return
             }
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
+            UIView.animate(withDuration: 0.4, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0, options: [], animations: {
                 sheet.transitionSetSheetOffset(0)
             }, completion: { _ in transitionContext.completeTransition(true) })
             // 遮罩出现时 0.25s 淡入（与弹窗滑入解耦）。
@@ -486,7 +486,7 @@ final class BearyEmoteSheetTransition: NSObject, UIViewControllerTransitioningDe
             transitionContext.completeTransition(true)
             return
         }
-        UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+        UIView.animate(withDuration: 0.4, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0, options: [], animations: {
             sheet.transitionSetSheetOffset(height)
         }, completion: { _ in transitionContext.completeTransition(true) })
         // 第 30 项：关闭时遮罩 0.25s 单独淡出（与打开同口径；此前与面板下滑合写在 0.3s 块里）。
