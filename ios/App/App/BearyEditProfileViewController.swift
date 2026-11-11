@@ -206,7 +206,7 @@ class BearyEditProfileViewController: UIViewController {
     private let titleLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 17, weight: .bold)
+        labelValue.font = BearyDynamicType.pageTitleFont()
         labelValue.textColor = BearyColors.ink
         labelValue.textAlignment = .center
         labelValue.text = "编辑资料"
@@ -306,7 +306,8 @@ class BearyEditProfileViewController: UIViewController {
     private let handlePrefixLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 16)
+        // 与同行输入框同款 16 scaled。
+        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
         labelValue.textColor = BearyColors.gray
         labelValue.text = "@"
         return labelValue
@@ -356,7 +357,7 @@ class BearyEditProfileViewController: UIViewController {
     private let hintLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 12)
+        labelValue.font = BearyDynamicType.captionFont()
         labelValue.textColor = BearyColors.gray
         labelValue.numberOfLines = 0
         labelValue.lineBreakMode = .byCharWrapping
@@ -378,7 +379,7 @@ class BearyEditProfileViewController: UIViewController {
     private let linkLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.font = BearyDynamicType.secondaryFont()
         labelValue.textColor = BearyColors.gray
         labelValue.numberOfLines = 1
         labelValue.lineBreakMode = .byTruncatingTail
@@ -391,8 +392,8 @@ class BearyEditProfileViewController: UIViewController {
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("复制", for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        // 按钮普查：裸 13pt 改 scaledFont，跟随系统字号（行高 44，最大档不裁剪）。
-        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        // 按钮普查：复制钮走 smallActionFont（15 bold scaled，规范 §11）。
+        buttonValue.titleLabel?.font = BearyDynamicType.smallActionFont()
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
         buttonValue.layer.borderWidth = 1
@@ -513,7 +514,7 @@ class BearyEditProfileViewController: UIViewController {
             return
         }
         linkLabel.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             self.linkLabel.alpha = 1
         })
     }
@@ -601,7 +602,7 @@ class BearyEditProfileViewController: UIViewController {
     private func makeFormLabel(_ text: String) -> UILabel {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+        labelValue.font = BearyDynamicType.smallSemiboldFont()
         labelValue.textColor = BearyColors.ink
         labelValue.text = text
         NSLayoutConstraint.activate([
@@ -769,11 +770,11 @@ class BearyEditProfileViewController: UIViewController {
             // L2：底边改走安全区。
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 12),
-            // L2：内容列最大宽 600 居中——窄屏时宽 = 屏宽 - 40（750 优先级），
-            // 宽 ≥821 时被 600 上限压住并居中（P2-1 开关），宽 ≤820 时上限停用、列宽 = 屏宽 -40 撑满。
+            // L2：内容列最大宽 600 居中——窄屏时宽 = 屏宽 - 32（750 优先级），
+            // 宽 ≥821 时被 600 上限压住并居中（P2-1 开关），宽 ≤820 时上限停用、列宽 = 屏宽 -32 撑满。
             contentStack.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
-            contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.leadingAnchor, constant: 20),
-            contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.trailingAnchor, constant: -20),
+            contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.leadingAnchor, constant: 16),
+            contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.trailingAnchor, constant: -16),
             contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -20),
             closeButton.widthAnchor.constraint(equalToConstant: 44),
             saveButton.widthAnchor.constraint(equalToConstant: 44),
@@ -811,8 +812,8 @@ class BearyEditProfileViewController: UIViewController {
             avatarTapButton.trailingAnchor.constraint(equalTo: avatarImageView.trailingAnchor),
             avatarTapButton.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
         ])
-        // L2（续）：窄屏时内容列宽 = 屏宽 - 40（750 优先级；宽 ≥821 时被 600 上限压住）。
-        let columnWidth = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40)
+        // L2（续）：窄屏时内容列宽 = 屏宽 - 32（750 优先级；宽 ≥821 时被 600 上限压住）。
+        let columnWidth = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32)
         columnWidth.priority = UILayoutPriority(750)
         columnWidth.isActive = true
         // P2-1：600 上限改为可开关约束（初始激活，viewDidLayoutSubviews 按实际宽度纠正）。
