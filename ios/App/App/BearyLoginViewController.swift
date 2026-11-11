@@ -1118,19 +1118,15 @@ final class BearyLoginViewController: UIViewController {
             let dateText = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(deleteAt) / 1000.0))
             message = "距离正式注销还剩：\(leftText)（\(dateText)）。继续登录将取消注销。"
         }
-        let alert = UIAlertController(
-            title: "账号正在注销中",
-            message: message,
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: "暂不登录", style: .cancel, handler: nil))
-        alert.addAction(UIAlertAction(title: "继续登录", style: .default, handler: { [weak self] _ in
-            guard let strongSelf = self else { return }
-            strongSelf.isVerifying = true
-            strongSelf.updateButtonStates()
-            strongSelf.verify(email: email, code: code, confirmCancel: true)
-        }))
-        present(alert, animated: BearyMotion.animated(true))
+        BearyConfirmSheet.show(from: self, title: "账号正在注销中", message: message, actions: [
+            BearyConfirmSheet.Action(title: "暂不登录", style: .cancel),
+            BearyConfirmSheet.Action(title: "继续登录", style: .default) { [weak self] in
+                guard let strongSelf = self else { return }
+                strongSelf.isVerifying = true
+                strongSelf.updateButtonStates()
+                strongSelf.verify(email: email, code: code, confirmCancel: true)
+            },
+        ])
     }
 
     // MARK: - 键盘
