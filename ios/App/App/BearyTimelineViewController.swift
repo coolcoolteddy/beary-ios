@@ -4200,7 +4200,9 @@ class BearyTimelineViewController: UIViewController {
         guard available > 0 else { return }
         let buttonWidth = visFilterButtonWidthConstraint?.constant ?? visFilterButton.intrinsicContentSize.width
         let dateWidth = filterDateLabel.intrinsicContentSize.width
-        let needsVertical = buttonWidth + filterRow.spacing + dateWidth > available
+        // 审计四轮第 1 项：行内三元素两段间距（按钮→日期、日期→弹性空白），
+        // 须算两段 spacing，只算一段会在临界宽度下误判横排而实际超宽。
+        let needsVertical = buttonWidth + filterRow.spacing * 2 + dateWidth > available
         let newAxis: NSLayoutConstraint.Axis = needsVertical ? .vertical : .horizontal
         guard filterRow.axis != newAxis else { return }
         filterRow.axis = newAxis
