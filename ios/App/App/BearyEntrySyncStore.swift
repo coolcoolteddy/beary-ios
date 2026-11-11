@@ -898,7 +898,6 @@ enum BearyTrashSyncStore {
         noteTrashWrite()
         return publishTrashFileAtomically(accountId: accountId, items: items)
     }
-    }
 
     /// 删帖进桶：新删的 deletedAt 最大，按服务端序插到头部。
     /// 桶不存在时不建半截桶（进回收站页走网络首拉，登录同步会建整桶）；下次静默刷新用服务端值纠正残差。
