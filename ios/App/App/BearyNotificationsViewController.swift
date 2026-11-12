@@ -233,7 +233,7 @@ final class BearyNotificationsViewController: UIViewController {
     private var lastFullLoadVersion: Int?
     private var lastFullLoadLatestId: Int?
     private var pollTimer: Timer?
-    /// 信件模态持有：BearyLetterModal 是普通类、VC 侧原无引用，show 后除 0.25s
+    /// 信件模态持有：BearyLetterModal 是普通类、VC 侧原无引用，show 后除 0.26s
     /// 入场动画外无人持有，动画一完即释放，按钮／遮罩 target 随之失效、点按静默无反应
     /// （视图仍在层级里，看着正常）。VC 持住它直到 dismiss 清理，破除该陷阱。
     private var activeLetterModal: BearyLetterModal?
@@ -1311,7 +1311,7 @@ final class BearyNotificationsViewController: UIViewController {
 
     // MARK: - 入场动效与自定义下拉
 
-    /// 逐行错峰入场（网页 staggerIn 口径）：slideDown 0.25s、步进 0.03、
+    /// 逐行错峰入场（网页 staggerIn 口径）：slideDown 0.26s、步进 0.03、
     /// 总延迟封顶 0.24、仅可视区前 24 行、减动效不播。
     /// 第三轮审计 10：入场身份只认通知 ID（分组卡认组内最新一条的 ID）——
     /// 已读／标题／昵称等内容变化不改变身份，已有行不重播；内容更新本就
@@ -1362,7 +1362,7 @@ final class BearyNotificationsViewController: UIViewController {
             cell.alpha = 0
             cell.transform = CGAffineTransform(translationX: 0, y: -24)
             let animator = UIViewPropertyAnimator(
-                duration: 0.25,
+                duration: BearyMotion.normal,
                 timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1))
             )
             animator.addAnimations({
@@ -1420,7 +1420,7 @@ final class BearyNotificationsViewController: UIViewController {
         // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”；
         // 旧 0.32s 默认 easeInOut 零初速起手、与手指甩速脱节，手感发轻。
         tableView.setContentOffset(tableView.contentOffset, animated: false)
-        // A5-3：下拉刷新进场查减动效开关——减动效时直接落位，不播 0.35s 动画。
+        // A5-3：下拉刷新进场查减动效开关——减动效时直接落位，不播 0.38s 动画。
         let pullIn = {
             self.tableView.contentInset.top = 84
             self.tableView.scrollIndicatorInsets.top = 84
@@ -1430,7 +1430,7 @@ final class BearyNotificationsViewController: UIViewController {
         if UIAccessibility.isReduceMotionEnabled {
             pullIn()
         } else {
-            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
         }
         loadFirstPage(completion: { [weak self] in
             guard let strongSelf = self else { return }
@@ -1458,7 +1458,7 @@ final class BearyNotificationsViewController: UIViewController {
             self.customPullEndInFlight = false
             self.pullIconView.stopSpinning()
         } else {
-            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
                 self.isCustomPullRefreshing = false
                 self.customPullEndInFlight = false
                 self.pullIconView.stopSpinning()
@@ -1560,7 +1560,7 @@ final class BearyNotificationsViewController: UIViewController {
             }, completion: nil)
             tableView.layoutIfNeeded()
             if let cardCell = tableView.cellForRow(at: IndexPath(row: cardRow, section: 0)) as? BearyNotificationCell {
-                UIView.animate(withDuration: 0.18) {
+                UIView.animate(withDuration: BearyMotion.micro) {
                     cardCell.setChevronExpanded(true)
                 }
             }
@@ -1671,7 +1671,7 @@ final class BearyNotificationsViewController: UIViewController {
         guard let cardRow = displayRows.firstIndex(where: { $0.kind == kind }) else { return }
         zeroHeightRows.removeAll()
         if let cardCell = tableView.cellForRow(at: IndexPath(row: cardRow, section: 0)) as? BearyNotificationCell {
-            UIView.animate(withDuration: 0.18) {
+            UIView.animate(withDuration: BearyMotion.micro) {
                 cardCell.setChevronExpanded(true)
             }
         }
@@ -2324,7 +2324,7 @@ final class BearyNotificationsViewController: UIViewController {
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
         shake.values = [0, -8, 8, -5, 5, 0]
         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = 0.4
+        shake.duration = BearyMotion.screen
         cell.layer.add(shake, forKey: "bearyNotifDenyShake")
     }
 
@@ -3075,7 +3075,7 @@ private class BearyLetterModal {
             // translateY(10px) scale(.95) + 透明到原位；App 原只有遮罩淡入、无卡片 pop。
             overlayView.alpha = 0
             cardView.transform = CGAffineTransform(translationX: 0, y: 10).scaledBy(x: 0.95, y: 0.95)
-            UIView.animate(withDuration: 0.25) {
+            UIView.animate(withDuration: BearyMotion.normal) {
                 self.overlayView.alpha = 1
             }
             let popAnimator = UIViewPropertyAnimator(duration: 0.28, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
@@ -3117,14 +3117,14 @@ private class BearyLetterModal {
         }
         quoteWrap.alpha = 0
         overlayView.layoutIfNeeded()
-        UIView.animate(withDuration: 0.18) {
+        UIView.animate(withDuration: BearyMotion.micro) {
             self.quoteWrap.alpha = 1
         }
     }
 
     private var isDismissingModal = false
 
-    /// M13：关闭走 0.25s 淡出动画完成后再移除（减动效直接移除）；去看看在移除后回调。
+    /// M13：关闭走 0.26s 淡出动画完成后再移除（减动效直接移除）；去看看在移除后回调。
     /// restoreFocus：普通关闭（知道了/稍后/遮罩点按）把 VoiceOver 焦点还给 show 时
     /// 记下的触发元素；“去看看”跳页时为 false，新页自带焦点、不抢回旧列表。
     private func dismissModalAnimated(restoreFocus: Bool = true, afterDismiss: (() -> Void)? = nil) {
@@ -3143,7 +3143,7 @@ private class BearyLetterModal {
             cleanup()
             return
         }
-        UIView.animate(withDuration: 0.25, animations: {
+        UIView.animate(withDuration: BearyMotion.normal, animations: {
             self.overlayView.alpha = 0
         }, completion: { _ in
             cleanup()

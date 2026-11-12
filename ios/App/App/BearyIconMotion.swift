@@ -32,7 +32,7 @@ enum BearyIconMotion {
         }
     }
 
-    /// 点赞反馈只保留官方爱心原图的短暂缩放：1 → 1.15 → 1，.32s。
+    /// 点赞反馈只保留官方爱心原图的短暂缩放：1 → 1.15 → 1，motion.micro 0.18s。
     /// 只在点赞（填色）的那一刻播，与填色同起（调用方在点按确认时与填色
     /// 一起播，不再等服务端回包）；取消点赞不播。点亮色仍为点赞红
     /// BearyColors.likeRed（#ff3b30）。减动效不播。粒子炸开不在此播，
@@ -43,18 +43,18 @@ enum BearyIconMotion {
         guard let imageView = button.imageView else { return }
         // 先清上一轮缩放动画残留（快速连点不再多轮堆叠）。
         clearLikeBurst(on: button)
-        // 爱心先轻微放大再回弹（1 → 1.15 → 1，.32s）。
+        // 爱心先轻微放大再回弹（1 → 1.15 → 1，motion.micro 0.18s）。
         let pop = CAKeyframeAnimation(keyPath: "transform.scale")
         pop.values = [1, 1.15, 1]
         pop.keyTimes = [0, 0.45, 1]
-        pop.duration = 0.32
+        pop.duration = BearyMotion.micro
         pop.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1)
         imageView.layer.add(pop, forKey: "bearyLikeBurstPop")
     }
 
     /// 点赞填充淡入（网页 .fill transition fill .3s）。
     /// 网页另有 .25s 延迟（与描边后半段重叠），原生因网络时序已与描边解耦，
-    /// 故成功到达时直接淡入 .3s，不再额外延迟。
+    /// 故成功到达时直接淡入 motion.normal 0.26s，不再额外延迟。
     /// fixall-cell 6-12：点赞填充淡入（网页 .fill transition fill .3s）。
     /// 中途换图处理：先按 key 清掉在途淡入（旧图淡入不再与新图叠加），
     /// 再以 keyed CA 淡入从 0 → 1；模型 alpha 全程保持 1，新图不会在
@@ -67,7 +67,7 @@ enum BearyIconMotion {
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 0
         fade.toValue = 1
-        fade.duration = 0.3
+        fade.duration = BearyMotion.normal
         fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         imageView.layer.add(fade, forKey: "bearyFillFade")
     }
@@ -82,14 +82,14 @@ enum BearyIconMotion {
         let pop = CAKeyframeAnimation(keyPath: "transform.scale")
         pop.values = [1, 1.12, 1]
         pop.keyTimes = [0, 0.4, 1]
-        pop.duration = 0.16
+        pop.duration = BearyMotion.micro
         pop.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1)
         imageView.layer.add(pop, forKey: "bearyBmPop")
     }
 
     /// 图标缩放（取消点赞 pre-unlike .8 / 恢复 1；按压已改走按钮层
-    /// pressDownVisual/pressUp，不再用本方法；网页 svg transition .13s 同款，
-    /// .13s 落在视觉清单第 9 项 0.12–0.18s 档内，不动）。
+    /// pressDownVisual/pressUp，不再用本方法；默认走 motion.micro 0.18s
+    /// （原网页 svg transition .13s 同款，已随三档 token 收敛）。
     static func animateIconScale(on button: UIButton, to scale: CGFloat, duration: TimeInterval = 0.13) {
         guard let imageView = button.imageView else { return }
         let transform = scale == 1 ? CGAffineTransform.identity : CGAffineTransform(scaleX: scale, y: scale)
@@ -101,7 +101,7 @@ enum BearyIconMotion {
     }
 
     /// 通用按压反馈（80 包 W6 全量推广）：按下缩 0.95 + .light 轻震，松手弹簧回 1。
-    /// 按压幅度与时长为预览 v3 定版（按下 0.95 / 0.1s、松手 1.03 → 0.99 → 1 / 0.32s）。
+    /// 按压幅度与时长为预览 v3 定版（按下 0.95 / 0.1s、松手 1.03 → 0.99 → 1 / motion.micro 0.18s）。
     /// 口径（2026-10-28 定）：按压轻震通用，所有挂 bearyAddPressFeedback 的按钮都发；
     /// 点赞/发布/拒绝三处专属反馈（成功/警告）另算，不与按压轻震混淆。
     /// 缩放一律走按钮层（button.transform）：图标层 pop 与粒子 overlay 不受影响，
@@ -136,7 +136,7 @@ enum BearyIconMotion {
         })
     }
 
-    /// 松手弹簧回 1（预览 v3 定版）：1.03 → 0.99 → 1，0.32s，分段线性。
+    /// 松手弹簧回 1（预览 v3 定版）：1.03 → 0.99 → 1，motion.micro 0.18s，分段线性。
     /// 减动效关时瞬时回 1（普通按压）。
     /// 审计 M1：同 pressDownVisual，补 .allowUserInteraction 与
     /// .beginFromCurrentState——回弹中途再按不从模型值起跳、不吞下一按。
@@ -145,7 +145,7 @@ enum BearyIconMotion {
             button.transform = .identity
             return
         }
-        UIView.animateKeyframes(withDuration: 0.32, delay: 0, options: [.calculationModeLinear, .allowUserInteraction, .beginFromCurrentState], animations: {
+        UIView.animateKeyframes(withDuration: BearyMotion.micro, delay: 0, options: [.calculationModeLinear, .allowUserInteraction, .beginFromCurrentState], animations: {
             UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.45) {
                 button.transform = CGAffineTransform(scaleX: 1.03, y: 1.03)
             }

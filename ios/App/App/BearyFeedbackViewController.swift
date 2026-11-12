@@ -273,7 +273,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     private static let descriptionPlaceholder = "请描述遇到的问题：在哪个页面、做了什么操作、看到了什么…"
 
     /// 116 数据填入动效：状态文案变化时只淡入该 label 本身、徽标由
-    /// 隐藏变可见时只淡入徽标本身（alpha 0→1、0.25s，不动 transform／
+    /// 隐藏变可见时只淡入徽标本身（alpha 0→1、0.18s，不动 transform／
     /// 布局、不重建节点）；同值不赋值不重播；减动效或未进窗口时直设终值。
     private func setStatusTextFaded(_ text: String) {
         guard statusLabel.text != text else { return }

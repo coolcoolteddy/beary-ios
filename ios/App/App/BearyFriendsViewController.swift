@@ -406,7 +406,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         let visible = (tableView.indexPathsForVisibleRows ?? []).sorted()
         let order = visible.firstIndex(of: indexPath) ?? indexPath.row
         let delay = min(Double(order) * 0.03, 0.24)
-        UIView.animate(withDuration: 0.22, delay: delay, options: [.curveEaseOut, .allowUserInteraction], animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: [.curveEaseOut, .allowUserInteraction], animations: {
             cell.alpha = 1
             cell.transform = .identity
         })
@@ -482,7 +482,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
         shake.values = [0, -8, 8, -5, 5, 0]
         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = 0.4
+        shake.duration = BearyMotion.screen
         view.layer.add(shake, forKey: "bearyDenyShake")
     }
 }

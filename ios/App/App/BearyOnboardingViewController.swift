@@ -28,15 +28,15 @@ import UIKit
 
 private enum OnboardingAnim {
     /// 互动翻页落点弹簧（规范 §6 引导专属档，取代旧 0.14＋0.14 两段切）：
-    /// 0.30s／damping 0.7；快甩把松手速度按页宽归一化后传 initialSpringVelocity，慢拖为 0。
-    static let pageSpringDuration: TimeInterval = 0.30
+    /// 0.26s／damping 0.7；快甩把松手速度按页宽归一化后传 initialSpringVelocity，慢拖为 0。
+    static let pageSpringDuration: TimeInterval = BearyMotion.normal
     static let pageSpringDamping: CGFloat = 0.7
     /// 松手判据：拖过页宽 1/3，或沿翻页方向速度 ＞600pt/s。
     static let pageCommitFraction: CGFloat = 1.0 / 3.0
     static let pageFlingVelocity: CGFloat = 600
-    /// 入场错峰间隔；总入场 0.5 秒内（0.09 末位延迟 + 0.25 播长 = 0.34）。
+    /// 入场错峰间隔；总入场 0.5 秒内（0.09 末位延迟 + 0.26 播长 = 0.35）。
     static let staggerStep: TimeInterval = 0.03
-    static let entranceDuration: TimeInterval = 0.25
+    static let entranceDuration: TimeInterval = BearyMotion.normal
     /// 第 1 页两张卡片的错位：后卡左右各缩 10，前卡下压 80、微转 0.5°，后卡微转 -3.5°。
     static let cardBackInset: CGFloat = 10
     static let cardFrontOffset: CGFloat = 80
@@ -1265,7 +1265,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
             responseChipIcon.transform = .identity
             if BearyMotion.animated(true) {
                 // chip-in 0.45s＋图标 wiggle 0.5s（规范 §6；与卡片／详情页 playChipIn 同款口径）。
-                UIView.animateKeyframes(withDuration: 0.45, delay: 0, options: [], animations: {
+                UIView.animateKeyframes(withDuration: BearyMotion.screen, delay: 0, options: [], animations: {
                     UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.6) {
                         self.responseChip.transform = CGAffineTransform(scaleX: 1.12, y: 1.12)
                         self.responseChip.alpha = 1
@@ -1275,7 +1275,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
                         self.responseChip.alpha = 1
                     }
                 }, completion: nil)
-                UIView.animateKeyframes(withDuration: 0.5, delay: 0, options: [], animations: {
+                UIView.animateKeyframes(withDuration: BearyMotion.screen, delay: 0, options: [], animations: {
                     UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.3) {
                         self.responseChipIcon.transform = CGAffineTransform(rotationAngle: -0.1745).scaledBy(x: 1.3, y: 1.3)
                     }

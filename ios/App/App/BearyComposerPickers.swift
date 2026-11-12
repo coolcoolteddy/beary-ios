@@ -7,7 +7,7 @@ import UIKit
 // 圆角 20/20/0/0、阴影 0 −12 32 rgba(0,0,0,.22)；宽 ≥821 时居中 440
 // 全圆角 20 + 边框 1 + 阴影 0 24 60 rgba(0,0,0,.30)；自定义抓手 40×4（不用系统抓手）。
 // 遮罩为通用 0.45 黑遮罩（网页 .modal .backdrop 口径），点遮罩关闭；第 30 项起遮罩与面板
-// 转场解耦（BearyRecipientSheetTransition）：面板上滑／下滑，遮罩只做 0.25s 透明度淡入／淡出，
+// 转场解耦（BearyRecipientSheetTransition）：面板上滑／下滑，遮罩只做 0.26s 透明度淡入／淡出，
 // 遮罩本身永不位移、永不瞬间消失；键盘弹出时 sheet
 // 底边抬到键盘上方（此前由 UISheet 承担的避让，改自定义 sheet 后在本文件内补上）。
 // 搜索框为图标 + “搜索昵称或 @用户名”；init/loading/none/fail 四态齐全；
@@ -616,7 +616,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     }
 
     /// 2026-10-30 抓手批：@ 选人 sheet 抓手下滑跟手——下滑超 80pt
-    /// 或快速下滑（速度 > 600）关闭，否则统一弹簧（0.30s／damping 0.7＋松手速度）弹回原位；上滑阻尼
+    /// 或快速下滑（速度 > 600）关闭，否则统一弹簧（0.26s／damping 0.7＋松手速度）弹回原位；上滑阻尼
     /// 微移后回弹，不扩高、不关闭。遮罩点按关闭与关闭钮均不动。
     /// 注意：键盘抬升走约束（phoneBottomConstraint / padCenterY），
     /// 本处理只动 transform，不改约束，两者不打架。
@@ -641,7 +641,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                     restore()
                 } else {
                     let offset = BearySheetDrag.offset(for: translation.y)
-                    UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore)
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore)
                 }
             }
         case .cancelled, .failed:
@@ -652,7 +652,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
             } else {
-                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore)
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore)
             }
         default:
             break
@@ -1200,7 +1200,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                 animatedRowKeys.insert(key)
                 button.alpha = 0
                 // R13 方案 B：新增行错峰淡入 0.18s（步进 0.03、封顶 0.24 不动）。
-                UIView.animate(withDuration: 0.18, delay: min(Double(animIndex) * 0.03, 0.24), options: [], animations: {
+                UIView.animate(withDuration: BearyMotion.micro, delay: min(Double(animIndex) * 0.03, 0.24), options: [], animations: {
                     button.alpha = 1
                 }, completion: nil)
                 animIndex += 1
@@ -1239,7 +1239,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// 只动底片背景，不动 transform，故整行不缩放。松开/取消见 rowPressUp。
     @objc private func rowPressDown(_ sender: UIButton) {
         guard let highlight = rowHighlight(for: sender) else { return }
-        UIView.animate(withDuration: BearyMotion.animated(true) ? 0.13 : 0, animations: {
+        UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0, animations: {
             highlight.backgroundColor = BearyColors.hov
         })
     }
@@ -1248,7 +1248,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// didTapRow 随即 dismiss，淡出是否播完不影响结果）。
     @objc private func rowPressUp(_ sender: UIButton) {
         guard let highlight = rowHighlight(for: sender) else { return }
-        UIView.animate(withDuration: BearyMotion.animated(true) ? 0.13 : 0, animations: {
+        UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0, animations: {
             highlight.backgroundColor = .clear
         })
     }
@@ -1277,7 +1277,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
 
 /// 第 30 项：@ 选人专属过渡——此前本页无 transitioningDelegate，系统默认把整个 view（含遮罩）
 /// 一起从底部滑入，遮罩顶缘的深浅差异线 visibly 从下方扫上来；关闭时遮罩同样随面板下滑。
-/// 改后与回应 Sheet 同口径解耦：面板上滑 0.35s／下滑 0.3s，遮罩只做透明度 0.25s 淡入／淡出，
+/// 改后与回应 Sheet 同口径解耦：面板上滑／下滑均走 motion.normal 0.26s，遮罩只做透明度 0.26s 淡入／淡出，
 /// 遮罩本身永不位移、永不瞬间消失。面板本身的上滑、抓手、圆角一字不动。
 final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioningDelegate, UIViewControllerAnimatedTransitioning {
 
@@ -1295,8 +1295,8 @@ final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioni
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
         if UIAccessibility.isReduceMotionEnabled { return 0 }
-        // 入场仍 0.25s；退场走拖拽收尾统一弹簧 0.30s。
-        return presenting ? 0.25 : 0.30
+        // 入场／退场均走 motion.normal 0.26s（第十轮三档收敛，原入场 0.25s／退场 0.30s）。
+        return BearyMotion.normal
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -1321,11 +1321,11 @@ final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioni
                 transitionContext.completeTransition(true)
                 return
             }
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut], animations: {
                 sheet.transitionSetSheetOffset(0)
             }, completion: { _ in transitionContext.completeTransition(true) })
-            // 遮罩 0.25s 单独淡入（与面板滑入解耦，遮罩本身不位移）。
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
+            // 遮罩 0.26s 单独淡入（与面板滑入解耦，遮罩本身不位移）。
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut], animations: {
                 sheet.transitionSetScrimAlpha(1)
             })
             return
@@ -1335,11 +1335,11 @@ final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioni
             transitionContext.completeTransition(true)
             return
         }
-        UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
             sheet.transitionSetSheetOffset(height)
         }, completion: { _ in transitionContext.completeTransition(true) })
-        // 遮罩 0.25s 单独淡出（与面板下滑解耦，遮罩本身不位移、不瞬间消失）。
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
+        // 遮罩 0.26s 单独淡出（与面板下滑解耦，遮罩本身不位移、不瞬间消失）。
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut], animations: {
             sheet.transitionSetScrimAlpha(0)
         })
     }

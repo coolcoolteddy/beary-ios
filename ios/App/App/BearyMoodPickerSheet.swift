@@ -2,8 +2,8 @@ import UIKit
 
 // ===== 编辑器心情选择器：底部弹窗＋表情组选择条（2026-11-11 Li 定）=====
 // 取代编辑器心情尖角 callout（moodCallout 已删）：走共享底部弹窗容器
-// BearyBottomSheet（弹簧 0.4s 上升、背后缩 0.92、遮罩 0.45、下拖超 80pt 或
-// 速度 >600pt/s 关闭、否则 0.30s/damping 0.7 弹回；减动效瞬时）。
+// BearyBottomSheet（弹簧 0.38s 上升、背后缩 0.92、遮罩 0.45、下拖超 80pt 或
+// 速度 >600pt/s 关闭、否则 0.26s/damping 0.7 弹回；减动效瞬时）。
 // 高度上限 88% 容器高（规范 §6：底 sheet 高 min(内容高, 88% 容器高)）。
 // 下方悬浮 pill 组选择条（照 Threads GIF 选择器截图）：胶囊横条贴选择器底部、
 // 内容区上方悬浮；条内横向排各组代表图标；选中组图标上抬 14pt（高于胶囊条）＋
@@ -338,7 +338,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             self?.view.layoutIfNeeded()
         }
         if animated, UIAccessibility.isReduceMotionEnabled == false {
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
                 applyHeight()
             })
             UIView.animate(withDuration: 0.15, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
@@ -368,7 +368,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             }
         }
         if animated, UIAccessibility.isReduceMotionEnabled == false {
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: apply)
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: apply)
         } else {
             apply()
         }

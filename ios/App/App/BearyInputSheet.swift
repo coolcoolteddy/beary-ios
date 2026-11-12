@@ -2,7 +2,7 @@ import UIKit
 
 // ===== 输入型底 sheet（编辑器气温输入框迁移，2026-11-11）=====
 // 仓内首个带输入框的底 sheet：走共享底部弹窗容器 BearyBottomSheet（与确认弹窗
-// 同款呈现与关闭流程：弹簧 0.4s 上升、背后缩 0.92、遮罩 0.45、下拖关/弹回；
+// 同款呈现与关闭流程：弹簧 0.38s 上升、背后缩 0.92、遮罩 0.45、下拖关/弹回；
 // 右上角叉叉关闭由本 sheet 自己保留）。结构照抄 BearyAnnouncementSheet
 // （enum show(from:...) ＋ ViewController、sheetDelegate 强持有、
 // modalPresentationStyle=.custom、进场前 loadViewIfNeeded＋算内容高＋

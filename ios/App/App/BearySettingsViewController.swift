@@ -2220,7 +2220,7 @@ final class BearySettingsViewController: UIViewController {
     // MARK: - 加载
 
     /// 116 数据填入动效：文案变化时只淡入该元素本身（alpha 0→1、
-    /// 0.25s，不动 transform／布局、不重建节点、不缩放弹一下）；同值
+    /// 0.26s，不动 transform／布局、不重建节点、不缩放弹一下）；同值
     /// 不赋值不重播；减动效或未进窗口时直设终值。容器首次出现时
     /// 只淡入容器本身，已可见时不重播。
     private func setLabelTextFaded(_ label: UILabel, _ text: String) {
@@ -2231,7 +2231,7 @@ final class BearySettingsViewController: UIViewController {
             return
         }
         label.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             label.alpha = 1
         })
     }
@@ -2242,7 +2242,7 @@ final class BearySettingsViewController: UIViewController {
             return
         }
         view.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             view.alpha = 1
         })
     }
@@ -3725,7 +3725,7 @@ final class BearySettingsViewController: UIViewController {
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
         shake.values = [0, -8, 8, -5, 5, 0]
         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = 0.4
+        shake.duration = BearyMotion.screen
         button.layer.add(shake, forKey: "bearySettingsDenyShake")
     }
 

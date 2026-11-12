@@ -316,7 +316,7 @@ final class BearyChromeViewController: UIViewController {
     /// 89 帧约 2.97s（入场 0–47、停留 48–59、退场 60–88，末两帧空白）；
     /// 减动效与 Lottie 加载失败时用同目录 keep_v3_hold_light/dark.png（停留帧 53 的渲染，
     /// 绝不用末帧 89——末帧是空白）。中文手绘 v3 仅设计稿、未转 Lottie，本批不接。
-    /// 时序：Lottie 播完 → veil 原地淡出 0.4s 露主页（同时顶栏 logo 淡入、首屏卡片
+    /// 时序：Lottie 播完 → veil 原地淡出 0.38s 露主页（同时顶栏 logo 淡入、首屏卡片
     /// 上滑＋淡入错峰）；减动效下静态直出。只冷启动播一次，热启动不播。
     private var launchVeilView: UIView?
     private var launchVeilSloganView: UIView?
@@ -1000,7 +1000,7 @@ final class BearyChromeViewController: UIViewController {
         let offset = view.safeAreaInsets.top + (headerVisible ? 108 : 0)
         guard top.constant != offset else { return }
         if animated && !UIAccessibility.isReduceMotionEnabled {
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
                 top.constant = offset
                 self.view.layoutIfNeeded()
             }
@@ -1044,7 +1044,7 @@ final class BearyChromeViewController: UIViewController {
                 return
             }
             if wasHidden { button.alpha = 0 }
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState], animations: {
                 button.alpha = 1
             })
         } else {
@@ -1054,7 +1054,7 @@ final class BearyChromeViewController: UIViewController {
                 button.isHidden = true
                 return
             }
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState], animations: {
                 button.alpha = 0
             }) { _ in
                 if button.alpha == 0 { button.isHidden = true }
@@ -1126,7 +1126,7 @@ final class BearyChromeViewController: UIViewController {
         // 初始态：本地有有效会话 cookie 时首帧直接按缓存登录态出（登录钮藏），
         // 后台验出 401 才切游客态；无 cookie 时仍按游客首帧。旧口径“恒按未登录首帧”
         // 会让已登录用户每次重开都先见登录钮、几秒后才翻态，体感即“检测几秒是否登录”。
-        // 首帧直设显隐（不走 setTopButtonVisible 的 0.25s 淡入淡出）。
+        // 首帧直设显隐（不走 setTopButtonVisible 的 0.26s 淡入淡出）。
         if SessionManager.shared.hasCachedSession {
             loginButton.isHidden = true
             loginButton.alpha = 0
@@ -1497,7 +1497,7 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// 文字 veil 动画链：Lottie 播完（入场＋停留＋退场，末两帧空白）→
-    /// revealHomeWithLaunchVeil 做 veil 原地淡出 0.4s 露主页。
+    /// revealHomeWithLaunchVeil 做 veil 原地淡出 0.38s 露主页。
     /// 减动效：静帧已挂好，直接揭开，无错峰。只播一次。
     /// 冷启动判定：install 只在 viewDidLoad 跑一次、launchVeilPlayed 守卫、
     /// veil 清掉后 viewDidAppear 重进不再触发；热启动（前后台切换、modal 回落）
@@ -1572,9 +1572,9 @@ final class BearyChromeViewController: UIViewController {
     /// 启动 veil 点按跳过：第一次点击只结束 veil，绝不穿透到底层。
     /// veil 可交互（见 installLaunchVeil），点按命中 veil 自身而非底层按钮；
     /// 此处不直接 remove，而是走与自然播完／起播兜底同一条 reveal→remove
-    /// 解锁流程（0.4s 淡出、引导补触发），
+    /// 解锁流程（0.38s 淡出、引导补触发），
     /// 不另起一条跳过路径。揭开进行中再次点按由 reveal 的
-    /// launchVeilRevealing 守卫挡下（0.4s 淡出内点按仍被 veil 截住，不穿透）；
+    /// launchVeilRevealing 守卫挡下（0.38s 淡出内点按仍被 veil 截住，不穿透）；
     /// veil 清掉后手势随视图移除，之后点按正常落到底层。
     /// 起播前点按（viewDidAppear 未到）同样走 reveal：remove 会取消两路兜底，
     /// 且 launchVeilView 已空使后续 runLaunchVeilIfNeeded no-op，不会重播。
@@ -1583,7 +1583,7 @@ final class BearyChromeViewController: UIViewController {
         revealHomeWithLaunchVeil(veil: veil)
     }
 
-    /// 审计第二阶段推荐 A：veil 原地淡出 0.4s＋主页首次揭开错峰。
+    /// 审计第二阶段推荐 A：veil 原地淡出 0.38s＋主页首次揭开错峰。
     /// 淡出完成 → removeLaunchVeil。
     /// 揭开时机按时间走，绝不为等内容加载而延长 veil：内容未到时快照为空，
     /// 只淡 veil，不延迟。错峰只做首次揭开：快照只取揭开瞬间已渲染的首屏
@@ -1596,7 +1596,7 @@ final class BearyChromeViewController: UIViewController {
         guard !launchVeilRevealing else { return }
         launchVeilRevealing = true
         // 审计动效组：点按跳过同样走减动效门控——减动效时直出终值，不播
-        // 0.4s 淡出与卡片错峰（自然起播路径已有减动效早退，此处补点按路径）。
+        // 0.38s 淡出与卡片错峰（自然起播路径已有减动效早退，此处补点按路径）。
         // 卡片此前未被藏起（藏起在下方才做），故终值即现状；音效不门控减动效。
         if UIAccessibility.isReduceMotionEnabled {
             topLogoButton?.alpha = 1
@@ -1614,12 +1614,12 @@ final class BearyChromeViewController: UIViewController {
             card.alpha = 0
             card.transform = CGAffineTransform(translationX: 0, y: 10)
         }
-        UIView.animate(withDuration: 0.4, delay: 0, options: [.curveEaseOut], animations: {
+        UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut], animations: {
             veil.alpha = 0
             logoButton?.alpha = 1
         }) { [weak self] _ in self?.removeLaunchVeil() }
         for (i, card) in cards.enumerated() {
-            UIView.animate(withDuration: 0.35, delay: 0.05 + Double(i) * 0.05, options: [.curveEaseOut], animations: {
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0.05 + Double(i) * 0.05, options: [.curveEaseOut], animations: {
                 card.alpha = 1
                 card.transform = .identity
             })
@@ -1692,7 +1692,7 @@ final class BearyChromeViewController: UIViewController {
         let targetTransform = visible ? CGAffineTransform.identity : CGAffineTransform(translationX: 0, y: -hideOffset)
         topGlass.isUserInteractionEnabled = visible
         if animated && !UIAccessibility.isReduceMotionEnabled {
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
                 self.topGlass.transform = targetTransform
                 self.topGlass.alpha = visible ? 1 : 0
             })
@@ -1725,7 +1725,7 @@ final class BearyChromeViewController: UIViewController {
         // 强制显示调用至此即按新规则收敛：他页只恢复底栏分段器，不恢复 header；
         // C5-B：FAB 亦只在首页/时间线恢复，他页不恢复）。
         // A1-1（搜索回首页不打断顶栏动画）：若再以 animated:false 调 setHeaderVisible，
-        // 会立即 layoutIfNeeded 把 showPage 刚启动的 0.25s 顶栏动画首帧硬切到终态；
+        // 会立即 layoutIfNeeded 把 showPage 刚启动的 0.26s 顶栏动画首帧硬切到终态；
         // 目标与当前 headerVisible 一致时跳过（动画继续走完），底栏/FAB 恢复仍按原口径走。
         let headerTarget = visible && currentPage == .home
         if headerTarget != headerVisible {
@@ -1755,7 +1755,7 @@ final class BearyChromeViewController: UIViewController {
         if !animated || UIAccessibility.isReduceMotionEnabled {
             applyBars()
         } else {
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: applyBars)
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: applyBars)
         }
         bottomSegmented?.isUserInteractionEnabled = visible
         fabContainerView?.isUserInteractionEnabled = fabVisible
@@ -1826,10 +1826,10 @@ final class BearyChromeViewController: UIViewController {
             if UIAccessibility.isReduceMotionEnabled {
                 resetDeform()
             } else {
-                // 扫 bug 第 3 项：松手回弹弹簧 0.5s → 0.30s（阻尼 0.7、初速度 0 不变），
+                // 扫 bug 第 3 项：松手回弹弹簧 0.5s → 0.26s（阻尼 0.7、初速度 0 不变），
                 // 只求回得更快、不拖沓；仍保留弹簧感，不改成生硬的线性复位。
                 // #479 合入解冲突：取主线 0.30s（#476 已定），本支其余（门限 0.25s + 形变 transform）全部保留。
-                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
                     resetDeform()
                 })
             }
@@ -1956,7 +1956,7 @@ final class BearyChromeViewController: UIViewController {
             container.transform = target
             return
         }
-        UIView.animate(withDuration: 0.13, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
             container.transform = target
         })
     }
@@ -2284,7 +2284,7 @@ final class BearyChromeViewController: UIViewController {
         lastRetapPage = nil
         lastRetapDidScrollToTop = false
         let previousPage = currentPage
-        // 淡入复加（Li 拍板，0.25s 只做透明度）：先记下离场页视图，暂不立即隐藏，
+        // 淡入复加（Li 拍板，0.26s 只做透明度）：先记下离场页视图，暂不立即隐藏，
         // 下方与入场页做交叉淡入；减动效时仍走旧的即时显隐。M4 删的是整页淡入+滑动，
         // 这里只动 alpha，不加位移、不改转场代理。
         let outgoingView: UIView?
@@ -2342,10 +2342,10 @@ final class BearyChromeViewController: UIViewController {
         incomingView.isHidden = false
         // 入场页接管时机不变：切换开始即恢复交互。快速反向切页时，入场页可能
         // 正是上一段交叉淡入的离场页（当时被禁用）；不等上一段动画完成回调，
-        // 否则反向切回的当前页在 0.25s 内点按无反应。
+        // 否则反向切回的当前页在 0.26s 内点按无反应。
         incomingView.isUserInteractionEnabled = true
         // 首次切入飞入修：懒建页首亮时帧仍为 .zero（addPageVC 只加约束未布局），
-        // 下方 setHeaderVisible 的 0.25s layoutIfNeeded 动画会把整页从左上零帧动画到满帧；
+        // 下方 setHeaderVisible 的 0.26s layoutIfNeeded 动画会把整页从左上零帧动画到满帧；
         // 此处先非动画布局一次定帧，动画只剩顶栏高度变化。只布局不动数据/分页/错峰滑入。
         view.layoutIfNeeded()
         // 切页生命周期 7 号（最小化）：进时间线页时显式启动倒计时
@@ -2369,7 +2369,7 @@ final class BearyChromeViewController: UIViewController {
             userVC?.resumeVisibleEmotes()
             userVC?.pageDidReturn()
         }
-        // 淡入复加：主 tab 0.25s 交叉淡入、搜索页淡入、二级页（.user 等容器页）推入淡入，
+        // 淡入复加：主 tab 0.26s 交叉淡入、搜索页淡入、二级页（.user 等容器页）推入淡入，
         // 均走同一条 showPage 路径；只做透明度动画。减动效或首亮（无离场页）时直接显隐。
         if UIAccessibility.isReduceMotionEnabled || outgoingView == nil {
             outgoingView?.isHidden = true
@@ -2381,10 +2381,10 @@ final class BearyChromeViewController: UIViewController {
         } else if let outgoing = outgoingView, outgoing !== incomingView {
             incomingView.alpha = 0
             // 离场页交互：切换开始即禁用。动画仍带 .allowUserInteraction（入场页
-            // 0.25s 内即可点按，时长与交叉淡入本身不动）；离场页在淡出过程中
+            // 0.26s 内即可点按，时长与交叉淡入本身不动）；离场页在淡出过程中
             // 仍可见、未 isHidden，此前点按会落到旧页，本行起不再落到旧页。
             outgoing.isUserInteractionEnabled = false
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
                 incomingView.alpha = 1
                 outgoing.alpha = 0
             }) { _ in
@@ -2412,13 +2412,13 @@ final class BearyChromeViewController: UIViewController {
                 }
             }
         }
-        // 2026-10-26 切 tab 滑动重播排查：M4 的整页淡入+滑动仍不恢复（见上方 0.25s
+        // 2026-10-26 切 tab 滑动重播排查：M4 的整页淡入+滑动仍不恢复（见上方 0.26s
         // 纯透明度交叉淡入，Li 拍板复加）；除该透明度淡入与顶栏高度结构动画外，
         // 页本身不做位移、不重播其他入场动效。
         updateTabSelection()
         updateDesktopLayout()
         // 64 包反馈修：52 批“他页恒收起无动画”决定作废——切页时顶栏收起/展开一并走
-        // setHeaderVisible 的 0.25s 高度动效（减动效时内部直达）；页的透明度淡入
+        // setHeaderVisible 的 0.26s 高度动效（减动效时内部直达）；页的透明度淡入
         // 见上方复加段（仅 alpha，不含 M4 的滑动）。
         setHeaderVisible(page == .home, animated: true)
         // 100 包消息页顶部空隙修：22(b) Plan A 后 setHeaderVisible 不再发 inset，
@@ -3056,7 +3056,7 @@ final class BearyChromeViewController: UIViewController {
     /// Toast 落点用：当前可见的底部 chrome（FAB 优先于底栏）在 container
     /// 坐标系中的顶边；FAB 与底栏均不可见时返回 nil。可见性判据与
     /// setBarsVisible 的同步口径一致：isUserInteractionEnabled 在动画外
-    /// 同步改，alpha 动画中读到的是目标态；动画中途（≤0.25s）读到的
+    /// 同步改，alpha 动画中读到的是目标态；动画中途（≤0.26s）读到的
     /// 是目标态而非飞行态，toast 至多一瞬偏高／偏低，不会被挡。
     /// 调用方（BearyToast）只在容器页是 Chrome 子页时调本方法；模态页
     /// 的 parent 链到不了 Chrome，走 -32 回落，不读这里。
@@ -3127,7 +3127,7 @@ final class BearyChromeViewController: UIViewController {
                             SessionManager.shared.signOutLocally()
                         }
                         if UIAccessibility.isReduceMotionEnabled || self.currentPage == .me {
-                            // 减动效直换；.me 页由 onUserChanged→showPage 的 0.25s 交叉淡入承接，不双驱动。
+                            // 减动效直换；.me 页由 onUserChanged→showPage 的 0.26s 交叉淡入承接，不双驱动。
                             clearLogoutState()
                         } else {
                             let logoutPageView: UIView? = {
@@ -3259,7 +3259,7 @@ final class BearyChromeViewController: UIViewController {
         // 设置页进场宽度三段变修：fadeRise 只定根视图帧 + 播淡入上移，不做
         // 内部布局；本页每次呈现新建，呈现前从未在最终帧布局过，首批内部
         // 布局（scrollView frameLayoutGuide → 内容列宽、821 上限开关）会落在
-        // 0.25s 淡入窗口里分步完成，卡片宽度随之分段跳变。此处呈现前先在
+        // 0.26s 淡入窗口里分步完成，卡片宽度随之分段跳变。此处呈现前先在
         // 最终帧布局一次定帧，进场动画只剩淡入上移，卡片首帧即正常宽度；
         // 只布局不动数据（loadAll 照常由 viewDidLoad 触发）与过渡本身。
         vc.loadViewIfNeeded()
@@ -4471,12 +4471,12 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
                     restore()
                 } else {
                     let drag = BearySheetDrag.offset(for: translation)
-                    UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: drag), options: [], animations: restore)
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: drag), options: [], animations: restore)
                 }
             }
         case .cancelled, .failed:
             // 审计 B 组 8：系统取消与手势失败时跟手位移可能已产生，
-            // 统一弹簧（0.30s／damping 0.7）弹回原位，不触发关闭（此前 .cancelled 与 .ended 共用
+            // 统一弹簧（0.26s／damping 0.7）弹回原位，不触发关闭（此前 .cancelled 与 .ended 共用
             // 关闭分支，系统取消也可能关掉编辑器/邀请弹层）。
             let restore = {
                 presentedView.transform = .identity
@@ -4486,7 +4486,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
             } else {
-                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore)
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore)
             }
         default:
             break
@@ -4505,8 +4505,8 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        // 入场仍 0.25s；退场走拖拽收尾统一弹簧 0.30s。
-        return UIAccessibility.isReduceMotionEnabled ? 0 : (isPresenting ? 0.25 : 0.30)
+        // 入场／退场均走 motion.normal 0.26s（第十轮三档收敛，原入场 0.25s／退场 0.30s）。
+        return UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -4586,7 +4586,7 @@ private final class BearyBadgeLabel: UILabel {
 }
 
 // 94 包：淡入 + 上移模态过渡（他人主页/设置页/回收站/诊断页共用，
-// 与草稿箱入场同款手感：0.25s easeOut 淡入上移；只做动画不改帧，
+// 与草稿箱入场同款手感：0.26s easeOut 淡入上移；只做动画不改帧，
 // 全屏页仍按 .fullScreen 布局）。减动效时瞬时完成。
 private final class BearyFadeRiseTransitioningDelegate: NSObject, UIViewControllerTransitioningDelegate {
     func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
@@ -4604,7 +4604,7 @@ private final class BearyFadeRiseAnimator: NSObject, UIViewControllerAnimatedTra
         super.init()
     }
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return UIAccessibility.isReduceMotionEnabled ? 0 : 0.25
+        return UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal
     }
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
         let container = transitionContext.containerView
@@ -4625,7 +4625,7 @@ private final class BearyFadeRiseAnimator: NSObject, UIViewControllerAnimatedTra
             }
             toView.alpha = 0
             toView.transform = CGAffineTransform(translationX: 0, y: 16)
-            UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
                 toView.alpha = 1
                 toView.transform = .identity
             }, completion: { _ in
@@ -4646,7 +4646,7 @@ private final class BearyFadeRiseAnimator: NSObject, UIViewControllerAnimatedTra
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
                 return
             }
-            UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseIn, animations: {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseIn, animations: {
                 fromView.alpha = 0
                 fromView.transform = CGAffineTransform(translationX: 0, y: 16)
             }, completion: { _ in

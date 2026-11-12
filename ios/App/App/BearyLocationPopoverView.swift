@@ -79,7 +79,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     /// （didConfirmManualText）、切手动（didTapManual → cancelRequests）；
     /// 异步回调（MKLocalSearch、逆地理编码、搜索建议）只在捕获的代次仍是
     /// 当前代次、且回包的搜索对象仍是当前搜索对象时才落定，旧回包一律丢弃。
-    /// 仅靠 !isHidden 不够：调用方关闭动画 0.20s 后才置 isHidden=true，动画期间
+    /// 仅靠 !isHidden 不够：调用方关闭动画 0.18s 后才置 isHidden=true，动画期间
     /// 或重开后旧回调仍能通过 isHidden 检查并经 didConfirm 落定旧地点。
     private var interactionGeneration = 0
     /// 搜索建议代次：与 interactionGeneration 同步——didChangeInput 发新查询时

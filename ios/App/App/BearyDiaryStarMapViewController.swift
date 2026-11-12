@@ -1522,7 +1522,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
             return
         }
         sheetCard.alpha = 0
-        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             self.sheetCard.alpha = 1
         })
     }
@@ -1717,10 +1717,10 @@ struct StarMapEntrance {
     let starDelays: [String: TimeInterval]
     /// 新线 id：两端星入场完成后淡入。
     let edgeIds: Set<String>
-    static let starDuration: TimeInterval = 0.25
+    static let starDuration: TimeInterval = BearyMotion.normal
     static let stagger: TimeInterval = 0.03
     static let maxDelay: TimeInterval = 0.24
-    static let edgeFadeDuration: TimeInterval = 0.25
+    static let edgeFadeDuration: TimeInterval = BearyMotion.normal
 }
 
 private struct StarMapSkyStar {
@@ -1834,7 +1834,7 @@ private final class StarMapSkyView: UIView {
     /// 往返代次：切线／切范围／旋转时 +1，旧段的完成回调凭代次丢弃，
     /// 快速连点不残留旧光点。
     private var flightGeneration = 0
-    private static let flightLegDuration: CFTimeInterval = 0.25
+    private static let flightLegDuration: CFTimeInterval = BearyMotion.normal
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1927,8 +1927,8 @@ private final class StarMapSkyView: UIView {
         self.selectedEdgeId = selectedEdgeId
         // 切范围即换模型：上一段光点立刻结束，不留旧线上的残影。
         endTravellingDot()
-        // r17 M2：有入场参数即起 displayLink 逐帧重建图层（星 0.25s + 最多 0.24s
-        // 延后 + 线 0.25s 淡入，跑完即停）；无参数 / 减动效（调用方不传）
+        // r17 M2：有入场参数即起 displayLink 逐帧重建图层（星 0.26s + 最多 0.24s
+        // 延后 + 线 0.26s 淡入，跑完即停）；无参数 / 减动效（调用方不传）
         // 直接终态。旧 link 先停，新入场不叠两条 link。
         entranceDisplayLink?.invalidate()
         entranceDisplayLink = nil
@@ -1972,7 +1972,7 @@ private final class StarMapSkyView: UIView {
         return (CGFloat(eased), CGFloat(0.6 + 0.4 * eased))
     }
 
-    /// r17 M2：新线淡入进度——两端星都可见（延后较大者 + 0.25s）后 0.25s
+    /// r17 M2：新线淡入进度——两端星都可见（延后较大者 + 0.26s）后 0.26s
     /// 线性淡入；旧线 / 无入场时 1；端点其一是旧星时延后按 0 计。
     private func entranceAlpha(forEdge edge: StarMapSkyEdge, now: CFTimeInterval) -> CGFloat {
         guard entranceStart > 0, entranceEdgeIds.contains(edge.id) else { return 1 }
@@ -2074,7 +2074,7 @@ private final class StarMapSkyView: UIView {
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 0.35
         fade.toValue = 1
-        fade.duration = 0.25
+        fade.duration = BearyMotion.normal
         fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
         edgeLayer.add(fade, forKey: "r17-edge-in")
     }

@@ -441,14 +441,14 @@ final class BearyDetailViewController: UIViewController {
             if gesture.state == .ended && wasJoined != stripPinchJoined {
                 BearyHaptics.press()
             }
-            // 捏合拼图落点走拖拽收尾统一弹簧 0.30s／damping 0.7（落点动画
+            // 捏合拼图落点走拖拽收尾统一弹簧 0.26s／damping 0.7（落点动画
             // 属性是间距／圆角、非缩放量，捏合速度无直接映射，初速度取 0）；减动效直接落终值，不播弹簧。
             if UIAccessibility.isReduceMotionEnabled {
                 self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
                 self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
                 self.imagesScrollView.layoutIfNeeded()
             } else {
-                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
                     self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
                     self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
                     self.imagesScrollView.layoutIfNeeded()
@@ -1792,7 +1792,7 @@ final class BearyDetailViewController: UIViewController {
     /// 在途字段天然与旧值相等、不会误刷对应区；私密占位切换（内容→占位）
     /// 不受在途保护限制，隐私优先。id 不符的回包直接忽略（防御）。
     /// 116 数据填入动效：后台补齐导致文案变化时只淡入该元素本身
-    /// （alpha 0→1、0.25s，不动 transform／布局、不重建节点、不缩放
+    /// （alpha 0→1、0.18s，不动 transform／布局、不重建节点、不缩放
     /// 弹一下）；减动效或未进窗口时直设终值。本函数只在 update(with:)
     /// 的变化分支里调用——初始 renderAll（首帧）与点赞操作行（已有
     /// 爆点／即时反馈）不走这里，避免首帧延迟与操作反馈冲突。
@@ -2535,7 +2535,7 @@ final class BearyDetailViewController: UIViewController {
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
         shake.values = [0, -8, 8, -5, 5, 0]
         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = 0.4
+        shake.duration = BearyMotion.screen
         button.layer.add(shake, forKey: "bearyDetailDenyShake")
     }
 
@@ -2612,7 +2612,7 @@ final class BearyDetailViewController: UIViewController {
                         chip.transform = .identity
                         chip.alpha = 1.0
                     } else {
-                        UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) {
+                        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) {
                             chip.transform = .identity
                             chip.alpha = 1.0
                         }
@@ -2637,7 +2637,7 @@ final class BearyDetailViewController: UIViewController {
                 emoteFlowView.addSubview(chip)
                 placed.append(chip)
                 if !isFirstRender && !reduceMotion {
-                    UIView.animateKeyframes(withDuration: 0.45, delay: 0, options: [], animations: {
+                    UIView.animateKeyframes(withDuration: BearyMotion.screen, delay: 0, options: [], animations: {
                         UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.6) {
                             chip.transform = CGAffineTransform(scaleX: 1.12, y: 1.12)
                             chip.alpha = 1.0
@@ -2648,7 +2648,7 @@ final class BearyDetailViewController: UIViewController {
                         }
                     }, completion: nil)
                     if let emoteView = chip.player {
-                        UIView.animateKeyframes(withDuration: 0.5, delay: 0, options: [], animations: {
+                        UIView.animateKeyframes(withDuration: BearyMotion.screen, delay: 0, options: [], animations: {
                             UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.3) {
                                 emoteView.transform = CGAffineTransform(rotationAngle: -0.1745).scaledBy(x: 1.3, y: 1.3)
                             }
@@ -2709,7 +2709,7 @@ final class BearyDetailViewController: UIViewController {
         } else {
             for chip in departing {
                 chip.overlayButton.isEnabled = false
-                UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState, .curveEaseIn], animations: {
+                UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.beginFromCurrentState, .curveEaseIn], animations: {
                     chip.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
                     chip.alpha = 0
                 }, completion: { [weak self] _ in
@@ -3108,7 +3108,7 @@ final class BearyDetailViewController: UIViewController {
                         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
                         shake.values = [0, -8, 8, -5, 5, 0]
                         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-                        shake.duration = 0.4
+                        shake.duration = BearyMotion.screen
                         self.moreButton.layer.add(shake, forKey: "bearyDenyShake")
                     }
                 }

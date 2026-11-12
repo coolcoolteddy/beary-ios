@@ -739,7 +739,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 // 动效只走 transform 与 opacity，不动布局。
                 receivedView.alpha = 0
                 receivedView.transform = CGAffineTransform(translationX: 0, y: 12)
-                UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
                     self.openSection.alpha = 0
                     self.openSection.transform = CGAffineTransform(translationX: 0, y: -8)
                     self.receivedView.alpha = 1
@@ -1381,7 +1381,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         emoteScroll.isHidden = visibleEmoteCount == 0
     }
 
-    /// 盲盒回应失败的拒绝动效：0.4s 摇头＋warning 震动＋拒绝音效（与详情/卡片 playDenyShake 同口径；
+    /// 盲盒回应失败的拒绝动效：0.38s 摇头＋warning 震动＋拒绝音效（与详情/卡片 playDenyShake 同口径；
     /// 减动效时只跳过视觉抖动，震动与音效照常给）。
     private func playDenyShake(on view: UIView) {
         BearyHaptics.rejectionWarning()
@@ -1391,7 +1391,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
         shake.values = [0, -8, 8, -5, 5, 0]
         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = 0.4
+        shake.duration = BearyMotion.screen
         view.layer.add(shake, forKey: "bearyBlindBoxDenyShake")
     }
 

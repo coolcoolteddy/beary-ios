@@ -617,14 +617,14 @@ final class BearyCalendarCardView: UIView {
         titleChangedSinceSet = true
     }
 
-    /// N3：换日时日历标题淡入（0.2s、只动 alpha；减动效时调用方不调本方法）。
+    /// N3：换日时日历标题淡入（0.18s、只动 alpha；减动效时调用方不调本方法）。
     /// 标题 label 是卡内常驻节点，不重建、不重播其他元素；标题值未变时直接
     /// 返回，不播淡入。
     func fadeTitleForDaySwitch() {
         guard titleChangedSinceSet else { return }
         titleChangedSinceSet = false
         titleLabel.alpha = 0
-        UIView.animate(withDuration: 0.2, animations: {
+        UIView.animate(withDuration: BearyMotion.micro, animations: {
             self.titleLabel.alpha = 1
         })
     }
@@ -641,8 +641,8 @@ final class BearyCalendarCardView: UIView {
         nextButton.alpha = nextEnabled ? 1 : 0.35
     }
 
-    /// C10 “今”钮显隐（VC 在每次 renderCalendar 末尾重算）：浮现 0.2s
-    /// 淡入、隐藏 0.2s 淡出后才 isHidden（栈内不占位）；减动效直设终值。
+    /// C10 “今”钮显隐（VC 在每次 renderCalendar 末尾重算）：浮现 0.18s
+    /// 淡入、隐藏 0.18s 淡出后才 isHidden（栈内不占位）；减动效直设终值。
     /// 重复调用同态时直接返回，不重播淡入淡出。
     func setTodayButtonVisible(_ visible: Bool) {
         if visible {
@@ -651,7 +651,7 @@ final class BearyCalendarCardView: UIView {
             if UIAccessibility.isReduceMotionEnabled {
                 todayButton.alpha = 1
             } else {
-                UIView.animate(withDuration: 0.2, animations: {
+                UIView.animate(withDuration: BearyMotion.micro, animations: {
                     self.todayButton.alpha = 1
                 })
             }
@@ -661,7 +661,7 @@ final class BearyCalendarCardView: UIView {
                 todayButton.alpha = 0
                 todayButton.isHidden = true
             } else {
-                UIView.animate(withDuration: 0.2, animations: {
+                UIView.animate(withDuration: BearyMotion.micro, animations: {
                     self.todayButton.alpha = 0
                 }, completion: { _ in
                     self.todayButton.isHidden = true
@@ -724,7 +724,7 @@ final class BearyCalendarCardView: UIView {
         dayButtons = []
         let staggerEnabled = !UIAccessibility.isReduceMotionEnabled
         // 本批 4b：错峰不再只限月视图——周视图切周时新格子此前静默弹出，
-        // 现与月视图同口径（0.25s、每格 0.03s 错峰、封顶 0.24s、curveEaseOut；
+        // 现与月视图同口径（0.26s、每格 0.03s 错峰、封顶 0.24s、curveEaseOut；
         // 复用格子仍不重播，见下方 isNewButton 分支）。
         // 6-5：快速连点翻页时先清掉在途错峰动画，再起新错峰，避免新旧格
         // 动画叠加残影（UIView 动画的模型值已是终值，清动画即落终值，
@@ -764,7 +764,7 @@ final class BearyCalendarCardView: UIView {
                         staggerIndex += 1
                         button.alpha = 0
                         button.transform = CGAffineTransform(translationX: 0, y: 6)
-                        UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
+                        UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: .curveEaseOut, animations: {
                             button.alpha = 1
                             button.transform = .identity
                         }, completion: nil)
@@ -1253,7 +1253,7 @@ final class BearyTimelineCell: UITableViewCell {
             self.cardView.backgroundColor = highlighted ? BearyColors.surface2 : BearyColors.bg
         }
         if BearyMotion.animated(animated) {
-            UIView.animate(withDuration: 0.13, animations: apply)
+            UIView.animate(withDuration: BearyMotion.micro, animations: apply)
         } else {
             apply()
         }
@@ -1792,7 +1792,7 @@ final class BearyTimelineCell: UITableViewCell {
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
         shake.values = [0, -8, 8, -5, 5, 0]
         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = 0.4
+        shake.duration = BearyMotion.screen
         moreButton.layer.add(shake, forKey: "bearyDenyShake")
     }
 
@@ -1996,7 +1996,7 @@ class BearyTimelineViewController: UIViewController {
     private var calendarFramePrimed = false
     private var visFilterBubbleOpen = false
     private var visFilterBubbleGeneration = 0
-    private static let visFilterBubbleTransitionDuration: TimeInterval = 0.20
+    private static let visFilterBubbleTransitionDuration: TimeInterval = BearyMotion.micro
     private static let visFilterBubbleTransitionOffset: CGFloat = 6
     // 崩溃 1（21:33/21:50 两次 Invalid_Batch_Updates）：首屏加载此前无在途守卫，
     // 重拍 tab/下拉/登录翻转/发布都可重入 loadTimelineFirstPage；旧回包按陈旧
@@ -2072,7 +2072,7 @@ class BearyTimelineViewController: UIViewController {
         return container
     }()
     /// 骨架是否实际出过屏：首屏回包时内容按 60ms/8px 入场，骨架背景视图
-    /// 0.25s 淡出再摘（见 updateChrome）。
+    /// 0.26s 淡出再摘（见 updateChrome）。
     private var didShowTimelineSkeleton = false
     /// 加载三件套·底部脚部（加载中 3 个跳动圆点 / 没有更多了 / 失败重试）。
     private let timelineLoadMoreFooterView = BearyLoadMoreFooterView()
@@ -2498,7 +2498,7 @@ class BearyTimelineViewController: UIViewController {
     }
 
     /// 底栏复位（时间线页从不藏栏，故任何时刻亮回都是正确态；animated:false
-    /// 直达终值，不与在途 0.25s 栏动画打架）。
+    /// 直达终值，不与在途 0.26s 栏动画打架）。
     /// 可见性守卫：本页被切走（isHidden）或不在窗内时不碰栏——否则后台
     /// 首拉回包会在首页下滚藏栏后又把栏亮出来，破坏首页滚动藏栏。
     private func restoreChromeAfterTimelineAction() {
@@ -3498,7 +3498,7 @@ class BearyTimelineViewController: UIViewController {
     /// 自定义下拉刷新进入（消息页 beginCustomPullRefresh 同款，基线适配时间线）：
     /// 指示固定 84 高 + 转圈，回包到即收回（第 2 项后无 0.5 秒最低展示，见 loadTimelineFirstPage 完成分支），
     /// 刷新中内边距 = 基线（安全区顶 + 可见时 60）+ 84，屏内指示底边 = 基线 +84，
-    /// 图标中心 = 基线 +54，灵动岛下方；减动效时直接落位，不播 0.32s 动画。
+    /// 图标中心 = 基线 +54，灵动岛下方；减动效时直接落位，不播 0.38s 动画。
     private func beginCustomPullRefresh() {
         if isCustomPullRefreshing || timelineState == .loading {
             return
@@ -3524,10 +3524,10 @@ class BearyTimelineViewController: UIViewController {
         if UIAccessibility.isReduceMotionEnabled {
             pullIn()
         } else {
-            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
         }
         // 112 刷新节流（仅手势下拉）：上次首屏网络成功 5 秒内且已有行时，
-        // 不再发网络请求，指示头随 0.35s 收回动画收回（第 2 项后首屏完成
+        // 不再发网络请求，指示头随 0.38s 收回动画收回（第 2 项后首屏完成
         // 分支也不再等 500ms）；程序侧刷新（重拍 tab/详情回写/
         // 登录翻转）不受此限。begin 顶部的
         // timelineState == .loading 守卫仍在：静默对齐在途时下拉直接忽略。
@@ -3570,7 +3570,7 @@ class BearyTimelineViewController: UIViewController {
             self.customPullEndInFlight = false
             self.refreshIconView.stopSpinning()
         } else {
-            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
                 self.isCustomPullRefreshing = false
                 self.customPullEndInFlight = false
                 self.refreshIconView.stopSpinning()
@@ -3780,8 +3780,8 @@ class BearyTimelineViewController: UIViewController {
 
     /// 吸顶日期换日动效：旧日期上滑淡出、新日期从下方滑入淡入，同时走、
     /// 吸顶日期换日动效：同一 label 两段衔接、只动 transform/opacity。
-    /// 旧日期上滑淡出（0.12s easeIn）→ 在 alpha=0 时换字 → 新日期从下方
-    /// 滑入淡入（0.13s easeOut），总时长仍 0.25s；任何时刻只显示一个日期，
+    /// 旧日期上滑淡出（motion.micro 0.18s easeIn）→ 在 alpha=0 时换字 → 新日期从下方
+    /// 滑入淡入（motion.micro 0.18s easeOut），总时长 0.36s；任何时刻只显示一个日期，
     /// 相邻日期文案仅差一字时也不再出现双字重影。快速连续换日时新退场以
     /// beginFromCurrentState 从当前呈现态平滑反向（不 snap）；只有最后一段
     /// 退场完成时才换字，中途被取代的退场 completion 以 finished=false 回调、
@@ -3804,7 +3804,7 @@ class BearyTimelineViewController: UIViewController {
             stickyHeaderLabel.text = title
             stickyHeaderLabel.transform = CGAffineTransform(translationX: 0, y: 8)
             stickyHeaderLabel.alpha = 0
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut]) {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut]) {
                 self.stickyHeaderLabel.transform = .identity
                 self.stickyHeaderLabel.alpha = 1
             }
@@ -3813,7 +3813,7 @@ class BearyTimelineViewController: UIViewController {
         // 可见态换日：不 removeAllAnimations（那会把呈现态 snap 回模型态），
         // 新退场直接从当前呈现态起手；被取代的旧退场 completion 以
         // finished=false 回调、跳过换字。
-        UIView.animate(withDuration: 0.12, delay: 0, options: [.curveEaseIn, .beginFromCurrentState]) {
+        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.curveEaseIn, .beginFromCurrentState]) {
             self.stickyHeaderLabel.transform = CGAffineTransform(translationX: 0, y: -8)
             self.stickyHeaderLabel.alpha = 0
         } completion: { finished in
@@ -3822,7 +3822,7 @@ class BearyTimelineViewController: UIViewController {
             // 均不可见，入场从 +8 滑回静止态，静止 frame 与基线与换日前一致。
             self.stickyHeaderLabel.text = title
             self.stickyHeaderLabel.transform = CGAffineTransform(translationX: 0, y: 8)
-            UIView.animate(withDuration: 0.13, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+            UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
                 self.stickyHeaderLabel.transform = .identity
                 self.stickyHeaderLabel.alpha = 1
             }
@@ -4148,7 +4148,7 @@ class BearyTimelineViewController: UIViewController {
         mutate()
         let newHeight = fittingHeaderHeight()
         calendarCard.alpha = 0
-        UIView.animate(withDuration: 0.22, delay: 0, options: [.beginFromCurrentState, .curveEaseOut], animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .curveEaseOut], animations: {
             self.calendarCard.alpha = 1
             if abs(newHeight - oldHeight) >= 1 {
                 self.headerContainer.frame = CGRect(x: 0, y: 0, width: self.tableView.bounds.width, height: newHeight)
@@ -4264,7 +4264,7 @@ class BearyTimelineViewController: UIViewController {
     }
 
     /// 116 数据填入动效：文案／数字变化时只淡入该元素本身（alpha 0→1、
-    /// 0.25s，不动 transform／布局、不重建节点、不缩放弹一下）；同值不赋值
+    /// 0.26s，不动 transform／布局、不重建节点、不缩放弹一下）；同值不赋值
     /// 不重播；减动效或未进窗口时直设终值。按钮只淡入 titleLabel，图标
     /// （火苗／回收站图标）不动，符合“数字只动数字本身”。
     private func setLabelTextFaded(_ label: UILabel, _ text: String) {
@@ -4275,7 +4275,7 @@ class BearyTimelineViewController: UIViewController {
             return
         }
         label.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             label.alpha = 1
         })
     }
@@ -4284,7 +4284,7 @@ class BearyTimelineViewController: UIViewController {
         guard !UIAccessibility.isReduceMotionEnabled, button.window != nil,
               let titleLabel = button.titleLabel else { return }
         titleLabel.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             titleLabel.alpha = 1
         })
     }
@@ -4761,7 +4761,7 @@ class BearyTimelineViewController: UIViewController {
             tableView.reloadData()
             if didShowTimelineSkeleton {
                 // 加载三件套·骨架淡出后内容入场：首屏行从上到下每块错开 60ms、
-                // 依次淡入并上移 8px（骨架背景视图由 updateChrome 0.25s 淡出）。
+                // 依次淡入并上移 8px（骨架背景视图由 updateChrome 0.26s 淡出）。
                 tableView.layoutIfNeeded()
                 let cells = (tableView.indexPathsForVisibleRows ?? []).sorted().compactMap { tableView.cellForRow(at: $0) }
                 BearyLoadingUX.staggerIn(cells: cells, delayStep: 0.06, yOffset: 8)
@@ -5611,7 +5611,7 @@ class BearyTimelineViewController: UIViewController {
     /// 的同日分支不碰 displayed 月，光调它回不到当月；周视图下
     /// selectDay 本就同步锚点，此处同值无害），再复用 selectDay 切日
     /// + 补拉当月圆点，不另写切日路径。切日动效即现有口径：网格复用
-    /// 钮不重播错峰、新格子走既有 0.25s / 0.03 步进错峰，不另加转场动画（翻页
+    /// 钮不重播错峰、新格子走既有 0.26s / 0.03 步进错峰，不另加转场动画（翻页
     /// 64 包反馈修已定“只外科更新网格、不整卡转场”）。
     /// 手动点“今”作废翻页跟随挂起（与手动点选日作废定位挂起同口径），
     /// 防在途月份回包把选区跟回旧视图；reload 守卫挂起不动，与点选
@@ -5771,7 +5771,7 @@ class BearyTimelineViewController: UIViewController {
                 return path.section == 0
             }
             if exitingCells.isEmpty == false {
-                UIView.animate(withDuration: 0.18, animations: {
+                UIView.animate(withDuration: BearyMotion.micro, animations: {
                     for cell in exitingCells {
                         cell.alpha = 0
                         cell.transform = CGAffineTransform(translationX: 0, y: 8)
@@ -6242,7 +6242,7 @@ class BearyTimelineViewController: UIViewController {
         return container
     }
 
-    /// 空态/背景视图上次种类（本批 4b：种类切换时新背景视图 0.2s 淡入，
+    /// 空态/背景视图上次种类（本批 4b：种类切换时新背景视图 0.26s 淡入，
     /// 同种类重复调用不重播；减动效时直显）。
     private var lastChromeBackgroundKind: String?
 
@@ -6301,11 +6301,11 @@ class BearyTimelineViewController: UIViewController {
                 newBackgroundKind = "empty"
             }
         } else {
-            // 加载三件套·骨架淡出：首屏骨架出过屏时，背景视图 0.25s 淡出再摘；
+            // 加载三件套·骨架淡出：首屏骨架出过屏时，背景视图 0.26s 淡出再摘；
             // 减动效或非骨架背景时直接摘（骨架淡出与内容 60ms/8px 入场同步）。
             if didShowTimelineSkeleton, let oldBackground = tableView.backgroundView, BearyMotion.animated(true) {
                 didShowTimelineSkeleton = false
-                UIView.animate(withDuration: 0.25, animations: {
+                UIView.animate(withDuration: BearyMotion.normal, animations: {
                     oldBackground.alpha = 0
                 }, completion: { [weak self] _ in
                     guard let self = self, self.tableView.backgroundView === oldBackground else { return }
@@ -6313,21 +6313,21 @@ class BearyTimelineViewController: UIViewController {
                     oldBackground.alpha = 1
                 })
             } else if let bg = tableView.backgroundView, bg === timelineSkeletonView, bg.alpha < 1 {
-                // 骨架正在淡出中（0.25s 内 updateChrome 重入）：不动，等淡出完成自摘。
+                // 骨架正在淡出中（0.26s 内 updateChrome 重入）：不动，等淡出完成自摘。
             } else {
                 didShowTimelineSkeleton = false
                 tableView.backgroundView = nil
             }
         }
         // 本批 4b：空态切换补入场动效——种类变化且新背景非空时淡入
-        // （6-7 收敛到 0.25s alpha 过渡；只动 backgroundView 的 alpha，
+        // （6-7 收敛到 0.26s alpha 过渡；只动 backgroundView 的 alpha，
         // 已有表行不重播、不重载）。
         if let backgroundView = tableView.backgroundView,
            newBackgroundKind != "none",
            newBackgroundKind != lastChromeBackgroundKind,
            UIAccessibility.isReduceMotionEnabled == false {
             backgroundView.alpha = 0
-            UIView.animate(withDuration: 0.25, animations: {
+            UIView.animate(withDuration: BearyMotion.normal, animations: {
                 backgroundView.alpha = 1
             }, completion: nil)
         }
@@ -6833,7 +6833,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
                 cell.alpha = 0
                 cell.transform = CGAffineTransform(translationX: 0, y: 6)
                 let delay = min(Double(dayOrder) * 0.03, 0.24)
-                UIView.animate(withDuration: 0.25, delay: delay, options: [.curveEaseOut, .allowUserInteraction], animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: [.curveEaseOut, .allowUserInteraction], animations: {
                     cell.alpha = 1
                     cell.transform = .identity
                 }, completion: nil)
@@ -6847,7 +6847,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         // 80 包 A2-3②：队列代际不符时丢弃残留条目，不在新数据行上重播旧错峰。
         guard staggerQueueGeneration == staggerGeneration else { return }
         // 审计 r16 第 10 项：步进／位移走 BearyEntranceConfig（首屏／筛子切换
-        // 60ms／8pt、分页追加 50ms／24pt），与广场共用一套配置；0.25s、
+        // 60ms／8pt、分页追加 50ms／24pt），与广场共用一套配置；0.26s、
         // 封顶 0.24s、可交互。减动效时队列为空，不播。
         let entranceKind: BearyEntranceConfig.Kind = staggerInsertFirstLoad ? .firstLoad : .pagination
         cell.alpha = 0
@@ -6866,7 +6866,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         guard daySwitchTitleFade, section == 0, selectedDayKey != nil else { return }
         daySwitchTitleFade = false
         view.alpha = 0
-        UIView.animate(withDuration: 0.2, animations: {
+        UIView.animate(withDuration: BearyMotion.micro, animations: {
             view.alpha = 1
         })
     }

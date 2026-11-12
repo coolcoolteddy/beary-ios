@@ -328,7 +328,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     }
 
     /// 116 数据填入动效：状态文案变化时只淡入该 label 本身（alpha
-    /// 0→1、0.25s，不动 transform／布局、不重建节点、不缩放弹一下）；
+    /// 0→1、0.26s，不动 transform／布局、不重建节点、不缩放弹一下）；
     /// 同值不赋值不重播；减动效或未进窗口时直设终值。失败视图由
     /// 隐藏变可见时只淡入视图本身。地图大头针为 MapKit 渲染元素，
     /// 不走本口径（见 PR 说明）。
@@ -340,7 +340,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             return
         }
         statusLabel.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             self.statusLabel.alpha = 1
         })
     }
@@ -758,7 +758,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         }
         guard !cells.isEmpty else { return }
         for cell in cells { cell.contentView.alpha = 0 }
-        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             for cell in cells { cell.contentView.alpha = 1 }
         })
     }

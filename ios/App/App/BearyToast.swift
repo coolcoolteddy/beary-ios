@@ -13,7 +13,7 @@ import UIKit
 /// （layoutSubviews 跟 bounds 走，单行约 19pt，与“圆角 18”同口径）。
 /// 展示时长按文案长度分档（U9，见 displayDuration）：≤20 字 2.0s（与旧值一致）、
 /// 21–40 字 3.0s、>40 字 4.0s；带动作入口时取字数档与动作档（保底 4.0s）的大值，
-/// 无动作提示的时长一字不动；淡入 0.25s、到点淡出 0.25s 后移除；减动效时直接现身、
+/// 无动作提示的时长一字不动；淡入 0.26s、到点淡出 0.26s 后移除；减动效时直接现身、
 /// 到点直接移除，不播淡入淡出（与各页原 A5-3 口径一致）。
 /// 动作入口（U9）：show 的 actionTitle/action 均可选、默认 nil；两者都传时 toast
 /// 右侧显示动作入口、点按先撤 toast 再执行回调；任一缺省即无动作入口，现有
@@ -69,11 +69,11 @@ enum BearyToast {
             }
         } else {
             toast.alpha = 0
-            UIView.animate(withDuration: 0.25) {
+            UIView.animate(withDuration: BearyMotion.normal) {
                 toast.alpha = 1
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + displayDuration(for: message, hasAction: hasAction)) { [weak toast] in
-                UIView.animate(withDuration: 0.25, animations: {
+                UIView.animate(withDuration: BearyMotion.normal, animations: {
                     toast?.alpha = 0
                 }, completion: { _ in
                     toast?.removeFromSuperview()

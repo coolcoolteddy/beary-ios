@@ -8,7 +8,7 @@ import UIKit
 // 容器：BearyLoginSheet.make() 只建 sheet 模式登录页、不 present；调用点按原样
 // 接回调后再 present（与原整页顺序一致，含 dismiss 调用方与会话守卫）。
 // 呈现走共享底部弹窗容器 BearyBottomSheet（transitioningDelegate +
-// presentationController 工厂）：出现弹簧 0.4s / damping 0.8 从底部升起，
+// presentationController 工厂）：出现弹簧 0.38s / damping 0.7 从底部升起，
 // 背后页面同步缩 0.92 倍、圆角 16pt、遮罩压暗 0.45；拖动整张弹窗可拖，
 // 下滑 1:1 跟手、上滑按 0.3 阻力折算，松手下拖超高 1/3 或下甩速度 > 1000pt/s
 // 关闭、否则弹簧弹回；关闭时背后页面同步恢复。遮罩点按与拖动关闭都走
@@ -238,11 +238,11 @@ private final class BearyLoginSheetPresentationController: BearyBottomSheetPrese
     override func preferredContentSizeDidChange(forChildContentContainer container: UIContentContainer) {
         super.preferredContentSizeDidChange(forChildContentContainer: container)
         guard let containerView = containerView else { return }
-        // 内容高变化（邀请展开/收起、字号档位）时 0.25s 跟帧走；减动效直落终值。
+        // 内容高变化（邀请展开/收起、字号档位）时 0.26s 跟帧走；减动效直落终值。
         if UIAccessibility.isReduceMotionEnabled {
             containerView.layoutIfNeeded()
         } else {
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState], animations: {
                 containerView.layoutIfNeeded()
             })
         }

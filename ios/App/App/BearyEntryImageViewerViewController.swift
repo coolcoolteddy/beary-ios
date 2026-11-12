@@ -390,7 +390,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         return true
     }
 
-    /// 拖拽收尾统一弹簧（规范 §6）：0.30s／damping 0.7；松手速度经
+    /// 拖拽收尾统一弹簧（规范 §6）：0.26s／damping 0.7；松手速度经
     /// springVelocityAlongReturn 归一化后由 initialSpringVelocity 传入，
     /// 慢拖（松手速度≈0）归一化结果即 0。减动效门控走 BearyMotion.animated，
     /// 与原直接判 UIAccessibility.isReduceMotionEnabled 等效，减动效开时
@@ -401,7 +401,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private func applyTransform(animated: Bool, initialSpringVelocity: CGFloat = 0, additionalAnimations: (() -> Void)? = nil) {
         let transform = CGAffineTransform(translationX: tx, y: ty).scaledBy(x: scale, y: scale)
         if BearyMotion.animated(animated) {
-            UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
                 self.imageView.transform = transform
                 self.liveOverlay?.transform = transform
                 additionalAnimations?()
@@ -1231,7 +1231,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                     ty = 0
                     // 审计残留第 10 项：背景/chrome 复位原在动画块外同步调用，
                     // 瞬间跳回、图片却随后滑回，视觉错位；现经 additionalAnimations
-                    // 与图片回弹放进同一弹簧块（0.30s／damping 0.7＋松手速度归一化，
+                    // 与图片回弹放进同一弹簧块（0.26s／damping 0.7＋松手速度归一化，
                     // 减动效开时直切终态），阈值与弹簧参数均不动。
                     applyTransform(animated: true, initialSpringVelocity: springVelocity, additionalAnimations: { self.resetDismissDragAppearance() })
                 }
@@ -1264,7 +1264,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 navigate(direction: direction)
             } else {
                 // 横向弹回：本分支要同步驱动相邻图，不能走 applyTransform
-                // 单图路径，动画块内仍用同一统一弹簧 0.30s／damping 0.7；
+                // 单图路径，动画块内仍用同一统一弹簧 0.26s／damping 0.7；
                 // 横向松手速度沿回弹方向的分量除以 |tx| 归一化，归一化前
                 // 先算，tx/ty 清零后距离就没了。减动效分支原样直切终态。
                 let returnSpeed = tx > 0 ? -velocity.x : velocity.x
@@ -1279,7 +1279,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                     let w = pageWidthValue()
                     let dir = neighborDirection
                     let hasNeighbor = neighborIndex != nil
-                    UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: springVelocity, options: .curveEaseOut, animations: {
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: springVelocity, options: .curveEaseOut, animations: {
                         self.applyTransform(animated: false)
                         if hasNeighbor {
                             self.neighborImageView.transform = CGAffineTransform(translationX: CGFloat(dir) * w, y: 0)
@@ -1409,7 +1409,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 commit()
                 return
             }
-            UIView.animate(withDuration: 0.25, animations: {
+            UIView.animate(withDuration: BearyMotion.normal, animations: {
                 self.tx = offX
                 self.ty = 0
                 self.applyTransform(animated: false)
@@ -1479,7 +1479,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             commitFallback()
             return
         }
-        UIView.animate(withDuration: 0.25, animations: {
+        UIView.animate(withDuration: BearyMotion.normal, animations: {
             self.tx = offX
             self.ty = 0
             self.applyTransform(animated: false)
@@ -1555,9 +1555,9 @@ private final class BearyImageViewerReturnAnimator: NSObject, UIViewControllerAn
               let viewer = viewer,
               let origin = viewer.dismissOriginFrame(),
               let start = viewer.dismissStartInfo() else {
-            // 兜底：减动效、无图、无原处、翻页后关场——走 0.25s 淡出，
+            // 兜底：减动效、无图、无原处、翻页后关场——走 0.26s 淡出，
             // 但 toView 已在位，同样不闪。
-            UIView.animate(withDuration: reduceMotion ? 0 : 0.25, animations: {
+            UIView.animate(withDuration: reduceMotion ? 0 : BearyMotion.normal, animations: {
                 fromView.alpha = 0
             }, completion: { _ in
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
@@ -1578,9 +1578,10 @@ private final class BearyImageViewerReturnAnimator: NSObject, UIViewControllerAn
         tempView.layer.cornerRadius = 12
         container.addSubview(tempView)
         let targetRect = container.convert(origin, from: nil)
-        // 关场回原位走弹簧（规范 §6）：阻尼 0.85，几乎无超弹、防冲出原位；
-        // 时长与目标矩形不动，仍 0.25s 回 targetRect。
-        UIView.animate(withDuration: 0.25, delay: 0, usingSpringWithDamping: 0.85, initialSpringVelocity: 0, options: .curveEaseOut, animations: {
+        // 关场回原位走弹簧（规范 §6，第十轮收敛）：阻尼 0.7——原 0.85 防冲出原位
+        // 口径作废，0.7 弹簧回弹有轻微超调、可能短暂冲出原位，需真机回归；
+        // 时长 0.26s（motion.normal），目标矩形不动，回 targetRect。
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: .curveEaseOut, animations: {
             fromView.alpha = 0
             tempView.frame = targetRect
         }, completion: { _ in

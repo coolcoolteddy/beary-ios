@@ -200,7 +200,7 @@ private final class BearyCenteredFadeAnimator: NSObject, UIViewControllerAnimate
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return UIAccessibility.isReduceMotionEnabled ? 0 : 0.25
+        return UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
