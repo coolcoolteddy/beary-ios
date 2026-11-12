@@ -103,10 +103,15 @@ final class BearyHeatmapView: UIView {
             gridArea.addSubview(label)
             monthLabels.append(label)
         }
-        // 星期名（周一在首行）：字号 10，框高取整行 pitch 使文字在行内居中。
+        // 星期名（周一在首行）：规范 §11 星期名 12 regular scaled（captionFont），
+        // 框高取整行 pitch 使文字在行内居中；大字号下星期名（28pt 宽框）可能溢出：
+        // 允许缩到 0.8 倍兜底（与月份名同款写法），星期列 28pt 宽不放宽。
         for weekday in ["周一", "周二", "周三", "周四", "周五", "周六", "周日"] {
             let label = UILabel()
-            label.font = UIFont.systemFont(ofSize: 10)
+            label.font = BearyDynamicType.captionFont()
+            label.adjustsFontForContentSizeCategory = true
+            label.adjustsFontSizeToFitWidth = true
+            label.minimumScaleFactor = 0.8
             label.textColor = BearyColors.gray
             label.text = weekday
             gridArea.addSubview(label)
