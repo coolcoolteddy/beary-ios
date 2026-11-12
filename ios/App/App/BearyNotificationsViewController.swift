@@ -9,7 +9,7 @@ import UIKit
 // - 设计帧：~/workspace/previews/layout_rest.html 的消息帧（未读蓝点 + 全部已读 +
 //   信件与系统信区分）。帧里时间写“今天 09:40 / 昨天”仅为示意，网页代码的
 //   fmtDate 一律是 M月d日 H:mm（小时不补零）。App 端时间已改相对口径
-//   （2026-11-05 Li 定：刚刚/X分钟前/X小时前/X天前），与网页不再同口径。
+//   （2026-11-11 定版带空格，取代 2026-11-05 口径：刚刚/X 分钟前/X 小时前/X 天前），与网页不再同口径。
 // - 后端：~/workspace/teddy_beary/worker.js（GET /beary/api/notifications、
 //   POST /beary/api/notifications/read，均已在 BearyAPI.swift 里有现成方法，
 //   本文件不新增网络层、不改 BearyAPI.swift）。
@@ -3708,8 +3708,8 @@ class BearyNotificationCell: UITableViewCell {
         return formatter
     }()
 
-    /// 通知时间口径（2026-11-05 Li 定）：24 小时内相对时间——不到 1 分钟“刚刚”，
-    /// 不到 1 小时“X分钟前”，不到 24 小时“X小时前”；超过 24 小时写天数“X天前”。
+    /// 通知时间口径（2026-11-11 定版带空格，取代 2026-11-05 口径）：24 小时内相对时间——不到 1 分钟“刚刚”，
+    /// 不到 1 小时“X 分钟前”，不到 24 小时“X 小时前”；超过 24 小时写天数“X 天前”。
     /// 新一轮 01：几秒内的时钟偏差仍算“刚刚”；明显未来（> 5 秒）不误报为刚发送，
     /// 改走绝对时间显示。
     private static func timeText(ms: Int?) -> String {
@@ -3718,9 +3718,9 @@ class BearyNotificationCell: UITableViewCell {
         let diff = Date().timeIntervalSince(date)
         if diff < -5 { return BearyText.timeString(ms: msValue) }
         if diff < 60 { return "刚刚" }
-        if diff < 3600 { return "\(Int(diff / 60))分钟前" }
-        if diff < 86400 { return "\(Int(diff / 3600))小时前" }
-        return "\(Int(diff / 86400))天前"
+        if diff < 3600 { return "\(Int(diff / 60)) 分钟前" }
+        if diff < 86400 { return "\(Int(diff / 3600)) 小时前" }
+        return "\(Int(diff / 86400)) 天前"
     }
 
     /// 网页 fmtDay 口径：M月d日（无空格，信件引用 meta 用它）。

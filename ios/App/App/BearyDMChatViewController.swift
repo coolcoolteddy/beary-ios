@@ -1643,7 +1643,7 @@ private final class BearyDMMessageCell: UITableViewCell {
         onRetry = nil
     }
 
-    /// 气泡时间口径与通知行一致（相对时间：刚刚/X分钟前/X小时前/X天前）。
+    /// 气泡时间口径与通知行一致（相对时间：刚刚/X 分钟前/X 小时前/X 天前；2026-11-11 定版带空格，取代 2026-11-05 无空格口径）。
     /// 新一轮 01：几秒内的时钟偏差仍算“刚刚”；明显未来（> 5 秒）不误报为刚发送，
     /// 改走绝对时间显示。
     private static func relativeTimeText(ms: Int?) -> String {
@@ -1652,9 +1652,9 @@ private final class BearyDMMessageCell: UITableViewCell {
         let diff = Date().timeIntervalSince(date)
         if diff < -5 { return BearyText.timeString(ms: msValue) }
         if diff < 60 { return "刚刚" }
-        if diff < 3600 { return "\(Int(diff / 60))分钟前" }
-        if diff < 86400 { return "\(Int(diff / 3600))小时前" }
-        return "\(Int(diff / 86400))天前"
+        if diff < 3600 { return "\(Int(diff / 60)) 分钟前" }
+        if diff < 86400 { return "\(Int(diff / 3600)) 小时前" }
+        return "\(Int(diff / 86400)) 天前"
     }
 
     /// 第三轮审计 1：相对时间 + 未确认后缀的统一组合（建行与分钟刷新共用）。
@@ -1683,7 +1683,7 @@ private final class BearyDMMessageCell: UITableViewCell {
         failButton.accessibilityLabel = (isMine && showFail) ? "消息发送失败，重试" : nil
         self.onRetry = onRetry
         let body = message.body ?? ""
-        // 气泡时间口径与通知行一致（相对时间：刚刚/X分钟前/X小时前/X天前）。
+        // 气泡时间口径与通知行一致（相对时间：刚刚/X 分钟前/X 小时前/X 天前；2026-11-11 定版带空格，取代 2026-11-05 无空格口径）。
         lastCreatedAtMs = message.createdAt
         isUnconfirmed = showUnconfirmed
         if isMine {
