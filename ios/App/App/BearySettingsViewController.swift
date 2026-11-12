@@ -1433,7 +1433,7 @@ final class BearySettingsViewController: UIViewController {
         let deviceRow = makeSettingsTappableRow(content: deviceRowContent, button: deviceButton)
         logoutOthersButton.translatesAutoresizingMaskIntoConstraints = false
         logoutOthersButton.setTitle("退出其他设备", for: .normal)
-        logoutOthersButton.setTitleColor(BearyColors.red, for: .normal)
+        logoutOthersButton.setTitleColor(BearyColors.destructiveText, for: .normal)
         // F10：网页 .btn.danger 口径——36 高、13/600、红字红边（红 45% 透明边）。
         logoutOthersButton.titleLabel?.font = BearyDynamicType.buttonSmallFont()
         logoutOthersButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -4884,7 +4884,7 @@ private final class BearyDiagnosticsViewController: UIViewController {
         copyButton.bearyAddPressFeedback()
         clearButton.translatesAutoresizingMaskIntoConstraints = false
         clearButton.setTitle("清空", for: .normal)
-        clearButton.setTitleColor(BearyColors.red, for: .normal)
+        clearButton.setTitleColor(BearyColors.destructiveText, for: .normal)
         clearButton.titleLabel?.font = BearyDynamicType.smallBodyFont()
         clearButton.titleLabel?.adjustsFontForContentSizeCategory = true
         clearButton.addTarget(self, action: #selector(clearTapped), for: .touchUpInside)

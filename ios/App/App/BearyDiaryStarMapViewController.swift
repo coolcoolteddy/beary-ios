@@ -1395,7 +1395,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let button = UIButton(type: .custom)
         button.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 15))
         button.titleLabel?.adjustsFontForContentSizeCategory = true
-        button.setTitleColor(BearyColors.orange, for: .normal)
+        button.setTitleColor(BearyColors.deepOrangeText, for: .normal)
         button.setTitle("加载更多（还剩 \(remaining) 条）", for: .normal)
         button.addTarget(self, action: #selector(didTapEdgeListLoadMore), for: .touchUpInside)
         let footer = UIView(frame: CGRect(x: 0, y: 0, width: edgeListTableView.bounds.width, height: 44))
