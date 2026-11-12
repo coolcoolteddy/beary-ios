@@ -443,7 +443,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
 
         headerWrap.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "草稿箱"
-        titleLabel.font = UIFont.systemFont(ofSize: 15, weight: .bold)
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .bold))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -943,7 +944,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         topRow.alignment = .center
         let timeLabel = UILabel()
         timeLabel.text = draftTimeText(updatedAtSeconds: draftValue.updatedAt)
-        timeLabel.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        timeLabel.font = BearyDynamicType.captionFont()
+        timeLabel.adjustsFontForContentSizeCategory = true
         // 113：卡片时间改全 App 时间文案同款灰（此前误用蓝）；同卡“草稿已保存”
         // 状态行蓝色不动（见下方 saveStatus 分支）。
         timeLabel.textColor = BearyColors.gray
@@ -967,7 +969,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             }
             let countLabel = UILabel()
             countLabel.text = "\(draftValue.images.count)"
-            countLabel.font = UIFont.systemFont(ofSize: 12)
+            countLabel.font = BearyDynamicType.numberFont()
+            countLabel.adjustsFontForContentSizeCategory = true
             countLabel.textColor = BearyColors.gray
             imageRow.addArrangedSubview(countLabel)
             topRow.addArrangedSubview(imageRow)
