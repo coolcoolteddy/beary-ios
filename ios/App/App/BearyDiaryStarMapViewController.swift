@@ -898,6 +898,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
         // P1-5：重叠列表随新模型刷新（见 refreshOverlapSheet）——单星／
         // 单线已有基线 :703–708 的清选择逻辑，不重复改；只补重叠列表。
         refreshOverlapSheet()
+        // 扫荡 130：连线列表同样随新模型刷新（见 refreshEdgeListSheet）——
+        // 否则打开后模型变了，列表仍是打开时的旧行与旧条数。
+        refreshEdgeListSheet()
         let visibleEdges: [StarMapSkyEdge]
         if let filter = edgeFilter {
             visibleEdges = model.edges
@@ -1329,11 +1332,26 @@ final class BearyDiaryStarMapViewController: UIViewController {
         // 审计三轮第 2 项：列表改 UITableView 复用——只建可见行；按关联度
         // （共享原因数）降序先展示少量，其余点“加载更多”按需续出。
         // 本支不动显隐（显隐是第 1 项的范围）。
-        edgeListEdges = listedEdges().sorted { a, b in
+        edgeListEdges = sortedListedEdges()
+        edgeListShownCount = min(edgeListInitialCount, edgeListEdges.count)
+        rebuildEdgeListContent()
+        // L3：底卡默认隐藏，展示函数自己取消隐藏（同 showStarSheet 等）——
+        // 空连线的「暂无连线」两行同样要可见，故取消隐藏放在分支外。
+        // 不另滚：底卡紧贴状态行下方，按钮可点时卡片顶部已在可视区内，
+        // 列表余部随页面正常滚动可见。
+        sheetCard.isHidden = false
+    }
+
+    /// 当前筛选下的连线按关联度（共享原因数）降序、id 升序排好。
+    private func sortedListedEdges() -> [StarMapEdge] {
+        listedEdges().sorted { a, b in
             if a.reasons.count != b.reasons.count { return a.reasons.count > b.reasons.count }
             return a.id < b.id
         }
-        edgeListShownCount = min(edgeListInitialCount, edgeListEdges.count)
+    }
+
+    /// 连线列表内容重建（标题／空态／表 + 脚部 + 表高）：打开与刷新共用。
+    private func rebuildEdgeListContent() {
         sheetStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         if edgeListEdges.isEmpty {
             sheetStack.addArrangedSubview(sheetTitleLabel("暂无连线"))
@@ -1349,11 +1367,22 @@ final class BearyDiaryStarMapViewController: UIViewController {
             updateEdgeListFooter()
             updateEdgeListTableHeight()
         }
-        // L3：底卡默认隐藏，展示函数自己取消隐藏（同 showStarSheet 等）——
-        // 空连线的「暂无连线」两行同样要可见，故取消隐藏放在分支外。
-        // 不另滚：底卡紧贴状态行下方，按钮可点时卡片顶部已在可视区内，
-        // 列表余部随页面正常滚动可见。
-        sheetCard.isHidden = false
+    }
+
+    /// 扫荡 130（#1213 回归）：连线列表打开后随新模型刷新——与重叠列表
+    /// refreshOverlapSheet 同款，由 applyModelToSky 调用。列表在初始加载
+    /// 中打开时模型还是空的，回包后旧「暂无连线」会一直留着；边被删改
+    /// 后旧行点按也是死路（didSelectRowAt 按 id 重查不到即静默 return）。
+    /// 已展示条数保留（只按新总数钳制），空过再有边时按初始条数重展。
+    private func refreshEdgeListSheet() {
+        guard showingEdgeListSheet else { return }
+        edgeListEdges = sortedListedEdges()
+        if edgeListShownCount == 0 {
+            edgeListShownCount = min(edgeListInitialCount, edgeListEdges.count)
+        } else {
+            edgeListShownCount = min(edgeListShownCount, edgeListEdges.count)
+        }
+        rebuildEdgeListContent()
     }
 
     /// 连线列表“加载更多”脚部：还有未展示的行才留入口，全部展示后撤掉。
