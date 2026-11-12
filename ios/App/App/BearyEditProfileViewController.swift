@@ -1328,10 +1328,10 @@ class BearyEditProfileViewController: UIViewController {
             case "taken": return "这个用户名已被占用"
             case "cooldown": return "用户名修改后，7 天内不能再改"
             case "bad_handle": return "用户名需 3–20 位小写字母、数字或下划线"
-            default: return "用户名修改失败"
+            default: return "用户名修改失败，请重试"
             }
         default:
-            return "用户名修改失败"
+            return "用户名修改失败，请重试"
         }
     }
 
