@@ -138,8 +138,10 @@ extension BearyAPI {
 
     /// POST /api/account/delete（注销发起；服务端返回 delete_at = 发起 + 7 天冷静期；
     /// 管理员 403 admin_cannot_delete，调用方须透传该判定，不得在客户端另造禁注销规则）。
-    func requestAccountDelete(completion: @escaping (Result<BearyAccountDeleteResponse, APIError>) -> Void) {
-        request("/api/account/delete", method: "POST", completion: completion)
+    /// keepPublic：第 5 条定版显式勾选——默认 false（全部日记随注销删除）；true 时
+    /// 只保留公开过的日记、作者匿名显示为“用户已注销”，以 keep_public 下发服务端。
+    func requestAccountDelete(keepPublic: Bool = false, completion: @escaping (Result<BearyAccountDeleteResponse, APIError>) -> Void) {
+        request("/api/account/delete", method: "POST", jsonBody: ["keep_public": keepPublic], completion: completion)
     }
 }
 
@@ -2647,25 +2649,28 @@ final class BearySettingsViewController: UIViewController {
 
     @objc private func deleteButtonTapped() {
         guard !isDeleting else { return }
-        // 第四轮审计 12：居中 Alert 改底部弹窗（两步确认文案与流程不变；措辞取主线现行「用户已注销」）。
-        BearyConfirmSheet.show(from: self, title: "注销账户", message: "7 天冷静期内登录可取消注销。7 天后账户正式注销，日记保留但作者显示为“用户已注销”。\n\n注销后，你的 Plus、未到账的邀请奖励和收藏会一并作废。", actions: [
+        // 第 5 条定版：默认删除全部日记；显式勾选（默认不勾）才保留公开过的日记。
+        var keepPublicDiaries = false
+        BearyConfirmSheet.show(from: self, title: "注销账户", message: "7 天冷静期内登录可取消注销。7 天后账户正式注销，全部日记将被删除。\n\n注销后，你的 Plus、未到账的邀请奖励和收藏会一并作废。", actions: [
             BearyConfirmSheet.Action(title: "继续注销", style: .destructive, handler: { [weak self] in
-                self?.showDeleteSecondConfirm()
+                self?.showDeleteSecondConfirm(keepPublicDiaries: keepPublicDiaries)
             }),
             BearyConfirmSheet.Action(title: "再想想", style: .cancel),
-        ])
+        ], toggle: BearyConfirmSheet.Toggle(title: "保留我公开过的日记", subtitle: "供曾读过的人回看，作者显示为“用户已注销”", isOn: false, onChange: { isOn in
+            keepPublicDiaries = isOn
+        }))
     }
 
-    private func showDeleteSecondConfirm() {
+    private func showDeleteSecondConfirm(keepPublicDiaries: Bool) {
         BearyConfirmSheet.show(from: self, title: "最后确认", message: "真的要注销吗？此操作 7 天后不可撤销。", actions: [
             BearyConfirmSheet.Action(title: "确认注销", style: .destructive, handler: { [weak self] in
-                self?.confirmDeleteAccount()
+                self?.confirmDeleteAccount(keepPublicDiaries: keepPublicDiaries)
             }),
             BearyConfirmSheet.Action(title: "取消", style: .cancel),
         ])
     }
 
-    private func confirmDeleteAccount() {
+    private func confirmDeleteAccount(keepPublicDiaries: Bool) {
         isDeleting = true
         setDeleteBusy(true)
         // 第八轮审计 01：注销成功回调验证发起时身份——只拦切换入口不够，
@@ -2674,7 +2679,7 @@ final class BearySettingsViewController: UIViewController {
         // 同一登录态内日常 /me 成功不推进，不会误判。
         let requestAccountId = SessionManager.shared.currentUser?.id
         let requestEpoch = BearyAPI.shared.authEpoch
-        BearyAPI.shared.requestAccountDelete { [weak self] result in
+        BearyAPI.shared.requestAccountDelete(keepPublic: keepPublicDiaries) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 switch result {
