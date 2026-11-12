@@ -1042,8 +1042,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 录屏批 (f)：加载态光转圈太空，加一句说明（与转圈同显同隐，见 loadQuotePanelTab）。
     private let quotePanelLoadingLabel = UILabel()
     private let quotePanelEmptyLabel = UILabel()
-    private let quotePanelRetryButton = UIButton(type: .system)
+    private let quotePanelRetryButton = BearyHit44Button(type: .system)
     private let quotePanelRows = UIStackView()
+    /// 审计 R9 A：三态（加载／空／失败）互斥状态容器——有数据时行栈撑高，
+    /// 三态时状态容器撑高；失败区与消息同处一区、有缓存行时落到行下方，
+    /// 不再绝对定位覆盖行。
+    private let quotePanelStateStack = UIStackView()
+    private let quotePanelSpinnerWrap = UIView()
+    private var quotePanelRowsBottomConstraint: NSLayoutConstraint?
+    private var quotePanelStateTopToPanelConstraint: NSLayoutConstraint?
+    private var quotePanelStateTopToRowsConstraint: NSLayoutConstraint?
+    private var quotePanelStateBottomConstraint: NSLayoutConstraint?
     /// 录屏批 (b)：引用页标题保存/恢复——打开面板时标题改“选择引用”，关闭时
     /// 还原打开前的标题（“新日记”/“编辑日记”/“加载日记…”均按原样回，不硬编码）。
     private var quotePanelSavedTitle: String?
@@ -2526,12 +2535,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanelLoadingLabel.font = UIFont.systemFont(ofSize: 13)
         quotePanelLoadingLabel.textColor = BearyColors.gray
         quotePanelLoadingLabel.textAlignment = .center
+        quotePanelLoadingLabel.numberOfLines = 0
         quotePanelLoadingLabel.text = "正在加载可引用的日记…"
         quotePanelLoadingLabel.isHidden = true
         quotePanelEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
         quotePanelEmptyLabel.font = UIFont.systemFont(ofSize: 15)
         quotePanelEmptyLabel.textColor = BearyColors.gray
         quotePanelEmptyLabel.textAlignment = .center
+        quotePanelEmptyLabel.numberOfLines = 0
         quotePanelEmptyLabel.text = "还没有可引用的日记"
         quotePanelEmptyLabel.isHidden = true
         quotePanelRetryButton.translatesAutoresizingMaskIntoConstraints = false
@@ -2543,44 +2554,77 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanelRetryButton.isHidden = true
         quotePanelRetryButton.addTarget(self, action: #selector(didTapQuotePanelRetry), for: .touchUpInside)
         quotePanelRetryButton.bearyAddPressFeedback()
+        // 审计 R9 A：三态（加载／空／失败）收进互斥状态容器——容器纵向参与
+        // 布局，有数据时行栈撑高、三态时状态容器撑高，不再各自绝对定位；
+        // 转圈只在加载态出现（stopSpinning 只置 alpha 不藏视图，包一层按
+        // 加载文案显隐收起，停转后不占 20pt 高）。
+        quotePanelStateStack.translatesAutoresizingMaskIntoConstraints = false
+        quotePanelStateStack.axis = .vertical
+        quotePanelStateStack.alignment = .fill
+        quotePanelStateStack.spacing = 8
+        quotePanelStateStack.isHidden = true
+        quotePanelSpinnerWrap.translatesAutoresizingMaskIntoConstraints = false
         quotePanelRows.translatesAutoresizingMaskIntoConstraints = false
         quotePanelRows.axis = .vertical
         quotePanelRows.spacing = 0
         // 112 v2：列表栈底色同页面底色走（浅白、深黑），行底不再另铺灰块。
         quotePanelRows.backgroundColor = BearyColors.bg
         contentStack.addArrangedSubview(quotePanel)
-        quotePanel.addSubview(quotePanelSpinner)
-        quotePanel.addSubview(quotePanelLoadingLabel)
-        quotePanel.addSubview(quotePanelEmptyLabel)
-        quotePanel.addSubview(quotePanelRetryButton)
         quotePanel.addSubview(quotePanelRows)
+        quotePanel.addSubview(quotePanelStateStack)
+        quotePanelStateStack.addArrangedSubview(quotePanelSpinnerWrap)
+        quotePanelSpinnerWrap.addSubview(quotePanelSpinner)
+        quotePanelStateStack.addArrangedSubview(quotePanelLoadingLabel)
+        quotePanelStateStack.addArrangedSubview(quotePanelEmptyLabel)
+        quotePanelStateStack.addArrangedSubview(quotePanelRetryButton)
+        quotePanelRowsBottomConstraint = quotePanelRows.bottomAnchor.constraint(equalTo: quotePanel.bottomAnchor)
+        quotePanelStateTopToPanelConstraint = quotePanelStateStack.topAnchor.constraint(equalTo: quotePanel.topAnchor, constant: 16)
+        quotePanelStateTopToRowsConstraint = quotePanelStateStack.topAnchor.constraint(equalTo: quotePanelRows.bottomAnchor, constant: 12)
+        quotePanelStateBottomConstraint = quotePanelStateStack.bottomAnchor.constraint(equalTo: quotePanel.bottomAnchor, constant: -16)
         NSLayoutConstraint.activate([
             // 2026-10-29 第 26 项：列表顶贴导航栏、无顶隙——tab 条顶距面板顶 0
             //（原 10）、行顶距 tab 条底 0（原 4）；左右 16 仍由 contentStack 边距提供，
             // 容器在面板内居中（网页 qp-seg justify-content:center）。
-            quotePanelSpinner.topAnchor.constraint(equalTo: quotePanel.topAnchor, constant: 16),
-            quotePanelSpinner.centerXAnchor.constraint(equalTo: quotePanel.centerXAnchor),
+            quotePanelSpinner.centerXAnchor.constraint(equalTo: quotePanelSpinnerWrap.centerXAnchor),
+            quotePanelSpinner.centerYAnchor.constraint(equalTo: quotePanelSpinnerWrap.centerYAnchor),
             quotePanelSpinner.widthAnchor.constraint(equalToConstant: 20),
             quotePanelSpinner.heightAnchor.constraint(equalToConstant: 20),
-            quotePanelLoadingLabel.topAnchor.constraint(equalTo: quotePanelSpinner.bottomAnchor, constant: 8),
-            quotePanelLoadingLabel.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
-            quotePanelLoadingLabel.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
-            quotePanelEmptyLabel.topAnchor.constraint(equalTo: quotePanel.topAnchor, constant: 16),
-            quotePanelEmptyLabel.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
-            quotePanelEmptyLabel.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
-            quotePanelRetryButton.topAnchor.constraint(equalTo: quotePanel.topAnchor, constant: 16),
-            quotePanelRetryButton.centerXAnchor.constraint(equalTo: quotePanel.centerXAnchor),
+            quotePanelSpinnerWrap.heightAnchor.constraint(equalToConstant: 20),
+            // 审计 R9 A：重试钮实高 44pt——命中区完整落在按钮自身 bounds
+            // 内，不靠 point(inside:) 外扩越过面板底。
+            quotePanelRetryButton.heightAnchor.constraint(equalToConstant: 44),
             quotePanelRows.topAnchor.constraint(equalTo: quotePanel.topAnchor, constant: 0),
             quotePanelRows.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
             quotePanelRows.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
-            quotePanelRows.bottomAnchor.constraint(equalTo: quotePanel.bottomAnchor),
+            quotePanelStateStack.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
+            quotePanelStateStack.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
         ])
+        quotePanelRowsBottomConstraint?.isActive = true
+        quotePanelStateTopToPanelConstraint?.isActive = true
+        // 审计 R9 A：面板不再让三态提示画在 0 高容器外——内容全部收进
+        // 有高度的容器内，溢出直接裁掉。
+        quotePanel.clipsToBounds = true
         // 2026-10-29 第 26 项：面板背板改回页面底色 bg（不再是内缩的灰色容器；
         // 原 surface 底在深色下呈 #26262c 灰框，与页底黑底形成方框感）。
         // tab 条 faint 底在 bg 面板上仍有区分，选中钮 surface 底在 faint 条上亦可见。
         quotePanel.backgroundColor = BearyColors.bg
         quotePanel.isHidden = true
         contentStack.setCustomSpacing(16, after: quotePanel)
+    }
+
+    /// 审计 R9 A：状态容器与行栈互斥撑高——任一状态可见时状态容器参与
+    /// 纵向布局（底锚面板底）；有缓存行又有失败态时状态区落到行下方，
+    /// 不覆盖行；无状态时只留行栈撑高。凡改动三态显隐处都要调一次。
+    private func refreshQuotePanelStateLayout() {
+        let loadingVisible = !quotePanelLoadingLabel.isHidden
+        quotePanelSpinnerWrap.isHidden = !loadingVisible
+        let stateVisible = loadingVisible || !quotePanelEmptyLabel.isHidden || !quotePanelRetryButton.isHidden
+        quotePanelStateStack.isHidden = !stateVisible
+        quotePanelStateBottomConstraint?.isActive = stateVisible
+        let hasRows = !quotePanelRows.arrangedSubviews.isEmpty
+        quotePanelStateTopToPanelConstraint?.isActive = stateVisible && !hasRows
+        quotePanelStateTopToRowsConstraint?.isActive = stateVisible && hasRows
+        quotePanelRowsBottomConstraint?.isActive = !(stateVisible && hasRows)
     }
 
     /// 自定义 tab 选中态：选中墨字 + surface 底，未选灰字无底（与旧系统分段控件的
@@ -2687,6 +2731,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 不会把转圈顶回已关闭的面板），标题还原打开前存的那句。
                 self.quotePanelSpinner.stopSpinning()
                 self.quotePanelLoadingLabel.isHidden = true
+                self.refreshQuotePanelStateLayout()
                 if let savedTitle = self.quotePanelSavedTitle {
                     self.titleLabel.text = savedTitle
                     self.quotePanelSavedTitle = nil
@@ -2938,6 +2983,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quotePanelRows.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
+        refreshQuotePanelStateLayout()
         quotePanelSeq += 1
         let seq = quotePanelSeq
         let tab = quotePanelTab
@@ -2966,6 +3012,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.quotePanelLoadingLabel.isHidden = true
                     self.quotePanelLoading = false
                     self.quotePanelCache.removeAll()
+                    self.refreshQuotePanelStateLayout()
                     return
                 }
                 self.quotePanelSpinner.stopSpinning()
@@ -3007,6 +3054,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     } else {
                         self.quotePanelRetryButton.isHidden = false
                     }
+                    self.refreshQuotePanelStateLayout()
                 }
             }
         }
@@ -3377,6 +3425,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 animIndex += 1
             }
         }
+        // 审计 R9 A：行全部落栈后再定状态区位置——有行又有失败态时状态区
+        // 落到行下方（行底约束随之停用），不覆盖行。
+        refreshQuotePanelStateLayout()
         updatePreferredContentSize()
     }
 
