@@ -678,10 +678,6 @@ final class BearyMonthlyCharsChartView: UIView {
     /// 选中月完整数值行（图表上方，titleRow 内；无选中月时隐藏）。
     private var selectedValueLabel: UILabel?
 
-    private var monthColumns: [UIStackView] = []
-    /// 点选浮层（点选／读屏激活时显示选中月完整数值）；点另一月移动、点浮层本身关闭、重建图表时移除。
-    private var valuePopover: UIView?
-    private var popoverMonth: Int?
     /// 上次按实宽判定的窄屏状态；只在宽窄翻转时重刷柱顶数字，避免 layoutSubviews 里反复写 text。
     private var lastNarrowState: Bool?
 
@@ -705,7 +701,7 @@ final class BearyMonthlyCharsChartView: UIView {
     }
 
     /// 柱顶常显文案：窄屏默认只留选中月与峰值月，其余留空（定高占位，柱形高度不动）；
-    /// 完整数值走点选浮层（showValuePopover）与读屏 label。宽屏沿用现行全部常显。
+    /// 完整数值见图表上方独立行与读屏 label。宽屏沿用现行全部常显。
     private func displayValueText(month: Int, value: Int, maxValue: Int) -> String {
         if isNarrowChart(), month != selectedMonth, !(maxValue > 0 && value == maxValue) { return "" }
         return monthValueText(month: month, value: value, maxValue: maxValue)
@@ -741,7 +737,6 @@ final class BearyMonthlyCharsChartView: UIView {
         guard month >= 1, month <= 12 else { return }
         selectedMonth = month
         refreshMonthValueTexts()
-        showValuePopover(for: month)
     }
 
     @objc private func monthColumnTapped(_ sender: UITapGestureRecognizer) {
@@ -749,61 +744,10 @@ final class BearyMonthlyCharsChartView: UIView {
         selectMonth(month)
     }
 
-    /// 点选浮层：选中月完整数值，numberFont 12pt 半粗（审计 ② 的可展开数值展示）；
-    /// 浮层锚在选中月柱顶上方、横向夹在图表内，读屏激活时同步播报完整数值。
-    private func showValuePopover(for month: Int) {
-        guard month >= 1, month <= monthColumns.count, month <= monthValues.count else { return }
-        let value = monthValues[month - 1]
-        dismissValuePopover()
-        let bubble = UIView()
-        bubble.backgroundColor = BearyColors.surface3
-        bubble.layer.cornerRadius = 8
-        bubble.translatesAutoresizingMaskIntoConstraints = false
-        let label = UILabel()
-        label.font = BearyDynamicType.numberFont()
-        label.textColor = BearyColors.ink
-        label.text = "\(month)月 · \(value) 字"
-        label.translatesAutoresizingMaskIntoConstraints = false
-        bubble.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: bubble.leadingAnchor, constant: 10),
-            label.trailingAnchor.constraint(equalTo: bubble.trailingAnchor, constant: -10),
-            label.topAnchor.constraint(equalTo: bubble.topAnchor, constant: 4),
-            label.bottomAnchor.constraint(equalTo: bubble.bottomAnchor, constant: -4),
-        ])
-        bubble.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(valuePopoverTapped)))
-        addSubview(bubble)
-        let column = monthColumns[month - 1]
-        NSLayoutConstraint.activate([
-            bubble.bottomAnchor.constraint(equalTo: column.topAnchor, constant: -4),
-            bubble.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8),
-            bubble.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
-        ])
-        let centerX = bubble.centerXAnchor.constraint(equalTo: column.centerXAnchor)
-        centerX.priority = .defaultHigh
-        centerX.isActive = true
-        valuePopover = bubble
-        popoverMonth = month
-        UIAccessibility.post(notification: .announcement, argument: "\(month)月，\(value)字")
-    }
-
-    @objc private func valuePopoverTapped() {
-        dismissValuePopover()
-    }
-
-    private func dismissValuePopover() {
-        valuePopover?.removeFromSuperview()
-        valuePopover = nil
-        popoverMonth = nil
-    }
-
     func configure(monthlyChars: [Int]) {
         for view in subviews { view.removeFromSuperview() }
         selectedMonth = nil
         monthValueLabels = []
-        monthColumns = []
-        valuePopover = nil
-        popoverMonth = nil
         lastNarrowState = nil
         monthValues = monthlyChars
         let maxValue = monthlyChars.max() ?? 0
@@ -838,7 +782,7 @@ final class BearyMonthlyCharsChartView: UIView {
             column.isUserInteractionEnabled = true
             column.tag = month
             column.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(monthColumnTapped(_:))))
-            // 读屏双击与手势点选走同一 selectMonth(_:)（审计 ①-P1）；浮层内有完整数值。
+            // 读屏双击与手势点选走同一 selectMonth(_:)（审计 ①-P1）。
             column.onActivate = { [weak self] in self?.selectMonth(month) }
             column.isAccessibilityElement = true
             column.accessibilityLabel = "\(month)月，\(value)字"
@@ -847,8 +791,8 @@ final class BearyMonthlyCharsChartView: UIView {
             let valueLabel = UILabel()
             // 12 列固定宽，字号不跟系统放大（放大会撑破列宽）：固定 9pt、
             // 不再继续缩小；仅选中月显完整数，其余过万简写（见 monthValueText）。
-            // 完整数值走点选浮层（numberFont 12pt 半粗，见 showValuePopover，审计 ②／④-9）；
-            // 窄屏默认只留选中月与峰值月（见 displayValueText）。单行＋按宽自缩＋定高，窄屏留空时不顶柱形。
+            // 完整数值见图表上方独立行；窄屏默认只留选中月与峰值月（见 displayValueText）。
+            // 单行＋按宽自缩＋定高，窄屏留空时不顶柱形。
             valueLabel.font = UIFont.systemFont(ofSize: 9)
             valueLabel.numberOfLines = 1
             valueLabel.adjustsFontSizeToFitWidth = true
@@ -888,7 +832,6 @@ final class BearyMonthlyCharsChartView: UIView {
             column.addArrangedSubview(monthLabel)
             track.widthAnchor.constraint(equalTo: column.widthAnchor, multiplier: 0.6).isActive = true
             columns.addArrangedSubview(column)
-            monthColumns.append(column)
         }
         let stack = UIStackView(arrangedSubviews: [titleRow, columns])
         stack.translatesAutoresizingMaskIntoConstraints = false
