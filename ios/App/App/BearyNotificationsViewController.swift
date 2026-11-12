@@ -1346,7 +1346,7 @@ final class BearyNotificationsViewController: UIViewController {
                     rowId = nil
                 }
             case .actCard:
-                if let latestIndex = items.indices.first(where: { (items[$0].type ?? "") != "system" && (items[$0].type ?? "") != "letter" }) {
+                if let latestIndex = items.indices.first(where: { Self.isInteractionType(items[$0].type) }) {
                     rowId = items[latestIndex].id
                 } else {
                     rowId = nil
@@ -1466,6 +1466,16 @@ final class BearyNotificationsViewController: UIViewController {
         }
     }
 
+    /// 互动行判定：非系统、非信件、非私信——私信只留在私信会话列表里，
+    /// 不进“互动消息”卡（Li 2026-11-12 点名去掉）。五处共用（行表重建／
+    /// 卡面／已读外观／入场动画／合并快照），改一处即全改。注意 dm 行仍
+    /// 保留在 items 里（标已读回滚／缓存／轮询都按全量走），只是永不进入
+    /// 互动分组；历史 dm 记录不动、不删数据。
+    private static func isInteractionType(_ type: String?) -> Bool {
+        let t = type ?? ""
+        return t != "system" && t != "letter" && t != "dm"
+    }
+
     /// 行表重建：letter 扁平置顶 → 系统卡（+ 展开时的系统行）→ 互动卡（+ 展开时的互动行）。
     /// 展开态由 isSysExpanded/isActExpanded 持有，重建不重置，刷新后恢复展开态。
     private func rebuildDisplayRows() {
@@ -1478,7 +1488,7 @@ final class BearyNotificationsViewController: UIViewController {
                 rows.append(NotificationDisplayRow(kind: .letter, itemIndex: index))
             } else if type == "system" {
                 sysIndices.append(index)
-            } else {
+            } else if Self.isInteractionType(type) {
                 actIndices.append(index)
             }
         }
@@ -2251,7 +2261,7 @@ final class BearyNotificationsViewController: UIViewController {
                 let anyUnread = sysIndices.contains(where: { (items[$0].read ?? true) == false })
                 cell.setCardReadAppearance(anyUnread: anyUnread, highlight: shouldHighlightCard(indices: Array(sysIndices)), isSystem: true)
             case .actCard:
-                let actIndices = items.indices.filter({ (items[$0].type ?? "") != "system" && (items[$0].type ?? "") != "letter" })
+                let actIndices = items.indices.filter({ Self.isInteractionType(items[$0].type) })
                 let anyUnread = actIndices.contains(where: { (items[$0].read ?? true) == false })
                 cell.setCardReadAppearance(anyUnread: anyUnread, highlight: shouldHighlightCard(indices: Array(actIndices)), isSystem: false)
             }
@@ -2691,7 +2701,7 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
                 )
             }
         case .actCard:
-            let actIndices = items.indices.filter({ (items[$0].type ?? "") != "system" && (items[$0].type ?? "") != "letter" })
+            let actIndices = items.indices.filter({ Self.isInteractionType(items[$0].type) })
             if let latestIndex = actIndices.first {
                 let latest = items[latestIndex]
                 let anyUnread = actIndices.contains(where: { (items[$0].read ?? true) == false })
@@ -4402,7 +4412,7 @@ extension BearyNotificationsViewController {
                 items: sysIndices.map({ items[$0] })
             ))
         }
-        let actIndices = items.indices.filter({ (items[$0].type ?? "") != "system" && (items[$0].type ?? "") != "letter" })
+        let actIndices = items.indices.filter({ Self.isInteractionType(items[$0].type) })
         if let latestIndex = actIndices.first {
             let latest = items[latestIndex]
             // 32 注销口径：互动卡对方已注销时，摘要里的对方名显“用户已注销”。
