@@ -711,7 +711,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
         // 状态 pill 同款几何（11/700、1pt 边、圆角 8、内边距 1/7），
         // 文字与边框同色走 token：当前深绿（#1320 对比度）、已过期灰。
         let makeStatusPill: (String, UIColor) -> UIView = { text, color in
-            let pillLabel = makeLabel(font: UIFont.systemFont(ofSize: 11, weight: .bold), color: color)
+            let pillLabel = self.makeLabel(font: UIFont.systemFont(ofSize: 11, weight: .bold), color: color)
             pillLabel.text = text
             let pill = UIView()
             pill.translatesAutoresizingMaskIntoConstraints = false
