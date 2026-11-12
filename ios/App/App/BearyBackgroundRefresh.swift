@@ -11,7 +11,7 @@ import UserNotifications
 /// 通知提醒一次；最后重算已有四种本地提醒（refreshAll）。
 /// 不碰 sceneDidBecomeActive 的通知逻辑；不碰 SceneDelegate 里
 /// UIBackgroundTaskIdentifier 的退后台草稿补存（短时任务，不是 BG 任务）。
-final enum BearyBackgroundRefresh {
+enum BearyBackgroundRefresh {
     static let taskIdentifier = "com.teddyhn.beary.app-refresh"
 
     /// 排程下限：最早 15 分钟后（系统按电量/使用习惯自行节流，实际
