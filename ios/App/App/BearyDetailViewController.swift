@@ -2734,7 +2734,7 @@ final class BearyDetailViewController: UIViewController {
                         chip.transform = .identity
                         chip.alpha = 1.0
                     } else {
-                        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) {
+                        UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) {
                             chip.transform = .identity
                             chip.alpha = 1.0
                         }
