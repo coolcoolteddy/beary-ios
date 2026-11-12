@@ -203,10 +203,10 @@ class BearyButton: BearyHit44Button {
             layer.bearyDynamicBorderColor = BearyColors.line
         case .destructiveOutline:
             backgroundColor = BearyColors.surface1
-            setTitleColor(BearyColors.red, for: .normal)
-            tintColor = BearyColors.red
+            setTitleColor(BearyColors.destructiveText, for: .normal)
+            tintColor = BearyColors.destructiveText
             layer.borderWidth = 1
-            layer.bearyDynamicBorderColor = BearyColors.red.withAlphaComponent(0.45)
+            layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.destructiveText, 0.45)
         case .iconCircleClose:
             backgroundColor = BearyColors.surface2
             tintColor = BearyColors.ink
@@ -223,7 +223,7 @@ class BearyButton: BearyHit44Button {
     }
 
     /// 深浅切换重刷：CALayer borderColor 赋值时固化，不重赋即停留在旧主题色。
-    /// 背景/字色是 UIColor 动态色，系统自动跟随，无需重赋；红 45% 是固定色，重赋无害。
+    /// 背景/字色是 UIColor 动态色，系统自动跟随，无需重赋；destructiveText 45% 边框由 bearyDynamicBorderColor 集中重刷，重赋同值无害。
     /// 投票钮例外：边框须按投票态重赋，否则会被下面 secondaryOutline 分支刷回 line 色。
     func refreshChrome() {
         if let selected = voteSelected {
@@ -234,7 +234,7 @@ class BearyButton: BearyHit44Button {
         case .secondaryOutline:
             layer.bearyDynamicBorderColor = BearyColors.line
         case .destructiveOutline:
-            layer.bearyDynamicBorderColor = BearyColors.red.withAlphaComponent(0.45)
+            layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.destructiveText, 0.45)
         case .primaryPill, .iconCircleClose:
             break
         }

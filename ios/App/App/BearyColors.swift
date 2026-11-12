@@ -15,10 +15,16 @@ enum BearyColors {
     /// 仅约 2.20:1，见 #508 注释）；onBrand 在深浅两模式下恒为墨色，
     /// 橙底对比度约 9.55:1。只用于橙底前景，不替代通用 ink。
     static var onBrand: UIColor { .black }
-    /// 语义红：网页 --red #e5484d，浅深同值（超字数提示等语义红一律走这里，不用 systemRed）。
+    /// 语义红：网页 --red #e5484d，浅深同值（失败徽标／横幅底等非文字语义红
+    /// 走这里，不用 systemRed；删除类与错误文字走 destructiveText）。
     static var red: UIColor { UIColor(red: 0.898, green: 0.282, blue: 0.302, alpha: 1) }
+    /// 删除／错误文字用深红（第十四轮审计 A1＋二-3，2026-11-12 Li 定版）：
+    /// 浅 #C92A2A / 深 #FF6B61，白底／黑底对比均 ≥4.5:1。
+    /// 只用于删除类与错误文字前景；描边走 BearyColors.alpha(destructiveText, 0.45)。
+    /// 失败徽标／横幅底等非文字语义红仍走 red，点赞填色仍走 likeRed，不动。
+    static var destructiveText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 107.0/255.0, blue: 97.0/255.0, alpha: 1) : UIColor(red: 201.0/255.0, green: 42.0/255.0, blue: 42.0/255.0, alpha: 1) } }
     /// 点赞填色：亮红 #ff3b30（2026-10-29 Li 定，明显亮于语义红 #e5484d；仅点赞入口用——
-    /// 删除按钮与语义红仍走 red，收藏点亮仍走 orange，不动）。
+    /// 删除按钮走 destructiveText，语义红仍走 red，收藏点亮仍走 orange，不动）。
     static var likeRed: UIColor { UIColor(red: 1.0, green: 59.0/255.0, blue: 48.0/255.0, alpha: 1) }
     /// 图片上的深色衬底：固定黑色半透明（与 ink 不同——深色下 ink 是近白，白字会看不清）。
     static var scrim: UIColor { UIColor(white: 0, alpha: 0.6) }

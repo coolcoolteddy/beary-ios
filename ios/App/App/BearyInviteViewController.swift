@@ -320,7 +320,7 @@ final class BearyInviteViewController: UIViewController {
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
         messageLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         messageLabel.adjustsFontForContentSizeCategory = true
-        messageLabel.textColor = BearyColors.red
+        messageLabel.textColor = BearyColors.destructiveText
         messageLabel.numberOfLines = 0
         // 第十一轮审计 3：无文案时整行隐藏、不占 18pt + 8pt 间距；有文案时由 showMessage / render 恢复显示（照登录页 showMessage 口径）。
         messageLabel.isHidden = true
@@ -469,7 +469,7 @@ final class BearyInviteViewController: UIViewController {
     private func showMessage(_ text: String, ok: Bool = false) {
         messageLabel.text = text
         messageLabel.isHidden = text.isEmpty
-        messageLabel.textColor = ok ? BearyColors.deepGreenText : BearyColors.red
+        messageLabel.textColor = ok ? BearyColors.deepGreenText : BearyColors.destructiveText
         // 审计登录杂项：行内失败时绑定框同步 isError 红边，成功 / 清空时复位。
         bindInputContainer?.isError = !text.isEmpty && !ok
     }
@@ -697,7 +697,7 @@ final class BearyInviteViewController: UIViewController {
         // 审计 P2：绑定成功文案先显示——render 清空消息行后，待展示的绑定文案重新落回。
         if let pending = pendingBindMessage {
             messageLabel.text = pending
-            messageLabel.textColor = pendingBindMessageOK ? BearyColors.deepGreenText : BearyColors.red
+            messageLabel.textColor = pendingBindMessageOK ? BearyColors.deepGreenText : BearyColors.destructiveText
             pendingBindMessage = nil
         }
         // 第十一轮审计 3：render 直接写 text、绕过 showMessage，此处同步显隐——无文案隐藏、有待展示文案显示。

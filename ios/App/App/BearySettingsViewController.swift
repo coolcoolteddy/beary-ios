@@ -464,16 +464,16 @@ final class BearySettingsViewController: UIViewController {
     private var sessionsLoadFailed = false
     // 设置“退出其他设备”热区：普通 UIButton 高钉死 36、无 Hit44，
     // 上下各缺 4pt 可点区。改 BearyHit44Button——视觉高仍钉死 36、
-    // 圆角 12、13/600 红字红边（45%）与文案/目标/按压反馈/忙碌态一律不动，
+    // 圆角 12、13/600 destructiveText 字／边（45%）与文案/目标/按压反馈/忙碌态一律不动，
     // 仅 point(inside:) 把热区上下各扩 4pt 至 44pt（扩区落在
     // makeGroupCard 每行上下各 14pt 的 wrap 留白内，不抢邻行点击）。
     // 不要把视觉高改成 44，也不要换 BearyButton 工厂（会改圆角/字号）。
     private let logoutOthersButton = BearyHit44Button(type: .system)
     /// 审计 E2 第 23 项：退出其他设备请求期的原入口忙碌图标（既有刷新图标，
-    /// 红 tint 贴合本钮红字；请求终结时停转隐藏，标题文案不动）。
+    /// destructiveText tint 贴合本钮红字；请求终结时停转隐藏，标题文案不动）。
     private let logoutOthersSpinner: BearyRefreshIconView = {
         let view = BearyRefreshIconView()
-        view.tintColor = BearyColors.red
+        view.tintColor = BearyColors.destructiveText
         return view
     }()
     /// 审计 E2 第 23 项：注销请求期的忙碌图标（既有刷新图标，灰 tint 贴合注销灰字）。
@@ -608,7 +608,7 @@ final class BearySettingsViewController: UIViewController {
         super.traitCollectionDidChange(previousTraitCollection)
         // CGColor 只在赋值时解析一次：深浅切换时重刷描边（背景色走动态色，自动跟随）。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            logoutOthersButton.layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.red, 0.45)
+            logoutOthersButton.layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.destructiveText, 0.45)
         }
     }
 
@@ -1445,11 +1445,11 @@ final class BearySettingsViewController: UIViewController {
         logoutOthersButton.translatesAutoresizingMaskIntoConstraints = false
         logoutOthersButton.setTitle("退出其他设备", for: .normal)
         logoutOthersButton.setTitleColor(BearyColors.destructiveText, for: .normal)
-        // F10：网页 .btn.danger 口径——36 高、13/600、红字红边（红 45% 透明边）。
+        // F10：网页 .btn.danger 口径——36 高、13/600、destructiveText 字／边（45% 透明边）。
         logoutOthersButton.titleLabel?.font = BearyDynamicType.buttonSmallFont()
         logoutOthersButton.titleLabel?.adjustsFontForContentSizeCategory = true
         logoutOthersButton.layer.borderWidth = 1
-        logoutOthersButton.layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.red, 0.45)
+        logoutOthersButton.layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.destructiveText, 0.45)
         logoutOthersButton.layer.cornerRadius = 12
         logoutOthersButton.addTarget(self, action: #selector(logoutOthersButtonTapped), for: .touchUpInside)
         logoutOthersButton.bearyAddPressFeedback()
