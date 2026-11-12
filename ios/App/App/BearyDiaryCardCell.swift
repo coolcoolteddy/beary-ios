@@ -529,6 +529,10 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 个人主页控制器以 cellEntryId 读取，故本属性为 internal，不再是原同文件 fileprivate）。
     var cellEntryId: String?
     private var currentImageKeys: [String] = []
+    /// 内联 GIF 覆盖层（正文＋标题各一）：按 label 实际排版贴动画 GIF，
+    /// 只播可见的；长按 GIF 弹「添加表情」进我的库。
+    private let bodyGIFOverlay = BearyInlineGIFOverlay()
+    private let titleGIFOverlay = BearyInlineGIFOverlay()
     private var isExpanded = false
     /// 快连点代次（首页模式，2026-10-29 及时性口径）：点按不再锁按钮丢点按，
     /// 每次点按代次 +1 并立即按本次点按态渲染；在途回包代次落后于最新代次时
@@ -1710,6 +1714,41 @@ class BearyDiaryCardCell: UITableViewCell {
                 updateDiaryStackSpacing()
             }
         }
+        // 内联 GIF 覆盖层：label 宽变或文本重建后跟帧刷新（签名未变时内部短路，不重载）。
+        refreshGIFOverlays()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        // 离屏即停播（cell 复用池离树时动画不空转）；入窗后刷新（可见才播）。
+        let visible = window != nil
+        bodyGIFOverlay.setVisible(visible)
+        titleGIFOverlay.setVisible(visible)
+        if visible { refreshGIFOverlays() }
+    }
+
+    /// 内联 GIF 覆盖层刷新：正文/标题各配一个，label 宽变或文本重建后
+    /// 跟帧刷新；长按回 fullKey（按 rand 在 entry.images 里找回）。
+    private func refreshGIFOverlays() {
+        let keys = currentEntry?.images ?? []
+        bodyGIFOverlay.attach(
+            to: contentLabel,
+            gifKeys: keys,
+            onLongPressGIF: { [weak self] rand in
+                guard let self = self,
+                      let fullKey = BearyGIF.fullKey(for: rand, in: self.currentEntry?.images ?? []) else { return }
+                BearyGIFAddPresenter.presentAddGIF(from: self, key: fullKey)
+            }
+        )
+        titleGIFOverlay.attach(
+            to: entryTitleLabel,
+            gifKeys: keys,
+            onLongPressGIF: { [weak self] rand in
+                guard let self = self,
+                      let fullKey = BearyGIF.fullKey(for: rand, in: self.currentEntry?.images ?? []) else { return }
+                BearyGIFAddPresenter.presentAddGIF(from: self, key: fullKey)
+            }
+        )
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -1751,6 +1790,8 @@ class BearyDiaryCardCell: UITableViewCell {
                 self.onNeedsRowReload?()
             }
         }
+        // 主题/字号档变化后正文/标题已重建，GIF 覆盖层跟帧刷新（签名未变时短路）。
+        refreshGIFOverlays()
         guard cardMode == .feed else { return }
         if currentEntry == nil { return }
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
@@ -1825,6 +1866,9 @@ class BearyDiaryCardCell: UITableViewCell {
         currentEntry = nil
         cellEntryId = nil
         currentImageKeys = []
+        // 内联 GIF 覆盖层复用时清理（动画停播、图层摘掉，防串位到下一行）。
+        bodyGIFOverlay.clear()
+        titleGIFOverlay.clear()
         isExpanded = false
         likeSeq = 0
         likeConfirmedSeq = 0
@@ -1968,7 +2012,8 @@ class BearyDiaryCardCell: UITableViewCell {
         let bodyFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: fontSize))
         // 内联心情：正文里的记号转回熊脸附件（与编辑器同一中间层），
         // 附件字号跟随正文字号；旧心情缀尾仍由 bodyWithTrailingMood 另 append。
-        return BearyText.inlineAttributedText(from: text, font: bodyFont, color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark)
+        // 内联 GIF 同款：记号按 entry.images 解析，动画走覆盖层播（见 refreshGIFOverlays）。
+        return BearyText.inlineAttributedText(from: text, font: bodyFont, color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: currentEntry?.images)
     }
 
     /// 旧日记心情改位：心情不再单独贴在作者行，改跟在正文最后一个字
@@ -1998,8 +2043,9 @@ class BearyDiaryCardCell: UITableViewCell {
             entryTitleLabel.attributedText = nil
             entryTitleLabel.isHidden = true
         } else {
-            // 标题里的记号同样转回熊脸附件（卡片标题 16.5 粗体）。
-            entryTitleLabel.attributedText = BearyText.inlineAttributedText(from: trimmed, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
+            // 标题里的记号同样转回熊脸附件（卡片标题 16.5 粗体）；GIF 同款按
+            // entry.images 解析，动画走覆盖层播（见 refreshGIFOverlays）。
+            entryTitleLabel.attributedText = BearyText.inlineAttributedText(from: trimmed, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: currentEntry?.images)
             entryTitleLabel.isHidden = false
         }
     }
@@ -2487,10 +2533,12 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 即清掉（旧静态图、纯静态新图一律走这里，不动原静态加载）。
     private func renderImages(keys: [String], dims: [String: [Int]]?, liveVideos: [String: String]? = nil) {
         resetImageStripPinch()
+        // 内联 GIF 不进图条：GIF 已插进正文/标题里播，再进图条会同一张图
+        // 出现两次（正文动画＋图条静态）；图条只放照片。
         // 112：卡片图片条上限 9 张（详情侧同款 Array(allKeys.prefix(9))）。
         // 脏数据超 9 张时先截断再渲染，灯箱 keys 同步取截断后列表，
         // 第 10 张起既不渲染也不进灯箱；逐项再 guard 三池下标，防池化异常越界。
-        let keys = Array(keys.prefix(9))
+        let keys = Array(keys.filter { $0.hasSuffix(".gif") == false }.prefix(9))
         currentImageKeys = keys
         updateNineGridButton(count: keys.count)
         if imageSlots.isEmpty { makeImageSlots() }

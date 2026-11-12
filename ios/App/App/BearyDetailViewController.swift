@@ -90,6 +90,10 @@ final class BearyDetailViewController: UIViewController {
     // MARK: - 状态
 
     private var entry: Entry
+    /// 内联 GIF 覆盖层（正文＋标题各一）：按 label 实际排版贴动画 GIF；
+    /// 详情页滚动出屏后仍播（只按页显隐，不跟滚动），长按 GIF 弹「添加表情」。
+    private let bodyGIFOverlay = BearyInlineGIFOverlay()
+    private let titleGIFOverlay = BearyInlineGIFOverlay()
     private let isGuest: Bool
     private let isAuthor: Bool
     /// R22-A1：详情落盘桶——进页时按当时账号钉住，不跟随后来的切号走；
@@ -785,6 +789,10 @@ final class BearyDetailViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        // 内联 GIF：入页即播（覆盖层按页显隐，不跟滚动）。
+        bodyGIFOverlay.setVisible(true)
+        titleGIFOverlay.setVisible(true)
+        refreshGIFOverlays()
         // 停留计时：只在首次出现时起计；其上再弹灯箱／picker 后回页不重置。
         if dwellStart == nil && !dwellReported {
             dwellStart = Date()
@@ -793,6 +801,9 @@ final class BearyDetailViewController: UIViewController {
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        // 内联 GIF：离页即停（其上弹灯箱／picker 回页时 viewDidAppear 再起播）。
+        bodyGIFOverlay.setVisible(false)
+        titleGIFOverlay.setVisible(false)
         // 只在详情本身被 dismiss 时上报与回调（其上弹灯箱／picker 不触发）。
         guard isBeingDismissed else { return }
         ephemeralExpiryTimer?.invalidate()
@@ -827,6 +838,8 @@ final class BearyDetailViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // 内联 GIF 覆盖层：label 宽变或文本重建后跟帧刷新（签名未变时内部短路，不重载）。
+        refreshGIFOverlays()
         // 详情重做：两分支互斥整组开关（状态不变不开关，避免布局循环）。
         // 仅 iPad 且宽 ≥821 用 600 居中，其余用安全区宽−32；切换时重算一次。
         let wantWide = BearyDesktop.isWide(view.bounds.width)
@@ -1676,7 +1689,7 @@ final class BearyDetailViewController: UIViewController {
         // 审计 P2-12：标题行（卡片同款，空标题不占位；详情全文页放开换行，
         // 首页单行截断是唯一偏离，见文件头）。
         let trimmedTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
+        titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
         titleLabel.isHidden = trimmedTitle.isEmpty
 
         // 正文 16pt（diaryBodyFont 即 scaled 16），行高 1.6（首页卡片口径）。
@@ -1706,7 +1719,8 @@ final class BearyDetailViewController: UIViewController {
         paragraph.lineHeightMultiple = 1.6
         paragraph.lineBreakMode = .byCharWrapping
         // 内联心情：正文里的记号先转回熊脸附件（与编辑器同一中间层）。
-        let base = BearyText.inlineAttributedText(from: content, font: font, color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark)
+        // 内联 GIF 同款：记号按 entry.images 解析，动画走覆盖层播（见 refreshGIFOverlays）。
+        let base = BearyText.inlineAttributedText(from: content, font: font, color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
         guard let key = moodKey, !key.isEmpty,
               let image = BearyEmoteImages.image(for: key, dark: traitCollection.userInterfaceStyle == .dark) else { return base }
         let attachment = NSTextAttachment()
@@ -1716,6 +1730,30 @@ final class BearyDetailViewController: UIViewController {
         let result = NSMutableAttributedString(attributedString: base)
         result.append(NSAttributedString(attachment: attachment))
         return result
+    }
+
+    /// 内联 GIF 覆盖层刷新：正文/标题各配一个，label 宽变或文本重建后
+    /// 跟帧刷新；长按回 fullKey（按 rand 在 entry.images 里找回）。
+    private func refreshGIFOverlays() {
+        let keys = entry.images ?? []
+        bodyGIFOverlay.attach(
+            to: bodyLabel,
+            gifKeys: keys,
+            onLongPressGIF: { [weak self] rand in
+                guard let self = self,
+                      let fullKey = BearyGIF.fullKey(for: rand, in: self.entry.images ?? []) else { return }
+                BearyGIFAddPresenter.presentAddGIF(from: self.view, key: fullKey)
+            }
+        )
+        titleGIFOverlay.attach(
+            to: titleLabel,
+            gifKeys: keys,
+            onLongPressGIF: { [weak self] rand in
+                guard let self = self,
+                      let fullKey = BearyGIF.fullKey(for: rand, in: self.entry.images ?? []) else { return }
+                BearyGIFAddPresenter.presentAddGIF(from: self.view, key: fullKey)
+            }
+        )
     }
 
     /// @ 行有效 ID 口径（审计 ①-P2 伴生收敛）：与跳转守卫同口径——只有
@@ -2098,7 +2136,7 @@ final class BearyDetailViewController: UIViewController {
         }
         if old.title != merged.title {
             let trimmedTitle = (merged.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
+            titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: merged.images)
             titleLabel.isHidden = trimmedTitle.isEmpty
             if !trimmedTitle.isEmpty { fadeLabel(titleLabel) }
         }
@@ -2323,7 +2361,9 @@ final class BearyDetailViewController: UIViewController {
     /// 条内走 thumb 图（首页同款），点图进灯箱仍按原图 key 打开。
     private func renderImages() {
         resetImageStripPinch()
-        let allKeys = (entry.images ?? []).filter { !$0.isEmpty }
+        // 内联 GIF 不进图条（与卡片同款：GIF 已插进正文/标题里播，再进图条
+        // 会同一张图出现两次）；图条只放照片。
+        let allKeys = (entry.images ?? []).filter { !$0.isEmpty && !$0.hasSuffix(".gif") }
         imageKeys = allKeys
         let keys = Array(allKeys.prefix(9))
         updateNineGridButton(count: keys.count)
