@@ -7313,7 +7313,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 for img in draft.images {
                     // 新模型：旧版存下的 failed 项（上传失败态）归一化为待传——
                     // 本地文件在，发布时由发布中心上传；编辑模式仍按 state 原样建项。
-                    let failed = isEditMode && (img.state == .failed)
+                    let failed = self.isEditMode && (img.state == .failed)
                     let item = self.createImageItem(localImage: nil, key: img.serverKey, uploading: false, localFile: img.localFile, failed: failed)
                     item.liveVideoKey = img.liveVideoKey
                     // B1：待传实况才带本地视频文件名（已上传项只留 liveVideoKey，
