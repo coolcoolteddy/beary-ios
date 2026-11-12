@@ -439,6 +439,7 @@ final class BearyWordprintDetailViewController: UIViewController {
         stack.addArrangedSubview(monthsTitle)
 
         let maxMonthCount = item.monthDocCounts.values.max() ?? 0
+        var monthLabels: [UILabel] = []
         for month in 1...12 {
             let monthCount = item.monthDocCounts[month] ?? 0
             let row = UIStackView()
@@ -450,8 +451,10 @@ final class BearyWordprintDetailViewController: UIViewController {
             monthLabel.adjustsFontForContentSizeCategory = true
             monthLabel.textColor = BearyColors.ink
             monthLabel.text = "\(month) 月"
-            // S1：不定宽，内容自适应——XXXL／特大档下「12 月」也不截断，横条吸差。
+            // S1：不定宽，内容自适应——XXXL／特大档下「12 月」也不截断；
+            // 12 行标签等宽于最宽一行（见循环后等宽约束），横条左缘对齐，不再吸差。
             monthLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+            monthLabels.append(monthLabel)
             let barBackground = UIView()
             barBackground.backgroundColor = BearyColors.surface2
             barBackground.layer.cornerRadius = 4
@@ -484,6 +487,15 @@ final class BearyWordprintDetailViewController: UIViewController {
             row.addArrangedSubview(barBackground)
             row.addArrangedSubview(countLabel)
             stack.addArrangedSubview(row)
+        }
+
+        // S1 续：12 行月份标签等宽于固有宽最宽的一行（通常是「12 月」），
+        // 横条左缘与长度就此对齐；宽锚在最宽标签的固有宽上、随字号自适应，
+        // XXXL 下「12 月」仍按自身固有宽显示，不截断。
+        if let widestLabel = monthLabels.max(by: { $0.intrinsicContentSize.width < $1.intrinsicContentSize.width }) {
+            for monthLabel in monthLabels where monthLabel !== widestLabel {
+                monthLabel.widthAnchor.constraint(equalTo: widestLabel.widthAnchor).isActive = true
+            }
         }
 
         let footnote = UILabel()
