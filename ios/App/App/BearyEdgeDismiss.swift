@@ -131,7 +131,13 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
         guard let presented = presentedVC, let view = pan.view else { return }
         let width = view.bounds.width
         guard width > 0 else { return }
-        let progress = min(max(pan.translation(in: view).x / width, 0), 1)
+        // 130 扫 bug：translation/velocity 必须在不动的坐标系里量。
+        // 之前取在被拖动的 view 自身坐标系里：view 一右移，它的坐标系跟着走，
+        // 量到的位移只有手指位移的一半（页面比手慢一半、35% 阈值实际要拖 70% 宽、
+        // 800pt/s 甩速实际要 1600pt/s）。底 sheet 同款量在 container 里。
+        // 呈现容器的 superview 是不动的，取它；取不到时退回 view（旧口径）。
+        let referenceView = view.superview ?? view
+        let progress = min(max(pan.translation(in: referenceView).x / width, 0), 1)
         switch pan.state {
         case .began:
             if let shouldAllow = shouldAllowInteractiveDismiss, !shouldAllow() {
@@ -165,7 +171,9 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
             prepareUnderlyingView(for: presented)
         case .changed:
             // 1:1 跟手：视图随手指右移（只向右，不向左出屏）。完成模式与普通模式同款。
-            view.transform = CGAffineTransform(translationX: max(pan.translation(in: view).x, 0), y: 0)
+            // 位移取在不动的 referenceView 坐标系里（见 handler 顶部注释），
+            // 取在被拖动的 view 自身坐标系里只有一半。
+            view.transform = CGAffineTransform(translationX: max(pan.translation(in: referenceView).x, 0), y: 0)
         case .cancelled, .failed:
             // U24：.failed 与 .cancelled 同处理——视图滑回原位＋撤底层画面，不留悬空态。
             resetCompletionFollow(view: view)
@@ -183,7 +191,7 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
                 completionMode = false
                 return
             }
-            let velocity = pan.velocity(in: view).x
+            let velocity = pan.velocity(in: referenceView).x
             if progress > 0.35 || velocity > 800 {
                 // U24：完成关闭时给轻触感（取消时无）。
                 BearyHaptics.press()
