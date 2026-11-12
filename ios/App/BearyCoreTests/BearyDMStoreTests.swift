@@ -113,6 +113,50 @@ final class BearyDMStoreTests: XCTestCase {
         XCTAssertEqual(afterSecond, garbage)
     }
 
+    // MARK: - 第十轮 V-Data：异步版 isCorrupt（读盘只在 ioQueue 上做）
+
+    func testAsyncIsCorruptDetectsCorruptFileAndRegisters() {
+        let accountId = 9011
+        let garbage = Data("这不是 JSON，文件已损坏".utf8)
+        try? garbage.write(to: storeFile(accountId: accountId))
+        let exp = expectation(description: "async isCorrupt corrupt")
+        var corrupt = false
+        BearyDMStore.isCorrupt(accountId: accountId) { value in
+            corrupt = value
+            exp.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        XCTAssertTrue(corrupt)
+        // 异步检查同样登记损坏态：空态判断经 isStoreCorrupt 读到同一结论，
+        // 且只留一份损坏备份、原文件一字未动。
+        XCTAssertTrue(BearyDMStore.isStoreCorrupt(accountId: accountId))
+        XCTAssertEqual(backupFiles(accountId: accountId).count, 1)
+        XCTAssertEqual(try? Data(contentsOf: storeFile(accountId: accountId)), garbage)
+    }
+
+    func testAsyncIsCorruptReturnsFalseForHealthyOrMissingFile() {
+        let healthyId = 9012
+        _ = saveMessages(accountId: healthyId, peer: 5, messages: [message(id: 10, body: "你好")])
+        let expHealthy = expectation(description: "async isCorrupt healthy")
+        var healthyCorrupt = true
+        BearyDMStore.isCorrupt(accountId: healthyId) { value in
+            healthyCorrupt = value
+            expHealthy.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        XCTAssertFalse(healthyCorrupt)
+        XCTAssertFalse(BearyDMStore.isStoreCorrupt(accountId: healthyId))
+        // 无文件（新库）同样不算损坏。
+        let expMissing = expectation(description: "async isCorrupt missing")
+        var missingCorrupt = true
+        BearyDMStore.isCorrupt(accountId: 9013) { value in
+            missingCorrupt = value
+            expMissing.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        XCTAssertFalse(missingCorrupt)
+    }
+
     func testWriteFailureReturnsFalse() {
         // 根目录本身是个普通文件：建目录失败，写盘必然失败。
         let blocker = tmpDir.appendingPathComponent("blocker")

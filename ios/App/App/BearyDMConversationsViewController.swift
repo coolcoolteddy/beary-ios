@@ -525,7 +525,10 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             conversationStateView.configure(kind: .error, title: "加载失败", subtitle: "下拉重试", iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.load() })
             conversationStateView.isHidden = false
             setRefreshFailedBannerVisible(false)
-        } else if conversations.isEmpty && BearyDMStore.isCorrupt(accountId: SessionManager.shared.currentUser?.id) {
+        } else if conversations.isEmpty && BearyDMStore.isStoreCorrupt(accountId: SessionManager.shared.currentUser?.id) {
+            // 第十轮 V-Data：空态判断在主线程，只读 ioQueue 已登记的损坏态，
+            // 不再同步读盘。首拉／快照合并都先走 ioQueue（cachedAll 登记损坏），
+            // 落定回调会再调一次 updateEmptyState，登记到时即纠正为空态。
             // 本地缓存损坏：不呈“还没有私信”空态；仅本地有的会话暂不可见，
             // 旧数据保留在原文件与备份里，未被覆盖。重试只重拉服务端列表。
             conversationStateView.configure(kind: .error, title: "本地私信损坏", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.load() })
