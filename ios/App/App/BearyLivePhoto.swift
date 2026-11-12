@@ -37,6 +37,76 @@ enum BearyLivePhoto {
     static func videoDataURL(_ data: Data) -> String {
         return "data:video/quicktime;base64," + data.base64EncodedString()
     }
+
+    /// R12C：上传前清掉实况视频里的 GPS 位置元数据。拍摄时开了定位，
+    /// MOV 文件级 QuickTime 元数据里会带 com.apple.quicktime.location.ISO6709；
+    /// 原始字节原样上传会把经纬度存上服务端，违背 Info.plist「日记本身只保存
+    /// 地点文字、不保存经纬度」的承诺。只删位置项，其余元数据（尤其 Live Photo
+    /// 配对用的 content-identifier）原样保留，否则下载回来组装不成实况。
+    /// 无位置项时原样返回，不重写；剥离失败返回 nil，调用方按读取失败处理，
+    /// 不把带 GPS 的原始字节发出。AVAssetExportSession passthrough 只重写
+    /// 容器、不重编码音视频轨。
+    static func videoDataByStrippingLocation(_ data: Data) -> Data? {
+        let tmpDir = FileManager.default.temporaryDirectory
+        let inputURL = tmpDir.appendingPathComponent("beary-live-strip-in-\(UUID().uuidString).mov")
+        let outputURL = tmpDir.appendingPathComponent("beary-live-strip-out-\(UUID().uuidString).mov")
+        defer {
+            try? FileManager.default.removeItem(at: inputURL)
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+        do {
+            try data.write(to: inputURL, options: .atomic)
+        } catch {
+            return nil
+        }
+        let asset = AVURLAsset(url: inputURL)
+        let loadSemaphore = DispatchSemaphore(value: 0)
+        asset.loadValuesAsynchronously(forKeys: ["metadata"]) {
+            loadSemaphore.signal()
+        }
+        guard loadSemaphore.wait(timeout: .now() + 5) == .success else { return nil }
+        var loadError: NSError?
+        guard asset.statusOfValue(forKey: "metadata", error: &loadError) == .loaded else { return nil }
+        let kept = asset.metadata.filter { !isLocationMetadataItem($0) }
+        guard kept.count != asset.metadata.count else {
+            // 无位置项：原样返回，不重写（本轮新选的图走这里居多）。
+            return data
+        }
+        guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else { return nil }
+        session.outputURL = outputURL
+        session.outputFileType = .mov
+        session.metadata = kept
+        let exportSemaphore = DispatchSemaphore(value: 0)
+        session.exportAsynchronously {
+            exportSemaphore.signal()
+        }
+        guard exportSemaphore.wait(timeout: .now() + 30) == .success,
+              session.status == .completed else {
+            session.cancelExport()
+            return nil
+        }
+        guard let stripped = try? Data(contentsOf: outputURL), !stripped.isEmpty else { return nil }
+        return stripped
+    }
+
+    /// 位置元数据判定：文件级 QuickTime 位置项（ISO6709）与通用 location
+    /// 键、旧式 udta ©xyz；其余元数据（content-identifier、创建时间等）
+    /// 一律保留。
+    private static func isLocationMetadataItem(_ item: AVMetadataItem) -> Bool {
+        if let identifier = item.identifier?.rawValue,
+           identifier == AVMetadataIdentifier.quickTimeMetadataLocationISO6709.rawValue {
+            return true
+        }
+        if item.commonKey == .commonKeyLocation {
+            return true
+        }
+        if let key = item.key as? String {
+            if key == "©xyz" || key.lowercased().contains("location") {
+                return true
+            }
+        }
+        return false
+    }
 }
 
 extension BearyImageURLs {
