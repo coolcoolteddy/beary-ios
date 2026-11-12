@@ -1139,6 +1139,14 @@ final class BearyDetailViewController: UIViewController {
         installImageStripPinch()
     }
 
+    private func buildQuote() {
+        quoteView.translatesAutoresizingMaskIntoConstraints = false
+        // 引用卡点按走共享卡 onTapped（卡片内手势 + 来源行按钮同一路，见 BearyQuoteCardView）；
+        // gone/locked 不导航的守卫仍在 quoteTapped 内，不凭渲染快照放行。
+        quoteView.onTapped = { [weak self] in self?.quoteTapped() }
+        bodyStack.addArrangedSubview(quoteView)
+    }
+
     /// 批 E 详情位置行（rebase 落点：新骨架正文栈 bodyStack，天气行之后、操作行之前；
     /// 旧详情挂在 chips 行后、引用卡之前，批 B 已删 chips 行与旧 stackView，故改挂正文栈）：
     /// 官方 icon_location 13 灰 + 位置文案；公开篇作者本人也只看区级，不再另附提示行；
@@ -1153,14 +1161,6 @@ final class BearyDetailViewController: UIViewController {
         let spacerWidth = detailLocationWeatherSpacer.widthAnchor.constraint(equalToConstant: 4)
         spacerWidth.priority = UILayoutPriority(999)
         spacerWidth.isActive = true
-    }
-
-    private func buildQuote() {
-        quoteView.translatesAutoresizingMaskIntoConstraints = false
-        // 引用卡点按走共享卡 onTapped（卡片内手势 + 来源行按钮同一路，见 BearyQuoteCardView）；
-        // gone/locked 不导航的守卫仍在 quoteTapped 内，不凭渲染快照放行。
-        quoteView.onTapped = { [weak self] in self?.quoteTapped() }
-        bodyStack.addArrangedSubview(quoteView)
     }
 
     private func buildActionRow() {
