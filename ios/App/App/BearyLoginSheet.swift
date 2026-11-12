@@ -235,17 +235,11 @@ private final class BearyLoginSheetPresentationController: BearyBottomSheetPrese
         chromeHitView.removeFromSuperview()
     }
 
+    // 内容高变化的跟帧动画由基类 BearyBottomSheetPresentationController
+    // 的 preferredContentSizeDidChange 统一做（motion.normal 跟帧、减动效直落），
+    // 此处不再重复写一份；只调 super。
     override func preferredContentSizeDidChange(forChildContentContainer container: UIContentContainer) {
         super.preferredContentSizeDidChange(forChildContentContainer: container)
-        guard let containerView = containerView else { return }
-        // 内容高变化（邀请展开/收起、字号档位）时 0.26s 跟帧走；减动效直落终值。
-        if UIAccessibility.isReduceMotionEnabled {
-            containerView.layoutIfNeeded()
-        } else {
-            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState], animations: {
-                containerView.layoutIfNeeded()
-            })
-        }
     }
 
     // MARK: - 键盘
