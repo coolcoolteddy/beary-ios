@@ -678,6 +678,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var imageItems: [ComposerImageItem] = [] {
         didSet { editorEditVersion += 1 }
     }
+    /// 原图确认（2026-11-12 Li 定）：一次选图（一个 picker 回调）内新选
+    /// 的图先只显示本地图、不上传，等用户在确认弹窗里选原图/压缩再传。
+    /// pendingChoiceAwaiting：准备未完成（压缩落盘＋原图取文件未都 settled）
+    /// 的项；pendingChoiceBatchItems：本批全部新选图（收尾时起传已定项用）。
+    /// 两批先后选图时合并为一批处理（后一批 settled 前不弹弹窗，弹窗面向
+    /// 当前全部未确认项）。cachedPlusStatus：本编辑器会话内缓存一次的 Plus 态。
+    private static let maxOriginalBytes = 5 * 1024 * 1024
+    private var cachedPlusStatus: Bool?
+    private var pendingChoiceAwaiting: [ComposerImageItem] = []
+    private var pendingChoiceBatchItems: [ComposerImageItem] = []
+    private var uploadChoiceSheetVisible = false
+    private var uploadChoiceSheet: BearyOriginalUploadSheetViewController?
+    private var plusPageEdgeDismiss: BearyEdgeDismissController?
     /// 草稿保存级别：nil=未显示；2=草稿已保存；1=文字已保存，图片未保存；0=保存失败（红字）。
     private var draftStatusLevel: Int?
     /// 引用内嵌面板状态：当前 tab（timeline/liked/saved）与每 tab 缓存、加载序号。
@@ -786,6 +799,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // 图片预览（无标题、无 + 块；空时整条隐藏，添加走工具栏图片钮）
     private let imageScrollView = UIScrollView()
     private let imageStackView = UIStackView()
+    /// 待确认条：「N 张照片待确认上传方式」，点按重开确认弹窗；无未确认项时隐藏。
+    private let pendingUploadBar = UIButton(type: .custom)
+    private let pendingUploadBarLabel = UILabel()
+    private let pendingUploadBarChevron = UIImageView()
     // C1：工具栏贴键盘上方（见 buildLayout：底锚 keyboardLayoutGuide.topAnchor），
     // 不随正文滚动；选择条（toolStripStack）贴在它上方，引用面板打开时两者同藏，
     // scrollView 底锚随之在工具栏/选择条/整页三档切换（见 updateScrollBottomAnchoring）。
@@ -3526,6 +3543,35 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         ])
         refreshImageStripVisibility()
         contentStack.setCustomSpacing(4, after: imageScrollView)
+        // 原图确认待确认条：插在图片条下方，默认隐藏；有未确认项时显示
+        //「N 张照片待确认上传方式」，点按重开确认弹窗（见 refreshPendingUploadBar）。
+        pendingUploadBar.backgroundColor = BearyColors.surface2
+        pendingUploadBar.layer.cornerRadius = 12
+        pendingUploadBar.clipsToBounds = true
+        pendingUploadBar.isHidden = true
+        pendingUploadBar.addTarget(self, action: #selector(didTapPendingUploadBar), for: .touchUpInside)
+        pendingUploadBar.translatesAutoresizingMaskIntoConstraints = false
+        pendingUploadBarLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        pendingUploadBarLabel.textColor = BearyColors.ink
+        pendingUploadBarLabel.translatesAutoresizingMaskIntoConstraints = false
+        pendingUploadBar.addSubview(pendingUploadBarLabel)
+        pendingUploadBarChevron.image = UIImage(systemName: "chevron.right")
+        pendingUploadBarChevron.tintColor = BearyColors.gray
+        pendingUploadBarChevron.contentMode = .scaleAspectFit
+        pendingUploadBarChevron.translatesAutoresizingMaskIntoConstraints = false
+        pendingUploadBar.addSubview(pendingUploadBarChevron)
+        contentStack.addArrangedSubview(pendingUploadBar)
+        NSLayoutConstraint.activate([
+            pendingUploadBar.heightAnchor.constraint(equalToConstant: 44),
+            pendingUploadBarLabel.centerYAnchor.constraint(equalTo: pendingUploadBar.centerYAnchor),
+            pendingUploadBarLabel.leadingAnchor.constraint(equalTo: pendingUploadBar.leadingAnchor, constant: 16),
+            pendingUploadBarLabel.trailingAnchor.constraint(lessThanOrEqualTo: pendingUploadBarChevron.leadingAnchor, constant: -8),
+            pendingUploadBarChevron.centerYAnchor.constraint(equalTo: pendingUploadBar.centerYAnchor),
+            pendingUploadBarChevron.trailingAnchor.constraint(equalTo: pendingUploadBar.trailingAnchor, constant: -16),
+            pendingUploadBarChevron.widthAnchor.constraint(equalToConstant: 14),
+            pendingUploadBarChevron.heightAnchor.constraint(equalToConstant: 14),
+        ])
+        contentStack.setCustomSpacing(4, after: pendingUploadBar)
     }
 
     /// 图片条显隐：有图才显示（网页 img-preview 空时 display:none）。
@@ -5332,6 +5378,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshPublishAppearance()
         refreshPublishBusyState()
         refreshPublishingInputFreeze()
+        // 原图确认：发布启用态每次同步时顺带刷新待确认条（未确认项显隐）。
+        refreshPendingUploadBar()
     }
 
     /// D 批：发布/保存请求在途时冻结编辑输入（发布钮本身由上方的 updatePublishState
@@ -5942,6 +5990,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func removeImageItem(_ item: ComposerImageItem) {
         cancelUpload(for: item)
+        // 原图确认：准备中的项被删时记一笔（幂等），批内其余项不因此等不到收尾。
+        notePickPrepFinished(item)
         var kept: [ComposerImageItem] = []
         for existing in imageItems {
             if existing !== item {
@@ -5969,6 +6019,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func deleteImageItemWithUndo(_ item: ComposerImageItem) {
         // 审计-编辑器详情：删图即取消在途上传（网络任务不继续跑、回包不回写）。
         cancelUpload(for: item)
+        // 原图确认：准备中的项被删时记一笔（幂等），批内其余项不因此等不到收尾。
+        notePickPrepFinished(item)
         var index = imageItems.count
         for (i, existing) in imageItems.enumerated() {
             if existing === item {
@@ -6179,6 +6231,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     item.liveVideoMissing = false
                     item.failed = false
                     item.localFile = saved
+                    // 原图确认：裁剪出的是新渲染图，无原图可保——方式定为压缩，
+                    // 清原图引用，随后仍按现有路立即压缩上传，不进确认弹窗。
+                    item.uploadMode = .compressed
+                    item.originalFile = nil
+                    item.originalBytes = nil
+                    item.originalOversize = false
+                    item.fellBackFromOriginal = false
                     if let oldName = oldName, oldName != saved {
                         // P2-11：旧图走后台队列删（新图已替换进 imageItems，
                         // 随后 saveDraftNow 按替换后状态落盘）。
@@ -6249,6 +6308,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if provider.canLoadObject(ofClass: PHLivePhoto.self) {
                 let item = createImageItem(localImage: nil, key: nil, uploading: true, localFile: nil, failed: false)
                 insertImageItem(item)
+                // 原图确认：本项进待定批（压缩落盘＋原图取文件都 settled 才收尾）。
+                pendingChoiceAwaiting.append(item)
+                pendingChoiceBatchItems.append(item)
                 provider.loadObject(ofClass: PHLivePhoto.self) { [weak self, weak item] object, _ in
                     guard let livePhoto = object as? PHLivePhoto else {
                         DispatchQueue.main.async {
@@ -6369,12 +6431,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                     // A6：选图时固定账号与草稿 ID——后台落盘与回填一律用这份身份。
                                     let pickAccountId = BearyDraftStore.currentAccountId
                                     let pickDraftId = self.currentDraftId
-                                    // R22-#6：实况路先发令牌再编码：编码期间删图
-                                    // 作废令牌后，编码完成也不起传。
-                                    let token = self.issueUploadToken(for: item)
-                                    // 新模型：后台块内不再读 isEditMode（跨线程读
-                                    // editingEntry），主线程先拍定本模式。
-                                    let editMode = self.isEditMode
+                                    // 原图确认：与静态路同款——先落盘再取原图，不上传，等用户
+                                    // 在确认弹窗里选了原图/压缩再传（见本块末尾）。
+                                    // 令牌不在此处发：上传在用户选定方式后才发起（见 startUpload /
+                                    // startOriginalUpload 的 issueUploadToken），编码期间删图由
+                                    // stillThere 门 + notePickPrepFinished 兜底。
+                                    // 实况路用 livePhoto 自带的 .photo 资源取原图（不用再按
+                                    // assetIdentifier 取一次）；无 .photo 资源时按取不到计。
+                                    let photoResource = resources.first(where: { $0.type == .photo }) ?? resources.first(where: { $0.type == .fullSizePhoto })
                                     self.imagePrepQueue.async { [weak self, weak item] in
                                         guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.92),
                                               let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
@@ -6383,6 +6447,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                                 self.markFailed(item)
                                                 self.saveDraftNow()
                                                 self.updatePublishState()
+                                                self.notePickPrepFinished(item)
                                             }
                                             return
                                         }
@@ -6398,49 +6463,75 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                         } else {
                                             videoFile = nil
                                         }
-                                        DispatchQueue.main.async {
-                                            guard let self = self, let item = item else {
-                                                if let saved = saved {
-                                                    BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
-                                                }
-                                                return
-                                            }
-                                            var stillThere = false
-                                            for existing in self.imageItems {
-                                                if existing === item {
-                                                    stillThere = true
-                                                }
-                                            }
-                                            if !stillThere {
-                                                if let saved = saved {
-                                                    BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
-                                                }
-                                                return
-                                            }
-                                            if let saved = saved {
-                                                // A6：回填只认选图时固定的身份——切号/切篇后不把引用写进别的草稿，
-                                                // 本次临时文件直接清理。
-                                                if BearyDraftStore.currentAccountId != pickAccountId || (pickDraftId != nil && self.currentDraftId != pickDraftId) {
-                                                    BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                                        // 原图取文件（异步回调，仍在后台）：需 still 名派生 .orig 名，
+                                        // 故在压缩落盘之后；取不到/超限/格式不对都按已定口径落点，
+                                        // 见 fetchOriginalPhotoResource 的 completion 语义。
+                                        self?.fetchOriginalPhotoResource(photoResource) { [weak self, weak item] fetchedData, fetchedOversize in
+                                            DispatchQueue.main.async {
+                                                guard let self = self, let item = item else {
+                                                    if let saved = saved {
+                                                        BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                                                    }
                                                     return
                                                 }
-                                                item.localFile = saved
+                                                var stillThere = false
+                                                for existing in self.imageItems {
+                                                    if existing === item {
+                                                        stillThere = true
+                                                    }
+                                                }
+                                                if !stillThere {
+                                                    if let saved = saved {
+                                                        BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                                                    }
+                                                    self.notePickPrepFinished(item)
+                                                    return
+                                                }
+                                                if item.localFile != nil {
+                                                    // 准备期间用户已裁剪（裁剪已回填新文件并定为压缩）：
+                                                    // 本批的旧编码结果不再回填，只记完成，不覆盖裁剪结果。
+                                                    self.notePickPrepFinished(item)
+                                                    return
+                                                }
+                                                if let saved = saved {
+                                                    // A6：回填只认选图时固定的身份——切号/切篇后不把引用写进别的草稿，
+                                                    // 本次临时文件直接清理。
+                                                    if BearyDraftStore.currentAccountId != pickAccountId || (pickDraftId != nil && self.currentDraftId != pickDraftId) {
+                                                        BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                                                        // 身份已变：本项只剩预览图可传，按压缩计，不进确认。
+                                                        item.uploadMode = .compressed
+                                                        self.notePickPrepFinished(item)
+                                                        return
+                                                    }
+                                                    item.localFile = saved
+                                                    // 原图落点（见 applyOriginalData）：HEIC/JPEG ≤5MB
+                                                    // 才存 .orig、保持未确认；超限打标回落、RAW 等
+                                                    // 非 HEIC/JPEG 直接按压缩计。
+                                                    if let fetchedData = fetchedData {
+                                                        self.applyOriginalData(fetchedData, for: item, stillName: saved)
+                                                    } else if fetchedOversize {
+                                                        item.originalOversize = true
+                                                        item.uploadMode = .compressed
+                                                        item.fellBackFromOriginal = true
+                                                    } else {
+                                                        item.uploadMode = .compressed
+                                                    }
+                                                } else {
+                                                    // 压缩落盘失败：无本地文件即无原图可存，按压缩计；
+                                                    // 上传时走 startUpload 的重编兜底（见上传入口）。
+                                                    item.uploadMode = .compressed
+                                                }
+                                                if let videoFile = videoFile {
+                                                    item.liveVideoFile = videoFile
+                                                }
+                                                // 未确认的项停转圈、露预览（不等上传），发布钮不被锁死。
+                                                if item.uploadMode == nil {
+                                                    self.markUploadIdle(item)
+                                                }
+                                                self.saveDraftNow()
+                                                self.updatePublishState()
+                                                self.notePickPrepFinished(item)
                                             }
-                                            if let videoFile = videoFile {
-                                                item.liveVideoFile = videoFile
-                                            }
-                                            // 新模型：本地图就绪即停转圈、恢复发布钮；
-                                            // 编辑模式仍等上传完成回调（markUploaded）恢复。
-                                            if !editMode {
-                                                self.markLocalReady(item)
-                                            }
-                                            self.saveDraftNow()
-                                            self.updatePublishState()
-                                        }
-                                        // 新模型：加图只存本地，发布时统一上传；
-                                        // 编辑模式仍立即上传。
-                                        if editMode {
-                                            self?.uploadPrepared(for: item, token: token, full: full, thumbData: thumb, image: image, liveVideoData: item?.liveVideoData)
                                         }
                                     }
                                 }
@@ -6458,6 +6549,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 占位项计入 9 张上限，发布在上传完成前保持禁用，与原有联动一致。
             let item = createImageItem(localImage: nil, key: nil, uploading: true, localFile: nil, failed: false)
             insertImageItem(item)
+            // 原图确认：本项进待定批（压缩落盘＋原图取文件都 settled 才收尾）。
+            pendingChoiceAwaiting.append(item)
+            pendingChoiceBatchItems.append(item)
             provider.loadObject(ofClass: UIImage.self) { [weak self, weak item] object, _ in
                 DispatchQueue.main.async {
                     guard let self = self, let item = item else { return }
@@ -6479,16 +6573,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // A6：选图时固定账号与草稿 ID——后台落盘与回填一律用这份身份。
                     let pickAccountId = BearyDraftStore.currentAccountId
                     let pickDraftId = self.currentDraftId
-                    // 先落盘再上传：选完图立刻有本地文件，杀 App 也不丢图。
-                    // 落盘失败则按无本地文件降级（与旧行为一致，草稿里只有 key）。
-                    // 编码 + 落盘 + 上传序列化全走后台队列，只编一次（旧写法落盘编一次、
+                    // 原图确认：先落盘再取原图，选完图立刻有本地文件、杀 App 也不丢图，
+                    // 但不上传——等用户在确认弹窗里选了原图/压缩再传（见本块末尾）。
+                    // 编码 + 落盘 + 取原图序列化全走后台队列，只编一次（旧写法落盘编一次、
                     // startUpload 又编一次）；主线程只填图与更新 UI。
-                    // R22-#6：静态路先发令牌再编码：编码期间删图作废令牌后，
-                    // 编码完成也不起传。
-                    let token = self.issueUploadToken(for: item)
-                    // 新模型：后台块内不再读 isEditMode（跨线程读
-                    // editingEntry），主线程先拍定本模式。
-                    let editMode = self.isEditMode
+                    // 令牌不在此处发：上传在用户选定方式后才发起（见 startUpload /
+                    // startOriginalUpload 的 issueUploadToken），编码期间删图由
+                    // stillThere 门 + notePickPrepFinished 兜底。
+                    let assetIdentifier = result.assetIdentifier
                     self.imagePrepQueue.async { [weak self, weak item] in
                         guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.92),
                               let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
@@ -6497,52 +6589,77 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                 self.markFailed(item)
                                 self.saveDraftNow()
                                 self.updatePublishState()
+                                self.notePickPrepFinished(item)
                             }
                             return
                         }
                         let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb, forAccount: pickAccountId)
-                        DispatchQueue.main.async {
-                            guard let self = self, let item = item else {
-                                if let saved = saved {
-                                    BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
-                                }
-                                return
-                            }
-                            var stillThere = false
-                            for existing in self.imageItems {
-                                if existing === item {
-                                    stillThere = true
-                                }
-                            }
-                            if !stillThere {
-                                if let saved = saved {
-                                    BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
-                                }
-                                return
-                            }
-                            if let saved = saved {
-                                // A6：回填只认选图时固定的身份——切号/切篇后不把引用写进别的草稿，
-                                // 本次临时文件直接清理。
-                                if BearyDraftStore.currentAccountId != pickAccountId || (pickDraftId != nil && self.currentDraftId != pickDraftId) {
-                                    BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                        // 原图取文件（异步回调，仍在后台）：需 still 名派生 .orig 名，
+                        // 故在压缩落盘之后；取不到/超限/格式不对都按已定口径落点，
+                        // 见 fetchOriginalFile 的 completion 语义。
+                        self?.fetchOriginalFile(assetIdentifier: assetIdentifier) { [weak self, weak item] fetchedData, fetchedOversize in
+                            DispatchQueue.main.async {
+                                guard let self = self, let item = item else {
+                                    if let saved = saved {
+                                        BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                                    }
                                     return
                                 }
-                                item.localFile = saved
+                                var stillThere = false
+                                for existing in self.imageItems {
+                                    if existing === item {
+                                        stillThere = true
+                                    }
+                                }
+                                if !stillThere {
+                                    if let saved = saved {
+                                        BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                                    }
+                                    self.notePickPrepFinished(item)
+                                    return
+                                }
+                                if item.localFile != nil {
+                                    // 准备期间用户已裁剪（裁剪已回填新文件并定为压缩）：
+                                    // 本批的旧编码结果不再回填，只记完成，不覆盖裁剪结果。
+                                    self.notePickPrepFinished(item)
+                                    return
+                                }
+                                if let saved = saved {
+                                    // A6：回填只认选图时固定的身份——切号/切篇后不把引用写进别的草稿，
+                                    // 本次临时文件直接清理。
+                                    if BearyDraftStore.currentAccountId != pickAccountId || (pickDraftId != nil && self.currentDraftId != pickDraftId) {
+                                        BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
+                                        // 身份已变：本项只剩预览图可传，按压缩计，不进确认。
+                                        item.uploadMode = .compressed
+                                        self.notePickPrepFinished(item)
+                                        return
+                                    }
+                                    item.localFile = saved
+                                    // 原图落点（见 applyOriginalData）：HEIC/JPEG ≤5MB
+                                    // 才存 .orig、保持未确认；超限打标回落、RAW 等
+                                    // 非 HEIC/JPEG 直接按压缩计。
+                                    if let fetchedData = fetchedData {
+                                        self.applyOriginalData(fetchedData, for: item, stillName: saved)
+                                    } else if fetchedOversize {
+                                        item.originalOversize = true
+                                        item.uploadMode = .compressed
+                                        item.fellBackFromOriginal = true
+                                    } else {
+                                        item.uploadMode = .compressed
+                                    }
+                                } else {
+                                    // 压缩落盘失败：无本地文件即无原图可存，按压缩计；
+                                    // 上传时走 startUpload 的重编兜底（见上传入口）。
+                                    item.uploadMode = .compressed
+                                }
+                                // 未确认的项停转圈、露预览（不等上传），发布钮不被锁死。
+                                if item.uploadMode == nil {
+                                    self.markUploadIdle(item)
+                                }
+                                self.saveDraftNow()
+                                self.updatePublishState()
+                                self.notePickPrepFinished(item)
                             }
-                            // 新模型：本地图就绪即停转圈、恢复发布钮；
-                            // 编辑模式仍等上传完成回调（markUploaded）恢复。
-                            if !editMode {
-                                self.markLocalReady(item)
-                            }
-                            self.saveDraftNow()
-                            self.updatePublishState()
-                        }
-                        // 上传用同一份编码结果，不再重编（uploadPrepared 内 base64 与
-                        // BearyAPI 的 JSON 序列化都在本后台线程上，不占主线程）。
-                        // 新模型：加图只存本地，发布时统一上传；
-                        // 编辑模式仍立即上传。
-                        if editMode {
-                            self?.uploadPrepared(for: item, token: token, full: full, thumbData: thumb, image: image)
                         }
                     }
                 }
@@ -6556,6 +6673,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 须用户重新选择；续传入口已跳过本态，此处是点图重试的第二道守卫。
         if item.liveVideoMissing {
             showToast(message: "这张实况需重新选择")
+            return
+        }
+        // 原图确认：已选原图的项走原图路（读 .orig、剥 GPS、按实测格式发）；
+        // 压缩项走下文现有路（复用已落盘 JPEG 或重编）。
+        if item.uploadMode == .original {
+            startOriginalUpload(for: item)
             return
         }
         markUploading(item)
@@ -6599,9 +6722,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 删图/取消已作废令牌、或切号后账号已变时一律不起传。校验与建任务
     /// 在上传锁内原子完成，取消无法插进两者之间；代次认领改在发起时
     /// （issueUploadToken），此处不再递增。
-    private func uploadPrepared(for item: ComposerImageItem?, token: (generation: Int, accountId: Int?), full: (data: Data, w: Int, h: Int), thumbData: Data, image: UIImage, liveVideoData: Data? = nil) {
+    private func uploadPrepared(for item: ComposerImageItem?, token: (generation: Int, accountId: Int?), full: (data: Data, w: Int, h: Int), thumbData: Data, image: UIImage, liveVideoData: Data? = nil, mimeType: String = "image/jpeg") {
         guard let item = item else { return }
-        let dataUrl = BearyImagePrep.dataURL(full.data)
+        let dataUrl = BearyImagePrep.dataURL(full.data, mimeType: mimeType)
         let thumbDataUrl = BearyImagePrep.dataURL(thumbData)
         let videoDataUrl = liveVideoData.map { BearyLivePhoto.videoDataURL($0) }
         // 门控 + 建任务原子段：锁内校验令牌与当前鉴权账号，通过才建任务
@@ -6670,6 +6793,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             if let videoFile = item.liveVideoFile {
                                 item.liveVideoFile = nil
                                 BearyDraftImageStore.deleteVideo(videoFile)
+                            }
+                            // 原图已在服务端，本地 .orig 不再需要，随即删掉；
+                            // 草稿随 scheduleDraftSave 重存，不再引用该文件。
+                            if let originalFile = item.originalFile {
+                                item.originalFile = nil
+                                BearyDraftImageStore.deleteOriginal(originalFile)
                             }
                             item.imageView.image = image
                             self.scheduleDraftSave()
@@ -6772,6 +6901,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if item.key != nil || item.uploading || item.failed || item.liveVideoMissing {
                 continue
             }
+            // 原图确认：未确认方式的项不自动续传——等用户在弹窗/待确认条里
+            // 选了再传，否则会把还没选方式的图直接按压缩传走。老草稿恢复
+            // 时已在 restore/loadDraftFromBox 里定为压缩，不在此列。
+            if item.uploadMode == nil {
+                continue
+            }
             guard let name = item.localFile else { continue }
             let ownerAccountId = composerOriginAccountId ?? BearyDraftStore.currentAccountId
             imagePrepQueue.async { [weak self, weak item] in
@@ -6795,6 +6930,315 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
             }
         }
+    }
+
+    // MARK: - 原图确认（选完图后问，原图仅 Plus；2026-11-12 Li 定）
+
+    /// 未确认上传方式的图：有本地文件、无 key、非失败态、方式仍为 nil 的项。
+    /// 失败态与已上传项不进确认；裁剪项与老草稿恢复时已定为压缩，不在此列。
+    private func undecidedImageItems() -> [ComposerImageItem] {
+        return imageItems.filter { $0.key == nil && !$0.failed && $0.uploadMode == nil }
+    }
+
+    private func hasUndecidedImage() -> Bool {
+        return !undecidedImageItems().isEmpty
+    }
+
+    /// 待确认条：有未确认方式的图时显示「N 张照片待确认上传方式」，点按重开
+    /// 确认弹窗；无未确认项时隐藏。显隐变化时同步一次 sheet 高。
+    private func refreshPendingUploadBar() {
+        let count = undecidedImageItems().count
+        let shouldShow = count > 0
+        pendingUploadBarLabel.text = "\(count) 张照片待确认上传方式"
+        pendingUploadBar.accessibilityLabel = "\(count) 张照片待确认上传方式，点按选择上传方式"
+        if pendingUploadBar.isHidden != !shouldShow {
+            pendingUploadBar.isHidden = !shouldShow
+            updatePreferredContentSize()
+        }
+    }
+
+    @objc private func didTapPendingUploadBar() {
+        presentUploadChoiceSheet()
+    }
+
+    /// 未确认态：停转圈、露预览，不占上传态（发布钮不被 hasUploadingImage 锁死）。
+    private func markUploadIdle(_ item: ComposerImageItem) {
+        item.uploading = false
+        item.failView.isHidden = true
+        item.imageView.isHidden = false
+        item.imageView.alpha = 1.0
+        item.spinner.stopSpinning()
+        item.removeButton.accessibilityLabel = "删除图片"
+        refreshAttachmentAccessibilityLabels()
+    }
+
+    /// 本批某项准备完成（压缩落盘＋原图取文件都 settled，或任一出口失败/
+    /// 项被删）：从待定集里划掉；待定集空时收尾（见 maybePresentUploadChoiceSheet）。
+    /// 幂等：同一项多次调用只划一次；从未进待定集的项不触发收尾。
+    private func notePickPrepFinished(_ item: ComposerImageItem) {
+        var removed = false
+        var kept: [ComposerImageItem] = []
+        for existing in pendingChoiceAwaiting {
+            if existing === item {
+                removed = true
+            } else {
+                kept.append(existing)
+            }
+        }
+        pendingChoiceAwaiting = kept
+        guard removed else { return }
+        if pendingChoiceAwaiting.isEmpty {
+            maybePresentUploadChoiceSheet()
+        }
+    }
+
+    /// 批内全部准备完成后的收尾：先起传本批已定项（超限/RAW 回落的压缩项，
+    /// 不等用户选）；仍有未确认项时弹确认弹窗；全批都已定且有超限项时 toast 一句。
+    private func maybePresentUploadChoiceSheet() {
+        let batch = pendingChoiceBatchItems
+        pendingChoiceBatchItems = []
+        guard !batch.isEmpty else { return }
+        var oversizeCount = 0
+        for item in batch {
+            if item.originalOversize {
+                oversizeCount += 1
+            }
+            if item.key == nil, !item.uploading, !item.failed, item.uploadMode != nil,
+               let image = item.imageView.image {
+                startUpload(for: item, image: image)
+            }
+        }
+        if hasUndecidedImage() {
+            if !uploadChoiceSheetVisible {
+                presentUploadChoiceSheet(oversizeCount: oversizeCount)
+            }
+            return
+        }
+        if oversizeCount > 0 {
+            showToast(message: "\(oversizeCount) 张原图超过 5MB，已按压缩上传")
+        }
+    }
+
+    /// Plus 判定（九宫格 BearyNineGridPresenter 同款口径：/me 的 plus 字段）：
+    /// 本编辑器会话内缓存一次；未登录/拉取失败按非 Plus 计，不静默放行。
+    private func ensurePlusStatus(completion: @escaping (Bool) -> Void) {
+        if let cached = cachedPlusStatus {
+            completion(cached)
+            return
+        }
+        BearyAPI.shared.fetchMe { [weak self] result in
+            DispatchQueue.main.async {
+                var isPlus = false
+                if case .success(let user) = result {
+                    isPlus = user?.plus == true
+                }
+                self?.cachedPlusStatus = isPlus
+                completion(isPlus)
+            }
+        }
+    }
+
+    /// 弹原图/压缩确认弹窗（面向当前全部未确认项）：先取 Plus 态，再按
+    /// 各原图字节和与压缩字节和建模；关闭（×/下拉）后不做任何事，待确认条留着重开。
+    /// oversizeCount 只在批收尾那次传（弹窗脚注用）；待确认条/发布重开时传 0。
+    private func presentUploadChoiceSheet(oversizeCount: Int = 0) {
+        let undecided = undecidedImageItems()
+        guard !undecided.isEmpty, !uploadChoiceSheetVisible, presentedViewController == nil else { return }
+        ensurePlusStatus { [weak self] isPlus in
+            guard let self = self else { return }
+            let undecided = self.undecidedImageItems()
+            guard !undecided.isEmpty, !self.uploadChoiceSheetVisible, self.presentedViewController == nil else { return }
+            var originalBytes = 0
+            var compressedBytes = 0
+            for item in undecided {
+                originalBytes += item.originalBytes ?? 0
+                if let name = item.localFile, let url = BearyDraftImageStore.fileURL(for: name),
+                   let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber {
+                    compressedBytes += size.intValue
+                }
+            }
+            let model = BearyOriginalUploadSheetModel(count: undecided.count, originalBytes: originalBytes, compressedBytes: compressedBytes, oversizeCount: oversizeCount, isPlus: isPlus)
+            self.uploadChoiceSheetVisible = true
+            let sheet = BearyOriginalUploadSheet.show(from: self, model: model, onPickOriginal: { [weak self] in
+                guard let self = self else { return }
+                self.uploadChoiceSheetVisible = false
+                self.applyUploadChoice(.original, for: self.undecidedImageItems())
+            }, onPickCompressed: { [weak self] in
+                guard let self = self else { return }
+                self.uploadChoiceSheetVisible = false
+                self.applyUploadChoice(.compressed, for: self.undecidedImageItems())
+            }, onShowPlus: { [weak self] in
+                guard let self = self else { return }
+                self.uploadChoiceSheetVisible = false
+                BearyToast.show(in: self.view, message: "原图上传是 Plus 功能", actionTitle: "了解 Plus") { [weak self] in
+                    self?.presentPlusPage()
+                }
+            })
+            sheet.onDismiss = { [weak self] in
+                self?.uploadChoiceSheetVisible = false
+            }
+            self.uploadChoiceSheet = sheet
+        }
+    }
+
+    /// 应用用户选的方式：逐项定模式并起传（原图走原图路、压缩走现有路）。
+    /// 选完不自动续发：发布仍须用户再点一次（见 didTapPublish 的未确认拦截）。
+    private func applyUploadChoice(_ mode: BearyUploadMode, for items: [ComposerImageItem]) {
+        for item in items {
+            guard item.key == nil, !item.failed, item.uploadMode == nil else { continue }
+            item.uploadMode = mode
+            if mode == .original {
+                startOriginalUpload(for: item)
+            } else if let image = item.imageView.image {
+                startUpload(for: item, image: image)
+            } else {
+                markFailed(item)
+            }
+        }
+        saveDraftNow()
+        updatePublishState()
+    }
+
+    /// 原图起传：读 .orig、剥 GPS、按实测格式发；任一步失败 → 回落压缩并提示，
+    /// 绝不发带 GPS 或格式不明的原图。
+    private func startOriginalUpload(for item: ComposerImageItem) {
+        if item.liveVideoMissing {
+            showToast(message: "这张实况需重新选择")
+            return
+        }
+        let ownerAccountId = composerOriginAccountId ?? BearyDraftStore.currentAccountId
+        var stripped: Data?
+        var mime: String?
+        var size: (width: Int, height: Int)?
+        if let originalFile = item.originalFile,
+           let rawData = BearyDraftImageStore.originalData(for: originalFile),
+           let strippedData = BearyImagePrep.strippedGPSData(rawData),
+           let detectedMime = BearyImagePrep.mimeType(of: strippedData),
+           detectedMime == "image/heic" || detectedMime == "image/jpeg",
+           let pixelSize = BearyImagePrep.pixelSize(of: strippedData),
+           pixelSize.width > 0, pixelSize.height > 0 {
+            stripped = strippedData
+            mime = detectedMime
+            size = pixelSize
+        }
+        // 缩略图：复用已落盘的 480 thumb；读不到时从预览图现编。
+        var thumbData: Data?
+        if let name = item.localFile,
+           let prepared = BearyDraftImageStore.existingPreparedJPEG(fullName: name, accountId: ownerAccountId) {
+            thumbData = prepared.thumb
+        }
+        if thumbData == nil, let previewImage = item.imageView.image {
+            thumbData = BearyImagePrep.thumbData(previewImage, maxSide: 480)
+        }
+        guard let strippedData = stripped, let mimeType = mime, let pixelSize = size,
+              let thumb = thumbData, let previewImage = item.imageView.image else {
+            item.uploadMode = .compressed
+            item.fellBackFromOriginal = true
+            showToast(message: "原图处理失败，已按压缩上传")
+            if let image = item.imageView.image {
+                startUpload(for: item, image: image)
+            } else {
+                markFailed(item)
+                saveDraftNow()
+                updatePublishState()
+            }
+            return
+        }
+        markUploading(item)
+        updatePublishState()
+        let token = issueUploadToken(for: item)
+        uploadPrepared(for: item, token: token, full: (data: strippedData, w: pixelSize.width, h: pixelSize.height), thumbData: thumb, image: previewImage, liveVideoData: item.liveVideoData, mimeType: mimeType)
+    }
+
+    /// 流式读原图资源（实况视频同款提前截断）：边收边写临时文件、只记字节数，
+    /// 整段原图不常驻内存；累计超 maxOriginalBytes 立即取消请求。
+    /// completion 在后台线程回调 (data, oversize)：超限时 data 为 nil、
+    /// oversize 为 true；取不到/读失败时 data 为 nil、oversize 为 false。
+    /// 临时文件只活到本次读取结束，各出口都删。
+    private func fetchOriginalResourceData(_ resource: PHAssetResource, completion: @escaping (Data?, Bool) -> Void) {
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("beary-original-\(UUID().uuidString)")
+        guard FileManager.default.createFile(atPath: tempURL.path, contents: nil),
+              let handle = try? FileHandle(forWritingTo: tempURL) else {
+            completion(nil, false)
+            return
+        }
+        var totalBytes = 0
+        var overLimit = false
+        var requestID: PHAssetResourceDataRequestID = 0
+        let options = PHAssetResourceRequestOptions()
+        options.isNetworkAccessAllowed = true
+        requestID = PHAssetResourceManager.default().requestData(for: resource, options: options, dataReceivedHandler: { chunk in
+            guard !overLimit else { return }
+            handle.write(chunk)
+            totalBytes += chunk.count
+            if totalBytes > Self.maxOriginalBytes {
+                overLimit = true
+                try? FileManager.default.removeItem(at: tempURL)
+                PHAssetResourceManager.default().cancelDataRequest(requestID)
+            }
+        }, completionHandler: { _ in
+            try? handle.close()
+            let data: Data? = overLimit ? nil : try? Data(contentsOf: tempURL)
+            try? FileManager.default.removeItem(at: tempURL)
+            completion(data, overLimit)
+        })
+    }
+
+    /// 按 PHPicker 的 assetIdentifier 取原图资源并流式读回。
+    /// identifier 为 nil（资产不在图库）或找不到 .photo 资源时直接按取不到回。
+    private func fetchOriginalFile(assetIdentifier: String?, completion: @escaping (Data?, Bool) -> Void) {
+        guard let assetIdentifier = assetIdentifier,
+              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [assetIdentifier], options: nil).firstObject else {
+            completion(nil, false)
+            return
+        }
+        let resources = PHAssetResource.assetResources(for: asset)
+        guard let photoResource = resources.first(where: { $0.type == .photo }) ?? resources.first(where: { $0.type == .fullSizePhoto }) else {
+            completion(nil, false)
+            return
+        }
+        fetchOriginalResourceData(photoResource, completion: completion)
+    }
+
+    /// 按已取到的 .photo 资源取原图（实况路：livePhoto 自带资源，不用再按
+    /// assetIdentifier 取一次）。resource 为 nil 时直接按取不到回。
+    private func fetchOriginalPhotoResource(_ resource: PHAssetResource?, completion: @escaping (Data?, Bool) -> Void) {
+        guard let resource = resource else {
+            completion(nil, false)
+            return
+        }
+        fetchOriginalResourceData(resource, completion: completion)
+    }
+
+    /// 原图落点判定（Li 2026-11-12 20:56 定：原图只放 HEIC/JPEG、5MB 以内）：
+    /// HEIC/JPEG ≤5MB → 存 .orig、记字节、保持未确认（等用户在弹窗里选）；
+    /// DNG/TIFF/PNG 等非 HEIC/JPEG 原图（RAW 在内）→ 直接按压缩计，
+    /// 不尝试传原文件、不进待确认集；.orig 落盘失败 → 按压缩计，不卡住。
+    private func applyOriginalData(_ data: Data, for item: ComposerImageItem, stillName: String) {
+        guard let mime = BearyImagePrep.mimeType(of: data), mime == "image/heic" || mime == "image/jpeg" else {
+            item.uploadMode = .compressed
+            return
+        }
+        if let originalFile = BearyDraftImageStore.saveOriginal(data: data, forStill: stillName) {
+            item.originalFile = originalFile
+            item.originalBytes = data.count
+        } else {
+            item.uploadMode = .compressed
+        }
+    }
+
+    /// Plus 页（个人页皇冠点按同款呈现：窄屏全屏＋左缘右滑、宽屏默认呈现）。
+    private func presentPlusPage() {
+        guard presentedViewController == nil else { return }
+        let page = BearyPlusPageViewController(isPlus: cachedPlusStatus == true)
+        if traitCollection.horizontalSizeClass == .compact {
+            page.modalPresentationStyle = .fullScreen
+            let edgeDismiss = BearyEdgeDismissController()
+            edgeDismiss.attach(to: page)
+            page.transitioningDelegate = edgeDismiss
+            plusPageEdgeDismiss = edgeDismiss
+        }
+        present(page, animated: BearyMotion.animated(true))
     }
 
     private func uploadedImageKeys() -> [String] {
@@ -7358,7 +7802,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             } else {
                 state = .pending
             }
-            images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: state, liveVideoKey: item.liveVideoKey, liveVideoFile: item.liveVideoFile))
+            images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: state, liveVideoKey: item.liveVideoKey, liveVideoFile: item.liveVideoFile, uploadMode: item.uploadMode?.rawValue, originalFile: item.originalFile, originalBytes: item.originalBytes, originalOversize: item.originalOversize))
         }
         // 内联 GIF 随草稿走：以已上传态追加（无本地文件；恢复时只进
         // inlineGifKeys、不进图片条，见 restoreDraft/loadDraftFromBox）。
@@ -7569,6 +8013,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // state 原样建项，续传/重试走下文解码后的同一格。
                     if img.liveVideoKey == nil {
                         item.liveVideoFile = img.liveVideoFile
+                    }
+                    // 原图确认：恢复上传方式标记。老草稿（无方式且无原图文件）
+                    // 按压缩计，保持旧行为（重开即续传，不弹确认）；原图文件
+                    // 已不在时按压缩回落，不静默丢图。
+                    item.uploadMode = BearyUploadMode(rawValue: img.uploadMode ?? "")
+                    item.originalFile = img.originalFile
+                    item.originalBytes = img.originalBytes
+                    item.originalOversize = img.originalOversize
+                    if item.uploadMode == .original, let originalFile = item.originalFile,
+                       !BearyDraftImageStore.originalExists(originalFile) {
+                        item.uploadMode = .compressed
+                        item.originalFile = nil
+                        item.originalBytes = nil
+                        item.originalOversize = false
+                        item.fellBackFromOriginal = true
+                    } else if item.uploadMode == nil, item.originalFile == nil {
+                        item.uploadMode = .compressed
                     }
                     self.insertImageItem(item)
                     // 只有 key 的老项（v1 迁移而来）走远程缩略图；有本地文件的项等后台解码后填图。
@@ -8066,6 +8527,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if img.liveVideoKey == nil {
                 item.liveVideoFile = img.liveVideoFile
             }
+            // 原图确认：恢复上传方式标记（与 restoreDraft 同款口径）。
+            // 老草稿（无方式且无原图文件）按压缩计，保持旧行为；
+            // 原图文件已不在时按压缩回落，不静默丢图。
+            item.uploadMode = BearyUploadMode(rawValue: img.uploadMode ?? "")
+            item.originalFile = img.originalFile
+            item.originalBytes = img.originalBytes
+            item.originalOversize = img.originalOversize
+            if item.uploadMode == .original, let originalFile = item.originalFile,
+               !BearyDraftImageStore.originalExists(originalFile) {
+                item.uploadMode = .compressed
+                item.originalFile = nil
+                item.originalBytes = nil
+                item.originalOversize = false
+                item.fellBackFromOriginal = true
+            } else if item.uploadMode == nil, item.originalFile == nil {
+                item.uploadMode = .compressed
+            }
             insertImageItem(item)
             // 只有 key 的老项走远程缩略图；有本地文件的项等后台解码后填图。
             if img.localFile == nil, let key = img.serverKey,
@@ -8104,6 +8582,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 只拆视图不删文件（切草稿时旧篇文件仍归旧篇所有，删文件只在丢弃/发布成功时做）。
     private func removeAllImageViews() {
+        // 原图确认：切篇时在途的选图准备一并作废——旧批的项不再记入
+        // 待定集（其后台回调仍会走 stillThere 门，不再弹旧批的弹窗）。
+        pendingChoiceAwaiting = []
+        pendingChoiceBatchItems = []
         // 切草稿/重置时撤销缓冲一并提交（旧缓冲项不跟进新篇，见 commitPendingRemoval）。
         commitPendingRemoval()
         for item in imageItems {
@@ -8146,7 +8628,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             } else {
                 state = .pending
             }
-            images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: state, liveVideoKey: item.liveVideoKey))
+            images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: state, liveVideoKey: item.liveVideoKey, uploadMode: item.uploadMode?.rawValue, originalFile: item.originalFile, originalBytes: item.originalBytes, originalOversize: item.originalOversize))
         }
         return BearyDraftStore.BearyEditCheckpoint(
             entryId: entryId,
@@ -8689,6 +9171,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 等于把用户明确选中的实况静默降级为静态图；须重新选择后再发布。
         if hasLiveVideoMissingImage() {
             showToast(message: "有实况视频已丢失，重新选择该图片后再发布")
+            return
+        }
+        // 原图确认：有未确认上传方式的图时先弹确认弹窗，不直接发布；
+        // 用户选完方式后需再点一次发布（不做选完自动续发）。
+        if hasUndecidedImage() {
+            presentUploadChoiceSheet()
             return
         }
         // 决议第 3 项 B：去掉发布/保存确认弹框，点发布/保存直接发（网页口径：
@@ -9300,6 +9788,20 @@ private final class ComposerImageItem {
     var liveVideoKey: String?
     var liveVideoFile: String?
     var liveVideoMissing = false
+    /// 原图确认（2026-11-12 Li 定）：本次新选图的上传方式，nil=未确认。
+    /// 原图/压缩二选一，按本次选的这批图生效；关闭弹窗后留待确认条重开；
+    /// 发布时有未确认项先弹确认弹窗。设计上让 #1451（发布时统一上传）
+    /// 合入后变基好接：届时发布中心按本标记逐项取原图或压缩字节上传。
+    var uploadMode: BearyUploadMode?
+    /// 原图本地文件名（与静图同 stem 的 <uuid>.orig）；nil=无原图
+    ///（压缩项/裁剪项/老草稿/RAW 等非 HEIC/JPEG 原图）。
+    var originalFile: String?
+    /// 原图字节数（弹窗展示用；恢复时读持久化值，不重读文件）。
+    var originalBytes: Int?
+    /// 原图是否超 5MB 已自动回落压缩（弹窗脚注与 toast 计数用）。
+    var originalOversize = false
+    /// 是否曾从原图回落压缩（超限/剥 GPS 失败/格式不明任一；提示去重用）。
+    var fellBackFromOriginal = false
     let container: UIView
     let imageView: UIImageView
     let spinner: BearyWebRingSpinnerView

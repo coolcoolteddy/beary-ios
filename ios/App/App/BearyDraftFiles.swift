@@ -44,6 +44,15 @@ struct BearyDraftImageItem: Codable {
     /// 上传成功后清掉（视频已在服务端，只留 liveVideoKey）；文件随
     /// deletePair/sweep 与静图同生同灭。
     var liveVideoFile: String? = nil
+    /// 原图上传方式（rawValue：original/compressed），nil=未确认或无需确认
+    ///（裁剪项/老草稿/已上传项）。老草稿缺本键时按 nil 解码。
+    var uploadMode: String? = nil
+    /// 原图本地文件名（与静图同 stem 的 <uuid>.orig；nil=无原图）。
+    var originalFile: String? = nil
+    /// 原图字节数（弹窗展示用；恢复时不重读文件）。老草稿缺本键时按 nil 解码。
+    var originalBytes: Int? = nil
+    /// 原图是否超 5MB 已自动回落压缩（弹窗脚注计数用；老草稿缺本键按 false）。
+    var originalOversize: Bool = false
 }
 
 extension BearyDraft {
@@ -181,7 +190,7 @@ enum BearyDraftImageStore {
     private static func isAllowedDraftFileName(_ name: String) -> Bool {
         // UUID：8-4-4-4-12 位十六进制（大小写均可，UUID().uuidString 为大写）。
         let uuid = "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
-        let pattern = "^(?:\(uuid)\\.jpg|\(uuid)_t\\.jpg|\(uuid)\\.mov)$"
+        let pattern = "^(?:\(uuid)\\.jpg|\(uuid)_t\\.jpg|\(uuid)\\.mov|\(uuid)\\.orig)$"
         return name.range(of: pattern, options: .regularExpression) != nil
     }
 
@@ -222,6 +231,52 @@ enum BearyDraftImageStore {
 
     /// 捕获账号版（后台删图专用）：路径只由入队时捕获的账号决定。
     static func deleteVideo(_ name: String, accountId: Int?) {
+        guard let url = fileURL(for: name, accountId: accountId) else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    /// 原图文件名由静图文件名派生：<uuid>.jpg → <uuid>.orig（同 stem，
+    /// deletePair/sweep 按静图名即可找到原图文件，不另记映射）。
+    static func originalFileName(for fullName: String) -> String {
+        if fullName.hasSuffix(".jpg") {
+            return String(fullName.dropLast(4)) + ".orig"
+        }
+        return fullName + ".orig"
+    }
+
+    /// 原图原始字节落盘（不转码；原子写；失败返回 nil，调用方按无原图降级，
+    /// 不静默谎称已存）。文件名由静图名派生，与静图一一对应。
+    static func saveOriginal(data: Data, forStill fullName: String) -> String? {
+        let name = originalFileName(for: fullName)
+        guard let url = fileURL(for: name) else { return nil }
+        do {
+            try data.write(to: url, options: .atomic)
+            return name
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            return nil
+        }
+    }
+
+    /// 读回落盘的原图原始字节（文件不存在返 nil）。
+    static func originalData(for name: String) -> Data? {
+        guard let url = fileURL(for: name) else { return nil }
+        return try? Data(contentsOf: url)
+    }
+
+    /// 原图文件是否存在（恢复时判定 .orig 是否还在，不读整文件）。
+    static func originalExists(_ name: String) -> Bool {
+        guard let url = fileURL(for: name) else { return false }
+        return FileManager.default.fileExists(atPath: url.path)
+    }
+
+    /// 删原图文件（静图删文件时同调，见 deletePair）。
+    static func deleteOriginal(_ name: String) {
+        deleteOriginal(name, accountId: BearyDraftStore.currentAccountId)
+    }
+
+    /// 捕获账号版（后台删图专用）：路径只由入队时捕获的账号决定。
+    static func deleteOriginal(_ name: String, accountId: Int?) {
         guard let url = fileURL(for: name, accountId: accountId) else { return }
         try? FileManager.default.removeItem(at: url)
     }
@@ -313,6 +368,8 @@ enum BearyDraftImageStore {
         delete(thumbFileName(for: fullName), accountId: accountId)
         // B1：同 stem 的实况 mov 一并删（无视频的静图派生名不存在，删动作空转）。
         deleteVideo(videoFileName(for: fullName), accountId: accountId)
+        // 原图 .orig 一并删（无原图的静图派生名不存在，删动作空转）。
+        deleteOriginal(originalFileName(for: fullName), accountId: accountId)
     }
 
     /// P2-11 后台删图：主线程只捕获账号与文件名，实际删除走
@@ -369,6 +426,8 @@ enum BearyDraftImageStore {
             keep.insert(thumbFileName(for: name))
             // B1：同 stem 的实况 mov 与静图同留（只留静图会误删待传视频）。
             keep.insert(videoFileName(for: name))
+            // 原图 .orig 与静图同留（只留静图会误删待确认的原图）。
+            keep.insert(originalFileName(for: name))
         }
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return }
         let now = Date()
