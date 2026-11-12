@@ -156,7 +156,6 @@ final class BearyDetailViewController: UIViewController {
     /// 只在 recipientRow 藏时激活（见 updateDiaryStackSpacing）；
     /// @ 行显时停用、改走头行顶约束。
     private var authorRowTopConstraint: NSLayoutConstraint?
-    private var headerStackTrailingConstraint: NSLayoutConstraint?
     /// 正文栈顶：取头像底与头行底两者较大者 + 6（紧贴用户名下方，取规范标题→正文档 6；
     /// 原 16 有标题／14 无标题，见规范 §3；该槽位改动须走规范同步）；正文全宽，
     /// 头像底约束保留（正文必须 clearance 头像底）。
@@ -353,8 +352,8 @@ final class BearyDetailViewController: UIViewController {
         return st
     }()
     /// 右上角 ⋯ 钮：时间线 moreButton 同款（21pt 灰色、28 框、44 热区），
-    /// 不挂作者行内，挂 contentColumnView 右上角、对齐作者行；头行右缩进见
-    /// refreshAuthorActions（⋯ 显时 −36、藏时 0，以内容列为基准）。
+    /// 挂顶栏右上角、与返回钮同一中心线（2026-11-12 Li 定：从作者行挪上来）；
+    /// 作者行不再给 ⋯ 留位，日期为行内最右元素。
     private let moreButton = BearyHit44Button(type: .custom)
     private let bodyLabel = UILabel()
     /// 审计 P2-12：详情补标题行（卡片同款 16.5 粗体，空标题不占位）。
@@ -926,13 +925,11 @@ final class BearyDetailViewController: UIViewController {
         let narrowTrailing = columnNarrowTrailing
         // 批 B：头像顶 16；头行顶：无 @ 行时作者行钉头像顶（顶约束停用）、
         // 有 @ 行时 17，见 updateDiaryStackSpacing（@ 行显隐的 1pt 差值保留）。
-        // 头行右缩进：他人 0、本人 −36（让出小地球 28 + 间隙 8；以内容列为基准，
-        // 等价于首页以整屏为基准的 −52，屏上几何一致）；正文栈左右与内容列齐平、
-        // 右缩进恒 0（小地球只占头行高度，正文不让位）。
+        // 头行右缩进恒 0：⋯ 已挪到顶栏（与返回钮平行），作者行不再给 ⋯ 留位，
+        // 日期为行内最右元素；正文栈左右与内容列齐平、右缩进恒 0。
         let headerTop = headerStack.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 16)
         let headerTrailing = headerStack.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor, constant: 0)
         headerStackTopConstraint = headerTop
-        headerStackTrailingConstraint = headerTrailing
         // 正文栈顶（2026-11-05 日记布局统一）：取头像底与头行底较大者 + 间距。
         // 初始间距按无标题 14 取，render 时经 updateDiaryStackSpacing 按标题显隐重定；
         // 两条 required ≥ 定下限，999 的 = 把栈顶拉回头行底 + 间距（头像更高时该条自动断开）。
@@ -1114,6 +1111,8 @@ final class BearyDetailViewController: UIViewController {
         ])
         // authorRow 入栈已移到皇冠块之前（见上，118 闪退修复），此处不再重复添加。
         // 右上角 ⋯ 钮：时间线 moreButton 同款（21pt 灰色、28 框、44 热区），图标恒为三点。
+        // 2026-11-12：从作者行挪到顶栏——挂 view（不跟内容滚动），右缘与返回钮
+        // 左缘对称（安全区 ±16），中心线与返回钮（closeButton，52 高）对齐。
         moreButton.translatesAutoresizingMaskIntoConstraints = false
         moreButton.setImage(BearyFeedIconCache.image(named: "icon_more", pointSize: 24), for: .normal)
         moreButton.tintColor = BearyColors.gray
@@ -1121,10 +1120,10 @@ final class BearyDetailViewController: UIViewController {
         moreButton.addTarget(self, action: #selector(moreTapped), for: .touchUpInside)
         moreButton.accessibilityLabel = "更多操作"
         moreButton.bearyAddPressFeedback()
-        contentColumnView.addSubview(moreButton)
+        view.addSubview(moreButton)
         NSLayoutConstraint.activate([
-            moreButton.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor),
-            moreButton.centerYAnchor.constraint(equalTo: authorRow.centerYAnchor),
+            moreButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            moreButton.centerYAnchor.constraint(equalTo: closeButton.centerYAnchor),
             moreButton.widthAnchor.constraint(equalToConstant: 28),
             moreButton.heightAnchor.constraint(equalToConstant: 28),
         ])
@@ -1393,7 +1392,7 @@ final class BearyDetailViewController: UIViewController {
     }
 
     /// 内容区（头像 + 头行 + 正文栈 + 小地球 + 底线）整体显隐：占位／失败态整藏，
-    /// 恢复时小地球显隐与头行缩进由 refreshAuthorActions、底线显隐由
+    /// 恢复时 ⋯ 显隐由 refreshAuthorActions、底线显隐由
     /// refreshEphemeralViews 按限时态重算（不由本函数定）。
     private func setContentVisible(_ visible: Bool) {
         avatarButton.isHidden = !visible
@@ -2337,8 +2336,8 @@ final class BearyDetailViewController: UIViewController {
         separatorView.isHidden = live
     }
 
-    /// 作者行右侧显隐：本人卡显小地球、头行右缩进 −36 让位；他人／游客无地球、
-    /// 头行恢复 0。游客永非作者，到不了本人分支。
+    /// 皇冠显隐：本人卡显皇冠（与名字同行）；他人／游客无皇冠。
+    /// 游客永非作者，到不了本人分支。
     /// 皇冠显隐唯一入口：容器与皇冠同藏同显，不留 19pt 空位。
     private func setCrownHidden(_ hidden: Bool) {
         crownWrapView.isHidden = hidden
@@ -2348,11 +2347,10 @@ final class BearyDetailViewController: UIViewController {
 
     private func refreshAuthorActions() {
         // 2026-10-31：⋯ 显隐——本人卡（编辑／修改权限／删除）或他人公开卡
-        // （举报／拉黑）显；游客与占位态（他人私密）无菜单项，藏；头行右缩进
-        // −36 给 ⋯（28 框）留位，藏时恢复 0。
+        // （举报／拉黑）显；游客与占位态（他人私密）无菜单项，藏。
+        // 2026-11-12：⋯ 已在顶栏，显隐只改 moreButton，作者行不再缩进。
         let showMore = !isGuest && (isAuthor || BearyEphemeral.isEffectivelyPublic(entry))
         moreButton.isHidden = !showMore
-        headerStackTrailingConstraint?.constant = showMore ? -36 : 0
     }
 
     /// 首页图片条同款（F5）：高 216、间距 8、圆角 12、槽底色 line、横向滚动、
