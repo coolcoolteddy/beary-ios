@@ -1909,6 +1909,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         return [
             isMineGroup ? "mine" : "public",
             content,
+            entry.title ?? "",
             entry.createdAt.map(String.init) ?? "",
             firstImage,
             entry.authorName ?? "",
@@ -2491,6 +2492,24 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         contentLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         contentLabel.attributedText = highlightedText(contentText, query: query, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, lineHeightMultiple: 1.6, lineBreakMode: .byCharWrapping)
 
+        // 第十三轮第 2 项：搜索结果行加标题（作者·日期 → 标题 → 正文 → 图片）。
+        // 标题用卡片同款 16.5 粗体（cardTitleFont）、最多两行截尾；命中词走
+        // highlightedText，与正文同款高亮；无标题时隐藏，stack 不留空行。
+        let trimmedTitle = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let titleLabel = BearyRoundedMarkLabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = BearyDynamicType.cardTitleFont()
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.numberOfLines = 2
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.clipsToBounds = true
+        if trimmedTitle.isEmpty {
+            titleLabel.isHidden = true
+        } else {
+            titleLabel.attributedText = highlightedText(trimmedTitle, query: query, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, lineBreakMode: .byTruncatingTail)
+        }
+
         let bodyRow = UIStackView()
         bodyRow.translatesAutoresizingMaskIntoConstraints = false
         bodyRow.axis = .horizontal
@@ -2584,10 +2603,16 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             metaStack.addArrangedSubview(reportedLabel)
         }
 
-        let column = UIStackView(arrangedSubviews: [metaStack, bodyRow])
+        let column = UIStackView(arrangedSubviews: [metaStack, titleLabel, bodyRow])
         column.translatesAutoresizingMaskIntoConstraints = false
         column.axis = .vertical
         column.spacing = 5
+        if !titleLabel.isHidden {
+            // meta→标题 12（时间线行同款）、标题→正文 6（卡片／时间线同款）；
+            // 无标题时不设，沿用栈间距 5（meta→正文不变）。
+            column.setCustomSpacing(12, after: metaStack)
+            column.setCustomSpacing(6, after: titleLabel)
+        }
         row.addSubview(column)
         row.addSubview(separator)
         var constraints: [NSLayoutConstraint] = [
