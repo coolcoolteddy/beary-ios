@@ -6130,7 +6130,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let pickAccountId = BearyDraftStore.currentAccountId
         let pickDraftId = currentDraftId
         imagePrepQueue.async { [weak self, weak item] in
-            guard let full = BearyImagePrep.jpegData(cropped, maxSide: 1600, quality: 0.85),
+            guard let full = BearyImagePrep.jpegData(cropped, maxSide: 1600, quality: 0.92),
                   let thumb = BearyImagePrep.thumbData(cropped, maxSide: 480) else {
                 DispatchQueue.main.async {
                     self?.showToast(message: "裁剪保存失败，原图未改")
@@ -6376,7 +6376,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                     // editingEntry），主线程先拍定本模式。
                                     let editMode = self.isEditMode
                                     self.imagePrepQueue.async { [weak self, weak item] in
-                                        guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
+                                        guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.92),
                                               let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
                                             DispatchQueue.main.async {
                                                 guard let self = self, let item = item else { return }
@@ -6490,7 +6490,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // editingEntry），主线程先拍定本模式。
                     let editMode = self.isEditMode
                     self.imagePrepQueue.async { [weak self, weak item] in
-                        guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
+                        guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.92),
                               let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
                             DispatchQueue.main.async {
                                 guard let self = self, let item = item else { return }
@@ -6576,7 +6576,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 return
             }
             // 旧草稿缺文件/读不出时走现有编码兜底。
-            guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
+            guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.92),
                   let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
                 DispatchQueue.main.async {
                     guard let self = self, let item = item else { return }

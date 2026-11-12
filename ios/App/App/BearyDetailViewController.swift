@@ -2392,7 +2392,8 @@ final class BearyDetailViewController: UIViewController {
             let slot = imageSlots[imageIndex]
             slot.tag = imageIndex
             let strip = stripWidth(forKey: imageKey, dims: entry.imgDims, height: 216)
-            bearyFeedLoadImage(into: slot, url: BearyImageURLs.imageURL(key: imageKey, thumb: true), retryButton: imageSlotRetryButtons[imageIndex], downsampleToWidth: strip * UIScreen.main.scale, blurUp: true)
+            // 卡片糊同款：详情条也是 216 高，直接走全尺寸图（缩略图 480px 在 3× 机上要拉大到 1438px）。
+            bearyFeedLoadImage(into: slot, url: BearyImageURLs.imageURL(key: imageKey, thumb: false), retryButton: imageSlotRetryButtons[imageIndex], downsampleToWidth: strip * UIScreen.main.scale, blurUp: true)
             imageSlotWidthConstraints[imageIndex].constant = strip
             slot.isHidden = false
             setLiveOverlay(index: imageIndex, staticKey: imageKey, liveKey: entry.liveVideos?[imageKey])
