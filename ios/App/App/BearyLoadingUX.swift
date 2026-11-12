@@ -69,6 +69,10 @@ final class BearySkeletonCardView: UIView {
         // 斜向光带：图层自身转 -20°，光带沿 x 扫过（只走 transform.translation.x，不动 position）。
         gradientLayer.transform = CATransform3DMakeRotation(-0.35, 0, 0, 1)
         shimmerContainer.layer.addSublayer(gradientLayer)
+        // 审计 ③-6：实时响应减动效切换——运行中开启减动效时，已加上的无限
+        // 扫光动画无任何路径会被移除；关时若骨架仍在显示需恢复扫光
+        //（与 BearyWebRingSpinnerView 同口径）。
+        NotificationCenter.default.addObserver(self, selector: #selector(reduceMotionChanged), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
         NSLayoutConstraint.activate([
             avatar.topAnchor.constraint(equalTo: topAnchor, constant: 16),
             avatar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
@@ -107,6 +111,10 @@ final class BearySkeletonCardView: UIView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
 
     private func bar(width: CGFloat? = nil, height: CGFloat) -> UIView {
         let v = UIView()
@@ -166,6 +174,18 @@ final class BearySkeletonCardView: UIView {
     func stopShimmer() {
         shimmering = false
         gradientLayer.removeAnimation(forKey: "beary-shimmer-sweep")
+    }
+
+    /// 减动效开关变化（审计 ③-6，与 BearyWebRingSpinnerView 同口径）：
+    /// 开→停掉在扫的动画；关→仅仍在窗口内显示时恢复扫光
+    ///（未进窗口时由 didMoveToWindow／layoutSubviews 补起）。
+    @objc private func reduceMotionChanged() {
+        if UIAccessibility.isReduceMotionEnabled {
+            stopShimmer()
+        } else {
+            guard window != nil else { return }
+            startShimmer()
+        }
     }
 
     private func restartShimmerAnimation() {
@@ -286,9 +306,17 @@ final class BearyLoadMoreFooterView: UIView {
         endLabel.isHidden = true
         retryButton.isHidden = true
         setState(.hidden)
+        // 审计 ③-6 同缺口：圆点跳动同样是无限循环＋一次性减动效快照，
+        // 运行中开关减动效不会实时响应；与骨架扫光同支修（与
+        // BearyWebRingSpinnerView 同口径）。
+        NotificationCenter.default.addObserver(self, selector: #selector(reduceMotionChanged), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
 
     @objc private func retryTapped() { onRetry?() }
 
@@ -324,6 +352,17 @@ final class BearyLoadMoreFooterView: UIView {
         for dot in dots {
             dot.layer.removeAnimation(forKey: "beary-dot-bounce")
             dot.transform = .identity
+        }
+    }
+
+    /// 减动效开关变化（审计 ③-6 同缺口，与骨架扫光同口径）：
+    /// 开→停掉在跳的圆点；关→仅仍在加载且在窗口内时恢复跳动。
+    @objc private func reduceMotionChanged() {
+        if UIAccessibility.isReduceMotionEnabled {
+            stopDots()
+        } else {
+            guard state == .loading, window != nil else { return }
+            startDots()
         }
     }
 }
