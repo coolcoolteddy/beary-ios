@@ -1855,7 +1855,17 @@ class BearyFeedViewController: UIViewController {
         tableView.performBatchUpdates({
             if !deletePaths.isEmpty { self.tableView.deleteRows(at: deletePaths, with: .none) }
             if !insertPaths.isEmpty { self.tableView.insertRows(at: insertPaths, with: .none) }
-        }, completion: { _ in applyMovesAndUpdates() })
+        }, completion: { [weak self] _ in
+            guard let strongSelf = self else { return }
+            applyMovesAndUpdates()
+            // R7（审计五轮）：本批新行错峰淡入（kind .pagination；只播
+            // 可见新行，已有行不重播）。首屏不走这里——首屏入场由
+            // finishFirstLoadIfNeeded 另播（kind .firstLoad）；isFirstLoad
+            // 守卫兜底，防首屏 diff 万一走到这里时重播两次。
+            if !insertPaths.isEmpty && !strongSelf.isFirstLoad {
+                strongSelf.staggerFadeCells(at: insertPaths, kind: .pagination)
+            }
+        })
     }
 
     // MARK: - F10 后台 revalidate 与新内容 pill
@@ -1951,17 +1961,20 @@ class BearyFeedViewController: UIViewController {
         hideNewContentPill()
         // feedfast：pill 换上同样走 diff（只插/删/改变了的行，已有行不重建、
         // 不重播动效；旧整表 crossDissolve 路径已随 applyRevalidated 删除），
-        // 再回顶。原新行错峰淡入随之取消——pill 本就是用户主动点按，
-        // 内容立即就位比再播一遍入场更重要。
+        // 再回顶。新行错峰淡入由 applyFirstPageDiff 内补位（kind .pagination）：
+        // 2026-11-11 定版（Li 按审计建议定：pill 点按也补错峰），撤回此前
+        // “内容立即就位比再播一遍入场更重要”的取舍。
         applyFirstPageDiff(newPlaza)
         tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: false)
     }
 
     /// M1：新行错峰淡入 + 轻微上滑（只针对本批新行，已有行不重播；减动效直设终值）。
-    /// 6-9 核查（2026-10-28）：调用方只传新行——分页走 insertPlazaRows 的 inserted
-    ///（oldCount..<newCount）、重校验走 diff 出的 newPaths（旧 id 集过滤）、首屏走
-    /// isFirstLoad 一次性可见行；其余 reloadData 路径不调本函数。故无需
-    /// animatedRowIds 防重播集合，stagger 现状无问题。
+    /// 调用方只传新行——分页走 insertPlazaRows 的 inserted（oldCount..<newCount）、
+    /// 首屏重拉／后台重校验／pill 点按走 applyFirstPageDiff 内补位的 insertPaths
+    ///（kind .pagination）、首屏走 isFirstLoad 一次性可见行；其余 reloadData
+    /// 路径不调本函数。故无需 animatedRowIds 防重播集合，stagger 现状无问题。
+    /// 注：此前注释所称重校验走“diff 出的 newPaths”已过期——全文件不存在
+    /// newPaths 标识，applyFirstPageDiff 在 R7 之前从未调 staggerFadeCells。
     /// 审计 r16 第 10 项：步进／位移走 BearyEntranceConfig（首屏 60ms／8pt、
     /// 分页 50ms／24pt），与时间线共用一套配置。
     private func staggerFadeCells(at paths: [IndexPath], kind: BearyEntranceConfig.Kind) {
