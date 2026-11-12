@@ -305,6 +305,10 @@ final class BearyChromeViewController: UIViewController {
     private var fabPressedState = false
     private var loginButton: UIButton!
     private var giftButton: UIButton!
+    /// 顶栏右侧操作组（登录／礼物／搜索，间距 8）：礼物藏时 UIStackView 仍保留其两侧
+    /// 各 8pt 间距，登录→搜索会变成 16pt；syncActionsStackSpacing 在礼物显隐翻转时
+    /// 把登录后的间距改 0（0＋8＝8）、显时恢复 8。
+    private var topActionsStack: UIStackView?
     /// 顶栏 logo 钮（buildChrome 内建，veil 揭开时自身淡入）。
     private var topLogoButton: UIButton?
     /// 文字启动图 veil（v3 接线，取代旧熊图 veil）：系统 LaunchScreen.storyboard
@@ -701,6 +705,7 @@ final class BearyChromeViewController: UIViewController {
         actionsStack.axis = .horizontal
         actionsStack.alignment = .center
         actionsStack.spacing = 8
+        topActionsStack = actionsStack
         let topStack = UIStackView(arrangedSubviews: [logo, betaBadge, spacer, actionsStack])
         topStack.setCustomSpacing(18, after: logo)
         topStack.axis = .horizontal
@@ -1039,6 +1044,7 @@ final class BearyChromeViewController: UIViewController {
         if visible {
             let wasHidden = button.isHidden
             button.isHidden = false
+            syncActionsStackSpacing()
             if UIAccessibility.isReduceMotionEnabled {
                 button.alpha = 1
                 return
@@ -1052,14 +1058,26 @@ final class BearyChromeViewController: UIViewController {
             if UIAccessibility.isReduceMotionEnabled {
                 button.alpha = 0
                 button.isHidden = true
+                syncActionsStackSpacing()
                 return
             }
             UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState], animations: {
                 button.alpha = 0
-            }) { _ in
-                if button.alpha == 0 { button.isHidden = true }
+            }) { [weak self] _ in
+                if button.alpha == 0 {
+                    button.isHidden = true
+                    self?.syncActionsStackSpacing()
+                }
             }
         }
+    }
+
+    /// 顶栏操作组间距：礼物钮藏时 UIStackView 仍保留其两侧各 8pt 间距，
+    /// 登录→搜索会变成 16pt；藏时把登录后的间距改 0（0＋8＝8），显时恢复 8。
+    /// 登录钮藏时（已登录）登录后的间距落在组首沿、无视觉影响，故只按礼物态取值。
+    private func syncActionsStackSpacing() {
+        guard let actionsStack = topActionsStack, let loginButton = loginButton else { return }
+        actionsStack.setCustomSpacing(giftButton?.isHidden == true ? 0 : 8, after: loginButton)
     }
 
     /// F5 回顶：我页/搜索页均无公开回顶方法（不编方法名），容器内 BFS 找页级滚动视图——
@@ -1134,6 +1152,9 @@ final class BearyChromeViewController: UIViewController {
         } else {
             giftButton.isHidden = true
         }
+        // 首帧礼物即藏（游客／未取到 referral 前）：同步操作组间距，
+        // 否则登录→搜索残留礼物两侧各 8pt、共 16pt。
+        syncActionsStackSpacing()
         // 冷启动快照先行恢复（2026-11-04）：本地有会话残留（活 cookie 或钥匙串
         // 快照）时，首帧即恢复已登录态，不再等 /me 回包才翻态；弱网/断网时
         // /me 回不来也不退登，旧内容照常从本地缓存出。后台 /me 仍按原口径
