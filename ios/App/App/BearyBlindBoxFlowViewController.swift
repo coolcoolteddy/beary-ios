@@ -1373,10 +1373,11 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         emoteScroll.isHidden = visibleEmoteCount == 0
     }
 
-    /// 盲盒回应失败的拒绝动效：0.4s 摇头＋warning 震动（与详情/卡片 playDenyShake 同口径；
-    /// 减动效时只跳视觉抖动，不补音效）。
+    /// 盲盒回应失败的拒绝动效：0.4s 摇头＋warning 震动＋拒绝音效（与详情/卡片 playDenyShake 同口径；
+    /// 减动效时只跳过视觉抖动，震动与音效照常给）。
     private func playDenyShake(on view: UIView) {
         BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
         if UIAccessibility.isReduceMotionEnabled { return }
         view.layer.removeAnimation(forKey: "bearyBlindBoxDenyShake")
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
