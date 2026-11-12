@@ -1262,8 +1262,7 @@ enum BearyDraftStore {
     // MARK: - 编辑检查点（审计四轮增量 09）
 
     /// 编辑中日记的本地临时检查点：只存未提交的修改，不进正常草稿箱、
-    /// 不改变服务器上的原文。崩溃/进程被杀后重进编辑器可恢复；15 分钟
-    /// 期限只由服务端判定，检查点不碰该限制（过期后恢复仍走现行到 0 冻结）。
+    /// 不改变服务器上的原文。崩溃/进程被杀后重进编辑器可恢复。
     struct BearyEditCheckpoint: Codable {
         var entryId: String
         var accountId: Int

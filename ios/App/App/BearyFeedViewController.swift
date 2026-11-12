@@ -2427,22 +2427,16 @@ class BearyFeedViewController: UIViewController {
     /// 即时反馈（2026-10-29 定版）：点按瞬间先按目标态同步本地（图标与操作行
     /// 门控立即变），回包成功对齐服务端值；失败回滚原态 + 拒绝动效。
     /// 2026-11-11 广场卡片 ⋯ 菜单迁底部弹窗（BearyConfirmSheet；原 actionSheet 文案/
-    /// 顺序/语义全保留）：本人篇 编辑内容（15 分钟内）／修改权限／删除；他人公开篇
+    /// 顺序/语义全保留）：本人篇 编辑内容／修改权限／删除；他人公开篇
     /// 举报（已举报置灰）；取消垫底。点赞／收藏／分享是互动，仍在底部操作行，
     /// 不进菜单；长按菜单已随 ⋯ 归并删除。iPad popover 锚点随迁移删去，底部弹窗不再需要。
+    /// 冲突清单第 4 条：编辑永久可改，不再按 15 分钟门控。
     private func presentCardMoreMenu(entry: Entry) {
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         var actions: [BearyConfirmSheet.Action] = []
         if entry.isMine == true {
-            if let deadline = entry.editDeadline, nowMs < deadline {
-                actions.append(BearyConfirmSheet.Action(title: "编辑内容", style: .default) { [weak self] in
-                    self?.onEditEntry?(entry)
-                })
-            } else {
-                // r29-11：过期（或 editDeadline 缺失即已锁）时编辑项不再直接消失，
-                // 与详情页同口径，置灰并附说明；handler 为 nil。
-                actions.append(BearyConfirmSheet.Action(title: "编辑（已超 15 分钟不可编辑）", style: .default, isEnabled: false))
-            }
+            actions.append(BearyConfirmSheet.Action(title: "编辑内容", style: .default) { [weak self] in
+                self?.onEditEntry?(entry)
+            })
             actions.append(BearyConfirmSheet.Action(title: "修改权限", style: .default) { [weak self] in
                 self?.handleVisibilityToggle(entryId: entry.id ?? "")
             })

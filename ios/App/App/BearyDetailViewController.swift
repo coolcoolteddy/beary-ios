@@ -1641,7 +1641,14 @@ final class BearyDetailViewController: UIViewController {
         nameButton.setTitle(authorNameValue, for: .normal)
         avatarInitialLabel.text = String(authorNameValue.prefix(1)).uppercased()
         if let createdAt = entry.createdAt {
-            timeLabel.text = BearyDiaryCardCell.feedTimeString(ms: createdAt)
+            // 冲突清单第 4 条：公开内容显示「编辑于 X」（编辑过才显；私密不显）。
+            let createdText = BearyDiaryCardCell.feedTimeString(ms: createdAt)
+            if BearyEphemeral.isEffectivelyPublic(entry),
+               let updatedAt = entry.updatedAt, updatedAt > createdAt {
+                timeLabel.text = "\(createdText) · 编辑于 \(BearyDiaryCardCell.feedTimeString(ms: updatedAt))"
+            } else {
+                timeLabel.text = createdText
+            }
         } else {
             timeLabel.text = nil
         }
@@ -2857,24 +2864,23 @@ final class BearyDetailViewController: UIViewController {
     }
 
     /// 2026-11-11 详情 ⋯ 菜单迁底部弹窗（BearyConfirmSheet；原 actionSheet 文案/
-    /// 顺序/语义全保留）：本人篇 编辑（15 分钟内）／修改权限／删除；他人公开篇
+    /// 顺序/语义全保留）：本人篇 编辑／快照／修改权限／删除；他人公开篇
     /// 举报（已举报置灰）／拉黑；游客无菜单（⋯ 已藏）。iPad popover 锚点随迁移
     /// 删去，底部弹窗不再需要。点赞／收藏／分享是互动，仍在底部操作行，不进菜单。
+    /// 冲突清单第 4 条：编辑永久可改，不再按 15 分钟门控。
     private func presentDetailMoreMenu() {
         if isGuest { return }
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         var actions: [BearyConfirmSheet.Action] = []
         if isAuthor {
-            if let deadline = entry.editDeadline, nowMs < deadline {
-                actions.append(BearyConfirmSheet.Action(title: "编辑", style: .default) { [weak self] in
-                    guard let self = self else { return }
-                    self.onEdit?(self.entry)
-                })
-            } else {
-                // 审计-编辑器详情：过期（或 editDeadline 缺失即已锁，见时间线
-                // 同口径注释）时编辑项不再直接消失，置灰并附说明；handler 为 nil。
-                actions.append(BearyConfirmSheet.Action(title: "编辑（已超 15 分钟不可编辑）", style: .default, isEnabled: false))
-            }
+            actions.append(BearyConfirmSheet.Action(title: "编辑", style: .default) { [weak self] in
+                guard let self = self else { return }
+                self.onEdit?(self.entry)
+            })
+            // 冲突清单第 4 条：快照入口（仅作者本人），进快照列表。
+            actions.append(BearyConfirmSheet.Action(title: "快照", style: .default) { [weak self] in
+                guard let self = self else { return }
+                self.presentSnapshotList()
+            })
             actions.append(BearyConfirmSheet.Action(title: "修改权限", style: .default) { [weak self] in
                 guard let self = self else { return }
                 self.visibilityTapped()
@@ -2902,6 +2908,22 @@ final class BearyDetailViewController: UIViewController {
         // 审计 2026-11-02 弹窗组：present 不写死 animated，走减动效口径
         // （BearyConfirmSheet.show 内部已走 BearyMotion.animated）。
         BearyConfirmSheet.show(from: self, title: "", message: nil, actions: actions)
+    }
+
+    /// 冲突清单第 4 条：快照列表（全屏 modal 导航栈）；恢复成功后关页并重拉单篇。
+    private func presentSnapshotList() {
+        guard entry.id?.isEmpty == false else { return }
+        let listVC = BearySnapshotListViewController(entry: entry)
+        listVC.onRestored = { [weak self] in
+            guard let self = self else { return }
+            self.dismiss(animated: BearyMotion.animated(true)) {
+                BearyToast.show(in: self.view, message: "已恢复到该版本")
+                self.retryFetchDetail()
+            }
+        }
+        let nav = UINavigationController(rootViewController: listVC)
+        nav.modalPresentationStyle = .fullScreen
+        present(nav, animated: BearyMotion.animated(true))
     }
 
     @objc private func visibilityTapped() {

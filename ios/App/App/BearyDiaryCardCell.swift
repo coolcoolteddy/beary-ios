@@ -2098,16 +2098,10 @@ class BearyDiaryCardCell: UITableViewCell {
         onAuthorTapped?()
     }
 
-    /// C6 菜单编辑资格：本人 + 未过编辑期；审计 P2-15 统一为缺失即锁
-    /// （与时间线编辑态文字组、网页端 +edit_deadline||0 算锁同口径；服务端
-    /// 列表 SELECT e.* 本就带 edit_deadline，缺失只剩 legacy 载荷，锁住为稳妥。
-    /// 本条审计已单列供 veto——若 Li 要恢复“缺失仍出编辑项”，改回 return true 即可）。
-    /// iCity：编辑锁只看 15 分钟，与可见性无关（公开后 15 分钟内仍可编辑）。
+    /// C6 菜单编辑资格：本人即可（冲突清单第 4 条取消 15 分钟锁，编辑永久可改）。
+    /// iCity：编辑锁已取消，与可见性无关。
     private func isCardMenuEditAvailable(entry: Entry) -> Bool {
-        guard entry.isMine == true else { return false }
-        guard let deadline = entry.editDeadline else { return false }
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-        return nowMs < deadline
+        entry.isMine == true
     }
 
     // MARK: - configure（首页模式）

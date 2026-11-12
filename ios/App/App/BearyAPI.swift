@@ -162,6 +162,9 @@ struct Entry: Codable {
     /// 不得再用于任何 UI 或门控判断；可见性唯一事实来源是 isPublic + publishedAt）。
     var publishPendingUntil: Int?
     var editDeadline: Int?
+    /// 冲突清单第 4 条：最后一次编辑时刻（毫秒，后端 updated_at；未编辑过为 nil）。
+    /// 公开内容凭它显示「编辑于 X」；卡片不加「已修订」标记。
+    var updatedAt: Int?
     var isPublic: Bool?
     /// iCity：最近一次公开时间（毫秒；私密态为 nil；服务端按 24 小时冷却刷新）。
     var publishedAt: Int?
