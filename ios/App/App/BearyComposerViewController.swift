@@ -5537,6 +5537,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         failLabel.font = BearyDynamicType.captionFont()
         failLabel.textColor = BearyColors.red
         failLabel.textAlignment = .center
+        // 扫包 130（#1253 回归）：文案 9 字 × 12pt 约 108pt，缩略图仅 84pt、
+        // failStack 两侧各留 4pt 后只剩 76pt，单行会被截成“上传失败，…”、
+        // “点按重试”看不见；放宽至两行（图标 20 + 间距 3 + 两行约 29 = 52 < 84）。
+        failLabel.numberOfLines = 2
         failStack.addArrangedSubview(failIcon)
         failStack.addArrangedSubview(failLabel)
         failView.addSubview(failStack)
