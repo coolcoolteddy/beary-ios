@@ -1841,8 +1841,7 @@ final class BearyChromeViewController: UIViewController {
             // 正常松手且没拖过 = 一次点按，在此补开编辑器。拖过、中途取消、
             // 识别失败（快点已走按钮路径）均不补开。同一次触摸里 touchUpInside
             // 与 .ended 互斥，故与快点路径不会重复开两次。
-            // 临时诊断（81 包，定根因后删除）：慢按补开入口。
-            if wasEnded && !wasDragged { DiagFile.mark("fabLongPress-open"); BearySoundPlayer.play(.fabPop); presentComposer() }
+            if wasEnded && !wasDragged { BearySoundPlayer.play(.fabPop); presentComposer() }
             // 下一 runloop 再清：保证 didTapWrite 开头的检查（若其触发）仍能看到标志。
             DispatchQueue.main.async { self.fabDraggedThisTouch = false }
         default:
