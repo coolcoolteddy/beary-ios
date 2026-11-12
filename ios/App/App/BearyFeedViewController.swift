@@ -2280,6 +2280,10 @@ class BearyFeedViewController: UIViewController {
             let keys = entry.images ?? []
             self?.presentImageViewer(imageKeys: keys, startIndex: index, liveVideos: entry.liveVideos, originFrame: originFrame, thumbnail: thumbnail)
         }
+        cell.onNineGridTapped = { [weak self] in
+            guard let strongSelf = self else { return }
+            BearyNineGridPresenter.present(from: strongSelf, imageKeys: entry.images ?? [], liveVideos: entry.liveVideos)
+        }
         // F2：引用卡点按经容器走 gotoEntry 等价（容器先 fetchEntry 校验可见性再放行，私密显占位）。
         cell.onQuoteSelected = { [weak self] quoteId in
             self?.onQuoteEntrySelected?(quoteId)

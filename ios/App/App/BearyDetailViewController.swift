@@ -467,6 +467,79 @@ final class BearyDetailViewController: UIViewController {
         applyImageStripCornerRadius(progress: 0)
         imagesScrollView.isScrollEnabled = true
     }
+
+    /// 九宫格入口：图片数 > 3 时在图片条下方弹起；纯文字 pill（卡片同款，
+    /// surface2 底、墨字、13 semibold、圆角 single 12、高 32）。点按直接走
+    /// BearyNineGridPresenter（Plus 门控 + 开网格都在那里）。
+    private lazy var nineGridButton: UIButton = {
+        let btn = BearyHit44Button(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        btn.titleLabel?.adjustsFontForContentSizeCategory = true
+        btn.setTitle("九宫格", for: .normal)
+        btn.setTitleColor(BearyColors.ink, for: .normal)
+        btn.backgroundColor = BearyColors.surface2
+        btn.layer.cornerRadius = 12
+        btn.clipsToBounds = true
+        btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
+        btn.bearyAddPressHaptic()
+        return btn
+    }()
+
+    /// 九宫格按钮容器：左贴内容缘，栈内隐藏时自动压零、不留空位。
+    private lazy var nineGridWrapView: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        v.alpha = 0
+        v.addSubview(nineGridButton)
+        NSLayoutConstraint.activate([
+            nineGridButton.leadingAnchor.constraint(equalTo: v.leadingAnchor),
+            nineGridButton.topAnchor.constraint(equalTo: v.topAnchor),
+            nineGridButton.bottomAnchor.constraint(equalTo: v.bottomAnchor),
+            nineGridButton.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        return v
+    }()
+
+    /// 九宫格入口隐藏动画代次：收起动画完成时若已有新一轮展开，须以新态为准、不再藏。
+    private var nineGridHideToken = 0
+
+    /// 九宫格入口显隐：图片数 > 3 才出现；状态真变时才动（重复渲染不闪）。
+    /// 出现走规范 §6 局部状态 0.18s 淡入，减动效直设；收起先淡出、完成再藏。
+    private func updateNineGridButton(count: Int) {
+        let shouldShow = count > 3
+        guard nineGridWrapView.isHidden != shouldShow else { return }
+        nineGridHideToken += 1
+        let animated = view.window != nil && !UIAccessibility.isReduceMotionEnabled
+        if shouldShow {
+            nineGridWrapView.isHidden = false
+            nineGridWrapView.alpha = animated ? 0 : 1
+            if animated {
+                UIView.animate(withDuration: 0.18) {
+                    self.nineGridWrapView.alpha = 1
+                }
+            }
+        } else {
+            if animated {
+                let token = nineGridHideToken
+                UIView.animate(withDuration: 0.18, animations: {
+                    self.nineGridWrapView.alpha = 0
+                }, completion: { _ in
+                    guard token == self.nineGridHideToken else { return }
+                    self.nineGridWrapView.isHidden = true
+                })
+            } else {
+                nineGridWrapView.isHidden = true
+                nineGridWrapView.alpha = 0
+            }
+        }
+    }
+
+    @objc private func nineGridButtonTapped() {
+        BearyNineGridPresenter.present(from: self, imageKeys: Array(imageKeys.prefix(9)), liveVideos: entry.liveVideos)
+    }
     /// 批 E 详情位置行：官方 icon_location 13 灰 + 位置文案；公开篇作者本人
     /// 也只看区级（与他人视角一致），不再另附提示行。无位置/他人视角无区级/
     /// 公开篇无区级时整组隐藏，不留空行（与卡片同口径）。
@@ -1077,6 +1150,7 @@ final class BearyDetailViewController: UIViewController {
 
     private func buildImages() {
         bodyStack.addArrangedSubview(imagesScrollView)
+        bodyStack.addArrangedSubview(nineGridWrapView)
         imagesScrollView.addSubview(imagesStack)
         let imageHeight = imagesScrollView.heightAnchor.constraint(equalToConstant: 0)
         imageHeightConstraint = imageHeight
@@ -1293,8 +1367,10 @@ final class BearyDetailViewController: UIViewController {
         // 正文→图片 14（ChatGPT 间距跟进，#904 为 10）：正文与图片条直接相邻。
         bodyStack.setCustomSpacing(14, after: bodyLabel)
         // 图片→定位 12（ChatGPT 间距跟进）：图片条与定位行中间隔着引用卡，
-        // 两段相邻间距（图片→引用、引用→定位）各取 12（天气已并进定位行）。
+        // 两段相邻间距（图片→引用、引用→定位）各取 12（天气已并进定位行）；
+        // 九宫格按钮在图片条与引用卡之间时，图片条→按钮、按钮→引用卡各取 12。
         bodyStack.setCustomSpacing(12, after: imagesScrollView)
+        bodyStack.setCustomSpacing(12, after: nineGridWrapView)
         bodyStack.setCustomSpacing(12, after: quoteView)
         // 定位→操作行 14（ChatGPT 间距跟进，#904 为 10）。
         bodyStack.setCustomSpacing(14, after: detailLocationStack)
@@ -2250,6 +2326,7 @@ final class BearyDetailViewController: UIViewController {
         let allKeys = (entry.images ?? []).filter { !$0.isEmpty }
         imageKeys = allKeys
         let keys = Array(allKeys.prefix(9))
+        updateNineGridButton(count: keys.count)
         if imageSlots.isEmpty { makeImageSlots() }
         if keys.isEmpty {
             imagesScrollView.isHidden = true

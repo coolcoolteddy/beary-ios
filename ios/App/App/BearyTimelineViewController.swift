@@ -6666,6 +6666,10 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
             viewer.modalPresentationStyle = .fullScreen
             self.present(viewer, animated: UIAccessibility.isReduceMotionEnabled == false, completion: nil)
         }
+        cell.onNineGridTapped = { [weak self] in
+            guard let strongSelf = self else { return }
+            BearyNineGridPresenter.present(from: strongSelf, imageKeys: viewerEntry.images ?? [], liveVideos: viewerEntry.liveVideos)
+        }
         return cell
     }
 
