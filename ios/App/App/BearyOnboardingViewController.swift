@@ -751,7 +751,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         responseChip.isHidden = true
         responseChipIcon.translatesAutoresizingMaskIntoConstraints = false
         responseChipCount.translatesAutoresizingMaskIntoConstraints = false
-        responseChipCount.font = scaledFont(size: 14, weight: .semibold)
+        responseChipCount.font = BearyDynamicType.numberFont()
         responseChipCount.textColor = BearyColors.ink
         responseChipCount.adjustsFontForContentSizeCategory = true
         responseChip.addSubview(responseChipIcon)
@@ -1261,12 +1261,31 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
             chipAppeared = true
             responseChip.isHidden = false
             responseChip.alpha = 0
-            responseChip.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
+            responseChip.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
+            responseChipIcon.transform = .identity
             if BearyMotion.animated(true) {
-                UIView.animate(withDuration: 0.2, animations: {
-                    self.responseChip.alpha = 1
-                    self.responseChip.transform = .identity
-                })
+                // chip-in 0.45s＋图标 wiggle 0.5s（规范 §6；与卡片／详情页 playChipIn 同款口径）。
+                UIView.animateKeyframes(withDuration: 0.45, delay: 0, options: [], animations: {
+                    UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.6) {
+                        self.responseChip.transform = CGAffineTransform(scaleX: 1.12, y: 1.12)
+                        self.responseChip.alpha = 1
+                    }
+                    UIView.addKeyframe(withRelativeStartTime: 0.6, relativeDuration: 0.4) {
+                        self.responseChip.transform = .identity
+                        self.responseChip.alpha = 1
+                    }
+                }, completion: nil)
+                UIView.animateKeyframes(withDuration: 0.5, delay: 0, options: [], animations: {
+                    UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.3) {
+                        self.responseChipIcon.transform = CGAffineTransform(rotationAngle: -0.1745).scaledBy(x: 1.3, y: 1.3)
+                    }
+                    UIView.addKeyframe(withRelativeStartTime: 0.3, relativeDuration: 0.3) {
+                        self.responseChipIcon.transform = CGAffineTransform(rotationAngle: 0.1396).scaledBy(x: 1.15, y: 1.15)
+                    }
+                    UIView.addKeyframe(withRelativeStartTime: 0.6, relativeDuration: 0.4) {
+                        self.responseChipIcon.transform = .identity
+                    }
+                }, completion: nil)
             } else {
                 responseChip.alpha = 1
                 responseChip.transform = .identity
