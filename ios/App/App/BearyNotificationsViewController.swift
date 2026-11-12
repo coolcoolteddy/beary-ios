@@ -3761,10 +3761,8 @@ class BearyNotificationCell: UITableViewCell {
         let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
         let diff = Date().timeIntervalSince(date)
         if diff < -5 { return BearyText.timeString(ms: msValue) }
-        if diff < 60 { return "刚刚" }
-        if diff < 3600 { return "\(Int(diff / 60)) 分钟前" }
-        if diff < 86400 { return "\(Int(diff / 3600)) 小时前" }
-        return "\(Int(diff / 86400)) 天前"
+        // 相对档位复用带空格共享实现（规范 §12）；共享实现无未来分支，故未来守卫留本地。
+        return BearyVisibilityText.publishedRelativeString(publishedAtMs: msValue) ?? ""
     }
 
     /// 网页 fmtDay 口径：M月d日（无空格，信件引用 meta 用它）。
