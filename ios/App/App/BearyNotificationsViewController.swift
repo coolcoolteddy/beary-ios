@@ -2128,6 +2128,11 @@ final class BearyNotificationsViewController: UIViewController {
                     if case .unauthorized = error {
                         self.onRequireLogin?()
                     } else {
+                        // 关注／回关失败：toast 外补拒绝反馈（摇头＋warning 震动＋拒绝音，
+                        // 规范 §6:88／§6:84）；行不可见时 helper 只给震动＋音效、不摇头。
+                        if let notificationId = notificationId {
+                            self.playDenyShakeForRow(notificationId: notificationId)
+                        }
                         self.showToast(message: wasFollowBack ? "回关失败，请重试" : "关注失败，请重试")
                     }
                 }
