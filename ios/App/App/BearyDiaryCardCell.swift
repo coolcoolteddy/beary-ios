@@ -1430,12 +1430,6 @@ class BearyDiaryCardCell: UITableViewCell {
             moreButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             moreButton.centerYAnchor.constraint(equalTo: titleStack.centerYAnchor),
         ])
-        // F1（首页模式）：正文点击不导航——正文 label 自带空点按手势，把点按截住，
-        // 使其不到达 tableView 的 didSelectRowAt（行其余区域点按仍进详情）。
-        if cardMode == .feed {
-            contentLabel.isUserInteractionEnabled = true
-            contentLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(contentTapped)))
-        }
         makeImageSlots()
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -1601,10 +1595,6 @@ class BearyDiaryCardCell: UITableViewCell {
         ] + extraConstraints)
         // imagesScrollView 的高度只由 imageHeightConstraint 驱动（216 有图 / 0 无图）。
         imageHeight.isActive = true
-    }
-
-    /// 正文点按（首页模式）：有意不做任何事（不导航、不折叠，折叠只走折叠钮）。
-    @objc private func contentTapped() {
     }
 
     override func layoutSubviews() {
@@ -3277,7 +3267,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     // MARK: - 交互
 
-    /// F1：点图进查看器（带下标）；正文点按已由 contentTapped 截住，不会走到行导航。
+    /// F1：点图进查看器（带下标）；正文点按走行导航进详情（展开只走「展开全文」钮）。
     /// 重试图标可见时点按只走重试，不进查看器（钮是槽位子视图，父层手势可能同收该点按）。
     @objc private func imageTapped(_ sender: UITapGestureRecognizer) {
         // 实况长按后的抬手点按：压住一次，不进灯箱（覆盖层在长按 began 时
