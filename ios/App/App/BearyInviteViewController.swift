@@ -84,6 +84,9 @@ final class BearyInviteViewController: UIViewController {
     private var copyTimer: Timer?
     /// 上次写入的弹窗高度（updatePreferredSheetHeight 的幂等守卫）。
     private var lastPreferredSheetHeight: CGFloat = 0
+    /// 升起动画中途算出的弹窗高度（/me 回包改内容时）：先记下不写，
+    /// 动画完成后再一次性落位，见 updatePreferredSheetHeight 与 viewDidAppear。
+    private var pendingSheetHeight: CGFloat?
 
     init() {
         super.init(nibName: nil, bundle: nil)
@@ -148,10 +151,40 @@ final class BearyInviteViewController: UIViewController {
         )
         let height = view.safeAreaInsets.top + 44 + fitting.height + 34 + 24 + view.safeAreaInsets.bottom
         if abs(height - lastPreferredSheetHeight) > 0.5 {
+            // 升起动画进行中（/me 回包改内容常落在这个窗口）：此时写
+            // preferredContentSize 会让呈现层在弹簧中途直接改 presentedView 的帧，
+            // 升起卡一下。先记下，等动画完成后再落位（viewDidAppear）。
+            if transitionCoordinator != nil {
+                pendingSheetHeight = height
+                return
+            }
             lastPreferredSheetHeight = height
             preferredContentSize = CGSize(width: 0, height: height)
             view.superview?.setNeedsLayout()
         }
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        flushPendingSheetHeight()
+    }
+
+    /// 升起动画完成后，把动画中途攒下的高度一次性落位：用弹窗本体的
+    /// 弹簧（0.4s / damping 0.8）带容器重布局，让 sheet 平滑长到终高，
+    /// 而不是落地后跳变；减动效时直接写。
+    private func flushPendingSheetHeight() {
+        guard let height = pendingSheetHeight else { return }
+        pendingSheetHeight = nil
+        guard abs(height - lastPreferredSheetHeight) > 0.5 else { return }
+        lastPreferredSheetHeight = height
+        preferredContentSize = CGSize(width: 0, height: height)
+        if UIAccessibility.isReduceMotionEnabled {
+            view.superview?.setNeedsLayout()
+            return
+        }
+        UIView.animate(withDuration: BearyBottomSheet.springDuration, delay: 0, usingSpringWithDamping: BearyBottomSheet.springDamping, initialSpringVelocity: 0, options: [.beginFromCurrentState], animations: {
+            self.view.superview?.layoutIfNeeded()
+        })
     }
 
     // MARK: - 布局（与登录页同尺寸体系：左右 22、输入框高 48、内容列 ≤432）
