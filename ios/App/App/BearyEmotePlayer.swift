@@ -972,7 +972,11 @@ public final class BearyEmoteView: UIView {
     /// 用同一份模型缓存（cachedEmoteEntry，命中即零解析）；未命中时同步解析
     /// （节日 JSON 仅 10–40KB，一次解析在点按链路上可接受）；
     /// 取循环段末帧（与减动效静态帧同一落点 staticFrame），渲染进指定尺寸位图。
-    /// 只能在主线程调用（建 LottieAnimationView 并渲染图层）；渲染结果待真机复验。
+    /// 只能在主线程调用（建 LottieAnimationView 并渲染图层）。
+    /// 空白兜底：离窗渲染失败时 layer.render 可能产出全透明图，而
+    /// UIGraphicsImageRenderer 恒返回非 nil 图、调用方无法分辨——全透明即判
+    /// 渲染失败、回 nil，走调用方既有的记号文字兜底（inlineAttachment 回 nil
+    /// 后正文显示 [mood:key] 原文），不让正文里留一段看不见的空白附件。
     public static func renderedStaticImage(for key: String, dark: Bool, size: CGSize) -> UIImage? {
         guard Thread.isMainThread else { return nil }
         guard size.width > 0, size.height > 0 else { return nil }
@@ -986,9 +990,27 @@ public final class BearyEmoteView: UIView {
         let format = UIGraphicsImageRendererFormat()
         format.scale = UIScreen.main.scale
         format.opaque = false
-        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+        let image = UIGraphicsImageRenderer(size: size, format: format).image { _ in
             guard let context = UIGraphicsGetCurrentContext() else { return }
             view.layer.render(in: context)
         }
+        guard hasOpaquePixel(in: image) else { return nil }
+        return image
+    }
+
+    /// 渲染结果是否含任一可见像素：把图缩到 16×16 已知格式位图里扫一遍
+    /// alpha 通道；全透明即空白。取样上下文建不出时不误判、放行原图。
+    private static func hasOpaquePixel(in image: UIImage) -> Bool {
+        guard let cgImage = image.cgImage else { return false }
+        let probe = 16
+        guard let context = CGContext(data: nil, width: probe, height: probe, bitsPerComponent: 8, bytesPerRow: probe * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return true }
+        context.interpolationQuality = .low
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: probe, height: probe))
+        guard let data = context.data else { return true }
+        let bytes = data.bindMemory(to: UInt8.self, capacity: probe * probe * 4)
+        for i in 0..<(probe * probe) where bytes[i * 4 + 3] > 8 {
+            return true
+        }
+        return false
     }
 }
