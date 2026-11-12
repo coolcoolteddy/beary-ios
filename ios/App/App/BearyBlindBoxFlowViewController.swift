@@ -962,7 +962,6 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             text += " · 篇数较多，仅展示最近拉取的 \(poolCollected.count) 篇"
         }
         if poolInterrupted {
-            if poolCapped { text += "。" }
             text += "仅展示已加载的部分，点按重试可继续加载。"
         }
         openHintLabel.text = text
