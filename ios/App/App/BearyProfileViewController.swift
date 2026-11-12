@@ -5,7 +5,7 @@ import CoreImage
 // 对照源（均已先读核实）：
 // - 网页版 ~/workspace/teddy_site/beary.html 的个人主页形态：封面带 .pf-hero 180、
 //   cover-on 时头像 -28 半压 + 3.5 边、头像 84、名字 23/800、handle 13 灰、
-//   meta 13 灰（上距 8）、stats 13 灰（上距 13、gap 22、数字 16 ink）、
+//   meta 13 灰（上距 8）、stats 13 灰（上距 13、数字 16 ink）、
 //   tabs（margin 16/20/0、tab padding 9/10、14/700、选中 ink + 2px ink 下划线）、
 //   他人模式隐藏编辑资料与收藏页签（网页 PF_MODE 表）。
 // - 个人主页头部：封面带 / 头像 / 统计 / 小熊回应墙 / 三标签；
@@ -41,8 +41,8 @@ import CoreImage
 //   齿轮路径不再触发它们；行内互动成功后走
 //   onInteractionChanged（与详情页同款签名：id、点赞数、已赞、已收藏、回应聚合）。
 // - 小熊回应墙：标题“小熊回应”+ 横滑表情 × 计数 + “共收到 N 只”，
-//   emotes_total > 0 才显示，数据直接用 profile 下发的 emotes_received /
-//   emotes_total（profilePayload，own 与 other 均含，不另拉 /api/stats）。
+//   emotes_total > 0 且仅本人页才显示，数据直接用 profile 下发的 emotes_received /
+//   emotes_total（profilePayload，不另拉 /api/stats）。
 // - C2：齿轮直达设置页，退出登录改走设置页独立按钮（仍是 BearyAPI.logout，
 //   /api/account/logout，见文末注记；设置页内逻辑一字不动）。
 // - 分享：优先 https://teddyhn.com/beary/@<handle>（取不到 handle 才回退
@@ -1070,19 +1070,8 @@ class BearyProfileViewController: UIViewController {
         return labelValue
     }()
 
-    private let likesCountLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
-        labelValue.adjustsFontForContentSizeCategory = true
-        labelValue.textColor = BearyColors.ink
-        labelValue.text = "—"
-        return labelValue
-    }()
-
     /// 统计行文字标签（v22 位移组用，故提为属性；原为 buildHeader 局部变量）。
     private var publicTextLabel: UILabel?
-    private var likesTextLabel: UILabel?
 
     // MARK: - 页内顶栏（仅 modal 态显示；容器页态由容器顶栏承担，见 updateTopBarVisibility）
 
@@ -2789,14 +2778,10 @@ class BearyProfileViewController: UIViewController {
             wallScrollView.transform = .identity
             wallTotalLabel.transform = .identity
             publicCountLabel.transform = fullShift
-            likesCountLabel.transform = fullShift
             publicTextLabel?.transform = fullShift
-            likesTextLabel?.transform = fullShift
         } else {
             publicCountLabel.transform = fullShift
-            likesCountLabel.transform = fullShift
             publicTextLabel?.transform = fullShift
-            likesTextLabel?.transform = fullShift
             tabsContainer.transform = fullShift
             modulesContainer.transform = .identity  // #257 脚部模块不跟 header 位移
             wallContainer.transform = fullShift
@@ -2953,7 +2938,6 @@ class BearyProfileViewController: UIViewController {
         headerView.addSubview(joinedLabel)
         headerView.addSubview(emailLabel)
         headerView.addSubview(publicCountLabel)
-        headerView.addSubview(likesCountLabel)
         headerView.addSubview(signatureContainer)
         signatureContainer.addSubview(signatureLabel)
         headerView.addSubview(wallContainer)
@@ -2975,11 +2959,8 @@ class BearyProfileViewController: UIViewController {
         // 里首次落位时接好）；按钮盖满整行保证热区，见 refreshFooter。
 
         let publicTextLabelValue = makeStatTextLabel(text: "公开日记")
-        let likesTextLabelValue = makeStatTextLabel(text: "获赞")
         publicTextLabel = publicTextLabelValue
-        likesTextLabel = likesTextLabelValue
         headerView.addSubview(publicTextLabelValue)
-        headerView.addSubview(likesTextLabelValue)
 
         NSLayoutConstraint.activate([
             coverHeightConstraint,
@@ -3092,11 +3073,7 @@ class BearyProfileViewController: UIViewController {
             publicCountLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
             publicTextLabelValue.centerYAnchor.constraint(equalTo: publicCountLabel.centerYAnchor),
             publicTextLabelValue.leadingAnchor.constraint(equalTo: publicCountLabel.trailingAnchor, constant: 4),
-            likesCountLabel.centerYAnchor.constraint(equalTo: publicCountLabel.centerYAnchor),
-            likesCountLabel.leadingAnchor.constraint(equalTo: publicTextLabelValue.trailingAnchor, constant: 22),
-            likesTextLabelValue.centerYAnchor.constraint(equalTo: publicCountLabel.centerYAnchor),
-            likesTextLabelValue.leadingAnchor.constraint(equalTo: likesCountLabel.trailingAnchor, constant: 4),
-            likesTextLabelValue.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -16),
+            publicTextLabelValue.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -16),
 
             wallContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: BearySpace.lg),
             wallContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -BearySpace.lg),
@@ -3827,12 +3804,11 @@ class BearyProfileViewController: UIViewController {
             joinedLabel.isHidden = true
             joinedIconView.isHidden = true
         }
-        // 116 数字文案规矩：统计数字与“公开日记／获赞”文字分属两个 label，
+        // 116 数字文案规矩：统计数字与“公开日记”文字分属两个 label，
         // 数据回来只改数字 label 本身；数字出现／变化时只淡入数字本身
         // （setLabelTextFaded：alpha 0→1，不弹、不缩放、不重建整行），
         // 同值不赋值不重播。
         setLabelTextFaded(publicCountLabel, isDeleted ? "—" : (profileValue.diaryCount.map { "\($0)" } ?? "—"))
-        setLabelTextFaded(likesCountLabel, isDeleted ? "—" : (profileValue.likesReceived.map { "\($0)" } ?? "—"))
 
         // 头像：有图盖住首字母位，无图透出首字母（与列表页同款回退）；
         // 有图时的加载与失败回退走 startHeaderAvatarLoad（失败显式恢复首字母 + 出重试图标）。
@@ -3975,11 +3951,12 @@ class BearyProfileViewController: UIViewController {
         guard let profileValue = profile else { return }
         // 小熊回应墙只显示熊脸：非熊脸（物件／道具）一律过滤，服务端数据不动；
         // 过滤后为空则不显示墙（不留“共收到 0 只”的空墙）。
+        // 冲突清单第 1 条：回应墙只给作者自己看，他人页按空墙收拢、不渲染内容。
         let received = (profileValue.emotesReceived ?? []).filter { item in
             guard let key = item.emote, !key.isEmpty else { return false }
             return BearyEmoteKeys.bearFaceKeys.contains(key)
         }
-        guard !received.isEmpty else {
+        guard isOwnProfile, !received.isEmpty else {
             wallContainer.isHidden = true
             wallContainer.alpha = 1
             wallContainer.transform = .identity
