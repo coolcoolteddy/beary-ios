@@ -213,6 +213,10 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
     private let subpageLayoutGuard = BearySubpageLayoutGuard()
     private var topBarView: UIView?
+    /// 审计五轮第 1 项（R2）：821 断点——600 上限只在宽屏激活，窄屏靠 750 等式取全宽减 32。
+    private var topBarWidthCap: NSLayoutConstraint?
+    private var contentWidthCap: NSLayoutConstraint?
+    private var feedbackColumnIsWide = false
     private let statusLabel = UILabel()
     private let statusBadge = UIView()
     private let typeSegmented = UISegmentedControl(items: ["问题反馈", "优化建议"])
@@ -348,6 +352,15 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // 审计五轮第 1 项（R2）：821 断点——宽 ≥821 时顶栏/内容列 600 居中，≤820 时全宽减 32；
+        // 600 上限只在宽屏激活（窄屏 750 等式已定宽，旧常驻上限会把 820 宽压成 600）。
+        // 状态不变不开关，避免布局循环（详情页同款）。
+        let wide = view.bounds.width >= 821
+        if wide != feedbackColumnIsWide {
+            feedbackColumnIsWide = wide
+            topBarWidthCap?.isActive = wide
+            contentWidthCap?.isActive = wide
+        }
         subpageLayoutGuard.applyIfNeeded(page: "反馈与改进", view: view, topView: topBarView, contentViews: [scrollView, contentStack], presentation: "fullScreen+fadeRise")
     }
 
@@ -355,6 +368,16 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         super.viewDidAppear(animated)
         // 117 终态偏离兜底：动画结束后的最终帧再校一次。
         subpageLayoutGuard.applyAfterAppearance(page: "反馈与改进", view: view, topView: topBarView, contentViews: [scrollView, contentStack], presentation: "fullScreen+fadeRise")
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // 审计五轮第 1 项（R9 残余）：字号档变了重设分段器 attributes——setTitleTextAttributes
+        // 里的字体只在赋值时解析一次，不跟随 Dynamic Type（搜索框同款，见 #1301）。
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            typeSegmented.setTitleTextAttributes([.font: BearyDynamicType.smallBodyFont()], for: .normal)
+            typeSegmented.setTitleTextAttributes([.font: BearyDynamicType.smallSemiboldFont(), .foregroundColor: BearyColors.bg], for: .selected)
+        }
     }
 
     // MARK: - 顶栏（诊断页同款：52 高、左上文字关闭 15、标题 17 居中）
@@ -384,13 +407,15 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         topBar.addSubview(titleLabel)
         view.addSubview(topBar)
         topBarView = topBar
-        // 补缺 P2-17：顶栏与内容列同宽居中（详情页同款：iPhone 全宽减 32，iPad 600 居中）。
+        // 审计五轮第 1 项（R2）：顶栏与内容列同宽居中（详情页同款：821 断点，≤820 全宽减 32，
+        // ≥821 时 600 居中；600 上限只在宽屏激活，见 viewDidLayoutSubviews）。
         let topBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -32)
         topBarWidthEquality.priority = UILayoutPriority(750)
+        topBarWidthCap = topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        topBarWidthCap?.isActive = false
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
             topBar.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
             topBar.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
             topBarWidthEquality,
@@ -420,13 +445,15 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         contentStack.spacing = 0
         contentStack.alignment = .fill
         scrollView.addSubview(contentStack)
-        // 补缺 P2-17：iPad 600 居中（详情页同款，含 750 宽度等式防短内容压塌）。
+        // 审计五轮第 1 项（R2）：iPad 600 居中（详情页同款，含 750 宽度等式防短内容压塌；
+        // 600 上限只在宽屏激活，见 viewDidLayoutSubviews）。
         let contentWidthEquality = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32)
         contentWidthEquality.priority = UILayoutPriority(750)
+        contentWidthCap = contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        contentWidthCap?.isActive = false
         NSLayoutConstraint.activate([
             contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 12),
             contentStack.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
-            contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
             contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 16),
             contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -16),
             contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -20),
@@ -1197,11 +1224,11 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 BearyToast.show(in: self.view, message: "已取消")
                 BearyAppLog.event(kind == .logOnly ? "feedback log mail cancelled" : "feedback mail cancelled")
             case .failed:
-                BearyToast.show(in: self.view, message: "\(noun)发送失败")
+                BearyToast.show(in: self.view, message: "\(noun)发送失败，请重试")
                 BearyHaptics.rejectionWarning()
                 BearyAppLog.event(kind == .logOnly ? "feedback log mail failed" : "feedback mail failed")
             @unknown default:
-                BearyToast.show(in: self.view, message: "\(noun)发送失败")
+                BearyToast.show(in: self.view, message: "\(noun)发送失败，请重试")
                 BearyHaptics.rejectionWarning()
             }
         }
