@@ -281,10 +281,10 @@ private final class WishRowView: UIView {
         lastVoteCounts = (up, down)
         let newNetText = "净赞成 \(net >= 0 ? "+" : "")\(net)"
         fadeVoteCount(on: netLabel, changed: voteChanged) { self.netLabel.text = newNetText }
-        let newUpTitle = "赞成 \(up)"
-        fadeVoteCount(on: upButton, changed: voteChanged) { self.upButton.setTitle(newUpTitle, for: .normal) }
-        let newDownTitle = "反对 \(down)"
-        fadeVoteCount(on: downButton, changed: voteChanged) { self.downButton.setTitle(newDownTitle, for: .normal) }
+        // 变基衔接：main 的 configure 已改走 setVoteTitle（attributed 标题＋无障碍标签），
+        // 淡变闭包里继续调它，不用 plain setTitle，避免丢掉 numberFont 与「赞成 N 票」读法。
+        fadeVoteCount(on: upButton, changed: voteChanged) { self.setVoteTitle(self.upButton, name: "赞成", count: up) }
+        fadeVoteCount(on: downButton, changed: voteChanged) { self.setVoteTitle(self.downButton, name: "反对", count: down) }
         setVoteSelected(upButton, selected: item.myVote == 1)
         setVoteSelected(downButton, selected: item.myVote == -1)
         let done = item.status == "done"
