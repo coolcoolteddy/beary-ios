@@ -314,7 +314,10 @@ final class BearyProgressiveBlurView: UIView {
         guard size.width > 0, size.height > 0 else { return }
         maskLayer.frame = bounds
         maskLayer.colors = [UIColor.white.cgColor, UIColor.white.cgColor, UIColor.clear.cgColor]
-        maskLayer.locations = [0, 0.45, 1]
+        // 渐隐区按 band/H 实算收至 12pt（规范 §6：8–20pt）；H 小于 band 时钳制为整高。
+        let fadeHeight = min(BearyProgressiveBlur.band, size.height)
+        let holdEnd = NSNumber(value: Double(1 - fadeHeight / size.height))
+        maskLayer.locations = [0, holdEnd, 1]
         switch fade {
         case .up:
             maskLayer.type = .axial
