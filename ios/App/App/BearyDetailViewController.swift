@@ -2663,6 +2663,17 @@ final class BearyDetailViewController: UIViewController {
                 }
             }
         }
+        // 位置移动（重排位移）：记下本轮复用 chip 与复用 + 钮重排前的中心，
+        // 重排后对位移者用 transform 平移回旧位再滑到新位（见下）。
+        // 新 chip（本轮刚建、frame 仍为 .zero）不在此列，入场关键帧自理；
+        // allChips 是本轮开始前就在场的 chip，复用判定以它为准。
+        var reorderPreviousCenters: [ObjectIdentifier: CGPoint] = [:]
+        for chip in allChips where placed.contains(where: { $0 === chip }) {
+            reorderPreviousCenters[ObjectIdentifier(chip)] = chip.center
+        }
+        if let previousAdd = emoteAddButton, previousAdd.superview != nil {
+            reorderPreviousCenters[ObjectIdentifier(previousAdd)] = previousAdd.center
+        }
         // 排序：只调 subviews 顺序，不动 chip 本身（依次置顶即得新顺序）。
         for chip in placed {
             emoteFlowView.bringSubviewToFront(chip)
@@ -2691,6 +2702,45 @@ final class BearyDetailViewController: UIViewController {
             emoteFlowView.addSubview(addButton)
         }
         emoteFlowView.bringSubviewToFront(addButton)
+        // 重排位移：新顺序已定（chip 与 + 钮均已置顶），先把 flow 按新顺序
+        // 落位（行高变化先结算，防动画中途布局重算把 chip 帧位重置），再把
+        // 位移的在场 chip／+ 钮用 transform 平移回旧位、0.26s 滑到新位。
+        // 只走 transform（§6 页面内位移 normal 0.26s），不重播已有 chip 的
+        // 入场动效；新 chip 入场关键帧不动；首渲染、减动效、行宽为 0 时直落终值。
+        if !isFirstRender, !reduceMotion, emoteFlowView.bounds.width > 0 {
+            let flowWidth = bodyStack.bounds.width
+            if flowWidth > 0, let heightConstraint = emoteFlowHeight {
+                let newFlowHeight = emoteFlowView.height(forWidth: flowWidth)
+                if heightConstraint.constant != newFlowHeight {
+                    heightConstraint.constant = newFlowHeight
+                    view.layoutIfNeeded()
+                }
+            }
+            emoteFlowView.layoutIfNeeded()
+            var sliding: [UIView] = []
+            for chip in placed {
+                guard let oldCenter = reorderPreviousCenters[ObjectIdentifier(chip)],
+                      chip.transform == .identity else { continue }
+                let newCenter = chip.center
+                if oldCenter != newCenter {
+                    chip.transform = CGAffineTransform(translationX: oldCenter.x - newCenter.x, y: oldCenter.y - newCenter.y)
+                    sliding.append(chip)
+                }
+            }
+            if let add = emoteAddButton, add.transform == .identity,
+               let oldCenter = reorderPreviousCenters[ObjectIdentifier(add)] {
+                let newCenter = add.center
+                if oldCenter != newCenter {
+                    add.transform = CGAffineTransform(translationX: oldCenter.x - newCenter.x, y: oldCenter.y - newCenter.y)
+                    sliding.append(add)
+                }
+            }
+            if !sliding.isEmpty {
+                UIView.animate(withDuration: 0.26, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+                    for view in sliding { view.transform = .identity }
+                }
+            }
+        }
         chipKeys = list.map { $0.emote ?? "" }
         renderedEmoteSignature = newSignature
         // 删除：未被本轮留用的现存 chip（含孤 chip）走 transform／opacity
