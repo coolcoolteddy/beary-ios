@@ -2895,7 +2895,9 @@ private class BearyLetterModal {
         quoteWrap.layer.cornerRadius = 12
         quoteWrap.clipsToBounds = true
         quoteBar.translatesAutoresizingMaskIntoConstraints = false
-        quoteBar.backgroundColor = BearyColors.line
+        // 引用竖条走 gray：引用块底是 surface2，line（浅 #DBDBDB）与 surface2（浅 #EAEAEA）
+        // 只差 15 阶、浅色下偏弱（#1286 档距拉大后；#1432 同款口径，色值与 #1432 一致）。
+        quoteBar.backgroundColor = BearyColors.gray
         quoteTextLabel.translatesAutoresizingMaskIntoConstraints = false
         quoteTextLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
         quoteTextLabel.adjustsFontForContentSizeCategory = true
