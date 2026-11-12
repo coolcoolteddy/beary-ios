@@ -672,7 +672,9 @@ final class BearyBubbleMenuView: UIView {
         for (index, row) in rows.enumerated() {
             if index > 0 {
                 let separator = UIView()
-                separator.backgroundColor = BearyColors.line
+                // 分隔线走 gray：气泡底是 surface3，line（浅 #DBDBDB）与 surface3
+                // （浅 #DFDFDF）只差 4 阶、浅色下几不可见（#1286 档距拉大后）。
+                separator.backgroundColor = BearyColors.gray
                 separator.translatesAutoresizingMaskIntoConstraints = false
                 separator.heightAnchor.constraint(equalToConstant: Self.separatorHeight).isActive = true
                 stackView.addArrangedSubview(separator)

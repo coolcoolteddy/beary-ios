@@ -141,7 +141,9 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         manualButton.setTitleColor(BearyColors.ink, for: .normal)
         manualButton.layer.cornerRadius = 999
         manualButton.layer.borderWidth = 1
-        manualButton.layer.bearyDynamicBorderColor = BearyColors.line
+        // 描边走 gray：浮层底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #DFDFDF）
+        // 只差 4 阶、浅色下几不可见（#1286 档距拉大后；深色亦只差约 9 阶）。
+        manualButton.layer.bearyDynamicBorderColor = BearyColors.gray
         manualButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
         manualButton.setContentHuggingPriority(.required, for: .horizontal)
         manualButton.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -156,7 +158,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         relocateButton.setTitleColor(BearyColors.ink, for: .normal)
         relocateButton.layer.cornerRadius = 999
         relocateButton.layer.borderWidth = 1
-        relocateButton.layer.bearyDynamicBorderColor = BearyColors.line
+        // 描边走 gray：同 manualButton，浮层底 surface3 上 line 几不可见。
+        relocateButton.layer.bearyDynamicBorderColor = BearyColors.gray
         relocateButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
         relocateButton.setContentHuggingPriority(.required, for: .horizontal)
         relocateButton.setContentCompressionResistancePriority(.required, for: .horizontal)

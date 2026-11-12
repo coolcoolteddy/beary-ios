@@ -127,7 +127,9 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         let sheetPan = UIPanGestureRecognizer(target: self, action: #selector(sheetPanGesture(_:)))
         sheetPan.delegate = self
         sheetView.addGestureRecognizer(sheetPan)
-        grabView.backgroundColor = BearyColors.line
+        // 抓手走 gray：底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #DFDFDF）
+        // 只差 4 阶、浅色下几不可见（#1286 档距拉大后；深色亦只差约 9 阶）。
+        grabView.backgroundColor = BearyColors.gray
         grabView.layer.cornerRadius = 2
         grabView.clipsToBounds = true
         grabView.translatesAutoresizingMaskIntoConstraints = false
