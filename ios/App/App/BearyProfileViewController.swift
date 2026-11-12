@@ -356,6 +356,13 @@ class BearyProfileViewController: UIViewController {
     /// R23-#2：磁盘快照加载代次——每次 loadProfileSnapshot 自增；切号时
     /// handleProfileUserChanged 再 +1，使在途旧快照回包失效。
     private var profileSnapshotGeneration = 0
+    /// 审计 r7 ⑤⑥收窄：观看者代次——切号（.bearyUserDidChange）时
+    /// handleProfileUserChanged +1；在途的观看者相关请求（资料 / 列表 /
+    /// 关注态 / 私信 can / 后台回填）回包先比代次，失配丢弃，不写回旧
+    /// 观看者会话下的数据。本人 tab 由容器重建（SceneDelegate
+    /// rebuildProfileVC），旧实例随之丢弃；本代次只守 modal 他人主页
+    /// 在途回包，不动本人 tab 的重建逻辑。
+    private var viewerGeneration = 0
     private var modulesStartedCycle: Int?
     /// 已拉到的作者条目（分页累积、按 id 去重）；未完成且无部分态时 renderModules
     /// 不画卡——半截语料的空白是假空白，会撒谎；部分态（缓存快照 / 游标缺失）
@@ -3267,11 +3274,15 @@ class BearyProfileViewController: UIViewController {
         followBlockedByMe = BearyBlockedStore.isBlocked(targetId)
         // 点按代次快照：在途点按已更新时，过期刷新回包不得覆盖新态。
         let requestGeneration = followActionSeq
+        // 审计 r7 ⑤：关注态同时记观看者代次——切号后旧回包丢弃，不把
+        // 旧观看者的关注 / 互关态写回新账号的页。
+        let requestViewerGeneration = viewerGeneration
         BearyAPI.shared.fetchFollowState(userId: targetId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.followStateLoading = false
                 guard requestGeneration == self.followActionSeq else { return }
+                guard requestViewerGeneration == self.viewerGeneration else { return }
                 switch result {
                 case .success(let state):
                     // 审计-个人页设置：互关翻转改变日记过滤（仅好友篇显隐），
@@ -3609,16 +3620,19 @@ class BearyProfileViewController: UIViewController {
         // 第三轮第 3 项：本轮次快照随请求走，资料回调先比轮次——旧轮回包
         // （换目标/下拉刷新后先到的旧资料）直接丢弃，不再覆盖新轮资料头。
         let cycle = profileLoadCycle
+        // 审计 r7 ⑤：资料请求同时记观看者代次——切号后旧回包凭代次丢弃，
+        // 不触发旧观看者会话下的关注态 / 私信 can / 模块刷新。
+        let viewerGenerationAtStart = viewerGeneration
         if let targetId = targetUserIdValue {
             BearyAPI.shared.fetchUserProfile(userIdValue: targetId) { [weak self] result in
                 DispatchQueue.main.async {
-                    self?.handleProfileResult(result: result, cycle: cycle)
+                    self?.handleProfileResult(result: result, cycle: cycle, viewerGeneration: viewerGenerationAtStart)
                 }
             }
         } else if let handle = targetHandleValue {
             BearyAPI.shared.fetchUserProfile(handleValue: handle) { [weak self] result in
                 DispatchQueue.main.async {
-                    self?.handleProfileResult(result: result, cycle: cycle)
+                    self?.handleProfileResult(result: result, cycle: cycle, viewerGeneration: viewerGenerationAtStart)
                 }
             }
         }
@@ -3661,7 +3675,11 @@ class BearyProfileViewController: UIViewController {
         loadTab(forceReload: true)
     }
 
-    private func handleProfileResult(result: Result<BearyUserProfile, APIError>, cycle: Int) {
+    private func handleProfileResult(result: Result<BearyUserProfile, APIError>, cycle: Int, viewerGeneration: Int) {
+        // 审计 r7 ⑤：观看者代次失配 = 切号后旧回包（成功与失败都一样），
+        // 直接丢弃；否则旧观看者会话下的资料头 / 关注态 / 私信 can 会
+        // 覆盖新账号的页。
+        guard viewerGeneration == self.viewerGeneration else { return }
         // 第三轮第 3 项：轮次不一致 = 旧轮回包（成功与失败都一样），直接丢弃；
         // 否则旧资料头/旧失败态会覆盖新轮（换目标时尤其不可接受）。
         guard cycle == profileLoadCycle else { return }
@@ -5968,6 +5986,10 @@ class BearyProfileViewController: UIViewController {
     @objc private func handleProfileUserChanged() {
         guard isViewLoaded else { return }
         profileSnapshotGeneration += 1
+        // 审计 r7 ⑤⑥收窄：切号即推观看者代次与模块语料代次，在途旧请求
+        // 回包凭代次丢弃（见各回包守卫）；旧模块分页不再写回。
+        viewerGeneration += 1
+        modulesGeneration += 1
         let wasOwn = isOwnProfile
         if wasOwn {
             diaryEntries = []
@@ -5981,6 +6003,18 @@ class BearyProfileViewController: UIViewController {
         refreshFooter()
         if wasOwn, currentTab != .saved {
             loadTab(forceReload: true)
+        }
+        // 审计 r7 ⑥：只修 modal 他人主页（!wasOwn）——旧 can 立即清掉，
+        // 按钮先藏，不闪旧账号的结果；有新账号时按新会话重查（refreshDMCan
+        // 内同样凭观看者代次守卫回包）；退出到游客（无新账号）只清不查。
+        // 本人 tab 不走这里：容器重建新页，且本人页私信钮恒藏，dmCan 无意义。
+        if !wasOwn {
+            dmCan = nil
+            dmCanLoading = false
+            updateDMButton()
+            if SessionManager.shared.currentUser != nil {
+                refreshDMCan()
+            }
         }
     }
 
@@ -6063,9 +6097,11 @@ class BearyProfileViewController: UIViewController {
     /// 失败时续发本函数，不再过 tabLoading 守卫；成功零新条目不再
     /// 续发，见 loadTabSince 内 r1-2 注释）。
     private func fetchTabFirstPageFull(scope: BearyAPI.Scope, tabAtStart: ProfileTab) {
+        // 审计 r7 ⑤：首屏请求记观看者代次，回包凭代次丢弃（见 handleTabResult）。
+        let requestViewerGeneration = viewerGeneration
         BearyAPI.shared.fetchEntries(scope: scope, limit: tabPageLimit) { [weak self] result in
             DispatchQueue.main.async {
-                self?.handleTabResult(result: result, appending: false, requestTab: tabAtStart)
+                self?.handleTabResult(result: result, appending: false, requestTab: tabAtStart, viewerGeneration: requestViewerGeneration)
             }
         }
     }
@@ -6079,12 +6115,23 @@ class BearyProfileViewController: UIViewController {
         let sortKey: (Entry) -> Int? = tabAtStart == .saved
             ? { $0.bmAt ?? $0.createdAt }
             : { $0.createdAt }
+        // 审计 r7 ⑤：since 增量请求记观看者代次，回包先比代次再按 tab 分发。
+        let requestViewerGeneration = viewerGeneration
         BearyAPI.shared.fetchEntriesSince(
             scope: scope, since: cursor, sinceId: headId,
             sortKey: sortKey, knownIds: knownIds
         ) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
+                // 审计 r7 ⑤：切号后旧 since 回包直接丢弃，不前插旧观看者
+                // 会话下的数据、不触发回落全量；只清加载旗、刷脚部。
+                guard requestViewerGeneration == strongSelf.viewerGeneration else {
+                    strongSelf.tabLoading = false
+                    strongSelf.tabLoadMore = false
+                    strongSelf.refreshFooter()
+                    strongSelf.endCustomPullRefresh()
+                    return
+                }
                 // 切走即丢弃（handleTabResult 的 109 守卫同款），只清加载旗。
                 guard tabAtStart == strongSelf.currentTab else {
                     strongSelf.tabLoading = false
@@ -6190,16 +6237,25 @@ class BearyProfileViewController: UIViewController {
         refreshFooter()
         // 109：翻页同样记请求发出时的 tab，见 loadTab。
         let tabAtStart = currentTab
+        // 审计 r7 ⑤：翻页请求记观看者代次，回包凭代次丢弃（见 handleTabResult）。
+        let requestViewerGeneration = viewerGeneration
         BearyAPI.shared.fetchEntries(scope: scopeValue, limit: tabPageLimit, before: beforeCursor, beforeId: lastEntryId) { [weak self] result in
             DispatchQueue.main.async {
-                self?.handleTabResult(result: result, appending: true, requestTab: tabAtStart)
+                self?.handleTabResult(result: result, appending: true, requestTab: tabAtStart, viewerGeneration: requestViewerGeneration)
             }
         }
     }
 
-    private func handleTabResult(result: Result<EntryList, APIError>, appending: Bool, requestTab: ProfileTab) {
+    private func handleTabResult(result: Result<EntryList, APIError>, appending: Bool, requestTab: ProfileTab, viewerGeneration: Int) {
         tabLoading = false
         tabLoadMore = false
+        // 审计 r7 ⑤：观看者代次失配 = 切号后旧列表回包，直接丢弃，不写进
+        // 任何 tab 模型；加载旗已清，脚部与下拉头照常收尾。
+        guard viewerGeneration == self.viewerGeneration else {
+            refreshFooter()
+            endCustomPullRefresh()
+            return
+        }
         // 32 注销口径：在途标签回包直接丢弃，不写进任何 tab 模型；
         // 脚部走已注销态（见 refreshFooter 首分支）。
         if profileDeleted {
@@ -6569,12 +6625,21 @@ class BearyProfileViewController: UIViewController {
         // false，见回包分支；只置 false 不恢复时新内容到了也翻不了页）。
         setHasMore(hasMore: true)
         let tabAtStart = currentTab
+        // 审计 r7 ⑤：后台回填请求记观看者代次，回包先比代次再对账。
+        let requestViewerGeneration = viewerGeneration
         BearyAPI.shared.fetchEntries(scope: scopeValue, limit: tabPageLimit) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // G1：回包时无论当前标签是否切走都清零（守卫只决定是否采用回包，
                 // 不再由“切走后不复位”导致切回旧标签不再刷新）。
                 strongSelf.tabBackgroundTab = nil
+                // 审计 r7 ⑤：切号后旧回填回包直接丢弃，不把旧观看者会话下
+                // 的可见性结果对账进新账号的列表；tabBackgroundTab 已清，
+                // 下次切回该 tab 仍可正常回填。
+                guard requestViewerGeneration == strongSelf.viewerGeneration else {
+                    strongSelf.refreshFooter()
+                    return
+                }
                 // 32 注销口径：在途后台回填回包直接丢弃，不写进任何 tab 模型。
                 if strongSelf.profileDeleted {
                     strongSelf.refreshFooter()
@@ -8237,9 +8302,16 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         }
         guard !dmCanLoading else { return }
         dmCanLoading = true
+        // 审计 r7 ⑥：can 请求记观看者代次——切号后旧回包丢弃，不把旧
+        // 账号的档位结果写回新账号的私信钮。
+        let requestViewerGeneration = viewerGeneration
         BearyAPI.shared.fetchDMCan(userId: targetId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                // 代次失配时直接丢弃：dmCanLoading 不由旧回包清——切号时
+                // handleProfileUserChanged 已先清旗并按新账号重查，在途的
+                // 是新请求的旗；旧回包清旗会提前解除新请求的在途锁。
+                guard requestViewerGeneration == self.viewerGeneration else { return }
                 self.dmCanLoading = false
                 switch result {
                 case .success(let can):
