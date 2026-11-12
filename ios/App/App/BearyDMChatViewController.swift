@@ -18,9 +18,18 @@ import UIKit
 /// 翻旧加载态浮标的命中容器：视觉保持 32pt 胶囊不变；失败态点按重试时
 /// point(inside:) 把命中纵向扩到 44pt（规范 §5：失败重试 ≥44），加载态
 /// 不扩，避免多占列表的触摸区。扩区只扩命中、不改视觉，不遮挡下面的消息。
+/// 读屏入口：普通 UIView 不响应 VoiceOver 双击，故以 button 语义暴露，
+/// 激活转发现有点按同一方法 olderLoadingViewTapped()（→ loadOlder()），
+/// 不另写业务逻辑（见 setOlderLoadingState，仅失败态设为无障碍元素）。
 private final class OlderLoadingHitView: UIView {
     /// 仅失败态扩热区；加载中／平时保持视觉帧命中。
     var expandsHitArea = false
+    var onActivate: (() -> Void)?
+
+    override func accessibilityActivate() -> Bool {
+        onActivate?()
+        return true
+    }
 
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         guard expandsHitArea else { return super.point(inside: point, with: event) }
@@ -267,6 +276,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         olderLoadingView.layer.cornerRadius = 16
         olderLoadingView.isHidden = true
         olderLoadingView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(olderLoadingViewTapped)))
+        // 读屏入口：与点按同一方法，VoiceOver 双击即重试（见 OlderLoadingHitView）。
+        olderLoadingView.accessibilityTraits = .button
+        olderLoadingView.onActivate = { [weak self] in self?.olderLoadingViewTapped() }
         view.addSubview(olderLoadingView)
         olderLoadingSpinner.translatesAutoresizingMaskIntoConstraints = false
         olderLoadingSpinner.color = BearyColors.bg
@@ -685,6 +697,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         // 失败态才把重试命中扩到 44pt；加载中不扩，不多占列表触摸区。
         olderLoadingView.expandsHitArea = failed
         olderLoadingView.isHidden = !loading && !failed
+        // 仅失败态暴露为可激活的重试按钮；加载中／平时读屏跳过，
+        // 与可见文案同步（“加载失败，点按重试”）。
+        olderLoadingView.isAccessibilityElement = failed
+        olderLoadingView.accessibilityLabel = failed ? "加载失败，点按重试" : nil
         if loading {
             olderLoadingLabel.text = "正在加载更早消息…"
             olderLoadingSpinner.startAnimating()
