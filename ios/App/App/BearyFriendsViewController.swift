@@ -404,7 +404,8 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     }
 
     /// 行内 ⋯ 菜单：取关为红字 destructive；点取关后再弹一次确认框，
-    /// 确认瞬间即删行（乐观更新，搜索页同款），失败按原位置恢复＋摇头＋toast，
+    /// 确认后先发请求、成功再删行（取关列为乐观更新例外，第六轮审计 N5），
+    /// 失败行保留原位＋拒绝反馈＋toast，不插回；
     /// 成功后清缓存并广播，各列表页据此重拉（取关静默解除，不发通知）。
     private func presentFriendMenu(user: BearyAPI.FriendUser, sourceButton: UIButton) {
         guard let userId = user.id else { return }
@@ -413,11 +414,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                 guard let self = self else { return }
                 BearyFriends.confirmUnfollowAlert(from: self, displayName: user.displayName ?? "", mutual: true) { [weak self] in
                     guard let self = self else { return }
-                    guard let index = self.friends.firstIndex(where: { $0.id == userId }) else { return }
-                    let removed = self.friends[index]
-                    self.friends.remove(at: index)
-                    self.updateTitleAndEmptyState()
-                    self.tableView.deleteRows(at: [IndexPath(row: index, section: 0)], with: .fade)
+                    guard self.friends.contains(where: { $0.id == userId }) else { return }
                     // r28-4：取关失败回滚只认发起账号。发起时同拍账号 id＋代次
                     //（通知页／引用面板同款口径），切号后到达的旧号失败回包整单丢弃。
                     let requestAccountId = BearyAPI.shared.authAccountId
@@ -427,25 +424,24 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                             guard let self = self else { return }
                             switch result {
                             case .success:
+                                // N5(a)：等成功再删行。请求期间列表可能已重拉，人已不在时不删行。
+                                if let currentIndex = self.friends.firstIndex(where: { $0.id == userId }) {
+                                    self.friends.remove(at: currentIndex)
+                                    self.updateTitleAndEmptyState()
+                                    self.tableView.deleteRows(at: [IndexPath(row: currentIndex, section: 0)], with: .fade)
+                                }
                                 BearyFriends.clearDiaryCachesAndNotify()
                             case .failure:
                                 // r28-4：账号或代次已变，说明回包属于旧账号——整单丢弃，
-                                // 不插行、不 toast、不抖动，避免把旧账号好友插进新账号列表。
+                                // 不 toast、不抖动，避免把旧账号的反馈给到新账号。
                                 guard requestAccountId == BearyAPI.shared.authAccountId,
                                       requestEpoch == BearyAPI.shared.authEpoch else { return }
-                                // 失败回滚到原位置；期间重拉已把人带回时只给拒绝动效，不重复插行。
-                                if let currentIndex = self.friends.firstIndex(where: { $0.id == userId }) {
-                                    if let cell = self.tableView.cellForRow(at: IndexPath(row: currentIndex, section: 0)) {
-                                        self.playDenyShake(on: cell)
-                                    }
-                                } else {
-                                    let insertIndex = min(index, self.friends.count)
-                                    self.friends.insert(removed, at: insertIndex)
-                                    self.updateTitleAndEmptyState()
-                                    self.tableView.insertRows(at: [IndexPath(row: insertIndex, section: 0)], with: .none)
-                                    if let cell = self.tableView.cellForRow(at: IndexPath(row: insertIndex, section: 0)) {
-                                        self.playDenyShake(on: cell)
-                                    }
+                                // N5：失败行保留原位，不插回；震动＋拒绝音不依赖 cell 是否可见，
+                                // 只有摇头仍只在行可见时执行。
+                                self.playDenyFeedback()
+                                if let currentIndex = self.friends.firstIndex(where: { $0.id == userId }),
+                                   let cell = self.tableView.cellForRow(at: IndexPath(row: currentIndex, section: 0)) {
+                                    self.denyShake(on: cell)
                                 }
                                 BearyToast.show(in: self.view, message: "取消关注失败，请重试")
                             }
@@ -457,11 +453,16 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         ])
     }
 
-    /// 取关失败拒绝动效（点赞同款：摇头＋warning 震动＋拒绝音效，toast 由调用方发；
-    /// 减动效时只跳过视觉抖动，震动与音效照常给）。
-    private func playDenyShake(on view: UIView) {
+    /// 取关失败拒绝反馈：warning 震动＋拒绝音效，与 cell 是否可见无关；
+    /// 摇头只在行可见时由调用方另调 denyShake(on:) 执行。
+    /// 减动效时只跳过视觉抖动，震动与音效照常给。
+    private func playDenyFeedback() {
         BearyHaptics.rejectionWarning()
         BearySoundPlayer.play(.refuseBonk)
+    }
+
+    /// 仅视觉摇头（0.4s）；减动效时跳过。调用方须先调 playDenyFeedback 给震动＋音效。
+    private func denyShake(on view: UIView) {
         if UIAccessibility.isReduceMotionEnabled { return }
         view.layer.removeAnimation(forKey: "bearyDenyShake")
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
