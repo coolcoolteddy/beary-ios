@@ -2415,7 +2415,7 @@ final class BearyNotificationsViewController: UIViewController {
 
     private func applyVisibleState() {
         let showsList = visibleState == .list
-        // 新规矩(b)：态容器由隐藏变可见时淡入 0.25（站内 toast 同款时长）；
+        // 新规矩(b)：态容器由隐藏变可见时淡入 0.18s（规范 §6 局部状态切换）；
         // 态间切换（容器已可见）不重播，已有元素不动。
         let stateWasHidden = stateContainer.isHidden
         // 表头是 tableHeaderView：表区不再整体隐藏，态容器只盖住表头以下；
@@ -2428,7 +2428,7 @@ final class BearyNotificationsViewController: UIViewController {
                 stateContainer.alpha = 1
             } else {
                 stateContainer.alpha = 0
-                UIView.animate(withDuration: 0.25) {
+                UIView.animate(withDuration: BearyMotion.localStateDuration) {
                     self.stateContainer.alpha = 1
                 }
             }
