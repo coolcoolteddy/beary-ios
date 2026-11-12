@@ -2639,8 +2639,36 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         row.addTarget(self, action: #selector(entryRowTapped(_:)), for: .touchUpInside)
         row.addTarget(self, action: #selector(rowTouchDown(_:)), for: .touchDown)
         row.addTarget(self, action: #selector(rowTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
-        // 审计：搜索行 VoiceOver 带“日记”上下文，不再只读正文。
-        row.accessibilityLabel = "日记：" + contentText
+        // r13-3：读屏串只拼实际存在的信息——日记，标题，作者，日期，可见范围，
+        // 正文摘要，图片数量；正文截断为摘要，不把全文塞进 label。
+        // 可见范围与行内 pill 同口径：限时／仅好友／私密（我的组）／公开。
+        var entryA11yParts: [String] = ["日记"]
+        if let title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            entryA11yParts.append("标题：" + title)
+        }
+        if let author = entry.authorName, !author.isEmpty {
+            entryA11yParts.append("作者：" + author)
+        }
+        if let created = entry.createdAt {
+            entryA11yParts.append(searchDateString(ms: created))
+        }
+        if BearyEphemeral.isLive(entry) {
+            entryA11yParts.append("限时")
+        } else if entry.isFriendsOnly {
+            entryA11yParts.append("仅好友")
+        } else if isMineGroup {
+            entryA11yParts.append("私密")
+        } else {
+            entryA11yParts.append("公开")
+        }
+        if !contentText.isEmpty {
+            let summary = String(contentText.prefix(100))
+            entryA11yParts.append("正文：" + summary + (contentText.count > 100 ? "…" : ""))
+        }
+        if let imageCount = entry.images?.count, imageCount > 0 {
+            entryA11yParts.append("\(imageCount) 张图片")
+        }
+        row.accessibilityLabel = entryA11yParts.joined(separator: "，")
         entryButtons.append(row)
         rowEntryIds.append(entryId)
         return row
@@ -2907,6 +2935,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 button.isAccessibilityElement = false
                 button.alpha = 1
             }
+            // r13-4：骨架态关注钮不可点，行上不同步关注操作；失败态同步“重试”。
+            syncFollowAccessibilityAction(for: button, actionName: followStateFailedIds.contains(stateKey) ? "重试" : nil)
             return
         }
         setFollowButtonSkeletonHeight(button, userId: userId, show: false)
@@ -2938,6 +2968,31 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             button.isEnabled = true
             button.alpha = 1
         }
+        // r13-4：关注操作名与钮状态同口径同步（关注／取消关注／回关）。
+        let followActionName: String
+        switch state {
+        case .none: followActionName = "关注"
+        case .following, .mutual: followActionName = "取消关注"
+        case .followedBy: followActionName = "回关"
+        }
+        syncFollowAccessibilityAction(for: button, actionName: followActionName)
+    }
+
+    /// r13-4：行上“关注”自定义无障碍操作。
+    /// 父行是 UIButton、读屏时独占焦点，行内关注钮不可达；行保留“进入主页”
+    /// 主操作（点按行），关注走自定义操作（VoiceOver 操作转子），与关注钮
+    /// 状态同口径同步；只改无障碍结构，不改视觉与触摸。
+    private func syncFollowAccessibilityAction(for button: UIButton, actionName: String?) {
+        guard let row = button.superview as? UIButton else { return }
+        guard let actionName = actionName else {
+            row.accessibilityCustomActions = nil
+            return
+        }
+        row.accessibilityCustomActions = [UIAccessibilityCustomAction(name: actionName) { [weak self, weak button] _ in
+            guard let self = self, let button = button, button.isEnabled else { return false }
+            self.followButtonTapped(button)
+            return true
+        }]
     }
 
     @objc private func followButtonTapped(_ sender: UIButton) {
