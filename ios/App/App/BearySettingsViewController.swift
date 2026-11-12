@@ -399,7 +399,7 @@ final class BearySettingsViewController: UIViewController {
     private let generalNotifyWrap = UIStackView()
     private let accountSecurityWrap = UIStackView()
     private let privacyWrap = UIStackView()
-    /// 数据与反馈组（2026-10-28 反馈 v3）：只剩「反馈与改进」一行；与通用 /
+    /// 反馈与建议组（2026-10-28 反馈 v3）：只剩「反馈与改进」一行；与通用 /
     /// 隐私组同款恒可见，不随登录态切换（游客进不了设置页，见任务说明）。
     private let dataFeedbackWrap = UIStackView()
     /// 2026-10-29 第 12 项（合并 B）：退出登录与注销账户并入「账号操作」卡
@@ -671,7 +671,10 @@ final class BearySettingsViewController: UIViewController {
         return container
     }
 
-    private func makeRow(title: String, detailLabel: UILabel, iconName: String? = nil) -> UIView {
+    // 第十轮审计文案 a：可点行删「查看」二字——行标题＋行尾箭头已表达可进入。
+    // detailLabel 传 nil 时不占位；showChevron 时行尾补官方右箭头（与 Plus
+    // 入口行同款：spacer 吸剩余宽度、箭头顶到行尾）。
+    private func makeRow(title: String, detailLabel: UILabel? = nil, iconName: String? = nil, showChevron: Bool = false) -> UIView {
         let titleLabelValue = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         // 视觉批：行标题归位 smallBodyFont（15 regular scaled；入口本身已
         // scaled，覆写而非经工厂再缩放，避免二次缩放）。
@@ -679,15 +682,23 @@ final class BearySettingsViewController: UIViewController {
         titleLabelValue.text = title
         // P1-7：行正文标题与行尾辅助文案均可多行，行高由栈自动撑开。
         titleLabelValue.numberOfLines = 0
-        detailLabel.numberOfLines = 0
+        if let detailLabel = detailLabel {
+            detailLabel.numberOfLines = 0
+            detailLabel.textAlignment = .right
+        }
         titleLabelValue.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        detailLabel.textAlignment = .right
         var parts: [UIView] = []
         if let icon = iconName {
             parts.append(makeRowIcon(icon))
         }
         parts.append(titleLabelValue)
-        parts.append(detailLabel)
+        if let detailLabel = detailLabel {
+            parts.append(detailLabel)
+        }
+        if showChevron {
+            parts.append(makeRowSpacer())
+            parts.append(makeRowChevron())
+        }
         let row = UIStackView(arrangedSubviews: parts)
         row.translatesAutoresizingMaskIntoConstraints = false
         row.axis = .horizontal
@@ -1492,7 +1503,7 @@ final class BearySettingsViewController: UIViewController {
         maskTitle.text = "隐私遮罩"
         maskTitle.numberOfLines = 0
         let maskDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
-        maskDetail.text = "切换到其他应用时显示纯色遮罩，防止切换器看到日记内容"
+        maskDetail.text = "在多任务切换界面中隐藏日记内容"
         let maskTextStack = UIStackView(arrangedSubviews: [maskTitle, maskDetail])
         maskTextStack.axis = .vertical
         maskTextStack.spacing = 2
@@ -1516,7 +1527,7 @@ final class BearySettingsViewController: UIViewController {
         exportTitle.text = "导出我的数据"
         exportTitle.numberOfLines = 0 // P1-7：行正文标题多行
         let exportDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
-        exportDetail.text = "下载 JSON，含账户、日记、点赞记录"
+        exportDetail.text = "导出 JSON，包含账户资料、日记和点赞记录"
         exportDetailLabel = exportDetail
         let exportStack = UIStackView(arrangedSubviews: [exportTitle, exportDetail])
         exportStack.axis = .vertical
@@ -2827,7 +2838,7 @@ final class BearySettingsViewController: UIViewController {
     /// 置“正在生成文件…”、文件写完（成功 present 前 / 失败 toast 前）才复原。
     private func setExportProgress(_ text: String?) {
         DispatchQueue.main.async { [weak self] in
-            self?.exportDetailLabel?.text = text ?? "下载 JSON，含账户、日记、点赞记录"
+            self?.exportDetailLabel?.text = text ?? "导出 JSON，包含账户资料、日记和点赞记录"
         }
     }
 
@@ -2893,9 +2904,9 @@ final class BearySettingsViewController: UIViewController {
                 let totalCount = mineEntries.count + mailboxEntries.count + likedEntries.count
                 // 第四轮审计 12：居中 Alert 改底部弹窗（文案不变；点“继续分享”
                 // 先关 sheet 再拼文件出分享面板，不叠层）。
-                BearyConfirmSheet.show(from: self, title: "部分导出", message: "本次仅导出 \(totalCount) 篇，未包含全部数据。是否继续分享这部分数据？", actions: [
+                BearyConfirmSheet.show(from: self, title: "部分导出", message: "本次仅导出 \(totalCount) 篇，未包含全部数据。文件包含账户资料、私密日记与登录设备信息，请只分享给可信的对象。是否继续分享这部分数据？", actions: [
                     BearyConfirmSheet.Action(title: "继续分享", style: .default, handler: { [weak self] in
-                        self?.buildAndShareExport(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries)
+                        self?.buildAndShareExport(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries, sensitiveNoticeShown: true)
                     }),
                     BearyConfirmSheet.Action(title: "取消", style: .cancel),
                 ])
@@ -2964,7 +2975,7 @@ final class BearySettingsViewController: UIViewController {
     /// 全移后台队列（userInitiated），主线程只做进度文案、复原与 present 分享面板；
     /// 后台失败回主线程走原失败分支（同文案 toast + 复原），成功回主线程复原后 present。
     /// 拼装函数只读传入的模型值（export*Dict 均为纯字典映射，不碰 UI），可安全离主线程。
-    private func buildAndShareExport(user: MeUser, pin: BearyExportPin, sessionsResp: BearyAccountSessionsResponse?, mineEntries: [Entry], mailboxEntries: [Entry], likedEntries: [Entry]) {
+    private func buildAndShareExport(user: MeUser, pin: BearyExportPin, sessionsResp: BearyAccountSessionsResponse?, mineEntries: [Entry], mailboxEntries: [Entry], likedEntries: [Entry], sensitiveNoticeShown: Bool = false) {
         // 主线程：进入生成阶段——直出路径沿用已置的 isExporting/禁用态，触顶确认
         // 路径在此重新置位；两种路径都在文件写完后统一复原。
         // 账号隔离改造：生成前（触顶确认后才进本方法，确认到生成之间
@@ -2972,6 +2983,29 @@ final class BearySettingsViewController: UIViewController {
         // present 分享面板前再查一次，变了即删已写文件、不 present。
         if exportPinChanged(pin) {
             cancelExportForAccountChange()
+            return
+        }
+        // 第十轮审计 #9：分享前提示敏感内容——文件含账户资料、私密日记与
+        // 登录设备信息。直出路径在此先弹一次确认再生成；触顶路径已在
+        // “部分导出”确认里带过同一句，不再重复弹。取消／直接关闭只复原
+        // 导出态、不出文件、不出分享面板（不 toast，用户主动取消）。
+        if !sensitiveNoticeShown {
+            BearyConfirmSheet.show(from: self, title: "导出包含敏感内容", message: "文件包含账户资料、私密日记与登录设备信息，请只分享给可信的对象。", actions: [
+                BearyConfirmSheet.Action(title: "继续分享", style: .default, handler: { [weak self] in
+                    self?.buildAndShareExport(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries, sensitiveNoticeShown: true)
+                }),
+                BearyConfirmSheet.Action(title: "取消", style: .cancel, handler: { [weak self] in
+                    guard let self = self else { return }
+                    self.isExporting = false
+                    self.exportRowButton.isEnabled = true
+                    self.setExportProgress(nil)
+                }),
+            ], onDismissWithoutAction: { [weak self] in
+                guard let self = self else { return }
+                self.isExporting = false
+                self.exportRowButton.isEnabled = true
+                self.setExportProgress(nil)
+            })
             return
         }
         isExporting = true
@@ -3317,9 +3351,7 @@ final class BearySettingsViewController: UIViewController {
         themeSegmented.addTarget(self, action: #selector(themeSegmentChanged(_:)), for: .valueChanged)
         var rows: [UIView] = [themeSegmented]
         // C2：使用指南行（原齿轮菜单项，改由设置页承载；容器接线到教程重播页）。
-        let tutorialDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
-        tutorialDetail.text = "查看"
-        let tutorialContent = makeRow(title: "使用指南", detailLabel: tutorialDetail, iconName: "icon_help")
+        let tutorialContent = makeRow(title: "使用指南", iconName: "icon_help", showChevron: true)
         let tutorialButton = UIButton(type: .custom)
         tutorialButton.accessibilityLabel = "使用指南"
         tutorialButton.addTarget(self, action: #selector(tutorialButtonTapped), for: .touchUpInside)
@@ -3374,9 +3406,7 @@ final class BearySettingsViewController: UIViewController {
         diagSwitchRow.spacing = 12
         diagSwitchRow.alignment = .center
         // 94 包：诊断日志行（点进专门页面看全部日志，不再只给 20 行尾巴）。
-        let diagDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
-        diagDetail.text = "查看"
-        let diagContent = makeRow(title: "诊断日志", detailLabel: diagDetail, iconName: "icon_list")
+        let diagContent = makeRow(title: "诊断日志", iconName: "icon_list", showChevron: true)
         let diagButton = UIButton(type: .custom)
         diagButton.accessibilityLabel = "诊断日志"
         diagButton.addTarget(self, action: #selector(openDiagnosticsPage), for: .touchUpInside)
@@ -3512,26 +3542,20 @@ final class BearySettingsViewController: UIViewController {
     private var dmLevelRequestAccountId: Int?
 
     private func buildPrivacySection() {
-        let privacyDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
-        privacyDetail.text = "查看"
-        let privacyContent = makeRow(title: "隐私政策", detailLabel: privacyDetail, iconName: "icon_eye_off")
+        let privacyContent = makeRow(title: "隐私政策", iconName: "icon_eye_off", showChevron: true)
         let privacyButton = UIButton(type: .custom)
         privacyButton.accessibilityLabel = "隐私政策"
         privacyButton.addTarget(self, action: #selector(openPrivacyText), for: .touchUpInside)
         privacyButton.bearyAddPressHaptic()
         let privacyRow = makeSettingsTappableRow(content: privacyContent, button: privacyButton)
-        let termsDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
-        termsDetail.text = "查看"
-        let termsContent = makeRow(title: "用户协议", detailLabel: termsDetail, iconName: "icon_file_text")
+        let termsContent = makeRow(title: "用户协议", iconName: "icon_file_text", showChevron: true)
         let termsButton = UIButton(type: .custom)
         termsButton.accessibilityLabel = "用户协议"
         termsButton.addTarget(self, action: #selector(openTermsText), for: .touchUpInside)
         termsButton.bearyAddPressHaptic()
         let termsRow = makeSettingsTappableRow(content: termsContent, button: termsButton)
         // iCity：已拉黑用户行（解除入口，不放他人主页）。
-        let blockedDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
-        blockedDetail.text = "查看"
-        let blockedContent = makeRow(title: "已拉黑用户", detailLabel: blockedDetail, iconName: "icon_user_block")
+        let blockedContent = makeRow(title: "已拉黑用户", iconName: "icon_user_block", showChevron: true)
         let blockedButton = UIButton(type: .custom)
         blockedButton.accessibilityLabel = "已拉黑用户"
         blockedButton.addTarget(self, action: #selector(openBlockedUsers), for: .touchUpInside)
@@ -3540,9 +3564,9 @@ final class BearySettingsViewController: UIViewController {
         // 私信权限行：当前档位中文，点按弹四档 ActionSheet（当前档打勾），选中即 POST。
         let dmDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         dmDetail.text = "加载中…"
-        let dmContent = makeRow(title: "私信权限", detailLabel: dmDetail, iconName: "icon_comment")
+        let dmContent = makeRow(title: "谁可以私信我", detailLabel: dmDetail, iconName: "icon_comment")
         let dmButton = UIButton(type: .custom)
-        dmButton.accessibilityLabel = "私信权限"
+        dmButton.accessibilityLabel = "谁可以私信我"
         dmButton.addTarget(self, action: #selector(dmLevelRowTapped), for: .touchUpInside)
         dmButton.bearyAddPressHaptic()
         let dmRow = makeSettingsTappableRow(content: dmContent, button: dmButton)
@@ -3838,7 +3862,7 @@ final class BearySettingsViewController: UIViewController {
         presentSettingsPage(vc)
     }
 
-    // MARK: - 数据与反馈（2026-10-28 反馈 v3，路线 A）
+    // MARK: - 反馈与建议（2026-10-28 反馈 v3，路线 A）
 
     // 开发者模式入口：版本号 2 秒窗内连点 5 次进入（并打开总开关）；
     // 已开启时连点只打开页面。平时设置页里没有任何入口行。
@@ -3869,7 +3893,7 @@ final class BearySettingsViewController: UIViewController {
         presentSettingsPage(vc)
     }
 
-    // 开发者模式行（仅开启时可见）：开着时在「数据与反馈」组内出现，点按进开发者模式页。
+    // 开发者模式行（仅开启时可见）：开着时在「反馈与建议」组内出现，点按进开发者模式页。
     private var developerModeRow: UIView?
     /// 开发者模式行的包容器与其前分隔线（随开发者模式行同隐同显）。
     private var developerModeWrapper: UIView?
@@ -3883,17 +3907,13 @@ final class BearySettingsViewController: UIViewController {
     }
 
     private func buildDataFeedbackSection() {
-        let feedbackDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
-        feedbackDetail.text = "查看"
-        let feedbackContent = makeRow(title: "反馈与改进", detailLabel: feedbackDetail, iconName: "icon_comment")
+        let feedbackContent = makeRow(title: "反馈与改进", iconName: "icon_comment", showChevron: true)
         let feedbackButton = UIButton(type: .custom)
         feedbackButton.accessibilityLabel = "反馈与改进"
         feedbackButton.addTarget(self, action: #selector(openFeedbackPage), for: .touchUpInside)
         feedbackButton.bearyAddPressHaptic()
         // 补缺第 21 项：功能许愿墙入口（反馈相邻行；官方包 icon_star，右箭头走 tappableRow 既有口径）。
-        let wishDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
-        wishDetail.text = "查看"
-        let wishContent = makeRow(title: "功能许愿墙", detailLabel: wishDetail, iconName: "icon_star")
+        let wishContent = makeRow(title: "功能许愿墙", iconName: "icon_star", showChevron: true)
         let wishButton = UIButton(type: .custom)
         wishButton.accessibilityLabel = "功能许愿墙"
         wishButton.addTarget(self, action: #selector(openWishWallPage), for: .touchUpInside)
@@ -3913,7 +3933,7 @@ final class BearySettingsViewController: UIViewController {
             makeSettingsTappableRow(content: wishContent, button: wishButton),
             devRow,
         ]
-        let group = makeGroupCard(title: "数据与反馈", rows: rows)
+        let group = makeGroupCard(title: "反馈与建议", rows: rows)
         dataFeedbackWrap.addArrangedSubview(group.card)
         // 第十一轮审计 1：开发者模式行是组内末行——只藏 row 会留 wrap 的 28pt
         // 内边距与其前分隔线；改藏 wrapper＋separator＋row 三者（Plus 限免行同款口径）。
