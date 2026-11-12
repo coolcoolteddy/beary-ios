@@ -33,6 +33,14 @@ private final class WishRowView: UIView {
     private var isDetailExpanded = false
     private var detailFullText = ""
     private var detailOverflow = false
+    // 审计第 13 项：溢出结果缓存——键为内容＋字体＋可用宽度，三者都不变时
+    // layoutSubviews 不再重复跑 boundingRect 量文字，只复用上次结果。
+    private var cachedOverflowText: String?
+    private var cachedOverflowFontName: String?
+    private var cachedOverflowFontSize: CGFloat = 0
+    private var cachedOverflowWidth: CGFloat = 0
+    private var cachedOverflowResult = false
+    private var hasCachedOverflow = false
     private let upButton = BearyButton.make(style: .secondaryOutline(.compact), title: "赞成")
     private let downButton = BearyButton.make(style: .secondaryOutline(.compact), title: "反对")
     private var isDoneRow = false
@@ -242,12 +250,28 @@ private final class WishRowView: UIView {
         }
         let availWidth = bounds.width - 32
         guard availWidth > 0, let font = detailLabel.font else { return }
-        let rect = (detailFullText as NSString).boundingRect(
-            with: CGSize(width: availWidth, height: CGFloat.greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: [.font: font], context: nil)
-        let lines = Int(ceil(rect.height / max(font.lineHeight, 1)))
-        let overflow = lines > 3
+        // 内容、字体、可用宽度三者与上次一致时直接复用溢出结果，不再量文字；
+        // 任一输入变了才重新算（字体按 fontName + pointSize 比，动态字号变化也命中）。
+        let overflow: Bool
+        if hasCachedOverflow, cachedOverflowText == detailFullText,
+           cachedOverflowFontName == font.fontName,
+           cachedOverflowFontSize == font.pointSize,
+           cachedOverflowWidth == availWidth {
+            overflow = cachedOverflowResult
+        } else {
+            let rect = (detailFullText as NSString).boundingRect(
+                with: CGSize(width: availWidth, height: CGFloat.greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: [.font: font], context: nil)
+            let lines = Int(ceil(rect.height / max(font.lineHeight, 1)))
+            overflow = lines > 3
+            cachedOverflowText = detailFullText
+            cachedOverflowFontName = font.fontName
+            cachedOverflowFontSize = font.pointSize
+            cachedOverflowWidth = availWidth
+            cachedOverflowResult = overflow
+            hasCachedOverflow = true
+        }
         if overflow != detailOverflow { detailOverflow = overflow }
         if detailLabel.numberOfLines != 3 { detailLabel.numberOfLines = 3 }
         if expandButton.isHidden != !overflow { expandButton.isHidden = !overflow }
@@ -263,6 +287,9 @@ private final class WishRowView: UIView {
             detailFullText = newDetail
             isDetailExpanded = false
             detailOverflow = false
+            // 文本换了，旧溢出缓存失效，下次布局按新内容重新量。
+            hasCachedOverflow = false
+            cachedOverflowText = nil
             expandButton.isHidden = true
             // P2-10：文本换了，展开淡入动效的残态（alpha/位移）一并清掉，不留半透明行。
             detailLabel.layer.removeAllAnimations()
