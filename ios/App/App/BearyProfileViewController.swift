@@ -8261,7 +8261,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                                 case .success:
                                     BearyToast.show(in: strongSelf.view, message: "公开失败，原日记已恢复私密")
                                 case .failure:
-                                    BearyToast.show(in: strongSelf.view, message: "公开失败，原日记恢复失败，请检查")
+                                    BearyToast.show(in: strongSelf.view, message: BearyRepeatedCopy.publishFailedRestoreFailed)
                                 }
                             }
                         }

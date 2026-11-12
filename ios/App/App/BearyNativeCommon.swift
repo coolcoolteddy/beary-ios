@@ -2023,6 +2023,19 @@ enum BearyText {
     /// iCity：可见性切换无需确认（选择本身即确认，翻回即撤销），旧公开确认框常量已删除。
 }
 
+/// 第十轮审计 dsh II-7：三句重复短句抽常量（各 4 处），文案本身不动，只收一处定义。
+/// 变基注：第四句“编辑（已超 15 分钟不可编辑）”的四处菜单项已随 main 的编辑永久可改
+/// （15 分钟门控删除）消失，该常量不再收录。
+/// 注释里的同形短句（盲盒 flow :11/:1314/:1566）不是字面量引用，不动。
+enum BearyRepeatedCopy {
+    /// 盲盒今日已换过：占位＋Toast＋两处错误文案映射共 4 处。
+    static let blindBoxAlreadySwappedToday = "今日已换过 1 次，明天再来"
+    /// 盲盒加载失败：两处错误文案映射的默认分支＋404 分支共 4 处。
+    static let blindBoxLoadFailed = "盲盒暂时无法加载，请稍后重试"
+    /// 公开失败且原日记恢复失败：详情／广场／个人页／时间线四处 Toast 共 4 处。
+    static let publishFailedRestoreFailed = "公开失败，原日记恢复失败，请检查"
+}
+
 // MARK: - 写接口响应模型（BearyAPI 用 convertFromSnakeCase 解码）
 
 struct LikeResponse: Decodable {
