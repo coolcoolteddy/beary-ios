@@ -710,8 +710,14 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 loadingLabel.isHidden = false
                 spinnerWrapHeightConstraint?.constant = 50
             } else {
+                // 扫荡 130（#1254 回归）：无文案时容器高度不能是 30——约束链
+                // 要求转圈 20 + 上 4 + 间距 6 + 下 2 = 32（label 高度为 0 时），
+                // 30 满足不了，逢无文案加载即报 Auto Layout 冲突；且隐藏的
+                // label 若留着上次「已换到，正在加载」文案，固有高度还会把
+                // 需求顶到约 50。清文案、高度改 32（视觉上与 30 无差别）。
+                loadingLabel.text = ""
                 loadingLabel.isHidden = true
-                spinnerWrapHeightConstraint?.constant = 30
+                spinnerWrapHeightConstraint?.constant = 32
             }
             loadingStatusText = nil
         case .login:
