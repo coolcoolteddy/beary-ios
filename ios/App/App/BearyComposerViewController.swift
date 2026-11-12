@@ -503,13 +503,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var pendingEditCheckpoint: BearyDraftStore.BearyEditCheckpoint?
     private var editCheckpointPromptRetries = 0
     /// 一并公开引用发布流程代次（quote-freeze）：每次点发布（新建态）即 +1，
-    /// setVisibility 与 publishEntry 的回调只认创建时的代次；过期回调直接
+    /// 交接给发布中心的回调只认创建时的代次；过期回调直接
     /// 丢弃，不碰 isPublishing、不 toast、不覆盖新一轮流程的状态。
     private var publishGeneration = 0
     /// 发布发起账号（新建发布专用）：首次点发布时捕获，之后本篇的发布重试
     /// 一律认它，不随重登改写。401 后重登成另一账号时，旧账号内容不得
-    /// 写进新账号草稿文件、也不得以新账号发出：didTapPublish、saveDraftNow、
-    /// beginPublishTogether、performPublish 四处均以它校验，失配即中止并
+    /// 写进新账号草稿文件、也不得以新账号发出：didTapPublish、saveDraftNow
+    /// 与发布中心起飞前校验均以它校验，失配即中止并
     /// 提示回到原账号或重新开始（见 showPublishAccountMismatchAlert）。
     /// 同账号重登 id 不变，校验通过、同一草稿可续写；编辑模式不设它
     /// （saveDraftNow 在编辑态本就是空操作，见 saveDraftNow 首行守卫）。
@@ -520,11 +520,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 又只在首次点发布时才定，故编辑态另用本绑定；#1009 合入后变基时与
     /// 它统一成同一绑定（见 isEditOriginMismatch 注释）。
     private var composerOriginAccountId: Int?
-    /// 一并公开部分成功态：setVisibility 已成功、原日记已公开的原日记 id。
-    /// 此后新篇发布失败不再回滚原日记（见 performPublish 部分成功分支），
-    /// 重试（弹框按钮或再点发布）只发新篇，不再走门禁/setVisibility。
-    /// 发布成功、清草稿、重置空白、从草稿箱切篇时清掉。
-    private var publishTogetherPublishedSourceId: String?
     /// 发布账号口径：登录态 id 优先，取不到时退回草稿分桶 id（两者正常
     /// 情况下一致，登录切换时由容器 setAccount 同步）。
     private func currentAccountIdForPublish() -> Int? {
@@ -538,8 +533,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 登录入口，不在此处误拦。
     /// P0-1：首次点发布前 publishOriginAccountId 尚未定，此时认打开编辑器
     /// 时绑定的 composerOriginAccountId——重登成另一账号后自动保存与
-    /// 发布都在四处旧校验点（saveDraftNow/didTapPublish/beginPublishTogether/
-    /// performPublish）被同一函数拦下，不另起校验。
+    /// 发布都在三处校验点（saveDraftNow/didTapPublish/发布中心起飞前）
+    /// 被同一函数拦下，不另起校验。
     private func isPublishOriginMismatch() -> Bool {
         guard let origin = publishOriginAccountId ?? composerOriginAccountId,
               let current = currentAccountIdForPublish() else { return false }
@@ -598,57 +593,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         showAlert(message: "账号已变化，这篇编辑属于原账号，修改已保留在原账号。请回到原账号后再继续编辑。")
     }
-    /// 账号失配提示：只提示、不删不改任何草稿与已公开态。部分成功态
-    /// （原日记已公开）另加一句，免得用户误以为什么都没发生。
+    /// 账号失配提示：只提示、不删不改任何草稿与已公开态。
     /// “重新开始”不由本弹框自动执行：用户走现有草稿箱“丢弃并新建”，
     /// clearDraftAndFiles 会清掉发起账号绑定，新篇再发布即按新账号计。
+    /// 部分成功态（原日记已公开）的账号失配文案在发布中心
+    /// （accountMismatchMessage），编辑器侧不再区分。
     private func showPublishAccountMismatchAlert() {
-        if let sourceId = publishTogetherPublishedSourceId,
-           sourceId == selectedQuote?.entryId {
-            showAlert(message: "原日记已公开，新篇未发布。账号已变化，请回到原账号后再发布，或丢弃本篇重新开始。")
-        } else {
-            showAlert(message: "账号已变化，本篇未发布。请回到原账号后再发布，或丢弃本篇重新开始。")
-        }
-    }
-    /// 第一次点按时拍下的不可变完整发布快照（quote-freeze）：正文、图片、
-    /// 实况映射、心情、天气、气温、引用、可见性、@、标题、限时、位置、
-    /// clientReq 全在点按瞬间定格；门禁与 setVisibility 在途期间
-    /// 用户改什么都不再进提交载荷，performPublish 只读本快照。
-    private struct PublishSnapshot {
-        let content: String
-        let imageKeys: [String]
-        let liveVideos: [String: String]
-        let mood: String?
-        let weather: String?
-        let temperature: Int?
-        var quoteId: String?
-        var published: Int
-        /// 好友第一期：新建三档（private/friends/public；限时恒 public）。
-        /// 快照拍定后 publishEntry 按它发，published 同步作旧版兼容（friends→0）。
-        var visibility: String
-        /// 时间胶囊 v1：埋了才有值（解锁毫秒戳＋区级）；不埋两者皆 nil，
-        /// performPublish 经 publishEntry 一概不发三键。
-        let capsuleUnlockAt: Int?
-        let capsuleDistrict: String?
-        let mentionedUserId: Int?
-        let title: String?
-        var ephemeral: Int?
-        let locationName: String?
-        let locationDistrict: String?
-        let clientReq: String
-        /// 快照拍定时的发起账号：performPublish 入口再校验一次，防门禁/
-        /// setVisibility 在途期间账号已变仍把旧篇以新账号发出。
-        let originAccountId: Int?
-        /// P0-2：提交时记录的草稿 id 与账号：成功回包只清理这一篇。
-        /// 回包时 currentDraftId 可能已切到另一篇，绝不能按现值删。
-        let draftId: String?
-        let accountId: Int?
-        /// P0-2：提交时本篇图片的本地文件名：成功后只删这些文件，
-        /// 不碰切篇后新篇的图片。
-        let imageLocalFiles: [String]
+        showAlert(message: "账号已变化，本篇未发布。请回到原账号后再发布，或丢弃本篇重新开始。")
     }
     /// 新建发布快照（quote-freeze）：在 didTapPublish 校验通过后、门禁弹出
-    /// 前调用。clientReq 在此创建（原 performPublish 首步），调用方随后等
+    /// 前调用。clientReq 在此创建，调用方随后等
     /// saveDraftNow 落盘成功才发首个会改变服务端状态的请求（P1-5），
     /// 保证服务端幂等键在任何请求发出前已持久化（不只是入队）。
     private func makePublishSnapshot(trimmed: String) -> PublishSnapshot? {
@@ -664,8 +618,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard let req = draftClientReq else { return nil }
         return PublishSnapshot(
             content: trimmed,
-            imageKeys: uploadedImageKeys(),
-            liveVideos: uploadedLiveVideos(),
             mood: selectedMood,
             weather: selectedWeather,
             temperature: selectedTemperature,
@@ -5353,11 +5305,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 单独管禁用，本函数不动它）：正文不可改；心情/天气（含工具栏天气钮与附加栏
     /// 开关，这两处是心情/天气行的入口）与图片（添加钮 + 每项移除/裁剪钮 + 条内
     /// 点按重试走容器手势，一并关容器交互）不可点。挂在 updatePublishState 里，
-    /// 故 performPublish/performUpdate 的成功与失败分支只要走原有的
+    /// 故 performUpdate 的成功与失败分支只要走原有的
     /// isPublishing = false + updatePublishState() 即恢复，无需各分支另写恢复。
+    /// 新建发布交接后编辑器直接退出，不再复位 isPublishing。
     /// 取消路径不动：进行中点取消仍走原有“发布中…”提示，不关编辑器、不碰草稿；
     /// 请求结束后的取消直接关（决议第 4 项 B），草稿按原规则保留；本函数不碰
-    /// 发布成功后的清草稿逻辑（clearDraftAndFiles 仍只在 performPublish 成功分支里调）。
+    /// 发布成功后的清草稿逻辑（清草稿由发布中心成功分支做）。
     /// 恢复时直接置回可用：上述控件在别处没有其他禁用逻辑（grep 无其他 isEnabled/
     /// isEditable 赋值），不会误解开本应禁用的项。
     /// B2：关闭保存期间同款冻结（isClosing 进 frozen）：保存期间输入框不再可
@@ -5373,7 +5326,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         textView.isEditable = !frozen
         headlineField.isEditable = !frozen
         // 100 包编辑器面修法：发布在途时可见性钮亦冻结——此前冻结清单
-        // 漏了它，在途点钮只改旗标不改已发送值（performPublish 已在请求
+        // 漏了它，在途点钮只改旗标不改已发送值（快照已在请求
         // 前捕获 publishVisibility），视觉上“切成功了”实则无效。
         // 2026-10-31：限时开关已删，钮冻结只看在途态（限时态本身不再锁钮，菜单仍可点开重选）。
         visibilityButton.isEnabled = !frozen
@@ -5630,6 +5583,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshAttachmentAccessibilityLabels()
     }
 
+    /// 新模型：本地图就绪（已显示本地图、已落盘）——停转圈、清上传态，
+    /// 发布钮恢复由调用方调 updatePublishState。编辑模式不用本函数
+    ///（上传态由 markUploaded/markFailed 接管）。
+    private func markLocalReady(_ item: ComposerImageItem) {
+        item.uploading = false
+        item.spinner.stopSpinning()
+        item.removeButton.accessibilityLabel = "删除图片"
+    }
+
     private func markFailed(_ item: ComposerImageItem) {
         item.uploading = false
         item.failed = true
@@ -5838,6 +5800,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func restartUploadForRestoredItem(_ item: ComposerImageItem) {
+        // 新模型：新建态不重启上传——本地图只存本地，发布时由发布中心统一上传；
+        // 撤销恢复的项若仍在读图窗口，编码完成块会经 markLocalReady 清上传态。
+        guard isEditMode else { return }
         if let name = item.localFile {
             let ownerAccountId = composerOriginAccountId ?? BearyDraftStore.currentAccountId
             imagePrepQueue.async { [weak self, weak item] in
@@ -6004,14 +5969,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.showToast(message: "裁剪保存失败，原图未改")
                     return
                 }
-                self.markUploading(item)
-                self.saveDraftNow()
-                self.updatePublishState()
-                // R22-#6：裁剪重传同样先发令牌：编码期间删图作废令牌后，
-                // 编码完成也不起传。
-                let token = self.issueUploadToken(for: item)
-                self.imagePrepQueue.async { [weak self, weak item] in
-                    self?.uploadPrepared(for: item, token: token, full: full, thumbData: thumb, image: cropped)
+                if self.isEditMode {
+                    self.markUploading(item)
+                    self.saveDraftNow()
+                    self.updatePublishState()
+                    // R22-#6：裁剪重传同样先发令牌：编码期间删图作废令牌后，
+                    // 编码完成也不起传。
+                    let token = self.issueUploadToken(for: item)
+                    self.imagePrepQueue.async { [weak self, weak item] in
+                        self?.uploadPrepared(for: item, token: token, full: full, thumbData: thumb, image: cropped)
+                    }
+                } else {
+                    // 新模型：裁剪只换本地文件，不上传；发布时统一上传。
+                    self.saveDraftNow()
+                    self.updatePublishState()
                 }
             }
         }
@@ -6174,6 +6145,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                     // R22-#6：实况路先发令牌再编码：编码期间删图
                                     // 作废令牌后，编码完成也不起传。
                                     let token = self.issueUploadToken(for: item)
+                                    // 新模型：后台块内不再读 isEditMode（跨线程读
+                                    // editingEntry），主线程先拍定本模式。
+                                    let editMode = self.isEditMode
                                     self.imagePrepQueue.async { [weak self, weak item] in
                                         guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
                                               let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
@@ -6228,9 +6202,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                             if let videoFile = videoFile {
                                                 item.liveVideoFile = videoFile
                                             }
+                                            // 新模型：本地图就绪即停转圈、恢复发布钮；
+                                            // 编辑模式仍等上传完成回调（markUploaded）恢复。
+                                            if !editMode {
+                                                self.markLocalReady(item)
+                                            }
                                             self.saveDraftNow()
+                                            self.updatePublishState()
                                         }
-                                        self?.uploadPrepared(for: item, token: token, full: full, thumbData: thumb, image: image, liveVideoData: item?.liveVideoData)
+                                        // 新模型：加图只存本地，发布时统一上传；
+                                        // 编辑模式仍立即上传。
+                                        if editMode {
+                                            self?.uploadPrepared(for: item, token: token, full: full, thumbData: thumb, image: image, liveVideoData: item?.liveVideoData)
+                                        }
                                     }
                                 }
                             }
@@ -6275,6 +6259,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // R22-#6：静态路先发令牌再编码：编码期间删图作废令牌后，
                     // 编码完成也不起传。
                     let token = self.issueUploadToken(for: item)
+                    // 新模型：后台块内不再读 isEditMode（跨线程读
+                    // editingEntry），主线程先拍定本模式。
+                    let editMode = self.isEditMode
                     self.imagePrepQueue.async { [weak self, weak item] in
                         guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
                               let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
@@ -6315,11 +6302,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                 }
                                 item.localFile = saved
                             }
+                            // 新模型：本地图就绪即停转圈、恢复发布钮；
+                            // 编辑模式仍等上传完成回调（markUploaded）恢复。
+                            if !editMode {
+                                self.markLocalReady(item)
+                            }
                             self.saveDraftNow()
+                            self.updatePublishState()
                         }
                         // 上传用同一份编码结果，不再重编（uploadPrepared 内 base64 与
                         // BearyAPI 的 JSON 序列化都在本后台线程上，不占主线程）。
-                        self?.uploadPrepared(for: item, token: token, full: full, thumbData: thumb, image: image)
+                        // 新模型：加图只存本地，发布时统一上传；
+                        // 编辑模式仍立即上传。
+                        if editMode {
+                            self?.uploadPrepared(for: item, token: token, full: full, thumbData: thumb, image: image)
+                        }
                     }
                 }
             }
@@ -6540,7 +6537,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 会把实况静默降级为静态，须用户重新选择。
     /// 一律后台读盘解码（不复用条内图：解码失败时条内可能是远程缩略图，复用会把
     /// 缩略图当原图上传）。
+    /// 新模型：新建态不续传——本地图只存本地，发布时由发布中心统一上传。
     private func resumePendingUploads() {
+        guard isEditMode else { return }
         let pending = imageItems
         for item in pending {
             if item.key != nil || item.uploading || item.failed || item.liveVideoMissing {
@@ -7171,7 +7170,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 快照里的图片在途态拍在主线程（内存态），整库写 + 回读验证走后台队列。
         var hasUnsavedImageSnapshot = false
         for item in imageItems {
-            if item.key == nil {
+            // 新模型：本地文件完整的图是正常态（发布时才上传），不算未保存；
+            // 只有既无 key 又无本地文件（仍在读图/编码）的项才算未保存。
+            // 编辑模式沿旧口径：无 key 即未上传完。
+            if item.key == nil && (isEditMode || item.localFile == nil) {
                 hasUnsavedImageSnapshot = true
             }
         }
@@ -7309,7 +7311,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.refreshQuoteSection()
                 self.refreshLocationRow()
                 for img in draft.images {
-                    let failed = (img.state == .failed)
+                    // 新模型：旧版存下的 failed 项（上传失败态）归一化为待传——
+                    // 本地文件在，发布时由发布中心上传；编辑模式仍按 state 原样建项。
+                    let failed = isEditMode && (img.state == .failed)
                     let item = self.createImageItem(localImage: nil, key: img.serverKey, uploading: false, localFile: img.localFile, failed: failed)
                     item.liveVideoKey = img.liveVideoKey
                     // B1：待传实况才带本地视频文件名（已上传项只留 liveVideoKey，
@@ -7506,7 +7510,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 下一篇发布重新捕获，不被旧绑定误拦。
         publishOriginAccountId = nil
         composerOriginAccountId = nil
-        publishTogetherPublishedSourceId = nil
         draftStatusLevel = nil
         updateDraftStatusLabel()
         if let draftIdValue = draftIdValue {
@@ -7525,35 +7528,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             BearyDraftImageStore.deletePairsIfUnreferencedAsync(localNames, excludingDraftId: nil, forAccount: clearAccountId)
             refreshDraftPillWidth()
         }
-    }
-
-    /// P0-2：发布成功只清理提交时快照记录的那一篇（草稿 id、账号、附件）。
-    /// 回包时编辑器可能已切到另一篇：按现值清会删掉新篇的草稿与图片。
-    /// 内存槽位（currentDraftId / draftClientReq / 发布绑定 / 状态行）只在
-    /// 仍是提交的那篇时清；已切篇时原样保留新篇状态。
-    private func clearPublishedDraft(snapshot: PublishSnapshot) {
-        // #1033 收尾：删图走后台队列，不堵发布成功退场；被清记录正在删除，
-        // 引用核对时排除它（磁盘记录尚未落盘删除），其他篇引用仍保护文件。
-        BearyDraftImageStore.deletePairsIfUnreferencedAsync(snapshot.imageLocalFiles, excludingDraftId: snapshot.draftId)
-        if let draftIdValue = snapshot.draftId {
-            BearyDraftStore.deleteAsync(draftId: draftIdValue, forAccount: snapshot.accountId) { [weak self] in
-                self?.refreshDraftPillWidth()
-            }
-        } else {
-            refreshDraftPillWidth()
-        }
-        guard currentDraftId == snapshot.draftId else { return }
-        currentDraftId = nil
-        clearedCurrentDraftId = nil
-        draftClientReq = nil
-        publishOriginAccountId = nil
-        // P0-1（变基整合）：打开时绑定随发布绑定一并清掉——与
-        // clearDraftAndFiles／resetEditorToBlank 同款口径，否则成功后
-        // 同一编辑器再写新篇会沿用旧绑定。
-        composerOriginAccountId = nil
-        publishTogetherPublishedSourceId = nil
-        draftStatusLevel = nil
-        updateDraftStatusLabel()
     }
 
     // MARK: - 草稿箱（BearyDraftBoxViewController 由草稿箱代理新建文件提供，只调用不定义）
@@ -7754,7 +7728,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 空白新篇不再继承上一篇的发布绑定与部分成功态。
         publishOriginAccountId = nil
         composerOriginAccountId = nil
-        publishTogetherPublishedSourceId = nil
         draftStatusLevel = nil
         updateCountLabel()
         updatePublishState()
@@ -7781,6 +7754,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             showToast(message: "发布中…")
             return
         }
+        // 发布后台化：本篇正在发布中心跑发布（编辑器已退场），同样不切篇，
+        // 等发布结束后再打开重发；否则新编辑器会与在途任务抢同一篇草稿。
+        if BearyPublishCenter.shared.isPublishing(draftId: draft.draftId) {
+            showToast(message: "发布中…")
+            return
+        }
         // 109：切篇先重置草稿状态——此前全程不碰 draftStatusLevel、不调
         // updateDraftStatusLabel()，工具栏状态行残留上一篇文案；对照组
         // resetEditorToBlank()/clearDraftAndFiles() 都会清状态并刷新。
@@ -7795,7 +7774,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // P0-1：切篇即按箱内草稿所属的当前账号重绑打开时绑定——箱内
         // 草稿来自当前账号桶，之后自动保存写该账号的桶，不沿用旧绑定。
         composerOriginAccountId = currentAccountIdForPublish()
-        publishTogetherPublishedSourceId = nil
         // P1-4：切到新篇，已发布标记清掉。
         publishedCurrentDraft = false
         currentDraftId = draft.draftId
@@ -7818,7 +7796,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshLocationRow()
         setQuotePanelOpen(false)
         for img in draft.images {
-            let failed = (img.state == .failed)
+            // 新模型：旧版存下的 failed 项（上传失败态）归一化为待传——
+            // 本地文件在，发布时由发布中心上传；编辑模式仍按 state 原样建项。
+            let failed = isEditMode && (img.state == .failed)
             let item = createImageItem(localImage: nil, key: img.serverKey, uploading: false, localFile: img.localFile, failed: failed)
             item.liveVideoKey = img.liveVideoKey
             // B1：待传实况才带本地视频文件名（已上传项只留 liveVideoKey，
@@ -8200,10 +8180,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if isClosing { return false }
         // P1-7：发布/保存进行中时取消键不走取消流程，给进行中提示（与 didTapPublish
         // 首行 isPublishing 守卫同口径；真取消在途请求属结构改动，本批不做）。
-        // quote-freeze：isPublishing 在“一并公开”点按瞬间即置（见
-        // beginPublishTogether），故 setVisibility 在途时取消键同样只 toast、
-        // 不关编辑器——半截退出（原日记已公开、本篇未发）已被这道守卫堵死。
-        // 编辑器为全屏 present、无下滑关闭手势，容器侧 onCancelled 在新建态
+        // 发布后台化：isPublishing 在交接给发布中心瞬间即置，随后编辑器
+        // 直接退出；在途 setVisibility 在发布中心内跑，编辑器已不在场，
+        // 不存在“关编辑器后原日记已公开、本篇未发”的半截退出。
+        // 编辑器现为底 sheet（试效果）：抓手下滑与左边缘右滑都经
+        // didTapCancelFromEdgeSwipe 走本函数，容器侧 onCancelled 在新建态
         // 只从本函数触发，故不存在另一条在途关闭路径。
         if isPublishing {
             showToast(message: isEditMode ? "保存中…" : "发布中…")
@@ -8362,23 +8343,30 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.showToast(message: "关闭时内容还在变化，已留在编辑器，再点一次关闭重试")
                 return
             }
-            // P1-8：按未上传完的图片数提示：key 为空的图都还没上传完
-            // （本地文件完整的图已随 localFile 进草稿，pending／failed 态，
-            // 重进续传／重试，见 saveDraftNow 组装处）；失败图与上传中图同计；
-            // 有失败图时指到页内现有重试入口（点失败的图重传，见 didTapImageItem），
-            // 纯上传中时只说还没传完（上传中点图不可重试）。
-            let unsavedImageCount = self.unsavedImageCount()
-            if unsavedImageCount > 0 {
-                if self.hasFailedImage() {
-                    self.showToastAfterClose(message: "有 \(unsavedImageCount) 张图片上传失败，点图片可重试上传")
-                } else if self.imageItems.contains(where: { $0.uploading && $0.localFile == nil })
-                    && !self.imageItems.contains(where: { $0.uploading && $0.localFile != nil }) {
-                    // B1：只有连本地文件都没有的占位项（仍在读图/编码）才存不进
-                    // 草稿，文案不说“已存进草稿”，仍走旧文案。
-                    self.showToastAfterClose(message: "图片还没上传完，不会存进草稿")
-                } else {
-                    self.showToastAfterClose(message: "有 \(unsavedImageCount) 张图片还没上传完，已存进草稿")
+            // P1-8：按未上传完的图片数提示。编辑模式沿旧口径：key 为空的图
+            // 都还没上传完（本地文件完整的图已随 localFile 进草稿，
+            // pending／failed 态，重进续传／重试，见 saveDraftNow 组装处）；
+            // 失败图与上传中图同计；有失败图时指到页内现有重试入口
+            // （点失败的图重传，见 didTapImageItem），纯上传中时只说还没传完
+            // （上传中点图不可重试）。
+            // 新模型：本地图是正常态、已随草稿落盘，不提示“还没上传完”；
+            // 只有仍在读图/编码、无本地文件的占位项才提示不会存进草稿。
+            if isEditMode {
+                let unsavedImageCount = self.unsavedImageCount()
+                if unsavedImageCount > 0 {
+                    if self.hasFailedImage() {
+                        self.showToastAfterClose(message: "有 \(unsavedImageCount) 张图片上传失败，点图片可重试上传")
+                    } else if self.imageItems.contains(where: { $0.uploading && $0.localFile == nil })
+                        && !self.imageItems.contains(where: { $0.uploading && $0.localFile != nil }) {
+                        // B1：只有连本地文件都没有的占位项（仍在读图/编码）才存不进
+                        // 草稿，文案不说“已存进草稿”，仍走旧文案。
+                        self.showToastAfterClose(message: "图片还没上传完，不会存进草稿")
+                    } else {
+                        self.showToastAfterClose(message: "有 \(unsavedImageCount) 张图片还没上传完，已存进草稿")
+                    }
                 }
+            } else if self.imageItems.contains(where: { $0.key == nil && $0.localFile == nil }) {
+                self.showToastAfterClose(message: "图片还没加载好，不会存进草稿")
             }
             // R14 P1-6：版本复核通过后、关页前清退出保存态（解冻＋状态行
             // 按保存级别刷新）；重存走递归 performCloseSave 提前
@@ -8450,7 +8438,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         // quote-freeze：新建发布先拍完整快照（胶囊校验失败即返回，不进门禁）。
-        // 快照后落盘一次草稿（原 performPublish 首步的 clientReq 落盘，现移到
+        // 快照后落盘一次草稿（clientReq 落盘，现移到
         // 请求链起点）；P1-5：等落盘成功回调再走请求链，使门禁路径的
         // setVisibility 之前幂等键已持久化（不只是入队）。
         guard let snapshot = makePublishSnapshot(trimmed: trimmed) else { return }
@@ -8468,37 +8456,32 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         publishGeneration += 1
         let generation = publishGeneration
         // P1-5：等本次快照的 clientReq 确认落盘，再发首个会改变服务端状态
-        // 的请求（门禁的 setVisibility / performPublish 的 publishEntry）。
+        // 的请求（发布中心的 setVisibility / publishEntry）。
         // 落盘失败就停在编辑器、保留输入并提示重试，不发请求。
         let proceedAfterPersist: () -> Void = { [weak self] in
             guard let self = self else { return }
-            // 一并公开部分成功后重按发布：原日记已公开，不再走门禁与
-            // setVisibility，只发新篇（publishTogetherPublishedSourceId 在
-            // setVisibility 成功时记下，发布成功/清草稿/切篇时清掉）。
-            if self.selectedVisibilityPublished, let pendingQuote = self.selectedQuote,
-               let publishedSourceId = self.publishTogetherPublishedSourceId,
-               publishedSourceId == pendingQuote.entryId {
-                self.performPublish(snapshot: snapshot, generation: generation, sourceAlreadyPublished: true)
-                return
-            }
             // 引用规则简化（2026-10-31）：新建将公开且含私密引用时先拦截，不直接发。
             // 自己来源三选一、他人来源两项（见 BearyQuoteGate.gateEditorPublish）；
-            // 一并公开先发原日记 visibility=1，成功才发本篇；失败停在编辑器、不发本篇。
+            // 一并公开由发布中心先发原日记 visibility=1，成功才发本篇；
+            // 失败停在发布中心、草稿保留，pill 给失败文案。
             // 保持私密发布即把本篇改回私密再发（引用保留）；删除引用即清引用再公开。
             // 门禁弹框本身是模态 alert，框在时编辑器动不了；三条出路提交的都是
             // 本快照（删除/保持私密只改快照副本对应字段，现场值改动不进载荷）。
+            // 部分成功后重试不再走本函数内分支：编辑器交接后即退出，
+            // 部分成功态不跨编辑器实例；重发即从草稿箱重开再点发布，
+            // 门禁重走一遍、setVisibility 对已公开原日记幂等重发。
             if self.selectedVisibilityPublished, let pendingQuote = self.selectedQuote, pendingQuote.isDeleted == false, pendingQuote.isPublic != true {
                 let mine = BearyQuoteGate.sourceIsMine(isMine: pendingQuote.isMine, authorId: pendingQuote.authorId)
                 BearyQuoteGate.gateEditorPublish(from: self, sourceIsMine: mine, sourceIsFriendsOnly: pendingQuote.visibility == "friends", onPublishTogether: { [weak self] in
                     guard let self = self else { return }
-                    self.beginPublishTogether(snapshot: snapshot, generation: generation)
+                    self.handOverToPublishCenter(snapshot: snapshot, generation: generation, publishTogether: true)
                 }, onDeleteQuote: { [weak self] in
                     guard let self = self else { return }
                     self.selectedQuote = nil
                     self.refreshQuoteSection()
                     var gated = snapshot
                     gated.quoteId = nil
-                    self.performPublish(snapshot: gated, generation: generation)
+                    self.handOverToPublishCenter(snapshot: gated, generation: generation, publishTogether: false)
                 }, onKeepPrivate: { [weak self] in
                     guard let self = self else { return }
                     self.selectedVisibilityPublished = false
@@ -8512,11 +8495,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     gated.published = 0
                     gated.visibility = "private"
                     gated.ephemeral = nil
-                    self.performPublish(snapshot: gated, generation: generation)
+                    self.handOverToPublishCenter(snapshot: gated, generation: generation, publishTogether: false)
                 })
                 return
             }
-            self.performPublish(snapshot: snapshot, generation: generation)
+            self.handOverToPublishCenter(snapshot: snapshot, generation: generation, publishTogether: false)
         }
         saveDraftNow { [weak self] result in
             guard let self = self else { return }
@@ -8529,78 +8512,55 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 一并公开出路（quote-freeze）：用户点“一并公开”的瞬间即进入发布态——
-    /// isPublishing = true + updatePublishState() 冻结全部输入与发布钮，
-    /// 取消键由 didTapCancel 的 isPublishing 守卫拦下（只 toast、不关），
-    /// 故 setVisibility 在途期间不存在“关编辑器后原日记已公开、本篇未发”
-    /// 的半截流程；setVisibility 失败则解冻、停在编辑器、原日记未动。
-    private func beginPublishTogether(snapshot: PublishSnapshot, generation: Int) {
+    /// 发布后台化交接（新建发布专用）：快照与图片清单交给发布中心，
+    /// 编辑器立即退出，发布在后台继续跑。调用前须已落盘成功
+    /// （saveDraftNow 回调里调）。代次过期（新一轮发布已开始）
+    /// 的调用直接丢弃。
+    /// 交接失败（同一草稿已有在途任务）时留页、解冻并 toast「发布中…」，
+    /// 不退出编辑器。
+    private func handOverToPublishCenter(snapshot: PublishSnapshot, generation: Int, publishTogether: Bool) {
         guard generation == publishGeneration else { return }
-        guard let sourceId = snapshot.quoteId, !sourceId.isEmpty else { return }
-        // setVisibility 发出前再校验发起账号：门禁弹框在途期间账号若已变，
-        // 不把原日记以新账号公开（isPublishing 尚未置位，直接中止即可）。
-        if isPublishOriginMismatch() {
-            showPublishAccountMismatchAlert()
-            return
-        }
+        // 交接即冻结发布钮（防交接窗口内二次点按），编辑器随即退出，
+        // 不再复位 isPublishing（编辑器析构即清态）。
         isPublishing = true
         updatePublishState()
-        BearyAPI.shared.setVisibility(id: sourceId, published: 1) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self, generation == self.publishGeneration else { return }
-                switch result {
-                case .success:
-                    // 原日记已公开：先记部分成功态，再发新篇。此后新篇
-                    // 失败不回滚原日记（见 performPublish 部分成功分支）。
-                    self.publishTogetherPublishedSourceId = sourceId
-                    self.performPublish(snapshot: snapshot, generation: generation, sourceAlreadyPublished: true)
-                case .failure:
-                    self.isPublishing = false
-                    self.updatePublishState()
-                    self.showToast(message: "原日记公开失败，请重试")
-                }
-            }
+        // P1-4：先使待执行的自动保存失效，再交接——否则退出动画期间
+        // 计时器触发会把已交接的内容当全新草稿落盘。
+        draftTimer?.invalidate()
+        draftTimer = nil
+        publishedCurrentDraft = true
+        // P0-2：只提交快照记录的那一篇的待撤销删图；切篇后 pending
+        // 撤销属于新篇，不在此提交。
+        if currentDraftId == snapshot.draftId {
+            commitPendingRemoval()
         }
-    }
-
-    /// 一并公开部分成功提示：原日记已公开、新篇发布失败。原日记不回滚：
-    /// 用户已明确同意一起公开，且公开后可能已被看到/引用，回滚既收不回
-    /// 可见性、又会把已同意的公开态悄悄改回私密，故部分成功即为终态，
-    /// 新篇单独重试。401 时不直接重发新篇（必再撞 401），改给重新登录；
-    /// 登录后用户再点发布即走部分成功跳门禁路径，只发新篇。
-    private func showPartialPublishFailureAlert(snapshot: PublishSnapshot, generation: Int, error: APIError) {
-        if let sourceId = snapshot.quoteId, !sourceId.isEmpty {
-            publishTogetherPublishedSourceId = sourceId
+        let images = imageItems.map { item in
+            BearyPublishImage(localFile: item.localFile, serverKey: item.key, liveVideoKey: item.liveVideoKey, liveVideoFile: item.liveVideoFile, liveVideoData: item.liveVideoData)
         }
-        var message = "原日记已公开，新篇发布失败"
-        let isUnauthorized: Bool
-        if case .unauthorized = error {
-            isUnauthorized = true
-            message += "，登录已失效，请重新登录后只重试新篇"
-        } else if case .network = error {
-            isUnauthorized = false
-            message += "，网络不可用，已保存为草稿，联网后可只重试新篇"
+        // onPublished/onRequireLogin 只取闭包值、不持有编辑器本身：
+        // 编辑器退出后析构，发布中心仍能经闭包值调容器接线。
+        let job = BearyPublishJob(
+            snapshot: snapshot,
+            images: images,
+            publishTogether: publishTogether,
+            hostView: presentingViewController?.view,
+            onPublished: onPublished,
+            onRequireLogin: onRequireLogin)
+        guard BearyPublishCenter.shared.start(job: job) else {
+            // 同一草稿已有在途任务：留页、解冻，提示发布中。
+            isPublishing = false
+            updatePublishState()
+            publishedCurrentDraft = false
+            showToast(message: "发布中…")
+            return
+        }
+        // 编辑器退出：presenting 方（Chrome）关页，连同其上可能残留的
+        // 门禁弹层一并收掉；发布中心已持有快照与闭包，退出不丢流程。
+        if let presenter = presentingViewController {
+            presenter.dismiss(animated: BearyMotion.animated(true))
         } else {
-            isUnauthorized = false
-            message += "，请只重试新篇"
+            dismiss(animated: BearyMotion.animated(true))
         }
-        // 原 alert 无标题，底 sheet 标题传空（只显说明＋按钮，不另起文案）。
-        var actions: [BearyConfirmSheet.Action] = []
-        if isUnauthorized {
-            actions.append(BearyConfirmSheet.Action(title: "重新登录", style: .default) { [weak self] in
-                self?.onRequireLogin?()
-            })
-        } else {
-            // 同一代次内只重试新篇：不走门禁、不再 setVisibility。
-            // 代次已变（用户已另起一轮发布）时 performPublish 入口守卫
-            // 会丢弃本次回调，不碰在途流程。
-            actions.append(BearyConfirmSheet.Action(title: "只重试新篇", style: .default) { [weak self] in
-                guard let self = self else { return }
-                self.performPublish(snapshot: snapshot, generation: generation, sourceAlreadyPublished: true)
-            })
-        }
-        actions.append(BearyConfirmSheet.Action(title: "知道了", style: .cancel))
-        BearyConfirmSheet.show(from: self, title: "", message: message, actions: actions)
     }
 
     private func hasFailedImage() -> Bool {
@@ -8631,160 +8591,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             guard let self = self, self.view.window != nil else { return }
             self.showToast(message: "这张实况需重新选择")
         }
-    }
-
-    /// 新建发布（quote-freeze）：提交载荷只读 snapshot，不再重读正文、
-    /// 图片、标题、天气、气温、引用等现场值。clientReq 落盘与胶囊校验
-    /// 已在 makePublishSnapshot/didTapPublish 做完，本处不再重复；
-    /// 失败分支的 saveDraftNow 只是草稿兜底（保留失败篇），不进请求。
-    /// 代次过期（新一轮发布已开始）的回调直接丢弃，不碰 isPublishing、
-    /// 不覆盖新流程状态。
-    /// - sourceAlreadyPublished：一并公开的原日记已公开成功，本次只发新篇；
-    ///   失败分支走部分成功提示、不回滚原日记（见 showPartialPublishFailureAlert）。
-    private func performPublish(snapshot: PublishSnapshot, generation: Int, sourceAlreadyPublished: Bool = false) {
-        guard generation == publishGeneration else { return }
-        // 发布请求发出前再校验发起账号：快照发起账号或本篇发起绑定
-        // 任一失配即中止、不发请求。部分成功态下失配用部分成功口径
-        // 提示（原日记已公开仍要明说），不给“只重试新篇”按钮——换号
-        // 重发仍会被本守卫拦下，须先回到原账号。
-        if isPublishOriginMismatch()
-            || (snapshot.originAccountId != nil && snapshot.originAccountId != currentAccountIdForPublish()) {
-            isPublishing = false
-            updatePublishState()
-            showPublishAccountMismatchAlert()
-            return
-        }
-        isPublishing = true
-        updatePublishState()
-        // 109：新建标题取快照（空 = nil 省略不传，按无标题创建）。
-        // iCity：可见性值即 visibility（published 0/1）；@ 以 mentioned_user_id 发出，无按篇通知开关。
-        // 限时：限时态时可见性必为公开，ephemeral=1 随新建发出（服务端写 24 小时到期）。
-        // 已删引用不传 quoteId：快照生成时已按“已删 → nil”定格（只剩 id 的
-        // 引用服务端会拒，发布应按无引用走，展示态仍保留到发布成功清草稿为止）。
-        let publishVisibility = snapshot.published
-        BearyAPI.shared.publishEntry(content: snapshot.content, images: snapshot.imageKeys, mood: snapshot.mood, weather: snapshot.weather, quoteId: snapshot.quoteId, published: publishVisibility, mentionedUserId: snapshot.mentionedUserId, title: snapshot.title, ephemeral: snapshot.ephemeral, clientReq: snapshot.clientReq, locationName: snapshot.locationName, locationDistrict: snapshot.locationDistrict, temperature: snapshot.temperature, liveVideos: snapshot.liveVideos.isEmpty ? nil : snapshot.liveVideos, visibility: snapshot.visibility, isCapsule: snapshot.capsuleUnlockAt == nil ? nil : 1, capsuleUnlockAt: snapshot.capsuleUnlockAt, capsuleDistrict: snapshot.capsuleDistrict) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self, generation == self.publishGeneration else { return }
-                self.isPublishing = false
-                self.updatePublishState()
-                switch result {
-                case .success(let resp):
-                    if let entryId = resp.id {
-                        // 只有拿到 entry id 才清草稿与本地图片。发布已成功，删库
-                        // 失败时不弹 toast（会与“已发布”冲突），残留草稿仍在草稿
-                        // 箱可见、可手动删；图片随记录保留，不丢。
-                        // P1-4：先使待执行的自动保存失效，再清理并退场——
-                        // 否则清理后、析构前计时器触发会把内存里已发布的内容
-                        // 当全新草稿落盘（saveDraftNow 的已发布守卫是第二道）。
-                        self.draftTimer?.invalidate()
-                        self.draftTimer = nil
-                        self.publishedCurrentDraft = true
-                        // P0-2：只清提交时快照记录的那一篇；切篇后 pending 撤销
-                        // 属于新篇，不在此提交。
-                        let stillOnPublishedDraft = self.currentDraftId == snapshot.draftId
-                        self.clearPublishedDraft(snapshot: snapshot)
-                        if stillOnPublishedDraft {
-                            self.commitPendingRemoval()
-                        }
-                        // iCity：成功 toast 按目标态动态（创建响应不带可见性字段，
-                        // 以本次发送的可见性值为准）；toast 挂在 presenting 方视图上
-                        //（showToastAfterClose），容器随后 dismiss 本页 + 切时间线时
-                        // toast 不随编辑器消失。
-                        // 落点高亮见交回说明：时间线无现成按 id 高亮入口，接线在
-                        // SceneDelegate.onPublished（D 路禁改），本处不硬编。
-                        // 100 包编辑器面修法：toast 必须用本次发送的可见性值
-                        // publishVisibility，而非回包时的 live 旗标——可见性在
-                        // 发布在途时此前未冻结（见 refreshPublishingInputFreeze），
-                        // 在途改动会使 toast 与实际发出态相反；现可见性已随冻结
-                        // 禁用，此处仍以发送值为准，双保险。
-                        self.showToastAfterClose(message: (snapshot.ephemeral == 1 ? "已发布 · 限时公开" : (snapshot.visibility == "friends" ? "已发布 · 仅好友可见" : (publishVisibility == 1 ? "已发布 · 已公开" : "已发布 · 已设为私密"))))
-                        BearyHaptics.publishSuccess()
-                        BearySoundPlayer.play(.publishSuccess)
-                        // B 修法：发布成功退场前先收起弹出框（无动画）。
-                        self.hideCallout(animated: false)
-                        self.onPublished?(entryId)
-                    } else {
-                        self.saveDraftNow()
-                        BearyHaptics.rejectionWarning()
-                        if !self.publishButton.isHidden, !UIAccessibility.isReduceMotionEnabled {
-                            self.publishButton.layer.removeAnimation(forKey: "bearyDenyShake")
-                            let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-                            shake.values = [0, -8, 8, -5, 5, 0]
-                            shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-                            shake.duration = BearyMotion.screen
-                            self.publishButton.layer.add(shake, forKey: "bearyDenyShake")
-                        }
-                        self.showAlert(message: "发布失败，请重试")
-                    }
-                case .failure(let error):
-                    // 失败一律保留草稿；离线/网络错误给明确文案。
-                    // saveDraftNow 受发起账号守卫约束：账号已变时不写新号桶，
-                    // 原账号旧版仍在，失败提示仍按本分支出（不因保存被拦而改口径）。
-                    // 两边都保：部分成功先行（原日记已公开，不回滚、给只重试新篇
-                    // 的路径，401 时给重新登录）；网络分支按落盘成败分文案。
-                    if sourceAlreadyPublished {
-                        // 部分成功：原日记已公开，不回滚、不走通用“发布失败”
-                        // 文案，弹框给只重试新篇的路径（401 时给重新登录）。
-                        self.saveDraftNow()
-                        self.showPartialPublishFailureAlert(snapshot: snapshot, generation: generation, error: error)
-                    } else if case .network = error {
-                        // 网络分支：草稿兜底须按落盘成败分文案——此前无条件称“已保存为
-                        // 草稿”，落盘失败时即谎称；现接 saveDraftNow 的 DraftSaveResult，
-                        // 成功才称已保存，失败明示草稿也未保存、请保留内容后重试。
-                        // 非网络分支（未授权/通用）口径不动，仍沿用原 fire-and-forget 调用。
-                        self.saveDraftNow { [weak self] result in
-                            guard let self = self else { return }
-                            if result.succeeded {
-                                self.showAlert(message: "网络不可用，已保存为草稿，联网后可重试")
-                            } else {
-                                self.showAlert(message: "发布失败，草稿也未保存，请保留当前内容后重试")
-                            }
-                        }
-                    } else if case .unauthorized = error {
-                        self.saveDraftNow()
-                        self.onRequireLogin?()
-                    } else {
-                        self.saveDraftNow()
-                        BearyHaptics.rejectionWarning()
-                        if !self.publishButton.isHidden, !UIAccessibility.isReduceMotionEnabled {
-                            self.publishButton.layer.removeAnimation(forKey: "bearyDenyShake")
-                            let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-                            shake.values = [0, -8, 8, -5, 5, 0]
-                            shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-                            shake.duration = BearyMotion.screen
-                            self.publishButton.layer.add(shake, forKey: "bearyDenyShake")
-                        }
-                        self.showAlert(message: self.message(forPublishError: error))
-                    }
-                }
-            }
-        }
-    }
-
-    private func message(forPublishError error: APIError) -> String {
-        if case .server(let code, _) = error {
-            switch code {
-            case "create_gap":
-                return "发布太频繁，请稍后再试"
-            case "create_day_limit":
-                return "今日发布次数已达上限，请明天再试"
-            case "create_dup":
-                return "这篇和你写过的一篇一模一样"
-            case "content too long":
-                return "正文最多 2000 字"
-            case "title too long":
-                // 扫查组兜底：旧草稿/他端标题超码点上限时发布仍可能撞上
-                // 服务端 400，不再落通用“发布失败”，直说标题超长。
-                return "标题最多 30 字"
-            case "image unavailable":
-                return "图片已失效，请重新添加"
-            case "recipient_invalid", "mentioned_user_invalid":
-                return "无法提到这位用户，请重新选择"
-            default:
-                return "发布失败，请重试"
-            }
-        }
-        return "发布失败，请重试"
     }
 
     // MARK: - 编辑保存（PUT；编辑永久可改，App 只展示与转文案）

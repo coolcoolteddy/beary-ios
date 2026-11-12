@@ -1722,6 +1722,12 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             }
         }
         guard let draftValue = targetDraft else { return }
+        // 发布后台化：发布中的草稿不许从草稿箱删——只删记录不删文件，
+        // 失败后重发即丢正文。拦在动画与 pendingUndos 之前，卡片不动。
+        if BearyPublishCenter.shared.isPublishing(draftId: draftValue.draftId) {
+            showDraftToast(message: "发布中…")
+            return
+        }
         // G17：按 draftId 查找下标，不再依赖删除钮数组与草稿数组的下标对齐。
         guard let draftIndex = drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) else { return }
         // 审计 P1-8：多笔队列——新删只追加本笔，不再使上一笔过期。
