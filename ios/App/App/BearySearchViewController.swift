@@ -3009,9 +3009,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         followButtonMeasuredCategory = traitCollection.preferredContentSizeCategory
     }
 
-    /// 搜索关注钮拒绝动效（个人页 playFollowDenyShake 同款：warning 震动＋0.4s 摇头）。
+    /// 搜索关注钮拒绝动效（个人页 playFollowDenyShake 同款：摇头＋warning 震动＋拒绝音效，toast 由调用方发；
+    /// 减动效时只跳过视觉抖动，震动与音效照常给）。
     private func playFollowDenyShake(on button: UIButton) {
         BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
         if UIAccessibility.isReduceMotionEnabled { return }
         button.layer.removeAnimation(forKey: "bearySearchFollowDenyShake")
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
