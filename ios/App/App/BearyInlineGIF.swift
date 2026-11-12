@@ -166,6 +166,9 @@ final class BearyInlineGIFOverlay {
     /// update 内部按文本/宽度签名短路；换篇/换 key 时重置，强制重算矩形）。
     func attach(to label: UILabel, gifKeys: [String], onLongPressGIF: ((String) -> Void)? = nil) {
         self.onLongPressGIF = onLongPressGIF
+        // UILabel 默认不收触摸：覆盖层上的长按手势须先开交互（label 本身无
+        // 手势、不拦点按与滚动，卡片行选、详情滚动都不受影响）。
+        label.isUserInteractionEnabled = true
         if self.label !== label || self.gifKeys != gifKeys {
             self.label = label
             self.gifKeys = gifKeys
