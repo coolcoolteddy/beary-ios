@@ -344,7 +344,7 @@ final class BearyChromeViewController: UIViewController {
     var homeSegmentControl: UISegmentedControl?
     // 批一：原生页切换状态。currentPage 为 nil 表示尚未显示任何页（启动时 showPage(.home) 亮原生列表）。
     private enum ContainerPage {
-        case home, notif, timeline, me, search, user
+        case timeline, home, notif, me, search, user
         /// 好友第一期：底栏第四段（互关列表，tab）；会话列表（私信，非 tab 页，
         /// 由好友列表页顶栏进入、返回回好友段）。
         case friends, conversations
@@ -790,13 +790,14 @@ final class BearyChromeViewController: UIViewController {
             bottomPad.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomPad.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
-        // 消息页（Li 2026-11-03 定）：底栏第 2 段由“好友”改叫“消息”、图标换气泡
-        //（icon_comment），顺序不变：首页、消息、时间线、我的。
+        // 消息页（Li 2026-11-03 定）：底栏第 3 段由“好友”改叫“消息”、图标换气泡
+        //（icon_comment）。底栏顺序（第十轮审计 VI，规范第 157 行）：
+        // 时间线、首页、消息、我的。
         // 好友列表页仍保留，由消息页顶栏用户列表钮进入。
         let tabIcons: [(String, String)] = [
+            ("IconTimeline", "icon_calendar"),
             ("IconHome", "icon_home"),
             ("icon_comment", "icon_comment"),
-            ("IconTimeline", "icon_calendar"),
             ("IconUser", "icon_user"),
         ]
         let seg = BearyHit44SegmentedControl(items: tabIcons.map { segmentIcon(named: $0.0, officialFallback: $0.1) })
@@ -813,10 +814,10 @@ final class BearyChromeViewController: UIViewController {
             return UIColor.black.withAlphaComponent(0.12)
         }
         seg.selectedSegmentIndex = 0
-        // 审计第三轮无障碍：整栏单名“底栏”改为每段各一名（首页/消息/时间线/我的），
+        // 审计第三轮无障碍：整栏单名“底栏”改为每段各一名（时间线/首页/消息/我的），
         // 当前段带 .selected；分段器本身不再作为读屏元素，避免与代理重复。
         seg.isAccessibilityElement = false
-        let segmentNames = ["首页", "消息", "时间线", "我的"]
+        let segmentNames = ["时间线", "首页", "消息", "我的"]
         seg.accessibilityElements = segmentNames.enumerated().map { index, name in
             let element = BottomSegmentAccessibilityElement(accessibilityContainer: seg)
             element.segmentIndex = index
@@ -1851,15 +1852,15 @@ final class BearyChromeViewController: UIViewController {
     /// 底栏选中态：分段器选段与 currentPage 双向同步。当前页不是 tab（搜索 /
     /// 铃铛 / 邀请 / 个人主页）时选段置 noSegment，对应旧“全部灰色、无 pill”口径。
     /// 铃铛页（.notif）无 tab，置 noSegment；消息页（.messages）与好友列表页
-    /// （.friends，同属消息段子页）均对应底栏第 2 段。
+    /// （.friends，同属消息段子页）均对应底栏第 3 段。
     /// 程序化设 selectedSegmentIndex 不发 valueChanged，不会与点按手势重入。
     private func updateTabSelection() {
         guard let seg = bottomSegmented else { return }
         let index: Int
         switch currentPage {
-        case .home: index = 0
-        case .friends, .messages: index = 1
-        case .timeline: index = 2
+        case .timeline: index = 0
+        case .home: index = 1
+        case .friends, .messages: index = 2
         case .me: index = 3
         default: index = UISegmentedControl.noSegment
         }
@@ -1963,7 +1964,7 @@ final class BearyChromeViewController: UIViewController {
     @objc private func didTapHome() { showPage(.home) }
     @objc private func didTapTimeline() { navigator.goTab("timeline") }
     @objc private func didTapMe() { navigator.goTab("me") }
-    /// 消息页（Li 2026-11-03 定）：底栏第 2 段“消息”点按（tab 页走 showPage，
+    /// 消息页（Li 2026-11-03 定）：底栏第 3 段“消息”点按（tab 页走 showPage，
     /// 与首页同口径，不走 navigator.goTab——消息段无旧钮导航可沿用）。
     @objc private func didTapMessages() { showPage(.messages) }
 
@@ -1979,9 +1980,9 @@ final class BearyChromeViewController: UIViewController {
         // W6：分段器无 touchDown 事件，切换瞬间补 .light（与重拍手势各管一种点按，不重叠）。
         BearyHaptics.press()
         switch bottomSegmented.selectedSegmentIndex {
-        case 0: didTapHome()
-        case 1: didTapMessages()
-        case 2: didTapTimeline()
+        case 0: didTapTimeline()
+        case 1: didTapHome()
+        case 2: didTapMessages()
         case 3: didTapMe()
         default: break
         }
@@ -1992,9 +1993,9 @@ final class BearyChromeViewController: UIViewController {
         guard let seg = bottomSegmented else { return }
         if seg.selectedSegmentIndex == index {
             switch index {
-            case 0: didTapHome()
-            case 1: didTapMessages()
-            case 2: didTapTimeline()
+            case 0: didTapTimeline()
+            case 1: didTapHome()
+            case 2: didTapMessages()
             case 3: didTapMe()
             default: break
             }
@@ -2016,9 +2017,9 @@ final class BearyChromeViewController: UIViewController {
         // W6：重拍（点已选段，valueChanged 不发）补 .light；切段时本分支已提前返回，不与上条重叠。
         BearyHaptics.press()
         switch tapped {
-        case 0: didTapHome()
-        case 1: didTapMessages()
-        case 2: didTapTimeline()
+        case 0: didTapTimeline()
+        case 1: didTapHome()
+        case 2: didTapMessages()
         case 3: didTapMe()
         default: break
         }

@@ -94,9 +94,9 @@ final class BearyNavigationCoordinator {
     /// 底栏 tab（键与原网页 bnavGo 同名，批一直接映射到原生页）。
     func goTab(_ key: String) {
         switch key {
+        case "timeline": handler(.timeline)
         case "home": handler(.home)
         case "notif": handler(.notifications)
-        case "timeline": handler(.timeline)
         case "me": handler(.profile)
         // 9-2：未知 key 原先静默 break，联调时难发现——记一条日志。
         default: NSLog("[BearyNavigator] goTab unknown key: %@", key)
