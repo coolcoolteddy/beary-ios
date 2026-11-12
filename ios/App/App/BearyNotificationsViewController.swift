@@ -3911,14 +3911,14 @@ class BearyNotificationCell: UITableViewCell {
         case mutual
         /// 回关请求在途：按钮禁用防重复发。
         case busy
-        /// state 拉取失败：按钮恢复可点（画“关注”不画“回关”，见下），点按重试拉取。
+        /// state 拉取失败：按钮恢复可点（画“重试”，见下），点按重试拉取。
         case loadFailed
     }
 
     /// 关注提醒卡动作区：base configure(with:) 已画好头像/名字/时间（verb“关注了你”），
     /// 本函数只管动作区。loading/busy 时按钮禁用；canFollowBack 时回关钮可点；
     /// canFollow 时关注钮可点；following 时“已关注”灰文案、不可再点；
-    /// mutual 时按钮换成“已互关”文案、不可再点；loadFailed 时关注钮可点
+    /// mutual 时按钮换成“已互关”文案、不可再点；loadFailed 时按钮画“重试”可点
     /// （点按重试拉取，不是直接关注）。非关注行调用 hideFollowAction。
     func configureFollowCard(state: FollowCardState, onFollowBack: @escaping () -> Void) {
         followBackHandler = onFollowBack
@@ -3937,12 +3937,18 @@ class BearyNotificationCell: UITableViewCell {
             followBackButton.setTitle("回关", for: .normal)
             followBackButton.isEnabled = true
             followBackButton.alpha = 1
-        case .canFollow, .loadFailed:
-            // 拉取失败也画“关注”不画“回关”：未知关系时不把回关摆出来；
-            // loadFailed 点按仍是重试拉取（见 handleFollowBack），不是直接关注。
+        case .canFollow:
             followBackButton.isHidden = false
             followProcessedLabel.isHidden = true
             followBackButton.setTitle("关注", for: .normal)
+            followBackButton.isEnabled = true
+            followBackButton.alpha = 1
+        case .loadFailed:
+            // 拉取失败画“重试”不画“关注”：关系未知时点按只是重试拉取
+            // （见 handleFollowBack），不把重试画成关注，避免用户误以为已关注。
+            followBackButton.isHidden = false
+            followProcessedLabel.isHidden = true
+            followBackButton.setTitle("重试", for: .normal)
             followBackButton.isEnabled = true
             followBackButton.alpha = 1
         case .following:
