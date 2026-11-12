@@ -61,7 +61,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let notifyLabel = UILabel()
     /// 搜索框配色（编辑器批）：原 A2 自定义动态底色/边框已删——96 包真机上搜索框
     /// 整棵子树不画（帧 44pt 证实存在、预测区像素纯白），v2 黑白灰改走
-    /// BearyColors.surface2 底＋line 边（R13 焦点态），圆角取精确半高 24（见 buildViews）。
+    /// BearyColors.surface2 底＋边框 0、聚焦走聚焦阴影（视觉审计 08），圆角取精确半高 24（见 buildViews）。
     private let listContainer = UIView()
     // 审计第 9 项：滚动取消走共享类（见 BearyNativeCommon.BearyCancellableScrollView）——
     // 从选人行按钮上起滑时滚动视图能抢到 pan，点按行为不变；搜索输入框不在本滚动区内。
@@ -83,8 +83,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// 审计二轮 03：在途搜索任务——清空或换词时取消，防晚到回包；seq 守卫仍保留。
     private var searchTask: URLSessionDataTask?
     private var lastQuery = ""
-    /// R13 方案 B：搜索框焦点态（聚焦＝蓝边、失焦＝line 边，搜索页同口径）；
-    /// 边框色只归 updateSearchBoxBorder 管。
+    /// 视觉审计 08：搜索框焦点态（聚焦＝聚焦阴影、失焦＝清掉阴影，搜索页同口径）；
+    /// 阴影只归 updateSearchBoxShadow 管，边框恒为 0。
     private var searchBoxFocused = false
     private var isPadLayout = false
     private var keyboardHeight: CGFloat = 0
@@ -152,6 +152,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         super.viewDidLayoutSubviews()
         updateLayoutModeIfNeeded()
         updateSheetHeight()
+        // 视觉审计 08：bounds 变了（旋转／分屏）跟进阴影 path，免得聚焦阴影还按旧框画。
+        updateSearchBoxShadow()
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -159,9 +161,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 形态与通知开关描边。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             applySheetChrome()
-            // R13 方案 B：深浅切换重刷描边时走焦点态（聚焦仍蓝、失焦回 line），
-            // 不再无条件写回 line 丢掉焦点态。
-            updateSearchBoxBorder()
+            // 视觉审计 08：深浅切换重刷阴影时走焦点态（聚焦仍是聚焦阴影、
+            // 失焦清掉阴影），不再无条件写回 line 丢掉焦点态。
+            updateSearchBoxShadow()
             notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
         }
     }
@@ -202,15 +204,16 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // 编辑器批搜索框去 exotic 化：原自定义动态底色/边框 + 999 圆角在 96 包真机上
         // 整棵子树不画（帧 44pt 证实存在、预测区像素纯白；静态查不到隐藏/透明/遮挡路径）。
         // v2 黑白灰：底由 faint 改 surface2（输入框层底色），圆角
-        // 仍取精确半高 24；显式 48 高、18 图标、16 占位均不动。描边保留
-        // （R13 焦点态：聚焦蓝、失焦 line）。注意：96 包的 faint
-        // 底是当时已证实可见的方案，白底组合须真机确认后再算数；若真机仍不可见，
-        // 下一步须诊断包记录 searchBox.frame/alpha/isHidden，而非继续盲改。
+        // 仍取精确半高 24；显式 48 高、18 图标、16 占位均不动。
+        // 视觉审计 08：边框恒为 0，聚焦走聚焦阴影（不再画蓝边）；阴影须画出
+        // 框外，masksToBounds 必须关（BearyInputContainer 同口径）；内容均有
+        // 内边距（图标 14、输入框 41/14/12），不会溢出圆角。
+        // 注意：96 包的 faint 底是当时已证实可见的方案，白底组合须真机确认后再算数；
+        // 若真机仍不可见，下一步须诊断包记录 searchBox.frame/alpha/isHidden，而非继续盲改。
         searchBox.backgroundColor = BearyColors.surface2
         searchBox.layer.cornerRadius = 24
-        searchBox.layer.masksToBounds = true
-        searchBox.layer.borderWidth = 1
-        searchBox.layer.bearyDynamicBorderColor = BearyColors.line
+        searchBox.layer.masksToBounds = false
+        searchBox.layer.borderWidth = 0
         searchIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 18)
         searchIcon.tintColor = BearyColors.gray
         searchIcon.contentMode = .scaleAspectFit
@@ -695,20 +698,34 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         return true
     }
 
-    /// R13 方案 B：输入框焦点变化仅切换边框状态（聚焦＝蓝、失焦＝line，
-    /// 搜索页同口径）；不动底色、不动圆角、不抢焦点。
+    /// 视觉审计 08：输入框焦点变化仅切换阴影状态（聚焦＝聚焦阴影、失焦＝清掉阴影；
+    /// 搜索页同口径）；边框恒为 0，不动底色、不动圆角、不抢焦点。
     func textFieldDidBeginEditing(_ textField: UITextField) {
         searchBoxFocused = true
-        updateSearchBoxBorder()
+        updateSearchBoxShadow()
     }
 
     func textFieldDidEndEditing(_ textField: UITextField) {
         searchBoxFocused = false
-        updateSearchBoxBorder()
+        updateSearchBoxShadow()
     }
 
-    private func updateSearchBoxBorder() {
-        searchBox.layer.bearyDynamicBorderColor = searchBoxFocused ? BearyColors.blue : BearyColors.line
+    /// 搜索框阴影（搜索页同口径）：边框恒为 0；聚焦时走聚焦阴影，失焦清掉；
+    /// path 随 bounds 更新（masksToBounds 已关，阴影画在框外）。
+    private func updateSearchBoxShadow() {
+        let bounds = searchBox.bounds
+        searchBox.layer.borderWidth = 0
+        if searchBoxFocused {
+            BearyShadow.applyFocused(to: searchBox.layer)
+        } else {
+            searchBox.layer.shadowOpacity = 0
+        }
+        if bounds.width > 0 && bounds.height > 0 {
+            searchBox.layer.shadowPath = UIBezierPath(
+                roundedRect: bounds,
+                cornerRadius: 24
+            ).cgPath
+        }
     }
 
     /// 四态：init（未搜）/ loading（中央大 @ 旋转 + 列表态文案，见第 22 项规则）/ none / fail；有结果时态视图隐藏。
