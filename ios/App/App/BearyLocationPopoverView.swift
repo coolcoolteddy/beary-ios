@@ -40,13 +40,10 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     private static let arrowHalfWidth: CGFloat = 8
     private static let cornerRadius: CGFloat = BearyCorners.single
 
+    /// 浮层底走 surface3（审计 ③-5：旧硬编码值深 #26262C／浅 #F5F5F5
+    /// 已废止，改走 surface3 常量；常量现行值由 #1286 微明度同步）。
     private static var popoverBackgroundColor: UIColor {
-        UIColor { trait in
-            if trait.userInterfaceStyle == .dark {
-                return UIColor(red: 38.0 / 255.0, green: 38.0 / 255.0, blue: 44.0 / 255.0, alpha: 1)
-            }
-            return UIColor(white: 0.96, alpha: 1)
-        }
+        BearyColors.surface3
     }
 
     private let backgroundLayer = CAShapeLayer()
