@@ -5563,7 +5563,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 'gif too large' 同样 toast「GIF 不能超过 1MB」；上传成功后记 key、
     /// 插进光标处；库满时服务端仍回 key，GIF 照插、另 toast 提醒删库。
     private func finishGIFUpload(data: Data) {
-        guard BearyGIF.isGIFData(data), let info = BearyGIF.info(data: data), info.w > 0, info.h > 0, info.frames > 0 else {
+        guard BearyGIF.isGIFData(data), let info = BearyGIF.info(data), info.w > 0, info.h > 0, info.frames > 0 else {
             showToast(message: "GIF 上传失败，请重试")
             return
         }
@@ -5575,7 +5575,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             showToast(message: "GIF 不能超过 1MB")
             return
         }
-        guard let firstFrame = BearyGIF.firstFrameImage(data: data) else {
+        guard let firstFrame = BearyGIF.firstFrameImage(data) else {
             showToast(message: "GIF 上传失败，请重试")
             return
         }

@@ -1742,7 +1742,7 @@ final class BearyDetailViewController: UIViewController {
             onLongPressGIF: { [weak self] rand in
                 guard let self = self,
                       let fullKey = BearyGIF.fullKey(for: rand, in: self.entry.images ?? []) else { return }
-                BearyGIFAddPresenter.presentAddGIF(from: self.view, key: fullKey)
+                BearyGIFAddPresenter.presentAddGIF(from: self.view, fullKey: fullKey)
             }
         )
         titleGIFOverlay.attach(
@@ -1751,7 +1751,7 @@ final class BearyDetailViewController: UIViewController {
             onLongPressGIF: { [weak self] rand in
                 guard let self = self,
                       let fullKey = BearyGIF.fullKey(for: rand, in: self.entry.images ?? []) else { return }
-                BearyGIFAddPresenter.presentAddGIF(from: self.view, key: fullKey)
+                BearyGIFAddPresenter.presentAddGIF(from: self.view, fullKey: fullKey)
             }
         )
     }

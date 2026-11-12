@@ -1292,7 +1292,7 @@ final class BearyTimelineCell: UITableViewCell {
             onLongPressGIF: { [weak self] rand in
                 guard let self = self,
                       let fullKey = BearyGIF.fullKey(for: rand, in: self.currentEntry?.images ?? []) else { return }
-                BearyGIFAddPresenter.presentAddGIF(from: self, key: fullKey)
+                BearyGIFAddPresenter.presentAddGIF(from: self, fullKey: fullKey)
             }
         )
         titleGIFOverlay.attach(
@@ -1301,7 +1301,7 @@ final class BearyTimelineCell: UITableViewCell {
             onLongPressGIF: { [weak self] rand in
                 guard let self = self,
                       let fullKey = BearyGIF.fullKey(for: rand, in: self.currentEntry?.images ?? []) else { return }
-                BearyGIFAddPresenter.presentAddGIF(from: self, key: fullKey)
+                BearyGIFAddPresenter.presentAddGIF(from: self, fullKey: fullKey)
             }
         )
     }

@@ -741,7 +741,7 @@ final class BearyMoodPickerCell: UICollectionViewCell {
             BearyImageLoader.shared.loadImageData(url: url) { [weak self] result in
                 guard let self = self, self.gifGeneration == generation, self.currentKey == key else { return }
                 guard case .success(let data) = result,
-                      let animated = BearyGIF.animatedImage(data: data) else { return }
+                      let animated = BearyGIF.animatedImage(data) else { return }
                 DispatchQueue.main.async {
                     guard self.gifGeneration == generation, self.currentKey == key, self.gifPlaying else { return }
                     self.gifAnimatedImage = animated

@@ -135,7 +135,7 @@ enum BearyGIF {
 
     /// rand → 完整 key（在 entry.images 里按 rand 后缀找回）。
     static func fullKey(for randKey: String, in keys: [String]) -> String? {
-        return keys.first { randKey(from: $0) == randKey }
+        return keys.first { BearyGIF.randKey(from: $0) == randKey }
     }
 }
 
