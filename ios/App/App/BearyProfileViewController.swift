@@ -9215,17 +9215,36 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         })
     }
 
-    /// 封面大图灯箱（本人页／他人页点封面带共用入口；主题态下
-    /// 封面图虽被隐藏、image 仍在，仍可进灯箱看原封面）。
+    /// 封面大图灯箱（本人页／他人页点封面带共用入口；主题态下看当前动态封面
+    /// 的实况快照，不再看被主题盖住的旧上传图——带上所见即灯箱所见）。
     private func presentCoverLightbox() {
-        guard let image = coverImageView.image else { return }
         guard presentedViewController == nil else { return }
         let now = Date()
         if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
         lastImageViewerAt = now
+        if profileCoverView != nil || festivalWallpaperView != nil {
+            guard let snapshot = coverSnapshot() else { return }
+            let viewer = BearyEntryImageViewerViewController(images: [snapshot], startIndex: 0)
+            viewer.originFrameInWindow = coverClipView.convert(coverClipView.bounds, to: nil)
+            present(viewer, animated: BearyMotion.animated(true), completion: nil)
+            return
+        }
+        guard let image = coverImageView.image else { return }
         let viewer = BearyEntryImageViewerViewController(images: [image], startIndex: 0)
         viewer.originFrameInWindow = coverImageView.convert(coverImageView.bounds, to: nil)
         present(viewer, animated: BearyMotion.animated(true), completion: nil)
+    }
+
+    /// 动态封面实况快照：把带上当前这一帧渲成图给灯箱看；六地与节日款同走
+    /// 一条路，不另拼海报图。快照失败（视图未布局）时不进灯箱。
+    private func coverSnapshot() -> UIImage? {
+        let target: UIView? = profileCoverView ?? festivalWallpaperView
+        guard let target, target.bounds.width > 0, target.bounds.height > 0 else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = UIScreen.main.scale
+        return UIGraphicsImageRenderer(bounds: target.bounds, format: format).image { _ in
+            target.drawHierarchy(in: target.bounds, afterScreenUpdates: true)
+        }
     }
 
     /// Plus 页入口①：皇冠显隐与点亮态。Plus 时点亮（播动＋全不透明）；
