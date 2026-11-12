@@ -73,7 +73,7 @@ private enum OnboardingVisibilityDemo: Int, CaseIterable {
         switch self {
         case .private: return "私密"
         case .public: return "公开"
-        case .ephemeral: return "限时日记"
+        case .ephemeral: return "限时"
         }
     }
 
@@ -1337,7 +1337,7 @@ private final class OnboardingOptionButton: BearyHit44Button {
         translatesAutoresizingMaskIntoConstraints = false
         backgroundColor = BearyColors.surface1
         layer.cornerRadius = BearyCorners.single
-        layer.borderWidth = 1.5
+        layer.borderWidth = 0
         layer.bearyDynamicBorderColor = BearyColors.line
 
         iconView.translatesAutoresizingMaskIntoConstraints = false
@@ -1408,7 +1408,7 @@ private final class OnboardingOptionButton: BearyHit44Button {
     }
 
     func refreshBorder() {
-        layer.borderWidth = isOptionSelected ? 2 : 1.5
+        layer.borderWidth = isOptionSelected ? 2 : 0
         layer.bearyDynamicBorderColor = isOptionSelected ? BearyColors.ink : BearyColors.line
         checkView.layer.bearyDynamicBorderColor = isOptionSelected ? BearyColors.ink : BearyColors.line
     }
