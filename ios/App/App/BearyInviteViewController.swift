@@ -588,7 +588,7 @@ final class BearyInviteViewController: UIViewController {
     }
 
     private func render() {
-        // 新规矩(b)：绑定区由隐藏变可见时淡入 0.25；已可见的不重播。
+        // 新规矩(b)：绑定区由隐藏变可见时淡入走局部状态 0.18s；已可见的不重播。
         let boundWasHidden = boundRow.isHidden
         let bindWasHidden = bindRow.isHidden
         let hintWasHidden = bindHintLabel.isHidden
@@ -668,7 +668,7 @@ final class BearyInviteViewController: UIViewController {
             for (view, wasHidden) in [(boundRow, boundWasHidden), (bindRow, bindWasHidden), (bindHintLabel, hintWasHidden)] {
                 if wasHidden && view.isHidden == false {
                     view.alpha = 0
-                    UIView.animate(withDuration: 0.25) {
+                    UIView.animate(withDuration: BearyMotion.localStateDuration) {
                         view.alpha = 1
                     }
                 }
