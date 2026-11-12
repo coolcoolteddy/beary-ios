@@ -201,13 +201,25 @@ final class BearyDetailViewController: UIViewController {
         lb.numberOfLines = 1
         return lb
     }()
-    private lazy var recipientRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [recipientIconView, recipientLabel])
+    /// @ 行读屏跳转（审计 ①-P2）：裸 UIStackView 无法逐实例 override
+    /// accessibilityActivate，故用小型私有子类承载——VoiceOver 双击走
+    /// accessibilityActivate，默认不触发 UITapGestureRecognizer，须由它调用
+    /// 与点按同一方法 openMentionedUser（同款模式见 BearyQuoteCardView）。
+    private final class BearyDetailRecipientRowView: UIStackView {
+        var onActivate: (() -> Bool)?
+
+        override func accessibilityActivate() -> Bool {
+            onActivate?() ?? false
+        }
+    }
+    private lazy var recipientRow: BearyDetailRecipientRowView = {
+        let st = BearyDetailRecipientRowView(arrangedSubviews: [recipientIconView, recipientLabel])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 5
         st.alignment = .center
         st.isHidden = true
+        st.onActivate = { [weak self] in self?.openMentionedUser() ?? false }
         return st
     }()
     /// 作者行：首页 titleStack 同款（名 + 皇冠 + 垫片 + 时间 + 天气 + 心情，
@@ -1604,6 +1616,25 @@ final class BearyDetailViewController: UIViewController {
         return result
     }
 
+    /// @ 行有效 ID 口径（审计 ①-P2 伴生收敛）：与跳转守卫同口径——只有
+    /// 正数 ID 才算可跳转；nil／≤0（后端未回／脏数据）均不可跳转。
+    private var hasValidMentionedUserId: Bool {
+        if let mentionedId = entry.mentionedUserId, mentionedId > 0 { return true }
+        return false
+    }
+
+    /// @ 行无障碍口径（审计 ①-P2）：与跳转守卫同口径——仅有效 ID 时为
+    /// button 元素（VoiceOver 双击走 accessibilityActivate，与点按同调
+    /// openMentionedUser）；无有效 ID 时仅作静态文本呈现，不宣称可点，
+    /// 手势亦关闭（有名无 ID 时行可见但点按静默 no-op 的缺口一并收敛）。
+    /// 已注销者仍显“@用户已注销”，ID 在时仍可点（不在审计范围内，不动）。
+    private func setRecipientRowAccessibility(tappable: Bool) {
+        recipientRow.isAccessibilityElement = tappable
+        recipientRow.accessibilityTraits = tappable ? .button : []
+        recipientRow.accessibilityLabel = tappable ? recipientLabel.text : nil
+        recipientRow.isUserInteractionEnabled = tappable
+    }
+
     private func renderHeaderMeta() {
         // 32 注销口径：作者已注销时显“用户已注销”，头像首字母同步为“用”。
         let authorNameValue = bearyDeletedAuthorDisplayName(entry.authorName) ?? "beary 用户"
@@ -1635,9 +1666,11 @@ final class BearyDetailViewController: UIViewController {
             recipientRow.isHidden = false
             // 32 注销口径：被 @ 者已注销时显“@用户已注销”。
             recipientLabel.text = "@" + (bearyDeletedAuthorDisplayName(mentioned) ?? mentioned)
+            setRecipientRowAccessibility(tappable: hasValidMentionedUserId)
         } else {
             recipientRow.isHidden = true
             recipientLabel.text = nil
+            setRecipientRowAccessibility(tappable: false)
         }
         // Plus 皇冠按 authorPlus 显示（徽章已下线摘掉，皇冠不受影响）。
         setCrownHidden((entry.authorPlus ?? 0) != 1 || !crownView.hasCrown)
@@ -2788,12 +2821,20 @@ final class BearyDetailViewController: UIViewController {
         onAuthorTapped?(authorId)
     }
 
-    @objc private func mentionTapped() {
-        guard let mentionedId = entry.mentionedUserId else { return }
+    /// @ 行跳转唯一入口（审计 ①-P2）：点按手势 mentionTapped 与 VoiceOver
+    /// 双击 accessibilityActivate 共用——有效 ID 守卫（>0）与 0.8s 防重复
+    /// 导航节流只在此一处，返回是否真的发起了跳转。
+    private func openMentionedUser() -> Bool {
+        guard let mentionedId = entry.mentionedUserId, mentionedId > 0 else { return false }
         let now = Date()
-        if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
+        if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return false }
         lastNavigationAt = now
         onAuthorTapped?(mentionedId)
+        return true
+    }
+
+    @objc private func mentionTapped() {
+        _ = openMentionedUser()
     }
 
     @objc private func moreTapped() {
