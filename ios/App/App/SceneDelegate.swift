@@ -2922,12 +2922,12 @@ final class BearyChromeViewController: UIViewController {
         let title: String
         let message: String
         switch page {
-        case .notif: title = "消息"; message = "正在做原生版"
-        case .timeline: title = "时间线"; message = "正在做原生版"
-        case .me: title = "我"; message = "正在做原生版"
-        case .search: title = "搜索"; message = "正在做原生版"
+        case .notif: title = "消息"; message = "这里还没有内容"
+        case .timeline: title = "时间线"; message = "这里还没有内容"
+        case .me: title = "我"; message = "这里还没有内容"
+        case .search: title = "搜索"; message = "这里还没有内容"
         case .user: title = "个人主页"; message = "用户不存在，请重试"
-        case .home: title = "首页"; message = "正在做原生版"
+        case .home: title = "首页"; message = "这里还没有内容"
         // 好友第一期：好友段与会话列表有真实页（pageView 分流），占位分支
         // 仅为 switch 穷尽而留，不可达。
         case .friends: title = "好友"; message = "正在做原生版"
