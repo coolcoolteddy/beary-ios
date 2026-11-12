@@ -209,6 +209,12 @@ final class BearyMessagesViewController: UIViewController {
         conversationsChild.onMergeSnapshotChanged = { [weak self] in self?.updateMergedRows() }
         conversationsChild.setEmbedded()
         conversationsChild.applyHeaderTopInset(visible: false)
+        // 私信轮询可见门控（通知页同款）：嵌入态子页 view 不进层级，
+        // 自身 view.window 恒为 nil，宿主把自己的可见状态供过去。
+        conversationsChild.hostVisibilityProvider = { [weak self] in
+            guard let self = self, self.isViewLoaded else { return false }
+            return self.view.window != nil && !self.view.isHidden
+        }
 
         // 只触发 viewDidLoad 首拉（通知子页末尾 startPolling＋loadFirstPage、
         // 私信子页末尾 load），不 addSubview——子页 view 不进层级。
@@ -272,6 +278,7 @@ final class BearyMessagesViewController: UIViewController {
     /// 通知行可见性门控记（铃铛页进页仍走记已看的原口径）。
     func pageDidEnter() {
         notifChild.pageDidEnter()
+        conversationsChild.pageDidEnter()
         notifChild.refreshListIfUnreadChangedWithoutMarking()
         updateMergedRows()
         checkNotifSeenIfVisible()
@@ -280,6 +287,7 @@ final class BearyMessagesViewController: UIViewController {
     /// 容器切页离页钩子：停通知轮询、写回通知缓存（与铃铛页同口径）。
     func pageDidLeave() {
         notifChild.pageDidLeave()
+        conversationsChild.pageDidLeave()
     }
 
     /// 聊天页关闭后的刷新（容器 presentDMChat onClosed 接线）：会话组重拉

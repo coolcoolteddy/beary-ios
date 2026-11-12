@@ -62,6 +62,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private var firstLoadPending = true
     /// 新一轮 01：相对时间分钟边界刷新定时器（页面统一持有，不进 Cell）。
     private var relativeTimeTimer: Timer?
+    /// 60 秒轮询（通知页 pollTimer 同款口径）：聊天页打开时对方发来的新消息
+    /// 实时出现，不用退出重进。每拍走 loadLatest()——在途守卫、锚点保位、
+    /// 新消息 pill、重标已读全走原有路径；无变化时只换同内容，不闪不丢位。
+    private var pollTimer: Timer?
     // 新行首次出现透明度过渡的已播记账（按消息 id 键，已有行更新不重播）。
     private var fadedRowKeys = Set<String>()
     private let inputBar = UIView()
@@ -473,10 +477,12 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         NotificationCenter.default.addObserver(self, selector: #selector(handleUserChanged), name: .bearyUserDidChange, object: nil)
         loadLatest()
         checkDMPermission()
+        startPolling()
     }
 
     deinit {
         relativeTimeTimer?.invalidate()
+        pollTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -491,12 +497,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         startRelativeTimeTimer()
+        startPolling()
         refreshVisibleTimeLabels()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         stopRelativeTimeTimer()
+        stopPolling()
     }
 
     /// 新一轮 01：相对时间只由页面统一刷新——首拍对齐下一分钟边界，之后每 60 秒
@@ -515,6 +523,24 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         relativeTimeTimer = nil
     }
 
+    /// 60 秒轮询（通知页 startPolling 同款）：首拍对齐下一分钟边界，之后
+    /// 每 60 秒一拍（自调度，计时漂移自动纠回边界）；每拍走 loadLatest()，
+    /// 在途时由 loadLatest 内部的 refreshQueued 排队补跑，不丢刷新。
+    private func startPolling() {
+        pollTimer?.invalidate()
+        let delay = 60.0 - Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 60.0)
+        pollTimer = Timer.scheduledTimer(withTimeInterval: max(delay, 1.0), repeats: false) { [weak self] _ in
+            self?.startPolling()
+            guard let strongSelf = self, strongSelf.view.window != nil && !strongSelf.view.isHidden else { return }
+            strongSelf.loadLatest()
+        }
+    }
+
+    private func stopPolling() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+    }
+
     /// 新一轮 01：只更新可见行的时间 Label（滚动位置、入场动效均不动），不 reloadData。
     private func refreshVisibleTimeLabels() {
         guard view.window != nil && !view.isHidden else { return }
@@ -526,6 +552,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     @objc private func handleForegroundForRelativeTime() {
         refreshVisibleTimeLabels()
         startRelativeTimeTimer()
+        // 回前台即拉一次最新消息（通知页回前台轻量刷新同款）：不用等下一拍。
+        startPolling()
+        loadLatest()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
