@@ -122,6 +122,15 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private var identityGeneration: Int
     /// 切号关页进行中（防通知与入口守卫重复触发两次关页）。
     private var isClosingForIdentityChange = false
+    /// 待发记录落盘中的提交锁（第七轮①）：只覆盖 savePending 回调前的
+    /// 落盘阶段——落盘是异步的，清空输入与发网请求都在回调里，锁未覆盖
+    /// 时连点会生成两个 localKey 各走一次 sendDM。落盘确认后即释放，
+    /// 网请求在途不持锁，正常连续发送不同消息不受影响。
+    private var isPersistingSend = false
+    /// 输入版本号（第七轮②）：用户每次改输入 +1；发送时捕获当时版本，
+    /// 落盘回调只在版本未变、且当前内容仍是本次发送的正文时才清空——
+    /// 落盘期间用户又打的字不属于本次发送，不得无条件清空。
+    private var inputVersion = 0
     /// 对方不接受私信（can=false 或 403 dm_not_allowed）：页顶横幅 + 禁用输入。
     private var dmNotAllowed = false
     private let permBannerView = UIView()
@@ -598,6 +607,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     }
 
     func textViewDidChange(_ textView: UITextView) {
+        // 第七轮②：用户输入变化即推高版本，落盘回调凭此判断输入框里的
+        // 内容是否仍属于本次发送（程序设值不走 delegate，不推版本）。
+        inputVersion += 1
         updateSendButton()
         updateInputChrome()
         updateInputTextViewHeight()
@@ -728,9 +740,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     private func updateSendButton() {
         let hasText = !inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        // 2026-11-04 乐观发送：不再单发锁——点发送即清空输入框，连点第二下
-        // 因空文案被拦，不会重复发出；多条在途请求各自认领自己的待发行。
-        sendButton.isEnabled = hasText && !sessionClosed && !dmNotAllowed
+        // 第七轮①：清空输入框在落盘回调里才发生，「连点第二下因空文案
+        // 被拦」的前提已不存在——落盘期间提交锁直接禁掉发送钮；锁只覆
+        // 盖落盘阶段，确认后即放开，多条在途请求各自认领自己的待发行。
+        sendButton.isEnabled = hasText && !sessionClosed && !dmNotAllowed && !isPersistingSend
         sendButton.alpha = sendButton.isEnabled ? 1 : 0.6
     }
 
@@ -1339,8 +1352,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }
     }
 
-    /// 乐观发送（2026-11-04）：点按即落行——待发行拼到记录末尾、输入框立即
-    /// 清空、滚到底、0.22s 淡入 + 从输入条位置上浮；请求在后台跑。成功后重拉
+    /// 乐观发送（2026-11-04）：点按即上提交锁、待发先落盘——确认落盘后
+    /// 才拼行、清空本次输入、发网请求，滚到底、0.22s 淡入 + 从输入条位置
+    /// 上浮；请求在后台跑。成功后重拉
     /// 认领（服务端行到位即替换待发）；网络失败行侧边出红叹号、点按重发；
     /// 401/403/超时未知走撤行 + 草稿回填（不谎称已发、也不给会重复发出的重试）。
     @objc private func sendTapped() {
@@ -1360,6 +1374,16 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             onRequireLogin?()
             return
         }
+        // 第七轮①：落盘期间拒绝再次提交（发送钮亦由 updateSendButton 禁掉，
+        // 此处是最后一道防线）；锁只覆盖落盘阶段，回调确认后即释放。
+        guard !isPersistingSend else { return }
+        // 第七轮③：点击时捕获原始账号与代次，落盘回调中再次校验再调 sendDM。
+        let submitAccountId = storeAccountId
+        let submitEpoch = BearyAPI.shared.authEpoch
+        // 第七轮②：捕获本次发送时的输入版本，回调凭此判断是否可清空。
+        let submitInputVersion = inputVersion
+        isPersistingSend = true
+        updateSendButton()
         let key = UUID().uuidString
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         let temp = BearyAPI.DMMessage(id: nil, senderId: myId, fromMe: true, body: body, createdAt: nowMs, localKey: key)
@@ -1369,15 +1393,31 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         // 留在输入框，不把这次输入当作可恢复的待发消息。
         BearyDMStore.savePending(.init(localKey: key, peerId: userId, body: body, createdAt: nowMs, status: .sending), accountId: storeAccountId) { [weak self] saved in
             guard let self = self else { return }
+            // 第七轮①：落盘已确认（成功与否都有结论），释放提交锁。
+            self.isPersistingSend = false
             guard saved else {
                 BearyToast.show(in: self.view, message: "暂时无法安全保存")
+                self.updateSendButton()
+                return
+            }
+            // 第七轮③：发前复查——点击与落盘之间切了号或重登，代次已变：
+            // 不发请求、不拼行、不清空输入；待发记录已按原账号落盘，留待
+            // 原账号恢复时由 loadPendings 认领（不删、不改状态）；只恢复
+            // 发送钮可用态。
+            guard self.isRequestCurrent(accountId: submitAccountId, epoch: submitEpoch) else {
+                self.updateSendButton()
                 return
             }
             self.messages.append(temp)
             // 入场动效归 animateLastMineRow——先记已播，免得 willDisplay
             // 的通用淡入与上浮动画抢 alpha。
             self.fadedRowKeys.insert("msg-pending-\(key)")
-            self.inputTextView.text = ""
+            // 第七轮②：只在输入未被用户改动、且当前内容仍是本次正文时才
+            // 清空；落盘期间用户又打的字、或别的回调回填的草稿，一律保留。
+            if self.inputVersion == submitInputVersion,
+               self.inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines) == body {
+                self.inputTextView.text = ""
+            }
             self.updateSendButton()
             self.updateInputChrome()
             self.updateInputTextViewHeight()
@@ -1385,9 +1425,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             self.tableView.reloadData()
             self.scrollToBottomIfNeeded()
             self.animateLastMineRow()
-            // 请求时捕获账号 + 代次：回包时任一不匹配即丢弃（见 isRequestCurrent）。
-            let requestAccountId = SessionManager.shared.currentUser?.id
-            let requestEpoch = BearyAPI.shared.authEpoch
+            // 回包仍用点击时捕获的账号 + 代次校验（落盘前已复查过一次，
+            // 见 isRequestCurrent）。
+            let requestAccountId = submitAccountId
+            let requestEpoch = submitEpoch
             BearyAPI.shared.sendDM(userId: userId, body: body) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
