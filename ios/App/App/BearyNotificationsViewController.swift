@@ -4400,9 +4400,10 @@ extension BearyNotificationsViewController {
         let actIndices = items.indices.filter({ (items[$0].type ?? "") != "system" && (items[$0].type ?? "") != "letter" })
         if let latestIndex = actIndices.first {
             let latest = items[latestIndex]
+            // 32 注销口径：互动卡对方已注销时，摘要里的对方名显“用户已注销”。
             // 第十三轮第 8 项：缺名（nil 或空串）统一回落全站缺省名“beary 用户”，不落空串。
-            let rawActorName = latest.actorName ?? ""
-            let actorName = rawActorName.isEmpty ? "beary 用户" : rawActorName
+            let deletedName = bearyDeletedAuthorDisplayName(latest.actorName) ?? ""
+            let actorName = deletedName.isEmpty ? "beary 用户" : deletedName
             let latestVerb = BearyNotificationCell.verb(for: latest.type)
             cards.append(NotifMergeCardData(
                 kind: .interactive,
