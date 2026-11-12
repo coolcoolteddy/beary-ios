@@ -1344,3 +1344,259 @@ final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioni
         })
     }
 }
+
+// MARK: - 埋时间胶囊（v1 底 sheet；只在新建模式进，编辑模式不进）
+
+/// 埋胶囊底 sheet：走共享底部弹窗容器 BearyBottomSheet（与确认弹窗同款
+/// 呈现与关闭流程：弹簧 0.4s 上升、背后缩 0.92、遮罩 0.45、下拖关／弹回）。
+/// 一个日期选择器（解锁日期，默认一年后，最小明天）＋一行当前区级
+/// （打开时按需定位＋逆地理编码取区级，取不到则提示无法埋藏、不让确认）。
+/// 确认只回传（解锁毫秒戳，区级），不发请求、不写盘；调用方记入编辑器
+/// 实例状态，发布快照拍定后才进 publishEntry 载荷。已埋时多一行
+/// 「取消埋藏」（清掉编辑器实例的胶囊两值，同样不发请求）。
+enum BearyCapsuleBurySheet {
+    static func show(from presenter: UIViewController, initialUnlockAtMs: Int?, initialDistrict: String?, onConfirm: @escaping (Int, String) -> Void, onClear: (() -> Void)? = nil) {
+        let sheet = BearyCapsuleBurySheetViewController(initialUnlockAtMs: initialUnlockAtMs, initialDistrict: initialDistrict, onConfirm: onConfirm, onClear: onClear)
+        let delegate = BearyBottomSheetTransitioningDelegate()
+        sheet.sheetDelegate = delegate
+        sheet.transitioningDelegate = delegate
+        sheet.modalPresentationStyle = .custom
+        sheet.loadViewIfNeeded()
+        let presenterWidth = presenter.view.bounds.width
+        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
+        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
+        sheet.view.setNeedsLayout()
+        sheet.view.layoutIfNeeded()
+        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
+        presenter.present(sheet, animated: BearyMotion.animated(true))
+    }
+}
+
+final class BearyCapsuleBurySheetViewController: UIViewController {
+
+    /// transitioningDelegate 是弱引用，须由本页自己强持有（确认弹窗同款做法）。
+    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
+
+    private let initialUnlockAtMs: Int?
+    private let initialDistrict: String?
+    private let onConfirm: (Int, String) -> Void
+    private let onClear: (() -> Void)?
+
+    private let grabberView = UIView()
+    private let closeButton = BearyButton.closeButton()
+    private let titleLabel = UILabel()
+    private let dateRow = UIStackView()
+    private let dateTitleLabel = UILabel()
+    private let datePicker = UIDatePicker()
+    private let districtRow = UIStackView()
+    private let districtTitleLabel = UILabel()
+    private let districtValueLabel = UILabel()
+    private let confirmButton = BearyButton(style: .primaryPill(.ink))
+    private let clearButton = BearyButton(style: .secondaryOutline(.regular))
+    /// 按钮栈：栈内隐藏的 arrangedSubview 自动塌掉——isHidden 的普通视图
+    /// 仍占约束位，未埋时「取消埋藏」隐藏会在底部留空隙。
+    private let buttonStack = UIStackView()
+
+    private var currentDistrict: String? {
+        didSet { refreshDistrictRow() }
+    }
+    private var districtFailed = false
+
+    init(initialUnlockAtMs: Int?, initialDistrict: String?, onConfirm: @escaping (Int, String) -> Void, onClear: (() -> Void)?) {
+        self.initialUnlockAtMs = initialUnlockAtMs
+        self.initialDistrict = initialDistrict
+        self.onConfirm = onConfirm
+        self.onClear = onClear
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = BearyColors.bg
+        view.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        view.layer.masksToBounds = true
+
+        grabberView.translatesAutoresizingMaskIntoConstraints = false
+        grabberView.backgroundColor = BearyColors.line
+        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
+        view.addSubview(grabberView)
+
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
+        view.addSubview(closeButton)
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = "埋时间胶囊"
+        titleLabel.font = BearyDynamicType.smallActionFont()
+        titleLabel.textColor = BearyColors.ink
+        view.addSubview(titleLabel)
+
+        let calendar = BearyBeijingDay.calendar
+        let todayStart = calendar.startOfDay(for: Date())
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: todayStart) ?? todayStart
+        let oneYearLater = calendar.date(byAdding: .year, value: 1, to: todayStart) ?? tomorrow
+        datePicker.datePickerMode = .date
+        datePicker.preferredDatePickerStyle = .compact
+        datePicker.locale = Locale(identifier: "zh_CN")
+        datePicker.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        datePicker.minimumDate = tomorrow
+        if let initialMs = initialUnlockAtMs {
+            let initialDate = Date(timeIntervalSince1970: TimeInterval(initialMs) / 1000)
+            datePicker.date = max(initialDate, tomorrow)
+        } else {
+            datePicker.date = oneYearLater
+        }
+
+        dateTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        dateTitleLabel.text = "解锁日期"
+        dateTitleLabel.font = BearyDynamicType.smallBodyFont()
+        dateTitleLabel.textColor = BearyColors.ink
+        datePicker.translatesAutoresizingMaskIntoConstraints = false
+        dateRow.translatesAutoresizingMaskIntoConstraints = false
+        dateRow.axis = .horizontal
+        dateRow.alignment = .center
+        dateRow.spacing = 12
+        dateRow.addArrangedSubview(dateTitleLabel)
+        dateRow.addArrangedSubview(datePicker)
+        view.addSubview(dateRow)
+
+        districtTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        districtTitleLabel.text = "埋藏区级"
+        districtTitleLabel.font = BearyDynamicType.smallBodyFont()
+        districtTitleLabel.textColor = BearyColors.ink
+        districtValueLabel.translatesAutoresizingMaskIntoConstraints = false
+        districtValueLabel.text = "正在定位…"
+        districtValueLabel.font = BearyDynamicType.smallBodyFont()
+        districtValueLabel.textColor = BearyColors.gray
+        districtValueLabel.numberOfLines = 0
+        districtRow.translatesAutoresizingMaskIntoConstraints = false
+        districtRow.axis = .horizontal
+        districtRow.alignment = .center
+        districtRow.spacing = 12
+        districtRow.addArrangedSubview(districtTitleLabel)
+        districtRow.addArrangedSubview(districtValueLabel)
+        view.addSubview(districtRow)
+
+        confirmButton.translatesAutoresizingMaskIntoConstraints = false
+        confirmButton.setTitle("埋藏", for: .normal)
+        confirmButton.isEnabled = false
+        confirmButton.addTarget(self, action: #selector(confirmTapped), for: .touchUpInside)
+        confirmButton.bearyAddPressFeedback()
+
+        // 已埋时才给「取消埋藏」：清掉编辑器实例的胶囊两值，不发请求。
+        clearButton.translatesAutoresizingMaskIntoConstraints = false
+        clearButton.setTitle("取消埋藏", for: .normal)
+        clearButton.addTarget(self, action: #selector(clearTapped), for: .touchUpInside)
+        clearButton.bearyAddPressFeedback()
+        clearButton.isHidden = initialUnlockAtMs == nil || initialDistrict == nil
+
+        buttonStack.translatesAutoresizingMaskIntoConstraints = false
+        buttonStack.axis = .vertical
+        buttonStack.spacing = 8
+        buttonStack.addArrangedSubview(confirmButton)
+        buttonStack.addArrangedSubview(clearButton)
+        view.addSubview(buttonStack)
+
+        NSLayoutConstraint.activate([
+            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop),
+            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
+            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
+
+            closeButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 16),
+            closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            closeButton.widthAnchor.constraint(equalToConstant: 32),
+            closeButton.heightAnchor.constraint(equalToConstant: 32),
+
+            titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
+            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            titleLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -12),
+
+            dateRow.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 16),
+            dateRow.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            dateRow.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+
+            districtRow.topAnchor.constraint(equalTo: dateRow.bottomAnchor, constant: 16),
+            districtRow.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            districtRow.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+
+            buttonStack.topAnchor.constraint(equalTo: districtRow.bottomAnchor, constant: 16),
+            buttonStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            buttonStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+
+            confirmButton.heightAnchor.constraint(equalToConstant: confirmButton.style.height),
+            clearButton.heightAnchor.constraint(equalToConstant: clearButton.style.height),
+        ])
+
+        // 打开时按需取一次当前区级：取不到则提示无法埋藏、不让确认。
+        BearyTimeCapsule.fetchCurrentDistrict { [weak self] district in
+            guard let self = self else { return }
+            if let district = district, !district.isEmpty {
+                self.currentDistrict = district
+            } else {
+                self.districtFailed = true
+                self.refreshDistrictRow()
+            }
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updatePreferredContentSize()
+    }
+
+    /// 按当前宽度算内容高，推给容器当 sheet 高（确认弹窗同款）。
+    func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
+        let width = view.bounds.width > 0 ? view.bounds.width : 375
+        let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
+        let size = view.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+        let height = ceil(size.height) + extraBottomInset
+        let preferred = CGSize(width: width, height: height)
+        if preferredContentSize != preferred {
+            preferredContentSize = preferred
+        }
+    }
+
+    private func refreshDistrictRow() {
+        if let district = currentDistrict {
+            districtValueLabel.text = district
+            districtValueLabel.textColor = BearyColors.ink
+            confirmButton.isEnabled = true
+        } else if districtFailed {
+            districtValueLabel.text = "无法获取当前位置，无法埋藏"
+            districtValueLabel.textColor = BearyColors.gray
+            confirmButton.isEnabled = false
+        } else {
+            districtValueLabel.text = "正在定位…"
+            districtValueLabel.textColor = BearyColors.gray
+            confirmButton.isEnabled = false
+        }
+    }
+
+    @objc private func confirmTapped() {
+        guard let district = currentDistrict else { return }
+        // 解锁戳取所选日北京时间 00:00（毫秒）。
+        let startOfDay = BearyBeijingDay.calendar.startOfDay(for: datePicker.date)
+        let unlockAtMs = Int(startOfDay.timeIntervalSince1970 * 1000)
+        dismiss(animated: BearyMotion.animated(true)) { [onConfirm] in
+            onConfirm(unlockAtMs, district)
+        }
+    }
+
+    @objc private func clearTapped() {
+        dismiss(animated: BearyMotion.animated(true)) { [onClear] in
+            onClear?()
+        }
+    }
+
+    @objc private func closeTapped() {
+        dismiss(animated: BearyMotion.animated(true))
+    }
+}

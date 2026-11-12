@@ -2137,7 +2137,7 @@ extension BearyAPI {
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
     /// create_ip_limit(429) / create_dup。
-    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, isCapsule: Int? = nil, capsuleUnlockAt: Int? = nil, capsuleDistrict: String? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
         // 实况：非空才发 live_videos（无实况的新建与旧版 body 一字相同）；
         // 空映射不发（新建无旧态可清，编辑清实况走 updateEntry 的显式空映射）。
@@ -2168,6 +2168,11 @@ extension BearyAPI {
         }
         if let e = ephemeral { body["ephemeral"] = e }
         if let mentioned = mentionedUserId { body["mentioned_user_id"] = mentioned }
+        // 时间胶囊 v1：埋了才发三键（is_capsule=1、毫秒戳、区级）；不埋时
+        // 三键一概不发，body 与旧版一字相同。
+        if let capsule = isCapsule { body["is_capsule"] = capsule }
+        if let unlockAt = capsuleUnlockAt { body["capsule_unlock_at"] = unlockAt }
+        if let district = capsuleDistrict { body["capsule_district"] = district }
         request("/beary/api/entries", method: "POST", jsonBody: body, completion: completion)
     }
 
@@ -2177,7 +2182,7 @@ extension BearyAPI {
     /// 可见性只走 visibility 接口，不可经此接口改。
     /// 成功只返回 {ok: true}，调用方成功后自行重拉单篇。
     /// 图片须归属本人且存在，否则 400 'invalid image ownership' / 409 'image unavailable'。
-    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, mentionedUserId: Int? = nil, clearMentioned: Bool = false, locationName: String? = nil, locationDistrict: String? = nil, clearLocationName: Bool = false, clearLocationDistrict: Bool = false, temperature: Int? = nil, liveVideos: [String: String]? = nil, completion: @escaping (Result<Void, APIError>) -> Void) {
+    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, mentionedUserId: Int? = nil, clearMentioned: Bool = false, locationName: String? = nil, locationDistrict: String? = nil, clearLocationName: Bool = false, clearLocationDistrict: Bool = false, temperature: Int? = nil, liveVideos: [String: String]? = nil, clearCapsule: Bool = false, completion: @escaping (Result<Void, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         var body: [String: Any] = ["content": content, "images": images]
         // 实况：调用方算清后才传——非空发映射；显式空映射 = 清掉原实况（删图/
@@ -2205,6 +2210,14 @@ extension BearyAPI {
             body["mentioned_user_id"] = NSNull()
         } else if let mentioned = mentionedUserId {
             body["mentioned_user_id"] = mentioned
+        }
+        // 时间胶囊 v1：取消埋藏唯一入口——发 is_capsule=0 且两键显式 null
+        //（后端 PUT 带键才改）；编辑已发日记的正常 PUT 一律不传本参，
+        // 胶囊三键不进 body、服务端原值不动。
+        if clearCapsule {
+            body["is_capsule"] = 0
+            body["capsule_unlock_at"] = NSNull()
+            body["capsule_district"] = NSNull()
         }
         requestVoid("/beary/api/entries/\(safe)", method: "PUT", jsonBody: body, completion: completion)
     }

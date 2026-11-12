@@ -367,6 +367,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var isEphemeral = false {
         didSet { editorEditVersion += 1 }
     }
+    /// 时间胶囊 v1（仅新建模式）：埋藏才有值——解锁毫秒戳＋埋藏区级；
+    /// 不埋时两者皆 nil，快照与 publishEntry 一概不发三键。
+    /// 只活在本编辑器实例内，不进草稿持久化（草稿恢复后须重埋）。
+    private var capsuleUnlockAtMs: Int? {
+        didSet { editorEditVersion += 1 }
+    }
+    private var capsuleDistrict: String? {
+        didSet { editorEditVersion += 1 }
+    }
+    /// 胶囊是否已设：两值齐全才算（缺任一即未埋，不发半截载荷）。
+    private var capsuleBuried: Bool { capsuleUnlockAtMs != nil && capsuleDistrict != nil }
     /// 编辑模式的引用：初始为原值，可改可删（网页 PUT 同款：body 带新 quote_id；
     /// 删为空时 updateEntry 省略 quote_id，服务端按 null 写，旧引用即清掉）。
     private var lockedQuote: SelectedQuote?
@@ -615,6 +626,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         /// 好友第一期：新建三档（private/friends/public；限时恒 public）。
         /// 快照拍定后 publishEntry 按它发，published 同步作旧版兼容（friends→0）。
         var visibility: String
+        /// 时间胶囊 v1：埋了才有值（解锁毫秒戳＋区级）；不埋两者皆 nil，
+        /// performPublish 经 publishEntry 一概不发三键。
+        let capsuleUnlockAt: Int?
+        let capsuleDistrict: String?
         let mentionedUserId: Int?
         let title: String?
         var ephemeral: Int?
@@ -657,6 +672,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quoteId: (selectedQuote?.isDeleted == true) ? nil : selectedQuote?.entryId,
             published: selectedVisibilityPublished ? 1 : 0,
             visibility: isEphemeral || selectedVisibilityPublished ? "public" : (selectedVisibilityFriends ? "friends" : "private"),
+            capsuleUnlockAt: capsuleBuried ? capsuleUnlockAtMs : nil,
+            capsuleDistrict: capsuleBuried ? capsuleDistrict : nil,
             mentionedUserId: selectedRecipient?.id,
             title: headlineForCreate,
             ephemeral: isEphemeral ? 1 : nil,
@@ -2764,7 +2781,30 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self?.applyVisibilityChoice(item.choice)
             }
         }
-        return UIMenu(title: "可见性", children: actions)
+        // 时间胶囊 v1：只在新建模式出现（编辑模式 visibilityButton 本就隐藏，
+        // 本菜单根本不展示）。点开埋胶囊底 sheet，不改可见性档。
+        let capsuleAction = UIAction(title: "埋时间胶囊…", image: BearyIconImages.image(named: "time-capsule", pointSize: 24), state: capsuleBuried ? .on : .off) { [weak self] _ in
+            self?.openCapsuleBurySheet()
+        }
+        return UIMenu(title: "可见性", children: actions + [capsuleAction])
+    }
+
+    /// 时间胶囊 v1：打开埋胶囊底 sheet（日期＋当前区级），确认后只写
+    /// 本编辑器实例的胶囊两值，发布快照拍定后才进 publishEntry 载荷。
+    private func openCapsuleBurySheet() {
+        BearyCapsuleBurySheet.show(from: self, initialUnlockAtMs: capsuleUnlockAtMs, initialDistrict: capsuleDistrict, onConfirm: { [weak self] unlockAtMs, district in
+            guard let self = self else { return }
+            self.capsuleUnlockAtMs = unlockAtMs
+            self.capsuleDistrict = district
+            self.refreshVisibilityButton()
+            self.scheduleDraftSave()
+        }, onClear: { [weak self] in
+            guard let self = self else { return }
+            self.capsuleUnlockAtMs = nil
+            self.capsuleDistrict = nil
+            self.refreshVisibilityButton()
+            self.scheduleDraftSave()
+        })
     }
 
     /// 三旗标折叠成的当前档：限时优先（限时恒公开），其次仅好友，其次公开，其余私密。
@@ -8512,7 +8552,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 已删引用不传 quoteId：快照生成时已按“已删 → nil”定格（只剩 id 的
         // 引用服务端会拒，发布应按无引用走，展示态仍保留到发布成功清草稿为止）。
         let publishVisibility = snapshot.published
-        BearyAPI.shared.publishEntry(content: snapshot.content, images: snapshot.imageKeys, mood: snapshot.mood, weather: snapshot.weather, quoteId: snapshot.quoteId, published: publishVisibility, mentionedUserId: snapshot.mentionedUserId, title: snapshot.title, ephemeral: snapshot.ephemeral, clientReq: snapshot.clientReq, locationName: snapshot.locationName, locationDistrict: snapshot.locationDistrict, temperature: snapshot.temperature, liveVideos: snapshot.liveVideos.isEmpty ? nil : snapshot.liveVideos, visibility: snapshot.visibility) { [weak self] result in
+        BearyAPI.shared.publishEntry(content: snapshot.content, images: snapshot.imageKeys, mood: snapshot.mood, weather: snapshot.weather, quoteId: snapshot.quoteId, published: publishVisibility, mentionedUserId: snapshot.mentionedUserId, title: snapshot.title, ephemeral: snapshot.ephemeral, clientReq: snapshot.clientReq, locationName: snapshot.locationName, locationDistrict: snapshot.locationDistrict, temperature: snapshot.temperature, liveVideos: snapshot.liveVideos.isEmpty ? nil : snapshot.liveVideos, visibility: snapshot.visibility, isCapsule: snapshot.capsuleUnlockAt == nil ? nil : 1, capsuleUnlockAt: snapshot.capsuleUnlockAt, capsuleDistrict: snapshot.capsuleDistrict) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self, generation == self.publishGeneration else { return }
                 self.isPublishing = false

@@ -94,6 +94,9 @@ enum BearyProfilePersonalLogic {
     }
 
     static func writingStats(entries: [Entry], now: Date, calendar: Calendar) -> WritingStats {
+        // 时间胶囊 v1：胶囊篇不进写作统计（总数／字数／时段／心情／天气／
+        // 连续天数一律先滤掉 isCapsule==1 的篇再算）。
+        let entries = entries.filter { $0.isCapsuleBuried != true }
         let total = entries.count
         let totalChars = entries.reduce(0) { $0 + ($1.content ?? "").count }
         // 2 小时桶。
@@ -204,6 +207,9 @@ enum BearyProfilePersonalLogic {
               let todayDay = todayParts.day else { return nil }
         var byYear: [Int: [Entry]] = [:]
         for entry in entries {
+            // 时间胶囊 v1：胶囊篇不进那年今日入口（只在取数处过滤，
+            // 不改 PastSelfMessage 逻辑）。
+            guard entry.isCapsuleBuried != true else { continue }
             guard let createdAt = entry.createdAt else { continue }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
             let parts = calendar.dateComponents([.year, .month, .day], from: date)
@@ -519,6 +525,9 @@ enum BearyProfilePersonalLogic {
             hasher.combine(entry.visibility)
             hasher.combine(entry.ephemeralUntil)
             hasher.combine(entry.placeholder)
+            // 时间胶囊 v1：writingStats 先滤胶囊篇，指纹须含胶囊态，
+            // 否则埋／取消埋藏后指纹不变、旧统计缓存会继续命中。
+            hasher.combine(entry.isCapsule)
         }
         return hasher.finalize()
     }
