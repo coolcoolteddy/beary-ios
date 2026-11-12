@@ -241,7 +241,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         view.addSubview(emptyRetryButton)
         view.addSubview(photosLoadingPlaceholderView)
         view.addSubview(photosStatusLabel)
-        photosStatusHeightConstraint = photosStatusLabel.heightAnchor.constraint(equalToConstant: 0)
+        photosStatusHeightConstraint = photosStatusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 0)
         photosStatusHeightConstraint?.isActive = true
         // 08：网格不再左右钉满页面——宽约束由 updatePhotosGridWidth 按实宽
         // 定（≥821 取 600 居中，≤820 取全宽），见 viewDidLayoutSubviews。
