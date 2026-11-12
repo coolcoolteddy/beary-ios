@@ -287,7 +287,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        let wantCap = view.bounds.width >= 821
+        // 仅 iPad 且宽 ≥821 才激活 600 上限（iPhone 横屏走全宽）。
+        let wantCap = BearyDesktop.isWide(view.bounds.width)
         for cap in colCapConstraints where cap.isActive != wantCap {
             cap.isActive = wantCap
         }

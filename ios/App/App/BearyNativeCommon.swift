@@ -40,6 +40,16 @@ enum BearyChrome {
     }
 }
 
+/// 桌面式断点（第十二轮第五轮第 3 项，#1424 同款判定）：仅 iPad 且宽 ≥821 才为真；
+/// iPhone 横屏 932/852/844/926pt 也 ≥821，但仍走 iPhone 式全宽，不进 600 居中桌面态。
+/// 宽度阈值保留作 iPad 窄屏/分屏的补充条件。内容列各页共用此入口，不再各写宽判定。
+/// 注意：底 sheet／居中卡片等浮层仍各按 ≥821 限宽（iPhone 横屏限宽居中本来就合适），不走此入口。
+enum BearyDesktop {
+    static func isWide(_ width: CGFloat) -> Bool {
+        UIDevice.current.userInterfaceIdiom == .pad && width >= 821
+    }
+}
+
 /// 阴影 token（视觉清单 Grok 项 2）：hairline 用于搜索框、callout；
 /// raised 用于 FAB、新内容条、居中弹层、底 sheet。只改数值一档，
 /// 不新增阴影层；弹层本身的两档数值（#519 视觉不变前提）本支不动。

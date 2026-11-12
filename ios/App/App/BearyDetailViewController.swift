@@ -753,8 +753,8 @@ final class BearyDetailViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // 详情重做：两分支互斥整组开关（状态不变不开关，避免布局循环）。
-        // 宽 ≥821 用 600 居中，宽 ≤820 用安全区宽−32；切换时重算一次。
-        let wantWide = view.bounds.width >= 821
+        // 仅 iPad 且宽 ≥821 用 600 居中，其余用安全区宽−32；切换时重算一次。
+        let wantWide = BearyDesktop.isWide(view.bounds.width)
         if wantWide != columnIsWide {
             columnIsWide = wantWide
             columnNarrowLeading?.isActive = !wantWide

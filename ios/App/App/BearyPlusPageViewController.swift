@@ -192,8 +192,8 @@ final class BearyPlusPageViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // 宽 ≥821 用 600 居中，宽 ≤820 用现行全宽；切换时重算一次。
-        let wantWide = view.bounds.width >= 821
+        // 仅 iPad 且宽 ≥821 用 600 居中，其余用现行全宽；切换时重算一次。
+        let wantWide = BearyDesktop.isWide(view.bounds.width)
         if wantWide != contentIsWide {
             contentIsWide = wantWide
             contentNarrowLeading.isActive = !wantWide

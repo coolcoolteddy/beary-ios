@@ -736,9 +736,9 @@ class BearyFeedViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // P2-1：600 上限只在宽 ≥821 时激活，宽 ≤820 时关掉、表走 == 屏宽回 iPhone 式全宽；
+        // P2-1：600 上限只在 iPad 且宽 ≥821 时激活，iPhone 横屏仍走 == 屏宽的 iPhone 式全宽；
         // 状态不变不开关，避免布局循环。
-        let wantColCap = view.bounds.width >= 821
+        let wantColCap = BearyDesktop.isWide(view.bounds.width)
         if feedColCapConstraint?.isActive != wantColCap {
             feedColCapConstraint?.isActive = wantColCap
         }

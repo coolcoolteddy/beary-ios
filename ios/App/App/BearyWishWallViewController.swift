@@ -549,8 +549,8 @@ final class BearyWishWallViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // 13：Feed 同款断点开关——状态不变不开关，避免布局循环。
-        let wantCap = view.bounds.width >= 821
+        // 13：Feed 同款断点开关（仅 iPad 且宽 ≥821）——状态不变不开关，避免布局循环。
+        let wantCap = BearyDesktop.isWide(view.bounds.width)
         for cap in colCapConstraints where cap.isActive != wantCap {
             cap.isActive = wantCap
         }
@@ -1222,8 +1222,8 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // 13：Feed 同款断点开关——状态不变不开关，避免布局循环。
-        let wantCap = view.bounds.width >= 821
+        // 13：Feed 同款断点开关（仅 iPad 且宽 ≥821）——状态不变不开关，避免布局循环。
+        let wantCap = BearyDesktop.isWide(view.bounds.width)
         for cap in colCapConstraints where cap.isActive != wantCap {
             cap.isActive = wantCap
         }
@@ -1237,7 +1237,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     }
 
     /// 13：表单字段居中列约束——宽 == 滚动容器 frame 宽-32（defaultHigh，≤820 全宽-32）
-    /// + 600 上限（存入 colCapConstraints，≥821 才激活）+ 左右 ≥16 + 居中。
+    /// + 600 上限（存入 colCapConstraints，仅 iPad 且宽 ≥821 才激活）+ 左右 ≥16 + 居中。
     private func fieldColumnConstraints(for field: UIView) -> [NSLayoutConstraint] {
         let fullWidth = field.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32)
         fullWidth.priority = .defaultHigh
