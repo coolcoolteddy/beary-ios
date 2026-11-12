@@ -1385,14 +1385,16 @@ final class BearyTimelineCell: UITableViewCell {
     private func refreshTimelineLocationRow(entry: Entry) {
         guard let line = BearyLocationDisplay.display(entry: entry) else {
             timelineLocationStack.isHidden = true
-            // 位置行隐藏时其后间距置 0（与标题行同款口径；不归零会多 9pt，
+            // 位置行隐藏时其后间距置 0（与标题行同款口径；不归零会多 14pt，
             // 与 :1144 注释「栈自动塌掉不留空行」相左，以卡片 126 真机实测为准）。
             cardStackReference?.setCustomSpacing(0, after: timelineLocationStack)
             timelineLocationLabel.text = nil
             return
         }
         timelineLocationStack.isHidden = false
-        cardStackReference?.setCustomSpacing(9, after: timelineLocationStack)
+        // sweep131-a：可见时恢复 14（#1250 定版、与卡片/详情对齐；#1268
+        // 沿用合入前基线旧值 9，漏跟 #1250 的 9→14）。
+        cardStackReference?.setCustomSpacing(14, after: timelineLocationStack)
         timelineLocationLabel.text = line
     }
 
