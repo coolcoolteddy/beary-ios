@@ -708,7 +708,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
         devLabel.text = BearyAccountText.deviceName(session: session)
         var lineParts: [UIView] = [devLabel]
         if session.isCurrent == true {
-            let curLabel = makeLabel(font: UIFont.systemFont(ofSize: 11, weight: .bold), color: BearyColors.green)
+            let curLabel = makeLabel(font: UIFont.systemFont(ofSize: 11, weight: .bold), color: BearyColors.deepGreenText)
             curLabel.text = "当前"
             let curPill = UIView()
             curPill.translatesAutoresizingMaskIntoConstraints = false
