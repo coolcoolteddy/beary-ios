@@ -85,7 +85,7 @@ final class BearyLoginViewController: UIViewController {
     /// Sheet 弹窗专属：标题“欢迎回来”（全屏页无此标题）。
     private let welcomeTitleLabel = UILabel()
     /// Sheet 弹窗专属：邀请码收起行（全屏页邀请码常显，无此行）。
-    private let inviteDisclosureRow = UIView()
+    private let inviteDisclosureRow = InviteDisclosureRowView()
     private let inviteDisclosureLabel = UILabel()
     private let inviteDisclosureChevron = UIImageView()
     /// Sheet 弹窗：邀请码展开态（收起时只留收起行，字段隐藏但文本保留，登录照常读取）。
@@ -321,6 +321,9 @@ final class BearyLoginViewController: UIViewController {
         inviteDisclosureRow.accessibilityTraits = .button
         inviteDisclosureRow.accessibilityValue = "已收起"
         inviteDisclosureRow.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(inviteDisclosureTapped)))
+        // 读屏激活（审计 ①-P1）：VoiceOver 双击走 accessibilityActivate，
+        // 与普通点按共用 inviteDisclosureTapped()，展开状态在其内同步。
+        inviteDisclosureRow.onActivate = { [weak self] in self?.inviteDisclosureTapped() }
         NSLayoutConstraint.activate([
             // 无障碍：第 7 轮好友顶栏同款口径——行高不再钉死 44，只定最小
             // 高；邀请文案是 scaledFont，大字号下行高超过 44 时靠文案上下
@@ -1248,4 +1251,22 @@ extension BearyLoginViewController: BearyBottomSheetVoiceOver {
     /// 出现时 VoiceOver 聚焦 sheet 专属标题“欢迎回来”（EmotePicker/DraftBox/
     /// Notifications 三处先例一律聚焦标题；全屏页不走本容器，钩子不生效）。
     var bottomSheetInitialAccessibilityElement: AnyObject? { welcomeTitleLabel }
+}
+
+// MARK: - 邀请码收起行读屏激活（审计 ①-P1）
+//
+// inviteDisclosureRow 是普通 UIView＋点按手势：isAccessibilityElement、
+// .button trait、accessibilityValue（已展开／已收起）都已到位，唯独没有
+// accessibilityActivate，VoiceOver 双击只靠 trait 默认行为。行本身是
+// UIView 实例，无法逐例重写方法，故用最小子类只转调现有的
+// inviteDisclosureTapped()，与普通点按同一方法、同一展开状态同步，
+// 不另写业务逻辑。换 UIButton 也能达到同样效果，但会改动控件类型与
+// 点按手势，改动面更大，故不换。
+private final class InviteDisclosureRowView: UIView {
+    var onActivate: (() -> Void)?
+
+    override func accessibilityActivate() -> Bool {
+        onActivate?()
+        return true
+    }
 }
