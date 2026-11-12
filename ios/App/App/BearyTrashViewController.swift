@@ -1294,7 +1294,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             guard let self = self else { return }
             // 扫荡 B：确认时再验一次 busy。入口处守卫拦不住已弹出的确认框：
             // 框在屏时点恢复可正常在途，确认后若不复验，恢复与彻底删除
-            // 双请求齐飞，恢复成功后删除回 409 还会误弹“删除失败”。
+            // 双请求齐飞，恢复成功后删除回 409 还会误弹“删除失败，请重试”。
             // 复验拦住时直接收框、不发请求、不弹 toast（行已由恢复带走）。
             guard !self.trashBusyIdentifiers.contains(identifier) else { return }
             self.trashBusyIdentifiers.insert(identifier)
@@ -1343,7 +1343,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         if case .unauthorized = error {
                             self.notifyTrashLoginOnce()
                         } else {
-                            self.showToast(message: "删除失败")
+                            self.showToast(message: "删除失败，请重试")
                         }
                     }
                 }
@@ -1420,7 +1420,7 @@ private enum TrashText {
         return NSAttributedString(string: text, attributes: attributes)
     }
 
-    /// [24] 小项 6：恒为 M月d日 H:mm（不走今天/昨天特例；小时不补零，
+    /// [24] 小项 6：同年 M月d日 H:mm，跨年 yyyy年M月d日（不走今天/昨天特例；小时不补零，
     /// 与项目主流日记日期口径一致；旧 HH:mm 注“网页 fmtDayTime 同款”
     /// 与现行卡片/详情 H:mm 主流冲突，已按 App 内主流改齐）。
     /// G8：显示用 formatter 统一设北京时区，与服务端日界一致。
@@ -1429,7 +1429,12 @@ private enum TrashText {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        formatter.dateFormat = "M月d日 H:mm"
+        // 跨年显示年份（规范 §12）：同年 "M月d日 H:mm"，跨年 "yyyy年M月d日"；
+        // 年份判定走北京日历，与本文件 G8 时区口径一致。
+        let calendar = BearyBeijingDay.calendar
+        let year = calendar.component(.year, from: date)
+        let currentYear = calendar.component(.year, from: Date())
+        formatter.dateFormat = year == currentYear ? "M月d日 H:mm" : "yyyy年M月d日"
         return formatter.string(from: date)
     }
 
