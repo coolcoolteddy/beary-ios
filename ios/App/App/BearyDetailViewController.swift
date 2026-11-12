@@ -140,7 +140,7 @@ final class BearyDetailViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let contentColumnView = UIView()
     /// 批 B 头行栈：首页卡片 headerStack 同款（spacing 0 + setCustomSpacing 对照表，
-    /// 见 updateDiaryStackSpacing；@ 行藏时作者行改钉头像中心、顶约束停用，
+    /// 见 updateDiaryStackSpacing；@ 行藏时作者行改钉头像顶、顶约束停用，
     /// @ 行显时顶距 17 走头行顶约束）。
     /// 只放 @ 行、作者行、限时行；标题/正文一律在下方的 bodyStack 全宽排布。
     private let headerStack = UIStackView()
@@ -148,13 +148,15 @@ final class BearyDetailViewController: UIViewController {
     /// 回应行一律全宽（左右与内容列齐平），不再缩进到昵称位置。
     private let bodyStack = BearyPassThroughStackView()
     private var headerStackTopConstraint: NSLayoutConstraint?
-    /// 作者行结构居中约束：authorRow.centerY == avatarButton.centerY。
+    /// 作者行顶对齐约束：authorRow.top == avatarButton.top（用户名顶部与头像顶部平行）。
     /// 只在 recipientRow 藏时激活（见 updateDiaryStackSpacing）；
     /// @ 行显时停用、改走头行顶约束。
-    private var authorRowCenterYConstraint: NSLayoutConstraint?
+    private var authorRowTopConstraint: NSLayoutConstraint?
     private var headerStackTrailingConstraint: NSLayoutConstraint?
-    /// 正文栈顶：取头像底与头行底两者较大者 + 间距（有标题 12、无标题 8）；
-    /// 两条 required ≥ 约束定下限，一条 999 的 = 约束把栈顶拉回头行底 + 间距。
+    /// 正文栈顶：取头像底与头行底两者较大者 + 6（紧贴用户名下方，取规范标题→正文档 6；
+    /// 原 16 有标题／14 无标题，见规范 §3；该槽位改动须走规范同步）；正文全宽，
+    /// 头像底约束保留（正文必须 clearance 头像底）。
+    /// 两条 required ≥ 约束定下限，一条 999 的 = 约束把栈顶拉回头行底 + 6。
     private var bodyStackTopFromAvatarConstraint: NSLayoutConstraint?
     private var bodyStackTopFromHeaderConstraint: NSLayoutConstraint?
     private var bodyStackTopPinConstraint: NSLayoutConstraint?
@@ -836,7 +838,7 @@ final class BearyDetailViewController: UIViewController {
         // 一旦某一路异常即全崩，故改本地常量激活、彻底去掉强制解包，行为不变。
         let narrowLeading = columnNarrowLeading
         let narrowTrailing = columnNarrowTrailing
-        // 批 B：头像顶 16；头行顶：无 @ 行时作者行钉头像中心（顶约束停用）、
+        // 批 B：头像顶 16；头行顶：无 @ 行时作者行钉头像顶（顶约束停用）、
         // 有 @ 行时 17，见 updateDiaryStackSpacing（@ 行显隐的 1pt 差值保留）。
         // 头行右缩进：他人 0、本人 −36（让出小地球 28 + 间隙 8；以内容列为基准，
         // 等价于首页以整屏为基准的 −52，屏上几何一致）；正文栈左右与内容列齐平、
@@ -963,9 +965,9 @@ final class BearyDetailViewController: UIViewController {
         // 让两端先同属 authorRow 层级，再激活皇冠约束才安全。
         headerStack.addArrangedSubview(authorRow)
 
-        // 作者行结构居中约束：初始不激活，只在 @ 行藏时启用（见 updateDiaryStackSpacing）。
+        // 作者行顶对齐约束：初始不激活，只在 @ 行藏时启用（见 updateDiaryStackSpacing）。
         // 建在此处：authorRow 已入栈、avatarButton 已入内容列，两端已同属内容列层级。
-        authorRowCenterYConstraint = authorRow.centerYAnchor.constraint(equalTo: avatarButton.centerYAnchor)
+        authorRowTopConstraint = authorRow.topAnchor.constraint(equalTo: avatarButton.topAnchor)
 
         nameButton.titleLabel?.font = BearyDynamicType.cardTitleFont()
         nameButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -1249,34 +1251,38 @@ final class BearyDetailViewController: UIViewController {
     }
 
     /// 首页 updateDiaryStackSpacing 同款对照表（详情无折叠钮，故正文后恒取 14）：
-    /// @→作者 4、作者→限时 4；头行→正文栈 16（有标题）/ 14（无标题），由正文栈顶
+    /// @→作者 4、作者→限时 4；头行→正文栈 6（紧贴用户名下方，取规范标题→正文档 6；
+    /// 原 16 有标题／14 无标题，该槽位改动须走规范同步），由正文栈顶
     /// 三条约束定（见 buildLayout／buildCardHeader）；标题→正文 6（标题隐藏时 0）、
     /// 正文→图片 14、图片→引用 12、引用→定位 12、定位→操作行 14、操作行→回应行 12；
     /// 批 E 位置行插在引用卡与操作行之间（无位置时整组隐藏、不留空行）；
-    /// 头行顶：@ 行藏时作者行钉头像中心（顶约束停用）、@ 行显时 17。
+    /// 头行顶：@ 行藏时作者行钉头像顶（顶约束停用）、@ 行显时 17。
     private func updateDiaryStackSpacing() {
         // 作者行顶部统一 16（2026-11-05 ChatGPT 间距跟进）：@ 行显隐的 1pt
         // 差值保留（16／17），只改基线不改相对行为。
-        // 名字行偏下（卡片同款，129 真机实测：整行 authorRow 被往下顶，
-        // 时间比头像中心低约 11pt）：#1145 的字体行高算顶距没修动，卡片侧
-        // 同款算式先天偏下（行真高比字体行高多约 4pt）且残余间距另顶约 6pt，
-        // 字体度量算不准这两笔。改钉中心：@ 行藏时作者行中心 == 头像中心，
-        // 行真高、基线几何、残余间距一律不再影响；顶约束本分支停用。
+        // 名字行偏下（卡片同款，129 真机实测：名字比头像顶低约 10pt，
+        // 时间约 11pt）：#1145 的字体行高算顶距没修动；#1288 的钉中心也没修住——
+        // 20pt 的行钉在 40pt 头像中心上，用户名顶仍比头像顶低 (40−20)/2 ≈ 10pt，
+        // 居中从来不是顶对齐。改钉顶部：@ 行藏时作者行顶 == 头像顶，用户名顶
+        // 即头像顶（常见态约 +0.3pt；皇冠／心情可见时栈顶比用户名顶高约一个
+        // 下行距，用户名约 +4pt，见 PR 正文）；行真高、基线几何、残余间距
+        // 一律不再影响；顶约束本分支停用。
         // @ 行显时恢复顶约束、顶距 17，保持顶对齐不动。
         if recipientRow.isHidden {
             headerStackTopConstraint?.isActive = false
-            authorRowCenterYConstraint?.isActive = true
+            authorRowTopConstraint?.isActive = true
         } else {
-            authorRowCenterYConstraint?.isActive = false
+            authorRowTopConstraint?.isActive = false
             headerStackTopConstraint?.isActive = true
             headerStackTopConstraint?.constant = 17
         }
         headerStack.setCustomSpacing(recipientRow.isHidden ? 0 : 4, after: recipientRow)
         headerStack.setCustomSpacing(4, after: authorRow)
-        // 2026-11-05 日记布局统一：头行→正文栈间距不再走栈内 spacing，
-        // 改由正文栈顶三条约束定——有标题 16、无标题 14（ChatGPT 间距跟进，
-        // 在 #904 的 12／8 基础上放宽）；限时行是头行末行，其后间距即该值。
-        let headerBodyGap: CGFloat = titleLabel.isHidden ? 14 : 16
+        // 正文紧贴用户名下方：头行→正文栈间距取规范标题→正文档 6（原 16 有标题／
+        // 14 无标题，见规范 §3；该槽位改动须走规范同步）。头像底约束保留——
+        // 正文全宽，必须 clearance 头像底；正文顶即 max(头像底，头行底) + 6，
+        // 常见态（无 @ 行、无限时行）为头像底 + 6。限时行是头行末行，其后间距即该值。
+        let headerBodyGap: CGFloat = 6
         bodyStackTopFromAvatarConstraint?.constant = headerBodyGap
         bodyStackTopFromHeaderConstraint?.constant = headerBodyGap
         bodyStackTopPinConstraint?.constant = headerBodyGap

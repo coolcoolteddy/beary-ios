@@ -609,14 +609,16 @@ class BearyDiaryCardCell: UITableViewCell {
     private var separatorHeightConstraint: NSLayoutConstraint?
     private var headerStackTopConstraint: NSLayoutConstraint?
     private var avatarTopConstraint: NSLayoutConstraint?
-    /// 作者行结构居中约束：titleStack.centerY == avatarContainer.centerY。
+    /// 作者行顶对齐约束：titleStack.top == avatarContainer.top（用户名顶部与头像顶部平行）。
     /// 只在 pinRow 与 recipientRow 都藏时激活（见 updateDiaryStackSpacing）；
     /// 有行在作者行之上时停用、改走头行顶约束。
-    private var authorRowCenterYConstraint: NSLayoutConstraint?
+    private var authorRowTopConstraint: NSLayoutConstraint?
     /// 头行右缩进恒 −16；⋯ 留位走标题行末 titleMoreSpacer，不再按本人／他人改右缩进。
     private var headerStackTrailingConstraint: NSLayoutConstraint?
-    /// 正文栈顶：取头像底与头行底两者较大者 + 间距（有标题 16、无标题 14）；
-    /// 两条 required ≥ 约束定下限，一条 999 的 = 约束把栈顶拉回头行底 + 间距。
+    /// 正文栈顶：头行底 + 6（紧贴用户名下方，取规范标题→正文档 6）；
+    /// 头像底约束保留但停用（见 updateDiaryStackSpacing：#1184 后正文栈左缘在名字列、
+    /// 头像列下方无文字，头像底不再是下限）；两条 required ≥ 约束定下限，
+    /// 一条 999 的 = 约束把栈顶拉回头行底 + 6。
     private var bodyStackTopFromAvatarConstraint: NSLayoutConstraint?
     private var bodyStackTopFromHeaderConstraint: NSLayoutConstraint?
     private var bodyStackTopPinConstraint: NSLayoutConstraint?
@@ -1474,9 +1476,9 @@ class BearyDiaryCardCell: UITableViewCell {
         // 110：头像顶约束显式持有，首卡与头行同值跟移（见 updateDiaryStackSpacing）。
         let avatarTop = avatarContainer.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16)
         avatarTopConstraint = avatarTop
-        // 作者行结构居中约束：初始不激活，只在两行都藏时启用（见 updateDiaryStackSpacing）。
+        // 作者行顶对齐约束：初始不激活，只在两行都藏时启用（见 updateDiaryStackSpacing）。
         // 建在此处：titleStack 与 avatarContainer 此时已同属 contentView 层级。
-        authorRowCenterYConstraint = titleStack.centerYAnchor.constraint(equalTo: avatarContainer.centerYAnchor)
+        authorRowTopConstraint = titleStack.topAnchor.constraint(equalTo: avatarContainer.topAnchor)
         var extraConstraints: [NSLayoutConstraint] = []
         if cardMode == .profile {
             // 个人主页口径：点赞高 22、收藏/分享 21×21（原 required 约束）。
@@ -1981,22 +1983,20 @@ class BearyDiaryCardCell: UITableViewCell {
         // 作者行顶部统一 16（2026-11-05 ChatGPT 间距跟进）：@ 行显隐的 1pt
         // 差值保留（16／17），只改基线不改相对行为；个人页首卡 30 与置顶 +25
         // 是例外，一字不动。
-        // 名字行偏下（129 真机实测：名字比头像中心低约 10pt，时间约 11pt，
+        // 名字行偏下（129 真机实测：名字比头像顶低约 10pt，时间约 11pt，
         // 天气图标同行跟走——整行 titleStack 被往下顶）：#1145 的字体行高
-        // 算顶距没修动——126→129 名字 10→10pt、时间 11.5→11.4pt，+10pt
-        // 偏移恰被残余间距抵消。算式先天偏下：它假定作者行高 = 名字字体行高，
-        // 但作者行是 .firstBaseline 栈——皇冠包（纯 UIView、基线即底边）把栈顶
-        // 顶到名字上一截、空垫片（17pt）的下行距把栈底压到名字基线下一截，
-        // 行真高比字体行高多约 4pt、名字又落行顶下一截；且隐藏行残余间距
-        // （setCustomSpacing(0) 未完全清掉）另顶约 6pt，字体度量算不准这两笔。
-        // 改钉中心：两行都藏（头行只剩作者行）时作者行中心 == 头像中心，
-        // 行真高、基线几何、残余间距一律不再影响；顶约束本分支停用。
+        // 算顶距没修动；#1288 的钉中心也没修住——20pt 的行钉在 40pt 头像
+        // 中心上，用户名顶仍比头像顶低 (40−20)/2 ≈ 10pt，居中从来不是顶对齐。
+        // 改钉顶部：两行都藏（头行只剩作者行）时作者行顶 == 头像顶，用户名顶
+        // 即头像顶（常见态约 +0.3pt；皇冠／心情可见时栈顶比用户名顶高约一个
+        // 下行距，用户名约 +4pt，见 PR 正文）；行真高、基线几何、残余间距
+        // 一律不再影响；顶约束本分支停用。
         // 有行在作者行之上时恢复顶约束、保持顶对齐不动。
         if pinRow.isHidden && recipientRow.isHidden {
             headerStackTopConstraint?.isActive = false
-            authorRowCenterYConstraint?.isActive = true
+            authorRowTopConstraint?.isActive = true
         } else {
-            authorRowCenterYConstraint?.isActive = false
+            authorRowTopConstraint?.isActive = false
             headerStackTopConstraint?.isActive = true
             headerStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 16 : 17) : (profileFirstRow ? 30 : 16)
         }
@@ -2005,7 +2005,7 @@ class BearyDiaryCardCell: UITableViewCell {
         ephemeralBorderTopConstraint?.constant = (cardMode == .profile && profileFirstRow) ? 22 : 6
         // 110：头像顶与头行顶同值（个人页首卡 30、其余 16；首页恒 16）——
         // 有行在作者行之上时头像顶与作者行顶对齐；两行都藏时作者行改为与
-        // 头像垂直居中（见上），头像顶不动，首卡限时框（顶 22）仍完整包住
+        // 头像顶对齐（见上），头像顶不动，首卡限时框（顶 22）仍完整包住
         // 头像（30..70，框顶留 8pt）；框路径一字不动，不用框迁就错位头像。
         // 置顶时头像同步下移置顶行高（15）＋行间距（10）＝ 25，使头像仍与作者行对齐、
         // 置顶行落在卡片最上方（预览口径：标识在作者行之上）；未置顶时一字不动。
@@ -2014,11 +2014,12 @@ class BearyDiaryCardCell: UITableViewCell {
         headerStack.setCustomSpacing(pinRow.isHidden ? 0 : 10, after: pinRow)
         headerStack.setCustomSpacing(recipientRow.isHidden ? 0 : 4, after: recipientRow)
         headerStack.setCustomSpacing(4, after: titleStack)
-        // 2026-11-05 日记布局统一：头行→正文栈间距不再走栈内 spacing，
-        // 改由正文栈顶三条约束定——有标题 16、无标题 14（ChatGPT 间距跟进，
-        // 在 #904 的 12／8 基础上放宽）；限时行是头行末行，其后间距即该值。
-        let headerBodyGap: CGFloat = entryTitleLabel.isHidden ? 14 : 16
-        bodyStackTopFromAvatarConstraint?.constant = headerBodyGap
+        // 正文紧贴用户名下方：头行→正文栈间距取规范标题→正文档 6（原 16 有标题／
+        // 14 无标题，见规范 §3；该槽位改动须走规范同步）。头像底约束停用——#1184
+        // 后正文栈左缘在名字列（头像右 +12）、头像列下方无文字，头像底不再是
+        // 正文顶的下限；正文顶即头行底 + 6。限时行是头行末行，其后间距即该值。
+        let headerBodyGap: CGFloat = 6
+        bodyStackTopFromAvatarConstraint?.isActive = false
         bodyStackTopFromHeaderConstraint?.constant = headerBodyGap
         bodyStackTopPinConstraint?.constant = headerBodyGap
         // 标题贴着正文走：标题→正文 6（ChatGPT 间距跟进，#904 为 4）；标题隐藏时其后间距置 0，正文直接贴头行间距。
