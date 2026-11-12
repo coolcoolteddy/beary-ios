@@ -329,13 +329,20 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         guard groups.indices.contains(index), index != selectedGroupIndex else { return }
         selectedGroupIndex = index
         refreshPillSelection(animated: animated)
-        emoteCollectionView?.reloadData()
-        emoteCollectionView?.setContentOffset(.zero, animated: false)
         // 节日组只有 6 款（2 行），sheet 随之缩短；网格内容切换只走 opacity，
         // 高度变化走容器帧动画，减动效时两者都瞬时。
         let applyHeight = { [weak self] in
             self?.updatePreferredContentSize()
             self?.view.layoutIfNeeded()
+        }
+        // 先淡出旧网格、再换内容淡入：reloadData 若在淡出前调，旧组来不及
+        // 淡出就被新组顶掉——新组先闪现、再淡出淡入（blink）；放淡出完成
+        // 回调里换内容，换内容发生在 alpha=0 时，淡入的才是新组。
+        // 淡出被连点打断时 completion 的 finished 为 false，不换内容、
+        // 不抢淡入，由最后一次切换的完成回调统一换内容淡入。
+        let reloadGrid = { [weak self] in
+            self?.emoteCollectionView?.reloadData()
+            self?.emoteCollectionView?.setContentOffset(.zero, animated: false)
         }
         if animated, UIAccessibility.isReduceMotionEnabled == false {
             UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
@@ -343,12 +350,15 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             })
             UIView.animate(withDuration: 0.15, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
                 self.emoteCollectionView?.alpha = 0
-            }, completion: { [weak self] _ in
+            }, completion: { [weak self] finished in
+                guard finished else { return }
+                reloadGrid()
                 UIView.animate(withDuration: 0.15, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
                     self?.emoteCollectionView?.alpha = 1
                 })
             })
         } else {
+            reloadGrid()
             applyHeight()
         }
     }
