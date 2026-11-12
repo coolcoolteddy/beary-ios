@@ -20,7 +20,7 @@ protocol BearyLocationPopoverDelegate: AnyObject {
     func locationPopoverDidFail(_ popover: BearyLocationPopoverView, message: String)
 }
 
-final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocalSearchCompleterDelegate {
+final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocalSearchCompleterDelegate, UITextFieldDelegate {
     weak var delegate: BearyLocationPopoverDelegate?
 
     /// 尖角顶点在本视图坐标系的 x（调用方按定位钮中心设；布局时钳制在框内，
@@ -183,11 +183,24 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         subLabel.text = "正在获取当前位置，也可以自己输入"
 
         inputField.translatesAutoresizingMaskIntoConstraints = false
-        inputField.borderStyle = .roundedRect
+        // 视觉审计第 10 项：系统描边输入框改无外框——.none + surface2 底色、
+        // 容器圆角 12，聚焦走聚焦阴影（BearyInputContainer 同款口径）。
+        inputField.borderStyle = .none
+        inputField.backgroundColor = BearyColors.surface2
+        inputField.layer.cornerRadius = BearyCorners.single
+        inputField.layer.borderWidth = 0
+        // 聚焦阴影画在图层外：不裁剪图层，否则外阴影会被裁掉（审计 08 同款提醒）。
+        inputField.layer.masksToBounds = false
         inputField.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         inputField.adjustsFontForContentSizeCategory = true
         inputField.placeholder = "输入地点，例如：天一、月湖"
         inputField.clearButtonMode = .whileEditing
+        // .none 无系统内边距：左侧补 12pt，避免文字贴边；高度 36（紧凑档），
+        // 否则 .none 的内容高度会比原来的 roundedRect 矮一截。
+        inputField.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 12, height: 1))
+        inputField.leftViewMode = .always
+        inputField.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        inputField.delegate = self
         inputField.isHidden = true
         inputField.addTarget(self, action: #selector(didChangeInput), for: .editingChanged)
 
@@ -378,7 +391,9 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             self.spinner.startSpinning()
             self.statusIconView.isHidden = true
             self.statusLabel.text = "正在获取当前位置…"
-            self.subLabel.text = "正在获取当前位置，也可以自己输入"
+            // 审计 D3：定位进行中副文案与状态行、操作钮重复，隐藏；
+            // 失败时 setManualMode 再显示具体说明，不动。
+            self.subLabel.isHidden = true
             self.setConfirmEnabled(false)
             self.inputField.isHidden = true
             self.suggestionsScrollView.isHidden = true
@@ -395,6 +410,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             self.spinner.isHidden = true
             self.statusIconView.isHidden = false
             self.statusLabel.text = location.name ?? location.district
+            self.subLabel.isHidden = false
             if let district = location.district, location.name != nil, district != location.name {
                 self.subLabel.text = "已定位 · 公开时仅显示大致位置（\(district)）"
             } else {
@@ -415,6 +431,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             self.spinner.isHidden = true
             self.statusIconView.isHidden = false
             self.statusLabel.text = "自己输入地点"
+            self.subLabel.isHidden = false
             if let message = message {
                 self.subLabel.text = message
             } else {
@@ -440,6 +457,21 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         guard manualMode else { return }
         let text = (inputField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         setConfirmEnabled(!text.isEmpty)
+    }
+
+    // MARK: - UITextFieldDelegate
+
+    /// 手动输入框聚焦态（视觉审计第 10 项）：不再画蓝边，改走聚焦阴影；
+    /// 失焦清掉阴影。边框恒为 0。
+    func textFieldDidBeginEditing(_ textField: UITextField) {
+        guard textField === inputField else { return }
+        inputField.layer.borderWidth = 0
+        BearyShadow.applyFocused(to: inputField.layer)
+    }
+
+    func textFieldDidEndEditing(_ textField: UITextField) {
+        guard textField === inputField else { return }
+        inputField.layer.shadowOpacity = 0
     }
 
     // MARK: - 点按
