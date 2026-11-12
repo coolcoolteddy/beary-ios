@@ -925,6 +925,44 @@ final class BearyTimelineCell: UITableViewCell {
     private weak var cardStackReference: UIStackView?
     private var thumbImageViews: [UIImageView] = []
 
+    /// 九宫格入口：图片数 > 3 时在图片条下方弹起；纯文字 pill（卡片同款，
+    /// surface2 底、墨字、13 semibold、圆角 single 12、高 32）。点按走
+    /// onNineGridTapped，Plus 门控在容器侧。
+    private lazy var nineGridButton: UIButton = {
+        let btn = BearyHit44Button(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        btn.titleLabel?.adjustsFontForContentSizeCategory = true
+        btn.setTitle("九宫格", for: .normal)
+        btn.setTitleColor(BearyColors.ink, for: .normal)
+        btn.backgroundColor = BearyColors.surface2
+        btn.layer.cornerRadius = 12
+        btn.clipsToBounds = true
+        btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
+        btn.bearyAddPressHaptic()
+        return btn
+    }()
+
+    /// 九宫格按钮容器：左贴内容缘，栈内隐藏时自动压零、不留空位。
+    private lazy var nineGridWrapView: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        v.alpha = 0
+        v.addSubview(nineGridButton)
+        NSLayoutConstraint.activate([
+            nineGridButton.leadingAnchor.constraint(equalTo: v.leadingAnchor),
+            nineGridButton.topAnchor.constraint(equalTo: v.topAnchor),
+            nineGridButton.bottomAnchor.constraint(equalTo: v.bottomAnchor),
+            nineGridButton.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        return v
+    }()
+
+    /// 九宫格入口隐藏动画代次：收起动画完成时若已有新一轮展开，须以新态为准、不再藏。
+    private var nineGridHideToken = 0
+
     // TL-1 竖线 + 圆点：线 x=11 宽 2（与 .tl:before 一致）；圆点中心 x=12 与线对齐，
     // 9pt 空心圆（configure 统一口径：公开橙边／私密蓝边，2.5pt 边、bg 填充）。
     // 第 14 项 B + 2026-10-31 Li 定（同日竖线不要断）：竖线按日通长连续
@@ -955,6 +993,8 @@ final class BearyTimelineCell: UITableViewCell {
     /// 另传被点缩略图已显示的 UIImage，灯箱打开先显它。
     /// 引用卡小图不走此路（点按引用卡仍走 onQuoteEntry 打开被引用日记）。
     var onTapImages: (([String], Int, CGRect?, UIImage?) -> Void)?
+    /// 九宫格入口点按：容器接线（Plus 门控 + 开网格都在容器侧，本处只转发）。
+    var onNineGridTapped: (() -> Void)?
     private let actsStack = UIStackView()
     /// 2026-10-29 Li 定编辑态口径：无图标、只留文字；冲突清单第 4 条取消
     /// 15 分钟锁后，本行只剩可点按的“编辑”二字（本行唯一的编辑入口，
@@ -1125,7 +1165,7 @@ final class BearyTimelineCell: UITableViewCell {
         // 批 E 补漏：位置行落点 = 图片条 → 引用卡 → 位置行 → 足行（操作行一带），与卡片
         // “图片条之后、操作行之前”同序；图片条后的动态间距（configure 内按有图
         // 9 / 无图 0）现为图片条→引用卡间距，位置行隐藏时栈自动塌掉不留空行。
-        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleLabel, contentLabel, thumbsScrollView, quoteCard, timelineLocationStack, footStack, actsStack])
+        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleLabel, contentLabel, thumbsScrollView, nineGridWrapView, quoteCard, timelineLocationStack, footStack, actsStack])
         cardStack.translatesAutoresizingMaskIntoConstraints = false
         cardStack.axis = .vertical
         cardStack.spacing = 0
@@ -1134,6 +1174,8 @@ final class BearyTimelineCell: UITableViewCell {
         cardStack.setCustomSpacing(6, after: titleLabel)
         cardStack.setCustomSpacing(14, after: contentLabel)
         cardStack.setCustomSpacing(12, after: thumbsScrollView)
+        // 九宫格按钮在图片条与引用卡之间时，图片条→按钮、按钮→引用卡各取 12。
+        cardStack.setCustomSpacing(12, after: nineGridWrapView)
         cardStack.setCustomSpacing(12, after: quoteCard)
         cardStack.setCustomSpacing(14, after: timelineLocationStack)
         cardStack.setCustomSpacing(12, after: footStack)
@@ -1194,6 +1236,7 @@ final class BearyTimelineCell: UITableViewCell {
         // 无图时把图片条高度约束压到 0（只靠 hidden 不够：显式高度约束仍会撑开 stack）。
         thumbsHeightConstraint = thumbsScrollView.heightAnchor.constraint(equalToConstant: 216)
         thumbsHeightConstraint?.isActive = true
+        installImageStripPinch()
     }
 
     required init?(coder: NSCoder) {
@@ -1333,6 +1376,11 @@ final class BearyTimelineCell: UITableViewCell {
         onQuoteEntry = nil
         onMoreEntry = nil
         onTapImages = nil
+        onNineGridTapped = nil
+        nineGridHideToken += 1
+        nineGridWrapView.isHidden = true
+        nineGridWrapView.alpha = 0
+        resetImageStripPinch()
         stopWeatherLottie()
         weatherIconView = nil
         // 80 包 A4/A2-3④：错峰改 cell.alpha/transform，对称复位，防复用残留。
@@ -1408,6 +1456,111 @@ final class BearyTimelineCell: UITableViewCell {
             return round(max(low, min(high, raw)))
         }
         return 280
+    }
+
+    /// 图片条捏合拼图（#429 卡片/详情同款口径，时间线 cell 此前根本没有捏合，
+    /// 只是点按进灯箱——Li 2026-11-12 报时间线捏不动即因此）：双指捏合把
+    /// 间距 8 → 0、圆角 12 → 0（图贴在一起且无圆角），张开恢复 8 / 12。
+    /// 只动 thumbsStack.spacing 与缩略图圆角，不动图宽/高，不缩放单张图。
+    private var stripPinchStartProgress: CGFloat = 0
+    private var stripPinchJoined = false
+
+    private func installImageStripPinch() {
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(imageStripPinched(_:)))
+        pinch.delegate = self
+        thumbsScrollView.addGestureRecognizer(pinch)
+    }
+
+    /// 捏合跟手圆角：progress 0 → 圆角 12，progress 1（贴合）→ 圆角 0，与间距同一进度走，
+    /// 不在松手瞬间跳变；只改缩略图图层圆角，不动其他圆角。
+    private func applyImageStripCornerRadius(progress: CGFloat) {
+        let radius = 12 * (1 - max(0, min(1, progress)))
+        for thumb in thumbImageViews { thumb.layer.cornerRadius = radius }
+    }
+
+    @objc private func imageStripPinched(_ gesture: UIPinchGestureRecognizer) {
+        // 单图时无间距可收，不接管手势（也不禁滚动）。
+        let visibleCount = thumbImageViews.count
+        guard visibleCount >= 2 else { return }
+        switch gesture.state {
+        case .began:
+            // 以当前实际间距起算，防上一轮贴合动画中途被新一轮捏合打断时跳变。
+            stripPinchStartProgress = max(0, min(1, 1 - thumbsStack.spacing / 8))
+            thumbsScrollView.isScrollEnabled = false
+        case .changed:
+            // scale < 1 为捏合（progress 增大、间距收小），scale > 1 为张开（反向）；
+            // 从贴合态起手张开同样走这条式子，不会出现“贴合后张开无效”。
+            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
+            thumbsStack.spacing = 8 * (1 - progress)
+            applyImageStripCornerRadius(progress: progress)
+            thumbsScrollView.setNeedsLayout()
+        case .ended, .cancelled, .failed:
+            thumbsScrollView.isScrollEnabled = true
+            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
+            let wasJoined = stripPinchJoined
+            stripPinchJoined = progress >= 0.5
+            // 拼合/张开落点到位时各轻震一次：只在 .ended 且落点状态真的变化时震，
+            // 跟手过程、取消/失败、原地未变都不震。
+            if gesture.state == .ended && wasJoined != stripPinchJoined {
+                BearyHaptics.press()
+            }
+            // 落点走拖拽收尾统一弹簧 0.30s／damping 0.7；减动效直接落终值，不播弹簧。
+            if UIAccessibility.isReduceMotionEnabled {
+                self.thumbsStack.spacing = self.stripPinchJoined ? 0 : 8
+                self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
+                self.thumbsScrollView.layoutIfNeeded()
+            } else {
+                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+                    self.thumbsStack.spacing = self.stripPinchJoined ? 0 : 8
+                    self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
+                    self.thumbsScrollView.layoutIfNeeded()
+                })
+            }
+        default:
+            break
+        }
+    }
+
+    private func resetImageStripPinch() {
+        stripPinchJoined = false
+        thumbsStack.spacing = 8
+        applyImageStripCornerRadius(progress: 0)
+        thumbsScrollView.isScrollEnabled = true
+    }
+
+    /// 九宫格入口显隐：图片数 > 3 才出现；状态真变时才动（复用滚动不闪）。
+    /// 出现走规范 §6 局部状态 0.18s 淡入，减动效直设；收起先淡出、完成再藏。
+    private func updateNineGridButton(count: Int) {
+        let shouldShow = count > 3
+        guard nineGridWrapView.isHidden != shouldShow else { return }
+        nineGridHideToken += 1
+        let animated = window != nil && !UIAccessibility.isReduceMotionEnabled
+        if shouldShow {
+            nineGridWrapView.isHidden = false
+            nineGridWrapView.alpha = animated ? 0 : 1
+            if animated {
+                UIView.animate(withDuration: 0.18) {
+                    self.nineGridWrapView.alpha = 1
+                }
+            }
+        } else {
+            if animated {
+                let token = nineGridHideToken
+                UIView.animate(withDuration: 0.18, animations: {
+                    self.nineGridWrapView.alpha = 0
+                }, completion: { _ in
+                    guard token == self.nineGridHideToken else { return }
+                    self.nineGridWrapView.isHidden = true
+                })
+            } else {
+                nineGridWrapView.isHidden = true
+                nineGridWrapView.alpha = 0
+            }
+        }
+    }
+
+    @objc private func nineGridButtonTapped() {
+        onNineGridTapped?()
     }
 
     /// C4：时间线引用占位/来源行已并入公共 BearyQuoteCardView（showGone /
@@ -1637,6 +1790,7 @@ final class BearyTimelineCell: UITableViewCell {
             }
         }
         let imageKeys = (entry.images ?? []).filter { !$0.isEmpty }
+        resetImageStripPinch()
         thumbsScrollView.isHidden = imageKeys.isEmpty
         thumbsHeightConstraint?.constant = imageKeys.isEmpty ? 0 : 216
         cardStackReference?.setCustomSpacing(imageKeys.isEmpty ? 0 : 12, after: thumbsScrollView)
@@ -1675,6 +1829,7 @@ final class BearyTimelineCell: UITableViewCell {
                 bearyFeedLoadImage(into: imageView, url: url, retryButton: thumbRetry, downsampleToWidth: strip * UIScreen.main.scale, blurUp: true)
             }
         }
+        updateNineGridButton(count: imageKeys.count)
         // 批 E 补漏：位置行（图片条 → 引用卡 → 位置行 → 足行）；无位置、或他人视角下
         // 无区级时整组隐藏，不留空行（文案与脱敏走 BearyLocationDisplay，
         // 与首页/个人页卡片、详情同一函数，时间线本只列本人日记，故实效为
@@ -1870,6 +2025,34 @@ final class BearyTimelineCell: UITableViewCell {
         }
     }
 
+}
+
+// UITableViewCell 在新 SDK 下已自带 UIGestureRecognizerDelegate 遵循，
+// 故此处不再重复声明协议、方法改 override；行为与卡片 #429 原意一致。
+extension BearyTimelineCell {
+    override func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // 只放行本图片条捏合与条自身滚动平移的共存：捏合 began 即禁了条的
+        // 滚动，故自家平移本就滑不动；外层列表的竖滑若也放行，两指捏合时
+        // 手指稍带竖向漂移就会一边捏合一边滚页。先识别意图者胜。
+        return otherGestureRecognizer is UIPanGestureRecognizer
+            && otherGestureRecognizer.view === thumbsScrollView
+    }
+
+    /// 时间线多图卡片捏合优先于外层列表竖滑：落在图片条上的双指捏合，
+    /// 要求外层滚动视图的平移等它先失败——捏合一旦成立，外层平移随之失败；
+    /// 单指滑动时捏合无从成立，直接放行，不拖慢列表滚动。只认外层滚动视图
+    /// 的平移（UITableView 的竖滑），条自身平移仍走上面的共存口径；详情页
+    /// 不走这条，不动。两指同向平移（双指滚页）时捏合始终不成立，外层竖滑
+    /// 须等手指抬起、捏合失败后才认，是本修法的已知取舍。
+    override func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer.view === thumbsScrollView,
+              otherGestureRecognizer is UIPanGestureRecognizer,
+              let otherScrollView = otherGestureRecognizer.view as? UIScrollView,
+              otherScrollView !== thumbsScrollView,
+              gestureRecognizer.numberOfTouches >= 2,
+              thumbImageViews.count >= 2 else { return false }
+        return true
+    }
 }
 
 
