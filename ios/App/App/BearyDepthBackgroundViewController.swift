@@ -90,7 +90,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
         labelValue.textColor = BearyColors.gray
         labelValue.textAlignment = .center
         labelValue.numberOfLines = 0
-        labelValue.text = "Plus 会员可使用全部景深背景"
+        labelValue.text = "仅 Plus 会员可使用景深背景"
         return labelValue
     }()
 
@@ -189,7 +189,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
         }
     }
 
-    /// Plus 态变化时同步底栏提示：非 Plus 显示“Plus 会员可使用全部景深背景”，
+    /// Plus 态变化时同步底栏提示：非 Plus 显示“仅 Plus 会员可使用景深背景”，
     /// 已开通则去掉；与 viewDidLoad 初始态同口径。
     private func updatePlusFooter() {
         if isPlusValue {
