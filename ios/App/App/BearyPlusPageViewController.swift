@@ -416,11 +416,13 @@ final class BearyPlusPageViewController: UIViewController {
                 agreementButton.bottomAnchor.constraint(equalTo: foot.bottomAnchor, constant: -32),
             ])
         } else {
-            mainButton.setTitle("开通 Plus", for: .normal)
-            mainButton.setTitleColor(BearyColors.bg, for: .normal)
-            mainButton.backgroundColor = BearyColors.ink
-            mainButton.addTarget(self, action: #selector(mainButtonTapped), for: .touchUpInside)
-            mainButton.bearyAddPressFeedback()
+            mainButton.setTitle("暂未开放", for: .normal)
+            mainButton.setTitleColor(BearyColors.ink, for: .normal)
+            mainButton.backgroundColor = BearyColors.bg
+            mainButton.layer.borderWidth = 1
+            mainButton.layer.bearyDynamicBorderColor = BearyColors.line
+            // 暂未开放态不是动作：置灰不可点，只作状态展示。
+            mainButton.isEnabled = false
             foot.addSubview(priceNoteLabel)
             let agreementText = NSMutableAttributedString(
                 string: "开通即同意",
