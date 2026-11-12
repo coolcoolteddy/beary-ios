@@ -32,6 +32,7 @@ final class BearyLocalNotifications {
     }
 
     private static let permissionRequestedKey = "beary.localNotifications.permissionRequested"
+    private static let firstEntryPromptShownKey = "beary.localNotifications.firstEntryPromptShown"
     private static let dailyIdentifier = "beary.local.daily-reminder"
     private static let pastDayIdentifier = "beary.local.past-day"
     private static let limitedPrefix = "beary.local.limited-"
@@ -63,12 +64,40 @@ final class BearyLocalNotifications {
 
     // MARK: - 权限
 
-    /// 首次回到前台时问一次（系统弹窗）；问过就不再问。
-    func requestAuthorizationIfNeeded() {
+    /// 门槛 4：首启不再问；只在用户写完第一篇日记后、由 promptAfterFirstEntryIfNeeded
+    /// 经自建说明卡调一次（系统弹窗）。问过就不再问；被拒时走 onDenied（App 内引导去设置）。
+    func requestAuthorizationIfNeeded(onDenied: (() -> Void)? = nil) {
         guard !UserDefaults.standard.bool(forKey: Self.permissionRequestedKey) else { return }
         UserDefaults.standard.set(true, forKey: Self.permissionRequestedKey)
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
-            if granted { self?.refreshAll(force: true) }
+            if granted {
+                self?.refreshAll(force: true)
+            } else if let onDenied = onDenied {
+                DispatchQueue.main.async { onDenied() }
+            }
+        }
+    }
+
+    /// 门槛 4：写完第一篇日记后问一次。先弹自建说明卡，点了「好」再调系统框；
+    /// 系统态已决定（已授权／已拒绝）或卡已弹过，均不再弹。
+    func promptAfterFirstEntryIfNeeded(from presenter: UIViewController) {
+        guard !UserDefaults.standard.bool(forKey: Self.firstEntryPromptShownKey) else { return }
+        fetchAuthorizationStatus { [weak self, weak presenter] status in
+            guard let self = self, let presenter = presenter else { return }
+            guard status == .notDetermined else { return }
+            DispatchQueue.main.async {
+                UserDefaults.standard.set(true, forKey: Self.firstEntryPromptShownKey)
+                BearyConfirmSheet.show(from: presenter, title: "晚上 9 点提醒你写一句", message: nil, actions: [
+                    BearyConfirmSheet.Action(title: "好", style: .default) { [weak self, weak presenter] in
+                        guard let self = self, let presenter = presenter else { return }
+                        self.requestAuthorizationIfNeeded {
+                            BearyToast.show(in: presenter.view, message: "通知权限未开启，去系统设置里打开才生效", actionTitle: "去设置") { [weak self] in
+                                self?.openSystemSettings()
+                            }
+                        }
+                    }
+                ])
+            }
         }
     }
 

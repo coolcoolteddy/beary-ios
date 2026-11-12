@@ -56,8 +56,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     // 反馈日志：前后台切换只记固定事件名（不含任何用户内容）。
     func sceneDidBecomeActive(_ scene: UIScene) {
         BearyAppLog.event("app foreground")
-        // 本地通知：首次回到前台问一次通知权限（系统弹窗，问过不再问）。
-        BearyLocalNotifications.shared.requestAuthorizationIfNeeded()
+        // 门槛 4：首启不再问通知权限；写完第一篇日记后由 onPublished 接线问。
         // 隐私遮罩卡住修法：只在 willEnterForeground 撤遮罩不够——下拉通知中心/
         // 控制中心、系统权限弹框等只走 resignActive → becomeActive，根本不进后台，
         // willEnterForeground 不触发，resignActive 时盖上的遮罩就永远撤不掉
@@ -3942,6 +3941,10 @@ final class BearyChromeViewController: UIViewController {
                 // 回前台刷新是兜底。
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                     BearyLocalNotifications.shared.refreshAll(force: true)
+                }
+                // 门槛 4：写完第一篇日记后再问通知权限（先弹自建说明卡，点了「好」才调系统框）。
+                if let chrome = self {
+                    BearyLocalNotifications.shared.promptAfterFirstEntryIfNeeded(from: chrome)
                 }
             }
         }
