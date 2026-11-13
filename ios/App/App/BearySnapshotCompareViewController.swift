@@ -20,6 +20,7 @@ final class BearySnapshotPreviewViewController: UIViewController {
 
     /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页/公告同款做法）。
     var sheetDelegate: BearyBottomSheetTransitioningDelegate?
+    private var starRequestInFlight = false
 
     private let grabberView = UIView()
     private let titleLabel = UILabel()
@@ -177,10 +178,14 @@ final class BearySnapshotPreviewViewController: UIViewController {
     }
 
     @objc private func starTapped() {
-        guard let snapshotId = snapshot.id else { return }
+        guard let snapshotId = snapshot.id, !starRequestInFlight else { return }
+        starRequestInFlight = true
+        starButton.isEnabled = false
         BearyAPI.shared.toggleSnapshotStar(entryId: entryId, snapshotId: snapshotId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                self.starRequestInFlight = false
+                self.starButton.isEnabled = true
                 switch result {
                 case .success(let resp):
                     let starred = (resp.starred ?? 0) == 1
