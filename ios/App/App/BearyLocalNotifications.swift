@@ -29,6 +29,17 @@ final class BearyLocalNotifications {
             case .pastSelfDelivery: return "留给明年的自己"
             }
         }
+
+        /// 专属通知音效（Sounds/*.wav，音乐盒风；与 App 内 UI 音效同系但各不相同）。
+        /// 通知音效不跟 App 内「音效」开关：响不响由系统静音键与本种类的通知开关定。
+        var soundFileName: String {
+            switch self {
+            case .dailyReminder: return "notif_daily.wav"
+            case .limitedExpiry: return "notif_limited.wav"
+            case .pastDay: return "notif_pastday.wav"
+            case .pastSelfDelivery: return "notif_pastself.wav"
+            }
+        }
     }
 
     private static let permissionRequestedKey = "beary.localNotifications.permissionRequested"
@@ -125,7 +136,7 @@ final class BearyLocalNotifications {
         case .pastSelfDelivery:
             content.body = "一年前留给自己的话到了，打开看看吧。（测试）"
         }
-        content.sound = .default
+        content.sound = UNNotificationSound(named: UNNotificationSoundName(kind.soundFileName))
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
         let request = UNNotificationRequest(
             identifier: "beary.local.test-\(kind.rawValue)-\(UUID().uuidString)",
@@ -174,6 +185,7 @@ final class BearyLocalNotifications {
         var identifier: String
         var fireDate: Date
         var body: String
+        var kind: Kind
     }
 
     private func rebuild(center: UNUserNotificationCenter, accountId: Int, enabled: [Kind: Bool]) {
@@ -196,7 +208,7 @@ final class BearyLocalNotifications {
                 return BearyBeijingDay.dayKey(ofMs: createdAt) == todayKey
             }
             if !(isToday && hasEntryToday) {
-                desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: "今天还没有写日记，写一点，留一点。"))
+                desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: "今天还没有写日记，写一点，留一点。", kind: .dailyReminder))
             }
         }
 
@@ -204,7 +216,7 @@ final class BearyLocalNotifications {
         if enabled[.pastDay] == true {
             let nextMorning = Self.nextOccurrence(hour: Self.morningHour, after: now, calendar: calendar)
             if BearyProfilePersonalLogic.thisDayInHistory(entries: entries, today: nextMorning, calendar: calendar) != nil {
-                desired.append(DesiredRequest(identifier: Self.pastDayIdentifier, fireDate: nextMorning, body: "往年今天，你写过日记，打开看看吧。"))
+                desired.append(DesiredRequest(identifier: Self.pastDayIdentifier, fireDate: nextMorning, body: "往年今天，你写过日记，打开看看吧。", kind: .pastDay))
             }
         }
 
@@ -212,7 +224,7 @@ final class BearyLocalNotifications {
         if enabled[.limitedExpiry] == true {
             for entry in entries {
                 guard let id = entry.id, let until = entry.ephemeralUntil, BearyEphemeral.isLive(entry, nowMs: nowMs) else { continue }
-                desired.append(DesiredRequest(identifier: Self.limitedPrefix + id, fireDate: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0), body: "限时结束了，这篇日记已自动转回私密。"))
+                desired.append(DesiredRequest(identifier: Self.limitedPrefix + id, fireDate: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0), body: "限时结束了，这篇日记已自动转回私密。", kind: .limitedExpiry))
             }
         }
 
@@ -223,7 +235,7 @@ final class BearyLocalNotifications {
                 guard message.revokedAtMs == nil,
                       let fireDate = Self.dateOf(dayKey: message.deliverOn, hour: Self.morningHour, calendar: calendar),
                       fireDate > now else { continue }
-                desired.append(DesiredRequest(identifier: Self.pastSelfPrefix + message.id, fireDate: fireDate, body: "一年前留给自己的话到了，打开看看吧。"))
+                desired.append(DesiredRequest(identifier: Self.pastSelfPrefix + message.id, fireDate: fireDate, body: "一年前留给自己的话到了，打开看看吧。", kind: .pastSelfDelivery))
             }
         }
 
@@ -237,7 +249,7 @@ final class BearyLocalNotifications {
             for item in desired {
                 let content = UNMutableNotificationContent()
                 content.body = item.body
-                content.sound = .default
+                content.sound = UNNotificationSound(named: UNNotificationSoundName(item.kind.soundFileName))
                 var comps = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: item.fireDate)
                 comps.calendar = calendar
                 comps.timeZone = calendar.timeZone

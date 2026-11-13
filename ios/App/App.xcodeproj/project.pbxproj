@@ -298,6 +298,10 @@
 		335A64EC9511442B9BFDD12C /* refuse_bonk.wav in Resources */ = {isa = PBXBuildFile; fileRef = 175C78792D8E4FBD9D7252E3 /* refuse_bonk.wav */; };
 		63E7BE34FACB4C479339AC77 /* login_chime.wav in Resources */ = {isa = PBXBuildFile; fileRef = 95A3FF88EA434AFDA9EB8AC2 /* login_chime.wav */; };
 		944DC3B7D92A46DE85A0C6F1 /* wish_ding.wav in Resources */ = {isa = PBXBuildFile; fileRef = 385C474CEBF54A899F891334 /* wish_ding.wav */; };
+		FB6F57D0F6939D1B2E733E51 /* notif_daily.wav in Resources */ = {isa = PBXBuildFile; fileRef = F22116F8651C9AEB468F379D /* notif_daily.wav */; };
+		5C923513864F5176243BEA72 /* notif_limited.wav in Resources */ = {isa = PBXBuildFile; fileRef = D5A60345022CBE7FFFBB02B1 /* notif_limited.wav */; };
+		316B2AA873593F3D15FB5384 /* notif_pastday.wav in Resources */ = {isa = PBXBuildFile; fileRef = E86FB7E8DA71170C85E475B8 /* notif_pastday.wav */; };
+		44F39C514B15FD976FEE0EDB /* notif_pastself.wav in Resources */ = {isa = PBXBuildFile; fileRef = 84A5B40D4375FCEE684CA706 /* notif_pastself.wav */; };
 		9FB0341FC0A518046A4837A6 /* keep_v3_light.json in Resources */ = {isa = PBXBuildFile; fileRef = A56F01A12A8C93D5AE44B959 /* keep_v3_light.json */; };
 		11154CAD773B5B9029A42D91 /* keep_v3_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 0FDA0D1BBB84E45144767D90 /* keep_v3_dark.json */; };
 		CB5D246C81D576E1DC471B44 /* keep_v3_hold_light.png in Resources */ = {isa = PBXBuildFile; fileRef = BE07B090D304A418C102D6C5 /* keep_v3_hold_light.png */; };
@@ -587,6 +591,10 @@
 		175C78792D8E4FBD9D7252E3 /* refuse_bonk.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/refuse_bonk.wav; sourceTree = "<group>"; };
 		95A3FF88EA434AFDA9EB8AC2 /* login_chime.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/login_chime.wav; sourceTree = "<group>"; };
 		385C474CEBF54A899F891334 /* wish_ding.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/wish_ding.wav; sourceTree = "<group>"; };
+		F22116F8651C9AEB468F379D /* notif_daily.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/notif_daily.wav; sourceTree = "<group>"; };
+		D5A60345022CBE7FFFBB02B1 /* notif_limited.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/notif_limited.wav; sourceTree = "<group>"; };
+		E86FB7E8DA71170C85E475B8 /* notif_pastday.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/notif_pastday.wav; sourceTree = "<group>"; };
+		84A5B40D4375FCEE684CA706 /* notif_pastself.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/notif_pastself.wav; sourceTree = "<group>"; };
 		A56F01A12A8C93D5AE44B959 /* keep_v3_light.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieSlogan/keep_v3_light.json; sourceTree = "<group>"; };
 		0FDA0D1BBB84E45144767D90 /* keep_v3_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieSlogan/keep_v3_dark.json; sourceTree = "<group>"; };
 		BE07B090D304A418C102D6C5 /* keep_v3_hold_light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = LottieSlogan/keep_v3_hold_light.png; sourceTree = "<group>"; };
@@ -888,6 +896,10 @@
 				175C78792D8E4FBD9D7252E3 /* refuse_bonk.wav */,
 				95A3FF88EA434AFDA9EB8AC2 /* login_chime.wav */,
 				385C474CEBF54A899F891334 /* wish_ding.wav */,
+				F22116F8651C9AEB468F379D /* notif_daily.wav */,
+				D5A60345022CBE7FFFBB02B1 /* notif_limited.wav */,
+				E86FB7E8DA71170C85E475B8 /* notif_pastday.wav */,
+				84A5B40D4375FCEE684CA706 /* notif_pastself.wav */,
 				A56F01A12A8C93D5AE44B959 /* keep_v3_light.json */,
 				0FDA0D1BBB84E45144767D90 /* keep_v3_dark.json */,
 				BE07B090D304A418C102D6C5 /* keep_v3_hold_light.png */,
@@ -1159,6 +1171,10 @@
 				335A64EC9511442B9BFDD12C /* refuse_bonk.wav in Resources */,
 				63E7BE34FACB4C479339AC77 /* login_chime.wav in Resources */,
 				944DC3B7D92A46DE85A0C6F1 /* wish_ding.wav in Resources */,
+				FB6F57D0F6939D1B2E733E51 /* notif_daily.wav in Resources */,
+				5C923513864F5176243BEA72 /* notif_limited.wav in Resources */,
+				316B2AA873593F3D15FB5384 /* notif_pastday.wav in Resources */,
+				44F39C514B15FD976FEE0EDB /* notif_pastself.wav in Resources */,
 				9FB0341FC0A518046A4837A6 /* keep_v3_light.json in Resources */,
 				11154CAD773B5B9029A42D91 /* keep_v3_dark.json in Resources */,
 				CB5D246C81D576E1DC471B44 /* keep_v3_hold_light.png in Resources */,
