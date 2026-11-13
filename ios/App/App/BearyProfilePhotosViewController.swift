@@ -491,7 +491,7 @@ final class BearyProfilePhotosViewController: UIViewController {
                 // 第 26 轮审计 #22：签名（ID＋图片 key）不变时也要提交新模型——
                 // 纯文字编辑、liveVideos 关联变化、父页 hasMore 由真变假都不
                 // 改签名，旧模型会让灯箱（liveVideos／查看日记）与「还有更多」
-                // 一直读旧值；只在签名变时才 reloadData／落快照，滚动位置不动。
+                // 一直读旧值；reloadData 只在签名变时，滚动位置不动；快照签名不变时也跟新 Entry 落盘（第 18 轮 #4）。
                 diaryEntriesValue = mergedEntries
                 // 父页“无更多页”才可信——本页此前已翻到尾时父页的 hasMore
                 // 仍为 true，不得把已确认的翻到尾翻回有更多页。
@@ -507,6 +507,12 @@ final class BearyProfilePhotosViewController: UIViewController {
                     collectionView.reloadData()
                     updateTitleAndEmpty()
                     updatePhotosStatusLabel()
+                    if ownProfileValue, !newPhotos.isEmpty {
+                        savePhotosSnapshotIfNeeded()
+                    }
+                } else {
+                    // 第 18 轮 #4：签名不变也跟新 Entry 落盘，否则快照里的
+                    // 旧 Entry 会让冷启动恢复后的灯箱读到旧 liveVideos。
                     if ownProfileValue, !newPhotos.isEmpty {
                         savePhotosSnapshotIfNeeded()
                     }
