@@ -1056,8 +1056,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         proceedWithSubmit()
     }
 
-    /// B6 提交续行：正文与附件在此刻定格为同一份提交数据（snapshot），
-    /// 之后再选附件、再读新批，都不再影响这次邮件组装。
+    /// B6 提交续行：正文、类别与附件在此刻定格为同一份提交数据（snapshot），
+    /// 之后再选附件、再读新批、再切分段，都不再影响这次邮件组装。
     private func proceedWithSubmit() {
         let description = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !description.isEmpty else {
@@ -1066,6 +1066,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             return
         }
         let body = submitBodyText()
+        let subjectPrefix = typePrefix()
         let batch = attachments
         pendingMailKind = .submit
         if zipReady {
@@ -1073,7 +1074,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             // 审计登录杂项：与 shareTapped / logOnlyTapped 同口径，统一守卫
             // view.window != nil 且 presentedViewController == nil。
             guard view.window != nil, presentedViewController == nil else { return }
-            presentMailComposer(body: body, attachments: batch)
+            presentMailComposer(body: body, attachments: batch, subjectPrefix: subjectPrefix)
         } else {
             // 清理后二次提交先重生成（不直接判失败）；重生成失败才走无 zip 发送。
             ensureZip { [weak self] ready in
@@ -1082,7 +1083,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                     // 审计登录杂项：ensureZip 回调分支补 presented 守卫（此前无守卫，
                     // 页面已不在窗口或已有面板时仍 present，可能撞车）。
                     guard self.view.window != nil, self.presentedViewController == nil else { return }
-                    self.presentMailComposer(body: body, attachments: batch)
+                    self.presentMailComposer(body: body, attachments: batch, subjectPrefix: subjectPrefix)
                 } else {
                     // zip 缺失时发送仍可继续（不带 zip）：先 toast 明说，待 toast 可见
                     // 后再弹出邮件撰写框，避免撰写框盖住 toast 导致说明不可见。
@@ -1091,7 +1092,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                         // 审计登录杂项：2.1 秒延迟分支补 view.window 守卫，与
                         // shareTapped / logOnlyTapped 同口径（此前只守 presented）。
                         guard let self = self, self.view.window != nil, self.presentedViewController == nil else { return }
-                        self.presentMailComposer(body: body, attachments: batch)
+                        self.presentMailComposer(body: body, attachments: batch, subjectPrefix: subjectPrefix)
                     }
                 }
             }
@@ -1149,9 +1150,9 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 邮件（系统 MFMailCompose；未配邮箱时按种类分流）
 
-    /// 邮件只带本次确认的附件：正文与附件由调用方在提交时定格为同一份
-    /// 提交数据（body/batch），组装时不再读 live 状态（B6）。
-    private func presentMailComposer(body: String, attachments batch: [Attachment]) {
+    /// 邮件只带本次确认的附件：正文、类别与附件由调用方在提交时定格为同一份
+    /// 提交数据（body/subjectPrefix/batch），组装时不再读 live 状态（B6）。
+    private func presentMailComposer(body: String, attachments batch: [Attachment], subjectPrefix: String) {
         // 审计登录杂项：入口统一守卫（本方法所有调用点此前各守各的，现入口
         // 再拦一层：不在窗口或已有面板时不 present，防双击撞车）。
         guard view.window != nil, presentedViewController == nil else { return }
@@ -1177,21 +1178,22 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                         BearyAppLog.event("feedback mail zip read failed")
                         return
                     }
-                    self.presentMailComposer(withZipData: zipData, body: body, attachments: batch)
+                    self.presentMailComposer(withZipData: zipData, body: body, attachments: batch, subjectPrefix: subjectPrefix)
                 }
             }
             return
         }
-        presentMailComposer(withZipData: nil, body: body, attachments: batch)
+        presentMailComposer(withZipData: nil, body: body, attachments: batch, subjectPrefix: subjectPrefix)
     }
 
     /// 组装并弹出反馈撰写器（须在主线程调用）。zipData 为 nil 表示不带日志包；
-    /// body/batch 为提交时定格的同一份数据，不读 live 正文与附件数组（B6）。
-    private func presentMailComposer(withZipData zipData: Data?, body: String, attachments batch: [Attachment]) {
+    /// body/subjectPrefix/batch 为提交时定格的同一份数据，不读 live 正文、
+    /// 附件数组与类别分段（B6）。
+    private func presentMailComposer(withZipData zipData: Data?, body: String, attachments batch: [Attachment], subjectPrefix: String) {
         let composer = MFMailComposeViewController()
         composer.mailComposeDelegate = self
         composer.setToRecipients([Self.recipient])
-        composer.setSubject("\(typePrefix()) beary 反馈")
+        composer.setSubject("\(subjectPrefix) beary 反馈")
         composer.setMessageBody(body, isHTML: false)
         if let zipData = zipData {
             composer.addAttachmentData(zipData, mimeType: "application/zip", fileName: "beary-feedback-logs.zip")
