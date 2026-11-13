@@ -65,15 +65,21 @@ final class BearyLocalNotifications {
     // MARK: - 权限
 
     /// 门槛 4：首启不再问；只在用户写完第一篇日记后、由 promptAfterFirstEntryIfNeeded
-    /// 经自建说明卡调一次（系统弹窗）。问过就不再问；被拒时走 onDenied（App 内引导去设置）。
+    /// 经自建说明卡调一次（系统弹窗）。问过就不再问；被拒时走 onDenied（App 内引导去设置）；
+    /// 弹窗出错（如被系统打断）不记已问、不走 onDenied，下次满足条件可再问。
     func requestAuthorizationIfNeeded(onDenied: (() -> Void)? = nil) {
         guard !UserDefaults.standard.bool(forKey: Self.permissionRequestedKey) else { return }
-        UserDefaults.standard.set(true, forKey: Self.permissionRequestedKey)
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
             if granted {
+                UserDefaults.standard.set(true, forKey: Self.permissionRequestedKey)
                 self?.refreshAll(force: true)
-            } else if let onDenied = onDenied {
-                DispatchQueue.main.async { onDenied() }
+            } else if error != nil {
+                // 弹窗出错：不记已问、不按拒绝处理，下次满足条件可再问。
+            } else {
+                UserDefaults.standard.set(true, forKey: Self.permissionRequestedKey)
+                if let onDenied = onDenied {
+                    DispatchQueue.main.async { onDenied() }
+                }
             }
         }
     }
@@ -187,17 +193,19 @@ final class BearyLocalNotifications {
         let messages = PastSelfStore(userId: accountId).loadAll()
         var desired: [DesiredRequest] = []
 
-        // 1. 每晚写日记提醒：下一个 21:00（北京）；今天已写则不排。
+        // 1. 每晚写日记提醒：下一个 21:00（北京）；今天已写则排明晚 21:00，不留空窗——
+        // 单次触发不重复，差分删了今晚的就没人补明晚的，不再依赖之后 rebuild。
         if enabled[.dailyReminder] == true {
-            let nextEvening = Self.nextOccurrence(hour: Self.dailyHour, after: now, calendar: calendar)
+            var nextEvening = Self.nextOccurrence(hour: Self.dailyHour, after: now, calendar: calendar)
             let isToday = calendar.isDate(nextEvening, inSameDayAs: now)
             let hasEntryToday = entries.contains { entry in
                 guard let createdAt = entry.createdAt else { return false }
                 return BearyBeijingDay.dayKey(ofMs: createdAt) == todayKey
             }
-            if !(isToday && hasEntryToday) {
-                desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: "今天还没有写日记，写一点，留一点。"))
+            if isToday && hasEntryToday {
+                nextEvening = calendar.date(byAdding: .day, value: 1, to: nextEvening) ?? nextEvening
             }
+            desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: "今天还没有写日记，写一点，留一点。"))
         }
 
         // 2. 那年今日：下一个 9:00（北京）；那天往年有日记才排。
