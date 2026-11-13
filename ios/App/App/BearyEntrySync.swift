@@ -824,6 +824,9 @@ final class BearySharedEntryLoader {
 
     private struct InFlight {
         var waiters: [Waiter]
+        /// 本次加载的唯一标识：退出/401 清理只清表不取消网络任务，
+        /// 旧回调回包时凭它校验——同键的新加载已占位时旧结果不得结算。
+        var loadId: UUID
     }
 
     private struct MemoryEntry {
@@ -876,7 +879,8 @@ final class BearySharedEntryLoader {
             inFlight[key]?.waiters.append(waiter)
             return
         }
-        inFlight[key] = InFlight(waiters: [waiter])
+        let loadId = UUID()
+        inFlight[key] = InFlight(waiters: [waiter], loadId: loadId)
         // 存档路：仅本人 timeline scope 且能确认完整时读盘；否则走网络。
         if case .timeline = scope, let uid = viewerId {
             archiveQueue.async { [weak self] in
@@ -888,15 +892,15 @@ final class BearySharedEntryLoader {
                             entries: entries, isCapped: false, isPartial: false,
                             resumeBefore: nil, resumeBeforeId: nil, resumePage: 1, source: .archive
                         )
-                        self.finish(key: key, load: load, cache: false)
+                        self.finish(key: key, load: load, cache: false, loadId: loadId)
                     } else {
-                        self.startNetwork(key: key, scope: scope, fromPage: nil, existing: [], seenIds: [])
+                        self.startNetwork(key: key, scope: scope, fromPage: nil, existing: [], seenIds: [], loadId: loadId)
                     }
                 }
             }
             return
         }
-        startNetwork(key: key, scope: scope, fromPage: nil, existing: [], seenIds: [])
+        startNetwork(key: key, scope: scope, fromPage: nil, existing: [], seenIds: [], loadId: loadId)
     }
 
     /// 中断续拉：从上轮成功页的游标继续翻页，existing 为已收页（调用方持有），
@@ -953,13 +957,13 @@ final class BearySharedEntryLoader {
 
     // MARK: - 内部分页（与两页现行分页同口径）
 
-    private func startNetwork(key: RequestKey, scope: BearyAPI.Scope, fromPage: (before: Int, beforeId: String, number: Int)?, existing: [Entry], seenIds: Set<String>) {
+    private func startNetwork(key: RequestKey, scope: BearyAPI.Scope, fromPage: (before: Int, beforeId: String, number: Int)?, existing: [Entry], seenIds: Set<String>, loadId: UUID) {
         fetchNetworkPage(key: key, scope: scope, page: fromPage, collected: existing, seenIds: seenIds) { [weak self] load in
             guard let self = self else { return }
             if let load = load {
-                self.finish(key: key, load: load, cache: !load.isPartial)
+                self.finish(key: key, load: load, cache: !load.isPartial, loadId: loadId)
             } else {
-                self.finish(key: key, load: nil, cache: false)
+                self.finish(key: key, load: nil, cache: false, loadId: loadId)
             }
         }
     }
@@ -1023,8 +1027,10 @@ final class BearySharedEntryLoader {
     }
 
     /// 在途结算：发给全部等待者（逐个校验账号与会话代次），完整网络结果进内存短缓存。
-    private func finish(key: RequestKey, load: SharedEntryLoad?, cache: Bool) {
-        guard let flight = inFlight[key] else { return }
+    /// 先校验加载标识：旧加载的迟到回调（退出后重登同号、新请求已占同键）
+    /// 不得结算新加载的等待者，也不得清掉新加载的在途表——直接丢弃。
+    private func finish(key: RequestKey, load: SharedEntryLoad?, cache: Bool, loadId: UUID) {
+        guard let flight = inFlight[key], flight.loadId == loadId else { return }
         inFlight[key] = nil
         if let load = load, cache, !load.isPartial, let first = flight.waiters.first {
             // 缓存记发起者的账号与代次（不用结算时现值：中途换号后结算的旧
