@@ -57,15 +57,19 @@ final class BearyAnnouncementCenter {
         fetchInFlight = true
         BearyAPI.shared.request("/beary/api/app-announcements", suppressUnauthorized: true) { [weak self] (result: Result<BearyAnnouncementListResponse, APIError>) in
             guard let self = self else { return }
-            self.fetchInFlight = false
-            switch result {
-            case .success(let response):
-                guard response.ok else { return }
-                self.cachedList = response.list
-                self.tryPresent(list: response.list, from: presenter)
-            case .failure:
-                // 弱网/失败静默：不弹、不记状态，下次启动再拉。
-                break
+            // BearyAPI 回调不在主线程：缓存读写统一走主线程，免得与主线程
+            // 的 checkOnLaunch 抢 cachedList/fetchInFlight。
+            DispatchQueue.main.async {
+                self.fetchInFlight = false
+                switch result {
+                case .success(let response):
+                    guard response.ok else { return }
+                    self.cachedList = response.list
+                    self.tryPresent(list: response.list, from: presenter)
+                case .failure:
+                    // 弱网/失败静默：不弹、不记状态，下次启动再拉。
+                    break
+                }
             }
         }
     }
