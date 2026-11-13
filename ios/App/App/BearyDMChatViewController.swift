@@ -416,9 +416,15 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         // 2026-11-04：键盘跟随改走 keyboardLayoutGuide，不再监听键盘通知。
         // 先显本地消息（服务端 7 天到期后本地仍可看），再拉服务端合并。
         if let userId = peer.id {
+            // 第七轮④：本地读取回包也要凭页面身份——发起时捕获账号 + 代次，
+            // 回包时正在为切号关闭、或账号/代次已变即丢弃，不把旧消息写回。
+            let loadAccountId = storeAccountId
+            let loadEpoch = identityGeneration
             // 读盘走后台串行队列，结果回主线程（与 loadLatest 的落盘同队列、保顺序）。
             BearyDMStore.messages(accountId: storeAccountId, peerId: userId) { [weak self] local in
                 guard let self = self else { return }
+                guard !self.isClosingForIdentityChange,
+                      self.isRequestCurrent(accountId: loadAccountId, epoch: loadEpoch) else { return }
                 self.showCorruptStoreToastIfNeeded()
                 guard !local.isEmpty else { return }
                 // 只补尚无记录的服务端行；在途待发留在末尾不动。
@@ -435,6 +441,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             //（可查看、长按复制，不自动重发；服务端已有该行时 loadLatest 认领即清掉）。
             BearyDMStore.loadPendings(accountId: storeAccountId, peerId: userId) { [weak self] pendings in
                 guard let self = self, !pendings.isEmpty else { return }
+                guard !self.isClosingForIdentityChange,
+                      self.isRequestCurrent(accountId: loadAccountId, epoch: loadEpoch) else { return }
                 let existingKeys = Set(self.messages.compactMap { $0.localKey })
                 var restored: [BearyAPI.DMMessage] = []
                 for p in pendings where !existingKeys.contains(p.localKey) {
