@@ -442,12 +442,13 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         BearyAPI.shared.fetchDMConversations { [weak self] result in
             guard let self = self else { return }
             DispatchQueue.main.async {
-                self.loading = false
-                self.tableView.refreshControl?.endRefreshing()
+                // 第 18 轮 #18：刷新态（loading／下拉转圈）只在本地合并完成
+                // 后才清；网络回包时不清，否则合并在途期间再下拉会重复发请求。
                 // 切号后到达的旧回包直接丢弃（账号 ID + 代次双重校验；
                 // A→B→A 时账号 ID 再次相等，代次不等仍丢弃）；若新号
                 // 重拉挂起，补发一次。
                 if BearyAPI.isStaleAccountLoad(requestAccountId: requestUid, requestEpoch: requestEpoch, currentAccountId: SessionManager.shared.currentUser?.id, currentEpoch: BearyAPI.shared.authEpoch) {
+                    self.endConversationsRefresh()
                     if self.needsReloadAfterUserChange {
                         self.needsReloadAfterUserChange = false
                         self.load()
@@ -467,6 +468,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                         // 合并是异步的：完成回调到达时再验一次账号/代次——
                         // 切号夹在网络回包与合并完成之间时，旧结果不得写进新号列表。
                         if BearyAPI.isStaleAccountLoad(requestAccountId: requestUid, requestEpoch: requestEpoch, currentAccountId: SessionManager.shared.currentUser?.id, currentEpoch: BearyAPI.shared.authEpoch) {
+                            self.endConversationsRefresh()
                             if self.needsReloadAfterUserChange {
                                 self.needsReloadAfterUserChange = false
                                 self.load()
@@ -480,6 +482,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                         }
                         self.loadFailed = false
                         self.finishConversationsLoad()
+                        self.endConversationsRefresh()
                     }
                 case .failure:
                     // 服务端失败：本地 BearyDMStore 会话先显（仅本地有消息的对方），
@@ -492,6 +495,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                         guard let self = self else { return }
                         // 与成功支同口径：合并完成时再验一次账号/代次。
                         if BearyAPI.isStaleAccountLoad(requestAccountId: requestUid, requestEpoch: requestEpoch, currentAccountId: SessionManager.shared.currentUser?.id, currentEpoch: BearyAPI.shared.authEpoch) {
+                            self.endConversationsRefresh()
                             if self.needsReloadAfterUserChange {
                                 self.needsReloadAfterUserChange = false
                                 self.load()
@@ -501,10 +505,19 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                         self.conversations = merged
                         self.loadFailed = true
                         self.finishConversationsLoad()
+                        self.endConversationsRefresh()
                     }
                 }
             }
         }
+    }
+
+    /// 刷新态收尾（第 18 轮 #18）：只在本地合并完成后调——清 loading、
+    /// 停下拉转圈；网络回包时不清，否则合并在途期间再下拉会重复发请求。
+    /// 旧号合并回调早退时也要调，否则挂起的重拉会被 guard !loading 挡住。
+    private func endConversationsRefresh() {
+        loading = false
+        tableView.refreshControl?.endRefreshing()
     }
 
     /// 首拉落定（成功或失败）后的统一收尾：空态＋重载＋快照变化通知。
