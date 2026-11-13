@@ -289,6 +289,8 @@ final class BearyInviteViewController: UIViewController {
         messageLabel.adjustsFontForContentSizeCategory = true
         messageLabel.textColor = BearyColors.red
         messageLabel.numberOfLines = 0
+        // 第十一轮审计 3：无文案时整行隐藏、不占 18pt + 8pt 间距；有文案时由 showMessage / render 恢复显示（照登录页 showMessage 口径）。
+        messageLabel.isHidden = true
 
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         // Hit44：只换类名 + 下方 ≥44 帧约束；标题/字色/字号/按压反馈/target 均不动。
@@ -433,6 +435,7 @@ final class BearyInviteViewController: UIViewController {
 
     private func showMessage(_ text: String, ok: Bool = false) {
         messageLabel.text = text
+        messageLabel.isHidden = text.isEmpty
         messageLabel.textColor = ok ? BearyColors.deepGreenText : BearyColors.red
         // 审计登录杂项：行内失败时绑定框同步 isError 红边，成功 / 清空时复位。
         bindInputContainer?.isError = !text.isEmpty && !ok
@@ -664,6 +667,8 @@ final class BearyInviteViewController: UIViewController {
             messageLabel.textColor = pendingBindMessageOK ? BearyColors.deepGreenText : BearyColors.red
             pendingBindMessage = nil
         }
+        // 第十一轮审计 3：render 直接写 text、绕过 showMessage，此处同步显隐——无文案隐藏、有待展示文案显示。
+        messageLabel.isHidden = (messageLabel.text ?? "").isEmpty
         if UIAccessibility.isReduceMotionEnabled == false {
             for (view, wasHidden) in [(boundRow, boundWasHidden), (bindRow, bindWasHidden), (bindHintLabel, hintWasHidden)] {
                 if wasHidden && view.isHidden == false {
