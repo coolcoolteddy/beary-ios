@@ -844,6 +844,10 @@ final class BearyNotificationsViewController: UIViewController {
             return
         }
         let requestEpoch = BearyAPI.shared.authEpoch
+        // 第 17 轮 11：拍下发起时的已读操作代次——全部已读成功后代次 +1，
+        // 此前在途的回包随后一律过期，不把已清零的未读数加回来（与单条
+        // 标已读失败回滚同口径，见 markSingleRead）。
+        let operationGen = readOperationGeneration
         BearyAPI.shared.fetchNotifications(limit: 2, suppressUnauthorized: true) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -851,6 +855,9 @@ final class BearyNotificationsViewController: UIViewController {
                 if strongSelf.isStaleRequestEpoch(requestEpoch) {
                     return
                 }
+                // 第 17 轮 11：全部已读已成功（操作代次已变）→ 旧回包丢弃，
+                // 不写未读数与角标、不触发重拉。
+                guard operationGen == strongSelf.readOperationGeneration else { return }
                 switch result {
                 case .success(let list):
                     if let unreadValue = list.unread {
@@ -1132,6 +1139,8 @@ final class BearyNotificationsViewController: UIViewController {
         let requestedLimit = items.isEmpty ? pageLimit : min(max(pageLimit, items.count), maxRefreshLimit)
         refreshVisibleState()
         let requestEpoch = BearyAPI.shared.authEpoch
+        // 第 17 轮 11：拍下发起时的已读操作代次（同轻量刷新）。
+        let operationGen = readOperationGeneration
         BearyAPI.shared.fetchNotifications(limit: requestedLimit) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -1139,6 +1148,12 @@ final class BearyNotificationsViewController: UIViewController {
                 // P1-21：代次已变 → 旧账号回包丢弃；下拉刷新仍走 completion 收尾，
                 // 避免转圈悬停（见 beginCustomPullRefresh）。
                 if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                    completion?()
+                    return
+                }
+                // 第 17 轮 11：全部已读已成功（操作代次已变）→ 旧回包丢弃，不写
+                // items/未读数/角标；下拉刷新仍走 completion 收尾。
+                guard operationGen == strongSelf.readOperationGeneration else {
                     completion?()
                     return
                 }
@@ -1708,6 +1723,8 @@ final class BearyNotificationsViewController: UIViewController {
             // P1-22：重载前先灭卡片动画，避免收起 completion 按旧下标删行。
             cancelCardAnimation()
             tableView.reloadData()
+            // 第 17 轮 12：无更多页即哨兵消失，外层合并列表同步重读快照。
+            notifyMergeSnapshotChanged()
             return
         }
         isLoadingMore = true
@@ -1715,10 +1732,14 @@ final class BearyNotificationsViewController: UIViewController {
         // P1-22：哨兵重载前同样先灭卡片动画（见 cancelCardAnimation）。
         cancelCardAnimation()
         tableView.reloadData()
+        // 第 17 轮 12：翻页开始即同步外层合并列表，哨兵行进加载态。
+        notifyMergeSnapshotChanged()
         // M12：翻页追加的行身份（卡种 + 通知下标），用于成功后 insertRows 而非整表重载。
         let oldDisplayRows = displayRows
         let oldSentinelRow = showsSentinelRow
         let requestEpoch = BearyAPI.shared.authEpoch
+        // 第 17 轮 11：拍下发起时的已读操作代次（同首屏）。
+        let operationGen = readOperationGeneration
         BearyAPI.shared.fetchNotifications(limit: pageLimit, before: cursor) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -1727,6 +1748,16 @@ final class BearyNotificationsViewController: UIViewController {
                 if strongSelf.isStaleRequestEpoch(requestEpoch) {
                     strongSelf.cancelCardAnimation()
                     strongSelf.tableView.reloadData()
+                    // 第 17 轮 12：取消即同步外层合并列表，哨兵行回闲置态。
+                    strongSelf.notifyMergeSnapshotChanged()
+                    return
+                }
+                // 第 17 轮 11：全部已读已成功（操作代次已变）→ 旧回包丢弃，不追加
+                // 旧已读态的行、不写未读数；哨兵重绘回闲置态并同步外层。
+                guard operationGen == strongSelf.readOperationGeneration else {
+                    strongSelf.cancelCardAnimation()
+                    strongSelf.tableView.reloadData()
+                    strongSelf.notifyMergeSnapshotChanged()
                     return
                 }
                 switch result {
@@ -1789,6 +1820,8 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.showToast(message: "加载失败")
                     strongSelf.cancelCardAnimation()
                     strongSelf.tableView.reloadData()
+                    // 第 17 轮 12：翻页失败即同步外层合并列表，哨兵行进失败态。
+                    strongSelf.notifyMergeSnapshotChanged()
                 }
                 strongSelf.updateReadAllButton()
             }
