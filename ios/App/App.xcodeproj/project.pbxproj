@@ -147,6 +147,15 @@
 		5248D64A4F66BE386B48299F /* gondola.png in Resources */ = {isa = PBXBuildFile; fileRef = FC056EBEC9C7471EF1CC7D35 /* gondola.png */; };
 		D7F7C2346FCC7058EC3C8CC0 /* floatplane.png in Resources */ = {isa = PBXBuildFile; fileRef = 77EBD303DE6467641446EC80 /* floatplane.png */; };
 		3AB193F0F7DEDDF8D243AE44 /* kite.png in Resources */ = {isa = PBXBuildFile; fileRef = 43B1FA4DBAD92CAC036BE233 /* kite.png */; };
+		995ADD8E17FDF2F45EAC0A55 /* qixi-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = 2F331A51EAC9D163D70278F5 /* qixi-poster.png */; };
+		902FA2A69E9466D6DCDA7DC0 /* qixi-depth.png in Resources */ = {isa = PBXBuildFile; fileRef = 3368B8B4BC773F24FD3D20CA /* qixi-depth.png */; };
+		90E8E1972DB0FEB06070852D /* qixi-magpie.png in Resources */ = {isa = PBXBuildFile; fileRef = 4A1C6E545CE53DE54DF1A0BF /* qixi-magpie.png */; };
+		0C745FC32187DDC4EF2BA98B /* qixi-egg-stars.png in Resources */ = {isa = PBXBuildFile; fileRef = 1D96666DD19463A736008E26 /* qixi-egg-stars.png */; };
+		7FF4A9BB3C413133B4E53925 /* qixi-egg-shimmer.png in Resources */ = {isa = PBXBuildFile; fileRef = 1841996FC60B9B9A519AC9B4 /* qixi-egg-shimmer.png */; };
+		A23D414B9FB4FAF5CB9D9A82 /* qixi-egg-magpie-big-body.png in Resources */ = {isa = PBXBuildFile; fileRef = 0DD1F7ACA510619B57D49CA4 /* qixi-egg-magpie-big-body.png */; };
+		AC674E97F53AFEEED31387C2 /* qixi-egg-magpie-big-gold.png in Resources */ = {isa = PBXBuildFile; fileRef = EEF17D4D9FF5D6CCE9CBDB13 /* qixi-egg-magpie-big-gold.png */; };
+		ECCB600A66A611F6724B776F /* qixi-egg-magpie-small-body.png in Resources */ = {isa = PBXBuildFile; fileRef = 230290B307129287A9308EAB /* qixi-egg-magpie-small-body.png */; };
+		3951A818CEB02F02FBEE1E03 /* qixi-egg-magpie-small-gold.png in Resources */ = {isa = PBXBuildFile; fileRef = 3A92A960744A469D12481BB1 /* qixi-egg-magpie-small-gold.png */; };
 		D395C5A456F0D264FAA5D081 /* china-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = F61DF01274DB03D3F0AB6FE0 /* china-poster.png */; };
 		1938F81450975213C5CE2010 /* japan-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = B18573473A12570FBD9DB089 /* japan-poster.png */; };
 		C73ABC14EF8C1B595064A827 /* usa-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = 95FB0D0AFDFEF9F5C38C947B /* usa-poster.png */; };
@@ -432,6 +441,15 @@
 		FC056EBEC9C7471EF1CC7D35 /* gondola.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/gondola.png; sourceTree = "<group>"; };
 		77EBD303DE6467641446EC80 /* floatplane.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/floatplane.png; sourceTree = "<group>"; };
 		43B1FA4DBAD92CAC036BE233 /* kite.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/kite.png; sourceTree = "<group>"; };
+		2F331A51EAC9D163D70278F5 /* qixi-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/qixi-poster.png; sourceTree = "<group>"; };
+		3368B8B4BC773F24FD3D20CA /* qixi-depth.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/qixi-depth.png; sourceTree = "<group>"; };
+		4A1C6E545CE53DE54DF1A0BF /* qixi-magpie.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/qixi-magpie.png; sourceTree = "<group>"; };
+		1D96666DD19463A736008E26 /* qixi-egg-stars.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/qixi-egg-stars.png; sourceTree = "<group>"; };
+		1841996FC60B9B9A519AC9B4 /* qixi-egg-shimmer.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/qixi-egg-shimmer.png; sourceTree = "<group>"; };
+		0DD1F7ACA510619B57D49CA4 /* qixi-egg-magpie-big-body.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/qixi-egg-magpie-big-body.png; sourceTree = "<group>"; };
+		EEF17D4D9FF5D6CCE9CBDB13 /* qixi-egg-magpie-big-gold.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/qixi-egg-magpie-big-gold.png; sourceTree = "<group>"; };
+		230290B307129287A9308EAB /* qixi-egg-magpie-small-body.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/qixi-egg-magpie-small-body.png; sourceTree = "<group>"; };
+		3A92A960744A469D12481BB1 /* qixi-egg-magpie-small-gold.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/qixi-egg-magpie-small-gold.png; sourceTree = "<group>"; };
 		C69BECF80F639F3B86A1C5F7 /* BearyFestivalWallpapers.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = BearyFestivalWallpapers.json; sourceTree = "<group>"; };
 		37B9943EDEF2C3A792782E9E /* agree_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree_dark.json; sourceTree = "<group>"; };
 		4ED6BF206A0F34DF117D855A /* crown.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieCrown/crown.json; sourceTree = "<group>"; };
@@ -894,6 +912,15 @@
 				FC056EBEC9C7471EF1CC7D35 /* gondola.png */,
 				77EBD303DE6467641446EC80 /* floatplane.png */,
 				43B1FA4DBAD92CAC036BE233 /* kite.png */,
+				2F331A51EAC9D163D70278F5 /* qixi-poster.png */,
+				3368B8B4BC773F24FD3D20CA /* qixi-depth.png */,
+				4A1C6E545CE53DE54DF1A0BF /* qixi-magpie.png */,
+				1D96666DD19463A736008E26 /* qixi-egg-stars.png */,
+				1841996FC60B9B9A519AC9B4 /* qixi-egg-shimmer.png */,
+				0DD1F7ACA510619B57D49CA4 /* qixi-egg-magpie-big-body.png */,
+				EEF17D4D9FF5D6CCE9CBDB13 /* qixi-egg-magpie-big-gold.png */,
+				230290B307129287A9308EAB /* qixi-egg-magpie-small-body.png */,
+				3A92A960744A469D12481BB1 /* qixi-egg-magpie-small-gold.png */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -1163,6 +1190,15 @@
 				5248D64A4F66BE386B48299F /* gondola.png in Resources */,
 				D7F7C2346FCC7058EC3C8CC0 /* floatplane.png in Resources */,
 				3AB193F0F7DEDDF8D243AE44 /* kite.png in Resources */,
+				995ADD8E17FDF2F45EAC0A55 /* qixi-poster.png in Resources */,
+				902FA2A69E9466D6DCDA7DC0 /* qixi-depth.png in Resources */,
+				90E8E1972DB0FEB06070852D /* qixi-magpie.png in Resources */,
+				0C745FC32187DDC4EF2BA98B /* qixi-egg-stars.png in Resources */,
+				7FF4A9BB3C413133B4E53925 /* qixi-egg-shimmer.png in Resources */,
+				A23D414B9FB4FAF5CB9D9A82 /* qixi-egg-magpie-big-body.png in Resources */,
+				AC674E97F53AFEEED31387C2 /* qixi-egg-magpie-big-gold.png in Resources */,
+				ECCB600A66A611F6724B776F /* qixi-egg-magpie-small-body.png in Resources */,
+				3951A818CEB02F02FBEE1E03 /* qixi-egg-magpie-small-gold.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
