@@ -113,8 +113,12 @@ final class BearyAvatarView: UIView {
             fallbackLabel.text = String(name.prefix(1)).uppercased()
             return
         }
-        imageView.isHidden = false
-        fallbackLabel.isHidden = true
+        // 换绑定先显首字母占位：清掉旧位图，加载期间不留上一任头像；
+        // 成功回包再切头像（load 成功分支），失败留占位＋重试钮（与重试路径同口径）。
+        imageView.image = nil
+        imageView.isHidden = true
+        fallbackLabel.isHidden = false
+        fallbackLabel.text = String(name.prefix(1)).uppercased()
         currentURL = url
         load(url: url, displayName: name)
     }
