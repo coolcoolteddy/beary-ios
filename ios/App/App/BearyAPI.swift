@@ -903,6 +903,7 @@ final class BearyAPI {
     /// before/before_id），但走隔离请求、凭据固定为导出账号的 token。
     /// 导出链在每步边界另做账号变化检查（见设置页）；本方法本身不判
     /// 断当前账号，只保证发出的数据恒属 token 账号。
+    /// 审计 18 轮⑲：空 before_id 不发（与 search / fetchTrash 同口径）。
     func fetchEntriesWithToken(
         _ token: String,
         scope: Scope,
@@ -913,7 +914,10 @@ final class BearyAPI {
     ) {
         var q: [String: String] = ["scope": scope.rawValue, "limit": "\(min(max(limit, 1), 50))"]
         if let b = before { q["before"] = "\(b)" }
-        if let bid = beforeId { q["before_id"] = bid }
+        // 审计 18 轮⑲：空 before_id 不再原样传出——与同文件 search /
+        // fetchTrash 的 !isEmpty 检查同口径；空串游标发出去服务端
+        // 无从锚定，只会重取同一页。
+        if let bid = beforeId, !bid.isEmpty { q["before_id"] = bid }
         if let aid = scope.authorId { q["author_id"] = "\(aid)" }
         requestWithToken("/beary/api/entries", query: q, token: token, completion: completion)
     }

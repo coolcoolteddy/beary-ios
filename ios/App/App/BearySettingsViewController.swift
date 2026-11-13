@@ -2854,8 +2854,9 @@ final class BearySettingsViewController: UIViewController {
         var sessionsFailed = false
         // 账号隔离改造：分页中途发现账号变化时 fetchScopePage 以
         // reason="账号已切换" 回包（见该方法）；各 scope 边界的主线程
-        // 检查（下）在下一步开始前就停链，不等整条链跑完，finish 处
-        // 的 exportPinChanged 复查兜底最后一 scope 回包后才变的情形。
+        // 检查（下）在下一步开始前就停链（账号变化或本步已失败均停，
+        // 不等整条链跑完），finish 处的 exportPinChanged 复查兜底
+        // 最后一 scope 回包后才变的情形。
         // 审计 B 批：4 路并行回调改串行汇集——会话 → 我的 → 信箱 → 赞过依次
         // 拉取，共享变量只在同一串行链上写，不再并发；判定口径不变（失败
         // 优先于触顶；分页失败与触顶同现时以失败为准，不出文件）。
@@ -2933,6 +2934,13 @@ final class BearySettingsViewController: UIViewController {
                 } else {
                     sessionsFailed = true
                 }
+                // 审计 18 轮㉒：设备拉取失败即停链——之前失败只在链尾
+                // finish() 结算，失败后仍白拉三组日记；直接 finish()，
+                // 由它出失败 toast（切号检查在 finish() 内优先）。
+                if sessionsFailed {
+                    finish()
+                    return
+                }
                 self.setExportProgress("正在导出（2/4）我的日记…")
                 self.fetchAllEntries(scope: .mine, pin: pin) { result in
                     DispatchQueue.main.async {
@@ -2941,6 +2949,14 @@ final class BearySettingsViewController: UIViewController {
                             return
                         }
                         applyScopeResult(result, &mineEntries)
+                        // 审计 18 轮㉒：本 scope 分页失败即停链，不再拉下
+                        // 一组日记；失败在 finish() 结算出失败 toast。
+                        // 触顶（exportTruncated）不是失败，继续拉其余
+                        // scope，文件仍可部分导出。
+                        if exportFailedReason != nil {
+                            finish()
+                            return
+                        }
                         self.setExportProgress("正在导出（3/4）私密日记…")
                         self.fetchAllEntries(scope: .mailbox, pin: pin) { result in
                             DispatchQueue.main.async {
@@ -2949,6 +2965,11 @@ final class BearySettingsViewController: UIViewController {
                                     return
                                 }
                                 applyScopeResult(result, &mailboxEntries)
+                                // 审计 18 轮㉒：同上，分页失败即停链。
+                                if exportFailedReason != nil {
+                                    finish()
+                                    return
+                                }
                                 self.setExportProgress("正在导出（4/4）赞过…")
                                 self.fetchAllEntries(scope: .liked, pin: pin) { result in
                                     DispatchQueue.main.async {
@@ -3125,6 +3146,8 @@ final class BearySettingsViewController: UIViewController {
     /// 安全；id 比对留给主线程边界（exportPinChanged），不在此做。
     /// complete=false 另有情形——账号已切换（reason 如上），
     /// 调用方不得把它当失败/触顶处理（见 exportWithUser 链）。
+    /// 审计 18 轮⑲：游标校验——空 before_id 由 fetchEntriesWithToken
+    /// 滤掉不再发出；下一页游标与本页游标相同即判本页失败停翻。
     private func fetchAllEntries(scope: BearyAPI.Scope, pin: BearyExportPin, completion: @escaping (BearyExportPageResult) -> Void) {
         fetchScopePage(scope: scope, pin: pin, before: nil, beforeId: nil, accumulated: [], depth: 0, completion: completion)
     }
@@ -3166,6 +3189,14 @@ final class BearySettingsViewController: UIViewController {
                 // （BearyEntrySync.fetchDiaryPage／fetchTrashPage）“游标缺失中止且不写盘”同口径，
                 // 不得当完整页收尾出文件。
                 guard let last = entries.last, let lastCreated = last.createdAt else {
+                    completion((entries: all, complete: false, reason: "第 \(depth + 1) 页失败"))
+                    return
+                }
+                // 审计 18 轮⑲：游标未推进即停翻——下一页游标与本页请求
+                // 游标完全相同（末条 createdAt 与 id 均一致）时再翻只会
+                // 原样重取同一页，之前要空翻到 depth 20 才截断；直接判
+                // 本页失败、整单 fail-closed。
+                if lastCreated == before, last.id == beforeId {
                     completion((entries: all, complete: false, reason: "第 \(depth + 1) 页失败"))
                     return
                 }
