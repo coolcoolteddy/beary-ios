@@ -100,7 +100,8 @@ final class BearyMessagesViewController: UIViewController {
         view.addSubview(topBar)
         topBarTopConstraint = topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 19), maximumPointSize: 20)
+        // #1256：消息头与时间线头同为 21 bold；此前此处仍是 19。
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 21))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.text = "消息"
@@ -156,10 +157,14 @@ final class BearyMessagesViewController: UIViewController {
             topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             topBar.heightAnchor.constraint(equalToConstant: 44),
             titleLabel.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
-            titleLabel.topAnchor.constraint(equalTo: topBar.topAnchor, constant: 14),
+            // 标题顶沿与时间线头对齐：时间线头在表头栈内居中于回收站 pill，
+            // 顶沿约在安全区顶 +60+14+4；此处顶栏 60 + 18 = 78，同字号则基线亦同。
+            titleLabel.topAnchor.constraint(equalTo: topBar.topAnchor, constant: 18),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: userListButton.leadingAnchor, constant: -8),
             userListButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),
-            userListButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            // 好友钮锚在顶栏中央，不再跟标题走——标题下移后跟标题会让 44 高的
+            // 钮底沿探出顶栏、压到列表首行。
+            userListButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             userListButton.widthAnchor.constraint(equalToConstant: 44),
             userListButton.heightAnchor.constraint(equalToConstant: 44),
             tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
