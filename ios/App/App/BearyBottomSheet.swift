@@ -178,6 +178,23 @@ class BearyBottomSheetPresentationController: UIPresentationController {
         presentedView.frame = frameOfPresentedViewInContainerView
     }
 
+    /// 内容高变化时容器帧跟动画走：preferredContentSize 只改数值本身，
+    /// 默认实现仅把容器布局标脏、帧在下一轮布局才落（不在调用方的动画块内，
+    /// 故心情选择器切组时 motion.normal 块里的改高不会跟帧、只会跳变）。这里在
+    /// motion.normal 内把容器布局跑完，帧与调用方的动画同速跟进；减动效直落终值。
+    /// 登录 sheet 子类的同款重写已并入此处，不再各自写一份。
+    override func preferredContentSizeDidChange(forChildContentContainer container: UIContentContainer) {
+        super.preferredContentSizeDidChange(forChildContentContainer: container)
+        guard let containerView = containerView else { return }
+        if UIAccessibility.isReduceMotionEnabled {
+            containerView.layoutIfNeeded()
+        } else {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState], animations: {
+                containerView.layoutIfNeeded()
+            })
+        }
+    }
+
     override func presentationTransitionWillBegin() {
         guard let container = containerView, let presentedView = presentedView else { return }
         // VoiceOver：出现前先记 sheet 外焦点（此时焦点仍在触发控件上，出现后即被夺走）；
