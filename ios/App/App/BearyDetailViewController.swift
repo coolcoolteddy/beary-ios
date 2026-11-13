@@ -2736,7 +2736,7 @@ final class BearyDetailViewController: UIViewController {
                 }
             }
             if !sliding.isEmpty {
-                UIView.animate(withDuration: 0.26, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
                     for view in sliding { view.transform = .identity }
                 }
             }
