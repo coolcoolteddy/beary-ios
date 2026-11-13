@@ -31,7 +31,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
     /// Plus 页的 EdgeDismiss 强持有（仅窄屏全屏路用，见 presentPlusPage）。
     private var plusPageEdgeDismiss: BearyEdgeDismissController?
 
-    private let themesValue: [Theme] = [.none, .halloween, .spring, .china, .usa, .japan, .germany, .canada, .korea]
+    private let themesValue: [Theme] = [.none, .halloween, .spring, .china, .usa, .japan, .germany, .canada, .korea, .christmas]
 
     init(currentTheme: Theme, isPlus: Bool, onPick: @escaping (Theme, Bool) -> Bool) {
         self.currentThemeValue = currentTheme
