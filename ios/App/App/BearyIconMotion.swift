@@ -90,7 +90,7 @@ enum BearyIconMotion {
     /// 图标缩放（取消点赞 pre-unlike .8 / 恢复 1；按压已改走按钮层
     /// pressDownVisual/pressUp，不再用本方法；默认走 motion.micro 0.18s
     /// （原网页 svg transition .13s 同款，已随三档 token 收敛）。
-    static func animateIconScale(on button: UIButton, to scale: CGFloat, duration: TimeInterval = 0.13) {
+    static func animateIconScale(on button: UIButton, to scale: CGFloat, duration: TimeInterval = BearyMotion.micro) {
         guard let imageView = button.imageView else { return }
         let transform = scale == 1 ? CGAffineTransform.identity : CGAffineTransform(scaleX: scale, y: scale)
         if UIAccessibility.isReduceMotionEnabled {
