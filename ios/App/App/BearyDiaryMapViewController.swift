@@ -92,6 +92,12 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     private var geocodeGeneration = 0
     private var activeGeocoder: CLGeocoder?
     private var didInitialGeocode = false
+    /// 首次视野的起点快照（扫荡 130，#1220 守卫）：整批初始解析完成时，
+    /// 只有用户尚未动过地图才整体调整视野；用户已拖动／缩放过则跳过
+    /// 本次调整、视角留给用户（之后批次本来就不再抢区域）。快照在
+    /// 取数开始（fetchAllEntries）或重算开始（regroupAndGeocode，
+    /// 无在途快照时）取，链尾 applyGeocodedGroups 消费后清空。
+    private var regionBeforeFirstGeocode: MKCoordinateRegion?
 
 
     init(authorId: Int, viewerIsAuthor: Bool, initialEntries: [Entry], onOpenEntry: ((Entry) -> Void)?) {
@@ -454,6 +460,11 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             return
         }
         loadGeneration += 1
+        // 扫荡 130：新一轮取数开始即记下当前视野——整批解析完成时只有
+        // 用户没动过地图才整体调整（见 applyGeocodedGroups）。
+        if !didInitialGeocode {
+            regionBeforeFirstGeocode = mapView.region
+        }
         beginLoadingIfEmpty()
         fetchCollected = []
         fetchResumeBefore = nil
@@ -628,6 +639,11 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     // 聚合规则、标记数据、编码查询词一律不动；只改成图时机与代次门控。
 
     private func regroupAndGeocode() {
+        // 扫荡 130：无在途快照时记下当前视野（取数驱动的重算已在
+        // fetchAllEntries 记过，不覆盖——取数中途用户拖动才受保护）。
+        if !didInitialGeocode, regionBeforeFirstGeocode == nil {
+            regionBeforeFirstGeocode = mapView.region
+        }
         // 重新加载先换代并取消上一轮在途编码：旧回调不得写回新一轮。
         let generation = cancelGeocoding()
         groups = BearyLocationMap.groups(entries: allEntries, viewerIsAuthor: viewerIsAuthor)
@@ -972,11 +988,20 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         addLocatedAnnotations(located)
         if !didInitialGeocode, !located.isEmpty {
             didInitialGeocode = true
-            let annotations = located.compactMap { locatedAnnotations[$0.group.id] }
-            if !annotations.isEmpty {
-                mapView.showAnnotations(annotations, animated: false)
+            // 扫荡 130：只有用户自本轮开始没动过地图，才整体调整视野——
+            // 串行编码要走一阵子（切账号后缓存清空、全组未命中时更久），
+            // 期间用户拖动／缩放过，链尾再 showAnnotations 就是抢视角。
+            // 旗标照样立（本次机会已过，之后批次不再抢区域）。
+            let userMovedMap = regionBeforeFirstGeocode.map { !regionsEqual($0, mapView.region) } ?? false
+            if !userMovedMap {
+                let annotations = located.compactMap { locatedAnnotations[$0.group.id] }
+                if !annotations.isEmpty {
+                    mapView.showAnnotations(annotations, animated: false)
+                }
             }
         }
+        // 链尾消费快照（位于空也消费：下次有定位结果的新一轮重新取）。
+        regionBeforeFirstGeocode = nil
         tableView.reloadData()
     }
 
@@ -1086,6 +1111,16 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         }, onUnburied: { [weak self] entryId in
             self?.removeCapsuleAnnotation(entryId: entryId)
         })
+    }
+
+    /// 两视野是否同一视野（中心与跨度都几乎相等）：MapKit 自身不改视野，
+    /// 只有用户手势或 showAnnotations 会改；链尾据此判断用户是否动过地图。
+    private func regionsEqual(_ a: MKCoordinateRegion, _ b: MKCoordinateRegion) -> Bool {
+        let eps = 1e-9
+        return abs(a.center.latitude - b.center.latitude) < eps
+            && abs(a.center.longitude - b.center.longitude) < eps
+            && abs(a.span.latitudeDelta - b.span.latitudeDelta) < eps
+            && abs(a.span.longitudeDelta - b.span.longitudeDelta) < eps
     }
 
     /// 按大头针找组：先认 groupId（P1-6 同名换区后展示名可重名，
