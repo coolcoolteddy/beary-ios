@@ -335,9 +335,14 @@ enum BearyDraftImageStore {
 
     /// ioQueue 内执行：核对引用后删原图＋缩略图对。只供 ioQueue 任务调，
     /// 调用方不得在主线程同步调（会读盘＋删文件，堵退场）。
+    /// 读库失败时一律保留（不删）：loadAll() 失败返 []，不得把 [] 当成
+    /// “无草稿”——损坏库里的草稿仍可能引用这些附件。
     private static func deletePairsIfUnreferenced(_ names: [String], accountId: Int?, excludingDraftId: String?) {
+        guard case .success(let allDrafts) = BearyDraftStore.loadAllResult(forAccount: accountId) else {
+            return
+        }
         var referenced = Set<String>()
-        for draft in BearyDraftStore.loadAll(forAccount: accountId) {
+        for draft in allDrafts {
             if let excluded = excludingDraftId, draft.draftId == excluded { continue }
             for img in draft.images {
                 if let name = img.localFile {
