@@ -1199,7 +1199,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                             // 账号档案会抹掉其他会话的本地历史），也不从损坏的库重读
                             //（读失败返空字典会把刚拉到的消息读丢）；已拉到的消息先在
                             // 会话里显示，原件留给后续恢复。
-                            applyMerged(fetched)
+                            // 第 18 轮第 10 项：损坏分支不走 saveMessages 回包合并，
+                            // 内存里已翻出的旧页须按 id 并进来（同 loadOlder 损坏分支
+                            // 口径）——直接用最新页覆盖会把旧页读丢；待发行先摘出
+                            //（localKey），同 id 以服务端新行为准、无 id 行保留。
+                            let base = self.messages.filter { $0.localKey == nil }
+                            let fetchedIds = Set(fetched.compactMap { $0.id })
+                            let kept = base.filter { $0.id == nil || !fetchedIds.contains($0.id!) }
+                            applyMerged((kept + fetched).sorted { ($0.id ?? 0) < ($1.id ?? 0) })
                             BearyToast.show(in: self.view, message: "手机里的旧消息暂时读不出来")
                         } else {
                             // 读改写走后台串行队列：save 直接回合并后的本会话消息，不再重读一次。
