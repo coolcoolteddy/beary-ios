@@ -9127,7 +9127,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         coverTrailingConstraint.constant = 0
         coverBlurImageView.isHidden = false
         festivalBlurView.isHidden = false
-        UIView.animate(withDuration: 0.28, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             self.coverBlurImageView.alpha = 0
             self.festivalBlurView.alpha = 0
             self.view.layoutIfNeeded()
