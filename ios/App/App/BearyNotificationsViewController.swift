@@ -3084,7 +3084,7 @@ private class BearyLetterModal {
             UIView.animate(withDuration: BearyMotion.normal) {
                 self.overlayView.alpha = 1
             }
-            let popAnimator = UIViewPropertyAnimator(duration: 0.28, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
+            let popAnimator = UIViewPropertyAnimator(duration: BearyMotion.normal, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
             popAnimator.addAnimations({
                 self.cardView.transform = CGAffineTransform.identity
             })
