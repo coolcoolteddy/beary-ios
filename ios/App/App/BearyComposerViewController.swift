@@ -6105,8 +6105,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         // 读盘在后台线程做（completionHandler 本就不在主线程）：
                         // 先关句柄再读文件，超限/失败/读完都删临时文件。
                         try? videoHandle.close()
-                        let videoData: Data? = videoOverLimit ? nil : try? Data(contentsOf: videoTempURL)
+                        let rawVideoData: Data? = videoOverLimit ? nil : try? Data(contentsOf: videoTempURL)
                         try? FileManager.default.removeItem(at: videoTempURL)
+                        // R12C：上传前清掉 MOV 里的 GPS 位置元数据（见 BearyLivePhoto
+                        // videoDataByStrippingLocation）：拍摄时定位会写进文件级
+                        // QuickTime 元数据，原始字节原样上传会把经纬度存上服务端，
+                        // 违背 Info.plist「只保存地点文字、不保存经纬度」的承诺；
+                        // 只删位置项，配对用的 content-identifier 等其余元数据原样
+                        // 保留。本处剥离后进内存的才是无 GPS 的字节：随后落盘
+                        // （saveVideo）与上传（uploadPrepared）都只认这份数据。
+                        // 剥离失败按读取失败处理，不把带 GPS 的原始字节发出。
+                        let videoData: Data? = rawVideoData.flatMap { BearyLivePhoto.videoDataByStrippingLocation($0) }
+                        let videoStripFailed = rawVideoData != nil && videoData == nil
                         DispatchQueue.main.async {
                             guard let self = self, let item = item else { return }
                             var stillThere = false
@@ -6123,7 +6133,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                 self.showToast(message: "实况视频超过 10MB，未添加")
                                 return
                             }
-                            if error != nil {
+                            if error != nil || videoStripFailed {
                                 self.removeImageItem(item)
                                 self.showToast(message: "实况视频读取失败，未添加")
                                 return
@@ -6475,7 +6485,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     decoded.append((name: name, image: BearyDraftImageStore.image(for: name, accountId: accountId)))
                 }
                 if img.liveVideoKey == nil, let videoName = img.liveVideoFile {
-                    liveVideos.append((videoName: videoName, data: BearyDraftImageStore.videoData(for: videoName)))
+                    // R12C：旧版草稿落盘的 mov 仍带 GPS（本修之前未剥离）：恢复时
+                    // 同样剥离后再进内存续传；剥离失败按读不到处理（data 为 nil →
+                    // liveVideoMissing，提示重新选择），不把带 GPS 的旧文件发出。
+                    // 已剥离过的文件走 helper 的无位置项快路径，原样返回，不重写。
+                    let restoredVideo = BearyDraftImageStore.videoData(for: videoName).flatMap { BearyLivePhoto.videoDataByStrippingLocation($0) }
+                    liveVideos.append((videoName: videoName, data: restoredVideo))
                 }
             }
             DispatchQueue.main.async {
