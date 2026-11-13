@@ -8052,9 +8052,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let message: String
         switch error {
         case .corrupt:
-            message = "上次编辑这篇日记时还没保存，但当时的修改已损坏，无法恢复。原始文件已保留备份。"
+            message = "修改已损坏，无法在这里恢复（原始副本仍在手机里，可在反馈时附上）。"
         case .identityMismatch:
-            message = "上次编辑这篇日记时还没保存，但当时的修改不属于当前账号，无法恢复。原始文件已保留备份。"
+            message = "修改属于另一个账号，请回到原账号继续。"
         }
         BearyConfirmSheet.show(from: self, title: "上次的修改无法恢复", message: message, actions: [
             BearyConfirmSheet.Action(title: "放弃并清除", style: .destructive, handler: { [weak self] in

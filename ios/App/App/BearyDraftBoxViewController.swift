@@ -829,10 +829,11 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     @objc private func clearCorruptStoreTapped() {
         // A1：清除前先确认 .bak 真的存在；不存在时不承诺备份、文案如实说。
         // 审计四轮 13：确认框里把不可逆后果讲清——损坏的草稿删掉后在 App 里找不回来。
+        // 第十轮审计 dsh II-1：与失败态副文案共用同一句（有／无备份各一句）。
         let backupKept = BearyDraftStore.hasCorruptBackup()
         let message = backupKept
-            ? "这些草稿目前无法读取。清除后，损坏的草稿会被删掉，在 App 里找不回来；备份会保留在手机里，新草稿可以正常保存。"
-            : "这些草稿目前无法读取。清除后，损坏的草稿会被删掉，在 App 里找不回来；没有可保留的备份，新草稿可以正常保存。"
+            ? "这些草稿读不出来。清除后 App 内找不回，手机里的备份仍在；新草稿不受影响。"
+            : "这些草稿读不出来。清除后无法找回；新草稿不受影响。"
         BearyConfirmSheet.show(from: self, title: "清除无法读取的草稿？", message: message, actions: [
             BearyConfirmSheet.Action(title: "取消", style: .cancel),
             BearyConfirmSheet.Action(title: "清除", style: .destructive) { [weak self] in
@@ -881,8 +882,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 // 不谎称备份保留在手机里，文案如实说。措辞沿审计四轮 13：
                 // 不说“无法恢复”，也不提 .bak（用户不认这个词）。
                 let corruptSubtitle = BearyDraftStore.hasCorruptBackup()
-                    ? "这些草稿暂时读不出来。清除会移除当前草稿数据，备份会保留在手机里。清除后重新读取会回到空态，新草稿可以正常保存。"
-                    : "这些草稿暂时读不出来。清除会移除当前草稿数据，没有可保留的备份。清除后重新读取会回到空态，新草稿可以正常保存。"
+                    ? "这些草稿读不出来。清除后 App 内找不回，手机里的备份仍在；新草稿不受影响。"
+                    : "这些草稿读不出来。清除后无法找回；新草稿不受影响。"
                 failedStateView.configure(kind: .error, title: "草稿库已损坏", subtitle: corruptSubtitle, iconName: nil, actionTitle: "清除损坏的草稿数据", actionStyle: .destructiveOutline(.regular), onAction: { [weak self] in self?.clearCorruptStoreTapped() })
             } else {
                 failedStateView.configure(kind: .error, title: "草稿读取失败", subtitle: "原文件已保留，请稍后再试", iconName: nil, actionTitle: "重新读取", onAction: { [weak self] in self?.retryLoadDraftsTapped() })
