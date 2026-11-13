@@ -18,13 +18,10 @@ struct BearyAnnouncement: Decodable {
     let targetBuild: Int?
     let createdAt: Int
 
-    enum CodingKeys: String, CodingKey {
-        case id, title, content, kind
-        case startsAt = "starts_at"
-        case endsAt = "ends_at"
-        case targetBuild = "target_build"
-        case createdAt = "created_at"
-    }
+    // 不写显式 CodingKeys：BearyAPI 的 decoder 用 convertFromSnakeCase，
+    // 会把服务端 starts_at/ends_at/target_build/created_at 转成这些 camelCase
+    // 名再匹配；写 snake_case rawValue 会与策略叠加后匹配失败，必填的
+    // createdAt 缺键会使整个非空列表解码失败（见 BearyAPI.swift 的同款注释）。
 
     var isAfterUpdate: Bool { kind == "after-update" }
 }
