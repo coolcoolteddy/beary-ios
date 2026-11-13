@@ -95,6 +95,17 @@ public final class BearyEmoteView: UIView {
     private static var cacheOrder: [String] = []
     private static let cacheLock = NSLock()
     private static let cacheLimit = 16
+
+    /// 静态帧位图缓存（第 18 轮审计 34 项）：renderedStaticImage 命中模型
+    /// 缓存只省解析，每次调用仍新建 LottieAnimationView＋渲染位图＋扫
+    /// alpha；心情静态图在时间线／详情反复出现时同一 key＋尺寸会被反复
+    /// 渲染。key＝模型 key＋深浅＋尺寸（pt 取整，同屏 scale 相同即同像素）。
+    /// 只在主线程读写（renderedStaticImage 本身只允许主线程调用），与模型
+    /// 缓存共用 cacheLock；内存警告时随模型缓存一起清；渲染失败不缓存，
+    /// 离窗渲染失败下次调用可重试。
+    private static var staticImageCache: [String: UIImage] = [:]
+    private static var staticImageCacheOrder: [String] = []
+    private static let staticImageCacheLimit = 32
     /// 审计 29 项：数量 + 估算成本双预算，预算单位不再是 JSON 文件字节。
     /// 总成本 = 缓存模型成本 + 存活渲染实例成本（cacheCostBytes + liveRenderCostBytes，
     /// 两项均只在持 cacheLock 时读写）。
@@ -339,6 +350,10 @@ public final class BearyEmoteView: UIView {
         if cacheCostBytes < 0 {
             cacheCostBytes = 0
         }
+        // 第 18 轮审计 34 项：静态帧位图缓存随内存警告一起清——位图已交出
+        // 的调用方自持引用，清字典只释放无人持有的那份，不影响在屏附件。
+        staticImageCache.removeAll()
+        staticImageCacheOrder.removeAll()
     }
 
     /// 审计 29 项：回收全部离屏渲染实例（window == nil 的存活播放器），
@@ -874,6 +889,32 @@ public final class BearyEmoteView: UIView {
         return hit
     }
 
+    private static func staticImageCacheKey(for key: String, dark: Bool, size: CGSize) -> String {
+        "\(key)|\(dark ? "dark" : "light")|\(Int(size.width))x\(Int(size.height))"
+    }
+
+    private static func staticImageCacheHit(for cacheKey: String) -> UIImage? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        guard let hit = staticImageCache[cacheKey] else { return nil }
+        staticImageCacheOrder.removeAll(where: { $0 == cacheKey })
+        staticImageCacheOrder.append(cacheKey)
+        return hit
+    }
+
+    private static func storeStaticImage(_ image: UIImage, for cacheKey: String) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        staticImageCache[cacheKey] = image
+        staticImageCacheOrder.removeAll(where: { $0 == cacheKey })
+        staticImageCacheOrder.append(cacheKey)
+        while staticImageCacheOrder.count > staticImageCacheLimit {
+            guard let oldest = staticImageCacheOrder.first else { break }
+            staticImageCacheOrder.removeFirst()
+            staticImageCache.removeValue(forKey: oldest)
+        }
+    }
+
     private static func store(_ value: CachedEmote, for cacheKey: String) {
         cacheLock.lock()
         defer { cacheLock.unlock() }
@@ -972,6 +1013,8 @@ public final class BearyEmoteView: UIView {
     /// 用同一份模型缓存（cachedEmoteEntry，命中即零解析）；未命中时同步解析
     /// （节日 JSON 仅 10–40KB，一次解析在点按链路上可接受）；
     /// 取循环段末帧（与减动效静态帧同一落点 staticFrame），渲染进指定尺寸位图。
+    /// 渲染结果按模型＋深浅＋尺寸进位图缓存，命中直接取位图，不再重复建视图、
+    /// 渲染与扫 alpha（第 18 轮审计 34 项）。
     /// 只能在主线程调用（建 LottieAnimationView 并渲染图层）。
     /// 空白兜底：离窗渲染失败时 layer.render 可能产出全透明图，而
     /// UIGraphicsImageRenderer 恒返回非 nil 图、调用方无法分辨——全透明即判
@@ -980,6 +1023,8 @@ public final class BearyEmoteView: UIView {
     public static func renderedStaticImage(for key: String, dark: Bool, size: CGSize) -> UIImage? {
         guard Thread.isMainThread else { return nil }
         guard size.width > 0, size.height > 0 else { return nil }
+        let bitmapKey = staticImageCacheKey(for: key, dark: dark, size: size)
+        if let hit = staticImageCacheHit(for: bitmapKey) { return hit }
         guard let cached = cachedEmoteEntry(for: key, dark: dark) else { return nil }
         let view = LottieAnimationView(animation: cached.animation)
         view.contentMode = .scaleAspectFit
@@ -995,6 +1040,7 @@ public final class BearyEmoteView: UIView {
             view.layer.render(in: context)
         }
         guard hasOpaquePixel(in: image) else { return nil }
+        storeStaticImage(image, for: bitmapKey)
         return image
     }
 
