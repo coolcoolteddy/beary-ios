@@ -578,7 +578,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         return cell
     }
 
-    // 审计第 19 项：新行首次出现只做透明度过渡（0.22s，减动效直设终值）；
+    // 审计第 19 项：新行首次出现只做透明度过渡（0.26s，减动效直设终值）；
     // 已播过的行再次出现（滚动回 / reloadData 更新）只复位 alpha，不重播。
     // 复用 cell 的 alpha 必须显式复位，否则上行动画中途的 cell 会带着半透明进新行。
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {

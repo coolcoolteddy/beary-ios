@@ -1978,7 +1978,7 @@ class BearyFeedViewController: UIViewController {
     /// 注：此前注释所称重校验走“diff 出的 newPaths”已过期——全文件不存在
     /// newPaths 标识，applyFirstPageDiff 在 R7 之前从未调 staggerFadeCells。
     /// 审计 r16 第 10 项：步进／位移走 BearyEntranceConfig（首屏 60ms／8pt、
-    /// 分页 50ms／24pt），与时间线共用一套配置。
+    /// 分页 30ms／8pt），与时间线共用一套配置。
     private func staggerFadeCells(at paths: [IndexPath], kind: BearyEntranceConfig.Kind) {
         if UIAccessibility.isReduceMotionEnabled { return }
         let visible = tableView.indexPathsForVisibleRows ?? []

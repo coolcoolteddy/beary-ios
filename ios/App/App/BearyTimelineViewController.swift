@@ -6849,7 +6849,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         // 80 包 A2-3②：队列代际不符时丢弃残留条目，不在新数据行上重播旧错峰。
         guard staggerQueueGeneration == staggerGeneration else { return }
         // 审计 r16 第 10 项：步进／位移走 BearyEntranceConfig（首屏／筛子切换
-        // 60ms／8pt、分页追加 50ms／24pt），与广场共用一套配置；0.26s、
+        // 60ms／8pt、分页追加 30ms／8pt），与广场共用一套配置；0.26s、
         // 封顶 0.24s、可交互。减动效时队列为空，不播。
         let entranceKind: BearyEntranceConfig.Kind = staggerInsertFirstLoad ? .firstLoad : .pagination
         cell.alpha = 0

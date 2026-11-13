@@ -381,7 +381,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         return cell
     }
 
-    // 审计 M4：新行首次出现错峰滑入（0.22s、6pt 位移、0.03s 步进、最多延迟 0.24s，
+    // 审计 M4：新行首次出现错峰滑入（0.26s、6pt 位移、0.03s 步进、最多延迟 0.24s，
     // 广场同款；减动效直设终值）；已播过的行再次出现（滚动回 / reloadData 更新）
     // 只复位 alpha 与 transform，不重播。复用 cell 的 alpha 与 transform 必须显式
     // 复位，否则上行动画中途的 cell 会带着半透明/位移进新行。

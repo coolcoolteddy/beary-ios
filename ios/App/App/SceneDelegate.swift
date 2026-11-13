@@ -1847,7 +1847,7 @@ final class BearyChromeViewController: UIViewController {
             if UIAccessibility.isReduceMotionEnabled {
                 resetDeform()
             } else {
-                // 扫 bug 第 3 项：松手回弹弹簧 0.5s → 0.26s（阻尼 0.7、初速度 0 不变），
+                // 扫 bug 第 3 项：松手回弹弹簧 0.5s → 0.30s（#476 已定），三档收敛 #1414 后走 BearyMotion.normal 0.26s（阻尼 0.7、初速度 0 不变），
                 // 只求回得更快、不拖沓；仍保留弹簧感，不改成生硬的线性复位。
                 // #479 合入解冲突：取主线 0.30s（#476 已定），本支其余（门限 0.25s + 形变 transform）全部保留。
                 UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
