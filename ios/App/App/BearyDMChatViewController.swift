@@ -1628,6 +1628,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     // 两路共享同一套刷新尾巴（锚点保位、新消息 pill、重标已读）。
                     let applyMerged: ([BearyAPI.DMMessage]) -> Void = { [weak self] merged in
                         guard let self = self else { return }
+                        // 切号夹在网络回包与落盘合并之间时，旧合并结果不得改表：
+                        // 回包时的校验已过去，更新界面前再验一次账号与代次。
+                        guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else { return }
                         // 审计 11-8：锚点（首个可见行 + 视口内偏移）与底部态在回包当刻、
                         // 应用新消息之前一次性拍定——此时表仍显示旧数据、messages 仍是旧数组，
                         // 锚点行号与旧表一致；底部态按旧表高算。请求前拍的值在途期间用户滚动
@@ -1709,6 +1712,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     // 损坏分支语义不变：只用已拉到的消息刷新，不写盘。
                     BearyDMStore.persistMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched) { [weak self] outcome in
                         guard let self = self else { return }
+                        // 落盘回调在后台队列跑：切号夹在回包与回调之间时旧结果不得
+                        // 刷新界面、不得弹 toast，更新界面前再验一次账号与代次。
+                        guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else { return }
                         switch outcome {
                         case .corrupt:
                             // A2：旧库暂时读不出——不写盘（空字典重建整份账号档案会抹掉
