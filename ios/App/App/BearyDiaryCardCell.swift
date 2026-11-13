@@ -3727,6 +3727,7 @@ class BearyDiaryCardCell: UITableViewCell {
         // 就地同步判等用（个人主页模式）：本轮实际渲染的 chip 签名。
         cellEmoteSignature = newSignature
         cellEmoteSignatureValid = true
+        var emoteHeightChanged = false
         if cardMode == .feed {
             let addButton: BearyDiaryCardDashedAddButton
             if let reused = feedAddButton {
@@ -3746,7 +3747,7 @@ class BearyDiaryCardCell: UITableViewCell {
                 addButton = made
             }
             emoteFlowView.addSubview(addButton)
-            updateEmoteRowHeight()
+            emoteHeightChanged = updateEmoteRowHeight()
         } else {
             let addButton: BearyDiaryCardDashedAddButton
             if let reused = profileAddButton {
@@ -3765,7 +3766,7 @@ class BearyDiaryCardCell: UITableViewCell {
                 addButton = made
             }
             emoteFlowView.addSubview(addButton)
-            updateEmoteRowHeight()
+            emoteHeightChanged = updateEmoteRowHeight()
         }
         updateEmoteInteractivity()
         // 卡片重排位移（与详情页 #1415 同款）：控制器接线后 cell 内原有 flow
@@ -3801,6 +3802,19 @@ class BearyDiaryCardCell: UITableViewCell {
                 UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut]) {
                     self.emoteFlowView.layoutIfNeeded()
                 }
+            }
+        } else if emoteHeightChanged, UIAccessibility.isReduceMotionEnabled == false,
+                  let entryIdValue = cellEntryId,
+                  let settledHeight = emoteRowHeightConstraint?.constant {
+            // 非用户动作的渲染（服务端对齐、失败复原）也改了行高：表内缓存行高
+            // 仍是旧值，下次批更新才纠正，页面随之无故滑动（位置变化后再点回应
+            // 时下滑即此因）。此处异步通知一次，让表立即取新高；复核 entryId
+            // 与高度，防复用／又变高后过期通知误触发（个人主页布局通知同款口径）。
+            // 异步发：防 configure／reloadRows 的更新块内嵌套批更新。
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.cellEntryId == entryIdValue,
+                      self.emoteRowHeightConstraint?.constant == settledHeight else { return }
+                self.onNeedsEmoteRowAnimation?()
             }
         }
     }

@@ -64,6 +64,27 @@ final class BearyEmoteFlowView: UIView {
         _ = self.layoutItems(forWidth: bounds.width, applyFrames: true)
     }
 
+    /// 动画中点按落点：重排滑位（批更新帧动画）期间 chip 的 model 帧已到终值、
+    /// 视觉位置还在滑动，UIKit 默认 hitTest 只认 model 帧——点在眼睛看到的
+    /// chip 上会落空、漏到卡片上触发行点按进详情。此处按动画中的 presentation
+    /// 帧判定落点；无动画时 presentation 帧即 model 帧，行为不变。
+    /// 按钮嵌在 chip 内时 overlay 占满 chip，取 chip 的 presentation 帧；
+    /// + 钮是 flow 直接子视图，取自身 presentation 帧。返回 flow 坐标系下
+    /// 扩到 44 的热区矩形（扩法与 BearyHit44Button 同款：不足 44 的边居中补到 44）。
+    func hitRect(for button: UIButton) -> CGRect {
+        var rect: CGRect
+        if button.superview === self {
+            rect = button.layer.presentation()?.frame ?? button.frame
+        } else if let host = button.superview, host.superview === self {
+            rect = host.layer.presentation()?.frame ?? host.frame
+        } else {
+            rect = button.convert(button.bounds, to: self)
+        }
+        let dx: CGFloat = rect.width < 44 ? (44 - rect.width) / 2 : 0
+        let dy: CGFloat = rect.height < 44 ? (44 - rect.height) / 2 : 0
+        return rect.insetBy(dx: -dx, dy: -dy)
+    }
+
     /// 热区透传：点落在自身 bounds 内照常；落在外时只当它命中了某个
     /// UIButton 子孙的扩后热区（BearyHit44Button 的 point(inside:) 已扩到 44）
     /// 才放行，否则仍返回 false，不吞邻行触摸。
@@ -92,7 +113,9 @@ final class BearyEmoteFlowView: UIView {
             var best: UIButton?
             var bestDistance: CGFloat = .greatestFiniteMagnitude
             for button in claimants {
-                let center = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: self)
+                // 动画中按 presentation 帧中心取最近者（与落点判定同一口径）。
+                let rect = hitRect(for: button)
+                let center = CGPoint(x: rect.midX, y: rect.midY)
                 let dx = center.x - point.x
                 let dy = center.y - point.y
                 let distance = dx * dx + dy * dy
@@ -111,13 +134,13 @@ final class BearyEmoteFlowView: UIView {
 
     /// 递归收集扩后热区命中该点的 UIButton 子孙（隐藏／不可交互／透明者不算，
     /// 与 UIKit hitTest 的可达条件一致；isEnabled 不参与判定，禁用钮仍占位吞点，
-    /// 与现行行为一致）。操作行栈同款。
+    /// 与现行行为一致）。落点按动画中的 presentation 帧判定（见 hitRect），
+    /// 重排滑动中点在视觉 chip 上不再落空。操作行栈同款。
     private func collectClaimingButtons(in view: UIView, point: CGPoint, event: UIEvent?, into out: inout [UIButton]) {
         for sub in view.subviews {
             guard sub.isHidden == false, sub.alpha >= 0.01, sub.isUserInteractionEnabled else { continue }
             if let button = sub as? UIButton {
-                let local = sub.convert(point, from: self)
-                if button.point(inside: local, with: event) {
+                if hitRect(for: button).contains(point) {
                     out.append(button)
                 }
             }
@@ -130,8 +153,7 @@ final class BearyEmoteFlowView: UIView {
             return false
         }
         if let button = view as? UIButton {
-            let local = view.convert(point, from: self)
-            if button.point(inside: local, with: nil) {
+            if hitRect(for: button).contains(point) {
                 return true
             }
         }
@@ -176,7 +198,7 @@ final class BearyPassThroughStackView: UIStackView {
             var best: UIButton?
             var bestDistance: CGFloat = .greatestFiniteMagnitude
             for button in claimants {
-                let center = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: self)
+                let center = buttonCenter(button)
                 let dx = center.x - point.x
                 let dy = center.y - point.y
                 let distance = dx * dx + dy * dy
@@ -193,13 +215,32 @@ final class BearyPassThroughStackView: UIStackView {
         return super.hitTest(point, with: event)
     }
 
+    /// 栈坐标系下的点是否落在该钮的动画中热区内（见 BearyEmoteFlowView.hitRect）；
+    /// 透传根不是 flow 视图时回退旧口径（model 帧 + point(inside:)），行为不变。
+    private func buttonHitContains(_ button: UIButton, point: CGPoint) -> Bool {
+        guard let flow = passThroughRoot as? BearyEmoteFlowView else {
+            let local = button.convert(point, from: self)
+            return button.point(inside: local, with: nil)
+        }
+        let flowPoint = flow.convert(point, from: self)
+        return flow.hitRect(for: button).contains(flowPoint)
+    }
+
+    /// 按钮中心（栈坐标系）：动画中按 presentation 帧中心取，否则沿用旧口径。
+    private func buttonCenter(_ button: UIButton) -> CGPoint {
+        if let flow = passThroughRoot as? BearyEmoteFlowView {
+            let rect = flow.hitRect(for: button)
+            return flow.convert(CGPoint(x: rect.midX, y: rect.midY), to: self)
+        }
+        return button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: self)
+    }
+
     private func hitExpandedButton(in view: UIView, point: CGPoint) -> Bool {
         if view.isHidden {
             return false
         }
         if let button = view as? UIButton {
-            let local = view.convert(point, from: self)
-            if button.point(inside: local, with: nil) {
+            if buttonHitContains(button, point: point) {
                 return true
             }
         }
@@ -213,13 +254,13 @@ final class BearyPassThroughStackView: UIStackView {
 
     /// 递归收集透传根内扩后热区命中该点的 UIButton 子孙（隐藏／不可交互／
     /// 透明者不算，与 UIKit hitTest 的可达条件一致；isEnabled 不参与判定，
-    /// 禁用钮仍占位吞点，与现行行为一致）。
+    /// 禁用钮仍占位吞点，与现行行为一致）。落点按动画中的 presentation 帧
+    /// 判定（见 buttonHitContains），重排滑动中点在视觉 chip 上不再落空。
     private func collectClaimingButtons(in view: UIView, point: CGPoint, event: UIEvent?, into out: inout [UIButton]) {
         for sub in view.subviews {
             guard sub.isHidden == false, sub.alpha >= 0.01, sub.isUserInteractionEnabled else { continue }
             if let button = sub as? UIButton {
-                let local = sub.convert(point, from: self)
-                if button.point(inside: local, with: event) {
+                if buttonHitContains(button, point: point) {
                     out.append(button)
                 }
             }
