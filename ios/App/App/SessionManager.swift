@@ -79,6 +79,11 @@ final class SessionManager {
     /// generations 字典只能拦 purge 前的旧读写，拦不住跨会话的旧快照，
     /// 故读盘回包必须以此代次为准。
     var currentSessionGeneration: Int { sessionGeneration }
+    /// 第 18 轮 ⑯：切号请求序号。每次 switchToAccount 发起预检时 +1；
+    /// 回包提交时须与发起时拍的值一致——并发切号时先返回的旧请求不得
+    /// 覆盖后发起的新请求（后发起者胜出）；结合会话代次守卫，退出/
+    /// 重登后切回原账号的迟到预检同样作废。
+    private var accountSwitchSeq = 0
     /// refreshMe 请求序号：每次调用 +1，回包只认最新一次，旧请求回包
     /// （含成功与 401 映射的 success(nil)）直接丢弃、不调 completion。
     /// 显式退出时同样 +1（见 signOutLocally），使退出时在途的旧 /me
@@ -91,6 +96,12 @@ final class SessionManager {
     /// 仍推 meSeq，旧回包按原口径丢弃，waiter 以 .cancelled 释放、不永久挂起。
     private var meInflight = false
     private var meWaiters: [(Result<MeUser?, APIError>) -> Void] = []
+    /// 第 18 轮 ⑮：在途请求的会话代次（发起时拍的 meSeq）。切号/退出
+    /// 推过 meSeq 后新到的 refreshMe 不再订阅旧请求——旧回包必被 seq
+    /// 守卫丢弃，订阅它只会收到 .cancelled；新代次的订阅排进
+    /// mePendingWaiters，在途请求落定后立即为新代次另发一次 /me。
+    private var meInflightSeq = 0
+    private var mePendingWaiters: [(Result<MeUser?, APIError>) -> Void] = []
 
     /// 账号隔离改造：会话状态写回统一到主线程。本类所有公开入口
     /// （refreshMe/switchToAccount/removeAccount/signOutLocally）只在主
@@ -164,13 +175,29 @@ final class SessionManager {
         }
         // r17-C8 在途合并：已有 /me 在途时订阅同一结果，不另发请求、
         // 不推 meSeq（在途请求不被作废，旧回包丢弃口径不受影响）。
+        // 第 18 轮 ⑮：只在同代次才共享——切号/退出已推过 meSeq 时，
+        // 在途请求属于旧代次，旧回包必被 seq 守卫丢弃；新代次的订阅
+        // 排进 mePendingWaiters，在途请求落定后立即另发一次 /me，
+        // 不再让新会话的刷新只收到 .cancelled 且无请求发出。
         if meInflight {
-            if let completion = completion { meWaiters.append(completion) }
+            if let completion = completion {
+                if meSeq == meInflightSeq {
+                    meWaiters.append(completion)
+                } else {
+                    mePendingWaiters.append(completion)
+                }
+            }
             return
         }
-        meInflight = true
         if let completion = completion { meWaiters.append(completion) }
+        startMeRequest()
+    }
+
+    /// 发起一次 /me 请求（refreshMe 的起飞段；排队的新代次订阅由此复用）。
+    private func startMeRequest() {
+        meInflight = true
         meSeq += 1
+        meInflightSeq = meSeq
         let seq = meSeq
         let previousUserId = currentUser?.id
         api.fetchMe { [weak self] result in
@@ -189,6 +216,7 @@ final class SessionManager {
                     let waiters = self.meWaiters
                     self.meWaiters = []
                     for waiter in waiters { waiter(.failure(.cancelled)) }
+                    self.startPendingMeRequestIfNeeded()
                     return
                 }
                 self.applyRefreshMeResult(result, previousUserId: previousUserId, completion: { drained in
@@ -198,9 +226,20 @@ final class SessionManager {
                     let waiters = self.meWaiters
                     self.meWaiters = []
                     for waiter in waiters { waiter(drained) }
+                    self.startPendingMeRequestIfNeeded()
                 })
             }
         }
+    }
+
+    /// 在途请求落定后，若有新代次的订阅在排队，立即为它另发一次 /me。
+    /// 须守 meInflight：waiter 回调里再调 refreshMe 可能已起飞新请求，
+    /// 此时排队订阅留给那次请求的落定点再起飞，不覆盖它的 waiter 表。
+    private func startPendingMeRequestIfNeeded() {
+        guard !meInflight, !mePendingWaiters.isEmpty else { return }
+        meWaiters = mePendingWaiters
+        mePendingWaiters = []
+        startMeRequest()
     }
 
     /// refreshMe 回包的主线程应用体（原回调本体原样挪入，只补
@@ -711,6 +750,9 @@ final class SessionManager {
             return
         }
         let startUserId = currentUser?.id
+        let startGeneration = sessionGeneration
+        accountSwitchSeq += 1
+        let switchSeq = accountSwitchSeq
         snapshotCurrentAccount()
         meSeq += 1
         api.fetchMeWithToken(target.token) { [weak self] result in
@@ -728,7 +770,13 @@ final class SessionManager {
                         finish(.expired)
                         return
                     }
-                    guard self.currentUser?.id == startUserId else {
+                    // 第 18 轮 ⑯：三重核对——当前账号仍是发起时账号、且
+                    // 预检期间无更新的切号请求发起、无会话代次变迁（退出/
+                    // 重登/401 清态/恢复原会话）。只比账号 ID 时，切出去
+                    // 又切回原账号的迟到预检仍可覆盖当前会话。
+                    guard self.currentUser?.id == startUserId,
+                          switchSeq == self.accountSwitchSeq,
+                          startGeneration == self.sessionGeneration else {
                         // 预检期间当前账号已被另一路切换/退出改掉：不覆盖
                         // 更新的态，本次切换作废（调用方 toast 失败口径）。
                         finish(.failed)
