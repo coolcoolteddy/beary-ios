@@ -292,8 +292,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// stateWrap 内做约束组互换（隐藏视图 + 失活约束易留布局歧义）。
     private let errorStateWrap = UIView()
     private let errorStateView = BearyStateView()
-    /// Q5 无结果 CTA：只在无结果态显示，点按复用 clearTapped（清空并回初始态）。
-    private let clearSearchButton = UIButton(type: .custom)
     /// Q9 最近搜索容器：插在状态区与结果区之间，只在初始态有记录时显示。
     private let recentWrap = UIView()
     private let recentStack = UIStackView()
@@ -743,24 +741,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         retryButton.bearyAddPressFeedback()
         stateStack.addArrangedSubview(retryButton)
 
-        // Q5 无结果 CTA：pill 口径（高 44、圆角 22、左右内边距 20），默认隐藏，
-        // 只由 showState(showClear: true) 在无结果态亮起；动作复用 clearTapped。
-        clearSearchButton.translatesAutoresizingMaskIntoConstraints = false
-        clearSearchButton.setTitle("清空搜索", for: .normal)
-        clearSearchButton.setTitleColor(BearyColors.ink, for: .normal)
-        clearSearchButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
-        clearSearchButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        clearSearchButton.backgroundColor = BearyColors.surface2
-        clearSearchButton.layer.borderWidth = 0
-        clearSearchButton.layer.cornerRadius = BearyCorners.single
-        clearSearchButton.layer.masksToBounds = true
-        clearSearchButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
-        clearSearchButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        clearSearchButton.isHidden = true
-        clearSearchButton.addTarget(self, action: #selector(clearSearchTapped), for: .touchUpInside)
-        clearSearchButton.bearyAddPressFeedback()
-        stateStack.addArrangedSubview(clearSearchButton)
-
         // 8-6：错误态 BearyStateView（wrap 与 stateWrap 同槽位、互斥显隐；
         // 内边距 28/20/20 与 bespoke stateStack 同口径，切换只在 showState /
         // showFailedState 做显隐，不在滚动回调里动约束）。
@@ -768,7 +748,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         errorStateWrap.isHidden = true
         contentStack.addArrangedSubview(errorStateWrap)
         errorStateView.translatesAutoresizingMaskIntoConstraints = false
-        errorStateView.configure(kind: .error, title: "搜索失败", subtitle: "搜索失败，请重试", iconName: "icon_search", actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
+        errorStateView.configure(kind: .error, title: "搜索失败", subtitle: "检查网络后重试", iconName: "icon_search", actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
         errorStateWrap.addSubview(errorStateView)
         NSLayoutConstraint.activate([
             errorStateView.topAnchor.constraint(equalTo: errorStateWrap.topAnchor, constant: 28),
@@ -1338,7 +1318,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     // MARK: - 状态渲染（网页 srchStateHtml 四态口径）
 
-    private func showState(title: String?, sub: String?, showRetry: Bool, loading: Bool, showClear: Bool = false) {
+    private func showState(title: String?, sub: String?, showRetry: Bool, loading: Bool) {
         // 8-6：非错误态一律藏起错误 wrap（stack arranged subview，隐藏即塌掉）。
         errorStateWrap.isHidden = true
         errorStateWrap.alpha = 1
@@ -1355,7 +1335,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateSubLabel.text = sub
         stateSubLabel.isHidden = (sub == nil)
         retryButton.isHidden = !showRetry
-        clearSearchButton.isHidden = !showClear
         stateIconView.isHidden = loading
         stateRingView.isHidden = !loading
         if loading {
@@ -1413,7 +1392,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         case .error:
             showFailedState()
         case .empty:
-            showState(title: "没有找到相关日记", sub: "换个关键词试试", showRetry: false, loading: false)
+            showState(title: "没有找到相关日记", sub: "换个词试试", showRetry: false, loading: false)
         case .loading:
             showLoadingState()
         }
@@ -1520,11 +1499,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         renderRecentSearches()
     }
 
-    @objc private func clearSearchTapped() {
-        // Q5 无结果 CTA：复用框内清空逻辑（清空输入、回初始态并亮起最近搜索）。
-        clearTapped()
-    }
-
     private func showLoadingState() {
         // 加载态：圆内转圈 + 登录态一句“你的私密日记只有你自己能搜到”
         // （网页 srchStateHtml('loading') 同口径）。
@@ -1539,7 +1513,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     private func showFailedState() {
         // 8-6：无旧结果的失败态改走统一 BearyStateView（文案与重试动作不变，
-        // 仍是标题“搜索失败”+ 副文案“搜索失败，请重试”+ 重试钮走 retryTapped）；
+        // 仍是标题“搜索失败”+ 副文案“检查网络后重试”+ 重试钮走 retryTapped）；
         // 有旧结果的失败仍走结果区尾行重试（showFailedStateKeepingResults），不动。
         let wasErrorHidden = errorStateWrap.isHidden
         showingResults = false
@@ -1726,8 +1700,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     private func showNoneState(query: String) {
-        // 网页 none 态：标题“没有找到「q」”+ 副文案“换个关键词试试”+ Q5 清空搜索 CTA。
-        showState(title: "没有找到「" + query + "」", sub: "换个关键词试试", showRetry: false, loading: false, showClear: true)
+        // 网页 none 态：标题“没有找到「q」”+ 副文案“换个词试试”。
+        showState(title: "没有找到「" + query + "」", sub: "换个词试试", showRetry: false, loading: false)
     }
 
     // MARK: - 结果渲染
