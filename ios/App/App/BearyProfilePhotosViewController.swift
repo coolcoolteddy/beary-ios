@@ -333,9 +333,16 @@ final class BearyProfilePhotosViewController: UIViewController {
         // 无容器刷新时也不直接返回，仍走下面的实时重滤。
         if let fresh = onRefreshEntries?() {
             let newPhotos = BearyProfileViewController.profilePhotoItems(from: fresh.entries, isOwnProfile: ownProfileValue, isMutualFriend: currentMutualFriend)
+            // 第 18 轮 #4：索引不变也同步条目信息——原图不变但 liveVideos
+            // 映射或日记字段变了时，旧签名（id|imageKey）比对直接跳过，
+            // photosValue 里仍是旧 Entry，灯箱拿到的 liveVideos 与“查看日记”
+            // 的 Entry 都是旧的；其后的重滤也从旧 diaryEntriesValue 重算，
+            // 同样看不见变化。条目与 hasMore 每轮都同步；索引不变只换
+            // Entry 对象，格只用 imageKey 配图，不用重载；索引变了才走
+            // 原重建＋reload。快照同理跟新 Entry 落盘。
+            diaryEntriesValue = fresh.entries
+            photosHasMore = fresh.hasMore && authorIdValue != nil
             if photosSignature(newPhotos) != photosSignature(photosValue) {
-                diaryEntriesValue = fresh.entries
-                photosHasMore = fresh.hasMore && authorIdValue != nil
                 photosValue = newPhotos
                 photosFromCache = false
                 photosFreshConfirmed = true
@@ -345,6 +352,11 @@ final class BearyProfilePhotosViewController: UIViewController {
                 collectionView.reloadData()
                 updateTitleAndEmpty()
                 updatePhotosStatusLabel()
+                if ownProfileValue, !newPhotos.isEmpty {
+                    savePhotosSnapshotIfNeeded()
+                }
+            } else {
+                photosValue = newPhotos
                 if ownProfileValue, !newPhotos.isEmpty {
                     savePhotosSnapshotIfNeeded()
                 }
