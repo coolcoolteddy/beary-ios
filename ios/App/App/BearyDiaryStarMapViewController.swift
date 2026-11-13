@@ -813,7 +813,10 @@ final class BearyDiaryStarMapViewController: UIViewController {
             diaryVersion: BearyStarMap.diaryVersion(entries: sliceEntries, viewerIsAuthor: viewerIsAuthor))
         if let cached = BearyStarMapCache.lookup(key: cacheKey) {
             // 同步命中：generation 刚 +1、无在途旧回包可冲掉它，直接换入。
-            model = cached
+            // ⑧：只复用星位/半径/亮度与连线——指纹不含天气、互动数等轻量
+            // 字段，命中模型的 Entry 可能是旧副本；按 id 从最新 allEntries
+            // 重绑星内 Entry 与 entryById，旧星不动位、不重算。
+            model = rebindCachedModelEntries(cached, from: allEntries)
             applyModelToSky()
         } else {
             DispatchQueue.global(qos: .userInitiated).async {
@@ -834,6 +837,28 @@ final class BearyDiaryStarMapViewController: UIViewController {
             model = StarMapModel(stars: [], edges: [], entryById: [:])
             applyModelToSky()
         }
+    }
+
+    /// ⑧：缓存命中模型的 Entry 重绑——指纹只守建模输入（标题/正文/心情/
+    /// 地点/可见性等），天气、互动数等轻量字段不在指纹里；命中时星位与
+    /// 连线可直接复用，但星内 Entry 与 entryById 须按 id 换成 allEntries
+    /// 里的最新副本，否则切走再回来会把旧天气/旧互动数换回来。allEntries
+    /// 里没有的 id（命中时理论上不会出现）留旧副本，不丢星。
+    private func rebindCachedModelEntries(_ cached: StarMapModel, from entries: [Entry]) -> StarMapModel {
+        var latestById: [String: Entry] = [:]
+        for entry in entries {
+            guard let id = entry.id else { continue }
+            latestById[id] = entry
+        }
+        let stars = cached.stars.map { star -> StarMapStar in
+            guard let id = star.entry.id, let fresh = latestById[id] else { return star }
+            return StarMapStar(entry: fresh, x: star.x, y: star.y, radius: star.radius, brightness: star.brightness, wordCount: star.wordCount)
+        }
+        var entryById = cached.entryById
+        for (id, fresh) in latestById where entryById[id] != nil {
+            entryById[id] = fresh
+        }
+        return StarMapModel(stars: stars, edges: cached.edges, entryById: entryById)
     }
 
     private func applyModelToSky() {
