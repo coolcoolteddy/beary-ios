@@ -157,6 +157,13 @@ final class BearyQuoteCardView: UIView {
 
     private var quoteExpanded = false
 
+    /// 审计十轮第 5 项：VoiceOver 读屏文案的输入快照——作者（handle 优先）、
+    /// 显示中的缩略图数、是否超 3 行；refreshQuoteAccessibility() 由三者
+    /// 拼 label，configure 末尾与展开后、布局算出超 3 行后各刷一次。
+    private var quoteAuthorText = ""
+    private var quoteImageCount = 0
+    private var quoteOverflowsThreeLines = false
+
     /// 审计八轮第 1 项：当前引用 ID——同引用重配时保留展开态的判定键；
     /// clear()（复用／失效占位）不碰它：判定只认 ID 相等，旧 ID 遇新引用
     /// 自然不等即重置，不会串位。
@@ -285,7 +292,11 @@ final class BearyQuoteCardView: UIView {
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             context: nil
         ).height
-        expandButton.isHidden = fullHeight <= contentLabel.bounds.height + 2
+        let overflows = fullHeight > contentLabel.bounds.height + 2
+        expandButton.isHidden = overflows == false
+        quoteOverflowsThreeLines = overflows
+        // 审计十轮第 5 项：布局算出超 3 行后，读屏 label 补“可展开”并挂展开操作。
+        refreshQuoteAccessibility()
     }
 
     @objc private func expandTapped() {
@@ -293,6 +304,8 @@ final class BearyQuoteCardView: UIView {
         contentLabel.numberOfLines = 0
         expandButton.isHidden = true
         onExpansionChanged?()
+        // 审计十轮第 5 项：展开后读屏 label 刷成“已展开”，撤掉展开操作。
+        refreshQuoteAccessibility()
     }
 
     override init(frame: CGRect) {
@@ -431,6 +444,52 @@ final class BearyQuoteCardView: UIView {
         accessibilityLabel = label
     }
 
+    /// 审计十轮第 5 项：正常卡的 VoiceOver label——作者＋正文摘要（前 100 字，
+    /// 与搜索行同口径，超了加 …；正文为空时略过本段）＋图片数（仅显示缩略
+    /// 图时，0 张不写）＋展开态（已展开／未展开且超 3 行时“可展开”）＋
+    /// 双击查看原文；超 3 行未展开时另挂“展开引用正文”自定义操作，走与
+    /// 展开钮同一路。只写正常卡 label，占位／加载失败态的 label 仍由
+    /// showGone／showLoadFailed 专管（本函数遇那两态直接返回）；只写
+    /// label 与操作，不碰 traits／isAccessibilityElement（configure 已置）。
+    private func refreshQuoteAccessibility() {
+        guard isGoneState == false, isLoadFailedState == false else { return }
+        var parts: [String] = ["引用日记"]
+        if quoteAuthorText.isEmpty == false {
+            parts.append(quoteAuthorText)
+        }
+        if let text = contentLabel.text, text.isEmpty == false {
+            parts.append("正文：" + String(text.prefix(100)) + (text.count > 100 ? "…" : ""))
+        }
+        if quoteImageCount > 0 {
+            parts.append("\(quoteImageCount) 张图片")
+        }
+        if quoteExpanded {
+            parts.append("已展开")
+        } else if quoteOverflowsThreeLines {
+            parts.append("可展开")
+        }
+        parts.append("双击查看原文")
+        let label = parts.joined(separator: "，")
+        if accessibilityLabel != label {
+            accessibilityLabel = label
+        }
+        if quoteExpanded == false, quoteOverflowsThreeLines {
+            if accessibilityCustomActions == nil {
+                accessibilityCustomActions = [UIAccessibilityCustomAction(name: "展开引用正文", target: self, selector: #selector(expandFromAccessibility))]
+            }
+        } else if accessibilityCustomActions != nil {
+            accessibilityCustomActions = nil
+        }
+    }
+
+    /// 审计十轮第 5 项：读屏自定义操作入口——与展开钮同一路；展开后
+    /// refreshQuoteAccessibility() 把 label 刷成“已展开”并撤掉本操作。
+    @objc private func expandFromAccessibility() -> Bool {
+        guard quoteExpanded == false else { return false }
+        expandTapped()
+        return true
+    }
+
     override func accessibilityActivate() -> Bool {
         if isLoadFailedState {
             onRetryTapped?()
@@ -445,6 +504,10 @@ final class BearyQuoteCardView: UIView {
 
     func clear() {
         quoteExpanded = false
+        quoteAuthorText = ""
+        quoteImageCount = 0
+        quoteOverflowsThreeLines = false
+        accessibilityCustomActions = nil
         contentLabel.numberOfLines = 3
         expandButton.isHidden = true
         isAccessibilityElement = false
@@ -629,9 +692,13 @@ final class BearyQuoteCardView: UIView {
         // 条宽算到 flex 值，不必等 layoutSubviews；卡宽未落位（0）时
         // refresh 提前返回，仍由 layoutSubviews 首轮算出。
         refreshThumbsWidth()
-        // 审计-广场：正常卡 VoiceOver 整卡为 button，label 带作者（handle 优先）。
+        // 审计十轮第 5 项：正常卡 VoiceOver 整卡为 button，label 带作者（handle 优先）
+        // ＋正文摘要＋图片数＋展开态，由 refreshQuoteAccessibility() 拼；
+        // 图片数只计显示中的缩略图（allowThumbs 关时不计，不泄露未展示数）。
         let quoteAuthor = (authorHandle ?? "").isEmpty ? authorName : "@\(authorHandle!)"
-        let quoteLabel = quoteAuthor.isEmpty ? "引用日记，点按查看原文" : "引用日记，\(quoteAuthor)，点按查看原文"
-        setQuoteAccessibility(label: quoteLabel, isButton: true)
+        quoteAuthorText = quoteAuthor
+        quoteImageCount = (keys.isEmpty || allowThumbs == false) ? 0 : keys.count
+        setQuoteAccessibility(label: nil, isButton: true)
+        refreshQuoteAccessibility()
     }
 }
