@@ -56,6 +56,9 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     private let manualButton = BearyHit44Button(type: .system)
     private let relocateButton = BearyHit44Button(type: .system)
     private let subLabel = UILabel()
+    // 审计三轮⑦ App 侧：首次用地点时的位置隐私说明，与 Info.plist
+    // NSLocationWhenInUseUsageDescription 一字相同；只在未决定授权时显示。
+    private let privacyLabel = UILabel()
     private let inputField = UITextField()
     // 审计 E2 第 6 项：建议区包进滚动视图——气泡总高不再随建议条数无上限长，
     // 头部、输入框保持原位，只有建议区内部滚动；选项仍是既有 5 条，不增不减。
@@ -179,6 +182,16 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         subLabel.numberOfLines = 0
         subLabel.text = "正在获取当前位置，也可以自己输入"
 
+        // 审计三轮⑦ App 侧：位置隐私说明（Info.plist 原文逐字），与副文案
+        // 同款 12pt 灰字；默认隐藏，只在未决定授权（首次用地点）时显示。
+        privacyLabel.translatesAutoresizingMaskIntoConstraints = false
+        privacyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        privacyLabel.adjustsFontForContentSizeCategory = true
+        privacyLabel.textColor = BearyColors.gray
+        privacyLabel.numberOfLines = 0
+        privacyLabel.text = "beary 需要使用位置，以便为日记添加地点和填写天气（精确位置只用于本次天气查询，会发送至服务接口；日记本身只保存地点文字，不保存经纬度）。"
+        privacyLabel.isHidden = true
+
         inputField.translatesAutoresizingMaskIntoConstraints = false
         // 视觉审计第 10 项：系统描边输入框改无外框——.none + surface2 底色、
         // 容器圆角 12，聚焦走聚焦阴影（BearyInputContainer 同款口径）。
@@ -221,6 +234,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         mainStack.translatesAutoresizingMaskIntoConstraints = false
         mainStack.addArrangedSubview(headerRow)
         mainStack.addArrangedSubview(subLabel)
+        mainStack.addArrangedSubview(privacyLabel)
         mainStack.addArrangedSubview(inputField)
         mainStack.addArrangedSubview(suggestionsScrollView)
         addSubview(mainStack)
@@ -391,6 +405,9 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             // 审计 D3：定位进行中副文案与状态行、操作钮重复，隐藏；
             // 失败时 setManualMode 再显示具体说明，不动。
             self.subLabel.isHidden = true
+            // 审计三轮⑦ App 侧：只在未决定授权（首次用地点）时显示位置
+            // 隐私说明；已决定后不再出现（后续打开 setLocating 会重算）。
+            self.privacyLabel.isHidden = CLLocationManager.authorizationStatus() != .notDetermined
             self.setConfirmEnabled(false)
             self.inputField.isHidden = true
             self.suggestionsScrollView.isHidden = true
@@ -408,6 +425,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             self.statusIconView.isHidden = false
             self.statusLabel.text = location.name ?? location.district
             self.subLabel.isHidden = false
+            // 审计三轮⑦ App 侧：已定位即非首次用地点，隐私说明不再显示。
+            self.privacyLabel.isHidden = true
             if let district = location.district, location.name != nil, district != location.name {
                 self.subLabel.text = "已定位 · 公开时仅显示大致位置（\(district)）"
             } else {
@@ -429,6 +448,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             self.statusIconView.isHidden = false
             self.statusLabel.text = "自己输入地点"
             self.subLabel.isHidden = false
+            // 审计三轮⑦ App 侧：手动态不走精确定位，隐私说明不再显示。
+            self.privacyLabel.isHidden = true
             if let message = message {
                 self.subLabel.text = message
             } else {
