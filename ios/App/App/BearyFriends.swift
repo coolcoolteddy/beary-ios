@@ -80,7 +80,7 @@ enum BearyFriends {
 
     private static func presentUnfollowSheet(from vc: UIViewController, displayName: String, mutual: Bool, onConfirmed: @escaping () -> Void) {
         let message = mutual
-            ? "取消关注后，你们不再是互关好友，对方将看不到你的仅好友日记，你也看不到对方的仅好友日记。"
+            ? "取消后不再是互关：互相看不到对方的「仅好友」日记。"
             : "对方的日记将不再出现在‘正在关注’中"
         // displayName 一直透传却未用：标题改为带昵称；调用方传空串时只用「取消关注」，避免“取消关注 ？”。
         let title = displayName.isEmpty ? "取消关注" : "取消关注 \(displayName)？"
