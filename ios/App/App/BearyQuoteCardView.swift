@@ -396,7 +396,7 @@ final class BearyQuoteCardView: UIView {
         if let handleText = handleText {
             return "引用自 \(handleText)"
         }
-        return dateText
+        return "引用自 · \(dateText)"
     }
 
     /// 来源行唯一写入口：configure 与 showGone 均走这里，保证两态口径一致。
