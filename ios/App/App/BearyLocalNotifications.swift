@@ -54,6 +54,43 @@ final class BearyLocalNotifications {
 
     private var lastRefreshAt: Date?
 
+    /// 串行提交队列：通知的最终写盘（删 / 增）只在这里排队执行，提交之间不交错。
+    private let commitQueue = DispatchQueue(label: "com.beary.localNotifications.commit")
+
+    /// 重算代次（stateLock 保护）：每次 refreshAll（未被 5 分钟节流拦下）+1；
+    /// 切号也走 refreshAll(force:)，同样 +1。提交前校验代次与账号，
+    /// 旧重算的提交直接丢弃（审计第 11 轮第 5 项）。
+    private let stateLock = NSLock()
+    private var generation: UInt64 = 0
+    /// 最近一次 refreshAll 在主线程读到的账号（stateLock 保护；无账号时为 nil）。
+    private var latestAccountId: Int?
+
+    private func nextGeneration() -> UInt64 {
+        stateLock.lock()
+        generation += 1
+        let gen = generation
+        stateLock.unlock()
+        return gen
+    }
+
+    private func isCurrentGeneration(_ gen: UInt64) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return gen == generation
+    }
+
+    private func isCurrentCommit(_ gen: UInt64, accountId: Int) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return gen == generation && accountId == latestAccountId
+    }
+
+    private func setLatestAccountId(_ accountId: Int?) {
+        stateLock.lock()
+        latestAccountId = accountId
+        stateLock.unlock()
+    }
+
     private init() {
         // 切号时按新号重算（SceneDelegate onUserChanged 在 id 真变时广播）。
         NotificationCenter.default.addObserver(forName: .bearyUserDidChange, object: nil, queue: .main) { [weak self] _ in
@@ -153,31 +190,43 @@ final class BearyLocalNotifications {
     func refreshAll(force: Bool = false) {
         if !force, let last = lastRefreshAt, Date().timeIntervalSince(last) < 300 { return }
         lastRefreshAt = Date()
+        // 代次先行：本次重算一旦开始，在途的旧重算提交即失效（第 5 项）；
+        // 未授权 / 无账号的清理同样先推进代次，旧提交不得把通知写回来。
+        let gen = nextGeneration()
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { [weak self] settings in
             guard let self = self else { return }
             guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
-                self.removeAllLocalPending(center: center)
+                self.setLatestAccountId(nil)
+                self.removeAllLocalPending(center: center, generation: gen)
                 return
             }
             DispatchQueue.main.async {
                 guard let accountId = SessionManager.shared.currentUser?.id else {
-                    self.removeAllLocalPending(center: center)
+                    self.setLatestAccountId(nil)
+                    self.removeAllLocalPending(center: center, generation: gen)
                     return
                 }
+                self.setLatestAccountId(accountId)
                 let enabled = Dictionary(uniqueKeysWithValues: Kind.allCases.map { ($0, self.isEnabled($0)) })
                 DispatchQueue.global(qos: .utility).async {
-                    self.rebuild(center: center, accountId: accountId, enabled: enabled)
+                    self.rebuild(center: center, accountId: accountId, enabled: enabled, generation: gen)
                 }
             }
         }
     }
 
-    private func removeAllLocalPending(center: UNUserNotificationCenter) {
-        center.getPendingNotificationRequests { requests in
+    private func removeAllLocalPending(center: UNUserNotificationCenter, generation gen: UInt64) {
+        // 快照与写盘分离：先取待发送快照，真正删除时回到串行队列再验一次代次，
+        // 避免删除与新提交交错（第 5 项）。
+        center.getPendingNotificationRequests { [weak self] requests in
+            guard let self = self else { return }
             let ids = requests.map(\.identifier).filter { $0.hasPrefix("beary.local.") }
             guard !ids.isEmpty else { return }
-            center.removePendingNotificationRequests(withIdentifiers: ids)
+            self.commitQueue.async {
+                guard self.isCurrentGeneration(gen) else { return }
+                center.removePendingNotificationRequests(withIdentifiers: ids)
+            }
         }
     }
 
@@ -188,13 +237,20 @@ final class BearyLocalNotifications {
         var kind: Kind
     }
 
-    private func rebuild(center: UNUserNotificationCenter, accountId: Int, enabled: [Kind: Bool]) {
+    private func rebuild(center: UNUserNotificationCenter, accountId: Int, enabled: [Kind: Bool], generation gen: UInt64) {
+        // 第 4 项：先取消已关种类的待发送——这一步不需要归档；归档读不到时
+        // 下面直接 return，但已关提醒不会再响。取消走串行提交队列，代次过期即丢弃。
+        let disabledKinds = Kind.allCases.filter { enabled[$0] != true }
+        if !disabledKinds.isEmpty {
+            cancelKinds(disabledKinds, center: center, generation: gen)
+        }
         let now = Date()
         let nowMs = Int(now.timeIntervalSince1970 * 1000)
         let calendar = BearyBeijingDay.calendar
         let todayKey = BearyBeijingDay.dayKey(ofMs: nowMs) ?? ""
         // 存档读盘失败则本轮不重算（保留已排提醒，下次重算补上）；
         // 主线 loadAllEntries 自 #1069 起返回可选（读盘失败为 nil）。
+        // 注意：已关种类的取消在上面已做完，不受这次 return 影响（第 4 项）。
         guard let entries = BearyEntrySyncStore.loadAllEntries(accountId: accountId) else { return }
         let messages = PastSelfStore(userId: accountId).loadAll()
         var desired: [DesiredRequest] = []
@@ -239,23 +295,65 @@ final class BearyLocalNotifications {
             }
         }
 
-        // 差分：清掉失效的（已关开关 / 已删篇 / 已撤回 / 已过期），补上新增的；
-        // 同 id 重排即覆盖（UNUserNotificationCenter 同 id 替换旧待发送）。
+        // 第 5 项：差分提交走串行队列，提交前再验代次与账号；旧重算直接丢弃。
+        let desiredSnapshot = desired
+        commitQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.commitDesired(desiredSnapshot, center: center, accountId: accountId, generation: gen, calendar: calendar)
+        }
+    }
+
+    /// 取消指定种类的全部待发送（第 4 项：不依赖归档，先行取消）。
+    /// 单条与前缀两种口径：每日提醒 / 那年今日各一条固定 id，限时 / 留话按前缀。
+    /// 测试通知（beary.local.test-…）不属于任一种类，不会被取消。
+    private func cancelKinds(_ kinds: [Kind], center: UNUserNotificationCenter, generation gen: UInt64) {
+        center.getPendingNotificationRequests { [weak self] requests in
+            guard let self = self else { return }
+            let ids = requests.map(\.identifier).filter { id in
+                kinds.contains { kind in Self.identifier(id, belongsTo: kind) }
+            }
+            guard !ids.isEmpty else { return }
+            self.commitQueue.async {
+                guard self.isCurrentGeneration(gen) else { return }
+                center.removePendingNotificationRequests(withIdentifiers: ids)
+            }
+        }
+    }
+
+    private static func identifier(_ id: String, belongsTo kind: Kind) -> Bool {
+        switch kind {
+        case .dailyReminder: return id == dailyIdentifier
+        case .pastDay: return id == pastDayIdentifier
+        case .limitedExpiry: return id.hasPrefix(limitedPrefix)
+        case .pastSelfDelivery: return id.hasPrefix(pastSelfPrefix)
+        }
+    }
+
+    /// 差分提交（第 5 项）：在串行队列上执行，提交前再验代次与账号；
+    /// 清掉失效的（已关开关 / 已删篇 / 已撤回 / 已过期），补上新增的；
+    /// 同 id 重排即覆盖（UNUserNotificationCenter 同 id 替换旧待发送）。
+    /// 音效只在这里设一次（content.sound）：音效支按 kind 在此取专属音效文件。
+    private func commitDesired(_ desired: [DesiredRequest], center: UNUserNotificationCenter, accountId: Int, generation gen: UInt64, calendar: Calendar) {
+        guard isCurrentCommit(gen, accountId: accountId) else { return }
         let desiredIds = Set(desired.map(\.identifier))
-        center.getPendingNotificationRequests { requests in
+        center.getPendingNotificationRequests { [weak self] requests in
+            guard let self = self else { return }
             let pendingIds = Set(requests.map(\.identifier).filter { $0.hasPrefix("beary.local.") })
             let stale = pendingIds.subtracting(desiredIds)
-            if !stale.isEmpty { center.removePendingNotificationRequests(withIdentifiers: Array(stale)) }
-            for item in desired {
-                let content = UNMutableNotificationContent()
-                content.body = item.body
-                content.sound = UNNotificationSound(named: UNNotificationSoundName(item.kind.soundFileName))
-                var comps = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: item.fireDate)
-                comps.calendar = calendar
-                comps.timeZone = calendar.timeZone
-                let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
-                let request = UNNotificationRequest(identifier: item.identifier, content: content, trigger: trigger)
-                center.add(request)
+            self.commitQueue.async {
+                guard self.isCurrentCommit(gen, accountId: accountId) else { return }
+                if !stale.isEmpty { center.removePendingNotificationRequests(withIdentifiers: Array(stale)) }
+                for item in desired {
+                    let content = UNMutableNotificationContent()
+                    content.body = item.body
+                    content.sound = UNNotificationSound(named: UNNotificationSoundName(item.kind.soundFileName))
+                    var comps = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: item.fireDate)
+                    comps.calendar = calendar
+                    comps.timeZone = calendar.timeZone
+                    let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
+                    let request = UNNotificationRequest(identifier: item.identifier, content: content, trigger: trigger)
+                    center.add(request)
+                }
             }
         }
     }
