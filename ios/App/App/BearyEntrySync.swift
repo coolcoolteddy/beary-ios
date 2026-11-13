@@ -797,7 +797,8 @@ final class BearySharedEntryLoader {
         var entries: [Entry]
         /// 是否触顶：10 页拉满且第 10 页仍满 50 篇（仅展示最近拉取的 500 篇）。
         var isCapped: Bool
-        /// 是否中断后的部分结果（失败发生在已收页之后）。
+        /// 是否中断后的部分结果（失败发生在已收页之后，或翻页提前终止：
+        /// 满页无可用游标、游标未推进——结果可能不完整，不当完整结果）。
         var isPartial: Bool
         /// 中断续拉游标（isPartial 时有效；触顶完整时亦带末页游标供按需续拉新一批）。
         var resumeBefore: Int?
@@ -968,6 +969,8 @@ final class BearySharedEntryLoader {
     /// 末页不满 50 篇即收尾；满 50 篇且页数到 10 即截断（isCapped）；
     /// 任一页失败时，已收页作部分结果回（isPartial + 续拉游标），
     /// 首页面失败则整体失败（nil）。
+    /// 满 50 篇却无可用游标（末条缺 createdAt/id）或新游标与本页游标
+    /// 相同（未推进）时停翻，按中断的部分结果回（isPartial），不当完整结果。
     private func fetchNetworkPage(
         key: RequestKey,
         scope: BearyAPI.Scope,
@@ -1003,19 +1006,40 @@ final class BearySharedEntryLoader {
                         nextCollected.append(entry)
                     }
                     let last = pageEntries.last
-                    if pageEntries.count >= Self.pageLimit, pageNumber < Self.maxPages,
+                    let isFullPage = pageEntries.count >= Self.pageLimit
+                    // 满页但末条无可用游标（缺 createdAt 或 id 为空）：续翻无
+                    // 入口，结果可能不完整，按中断的部分结果回，不当完整结果。
+                    let hasCursor = last?.createdAt != nil && !(last?.id ?? "").isEmpty
+                    if isFullPage, pageNumber < Self.maxPages, hasCursor,
                        let cursor = last?.createdAt, let lastId = last?.id {
+                        // 推进校验：新游标与本页请求游标相同即服务端未推进
+                        // （重复返回同一页），停翻并按部分结果回，避免翻到
+                        // 10 页才停、空耗请求。
+                        if page?.before == cursor && page?.beforeId == lastId {
+                            NSLog("[BearyEntrySync] shared load cursor did not advance, stopping as partial")
+                            completion(SharedEntryLoad(
+                                entries: nextCollected, isCapped: false, isPartial: true,
+                                resumeBefore: page?.before, resumeBeforeId: page?.beforeId,
+                                resumePage: pageNumber, source: .network
+                            ))
+                            return
+                        }
                         let nextPage = (before: cursor, beforeId: lastId, number: pageNumber + 1)
                         self.fetchNetworkPage(key: key, scope: scope, page: nextPage, collected: nextCollected, seenIds: nextSeenIds, completion: completion)
                         return
                     }
-                    let capped = pageEntries.count >= Self.pageLimit && pageNumber >= Self.maxPages
+                    let capped = isFullPage && pageNumber >= Self.maxPages
+                    let noCursorTruncated = isFullPage && pageNumber < Self.maxPages && !hasCursor
+                    if noCursorTruncated {
+                        NSLog("[BearyEntrySync] shared load full page has no cursor, stopping as partial")
+                    }
                     // 触顶时亦带末页游标：地图“加载更多”从该游标续拉新一批
                     // （resumePage 从 1 重新计）；末页满页却无游标时不留入口。
                     completion(SharedEntryLoad(
-                        entries: nextCollected, isCapped: capped, isPartial: false,
-                        resumeBefore: capped ? last?.createdAt : nil,
-                        resumeBeforeId: capped ? last?.id : nil, resumePage: 1, source: .network
+                        entries: nextCollected, isCapped: capped, isPartial: noCursorTruncated,
+                        resumeBefore: capped ? last?.createdAt : (noCursorTruncated ? page?.before : nil),
+                        resumeBeforeId: capped ? last?.id : (noCursorTruncated ? page?.beforeId : nil),
+                        resumePage: noCursorTruncated ? pageNumber : 1, source: .network
                     ))
                 }
             }
