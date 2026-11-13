@@ -2586,10 +2586,10 @@ final class BearySettingsViewController: UIViewController {
 
     /// 2026-10-29 第 11 项：设备列表已抽成独立页——本函数不再内联建设备行，
     /// 只缓存失败态（列表数据走既有 accountSessions；子页打开时传入，未拉到
-    /// 时子页自己拉一次）。行格式（设备名 15 墨 + 当前绿 pill + 「地区 ·
-    /// 上次活跃 dateTime」13 灰、过期行 alpha 0.55、空态与失败重试）已原样
-    /// 搬进 BearyDevicesViewController；原错峰淡入 fadeInNewStackRows 随内联
-    /// 列表一并删除（子页内无此动效）。
+    /// 时子页自己拉一次）。行格式（设备名 15 墨 + 状态 pill：「当前」绿、
+    /// 「已过期」灰 + 「地区 · 上次活跃 dateTime」13 灰，过期行不再降
+    /// 透明度、副文案不再拼「· 已过期」）已原样搬进 BearyDevicesViewController；
+    /// 原错峰淡入 fadeInNewStackRows 随内联列表一并删除（子页内无此动效）。
     private func rebuildSessions(sessions: [BearyAccountSession]?, failed: Bool) {
         sessionsLoadFailed = failed
     }

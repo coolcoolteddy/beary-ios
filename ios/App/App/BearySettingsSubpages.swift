@@ -675,7 +675,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
         // 行每次 render 重建，故以首个数据 render＋已进窗口为播一次的
         // 守卫；传入数据首帧因窗口未进不播、直接显；加载／失败态
         // render 不置位，重试成功后仍可播一次；减动效直显；目标
-        // alpha 按行原值取——过期行 0.55 不会被动画抬到 1）。
+        // alpha 按行原值取（各行均为 1，不再有过期行降透明度）。
         if !deviceRowsAnimated, sessions != nil, !loadFailed,
            view.window != nil, !UIAccessibility.isReduceMotionEnabled {
             deviceRowsAnimated = true
@@ -700,32 +700,43 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
         }
     }
 
-    /// 设置页 rebuildSessions 同款行格式：设备名 15 墨 + 当前绿 pill
-    /// （11/700 绿字绿边、内边距 1/7、圆角 8）+ 副文案 13 灰
-    /// 「地区 · 上次活跃 dateTime[ · 已过期]」，过期行 alpha 0.55。
+    /// 设置页 rebuildSessions 同款行格式：设备名 15 墨 + 状态 pill
+    /// （「当前」11/700 绿字绿边、「已过期」11/700 灰字灰边，内边距 1/7、
+    /// 圆角 8）+ 副文案 13 灰「地区 · 上次活跃 dateTime」；过期行不再
+    /// 整行降透明度，设备名／地区／上次活跃时间保持正常对比度。
     private func sessionRow(session: BearyAccountSession) -> UIView {
         let devLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         devLabel.text = BearyAccountText.deviceName(session: session)
         var lineParts: [UIView] = [devLabel]
-        if session.isCurrent == true {
-            let curLabel = makeLabel(font: UIFont.systemFont(ofSize: 11, weight: .bold), color: BearyColors.deepGreenText)
-            curLabel.text = "当前"
-            let curPill = UIView()
-            curPill.translatesAutoresizingMaskIntoConstraints = false
-            curPill.layer.borderWidth = 1
-            curPill.layer.bearyDynamicBorderColor = BearyColors.green
-            curPill.layer.cornerRadius = 8
-            curPill.clipsToBounds = true
-            curPill.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-            curLabel.translatesAutoresizingMaskIntoConstraints = false
-            curPill.addSubview(curLabel)
+        // 状态 pill 同款几何（11/700、1pt 边、圆角 8、内边距 1/7），
+        // 文字与边框同色走 token：当前深绿（#1320 对比度）、已过期灰。
+        let makeStatusPill: (String, UIColor) -> UIView = { text, color in
+            let pillLabel = self.makeLabel(font: UIFont.systemFont(ofSize: 11, weight: .bold), color: color)
+            pillLabel.text = text
+            let pill = UIView()
+            pill.translatesAutoresizingMaskIntoConstraints = false
+            pill.layer.borderWidth = 1
+            pill.layer.bearyDynamicBorderColor = color
+            pill.layer.cornerRadius = 8
+            pill.clipsToBounds = true
+            pill.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+            pillLabel.translatesAutoresizingMaskIntoConstraints = false
+            pill.addSubview(pillLabel)
             NSLayoutConstraint.activate([
-                curLabel.topAnchor.constraint(equalTo: curPill.topAnchor, constant: 1),
-                curLabel.leadingAnchor.constraint(equalTo: curPill.leadingAnchor, constant: 7),
-                curLabel.trailingAnchor.constraint(equalTo: curPill.trailingAnchor, constant: -7),
-                curLabel.bottomAnchor.constraint(equalTo: curPill.bottomAnchor, constant: -1),
+                pillLabel.topAnchor.constraint(equalTo: pill.topAnchor, constant: 1),
+                pillLabel.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 7),
+                pillLabel.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -7),
+                pillLabel.bottomAnchor.constraint(equalTo: pill.bottomAnchor, constant: -1),
             ])
-            lineParts.append(curPill)
+            return pill
+        }
+        if session.isCurrent == true {
+            lineParts.append(makeStatusPill("当前", BearyColors.deepGreenText))
+        }
+        if session.expired == true {
+            lineParts.append(makeStatusPill("已过期", BearyColors.gray))
+        }
+        if session.isCurrent == true || session.expired == true {
             lineParts.append(UIView())
         }
         let lineRow = UIStackView(arrangedSubviews: lineParts)
@@ -733,14 +744,12 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
         lineRow.spacing = 8
         lineRow.alignment = .center
         let region = (session.region ?? "").isEmpty ? "未知地区" : (session.region ?? "")
-        var meta = region + " · 上次活跃 " + BearyAccountText.dateTimeString(ms: session.lastActive)
-        if session.expired == true { meta += " · 已过期" }
+        let meta = region + " · 上次活跃 " + BearyAccountText.dateTimeString(ms: session.lastActive)
         let metaLabel = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
         metaLabel.text = meta
         let rowStack = UIStackView(arrangedSubviews: [lineRow, metaLabel])
         rowStack.axis = .vertical
         rowStack.spacing = 4
-        if session.expired == true { rowStack.alpha = 0.55 }
         return rowStack
     }
 
