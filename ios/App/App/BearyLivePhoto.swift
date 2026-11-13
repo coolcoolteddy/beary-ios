@@ -139,6 +139,11 @@ final class BearyLivePhotoLoader {
     private static let diskCacheCapBytes: Int64 = 200 * 1024 * 1024
 
     private let stateLock = NSLock()
+    /// 第十一轮 06：写盘与清理的共享锁（图片加载器 diskWriteLock 同款）——
+    /// 代次校验与落盘在同一临界区内完成，purge 的代次推进与目录删除在同一
+    /// 锁内，两者互斥、窗口闭合。锁顺序：本锁 → stateLock（校验时代次读），
+    /// 与 purgeAccount 一致；stateLock 内不取任何其他锁，无反向嵌套，无死锁。
+    private let diskWriteLock = NSLock()
     /// 按账号桶的下载代次（与图片加载器 BearyImageLoader.generations 同口径）：
     /// purgeAccount / 切桶只推进对应桶的代次，该桶在途写入（磁盘 / 内存 /
     /// 交付）在落点前复核代次，代次已变即弃写；其他桶在途任务不受影响。
@@ -209,26 +214,35 @@ final class BearyLivePhotoLoader {
 
     /// 退出/401 清态：清该账号实况内存 + 磁盘桶（SessionManager 退出路径调用，
     /// 与图片桶 purgeAccount 同口径；切换账号不走这里，旧桶保留、切回可复用）。
-    /// 顺序与图片桶一致：先推进该桶代次（删除前已在途、删除后才到写盘点的
-    /// 旧写入凭代次弃写，不再把已删的私密实况写回来）、取消该桶在途下载，
-    /// 再清内存、串行删目录、清累计字节。
+    /// 顺序与图片桶一致：先取消该桶在途下载，再清内存、删目录、清累计字节。
     /// 第七轮审计 06：先推进代次、取消在途下载，再清内存、删目录。代次屏障使
     /// 删除前已在途、删除后才到写盘点的旧下载在完成回调守卫处即被丢弃，不再
     /// 调 writeDisk 重新创建刚删除的目录；取消任务使仍在途的网络任务不再跑
     /// 完整个回调链。只删目录不做这两件，迟到回包会把缓存目录重新建回来
     /// （writeDisk 经 fileURL 先 createDirectory 再写盘）。
+    /// 第十一轮 06：上述屏障仍留一道窗口——writeDisk 的校验与落盘之间，
+    /// purge 可能夹进来删目录，旧写入随后重建目录写回文件。现与图片加载器
+    /// 第十轮 08 同款：代次推进与目录删除在 diskWriteLock 内原子完成，
+    /// 写盘侧的校验＋落盘在同一锁内，两者任一先行，最终状态都是目录已删、
+    /// 旧写入未落盘。
     func purgeAccount(_ id: Int) {
         let bucket = "\(id)"
-        bumpGeneration(for: bucket)
         stateLock.lock()
         let stale = inFlightTasks[bucket] ?? []
         inFlightTasks[bucket] = nil
         stateLock.unlock()
         stale.forEach { $0.cancel() }
         cache.removeAllObjects()
-        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
-        let dir = caches.appendingPathComponent("BearyLiveCache").appendingPathComponent(bucket)
-        try? FileManager.default.removeItem(at: dir)
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("BearyLiveCache").appendingPathComponent(bucket)
+        // 代次推进与目录删除在 diskWriteLock 内原子完成（见本方法注释）；
+        // 写盘侧的校验＋落盘在同一锁内，两者互斥，旧写入不再重建目录。
+        diskWriteLock.lock()
+        bumpGeneration(for: bucket)
+        if let dir = dir {
+            try? FileManager.default.removeItem(at: dir)
+        }
+        diskWriteLock.unlock()
         stateLock.lock()
         diskCacheTotals[bucket] = nil
         stateLock.unlock()
@@ -263,14 +277,31 @@ final class BearyLivePhotoLoader {
     /// 第七轮审计 06：写盘前再验一次代次——下载完成回调的守卫与真正落盘之间
     /// 仍有一道窗口（purge 可能正好夹在中间），这里是最后一道门；代次已变
     /// 即弃写，不重新创建刚删除的缓存目录。
+    /// 第十一轮 06：仅在写盘点之前校验仍不够——校验通过后、落盘之前，
+    /// purge 可能删目录，旧写入随后重建目录写回文件。现与图片加载器
+    /// 第十轮 08 同款：校验与落盘在 diskWriteLock 同一临界区内完成，
+    /// purge 的代次推进与目录删除在同一锁内，两者互斥。fileURL 内会建
+    /// 目录，故须在校验通过后、锁内再算文件路径。淘汰走 stateLock，
+    /// 与本锁不嵌套：先放锁再调（见 enforceDiskCacheCap）。
     private func writeDisk(data: Data, key: String, ext: String, bucket: String, generation gen: UInt64) {
-        guard isCurrentGeneration(gen, bucket: bucket) else { return }
-        guard let file = fileURL(key: key, ext: ext, bucket: bucket) else { return }
+        diskWriteLock.lock()
+        // 权威代次门控——校验与落盘同一临界区，过期写入在建目录之前即被
+        // 丢弃，不会重建刚被 purge 删掉的桶目录。
+        guard isCurrentGeneration(gen, bucket: bucket) else {
+            diskWriteLock.unlock()
+            return
+        }
+        guard let file = fileURL(key: key, ext: ext, bucket: bucket) else {
+            diskWriteLock.unlock()
+            return
+        }
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         let oldSize = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
         try? data.write(to: file, options: .atomic)
         let newSize = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
-        enforceDiskCacheCap(bucket: bucket, writtenDelta: newSize - oldSize)
+        let delta = newSize - oldSize
+        diskWriteLock.unlock()
+        enforceDiskCacheCap(bucket: bucket, writtenDelta: delta)
     }
 
     /// 第十一轮 07：淘汰扫盘不再持 stateLock——枚举、读属性、排序、删文件
