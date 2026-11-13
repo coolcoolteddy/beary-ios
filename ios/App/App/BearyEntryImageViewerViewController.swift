@@ -1016,6 +1016,12 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         viewEntryButton.alpha = 1
     }
 
+    /// 下甩关闭跟手缩放：与 applyDismissDragProgress 共用同一进度 p = |ty|/320；
+    /// 关场阈值 120pt 处 p=0.375、scale≈0.78；拖得越远越小，下限 0.7 兜底。
+    private func dismissDragScale(forProgress progress: CGFloat) -> CGFloat {
+        max(0.7, 1 - 0.6 * max(0, min(1, progress)))
+    }
+
     // MARK: - E-G12 淡入转场 + 回到原处关场
 
     func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
@@ -1088,6 +1094,11 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 
     @objc private func pinchChanged(_ sender: UIPinchGestureRecognizer) {
+        // 下甩关闭拖动中不接捏合：pinchScale0 会取到跟手缩小后的 scale（<1），
+        // .changed 里 max(1, …) 会把图瞬间弹回 1 倍；且 pinchActive 会冻住 panChanged。
+        if dismissDragActive {
+            return
+        }
         if isNavigating == true {
             return
         }
@@ -1175,6 +1186,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 hideNeighbor()
                 tx = 0
                 ty = translation.y
+                scale = dismissDragScale(forProgress: abs(ty) / 320)
                 applyTransform(animated: false)
                 applyDismissDragProgress(abs(ty) / 320)
             } else if panMode == 1 {
@@ -1194,6 +1206,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                         hideNeighbor()
                         tx = 0
                         ty = translation.y
+                        scale = dismissDragScale(forProgress: abs(ty) / 320)
                         applyTransform(animated: false)
                         applyDismissDragProgress(abs(ty) / 320)
                     } else {
@@ -1228,6 +1241,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                     hideNeighbor()
                     tx = 0
                     ty = 0
+                    scale = 1
                     // 审计残留第 10 项：背景/chrome 复位原在动画块外同步调用，
                     // 瞬间跳回、图片却随后滑回，视觉错位；现经 additionalAnimations
                     // 与图片回弹放进同一弹簧块（0.26s／damping 0.7＋松手速度归一化，
