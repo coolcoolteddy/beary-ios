@@ -233,6 +233,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     // Hit44：行高由左钮 44 钉死、居中对齐，清除钮纵向扩区恰填满行高；横向各扩约 7，不及左间距 8 与右 inset 14，不抢左钮热区。
     private let attachClearButton = BearyHit44Button(type: .system)
     private let submitButton = BearyButton.make(style: .primaryPill(.ink), title: "撰写反馈邮件")
+    private let submitHintLabel = UILabel()
     private let shareButton = BearyButton.make(style: .secondaryOutline(.regular), title: "分享诊断日志")
     private let logOnlyButton = BearyButton.make(style: .secondaryOutline(.regular), title: "仅发送日志")
 
@@ -267,7 +268,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
     private static let recipient = "hi@teddyhn.com"
     /// 审计 r2 D4：原页底 footnote 全文，移入帮助入口展示（不是删除）。
-    private static let sendHelpText = "反馈发送走邮件到 hi@teddyhn.com。未配置邮箱时，仅复制反馈文字，附件不随复制发出。分享或仅发送日志时只发日志包，不含描述与附件。"
+    /// 第十轮审计 dsh II-3：71 字长句按句拆三行短句，措辞不变，只加换行。
+    private static let sendHelpText = "反馈发送走邮件到 hi@teddyhn.com。\n未配置邮箱时，仅复制反馈文字，附件不随复制发出。\n分享或仅发送日志时只发日志包，不含描述与附件。"
     private static let descriptionPlaceholder = "请描述遇到的问题：在哪个页面、做了什么操作、看到了什么…"
 
     /// 116 数据填入动效：状态文案变化时只淡入该 label 本身、徽标由
@@ -349,6 +351,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         subpageLayoutGuard.resetForAppearance()
+        // 邮箱配置可能在切出期间改动，回前台重算动态提示。
+        refreshSubmitHint()
     }
 
     override func viewDidLayoutSubviews() {
@@ -672,17 +676,17 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         submitButton.translatesAutoresizingMaskIntoConstraints = false
         submitButton.addTarget(self, action: #selector(submitTapped), for: .touchUpInside)
         submitButton.bearyAddPressFeedback()
-        // 主按钮只打开邮件撰写框、本身不完成提交：发送说明（目的地、
-        // 未配邮箱 fallback、附件与日志包范围）收进本行末的帮助入口，
-        // 这里只补后半句，不重复目的地与未配邮箱 fallback。
-        let submitHint = UILabel()
-        submitHint.translatesAutoresizingMaskIntoConstraints = false
-        submitHint.font = BearyDynamicType.secondaryFont()
-        submitHint.adjustsFontForContentSizeCategory = true
-        submitHint.textColor = BearyColors.gray
-        submitHint.numberOfLines = 0
-        submitHint.textAlignment = .center
-        submitHint.text = "将打开邮件撰写界面，还需在邮件里再按一次发送，取消即未提交。"
+        // 主按钮只打开邮件撰写框、本身不完成提交：按钮下只显示
+        // 「这次会发生什么」（第十轮审计 dsh II-3 动态一行），目的地、
+        // 未配邮箱 fallback、附件与日志包范围见 refreshSubmitHint；
+        // 三句完整说明仍在旁边的帮助入口里。
+        submitHintLabel.translatesAutoresizingMaskIntoConstraints = false
+        submitHintLabel.font = BearyDynamicType.secondaryFont()
+        submitHintLabel.adjustsFontForContentSizeCategory = true
+        submitHintLabel.textColor = BearyColors.gray
+        submitHintLabel.numberOfLines = 0
+        submitHintLabel.textAlignment = .center
+        refreshSubmitHint()
         // 审计 r2 D4：帮助入口（info 图标，点按底部弹窗展示发送说明全文）。
         let helpButton = BearyHit44Button(type: .system)
         helpButton.translatesAutoresizingMaskIntoConstraints = false
@@ -691,7 +695,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         helpButton.accessibilityLabel = "反馈发送说明"
         helpButton.addTarget(self, action: #selector(helpTapped), for: .touchUpInside)
         helpButton.bearyAddPressFeedback()
-        let submitHintRow = UIStackView(arrangedSubviews: [submitHint, helpButton])
+        let submitHintRow = UIStackView(arrangedSubviews: [submitHintLabel, helpButton])
         submitHintRow.translatesAutoresizingMaskIntoConstraints = false
         submitHintRow.axis = .horizontal
         submitHintRow.alignment = .center
@@ -708,7 +712,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         logOnlyButton.addTarget(self, action: #selector(logOnlyTapped), for: .touchUpInside)
         logOnlyButton.bearyAddPressFeedback()
 
-        // 审计 r2 D4：页底 footnote 已移入 submitHint 旁的帮助入口（见 helpTapped），
+        // 审计 r2 D4：页底 footnote 已移入 submitHintLabel 旁的帮助入口（见 helpTapped），
         // 此处不再常驻显示；fallback 与附件限制句是移入、不是删除。
         let views: [UIView] = [statusCard, descLabel, descCard, mediaLabel, attachCard, deviceLabel, deviceCard, submitButton, submitHintRow, shareButton, diagLabel, logOnlyButton]
         for viewItem in views {
@@ -758,6 +762,24 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         submitButton.alpha = hasText ? 1.0 : 0.4
     }
 
+    /// 第十轮审计 dsh II-3：提交钮下的动态一行，只说「这次会发生什么」。
+    /// 已配邮箱：目的地＋本次附件总数（用户附件＋日志包，日志包就绪时算 1 个，
+    /// 与 presentMailComposer 实际组装的附件一致）；未配邮箱：只说复制 fallback，
+    /// 与 presentMailComposer 的复制分流一致。附件增减／日志包就绪或失效／
+    /// 回前台时刷新（见 refreshAttachUI、ensureZip、cleanupZip、viewWillAppear）。
+    private func refreshSubmitHint() {
+        guard MFMailComposeViewController.canSendMail() else {
+            submitHintLabel.text = "未配置邮箱：只复制文字，不含附件。"
+            return
+        }
+        let count = attachments.count + (zipReady ? 1 : 0)
+        if count > 0 {
+            submitHintLabel.text = "将发送到 hi@teddyhn.com（含 \(count) 个附件），还需在邮件里再按一次发送。"
+        } else {
+            submitHintLabel.text = "将发送到 hi@teddyhn.com，还需在邮件里再按一次发送。"
+        }
+    }
+
     private func refreshAttachUI() {
         if attachments.isEmpty {
             attachLabelButton.setTitle("添加图片或视频", for: .normal)
@@ -769,6 +791,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             attachLabelButton.accessibilityLabel = "已选 \(attachments.count) 个，点按重选"
             attachClearButton.isHidden = false
         }
+        refreshSubmitHint()
     }
 
     /// B6：附件读取进度（原位、附件卡内）。选择器关闭即显「正在读取 N 个附件」，
@@ -881,6 +904,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         }
         zipURL = nil
         zipReady = false
+        refreshSubmitHint()
     }
 
     /// 第七轮审计 04：换新 zip 时先删旧文件。首次生成与重生成都走
@@ -925,6 +949,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 ready = false
             }
             self.zipInFlight = false
+            // 日志包就绪／失败会改变动态提示里的附件数。
+            self.refreshSubmitHint()
             let pending = self.pendingZipCompletions
             self.pendingZipCompletions = []
             for pendingCompletion in pending {
