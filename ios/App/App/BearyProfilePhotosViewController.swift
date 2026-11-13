@@ -619,6 +619,10 @@ final class BearyProfilePhotosViewController: UIViewController {
                     strongSelf.photosPartialFailed = false
                     strongSelf.photosRefreshFailed = false
                     strongSelf.collectionView.reloadData()
+                    // 第 18 轮③：首屏重拉换了新首屏，最近一篇限时到期点可能
+                    // 变了——续页成功会重排，首屏重拉成功也要按新首屏重排，
+                    // 否则旧定时仍按旧首屏的到期点触发。
+                    strongSelf.scheduleExpiryRefilter()
                     strongSelf.updateTitleAndEmpty()
                     strongSelf.updatePhotosStatusLabel()
                     strongSelf.fetchMoreWhileEmptyIfNeeded()
@@ -803,6 +807,9 @@ final class BearyProfilePhotosViewController: UIViewController {
                     }
                     // 续拉页同样按创建时间倒序并案：新页全部更旧，直接追加即可保持倒序。
                     let oldPhotoCount = strongSelf.photosValue.count
+                    // 第 18 轮①：重滤可能让旧照片因限时到期或关系变化被移除，
+                    // 旧照片 key 留作差分基线（见 performBatchUpdates 前的判断）。
+                    let oldKeys = strongSelf.photosValue.map { $0.imageKey }
                     strongSelf.diaryEntriesValue.append(contentsOf: appended)
                     // 第 22 轮 B5：续拉重算走实时互关态（currentMutualFriend），不沿用进页旧值。
                     strongSelf.photosValue = BearyProfileViewController.profilePhotoItems(from: strongSelf.diaryEntriesValue, isOwnProfile: strongSelf.ownProfileValue, isMutualFriend: strongSelf.currentMutualFriend)
@@ -836,6 +843,34 @@ final class BearyProfilePhotosViewController: UIViewController {
                     // （116 错峰滑入与空相册续拉已在下面 performBatchUpdates
                     // 完成回调里，主线后移的位置为准，此处不重复。）
                     strongSelf.scheduleExpiryRefilter()
+                    // 第 18 轮①：重滤可能减数或换序，批量更新只插新增格会让
+                    // 集合视图内部计数与数据源不一致而触发数量断言。按稳定
+                    // imageKey 差分：仅当旧照片原序仍为新列表前缀时才走 insert
+                    // 批量更新，否则走完整刷新并同步灯箱。
+                    let newKeys = strongSelf.photosValue.map { $0.imageKey }
+                    let isPureAppend = newPhotoCount >= oldPhotoCount && Array(newKeys.prefix(oldPhotoCount)) == oldKeys
+                    guard isPureAppend else {
+                        strongSelf.collectionView.reloadData()
+                        let removedKeys = Set(oldKeys).subtracting(newKeys)
+                        if !removedKeys.isEmpty {
+                            strongSelf.presentedViewer?.pruneImageKeys(removedKeys)
+                        }
+                        if let viewer = strongSelf.presentedViewController as? BearyEntryImageViewerViewController {
+                            let oldKeySet = Set(oldKeys)
+                            let addedPhotos = strongSelf.photosValue.filter { !oldKeySet.contains($0.imageKey) }
+                            var addedLiveVideos: [String: String] = [:]
+                            for photo in addedPhotos {
+                                if let liveKey = photo.entry.liveVideos?[photo.imageKey] {
+                                    addedLiveVideos[photo.imageKey] = liveKey
+                                }
+                            }
+                            viewer.appendImageKeys(addedPhotos.map { $0.imageKey }, liveVideos: addedLiveVideos.isEmpty ? nil : addedLiveVideos, hasMorePages: strongSelf.photosHasMore)
+                        }
+                        if strongSelf.photosValue.isEmpty, !appended.isEmpty {
+                            strongSelf.fetchMoreWhileEmptyIfNeeded()
+                        }
+                        return
+                    }
                     strongSelf.collectionView.performBatchUpdates({
                         if hadRetrySection {
                             strongSelf.collectionView.deleteSections(IndexSet(integer: 1))
