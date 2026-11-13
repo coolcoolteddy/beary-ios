@@ -480,11 +480,20 @@ final class BearyCalendarCardView: UIView {
         titleRow.alignment = .center
         let controlsSpacer = UIView()
         controlsSpacer.translatesAutoresizingMaskIntoConstraints = false
-        let controlsRow = UIStackView(arrangedSubviews: [controlsSpacer, todayButton, toggleButton, prevButton, nextButton])
+        // R10-#19：控制行重分组——上一页／下一页是相邻导航组（组内 6pt），
+        // 周／月切换是模式切换（组间 12pt），“今”放组左边缘作快速归位入口。
+        // 各钮顺序／尺寸／样式不动；上一／下一仍优先官方 chevron 资产，
+        // 缺失才用 ‹ / › 文字兜底（兜底不是正式图标，不动）。
+        let pageNavStack = UIStackView(arrangedSubviews: [prevButton, nextButton])
+        pageNavStack.translatesAutoresizingMaskIntoConstraints = false
+        pageNavStack.axis = .horizontal
+        pageNavStack.alignment = .center
+        pageNavStack.spacing = 6
+        let controlsRow = UIStackView(arrangedSubviews: [controlsSpacer, todayButton, toggleButton, pageNavStack])
         controlsRow.translatesAutoresizingMaskIntoConstraints = false
         controlsRow.axis = .horizontal
         controlsRow.alignment = .center
-        controlsRow.spacing = 6
+        controlsRow.spacing = BearySpace.md
 
         let weekdayRow = UIStackView()
         weekdayRow.translatesAutoresizingMaskIntoConstraints = false
