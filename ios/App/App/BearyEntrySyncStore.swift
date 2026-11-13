@@ -175,8 +175,7 @@ enum BearyEntrySyncStore {
     /// 返回写盘是否成功：任一步失败或回读校验不过均为 false。
     @discardableResult
     static func saveDay(accountId: Int, dayKey: String, entries: [Entry]) -> Bool {
-        guard let url = dayFileURL(accountId: accountId, dayKey: dayKey),
-              let data = try? makeEncoder().encode(entries) else { return false }
+        guard dayFileURL(accountId: accountId, dayKey: dayKey) != nil else { return false }
         let oldCount = loadDay(accountId: accountId, dayKey: dayKey)?.count ?? 0
         guard saveDayToDirectory(dayKey: dayKey, entries: entries, directory: accountDir(accountId: accountId)) else { return false }
         // 回读校验：id 序列与写入一致才算成功。
