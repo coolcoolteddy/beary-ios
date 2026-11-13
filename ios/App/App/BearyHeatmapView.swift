@@ -187,11 +187,14 @@ final class BearyHeatmapView: UIView {
 
     // MARK: - 数据
 
-    /// 可见日记按北京日计数（createdAt 缺失的篇跳过，与 BearyEntrySyncStore.groupByDay 同口径）。
-    static func counts(from entries: [Entry]) -> [String: Int] {
+    /// 窗口内可见日记按北京日计数（createdAt 缺失的篇跳过，与 BearyEntrySyncStore.groupByDay 同口径）。
+    /// 窗口外的篇先按北京日序号（纯算术，不建 Date/Calendar）滤掉，不换算日期、不入表。
+    static func counts(from entries: [Entry], windowStartNumber: Int, windowEndNumber: Int) -> [String: Int] {
         var counts: [String: Int] = [:]
         for entry in entries {
-            guard let createdAt = entry.createdAt,
+            guard let createdAt = entry.createdAt else { continue }
+            let number = Int(floor((TimeInterval(createdAt) / 1000.0 + 8 * 3600) / 86400))
+            guard number >= windowStartNumber, number <= windowEndNumber,
                   let key = BearyBeijingDay.dayKey(ofMs: createdAt) else { continue }
             counts[key, default: 0] += 1
         }
@@ -223,11 +226,13 @@ final class BearyHeatmapView: UIView {
     /// 窗口：今天所在周的周一往前推 26 周（共 27 列），最早一周不丢——
     /// 首列是完整一周（即使其中几天在账号首篇之前，也画 line 空格，不截掉）。
     func configure(entries: [Entry]) {
-        let counts = Self.counts(from: entries)
         guard let today = BearyBeijingDay.todayComponents(),
               let todayNumber = BearyBeijingDay.todayNumber(),
               let monday = BearyBeijingDay.mondayOf(year: today.year, month: today.month, day: today.day),
-              let windowStart = BearyBeijingDay.shifted(year: monday.0, month: monday.1, day: monday.2, byDays: -26 * 7) else { return }
+              let windowStart = BearyBeijingDay.shifted(year: monday.0, month: monday.1, day: monday.2, byDays: -26 * 7),
+              let windowStartNumber = BearyBeijingDay.dayNumber(year: windowStart.0, month: windowStart.1, day: windowStart.2) else { return }
+        // 只算窗口内 27 周 × 7 天：窗口外的篇不换算日期、不入表。
+        let counts = Self.counts(from: entries, windowStartNumber: windowStartNumber, windowEndNumber: todayNumber)
         for col in 0..<Self.weeks {
             for row in 0..<Self.daysPerWeek {
                 let index = col * Self.daysPerWeek + row
