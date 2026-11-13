@@ -446,8 +446,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 self.tableView.reloadData()
                 self.scrollToBottomIfNeeded()
             }
-            // 审计四轮增量 12：恢复上次未落盘的待发——重启后以“未确认”态回显
-            //（可查看、长按复制，不自动重发；服务端已有该行时 loadLatest 认领即清掉）。
+            // 审计四轮增量 12：恢复上次未落盘的待发——按存储状态如实回显
+            //（不自动重发；服务端已有该行时 loadLatest 认领即清掉）。
             BearyDMStore.loadPendings(accountId: storeAccountId, peerId: userId) { [weak self] pendings in
                 guard let self = self, !pendings.isEmpty else { return }
                 guard !self.isClosingForIdentityChange,
@@ -456,7 +456,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 var restored: [BearyAPI.DMMessage] = []
                 for p in pendings where !existingKeys.contains(p.localKey) {
                     restored.append(BearyAPI.DMMessage(id: nil, senderId: self.storeAccountId, fromMe: true, body: p.body, createdAt: p.createdAt, localKey: p.localKey))
-                    self.unconfirmedSendKeys.insert(p.localKey)
+                    // 第 17 轮：失败态如实恢复——明确失败的回失败集（保留红叹号重试入口），
+                    // 发送中（结果未知）的降为未确认，未确认的保持未确认。
+                    switch p.status {
+                    case .failed:
+                        self.failedSendKeys.insert(p.localKey)
+                    case .sending, .unconfirmed:
+                        self.unconfirmedSendKeys.insert(p.localKey)
+                    }
                     self.fadedRowKeys.insert("msg-pending-\(p.localKey)")
                 }
                 guard !restored.isEmpty else { return }
