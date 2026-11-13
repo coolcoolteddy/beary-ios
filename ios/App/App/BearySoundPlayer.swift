@@ -126,7 +126,9 @@ enum BearySoundPlayer {
         }
     }
 
-    /// 未命中路径：后台建播放器，建好后回主线程播放；过期交互音不排队延迟播放。
+    /// 未命中路径：后台取播放器，建好后回主线程播放；过期交互音不排队延迟播放。
+    /// 未命中任务排在整批预热后面：真正执行时预热可能已把该音放进池，
+    /// 先重取池、池里有就直接用，不再重复建播放器；池仍空才建。
     /// 新鲜度三条（任一不满足即不播、播放器回池供下次命中）：
     /// 1) 仍在前台 active（与 play 入口守卫一致，锁屏/后台不补播）；
     /// 2) 距点按 < 0.5s（正常后台建播放器远低于此值，阈值只截断磁盘卡顿等
@@ -136,7 +138,7 @@ enum BearySoundPlayer {
     /// 设置开关在建好后复核：关了就不播（回池无害，下次开时可命中）。
     private static func scheduleMissedSoundBuild(_ sound: BearySound, tappedAt: TimeInterval) {
         poolQueue.async {
-            guard let built = buildPlayer(for: sound) else { return }
+            guard let player = takePooledPlayer(for: sound) ?? buildPlayer(for: sound) else { return }
             DispatchQueue.main.async {
                 let isFresh: Bool = {
                     guard isEnabled else { return false }
@@ -148,16 +150,16 @@ enum BearySoundPlayer {
                     return latest == tappedAt
                 }()
                 guard isFresh else {
-                    returnPlayerToPool(built, for: sound)
+                    returnPlayerToPool(player, for: sound)
                     return
                 }
                 do {
                     try ensureAudioSession()
                 } catch {
-                    returnPlayerToPool(built, for: sound)
+                    returnPlayerToPool(player, for: sound)
                     return
                 }
-                startPlaying(built, for: sound)
+                startPlaying(player, for: sound)
             }
         }
     }
