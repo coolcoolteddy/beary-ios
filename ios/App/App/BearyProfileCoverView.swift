@@ -38,10 +38,10 @@ public final class ProfileCoverView: UIView {
         case .canada: names.append("floatplane")
         case .korea: names.append("kite")
         case .newyear:
-            // 元旦：动态物是金色烟花余烬一张 PNG；彩蛋一张（大烟花中心金色
-            // 五角星＋光晕），与第 7 帧对齐、只在烟花中心可见。
+            // 元旦：动态物是金色烟花余烬一张 PNG；彩蛋一张（左上夜空一朵金色
+            // 烟花，中心 (300, 65)），与第 7 帧对齐。
             names.append("newyear-embers")
-            names.append("newyear-egg-star")
+            names.append("newyear-egg-burst")
         }
         var images: [String: UIImage] = [:]
         for name in names {
@@ -292,7 +292,7 @@ public final class ProfileCoverView: UIView {
     }
 
     /// 元旦（中式木刻版画、深蓝夜＋金色烟花）：图集只含背景，余烬由动态物层单独贴；
-    /// 彩蛋一张是与第 7 帧对齐的整帧透明层（大烟花中心金色五角星＋光晕）。
+    /// 彩蛋一张是与第 7 帧对齐的整帧透明层（左上夜空一朵金色烟花，中心 (300, 65)）。
     /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
     /// 视差翻倍版：帧 f 结构平移 2(f−6) px（±12）、主体平移 4(f−6) px（±24）。
     private func drawNewyear(_ ctx: CGContext, depth: CGFloat, vertical: CGFloat, padded: CGRect) {
@@ -303,10 +303,10 @@ public final class ProfileCoverView: UIView {
         // 平移 4(f−6) px，即 24*depth。
         let structureX = 12 * depth * scaleX
         let subjectX = 24 * depth * scaleX
-        // 彩蛋：大烟花中心金色五角星＋光晕，倾斜保持 0.45 秒后随 egg 淡入（触发走共享
+        // 彩蛋：左上夜空一朵金色烟花，倾斜保持 0.45 秒后随 egg 淡入（触发走共享
         // step 逻辑，与圣诞同款；每次进页 restartVisit 可再触发）。
         if egg > 0.001 {
-            bitmap("newyear-egg-star", in: ctx,
+            bitmap("newyear-egg-burst", in: ctx,
                    center: CGPoint(x: padded.midX + structureX, y: padded.midY),
                    width: padded.width, height: padded.height, angle: 0, alpha: egg)
         }
