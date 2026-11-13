@@ -179,14 +179,16 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         backdropButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
         backdropButton.bearyAddPressFeedback()
 
-        // 审计 D-16：浮层背景与回应 Sheet 一致走 surface3（深色 #1E1E23；
-        // 浅色下 surface3 #F0F0F0 略深于 bg 白，观感微分层）；全屏页面仍用 bg，不动。
+        // 审计 D-16：浮层背景与回应 Sheet 一致走 surface3（深色 #313138；
+        // 浅色下 surface3 #DFDFDF 略深于 bg 白，观感微分层）；全屏页面仍用 bg，不动。
         sheetView.backgroundColor = BearyColors.surface3
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         // 阴影：手机端走底 sheet 档；iPad 卡片走 raised 档（2026-11-02 定版第 2 组，
         // 旧 0.30/30/(0, 24) 档已废弃），此处不再自写数值。
 
-        grabberView.backgroundColor = BearyColors.line
+        // 抓手走 gray：底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #DFDFDF）
+        // 只差 4 阶、浅色下几不可见（#1286 档距拉大后；深色亦只差约 9 阶）。
+        grabberView.backgroundColor = BearyColors.gray
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
 
         // v2 黑白灰：标题行去掉 40×40 橙圈＋橙色 icon_at，改纯文字标题
@@ -967,7 +969,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         separator.translatesAutoresizingMaskIntoConstraints = false
         // 8-4：分隔线收进统一样式——基线厚已是 1pt，0.55 是颜色透明度（非厚度），
         // 现改全强度 line 色（动态色本身，不走 withAlphaComponent，8-1 同款）。
-        separator.backgroundColor = BearyColors.line
+        // 例外：行底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #DFDFDF）只差
+        // 4 阶、浅色下几不可见（#1286 档距拉大后），此处改走 gray。
+        separator.backgroundColor = BearyColors.gray
         // 审计 9 层级：占位在下、头像在上（其余子视图顺序与旧版一致）。
         // 审计 D-12：行按压底片——铺满整行、垫在全部内容之下，只换底色不缩放，
         // isUserInteractionEnabled 关掉，否则底片会吞行点按。

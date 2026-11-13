@@ -409,7 +409,9 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         sheetScrollView.addSubview(contentStack)
 
-        handleView.backgroundColor = BearyColors.line
+        // 抓手走 gray：底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #DFDFDF）
+        // 只差 4 阶、浅色下几不可见（#1286 档距拉大后；深色亦只差约 9 阶）。
+        handleView.backgroundColor = BearyColors.gray
         handleView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
         handleView.translatesAutoresizingMaskIntoConstraints = false
         handleWrapView.translatesAutoresizingMaskIntoConstraints = false
@@ -1941,8 +1943,10 @@ private final class BearyDraftBoxDashedButton: BearyHit44Button {
         super.init(frame: frame)
         // 撤回批（2026-10-27）：虚线钮去玻璃留虚线——玻璃 subview 会拦截触摸致死钮，删掉，
         // 只留 dashedLayer 描边（原 75 包形态）。
+        // 描边走 gray：钮底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #DFDFDF）
+        // 只差 4 阶、浅色下几不可见（#1286 档距拉大后；深色亦只差约 9 阶）。
         dashedLayer.fillColor = UIColor.clear.cgColor
-        dashedLayer.strokeColor = BearyColors.line.cgColor
+        dashedLayer.strokeColor = BearyColors.gray.cgColor
         dashedLayer.lineWidth = 1.5
         dashedLayer.lineDashPattern = [6, 4]
         layer.addSublayer(dashedLayer)
@@ -1961,8 +1965,9 @@ private final class BearyDraftBoxDashedButton: BearyHit44Button {
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         // CAShapeLayer 描边色只在赋值时解析一次，深浅切换时重赋（编辑器同款虚线钮已有此处理）。
+        // 与初建同口径：钮底 surface3 上 line 几不可见，描边走 gray（见上）。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            dashedLayer.strokeColor = BearyColors.line.cgColor
+            dashedLayer.strokeColor = BearyColors.gray.cgColor
         }
     }
 }

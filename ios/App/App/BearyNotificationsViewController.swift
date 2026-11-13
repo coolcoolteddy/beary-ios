@@ -2921,7 +2921,9 @@ private class BearyLetterModal {
         secondaryButton.setTitleColor(BearyColors.ink, for: .normal)
         secondaryButton.tintColor = BearyColors.ink
         secondaryButton.layer.borderWidth = 1
-        secondaryButton.layer.bearyDynamicBorderColor = BearyColors.line
+        // 描边走 gray：卡底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #DFDFDF）
+        // 只差 4 阶、浅色下几不可见（#1286 档距拉大后；深色亦只差约 9 阶）。
+        secondaryButton.layer.bearyDynamicBorderColor = BearyColors.gray
         // Q1 对照表：pill 按钮圆角 22（网页 .obtn 原 20 已按表统一）。
         secondaryButton.layer.cornerRadius = BearyCorners.single
         secondaryButton.setTitle(goEntryId == nil ? "知道了" : "稍后", for: .normal)
@@ -3204,7 +3206,8 @@ private final class BearyLetterModalButton: UIButton {
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            layer.bearyDynamicBorderColor = BearyColors.line
+            // 与初建同口径：卡底 surface3 上 line 几不可见，描边走 gray（见上）。
+            layer.bearyDynamicBorderColor = BearyColors.gray
         }
     }
 }
