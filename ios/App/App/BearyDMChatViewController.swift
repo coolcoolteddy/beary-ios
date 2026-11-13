@@ -1714,10 +1714,8 @@ private final class BearyDMMessageCell: UITableViewCell {
         let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
         let diff = Date().timeIntervalSince(date)
         if diff < -5 { return BearyText.timeString(ms: msValue) }
-        if diff < 60 { return "刚刚" }
-        if diff < 3600 { return "\(Int(diff / 60)) 分钟前" }
-        if diff < 86400 { return "\(Int(diff / 3600)) 小时前" }
-        return "\(Int(diff / 86400)) 天前"
+        // 相对档位复用带空格共享实现（规范 §12）；共享实现无未来分支，故未来守卫留本地。
+        return BearyVisibilityText.publishedRelativeString(publishedAtMs: msValue) ?? ""
     }
 
     /// 第三轮审计 1：相对时间 + 未确认后缀的统一组合（建行与分钟刷新共用）。
