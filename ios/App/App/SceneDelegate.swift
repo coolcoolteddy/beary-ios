@@ -247,10 +247,6 @@ final class BearyChromeViewController: UIViewController {
     /// 编辑器取消要先存草稿/清临时文件，不能由手势直接 dismiss，故本页只用
     /// 边缘滑过阈值后走 didTapCancel 的完成模式，见 BearyEdgeDismiss）。
     private var composerEdgeDismiss: BearyEdgeDismissController?
-    /// 写日记页底 sheet 的 transitioningDelegate 强持有（见 configureComposerPresentation；
-    /// transitioningDelegate 本身是弱引用，须由本处强持到 dismiss 完成，dismissalHandler 里清掉，
-    /// 与邀请页 inviteSheet 同口径）。
-    private var composerSheetDelegate: BearyComposerSheetTransitioningDelegate?
     /// 22(b) Plan A：顶栏高恒为安全区顶 + 60，显隐不再塌高（收起态只上移 +
     /// 淡出，见 setHeaderVisible）；页顶约束恒为 view.top，但常量为 -12：
     /// 液态玻璃顶边自带高光恰落在屏幕顶边即用户报的那条白线，顶边推出屏外
@@ -4018,37 +4014,13 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
-    /// 试效果（2026-11-10）：写日记页改底部 sheet，顶到状态栏下面——iPhone 与
-    /// iPad 一律 .custom + BearyComposerSheetTransitioningDelegate（邀请页同款容器，
-    /// 带抓手、顶部圆角、遮罩），sheet 高 = 容器高 − 状态栏高（fillsToStatusBar）。
-    /// 新建与编辑共用本函数，一处改动覆盖两者。关闭口径不变：遮罩点按不关闭
-    /// （dimTapCloses=false），抓手下滑与左边缘右滑都走 didTapCancel 取消流程
-    /// （先存草稿／清临时文件，发布在途只 toast），不得直接 dismiss。
-    /// 旧口径（92 包）：iPhone 与 iPad 一律 .fullScreen + 系统默认上滑过渡，
+    /// 92 包：新建与编辑共用整页——iPhone 与 iPad 一律 .fullScreen + 系统默认上滑过渡，
     /// 不再按宽分流、不再用底 sheet 与居中卡片两套自定义转场（底 sheet 转场在 iPhone 上
     /// 有主线程卡死问题，90 包修法未生效，整页直接绕开该路径）。iPad 列居中由编辑器
     /// 自身 updateColumnConstraints 定（宽 ≥821 时 640 居中），不在此定宽。forEdit 仅保留
     /// 参数位（两模式同路径）。底 sheet/居中卡片类本身保留，邀请弹窗仍在用，不要删。
     private func configureComposerPresentation(_ composer: BearyComposerViewController, forEdit: Bool) {
-        composer.modalPresentationStyle = .custom
-        // 试效果：走邀请页同款底 sheet 容器（fillsToStatusBar 顶到状态栏下面，
-        // 仅写日记页这一路放开 88% 上限，邀请页不动）。dimTapCloses 保持 false——
-        // 编辑器须走自身取消流程，遮罩点按不得关闭。
-        let composerSheet = BearyComposerSheetTransitioningDelegate()
-        composerSheet.dimTapCloses = false
-        composerSheet.fillsToStatusBar = true
-        // 抓手下滑关闭不得直接 dismiss，走 didTapCancelFromEdgeSwipe 同款取消流程
-        // （发布在途只 toast、引用面板开着只退面板、其余存草稿/清临时文件后关页）；
-        // 返回 false 表示取消被拒，sheet 弹回原位（见 presentationController 侧）。
-        composerSheet.grabberDismissHandler = { [weak composer] in
-            composer?.didTapCancelFromEdgeSwipe() ?? false
-        }
-        composerSheet.dismissalHandler = { [weak self, weak composer] in
-            self?.composerSheetDelegate = nil
-            composer?.transitioningDelegate = nil
-        }
-        composer.transitioningDelegate = composerSheet
-        self.composerSheetDelegate = composerSheet
+        composer.modalPresentationStyle = .fullScreen
         // 全站返回手势补齐（完成模式，见 BearyEdgeDismiss）：编辑器取消不能由
         // 手势直接 dismiss——新建态要先存草稿、编辑态要先清临时文件，且发布在途
         // 只 toast、引用面板开着只退面板；故边缘滑过阈值后走 didTapCancel 原流程，
@@ -4062,16 +4034,11 @@ final class BearyChromeViewController: UIViewController {
         }
         // R14 P2-13：边缘返回改走 didTapCancelFromEdgeSwipe——松手过阈值后
         // 先立“保存中…”状态行＋转圈再进原取消流程；拖动开始时底层画面已由
-        // BearyEdgeDismiss 提前准备（见 prepareUnderlyingView）。试效果注：编辑器
-        // 现为底 sheet，presenting 方视图仍在窗口里（prepareUnderlyingView 的
-        // window==nil 门控直接返回、不搬视图），边缘拖动中露出的是遮罩下的原页，
-        // 不再是提前准备的底层画面；取消流程本身不动。
+        // BearyEdgeDismiss 提前准备（见 prepareUnderlyingView）。
         composerEdgeDismiss.onEdgeSwipeCompleted = { [weak composer] in
             composer?.didTapCancelFromEdgeSwipe() ?? false
         }
-        // 试效果注：边缘手势控制器只挂手势（attach + 完成模式回调），不再兼任
-        // transitioningDelegate——转场由上面的底 sheet delegate 提供；完成模式
-        // 本就不走 interactionControllerForDismissal，行为不变。
+        composer.transitioningDelegate = composerEdgeDismiss
         self.composerEdgeDismiss = composerEdgeDismiss
     }
 
@@ -4271,21 +4238,12 @@ final class BearyComposerSheetTransitioningDelegate: NSObject, UIViewControllerT
     var dimTapHandler: (() -> Void)?
     /// dismiss 完成回调（调用方做 dismiss 后清理，如 transitioningDelegate=nil）。
     var dismissalHandler: (() -> Void)?
-    /// 写日记页专用（试效果）：sheet 顶到状态栏下面（高 = 容器高 − 状态栏高），
-    /// 不走 88% 封顶与 preferredContentSize；默认 false（邀请页保持 88% 不动）。
-    var fillsToStatusBar = false
-    /// 抓手下滑关闭的接管回调：置了就走它（返回 true 表示退出已在进行、
-    /// sheet 留在原位等原流程关页；false 表示取消被拒、sheet 弹回原位），
-    /// 不置时走旧口径直接 dismiss（邀请页）。写日记页置为 didTapCancelFromEdgeSwipe。
-    var grabberDismissHandler: (() -> Bool)?
 
     func presentationController(forPresented presented: UIViewController, presenting: UIViewController?, source: UIViewController) -> UIPresentationController? {
         let controller = BearyComposerSheetPresentationController(presentedViewController: presented, presenting: presenting)
         controller.dimTapCloses = dimTapCloses
         controller.dimTapHandler = dimTapHandler
         controller.dismissalHandler = dismissalHandler
-        controller.fillsToStatusBar = fillsToStatusBar
-        controller.grabberDismissHandler = grabberDismissHandler
         return controller
     }
 
@@ -4331,10 +4289,6 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
     /// 审计 2026-11-02 弹窗组：见 BearyComposerSheetTransitioningDelegate。
     var dimTapHandler: (() -> Void)?
     var dismissalHandler: (() -> Void)?
-    /// 写日记页专用（试效果）：sheet 顶到状态栏下面，见 frameOfPresentedViewInContainerView。
-    var fillsToStatusBar = false
-    /// 抓手下滑关闭的接管回调，见 BearyComposerSheetTransitioningDelegate。
-    var grabberDismissHandler: (() -> Bool)?
 
     @objc private func sheetDimTapped() {
         if let handler = dimTapHandler {
@@ -4350,27 +4304,10 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
     override var frameOfPresentedViewInContainerView: CGRect {
         guard let container = containerView else { return .zero }
         let bounds = container.bounds
-        if fillsToStatusBar {
-            // 写日记页专用（试效果）：sheet 顶到状态栏下面——高 = 容器高 − 状态栏高，
-            // 不走 88% 封顶、不读 preferredContentSize（编辑器 content 驱动的
-            // preferredContentSize 会随内容变，读它 sheet 高会跟着跳）。状态栏高取
-            // windowScene.statusBarManager（不写死数字），拿不到时回退容器安全区顶。
-            let top = statusBarHeight(in: container)
-            return CGRect(x: 0, y: top, width: bounds.width, height: bounds.height - top)
-        }
         let capHeight = bounds.height * 0.88
         let preferredHeight = presentedViewController.preferredContentSize.height
         let height = preferredHeight > 0 ? min(capHeight, preferredHeight) : capHeight
         return CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
-    }
-
-    /// 状态栏高：windowScene.statusBarManager 为准（刘海／灵动岛机型各不相同，
-    /// 不写死）；拿不到时回退容器安全区顶（全屏容器里即状态栏高）。
-    private func statusBarHeight(in container: UIView) -> CGFloat {
-        if let height = container.window?.windowScene?.statusBarManager?.statusBarFrame.height, height > 0 {
-            return height
-        }
-        return container.safeAreaInsets.top
     }
 
     override func presentationTransitionWillBegin() {
@@ -4522,45 +4459,36 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             // （位移 > 80pt 或速度 > 600pt/s 即关闭，否则弹回原位）。
             let velocity = pan.velocity(in: container).y
             if translation > 80 || velocity > 600 {
-                if let handler = grabberDismissHandler {
-                    // 写日记页：抓手下滑关闭走取消流程（didTapCancelFromEdgeSwipe），
-                    // 不得直接 dismiss。返回 true 表示退出已在进行（存草稿中或已在关页），
-                    // transform 留在原位等原流程关页；返回 false 表示取消被拒（发布在途
-                    // 只 toast、引用面板开着只退面板、已有弹层），弹回原位。
-                    if !handler() {
-                        restoreGrabberSpring(velocity: velocity, offset: BearySheetDrag.offset(for: translation))
-                    }
-                } else {
-                    presentedViewController.dismiss(animated: BearyMotion.animated(true))
-                }
+                presentedViewController.dismiss(animated: BearyMotion.animated(true))
             } else {
-                restoreGrabberSpring(velocity: velocity, offset: BearySheetDrag.offset(for: translation))
+                let restore = {
+                    presentedView.transform = .identity
+                    self.sheetShadowView.transform = .identity
+                    self.dimmingView.alpha = 1
+                }
+                if UIAccessibility.isReduceMotionEnabled {
+                    restore()
+                } else {
+                    let drag = BearySheetDrag.offset(for: translation)
+                    UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: drag), options: [], animations: restore)
+                }
             }
         case .cancelled, .failed:
             // 审计 B 组 8：系统取消与手势失败时跟手位移可能已产生，
             // 统一弹簧（0.30s／damping 0.7）弹回原位，不触发关闭（此前 .cancelled 与 .ended 共用
             // 关闭分支，系统取消也可能关掉编辑器/邀请弹层）。
-            restoreGrabberSpring(velocity: 0, offset: 0)
+            let restore = {
+                presentedView.transform = .identity
+                self.sheetShadowView.transform = .identity
+                self.dimmingView.alpha = 1
+            }
+            if UIAccessibility.isReduceMotionEnabled {
+                restore()
+            } else {
+                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore)
+            }
         default:
             break
-        }
-    }
-
-    /// 抓手拖动取消／被拒：弹簧（0.30s／damping 0.7）弹回原位，遮罩同步回满；
-    /// 松手速度归一化后传初速度（与底 sheet／灯箱复位同口径）；减动效时瞬时归位。
-    /// 抽出与 .ended 未过阈值、.cancelled／.failed、抓手关闭被拒三处共用（此前两处
-    /// 各写一份，行为一致）。
-    private func restoreGrabberSpring(velocity: CGFloat, offset: CGFloat) {
-        guard let presentedView = presentedView else { return }
-        let restore = {
-            presentedView.transform = .identity
-            self.sheetShadowView.transform = .identity
-            self.dimmingView.alpha = 1
-        }
-        if UIAccessibility.isReduceMotionEnabled {
-            restore()
-        } else {
-            UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore)
         }
     }
 }
