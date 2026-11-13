@@ -156,24 +156,61 @@ enum BearySnapshotDiff {
     }
 
     /// 行级 LCS diff：旧版独有的行红底、新版独有的行绿底，其余行无底色。
+    /// 先裁掉相同的首尾行再建表（首尾行永不标色，结果与全表一致），
+    /// 裁后矩阵仍超上限时退化为集合差分，不建表。
     static func highlighted(old: String, new: String) -> (old: NSAttributedString, new: NSAttributedString) {
         let oldLines = old.components(separatedBy: "\n")
         let newLines = new.components(separatedBy: "\n")
-        let lcs = lcsTable(oldLines, newLines)
-        var oldRemoved = Set<Int>()
-        var newAdded = Set<Int>()
-        var i = oldLines.count, j = newLines.count
-        while i > 0 || j > 0 {
-            if i > 0, j > 0, oldLines[i - 1] == newLines[j - 1] {
-                i -= 1; j -= 1
-            } else if j > 0, (i == 0 || lcs[i][j - 1] >= lcs[i - 1][j]) {
-                newAdded.insert(j - 1); j -= 1
-            } else if i > 0 {
-                oldRemoved.insert(i - 1); i -= 1
-            }
-        }
+        let (oldRemoved, newAdded) = diffLineIndices(old: oldLines, new: newLines)
         return (attributed(lines: oldLines, highlighted: oldRemoved, color: BearyColors.red),
                 attributed(lines: newLines, highlighted: newAdded, color: BearyColors.green))
+    }
+
+    /// 行下标 diff：返回（旧版独有行下标，新版独有行下标）。
+    /// 注：重复行横跨裁剪边界时，全表回溯与裁后回溯可能标在内容相同的
+    /// 不同行上（同为合法 LCS diff，高亮的文字内容一致），属预期内差异。
+    private static func diffLineIndices(old: [String], new: [String]) -> (removed: Set<Int>, added: Set<Int>) {
+        var prefix = 0
+        while prefix < old.count, prefix < new.count, old[prefix] == new[prefix] {
+            prefix += 1
+        }
+        var suffix = 0
+        while suffix < old.count - prefix, suffix < new.count - prefix,
+              old[old.count - 1 - suffix] == new[new.count - 1 - suffix] {
+            suffix += 1
+        }
+        let oldMid = Array(old[prefix..<(old.count - suffix)])
+        let newMid = Array(new[prefix..<(new.count - suffix)])
+        guard !oldMid.isEmpty || !newMid.isEmpty else { return ([], []) }
+        // 大输入上限：矩阵 (n+1)×(m+1) 个 Int，超 25 万格（约 2MB）时
+        // 不建表，退化为集合差分（只认“对方没有的行”，O(n+m)）。
+        if (oldMid.count + 1) * (newMid.count + 1) > 250_000 {
+            let newSet = Set(newMid)
+            let oldSet = Set(oldMid)
+            var removed = Set<Int>()
+            var added = Set<Int>()
+            for (offset, line) in oldMid.enumerated() where !newSet.contains(line) {
+                removed.insert(prefix + offset)
+            }
+            for (offset, line) in newMid.enumerated() where !oldSet.contains(line) {
+                added.insert(prefix + offset)
+            }
+            return (removed, added)
+        }
+        let lcs = lcsTable(oldMid, newMid)
+        var removed = Set<Int>()
+        var added = Set<Int>()
+        var i = oldMid.count, j = newMid.count
+        while i > 0 || j > 0 {
+            if i > 0, j > 0, oldMid[i - 1] == newMid[j - 1] {
+                i -= 1; j -= 1
+            } else if j > 0, (i == 0 || lcs[i][j - 1] >= lcs[i - 1][j]) {
+                added.insert(prefix + j - 1); j -= 1
+            } else if i > 0 {
+                removed.insert(prefix + i - 1); i -= 1
+            }
+        }
+        return (removed, added)
     }
 
     private static func lcsTable(_ a: [String], _ b: [String]) -> [[Int]] {
