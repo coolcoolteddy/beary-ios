@@ -50,7 +50,9 @@ enum BearyWordprintMode {
 }
 
 /// 仅公开篇徽标行：icon_public_only 资产（#229 已注册）+ 文字标注；资产未到时只留文字。
-/// 他人口径的蓝色取 BearyColors.blue（提示性元素次色）；本人态为灰色说明文字。
+/// 他人口径用墨色（BearyColors.ink）：「仅公开篇」是统计范围说明，不是可见性
+/// 状态，不用公开橙／私密蓝——蓝色易与私密混淆；墨色在浅色白底 21.00:1、
+/// surface1 底 19.26:1，深色底 18.04:1，均高于普通文字 4.5:1。本人态仍为灰色说明文字，不动。
 func bearyMakeWordprintScopeBadge(scope: BearyWordprintScope) -> UIView {
     let row = UIStackView()
     row.translatesAutoresizingMaskIntoConstraints = false
@@ -59,7 +61,7 @@ func bearyMakeWordprintScopeBadge(scope: BearyWordprintScope) -> UIView {
     row.alignment = .center
     if scope == .other, let badgeImage = BearyIconImages.image(named: "icon_public_only", pointSize: 14) {
         let badgeView = UIImageView(image: badgeImage)
-        badgeView.tintColor = BearyColors.blue
+        badgeView.tintColor = BearyColors.ink
         badgeView.translatesAutoresizingMaskIntoConstraints = false
         badgeView.contentMode = .scaleAspectFit
         NSLayoutConstraint.activate([
@@ -72,7 +74,7 @@ func bearyMakeWordprintScopeBadge(scope: BearyWordprintScope) -> UIView {
     label.translatesAutoresizingMaskIntoConstraints = false
     label.font = BearyDynamicType.captionFont()
     label.adjustsFontForContentSizeCategory = true
-    label.textColor = scope == .other ? BearyColors.blue : BearyColors.gray
+    label.textColor = scope == .other ? BearyColors.ink : BearyColors.gray
     label.text = scope.labelText
     row.addArrangedSubview(label)
     return row
