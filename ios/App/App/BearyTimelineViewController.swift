@@ -2193,7 +2193,9 @@ class BearyTimelineViewController: UIViewController {
     /// 同款语义），退场结束的提交只读内存，永不在主线程碰磁盘。
     /// 校验：只在全部档（.all）预读——日缓存是全部档行，筛子档不读缓存
     /// （与提交分支同口径）；回填前比对账号（uid 分桶，中途切号的旧账号
-    /// 落盘绝不写进新账号缓存）与日期（按 key 回填）；筛子档位在提交处
+    /// 落盘绝不写进新账号缓存）与日期（按 key 回填），并复用日缓存版本
+    /// 检查（与相邻日预取同款）：期间网络已写过该日则版本已变、或槽位
+    /// 已被占，迟到的磁盘结果拒写，不覆盖新数据；筛子档位在提交处
     /// 的内存查表时再校验（见 commitDaySwitch）。
     private func prepareDayEntriesInBackground(key: String) {
         guard timelineVisFilter == .all,
@@ -2201,12 +2203,17 @@ class BearyTimelineViewController: UIViewController {
               !dayDiskLoadInFlight.contains(key),
               let uid = SessionManager.shared.currentUser?.id else { return }
         dayDiskLoadInFlight.insert(key)
+        // 缓存版本快照：发出时记下该日版本，回调写缓存前比对——期间
+        // 主动加载已写过该日时版本已变，旧预读直接拒写，不覆盖新缓存。
+        let requestCacheVersion = dayCacheVersions[key] ?? 0
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let disk = BearyEntrySyncStore.loadDay(accountId: uid, dayKey: key)
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.dayDiskLoadInFlight.remove(key)
                 guard SessionManager.shared.currentUser?.id == uid else { return }
+                guard (self.dayCacheVersions[key] ?? 0) == requestCacheVersion else { return }
+                guard self.dayEntriesCache[key] == nil else { return }
                 if let disk = disk {
                     self.dayEntriesCache[key] = disk
                 }
