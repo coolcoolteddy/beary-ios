@@ -227,14 +227,22 @@ final class BearyLocalNotifications {
             }
         }
 
-        // 差分：清掉失效的（已关开关 / 已删篇 / 已撤回 / 已过期），补上新增的；
-        // 同 id 重排即覆盖（UNUserNotificationCenter 同 id 替换旧待发送）。
+        // 差分：清掉失效的（已关开关 / 已删篇 / 已撤回 / 已过期），只提交新增
+        // 或变化的；触发时刻与正文都相同的已排提醒不再重复提交——同 id 重排
+        // 即覆盖，逐轮重提是无用功。
         let desiredIds = Set(desired.map(\.identifier))
         center.getPendingNotificationRequests { requests in
-            let pendingIds = Set(requests.map(\.identifier).filter { $0.hasPrefix("beary.local.") })
-            let stale = pendingIds.subtracting(desiredIds)
+            var pending: [String: UNNotificationRequest] = [:]
+            for request in requests where request.identifier.hasPrefix("beary.local.") {
+                pending[request.identifier] = request
+            }
+            let stale = Set(pending.keys).subtracting(desiredIds)
             if !stale.isEmpty { center.removePendingNotificationRequests(withIdentifiers: Array(stale)) }
             for item in desired {
+                if let existing = pending[item.identifier],
+                   Self.isSameReminder(existing, as: item, calendar: calendar) {
+                    continue
+                }
                 let content = UNMutableNotificationContent()
                 content.body = item.body
                 content.sound = .default
@@ -246,6 +254,21 @@ final class BearyLocalNotifications {
                 center.add(request)
             }
         }
+    }
+
+    /// 已排提醒与期望是否一致：触发时刻（到分钟）与正文都相同即视为同一条，
+    /// 不再重复提交。时刻按触发器的日历分量比对——期望的触发器同样只含
+    /// 年月日时分，秒级差异不进入触发器，不参与比较。
+    private static func isSameReminder(_ request: UNNotificationRequest, as item: DesiredRequest, calendar: Calendar) -> Bool {
+        guard request.content.body == item.body,
+              let trigger = request.trigger as? UNCalendarNotificationTrigger else { return false }
+        let wanted = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: item.fireDate)
+        let existing = trigger.dateComponents
+        return existing.year == wanted.year
+            && existing.month == wanted.month
+            && existing.day == wanted.day
+            && existing.hour == wanted.hour
+            && existing.minute == wanted.minute
     }
 
     // MARK: - 日期
