@@ -38,6 +38,7 @@ final class BearyAnnouncementCenter {
     static let shared = BearyAnnouncementCenter()
 
     private let lastBuildKey = "beary_announcement_last_build"
+    private let lastRunBuildKey = "beary_announcement_last_run_build"
     private let shownIdsKey = "beary_announcement_shown_ids"
 
     private var fetchInFlight = false
@@ -93,7 +94,23 @@ final class BearyAnnouncementCenter {
         guard !BearyAppLockManager.shared.isColdLocked,
               presenter.presentedViewController == nil else { return }
         let current = currentBuild()
+        // R13-3/4：构建号结算拆成两本账——
+        // · lastRunBuildKey：上次实际运行的构建号，每次走到这里都记当前构建号；
+        // · lastBuildKey：更新跨越的结算基线，只在更新后公告展示、或无候选但列表
+        //   已有本构建号目标时才推进到当前构建号。
+        // 旧口径只用 lastBuildKey、缺失时回落 current：旧版启动时列表为空就从不
+        // 记旧构建号，升级后基线回落成当前构建号，目标为新构建号的更新公告永不弹；
+        // 且活动公告一弹就把 lastBuildKey 写成当前构建号，同版更新公告随即被烧掉。
+        // 新口径：首次检测到升级（上次运行构建号 < 当前）时，把升级起点记进
+        // lastBuildKey 并保留到结算为止——公告晚发布时下次启动仍按起点判断；
+        // 全新安装（从无上次运行构建号）时基线仍是当前构建号，更新后公告不弹。
+        let previousRunBuild = UserDefaults.standard.object(forKey: lastRunBuildKey) as? Int
+        if UserDefaults.standard.object(forKey: lastBuildKey) == nil,
+           let previous = previousRunBuild, previous < current {
+            UserDefaults.standard.set(previous, forKey: lastBuildKey)
+        }
         let lastBuild = UserDefaults.standard.object(forKey: lastBuildKey) as? Int ?? current
+        UserDefaults.standard.set(current, forKey: lastRunBuildKey)
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         let shown = shownIds()
         let candidate = list.first { ann in
@@ -129,7 +146,11 @@ final class BearyAnnouncementCenter {
         var nextShown = shown
         nextShown.insert(ann.id)
         UserDefaults.standard.set(Array(nextShown), forKey: shownIdsKey)
-        UserDefaults.standard.set(current, forKey: lastBuildKey)
+        // R13-4：只有更新后公告才结算构建号跨越；活动公告只记自己的展示 id，
+        // 不动 lastBuildKey——否则同版更新公告会被先弹的活动公告烧掉。
+        if ann.isAfterUpdate {
+            UserDefaults.standard.set(current, forKey: lastBuildKey)
+        }
         BearyAnnouncementSheet.show(from: presenter, announcement: ann)
     }
 }
