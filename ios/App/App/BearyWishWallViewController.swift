@@ -719,11 +719,14 @@ final class BearyWishWallViewController: UIViewController {
                     self.wishStaleLabel.isHidden = true
                     self.renderWishes()
                     // 确认结果为空时旧快照失效，下次不再先恢复已撤的愿望；非空则落快照。
+                    // 审计第 14 轮 4：快照只存服务端确认数据——在途投票的乐观票数
+                    // 只留在内存展示（merged），不进快照；投票失败回滚时快照不被
+                    // 旧乐观值污染，下次进页先看到的是服务端确认态。
                     if let accountId = SessionManager.shared.currentUser?.id {
                         if merged.isEmpty {
                             BearyWishWallCache.purge(bucket: "\(accountId)")
                         } else {
-                            self.saveWishesSnapshotIfNeeded(items: merged)
+                            self.saveWishesSnapshotIfNeeded(items: serverWishes)
                         }
                     }
                 case .failure:
