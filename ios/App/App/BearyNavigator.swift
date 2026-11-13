@@ -19,6 +19,17 @@ enum BearyRoute: Equatable {
     case userById(Int)
 
     static func parse(url: URL) -> BearyRoute? {
+        // 第三轮②收窄：beary:// 深链——scheme 在 Info.plist 已注册，
+        // SceneDelegate 的 openURLContexts / handleDeepLink 链路已接通，
+        // 此处只补解析：beary://d/<id> 与 https://teddyhn.com/beary/d/<id>
+        // 同一条链路进详情；其余 beary:// 形态一律拒收。
+        if url.scheme == "beary" {
+            guard url.host == "d" else { return nil }
+            var id = url.path
+            while id.hasPrefix("/") { id.removeFirst() }
+            while id.count > 1 && id.hasSuffix("/") { id.removeLast() }
+            return id.isEmpty || id.contains("/") ? nil : .entry(id)
+        }
         guard url.host == "teddyhn.com" || url.host == "www.teddyhn.com" else { return nil }
         var path = url.path
         while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
