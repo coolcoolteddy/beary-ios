@@ -1833,7 +1833,12 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         pendingUndos.removeLast()
         let draftValue = last.draft
         let insertIndex = min(last.index, drafts.count)
-        drafts.insert(draftValue, at: insertIndex)
+        // 审计第 17 轮第 17 项：恢复按 draftId 幂等——删第二份草稿时第一份的撤销条
+        // 仍可点，undo 取的是队尾那笔；若该篇仍在 drafts 里（收起动画／删盘未完成），
+        // 跳过插入，否则会插出重复行。仍走原有 saveAsyncReporting 恢复写盘与回调。
+        if !drafts.contains(where: { $0.draftId == draftValue.draftId }) {
+            drafts.insert(draftValue, at: insertIndex)
+        }
         // E1-4：整库写回走后台队列，主线程只更新 UI。
         refreshUndoBar()
         // G5：恢复写盘带 Bool 回调；失败时从磁盘重读并 toast，不让内存态冒充已恢复。
