@@ -1280,6 +1280,9 @@ final class BearyAPI {
     /// 内存缓存，随会话丢弃；命中须账号一致（authAccountId），不跨号复用
     /// “我的”组等鉴权敏感内容。
     private static let searchFirstPageTTL: TimeInterval = 60
+    /// 搜索首页缓存容量上限：写时清过期＋超量淘最旧（按 at 最旧先淘），
+    /// 避免长会话多词搜索把旧结果体一直留在内存（见 storeSearchFirstPage）。
+    private static let searchFirstPageCacheMaxEntries = 50
     private var searchFirstPageCache: [String: (at: Date, accountId: Int?, result: SearchResult)] = [:]
     private let searchFirstPageCacheLock = NSLock()
 
@@ -1295,10 +1298,28 @@ final class BearyAPI {
         return entry.result
     }
 
-    private func storeSearchFirstPage(q: String, result: SearchResult) {
+    /// 写缓存：只由 search(q:completion:) 的网络回包调用，入参 accountId /
+    /// epoch 为发起时捕获的值（见 search）。写入前凭 isStaleAccountLoad
+    /// 复核：发起后已切号的晚到回包不落盘（此处再守一次，防以后新增调用方
+    /// 漏传）；写入时先清过期条目（不等下次同词查询才删），再按容量上限
+    /// 淘最旧条目；最后按捕获的账号与同一 now 落盘，不再读现值。
+    /// 锁内读 authAccountId/authEpoch 与 cachedSearchFirstPage 同口径
+    /// （authStateQueue 与 searchFirstPageCacheLock 是两个不同队列，
+    /// 无嵌套反向持有）。
+    private func storeSearchFirstPage(q: String, result: SearchResult, accountId: Int?, epoch: Int) {
         searchFirstPageCacheLock.lock()
         defer { searchFirstPageCacheLock.unlock() }
-        searchFirstPageCache[q] = (at: Date(), accountId: authAccountId, result: result)
+        guard !Self.isStaleAccountLoad(requestAccountId: accountId, requestEpoch: epoch, currentAccountId: authAccountId, currentEpoch: authEpoch) else { return }
+        let now = Date()
+        let expiredKeys = searchFirstPageCache.filter { now.timeIntervalSince($0.value.at) >= Self.searchFirstPageTTL }.map(\.key)
+        for key in expiredKeys {
+            searchFirstPageCache.removeValue(forKey: key)
+        }
+        while searchFirstPageCache.count >= Self.searchFirstPageCacheMaxEntries,
+              let oldestKey = searchFirstPageCache.min(by: { $0.value.at < $1.value.at })?.key {
+            searchFirstPageCache.removeValue(forKey: oldestKey)
+        }
+        searchFirstPageCache[q] = (at: now, accountId: accountId, result: result)
     }
 
     @discardableResult
@@ -1309,9 +1330,15 @@ final class BearyAPI {
             DispatchQueue.global(qos: .userInitiated).async { completion(.success(cached)) }
             return nil
         }
+        // 发起时捕获（账号 ID，authEpoch）：回包写缓存前凭它复核，
+        // 发起后切号的晚到回包不落盘（见 storeSearchFirstPage）。
+        // 回包本身仍原样交调用方（调用方凭序号守卫丢弃旧回包做展示），
+        // 本处只守缓存写入，不改投递语义。
+        let requestAccountId = authAccountId
+        let requestEpoch = authEpoch
         return search(q: q, before: nil, beforeId: nil) { [weak self] result in
             if case .success(let data) = result {
-                self?.storeSearchFirstPage(q: q, result: data)
+                self?.storeSearchFirstPage(q: q, result: data, accountId: requestAccountId, epoch: requestEpoch)
             }
             completion(result)
         }
