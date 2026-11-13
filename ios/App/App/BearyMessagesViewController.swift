@@ -812,7 +812,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
         guard indexPath.row < mergedRows.count else { return }
         let row = mergedRows[indexPath.row]
-        // 会话行错峰淡入（广场同款：alpha + y+6、0.22s、0.03 步进封顶
+        // 会话行错峰淡入（广场同款：alpha + y+6、0.26s、0.03 步进封顶
         // 0.24s；按稳定 ID 已播行不重播，减动效直设终值）。
         if case .conversation = row {
             let k = key(for: row)
