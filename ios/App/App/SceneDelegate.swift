@@ -4142,11 +4142,13 @@ final class BearyChromeViewController: UIViewController {
         updateSideDecoLayout()
     }
 
-    // MARK: - 桌面式布局（宽 ≥821，与网页 @media 断点一致）
+    // MARK: - 桌面式布局（仅 iPad 且宽 ≥821，与网页 @media 断点一致）
 
-    /// 桌面式判定：只看宽度（网页 @media (min-width:821px) 同口径，不用 size class 单独判断；
-    /// iPad 竖屏 820 回 iPhone 式，横屏 1180 走桌面式；旋转/多任务改 bounds 时 viewDidLayoutSubviews 重算）。
+    /// 桌面式判定：只在 iPad 上为真（iPhone 横屏 932/852/844/926pt 也 ≥821，但仍走 iPhone 式全宽，
+    /// 不进「列表锁 600 宽居中」的桌面态）；宽度阈值保留作 iPad 窄屏/分屏的补充条件。
+    /// iPad 竖屏 820 回 iPhone 式，横屏 1180 走桌面式；旋转/多任务改 bounds 时 viewDidLayoutSubviews 重算。
     private func isDesktopLayout() -> Bool {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return false }
         return view.bounds.width >= 821
     }
 
