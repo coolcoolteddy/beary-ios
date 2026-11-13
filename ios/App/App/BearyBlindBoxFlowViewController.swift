@@ -1236,11 +1236,19 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         }
         poolBusy = true
         setStep(.pool)
+        // A2：入池也拍快照（账号 + 会话代次 + 北京日期），与开盒同口径：
+        // 跨日 / 切号后旧回包作废重查，不拿旧成功写当前桶。
+        let snapshot = Self.captureBlindBoxSnapshot()
         let request = beginBlindBoxRequest()
         BearyAPI.shared.poolBlindBoxEntry(entryId: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.poolBusy = false
+                if self.isStaleBlindBoxSnapshot(snapshot) {
+                    // 跨日 / 切号后旧回包作废：不写当前桶，重查当前状态。
+                    self.loadInitial()
+                    return
+                }
                 guard let accountId = request.accountId, self.isCurrentBlindBoxResponse(accountId: accountId, generation: request.generation) else { return }
                 switch result {
                 case .success(let resp):
