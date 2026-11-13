@@ -7730,6 +7730,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedMood = nil
         selectedWeather = nil
         selectedTemperature = nil
+        // 切空白：上一篇在途自动填天气回包即过期作废，不写进新篇（见 weatherFetchGeneration）。
+        weatherFetchGeneration += 1
         selectedRecipient = nil
         notifyRecipient = true
         selectedQuote = nil
@@ -7807,6 +7809,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedMood = draft.mood
         selectedWeather = draft.weather
         selectedTemperature = draft.temperature
+        // 切草稿：上一篇在途自动填天气回包即过期作废，不覆盖新篇天气（见 weatherFetchGeneration）。
+        weatherFetchGeneration += 1
         refreshSelectedChips()
         restoreVisibility(index: draft.visibilitySegmentIndex, ephemeral: draft.ephemeralEnabled)
         selectedRecipient = restoredRecipient(from: draft)
