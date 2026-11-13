@@ -883,6 +883,13 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             self.showingInitialThumbnail = false
             self.zoomHiResKey = key
             self.zoomHiResWidth = targetWidth
+            // 审计 15 项第 3 项：高清先到时同步更新成功态（与基础回包同款）——
+            // 否则基础回包因已有更高清图直接返回，displayedImageKey 再没机会
+            // 更新，「查看日记」入口一直打不开。
+            self.displayedImageKey = key
+            self.isFailed = false
+            self.retryButton.isHidden = true
+            self.updateViewEntryAvailability()
         }
     }
 
