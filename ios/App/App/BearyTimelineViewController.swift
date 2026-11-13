@@ -1929,6 +1929,12 @@ class BearyTimelineViewController: UIViewController {
     /// 故任何一次读取都不可能读到过期快照。
     private var cachedSections: [DaySection]?
 
+    /// 审计 r18 第 37 项：dayKey／组标题缓存——dayKey 只由 createdAt 决定
+    /// (创建后不变)，按 entry id／dayKey 缓存后 buildSections 重建时
+    /// 不再逐条跑 Date＋Calendar 换算；无 id 的条目仍现算。
+    private var dayKeyCacheByEntryId: [String: String] = [:]
+    private var dayTitleCacheByKey: [String: String] = [:]
+
     private var timelineEntries: [Entry] = [] { didSet { cachedSections = nil } }
     private var timelineHasMore = false
     private var timelineState = LoadState.idle
@@ -2044,7 +2050,9 @@ class BearyTimelineViewController: UIViewController {
     /// loadTimelineNextPage 入口，自动触发与手动重试同拦，防低速网络下
     /// 滑动中连续触发分页；手动点按被拦时给 toast 提示，自动触发被拦时静默。
     private var timelinePageFailureCount = 0
-    private var timelinePageRetryNotBefore: Date?
+    /// 审计 r18 第 36 项：退避窗口锚单调时钟(ProcessInfo.systemUptime 秒数，
+    /// 非 Date 墙钟)——改系统时间不再提前或推后窗口。
+    private var timelinePageRetryNotBefore: TimeInterval?
     // M2：分页新增行的错峰滑入队列（willDisplay 时按原始序号起播，播过即摘；
     // 用序号字典而非数组，避免摘除后后续序号前移导致错峰失效）。
     private var staggerInsertOrder: [IndexPath: Int] = [:]
@@ -4995,7 +5003,7 @@ class BearyTimelineViewController: UIViewController {
         if timelineLoadingMore || !timelineHasMore { return }
         // 审计 r16 第 17 项：失败退避窗口内不发新请求（自动触发与手动重试同拦，
         // 防低速网络下滑动中连续触发分页；窗口到时自动恢复）。
-        if let notBefore = timelinePageRetryNotBefore, Date() < notBefore {
+        if let notBefore = timelinePageRetryNotBefore, ProcessInfo.processInfo.systemUptime < notBefore {
             // 手动点按被拦时给一句提示；自动触发被拦时静默，不刷 toast。
             if manual { showTimelineToast(message: "网络较慢，稍后再试") }
             return
@@ -5057,7 +5065,7 @@ class BearyTimelineViewController: UIViewController {
                     // 审计 r16 第 17 项：指数退避 2s 起、翻倍、上限 30s。
                     strongSelf.timelinePageFailureCount += 1
                     let backoff = min(2.0 * pow(2.0, Double(strongSelf.timelinePageFailureCount - 1)), 30.0)
-                    strongSelf.timelinePageRetryNotBefore = Date().addingTimeInterval(backoff)
+                    strongSelf.timelinePageRetryNotBefore = ProcessInfo.processInfo.systemUptime + backoff
                     strongSelf.showTimelineToast(message: "加载失败")
                 }
                 strongSelf.updateChrome()
@@ -6205,17 +6213,34 @@ class BearyTimelineViewController: UIViewController {
         var indexByKey: [String: Int] = [:]
         for entry in timelineEntries {
             guard let createdMs = entry.createdAt else { continue }
-            guard let key = BearyBeijingDay.dayKey(ofMs: createdMs) else { continue }
+            guard let key = cachedDayKey(for: entry, createdMs: createdMs) else { continue }
             // 84 包：当日面板已展示该天条目时，时间线不再重复建组；dayEntries 为空时保留时间线组，避免取数失败藏条目。非今天的选中日同样适用。
             if key == selectedDayKey, !dayEntries.isEmpty { continue }
             if let existing = indexByKey[key] {
                 sections[existing].entries.append(entry)
             } else {
                 indexByKey[key] = sections.count
-                sections.append(DaySection(dayKey: key, title: dayTitleForMs(createdMs), entries: [entry]))
+                sections.append(DaySection(dayKey: key, title: cachedDayTitle(for: key, ms: createdMs), entries: [entry]))
             }
         }
         return sections
+    }
+
+    /// 审计 r18 第 37 项：按 entry id 取 dayKey——命中缓存即不跑日历换算；
+    /// 未命中时现算并记入缓存；无 id 的条目不缓存、每次现算。
+    private func cachedDayKey(for entry: Entry, createdMs: Int) -> String? {
+        if let entryId = entry.id, let cached = dayKeyCacheByEntryId[entryId] { return cached }
+        guard let key = BearyBeijingDay.dayKey(ofMs: createdMs) else { return nil }
+        if let entryId = entry.id { dayKeyCacheByEntryId[entryId] = key }
+        return key
+    }
+
+    /// 审计 r18 第 37 项：按 dayKey 取组标题——同 key 的标题只算一次。
+    private func cachedDayTitle(for key: String, ms: Int) -> String {
+        if let cached = dayTitleCacheByKey[key] { return cached }
+        let title = dayTitleForMs(ms)
+        dayTitleCacheByKey[key] = title
+        return title
     }
 
     /// 追加 6①：日组标题统一格式——此前今天/昨天带“今天 · / 昨天 · ”前缀、
