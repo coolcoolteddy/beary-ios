@@ -3670,6 +3670,13 @@ class BearyDiaryCardCell: UITableViewCell {
             updateEmoteInteractivity()
             return
         }
+        // 卡片重排位移（与详情页 #1415 同款）：记下本轮在场 chip 与 + 钮重排前的中心，
+        // 重排落位后对位移者用 transform 平移回旧位再滑到新位（见下 animatedLayout 分支）。
+        // 新 chip（本轮刚建）不在此列，入场关键帧自理；复用 chip 以对象为准。
+        var reorderPreviousCenters: [ObjectIdentifier: CGPoint] = [:]
+        for sub in emoteFlowView.subviews {
+            reorderPreviousCenters[ObjectIdentifier(sub)] = sub.center
+        }
         for sub in emoteFlowView.subviews {
             sub.removeFromSuperview()
         }
@@ -3761,13 +3768,32 @@ class BearyDiaryCardCell: UITableViewCell {
             updateEmoteRowHeight()
         }
         updateEmoteInteractivity()
-        // 用户动作位移：+ 钮与已存 chip 随新布局帧动画滑到新位（只动位置，
-        // 不重播已有 chip；新 chip 的出现动画由 playChipIn 另播，不冲突）。
-        // fixall-cell 6-4：行高变化走控制器 performBatchUpdates（折叠同款口径）——
-        // 控制器接线 onNeedsEmoteRowAnimation 后，此处只调回调、不再播 cell 内
-        // flow 位移动画（batch 内行高与 chip 位置同动画，防双动画叠加）；
-        // 未接线时保留原有 0.26s flow 位移动画；减动效下两种路径均为直设终值。
-        if animatedLayout, UIAccessibility.isReduceMotionEnabled == false {
+        // 卡片重排位移（与详情页 #1415 同款）：控制器接线后 cell 内原有 flow
+        // 位移动画被 batch 回调取代，但 batch（performBatchUpdates(nil)）只动
+        // 行高、同行重排时无物可动，且重建是先拆后建、chip 新帧落在动画块外，
+        // 所以数量变化引起的重排一直直接跳位。改后：先把 flow 按新顺序落位
+        // （行高变化先结算），再把位移的在场 chip／+ 钮用 transform 平移回旧位、
+        // 0.26s（§6 normal）滑到新位；只走 transform，不重播已有 chip 的入场
+        // 动效；新 chip 入场关键帧不动；减动效、行宽为 0 时直落终值。
+        // 行高变化仍走控制器 batch 回调（折叠同款口径），与本位移动画各管一端，
+        // 不叠加：落位已在 batch 前结算，batch 内 chip 帧不再变化。
+        if animatedLayout, UIAccessibility.isReduceMotionEnabled == false, emoteFlowView.bounds.width > 0 {
+            emoteFlowView.layoutIfNeeded()
+            var sliding: [UIView] = []
+            for sub in emoteFlowView.subviews {
+                guard let oldCenter = reorderPreviousCenters[ObjectIdentifier(sub)],
+                      sub.transform == .identity else { continue }
+                let newCenter = sub.center
+                if oldCenter != newCenter {
+                    sub.transform = CGAffineTransform(translationX: oldCenter.x - newCenter.x, y: oldCenter.y - newCenter.y)
+                    sliding.append(sub)
+                }
+            }
+            if !sliding.isEmpty {
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+                    for view in sliding { view.transform = .identity }
+                }
+            }
             if let batchAnimation = onNeedsEmoteRowAnimation {
                 batchAnimation()
             } else {
