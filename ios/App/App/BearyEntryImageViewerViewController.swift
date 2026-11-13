@@ -1888,7 +1888,7 @@ private final class BearyImageViewerReturnAnimator: NSObject, UIViewControllerAn
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return 0.25
+        return BearyMotion.normal
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
