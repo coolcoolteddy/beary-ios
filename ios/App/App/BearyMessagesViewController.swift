@@ -557,12 +557,30 @@ final class BearyMessagesViewController: UIViewController {
     /// key 冲突（按行定位不可信），或改动面过大（整页重排/批量已读等，
     /// 按行更新无收益）。小改动才走 batch——一次新通知、一次已读/
     /// 摘要变化都在此列。
+    /// 移位只计真重排：行在新旧两表都出现、内容未变时，先算它“只随
+    /// 前方插／删自然平移”的期望下标（旧下标＋前方插入数－前方删除数）；
+    /// 实际下标与期望一致即纯平移——insertRows／deleteRows 会自动把它
+    /// 带到新位置，不记 move、不占操作预算；只有实际下标偏离期望
+    /// （相对顺序真变了）才记一次 move。顶部插一条新消息时，后面全体
+    /// 行都只是纯平移，不再因移位行数超 10 次阈值而回退 reloadData。
     private func diffBatch(from oldRows: [MergedRow], to newRows: [MergedRow]) -> MergedRowsBatch? {
         let oldKeys = oldRows.map { key(for: $0) }
         let newKeys = newRows.map { key(for: $0) }
         guard Set(oldKeys).count == oldKeys.count, Set(newKeys).count == newKeys.count else { return nil }
         let oldIndexByKey = Dictionary(uniqueKeysWithValues: zip(oldKeys, oldKeys.indices))
         let newIndexByKey = Dictionary(uniqueKeysWithValues: zip(newKeys, newKeys.indices))
+        // 前方插入／删除的前缀计数：insertionsBeforeNew[i] = 新表中下标 < i 的插入行数；
+        // deletionsBeforeOld[i] = 旧表中下标 < i 的删除行数。
+        var insertionsBeforeNew = [Int](repeating: 0, count: newKeys.count + 1)
+        for (newIndex, newKey) in newKeys.enumerated() where oldIndexByKey[newKey] == nil {
+            insertionsBeforeNew[newIndex + 1] += 1
+        }
+        for i in 1..<insertionsBeforeNew.count { insertionsBeforeNew[i] += insertionsBeforeNew[i - 1] }
+        var deletionsBeforeOld = [Int](repeating: 0, count: oldKeys.count + 1)
+        for (oldIndex, oldKey) in oldKeys.enumerated() where newIndexByKey[oldKey] == nil {
+            deletionsBeforeOld[oldIndex + 1] += 1
+        }
+        for i in 1..<deletionsBeforeOld.count { deletionsBeforeOld[i] += deletionsBeforeOld[i - 1] }
         var batch = MergedRowsBatch()
         var opCount = 0
         for (oldIndex, oldKey) in oldKeys.enumerated() {
@@ -576,10 +594,12 @@ final class BearyMessagesViewController: UIViewController {
                     batch.deletions.append(IndexPath(row: oldIndex, section: 0))
                     batch.insertions.append(IndexPath(row: newIndex, section: 0))
                     opCount += 2
-                } else {
+                } else if newIndex != oldIndex + insertionsBeforeNew[newIndex] - deletionsBeforeOld[oldIndex] {
+                    // 真重排：实际下标偏离了只随前方插／删平移的期望下标。
                     batch.moves.append((from: IndexPath(row: oldIndex, section: 0), to: IndexPath(row: newIndex, section: 0)))
                     opCount += 1
                 }
+                // 否则纯平移：不记 move，insert／delete 会自动带它到位。
             } else if contentSignature(for: oldRows[oldIndex]) != contentSignature(for: newRows[newIndex]) {
                 batch.reloads.append(IndexPath(row: oldIndex, section: 0))
                 opCount += 1
