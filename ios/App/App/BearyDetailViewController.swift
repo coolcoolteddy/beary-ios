@@ -3394,12 +3394,15 @@ extension BearyDetailViewController: UIGestureRecognizerDelegate {
     }
 }
 
-// MARK: - 单篇详情磁盘缓存（与 BearyFeedCache 同口径，不新增文件）
+// MARK: - 单篇详情磁盘缓存（与 BearyFeedCache 同口径）
 ///
 /// 看过单篇的正文按账号分桶、按篇分文件；id 直达（搜索/消息/深链/引用卡）
 /// 网络拉不到时先显这份旧正文。占位/拉黑态不写盘；进详情的可见性门仍由
 /// routeFetchedEntry 把关（仅好友篇离线直达时仍重验互关、失败落占位）。
 /// 退出/401 时由 SessionManager 清桶。
+/// 每桶另有一份浏览时间索引（beary_detail_cache_<bucket>.index.json，
+/// 键为 entryKey、值为 lastViewedAt）：判限只读索引，不再全量解码快照；
+/// 索引缺失的旧文件才回落解码一次。
 enum BearyDetailCache {
     private static let filePrefix = "beary_detail_cache_"
 
@@ -3434,6 +3437,37 @@ enum BearyDetailCache {
     private static func fileURL(bucket: String, entryId: String) -> URL? {
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         return base.appendingPathComponent("\(filePrefix)\(bucket)_\(safeEntryId(entryId)).json")
+    }
+
+    /// 浏览时间索引：每桶一份，键为 entryKey、值为 lastViewedAt。
+    /// 判限只读它，不再逐文件解码快照。
+    private static func indexURL(bucket: String) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return base.appendingPathComponent("\(filePrefix)\(bucket).index.json")
+    }
+
+    /// 从快照文件名取 entryKey（safeEntryId 后的部分，去掉 .json 后缀）；
+    /// 名字不合格式（索引文件本身等）返回 nil。
+    private static func entryKey(fromFileName name: String, bucket: String) -> String? {
+        let prefix = "\(filePrefix)\(bucket)_"
+        guard name.hasPrefix(prefix), name.hasSuffix(".json") else { return nil }
+        let key = name.dropFirst(prefix.count).dropLast(".json".count)
+        return key.isEmpty ? nil : String(key)
+    }
+
+    /// 读索引（ioQueue 内同步用；缺失或损坏即空表，不抛）。
+    private static func loadIndex(bucket: String) -> [String: TimeInterval] {
+        guard let url = indexURL(bucket: bucket),
+              let data = try? Data(contentsOf: url) else { return [:] }
+        return (try? JSONDecoder().decode([String: TimeInterval].self, from: data)) ?? [:]
+    }
+
+    /// 写索引（ioQueue 内同步用；编码失败即跳过，不抛）。
+    private static func saveIndex(_ index: [String: TimeInterval], bucket: String) {
+        guard let url = indexURL(bucket: bucket),
+              let data = try? JSONEncoder().encode(index) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
     }
 
     private static let ioQueue = DispatchQueue(label: "beary.detailCache.io", qos: .utility)
@@ -3480,6 +3514,9 @@ enum BearyDetailCache {
             let lastViewed = loadSnapshot(at: url)?.effectiveLastViewedAt ?? now
             let snap = Snapshot(savedAt: now, confirmedAt: now, lastViewedAt: lastViewed, entry: entry)
             writeSnapshot(snap, to: url)
+            var index = loadIndex(bucket: bucket)
+            index[safeEntryId(entryId)] = lastViewed
+            saveIndex(index, bucket: bucket)
             enforceLimits(bucket: bucket)
         }
     }
@@ -3493,12 +3530,19 @@ enum BearyDetailCache {
             guard capturedGeneration == generation(for: bucket) else { return }
             guard let url = fileURL(bucket: bucket, entryId: entryId) else { return }
             let now = Date().timeIntervalSince1970
+            var isNew = false
             if var existing = loadSnapshot(at: url) {
                 existing.lastViewedAt = now
                 writeSnapshot(existing, to: url)
             } else {
                 let snap = Snapshot(savedAt: now, confirmedAt: now, lastViewedAt: now, entry: entry)
                 writeSnapshot(snap, to: url)
+                isNew = true
+            }
+            var index = loadIndex(bucket: bucket)
+            index[safeEntryId(entryId)] = now
+            saveIndex(index, bucket: bucket)
+            if isNew {
                 enforceLimits(bucket: bucket)
             }
         }
@@ -3527,29 +3571,61 @@ enum BearyDetailCache {
     static let maxSnapshotBytesPerBucket = 20 * 1024 * 1024
 
     /// 桶内清理（只在 ioQueue 内调用，与 save/markViewed 同队列串行）。
+    /// 判限只读浏览时间索引：索引缺失的旧文件才回落解码一次（解出的值顺手
+    /// 回填索引，下次不再解码），再回落文件修改时间；淘汰后把已删键与已
+    /// 不存在文件的键从索引里清掉并写回。删除失败不扣账：字节与条数只按
+    /// 实际删掉的算（㉗）。
     private static func enforceLimits(bucket: String) {
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
         let prefix = "\(filePrefix)\(bucket)_"
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: base.path) else { return }
-        var files: [(url: URL, size: Int, lastViewed: TimeInterval)] = []
+        var index = loadIndex(bucket: bucket)
+        var files: [(url: URL, key: String, size: Int, lastViewed: TimeInterval)] = []
         var totalBytes = 0
+        var indexDirty = false
         for name in names where name.hasPrefix(prefix) {
+            guard let key = entryKey(fromFileName: name, bucket: bucket) else { continue }
             let url = base.appendingPathComponent(name)
             let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
             let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
-            let lastViewed = loadSnapshot(at: url)?.effectiveLastViewedAt
-                ?? (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-            files.append((url: url, size: size, lastViewed: lastViewed))
+            let lastViewed: TimeInterval
+            if let known = index[key] {
+                lastViewed = known
+            } else {
+                lastViewed = loadSnapshot(at: url)?.effectiveLastViewedAt
+                    ?? (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+                index[key] = lastViewed
+                indexDirty = true
+            }
+            files.append((url: url, key: key, size: size, lastViewed: lastViewed))
             totalBytes += size
         }
-        guard files.count > maxSnapshotsPerBucket || totalBytes > maxSnapshotBytesPerBucket else { return }
-        files.sort { $0.lastViewed < $1.lastViewed }
-        var index = 0
-        while (files.count - index > maxSnapshotsPerBucket || totalBytes > maxSnapshotBytesPerBucket) && index < files.count {
-            try? FileManager.default.removeItem(at: files[index].url)
-            totalBytes -= files[index].size
-            index += 1
+        guard files.count > maxSnapshotsPerBucket || totalBytes > maxSnapshotBytesPerBucket else {
+            if indexDirty { saveIndex(index, bucket: bucket) }
+            return
         }
+        files.sort { $0.lastViewed < $1.lastViewed }
+        var remainingCount = files.count
+        var cursor = 0
+        while (remainingCount > maxSnapshotsPerBucket || totalBytes > maxSnapshotBytesPerBucket) && cursor < files.count {
+            let victim = files[cursor]
+            do {
+                try FileManager.default.removeItem(at: victim.url)
+                totalBytes -= victim.size
+                remainingCount -= 1
+                index.removeValue(forKey: victim.key)
+            } catch {
+                // 删除失败：账目不动，只跳过该文件继续往后删（㉗）。
+            }
+            cursor += 1
+        }
+        // 索引只保留仍在盘上的文件：删掉已不存在文件的过期键。
+        let liveKeys = Set(files.map { $0.key })
+        let staleKeys = index.keys.filter { !liveKeys.contains($0) }
+        for key in staleKeys {
+            index.removeValue(forKey: key)
+        }
+        saveIndex(index, bucket: bucket)
     }
 
     /// 清某账号桶下全部单篇快照（按文件名前缀枚举删除）。
@@ -3562,6 +3638,9 @@ enum BearyDetailCache {
             for name in names where name.hasPrefix(prefix) {
                 try? FileManager.default.removeItem(at: base.appendingPathComponent(name))
             }
+            if let indexURL = indexURL(bucket: bucket) {
+                try? FileManager.default.removeItem(at: indexURL)
+            }
         }
     }
 
@@ -3573,6 +3652,9 @@ enum BearyDetailCache {
         ioQueue.async {
             guard let url = fileURL(bucket: bucket, entryId: entryId) else { return }
             try? FileManager.default.removeItem(at: url)
+            var index = loadIndex(bucket: bucket)
+            index.removeValue(forKey: safeEntryId(entryId))
+            saveIndex(index, bucket: bucket)
         }
     }
 }
