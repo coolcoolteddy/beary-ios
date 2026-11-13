@@ -19,6 +19,9 @@ final class BearyQuoteCardView: UIView {
     /// F2：引用卡点按（gone/locked 时首页 cell 侧不动作；加载失败时走 onRetryTapped）。
     var onTapped: (() -> Void)?
     var onRetryTapped: (() -> Void)?
+    /// 展开时通知宿主更新行高（审计第十轮第 4 项）：卡片只改自身状态
+    /// （行数放开），行高归宿主的表/滚动容器重算，卡片不猜外层高度。
+    var onExpansionChanged: (() -> Void)?
     /// 个人主页口径：gone 卡点按仍透传给控制器（弹“已删除/还没公开”提示），
     /// 首页保持 false（gone 卡点按无动作）。
     var allowGoneTap = false
@@ -289,6 +292,7 @@ final class BearyQuoteCardView: UIView {
         quoteExpanded = true
         contentLabel.numberOfLines = 0
         expandButton.isHidden = true
+        onExpansionChanged?()
     }
 
     override init(frame: CGRect) {

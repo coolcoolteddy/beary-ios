@@ -1484,6 +1484,7 @@ class BearyDiaryCardCell: UITableViewCell {
         quoteView.allowGoneTap = (cardMode == .profile)
         quoteView.onTapped = { [weak self] in self?.quoteViewTapped() }
         quoteView.onRetryTapped = { [weak self] in self?.retryQuoteFetch() }
+        quoteView.onExpansionChanged = { [weak self] in self?.notifyQuoteExpanded() }
         avatarContainer.addSubview(avatarInitialLabel)
         avatarContainer.addSubview(avatarImageView)
         avatarContainer.addSubview(avatarRetryButton)
@@ -2895,6 +2896,23 @@ class BearyDiaryCardCell: UITableViewCell {
             waiter.configureQuoteFeed(for: waiterEntry)
             waiter.updateDiaryStackSpacing()
             waiter.onNeedsRowReload?()
+        }
+    }
+
+    /// 引用卡展开后通知表格重算行高（审计第十轮第 4 项）：卡片内部只改行数，
+    /// 行高归表格所有；begin/end 更新走 motion.normal（0.26s）平滑过渡，
+    /// 不做突然跳变。找不到表（卡未挂表）时不做事。
+    private func notifyQuoteExpanded() {
+        var tableView: UITableView?
+        var view = superview
+        while let current = view {
+            if let table = current as? UITableView { tableView = table; break }
+            view = current.superview
+        }
+        guard let tableView = tableView else { return }
+        UIView.animate(withDuration: BearyMotion.normal) {
+            tableView.beginUpdates()
+            tableView.endUpdates()
         }
     }
 
