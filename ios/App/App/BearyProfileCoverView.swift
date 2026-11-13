@@ -294,8 +294,10 @@ public final class ProfileCoverView: UIView {
     /// 元旦（中式木刻版画、深蓝夜＋金色烟花）：图集只含背景，余烬由动态物层单独贴；
     /// 彩蛋一张是与第 7 帧对齐的整帧透明层（左上夜空一朵金色烟花，中心 (300, 65)）。
     /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
-    /// v22 模型：只动烟花——图集结构层就是烟花（大红烟花＋小白烟花＋河面倒影），
-    /// 帧 f 平移 2(f−6) px（±12）；桥/小镇/行人/河面全在 far 层静止。
+    /// v23 模型：只动天上的烟花——图集结构层就是大红烟花＋小白烟花，
+    /// 帧 f 平移 2(f−6) px（±12）；桥/小镇/行人/河面/倒影全在 far 层静止。
+    /// v22 曾把河面倒影也放进结构层，倒影紧贴桥左拱、动起来像桥在动，
+    /// 且它遮住的 inpaint 是抹平的水面、露出时像一块糊斑，v23 已去掉。
     /// 余烬是烟花的火星，跟烟花同速（structureX），不再用主体速率 24*depth。
     private func drawNewyear(_ ctx: CGContext, depth: CGFloat, vertical: CGFloat, padded: CGRect) {
         let scaleX = padded.width / 1024
