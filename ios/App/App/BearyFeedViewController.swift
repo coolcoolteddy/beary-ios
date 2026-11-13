@@ -1603,7 +1603,9 @@ class BearyFeedViewController: UIViewController {
 
     /// 账号/游客切换（SceneDelegate onUserChanged 在 id 真变时广播）：
     /// 桶一换，内存列表立即换桶——新身份有缓存即瞬间出缓存 + 静默刷新，
-    /// 无缓存则旧行全清后全量拉取；旧桶的行绝不留给新身份看。
+    /// 无缓存则旧行先留着当占位、后台全量 diff 对齐（广场只含有效公开篇，
+    /// 游客行与新身份首屏是服务端同一批公开内容，仅 viewer 字段待刷新；
+    /// 失败也保留旧行，不清空）。
     /// 冷启动 /me 回包前 currentUser 仍为 nil 时本函数不触发（id 未变），
     /// 首帧按 lastKnownUserId 桶渲染，/me 回包后这里换桶纠正 viewer 字段。
     @objc private func handleFeedUserChanged() {
@@ -1659,12 +1661,14 @@ class BearyFeedViewController: UIViewController {
                 return
             }
         }
-        strongSelf.plazaRaw = []
-        strongSelf.firstPageIds = []
+        // 登录后新桶无缓存：不清表——广场只含有效公开篇，游客行与登录后
+        // 首屏是服务端同一批公开内容（仅点赞态等 viewer 字段待刷新），先留
+        // 着当占位、后台全量 diff 对齐；失败也保留旧行（首拉失败口径）。
+        // bypass 强制走全量首拉而非 since 增量（since 只前插新篇、不刷新旧行 viewer 字段）。
         strongSelf.plazaHasMore = true
         strongSelf.plazaReachedEnd = false
         strongSelf.plazaError = false
-        strongSelf.tableView.reloadData()
+        strongSelf.refreshAllBypassInFlight = true
         strongSelf.refreshAll()
         }
     }
