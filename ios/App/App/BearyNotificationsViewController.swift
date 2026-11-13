@@ -1638,7 +1638,7 @@ final class BearyNotificationsViewController: UIViewController {
         cardAnimationGeneration += 1
         if let animator = cardAnimator {
             cardAnimator = nil
-            animator.stopAnimation(true)
+            animator.stopAnimation(false)
             animator.finishAnimation(at: .current)
         }
         cardAnimatingKind = nil
@@ -1659,7 +1659,7 @@ final class BearyNotificationsViewController: UIViewController {
         cardAnimationGeneration += 1
         if let animator = cardAnimator {
             cardAnimator = nil
-            animator.stopAnimation(true)
+            animator.stopAnimation(false)
             animator.finishAnimation(at: .current)
         }
         cardAnimatingKind = nil
