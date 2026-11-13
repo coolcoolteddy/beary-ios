@@ -1426,14 +1426,29 @@ final class BearyDiaryStarMapViewController: UIViewController {
         return ""  // 109：无标题又无正文不再显“日记”占位
     }
 
+    /// 审计 17 轮第 20 项：底卡日期共用两个格式化器——sheetDateString 每行
+    /// 新建 DateFormatter 是重复开销；格式一字不动（当年 M月d日／跨年
+    /// yyyy年M月d日）。调用点全在主线程 sheet UI（见 sheetEntryButton／
+    /// showStarSheet／edgeEntryName），DateFormatter 非线程安全，此处
+    /// 单线程使用无虞（与画布 starDateFormatter 同款做法）。
+    private static let sheetDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "M月d日"
+        return formatter
+    }()
+
+    private static let sheetDateYearFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy年M月d日"
+        return formatter
+    }()
+
     private func sheetDateString(_ entry: Entry) -> String {
         guard let ms = entry.createdAt, ms > 0 else { return "" }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let formatter = DateFormatter()
         let currentYear = Calendar.current.component(.year, from: Date())
         let year = Calendar.current.component(.year, from: date)
-        formatter.dateFormat = year == currentYear ? "M月d日" : "yyyy年M月d日"
-        return formatter.string(from: date)
+        return (year == currentYear ? Self.sheetDateFormatter : Self.sheetDateYearFormatter).string(from: date)
     }
 
     private func openEntry(_ entry: Entry) {
