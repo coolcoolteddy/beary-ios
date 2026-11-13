@@ -2121,8 +2121,11 @@ final class BearyDetailViewController: UIViewController {
 
     /// 浏览记次：进页只刷新快照的上次浏览，确认时间与正文不动；
     /// 回看旧快照不再换成新的保存时间。
+    /// 桶用进页时钉住的 snapshotBucket；进页后已切号时拒绝这次写入，
+    /// 不把浏览记到切换后的账号桶里。
     private func markDetailSnapshotViewed() {
-        BearyDetailCache.markViewed(bucket: BearyDetailCache.bucket(), entry: entry)
+        guard BearyDetailCache.bucket() == snapshotBucket else { return }
+        BearyDetailCache.markViewed(bucket: snapshotBucket, entry: entry)
     }
 
     // MARK: - 限时到期（审计三轮第二批 9）
