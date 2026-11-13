@@ -4077,7 +4077,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// buildSelectedChipsRow 之后立即建，顺序即栈顺序）；无位置时整行隐藏，不留空行。
     private func buildLocationRow() {
         locationIconView.translatesAutoresizingMaskIntoConstraints = false
-        locationIconView.image = BearyLocationIcon.image(pointSize: 16)
+        locationIconView.image = BearyLocationIcon.image(pointSize: 13)
         locationIconView.tintColor = BearyColors.gray
         locationIconView.contentMode = .scaleAspectFit
         locationLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -4109,8 +4109,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         locationRowStack.addArrangedSubview(locationNoteLabel)
         contentStack.addArrangedSubview(locationRowStack)
         NSLayoutConstraint.activate([
-            locationIconView.widthAnchor.constraint(equalToConstant: 16),
-            locationIconView.heightAnchor.constraint(equalToConstant: 16),
+            locationIconView.widthAnchor.constraint(equalToConstant: 13),
+            locationIconView.heightAnchor.constraint(equalToConstant: 13),
             locationClearButton.widthAnchor.constraint(equalToConstant: 24),
             locationClearButton.heightAnchor.constraint(equalToConstant: 24),
         ])
@@ -4477,7 +4477,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         BearyIconImages.image(named: "icon_close", pointSize: 40)
     }
 
-    /// 审计 16 项：心情 chip 图标——官方 emote 静态 PNG 按 16pt 重绘。
+    /// 审计 16 项：心情 chip 图标——官方 emote 静态 PNG 按 13pt 重绘。
     /// UIButton.setImage 不缩放，原图 72pt 会撑爆 chip；重绘保留原色（不用
     /// BearyIconImages 的 alwaysTemplate，线条稿深浅变体靠 _dark 资产本身）。
     /// 深色资产缺失时 BearyEmoteImages 已按 C3 上报并返回 nil，此处不另找替代、
@@ -4485,7 +4485,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func selectedMoodChipIcon(for key: String) -> UIImage? {
         let dark = traitCollection.userInterfaceStyle == .dark
         guard let base = BearyEmoteImages.image(for: key, dark: dark) else { return nil }
-        let size = CGSize(width: 16, height: 16)
+        let size = CGSize(width: 13, height: 13)
         let format = UIGraphicsImageRendererFormat()
         format.scale = UIScreen.main.scale
         return UIGraphicsImageRenderer(size: size, format: format).image { _ in
@@ -4519,7 +4519,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             weatherChipButton.isHidden = false
             let weatherTitle = selectedTemperature != nil ? "\(name) \(selectedTemperature!)°" : name
             weatherChipButton.setTitle(weatherTitle, for: .normal)
-            let icon = BearyIconImages.image(named: "icon_wx_\(weather)", pointSize: 16)
+            let icon = BearyIconImages.image(named: "icon_wx_\(weather)", pointSize: 15)
             if icon == nil {
                 NSLog("[BearyComposer] selected weather chip icon missing key=%@", weather)
             }

@@ -469,7 +469,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         dateLabel.text = dateText
         let weatherView = UIImageView()
         weatherView.translatesAutoresizingMaskIntoConstraints = false
-        weatherView.image = BearyIconImages.image(named: "icon_wx_sun", pointSize: 18)
+        weatherView.image = BearyIconImages.image(named: "icon_wx_sun", pointSize: 15)
         weatherView.tintColor = BearyColors.ink
         dateRow.addArrangedSubview(dateLabel)
         dateRow.addArrangedSubview(weatherView)
@@ -492,8 +492,8 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         stack.addArrangedSubview(body)
         card.addSubview(stack)
         NSLayoutConstraint.activate([
-            weatherView.widthAnchor.constraint(equalToConstant: 18),
-            weatherView.heightAnchor.constraint(equalToConstant: 18),
+            weatherView.widthAnchor.constraint(equalToConstant: 15),
+            weatherView.heightAnchor.constraint(equalToConstant: 15),
             stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 16),
             stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
             stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
@@ -710,7 +710,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         dateLabel.text = "今天"
         let weatherView = UIImageView()
         weatherView.translatesAutoresizingMaskIntoConstraints = false
-        weatherView.image = BearyIconImages.image(named: "icon_wx_sun", pointSize: 18)
+        weatherView.image = BearyIconImages.image(named: "icon_wx_sun", pointSize: 15)
         weatherView.tintColor = BearyColors.ink
         dateRow.addArrangedSubview(dateLabel)
         dateRow.addArrangedSubview(weatherView)
@@ -736,8 +736,8 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
             pillLabel.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 11),
             pillLabel.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -11),
             pillLabel.bottomAnchor.constraint(equalTo: pill.bottomAnchor, constant: -3),
-            weatherView.widthAnchor.constraint(equalToConstant: 18),
-            weatherView.heightAnchor.constraint(equalToConstant: 18),
+            weatherView.widthAnchor.constraint(equalToConstant: 15),
+            weatherView.heightAnchor.constraint(equalToConstant: 15),
             demoStack.topAnchor.constraint(equalTo: demoCard.topAnchor, constant: 16),
             demoStack.leadingAnchor.constraint(equalTo: demoCard.leadingAnchor, constant: 16),
             demoStack.trailingAnchor.constraint(equalTo: demoCard.trailingAnchor, constant: -16),

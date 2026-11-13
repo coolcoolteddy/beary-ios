@@ -1769,13 +1769,13 @@ final class BearySettingsViewController: UIViewController {
         rowContent.alignment = .center
         rowContent.translatesAutoresizingMaskIntoConstraints = false
         if isCurrent {
-            let checkView = UIImageView(image: BearyIconImages.image(named: "icon_check", pointSize: 18))
+            let checkView = UIImageView(image: BearyIconImages.image(named: "icon_check", pointSize: 15))
             checkView.translatesAutoresizingMaskIntoConstraints = false
             checkView.tintColor = BearyColors.ink
             checkView.contentMode = .scaleAspectFit
             NSLayoutConstraint.activate([
-                checkView.widthAnchor.constraint(equalToConstant: 18),
-                checkView.heightAnchor.constraint(equalToConstant: 18),
+                checkView.widthAnchor.constraint(equalToConstant: 15),
+                checkView.heightAnchor.constraint(equalToConstant: 15),
             ])
             rowContent.addArrangedSubview(checkView)
         }

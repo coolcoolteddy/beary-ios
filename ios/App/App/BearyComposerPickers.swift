@@ -216,7 +216,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         searchBox.layer.cornerRadius = 24
         searchBox.layer.masksToBounds = false
         searchBox.layer.borderWidth = 0
-        searchIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 18)
+        searchIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 16)
         searchIcon.tintColor = BearyColors.gray
         searchIcon.contentMode = .scaleAspectFit
         // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径），
@@ -355,8 +355,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             searchBox.heightAnchor.constraint(greaterThanOrEqualToConstant: 48),
             searchIcon.leadingAnchor.constraint(equalTo: searchBox.leadingAnchor, constant: 14),
             searchIcon.centerYAnchor.constraint(equalTo: searchBox.centerYAnchor),
-            searchIcon.widthAnchor.constraint(equalToConstant: 18),
-            searchIcon.heightAnchor.constraint(equalToConstant: 18),
+            searchIcon.widthAnchor.constraint(equalToConstant: 16),
+            searchIcon.heightAnchor.constraint(equalToConstant: 16),
             searchField.leadingAnchor.constraint(equalTo: searchBox.leadingAnchor, constant: 41),
             searchField.trailingAnchor.constraint(equalTo: searchBox.trailingAnchor, constant: -14),
             searchField.topAnchor.constraint(equalTo: searchBox.topAnchor, constant: 12),
@@ -789,7 +789,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private func setSearchBusy(_ busy: Bool) {
         searchIcon.layer.removeAnimation(forKey: "bearySearchSpin")
         if busy {
-            searchIcon.image = BearyIconImages.image(named: "icon_refresh", pointSize: 18)
+            searchIcon.image = BearyIconImages.image(named: "icon_refresh", pointSize: 16)
             if !UIAccessibility.isReduceMotionEnabled {
                 let spin = CABasicAnimation(keyPath: "transform.rotation.z")
                 spin.fromValue = 0
@@ -799,7 +799,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                 searchIcon.layer.add(spin, forKey: "bearySearchSpin")
             }
         } else {
-            searchIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 18)
+            searchIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 16)
         }
     }
 

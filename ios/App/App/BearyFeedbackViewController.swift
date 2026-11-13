@@ -565,7 +565,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         // 按钮普查：裸 16pt medium 改 scaledFont，跟随系统字号（行高 44，最大档不裁剪）。
         attachLabelButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .medium))
         attachLabelButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        if let attachIcon = BearyIconImages.image(named: "icon_image", pointSize: 18) {
+        if let attachIcon = BearyIconImages.image(named: "icon_image", pointSize: 16) {
             attachLabelButton.setImage(attachIcon, for: .normal)
         }
         attachLabelButton.tintColor = BearyColors.gray
@@ -701,7 +701,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         submitHintRow.alignment = .center
         submitHintRow.spacing = 4
         shareButton.translatesAutoresizingMaskIntoConstraints = false
-        if let shareIcon = BearyIconImages.image(named: "icon_share", pointSize: 18) {
+        if let shareIcon = BearyIconImages.image(named: "icon_share", pointSize: 16) {
             shareButton.setImage(shareIcon, for: .normal)
         }
         shareButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 0)
