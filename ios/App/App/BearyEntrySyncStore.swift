@@ -145,8 +145,8 @@ enum BearyEntrySyncStore {
     /// 进度文件（beary_sync_progress.json）不是日文件，枚举时跳过。
     /// 同步读盘，调用方须在后台队列调。
     static func loadAllEntries(accountId: Int) -> [Entry]? {
-        guard isArchiveComplete(accountId: accountId),
-              let marker = loadCompletion(accountId: accountId),
+        guard let marker = loadCompletion(accountId: accountId),
+              marker.accountId == accountId,
               let dir = accountDir(accountId: accountId) else { return nil }
         let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
         var merged: [Entry] = []
@@ -237,6 +237,20 @@ enum BearyEntrySyncStore {
             count += loadDayFile(dayKey: dayKey, directory: liveDir)?.count ?? 0
         }
         return count
+    }
+
+    /// 一次解码复用：可读篇数，nil = 无可读数据。markDiaryPartial 单次调用，
+    /// 免得 hasReadableData 与 readableItemCount 各扫全盘解码一遍。
+    static func readableDataSummary(accountId: Int) -> Int? {
+        guard let liveDir = accountDir(accountId: accountId) else { return nil }
+        var count = 0
+        var anyReadable = false
+        for dayKey in dayKeys(in: liveDir) {
+            guard let entries = loadDayFile(dayKey: dayKey, directory: liveDir) else { continue }
+            anyReadable = true
+            count += entries.count
+        }
+        return anyReadable ? count : nil
     }
 
     // MARK: - 存档完整性标记（C3 门控；C2 完整度工作的消费侧）
@@ -660,6 +674,12 @@ enum BearyTrashSyncStore {
     /// 可读条数（状态文件里的 itemCount）。
     static func readableItemCount(accountId: Int) -> Int {
         return loadAll(accountId: accountId)?.count ?? 0
+    }
+
+    /// 一次解码复用：可读条数，nil = 无可读数据。markTrashPartial 单次调用，
+    /// 免得 hasReadableData 与 readableItemCount 各解整份 trash.json 一遍。
+    static func readableDataSummary(accountId: Int) -> Int? {
+        return loadAll(accountId: accountId)?.count
     }
 
     /// 5-26 回收站写盘代际（与日记腿同款守卫的计数端）：任何 trash.json 写
