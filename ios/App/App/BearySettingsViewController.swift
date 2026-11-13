@@ -222,7 +222,7 @@ enum BearyAccountText {
 /// 等候方、不写入缓存）。回包一律回主线程再通知等候方
 /// （BearyAPI.request 的 completion 不在主线程，见各调用点的既有转主线程）。
 /// 注：invalidate 的调用点全在设置主页自身动作（loadAll 开头、撤销后刷新），
-/// 子页 present 期间不会触发，故不存在子页等候方被丢弃后转圈卡住的情况。
+/// 作废时等候方由 invalidate 以 .cancelled 通知，不会无声丢弃致转圈卡住。
 final class BearySharedLoad<Value> {
     private struct InFlight {
         let generation: Int
@@ -270,10 +270,14 @@ final class BearySharedLoad<Value> {
 
     /// 丢弃本轮已缓存的成功结果并作废在途旧请求（新一轮 loadAll、账号切换、
     /// 撤销后刷新时调用）；新轮次调用 load 时另发请求，不接旧代次回包。
+    /// 作废时在途等候方一律收到 .failure(.cancelled)，不再无声丢弃——
+    /// 否则子页靠回调结束加载，等候方会一直转圈（第 18 轮第 13 项）。
     func invalidate() {
         loadedValue = nil
         generation += 1
+        let waiters = inFlight?.waiters ?? []
         inFlight = nil
+        for waiter in waiters { waiter(.failure(.cancelled)) }
     }
 }
 

@@ -536,7 +536,9 @@ final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
                 case .success(let detail):
                     self.statusText = Self.statusText(detail: detail)
                     self.personalText = Self.personalText(detail: detail)
-                    self.grants = detail.grants
+                    // 服务端 grants 为 nil 即确认无发放记录，落 [] 显空态，
+                    // 不留 nil 致 render 误判为“加载中”（与 viewDidLoad 共享路径同款）。
+                    self.grants = detail.grants ?? []
                     self.loadFailed = false
                 case .failure:
                     self.loadFailed = true
