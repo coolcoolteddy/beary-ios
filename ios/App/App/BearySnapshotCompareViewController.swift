@@ -26,6 +26,7 @@ final class BearySnapshotCompareViewController: UIViewController {
     private let currentTextView = UITextView()
     private let snapshotTextView = UITextView()
     private let restoreButton = UIButton(type: .system)
+    private var starRequestInFlight = false
 
     init(entryId: String, snapshot: BearyEntrySnapshot, currentContent: String, currentTitle: String?) {
         self.entryId = entryId
@@ -106,10 +107,14 @@ final class BearySnapshotCompareViewController: UIViewController {
     }
 
     @objc private func starTapped() {
-        guard let snapshotId = snapshot.id else { return }
+        guard let snapshotId = snapshot.id, !starRequestInFlight else { return }
+        starRequestInFlight = true
+        navigationItem.rightBarButtonItem?.isEnabled = false
         BearyAPI.shared.toggleSnapshotStar(entryId: entryId, snapshotId: snapshotId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                self.starRequestInFlight = false
+                self.navigationItem.rightBarButtonItem?.isEnabled = true
                 switch result {
                 case .success(let resp):
                     let starred = (resp.starred ?? 0) == 1
