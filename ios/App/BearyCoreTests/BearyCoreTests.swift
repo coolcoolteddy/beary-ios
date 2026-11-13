@@ -588,6 +588,48 @@ final class BearyPastSelfTests: XCTestCase {
         suite.removePersistentDomain(forName: "beary.pastself.tests")
     }
 
+    func testReplaceLocalRowDedupsByServerId() throws {
+        // 第 13 轮审计 2：列表回包先到、创建回包后到时，同服务端 id 不存两份；
+        // 本地已撤回的待同步撤回态保留，revokeSynced 仍为 false，待同步循环补推。
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let store = PastSelfStore(userId: 93, defaults: suite)
+        let created = ms(year: 2025, month: 10, day: 30)
+        let local = store.add(originEntryId: "b_7", body: "待同步句", createdAtMs: created, calendar: calendar)!
+        XCTAssertTrue(store.revoke(messageId: local.id, nowMs: created, today: "2026-01-01"))
+        // 列表回包先到：服务端行插进来，临时行保留。
+        var serverRow = message(id: "ps_s2", chain: "b_7", createdMs: created, deliverOn: "2026-10-30")
+        serverRow.authorId = 93
+        store.mergeServerRows([serverRow])
+        XCTAssertEqual(store.loadAll().count, 2)
+        // 创建回包后到：按临时 id 替换，列表里只剩一行。
+        store.replaceLocalRow(localId: local.id, with: serverRow)
+        let rows = store.loadAll()
+        XCTAssertEqual(rows.map { $0.id }, ["ps_s2"])
+        XCTAssertEqual(rows.first?.revokedAtMs, created)
+        XCTAssertFalse(rows.first?.localOnly ?? true)
+        XCTAssertFalse(rows.first?.revokeSynced ?? true)
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
+    func testReplaceLocalRowKeepsServerConfirmedRevoke() throws {
+        // 服务端行自带 revoked_at 时，替换后撤回已确认，不再重发。
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let store = PastSelfStore(userId: 92, defaults: suite)
+        let created = ms(year: 2025, month: 10, day: 30)
+        let local = store.add(originEntryId: "b_7", body: "待同步句", createdAtMs: created, calendar: calendar)!
+        var serverRow = message(id: "ps_s3", chain: "b_7", createdMs: created, deliverOn: "2026-10-30", revokedMs: created)
+        serverRow.authorId = 92
+        store.mergeServerRows([serverRow])
+        store.replaceLocalRow(localId: local.id, with: serverRow)
+        let rows = store.loadAll()
+        XCTAssertEqual(rows.map { $0.id }, ["ps_s3"])
+        XCTAssertEqual(rows.first?.revokedAtMs, created)
+        XCTAssertTrue(rows.first?.revokeSynced ?? false)
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
     func testCorruptStoreBlocksAllWrites() throws {
         // 审计新一轮 05：存储损坏后，add / revoke / merge / replace / remove
         // 全都不覆盖，原始数据原样保留。
