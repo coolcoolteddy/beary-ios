@@ -436,10 +436,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         updateSearchBoxShadow()
     }
 
-    /// P2-1：宽 ≥821 时内容列 600 / 搜索框 568 居中，宽 ≤820 时内容列满宽 /
-    /// 搜索框 = 屏宽 -32；与个人主页 isDesktopColumn（≥821）同口径，不自创第三种。
+    /// P2-1：仅 iPad 且宽 ≥821 时内容列 600 / 搜索框 568 居中，其余内容列满宽 /
+    /// 搜索框 = 屏宽 -32；与个人主页 isDesktopColumn（仅 iPad ≥821）同口径，不自创第三种。
     private func updateColumnLayout() {
-        let desktop = view.bounds.width >= 821
+        let desktop = BearyDesktop.isWide(view.bounds.width)
         contentStackWidthCap?.isActive = desktop
         contentStackFullWidth?.isActive = !desktop
         searchBoxWidthCap?.isActive = desktop

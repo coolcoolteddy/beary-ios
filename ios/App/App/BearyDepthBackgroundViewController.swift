@@ -94,7 +94,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
         return labelValue
     }()
 
-    /// 内容列：宽 ≥821 时 600 居中，≤820 时屏宽减 32（许愿墙同款口径）；
+    /// 内容列：仅 iPad 且宽 ≥821 时 600 居中，其余屏宽减 32（许愿墙同款口径）；
     /// cap 只在宽屏激活，窄屏不收窄到 600。
     private var tableCapConstraint: NSLayoutConstraint?
 
@@ -109,8 +109,8 @@ final class BearyDepthBackgroundViewController: UIViewController {
         view.addSubview(tableView)
         updatePlusFooter()
         // 内容列：centerX ＋ defaultHigh 的屏宽减 32 撑满（只靠 centerX＋两侧
-        // 不等式列宽会跟着内容走，见 2026-11-02 居中列布局陷阱）；宽 ≥821 时
-        // cap 600 生效居中，窄屏 cap 关掉、不收窄。
+        // 不等式列宽会跟着内容走，见 2026-11-02 居中列布局陷阱）；仅 iPad 且宽 ≥821 时
+        // cap 600 生效居中，其余 cap 关掉、不收窄。
         let tableViewWidth = tableView.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -32)
         tableViewWidth.priority = .defaultHigh
         let tableCap = tableView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
@@ -146,7 +146,8 @@ final class BearyDepthBackgroundViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        let wantCap = view.bounds.width >= 821
+        // 仅 iPad 且宽 ≥821 才激活 600 上限（iPhone 横屏走全宽）。
+        let wantCap = BearyDesktop.isWide(view.bounds.width)
         if let cap = tableCapConstraint, cap.isActive != wantCap {
             cap.isActive = wantCap
         }

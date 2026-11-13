@@ -2249,10 +2249,10 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    /// 列宽：modal 态且宽 ≥821 时内容列 600 居中（D-1）；容器页态 view 本身
+    /// 列宽：modal 态且仅 iPad 宽 ≥821 时内容列 600 居中（D-1）；容器页态 view 本身
     /// 已被容器锁 600（宽 <821），不加第二层收窄。
     private var isDesktopColumn: Bool {
-        return view.bounds.width >= 821
+        BearyDesktop.isWide(view.bounds.width)
     }
 
     private var headerWidthValue: CGFloat {

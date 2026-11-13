@@ -642,9 +642,9 @@ final class BearyNotificationsViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // 审计三轮第 14 项：600 上限只在宽 ≥821 时激活，宽 ≤820 时关掉、
+        // 审计三轮第 14 项：600 上限只在 iPad 且宽 ≥821 时激活，其余关掉、
         // 列走 750 全宽等式回满屏宽；状态不变不开关，避免布局循环（Feed 同款）。
-        let wantColCap = view.bounds.width >= 821
+        let wantColCap = BearyDesktop.isWide(view.bounds.width)
         if notifColCapConstraint?.isActive != wantColCap {
             notifColCapConstraint?.isActive = wantColCap
         }
@@ -979,7 +979,7 @@ final class BearyNotificationsViewController: UIViewController {
     /// 大字号下标题／副标题换行使栈变高，底线随之撑高、不钉死 280。
     private var adaptiveStateMinHeight: CGFloat {
         guard let stack = stateStackView, view.bounds.width > 0 else { return 280 }
-        let contentWidth: CGFloat = view.bounds.width >= 821 ? 600 : view.bounds.width
+        let contentWidth: CGFloat = BearyDesktop.isWide(view.bounds.width) ? 600 : view.bounds.width
         let stackWidth = max(0, contentWidth - 40)
         let stackHeight = stack.systemLayoutSizeFitting(
             CGSize(width: stackWidth, height: UIView.layoutFittingCompressedSize.height),

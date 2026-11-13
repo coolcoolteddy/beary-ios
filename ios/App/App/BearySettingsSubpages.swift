@@ -208,14 +208,14 @@ class BearySettingsSubpageViewController: UIViewController {
         subpageLayoutGuard.resetForAppearance()
     }
 
-    /// 审计-个人页设置：按当前屏宽更新子页壳列宽（≥821 锁 600，
-    /// ≤820 全宽 / 内容列全宽减 32）；旋转/分屏时 viewDidLayoutSubviews
+    /// 审计-个人页设置：按当前屏宽更新子页壳列宽（仅 iPad ≥821 锁 600，
+    /// 其余全宽 / 内容列全宽减 32）；旋转/分屏时 viewDidLayoutSubviews
     /// 再跑即纠正，不另监听尺寸变化。
     private func updateSubpageColumnWidths() {
         let viewWidth = view.bounds.width
         guard viewWidth > 0 else { return }
-        let topBarWidth = viewWidth >= 821 ? 600 : viewWidth
-        let contentWidth = viewWidth >= 821 ? 600 : max(viewWidth - 32, 0)
+        let topBarWidth = BearyDesktop.isWide(viewWidth) ? 600 : viewWidth
+        let contentWidth = BearyDesktop.isWide(viewWidth) ? 600 : max(viewWidth - 32, 0)
         if subpageTopBarWidthConstraint?.constant != topBarWidth {
             subpageTopBarWidthConstraint?.constant = topBarWidth
         }

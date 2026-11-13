@@ -143,14 +143,14 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         updateColumnWidth()
     }
 
-    /// 列宽直派：宽 ≥821 取 600 居中、宽 ≤820 取全宽减 32（两侧各 16），与旧口径一致。
+    /// 列宽直派：仅 iPad 且宽 ≥821 取 600 居中、其余取全宽减 32（两侧各 16），与旧口径一致。
     /// 95 包实证：@750 协商宽 + 上限开关在加载态（无列表行撑宽）仍退化成内容拟合宽
     /// （列约 92pt、说明文案被截断），故改必需约束，协商余地清零。
     private func updateColumnWidth() {
         guard let widthConstraint = trashColWidthConstraint else { return }
         let boundsWidth = view.bounds.width
         guard boundsWidth > 0 else { return }
-        let constant: CGFloat = boundsWidth >= 821 ? 600 - boundsWidth : -32
+        let constant: CGFloat = BearyDesktop.isWide(boundsWidth) ? 600 - boundsWidth : -32
         if widthConstraint.constant != constant {
             widthConstraint.constant = constant
         }

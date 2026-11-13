@@ -232,8 +232,8 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // 821 断点：宽 ≥821 时 600 上限激活、内容居中；≤820 时停用、可用宽度＋边距撑满。
-        let wantCap = view.bounds.width >= 821
+        // 821 断点：仅 iPad 且宽 ≥821 时 600 上限激活、内容居中；其余停用、可用宽度＋边距撑满。
+        let wantCap = BearyDesktop.isWide(view.bounds.width)
         if topCap?.isActive != wantCap { topCap?.isActive = wantCap }
         if columnCap?.isActive != wantCap { columnCap?.isActive = wantCap }
         if bottomCap?.isActive != wantCap { bottomCap?.isActive = wantCap }

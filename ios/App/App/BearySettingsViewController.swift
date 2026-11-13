@@ -582,10 +582,10 @@ final class BearySettingsViewController: UIViewController {
     }
 
 
-    /// 列宽唯一计算入口：宽 ≥821 锁 600（P2-1 同款），宽 ≤820 时
+    /// 列宽唯一计算入口：仅 iPad 且宽 ≥821 锁 600（P2-1 同款），其余时
     /// 屏宽 -32 撑满（两侧各 16）。顶栏与正文列共用此值，600 上限不再以独立约束形式存在。
     private func columnWidth(forViewWidth w: CGFloat) -> CGFloat {
-        w >= 821 ? 600 : max(w - 32, 0)
+        BearyDesktop.isWide(w) ? 600 : max(w - 32, 0)
     }
 
     /// 列宽只由 view.bounds 定（见 columnWidth(forViewWidth:)）；顶栏与正文列
@@ -4199,10 +4199,10 @@ final class BearyLegalTextViewController: UIViewController {
     }
 
     /// 列宽唯一计算入口：BearySettingsSubpages.updateSubpageColumnWidths
-    /// 同款 ≥821 门禁——宽 ≥821 锁 600 居中，≤820 全宽减 32（规范 §3 内容列）。
+    /// 同款 ≥821 门禁——仅 iPad 且宽 ≥821 锁 600 居中，其余全宽减 32（规范 §3 内容列）。
     /// 本页顶栏与正文列原即同宽居中，故共用此值；600 上限不再以独立约束形式存在。
     private func columnWidth(forViewWidth w: CGFloat) -> CGFloat {
-        w >= 821 ? 600 : max(w - 32, 0)
+        BearyDesktop.isWide(w) ? 600 : max(w - 32, 0)
     }
 
     /// 列宽只由 view.bounds 定；顶栏与正文列在同一入口算出同一目标值、
@@ -4959,10 +4959,10 @@ private final class BearyDiagnosticsViewController: UIViewController {
     }
 
     /// 列宽唯一计算入口：BearySettingsSubpages.updateSubpageColumnWidths
-    /// 同款 ≥821 门禁——宽 ≥821 锁 600 居中，≤820 全宽减 32（规范 §3 内容列）。
+    /// 同款 ≥821 门禁——仅 iPad 且宽 ≥821 锁 600 居中，其余全宽减 32（规范 §3 内容列）。
     /// 本页顶栏与正文列原即同宽居中，故共用此值；600 上限不再以独立约束形式存在。
     private func columnWidth(forViewWidth w: CGFloat) -> CGFloat {
-        w >= 821 ? 600 : max(w - 32, 0)
+        BearyDesktop.isWide(w) ? 600 : max(w - 32, 0)
     }
 
     /// 列宽只由 view.bounds 定；顶栏与正文列在同一入口算出同一目标值、
@@ -5302,10 +5302,10 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
     }
 
     /// 列宽唯一计算入口：BearySettingsSubpages.updateSubpageColumnWidths
-    /// 同款 ≥821 门禁——宽 ≥821 锁 600 居中，≤820 全宽减 32（规范 §3 内容列）。
+    /// 同款 ≥821 门禁——仅 iPad 且宽 ≥821 锁 600 居中，其余全宽减 32（规范 §3 内容列）。
     /// 本页顶栏与列表列原即同宽居中，故共用此值；600 上限不再以独立约束形式存在。
     private func columnWidth(forViewWidth w: CGFloat) -> CGFloat {
-        w >= 821 ? 600 : max(w - 32, 0)
+        BearyDesktop.isWide(w) ? 600 : max(w - 32, 0)
     }
 
     /// 列宽只由 view.bounds 定；顶栏与列表列在同一入口算出同一目标值、

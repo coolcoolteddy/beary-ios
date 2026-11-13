@@ -578,8 +578,8 @@ class BearyEditProfileViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // P2-1：宽 ≥821 才锁 600 上限；宽 ≤820 时停用上限，屏宽 -40 约束撑满。
-        contentColumnWidthCap?.isActive = view.bounds.width >= 821
+        // P2-1：仅 iPad 且宽 ≥821 才锁 600 上限；其余停用上限，屏宽 -40 约束撑满。
+        contentColumnWidthCap?.isActive = BearyDesktop.isWide(view.bounds.width)
         subpageLayoutGuard.applyIfNeeded(page: "编辑资料", view: view, topView: scrollView)
     }
 

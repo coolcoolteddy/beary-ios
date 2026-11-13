@@ -449,10 +449,10 @@ final class BearyProfilePhotosViewController: UIViewController {
         updatePhotosGridWidth()
     }
 
-    /// 08：网格宽按实宽定——页面宽度 ≥821 时 600 居中、≤820 时全宽，与全站
+    /// 08：网格宽按实宽定——仅 iPad 且页面宽度 ≥821 时 600 居中、其余时全宽，与全站
     /// iPad 口径一致；只在目标宽变化时改约束并失效布局，不反复触发。
     private func updatePhotosGridWidth() {
-        let targetWidth: CGFloat = view.bounds.width >= 821 ? 600 : view.bounds.width
+        let targetWidth: CGFloat = BearyDesktop.isWide(view.bounds.width) ? 600 : view.bounds.width
         guard collectionViewWidthConstraint?.constant != targetWidth else { return }
         collectionViewWidthConstraint?.constant = targetWidth
         collectionView.collectionViewLayout.invalidateLayout()
