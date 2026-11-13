@@ -53,6 +53,10 @@ enum BearyConfirmSheet {
     /// - Parameter onDismissWithoutAction: 未点任何按钮就关闭（叉叉/遮罩/下滑）
     ///   时调一次；点过按钮后关闭不调；不传则关闭时什么都不做。
     static func show(from presenter: UIViewController, title: String, message: String?, actions: [Action], toggle: Toggle? = nil, onDismissWithoutAction: (() -> Void)? = nil) {
+        // 有在途弹窗时不叠弹：presenter 已 present 另一弹窗时再 present 会被
+        // 系统静默丢弃、点按无反应（草稿箱 exitWithUndoGuard 同款口径）；
+        // 先到的弹窗为准，只跳过本次弹出，不动已有弹窗的关闭行为。
+        guard presenter.presentedViewController == nil else { return }
         let sheet = BearyConfirmSheetViewController(title: title, message: message, actions: actions, toggle: toggle, onDismissWithoutAction: onDismissWithoutAction)
         let delegate = BearyBottomSheetTransitioningDelegate()
         sheet.sheetDelegate = delegate
