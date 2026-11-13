@@ -345,6 +345,56 @@ final class BearyDMStoreTests: XCTestCase {
         XCTAssertEqual(try? Data(contentsOf: pendingFile(accountId: accountId)), Data("坏了".utf8))
     }
 
+    // 审计第 18 轮 #12：改状态／删行的写盘结果经 completion 回传。
+    func testPendingStatusAndRemoveReportWriteResult() {
+        // 损坏态：改状态与删行都回 false，且原文件不动。
+        let corruptAccount = 9013
+        try? Data("坏了".utf8).write(to: pendingFile(accountId: corruptAccount))
+        let corruptStatus = expectation(description: "corrupt update returns false")
+        BearyDMStore.updatePendingStatus(localKey: "k1", status: .failed, accountId: corruptAccount) { saved in
+            XCTAssertFalse(saved)
+            corruptStatus.fulfill()
+        }
+        let corruptRemove = expectation(description: "corrupt remove returns false")
+        BearyDMStore.removePending(localKey: "k1", accountId: corruptAccount) { saved in
+            XCTAssertFalse(saved)
+            corruptRemove.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        XCTAssertEqual(try? Data(contentsOf: pendingFile(accountId: corruptAccount)), Data("坏了".utf8))
+        // 正常态：改状态成功回 true，落盘后的状态读回一致。
+        let accountId = 9014
+        BearyDMStore.savePending(.init(localKey: "k1", peerId: 5, body: "待发", createdAt: 1000, status: .sending), accountId: accountId)
+        let statusExp = expectation(description: "update returns true")
+        BearyDMStore.updatePendingStatus(localKey: "k1", status: .failed, accountId: accountId) { saved in
+            XCTAssertTrue(saved)
+            statusExp.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        XCTAssertEqual(loadPendings(accountId: accountId, peerId: 5).first?.status, .failed)
+        // 删行成功回 true，行已不在；再删不存在的行回 true（目标态已达成）。
+        let removeExp = expectation(description: "remove returns true")
+        BearyDMStore.removePending(localKey: "k1", accountId: accountId) { saved in
+            XCTAssertTrue(saved)
+            removeExp.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        XCTAssertEqual(loadPendings(accountId: accountId, peerId: 5).count, 0)
+        let removeMissingExp = expectation(description: "remove missing returns true")
+        BearyDMStore.removePending(localKey: "k1", accountId: accountId) { saved in
+            XCTAssertTrue(saved)
+            removeMissingExp.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        // 改不存在的行回 false（未落盘）。
+        let missingStatusExp = expectation(description: "update missing returns false")
+        BearyDMStore.updatePendingStatus(localKey: "k1", status: .failed, accountId: accountId) { saved in
+            XCTAssertFalse(saved)
+            missingStatusExp.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+    }
+
     func testPendingCorruptBackupURLIsUnique() {
         // 同秒内多次损坏也不撞名（审计第二轮 6：秒级时间戳会撞，须加 UUID）。
         let url = pendingFile(accountId: 9012)

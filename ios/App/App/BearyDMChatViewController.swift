@@ -826,8 +826,12 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }
         messages += remaining
         // 认领到的待发已在服务端落袋，待发存储里同步清掉（重启后不再恢复）。
+        let accountId = storeAccountId
         for claimed in claimedKeys {
-            BearyDMStore.removePending(localKey: claimed, accountId: storeAccountId)
+            BearyDMStore.removePending(localKey: claimed, accountId: accountId) { saved in
+                // 审计第 18 轮 #12：写盘失败补试一次；仍失败不打扰用户，下次拉取认领时再同步。
+                if !saved { BearyDMStore.removePending(localKey: claimed, accountId: accountId) }
+            }
         }
     }
 
@@ -858,7 +862,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else { return }
                 switch result {
                 case .success:
-                    BearyDMStore.removePending(localKey: key, accountId: self.storeAccountId)
+                    let accountId = self.storeAccountId
+                    BearyDMStore.removePending(localKey: key, accountId: accountId) { saved in
+                        // 审计第 18 轮 #12：写盘失败补试一次；仍失败不打扰用户，下次拉取认领时再同步。
+                        if !saved { BearyDMStore.removePending(localKey: key, accountId: accountId) }
+                    }
                     self.dmNotAllowed = false
                     self.updatePermBanner()
                     self.loadLatest()
@@ -883,7 +891,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     } else {
                         // M3：确认未送达的失败只让这一条摇头并提示「没发出去」，其余行不动。
                         self.failedSendKeys.insert(key)
-                        BearyDMStore.updatePendingStatus(localKey: key, status: .failed, accountId: self.storeAccountId)
+                        let accountId = self.storeAccountId
+                        BearyDMStore.updatePendingStatus(localKey: key, status: .failed, accountId: accountId) { saved in
+                            // 审计第 18 轮 #12：写盘失败补试一次；仍失败不打扰用户，内存态已是失败态。
+                            if !saved { BearyDMStore.updatePendingStatus(localKey: key, status: .failed, accountId: accountId) }
+                        }
                         self.reloadPendingRow(key: key)
                         DispatchQueue.main.async { [weak self] in self?.shakeFailedRow(key: key) }
                         BearyToast.show(in: self.view, message: "没发出去")
@@ -902,7 +914,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         unconfirmedSendKeys.insert(key)
         failedSendKeys.remove(key)
         // 审计四轮增量 12：待发存储里同步记为未确认（重启后恢复查看、只看不自动重发）。
-        BearyDMStore.updatePendingStatus(localKey: key, status: .unconfirmed, accountId: storeAccountId)
+        let accountId = storeAccountId
+        BearyDMStore.updatePendingStatus(localKey: key, status: .unconfirmed, accountId: accountId) { saved in
+            // 审计第 18 轮 #12：写盘失败补试一次；仍失败不打扰用户，内存态已是未确认态。
+            if !saved { BearyDMStore.updatePendingStatus(localKey: key, status: .unconfirmed, accountId: accountId) }
+        }
         if restoreDraft, !body.isEmpty {
             if inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 inputTextView.text = body
@@ -1452,7 +1468,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     switch result {
                     case .success:
                         // 发送成功即权限无问题：横幅清掉（进页 can 误判时靠此恢复）。
-                        BearyDMStore.removePending(localKey: key, accountId: self.storeAccountId)
+                        let accountId = self.storeAccountId
+                        BearyDMStore.removePending(localKey: key, accountId: accountId) { saved in
+                            // 审计第 18 轮 #12：写盘失败补试一次；仍失败不打扰用户，下次拉取认领时再同步。
+                            if !saved { BearyDMStore.removePending(localKey: key, accountId: accountId) }
+                        }
                         self.dmNotAllowed = false
                         self.updatePermBanner()
                         self.loadLatest()
@@ -1484,7 +1504,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                             // 确认未送达的失败：行留在原地、侧边出红叹号，点按重发；
                             // M3：只让这一条摇头并提示「没发出去」，其余行不动。
                             self.failedSendKeys.insert(key)
-                            BearyDMStore.updatePendingStatus(localKey: key, status: .failed, accountId: self.storeAccountId)
+                            let accountId = self.storeAccountId
+                            BearyDMStore.updatePendingStatus(localKey: key, status: .failed, accountId: accountId) { saved in
+                                // 审计第 18 轮 #12：写盘失败补试一次；仍失败不打扰用户，内存态已是失败态。
+                                if !saved { BearyDMStore.updatePendingStatus(localKey: key, status: .failed, accountId: accountId) }
+                            }
                             self.reloadPendingRow(key: key)
                             DispatchQueue.main.async { [weak self] in self?.shakeFailedRow(key: key) }
                             BearyToast.show(in: self.view, message: "没发出去")

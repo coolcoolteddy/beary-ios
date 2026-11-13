@@ -501,24 +501,49 @@ enum BearyDMStore {
     }
 
     /// 改一条待发的状态（不存在即忽略）。
-    static func updatePendingStatus(localKey: String, status: PendingSend.Status, accountId: Int?) {
+    /// 审计第 18 轮 #12：写盘成败经 completion 回主线程（同 savePending 口径）——
+    /// 调用方须确认落盘，失败时不得按已落盘处理。默认空回调，旧调用（测试等）不用改。
+    /// 损坏／缺文件／无此行时回 false（未落盘）；改后写盘结果原样回传。
+    static func updatePendingStatus(localKey: String, status: PendingSend.Status, accountId: Int?, completion: @escaping (Bool) -> Void = { _ in }) {
         ioQueue.async {
             // 损坏／缺文件时无行可改，直接返回，不写盘。
-            guard case .loaded(var list) = loadPendingList(accountId: accountId) else { return }
-            guard let idx = list.firstIndex(where: { $0.localKey == localKey }) else { return }
+            guard case .loaded(var list) = loadPendingList(accountId: accountId) else {
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            guard let idx = list.firstIndex(where: { $0.localKey == localKey }) else {
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
             list[idx].status = status
-            _ = savePendingList(list, accountId: accountId)
+            let saved = savePendingList(list, accountId: accountId)
+            DispatchQueue.main.async { completion(saved) }
         }
     }
 
     /// 删一条待发（已送达认领/成功后调）。
-    static func removePending(localKey: String, accountId: Int?) {
+    /// 审计第 18 轮 #12：写盘成败经 completion 回主线程（同 updatePendingStatus）。
+    /// 无此行时视为已达成（行已不在）回 true；损坏时回 false、不动原文件。
+    static func removePending(localKey: String, accountId: Int?, completion: @escaping (Bool) -> Void = { _ in }) {
         ioQueue.async {
             // 损坏时不动原文件（不删行、不写盘）。
-            guard case .loaded(let list) = loadPendingList(accountId: accountId) else { return }
-            let kept = BearyDMStoreCore.removePending(list, localKey: localKey)
-            guard kept.count != list.count else { return }
-            _ = savePendingList(kept, accountId: accountId)
+            switch loadPendingList(accountId: accountId) {
+            case .corrupt:
+                DispatchQueue.main.async { completion(false) }
+                return
+            case .missing:
+                // 无文件即无此行，目标态已达成。
+                DispatchQueue.main.async { completion(true) }
+                return
+            case .loaded(let list):
+                let kept = BearyDMStoreCore.removePending(list, localKey: localKey)
+                guard kept.count != list.count else {
+                    DispatchQueue.main.async { completion(true) }
+                    return
+                }
+                let saved = savePendingList(kept, accountId: accountId)
+                DispatchQueue.main.async { completion(saved) }
+            }
         }
     }
 }
