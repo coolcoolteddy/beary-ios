@@ -514,7 +514,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         newButton.setTitleColor(BearyColors.gray, for: .normal)
         newButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         newButton.tintColor = BearyColors.gray
-        if let editImage = BearyIconImages.image(named: "icon_edit", pointSize: 15) {
+        if let editImage = BearyIconImages.image(named: "icon_edit", pointSize: 13) {
             newButton.setImage(editImage, for: .normal)
         }
         newButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
@@ -960,13 +960,13 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             imageRow.axis = .horizontal
             imageRow.spacing = 4
             imageRow.alignment = .center
-            if let photoImage = BearyIconImages.image(named: "icon_image", pointSize: 15) {
+            if let photoImage = BearyIconImages.image(named: "icon_image", pointSize: 12) {
                 let photoView = UIImageView(image: photoImage)
                 photoView.tintColor = BearyColors.gray
                 photoView.translatesAutoresizingMaskIntoConstraints = false
                 NSLayoutConstraint.activate([
-                    photoView.widthAnchor.constraint(equalToConstant: 15),
-                    photoView.heightAnchor.constraint(equalToConstant: 15),
+                    photoView.widthAnchor.constraint(equalToConstant: 12),
+                    photoView.heightAnchor.constraint(equalToConstant: 12),
                 ])
                 imageRow.addArrangedSubview(photoView)
             }

@@ -894,7 +894,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
         buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
-        buttonValue.setImage(BearyIconImages.image(named: "icon_edit", pointSize: 15), for: .normal)
+        buttonValue.setImage(BearyIconImages.image(named: "icon_edit", pointSize: 14), for: .normal)
         buttonValue.tintColor = BearyColors.ink
         buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
@@ -1045,11 +1045,11 @@ class BearyProfileViewController: UIViewController {
         return labelValue
     }()
 
-    /// I7：加入时间前的 14px 日历图标（网页 pf-meta 用 beary-calendar；icon_calendar 由该 symbol 渲染）。
+    /// I7：加入时间前的 13px 日历图标（网页 pf-meta 用 beary-calendar；icon_calendar 由该 symbol 渲染）。
     private let joinedIconView: UIImageView = {
         let imageViewValue = UIImageView()
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
-        imageViewValue.image = BearyIconImages.image(named: "icon_calendar", pointSize: 14)
+        imageViewValue.image = BearyIconImages.image(named: "icon_calendar", pointSize: 13)
         imageViewValue.tintColor = BearyColors.gray
         imageViewValue.contentMode = .scaleAspectFit
         imageViewValue.isHidden = true
@@ -1535,7 +1535,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.setTitle("换一篇", for: .normal)
         buttonValue.setTitleColor(BearyColors.bg, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-        buttonValue.setImage(BearyIconImages.image(named: "icon_shuffle", pointSize: 16), for: .normal)
+        buttonValue.setImage(BearyIconImages.image(named: "icon_shuffle", pointSize: 14), for: .normal)
         buttonValue.tintColor = BearyColors.bg
         buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         buttonValue.backgroundColor = BearyColors.ink
@@ -3065,7 +3065,7 @@ class BearyProfileViewController: UIViewController {
             signatureLabel.bottomAnchor.constraint(equalTo: signatureContainer.bottomAnchor),
             handleLabel.topAnchor.constraint(equalTo: signatureContainer.bottomAnchor, constant: 8),
             handleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
-            // I7：加入时间前补 14px 日历图标，图标与加入时间同显隐（见 applyProfile）。
+            // I7：加入时间前补 13px 日历图标，图标与加入时间同显隐（见 applyProfile）。
             joinedIconCenterYWithHandleConstraint,
             joinedIconLeadingWithHandleConstraint,
             joinedLabelCenterYWithHandleConstraint,

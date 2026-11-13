@@ -233,7 +233,7 @@ final class BearyInviteViewController: UIViewController {
         boundLabel.textColor = BearyColors.ink
         boundLabel.numberOfLines = 0
         boundCheckIcon.translatesAutoresizingMaskIntoConstraints = false
-        boundCheckIcon.image = BearyIconImages.image(named: "icon_check_circle", pointSize: 16)
+        boundCheckIcon.image = BearyIconImages.image(named: "icon_check_circle", pointSize: 14)
         boundCheckIcon.tintColor = BearyColors.green
         boundCheckIcon.contentMode = .scaleAspectFit
         boundRow.translatesAutoresizingMaskIntoConstraints = false
@@ -244,8 +244,8 @@ final class BearyInviteViewController: UIViewController {
         boundRow.addArrangedSubview(boundLabel)
         boundRow.isHidden = true
         NSLayoutConstraint.activate([
-            boundCheckIcon.widthAnchor.constraint(equalToConstant: 16),
-            boundCheckIcon.heightAnchor.constraint(equalToConstant: 16),
+            boundCheckIcon.widthAnchor.constraint(equalToConstant: 14),
+            boundCheckIcon.heightAnchor.constraint(equalToConstant: 14),
         ])
 
         bindRow.translatesAutoresizingMaskIntoConstraints = false

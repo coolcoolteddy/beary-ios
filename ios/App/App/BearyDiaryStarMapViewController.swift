@@ -1241,7 +1241,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let visValue = BearyVisibility.current(for: entry)
         let isPublic = visValue == "public"
         let isFriendsOnly = visValue == "friends"
-        visIcon.image = BearyIconImages.image(named: isPublic ? "icon_globe" : (isFriendsOnly ? "icon_friends_lock" : "icon_lock"), pointSize: 16)
+        visIcon.image = BearyIconImages.image(named: isPublic ? "icon_globe" : (isFriendsOnly ? "icon_friends_lock" : "icon_lock"), pointSize: 13)
         visIcon.tintColor = isPublic ? BearyColors.orange : BearyColors.blue
         visIcon.contentMode = .scaleAspectFit
         visRow.addArrangedSubview(visIcon)

@@ -69,7 +69,7 @@ private final class BlindBoxPoolRowView: UIView {
         checkView.translatesAutoresizingMaskIntoConstraints = false
         checkView.contentMode = .scaleAspectFit
         checkView.tintColor = BearyColors.ink
-        if let check = BearyIconImages.image(named: "icon_check", pointSize: 16) {
+        if let check = BearyIconImages.image(named: "icon_check", pointSize: 15) {
             checkView.image = check
         }
         checkView.isHidden = true
@@ -98,8 +98,8 @@ private final class BlindBoxPoolRowView: UIView {
             row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
             pillLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 48),
             pillLabel.heightAnchor.constraint(equalToConstant: 18),
-            checkView.widthAnchor.constraint(equalToConstant: 16),
-            checkView.heightAnchor.constraint(equalToConstant: 16),
+            checkView.widthAnchor.constraint(equalToConstant: 15),
+            checkView.heightAnchor.constraint(equalToConstant: 15),
             tapButton.topAnchor.constraint(equalTo: topAnchor),
             tapButton.leadingAnchor.constraint(equalTo: leadingAnchor),
             tapButton.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -599,7 +599,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
         // 撤回钮图标：icon_exchange_recall（#229 已注册；标题不变，
         // 避免操作行拥挤）。
-        let (recallIcon, _) = BlindBoxIcons.recall(pointSize: 16)
+        let (recallIcon, _) = BlindBoxIcons.recall(pointSize: 14)
         withdrawButton.setImage(recallIcon, for: .normal)
         withdrawButton.imageEdgeInsets.left = -4
         withdrawButton.translatesAutoresizingMaskIntoConstraints = false
