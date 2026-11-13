@@ -114,9 +114,15 @@ final class BearyAnnouncementCenter {
             if let end = ann.endsAt, nowMs > end { return false }
             return true
         }
-        // 无待弹公告：把本次构建号记为已结算，下次只认更新的跨越。
+        // 无待弹公告：只有列表里已有一条本构建号的更新后公告时才结算；
+        // 公告还没发布（装包后、发布前启动过一次）时不结算，留着等公告
+        // 发布后再弹——否则本次构建号会被提前记为已结算，该包公告永不弹
+        // （130 包实证：公告晚于装包发布，首启即烧掉了本次跨越）。
         guard let ann = candidate else {
-            UserDefaults.standard.set(current, forKey: lastBuildKey)
+            let hasCurrentTarget = list.contains { $0.isAfterUpdate && ($0.targetBuild ?? Int.max) <= current }
+            if hasCurrentTarget {
+                UserDefaults.standard.set(current, forKey: lastBuildKey)
+            }
             return
         }
         // 先记已展示、再弹：弹过即结算，关掉后不再重弹。
