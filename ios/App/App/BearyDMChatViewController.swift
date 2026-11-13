@@ -846,6 +846,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         guard ensureIdentityCurrent() else { return }
         retryingKeys.insert(key)
         failedSendKeys.remove(key)
+        // 第 18 轮⑨：重发锚定本次发送时间——认领窗口按待发 createdAt 算，
+        // 沿用首次发送时间会让超 60 秒后重发的行认领不上、与服务端行双气泡。
+        // 内存待发与落盘记录同步改成本次时间（重启恢复也按新时间认领）。
+        let retryMs = Int(Date().timeIntervalSince1970 * 1000)
+        if let row = messages.firstIndex(where: { $0.localKey == key }) {
+            messages[row].createdAt = retryMs
+        }
+        BearyDMStore.updatePendingCreatedAt(localKey: key, createdAt: retryMs, accountId: storeAccountId)
         reloadPendingRow(key: key)
         let requestAccountId = SessionManager.shared.currentUser?.id
         let requestEpoch = BearyAPI.shared.authEpoch

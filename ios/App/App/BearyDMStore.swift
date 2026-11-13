@@ -511,6 +511,18 @@ enum BearyDMStore {
         }
     }
 
+    /// 改一条待发的创建时间（重发时锚定本次发送时间，不存在即忽略）。
+    /// 只改时间、不动状态：失败态仍由调用方经 updatePendingStatus 维护。
+    static func updatePendingCreatedAt(localKey: String, createdAt: Int, accountId: Int?) {
+        ioQueue.async {
+            // 损坏／缺文件时无行可改，直接返回，不写盘。
+            guard case .loaded(var list) = loadPendingList(accountId: accountId) else { return }
+            guard let idx = list.firstIndex(where: { $0.localKey == localKey }) else { return }
+            list[idx].createdAt = createdAt
+            _ = savePendingList(list, accountId: accountId)
+        }
+    }
+
     /// 删一条待发（已送达认领/成功后调）。
     static func removePending(localKey: String, accountId: Int?) {
         ioQueue.async {
