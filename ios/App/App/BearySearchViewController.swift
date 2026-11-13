@@ -189,6 +189,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 即撤掉，行重建/清表时随表清空）。
     private var followButtonSkeletonHeightConstraints: [Int: NSLayoutConstraint] = [:]
     private var followStateLoadingIds: Set<String> = []
+    /// 审计第 18 轮 ㉚：在途标记所属的搜索代次——回包只摘同代的标记，
+    /// 旧回包不再摘新代的标记、不再多减新代的在途计数。
+    private var followStateLoadingSeq: [String: Int] = [:]
     /// S5：关注状态请求排队——建行时不再立即请求；可见行（+下一屏）优先，
     /// 其余排队；同时在途上限 3。结果区失效时待办整批丢弃（见 clearResultRows）。
     private var followStatePendingIds: [Int] = []
@@ -1764,6 +1767,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         followStateFailedIds = []
         followButtonSkeletonHeightConstraints = [:]
         followStateLoadingIds = []
+        followStateLoadingSeq = [:]
         // S5：结果区失效时取消待办——排队的关注状态请求整批丢弃；
         // 在途请求无取消句柄，回包由 searchSeq/账号代次守卫丢弃。
         followStatePendingIds = []
@@ -2807,8 +2811,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 写不进新号缓存；在途请求拍账号＋鉴权代次，回包多门校验。
     private func loadFollowState(userId: Int) {
         let key = followStateKey(userId: userId)
+        // 审计第 18 轮 ㉛：失败态不进队——失败只由明确重试清掉，
+        // 排队/重排不再把失败行拉回骨架态。
         guard followStates[key] == nil,
               !followStateLoadingIds.contains(key),
+              !followStateFailedIds.contains(key),
               !followStatePendingIds.contains(userId) else { return }
         followStatePendingIds.append(userId)
         pumpFollowStateQueue()
@@ -2828,10 +2835,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private func fireFollowStateRequest(userId: Int) {
         guard let accountId = SessionManager.shared.currentUser?.id else { return }
         let key = "\(accountId):\(userId)"
+        // 审计第 18 轮 ㉚：代次与标记同拍——回包按代次校验后再摘标记。
+        let fireSeq = searchSeq
         followStateLoadingIds.insert(key)
+        followStateLoadingSeq[key] = fireSeq
         followStateInFlightCount += 1
-        // r29-10：重发即清失败标记，按钮回到骨架态。
-        followStateFailedIds.remove(key)
+        // 审计第 18 轮 ㉛：发请求不再清失败标记——失败只由明确重试
+        //（followButtonTapped 的「重试」）清掉，排队路径不再把失败行拉回骨架。
         if let button = followButtonsByUserId[userId] {
             applyFollowButtonState(button, userId: userId)
         }
@@ -2841,13 +2851,18 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 待办则由 clearResultRows 直接清队（见该函数注释）。
         // r25-6：鉴权代次也拍一份——401 清态后旧回包同样丢弃；键含账号，
         // 旧账号回包的在途标记清掉也不影响新账号同用户的请求。
-        let seq = searchSeq
+        let seq = fireSeq
         let epoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchFollowState(userId: userId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.followStateLoadingIds.remove(key)
+                // 审计第 18 轮 ㉚：计数按请求恰好减一次；标记只摘同代的——
+                // 旧回包到时若标记已属新代请求，只减本次计数的账，不动新标记。
                 self.followStateInFlightCount = max(0, self.followStateInFlightCount - 1)
+                if self.followStateLoadingSeq[key] == seq {
+                    self.followStateLoadingIds.remove(key)
+                    self.followStateLoadingSeq.removeValue(forKey: key)
+                }
                 guard seq == self.searchSeq,
                       accountId == SessionManager.shared.currentUser?.id,
                       epoch == BearyAPI.shared.authEpoch,
@@ -2886,6 +2901,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         for (userId, button) in followButtonsByUserId {
             guard followStates[followStateKey(userId: userId)] == nil,
                   !followStateLoadingIds.contains(followStateKey(userId: userId)),
+                  !followStateFailedIds.contains(followStateKey(userId: userId)),
                   let row = button.superview else { continue }
             let frame = row.convert(row.bounds, to: scrollView)
             ordered.append((frame: frame, id: userId))
