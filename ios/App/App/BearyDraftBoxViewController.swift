@@ -2,7 +2,7 @@ import UIKit
 
 // ===== 草稿箱弹层（网页草稿箱移植；对应审计 G1）=====
 // 网页对照：~/workspace/teddy_site/beary.html 内 #draftModal。
-// 形态：overFullScreen 自包含呈现；遮罩统一走 BearySheetChrome scrim 0.45、出现时 0.25s 淡入
+// 形态：overFullScreen 自包含呈现；遮罩统一走 BearySheetChrome scrim 0.45、出现时 0.26s 淡入
 // （2026-10-28 Li 令统一，此前全透明例外已撤销，见 buildViews 注释）；
 // 点遮罩关闭（backdrop 点击走 closeDraftBox，行为不变）；
 // iPhone 为底部 sheet、最大高度 82vh；iPad（宽 ≥821）为居中 440 宽卡片。
@@ -13,7 +13,7 @@ import UIKit
 // 同款）；删除为本地操作：只删该篇（图片文件不动，6 秒撤销期内可原样恢复），
 // 删后出 6 秒撤销条，超时丢弃暂存；不碰服务端。
 // 调用约定：点“新建日记”只回调 onNew，点卡片只回调 onOpen 并传出该篇草稿；
-// 弹窗审计 E1-18 统一退场：关闭、打开、新建三路共用同一退场——先播 0.25s
+// 弹窗审计 E1-18 统一退场：关闭、打开、新建三路共用同一退场——先播 0.26s
 // 退场动画、dismiss 后再调回调，编辑器侧不再另行 dismiss（旧路径经
 // BearyDraftBoxInstantAnimator 瞬时消失，绕过了退场动画）；关闭路回调为空，
 // 不重复播动画；关闭与打开/新建均不删任何草稿。
@@ -280,13 +280,13 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         }
         view.layoutIfNeeded()
         applyEntranceStartState()
-        let duration: TimeInterval = 0.25
+        let duration: TimeInterval = BearyMotion.normal
         UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut, animations: {
             self.sheetView.transform = .identity
             self.sheetView.alpha = 1
         })
-        // 遮罩 0.25s 淡入（与卡片滑入解耦）。
-        UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
+        // 遮罩 0.26s 淡入（与卡片滑入解耦）。
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
             self.backdropButton.alpha = 1
         })
     }
@@ -301,7 +301,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     /// playSheetEntrance 先播，本函数面板已播时只播卡片、不重播面板；面板未播
     /// 时走兜底分支（面板动画播完再播卡片）。
     private func tryPlayEntrance() {
-        // 2026-10-28 Li 令：遮罩出现时 0.25s 淡入；减动效直显终值。
+        // 2026-10-28 Li 令：遮罩出现时 0.26s 淡入；减动效直显终值。
         if UIAccessibility.isReduceMotionEnabled { backdropButton.alpha = 1 }
         guard !didPlayEntrance, draftBoxAppeared, draftsInitialLoaded,
               !UIAccessibility.isReduceMotionEnabled else { return }
@@ -329,7 +329,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             let maxDelay: TimeInterval = 0.24
             for (index, cardView) in cardViews.enumerated() {
                 let delay = min(TimeInterval(index) * 0.03, maxDelay)
-                UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: .curveEaseOut, animations: {
                     cardView.alpha = 1
                     cardView.transform = .identity
                 })
@@ -341,15 +341,15 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         }
         view.layoutIfNeeded()
         applyEntranceStartState()
-        let duration: TimeInterval = 0.25
+        let duration: TimeInterval = BearyMotion.normal
         UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut, animations: {
             self.sheetView.transform = .identity
             self.sheetView.alpha = 1
         }, completion: { _ in
             playCards()
         })
-        // 遮罩 0.25s 淡入（与卡片滑入解耦）。
-        UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
+        // 遮罩 0.26s 淡入（与卡片滑入解耦）。
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
             self.backdropButton.alpha = 1
         })
     }
@@ -375,7 +375,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     // MARK: - 视图搭建
 
     private func buildViews() {
-        // 草稿箱遮罩统一走 BearySheetChrome scrim 0.45，出现时 0.25s 淡入（2026-10-28 Li 令统一，全透明例外已撤销）。
+        // 草稿箱遮罩统一走 BearySheetChrome scrim 0.45，出现时 0.26s 淡入（2026-10-28 Li 令统一，全透明例外已撤销）。
         backdropButton.backgroundColor = BearySheetChrome.scrimColor
         backdropButton.alpha = 0
         backdropButton.accessibilityLabel = "关闭"
@@ -1195,13 +1195,13 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     }
 
     /// 拖动结束/取消后卡片归位：减动效直设（回收站 resetTrashDragRow 同款
-    /// 门控），其余以统一弹簧弹回（0.30s／damping 0.7，只走 transform）。
+    /// 门控），其余以统一弹簧弹回（0.26s／damping 0.7，只走 transform）。
     private func resetDraftDragCard(_ card: UIButton, initialSpringVelocity: CGFloat = 0) {
         if UIAccessibility.isReduceMotionEnabled {
             card.transform = .identity
             return
         }
-        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
             card.transform = .identity
         }, completion: nil)
     }
@@ -1543,7 +1543,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     }
 
     /// 弹窗审计 E1-18 统一退场完成回调：关闭、打开、新建三路共用同一
-    /// 退场（遮罩 0.25s 淡出 + 面板滑出走拖拽收尾统一弹簧 0.30s／damping 0.7，减动效直 dismiss），
+    /// 退场（遮罩 0.26s 淡出 + 面板滑出走拖拽收尾统一弹簧 0.26s／damping 0.7，减动效直 dismiss），
     /// dismiss 完成后才调 completion（即原 onNew/onOpen 回调）。
     /// 退场在途时再点按一律忽略：不重复播动画，也不让“关闭后又打开”
     /// 的回调在关闭完成后再执行；先到的一路为准。
@@ -1567,11 +1567,11 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             dismiss(animated: false, completion: wrappedCompletion)
             return
         }
-        // 第 30 项：遮罩 0.25s 单独淡出（与面板滑出解耦；面板滑出走拖拽收尾统一弹簧 0.30s／damping 0.7）。
-        UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
+        // 第 30 项：遮罩 0.26s 单独淡出（与面板滑出解耦；面板滑出走拖拽收尾统一弹簧 0.26s／damping 0.7）。
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
             self.backdropButton.alpha = 0
         })
-        UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
             if self.isPadLayout {
                 self.sheetView.alpha = 0
                 self.sheetView.transform = CGAffineTransform(translationX: 0, y: self.sheetView.bounds.height * 0.04)
@@ -1605,7 +1605,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     }
 
     /// U18：把手下滑关闭——下滑跟手，超过 80pt 或快速下滑时走 closeBox 同动画；
-    /// 否则统一弹簧（0.30s／damping 0.7＋松手速度）弹回原位，减动效直接落位（不播回弹动画）。遮罩点按关闭不受影响。
+    /// 否则统一弹簧（0.26s／damping 0.7＋松手速度）弹回原位，减动效直接落位（不播回弹动画）。遮罩点按关闭不受影响。
     /// 2026-10-30 抓手批：上滑按统一口径阻尼微移后回弹，不扩高、不关闭。
     @objc private func handlePanGesture(_ gesture: UIPanGestureRecognizer) {
         guard !isDismissing else { return }
@@ -1636,7 +1636,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                     UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
                 } else {
                     let offset = BearySheetDrag.offset(for: translation.y)
-                    UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore) { _ in
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore) { _ in
                         UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
                     }
                 }
@@ -1651,7 +1651,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 restore()
                 UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
             } else {
-                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore) { _ in
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore) { _ in
                     UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
                 }
             }
@@ -1678,7 +1678,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         }
         undoWrap.alpha = 0
         undoWrap.transform = CGAffineTransform(translationX: 0, y: 8)
-        UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
             self.undoWrap.alpha = 1
             self.undoWrap.transform = .identity
         })
@@ -1742,7 +1742,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         let heightConstraint = cardView.heightAnchor.constraint(equalToConstant: cardView.bounds.height)
         heightConstraint.isActive = true
         view.layoutIfNeeded()
-        UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseIn, animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseIn, animations: {
             cardView.alpha = 0
             heightConstraint.constant = 0
             self.view.layoutIfNeeded()

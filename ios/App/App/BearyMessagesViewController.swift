@@ -33,7 +33,7 @@ import UIKit
 // 分页：通知分页游标续拉（子页 loadMore 全套守卫）；哨兵行仅当
 // hasMore || isLoadingMore 时出现（忙 40、闲 56）；哨兵滚出视野清失败旗
 // 重 arm（子页原 scrollViewDidScroll 口径，改由容器表驱动）。
-// 动效：通知行错峰入场（首 24 行、alpha 0、y -24、0.25s、步进 0.03 封顶
+// 动效：通知行错峰入场（首 24 行、alpha 0、y -24、0.26s、步进 0.03 封顶
 // 0.24，减动效直落终值）与会话行淡入（0.22s 纯透明度）两套并存、行集不交。
 // 空态：两组都空时走合并空态（统一 BearyStateView，不再画通知空态的
 // 动态信封 BearyMailView）；一组空时只显另一组；任一组首次失败且贡献
@@ -616,7 +616,7 @@ final class BearyMessagesViewController: UIViewController {
     }
 
     /// 通知行错峰入场：重建后对可见新行播（前 24 行、alpha 0、y -24、
-    /// 0.25s、延迟 min(序号×0.03, 0.24)；减动效直接落终值）。离屏行 key
+    /// 0.26s、延迟 min(序号×0.03, 0.24)；减动效直接落终值）。离屏行 key
     /// 同样记为已知，滚动进视野时不再补播。会话行不走这里（走 willDisplay 淡入）。
     private func playStaggeredEntranceIfNeeded() {
         tableView.layoutIfNeeded()
@@ -639,7 +639,7 @@ final class BearyMessagesViewController: UIViewController {
             cell.alpha = 0
             cell.transform = CGAffineTransform(translationX: 0, y: -24)
             UIView.animate(
-                withDuration: 0.25,
+                withDuration: BearyMotion.normal,
                 delay: min(Double(order) * 0.03, 0.24),
                 options: [.curveEaseOut],
                 animations: {
@@ -833,7 +833,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
                 } else {
                     cell.alpha = 0
                     cell.transform = CGAffineTransform(translationX: 0, y: 6)
-                    UIView.animate(withDuration: 0.22, delay: min(Double(order) * 0.03, 0.24), options: [.curveEaseOut], animations: {
+                    UIView.animate(withDuration: BearyMotion.normal, delay: min(Double(order) * 0.03, 0.24), options: [.curveEaseOut], animations: {
                         cell.alpha = 1
                         cell.transform = .identity
                     })

@@ -773,7 +773,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         guard deltaY > 0 else { return }
         cell.alpha = 0
         cell.transform = CGAffineTransform(translationX: 0, y: deltaY)
-        UIView.animate(withDuration: BearyMotion.animated(true) ? 0.22 : 0, delay: 0, options: .curveEaseOut, animations: {
+        UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.normal : 0, delay: 0, options: .curveEaseOut, animations: {
             cell.alpha = 1
             cell.transform = .identity
         }, completion: nil)
@@ -923,7 +923,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
     }
 
-    /// M3：确认未送达的失败只让这一条摇头（标准拒绝动效 values [0,-8,8,-5,5,0]/0.4s，
+    /// M3：确认未送达的失败只让这一条摇头（标准拒绝动效 values [0,-8,8,-5,5,0]/0.38s，
     /// 与 BearyEditProfileViewController.playDenyShake 同口径；减动效时只跳视觉抖动），
     /// 其余行不动。reloadRows 后下一 runloop 再取 cell，取到的是刷新后的新 cell。
     private func shakeFailedRow(key: String) {
@@ -936,7 +936,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
         shake.values = [0, -8, 8, -5, 5, 0]
         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = 0.4
+        shake.duration = BearyMotion.screen
         cell.layer.add(shake, forKey: "bearyDMFailShake")
     }
 
@@ -1536,7 +1536,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             return
         }
         cell.alpha = 0
-        UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: {
             cell.alpha = 1
         })
     }

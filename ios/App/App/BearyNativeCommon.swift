@@ -71,25 +71,35 @@ enum BearyShadow {
 /// 减动效时一律返回 false，present/dismiss 即瞬时落终值。
 enum BearyMotion {
     static func animated(_ animated: Bool) -> Bool { UIAccessibility.isReduceMotionEnabled ? false : animated }
-    /// 局部状态动效统一时长（规格附录第 3 项已定）：开关、选中等小反馈取 0.18s。
-    /// 拒绝摇头 0.4s 是拒绝动效、不是局部状态动效，不走本值。
-    static let localStateDuration: TimeInterval = 0.18
+    /// 三档动效 token（规范 §6，第十轮定版）：micro 0.18s——按压、图标切换、
+    /// 选中态、局部状态、数字淡变、图片 crossfade、chip 出入、点赞／收藏爆点；
+    /// normal 0.26s——卡片展开、页面内位移、入场错峰、通用转场／模态、Toast
+    /// 淡入淡出、列表新行、日历切换、下拉刷新、拖拽收尾弹簧；screen 0.38s——
+    /// 页面进出、sheet 出现／消失、启动揭开、下拉刷新进入／收回、拒绝摇头、
+    /// 表情 chip-in。弹簧阻尼统一 0.7。
+    static let micro: TimeInterval = 0.18
+    static let normal: TimeInterval = 0.26
+    static let screen: TimeInterval = 0.38
+    static let springDamping: CGFloat = 0.7
+    /// 局部状态动效统一时长（规格附录第 3 项已定）：开关、选中等小反馈取 micro。
+    /// 拒绝摇头 0.38s 是拒绝动效、不是局部状态动效，不走本值。
+    static let localStateDuration: TimeInterval = micro
 }
 
 /// 新卡片入场统一配置（审计 r16 第 10 项，Li 定版 2026-11-06，规范 §6）：
 /// 首屏／筛子切换 60ms 步进、8pt 上移；分页追加 30ms 步进、8pt 上移；
-/// 0.25s、封顶 0.24s、可交互。广场（BearyFeedViewController.
+/// motion.normal 0.26s、封顶 0.24s、可交互。广场（BearyFeedViewController.
 /// staggerFadeCells）与时间线（BearyTimelineViewController willDisplay
 /// M2 块）两处共用；减动效时调用方不播。
 /// 分页档 30ms／8pt（2026-11-11 定版）；切日 N3 行仍走
 /// 旧 0.03s／6pt（见时间线 N3 注释），不在本配置内。
-/// 骨架交接：数据到达后骨架 0.25s 交叉溶解淡出，内容随即按首屏档错峰进入。
+/// 骨架交接：数据到达后骨架 0.26s 交叉溶解淡出，内容随即按首屏档错峰进入。
 enum BearyEntranceConfig {
     enum Kind {
         case firstLoad
         case pagination
     }
-    static let duration: TimeInterval = 0.25
+    static let duration: TimeInterval = BearyMotion.normal
     static let maxDelay: TimeInterval = 0.24
     static func delayStep(for kind: Kind) -> TimeInterval {
         switch kind {
@@ -113,7 +123,7 @@ enum BearyEntranceConfig {
 /// 底 sheet 与居中模态的共享 chrome：顶部圆角 20、抓手 40×4（顶距 10、圆角 2）、
 /// 遮罩 scrim 0.45。B 批前四处各写各的数值（恰好同值），改一处即全跟走，防再分裂。
 /// 2026-10-28 Li 令：回应 Sheet 与草稿箱 Sheet 统一走本 chrome（此前草稿箱遮罩全透明、
-/// 回应 Sheet 圆角 22 / 抓手 38×4 的例外一律撤销）；遮罩出现时 0.25s 淡入。
+/// 回应 Sheet 圆角 22 / 抓手 38×4 的例外一律撤销）；遮罩出现时 0.26s 淡入。
 /// 注意：CenteredModal 旧值 UIColor(white: 0, alpha: 0.45) 与 scrimColor 等值
 /// （scrim 本就是 white 0，withAlphaComponent 只换 alpha），改写后视觉不变。
 /// 面板阴影（2026-11-01 清理批：此前各面板自写两组数值，现统一于此，视觉不变）：
@@ -173,7 +183,7 @@ final class BearyCancellableScrollView: UIScrollView {
 }
 
 /// 抓手跟手位移统一口径：下滑原样跟手；上滑不扩高、不关闭，只按
-/// 0.25 阻尼跟手微移、上限 24pt，松手 0.25s 弹回原位。
+/// 0.25 阻尼跟手微移、上限 24pt，松手 0.26s 弹回原位。
 enum BearySheetDrag {
     static func offset(for translationY: CGFloat) -> CGFloat {
         if translationY >= 0 { return translationY }
@@ -1709,7 +1719,7 @@ extension UIImageView {
     /// 18pt 网页圆环（BearyWebRingSpinnerView），图到/失败/取消/复用清图时摘掉；
     /// 失败态一字不动（仍走 onFailure 的重试 UI）。有占位图时不挂转圈——
     /// 占位图本身就是可见内容，网页环在图片之下、有图时也看不见。
-    /// 图到时若转圈已亮过（加载 ≥0.15s），图片 0.25s 淡入；瞬时命中缓存时直设不闪。
+    /// 图到时若转圈已亮过（加载 ≥0.15s），图片 0.26s 淡入；瞬时命中缓存时直设不闪。
     /// 减动效开启时直设不淡入（走 BearyMotion.animated 口径，不另起判断）。
     private func bearyAttachWebRingSpinner() {
         bearyRemoveWebRingSpinner()
@@ -1761,7 +1771,7 @@ extension UIImageView {
                 if slowLoad && self.alpha == 1 && BearyMotion.animated(true) {
                     self.alpha = 0
                     self.image = img
-                    UIView.animate(withDuration: 0.25) { self.alpha = 1 }
+                    UIView.animate(withDuration: BearyMotion.normal) { self.alpha = 1 }
                 } else {
                     self.image = img
                 }
@@ -1822,7 +1832,7 @@ extension UIImageView {
                     self.image = img
                     self.alpha = 0
                     self.transform = CGAffineTransform(scaleX: 1.04, y: 1.04)
-                    UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: {
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: {
                         self.alpha = 1
                         self.transform = .identity
                     })
@@ -3834,7 +3844,7 @@ extension UITableView {
         let maxOffsetY = contentSize.height + delta - bounds.height + contentInset.bottom
         let clampedTargetY = min(max(targetOffsetY, minOffsetY), max(maxOffsetY, minOffsetY))
         let targetOffset = CGPoint(x: 0, y: clampedTargetY)
-        UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState], animations: {
             self.performBatchUpdates(nil, completion: { _ in
                 // 兜底：若批更新内系统又动了 offset，这里一次复位（与目标一致时 no-op）。
                 self.contentOffset = targetOffset

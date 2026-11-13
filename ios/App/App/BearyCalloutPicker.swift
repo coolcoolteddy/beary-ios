@@ -505,7 +505,7 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
 /// CalloutPicker 本体是横向 48pt 图标排、渲不出文字，故只复用其壳常量与
 /// 路径画法，不硬套其本体。尖角改放框顶（筛子钮在表头、气泡朝下展开，
 /// 框在钮下方、尖角向上指钮中心——与编辑器“框在上、尖角朝下指钮”镜像）。
-/// 出现/消失只走 transform/opacity（0.20s、6pt，编辑器 showCallout 同款；
+/// 出现/消失只走 transform/opacity（0.18s、6pt，编辑器 showCallout 同款；
 /// 减动效静态直出，本视图不自播动画）。
 final class BearyBubbleMenuView: UIView {
     struct Row {
@@ -621,21 +621,21 @@ final class BearyBubbleMenuView: UIView {
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
             super.touchesBegan(touches, with: event)
             BearyHaptics.press()
-            UIView.animate(withDuration: BearyMotion.animated(true) ? 0.13 : 0,
+            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
                            delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
                            animations: { self.transform = CGAffineTransform(scaleX: 0.98, y: 0.98) })
         }
 
         override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
             super.touchesEnded(touches, with: event)
-            UIView.animate(withDuration: BearyMotion.animated(true) ? 0.13 : 0,
+            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
                            delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
                            animations: { self.transform = .identity })
         }
 
         override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
             super.touchesCancelled(touches, with: event)
-            UIView.animate(withDuration: BearyMotion.animated(true) ? 0.13 : 0,
+            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
                            delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
                            animations: { self.transform = .identity })
         }

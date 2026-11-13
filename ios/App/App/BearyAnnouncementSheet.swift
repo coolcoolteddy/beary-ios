@@ -1,7 +1,7 @@
 import UIKit
 
 // ===== App 公告底 sheet（2026-11-08）=====
-// 走共享底部弹窗容器 BearyBottomSheet（与登录弹窗/确认弹窗同款：弹簧 0.4s 上升、
+// 走共享底部弹窗容器 BearyBottomSheet（与登录弹窗/确认弹窗同款：弹簧 0.38s 上升、
 // 背后缩 0.92、遮罩 0.45、下拖关/弹回；右上角叉叉关闭由本 sheet 自己保留）。
 // 内容就是 admin 里写的那段原文，不自动拼 Release 说明。单“知道了”按钮。
 // 字号走规范语义入口：标题 sheet 档 15 bold（smallActionFont），

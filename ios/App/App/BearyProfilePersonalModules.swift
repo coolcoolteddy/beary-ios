@@ -916,7 +916,7 @@ final class BearyYearReviewViewController: UIViewController {
            !UIAccessibility.isReduceMotionEnabled, summaryLabel.window != nil {
             summaryLabel.transform = CGAffineTransform(translationX: slideDirection * 16, y: 0)
             summaryLabel.alpha = 0
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
                 summaryLabel.transform = .identity
                 summaryLabel.alpha = 1
             })
@@ -1023,7 +1023,7 @@ final class BearyYearReviewViewController: UIViewController {
                 insertedRow.alpha = 1
             } else {
                 insertedRow.alpha = 0
-                UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
                     insertedRow.alpha = 1
                 })
             }

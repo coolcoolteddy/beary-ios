@@ -1345,7 +1345,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 新规矩 (b)：状态区首次出现淡入（同态内文案更换不重播；减动效直显）。
         if wasStateHidden && !UIAccessibility.isReduceMotionEnabled {
             stateWrap.alpha = 0
-            UIView.animate(withDuration: 0.18, animations: {
+            UIView.animate(withDuration: BearyMotion.micro, animations: {
                 self.stateWrap.alpha = 1
             })
         } else {
@@ -1477,7 +1477,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         recentWrap.isHidden = false
         if !UIAccessibility.isReduceMotionEnabled {
             recentWrap.alpha = 0
-            UIView.animate(withDuration: 0.18, animations: {
+            UIView.animate(withDuration: BearyMotion.micro, animations: {
                 self.recentWrap.alpha = 1
             })
         } else {
@@ -1526,7 +1526,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 新规矩 (b) 同口径：错误态首次出现淡入（同态内不重播；减动效直显）。
         if wasErrorHidden && !UIAccessibility.isReduceMotionEnabled {
             errorStateWrap.alpha = 0
-            UIView.animate(withDuration: 0.18, animations: {
+            UIView.animate(withDuration: BearyMotion.micro, animations: {
                 self.errorStateWrap.alpha = 1
             })
         } else {
@@ -2209,7 +2209,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             return
         }
         if isNewBatch {
-            // 审计：新批错峰延迟封顶 0.24s（此前 48 行末行约 1.41s＋0.25s，与同批分支同口径）。
+            // 审计：新批错峰延迟封顶 0.24s（此前 48 行末行约 1.41s＋0.26s，与同批分支同口径）。
             let rowViews: [UIView] = entryButtons + userButtons
             for (index, rowView) in rowViews.enumerated() {
                 // 审计三轮 09：终值按业务状态恢复，已举报行 0.6、其余行 1。
@@ -2218,14 +2218,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 rowView.alpha = 0
                 rowView.transform = CGAffineTransform(translationX: 0, y: 8)
                 let delay = min(Double(index) * 0.03, 0.24)
-                UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: .curveEaseOut, animations: {
                     rowView.alpha = targetAlpha
                     rowView.transform = .identity
                 })
             }
         } else {
             // 同批（5-20 / 6-6 / 6-9）：按行身份 key 查视图，不按下标配对；
-            // 仅新行错峰滑入（alpha + y+8、0.25s、0.03 步进封顶 0.24s，与新批同口径），
+            // 仅新行错峰滑入（alpha + y+8、0.26s、0.03 步进封顶 0.24s，与新批同口径），
             // 已有行不动；查表不到（nil 跳过行）即跳过，不会把动画落到旧行。
             // 新旧区分走 lastResultRowKeys（Profile animatedRowIds 同款集合口径），
             // 故 6-9 不需“无法区分则不加”的兜底：区分在静态上已证实。
@@ -2235,7 +2235,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 rowView.transform = CGAffineTransform(translationX: 0, y: 8)
                 let delay = min(Double(order) * 0.03, 0.24)
                 order += 1
-                UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: .curveEaseOut, animations: {
                     rowView.alpha = targetAlpha
                     rowView.transform = .identity
                 })
@@ -3032,7 +3032,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
         shake.values = [0, -8, 8, -5, 5, 0]
         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = 0.4
+        shake.duration = BearyMotion.screen
         button.layer.add(shake, forKey: "bearySearchFollowDenyShake")
     }
 

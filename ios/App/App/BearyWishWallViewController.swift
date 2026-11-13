@@ -195,7 +195,7 @@ private final class WishRowView: UIView {
         }
         detailLabel.alpha = 0
         detailLabel.transform = CGAffineTransform(translationX: 0, y: 4)
-        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut], animations: {
+        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.curveEaseOut], animations: {
             self.detailLabel.alpha = 1
             self.detailLabel.transform = .identity
         }, completion: nil)
@@ -361,7 +361,7 @@ private final class WishRowView: UIView {
         if UIAccessibility.isReduceMotionEnabled { return }
         let anim = CAKeyframeAnimation(keyPath: "transform.translation.x")
         anim.values = [0, -8, 8, -5, 5, 0]
-        anim.duration = 0.4
+        anim.duration = BearyMotion.screen
         layer.add(anim, forKey: "wish-row-shake")
     }
 }
@@ -646,7 +646,7 @@ final class BearyWishWallViewController: UIViewController {
             return
         }
         wishStateView.alpha = 0
-        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             self.wishStateView.alpha = 1
         })
     }
@@ -815,7 +815,7 @@ final class BearyWishWallViewController: UIViewController {
         for (index, row) in newRows.enumerated() {
             row.alpha = 0
             row.transform = CGAffineTransform(translationX: 0, y: 6)
-            UIView.animate(withDuration: 0.25, delay: min(Double(index) * 0.03, 0.24), options: [.curveEaseOut], animations: {
+            UIView.animate(withDuration: BearyMotion.normal, delay: min(Double(index) * 0.03, 0.24), options: [.curveEaseOut], animations: {
                 row.alpha = 1
                 row.transform = .identity
             }, completion: nil)

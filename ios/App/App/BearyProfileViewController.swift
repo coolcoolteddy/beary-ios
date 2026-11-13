@@ -2224,7 +2224,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 审计四轮增量 07：切 tab 离页钩子，与 pageDidReturn 对称——容器在
-    /// 0.25s 交叉淡入完成回调（或减动效直接显隐分支）里调，此时本页已
+    /// 0.26s 交叉淡入完成回调（或减动效直接显隐分支）里调，此时本页已
     /// isHidden：updateProfileCoverVisibility / updateFestivalWallpaperVisibility
     /// 按 isHidden 算可见性，停景深封面与节日墙纸的陀螺仪驱动；切回由
     /// pageDidReturn() 恢复。切后台不走这里（封面自身监听 willResignActive 停表）。
@@ -3360,7 +3360,7 @@ class BearyProfileViewController: UIViewController {
         let shouldAnimate = animated && wasVisible && stateChanged && !UIAccessibility.isReduceMotionEnabled
         let image = BearyIconImages.image(named: config.imageName, pointSize: 17)
         if shouldAnimate {
-            UIView.transition(with: followButton, duration: 0.25, options: [.transitionCrossDissolve, .beginFromCurrentState], animations: {
+            UIView.transition(with: followButton, duration: BearyMotion.normal, options: [.transitionCrossDissolve, .beginFromCurrentState], animations: {
                 self.followButton.setImage(image, for: .normal)
                 self.followButton.setTitle(config.title, for: .normal)
             }, completion: nil)
@@ -3417,7 +3417,7 @@ class BearyProfileViewController: UIViewController {
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
         shake.values = [0, -8, 8, -5, 5, 0]
         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = 0.4
+        shake.duration = BearyMotion.screen
         followButton.layer.add(shake, forKey: "bearyFollowDenyShake")
     }
 
@@ -3591,7 +3591,7 @@ class BearyProfileViewController: UIViewController {
     /// M9/M10：仅对从未播过入场动画的可见行做错峰滑入（每行递增 0.03s）；
     /// 已有行一律不动。减动效时直设终值（即不播）。
     /// 加载三件套·错峰口径：首屏/切 tab/后台回填 60ms 步进、8px 上移；
-    /// 分页追加 50ms 步进、24px 下滑入；0.25s、封顶 0.24s、可交互。
+    /// 分页追加 50ms 步进、24px 下滑入；0.26s、封顶 0.24s、可交互。
     /// 只针对未播过的新行（animatedRowIds），已有行不重播。
     private func animateNewRows(delayStep: TimeInterval = 0.06, yOffset: CGFloat = 8) {
         guard !UIAccessibility.isReduceMotionEnabled else { return }
@@ -3605,7 +3605,7 @@ class BearyProfileViewController: UIViewController {
             animatedRowIds.insert(entryId)
             cell.alpha = 0
             cell.transform = CGAffineTransform(translationX: 0, y: yOffset)
-            UIView.animate(withDuration: 0.25, delay: delay, options: [.curveEaseOut, .allowUserInteraction], animations: {
+            UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: [.curveEaseOut, .allowUserInteraction], animations: {
                 cell.alpha = 1
                 cell.transform = .identity
             })
@@ -3748,7 +3748,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 116 数据填入动效：文案／数字变化时只淡入该 label 本身（alpha 0→1、
-    /// 0.25s，不动 transform、不动布局、不重建节点、不弹一下）；同值不赋值
+    /// 0.26s，不动 transform、不动布局、不重建节点、不弹一下）；同值不赋值
     /// 不重播；减动效或未进窗口时直设终值。顶栏／sticky 名字为镜像同步，
     /// 不走本函数（sticky 名有自己的滚动淡入逻辑，重复动画会冲突）。
     private func setLabelTextFaded(_ label: UILabel, _ text: String?) {
@@ -3759,7 +3759,7 @@ class BearyProfileViewController: UIViewController {
             return
         }
         label.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             label.alpha = 1
         })
     }
@@ -3774,7 +3774,7 @@ class BearyProfileViewController: UIViewController {
             return
         }
         view.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             view.alpha = 1
         })
     }
@@ -4026,7 +4026,7 @@ class BearyProfileViewController: UIViewController {
             if !UIAccessibility.isReduceMotionEnabled {
                 wallContainer.alpha = 0
                 wallContainer.transform = CGAffineTransform(translationX: 0, y: endShift + 8)
-                UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut, animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
                     self.wallContainer.alpha = 1
                     self.wallContainer.transform = CGAffineTransform(translationX: 0, y: endShift)
                 })
@@ -4935,7 +4935,7 @@ class BearyProfileViewController: UIViewController {
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
         shake.values = [0, -8, 8, -5, 5, 0]
         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = 0.4
+        shake.duration = BearyMotion.screen
         view.layer.add(shake, forKey: "pastSelfDenyShake")
     }
 
@@ -5242,7 +5242,7 @@ class BearyProfileViewController: UIViewController {
             } else {
                 section.alpha = 0
                 section.transform = CGAffineTransform(translationX: 0, y: 8)
-                UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut], animations: {
                     section.alpha = 1
                     section.transform = .identity
                 })
@@ -6332,10 +6332,10 @@ class BearyProfileViewController: UIViewController {
                     self.tableView.insertRows(at: inserted, with: .none)
                 }, completion: { [weak self] _ in self?.animateNewRows(delayStep: 0.05, yOffset: 24) })
             } else if didShowProfileSkeleton, BearyMotion.animated(true) {
-                // 加载三件套·骨架淡出＋内容入场：整表 0.25s 交叉溶解（骨架同步
+                // 加载三件套·骨架淡出＋内容入场：整表 0.26s 交叉溶解（骨架同步
                 // 淡出），内容再从上到下每块错开 60ms、依次淡入并上移 8px。
                 didShowProfileSkeleton = false
-                UIView.transition(with: tableView, duration: 0.25, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
+                UIView.transition(with: tableView, duration: BearyMotion.normal, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
                     self.tableView.reloadData()
                 }, completion: { [weak self] _ in
                     guard let self = self else { return }
@@ -6536,10 +6536,10 @@ class BearyProfileViewController: UIViewController {
                     flash.trailingAnchor.constraint(equalTo: cell.contentView.trailingAnchor),
                     flash.bottomAnchor.constraint(equalTo: cell.contentView.bottomAnchor),
                 ])
-                // Grok 5.4：有动效时延迟 0、时长 0.2s（原 0.5s / 0.6s 偏慢）；
+                // Grok 5.4：有动效时延迟 0、时长 0.18s（原 0.5s / 0.6s 偏慢）；
                 // 减动效分支上游已 return（见本闭包开头），此处不再重复判断。
-                // 注：闪光淡出专属 0.2s（有意效果，非局部状态 0.18 档），保留。
-                UIView.animate(withDuration: 0.2, delay: 0, options: [], animations: {
+                // 注：闪光淡出原专属 0.2s，第十轮三档收敛后走 motion.micro，不再单列。
+                UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [], animations: {
                     flash.alpha = 0
                 }, completion: { _ in
                     flash.removeFromSuperview()
@@ -7003,19 +7003,19 @@ class BearyProfileViewController: UIViewController {
         } else {
             tableView.tableFooterView = UIView()
         }
-        // 80 包 A3-1：空态脚部出现时 0.25s 淡入（与首页空态进入淡入同口径）。
+        // 80 包 A3-1：空态脚部出现时 0.26s 淡入（与首页空态进入淡入同口径）。
         // 批 C：有照片区时不整脚淡入——否则切到空 tab（赞过空）时下方照片区
         // 也跟着闪一次；空态淡入只在无照片区时保留。
         if kind == "empty", kind != lastProfileFooterKind, cachedPhotosFooterView == nil,
            UIAccessibility.isReduceMotionEnabled == false,
            let footer = tableView.tableFooterView {
             footer.alpha = 0
-            UIView.animate(withDuration: 0.25, animations: {
+            UIView.animate(withDuration: BearyMotion.normal, animations: {
                 footer.alpha = 1
             })
         }
         lastProfileFooterKind = kind
-        // 审计-个人页设置：照片墙首次出现补与空态同款 0.25s 淡入（只淡照片区
+        // 审计-个人页设置：照片墙首次出现补与空态同款 0.26s 淡入（只淡照片区
         // 本身，不整脚淡入，免得切空 tab 时照片区跟着闪；缓存视图复用时
         // 签名不变不重播；脚部模块组淡入已由 renderModules 的
         // fadeInViewIfAppearing 覆盖，本处不重复加）。
@@ -7023,7 +7023,7 @@ class BearyProfileViewController: UIViewController {
            UIAccessibility.isReduceMotionEnabled == false {
             lastPhotosFooterFadeSignature = cachedPhotosFooterSignature
             photosView.alpha = 0
-            UIView.animate(withDuration: 0.25, animations: {
+            UIView.animate(withDuration: BearyMotion.normal, animations: {
                 photosView.alpha = 1
             })
         }
@@ -7551,7 +7551,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         if UIAccessibility.isReduceMotionEnabled {
             pullIn()
         } else {
-            UIView.animate(withDuration: 0.32, animations: pullIn)
+            UIView.animate(withDuration: BearyMotion.normal, animations: pullIn)
         }
         // G2：下拉刷新保留旧内容，成功后替换、失败保留旧内容
         // （见 handleProfileResult / handleTabResult）。
@@ -7572,7 +7572,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             return
         }
         // 扫 bug 定版第 2 项：去掉 0.5 秒最低展示，回包到即收回，
-        // 不再用 asyncAfter 补满剩余时间；0.32s 收回动画与触发口径不动。
+        // 不再用 asyncAfter 补满剩余时间；0.26s 收回动画与触发口径不动。
         customPullEndScheduled = true
         isCustomPullRefreshing = false
         customPullEndScheduled = false
@@ -7591,7 +7591,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             // 复位，故此处强制归自然态（无模糊、无放大）。
             self.resetCoverStretch()
         } else {
-            UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
+            UIView.animate(withDuration: BearyMotion.normal, animations: pullOut, completion: { _ in
                 self.refreshIconView.stopSpinning()
                 self.resetCoverStretch()
             })
@@ -8950,7 +8950,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         //（容器接登录提示 Sheet）；此前 cellForRowAt 未接此回调，现补上。
         cellValue.onRequireLogin = { [weak self] in self?.onRequireLogin?() }
         // fixall-cell 6-4 集成接线：回应行高变化走 batch（首页折叠同款口径），
-        // cell 内不再播 flow 位移动画，防双动画叠加；未接线时 cell 保留 0.25s 兜底。
+        // cell 内不再播 flow 位移动画，防双动画叠加；未接线时 cell 保留 0.26s 兜底。
         cellValue.onNeedsEmoteRowAnimation = { [weak self, weak cellValue] in
             guard let strongSelf = self, let targetCell = cellValue else { return }
             guard let path = strongSelf.tableView.indexPath(for: targetCell) else { return }

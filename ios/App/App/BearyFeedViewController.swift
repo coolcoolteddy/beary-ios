@@ -835,7 +835,7 @@ class BearyFeedViewController: UIViewController {
         if UIAccessibility.isReduceMotionEnabled {
             pullIn()
         } else {
-            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
         }
         // 112 刷新节流（仅手势下拉）：上次首拉成功 5 秒内且已有内容时，
         // 不再发网络请求，指示头随收回动画收回（第 2 项后不再等 500ms）；程序侧刷新
@@ -857,7 +857,7 @@ class BearyFeedViewController: UIViewController {
             return
         }
         // 扫 bug 定版第 2 项：去掉 0.5 秒最低展示，回包到即收回，
-        // 不再用 asyncAfter 补满剩余时间；触发口径不动，收回动画随 454 改 0.35s easeOut。
+        // 不再用 asyncAfter 补满剩余时间；触发口径不动，收回动画随 454 改 0.38s easeOut。
         customPullEndScheduled = true
         isCustomPullRefreshing = false
         customPullEndScheduled = false
@@ -877,7 +877,7 @@ class BearyFeedViewController: UIViewController {
             pullOut()
             self.refreshIconView.stopSpinning()
         } else {
-            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
                 self.refreshIconView.stopSpinning()
             })
         }
@@ -1195,7 +1195,7 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.lastFeedLoadAt = Date()
                     // 审计 13：界面先应用（落表 + 状态），写盘异步在后、不卡首帧。
                     // 加载三件套·骨架淡出：骨架出过屏时不直接 reloadData，
-                    // 由 finishFirstLoadIfNeeded 经 0.25s 交叉溶解换上真实行。
+                    // 由 finishFirstLoadIfNeeded 经 0.26s 交叉溶解换上真实行。
                     if !strongSelf.didShowSkeleton {
                         strongSelf.tableView.reloadData()
                     }
@@ -1218,7 +1218,7 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.plazaError = true
                         strongSelf.plazaFirstDone = true
                         // 加载三件套·骨架淡出：骨架出过屏时不直接 reloadData，
-                        // 由 finishFirstLoadIfNeeded 经 0.25s 交叉溶解换上失败行。
+                        // 由 finishFirstLoadIfNeeded 经 0.26s 交叉溶解换上失败行。
                         if !strongSelf.didShowSkeleton {
                             strongSelf.tableView.reloadData()
                         }
@@ -1914,7 +1914,7 @@ class BearyFeedViewController: UIViewController {
         }
     }
 
-    /// M5：“有新内容”pill 出现/消失：0.25s 淡入 + 轻微上滑；减动效直设终值。
+    /// M5：“有新内容”pill 出现/消失：0.26s 淡入 + 轻微上滑；减动效直设终值。
     private func showNewContentPill() {
         if newContentPill.isHidden == false {
             newContentPill.layer.removeAllAnimations()
@@ -1930,7 +1930,7 @@ class BearyFeedViewController: UIViewController {
         }
         newContentPill.alpha = 0
         newContentPill.transform = CGAffineTransform(translationX: 0, y: 8)
-        UIView.animate(withDuration: 0.25) {
+        UIView.animate(withDuration: BearyMotion.normal) {
             self.newContentPill.alpha = 1
             self.newContentPill.transform = .identity
         }
@@ -1944,7 +1944,7 @@ class BearyFeedViewController: UIViewController {
             newContentPill.transform = .identity
             return
         }
-        UIView.animate(withDuration: 0.25, animations: {
+        UIView.animate(withDuration: BearyMotion.normal, animations: {
             self.newContentPill.alpha = 0
             self.newContentPill.transform = CGAffineTransform(translationX: 0, y: -8)
         }, completion: { [weak self] _ in
@@ -2025,10 +2025,10 @@ class BearyFeedViewController: UIViewController {
             let visible = (tableView.indexPathsForVisibleRows ?? []).sorted()
             if didShowSkeleton {
                 didShowSkeleton = false
-                // 加载三件套·骨架淡出＋内容入场：整表 0.25s 交叉溶解（骨架同步
+                // 加载三件套·骨架淡出＋内容入场：整表 0.26s 交叉溶解（骨架同步
                 // 淡出），内容再从上到下每块错开 60ms、依次淡入并上移 8px。
                 if BearyMotion.animated(true) {
-                    UIView.transition(with: tableView, duration: 0.25, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
+                    UIView.transition(with: tableView, duration: BearyMotion.normal, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
                         self.tableView.reloadData()
                     }, completion: { [weak self] _ in
                         guard let self = self else { return }
@@ -2056,7 +2056,7 @@ class BearyFeedViewController: UIViewController {
                 layoutFeedBlindBoxHeader()
                 return
             }
-            // 80 包 A11：空态退出与进入淡入对称——0.25s 淡出后再摘空态行；
+            // 80 包 A11：空态退出与进入淡入对称——0.26s 淡出后再摘空态行；
             // 减动效直接摘行；退出中重入空态时 token 作废旧动画（见进入分支）。
             feedEmptyVisible = false
             emptyExitToken += 1
@@ -2065,7 +2065,7 @@ class BearyFeedViewController: UIViewController {
                 layoutFeedBlindBoxHeader()
                 emptyView.alpha = 1
             } else {
-                UIView.animate(withDuration: 0.25, animations: {
+                UIView.animate(withDuration: BearyMotion.normal, animations: {
                     self.emptyView.alpha = 0
                 }, completion: { [weak self] _ in
                     guard let strongSelf = self, token == strongSelf.emptyExitToken else { return }
@@ -2085,7 +2085,7 @@ class BearyFeedViewController: UIViewController {
             // 新规矩 (b)：空态首次出现淡入（已有空态不重播；减动效直显）。
             if !UIAccessibility.isReduceMotionEnabled {
                 emptyView.alpha = 0
-                UIView.animate(withDuration: 0.25, animations: {
+                UIView.animate(withDuration: BearyMotion.normal, animations: {
                     self.emptyView.alpha = 1
                 })
             }
@@ -2355,7 +2355,7 @@ class BearyFeedViewController: UIViewController {
             )
         }
         // fixall-cell 6-4 集成接线：回应行高变化走 batch（折叠同款口径），
-        // cell 内不再播 flow 位移动画，防双动画叠加；未接线时 cell 保留 0.25s 兜底。
+        // cell 内不再播 flow 位移动画，防双动画叠加；未接线时 cell 保留 0.26s 兜底。
         cell.onNeedsEmoteRowAnimation = { [weak self, weak cell] in
             guard let strongSelf = self, let targetCell = cell else { return }
             guard let path = strongSelf.tableView.indexPath(for: targetCell) else { return }
@@ -2604,7 +2604,7 @@ class BearyFeedViewController: UIViewController {
     }
 
     /// 举报成功后立即同步模型和表格；可见卡片用快照退场，避免延迟删除时列表已被刷新。
-    /// 快照挂 tableView（frame = cell.frame，表坐标）：0.25s 内用户滚动时快照随表走，
+    /// 快照挂 tableView（frame = cell.frame，表坐标）：0.26s 内用户滚动时快照随表走，
     /// 不会像挂 view 那样漂在原屏位；下方行 deleteRows .none 已立即上移，快照在其上淡出。
     @objc private func handleReportedEntryNotification(_ note: Notification) {
         guard let entryId = note.object as? String, !entryId.isEmpty else { return }
@@ -2636,7 +2636,7 @@ class BearyFeedViewController: UIViewController {
         updateOverlayState()
         refillPlazaIfEmptiedAfterModeration()
         if let snapshot = snapshot {
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut], animations: {
                 snapshot.alpha = 0
                 snapshot.transform = CGAffineTransform(translationX: 0, y: -8)
             }, completion: { _ in

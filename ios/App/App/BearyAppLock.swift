@@ -271,13 +271,13 @@ final class BearyAppLockManager {
                 UIAccessibility.post(notification: .screenChanged, argument: nil)
             }
         }
-        // 审计动效组：锁屏解锁补减动效分支——减动效时直出终值，不播 0.25s 淡出。
+        // 审计动效组：锁屏解锁补减动效分支——减动效时直出终值，不播 0.26s 淡出。
         if UIAccessibility.isReduceMotionEnabled {
             overlay.alpha = 0
             overlay.removeFromSuperview()
             restoreVoiceOverFocus()
         } else {
-            UIView.animate(withDuration: 0.25, animations: {
+            UIView.animate(withDuration: BearyMotion.normal, animations: {
                 overlay.alpha = 0
             }) { _ in
                 overlay.removeFromSuperview()

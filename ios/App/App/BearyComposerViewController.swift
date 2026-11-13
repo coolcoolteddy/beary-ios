@@ -924,7 +924,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func invalidatePendingCalloutPresentation() {
         calloutPresentationGeneration += 1
     }
-    private static let calloutTransitionDuration: TimeInterval = 0.20
+    private static let calloutTransitionDuration: TimeInterval = BearyMotion.micro
     private static let calloutTransitionOffset: CGFloat = 6
     private static let calloutHeight: CGFloat = 78
     /// [24] 小项 2：天气框高约束（基准 78；步进器附属行显时 += 附属行高，
@@ -2724,10 +2724,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 quotePanel.alpha = 1
             } else {
                 quotePanel.alpha = 0
-                UIView.animate(withDuration: 0.25) { self.quotePanel.alpha = 1 }
+                UIView.animate(withDuration: BearyMotion.normal) { self.quotePanel.alpha = 1 }
             }
         } else {
-            // M6：关闭先 0.2s 淡出再恢复各区（减动效直接恢复）；恢复后重算 sheet 高。
+            // M6：关闭先 0.18s 淡出再恢复各区（减动效直接恢复）；恢复后重算 sheet 高。
             let applyClose = {
                 self.quoteTabStack.isHidden = true
                 self.scrollView.contentInset.top = 0
@@ -2792,7 +2792,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if UIAccessibility.isReduceMotionEnabled {
                 applyClose()
             } else {
-                UIView.animate(withDuration: 0.18, animations: {
+                UIView.animate(withDuration: BearyMotion.micro, animations: {
                     self.quotePanel.alpha = 0
                 }, completion: { _ in
                     applyClose()
@@ -3435,7 +3435,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 guard !quotePanelAnimatedRowKeys.contains(key) else { continue }
                 quotePanelAnimatedRowKeys.insert(key)
                 button.alpha = 0
-                UIView.animate(withDuration: 0.25, delay: min(Double(animIndex) * 0.03, 0.24), options: [], animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: min(Double(animIndex) * 0.03, 0.24), options: [], animations: {
                     button.alpha = 1
                 }, completion: nil)
                 animIndex += 1
@@ -3791,9 +3791,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshToolStrip()
     }
 
-    /// 审计 P1-8：选择条转场常量——0.20s 落在 0.18–0.22s 区间内，
+    /// 审计 P1-8：选择条转场常量——走 motion.micro 0.18s（原 0.20s，落在 0.18–0.22s 区间内），
     /// 透明度 + 6pt 小幅位移（入场自下 6pt 升至原位，出场沉至 6pt 后淡出）。
-    private static let toolStripTransitionDuration: TimeInterval = 0.20
+    private static let toolStripTransitionDuration: TimeInterval = BearyMotion.micro
     private static let toolStripTransitionOffset: CGFloat = 6
 
     /// 选择条显隐总口：栈内只剩写给区（心情/天气旧条带已删，入口只走尖角弹出框）；
@@ -4152,7 +4152,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         locationRowStack.alpha = 0
-        UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
             self.locationRowStack.alpha = 1
         })
     }
@@ -4228,7 +4228,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         } else {
             locationPopover.alpha = 0
             locationPopover.transform = CGAffineTransform(translationX: 0, y: 6)
-            UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+            UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
                 self.locationPopover.alpha = 1
                 self.locationPopover.transform = .identity
             })
@@ -4260,7 +4260,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             return
         }
-        UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
             self.locationPopover.alpha = 0
             self.locationPopover.transform = CGAffineTransform(translationX: 0, y: 6)
         }, completion: { [weak self] _ in
@@ -5003,7 +5003,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 draftStatusIcon.alpha = 0
                 draftStatusLabel.alpha = 0
                 draftStatusBannerLabel.alpha = 0
-                UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+                UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
                     self.draftStatusIcon.alpha = 1
                     self.draftStatusLabel.alpha = 1
                     self.draftStatusBannerLabel.alpha = 1
@@ -7570,7 +7570,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if self.presentedViewController != nil || self.isDraftBoxPresenting { return }
             self.isDraftBoxPresenting = true
             // 弹窗审计 E1-18：草稿箱内部已统一退场——新建/打开先播同一
-            // 0.25s 退场、dismiss 后再调回调，故编辑器侧不再另行 dismiss
+            // 0.26s 退场、dismiss 后再调回调，故编辑器侧不再另行 dismiss
             // （旧 dismiss 经 BearyDraftBoxInstantAnimator 瞬时消失，绕过了退场动画）。
             let box = BearyDraftBoxViewController(
                 onNew: { [weak self] in
@@ -7666,7 +7666,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                 let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
                                 shake.values = [0, -8, 8, -5, 5, 0]
                                 shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-                                shake.duration = 0.4
+                                shake.duration = BearyMotion.screen
                                 self.cancelButton.layer.add(shake, forKey: "bearyDenyShake")
                             }
                             self.showToast(message: result.hadPreviousSavedVersion
@@ -8320,14 +8320,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
                     shake.values = [0, -8, 8, -5, 5, 0]
                     shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-                    shake.duration = 0.4
+                    shake.duration = BearyMotion.screen
                     self.cancelButton.layer.add(shake, forKey: "bearyDenyShake")
                 }
                 // 审计 M2：保存失败留页——边缘跟手若已把视图滑出，滑回原位
-                //（与 BearyEdgeDismiss 的复位同口径：拖拽收尾统一弹簧 0.30s／
+                //（与 BearyEdgeDismiss 的复位同口径：拖拽收尾统一弹簧 0.26s／
                 // damping 0.7；保存回调里无松手速度可传，初速度取 0；减动效瞬时归位）。
                 if self.view.transform != .identity {
-                    UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+                    UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
                         self.view.transform = .identity
                     })
                 }
@@ -8696,7 +8696,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
                             shake.values = [0, -8, 8, -5, 5, 0]
                             shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-                            shake.duration = 0.4
+                            shake.duration = BearyMotion.screen
                             self.publishButton.layer.add(shake, forKey: "bearyDenyShake")
                         }
                         self.showAlert(message: "发布失败，请重试")
@@ -8736,7 +8736,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
                             shake.values = [0, -8, 8, -5, 5, 0]
                             shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-                            shake.duration = 0.4
+                            shake.duration = BearyMotion.screen
                             self.publishButton.layer.add(shake, forKey: "bearyDenyShake")
                         }
                         self.showAlert(message: self.message(forPublishError: error))

@@ -807,7 +807,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             for (view, wasHidden) in [(emptyStateView, emptyWasHidden), (failureWrap, failureWasHidden), (loginWrap, loginWasHidden)] {
                 if wasHidden && view.isHidden == false {
                     view.alpha = 0
-                    UIView.animate(withDuration: 0.25) {
+                    UIView.animate(withDuration: BearyMotion.normal) {
                         view.alpha = 1
                     }
                 }
@@ -872,7 +872,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 let delay = min(Double(index) * 0.03, 0.24)
                 rowView.alpha = 0
                 rowView.transform = CGAffineTransform(translationX: 0, y: 6)
-                UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: .curveEaseOut, animations: {
                     rowView.alpha = 1
                     rowView.transform = .identity
                 }, completion: nil)
@@ -893,7 +893,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 let delay = min(Double(index) * 0.03, 0.24)
                 rowView.alpha = 0
                 rowView.transform = CGAffineTransform(translationX: 0, y: 6)
-                UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: .curveEaseOut, animations: {
                     rowView.alpha = 1
                     rowView.transform = .identity
                 }, completion: nil)
@@ -1117,7 +1117,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             rowView.transform = .identity
             return
         }
-        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
             rowView.transform = .identity
         }, completion: nil)
     }
@@ -1382,7 +1382,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         rowView.clipsToBounds = true
         let heightConstraint = rowView.heightAnchor.constraint(equalToConstant: rowHeight)
         heightConstraint.isActive = true
-        UIView.animate(withDuration: 0.3, animations: {
+        UIView.animate(withDuration: BearyMotion.normal, animations: {
             rowView.alpha = 0
             heightConstraint.constant = 0
             self.view.layoutIfNeeded()

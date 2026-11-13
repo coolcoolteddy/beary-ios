@@ -399,7 +399,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// fixall-cell 6-4：回应行高变化时的控制器 batch 口径（与折叠同款）。
     /// 控制器接线后 renderEmotes(animatedLayout:) 不再在 cell 内播 flow 位移动画，
     /// 而是调本回调、由控制器 performBatchUpdates 平滑伸缩行高；未接线时
-    /// （本分支单独合入前）仍走 cell 内原有 0.25s flow 位移动画，不回退为瞬变。
+    /// （本分支单独合入前）仍走 cell 内原有 0.26s flow 位移动画，不回退为瞬变。
     /// 减动效下两种路径均为直设终值。
     var onNeedsEmoteRowAnimation: (() -> Void)?
 
@@ -1288,14 +1288,14 @@ class BearyDiaryCardCell: UITableViewCell {
             if gesture.state == .ended && wasJoined != stripPinchJoined {
                 BearyHaptics.press()
             }
-            // 捏合拼图落点走拖拽收尾统一弹簧 0.30s／damping 0.7（落点动画
+            // 捏合拼图落点走拖拽收尾统一弹簧 0.26s／damping 0.7（落点动画
             // 属性是间距／圆角、非缩放量，捏合速度无直接映射，初速度取 0）；减动效直接落终值，不播弹簧。
             if UIAccessibility.isReduceMotionEnabled {
                 self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
                 self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
                 self.imagesScrollView.layoutIfNeeded()
             } else {
-                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
                     self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
                     self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
                     self.imagesScrollView.layoutIfNeeded()
@@ -2525,7 +2525,7 @@ class BearyDiaryCardCell: UITableViewCell {
         return overflow
     }
 
-    /// M7：折叠箭头与编辑器附加栏同口径——0.2s 旋转动画；变换未变时不播（复用/重渲染不闪）。
+    /// M7：折叠箭头与编辑器附加栏同口径——0.18s 旋转动画；变换未变时不播（复用/重渲染不闪）。
     /// 折叠正文无透明度动画是刻意选择（与网页一致），不补。
     private func animateFoldArrow(expanded: Bool) {
         let target = expanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : .identity
@@ -2533,7 +2533,7 @@ class BearyDiaryCardCell: UITableViewCell {
         if UIAccessibility.isReduceMotionEnabled {
             foldButton.imageView?.transform = target
         } else {
-            UIView.animate(withDuration: 0.18) { self.foldButton.imageView?.transform = target }
+            UIView.animate(withDuration: BearyMotion.micro) { self.foldButton.imageView?.transform = target }
         }
     }
 
@@ -2579,7 +2579,7 @@ class BearyDiaryCardCell: UITableViewCell {
             self.contentLabel.numberOfLines = expanded ? 0 : 6
         }
         if animated {
-            UIView.transition(with: contentLabel, duration: 0.22, options: .transitionCrossDissolve, animations: apply)
+            UIView.transition(with: contentLabel, duration: BearyMotion.normal, options: .transitionCrossDissolve, animations: apply)
         } else {
             apply()
         }
@@ -2600,7 +2600,7 @@ class BearyDiaryCardCell: UITableViewCell {
             BearyDiaryCardCell.expandedEntryIds.insert(entryIdValue)
             isExpanded = true
         }
-        UIView.transition(with: contentLabel, duration: 0.22, options: .transitionCrossDissolve, animations: {
+        UIView.transition(with: contentLabel, duration: BearyMotion.normal, options: .transitionCrossDissolve, animations: {
             self.updateContentAndFold()
         })
         updateDiaryStackSpacing()
@@ -3109,7 +3109,7 @@ class BearyDiaryCardCell: UITableViewCell {
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
         shake.values = [0, -8, 8, -5, 5, 0]
         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = 0.4
+        shake.duration = BearyMotion.screen
         button.layer.add(shake, forKey: "bearyDenyShake")
     }
 
@@ -3295,7 +3295,7 @@ class BearyDiaryCardCell: UITableViewCell {
         onTapImages?(currentImageKeys, index, sender.view.map { $0.convert($0.bounds, to: nil) }, (sender.view as? UIImageView)?.image)
     }
 
-    /// 按压反馈（预览 v3 定版：按下 0.95 / 0.1s、松手弹簧 1.03 → 0.99 → 1 / 0.32s，
+    /// 按压反馈（预览 v3 定版：按下 0.95 / 0.1s、松手弹簧 1.03 → 0.99 → 1 / motion.micro 0.18s，
     /// 走按钮层，与共用按压路径同款核心；震动仍由各点按流程自理，不在此补）。
     @objc private func iconTouchDown(_ sender: UIButton) {
         BearyIconMotion.pressDownVisual(on: sender)
@@ -3581,7 +3581,7 @@ class BearyDiaryCardCell: UITableViewCell {
         guard let chip = chipView(forKey: key) else { completion?(); return }
         chip.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
         chip.alpha = 0
-        UIView.animateKeyframes(withDuration: 0.45, delay: 0, options: [], animations: {
+        UIView.animateKeyframes(withDuration: BearyMotion.screen, delay: 0, options: [], animations: {
             UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.6) {
                 chip.transform = CGAffineTransform(scaleX: 1.12, y: 1.12)
                 chip.alpha = 1
@@ -3592,7 +3592,7 @@ class BearyDiaryCardCell: UITableViewCell {
             }
         }, completion: { _ in completion?() })
         if let emoteView = chip.player {
-            UIView.animateKeyframes(withDuration: 0.5, delay: 0, options: [], animations: {
+            UIView.animateKeyframes(withDuration: BearyMotion.screen, delay: 0, options: [], animations: {
                 UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.3) {
                     emoteView.transform = CGAffineTransform(rotationAngle: -0.1745).scaledBy(x: 1.3, y: 1.3)
                 }
@@ -3618,7 +3618,7 @@ class BearyDiaryCardCell: UITableViewCell {
             completion()
             return
         }
-        UIView.animate(withDuration: 0.2, animations: {
+        UIView.animate(withDuration: BearyMotion.micro, animations: {
             chip.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
             chip.alpha = 0
         }, completion: { _ in completion() })
@@ -3664,7 +3664,7 @@ class BearyDiaryCardCell: UITableViewCell {
         let newSignature = BearyEmoteOrder.signature(list.filter { ($0.emote ?? "").isEmpty == false })
         if cellEmoteSignatureValid && newSignature == cellEmoteSignature {
             // 签名一致：chip 行内容无变化，跳过拆建。连续点按/回包对齐时
-            // 第二次渲染若在 0.25s 位移动画中途拆掉在场 chip 再重建，
+            // 第二次渲染若在 0.26s 位移动画中途拆掉在场 chip 再重建，
             // 第一个 chip 就会先消失再出现；此处只刷新互动启用态
             // （busy 等状态可能已变，内容未变），行高与 + 钮均不受影响。
             updateEmoteInteractivity()
@@ -3766,13 +3766,13 @@ class BearyDiaryCardCell: UITableViewCell {
         // fixall-cell 6-4：行高变化走控制器 performBatchUpdates（折叠同款口径）——
         // 控制器接线 onNeedsEmoteRowAnimation 后，此处只调回调、不再播 cell 内
         // flow 位移动画（batch 内行高与 chip 位置同动画，防双动画叠加）；
-        // 未接线时保留原有 0.25s flow 位移动画；减动效下两种路径均为直设终值。
+        // 未接线时保留原有 0.26s flow 位移动画；减动效下两种路径均为直设终值。
         if animatedLayout, UIAccessibility.isReduceMotionEnabled == false {
             if let batchAnimation = onNeedsEmoteRowAnimation {
                 batchAnimation()
             } else {
                 emoteFlowView.setNeedsLayout()
-                UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut]) {
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut]) {
                     self.emoteFlowView.layoutIfNeeded()
                 }
             }

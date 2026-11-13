@@ -632,7 +632,7 @@ enum BearyLoadingUX {
 
     /// 新内容入场：淡入 + 从下方 yOffset 处上移（transform + opacity）。
     /// delayStep 为每块错峰步进（首屏 60ms、分页 50ms）；减动效直接落终值。
-    static func staggerIn(cells: [UIView], delayStep: TimeInterval, yOffset: CGFloat, duration: TimeInterval = 0.25) {
+    static func staggerIn(cells: [UIView], delayStep: TimeInterval, yOffset: CGFloat, duration: TimeInterval = BearyMotion.normal) {
         guard BearyMotion.animated(true) else {
             for cell in cells { cell.alpha = 1; cell.transform = .identity }
             return

@@ -595,7 +595,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             return
         }
         cell.alpha = 0
-        UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: {
             cell.alpha = 1
         })
     }

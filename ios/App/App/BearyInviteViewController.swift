@@ -442,7 +442,7 @@ final class BearyInviteViewController: UIViewController {
     }
 
     /// 116 数据填入动效：文案变化时只淡入该 label 本身（alpha 0→1、
-    /// 0.25s，不动 transform／布局、不重建节点、不缩放弹一下）；同值
+    /// 0.26s，不动 transform／布局、不重建节点、不缩放弹一下）；同值
     /// 不赋值不重播；减动效或未进窗口时直设终值。绑定区容器本身的
     /// 隐藏变可见淡入已实现，本函数只补文案层。
     private func setLabelTextFaded(_ label: UILabel, _ text: String) {
@@ -453,7 +453,7 @@ final class BearyInviteViewController: UIViewController {
             return
         }
         label.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             label.alpha = 1
         })
     }

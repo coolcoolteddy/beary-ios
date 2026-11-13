@@ -114,8 +114,8 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
     /// 的交接；superview 已变的也一律不动，等转场自己收尾）。
     private func removePreparedUnderlyingViewAfterReset() {
         guard underlyingViewPrepared, let underlying = preparedUnderlyingView, let presented = presentedVC else { return }
-        // 延迟与复位动画同长（#1000 的 0.30s 弹簧复位）；减动效时复位是瞬时的，延迟取 0。
-        let delay = UIAccessibility.isReduceMotionEnabled ? 0 : 0.30
+        // 延迟与复位动画同长（#1000 的 motion.normal 0.26s 弹簧复位）；减动效时复位是瞬时的，延迟取 0。
+        let delay = UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak underlying, weak presented] in
             guard let self = self, self.underlyingViewPrepared, let underlying = underlying, let presented = presented else { return }
             guard underlying.superview == presented.view.superview, presented.view.window != nil else { return }
@@ -226,13 +226,13 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
         }
     }
 
-    /// 完成模式跟手取消／被拒：视图滑回原位（拖拽收尾统一弹簧 0.30s／
+    /// 完成模式跟手取消／被拒：视图滑回原位（拖拽收尾统一弹簧 0.26s／
     /// damping 0.7，与同文件退场动画同档；快甩松手把手势结束速度归一化后
     /// 传 initialSpringVelocity，慢拖为 0；减动效时瞬时归位）。
     /// 取消／失败无有效松手速度，调用方不传（默认 0）。
     private func resetCompletionFollow(view: UIView, initialSpringVelocity: CGFloat = 0) {
         guard view.transform != .identity else { return }
-        UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: [], animations: {
+        UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: [], animations: {
             view.transform = .identity
         })
     }
@@ -250,8 +250,8 @@ private final class BearySlideTransitionAnimator: NSObject, UIViewControllerAnim
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        // 拖拽收尾统一弹簧：退场 0.30s，入场仍 0.25s；减动效门控原已有（时长 0）。
-        return UIAccessibility.isReduceMotionEnabled ? 0 : (isPresenting ? 0.25 : 0.30)
+        // 入场／退场均走 motion.normal 0.26s（第十轮三档收敛，原入场 0.25s／退场 0.30s）；减动效门控原已有（时长 0）。
+        return UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -281,7 +281,7 @@ private final class BearySlideTransitionAnimator: NSObject, UIViewControllerAnim
             container.insertSubview(toView, belowSubview: fromView)
             toView.frame = transitionContext.finalFrame(for: toVC)
             let width = container.bounds.width
-            // 拖拽收尾统一弹簧 0.30s／damping 0.7：交互式过渡的 animator
+            // 拖拽收尾统一弹簧 0.26s／damping 0.7：交互式过渡的 animator
             // 实例在手势开始时已建、无松手速度可传，故初速度取 0。
             UIView.animate(withDuration: duration, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
                 fromView.transform = CGAffineTransform(translationX: width, y: 0)

@@ -497,7 +497,7 @@ final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
         contentStack.addArrangedSubview(makeGroupCard(title: "来源明细", rows: grantRows))
         // 116：发放行数据到达时错峰滑入（新内容 only：本页行每次 render
         // 重建，故以首个数据 render + 已进窗口为播一次的守卫；行本身
-        // alpha／y+6、0.25s、0.03 步进，减动效直显；加载／失败／空态
+        // alpha／y+6、0.26s、0.03 步进，减动效直显；加载／失败／空态
         // 行不走本分支——grants 为 nil 或失败时不置位）。
         if !grantsRowsAnimated, grants != nil, !loadFailed,
            view.window != nil, !UIAccessibility.isReduceMotionEnabled {
@@ -507,7 +507,7 @@ final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
                 let targetAlpha = row.alpha
                 row.alpha = 0
                 row.transform = CGAffineTransform(translationX: 0, y: 6)
-                UIView.animate(withDuration: 0.25, delay: delay, options: [.curveEaseOut], animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: [.curveEaseOut], animations: {
                     row.alpha = targetAlpha
                     row.transform = .identity
                 })
@@ -671,7 +671,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
             rows.append(emptyLabel)
         }
         contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: rows))
-        // 116：设备行数据到达时错峰滑入（alpha＋y+6、0.25s、0.03 步进；
+        // 116：设备行数据到达时错峰滑入（alpha＋y+6、0.26s、0.03 步进；
         // 行每次 render 重建，故以首个数据 render＋已进窗口为播一次的
         // 守卫；传入数据首帧因窗口未进不播、直接显；加载／失败态
         // render 不置位，重试成功后仍可播一次；减动效直显；目标
@@ -682,7 +682,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
             // 116：计数文案随数据到达只淡入本身（无位移）。
             if let countLabelView = countLabelView {
                 countLabelView.alpha = 0
-                UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut], animations: {
                     countLabelView.alpha = 1
                 })
             }
@@ -691,7 +691,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
                 let targetAlpha = row.alpha
                 row.alpha = 0
                 row.transform = CGAffineTransform(translationX: 0, y: 6)
-                UIView.animate(withDuration: 0.25, delay: delay, options: [.curveEaseOut], animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: [.curveEaseOut], animations: {
                     row.alpha = targetAlpha
                     row.transform = .identity
                 })

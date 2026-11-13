@@ -642,12 +642,12 @@ final class BearyProfilePhotosViewController: UIViewController {
             return
         }
         titleLabel.alpha = 0
-        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             self.titleLabel.alpha = 1
         })
     }
 
-    /// 116：续拉新格错峰滑入（仅本页新增格、alpha＋y+6、0.25s、
+    /// 116：续拉新格错峰滑入（仅本页新增格、alpha＋y+6、0.26s、
     /// 0.03 步进封顶 0.24s；已有格不重播；减动效直显）。
     private func staggerNewCells(from oldCount: Int) {
         guard !UIAccessibility.isReduceMotionEnabled else { return }
@@ -660,7 +660,7 @@ final class BearyProfilePhotosViewController: UIViewController {
             guard let cell = collectionView.cellForItem(at: path) else { continue }
             cell.alpha = 0
             cell.transform = CGAffineTransform(translationX: 0, y: 6)
-            UIView.animate(withDuration: 0.25, delay: min(delay, 0.24), options: [.curveEaseOut], animations: {
+            UIView.animate(withDuration: BearyMotion.normal, delay: min(delay, 0.24), options: [.curveEaseOut], animations: {
                 cell.alpha = 1
                 cell.transform = .identity
             })

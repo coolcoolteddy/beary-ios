@@ -502,7 +502,7 @@ class BearyEditProfileViewController: UIViewController {
     /// F12：主页链接文案（@handle 优先口径：有 handle 用 @handle，无 handle
     /// 才回退 /u/id，再无回退 @用户名；与个人主页分享、设置页隐私文案一致）。
     /// 116 数据填入动效：链接行文案随 /me 到达或改名成功变化时只淡入
-    /// 该 label 本身（alpha 0→1、0.25s，不动 transform／布局、不重建
+    /// 该 label 本身（alpha 0→1、0.26s，不动 transform／布局、不重建
     /// 节点、不缩放弹一下）；同值不赋值不重播；减动效或未进窗口时
     /// 直设终值。签名输入框内容为可编辑文档，不做淡入（与编辑器
     /// 表单回填同口径）。
@@ -1305,7 +1305,7 @@ class BearyEditProfileViewController: UIViewController {
         presentSimpleAlert(message: message)
     }
 
-    /// 拒绝动效（卡片 playDenyShake 同口径：values [0,-8,8,-5,5,0] / 0.4s）。
+    /// 拒绝动效（卡片 playDenyShake 同口径：values [0,-8,8,-5,5,0] / 0.38s）。
     private func playDenyShake(on button: UIButton) {
         BearyHaptics.rejectionWarning()
         BearySoundPlayer.play(.refuseBonk)
@@ -1314,7 +1314,7 @@ class BearyEditProfileViewController: UIViewController {
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
         shake.values = [0, -8, 8, -5, 5, 0]
         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = 0.4
+        shake.duration = BearyMotion.screen
         button.layer.add(shake, forKey: "bearyDenyShake")
     }
 
