@@ -224,7 +224,7 @@ class BearyEditProfileViewController: UIViewController {
         return imageViewValue
     }()
 
-    /// F14：头像包容器（80 头像 + 相机角标），封面下半压 40；头像点按钮
+    /// F14：头像包容器（80 头像 + 相机角标），封面下半压 28；头像点按钮
     /// 为 scrollView 级覆盖层（约束锚头像框、后加层级在封面之上，见 buildLayout 末尾），
     /// 故头像区点按仍走换头像、不与封面点按冲突。
     private let avatarWrap = UIView()
@@ -236,6 +236,8 @@ class BearyEditProfileViewController: UIViewController {
         imageViewValue.contentMode = .scaleAspectFill
         imageViewValue.clipsToBounds = true
         imageViewValue.layer.cornerRadius = 40
+        // 与个人主页同款：头像圈 3.5pt、圈色走 bg（深浅切换见 updateDynamicLayerColors）。
+        imageViewValue.layer.borderWidth = 3.5
         return imageViewValue
     }()
 
@@ -596,6 +598,8 @@ class BearyEditProfileViewController: UIViewController {
 
     private func updateDynamicLayerColors() {
         copyLinkButton.layer.bearyDynamicBorderColor = BearyColors.line
+        // 头像圈色与个人主页同款（bg；动态色，深浅切换时重赋）。
+        avatarImageView.layer.bearyDynamicBorderColor = BearyColors.bg
     }
 
     /// F15：表单标签（网页 ed-rlabel 口径：宽 58、15/600）。
@@ -643,7 +647,7 @@ class BearyEditProfileViewController: UIViewController {
         topRow.translatesAutoresizingMaskIntoConstraints = false
         topRow.axis = .horizontal
         topRow.alignment = .center
-        // F14：头像包容器（80 头像 + 相机角标），封面下半压 40；头像点按钮
+        // F14：头像包容器（80 头像 + 相机角标），封面下半压 28；头像点按钮
         // 改为 scrollView 级覆盖层（见本函数末尾），不放在 wrap 内。
         avatarWrap.translatesAutoresizingMaskIntoConstraints = false
         avatarWrap.addSubview(avatarImageView)
@@ -755,11 +759,11 @@ class BearyEditProfileViewController: UIViewController {
         contentStack.addArrangedSubview(formStack)
         contentStack.addArrangedSubview(linkWrap)
         // 封面已移出内容列（scrollView 级通栏，见下方 coverImageView 约束，不再吃
-        // 内容列左右 20 内边距）；头像半压封面改由顶行后 156 间距实现
-        // （180 封面高 + 16 行距 − 40 半压）。
-        // F14：头像半压封面（网页 ed-ava-row margin-top:-40 口径），
+        // 内容列左右 20 内边距）；头像半压封面改由顶行后 168 间距实现
+        // （180 封面高 + 16 行距 − 28 半压，与个人主页 -28 同口径）。
+        // F14：头像半压封面（网页 ed-ava-row margin-top:-28 口径），
         // 封面已在内容列外，故这里直接给定行后间距。
-        contentStack.setCustomSpacing(156, after: topRow)
+        contentStack.setCustomSpacing(168, after: topRow)
         // F12：表单→链接行距 0（链接包容器自带 14 上边距 = 网页 margin-top:14）；
         // C4：链接行已为末行，旧「链接行→账户行距 26」随账户行一并删除。
         contentStack.setCustomSpacing(0, after: formStack)
@@ -790,7 +794,7 @@ class BearyEditProfileViewController: UIViewController {
         coverImageView.isUserInteractionEnabled = true
         coverImageView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(presentCoverSourcePicker)))
         scrollView.addSubview(coverImageView)
-        // 头像半压封面：封面后加会盖住头像的上半 40pt（内容列先加、封面后加，
+        // 头像半压封面：封面后加会盖住头像的上半 28pt（内容列先加、封面后加，
         // 层级上封面在内容列之上），故内容列须提至封面之上，头像整圆才可见；
         // 点按按钮在其后加入、仍保持最上层，换头像点按不受影响。
         scrollView.bringSubviewToFront(contentStack)
