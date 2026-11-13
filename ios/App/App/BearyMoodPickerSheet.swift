@@ -458,12 +458,12 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
                 applyHeight()
             })
-            UIView.animate(withDuration: 0.15, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+            UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
                 self.emoteCollectionView?.alpha = 0
             }, completion: { [weak self] finished in
                 guard finished else { return }
                 reloadGrid()
-                UIView.animate(withDuration: 0.15, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+                UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
                     self?.emoteCollectionView?.alpha = 1
                 })
             })
