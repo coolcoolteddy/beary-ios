@@ -190,6 +190,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// S5：关注状态请求排队——建行时不再立即请求；可见行（+下一屏）优先，
     /// 其余排队；同时在途上限 3。结果区失效时待办整批丢弃（见 clearResultRows）。
     private var followStatePendingIds: [Int] = []
+    /// r11-11：滚动重排节流——上次重排关注请求队列时的 contentOffset.y；
+    /// 滚动回调只在偏移移动超过一行后才重测重排，微小 contentOffset
+    /// 变化不再重复 layoutIfNeeded＋全量量帧＋排序；滚动停稳时强制
+    /// 重排一次，停稳态队列与改前一致。
+    private var lastFollowReorderOffsetY: CGFloat?
+    /// r11-11：滚动重排节流步长——用户行默认高 72pt（见 makeUserRow，
+    /// 大字号下只会更高）；滚动不足一行时可见行集合至多差一行，
+    /// 重排收益小于整批测量成本。
+    private let followReorderMinScrollDelta: CGFloat = 72
     private var followStateInFlightCount = 0
     private let followStateMaxConcurrent = 3
     private var followButtonUserIds: [UIButton: Int] = [:]
@@ -441,6 +450,31 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         updateStickyBoxPosition()
         // S5：滚动露出新行时，屏外排队的关注状态按可见优先重排队头；
         // 无待办时不做帧量算。
+        // r11-11：滚动重排节流——偏移不足一行不重测（可见行集合至多
+        // 差一行，重排收益小于整批测量成本）；停稳时见下方两个回调
+        // 强制重排，停稳态队列与改前一致。
+        if !followStatePendingIds.isEmpty,
+           shouldReorderFollowStatesForScroll(offsetY: scrollView.contentOffset.y) {
+            requestFollowStatesForVisibleRows()
+        }
+    }
+
+    /// r11-11：滚动重排节流判定——首次滚动（无上次记录）或偏移自上次
+    /// 重排移动超过一行时重排；否则跳过本次测量。
+    private func shouldReorderFollowStatesForScroll(offsetY: CGFloat) -> Bool {
+        guard let last = lastFollowReorderOffsetY else { return true }
+        return abs(offsetY - last) >= followReorderMinScrollDelta
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        // r11-11：拖动停稳（不再减速）时强制重排一次，停稳态队列与改前一致。
+        if !decelerate, !followStatePendingIds.isEmpty {
+            requestFollowStatesForVisibleRows()
+        }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        // r11-11：减速停稳时强制重排一次，停稳态队列与改前一致。
         if !followStatePendingIds.isEmpty {
             requestFollowStatesForVisibleRows()
         }
@@ -1719,6 +1753,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // S5：结果区失效时取消待办——排队的关注状态请求整批丢弃；
         // 在途请求无取消句柄，回包由 searchSeq/账号代次守卫丢弃。
         followStatePendingIds = []
+        // r11-11：行集已失效，上次重排偏移一并作废，下次滚动重排不限流。
+        lastFollowReorderOffsetY = nil
         followActionSeqByUserId = [:]
         confirmedFollowStates = [:]
         followButtonWidthConstraints = [:]
@@ -2766,6 +2802,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             return a.frame.minY < b.frame.minY
         }
         followStatePendingIds = ordered.map { $0.id }
+        // r11-11：记下本次重排时的偏移，供滚动节流判定用（渲染末尾
+        // 的重排同样记，之后滚动不足一行不再重复测量）。
+        lastFollowReorderOffsetY = scrollView.contentOffset.y
         pumpFollowStateQueue()
     }
 
