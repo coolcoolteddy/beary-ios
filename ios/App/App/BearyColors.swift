@@ -29,7 +29,14 @@ enum BearyColors {
     /// 正文用深橙（ChatGPT 审计第四类新 token）：浅 #C2410C / 深 #ff9500。
     /// 浅色白底对比约 5.18:1、橙底 0.12 浅底对比约 4.69:1；深色黑底对比约 9.55:1。
     /// 只用于文字前景；图标/FAB/收藏/大号文字/描边仍走 orange，不动。
+    /// 唯一例外（第十轮 #13）：系统通知图标（19pt 信封，橙 14% 底）浅色对比仅
+    /// 约 2.20:1，浅色改走本 token（深色与 orange 同值 #ff9500，不变）。
     static var deepOrangeText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1) : UIColor(red: 194.0/255.0, green: 65.0/255.0, blue: 12.0/255.0, alpha: 1) } }
+    /// 破坏性文字（第十轮审计 ChatGPT #14 新增 token，规范 §7）：浅 #C92A2A / 深 #FF6B61。
+    /// 浅色白底对比约 5.46:1、深色 surface0 底约 7.05:1，均 ≥4.5:1。
+    /// 只用于删除类文字前景（退出其他设备、清空等）；语义红 #E5484D 白底仅
+    /// 约 3.91:1，不再做正文色；删除钮描边与忙碌图标仍走 red，不动。
+    static var destructiveText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 107.0/255.0, blue: 97.0/255.0, alpha: 1) : UIColor(red: 201.0/255.0, green: 42.0/255.0, blue: 42.0/255.0, alpha: 1) } }
     /// 正文用深绿（同上）：浅 #166534 / 深 #34C759（系统绿亮值）。
     /// 浅色白底对比约 7.13:1、绿底 0.12 浅底对比约 6.42:1；深色黑底对比约 9.46:1。
     /// 只用于文字前景；语义绿填充 #2fbf71 底色不动。

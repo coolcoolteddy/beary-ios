@@ -2249,11 +2249,11 @@ final class BearyNotificationsViewController: UIViewController {
             case .sysCard:
                 let sysIndices = items.indices.filter({ items[$0].type == "system" })
                 let anyUnread = sysIndices.contains(where: { (items[$0].read ?? true) == false })
-                cell.setCardReadAppearance(anyUnread: anyUnread, highlight: shouldHighlightCard(indices: Array(sysIndices)))
+                cell.setCardReadAppearance(anyUnread: anyUnread, highlight: shouldHighlightCard(indices: Array(sysIndices)), isSystem: true)
             case .actCard:
                 let actIndices = items.indices.filter({ (items[$0].type ?? "") != "system" && (items[$0].type ?? "") != "letter" })
                 let anyUnread = actIndices.contains(where: { (items[$0].read ?? true) == false })
-                cell.setCardReadAppearance(anyUnread: anyUnread, highlight: shouldHighlightCard(indices: Array(actIndices)))
+                cell.setCardReadAppearance(anyUnread: anyUnread, highlight: shouldHighlightCard(indices: Array(actIndices)), isSystem: false)
             }
         }
     }
@@ -3677,14 +3677,33 @@ class BearyNotificationCell: UITableViewCell {
         unreadDotView.isHidden = !isUnread
     }
 
-    /// C-G10：卡面已读态直接改 class——未读底一律蓝 9%；highlight 同上。
-    func setCardReadAppearance(anyUnread: Bool, highlight: Bool) {
-        applyUnreadHighlight(highlight: highlight, blueAlpha: 0.09, nested: false)
-        unreadDotView.isHidden = !anyUnread
+    /// 卡面类别色（第十轮 #13／#15）：系统卡一律橙底＋深橙图标（已读也不退，
+    /// 橙色类别标记不动；浅色图标走 deepOrangeText）；互动卡未读时蓝底＋蓝图标，
+    /// 已读退回灰底＋墨图标，蓝色只剩未读点／未读背景承担。
+    private func applyCardCategoryColors(isSystem: Bool, anyUnread: Bool) {
+        if isSystem {
+            avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.14)
+            avatarIconView.tintColor = BearyColors.deepOrangeText
+        } else if anyUnread {
+            avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.12)
+            avatarIconView.tintColor = BearyColors.blue
+        } else {
+            avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.gray, 0.12)
+            avatarIconView.tintColor = BearyColors.ink
+        }
     }
 
-    /// 折叠卡卡面：系统卡橙 14% 底 + mail 图，互动卡蓝 12% 底 + heart 图；
-    /// 未读底一律蓝 9%（网页 .nt-item.sys.unread，互动卡同样带 sys 类）。
+    /// C-G10：卡面已读态直接改 class——未读底一律蓝 9%；highlight 同上。
+    /// 类别色同步重算（就地标已读也要把互动卡蓝图标／蓝底退回墨／灰，见上）。
+    func setCardReadAppearance(anyUnread: Bool, highlight: Bool, isSystem: Bool) {
+        applyUnreadHighlight(highlight: highlight, blueAlpha: 0.09, nested: false)
+        unreadDotView.isHidden = !anyUnread
+        applyCardCategoryColors(isSystem: isSystem, anyUnread: anyUnread)
+    }
+
+    /// 折叠卡卡面：系统卡橙 14% 底 + mail 图，互动卡未读蓝 12% 底 + heart 图、
+    /// 已读灰底＋墨图标（第十轮 #15）；未读底一律蓝 9%（网页 .nt-item.sys.unread，
+    /// 互动卡同样带 sys 类）。
     func configureAsCard(title: String, excerpt: String, timeMs: Int?, anyUnread: Bool, isSystem: Bool, expanded: Bool, highlight: Bool) {
         cancelAvatarLoad()
         hideFollowAction()
@@ -3693,11 +3712,10 @@ class BearyNotificationCell: UITableViewCell {
         avatarRetryButton.isHidden = true
         applyUnreadHighlight(highlight: highlight, blueAlpha: 0.09, nested: false)
         unreadDotView.isHidden = !anyUnread
-        avatarImageView.backgroundColor = isSystem ? BearyColors.alpha(BearyColors.orange, 0.14) : BearyColors.alpha(BearyColors.blue, 0.12)
+        applyCardCategoryColors(isSystem: isSystem, anyUnread: anyUnread)
         popperView.stop()
         popperView.isHidden = true
         avatarIconView.isHidden = false
-        avatarIconView.tintColor = isSystem ? BearyColors.orange : BearyColors.blue
         avatarIconView.image = BearyIconImages.image(named: isSystem ? "icon_mail" : "icon_heart", pointSize: 19)
         avatarFallbackLabel.isHidden = true
         kindBadgeView.isHidden = true
@@ -3816,8 +3834,10 @@ class BearyNotificationCell: UITableViewCell {
             avatarRetryButton.isHidden = true
             // system 行标题含“成就/徽章”时用 popper（礼花）图，否则 mail 图；
             // letter 行恒为 mail 图（网页 ntOne 两分支同口径）。
+            // 第十轮 #13：系统图标浅色走 deepOrangeText（#C2410C，淡橙底上约 5.18:1；
+            // 原 orange 亮橙仅约 2.20:1），深色与 orange 同值不变；底仍保留淡橙 14%。
             avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.14)
-            avatarIconView.tintColor = BearyColors.orange
+            avatarIconView.tintColor = BearyColors.deepOrangeText
             // C-G2：同上，空串标题回退（网页 || 语义）。
             let rawTitle = item.title ?? ""
             let titleText = rawTitle.isEmpty ? (itemType == "letter" ? "消息" : "通知") : rawTitle
