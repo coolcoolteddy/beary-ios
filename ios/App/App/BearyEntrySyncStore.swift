@@ -279,16 +279,25 @@ enum BearyEntrySyncStore {
     }
 
     /// 写完整性标记（分批收尾 finishDiaryRun 校验通过后调；commitFullSync 内调）。
-    static func writeCompletion(accountId: Int, entryCount: Int) {
-        guard let url = completionMarkerURL(accountId: accountId) else { return }
+    /// 返回标记是否真正落盘：编码、建目录、写盘任一步失败均为 false——调用方
+    /// 须把失败当收尾失败处理（磁盘满时标记落不了盘却记 complete，会让读档方
+    /// 拒绝使用归档、本次启动又跳过自动同步）。
+    @discardableResult
+    static func writeCompletion(accountId: Int, entryCount: Int) -> Bool {
+        guard let url = completionMarkerURL(accountId: accountId) else { return false }
         let marker = EntrySyncCompletion(
             accountId: accountId,
             entryCount: entryCount,
             syncedAtMs: Int(Date().timeIntervalSince1970 * 1000)
         )
-        guard let data = try? JSONEncoder().encode(marker) else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+        guard let data = try? JSONEncoder().encode(marker) else { return false }
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
     }
 
     /// 删完整性标记（收尾任一步失败时调；半截盘不认完整）。
@@ -422,9 +431,13 @@ enum BearyEntrySyncStore {
             removeCompletion(accountId: accountId)
             return false
         }
-        // 整批写盘全部成功：写完整性标记（总数 = 本批总篇数）。
+        // 整批写盘全部成功：写完整性标记（总数 = 本批总篇数）；标记落盘失败
+        // 同样算提交失败（半截盘不认完整，下次重跑再对齐）。
         let total = grouped.values.reduce(0) { $0 + $1.count }
-        writeCompletion(accountId: accountId, entryCount: total)
+        guard writeCompletion(accountId: accountId, entryCount: total) else {
+            removeCompletion(accountId: accountId)
+            return false
+        }
         return true
     }
 

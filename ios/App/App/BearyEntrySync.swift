@@ -549,11 +549,15 @@ final class BearyEntrySync {
                     ok = self.verifyDiaryFinalState(run: run)
                 }
                 // C3：收尾校验通过即存档完整，写完整性标记（总数 = 本轮拉到的
-                // 总篇数，verifyDiaryFinalState 已核对与落盘一致）；任一步
-                // 失败即删标记，半截盘不认完整，下次读存档回落网络重拉。
+                // 总篇数，verifyDiaryFinalState 已核对与落盘一致）；标记写入
+                // 失败同样算收尾失败（磁盘满时标记落不了盘却记 complete，会让
+                // 读档方拒绝使用归档、本次启动又跳过自动同步）；任一步失败即
+                // 删标记，半截盘不认完整，下次读存档回落网络重拉。
                 // r17-C2：收尾成败同时记状态文件——成功记 complete，失败记 partial。
                 if ok {
-                    BearyEntrySyncStore.writeCompletion(accountId: run.accountId, entryCount: run.totalFetched)
+                    ok = BearyEntrySyncStore.writeCompletion(accountId: run.accountId, entryCount: run.totalFetched)
+                }
+                if ok {
                     _ = BearySyncStateStore.save(stateURL: BearyEntrySyncStore.stateFileURL(accountId: run.accountId), status: "complete", itemCount: run.totalFetched)
                 } else {
                     BearyEntrySyncStore.removeCompletion(accountId: run.accountId)
