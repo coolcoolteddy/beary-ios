@@ -18,6 +18,10 @@ import LocalAuthentication
 enum BearyAppLockSettings {
     static let defaultsKey = "beary_biometric_lock_enabled"
 
+    /// 冷启动锁说明（dsh II-4）：锁屏与设置页详情共用同一句，旧句 35 字，
+    /// 现 25 字——“冷启动时验证一次；切到别的 App 再回来不重复。”
+    static let coldStartNote = "冷启动时验证一次；切到别的 App 再回来不重复。"
+
     /// 开关值（默认关）。只读走 UserDefaults，写走 setEnabled（设置页已验身份后才调）。
     static var isEnabled: Bool {
         UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? false
@@ -162,7 +166,7 @@ final class BearyAppLockManager {
         status.textColor = BearyColors.gray
         status.textAlignment = .center
         status.numberOfLines = 0
-        status.text = "重新启动 beary 时验证一次，短暂切换到其他应用后返回不会重复验证"
+        status.text = BearyAppLockSettings.coldStartNote
         lockStatusLabel = status
 
         let button = BearyButton(style: .secondaryOutline(.regular))
