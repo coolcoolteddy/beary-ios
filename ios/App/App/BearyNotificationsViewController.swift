@@ -294,6 +294,7 @@ final class BearyNotificationsViewController: UIViewController {
     private var readAllButtonWidthConstraint: NSLayoutConstraint?
 
     private lazy var readAllButton: UIButton = {
+        // 初始外观须与 refreshReadAllButtonAppearance(for: .normal) 一致（对勾 14pt）。
         // R9-A：图标+文字小钮、高约 25（14 字 + 上下各 4 内边距）：换 Hit44 后
         // 热区竖向扩向 44；header 高 48（见 headerView 高度约束），热区上下
         // 均在框内、满 44 不裁（此前 header 41 时实际可达约 38）。
@@ -1860,15 +1861,8 @@ final class BearyNotificationsViewController: UIViewController {
             return
         }
         isMarkingAllRead = true
-        readAllButton.isEnabled = false
         // 网页口径：处理中换成转圈图标 +“处理中…”（check 图标不再保留）。
-        readAllButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 14), for: .normal)
-        readAllButton.setTitle("处理中…", for: .normal)
-        updateReadAllButtonWidth()
-        readAllButton.layoutIfNeeded()
-        if let buttonImageView = readAllButton.imageView {
-            BearyIconMotion.startSpin(on: buttonImageView, duration: 1.0, key: "bearyReadAllSpin")
-        }
+        refreshReadAllButtonAppearance(for: .marking)
         // 第三轮审计 01：全部已读改乐观更新——先拍快照（未读 id 集＋未读数），
         // 立即显示最终态（整批置已读、未读清零）；成功时递增操作代次（在途
         // 单条失败回滚随即作废），失败时按快照恢复。按钮仍显“处理中…”转圈，
@@ -1891,13 +1885,8 @@ final class BearyNotificationsViewController: UIViewController {
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.isMarkingAllRead = false
-                strongSelf.readAllButton.isEnabled = true
-                if let buttonImageView = strongSelf.readAllButton.imageView {
-                    BearyIconMotion.stopSpin(on: buttonImageView, key: "bearyReadAllSpin")
-                }
-                strongSelf.readAllButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 24), for: .normal)
-                strongSelf.readAllButton.setTitle("全部已读", for: .normal)
-                strongSelf.updateReadAllButtonWidth()
+                // R10-#5：完成态经同一刷新方法恢复，对勾 14pt（此前误写 24pt）。
+                strongSelf.refreshReadAllButtonAppearance(for: .done)
                 // P1-21：代次已变 → 旧账号回包丢弃，不整批置已读、不重拉。
                 if strongSelf.isStaleRequestEpoch(requestEpoch) {
                     return
@@ -2355,6 +2344,38 @@ final class BearyNotificationsViewController: UIViewController {
             object: nil,
             userInfo: ["unread": clamped, "sysUnread": sysClamped]
         )
+    }
+
+    /// 全部已读钮三态外观（R10-#5）：正常／处理中／完成共用同一刷新方法，
+    /// 对勾始终 14pt——完成态此前误写 24pt。显隐仍由 updateReadAllButton() 管，
+    /// 各回调只调本方法，不再自行改按钮图标／标题／可用态。
+    private enum ReadAllButtonState {
+        case normal
+        case marking
+        case done
+    }
+
+    private func refreshReadAllButtonAppearance(for state: ReadAllButtonState) {
+        switch state {
+        case .normal, .done:
+            readAllButton.isEnabled = true
+            if let buttonImageView = readAllButton.imageView {
+                BearyIconMotion.stopSpin(on: buttonImageView, key: "bearyReadAllSpin")
+            }
+            readAllButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
+            readAllButton.setTitle("全部已读", for: .normal)
+        case .marking:
+            readAllButton.isEnabled = false
+            readAllButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 14), for: .normal)
+            readAllButton.setTitle("处理中…", for: .normal)
+        }
+        updateReadAllButtonWidth()
+        readAllButton.layoutIfNeeded()
+        if state == .marking {
+            if let buttonImageView = readAllButton.imageView {
+                BearyIconMotion.startSpin(on: buttonImageView, duration: 1.0, key: "bearyReadAllSpin")
+            }
+        }
     }
 
     /// 全部已读钮仅在未读数 > 0 时出现（网页 ntSyncReadAll）。
