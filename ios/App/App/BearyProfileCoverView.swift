@@ -3,7 +3,7 @@ import ImageIO
 import UIKit
 
 public enum ProfileCoverTheme: String, CaseIterable {
-    case china, usa, japan, germany, canada, korea
+    case china, usa, japan, germany, canada, korea, qixi
 }
 
 public final class ProfileCoverView: UIView {
@@ -20,6 +20,8 @@ public final class ProfileCoverView: UIView {
     private var backdrop: CGImage?
     private var backdropFrames: [Int: UIImage] = [:]
     private var egg: CGFloat = 0
+    /// 七夕彩蛋：两只喜鹊靠拢进度 0→1，跟倾斜挂钩（倾斜越深靠得越近），慢缓动。
+    private var converge: CGFloat = 0
     private var tilt: CGPoint = .zero
     private var neutral: CGPoint?
     private var orientation: UIInterfaceOrientation?
@@ -37,6 +39,13 @@ public final class ProfileCoverView: UIView {
         case .germany: names.append("gondola")
         case .canada: names.append("floatplane")
         case .korea: names.append("kite")
+        case .qixi:
+            // 七夕：动态物是两只喜鹊同一张 PNG；彩蛋六张分层（星点／银河闪烁／
+            // 每只喜鹊的身体层＋金丝线层），身体与金线分开、代码才能只让金线变亮。
+            names.append("qixi-magpie")
+            names.append(contentsOf: ["qixi-egg-stars", "qixi-egg-shimmer",
+                                      "qixi-egg-magpie-big-body", "qixi-egg-magpie-big-gold",
+                                      "qixi-egg-magpie-small-body", "qixi-egg-magpie-small-gold"])
         }
         var images: [String: UIImage] = [:]
         for name in names {
@@ -90,6 +99,7 @@ public final class ProfileCoverView: UIView {
     /// Call on each new visit to the profile to make the hidden detail available again.
     public func restartVisit() {
         egg = 0
+        converge = 0
         hold = 0
         shown = false
         revealing = false
@@ -117,6 +127,7 @@ public final class ProfileCoverView: UIView {
         tilt = .zero
         hold = 0
         egg = 0
+        converge = 0
         revealing = false
         setNeedsDisplay()
     }
@@ -159,10 +170,15 @@ public final class ProfileCoverView: UIView {
         }
         let next = CGPoint(x: approach(tilt.x, x), y: approach(tilt.y, y))
         let detail = approach(egg, revealing ? 1 : 0)
+        // 七夕彩蛋靠拢：目标跟倾斜强度走（越深靠得越近），松手漂回；慢缓动
+        //（τ≈0.4s，约 1.2s 到 95%），猛倾斜也不冲刺、像滑翔。
+        let convergeTarget: CGFloat = revealing ? min(1, strength) : 0
+        let nextConverge = converge + (convergeTarget - converge) * (1 - exp(-dt * 2.5))
         // 节流：姿态与彩蛋的变化都小于阈值时不重画（0.002 姿态约合 0.04pt 位移，肉眼不可见）。
-        let delta = max(abs(next.x - tilt.x), abs(next.y - tilt.y), abs(detail - egg))
+        let delta = max(abs(next.x - tilt.x), abs(next.y - tilt.y), abs(detail - egg), abs(nextConverge - converge))
         tilt = next
         egg = detail
+        converge = nextConverge
         guard delta >= 0.002 else { return }
         setNeedsDisplay()
     }
@@ -279,9 +295,77 @@ public final class ProfileCoverView: UIView {
                 self.stroke(ctx, [CGPoint(x: 0, y: yy + 1), CGPoint(x: 0, y: yy - 7)],
                             color: blue, width: 1.8, alpha: self.egg)
             }
+        case .qixi:
+            drawQixi(ctx, depth: depth, vertical: vertical, nearX: nearX, padded: padded)
         case .germany, .canada, .korea:
             drawAdditionalTheme(ctx, x: x, y: y, travel: travel, midX: midX, nearX: nearX, vertical: vertical)
         }
+    }
+
+    /// 七夕（金粉描线，深靛底）：图集只含背景，喜鹊由动态物层单独贴；
+    /// 彩蛋六张全是与第 7 帧对齐的整帧透明层。坐标全按帧坐标（1024×323）
+    /// 算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
+    private func drawQixi(_ ctx: CGContext, depth: CGFloat, vertical: CGFloat,
+                          nearX: CGFloat, padded: CGRect) {
+        let scaleX = padded.width / 1024
+        let scaleY = padded.height / 323
+        // 结构层位移与图集帧内 baked 的一致（帧 f 结构平移 f−6 px，f=(depth+1)*6），
+        // 星点／闪烁层按它平移才贴得住银河带；主体层与动态物同款走 nearX。
+        let structureX = 6 * depth * scaleX
+        let motion = min(1, hypot(tilt.x, tilt.y))
+        // 彩蛋未触发时画整张喜鹊；触发后改画四张分层（身体＋金线各一只），
+        // split 取 egg 与 converge 的较大值——松手后 egg 先褪、converge 慢慢回，
+        // 分层多留一会儿，喜鹊漂回的过程才看得见，不会一下跳回原位。
+        let split = max(egg, converge)
+        if egg > 0.001 {
+            // 星点层：只沿银河带多出的小金点，淡淡浮现、不密。
+            bitmap("qixi-egg-stars", in: ctx,
+                   center: CGPoint(x: padded.midX + structureX, y: padded.midY),
+                   width: padded.width, height: padded.height, angle: 0, alpha: egg)
+            // 闪烁层：金丝带随移动轻微起伏（静止 0.35、动起来到 0.8），柔和不刺眼。
+            bitmap("qixi-egg-shimmer", in: ctx,
+                   center: CGPoint(x: padded.midX + structureX, y: padded.midY),
+                   width: padded.width, height: padded.height, angle: 0, alpha: egg * (0.35 + 0.45 * motion))
+        }
+        // 两只喜鹊中心（帧坐标）：大喜鹊 (545.5, 263)，小喜鹊 (883, 57.5)；
+        // 桥心取两者中点 (714.25, 160.25)；靠拢走 55% 的路、留翼尖相触的距离，
+        // 不叠在一起；再各加一条 sin 弧线（约 10px），轨迹是短弧线、像滑翔。
+        let meet = CGPoint(x: 714.25, y: 160.25)
+        let bigCenter = CGPoint(x: 545.5, y: 263)
+        let smallCenter = CGPoint(x: 883, y: 57.5)
+        let arc = sin(.pi * converge) * 10
+        let bigFrame = CGPoint(
+            x: converge * 0.55 * (meet.x - bigCenter.x) + arc * 0.520,
+            y: converge * 0.55 * (meet.y - bigCenter.y) + arc * 0.854)
+        let smallFrame = CGPoint(
+            x: converge * 0.55 * (meet.x - smallCenter.x) - arc * 0.520,
+            y: converge * 0.55 * (meet.y - smallCenter.y) - arc * 0.854)
+        // 金线亮度：越靠近越亮、相会时最亮；还随移动轻轻闪烁。身体层不动，
+        // 只有金线变亮——这就是身体与金线分层的意义。
+        let goldBright = (0.6 + 0.4 * converge) * (0.92 + 0.08 * motion)
+        if split > 0.001 {
+            bitmap("qixi-egg-magpie-big-body", in: ctx,
+                   center: CGPoint(x: padded.midX + nearX + bigFrame.x * scaleX,
+                                   y: padded.midY + bigFrame.y * scaleY),
+                   width: padded.width, height: padded.height, angle: 0, alpha: split)
+            bitmap("qixi-egg-magpie-big-gold", in: ctx,
+                   center: CGPoint(x: padded.midX + nearX + bigFrame.x * scaleX,
+                                   y: padded.midY + bigFrame.y * scaleY),
+                   width: padded.width, height: padded.height, angle: 0, alpha: split * goldBright)
+            bitmap("qixi-egg-magpie-small-body", in: ctx,
+                   center: CGPoint(x: padded.midX + nearX + smallFrame.x * scaleX,
+                                   y: padded.midY + smallFrame.y * scaleY),
+                   width: padded.width, height: padded.height, angle: 0, alpha: split)
+            bitmap("qixi-egg-magpie-small-gold", in: ctx,
+                   center: CGPoint(x: padded.midX + nearX + smallFrame.x * scaleX,
+                                   y: padded.midY + smallFrame.y * scaleY),
+                   width: padded.width, height: padded.height, angle: 0, alpha: split * goldBright)
+        }
+        // 未触发时整张喜鹊：PNG 左上角对帧坐标 (483, 7)、473×313。
+        bitmap("qixi-magpie", in: ctx,
+               center: CGPoint(x: -32 + (483 + 473 / 2) * scaleX + nearX,
+                               y: -12 + (7 + 313 / 2) * scaleY + vertical),
+               width: 473 * scaleX, height: 313 * scaleY, angle: 0, alpha: 1 - split)
     }
 
     private func drawAdditionalTheme(_ ctx: CGContext, x: CGFloat, y: CGFloat, travel: CGFloat,
@@ -450,7 +534,7 @@ public final class ProfileCoverView: UIView {
 
 /// 封面底图缓存：读盘＋解码只在后台串行队列做，主线程只贴图。
 /// 有界：最多留 3 张（最近用的），超了逐出最久未用的；收到内存警告时清库。
-/// 每张全幅图集 5120×969 ≈ 19 MiB，6 张全留理论约 113.6 MiB；封顶 3 张后
+/// 每张全幅图集 5120×969 ≈ 19 MiB，7 张全留理论约 133 MiB；封顶 3 张后
 /// 稳态约 57 MiB。preload 保留：设置页进页仍预热，逐出只发生在解码完成
 /// 入库时；已显示的封面持有自己的 backdrop 强引用，清库/逐出不会让首屏
 /// 变空白；未命中时 draw() 走 poster 兜底（与原来 backdrop == nil 的分支
@@ -533,7 +617,7 @@ private final class CoverBackdropCache: NSObject {
     /// 后台队列做、不碰主线程；帧切分按底图实际尺寸动态算，不用改 drawBackdrop。
     /// 第十轮 07：显式立即解码（kCGImageSourceShouldCacheImmediately），像素在
     /// 后台队列解完再交付主线程，首帧绘制不回主线程解压；须配合按需加载＋内存
-    /// 预算，六张不一次全解。
+    /// 预算，七张不一次全解。
     private static func decoded(theme: ProfileCoverTheme) -> CGImage? {
         guard let url = Bundle.main.url(forResource: theme.rawValue + "-depth", withExtension: "png"),
               let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
