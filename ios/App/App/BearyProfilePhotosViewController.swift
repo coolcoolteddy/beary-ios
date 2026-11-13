@@ -416,8 +416,16 @@ final class BearyProfilePhotosViewController: UIViewController {
         guard ownProfileValue, photosValue.isEmpty, !photosFreshConfirmed,
               let accountId = SessionManager.shared.currentUser?.id,
               let authorId = authorIdValue else { return }
-        BearyProfilePhotosCache.load(accountId: accountId, sessionGeneration: SessionManager.shared.currentSessionGeneration, authorId: authorId) { [weak self] snap in
-            guard let self = self, let snap = snap, !self.photosFreshConfirmed, self.photosValue.isEmpty else { return }
+        // r13-#1：发起时捕获账号 id、会话代次、照片代次——切号落在读盘
+        // 窗口内时，旧身份的合法快照不得贴到新身份页面；完成闭包里
+        // 三项全部复核通过才允许更新（与首拉／续拉的代次守卫同款口径）。
+        let sessionGeneration = SessionManager.shared.currentSessionGeneration
+        let generation = photosGeneration
+        BearyProfilePhotosCache.load(accountId: accountId, sessionGeneration: sessionGeneration, authorId: authorId) { [weak self] snap in
+            guard let self = self, let snap = snap, !self.photosFreshConfirmed, self.photosValue.isEmpty,
+                  SessionManager.shared.currentUser?.id == accountId,
+                  SessionManager.shared.currentSessionGeneration == sessionGeneration,
+                  generation == self.photosGeneration else { return }
             var entriesById: [String: Entry] = [:]
             for entry in snap.entries {
                 if let entryId = entry.id, !entryId.isEmpty { entriesById[entryId] = entry }
@@ -999,7 +1007,7 @@ extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollec
             return UICollectionViewCell()
         }
         let item = photosValue[indexPath.item]
-        cellValue.configure(imageKey: item.imageKey)
+        cellValue.configure(imageKey: item.imageKey, index: indexPath.item + 1)
         return cellValue
     }
 
@@ -1051,6 +1059,15 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
 
     private var loadingKey: String?
 
+    /// r13-#5：读屏用的照片序号（1 起，由 cellForItemAt 传入）。
+    private var photoIndex: Int = 0
+
+    /// r13-#9：缩略图逐次请求代次——每次 configure 递增；完成回调除
+    /// key 比较外再核代次。prepareForReuse 不重置（单调递增，旧回包
+    /// 永不与新请求同代）；复用／重新配置／点击重试都走 configure，
+    /// 三路递增都在此处。
+    private var loadGeneration = 0
+
     /// 灯箱先显缩略图：只读露出当前格已显示的图（未加载出为 nil，走转圈口径）。
     var displayedThumbnail: UIImage? { photoImageView.image }
 
@@ -1081,6 +1098,13 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        // r13-#5：整格即一个无障碍元素（按钮）：序号＋状态进读屏名，
+        // 操作进读屏提示；子视图不单独进读屏树，防焦点碎成多段。
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        photoImageView.isAccessibilityElement = false
+        loadingIndicator.isAccessibilityElement = false
+        failedLabel.isAccessibilityElement = false
         contentView.addSubview(photoImageView)
         contentView.addSubview(loadingIndicator)
         contentView.addSubview(failedLabel)
@@ -1106,6 +1130,9 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
         super.prepareForReuse()
         loadingKey = nil
         isFailed = false
+        photoIndex = 0
+        accessibilityLabel = nil
+        accessibilityHint = nil
         photoImageView.image = nil
         loadingIndicator.stopAnimating()
         failedLabel.isHidden = true
@@ -1116,22 +1143,47 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
         transform = .identity
     }
 
-    func configure(imageKey: String) {
+    /// r13-#5：读屏内容随三态同步更新——加载中／成功／失败各有明确
+    /// 的名称与操作提示（序号 1 起）；r13-#9：每次配置递增请求代次。
+    private func updateAccessibility() {
+        guard photoIndex > 0 else {
+            accessibilityLabel = nil
+            accessibilityHint = nil
+            return
+        }
+        if isFailed {
+            accessibilityLabel = "第\(photoIndex)张照片，加载失败"
+            accessibilityHint = "双击重试"
+        } else if photoImageView.image != nil {
+            accessibilityLabel = "第\(photoIndex)张照片"
+            accessibilityHint = "双击查看大图"
+        } else {
+            accessibilityLabel = "第\(photoIndex)张照片，正在加载"
+            accessibilityHint = nil
+        }
+    }
+
+    func configure(imageKey: String, index: Int) {
         loadingKey = imageKey
+        photoIndex = index
         isFailed = false
         photoImageView.image = nil
         failedLabel.isHidden = true
         loadingIndicator.startAnimating()
+        updateAccessibility()
+        loadGeneration += 1
+        let requestGeneration = loadGeneration
         guard let url = BearyImageURLs.imageURL(key: imageKey, thumb: true) else {
             // 地址无效也是失败态：不直接 return 留淡色空白，显失败占位、可点按重试。
             loadingIndicator.stopAnimating()
             isFailed = true
             failedLabel.isHidden = false
+            updateAccessibility()
             return
         }
         let downsampleWidth = (bounds.width > 0 ? bounds.width : 120) * UIScreen.main.scale
         BearyImageLoader.shared.load(url: url, downsampleToWidth: downsampleWidth) { [weak self] imageValue in
-            guard let strongSelf = self, strongSelf.loadingKey == imageKey else { return }
+            guard let strongSelf = self, strongSelf.loadingKey == imageKey, requestGeneration == strongSelf.loadGeneration else { return }
             strongSelf.loadingIndicator.stopAnimating()
             if let imageValue {
                 strongSelf.isFailed = false
@@ -1143,13 +1195,15 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
                 strongSelf.photoImageView.image = nil
                 strongSelf.failedLabel.isHidden = false
             }
+            strongSelf.updateAccessibility()
         }
     }
 
     /// 失败格点按重试：只重新加载本格同一 key，不进灯箱、不碰其他格。
+    /// 重新配置即递增请求代次（见 configure），序号沿用本格序号。
     func retryLoading() {
         guard isFailed, let key = loadingKey else { return }
-        configure(imageKey: key)
+        configure(imageKey: key, index: photoIndex)
     }
 }
 
