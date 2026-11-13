@@ -7938,19 +7938,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // （内部又是一次完整 loadAll 再取首项）再 loadAll()，两次读盘
             // 两倍成本；且两份结果独立，第二次读失败时 sweep 只保留最新一
             // 篇的图片、误删其他篇图片。恢复与清理现用同一份数据。
-            let allDrafts = BearyDraftStore.loadAll(forAccount: restoreAccountId)
+            // 第 11 轮审计 02：读失败时直接跳过恢复与清理（loadAllResult 的
+            // failure 不得当成“无草稿”，见 loadAll 注释）。
+            guard case .success(let allDrafts) = BearyDraftStore.loadAllResult(forAccount: restoreAccountId) else { return }
             guard let draft = allDrafts.first else { return }
-            // 回收无主文件（杀 App 后、首存前产生的孤文件）：多槽下必须保留全部草稿的
-            // 引用并集，只留本篇会误删其他篇的本地图片。
-            var referenced = Set<String>()
-            for otherDraft in allDrafts {
-                for img in otherDraft.images {
-                    if let name = img.localFile {
-                        referenced.insert(name)
-                    }
-                }
+            // 回收无主文件（杀 App 后、首存前产生的孤文件）：多槽下必须保留全部草稿
+            // 与全部编辑检查点的引用并集，只留本篇会误删其他篇与检查点的本地图片。
+            // 检查点任一读失败时本轮跳过清理（宁留孤文件、不误删检查点图）。
+            if let referenced = BearyDraftStore.referencedLocalFiles(drafts: allDrafts, forAccount: restoreAccountId) {
+                BearyDraftImageStore.sweep(keeping: referenced, accountId: restoreAccountId)
             }
-            BearyDraftImageStore.sweep(keeping: referenced, accountId: restoreAccountId)
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 // 52 批补充：恢复竞态门——恢复是异步读盘，落地时用户可能已经打过字；
