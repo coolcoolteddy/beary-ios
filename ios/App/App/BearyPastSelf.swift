@@ -451,16 +451,34 @@ final class PastSelfStore {
     }
 
     /// 用服务端行替换一条本地行（创建成功后去 localOnly 化）。
+    /// 第 13 轮审计 2：列表回包先到时 mergeServerRows 已插过同服务端 id 的行，
+    /// 替换须按服务端 id 去重——只留替换后的这一行，否则同 id 存两份。
     func replaceLocalRow(localId: String, with serverRow: PastSelfMessage) {
         // 审计新一轮 05：存储读取失败时找不到 id，直接返回（原安全口径保留）。
         guard case .loaded(var all) = loadOutcome() else { return }
         guard let index = all.firstIndex(where: { $0.id == localId }) else { return }
+        let local = all[index]
         var row = serverRow
         row.localOnly = false
         // 本地已撤回过的行不被创建回包复活。
-        if all[index].revokedAtMs != nil { row.revokedAtMs = all[index].revokedAtMs }
-        // revokeSynced 不继承：新服务端 id 的撤回尚未推送，须由同步循环补推。
-        all[index] = row
+        if local.revokedAtMs != nil { row.revokedAtMs = local.revokedAtMs }
+        // 同 id 副本的撤回态并入替换行：副本若已带服务端确认的撤回（服务端行
+        // 自带 revoked_at、或副本 revokeSynced），替换后不再重发；否则
+        // revokeSynced 不继承——新服务端 id 的撤回尚未推送，须由同步循环补推。
+        var duplicateRevokedAtMs: Int?
+        var duplicateConfirmed = false
+        for other in all where other.id == serverRow.id && other.id != localId {
+            if other.revokedAtMs != nil { duplicateRevokedAtMs = other.revokedAtMs }
+            if other.revokeSynced { duplicateConfirmed = true }
+        }
+        if row.revokedAtMs == nil { row.revokedAtMs = duplicateRevokedAtMs }
+        if serverRow.id != localId {
+            row.revokeSynced = serverRow.revokedAtMs != nil || duplicateConfirmed
+        }
+        // 去重：删掉其他同服务端 id 的行，再在本地行原位置写入替换行（顺序不变）。
+        all.removeAll { $0.id == serverRow.id && $0.id != localId }
+        guard let target = all.firstIndex(where: { $0.id == localId }) else { return }
+        all[target] = row
         save(all)
     }
 
