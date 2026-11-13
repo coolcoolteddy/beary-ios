@@ -1118,18 +1118,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             loadFailedStateView.isHidden = true
         }
         // A6：位置只在回包时复查——请求在途期间用户可能滑离底部，
-        // 发请求前拍的旧值不能再决定是否滚到底。锚点（首个可见行 + 视口内偏移）
-        // 只在已有消息时记，首拉/空表不记、不弹 pill；新消息计数以请求前
+        // 发请求前拍的旧值不能再决定是否滚到底。锚点与底部态都在回包当刻、
+        // 应用新消息之前一次性拍定（见 applyMerged 开头）；新消息计数以请求前
         // 的最大服务端 id 为界，待发行无 id、不计入。
         let hadMessagesBeforeFetch = !messages.isEmpty
         let previousMaxMessageId = messages.compactMap(\.id).max()
-        let anchorIndexPath = tableView.indexPathsForVisibleRows?.sorted().first
-        let anchorMessageId = anchorIndexPath.flatMap { $0.row < messages.count ? messages[$0.row].id : nil }
-        let anchorViewportOffset: CGFloat = {
-            guard let anchorIndexPath = anchorIndexPath else { return 0 }
-            let rect = tableView.rectForRow(at: anchorIndexPath)
-            return rect.origin.y - tableView.contentOffset.y
-        }()
         // 请求时捕获账号 + 代次：回包时任一不匹配即丢弃（见 isRequestCurrent）。
         let requestAccountId = SessionManager.shared.currentUser?.id
         let requestEpoch = BearyAPI.shared.authEpoch
@@ -1163,6 +1156,19 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     // 两路共享同一套刷新尾巴（锚点保位、新消息 pill、重标已读）。
                     let applyMerged: ([BearyAPI.DMMessage]) -> Void = { [weak self] merged in
                         guard let self = self else { return }
+                        // 审计 11-8：锚点（首个可见行 + 视口内偏移）与底部态在回包当刻、
+                        // 应用新消息之前一次性拍定——此时表仍显示旧数据、messages 仍是旧数组，
+                        // 锚点行号与旧表一致；底部态按旧表高算。请求前拍的值在途期间用户滚动
+                        // 后即过期；reload 后再按新表高判底部，会把在底部的用户误判为离底。
+                        // 首拉/空表不记锚点（沿用旧口径：首拉即到底）。
+                        let responseAnchorIndexPath = self.tableView.indexPathsForVisibleRows?.sorted().first
+                        let responseAnchorMessageId = responseAnchorIndexPath.flatMap { $0.row < self.messages.count ? self.messages[$0.row].id : nil }
+                        let responseAnchorViewportOffset: CGFloat = {
+                            guard let responseAnchorIndexPath = responseAnchorIndexPath else { return 0 }
+                            let rect = self.tableView.rectForRow(at: responseAnchorIndexPath)
+                            return rect.origin.y - self.tableView.contentOffset.y
+                        }()
+                        let wasNearBottomBeforeReload = self.isNearBottom()
                         let pending = self.pendingTemps()
                         self.messages = merged
                         self.reconcilePendingSends(pending)
@@ -1171,8 +1177,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         self.firstLoadPending = false
                         self.firstLoadStateView.isHidden = true
                         self.updateEmptyState()
-                        // A6：回包时复查位置（发请求前不拍板）：先记回包当刻的偏移与表高，
-                        // 再 reloadData；reload 后 layout，再按当刻位置定去向。
+                        // 位置已在 applyMerged 开头拍定（回包当刻的锚点与底部态）；
+                        // 这里只记回包当刻的偏移与表高，供锚点丢失时按插入高度平移视口。
                         let responseOffsetY = self.tableView.contentOffset.y
                         let oldHeight = self.tableView.contentSize.height
                         self.tableView.reloadData()
@@ -1186,16 +1192,18 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                             }.count
                         }()
                         // 首拉/空表（沿用旧口径：空表 isNearBottom 恒真，首拉即到底）
-                        // 或回包当刻仍在底部：直接接上，不动 pill 之外任何东西。
-                        let atBottomNow = !hadMessagesBeforeFetch || self.isNearBottom()
+                        // 或回包当刻（reload 前）仍在底部：直接接上，不动 pill 之外任何东西。
+                        // 注意：底部态须用 reload 前拍的值——reload 后新消息已撑高表，
+                        // 再按新表高判会把在底部的用户误判为离底。
+                        let atBottomNow = !hadMessagesBeforeFetch || wasNearBottomBeforeReload
                         if atBottomNow {
                             self.scrollToBottomIfNeeded()
                             self.setNewMessagePillVisible(false)
-                        } else if let anchorId = anchorMessageId,
+                        } else if let anchorId = responseAnchorMessageId,
                                   let anchorIndex = self.messages.firstIndex(where: { $0.id == anchorId }) {
-                            // 读旧消息：锚点行复位，视口内容原地不动——不滚、不打断待发气泡。
+                            // 读旧消息：回包当刻的锚点行复位，视口内容原地不动——不滚、不打断待发气泡。
                             let rect = self.tableView.rectForRow(at: IndexPath(row: anchorIndex, section: 0))
-                            self.tableView.contentOffset = CGPoint(x: 0, y: rect.origin.y - anchorViewportOffset)
+                            self.tableView.contentOffset = CGPoint(x: 0, y: rect.origin.y - responseAnchorViewportOffset)
                         } else {
                             // 锚点行已不在新表里：按插入高度平移当刻视口，内容仍原地不动。
                             let delta = self.tableView.contentSize.height - oldHeight
