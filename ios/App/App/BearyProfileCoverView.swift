@@ -294,28 +294,34 @@ public final class ProfileCoverView: UIView {
     /// 元旦（中式木刻版画、深蓝夜＋金色烟花）：图集只含背景，余烬由动态物层单独贴；
     /// 彩蛋一张是与第 7 帧对齐的整帧透明层（左上夜空一朵金色烟花，中心 (300, 65)）。
     /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
-    /// v23 模型：只动天上的烟花——图集结构层就是大红烟花＋小白烟花，
-    /// 帧 f 平移 2(f−6) px（±12）；桥/小镇/行人/河面/倒影全在 far 层静止。
+    /// v26 模型：烟花按远近分三层视差——大红烟花最近，帧移 3(f−6) px（±18）；
+    /// (580,132) 那朵小白烟花居中，帧移 2(f−6) px（±12）；顶部小白烟花群最远，
+    /// 帧移 1(f−6) px（±6）。桥/小镇/行人/河面/倒影全在 far 层静止。
     /// v22 曾把河面倒影也放进结构层，倒影紧贴桥左拱、动起来像桥在动，
     /// 且它遮住的 inpaint 是抹平的水面、露出时像一块糊斑，v23 已去掉。
+    /// v24 曾把中央高楼暖色墙面抓进红掩膜抹糊，改迟滞掩膜后已修。
+    /// App 侧动态层跟图集同速：余烬是近层大红烟花的火星（18*depth），
+    /// 彩蛋是远层小金烟花（6*depth）。
     /// 余烬是烟花的火星，跟烟花同速（structureX），不再用主体速率 24*depth。
     private func drawNewyear(_ ctx: CGContext, depth: CGFloat, vertical: CGFloat, padded: CGRect) {
         let scaleX = padded.width / 1024
         let scaleY = padded.height / 323
-        // 结构层位移与图集帧内 baked 的一致（帧 f 结构平移 2(f−6) px，f=(depth+1)*6，
-        // 即 12*depth）；彩蛋层与余烬层按它平移才贴得住烟花。
-        let structureX = 12 * depth * scaleX
+        // 各层位移与图集帧内 baked 的一致（帧 f=(depth+1)*6）：近层 3(f−6) px
+        // 即 18*depth，中层 2(f−6) px 即 12*depth，远层 1(f−6) px 即 6*depth。
+        // 余烬是近层大红烟花的火星，跟近层同速；彩蛋是远层小金烟花，跟远层同速。
+        let nearX = 18 * depth * scaleX
+        let farX = 6 * depth * scaleX
         // 彩蛋：左上夜空一朵金色烟花，倾斜保持 0.45 秒后随 egg 淡入（触发走共享
         // step 逻辑，与圣诞同款；每次进页 restartVisit 可再触发）。
         if egg > 0.001 {
             bitmap("newyear-egg-burst", in: ctx,
-                   center: CGPoint(x: padded.midX + structureX, y: padded.midY),
+                   center: CGPoint(x: padded.midX + farX, y: padded.midY),
                    width: padded.width, height: padded.height, angle: 0, alpha: egg)
         }
         // 余烬动态物：PNG 左上角对帧坐标 (212, 0)、600×323，中心即帧中心
-        // (512, 161.5)；padded.midY 已含 vertical，不再另加。跟烟花同速 structureX。
+        // (512, 161.5)；padded.midY 已含 vertical，不再另加。跟近层大红烟花同速 nearX。
         bitmap("newyear-embers", in: ctx,
-               center: CGPoint(x: padded.midX + structureX, y: padded.midY),
+               center: CGPoint(x: padded.midX + nearX, y: padded.midY),
                width: 600 * scaleX, height: 323 * scaleY, angle: 0, alpha: 1)
     }
 
