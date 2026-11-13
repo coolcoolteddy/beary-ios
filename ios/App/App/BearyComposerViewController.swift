@@ -8628,7 +8628,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             } else {
                 state = .pending
             }
-            images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: state, liveVideoKey: item.liveVideoKey, uploadMode: item.uploadMode?.rawValue, originalFile: item.originalFile, originalBytes: item.originalBytes, originalOversize: item.originalOversize))
+            // B1：待传实况随 liveVideoFile 进检查点（与草稿保存同款）；不带它，
+            // 恢复时视频读不回、续传只剩静图，实况静默变静态。
+            images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: state, liveVideoKey: item.liveVideoKey, liveVideoFile: item.liveVideoFile, uploadMode: item.uploadMode?.rawValue, originalFile: item.originalFile, originalBytes: item.originalBytes, originalOversize: item.originalOversize))
         }
         return BearyDraftStore.BearyEditCheckpoint(
             entryId: entryId,
@@ -8816,7 +8818,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         syncWeatherToolButton()
         refreshSelectedChips()
         refreshLocationRow()
-        rebuildImageItemsFromCheckpoint(checkpoint.images)
+        rebuildImageItemsFromCheckpoint(checkpoint.images, accountId: checkpoint.accountId)
         refreshImageStripVisibility()
         updateTextViewHeight()
         updatePublishState()
@@ -8826,41 +8828,30 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 按检查点重建图片条：原图与未上传本地图都建项；本地缩略图后台解码后
     /// 贴回，随后按草稿恢复同款 resumePendingUploads（有本地文件、无 key、
     /// 非失败态自动重传；失败态等用户点图重试）。
-    private func rebuildImageItemsFromCheckpoint(_ images: [BearyDraftImageItem]) {
+    private func rebuildImageItemsFromCheckpoint(_ images: [BearyDraftImageItem], accountId: Int? = nil) {
         removeAllImageViews()
         for img in images {
             let item = createImageItem(localImage: nil, key: img.serverKey, uploading: false, localFile: img.localFile, failed: img.state == .failed)
             item.liveVideoKey = img.liveVideoKey
+            // B1：待传实况才带本地视频文件名（已上传项只留 liveVideoKey，
+            // 视频已在服务端，不再读本地 mov）；pending/failed 项按
+            // state 原样建项，续传/重试走下文解码后的同一格（与草稿恢复同款）。
+            if img.liveVideoKey == nil {
+                item.liveVideoFile = img.liveVideoFile
+            }
             insertImageItem(item)
             if img.localFile == nil, let key = img.serverKey, let url = BearyImageURLs.imageURL(key: key, thumb: true) {
                 item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 84 * UIScreen.main.scale)
             }
         }
+        // 本地图后台解码与草稿恢复共用 decodeRestoredImages：待传实况视频同批
+        // 读回内存，读不到的记 liveVideoMissing 并提示重选，不静默变静态。
         let decodingImages = images
-        imagePrepQueue.async { [weak self] in
-            var decoded: [(name: String, image: UIImage?)] = []
-            for img in decodingImages {
-                if img.state == .failed { continue }
-                if let name = img.localFile {
-                    decoded.append((name: name, image: BearyDraftImageStore.image(for: name)))
-                }
-            }
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                for entry in decoded {
-                    for item in self.imageItems {
-                        if item.localFile == entry.name {
-                            if let image = entry.image {
-                                item.imageView.image = image
-                            } else if let key = item.key, let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                                item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 84 * UIScreen.main.scale)
-                            }
-                        }
-                    }
-                }
-                self.resumePendingUploads()
-                self.updatePublishState()
-            }
+        decodeRestoredImages(decodingImages, accountId: accountId) { [weak self] decoded, liveVideos in
+            guard let self = self else { return }
+            self.applyRestoredImages(decoded: decoded, liveVideos: liveVideos)
+            self.resumePendingUploads()
+            self.updatePublishState()
         }
     }
 
