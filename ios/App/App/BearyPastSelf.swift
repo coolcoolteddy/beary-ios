@@ -326,10 +326,12 @@ final class PastSelfStore {
         if capped.count > Self.maxStoredMessages {
             let today = PastSelfLogic.localDateString(from: Date(), calendar: .current)
             let overflow = capped.count - Self.maxStoredMessages
-            // 先丢最旧的已撤回行，再丢最旧的、已被取代的已送达旧串；等待中行与
-            // 各链最新已送达行（待回复锚点）绝不丢——若可丢行不够填 overflow，
-            // 剩余超限部分原样保留（不砍等待中与待回复锚点）。
-            let revoked = capped.indices.filter { capped[$0].revokedAtMs != nil }.sorted {
+            // 先丢最旧的已撤回且撤回已同步行，再丢最旧的、已被取代的已送达旧串；
+            // 未同步的撤回行（revokeSynced == false）绝不丢——丢了补推循环就
+            // 再无记录可发，服务端旧留话下次拉取即重新出现；等待中行与各链
+            // 最新已送达行（待回复锚点）同样绝不丢——若可丢行不够填 overflow，
+            // 剩余超限部分原样保留（不砍受保护行）。
+            let revoked = capped.indices.filter { capped[$0].revokedAtMs != nil && capped[$0].revokeSynced }.sorted {
                 capped[$0].createdAtMs < capped[$1].createdAtMs
             }
             var drop = Set<Int>()
