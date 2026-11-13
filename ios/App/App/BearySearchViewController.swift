@@ -170,6 +170,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         UserDefaults.standard.removeObject(forKey: legacyRecentSearchesKey)
     }
     private var recentButtons: [UIButton] = []
+    /// R13 (c)：最近搜索展开态，只影响展示，不改存储。
+    private var isRecentSearchesExpanded = false
 
     private var userButtons: [UIButton] = []
     private var rowUsers: [SearchUser] = []
@@ -1455,7 +1457,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         headerRow.axis = .horizontal
         headerRow.alignment = .center
         recentStack.addArrangedSubview(headerRow)
-        for term in terms {
+        // R13 (c)：默认只展最近 4 条，展开后看全部；上限 8 条不变，每条仍 44pt。
+        let visibleTerms = isRecentSearchesExpanded ? terms : Array(terms.prefix(4))
+        for term in visibleTerms {
             let button = UIButton(type: .custom)
             button.translatesAutoresizingMaskIntoConstraints = false
             button.setTitle(term, for: .normal)
@@ -1474,6 +1478,25 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             recentStack.addArrangedSubview(button)
             recentButtons.append(button)
         }
+        // R13 (c)：超过 4 条时加展开/收起钮（与词条同款 44pt 行），点按只改展示。
+        if terms.count > 4 {
+            let expandButton = UIButton(type: .custom)
+            expandButton.translatesAutoresizingMaskIntoConstraints = false
+            expandButton.setTitle(isRecentSearchesExpanded ? "收起最近搜索" : "展开最近搜索", for: .normal)
+            expandButton.setTitleColor(BearyColors.ink, for: .normal)
+            expandButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
+            expandButton.titleLabel?.adjustsFontForContentSizeCategory = true
+            expandButton.backgroundColor = BearyColors.surface2
+            expandButton.layer.cornerRadius = BearyCorners.single
+            expandButton.layer.masksToBounds = true
+            expandButton.contentHorizontalAlignment = .left
+            expandButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+            expandButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
+            expandButton.accessibilityLabel = isRecentSearchesExpanded ? "收起最近搜索" : "展开最近搜索"
+            expandButton.addTarget(self, action: #selector(toggleRecentSearchesExpanded), for: .touchUpInside)
+            expandButton.bearyAddPressFeedback()
+            recentStack.addArrangedSubview(expandButton)
+        }
         recentWrap.isHidden = false
         if !UIAccessibility.isReduceMotionEnabled {
             recentWrap.alpha = 0
@@ -1483,6 +1506,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         } else {
             recentWrap.alpha = 1
         }
+    }
+
+    /// R13 (c)：展开/收起最近搜索，只改展示，不改存储。
+    @objc private func toggleRecentSearchesExpanded() {
+        isRecentSearchesExpanded.toggle()
+        renderRecentSearches()
     }
 
     @objc private func recentSearchTapped(_ sender: UIButton) {
@@ -1496,6 +1525,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// A7：一键清除最近搜索（当前桶：登录为账号桶、游客为 guest 桶），随后同步重建本区。
     @objc private func clearRecentSearchesTapped() {
         UserDefaults.standard.removeObject(forKey: recentSearchesKey)
+        isRecentSearchesExpanded = false
         renderRecentSearches()
     }
 
@@ -2542,7 +2572,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             }
         }
 
-        // iCity 已举报态：搜索是刻意搜索例外，行保留（不删除），但置灰并标“已举报”。
+        // iCity 已举报态：搜索是刻意搜索例外，行保留（不删除），标“已举报”；
+        // 行仍可点进详情重新查看，不置灰（R13 (a) 定版）。
         if BearyReportedStore.isReported(entryId: entryId) {
             let reportedLabel = UILabel()
             reportedLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -2551,7 +2582,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             reportedLabel.textColor = BearyColors.gray
             reportedLabel.text = "已举报"
             metaStack.addArrangedSubview(reportedLabel)
-            row.alpha = 0.6
         }
 
         let column = UIStackView(arrangedSubviews: [metaStack, bodyRow])
