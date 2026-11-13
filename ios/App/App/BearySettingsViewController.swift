@@ -153,22 +153,43 @@ enum BearyAccountText {
     /// 永久会员阈值：网页与服务端同款常量（plus_until >= 该值即永久）。
     static let permanentThreshold: Int = 4102444800000
 
-    static func dateString(ms: Int?) -> String {
-        guard let value = ms, value > 0 else { return "–" }
-        let date = Date(timeIntervalSince1970: TimeInterval(value) / 1000.0)
+    /// 日期格式化器只建一次复用：DateFormatter 创建昂贵，导出每篇调
+    /// isoString 三次、设置页反复调 dateString／dateTimeString。
+    /// DateFormatter 非线程安全：date／dateTime 两档只在主线程用（设置页
+    /// 文案）；iso 档只在导出后台链用（单次导出串行，isExporting 守卫），
+    /// 不可拿到别的队列共用。
+    private static let dateFormatter: DateFormatter = {
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "zh_CN")
         fmt.dateFormat = "yyyy年M月d日"
-        return fmt.string(from: date)
+        return fmt
+    }()
+
+    private static let dateTimeFormatter: DateFormatter = {
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "zh_CN")
+        fmt.dateFormat = "yyyy年M月d日 HH:mm"
+        return fmt
+    }()
+
+    private static let isoFormatter: DateFormatter = {
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.timeZone = TimeZone(secondsFromGMT: 0)
+        fmt.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
+        return fmt
+    }()
+
+    static func dateString(ms: Int?) -> String {
+        guard let value = ms, value > 0 else { return "–" }
+        let date = Date(timeIntervalSince1970: TimeInterval(value) / 1000.0)
+        return dateFormatter.string(from: date)
     }
 
     static func dateTimeString(ms: Int?) -> String {
         guard let value = ms, value > 0 else { return "–" }
         let date = Date(timeIntervalSince1970: TimeInterval(value) / 1000.0)
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "yyyy年M月d日 HH:mm"
-        return fmt.string(from: date)
+        return dateTimeFormatter.string(from: date)
     }
 
     /// 毫秒转 ISO（网页导出 toMs + toISOString 同口径：秒级值先 ×1000）。
@@ -176,11 +197,7 @@ enum BearyAccountText {
         guard let value = ms, value != 0 else { return nil }
         let msValue = value < 1000000000000 ? value * 1000 : value
         let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "en_US_POSIX")
-        fmt.timeZone = TimeZone(secondsFromGMT: 0)
-        fmt.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
-        return fmt.string(from: date)
+        return isoFormatter.string(from: date)
     }
 
     /// 网页 loadSessions 同款设备名回退：服务端 device 为空时按 UA 推断。
@@ -3039,9 +3056,21 @@ final class BearySettingsViewController: UIViewController {
             // 审计 P2：文件名加时间戳 + UUID 后缀，分享面板未收起时再导出不互相覆盖/删除。
             let fileName = "teddyhn-data-" + fmt.string(from: Date()) + "-" + String(UUID().uuidString.prefix(8)) + ".json"
             let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
-            var text = "\u{feff}"
-            text += String(data: jsonData, encoding: .utf8) ?? ""
-            guard let fileData = text.data(using: .utf8), (try? fileData.write(to: fileURL)) != nil else {
+            // 第 18 轮㉓：流式写 BOM＋JSON 字节，不再经 String 中转整份复制；
+            // 任何一步失败都走导出失败，不产出只含 BOM 的空文件。
+            let exportWriteSucceeded: Bool = {
+                guard FileManager.default.createFile(atPath: fileURL.path, contents: nil) else { return false }
+                do {
+                    let handle = try FileHandle(forWritingTo: fileURL)
+                    defer { try? handle.close() }
+                    try handle.write(contentsOf: Data([0xEF, 0xBB, 0xBF]))
+                    try handle.write(contentsOf: jsonData)
+                    return true
+                } catch {
+                    return false
+                }
+            }()
+            guard exportWriteSucceeded else {
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
                     self.isExporting = false
