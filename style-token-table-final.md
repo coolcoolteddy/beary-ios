@@ -95,6 +95,7 @@
 ## 7. 颜色
 
 - 底子黑白灰：页面、弹窗、chip、pill、按钮一律白／浅灰／细灰线／墨字，无彩色装饰。墨／灰／浅灰／细灰／底／卡面均为动态色，深浅两模式自动切换，色值以 BearyColors 定义为准，不写死 hex。明度阶（2026-11-07 定，推翻纯黑口径）：surface0 页面底＝BearyColors.bg（深 #0B0B0D／浅 #FFFFFF，旧纯黑废止）、surface1 页上卡片（深 #18181C／浅 #F5F5F5）、surface2 输入框／chip（深 #24242A／浅 #EAEAEA）、surface3 sheet／弹窗（深 #313138／浅 #DFDFDF）。faint 与旧 surface 废止，faint 调用点一律改 surface2；卡片、输入框、sheet、弹窗靠明度阶分层，不画 1px 外框（分隔线、按钮描边、选中态边框、头像描边不动；日记卡保持 surface0＋1px 底线分隔，不改 surface1 卡片）。surface3 上的细线（抓手／分隔线／描边）走 gray——line 浅 #DBDBDB 与 surface3 浅 #DFDFDF 只差 4 阶、浅色下几不可见（2026-11-12 131 包扫 bug）。
+- 信件引用竖条走 gray：引用块底 surface2 上 line（浅 #DBDBDB）与 surface2（浅 #EAEAEA）只差 15 阶、浅色下偏弱，竖条改走 gray（#1432 同款口径；2026-11-12 131 包扫 bug）。
 - 墨＝行动与选中：所有动作钮、选中态、自己发的私信气泡都是墨底或墨字；墨底前景用 BearyColors.bg（深浅反色）。
 - 品牌橙 #ff9500：品牌与情感，收藏点亮、FAB 保持橙；橙底前景走 onBrand 恒墨色，不得用白。
 - 点赞填色 likeRed #ff3b30；语义红 #e5484d 只给删除；语义绿 #2fbf71 只给正向语义。
