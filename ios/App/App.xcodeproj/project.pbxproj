@@ -147,6 +147,10 @@
 		5248D64A4F66BE386B48299F /* gondola.png in Resources */ = {isa = PBXBuildFile; fileRef = FC056EBEC9C7471EF1CC7D35 /* gondola.png */; };
 		D7F7C2346FCC7058EC3C8CC0 /* floatplane.png in Resources */ = {isa = PBXBuildFile; fileRef = 77EBD303DE6467641446EC80 /* floatplane.png */; };
 		3AB193F0F7DEDDF8D243AE44 /* kite.png in Resources */ = {isa = PBXBuildFile; fileRef = 43B1FA4DBAD92CAC036BE233 /* kite.png */; };
+		853AF9628D2F4AC6C0883D5C /* christmas-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = 3AAB07A16229C8D3F2020F6D /* christmas-poster.png */; };
+		3D5AF2FFF59590678FA95C2A /* christmas-depth.png in Resources */ = {isa = PBXBuildFile; fileRef = BFD437D5BAB1F6B33549BC2F /* christmas-depth.png */; };
+		8CCE891C7A4B202F88E82D07 /* christmas-snowflakes.png in Resources */ = {isa = PBXBuildFile; fileRef = F5435FF1CB4C5534BA18628E /* christmas-snowflakes.png */; };
+		F538873D466F2DCC2922DA73 /* christmas-egg-globe.png in Resources */ = {isa = PBXBuildFile; fileRef = 810B1DF3CE1C0352E6FB7337 /* christmas-egg-globe.png */; };
 		D395C5A456F0D264FAA5D081 /* china-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = F61DF01274DB03D3F0AB6FE0 /* china-poster.png */; };
 		1938F81450975213C5CE2010 /* japan-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = B18573473A12570FBD9DB089 /* japan-poster.png */; };
 		C73ABC14EF8C1B595064A827 /* usa-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = 95FB0D0AFDFEF9F5C38C947B /* usa-poster.png */; };
@@ -432,6 +436,10 @@
 		FC056EBEC9C7471EF1CC7D35 /* gondola.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/gondola.png; sourceTree = "<group>"; };
 		77EBD303DE6467641446EC80 /* floatplane.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/floatplane.png; sourceTree = "<group>"; };
 		43B1FA4DBAD92CAC036BE233 /* kite.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/kite.png; sourceTree = "<group>"; };
+		3AAB07A16229C8D3F2020F6D /* christmas-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/christmas-poster.png; sourceTree = "<group>"; };
+		BFD437D5BAB1F6B33549BC2F /* christmas-depth.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/christmas-depth.png; sourceTree = "<group>"; };
+		F5435FF1CB4C5534BA18628E /* christmas-snowflakes.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/christmas-snowflakes.png; sourceTree = "<group>"; };
+		810B1DF3CE1C0352E6FB7337 /* christmas-egg-globe.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/christmas-egg-globe.png; sourceTree = "<group>"; };
 		C69BECF80F639F3B86A1C5F7 /* BearyFestivalWallpapers.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = BearyFestivalWallpapers.json; sourceTree = "<group>"; };
 		37B9943EDEF2C3A792782E9E /* agree_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree_dark.json; sourceTree = "<group>"; };
 		4ED6BF206A0F34DF117D855A /* crown.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieCrown/crown.json; sourceTree = "<group>"; };
@@ -894,6 +902,10 @@
 				FC056EBEC9C7471EF1CC7D35 /* gondola.png */,
 				77EBD303DE6467641446EC80 /* floatplane.png */,
 				43B1FA4DBAD92CAC036BE233 /* kite.png */,
+				3AAB07A16229C8D3F2020F6D /* christmas-poster.png */,
+				BFD437D5BAB1F6B33549BC2F /* christmas-depth.png */,
+				F5435FF1CB4C5534BA18628E /* christmas-snowflakes.png */,
+				810B1DF3CE1C0352E6FB7337 /* christmas-egg-globe.png */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -1163,6 +1175,10 @@
 				5248D64A4F66BE386B48299F /* gondola.png in Resources */,
 				D7F7C2346FCC7058EC3C8CC0 /* floatplane.png in Resources */,
 				3AB193F0F7DEDDF8D243AE44 /* kite.png in Resources */,
+				853AF9628D2F4AC6C0883D5C /* christmas-poster.png in Resources */,
+				3D5AF2FFF59590678FA95C2A /* christmas-depth.png in Resources */,
+				8CCE891C7A4B202F88E82D07 /* christmas-snowflakes.png in Resources */,
+				F538873D466F2DCC2922DA73 /* christmas-egg-globe.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
