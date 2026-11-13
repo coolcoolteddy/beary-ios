@@ -266,7 +266,6 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         counterLabel.adjustsFontForContentSizeCategory = true
         counterLabel.textAlignment = .center
         counterLabel.translatesAutoresizingMaskIntoConstraints = false
-        counterLabel.isHidden = imageKeys.count <= 1
         view.addSubview(counterLabel)
         // C1：边缘加载提示（计数下方）：翻到已加载末尾、还有后续页时显
         //「正在加载更多照片」，失败时切失败文案；平时隐藏。
