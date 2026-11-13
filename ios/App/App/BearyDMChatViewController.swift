@@ -785,8 +785,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     }
 
     /// 认领窗口（审计四轮增量 05）：服务端时间须落在待发时间前后窗口内——
-    /// 下限 5 秒容时钟偏差，上限 60 秒防晚到的同文案行被旧待发误认领
-    ///（A 先失败、B 后成功时 A 不得认领 B 的行）。完整精确认领须后端在
+    /// 下限 5 秒容时钟偏差，上限 60 秒防晚到的同文案行被旧待发误认领。
+    /// 窗口拦不住先失败、后成功同文场景（A 先失败、B 后成功时 A 仍在窗内），
+    /// 该场景靠 reconcilePendingSends 排除失败行。完整精确认领须后端在
     /// 历史接口透传客户端消息 ID，见 PR 描述待办。
     private static let claimWindowBeforeMs = 5000
     private static let claimWindowAfterMs = 60000
@@ -796,6 +797,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     /// 同文案行被旧待发误认领）；一条服务端行只认领一条待发（同文案连发不串位）。
     /// 认领到的待发丢弃（服务端行已在列表里，不闪动、不重播）；未认领的待发
     /// 重新拼到末尾（失败态跟随 localKey 保留）。
+    /// 审计第 17 轮第 6 项：失败行（failedSendKeys）不参与认领，留在末尾
+    /// 保留失败态与重发入口；否则同文在 60s 窗内可误认领后一条成功发送
+    /// 的服务端行（A 先失败、B 后成功时 A 会抢走 B 的行）。
     private func reconcilePendingSends(_ pending: [BearyAPI.DMMessage]) {
         guard !pending.isEmpty else { return }
         let myId = storeAccountId
@@ -804,6 +808,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         var claimedKeys: [String] = []
         for temp in pending {
             guard let key = temp.localKey else { continue }
+            guard !failedSendKeys.contains(key) else {
+                remaining.append(temp)
+                continue
+            }
             if let idx = messages.indices.first(where: { i in
                 !usedServer.contains(i) &&
                 messages[i].localKey == nil &&
@@ -858,7 +866,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else { return }
                 switch result {
                 case .success:
-                    BearyDMStore.removePending(localKey: key, accountId: self.storeAccountId)
+                    // 审计第 17 轮第 5 项：成功不立即清待发，待 loadLatest
+                    // 回包落盘后由 reconcilePendingSends 认领清理（同首发）。
                     self.dmNotAllowed = false
                     self.updatePermBanner()
                     self.loadLatest()
@@ -1452,7 +1461,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     switch result {
                     case .success:
                         // 发送成功即权限无问题：横幅清掉（进页 can 误判时靠此恢复）。
-                        BearyDMStore.removePending(localKey: key, accountId: self.storeAccountId)
+                        // 审计第 17 轮第 5 项：成功不立即清待发——待 loadLatest
+                        // 回包落盘后由 reconcilePendingSends 认领清理；回包
+                        // 失败或关页时待发保留，之后重拉可认领。
                         self.dmNotAllowed = false
                         self.updatePermBanner()
                         self.loadLatest()
