@@ -113,6 +113,61 @@ final class BearyDMStoreTests: XCTestCase {
         XCTAssertEqual(afterSecond, garbage)
     }
 
+    // MARK: - 第 17 轮 #9：persistMessages（损坏检查＋合并＋写盘合一）
+
+    func testPersistMessagesMergesTwoPagesOnHealthyStore() {
+        let accountId = 9030
+        // 第一页 5 条，第二页（更早）另 5 条：两页合并无丢、按 id 升序。
+        let exp1 = expectation(description: "persist page 1")
+        var first: [BearyAPI.DMMessage] = []
+        var firstSaved = false
+        BearyDMStore.persistMessages(accountId: accountId, peer: peer(id: 5), messages: (1...5).map { message(id: $0, body: "新 \($0)") }) { outcome in
+            if case .merged(let merged, let saved) = outcome { first = merged; firstSaved = saved }
+            exp1.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        XCTAssertTrue(firstSaved)
+        XCTAssertEqual(first.map { $0.id }, [1, 2, 3, 4, 5])
+        let exp2 = expectation(description: "persist page 2")
+        var second: [BearyAPI.DMMessage] = []
+        var secondSaved = false
+        BearyDMStore.persistMessages(accountId: accountId, peer: peer(id: 5), messages: (6...10).map { message(id: $0, body: "旧 \($0)") }) { outcome in
+            if case .merged(let merged, let saved) = outcome { second = merged; secondSaved = saved }
+            exp2.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        XCTAssertTrue(secondSaved)
+        XCTAssertEqual(second.map { $0.id }, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        // 磁盘上的库同样是两页合并后的 10 条。
+        if case .loaded(let all) = BearyDMStore.loadAll(accountId: accountId) {
+            XCTAssertEqual(all["5"]?.messages.map { $0.id }, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        } else {
+            XCTFail("健康库应能读出两页合并结果")
+        }
+    }
+
+    func testPersistMessagesCorruptStoreReturnsFreshOnly() {
+        let accountId = 9031
+        let garbage = Data("这不是 JSON，文件已损坏".utf8)
+        try? garbage.write(to: storeFile(accountId: accountId))
+        let exp = expectation(description: "persist corrupt")
+        var gotCorrupt = false
+        var fresh: [BearyAPI.DMMessage] = []
+        BearyDMStore.persistMessages(accountId: accountId, peer: peer(id: 5), messages: [message(id: 10, body: "新消息")]) { outcome in
+            if case .corrupt(let rows) = outcome { gotCorrupt = true; fresh = rows }
+            exp.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        XCTAssertTrue(gotCorrupt)
+        // 损坏时只回本次新消息，不写盘。
+        XCTAssertEqual(fresh.map { $0.id }, [10])
+        let after = try? Data(contentsOf: storeFile(accountId: accountId))
+        XCTAssertEqual(after, garbage)
+        // 恰一份备份，损坏态已登记。
+        XCTAssertEqual(backupFiles(accountId: accountId).count, 1)
+        XCTAssertTrue(BearyDMStore.isStoreCorrupt(accountId: accountId))
+    }
+
     // MARK: - 第十轮 V-Data：异步版 isCorrupt（读盘只在 ioQueue 上做）
 
     func testAsyncIsCorruptDetectsCorruptFileAndRegisters() {

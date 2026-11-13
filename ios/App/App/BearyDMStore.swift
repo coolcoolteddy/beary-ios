@@ -280,32 +280,58 @@ enum BearyDMStore {
         }.sorted { ($0.id ?? 0) < ($1.id ?? 0) }
     }
 
-    /// 按 id 去重并入本地（服务端回包与本地旧行同 id 时服务端为准），对方展示信息同步最新。
-    /// 读改写在后台串行队列一次完成，直接回合并后的本会话消息，不再重读一次。
-    /// 损坏时禁止覆盖：只回本次服务端新消息，不写盘、不动原文件。
-    /// 第七轮 #4：整库取自内存索引（cachedAll），不再每次读盘解码；写回时同步更新索引。
-    /// completion 为空时仍照常落盘（只不要回包结果的调用方可省回调）。
-    /// completion 第二个参数为写盘成败：失败时合并结果仍是内存值（可展示），
-    /// 但磁盘未落下，调用方须置失败态、不得按已保存展示。
-    static func saveMessages(accountId: Int?, peer: BearyAPI.FriendUser, messages: [BearyAPI.DMMessage], completion: (([BearyAPI.DMMessage], Bool) -> Void)? = nil) {
+    /// 审计第 17 轮 #9：损坏检查＋合并＋写盘合一的单次存储操作。
+    /// 调用方原来要先调异步版 isCorrupt（整文件读盘＋解码判损坏），再调
+    /// saveMessages（又一次读改写）；两遍整文件读解码随账号库变大而变贵。
+    /// 本方法在 ioQueue 上一次操作内完成：损坏判定走内存索引 cachedAll
+    /// （已缓存时零读盘；未缓存时 loadAll 读一次——损坏不进索引，损坏路径
+    /// 仍有一次读盘，但 isCorrupt 预检的第二遍整文件读解被省掉），再合并、
+    /// 写盘。损坏语义不变：只回本次新消息、不写盘、不动原文件。
+    enum PersistOutcome {
+        case merged([BearyAPI.DMMessage], saved: Bool)
+        case corrupt([BearyAPI.DMMessage])
+    }
+
+    static func persistMessages(accountId: Int?, peer: BearyAPI.FriendUser, messages: [BearyAPI.DMMessage], completion: ((PersistOutcome) -> Void)? = nil) {
         ioQueue.async {
             guard let accountId = accountId, let peerId = peer.id else {
-                DispatchQueue.main.async { completion?([], false) }
+                DispatchQueue.main.async { completion?(.merged([], saved: false)) }
                 return
             }
             let (base, corrupt) = cachedAll(accountId: accountId)
+            let fresh = dmMessages(from: messages.map {
+                StoredMessage(id: $0.id, senderId: $0.senderId, body: $0.body, createdAt: $0.createdAt)
+            })
             if corrupt {
-                let fresh = dmMessages(from: messages.map {
-                    StoredMessage(id: $0.id, senderId: $0.senderId, body: $0.body, createdAt: $0.createdAt)
-                })
-                DispatchQueue.main.async { completion?(fresh, false) }
+                DispatchQueue.main.async { completion?(.corrupt(fresh)) }
                 return
             }
             let mergedAll = BearyDMStoreCore.merge(base, peer: peer, messages: messages)
             memoryIndex[accountId] = mergedAll
             let saved = saveAll(mergedAll, accountId: accountId)
             let merged = dmMessages(from: mergedAll["\(peerId)"]?.messages ?? [])
-            DispatchQueue.main.async { completion?(merged, saved) }
+            DispatchQueue.main.async { completion?(.merged(merged, saved: saved)) }
+        }
+    }
+
+    /// 按 id 去重并入本地（服务端回包与本地旧行同 id 时服务端为准），对方展示信息同步最新。
+    /// 读改写在后台串行队列一次完成，直接回合并后的本会话消息，不再重读一次。
+    /// 损坏时禁止覆盖：只回本次服务端新消息，不写盘、不动原文件。
+    /// 第七轮 #4：整库取自内存索引（cachedAll），不再每次读盘解码；写回时同步更新索引。
+    /// 审计第 17 轮 #9：本方法现为 persistMessages 的薄委托——损坏判定与
+    /// 合并＋写盘合在同一次 ioQueue 操作里，不再另做一遍损坏预检；
+    /// 回调口径不变（损坏时回本次新消息＋saved=false），旧调用方不用改。
+    /// completion 为空时仍照常落盘（只不要回包结果的调用方可省回调）。
+    /// completion 第二个参数为写盘成败：失败时合并结果仍是内存值（可展示），
+    /// 但磁盘未落下，调用方须置失败态、不得按已保存展示。
+    static func saveMessages(accountId: Int?, peer: BearyAPI.FriendUser, messages: [BearyAPI.DMMessage], completion: (([BearyAPI.DMMessage], Bool) -> Void)? = nil) {
+        persistMessages(accountId: accountId, peer: peer, messages: messages) { outcome in
+            switch outcome {
+            case .merged(let merged, let saved):
+                completion?(merged, saved)
+            case .corrupt(let fresh):
+                completion?(fresh, false)
+            }
         }
     }
 
