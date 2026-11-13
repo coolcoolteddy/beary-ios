@@ -98,6 +98,8 @@ final class BearyDetailViewController: UIViewController {
     /// 快连点代次（2026-10-29 及时性口径）：点按不再锁按钮丢点按，每次
     /// 点按代次 +1 并立即按本次点按态渲染；在途回包代次落后于最新代次
     /// 时直接丢弃，不得覆盖更新的点按态；失败回滚到最后确认态。
+    /// 串行提交（第 18 轮审计）：写请求一次只发一个，在途点按只记最新意图，
+    /// 回包后按最新意图补发，先前成功的回包不再被并行请求丢弃。
     private var likeSeq = 0
     /// 审计动效组：点赞按下预览标记——bearyAddPressFeedback 已在 touchDown 给过
     /// press 轻震，likeTapped 里不再补 likeTap，只震一次；取消/滑出时清零。
@@ -107,6 +109,8 @@ final class BearyDetailViewController: UIViewController {
     private var bookmarkConfirmedSeq = 0
     private var confirmedLiked = false
     private var confirmedLikeCount = 0
+    private var likeInFlight = false
+    private var pendingLikeTarget: Bool?
     private var lastNavigationAt: Date?
     private var lastImageViewerAt: Date?
     private var confirmedBookmarked = false
@@ -3124,7 +3128,11 @@ final class BearyDetailViewController: UIViewController {
                     self.scheduleEphemeralExpiry()
                     self.onVisibilityChanged?(self.entry)
                 case .failure(let err):
-                    self.entry = original
+                    // 只回滚本次操作改动的字段：整篇对象回滚会抹掉请求期间
+                    // 已写入当前详情的点赞等其他字段。
+                    self.entry.isPublic = original.isPublic
+                    self.entry.visibility = original.visibility
+                    self.entry.ephemeralUntil = original.ephemeralUntil
                     self.refreshVisibilityViews()
                     // 失败回滚原态：原限时标记若在，按原到期点重排单次定时。
                     self.scheduleEphemeralExpiry()
@@ -3193,7 +3201,7 @@ final class BearyDetailViewController: UIViewController {
             return
         }
         // 2026-10-29 及时性口径：快连点不再丢点按——每次点按都立即按本次
-        // 点按后的态渲染；在途请求只带代次，过期回包直接丢弃。
+        // 点按后的态渲染；写请求串行发，在途点按只记最新意图，回包后补发。
         let currentlyLiked = entry.likedByMe ?? false
         let originalCount = entry.likeCount ?? 0
         let targetLiked = !currentlyLiked
@@ -3225,8 +3233,22 @@ final class BearyDetailViewController: UIViewController {
             BearyIconMotion.clearLikeBurst(on: likeButton)
             BearyBurstParticles.clear(from: likeButton)
         }
+        // 串行提交：一次只发一个写请求；在途时只记最新意图，不并行发请求，
+        // 回包后再按最新意图补发——先前成功的回包不再被后发的请求丢弃。
+        if likeInFlight {
+            pendingLikeTarget = targetLiked
+            return
+        }
+        submitLike(entryId: entryId, targetLiked: targetLiked)
+    }
+
+    /// 发一次点赞写请求（串行：调用前须确认无在途请求）。回包后若期间有
+    /// 更新的点按意图，按最新意图再发一次；意图与已确认态相同（两次点按
+    /// 互相抵消）时不发，只把界面刷回已确认态。
+    private func submitLike(entryId: String, targetLiked: Bool) {
         likeSeq += 1
         let reqSeq = likeSeq
+        likeInFlight = true
         BearyAPI.shared.toggleLike(id: entryId, liked: targetLiked) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -3256,6 +3278,22 @@ final class BearyDetailViewController: UIViewController {
                     } else {
                         self.playDenyShake(on: self.likeButton)
                         BearyToast.show(in: self.view, message: "操作失败，请重试")
+                    }
+                }
+                self.likeInFlight = false
+                if let pending = self.pendingLikeTarget {
+                    self.pendingLikeTarget = nil
+                    if pending != self.confirmedLiked {
+                        // 按最新意图补发：先行反馈已在点按时给过，这里只同步
+                        // 字段与计数，不重播动效与音效。
+                        self.entry.likedByMe = pending
+                        self.entry.likeCount = max(0, self.confirmedLikeCount + (pending ? 1 : -1))
+                        self.refreshActionRow()
+                        self.submitLike(entryId: entryId, targetLiked: pending)
+                    } else {
+                        self.entry.likedByMe = self.confirmedLiked
+                        self.entry.likeCount = self.confirmedLikeCount
+                        self.refreshActionRow()
                     }
                 }
             }
