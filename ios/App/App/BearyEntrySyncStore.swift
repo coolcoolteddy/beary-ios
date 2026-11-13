@@ -171,6 +171,27 @@ enum BearyEntrySyncStore {
         return deduped
     }
 
+    /// 按 id 取回日记：只读命中 id 所在的日文件（最新日优先、找齐即停），
+    /// 不读全量、不排序、不去重——调用方（搜索）按 FTS 返回序取用。
+    /// 任一日文件解码失败返回 nil（与 loadAllEntries 同款“不认半截盘”口径）。
+    /// 注意：本函数不核对完整性标记，调用方须先确认存档完整。
+    static func loadEntries(accountId: Int, byIds ids: Set<String>) -> [Entry]? {
+        guard !ids.isEmpty else { return [] }
+        guard let dir = accountDir(accountId: accountId) else { return nil }
+        var found: [Entry] = []
+        var remaining = ids
+        for dayKey in dayKeys(in: dir).sorted().reversed() {
+            guard let entries = loadDay(accountId: accountId, dayKey: dayKey) else { return nil }
+            for entry in entries {
+                guard let id = entry.id, remaining.contains(id) else { continue }
+                found.append(entry)
+                remaining.remove(id)
+                if remaining.isEmpty { return found }
+            }
+        }
+        return found
+    }
+
     /// 写某日落盘（单日写透：时间线日拉取/预取成功、发布/编辑 upsert 均走这里）。
     /// 返回写盘是否成功：任一步失败或回读校验不过均为 false。
     @discardableResult
@@ -185,6 +206,8 @@ enum BearyEntrySyncStore {
         // 完整性标记计数随该日新旧篇数差维护（无标记时不建标记）。
         let delta = entries.count - oldCount
         if delta != 0 { adjustCompletionCount(accountId: accountId, delta: delta) }
+        // 活盘内容变了：记一次修订号（搜索侧按修订号快查，免全量读盘）。
+        bumpRevision(accountId: accountId)
         return true
     }
 
@@ -309,6 +332,53 @@ enum BearyEntrySyncStore {
         try? data.write(to: url, options: .atomic)
     }
 
+    // MARK: - 归档修订号（搜索增量更新的快查门）
+    //
+    // 活盘日内容每变一次 +1：saveDay 写透、commitFullSync 换盘、
+    // finalizeDay 删空日文件、cleanupDaysNotIn 清旧日文件——搜索只读
+    // 修订号就能判断存档变没变，不必每查都读全量、算全量指纹。
+    // 修订号文件放活盘目录内（revision.marker，与 complete.marker 同款
+    // 命名）：换盘时随活盘走——staging 里没有，换盘后读不到即 0，下一次
+    // 搜索重建；.bak 恢复时带回旧修订号，与恢复的内容一致。文件名不以
+    // .json 结尾，loadAllEntries / dayKeys / cleanup 的日文件枚举都
+    // 碰不到它。老存档（本改动前建的）没有该文件，读不到按 0 计，首次
+    // 搜索即重建，此后正常递增。写盘失败不记修订号；计数只增不减，
+    // 读-改-写进同一把锁，防并发写盘丢计数。
+    static let revisionMarkerName = "revision.marker"
+
+    /// 归档修订号内容（JSON，单文件原子写）。
+    struct ArchiveRevision: Codable {
+        var revision: Int
+    }
+
+    static func revisionMarkerURL(accountId: Int) -> URL? {
+        guard let dir = accountDir(accountId: accountId) else { return nil }
+        return dir.appendingPathComponent(revisionMarkerName)
+    }
+
+    /// 读归档修订号：无文件/损坏按 0 计（老存档与换盘后的新活盘都从 0 起，
+    /// 调用方按“与上次见到的不一致即重建”处理，不会误认未变）。
+    static func archiveRevision(accountId: Int) -> Int {
+        guard let url = revisionMarkerURL(accountId: accountId),
+              let data = try? Data(contentsOf: url),
+              let record = try? JSONDecoder().decode(ArchiveRevision.self, from: data) else { return 0 }
+        return max(0, record.revision)
+    }
+
+    private static let revisionLock = NSLock()
+
+    /// 活盘日内容变化后记一次修订号（只增不减；写失败静默——修订号滞后
+    /// 时搜索侧指纹门仍会挡下，不会误认未变）。
+    private static func bumpRevision(accountId: Int) {
+        revisionLock.lock()
+        defer { revisionLock.unlock() }
+        let next = archiveRevision(accountId: accountId) + 1
+        guard let url = revisionMarkerURL(accountId: accountId),
+              let data = try? JSONEncoder().encode(ArchiveRevision(revision: next)) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+    }
+
     /// 按北京日分组的结果。skippedCount = 无法归日的条目数（缺 createdAt、
     /// 缺 id、或时间戳算不出北京日）——第四轮增量 04：有跳过即数据异常，
     /// 编排层据此终止带删除行为的收尾（不重写精确集合、不清旧日文件、
@@ -422,6 +492,9 @@ enum BearyEntrySyncStore {
             removeCompletion(accountId: accountId)
             return false
         }
+        // 换盘成功：活盘整批换新，记一次修订号（staging 里没有修订号文件，
+        // 换盘后的活盘读不到即 0，本次 +1 即 1；下一次搜索重建索引）。
+        bumpRevision(accountId: accountId)
         // 整批写盘全部成功：写完整性标记（总数 = 本批总篇数）。
         let total = grouped.values.reduce(0) { $0 + $1.count }
         writeCompletion(accountId: accountId, entryCount: total)
@@ -464,6 +537,8 @@ enum BearyEntrySyncStore {
         if entryIds.isEmpty {
             if FileManager.default.fileExists(atPath: url.path) {
                 do { try FileManager.default.removeItem(at: url) } catch { return false }
+                // 空日文件删了：活盘内容变了，记一次修订号。
+                bumpRevision(accountId: accountId)
             }
             return true
         }
@@ -486,12 +561,18 @@ enum BearyEntrySyncStore {
         guard FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else { return true }
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return false }
         var ok = true
+        var removedAny = false
         for name in names {
             guard name.hasSuffix(".json") else { continue }
             let dayKey = String(name.dropLast(".json".count))
             guard isDayKey(dayKey), !seenDayKeys.contains(dayKey) else { continue }
-            do { try FileManager.default.removeItem(at: dir.appendingPathComponent(name)) } catch { ok = false }
+            do {
+                try FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+                removedAny = true
+            } catch { ok = false }
         }
+        // 清掉旧日文件即活盘内容变了，记一次修订号（一次清理只记一次）。
+        if removedAny { bumpRevision(accountId: accountId) }
         return ok
     }
 
