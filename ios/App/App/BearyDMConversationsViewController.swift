@@ -22,9 +22,11 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     // C5：空态/失败态走统一 BearyStateView（旧 emptyLabel 退役；文案与下拉重试不变，
     // 失败态另加“重试”动作钮调同一 load()，下拉手势仍在）。
     private let conversationStateView = BearyStateView()
-    // 审计第 19 项：首次加载态复用 BearyStateView（转圈 +“加载中…”），不加骨架屏。
-    // 只在“首次请求且尚无旧数据”时出现；有旧数据时保留内容后台刷新。
-    private let firstLoadStateView = BearyStateView()
+    // 第十轮 #20：首次加载态改骨架行（头像／名称／摘要三段式，见
+    // BearyDMConversationSkeletonCell），不再复用 BearyStateView 转圈＋
+    // “加载中…”；只在“首次请求且尚无旧数据”时出（有旧数据时保留内容
+    // 后台刷新，下拉刷新自带转圈时不叠加）。骨架行数与广场／地图同款 3 行。
+    private let skeletonRowCount = 3
     private var firstLoadPending = true
     /// 快照回填代次：切号即变，旧号在途快照回包凭此丢弃。
     private var snapshotGeneration: UInt64 = 0
@@ -87,6 +89,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         tableView.delegate = self
         tableView.dataSource = self
         tableView.register(BearyDMConversationCell.self, forCellReuseIdentifier: "dmConversationCell")
+        tableView.register(BearyDMConversationSkeletonCell.self, forCellReuseIdentifier: BearyDMConversationSkeletonCell.reuseIdentifier)
         let refresh = UIRefreshControl()
         refresh.addTarget(self, action: #selector(refreshPulled), for: .valueChanged)
         tableView.refreshControl = refresh
@@ -119,10 +122,6 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         refreshFailedRetryButton.addTarget(self, action: #selector(refreshFailedRetryTapped), for: .touchUpInside)
         refreshFailedRetryButton.bearyAddPressFeedback()
         refreshFailedBanner.addSubview(refreshFailedRetryButton)
-
-        firstLoadStateView.translatesAutoresizingMaskIntoConstraints = false
-        firstLoadStateView.isHidden = true
-        view.addSubview(firstLoadStateView)
 
         let topBarHeight = topBar.heightAnchor.constraint(equalToConstant: 44)
         topBarHeightConstraint = topBarHeight
@@ -158,11 +157,6 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            // 首次加载态与空态同槽位居中（互斥显隐，见 load/updateEmptyState）。
-            firstLoadStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            firstLoadStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            firstLoadStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
-            firstLoadStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
             conversationStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             conversationStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             conversationStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
@@ -295,6 +289,15 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         topBarTopConstraint?.constant = (visible ? 60 : 0) + BearyDeveloperMode.shared.devBannerInset
     }
 
+    /// 第十轮 #20：骨架行是否在屏——首次请求未落定、尚无会话、已登录、
+    /// 且不在下拉刷新中（下拉刷新自带转圈，不叠加骨架；未登录时走登录门，
+    /// 不出骨架）。快照回填出内容后 conversations 非空，骨架即退。
+    private var showingSkeleton: Bool {
+        firstLoadPending && conversations.isEmpty
+            && SessionManager.shared.isLoggedIn
+            && tableView.refreshControl?.isRefreshing != true
+    }
+
     /// 同 tab 重拍口径（消息页取两组并集用）：在途加载或下拉刷新在途都算刷新中。
     var isRefreshingForRetap: Bool {
         loading || (tableView.refreshControl?.isRefreshing ?? false)
@@ -408,8 +411,8 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                       self.firstLoadPending,
                       self.conversations.isEmpty else { return }
                 self.conversations = merged
-                // 快照已显内容：首拉转圈遮层随即收起，不再盖住旧会话等网络回包。
-                self.firstLoadStateView.isHidden = true
+                // 快照已显内容：reloadData 即把骨架行换成旧会话，不再
+                // 盖加载态等网络回包。
                 self.tableView.reloadData()
                 self.updateEmptyState()
                 self.notifyDMConversationsMergeChanged()
@@ -426,12 +429,10 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         guard !loading else { return }
         loading = true
         loadFailed = false
-        // 审计第 19 项：首次无数据才显加载态（下拉刷新自带转圈时不叠加）；
+        // 第十轮 #20：首次无数据才出骨架行（下拉刷新自带转圈时不叠加）；
         // 有旧数据时不遮内容，后台刷新完直接换行。
-        if firstLoadPending && conversations.isEmpty && tableView.refreshControl?.isRefreshing != true {
-            conversationStateView.isHidden = true
-            firstLoadStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
-            firstLoadStateView.isHidden = false
+        if showingSkeleton {
+            tableView.reloadData()
         }
         let requestUid = SessionManager.shared.currentUser?.id
         // 第 7 轮 #7：发起时同时捕获鉴权代次——只比账号 ID 时，
@@ -443,7 +444,6 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             DispatchQueue.main.async {
                 self.loading = false
                 self.tableView.refreshControl?.endRefreshing()
-                self.firstLoadStateView.isHidden = true
                 // 切号后到达的旧回包直接丢弃（账号 ID + 代次双重校验；
                 // A→B→A 时账号 ID 再次相等，代次不等仍丢弃）；若新号
                 // 重拉挂起，补发一次。
@@ -519,6 +519,13 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     }
 
     private func updateEmptyState() {
+        // 第十轮 #20：骨架在屏时不下空／失败结论（骨架行即加载态），
+        // 空态只在首拉落定后才按 conversations 判定。
+        if showingSkeleton {
+            conversationStateView.isHidden = true
+            setRefreshFailedBannerVisible(false)
+            return
+        }
         if loadFailed && conversations.isEmpty {
             // 失败文案拆标题/副文案（旧“加载失败，下拉重试”两段原意不变），
             // 动作钮与下拉刷新同入口 load()，减动效时 BearyStateView 内部直设终值。
@@ -557,10 +564,15 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     // MARK: - Table
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        conversations.count
+        // 第十轮 #20：首拉无数据时出 3 行会话骨架（不冒充具体会话）；
+        // 落定后按真实会话数出行，骨架行不与真实行叠加。
+        showingSkeleton ? skeletonRowCount : conversations.count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        if showingSkeleton {
+            return tableView.dequeueReusableCell(withIdentifier: BearyDMConversationSkeletonCell.reuseIdentifier, for: indexPath)
+        }
         let cell = tableView.dequeueReusableCell(withIdentifier: "dmConversationCell", for: indexPath) as! BearyDMConversationCell
         cell.configure(conversation: conversations[indexPath.row])
         return cell
@@ -779,10 +791,10 @@ final class BearyDMConversationCell: UITableViewCell {
 // 首拉仍由子页原有路径驱动（viewDidLoad 末尾 load()、关系／账号广播
 // 重拉均不动）。独立会话页（showPage(.conversations)）仍用子页自己的
 // 表与自有首次加载态／空态／失败态，本节只给合并列表用。
-// 注意：合并模式下子页 view 不进层级，故子页自己的 firstLoadStateView
-//（转圈＋“加载中…”）与 conversationStateView 永不渲染——私信组首次
-// 加载态由容器顶部唯一转圈承担（见 BearyMessagesViewController 的
-// loadingHeaderView），本支不再复制私信组的加载态。
+// 注意：合并模式下子页 view 不进层级，故子页自己的骨架行
+// 与 conversationStateView 永不渲染——私信组首次加载态由容器
+// 表内的私信骨架行承担（见 BearyMessagesViewController 的
+// .dmSkeleton），本支不再复制私信组的加载态。
 
 /// 合并列表用私信快照：会话行与首次落定状态一次给齐。
 struct DMConversationsMergeSnapshot {

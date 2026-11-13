@@ -234,6 +234,265 @@ final class BearySkeletonCell: UITableViewCell {
     }
 }
 
+// MARK: - 行骨架扫光与分结构骨架行（第十轮 #20）
+
+/// 骨架扫光覆盖层：盖在骨架块之上，光带只在块上扫（遮罩取各块外框），
+/// 1.5s 一次斜向扫过、只走 transform；减动效时不起扫光。
+/// 与 BearySkeletonCardView 同款扫光口径（周期／角度／遮罩），抽出来
+/// 供行骨架复用——卡片骨架本体不动，不碰已有扫光行为。
+/// 调用方把骨架块数组交给它；块是同级视图时按 convert 取框，布局
+/// 变化时遮罩随块重算。
+final class BearySkeletonShimmerView: UIView {
+
+    static let shimmerDuration: TimeInterval = 1.5
+
+    /// 骨架块底色（与 BearySkeletonCardView 同款深浅色）。
+    static func baseColor() -> UIColor {
+        UIColor { t in
+            t.userInterfaceStyle == .dark ? UIColor(white: 0.22, alpha: 1) : UIColor(white: 0.92, alpha: 1)
+        }
+    }
+
+    private static func shimmerBandColor() -> UIColor {
+        UIColor { t in
+            t.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.16) : UIColor(white: 1, alpha: 0.65)
+        }
+    }
+
+    /// 骨架条工厂：圆角取半高（规范 §1 半高类），宽固定或由调用方另钉。
+    static func bar(width: CGFloat? = nil, height: CGFloat) -> UIView {
+        let v = UIView()
+        v.backgroundColor = baseColor()
+        v.layer.cornerRadius = height / 2
+        if let width = width {
+            v.widthAnchor.constraint(equalToConstant: width).isActive = true
+        }
+        v.heightAnchor.constraint(equalToConstant: height).isActive = true
+        return v
+    }
+
+    private let blocks: [UIView]
+    private let shimmerContainer = UIView()
+    private let gradientLayer = CAGradientLayer()
+    private let maskLayer = CAShapeLayer()
+    private var shimmering = false
+    private var lastShimmerSize: CGSize = .zero
+
+    init(blocks: [UIView]) {
+        self.blocks = blocks
+        super.init(frame: .zero)
+        isUserInteractionEnabled = false
+        shimmerContainer.translatesAutoresizingMaskIntoConstraints = false
+        shimmerContainer.isUserInteractionEnabled = false
+        addSubview(shimmerContainer)
+        shimmerContainer.layer.mask = maskLayer
+        gradientLayer.colors = [UIColor.clear.cgColor, Self.shimmerBandColor().cgColor, UIColor.clear.cgColor]
+        gradientLayer.locations = [0.42, 0.5, 0.58]
+        gradientLayer.startPoint = CGPoint(x: 0, y: 0.5)
+        gradientLayer.endPoint = CGPoint(x: 1, y: 0.5)
+        gradientLayer.transform = CATransform3DMakeRotation(-0.35, 0, 0, 1)
+        shimmerContainer.layer.addSublayer(gradientLayer)
+        NSLayoutConstraint.activate([
+            shimmerContainer.topAnchor.constraint(equalTo: topAnchor),
+            shimmerContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
+            shimmerContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
+            shimmerContainer.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let path = UIBezierPath()
+        for b in blocks {
+            let frame = convert(b.bounds, from: b)
+            guard !frame.isNull, !frame.isEmpty else { continue }
+            path.append(UIBezierPath(roundedRect: frame, cornerRadius: b.layer.cornerRadius))
+        }
+        maskLayer.path = path.cgPath
+        maskLayer.frame = bounds
+        let w = max(bounds.width, 1)
+        let h = max(bounds.height, 1)
+        gradientLayer.bounds = CGRect(x: 0, y: 0, width: w * 2, height: h * 2)
+        gradientLayer.position = CGPoint(x: bounds.width * 0.5, y: bounds.height * 0.5)
+        if shimmering, lastShimmerSize != bounds.size {
+            lastShimmerSize = bounds.size
+            restartShimmerAnimation()
+        }
+        if window != nil, bounds.width > 0 { startShimmer() }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { startShimmer() } else { stopShimmer() }
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            gradientLayer.colors = [UIColor.clear.cgColor, Self.shimmerBandColor().cgColor, UIColor.clear.cgColor]
+        }
+    }
+
+    func startShimmer() {
+        guard BearyMotion.animated(true) else { return }
+        guard !shimmering, window != nil, bounds.width > 0 else { return }
+        shimmering = true
+        restartShimmerAnimation()
+    }
+
+    func stopShimmer() {
+        shimmering = false
+        gradientLayer.removeAnimation(forKey: "beary-shimmer-sweep")
+    }
+
+    private func restartShimmerAnimation() {
+        gradientLayer.removeAnimation(forKey: "beary-shimmer-sweep")
+        let w = max(bounds.width, 1)
+        let anim = CABasicAnimation(keyPath: "transform.translation.x")
+        anim.fromValue = -0.7 * w
+        anim.toValue = 0.7 * w
+        anim.duration = Self.shimmerDuration
+        anim.repeatCount = .infinity
+        anim.isRemovedOnCompletion = false
+        gradientLayer.add(anim, forKey: "beary-shimmer-sweep")
+    }
+}
+
+/// 私信会话行骨架：与 BearyDMConversationCell 同结构——头像 44 圆、
+/// 名称条、摘要条三段式；无文字、不冒充用户内容。只在无缓存首拉时出
+///（有缓存／后台重拉／下拉刷新不画骨架，见各页 showingSkeleton）。
+final class BearyDMConversationSkeletonCell: UITableViewCell {
+
+    static let reuseIdentifier = "BearyDMConversationSkeletonCell"
+
+    private let avatarView = UIView()
+    private let nameBar = BearySkeletonShimmerView.bar(width: 120, height: 14)
+    private let snippetBar = BearySkeletonShimmerView.bar(height: 12)
+    private lazy var shimmerView = BearySkeletonShimmerView(blocks: [avatarView, nameBar, snippetBar])
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        avatarView.backgroundColor = BearySkeletonShimmerView.baseColor()
+        avatarView.layer.cornerRadius = 22
+        selectionStyle = .none
+        backgroundColor = BearyColors.bg
+        contentView.backgroundColor = BearyColors.bg
+        // 骨架行不进读屏：无文字内容，VoiceOver 直接跳过。
+        isAccessibilityElement = false
+        accessibilityElementsHidden = true
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        nameBar.translatesAutoresizingMaskIntoConstraints = false
+        snippetBar.translatesAutoresizingMaskIntoConstraints = false
+        shimmerView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(avatarView)
+        contentView.addSubview(nameBar)
+        contentView.addSubview(snippetBar)
+        contentView.addSubview(shimmerView)
+        NSLayoutConstraint.activate([
+            // 与真实行同几何：头像 44、左 16、上下各留 14，行高下限 72。
+            avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
+            avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            avatarView.widthAnchor.constraint(equalToConstant: 44),
+            avatarView.heightAnchor.constraint(equalToConstant: 44),
+            nameBar.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            nameBar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
+            snippetBar.topAnchor.constraint(equalTo: nameBar.bottomAnchor, constant: 6),
+            snippetBar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
+            snippetBar.widthAnchor.constraint(equalTo: contentView.widthAnchor, multiplier: 0.55),
+            snippetBar.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
+            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
+            shimmerView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            shimmerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            shimmerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            shimmerView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        alpha = 1
+        transform = .identity
+    }
+}
+
+/// 通知行骨架：与 BearyNotificationCell 同结构——头像 42 圆＋右下角
+/// 类型角标圆 19、标题条＋右端时间条、摘要条；无文字、不冒充用户内容。
+/// 与私信骨架的区别正在结构上：通知行有角标圆与时间条，私信行没有——
+/// 合并消息页首拉时两组骨架一眼可分。
+final class BearyNotificationSkeletonCell: UITableViewCell {
+
+    static let reuseIdentifier = "BearyNotificationSkeletonCell"
+
+    private let avatarView = UIView()
+    private let kindBadgeView = UIView()
+    private let titleBar = BearySkeletonShimmerView.bar(width: 140, height: 14)
+    private let timeBar = BearySkeletonShimmerView.bar(width: 36, height: 12)
+    private let excerptBar = BearySkeletonShimmerView.bar(height: 12)
+    private lazy var shimmerView = BearySkeletonShimmerView(blocks: [avatarView, kindBadgeView, titleBar, timeBar, excerptBar])
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        avatarView.backgroundColor = BearySkeletonShimmerView.baseColor()
+        avatarView.layer.cornerRadius = 21
+        kindBadgeView.backgroundColor = BearySkeletonShimmerView.baseColor()
+        kindBadgeView.layer.cornerRadius = 9.5
+        selectionStyle = .none
+        backgroundColor = BearyColors.bg
+        contentView.backgroundColor = BearyColors.bg
+        isAccessibilityElement = false
+        accessibilityElementsHidden = true
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        kindBadgeView.translatesAutoresizingMaskIntoConstraints = false
+        titleBar.translatesAutoresizingMaskIntoConstraints = false
+        timeBar.translatesAutoresizingMaskIntoConstraints = false
+        excerptBar.translatesAutoresizingMaskIntoConstraints = false
+        shimmerView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(avatarView)
+        contentView.addSubview(kindBadgeView)
+        contentView.addSubview(titleBar)
+        contentView.addSubview(timeBar)
+        contentView.addSubview(excerptBar)
+        contentView.addSubview(shimmerView)
+        NSLayoutConstraint.activate([
+            // 与真实行同几何：头像 42、左 16、顶 14；角标圆 19 压头像右下角；
+            // 标题行左 70、摘要行同左，行高下限 70。
+            avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
+            avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            avatarView.widthAnchor.constraint(equalToConstant: 42),
+            avatarView.heightAnchor.constraint(equalToConstant: 42),
+            kindBadgeView.widthAnchor.constraint(equalToConstant: 19),
+            kindBadgeView.heightAnchor.constraint(equalToConstant: 19),
+            kindBadgeView.trailingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 4),
+            kindBadgeView.bottomAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 4),
+            titleBar.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            titleBar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 70),
+            timeBar.centerYAnchor.constraint(equalTo: titleBar.centerYAnchor),
+            timeBar.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            excerptBar.topAnchor.constraint(equalTo: titleBar.bottomAnchor, constant: 8),
+            excerptBar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 70),
+            excerptBar.widthAnchor.constraint(equalTo: contentView.widthAnchor, multiplier: 0.5),
+            excerptBar.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
+            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 70),
+            shimmerView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            shimmerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            shimmerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            shimmerView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        alpha = 1
+        transform = .identity
+    }
+}
+
 // MARK: - 加载更多脚部
 
 /// 信息流底部脚部：加载中 3 个跳动小圆点；到底显示“没有更多了”；

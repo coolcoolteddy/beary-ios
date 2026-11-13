@@ -124,10 +124,11 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private let failureView = UIView()
     private let failureLabel = UILabel()
     private let retryButton = BearyHit44Button(type: .system)
-    /// 审计登录杂项：加载态（转圈＋“加载中…”），只在无已有数据时出现。
-    private let loadingView = UIView()
-    private let loadingSpinner = BearyRefreshIconView()
-    private let loadingLabel = UILabel()
+    /// 第十轮 #20：加载态不再转圈＋“加载中…”——夜空背景先行、画布内
+    /// 出静态星点占位（见 StarMapSkyView.setPlaceholdersVisible），只在
+    /// 无已有数据时出现；数据到达后仅新增真实星点（差分入场本就只加新星），
+    /// 占位星 0.26s 交叉溶解淡出。
+    private var skyLoadingBottom: NSLayoutConstraint?
     /// 审计登录杂项：已有数据时分页失败的弱提示标记（applyModelToSky 拼进状态行）。
     private var fetchStaleNote = false
     /// 分批中断：本轮暂存已提升为已展示的部分结果时为真（applyModelToSky
@@ -198,7 +199,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var failureBottom: NSLayoutConstraint?
     /// P1-4：加载态独占时的内容底锚（与扫荡 C 的三选一底部约束同款，
     /// 同一时刻只激活一个；其余三态恢复时由 applyModelToSky 关掉）。
-    private var loadingBottom: NSLayoutConstraint?
+    /// 第十轮 #20：加载期夜空先行，底锚改锚 skyView 底（原 loadingView 已删），
+    /// 约束本体见上方 skyLoadingBottom。
 
     init(authorId: Int, viewerIsAuthor: Bool, initialEntries: [Entry], onOpenEntry: ((Entry) -> Void)?) {
         self.authorId = authorId
@@ -354,20 +356,22 @@ final class BearyDiaryStarMapViewController: UIViewController {
         sheetBottom?.isActive = false
         emptyBottom?.isActive = false
         failureBottom?.isActive = true
-        loadingBottom?.isActive = false
+        skyLoadingBottom?.isActive = false
         failureView.isHidden = false
     }
 
     /// P1-4：加载态独占——加载／空白／有内容／失败同一时刻只显示一种。
     /// 根因：四个视图各自在不同函数里独立开关 isHidden——加载开始只开
-    /// loadingView（不藏空态），而 recompute 的“空态先行”与后台重算回包
-    /// 又把空态（340 高）顶回来，与加载态（200 高）同锚点同时可见。
+    /// 加载视图（不藏空态），而 recompute 的“空态先行”与后台重算回包
+    /// 又把空态（340 高）顶回来，与加载态同锚点同时可见。
     /// 此后加载态只经这里出、只经 applyModelToSky／showFailureState 收。
+    /// 第十轮 #20：加载期夜空先行——skyView 保持 420 高可见、画布内出
+    /// 静态星点占位（无转圈、无“加载中…”文字）；状态行与底卡仍藏，
+    /// 内容底改锚 skyView 底。
     private func showLoadingState() {
-        loadingView.isHidden = false
-        loadingSpinner.startSpinning()
-        skyHeight?.constant = 0
-        skyView.isHidden = true
+        skyView.setPlaceholdersVisible(true)
+        skyHeight?.constant = 420
+        skyView.isHidden = false
         emptyView.isHidden = true
         failureView.isHidden = true
         statusLabel.isHidden = true
@@ -375,7 +379,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         sheetBottom?.isActive = false
         emptyBottom?.isActive = false
         failureBottom?.isActive = false
-        loadingBottom?.isActive = true
+        skyLoadingBottom?.isActive = true
     }
 
     // MARK: - 布局
@@ -519,22 +523,6 @@ final class BearyDiaryStarMapViewController: UIViewController {
         failureView.addSubview(retryButton)
         contentView.addSubview(failureView)
 
-        // 审计登录杂项：加载态与盲盒页 spinnerWrap 同款（转圈＋“加载中…”）。
-        loadingView.translatesAutoresizingMaskIntoConstraints = false
-        loadingView.isHidden = true
-        loadingSpinner.translatesAutoresizingMaskIntoConstraints = false
-        loadingSpinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
-        loadingSpinner.tintColor = BearyStarMapNight.secondaryText
-        loadingLabel.translatesAutoresizingMaskIntoConstraints = false
-        loadingLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        loadingLabel.adjustsFontForContentSizeCategory = true
-        loadingLabel.textColor = BearyStarMapNight.secondaryText
-        loadingLabel.textAlignment = .center
-        loadingLabel.text = "加载中…"
-        loadingView.addSubview(loadingSpinner)
-        loadingView.addSubview(loadingLabel)
-        contentView.addSubview(loadingView)
-
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             // 横向安全区：scrollView 左右锚 safeArea 而非 view 边缘。内容各行
@@ -615,18 +603,6 @@ final class BearyDiaryStarMapViewController: UIViewController {
             failureLabel.trailingAnchor.constraint(equalTo: failureView.trailingAnchor, constant: -24),
             retryButton.topAnchor.constraint(equalTo: failureLabel.bottomAnchor, constant: 16),
             retryButton.centerXAnchor.constraint(equalTo: failureView.centerXAnchor),
-
-            loadingView.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 12),
-            loadingView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            loadingView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            loadingView.heightAnchor.constraint(equalToConstant: 200),
-            loadingSpinner.topAnchor.constraint(equalTo: loadingView.topAnchor, constant: 60),
-            loadingSpinner.centerXAnchor.constraint(equalTo: loadingView.centerXAnchor),
-            loadingSpinner.widthAnchor.constraint(equalToConstant: 20),
-            loadingSpinner.heightAnchor.constraint(equalToConstant: 20),
-            loadingLabel.topAnchor.constraint(equalTo: loadingSpinner.bottomAnchor, constant: 12),
-            loadingLabel.leadingAnchor.constraint(equalTo: loadingView.leadingAnchor),
-            loadingLabel.trailingAnchor.constraint(equalTo: loadingView.trailingAnchor),
         ])
         // 扫荡 C：sky 高与三选一底部约束单独持有（见属性注释）。
         skyHeight = skyView.heightAnchor.constraint(equalToConstant: 420)
@@ -637,8 +613,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
         emptyBottom?.isActive = false
         failureBottom = failureView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24)
         failureBottom?.isActive = false
-        loadingBottom = loadingView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24)
-        loadingBottom?.isActive = false
+        // 第十轮 #20：加载期内容底改锚 skyView 底（夜空先行，见 showLoadingState）。
+        skyLoadingBottom = skyView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24)
+        skyLoadingBottom?.isActive = false
         // 年/月行高约束单独持有：不分片时高置 0（isHidden 本身不塌约束，
         // 否则不分片页会在图例与过滤行之间留两行空白）。
         yearRowHeight = yearScrollView.heightAnchor.constraint(equalToConstant: 44)
@@ -876,7 +853,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         }
         // 非在途终态：加载态收起、内容底改回三选一（见下方分支）。
         hideLoadingState()
-        loadingBottom?.isActive = false
+        skyLoadingBottom?.isActive = false
         // 选中态失效回收：选中的星/线若因重算消失（删篇/翻私密/切账号），
         // 底卡不留指向旧篇的入口，直接回默认态（不展示已不可见的篇名）。
         if let sid = selectedStarId, model.entryById[sid] == nil {
@@ -1655,10 +1632,11 @@ final class BearyDiaryStarMapViewController: UIViewController {
         recompute()
     }
 
-    /// 加载态统一收起（成功 / 失败回包终态各调一次）。
+    /// 加载态统一收起（成功 / 失败回包终态各调一次）：占位星 0.26s
+    /// 交叉溶解淡出（减动效直藏），真实星点随即经差分入场新增——
+    /// 占位星与真实星不叠加、不闪整页。
     private func hideLoadingState() {
-        loadingView.isHidden = true
-        loadingSpinner.stopSpinning()
+        skyView.setPlaceholdersVisible(false)
     }
 
     /// 拉取 scope（清单第 7 项，Li 拍板）：本人走 timeline scope（服务端按
@@ -1824,6 +1802,13 @@ private final class StarMapSkyView: UIView {
     private var entranceDisplayLink: CADisplayLink?
 
     private let dustLayer = CAShapeLayer()
+    /// 第十轮 #20：静态星点占位层——加载期夜空先行的占位星（固定哈希点，
+    /// 与星尘同款“只装饰、不代表任何日记”口径，12 颗、dim 白、无光晕／
+    /// 无日期／无连线、不可点按、读屏不暴露）。数据到达后仅新增真实星点
+    ///（差分入场本就只加新星），占位星 0.26s 交叉溶解淡出。
+    private let placeholderLayer = CAShapeLayer()
+    private var placeholdersVisible = false
+    private static let placeholderStarCount = 12
     private var edgeLayers: [String: CAShapeLayer] = [:]
     /// 每颗星的一组图层：光晕 halo（常亮弱）／闪亮 flash（光点经过时短暂亮起，
     /// 平时 opacity 0）／星核 core／选中圈 ring／日期 date。
@@ -1858,6 +1843,10 @@ private final class StarMapSkyView: UIView {
         isAccessibilityElement = false
         dustLayer.zPosition = 0
         layer.addSublayer(dustLayer)
+        // 第十轮 #20：占位星层压在星尘上、真实星线下（z 0.5），平时隐藏。
+        placeholderLayer.zPosition = 0.5
+        placeholderLayer.isHidden = true
+        layer.addSublayer(placeholderLayer)
         dotLayer.bounds = CGRect(x: 0, y: 0, width: 10, height: 10)
         dotLayer.cornerRadius = 5
         dotLayer.backgroundColor = BearyStarMapNight.selected.cgColor
@@ -1992,6 +1981,41 @@ private final class StarMapSkyView: UIView {
         let start = entranceStart + max(firstDelay, secondDelay) + StarMapEntrance.starDuration
         let t = max(0, min(1, (now - start) / StarMapEntrance.edgeFadeDuration))
         return CGFloat(t)
+    }
+
+    /// 第十轮 #20：占位星显隐。显时立即出（夜空先行、静态占位）；
+    /// 藏时 0.26s 交叉溶解淡出（骨架交接口径，减动效直藏），淡完才
+    /// 藏层——淡出期间真实星点正经差分入场新增，两者不叠加、不闪页。
+    /// 路径由 rebuildLayers 按当前 bounds 重建（显隐只开关层，不碰路径）。
+    func setPlaceholdersVisible(_ visible: Bool) {
+        guard visible != placeholdersVisible else { return }
+        placeholdersVisible = visible
+        placeholderLayer.removeAnimation(forKey: "r10-placeholder-fade")
+        if visible {
+            placeholderLayer.opacity = 1
+            placeholderLayer.isHidden = false
+            rebuildLayers()
+        } else if BearyMotion.animated(true) {
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = placeholderLayer.opacity
+            fade.toValue = 0
+            fade.duration = 0.26
+            fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            fade.fillMode = .forwards
+            fade.isRemovedOnCompletion = false
+            CATransaction.begin()
+            CATransaction.setCompletionBlock { [weak self] in
+                guard let self = self, !self.placeholdersVisible else { return }
+                self.placeholderLayer.removeAnimation(forKey: "r10-placeholder-fade")
+                self.placeholderLayer.isHidden = true
+                self.placeholderLayer.opacity = 1
+            }
+            placeholderLayer.add(fade, forKey: "r10-placeholder-fade")
+            CATransaction.commit()
+        } else {
+            placeholderLayer.isHidden = true
+            placeholderLayer.opacity = 1
+        }
     }
 
     func setSelected(starId: String?, edgeId: String?) {
@@ -2328,6 +2352,21 @@ private final class StarMapSkyView: UIView {
         dustLayer.path = dustPath
         dustLayer.fillColor = BearyStarMapNight.dust.cgColor
         dustLayer.frame = bounds
+        // 第十轮 #20：占位星——固定哈希点（与星尘错开种子，不重位），
+        // 半径 2–4pt、dim 白；路径常备（显隐只开关层），旋转／分屏
+        // 重建时位置随 bounds 确定性重算、不跳变。
+        let placeholderPath = CGMutablePath()
+        for i in 0..<Self.placeholderStarCount {
+            let h = UInt64(i + 1000) &* 2_862_933_555_777_037_127 &+ 11
+            let nx = CGFloat(h % 1000) / 1000.0
+            let ny = CGFloat((h >> 16) % 1000) / 1000.0
+            let center = point(for: (x: Double(nx), y: Double(ny)), in: bounds)
+            let radius = 2.0 + CGFloat(h % 5) * 0.5
+            placeholderPath.addEllipse(in: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
+        }
+        placeholderLayer.path = placeholderPath
+        placeholderLayer.fillColor = UIColor(white: 1, alpha: 0.5).cgColor
+        placeholderLayer.frame = bounds
         // 连线：每条边独立图层（选中橙粗、其余细蓝灰，见 updateSelectionVisuals；
         // 只建 displayedEdges 的图层，见预算注释）。
         var seenEdgeIds = Set<String>()
