@@ -298,6 +298,20 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                     if self.needsReloadAfterUserChange {
                         self.needsReloadAfterUserChange = false
                         self.load()
+                    } else if SessionManager.shared.currentUser?.id == requestUid {
+                        // 账号没变、只是代次变了（在途时鉴权代次被推过，
+                        // 如 401 清态后又恢复）：旧回包丢弃后补拉一次。
+                        // 此时 loading 已置 false，load() 内守卫不拦；
+                        // 代次稳定后第二次回包即正常渲染，不会循环触发
+                        //（代次只在鉴权变迁时单调 +1，401 本身会走下
+                        // 面分支，不进补拉）。
+                        self.load()
+                    } else {
+                        // 真切号／已退出：恢复与当前登录态一致的空态与
+                        // 标题，不留空白页（此前直接 return，加载态已藏、
+                        // 空态仍藏、friends 仍空，页上只剩标题）。
+                        self.updateTitleAndEmptyState()
+                        self.tableView.reloadData()
                     }
                     return
                 }
