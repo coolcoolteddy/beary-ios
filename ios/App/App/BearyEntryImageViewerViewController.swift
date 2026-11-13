@@ -1322,6 +1322,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
         let next = currentIndex + direction
         let wrapped = (next + imageKeys.count) % imageKeys.count
+        // 审计 15 项第 2 项：延迟提交按目标 key 重新定位——commit 在翻页
+        // 动画（BearyMotion.normal）结束时才执行，动画期间到期过滤可能
+        // 缩短 imageKeys；旧下标 wrapped 可能指向另一张图或越界。
+        let targetKey = imageKeys[wrapped]
         let isWrap = next < 0 || next >= imageKeys.count
         if isWrap, direction == 1 {
             // C1：还有后续页时不回绕——先请网格续拉，等新页到了再往前翻；
@@ -1371,12 +1375,18 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             let reduceMotion = UIAccessibility.isReduceMotionEnabled
             let commit: () -> Void = { [weak self] in
                 guard let self = self else { return }
-                self.currentIndex = wrapped
+                // 目标已撤（动画期间 prune 掉）：放弃本次翻页，安全回退
+                // 到当前图，不用旧下标读新数组。
+                guard let resolvedIndex = self.imageKeys.firstIndex(of: targetKey) else {
+                    self.abortStalePageTurn()
+                    return
+                }
+                self.currentIndex = resolvedIndex
                 self.scale = 1
                 self.tx = 0
                 self.ty = 0
                 self.imageView.image = self.neighborImageView.image
-                self.displayedImageKey = self.imageKeys[wrapped]
+                self.displayedImageKey = self.imageKeys[resolvedIndex]
                 self.showingInitialThumbnail = false
                 self.imageView.transform = .identity
                 self.liveOverlay?.transform = .identity
@@ -1389,7 +1399,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 // 否则换图前在途的旧升级回包仍可能凭旧代次蒙混过关。
                 self.isFailed = false
                 self.retryButton.isHidden = true
-                self.loadingKey = self.imageKeys[wrapped]
+                self.loadingKey = self.imageKeys[resolvedIndex]
                 self.imageLoadGeneration += 1
                 // 快速通道交接：当前显示的是相邻槽位的基础图，高清标记须随图清零
                 //（否则回 A 时标记仍在、再放大跳过升级）；加载圈同步重算，
@@ -1449,7 +1459,13 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         let reduceMotion = UIAccessibility.isReduceMotionEnabled
         let commitFallback: () -> Void = { [weak self] in
             guard let self = self else { return }
-            self.currentIndex = wrapped
+            // 目标已撤（动画期间 prune 掉）：放弃本次翻页，安全回退
+            // 到当前图，不用旧下标读新数组。
+            guard let resolvedIndex = self.imageKeys.firstIndex(of: targetKey) else {
+                self.abortStalePageTurn()
+                return
+            }
+            self.currentIndex = resolvedIndex
             self.scale = 1
             self.tx = 0
             self.ty = 0
@@ -1457,10 +1473,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             self.liveOverlay?.transform = .identity
             if let targetImage = self.neighborImageView.image {
                 self.imageView.image = targetImage
-                self.displayedImageKey = self.imageKeys[wrapped]
+                self.displayedImageKey = self.imageKeys[resolvedIndex]
                 self.isFailed = false
                 self.retryButton.isHidden = true
-                self.loadingKey = self.imageKeys[wrapped]
+                self.loadingKey = self.imageKeys[resolvedIndex]
             } else {
                 // 目标未到：先空 + 加载圈，loadCurrent 回包填图（不留旧图）。
                 self.imageView.image = nil
@@ -1486,6 +1502,24 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }, completion: { _ in
             commitFallback()
         })
+    }
+
+    /// 审计 15 项第 2 项：翻页动画期间目标照片被撤时的安全回退——动画已把
+    /// 当前图滑出、相邻图滑入，复位 transform 回到当前图、撤掉相邻槽、
+    /// 重新加载当前下标（prune 若换了当前图，loadCurrent 会跟进新下标；
+    /// 全部撤完时 prune 已关灯箱，loadCurrent 的空表守卫直接返回）。
+    private func abortStalePageTurn() {
+        scale = 1
+        tx = 0
+        ty = 0
+        imageView.transform = .identity
+        liveOverlay?.transform = .identity
+        hideNeighbor()
+        updateCounter()
+        loadCurrent()
+        isNavigating = false
+        updateViewEntryAvailability()
+        maybeRequestMorePages()
     }
 }
 
