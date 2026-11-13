@@ -213,12 +213,28 @@ enum BearyDMStore {
     /// 供聊天页在呈现已拉到的消息前区分“新库（无文件）／读到了／暂时读不出”：
     /// 只有无文件才是新库、可直接创建；已损坏时不得调 saveMessages（空字典重建
     /// 会抹掉其他会话的本地历史），也不得从损坏的库重读（会把刚拉到的消息读丢）。
+    /// 第十轮 V-Data：同步整文件读盘＋解码，只许在 ioQueue 内或测试里调；
+    /// 主线程调用方一律走下面的异步版。
     static func isCorrupt(accountId: Int?) -> Bool {
         guard let url = fileURL(forAccount: accountId),
               FileManager.default.fileExists(atPath: url.path) else { return false }
         guard let data = try? Data(contentsOf: url),
               (try? JSONDecoder().decode([String: StoredConversation].self, from: data)) != nil else { return true }
         return false
+    }
+
+    /// 异步版 isCorrupt：整文件读盘＋解码只在 ioQueue 上做，结果回主线程。
+    /// 主线程的空态判断与回包落盘分支一律走它，不调同步版。
+    /// 检出损坏时按 loadAll 同口径登记损坏态（原文件不动、另存一份 .bak），
+    /// 这样 updateEmptyState 经 isStoreCorrupt 读到的是同一结论。
+    static func isCorrupt(accountId: Int?, completion: @escaping (Bool) -> Void) {
+        ioQueue.async {
+            let corrupt = isCorrupt(accountId: accountId)
+            if corrupt, let url = fileURL(forAccount: accountId) {
+                noteCorruptStore(accountId: accountId, fileURL: url)
+            }
+            DispatchQueue.main.async { completion(corrupt) }
+        }
     }
 
     /// 写盘：编码或写入失败返回 false（调用方不得把失败当成功）。

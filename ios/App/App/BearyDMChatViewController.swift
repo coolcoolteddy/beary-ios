@@ -952,7 +952,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             emptyStateView.isHidden = true
             loadFailedStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.loadLatest() })
             loadFailedStateView.isHidden = false
-        } else if messages.isEmpty && BearyDMStore.isCorrupt(accountId: storeAccountId) {
+        } else if messages.isEmpty && BearyDMStore.isStoreCorrupt(accountId: storeAccountId) {
+            // 第十轮 V-Data：空态判断在主线程，只读 ioQueue 已登记的损坏态，
+            // 不再同步读盘。登记由进页本地加载（messages，经 cachedAll）与
+            // 回包损坏检查（异步版 isCorrupt）触发；落定回调会再调一次
+            // updateEmptyState，登记到时即纠正为空态。
             // 本地缓存损坏：不呈“还没有消息”空态；旧消息已保留在原文件与备份里，
             // 未被覆盖。重试只重拉服务端历史，损坏期间 saveMessages 拒绝回写。
             emptyLabel.isHidden = true
@@ -1186,24 +1190,29 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                             self.loadLatest()
                         }
                     }
-                    if BearyDMStore.isCorrupt(accountId: self.storeAccountId) {
-                        // A2：旧库暂时读不出——不调 saveMessages（空字典重建整份
-                        // 账号档案会抹掉其他会话的本地历史），也不从损坏的库重读
-                        //（读失败返空字典会把刚拉到的消息读丢）；已拉到的消息先在
-                        // 会话里显示，原件留给后续恢复。
-                        applyMerged(fetched)
-                        BearyToast.show(in: self.view, message: "手机里的旧消息暂时读不出来")
-                    } else {
-                        // 读改写走后台串行队列：save 直接回合并后的本会话消息，不再重读一次。
-                        // 写盘失败不再静默：服务端数据仍展示（内存值），但置失败态＋toast，
-                        // 下拉刷新可重试（重拉即重写盘）；空消息时失败态走加载失败重试入口。
-                        BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched) { [weak self] merged, saved in
-                            guard let self = self else { return }
-                            applyMerged(merged)
-                            if !saved {
-                                self.loadFailed = true
-                                self.updateEmptyState()
-                                BearyToast.show(in: self.view, message: "本地保存失败，下拉刷新可重试")
+                    // 第十轮 V-Data：损坏判断的整文件读盘＋解码只在 ioQueue 上做，
+                    // 结果回主线程再分路；主线程不再同步读盘。
+                    BearyDMStore.isCorrupt(accountId: self.storeAccountId) { [weak self] corrupt in
+                        guard let self = self else { return }
+                        if corrupt {
+                            // A2：旧库暂时读不出——不调 saveMessages（空字典重建整份
+                            // 账号档案会抹掉其他会话的本地历史），也不从损坏的库重读
+                            //（读失败返空字典会把刚拉到的消息读丢）；已拉到的消息先在
+                            // 会话里显示，原件留给后续恢复。
+                            applyMerged(fetched)
+                            BearyToast.show(in: self.view, message: "手机里的旧消息暂时读不出来")
+                        } else {
+                            // 读改写走后台串行队列：save 直接回合并后的本会话消息，不再重读一次。
+                            // 写盘失败不再静默：服务端数据仍展示（内存值），但置失败态＋toast，
+                            // 下拉刷新可重试（重拉即重写盘）；空消息时失败态走加载失败重试入口。
+                            BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched) { [weak self] merged, saved in
+                                guard let self = self else { return }
+                                applyMerged(merged)
+                                if !saved {
+                                    self.loadFailed = true
+                                    self.updateEmptyState()
+                                    BearyToast.show(in: self.view, message: "本地保存失败，下拉刷新可重试")
+                                }
                             }
                         }
                     }
@@ -1317,23 +1326,28 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                             self.loadLatest()
                         }
                     }
-                    if BearyDMStore.isCorrupt(accountId: self.storeAccountId) {
-                        // A2：同最新页——旧库损坏时不调 saveMessages、不从损坏的
-                        // 库重读；已拉到的更早消息直接并入内存会话（待发行先摘
-                        // 出再拼回，防重复），原件留给后续恢复。
-                        let base = self.messages.filter { $0.localKey == nil }
-                        applyMerged((older + base).sorted { ($0.id ?? 0) < ($1.id ?? 0) })
-                        BearyToast.show(in: self.view, message: "手机里的旧消息暂时读不出来")
-                    } else {
-                        // 待发在回包时刻才取，见 loadLatest（审计四轮增量 12）。
-                        // 写盘失败不再静默：服务端数据仍展示（内存值），但翻旧浮标切失败态＋toast，
-                        // 点按浮标或再次滚动到顶部即重试（重拉即重写盘）。
-                        BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older) { [weak self] merged, saved in
-                            guard let self = self else { return }
-                            applyMerged(merged)
-                            if !saved {
-                                self.setOlderLoadingState(loading: false, failed: true)
-                                BearyToast.show(in: self.view, message: "本地保存失败，滚动可重试")
+                    // 第十轮 V-Data：同最新页——损坏判断的整文件读盘＋解码只在
+                    // ioQueue 上做，结果回主线程再分路；主线程不再同步读盘。
+                    BearyDMStore.isCorrupt(accountId: self.storeAccountId) { [weak self] corrupt in
+                        guard let self = self else { return }
+                        if corrupt {
+                            // A2：同最新页——旧库损坏时不调 saveMessages、不从损坏的
+                            // 库重读；已拉到的更早消息直接并入内存会话（待发行先摘
+                            // 出再拼回，防重复），原件留给后续恢复。
+                            let base = self.messages.filter { $0.localKey == nil }
+                            applyMerged((older + base).sorted { ($0.id ?? 0) < ($1.id ?? 0) })
+                            BearyToast.show(in: self.view, message: "手机里的旧消息暂时读不出来")
+                        } else {
+                            // 待发在回包时刻才取，见 loadLatest（审计四轮增量 12）。
+                            // 写盘失败不再静默：服务端数据仍展示（内存值），但翻旧浮标切失败态＋toast，
+                            // 点按浮标或再次滚动到顶部即重试（重拉即重写盘）。
+                            BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older) { [weak self] merged, saved in
+                                guard let self = self else { return }
+                                applyMerged(merged)
+                                if !saved {
+                                    self.setOlderLoadingState(loading: false, failed: true)
+                                    BearyToast.show(in: self.view, message: "本地保存失败，滚动可重试")
+                                }
                             }
                         }
                     }
