@@ -523,7 +523,9 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             clearSuggestions()
             return
         }
-        // 改词即新操作：在途的手动确认／点建议搜索与旧建议回包一律过期作废。
+        // 改词即新操作：旧建议立即撤下、不可再点，直到当前查询的结果到达；
+        // 在途的手动确认／点建议搜索与旧建议回包一律过期作废。
+        clearSuggestions()
         interactionGeneration += 1
         completerGeneration = interactionGeneration
         completer.queryFragment = text
@@ -592,7 +594,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         suggestionsEmptyLabel.isHidden = true
     }
 
-    /// 全清：数据 + 视图。仅输入清空或搜索失败（且输入已空）等“旧建议必须不残留”时用；
+    /// 全清：数据 + 视图。仅输入清空、改词、搜索失败（且输入已空）等“旧建议必须不残留”时用；
     /// 正常渲染不得走这里，否则会把刚到的结果清掉。
     private func clearSuggestions() {
         suggestions = []
