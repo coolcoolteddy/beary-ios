@@ -519,6 +519,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 只删 invalid 里的 key、其余顺序不变；当前图被撤时就近留下一张
     /// （优先同位、否则末张）；全部撤完即关闭灯箱；本地图模式不走 key，不动。
     /// 在途加载凭 loadCurrent 的代次守门丢弃，不会把已撤的图盖回来。
+    /// 审计 15 项第 1 项：当前屏上这张被撤时立即清图——旧图已失效，
+    /// 不能像普通切图（P2-25）那样留到新图到达；替代图加载失败时
+    /// 失效照片也不得继续留在屏上。当前图未被撤时保持旧行为。
     func pruneImageKeys(_ invalidKeys: Set<String>) {
         guard localImages.isEmpty else { return }
         guard !invalidKeys.isEmpty else { return }
@@ -530,6 +533,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             return
         }
         imageKeys = keptKeys
+        // 审计 15 项第 1 项：屏上图／当前图被撤时立即清掉（见函数头注释）。
+        let displayedPhotoPruned = displayedImageKey.map { invalidKeys.contains($0) } ?? false
+        let currentPhotoPruned = currentKey.map { invalidKeys.contains($0) } ?? false
         if let currentKey = currentKey, let keptIndex = keptKeys.firstIndex(of: currentKey) {
             currentIndex = keptIndex
         } else {
@@ -540,6 +546,15 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         zoomHiResKey = nil
         zoomHiResWidth = 0
         resetZoom(animated: false)
+        if displayedPhotoPruned || currentPhotoPruned {
+            imageView.image = nil
+            displayedImageKey = nil
+            showingInitialThumbnail = false
+            initialThumbnail = nil
+            isFailed = false
+            retryButton.isHidden = true
+            updateViewEntryAvailability()
+        }
         rebuildDots()
         updateCounter()
         loadCurrent()
