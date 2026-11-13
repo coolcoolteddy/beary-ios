@@ -7274,8 +7274,13 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         viewer.modalPresentationStyle = .fullScreen
         viewer.onViewEntryAtIndex = { [weak self, weak viewer] tappedIndex in
             guard let strongSelf = self, let viewerValue = viewer else { return }
-            guard tappedIndex >= 0, tappedIndex < strongSelf.photoWallPhotosValue.count else { return }
-            let targetEntry = strongSelf.photoWallPhotosValue[tappedIndex].entry
+            guard tappedIndex >= 0, tappedIndex < allPhotos.count else { return }
+            // 灯箱按打开时的快照建图：跳转凭快照里该图的 key 在实时墙里定位日记，
+            // 不用下标读实时列表——打开期间墙重排/删图，下标会错位到别篇。
+            let tappedKey = allPhotos[tappedIndex].imageKey
+            let targetEntry = strongSelf.photoWallPhotosValue
+                .first(where: { $0.imageKey == tappedKey })?.entry
+                ?? allPhotos[tappedIndex].entry
             viewerValue.dismiss(animated: BearyMotion.animated(true)) {
                 strongSelf.onOpenEntry?(targetEntry)
             }
