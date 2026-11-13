@@ -1033,6 +1033,18 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     private var fieldErrorHeight: NSLayoutConstraint?
     private static let titleLimit = 100
     private static let detailLimit = 2000
+    /// 11 轮审计第 10 项：表单级错误文案（服务端笼统 bad wish 时用，两框均不变红）。
+    private static let formErrorText = "标题需为 1–100 字，详情最多 2000 字，请检查后重试"
+    /// 11 轮审计第 10 项：错误定位拆三类——标题错只标标题框、详情错只标详情框、
+    /// 表单级错误只显示错误行。旧的全局 fieldErrorShown 让任一错误都双框变红，
+    /// 归因是错的，故拆掉。
+    private enum WishFieldError {
+        case none
+        case title
+        case detail
+        case form
+    }
+    private var wishFieldError: WishFieldError = .none
     /// 11：提交锁——锁期间 titleChanged 不得重新启用提交钮（服务端幂等另有工人做）。
     private var isSubmitting = false
     /// 提交在途时关闭钮的引用：提交期间一并禁用，失败后恢复；成功即随页关闭，无需恢复。
@@ -1117,7 +1129,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         fieldErrorLabel.adjustsFontForContentSizeCategory = true
         fieldErrorLabel.textColor = BearyColors.red
         fieldErrorLabel.numberOfLines = 0
-        fieldErrorLabel.text = "标题需为 1–100 字，详情最多 2000 字，请检查后重试"
+        fieldErrorLabel.text = Self.formErrorText
         fieldErrorLabel.isHidden = true
         fieldErrorHeight = fieldErrorLabel.heightAnchor.constraint(equalToConstant: 0)
         fieldErrorHeight?.isActive = true
@@ -1275,21 +1287,50 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         ])
     }
 
-    /// 30：字段级错误行显隐（显时松开 0 高约束，隐时压回 0 高，见属性注释）。
-    private func setFieldErrorVisible(_ visible: Bool) {
-        fieldErrorLabel.isHidden = !visible
-        fieldErrorHeight?.isActive = !visible
+    /// 11 轮审计第 10 项：错误态唯一入口——标题／详情错只标对应输入框并配单字段
+    /// 文案；表单级错误只显示错误行（位置不变），两框均不变红；无错时清掉错误行与红边。
+    /// 显时松开 0 高约束，隐时压回 0 高，见属性注释。
+    private func setWishFieldError(_ error: WishFieldError) {
+        wishFieldError = error
+        switch error {
+        case .none:
+            fieldErrorLabel.text = Self.formErrorText
+            fieldErrorLabel.isHidden = true
+            fieldErrorHeight?.isActive = true
+        case .title:
+            fieldErrorLabel.text = "标题需为 1–100 字，请检查后重试"
+            fieldErrorLabel.isHidden = false
+            fieldErrorHeight?.isActive = false
+        case .detail:
+            fieldErrorLabel.text = "详情最多 2000 字，请检查后重试"
+            fieldErrorLabel.isHidden = false
+            fieldErrorHeight?.isActive = false
+        case .form:
+            fieldErrorLabel.text = Self.formErrorText
+            fieldErrorLabel.isHidden = false
+            fieldErrorHeight?.isActive = false
+        }
         // 审计视觉 04/10：错误显隐即边框态变化，同步刷新两框边框。
         refreshTitleBorder()
         refreshDetailBorder()
     }
 
-    /// 审计视觉 04/10：输入框边框三态（BearyInputContainer 同款）——错误态（字段级红字在显）
-    /// 才画 1pt 红边框并清掉阴影；聚焦走聚焦阴影、边框 0；其余态边框 0、无阴影。
-    private var fieldErrorShown: Bool { !fieldErrorLabel.isHidden }
+    /// 11 轮审计第 10 项：服务端 bad wish 归因——服务端只回单一 'bad wish'
+    ///（worker.js:9129），不带字段信息；按服务端口径重算当前两字段：标题
+    /// trim 后判空／>100、详情不 trim／>2000，长度按 JS .length（UTF-16 计，
+    /// 与 Swift .count 口径不同，多 emoji 时两端计数会差出一位）；能定位到
+    /// 字段才标该框，都合规时（如入库后回读失败）归表单级错误，不标任一框。
+    private func fieldError(forBadWish title: String, detail: String) -> WishFieldError {
+        if title.isEmpty || title.utf16.count > Self.titleLimit { return .title }
+        if detail.utf16.count > Self.detailLimit { return .detail }
+        return .form
+    }
 
+    /// 审计视觉 04/10：输入框边框三态（BearyInputContainer 同款）——仅当错误
+    /// 归因到本字段时才画 1pt 红边框并清掉阴影；聚焦走聚焦阴影、边框 0；
+    /// 其余态边框 0、无阴影。表单级错误不标任一框。
     private func refreshTitleBorder() {
-        if fieldErrorShown {
+        if wishFieldError == .title {
             titleField.layer.borderWidth = 1
             titleField.layer.bearyDynamicBorderColor = BearyColors.red
             titleField.layer.shadowOpacity = 0
@@ -1303,7 +1344,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     }
 
     private func refreshDetailBorder() {
-        if fieldErrorShown {
+        if wishFieldError == .detail {
             detailView.layer.borderWidth = 1
             detailView.layer.bearyDynamicBorderColor = BearyColors.red
             detailView.layer.shadowOpacity = 0
@@ -1317,7 +1358,8 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     }
 
     /// 30：长度提示唯一刷新点——标题/详情计数与超限变红；超限时提交钮禁用
-    /// （服务端同限，客户端先拦，超长 400 的 bad wish 仍由 submitTapped 字段级映射兜底）。
+    /// （服务端同限，客户端先拦；超长 400 的 bad wish 由 submitTapped 按服务
+    /// 端口径重算归因，能定位字段只标该框，否则只显示表单级错误行）。
     private func updateLengthHints() {
         let titleCount = (titleField.text ?? "").count
         let detailCount = detailView.text.count
@@ -1330,7 +1372,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     /// 11：提交钮启用态唯一入口——提交锁期间直接返回，标题变化不得重新启用提交钮。
     @objc private func titleChanged() {
         updateLengthHints()
-        setFieldErrorVisible(false)
+        setWishFieldError(.none)
         guard !isSubmitting else { return }
         let trimmed = (titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let ok = !trimmed.isEmpty && trimmed.count <= Self.titleLimit && detailView.text.count <= Self.detailLimit
@@ -1380,7 +1422,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         guard !title.isEmpty, title.count <= Self.titleLimit, detailView.text.count <= Self.detailLimit else { return }
         let detail = detailView.text ?? ""
         isSubmitting = true
-        setFieldErrorVisible(false)
+        setWishFieldError(.none)
         submitButton.isEnabled = false
         submitButton.alpha = 0.4
         createCloseButton?.isEnabled = false
@@ -1400,10 +1442,11 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
                     self.createCloseButton?.isEnabled = true
                     self.createCloseButton?.alpha = 1
                     self.titleChanged()
-                    // 30：超长 400 'bad wish' 走字段级提示（字段旁红字），不弹通用 toast；
-                    // 其余失败映射不变（not_plus / rate_limited / 通用 toast）。
+                    // 11 轮审计第 10 项：超长 400 'bad wish' 按服务端口径重算归因——
+                    // 能定位到字段只标该框，无法定位只显示表单级错误行、不标任一框；
+                    // 不弹通用 toast；其余失败映射不变（not_plus / rate_limited / 通用 toast）。
                     if case .server(let code, _) = err, code == "bad wish" {
-                        self.setFieldErrorVisible(true)
+                        self.setWishFieldError(self.fieldError(forBadWish: title, detail: detail))
                         return
                     }
                     let message: String
