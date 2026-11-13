@@ -751,7 +751,10 @@ final class BearySettingsViewController: UIViewController {
     /// 圆角 20、行间 1px 分隔线（分隔线通宽，行内容左右 16、上下 14）。
     /// 返回卡片与每行的包容器（包容器用于显隐整行：隐藏行本身仍会留 28pt 内边距，
     /// 故 Plus「内测限免」行须改藏包容器，见 fillPlusDetail）。
-    private func makeGroupCard(title: String?, rows: [UIView]) -> (card: UIView, wrappers: [UIView]) {
+    /// 一并返回行间分隔线：separators[i] 位于 wrappers[i] 与 wrappers[i + 1] 之间；
+    /// 隐藏第 i（i > 0）行时须连同其前分隔线 separators[i - 1] 一并藏，否则留 stray 线
+    /// （第十一轮审计 1：通知提示行与开发者模式行只藏 row，残留 wrap 内边距与分隔线）。
+    private func makeGroupCard(title: String?, rows: [UIView]) -> (card: UIView, wrappers: [UIView], separators: [UIView]) {
         let card = makeCardView()
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -780,6 +783,7 @@ final class BearySettingsViewController: UIViewController {
             stack.addArrangedSubview(titleWrap)
         }
         var wrappers: [UIView] = []
+        var separators: [UIView] = []
         for (index, row) in rows.enumerated() {
             if index > 0 {
                 let separator = UIView()
@@ -789,6 +793,7 @@ final class BearySettingsViewController: UIViewController {
                     separator.heightAnchor.constraint(equalToConstant: 1),
                 ])
                 stack.addArrangedSubview(separator)
+                separators.append(separator)
             }
             let wrap = UIView()
             wrap.translatesAutoresizingMaskIntoConstraints = false
@@ -828,7 +833,7 @@ final class BearySettingsViewController: UIViewController {
             stack.addArrangedSubview(wrap)
             wrappers.append(wrap)
         }
-        return (card, wrappers)
+        return (card, wrappers, separators)
     }
 
     private func makeCardStack(spacing: CGFloat = 12) -> UIStackView {
@@ -3394,6 +3399,9 @@ final class BearySettingsViewController: UIViewController {
     // 开关行沿用音效 / 诊断日志行的样式（标题 15 + 说明 12 灰 + UISwitch，无图标）。
     private var notificationSwitches: [BearyLocalNotifications.Kind: UISwitch] = [:]
     private var notificationHintRow: UIView?
+    /// 通知提示行的包容器与其前分隔线（随提示行同隐同显，见 buildNotificationSection）。
+    private var notificationHintWrapper: UIView?
+    private var notificationHintSeparator: UIView?
 
     private func buildNotificationSection() {
         let items: [(kind: BearyLocalNotifications.Kind, title: String, detail: String)] = [
@@ -3442,6 +3450,17 @@ final class BearySettingsViewController: UIViewController {
         rows.append(hintRow)
         let group = makeGroupCard(title: "通知", rows: rows)
         generalNotifyWrap.addArrangedSubview(group.card)
+        // 第十一轮审计 1：提示行是组内末行——只藏 row 会留 wrap 的 28pt 内边距
+        // 与其前分隔线；改藏 wrapper＋separator＋row 三者（Plus 限免行同款口径）。
+        // 初始即与 row 同藏，权限回包前的异步窗口也不留空白。
+        if let hintIndex = rows.firstIndex(where: { $0 === hintRow }) {
+            notificationHintWrapper = group.wrappers[hintIndex]
+            notificationHintWrapper?.isHidden = true
+            if hintIndex > 0 {
+                notificationHintSeparator = group.separators[hintIndex - 1]
+                notificationHintSeparator?.isHidden = true
+            }
+        }
         refreshNotificationHintRow()
     }
 
@@ -3469,7 +3488,10 @@ final class BearySettingsViewController: UIViewController {
     private func refreshNotificationHintRow() {
         BearyLocalNotifications.shared.fetchAuthorizationStatus { [weak self] status in
             DispatchQueue.main.async { [weak self] in
-                self?.notificationHintRow?.isHidden = (status != .denied)
+                let hidden = (status != .denied)
+                self?.notificationHintRow?.isHidden = hidden
+                self?.notificationHintWrapper?.isHidden = hidden
+                self?.notificationHintSeparator?.isHidden = hidden
             }
         }
     }
@@ -3849,9 +3871,15 @@ final class BearySettingsViewController: UIViewController {
 
     // 开发者模式行（仅开启时可见）：开着时在「数据与反馈」组内出现，点按进开发者模式页。
     private var developerModeRow: UIView?
+    /// 开发者模式行的包容器与其前分隔线（随开发者模式行同隐同显）。
+    private var developerModeWrapper: UIView?
+    private var developerModeSeparator: UIView?
 
     private func refreshDeveloperModeRow() {
-        developerModeRow?.isHidden = !BearyDeveloperMode.shared.isEnabled
+        let hidden = !BearyDeveloperMode.shared.isEnabled
+        developerModeRow?.isHidden = hidden
+        developerModeWrapper?.isHidden = hidden
+        developerModeSeparator?.isHidden = hidden
     }
 
     private func buildDataFeedbackSection() {
@@ -3887,6 +3915,16 @@ final class BearySettingsViewController: UIViewController {
         ]
         let group = makeGroupCard(title: "数据与反馈", rows: rows)
         dataFeedbackWrap.addArrangedSubview(group.card)
+        // 第十一轮审计 1：开发者模式行是组内末行——只藏 row 会留 wrap 的 28pt
+        // 内边距与其前分隔线；改藏 wrapper＋separator＋row 三者（Plus 限免行同款口径）。
+        if let devIndex = rows.firstIndex(where: { $0 === devRow }) {
+            developerModeWrapper = group.wrappers[devIndex]
+            developerModeWrapper?.isHidden = devRow.isHidden
+            if devIndex > 0 {
+                developerModeSeparator = group.separators[devIndex - 1]
+                developerModeSeparator?.isHidden = devRow.isHidden
+            }
+        }
     }
 
     @objc private func openFeedbackPage() {
