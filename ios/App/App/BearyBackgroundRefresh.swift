@@ -79,8 +79,26 @@ enum BearyBackgroundRefresh {
     /// 拉广场首屏 → 写回快照 → 有新头条则提醒 → 重算四种本地提醒。
     /// 回包线程不固定，收尾一律回主线程。
     private static func runOnce(completion: @escaping (Bool) -> Void) {
-        let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id)
+        // 审计第 17 轮 #3：发起时同时捕获账号 ID 与鉴权代次（BearyAPI
+        // isStaleAccountLoad 同款双重校验：只比账号 ID 不够，A→B→A 快切后
+        // 旧账号回包时 ID 再次相等；epoch 在登录态变迁时单调 +1，旧回包凭
+        // 代次丢弃）。快照读盘与网络回包都可能跨过一次切号：发请求前与
+        // 写盘前各核对一次，任一检查点发现已变即放弃本轮——不发新会话的
+        // 请求、不把回包写进旧账号的桶、不发提醒、不重算提醒。放弃不是
+        // 失败（下一轮已排程，会在新账号下重跑），故 completion(true)。
+        let requestAccountId = SessionManager.shared.currentUser?.id
+        let requestEpoch = BearyAPI.shared.authEpoch
+        let bucket = BearyFeedCache.bucket(userId: requestAccountId)
         BearyFeedCache.load(bucket: bucket) { snapshot in
+            // 检查点 1（发请求前）：读盘期间切号 → 之后发出的请求会用新会话，
+            // 回包却仍写旧桶；直接放弃，不发请求。
+            guard !BearyAPI.isStaleAccountLoad(
+                requestAccountId: requestAccountId, requestEpoch: requestEpoch,
+                currentAccountId: SessionManager.shared.currentUser?.id,
+                currentEpoch: BearyAPI.shared.authEpoch) else {
+                completion(true)
+                return
+            }
             let seenHead = BearyFeedCache.visibleHead(snapshot?.entries ?? []).first
             BearyAPI.shared.fetchEntries(scope: .plaza, limit: BearyFeedCache.snapshotEntryLimit) { result in
                 DispatchQueue.main.async {
@@ -88,6 +106,15 @@ enum BearyBackgroundRefresh {
                     case .failure:
                         completion(false)
                     case .success(let list):
+                        // 检查点 2（写盘前）：请求在途期间切号 → 回包属于旧会话，
+                        // 不得写进旧桶、不得按旧账号判“自己的篇”、不得重算提醒。
+                        guard !BearyAPI.isStaleAccountLoad(
+                            requestAccountId: requestAccountId, requestEpoch: requestEpoch,
+                            currentAccountId: SessionManager.shared.currentUser?.id,
+                            currentEpoch: BearyAPI.shared.authEpoch) else {
+                            completion(true)
+                            return
+                        }
                         let entries = list.entries ?? []
                         let fresh = BearyFeedCache.visibleHead(entries)
                         guard let latest = fresh.first else {
@@ -99,7 +126,7 @@ enum BearyBackgroundRefresh {
                         // 无快照基线（首次后台跑）只记不提醒，不把旧内容当新内容推。
                         if let seen = seenHead, isNewer(latest, than: seen) {
                             // 自己的新篇不提醒（刚发布完就弹“广场有新日记”是噪音）。
-                            if latest.authorId != SessionManager.shared.currentUser?.id {
+                            if latest.authorId != requestAccountId {
                                 postPlazaNewNotification()
                             }
                         }
@@ -112,14 +139,23 @@ enum BearyBackgroundRefresh {
         }
     }
 
-    /// 头条是否比已见头条新：publishedAt 更晚，或同毫秒下 id 不同
-    /// （同毫秒连发两篇时只比时间会漏第二篇）。
+    /// 头条是否比已见头条新：按服务端广场排序 published_at DESC, id DESC
+    /// （见 BearyAPI.swift 顶部约定）比较——publishedAt 更晚即新；同毫秒
+    /// 时只有 id 更大（服务端序更靠前）才算新。旧口径“同毫秒 id 不同即新”
+    /// 会误报：原头条被删或转私密后，同毫秒排在它后面的旧篇补位到头条，
+    /// id 不同但序更靠后，并不是新内容。
+    /// 日记 id 为 `b_` + UUID 文本（服务端 TEXT 列），SQLite `id DESC` 是
+    /// 字典序，与 Swift String 比较同口径；id 缺失时无法定序，沿用旧口径
+    /// （不同即新），不静默漏报。
     private static func isNewer(_ latest: Entry, than seen: Entry) -> Bool {
         guard let latestAt = latest.publishedAt, let seenAt = seen.publishedAt else {
             return latest.id != seen.id
         }
         if latestAt != seenAt { return latestAt > seenAt }
-        return latest.id != seen.id
+        guard let latestId = latest.id, let seenId = seen.id else {
+            return latest.id != seen.id
+        }
+        return latestId > seenId
     }
 
     /// 立即提醒一条（1 秒后触发，不走重算、不改排程；与
