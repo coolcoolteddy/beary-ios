@@ -147,6 +147,10 @@
 		5248D64A4F66BE386B48299F /* gondola.png in Resources */ = {isa = PBXBuildFile; fileRef = FC056EBEC9C7471EF1CC7D35 /* gondola.png */; };
 		D7F7C2346FCC7058EC3C8CC0 /* floatplane.png in Resources */ = {isa = PBXBuildFile; fileRef = 77EBD303DE6467641446EC80 /* floatplane.png */; };
 		3AB193F0F7DEDDF8D243AE44 /* kite.png in Resources */ = {isa = PBXBuildFile; fileRef = 43B1FA4DBAD92CAC036BE233 /* kite.png */; };
+		D24097D982234149AB56F3F3 /* newyear-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = 446484BF1D394650B042A1A3 /* newyear-poster.png */; };
+		E3C54301180C4502811503AF /* newyear-depth.png in Resources */ = {isa = PBXBuildFile; fileRef = 5E2AF08B5A4043B39D626DA5 /* newyear-depth.png */; };
+		ECD58093868B46C68C867D25 /* newyear-embers.png in Resources */ = {isa = PBXBuildFile; fileRef = 5C11CF9CDA5D4060A9412DDA /* newyear-embers.png */; };
+		4DE1CD9079B8445F96496405 /* newyear-egg-star.png in Resources */ = {isa = PBXBuildFile; fileRef = 28AF9B45D275477ABEBA3ABA /* newyear-egg-star.png */; };
 		D395C5A456F0D264FAA5D081 /* china-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = F61DF01274DB03D3F0AB6FE0 /* china-poster.png */; };
 		1938F81450975213C5CE2010 /* japan-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = B18573473A12570FBD9DB089 /* japan-poster.png */; };
 		C73ABC14EF8C1B595064A827 /* usa-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = 95FB0D0AFDFEF9F5C38C947B /* usa-poster.png */; };
@@ -432,6 +436,10 @@
 		FC056EBEC9C7471EF1CC7D35 /* gondola.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/gondola.png; sourceTree = "<group>"; };
 		77EBD303DE6467641446EC80 /* floatplane.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/floatplane.png; sourceTree = "<group>"; };
 		43B1FA4DBAD92CAC036BE233 /* kite.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/kite.png; sourceTree = "<group>"; };
+		446484BF1D394650B042A1A3 /* newyear-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/newyear-poster.png; sourceTree = "<group>"; };
+		5E2AF08B5A4043B39D626DA5 /* newyear-depth.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/newyear-depth.png; sourceTree = "<group>"; };
+		5C11CF9CDA5D4060A9412DDA /* newyear-embers.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/newyear-embers.png; sourceTree = "<group>"; };
+		28AF9B45D275477ABEBA3ABA /* newyear-egg-star.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/newyear-egg-star.png; sourceTree = "<group>"; };
 		C69BECF80F639F3B86A1C5F7 /* BearyFestivalWallpapers.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = BearyFestivalWallpapers.json; sourceTree = "<group>"; };
 		37B9943EDEF2C3A792782E9E /* agree_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree_dark.json; sourceTree = "<group>"; };
 		4ED6BF206A0F34DF117D855A /* crown.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieCrown/crown.json; sourceTree = "<group>"; };
@@ -894,6 +902,10 @@
 				FC056EBEC9C7471EF1CC7D35 /* gondola.png */,
 				77EBD303DE6467641446EC80 /* floatplane.png */,
 				43B1FA4DBAD92CAC036BE233 /* kite.png */,
+				446484BF1D394650B042A1A3 /* newyear-poster.png */,
+				5E2AF08B5A4043B39D626DA5 /* newyear-depth.png */,
+				5C11CF9CDA5D4060A9412DDA /* newyear-embers.png */,
+				28AF9B45D275477ABEBA3ABA /* newyear-egg-star.png */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -1163,6 +1175,10 @@
 				5248D64A4F66BE386B48299F /* gondola.png in Resources */,
 				D7F7C2346FCC7058EC3C8CC0 /* floatplane.png in Resources */,
 				3AB193F0F7DEDDF8D243AE44 /* kite.png in Resources */,
+				D24097D982234149AB56F3F3 /* newyear-poster.png in Resources */,
+				E3C54301180C4502811503AF /* newyear-depth.png in Resources */,
+				ECD58093868B46C68C867D25 /* newyear-embers.png in Resources */,
+				4DE1CD9079B8445F96496405 /* newyear-egg-star.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

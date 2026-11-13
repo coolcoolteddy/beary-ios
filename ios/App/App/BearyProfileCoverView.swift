@@ -3,7 +3,7 @@ import ImageIO
 import UIKit
 
 public enum ProfileCoverTheme: String, CaseIterable {
-    case china, usa, japan, germany, canada, korea
+    case china, usa, japan, germany, canada, korea, newyear
 }
 
 public final class ProfileCoverView: UIView {
@@ -37,6 +37,11 @@ public final class ProfileCoverView: UIView {
         case .germany: names.append("gondola")
         case .canada: names.append("floatplane")
         case .korea: names.append("kite")
+        case .newyear:
+            // 元旦：动态物是金色烟花余烬一张 PNG；彩蛋一张（左上夜空一朵金色
+            // 烟花，中心 (300, 65)），与第 7 帧对齐。
+            names.append("newyear-embers")
+            names.append("newyear-egg-burst")
         }
         var images: [String: UIImage] = [:]
         for name in names {
@@ -279,9 +284,45 @@ public final class ProfileCoverView: UIView {
                 self.stroke(ctx, [CGPoint(x: 0, y: yy + 1), CGPoint(x: 0, y: yy - 7)],
                             color: blue, width: 1.8, alpha: self.egg)
             }
+        case .newyear:
+            drawNewyear(ctx, depth: depth, vertical: vertical, padded: padded)
         case .germany, .canada, .korea:
             drawAdditionalTheme(ctx, x: x, y: y, travel: travel, midX: midX, nearX: nearX, vertical: vertical)
         }
+    }
+
+    /// 元旦（中式木刻版画、深蓝夜＋金色烟花）：图集只含背景，余烬由动态物层单独贴；
+    /// 彩蛋一张是与第 7 帧对齐的整帧透明层（左上夜空一朵金色烟花，中心 (300, 65)）。
+    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
+    /// v26 模型：烟花按远近分三层视差——大红烟花最近，帧移 3(f−6) px（±18）；
+    /// (580,132) 那朵小白烟花居中，帧移 2(f−6) px（±12）；顶部小白烟花群最远，
+    /// 帧移 1(f−6) px（±6）。桥/小镇/行人/河面/倒影全在 far 层静止。
+    /// v22 曾把河面倒影也放进结构层，倒影紧贴桥左拱、动起来像桥在动，
+    /// 且它遮住的 inpaint 是抹平的水面、露出时像一块糊斑，v23 已去掉。
+    /// v24 曾把中央高楼暖色墙面抓进红掩膜抹糊，改迟滞掩膜后已修。
+    /// App 侧动态层跟图集同速：余烬是近层大红烟花的火星（18*depth），
+    /// 彩蛋是远层小金烟花（6*depth）。
+    /// 余烬是烟花的火星，跟烟花同速（structureX），不再用主体速率 24*depth。
+    private func drawNewyear(_ ctx: CGContext, depth: CGFloat, vertical: CGFloat, padded: CGRect) {
+        let scaleX = padded.width / 1024
+        let scaleY = padded.height / 323
+        // 各层位移与图集帧内 baked 的一致（帧 f=(depth+1)*6）：近层 3(f−6) px
+        // 即 18*depth，中层 2(f−6) px 即 12*depth，远层 1(f−6) px 即 6*depth。
+        // 余烬是近层大红烟花的火星，跟近层同速；彩蛋是远层小金烟花，跟远层同速。
+        let nearX = 18 * depth * scaleX
+        let farX = 6 * depth * scaleX
+        // 彩蛋：左上夜空一朵金色烟花，倾斜保持 0.45 秒后随 egg 淡入（触发走共享
+        // step 逻辑，与圣诞同款；每次进页 restartVisit 可再触发）。
+        if egg > 0.001 {
+            bitmap("newyear-egg-burst", in: ctx,
+                   center: CGPoint(x: padded.midX + farX, y: padded.midY),
+                   width: padded.width, height: padded.height, angle: 0, alpha: egg)
+        }
+        // 余烬动态物：PNG 左上角对帧坐标 (212, 0)、600×323，中心即帧中心
+        // (512, 161.5)；padded.midY 已含 vertical，不再另加。跟近层大红烟花同速 nearX。
+        bitmap("newyear-embers", in: ctx,
+               center: CGPoint(x: padded.midX + nearX, y: padded.midY),
+               width: 600 * scaleX, height: 323 * scaleY, angle: 0, alpha: 1)
     }
 
     private func drawAdditionalTheme(_ ctx: CGContext, x: CGFloat, y: CGFloat, travel: CGFloat,
@@ -450,7 +491,7 @@ public final class ProfileCoverView: UIView {
 
 /// 封面底图缓存：读盘＋解码只在后台串行队列做，主线程只贴图。
 /// 有界：最多留 3 张（最近用的），超了逐出最久未用的；收到内存警告时清库。
-/// 每张全幅图集 5120×969 ≈ 19 MiB，6 张全留理论约 113.6 MiB；封顶 3 张后
+/// 每张全幅图集 5120×969 ≈ 19 MiB，7 张全留理论约 133 MiB；封顶 3 张后
 /// 稳态约 57 MiB。preload 保留：设置页进页仍预热，逐出只发生在解码完成
 /// 入库时；已显示的封面持有自己的 backdrop 强引用，清库/逐出不会让首屏
 /// 变空白；未命中时 draw() 走 poster 兜底（与原来 backdrop == nil 的分支
@@ -533,7 +574,7 @@ private final class CoverBackdropCache: NSObject {
     /// 后台队列做、不碰主线程；帧切分按底图实际尺寸动态算，不用改 drawBackdrop。
     /// 第十轮 07：显式立即解码（kCGImageSourceShouldCacheImmediately），像素在
     /// 后台队列解完再交付主线程，首帧绘制不回主线程解压；须配合按需加载＋内存
-    /// 预算，六张不一次全解。
+    /// 预算，七张不一次全解。
     private static func decoded(theme: ProfileCoverTheme) -> CGImage? {
         guard let url = Bundle.main.url(forResource: theme.rawValue + "-depth", withExtension: "png"),
               let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
