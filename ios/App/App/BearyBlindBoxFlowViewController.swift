@@ -1057,11 +1057,28 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             row.onTap = { [weak self] in
                 guard let self = self, let entryId = entry.id else { return }
                 if BlindBoxPool.eligibility(for: entry) != .eligible { return }
+                let oldSelectedId = self.selectedEntryId
                 self.selectedEntryId = entryId
-                self.renderPoolRows()
+                self.updatePoolSelectionRows(oldSelectedId: oldSelectedId, newSelectedId: entryId)
                 self.setStep(.pool)
             }
             poolStack.addArrangedSubview(row)
+        }
+    }
+
+    /// 选篇只刷新新旧两行：原选中行与新选中行就地重配选中态，不拆整表。
+    /// 行视图与 poolEntries 按下标一一对应；对不上时回落整表重建。
+    /// 整表重建仍留给列表变化处（预取完成／中断／失败）。
+    private func updatePoolSelectionRows(oldSelectedId: String?, newSelectedId: String) {
+        guard !poolEntries.isEmpty, poolStack.arrangedSubviews.count == poolEntries.count else {
+            renderPoolRows()
+            return
+        }
+        for (index, entry) in poolEntries.enumerated() {
+            guard let entryId = entry.id, !entryId.isEmpty,
+                  entryId == oldSelectedId || entryId == newSelectedId,
+                  let row = poolStack.arrangedSubviews[index] as? BlindBoxPoolRowView else { continue }
+            row.configure(entry: entry, selected: entryId == newSelectedId)
         }
     }
 
