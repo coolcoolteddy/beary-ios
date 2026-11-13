@@ -176,7 +176,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
         self.initialIndex = self.currentIndex
         super.init(nibName: nil, bundle: nil)
-        // E-G12：网页灯箱开场 200ms 淡入；关场见 BearyImageViewerReturnAnimator
+        // E-G12：网页灯箱开场 0.26s 淡入；关场见 BearyImageViewerReturnAnimator
         //（回到原处动效，缺原处时淡出兜底），不用默认滑入滑出。
         modalPresentationStyle = .fullScreen
         transitioningDelegate = self
