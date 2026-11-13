@@ -6491,7 +6491,7 @@ class BearyTimelineViewController: UIViewController {
                                 case .success:
                                     strongSelf.showTimelineToast(message: "公开失败，原日记已恢复私密")
                                 case .failure:
-                                    strongSelf.showTimelineToast(message: "公开失败，原日记恢复失败，请检查")
+                                    strongSelf.showTimelineToast(message: BearyRepeatedCopy.publishFailedRestoreFailed)
                                 }
                             }
                         }

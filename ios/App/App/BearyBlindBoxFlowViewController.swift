@@ -864,7 +864,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             return
         }
         if body.used == true {
-            setStep(.placeholder("今日已换过 1 次，明天再来"))
+            setStep(.placeholder(BearyRepeatedCopy.blindBoxAlreadySwappedToday))
             return
         }
         if let pooled = body.pooledEntryId, pooled.isEmpty == false {
@@ -1326,7 +1326,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                         return
                     }
                     if case .http(let code, _) = error, code == 409 {
-                        BearyToast.show(in: self.view, message: "今日已换过 1 次，明天再来")
+                        BearyToast.show(in: self.view, message: BearyRepeatedCopy.blindBoxAlreadySwappedToday)
                         self.loadInitial()
                         return
                     }
@@ -1554,10 +1554,10 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         case .unauthorized, .authFailure:
             return "登录已过期，请重新登录"
         case .notFound:
-            return "盲盒暂时无法加载，请稍后重试"
+            return BearyRepeatedCopy.blindBoxLoadFailed
         case .http(let code, _):
-            if code == 404 { return "盲盒暂时无法加载，请稍后重试" }
-            if code == 409 { return "今日已换过 1 次，明天再来" }
+            if code == 404 { return BearyRepeatedCopy.blindBoxLoadFailed }
+            if code == 409 { return BearyRepeatedCopy.blindBoxAlreadySwappedToday }
             return "加载失败，请重试"
         default:
             return "网络不稳定，请稍后再试"
@@ -1607,12 +1607,12 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         case .unauthorized, .authFailure:
             return "登录已过期，请重新登录"
         case .notFound:
-            return "盲盒暂时无法加载，请稍后重试"
+            return BearyRepeatedCopy.blindBoxLoadFailed
         case .server(let code, _):
             return fallback
         case .http(let code, let snippet):
-            if code == 404 { return "盲盒暂时无法加载，请稍后重试" }
-            if code == 409 { return "今日已换过 1 次，明天再来" }
+            if code == 404 { return BearyRepeatedCopy.blindBoxLoadFailed }
+            if code == 409 { return BearyRepeatedCopy.blindBoxAlreadySwappedToday }
             return fallback
         default:
             return fallback
