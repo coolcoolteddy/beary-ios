@@ -961,7 +961,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             loadFailedStateView.isHidden = false
         } else if messages.isEmpty {
             emptyLabel.isHidden = true
-            emptyStateView.configure(kind: .empty, title: "还没有消息", subtitle: "发条消息吧", iconName: nil, actionTitle: nil)
+            emptyStateView.configure(kind: .empty, title: "还没有消息", subtitle: "发第一条纯文字消息吧", iconName: nil, actionTitle: nil)
             emptyStateView.isHidden = false
             loadFailedStateView.isHidden = true
         } else {

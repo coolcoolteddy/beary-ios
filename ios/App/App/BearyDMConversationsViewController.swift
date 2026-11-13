@@ -249,21 +249,21 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     var onContentHeightChanged: ((CGFloat) -> Void)?
     private var lastReportedContentHeight: CGFloat = -1
 
-    /// 空态自适应底线：默认字号下空文案折算后低于 160，走 160 底线；
+    /// 空态自适应底线：默认字号下空内容折算后低于 160，走 160 底线；
     /// 大字号下空文案换行变高，底线随之撑高、不钉死 160。
     /// #711 修红：#706 已退役旧 emptyLabel，空／失败态现由 conversationStateView
     /// 承载（其标题／副文案为内部 label，外部量不到）；此处按状态视图的实际字号
-    /// （标题 15 粗体、副文案 12）与空态文案重算——空态文案比失败态长，取空态
-    /// 作上限，两态共用同一底线，与旧 emptyLabel 的覆盖口径一致。
+    /// （标题 15 粗体）与空态内容重算——§12 空态现为主句＋「去找好友」动作钮
+    /// （StateView 默认 secondaryOutline 常规档，高 44），副文案已去掉；
+    /// 48 余量仍盖住失败态多出的副文案行，两态共用同一底线。
     private var adaptiveEmptyMinHeight: CGFloat {
         guard view.bounds.width > 0 else { return 160 }
         let textWidth = max(0, view.bounds.width - 64)
         let size = CGSize(width: textWidth, height: CGFloat.greatestFiniteMagnitude)
         let titleFont = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
-        let subtitleFont = BearyDynamicType.captionFont()
         let titleHeight = ("还没有私信" as NSString).boundingRect(with: size, options: [.usesLineFragmentOrigin], attributes: [.font: titleFont], context: nil).height
-        let subtitleHeight = ("发条消息吧" as NSString).boundingRect(with: size, options: [.usesLineFragmentOrigin], attributes: [.font: subtitleFont], context: nil).height
-        return max(160, titleHeight + 4 + subtitleHeight + 48)
+        let actionHeight = BearyButtonStyle.secondaryOutline(.regular).height
+        return max(160, titleHeight + 4 + actionHeight + 48)
     }
 
     /// 嵌入消息页时调用：隐藏返回钮并把组头顶栏整条折叠（“私信”标题随顶栏去掉），
@@ -532,7 +532,9 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             conversationStateView.isHidden = false
             setRefreshFailedBannerVisible(false)
         } else if conversations.isEmpty {
-            conversationStateView.configure(kind: .empty, title: "还没有私信", subtitle: "发条消息吧", iconName: nil, actionTitle: nil, onAction: nil)
+            // §12：空态主句「还没有私信」，副文案去掉，动作「去找好友」回好友
+            // 列表（onBack 在独立页接 showPage(.friends)；嵌入消息页时本视图不渲染）。
+            conversationStateView.configure(kind: .empty, title: "还没有私信", subtitle: nil, iconName: nil, actionTitle: "去找好友", onAction: { [weak self] in self?.onBack?() })
             conversationStateView.isHidden = false
             setRefreshFailedBannerVisible(false)
         } else {
