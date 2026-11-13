@@ -999,12 +999,14 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                         self.loadPoolEntriesPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
                         return
                     }
-                    // 触顶（第八轮审计 02，地图 #944 同款口径）：本批 40 页已满、
-                    // 末页仍满页，后面可能还有——记 poolCapped，留触顶页末尾游标
-                    // 供按需续拉新一批；末页满页却无游标时清旧游标、不留入口。
+                    // 触顶（第八轮审计 02，地图 #944 同款口径）：末页仍满页，后面
+                    // 可能还有——记 poolCapped，留末页游标供按需续拉新一批；末页
+                    // 满页却无游标时清旧游标、不留入口。是否满页只看末页篇数，
+                    // 不看停在哪一页：找够 20 篇提前停时末页也可能满页，游标同
+                    // 样要留，否则更早的日记再也进不来（审计 16 项第 4 项）。
                     // 本批拉完即清中断态（续拉成功说明链已接上）。
                     self.poolInterrupted = false
-                    self.poolCapped = pageEntries.count >= 50 && page >= 10
+                    self.poolCapped = pageEntries.count >= 50
                     if self.poolCapped, let cursor = last?.createdAt, let lastId = last?.id {
                         self.poolResumeBefore = cursor
                         self.poolResumeBeforeId = lastId
