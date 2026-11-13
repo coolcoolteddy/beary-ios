@@ -56,8 +56,9 @@ enum BearySoundPlayer {
     private static let prewarmSounds: [BearySound] = BearySound.allCases
     /// 空闲池：只在后台队列与主线程清理闭包之间共享，一律经 poolLock 访问。
     private static var pooledPlayers: [BearySound: [AVAudioPlayer]] = [:]
-    /// 同音上次播放时刻（0.1s 节流用，只经 poolLock 访问）。
-    private static var lastPlayAt: [BearySound: Date] = [:]
+    /// 同音上次播放时刻（0.1s 节流用，只经 poolLock 访问；单调时钟 systemUptime，
+    /// 不受系统时间回拨影响）。
+    private static var lastPlayAt: [BearySound: TimeInterval] = [:]
     private static var prewarmScheduled = false
     private static let poolLock = NSLock()
     /// 后台串行队列：文件 IO + 解码（Bundle.url / AVAudioPlayer(contentsOf:) /
@@ -80,8 +81,8 @@ enum BearySoundPlayer {
         // 审计动效组：高频短音 0.1s 节流——同音 0.1s 内重复触发直接丢弃
         // （震动不节流；池复用仍负责同音 burst 的播放器复用）。
         poolLock.lock()
-        let now = Date()
-        if let last = lastPlayAt[sound], now.timeIntervalSince(last) < 0.1 {
+        let now = ProcessInfo.processInfo.systemUptime
+        if let last = lastPlayAt[sound], now - last < 0.1 {
             poolLock.unlock()
             return
         }
@@ -133,14 +134,14 @@ enum BearySoundPlayer {
     /// 3) 仍是该音效最近一次点按（其后若已有更新点按走池播出，本次旧请求
     ///    不再叠播，只回池）。
     /// 设置开关在建好后复核：关了就不播（回池无害，下次开时可命中）。
-    private static func scheduleMissedSoundBuild(_ sound: BearySound, tappedAt: Date) {
+    private static func scheduleMissedSoundBuild(_ sound: BearySound, tappedAt: TimeInterval) {
         poolQueue.async {
             guard let built = buildPlayer(for: sound) else { return }
             DispatchQueue.main.async {
                 let isFresh: Bool = {
                     guard isEnabled else { return false }
                     guard UIApplication.shared.applicationState == .active else { return false }
-                    guard Date().timeIntervalSince(tappedAt) < 0.5 else { return false }
+                    guard ProcessInfo.processInfo.systemUptime - tappedAt < 0.5 else { return false }
                     poolLock.lock()
                     let latest = lastPlayAt[sound]
                     poolLock.unlock()
