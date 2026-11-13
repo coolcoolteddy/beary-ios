@@ -1396,6 +1396,19 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         view.layer.add(shake, forKey: "bearyBlindBoxDenyShake")
     }
 
+    /// 摇头目标必须是当前在树上的 chip：renderEmoteChips() 全量重建，
+    /// 回调闭包里捕获的旧 chip 在乐观渲染时已离树，摇它看不见。
+    /// 失败回滚重渲染后按 emoteKey 找新 chip；已摘下（计数归 0）时摇整行。
+    private func shakeEmoteChip(forKey key: String) {
+        for sub in emoteStack.arrangedSubviews {
+            if let chip = sub as? BlindBoxEmoteChipButton, chip.emoteKey == key {
+                playDenyShake(on: chip)
+                return
+            }
+        }
+        playDenyShake(on: emoteScroll)
+    }
+
     @objc private func emoteChipTapped(_ sender: UIButton) {
         guard let chip = sender as? BlindBoxEmoteChipButton, chip.emoteKey.isEmpty == false, reactBusy == false, let exchangeId = exchangeId else { return }
         let key = chip.emoteKey
@@ -1419,7 +1432,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 case .failure:
                     self.receivedEmotes = previous
                     self.renderEmoteChips()
-                    self.playDenyShake(on: chip)
+                    self.shakeEmoteChip(forKey: key)
                     BearyToast.show(in: self.view, message: "回应失败，请重试")
                 }
             }
