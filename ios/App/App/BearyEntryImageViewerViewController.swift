@@ -176,7 +176,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
         self.initialIndex = self.currentIndex
         super.init(nibName: nil, bundle: nil)
-        // E-G12：网页灯箱开场 200ms 淡入；关场见 BearyImageViewerReturnAnimator
+        // E-G12：网页灯箱开场 0.26s 淡入；关场见 BearyImageViewerReturnAnimator
         //（回到原处动效，缺原处时淡出兜底），不用默认滑入滑出。
         modalPresentationStyle = .fullScreen
         transitioningDelegate = self
@@ -1489,7 +1489,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 }
 
-/// 网页灯箱同款纯透明度转场：只做开场 200ms 淡入。
+/// 网页灯箱同款纯透明度转场：只做开场 0.26s 淡入。
 private final class BearyImageViewerFadeAnimator: NSObject, UIViewControllerAnimatedTransitioning {
     private let presenting: Bool
 
@@ -1498,7 +1498,7 @@ private final class BearyImageViewerFadeAnimator: NSObject, UIViewControllerAnim
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return 0.25
+        return BearyMotion.normal
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -1534,7 +1534,7 @@ private final class BearyImageViewerReturnAnimator: NSObject, UIViewControllerAn
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return 0.25
+        return BearyMotion.normal
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
