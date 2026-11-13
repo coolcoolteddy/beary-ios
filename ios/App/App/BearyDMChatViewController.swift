@@ -1134,6 +1134,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     // 两路共享同一套刷新尾巴（锚点保位、新消息 pill、重标已读）。
                     let applyMerged: ([BearyAPI.DMMessage]) -> Void = { [weak self] merged in
                         guard let self = self else { return }
+                        // 切号夹在网络回包与落盘合并之间时，旧合并结果不得改表：
+                        // 回包时的校验已过去，更新界面前再验一次账号与代次。
+                        guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else { return }
                         let pending = self.pendingTemps()
                         self.messages = merged
                         self.reconcilePendingSends(pending)
@@ -1194,6 +1197,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     // 结果回主线程再分路；主线程不再同步读盘。
                     BearyDMStore.isCorrupt(accountId: self.storeAccountId) { [weak self] corrupt in
                         guard let self = self else { return }
+                        // 落盘回调在后台队列跑：切号夹在回包与回调之间时旧结果不得
+                        // 刷新界面、不得弹 toast，更新界面前再验一次账号与代次。
+                        guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else { return }
                         if corrupt {
                             // A2：旧库暂时读不出——不调 saveMessages（空字典重建整份
                             // 账号档案会抹掉其他会话的本地历史），也不从损坏的库重读
@@ -1207,6 +1213,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                             // 下拉刷新可重试（重拉即重写盘）；空消息时失败态走加载失败重试入口。
                             BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched) { [weak self] merged, saved in
                                 guard let self = self else { return }
+                                // 同上：落盘合并回包前再验一次账号与代次，旧结果不得
+                                // 改表、不得置失败态、不得弹 toast。
+                                guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else { return }
                                 applyMerged(merged)
                                 if !saved {
                                     self.loadFailed = true
