@@ -126,6 +126,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     // 用过滤后末条当游标会把已回包的行重拉一遍，LIMIT 截断下还可能卡住进度）。
     private var isLoadingMore = false
     private var loadMoreFailed = false
+    /// 第 14 轮审计 6：按组保留翻页失败态——重试只补失败的组，不重发已成功组。
+    private var loadMoreFailedPublic = false
+    private var loadMoreFailedMine = false
+    private var loadMoreFailedUsers = false
     /// 尾行重试当前是翻页重试（true）还是整搜重试（false，见 showFailedStateKeepingResults）。
     private var searchFooterRetryIsLoadMore = false
     private var currentLoadMoreTasks: [URLSessionDataTask] = []
@@ -1005,7 +1009,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // sweep32-2：尾行翻页失败的重试只重跑翻页（loadMore 再试），不重跑整搜；
         // 其余失败态仍按网页口径立即重跑上一次关键词，不走防抖。
         if loadMoreFailed && searchFooterRetryIsLoadMore {
-            loadMore()
+            loadMore(retryFailedOnly: true)
             return
         }
         runSearch(query: lastQuery)
@@ -1025,14 +1029,26 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 某路失败时已成功路的结果照常合并，尾行亮翻页重试（只重跑翻页）；
     /// .cancelled（新搜索已取消本批翻页）不计失败、不亮尾行。
     /// 新搜索会使 searchSeq 变化，旧翻页回包凭序号丢弃，不碰 UI。
-    private func loadMore() {
+    /// 第 14 轮审计 5：结算只由完成回调做——request 在开发者模拟断网/500
+    /// 时同步调失败回调并返回 nil，nil 任务分支再扣一次 pending 会把同一路
+    /// 结算两次；完成回调必调一次（含模拟模式），故不另扣。
+    /// 第 14 轮审计 6：retryFailedOnly 时只发失败组，已成功组等下次正常翻页。
+    private func loadMore(retryFailedOnly: Bool = false) {
         guard showingResults, !isLoadingMore else { return }
         guard let query = lastRenderedQuery, !query.isEmpty else { return }
         guard var merged = lastRenderedData else { return }
         guard searchHasMorePublic || searchHasMoreMine || searchHasMoreUsers else { return }
+        // 重试只补失败组：无失败组时直接返回，不亮加载态。
+        guard !retryFailedOnly || loadMoreFailedPublic || loadMoreFailedMine || loadMoreFailedUsers else { return }
         isLoadingMore = true
         loadMoreFailed = false
         searchFooterRetryIsLoadMore = false
+        // 正常翻页重算各组失败态；重试不清除——选组要靠它。
+        if !retryFailedOnly {
+            loadMoreFailedPublic = false
+            loadMoreFailedMine = false
+            loadMoreFailedUsers = false
+        }
         updateSearchFooter()
         let seq = searchSeq
         var pending = 0
@@ -1074,7 +1090,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             self.updateSearchFooter()
         }
         // 公开组下一批：before + before_id（created_at DESC + id DESC）。
-        if searchHasMorePublic, let before = searchPublicCursorBefore, let beforeId = searchPublicCursorId {
+        // 第 14 轮审计 6：重试只发失败组。
+        if searchHasMorePublic, let before = searchPublicCursorBefore, let beforeId = searchPublicCursorId, !retryFailedOnly || loadMoreFailedPublic {
             pending += 1
             let task = BearyAPI.shared.search(q: query, before: before, beforeId: beforeId) { [weak self] result in
                 DispatchQueue.main.async {
@@ -1082,6 +1099,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                     if seq != self.searchSeq { return }
                     switch result {
                     case .success(let data):
+                        self.loadMoreFailedPublic = false
                         if let entries = data.entries {
                             self.searchHasMorePublic = entries.count == 20
                             if let last = entries.last, let created = last.createdAt, let entryId = last.id {
@@ -1115,6 +1133,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                             // 不计失败，尾行不亮重试。
                         } else {
                             anyFailed = true
+                            self.loadMoreFailedPublic = true
                         }
                     }
                     finishOne()
@@ -1122,12 +1141,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             }
             if let task = task {
                 currentLoadMoreTasks.append(task)
-            } else {
-                pending -= 1
             }
         }
         // “我的”组下一批：与公开组同口径游标，只取 mine。
-        if searchHasMoreMine, let before = searchMineCursorBefore, let beforeId = searchMineCursorId {
+        // 第 14 轮审计 6：重试只发失败组。
+        if searchHasMoreMine, let before = searchMineCursorBefore, let beforeId = searchMineCursorId, !retryFailedOnly || loadMoreFailedMine {
             pending += 1
             let task = BearyAPI.shared.search(q: query, before: before, beforeId: beforeId) { [weak self] result in
                 DispatchQueue.main.async {
@@ -1135,6 +1153,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                     if seq != self.searchSeq { return }
                     switch result {
                     case .success(let data):
+                        self.loadMoreFailedMine = false
                         if let mine = data.mine {
                             self.searchHasMoreMine = mine.count == 20
                             if let last = mine.last, let created = last.createdAt, let entryId = last.id {
@@ -1166,6 +1185,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                         if case .cancelled = error {
                         } else {
                             anyFailed = true
+                            self.loadMoreFailedMine = true
                         }
                     }
                     finishOne()
@@ -1173,12 +1193,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             }
             if let task = task {
                 currentLoadMoreTasks.append(task)
-            } else {
-                pending -= 1
             }
         }
         // 用户组下一批：只传 before_id（id 升序、id > before_id），不传 before。
-        if searchHasMoreUsers, let userCursor = searchUsersCursorId {
+        // 第 14 轮审计 6：重试只发失败组。
+        if searchHasMoreUsers, let userCursor = searchUsersCursorId, !retryFailedOnly || loadMoreFailedUsers {
             pending += 1
             let task = BearyAPI.shared.search(q: query, before: nil, beforeId: "\(userCursor)") { [weak self] result in
                 DispatchQueue.main.async {
@@ -1186,6 +1205,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                     if seq != self.searchSeq { return }
                     switch result {
                     case .success(let data):
+                        self.loadMoreFailedUsers = false
                         if let users = data.users {
                             self.searchHasMoreUsers = users.count == 8
                             if let last = users.last, let userId = last.id {
@@ -1216,6 +1236,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                         if case .cancelled = error {
                         } else {
                             anyFailed = true
+                            self.loadMoreFailedUsers = true
                         }
                     }
                     finishOne()
@@ -1223,8 +1244,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             }
             if let task = task {
                 currentLoadMoreTasks.append(task)
-            } else {
-                pending -= 1
             }
         }
         // 游标缺失导致一路都没发出（防御）：直接复位尾行，不卡加载态。
@@ -1691,6 +1710,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         currentLoadMoreTasks = []
         isLoadingMore = false
         loadMoreFailed = false
+        loadMoreFailedPublic = false
+        loadMoreFailedMine = false
+        loadMoreFailedUsers = false
         searchFooterRetryIsLoadMore = false
         searchHasMorePublic = false
         searchHasMoreMine = false
