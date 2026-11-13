@@ -4875,6 +4875,9 @@ private final class BearyDiagnosticsViewController: UIViewController {
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         copyButton.setTitle("复制全部", for: .normal)
         copyButton.setTitleColor(BearyColors.ink, for: .normal)
+        // 第十轮审计文案 g：未读到日志前先隐藏，reloadLog 按有无日志决定显隐；
+        // 按钮标题恒为「复制全部」，不把说明文字塞进操作按钮。
+        copyButton.isHidden = true
         copyButton.titleLabel?.font = BearyDynamicType.smallActionFont()
         copyButton.titleLabel?.adjustsFontForContentSizeCategory = true
         copyButton.addTarget(self, action: #selector(copyTapped), for: .touchUpInside)
@@ -4970,12 +4973,13 @@ private final class BearyDiagnosticsViewController: UIViewController {
             if lines.isEmpty {
                 self.textView.text = "暂无诊断日志"
                 self.textView.textColor = BearyColors.gray
-                // 审计 P1-24：空日志时复制钮即显示无日志可复制，不留“复制全部”误导。
-                self.copyButton.setTitle("暂无日志可复制", for: .normal)
+                // 第十轮审计文案 g：无日志时隐藏「复制全部」钮（规范 §12），
+                // 空态说明只由正文区「暂无诊断日志」承担，不把说明文字塞进操作按钮。
+                self.copyButton.isHidden = true
             } else {
                 self.textView.text = lines.joined(separator: "\n")
                 self.textView.textColor = BearyColors.ink
-                self.copyButton.setTitle("复制全部", for: .normal)
+                self.copyButton.isHidden = false
             }
         }
     }
@@ -4986,9 +4990,9 @@ private final class BearyDiagnosticsViewController: UIViewController {
 
     @objc private func copyTapped() {
         DiagFile.linesAsync { [weak self] lines in
-            // 审计 P1-24：日志为空时不写剪贴板（不清空用户原有剪贴内容），只提示无日志可复制。
+            // 第十轮审计文案 g：无日志时按钮已隐藏，此处仅防异步竞态——
+            // 不写剪贴板（不清空用户原有剪贴内容），也不改按钮标题。
             guard !lines.isEmpty else {
-                self?.copyButton.setTitle("暂无日志可复制", for: .normal)
                 return
             }
             UIPasteboard.general.string = lines.joined(separator: "\n")
