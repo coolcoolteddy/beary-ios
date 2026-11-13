@@ -80,6 +80,11 @@ class BearyFeedViewController: UIViewController {
     /// 直接跳过（不 bump 代际、不动模型），在途回包自会经 maybeEndRefreshing
     /// 结束下拉头并更新模型；代际丢弃分支不动标记（新请求完成时清）。
     private var plazaFirstPageInFlight = false
+    /// 审计 14-1：分页游标取服务端原始页末条——满页全被客户端过滤时游标
+    /// 仍推进，不再取过滤后列表末条（否则同一页反复请求）。与段槽同行，
+    /// 绝不跨段复用；列表清空／首拉 diff 换头窗时清掉，回落可见末条推导。
+    private var plazaNextPageBefore: Int?
+    private var plazaNextPageBeforeId: String?
     /// 112：登录翻转刷新的一次性绕过去重——旧身份在途首拉绝不能吞掉
     /// 新身份的刷新（否则切号后会停留在旧身份数据上，直到下次重拉）。
     /// 由 handlePageEnter 登录翻转分支置位，refreshAllInternal 消费一次。
@@ -103,6 +108,9 @@ class BearyFeedViewController: UIViewController {
         var reachedEnd = false
         var error = false
         var lastLoadAt: Date? = nil
+        /// 审计 14-1：原始页末条游标随槽走（满页全被过滤时仍推进）。
+        var nextPageBefore: Int? = nil
+        var nextPageBeforeId: String? = nil
     }
     private var plazaSegmentCache = FeedSegmentCache()
     private var followingSegmentCache = FeedSegmentCache()
@@ -120,7 +128,9 @@ class BearyFeedViewController: UIViewController {
             hasMore: plazaHasMore,
             reachedEnd: plazaReachedEnd,
             error: plazaError,
-            lastLoadAt: lastFeedLoadAt
+            lastLoadAt: lastFeedLoadAt,
+            nextPageBefore: plazaNextPageBefore,
+            nextPageBeforeId: plazaNextPageBeforeId
         )
         if feedFollowingSegment {
             followingSegmentCache = slot
@@ -138,6 +148,8 @@ class BearyFeedViewController: UIViewController {
         plazaReachedEnd = slot.reachedEnd
         plazaError = slot.error
         lastFeedLoadAt = slot.lastLoadAt
+        plazaNextPageBefore = slot.nextPageBefore
+        plazaNextPageBeforeId = slot.nextPageBeforeId
     }
 
     private var currentSegmentLoaded: Bool {
@@ -371,6 +383,8 @@ class BearyFeedViewController: UIViewController {
             loadFollowingSnapshotOrRefresh()
         } else {
             plazaRaw = []
+            plazaNextPageBefore = nil
+            plazaNextPageBeforeId = nil
             firstPageIds = []
             plazaHasMore = true
             plazaReachedEnd = false
@@ -411,6 +425,8 @@ class BearyFeedViewController: UIViewController {
         let ownerKey = feedCacheOwnerKey
         // 读盘前即置加载态：快照回包前不判空态、不闪空态文案。
         plazaRaw = []
+        plazaNextPageBefore = nil
+        plazaNextPageBeforeId = nil
         firstPageIds = []
         plazaHasMore = true
         plazaReachedEnd = false
@@ -428,6 +444,9 @@ class BearyFeedViewController: UIViewController {
                 let head = BearyFeedCache.visibleHead(snap.entries)
                 if !head.isEmpty {
                     strongSelf.plazaRaw = head
+                    // 审计 14-1：快照只有可见篇、无原始游标，旧游标（另一段）作废。
+                    strongSelf.plazaNextPageBefore = nil
+                    strongSelf.plazaNextPageBeforeId = nil
                     strongSelf.firstPageIds = head.compactMap { $0.id }
                     strongSelf.plazaHasMore = snap.hasMore
                     strongSelf.plazaReachedEnd = !snap.hasMore
@@ -486,6 +505,8 @@ class BearyFeedViewController: UIViewController {
         // 与广播本身不动；普通刷新（非本路）仍走 since，不改。
         if feedFollowingSegment {
             plazaRaw = []
+            plazaNextPageBefore = nil
+            plazaNextPageBeforeId = nil
             firstPageIds = []
             plazaHasMore = true
             plazaReachedEnd = false
@@ -695,6 +716,8 @@ class BearyFeedViewController: UIViewController {
                     followingSegmentLoaded = false
                 }
                 plazaRaw = []
+                plazaNextPageBefore = nil
+                plazaNextPageBeforeId = nil
                 firstPageIds = []
                 plazaHasMore = true
                 plazaReachedEnd = false
@@ -1128,9 +1151,9 @@ class BearyFeedViewController: UIViewController {
         BearyAPI.shared.fetchEntries(scope: feedScope, limit: firstPageLimit) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
-                // 80 包 B4：代际不符时只复位 loading，不动模型与表。
+                // 80 包 B4：代际不符时直接丢弃，不动模型与表；plazaLoading 不复位
+                //（已归新请求所有，见审计 14-2；plazaFirstPageInFlight 同款口径）。
                 guard firstPageGeneration == strongSelf.revalidateGeneration else {
-                    strongSelf.plazaLoading = false
                     strongSelf.maybeEndRefreshing()
                     return
                 }
@@ -1153,6 +1176,8 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.plazaRaw = fakes
                         strongSelf.firstPageIds = fakes.compactMap { $0.id }
                         strongSelf.plazaHasMore = false
+                        strongSelf.plazaNextPageBefore = nil
+                        strongSelf.plazaNextPageBeforeId = nil
                         strongSelf.plazaReachedEnd = true
                         strongSelf.plazaError = false
                         strongSelf.lastFeedLoadAt = Date()
@@ -1180,6 +1205,10 @@ class BearyFeedViewController: UIViewController {
                     // 仅写缓存、不碰时间线 VC 状态）。
                     BearyTimelinePrefetch.maybePrefetch()
                     if diffMode && !strongSelf.plazaRaw.isEmpty {
+                        // 审计 14-1：diff 只换头窗，旧尾部游标不再与新列表对应，
+                        // 清掉后回落可见末条推导；下次分页回包再存原始游标。
+                        strongSelf.plazaNextPageBefore = nil
+                        strongSelf.plazaNextPageBeforeId = nil
                         strongSelf.applyFirstPageDiff(entries, hasMoreOverride: rawEntries.count >= strongSelf.firstPageLimit)
                         // 秒开-启动瘦身：首屏回包已终结，通知容器再发启动期 /me。
                         strongSelf.notifyFirstScreenDoneOnce()
@@ -1190,6 +1219,14 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaRaw = pageEntries
                     strongSelf.firstPageIds = pageEntries.compactMap { $0.id }
                     strongSelf.plazaHasMore = rawEntries.count >= strongSelf.firstPageLimit
+                    // 审计 14-1：分页游标存服务端原始页末条（满页全被过滤时下次仍推进）。
+                    if let rawLast = rawEntries.last, let rawLastId = rawLast.id, let rawLastKey = strongSelf.feedSortKey(rawLast) {
+                        strongSelf.plazaNextPageBefore = rawLastKey
+                        strongSelf.plazaNextPageBeforeId = rawLastId
+                    } else {
+                        strongSelf.plazaNextPageBefore = nil
+                        strongSelf.plazaNextPageBeforeId = nil
+                    }
                     strongSelf.plazaReachedEnd = rawEntries.count < strongSelf.firstPageLimit
                     strongSelf.plazaError = false
                     strongSelf.lastFeedLoadAt = Date()
@@ -1269,8 +1306,8 @@ class BearyFeedViewController: UIViewController {
         ) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
+                // 审计 14-2：代际不符时直接丢弃，plazaLoading 不复位（已归新请求所有）。
                 guard generation == strongSelf.revalidateGeneration, sinceScopeRaw == strongSelf.feedScope.rawValue else {
-                    strongSelf.plazaLoading = false
                     strongSelf.maybeEndRefreshing()
                     return
                 }
@@ -1347,18 +1384,25 @@ class BearyFeedViewController: UIViewController {
     private func loadPlazaNextPage() {
         if plazaLoading { return }
         let entries = plazaEntries()
-        guard let last = entries.last else {
-            plazaHasMore = false
-            return
-        }
-        guard let lastEntryIdValue = last.id else {
+        // 审计 14-1：游标优先取服务端原始页末条（满页全被过滤时仍推进）；
+        // 无存储游标时（如磁盘快照恢复）回落可见列表末条。
+        let cursorBefore: Int?
+        let cursorBeforeId: String?
+        if let storedBefore = plazaNextPageBefore, let storedBeforeId = plazaNextPageBeforeId {
+            cursorBefore = storedBefore
+            cursorBeforeId = storedBeforeId
+        } else if let last = entries.last, let lastId = last.id {
+            cursorBefore = feedSortKey(last)
+            cursorBeforeId = lastId
+        } else {
             plazaHasMore = false
             return
         }
         let oldPlazaCount = entries.count
         let wasPlazaError = plazaError
         // P1-4：广场分页回包同样捕获 generation，照抄首拉的代际守卫写法——
-        // 期间若有 refreshAll，旧分页回包只复位 loading，不覆盖新首拉的 hasMore。
+        // 期间若有 refreshAll，旧分页回包直接丢弃，不覆盖新首拉的 hasMore，
+        // 也不复位 plazaLoading（标记已归新请求所有，见审计 14-2）。
         let nextPageGeneration = revalidateGeneration
         plazaLoading = true
         // 加载三件套·底部脚部：分页一启动即亮 3 个跳动圆点（回包后由
@@ -1366,11 +1410,10 @@ class BearyFeedViewController: UIViewController {
         updateFootLogo()
         // iCity：广场服务端按 published_at DESC 排序，分页游标同步用 publishedAt（缺失时回退 createdAt）。
         // 正在关注段按 created_at DESC，游标同步用 createdAt。
-        BearyAPI.shared.fetchEntries(scope: feedScope, limit: pageLimit, before: feedSortKey(last), beforeId: lastEntryIdValue) { [weak self] result in
+        BearyAPI.shared.fetchEntries(scope: feedScope, limit: pageLimit, before: cursorBefore, beforeId: cursorBeforeId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 guard nextPageGeneration == strongSelf.revalidateGeneration else {
-                    strongSelf.plazaLoading = false
                     strongSelf.maybeEndRefreshing()
                     return
                 }
@@ -1390,6 +1433,14 @@ class BearyFeedViewController: UIViewController {
                         guard let entryIdValue = entry.id, !known.contains(entryIdValue) else { continue }
                         strongSelf.plazaRaw.append(entry)
                         known.insert(entryIdValue)
+                    }
+                    // 审计 14-1：每页回包都存原始页末条作下次游标（哪怕整页被滤掉）。
+                    if let rawLast = rawFresh.last, let rawLastId = rawLast.id, let rawLastKey = strongSelf.feedSortKey(rawLast) {
+                        strongSelf.plazaNextPageBefore = rawLastKey
+                        strongSelf.plazaNextPageBeforeId = rawLastId
+                    } else {
+                        strongSelf.plazaNextPageBefore = nil
+                        strongSelf.plazaNextPageBeforeId = nil
                     }
                     strongSelf.plazaHasMore = rawFresh.count >= strongSelf.pageLimit
                     strongSelf.plazaReachedEnd = rawFresh.count < strongSelf.pageLimit
@@ -1581,6 +1632,9 @@ class BearyFeedViewController: UIViewController {
                 let head = BearyFeedCache.visibleHead(snap.entries)
                 if !head.isEmpty {
                     strongSelf.plazaRaw = head
+                    // 审计 14-1：快照只有可见篇、无原始游标，旧游标作废。
+                    strongSelf.plazaNextPageBefore = nil
+                    strongSelf.plazaNextPageBeforeId = nil
                     strongSelf.firstPageIds = head.compactMap { $0.id }
                     strongSelf.plazaHasMore = snap.hasMore
                     strongSelf.plazaReachedEnd = !snap.hasMore
@@ -1644,6 +1698,9 @@ class BearyFeedViewController: UIViewController {
             let head = BearyFeedCache.visibleHead(snap.entries)
             if !head.isEmpty {
                 strongSelf.plazaRaw = head
+                // 审计 14-1：快照只有可见篇、无原始游标，旧身份的旧游标作废。
+                strongSelf.plazaNextPageBefore = nil
+                strongSelf.plazaNextPageBeforeId = nil
                 strongSelf.firstPageIds = head.compactMap { $0.id }
                 strongSelf.plazaHasMore = snap.hasMore
                 strongSelf.plazaReachedEnd = !snap.hasMore
@@ -1660,6 +1717,8 @@ class BearyFeedViewController: UIViewController {
             }
         }
         strongSelf.plazaRaw = []
+        strongSelf.plazaNextPageBefore = nil
+        strongSelf.plazaNextPageBeforeId = nil
         strongSelf.firstPageIds = []
         strongSelf.plazaHasMore = true
         strongSelf.plazaReachedEnd = false
