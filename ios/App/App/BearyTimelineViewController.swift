@@ -2315,10 +2315,9 @@ class BearyTimelineViewController: UIViewController {
         return pull
     }()
 
-    /// 表头容器：标题行 + 日历卡 + 筛选行。
+    /// 表头容器：标题行 + 统计小字 + 连续写作行 + 日历卡 + 筛选行。
     /// 用 tableHeaderView 承载（随列表一起滚走，不常驻占位）；高度每次渲染后重算。
-    /// 统计小字 + 连续写作行不在表头——它们是整月／全部的汇总，放条目上方易被误读为
-    /// 选中日数据，已挪到列表底部的 footerContainer（见 buildHeader／updateFooter）。
+    /// 统计小字 + 连续写作行紧贴标题「时间线」下方（2026-11-12 Li 定位置）。
     /// TL-7：当日列表不替换整个时间线，而是表格的
     /// 第一个分区（当日面板），时间线分区紧随其后（与网页 #calDay + #tlBody 并存一致）。
     /// 顶栏透度批：容器最后一次发来的栏态（viewDidLayoutSubviews 安全区变化时按此重算）。
@@ -2340,11 +2339,6 @@ class BearyTimelineViewController: UIViewController {
     private var stickyHeaderCurrentSection: Int?
     private var stickyHeaderCurrentTitle: String?
     private let headerContainer = UIView()
-    /// 列表底脚容器：翻页脚（加载中／没有更多了／重试）＋统计两行（共 X 篇／已连续写 X 天）。
-    /// 单一 tableFooterView 承载——统计行是整月／全部的汇总，放条目上方易被误读为选中日数据，
-    /// 故与翻页脚合在列表底部（翻页脚在上、统计在下）；高度随内容重算（见 refreshFooterHeight）。
-    private let footerContainer = UIView()
-    private var loadMoreHeightConstraint: NSLayoutConstraint?
     private let titleLabel = UILabel()
     // 审计-时间线：表头回收站钮改 BearyHit44Button，视觉帧不动、热区扩至 44×44。
     private let trashButton = BearyHit44Button(type: .system)
@@ -4002,16 +3996,17 @@ class BearyTimelineViewController: UIViewController {
         filterRow.addArrangedSubview(UIView())
         updateFilterDateLabel()
 
-        // R15-L1：表头顺序改为标题与回收站 → 日历 → 筛选和日期 → 日记；
-        // 统计两行（次要信息，是整月／全部的汇总）不在表头，挪到列表底部的
-        // footerContainer（见下方），放条目上方易被误读为选中日数据。
+        // R15-L1：表头顺序改为标题与回收站 → 统计（共 X 篇／已连续写 X 天，
+        // 紧贴标题「时间线」下方，2026-11-12 Li 定）→ 日历 → 筛选和日期 → 日记；
         // ≥821pt 居中列 / ≤820pt 全宽列与左右各 16 边距一律不动
         // （见下方约束与 SceneDelegate 宽度口径）。
-        let stack = UIStackView(arrangedSubviews: [titleRow, calendarCard, filterRow])
+        let stack = UIStackView(arrangedSubviews: [titleRow, countsLabel, statsButton, calendarCard, filterRow])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
         stack.spacing = 0
         stack.setCustomSpacing(4, after: titleRow)
+        stack.setCustomSpacing(2, after: countsLabel)
+        stack.setCustomSpacing(12, after: statsButton)
         stack.setCustomSpacing(12, after: calendarCard)
         headerStack = stack
         headerContainer.addSubview(stack)
@@ -4022,33 +4017,6 @@ class BearyTimelineViewController: UIViewController {
             stack.bottomAnchor.constraint(equalTo: headerContainer.bottomAnchor),
         ])
         tableView.tableHeaderView = headerContainer
-
-        // 列表底脚：翻页脚（加载中／没有更多了／重试）＋统计两行共用一个
-        // tableFooterView——统计行是汇总数据，放最底部；翻页脚在上、统计在下。
-        // 翻页脚 hidden 态时高 0（不占位），统计行顶距末行 12；统计行两侧 16、
-        // 与表头同边距，底留 16。
-        footerContainer.backgroundColor = BearyColors.bg
-        let statsStack = UIStackView(arrangedSubviews: [countsLabel, statsButton])
-        statsStack.translatesAutoresizingMaskIntoConstraints = false
-        statsStack.axis = .vertical
-        statsStack.spacing = 2
-        timelineLoadMoreFooterView.translatesAutoresizingMaskIntoConstraints = false
-        footerContainer.addSubview(timelineLoadMoreFooterView)
-        footerContainer.addSubview(statsStack)
-        let loadMoreHeight = timelineLoadMoreFooterView.heightAnchor.constraint(equalToConstant: BearyLoadMoreFooterView.height)
-        loadMoreHeightConstraint = loadMoreHeight
-        NSLayoutConstraint.activate([
-            timelineLoadMoreFooterView.topAnchor.constraint(equalTo: footerContainer.topAnchor),
-            timelineLoadMoreFooterView.leadingAnchor.constraint(equalTo: footerContainer.leadingAnchor),
-            timelineLoadMoreFooterView.trailingAnchor.constraint(equalTo: footerContainer.trailingAnchor),
-            loadMoreHeight,
-            statsStack.topAnchor.constraint(equalTo: timelineLoadMoreFooterView.bottomAnchor, constant: 12),
-            statsStack.leadingAnchor.constraint(equalTo: footerContainer.leadingAnchor, constant: 16),
-            statsStack.trailingAnchor.constraint(equalTo: footerContainer.trailingAnchor, constant: -16),
-            statsStack.bottomAnchor.constraint(equalTo: footerContainer.bottomAnchor, constant: -16),
-        ])
-        tableView.tableFooterView = footerContainer
-        refreshFooterHeight()
     }
 
     /// 表头高度待重算：refreshHeaderHeight 在表宽为 0 时置位，
@@ -4127,24 +4095,6 @@ class BearyTimelineViewController: UIViewController {
         if headerContainer.frame.height != size.height {
             headerContainer.frame = CGRect(x: 0, y: 0, width: width, height: size.height)
             tableView.tableHeaderView = headerContainer
-        }
-        refreshFooterHeight()
-    }
-
-    /// 底脚高度重算（与 refreshHeaderHeight 同口径）：翻页脚 hidden 态高 0，
-    /// 统计行单行、字号变化时高度跟走；只在高度变化时重赋 tableFooterView。
-    private func refreshFooterHeight() {
-        let width = tableView.bounds.width
-        guard width > 0 else { return }
-        footerContainer.frame = CGRect(x: 0, y: 0, width: width, height: 0)
-        let size = footerContainer.systemLayoutSizeFitting(
-            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        )
-        if footerContainer.frame.height != size.height {
-            footerContainer.frame = CGRect(x: 0, y: 0, width: width, height: size.height)
-            tableView.tableFooterView = footerContainer
         }
     }
 
@@ -6398,9 +6348,9 @@ class BearyTimelineViewController: UIViewController {
     }
 
     private func updateFooter() {
-        // 脚部：翻页脚（加载中 3 个跳动圆点、末页“没有更多了”、分页失败重试；
-        // 手动“加载更多”按钮已由离底部一屏自动预加载取代）＋统计两行共用一个
-        // tableFooterView，翻页脚在上、统计在下；当日面板的加载/失败态在面板表头里。
+        // 脚部只属于时间线翻页；当日面板的加载/失败态在面板表头里。
+        // 加载三件套·底部脚部：加载中 3 个跳动圆点、末页“没有更多了”、
+        // 分页失败重试；手动“加载更多”按钮已由离底部一屏自动预加载取代。
         let state: BearyLoadMoreFooterView.State = {
             if timelineLoadingMore { return .loading }
             if timelinePageFailed && timelineHasMore { return .failed }
@@ -6416,9 +6366,12 @@ class BearyTimelineViewController: UIViewController {
         let signature = "\(state)-\(Int(width))"
         if signature == lastTimelineFooterSignature, tableView.tableFooterView != nil { return }
         lastTimelineFooterSignature = signature
-        // 翻页脚 hidden 态时高 0 不占位（统计行仍在，顶距末行 12）；其余态高 56。
-        loadMoreHeightConstraint?.constant = state == .hidden ? 0 : BearyLoadMoreFooterView.height
-        refreshFooterHeight()
+        guard state != .hidden else {
+            tableView.tableFooterView = nil
+            return
+        }
+        timelineLoadMoreFooterView.frame = CGRect(x: 0, y: 0, width: width, height: BearyLoadMoreFooterView.height)
+        tableView.tableFooterView = timelineLoadMoreFooterView
     }
 
     @objc private func didTapTrash() {
