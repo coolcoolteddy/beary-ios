@@ -3,7 +3,7 @@ import ImageIO
 import UIKit
 
 public enum ProfileCoverTheme: String, CaseIterable {
-    case china, usa, japan, germany, canada, korea, qixi
+    case china, usa, japan, germany, canada, korea, qixi, christmas
 }
 
 public final class ProfileCoverView: UIView {
@@ -46,6 +46,11 @@ public final class ProfileCoverView: UIView {
             names.append(contentsOf: ["qixi-egg-stars", "qixi-egg-shimmer",
                                       "qixi-egg-magpie-big-body", "qixi-egg-magpie-big-gold",
                                       "qixi-egg-magpie-small-body", "qixi-egg-magpie-small-gold"])
+        case .christmas:
+            // 圣诞：动态物是程序绘制的六角雪花一张 PNG；彩蛋一张（水晶球内金晕＋
+            // 雪点），与第 7 帧对齐、只在球内可见。
+            names.append("christmas-snowflakes")
+            names.append("christmas-egg-globe")
         }
         var images: [String: UIImage] = [:]
         for name in names {
@@ -297,6 +302,8 @@ public final class ProfileCoverView: UIView {
             }
         case .qixi:
             drawQixi(ctx, depth: depth, vertical: vertical, padded: padded)
+        case .christmas:
+            drawChristmas(ctx, depth: depth, vertical: vertical, padded: padded)
         case .germany, .canada, .korea:
             drawAdditionalTheme(ctx, x: x, y: y, travel: travel, midX: midX, nearX: nearX, vertical: vertical)
         }
@@ -369,6 +376,32 @@ public final class ProfileCoverView: UIView {
                center: CGPoint(x: -32 + (483 + 473 / 2) * scaleX + subjectX,
                                y: -12 + (7 + 313 / 2) * scaleY + vertical),
                width: 473 * scaleX, height: 313 * scaleY, angle: 0, alpha: 1 - split)
+    }
+
+    /// 圣诞（北欧木刻、深蓝雪夜）：图集只含背景，雪花由动态物层单独贴；
+    /// 彩蛋一张是与第 7 帧对齐的整帧透明层（水晶球内金晕＋雪点）。
+    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
+    /// 视差翻倍版：帧 f 结构平移 2(f−6) px（±12）、主体平移 4(f−6) px（±24）。
+    private func drawChristmas(_ ctx: CGContext, depth: CGFloat, vertical: CGFloat, padded: CGRect) {
+        let scaleX = padded.width / 1024
+        let scaleY = padded.height / 323
+        // 结构层位移与图集帧内 baked 的一致（帧 f 结构平移 2(f−6) px，f=(depth+1)*6，
+        // 即 12*depth）；彩蛋层按它平移才贴得住水晶球。主体层（雪花）
+        // 平移 4(f−6) px，即 24*depth。
+        let structureX = 12 * depth * scaleX
+        let subjectX = 24 * depth * scaleX
+        // 彩蛋：水晶球内金晕＋雪点，倾斜保持 0.45 秒后随 egg 淡入（触发走共享
+        // step 逻辑，与七夕同款；每次进页 restartVisit 可再触发）。
+        if egg > 0.001 {
+            bitmap("christmas-egg-globe", in: ctx,
+                   center: CGPoint(x: padded.midX + structureX, y: padded.midY),
+                   width: padded.width, height: padded.height, angle: 0, alpha: egg)
+        }
+        // 雪花动态物：PNG 左上角对帧坐标 (212, 0)、600×323，中心即帧中心
+        // (512, 161.5)；padded.midY 已含 vertical，不再另加。
+        bitmap("christmas-snowflakes", in: ctx,
+               center: CGPoint(x: padded.midX + subjectX, y: padded.midY),
+               width: 600 * scaleX, height: 323 * scaleY, angle: 0, alpha: 1)
     }
 
     private func drawAdditionalTheme(_ ctx: CGContext, x: CGFloat, y: CGFloat, travel: CGFloat,
@@ -537,7 +570,7 @@ public final class ProfileCoverView: UIView {
 
 /// 封面底图缓存：读盘＋解码只在后台串行队列做，主线程只贴图。
 /// 有界：最多留 3 张（最近用的），超了逐出最久未用的；收到内存警告时清库。
-/// 每张全幅图集 5120×969 ≈ 19 MiB，7 张全留理论约 133 MiB；封顶 3 张后
+/// 每张全幅图集 5120×969 ≈ 19 MiB，8 张全留理论约 152 MiB；封顶 3 张后
 /// 稳态约 57 MiB。preload 保留：设置页进页仍预热，逐出只发生在解码完成
 /// 入库时；已显示的封面持有自己的 backdrop 强引用，清库/逐出不会让首屏
 /// 变空白；未命中时 draw() 走 poster 兜底（与原来 backdrop == nil 的分支
@@ -620,7 +653,7 @@ private final class CoverBackdropCache: NSObject {
     /// 后台队列做、不碰主线程；帧切分按底图实际尺寸动态算，不用改 drawBackdrop。
     /// 第十轮 07：显式立即解码（kCGImageSourceShouldCacheImmediately），像素在
     /// 后台队列解完再交付主线程，首帧绘制不回主线程解压；须配合按需加载＋内存
-    /// 预算，七张不一次全解。
+    /// 预算，八张不一次全解。
     private static func decoded(theme: ProfileCoverTheme) -> CGImage? {
         guard let url = Bundle.main.url(forResource: theme.rawValue + "-depth", withExtension: "png"),
               let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
