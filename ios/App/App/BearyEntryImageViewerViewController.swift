@@ -1489,7 +1489,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 }
 
-/// 网页灯箱同款纯透明度转场：只做开场 200ms 淡入。
+/// 网页灯箱同款纯透明度转场：只做开场 0.26s 淡入。
 private final class BearyImageViewerFadeAnimator: NSObject, UIViewControllerAnimatedTransitioning {
     private let presenting: Bool
 
@@ -1498,7 +1498,7 @@ private final class BearyImageViewerFadeAnimator: NSObject, UIViewControllerAnim
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return 0.25
+        return BearyMotion.normal
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -1534,7 +1534,7 @@ private final class BearyImageViewerReturnAnimator: NSObject, UIViewControllerAn
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return 0.25
+        return BearyMotion.normal
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
