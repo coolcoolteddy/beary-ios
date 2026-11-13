@@ -1958,8 +1958,8 @@ final class BearyNotificationsViewController: UIViewController {
             }
             return
         }
-        // 未拉取：先画禁用态回关钮，同时按关注方 id 拉一次 state（同人多卡共享
-        // 一次请求；在途复用行重配时不重复发）。
+        // 未拉取：先画中性占位钮（无“回关”/“关注”文字，见 configureFollowCard），
+        // 同时按关注方 id 拉一次 state（同人多卡共享一次请求；在途复用行重配时不重复发）。
         cell.configureFollowCard(state: .loading) { [weak self] in
             self?.handleFollowBack(actorId: actorId, notificationId: item.id)
         }
@@ -2696,7 +2696,9 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
                 let latest = items[latestIndex]
                 let anyUnread = actIndices.contains(where: { (items[$0].read ?? true) == false })
                 // 32 注销口径：互动卡对方已注销时，摘要里的对方名显“用户已注销”。
-                let actorName = bearyDeletedAuthorDisplayName(latest.actorName) ?? ""
+                // 第十三轮第 8 项：缺名（nil 或空串）统一回落全站缺省名“beary 用户”，不落空串。
+                let deletedName = bearyDeletedAuthorDisplayName(latest.actorName) ?? ""
+                let actorName = deletedName.isEmpty ? "beary 用户" : deletedName
                 let latestVerb = BearyNotificationCell.verb(for: latest.type)
                 cell.configureAsCard(
                     title: "互动消息",
@@ -3284,9 +3286,10 @@ class BearyNotificationCell: UITableViewCell {
 
     private lazy var followBackButton: UIButton = {
         // 审计：回关钮视觉高约 32 不变，热区用 Hit44 扩到 44。
+        // 第十三轮第 7 项：初始不预设标题——关系未查出前不把“回关”摆出来，
+        // 标题只由 configureFollowCard 按已确认态写（加载态画中性占位）。
         let button = BearyHit44Button(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.setTitle("回关", for: .normal)
         button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         button.titleLabel?.adjustsFontForContentSizeCategory = true
         button.setTitleColor(BearyColors.bg, for: .normal)
@@ -3311,6 +3314,8 @@ class BearyNotificationCell: UITableViewCell {
     private var followActionsTopConstraint: NSLayoutConstraint?
     private var followActionsHeightConstraint: NSLayoutConstraint?
     private var followBackHandler: (() -> Void)?
+    /// 第十三轮第 7 项：回关钮定宽约束——按“回关”量取，加载态无文案占位与有文案态同宽，态变不顶布局。
+    private var followBackButtonWidthConstraint: NSLayoutConstraint?
 
     /// 右下角 19 号类型角标（网页 .nt-kind：圆底 bg、1px line 边、11 号橙图标）。
     private let kindBadgeView: UIView = {
@@ -3613,11 +3618,14 @@ class BearyNotificationCell: UITableViewCell {
     private func loadAvatar(url: URL, actorName: String) {
         cancelAvatarLoad()
         avatarRetryURL = url
-        avatarRetryActorName = actorName
+        // 第十三轮第 8 项：缺名（nil 或空串已在调用方回落，此处再兜底一次）不再回退字母 "T"，
+        // 与全站缺省名“beary 用户”一致（首字母占位即 "B"）。
+        let displayName = actorName.isEmpty ? "beary 用户" : actorName
+        avatarRetryActorName = displayName
         avatarImageView.image = nil
         avatarRetryButton.isHidden = true
         avatarFallbackLabel.isHidden = false
-        avatarFallbackLabel.text = actorName.isEmpty ? "T" : String(actorName.prefix(1)).uppercased()
+        avatarFallbackLabel.text = String(displayName.prefix(1)).uppercased()
         let generation = avatarLoadGeneration
         // 头像框 42pt：下采样到 42×scale 解码，不整图全解码进内存。
         avatarTask = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: 42 * UIScreen.main.scale) { [weak self] result in
@@ -3881,7 +3889,10 @@ class BearyNotificationCell: UITableViewCell {
             }
             kindIconView.image = BearyIconImages.image(named: kindIconName, pointSize: 11)
             // 32 注销口径：通知行对方已注销时，标题与头像首字母显“用户已注销／用”。
-            let actorName = bearyDeletedAuthorDisplayName(item.actorName) ?? ""
+            // 第十三轮第 8 项：缺名（nil 或空串）统一回落全站缺省名“beary 用户”，
+            // 与已注销（“用户已注销”）是两种状态，不混淆。
+            let deletedName = bearyDeletedAuthorDisplayName(item.actorName) ?? ""
+            let actorName = deletedName.isEmpty ? "beary 用户" : deletedName
             if let avatarURL = BearyImageURLs.avatarURL(item.actorAvatar) {
                 loadAvatar(url: avatarURL, actorName: actorName)
             } else {
@@ -3890,7 +3901,7 @@ class BearyNotificationCell: UITableViewCell {
                 avatarRetryActorName = ""
                 avatarRetryButton.isHidden = true
                 avatarFallbackLabel.isHidden = false
-                avatarFallbackLabel.text = actorName.isEmpty ? "T" : String(actorName.prefix(1)).uppercased()
+                avatarFallbackLabel.text = String(actorName.prefix(1)).uppercased()
             }
             let title = NSMutableAttributedString()
             title.append(NSAttributedString(
@@ -3938,7 +3949,7 @@ class BearyNotificationCell: UITableViewCell {
     /// 对方仍关注我、我没关注对方 → 回关；对方已取关、我也没关注 → 关注；
     /// 我已关注对方 → 已关注灰文案、不可再点；已互关 → 已互关灰文案、不可再点。
     enum FollowCardState {
-        /// state 接口在途：按钮禁用防重复发。
+        /// state 接口在途：按钮禁用防重复发，画中性占位（无“回关”/“关注”文字，不暗示关系）。
         case loading
         /// 对方仍关注我、我没关注对方：回关钮可点。
         case canFollowBack
@@ -3955,7 +3966,8 @@ class BearyNotificationCell: UITableViewCell {
     }
 
     /// 关注提醒卡动作区：base configure(with:) 已画好头像/名字/时间（verb“关注了你”），
-    /// 本函数只管动作区。loading/busy 时按钮禁用；canFollowBack 时回关钮可点；
+    /// 本函数只管动作区。loading/busy 时画与按钮等宽的中性占位（无文案、读屏跳过），
+    /// 查询成功后才显准确操作；canFollowBack 时回关钮可点；
     /// canFollow 时关注钮可点；following 时“已关注”灰文案、不可再点；
     /// mutual 时按钮换成“已互关”文案、不可再点；loadFailed 时按钮画“重试”可点
     /// （点按重试拉取，不是直接关注）。非关注行调用 hideFollowAction。
@@ -3964,22 +3976,46 @@ class BearyNotificationCell: UITableViewCell {
         followActionStack.isHidden = false
         followActionsTopConstraint?.constant = 10
         followActionsHeightConstraint?.isActive = false
+        // 第十三轮第 7 项：定宽（按“回关”量取，与“关注”同宽），每次重配都按当前字号重算，
+        // 加载态无文案占位与有文案态同宽，态变不顶布局、不闪没。
+        let titleFont = followBackButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        let placeholderWidth = ceil(("回关" as NSString).size(withAttributes: [.font: titleFont]).width)
+            + followBackButton.contentEdgeInsets.left + followBackButton.contentEdgeInsets.right
+        if let constraint = followBackButtonWidthConstraint {
+            constraint.constant = placeholderWidth
+        } else {
+            let constraint = followBackButton.widthAnchor.constraint(equalToConstant: placeholderWidth)
+            constraint.isActive = true
+            followBackButtonWidthConstraint = constraint
+        }
         switch state {
         case .loading, .busy:
+            // 第十三轮第 7 项：关系未查出前不摆“回关”/“关注”——中性占位（line 底、
+            // 无文案、读屏跳过），只禁用防重复发；查询成功后才出现准确操作。
             followBackButton.isHidden = false
             followProcessedLabel.isHidden = true
+            followBackButton.setTitle(nil, for: .normal)
+            followBackButton.accessibilityLabel = nil
+            followBackButton.isAccessibilityElement = false
+            followBackButton.backgroundColor = BearyColors.line
             followBackButton.isEnabled = false
-            followBackButton.alpha = 0.6
+            followBackButton.alpha = 1
         case .canFollowBack:
             followBackButton.isHidden = false
             followProcessedLabel.isHidden = true
             followBackButton.setTitle("回关", for: .normal)
+            followBackButton.accessibilityLabel = "回关"
+            followBackButton.isAccessibilityElement = true
+            followBackButton.backgroundColor = BearyColors.ink
             followBackButton.isEnabled = true
             followBackButton.alpha = 1
         case .canFollow:
             followBackButton.isHidden = false
             followProcessedLabel.isHidden = true
             followBackButton.setTitle("关注", for: .normal)
+            followBackButton.accessibilityLabel = "关注"
+            followBackButton.isAccessibilityElement = true
+            followBackButton.backgroundColor = BearyColors.ink
             followBackButton.isEnabled = true
             followBackButton.alpha = 1
         case .loadFailed:
@@ -4007,6 +4043,10 @@ class BearyNotificationCell: UITableViewCell {
         followActionsTopConstraint?.constant = 0
         followActionsHeightConstraint?.isActive = true
         followProcessedLabel.isHidden = true
+        // 第十三轮第 7 项：复用行先清标题与读屏名，加载态不留上一行的“回关”/“关注”。
+        followBackButton.setTitle(nil, for: .normal)
+        followBackButton.accessibilityLabel = nil
+        followBackButton.isAccessibilityElement = false
     }
 
     @objc private func followBackTapped() {
@@ -4360,7 +4400,10 @@ extension BearyNotificationsViewController {
         let actIndices = items.indices.filter({ (items[$0].type ?? "") != "system" && (items[$0].type ?? "") != "letter" })
         if let latestIndex = actIndices.first {
             let latest = items[latestIndex]
-            let actorName = latest.actorName ?? ""
+            // 32 注销口径：互动卡对方已注销时，摘要里的对方名显“用户已注销”。
+            // 第十三轮第 8 项：缺名（nil 或空串）统一回落全站缺省名“beary 用户”，不落空串。
+            let deletedName = bearyDeletedAuthorDisplayName(latest.actorName) ?? ""
+            let actorName = deletedName.isEmpty ? "beary 用户" : deletedName
             let latestVerb = BearyNotificationCell.verb(for: latest.type)
             cards.append(NotifMergeCardData(
                 kind: .interactive,
