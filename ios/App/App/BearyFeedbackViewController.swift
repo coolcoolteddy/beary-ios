@@ -348,6 +348,14 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         progresses.forEach { $0.progress.cancel() }
     }
 
+    /// 审计 16 项第 3 项：大小未知时的有上限读取——最多读 maxBytes 字节，
+    /// 不把整文件读进内存；调用方以“读满上限”判定文件超出剩余预算。
+    private static func boundedData(contentsOf url: URL, maxBytes: Int) -> Data? {
+        guard maxBytes > 0, let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        return handle.readData(ofLength: maxBytes)
+    }
+
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         subpageLayoutGuard.resetForAppearance()
@@ -1293,7 +1301,12 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         // feedbackAttachmentBatchBudgetBytes（Li 定 50MB），超限项跳过不存。
         var loadNext: (() -> Void)?
         loadNext = { [weak self] in
-            guard let self = self else { return }
+            // 审计 16 项第 2 项：链路终点即断开自引用环（loadNext 置 nil），
+            // 释放闭包捕获的整批 loaded 数据；代次失效、页面释放同样是终点。
+            guard let self = self else {
+                loadNext = nil
+                return
+            }
             lock.lock()
             guard nextIndex < results.count else {
                 lock.unlock()
@@ -1302,6 +1315,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 let failures = failedCount
                 let oversized = oversizedCount
                 let budgetRejected = budgetRejectedCount
+                // 审计 16 项第 2 项：本批读完，断开 loadNext 自引用环。
+                loadNext = nil
                 self.clearTrackedAttachmentLoads(for: generation)
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self, self.attachmentGeneration == generation else { return }
@@ -1333,7 +1348,11 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             nextIndex += 1
             lock.unlock()
             // 代次已失效时不再发起新的读取；在途的那一项由回调内的代次检查拦截。
-            guard self.attachmentGeneration == generation else { return }
+            // 审计 16 项第 2 项：代次失效即链路终点，断开自引用环。
+            guard self.attachmentGeneration == generation else {
+                loadNext = nil
+                return
+            }
             let provider = results[index].itemProvider
             if provider.canLoadObject(ofClass: UIImage.self) {
                 let progress = provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
@@ -1383,21 +1402,39 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                         lock.unlock()
                         return
                     }
-                    // 审计 N5 预算：读入前先按文件大小算总账，超 50MB 则不读不存。
+                    // 审计 16 项第 3 项：预算按实际字节数结算——已知大小只做读前预判
+                    // （已超剩余预算则不读不存），不提前扣账；读失败不占预算；
+                    // 大小未知时有上限读取（最多读剩余预算 + 1 字节），超了按预算拒绝。
+                    var knownSize: Int?
                     if let attrs = try? FileManager.default.attributesOfItem(atPath: urlValue.path),
                        let size = attrs[.size] as? NSNumber {
-                        lock.lock()
-                        if loadedBytes + size.intValue > Self.feedbackAttachmentBatchBudgetBytes {
+                        knownSize = size.intValue
+                    }
+                    lock.lock()
+                    if let knownSize = knownSize,
+                       loadedBytes + knownSize > Self.feedbackAttachmentBatchBudgetBytes {
+                        budgetRejectedCount += 1
+                        lock.unlock()
+                        return
+                    }
+                    let remainingBudget = Self.feedbackAttachmentBatchBudgetBytes - loadedBytes
+                    lock.unlock()
+                    // 审计 N5：读文件前再查一次代次，避免为已失效批次分配 Data。
+                    guard self.attachmentGeneration == generation else { return }
+                    let data: Data?
+                    if knownSize != nil {
+                        data = try? Data(contentsOf: urlValue)
+                    } else {
+                        // 大小未知：有上限读取；剩余预算已空时直接按预算拒绝。
+                        guard remainingBudget >= 0 else {
+                            lock.lock()
                             budgetRejectedCount += 1
                             lock.unlock()
                             return
                         }
-                        loadedBytes += size.intValue
-                        lock.unlock()
+                        data = Self.boundedData(contentsOf: urlValue, maxBytes: remainingBudget + 1)
                     }
-                    // 审计 N5：读文件前再查一次代次，避免为已失效批次分配 Data。
-                    guard self.attachmentGeneration == generation else { return }
-                    guard let data = try? Data(contentsOf: urlValue) else {
+                    guard let data = data else {
                         lock.lock()
                         failedCount += 1
                         lock.unlock()
@@ -1414,6 +1451,14 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                     }
                     let name = urlValue.lastPathComponent.isEmpty ? "feedback-video-\(index + 1).mov" : urlValue.lastPathComponent
                     lock.lock()
+                    // 实际字节数结算：查大小后文件变大、或大小未知时读满上限的，
+                    // 都按预算拒绝、不存。
+                    if loadedBytes + data.count > Self.feedbackAttachmentBatchBudgetBytes {
+                        budgetRejectedCount += 1
+                        lock.unlock()
+                        return
+                    }
+                    loadedBytes += data.count
                     loaded[index] = Attachment(data: data, mimeType: mime, fileName: name)
                     lock.unlock()
                 }
