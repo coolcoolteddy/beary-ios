@@ -729,8 +729,20 @@ class BearyDiaryCardCell: UITableViewCell {
         return lb
     }()
 
+    /// 地址与天气之间的间隔（宽 4，与栈间距 4 合计 12pt；无地址时与地址组
+    /// 同藏，天气顶到左边缘；固定宽，不被栈拉伸）。
+    private let locationWeatherSpacer: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        return v
+    }()
+
+    /// 底行（左下角、正文区下面）：地址在左、天气组在地址右侧；无地址时
+    /// 地址组与间隔同藏，天气组顶到左边缘；地址与天气全无时整行由
+    /// updateBottomRowVisibility 藏起、不占位。
     private lazy var locationLineRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [locationIconView, locationLabel])
+        let st = UIStackView(arrangedSubviews: [locationIconView, locationLabel, locationWeatherSpacer, weatherGroup])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 4
@@ -822,15 +834,29 @@ class BearyDiaryCardCell: UITableViewCell {
         return lb
     }()
 
-    /// 天气行（左下角、正文区下面、位置行之前）：天气图标 15 + 气温，左对齐；
-    /// 无天气数据时整行隐藏、不占位（显隐由两次 configure 末尾与复位同步）。
-    private lazy var weatherRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [weatherWrapLabel, weatherTempLabel])
+    /// 卡片中文天气名（BearyText.weatherNames：晴／多云／阴……；无 key 或查不到
+    /// 映射时隐藏、不留空位，与气温同款 13pt 动态字号灰字）。
+    private let weatherNameLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        lb.isHidden = true
+        lb.setContentHuggingPriority(.required, for: .horizontal)
+        lb.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return lb
+    }()
+
+    /// 天气组（图标 15 + 中文名 + 气温，间距 6，与旧天气行同款；并进地址行后
+    /// 仍是独立一组，三个子视图各自显隐、全藏时整组不占位）。
+    private lazy var weatherGroup: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [weatherWrapLabel, weatherNameLabel, weatherTempLabel])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 6
         st.alignment = .center
-        st.isHidden = true
         return st
     }()
 
@@ -1113,7 +1139,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 不再缩进到昵称位置；顶缘取头像底与头行底较大者 + 间距（见 setupConstraints）。
     private lazy var bodyStack: BearyPassThroughStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = BearyPassThroughStackView(arrangedSubviews: [entryTitleLabel, contentLabel, foldButton, imagesScrollView, quoteView, weatherRow, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
+        let st = BearyPassThroughStackView(arrangedSubviews: [entryTitleLabel, contentLabel, foldButton, imagesScrollView, quoteView, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
         // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
         st.passThroughRoot = emoteFlowView
         st.translatesAutoresizingMaskIntoConstraints = false
@@ -1514,6 +1540,10 @@ class BearyDiaryCardCell: UITableViewCell {
         locationIconHeight.priority = UILayoutPriority(999)
         extraConstraints.append(locationIconWidth)
         extraConstraints.append(locationIconHeight)
+        // 地址与天气的间隔固定 4 宽（与栈间距合计 12pt）；隐藏时栈自动压零。
+        let locationWeatherSpacerWidth = locationWeatherSpacer.widthAnchor.constraint(equalToConstant: 4)
+        locationWeatherSpacerWidth.priority = UILayoutPriority(999)
+        extraConstraints.append(locationWeatherSpacerWidth)
         if headerStackTrailingConstraint == nil {
             headerStackTrailingConstraint = headerStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
         }
@@ -1824,9 +1854,11 @@ class BearyDiaryCardCell: UITableViewCell {
         weatherImageView.image = nil
         weatherImageView.isHidden = true
         weatherWrapLabel.isHidden = true
+        weatherNameLabel.text = nil
+        weatherNameLabel.isHidden = true
         weatherTempLabel.text = nil
         weatherTempLabel.isHidden = true
-        weatherRow.isHidden = true
+        locationWeatherSpacer.isHidden = true
         moodStack.isHidden = true
         moodEmoteView?.removeFromSuperview()
         moodEmoteView = nil
@@ -2005,11 +2037,10 @@ class BearyDiaryCardCell: UITableViewCell {
         // 正文→展开全文仍为 6（折叠钮显时），不动。
         bodyStack.setCustomSpacing(foldButton.isHidden ? 14 : 6, after: contentLabel)
         bodyStack.setCustomSpacing(14, after: foldButton)
-        // 图片→定位 12（ChatGPT 间距跟进）：图片条与定位行中间隔着引用卡与
-        // 天气行，三段相邻间距（图片→引用、引用→天气、天气→定位）各取 12。
+        // 图片→定位 12（ChatGPT 间距跟进）：图片条与定位行中间隔着引用卡，
+        // 两段相邻间距（图片→引用、引用→定位）各取 12（天气已并进定位行）。
         bodyStack.setCustomSpacing(12, after: imagesScrollView)
         bodyStack.setCustomSpacing(12, after: quoteView)
-        bodyStack.setCustomSpacing(12, after: weatherRow)
         // 批 E：位置行→操作行 14（ChatGPT 间距跟进，#904 为 8）；位置行隐藏时 stack 自动忽略该间距，不留空隙。
         bodyStack.setCustomSpacing(14, after: locationStack)
         // 操作行→回应行 12（ChatGPT 间距跟进，#904 为 10）。
@@ -2030,12 +2061,23 @@ class BearyDiaryCardCell: UITableViewCell {
     /// display 返回 nil 时整组隐藏（无位置、他人视角无区级、公开篇无区级），不留空行。
     private func refreshLocationRow(entry: Entry) {
         guard let line = BearyLocationDisplay.display(entry: entry) else {
-            locationStack.isHidden = true
             locationLabel.text = nil
+            updateBottomRowVisibility()
             return
         }
-        locationStack.isHidden = false
         locationLabel.text = line
+        updateBottomRowVisibility()
+    }
+
+    /// 底行（地址＋天气）显隐：地址与天气任一有内容即显，全无即整行隐藏、
+    /// 不占位；无地址时地址组与间隔同藏，天气顶到左边缘。
+    private func updateBottomRowVisibility() {
+        let hasLocation = !(locationLabel.text ?? "").isEmpty
+        let hasWeather = !weatherWrapLabel.isHidden || !weatherNameLabel.isHidden || !weatherTempLabel.isHidden
+        locationIconView.isHidden = !hasLocation
+        locationLabel.isHidden = !hasLocation
+        locationWeatherSpacer.isHidden = !hasLocation
+        locationStack.isHidden = !hasLocation && !hasWeather
     }
 
     /// 置顶标识行刷新：只认 entry.isPinned（显式 1）；隐藏后 stack 自动压为 0，不留空行。
@@ -2172,6 +2214,15 @@ class BearyDiaryCardCell: UITableViewCell {
             weatherImageView.isHidden = true
             weatherWrapLabel.isHidden = true
         }
+        // 中文天气名（BearyText.weatherNames）：有映射才显，无 key 或查不到
+        // 映射时隐藏、不留空位。
+        if let weatherKey = entry.weather, !weatherKey.isEmpty, let weatherName = BearyText.weatherNames[weatherKey] {
+            weatherNameLabel.text = weatherName
+            weatherNameLabel.isHidden = false
+        } else {
+            weatherNameLabel.text = nil
+            weatherNameLabel.isHidden = true
+        }
         // 天气图标改动态 Lottie（落点行 playWeatherLottie 同款；无天气时其内守卫停播）。
         playWeatherLottie()
         // 气温跟天气图标走同一处：有值显“18°”，无值隐藏、不留空位。
@@ -2182,8 +2233,9 @@ class BearyDiaryCardCell: UITableViewCell {
             weatherTempLabel.text = nil
             weatherTempLabel.isHidden = true
         }
-        // 天气行显隐跟图标走：图标与气温全无时整行隐藏、不占位。
-        weatherRow.isHidden = weatherWrapLabel.isHidden && weatherTempLabel.isHidden
+        // 底行显隐跟图标／中文名／气温走：三者全无时整行隐藏、不占位
+        // （地址行随后 refreshLocationRow 再结算一次）。
+        updateBottomRowVisibility()
 
         // F9：心情。
         refreshMoodView()
@@ -2269,6 +2321,15 @@ class BearyDiaryCardCell: UITableViewCell {
             weatherImageView.isHidden = true
             weatherWrapLabel.isHidden = true
         }
+        // 中文天气名（BearyText.weatherNames）：有映射才显，无 key 或查不到
+        // 映射时隐藏、不留空位。
+        if let weatherKey = entry.weather, !weatherKey.isEmpty, let weatherName = BearyText.weatherNames[weatherKey] {
+            weatherNameLabel.text = weatherName
+            weatherNameLabel.isHidden = false
+        } else {
+            weatherNameLabel.text = nil
+            weatherNameLabel.isHidden = true
+        }
         // 天气图标改动态 Lottie（落点行 playWeatherLottie 同款；无天气时其内守卫停播）。
         playWeatherLottie()
         // #427 的气温显示保留；作者行心情位按 #421 新模型一律隐藏
@@ -2280,8 +2341,9 @@ class BearyDiaryCardCell: UITableViewCell {
             weatherTempLabel.text = nil
             weatherTempLabel.isHidden = true
         }
-        // 天气行显隐跟图标走：图标与气温全无时整行隐藏、不占位。
-        weatherRow.isHidden = weatherWrapLabel.isHidden && weatherTempLabel.isHidden
+        // 底行显隐跟图标／中文名／气温走：三者全无时整行隐藏、不占位
+        // （地址行随后 refreshLocationRow 再结算一次）。
+        updateBottomRowVisibility()
         refreshMoodView()
         // 置顶标识行（卡片最上方；两模式同款）。
         refreshPinRow(entry: entry)

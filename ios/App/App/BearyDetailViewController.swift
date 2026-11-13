@@ -292,15 +292,28 @@ final class BearyDetailViewController: UIViewController {
         lb.setContentCompressionResistancePriority(.required, for: .horizontal)
         return lb
     }()
-    /// 天气行（左下角、正文区下面、位置行之前）：天气图标 15 + 气温，左对齐；
-    /// 无天气数据时整行隐藏、不占位（显隐由 renderWeatherTemp 末尾同步）。
-    private lazy var weatherRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [weatherWrapLabel, weatherTempLabel])
+    /// 详情中文天气名（BearyText.weatherNames：晴／多云／阴……；无 key 或查不到
+    /// 映射时隐藏、不留空位，与气温同款 13pt 动态字号灰字）。
+    private let weatherNameLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        lb.isHidden = true
+        lb.setContentHuggingPriority(.required, for: .horizontal)
+        lb.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return lb
+    }()
+    /// 天气组（图标 15 + 中文名 + 气温，间距 6，与旧天气行同款；并进地址行后
+    /// 仍是独立一组，三个子视图各自显隐、全藏时整组不占位）。
+    private lazy var weatherGroup: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [weatherWrapLabel, weatherNameLabel, weatherTempLabel])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 6
         st.alignment = .center
-        st.isHidden = true
         return st
     }()
     private let moodLabel: UILabel = {
@@ -474,8 +487,19 @@ final class BearyDetailViewController: UIViewController {
         lb.lineBreakMode = .byTruncatingTail
         return lb
     }()
+    /// 地址与天气之间的间隔（宽 4，与栈间距 4 合计 12pt；无地址时与地址组
+    /// 同藏，天气顶到左边缘；固定宽，不被栈拉伸）。
+    private let detailLocationWeatherSpacer: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        return v
+    }()
+    /// 底行（左下角、正文区下面）：地址在左、天气组在地址右侧；无地址时
+    /// 地址组与间隔同藏，天气组顶到左边缘；地址与天气全无时整行由
+    /// updateDetailBottomRowVisibility 藏起、不占位。
     private lazy var detailLocationLineRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [detailLocationIconView, detailLocationLabel])
+        let st = UIStackView(arrangedSubviews: [detailLocationIconView, detailLocationLabel, detailLocationWeatherSpacer, weatherGroup])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 4
@@ -871,7 +895,6 @@ final class BearyDetailViewController: UIViewController {
         buildStaleBanner()
         buildImages()
         buildQuote()
-        buildWeatherRow()
         buildLocation()
         buildActionRow()
         buildEmoteRow()
@@ -1116,12 +1139,6 @@ final class BearyDetailViewController: UIViewController {
         installImageStripPinch()
     }
 
-    /// 天气行（左下角、正文区下面、位置行之前）：图标 15 + 气温，左对齐；
-    /// 无天气数据时整行隐藏、不占位（显隐由 renderWeatherTemp 末尾同步）。
-    private func buildWeatherRow() {
-        bodyStack.addArrangedSubview(weatherRow)
-    }
-
     /// 批 E 详情位置行（rebase 落点：新骨架正文栈 bodyStack，天气行之后、操作行之前；
     /// 旧详情挂在 chips 行后、引用卡之前，批 B 已删 chips 行与旧 stackView，故改挂正文栈）：
     /// 官方 icon_location 13 灰 + 位置文案；公开篇作者本人也只看区级，不再另附提示行；
@@ -1132,6 +1149,10 @@ final class BearyDetailViewController: UIViewController {
             detailLocationIconView.widthAnchor.constraint(equalToConstant: 13),
             detailLocationIconView.heightAnchor.constraint(equalToConstant: 13),
         ])
+        // 地址与天气的间隔固定 4 宽（与栈间距合计 12pt）；隐藏时栈自动压零。
+        let spacerWidth = detailLocationWeatherSpacer.widthAnchor.constraint(equalToConstant: 4)
+        spacerWidth.priority = UILayoutPriority(999)
+        spacerWidth.isActive = true
     }
 
     private func buildQuote() {
@@ -1265,11 +1286,10 @@ final class BearyDetailViewController: UIViewController {
         bodyStack.setCustomSpacing(titleLabel.isHidden ? 0 : 6, after: titleLabel)
         // 正文→图片 14（ChatGPT 间距跟进，#904 为 10）：正文与图片条直接相邻。
         bodyStack.setCustomSpacing(14, after: bodyLabel)
-        // 图片→定位 12（ChatGPT 间距跟进）：图片条与定位行中间隔着引用卡与
-        // 天气行，三段相邻间距（图片→引用、引用→天气、天气→定位）各取 12。
+        // 图片→定位 12（ChatGPT 间距跟进）：图片条与定位行中间隔着引用卡，
+        // 两段相邻间距（图片→引用、引用→定位）各取 12（天气已并进定位行）。
         bodyStack.setCustomSpacing(12, after: imagesScrollView)
         bodyStack.setCustomSpacing(12, after: quoteView)
-        bodyStack.setCustomSpacing(12, after: weatherRow)
         // 定位→操作行 14（ChatGPT 间距跟进，#904 为 10）。
         bodyStack.setCustomSpacing(14, after: detailLocationStack)
         // 操作行→回应行 12（ChatGPT 间距跟进，#904 为 10）。
@@ -1736,6 +1756,15 @@ final class BearyDetailViewController: UIViewController {
             weatherImageView.isHidden = true
             weatherWrapLabel.isHidden = true
         }
+        // 中文天气名（BearyText.weatherNames）：有映射才显，无 key 或查不到
+        // 映射时隐藏、不留空位。
+        if let weatherKey = entry.weather, !weatherKey.isEmpty, let weatherName = BearyText.weatherNames[weatherKey] {
+            weatherNameLabel.text = weatherName
+            weatherNameLabel.isHidden = false
+        } else {
+            weatherNameLabel.text = nil
+            weatherNameLabel.isHidden = true
+        }
         // 气温跟天气图标走同一处（卡片同款门：有气温且有天气类型才显）。
         // #427 的气温显示保留；作者行心情位按 #421 新模型一律隐藏，
         // 心情缀正文末尾（见 detailBodyAttributedText），不恢复旧心情位。
@@ -1746,8 +1775,9 @@ final class BearyDetailViewController: UIViewController {
             weatherTempLabel.text = nil
             weatherTempLabel.isHidden = true
         }
-        // 天气行显隐跟图标走：图标与气温全无时整行隐藏、不占位。
-        weatherRow.isHidden = weatherWrapLabel.isHidden && weatherTempLabel.isHidden
+        // 底行显隐跟图标／中文名／气温走：三者全无时整行隐藏、不占位
+        // （地址行随后 renderLocation 再结算一次）。
+        updateDetailBottomRowVisibility()
     }
 
 
@@ -2314,12 +2344,23 @@ final class BearyDetailViewController: UIViewController {
     /// 他人视角恒为区级）。
     private func renderLocation() {
         guard let line = BearyLocationDisplay.display(entry: entry) else {
-            detailLocationStack.isHidden = true
             detailLocationLabel.text = nil
+            updateDetailBottomRowVisibility()
             return
         }
-        detailLocationStack.isHidden = false
         detailLocationLabel.text = line
+        updateDetailBottomRowVisibility()
+    }
+
+    /// 底行（地址＋天气）显隐：地址与天气任一有内容即显，全无即整行隐藏、
+    /// 不占位；无地址时地址组与间隔同藏，天气顶到左边缘。
+    private func updateDetailBottomRowVisibility() {
+        let hasLocation = !(detailLocationLabel.text ?? "").isEmpty
+        let hasWeather = !weatherWrapLabel.isHidden || !weatherNameLabel.isHidden || !weatherTempLabel.isHidden
+        detailLocationIconView.isHidden = !hasLocation
+        detailLocationLabel.isHidden = !hasLocation
+        detailLocationWeatherSpacer.isHidden = !hasLocation
+        detailLocationStack.isHidden = !hasLocation && !hasWeather
     }
 
     /// 引用渲染代次：每次 renderQuote 即 +1。仅好友异步补全回调到达时须与
