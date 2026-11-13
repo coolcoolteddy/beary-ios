@@ -18,6 +18,7 @@
 		147711CB4F24122B8270E75F /* BearyCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5402B22C53F47BC0E5260A35 /* BearyCoreTests.swift */; };
 		49F9088AA0BEE72A92CEA33D /* BearyBeijingDay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D645AE2AFF2E373B5E32D6E /* BearyBeijingDay.swift */; };
 		649D01DBF721A0947AC482C9 /* BearyEntrySyncStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BF9342D327334807DB97719 /* BearyEntrySyncStore.swift */; };
+		43B946906C4ED44FAB9FAA64 /* BearyMineSearchIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6E20A51980730923E35F26C /* BearyMineSearchIndex.swift */; };
 		13FC1A9F34F131E29764A616 /* BearyEntrySyncStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB7E26C7A8336188526E5B68 /* BearyEntrySyncStoreTests.swift */; };
 		DED94DD2E4AA4932A3525D41 /* BearySyncProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4587329BF5ED4BD096496C9F /* BearySyncProgress.swift */; };
 		E4161BD942F941B698D09A76 /* BearyEntrySyncIncrementalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA281F841D514C3290442AC0 /* BearyEntrySyncIncrementalTests.swift */; };
@@ -334,6 +335,7 @@
 		77AD3CB98561B2E60A48412C /* BearyComposerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyComposerViewController.swift; sourceTree = "<group>"; };
 		55657C85F900B6AAC4EBF6D1 /* BearyDraftFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDraftFiles.swift; sourceTree = "<group>"; };
 		93AA4EE6DE8A068A6BC825BB /* BearyEntrySync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEntrySync.swift; sourceTree = "<group>"; };
+		A6E20A51980730923E35F26C /* BearyMineSearchIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyMineSearchIndex.swift; sourceTree = "<group>"; };
 		1D645AE2AFF2E373B5E32D6E /* BearyBeijingDay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBeijingDay.swift; sourceTree = "<group>"; };
 		9BF9342D327334807DB97719 /* BearyEntrySyncStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEntrySyncStore.swift; sourceTree = "<group>"; };
 		FB7E26C7A8336188526E5B68 /* BearyEntrySyncStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEntrySyncStoreTests.swift; sourceTree = "<group>"; };
@@ -645,6 +647,7 @@
 				93AA4EE6DE8A068A6BC825BB /* BearyEntrySync.swift */,
 				1D645AE2AFF2E373B5E32D6E /* BearyBeijingDay.swift */,
 				9BF9342D327334807DB97719 /* BearyEntrySyncStore.swift */,
+				A6E20A51980730923E35F26C /* BearyMineSearchIndex.swift */,
 				4587329BF5ED4BD096496C9F /* BearySyncProgress.swift */,
 				DFB7CEC22AB4833567716062 /* BearyEdgeDismiss.swift */,
 				DF72F9D9B2F74A28879E58DD /* BearyCenteredModal.swift */,
@@ -1268,6 +1271,7 @@
 				0AE5D01B1CC24189AE94E211 /* BearyProfilePersonalModules.swift in Sources */,
 				2E8196B98A259984EC93E07F /* BearyWordprint.swift in Sources */,
 				2B5FFB899357ED2A2FA2E05E /* BearySearchViewController.swift in Sources */,
+				43B946906C4ED44FAB9FAA64 /* BearyMineSearchIndex.swift in Sources */,
 				A23C53DAC03E8C03962E6498 /* BearyNotificationsViewController.swift in Sources */,
 				EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */,
 				3AA12B2885B64262BB5A9AD8 /* BearySoundPlayer.swift in Sources */,

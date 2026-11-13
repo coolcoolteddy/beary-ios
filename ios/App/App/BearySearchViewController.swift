@@ -1279,17 +1279,27 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             showLoadingState()
         }
         currentSearchTask = BearyAPI.shared.search(q: trimmed) { [weak self] result in
+            // 第十二轮 02：设备 FTS 与服务端回包并行——服务端回包到达后（仍在
+            // 后台线程）先查本地本人日记索引，再回主线程渲染；FTS 失败／本地
+            // 归档不完整时返回 []，服务端「我的」组原样兜底，不断档。公开组与
+            // 用户组不碰，仍是服务端原样。
+            var ftsMine: [Entry] = []
+            if case .success = result {
+                ftsMine = BearyMineSearchIndex.shared.searchMine(query: trimmed)
+            }
             // BearyAPI 回调不在主线程，碰 UI 必须回主线程。
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 if seq != self.searchSeq { return }
                 self.setBoxBusy(false)
                 switch result {
-                case .success(let data):
+                case .success(var data):
                     self.recordRecentSearch(trimmed)
-                    // sweep32-2：先记当批翻页态，renderResults 末尾的
-                    // updateSearchFooter 才能据此亮起“加载更多”。
+                    // sweep32-2：先按服务端原始回包记当批翻页态（游标与 hasMore
+                    // 只属于服务端页），再把 FTS 结果并进「我的」组；renderResults
+                    // 末尾的 updateSearchFooter 才能据此亮起“加载更多”。
                     self.updateSearchPagination(from: data)
+                    data.mine = self.mergedMine(serverMine: data.mine, ftsMine: ftsMine)
                     self.renderResults(data: data, query: trimmed)
                 case .failure:
                     // S7：已有旧结果时不进失败态（showState 会清结果区），
@@ -1774,6 +1784,33 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         setSearchFooter(failed: false)
     }
 
+    /// 第十二轮 02：设备 FTS 与服务端「我的」组按 entry id 去重合并。
+    /// 服务端仍回「我的」组（上线顺序：App FTS 先行、服务端改动随后），两边
+    /// 同一篇只留一行；按服务端序（created_at DESC, id DESC）重排。不截断——
+    /// 正常态 FTS 结果是服务端全集的子集、并集首批仍是服务端页宽；两边万一
+    /// 有不重合的篇，并集全显、余下仍由翻页按服务端游标续取，不丢篇。
+    /// 无 id 的行渲染时本就建不出行（makeEntryRow 返回 nil），这里一并跳过。
+    private func mergedMine(serverMine: [Entry]?, ftsMine: [Entry]) -> [Entry]? {
+        if ftsMine.isEmpty { return serverMine }
+        var seen = Set<String>()
+        var merged: [Entry] = []
+        for entry in ftsMine {
+            guard let id = entry.id, !seen.contains(id) else { continue }
+            seen.insert(id)
+            merged.append(entry)
+        }
+        for entry in serverMine ?? [] {
+            guard let id = entry.id, !seen.contains(id) else { continue }
+            seen.insert(id)
+            merged.append(entry)
+        }
+        merged.sort { (a, b) in
+            if a.createdAt != b.createdAt { return (a.createdAt ?? 0) > (b.createdAt ?? 0) }
+            return (a.id ?? "") > (b.id ?? "")
+        }
+        return merged
+    }
+
     /// 审计 P2-20：最近一次成功渲染的原始结果（供拉黑/举报广播过滤后重渲；重渲走
     /// 同 query 的 lastResultRowKeys，行入场不重播）。
     private var lastRenderedData: SearchResult?
@@ -1794,8 +1831,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             for entry in mine {
                 // 审计 2026-11-02 第十节：我的组按三档收——私密与仅好友照旧，
                 // 存活限时篇（stored 公开、未过期）同样归本组、不再无处可寻；
-                // 已过期篇两组皆不进（公开组有效态过滤已挡）。
-                if entry.isPublic == false || BearyEphemeral.isLive(entry) {
+                // 已过期篇两组皆不进（公开组有效态过滤已挡；第十二轮 02：FTS
+                // 建索引时已排除已过期篇，这里再挡一道服务端回包里的过期篇）。
+                if (entry.isPublic == false || BearyEphemeral.isLive(entry)) && !BearyEphemeral.isExpired(entry) {
                     mineEntries.append(entry)
                 }
             }
@@ -2109,8 +2147,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         var newEntryIds: [String] = []
         for entry in mine {
             // 与 renderResults 逐字一致：只取确认为私密篇（is_public == false）
-            // 与存活限时篇；缺失字段（nil）不进私密组。
-            guard entry.isPublic == false || BearyEphemeral.isLive(entry) else { continue }
+            // 与存活限时篇；缺失字段（nil）不进私密组；已过期篇两组皆不进。
+            guard (entry.isPublic == false || BearyEphemeral.isLive(entry)) && !BearyEphemeral.isExpired(entry) else { continue }
             guard let entryId = entry.id, rowEntryIds.contains(entryId) == false else { continue }
             if let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
                 mineRows.append(row)
