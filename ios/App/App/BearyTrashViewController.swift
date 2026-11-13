@@ -52,6 +52,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     /// 已改走后台串行队列，主线程终态检查时那笔写可能尚未执行、
     /// 代际尚未 +1，故另记一份主线程同步可见的已移除集合防回插。
     /// 刷新开始时清空、终态（成功/失败/游标缺失）时清空，只活一轮。
+    /// 同一集合也守网络首拉：首屏请求在途时恢复/删除成功的 id 一并记入，
+    /// 迟到首屏回包过滤后即消费（见 loadFirstPageFromNetwork）。
     private var trashRemovedDuringSilentRefresh: Set<String> = []
     /// 本地桶后台读在途：loadFirstPage 改异步后防重复进页（重试/
     /// reload 在读桶完成前再调直接丢弃，下次进页重读）。
@@ -551,7 +553,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 }
                 switch result {
                 case .success(let list):
-                    self.trashItems = list.items
+                    // 防回插：首屏请求在途时恢复/彻底删除成功的 id 不得被
+                    // 迟到回包写回（回包快照生成于恢复之前，仍含该篇）；
+                    // 过滤后集合即消费——同 id 日后再次进桶时不再拦。
+                    let filtered = list.items.filter { !self.trashRemovedDuringSilentRefresh.contains($0.id) }
+                    self.trashRemovedDuringSilentRefresh.removeAll()
+                    self.trashItems = filtered
                     self.trashHasMore = list.hasMore
                     self.updateListRowsIncrementally()
                     self.renderStateViews()
@@ -1249,9 +1256,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     // 若已先入队，恢复写随后读桶再清，终态仍不含本篇。
                     // 不走 runTrashDiskWrite：removeItem 内部 saveAll 已记
                     // 一次代际，再记一次会重复计数。
-                    if self.trashSilentRefreshing {
-                        self.trashRemovedDuringSilentRefresh.insert(identifier)
-                    }
+                    // 不限静默刷新在途：首屏请求在途时恢复同样记入，迟到
+                    // 首屏回包过滤后即消费（见 loadFirstPageFromNetwork）。
+                    self.trashRemovedDuringSilentRefresh.insert(identifier)
                     // 清桶用发起账号，不再读回调时刻账号（已门控，两者此时相等，
                     // 但发起值才是本次请求的归属，避免校验与写盘之间再被切号钻空）。
                     if let uid = requestAccountId {
@@ -1327,9 +1334,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         self.removeRow(identifier: identifier)
                         // 防回插 + 后台落盘：口径与恢复成功处完全一致
                         // （主线程先记已移除 id，再走同步串行后台队列清桶）。
-                        if self.trashSilentRefreshing {
-                            self.trashRemovedDuringSilentRefresh.insert(identifier)
-                        }
+                        // 不限静默刷新在途：首屏请求在途时删除同样记入，迟到
+                        // 首屏回包过滤后即消费（见 loadFirstPageFromNetwork）。
+                        self.trashRemovedDuringSilentRefresh.insert(identifier)
                         // 清桶用发起账号，口径与恢复成功处一致。
                         if let uid = requestAccountId {
                             BearyEntrySync.shared.runDiskWrite(accountId: uid) {
