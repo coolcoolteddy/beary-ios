@@ -111,7 +111,7 @@ final class BearyInputSheetViewController: UIViewController {
         scrollView.addSubview(scrollContentView)
 
         grabberView.translatesAutoresizingMaskIntoConstraints = false
-        grabberView.backgroundColor = BearyColors.line
+        grabberView.backgroundColor = BearyColors.gray
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
         scrollContentView.addSubview(grabberView)
 
