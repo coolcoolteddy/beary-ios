@@ -763,6 +763,10 @@ final class BearyProfilePhotosViewController: UIViewController {
             presentedViewer?.pruneImageKeys(removedKeys)
         }
         scheduleExpiryRefilter()
+        // 限时到期把照片滤空且仍有下一页时，网格已隐藏、尾部单元格触发不了
+        // 分页，不主动续拉会一直停在加载占位；本函数内有 isEmpty 守门，
+        // 照片未空时是空操作。
+        fetchMoreWhileEmptyIfNeeded()
     }
 
     private func fetchNextPageIfNeeded() {
