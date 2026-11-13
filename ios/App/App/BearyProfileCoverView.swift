@@ -296,7 +296,7 @@ public final class ProfileCoverView: UIView {
                             color: blue, width: 1.8, alpha: self.egg)
             }
         case .qixi:
-            drawQixi(ctx, depth: depth, vertical: vertical, nearX: nearX, padded: padded)
+            drawQixi(ctx, depth: depth, vertical: vertical, padded: padded)
         case .germany, .canada, .korea:
             drawAdditionalTheme(ctx, x: x, y: y, travel: travel, midX: midX, nearX: nearX, vertical: vertical)
         }
@@ -305,13 +305,16 @@ public final class ProfileCoverView: UIView {
     /// 七夕（金粉描线，深靛底）：图集只含背景，喜鹊由动态物层单独贴；
     /// 彩蛋六张全是与第 7 帧对齐的整帧透明层。坐标全按帧坐标（1024×323）
     /// 算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
-    private func drawQixi(_ ctx: CGContext, depth: CGFloat, vertical: CGFloat,
-                          nearX: CGFloat, padded: CGRect) {
+    /// 视差翻倍版（2026-11-13 Li 定：13 帧看着没区别，旧版太 subtle）：
+    /// 帧 f 结构平移 2(f−6) px（±12）、主体平移 4(f−6) px（±24）。
+    private func drawQixi(_ ctx: CGContext, depth: CGFloat, vertical: CGFloat, padded: CGRect) {
         let scaleX = padded.width / 1024
         let scaleY = padded.height / 323
-        // 结构层位移与图集帧内 baked 的一致（帧 f 结构平移 f−6 px，f=(depth+1)*6），
-        // 星点／闪烁层按它平移才贴得住银河带；主体层与动态物同款走 nearX。
-        let structureX = 6 * depth * scaleX
+        // 结构层位移与图集帧内 baked 的一致（帧 f 结构平移 2(f−6) px，f=(depth+1)*6，
+        // 即 12*depth）；星点／闪烁层按它平移才贴得住银河带。主体层（喜鹊）
+        // 平移 4(f−6) px，即 24*depth——动态物与彩蛋里的喜鹊分层同速。
+        let structureX = 12 * depth * scaleX
+        let subjectX = 24 * depth * scaleX
         let motion = min(1, hypot(tilt.x, tilt.y))
         // 彩蛋未触发时画整张喜鹊；触发后改画四张分层（身体＋金线各一只），
         // split 取 egg 与 converge 的较大值——松手后 egg 先褪、converge 慢慢回，
@@ -345,25 +348,25 @@ public final class ProfileCoverView: UIView {
         let goldBright = (0.6 + 0.4 * converge) * (0.92 + 0.08 * motion)
         if split > 0.001 {
             bitmap("qixi-egg-magpie-big-body", in: ctx,
-                   center: CGPoint(x: padded.midX + nearX + bigFrame.x * scaleX,
+                   center: CGPoint(x: padded.midX + subjectX + bigFrame.x * scaleX,
                                    y: padded.midY + bigFrame.y * scaleY),
                    width: padded.width, height: padded.height, angle: 0, alpha: split)
             bitmap("qixi-egg-magpie-big-gold", in: ctx,
-                   center: CGPoint(x: padded.midX + nearX + bigFrame.x * scaleX,
+                   center: CGPoint(x: padded.midX + subjectX + bigFrame.x * scaleX,
                                    y: padded.midY + bigFrame.y * scaleY),
                    width: padded.width, height: padded.height, angle: 0, alpha: split * goldBright)
             bitmap("qixi-egg-magpie-small-body", in: ctx,
-                   center: CGPoint(x: padded.midX + nearX + smallFrame.x * scaleX,
+                   center: CGPoint(x: padded.midX + subjectX + smallFrame.x * scaleX,
                                    y: padded.midY + smallFrame.y * scaleY),
                    width: padded.width, height: padded.height, angle: 0, alpha: split)
             bitmap("qixi-egg-magpie-small-gold", in: ctx,
-                   center: CGPoint(x: padded.midX + nearX + smallFrame.x * scaleX,
+                   center: CGPoint(x: padded.midX + subjectX + smallFrame.x * scaleX,
                                    y: padded.midY + smallFrame.y * scaleY),
                    width: padded.width, height: padded.height, angle: 0, alpha: split * goldBright)
         }
         // 未触发时整张喜鹊：PNG 左上角对帧坐标 (483, 7)、473×313。
         bitmap("qixi-magpie", in: ctx,
-               center: CGPoint(x: -32 + (483 + 473 / 2) * scaleX + nearX,
+               center: CGPoint(x: -32 + (483 + 473 / 2) * scaleX + subjectX,
                                y: -12 + (7 + 313 / 2) * scaleY + vertical),
                width: 473 * scaleX, height: 313 * scaleY, angle: 0, alpha: 1 - split)
     }
