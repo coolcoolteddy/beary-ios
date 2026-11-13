@@ -57,8 +57,12 @@ enum BearyBackgroundRefresh {
         // 先排下一轮：本轮成败都不中断链。
         schedule()
         // setTaskCompleted 只调一次（过期回调与完成回调可能同时到达）。
+        // 取消态与完成态共用一把锁：超时（系统过期回调或 25 秒看门狗）
+        // 先置取消态再收尾，取消态只进不出；晚到的回包经 runOnce 的
+        // isCancelled 复核，不再写缓存、不发通知、不重算提醒。
         let lock = NSLock()
         var finished = false
+        var cancelled = false
         let finish: (Bool) -> Void = { success in
             lock.lock()
             defer { lock.unlock() }
@@ -66,11 +70,22 @@ enum BearyBackgroundRefresh {
             finished = true
             refreshTask.setTaskCompleted(success: success)
         }
-        refreshTask.expirationHandler = { finish(false) }
+        let cancel: () -> Void = {
+            lock.lock()
+            cancelled = true
+            lock.unlock()
+            finish(false)
+        }
+        let isCancelled: () -> Bool = {
+            lock.lock()
+            defer { lock.unlock() }
+            return cancelled
+        }
+        refreshTask.expirationHandler = { cancel() }
         // 看门狗：网络挂起时不等系统过期，先收尾。
-        let watchdog = DispatchWorkItem { finish(false) }
+        let watchdog = DispatchWorkItem { cancel() }
         DispatchQueue.main.asyncAfter(deadline: .now() + watchdogInterval, execute: watchdog)
-        runOnce { success in
+        runOnce(isCancelled: isCancelled) { success in
             watchdog.cancel()
             finish(success)
         }
@@ -78,18 +93,36 @@ enum BearyBackgroundRefresh {
 
     /// 拉广场首屏 → 写回快照 → 有新头条则提醒 → 重算四种本地提醒。
     /// 回包线程不固定，收尾一律回主线程。
-    private static func runOnce(completion: @escaping (Bool) -> Void) {
+    /// isCancelled 由 handle 的超时方（系统过期回调或 25 秒看门狗）置位；
+    /// 置位后本轮不再发新请求，晚到回包在每处副作用前复核，只收尾。
+    private static func runOnce(isCancelled: @escaping () -> Bool, completion: @escaping (Bool) -> Void) {
         let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id)
         BearyFeedCache.load(bucket: bucket) { snapshot in
             let seenHead = BearyFeedCache.visibleHead(snapshot?.entries ?? []).first
+            // 超时后不再发新的网络请求。
+            guard !isCancelled() else {
+                completion(false)
+                return
+            }
             BearyAPI.shared.fetchEntries(scope: .plaza, limit: BearyFeedCache.snapshotEntryLimit) { result in
                 DispatchQueue.main.async {
+                    // 超时后晚到的回包：不做任何副作用，只收尾
+                    //（finish 已由超时方调过，completion(false) 只是空操作）。
+                    guard !isCancelled() else {
+                        completion(false)
+                        return
+                    }
                     switch result {
                     case .failure:
                         completion(false)
                     case .success(let list):
                         let entries = list.entries ?? []
                         let fresh = BearyFeedCache.visibleHead(entries)
+                        // 取消态贯穿：每处副作用前都复核。
+                        guard !isCancelled() else {
+                            completion(false)
+                            return
+                        }
                         // 快照写回：回前台秒显新内容（只存有效公开篇，与前台同口径）。
                         // 空广场也要写回（否则本地留旧快照），再重算提醒。
                         BearyFeedCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= BearyFeedCache.snapshotEntryLimit)
@@ -98,10 +131,18 @@ enum BearyBackgroundRefresh {
                         if let latest = fresh.first, let seen = seenHead, isNewer(latest, than: seen) {
                             // 自己的新篇不提醒（刚发布完就弹“广场有新日记”是噪音）。
                             if latest.authorId != SessionManager.shared.currentUser?.id {
+                                guard !isCancelled() else {
+                                    completion(false)
+                                    return
+                                }
                                 postPlazaNewNotification()
                             }
                         }
                         // 联动：按最新本地数据重算已有四种本地提醒。
+                        guard !isCancelled() else {
+                            completion(false)
+                            return
+                        }
                         BearyLocalNotifications.shared.refreshAll(force: true)
                         completion(true)
                     }
