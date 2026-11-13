@@ -294,15 +294,15 @@ public final class ProfileCoverView: UIView {
     /// 元旦（中式木刻版画、深蓝夜＋金色烟花）：图集只含背景，余烬由动态物层单独贴；
     /// 彩蛋一张是与第 7 帧对齐的整帧透明层（左上夜空一朵金色烟花，中心 (300, 65)）。
     /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
-    /// 视差翻倍版：帧 f 结构平移 2(f−6) px（±12）、主体平移 4(f−6) px（±24）。
+    /// v22 模型：只动烟花——图集结构层就是烟花（大红烟花＋小白烟花＋河面倒影），
+    /// 帧 f 平移 2(f−6) px（±12）；桥/小镇/行人/河面全在 far 层静止。
+    /// 余烬是烟花的火星，跟烟花同速（structureX），不再用主体速率 24*depth。
     private func drawNewyear(_ ctx: CGContext, depth: CGFloat, vertical: CGFloat, padded: CGRect) {
         let scaleX = padded.width / 1024
         let scaleY = padded.height / 323
         // 结构层位移与图集帧内 baked 的一致（帧 f 结构平移 2(f−6) px，f=(depth+1)*6，
-        // 即 12*depth）；彩蛋层按它平移才贴得住烟花中心。主体层（余烬）
-        // 平移 4(f−6) px，即 24*depth。
+        // 即 12*depth）；彩蛋层与余烬层按它平移才贴得住烟花。
         let structureX = 12 * depth * scaleX
-        let subjectX = 24 * depth * scaleX
         // 彩蛋：左上夜空一朵金色烟花，倾斜保持 0.45 秒后随 egg 淡入（触发走共享
         // step 逻辑，与圣诞同款；每次进页 restartVisit 可再触发）。
         if egg > 0.001 {
@@ -311,9 +311,9 @@ public final class ProfileCoverView: UIView {
                    width: padded.width, height: padded.height, angle: 0, alpha: egg)
         }
         // 余烬动态物：PNG 左上角对帧坐标 (212, 0)、600×323，中心即帧中心
-        // (512, 161.5)；padded.midY 已含 vertical，不再另加。
+        // (512, 161.5)；padded.midY 已含 vertical，不再另加。跟烟花同速 structureX。
         bitmap("newyear-embers", in: ctx,
-               center: CGPoint(x: padded.midX + subjectX, y: padded.midY),
+               center: CGPoint(x: padded.midX + structureX, y: padded.midY),
                width: 600 * scaleX, height: 323 * scaleY, angle: 0, alpha: 1)
     }
 
