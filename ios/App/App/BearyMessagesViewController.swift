@@ -518,8 +518,10 @@ final class BearyMessagesViewController: UIViewController {
 
     /// B3：行内容签名——只由 cell 实际画出的字段组成。卡面：标题/摘要/
     /// 时间/未读/高亮；信件：类型/发送方/标题/正文/摘要/时间/已读；
-    /// 会话：对方名/摘要/时间/未读数；哨兵行由分页态定；失败行内容恒定。
-    /// 头像 URL 不入签名（异步加载，不属行内容）。key 相同且签名相同
+    /// 会话：对方名/摘要/时间/未读数/头像 URL；哨兵行由分页态定；失败行内容恒定。
+    /// 会话行头像走对方 avatarUrl 异步加载（BearyDMConversationCell），
+    /// 只换头像时签名须变、行须重配，否则新头像收不到；信件行与卡面行
+    /// 只画静态图标、不加载头像，故不入头像字段。key 相同且签名相同
     /// 即同一行未变，不动它；签名变了只 reload 该行。
     private func contentSignature(for row: MergedRow) -> String {
         switch row {
@@ -528,7 +530,7 @@ final class BearyMessagesViewController: UIViewController {
         case .notifLetter(let item):
             return "letter|\(item.type ?? "")|\(item.actorId ?? 0)|\(item.actorName ?? "")|\(item.title ?? "")|\(item.body ?? "")|\(item.excerpt ?? "")|\(item.createdAt ?? 0)|\(item.read ?? false)"
         case .conversation(let conv):
-            return "dm|\(conv.peer?.displayName ?? "")|\(conv.lastBody ?? "")|\(conv.lastAt ?? 0)|\(conv.unreadCount ?? 0)"
+            return "dm|\(conv.peer?.displayName ?? "")|\(conv.lastBody ?? "")|\(conv.lastAt ?? 0)|\(conv.unreadCount ?? 0)|\(conv.peer?.avatarUrl ?? "")"
         case .notifFailure:
             return "notif-failure"
         case .dmFailure:
