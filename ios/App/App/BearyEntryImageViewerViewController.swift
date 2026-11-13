@@ -558,18 +558,22 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         let totalCount = max(imageKeys.count, localImages.count)
         counterLabel.isHidden = totalCount <= 1
         dotsStack.isHidden = totalCount <= 1 || totalCount > 20
-        for _ in 0..<totalCount {
-            let dot = UIView()
-            dot.translatesAutoresizingMaskIntoConstraints = false
-            dot.backgroundColor = UIColor(white: 1, alpha: 0.35)
-            dot.layer.cornerRadius = 3
-            dot.clipsToBounds = true
-            NSLayoutConstraint.activate([
-                dot.widthAnchor.constraint(equalToConstant: 6),
-                dot.heightAnchor.constraint(equalToConstant: 6),
-            ])
-            dotsStack.addArrangedSubview(dot)
-            dotViews.append(dot)
+        // 超 20 张只留顶部计数：圆点容器已隐藏，不再逐张创建隐藏圆点
+        // （每追加一页都会重建全部，隐藏视图的分配与布局纯属浪费）。
+        if totalCount <= 20 {
+            for _ in 0..<totalCount {
+                let dot = UIView()
+                dot.translatesAutoresizingMaskIntoConstraints = false
+                dot.backgroundColor = UIColor(white: 1, alpha: 0.35)
+                dot.layer.cornerRadius = 3
+                dot.clipsToBounds = true
+                NSLayoutConstraint.activate([
+                    dot.widthAnchor.constraint(equalToConstant: 6),
+                    dot.heightAnchor.constraint(equalToConstant: 6),
+                ])
+                dotsStack.addArrangedSubview(dot)
+                dotViews.append(dot)
+            }
         }
         if onViewEntryAtIndex != nil {
             viewEntryBottomToDotsConstraint?.isActive = !dotsStack.isHidden
