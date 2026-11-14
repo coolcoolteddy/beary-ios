@@ -217,18 +217,47 @@ enum BearyTimeCapsule {
 
     /// 当前区级一次定位＋逆地理编码：只取区级文本，不存坐标、不上传、
     /// 不写盘。取不到／无权限时回 nil，调用方按未解锁处理。
+    /// 2026-11-14 埋藏定位修：冷启动 GPS 下单次 requestLocation 常在拿到
+    /// 定位前先报 kCLErrorLocationUnknown、或 10 秒超时，先到即判失败；
+    /// 失败分两类——拒绝（.denied）直接回 nil 不重试，暂不可用
+    /// （.unavailable，含定位超时与逆地理编码超时／无结果）自动再试一次，
+    /// 首轮已把 GPS 热起来，第二轮通常很快拿到；逆地理编码另加 8 秒超时，
+    /// 不再无限等。仍只取区级文本，不存坐标。
     static func fetchCurrentDistrict(completion: @escaping (String?) -> Void) {
+        fetchCurrentDistrict(attemptsRemaining: 2, completion: completion)
+    }
+
+    private static func fetchCurrentDistrict(attemptsRemaining: Int, completion: @escaping (String?) -> Void) {
         BearyOneShotLocation.request { result in
             switch result {
             case .coordinate(let latitude, let longitude):
                 let geocoder = CLGeocoder()
-                geocoder.reverseGeocodeLocation(CLLocation(latitude: latitude, longitude: longitude)) { placemarks, _ in
-                    DispatchQueue.main.async {
-                        completion(placemarks?.first.flatMap { BearyLocationDisplay.district(from: $0) })
+                var settled = false
+                let settle: (String?) -> Void = { district in
+                    guard !settled else { return }
+                    settled = true
+                    if let district = district, !district.isEmpty {
+                        DispatchQueue.main.async { completion(district) }
+                    } else if attemptsRemaining > 1 {
+                        fetchCurrentDistrict(attemptsRemaining: attemptsRemaining - 1, completion: completion)
+                    } else {
+                        DispatchQueue.main.async { completion(nil) }
                     }
                 }
-            case .denied, .unavailable:
+                geocoder.reverseGeocodeLocation(CLLocation(latitude: latitude, longitude: longitude)) { placemarks, _ in
+                    DispatchQueue.main.async {
+                        settle(placemarks?.first.flatMap { BearyLocationDisplay.district(from: $0) })
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8) { settle(nil) }
+            case .denied:
                 DispatchQueue.main.async { completion(nil) }
+            case .unavailable:
+                if attemptsRemaining > 1 {
+                    fetchCurrentDistrict(attemptsRemaining: attemptsRemaining - 1, completion: completion)
+                } else {
+                    DispatchQueue.main.async { completion(nil) }
+                }
             }
         }
     }
