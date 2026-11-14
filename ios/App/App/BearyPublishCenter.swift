@@ -242,7 +242,7 @@ final class BearyPublishCenter {
         guard let localFile = image.localFile else {
             // 交接时已守卫（无 key 又无本地文件拦截不发），到这里即程序错误；
             // 按图片失效处理，不编新文案。
-            fail(runningJob, message: Self.message(forPublishError: .server("image unavailable", nil)))
+            fail(runningJob, message: partialFailureMessage(Self.message(forPublishError: .server("image unavailable", nil)), runningJob: runningJob))
             return
         }
         let step = runningJob.imageIndex
@@ -251,7 +251,7 @@ final class BearyPublishCenter {
             guard let self = self, let runningJob = runningJob, !runningJob.finished else { return }
             guard let prepared = BearyDraftImageStore.existingPreparedJPEG(fullName: localFile, accountId: accountId) else {
                 DispatchQueue.main.async {
-                    self.fail(runningJob, message: Self.message(forPublishError: .server("image unavailable", nil)))
+                    self.fail(runningJob, message: self.partialFailureMessage(Self.message(forPublishError: .server("image unavailable", nil)), runningJob: runningJob))
                 }
                 return
             }
@@ -261,7 +261,7 @@ final class BearyPublishCenter {
                 if videoData == nil {
                     DispatchQueue.main.async {
                         // 实况视频已丢：与编辑器恢复态同口径，不静默降级为静态。
-                        self.fail(runningJob, message: "有实况视频已丢失，重新选择该图片后再发布")
+                        self.fail(runningJob, message: self.partialFailureMessage("有实况视频已丢失，重新选择该图片后再发布", runningJob: runningJob))
                     }
                     return
                 }
@@ -294,7 +294,7 @@ final class BearyPublishCenter {
                         // 实况回包缺 live_key = 视频没落下：按失败处理，
                         // 不把实况当静态图发出（与编辑器 uploadPrepared 同口径）。
                         if videoData != nil, resp.liveKey == nil || resp.liveKey?.isEmpty == true {
-                            self.fail(runningJob, message: "实况视频上传失败，请点图重试")
+                            self.fail(runningJob, message: self.partialFailureMessage("实况视频上传失败，请点图重试", runningJob: runningJob))
                             return
                         }
                         runningJob.imageKeys.append(key)
@@ -349,7 +349,7 @@ final class BearyPublishCenter {
                         self.succeed(runningJob, entryId: entryId)
                     } else {
                         // 成功回包无 id：按旧口径发布失败，草稿保留。
-                        self.fail(runningJob, message: "发布失败，请重试")
+                        self.fail(runningJob, message: self.partialFailureMessage("发布失败，请重试", runningJob: runningJob))
                     }
                 case .failure(let error):
                     self.fail(runningJob, error: error)
@@ -470,6 +470,19 @@ final class BearyPublishCenter {
             return "原日记已公开，新篇未发布。账号已变化，请回到原账号后再发布，或丢弃本篇重新开始。"
         }
         return "账号已变化，本篇未发布。请回到原账号后再发布，或丢弃本篇重新开始。"
+    }
+
+    /// 部分成功失败文案：第 25 轮 13（收窄）：原日记已公开时，在原失败
+    /// 文案前加“原日记已公开，新篇未发布。”；未公开时原样返回。
+    /// 通用“发布失败，请重试”只改成“原日记已公开，新篇未发布，请重试”，
+    /// 不重复“发布失败”。仅供上述四条分支用；fail(error:) 与账号失配
+    /// 分支已有部分成功口径，不走这里。
+    private func partialFailureMessage(_ base: String, runningJob: RunningJob) -> String {
+        guard runningJob.sourcePublished else { return base }
+        if base == "发布失败，请重试" {
+            return "原日记已公开，新篇未发布，请重试"
+        }
+        return "原日记已公开，新篇未发布。" + base
     }
 
     private func reportProgress(_ runningJob: RunningJob, value: Double) {
