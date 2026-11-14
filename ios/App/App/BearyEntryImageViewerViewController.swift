@@ -1577,10 +1577,12 @@ private final class BearyImageViewerReturnAnimator: NSObject, UIViewControllerAn
         tempView.layer.cornerRadius = 12
         container.addSubview(tempView)
         let targetRect = container.convert(origin, from: nil)
-        // 关场回原位走弹簧（规范 §6，第十轮收敛）：阻尼 0.7——原 0.85 防冲出原位
-        // 口径作废，0.7 弹簧回弹有轻微超调、可能短暂冲出原位，需真机回归；
-        // 时长 0.26s（motion.normal），目标矩形不动，回 targetRect。
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: .curveEaseOut, animations: {
+        // 关场回原位走临界阻尼弹簧（阻尼 1.0，不超调）：此前阻尼 0.7 的回弹
+        // 会短暂冲过目标矩形——临时图先比原处格子矮一截再弹回正常，真机报障
+        // 即此（灯箱回页后照片先矮后正常）；临界阻尼单调趋近目标、无冲出，
+        // 时长仍 0.26s（motion.normal），目标矩形不动，回 targetRect。
+        // 规范 §6 仍写关场阻尼 0.7，本支改后须同步规范，见 PR 说明。
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 1.0, initialSpringVelocity: 0, options: .curveEaseOut, animations: {
             fromView.alpha = 0
             tempView.frame = targetRect
         }, completion: { _ in
