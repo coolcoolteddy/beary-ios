@@ -3,7 +3,7 @@ import ImageIO
 import UIKit
 
 public enum ProfileCoverTheme: String, CaseIterable {
-    case china, usa, japan, germany, canada, korea, qixi, christmas, newyear, easter
+    case china, usa, japan, germany, canada, korea, qixi, christmas, newyear, easter, lantern
 }
 
 public final class ProfileCoverView: UIView {
@@ -60,6 +60,12 @@ public final class ProfileCoverView: UIView {
             // （兔子右侧草丛），与第 7 帧对齐、只在触发后出现。
             names.append("easter-painted-egg")
             names.append("easter-golden-egg")
+        case .lantern:
+            // 元宵：动态物是一盏莲花灯（浮在水面）；万灯齐明光效按图层拆成两片
+            // （近景片跟近景灯笼、远景片跟远景），与第 7 帧对齐、只在触发后出现。
+            names.append("flower-lantern")
+            names.append("lantern-lights-near")
+            names.append("lantern-lights-far")
         }
         var images: [String: UIImage] = [:]
         for name in names {
@@ -317,6 +323,8 @@ public final class ProfileCoverView: UIView {
             drawNewyear(ctx, depth: depth, vertical: vertical, padded: padded)
         case .easter:
             drawEaster(ctx, depth: depth, vertical: vertical, padded: padded)
+        case .lantern:
+            drawLantern(ctx, depth: depth, travel: travel, vertical: vertical, padded: padded)
         case .germany, .canada, .korea:
             drawAdditionalTheme(ctx, x: x, y: y, travel: travel, midX: midX, nearX: nearX, vertical: vertical)
         }
@@ -466,6 +474,49 @@ public final class ProfileCoverView: UIView {
                center: CGPoint(x: -32 + 380 * scaleX + middleX,
                                y: -12 + 269 * scaleY + vertical),
                width: eggWidth, height: eggHeight, angle: 0, alpha: 1)
+    }
+    /// 元宵（深红夜景剪纸风）：图集只含背景，莲花灯由动态物层单独贴；
+    /// 万灯齐明光效按图层拆成两片（近景片跟近景灯笼、远景片跟远景），
+    /// 与第 7 帧对齐、只在触发后随 egg 淡入。
+    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
+    /// 四层位移（第 1→13 帧全程）：远 24／中 36／近 48／前景 60；帧内位移即
+    /// (T/2)*depth——花灯浮在水面跟中层走（±18px），光效近景片跟近景（±24px）、
+    /// 远景片跟远景（±12px）。中景片与前景片为空：光晕够不着桥面水纹与梅花枝，
+    /// 拆分见 festival-depth-covers/chatgpt-step2/split-lights.py，两片重组与原图逐像素一致。
+    /// 莲花灯（flower-lantern.png，520×484）：画在桥右水面开阔处，中心帧坐标 (430, 288)、
+    /// 宽 70，底边贴水面（y≈320）；交付里没给位置，这个点是我定的，想挪直接改这两个数。
+    /// 预览 v2 里花灯会持续漂移＋浮沉＋倾斜＋光晕脉动，本接线没做：灯锚在水面，
+    /// 只跟倾斜轻摆（角度 0.03*travel）＋水面一圈暖光晕；持续漂移要时间驱动，
+    /// 现在的 ProfileCoverView 没有时间相位，先不做。远景虚化＋梅花清晰豁免也是
+    /// 预览专属效果（离屏模糊＋遮罩挖洞），接线里没有模糊 pass，图集按原样画。
+    private func drawLantern(_ ctx: CGContext, depth: CGFloat, travel: CGFloat, vertical: CGFloat, padded: CGRect) {
+        let scaleX = padded.width / 1024
+        let scaleY = padded.height / 323
+        // 各层帧内位移与图集 baked 的一致（第 1→13 帧全程远 24／中 36／近 48／前景 60，
+        // 即每层 ±T/2*depth）；花灯跟中层、光效两片各跟其层。
+        let middleX = 18 * depth * scaleX
+        let nearX = 24 * depth * scaleX
+        let farX = 12 * depth * scaleX
+        // 万灯齐明：倾斜保持 0.45 秒后随 egg 淡入（触发走共享 step 逻辑，与圣诞同款；
+        // 每次进页 restartVisit 可再触发）。远景片先画、近景片后画。
+        if egg > 0.001 {
+            bitmap("lantern-lights-far", in: ctx,
+                   center: CGPoint(x: padded.midX + farX, y: padded.midY),
+                   width: padded.width, height: padded.height, angle: 0, alpha: egg)
+            bitmap("lantern-lights-near", in: ctx,
+                   center: CGPoint(x: padded.midX + nearX, y: padded.midY),
+                   width: padded.width, height: padded.height, angle: 0, alpha: egg)
+        }
+        // 莲花灯：PNG 520×484，宽 70、高 70*484/520；中心帧坐标 (430, 288)。
+        let lanternWidth: CGFloat = 70
+        let lanternHeight = lanternWidth * 484 / 520
+        let lanternCenter = CGPoint(x: -32 + 430 * scaleX + middleX,
+                                    y: -12 + 288 * scaleY + vertical)
+        // 水面暖光晕（灯下倒影一圈暖色，随灯走）。
+        glow(ctx, center: CGPoint(x: lanternCenter.x, y: lanternCenter.y + lanternHeight * 0.42),
+             rx: 52, ry: 8, color: UIColor(red: 1, green: 0.69, blue: 0.34, alpha: 1), alpha: 0.30)
+        bitmap("flower-lantern", in: ctx, center: lanternCenter,
+               width: lanternWidth, height: lanternHeight, angle: 0.03 * travel, alpha: 1)
     }
 
     private func drawAdditionalTheme(_ ctx: CGContext, x: CGFloat, y: CGFloat, travel: CGFloat,
@@ -634,7 +685,7 @@ public final class ProfileCoverView: UIView {
 
 /// 封面底图缓存：读盘＋解码只在后台串行队列做，主线程只贴图。
 /// 有界：最多留 3 张（最近用的），超了逐出最久未用的；收到内存警告时清库。
-/// 每张全幅图集 5120×969 ≈ 19 MiB，10 张全留理论约 190 MiB；封顶 3 张后
+/// 每张全幅图集 5120×969 ≈ 19 MiB，11 张全留理论约 209 MiB；封顶 3 张后
 /// 稳态约 57 MiB。preload 保留：设置页进页仍预热，逐出只发生在解码完成
 /// 入库时；已显示的封面持有自己的 backdrop 强引用，清库/逐出不会让首屏
 /// 变空白；未命中时 draw() 走 poster 兜底（与原来 backdrop == nil 的分支
@@ -717,7 +768,7 @@ private final class CoverBackdropCache: NSObject {
     /// 后台队列做、不碰主线程；帧切分按底图实际尺寸动态算，不用改 drawBackdrop。
     /// 第十轮 07：显式立即解码（kCGImageSourceShouldCacheImmediately），像素在
     /// 后台队列解完再交付主线程，首帧绘制不回主线程解压；须配合按需加载＋内存
-    /// 预算，十张不一次全解。
+    /// 预算，十一张不一次全解。
     private static func decoded(theme: ProfileCoverTheme) -> CGImage? {
         guard let url = Bundle.main.url(forResource: theme.rawValue + "-depth", withExtension: "png"),
               let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
