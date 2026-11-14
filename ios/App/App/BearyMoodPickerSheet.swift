@@ -505,7 +505,8 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             return UICollectionViewCell()
         }
         let key = selectedGroup.keys[indexPath.item]
-        cell.configure(key: key)
+        // 第 25 轮 69 项：GIF 读屏名按库内顺序编号区分（最新在前，第 1 张起）。
+        cell.configure(key: key, gifIndex: selectedGroup.id == "mygif" ? indexPath.item + 1 : nil)
         // “我的 GIF”组 cell 长按删库（只删库行）；其余组长按无动作。
         cell.onDeleteGIF = selectedGroup.id == "mygif" ? { [weak self] gifKey in self?.confirmDeleteGIF(key: gifKey) } : nil
         return cell
@@ -551,7 +552,8 @@ final class BearyMoodPickerCell: UICollectionViewCell {
     private var noneImageView: UIImageView?
     private var currentKey: String?
     /// “我的 GIF”组 cell：46 槽位里贴 GIF；先贴首帧 JPEG 缩略图（快），
-    /// 可见时再取整 GIF 动画；长按删库（只删库行，不删文件）。
+    /// 可见时再取整 GIF 动画；长按删库（只删库行，不删文件），读屏另有
+    /// “删除 GIF”自定义操作（第 25 轮 69 项）。
     private var gifImageView: UIImageView?
     private var gifFirstFrame: UIImage?
     private var gifAnimatedImage: UIImage?
@@ -605,6 +607,11 @@ final class BearyMoodPickerCell: UICollectionViewCell {
         gifImageView?.image = nil
         gifImageView?.isHidden = true
         onDeleteGIF = nil
+        isAccessibilityElement = false
+        accessibilityLabel = nil
+        accessibilityHint = nil
+        accessibilityTraits = []
+        accessibilityCustomActions = nil
     }
 
     /// 回应 sheet cell 同款按压态（surface2 底，只画在 46 槽位圆角底片上）。
@@ -614,9 +621,16 @@ final class BearyMoodPickerCell: UICollectionViewCell {
         }
     }
 
-    func configure(key: String) {
+    func configure(key: String, gifIndex: Int? = nil) {
         currentKey = key
-        if key.hasSuffix(".gif") { configureGIF(key: key); return }
+        // 非 GIF cell 不带删除操作；复用来的 GIF 读屏名与操作在此清掉，
+        // GIF 分支下面再按库内顺序重设。
+        isAccessibilityElement = false
+        accessibilityLabel = nil
+        accessibilityHint = nil
+        accessibilityTraits = []
+        accessibilityCustomActions = nil
+        if key.hasSuffix(".gif") { configureGIF(key: key, gifIndex: gifIndex); return }
         stopGIF()
         nameLabel.text = key == "none" ? "无" : (BearyText.moodNames[key] ?? key)
         nameLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
@@ -666,12 +680,23 @@ final class BearyMoodPickerCell: UICollectionViewCell {
 
     /// “我的 GIF”组 cell：名签留空；先贴首帧 JPEG 缩略图（快），播时再取
     /// 整 GIF 动画；setPlaying 启停复用心情 cell 的 willDisplay 口径。
-    private func configureGIF(key: String) {
+    /// 第 25 轮 69 项：名签视觉仍留空，读屏名按库内顺序编号（第 N 张），
+    /// 另给“删除 GIF”自定义操作（与长按同一路），不依赖发现长按。
+    private func configureGIF(key: String, gifIndex: Int? = nil) {
         emoteView?.stop()
         emoteView?.removeFromSuperview()
         emoteView = nil
         noneImageView?.isHidden = true
         nameLabel.text = ""
+        isAccessibilityElement = true
+        if let gifIndex = gifIndex {
+            accessibilityLabel = "我的 GIF，第 \(gifIndex) 张"
+        } else {
+            accessibilityLabel = "我的 GIF"
+        }
+        accessibilityTraits = [.button]
+        accessibilityHint = "点按插入到日记"
+        accessibilityCustomActions = [UIAccessibilityCustomAction(name: "删除 GIF", target: self, selector: #selector(deleteGIFFromAccessibility))]
         gifGeneration += 1
         let generation = gifGeneration
         gifFirstFrame = nil
@@ -718,6 +743,13 @@ final class BearyMoodPickerCell: UICollectionViewCell {
         guard recognizer.state == .began,
               let key = currentKey, key.hasSuffix(".gif") else { return }
         onDeleteGIF?(key)
+    }
+
+    /// 第 25 轮 69 项：读屏“删除 GIF”自定义操作——与长按同一路（弹确认再删库）。
+    @objc private func deleteGIFFromAccessibility() -> Bool {
+        guard let key = currentKey, key.hasSuffix(".gif") else { return false }
+        onDeleteGIF?(key)
+        return true
     }
 
     /// 可见性启停（willDisplay/didEndDisplaying 调）：播放只走 play/stop，
