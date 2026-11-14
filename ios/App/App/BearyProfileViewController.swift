@@ -5376,10 +5376,10 @@ class BearyProfileViewController: UIViewController {
         let originBody = origin.map { personalExcerpt(entry: $0, limit: 200) }
         let originText = (originBody ?? "").isEmpty ? (origin.map { personalTitle(entry: $0) } ?? "") : (originBody ?? "")
         sideRow.addArrangedSubview(pastSelfSideColumn(
-            title: "去年原篇 · \(originDate ?? "")", body: originText, barColor: BearyColors.orange))
+            title: "去年原篇 · \(originDate ?? "")", body: originText, barColor: BearyColors.gray))
         let writtenDate = pastSelfDisplayDate(PastSelfLogic.localDateString(fromMs: latestDelivered.createdAtMs, calendar: .current))
         sideRow.addArrangedSubview(pastSelfSideColumn(
-            title: "今年留话 · 写于 \(writtenDate)", body: latestDelivered.body, barColor: BearyColors.blue))
+            title: "今年留话 · 写于 \(writtenDate)", body: latestDelivered.body, barColor: BearyColors.gray))
         section.addArrangedSubview(sideRow)
         // 年份链：原篇年 + 每条留话的送达年（已撤回行已在 liveChainMessages 里排除）。
         var chainParts: [String] = []
