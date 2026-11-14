@@ -73,6 +73,13 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     private let geocoder = CLGeocoder()
     private let completer = MKLocalSearchCompleter()
     private var suggestions: [MKLocalSearchCompletion] = []
+    /// 审计 20 A12：建议行复用池（键＝标题＋副标题）与当前展示行：同一建议
+    /// 跨两次搜索结果继续存在时复用行视图，不拆掉重建。
+    private var suggestionButtonPool: [String: UIButton] = [:]
+    private var suggestionButtons: [UIButton] = []
+    /// 已播过入场错峰的行键（@ 选人 animatedRowKeys 同口径）：同一会话内
+    /// 多次搜索，已播过的行不重播，只播本轮新 key 行。
+    private var animatedSuggestionKeys: Set<String> = []
     private var activeSearch: MKLocalSearch?
     /// 交互代次：每次用户操作都 +1——打开／关闭（cancelRequests）、改词
     /// （didChangeInput）、点建议（didTapSuggestion）、手动确认
@@ -580,7 +587,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         }
     }
 
-    /// 只清旧视图，不动结果数据：正常渲染先清旧按钮/旧空态，再按当前 suggestions 重建。
+    /// 只清旧视图，不动结果数据：全清时撤下栈内全部行视图与空态；行视图
+    /// 本身留池（见 suggestionButtonPool），下次同一建议回来可再复用。
     /// 此前 renderSuggestions 首句调 clearSuggestions，而后者首句就把 suggestions 置空，
     /// 导致 completerDidUpdateResults 刚赋值的 completer.results 立即被清空、
     /// suggestions.isEmpty 恒真、有结果也永远走“没有找到”空态分支。
@@ -589,6 +597,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             suggestionsStack.removeArrangedSubview(sub)
             sub.removeFromSuperview()
         }
+        suggestionButtons = []
         suggestionsEmptyLabel.isHidden = true
     }
 
@@ -599,39 +608,115 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         clearSuggestionViews()
     }
 
+    /// 审计 20 A12：按 key 复用建议行——同一建议跨两次搜索结果继续存在时
+    /// 复用行视图，不拆掉重建；只有本轮新 key 的行按通用错峰（BearyEntranceConfig
+    /// 分页档：0.26s、8pt 上移、步进 0.03、封顶 0.24）滑入；已播过的行不重播；
+    /// 减动效时直接落终值。
     private func renderSuggestions() {
-        clearSuggestionViews()
+        let displayed = Array(suggestions.prefix(5))
+        // 空态只在状态翻转时挂／撤，不随每次渲染重建。
+        if displayed.isEmpty {
+            if !suggestionsStack.arrangedSubviews.contains(suggestionsEmptyLabel) {
+                suggestionsStack.addArrangedSubview(suggestionsEmptyLabel)
+            }
+            suggestionsEmptyLabel.isHidden = false
+        } else if suggestionsStack.arrangedSubviews.contains(suggestionsEmptyLabel) {
+            suggestionsStack.removeArrangedSubview(suggestionsEmptyLabel)
+            suggestionsEmptyLabel.removeFromSuperview()
+            suggestionsEmptyLabel.isHidden = true
+        }
+        var newButtons: [UIButton] = []
+        var newKeys: [String] = []
+        for (index, item) in displayed.enumerated() {
+            let key = Self.suggestionKey(for: item)
+            newKeys.append(key)
+            let button: UIButton
+            if let reused = suggestionButtonPool[key] {
+                button = reused
+            } else {
+                button = makeSuggestionButton()
+                suggestionButtonPool[key] = button
+            }
+            configureSuggestionButton(button, for: item, index: index)
+            newButtons.append(button)
+        }
+        // 撤下不再展示的行（视图留池，下次同一建议回来可再复用）。
+        for old in suggestionButtons where !newButtons.contains(old) {
+            suggestionsStack.removeArrangedSubview(old)
+            old.removeFromSuperview()
+        }
+        // 按新顺序挂行：已在栈内的行只调序，不重建、不重播。
+        for (index, button) in newButtons.enumerated() {
+            suggestionsStack.removeArrangedSubview(button)
+            suggestionsStack.insertArrangedSubview(button, at: index)
+        }
+        suggestionButtons = newButtons
+        // 池子封顶：行视图轻量，但长会话里不同建议会越积越多；超 20 后
+        // 丢掉当前未展示的旧行（无需精确 LRU）。
+        if suggestionButtonPool.count > 20 {
+            let staleKeys = suggestionButtonPool.keys.filter { !newKeys.contains($0) }
+            for key in staleKeys.prefix(suggestionButtonPool.count - 20) {
+                suggestionButtonPool.removeValue(forKey: key)
+            }
+        }
         // 布局一轮后按内容高与可用高重算建议区上限（见 updateSuggestionsHeight；
         // layoutSubviews 也会再算一次，首帧不靠它也能落定）。
         layoutIfNeeded()
         updateSuggestionsHeight()
-        if suggestions.isEmpty {
-            suggestionsStack.addArrangedSubview(suggestionsEmptyLabel)
-            suggestionsEmptyLabel.isHidden = false
-            return
+        // 新行错峰：只播本轮新 key 行，减动效跳过。
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        var animIndex = 0
+        for (index, button) in newButtons.enumerated() {
+            let key = newKeys[index]
+            guard !animatedSuggestionKeys.contains(key) else { continue }
+            animatedSuggestionKeys.insert(key)
+            button.alpha = 0
+            button.transform = CGAffineTransform(translationX: 0, y: BearyEntranceConfig.yOffset(for: .pagination))
+            UIView.animate(withDuration: BearyEntranceConfig.duration,
+                           delay: BearyEntranceConfig.delay(for: .pagination, order: animIndex),
+                           options: [], animations: {
+                button.alpha = 1
+                button.transform = .identity
+            }, completion: nil)
+            animIndex += 1
         }
-        for (index, item) in suggestions.prefix(5).enumerated() {
-            let button = UIButton(type: .system)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.tag = index
-            button.contentHorizontalAlignment = .left
-            button.titleLabel?.numberOfLines = 0
-            let title = NSMutableAttributedString(
-                string: item.title,
-                attributes: [.font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), .foregroundColor: BearyColors.ink]
-            )
-            if !item.subtitle.isEmpty {
-                title.append(NSAttributedString(
-                    string: "\n\(item.subtitle)",
-                    attributes: [.font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12)), .foregroundColor: BearyColors.gray]
-                ))
-            }
-            button.setAttributedTitle(title, for: .normal)
-            button.contentEdgeInsets = UIEdgeInsets(top: 10, left: 2, bottom: 10, right: 2)
-            button.accessibilityLabel = "定位到\(item.title)"
-            button.addTarget(self, action: #selector(didTapSuggestion(_:)), for: .touchUpInside)
-            suggestionsStack.addArrangedSubview(button)
+    }
+
+    /// 建议行键：MKLocalSearchCompletion 无稳定 ID，标题＋副标题即该行的
+    /// 全部展示内容，同键即同行、可复用。
+    private static func suggestionKey(for item: MKLocalSearchCompletion) -> String {
+        item.title + "\n" + item.subtitle
+    }
+
+    /// 新建一行建议按钮（只配不变的部分：对齐、行数、边距、点按目标；
+    /// 文字与 tag 每次渲染由 configureSuggestionButton 重填）。
+    private func makeSuggestionButton() -> UIButton {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.contentHorizontalAlignment = .left
+        button.titleLabel?.numberOfLines = 0
+        button.contentEdgeInsets = UIEdgeInsets(top: 10, left: 2, bottom: 10, right: 2)
+        button.addTarget(self, action: #selector(didTapSuggestion(_:)), for: .touchUpInside)
+        return button
+    }
+
+    /// 按当前项重填行内容：tag 须跟当前下标走（didTapSuggestion 按 tag
+    /// 取 suggestions 下标，复用行不更新 tag 会点错行）；富文本每次重设，
+    /// 字号档变化后复用行也能跟上新字号。
+    private func configureSuggestionButton(_ button: UIButton, for item: MKLocalSearchCompletion, index: Int) {
+        button.tag = index
+        let title = NSMutableAttributedString(
+            string: item.title,
+            attributes: [.font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), .foregroundColor: BearyColors.ink]
+        )
+        if !item.subtitle.isEmpty {
+            title.append(NSAttributedString(
+                string: "\n\(item.subtitle)",
+                attributes: [.font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12)), .foregroundColor: BearyColors.gray]
+            ))
         }
+        button.setAttributedTitle(title, for: .normal)
+        button.accessibilityLabel = "定位到\(item.title)"
     }
 
     // MARK: - CLLocationManagerDelegate
