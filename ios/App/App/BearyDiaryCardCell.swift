@@ -3625,7 +3625,9 @@ class BearyDiaryCardCell: UITableViewCell {
         updateBookmarkButton()
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
         if flipped { playBookmarkBurst() }
-        if flipped { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.unlikeSoft) }
+        // 收藏音按最终结果只播一次（点赞支同款口径）：点按只留视觉＋触觉，
+        // 成功回包按最终态播 bookmarkTick／unlikeSoft，失败走拒绝音；
+        // 否则失败时点按音与拒绝音先后两声。
         bookmarkSeq += 1
         let reqSeq = bookmarkSeq
         BearyAPI.shared.toggleBookmark(id: entryIdValue) { [weak self] result in
@@ -3641,6 +3643,9 @@ class BearyDiaryCardCell: UITableViewCell {
                     strongSelf.confirmedBookmarked = newBookmarked
                     strongSelf.updateBookmarkButton()
                     strongSelf.updateActionInteractivity()
+                    // 收藏音按最终结果只播一次（成功按最终态播 bookmarkTick／
+                    // unlikeSoft，失败分支走拒绝音 refuse_bonk）。
+                    BearySoundPlayer.play(newBookmarked ? .bookmarkTick : .unlikeSoft)
                     strongSelf.onInteractionChanged?(entryIdValue, nil, nil, newBookmarked)
                 case .failure(let err):
                     // 失败回滚到最后服务端确认态，再走既有失败路径。
