@@ -158,13 +158,13 @@ final class BearyBlindBoxEntryView: UIView {
         iconView.image = icon
         pendingChip.isHidden = !isPlaceholder
         if SessionManager.shared.isLoggedIn == false {
-            countLabel.text = "今日 0/1"
+            setCountText("今日 0/1")
             subtitleLabel.text = "登录后可交换 · 放一篇旧公开日记，换一篇别人的旧日记"
             alpha = 1
             return
         }
         let used = BlindBoxState.shared.usedToday
-        countLabel.text = BlindBoxState.shared.countText()
+        setCountText(BlindBoxState.shared.countText())
         if used {
             subtitleLabel.text = "今日已换，来看看收到的日记"
             alpha = 0.6
@@ -172,5 +172,16 @@ final class BearyBlindBoxEntryView: UIView {
             subtitleLabel.text = "放一篇旧公开日记，换一篇别人的旧日记"
             alpha = 1
         }
+    }
+
+    /// 第一轮审计 21：计数变化时 0.18s opacity 交叉淡变
+    /// （BearyMotion.localStateDuration，许愿墙票数同款 transitionCrossDissolve）；
+    /// 数值未变、减动效开、或视图未进窗口时直设终值。
+    private func setCountText(_ text: String) {
+        guard countLabel.text != text, !UIAccessibility.isReduceMotionEnabled, countLabel.window != nil else {
+            countLabel.text = text
+            return
+        }
+        UIView.transition(with: countLabel, duration: BearyMotion.localStateDuration, options: .transitionCrossDissolve, animations: { self.countLabel.text = text })
     }
 }
