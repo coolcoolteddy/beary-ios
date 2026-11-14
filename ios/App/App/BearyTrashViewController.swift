@@ -1266,6 +1266,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     if case .unauthorized = error {
                         self.notifyTrashLoginOnce()
                     } else {
+                        self.shakeFailedRow(identifier: identifier)
                         self.showToast(message: "恢复失败，请刷新后重试")
                     }
                 }
@@ -1343,6 +1344,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         if case .unauthorized = error {
                             self.notifyTrashLoginOnce()
                         } else {
+                            self.shakeFailedRow(identifier: identifier)
                             self.showToast(message: "删除失败，请重试")
                         }
                     }
@@ -1397,6 +1399,20 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     // MARK: - 轻提示：委托统一 BearyToast。回收站是全屏模态，盖住
     // Chrome，落点由组件回落安全区 -32；展示时长由旧 1.6s 统一为
     // 2.0s，调用签名与文案、触发时机不变。
+
+    /// r21-A6：恢复／彻底删除失败时仍可见的操作行补 0.38s 拒绝摇头
+    /// （与私信 shakeFailedRow 同口径：values [0,-8,8,-5,5,0] / BearyMotion.screen；
+    /// 减动效时跳过摇头，只留 toast；行已不在屏时不做任何事）。
+    private func shakeFailedRow(identifier: String) {
+        guard let rowView = rowViewsByIdentifier[identifier] else { return }
+        guard BearyMotion.animated(true) else { return }
+        rowView.layer.removeAnimation(forKey: "bearyTrashFailShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = BearyMotion.screen
+        rowView.layer.add(shake, forKey: "bearyTrashFailShake")
+    }
 
     private func showToast(message: String) {
         BearyToast.show(in: view, message: message)
