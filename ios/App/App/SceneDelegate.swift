@@ -1,5 +1,6 @@
 import UIKit
 import Lottie
+import UserNotifications
 
 // ===== 外观手动切换（审计 N3）：主题档位 → window.overrideUserInterfaceStyle =====
 // 存档键 beary_theme_mode，值 system/light/dark；未知值按 system（跟随系统）处理。
@@ -11,10 +12,14 @@ private func bearyUserInterfaceStyle(forThemeMode mode: String) -> UIUserInterfa
     }
 }
 
-class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCenterDelegate {
     var window: UIWindow?
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        // 前台通知横幅：未设 UNUserNotificationCenter delegate 时，iOS 对前台本地通知
+        // 静默投递（无横幅、无声音），开发者模式的通知测试与 21:00 写日记提醒在用 App 时
+        // 都看不到。SceneDelegate 随场景存活，直接作 delegate；只管展示方式，不动排程与权限。
+        UNUserNotificationCenter.current().delegate = self
         // 临时诊断（81 包，定根因后删除）：冷启动先记一行 launch，供下次启动判断上次是否卡在打开流程。
         DiagFile.mark("launch")
         // 反馈日志：生命周期只记固定事件名（不含任何用户内容）。
@@ -51,6 +56,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                 }
             }
         }
+    }
+
+    // UNUserNotificationCenterDelegate：前台收到本地通知时也显示横幅并播提示音
+    //（默认不设 delegate 时前台静默投递）。不按类别过滤、不改 badge、不处理点按。
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
     }
 
     // 反馈日志：前后台切换只记固定事件名（不含任何用户内容）。
