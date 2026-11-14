@@ -94,6 +94,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     }
     private var sheetHeightConstraint: NSLayoutConstraint?
     private var sheetBottomConstraint: NSLayoutConstraint?
+    /// A5（第 20 轮）：440 上限约束的可开关句柄；≤820 全宽、≥821 才限 440。
     /// VoiceOver 焦点返回：与通知弹层同口径（BearyNotificationsViewController），
     /// init 时记下 Sheet 外当前焦点元素（通常为触发回应的入口控件）；关闭后
     /// 把焦点还回去。weak 持有：触发控件是列表 cell 内元素，复用/离屏后失效
@@ -174,6 +175,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         let bottomConstraint = sheetView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         sheetBottomConstraint = bottomConstraint
         let widthLimit = sheetView.widthAnchor.constraint(lessThanOrEqualToConstant: 440)
+        sheetWidthLimitConstraint = widthLimit
         let widthFull = sheetView.widthAnchor.constraint(equalTo: view.widthAnchor)
         widthFull.priority = .defaultHigh
         NSLayoutConstraint.activate([
@@ -241,6 +243,13 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     /// 只改注释统一为 20，不改代码数值（圆角属样式 token）。
     private func updateSheetChrome() {
         let isWide = view.bounds.width >= 821
+        // A5（第 20 轮）：440 上限只在宽屏生效，≤820 全宽、≥821 限 440；状态不变不开关。
+        // 用本方法已有的纯宽度判定（≥821），不用 BearyDesktop.isWide：底 sheet 按仓库口径
+        // 不走 isWide 的 iPad 限定（BearyNativeCommon.swift 注释），且本 sheet 的浮起卡片形态
+        // 本身就是 ≥821 触发，宽度与形态须同档。
+        if sheetWidthLimitConstraint?.isActive != isWide {
+            sheetWidthLimitConstraint?.isActive = isWide
+        }
         if isWide {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
             sheetView.layer.borderWidth = 0
