@@ -65,7 +65,7 @@ private enum OnboardingVisibilityDemo: Int, CaseIterable {
         switch self {
         case .private: return "icon_lock"
         case .public: return "icon_globe"
-        case .ephemeral: return "icon_clock"
+        case .ephemeral: return "icon_limited"
         }
     }
 
