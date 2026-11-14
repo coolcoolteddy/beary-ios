@@ -121,7 +121,7 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.clipsToBounds = true
 
-        grabberView.backgroundColor = BearyColors.line
+        grabberView.backgroundColor = BearyColors.gray
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
         grabberView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(grabberView)
