@@ -8461,7 +8461,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         let syncedBookmarkCell = syncVisibleCell(entry: optimistic, interactionDisabled: false)
         syncedBookmarkCell?.playBookmarkPop()
         if wantBookmarked { syncedBookmarkCell?.playBookmarkBurst() }
-        if wantBookmarked { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.unlikeSoft) }
+        // 收藏音按最终结果只播一次（点赞支同款口径）：点按只留视觉＋触觉，
+        // 成功回包按最终态播 bookmarkTick／unlikeSoft，失败走拒绝音；
+        // 否则失败时点按音与拒绝音先后两声。
         let seq = (bookmarkSeqById[entryId] ?? 0) + 1
         bookmarkSeqById[entryId] = seq
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
@@ -8493,6 +8495,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                         // 服务端值与先行值不一致时以服务端为准就地同步；一致时不动，避免打断 pop。
                         strongSelf.syncVisibleCell(entry: updated)
                     }
+                    // 收藏音按最终结果只播一次（成功按最终态播 bookmarkTick／
+                    // unlikeSoft，失败分支走拒绝音 refuse_bonk）。
+                    BearySoundPlayer.play((updated.bookmarkedByMe ?? wantBookmarked) ? .bookmarkTick : .unlikeSoft)
                 case .failure(let err):
                     // 失败回滚到最后确认态（页签模型先行时已改，需把确认态写回各页
                     // 再就地同步）；提示口径（未登录走登录页、其他弹“操作失败”）一字不动，
