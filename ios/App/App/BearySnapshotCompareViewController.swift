@@ -20,12 +20,14 @@ final class BearySnapshotCompareViewController: UIViewController {
         label.font = BearyDynamicType.secondaryFont()
         label.textColor = BearyColors.gray
         label.numberOfLines = 0
+        label.adjustsFontForContentSizeCategory = true
         label.text = "只恢复文字，不动现在的照片。"
         return label
     }()
     private let currentTextView = UITextView()
     private let snapshotTextView = UITextView()
-    private let restoreButton = UIButton(type: .system)
+    private let restoreButton = BearyButton.make(style: .primaryPill(.ink), title: "恢复到这个版本")
+    private var contentWidthCap: NSLayoutConstraint?
 
     init(entryId: String, snapshot: BearyEntrySnapshot, currentContent: String, currentTitle: String?) {
         self.entryId = entryId
@@ -42,9 +44,10 @@ final class BearySnapshotCompareViewController: UIViewController {
         view.backgroundColor = BearyColors.bg
         title = "快照对比"
         navigationItem.rightBarButtonItem = UIBarButtonItem(
-            title: snapshot.isStarred ? "★ 已加星" : "☆ 加星标",
+            title: snapshot.isStarred ? "已加星" : "加星标",
             style: .plain, target: self, action: #selector(starTapped))
         navigationItem.rightBarButtonItem?.tintColor = BearyColors.ink
+        updateStarButton()
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         contentStack.translatesAutoresizingMaskIntoConstraints = false
@@ -58,11 +61,17 @@ final class BearySnapshotCompareViewController: UIViewController {
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 16),
-            contentStack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 16),
-            contentStack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -16),
+            contentStack.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
+            contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.leadingAnchor, constant: 16),
+            contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.trailingAnchor, constant: -16),
             contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -24),
-            contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -32),
         ])
+        // 内容列宽 = 滚动区宽 −32（750 优先级；宽 ≥821 时被 600 上限压住，编辑资料页同款）。
+        let columnWidth = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32)
+        columnWidth.priority = UILayoutPriority(750)
+        columnWidth.isActive = true
+        contentWidthCap = contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        contentWidthCap?.isActive = true
 
         contentStack.addArrangedSubview(noteLabel)
         contentStack.addArrangedSubview(sectionLabel(text: "当前版本"))
@@ -79,22 +88,45 @@ final class BearySnapshotCompareViewController: UIViewController {
             textView.layer.cornerRadius = BearyCorners.single
             textView.textContainerInset = UIEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
         }
+        applyDiffText()
+
+        restoreButton.translatesAutoresizingMaskIntoConstraints = false
+        restoreButton.heightAnchor.constraint(equalToConstant: restoreButton.style.height).isActive = true
+        restoreButton.addTarget(self, action: #selector(restoreTapped), for: .touchUpInside)
+        restoreButton.bearyAddPressFeedback()
+        contentStack.addArrangedSubview(restoreButton)
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 600 上限只在 iPad 且宽 ≥821 时激活；状态不变不开关，避免布局循环。
+        let wantCap = BearyDesktop.isWide(view.bounds.width)
+        if contentWidthCap?.isActive != wantCap {
+            contentWidthCap?.isActive = wantCap
+        }
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // 大字号实时变化：富文本按当前字号重算（说明／分区标题走 adjustsFontForContentSizeCategory 自动跟随）。
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            applyDiffText()
+        }
+    }
+
+    /// 对比富文本按当前字号生成（diaryBodyFont 走 scaledFont，字号变了须重算重赋）。
+    private func applyDiffText() {
         let (oldAttributed, newAttributed) = BearySnapshotDiff.highlighted(
             old: BearySnapshotDiff.displayText(title: snapshot.title, content: snapshot.content ?? ""),
             new: BearySnapshotDiff.displayText(title: currentTitle, content: currentContent))
         snapshotTextView.attributedText = oldAttributed
         currentTextView.attributedText = newAttributed
+    }
 
-        restoreButton.translatesAutoresizingMaskIntoConstraints = false
-        restoreButton.setTitle("恢复到这个版本", for: .normal)
-        restoreButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
-        restoreButton.setTitleColor(BearyColors.bg, for: .normal)
-        restoreButton.backgroundColor = BearyColors.ink
-        restoreButton.layer.cornerRadius = BearyCorners.single
-        restoreButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
-        restoreButton.addTarget(self, action: #selector(restoreTapped), for: .touchUpInside)
-        restoreButton.bearyAddPressFeedback()
-        contentStack.addArrangedSubview(restoreButton)
+    /// 星标只用官方手绘图标（icon_star／icon_star_fill），不用 ★/☆ 文字符号。
+    private func updateStarButton() {
+        navigationItem.rightBarButtonItem?.image = BearyIconImages.image(
+            named: snapshot.isStarred ? "icon_star_fill" : "icon_star", pointSize: 20)
     }
 
     private func sectionLabel(text: String) -> UILabel {
@@ -102,6 +134,7 @@ final class BearySnapshotCompareViewController: UIViewController {
         label.font = BearyDynamicType.smallSemiboldFont()
         label.textColor = BearyColors.ink
         label.text = text
+        label.adjustsFontForContentSizeCategory = true
         return label
     }
 
@@ -114,7 +147,8 @@ final class BearySnapshotCompareViewController: UIViewController {
                 case .success(let resp):
                     let starred = (resp.starred ?? 0) == 1
                     self.snapshot.starred = starred ? 1 : 0
-                    self.navigationItem.rightBarButtonItem?.title = starred ? "★ 已加星" : "☆ 加星标"
+                    self.navigationItem.rightBarButtonItem?.title = starred ? "已加星" : "加星标"
+                    self.updateStarButton()
                     self.onStarChanged?(snapshotId, starred)
                 case .failure:
                     BearyToast.show(in: self.view, message: "操作失败，请重试")

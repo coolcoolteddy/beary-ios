@@ -11,6 +11,8 @@ final class BearySnapshotListViewController: UIViewController {
     private var loadFailed = false
 
     private let tableView = UITableView(frame: .zero, style: .plain)
+    private let retryButton = BearyButton.retryPage()
+    private var tableWidthCap: NSLayoutConstraint?
     private let emptyLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -18,6 +20,7 @@ final class BearySnapshotListViewController: UIViewController {
         label.textColor = BearyColors.gray
         label.textAlignment = .center
         label.numberOfLines = 0
+        label.adjustsFontForContentSizeCategory = true
         return label
     }()
 
@@ -46,16 +49,55 @@ final class BearySnapshotListViewController: UIViewController {
         tableView.delegate = self
         view.addSubview(tableView)
         view.addSubview(emptyLabel)
+        retryButton.translatesAutoresizingMaskIntoConstraints = false
+        retryButton.setTitle("重试", for: .normal)
+        retryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
+        retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButton.retryPageStyle.height).isActive = true
+        retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        retryButton.bearyAddPressFeedback()
+        retryButton.isHidden = true
+        view.addSubview(retryButton)
         NSLayoutConstraint.activate([
             tableView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
+            tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
             emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
+            retryButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            retryButton.topAnchor.constraint(equalTo: emptyLabel.bottomAnchor, constant: 16),
         ])
+        // 内容列宽 = 屏宽（defaultHigh；宽 ≥821 时被 600 上限压住，广场页同款）。
+        let tableWidth = tableView.widthAnchor.constraint(equalTo: view.widthAnchor)
+        tableWidth.priority = .defaultHigh
+        tableWidth.isActive = true
+        tableWidthCap = tableView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        tableWidthCap?.isActive = true
+        loadSnapshots()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 600 上限只在 iPad 且宽 ≥821 时激活；状态不变不开关，避免布局循环。
+        let wantCap = BearyDesktop.isWide(view.bounds.width)
+        if tableWidthCap?.isActive != wantCap {
+            tableWidthCap?.isActive = wantCap
+        }
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // 大字号实时变化：cell 字体在 cellForRowAt 里现取，须重建行才跟上（空态文案走 adjustsFontForContentSizeCategory 自动跟随）。
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            tableView.reloadData()
+        }
+    }
+
+    @objc private func retryTapped() {
+        retryButton.isHidden = true
         loadSnapshots()
     }
 
@@ -85,13 +127,16 @@ final class BearySnapshotListViewController: UIViewController {
 
     private func refreshEmptyState() {
         if loadFailed {
-            emptyLabel.text = "加载失败，请关闭后重试"
+            emptyLabel.text = "快照加载失败"
             emptyLabel.isHidden = false
+            retryButton.isHidden = false
         } else if snapshots.isEmpty {
             emptyLabel.text = "暂无快照"
             emptyLabel.isHidden = false
+            retryButton.isHidden = true
         } else {
             emptyLabel.isHidden = true
+            retryButton.isHidden = true
         }
     }
 
@@ -116,9 +161,11 @@ extension BearySnapshotListViewController: UITableViewDataSource, UITableViewDel
         let dateText = snapshot.createdAt.map { BearyDiaryCardCell.feedTimeString(ms: $0) } ?? ""
         cell.textLabel?.text = snapshot.isStarred ? "\(dateText)  ★" : dateText
         cell.textLabel?.font = BearyDynamicType.smallSemiboldFont()
+        cell.textLabel?.adjustsFontForContentSizeCategory = true
         cell.textLabel?.textColor = BearyColors.ink
         cell.detailTextLabel?.text = previewText(for: snapshot)
         cell.detailTextLabel?.font = BearyDynamicType.smallBodyFont()
+        cell.detailTextLabel?.adjustsFontForContentSizeCategory = true
         cell.detailTextLabel?.textColor = BearyColors.gray
         cell.detailTextLabel?.numberOfLines = 2
         cell.backgroundColor = BearyColors.bg
