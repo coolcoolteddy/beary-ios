@@ -1266,6 +1266,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                         self.loadInitial()
                         return
                     }
+                    self.playDenyShake(on: self.poolButton)
                     BearyToast.show(in: self.view, message: self.actionErrorText(error, fallback: "放进池子失败，请重试"))
                     self.setStep(.pool)
                 }
@@ -1338,6 +1339,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                         self.setStep(.pool)
                         return
                     }
+                    self.playDenyShake(on: self.openButton)
                     BearyToast.show(in: self.view, message: self.actionErrorText(error, fallback: "开盒失败，请重试"))
                     self.setStep(.pool)
                 }
