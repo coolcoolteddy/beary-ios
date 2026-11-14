@@ -1431,6 +1431,68 @@ final class BearyAPI {
         }
     }
 
+    /// 本机友好型号名（如 iPhone 17 Pro）：hw.machine 标识查表，未知新型号回退 "iPhone"／"iPad"。
+    /// 2026-11-14：登录设备曾显示“浏览器”——原生 URLSession 的 UA 不含 iPhone 标记，
+    /// 服务端 deviceLabel 的 iPhone 分支走不通；现登录验码与 session-device 补报改传
+    /// 显式 model，服务端直接采用，不再依赖 UA 推断。
+    static func deviceModelName() -> String {
+        var size = 0
+        sysctlbyname("hw.machine", nil, &size, nil, 0)
+        if size > 0 {
+            var machine = [CChar](repeating: 0, count: size)
+            if sysctlbyname("hw.machine", &machine, &size, nil, 0) == 0 {
+                let identifier = machine.withUnsafeBufferPointer { buffer in
+                    guard let base = buffer.baseAddress else { return "" }
+                    return String(cString: base)
+                }
+                if let name = modelNameByIdentifier[identifier] { return name }
+                if identifier.hasPrefix("iPhone") { return "iPhone" }
+                if identifier.hasPrefix("iPad") { return "iPad" }
+            }
+        }
+        return UIDevice.current.model
+    }
+
+    /// hw.machine 标识 → 营销型号名（近年代 iPhone 全系；新机型未入库时走上方回退）。
+    private static let modelNameByIdentifier: [String: String] = [
+        "iPhone18,1": "iPhone 17 Pro",
+        "iPhone18,2": "iPhone 17 Pro Max",
+        "iPhone18,3": "iPhone 17",
+        "iPhone18,4": "iPhone Air",
+        "iPhone17,1": "iPhone 16 Pro",
+        "iPhone17,2": "iPhone 16 Pro Max",
+        "iPhone17,3": "iPhone 16",
+        "iPhone17,4": "iPhone 16 Plus",
+        "iPhone17,5": "iPhone 16e",
+        "iPhone16,1": "iPhone 15 Pro",
+        "iPhone16,2": "iPhone 15 Pro Max",
+        "iPhone15,4": "iPhone 15",
+        "iPhone15,5": "iPhone 15 Plus",
+        "iPhone15,2": "iPhone 14 Pro",
+        "iPhone15,3": "iPhone 14 Pro Max",
+        "iPhone14,7": "iPhone 14",
+        "iPhone14,8": "iPhone 14 Plus",
+        "iPhone14,2": "iPhone 13 Pro",
+        "iPhone14,3": "iPhone 13 Pro Max",
+        "iPhone14,4": "iPhone 13 mini",
+        "iPhone14,5": "iPhone 13",
+        "iPhone13,1": "iPhone 12 mini",
+        "iPhone13,2": "iPhone 12",
+        "iPhone13,3": "iPhone 12 Pro",
+        "iPhone13,4": "iPhone 12 Pro Max",
+        "iPhone12,1": "iPhone 11",
+        "iPhone12,3": "iPhone 11 Pro",
+        "iPhone12,5": "iPhone 11 Pro Max",
+        "iPhone12,8": "iPhone SE (2nd generation)",
+        "iPhone14,6": "iPhone SE (3rd generation)",
+        "iPhone11,2": "iPhone XS",
+        "iPhone11,4": "iPhone XS Max",
+        "iPhone11,6": "iPhone XS Max",
+        "iPhone11,8": "iPhone XR",
+        "iPhone10,3": "iPhone X",
+        "iPhone10,6": "iPhone X",
+    ]
+
     /// 验码：返回完整响应体（含 pending_delete 冷静期与 referral 绑定结果），不只看状态码。
     /// body 与网页 lgVerify 同口径：恒带 invite_code（空串也带，上层须先 trim + 大写），
     /// 恒带 dev（设备信号，能取到的字段才带）；confirmCancel 仅二次确认时带 true。

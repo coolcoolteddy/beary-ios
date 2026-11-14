@@ -563,6 +563,8 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
     /// 传入数据首帧（viewDidLoad 时窗口未进）不播、直接显；失败／
     /// 加载态 render 不置位，重试成功后仍可播一次。
     private var deviceRowsAnimated = false
+    /// 2026-11-14：当前会话型号补报只发一次（本页生命周期内）；失败时复位，下次加载可再试。
+    private var didReportCurrentDevice = false
 
     /// 设置页已拉到的 sessions 传入（A2：nil = 还没取到，[] = 确认是空，
     /// 两者不再混同）；为 nil 且未失败时本页接设置页同一份在途结果，不再自己另发请求。
@@ -600,6 +602,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
                         self.loadFailed = true
                     }
                     self.render()
+                    self.reportCurrentDeviceIfNeeded()
                 }
             } else {
                 BearyAPI.shared.fetchAccountSessions { [weak self] result in
@@ -618,6 +621,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
                             self.loadFailed = true
                         }
                         self.render()
+                        self.reportCurrentDeviceIfNeeded()
                     }
                 }
             }
@@ -753,6 +757,41 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
         return rowStack
     }
 
+    /// 当前会话设备型号补报（2026-11-14）：老会话登录时未采集型号、列表显示“浏览器”时，
+    /// 用显式型号调一次 session-device 补上，成功后重拉列表刷新显示；已有标签绝不覆盖。
+    /// 只在当前会话 device 为空或“浏览器”时触发，本页生命周期内最多一次（失败复位可再试）。
+    private func reportCurrentDeviceIfNeeded() {
+        guard !didReportCurrentDevice else { return }
+        guard let current = sessions?.first(where: { $0.isCurrent == true }) else { return }
+        let dev = current.device ?? ""
+        guard dev.isEmpty || dev == "浏览器" else { return }
+        didReportCurrentDevice = true
+        BearyAPI.shared.reportSessionDevice(model: BearyAPI.deviceModelName()) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard case .success = result else {
+                    self.didReportCurrentDevice = false
+                    return
+                }
+                // 补报成功：重拉一次列表（不走共享缓存，取最新 device），刷新显示。
+                BearyAPI.shared.fetchAccountSessions { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        guard case .success(let resp) = result else { return }
+                        self.sessions = resp.sessions ?? []
+                        if let active = resp.activeCount {
+                            self.countText = "共 \(active) 台设备（活跃）"
+                        } else {
+                            self.countText = "共 \((resp.sessions ?? []).count) 台设备"
+                        }
+                        self.loadFailed = false
+                        self.render()
+                    }
+                }
+            }
+        }
+    }
+
     @objc private func retryTapped() {
         // 109：同会员来源明细页——在途重试直接忽略，先 render 加载态
         // （sessions=nil 且 !loadFailed 时 render 出转圈“加载中…”行，
@@ -782,6 +821,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
                     self.loadFailed = true
                 }
                 self.render()
+                self.reportCurrentDeviceIfNeeded()
             }
         }
     }
