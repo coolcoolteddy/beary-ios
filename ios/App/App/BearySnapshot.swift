@@ -13,6 +13,21 @@ struct BearyEntrySnapshot: Decodable {
     var starred: Int?
     /// 星标判定：只认显式 1（与 Entry.isPinned 同款 fail-closed 口径）。
     var isStarred: Bool { starred == 1 }
+
+    /// 展示时间：yyyy-MM-dd HH:mm:ss（设备本地时区）；列表首行与预览副行同款。
+    /// 服务端 created_at 是毫秒，相对时间（feedTimeString）不进快照展示。
+    var displayDateString: String {
+        guard let ms = createdAt else { return "" }
+        return Self.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(ms) / 1000))
+    }
+
+    /// 固定格式走 en_US_POSIX，时区跟设备（与截图 23:42:35 同款本地时间）。
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f
+    }()
 }
 
 struct BearySnapshotListResponse: Decodable {
@@ -51,5 +66,13 @@ extension BearyAPI {
     func restoreSnapshot(entryId: String, snapshotId: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
         let safe = entryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? entryId
         requestVoid("/beary/api/entries/\(safe)/snapshots/\(snapshotId)/restore", method: "POST", completion: completion)
+    }
+
+    /// 清空全部快照：DELETE /beary/api/entries/:id/snapshots，仅作者本人。
+    /// 删掉该篇全部快照（含已加星标的长期保留版），不可撤销；服务端点位见
+    /// beary-snapshot-clear-server.diff，部署前调用会 404、按失败处理。
+    func clearSnapshots(entryId: String, completion: @escaping (Result<Void, APIError>) -> Void) {
+        let safe = entryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? entryId
+        requestVoid("/beary/api/entries/\(safe)/snapshots", method: "DELETE", completion: completion)
     }
 }
