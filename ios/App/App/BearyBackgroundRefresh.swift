@@ -90,14 +90,12 @@ enum BearyBackgroundRefresh {
                     case .success(let list):
                         let entries = list.entries ?? []
                         let fresh = BearyFeedCache.visibleHead(entries)
-                        guard let latest = fresh.first else {
-                            completion(true)
-                            return
-                        }
                         // 快照写回：回前台秒显新内容（只存有效公开篇，与前台同口径）。
+                        // 空广场也要写回（否则本地留旧快照），再重算提醒。
                         BearyFeedCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= BearyFeedCache.snapshotEntryLimit)
-                        // 无快照基线（首次后台跑）只记不提醒，不把旧内容当新内容推。
-                        if let seen = seenHead, isNewer(latest, than: seen) {
+                        // 有新头条才考虑提醒：无头条（空广场）不提醒；无快照基线
+                        // （首次后台跑）只记不提醒，不把旧内容当新内容推。
+                        if let latest = fresh.first, let seen = seenHead, isNewer(latest, than: seen) {
                             // 自己的新篇不提醒（刚发布完就弹“广场有新日记”是噪音）。
                             if latest.authorId != SessionManager.shared.currentUser?.id {
                                 postPlazaNewNotification()
