@@ -802,7 +802,7 @@ final class BearyYearReviewViewController: UIViewController {
         footnote.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         footnote.adjustsFontForContentSizeCategory = true
         footnote.textColor = BearyColors.gray
-        footnote.text = "词汇指纹只按当年正文统计，不展示正文。今年先给这些，明年更完整。"
+        footnote.text = "词汇指纹只按当年正文统计，不展示正文。"
         return footnote
     }
 
