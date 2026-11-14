@@ -740,6 +740,9 @@ final class BearyLoginViewController: UIViewController {
     }
 
     private func refreshAgreeBox() {
+        // 第 25 轮 21-26（项26）：同步选中状态，读屏用户才能确认授权选择。
+        agreeButton.isSelected = isAgreed
+        agreeButton.accessibilityValue = isAgreed ? "已勾选" : "未勾选"
         if isAgreed {
             agreeButton.backgroundColor = BearyColors.ink
             agreeButton.layer.bearyDynamicBorderColor = BearyColors.ink
@@ -839,7 +842,7 @@ final class BearyLoginViewController: UIViewController {
         } else {
             sendButton.setTitle("获取验证码", for: .normal)
         }
-        let sendEnabled = emailValid && !isSendingCode && countdownRemaining == nil
+        let sendEnabled = emailValid && !isSendingCode && countdownRemaining == nil && !isVerifying
         sendButton.isEnabled = sendEnabled
         if sheetMode {
             // Sheet 弹窗：发码钮为浅色次级钮（全弹窗唯一重色是橙登录钮），
@@ -856,6 +859,11 @@ final class BearyLoginViewController: UIViewController {
         let loginEnabled = isAgreed && emailValid && code.count == 6 && !isVerifying
         loginButton.isEnabled = loginEnabled
         loginButton.alpha = loginEnabled ? 1 : 0.35
+        // 第 25 轮 21-26（项23）：验码期间冻结邮箱／验证码／邀请码字段，
+        // 界面显示的邮箱与正在登录的邮箱不再脱节；验证结束即恢复。
+        emailField.isEnabled = !isVerifying
+        codeField.isEnabled = !isVerifying
+        inviteField.isEnabled = !isVerifying
         // M14：进行态 = “处理中…”文案 + 圈转指示，不再只有 alpha 变化。
         if isVerifying {
             loginSpinner.startSpinning()
@@ -914,6 +922,9 @@ final class BearyLoginViewController: UIViewController {
             countdownDeadline = nil
             countdownRemaining = nil
             sentCodeEmail = nil
+            // 第 25 轮 21-26（项22）：邮箱一改，旧邮箱的验证码即作废，一并清空，
+            // 免得把旧邮箱的码拿去验证新邮箱。
+            codeField.text = ""
             if messageLabel.text?.hasPrefix("验证码已发送至") == true {
                 showMessage("")
             }
@@ -931,6 +942,15 @@ final class BearyLoginViewController: UIViewController {
         verifyTask?.cancel()
         verifyTask = nil
         onCancelled?()
+    }
+
+    /// 第 25 轮 21-26（项25）：邀请码出错时自动展开字段——收起态下 showMessage
+    /// 只标红隐藏的输入框，用户看不到错在哪；展开后聚焦，见 loginTapped。
+    private func expandInviteField() {
+        inviteExpanded = true
+        inviteInputContainer?.isHidden = false
+        inviteDisclosureChevron.image = BearyIconImages.image(named: "icon_chevron_down", pointSize: 14)
+        inviteDisclosureRow.accessibilityValue = "已展开"
     }
 
     /// Sheet 容器关闭路径（遮罩点按 / 抓手拖动）：与关闭钮同一取消路径——
@@ -982,6 +1002,10 @@ final class BearyLoginViewController: UIViewController {
                     if strongSelf.normalizedEmail() == email {
                         strongSelf.startCountdown(for: email)
                         strongSelf.codeField.becomeFirstResponder()
+                    } else {
+                        // 第 25 轮 21-26（项21）：邮箱已变时不启动倒计时、不抢码框焦点，
+                        // 但仍须重算按钮，否则发码钮停在“发送中…”。
+                        strongSelf.updateButtonStates()
                     }
                 case .failure(.cancelled):
                     strongSelf.updateButtonStates()
@@ -1013,19 +1037,22 @@ final class BearyLoginViewController: UIViewController {
         // 审计 P2：邀请码先行格式校验，不合规行内提示且不发请求。
         let inviteCode = normalizedInviteCode()
         guard inviteCode.isEmpty || isValidInviteCode(inviteCode) else {
+            // 第 25 轮 21-26（项25）：格式错时自动展开并聚焦邀请码。
+            expandInviteField()
             showMessage("邀请码格式不正确，应为 8 位字母或数字", errorField: .invite)
+            inviteField.becomeFirstResponder()
             return
         }
         isVerifying = true
         updateButtonStates()
-        verify(email: email, code: code, confirmCancel: false)
+        verify(email: email, code: code, inviteCode: inviteCode, confirmCancel: false)
     }
 
-    private func verify(email: String, code: String, confirmCancel: Bool) {
+    private func verify(email: String, code: String, inviteCode: String, confirmCancel: Bool) {
         verifyTask = BearyAPI.shared.verify(
             email: email,
             code: code,
-            inviteCode: normalizedInviteCode(),
+            inviteCode: inviteCode,
             dev: deviceSignals(),
             confirmCancel: confirmCancel
         ) { [weak self] result in
@@ -1041,14 +1068,14 @@ final class BearyLoginViewController: UIViewController {
                             // 二次确认后仍回 pending_delete 不应出现：不断循环，直接报失败。
                             strongSelf.showMessage("验证失败，请重试")
                         } else {
-                            strongSelf.presentPendingDeleteConfirm(email: email, code: code, deleteAt: resp.deleteAt)
+                            strongSelf.presentPendingDeleteConfirm(email: email, code: code, inviteCode: inviteCode, deleteAt: resp.deleteAt)
                         }
                     } else if resp.ok == true {
                         // 验证组④：登录成功即注销已取消（冷静期登录即取消），清掉注销时持久化的 delete_at。
                         UserDefaults.standard.removeObject(forKey: "bearyPendingDeleteAt")
                         // 会话 cookie 已由共享 URLSession 存好；容器随后刷新登录态。
                         // 审计登录杂项：绑定文案经回调带给容器，进 App 后 toast 一次。
-                        strongSelf.handleLoginReferralFeedback(resp: resp)
+                        strongSelf.handleLoginReferralFeedback(resp: resp, submittedInviteCode: inviteCode)
                         BearySoundPlayer.play(.loginChime)
                     } else {
                         strongSelf.showMessage(resp.message ?? resp.error ?? "验证失败，请重试")
@@ -1073,8 +1100,10 @@ final class BearyLoginViewController: UIViewController {
     /// （随 dismiss 消失、不可读），页面 dismiss 后不再发 fetchMe 请求。
     /// granted → 到账文案；flagged → 待审核文案；其余（失败态 / 无 referral 回包）
     /// 均显式提示“邀请码绑定失败”，且不影响登录本身；绑定规则与文案不动。
-    private func handleLoginReferralFeedback(resp: VerifyResponse) {
-        let inviteCode = normalizedInviteCode()
+    private func handleLoginReferralFeedback(resp: VerifyResponse, submittedInviteCode: String) {
+        // 第 25 轮 21-26（项24）：用本次提交的邀请码快照判断反馈，不再重读输入框；
+        // 在途清空或补填不再让绑定结果不提示或误提示。
+        let inviteCode = submittedInviteCode
         guard !inviteCode.isEmpty else {
             onLoggedIn?(nil)
             return
@@ -1096,7 +1125,7 @@ final class BearyLoginViewController: UIViewController {
     }
 
     /// 注销冷静期确认：文案与网页端 lgDelCfm 同款（“暂不登录 / 继续登录”）。
-    private func presentPendingDeleteConfirm(email: String, code: String, deleteAt: Int?) {
+    private func presentPendingDeleteConfirm(email: String, code: String, inviteCode: String, deleteAt: Int?) {
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         // 验证组⑧：deleteAt 缺失时不得按 epoch 渲染（1970 年）；无截止日时
         // 只提示注销中，不拼倒计时与日期（缺失字段不等于 1970）。
@@ -1127,7 +1156,7 @@ final class BearyLoginViewController: UIViewController {
                 guard let strongSelf = self else { return }
                 strongSelf.isVerifying = true
                 strongSelf.updateButtonStates()
-                strongSelf.verify(email: email, code: code, confirmCancel: true)
+                strongSelf.verify(email: email, code: code, inviteCode: inviteCode, confirmCancel: true)
             },
         ])
     }
