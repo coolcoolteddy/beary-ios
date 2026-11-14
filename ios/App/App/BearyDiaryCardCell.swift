@@ -364,7 +364,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 点图片条时触发（传图片下标与被点缩略图在 window 下的矩形，控制器开图片查看器；不再进详情；矩形供关场回到原处用；另传被点缩略图已显示的 UIImage，灯箱打开先显它）。
     var onImageTapped: ((Int, CGRect?, UIImage?) -> Void)?
     /// 九宫格入口点按：容器接线（Plus 门控 + 开网格都在容器侧，本处只转发）。
-    var onNineGridTapped: (() -> Void)?
+    var onNineGridTapped: ((UIButton) -> Void)?
     /// 引用卡点按：传引用 id（容器先 fetchEntry 校验可见性再放行，私密时显占位）。
     var onQuoteSelected: ((String) -> Void)?
     /// 点赞/收藏成功后回传（控制器用 applyInteraction 同步模型并刷新该行）。
@@ -1393,7 +1393,7 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     @objc private func nineGridButtonTapped() {
-        onNineGridTapped?()
+        onNineGridTapped?(nineGridButton)
     }
 
     private func makeImageSlots() {
