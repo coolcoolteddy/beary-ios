@@ -74,6 +74,8 @@ final class BearyDetailViewController: UIViewController {
     var onDismissed: ((String) -> Void)?
     /// 本人菜单：编辑 → 容器先关详情再弹编辑器。
     var onEdit: ((Entry) -> Void)?
+    /// 快照预览「恢复到编辑器」→ 容器先关详情再弹编辑器（快照文字预填，手动保存）。
+    var onRestoreSnapshotToEditor: ((Entry, BearyEntrySnapshot) -> Void)?
     /// 本人菜单：删除 → 容器先关详情再走确认删除流程。
     var onDelete: ((Entry) -> Void)?
     /// 作者名／头像／@ chip 点按 → 容器先关详情再开作者主页。
@@ -3126,20 +3128,14 @@ final class BearyDetailViewController: UIViewController {
         BearyConfirmSheet.show(from: self, title: "", message: nil, actions: actions)
     }
 
-    /// 冲突清单第 4 条：快照列表（全屏 modal 导航栈）；恢复成功后关页并重拉单篇。
+    /// 冲突清单第 4 条：快照列表（2026-11-14 Li 定版：底部弹窗两层，不再走全屏 modal 导航栈）。
+    /// 「恢复到编辑器」经 onRestoreSnapshotToEditor 交容器开编辑器（快照文字预填、手动保存）。
     private func presentSnapshotList() {
         guard entry.id?.isEmpty == false else { return }
-        let listVC = BearySnapshotListViewController(entry: entry)
-        listVC.onRestored = { [weak self] in
+        BearySnapshotListViewController.show(from: self, entry: entry) { [weak self] snapshot in
             guard let self = self else { return }
-            self.dismiss(animated: BearyMotion.animated(true)) {
-                BearyToast.show(in: self.view, message: "已恢复到该版本")
-                self.retryFetchDetail()
-            }
+            self.onRestoreSnapshotToEditor?(self.entry, snapshot)
         }
-        let nav = UINavigationController(rootViewController: listVC)
-        nav.modalPresentationStyle = .fullScreen
-        present(nav, animated: BearyMotion.animated(true))
     }
 
     @objc private func visibilityTapped() {
