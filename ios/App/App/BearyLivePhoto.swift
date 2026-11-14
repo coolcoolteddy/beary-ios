@@ -273,44 +273,64 @@ final class BearyLivePhotoLoader {
         enforceDiskCacheCap(bucket: bucket, writtenDelta: newSize - oldSize)
     }
 
+    /// 第十一轮 07：淘汰扫盘不再持 stateLock——枚举、读属性、排序、删文件
+    /// 全在专用串行队列 diskQueue 上做；stateLock 只护累计值等短内存操作，
+    /// 列表加载入口的短锁不再被整段扫盘挡住。淘汰口径不变：同上限、同最
+    /// 旧优先、同本进程首写校准；累计值只作触发依据，淘汰决策永远用枚举
+    /// 出的真实总量（高估只提前触发一次校准，低估至多延迟到下次越限校准，
+    /// 与图片加载器同款容差）。
     private func enforceDiskCacheCap(bucket: String, writtenDelta: Int64) {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
         let dir = caches.appendingPathComponent("BearyLiveCache").appendingPathComponent(bucket)
+        // 短锁：只更新累计值、判定是否需要扫盘。
         stateLock.lock()
-        defer { stateLock.unlock() }
-        var tracked: Int64
+        let needsScan: Bool
         if let known = diskCacheTotals[bucket] {
-            tracked = known + writtenDelta
+            let tracked = known + writtenDelta
             diskCacheTotals[bucket] = tracked
-            guard tracked > Self.diskCacheCapBytes else { return }
+            needsScan = tracked > Self.diskCacheCapBytes
         } else {
             // 本进程首写、累计值未知：置为越限值，迫使本次即枚举校准一次。
-            tracked = Self.diskCacheCapBytes + 1
+            diskCacheTotals[bucket] = Self.diskCacheCapBytes + 1
+            needsScan = true
         }
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
-            diskCacheTotals[bucket] = tracked
-            return
+        stateLock.unlock()
+        guard needsScan else { return }
+        // 派发时代次：purge/切桶已推进该桶代次时，本次扫盘即过期，跳过——
+        // 免得把 purge 后刚重下的同名文件误删；累计值已由 purge 清零，
+        // 下次写盘即重新校准。
+        let scanGeneration = generation(for: bucket)
+        Self.diskQueue.async { [weak self] in
+            guard let self = self, self.isCurrentGeneration(scanGeneration, bucket: bucket) else { return }
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
+                // 枚举失败不静默低估：累计值仍是越限值，下次写重试枚举。
+                return
+            }
+            var entries: [(url: URL, size: Int64, mtime: Date)] = []
+            var total: Int64 = 0
+            for name in names {
+                let url = dir.appendingPathComponent(name)
+                guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+                      let size = values.fileSize, let mtime = values.contentModificationDate else { continue }
+                entries.append((url: url, size: Int64(size), mtime: mtime))
+                total += Int64(size)
+            }
+            // 短锁：只写回枚举出的真实总量。
+            self.stateLock.lock()
+            self.diskCacheTotals[bucket] = total
+            self.stateLock.unlock()
+            guard total > Self.diskCacheCapBytes else { return }
+            entries.sort { $0.mtime < $1.mtime }
+            for entry in entries {
+                if total <= Self.diskCacheCapBytes { break }
+                try? FileManager.default.removeItem(at: entry.url)
+                total -= entry.size
+            }
+            // 短锁：只写回淘汰后的总量。
+            self.stateLock.lock()
+            self.diskCacheTotals[bucket] = total
+            self.stateLock.unlock()
         }
-        var entries: [(url: URL, size: Int64, mtime: Date)] = []
-        var total: Int64 = 0
-        for name in names {
-            let url = dir.appendingPathComponent(name)
-            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
-                  let size = values.fileSize, let mtime = values.contentModificationDate else { continue }
-            entries.append((url: url, size: Int64(size), mtime: mtime))
-            total += Int64(size)
-        }
-        guard total > Self.diskCacheCapBytes else {
-            diskCacheTotals[bucket] = total
-            return
-        }
-        entries.sort { $0.mtime < $1.mtime }
-        for entry in entries {
-            if total <= Self.diskCacheCapBytes { break }
-            try? FileManager.default.removeItem(at: entry.url)
-            total -= entry.size
-        }
-        diskCacheTotals[bucket] = total
     }
 
     private func untrackTask(_ task: URLSessionDataTask, bucket: String) {
