@@ -1126,6 +1126,25 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
         return nil
     }
 
+    /// r22-A10：照片格按下即时视觉反馈——手指落下时照片轻缩 0.95
+    /// （micro 0.18s，与按钮 pressDownVisual 同档同幅），抬手／取消回弹。
+    /// 九宫格与个人照片页共用本 cell，修在 cell 侧一次到位；只动
+    /// photoImageView，不动 cell 本体（错峰入场动的就是 cell transform）。
+    /// 减动效时直达终值；抬手后的震动与打开／重试逻辑不动。
+    override var isHighlighted: Bool {
+        didSet {
+            guard isHighlighted != oldValue else { return }
+            let pressed = CGAffineTransform(scaleX: 0.95, y: 0.95)
+            guard BearyMotion.animated(true) else {
+                photoImageView.transform = isHighlighted ? pressed : .identity
+                return
+            }
+            UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState], animations: {
+                self.photoImageView.transform = self.isHighlighted ? pressed : .identity
+            })
+        }
+    }
+
     override func prepareForReuse() {
         super.prepareForReuse()
         loadingKey = nil
@@ -1134,6 +1153,8 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
         accessibilityLabel = nil
         accessibilityHint = nil
         photoImageView.image = nil
+        // r22-A10：按压残留态一并复位（见上方 isHighlighted）。
+        photoImageView.transform = .identity
         loadingIndicator.stopAnimating()
         failedLabel.isHidden = true
         // 审计动效组：错峰入场动的是 cell 本体（alpha/transform），复用时同步
