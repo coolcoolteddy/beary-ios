@@ -62,6 +62,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     private var restoreEntries: [(button: UIButton, trashValue: TrashItem)] = []
     private var purgeEntries: [(button: UIButton, trashValue: TrashItem)] = []
     private var rowViewsByIdentifier: [String: UIView] = [:]
+    /// A8：meta 行标签——复用行靠它找到 metaLabel 重算日期/天数（本文件内无其他 tag 使用）。
+    private static let trashMetaLabelTag = 9917
     /// 真跟手左滑：当前正在被手指拖动的行（同一时刻只可能有一行在拖）；
     /// 新一行开始拖时，上一行若还停在偏移处先瞬间复位，避免两行同偏。
     private var trashDraggingRow: UIView?
@@ -821,7 +823,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     /// B4-3：刷新改增量（分页追加仍走 appendListRows，不动）。
     /// 仍在新列表里的行复用原视图——不重建、不重播入场、不丢进行中的按钮态；
     /// 只建新增行（新行走追加同款错峰）、只删消失行，并按新顺序重排。
-    /// 回收站条目删后内容不变，复用行不刷新文案；无 identifier 的行无法按键，
+    /// 回收站条目删后内容不变，复用行只重算 meta 行（日期＋剩余天数，见 A8），其余文案不动；无 identifier 的行无法按键，
     /// 每次刷新重建（服务端条目正常都有 identifier，此为兜底）。
     private func updateListRowsIncrementally() {
         // 无 identifier 的旧行未登记在 rowViewsByIdentifier，先移除，随后按新行重建。
@@ -850,6 +852,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                placedIdentifiers.contains(identifier) == false,
                let existing = rowViewsByIdentifier[identifier] {
                 placedIdentifiers.insert(identifier)
+                // A8：复用行重算 meta 行（日期＋剩余天数）：建行时算好的
+                // “还剩 N 天”跨过天数边界后刷新也不变，现按当前时间重算；
+                // 数字变了才做 0.18s 交叉淡变，不变不动，减动效时直接改文案。
+                refreshTrashMetaLabel(in: existing, trashValue: trashValue)
                 // 已在正确位置不动；否则移到新位置（按新顺序从左到右处理，
                 // 每次落位后前 index + 1 行即为最终顺序）。
                 if let current = listStack.arrangedSubviews.firstIndex(where: { $0 === existing }),
@@ -877,6 +883,21 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     rowView.transform = .identity
                 }, completion: nil)
             }
+        }
+    }
+
+    /// A8：复用行只重算 meta 行文案（TrashText.metaLine 按当前时间现算
+    /// 日期与剩余天数），其余内容与按钮态不动；文案不变时不碰视图。
+    private func refreshTrashMetaLabel(in rowView: UIView, trashValue: TrashItem) {
+        guard let metaLabel = rowView.viewWithTag(Self.trashMetaLabelTag) as? UILabel else { return }
+        let newText = TrashText.metaLine(trashValue: trashValue)
+        guard metaLabel.text != newText else { return }
+        if UIAccessibility.isReduceMotionEnabled {
+            metaLabel.text = newText
+        } else {
+            UIView.transition(with: metaLabel, duration: 0.18, options: .transitionCrossDissolve, animations: {
+                metaLabel.text = newText
+            }, completion: nil)
         }
     }
 
@@ -941,6 +962,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         metaLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         metaLabel.adjustsFontForContentSizeCategory = true
         metaLabel.textColor = BearyColors.gray
+        metaLabel.tag = Self.trashMetaLabelTag
         metaLabel.text = TrashText.metaLine(trashValue: trashValue)
 
         let buttonsRow = UIStackView()
