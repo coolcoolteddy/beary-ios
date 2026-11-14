@@ -746,11 +746,24 @@ class BearyDiaryCardCell: UITableViewCell {
         return v
     }()
 
+    /// 行尾吸余 spacer：满宽行富余宽度全由它吸掉（横向抱紧／抗压均为 1），
+    /// 天气组贴在地址右侧、不被顶到右边缘；无地址时它仍在行尾，天气顶左。
+    /// 不接手势，不挡卡片点按。
+    private let locationTrailingSpacer: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isUserInteractionEnabled = false
+        v.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
+        v.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
+        return v
+    }()
+
     /// 底行（左下角、正文区下面）：地址在左、天气组在地址右侧；无地址时
     /// 地址组与间隔同藏，天气组顶到左边缘；地址与天气全无时整行由
-    /// updateBottomRowVisibility 藏起、不占位。
+    /// updateBottomRowVisibility 藏起、不占位。行尾 locationTrailingSpacer
+    /// 吸掉富余宽度，天气组贴地址、不顶右缘。
     private lazy var locationLineRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [locationIconView, locationLabel, locationWeatherSpacer, weatherGroup])
+        let st = UIStackView(arrangedSubviews: [locationIconView, locationLabel, locationWeatherSpacer, weatherGroup, locationTrailingSpacer])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 4
