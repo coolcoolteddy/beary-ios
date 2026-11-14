@@ -5794,45 +5794,75 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 本地先验 magic/宽高/帧数/1MB（超了直接 toast，不发请求）；服务端 413
     /// 'gif too large' 同样 toast「GIF 不能超过 1MB」；上传成功后记 key、
     /// 插进光标处；库满时服务端仍回 key，GIF 照插、另 toast 提醒删库。
+    /// 线程：1MB 字节上限先在主线程预检（只读 count，O(1)）；GIF 结构
+    /// 遍历、首帧解码、缩略图、两次 Base64 编码全在 imagePrepQueue（照片
+    /// 预处理同款后台队列）上做，主线程只更新界面。旧实现在主线程先遍历
+    /// GIF 结构再查 1MB、随后首帧解码＋缩略图＋编码，1MB GIF 会卡主线程一拍。
     private func finishGIFUpload(data: Data) {
-        guard BearyGIF.isGIFData(data), let info = BearyGIF.info(data), info.w > 0, info.h > 0, info.frames > 0 else {
-            showToast(message: "GIF 上传失败，请重试")
-            return
-        }
-        if info.w > BearyGIF.maxSide || info.h > BearyGIF.maxSide || info.frames > BearyGIF.maxFrames {
-            showToast(message: "这个 GIF 加不了")
-            return
-        }
+        // 1MB 预检放最前：不用先遍历 GIF 结构。
         if data.count > BearyGIF.maxBytes {
             showToast(message: "GIF 不能超过 1MB")
             return
         }
-        guard let firstFrame = BearyGIF.firstFrameImage(data) else {
-            showToast(message: "GIF 上传失败，请重试")
+        // 在途占位先行：后台校验/编码期间再进上传仍按“上传中”拦，与旧实现
+        // （主线程同步校验、期间无窗口）同口径；失败分支在主线程复位。
+        guard gifUploadInFlight == false else {
+            showToast(message: "GIF 正在上传")
             return
         }
-        let thumbData = BearyImagePrep.thumbData(firstFrame)
         gifUploadInFlight = true
-        BearyAPI.shared.uploadImage(dataUrl: "data:image/gif;base64,\(data.base64EncodedString())", width: info.w, height: info.h, thumbDataUrl: thumbData.map { "data:image/jpeg;base64,\($0.base64EncodedString())" }) { [weak self] result in
-            DispatchQueue.main.async {
+        imagePrepQueue.async { [weak self] in
+            guard BearyGIF.isGIFData(data), let info = BearyGIF.info(data), info.w > 0, info.h > 0, info.frames > 0 else {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.gifUploadInFlight = false
+                    self.showToast(message: "GIF 上传失败，请重试")
+                }
+                return
+            }
+            guard info.w <= BearyGIF.maxSide, info.h <= BearyGIF.maxSide, info.frames <= BearyGIF.maxFrames else {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.gifUploadInFlight = false
+                    self.showToast(message: "这个 GIF 加不了")
+                }
+                return
+            }
+            guard let firstFrame = BearyGIF.firstFrameImage(data) else {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.gifUploadInFlight = false
+                    self.showToast(message: "GIF 上传失败，请重试")
+                }
+                return
+            }
+            let thumbData = BearyImagePrep.thumbData(firstFrame)
+            let dataUrl = "data:image/gif;base64,\(data.base64EncodedString())"
+            let thumbDataUrl = thumbData.map { "data:image/jpeg;base64,\($0.base64EncodedString())" }
+            DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
-                self.gifUploadInFlight = false
-                switch result {
-                case .success(let response):
-                    guard let key = response.key, key.hasSuffix(".gif"), let rand = BearyGIF.randKey(from: key) else {
-                        self.showToast(message: "GIF 上传失败，请重试")
-                        return
-                    }
-                    if response.libraryFull == true {
-                        self.showToast(message: "表情库满了，先删掉一些再添加")
-                    }
-                    self.gifFirstFrames[rand] = firstFrame
-                    self.insertGIFAttachmentAtCursor(key: key, randKey: rand)
-                case .failure(let error):
-                    if case .server(let code, _) = error, code == "gif too large" {
-                        self.showToast(message: "GIF 不能超过 1MB")
-                    } else {
-                        self.showToast(message: "GIF 上传失败，请重试")
+                BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: info.w, height: info.h, thumbDataUrl: thumbDataUrl) { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        self.gifUploadInFlight = false
+                        switch result {
+                        case .success(let response):
+                            guard let key = response.key, key.hasSuffix(".gif"), let rand = BearyGIF.randKey(from: key) else {
+                                self.showToast(message: "GIF 上传失败，请重试")
+                                return
+                            }
+                            if response.libraryFull == true {
+                                self.showToast(message: "表情库满了，先删掉一些再添加")
+                            }
+                            self.gifFirstFrames[rand] = firstFrame
+                            self.insertGIFAttachmentAtCursor(key: key, randKey: rand)
+                        case .failure(let error):
+                            if case .server(let code, _) = error, code == "gif too large" {
+                                self.showToast(message: "GIF 不能超过 1MB")
+                            } else {
+                                self.showToast(message: "GIF 上传失败，请重试")
+                            }
+                        }
                     }
                 }
             }
