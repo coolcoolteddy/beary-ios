@@ -86,6 +86,8 @@ enum BearyToast {
     /// 中长文案给足读完时间，长文案再延长一档；r27-10：带动作入口时取字数档
     /// 与动作档（保底 4.0s）的大值——短文案的重试钮也有时间点到；无动作时
     /// 各档数值与旧版逐字一致。fileprivate：发布 pill 的失败态同款分档。
+    /// 第十轮：带动作且 VoiceOver 开启时延长到 8.0s——读屏用户需要时间找到、
+    /// 聚焦并激活操作钮；8.0s 为动作档 4.0s 的两倍，可调。
     fileprivate static func displayDuration(for message: String, hasAction: Bool = false) -> TimeInterval {
         let base: TimeInterval
         if message.count <= 20 {
@@ -94,6 +96,9 @@ enum BearyToast {
             base = 3.0
         } else {
             base = 4.0
+        }
+        if hasAction, UIAccessibility.isVoiceOverRunning {
+            return 8.0
         }
         return hasAction ? max(base, 4.0) : base
     }
