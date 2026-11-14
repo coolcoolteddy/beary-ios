@@ -99,8 +99,16 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         self.onUploadGIF = onUploadGIF
         self.groups = [
             MoodGroup(id: "default", title: "心情", keys: ["none"] + moodKeys, representativeKey: moodKeys.first ?? "agree", representativeIconName: nil),
-            MoodGroup(id: "halloween", title: "万圣节", keys: BearyText.halloweenMoodKeys, representativeKey: "pumpkin", representativeIconName: nil),
+            MoodGroup(id: "newyear", title: "元旦", keys: BearyText.newyearMoodKeys, representativeKey: "clockstrikesmidnight", representativeIconName: nil),
             MoodGroup(id: "spring", title: "春节", keys: BearyText.springMoodKeys, representativeKey: "lantern", representativeIconName: nil),
+            MoodGroup(id: "lantern", title: "元宵", keys: BearyText.lanternMoodKeys, representativeKey: "yuanxiaoinspoon", representativeIconName: nil),
+            MoodGroup(id: "easter", title: "复活节", keys: BearyText.easterMoodKeys, representativeKey: "easterbasket", representativeIconName: nil),
+            MoodGroup(id: "children", title: "儿童节", keys: BearyText.childrenMoodKeys, representativeKey: "paperplanebanks", representativeIconName: nil),
+            MoodGroup(id: "qixi", title: "七夕", keys: BearyText.qixiMoodKeys, representativeKey: "magpiesbuildbridge", representativeIconName: nil),
+            MoodGroup(id: "midautumn", title: "中秋", keys: BearyText.midautumnMoodKeys, representativeKey: "moonbehindcloud", representativeIconName: nil),
+            MoodGroup(id: "halloween", title: "万圣节", keys: BearyText.halloweenMoodKeys, representativeKey: "pumpkin", representativeIconName: nil),
+            MoodGroup(id: "dayofthedead", title: "亡灵节", keys: BearyText.dayofthedeadMoodKeys, representativeKey: "marigoldbloom", representativeIconName: nil),
+            MoodGroup(id: "christmas", title: "圣诞节", keys: BearyText.christmasMoodKeys, representativeKey: "christmastree", representativeIconName: nil),
             MoodGroup(id: "mygif", title: "我的 GIF", keys: gifKeys, representativeKey: "", representativeIconName: "icon_image"),
         ]
         super.init(nibName: nil, bundle: nil)
