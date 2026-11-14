@@ -491,6 +491,23 @@ final class BearyInviteViewController: UIViewController {
         })
     }
 
+    /// r21-A15：邀请统计数字变化走 0.18s 交叉淡变（规范 §6 micro 档即
+    /// “数字淡变”档）：旧数字淡出、新数字淡入，不再先换文字再 0.26s
+    /// 单向淡入；同值不赋值不重播；减动效或未进窗口时直设终值。
+    /// 仅 statsLabel 走本函数，其余 label 仍走 setLabelTextFaded。
+    private func setStatsLabelTextCrossfaded(_ text: String) {
+        guard statsLabel.text != text else { return }
+        guard !UIAccessibility.isReduceMotionEnabled, statsLabel.window != nil else {
+            statsLabel.text = text
+            statsLabel.alpha = 1
+            return
+        }
+        let label = statsLabel
+        UIView.transition(with: label, duration: BearyMotion.micro, options: [.transitionCrossDissolve, .beginFromCurrentState], animations: {
+            label.text = text
+        })
+    }
+
     private func load(afterRender: (() -> Void)? = nil) {
         guard !isLoading else { return }
         // r17-C8：先用本次会话已确认的字段渲染——冷启动快照恢复的 MeUser
@@ -523,7 +540,7 @@ final class BearyInviteViewController: UIViewController {
         // U6：加载中统计区显示“加载中…”，复制钮在拿到码之前禁用；码区
         // 等待期间同样先显“加载中…”，不再直接给缺省态“—”。
         setLabelTextFaded(codeLabel, "加载中…")
-        setLabelTextFaded(statsLabel, "加载中…")
+        setStatsLabelTextCrossfaded("加载中…")
         updateCopyButton()
         SessionManager.shared.refreshMe { [weak self] result in
             DispatchQueue.main.async {
@@ -638,9 +655,9 @@ final class BearyInviteViewController: UIViewController {
             let months = ref.rewardMonths ?? 0
             // 统计单位按 30 天：rewardMonths 计奖励次数，每次 30 天，故 ×30 换算成天；
             // #405 的文案淡入保留）。
-            setLabelTextFaded(statsLabel, "已邀请 \(invited) 人 · 累计获得 \(months * 30) 天 Plus")
+            setStatsLabelTextCrossfaded("已邀请 \(invited) 人 · 累计获得 \(months * 30) 天 Plus")
         } else {
-            setLabelTextFaded(statsLabel, "加载中…")
+            setStatsLabelTextCrossfaded("加载中…")
         }
         boundRow.isHidden = true
         bindRow.isHidden = true
