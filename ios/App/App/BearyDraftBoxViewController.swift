@@ -1173,9 +1173,9 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             draftDraggingCard = nil
             let offset = card.transform.tx
             if offset <= -draftDragDeleteThreshold {
-                // 拖过阈值执行删除：复用删除钮路径（删卡 + 6 秒撤销条），
+                // 拖过阈值执行删除：复用删除钮路径（删盘成功后删卡 + 6 秒撤销条），
                 // 拖动 transform 不先复位——复位会让卡片先跳回原位再收起，
-                // 直接交接给 deleteTapped 的收起动画，视觉上连续。
+                // 直接交接给 deleteTapped，删盘成功后的收起动画里一并滑回原位，视觉上连续。
                 guard let button = deleteEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button else {
                     resetDraftDragCard(card)
                     return
@@ -1198,14 +1198,33 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
 
     /// 拖动结束/取消后卡片归位：减动效直设（回收站 resetTrashDragRow 同款
     /// 门控），其余以统一弹簧弹回（0.26s／damping 0.7，只走 transform）。
-    private func resetDraftDragCard(_ card: UIButton, initialSpringVelocity: CGFloat = 0) {
+    /// completion 在归位动画完成后调（减动效直接调），供拒删摇头接在归位后。
+    private func resetDraftDragCard(_ card: UIButton, initialSpringVelocity: CGFloat = 0, completion: (() -> Void)? = nil) {
         if UIAccessibility.isReduceMotionEnabled {
             card.transform = .identity
+            completion?()
             return
         }
         UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
             card.transform = .identity
-        }, completion: nil)
+        }, completion: { _ in completion?() })
+    }
+
+    /// 拒绝反馈：warning 震动＋拒绝音（与好友页 playDenyFeedback 同口径）。
+    private func playDenyFeedback() {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+    }
+
+    /// 仅视觉摇头（0.4s）；减动效时跳过。调用方须先调 playDenyFeedback 给震动＋音效。
+    private func denyShake(on view: UIView) {
+        if UIAccessibility.isReduceMotionEnabled { return }
+        view.layer.removeAnimation(forKey: "bearyDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = BearyMotion.screen
+        view.layer.add(shake, forKey: "bearyDenyShake")
     }
 
     private func chipShell() -> UIView {
@@ -1725,105 +1744,136 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         // 发布后台化：发布中的草稿不许从草稿箱删——只删记录不删文件，
         // 失败后重发即丢正文。拦在动画与 pendingUndos 之前，卡片不动。
         if BearyPublishCenter.shared.isPublishing(draftId: draftValue.draftId) {
+            // A2：左滑拒删也要回原位——拖动 transform 若不复位，卡片就停
+            // 在半路（按钮路径卡片本就在原位，复位是无视觉变化的空操作）。
+            // 拒绝反馈（震动＋音效＋toast），摇头等弹簧归位完成后再抖，
+            // 免得与归位动画抢 transform。
+            if let cardView = cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button {
+                playDenyFeedback()
+                resetDraftDragCard(cardView) { [weak self] in
+                    guard let strongSelf = self else { return }
+                    strongSelf.denyShake(on: cardView)
+                }
+            }
             showDraftToast(message: "发布中…")
             return
         }
         // G17：按 draftId 查找下标，不再依赖删除钮数组与草稿数组的下标对齐。
         guard let draftIndex = drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) else { return }
+        // 连点／拖动＋按钮重复进删只算一笔：在途笔未清前不再追加。
+        guard !pendingUndos.contains(where: { $0.draft.draftId == draftValue.draftId }) else { return }
         // 审计 P1-8：多笔队列——新删只追加本笔，不再使上一笔过期。
-        pendingUndos.removeAll { $0.draft.draftId == draftValue.draftId }
         pendingUndos.append(PendingUndo(draft: draftValue, index: draftIndex, timer: nil))
-        // M3：删卡先高度收起动画再移除，其余卡在栈内原地补位；减动效直接移除。
-        // 2026-10-28 Li 定：高度收到 0 允许改约束，算例外——能走 transform 的走 transform，高度必须收到 0 的例外。
-        guard !UIAccessibility.isReduceMotionEnabled,
-              let cardView = cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button,
-              cardView.bounds.height > 0 else {
-            // 113：减动效路径此前不禁用任何按钮，连点可重复进删；与动画路径
-            // 口径对齐：删钮与卡片一并禁用（回调幂等不动，finishDelete 内的
-            // 校验与失败恢复口径不变；失败时 renderDrafts 重建卡片，禁用不残留）。
-            sender.isEnabled = false
-            cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button.isUserInteractionEnabled = false
-            finishDelete(draftValue: draftValue)
-            return
-        }
-        cardView.isUserInteractionEnabled = false
-        let heightConstraint = cardView.heightAnchor.constraint(equalToConstant: cardView.bounds.height)
-        heightConstraint.isActive = true
-        view.layoutIfNeeded()
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseIn, animations: {
-            cardView.alpha = 0
-            heightConstraint.constant = 0
-            self.view.layoutIfNeeded()
-        }, completion: { _ in
-            self.finishDelete(draftValue: draftValue)
-        })
+        // A3：删盘先行——卡片只给按压反馈（删除钮自带 bearyAddPressFeedback），
+        // 删盘成功后才收起移除；失败卡片原地不动（见 finishDelete）。
+        // 先禁用删钮与卡片，免得删盘在途时重复进删或点开该卡。
+        sender.isEnabled = false
+        cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button.isUserInteractionEnabled = false
+        finishDelete(draftValue: draftValue)
     }
 
-    /// 删除收尾：删前再按 draftId 校验一次（动画期内下标可能已变），
-    /// 后台删盘；只有删盘成功才从内存列表移除并出撤销条，失败时卡片
-    /// 原地恢复（仍在原位置）+ toast，不让它静默消失。
+    /// 删除收尾：先后台删盘，成功后才收起卡片、从内存列表移除并出撤销条；
+    /// 失败时卡片原地不动（只摇头＋toast），不让它先消失再回来。
     /// G7：删盘走带 Bool 回传的 deleteAsyncReporting（老 deleteAsync
-    /// 保留给编辑器两处调用作兼容）；成功路径的 collapse 退场（deleteTapped）
-    /// 与撤销条行为不变，只是移除/出条改到删盘成功回调里（本地写盘，
-    /// 延迟毫秒级，视觉上与原来无差）。
+    /// 保留给编辑器两处调用作兼容）。
     private func finishDelete(draftValue: BearyDraft) {
-        // r28-3：动画期内已点撤销 → 该笔已从 pendingUndos 移除、恢复写盘
-        // 已先入队；此时再入队删盘，串行 ioQueue 下先存后删确定发生，
-        // 刚恢复的草稿会被静默删掉，故直接跳过（不删盘、不出条、不计时）。
-        guard pendingUndos.contains(where: { $0.draft.draftId == draftValue.draftId }) else { return }
-        // 失败恢复用：记下当前下标；删盘失败且内存里已没它时按此插回原位。
-        let restoreIndex = drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) ?? pendingUndos.first(where: { $0.draft.draftId == draftValue.draftId })?.index ?? 0
         BearyDraftStore.deleteAsyncReporting(draftId: draftValue.draftId) { [weak self] ok in
             guard let strongSelf = self else { return }
-            // r28-3：删盘在途时点了撤销（恢复写盘排在删盘之后入队，磁盘上
-            // 先删后存、草稿仍在）——回调不再从内存移除，也不再报删除失败；
-            // 恢复成败由撤销自己的 save 回调汇报。
+            // r28-3：删盘在途时点了撤销 → 恢复写盘已排在删盘之后入队，串行
+            // ioQueue 下先删后存确定发生，磁盘上的草稿仍在，故回调里直接
+            // 跳过（不移除、不出条、不计时）；恢复成败由撤销自己的 save 回调汇报。
+            // （旧流程删盘排在收起动画之后，撤销的存先于删入队，会把刚恢复的
+            // 草稿静默删掉，才须在入队前拦下；删盘先行后该窗口已不存在。）
             guard strongSelf.pendingUndos.contains(where: { $0.draft.draftId == draftValue.draftId }) else { return }
             if !ok {
-                // 失败：只清本笔的暂存与计时器（撤销条尚未出），不动队列里其余笔。
+                // 失败：只清本笔的暂存与计时器（撤销条尚未出），不动队列里其余笔；
+                // 内存与卡片都没动过，只需解禁删钮与卡片、摇头＋toast。
                 if let idx = strongSelf.pendingUndos.firstIndex(where: { $0.draft.draftId == draftValue.draftId }) {
                     strongSelf.pendingUndos[idx].timer?.invalidate()
                     strongSelf.pendingUndos.remove(at: idx)
                     strongSelf.refreshUndoBar()
                 }
-                if strongSelf.drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) == nil {
-                    strongSelf.drafts.insert(draftValue, at: min(restoreIndex, strongSelf.drafts.count))
+                if let cardView = strongSelf.cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button {
+                    cardView.isUserInteractionEnabled = true
+                    strongSelf.playDenyFeedback()
+                    strongSelf.denyShake(on: cardView)
                 }
-                strongSelf.renderDrafts()
+                if let deleteButton = strongSelf.deleteEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button {
+                    deleteButton.isEnabled = true
+                }
                 strongSelf.showDraftToast(message: "删除失败，请重试")
                 return
             }
-            if let currentIndex = strongSelf.drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) {
-                strongSelf.drafts.remove(at: currentIndex)
-                // DF-2：删的是编辑器正在写的那篇时通知编辑器（容器接线后编辑器清 draftId）。
-                // 注意：6 秒内点撤销会把草稿插回箱里，但编辑器侧已清的槽位不会自动接回，
-                // 容器需决定撤销后是否重新打开该篇（见交回说明）。
-                if let current = strongSelf.currentDraftId, current == draftValue.draftId {
-                    strongSelf.onDeleteCurrentDraft?(draftValue.draftId)
-                }
+            strongSelf.collapseDeletedCardAndRemove(draftValue: draftValue)
+        }
+    }
+
+    /// 删盘成功后的收起与移除：卡片先淡出、收至 0 高，再从内存列表移除
+    /// 并出撤销条、起 6 秒计时。收起动画期内点了撤销（撤销条来自队列
+    /// 里其余笔）→ 该笔已不在 pendingUndos，收起完成也不再移除，
+    /// 撤销重建的卡片不受影响。
+    private func collapseDeletedCardAndRemove(draftValue: BearyDraft) {
+        // M3：删卡先高度收起动画再移除，其余卡在栈内原地补位；减动效直接移除。
+        // 2026-10-28 Li 定：高度收到 0 允许改约束，算例外——能走 transform 的走 transform，高度必须收到 0 的例外。
+        guard !UIAccessibility.isReduceMotionEnabled,
+              let cardView = cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button,
+              cardView.bounds.height > 0 else {
+            removeDeletedDraftFromList(draftValue: draftValue)
+            return
+        }
+        let heightConstraint = cardView.heightAnchor.constraint(equalToConstant: cardView.bounds.height)
+        heightConstraint.isActive = true
+        view.layoutIfNeeded()
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseIn, animations: {
+            cardView.alpha = 0
+            // 拖动进删的卡片带着左移 transform 进来，收起时一并滑回原位，
+            // 免得它偏着收起。
+            cardView.transform = .identity
+            heightConstraint.constant = 0
+            self.view.layoutIfNeeded()
+        }, completion: { [weak self] _ in
+            guard let strongSelf = self else { return }
+            // 收起期内已点撤销 → 该笔已恢复，不再移除。
+            guard strongSelf.pendingUndos.contains(where: { $0.draft.draftId == draftValue.draftId }) else { return }
+            strongSelf.removeDeletedDraftFromList(draftValue: draftValue)
+        })
+    }
+
+    /// 删盘成功且收起完成（减动效直接）后的内存移除与撤销条：
+    /// 从内存列表移除并通知编辑器（若删的是正在写的那篇），空箱走全量
+    /// 渲染出空态，否则只摘被删卡片；本笔计时未起时出条并起 6 秒计时。
+    private func removeDeletedDraftFromList(draftValue: BearyDraft) {
+        guard pendingUndos.contains(where: { $0.draft.draftId == draftValue.draftId }) else { return }
+        if let currentIndex = drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) {
+            drafts.remove(at: currentIndex)
+            // DF-2：删的是编辑器正在写的那篇时通知编辑器（容器接线后编辑器清 draftId）。
+            // 注意：6 秒内点撤销会把草稿插回箱里，但编辑器侧已清的槽位不会自动接回，
+            // 容器需决定撤销后是否重新打开该篇（见交回说明）。
+            if let current = currentDraftId, current == draftValue.draftId {
+                onDeleteCurrentDraft?(draftValue.draftId)
             }
-            if strongSelf.drafts.isEmpty {
-                // 删到空时无剩余卡片可保留，走原有全量渲染出空态。
-                strongSelf.renderDrafts()
-            } else {
-                // 88 包 M16：只摘被删卡片与各处按钮登记，不重建剩余卡片。
-                // （删卡自身已在 deleteTapped 里收起为 0 高，摘除无视觉跳变。）
-                if let cardEntry = strongSelf.cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId }) {
-                    strongSelf.listStack.removeArrangedSubview(cardEntry.button)
-                    cardEntry.button.removeFromSuperview()
-                }
-                strongSelf.cardEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-                strongSelf.deleteEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-                strongSelf.lostEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-                strongSelf.subLabel.text = "共 \(strongSelf.drafts.count) 份 · 仅保存在本设备"
+        }
+        if drafts.isEmpty {
+            // 删到空时无剩余卡片可保留，走原有全量渲染出空态。
+            renderDrafts()
+        } else {
+            // 88 包 M16：只摘被删卡片与各处按钮登记，不重建剩余卡片。
+            // （删卡自身已在 collapseDeletedCardAndRemove 里收起为 0 高，摘除无视觉跳变。）
+            if let cardEntry = cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId }) {
+                listStack.removeArrangedSubview(cardEntry.button)
+                cardEntry.button.removeFromSuperview()
             }
-            // 本笔在队列里且计时未起时出条并起 6 秒计时；其余笔的计时互不干扰。
-            if let idx = strongSelf.pendingUndos.firstIndex(where: { $0.draft.draftId == draftValue.draftId }),
-               strongSelf.pendingUndos[idx].timer == nil {
-                strongSelf.refreshUndoBar()
-                strongSelf.pendingUndos[idx].timer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
-                    self?.expireUndo(draftId: draftValue.draftId)
-                }
+            cardEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+            deleteEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+            lostEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+            subLabel.text = "共 \(drafts.count) 份 · 仅保存在本设备"
+        }
+        // 本笔在队列里且计时未起时出条并起 6 秒计时；其余笔的计时互不干扰。
+        if let idx = pendingUndos.firstIndex(where: { $0.draft.draftId == draftValue.draftId }),
+           pendingUndos[idx].timer == nil {
+            refreshUndoBar()
+            pendingUndos[idx].timer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
+                self?.expireUndo(draftId: draftValue.draftId)
             }
         }
     }
