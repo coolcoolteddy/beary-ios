@@ -71,6 +71,12 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     private var pendingMapReturnRestore = false
     /// 文本 → 坐标的本页内存缓存（只活在本页实例里，deinit 即丢；绝不写盘）。
     private var geocodeCache: [String: CLLocationCoordinate2D] = [:]
+    /// 区级文本 → 当语言行政名集合的本页内存缓存（只活在本页实例里，随页销毁）。
+    /// 2026-11-14 切语言定位修：日记只存两段文本，区级是按定位当时的系统语言写的
+    /// （英文下 "Ningbo"，中文下 "宁波市"）；CLGeocoder 回包的行政字段永远是当前语言，
+    /// 切语言后回包字段与存量区级再也精确对不上，校验会把全部候选都拒掉、组进未定位。
+    /// 故每区先用当前语言编一次区级本身，取回包的当语言行政名作补充期望集；
+    /// 校验仍是精确相等（不放宽成包含匹配），防同名异地误落钉。
     /// 组 ID → 在图标记（P2-9）：标记对象常驻地图、按组 ID 增删改，
     /// 不随整批解析拆建；随页销毁。切账号时随标记一并清掉。
     private var locatedAnnotations: [String: MKPointAnnotation] = [:]
@@ -299,6 +305,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         capsuleAnnotations.removeAll()
         selectedGroup = nil
         geocodeCache.removeAll()
+        districtLocaleNamesCache.removeAll()
         didInitialGeocode = false
         failureStateView.isHidden = true
         inlineRetryButton.isHidden = true
@@ -773,10 +780,61 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             return
         }
         let group = pending[index]
-        geocodeGroupCandidates(
-            group: group, pending: pending, pendingIndex: index,
-            candidates: geocodeCandidates(for: group), candidateIndex: 0,
-            located: located, unlocated: unlocated, generation: generation)
+        // 2026-11-14 切语言定位修：先把本组期望区级编成当语言行政名集合，
+        // 再跑候选链——回包字段（当语言）与存量区级（旧语言）直接比对不上，
+        // 须以当语言的同区行政名作补充期望集，否则切语言后全部候选都被拒。
+        // 无期望区级（组内无区级记录）时不解析，沿旧口径不校验。
+        guard let expected = expectedDistrict(for: group) else {
+            geocodeGroupCandidates(
+                group: group, pending: pending, pendingIndex: index,
+                candidates: geocodeCandidates(for: group), candidateIndex: 0,
+                located: located, unlocated: unlocated, districtLocaleNames: [], generation: generation)
+            return
+        }
+        if let cached = districtLocaleNamesCache[expected] {
+            geocodeGroupCandidates(
+                group: group, pending: pending, pendingIndex: index,
+                candidates: geocodeCandidates(for: group), candidateIndex: 0,
+                located: located, unlocated: unlocated, districtLocaleNames: cached, generation: generation)
+            return
+        }
+        resolveDistrictLocaleNames(district: expected, generation: generation) { [weak self] names in
+            guard let self = self, generation == self.geocodeGeneration else { return }
+            self.geocodeGroupCandidates(
+                group: group, pending: pending, pendingIndex: index,
+                candidates: self.geocodeCandidates(for: group), candidateIndex: 0,
+                located: located, unlocated: unlocated, districtLocaleNames: names, generation: generation)
+        }
+    }
+
+    /// 把存量区级文本编成当语言行政名集合（2026-11-14 切语言定位修）：
+    /// 只编一次区级本身、取首个回包的行政字段（名／子区／区县／市），不含省级
+    /// ——省级太宽（同省异市的回包也会含同一省名），会放过同名异地的误落钉；
+    /// 区级本身的当语言名已足以让同区候选通过校验。编不到／无回包时给空集，
+    /// 校验退回只比存量文本（= 修前行为），不因此丢组。本页内存缓存，同区
+    /// 多组只编一次。解析器不进 activeGeocoder（与地点组链分开、互不取消），
+    /// 旧回调凭代次丢弃——见本回调与调用点的 generation 检查。
+    private func resolveDistrictLocaleNames(district: String, generation: Int, completion: @escaping (Set<String>) -> Void) {
+        if let cached = districtLocaleNamesCache[district] {
+            completion(cached)
+            return
+        }
+        let geocoder = CLGeocoder()
+        geocoder.geocodeAddressString(district) { [weak self] placemarks, _ in
+            DispatchQueue.main.async {
+                guard let self = self, generation == self.geocodeGeneration else { return }
+                var names = Set<String>()
+                if let placemark = placemarks?.first {
+                    for field in [placemark.name, placemark.subLocality, placemark.subAdministrativeArea, placemark.locality] {
+                        if let value = field?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+                            names.insert(value)
+                        }
+                    }
+                }
+                self.districtLocaleNamesCache[district] = names
+                completion(names)
+            }
+        }
     }
 
     /// 地理编码缓存键：组 ID 本身。作者组 ID 已含区级
@@ -823,12 +881,15 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 时算不一致——不凭无校验的回包落钉。精确比对而不用包含匹配，避免“东区”
     /// 误中“浦东新区”这类子串撞名；写入时区级本就取自同一派生口径
     /// （BearyLocationDisplay.district(from:)），同区回包的字段应当能对上。
-    private func placemarkMatchesDistrict(_ placemark: CLPlacemark, expectedDistrict: String?) -> Bool {
+    /// additionalNames（2026-11-14 切语言定位修）：期望区级按当前语言编出的
+    /// 当语言行政名集合——存量区级是旧语言写的，回包字段是当前语言的，两边
+    /// 直接比对不上；当语言的同区行政名也算一致。仍是精确相等，不放宽。
+    private func placemarkMatchesDistrict(_ placemark: CLPlacemark, expectedDistrict: String?, additionalNames: Set<String> = []) -> Bool {
         guard let expected = expectedDistrict?.trimmingCharacters(in: .whitespacesAndNewlines), !expected.isEmpty else { return true }
         let fields = [placemark.name, placemark.subLocality, placemark.subAdministrativeArea, placemark.locality, placemark.administrativeArea]
         for field in fields {
             guard let value = field?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { continue }
-            if value == expected { return true }
+            if value == expected || additionalNames.contains(value) { return true }
         }
         return false
     }
@@ -836,12 +897,12 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 同一批回包里第一个区级一致且带坐标的候选（审计四轮第 4 项）：
     /// 按回包顺序逐个校验，不一致的跳过；全部不一致时返回 nil，调用方
     /// 改试下一级兜底，候选穷尽后不落钉、不凭空编坐标。
-    private func firstMatchingCoordinate(for group: BearyLocationMapGroup, in placemarks: [CLPlacemark]?) -> CLLocationCoordinate2D? {
+    private func firstMatchingCoordinate(for group: BearyLocationMapGroup, in placemarks: [CLPlacemark]?, districtLocaleNames: Set<String> = []) -> CLLocationCoordinate2D? {
         guard let placemarks else { return nil }
         let expected = expectedDistrict(for: group)
         for placemark in placemarks {
             guard let coordinate = placemark.location?.coordinate else { continue }
-            guard placemarkMatchesDistrict(placemark, expectedDistrict: expected) else { continue }
+            guard placemarkMatchesDistrict(placemark, expectedDistrict: expected, additionalNames: districtLocaleNames) else { continue }
             return coordinate
         }
         return nil
@@ -871,11 +932,14 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 到达时直接丢弃，不写缓存、不补标记、不续跑下一组。
     /// 查询词口径不动（见 geocodeCandidates）：作者组 = 区级+名 → 裸名 → 区级；
     /// 他人组键本身就是区级，只编一格。
+    /// districtLocaleNames（2026-11-14 切语言定位修）：调用方事先把期望区级
+    /// 编成的当语言行政名集合，校验时与存量区级并列接受，见 placemarkMatchesDistrict。
     private func geocodeGroupCandidates(
         group: BearyLocationMapGroup, pending: [BearyLocationMapGroup], pendingIndex: Int,
         candidates: [String], candidateIndex: Int,
         located: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)],
         unlocated: [BearyLocationMapGroup],
+        districtLocaleNames: Set<String>,
         generation: Int
     ) {
         guard generation == geocodeGeneration else { return }
@@ -903,7 +967,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                     self.geocodePendingGroups(pending: pending, index: pendingIndex + 1, located: located, unlocated: unlocated, generation: generation)
                     return
                 }
-                if let coordinate = self.firstMatchingCoordinate(for: group, in: placemarks) {
+                if let coordinate = self.firstMatchingCoordinate(for: group, in: placemarks, districtLocaleNames: districtLocaleNames) {
                     self.geocodeCache[self.geocodeCacheKey(for: group)] = coordinate
                     var nextLocated = located
                     nextLocated.append((group, coordinate))
@@ -916,7 +980,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                     self.geocodeGroupCandidates(
                         group: group, pending: pending, pendingIndex: pendingIndex,
                         candidates: candidates, candidateIndex: candidateIndex + 1,
-                        located: located, unlocated: unlocated, generation: generation)
+                        located: located, unlocated: unlocated, districtLocaleNames: districtLocaleNames, generation: generation)
                 }
             }
         }
