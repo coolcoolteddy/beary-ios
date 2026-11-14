@@ -83,6 +83,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 切语言后回包字段与存量区级再也精确对不上，校验会把全部候选都拒掉、组进未定位。
     /// 故每区先用当前语言编一次区级本身，取回包的当语言行政名作补充期望集；
     /// 校验仍是精确相等（不放宽成包含匹配），防同名异地误落钉。
+    private var districtLocaleNamesCache: [String: Set<String>] = [:]
     /// 组 ID → 在图标记（P2-9）：标记对象常驻地图、按组 ID 增删改，
     /// 不随整批解析拆建；随页销毁。切账号时随标记一并清掉。
     private var locatedAnnotations: [String: MKPointAnnotation] = [:]

@@ -677,7 +677,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
                 return
             }
             let name = placemark.name ?? [placemark.thoroughfare, placemark.subThoroughfare].compactMap { $0 }.joined(separator: "")
-            let location = DiaryLocation(name: name.isEmpty ? nil : name, district: BearyLocationDisplay.district(from: placemark), latitude: coordinate.latitude, longitude: coordinate.longitude)
+            let location = DiaryLocation(name: name.isEmpty ? nil : name, district: BearyLocationDisplay.district(from: placemark), latitude: coordinate.coordinate.latitude, longitude: coordinate.coordinate.longitude)
             if location.isEmpty {
                 self.setManualMode(message: "未能解析当前位置地名，请自己输入")
             } else {
