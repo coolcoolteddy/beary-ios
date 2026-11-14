@@ -350,7 +350,8 @@ private final class BearyToastView: UIView {
 /// 成功时 fill 走满、对勾 +「已发布」，2.0s 后淡出；失败时文案换调用方传的
 /// 现有失败文案、进度条隐去，按文案长度分档（同 BearyToast.displayDuration）
 /// 后淡出。isUserInteractionEnabled = false，不吞下方点按；减动效时直现直消、
-/// 进度直设终值；VoiceOver 在各态切换时播报文案。
+/// 进度直设终值；VoiceOver 在各态切换时播报文案，进度到 25%／50%／75%
+/// 节点时各播报一次（不逐字节播报）。
 /// 同容器已有 pill 时 show 先移除旧 pill（新任务接管）；视图从容器移除后
 /// 全部更新为空操作。键盘不避让：pill 在编辑器退出时才露出，键盘随编辑器
 /// 一起收走，落点即无键盘基线。
@@ -394,6 +395,7 @@ final class BearyPublishPillView: UIView {
     private let fillView = UIView()
     private var fillWidthConstraint: NSLayoutConstraint?
     private var progress: Double = 0
+    private var lastAnnouncedMilestone = 0
     private var dismissed = false
 
     init() {
@@ -466,9 +468,18 @@ final class BearyPublishPillView: UIView {
 
     /// 进度 0...1：调用方按真实上传字节比喂；animated 只在收尾走满时用，
     /// 上传途中的每次回调都直设（回调本身即动画，不叠加 0.25s 补间）。
+    /// 读屏：进度越过 25%／50%／75% 节点时各播报一次「正在发布，已完成 X%」，
+    /// 单次大跳变只播报所到的最高节点，不逐字节播报。
     func setProgress(_ value: Double, animated: Bool) {
         guard superview != nil, !dismissed else { return }
         progress = min(max(value, 0), 1)
+        let crossedMilestone = [25, 50, 75]
+            .filter { Double($0) / 100 <= progress && $0 > lastAnnouncedMilestone }
+            .max()
+        if let milestone = crossedMilestone {
+            lastAnnouncedMilestone = milestone
+            UIAccessibility.post(notification: .announcement, argument: "正在发布，已完成 \(milestone)%")
+        }
         if animated, !UIAccessibility.isReduceMotionEnabled {
             UIView.animate(withDuration: 0.25) {
                 self.layoutIfNeeded()
