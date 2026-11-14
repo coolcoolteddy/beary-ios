@@ -982,16 +982,30 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         return hasText || !attachments.isEmpty
     }
 
-    @objc private func closeTapped() {
-        // zip 生成在途（首次生成与按需重生成共用同一 zipInFlight 标记，
-        // 见 r24-#6）时先拦：与编辑资料页“保存中拦截、不弹放弃确认”
-        // 同口径；提示走本页已有的 BearyToast，不另起 alert。已有弹层时不叠弹。
+    /// 退出前准备态守卫（关闭钮与右滑共用）：zip 生成在途时拦截退出并
+    /// 提示“正在准备附件，请稍候”，返回 false；不在途时返回 true，调用方
+    /// 再按有无内容决定直接退出或弹放弃确认。准备完成后退出走关闭钮
+    /// 同一路径（有内容弹确认、无内容直接退出）。
+    /// 注意：internal 而非 private——设置页 presentSettingsPage 的
+    /// EdgeDismiss 守卫要读它（与 hasFeedbackContent 同口径）。
+    /// 第 19 轮审计 A3：此前只有关闭钮拦准备态，右滑只读有无内容；
+    /// 空描述、无附件时准备期间右滑可离页，分享／仅发送日志流程中断。
+    func guardZipInFlightForExit() -> Bool {
         if zipInFlight {
             if presentedViewController == nil {
                 BearyToast.show(in: view, message: "正在准备附件，请稍候")
             }
-            return
+            return false
         }
+        return true
+    }
+
+    @objc private func closeTapped() {
+        // zip 生成在途（首次生成与按需重生成共用同一 zipInFlight 标记，
+        // 见 r24-#6）时先拦：与编辑资料页“保存中拦截、不弹放弃确认”
+        // 同口径；提示走本页已有的 BearyToast，不另起 alert。已有弹层时不叠弹。
+        // 第 19 轮审计 A3：该守卫与右滑共用（见 guardZipInFlightForExit）。
+        guard guardZipInFlightForExit() else { return }
         guard hasFeedbackContent else {
             dismiss(animated: BearyMotion.animated(true))
             return
