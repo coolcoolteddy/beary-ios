@@ -7,7 +7,8 @@ import ImageIO
 // images 数组走（发布/更新/GC 共用照片口径）；旧客户端看不到图时只显示
 // 记号原文，不崩。卡片/详情/时间线用覆盖层播动画（UILabel 不能直接播附件
 // 动画）；编辑器里只显首帧静态图（与心情附件同款静态口径，动画在卡片/
-// 详情/时间线里播）。减动效下一律首帧静态图。
+// 详情/时间线里播）。减动效下一律首帧静态图；覆盖层监听减动效变化，
+// 已显示的 GIF 在开关打开后立即切静帧、关闭后恢复动画（第 25 轮 7）。
 // 服务端口径（见 ~/workspace/beary-gif-upload-server.diff）：GIF 解码后
 // 1MB 上限（照片仍 5MB）、单边 ≤1000px、帧数 ≤200；取图按 key 鉴权，
 // 引用日记作者本人与本人库成员放行；库只引用 key、不复制文件。
@@ -24,6 +25,18 @@ enum BearyGIF {
     /// 解帧上限：帧压到 200px、最多 40 帧。
     static let maxDecodedFrames = 40
     static let maxDecodedSide: CGFloat = 200
+    /// 动画帧槽上限：变速帧按停留时间在动画里占多槽（同一 UIImage 复用，
+    /// 只多存数组引用、不复制像素），总槽数封顶，避免长停留帧把槽数撑爆。
+    static let maxAnimatedSlots = 200
+
+    /// 解码结果：动画图 + 原始循环次数 + 单次播放总时长。
+    /// loopCount：nil = 资源未声明循环块，沿用旧口径无限循环；
+    /// 0 = 资源声明无限循环；>0 = 总共播放这么多次。
+    struct DecodedGIF {
+        let image: UIImage
+        let loopCount: Int?
+        let duration: TimeInterval
+    }
 
     static func isGIFData(_ data: Data) -> Bool {
         guard data.count >= 6 else { return false }
@@ -80,23 +93,72 @@ enum BearyGIF {
 
     /// 解帧成 animated UIImage：帧压到 200px、最多 40 帧；延时取
     /// UnclampedDelayTime → DelayTime，<0.02 按 0.1 计；减动效只回首帧。
+    /// 兼容旧调用：只取动画图时用它；要循环次数与单次时长时用 decodedImage。
     static func animatedImage(_ data: Data) -> UIImage? {
-        if UIAccessibility.isReduceMotionEnabled { return firstFrameImage(data) }
+        return decodedImage(data)?.image
+    }
+
+    /// 解帧成动画（含循环次数与单次时长）：
+    /// - 全程抽帧（第 25 轮 64）：帧数超上限时按总帧数均匀取 maxDecodedFrames
+    ///   帧覆盖全程，不再只取前 40 帧；解出的像素量与旧口径相同，不加内存。
+    /// - 帧延时（第 25 轮 65）：UIImage.animatedImage 只能均分时长，这里按
+    ///   各帧实际停留时间占槽——一帧在动画数组里重复出现多次（同一 UIImage
+    ///   复用，不复制像素），停留久的帧占槽多，总时长仍为各帧延时之和；
+    ///   被抽掉的帧的延时并进代表它的采样帧。
+    /// - 循环次数（第 25 轮 66）：读 GIF 循环块（NETSCAPE2.0 loop count）；
+    ///   未声明或声明 0 均为无限循环，声明 N>0 为总共播 N 次。
+    /// 减动效时只回首帧（loopCount 为 nil、duration 为 0，调用方按静帧处理）。
+    static func decodedImage(_ data: Data) -> DecodedGIF? {
+        if UIAccessibility.isReduceMotionEnabled {
+            guard let first = firstFrameImage(data) else { return nil }
+            return DecodedGIF(image: first, loopCount: nil, duration: 0)
+        }
         guard isGIFData(data), let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let count = CGImageSourceGetCount(source)
         guard count > 0 else { return nil }
-        let frames = min(count, maxDecodedFrames)
-        var images: [UIImage] = []
-        var totalDuration: TimeInterval = 0
-        for i in 0..<frames {
-            guard let cg = CGImageSourceCreateImageAtIndex(source, i, nil) else { continue }
+        // 全程抽帧：≤ 上限全解；超上限按总帧数均匀取帧。
+        var indices: [Int] = []
+        if count <= maxDecodedFrames {
+            indices = Array(0..<count)
+        } else {
+            for i in 0..<maxDecodedFrames { indices.append(i * count / maxDecodedFrames) }
+        }
+        // 各采样帧的有效延时 = 它所代表的那段原帧的延时之和。
+        var frames: [(image: UIImage, delay: TimeInterval)] = []
+        for (j, index) in indices.enumerated() {
+            let end = j + 1 < indices.count ? indices[j + 1] : count
+            var delay: TimeInterval = 0
+            for k in index..<end { delay += delayForFrame(source: source, index: k) }
+            guard let cg = CGImageSourceCreateImageAtIndex(source, index, nil) else { continue }
             let raw = UIImage(cgImage: cg)
-            images.append(downsampled(raw, maxSide: maxDecodedSide) ?? raw)
-            totalDuration += delayForFrame(source: source, index: i)
+            frames.append((downsampled(raw, maxSide: maxDecodedSide) ?? raw, delay))
+        }
+        guard !frames.isEmpty else { return nil }
+        let totalDuration = frames.reduce(0) { $0 + $1.delay }
+        if frames.count == 1 { return DecodedGIF(image: frames[0].image, loopCount: loopCount(of: source), duration: max(totalDuration, 0.1)) }
+        // 按停留时间占槽：量化单位取最小有效延时，总槽数超上限时放大单位重算。
+        var unit = frames.map { $0.delay }.min() ?? 0.1
+        if unit < 0.02 { unit = 0.02 }
+        var slots = frames.map { max(1, Int(round($0.delay / unit))) }
+        if slots.reduce(0, +) > maxAnimatedSlots {
+            unit = max(totalDuration / TimeInterval(maxAnimatedSlots), 0.02)
+            slots = frames.map { max(1, Int(round($0.delay / unit))) }
+        }
+        var images: [UIImage] = []
+        for (j, frame) in frames.enumerated() {
+            for _ in 0..<slots[j] { images.append(frame.image) }
         }
         guard !images.isEmpty else { return nil }
-        if images.count == 1 { return images[0] }
-        return UIImage.animatedImage(with: images, duration: max(totalDuration, 0.1))
+        let animated = UIImage.animatedImage(with: images, duration: max(totalDuration, 0.1))
+        return DecodedGIF(image: animated, loopCount: loopCount(of: source), duration: max(totalDuration, 0.1))
+    }
+
+    /// GIF 循环块读数：无循环块返回 nil（调用方按无限循环处理，沿用旧口径）。
+    private static func loopCount(of source: CGImageSource) -> Int? {
+        guard let props = CGImageSourceCopyProperties(source, nil) as? [CFString: Any],
+              let gifProps = props[kCGImagePropertyGIFDictionary] as? [CFString: Any],
+              let loop = gifProps[kCGImagePropertyGIFLoopCount] as? NSNumber else { return nil }
+        return loop.intValue
     }
 
     private static func delayForFrame(source: CGImageSource, index: Int) -> TimeInterval {
@@ -147,6 +209,11 @@ enum BearyGIF {
 /// 6 行外的、标题截断掉的都不贴）；宽变时刷新；复用时清理。
 /// 可见性：setVisible(false) 时换首帧静态图（滚动出屏、切 tab、复用前），
 /// setVisible(true) 时换回动画；减动效下 animatedImage 本身即首帧。
+/// 减动效监听（第 25 轮 7）：init 即注册减动效变化通知，开关打开后已显示
+/// 的 GIF 立即切静帧、关闭后恢复动画；只改 GIF 路径，不动 Lottie。
+/// 失败重试（第 25 轮 68）：加载失败的 key 记入 failedKeys；下次 update
+/// （即使布局签名不变）、回前台（网络常在此时恢复）与 retryFailedGIFs()
+/// 都会重载；失败时不写缓存，加载器下次仍会重新请求网络。
 final class BearyInlineGIFOverlay {
 
     private weak var label: UILabel?
@@ -154,12 +221,81 @@ final class BearyInlineGIFOverlay {
     private var views: [String: UIImageView] = [:]
     private var animatedImages: [String: UIImage] = [:]
     private var firstFrames: [String: UIImage] = [:]
+    /// 有限循环 GIF 的播放信息（循环次数 + 单次时长），用于播完停在末帧。
+    private var loopInfo: [String: (loopCount: Int?, duration: TimeInterval)] = [:]
+    /// 有限循环 GIF 的停播任务（播完切末帧），换图/隐藏/清掉时取消。
+    private var loopStopWorkItems: [String: DispatchWorkItem] = [:]
     private var loadingKeys: Set<String> = []
+    private var failedKeys: Set<String> = []
     private var lastSignature: String = ""
     private var lastWidth: CGFloat = 0
     private var visible: Bool = true
     /// 长按 GIF 时的回调（randKey → 调用方弹“添加表情”）。
     var onLongPressGIF: ((String) -> Void)?
+
+    init() {
+        NotificationCenter.default.addObserver(self, selector: #selector(reduceMotionChanged), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(foregroundEntered), name: UIApplication.willEnterForegroundNotification, object: nil)
+    }
+
+    deinit {
+        for item in loopStopWorkItems.values { item.cancel() }
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    /// 减动效变化：打开后所有已显示 GIF 立即切静帧并停掉有限循环的停播
+    /// 任务；关闭后恢复动画（有限循环的重新从头计时）。
+    @objc private func reduceMotionChanged() {
+        refreshViewImages()
+    }
+
+    /// 回前台：网络常在此时恢复，重载之前失败的 GIF。
+    @objc private func foregroundEntered() {
+        retryFailedGIFs()
+    }
+
+    /// 当前应显示的图：减动效或不可见时首帧，否则动画（未解出时先用首帧）。
+    private func image(for randKey: String) -> UIImage? {
+        if UIAccessibility.isReduceMotionEnabled || !visible {
+            return firstFrames[randKey]
+        }
+        return animatedImages[randKey] ?? firstFrames[randKey]
+    }
+
+    /// 按当前减动效/可见状态重刷全部覆盖视图的图；有限循环 GIF 在此
+    /// （重）新计时，播完停在末帧。
+    private func refreshViewImages() {
+        for (id, view) in views {
+            let rand = id.components(separatedBy: "#").first ?? ""
+            view.image = image(for: rand)
+        }
+        rearmLoopStops()
+    }
+
+    /// 有限循环 GIF：播完（单次时长 × 次数）后停在末帧；无限循环/减动效/
+    /// 不可见时不计时。旧任务先取消，避免复用后旧计时把新图切掉。
+    private func rearmLoopStops() {
+        for item in loopStopWorkItems.values { item.cancel() }
+        loopStopWorkItems.removeAll()
+        guard visible, !UIAccessibility.isReduceMotionEnabled else { return }
+        for (rand, info) in loopInfo {
+            guard let count = info.loopCount, count > 0, info.duration > 0,
+                  animatedImages[rand] != nil else { continue }
+            let delay = info.duration * TimeInterval(count)
+            let item = DispatchWorkItem { [weak self] in
+                guard let self = self else { return }
+                guard self.visible, !UIAccessibility.isReduceMotionEnabled else { return }
+                let last = self.animatedImages[rand]?.images?.last ?? self.firstFrames[rand]
+                for (id, view) in self.views {
+                    let r = id.components(separatedBy: "#").first ?? ""
+                    guard r == rand else { continue }
+                    view.image = last
+                }
+            }
+            loopStopWorkItems[rand] = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+        }
+    }
 
     /// 绑 label + 本篇 images 里的 key + 长按回调；调后即按当前 attributedText 贴图。
     /// 宽变或文本重建后重复调（同一 label + 同一批 key 时不重置签名，
@@ -181,6 +317,8 @@ final class BearyInlineGIFOverlay {
     /// 复用 / 内容清空时调：摘掉全部覆盖视图（已加载的图仍缓存在本管理器内，
     /// 同一管理器重绑同一篇时不再重下）。
     func clear() {
+        for item in loopStopWorkItems.values { item.cancel() }
+        loopStopWorkItems.removeAll()
         for view in views.values { view.removeFromSuperview() }
         views.removeAll()
         lastSignature = ""
@@ -190,10 +328,12 @@ final class BearyInlineGIFOverlay {
     func setVisible(_ visible: Bool) {
         guard self.visible != visible else { return }
         self.visible = visible
-        for (id, view) in views {
-            let rand = id.components(separatedBy: "#").first ?? ""
-            view.image = visible ? (animatedImages[rand] ?? firstFrames[rand]) : firstFrames[rand]
-        }
+        refreshViewImages()
+    }
+
+    /// 手动重试之前加载失败的 GIF（调用方可挂到失败态入口；无失败 key 时空转）。
+    func retryFailedGIFs() {
+        for rand in failedKeys { loadGIF(randKey: rand) }
     }
 
     /// 宽或文本变化时重算矩形（label 布局落位后调；无 GIF 附件时直接返回）。
@@ -203,8 +343,13 @@ final class BearyInlineGIFOverlay {
             clear()
             return
         }
-        let signature = "\(attributed.string.hashValue)#\(label.numberOfLines)#\(label.bounds.width)"
-        if signature == lastSignature { return }
+        let signature = layoutSignature(label: label, attributed: attributed)
+        if signature == lastSignature {
+            // 签名不变时不再重算矩形，但之前失败的 GIF 要重载（第 25 轮 68）：
+            // 网络恢复后同一页不靠布局变化也能重新拿到图。
+            retryFailedGIFs()
+            return
+        }
         lastSignature = signature
         lastWidth = label.bounds.width
         let rects = attachmentRects(label: label, attributed: attributed)
@@ -220,7 +365,7 @@ final class BearyInlineGIFOverlay {
             view.clipsToBounds = true
             view.isUserInteractionEnabled = true
             view.frame = rect
-            view.image = visible ? (animatedImages[rand] ?? firstFrames[rand]) : firstFrames[rand]
+            view.image = image(for: rand)
             let press = UILongPressGestureRecognizer(target: self, action: #selector(overlayLongPressed(_:)))
             press.minimumPressDuration = 0.5
             view.addGestureRecognizer(press)
@@ -232,6 +377,32 @@ final class BearyInlineGIFOverlay {
             view.removeFromSuperview()
             views.removeValue(forKey: id)
         }
+    }
+
+    /// 布局缓存签名（第 25 轮 67）：除旧口径的文本 hash、行数、宽度外，
+    /// 再含 label 字体、全文段落行高参数与各 GIF 附件尺寸；任一变化都
+    /// 作废缓存、重算矩形。
+    private func layoutSignature(label: UILabel, attributed: NSAttributedString) -> String {
+        var parts: [String] = []
+        parts.append("\(attributed.string.hashValue)")
+        parts.append("\(label.numberOfLines)")
+        parts.append("\(label.bounds.width)")
+        parts.append("\(label.font.fontName)-\(label.font.pointSize)")
+        var paraParts: [String] = []
+        attributed.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: attributed.length), options: []) { value, _, _ in
+            guard let style = value as? NSParagraphStyle else { return }
+            let p = "\(style.lineSpacing)/\(style.minimumLineHeight)/\(style.maximumLineHeight)/\(style.lineHeightMultiple)"
+            if !paraParts.contains(p) { paraParts.append(p) }
+        }
+        parts.append(paraParts.joined(separator: ","))
+        var attachParts: [String] = []
+        attributed.enumerateAttribute(.attachment, in: NSRange(location: 0, length: attributed.length), options: []) { value, _, _ in
+            guard let attachment = value as? NSTextAttachment else { return }
+            let s = "\(attachment.bounds.size.width)x\(attachment.bounds.size.height)"
+            if !attachParts.contains(s) { attachParts.append(s) }
+        }
+        parts.append(attachParts.joined(separator: ","))
+        return parts.joined(separator: "#")
     }
 
     @objc private func overlayLongPressed(_ sender: UILongPressGestureRecognizer) {
@@ -276,21 +447,35 @@ final class BearyInlineGIFOverlay {
         BearyImageLoader.shared.loadImageData(url: url) { [weak self] result in
             guard let self = self else { return }
             // 解帧放后台线程（最多 40 帧），解完切主线程贴图。
-            var animated: UIImage?
+            var decoded: BearyGIF.DecodedGIF?
             var first: UIImage?
+            var failed = false
             if case .success(let data) = result {
                 first = BearyGIF.firstFrameImage(data)
-                animated = BearyGIF.animatedImage(data)
+                decoded = BearyGIF.decodedImage(data)
+            } else {
+                failed = true
             }
             DispatchQueue.main.async {
                 self.loadingKeys.remove(randKey)
+                if failed {
+                    // 加载失败记入 failedKeys：覆盖视图仍在（占位），下次 update、
+                    // 回前台或调用方调 retryFailedGIFs() 时重载（第 25 轮 68）。
+                    self.failedKeys.insert(randKey)
+                    return
+                }
+                self.failedKeys.remove(randKey)
                 if let first = first { self.firstFrames[randKey] = first }
-                if let animated = animated { self.animatedImages[randKey] = animated }
+                if let decoded = decoded {
+                    self.animatedImages[randKey] = decoded.image
+                    self.loopInfo[randKey] = (decoded.loopCount, decoded.duration)
+                }
                 for (id, view) in self.views {
                     let rand = id.components(separatedBy: "#").first ?? ""
                     guard rand == randKey else { continue }
-                    view.image = self.visible ? (animated ?? first) : first
+                    view.image = self.image(for: rand)
                 }
+                self.rearmLoopStops()
             }
         }
     }
