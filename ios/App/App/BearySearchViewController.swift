@@ -3256,12 +3256,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         return parts.joined(separator: " ")
     }
 
-    /// 网页 srchDateStr 口径：M 月 d 日（带空格，不带时间、不带年份）。
+    /// 网页 srchDateStr 口径：同年 M 月 d 日，跨年 yyyy 年 M 月 d 日（带空格，不带时间）。
     private func searchDateString(ms: Int) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "M 月 d 日"
+        let year = Calendar.current.component(.year, from: date)
+        let currentYear = Calendar.current.component(.year, from: Date())
+        fmt.dateFormat = year == currentYear ? "M 月 d 日" : "yyyy 年 M 月 d 日"
         return fmt.string(from: date)
     }
 
