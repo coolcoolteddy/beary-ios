@@ -1456,6 +1456,8 @@ class BearyProfileViewController: UIViewController {
         labelValue.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         // 审计-个人页设置：橙色正文改深橙文字 token（同 pastSelfEntryButton，token 值不动）。
         labelValue.textColor = BearyColors.ink
+        // r25-48：未同步后缀（“仅保存在本机，等待同步”）较长，允许多行换行。
+        labelValue.numberOfLines = 0
         return labelValue
     }()
     private let pastSelfWaitingBodyLabel: UILabel = {
@@ -4776,16 +4778,19 @@ class BearyProfileViewController: UIViewController {
         // 开发者模式时间旅行（仅内存）：标题月日与历史查询都跟假日；
         // 写路径（留话 createdAtMs）保持真实，不读这里。
         let fakeToday = BearyDevPreviewState.fakeTodayDate()
-        let todayParts = Calendar.current.dateComponents([.month, .day], from: fakeToday ?? Date())
+        // r25-43：用调用方传入的 today/calendar（北京时间），不用 Calendar.current；
+        // 开发者模式假日仍优先，只改时区口径、不改假日语义。
+        let effectiveToday = fakeToday ?? today
+        let todayParts = calendar.dateComponents([.month, .day], from: effectiveToday)
         guard let month = todayParts.month, let day = todayParts.day else {
             thisDayCard.isHidden = true
             return
         }
-        var history = BearyProfilePersonalLogic.thisDayInHistory(entries: visible, today: fakeToday ?? Date(), calendar: Calendar.current)
+        var history = BearyProfilePersonalLogic.thisDayInHistory(entries: visible, today: effectiveToday, calendar: calendar)
         // 开发者模式假数据预览（仅内存）：往年今天无日记时也亮一张假卡；
         // 假篇 id 带 dev- 前缀，点按进详情会被拦截、留话入口同样拦截。
         if history == nil && BearyDevPreviewState.pastDayPreview {
-            let fakeYear = (Calendar.current.component(.year, from: fakeToday ?? Date())) - 1
+            let fakeYear = calendar.component(.year, from: effectiveToday) - 1
             let fakeEntry = BearyDeveloperMode.shared.makeFakePastDayEntry(fakeYear: fakeYear, month: month, day: day)
             history = BearyProfilePersonalLogic.ThisDayHistory(year: fakeYear, entries: [fakeEntry])
         }
@@ -4872,7 +4877,9 @@ class BearyProfileViewController: UIViewController {
 
     private func pastSelfToday() -> String {
         // 开发者模式时间旅行（仅内存）：读路径跟假日；写路径 pastSelfNowMs() 保持真实。
-        PastSelfLogic.localDateString(from: BearyDevPreviewState.fakeTodayDate() ?? Date(), calendar: .current)
+        // r25-44：留话送达日按北京时间算，与送达提醒排程（BearyBeijingDay.calendar）
+        // 同一口径；设备时区≠北京时，页面送达态与提醒不再各判各的“今天”。
+        PastSelfLogic.localDateString(from: BearyDevPreviewState.fakeTodayDate() ?? Date(), calendar: Self.beijingCalendar)
     }
 
     private func pastSelfNowMs() -> Int {
@@ -4924,7 +4931,9 @@ class BearyProfileViewController: UIViewController {
            let selection = editingSelection,
            editingTextView.window != nil {
             editingTextView.becomeFirstResponder()
-            let length = (editingTextView.text ?? "").count
+            // r25-47：NSRange 按 UTF-16 计，须用 utf16.count 截断；用 Swift 字符数
+            // .count 时，含组合字符/表情的文本会把光标截到错误位置。
+            let length = (editingTextView.text ?? "").utf16.count
             let location = min(selection.location, length)
             editingTextView.selectedRange = NSRange(location: location, length: min(selection.length, max(length - location, 0)))
         }
@@ -4976,27 +4985,29 @@ class BearyProfileViewController: UIViewController {
                 if pastSelfComposeView.text != pastSelfThisDayDraft {
                     pastSelfComposeView.text = pastSelfThisDayDraft
                 }
-                pastSelfComposeHintLabel.text = "明年同一天（\(pastSelfDisplayDate(pastSelfThisDayDeliverOn))）会和这篇日记一起送达。在此之前仅你可见。"
+                pastSelfComposeHintLabel.text = "明年同一天（\(pastSelfDisplayDate(pastSelfThisDayDeliverOn))，北京时间）会和这篇日记一起送达。在此之前仅你可见。"
             } else {
                 pastSelfEntryRow.isHidden = false
             }
         case .waiting(let message):
             pastSelfWaitingSection.isHidden = false
-            pastSelfWaitingStatusLabel.text = "✓ 已留话 · 明年 \(pastSelfDisplayMonthDay(message.deliverOn))见"
+            // r25-48：未同步（localOnly）时标明仅保存在本机；服务端创建回包一到
+            // 即去 localOnly 化，重渲染后该后缀自动消失。提交 toast 文案不动。
+            pastSelfWaitingStatusLabel.text = "✓ 已留话 · 明年 \(pastSelfDisplayMonthDay(message.deliverOn))见" + (message.localOnly ? " · 仅保存在本机，等待同步" : "")
             pastSelfWaitingBodyLabel.text = message.body
         case .due:
             pastSelfDueNoteLabel.isHidden = false
             pastSelfDueNoteLabel.text = "对话已送达，见上方「去年的对话」"
         case .answered(let waiting, _):
             pastSelfDueNoteLabel.isHidden = false
-            pastSelfDueNoteLabel.text = "已回一句 · 明年 \(pastSelfDisplayMonthDay(waiting.deliverOn))再见，见上方「去年的对话」"
+            pastSelfDueNoteLabel.text = "已回一句 · 明年 \(pastSelfDisplayMonthDay(waiting.deliverOn))再见" + (waiting.localOnly ? "（仅保存在本机，等待同步）" : "") + "，见上方「去年的对话」"
         }
         pastSelfRefreshLayout()
     }
 
     @objc private func pastSelfEntryTapped() {
         guard thisDayMainEntry?.id != nil, pastSelfStore() != nil else { return }
-        guard let deliverOn = PastSelfLogic.nextYearDateString(fromMs: pastSelfNowMs(), calendar: .current) else {
+        guard let deliverOn = PastSelfLogic.nextYearDateString(fromMs: pastSelfNowMs(), calendar: Self.beijingCalendar) else {
             BearyToast.show(in: view, message: "日期算不出来，换一天再试")
             return
         }
@@ -5007,9 +5018,25 @@ class BearyProfileViewController: UIViewController {
     }
 
     @objc private func pastSelfComposeCancelTapped() {
-        pastSelfComposingThisDay = false
-        pastSelfThisDayDraft = ""
-        renderPastSelf(visible: pastSelfVisibleEntries())
+        // r25-46：无内容直接收起；有内容先确认，防误触丢字（叉叉/下滑关 sheet
+        // 不跑回调，草稿原样保留，下次打开还在）。
+        let hasContent = !pastSelfThisDayDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !(pastSelfComposeView.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard hasContent else {
+            pastSelfComposingThisDay = false
+            pastSelfThisDayDraft = ""
+            renderPastSelf(visible: pastSelfVisibleEntries())
+            return
+        }
+        BearyConfirmSheet.show(from: self, title: "放弃这句话？", message: "已写的内容会清空。", actions: [
+            BearyConfirmSheet.Action(title: "放弃", style: .destructive) { [weak self] in
+                guard let strongSelf = self else { return }
+                strongSelf.pastSelfComposingThisDay = false
+                strongSelf.pastSelfThisDayDraft = ""
+                strongSelf.renderPastSelf(visible: strongSelf.pastSelfVisibleEntries())
+            },
+            BearyConfirmSheet.Action(title: "继续写", style: .cancel),
+        ])
     }
 
     @objc private func pastSelfComposeSubmitTapped() {
@@ -5032,7 +5059,7 @@ class BearyProfileViewController: UIViewController {
             BearyToast.show(in: view, message: "一句话最多 \(PastSelfLogic.maxBodyLength) 字")
             return
         }
-        guard let message = store.add(originEntryId: mainId, body: text, createdAtMs: pastSelfNowMs(), calendar: .current) else {
+        guard let message = store.add(originEntryId: mainId, body: text, createdAtMs: pastSelfNowMs(), calendar: Self.beijingCalendar) else {
             BearyHaptics.rejectionWarning()
             pastSelfDenyShake(pastSelfComposeSubmitButton)
             // 审计登录杂项：等待中超限时拒绝新留话并行内提示（不关编辑器、不清草稿，
@@ -5076,8 +5103,13 @@ class BearyProfileViewController: UIViewController {
                 pastSelfPendingRevokeLocalIds.insert(waiting.id)
                 BearyToast.show(in: view, message: "正在同步撤回")
             } else {
-                pastSelfPushRevoke(waiting.id)
-                BearyToast.show(in: view, message: "已撤回")
+                // r25-49：服务端尚未确认前不称“已撤回”；先报本机态，确认回包
+                // 到了再报已撤回（失败则保持本机态，等下次同步补推）。
+                pastSelfPushRevoke(waiting.id) { [weak self] in
+                    guard let strongSelf = self, strongSelf.isOwnProfile else { return }
+                    BearyToast.show(in: strongSelf.view, message: "已撤回")
+                }
+                BearyToast.show(in: view, message: "已在本机撤回，等待同步")
             }
             // 本地通知：撤回即取消该留话的送达提醒。
             BearyLocalNotifications.shared.refreshAll(force: true)
@@ -5176,7 +5208,8 @@ class BearyProfileViewController: UIViewController {
            let compose = pastSelfReplyComposeViews[editingChainId],
            compose.window != nil {
             compose.textView.becomeFirstResponder()
-            let length = (compose.textView.text ?? "").count
+            // r25-47：同上，NSRange 按 UTF-16 计。
+            let length = (compose.textView.text ?? "").utf16.count
             let location = min(selection.location, length)
             compose.textView.selectedRange = NSRange(location: location, length: min(selection.length, max(length - location, 0)))
         }
@@ -5377,14 +5410,14 @@ class BearyProfileViewController: UIViewController {
         let originText = (originBody ?? "").isEmpty ? (origin.map { personalTitle(entry: $0) } ?? "") : (originBody ?? "")
         sideRow.addArrangedSubview(pastSelfSideColumn(
             title: "去年原篇 · \(originDate ?? "")", body: originText, barColor: BearyColors.orange))
-        let writtenDate = pastSelfDisplayDate(PastSelfLogic.localDateString(fromMs: latestDelivered.createdAtMs, calendar: .current))
+        let writtenDate = pastSelfDisplayDate(PastSelfLogic.localDateString(fromMs: latestDelivered.createdAtMs, calendar: Self.beijingCalendar))
         sideRow.addArrangedSubview(pastSelfSideColumn(
             title: "今年留话 · 写于 \(writtenDate)", body: latestDelivered.body, barColor: BearyColors.blue))
         section.addArrangedSubview(sideRow)
         // 年份链：原篇年 + 每条留话的送达年（已撤回行已在 liveChainMessages 里排除）。
         var chainParts: [String] = []
         if let createdAt = origin?.createdAt {
-            let year = Calendar.current.component(.year, from: Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000))
+            let year = Self.beijingCalendar.component(.year, from: Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000))
             chainParts.append("\(year) 原篇")
         }
         for message in messages {
@@ -5398,7 +5431,7 @@ class BearyProfileViewController: UIViewController {
         // 下方动作：未回过 → 「再回一句」；已回过 → 明年见提示，不再出按钮。
         if isAnswered, let waiting = waiting {
             let answeredNote = pastSelfMetaLabel()
-            answeredNote.text = "已回一句 · 明年 \(pastSelfDisplayMonthDay(waiting.deliverOn))再见"
+            answeredNote.text = "已回一句 · 明年 \(pastSelfDisplayMonthDay(waiting.deliverOn))再见" + (waiting.localOnly ? "（仅保存在本机，等待同步）" : "")
             section.addArrangedSubview(answeredNote)
         } else if pastSelfReplyingChainId == chainId {
             // 09：按 chainId 复用输入框——服务端回包重建各节时不再新建
@@ -5463,11 +5496,28 @@ class BearyProfileViewController: UIViewController {
     }
 
     @objc private func pastSelfReplyCancelTapped(_ sender: UIButton) {
-        if let chainId = sender.accessibilityIdentifier {
-            pastSelfReplyDrafts[chainId] = nil
+        // r25-46：同留话输入取消——无内容直接收起，有内容先确认再清草稿。
+        guard let chainId = sender.accessibilityIdentifier, !chainId.isEmpty else {
+            pastSelfReplyingChainId = nil
+            renderPastSelf(visible: pastSelfVisibleEntries())
+            return
         }
-        pastSelfReplyingChainId = nil
-        renderPastSelf(visible: pastSelfVisibleEntries())
+        let draft = pastSelfReplyDrafts[chainId] ?? ""
+        guard !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            pastSelfReplyDrafts[chainId] = nil
+            pastSelfReplyingChainId = nil
+            renderPastSelf(visible: pastSelfVisibleEntries())
+            return
+        }
+        BearyConfirmSheet.show(from: self, title: "放弃这句话？", message: "已写的内容会清空。", actions: [
+            BearyConfirmSheet.Action(title: "放弃", style: .destructive) { [weak self] in
+                guard let strongSelf = self else { return }
+                strongSelf.pastSelfReplyDrafts[chainId] = nil
+                strongSelf.pastSelfReplyingChainId = nil
+                strongSelf.renderPastSelf(visible: strongSelf.pastSelfVisibleEntries())
+            },
+            BearyConfirmSheet.Action(title: "继续写", style: .cancel),
+        ])
     }
 
     @objc private func pastSelfReplySubmitTapped(_ sender: UIButton) {
@@ -5493,7 +5543,7 @@ class BearyProfileViewController: UIViewController {
             BearyToast.show(in: view, message: "一句话最多 \(PastSelfLogic.maxBodyLength) 字")
             return
         }
-        guard let message = store.add(originEntryId: chainId, body: text, createdAtMs: pastSelfNowMs(), calendar: .current) else {
+        guard let message = store.add(originEntryId: chainId, body: text, createdAtMs: pastSelfNowMs(), calendar: Self.beijingCalendar) else {
             BearyHaptics.rejectionWarning()
             pastSelfDenyShake(sender)
             // 审计登录杂项：同上，等待中超限时只提示、不清回复态与草稿。
@@ -5550,6 +5600,7 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.pastSelfRefreshLayout()
                 case .failure:
                     // 后端未上线（404）或断网：本地存储即事实来源，不弹 toast。
+                    // r25-48：未同步态由等待区状态行标明（localOnly 后缀），此处不补 toast。
                     break
                 }
             }
@@ -5579,9 +5630,13 @@ class BearyProfileViewController: UIViewController {
                             // 该本地 id）：几天前离线撤回的行由同步默默补推，不弹旧 toast。
                             let awaitingConfirmation = strongSelf.pastSelfPendingRevokeLocalIds.contains(localId)
                             strongSelf.pastSelfPendingRevokeLocalIds.remove(localId)
-                            strongSelf.pastSelfPushRevoke(serverRow.id)
-                            if awaitingConfirmation, strongSelf.isOwnProfile {
+                            // r25-49：同上，补发撤回也须等服务端确认才报“已撤回”。
+                            strongSelf.pastSelfPushRevoke(serverRow.id) { [weak self] in
+                                guard let strongSelf = self, strongSelf.isOwnProfile else { return }
                                 BearyToast.show(in: strongSelf.view, message: "已撤回")
+                            }
+                            if awaitingConfirmation, strongSelf.isOwnProfile {
+                                BearyToast.show(in: strongSelf.view, message: "已在本机撤回，等待同步")
                             }
                         }
                         if strongSelf.isOwnProfile {
@@ -5595,13 +5650,17 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    private func pastSelfPushRevoke(_ id: String) {
+    /// r25-49：onConfirmed 只在服务端确认撤回后调一次（调用方据此把
+    /// “已在本机撤回，等待同步”换成“已撤回”）；失败不调，静默等下次同步补推，
+    /// 本机已撤回态不变。
+    private func pastSelfPushRevoke(_ id: String, onConfirmed: (() -> Void)? = nil) {
         BearyAPI.shared.revokePastSelfMessage(id: id) { [weak self] result in
             // 撤回成功即记确认：下次同步不再重发（服务端撤回已幂等，重发无副
             // 作用、只浪费请求）；失败静默，下次同步再补推。
             guard case .success = result else { return }
             DispatchQueue.main.async {
                 self?.pastSelfStore()?.markRevokeSynced(id: id)
+                onConfirmed?()
             }
         }
     }
