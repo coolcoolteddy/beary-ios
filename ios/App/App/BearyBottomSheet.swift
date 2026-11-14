@@ -106,6 +106,19 @@ class BearyBottomSheetPresentationController: UIPresentationController {
     ///（EmotePicker :97–101 / Notifications :2740–2746 同款写法：weak 持有，
     /// iOS 17 起取焦点 API 作守门；旧系统无显式返回、走系统默认行为）。
     private weak var previousFocusedElement: AnyObject?
+    /// 本次拖动起手时触点命中的滚动视图（.began 时记下；无滚动内容时为 nil）：
+    /// 一次手势内只认这一只，避免中途换滚动视图导致抖动。
+    private weak var dragScrollView: UIScrollView?
+    /// 本次拖动弹窗接手的位移原点（手势累计位移，容器坐标）：接手前内容先滚、
+    /// 弹窗不动；滚到头才接手，接手后弹窗位移按（当前位移 − 原点）折算，
+    /// 接手瞬间位移为 0、不跳变。nil = 本次手势尚未接手（内容在滚）。
+    private var dragTakeoverTranslation: CGFloat?
+    /// 接手时手指方向（+1 下拉、−1 上拉）：手指回到接手点并反向越过、
+    /// 且内容能往新方向滚时，把手势交还内容。
+    private var dragTakeoverSign: CGFloat = 1
+    /// 本次拖动实际作用到弹窗上的位移（最后一次传给 applySheetTransform 的 ty）：
+    /// 松手关／回弹按它裁决，不按手势原始位移（原始位移含内容滚动那段）。
+    private var appliedDragOffset: CGFloat = 0
 
     /// 关闭请求：默认直接 dismiss；子类重写改走自己的关闭路径
     ///（如登录弹窗的 cancelFromSheet——先停倒计时与在途任务）。
@@ -327,16 +340,79 @@ class BearyBottomSheetPresentationController: UIPresentationController {
         return min(1, translationY / height)
     }
 
+    /// 触点命中的最内层滚动视图（沿 hitTest 链上找第一只 UIScrollView；无则 nil）。
+    private func scrollView(at point: CGPoint) -> UIScrollView? {
+        guard let presentedView = presentedView,
+              let hitView = presentedView.hitTest(point, with: nil) else { return nil }
+        var view: UIView? = hitView
+        while let candidate = view, candidate !== presentedView {
+            if let scrollView = candidate as? UIScrollView { return scrollView }
+            view = candidate.superview
+        }
+        return nil
+    }
+
+    /// 该滚动视图还能不能往 translationY 方向滚（>0 下拉、<0 上拉）：
+    /// 能滚时弹窗不动、内容先滚；滚到头了弹窗接手。边界按
+    /// adjustedContentInset 算（有顶部内边距时真正的顶是 -top，不是 0），留 1pt 浮点容差。
+    private func scrollViewCanScroll(_ scrollView: UIScrollView, for translationY: CGFloat) -> Bool {
+        guard scrollView.isScrollEnabled else { return false }
+        if translationY > 0 {
+            return scrollView.contentOffset.y > -scrollView.adjustedContentInset.top + 1
+        } else if translationY < 0 {
+            let maxOffsetY = scrollView.contentSize.height + scrollView.adjustedContentInset.bottom - scrollView.bounds.height
+            return scrollView.contentOffset.y < maxOffsetY - 1
+        }
+        return false
+    }
+
     @objc private func dragPan(_ gesture: UIPanGestureRecognizer) {
         guard let container = containerView, let presentedView = presentedView else { return }
         let translation = gesture.translation(in: container).y
         switch gesture.state {
+        case .began:
+            // 记下起手命中的滚动视图；本次手势内只认它，接手状态清零。
+            dragScrollView = scrollView(at: gesture.location(in: presentedView))
+            dragTakeoverTranslation = nil
+            appliedDragOffset = 0
         case .changed:
-            applySheetTransform(CGAffineTransform(translationX: 0, y: Self.dragOffset(for: translation)))
-            applyPresentationProgress(dragProgress(for: translation))
+            // 逐采样裁决。旧口径只在起手判一次：内容能滚时容器手势直接失败，
+            // 整次手势再也接手不了——内容滚到头、继续往上拉，弹窗也不动，
+            // 固定按钮（心情 pill、输入 sheet 底部按钮组）全程不跟手。
+            // 新口径：两只 pan 同时认（见 shouldRecognizeSimultaneouslyWith），
+            // 内容先滚、滚到头弹窗接手；一次手势内滚动→拖弹窗可衔接，
+            // 不用抬手再拖一次；手指反向越过接手点、内容能往新方向滚时交还内容。
+            if let takeover = dragTakeoverTranslation {
+                let relative = translation - takeover
+                if relative != 0, relative * dragTakeoverSign < 0,
+                   let scrollView = dragScrollView,
+                   scrollViewCanScroll(scrollView, for: relative) {
+                    // 交还内容：弹窗回到接手时的静止位（恒为 0），不跳变。
+                    dragTakeoverTranslation = nil
+                    appliedDragOffset = 0
+                    applySheetTransform(.identity)
+                    applyPresentationProgress(0)
+                } else {
+                    let offset = Self.dragOffset(for: relative)
+                    appliedDragOffset = offset
+                    applySheetTransform(CGAffineTransform(translationX: 0, y: offset))
+                    applyPresentationProgress(dragProgress(for: offset))
+                }
+            } else if let scrollView = dragScrollView, scrollViewCanScroll(scrollView, for: translation) {
+                // 内容还能往该方向滚：弹窗不动（transform 已是静止态，无需重复设）。
+            } else {
+                // 滚到头（或无滚动内容）：接手。接手瞬间相对位移为 0、弹窗位移为 0，不跳变。
+                dragTakeoverTranslation = translation
+                dragTakeoverSign = translation >= 0 ? 1 : -1
+                appliedDragOffset = 0
+            }
         case .ended:
             let velocity = gesture.velocity(in: container).y
-            if translation > BearyBottomSheet.dismissDistance || velocity > BearyBottomSheet.dismissVelocity {
+            dragScrollView = nil
+            dragTakeoverTranslation = nil
+            // 关／回弹按实际作用到弹窗的位移裁决，不按手势原始位移
+            //（原始位移含内容滚动那段：只滚内容没动弹窗时不得关）。
+            if appliedDragOffset > BearyBottomSheet.dismissDistance || (appliedDragOffset > 0 && velocity > BearyBottomSheet.dismissVelocity) {
                 // 不清 transform：dismiss 动效从当前拖位滑下（beginFromCurrentState），
                 // 避免先回弹再下滑的跳变；松手速度交给退场弹簧初速度。
                 dismissVelocity = velocity
@@ -345,6 +421,8 @@ class BearyBottomSheetPresentationController: UIPresentationController {
                 restoreDrag(velocity: velocity)
             }
         case .cancelled, .failed:
+            dragScrollView = nil
+            dragTakeoverTranslation = nil
             restoreDrag(velocity: 0)
         default:
             break
@@ -358,8 +436,10 @@ class BearyBottomSheetPresentationController: UIPresentationController {
             self.setSheetPresented(true)
         }
         // 拖动结束时强制一次布局：拖动中 containerViewWillLayoutSubviews 为保跟手
-        // 提前返回，期间键盘帧变化只记了 keyboardTopY、未落帧；复位完成后再落一次帧，
-        // 否则 sheet 会停在拖动前的键盘位置，直到下一次布局才纠正。
+        // 提前返回，期间键盘帧／内容高变化只记了值、未落帧；复位时把布局放进
+        // 同一弹簧里（与 transform 同速回位），按钮与弹窗同一弹簧、不跳变；
+        // 完成后再补一次（幂等兜底：动画块内已落过时为空操作）。
+        // 旧口径只在完成回调里落帧：弹簧跑完按钮才跳变到正确位置（松手卡一下）。
         //（旧登录弹窗 restoreDrag 同款 relayout，容器化时一并带过来。）
         let relayout = { [weak self] in
             self?.containerView?.setNeedsLayout()
@@ -380,7 +460,10 @@ class BearyBottomSheetPresentationController: UIPresentationController {
             } else {
                 initialVelocity = 0
             }
-            UIView.animate(withDuration: BearyBottomSheet.dragSpringDuration, delay: 0, usingSpringWithDamping: BearyBottomSheet.dragSpringDamping, initialSpringVelocity: initialVelocity, options: [.beginFromCurrentState], animations: restore, completion: { [weak self] _ in
+            UIView.animate(withDuration: BearyBottomSheet.dragSpringDuration, delay: 0, usingSpringWithDamping: BearyBottomSheet.dragSpringDamping, initialSpringVelocity: initialVelocity, options: [.beginFromCurrentState], animations: {
+                restore()
+                relayout()
+            }, completion: { [weak self] _ in
                 relayout()
                 self?.postSheetRestoreFocus()
             })
@@ -392,52 +475,45 @@ class BearyBottomSheetPresentationController: UIPresentationController {
 
 extension BearyBottomSheetPresentationController: UIGestureRecognizerDelegate {
 
-    /// 拖动手势起手仲裁：只接竖直拖动；触点落在可滚动内容上时，
-    /// 内容还能往该方向滚，先让内容滚、滚到头了再接手拖弹窗；
-    /// 无滚动内容时直接接手。避免整张拖动手势与页内滚动抢触摸。
+    /// 拖动手势起手仲裁：只接竖直拖动。滚动与拖弹窗的裁决不在这里做——
+    /// 旧口径在这里一次判死（内容能滚就让容器手势失败）：一次手势内内容
+    /// 滚到头、继续往上拉，弹窗也接手不了，固定按钮全程不动。
+    /// 新口径：两只 pan 同时认（见 shouldRecognizeSimultaneouslyWith），
+    /// 滚动／拖弹窗的逐采样裁决在 dragPan 里做（内容先滚、滚到头接手）。
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard let pan = gestureRecognizer as? UIPanGestureRecognizer,
               isDragPan(pan),
               let presentedView = presentedView else { return false }
         let translation = pan.translation(in: presentedView)
-        guard abs(translation.y) > abs(translation.x) else { return false }
-        let location = pan.location(in: presentedView)
-        guard let hitView = presentedView.hitTest(location, with: nil) else { return true }
-        var view: UIView? = hitView
-        while let candidate = view, candidate !== presentedView {
-            if let scrollView = candidate as? UIScrollView, scrollView.isScrollEnabled {
-                if translation.y > 0 {
-                    // 下拉：内容不在顶时先让内容滚回顶部。顶部边界按
-                    // adjustedContentInset.top 算（有顶部内边距时真正的
-                    // 顶是 -top，不是 0），留 1pt 浮点容差。
-                    return scrollView.contentOffset.y <= -scrollView.adjustedContentInset.top + 1
-                }
-                // 上拉：内容还能往上滚时先让内容滚。
-                let maxOffsetY = scrollView.contentSize.height + scrollView.adjustedContentInset.bottom - scrollView.bounds.height
-                return scrollView.contentOffset.y >= maxOffsetY - 1
-            }
-            view = candidate.superview
-        }
-        return true
+        return abs(translation.y) > abs(translation.x)
     }
 
-    /// 拖动仲裁必须说了算：弹窗内的滚动视图自带 pan 手势，默认先认出来、
-    /// 把容器拖动手势挤掉，导致内容区拖不动。依赖方向不能写反：
-    /// - shouldRequireFailureOf 返回 true 的意思是“本手势等对方先失败”——
-    ///   旧代码就是这么写的，但列表到顶下拉时内部 pan 照常认出（回弹），
-    ///   容器手势永远等不到失败，弹窗在内容区拖不动，所以这里绝不能用它。
-    /// - shouldBeRequiredToFailBy 返回 true 的意思是“对方等本手势先裁决”，
-    ///   这才是要的：内部 pan 先等 gestureRecognizerShouldBegin 的 verdict，
-    ///   判能拖（滚到头）时容器手势先认、内容 pan 认输；判不能拖（内容还能
-    ///   往该方向滚）时容器手势立刻失败、内容 pan 正常接手。内容滚动只被
-    ///   拖后一个触摸采样，体感无延迟；点按不受影响（点按不经过 pan 认出）。
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+    /// 拖动与滚动的协调（2026-11-14 改口径）：两只 pan 同时认，逐采样裁决。
+    /// 旧口径是一次性裁决：shouldBeRequiredToFailBy 让内容 pan 等容器手势的
+    /// gestureRecognizerShouldBegin verdict——判能拖（滚到头）时容器先认、
+    /// 内容 pan 认输；判不能拖（内容还能往该方向滚）时容器立刻失败、内容 pan
+    /// 接手。问题是一次判死：整次手势内内容滚到头、继续往上拉，容器手势
+    /// 已经失败、再也接手不了，弹窗不动、固定按钮全程不跟手。
+    /// 新口径：容器 pan 与内容 pan 同时认（UIScrollView 允许祖先视图的 pan
+    /// 同时认，见 shouldRecognizeSimultaneouslyWith），滚动／拖弹窗的
+    /// 逐采样裁决在 dragPan 里做——内容先滚、滚到头弹窗接手（接手点起算、
+    /// 接手瞬间位移为 0），手指反向越过接手点、内容能往新方向滚时交还内容。
+    /// 点按不受影响（点按不经过 pan 认出）；失败依赖不再需要，返回 false
+    ///（旧注释里“依赖方向不能写反”的教训仍成立：这里绝不能用
+    /// shouldRequireFailureOf 让容器等内容先失败——内容到顶下拉时内部 pan
+    /// 照常认出（回弹），容器永远等不到失败，弹窗在内容区拖不动）。
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         guard isDragPan(gestureRecognizer),
               let otherPan = otherGestureRecognizer as? UIPanGestureRecognizer,
               let otherView = otherPan.view,
               let presentedView = presentedView,
-              otherView.isDescendant(of: presentedView) else { return false }
+              otherView.isDescendant(of: presentedView),
+              otherView is UIScrollView else { return false }
         return true
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        return false
     }
 }
 
