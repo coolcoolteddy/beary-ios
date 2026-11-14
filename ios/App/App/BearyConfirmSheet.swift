@@ -26,11 +26,16 @@ enum BearyConfirmSheet {
         /// 禁用态（默认 true）：详情页更多菜单的过期编辑／已举报两项置灰用；
         /// 后续菜单支（Timeline/Feed/Profile 卡片菜单）复用本扩展。
         let isEnabled: Bool
-        init(title: String, style: Style = .default, handler: (() -> Void)? = nil, isEnabled: Bool = true) {
+        /// 选中态（默认 false）：仅档位选择器这类“当前档”用，选中钮左侧挂
+        /// 官方 icon_check 图标＋标题加粗（r21-A13：文字勾号“✓”改官方图标，
+        /// 文字与选中状态分别表达）；其余确认弹窗不受影响。
+        let isSelected: Bool
+        init(title: String, style: Style = .default, handler: (() -> Void)? = nil, isEnabled: Bool = true, isSelected: Bool = false) {
             self.title = title
             self.style = style
             self.handler = handler
             self.isEnabled = isEnabled
+            self.isSelected = isSelected
         }
     }
 
@@ -204,6 +209,19 @@ final class BearyConfirmSheetViewController: UIViewController {
             button.setTitle(action.title, for: .normal)
             button.tag = index
             button.isEnabled = action.isEnabled
+            // r21-A13：选中态走官方 icon_check 图标（15pt，tint 即按钮字色，
+            // 与草稿“已保存”状态组同口径）＋标题加粗，不再把“✓”拼进文案；
+            // 资产缺失时只留加粗标题，选中态仍可辨（BearyCalloutPicker 同款
+            // “半粗体＋左侧官方 icon_check”口径）。
+            if action.isSelected {
+                button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .bold))
+                button.accessibilityTraits.insert(.selected)
+                if let check = BearyIconImages.image(named: "icon_check", pointSize: 15) {
+                    button.setImage(check, for: .normal)
+                    button.imageEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 6)
+                    button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+                }
+            }
             // BearyButton 是 .custom 类型、只配了 .normal 态底色/字色，isEnabled=false
             // 本身看不出置灰；禁用项另降 alpha（站内同款 0.4，见 BearyDiaryCardCell），
             // 让置灰在视觉上成立。BearyButton 本身不动。
