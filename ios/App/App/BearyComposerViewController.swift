@@ -9952,9 +9952,14 @@ extension BearyComposerViewController: BearyLocationPopoverDelegate {
     }
 
     func locationPopoverDidFail(_ popover: BearyLocationPopoverView, message: String) {
-        // 权限被拒/定位失败：只 toast，绝不关气泡——气泡已原地转手动输入，
-        // 关掉会把用户刚切到的输入框一起关掉；失败本身不产生位置值，
-        // 已确认过的位置不被失败清掉（见 selectedLocation 注释），从未确认过时行即隐藏。
+        // 第 25 轮 33 项：气泡副文案已显示同一句，不再重复 toast；读屏仍需播报，
+        // 用无障碍播报代替 toast。气泡不可见时才 toast，保证提示总有一处可见。
+        // 气泡绝不关——已原地转手动输入，关掉会把用户刚切到的输入框一起关掉；
+        // 失败本身不产生位置值，已确认过的位置不被失败清掉（见 selectedLocation 注释），从未确认过时行即隐藏。
+        if !popover.isHidden {
+            UIAccessibility.post(notification: .announcement, argument: message)
+            return
+        }
         showToast(message: message)
     }
 }
