@@ -1397,6 +1397,9 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
     private let districtValueLabel = UILabel()
     private let confirmButton = BearyButton(style: .primaryPill(.ink))
     private let clearButton = BearyButton(style: .secondaryOutline(.regular))
+    /// 第 25 轮 36：默认保留原区级，另设“重新定位”——只想改日期时，
+    /// 移动位置不顺带改埋藏区；定位失败时也是重试入口。
+    private let relocateButton = BearyButton(style: .secondaryOutline(.regular))
     /// 按钮栈：栈内隐藏的 arrangedSubview 自动塌掉——isHidden 的普通视图
     /// 仍占约束位，未埋时「取消埋藏」隐藏会在底部留空隙。
     private let buttonStack = UIStackView()
@@ -1500,10 +1503,16 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
         clearButton.bearyAddPressFeedback()
         clearButton.isHidden = initialUnlockAtMs == nil || initialDistrict == nil
 
+        relocateButton.translatesAutoresizingMaskIntoConstraints = false
+        relocateButton.setTitle("重新定位", for: .normal)
+        relocateButton.addTarget(self, action: #selector(relocateTapped), for: .touchUpInside)
+        relocateButton.bearyAddPressFeedback()
+
         buttonStack.translatesAutoresizingMaskIntoConstraints = false
         buttonStack.axis = .vertical
         buttonStack.spacing = 8
         buttonStack.addArrangedSubview(confirmButton)
+        buttonStack.addArrangedSubview(relocateButton)
         buttonStack.addArrangedSubview(clearButton)
         view.addSubview(buttonStack)
 
@@ -1536,18 +1545,17 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
             buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
 
             confirmButton.heightAnchor.constraint(equalToConstant: confirmButton.style.height),
+            relocateButton.heightAnchor.constraint(equalToConstant: relocateButton.style.height),
             clearButton.heightAnchor.constraint(equalToConstant: clearButton.style.height),
         ])
 
-        // 打开时按需取一次当前区级：取不到则提示无法埋藏、不让确认。
-        BearyTimeCapsule.fetchCurrentDistrict { [weak self] district in
-            guard let self = self else { return }
-            if let district = district, !district.isEmpty {
-                self.currentDistrict = district
-            } else {
-                self.districtFailed = true
-                self.refreshDistrictRow()
-            }
+        // 第 25 轮 36：有原区级时默认保留、不重新定位；只有首次埋藏
+        // （无原区级）才打开时取一次当前区级。取不到则提示无法埋藏、
+        // 不让确认，点“重新定位”可重试。
+        if let initialDistrict = initialDistrict {
+            currentDistrict = initialDistrict
+        } else {
+            fetchDistrict()
         }
     }
 
@@ -1566,6 +1574,26 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
         if preferredContentSize != preferred {
             preferredContentSize = preferred
         }
+    }
+
+    /// 取一次当前区级（三段标识，见 BearyTimeCapsule.fetchCurrentDistrict）：
+    /// 先清旧值、显示“正在定位…”并禁用确认，取不到时标失败、提示无法埋藏。
+    private func fetchDistrict() {
+        districtFailed = false
+        currentDistrict = nil
+        BearyTimeCapsule.fetchCurrentDistrict { [weak self] district in
+            guard let self = self else { return }
+            if let district = district, !district.isEmpty {
+                self.currentDistrict = district
+            } else {
+                self.districtFailed = true
+                self.refreshDistrictRow()
+            }
+        }
+    }
+
+    @objc private func relocateTapped() {
+        fetchDistrict()
     }
 
     private func refreshDistrictRow() {

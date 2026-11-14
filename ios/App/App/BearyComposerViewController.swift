@@ -370,7 +370,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
     /// 时间胶囊 v1（仅新建模式）：埋藏才有值——解锁毫秒戳＋埋藏区级；
     /// 不埋时两者皆 nil，快照与 publishEntry 一概不发三键。
-    /// 只活在本编辑器实例内，不进草稿持久化（草稿恢复后须重埋）。
+    /// 第 25 轮 35：两项随草稿保存、恢复（BearyDraft 同名字段），
+    /// 重开草稿不再丢已选胶囊设置。
     private var capsuleUnlockAtMs: Int? {
         didSet { editorEditVersion += 1 }
     }
@@ -2825,7 +2826,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 时间胶囊 v1：打开埋胶囊底 sheet（日期＋当前区级），确认后只写
     /// 本编辑器实例的胶囊两值，发布快照拍定后才进 publishEntry 载荷。
+    /// 第 25 轮 42：非公开才埋时先说明地图展示条件——只有公开胶囊
+    /// 进地图；私密/仅好友照常能埋，只是不出现在地图上。
     private func openCapsuleBurySheet() {
+        if !selectedVisibilityPublished && !isEphemeral {
+            BearyConfirmSheet.show(from: self, title: "埋时间胶囊", message: "只有公开的时间胶囊会显示在地图上。当前为私密或仅好友，埋藏后不会出现在地图上。", actions: [
+                BearyConfirmSheet.Action(title: "继续埋藏", style: .default) { [weak self] in
+                    self?.presentCapsuleBurySheet()
+                },
+                BearyConfirmSheet.Action(title: "取消", style: .cancel),
+            ])
+            return
+        }
+        presentCapsuleBurySheet()
+    }
+
+    private func presentCapsuleBurySheet() {
         BearyCapsuleBurySheet.show(from: self, initialUnlockAtMs: capsuleUnlockAtMs, initialDistrict: capsuleDistrict, onConfirm: { [weak self] unlockAtMs, district in
             guard let self = self else { return }
             self.capsuleUnlockAtMs = unlockAtMs
@@ -7837,6 +7853,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             temperature: selectedTemperature,
             locationName: selectedLocation?.name,
             locationDistrict: selectedLocation?.district,
+            // 第 25 轮 35：胶囊两项随草稿保存（未埋时皆 nil）。
+            capsuleUnlockAtMs: capsuleBuried ? capsuleUnlockAtMs : nil,
+            capsuleDistrict: capsuleBuried ? capsuleDistrict : nil,
             visibilitySegmentIndex: selectedVisibilityFriends ? 2 : (selectedVisibilityPublished ? 1 : 0),
             ephemeralEnabled: isEditMode ? false : isEphemeral,
             recipientId: recipientUserId,
@@ -7997,6 +8016,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 批 E：草稿位置恢复（两段文本，无坐标）；双空即无位置，不留空行。
                 let restoredLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict)
                 self.selectedLocation = restoredLocation.isEmpty ? nil : restoredLocation
+                // 第 25 轮 35：胶囊两项随草稿恢复；缺任一即未埋。
+                self.capsuleUnlockAtMs = draft.capsuleUnlockAtMs
+                self.capsuleDistrict = draft.capsuleDistrict
                 self.refreshRecipientRow()
                 self.refreshQuoteSection()
                 self.refreshLocationRow()
@@ -8421,6 +8443,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedLocation = nil
         originalLocation = nil
         refreshLocationRow()
+        // 第 25 轮 35：空白新篇不继承上一篇的胶囊设置。
+        capsuleUnlockAtMs = nil
+        capsuleDistrict = nil
         // 112：空白新日记不得继承上一篇的可见性/限时态——编辑器每次
         // 默认私密、不记住上次选择。
         selectedVisibilityPublished = false
@@ -8511,6 +8536,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 批 E：草稿箱打开某篇时位置同款恢复。
         let boxLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict)
         selectedLocation = boxLocation.isEmpty ? nil : boxLocation
+        // 第 25 轮 35：胶囊两项随草稿恢复；缺任一即未埋。
+        capsuleUnlockAtMs = draft.capsuleUnlockAtMs
+        capsuleDistrict = draft.capsuleDistrict
         refreshLocationRow()
         setQuotePanelOpen(false)
         for img in draft.images {

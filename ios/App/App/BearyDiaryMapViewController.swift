@@ -1461,6 +1461,9 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
     private let hintLabel = UILabel()
     private let openButton = BearyButton(style: .primaryPill(.ink))
     private let unburyButton = BearyButton(style: .destructiveOutline(.regular))
+    /// 第 25 轮 41：面板内重新定位入口——打开时只检查一次不够，
+    /// 位置变了或定位失败时可当场复核。
+    private let relocateButton = BearyButton(style: .secondaryOutline(.regular))
     /// 下半区栈（提示行＋两钮）：栈内隐藏的 arrangedSubview 自动塌掉，
     /// 不留空隙——isHidden 的普通视图仍占约束位，不能直接藏。
     private let actionStack = UIStackView()
@@ -1471,6 +1474,9 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
     private var currentDistrict: String?
     private var districtFetchFailed = false
     private var isUnburying = false
+    /// 第 25 轮 41：解锁时刻定时器——面板开着跨过解锁时间时复核，
+    /// 不必重开面板；触发一次后即失效。
+    private var unlockTimer: Timer?
 
     /// 是否为作者本人（服务端 isMine 优先，缺失时按作者 id 比对当前用户；
     /// 判定不出按他人算，fail-closed，不给取消埋藏）。
@@ -1560,12 +1566,19 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
         unburyButton.bearyAddPressFeedback()
         unburyButton.isHidden = !viewerIsAuthor
 
+        relocateButton.translatesAutoresizingMaskIntoConstraints = false
+        relocateButton.setTitle("重新定位", for: .normal)
+        relocateButton.addTarget(self, action: #selector(relocateTapped), for: .touchUpInside)
+        relocateButton.bearyAddPressFeedback()
+        relocateButton.isHidden = true
+
         actionStack.translatesAutoresizingMaskIntoConstraints = false
         actionStack.axis = .vertical
         actionStack.spacing = 8
         actionStack.addArrangedSubview(hintLabel)
         actionStack.addArrangedSubview(openButton)
         actionStack.addArrangedSubview(unburyButton)
+        actionStack.addArrangedSubview(relocateButton)
         view.addSubview(actionStack)
 
         NSLayoutConstraint.activate([
@@ -1607,23 +1620,27 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
 
             openButton.heightAnchor.constraint(equalToConstant: openButton.style.height),
             unburyButton.heightAnchor.constraint(equalToConstant: unburyButton.style.height),
+            relocateButton.heightAnchor.constraint(equalToConstant: relocateButton.style.height),
         ])
 
         refreshStatus()
-        // 时间未到：未解锁已定，不取定位；时间到了才按需取一次当前区级。
-        guard timeReached else { return }
-        isLocating = true
-        refreshStatus()
-        BearyTimeCapsule.fetchCurrentDistrict { [weak self] district in
-            guard let self = self else { return }
-            self.isLocating = false
-            if let district = district, !district.isEmpty {
-                self.currentDistrict = district
-            } else {
-                self.districtFetchFailed = true
+        // 第 25 轮 41：时间到了即查一次；未到则在解锁时刻复核，
+        // 回前台或点“重新定位”时也复核，不必重开面板。
+        if timeReached {
+            checkCurrentDistrict()
+        } else if let unlockAt = entry.capsuleUnlockAt {
+            let interval = TimeInterval(unlockAt) / 1000 - Date().timeIntervalSince1970
+            unlockTimer = Timer.scheduledTimer(withTimeInterval: max(interval, 0), repeats: false) { [weak self] _ in
+                self?.unlockTimer = nil
+                self?.checkCurrentDistrict()
             }
-            self.refreshStatus()
         }
+        NotificationCenter.default.addObserver(self, selector: #selector(foregroundRecheck), name: UIApplication.willEnterForegroundNotification, object: nil)
+    }
+
+    deinit {
+        unlockTimer?.invalidate()
+        NotificationCenter.default.removeObserver(self)
     }
 
     override func viewDidLayoutSubviews() {
@@ -1650,6 +1667,35 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
 
     private var isUnlocked: Bool {
         BearyTimeCapsule.isUnlocked(entry, currentDistrict: currentDistrict)
+    }
+
+    /// 按需取一次当前区级并刷新状态（打开、解锁时刻、回前台、
+    /// “重新定位”四路共用）：时间未到不取定位；在途不重复取。
+    private func checkCurrentDistrict() {
+        guard timeReached, !isLocating else { return }
+        isLocating = true
+        districtFetchFailed = false
+        currentDistrict = nil
+        refreshStatus()
+        BearyTimeCapsule.fetchCurrentDistrict { [weak self] district in
+            guard let self = self else { return }
+            self.isLocating = false
+            if let district = district, !district.isEmpty {
+                self.currentDistrict = district
+            } else {
+                self.districtFetchFailed = true
+            }
+            self.refreshStatus()
+        }
+    }
+
+    @objc private func foregroundRecheck() {
+        guard view.window != nil else { return }
+        checkCurrentDistrict()
+    }
+
+    @objc private func relocateTapped() {
+        checkCurrentDistrict()
     }
 
     private func refreshStatus() {
@@ -1682,6 +1728,9 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
         }
         // 取消埋藏钮只看作者身份：栈内隐藏行自动塌掉，不留空隙。
         unburyButton.isHidden = !viewerIsAuthor
+        // “重新定位”只在时间到了、尚未解锁、且不在定位中时出现：
+        // 未到时间无位置可核，已解锁无需再核。
+        relocateButton.isHidden = !timeReached || isUnlocked || isLocating
         updatePreferredContentSize()
     }
 
@@ -1695,7 +1744,7 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
     @objc private func unburyTapped() {
         guard !isUnburying, let entryId = entry.id else { return }
         // 取消埋藏不可逆（已发日记无法重埋）：先给一次后果确认。
-        BearyConfirmSheet.show(from: self, title: "取消埋藏", message: "取消埋藏后，这篇日记不再是时间胶囊，地图上的标记会消失。", actions: [
+        BearyConfirmSheet.show(from: self, title: "取消埋藏", message: "取消埋藏后，这篇日记不再是时间胶囊，地图上的标记会消失，取消后不能重新埋藏。", actions: [
             BearyConfirmSheet.Action(title: "取消埋藏", style: .destructive) { [weak self] in
                 self?.performUnbury(entryId: entryId)
             },

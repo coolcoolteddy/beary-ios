@@ -194,29 +194,53 @@ enum BearyTimeCapsule {
         return !BearyEphemeral.isExpired(entry)
     }
 
-    /// 本地解锁判定：时间到了 AND 当前区级与埋藏区级去空白后精确相等。
-    /// 不做包含／模糊匹配；取不到当前区级时按未解锁处理（fail-closed）。
+    /// 胶囊区级标识（省·市·区三段拼成，如“浙江省·宁波市·鄞州区”）：
+    /// 同名区只凭区名无法区分（南京与福州都有鼓楼区），埋藏与解锁
+    /// 两端都走同一标识比对。区级缺失时返回 nil——不退市/省：
+    /// 日记位置展示用的 district(from:) 回退只供展示，胶囊不复用；
+    /// 无法确认区级时调用方提示重试，不拿市/省当埋藏区。
+    static func qualifiedDistrict(from placemark: CLPlacemark) -> String? {
+        guard let district = placemark.subAdministrativeArea?.trimmingCharacters(in: .whitespacesAndNewlines), !district.isEmpty else { return nil }
+        let province = placemark.administrativeArea?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let city = placemark.locality?.trimmingCharacters(in: .whitespacesAndNewlines)
+        var parts: [String] = []
+        if let province = province, !province.isEmpty, province != city { parts.append(province) }
+        if let city = city, !city.isEmpty { parts.append(city) }
+        parts.append(district)
+        return parts.joined(separator: "·")
+    }
+
+    /// 本地解锁判定：时间到了 AND 当前区级标识与埋藏标识一致。
+    /// 新埋胶囊存三段标识，精确比对；老胶囊只存了区名，当前标识
+    /// 以该区名结尾时也认——老数据本就没有省市，无法事后区分同名区，
+    /// 仍按旧口径放行，不把已埋胶囊锁死。取不到当前区级时按未解锁
+    /// 处理（fail-closed）。
     static func isUnlocked(_ entry: Entry, currentDistrict: String?, nowMs: Int? = nil) -> Bool {
         guard let unlockAt = entry.capsuleUnlockAt else { return false }
         let now = nowMs ?? Int(Date().timeIntervalSince1970 * 1000)
         guard now >= unlockAt else { return false }
         guard let current = currentDistrict?.trimmingCharacters(in: .whitespacesAndNewlines), !current.isEmpty,
               let buried = entry.capsuleDistrict?.trimmingCharacters(in: .whitespacesAndNewlines), !buried.isEmpty else { return false }
-        return current == buried
+        if current == buried { return true }
+        return current.hasSuffix(buried)
     }
 
     /// 解锁日期文案：与现有日期文案同格式（yyyy年M月d日）。
+    /// 解锁戳按北京时间生成（埋藏取所选日北京时间 00:00），显示也用
+    /// 北京时间；否则其他时区可能看到前一天日期。
     static func unlockDateText(_ entry: Entry) -> String? {
         guard let unlockAt = entry.capsuleUnlockAt else { return nil }
         let date = Date(timeIntervalSince1970: TimeInterval(unlockAt) / 1000)
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = BearyBeijingDay.calendar.timeZone
         formatter.dateFormat = "yyyy年M月d日"
         return formatter.string(from: date)
     }
 
-    /// 当前区级一次定位＋逆地理编码：只取区级文本，不存坐标、不上传、
-    /// 不写盘。取不到／无权限时回 nil，调用方按未解锁处理。
+    /// 当前区级一次定位＋逆地理编码：只取“省·市·区”三段标识，不存坐标、
+    /// 不上传、不写盘。取不到／无权限／逆地理编码无区级时回 nil，
+    /// 调用方按未确认处理、提示重试。
     static func fetchCurrentDistrict(completion: @escaping (String?) -> Void) {
         BearyOneShotLocation.request { result in
             switch result {
@@ -224,7 +248,7 @@ enum BearyTimeCapsule {
                 let geocoder = CLGeocoder()
                 geocoder.reverseGeocodeLocation(CLLocation(latitude: latitude, longitude: longitude)) { placemarks, _ in
                     DispatchQueue.main.async {
-                        completion(placemarks?.first.flatMap { BearyLocationDisplay.district(from: $0) })
+                        completion(placemarks?.first.flatMap { BearyTimeCapsule.qualifiedDistrict(from: $0) })
                     }
                 }
             case .denied, .unavailable:
