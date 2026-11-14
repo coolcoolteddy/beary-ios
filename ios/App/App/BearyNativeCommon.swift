@@ -2154,11 +2154,11 @@ extension BearyAPI {
     /// 审计-编辑器详情：返回在途任务，供编辑器取消上传用（调用方不
     /// 用时可忽略返回值；上传本身仍不重试，见 request 注释）。
     @discardableResult
-    func uploadImage(dataUrl: String, width: Int, height: Int, thumbDataUrl: String?, videoDataUrl: String? = nil, completion: @escaping (Result<UploadResponse, APIError>) -> Void) -> URLSessionDataTask? {
+    func uploadImage(dataUrl: String, width: Int, height: Int, thumbDataUrl: String?, videoDataUrl: String? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<UploadResponse, APIError>) -> Void) -> URLSessionDataTask? {
         var body: [String: Any] = ["dataUrl": dataUrl, "w": width, "h": height]
         if let t = thumbDataUrl { body["thumb"] = t }
         if let v = videoDataUrl { body["videoDataUrl"] = v }
-        return request("/beary/api/images/upload", method: "POST", jsonBody: body, completion: completion)
+        return request("/beary/api/images/upload", method: "POST", jsonBody: body, uploadProgress: uploadProgress, completion: completion)
     }
 
     /// 发帖：content 必填 ≤2000 字；images 是已上传的 R2 key 数组（须归属本人且存在）；
@@ -2170,7 +2170,7 @@ extension BearyAPI {
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
     /// create_ip_limit(429) / create_dup。
-    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, isCapsule: Int? = nil, capsuleUnlockAt: Int? = nil, capsuleDistrict: String? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, isCapsule: Int? = nil, capsuleUnlockAt: Int? = nil, capsuleDistrict: String? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
         // 实况：非空才发 live_videos（无实况的新建与旧版 body 一字相同）；
         // 空映射不发（新建无旧态可清，编辑清实况走 updateEntry 的显式空映射）。
@@ -2206,7 +2206,7 @@ extension BearyAPI {
         if let capsule = isCapsule { body["is_capsule"] = capsule }
         if let unlockAt = capsuleUnlockAt { body["capsule_unlock_at"] = unlockAt }
         if let district = capsuleDistrict { body["capsule_district"] = district }
-        request("/beary/api/entries", method: "POST", jsonBody: body, completion: completion)
+        request("/beary/api/entries", method: "POST", jsonBody: body, uploadProgress: uploadProgress, completion: completion)
     }
 
     /// 编辑已发日记：PUT /beary/api/entries/:id，字段与网页编辑同款（content/images/mood/weather/quote_id；

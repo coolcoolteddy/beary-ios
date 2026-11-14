@@ -622,6 +622,41 @@ final class BearyAPI {
     /// gzip/deflate/br 并透明解压；手动设会关掉透明解压，回包 gzip
     /// 字节将直接进 JSON 解码而失败。压缩收益来自服务端（见后端
     /// 秒开-网络层 patch 的 json() gzip 分支），App 侧零改动即享。
+    /// 上传进度 delegate：只实现 didSendBodyData（上传字节回调）与
+    /// didCompleteWithError（清掉已完成任务的登记）。
+    /// 其余 delegate 方法一律不实现——回包、鉴权、重定向等行为与无
+    /// delegate 时完全一致；尤其不实现 didReceive data/response，
+    /// 否则 completion-handler 任务收不到回包体。
+    /// 回调在会话自建的 delegate 队列（串行）上触发，登记表用锁保护；
+    /// 进度闭包由调用方自己 hop 到主线程。
+    final class BearyUploadProgressDelegate: NSObject, URLSessionTaskDelegate {
+        private var handlers: [Int: (Int64, Int64) -> Void] = [:]
+        private let lock = NSLock()
+
+        func observe(task: URLSessionTask, handler: @escaping (Int64, Int64) -> Void) {
+            lock.lock()
+            handlers[task.taskIdentifier] = handler
+            lock.unlock()
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+            lock.lock()
+            let handler = handlers[task.taskIdentifier]
+            lock.unlock()
+            handler?(totalBytesSent, totalBytesExpectedToSend)
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            lock.lock()
+            handlers.removeValue(forKey: task.taskIdentifier)
+            lock.unlock()
+        }
+    }
+
+    /// 上传进度登记表（单例会话共用；注入会话无 delegate 时 observe 只是登记、
+    /// 永远不回调，调用方进度停在估计值、完成时跳终值）。
+    static let uploadProgressDelegate = BearyUploadProgressDelegate()
+
     static func makeDedicatedSession() -> URLSession {
         let config = URLSessionConfiguration.default
         config.httpMaximumConnectionsPerHost = 6
@@ -629,7 +664,7 @@ final class BearyAPI {
         config.httpCookieAcceptPolicy = .always
         config.httpShouldSetCookies = true
         config.urlCache = nil
-        return URLSession(configuration: config)
+        return URLSession(configuration: config, delegate: uploadProgressDelegate, delegateQueue: nil)
     }
 
     init(session: URLSession? = nil) {
@@ -705,6 +740,7 @@ final class BearyAPI {
         method: String = "GET",
         jsonBody: [String: Any]? = nil,
         timeout: TimeInterval? = nil,
+        onUploadProgress: ((Int64, Int64) -> Void)? = nil,
         completion: @escaping (Data?, Int, Error?) -> Void
     ) -> URLSessionDataTask? {
         guard var url = URL(string: path, relativeTo: Self.baseURL)?.absoluteURL else {
@@ -732,6 +768,10 @@ final class BearyAPI {
             // 入参；query / body / header 一律不记，见 BearyAppLog 排除清单）。
             BearyAppLog.api(method: method, path: path, status: status)
             completion(data, status, error)
+        }
+        // 上传进度：在 resume 之前登记，首个 didSendBodyData 即进回调，不丢拍。
+        if let onUploadProgress {
+            Self.uploadProgressDelegate.observe(task: task, handler: onUploadProgress)
         }
         task.resume()
         return task
@@ -978,6 +1018,7 @@ final class BearyAPI {
         suppressUnauthorized: Bool = false,
         timeout: TimeInterval? = nil,
         payloadDecoder: JSONDecoder? = nil,
+        uploadProgress: ((Int64, Int64) -> Void)? = nil,
         completion: @escaping (Result<T, APIError>) -> Void
     ) -> URLSessionDataTask? {
         let epoch = authEpoch
@@ -1020,6 +1061,7 @@ final class BearyAPI {
                               epoch: epoch, accountId: accountId,
                               retriesLeft: retriesLeft, retryBackoff: isPublish, retryDelay: 0,
                               payloadDecoder: payloadDecoder,
+                              uploadProgress: uploadProgress,
                               completion: completion)
     }
 
@@ -1036,9 +1078,10 @@ final class BearyAPI {
         retryBackoff: Bool,
         retryDelay: TimeInterval,
         payloadDecoder: JSONDecoder?,
+        uploadProgress: ((Int64, Int64) -> Void)? = nil,
         completion: @escaping (Result<T, APIError>) -> Void
     ) -> URLSessionDataTask? {
-        return perform(path, query: query, method: method, jsonBody: jsonBody, timeout: timeout) { [weak self] data, status, error in
+        return perform(path, query: query, method: method, jsonBody: jsonBody, timeout: timeout, onUploadProgress: uploadProgress) { [weak self] data, status, error in
             guard let self = self else { return }
             if let apiErr = self.mapStatus(status, data: data, error: error, suppressUnauthorized: suppressUnauthorized, epoch: epoch) {
                 // 审计-性能：重试条件按通道分流——发布走网络错误、5xx
@@ -1069,7 +1112,7 @@ final class BearyAPI {
                                                     suppressUnauthorized: suppressUnauthorized, timeout: timeout,
                                                     epoch: epoch, accountId: accountId,
                                                     retriesLeft: retriesLeft - 1, retryBackoff: retryBackoff, retryDelay: nextDelay,
-                                                    payloadDecoder: payloadDecoder, completion: completion)
+                                                    payloadDecoder: payloadDecoder, uploadProgress: uploadProgress, completion: completion)
                         }
                         if nextDelay > 0 {
                             DispatchQueue.global().asyncAfter(deadline: .now() + nextDelay, execute: retryBlock)

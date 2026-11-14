@@ -39,6 +39,7 @@
 		DDF0E7A02351BD332CD2AEDD /* BearyColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 480F2905FC850A20929C2317 /* BearyColors.swift */; };
 		9C2B95CD3B41422AB2023653 /* BearyDynamicType.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9DC0708952A4FAAA2FC5BA4 /* BearyDynamicType.swift */; };
 		A6C9DAF78D06334E705A0010 /* BearyToast.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7C745921A0C2FD48D13487A /* BearyToast.swift */; };
+		32D5C6A6B80973A6B4C90DE6 /* BearyPublishCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100020ADC8E74B08CDBAE83 /* BearyPublishCenter.swift */; };
 		F40B709B8AD75CFF1DD051E2 /* BearyFeedViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1CF8C5F0C4EAA6EE5AD6D99 /* BearyFeedViewController.swift */; };
 		62A7D36DFC5C414F97A8DFC2 /* BearyFriends.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AA457831FB692BAD3805997 /* BearyFriends.swift */; };
 		FBE8D94C776A22C7A27151F5 /* BearyFriendsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 211813330D055BE3541E630C /* BearyFriendsViewController.swift */; };
@@ -324,6 +325,7 @@
 		480F2905FC850A20929C2317 /* BearyColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyColors.swift; sourceTree = "<group>"; };
 		C9DC0708952A4FAAA2FC5BA4 /* BearyDynamicType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDynamicType.swift; sourceTree = "<group>"; };
 		F7C745921A0C2FD48D13487A /* BearyToast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyToast.swift; sourceTree = "<group>"; };
+		A100020ADC8E74B08CDBAE83 /* BearyPublishCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyPublishCenter.swift; sourceTree = "<group>"; };
 		A1CF8C5F0C4EAA6EE5AD6D99 /* BearyFeedViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyFeedViewController.swift; sourceTree = "<group>"; };
 		1AA457831FB692BAD3805997 /* BearyFriends.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyFriends.swift; sourceTree = "<group>"; };
 		211813330D055BE3541E630C /* BearyFriendsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyFriendsViewController.swift; sourceTree = "<group>"; };
@@ -635,6 +637,7 @@
 				480F2905FC850A20929C2317 /* BearyColors.swift */,
 				C9DC0708952A4FAAA2FC5BA4 /* BearyDynamicType.swift */,
 				F7C745921A0C2FD48D13487A /* BearyToast.swift */,
+				A100020ADC8E74B08CDBAE83 /* BearyPublishCenter.swift */,
 				A1CF8C5F0C4EAA6EE5AD6D99 /* BearyFeedViewController.swift */,
 				1AA457831FB692BAD3805997 /* BearyFriends.swift */,
 				211813330D055BE3541E630C /* BearyFriendsViewController.swift */,
@@ -1187,6 +1190,7 @@
 				DDF0E7A02351BD332CD2AEDD /* BearyColors.swift in Sources */,
 				9C2B95CD3B41422AB2023653 /* BearyDynamicType.swift in Sources */,
 				A6C9DAF78D06334E705A0010 /* BearyToast.swift in Sources */,
+				32D5C6A6B80973A6B4C90DE6 /* BearyPublishCenter.swift in Sources */,
 				F40B709B8AD75CFF1DD051E2 /* BearyFeedViewController.swift in Sources */,
 				62A7D36DFC5C414F97A8DFC2 /* BearyFriends.swift in Sources */,
 				FBE8D94C776A22C7A27151F5 /* BearyFriendsViewController.swift in Sources */,

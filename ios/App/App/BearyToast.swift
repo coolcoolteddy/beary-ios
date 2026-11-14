@@ -85,8 +85,8 @@ enum BearyToast {
     /// U9 展示时长分档（按文案字符数，CJK 每字计 1）：短文案沿用旧 2.0s，
     /// 中长文案给足读完时间，长文案再延长一档；r27-10：带动作入口时取字数档
     /// 与动作档（保底 4.0s）的大值——短文案的重试钮也有时间点到；无动作时
-    /// 各档数值与旧版逐字一致。
-    private static func displayDuration(for message: String, hasAction: Bool = false) -> TimeInterval {
+    /// 各档数值与旧版逐字一致。fileprivate：发布 pill 的失败态同款分档。
+    fileprivate static func displayDuration(for message: String, hasAction: Bool = false) -> TimeInterval {
         let base: TimeInterval
         if message.count <= 20 {
             base = 2.0
@@ -101,7 +101,8 @@ enum BearyToast {
     /// 落点计算：只认“容器页是 Chrome 子页”这一条——模态页的 parent 链
     /// 到不了 Chrome，落 -32；Chrome 子页则读 Chrome 当前 chrome 态。
     /// 未布局（高为 0）或无 window 时回落 -32，不产野值。
-    private static func bottomConstant(for container: UIView) -> CGFloat {
+    /// fileprivate：发布 pill 与 toast 同落点。
+    fileprivate static func bottomConstant(for container: UIView) -> CGFloat {
         let fallback: CGFloat = -32
         guard container.bounds.height > 0, container.window != nil,
               let chrome = chromeViewController(for: container),
@@ -331,5 +332,205 @@ private final class BearyToastView: UIView {
         layer.cornerRadius = bounds.height / 2
         // 阴影在 bounds 外：clipsToBounds 会裁掉阴影，故不裁剪；label 内缩 18/10，无溢出。
         clipsToBounds = false
+    }
+}
+
+// MARK: - 发布后台化底部 pill（Threads Posting/Posted 同款位置）
+
+/// 发布后台化底部 pill：与 BearyToast 同落点（底栏/FAB 之上 12pt 或安全区
+/// -32，见 BearyToast.bottomConstant）、同 surface3 底、ink 字、14pt
+/// medium、10/18 内边距、半高圆角、hairline 阴影。
+/// 结构：文案 label（进行中「正在发布…」）＋ 底部 2pt 进度条（track
+/// BearyColors.line、fill ink，内缩 14pt、底边之上 6pt，避开 pill 圆角）；
+/// 成功时 fill 走满、对勾 +「已发布」，2.0s 后淡出；失败时文案换调用方传的
+/// 现有失败文案、进度条隐去，按文案长度分档（同 BearyToast.displayDuration）
+/// 后淡出。isUserInteractionEnabled = false，不吞下方点按；减动效时直现直消、
+/// 进度直设终值；VoiceOver 在各态切换时播报文案。
+/// 同容器已有 pill 时 show 先移除旧 pill（新任务接管）；视图从容器移除后
+/// 全部更新为空操作。键盘不避让：pill 在编辑器退出时才露出，键盘随编辑器
+/// 一起收走，落点即无键盘基线。
+enum BearyPublishPill {
+
+    static func show(in container: UIView) -> BearyPublishPillView {
+        for oldPill in container.subviews where oldPill is BearyPublishPillView {
+            oldPill.removeFromSuperview()
+        }
+        let pill = BearyPublishPillView()
+        container.addSubview(pill)
+        container.bringSubviewToFront(pill)
+        let bottomConstraint = pill.bottomAnchor.constraint(
+            equalTo: container.safeAreaLayoutGuide.bottomAnchor,
+            constant: BearyToast.bottomConstant(for: container))
+        NSLayoutConstraint.activate([
+            pill.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            pill.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 20),
+            pill.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -20),
+            bottomConstraint,
+        ])
+        UIAccessibility.post(notification: .announcement, argument: "正在发布…")
+        if UIAccessibility.isReduceMotionEnabled {
+            pill.alpha = 1
+        } else {
+            pill.alpha = 0
+            UIView.animate(withDuration: 0.25) {
+                pill.alpha = 1
+            }
+        }
+        return pill
+    }
+}
+
+/// 发布 pill 视图本体（类型即身份，show 以此识别同容器旧 pill）。
+final class BearyPublishPillView: UIView {
+
+    private let label = UILabel()
+    private let checkView = UIImageView()
+    private let trackView = UIView()
+    private let fillView = UIView()
+    private var fillWidthConstraint: NSLayoutConstraint?
+    private var progress: Double = 0
+    private var dismissed = false
+
+    init() {
+        super.init(frame: .zero)
+        backgroundColor = BearyColors.surface3
+        BearyShadow.applyHairline(to: layer)
+        layer.borderWidth = 0
+        isUserInteractionEnabled = false
+        translatesAutoresizingMaskIntoConstraints = false
+
+        label.text = "正在发布…"
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .medium))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.ink
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        checkView.image = BearyIconImages.image(named: "icon_check", pointSize: 15)
+        checkView.tintColor = BearyColors.ink
+        checkView.isHidden = true
+        checkView.translatesAutoresizingMaskIntoConstraints = false
+
+        trackView.backgroundColor = BearyColors.line
+        trackView.translatesAutoresizingMaskIntoConstraints = false
+        fillView.backgroundColor = BearyColors.ink
+        fillView.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = UIStackView(arrangedSubviews: [checkView, label])
+        stack.axis = .horizontal
+        stack.spacing = 6
+        stack.alignment = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        addSubview(trackView)
+        addSubview(fillView)
+        let fillWidth = fillView.widthAnchor.constraint(equalToConstant: 0)
+        fillWidthConstraint = fillWidth
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 18),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -18),
+            stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            checkView.widthAnchor.constraint(equalToConstant: 15),
+            checkView.heightAnchor.constraint(equalToConstant: 15),
+            trackView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            trackView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            trackView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            trackView.heightAnchor.constraint(equalToConstant: 2),
+            fillView.leadingAnchor.constraint(equalTo: trackView.leadingAnchor),
+            fillView.bottomAnchor.constraint(equalTo: trackView.bottomAnchor),
+            fillView.heightAnchor.constraint(equalToConstant: 2),
+            fillWidth,
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layer.cornerRadius = bounds.height / 2
+        trackView.layer.cornerRadius = 1
+        fillView.layer.cornerRadius = 1
+        clipsToBounds = false
+        fillWidthConstraint?.constant = trackView.bounds.width * CGFloat(progress)
+    }
+
+    /// 进度 0...1：调用方按真实上传字节比喂；animated 只在收尾走满时用，
+    /// 上传途中的每次回调都直设（回调本身即动画，不叠加 0.25s 补间）。
+    func setProgress(_ value: Double, animated: Bool) {
+        guard superview != nil, !dismissed else { return }
+        progress = min(max(value, 0), 1)
+        if animated, !UIAccessibility.isReduceMotionEnabled {
+            UIView.animate(withDuration: 0.25) {
+                self.layoutIfNeeded()
+            }
+        } else {
+            layoutIfNeeded()
+        }
+    }
+
+    /// 成功：进度走满、对勾 +「已发布」，2.0s 后淡出移除。
+    func finishSuccess() {
+        guard superview != nil, !dismissed else { return }
+        progress = 1
+        label.text = "已发布"
+        checkView.isHidden = false
+        UIAccessibility.post(notification: .announcement, argument: "已发布")
+        if UIAccessibility.isReduceMotionEnabled {
+            trackView.alpha = 0
+            fillView.alpha = 0
+            layoutIfNeeded()
+        } else {
+            UIView.animate(withDuration: 0.25) {
+                self.trackView.alpha = 0
+                self.fillView.alpha = 0
+                self.layoutIfNeeded()
+            }
+        }
+        scheduleDismiss(after: 2.0)
+    }
+
+    /// 失败：文案换调用方传的现有失败文案、进度条隐去，按文案长度分档后淡出移除。
+    func finishFailure(message: String) {
+        guard superview != nil, !dismissed else { return }
+        label.text = message
+        UIAccessibility.post(notification: .announcement, argument: message)
+        if UIAccessibility.isReduceMotionEnabled {
+            trackView.alpha = 0
+            fillView.alpha = 0
+            layoutIfNeeded()
+        } else {
+            UIView.animate(withDuration: 0.25) {
+                self.trackView.alpha = 0
+                self.fillView.alpha = 0
+                self.layoutIfNeeded()
+            }
+        }
+        scheduleDismiss(after: BearyToast.displayDuration(for: message))
+    }
+
+    private func scheduleDismiss(after delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.dismiss()
+        }
+    }
+
+    /// 立即淡出移除（新任务接管旧 pill 时调）；重复调用为空操作。
+    func dismiss() {
+        guard !dismissed else { return }
+        dismissed = true
+        if UIAccessibility.isReduceMotionEnabled {
+            removeFromSuperview()
+        } else {
+            UIView.animate(withDuration: 0.25, animations: {
+                self.alpha = 0
+            }, completion: { _ in
+                self.removeFromSuperview()
+            })
+        }
     }
 }
