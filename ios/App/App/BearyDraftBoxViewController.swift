@@ -861,6 +861,17 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         }
     }
 
+    /// 第一轮审计 21：草稿份数变化时 0.18s opacity 交叉淡变
+    /// （BearyMotion.localStateDuration，许愿墙票数同款 transitionCrossDissolve）；
+    /// 数值未变、减动效开、或视图未进窗口时直设终值。
+    private func setSubLabelCountText(_ text: String) {
+        guard subLabel.text != text, !UIAccessibility.isReduceMotionEnabled, subLabel.window != nil else {
+            subLabel.text = text
+            return
+        }
+        UIView.transition(with: subLabel, duration: BearyMotion.localStateDuration, options: .transitionCrossDissolve, animations: { self.subLabel.text = text })
+    }
+
     private func renderDrafts() {
         for arranged in listStack.arrangedSubviews {
             listStack.removeArrangedSubview(arranged)
@@ -905,7 +916,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             subWrap.isHidden = false
             // Q10：App 草稿只存本机，副文案改“仅保存在本设备”
             //（原网页口径“仅保存在当前浏览器”不适用于 App 本机存储）。
-            subLabel.text = "共 \(drafts.count) 份 · 仅保存在本设备"
+            setSubLabelCountText("共 \(drafts.count) 份 · 仅保存在本设备")
             hintWrap.isHidden = false
             for draftValue in drafts {
                 let card = makeCard(for: draftValue)
@@ -1815,7 +1826,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 strongSelf.cardEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
                 strongSelf.deleteEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
                 strongSelf.lostEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-                strongSelf.subLabel.text = "共 \(strongSelf.drafts.count) 份 · 仅保存在本设备"
+                strongSelf.setSubLabelCountText("共 \(strongSelf.drafts.count) 份 · 仅保存在本设备")
             }
             // 本笔在队列里且计时未起时出条并起 6 秒计时；其余笔的计时互不干扰。
             if let idx = strongSelf.pendingUndos.firstIndex(where: { $0.draft.draftId == draftValue.draftId }),
