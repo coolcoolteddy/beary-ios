@@ -730,7 +730,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         }
     }
 
-    /// 四态：init（未搜）/ loading（中央大 @ 旋转 + 列表态文案，见第 22 项规则）/ none / fail；有结果时态视图隐藏。
+    /// 四态：init（未搜）/ loading（中央 @ 占位、不写加载文案，见第 25 轮第 3 项）/ none / fail；有结果时态视图隐藏。
     /// 审计二轮 16：搜索失败文案按错误类型分流（APIError 自带分类，不猜原因）。
     private static func searchFailureMessage(for error: APIError) -> String {
         switch error {
@@ -761,11 +761,12 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateRetryButton.isHidden = true
         stateRetryBottomConstraint?.isActive = false
         if kind == "loading" {
-            // 2026-10-29 第 22 项：加载态中央图标（showState 先置 @，转圈由 setCenterBusy 换官方刷新图标并加旋转，
-            // 与搜索日记页“中央可见转中央”同规则；框里放大镜此时静态）。
+            // 第 25 轮第 3 项（规范 §9）：加载态只留中央 @ 占位，不写“正在找／正在搜索…”
+            // 这类重复说明文字；转圈仍由 setCenterBusy 接管（与搜索日记页“中央可见转中央”
+            // 同规则），框里放大镜此时静态。
             stateIcon.image = BearyIconImages.image(named: "icon_at", pointSize: 25)
-            stateTitle.text = "正在找"
-            stateSubtitle.text = "正在搜索…"
+            stateTitle.text = ""
+            stateSubtitle.text = ""
         } else if kind == "none" {
             stateIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 25)
             stateTitle.text = "没有找到「" + query + "」"
@@ -783,24 +784,12 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         }
     }
 
-    /// 搜索图标位状态（D-G9）：网页 addrSetIconBusy 同款——闲时放大镜，
-    /// 搜索中换 beary-loading 并 0.9s 线性无限旋转；减动效下换图不转。
-    /// 资产 icon_refresh.imageset（官方刷新图标，发布钮/搜索页同款）。
+    /// 第 25 轮第 3 项（规范 §9）：搜索框内图标恒为放大镜、静态——搜索中也不换
+    /// 刷新图标、不转；busy 只摘掉可能残留的旋转动画（调用方口径不动）。
     private func setSearchBusy(_ busy: Bool) {
+        _ = busy
         searchIcon.layer.removeAnimation(forKey: "bearySearchSpin")
-        if busy {
-            searchIcon.image = BearyIconImages.image(named: "icon_refresh", pointSize: 18)
-            if !UIAccessibility.isReduceMotionEnabled {
-                let spin = CABasicAnimation(keyPath: "transform.rotation.z")
-                spin.fromValue = 0
-                spin.toValue = CGFloat.pi * 2
-                spin.duration = 0.9
-                spin.repeatCount = .infinity
-                searchIcon.layer.add(spin, forKey: "bearySearchSpin")
-            }
-        } else {
-            searchIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 18)
-        }
+        searchIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 18)
     }
 
     /// 中央转圈（2026-10-29 第 22 项，搜索日记页同规则）：搜索中且结果未盖住
@@ -1281,7 +1270,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
 
 /// 第 30 项：@ 选人专属过渡——此前本页无 transitioningDelegate，系统默认把整个 view（含遮罩）
 /// 一起从底部滑入，遮罩顶缘的深浅差异线 visibly 从下方扫上来；关闭时遮罩同样随面板下滑。
-/// 改后与回应 Sheet 同口径解耦：面板上滑／下滑均走 motion.normal 0.26s，遮罩只做透明度 0.26s 淡入／淡出，
+/// 改后与回应 Sheet 同口径解耦：面板上滑／下滑均走 motion.screen 0.38s，遮罩只做透明度 0.38s 淡入／淡出，
 /// 遮罩本身永不位移、永不瞬间消失。面板本身的上滑、抓手、圆角一字不动。
 final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioningDelegate, UIViewControllerAnimatedTransitioning {
 
@@ -1299,8 +1288,9 @@ final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioni
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
         if UIAccessibility.isReduceMotionEnabled { return 0 }
-        // 入场／退场均走 motion.normal 0.26s（第十轮三档收敛，原入场 0.25s／退场 0.30s）。
-        return BearyMotion.normal
+        // 第 25 轮第 4 项（规范 §6）：底 sheet 出现／消失走 motion.screen 0.38s；
+        // 减动效仍直出终态（见上行 return 0，animateTransition 内同样直置终态）。
+        return BearyMotion.screen
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -1325,11 +1315,11 @@ final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioni
                 transitionContext.completeTransition(true)
                 return
             }
-            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut], animations: {
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut], animations: {
                 sheet.transitionSetSheetOffset(0)
             }, completion: { _ in transitionContext.completeTransition(true) })
-            // 遮罩 0.26s 单独淡入（与面板滑入解耦，遮罩本身不位移）。
-            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut], animations: {
+            // 遮罩 0.38s 单独淡入（与面板滑入解耦，遮罩本身不位移）。
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut], animations: {
                 sheet.transitionSetScrimAlpha(1)
             })
             return
@@ -1339,11 +1329,11 @@ final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioni
             transitionContext.completeTransition(true)
             return
         }
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+        UIView.animate(withDuration: BearyMotion.screen, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
             sheet.transitionSetSheetOffset(height)
         }, completion: { _ in transitionContext.completeTransition(true) })
-        // 遮罩 0.26s 单独淡出（与面板下滑解耦，遮罩本身不位移、不瞬间消失）。
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut], animations: {
+        // 遮罩 0.38s 单独淡出（与面板下滑解耦，遮罩本身不位移、不瞬间消失）。
+        UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut], animations: {
             sheet.transitionSetScrimAlpha(0)
         })
     }
