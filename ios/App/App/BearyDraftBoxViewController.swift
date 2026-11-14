@@ -1733,6 +1733,10 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         // 审计 P1-8：多笔队列——新删只追加本笔，不再使上一笔过期。
         pendingUndos.removeAll { $0.draft.draftId == draftValue.draftId }
         pendingUndos.append(PendingUndo(draft: draftValue, index: draftIndex, timer: nil))
+        // R21-A1：入队即刷新撤销条——条上显示的永远是队列最后一笔，
+        // 不再等删盘回调才刷新，否则 B 的退场／删盘未完成时条仍显示 A，
+        // 点撤销却取到 B，与显示不一致。
+        refreshUndoBar()
         // M3：删卡先高度收起动画再移除，其余卡在栈内原地补位；减动效直接移除。
         // 2026-10-28 Li 定：高度收到 0 允许改约束，算例外——能走 transform 的走 transform，高度必须收到 0 的例外。
         guard !UIAccessibility.isReduceMotionEnabled,
@@ -1836,26 +1840,98 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             return
         }
         last.timer?.invalidate()
+        let queueIndex = pendingUndos.count - 1
         pendingUndos.removeLast()
         let draftValue = last.draft
         let insertIndex = min(last.index, drafts.count)
-        drafts.insert(draftValue, at: insertIndex)
+        // R21-A1：按草稿 ID 去重——B 的删盘未完成时它仍在列表里，
+        // 此时点撤销不再把它插第二次（否则出现两张 B 卡片）。
+        let alreadyInList = drafts.contains(where: { $0.draftId == draftValue.draftId })
+        if !alreadyInList {
+            drafts.insert(draftValue, at: insertIndex)
+        }
         // E1-4：整库写回走后台队列，主线程只更新 UI。
         refreshUndoBar()
         // G5：恢复写盘带 Bool 回调；失败时从磁盘重读并 toast，不让内存态冒充已恢复。
         BearyDraftStore.saveAsyncReporting(draftValue) { [weak self] ok in
             guard let strongSelf = self else { return }
             if ok {
-                strongSelf.renderDrafts()
+                strongSelf.insertRestoredCard(draftValue: draftValue)
                 // 审计 P1-9：撤销写盘成功后才通知容器绑回（容器按 clearedCurrentDraftId 过滤）。
                 strongSelf.onUndoCurrentDraft?(draftValue)
             } else {
-                strongSelf.loadDrafts {
-                    strongSelf.renderDrafts()
-                    strongSelf.showDraftToast(message: "恢复失败，请重试")
+                // R21-B1：写盘失败不再只 toast——先把未落盘的草稿从内存与
+                // 列表里摘掉（不让内存态冒充已恢复），再把该笔恢复数据插回
+                // 队列原位、重起 6 秒计时：撤销条本身就是重试入口，再点
+                // “撤销”即重存；过期才真正丢弃（与正常撤销过期同口径）。
+                strongSelf.removeUnpersistedRestoredCard(draftValue: draftValue)
+                strongSelf.pendingUndos.insert(PendingUndo(draft: draftValue, index: insertIndex, timer: nil), at: min(queueIndex, strongSelf.pendingUndos.count))
+                if let idx = strongSelf.pendingUndos.firstIndex(where: { $0.draft.draftId == draftValue.draftId }) {
+                    strongSelf.refreshUndoBar()
+                    strongSelf.pendingUndos[idx].timer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
+                        self?.expireUndo(draftId: draftValue.draftId)
+                    }
                 }
+                strongSelf.showDraftToast(message: "恢复失败，请重试")
             }
         }
+    }
+
+    /// R21-A10：撤销成功只插回被撤销的那一张，不重建全部卡片。
+    /// 该卡已在列表里（删盘未完成时撤销又插回）只刷新计数，不重复建卡；
+    /// 箱内无卡（空态／失败态）时走原有全量渲染（本来也只有这一张）。
+    private func insertRestoredCard(draftValue: BearyDraft) {
+        guard !draftsLoadFailed else {
+            renderDrafts()
+            return
+        }
+        if let existing = cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId }) {
+            // 退场动画进行中点的撤销：卡片已收透明／收到 0 高，单插修不回来，
+            // 走全量重建（仅此竞态分支）；其余情况只刷新计数，不重复建卡。
+            if existing.button.alpha < 1 || existing.button.bounds.height == 0 {
+                renderDrafts()
+                return
+            }
+            subLabel.text = "共 \(drafts.count) 份 · 仅保存在本设备"
+            return
+        }
+        guard !cardEntries.isEmpty else {
+            renderDrafts()
+            return
+        }
+        // makeCard 会把删除钮／丢失图钮登记进 deleteEntries／lostEntries（与 renderDrafts 同路）。
+        let card = makeCard(for: draftValue)
+        let restoredIndex = drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) ?? drafts.count
+        // 按草稿在 drafts 里的先后排位，不依赖卡片数组与草稿数组下标对齐。
+        let position = cardEntries.filter { entry in
+            (drafts.firstIndex(where: { $0.draftId == entry.draftValue.draftId }) ?? Int.max) < restoredIndex
+        }.count
+        let clamped = min(position, cardEntries.count)
+        cardEntries.insert((button: card, draftValue: draftValue), at: clamped)
+        listStack.insertArrangedSubview(card, at: min(clamped, listStack.arrangedSubviews.count))
+        subWrap.isHidden = false
+        hintWrap.isHidden = false
+        subLabel.text = "共 \(drafts.count) 份 · 仅保存在本设备"
+    }
+
+    /// R21-B1：撤销写盘失败时把未落盘的草稿从内存与列表里摘掉（不让内存态冒充已恢复）；
+    /// 删到空时走原有全量渲染出空态。其余卡片不动。
+    private func removeUnpersistedRestoredCard(draftValue: BearyDraft) {
+        if let idx = drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) {
+            drafts.remove(at: idx)
+        }
+        if drafts.isEmpty || cardEntries.isEmpty {
+            renderDrafts()
+            return
+        }
+        if let cardEntry = cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId }) {
+            listStack.removeArrangedSubview(cardEntry.button)
+            cardEntry.button.removeFromSuperview()
+        }
+        cardEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+        deleteEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+        lostEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+        subLabel.text = "共 \(drafts.count) 份 · 仅保存在本设备"
     }
 
     /// 撤销条刷新：队列空→藏条；非空→显条并写份数（多笔时“N 份草稿已删除”），
