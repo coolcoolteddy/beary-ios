@@ -3147,7 +3147,7 @@ final class BearyDetailViewController: UIViewController {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         if isVisibilityBusy { return }
         // 审计 2026-11-02 第十节：已发布日记改三档——“修改权限”先弹三档选择器
-        // （私密/仅好友/公开，当前档带 ✓），选同档即无变化、不发请求；
+        // （私密/仅好友/公开，当前档带官方对勾图标），选同档即无变化、不发请求；
         // 仅好友→公开→仅好友全程可逆；限时与仅好友互斥规则不动（手动改档恒清限时标记）。
         // 引用规则简化（2026-10-31）：切公开先过引用门禁（私密来源时先问一并公开，
         // 他人来源无一并公开项）；改私密先查引用数提醒；改仅好友为收紧方向，直接放行。

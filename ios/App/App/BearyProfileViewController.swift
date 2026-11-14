@@ -1458,6 +1458,29 @@ class BearyProfileViewController: UIViewController {
         labelValue.textColor = BearyColors.ink
         return labelValue
     }()
+    /// r21-A13：已留话状态行的官方对勾图标（icon_check 15pt，ink tint，
+    /// 与编辑器草稿“已保存”状态组同口径）；文案只留文字，不再拼“✓”。
+    /// 资产缺失时图标隐藏，状态行只剩文案，不留空位。
+    private let pastSelfWaitingStatusIconView: UIImageView = {
+        let imageView = UIImageView()
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.contentMode = .scaleAspectFit
+        imageView.tintColor = BearyColors.ink
+        if let check = BearyIconImages.image(named: "icon_check", pointSize: 15) {
+            imageView.image = check
+        } else {
+            imageView.isHidden = true
+        }
+        return imageView
+    }()
+    private let pastSelfWaitingStatusRow: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .horizontal
+        stackValue.spacing = 5
+        stackValue.alignment = .center
+        return stackValue
+    }()
     private let pastSelfWaitingBodyLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
@@ -4131,7 +4154,9 @@ class BearyProfileViewController: UIViewController {
         pastSelfComposeSection.addArrangedSubview(pastSelfComposeView)
         pastSelfComposeSection.addArrangedSubview(pastSelfComposeHintLabel)
         pastSelfComposeSection.addArrangedSubview(pastSelfComposeButtonsRow)
-        pastSelfWaitingSection.addArrangedSubview(pastSelfWaitingStatusLabel)
+        pastSelfWaitingStatusRow.addArrangedSubview(pastSelfWaitingStatusIconView)
+        pastSelfWaitingStatusRow.addArrangedSubview(pastSelfWaitingStatusLabel)
+        pastSelfWaitingSection.addArrangedSubview(pastSelfWaitingStatusRow)
         pastSelfWaitingSection.addArrangedSubview(pastSelfWaitingBodyLabel)
         pastSelfWaitingSection.addArrangedSubview(pastSelfRevokeButton)
         pastSelfThisDaySection.addArrangedSubview(pastSelfEntryRow)
@@ -4982,7 +5007,7 @@ class BearyProfileViewController: UIViewController {
             }
         case .waiting(let message):
             pastSelfWaitingSection.isHidden = false
-            pastSelfWaitingStatusLabel.text = "✓ 已留话 · 明年 \(pastSelfDisplayMonthDay(message.deliverOn))见"
+            pastSelfWaitingStatusLabel.text = "已留话 · 明年 \(pastSelfDisplayMonthDay(message.deliverOn))见"
             pastSelfWaitingBodyLabel.text = message.body
         case .due:
             pastSelfDueNoteLabel.isHidden = false

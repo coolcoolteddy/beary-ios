@@ -3665,10 +3665,9 @@ final class BearySettingsViewController: UIViewController {
             ("none", "任何人都不可私信我"),
         ]
         var actions: [BearyConfirmSheet.Action] = options.map { option in
-            let title = option.value == dmLevel ? "✓ " + option.title : option.title
-            return BearyConfirmSheet.Action(title: title, style: .default) { [weak self] in
+            return BearyConfirmSheet.Action(title: option.title, style: .default, handler: { [weak self] in
                 self?.saveDMLevel(option.value)
-            }
+            }, isSelected: option.value == dmLevel)
         }
         actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: self, title: "谁可以私信我", message: nil, actions: actions)
