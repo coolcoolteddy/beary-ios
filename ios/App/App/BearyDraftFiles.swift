@@ -392,23 +392,20 @@ enum BearyDraftImageStore {
 
     /// ioQueue 内执行：核对引用后删原图＋缩略图对。只供 ioQueue 任务调，
     /// 调用方不得在主线程同步调（会读盘＋删文件，堵退场）。
+    /// 第 11 轮审计 02：引用并集 = 全部普通草稿 + 全部编辑检查点（同账号，
+    /// 见 referencedLocalFiles）；草稿库读失败或任一检查点读失败时本轮
+    /// 不删（宁留残留文件，不误删检查点图片——残留由下次清理回收）。
     private static func deletePairsIfUnreferenced(_ names: [String], accountId: Int?, excludingDraftId: String?) {
-        var referenced = Set<String>()
-        for draft in BearyDraftStore.loadAll(forAccount: accountId) {
-            if let excluded = excludingDraftId, draft.draftId == excluded { continue }
-            for img in draft.images {
-                if let name = img.localFile {
-                    referenced.insert(name)
-                }
-            }
-        }
+        guard case .success(let drafts) = BearyDraftStore.loadAllResult(forAccount: accountId),
+              let referenced = BearyDraftStore.referencedLocalFiles(drafts: drafts, forAccount: accountId, excludingDraftId: excludingDraftId) else { return }
         for name in names where !referenced.contains(name) {
             deletePair(fullName: name, accountId: accountId)
         }
     }
 
-    /// 清理无主文件：只保留给定草稿引用的原图与缩略图（调用方须传入全部草稿的
-    /// 引用并集，只传当前篇会误删其他篇的图片，见编辑器 restoreDraft）。
+    /// 清理无主文件：只保留给定引用的原图与缩略图（调用方须传入全部草稿＋
+    /// 全部编辑检查点的引用并集，见 referencedLocalFiles；只传当前篇会误删
+    /// 其他篇与检查点的图片，见编辑器 restoreDraft）。
     /// 第九轮 07：刚落盘的新图可能在草稿写库之前（图片准备走独立队列，落盘与
     /// 写库之间有窗口），引用集合里还没有它；保护期内的文件一律不删——孤文件
     /// 晚一轮清理无害，误删新图有害。读属性失败时也跳过（不删），下轮再清。
@@ -1450,5 +1447,42 @@ enum BearyDraftStore {
         ioQueue.async {
             clearEditCheckpoint(entryId: entryId, forAccount: accountId)
         }
+    }
+
+    /// 第 11 轮审计 02：无主文件清理用的本地图片引用并集——全部普通草稿 +
+    /// 全部编辑检查点（同账号）。检查点文件按 `beary_edit_checkpoint_<账号>_<篇>.json`
+    /// 枚举（损坏备份是同名 + `.corrupt-<时间>-<UUID>.bak`，不在枚举内；
+    /// 写盘中的 `.tmp` 也不在枚举内）。
+    /// 任一检查点枚举 / 读盘 / 解码失败、或账号为空时返回 nil，调用方本轮
+    /// 跳过删除（宁留孤文件、不误删检查点图片）；清理路径只读引用，不做
+    /// 损坏备份等写盘副作用。drafts 由调用方一次 loadAllResult 读出并传入——
+    /// 恢复与清理共用同一份数据（P2-10），不在本函数内再读一次；
+    /// excludingDraftId 只排除普通草稿（其记录正在同批删除／重写），检查点不受影响。
+    static func referencedLocalFiles(drafts: [BearyDraft], forAccount accountId: Int?, excludingDraftId: String? = nil) -> Set<String>? {
+        guard let accountId = accountId else { return nil }
+        var referenced = Set<String>()
+        for draft in drafts {
+            if let excluded = excludingDraftId, draft.draftId == excluded { continue }
+            for img in draft.images {
+                if let name = img.localFile {
+                    referenced.insert(name)
+                }
+            }
+        }
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
+              let names = try? FileManager.default.contentsOfDirectory(atPath: base.path) else { return nil }
+        let prefix = "beary_edit_checkpoint_\(accountId)_"
+        for name in names where name.hasPrefix(prefix) && name.hasSuffix(".json") {
+            let url = base.appendingPathComponent(name)
+            guard let data = try? Data(contentsOf: url),
+                  let checkpoint = try? JSONDecoder().decode(BearyEditCheckpoint.self, from: data),
+                  checkpoint.accountId == accountId else { return nil }
+            for img in checkpoint.images {
+                if let local = img.localFile {
+                    referenced.insert(local)
+                }
+            }
+        }
+        return referenced
     }
 }
