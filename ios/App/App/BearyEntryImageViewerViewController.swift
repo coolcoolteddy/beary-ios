@@ -165,6 +165,13 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     var initialIndex: Int = 0
     /// 下甩关闭拖动态：竖向为主且向下时进入，横向翻页不再接管本次手势。
     private var dismissDragActive: Bool = false
+    /// 下甩渐显后面界面：全屏 modal 下 presenting 方的 view 在呈现完成
+    /// 后已不在窗口层级里，拖动全程滑开的区域背后是空窗口底；拖动开始
+    /// 时即把它插到本 view 下方，后面界面随幅度渐显（R14 P2-13 同款）。
+    /// 取消时在复位动画后撤掉；正式退场时转场容器接管它
+    /// （见 animationController(forDismissed:)），不再碰。
+    private var underlyingViewPrepared = false
+    private weak var preparedUnderlyingView: UIView?
 
     init(imageKeys: [String], startIndex: Int) {
         self.imageKeys = imageKeys
@@ -217,8 +224,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         // 灯箱底色 0.92 黑为例外（2026-10-28 定）：透 8% 保留底层上下文，不改纯黑；深色背景纯黑定版不覆盖灯箱。
         // ①-6：view 背景改透明，底色改由最底层遮罩承载——下甩跟手只改
         // 遮罩 opacity（规范 §6 只走 transform/opacity），不再改 backgroundColor；
-        // 遮罩 alpha 0.92→0.276，与旧口径现行视觉一致。审计原修法只加遮罩、
-        // 保留 0.92 背景不动，p=1 时会叠成 0.92＋遮罩、复现不了现行视觉，故不采用。
+        // 遮罩 alpha 0.92→0，下甩幅度越大、后面界面渐显越多。
+        // 审计原修法只加遮罩、保留 0.92 背景不动，p=1 时会叠成 0.92＋遮罩、
+        // 复现不了现行视觉，故不采用。
         view.backgroundColor = .clear
         dismissScrimView.backgroundColor = .black
         dismissScrimView.alpha = 0.92
@@ -996,15 +1004,49 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 取消时传 0 恢复原样。
     private func applyDismissDragProgress(_ progress: CGFloat) {
         let p = max(0, min(1, progress))
-        // ①-6：只改最底层遮罩的 opacity（0.92→0.276），现行视觉原样复现；
-        // view 背景已是透明，不再改 backgroundColor。
-        dismissScrimView.alpha = 0.92 * (1 - p * 0.7)
+        // ①-6：只改最底层遮罩的 opacity（0.92→0，与拖动进度同驱）；
+        // view 背景已是透明，不再改 backgroundColor。遮罩全透后露出的
+        // 即拖动开始时插好的后面界面（见 prepareUnderlyingViewForDismissDrag）。
+        dismissScrimView.alpha = 0.92 * (1 - p)
         counterLabel.alpha = 1 - p
         dotsStack.alpha = 1 - p
         closeButton.alpha = 1 - p
         // 审计 15 项第 11 项：底部“查看日记”钮同套渐隐，取消时由下
         // 方 resetDismissDragAppearance 一并恢复。
         viewEntryButton.alpha = 1 - p
+    }
+
+    /// 拖动开始即把后面界面提前放进底层（R14 P2-13 同款）：presenting
+    /// 方的 view 插到本 view 下方（仅当它当前不在窗口里、且本 view 未带
+    /// 位移时；上一轮复位动画未跑完就又开拖时它仍在位，守卫直接跳过，
+    /// 本轮沿用已插好的那一张）。提前插入会触发 presenting 方的
+    /// appearance 回调，与正式退场时同一套回调，只是时机从退场提前到
+    /// 开拖，不引入新副作用。
+    private func prepareUnderlyingViewForDismissDrag() {
+        guard let underlying = presentingViewController?.view else { return }
+        guard underlying.window == nil, view.transform == .identity else { return }
+        guard let superview = view.superview else { return }
+        underlying.frame = view.frame
+        superview.insertSubview(underlying, belowSubview: view)
+        preparedUnderlyingView = underlying
+        underlyingViewPrepared = true
+    }
+
+    /// 取消／未过阈值：复位动画跑完后再撤提前插入的后面界面——动画期间
+    /// 仍露着它，撤早了复位过程露出的条带会变黑底。正式退场已把它接进
+    /// 转场容器时不再碰（见 animationController(forDismissed:) 的交接；
+    /// superview 已变的也一律不动，等转场自己收尾）。
+    private func removePreparedUnderlyingViewAfterReset() {
+        guard underlyingViewPrepared, let underlying = preparedUnderlyingView else { return }
+        // 延迟与复位动画同长（motion.normal 0.26s 弹簧复位）；减动效时复位是瞬时的，延迟取 0。
+        let delay = UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak underlying] in
+            guard let self = self, self.underlyingViewPrepared, let underlying = underlying else { return }
+            guard underlying.superview == self.view.superview, self.view.window != nil else { return }
+            underlying.removeFromSuperview()
+            self.underlyingViewPrepared = false
+            self.preparedUnderlyingView = nil
+        }
     }
 
     private func resetDismissDragAppearance() {
@@ -1023,6 +1065,13 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 
     func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        // 下甩渐显后面界面：正式退场开始，转场容器接管提前插入的后面界面——
+        // ReturnAnimator 关场分支会把它 insertSubview 进容器；此处只把
+        // 所有权交出去（清旗标），让待撤的延迟清理不再碰它（R14 P2-13 同款）。
+        if underlyingViewPrepared {
+            underlyingViewPrepared = false
+            preparedUnderlyingView = nil
+        }
         return BearyImageViewerReturnAnimator(viewer: self)
     }
 
@@ -1191,6 +1240,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                     if abs(translation.y) > abs(translation.x) {
                         panMode = 2
                         dismissDragActive = true
+                        // 下甩渐显后面界面：定向为纵向甩关闭即把后面界面
+                        // 插到本 view 下方，不等正式退场（R14 P2-13 同款）。
+                        prepareUnderlyingViewForDismissDrag()
                         hideNeighbor()
                         tx = 0
                         ty = translation.y
@@ -1233,6 +1285,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                     // 与图片回弹放进同一弹簧块（0.26s／damping 0.7＋松手速度归一化，
                     // 减动效开时直切终态），阈值与弹簧参数均不动。
                     applyTransform(animated: true, initialSpringVelocity: springVelocity, additionalAnimations: { self.resetDismissDragAppearance() })
+                    // 下甩渐显后面界面：未过阈值弹回后撤提前插入的后面界面
+                    // （复位动画跑完再撤，见 removePreparedUnderlyingViewAfterReset）。
+                    removePreparedUnderlyingViewAfterReset()
                 }
                 return
             }
