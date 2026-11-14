@@ -87,6 +87,11 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     private var pillDots: [UIView] = []
     /// “我的 GIF”组为空时的空提示（点 ＋ 上传一张）。
     private let emptyHintLabel = UILabel()
+    /// GIF 库刷新状态：结果未确认前显示加载占位，失败时显示“加载失败”＋重试；
+    /// 已有缓存时保留内容、只 toast 提示刷新失败。
+    private var libraryLoading = false
+    private var libraryLoadFailed = false
+    private let libraryRetryButton = UIButton(type: .system)
     private var lastLayoutWidth: CGFloat = 0
     private var lastLayoutContainerHeight: CGFloat = 0
 
@@ -197,6 +202,16 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         emptyHintLabel.textAlignment = .center
         emptyHintLabel.isHidden = true
         view.addSubview(emptyHintLabel)
+
+        libraryRetryButton.translatesAutoresizingMaskIntoConstraints = false
+        libraryRetryButton.setTitle("重试", for: .normal)
+        libraryRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        libraryRetryButton.setTitleColor(BearyColors.ink, for: .normal)
+        libraryRetryButton.addTarget(self, action: #selector(retryLibraryLoad), for: .touchUpInside)
+        libraryRetryButton.bearyAddPressFeedback()
+        libraryRetryButton.accessibilityLabel = "重试加载 GIF 库"
+        libraryRetryButton.isHidden = true
+        view.addSubview(libraryRetryButton)
 
         // 悬浮 pill 组选择条：胶囊贴选择器底部、内容区上方悬浮（照截图的 pill 形态）。
         pillView.translatesAutoresizingMaskIntoConstraints = false
@@ -317,6 +332,9 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
 
             emptyHintLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyHintLabel.topAnchor.constraint(equalTo: collection.topAnchor, constant: 44),
+
+            libraryRetryButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            libraryRetryButton.topAnchor.constraint(equalTo: emptyHintLabel.bottomAnchor, constant: 12),
         ])
         for (index, button) in pillItemButtons.enumerated() {
             NSLayoutConstraint.activate([
@@ -401,7 +419,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         selectGroup(at: sender.tag, animated: true)
     }
 
-    /// 打开时从服务端拉一次库（失败静默用缓存）；增删后通知到时跟帧刷新
+    /// 打开时从服务端拉一次库；增删后通知到时跟帧刷新
     /// “我的 GIF”组（只在正看着该组时重刷网格与 sheet 高）。
     private func refreshLibrary() {
         libraryObserver = NotificationCenter.default.addObserver(forName: BearyGIFLibrary.libraryDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -417,21 +435,91 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             }
             self.refreshEmptyHint()
         }
-        BearyGIFLibrary.refresh()
+        loadLibrary()
+    }
+
+    /// 拉库并按结果更新占位：成功清失败态；失败时空库显示“加载失败”＋重试，
+    /// 有缓存则保留内容、只 toast 提示刷新失败；结果未确认前显示加载占位。
+    private func loadLibrary() {
+        libraryLoading = true
+        libraryLoadFailed = false
+        refreshEmptyHint()
+        BearyGIFLibrary.refresh { [weak self] result in
+            guard let self = self else { return }
+            self.libraryLoading = false
+            switch result {
+            case .loaded:
+                self.libraryLoadFailed = false
+            case .failed(let cached):
+                self.libraryLoadFailed = true
+                if cached.isEmpty == false {
+                    BearyToast.show(in: self.view, message: "刷新失败，请重试")
+                }
+            }
+            self.refreshEmptyHint()
+            if self.selectedGroup.id == "mygif" {
+                self.updatePreferredContentSize()
+            }
+        }
+    }
+
+    @objc private func retryLibraryLoad() {
+        loadLibrary()
     }
 
     private func refreshEmptyHint() {
-        emptyHintLabel.isHidden = !(selectedGroup.id == "mygif" && selectedGroup.keys.isEmpty)
+        guard selectedGroup.id == "mygif", selectedGroup.keys.isEmpty else {
+            emptyHintLabel.isHidden = true
+            libraryRetryButton.isHidden = true
+            return
+        }
+        if libraryLoadFailed {
+            emptyHintLabel.text = "加载失败"
+            emptyHintLabel.isHidden = false
+            libraryRetryButton.isHidden = false
+        } else if libraryLoading {
+            emptyHintLabel.text = "正在加载…"
+            emptyHintLabel.isHidden = false
+            libraryRetryButton.isHidden = true
+        } else {
+            emptyHintLabel.text = "还没有 GIF，点 ＋ 上传一张"
+            emptyHintLabel.isHidden = false
+            libraryRetryButton.isHidden = true
+        }
     }
 
     /// “我的 GIF”组内长按 cell：删库内 GIF（只删库行，不删文件、不影响已发日记）。
+    /// 服务端确认成功才算删掉；失败保留原项，摇头＋toast，下次同步还会出现。
     private func confirmDeleteGIF(key: String) {
         BearyConfirmSheet.show(from: self, title: "从我的 GIF 里删除？", message: nil, actions: [
             BearyConfirmSheet.Action(title: "取消", style: .cancel),
-            BearyConfirmSheet.Action(title: "删除", style: .destructive) {
-                BearyGIFLibrary.remove(key: key)
+            BearyConfirmSheet.Action(title: "删除", style: .destructive) { [weak self] in
+                BearyGIFLibrary.remove(key: key) { success in
+                    guard success == false else { return }
+                    self?.playDeleteGIFfailedFeedback(forKey: key)
+                }
             },
         ])
+    }
+
+    /// 删除失败反馈：0.38s 摇头＋toast“删除失败，请重试”；减动效时跳过视觉摇头。
+    private func playDeleteGIFfailedFeedback(forKey key: String) {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+        if UIAccessibility.isReduceMotionEnabled == false {
+            var target: UIView? = emoteCollectionView
+            if let index = groups.firstIndex(where: { $0.id == "mygif" }),
+               let keyIndex = groups[index].keys.firstIndex(of: key) {
+                target = emoteCollectionView?.cellForItem(at: IndexPath(item: keyIndex, section: 0)) ?? target
+            }
+            target?.layer.removeAnimation(forKey: "bearyMoodPickerDeleteFailShake")
+            let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+            shake.values = [0, -8, 8, -5, 5, 0]
+            shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+            shake.duration = BearyMotion.screen
+            target?.layer.add(shake, forKey: "bearyMoodPickerDeleteFailShake")
+        }
+        BearyToast.show(in: view, message: "删除失败，请重试")
     }
 
     private func selectGroup(at index: Int, animated: Bool) {
