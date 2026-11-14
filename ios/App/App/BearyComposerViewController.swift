@@ -7015,7 +7015,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         if oversizeCount > 0 {
-            showToast(message: "\(oversizeCount) 张原图超过 5MB，已按压缩上传")
+            showToast(message: "\(oversizeCount) 张原图超过 5MB，改用压缩上传")
         }
     }
 
@@ -7134,10 +7134,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
               let thumb = thumbData, let previewImage = item.imageView.image else {
             item.uploadMode = .compressed
             item.fellBackFromOriginal = true
-            showToast(message: "原图处理失败，已按压缩上传")
             if let image = item.imageView.image {
+                showToast(message: "原图处理失败，改用压缩上传")
                 startUpload(for: item, image: image)
             } else {
+                showToast(message: "原图处理失败，请重新选择照片")
                 markFailed(item)
                 saveDraftNow()
                 updatePublishState()

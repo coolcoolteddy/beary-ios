@@ -146,7 +146,7 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
         compressedButton.accessibilityLabel = "压缩，约 \(BearyOriginalUploadSheet.formattedSize(model.compressedBytes))，\(model.count) 张照片"
         view.addSubview(compressedButton)
 
-        footnoteLabel.text = model.oversizeCount > 0 ? "其中 \(model.oversizeCount) 张原图超过 5MB，已按压缩上传" : nil
+        footnoteLabel.text = model.oversizeCount > 0 ? "其中 \(model.oversizeCount) 张原图超过 5MB，改用压缩上传" : nil
         footnoteLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         footnoteLabel.textColor = BearyColors.gray
         footnoteLabel.numberOfLines = 0
