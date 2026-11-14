@@ -2942,8 +2942,9 @@ private class BearyLetterModal {
         primaryButton.translatesAutoresizingMaskIntoConstraints = false
         primaryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
         primaryButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        primaryButton.setTitleColor(BearyColors.bg, for: .normal)
-        primaryButton.backgroundColor = BearyColors.ink
+        primaryButton.setTitleColor(BearyColors.ink, for: .normal)
+        // 2026-11-14 Li 定：纯白／纯黑墨底太突兀，改 surface2 柔和灰底 + ink 字。
+        primaryButton.backgroundColor = BearyColors.surface2
         primaryButton.layer.cornerRadius = BearyCorners.single
         primaryButton.setTitle("去看看", for: .normal)
         primaryButton.isHidden = goEntryId == nil

@@ -88,8 +88,9 @@ final class BearySnapshotCompareViewController: UIViewController {
         restoreButton.translatesAutoresizingMaskIntoConstraints = false
         restoreButton.setTitle("恢复到这个版本", for: .normal)
         restoreButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
-        restoreButton.setTitleColor(BearyColors.bg, for: .normal)
-        restoreButton.backgroundColor = BearyColors.ink
+        // 2026-11-14 Li 定：纯白／纯黑墨底太突兀，改 surface2 柔和灰底 + ink 字。
+        restoreButton.setTitleColor(BearyColors.ink, for: .normal)
+        restoreButton.backgroundColor = BearyColors.surface2
         restoreButton.layer.cornerRadius = BearyCorners.single
         restoreButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
         restoreButton.addTarget(self, action: #selector(restoreTapped), for: .touchUpInside)
