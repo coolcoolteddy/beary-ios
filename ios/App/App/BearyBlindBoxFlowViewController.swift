@@ -214,6 +214,11 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     private var step: Step = .loading
     private var poolEntries: [Entry] = []
+    /// 审计 19 A9：候选列表按日记 ID 复用的行视图（key 为 entry.id；无 id 的行不复用，
+    /// 每次重建）与已播入场错峰的行键集（引用面板 quotePanelAnimatedRowKeys 同口径——
+    /// 补页只播新 key 行，已播行不重播）。
+    private var poolRowViews: [String: BlindBoxPoolRowView] = [:]
+    private var poolAnimatedRowKeys: Set<String> = []
     /// R22 #10：入池分页上限与“够选即停”目标——每页 50 篇；集满 20 篇可入池篇
     /// 即停（常见账号 1~2 页收尾），否则续拉到 40 页（2000 篇）或服务端短页为止。
     private static let poolMaxPages = 40
@@ -1041,18 +1046,40 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     }
 
     private func renderPoolRows() {
-        for sub in poolStack.arrangedSubviews {
-            poolStack.removeArrangedSubview(sub)
-            sub.removeFromSuperview()
-        }
         if poolEntries.isEmpty {
+            // 空态：撤下栈上全部视图（复用映射与已播 key 不清——回填同一批日记时
+            // 仍复用旧行，已播行也不重播），再挂空态文案。
+            for sub in poolStack.arrangedSubviews {
+                poolStack.removeArrangedSubview(sub)
+                sub.removeFromSuperview()
+            }
             let empty = label("还没有可入池的日记：先写一篇并公开它（当日公开的需等明日）。", size: 14, weight: .regular, color: BearyColors.gray)
             empty.textAlignment = .center
             poolStack.addArrangedSubview(empty)
             return
         }
-        for entry in poolEntries {
-            let row = BlindBoxPoolRowView()
+        // 审计 19 A9：按日记 ID 复用已有行——点选、补页不再全量重建；只有新 ID
+        // 才新建行并做一次入场错峰（0.26s 透明度＋8pt 位移，步进 0.03s、封顶 0.24s，
+        // 减动效直显；引用面板 quotePanelAnimatedRowKeys 同口径，已播行不重播）。
+        var orderedRows: [BlindBoxPoolRowView] = []
+        orderedRows.reserveCapacity(poolEntries.count)
+        var newRows: [(row: BlindBoxPoolRowView, index: Int)] = []
+        for (index, entry) in poolEntries.enumerated() {
+            let key = entry.id.flatMap { $0.isEmpty ? nil : $0 }
+            let row: BlindBoxPoolRowView
+            if let key = key, let existing = poolRowViews[key] {
+                row = existing
+                // 复用行：在途入场动画作废，状态按本次配置一次落定（选中态／资格
+                // 变化不靠重建也能生效；configure 会把 alpha 写回目标值）。
+                row.layer.removeAllAnimations()
+                row.transform = .identity
+            } else {
+                row = BlindBoxPoolRowView()
+                if let key = key {
+                    poolRowViews[key] = row
+                    newRows.append((row: row, index: index))
+                }
+            }
             row.configure(entry: entry, selected: entry.id == selectedEntryId)
             row.onTap = { [weak self] in
                 guard let self = self, let entryId = entry.id else { return }
@@ -1061,7 +1088,44 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 self.renderPoolRows()
                 self.setStep(.pool)
             }
-            poolStack.addArrangedSubview(row)
+            orderedRows.append(row)
+        }
+        // 撤下不在新列表里的视图（空态文案、无 id 旧行——无 id 行每次重建，
+        // 旧实例在这里清掉）。
+        for sub in poolStack.arrangedSubviews where orderedRows.contains(where: { $0 === sub }) == false {
+            poolStack.removeArrangedSubview(sub)
+            sub.removeFromSuperview()
+        }
+        // 忘掉已不在列表里的复用映射（无 id 行本来就不进映射）。
+        let liveKeys = Set(poolEntries.compactMap { $0.id.flatMap { $0.isEmpty ? nil : $0 } })
+        for key in poolRowViews.keys where liveKeys.contains(key) == false {
+            poolRowViews.removeValue(forKey: key)
+            poolAnimatedRowKeys.remove(key)
+        }
+        // 按目标顺序排布：已在栈里的行只调换位置，不重建、不重播。
+        for (index, row) in orderedRows.enumerated() {
+            if index < poolStack.arrangedSubviews.count, poolStack.arrangedSubviews[index] === row {
+                continue
+            }
+            if row.superview == poolStack {
+                poolStack.removeArrangedSubview(row)
+            }
+            poolStack.insertArrangedSubview(row, at: index)
+        }
+        // 只给本轮新行做入场错峰（错峰序号按本轮新行排，不按绝对行号）。
+        if UIAccessibility.isReduceMotionEnabled == false {
+            for (animIndex, pair) in newRows.enumerated() {
+                let row = pair.row
+                guard let key = poolEntries[pair.index].id, poolAnimatedRowKeys.contains(key) == false else { continue }
+                poolAnimatedRowKeys.insert(key)
+                let targetAlpha = row.alpha
+                row.alpha = 0
+                row.transform = CGAffineTransform(translationX: 0, y: 8)
+                UIView.animate(withDuration: BearyMotion.normal, delay: min(Double(animIndex) * 0.03, 0.24), options: [], animations: {
+                    row.alpha = targetAlpha
+                    row.transform = .identity
+                }, completion: nil)
+            }
         }
     }
 
