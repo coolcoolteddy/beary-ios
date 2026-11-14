@@ -359,8 +359,9 @@ final class BearyLoginViewController: UIViewController {
         messageLabel.isHidden = true
 
         loginButton.translatesAutoresizingMaskIntoConstraints = false
-        // 黑白灰新标准：登录钮统一墨底（sheet 橙已删，全屏页本就墨底）。
-        loginButton.backgroundColor = BearyColors.ink
+        // 2026-11-14 Li 定：纯白／纯黑墨底太突兀，登录钮改 surface2 柔和灰底 + ink 字
+        //（标题前景见 setLoginTitle，同改 ink）。
+        loginButton.backgroundColor = BearyColors.surface2
         loginButton.layer.cornerRadius = 12
         loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
         loginButton.bearyAddPressFeedback()
@@ -816,12 +817,11 @@ final class BearyLoginViewController: UIViewController {
     }
 
     private func setLoginTitle(_ text: String) {
-        // U1：登录钮底色已统一为 ink（sheet 橙已删，见 327 行），标题前景
-        // 不能再用 onBrand——onBrand 是固定纯黑，浅色下墨底黑字看不见；
-        // ink 底配 bg 字：浅色白字黑底、深色黑字近白底，两模式对比都够。
+        // U1：登录钮底色已统一为 surface2（2026-11-14 Li 定，纯白／纯黑墨底太突兀），
+        // 标题前景跟底色走 ink：深色白字灰底、浅色墨字灰底，两模式对比都够。
         let title = NSAttributedString(string: text, attributes: [
             .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .bold)),
-            .foregroundColor: BearyColors.bg,
+            .foregroundColor: BearyColors.ink,
             .kern: 5.43,
         ])
         loginButton.setAttributedTitle(title, for: .normal)

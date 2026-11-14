@@ -344,9 +344,10 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         bottomStack.setCustomSpacing(12, after: titleLabel)
 
         primaryButton.translatesAutoresizingMaskIntoConstraints = false
-        primaryButton.backgroundColor = BearyColors.ink
-        primaryButton.setTitleColor(BearyColors.bg, for: .normal)
-        primaryButton.setTitleColor(BearyColors.bg, for: .highlighted)
+        // 2026-11-14 Li 定：纯白／纯黑墨底太突兀，改 surface2 柔和灰底 + ink 字。
+        primaryButton.backgroundColor = BearyColors.surface2
+        primaryButton.setTitleColor(BearyColors.ink, for: .normal)
+        primaryButton.setTitleColor(BearyColors.ink, for: .highlighted)
         // 固定高度容器：字号上限 20 防撑破（BearyDynamicType.cappedFont 口径）。
         primaryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
         primaryButton.titleLabel?.adjustsFontForContentSizeCategory = true

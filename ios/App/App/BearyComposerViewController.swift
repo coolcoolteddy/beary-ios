@@ -1682,10 +1682,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             publishButton.accessibilityTraits.insert(.notEnabled)
         }
         if publishButton.isEnabled {
-            publishButton.backgroundColor = BearyColors.ink
-            // 底是 ink、字须取反色 bg：深色下 ink 近白，白字面量会糊在底上看不见。
-            publishButton.setTitleColor(BearyColors.bg, for: .normal)
-            publishButton.tintColor = BearyColors.bg
+            // 2026-11-14 Li 定：纯白／纯黑墨底太突兀，改 surface2 柔和灰底 + ink 字。
+            publishButton.backgroundColor = BearyColors.surface2
+            publishButton.setTitleColor(BearyColors.ink, for: .normal)
+            publishButton.tintColor = BearyColors.ink
         } else {
             publishButton.backgroundColor = UIColor.clear
             publishButton.setTitleColor(BearyColors.gray, for: .normal)
