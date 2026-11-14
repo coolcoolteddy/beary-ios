@@ -116,9 +116,32 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
 
     private var selectedGroup: MoodGroup { groups[selectedGroupIndex] }
 
+    /// 行高缓存（按组缓存，避免 sizeForItemAt 每格都重测全组名称）：
+    /// 失效口径——组切换、item 宽度变化（>0.5pt）、系统字号档变化时重算，
+    /// 其余时候直接用缓存值；“我的 GIF”组 keys 变化时由 refreshLibrary
+    /// 显式清缓存（同组 id 但内容变了，单靠组 id 判不出来）。
+    private struct CachedCellHeight {
+        let groupID: String
+        let width: CGFloat
+        let contentSizeCategory: UIContentSizeCategory
+        let height: CGFloat
+    }
+    private var cachedCellHeight: CachedCellHeight?
+
+    private func invalidateCachedCellHeight() {
+        cachedCellHeight = nil
+    }
+
     /// 网格行高（与回应 Sheet 同口径：46 槽位＋4 间隙＋名称行＋8 底边距；
     /// 名称按与 cell 一致的缩放 11pt 字实测量取，放大后允许多行、行高随之长高）。
     private func cellHeight(forWidth width: CGFloat) -> CGFloat {
+        let contentSizeCategory = traitCollection.preferredContentSizeCategory
+        if let cached = cachedCellHeight,
+           cached.groupID == selectedGroup.id,
+           abs(cached.width - width) <= 0.5,
+           cached.contentSizeCategory == contentSizeCategory {
+            return cached.height
+        }
         let nameFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
         var maxNameHeight: CGFloat = 0
         for key in selectedGroup.keys {
@@ -132,7 +155,9 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             ).height.rounded(.up)
             maxNameHeight = max(maxNameHeight, nameHeight)
         }
-        return max(72, 46 + 4 + maxNameHeight + 8)
+        let height = max(72, 46 + 4 + maxNameHeight + 8)
+        cachedCellHeight = CachedCellHeight(groupID: selectedGroup.id, width: width, contentSizeCategory: contentSizeCategory, height: height)
+        return height
     }
 
     /// 网格内容总高（sectionInset 上 4＋行高＋行距＋下 20）；“我的 GIF”组
@@ -349,6 +374,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         // 系统字号档变化时行高需重算（cellHeight 按实际文字高度计），只刷布局，
         // 不重建 cell、不改列数与顺序；深浅切换由各 BearyEmoteView 内部跟随。
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            invalidateCachedCellHeight()
             emoteCollectionView?.collectionViewLayout.invalidateLayout()
             updatePreferredContentSize()
         }
@@ -411,6 +437,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             let group = self.groups[index]
             guard group.keys != keys else { return }
             self.groups[index] = MoodGroup(id: group.id, title: group.title, keys: keys, representativeKey: group.representativeKey, representativeIconName: group.representativeIconName)
+            self.invalidateCachedCellHeight()
             if self.selectedGroup.id == "mygif" {
                 self.emoteCollectionView?.reloadData()
                 self.updatePreferredContentSize()
@@ -437,6 +464,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     private func selectGroup(at index: Int, animated: Bool) {
         guard groups.indices.contains(index), index != selectedGroupIndex else { return }
         selectedGroupIndex = index
+        invalidateCachedCellHeight()
         refreshPillSelection(animated: animated)
         refreshEmptyHint()
         // 节日组只有 6 款（2 行），sheet 随之缩短；网格内容切换只走 opacity，
