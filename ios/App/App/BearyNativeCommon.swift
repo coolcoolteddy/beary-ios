@@ -1630,7 +1630,8 @@ final class BearyImagePrefetcher {
             for key in keys.prefix(budget.maxThumbsPerEntry) {
                 if items.count >= budget.maxURLs { break }
                 if key.isEmpty { continue }
-                guard let url = BearyImageURLs.imageURL(key: key, thumb: true) else { continue }
+                // 卡片糊同款：预热与卡片同口径的全尺寸图，缩略图 URL 预热了卡片也用不上。
+                guard let url = BearyImageURLs.imageURL(key: key, thumb: false) else { continue }
                 let warmedKey = bucketKey + "|" + url.absoluteString
                 lock.lock()
                 let seen = isWarmed(warmedKey) || pending.contains(warmedKey)
@@ -2456,7 +2457,8 @@ enum BearyImagePrep {
 
     /// 返回 JPEG data 与最终像素宽高：宽高从最终图的 cgImage 像素读，
     /// 与 JPEG 实际像素一致（旧实现按 pt 换算，上报 1600×1200 时实际是 4800×3600）。
-    static func jpegData(_ image: UIImage, maxSide: CGFloat = 1600, quality: CGFloat = 0.85) -> (data: Data, w: Int, h: Int)? {
+    /// 质量 0.92：仍是压缩图（长边仍压到 1600），但视觉上接近原图。
+    static func jpegData(_ image: UIImage, maxSide: CGFloat = 1600, quality: CGFloat = 0.92) -> (data: Data, w: Int, h: Int)? {
         let img = resized(image, maxSide: maxSide)
         guard let data = img.jpegData(compressionQuality: quality) else { return nil }
         let px = pixelSize(of: img)

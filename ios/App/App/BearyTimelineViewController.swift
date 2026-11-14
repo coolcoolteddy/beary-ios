@@ -1869,7 +1869,8 @@ final class BearyTimelineCell: UITableViewCell {
                 thumbRetry.widthAnchor.constraint(equalToConstant: 28),
                 thumbRetry.heightAnchor.constraint(equalToConstant: 28),
             ])
-            if let url = BearyImageURLs.imageURL(key: key, thumb: true) {
+            // 卡片糊同款：时间线条也是 216 高，直接走全尺寸图（缩略图 480px 在 3× 机上要拉大到 1438px）。
+            if let url = BearyImageURLs.imageURL(key: key, thumb: false) {
                 bearyFeedLoadImage(into: imageView, url: url, retryButton: thumbRetry, downsampleToWidth: strip * UIScreen.main.scale, blurUp: true)
             }
         }
@@ -7047,7 +7048,8 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
                     if let avatarURL = BearyImageURLs.avatarURL(entry.authorAvatar) {
                         _ = BearyImageLoader.shared.load(url: avatarURL, downsampleToWidth: 40 * UIScreen.main.scale) { _ in }
                     }
-                    if let firstKey = entry.images?.first, let imageURL = BearyImageURLs.imageURL(key: firstKey, thumb: true) {
+                    // 卡片糊同款：首图预热与时间线条同口径的全尺寸图。
+                    if let firstKey = entry.images?.first, let imageURL = BearyImageURLs.imageURL(key: firstKey, thumb: false) {
                         // 112：预取与卡片展示同宽下采样（卡片 stripWidth 同公式，
                         // 见 BearyTimelinePrefetchStrip）——旧口径不带宽度时内存键
                         // 与展示键不一致，预取只暖磁盘、展示仍需解码一遍
