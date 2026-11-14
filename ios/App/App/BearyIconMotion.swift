@@ -101,7 +101,10 @@ enum BearyIconMotion {
     }
 
     /// 通用按压反馈（80 包 W6 全量推广）：按下缩 0.95 + .light 轻震，松手弹簧回 1。
-    /// 按压幅度与时长为预览 v3 定版（按下 0.95 / 0.1s、松手 1.03 → 0.99 → 1 / motion.micro 0.18s）。
+    /// 第十四轮审计二-2（Li 2026-11-12 定版：按审计建议来）：按下 0.1s＋回弹
+    /// 0.32s 两段式合成单段 0.18s——按下与回弹同为 0.18s 单段动画，按压反馈
+    /// 整体合规范 §6「按压反馈 0.18s」（micro 档）；视觉仍是轻缩后回弹。
+    /// 时长走 BearyMotion.micro（#1414 已合入）。
     /// 口径（2026-10-28 定）：按压轻震通用，所有挂 bearyAddPressFeedback 的按钮都发；
     /// 点赞/发布/拒绝三处专属反馈（成功/警告）另算，不与按压轻震混淆。
     /// 缩放一律走按钮层（button.transform）：图标层 pop 与粒子 overlay 不受影响，
@@ -123,20 +126,23 @@ enum BearyIconMotion {
     /// 审计第 30 项：重新滑入的视觉恢复——与 pressDown 同款 0.95 缩放、
     /// 同时长同曲线，唯独不发触感。pressDown 复用本方法，视觉行为单点。
     /// 审计 M1：两项动画选项补齐 .allowUserInteraction（回弹窗口内的下一按
-    /// 不被吞）与 .beginFromCurrentState（新按压从当前态起播，中断旧回弹）；
-    /// 缩放与时长仍是预览 v3 定版，不动。
+    /// 不被吞）与 .beginFromCurrentState（新按压从当前态起播，中断旧回弹）。
+    /// 第十四轮审计二-2：按下时长由 0.1s 合并为单段 0.18s（与回弹同值同档），
+    /// 曲线仍为 easeOut、幅度仍为 0.95 缩放。
     static func pressDownVisual(on button: UIButton) {
         let pressed = CGAffineTransform(scaleX: 0.95, y: 0.95)
         guard BearyMotion.animated(true) else {
             button.transform = pressed
             return
         }
-        UIView.animate(withDuration: 0.1, delay: 0, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState], animations: {
             button.transform = pressed
         })
     }
 
-    /// 松手弹簧回 1（预览 v3 定版）：1.03 → 0.99 → 1，motion.micro 0.18s，分段线性。
+    /// 松手弹簧回 1：第十四轮审计二-2（Li 2026-11-12 定版）——原三段关键帧
+    /// （1.03 → 0.99 → 1，0.32s）合成单段 0.18s 弹簧动画；阻尼 0.7 为规范
+    /// 统一弹簧阻尼，弹簧自然超调后收敛，视觉仍是轻缩后回弹。
     /// 减动效关时瞬时回 1（普通按压）。
     /// 审计 M1：同 pressDownVisual，补 .allowUserInteraction 与
     /// .beginFromCurrentState——回弹中途再按不从模型值起跳、不吞下一按。
@@ -145,16 +151,8 @@ enum BearyIconMotion {
             button.transform = .identity
             return
         }
-        UIView.animateKeyframes(withDuration: BearyMotion.micro, delay: 0, options: [.calculationModeLinear, .allowUserInteraction, .beginFromCurrentState], animations: {
-            UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.45) {
-                button.transform = CGAffineTransform(scaleX: 1.03, y: 1.03)
-            }
-            UIView.addKeyframe(withRelativeStartTime: 0.45, relativeDuration: 0.30) {
-                button.transform = CGAffineTransform(scaleX: 0.99, y: 0.99)
-            }
-            UIView.addKeyframe(withRelativeStartTime: 0.75, relativeDuration: 0.25) {
-                button.transform = .identity
-            }
+        UIView.animate(withDuration: BearyMotion.micro, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+            button.transform = .identity
         })
     }
 
