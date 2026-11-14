@@ -1906,7 +1906,7 @@ enum BearyText {
         return monthDayHourMinuteFormatter.string(from: date)
     }
 
-    /// 心情 key → 中文名（32 只熊脸＋节日 12 款；与网页 MOOD_DEFS 的 40 种不同集，
+    /// 心情 key → 中文名（32 只熊脸＋节日 200 款；与网页 MOOD_DEFS 的 40 种不同集，
     /// 节日款是 App 侧新增、网页暂无同款名，见 bearMoodKeys 注释）。
     static let moodNames: [String: String] = [
         "agree": "嗯嗯", "happy": "开心", "applause": "为你鼓掌", "cheer": "加油",
@@ -1920,20 +1920,135 @@ enum BearyText {
         "pumpkin": "南瓜灯", "ghost": "小幽灵", "bat": "蝙蝠", "witchhat": "女巫帽",
         "candy": "糖果", "spider": "蜘蛛", "lantern": "红灯笼", "redenvelope": "红包",
         "dumpling": "饺子", "firecracker": "鞭炮", "liondance": "舞狮", "ingot": "元宝",
+        "clockstrikesmidnight": "零点", "calendarflips": "日历", "partypopper": "彩带筒", "newyearclink": "碰杯",
+        "sparklerstar": "星光棒", "countdownskyburst": "花火", "hourglassturn": "沙漏", "partyhattip": "派对帽",
+        "newyeardiarypage": "新日记", "instantphotoejects": "拍立得", "balloonpair": "气球", "firstnewyearsunrise": "日出",
+        "openanewdoor": "开门", "partyblowerunrolls": "吹卷", "ribbonspool": "彩缎", "threecountdownlights": "倒数",
+        "startflagunfurls": "起步旗", "midnightticket": "票根", "newyearcitywindows": "亮窗", "starwishjar": "星愿瓶",
+        "foldingfan": "折扇", "dragondance": "游龙", "festivaldrum": "年鼓", "newyearfirework": "烟花",
+        "mandarinoranges": "双橘", "plumblossom": "梅花", "koiswim": "锦鲤", "candiedhawthorn": "糖葫芦",
+        "chineseknot": "中国结", "windowpapercut": "窗花", "festivejacket": "新衣", "teapour": "敬茶",
+        "reuniondoors": "迎春", "steamedprosperitycake": "发糕", "revolvinglantern": "走马灯", "yuanxiaoinspoon": "汤圆",
+        "rabbitpaperlantern": "兔灯", "goldfishlantern": "金鱼灯", "lotuslampopens": "莲花灯", "riddleslip": "灯谜",
+        "lanternsonwire": "灯串", "prismlantern": "六角灯", "rollyuanxiao": "滚元宵", "sesameyuanxiaosplit": "芝麻汤圆",
+        "sugarrabbit": "糖兔", "bearcarrieslantern": "提灯熊", "lanternwick": "灯芯", "lanterntasselunwind": "彩穗",
+        "lanternknot": "灯结", "lanternfairgate": "灯市", "paperlanternunfold": "纸灯", "flouroveryuanxiao": "糯米粉",
+        "floatinglanternreflection": "灯影", "fairpinwheellantern": "转灯", "chickhatching": "破壳", "eggdyedip": "染蛋",
+        "eggroll": "彩蛋滚", "egghiddeningrass": "找彩蛋", "easterbasket": "彩蛋篮", "rabbitbehindfence": "兔耳",
+        "rabbitleaps": "跳兔", "chocolaterabbitcrack": "巧克力兔", "carrottug": "拔萝卜", "ribboneggunwinds": "缎带",
+        "chickfirststeps": "小鸡", "daffodilopens": "水仙", "springeggnest": "鸟巢", "paintedeasteregg": "彩绘蛋",
+        "egghuntlens": "放大镜", "paperrabbitbunting": "纸兔旗", "hotcrossbun": "热面包", "bunnyfootprinttrail": "兔脚印",
+        "littlespringlamb": "小羊", "eastereggcarton": "蛋盒", "paperplanebanks": "纸飞机", "blowandpopbubbles": "泡泡",
+        "bearjackinbox": "盒子熊", "fourbladepinwheel": "风车", "spinningtop": "陀螺", "kitepullsline": "风筝",
+        "balloondog": "气球狗", "playgroundswing": "秋千", "sidewalkchalk": "粉笔画", "skippingrope": "跳绳",
+        "toytrainrolls": "小火车", "stackedblocksfall": "积木", "paperboatwaves": "纸船", "blanketpeekaboo": "躲猫猫",
+        "yoyoreturns": "悠悠球", "hopscotchstone": "跳格子", "toybinoculars": "望远镜", "puzzlepiecesclick": "拼图",
+        "windupduck": "发条鸭", "icecreamtilts": "冰淇淋", "magpiesbuildbridge": "鹊桥", "milkywaytwoshores": "银河",
+        "threadtheneedle": "穿针", "weavingshuttle": "织梭", "qiaoguoonplate": "巧果", "weaverhairpin": "簪穗",
+        "cowherdstrawhat": "斗笠", "cowbyriver": "老牛", "starsanswer": "双星", "magpiebeyondwindow": "夜鹊",
+        "brocadescroll": "织锦", "embroideryhoop": "绣绷", "floatingneedle": "浮针", "dewonsilk": "露珠",
+        "grapetrellis": "葡萄架", "silkthreadsknot": "丝结", "magpiefeatheroverwater": "鹊羽", "magpielands": "落鹊",
+        "qixistarmap": "星图", "fruitofferingslice": "瓜果", "moonbehindcloud": "满月", "splitmooncake": "半月饼",
+        "jaderabbitpestle": "玉兔", "osmanthusinbreeze": "桂花", "moonthroughwindow": "月光", "mooncakepress": "月饼花",
+        "osmanthustea": "桂花茶", "moonphases": "月相", "rabbithugsmoon": "接月兔", "bridgeundermoon": "月桥",
+        "moononwater": "水月", "vasewithosmanthus": "桂花瓶", "persimmononbranch": "秋柿", "pomeloopen": "柚子",
+        "silkmoonfan": "团扇", "mooncakedrawer": "月饼盒", "moonlitletter": "家书", "clayrabbitnod": "兔儿爷",
+        "rabbitswatchmoon": "望月", "moonindiary": "月入册", "hauntedcandle": "鬼火", "potionbottle": "药水",
+        "cauldron": "坩埚", "hauntedhouse": "鬼屋", "creakycoffin": "棺材", "chatteringskull": "骷髅",
+        "witchbroom": "扫帚", "werewolfmoon": "狼人", "mummyunwrapped": "木乃伊", "vampirebear": "吸血熊",
+        "monsterhand": "怪手", "blackcat": "黑猫", "crystalball": "水晶球", "scarecrow": "稻草人",
+        "marigoldbloom": "万寿菊", "pathofpetals": "花瓣路", "marigoldarch": "花拱", "ofrendacandles": "供烛",
+        "papelpicadogarland": "剪纸旗", "sugarskullflowerlines": "糖骷髅", "pandemuerto": "亡灵面包", "offeringwater": "清水",
+        "copalwarmsmoke": "柯巴香", "remembranceframe": "相框", "basketofmarigolds": "花篮", "papelpicadounfolds": "剪纸",
+        "marigoldflowercrown": "花冠", "clayjugpours": "陶罐", "candiedpumpkin": "糖南瓜", "butterflyovermarigold": "夜蝶",
+        "catrinaflowerhat": "花帽", "flowersonofrenda": "供花", "altarclothunrolls": "供桌布", "leaveamarigold": "留菊",
+        "christmastree": "圣诞树", "snowglobe": "雪景球", "surprisegift": "礼物盒", "jinglereindeer": "驯鹿",
+        "santachimney": "圣诞老人", "christmasstocking": "圣诞袜", "candycanes": "拐杖糖", "christmaswreath": "圣诞花环",
+        "gingerbreadbear": "姜饼熊", "glassbauble": "彩球", "snowmanhat": "雪人", "snowflakecrystal": "雪花",
+        "snowycabin": "雪屋", "santasleigh": "雪橇", "twinchristmasbells": "双铃", "woolenmittens": "手套",
+        "mistletoe": "槲寄生", "nutcracker": "胡桃夹子", "hotcocoa": "热可可", "christmaspostbox": "圣诞信箱",
     ]
 
     /// 节日心情 key：只有 LottieEmotes/ 下深浅 JSON，无 PNG 静态图；
     /// 不进 moodOrder（资产检查只认 PNG）、不进回应侧 BearyEmoteKeys.all；
     /// 内联渲染走 Lottie 静态帧（见 inlineAttachment），不走 PNG 口径；
     /// 现阶段不做领取门禁，人人可见可用。
-    static let halloweenMoodKeys: [String] = ["pumpkin", "ghost", "bat", "witchhat", "candy", "spider"]
-    static let springMoodKeys: [String] = ["lantern", "redenvelope", "dumpling", "firecracker", "liondance", "ingot"]
-    static let festivalMoodKeys: [String] = halloweenMoodKeys + springMoodKeys
+    static let newyearMoodKeys: [String] = [
+        "clockstrikesmidnight", "calendarflips", "partypopper", "newyearclink",
+        "sparklerstar", "countdownskyburst", "hourglassturn", "partyhattip",
+        "newyeardiarypage", "instantphotoejects", "balloonpair", "firstnewyearsunrise",
+        "openanewdoor", "partyblowerunrolls", "ribbonspool", "threecountdownlights",
+        "startflagunfurls", "midnightticket", "newyearcitywindows", "starwishjar"
+    ]
+    static let springMoodKeys: [String] = [
+        "lantern", "redenvelope", "dumpling", "firecracker",
+        "liondance", "ingot", "foldingfan", "dragondance",
+        "festivaldrum", "newyearfirework", "mandarinoranges", "plumblossom",
+        "koiswim", "candiedhawthorn", "chineseknot", "windowpapercut",
+        "festivejacket", "teapour", "reuniondoors", "steamedprosperitycake"
+    ]
+    static let lanternMoodKeys: [String] = [
+        "revolvinglantern", "yuanxiaoinspoon", "rabbitpaperlantern", "goldfishlantern",
+        "lotuslampopens", "riddleslip", "lanternsonwire", "prismlantern",
+        "rollyuanxiao", "sesameyuanxiaosplit", "sugarrabbit", "bearcarrieslantern",
+        "lanternwick", "lanterntasselunwind", "lanternknot", "lanternfairgate",
+        "paperlanternunfold", "flouroveryuanxiao", "floatinglanternreflection", "fairpinwheellantern"
+    ]
+    static let easterMoodKeys: [String] = [
+        "chickhatching", "eggdyedip", "eggroll", "egghiddeningrass",
+        "easterbasket", "rabbitbehindfence", "rabbitleaps", "chocolaterabbitcrack",
+        "carrottug", "ribboneggunwinds", "chickfirststeps", "daffodilopens",
+        "springeggnest", "paintedeasteregg", "egghuntlens", "paperrabbitbunting",
+        "hotcrossbun", "bunnyfootprinttrail", "littlespringlamb", "eastereggcarton"
+    ]
+    static let childrenMoodKeys: [String] = [
+        "paperplanebanks", "blowandpopbubbles", "bearjackinbox", "fourbladepinwheel",
+        "spinningtop", "kitepullsline", "balloondog", "playgroundswing",
+        "sidewalkchalk", "skippingrope", "toytrainrolls", "stackedblocksfall",
+        "paperboatwaves", "blanketpeekaboo", "yoyoreturns", "hopscotchstone",
+        "toybinoculars", "puzzlepiecesclick", "windupduck", "icecreamtilts"
+    ]
+    static let qixiMoodKeys: [String] = [
+        "magpiesbuildbridge", "milkywaytwoshores", "threadtheneedle", "weavingshuttle",
+        "qiaoguoonplate", "weaverhairpin", "cowherdstrawhat", "cowbyriver",
+        "starsanswer", "magpiebeyondwindow", "brocadescroll", "embroideryhoop",
+        "floatingneedle", "dewonsilk", "grapetrellis", "silkthreadsknot",
+        "magpiefeatheroverwater", "magpielands", "qixistarmap", "fruitofferingslice"
+    ]
+    static let midautumnMoodKeys: [String] = [
+        "moonbehindcloud", "splitmooncake", "jaderabbitpestle", "osmanthusinbreeze",
+        "moonthroughwindow", "mooncakepress", "osmanthustea", "moonphases",
+        "rabbithugsmoon", "bridgeundermoon", "moononwater", "vasewithosmanthus",
+        "persimmononbranch", "pomeloopen", "silkmoonfan", "mooncakedrawer",
+        "moonlitletter", "clayrabbitnod", "rabbitswatchmoon", "moonindiary"
+    ]
+    static let halloweenMoodKeys: [String] = [
+        "pumpkin", "ghost", "bat", "witchhat",
+        "candy", "spider", "hauntedcandle", "potionbottle",
+        "cauldron", "hauntedhouse", "creakycoffin", "chatteringskull",
+        "witchbroom", "werewolfmoon", "mummyunwrapped", "vampirebear",
+        "monsterhand", "blackcat", "crystalball", "scarecrow"
+    ]
+    static let dayofthedeadMoodKeys: [String] = [
+        "marigoldbloom", "pathofpetals", "marigoldarch", "ofrendacandles",
+        "papelpicadogarland", "sugarskullflowerlines", "pandemuerto", "offeringwater",
+        "copalwarmsmoke", "remembranceframe", "basketofmarigolds", "papelpicadounfolds",
+        "marigoldflowercrown", "clayjugpours", "candiedpumpkin", "butterflyovermarigold",
+        "catrinaflowerhat", "flowersonofrenda", "altarclothunrolls", "leaveamarigold"
+    ]
+    static let christmasMoodKeys: [String] = [
+        "christmastree", "snowglobe", "surprisegift", "jinglereindeer",
+        "santachimney", "christmasstocking", "candycanes", "christmaswreath",
+        "gingerbreadbear", "glassbauble", "snowmanhat", "snowflakecrystal",
+        "snowycabin", "santasleigh", "twinchristmasbells", "woolenmittens",
+        "mistletoe", "nutcracker", "hotcocoa", "christmaspostbox"
+    ]
+    static let festivalMoodKeys: [String] = newyearMoodKeys + springMoodKeys + lanternMoodKeys + easterMoodKeys + childrenMoodKeys + qixiMoodKeys + midautumnMoodKeys + halloweenMoodKeys + dayofthedeadMoodKeys + christmasMoodKeys
 
     /// 内联心情记号（编辑器熊脸图 ↔ 落库纯文本的中间层）：
     /// 编辑器里心情是图片附件，正文/标题落库与后端都只存纯文本，故附件在
     /// 发出/存草稿时转成记号 `[mood:<key>]`，读回编辑器/卡片/详情时再转回图。
-    /// 前 32 只熊脸（后 8 只非熊脸已删，不进记号集）＋节日 12 款；
+    /// 前 32 只熊脸（后 8 只非熊脸已删，不进记号集）＋节日 200 款；
     /// moodOrder 32 只与本集前 32 项逐项一致，改默认组要同步两处；
     /// 节日款不在 moodOrder 里（资产检查只认 PNG），只进本集与 moodNames。
     /// 未知 key 的记号原样当文字，不凭空变图。用户手打的同形文字也会在读回时变图，
@@ -1945,6 +2060,53 @@ enum BearyText {
         "proud", "shrug", "sorry", "cry", "angry", "thanks", "zap", "wave",
         "pumpkin", "ghost", "bat", "witchhat", "candy", "spider",
         "lantern", "redenvelope", "dumpling", "firecracker", "liondance", "ingot",
+        "clockstrikesmidnight", "calendarflips", "partypopper", "newyearclink",
+        "sparklerstar", "countdownskyburst", "hourglassturn", "partyhattip",
+        "newyeardiarypage", "instantphotoejects", "balloonpair", "firstnewyearsunrise",
+        "openanewdoor", "partyblowerunrolls", "ribbonspool", "threecountdownlights",
+        "startflagunfurls", "midnightticket", "newyearcitywindows", "starwishjar",
+        "foldingfan", "dragondance", "festivaldrum", "newyearfirework",
+        "mandarinoranges", "plumblossom", "koiswim", "candiedhawthorn",
+        "chineseknot", "windowpapercut", "festivejacket", "teapour",
+        "reuniondoors", "steamedprosperitycake", "revolvinglantern", "yuanxiaoinspoon",
+        "rabbitpaperlantern", "goldfishlantern", "lotuslampopens", "riddleslip",
+        "lanternsonwire", "prismlantern", "rollyuanxiao", "sesameyuanxiaosplit",
+        "sugarrabbit", "bearcarrieslantern", "lanternwick", "lanterntasselunwind",
+        "lanternknot", "lanternfairgate", "paperlanternunfold", "flouroveryuanxiao",
+        "floatinglanternreflection", "fairpinwheellantern", "chickhatching", "eggdyedip",
+        "eggroll", "egghiddeningrass", "easterbasket", "rabbitbehindfence",
+        "rabbitleaps", "chocolaterabbitcrack", "carrottug", "ribboneggunwinds",
+        "chickfirststeps", "daffodilopens", "springeggnest", "paintedeasteregg",
+        "egghuntlens", "paperrabbitbunting", "hotcrossbun", "bunnyfootprinttrail",
+        "littlespringlamb", "eastereggcarton", "paperplanebanks", "blowandpopbubbles",
+        "bearjackinbox", "fourbladepinwheel", "spinningtop", "kitepullsline",
+        "balloondog", "playgroundswing", "sidewalkchalk", "skippingrope",
+        "toytrainrolls", "stackedblocksfall", "paperboatwaves", "blanketpeekaboo",
+        "yoyoreturns", "hopscotchstone", "toybinoculars", "puzzlepiecesclick",
+        "windupduck", "icecreamtilts", "magpiesbuildbridge", "milkywaytwoshores",
+        "threadtheneedle", "weavingshuttle", "qiaoguoonplate", "weaverhairpin",
+        "cowherdstrawhat", "cowbyriver", "starsanswer", "magpiebeyondwindow",
+        "brocadescroll", "embroideryhoop", "floatingneedle", "dewonsilk",
+        "grapetrellis", "silkthreadsknot", "magpiefeatheroverwater", "magpielands",
+        "qixistarmap", "fruitofferingslice", "moonbehindcloud", "splitmooncake",
+        "jaderabbitpestle", "osmanthusinbreeze", "moonthroughwindow", "mooncakepress",
+        "osmanthustea", "moonphases", "rabbithugsmoon", "bridgeundermoon",
+        "moononwater", "vasewithosmanthus", "persimmononbranch", "pomeloopen",
+        "silkmoonfan", "mooncakedrawer", "moonlitletter", "clayrabbitnod",
+        "rabbitswatchmoon", "moonindiary", "hauntedcandle", "potionbottle",
+        "cauldron", "hauntedhouse", "creakycoffin", "chatteringskull",
+        "witchbroom", "werewolfmoon", "mummyunwrapped", "vampirebear",
+        "monsterhand", "blackcat", "crystalball", "scarecrow",
+        "marigoldbloom", "pathofpetals", "marigoldarch", "ofrendacandles",
+        "papelpicadogarland", "sugarskullflowerlines", "pandemuerto", "offeringwater",
+        "copalwarmsmoke", "remembranceframe", "basketofmarigolds", "papelpicadounfolds",
+        "marigoldflowercrown", "clayjugpours", "candiedpumpkin", "butterflyovermarigold",
+        "catrinaflowerhat", "flowersonofrenda", "altarclothunrolls", "leaveamarigold",
+        "christmastree", "snowglobe", "surprisegift", "jinglereindeer",
+        "santachimney", "christmasstocking", "candycanes", "christmaswreath",
+        "gingerbreadbear", "glassbauble", "snowmanhat", "snowflakecrystal",
+        "snowycabin", "santasleigh", "twinchristmasbells", "woolenmittens",
+        "mistletoe", "nutcracker", "hotcocoa", "christmaspostbox",
     ]
     static let inlineMoodKeyAttribute = NSAttributedString.Key(rawValue: "BearyInlineMoodKey")
     static func inlineMoodToken(for key: String) -> String? {
