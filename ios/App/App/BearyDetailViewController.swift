@@ -3154,7 +3154,7 @@ final class BearyDetailViewController: UIViewController {
         // 门禁/提醒期间置 busy 防重入，放弃时清 busy、原态未动（乐观落地只在 perform 里做）。
         BearyVisibility.presentPicker(from: self, entry: entry) { [weak self] targetVisibility in
             guard let self = self else { return }
-            if targetVisibility == BearyVisibility.current(for: self.entry) { return }
+            if BearyVisibility.isNoChange(target: targetVisibility, for: self.entry) { return }
             self.isVisibilityBusy = true
             if targetVisibility == "public" {
                 BearyQuoteGate.gatePublicToggle(from: self, entry: self.entry) { [weak self] result in
