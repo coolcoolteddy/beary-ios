@@ -541,7 +541,7 @@ final class BearyDetailViewController: UIViewController {
     }
 
     @objc private func nineGridButtonTapped() {
-        BearyNineGridPresenter.present(from: self, imageKeys: Array(imageKeys.prefix(9)), liveVideos: entry.liveVideos)
+        BearyNineGridPresenter.present(from: self, anchorView: nineGridButton, imageKeys: Array(imageKeys.prefix(9)), liveVideos: entry.liveVideos)
     }
     /// 批 E 详情位置行：官方 icon_location 13 灰 + 位置文案；公开篇作者本人
     /// 也只看区级（与他人视角一致），不再另附提示行。无位置/他人视角无区级/

@@ -998,7 +998,7 @@ final class BearyTimelineCell: UITableViewCell {
     /// 引用卡小图不走此路（点按引用卡仍走 onQuoteEntry 打开被引用日记）。
     var onTapImages: (([String], Int, CGRect?, UIImage?) -> Void)?
     /// 九宫格入口点按：容器接线（Plus 门控 + 开网格都在容器侧，本处只转发）。
-    var onNineGridTapped: (() -> Void)?
+    var onNineGridTapped: ((UIButton) -> Void)?
     private let actsStack = UIStackView()
     /// 2026-10-29 Li 定编辑态口径：无图标、只留文字；冲突清单第 4 条取消
     /// 15 分钟锁后，本行只剩可点按的“编辑”二字（本行唯一的编辑入口，
@@ -1602,7 +1602,7 @@ final class BearyTimelineCell: UITableViewCell {
     }
 
     @objc private func nineGridButtonTapped() {
-        onNineGridTapped?()
+        onNineGridTapped?(nineGridButton)
     }
 
     /// C4：时间线引用占位/来源行已并入公共 BearyQuoteCardView（showGone /
@@ -6895,9 +6895,9 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
             viewer.modalPresentationStyle = .fullScreen
             self.present(viewer, animated: UIAccessibility.isReduceMotionEnabled == false, completion: nil)
         }
-        cell.onNineGridTapped = { [weak self] in
+        cell.onNineGridTapped = { [weak self] button in
             guard let strongSelf = self else { return }
-            BearyNineGridPresenter.present(from: strongSelf, imageKeys: viewerEntry.images ?? [], liveVideos: viewerEntry.liveVideos)
+            BearyNineGridPresenter.present(from: strongSelf, anchorView: button, imageKeys: viewerEntry.images ?? [], liveVideos: viewerEntry.liveVideos)
         }
         return cell
     }

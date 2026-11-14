@@ -161,9 +161,22 @@ enum BearyNineGridPresenter {
 
     /// Plus 专属（2026-11-03 Li 定版：九宫格版式只给 Plus 开）；非 Plus 走景深背景
     /// 同款 Plus 专属提示口径，不开网格。图片上限 9 张与图片条一致。
-    static func present(from viewController: UIViewController, imageKeys: [String], liveVideos: [String: String]?) {
+    /// r22 A6：未登录先走登录门（登录态未知时不弹登录页，改网络 toast，与卡片
+    /// onRequireLogin 汇点同款）；A7：非 Plus 拒绝只摇触发入口，不摇整页。
+    static func present(from viewController: UIViewController, anchorView: UIView? = nil, imageKeys: [String], liveVideos: [String: String]?) {
         guard viewController.presentedViewController == nil else { return }
+        if SessionManager.shared.isLoggedIn == false {
+            if SessionManager.shared.authUnknown {
+                BearyToast.show(in: viewController.view, message: "网络不稳定，请稍后再试")
+            } else {
+                viewController.present(BearyLoginSheet.make(), animated: BearyMotion.animated(true), completion: nil)
+            }
+            return
+        }
         guard SessionManager.shared.currentUser?.plus == true else {
+            if let anchorView {
+                playDenyShake(on: anchorView)
+            }
             BearyToast.show(in: viewController.view, message: "仅 Plus 会员可使用九宫格版式")
             return
         }
@@ -172,5 +185,19 @@ enum BearyNineGridPresenter {
         let grid = BearyNineGridViewController(imageKeys: keys, liveVideos: liveVideos)
         grid.modalPresentationStyle = .fullScreen
         viewController.present(grid, animated: BearyMotion.animated(true), completion: nil)
+    }
+
+    /// 非 Plus 拒绝动效：0.38s 摇头＋warning 震动＋拒绝音效（与详情 playDenyShake 同口径；
+    /// 减动效时只跳视觉抖动），只摇触发入口。
+    private static func playDenyShake(on view: UIView) {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+        if UIAccessibility.isReduceMotionEnabled { return }
+        view.layer.removeAnimation(forKey: "bearyNineGridDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = BearyMotion.screen
+        view.layer.add(shake, forKey: "bearyNineGridDenyShake")
     }
 }
