@@ -3855,6 +3855,11 @@ final class BearyChromeViewController: UIViewController {
                 self?.presentComposerForEdit(entry: entry)
             }
         }
+        detail.onRestoreSnapshotToEditor = { [weak self, weak detail] entry, snapshot in
+            detail?.dismiss(animated: BearyMotion.animated(true)) {
+                self?.presentComposerForEdit(entry: entry, restoredSnapshot: snapshot)
+            }
+        }
         detail.onDelete = { [weak self, weak detail] entry in
             detail?.dismiss(animated: BearyMotion.animated(true)) {
                 self?.confirmAndDeleteEntry(entry)
@@ -4094,13 +4099,18 @@ final class BearyChromeViewController: UIViewController {
     ///（112 返回未改不刷新：取消没有保存，服务端未动；旧 C4 网页 closeEditor +
     /// loadFeed 同口径的无条件重拉已删）；发布时登录失效 →
     /// 登录页盖在编辑器上层，编辑器不关（D7）。
-    private func presentComposerForEdit(entry: Entry) {
+    /// restoredSnapshot：快照预览「恢复到编辑器」时带入，快照文字预填进编辑器、
+    /// 手动保存才落盘（保存时服务端先把恢复前版本存为快照）；平时为 nil。
+    private func presentComposerForEdit(entry: Entry, restoredSnapshot: BearyEntrySnapshot? = nil) {
         if isComposerPresented() { return }
         guard SessionManager.shared.isLoggedIn else {
             presentLoginGate()
             return
         }
         let c = BearyComposerViewController(entry: entry)
+        if let snapshot = restoredSnapshot {
+            c.restoredSnapshotText = (title: snapshot.title, content: snapshot.content ?? "")
+        }
         c.onUpdated = { [weak self, weak c] updated in
             guard let self = self else { return }
             c?.dismiss(animated: BearyMotion.animated(true)) {

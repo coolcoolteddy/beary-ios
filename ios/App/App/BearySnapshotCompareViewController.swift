@@ -1,37 +1,42 @@
 import UIKit
 
-// 快照对比（2026-11-11 产品冲突清单第 4 条定版）：新旧两版文字对比，改动行高亮；
-// 一键恢复只恢复文字，界面明写「只恢复文字」；星标只由用户手动加。
+// 快照预览（2026-11-14 Li 定版，照截图改成底部弹窗两层中的预览层；
+// 原「快照对比」页替换为本页：不再并排对比新旧版，只展示快照文字内容）。
+// 标题「快照预览」，副行「时间 · 保存成功」；正文为快照文字（标题有则占首行，
+// 与恢复写回的 title＋content 同款——服务端恢复同时写回两者）；
+// 提示「请先核对快照内容。恢复前会备份当前非空文字，恢复后需手动保存。」；
+// 底部橙色满宽钮「恢复到编辑器」。
+// 恢复语义（与截图注文一致）：点按钮不直接写库，只把快照文字载入编辑器、
+// 手动保存才落盘；保存时服务端 PUT 先把恢复前版本存为快照（既有口径），
+// 故恢复前备份有兜底、不调 POST restore（它会直接写库，等于自动保存）。
+// 星标能力保留：右上角星形钮，点亮橙色＝已加星标，沿用原 star 接口。
 
-final class BearySnapshotCompareViewController: UIViewController {
+final class BearySnapshotPreviewViewController: UIViewController {
     var onStarChanged: ((Int, Bool) -> Void)?
-    var onRestored: (() -> Void)?
+    var onRestoreToEditor: ((BearyEntrySnapshot) -> Void)?
 
     private let entryId: String
     private var snapshot: BearyEntrySnapshot
-    private let currentContent: String
-    private let currentTitle: String?
 
-    private let scrollView = UIScrollView()
-    private let contentStack = UIStackView()
-    private let noteLabel: UILabel = {
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.secondaryFont()
-        label.textColor = BearyColors.gray
-        label.numberOfLines = 0
-        label.text = "只恢复文字，不动现在的照片。"
-        return label
-    }()
-    private let currentTextView = UITextView()
-    private let snapshotTextView = UITextView()
-    private let restoreButton = UIButton(type: .system)
+    /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页/公告同款做法）。
+    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
 
-    init(entryId: String, snapshot: BearyEntrySnapshot, currentContent: String, currentTitle: String?) {
+    private let grabberView = UIView()
+    private let titleLabel = UILabel()
+    private let starButton = UIButton(type: .system)
+    private let subtitleLabel = UILabel()
+    private let contentTextView = UITextView()
+    private let noteLabel = UILabel()
+    private let restoreButton = BearyButton.make(style: .primaryPill(.orange), title: "恢复到编辑器")
+    private var textHeightConstraint: NSLayoutConstraint?
+
+    /// 正文区最高 360pt，超出内部滚动；最少 80pt，空内容也不塌。
+    private static let maxTextHeight: CGFloat = 360
+    private static let minTextHeight: CGFloat = 80
+
+    init(entryId: String, snapshot: BearyEntrySnapshot) {
         self.entryId = entryId
         self.snapshot = snapshot
-        self.currentContent = currentContent
-        self.currentTitle = currentTitle
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -39,70 +44,136 @@ final class BearySnapshotCompareViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.bg
-        title = "快照对比"
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            title: snapshot.isStarred ? "★ 已加星" : "☆ 加星标",
-            style: .plain, target: self, action: #selector(starTapped))
-        navigationItem.rightBarButtonItem?.tintColor = BearyColors.ink
+        view.backgroundColor = BearyColors.surface3
+        view.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        view.layer.masksToBounds = true
 
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.axis = .vertical
-        contentStack.spacing = 16
-        view.addSubview(scrollView)
-        scrollView.addSubview(contentStack)
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 16),
-            contentStack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 16),
-            contentStack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -16),
-            contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -24),
-            contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -32),
-        ])
+        grabberView.translatesAutoresizingMaskIntoConstraints = false
+        grabberView.backgroundColor = BearyColors.gray
+        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
+        view.addSubview(grabberView)
 
-        contentStack.addArrangedSubview(noteLabel)
-        contentStack.addArrangedSubview(sectionLabel(text: "当前版本"))
-        contentStack.addArrangedSubview(currentTextView)
-        let snapshotDate = snapshot.createdAt.map { BearyDiaryCardCell.feedTimeString(ms: $0) } ?? ""
-        contentStack.addArrangedSubview(sectionLabel(text: snapshotDate.isEmpty ? "快照版本" : "快照版本 · \(snapshotDate)"))
-        contentStack.addArrangedSubview(snapshotTextView)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = "快照预览"
+        titleLabel.font = BearyDynamicType.pageTitleFont()
+        titleLabel.textColor = BearyColors.ink
+        view.addSubview(titleLabel)
 
-        for textView in [currentTextView, snapshotTextView] {
-            textView.translatesAutoresizingMaskIntoConstraints = false
-            textView.isEditable = false
-            textView.isScrollEnabled = false
-            textView.backgroundColor = BearyColors.surface1
-            textView.layer.cornerRadius = BearyCorners.single
-            textView.textContainerInset = UIEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
-        }
-        let (oldAttributed, newAttributed) = BearySnapshotDiff.highlighted(
-            old: BearySnapshotDiff.displayText(title: snapshot.title, content: snapshot.content ?? ""),
-            new: BearySnapshotDiff.displayText(title: currentTitle, content: currentContent))
-        snapshotTextView.attributedText = oldAttributed
-        currentTextView.attributedText = newAttributed
+        starButton.translatesAutoresizingMaskIntoConstraints = false
+        starButton.setImage(BearyIconImages.image(named: "icon_star", pointSize: 20), for: .normal)
+        starButton.addTarget(self, action: #selector(starTapped), for: .touchUpInside)
+        starButton.bearyAddPressFeedback()
+        refreshStarButton()
+        view.addSubview(starButton)
+
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        subtitleLabel.font = BearyDynamicType.captionFont()
+        subtitleLabel.textColor = BearyColors.gray
+        subtitleLabel.text = snapshot.displayDateString.isEmpty ? "保存成功" : "\(snapshot.displayDateString) · 保存成功"
+        view.addSubview(subtitleLabel)
+
+        contentTextView.translatesAutoresizingMaskIntoConstraints = false
+        contentTextView.isEditable = false
+        contentTextView.isScrollEnabled = true
+        contentTextView.backgroundColor = .clear
+        contentTextView.textContainerInset = .zero
+        contentTextView.textContainer.lineFragmentPadding = 0
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = 1.6
+        paragraph.lineBreakMode = .byCharWrapping
+        contentTextView.attributedText = NSAttributedString(
+            string: Self.displayText(title: snapshot.title, content: snapshot.content ?? ""),
+            attributes: [.font: BearyDynamicType.smallBodyFont(), .foregroundColor: BearyColors.ink, .paragraphStyle: paragraph])
+        view.addSubview(contentTextView)
+
+        noteLabel.translatesAutoresizingMaskIntoConstraints = false
+        noteLabel.font = BearyDynamicType.captionFont()
+        noteLabel.textColor = BearyColors.gray
+        noteLabel.numberOfLines = 0
+        noteLabel.text = "请先核对快照内容。恢复前会备份当前非空文字，恢复后需手动保存。"
+        view.addSubview(noteLabel)
 
         restoreButton.translatesAutoresizingMaskIntoConstraints = false
-        restoreButton.setTitle("恢复到这个版本", for: .normal)
-        restoreButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
-        restoreButton.setTitleColor(BearyColors.bg, for: .normal)
-        restoreButton.backgroundColor = BearyColors.ink
-        restoreButton.layer.cornerRadius = BearyCorners.single
-        restoreButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
         restoreButton.addTarget(self, action: #selector(restoreTapped), for: .touchUpInside)
         restoreButton.bearyAddPressFeedback()
-        contentStack.addArrangedSubview(restoreButton)
+        view.addSubview(restoreButton)
+
+        let textHeight = contentTextView.heightAnchor.constraint(equalToConstant: Self.minTextHeight)
+        textHeightConstraint = textHeight
+        NSLayoutConstraint.activate([
+            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop),
+            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
+            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
+
+            titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
+            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+
+            starButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            starButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+            starButton.widthAnchor.constraint(equalToConstant: 44),
+            starButton.heightAnchor.constraint(equalToConstant: 44),
+
+            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
+            subtitleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            subtitleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+
+            contentTextView.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 16),
+            contentTextView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            contentTextView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            textHeight,
+
+            noteLabel.topAnchor.constraint(equalTo: contentTextView.bottomAnchor, constant: 16),
+            noteLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            noteLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+
+            restoreButton.topAnchor.constraint(equalTo: noteLabel.bottomAnchor, constant: 16),
+            restoreButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            restoreButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            restoreButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.orange).height),
+            restoreButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+        ])
     }
 
-    private func sectionLabel(text: String) -> UILabel {
-        let label = UILabel()
-        label.font = BearyDynamicType.smallSemiboldFont()
-        label.textColor = BearyColors.ink
-        label.text = text
-        return label
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateTextHeight()
+        updatePreferredContentSize()
+    }
+
+    /// 正文区按内容高撑开（上限 360pt 内部滚动），宽/字号档变化时跟帧补齐。
+    private func updateTextHeight() {
+        contentTextView.layoutIfNeeded()
+        let contentHeight = contentTextView.contentSize.height
+        let height = min(max(contentHeight, Self.minTextHeight), Self.maxTextHeight)
+        if textHeightConstraint?.constant != height {
+            textHeightConstraint?.constant = height
+        }
+    }
+
+    /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档变化时跟帧补齐。
+    /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
+    func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
+        let width = view.bounds.width > 0 ? view.bounds.width : 375
+        let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
+        let size = view.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+        let height = ceil(size.height) + extraBottomInset
+        let preferred = CGSize(width: width, height: height)
+        if preferredContentSize != preferred {
+            preferredContentSize = preferred
+        }
+    }
+
+    /// 展示文本：标题（有则）占首行，正文随后（与原对比页同款）。
+    private static func displayText(title: String?, content: String) -> String {
+        guard let title = title, !title.isEmpty else { return content }
+        return content.isEmpty ? title : "\(title)\n\(content)"
+    }
+
+    private func refreshStarButton() {
+        starButton.tintColor = snapshot.isStarred ? BearyColors.orange : BearyColors.gray
+        starButton.accessibilityLabel = snapshot.isStarred ? "已加星标" : "加星标"
     }
 
     @objc private func starTapped() {
@@ -114,7 +185,7 @@ final class BearySnapshotCompareViewController: UIViewController {
                 case .success(let resp):
                     let starred = (resp.starred ?? 0) == 1
                     self.snapshot.starred = starred ? 1 : 0
-                    self.navigationItem.rightBarButtonItem?.title = starred ? "★ 已加星" : "☆ 加星标"
+                    self.refreshStarButton()
                     self.onStarChanged?(snapshotId, starred)
                 case .failure:
                     BearyToast.show(in: self.view, message: "操作失败，请重试")
@@ -124,87 +195,29 @@ final class BearySnapshotCompareViewController: UIViewController {
     }
 
     @objc private func restoreTapped() {
-        guard let snapshotId = snapshot.id else { return }
-        BearyConfirmSheet.show(from: self, title: "恢复到这个版本？", message: "只恢复文字，不动现在的照片。恢复前会先自动存一遍当前版本。", actions: [
-            BearyConfirmSheet.Action(title: "恢复", style: .default, handler: { [weak self] in
-                guard let self = self else { return }
-                BearyAPI.shared.restoreSnapshot(entryId: self.entryId, snapshotId: snapshotId) { [weak self] result in
-                    DispatchQueue.main.async {
-                        guard let self = self else { return }
-                        switch result {
-                        case .success:
-                            // 成功提示由详情页在关页后弹（本页随关页消失，toast 会一并消失）。
-                            self.onRestored?()
-                        case .failure:
-                            BearyToast.show(in: self.view, message: "恢复失败，请重试")
-                        }
-                    }
-                }
-            }),
-            BearyConfirmSheet.Action(title: "取消", style: .cancel, handler: {}),
-        ])
+        // 不直接写库：只把快照文字载入编辑器，手动保存才落盘（见文件头注释）。
+        onRestoreToEditor?(snapshot)
     }
 }
 
-// MARK: - 行级 diff（改动行高亮）
+// MARK: - 弹出（公告底 sheet 同款容器口径）
 
-enum BearySnapshotDiff {
-    /// 展示文本：标题（有则）占首行，正文随后；标题变化同样按行参与 diff。
-    static func displayText(title: String?, content: String) -> String {
-        guard let title = title, !title.isEmpty else { return content }
-        return content.isEmpty ? title : "\(title)\n\(content)"
-    }
-
-    /// 行级 LCS diff：旧版独有的行红底、新版独有的行绿底，其余行无底色。
-    static func highlighted(old: String, new: String) -> (old: NSAttributedString, new: NSAttributedString) {
-        let oldLines = old.components(separatedBy: "\n")
-        let newLines = new.components(separatedBy: "\n")
-        let lcs = lcsTable(oldLines, newLines)
-        var oldRemoved = Set<Int>()
-        var newAdded = Set<Int>()
-        var i = oldLines.count, j = newLines.count
-        while i > 0 || j > 0 {
-            if i > 0, j > 0, oldLines[i - 1] == newLines[j - 1] {
-                i -= 1; j -= 1
-            } else if j > 0, (i == 0 || lcs[i][j - 1] >= lcs[i - 1][j]) {
-                newAdded.insert(j - 1); j -= 1
-            } else if i > 0 {
-                oldRemoved.insert(i - 1); i -= 1
-            }
-        }
-        return (attributed(lines: oldLines, highlighted: oldRemoved, color: BearyColors.red),
-                attributed(lines: newLines, highlighted: newAdded, color: BearyColors.green))
-    }
-
-    private static func lcsTable(_ a: [String], _ b: [String]) -> [[Int]] {
-        var table = Array(repeating: Array(repeating: 0, count: b.count + 1), count: a.count + 1)
-        guard !a.isEmpty, !b.isEmpty else { return table }
-        for i in 1...a.count {
-            for j in 1...b.count {
-                table[i][j] = a[i - 1] == b[j - 1] ? table[i - 1][j - 1] + 1 : max(table[i - 1][j], table[i][j - 1])
-            }
-        }
-        return table
-    }
-
-    private static func attributed(lines: [String], highlighted: Set<Int>, color: UIColor) -> NSAttributedString {
-        let font = BearyDynamicType.diaryBodyFont()
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineHeightMultiple = 1.6
-        paragraph.lineBreakMode = .byCharWrapping
-        let result = NSMutableAttributedString()
-        for (index, line) in lines.enumerated() {
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: BearyColors.ink,
-                .paragraphStyle: paragraph,
-                .backgroundColor: highlighted.contains(index) ? BearyColors.alpha(color, 0.12) : UIColor.clear,
-            ]
-            result.append(NSAttributedString(string: line, attributes: attrs))
-            if index < lines.count - 1 {
-                result.append(NSAttributedString(string: "\n", attributes: attrs))
-            }
-        }
-        return result
+extension BearySnapshotPreviewViewController {
+    static func show(from presenter: UIViewController, entryId: String, snapshot: BearyEntrySnapshot, onStarChanged: ((Int, Bool) -> Void)?, onRestoreToEditor: ((BearyEntrySnapshot) -> Void)?) {
+        let sheet = BearySnapshotPreviewViewController(entryId: entryId, snapshot: snapshot)
+        sheet.onStarChanged = onStarChanged
+        sheet.onRestoreToEditor = onRestoreToEditor
+        let delegate = BearyBottomSheetTransitioningDelegate()
+        sheet.sheetDelegate = delegate
+        sheet.transitioningDelegate = delegate
+        sheet.modalPresentationStyle = .custom
+        sheet.loadViewIfNeeded()
+        let presenterWidth = presenter.view.bounds.width
+        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
+        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
+        sheet.view.setNeedsLayout()
+        sheet.view.layoutIfNeeded()
+        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
+        presenter.present(sheet, animated: BearyMotion.animated(true))
     }
 }

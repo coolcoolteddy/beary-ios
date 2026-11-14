@@ -379,6 +379,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 非 nil 即编辑模式：回填正文/心情/天气/图片/@；引用可改可删。
     private var editingEntry: Entry?
     private var isEditMode: Bool { editingEntry != nil }
+    /// 快照恢复进编辑器：详情快照预览点「恢复到编辑器」时由容器置入；
+    /// setupEditContent 首次回填后以快照文字（标题＋正文）覆盖回填，
+    /// 原文仍以 editingEntry 为准——脏检查据此认作已改动，保存走正常 PUT
+    /// （服务端保存前自动把恢复前版本存为快照），手动保存才落盘。
+    var restoredSnapshotText: (title: String?, content: String)?
 
     init() {
         super.init(nibName: nil, bundle: nil)
@@ -7488,6 +7493,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 109：编辑回填标题进新输入框（编辑永久可改）；无标题时字段留空。
             // 无标题时字段留空。
             setHeadlineText(entry.title)
+            // 快照恢复进编辑器：以快照文字覆盖首次回填（只标题＋正文；心情/
+            // 天气/位置/图片仍用原文，恢复只恢复文字）。只在首次回填跑，
+            // 补拉二次调用不重填、不盖用户在加载期间的手改；用后即清。
+            if let restored = restoredSnapshotText {
+                restoredSnapshotText = nil
+                setBodyAttributedText(restored.content)
+                applyBodyLineHeight()
+                setHeadlineText(restored.title)
+            }
             selectedMood = entry.mood
             selectedWeather = entry.weather
         }
