@@ -73,7 +73,7 @@ enum BearyProfilePersonalLogic {
         }
     }
 
-    /// 本地日（Calendar.current，设备时区）起点的 Date，用作 streak 去重键。
+    /// 北京日（北京时间日历，Asia/Shanghai）起点的 Date，用作 streak 去重键。
     static func startOfDay(for timestampMs: Int, calendar: Calendar) -> Date? {
         let date = Date(timeIntervalSince1970: TimeInterval(timestampMs) / 1000)
         return calendar.startOfDay(for: date)
