@@ -97,7 +97,6 @@ enum BearySoundPlayer {
         }
         // 命中池：零文件 IO、零解码，只有取池 + play()，调用保持轻。
         guard let pooled = takePooledPlayer(for: sound) else {
-            DiagFile.mark("sound-play \(sound.rawValue) miss")
             // 审计第 21 项残留缺口：未命中（预热未完成 / 同音 burst 超池）
             // 时不再主线程同步 buildPlayer——点按主线程只调度后台建播放器
             // 就立即返回；建好后回主线程、符合新鲜度才播放，过期不播只回池。
@@ -105,7 +104,6 @@ enum BearySoundPlayer {
             return
         }
         pooled.currentTime = 0
-        DiagFile.mark("sound-play \(sound.rawValue) hit")
         // 已解码数据仍在内存，prepareToPlay 只是内存侧就绪，不读文件。
         pooled.prepareToPlay()
         refillPoolIfEmpty(for: sound)
@@ -114,7 +112,6 @@ enum BearySoundPlayer {
 
     /// 主线程播放已就绪播放器：强持有到播完，播完回池（池满丢弃）。
     private static func startPlaying(_ player: AVAudioPlayer, for sound: BearySound) {
-        DiagFile.mark("sound-start \(sound.rawValue) player=\(ObjectIdentifier(player).hashValue) session=\(AVAudioSession.sharedInstance().category.rawValue)")
         poolLock.lock()
         activePlayers.append(player)
         poolLock.unlock()
