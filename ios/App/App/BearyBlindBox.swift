@@ -89,12 +89,14 @@ enum BlindBoxDate {
 enum BlindBoxPoolEligibility {
     case eligible
     case privateEntry
+    case friendsOnly
     case tooNew
 
     var disabledReason: String? {
         switch self {
         case .eligible: return nil
         case .privateEntry: return "私密篇不可入池"
+        case .friendsOnly: return "仅好友日记不可入池"
         case .tooNew: return "今日公开，明日可入池"
         }
     }
@@ -104,9 +106,13 @@ enum BlindBoxPool {
     /// 旧公开 = 有效公开且 published_at 早于今日 00:00；私密与当日新公开一律置灰禁用。
     /// 审计 2026-11-02 第十节：入池资格改用有效态——限时到期转私密后不再算公开，
     /// 行 pill 同步走本函数（过期篇 pill 由“公开”改“私密”，与资格一致）；
+    /// 仅好友单独一档：行上显示“仅好友”（墨字灰底），仍不可入池，只改显示、不改资格。
     /// 服务端交换接口二次校验不在 App 支做（后端项，见 PR 未做项）。
     static func eligibility(for entry: Entry) -> BlindBoxPoolEligibility {
-        guard BearyEphemeral.isEffectivelyPublic(entry) else { return .privateEntry }
+        guard BearyEphemeral.isEffectivelyPublic(entry) else {
+            if entry.isFriendsOnly { return .friendsOnly }
+            return .privateEntry
+        }
         let published = entry.publishedAt ?? entry.createdAt ?? 0
         if published <= 0 || published >= BlindBoxDate.todayStartMs() { return .tooNew }
         return .eligible

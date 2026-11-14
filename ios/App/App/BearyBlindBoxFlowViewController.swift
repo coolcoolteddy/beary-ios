@@ -140,6 +140,13 @@ private final class BlindBoxPoolRowView: UIView {
             subLabel.text = (dateText.isEmpty ? "" : dateText + " · ") + "私密篇不可入池"
             alpha = 0.55
             tapButton.isEnabled = false
+        case .friendsOnly:
+            pillLabel.text = "仅好友"
+            pillLabel.textColor = BearyColors.ink
+            pillLabel.backgroundColor = BearyColors.surface2
+            subLabel.text = (dateText.isEmpty ? "" : dateText + " · ") + "仅好友日记不可入池"
+            alpha = 0.55
+            tapButton.isEnabled = false
         case .tooNew:
             pillLabel.text = "公开"
             pillLabel.textColor = BearyColors.deepOrangeText
@@ -920,7 +927,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 self.poolEntries = self.poolCollected
                 self.renderPoolRows()
                 self.openHintLabel.text = self.pooledEntryId == nil
-                    ? "先放进池子，再开盒。私密篇与今日新公开篇不可入池。"
+                    ? "选一篇旧公开日记，放进池子后开盒。"
                     : "已放进池子，可以开盒了。"
                 self.setStep(.pool)
                 // 存档已含全量（hasMore 为假）时不再发网络请求。
@@ -952,7 +959,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private func updatePoolHint() {
         var text: String
         if pooledEntryId == nil {
-            text = "先放进池子，再开盒。私密篇与今日新公开篇不可入池。"
+            text = "选一篇旧公开日记，放进池子后开盒。"
         } else if poolInterrupted {
             text = "已放进池子，可以开盒了。开盒后今日计数变为 1/1。"
         } else {
