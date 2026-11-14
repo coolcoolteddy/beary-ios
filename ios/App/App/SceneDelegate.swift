@@ -1,5 +1,6 @@
 import UIKit
 import Lottie
+import UserNotifications
 
 // ===== 外观手动切换（审计 N3）：主题档位 → window.overrideUserInterfaceStyle =====
 // 存档键 beary_theme_mode，值 system/light/dark；未知值按 system（跟随系统）处理。
@@ -17,6 +18,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         // 临时诊断（81 包，定根因后删除）：冷启动先记一行 launch，供下次启动判断上次是否卡在打开流程。
         DiagFile.mark("launch")
+        // 第 25 轮 60：本地通知点按路由（此前全仓无 delegate，点通知只打开 App）。
+        UNUserNotificationCenter.current().delegate = BearyLocalNotifications.shared
         // 反馈日志：生命周期只记固定事件名（不含任何用户内容）。
         BearyAppLog.event("app launch")
         // iCity §12：App 启动记 app_open 事件（fire-and-forget，失败不阻塞、不 toast）。
@@ -2054,6 +2057,19 @@ final class BearyChromeViewController: UIViewController {
         return true
     }
 
+    /// 第 25 轮 60：本地通知点按落点（BearyLocalNotifications 的 delegate 回调）。
+    /// 账号已在 delegate 侧校验；单篇仍走 gotoEntry 的拉取＋可见性门。
+    func openLocalNotificationTarget(_ target: BearyLocalNotifications.NotificationTarget) {
+        switch target {
+        case .dailyReminder:
+            navigator.open(.editor)
+        case .entry(let entryId):
+            navigator.open(.entry(entryId))
+        case .pastDay:
+            navigator.open(.profile)
+        }
+    }
+
     // MARK: - 原生页接线（批一：原生栏行为、动画、无障碍标签一律不动；页切换只在原生页之间）
 
     private func ensureFeedVC() -> BearyFeedViewController {
@@ -3952,13 +3968,11 @@ final class BearyChromeViewController: UIViewController {
                 self?.feedVC?.refreshAll()
                 // 发布成功落盘：单篇拉取后 upsert 到该北京日文件（失败静默，
                 // 下次同步/切日刷新纠正）；内存日缓存由切日静默刷新接管，不在此处碰。
+                // 本地通知：落盘完成后重算（当天已写则取消今晚提醒）；回前台刷新是兜底。
                 if let uid = SessionManager.shared.currentUser?.id {
-                    BearyEntrySync.shared.upsertPublished(entryId: entryId, accountId: uid)
-                }
-                // 本地通知：落盘是异步拉取，2 秒后重算（当天已写则取消今晚提醒）；
-                // 回前台刷新是兜底。
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    BearyLocalNotifications.shared.refreshAll(force: true)
+                    BearyEntrySync.shared.upsertPublished(entryId: entryId, accountId: uid) {
+                        BearyLocalNotifications.shared.refreshAll(force: true)
+                    }
                 }
                 // 门槛 4：写完第一篇日记后再问通知权限（先弹自建说明卡，点了「好」才调系统框）。
                 if let chrome = self {

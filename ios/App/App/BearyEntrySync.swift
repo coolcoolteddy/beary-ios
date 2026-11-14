@@ -390,17 +390,21 @@ final class BearyEntrySync {
     }
 
     /// 发布成功：onPublished 只给 entryId，单篇拉取后 upsert 落盘（失败静默）。
-    func upsertPublished(entryId: String, accountId: Int) {
+    /// completion 在落盘完成后调（第 25 轮 54：调用方据此重算提醒，不再固定等 2 秒）；
+    /// 拉取失败／账号已变时也调（落盘不会再发生）；写盘被新代际丢弃时不调，
+    /// 该情形由切号／同步的重算兜底。
+    func upsertPublished(entryId: String, accountId: Int, completion: (() -> Void)? = nil) {
         BearyAPI.shared.fetchEntry(id: entryId) { result in
             // 回调线程不固定；账号守卫在主线程做（与全站 currentUser 读取口径一致），
             // 落盘写走同步队列（不卡主线程，同时记写盘代际供提交守卫判断）。
             DispatchQueue.main.async {
-                guard SessionManager.shared.currentUser?.id == accountId else { return }
-                guard case .success(let entry) = result else { return }
+                guard SessionManager.shared.currentUser?.id == accountId else { completion?(); return }
+                guard case .success(let entry) = result else { completion?(); return }
                 BearyEntrySync.shared.runDiaryDiskWrite(accountId: accountId) {
                     // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
                     let ok = BearyEntrySyncStore.upsertEntry(accountId: accountId, entry: entry)
                     if !ok { NSLog("[BearyEntrySync] upsertEntry failed account=%d entry=%@", accountId, entry.id ?? "-") }
+                    DispatchQueue.main.async { completion?() }
                 }
             }
         }

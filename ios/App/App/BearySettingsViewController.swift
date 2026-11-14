@@ -3435,10 +3435,10 @@ final class BearySettingsViewController: UIViewController {
 
     private func buildNotificationSection() {
         let items: [(kind: BearyLocalNotifications.Kind, title: String, detail: String)] = [
-            (.dailyReminder, "写日记提醒", "每天 21:00，还没写才提醒"),
+            (.dailyReminder, "写日记提醒", "每天 21:00（北京时间），还没写才提醒"),
             (.limitedExpiry, "限时日记到期", "限时结束、转回私密时提醒"),
-            (.pastDay, "那年今日", "早上 9:00，往年今天有日记才提醒"),
-            (.pastSelfDelivery, "留给明年的自己", "留言送达当天早上 9:00 提醒"),
+            (.pastDay, "那年今日", "早上 9:00（北京时间），往年今天有日记才提醒"),
+            (.pastSelfDelivery, "留给明年的自己", "留言送达当天早上 9:00（北京时间）提醒"),
         ]
         var rows: [UIView] = []
         for (index, item) in items.enumerated() {
@@ -3457,6 +3457,7 @@ final class BearySettingsViewController: UIViewController {
             toggle.setContentHuggingPriority(.required, for: .horizontal)
             toggle.setContentCompressionResistancePriority(.required, for: .horizontal)
             toggle.tag = index
+            toggle.accessibilityLabel = item.title
             toggle.addTarget(self, action: #selector(notificationSwitchValueChanged(_:)), for: .valueChanged)
             notificationSwitches[item.kind] = toggle
             let row = UIStackView(arrangedSubviews: [textStack, toggle])
@@ -3478,6 +3479,11 @@ final class BearySettingsViewController: UIViewController {
         hintRow.isHidden = true
         notificationHintRow = hintRow
         rows.append(hintRow)
+        // 第 25 轮 59：广场有新日记的提醒不另设开关，纳入上面四类——任一类
+        // 开着才发，四类全关即停；说明放组末行。
+        let plazaNoteLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
+        plazaNoteLabel.text = "广场有新日记时也会发一条提醒；上面四类提醒全关时不再发。"
+        rows.append(plazaNoteLabel)
         let group = makeGroupCard(title: "通知", rows: rows)
         generalNotifyWrap.addArrangedSubview(group.card)
         // 第十一轮审计 1：提示行是组内末行——只藏 row 会留 wrap 的 28pt 内边距
@@ -3502,10 +3508,22 @@ final class BearySettingsViewController: UIViewController {
         // 权限被拒时开关照常记偏好，只提示一次：进系统打开后即生效。
         if sender.isOn {
             BearyLocalNotifications.shared.fetchAuthorizationStatus { [weak self] status in
-                guard status == .denied else { return }
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    BearyToast.show(in: self.view, message: "通知权限未开启，去系统设置里打开才生效")
+                switch status {
+                case .notDetermined:
+                    // 尚未询问授权时：用户主动开开关即发起授权（首次引导关掉后仍有入口）。
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self else { return }
+                        BearyLocalNotifications.shared.requestAuthorizationIfNeeded(force: true) {
+                            BearyToast.show(in: self.view, message: "通知权限未开启，去系统设置里打开才生效")
+                        }
+                    }
+                case .denied:
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self else { return }
+                        BearyToast.show(in: self.view, message: "通知权限未开启，去系统设置里打开才生效")
+                    }
+                default:
+                    break
                 }
             }
         }
