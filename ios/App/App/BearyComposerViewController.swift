@@ -9080,8 +9080,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     return
                 }
                 // 上限耗尽：留在编辑器，解冻输入，让用户确认后再关。
+                // A1：与保存失败分支同口径——清退出保存态（解冻输入＋发布钮，
+                // 否则再点关闭撞 isDraftExitSaving 守卫只 toast“保存中…”）、
+                // 边缘滑入时把视图滑回原位。
+                self.setDraftExitSaving(false)
                 self.isClosing = false
                 self.updatePublishState()
+                if self.view.transform != .identity {
+                    UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+                        self.view.transform = .identity
+                    })
+                }
                 self.showToast(message: "关闭时内容还在变化，已留在编辑器，再点一次关闭重试")
                 return
             }
