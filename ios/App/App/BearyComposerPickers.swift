@@ -1396,6 +1396,7 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
     private let districtTitleLabel = UILabel()
     private let districtValueLabel = UILabel()
     private let confirmButton = BearyButton(style: .primaryPill(.ink))
+    private let retryLocateButton = BearyButton(style: .secondaryOutline(.regular))
     private let clearButton = BearyButton(style: .secondaryOutline(.regular))
     /// 按钮栈：栈内隐藏的 arrangedSubview 自动塌掉——isHidden 的普通视图
     /// 仍占约束位，未埋时「取消埋藏」隐藏会在底部留空隙。
@@ -1493,6 +1494,13 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
         confirmButton.addTarget(self, action: #selector(confirmTapped), for: .touchUpInside)
         confirmButton.bearyAddPressFeedback()
 
+        // 定位失败时的重试入口：确认仍禁用，直到重新定位成功。
+        retryLocateButton.translatesAutoresizingMaskIntoConstraints = false
+        retryLocateButton.setTitle("重新定位", for: .normal)
+        retryLocateButton.addTarget(self, action: #selector(retryLocateTapped), for: .touchUpInside)
+        retryLocateButton.bearyAddPressFeedback()
+        retryLocateButton.isHidden = true
+
         // 已埋时才给「取消埋藏」：清掉编辑器实例的胶囊两值，不发请求。
         clearButton.translatesAutoresizingMaskIntoConstraints = false
         clearButton.setTitle("取消埋藏", for: .normal)
@@ -1504,6 +1512,7 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
         buttonStack.axis = .vertical
         buttonStack.spacing = 8
         buttonStack.addArrangedSubview(confirmButton)
+        buttonStack.addArrangedSubview(retryLocateButton)
         buttonStack.addArrangedSubview(clearButton)
         view.addSubview(buttonStack)
 
@@ -1536,19 +1545,12 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
             buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
 
             confirmButton.heightAnchor.constraint(equalToConstant: confirmButton.style.height),
+            retryLocateButton.heightAnchor.constraint(equalToConstant: retryLocateButton.style.height),
             clearButton.heightAnchor.constraint(equalToConstant: clearButton.style.height),
         ])
 
         // 打开时按需取一次当前区级：取不到则提示无法埋藏、不让确认。
-        BearyTimeCapsule.fetchCurrentDistrict { [weak self] district in
-            guard let self = self else { return }
-            if let district = district, !district.isEmpty {
-                self.currentDistrict = district
-            } else {
-                self.districtFailed = true
-                self.refreshDistrictRow()
-            }
-        }
+        requestCurrentDistrict()
     }
 
     override func viewDidLayoutSubviews() {
@@ -1573,15 +1575,38 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
             districtValueLabel.text = district
             districtValueLabel.textColor = BearyColors.ink
             confirmButton.isEnabled = true
+            retryLocateButton.isHidden = true
         } else if districtFailed {
             districtValueLabel.text = "无法获取当前位置，无法埋藏"
             districtValueLabel.textColor = BearyColors.gray
             confirmButton.isEnabled = false
+            retryLocateButton.isHidden = false
         } else {
             districtValueLabel.text = "正在定位…"
             districtValueLabel.textColor = BearyColors.gray
             confirmButton.isEnabled = false
+            retryLocateButton.isHidden = true
         }
+    }
+
+    /// 取当前区级：先清失败态回“正在定位…”，再发一次定位请求。
+    private func requestCurrentDistrict() {
+        districtFailed = false
+        currentDistrict = nil
+        refreshDistrictRow()
+        BearyTimeCapsule.fetchCurrentDistrict { [weak self] district in
+            guard let self = self else { return }
+            if let district = district, !district.isEmpty {
+                self.currentDistrict = district
+            } else {
+                self.districtFailed = true
+                self.refreshDistrictRow()
+            }
+        }
+    }
+
+    @objc private func retryLocateTapped() {
+        requestCurrentDistrict()
     }
 
     @objc private func confirmTapped() {
