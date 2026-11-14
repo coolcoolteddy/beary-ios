@@ -3053,133 +3053,81 @@ final class BearyPencilView: UIView {
     }
 }
 
-/// NB.heart 空态口径（nb-static）：只画官方轮廓线，无填充、无涟漪、无动画。
+/// NB.heart 空态口径（nb-static）：官方 icon_heart 资产，灰色描边、无填充、无动画。
+/// 字形框取框宽 0.6（旧手绘路径字形约占框 0.6），居中显示，空态视觉不变。
+/// tintColor 用动态 UIColor，深浅切换由系统自动重解，无需 traitCollectionDidChange。
 final class BearyHeartView: UIView {
     var strokeColor: UIColor = BearyColors.gray {
-        didSet { updateStrokeColors() }
+        didSet { iconView.tintColor = strokeColor }
     }
 
-    private var heartLayer: CAShapeLayer?
+    private let iconView = UIImageView()
     private var builtSize: CGSize = .zero
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         isAccessibilityElement = false
         backgroundColor = .clear
+        iconView.contentMode = .scaleAspectFit
+        iconView.tintColor = strokeColor
+        addSubview(iconView)
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         isAccessibilityElement = false
         backgroundColor = .clear
+        iconView.contentMode = .scaleAspectFit
+        iconView.tintColor = strokeColor
+        addSubview(iconView)
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         guard bounds.width > 0, bounds.size != builtSize else { return }
         builtSize = bounds.size
-        buildLayers()
-    }
-
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        updateStrokeColors()
-    }
-
-    private func updateStrokeColors() {
-        heartLayer?.strokeColor = strokeColor.resolvedColor(with: traitCollection).cgColor
-    }
-
-    private func buildLayers() {
-        heartLayer?.removeFromSuperlayer()
-        heartLayer = nil
-        let scale = bounds.width / 48
-        let lineWidth = 2.2 * scale
-        let path = UIBezierPath()
-        path.move(to: CGPoint(x: 24, y: 40))
-        path.addCurve(to: CGPoint(x: 9, y: 19.6), controlPoint1: CGPoint(x: 24, y: 40), controlPoint2: CGPoint(x: 9, y: 30.8))
-        BearyNBPath.appendArcSweep1(to: path, from: CGPoint(x: 9, y: 19.6), to: CGPoint(x: 24, y: 14.8), radius: 8.4)
-        BearyNBPath.appendArcSweep1(to: path, from: CGPoint(x: 24, y: 14.8), to: CGPoint(x: 39, y: 19.6), radius: 8.4)
-        path.addCurve(to: CGPoint(x: 24, y: 40), controlPoint1: CGPoint(x: 39, y: 30.8), controlPoint2: CGPoint(x: 24, y: 40))
-        path.close()
-        path.apply(CGAffineTransform(scaleX: scale, y: scale))
-        let heart = CAShapeLayer()
-        heart.frame = bounds
-        heart.path = path.cgPath
-        heart.fillColor = UIColor.clear.cgColor
-        heart.strokeColor = strokeColor.resolvedColor(with: traitCollection).cgColor
-        heart.lineWidth = lineWidth
-        heart.lineCap = .round
-        heart.lineJoin = .round
-        layer.addSublayer(heart)
-        heartLayer = heart
+        let side = bounds.width * 0.6
+        iconView.frame = CGRect(x: (bounds.width - side) / 2, y: (bounds.height - side) / 2, width: side, height: side)
+        iconView.image = BearyIconImages.image(named: "icon_heart", pointSize: side)
     }
 }
 
-/// NB.bookmark 空态口径（nb-static）：只画官方轮廓线，无填充、无动画。
-/// 两处 r=2 小圆角用二次贝塞尔近似（误差 <0.05 盒单位，40pt 下不可见）。
+/// NB.bookmark 空态口径（nb-static）：官方 icon_bookmark 资产，灰色描边、无填充、无动画。
+/// 字形框取框宽 0.6（旧手绘路径字形约占框 0.6），居中显示，空态视觉不变。
+/// tintColor 用动态 UIColor，深浅切换由系统自动重解，无需 traitCollectionDidChange。
 final class BearyBookmarkView: UIView {
     var strokeColor: UIColor = BearyColors.gray {
-        didSet { updateStrokeColors() }
+        didSet { iconView.tintColor = strokeColor }
     }
 
-    private var bookmarkLayer: CAShapeLayer?
+    private let iconView = UIImageView()
     private var builtSize: CGSize = .zero
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         isAccessibilityElement = false
         backgroundColor = .clear
+        iconView.contentMode = .scaleAspectFit
+        iconView.tintColor = strokeColor
+        addSubview(iconView)
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         isAccessibilityElement = false
         backgroundColor = .clear
+        iconView.contentMode = .scaleAspectFit
+        iconView.tintColor = strokeColor
+        addSubview(iconView)
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         guard bounds.width > 0, bounds.size != builtSize else { return }
         builtSize = bounds.size
-        buildLayers()
-    }
-
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        updateStrokeColors()
-    }
-
-    private func updateStrokeColors() {
-        bookmarkLayer?.strokeColor = strokeColor.resolvedColor(with: traitCollection).cgColor
-    }
-
-    private func buildLayers() {
-        bookmarkLayer?.removeFromSuperlayer()
-        bookmarkLayer = nil
-        let scale = bounds.width / 48
-        let lineWidth = 2.2 * scale
-        let path = UIBezierPath()
-        path.move(to: CGPoint(x: 14, y: 8))
-        path.addLine(to: CGPoint(x: 34, y: 8))
-        path.addQuadCurve(to: CGPoint(x: 36, y: 10), controlPoint: CGPoint(x: 36, y: 8))
-        path.addLine(to: CGPoint(x: 36, y: 40))
-        path.addLine(to: CGPoint(x: 24, y: 32))
-        path.addLine(to: CGPoint(x: 12, y: 40))
-        path.addLine(to: CGPoint(x: 12, y: 10))
-        path.addQuadCurve(to: CGPoint(x: 14, y: 8), controlPoint: CGPoint(x: 12, y: 8))
-        path.close()
-        path.apply(CGAffineTransform(scaleX: scale, y: scale))
-        let bookmark = CAShapeLayer()
-        bookmark.frame = bounds
-        bookmark.path = path.cgPath
-        bookmark.fillColor = UIColor.clear.cgColor
-        bookmark.strokeColor = strokeColor.resolvedColor(with: traitCollection).cgColor
-        bookmark.lineWidth = lineWidth
-        bookmark.lineCap = .round
-        bookmark.lineJoin = .round
-        layer.addSublayer(bookmark)
-        bookmarkLayer = bookmark
+        let side = bounds.width * 0.6
+        iconView.frame = CGRect(x: (bounds.width - side) / 2, y: (bounds.height - side) / 2, width: side, height: side)
+        iconView.image = BearyIconImages.image(named: "icon_bookmark", pointSize: side)
     }
 }
 
