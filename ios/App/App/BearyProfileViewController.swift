@@ -4558,7 +4558,10 @@ class BearyProfileViewController: UIViewController {
             accountKey: accountKey,
             entries: visible,
             isOwn: isOwnProfile,
-            calendar: .current
+            // 2026-11-14：连续天数按北京时间自然日算——此前传 .current（设备时区），
+            // 与服务端 /beary/api/calendar 及全站 BearyBeijingDay（GMT+8）口径不一致，
+            // 设备时区≠北京时，同一天的归属会错位，统计卡数字与网页时间线对不上。
+            calendar: Self.beijingCalendar
         ) { [weak self] stats in
             guard let self = self, self.statsRequest == request else { return }
             self.applyWritingStats(stats, visible: visible, syncContainerVisibility: callReturned)
@@ -5931,7 +5934,7 @@ class BearyProfileViewController: UIViewController {
         guard isOwnProfile, let bucket = profileCacheBucket(),
               let accountId = SessionManager.shared.currentUser?.id else { return }
         let visible = BearyProfilePersonalLogic.visibleEntries(entries, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
-        let stats = BearyProfilePersonalLogic.writingStats(entries: visible, now: Date(), calendar: .current)
+        let stats = BearyProfilePersonalLogic.writingStats(entries: visible, now: Date(), calendar: Self.beijingCalendar)
         let history = BearyProfilePersonalLogic.thisDayInHistory(entries: visible, today: Date(), calendar: Self.beijingCalendar)
         var yearCounts: [String: Int] = [:]
         for entry in visible {
