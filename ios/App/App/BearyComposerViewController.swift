@@ -958,6 +958,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 第二轮增量审计第 6 项：图片条固定高约束（96）。无图隐藏整条时须停用它，
     /// 否则隐藏的 arranged 子项仍被自身 96 必需高撑住、与 stack 的隐藏折叠冲突。
     private var imageStripHeightConstraint: NSLayoutConstraint?
+    /// 第 20 轮 A4：待确认条固定高约束（44）。无未确认项隐藏整条时须停用它，
+    /// 否则隐藏的 arranged 子项仍被自身 44 必需高撑住、与 stack 的隐藏折叠冲突
+    ///（同图片条 96 约束先例）。
+    private var pendingUploadBarHeightConstraint: NSLayoutConstraint?
     private let editTimerLabel = UILabel()
     private let draftStatusGroup = UIStackView()
     private let draftStatusIcon = UIImageView()
@@ -1121,6 +1125,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 编辑器开着时改系统字号，pill 宽度直接过期、大字号下裁标题）。
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
             refreshPublishButtonWidth()
+            // 第 20 轮 A6：待确认条字号档变化时重取 scaled 字号并同步 sheet 高
+            //（label 自带 adjustsFontForContentSizeCategory 自动跟档，此处补字体
+            // 重算与布局同步）。
+            pendingUploadBarLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+            updatePreferredContentSize()
         }
         // 动态字号变化时标题字号跟随（原 UITextField 靠
         // adjustsFontForContentSizeCategory 自动跟，UITextView 没有该属性，
@@ -3550,19 +3559,27 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         pendingUploadBar.clipsToBounds = true
         pendingUploadBar.isHidden = true
         pendingUploadBar.addTarget(self, action: #selector(didTapPendingUploadBar), for: .touchUpInside)
+        // 第 20 轮 A10：统一 0.18s 单段按压反馈（bearyAddPressFeedback）。
+        pendingUploadBar.bearyAddPressFeedback()
         pendingUploadBar.translatesAutoresizingMaskIntoConstraints = false
         pendingUploadBarLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        // 第 20 轮 A6：字号档变化时自动跟随（字体重算见 traitCollectionDidChange）。
+        pendingUploadBarLabel.adjustsFontForContentSizeCategory = true
         pendingUploadBarLabel.textColor = BearyColors.ink
         pendingUploadBarLabel.translatesAutoresizingMaskIntoConstraints = false
         pendingUploadBar.addSubview(pendingUploadBarLabel)
-        pendingUploadBarChevron.image = UIImage(systemName: "chevron.right")
+        // 第 20 轮 A9：SF Symbol 换官方手绘 icon_chevron_right，尺寸保持 14pt。
+        pendingUploadBarChevron.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 14)
         pendingUploadBarChevron.tintColor = BearyColors.gray
         pendingUploadBarChevron.contentMode = .scaleAspectFit
         pendingUploadBarChevron.translatesAutoresizingMaskIntoConstraints = false
         pendingUploadBar.addSubview(pendingUploadBarChevron)
         contentStack.addArrangedSubview(pendingUploadBar)
+        // 第 20 轮 A4：44 高约束单独存引用——隐藏整条时停用它（同图片条先例）。
+        let pendingUploadBarHeight = pendingUploadBar.heightAnchor.constraint(equalToConstant: 44)
+        pendingUploadBarHeightConstraint = pendingUploadBarHeight
         NSLayoutConstraint.activate([
-            pendingUploadBar.heightAnchor.constraint(equalToConstant: 44),
+            pendingUploadBarHeight,
             pendingUploadBarLabel.centerYAnchor.constraint(equalTo: pendingUploadBar.centerYAnchor),
             pendingUploadBarLabel.leadingAnchor.constraint(equalTo: pendingUploadBar.leadingAnchor, constant: 16),
             pendingUploadBarLabel.trailingAnchor.constraint(lessThanOrEqualTo: pendingUploadBarChevron.leadingAnchor, constant: -8),
@@ -6949,12 +6966,27 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func refreshPendingUploadBar() {
         let count = undecidedImageItems().count
         let shouldShow = count > 0
-        pendingUploadBarLabel.text = "\(count) 张照片待确认上传方式"
+        // 第 20 轮 A13：数字变化走 0.18s 交叉淡变（同许愿墙 fadeVoteCount 口径）。
+        setPendingUploadBarText("\(count) 张照片待确认上传方式")
         pendingUploadBar.accessibilityLabel = "\(count) 张照片待确认上传方式，点按选择上传方式"
+        // 第 20 轮 A4：44 高约束与显隐同步——隐藏时停用，显示时恢复（同图片条先例）。
+        pendingUploadBarHeightConstraint?.isActive = shouldShow
         if pendingUploadBar.isHidden != !shouldShow {
             pendingUploadBar.isHidden = !shouldShow
             updatePreferredContentSize()
         }
+    }
+
+    /// 第 20 轮 A13：待确认数量交叉淡变——数字不变直返；减动效或未进窗口时直设终值。
+    private func setPendingUploadBarText(_ text: String) {
+        guard pendingUploadBarLabel.text != text else { return }
+        guard !UIAccessibility.isReduceMotionEnabled, pendingUploadBar.window != nil else {
+            pendingUploadBarLabel.text = text
+            return
+        }
+        UIView.transition(with: pendingUploadBarLabel, duration: BearyMotion.localStateDuration, options: .transitionCrossDissolve, animations: {
+            self.pendingUploadBarLabel.text = text
+        })
     }
 
     @objc private func didTapPendingUploadBar() {
