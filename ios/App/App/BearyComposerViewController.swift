@@ -5811,6 +5811,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         ])
         if uploading {
             spinner.startSpinning()
+        } else {
+            // 恢复项（编辑回填／草稿恢复／检查点重建）建项时 uploading 为 false：
+            // 圆环初始 isHidden 为 false、又无旋转动画，不停就会以静止圆环一直
+            // 盖在缩略图上；非上传态建项即藏起，后续起传由 markUploading 重显。
+            spinner.stopSpinning()
         }
         if failed {
             imageView.isHidden = true
