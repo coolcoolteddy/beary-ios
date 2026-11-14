@@ -132,22 +132,26 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
 
         titleLabel.text = "选择上传方式"
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(titleLabel)
 
         configureOptionButton(originalButton, title: "原图", subtitle: "共 \(BearyOriginalUploadSheet.formattedSize(model.originalBytes)) · \(model.count) 张照片", showsCrown: !model.isPlus)
         originalButton.addTarget(self, action: #selector(originalTapped), for: .touchUpInside)
+        originalButton.bearyAddPressFeedback()
         originalButton.accessibilityLabel = model.isPlus ? "原图，共 \(BearyOriginalUploadSheet.formattedSize(model.originalBytes))，\(model.count) 张照片" : "原图，仅 Plus 会员，共 \(BearyOriginalUploadSheet.formattedSize(model.originalBytes))，\(model.count) 张照片"
         view.addSubview(originalButton)
 
         configureOptionButton(compressedButton, title: "压缩", subtitle: "约 \(BearyOriginalUploadSheet.formattedSize(model.compressedBytes)) · \(model.count) 张照片", showsCrown: false)
         compressedButton.addTarget(self, action: #selector(compressedTapped), for: .touchUpInside)
+        compressedButton.bearyAddPressFeedback()
         compressedButton.accessibilityLabel = "压缩，约 \(BearyOriginalUploadSheet.formattedSize(model.compressedBytes))，\(model.count) 张照片"
         view.addSubview(compressedButton)
 
         footnoteLabel.text = model.oversizeCount > 0 ? "其中 \(model.oversizeCount) 张原图超过 5MB，已按压缩上传" : nil
         footnoteLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        footnoteLabel.adjustsFontForContentSizeCategory = true
         footnoteLabel.textColor = BearyColors.gray
         footnoteLabel.numberOfLines = 0
         footnoteLabel.isHidden = model.oversizeCount <= 0
@@ -190,12 +194,14 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
         let titleLabel = UILabel()
         titleLabel.text = title
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         button.addSubview(titleLabel)
         let subtitleLabel = UILabel()
         subtitleLabel.text = subtitle
         subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         button.addSubview(subtitleLabel)
