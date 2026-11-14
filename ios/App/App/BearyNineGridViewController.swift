@@ -151,6 +151,15 @@ extension BearyNineGridViewController: UICollectionViewDataSource, UICollectionV
         let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: liveVideos, startIndex: indexPath.item)
         viewer.initialThumbnail = (collectionView.cellForItem(at: indexPath) as? BearyProfilePhotoCell)?.displayedThumbnail
         viewer.originFrameInWindow = collectionView.cellForItem(at: indexPath).map { $0.convert($0.bounds, to: nil) }
+        // C3：关场回当前照片——按下标找网格里对应的格；在视口内才给
+        // 矩形与焦点视图，格不在视口内时返回 nil、走淡出兜底（照片页同款）。
+        viewer.dismissOriginProvider = { [weak self] index in
+            guard let self = self, index >= 0, index < self.imageKeys.count else { return nil }
+            let path = IndexPath(item: index, section: 0)
+            guard let cell = self.collectionView.cellForItem(at: path) else { return nil }
+            let frame = cell.convert(cell.bounds, to: nil)
+            return (frame: frame, element: cell)
+        }
         viewer.modalPresentationStyle = .fullScreen
         present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }
