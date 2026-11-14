@@ -619,6 +619,11 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 只在 pinRow 与 recipientRow 都藏时激活（见 updateDiaryStackSpacing）；
     /// 有行在作者行之上时停用、改走头行顶约束。
     private var authorRowTopConstraint: NSLayoutConstraint?
+    /// 置顶行／@ 行零高约束：对应行藏时用 required 把它压到 0 高（只在对应行藏时激活，见 updateDiaryStackSpacing）。
+    /// 132 真机实测（详情同款）：隐藏行仍占约 12pt 高，栈内链把作者行往下顶，#1443 的
+    /// 钉顶约束被栈内部约束顶掉；零高约束钉死它。
+    private var pinRowZeroHeightConstraint: NSLayoutConstraint?
+    private var recipientRowZeroHeightConstraint: NSLayoutConstraint?
     /// 头行右缩进恒 −16；⋯ 留位走标题行末 titleMoreSpacer，不再按本人／他人改右缩进。
     private var headerStackTrailingConstraint: NSLayoutConstraint?
     /// 正文栈顶：头行底 + 6（紧贴用户名下方，取规范标题→正文档 6）；
@@ -1561,6 +1566,9 @@ class BearyDiaryCardCell: UITableViewCell {
         // 作者行顶对齐约束：初始不激活，只在两行都藏时启用（见 updateDiaryStackSpacing）。
         // 建在此处：titleStack 与 avatarContainer 此时已同属 contentView 层级。
         authorRowTopConstraint = titleStack.topAnchor.constraint(equalTo: avatarContainer.topAnchor)
+        // 两行零高约束：初始不激活，只在对应行藏时启用（见 updateDiaryStackSpacing）。
+        pinRowZeroHeightConstraint = pinRow.heightAnchor.constraint(equalToConstant: 0)
+        recipientRowZeroHeightConstraint = recipientRow.heightAnchor.constraint(equalToConstant: 0)
         var extraConstraints: [NSLayoutConstraint] = []
         if cardMode == .profile {
             // 个人主页口径：点赞高 22、收藏/分享 21×21（原 required 约束）。
@@ -2115,19 +2123,22 @@ class BearyDiaryCardCell: UITableViewCell {
         // 天气图标同行跟走——整行 titleStack 被往下顶）：#1145 的字体行高
         // 算顶距没修动；#1288 的钉中心也没修住——20pt 的行钉在 40pt 头像
         // 中心上，用户名顶仍比头像顶低 (40−20)/2 ≈ 10pt，居中从来不是顶对齐。
-        // 改钉顶部：两行都藏（头行只剩作者行）时作者行顶 == 头像顶，用户名顶
-        // 即头像顶（常见态约 +0.3pt；皇冠／心情可见时栈顶比用户名顶高约一个
-        // 下行距，用户名约 +4pt，见 PR 正文）；行真高、基线几何、残余间距
-        // 一律不再影响；顶约束本分支停用。
-        // 有行在作者行之上时恢复顶约束、保持顶对齐不动。
+        // #1443 改钉顶部：两行都藏时作者行顶 == 头像顶，但 132 真机实测详情仍低
+        // 约 16pt——钉顶约束钉的是栈内子视图，栈内它上方的隐藏行仍占约 12pt 高，
+        // 栈内链把作者行往下顶，外部钉顶约束被栈内部约束顶掉。本次三处一致钉死：
+        // 两行都藏时头行顶约束保持激活（16／首卡 30，不再停用）＋ 两行 required
+        // 零高压零 ＋ 作者行钉顶保留；有行在作者行之上时恢复顶约束、保持顶对齐不动。
         if pinRow.isHidden && recipientRow.isHidden {
-            headerStackTopConstraint?.isActive = false
+            headerStackTopConstraint?.isActive = true
+            headerStackTopConstraint?.constant = cardMode == .feed ? 16 : (profileFirstRow ? 30 : 16)
             authorRowTopConstraint?.isActive = true
         } else {
             authorRowTopConstraint?.isActive = false
             headerStackTopConstraint?.isActive = true
             headerStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 16 : 17) : (profileFirstRow ? 30 : 16)
         }
+        pinRowZeroHeightConstraint?.isActive = pinRow.isHidden
+        recipientRowZeroHeightConstraint?.isActive = recipientRow.isHidden
         // 首卡虚线框顶 6→22（底边仍距 cell 底 6，不整体下移），tab 视觉底边
         // （首卡顶 +14）到框顶留 8pt；其余一律 6。
         ephemeralBorderTopConstraint?.constant = (cardMode == .profile && profileFirstRow) ? 22 : 6
@@ -2312,11 +2323,12 @@ class BearyDiaryCardCell: UITableViewCell {
         nameLabel.text = authorNameValue
         setCrownHidden((entry.authorPlus ?? 0) != 1 || !crownView.hasCrown)
 
-        // F3：时间。广场卡：有效公开（未过期）且有 publishedAt 时显相对时间（“X 分钟前”），否则绝对时间。
+        // F3：时间一律相对时间（与私信/通知同口径，7 天外回绝对时间；2026-11-15 改，取代绝对时间）。
+        // 广场卡有效公开且有 publishedAt 时按发布时间相对；其余按创建时间相对。
         if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt) {
             timeLabel.text = relative
         } else {
-            timeLabel.text = BearyDiaryCardCell.feedTimeString(ms: entry.createdAt ?? 0)
+            timeLabel.text = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.createdAt) ?? BearyDiaryCardCell.feedTimeString(ms: entry.createdAt ?? 0)
         }
 
         // F10：天气图标 15px（icon_wx_<weatherKey>，取不到图时隐藏、不留空）。
@@ -2405,7 +2417,7 @@ class BearyDiaryCardCell: UITableViewCell {
         let authorNameValue = bearyDeletedAuthorDisplayName(entry.authorName) ?? "beary 用户"
         nameLabel.text = authorNameValue
         if let createdMs = entry.createdAt, createdMs > 0 {
-            timeLabel.text = BearyDiaryCardCell.feedTimeString(ms: createdMs)
+            timeLabel.text = BearyVisibilityText.publishedRelativeString(publishedAtMs: createdMs) ?? BearyDiaryCardCell.feedTimeString(ms: createdMs)
         } else {
             timeLabel.text = nil
         }
