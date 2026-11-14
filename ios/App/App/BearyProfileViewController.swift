@@ -7954,16 +7954,17 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             // 上一轮炸开微粒还在飞时一并清掉。
             syncedCell?.clearLikeBurst()
         }
-        // 审计动效组：抬起确认时补震动＋音效（与首页 feedLikeTapped 同款）；
+        // 审计动效组：抬起确认时补震动（与首页 feedLikeTapped 同款）；
         // 不补则个人页点赞将完全无反馈；失败回滚分支的拒绝反馈另算，不动。
+        // 第 1 轮 24：点赞音按最终结果只播一次——点按只留视觉＋触觉，
+        // 成功回包按最终态播 likePop／unlikeSoft，失败走拒绝音；
+        // 否则失败时点按音与拒绝音先后两声。
         if wantLiked {
             BearyHaptics.likeTap()
-            BearySoundPlayer.play(.likePop)
         } else {
             // 取消点赞与点赞对称：控制器确认时补一次 likeTap。
             // 个人页 cell 的 likePressDown 仅 prepare、不震动，故此处恒补也不双震。
             BearyHaptics.likeTap()
-            BearySoundPlayer.play(.unlikeSoft)
         }
         let seq = (likeSeqById[entryId] ?? 0) + 1
         likeSeqById[entryId] = seq
@@ -7985,6 +7986,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                     // 卡顿批：就地同步（取消点赞不炸，已滑走则 cell 为空，跳过无害）；
                     // 炸开已在点按时播过，不再重播；不再 reload 换 cell。
                     strongSelf.syncVisibleCell(entry: updated)
+                    // 第 1 轮 24：音效只按最终结果播一次（成功按最终态播
+                    // likePop／unlikeSoft，失败分支走拒绝音 refuse_bonk）。
+                    BearySoundPlayer.play((updated.likedByMe ?? wantLiked) ? .likePop : .unlikeSoft)
                 case .failure(let err):
                     // 失败回滚到最后确认态（页签模型从未先行改动，直接取它），
                     // 按下预览与点赞先行态均由就地同步刷回；再走既有失败路径，
