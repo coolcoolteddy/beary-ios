@@ -2489,7 +2489,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteTabStack.distribution = .fillEqually
         let tabTitles = ["全部", "赞过", "收藏"]
         for title in tabTitles {
-            let tabButton = UIButton(type: .system)
+            // 2026-11-14 引用页蓝底修：此前的 .system 钮在 isSelected = true 时，
+            // 系统会用继承来的 tintColor（#0A84FF）在标题后画一块 tint 胶囊底
+            //（截图里“全部”文字外的蓝底；App 代码从未给 tab 钮设过蓝色），
+            // 与 refreshQuoteTabs 的墨底选中态叠在一起。改 .custom 后系统不再画
+            // 任何选中 chrome，选中态只剩 refreshQuoteTabs 显式设的底色与字色；
+            // tintColor 同置 clear 兜底，不让任何 tint 渲染路径再漏进来。
+            let tabButton = UIButton(type: .custom)
+            tabButton.tintColor = .clear
             tabButton.translatesAutoresizingMaskIntoConstraints = false
             tabButton.setTitle(title, for: .normal)
             // 按钮普查：36 高 tab 条，标题走 cappedFont（上限 20，工厂紧凑款同款口径）。
@@ -3274,7 +3281,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             contentLabel.textColor = BearyColors.ink
             let panelParagraph = NSMutableParagraphStyle()
             panelParagraph.lineHeightMultiple = 1.75
-            contentLabel.attributedText = NSAttributedString(string: entry.content ?? "", attributes: [.font: BearyDynamicType.diaryBodyFont(), .foregroundColor: BearyColors.ink, .paragraphStyle: panelParagraph])
+            // 2026-11-14 引用行表情修：此前纯文本 NSAttributedString 不解析
+            // [mood:xxx] 记号，行里直接露出原文；改走卡片／详情同款共享解析器
+            // BearyText.inlineAttributedText，记号转回小熊表情（节日款走 Lottie
+            // 静态帧，GIF 记号按本篇 images 找回 key、只显首帧占位，与卡片一致）。
+            contentLabel.attributedText = BearyText.inlineAttributedText(from: entry.content ?? "", font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, paragraphStyle: panelParagraph, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
             let separator = UIView()
             separator.translatesAutoresizingMaskIntoConstraints = false
             separator.backgroundColor = BearyColors.line
