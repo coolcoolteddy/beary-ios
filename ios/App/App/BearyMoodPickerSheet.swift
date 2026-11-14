@@ -401,20 +401,37 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         selectGroup(at: sender.tag, animated: true)
     }
 
-    /// 打开时从服务端拉一次库（失败静默用缓存）；增删后通知到时跟帧刷新
-    /// “我的 GIF”组（只在正看着该组时重刷网格与 sheet 高）。
+    /// 打开时从服务端拉一次库（失败静默用缓存）；增删后通知到时按 key 增量
+    /// 插删“我的 GIF”组（只在正看着该组时刷网格与 sheet 高，已有项不重建、
+    /// 不清首帧与动画，只有新项入场；共同项相对顺序变了才整刷）。
     private func refreshLibrary() {
         libraryObserver = NotificationCenter.default.addObserver(forName: BearyGIFLibrary.libraryDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self = self else { return }
             let keys = BearyGIFLibrary.cachedKeys()
             guard let index = self.groups.firstIndex(where: { $0.id == "mygif" }) else { return }
+            let oldKeys = self.groups[index].keys
+            guard oldKeys != keys else { return }
             let group = self.groups[index]
-            guard group.keys != keys else { return }
             self.groups[index] = MoodGroup(id: group.id, title: group.title, keys: keys, representativeKey: group.representativeKey, representativeIconName: group.representativeIconName)
-            if self.selectedGroup.id == "mygif" {
-                self.emoteCollectionView?.reloadData()
-                self.updatePreferredContentSize()
+            guard self.selectedGroup.id == "mygif", let collectionView = self.emoteCollectionView else {
+                self.refreshEmptyHint()
+                return
             }
+            let oldSet = Set(oldKeys)
+            let newSet = Set(keys)
+            let deleted = oldKeys.enumerated().compactMap { newSet.contains($0.element) ? nil : IndexPath(item: $0.offset, section: 0) }
+            let inserted = keys.enumerated().compactMap { oldSet.contains($0.element) ? nil : IndexPath(item: $0.offset, section: 0) }
+            // 共同项相对顺序不变时才增量插删（正常增删都满足）；顺序变了整刷兜底。
+            let orderKept = oldKeys.filter { newSet.contains($0) } == keys.filter { oldSet.contains($0) }
+            if orderKept, !(deleted.isEmpty && inserted.isEmpty) {
+                collectionView.performBatchUpdates({
+                    if !deleted.isEmpty { collectionView.deleteItems(at: deleted) }
+                    if !inserted.isEmpty { collectionView.insertItems(at: inserted) }
+                }, completion: nil)
+            } else {
+                collectionView.reloadData()
+            }
+            self.updatePreferredContentSize()
             self.refreshEmptyHint()
         }
         BearyGIFLibrary.refresh()
@@ -474,7 +491,8 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     }
 
     /// 选中态：选中组图标上抬（只动 transform）＋下方小圆点显现（只动 opacity）；
-    /// 未选中组图标回落、圆点隐藏。减动效时瞬时切换。
+    /// 未选中组图标回落、圆点隐藏。局部选中反馈 0.18s（BearyMotion.micro），
+    /// 减动效时瞬时切换。
     private func refreshPillSelection(animated: Bool) {
         let apply = { [weak self] in
             guard let self = self else { return }
@@ -488,7 +506,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             }
         }
         if animated, UIAccessibility.isReduceMotionEnabled == false {
-            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: apply)
+            UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: apply)
         } else {
             apply()
         }
