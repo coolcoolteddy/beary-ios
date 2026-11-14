@@ -357,10 +357,10 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // 审计五轮第 1 项（R2）：821 断点——宽 ≥821 时顶栏/内容列 600 居中，≤820 时全宽减 32；
+        // 审计五轮第 1 项（R2）：821 断点——仅 iPad 且宽 ≥821 时顶栏/内容列 600 居中，其余全宽减 32；
         // 600 上限只在宽屏激活（窄屏 750 等式已定宽，旧常驻上限会把 820 宽压成 600）。
         // 状态不变不开关，避免布局循环（详情页同款）。
-        let wide = view.bounds.width >= 821
+        let wide = BearyDesktop.isWide(view.bounds.width)
         if wide != feedbackColumnIsWide {
             feedbackColumnIsWide = wide
             topBarWidthCap?.isActive = wide

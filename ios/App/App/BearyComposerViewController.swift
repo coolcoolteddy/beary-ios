@@ -1389,10 +1389,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         ])
     }
 
-    /// 92 包整页列宽：宽 ≥821 时顶栏/滚动区 640 居中、工具栏 608 居中（与旧居中卡几何一致），
+    /// 92 包整页列宽：仅 iPad 且宽 ≥821 时顶栏/滚动区 640 居中、工具栏 608 居中（与旧居中卡几何一致），
     /// 窄屏恢复贴边；只在跨阈值时切换一次，分屏/旋转由 viewDidLayoutSubviews 的宽门驱动。
     private func updateColumnConstraints() {
-        let centered = view.bounds.width >= 821
+        let centered = BearyDesktop.isWide(view.bounds.width)
         guard centered != isColumnCentered else { return }
         isColumnCentered = centered
         topBarLeadingConstraint?.isActive = !centered
