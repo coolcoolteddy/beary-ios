@@ -674,7 +674,9 @@ final class BearyLoginViewController: UIViewController {
         }
         agreeLabel.attributedText = attributed
         agreeLabel.delegate = self
-        agreeLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(agreeTextTapped(_:))))
+        // 手势挂在整行 agreeRow 上：UITextView 不可选时系统链接交互不触发，
+        // 挂在其上的自定义手势也不可靠；整行是普通 UIView，触摸直达。
+        agreeRow.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(agreeTextTapped(_:))))
         agreeRow.addSubview(agreeButton)
         agreeRow.addSubview(agreeLabel)
         refreshAgreeBox()
@@ -684,6 +686,11 @@ final class BearyLoginViewController: UIViewController {
     /// 注意：agreeLabel 不可选（#631：不读两遍、不可选中复制），系统链接交互
     /// 不触发，故不能像以前那样在链接处 return 放行，必须在此直接打开。
     @objc private func agreeTextTapped(_ gesture: UITapGestureRecognizer) {
+        // 手势挂在整行上：点在勾选框 44pt 热区内时让按钮自己处理，避免双重触发。
+        let rowPoint = gesture.location(in: agreeRow)
+        if agreeButton.frame.insetBy(dx: -11, dy: -11).contains(rowPoint) {
+            return
+        }
         let point = gesture.location(in: agreeLabel)
         let index = agreeLabel.layoutManager.characterIndex(for: point, in: agreeLabel.textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
         let plainText = agreeLabel.attributedText?.string ?? ""
