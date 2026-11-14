@@ -602,13 +602,13 @@ final class BearyWishWallViewController: UIViewController {
         vc.modalPresentationStyle = .fullScreen
         // 全站返回手势补齐：许愿新建页此前只有 fadeRise、没有左边缘右滑；改走 EdgeDismiss。
         let wishCreateEdgeDismiss = BearyEdgeDismissController()
-        // 审计残留 EdgeDismiss 确认补绑：closeTapped 与 isSubmitting／标题／
-        // 详情均为 private，挂载处无法直接复用，故守卫读下方与 closeTapped
-        // 同口径的 allowsInteractiveDismiss；shouldAllowInteractiveDismiss
-        // 只有允许/拒绝两种语义，返回 false 时手势在 .began 即被拦下、不弹
-        // 确认——提交在途或有未保存内容时拒绝滑走，用户走左上角返回钮弹确认。
+        // 审计 19 轮 A4：手势与左上角返回钮走同一退出流程——守卫调下方与
+        // closeTapped 同口径的 handleInteractiveDismissRejected：被拒时由
+        // 该方法按同一流程处理（提交在途只 toast、有内容弹确认、无内容放行），
+        // 不再只拦不问。shouldAllowInteractiveDismiss 只有允许/拒绝两种语义，
+        // 返回 false 时手势在 .began 即被拦下，确认由该方法内弹。
         wishCreateEdgeDismiss.shouldAllowInteractiveDismiss = { [weak vc] in
-            vc?.allowsInteractiveDismiss ?? true
+            vc?.handleInteractiveDismissRejected() ?? true
         }
         wishCreateEdgeDismiss.attach(to: vc)
         vc.transitioningDelegate = wishCreateEdgeDismiss
@@ -1252,19 +1252,41 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         ]
     }
 
-    /// 左缘右滑守卫：与下方 closeTapped 逐条同口径（提交在途，或标题／详情
-    /// 任一非空 → 不允许直接滑走，改走左上角返回钮的确认流程）。internal
-    /// 而非 private——挂载处 createTapped（另一类）要读它；closeTapped 本身
-    /// 与所读状态均为 private，无法直接复用，故单列此只读镜像，不改原逻辑。
-    var allowsInteractiveDismiss: Bool {
-        guard !isSubmitting else { return false }
+    /// 是否有未保存内容（标题或详情任一非空）：closeTapped 与边缘右滑共用。
+    private var hasUnsavedContent: Bool {
         let hasTitle = !(titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasDetail = !detailView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return !(hasTitle || hasDetail)
+        return hasTitle || hasDetail
+    }
+
+    /// 边缘右滑在 .began 被拒时的处理（与 closeTapped 同口径）：
+    /// 提交在途只 toast、不弹确认；有未保存内容弹“放弃未保存的改动？”确认，
+    /// 确认后离页、取消留页；无内容返回 true，允许手势继续。
+    /// internal 而非 private——挂载处 createTapped（另一类）要调它。
+    func handleInteractiveDismissRejected() -> Bool {
+        guard !isSubmitting else {
+            BearyToast.show(in: view, message: "正在提交，请稍候")
+            return false
+        }
+        guard hasUnsavedContent else { return true }
+        showDiscardConfirm()
+        return false
+    }
+
+    /// 放弃未保存改动的确认（closeTapped 与边缘右滑共用）：
+    /// “继续编辑”留页、“放弃修改”离页。
+    private func showDiscardConfirm() {
+        BearyConfirmSheet.show(from: self, title: "放弃未保存的改动？", message: nil, actions: [
+            BearyConfirmSheet.Action(title: "继续编辑", style: .cancel),
+            BearyConfirmSheet.Action(title: "放弃修改", style: .destructive) { [weak self] in
+                self?.dismiss(animated: BearyMotion.animated(true), completion: nil)
+            },
+        ])
     }
 
     /// P0-13：关闭未保存提示——空内容（标题与详情均空白）直接关；有修改时先弹
     /// 确认，“继续编辑”留页、“放弃修改”才关（编辑资料页“放弃未保存的改动？”同款口径）。
+    /// 与边缘右滑共用 hasUnsavedContent／showDiscardConfirm，同一退出流程。
     @objc private func closeTapped() {
         // 提交在途时关闭入口统一为“正在提交，请稍候”：不弹放弃改动确认、
         // 不直接退出——已发出的创建请求无取消路径，退出会让用户误以为已取消、
@@ -1273,18 +1295,11 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
             BearyToast.show(in: view, message: "正在提交，请稍候")
             return
         }
-        let hasTitle = !(titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasDetail = !detailView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        guard hasTitle || hasDetail else {
+        guard hasUnsavedContent else {
             dismiss(animated: BearyMotion.animated(true), completion: nil)
             return
         }
-        BearyConfirmSheet.show(from: self, title: "放弃未保存的改动？", message: nil, actions: [
-            BearyConfirmSheet.Action(title: "继续编辑", style: .cancel),
-            BearyConfirmSheet.Action(title: "放弃修改", style: .destructive) { [weak self] in
-                self?.dismiss(animated: BearyMotion.animated(true), completion: nil)
-            },
-        ])
+        showDiscardConfirm()
     }
 
     /// 11 轮审计第 10 项：错误态唯一入口——标题／详情错只标对应输入框并配单字段
