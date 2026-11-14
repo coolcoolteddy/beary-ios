@@ -169,6 +169,10 @@
 		D24097D982234149AB56F3F3 /* newyear-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = 446484BF1D394650B042A1A3 /* newyear-poster.png */; };
 		E3C54301180C4502811503AF /* newyear-depth.png in Resources */ = {isa = PBXBuildFile; fileRef = 5E2AF08B5A4043B39D626DA5 /* newyear-depth.png */; };
 		4DE1CD9079B8445F96496405 /* newyear-egg-burst.png in Resources */ = {isa = PBXBuildFile; fileRef = 28AF9B45D275477ABEBA3ABA /* newyear-egg-burst.png */; };
+		093F67340B0A340FD790AB0F /* easter-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = BF8B412187B9CA677E6C9F97 /* easter-poster.png */; };
+		3BE240829E877D8C524F09EA /* easter-depth.png in Resources */ = {isa = PBXBuildFile; fileRef = CC96A3E9EB81F192D31BE647 /* easter-depth.png */; };
+		52721587D3AB173FD1E20C16 /* easter-painted-egg.png in Resources */ = {isa = PBXBuildFile; fileRef = EC827862216C190F45828D3B /* easter-painted-egg.png */; };
+		861764255311FCCA633A1890 /* easter-golden-egg.png in Resources */ = {isa = PBXBuildFile; fileRef = F59B1F70A1063CEF752B30A3 /* easter-golden-egg.png */; };
 		D395C5A456F0D264FAA5D081 /* china-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = F61DF01274DB03D3F0AB6FE0 /* china-poster.png */; };
 		1938F81450975213C5CE2010 /* japan-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = B18573473A12570FBD9DB089 /* japan-poster.png */; };
 		C73ABC14EF8C1B595064A827 /* usa-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = 95FB0D0AFDFEF9F5C38C947B /* usa-poster.png */; };
@@ -856,6 +860,10 @@
 		446484BF1D394650B042A1A3 /* newyear-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/newyear-poster.png; sourceTree = "<group>"; };
 		5E2AF08B5A4043B39D626DA5 /* newyear-depth.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/newyear-depth.png; sourceTree = "<group>"; };
 		28AF9B45D275477ABEBA3ABA /* newyear-egg-burst.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/newyear-egg-burst.png; sourceTree = "<group>"; };
+		BF8B412187B9CA677E6C9F97 /* easter-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/easter-poster.png; sourceTree = "<group>"; };
+		CC96A3E9EB81F192D31BE647 /* easter-depth.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/easter-depth.png; sourceTree = "<group>"; };
+		EC827862216C190F45828D3B /* easter-painted-egg.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/easter-painted-egg.png; sourceTree = "<group>"; };
+		F59B1F70A1063CEF752B30A3 /* easter-golden-egg.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/easter-golden-egg.png; sourceTree = "<group>"; };
 		C69BECF80F639F3B86A1C5F7 /* BearyFestivalWallpapers.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = BearyFestivalWallpapers.json; sourceTree = "<group>"; };
 		37B9943EDEF2C3A792782E9E /* agree_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree_dark.json; sourceTree = "<group>"; };
 		4ED6BF206A0F34DF117D855A /* crown.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieCrown/crown.json; sourceTree = "<group>"; };
@@ -2100,6 +2108,10 @@
 				446484BF1D394650B042A1A3 /* newyear-poster.png */,
 				5E2AF08B5A4043B39D626DA5 /* newyear-depth.png */,
 				28AF9B45D275477ABEBA3ABA /* newyear-egg-burst.png */,
+				BF8B412187B9CA677E6C9F97 /* easter-poster.png */,
+				CC96A3E9EB81F192D31BE647 /* easter-depth.png */,
+				EC827862216C190F45828D3B /* easter-painted-egg.png */,
+				F59B1F70A1063CEF752B30A3 /* easter-golden-egg.png */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -2765,6 +2777,10 @@
 				D24097D982234149AB56F3F3 /* newyear-poster.png in Resources */,
 				E3C54301180C4502811503AF /* newyear-depth.png in Resources */,
 				4DE1CD9079B8445F96496405 /* newyear-egg-burst.png in Resources */,
+				093F67340B0A340FD790AB0F /* easter-poster.png in Resources */,
+				3BE240829E877D8C524F09EA /* easter-depth.png in Resources */,
+				52721587D3AB173FD1E20C16 /* easter-painted-egg.png in Resources */,
+				861764255311FCCA633A1890 /* easter-golden-egg.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
