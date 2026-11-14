@@ -8461,7 +8461,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         let syncedBookmarkCell = syncVisibleCell(entry: optimistic, interactionDisabled: false)
         syncedBookmarkCell?.playBookmarkPop()
         if wantBookmarked { syncedBookmarkCell?.playBookmarkBurst() }
-        if wantBookmarked { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.unlikeSoft) }
+        // 2026-11-14 取消收藏单独一个音（Li 定）：改用 delete_swoosh，不再与取消点赞共用 unlike_soft。
+        if wantBookmarked { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.deleteSwoosh) }
         let seq = (bookmarkSeqById[entryId] ?? 0) + 1
         bookmarkSeqById[entryId] = seq
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
