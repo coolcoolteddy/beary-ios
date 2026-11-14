@@ -1327,20 +1327,9 @@ final class BearyTimelineCell: UITableViewCell {
         }
     }
 
-    /// U14：行点按给内容列短暂 surface2 底色（selectionStyle 已是 .none，
-    /// 但 setHighlighted 仍由 tableView 在点按时调用；按钮上的点按不走此路）。
-    override func setHighlighted(_ highlighted: Bool, animated: Bool) {
-        super.setHighlighted(highlighted, animated: animated)
-        let apply = {
-            // 分割线式：未高亮回页面底 bg（内容列无卡片底色）。
-            self.cardView.backgroundColor = highlighted ? BearyColors.surface2 : BearyColors.bg
-        }
-        if BearyMotion.animated(animated) {
-            UIView.animate(withDuration: BearyMotion.micro, animations: apply)
-        } else {
-            apply()
-        }
-    }
+    /// 2026-11-14 Li 定：点按／长按不再给内容列变色——原 U14 的
+    /// setHighlighted（高亮时 cardView 改 surface2）已删；点按仍进详情
+    /// （didSelectRowAt 不动），定位落点闪一下走 flashHighlight（不动）。
 
     /// E3：gotoEntry 落点行天气标播 Lottie（统一卡片同款口径，见
     /// BearyDiaryCardCell.playWeatherLottie：编辑器选择器同款
