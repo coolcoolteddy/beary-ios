@@ -313,7 +313,7 @@ final class BearyTagEntriesViewController: UIViewController {
         cell.onImageTapped = { [weak self] _, _, _ in
             self?.onOpenEntry?(entry)
         }
-        cell.onNineGridTapped = { [weak self] in
+        cell.onNineGridTapped = { [weak self] _ in
             self?.onOpenEntry?(entry)
         }
         cell.onMoreRequested = { [weak self] _, _ in
