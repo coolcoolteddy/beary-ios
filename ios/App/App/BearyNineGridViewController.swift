@@ -126,7 +126,7 @@ extension BearyNineGridViewController: UICollectionViewDataSource, UICollectionV
         guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "BearyProfilePhotoCell", for: indexPath) as? BearyProfilePhotoCell else {
             return UICollectionViewCell()
         }
-        cell.configure(imageKey: imageKeys[indexPath.item])
+        cell.configure(imageKey: imageKeys[indexPath.item], index: indexPath.item + 1)
         return cell
     }
 
