@@ -439,8 +439,6 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         selectedGroupIndex = index
         refreshPillSelection(animated: animated)
         refreshEmptyHint()
-        emoteCollectionView?.reloadData()
-        emoteCollectionView?.setContentOffset(.zero, animated: false)
         // 节日组只有 6 款（2 行），sheet 随之缩短；网格内容切换只走 opacity，
         // 高度变化走容器帧动画，减动效时两者都瞬时。
         let applyHeight = { [weak self] in
