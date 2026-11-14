@@ -34,10 +34,12 @@ import UIKit
 //     服务端对管理员返回 403 {error: 'admin_cannot_delete'}，本页以该服务端判定为准，
 //     客户端不写 id == 1 / 2 的判断，只用 /me 下发的 is_admin（服务端算出）隐藏注销入口，
 //     且 403 透传为“管理员账号不能注销”，服务端仍是最终判定。
-//   POST /api/account/session-device（网页 loadSessions 先补报当前设备型号）：本页不移植——
-//     原生 URLSession 的 UA 不含 iPhone 标记，服务端 deviceLabel 的 iPhone 分支走不通，
-//     补报恒得“浏览器”，无收益且可能覆盖登录时已有的设备标签；列表直接读 /sessions 的
-//     device 字段，空时按网页同款 UA 回退（iPhone / iPad / Android / Mac / Windows / 浏览器）推断。
+//   POST /api/account/session-device（网页 loadSessions 先补报当前设备型号）：2026-11-14 起移植——
+//     原生 URLSession 的 UA 不含 iPhone 标记、服务端 deviceLabel 的 iPhone 分支走不通，
+//     曾使补报恒得“浏览器”；现改传显式 dev.model（本机友好型号名，见 BearyAPI.deviceModelName），
+//     服务端直接采用。只在当前会话 device 为空或“浏览器”时补报一次，绝不覆盖登录时已有的
+//     设备标签；列表仍直接读 /sessions 的 device 字段，空时按网页同款 UA 回退
+//     （iPhone / iPad / Android / Mac / Windows / 浏览器）推断。
 // - 导出（网页 exportDataBtn 口径，客户端拼 JSON，不新编服务端接口）：
 //   profile = /me 的 user（data: 头像改写为 [avatar]）；sessions = /sessions 原样；
 //   diaries = scope=mine（公开，is_private=false）+ scope=mailbox（私密，is_private=true）分页拉全；
@@ -134,6 +136,13 @@ extension BearyAPI {
     /// DELETE /api/account/sessions/others（退出当前设备之外的全部会话；当前会话服务端必保留）。
     func revokeOtherSessions(completion: @escaping (Result<BearyAccountOkResponse, APIError>) -> Void) {
         request("/api/account/sessions/others", method: "DELETE", completion: completion)
+    }
+
+    /// POST /api/account/session-device（当前会话设备型号补报；服务端直接采用 dev.model，
+    /// 2026-11-14 起与网页同款：老会话登录时未采集，进账户页后补上）。
+    /// 调用方只在当前会话 device 为空或“浏览器”时调一次，绝不覆盖已有设备标签。
+    func reportSessionDevice(model: String, completion: @escaping (Result<BearyAccountOkResponse, APIError>) -> Void) {
+        request("/api/account/session-device", method: "POST", jsonBody: ["dev": ["model": model]], completion: completion)
     }
 
     /// POST /api/account/delete（注销发起；服务端返回 delete_at = 发起 + 7 天冷静期；
