@@ -426,6 +426,10 @@ final class BearyChromeViewController: UIViewController {
     /// （presentComposerForEdit）需带篇目恢复，不在本标记范围，登录后仍需
     /// 用户再次点编辑。
     private var pendingComposerAfterLogin = false
+    /// 第 25 轮 18 项：草稿箱“打开草稿”入口在未登录时记下的意图——登录成功后
+    /// 由 presentLogin 的 onLoggedIn 消费一次、自动打开草稿箱；取消登录
+    /// （onCancelled）与游客模式（onGuestMode）清除，不跨次登录残留。
+    private var pendingDraftBoxAfterLogin = false
     /// 删帖进回收站的在途防重复提交：按日记 id 记在途删除；同一篇首请求
     /// 在途时重开确认框再点直接丢弃，不重发 DELETE。成功／失败（含 401）
     /// 回包时一律清除，失败后用户可再次确认重删，不会被标记永久卡住。
@@ -3005,6 +3009,7 @@ final class BearyChromeViewController: UIViewController {
             // 待续写意图随取消清除：取消即放弃本次写作入口触发的登录，
             // 不得留到用户下一次因别事登录时误开编辑器。
             self?.pendingComposerAfterLogin = false
+            self?.pendingDraftBoxAfterLogin = false
             // 添加账号会话守卫：从添加/过期重登进来的取消，在此恢复原会话；
             // 未登录直登时守卫未 arm、cancel 是空操作，原有取消行为不动。
             SessionManager.shared.cancelAccountAddSession()
@@ -3038,6 +3043,15 @@ final class BearyChromeViewController: UIViewController {
                             && !self.isComposerPresented() && self.presentedViewController == nil {
                             self.presentComposer()
                         }
+                        // 第 25 轮 18 项：草稿箱意图同款消费——登录成功后自动打开草稿箱；
+                        // 条件不满足直接丢弃，不留到下次登录。
+                        if self.pendingDraftBoxAfterLogin {
+                            self.pendingDraftBoxAfterLogin = false
+                            if SessionManager.shared.isLoggedIn
+                                && !self.isComposerPresented() && self.presentedViewController == nil {
+                                self.presentDraftBoxFromChrome()
+                            }
+                        }
                     }
                 }
             }
@@ -3046,6 +3060,7 @@ final class BearyChromeViewController: UIViewController {
         vc.onGuestMode = { [weak self, weak vc] in
             // 游客不写日记：待续写意图随进游客态清除，之后登录不再误开编辑器。
             self?.pendingComposerAfterLogin = false
+            self?.pendingDraftBoxAfterLogin = false
             vc?.dismiss(animated: BearyMotion.animated(true)) {
                 self?.enterGuestMode()
             }
@@ -3909,7 +3924,7 @@ final class BearyChromeViewController: UIViewController {
         return false
     }
 
-    private func presentComposer() {
+    private func presentComposer(openingDraft: BearyDraft? = nil) {
         if isComposerPresented() { return }
         // 闪退诊断打点（容器侧，只记日志不改行为）：本文件此前无日志，循仓内
         // NSLog("[Tag] ...") 惯例（BearyEmotePlayer 等同款），每调用一次记一行。
@@ -3941,15 +3956,19 @@ final class BearyChromeViewController: UIViewController {
         // 临时诊断（86 包，定根因后删除）：登录守卫已过。
         DiagFile.mark("presentComposer-authed")
         let c = BearyComposerViewController()
-        c.onPublished = { [weak self] entryId in
-            self?.dismiss(animated: BearyMotion.animated(true)) {
+        c.onPublished = { [weak self, weak c] entryId in
+            // 第 25 轮 14 项：只关闭属于本次发布任务的编辑器——交接时编辑器已
+            // 退场，若用户等待期间新开了编辑器或其他页面，顶层已不是本任务的
+            // 编辑器，旧回包不替它关闭；时间线刷新等收尾照常做。
+            let finish: () -> Void = { [weak self] in
+                guard let self = self else { return }
                 // 发帖落点是原生时间线，顺带刷新原生列表与时间线备下次回访。
                 // 64 包反馈修（第 3 项）：写新日记使统计失效（清签名 + 丢当月缓存），
                 // 否则 reloadTimeline 的非强制月份拉取命中旧缓存、统计恒旧。
-                self?.timelineVC?.invalidateStatsLine()
-                self?.showPage(.timeline)
-                self?.timelineVC?.reloadTimeline()
-                self?.feedVC?.refreshAll()
+                self.timelineVC?.invalidateStatsLine()
+                self.showPage(.timeline)
+                self.timelineVC?.reloadTimeline()
+                self.feedVC?.refreshAll()
                 // 发布成功落盘：单篇拉取后 upsert 到该北京日文件（失败静默，
                 // 下次同步/切日刷新纠正）；内存日缓存由切日静默刷新接管，不在此处碰。
                 if let uid = SessionManager.shared.currentUser?.id {
@@ -3961,21 +3980,51 @@ final class BearyChromeViewController: UIViewController {
                     BearyLocalNotifications.shared.refreshAll(force: true)
                 }
                 // 门槛 4：写完第一篇日记后再问通知权限（先弹自建说明卡，点了「好」才调系统框）。
-                if let chrome = self {
-                    BearyLocalNotifications.shared.promptAfterFirstEntryIfNeeded(from: chrome)
-                }
+                BearyLocalNotifications.shared.promptAfterFirstEntryIfNeeded(from: self)
+            }
+            if let top = self?.presentedViewController, top === c {
+                self?.dismiss(animated: BearyMotion.animated(true), completion: finish)
+            } else {
+                finish()
             }
         }
         c.onCancelled = { [weak c] in c?.dismiss(animated: BearyMotion.animated(true)) }
         c.onRequireLogin = { [weak self] in
             self?.presentLoginGate()
         }
+        // 第 25 轮 18 项：发布失败“打开草稿重试”入口——编辑器已退场时由容器打开草稿箱。
+        c.onOpenDraft = { [weak self] in
+            self?.presentDraftBoxFromChrome()
+        }
         configureComposerPresentation(c, forEdit: false)
         // 临时诊断（86 包，定根因后删除）：present 调用之前。
         DiagFile.mark("presentComposer-willPresent")
-        present(c, animated: BearyMotion.animated(true))
+        present(c, animated: BearyMotion.animated(true)) { [weak c] in
+            // 第 25 轮 18 项：容器侧草稿箱选篇后载入该篇。
+            if let draft = openingDraft {
+                c?.openDraftFromBox(draft)
+            }
+        }
         // 临时诊断（81 包，定根因后删除）：present 调用已返回（动画是异步的，返回只证明调用本身没堵住）。
         DiagFile.mark("present-returned")
+    }
+
+    /// 第 25 轮 18 项：发布失败“打开草稿重试”入口——编辑器已退场，草稿箱由容器
+    /// 直接呈现；选篇后开新编辑器并载入该篇（与编辑器内草稿箱 onOpen 同路径），
+    /// 新建则走普通写入口。未登录时先走登录门，登录成功后由 onLoggedIn 续开。
+    /// 已有编辑器在栈时 presentComposer 按旧口径直接返回，草稿仍留在箱里，
+    /// 用户可从编辑器内草稿 pill 再开。
+    private func presentDraftBoxFromChrome() {
+        guard SessionManager.shared.isLoggedIn else {
+            pendingDraftBoxAfterLogin = true
+            presentLoginGate()
+            return
+        }
+        let box = BearyDraftBoxViewController(
+            onNew: { [weak self] in self?.presentComposer() },
+            onOpen: { [weak self] draft in self?.presentComposer(openingDraft: draft) }
+        )
+        topmostViewController().present(box, animated: BearyMotion.animated(true))
     }
 
     /// P1-1：FAB 等 /me 回包后的再判（复用我页延迟三重复核口径的语义，不用

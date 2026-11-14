@@ -204,6 +204,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     var onCancelled: (() -> Void)?
     /// 发布时未登录走这里，不发请求。
     var onRequireLogin: (() -> Void)?
+    /// 第 25 轮 18 项：发布失败“打开草稿重试”入口——编辑器已退场时由容器
+    /// 打开草稿箱；由容器在建编辑器时接线，交接时传给发布中心。
+    var onOpenDraft: (() -> Void)?
 
     // MARK: - 编辑模式
 
@@ -6073,9 +6076,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func restartUploadForRestoredItem(_ item: ComposerImageItem) {
-        // 新模型：新建态不重启上传——本地图只存本地，发布时由发布中心统一上传；
-        // 撤销恢复的项若仍在读图窗口，编码完成块会经 markLocalReady 清上传态。
-        guard isEditMode else { return }
+        // 第 25 轮 19 项：新建态也按已保存的上传方式续传——撤销恢复的项
+        // 仍是上传态时，从本地/条内图重启一次上传；startUpload 内已按
+        // uploadMode 分流（原图走 startOriginalUpload，压缩走现有路），
+        // 不再因新建态跳过、也不静默按压缩传。旧口径“新建态不重启、
+        // 等发布中心统一上传”会使撤销恢复的上传态项一直卡上传中。
         if let name = item.localFile {
             let ownerAccountId = composerOriginAccountId ?? BearyDraftStore.currentAccountId
             imagePrepQueue.async { [weak self, weak item] in
@@ -8460,6 +8465,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 草稿箱打开某篇：正文/心情/图片/天气/@/引用按 v3 原样恢复；之后再保存、
     /// 发布、丢弃都只针对这一篇（currentDraftId 已切到该篇）。
+    /// 第 25 轮 18 项：容器侧草稿箱选篇后载入——与编辑器内草稿箱 onOpen 同路径。
+    func openDraftFromBox(_ draft: BearyDraft) {
+        loadDraftFromBox(draft)
+    }
+
     private func loadDraftFromBox(_ draft: BearyDraft) {
         if isEditMode { return }
         // P0-2：发布在途不切篇，等回包后再切——在途发布成功后只清提交的那篇，
@@ -9203,6 +9213,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         publishGeneration += 1
         let generation = publishGeneration
+        // 第 25 轮 11 项：点发布即冻结输入——快照已拍，之后落盘与门禁等待
+        // 期间再输入也不进快照；冻结经 updatePublishState 施加（正文只读、
+        // 各入口钮禁用），交接成功随编辑器退场，落盘失败／门禁取消／门禁
+        // 未弹出时解冻（见 unfreezePublish）。
+        isPublishing = true
+        updatePublishState()
         // P1-5：等本次快照的 clientReq 确认落盘，再发首个会改变服务端状态
         // 的请求（发布中心的 setVisibility / publishEntry）。
         // 落盘失败就停在编辑器、保留输入并提示重试，不发请求。
@@ -9229,7 +9245,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.refreshQuoteSection()
                     var gated = snapshot
                     gated.quoteId = nil
-                    self.handOverToPublishCenter(snapshot: gated, generation: generation, publishTogether: false)
+                    // 第 25 轮 12 项：门禁最终选择先写回草稿再交接——否则发布
+                    // 失败重开时恢复的仍是门禁前的引用。落盘失败则留页解冻、
+                    // 提示重试，不交接。
+                    self.saveDraftNow { [weak self] result in
+                        guard let self = self else { return }
+                        guard result.succeeded else {
+                            self.unfreezePublish(for: generation)
+                            self.showAlert(message: "草稿保存失败，本篇未发布，请重试")
+                            return
+                        }
+                        self.handOverToPublishCenter(snapshot: gated, generation: generation, publishTogether: false)
+                    }
                 }, onKeepPrivate: { [weak self] in
                     guard let self = self else { return }
                     self.selectedVisibilityPublished = false
@@ -9243,8 +9270,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     gated.published = 0
                     gated.visibility = "private"
                     gated.ephemeral = nil
-                    self.handOverToPublishCenter(snapshot: gated, generation: generation, publishTogether: false)
+                    // 第 25 轮 12 项：同上，门禁改档先写回草稿再交接。
+                    self.saveDraftNow { [weak self] result in
+                        guard let self = self else { return }
+                        guard result.succeeded else {
+                            self.unfreezePublish(for: generation)
+                            self.showAlert(message: "草稿保存失败，本篇未发布，请重试")
+                            return
+                        }
+                        self.handOverToPublishCenter(snapshot: gated, generation: generation, publishTogether: false)
+                    }
+                }, onCancel: { [weak self] in
+                    // 第 25 轮 11 项：门禁取消／无选择关闭时解冻，留页继续写。
+                    self?.unfreezePublish(for: generation)
                 })
+                // 门禁没弹出来（present 守卫拦下）时无任何回调会来：不等，立即解冻留页。
+                if !(self.presentedViewController is BearyConfirmSheetViewController) {
+                    self.unfreezePublish(for: generation)
+                }
                 return
             }
             self.handOverToPublishCenter(snapshot: snapshot, generation: generation, publishTogether: false)
@@ -9252,12 +9295,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         saveDraftNow { [weak self] result in
             guard let self = self else { return }
             guard result.succeeded else {
+                self.unfreezePublish(for: generation)
                 BearyHaptics.rejectionWarning()
                 self.showAlert(message: "草稿保存失败，本篇未发布，请重试")
                 return
             }
             proceedAfterPersist()
         }
+    }
+
+    /// 第 25 轮 11 项：发布冻结的留页解冻（落盘失败／门禁取消／门禁未弹出）。
+    /// 只解本轮代次——新一轮发布已开始时旧回调不碰新冻结。
+    private func unfreezePublish(for generation: Int) {
+        guard generation == publishGeneration else { return }
+        isPublishing = false
+        updatePublishState()
     }
 
     /// 发布后台化交接（新建发布专用）：快照与图片清单交给发布中心，
@@ -9283,7 +9335,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             commitPendingRemoval()
         }
         let images = imageItems.map { item in
-            BearyPublishImage(localFile: item.localFile, serverKey: item.key, liveVideoKey: item.liveVideoKey, liveVideoFile: item.liveVideoFile, liveVideoData: item.liveVideoData)
+            BearyPublishImage(localFile: item.localFile, serverKey: item.key, liveVideoKey: item.liveVideoKey, liveVideoFile: item.liveVideoFile, liveVideoData: item.liveVideoData, uploadMode: item.uploadMode, originalFile: item.originalFile)
         }
         // onPublished/onRequireLogin 只取闭包值、不持有编辑器本身：
         // 编辑器退出后析构，发布中心仍能经闭包值调容器接线。
@@ -9293,7 +9345,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             publishTogether: publishTogether,
             hostView: presentingViewController?.view,
             onPublished: onPublished,
-            onRequireLogin: onRequireLogin)
+            onRequireLogin: onRequireLogin,
+            onOpenDraft: onOpenDraft)
         guard BearyPublishCenter.shared.start(job: job) else {
             // 同一草稿已有在途任务：留页、解冻，提示发布中。
             isPublishing = false
