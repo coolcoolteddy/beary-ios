@@ -3,10 +3,13 @@ import UIKit
 // ===== BearyButton 按钮工厂（B 批）=====
 // 四类样式（各页实测形态的归纳口径，见下方各 case 注释；数值即原各页数值，
 // 工厂只收敛写法，不改任何一处视觉）：
-//  .primaryPill：高 44、圆角 single（12）；墨底 + 反色字（bg 色，浅白深黑，与 ink 互为反色），
-//    或橙底 + onBrand 深墨字（视觉清单第 5 项：橙底前景固定深墨色，不用
-//    深色下会变白的 ink；引导/主操作，Onboarding 主钮同款口径）。
-//  .secondaryOutline：高 44/36、圆角 single（12）、1pt line 边框 + surface1 底 + ink 字
+//  .primaryPill：高 44、圆角 single（12）；柔和灰底（surface2）+ ink 字
+//    （2026-11-14 Li 定：纯白／纯黑墨底太突兀，改走 surface2，与心情选择器
+//    pill 同款；字仍走 ink，深浅对比都够），或橙底 + onBrand 深墨字
+//    （视觉清单第 5 项：橙底前景固定深墨色，不用深色下会变白的 ink；
+//    引导/主操作，Onboarding 主钮同款口径）。
+//  .secondaryOutline：高 44/36、圆角 single（12）、1pt line 边框 + surface2 底 + ink 字
+//    （2026-11-14 同上：原 surface1 在深色 sheet 上仍显纯黑，改 surface2）。
 //    （搜索页“清空搜索”44/22 同款；36/18 为其紧凑版）。
 //  .destructiveOutline：高 36/44、圆角 single（12）、1pt 45% 红边框 + 红字 + surface1 底
 //    （回收站“彻底删除”红字口径，边框按任务要求取 45% 红而非 line）。
@@ -185,9 +188,11 @@ class BearyButton: BearyHit44Button {
         case .primaryPill(let tone):
             layer.borderWidth = 0
             if tone == .ink {
-                backgroundColor = BearyColors.ink
-                setTitleColor(BearyColors.bg, for: .normal)
-                tintColor = BearyColors.bg
+                // 2026-11-14 Li 定：纯白／纯黑墨底太突兀，改 surface2 柔和灰底 + ink 字
+                //（深色 ink 字 245 配 surface2 约 14:1、浅色墨字配 surface2 约 17:1）。
+                backgroundColor = BearyColors.surface2
+                setTitleColor(BearyColors.ink, for: .normal)
+                tintColor = BearyColors.ink
             } else {
                 // 视觉清单第 5 项：橙底保留，前景固定深墨色 onBrand（不用 ink，
                 // ink 深色下变近白、橙底白字对比度不足；onBrand 深浅恒墨色）。
@@ -196,7 +201,8 @@ class BearyButton: BearyHit44Button {
                 tintColor = BearyColors.onBrand
             }
         case .secondaryOutline:
-            backgroundColor = BearyColors.surface1
+            // 2026-11-14 Li 定：同上，surface1 在深色 sheet 上仍显纯黑，改 surface2。
+            backgroundColor = BearyColors.surface2
             setTitleColor(BearyColors.ink, for: .normal)
             tintColor = BearyColors.ink
             layer.borderWidth = 1
