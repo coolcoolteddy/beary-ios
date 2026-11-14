@@ -114,6 +114,13 @@ enum BearyBackgroundRefresh {
                     }
                     switch result {
                     case .failure:
+                        // 提醒重算独立于广场请求结果：失败时也要按最新本地数据
+                        // 重算已有四种本地提醒（第 25 轮 53）；取消态不做副作用。
+                        guard !isCancelled() else {
+                            completion(false)
+                            return
+                        }
+                        BearyLocalNotifications.shared.refreshAll(force: true)
                         completion(false)
                     case .success(let list):
                         let entries = list.entries ?? []
