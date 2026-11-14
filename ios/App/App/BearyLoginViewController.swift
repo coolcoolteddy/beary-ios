@@ -1082,7 +1082,7 @@ final class BearyLoginViewController: UIViewController {
         let status = resp.referral?.status ?? ""
         let text: String
         if resp.referral?.ok == true || status == "granted" {
-            text = "邀请码绑定成功，30 天 Plus 已到账"
+            text = "绑定成功，30 天 Plus 已到账"
         } else if status == "flagged" {
             text = "邀请码已提交，站长审核通过后各得 30 天 Plus"
         } else {
@@ -1231,7 +1231,7 @@ extension BearyLoginViewController: UITextViewDelegate {
 /// 补成最终 toast 文案：仅 granted 基础文案补到期日（邀请页 granted 同款口径，
 /// 永久阈值 4102444800000）；plusUntil 缺失 / 非 granted 时原样返回，不编造日期。
 enum BearyReferralFeedback {
-    static let grantedBaseText = "邀请码绑定成功，30 天 Plus 已到账"
+    static let grantedBaseText = "绑定成功，30 天 Plus 已到账"
 
     static func toastText(base: String, plusUntil: Int?) -> String {
         guard base == grantedBaseText, let until = plusUntil, until > 0 else { return base }
