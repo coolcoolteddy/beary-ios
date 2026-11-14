@@ -32,6 +32,17 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     private var snapshotGeneration: UInt64 = 0
     /// 新一轮 01：相对时间分钟边界刷新定时器（页面统一持有，不进 Cell）。
     private var relativeTimeTimer: Timer?
+    /// 60 秒轮询（通知页 pollTimer 同款口径）：新私信到达时列表实时出现，
+    /// 不用退出重进。轮询只做轻量门控比对（见 refreshConversationsLightly），
+    /// 签名变了才走 load() 整页重拉；无变化时不重绘、不动滚动位置。
+    private var pollTimer: Timer?
+    /// 合并模式宿主注入的实际可见状态（通知页 hostVisibilityProvider 同款）：
+    /// 嵌入态子页 view 不进层级，view.window 恒为 nil，自身可见状态永远判 false，
+    /// 轮询每拍死在守卫处；宿主把自己的可见状态供过来。独立会话页不设本属性。
+    var hostVisibilityProvider: (() -> Bool)?
+    /// 上次服务端回包的会话列表签名（对方 id＋最后时间＋未读数＋摘要）：
+    /// 轻量轮询只比对它，变了才重拉；切号时清掉，旧号签名不得拦住新号首拉。
+    private var lastServerConversationsSignature: String?
     // 新行首次出现透明度过渡的已播记账（按对方 id/handle 键，已有行更新不重播）。
     private var fadedRowKeys = Set<String>()
     private let titleLabel = UILabel()
@@ -177,22 +188,26 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         NotificationCenter.default.addObserver(self, selector: #selector(handleForegroundForRelativeTime), name: UIApplication.willEnterForegroundNotification, object: nil)
         loadConversationsSnapshot()
         load()
+        startPolling()
     }
 
     deinit {
         relativeTimeTimer?.invalidate()
+        pollTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         startRelativeTimeTimer()
+        startPolling()
         refreshVisibleTimeLabels()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         stopRelativeTimeTimer()
+        stopPolling()
     }
 
     /// 新一轮 01：相对时间只由页面统一刷新——首拍对齐下一分钟边界，之后每 60 秒
@@ -211,6 +226,79 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         relativeTimeTimer = nil
     }
 
+    /// 容器切页进页钩子（与通知页 pageDidEnter 同口径）：嵌入态 appearance
+    /// 回调不触发，容器 showPage 在进页时显式调本钩子恢复轮询。
+    func pageDidEnter() {
+        startPolling()
+    }
+
+    /// 容器切页离页钩子（与通知页 pageDidLeave 同口径）：停轮询。
+    func pageDidLeave() {
+        stopPolling()
+    }
+
+    /// 60 秒轮询（通知页 startPolling 同款）：首拍对齐下一分钟边界，之后
+    /// 每 60 秒一拍（自调度，计时漂移自动纠回边界）；回调里顺带刷新可见行
+    /// 的时间标签，只改 Label，不 reloadData、不动滚动位置。
+    private func startPolling() {
+        pollTimer?.invalidate()
+        let delay = 60.0 - Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 60.0)
+        pollTimer = Timer.scheduledTimer(withTimeInterval: max(delay, 1.0), repeats: false) { [weak self] _ in
+            self?.startPolling()
+            guard let strongSelf = self, strongSelf.isDMPageVisible else { return }
+            strongSelf.refreshConversationsLightly()
+            strongSelf.refreshVisibleTimeLabels()
+        }
+    }
+
+    private func stopPolling() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+    }
+
+    /// 审计-性能：页面可见性。容器切 tab 只改 view.isHidden，不走
+    /// viewWillAppear/viewWillDisappear，故轮询不能只靠 appearance 回调；
+    /// timer 回调统一凭本属性门控，隐藏时跳过本次请求、不停表
+    /// （切回后下一拍自动恢复，不依赖容器补调）。
+    private var isDMPageVisible: Bool {
+        if let provider = hostVisibilityProvider { return provider() }
+        return view.window != nil && !view.isHidden
+    }
+
+    /// 轻量刷新（通知页 refreshUnreadCountLightly 同款门控）：只比对服务端
+    /// 会话列表签名，变了才走 load() 整页重拉；无变化时不重绘、不动滚动位置。
+    /// 失败静默（下一拍再试），不弹失败态、不清旧列表。
+    private func refreshConversationsLightly() {
+        guard SessionManager.shared.isLoggedIn, !loading, !firstLoadPending else { return }
+        let requestEpoch = BearyAPI.shared.authEpoch
+        BearyAPI.shared.fetchDMConversations { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                // 切号后到达的旧回包直接丢弃（账号代次校验，与 load() 同口径）。
+                guard requestEpoch == BearyAPI.shared.authEpoch,
+                      SessionManager.shared.isLoggedIn else { return }
+                switch result {
+                case .success(let list):
+                    let signature = Self.conversationsSignature(list.resolvedConversations)
+                    guard signature != strongSelf.lastServerConversationsSignature else { return }
+                    strongSelf.load()
+                case .failure:
+                    break
+                }
+            }
+        }
+    }
+
+    /// 会话列表签名：对方 id＋最后时间＋未读数＋摘要拼串。服务端回包无
+    /// 版本号字段（DMConversationsResponse 只有 conversations/list），
+    /// 轻量门控凭此比对——新私信到达时首行摘要／时间／未读必变，签名必变。
+    private static func conversationsSignature(_ list: [BearyAPI.DMConversation]) -> String {
+        list.map { conv in
+            let peerId = conv.peer?.id.map(String.init) ?? ""
+            return "\(peerId):\(conv.lastAt ?? 0):\(conv.unreadCount ?? 0):\(conv.lastBody ?? "")"
+        }.joined(separator: "|")
+    }
+
     /// 新一轮 01：只更新可见行的时间 Label（滚动位置、入场动效均不动），不 reloadData。
     private func refreshVisibleTimeLabels() {
         guard view.window != nil && !view.isHidden else { return }
@@ -222,6 +310,8 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     @objc private func handleForegroundForRelativeTime() {
         refreshVisibleTimeLabels()
         startRelativeTimeTimer()
+        startPolling()
+        refreshConversationsLightly()
     }
 
     override func viewDidLayoutSubviews() {
@@ -345,6 +435,8 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     @objc private func userChanged() {
         // 回填代次+1：在途旧号快照回包凭此丢弃。
         snapshotGeneration += 1
+        // 切号即清服务端签名：旧号签名不得拦住新号首拉后的轻量比对。
+        lastServerConversationsSignature = nil
         // 账号切换：旧号会话不得残留。先清表再重拉；在途旧号请求回包凭
         // 请求时账号丢弃（见 load），在途时新号重拉挂起、旧回包到后补发。
         if SessionManager.shared.isLoggedIn {
@@ -457,6 +549,8 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                 self.firstLoadPending = false
                 switch result {
                 case .success(let list):
+                    // 轻量轮询门控：记下本次服务端回包签名，供下次轮询比对。
+                    self.lastServerConversationsSignature = Self.conversationsSignature(list.resolvedConversations)
                     // 服务端为准，仅本地有的对方追加（未读数不由本地推断，置空）。
                     // 第七轮 #4：本地并入只走后台队列，结果回主线程再刷新。
                     BearyDMStore.mergedConversations(
