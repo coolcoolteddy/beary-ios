@@ -68,6 +68,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     private var popoverTopConstraint: NSLayoutConstraint?
     private var lastShadowSize: CGSize = .zero
     private let suggestionsEmptyLabel = UILabel()
+    // 第 25 轮 8 项：搜索失败重试入口——失败时建议区改显此钮，不复用“没有找到相关位置”。
+    private let suggestionsRetryButton = UIButton(type: .system)
 
     private let locationManager = CLLocationManager()
     private let geocoder = CLGeocoder()
@@ -89,6 +91,14 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     private var located: DiaryLocation?
     private var locating = false
     private var manualMode = false
+    /// 第 25 轮 31 项：点建议／手动确认在途标志——显示“正在确认…”并防重复提交；
+    /// confirmingKey 区分不同确认：同建议／同文本重复点按直接忽略，换建议／改词可 supersede 在途确认。
+    private var isConfirming = false
+    private var confirmingKey: String?
+    /// 第 25 轮 30 项：无区级提示是否正在显示——输入变化时恢复手动态默认副文案。
+    private var showingNoDistrictNotice = false
+    /// 第 25 轮 8 项：搜索建议失败态——失败时建议区改显重试入口，不复用“没有找到相关位置”。
+    private var suggestionsSearchFailed = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -223,6 +233,16 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         suggestionsEmptyLabel.textColor = BearyColors.gray
         suggestionsEmptyLabel.text = "没有找到相关位置"
         suggestionsEmptyLabel.isHidden = true
+        // 第 25 轮 8 项：搜索失败重试入口（同建议行左对齐 13pt，便于点按重试）。
+        suggestionsRetryButton.translatesAutoresizingMaskIntoConstraints = false
+        suggestionsRetryButton.setTitle("搜索失败，点按重试", for: .normal)
+        suggestionsRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        suggestionsRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        suggestionsRetryButton.setTitleColor(BearyColors.ink, for: .normal)
+        suggestionsRetryButton.contentHorizontalAlignment = .left
+        suggestionsRetryButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 2, bottom: 10, right: 2)
+        suggestionsRetryButton.accessibilityLabel = "搜索失败，点按重试"
+        suggestionsRetryButton.addTarget(self, action: #selector(didRetrySuggestionSearch), for: .touchUpInside)
         suggestionsStack.axis = .vertical
         suggestionsStack.spacing = 0
         suggestionsStack.translatesAutoresizingMaskIntoConstraints = false
@@ -376,6 +396,9 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     /// 经 startAutoLocate 再调本方法又 +1，旧回调同样干扰不了新气泡。
     func cancelRequests() {
         interactionGeneration += 1
+        // 第 25 轮 27／31 项：代次作废同时清确认态，旧确认回包不再落定。
+        isConfirming = false
+        confirmingKey = nil
         activeSearch?.cancel()
         activeSearch = nil
         locating = false
@@ -415,6 +438,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             self.inputField.isHidden = true
             self.suggestionsScrollView.isHidden = true
             self.relocateButton.isHidden = true
+            // 第 25 轮 32 项：非手动态恢复“自己输入”钮（手动态已隐藏，见 setManualMode）。
+            self.manualButton.isHidden = false
         }
     }
 
@@ -439,6 +464,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             self.inputField.isHidden = true
             self.suggestionsScrollView.isHidden = true
             self.relocateButton.isHidden = false
+            // 第 25 轮 32 项：已定位态恢复“自己输入”钮。
+            self.manualButton.isHidden = false
         }
     }
 
@@ -460,6 +487,13 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             }
             // 手动态的确认就是头部 ✅：有输入才可点，空输入禁用防误存；
             // 不再另起“使用这个地点”钮，避免两个确认入口。
+            // 第 25 轮 32 项：已在手动态，“自己输入”钮隐藏（它重复指向当前状态）。
+            self.manualButton.isHidden = true
+            // 第 25 轮 27／31／8 项：进手动态即放弃在途确认与旧失败态。
+            self.isConfirming = false
+            self.confirmingKey = nil
+            self.showingNoDistrictNotice = false
+            self.hideSuggestionFailure()
             self.inputField.isHidden = false
             self.suggestionsScrollView.isHidden = false
             self.relocateButton.isHidden = true
@@ -478,6 +512,54 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         guard manualMode else { return }
         let text = (inputField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         setConfirmEnabled(!text.isEmpty)
+    }
+
+    /// 第 25 轮 31 项：进入“正在确认…”——副文案＋转圈示意已收到，头部 ✅ 置灰防并发确认；
+    /// 同 key 重复点按返回 false（调用方直接忽略），不同 key 允许 supersede 在途确认。
+    private func beginConfirming(key: String) -> Bool {
+        if isConfirming, confirmingKey == key { return false }
+        isConfirming = true
+        confirmingKey = key
+        showingNoDistrictNotice = false
+        subLabel.isHidden = false
+        subLabel.text = "正在确认…"
+        spinner.isHidden = false
+        spinner.startSpinning()
+        setConfirmEnabled(false)
+        return true
+    }
+
+    /// 第 25 轮 31 项：确认回包落定／作废时退出确认态（转圈停、标志清零）；
+    /// 被 supersede 的旧回包走代次守卫提前返回，不经过这里、不动新确认的状态。
+    private func endConfirming() {
+        isConfirming = false
+        confirmingKey = nil
+        spinner.stopSpinning()
+        spinner.isHidden = true
+    }
+
+    /// 第 25 轮 30 项：有区级直接落定；无区级不落定——副文案提示“未识别区级，
+    /// 公开后不显示地点”，用户可再点一次重试，✅ 恢复可用；district 仍为 nil，
+    /// 不拿地名冒充区级，现有隐私规则不变。
+    private func finishConfirmedLocation(name: String, district: String?) {
+        guard let district = district else {
+            showingNoDistrictNotice = true
+            subLabel.isHidden = false
+            subLabel.text = "未识别区级，公开后不显示地点，可再点一次重试"
+            UIAccessibility.post(notification: .announcement, argument: "未识别区级，公开后不显示地点")
+            refreshManualConfirmState()
+            return
+        }
+        delegate?.locationPopover(self, didConfirm: DiaryLocation(name: name, district: district))
+    }
+
+    /// 第 25 轮 8 项：撤下搜索失败重试入口（新查询发出／成功回包／清空／进手动态时调用）。
+    private func hideSuggestionFailure() {
+        suggestionsSearchFailed = false
+        if suggestionsRetryButton.superview != nil {
+            suggestionsStack.removeArrangedSubview(suggestionsRetryButton)
+            suggestionsRetryButton.removeFromSuperview()
+        }
     }
 
     // MARK: - UITextFieldDelegate
@@ -520,9 +602,29 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         refreshManualConfirmState()
         let text = (inputField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty {
+            // 第 25 轮 27 项：清空输入也作废在途确认——代次 +1 并取消当前搜索，
+            // 否则点建议的晚到回包仍能按旧代次校验通过并落定旧地点；
+            // completer 查询片段一并清空，旧建议回包不再到达。
+            interactionGeneration += 1
+            activeSearch?.cancel()
+            activeSearch = nil
+            endConfirming()
+            completer.queryFragment = ""
+            if showingNoDistrictNotice {
+                showingNoDistrictNotice = false
+                subLabel.text = "输入地点，下方出现建议时点建议直接定位"
+            }
             clearSuggestions()
             return
         }
+        // 新词在途：旧确认已过期（下行代次 +1 作废）、旧无区级提示与失败态不再显示；
+        // 旧建议本身不动（第 25 轮 28 项由 #1511 负责，本支不碰）。
+        if isConfirming || showingNoDistrictNotice {
+            endConfirming()
+            showingNoDistrictNotice = false
+            subLabel.text = "输入地点，下方出现建议时点建议直接定位"
+        }
+        hideSuggestionFailure()
         // 改词即新操作：在途的手动确认／点建议搜索与旧建议回包一律过期作废。
         interactionGeneration += 1
         completerGeneration = interactionGeneration
@@ -532,6 +634,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     private func didConfirmManualText() {
         let text = (inputField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        // 第 25 轮 31 项：同文本重复确认直接忽略（防重复提交）；改词后是新确认。
+        guard beginConfirming(key: "manual:\(text)") else { return }
         // 手动输入的区级仍由地理编码得出，不由用户手填（v2 口径）；编不到区级时
         // district 留空——他人视角展示层 fail-closed（不显示），不拿精确名冒充区级。
         let request = MKLocalSearch.Request()
@@ -549,8 +653,10 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
                   self.activeSearch === search,
                   (self.inputField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines) == confirmedText else { return }
             if self.activeSearch === search { self.activeSearch = nil }
+            self.endConfirming()
             let district = response?.mapItems.first.map { BearyLocationDisplay.district(from: $0.placemark) } ?? nil
-            self.delegate?.locationPopover(self, didConfirm: DiaryLocation(name: text, district: district))
+            // 第 25 轮 30 项：无区级不直接落定，提示并允许重试（见 finishConfirmedLocation）。
+            self.finishConfirmedLocation(name: text, district: district)
         }
     }
 
@@ -558,6 +664,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         let index = sender.tag
         guard index < suggestions.count else { return }
         let completion = suggestions[index]
+        // 第 25 轮 31 项：同一建议重复点按直接忽略（防重复提交）；点另一建议可 supersede 在途确认。
+        guard beginConfirming(key: "suggestion:\(index):\(completion.title)") else { return }
         let request = MKLocalSearch.Request(completion: completion)
         // 审计二轮 04：同 439 行——连续两次点建议也要递增代次，回调按请求对象
         // 同一性 + 代次双重校验，旧回包不提交旧地点。
@@ -570,14 +678,31 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             guard let self = self, !self.isHidden, self.interactionGeneration == generation,
                   self.activeSearch === search else { return }
             if self.activeSearch === search { self.activeSearch = nil }
+            self.endConfirming()
             let placemark = response?.mapItems.first?.placemark
             let name = placemark?.name ?? completion.title
             // flatMap 把 String?? 压到一层 String?，与 DiaryLocation(district:) 入参对齐；
             // 无 placemark 或无区级时均为 nil，不改逆地理编码流程。
             let district = placemark.flatMap { BearyLocationDisplay.district(from: $0) }
-            // 点建议即直接定位：不等头部确认钮，调用方直接落定该地点（v3 口径）。
-            self.delegate?.locationPopover(self, didConfirm: DiaryLocation(name: name, district: district))
+            // 第 25 轮 30 项：无区级不直接落定，提示并允许重试（见 finishConfirmedLocation）；
+            // 有区级时点建议即直接定位：不等头部确认钮，调用方直接落定该地点（v3 口径）。
+            self.finishConfirmedLocation(name: name, district: district)
         }
+    }
+
+    /// 第 25 轮 8 项：搜索失败重试——按当前输入重新发一次建议查询；新查询到达前撤下失败态。
+    @objc private func didRetrySuggestionSearch() {
+        let text = (inputField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        hideSuggestionFailure()
+        clearSuggestionViews()
+        layoutIfNeeded()
+        updateSuggestionsHeight()
+        interactionGeneration += 1
+        completerGeneration = interactionGeneration
+        // 先清空再重设：同值重设不一定触发新查询，清空可确保本次重试真正发出。
+        completer.queryFragment = ""
+        completer.queryFragment = text
     }
 
     /// 只清旧视图，不动结果数据：正常渲染先清旧按钮/旧空态，再按当前 suggestions 重建。
@@ -596,6 +721,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     /// 正常渲染不得走这里，否则会把刚到的结果清掉。
     private func clearSuggestions() {
         suggestions = []
+        hideSuggestionFailure()
         clearSuggestionViews()
     }
 
@@ -605,6 +731,14 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         // layoutSubviews 也会再算一次，首帧不靠它也能落定）。
         layoutIfNeeded()
         updateSuggestionsHeight()
+        // 第 25 轮 8 项：搜索失败不复用“没有找到相关位置”空态，改显重试入口。
+        if suggestionsSearchFailed {
+            suggestionsStack.addArrangedSubview(suggestionsRetryButton)
+            suggestionsRetryButton.isHidden = false
+            layoutIfNeeded()
+            updateSuggestionsHeight()
+            return
+        }
         if suggestions.isEmpty {
             suggestionsStack.addArrangedSubview(suggestionsEmptyLabel)
             suggestionsEmptyLabel.isHidden = false
@@ -628,7 +762,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             }
             button.setAttributedTitle(title, for: .normal)
             button.contentEdgeInsets = UIEdgeInsets(top: 10, left: 2, bottom: 10, right: 2)
-            button.accessibilityLabel = "定位到\(item.title)"
+            // 第 25 轮 29 项：读屏标签含非空地址，同名地点才容易区分。
+            button.accessibilityLabel = item.subtitle.isEmpty ? "定位到\(item.title)" : "定位到\(item.title)，\(item.subtitle)"
             button.addTarget(self, action: #selector(didTapSuggestion(_:)), for: .touchUpInside)
             suggestionsStack.addArrangedSubview(button)
         }
@@ -703,6 +838,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             clearSuggestions()
             return
         }
+        hideSuggestionFailure()
         suggestions = completer.results
         renderSuggestions()
     }
@@ -717,7 +853,10 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             clearSuggestions()
             return
         }
+        // 第 25 轮 8 项：搜索失败不再复用“没有找到相关位置”空态——失败态渲染重试入口；
+        // 网络失败不等于无结果。
         suggestions = []
+        suggestionsSearchFailed = true
         renderSuggestions()
     }
 }
