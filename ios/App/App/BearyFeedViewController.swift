@@ -1088,13 +1088,10 @@ class BearyFeedViewController: UIViewController {
         onEntrySelected?(entry)
     }
 
-    private func presentActionFailedAlert() {
-        if presentedViewController != nil { return }
-        // 原 UIAlertController(.alert) 单「确定」钮，改走共享底部弹窗
-        // （无标题确认框同款做法：标题传空，只显说明＋按钮）；文案原样。
-        BearyConfirmSheet.show(from: self, title: "", message: "操作失败，请重试", actions: [
-            BearyConfirmSheet.Action(title: "确定", style: .default),
-        ])
+    /// 点赞／收藏失败的通用提示：只发 toast（文案原样），不弹确认。
+    /// 按钮摇头已在卡片侧先做（失败按钮上 playDenyShake），这里不再重复。
+    private func showActionFailedToast() {
+        BearyToast.show(in: view, message: "操作失败，请重试")
     }
 
     // MARK: - 广场流
@@ -2310,7 +2307,7 @@ class BearyFeedViewController: UIViewController {
             self?.onRequireLogin?()
         }
         cell.onActionFailed = { [weak self] in
-            self?.presentActionFailedAlert()
+            self?.showActionFailedToast()
         }
         cell.onEmoteFailed = { [weak self] in
             guard let strongSelf = self else { return }
