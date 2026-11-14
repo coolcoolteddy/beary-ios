@@ -2497,7 +2497,7 @@ class BearyFeedViewController: UIViewController {
         BearyVisibility.presentPicker(from: self, entry: entry) { [weak self] targetVisibility in
             guard let strongSelf = self else { return }
             guard let current = strongSelf.entryModel(for: entryId),
-                  targetVisibility != BearyVisibility.current(for: current) else { return }
+                  !BearyVisibility.isNoChange(target: targetVisibility, for: current) else { return }
             strongSelf.pubBusyIds.insert(entryId)
             if targetVisibility == "public" {
                 BearyQuoteGate.gatePublicToggle(from: strongSelf, entry: entry) { [weak self] result in
