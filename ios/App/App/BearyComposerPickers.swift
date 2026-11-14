@@ -1192,7 +1192,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         rowUsers = users
         recipientRowViews = newViews
         rowHighlightViews = newHighlights
-        // M8：搜索结果行淡入错峰（减动效跳过；审计 P2-24：只播新 key 行——
+        // M8：搜索结果行错峰滑入（减动效跳过；审计 P2-24：只播新 key 行——
         // 同一选人会话内多次搜索，已播过的行不重播；错峰序号按本轮新行动）。
         // sheet 高度由 viewDidLayoutSubviews 的 updateSheetHeight 跟进，键盘事件下的
         // 高度变化走 animateKeyboardLayout 的键盘曲线。
@@ -1203,9 +1203,11 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                 guard !animatedRowKeys.contains(key) else { continue }
                 animatedRowKeys.insert(key)
                 button.alpha = 0
-                // R13 方案 B：新增行错峰淡入 0.18s（步进 0.03、封顶 0.24 不动）。
-                UIView.animate(withDuration: BearyMotion.micro, delay: min(Double(animIndex) * 0.03, 0.24), options: [], animations: {
+                button.transform = CGAffineTransform(translationX: 0, y: 8)
+                // 第 20 轮 A11：新增行错峰滑入 0.26s（位移 8pt＋透明度，步进 0.03、封顶 0.24 不动）。
+                UIView.animate(withDuration: BearyMotion.normal, delay: min(Double(animIndex) * 0.03, 0.24), options: [], animations: {
                     button.alpha = 1
+                    button.transform = .identity
                 }, completion: nil)
                 animIndex += 1
             }
