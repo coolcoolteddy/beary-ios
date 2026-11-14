@@ -339,8 +339,16 @@ private final class WishRowView: UIView {
     }
 
     /// 投票选中态走按钮公共样式（BearyButton.applyVoteSelected）；本处只转发，不再各写一套颜色。
+    /// 第 25 轮 75：applyVoteSelected 只改颜色，读屏看不到选中态——同步 isSelected
+    /// 与 .selected trait，读屏读作「赞成 N 票，已选择」/「反对 N 票，已选择」。
     private func setVoteSelected(_ button: BearyButton, selected: Bool) {
         button.applyVoteSelected(selected)
+        button.isSelected = selected
+        if selected {
+            button.accessibilityTraits.insert(.selected)
+        } else {
+            button.accessibilityTraits.remove(.selected)
+        }
     }
 
     /// 审计视觉 13：按钮标题只留操作名，计数另起一段走 numberFont 等宽数字；
@@ -349,7 +357,11 @@ private final class WishRowView: UIView {
     private func setVoteTitle(_ button: BearyButton, name: String, count: Int) {
         let nameFont = button.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         let title = NSMutableAttributedString(string: name, attributes: [.font: nameFont])
-        title.append(NSAttributedString(string: " \(count)", attributes: [.font: BearyDynamicType.numberFont()]))
+        // 第 25 轮 5：票数为 0 时不拼数字及其前导空格，只显示操作名；
+        // 读屏标签仍保留票数（「赞成 0 票」照常可读）。
+        if count > 0 {
+            title.append(NSAttributedString(string: " \(count)", attributes: [.font: BearyDynamicType.numberFont()]))
+        }
         button.setAttributedTitle(title, for: .normal)
         button.accessibilityLabel = "\(name) \(count) 票"
     }
