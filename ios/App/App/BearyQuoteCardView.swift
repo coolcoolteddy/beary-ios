@@ -14,6 +14,43 @@ import UIKit
 // 池化口径与 94 包主图 9 槽位同款（上限 9 张，池按需增长、不预建）。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
+/// A2：引用展开态的视图外存储——广场卡片与详情页共用同一份键。
+/// 键 = 宿主日记 ID + 引用稳定 ID：换 cell 实例、引用异步重拉后 configure
+/// 再查同一键，展开态不丢。只记“已展开”（展开单向，无收起），键按最近
+/// 展开排序、只留最近 64 个，防无界增长。hostId/quoteId 任一为空时不建
+/// 键（不记、不查），调用方仍走旧的同实例 keepExpanded 口径；失效占位
+/// 由调用方在 gone/locked 终态分支显式 forget——加载中/加载失败/仅好友
+/// 待确认占位不忘，异步重拉回来仍恢复展开。
+enum BearyQuoteExpandState {
+    static let maxKeptKeys = 64
+    private static var expandedKeys: [String] = []
+
+    static func key(hostId: String?, quoteId: String?) -> String? {
+        guard let hostId = hostId, !hostId.isEmpty,
+              let quoteId = quoteId, !quoteId.isEmpty else { return nil }
+        return "\(hostId)|\(quoteId)"
+    }
+
+    static func isExpanded(key: String?) -> Bool {
+        guard let key = key else { return false }
+        return expandedKeys.contains(key)
+    }
+
+    static func markExpanded(key: String?) {
+        guard let key = key else { return }
+        expandedKeys.removeAll { $0 == key }
+        expandedKeys.append(key)
+        if expandedKeys.count > maxKeptKeys {
+            expandedKeys.removeFirst(expandedKeys.count - maxKeptKeys)
+        }
+    }
+
+    static func forget(key: String?) {
+        guard let key = key else { return }
+        expandedKeys.removeAll { $0 == key }
+    }
+}
+
 final class BearyQuoteCardView: UIView {
 
     /// F2：引用卡点按（gone/locked 时首页 cell 侧不动作；加载失败时走 onRetryTapped）。
@@ -168,6 +205,9 @@ final class BearyQuoteCardView: UIView {
     /// clear()（复用／失效占位）不碰它：判定只认 ID 相等，旧 ID 遇新引用
     /// 自然不等即重置，不会串位。
     private var currentQuoteId: String?
+    /// A2：本次 configure 的视图外展开键（宿主 ID + 引用 ID）；展开时按
+    /// 它记入 BearyQuoteExpandState，clear() 不碰它（与 currentQuoteId 同口径）。
+    private var currentExpandKey: String?
 
     private lazy var textStack: UIStackView = {
         let st = UIStackView(arrangedSubviews: [contentLabel, expandButton])
@@ -303,6 +343,8 @@ final class BearyQuoteCardView: UIView {
         quoteExpanded = true
         contentLabel.numberOfLines = 0
         expandButton.isHidden = true
+        // A2：展开记到视图外存储——换 cell 实例、异步重拉后仍按键恢复。
+        BearyQuoteExpandState.markExpanded(key: currentExpandKey)
         onExpansionChanged?()
         // 审计十轮第 5 项：展开后读屏 label 刷成“已展开”，撤掉展开操作。
         refreshQuoteAccessibility()
@@ -610,13 +652,21 @@ final class BearyQuoteCardView: UIView {
     /// 引用规则简化（2026-10-31）：“仅你可见”角标随混合态取消而下线，本函数不再接受
     /// showOnlyYouBadge，调用点亦全部清掉。占位态（showGone）不带日期与缩略图：
     /// clear() 已把日期行与缩略图区藏起，showGone 只显图标 + 占位文案（+ 可选提醒句）。
-    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, allowThumbs: Bool = true, authorHandle: String? = nil, sourceTappable: Bool = false, quoteId: String? = nil) {
-        // 审计八轮第 1 项：同引用重配保留展开态——ID 不变且已展开时不折回三行；
-        // 换引用、首次配置、或 ID 未传时按旧口径重置。失效占位（showGone）与
-        // 复用（clear）仍走重置，保留逻辑只放本函数内。
-        let keepExpanded = quoteId != nil && quoteId == currentQuoteId && quoteExpanded
+    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, allowThumbs: Bool = true, authorHandle: String? = nil, sourceTappable: Bool = false, quoteId: String? = nil, hostId: String? = nil) {
+        // A2：展开态改按宿主 + 引用稳定 ID 查视图外存储——同键跨 cell 实例、
+        // 跨异步重拉仍恢复；换引用时键不同自然重置。hostId 未传时（编辑器/
+        // 时间线等旧调用点）仍走旧的同实例 keepExpanded 口径，不改其行为。
+        // 失效占位（showGone）与复用（clear）仍走重置，保留逻辑只放本函数内。
+        let expandKey = BearyQuoteExpandState.key(hostId: hostId, quoteId: quoteId)
+        let keepExpanded: Bool
+        if expandKey != nil {
+            keepExpanded = BearyQuoteExpandState.isExpanded(key: expandKey)
+        } else {
+            keepExpanded = quoteId != nil && quoteId == currentQuoteId && quoteExpanded
+        }
         clear()
         currentQuoteId = quoteId
+        currentExpandKey = expandKey
         // 32 注销口径：引用原作者已注销时，来源行与读屏文案统一显“用户已注销”。
         let authorName = bearyDeletedAuthorDisplayName(authorName) ?? authorName
         // 52 批：lite 卡不带头像名——authorName/authorAvatar 参数仅为调用点兼容保留，不再赋值给任何视图。
