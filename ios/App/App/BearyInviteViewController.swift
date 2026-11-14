@@ -474,6 +474,28 @@ final class BearyInviteViewController: UIViewController {
         bindInputContainer?.isError = !text.isEmpty && !ok
     }
 
+    /// 第 21 轮审计 A7：绑定请求失败（服务端／网络）只留行内提示不够——
+    /// 行内错误照旧，同时给绑定钮摇头＋toast，与详情页／编辑资料页
+    /// playDenyShake 同口径（warning 震动＋拒绝音，减动效只跳过视觉抖动）。
+    private func showBindFailure(_ text: String) {
+        showMessage(text)
+        playDenyShake(on: bindButton)
+        BearyToast.show(in: view, message: text)
+    }
+
+    /// 拒绝动效（详情页／编辑资料页同口径：values [0,-8,8,-5,5,0] / BearyMotion.screen）。
+    private func playDenyShake(on button: UIButton) {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+        if UIAccessibility.isReduceMotionEnabled { return }
+        button.layer.removeAnimation(forKey: "bearyDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = BearyMotion.screen
+        button.layer.add(shake, forKey: "bearyDenyShake")
+    }
+
     /// 116 数据填入动效：文案变化时只淡入该 label 本身（alpha 0→1、
     /// 0.26s，不动 transform／布局、不重建节点、不缩放弹一下）；同值
     /// 不赋值不重播；减动效或未进窗口时直设终值。绑定区容器本身的
@@ -827,11 +849,11 @@ final class BearyInviteViewController: UIViewController {
                 case .failure(.cancelled):
                     break
                 case .failure(.server(let message, _)):
-                    strongSelf.showMessage(message)
+                    strongSelf.showBindFailure(message)
                 case .failure(.network):
-                    strongSelf.showMessage("网络不稳定，请稍后再试")
+                    strongSelf.showBindFailure("网络不稳定，请稍后再试")
                 case .failure:
-                    strongSelf.showMessage("绑定失败，请稍后再试")
+                    strongSelf.showBindFailure("绑定失败，请稍后再试")
                 }
             }
         }
