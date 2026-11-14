@@ -6647,7 +6647,7 @@ class BearyTimelineViewController: UIViewController {
         // 原态未动（乐观落地只在 perform 里做）。
         BearyVisibility.presentPicker(from: self, entry: entry) { [weak self] targetVisibility in
             guard let strongSelf = self else { return }
-            if targetVisibility == BearyVisibility.current(for: entry) { return }
+            if BearyVisibility.isNoChange(target: targetVisibility, for: entry) { return }
             strongSelf.publishBusyIds.insert(entryId)
             if targetVisibility == "public" {
                 BearyQuoteGate.gatePublicToggle(from: strongSelf, entry: entry) { [weak self] result in

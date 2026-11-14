@@ -3274,6 +3274,7 @@ enum BearyVisibility {
 
     /// 当前档：显式 friends 优先；否则按有效公开态（限时过期即私密）。
     /// 存活限时篇当前档为公开（限时不是手动切换的目标档；手动翻转恒清限时标记）。
+    /// 选择器里另标限时行、点公开转永久公开，见 isNoChange / presentPicker。
     static func current(for entry: Entry) -> String {
         if entry.isFriendsOnly { return "friends" }
         return BearyEphemeral.isEffectivelyPublic(entry) ? "public" : "private"
@@ -3281,14 +3282,31 @@ enum BearyVisibility {
 
     static func isPublicValue(_ visibility: String) -> Bool { visibility == "public" }
 
+    /// 同档判定（四处“修改权限”入口共用）：目标档等于当前档即无变化，
+    /// 唯独存活限时篇点“公开”不是同档——它是转普通永久公开的入口
+    /// （手动翻转恒清限时标记，见各调用方的 perform；限时到期自动转
+    /// 私密的逻辑本身不动）。current(for:) 仍把存活限时篇算作公开，
+    /// 其余读路径（星图/地图/个人页文案）不受本例外影响。
+    static func isNoChange(target: String, for entry: Entry) -> Bool {
+        guard target == current(for: entry) else { return false }
+        if target == "public" && BearyEphemeral.isLive(entry) { return false }
+        return true
+    }
+
     /// 三档选择器（底部弹窗形态，iPad 无需 popover 锚点）：当前档带 ✓ 前缀；
     /// 选同档时调用方按无变化处理（不发请求、不清限时标记）。
     /// 限时与仅好友互斥规则不动：本选择器不提供限时档，手动改档恒清限时标记。
+    /// 存活限时篇例外：当前档明确标为“限时”（置灰 ✓ 行，不可点），三档均不带 ✓；
+    /// 点“公开”即转普通永久公开（isNoChange 例外放行，perform 清限时标记）。
     static func presentPicker(from vc: UIViewController, entry: Entry, onPick: @escaping (String) -> Void) {
         let currentValue = current(for: entry)
+        let isLiveEphemeral = BearyEphemeral.isLive(entry)
         var actions: [BearyConfirmSheet.Action] = all.map { value in
-            let title = (value == currentValue ? "✓ " : "") + title(for: value)
+            let title = (!isLiveEphemeral && value == currentValue ? "✓ " : "") + title(for: value)
             return BearyConfirmSheet.Action(title: title, style: .default) { onPick(value) }
+        }
+        if isLiveEphemeral {
+            actions.insert(BearyConfirmSheet.Action(title: "✓ 限时", style: .default, isEnabled: false), at: 0)
         }
         actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: vc, title: "修改权限", message: nil, actions: actions)
