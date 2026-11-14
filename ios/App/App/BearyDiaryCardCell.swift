@@ -3589,6 +3589,8 @@ class BearyDiaryCardCell: UITableViewCell {
                     strongSelf.currentEntry?.likedByMe = strongSelf.confirmedLiked
                     strongSelf.currentEntry?.likeCount = strongSelf.confirmedLikeCount
                     strongSelf.updateLikeButton()
+                    // 回滚到未填色：在飞的点赞微粒一并清掉，屏幕只反映最新点按态。
+                    strongSelf.clearLikeBurst()
                     if case .unauthorized = err {
                         strongSelf.onRequireLogin?()
                     } else {
@@ -3646,6 +3648,8 @@ class BearyDiaryCardCell: UITableViewCell {
                     // 失败回滚到最后服务端确认态，再走既有失败路径。
                     strongSelf.currentEntry?.bookmarkedByMe = strongSelf.confirmedBookmarked
                     strongSelf.updateBookmarkButton()
+                    // 回滚到未填色：在飞的收藏微粒一并清掉。
+                    BearyBurstParticles.clear(from: strongSelf.bookmarkButton)
                     strongSelf.updateActionInteractivity()
                     if case .unauthorized = err {
                         strongSelf.onRequireLogin?()

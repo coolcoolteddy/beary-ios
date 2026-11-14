@@ -3373,6 +3373,9 @@ final class BearyDetailViewController: UIViewController {
                     self.entry.likedByMe = self.confirmedLiked
                     self.entry.likeCount = self.confirmedLikeCount
                     self.refreshActionRow()
+                    // 回滚到未填色：在飞的点赞微粒一并清掉。
+                    BearyIconMotion.clearLikeBurst(on: self.likeButton)
+                    BearyBurstParticles.clear(from: self.likeButton)
                     if case .unauthorized = err {
                         self.onRequireLogin?()
                     } else {
@@ -3424,6 +3427,8 @@ final class BearyDetailViewController: UIViewController {
                     // 失败回滚到最后服务端确认态。
                     self.entry.bookmarkedByMe = self.confirmedBookmarked
                     self.refreshActionRow()
+                    // 回滚到未填色：在飞的收藏微粒一并清掉。
+                    BearyBurstParticles.clear(from: self.bookmarkButton)
                     if case .unauthorized = err {
                         self.onRequireLogin?()
                     } else {
