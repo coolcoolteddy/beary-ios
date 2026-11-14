@@ -2900,8 +2900,9 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     /// 引用卡展开后通知表格重算行高（审计第十轮第 4 项）：卡片内部只改行数，
-    /// 行高归表格所有；begin/end 更新走 motion.normal（0.26s）平滑过渡，
-    /// 不做突然跳变。找不到表（卡未挂表）时不做事。
+    /// 行高归表格所有。A5：开启减少动态效果时直接落终态，不播视觉动画；
+    /// A6：不再用 begin/endUpdates 插值行高——先无动画结算最终行高，
+    /// 再对引用卡做 0.26s transform/opacity 视觉过渡。找不到表（卡未挂表）时不做事。
     private func notifyQuoteExpanded() {
         var tableView: UITableView?
         var view = superview
@@ -2910,10 +2911,30 @@ class BearyDiaryCardCell: UITableViewCell {
             view = current.superview
         }
         guard let tableView = tableView else { return }
-        UIView.animate(withDuration: BearyMotion.normal) {
+        // A5：减动效直接落终态。
+        if UIAccessibility.isReduceMotionEnabled {
+            UIView.performWithoutAnimation {
+                tableView.beginUpdates()
+                tableView.endUpdates()
+                tableView.layoutIfNeeded()
+            }
+            return
+        }
+        // A6：先结算最终行高（无插值），再播视觉过渡。
+        UIView.performWithoutAnimation {
             tableView.beginUpdates()
             tableView.endUpdates()
+            tableView.layoutIfNeeded()
         }
+        quoteView.transform = CGAffineTransform(translationX: 0, y: 4)
+        quoteView.alpha = 0.75
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.quoteView.transform = .identity
+            self.quoteView.alpha = 1
+        }, completion: { [weak self] _ in
+            self?.quoteView.transform = .identity
+            self?.quoteView.alpha = 1
+        })
     }
 
     private func configureQuoteFeed(for entry: Entry) {
