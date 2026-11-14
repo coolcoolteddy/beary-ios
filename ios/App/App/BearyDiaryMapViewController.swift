@@ -71,6 +71,12 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     private var pendingMapReturnRestore = false
     /// 文本 → 坐标的本页内存缓存（只活在本页实例里，deinit 即丢；绝不写盘）。
     private var geocodeCache: [String: CLLocationCoordinate2D] = [:]
+    /// 地点组当语言展示名（2026-11-14 存经纬度）：组键是存量文本（旧语言），有坐标的组按
+    /// 当前语言重取地名后写这里；列表行与大头针标题优先用它，未解析出时退回组键。只活本页内存。
+    private var groupDisplayNames: [String: String] = [:]
+    /// 选中组内日记行的当语言位置行（2026-11-14 存经纬度）：entry id → 解析出的行文；
+    /// 未解析出时行内退回原存文本行。只活本页内存，切选中组时清空。
+    private var selectedEntryDisplayLines: [String: String] = [:]
     /// 区级文本 → 当语言行政名集合的本页内存缓存（只活在本页实例里，随页销毁）。
     /// 2026-11-14 切语言定位修：日记只存两段文本，区级是按定位当时的系统语言写的
     /// （英文下 "Ningbo"，中文下 "宁波市"）；CLGeocoder 回包的行政字段永远是当前语言，
@@ -306,6 +312,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         selectedGroup = nil
         geocodeCache.removeAll()
         districtLocaleNamesCache.removeAll()
+        groupDisplayNames.removeAll()
+        selectedEntryDisplayLines.removeAll()
         didInitialGeocode = false
         failureStateView.isHidden = true
         inlineRetryButton.isHidden = true
@@ -598,6 +606,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         target.weather = updated.weather
         target.locationName = updated.locationName
         target.locationDistrict = updated.locationDistrict
+        target.locationLatitude = updated.locationLatitude
+        target.locationLongitude = updated.locationLongitude
         target.quoteId = updated.quoteId
         target.quote = updated.quote
         if let v = updated.publishedAt { target.publishedAt = v }
@@ -709,6 +719,11 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         for group in groups {
             if let cached = geocodeCache[geocodeCacheKey(for: group)] {
                 cachedLocated.append((group, cached))
+            } else if let stored = storedCoordinate(for: group) {
+                // 2026-11-14 存经纬度：有存量坐标的组直接落钉，不再按文本编码；
+                // 不进 geocodeCache——编辑改了坐标后重算须读新值，缓存会留旧钉。
+                // 无坐标的旧日记才走文本编码链（+切语言校验修）。
+                cachedLocated.append((group, stored))
             } else {
                 pendingGroups.append(group)
             }
@@ -842,6 +857,18 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 各自编各自的坐标、旧坐标不再被复用；他人组 ID 本身就是区级。
     private func geocodeCacheKey(for group: BearyLocationMapGroup) -> String {
         return group.id
+    }
+
+    /// 组内存量坐标（2026-11-14 存经纬度）：组内首篇带有效经纬度的即取用；
+    /// 同名同区的多篇坐标可能略有出入，文本级聚合点取首篇即可。无坐标返回 nil，
+    /// 调用方走文本编码链。胶囊不走本函数（胶囊仍只存区级名）。
+    private func storedCoordinate(for group: BearyLocationMapGroup) -> CLLocationCoordinate2D? {
+        for entry in group.entries {
+            let location = DiaryLocation(entry: entry)
+            guard location.hasCoordinates, let lat = location.latitude, let lng = location.longitude else { continue }
+            return CLLocationCoordinate2D(latitude: lat, longitude: lng)
+        }
+        return nil
     }
 
     /// 编码查询词（只活本页内存）：作者组 = 区级+名 → 裸名 → 区级；
@@ -1000,21 +1027,57 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         for item in items {
             if let existing = locatedAnnotations[item.group.id] {
                 existing.coordinate = item.coordinate
-                existing.title = item.group.key
+                existing.title = groupDisplayNames[item.group.id] ?? item.group.key
                 existing.subtitle = "\(item.group.count) 篇"
                 refreshGlyph(for: existing, count: item.group.count)
             } else {
                 let annotation = DiaryMapAnnotation()
                 annotation.groupId = item.group.id
                 annotation.coordinate = item.coordinate
-                annotation.title = item.group.key
+                annotation.title = groupDisplayNames[item.group.id] ?? item.group.key
                 annotation.subtitle = "\(item.group.count) 篇"
                 locatedAnnotations[item.group.id] = annotation
                 newAnnotations.append(annotation)
             }
+            resolveGroupDisplayName(for: item.group)
         }
         if !newAnnotations.isEmpty {
             mapView.addAnnotations(newAnnotations)
+        }
+    }
+
+    /// 有坐标的组按当前语言重取展示名（2026-11-14 存经纬度）：用组内首篇的坐标解析，
+    /// 取当语言精确名（无名退区级）；成功即记下、刷大头针标题与列表；失败／无坐标时
+    /// 留组键（存量文本）不动。标题只翻译、不脱敏——本页仅本人入口，组标题沿用
+    /// 现行精确名口径（卡片／详情的位置行仍走显示口径脱敏）。
+    private func resolveGroupDisplayName(for group: BearyLocationMapGroup) {
+        guard groupDisplayNames[group.id] == nil, let entry = group.entries.first else { return }
+        BearyLocationDisplayNames.resolvedNames(for: entry) { [weak self] names in
+            guard let self = self, let names = names,
+                  self.groups.contains(where: { $0.id == group.id }) else { return }
+            let title = names.name ?? names.district ?? group.key
+            guard self.groupDisplayNames[group.id] != title else { return }
+            self.groupDisplayNames[group.id] = title
+            if let annotation = self.locatedAnnotations[group.id] {
+                annotation.title = title
+            }
+            self.tableView.reloadData()
+        }
+    }
+
+    /// 选中组内日记行的当语言位置行（2026-11-14 存经纬度）：有坐标的篇按当前语言重取，
+    /// 成功记下并只刷该行；失败／无坐标时留原存文本行。只活本页内存。
+    private func resolveSelectedEntryDisplayLine(for entry: Entry) {
+        guard let entryId = entry.id, selectedEntryDisplayLines[entryId] == nil else { return }
+        BearyLocationDisplayNames.displayLine(for: entry) { [weak self] resolved in
+            guard let self = self, let resolved = resolved,
+                  let selected = self.selectedGroup,
+                  selected.entries.contains(where: { $0.id == entryId }),
+                  self.selectedEntryDisplayLines[entryId] != resolved else { return }
+            self.selectedEntryDisplayLines[entryId] = resolved
+            guard let mainSection = self.diaryMapSections.firstIndex(of: .main),
+                  let row = selected.entries.firstIndex(where: { $0.id == entryId }) else { return }
+            self.tableView.reloadRows(at: [IndexPath(row: row, section: mainSection)], with: .none)
         }
     }
 
@@ -1202,6 +1265,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     private func selectGroup(_ group: BearyLocationMapGroup) {
         selectedGroup = group
+        selectedEntryDisplayLines.removeAll()
         tableView.reloadData()
         // 列表在地图下方：选中后把列表顶到可见区，不用用户再往下翻找。
         if tableView.numberOfSections > 0, tableView.numberOfRows(inSection: 0) > 0 {
@@ -1414,7 +1478,10 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                     secondary = BearyDiaryCardCell.feedTimeString(ms: created)
                 }
                 if let line = BearyLocationDisplay.display(entry: entry) {
-                    secondary = secondary.isEmpty ? line : "\(secondary) · \(line)"
+                    // 2026-11-14 存经纬度：有坐标的篇按当前语言重取位置行，解析出后只刷该行。
+                    let shown = (entry.id.flatMap { selectedEntryDisplayLines[$0] }) ?? line
+                    secondary = secondary.isEmpty ? shown : "\(secondary) · \(shown)"
+                    resolveSelectedEntryDisplayLine(for: entry)
                 }
                 config.secondaryText = secondary.isEmpty ? nil : secondary
                 cell.contentConfiguration = config
@@ -1437,7 +1504,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapGroupCell", for: indexPath)
             let group = listedGroups[indexPath.row]
             var config = cell.defaultContentConfiguration()
-            config.text = group.key
+            // 2026-11-14 存经纬度：有坐标的组按当前语言重取过展示名时用它，否则用组键（存量文本）。
+            config.text = groupDisplayNames[group.id] ?? group.key
             config.secondaryText = "\(group.count) 篇"
             cell.contentConfiguration = config
             cell.accessoryType = .disclosureIndicator

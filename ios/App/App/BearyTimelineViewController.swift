@@ -1487,6 +1487,13 @@ final class BearyTimelineCell: UITableViewCell {
         // 沿用合入前基线旧值 9，漏跟 #1250 的 9→14）。
         cardStackReference?.setCustomSpacing(14, after: timelineLocationStack)
         timelineLocationLabel.text = line
+        // 2026-11-14 存经纬度：有坐标时按当前语言重取地名；失败／无坐标时保留原存文本行。
+        // 复用守卫以 currentEntry 为准（configure 已先赋值；复用后旧回调凭 id 不符丢弃）。
+        let entryId = entry.id
+        BearyLocationDisplayNames.displayLine(for: entry) { [weak self] resolved in
+            guard let self = self, let resolved = resolved, self.currentEntry?.id == entryId else { return }
+            self.timelineLocationLabel.text = resolved
+        }
     }
 
     /// 主图条定宽：广场卡 stripWidth 同口径（网页 stripW）——0.55–2.22 倍高夹取，
@@ -3498,6 +3505,8 @@ class BearyTimelineViewController: UIViewController {
             copy.weather = entry.weather
             copy.locationName = entry.locationName
             copy.locationDistrict = entry.locationDistrict
+            copy.locationLatitude = entry.locationLatitude
+            copy.locationLongitude = entry.locationLongitude
             copy.quoteId = entry.quoteId
             copy.quote = entry.quote
             if let v = entry.publishedAt { copy.publishedAt = v }

@@ -7762,6 +7762,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             copy.weather = entry.weather
             copy.locationName = entry.locationName
             copy.locationDistrict = entry.locationDistrict
+            copy.locationLatitude = entry.locationLatitude
+            copy.locationLongitude = entry.locationLongitude
             copy.quoteId = entry.quoteId
             copy.quote = entry.quote
             if let v = entry.publishedAt { copy.publishedAt = v }

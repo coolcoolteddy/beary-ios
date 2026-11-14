@@ -2171,7 +2171,7 @@ final class BearyDetailViewController: UIViewController {
             }
         }
         // 批 E：位置字段或可见性/限时态变化时位置行重算（公开翻私密恢复精确，反之脱敏）。
-        if old.locationName != merged.locationName || old.locationDistrict != merged.locationDistrict || old.isPublic != merged.isPublic || old.ephemeralUntil != merged.ephemeralUntil {
+        if old.locationName != merged.locationName || old.locationDistrict != merged.locationDistrict || old.locationLatitude != merged.locationLatitude || old.locationLongitude != merged.locationLongitude || old.isPublic != merged.isPublic || old.ephemeralUntil != merged.ephemeralUntil {
             renderLocation()
         }
         let oldQuote = old.quote
@@ -2473,6 +2473,13 @@ final class BearyDetailViewController: UIViewController {
         }
         detailLocationLabel.text = line
         updateDetailBottomRowVisibility()
+        // 2026-11-14 存经纬度：有坐标时按当前语言重取地名；失败／无坐标时保留原存文本行。
+        let entryId = entry.id
+        BearyLocationDisplayNames.displayLine(for: entry) { [weak self] resolved in
+            guard let self = self, let resolved = resolved, self.entry.id == entryId else { return }
+            self.detailLocationLabel.text = resolved
+            self.updateDetailBottomRowVisibility()
+        }
     }
 
     /// 底行（地址＋天气）显隐：地址与天气任一有内容即显，全无即整行隐藏、

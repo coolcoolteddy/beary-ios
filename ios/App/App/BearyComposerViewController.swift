@@ -644,6 +644,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             ephemeral: isEphemeral ? 1 : nil,
             locationName: selectedLocation?.name,
             locationDistrict: selectedLocation?.district,
+            locationLatitude: selectedLocation?.latitude,
+            locationLongitude: selectedLocation?.longitude,
             clientReq: req,
             originAccountId: currentAccountIdForPublish(),
             draftId: currentDraftId,
@@ -7842,6 +7844,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             temperature: selectedTemperature,
             locationName: selectedLocation?.name,
             locationDistrict: selectedLocation?.district,
+            locationLatitude: selectedLocation?.latitude,
+            locationLongitude: selectedLocation?.longitude,
             visibilitySegmentIndex: selectedVisibilityFriends ? 2 : (selectedVisibilityPublished ? 1 : 0),
             ephemeralEnabled: isEditMode ? false : isEphemeral,
             recipientId: recipientUserId,
@@ -7996,8 +8000,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.selectedRecipient = self.restoredRecipient(from: draft)
                 self.notifyRecipient = draft.notifyRecipient
                 self.selectedQuote = self.restoredQuote(from: draft)
-                // 批 E：草稿位置恢复（两段文本，无坐标）；双空即无位置，不留空行。
-                let restoredLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict)
+                // 批 E：草稿位置恢复（两段文本＋经纬度，2026-11-14 Li 定改存经纬度）；双空即无位置，不留空行。
+                let restoredLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict, latitude: draft.locationLatitude, longitude: draft.locationLongitude)
                 self.selectedLocation = restoredLocation.isEmpty ? nil : restoredLocation
                 self.refreshRecipientRow()
                 self.refreshQuoteSection()
@@ -8511,7 +8515,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         notifyRecipient = draft.notifyRecipient
         selectedQuote = restoredQuote(from: draft)
         // 批 E：草稿箱打开某篇时位置同款恢复。
-        let boxLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict)
+        let boxLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict, latitude: draft.locationLatitude, longitude: draft.locationLongitude)
         selectedLocation = boxLocation.isEmpty ? nil : boxLocation
         refreshLocationRow()
         setQuotePanelOpen(false)
@@ -8644,6 +8648,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             temperature: selectedTemperature,
             locationName: selectedLocation?.name,
             locationDistrict: selectedLocation?.district,
+            locationLatitude: selectedLocation?.latitude,
+            locationLongitude: selectedLocation?.longitude,
             images: images,
             updatedAt: Date().timeIntervalSince1970)
     }
@@ -8728,7 +8734,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if checkpoint.mood != entry.mood { return true }
         if checkpoint.weather != entry.weather { return true }
         if checkpoint.temperature != entry.temperatureC { return true }
-        let checkpointLocation = DiaryLocation(name: checkpoint.locationName, district: checkpoint.locationDistrict)
+        let checkpointLocation = DiaryLocation(name: checkpoint.locationName, district: checkpoint.locationDistrict, latitude: checkpoint.locationLatitude, longitude: checkpoint.locationLongitude)
         let checkpointLocationValue: DiaryLocation? = checkpointLocation.isEmpty ? nil : checkpointLocation
         if checkpointLocationValue != originalLocation { return true }
         let checkpointKeys = checkpoint.images.compactMap { $0.serverKey }
@@ -8815,7 +8821,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedMood = checkpoint.mood
         selectedWeather = checkpoint.weather
         selectedTemperature = checkpoint.temperature
-        let checkpointLocation = DiaryLocation(name: checkpoint.locationName, district: checkpoint.locationDistrict)
+        let checkpointLocation = DiaryLocation(name: checkpoint.locationName, district: checkpoint.locationDistrict, latitude: checkpoint.locationLatitude, longitude: checkpoint.locationLongitude)
         selectedLocation = checkpointLocation.isEmpty ? nil : checkpointLocation
         syncWeatherToolButton()
         refreshSelectedChips()
@@ -9365,7 +9371,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let editLiveVideos: [String: String]? = uploadedLiveVideos().isEmpty
             ? ((editingEntry?.liveVideos?.isEmpty == false) ? [:] : nil)
             : uploadedLiveVideos()
-                BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil, temperature: selectedTemperature, liveVideos: editLiveVideos) { [weak self] result in
+                BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil, locationLatitude: locationChanged ? selectedLocation?.latitude : nil, locationLongitude: locationChanged ? selectedLocation?.longitude : nil, clearLocationCoords: locationChanged && selectedLocation?.latitude == nil, temperature: selectedTemperature, liveVideos: editLiveVideos) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -9400,6 +9406,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         // 批 E：编辑成功后本地副本跟随位置终态，列表行不靠重拉才变。
                         updated.locationName = self.selectedLocation?.name
                         updated.locationDistrict = self.selectedLocation?.district
+                        updated.locationLatitude = self.selectedLocation?.latitude
+                        updated.locationLongitude = self.selectedLocation?.longitude
                         updated.quoteId = self.lockedQuote?.entryId
                         // iCity：编辑回传的 @ 终态同步进本地副本（改选→新 id/名，清除→nil，未动→保留原值）。
                         if let picked = self.selectedRecipient {

@@ -2265,7 +2265,7 @@ extension BearyAPI {
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
     /// create_ip_limit(429) / create_dup。
-    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, isCapsule: Int? = nil, capsuleUnlockAt: Int? = nil, capsuleDistrict: String? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, locationLatitude: Double? = nil, locationLongitude: Double? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, isCapsule: Int? = nil, capsuleUnlockAt: Int? = nil, capsuleDistrict: String? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
         // 实况：非空才发 live_videos（无实况的新建与旧版 body 一字相同）；
         // 空映射不发（新建无旧态可清，编辑清实况走 updateEntry 的显式空映射）。
@@ -2279,11 +2279,13 @@ extension BearyAPI {
         // 天气气温：后端 temperature_c 字段未上线前服务端忽略本键，App 端先行透传（与位置字段同款先行口径）；
         // 字段上线后即持久化，卡片/编辑回填凭 Entry.temperatureC 读回。气温只在有天气类型时发。
         if weather != nil, let temp = temperature { body["temperature_c"] = temp }
-        // 批 E：位置只传两段文本，不传经纬度；nil=省略不传（服务端保留缺省 NULL）。
-        // 注意：后端字段批尚未落地前服务端可能忽略这两个键，App 端先行透传，
+        // 批 E：位置传两段文本＋经纬度（2026-11-14 Li 定改存经纬度）；nil=省略不传（服务端保留缺省 NULL）。
+        // 注意：后端字段批尚未落地前服务端可能忽略这几个键，App 端先行透传，
         // 位置持久化以后端批上线为准（见 ios/Docs/diary-location-fields.md）。
         if let loc = locationName { body["location_name"] = loc }
         if let district = locationDistrict { body["location_district"] = district }
+        if let lat = locationLatitude { body["location_lat"] = lat }
+        if let lng = locationLongitude { body["location_lng"] = lng }
         if let q = quoteId { body["quote_id"] = q }
         if let p = published { body["published"] = p }
         /// 好友第一期：visibility 显式发三档；发 friends 时 published 同步为 0
@@ -2310,17 +2312,19 @@ extension BearyAPI {
     /// 可见性只走 visibility 接口，不可经此接口改。
     /// 成功只返回 {ok: true}，调用方成功后自行重拉单篇。
     /// 图片须归属本人且存在，否则 400 'invalid image ownership' / 409 'image unavailable'。
-    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, mentionedUserId: Int? = nil, clearMentioned: Bool = false, locationName: String? = nil, locationDistrict: String? = nil, clearLocationName: Bool = false, clearLocationDistrict: Bool = false, temperature: Int? = nil, liveVideos: [String: String]? = nil, clearCapsule: Bool = false, completion: @escaping (Result<Void, APIError>) -> Void) {
+    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, mentionedUserId: Int? = nil, clearMentioned: Bool = false, locationName: String? = nil, locationDistrict: String? = nil, clearLocationName: Bool = false, clearLocationDistrict: Bool = false, locationLatitude: Double? = nil, locationLongitude: Double? = nil, clearLocationCoords: Bool = false, temperature: Int? = nil, liveVideos: [String: String]? = nil, clearCapsule: Bool = false, completion: @escaping (Result<Void, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         var body: [String: Any] = ["content": content, "images": images]
         // 实况：调用方算清后才传——非空发映射；显式空映射 = 清掉原实况（删图/
         // 裁剪丢实况后用）；nil = 省略（纯静态编辑与旧版 body 一字相同）。
         if let live = liveVideos { body["live_videos"] = live }
-        // 批 E：编辑位置——未动时四值皆空、服务端保留原值；改选时调用方把两键都算清楚
+        // 批 E：编辑位置——未动时各值皆空、服务端保留原值；改选时调用方把各键都算清楚
         // （有值发值、无值发显式 null），不出现“只改名不改区、旧区残留”的半更新。
-        // 清除整行时两 clear 皆真。经纬度永不进 body。
+        // 清除整行时各 clear 皆真。经纬度随文本一起发／一起清，不单独改。
         if let loc = locationName { body["location_name"] = loc } else if clearLocationName { body["location_name"] = NSNull() }
         if let district = locationDistrict { body["location_district"] = district } else if clearLocationDistrict { body["location_district"] = NSNull() }
+        if let lat = locationLatitude { body["location_lat"] = lat } else if clearLocationCoords { body["location_lat"] = NSNull() }
+        if let lng = locationLongitude { body["location_lng"] = lng } else if clearLocationCoords { body["location_lng"] = NSNull() }
         // 标题透传，nil=省略不传（不改服务端标题）；非 nil 原样传。标题行已去掉后
         // 编辑调用方只传 preservedTitle（旧标题原样、无标题为 nil 即省略），不再发
         // 显式空串清标题；旧 R1“清空发空串清为 NULL”口径随标题行作废。新建不走本函数。
