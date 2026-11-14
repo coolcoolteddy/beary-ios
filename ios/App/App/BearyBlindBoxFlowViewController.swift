@@ -236,6 +236,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private var exchangeId: String?
     private var received: BlindBoxReceivedEntry?
     private var receivedEmotes: [EmoteCount] = []
+    /// 上次渲染时各回应 key 的展示数量：数量变化才淡变，未变（主题切换重渲染）不重播。
+    private var shownEmoteTotals: [String: Int] = [:]
     private var poolBusy = false
     private var openBusy = false
     private var withdrawBusy = false
@@ -1358,6 +1360,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             visibleEmoteCount += 1
             let chip = BlindBoxEmoteChipButton(style: .secondaryOutline(.compact))
             chip.setTitle("\(total)", for: .normal)
+            // 行内计数走数值档：12pt semibold scaled 等宽数字（规范 §11 numberFont），
+            // 不再继承紧凑按钮的 14pt semibold。
+            chip.titleLabel?.font = BearyDynamicType.numberFont()
             chip.emoteKey = key
             chip.translatesAutoresizingMaskIntoConstraints = false
             let dark = traitCollection.userInterfaceStyle == .dark
@@ -1377,7 +1382,20 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             NSLayoutConstraint.activate([
                 chip.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
             ])
+            // 数量变化时 0.18s 透明度淡变（BearyMotion.micro）；减动效直设终值，
+            // 不播动画；数量未变（主题切换重渲染）不重播。
+            if shownEmoteTotals[key] != total, UIAccessibility.isReduceMotionEnabled == false, let countLabel = chip.titleLabel {
+                countLabel.alpha = 0
+                UIView.animate(withDuration: BearyMotion.micro) { countLabel.alpha = 1 }
+            }
         }
+        var nextShownTotals: [String: Int] = [:]
+        for count in receivedEmotes {
+            if let key = count.emote, let total = count.count, total > 0 {
+                nextShownTotals[key] = total
+            }
+        }
+        shownEmoteTotals = nextShownTotals
         emoteScroll.isHidden = visibleEmoteCount == 0
     }
 
