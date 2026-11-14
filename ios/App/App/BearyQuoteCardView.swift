@@ -290,8 +290,25 @@ final class BearyQuoteCardView: UIView {
 
     @objc private func expandTapped() {
         quoteExpanded = true
-        contentLabel.numberOfLines = 0
-        expandButton.isHidden = true
+        // A8：展开补 0.26s 过渡——正文交叉淡入（opacity）、展开钮淡出（opacity），
+        // 行高伸缩由 onExpansionChanged 通知宿主（#1473）走同款 0.26s；减动效时直接展开。
+        if BearyMotion.animated(true) {
+            UIView.transition(with: contentLabel, duration: BearyMotion.normal, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
+                self.contentLabel.numberOfLines = 0
+            })
+            UIView.animate(withDuration: BearyMotion.normal, animations: {
+                self.expandButton.alpha = 0
+            }, completion: { _ in
+                // 复用/重配已重置展开态时不藏钮，下一轮布局会按需再显。
+                if self.quoteExpanded {
+                    self.expandButton.isHidden = true
+                }
+                self.expandButton.alpha = 1
+            })
+        } else {
+            contentLabel.numberOfLines = 0
+            expandButton.isHidden = true
+        }
         onExpansionChanged?()
     }
 
@@ -400,7 +417,10 @@ final class BearyQuoteCardView: UIView {
         if let handleText = handleText {
             return "引用自 \(handleText)"
         }
-        return "引用自 · \(dateText)"
+        if let dateText = dateText {
+            return "引用自 \(dateText)"
+        }
+        return nil
     }
 
     /// 来源行唯一写入口：configure 与 showGone 均走这里，保证两态口径一致。
