@@ -260,16 +260,18 @@ enum BearyGlass {
 }
 
 /// 渐进模糊（规范 §6 滚动交界）：毛玻璃＋渐变遮罩，模糊从贴体处最强、向内容方向渐弱至透明。
-/// 渐变带统一 12pt（规范 8–20pt 内取中值）；强度取轻量（无 tint 液态玻璃／超薄材质，内容隐约可见、不断层）。
-/// 现行只剩底栏一处垫片（.up）：贴在底栏顶边、向上方内容渐弱，渐隐区只占末 12pt；
-/// 遮罩从贴体边满强度保持到距顶边 12pt 处再柔和淡到透明（渐隐区按 band/H 实算，2026-11-11 定版收至 12pt）。其余 10 处垫片已随 125 移除，不再新增。
+/// 强度取轻量（无 tint 液态玻璃／超薄材质，内容隐约可见、不断层）。
+/// 现行只剩底栏一处垫片（.up）：自屏幕底缘向上整高平滑渐变，底部满强度、顶端完全透明
+/// （2026-11-14 Li 定；此前满强度保持到距顶边 12pt 处再淡，整块均匀厚模糊，见 #903）。
+/// 其余 10 处垫片已随 125 移除，不再新增。
 /// 垫片永不拦截触摸（与 BearyGlass 同口径）；遮罩只用白／透明，不缓存主题色；
 /// 尺寸变化（转屏／大字号）时 layoutSubviews 重算遮罩，不依赖调用点手动刷新。
 /// 124 实证（iOS 27 真机）：渐变遮罩绝不能直接挂毛玻璃自己身上——layer.mask 不裁
 /// UIVisualEffectView 的 backdrop 模糊，垫片整块硬边显示（顶栏条／底栏条／FAB 方块）；
 /// 本类改普通容器包毛玻璃、遮罩挂容器层上，容器遮罩裁的是合成后的整棵子树，渐变才生效。
 enum BearyProgressiveBlur {
-    /// 渐变带：规范 8–20pt，统一取 12。
+    /// 垫片顶缘在衬底顶沿上方的距离（规范 8–20pt，统一取 12）；不再是渐变带宽——
+    /// 渐变现为整高平滑过渡（2026-11-14 Li 定）。
     static let band: CGFloat = 12
 
     enum Fade {
@@ -333,11 +335,10 @@ final class BearyProgressiveBlurView: UIView {
         let size = bounds.size
         guard size.width > 0, size.height > 0 else { return }
         maskLayer.frame = bounds
-        maskLayer.colors = [UIColor.white.cgColor, UIColor.white.cgColor, UIColor.clear.cgColor]
-        // 渐隐区按 band/H 实算收至 12pt（规范 §6：8–20pt）；H 小于 band 时钳制为整高。
-        let fadeHeight = min(BearyProgressiveBlur.band, size.height)
-        let holdEnd = NSNumber(value: Double(1 - fadeHeight / size.height))
-        maskLayer.locations = [0, holdEnd, 1]
+        // 2026-11-14 Li 定：整高平滑渐变——底部满强度、向上渐弱、顶端完全透明；
+        // 不再满强度保持到顶边 12pt 处再淡（那版整块均匀厚模糊，见 #903）。
+        maskLayer.colors = [UIColor.white.cgColor, UIColor.clear.cgColor]
+        maskLayer.locations = [0, 1]
         switch fade {
         case .up:
             maskLayer.type = .axial
