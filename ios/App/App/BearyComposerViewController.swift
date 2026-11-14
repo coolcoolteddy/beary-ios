@@ -636,6 +636,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 审计 P1-9：箱内删“正在写”草稿时被清掉的 draftId（onDeleteCurrentDraft 处记下），
     /// 供箱内撤销恢复时比对——只绑回正是这一篇的恢复，防串篇；新篇接管/重开/发布重置时清掉。
     private var clearedCurrentDraftId: String?
+    /// 2026-11-14 点仍要关闭后已删草稿复活修：本编辑器打开以来、经草稿箱
+    /// 删盘成功的草稿 id 集合（盒子删任何一篇都通知，不只正在写的那篇）。
+    /// restoreDraft 落地时若快照里那篇已在集合里，整单跳过——快照是删前
+    /// 拍的，不能把它填回来；撤销恢复时再从集合里摘掉。
+    private var deletedDraftIdsSinceOpen: Set<String> = []
     /// 审计第 26 项：编辑版本——打开编辑器（restoreDraft 入口）时记下基线，
     /// 此后任何草稿字段变化都 +1（各字段的 didSet、正文/标题变化入口），
     /// 异步恢复回包仅在版本与草稿身份均未变化时才应用；跳过时旧草稿
@@ -8146,9 +8151,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 下文整单覆盖，故再加版本与身份双门：读盘期间任何字段变化
                 // （didSet/正文/标题/图片入口均已递增版本）或草稿身份变化
                 // （切篇、删正在写篇、保存建新篇）都整单跳过；旧草稿仍在箱里，不丢。
+                // 2026-11-14 点仍要关闭后已删草稿复活修：再加已删门——
+                // 快照是打开时拍的，落地前用户可能已在草稿箱里删了这篇；
+                // 落地时它已在已删集合里就整单跳过，不把已删草稿填回来。
                 guard self.editorEditVersion == restoreBaselineVersion,
                       self.currentDraftId == restoreBaselineDraftId,
-                      self.clearedCurrentDraftId == restoreBaselineClearedDraftId else { return }
+                      self.clearedCurrentDraftId == restoreBaselineClearedDraftId,
+                      !self.deletedDraftIdsSinceOpen.contains(draft.draftId) else { return }
                 let wasEmptyBeforeRestore = self.textView.text.isEmpty
                 guard wasEmptyBeforeRestore else { return }
                 self.currentDraftId = draft.draftId
@@ -8471,13 +8480,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 无障碍：草稿箱纯关闭后焦点回草稿钮（新建／打开走回调时不发）。
             box.accessibilityFocusReturnElement = self.draftPillButton
             box.onDeleteCurrentDraft = { [weak self] deletedId in
-                if self?.currentDraftId == deletedId {
-                    self?.currentDraftId = nil
+                guard let self = self else { return }
+                // 2026-11-14 点仍要关闭后已删草稿复活修：盒子删任何一篇都
+                // 通知，先记进已删集合，拦住随后落地的 restoreDraft 快照。
+                self.deletedDraftIdsSinceOpen.insert(deletedId)
+                if self.currentDraftId == deletedId {
                     // 审计 P1-9：记下被清掉的那篇 id，供撤销恢复时比对绑回。
-                    self?.clearedCurrentDraftId = deletedId
+                    self.clearedCurrentDraftId = deletedId
                     // P1-16：只清 currentDraftId 会让新篇复用旧幂等键——
                     // 删“正在写”草稿时 clientReq 一并清掉，下次落盘重新生成。
-                    self?.draftClientReq = nil
+                    self.draftClientReq = nil
+                    // 2026-11-14：光清槽位不够——编辑器里还留着这篇内容，
+                    // 下次落盘会以新 id 把它复活；整页清成空白。打开时绑定
+                    // 的原账号不随空白重置（新篇落盘仍走原账号桶）。
+                    let originAccount = self.composerOriginAccountId
+                    self.resetEditorToBlank()
+                    self.composerOriginAccountId = originAccount
                 }
             }
             // 审计 P1-9：箱内撤销恢复正在写草稿时绑回编辑器——仅当恢复的正是
@@ -8485,6 +8503,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 不满足时恢复的篇仍在箱里，点开即是原有 onOpen 路径，不丢数据。
             box.onUndoCurrentDraft = { [weak self] draft in
                 guard let self = self else { return }
+                // 2026-11-14：撤销后该篇又活了，从已删集合里摘掉，恢复落地不再拦它。
+                self.deletedDraftIdsSinceOpen.remove(draft.draftId)
                 if self.currentDraftId == nil, draft.draftId == self.clearedCurrentDraftId {
                     self.currentDraftId = draft.draftId
                     self.clearedCurrentDraftId = nil
@@ -8493,6 +8513,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // 落盘，覆盖箱内撤销刚写回的旧键；与 loadDraftFromBox /
                     // restoreDraft 的成对绑回一致。
                     self.draftClientReq = draft.clientReq
+                    // 2026-11-14：删时已把编辑器清成空白（防落盘复活），撤销
+                    // 后把内容接回来；编辑器已有新内容时不动，恢复的篇仍在
+                    // 箱里、点开即是原有 onOpen 路径。
+                    if !self.hasEditorContent() {
+                        self.loadDraftFromBox(draft)
+                    }
                 }
             }
             self.present(box, animated: !UIAccessibility.isReduceMotionEnabled) { [weak self] in
