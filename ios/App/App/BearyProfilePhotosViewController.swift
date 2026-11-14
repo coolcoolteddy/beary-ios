@@ -639,19 +639,20 @@ final class BearyProfilePhotosViewController: UIViewController {
         }
     }
 
-    /// 116 数据填入动效：标题计数变化时只淡入标题本身（alpha 0→1、
-    /// 0.18s，不动布局、不缩放弹一下）；同值不赋值不重播；减动效或
-    /// 未进窗口时直设终值。续拉新格见 staggerNewCells。
+    /// 116 数据填入动效：标题计数变化时交叉淡变（0.18s，新旧字
+    /// 交叠淡入淡出，不动布局、不缩放弹一下）；同值不赋值不重播；减动效或
+    /// 未进窗口时直设终值。audit20-A13：旧版先换字再 alpha 0→1 单向淡入，
+    /// 旧数字没有淡出，改走 transitionCrossDissolve。
     private func setTitleTextFaded(_ text: String) {
         guard titleLabel.text != text else { return }
-        titleLabel.text = text
         guard !UIAccessibility.isReduceMotionEnabled, titleLabel.window != nil else {
+            titleLabel.text = text
             titleLabel.alpha = 1
             return
         }
-        titleLabel.alpha = 0
-        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-            self.titleLabel.alpha = 1
+        titleLabel.alpha = 1
+        UIView.transition(with: titleLabel, duration: BearyMotion.localStateDuration, options: .transitionCrossDissolve, animations: {
+            self.titleLabel.text = text
         })
     }
 
