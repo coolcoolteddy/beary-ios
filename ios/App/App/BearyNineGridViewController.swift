@@ -61,6 +61,10 @@ final class BearyNineGridViewController: UIViewController {
 
     private var collectionViewWidthConstraint: NSLayoutConstraint?
 
+    /// 左缘返回控制器强持有（transitioningDelegate 是弱引用；打开方是静态
+    /// BearyNineGridPresenter、无实例可代持，改由本页持有到 dismiss 完成）。
+    fileprivate var edgeDismiss: BearyEdgeDismissController?
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
@@ -171,6 +175,12 @@ enum BearyNineGridPresenter {
         guard !keys.isEmpty else { return }
         let grid = BearyNineGridViewController(imageKeys: keys, liveVideos: liveVideos)
         grid.modalPresentationStyle = .fullScreen
+        // 第 22 轮 A4：左缘返回——与返回按钮走同一 dismiss 路径；进出走
+        // EdgeDismiss 自带的右滑 slide（全站全屏页同款原生返回口径）。
+        let edgeDismiss = BearyEdgeDismissController()
+        edgeDismiss.attach(to: grid)
+        grid.transitioningDelegate = edgeDismiss
+        grid.edgeDismiss = edgeDismiss
         viewController.present(grid, animated: BearyMotion.animated(true), completion: nil)
     }
 }
