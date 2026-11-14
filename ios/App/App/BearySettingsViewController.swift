@@ -3232,14 +3232,29 @@ final class BearySettingsViewController: UIViewController {
             dict["author_avatar"] = avatar.hasPrefix("data:") ? "[avatar]" : avatar
         }
         if let value = entry.content { dict["content"] = value }
+        if let value = entry.title { dict["title"] = value }
         if let images = entry.images {
             dict["images"] = images.map { key in
                 let encoded = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key
                 return BearyImageURLs.base + "/beary/api/images/" + encoded
             }
         }
+        if let liveVideos = entry.liveVideos, !liveVideos.isEmpty {
+            // 实况：静图 key → 视频 key 的配对须原样保留，两边都按 images 同款拼完整 URL。
+            dict["live_videos"] = liveVideos.map { stillKey, videoKey in
+                let stillEncoded = stillKey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? stillKey
+                let videoEncoded = videoKey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? videoKey
+                return [
+                    "image": BearyImageURLs.base + "/beary/api/images/" + stillEncoded,
+                    "video": BearyImageURLs.base + "/beary/api/images/" + videoEncoded,
+                ] as [String: Any]
+            }
+        }
         if let value = entry.mood { dict["mood"] = value }
         if let value = entry.weather { dict["weather"] = value }
+        if let value = entry.temperatureC { dict["temperature_c"] = value }
+        if let value = entry.locationName { dict["location_name"] = value }
+        if let value = entry.locationDistrict { dict["location_district"] = value }
         if let value = BearyAccountText.isoString(ms: entry.createdAt) { dict["created_at"] = value }
         if let value = BearyAccountText.isoString(ms: entry.publishAt) { dict["publish_at"] = value }
         if let value = BearyAccountText.isoString(ms: entry.editDeadline) { dict["edit_deadline"] = value }
