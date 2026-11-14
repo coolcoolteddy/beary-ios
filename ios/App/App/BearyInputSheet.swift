@@ -18,6 +18,7 @@ import UIKit
 // 取消垫底）；清除钮只在传了 onClear 时出现。点按按钮先关 sheet、关完再跑
 // 回调（回调里再弹 sheet 或出 toast 时不叠在正在退场的 sheet 上）；
 // 叉叉/遮罩/下滑关闭只关 sheet、不跑任何回调。
+// 校验（onValidate）不过时不关 sheet、不跑回调，输入原样保留、摇头＋toast。
 // 滚动结构：表单区走 UIScrollView＋内容容器（grabber→标题→说明→输入框在
 // 滚动区内，确定/清除/取消按钮组固定在底部），键盘顶−56 封顶截断内容高时
 // 表单纵向滚动、按钮组不被遮挡；updatePreferredContentSize 改为滚动内容高
@@ -35,9 +36,10 @@ enum BearyInputSheet {
     ///   - title: 标题（如“气温”）；message: 说明（如输入口径）。
     ///   - placeholder: 输入框占位；initialText: 预填值，nil 即空。
     ///   - onConfirm: 点确定时调一次，收到输入框原始文本（调用方自行 trim 与校验）。
+    ///   - onValidate: 点确定前校验，返回错误文案即不关 sheet、不跑回调（输入保留、摇头＋toast）；返回 nil 即通过。不传则不校验。
     ///   - onClear: 点清除时调一次；不传则不显示清除钮。
-    static func show(from presenter: UIViewController, title: String, message: String, placeholder: String, initialText: String?, onConfirm: @escaping (String) -> Void, onClear: (() -> Void)? = nil) {
-        let sheet = BearyInputSheetViewController(title: title, message: message, placeholder: placeholder, initialText: initialText, onConfirm: onConfirm, onClear: onClear)
+    static func show(from presenter: UIViewController, title: String, message: String, placeholder: String, initialText: String?, onConfirm: @escaping (String) -> Void, onValidate: ((String) -> String?)? = nil, onClear: (() -> Void)? = nil) {
+        let sheet = BearyInputSheetViewController(title: title, message: message, placeholder: placeholder, initialText: initialText, onConfirm: onConfirm, onValidate: onValidate, onClear: onClear)
         let delegate = BearyBottomSheetTransitioningDelegate { presented, presenting, _ in
             BearyInputSheetPresentationController(presentedViewController: presented, presenting: presenting)
         }
@@ -64,6 +66,7 @@ final class BearyInputSheetViewController: UIViewController {
     private let fieldPlaceholder: String
     private let fieldInitialText: String?
     private let onConfirm: (String) -> Void
+    private let onValidate: ((String) -> String?)?
     private let onClear: (() -> Void)?
 
     /// 只解析一次：点按任一按钮即定局，后到的直接丢弃，防确定/清除双跑。
@@ -82,12 +85,13 @@ final class BearyInputSheetViewController: UIViewController {
     private let inputField = UITextField()
     private let buttonStack = UIStackView()
 
-    init(title: String, message: String, placeholder: String, initialText: String?, onConfirm: @escaping (String) -> Void, onClear: (() -> Void)? = nil) {
+    init(title: String, message: String, placeholder: String, initialText: String?, onConfirm: @escaping (String) -> Void, onValidate: ((String) -> String?)? = nil, onClear: (() -> Void)? = nil) {
         self.sheetTitle = title
         self.sheetMessage = message
         self.fieldPlaceholder = placeholder
         self.fieldInitialText = initialText
         self.onConfirm = onConfirm
+        self.onValidate = onValidate
         self.onClear = onClear
         super.init(nibName: nil, bundle: nil)
     }
@@ -130,6 +134,7 @@ final class BearyInputSheetViewController: UIViewController {
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
         messageLabel.text = sheetMessage
         messageLabel.font = BearyDynamicType.smallBodyFont()
+        messageLabel.adjustsFontForContentSizeCategory = true
         messageLabel.textColor = BearyColors.gray
         messageLabel.numberOfLines = 0
         scrollContentView.addSubview(messageLabel)
@@ -233,6 +238,16 @@ final class BearyInputSheetViewController: UIViewController {
         updatePreferredContentSize()
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // 第 25 轮 77 项：系统字号变化后重取说明字体并重新布局（面板打开期间也跟随）。
+        guard previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory else { return }
+        messageLabel.font = BearyDynamicType.smallBodyFont()
+        updatePreferredContentSize()
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+    }
+
     /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档变化时跟帧补齐。
     /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
     /// 滚动区无固有高，整体系 fitting 算不出高：改为滚动内容高（已含内容底
@@ -253,8 +268,22 @@ final class BearyInputSheetViewController: UIViewController {
 
     @objc private func confirmTapped() {
         guard !resolved else { return }
-        resolved = true
         let text = inputField.text ?? ""
+        // 第 25 轮 6、76 项：校验不过不关 sheet、不定局，输入原样保留，
+        // 摇头＋toast 提示；减动效时跳过摇头。
+        if let message = onValidate?(text) {
+            if !UIAccessibility.isReduceMotionEnabled {
+                inputField.layer.removeAnimation(forKey: "bearyDenyShake")
+                let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+                shake.values = [0, -8, 8, -5, 5, 0]
+                shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+                shake.duration = BearyMotion.screen
+                inputField.layer.add(shake, forKey: "bearyDenyShake")
+            }
+            BearyToast.show(in: view, message: message)
+            return
+        }
+        resolved = true
         let handler = onConfirm
         // 先关 sheet、关完再跑回调（回调里再弹 sheet 或出 toast 时不叠层）。
         dismiss(animated: BearyMotion.animated(true)) {

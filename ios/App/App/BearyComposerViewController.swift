@@ -4364,12 +4364,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 点气温数值：底 sheet 直输整数（-60…60°）；留空点确定即清除气温（只清气温、不动类型）。
+    /// 第 25 轮 76 项：范围在输入前说明（sheet 说明文案），超范围／非整数由 sheet 校验拦下、
+    /// 输入保留，不再静默夹值。
     @objc private func didTapTempLabel() {
         guard selectedWeather != nil else { return }
         BearyInputSheet.show(
             from: self,
             title: "气温",
-            message: "输入摄氏度整数，留空即清除",
+            message: "输入 -60 到 60 的摄氏度整数，留空即清除",
             placeholder: "例如 18",
             initialText: selectedTemperature.map { "\($0)" },
             onConfirm: { [weak self] raw in
@@ -4381,16 +4383,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.selectedTemperature = nil
                 } else if let value = Int(trimmed) {
                     // 手改气温（直输亦算手改）：在途自动填回包过期作废。
+                    // 第 25 轮 76 项：非整数与超范围已由 onValidate 拦下，此处不再静默夹值。
                     self.weatherFetchGeneration += 1
-                    self.selectedTemperature = min(60, max(-60, value))
-                } else {
-                    // 非法输入：toast 后关闭 sheet、不保存不刷新（原 alert 点确定后
-                    // 无论如何都会关闭，新 sheet 同款：先关 sheet、关完再跑回调）。
-                    self.showToast(message: "气温请输入整数")
-                    return
+                    self.selectedTemperature = value
                 }
                 self.refreshSelectedChips()
                 self.scheduleDraftSave()
+            },
+            onValidate: { raw in
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty { return nil }
+                guard let value = Int(trimmed) else { return "气温请输入整数" }
+                guard (-60...60).contains(value) else { return "气温范围是 -60 到 60 度" }
+                return nil
             },
             onClear: { [weak self] in
                 // 手改气温（清除亦算手改）：在途自动填回包过期作废。
