@@ -3323,19 +3323,20 @@ final class BearyDetailViewController: UIViewController {
         // 液体炸开与填色同起——点按确认时即播，不再等服务端回包。
         // 审计动效组：touchDown 已由 bearyAddPressFeedback 给过一次 press 轻震，
         // 此处照搬卡片页 hadPressPreview 守卫——有预览时不再补 likeTap，只震一次；
-        // 直达抬起（无 touchDown）时仍补一次；音效只在确认时播，不受守卫影响。
+        // 直达抬起（无 touchDown）时仍补一次。
+        // 第 1 轮 24：点赞音按最终结果只播一次——点按只留视觉＋触觉，
+        // 成功回包按最终态播 likePop／unlikeSoft，失败走拒绝音；
+        // 否则失败时点按音与拒绝音先后两声。
         if !currentlyLiked {
             if !hadPressPreview {
                 BearyHaptics.likeTap()
             }
-            BearySoundPlayer.play(.likePop)
         } else {
             // 取消点赞按点赞同款守卫：touchDown 已给 press 轻震时不再补，
             // 直达抬起（无 touchDown）时补一次；每点按只震一次，不双震。
             if !hadPressPreview {
                 BearyHaptics.likeTap()
             }
-            BearySoundPlayer.play(.unlikeSoft)
         }
         entry.likedByMe = targetLiked
         entry.likeCount = max(0, originalCount + (currentlyLiked ? -1 : 1))
@@ -3366,6 +3367,9 @@ final class BearyDetailViewController: UIViewController {
                     self.confirmedLiked = newLiked
                     self.confirmedLikeCount = self.entry.likeCount ?? 0
                     self.refreshActionRow()
+                    // 第 1 轮 24：音效只按最终结果播一次（成功按最终态播
+                    // likePop／unlikeSoft，失败分支走拒绝音 refuse_bonk）。
+                    BearySoundPlayer.play(newLiked ? .likePop : .unlikeSoft)
                     // 炸开已在点按时播过，成功回包不再重播；取消点赞不炸。
                     self.onInteractionChanged?(entryId, self.entry.likeCount, newLiked, nil, nil)
                 case .failure(let err):
