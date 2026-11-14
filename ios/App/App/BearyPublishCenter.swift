@@ -17,6 +17,12 @@ struct PublishSnapshot {
     /// 好友第一期：新建三档（private/friends/public；限时恒 public）。
     /// 快照拍定后 publishEntry 按它发，published 同步作旧版兼容（friends→0）。
     var visibility: String
+    /// 时间胶囊 v1：埋了才有值（解锁毫秒戳＋区级）；不埋两者皆 nil，
+    /// 发布中心按它发 is_capsule 三键（变基衔接：main 侧胶囊字段，
+    /// #1451 基线后才进 main，快照从编辑器移到中心时须一并带上，
+    /// 否则埋胶囊的日记会静默发成普通篇）。
+    let capsuleUnlockAt: Int?
+    let capsuleDistrict: String?
     let mentionedUserId: Int?
     let title: String?
     var ephemeral: Int?
@@ -328,7 +334,10 @@ final class BearyPublishCenter {
             clientReq: snapshot.clientReq, locationName: snapshot.locationName,
             locationDistrict: snapshot.locationDistrict, temperature: snapshot.temperature,
             liveVideos: runningJob.liveVideos.isEmpty ? nil : runningJob.liveVideos,
-            visibility: snapshot.visibility, uploadProgress: progressHandler
+            visibility: snapshot.visibility,
+            isCapsule: snapshot.capsuleUnlockAt == nil ? nil : 1,
+            capsuleUnlockAt: snapshot.capsuleUnlockAt, capsuleDistrict: snapshot.capsuleDistrict,
+            uploadProgress: progressHandler
         ) { [weak self, weak runningJob] result in
             DispatchQueue.main.async {
                 guard let self = self, let runningJob = runningJob, !runningJob.finished else { return }
