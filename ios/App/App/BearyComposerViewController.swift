@@ -5364,7 +5364,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func updatePublishState() {
-        // C11：超长时发布钮保持可用（不禁用），点发布时 toast 报当前字数；上传中仍禁用。
+        // C11：超长时发布钮保持可用（不禁用），点发布时 toast 报当前字数。
+        // 2026-11-14（132 真机）：新建态上传中不再禁用发布钮——#1451 口径是点发布
+        // 即退编辑器、图片由发布中心在后台续传；“上传中仍禁用”是回归，发布钮
+        // 被上传堵住、底部 pill 也永远等不到交接。编辑态保留该门：PUT 直接发
+        // uploadedImageKeys()，没传完的图不在 keys 里，发出去会把这张图从日记里
+        // 丢掉，故编辑态仍须等传完（或删图）再保存。
         // U13 改真禁用（2026-11-03 Li 定，旧“视觉置灰但可点、点按给‘先写点什么’”口径作废）：
         // 去空白后正文为空时按钮真禁用，有图也一样；空态下点按无反应、无提示。
         // 超长时保持可用的口径不动。
@@ -5374,7 +5379,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // B2：关闭进行中时发布钮亦禁用——关闭保存与发布提交不得并发
         //（发布会另起一条 saveDraftNow + 请求链，与关闭保存抢同一篇草稿）。
         // 切到另一账号时冻结（editOriginFrozen，第三轮审计第 5 项），切回原账号即解冻。
-        publishButton.isEnabled = !isPublishing && !isClosing && !isDraftExitSaving && !hasUploadingImage() && !editQuoteFetchFailed && !editQuoteFetchInFlight && !editOriginFrozen && !trimmedContent().isEmpty
+        let uploadGate = isEditMode && hasUploadingImage()
+        publishButton.isEnabled = !isPublishing && !isClosing && !isDraftExitSaving && !uploadGate && !editQuoteFetchFailed && !editQuoteFetchInFlight && !editOriginFrozen && !trimmedContent().isEmpty
         refreshPublishAppearance()
         refreshPublishBusyState()
         refreshPublishingInputFreeze()
@@ -6738,10 +6744,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 之后：已取消的项先由门控静默拦下，不再 toast、不改态。
         // 锁内只做整数校验与任务创建（authAccountId 的读走 authStateQueue，
         // 不回调编辑器，无死锁环；uploadImage 只建任务，不同步回主线程）。
+        // 2026-11-14（132 真机）：门控失败不再一律静默丢弃——代次已变说明
+        // 新一轮起传已接管本项状态，仍静默丢弃（新一轮的回包会清态）；代次
+        // 未变（只是账号已变）时本项再无后续回包会来清态，静默丢弃即转圈
+        // 永久卡住，须当场置失败、让用户可点图重试。
         uploadStateLock.lock()
         defer { uploadStateLock.unlock() }
         guard token.generation == item.uploadGeneration,
-              token.accountId == nil || BearyAPI.shared.authAccountId == token.accountId else { return }
+              token.accountId == nil || BearyAPI.shared.authAccountId == token.accountId else {
+            if token.generation == item.uploadGeneration {
+                DispatchQueue.main.async {
+                    self.markFailed(item)
+                    self.saveDraftNow()
+                    self.updatePublishState()
+                }
+            }
+            return
+        }
         // 实况上传失败口径（防静默降级）：视频超限在选图时已拒收，这里再守
         // 一道；上传失败、或回包缺 live_key（后端未上线/不匹配）时一律按失败
         // 处理——亮红底重试块 + toast，发布亦被失败图拦截，绝不把实况当静态
@@ -7248,8 +7267,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func uploadedImageKeys() -> [String] {
         var keys: [String] = []
+        // 2026-11-14：按 key 去重后返回——条里同 key 两项时 PUT 只发一次，
+        // 服务端 ownImages 虽也去重，但本地先去重、不把重复项发出去。
+        var seen = Set<String>()
         for item in imageItems {
-            if let key = item.key {
+            if let key = item.key, !seen.contains(key) {
+                seen.insert(key)
                 keys.append(key)
             }
         }
@@ -7354,9 +7377,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshToolStrip()
         maybePresentStoredQuotePrompt()
         startEditTimer()
+        // 2026-11-14（132 真机）：编辑回填按 key 去重后追加——补拉二次调用
+        // setupEditContent 时图片回填段无守卫（正文/心情等段有 editQuoteFetchAttempted
+        // 守卫），重复回填会把同一张图插两遍，条里看起来像“编辑一次多一张图”；
+        // PUT 虽经服务端 ownImages 去重不落库，但条里重复项本身即错，去重后
+        // 回填幂等，重复调用也不再多项。
+        var seenImageKeys = Set(imageItems.compactMap { $0.key })
         for key in entry.images ?? [] {
             // 内联 GIF 不进图片条（只进 inlineGifKeys，见上），否则条里会多一张静态图。
             guard key.hasSuffix(".gif") == false else { continue }
+            guard !seenImageKeys.contains(key) else { continue }
+            seenImageKeys.insert(key)
             let item = createImageItem(localImage: nil, key: key, uploading: false, localFile: nil, failed: false)
             // 编辑回填带实况：原图实况 key 随项带回，不动的图 PUT 时原样
             // 发回 live_videos；删图/裁剪会清掉对应项，PUT 映射随之变。
@@ -9277,6 +9308,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         let images = imageItems.map { item in
             BearyPublishImage(localFile: item.localFile, serverKey: item.key, liveVideoKey: item.liveVideoKey, liveVideoFile: item.liveVideoFile, liveVideoData: item.liveVideoData)
+        }
+        // 2026-11-14：交接前取消编辑器侧在途上传——中心是唯一上传方。
+        // 不取消时，编辑器在途的上传与中心对同一张图的上传会各落一个 key，
+        // 多一个孤儿图（且浪费一份上行流量）；取消只 bump 代次（迟到回包由
+        // 代次守卫丢弃），本地文件与已落盘的 prepared JPEG 不动，中心照常
+        // 读盘上传；已传完的项 key 已定，中心直接跳过、不受影响。
+        for item in imageItems where item.uploading {
+            cancelUpload(for: item)
         }
         // onPublished/onRequireLogin 只取闭包值、不持有编辑器本身：
         // 编辑器退出后析构，发布中心仍能经闭包值调容器接线。

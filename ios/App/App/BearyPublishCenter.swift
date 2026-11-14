@@ -127,8 +127,8 @@ private final class BearyPublishProgress {
 /// 快照、图片清单与回包闭包，编辑器析构不影响它。单例，活得比任何
 /// 一页编辑器都久；同一 draftId 同时只跑一支任务（重入即拒收，
 /// 调用方留页并 toast「发布中…」）。
-/// 流程：起飞前账号校验 →（一并公开时）setVisibility → 按顺序逐张
-/// 上传本地图片（拿到 keys）→ publishEntry。任一步失败即停，草稿
+/// 流程：起飞前账号校验 →（一并公开时）setVisibility → 本地图片并行
+/// 上传（拿到 keys，按原序组装）→ publishEntry。任一步失败即停，草稿
 /// 保留（交接前已落盘），pill 显示现有失败文案；成功清草稿与本地
 /// 图片、pill 对勾「已发布」、走 onPublished。
 /// 杀 App／切后台时发布即停、草稿可重试（不加后台任务）；失败重试
@@ -136,6 +136,10 @@ private final class BearyPublishProgress {
 final class BearyPublishCenter {
 
     static let shared = BearyPublishCenter()
+
+    /// 图片并行上传上限（2026-11-14）：3 路——API 会话每 host 6 并发，
+    /// 留一半给时间线等其他请求；9 张图时约 3 倍于串行。
+    private static let maxConcurrentUploads = 3
 
     /// 图片准备（读盘＋base64）走本队列，不占主线程；与编辑器
     /// imagePrepQueue 同款分工。
@@ -211,41 +215,70 @@ final class BearyPublishCenter {
         }
     }
 
+    /// 图片上传入口（主线程）：已有 key 的图直接记结果、不再上传；
+    /// 其余图最多 3 路并行上传（见 pumpUploads），keys 按原序组装后转 POST。
+    /// 2026-11-14（132 真机）：旧版逐张串行传，9 张图要等 9 个往返，
+    /// 发布钮放开后用户点发布即交接、中心一次接多张未传图时串行太慢；
+    /// 并行上限 3——API 会话每 host 6 并发，留一半给时间线等其他请求。
+    /// 进度仍按步记账（BearyPublishProgress 各步独立预算，乱序完成不回退）。
     private func uploadNext(_ runningJob: RunningJob) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard !runningJob.finished else { return }
         let job = runningJob.job
-        // 每步（图片上传／转 POST）前再校验发起账号（旧 uploadPrepared
-        // 令牌门控与 performPublish 入口同款）：切号后不再用新账号
-        // cookie 传旧账号的图片或发帖，草稿保留；部分成功态（原日记
-        // 已公开）用部分成功口径。
+        // 起飞前账号校验（旧 uploadPrepared 令牌门控与 performPublish 入口
+        // 同款）：切号后不再用新账号 cookie 传旧账号的图片或发帖，草稿保留；
+        // 部分成功态（原日记已公开）用部分成功口径。
         if let expected = job.snapshot.originAccountId,
            BearyAPI.shared.authAccountId != expected {
             fail(runningJob, message: accountMismatchMessage(sourceAlreadyPublished: runningJob.sourcePublished))
             return
         }
-        if runningJob.imageIndex >= job.images.count {
-            runPost(runningJob)
-            return
-        }
-        let image = job.images[runningJob.imageIndex]
-        // 已有服务端 key 的图不再上传（旧草稿、旧版已传完的图）。
-        if let key = image.serverKey {
-            runningJob.imageKeys.append(key)
-            if let liveKey = image.liveVideoKey {
-                runningJob.liveVideos[key] = liveKey
+        // 已有服务端 key 的图不再上传（旧草稿、旧版已传完的图），直接记结果。
+        for (index, image) in job.images.enumerated() {
+            if let key = image.serverKey {
+                runningJob.uploadResults[index] = key
+                if let liveKey = image.liveVideoKey {
+                    runningJob.uploadLiveResults[index] = liveKey
+                }
+                runningJob.uploadFinished += 1
             }
-            runningJob.imageIndex += 1
-            uploadNext(runningJob)
+        }
+        if runningJob.uploadFinished >= job.images.count {
+            finishUploadsAndPost(runningJob)
             return
         }
-        guard let localFile = image.localFile else {
-            // 交接时已守卫（无 key 又无本地文件拦截不发），到这里即程序错误；
-            // 按图片失效处理，不编新文案。
-            fail(runningJob, message: Self.message(forPublishError: .server("image unavailable", nil)))
-            return
+        pumpUploads(runningJob)
+    }
+
+    /// 并行泵：同时在途不超过 3 路；每路完成时补起下一张（见 uploadOne
+    /// 完成分支）。无本地文件又无 key 的项是交接时已守卫的程序错误，
+    /// 按图片失效处理，不编新文案（与旧串行版同款）。
+    private func pumpUploads(_ runningJob: RunningJob) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !runningJob.finished else { return }
+        let job = runningJob.job
+        while runningJob.uploadInFlight < Self.maxConcurrentUploads,
+              runningJob.uploadStarted < job.images.count {
+            let index = runningJob.uploadStarted
+            runningJob.uploadStarted += 1
+            let image = job.images[index]
+            if image.serverKey != nil { continue }
+            guard image.localFile != nil else {
+                fail(runningJob, message: Self.message(forPublishError: .server("image unavailable", nil)))
+                return
+            }
+            runningJob.uploadInFlight += 1
+            uploadOne(runningJob, index: index, image: image)
         }
-        let step = runningJob.imageIndex
+    }
+
+    /// 单张上传：ioQueue 上读盘＋base64，网络任务建好后回主线程记账。
+    /// 完成分支在主线程跑：成功记结果、补起下一路、全部落袋后按序组装
+    /// 转 POST；失败即停整单（草稿保留，旧串行版同款）。
+    private func uploadOne(_ runningJob: RunningJob, index: Int, image: BearyPublishImage) {
+        let job = runningJob.job
+        guard let localFile = image.localFile else { return }
+        let step = index
         let accountId = job.snapshot.accountId
         ioQueue.async { [weak self, weak runningJob] in
             guard let self = self, let runningJob = runningJob, !runningJob.finished else { return }
@@ -283,6 +316,7 @@ final class BearyPublishCenter {
             BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: prepared.full.w, height: prepared.full.h, thumbDataUrl: thumbDataUrl, videoDataUrl: videoDataUrl, uploadProgress: progressHandler) { [weak self, weak runningJob] result in
                 DispatchQueue.main.async {
                     guard let self = self, let runningJob = runningJob, !runningJob.finished else { return }
+                    runningJob.uploadInFlight -= 1
                     let value = runningJob.progress.complete(step: step)
                     self.reportProgress(runningJob, value: value)
                     switch result {
@@ -297,12 +331,15 @@ final class BearyPublishCenter {
                             self.fail(runningJob, message: "实况视频上传失败，请点图重试")
                             return
                         }
-                        runningJob.imageKeys.append(key)
+                        runningJob.uploadResults[index] = key
                         if let liveKey = resp.liveKey {
-                            runningJob.liveVideos[key] = liveKey
+                            runningJob.uploadLiveResults[index] = liveKey
                         }
-                        runningJob.imageIndex += 1
-                        self.uploadNext(runningJob)
+                        runningJob.uploadFinished += 1
+                        self.pumpUploads(runningJob)
+                        if runningJob.uploadFinished >= runningJob.job.images.count {
+                            self.finishUploadsAndPost(runningJob)
+                        }
                     case .failure(let error):
                         self.fail(runningJob, error: error)
                     }
@@ -311,8 +348,37 @@ final class BearyPublishCenter {
         }
     }
 
+    /// 全部图片落袋后按原序组装 keys／liveVideos，再进 POST。
+    private func finishUploadsAndPost(_ runningJob: RunningJob) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !runningJob.finished else { return }
+        var keys: [String] = []
+        var liveVideos: [String: String] = [:]
+        for index in runningJob.job.images.indices {
+            guard let key = runningJob.uploadResults[index] else {
+                fail(runningJob, message: Self.message(forPublishError: .server("image unavailable", nil)))
+                return
+            }
+            keys.append(key)
+            if let liveKey = runningJob.uploadLiveResults[index] {
+                liveVideos[key] = liveKey
+            }
+        }
+        runningJob.imageKeys = keys
+        runningJob.liveVideos = liveVideos
+        runPost(runningJob)
+    }
+
     private func runPost(_ runningJob: RunningJob) {
         dispatchPrecondition(condition: .onQueue(.main))
+        guard !runningJob.finished else { return }
+        // POST 前再校验发起账号（旧串行版在 uploadNext 递归末尾校验，
+        // 并行版的组装入口在此补同一道校验）：切号后不发帖，草稿保留。
+        if let expected = runningJob.job.snapshot.originAccountId,
+           BearyAPI.shared.authAccountId != expected {
+            fail(runningJob, message: accountMismatchMessage(sourceAlreadyPublished: runningJob.sourcePublished))
+            return
+        }
         let job = runningJob.job
         let snapshot = job.snapshot
         let step = job.images.count
@@ -486,12 +552,20 @@ final class BearyPublishCenter {
     }
 
     /// 在途任务（强持有到终态；终态后从 running 摘除即释放）。
+    /// 并行上传记账：uploadResults／uploadLiveResults 按原下标收结果，
+    /// uploadStarted 是下一个待起传的下标，uploadInFlight 是当前在途
+    /// 路数，uploadFinished 是已落袋张数（含已有 key 不用传的）；
+    /// imageKeys／liveVideos 在全部落袋后按序组装（见 finishUploadsAndPost）。
     private final class RunningJob {
         let job: BearyPublishJob
         let key: String
         var imageKeys: [String] = []
         var liveVideos: [String: String] = [:]
-        var imageIndex = 0
+        var uploadResults: [Int: String] = [:]
+        var uploadLiveResults: [Int: String] = [:]
+        var uploadStarted = 0
+        var uploadInFlight = 0
+        var uploadFinished = 0
         var sourcePublished: Bool
         var progress = BearyPublishProgress()
         var pill: BearyPublishPillView?
