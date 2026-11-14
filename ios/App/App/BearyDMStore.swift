@@ -113,7 +113,8 @@ enum BearyDMStore {
     }
 
     /// 损坏登记（只在 ioQueue 内读写）：记下账号；原文件不动，另存一份时间戳 .bak。
-    /// 同一轮损坏只备一份，免得每次读取都刷一个新备份。
+    /// 同一轮损坏只备一份，免得每次读取都刷一个新备份。复制失败不记已备份
+    /// （下次读重试），但损坏登记保留——写盘仍禁，防覆盖原文件。
     private static var corruptAccountIds: Set<Int> = []
     private static var corruptBackupAccountIds: Set<Int> = []
 
@@ -121,8 +122,12 @@ enum BearyDMStore {
         guard let accountId = accountId else { return }
         corruptAccountIds.insert(accountId)
         guard !corruptBackupAccountIds.contains(accountId) else { return }
-        corruptBackupAccountIds.insert(accountId)
-        try? FileManager.default.copyItem(at: url, to: BearyDMStoreCore.corruptBackupURL(for: url))
+        do {
+            try FileManager.default.copyItem(at: url, to: BearyDMStoreCore.corruptBackupURL(for: url))
+            corruptBackupAccountIds.insert(accountId)
+        } catch {
+            // 备份失败：不记已备份，下次读重试；损坏登记已留，写盘继续禁。
+        }
     }
 
     /// 该账号最新的损坏备份（只在 ioQueue 内调用）。
