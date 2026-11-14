@@ -439,11 +439,22 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         selectedGroupIndex = index
         refreshPillSelection(animated: animated)
         refreshEmptyHint()
-        // 节日组只有 6 款（2 行），sheet 随之缩短；网格内容切换只走 opacity，
-        // 高度变化走容器帧动画，减动效时两者都瞬时。
-        let applyHeight = { [weak self] in
-            self?.updatePreferredContentSize()
-            self?.view.layoutIfNeeded()
+        // 节日组只有 6 款（2 行），sheet 随之缩短；切组高度一次到位：
+        // 先同步算好新高、立即落帧（不包进任何动画块），视觉过渡只留
+        // 网格 opacity 淡入淡出与 pill transform/opacity，减动效时两者都瞬时。
+        // 容器帧动画靠本 sheet 自己的 presentationController 上的作用域开关
+        // suppressPreferredContentSizeAnimation 关掉——只在本次切组内生效，
+        // 其他 sheet 从不置位、行为不动；开关由 preferredContentSizeDidChange
+        // 用完自清，另加下一 runloop 兜底清零（新高与旧高相等、回调未触发时不残留）。
+        // 高度在淡出开始前就一次落位（而不等淡出完成回调）：淡出被连点打断时
+        // 完成回调不执行，绑在回调里的改高会丢、sheet 停在旧高。
+        let applyHeightInstantly = { [weak self] in
+            guard let self = self else { return }
+            let sheetPC = self.presentationController as? BearyBottomSheetPresentationController
+            sheetPC?.suppressPreferredContentSizeAnimation = true
+            self.updatePreferredContentSize()
+            self.view.layoutIfNeeded()
+            DispatchQueue.main.async { sheetPC?.suppressPreferredContentSizeAnimation = false }
         }
         // 先淡出旧网格、再换内容淡入：reloadData 若在淡出前调，旧组来不及
         // 淡出就被新组顶掉——新组先闪现、再淡出淡入（blink）；放淡出完成
@@ -455,9 +466,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             self?.emoteCollectionView?.setContentOffset(.zero, animated: false)
         }
         if animated, UIAccessibility.isReduceMotionEnabled == false {
-            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
-                applyHeight()
-            })
+            applyHeightInstantly()
             UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
                 self.emoteCollectionView?.alpha = 0
             }, completion: { [weak self] finished in
@@ -469,7 +478,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             })
         } else {
             reloadGrid()
-            applyHeight()
+            applyHeightInstantly()
         }
     }
 
