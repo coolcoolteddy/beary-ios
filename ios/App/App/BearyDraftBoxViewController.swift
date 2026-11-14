@@ -1003,13 +1003,29 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         deleteEntries.append((button: deleteButton, draftValue: draftValue))
         inner.addArrangedSubview(topRow)
 
+        // 2026-11-14（132 真机）：标题独立成行（卡片标题字、粗体），不再挤进
+        // 正文摘要槽——此前标题靠 summaryText 兜底进摘要，正文被标题顶掉、
+        // 标题也看不出是标题，上方还空出一大段。无标题时整行 isHidden，
+        // UIStackView 不留高度（不要只设空文字留着槽位）。
+        let titleText = (draftValue.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let titleLabel = UILabel()
+        titleLabel.font = BearyDynamicType.cardTitleFont()
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.numberOfLines = 1
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.textAlignment = .left
+        titleLabel.text = titleText
+        titleLabel.isHidden = titleText.isEmpty
+        inner.addArrangedSubview(titleLabel)
+
         let summaryLabel = UILabel()
         summaryLabel.font = BearyDynamicType.diaryBodyFont()
         summaryLabel.adjustsFontForContentSizeCategory = true
         summaryLabel.textColor = BearyColors.ink
         summaryLabel.numberOfLines = 2
         summaryLabel.textAlignment = .left
-        let summary = summaryText(for: draftValue)
+        let summary = bodyPreviewText(for: draftValue)
         if let attributed = attributedText(summary, lineHeightMultiple: 1.6, font: summaryLabel.font) {
             summaryLabel.attributedText = attributed
         } else {
@@ -1370,14 +1386,20 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
 
     // MARK: - 文案推导（网页口径移植）
 
-    /// DF-1 摘要兜底顺序改网页口径（buildDraftCard）：
-    /// 正文 > 只有图片 > 只有引用 > 只有心情 > 有天气/写给则“（还没写字）” > “（空白草稿）”。
+    /// 撤销条用摘要：标题优先（标题最能认出是哪篇），无标题走正文预览。
     private func summaryText(for draftValue: BearyDraft) -> String {
-        // 摘要兜底：标题优先 → 正文摘要 → 图片数量/位置 → 引用/心情/天气/写给 → 空白。
         let title = (draftValue.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !title.isEmpty {
             return title
         }
+        return bodyPreviewText(for: draftValue)
+    }
+
+    /// 卡片正文预览（DF-1 兜底顺序改网页口径 buildDraftCard）：
+    /// 正文 > 只有图片 > 只有引用 > 只有心情 > 有天气/写给则“（还没写字）” > “（空白草稿）”。
+    /// 标题不在这里——标题另有独立标题行（见 makeCard）。只有标题、无正文时
+    /// 给“（还没写字）”，不谎称“（空白草稿）”。
+    private func bodyPreviewText(for draftValue: BearyDraft) -> String {
         let trimmed = draftValue.content.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             return trimmed
@@ -1398,7 +1420,10 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         }
         // G19：recipientName 口径收紧为非空（空字符串不再触发“还没写字”兜底，
         // 与存储层 hasContent 的 recipientName 非空判定一致）。
-        if draftValue.weather != nil || draftValue.recipientId != nil || !(draftValue.recipientName ?? "").isEmpty {
+        // 只有标题、无正文时同样给“（还没写字）”——标题行已显示标题，
+        // 摘要不谎称“（空白草稿）”。
+        if draftValue.weather != nil || draftValue.recipientId != nil || !(draftValue.recipientName ?? "").isEmpty
+            || !(draftValue.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return "（还没写字）"
         }
         return "（空白草稿）"
