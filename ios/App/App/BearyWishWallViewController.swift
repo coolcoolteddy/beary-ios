@@ -1117,7 +1117,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         // 30：计数行右对齐、超限变红；字段级错误行默认隐藏，见 submitTapped 的 bad wish 分支。
         for label in [titleCountLabel, detailCountLabel] {
             label.translatesAutoresizingMaskIntoConstraints = false
-            label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+            label.font = BearyDynamicType.numberFont()
             label.adjustsFontForContentSizeCategory = true
             label.textColor = BearyColors.gray
             label.textAlignment = .right
@@ -1360,13 +1360,43 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     /// 30：长度提示唯一刷新点——标题/详情计数与超限变红；超限时提交钮禁用
     /// （服务端同限，客户端先拦；超长 400 的 bad wish 由 submitTapped 按服务
     /// 端口径重算归因，能定位字段只标该框，否则只显示表单级错误行）。
+    /// 计数走 numberFont（12 semibold 等宽数字）；数字变化时 0.18s 交叉淡变
+    /// （票数 fadeVoteCount／图片序号 updateCounter 同款口径：
+    /// BearyMotion.localStateDuration＋transitionCrossDissolve；文字不变、
+    /// 减动效开、或未进窗口时直设终值，超限变红随淡变一同落定）。
     private func updateLengthHints() {
         let titleCount = (titleField.text ?? "").count
         let detailCount = detailView.text.count
-        titleCountLabel.text = "\(titleCount)/\(Self.titleLimit)"
-        titleCountLabel.textColor = titleCount > Self.titleLimit ? BearyColors.destructiveText : BearyColors.gray
-        detailCountLabel.text = "\(detailCount)/\(Self.detailLimit)"
-        detailCountLabel.textColor = detailCount > Self.detailLimit ? BearyColors.destructiveText : BearyColors.gray
+        let titleText = "\(titleCount)/\(Self.titleLimit)"
+        let titleColor = titleCount > Self.titleLimit ? BearyColors.destructiveText : BearyColors.gray
+        if titleCountLabel.text != titleText {
+            if BearyMotion.animated(true), titleCountLabel.window != nil {
+                UIView.transition(with: titleCountLabel, duration: BearyMotion.localStateDuration, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
+                    self.titleCountLabel.text = titleText
+                    self.titleCountLabel.textColor = titleColor
+                })
+            } else {
+                titleCountLabel.text = titleText
+                titleCountLabel.textColor = titleColor
+            }
+        } else {
+            titleCountLabel.textColor = titleColor
+        }
+        let detailText = "\(detailCount)/\(Self.detailLimit)"
+        let detailColor = detailCount > Self.detailLimit ? BearyColors.destructiveText : BearyColors.gray
+        if detailCountLabel.text != detailText {
+            if BearyMotion.animated(true), detailCountLabel.window != nil {
+                UIView.transition(with: detailCountLabel, duration: BearyMotion.localStateDuration, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
+                    self.detailCountLabel.text = detailText
+                    self.detailCountLabel.textColor = detailColor
+                })
+            } else {
+                detailCountLabel.text = detailText
+                detailCountLabel.textColor = detailColor
+            }
+        } else {
+            detailCountLabel.textColor = detailColor
+        }
     }
 
     /// 11：提交钮启用态唯一入口——提交锁期间直接返回，标题变化不得重新启用提交钮。
