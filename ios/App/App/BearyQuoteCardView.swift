@@ -448,9 +448,11 @@ final class BearyQuoteCardView: UIView {
     /// 与搜索行同口径，超了加 …；正文为空时略过本段）＋图片数（仅显示缩略
     /// 图时，0 张不写）＋展开态（已展开／未展开且超 3 行时“可展开”）＋
     /// 双击查看原文；超 3 行未展开时另挂“展开引用正文”自定义操作，走与
-    /// 展开钮同一路。只写正常卡 label，占位／加载失败态的 label 仍由
-    /// showGone／showLoadFailed 专管（本函数遇那两态直接返回）；只写
-    /// label 与操作，不碰 traits／isAccessibilityElement（configure 已置）。
+    /// 展开钮同一路。A3：已展开时正文段放全文（折叠态仍为前 100 字摘要，
+    /// #1474 文案不动）——整卡独占焦点、正文不独立聚焦，展开后全文只能经
+    /// label 读出，否则读屏永远听不到 100 字后的正文。只写正常卡 label，占位／
+    /// 加载失败态的 label 仍由 showGone／showLoadFailed 专管（本函数遇那两态
+    /// 直接返回）；只写 label 与操作，不碰 traits／isAccessibilityElement（configure 已置）。
     private func refreshQuoteAccessibility() {
         guard isGoneState == false, isLoadFailedState == false else { return }
         var parts: [String] = ["引用日记"]
@@ -458,7 +460,12 @@ final class BearyQuoteCardView: UIView {
             parts.append(quoteAuthorText)
         }
         if let text = contentLabel.text, text.isEmpty == false {
-            parts.append("正文：" + String(text.prefix(100)) + (text.count > 100 ? "…" : ""))
+            if quoteExpanded {
+                // A3：已展开时放全文——折叠态的 100 字摘要（#1474）读不到 100 字后的正文。
+                parts.append("正文：" + text)
+            } else {
+                parts.append("正文：" + String(text.prefix(100)) + (text.count > 100 ? "…" : ""))
+            }
         }
         if quoteImageCount > 0 {
             parts.append("\(quoteImageCount) 张图片")
