@@ -1526,7 +1526,24 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 BearyConfirmSheet.Action(title: confirmTitle, style: .destructive) {
                     confirmedExit()
                 },
-                BearyConfirmSheet.Action(title: "取消", style: .cancel),
+                BearyConfirmSheet.Action(title: "取消", style: .cancel) { [weak self] in
+                    // 审计 A3：取消关闭时回到原位——把手下滑已把面板拖离原位、
+                    // 遮罩变淡，确认框“取消”后须复位，否则面板一直停在拖动态。
+                    // 非拖拽路（关闭钮／遮罩／新建／点开）面板本就在原位，复位为空操作。
+                    guard let strongSelf = self else { return }
+                    let restore = {
+                        strongSelf.sheetView.transform = .identity
+                        strongSelf.backdropButton.alpha = 1
+                    }
+                    if UIAccessibility.isReduceMotionEnabled {
+                        restore()
+                        UIAccessibility.post(notification: .layoutChanged, argument: strongSelf.closeButton)
+                    } else {
+                        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [], animations: restore) { _ in
+                            UIAccessibility.post(notification: .layoutChanged, argument: strongSelf.closeButton)
+                        }
+                    }
+                },
             ])
             return
         }
