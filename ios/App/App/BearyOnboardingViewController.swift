@@ -270,6 +270,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         backButton.translatesAutoresizingMaskIntoConstraints = false
         backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
         backButton.tintColor = BearyColors.ink
+        backButton.accessibilityLabel = "返回上一页"
         backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
         backButton.bearyAddPressFeedback()
 
@@ -277,6 +278,8 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         segmentStack.axis = .horizontal
         segmentStack.spacing = 6
         segmentStack.distribution = .fillEqually
+        segmentStack.isAccessibilityElement = true
+        segmentStack.accessibilityLabel = "第 1 页，共 4 页"
         for _ in 0..<4 {
             let seg = UIView()
             seg.translatesAutoresizingMaskIntoConstraints = false
@@ -886,6 +889,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
             // 预览口径：只有当前段填充，其余为线色（不做已走过的累计填充）。
             seg.backgroundColor = index == currentPage ? BearyColors.ink : BearyColors.line
         }
+        segmentStack.accessibilityLabel = "第 \(currentPage + 1) 页，共 4 页"
         let showBack = currentPage >= 1
         backButton.isHidden = !showBack
         backButton.alpha = showBack ? 1 : 0
@@ -926,8 +930,9 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
 
     /// 把目标页摆到屏外待命：与当前页同框（边缘约束与当前页相同，可
     /// 同时激活），transform 偏一页宽；先布局一次再设位移，避免布局
-    /// 后 transform 被冲掉。入场错峰随摆位即播（已播过即空操作），
-    /// 拖动中目标页内容随页滑入，不留空白页。
+    /// 后 transform 被冲掉。摆位不消耗首入动画：入场错峰只在目标页
+    /// 实际进入时播（completeTransition），拖动取消不消耗，拖动中
+    /// 目标页内容随页滑入，不留空白页。
     private func stageTargetPage(_ target: Int, forward: Bool) {
         let width = pageWidth()
         for constraint in pageEdgeConstraints[target] { constraint.isActive = true }
@@ -936,7 +941,6 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         view.layoutIfNeeded()
         pageViews[target].transform = CGAffineTransform(translationX: forward ? width : -width, y: 0)
         refreshWeatherEmotes()
-        playEntranceIfNeeded(target)
     }
 
     /// 转场收尾（按钮滑切与互动松手共用）：落到终页、清转场与拖动旗标、
@@ -1042,9 +1046,27 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
                 isTransitioning = true
                 stageTargetPage(target, forward: target > currentPage)
             }
-            guard let target = dragTargetPage else { return }
-            guard target != currentPage else { return }
-            // 1:1 跟手，夹在起止之间：拖回起点外不反向翻目标，避免中途换向。
+            guard var target = dragTargetPage else { return }
+            if target == currentPage {
+                // 首尾越界方向锁住后反向越过起点：改向相邻页，继续跟手。
+                guard translation != 0 else { return }
+                let newTarget = translation < 0 ? currentPage + 1 : currentPage - 1
+                guard newTarget >= 0, newTarget <= 3 else { return }
+                if currentPage == 3 { stopAllEmotes() }
+                dragTargetPage = newTarget
+                stageTargetPage(newTarget, forward: newTarget > currentPage)
+                target = newTarget
+            } else if (target > currentPage && translation > 0 && currentPage > 0)
+                || (target < currentPage && translation < 0 && currentPage < 3) {
+                // 拖回起点外改向相邻目标页：手指继续移动时页面不停住，1:1 跟手不断。
+                let newTarget = target > currentPage ? currentPage - 1 : currentPage + 1
+                pageViews[target].isHidden = true
+                pageViews[target].transform = .identity
+                dragTargetPage = newTarget
+                stageTargetPage(newTarget, forward: newTarget > currentPage)
+                target = newTarget
+            }
+            // 1:1 跟手，夹在起止之间：同向位移不越过目标页；跨起点即改向（见上）。
             let clamped: CGFloat
             if target > currentPage {
                 clamped = min(0, max(-width, translation))
@@ -1248,6 +1270,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
             button.layer.borderWidth = selected ? 2 : 0
             button.layer.bearyDynamicBorderColor = BearyColors.ink
             button.backgroundColor = selected ? BearyColors.alpha(BearyColors.ink, 0.07) : BearyColors.surface2
+            button.accessibilityTraits = selected ? [.button, .selected] : [.button]
         }
         selectedEmote = key
         let isDark = traitCollection.userInterfaceStyle == .dark
@@ -1423,6 +1446,7 @@ private final class OnboardingOptionButton: BearyHit44Button {
         backgroundColor = selected ? BearyColors.alpha(BearyColors.ink, 0.07) : BearyColors.surface1
         checkView.backgroundColor = selected ? BearyColors.ink : .clear
         checkImageView.isHidden = !selected
+        accessibilityTraits = selected ? [.button, .selected] : [.button]
         refreshBorder()
     }
 
