@@ -1318,7 +1318,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     /// 11 轮审计第 10 项：服务端 bad wish 归因——服务端只回单一 'bad wish'
     ///（worker.js:9129），不带字段信息；按服务端口径重算当前两字段：标题
     /// trim 后判空／>100、详情不 trim／>2000，长度按 JS .length（UTF-16 计，
-    /// 与 Swift .count 口径不同，多 emoji 时两端计数会差出一位）；能定位到
+    /// 客户端同用 .utf16.count 对齐）；能定位到
     /// 字段才标该框，都合规时（如入库后回读失败）归表单级错误，不标任一框。
     private func fieldError(forBadWish title: String, detail: String) -> WishFieldError {
         if title.isEmpty || title.utf16.count > Self.titleLimit { return .title }
@@ -1361,8 +1361,8 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     /// （服务端同限，客户端先拦；超长 400 的 bad wish 由 submitTapped 按服务
     /// 端口径重算归因，能定位字段只标该框，否则只显示表单级错误行）。
     private func updateLengthHints() {
-        let titleCount = (titleField.text ?? "").count
-        let detailCount = detailView.text.count
+        let titleCount = (titleField.text ?? "").utf16.count
+        let detailCount = detailView.text.utf16.count
         titleCountLabel.text = "\(titleCount)/\(Self.titleLimit)"
         titleCountLabel.textColor = titleCount > Self.titleLimit ? BearyColors.destructiveText : BearyColors.gray
         detailCountLabel.text = "\(detailCount)/\(Self.detailLimit)"
@@ -1375,7 +1375,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         setWishFieldError(.none)
         guard !isSubmitting else { return }
         let trimmed = (titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let ok = !trimmed.isEmpty && trimmed.count <= Self.titleLimit && detailView.text.count <= Self.detailLimit
+        let ok = !trimmed.isEmpty && trimmed.utf16.count <= Self.titleLimit && detailView.text.utf16.count <= Self.detailLimit
         submitButton.isEnabled = ok
         submitButton.alpha = ok ? 1 : 0.4
     }
@@ -1419,7 +1419,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     @objc private func submitTapped() {
         guard !isSubmitting else { return }
         let title = (titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, title.count <= Self.titleLimit, detailView.text.count <= Self.detailLimit else { return }
+        guard !title.isEmpty, title.utf16.count <= Self.titleLimit, detailView.text.utf16.count <= Self.detailLimit else { return }
         let detail = detailView.text ?? ""
         isSubmitting = true
         setWishFieldError(.none)
