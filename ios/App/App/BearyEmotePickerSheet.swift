@@ -54,6 +54,11 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
 
     var onPick: ((String) -> Void)?
 
+    /// 第 19 轮审计 B4：回应音按结果播。默认点选即播回应音（详情／广场／个人页
+    /// 三处调用方保持现行行为）；盲盒调用方把本开关关掉，点选不播音，改由
+    /// 盲盒在服务端确认成功后播一次，失败只播拒绝音。
+    var playsPickSound = true
+
     /// 本 Sheet 专属过渡（遮罩渐变与弹窗滑入解耦）；强持有，transitioningDelegate 弱引用。
     private let sheetTransition = BearyEmoteSheetTransition()
     /// #722 修红：焦点返回用的原焦点元素（init 时记、消失时还）；#722 原支只写了
@@ -411,7 +416,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         let pickedKey = emoteKeys(forSection: indexPath.section)[indexPath.item]
         // 视觉批 2-2：最近行与全量区点选走同一回调前先记最近使用——不另写回应逻辑。
         BearyEmoteRecentStore.record(pickedKey)
-        BearySoundPlayer.play(.emoteChirp)
+        if playsPickSound { BearySoundPlayer.play(.emoteChirp) }
         onPick?(pickedKey)
     }
 

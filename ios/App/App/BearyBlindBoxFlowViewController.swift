@@ -1372,6 +1372,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 chip.tintColor = BearyColors.bg
             }
             chip.addTarget(self, action: #selector(emoteChipTapped(_:)), for: .touchUpInside)
+            // 第 19 轮审计 B4：点按即时视觉＋触觉反馈——卡片行回应 chip 已挂
+            // bearyAddPressFeedback，盲盒 chip 补上同一反馈（按压轻缩＋轻震）。
+            chip.bearyAddPressFeedback()
             chip.accessibilityLabel = "小熊回应"
             emoteStack.addArrangedSubview(chip)
             NSLayoutConstraint.activate([
@@ -1424,6 +1427,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 guard self.isCurrentBlindBoxResponse(accountId: request.accountId, generation: request.generation) else { return }
                 switch result {
                 case .success(let resp):
+                    // 第 19 轮审计 B4：回应音按结果播——服务端确认成功后播一次；
+                    // 点按时不播音，失败只播拒绝音（下方 playDenyShake）。
+                    BearySoundPlayer.play(.emoteChirp)
                     if let emotes = resp.emotes {
                         self.receivedEmotes = emotes
                         self.renderEmoteChips()
@@ -1467,6 +1473,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         if presentedViewController != nil { return }
         // 选择器本身只出熊脸（BearyEmoteKeys.bearFaces），与小熊回应墙同口径。
         let sheet = BearyEmotePickerSheetViewController()
+        // 第 19 轮审计 B4：点选不在 Sheet 里播回应音，改由下方成功分支播一次。
+        sheet.playsPickSound = false
         sheet.modalPresentationStyle = .overFullScreen
         sheet.onPick = { [weak self] pickedKey in
             let reduceMotion = UIAccessibility.isReduceMotionEnabled
@@ -1485,6 +1493,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                         guard self.isCurrentBlindBoxResponse(accountId: request.accountId, generation: request.generation) else { return }
                         switch result {
                         case .success(let resp):
+                            // 第 19 轮审计 B4：回应音按结果播——服务端确认成功后播一次；
+                            // 点按时不播音，失败只播拒绝音（下方 playDenyShake）。
+                            BearySoundPlayer.play(.emoteChirp)
                             if let emotes = resp.emotes {
                                 self.receivedEmotes = emotes
                                 self.renderEmoteChips()
