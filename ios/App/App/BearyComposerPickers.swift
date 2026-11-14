@@ -1539,16 +1539,10 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
             clearButton.heightAnchor.constraint(equalToConstant: clearButton.style.height),
         ])
 
-        // 打开时按需取一次当前区级：取不到则提示无法埋藏、不让确认。
-        BearyTimeCapsule.fetchCurrentDistrict { [weak self] district in
-            guard let self = self else { return }
-            if let district = district, !district.isEmpty {
-                self.currentDistrict = district
-            } else {
-                self.districtFailed = true
-                self.refreshDistrictRow()
-            }
-        }
+        // 打开时按需取当前区级；失败不判死刑，行内点按可重试（见 districtRowTapped）。
+        let retryTap = UITapGestureRecognizer(target: self, action: #selector(districtRowTapped))
+        districtRow.addGestureRecognizer(retryTap)
+        fetchDistrict()
     }
 
     override func viewDidLayoutSubviews() {
@@ -1568,13 +1562,35 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
         }
     }
 
+    /// 取当前区级：先清失败态、回到“正在定位…”，再跑一次 fetchCurrentDistrict
+    ///（其内暂不可用时自动再试一次；拒绝才直接回 nil）。
+    private func fetchDistrict() {
+        districtFailed = false
+        currentDistrict = nil
+        BearyTimeCapsule.fetchCurrentDistrict { [weak self] district in
+            guard let self = self else { return }
+            if let district = district, !district.isEmpty {
+                self.currentDistrict = district
+            } else {
+                self.districtFailed = true
+                self.refreshDistrictRow()
+            }
+        }
+    }
+
+    /// 失败行点按重试：只在失败态起作用，定位中与已取到时点按无动作。
+    @objc private func districtRowTapped() {
+        guard districtFailed, currentDistrict == nil else { return }
+        fetchDistrict()
+    }
+
     private func refreshDistrictRow() {
         if let district = currentDistrict {
             districtValueLabel.text = district
             districtValueLabel.textColor = BearyColors.ink
             confirmButton.isEnabled = true
         } else if districtFailed {
-            districtValueLabel.text = "无法获取当前位置，无法埋藏"
+            districtValueLabel.text = "定位失败，点按重试"
             districtValueLabel.textColor = BearyColors.gray
             confirmButton.isEnabled = false
         } else {
