@@ -102,6 +102,10 @@ class BearyBottomSheetPresentationController: UIPresentationController {
     private var backgroundOriginalMasksToBounds = false
     /// 拖动关闭时记下的松手速度（供退场弹簧初速度，animator 读；读完即清）。
     var dismissVelocity: CGFloat = 0
+    /// 作用域开关（仅心情选择器切组用，默认 false）：为 true 时下一次
+    /// preferredContentSizeDidChange 不走 0.26s 容器帧动画、直接落终帧，
+    /// 用完即由该回调自清。其他 sheet 从不置位，行为一律不动。
+    var suppressPreferredContentSizeAnimation = false
     /// VoiceOver 焦点返回：presentationTransitionWillBegin 时记下 sheet 外当前焦点元素
     ///（EmotePicker :97–101 / Notifications :2740–2746 同款写法：weak 持有，
     /// iOS 17 起取焦点 API 作守门；旧系统无显式返回、走系统默认行为）。
@@ -182,11 +186,16 @@ class BearyBottomSheetPresentationController: UIPresentationController {
     /// 默认实现仅把容器布局标脏、帧在下一轮布局才落（不在调用方的动画块内，
     /// 故心情选择器切组时 motion.normal 块里的改高不会跟帧、只会跳变）。这里在
     /// motion.normal 内把容器布局跑完，帧与调用方的动画同速跟进；减动效直落终值。
+    /// 例外：心情选择器切组时调用方先置位 suppressPreferredContentSizeAnimation，
+    /// 本次直接落终帧、不走动画（该开关只作用于本次调用、只影响置位的那张 sheet）。
     /// 登录 sheet 子类的同款重写已并入此处，不再各自写一份。
     override func preferredContentSizeDidChange(forChildContentContainer container: UIContentContainer) {
         super.preferredContentSizeDidChange(forChildContentContainer: container)
         guard let containerView = containerView else { return }
-        if UIAccessibility.isReduceMotionEnabled {
+        if suppressPreferredContentSizeAnimation {
+            suppressPreferredContentSizeAnimation = false
+            containerView.layoutIfNeeded()
+        } else if UIAccessibility.isReduceMotionEnabled {
             containerView.layoutIfNeeded()
         } else {
             UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState], animations: {
