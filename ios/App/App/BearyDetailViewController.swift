@@ -3619,8 +3619,10 @@ final class BearyDetailViewController: UIViewController {
         refreshActionRow()
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
         if flipped { BearyBurstParticles.burstStar(from: bookmarkButton) }
-        // 2026-11-14 取消收藏单独一个音（Li 定）：改用 delete_swoosh，不再与取消点赞共用 unlike_soft。
-        if flipped { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.deleteSwoosh) }
+        // 收藏音按最终结果只播一次（点赞支同款口径）：点按只留视觉＋触觉，
+        // 成功回包按最终态播 bookmarkTick／deleteSwoosh，失败走拒绝音；
+        // 否则失败时点按音与拒绝音先后两声。
+        // 取消收藏用 deleteSwoosh（2026-11-14 Li 定，不与取消点赞共用 unlikeSoft）。
         bookmarkSeq += 1
         let reqSeq = bookmarkSeq
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
@@ -3635,6 +3637,9 @@ final class BearyDetailViewController: UIViewController {
                     self.entry.bookmarkedByMe = newBookmarked
                     self.confirmedBookmarked = newBookmarked
                     self.refreshActionRow()
+                    // 收藏音按最终结果只播一次（成功按最终态播 bookmarkTick／
+                    // deleteSwoosh，失败分支走拒绝音 refuse_bonk）。
+                    BearySoundPlayer.play(newBookmarked ? .bookmarkTick : .deleteSwoosh)
                     self.onInteractionChanged?(entryId, nil, nil, newBookmarked, nil)
                 case .failure(let err):
                     // 失败回滚到最后服务端确认态。
