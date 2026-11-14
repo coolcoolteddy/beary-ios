@@ -539,12 +539,14 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         undoBar.layer.masksToBounds = true
         undoBar.translatesAutoresizingMaskIntoConstraints = false
         undoLabel.text = "草稿已删除"
-        undoLabel.font = UIFont.systemFont(ofSize: 13)
+        undoLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        undoLabel.adjustsFontForContentSizeCategory = true
         undoLabel.textColor = BearyColors.ink
         undoLabel.translatesAutoresizingMaskIntoConstraints = false
         undoButton.setTitle("撤销", for: .normal)
         undoButton.setTitleColor(BearyColors.ink, for: .normal)
-        undoButton.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        undoButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        undoButton.titleLabel?.adjustsFontForContentSizeCategory = true
         undoButton.translatesAutoresizingMaskIntoConstraints = false
         undoButton.addTarget(self, action: #selector(undoDeleteTapped), for: .touchUpInside)
         undoButton.bearyAddPressFeedback()
