@@ -3107,6 +3107,21 @@ final class BearyChromeViewController: UIViewController {
         return nil
     }
 
+    /// 发布 pill 的底锚：底栏/FAB 顶沿的 layout 锚点（2026-11-14 盖底栏修）。
+    /// 锚点是 layout 位置，不受藏栏 transform 影响——栏藏起时锚点仍在栏将
+    /// 回到的位置上，pill 永远悬在栏上方 12pt，不会像旧的一次性安全区常数
+    /// 那样在栏藏起回落 -32 时落进底栏带里（底栏顶在安全区底之上 64pt）。
+    /// FAB 只在首页/时间线且非游客时才参与（与 setBarsVisible 的 fabVisible
+    /// 结构口径一致，不含瞬时藏栏态）；其余页锚底栏顶沿。底栏/FAB 均未建好
+    /// 时返回 nil，调用方回落旧的安全区常数。
+    func publishPillObstructionTopAnchor() -> NSLayoutYAxisAnchor? {
+        let fabStructural = (currentPage == .home || currentPage == .timeline) && !SessionManager.shared.isGuestMode
+        if fabStructural, let fab = fabContainerView {
+            return fab.topAnchor
+        }
+        return bottomSegmented?.topAnchor
+    }
+
     /// 容器级轻提示（A11 未登录“我”页、时间线删除失败等）：委托统一
     /// BearyToast。落点由组件按当前 chrome 态算（FAB 可见落 FAB 顶之上、
     /// 仅底栏可见落底栏顶之上、皆无落 -32），此处不再自算可见性；
