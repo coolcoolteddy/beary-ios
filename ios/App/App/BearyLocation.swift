@@ -3,10 +3,13 @@ import UIKit
 import CoreLocation
 
 // ===== 日记位置（批 E，2026-10-30）=====
-// 口径（预览 v2 + v3，方案 A）：
-// - 日记行只存两段文本：location_name（精确地点文本）、location_district（区级文本）。
-// - 经纬度永不持久化：定位/搜索时坐标只在内存里走一次逆地理编码取地名，用完即弃；
-//   地图渲染时按文本现场地理编码（见 BearyDiaryMapViewController，缓存只在内存、随页销毁）。
+// 口径（预览 v2 + v3，方案 A；经纬度口径 2026-11-14 Li 改版，见下）：
+// - 日记行存两段文本＋经纬度：location_name（精确地点文本）、location_district（区级文本）、
+//   location_lat / location_lng（2026-11-14 Li 定，推翻方案 A“只存地点文字、不存经纬度”口径）。
+// - 显示层按当前系统语言逆地理编码取地名（见 BearyLocationDisplayNames），切语言后地名跟着变；
+//   逆地理编码失败／离线回退显示原存地名；无经纬度的旧日记只显示原存地名，不动。
+// - 地图渲染时优先用存量经纬度直接落钉；无坐标的旧日记仍按文本现场地理编码
+//   （见 BearyDiaryMapViewController，缓存只在内存、随页销毁）。
 // - 展示层实时脱敏：库里保留精确值，非作者一律只渲染区级（公开、仅好友、
 //   私密不分，精确位置只有作者本人在非公开篇可见）；公开翻回私密，精确位置
 //   立即恢复（因为脱敏不在写库时做，翻转无需回写）。
@@ -15,10 +18,15 @@ import CoreLocation
 // - 他人视角 fail-closed：只有精确名、没有区级文本时，他人行直接不显示位置行，
 //   绝不把精确名当区级兜底露出。
 
-/// 编辑器/草稿/发布共用的位置值（只有文本，没有坐标）。
+/// 编辑器/草稿/发布共用的位置值（两段文本＋经纬度）。
 struct DiaryLocation: Equatable {
     var name: String?
     var district: String?
+    /// 2026-11-14 Li 定：地点改存经纬度（推翻方案 A 只存文本口径）；写路径下坐标
+    /// 恒随文本一起存（定位／搜索结果自带坐标）；显示层按当前语言逆地理编码取地名。
+    /// 埋藏定位仍只存区级名、不存经纬度（见 BearyTimeCapsule），与本字段无关。
+    var latitude: Double?
+    var longitude: Double?
 
     var isEmpty: Bool {
         let n = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -26,15 +34,24 @@ struct DiaryLocation: Equatable {
         return n.isEmpty && d.isEmpty
     }
 
-    init(name: String?, district: String?) {
+    /// 坐标是否齐全可用：写路径下坐标恒随文本一起存，旧日记无坐标时为 false；
+    /// (0,0) 不是真实地点，按无效处理。
+    var hasCoordinates: Bool {
+        guard let lat = latitude, let lng = longitude else { return false }
+        return (-90...90).contains(lat) && (-180...180).contains(lng) && (lat != 0 || lng != 0)
+    }
+
+    init(name: String?, district: String?, latitude: Double? = nil, longitude: Double? = nil) {
         let n = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let d = (district ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         self.name = n.isEmpty ? nil : n
         self.district = d.isEmpty ? nil : d
+        self.latitude = latitude
+        self.longitude = longitude
     }
 
     init(entry: Entry) {
-        self.init(name: entry.locationName, district: entry.locationDistrict)
+        self.init(name: entry.locationName, district: entry.locationDistrict, latitude: entry.locationLatitude, longitude: entry.locationLongitude)
     }
 }
 
@@ -90,6 +107,83 @@ enum BearyLocationDisplay {
             }
         }
         return nil
+    }
+}
+
+/// 按当前系统语言重取地名（2026-11-14 Li 定，推翻方案 A“只存地点文字、不存经纬度”口径）：
+/// 日记地点改存经纬度；显示层按当前语言逆地理编码取地名，切语言后地名跟着变；
+/// 逆地理编码失败／离线时回退显示原存地名（调用方保留同步算出的原存文本行）；
+/// 无经纬度的旧日记不解析，只显示原存地名。
+/// 地名派生与写路径同口径（placemark.name + district(from:)），只差语言是当前的；
+/// 可见性脱敏与同步 display 完全一致（公开→区级、私密→精确、他人→区级）。
+enum BearyLocationDisplayNames {
+    /// 坐标＋语言 → 解析出的（精确名，区级）。只活在内存里，随进程销毁；
+    /// 切语言后键里的语言变了，旧缓存自然不再命中。失败不缓存，下次渲染再试。
+    private static var cache: [String: (name: String?, district: String?)] = [:]
+    /// 在途解析的回调表：同坐标同语言只发一次请求，多处共用回包。
+    private static var pending: [String: [((name: String?, district: String?)?) -> Void]] = [:]
+
+    private static func cacheKey(latitude: Double, longitude: Double) -> String {
+        let lang = Locale.preferredLanguages.first ?? Locale.current.identifier
+        return "\(latitude),\(longitude)|\(lang)"
+    }
+
+    /// 当前语言的地名（精确名，区级）：有经纬度时逆地理编码取当语言地名；
+    /// 失败／无经纬度／解析出空地名时回 nil，调用方保留原存文本。
+    /// 回调总在主线程、总异步投递（缓存命中也不例外，调用方在 cellForRow 内调也安全）；
+    /// 同一行重复渲染共用一次在途请求。调用方须在主线程调用。
+    static func resolvedNames(for entry: Entry, completion: @escaping ((name: String?, district: String?)?) -> Void) {
+        guard let lat = entry.locationLatitude, let lng = entry.locationLongitude,
+              (-90...90).contains(lat), (-180...180).contains(lng), (lat != 0 || lng != 0) else {
+            DispatchQueue.main.async { completion(nil) }
+            return
+        }
+        let key = cacheKey(latitude: lat, longitude: lng)
+        if let cached = cache[key] {
+            DispatchQueue.main.async { completion(cached) }
+            return
+        }
+        if pending[key] != nil {
+            pending[key]?.append(completion)
+            return
+        }
+        pending[key] = [completion]
+        let geocoder = CLGeocoder()
+        geocoder.reverseGeocodeLocation(CLLocation(latitude: lat, longitude: lng)) { placemarks, _ in
+            DispatchQueue.main.async {
+                let callbacks = pending.removeValue(forKey: key) ?? []
+                guard let placemark = placemarks?.first else {
+                    callbacks.forEach { $0(nil) }
+                    return
+                }
+                let name = placemark.name
+                let district = BearyLocationDisplay.district(from: placemark)
+                let resolved = DiaryLocation(name: name, district: district, latitude: lat, longitude: lng)
+                guard !resolved.isEmpty else {
+                    callbacks.forEach { $0(nil) }
+                    return
+                }
+                let names = (name, district)
+                cache[key] = names
+                callbacks.forEach { $0(names) }
+            }
+        }
+    }
+
+    /// 当前语言的位置行：有经纬度时逆地理编码取当语言地名，成功即按显示口径算行文；
+    /// 失败／无经纬度时回 nil，调用方保留原存文本行。回调总在主线程、总异步投递。
+    static func displayLine(for entry: Entry, completion: @escaping (String?) -> Void) {
+        resolvedNames(for: entry) { names in
+            guard let names = names else {
+                completion(nil)
+                return
+            }
+            let line = BearyLocationDisplay.display(
+                location: DiaryLocation(name: names.name, district: names.district, latitude: entry.locationLatitude, longitude: entry.locationLongitude),
+                isPublic: BearyEphemeral.isEffectivelyPublic(entry),
+                viewerIsAuthor: BearyLocationDisplay.viewerIsAuthor(entry: entry))
+            completion(line)
+        }
     }
 }
 

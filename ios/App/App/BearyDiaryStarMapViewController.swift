@@ -1065,6 +1065,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
         target.weather = updated.weather
         target.locationName = updated.locationName
         target.locationDistrict = updated.locationDistrict
+        target.locationLatitude = updated.locationLatitude
+        target.locationLongitude = updated.locationLongitude
         target.quoteId = updated.quoteId
         target.quote = updated.quote
         if let v = updated.publishedAt { target.publishedAt = v }

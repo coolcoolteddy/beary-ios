@@ -2188,6 +2188,14 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         locationLabel.text = line
         updateBottomRowVisibility()
+        // 2026-11-14 存经纬度：有坐标时按当前语言重取地名；失败／无坐标时保留原存文本行。
+        // 复用守卫以 cellEntryId 为准（configure 已先赋值；复用后旧回调凭 id 不符丢弃）。
+        let entryId = entry.id
+        BearyLocationDisplayNames.displayLine(for: entry) { [weak self] resolved in
+            guard let self = self, let resolved = resolved, self.cellEntryId == entryId else { return }
+            self.locationLabel.text = resolved
+            self.updateBottomRowVisibility()
+        }
     }
 
     /// 底行（地址＋天气）显隐：地址与天气任一有内容即显，全无即整行隐藏、
