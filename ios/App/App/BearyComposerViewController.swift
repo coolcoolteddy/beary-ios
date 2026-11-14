@@ -690,6 +690,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var pendingChoiceBatchItems: [ComposerImageItem] = []
     private var uploadChoiceSheetVisible = false
     private var uploadChoiceSheet: BearyOriginalUploadSheetViewController?
+    /// 2026-11-14：确认弹窗被在场 VC（如正在退场的相册）挡住时只重试一次的旗标。
+    private var uploadChoiceSheetRetryPending = false
     private var plusPageEdgeDismiss: BearyEdgeDismissController?
     /// 草稿保存级别：nil=未显示；2=草稿已保存；1=文字已保存，图片未保存；0=保存失败（红字）。
     private var draftStatusLevel: Int?
@@ -6443,8 +6445,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                     // 令牌不在此处发：上传在用户选定方式后才发起（见 startUpload /
                                     // startOriginalUpload 的 issueUploadToken），编码期间删图由
                                     // stillThere 门 + notePickPrepFinished 兜底。
-                                    // 实况路用 livePhoto 自带的 .photo 资源取原图（不用再按
-                                    // assetIdentifier 取一次）；无 .photo 资源时按取不到计。
+                                    // 实况路用 livePhoto 自带的 .photo 资源取原图（不用再取一次）；
+                                    // 无 .photo 资源时按取不到计。
                                     let photoResource = resources.first(where: { $0.type == .photo }) ?? resources.first(where: { $0.type == .fullSizePhoto })
                                     self.imagePrepQueue.async { [weak self, weak item] in
                                         guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.92),
@@ -6587,7 +6589,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // 令牌不在此处发：上传在用户选定方式后才发起（见 startUpload /
                     // startOriginalUpload 的 issueUploadToken），编码期间删图由
                     // stillThere 门 + notePickPrepFinished 兜底。
-                    let assetIdentifier = result.assetIdentifier
                     self.imagePrepQueue.async { [weak self, weak item] in
                         guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.92),
                               let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
@@ -6604,7 +6605,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         // 原图取文件（异步回调，仍在后台）：需 still 名派生 .orig 名，
                         // 故在压缩落盘之后；取不到/超限/格式不对都按已定口径落点，
                         // 见 fetchOriginalFile 的 completion 语义。
-                        self?.fetchOriginalFile(assetIdentifier: assetIdentifier) { [weak self, weak item] fetchedData, fetchedOversize in
+                        self?.fetchOriginalFile(provider: provider) { [weak self, weak item] fetchedData, fetchedOversize in
                             DispatchQueue.main.async {
                                 guard let self = self, let item = item else {
                                     if let saved = saved {
@@ -7048,9 +7049,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 弹原图/压缩确认弹窗（面向当前全部未确认项）：先取 Plus 态，再按
     /// 各原图字节和与压缩字节和建模；关闭（×/下拉）后不做任何事，待确认条留着重开。
     /// oversizeCount 只在批收尾那次传（弹窗脚注用）；待确认条/发布重开时传 0。
-    private func presentUploadChoiceSheet(oversizeCount: Int = 0) {
+    private func presentUploadChoiceSheet(oversizeCount: Int = 0, allowRetry: Bool = true) {
         let undecided = undecidedImageItems()
-        guard !undecided.isEmpty, !uploadChoiceSheetVisible, presentedViewController == nil else { return }
+        guard !undecided.isEmpty, !uploadChoiceSheetVisible else { return }
+        // 2026-11-14：选图刚结束时相册可能还在退场动画里，presentedViewController
+        // 仍非 nil；此时直接 return 会把本次触发丢掉（批已消费、再无重试），
+        // 弹窗就永不出现。只拦这一种情况：0.6 秒后重唤一次（退场动画约 0.4 秒），
+        // 只重试一次。
+        if presentedViewController != nil {
+            guard allowRetry, !uploadChoiceSheetRetryPending else { return }
+            uploadChoiceSheetRetryPending = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                guard let self = self else { return }
+                self.uploadChoiceSheetRetryPending = false
+                self.presentUploadChoiceSheet(oversizeCount: oversizeCount, allowRetry: false)
+            }
+            return
+        }
         ensurePlusStatus { [weak self] isPlus in
             guard let self = self else { return }
             let undecided = self.undecidedImageItems()
@@ -7191,24 +7206,46 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         })
     }
 
-    /// 按 PHPicker 的 assetIdentifier 取原图资源并流式读回。
-    /// identifier 为 nil（资产不在图库）或找不到 .photo 资源时直接按取不到回。
-    private func fetchOriginalFile(assetIdentifier: String?, completion: @escaping (Data?, Bool) -> Void) {
-        guard let assetIdentifier = assetIdentifier,
-              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [assetIdentifier], options: nil).firstObject else {
+    /// 按 PHPicker 的 NSItemProvider 取原图文件（不走 PHAsset、不需相册权限）。
+    /// 旧实现用 PHAsset.fetchAssets(withLocalIdentifiers:) 取原图，但 App 从未
+    /// 请求过相册权限（只用 PHPicker 选图，不弹权限框），无权限时 fetch 直接
+    /// 回空、每张静图都被静默定为压缩，确认弹窗永不出现（2026-11-14 132 真机；
+    /// 实况不受影响，它的原图来自已加载的 PHLivePhoto 对象）。
+    /// itemProvider 的 loadFileRepresentation 不需相册权限即可取回原图文件；
+    /// 取首个注册的图片类型标识（原格式在前），超 5MB 按超限回、其余取不到
+    /// 按取不到回，与旧接口同一 completion 语义（data, oversize）。
+    private func fetchOriginalFile(provider: NSItemProvider, completion: @escaping (Data?, Bool) -> Void) {
+        // 注册类型里第一个图片类型即原格式（heic/jpeg/png…）；通用 public.image
+        // 在后，只在没有更具体的标识时才用它（此时系统可能转码，mime 判定兜底）。
+        var typeIdentifier: String?
+        for identifier in provider.registeredTypeIdentifiers {
+            guard let type = UTType(identifier), type.conforms(to: .image) else { continue }
+            if typeIdentifier == nil || type != .image {
+                typeIdentifier = identifier
+                if type != .image { break }
+            }
+        }
+        guard let typeIdentifier = typeIdentifier else {
             completion(nil, false)
             return
         }
-        let resources = PHAssetResource.assetResources(for: asset)
-        guard let photoResource = resources.first(where: { $0.type == .photo }) ?? resources.first(where: { $0.type == .fullSizePhoto }) else {
-            completion(nil, false)
-            return
+        provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { url, error in
+            guard let url = url, error == nil else {
+                completion(nil, false)
+                return
+            }
+            // 临时文件只在本次回调内有效：先判大小、再读字节。
+            if let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber,
+               size.intValue > Self.maxOriginalBytes {
+                completion(nil, true)
+                return
+            }
+            completion(try? Data(contentsOf: url), false)
         }
-        fetchOriginalResourceData(photoResource, completion: completion)
     }
 
-    /// 按已取到的 .photo 资源取原图（实况路：livePhoto 自带资源，不用再按
-    /// assetIdentifier 取一次）。resource 为 nil 时直接按取不到回。
+    /// 按已取到的 .photo 资源取原图（实况路：livePhoto 自带资源，不用再取一次）。
+    /// resource 为 nil 时直接按取不到回。
     private func fetchOriginalPhotoResource(_ resource: PHAssetResource?, completion: @escaping (Data?, Bool) -> Void) {
         guard let resource = resource else {
             completion(nil, false)
