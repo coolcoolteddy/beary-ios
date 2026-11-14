@@ -389,6 +389,18 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         return true
     }
 
+    /// 捏合与滑动切图按触点数分流：双指已落下时不让 pan 起手——
+    /// 捏合独占，pan 直接失败，不再先抢跑一段翻页/甩关闭再被冻住；
+    /// 单指滑动时 pan 正常起手（pinch 需双指，本就认不出，不延迟跟手）。
+    /// 只挡起手，不改 simultaneous：已起手的 pan 与 pinch 仍可共存，
+    /// 单指滑动中途第二指落下的情况由 pinchChanged(.began) 缴械。
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === panGesture, let pan = gestureRecognizer as? UIPanGestureRecognizer {
+            return pan.numberOfTouches < 2
+        }
+        return true
+    }
+
     /// 拖拽收尾统一弹簧（规范 §6）：0.26s／damping 0.7；松手速度经
     /// springVelocityAlongReturn 归一化后由 initialSpringVelocity 传入，
     /// 慢拖（松手速度≈0）归一化结果即 0。减动效门控走 BearyMotion.animated，
@@ -1096,6 +1108,19 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             // 捏合是主动操作，清掉待挡的一次抬手误触，不留给后面的点按。
             suppressNextStageTapAfterLive = false
             hideNeighbor()
+            // 捏合接管：若 pan 已先起手（单指滑动中第二指落下），冻住
+            // 其翻页/甩关闭意图——panMode 与 dismissDragActive 清零、
+            // 下甩进度复位（遮罩/chrome 渐隐一并恢复），translation 清零
+            // 并重定平移基线，使捏合结束后 pan 续跑时不再用捏合前的
+            // 累计位移翻页；tx/ty 本身不动（已是捏合锚点基线，图不跳）。
+            if let pan = panGesture, pan.state == .began || pan.state == .changed {
+                panMode = 0
+                dismissDragActive = false
+                resetDismissDragAppearance()
+                pan.setTranslation(.zero, in: view)
+                panTx0 = tx
+                panTy0 = ty
+            }
             pinchScale0 = scale
             pinchCenter0 = sender.location(in: view)
             pinchTx0 = tx
