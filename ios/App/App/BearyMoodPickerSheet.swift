@@ -149,13 +149,13 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.bg
+        view.backgroundColor = BearyColors.surface3
         view.layer.cornerRadius = BearySheetChrome.topCornerRadius
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
 
         grabberView.translatesAutoresizingMaskIntoConstraints = false
-        grabberView.backgroundColor = BearyColors.line
+        grabberView.backgroundColor = BearyColors.gray
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
         view.addSubview(grabberView)
 
@@ -178,7 +178,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         layout.sectionInset = UIEdgeInsets(top: 4, left: 18, bottom: 20, right: 18)
         let collection = UICollectionView(frame: .zero, collectionViewLayout: layout)
         collection.translatesAutoresizingMaskIntoConstraints = false
-        collection.backgroundColor = BearyColors.bg
+        collection.backgroundColor = BearyColors.surface3
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         collection.delaysContentTouches = false
         collection.dataSource = self

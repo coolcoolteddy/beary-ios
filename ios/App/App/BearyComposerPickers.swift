@@ -1420,13 +1420,13 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.bg
+        view.backgroundColor = BearyColors.surface3
         view.layer.cornerRadius = BearySheetChrome.topCornerRadius
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
 
         grabberView.translatesAutoresizingMaskIntoConstraints = false
-        grabberView.backgroundColor = BearyColors.line
+        grabberView.backgroundColor = BearyColors.gray
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
         view.addSubview(grabberView)
 
