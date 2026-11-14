@@ -30,7 +30,7 @@ final class BearyQuoteCardView: UIView {
     private let leftBorderView: UIView = {
         let v = UIView()
         v.translatesAutoresizingMaskIntoConstraints = false
-        v.backgroundColor = BearyColors.line
+        v.backgroundColor = BearyColors.gray
         return v
     }()
 
