@@ -12,8 +12,9 @@ import MapKit
 // 长地名不得挤压右边三钮：状态文案横向抗压最低、三钮抗压/抱紧均为 required，✅ 固定 32×32。
 // 自己输入边输边出 MapKit 搜索建议（MKLocalSearchCompleter），点建议直接定位；
 // 权限被拒/定位失败不留空地点：原地转手动输入，气泡不关（调用方只 toast，不关气泡）。
-// 隐私：坐标只在内存里走一次逆地理编码取地名，用完即弃；本视图不写盘、不缓存坐标，
-// 也不把坐标传给调用方——调用方只拿到 DiaryLocation（两段文本）。
+// 隐私：坐标进一次逆地理编码取地名；2026-11-14 Li 定改存经纬度后，坐标随
+// DiaryLocation 交给调用方（写进日记地点，显示时按当前语言重取地名）；
+// 本视图自身不写盘、不缓存坐标。埋藏定位仍只存区级名（见 BearyTimeCapsule），不走本视图。
 
 protocol BearyLocationPopoverDelegate: AnyObject {
     func locationPopover(_ popover: BearyLocationPopoverView, didConfirm location: DiaryLocation)
@@ -192,7 +193,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         privacyLabel.adjustsFontForContentSizeCategory = true
         privacyLabel.textColor = BearyColors.gray
         privacyLabel.numberOfLines = 0
-        privacyLabel.text = "beary 需要使用位置，以便为日记添加地点和填写天气（精确位置只用于本次天气查询，会发送至服务接口；日记本身只保存地点文字，不保存经纬度）。"
+        privacyLabel.text = "beary 需要使用位置，以便为日记添加地点和填写天气（精确位置只用于本次天气查询，会发送至服务接口；日记地点会保存经纬度，用于按当前语言显示地名）。"
         privacyLabel.isHidden = true
 
         inputField.translatesAutoresizingMaskIntoConstraints = false
@@ -550,7 +551,9 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
                   (self.inputField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines) == confirmedText else { return }
             if self.activeSearch === search { self.activeSearch = nil }
             let district = response?.mapItems.first.map { BearyLocationDisplay.district(from: $0.placemark) } ?? nil
-            self.delegate?.locationPopover(self, didConfirm: DiaryLocation(name: text, district: district))
+            // 2026-11-14 存经纬度：手动输入的地点也带上搜索结果的坐标（显示时按当前语言重取地名）。
+            let coordinate = response?.mapItems.first?.placemark.coordinate
+            self.delegate?.locationPopover(self, didConfirm: DiaryLocation(name: text, district: district, latitude: coordinate?.latitude, longitude: coordinate?.longitude))
         }
     }
 
@@ -575,8 +578,10 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             // flatMap 把 String?? 压到一层 String?，与 DiaryLocation(district:) 入参对齐；
             // 无 placemark 或无区级时均为 nil，不改逆地理编码流程。
             let district = placemark.flatMap { BearyLocationDisplay.district(from: $0) }
+            // 2026-11-14 存经纬度：点建议的地点带上建议结果的坐标。
+            let coordinate = placemark?.coordinate
             // 点建议即直接定位：不等头部确认钮，调用方直接落定该地点（v3 口径）。
-            self.delegate?.locationPopover(self, didConfirm: DiaryLocation(name: name, district: district))
+            self.delegate?.locationPopover(self, didConfirm: DiaryLocation(name: name, district: district, latitude: coordinate?.latitude, longitude: coordinate?.longitude))
         }
     }
 
@@ -657,7 +662,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard locating, let coordinate = locations.last else { return }
         locating = false
-        // 坐标只进这一次逆地理编码，取地名后即弃，不存、不传、不缓存。
+        // 坐标进这一次逆地理编码取地名，并随 DiaryLocation 交给调用方存进日记地点
+        //（2026-11-14 Li 定改存经纬度，显示时按当前语言重取地名）；本视图不写盘、不缓存。
         // 审计二轮 04：逆地理编码回调补代次校验——cancelGeocode 后回调仍会投递，
         // 仅靠 isHidden 拦不住重开面板/切手动态后的旧回调覆盖新状态。
         let geocodeGeneration = interactionGeneration
@@ -671,7 +677,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
                 return
             }
             let name = placemark.name ?? [placemark.thoroughfare, placemark.subThoroughfare].compactMap { $0 }.joined(separator: "")
-            let location = DiaryLocation(name: name.isEmpty ? nil : name, district: BearyLocationDisplay.district(from: placemark))
+            let location = DiaryLocation(name: name.isEmpty ? nil : name, district: BearyLocationDisplay.district(from: placemark), latitude: coordinate.latitude, longitude: coordinate.longitude)
             if location.isEmpty {
                 self.setManualMode(message: "未能解析当前位置地名，请自己输入")
             } else {
