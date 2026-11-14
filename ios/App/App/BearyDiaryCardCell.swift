@@ -3532,16 +3532,17 @@ class BearyDiaryCardCell: UITableViewCell {
         // 带代次，过期回包直接丢弃，不得覆盖更新的点按态。
         let currentlyLiked = currentEntry?.likedByMe ?? false
         let originalCount = currentEntry?.likeCount ?? 0
-        // 审计动效组：按下已改为纯视觉预态，故确认时恒播震动＋音效（不再以
+        // 审计动效组：按下已改为纯视觉预态，故确认时恒播震动（不再以
         // hadPressPreview 跳过）；hadPressPreview 只用于上方守卫失败时复位视觉。
+        // 第 1 轮 24：点赞音按最终结果只播一次——点按只留视觉＋触觉，
+        // 成功回包按最终态播 likePop／unlikeSoft，失败走拒绝音；
+        // 否则失败时点按音与拒绝音先后两声。
         if currentlyLiked == false {
             BearyHaptics.likeTap()
-            BearySoundPlayer.play(.likePop)
         } else {
             applyPreUnlike()
             // 取消点赞与点赞对称：确认时同样补一次 likeTap（按下仅 prepare，不双震）。
             BearyHaptics.likeTap()
-            BearySoundPlayer.play(.unlikeSoft)
         }
         let targetLiked = currentlyLiked == false
         if targetLiked {
@@ -3580,6 +3581,9 @@ class BearyDiaryCardCell: UITableViewCell {
                     strongSelf.confirmedLiked = newLiked
                     strongSelf.confirmedLikeCount = strongSelf.currentEntry?.likeCount ?? 0
                     strongSelf.updateLikeButton()
+                    // 第 1 轮 24：音效只按最终结果播一次（成功按最终态播
+                    // likePop／unlikeSoft，失败分支走拒绝音 refuse_bonk）。
+                    BearySoundPlayer.play(newLiked ? .likePop : .unlikeSoft)
                     // 炸开已在点按时播过，成功回包不再重播（否则已填好的爱心
                     // 会再炸一次）；取消点赞不炸。
                     strongSelf.onInteractionChanged?(entryIdValue, strongSelf.currentEntry?.likeCount, newLiked, nil)
