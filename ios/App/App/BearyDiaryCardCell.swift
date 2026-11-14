@@ -3643,7 +3643,8 @@ class BearyDiaryCardCell: UITableViewCell {
         updateBookmarkButton()
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
         if flipped { playBookmarkBurst() }
-        if flipped { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.unlikeSoft) }
+        // 2026-11-14 取消收藏单独一个音（Li 定）：改用 delete_swoosh，不再与取消点赞共用 unlike_soft。
+        if flipped { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.deleteSwoosh) }
         bookmarkSeq += 1
         let reqSeq = bookmarkSeq
         BearyAPI.shared.toggleBookmark(id: entryIdValue) { [weak self] result in
