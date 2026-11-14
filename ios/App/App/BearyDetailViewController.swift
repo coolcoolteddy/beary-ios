@@ -2500,14 +2500,20 @@ final class BearyDetailViewController: UIViewController {
             quoteView.isHidden = true
             return
         }
+        // A2：与广场卡片共用同一份视图外展开键（宿主 + 引用）。
+        let detailExpandKey = BearyQuoteExpandState.key(hostId: entry.id, quoteId: quoteId)
         let viewerId = SessionManager.shared.currentUser?.id
         let quoteIsMine = quote.authorId != nil && viewerId != nil && quote.authorId == viewerId
         if quote.gone == true {
+            // A2：已删除为终态占位，忘掉该键的展开态。
+            BearyQuoteExpandState.forget(key: detailExpandKey)
             quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
             quoteView.isHidden = false
             return
         }
         if quote.locked == true {
+            // A2：锁定为终态占位，忘掉该键的展开态。
+            BearyQuoteExpandState.forget(key: detailExpandKey)
             let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: true, visibility: quote.visibility)
             quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
             quoteView.isHidden = false
@@ -2515,6 +2521,8 @@ final class BearyDetailViewController: UIViewController {
         }
         let content = quote.content ?? ""
         if content.isEmpty {
+            // A2：正文空的占位为终态，忘掉该键的展开态。
+            BearyQuoteExpandState.forget(key: detailExpandKey)
             if quote.isEffectivelyPublic == false {
                 let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
                 quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
@@ -2543,7 +2551,8 @@ final class BearyDetailViewController: UIViewController {
                 allowThumbs: quote.isEffectivelyPublic || quoteIsMine,
                 authorHandle: quote.authorHandle,
                 sourceTappable: true,
-                quoteId: quote.id
+                quoteId: quote.id,
+                hostId: entry.id
             )
             quoteView.isHidden = false
             return
@@ -2563,12 +2572,15 @@ final class BearyDetailViewController: UIViewController {
                     allowThumbs: true,
                     authorHandle: quote.authorHandle,
                     sourceTappable: true,
-                    quoteId: quote.id
+                    quoteId: quote.id,
+                    hostId: self.entry.id
                 )
                 self.quoteView.isHidden = false
             }
             return
         }
+        // A2：此处占位为终态（非仅好友待确认分支），忘掉该键的展开态。
+        BearyQuoteExpandState.forget(key: detailExpandKey)
         showPlaceholderForQuote()
     }
 

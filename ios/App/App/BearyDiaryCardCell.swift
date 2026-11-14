@@ -2755,20 +2755,26 @@ class BearyDiaryCardCell: UITableViewCell {
     /// - 正文空：未公开→未公开占位，其余→已删占位；
     /// - 正文非空但 viewer 非作者且未公开：占位（绝不凭“正文非空”推断作者身份，fail-closed）。
     /// 缩略图门控：仅被引公开或 viewer 为作者时出。
-    private func presentQuoteCard(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int?, isPublic: Bool?, gone: Bool?, locked: Bool?, quoteId: String?, quoteAuthorId: Int?, quoteIsMine: Bool?, hostIsPublic: Bool, quotePublishedAt: Int? = nil, authorHandle: String? = nil, quoteVisibility: String? = nil) {
+    private func presentQuoteCard(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int?, isPublic: Bool?, gone: Bool?, locked: Bool?, quoteId: String?, hostId: String?, quoteAuthorId: Int?, quoteIsMine: Bool?, hostIsPublic: Bool, quotePublishedAt: Int? = nil, authorHandle: String? = nil, quoteVisibility: String? = nil) {
         // 112：落卡即不再等待，回包补刷不再重复命中本卡。
         quoteAwaitingId = nil
+        // A2：本卡的视图外展开键（宿主 + 引用）；终态占位分支凭它忘掉展开态。
+        let expandKey = BearyQuoteExpandState.key(hostId: hostId, quoteId: quoteId)
         quoteTapId = quoteId
         quoteTapGoneOrLocked = false
         quoteTapLoadFailed = false
         if gone == true {
             quoteTapGoneOrLocked = true
+            // A2：已删除为终态占位，忘掉该键的展开态。
+            BearyQuoteExpandState.forget(key: expandKey)
             quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
             quoteView.isHidden = false
             return
         }
         if locked == true {
             quoteTapGoneOrLocked = true
+            // A2：锁定为终态占位，忘掉该键的展开态。
+            BearyQuoteExpandState.forget(key: expandKey)
             let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quotePublishedAt, locked: true, visibility: quoteVisibility)
             quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
             quoteView.isHidden = false
@@ -2776,6 +2782,8 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         if content.isEmpty {
             quoteTapGoneOrLocked = true
+            // A2：正文空的占位为终态，忘掉该键的展开态。
+            BearyQuoteExpandState.forget(key: expandKey)
             if isPublic == false {
                 let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quotePublishedAt, locked: false, visibility: quoteVisibility)
                 quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
@@ -2811,6 +2819,7 @@ class BearyDiaryCardCell: UITableViewCell {
                             gone: gone,
                             locked: locked,
                             quoteId: quoteId,
+                            hostId: hostId,
                             quoteAuthorId: quoteAuthorId,
                             quoteIsMine: quoteIsMine,
                             hostIsPublic: hostIsPublic,
@@ -2822,6 +2831,10 @@ class BearyDiaryCardCell: UITableViewCell {
                         strongSelf.onNeedsRowReload?()
                     }
                 }
+            } else {
+                // A2：仅好友异步确认未发起时，此占位为终态，忘掉该键的展开态；
+                // 发起确认时不忘——回包确认互关后重配仍恢复展开。
+                BearyQuoteExpandState.forget(key: expandKey)
             }
             return
         }
@@ -2835,7 +2848,8 @@ class BearyDiaryCardCell: UITableViewCell {
             allowThumbs: isPublic == true || viewerIsAuthor,
             authorHandle: authorHandle,
             sourceTappable: true,
-            quoteId: quoteId
+            quoteId: quoteId,
+            hostId: hostId
         )
         quoteView.isHidden = false
     }
@@ -2937,6 +2951,7 @@ class BearyDiaryCardCell: UITableViewCell {
                 gone: quoteValue.gone,
                 locked: quoteValue.locked,
                 quoteId: quoteValue.id,
+                hostId: entry.id,
                 quoteAuthorId: quoteValue.authorId,
                 quoteIsMine: quoteValue.isMine,
                 hostIsPublic: BearyEphemeral.isEffectivelyPublic(entry),
@@ -2964,6 +2979,7 @@ class BearyDiaryCardCell: UITableViewCell {
                 gone: nil,
                 locked: nil,
                 quoteId: quoteIdValue,
+                hostId: entry.id,
                 quoteAuthorId: cachedEntry.authorId,
                 quoteIsMine: cachedEntry.isMine,
                 hostIsPublic: BearyEphemeral.isEffectivelyPublic(entry),
@@ -3023,6 +3039,7 @@ class BearyDiaryCardCell: UITableViewCell {
                         gone: nil,
                         locked: nil,
                         quoteId: quoteIdValue,
+                        hostId: hostEntryIdValue,
                         quoteAuthorId: fetchedEntry.authorId,
                         quoteIsMine: fetchedEntry.isMine,
                         hostIsPublic: BearyEphemeral.isEffectivelyPublic(entry),
@@ -3059,8 +3076,12 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 正常卡不带“投递中”pill（个人主页原口径）；gone 卡点按透传控制器（allowGoneTap）。
     private func configureQuoteProfile(entry: Entry) {
         quoteView.clear()
+        // A2：个人主页模式与首页共用同一份视图外展开键（宿主 + 引用）。
+        let profileExpandKey = BearyQuoteExpandState.key(hostId: entry.id, quoteId: entry.quote?.id ?? entry.quoteId)
         guard let quoteValue = entry.quote else {
             if let quoteId = entry.quoteId, !quoteId.isEmpty {
+                // A2：无引用体为终态占位，忘掉该键的展开态。
+                BearyQuoteExpandState.forget(key: profileExpandKey)
                 quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
                 quoteView.isHidden = false
             } else {
@@ -3071,6 +3092,8 @@ class BearyDiaryCardCell: UITableViewCell {
         let quoteContent = quoteValue.content ?? ""
         if quoteContent.isEmpty {
             // 审计 2026-11-02 第十节：个人主页模式同样走有效态（过期即非公开）。
+            // A2：正文空的占位为终态，忘掉该键的展开态。
+            BearyQuoteExpandState.forget(key: profileExpandKey)
             if quoteValue.isEffectivelyPublic == false {
                 let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quoteValue.publishedAt, locked: quoteValue.locked == true, visibility: quoteValue.visibility)
                 quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quoteValue.authorHandle, sourceDateMs: quoteValue.createdAt)
@@ -3086,6 +3109,8 @@ class BearyDiaryCardCell: UITableViewCell {
         let viewerId = SessionManager.shared.currentUser?.id
         let viewerIsAuthor = quoteValue.isMine == true || (quoteValue.authorId != nil && viewerId != nil && quoteValue.authorId == viewerId)
         guard viewerIsAuthor || quoteValue.isEffectivelyPublic else {
+            // A2：仅好友档互关通道本模式暂不接，此占位为终态，忘掉该键的展开态。
+            BearyQuoteExpandState.forget(key: profileExpandKey)
             let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quoteValue.publishedAt, locked: false, visibility: quoteValue.visibility)
             quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quoteValue.authorHandle, sourceDateMs: quoteValue.createdAt)
             quoteView.isHidden = false
@@ -3101,7 +3126,8 @@ class BearyDiaryCardCell: UITableViewCell {
             allowThumbs: quoteValue.isEffectivelyPublic || viewerIsAuthor,
             authorHandle: quoteValue.authorHandle,
             sourceTappable: true,
-            quoteId: quoteValue.id
+            quoteId: quoteValue.id,
+            hostId: entry.id
         )
         quoteView.isHidden = false
     }
