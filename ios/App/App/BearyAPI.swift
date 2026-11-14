@@ -150,10 +150,15 @@ struct Entry: Codable {
     var weather: String?
     /// 天气气温（摄氏度整数，后端 temperature_c；字段未上线时服务端不回传即 nil，卡片不显示气温）。
     var temperatureC: Int?
-    /// 批 E 日记位置（方案 A：只存文本，不存经纬度；服务端字段 location_name /
-    /// location_district 经 convertFromSnakeCase 直解；服务端未透传时为 nil，展示层按无位置处理）。
+    /// 批 E 日记位置（2026-11-14 Li 改版：地点改存经纬度，推翻方案 A 只存文本口径；
+    /// 服务端字段 location_name / location_district / location_lat / location_lng
+    /// 经 convertFromSnakeCase 直解；服务端未透传时为 nil，展示层按无位置处理）。
     var locationName: String?
     var locationDistrict: String?
+    /// 日记地点经纬度（2026-11-14 Li 定，见 BearyLocation.swift；旧日记无本字段时为 nil，
+    /// 只显示原存地名。埋藏定位仍只存区级名、不存经纬度，与本字段无关）。
+    var locationLatitude: Double?
+    var locationLongitude: Double?
     var quoteId: String?
     var quote: Quote?
     var createdAt: Int?
