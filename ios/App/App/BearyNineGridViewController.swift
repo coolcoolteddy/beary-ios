@@ -162,15 +162,23 @@ enum BearyNineGridPresenter {
     /// Plus 专属（2026-11-03 Li 定版：九宫格版式只给 Plus 开）；非 Plus 走景深背景
     /// 同款 Plus 专属提示口径，不开网格。图片上限 9 张与图片条一致。
     static func present(from viewController: UIViewController, imageKeys: [String], liveVideos: [String: String]?) {
-        guard viewController.presentedViewController == nil else { return }
         guard SessionManager.shared.currentUser?.plus == true else {
             BearyToast.show(in: viewController.view, message: "仅 Plus 会员可使用九宫格版式")
             return
         }
         let keys = Array(imageKeys.filter { !$0.isEmpty }.prefix(9))
         guard !keys.isEmpty else { return }
+        // 2026-11-14 九宫格入口点按无反应修：此前要求 presentedViewController
+        // == nil 才 present，任一已弹出页（没盖住按钮的底部弹窗、灯箱正在收起
+        // 的动画在途）都会让这次点按静默丢掉、零反馈。改为沿 presented 链走到
+        // 最顶层再 present，点按必有反应；链上已有九宫格时不再叠加。
+        var top = viewController
+        while let presented = top.presentedViewController {
+            if presented is BearyNineGridViewController { return }
+            top = presented
+        }
         let grid = BearyNineGridViewController(imageKeys: keys, liveVideos: liveVideos)
         grid.modalPresentationStyle = .fullScreen
-        viewController.present(grid, animated: BearyMotion.animated(true), completion: nil)
+        top.present(grid, animated: BearyMotion.animated(true), completion: nil)
     }
 }
