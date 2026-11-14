@@ -1232,6 +1232,7 @@ final class BearyDetailViewController: UIViewController {
         // 引用卡点按走共享卡 onTapped（卡片内手势 + 来源行按钮同一路，见 BearyQuoteCardView）；
         // gone/locked 不导航的守卫仍在 quoteTapped 内，不凭渲染快照放行。
         quoteView.onTapped = { [weak self] in self?.quoteTapped() }
+        quoteView.onExpansionChanged = { [weak self] in self?.notifyQuoteExpanded() }
         bodyStack.addArrangedSubview(quoteView)
     }
 
@@ -3501,6 +3502,14 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideo
         if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
         lastNavigationAt = now
         onQuoteTapped?(quoteId)
+    }
+
+    /// 引用卡展开后重算滚动内容高（审计第十轮第 4 项）：卡片在 bodyStack 内，
+    /// 行数放开后 intrinsic 高变大，layoutIfNeeded 走 motion.normal（0.26s）平滑过渡。
+    private func notifyQuoteExpanded() {
+        UIView.animate(withDuration: BearyMotion.normal) {
+            self.view.layoutIfNeeded()
+        }
     }
 }
 

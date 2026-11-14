@@ -1129,6 +1129,7 @@ final class BearyTimelineCell: UITableViewCell {
         // 点按走共享卡 onTapped（卡片手势 + 来源行按钮同一路）；gone/locked
         // 不导航的守卫仍在 quoteTapped 内，不凭渲染快照放行。
         quoteCard.onTapped = { [weak self] in self?.quoteTapped() }
+        quoteCard.onExpansionChanged = { [weak self] in self?.notifyQuoteExpanded() }
 
         // 2026-10-29 编辑态口径：可点按的“编辑”二字（12pt 灰字按钮，
         // BearyHit44Button 扩后热区 44；点按即进编辑器，与旧图标编辑钮同一回调）。
@@ -2010,6 +2011,23 @@ final class BearyTimelineCell: UITableViewCell {
         // iCity：gone/locked 卡不导航；其余一律转发 id，容器先 fetchEntry 校验再放行。
         if entry.quote?.gone == true || entry.quote?.locked == true { return }
         onQuoteEntry?(quoteId)
+    }
+
+    /// 引用卡展开后通知表格重算行高（审计第十轮第 4 项）：卡片内部只改行数，
+    /// 行高归表格所有；begin/end 更新走 motion.normal（0.26s）平滑过渡。
+    /// 找不到表（卡未挂表）时不做事。
+    private func notifyQuoteExpanded() {
+        var tableView: UITableView?
+        var view = superview
+        while let current = view {
+            if let table = current as? UITableView { tableView = table; break }
+            view = current.superview
+        }
+        guard let tableView = tableView else { return }
+        UIView.animate(withDuration: BearyMotion.normal) {
+            tableView.beginUpdates()
+            tableView.endUpdates()
+        }
     }
 
     /// 80 包 B4-1：行内时间与引用日期 formatter 静态复用（原每次 configure 新建）。
