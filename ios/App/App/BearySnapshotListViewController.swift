@@ -114,9 +114,26 @@ extension BearySnapshotListViewController: UITableViewDataSource, UITableViewDel
             ?? UITableViewCell(style: .subtitle, reuseIdentifier: "BearySnapshotCell")
         let snapshot = snapshots[indexPath.row]
         let dateText = snapshot.createdAt.map { BearyDiaryCardCell.feedTimeString(ms: $0) } ?? ""
-        cell.textLabel?.text = snapshot.isStarred ? "\(dateText)  ★" : dateText
-        cell.textLabel?.font = BearyDynamicType.smallSemiboldFont()
+        let titleFont = BearyDynamicType.smallSemiboldFont()
+        cell.textLabel?.font = titleFont
         cell.textLabel?.textColor = BearyColors.ink
+        if snapshot.isStarred,
+           let starImage = BearyIconImages.image(named: "icon_star_fill", pointSize: titleFont.pointSize * 1.2) {
+            // 行内星标只用官方手绘图标（icon_star_fill），不用文字符号星标；
+            // 尺寸与字号走内联附件同款 1.2 倍、基线按 descender 对齐（心情附件同口径），
+            // 模板图由 textLabel.tintColor 着色，与正文同墨色。
+            let attachment = NSTextAttachment()
+            attachment.image = starImage
+            let starSize = titleFont.pointSize * 1.2
+            attachment.bounds = CGRect(x: 0, y: titleFont.descender, width: starSize, height: starSize)
+            attachment.accessibilityLabel = "已加星"
+            let title = NSMutableAttributedString(string: dateText + "  ", attributes: [.font: titleFont, .foregroundColor: BearyColors.ink])
+            title.append(NSAttributedString(attachment: attachment))
+            cell.textLabel?.tintColor = BearyColors.ink
+            cell.textLabel?.attributedText = title
+        } else {
+            cell.textLabel?.text = dateText
+        }
         cell.detailTextLabel?.text = previewText(for: snapshot)
         cell.detailTextLabel?.font = BearyDynamicType.smallBodyFont()
         cell.detailTextLabel?.textColor = BearyColors.gray
