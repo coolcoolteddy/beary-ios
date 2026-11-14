@@ -407,8 +407,10 @@ extension BearyBottomSheetPresentationController: UIGestureRecognizerDelegate {
         while let candidate = view, candidate !== presentedView {
             if let scrollView = candidate as? UIScrollView, scrollView.isScrollEnabled {
                 if translation.y > 0 {
-                    // 下拉：内容不在顶时先让内容滚回顶部。
-                    return scrollView.contentOffset.y <= 0
+                    // 下拉：内容不在顶时先让内容滚回顶部。顶部边界按
+                    // adjustedContentInset.top 算（有顶部内边距时真正的
+                    // 顶是 -top，不是 0），留 1pt 浮点容差。
+                    return scrollView.contentOffset.y <= -scrollView.adjustedContentInset.top + 1
                 }
                 // 上拉：内容还能往上滚时先让内容滚。
                 let maxOffsetY = scrollView.contentSize.height + scrollView.adjustedContentInset.bottom - scrollView.bounds.height
@@ -420,12 +422,16 @@ extension BearyBottomSheetPresentationController: UIGestureRecognizerDelegate {
     }
 
     /// 拖动仲裁必须说了算：弹窗内的滚动视图自带 pan 手势，默认先认出来、
-    /// 把容器拖动手势挤掉，导致内容区拖不动。本方法让弹窗内的 pan 先等
-    /// 容器拖动手势的 verdict：gestureRecognizerShouldBegin 判能拖（滚到头）
-    /// 时容器手势先认、内容 pan 认输；判不能拖（内容还能往该方向滚）时容器
-    /// 手势立刻失败、内容 pan 正常接手。内容滚动只被拖后一个触摸采样，
-    /// 体感无延迟；点按不受影响（点按不经过 pan 认出）。
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+    /// 把容器拖动手势挤掉，导致内容区拖不动。依赖方向不能写反：
+    /// - shouldRequireFailureOf 返回 true 的意思是“本手势等对方先失败”——
+    ///   旧代码就是这么写的，但列表到顶下拉时内部 pan 照常认出（回弹），
+    ///   容器手势永远等不到失败，弹窗在内容区拖不动，所以这里绝不能用它。
+    /// - shouldBeRequiredToFailBy 返回 true 的意思是“对方等本手势先裁决”，
+    ///   这才是要的：内部 pan 先等 gestureRecognizerShouldBegin 的 verdict，
+    ///   判能拖（滚到头）时容器手势先认、内容 pan 认输；判不能拖（内容还能
+    ///   往该方向滚）时容器手势立刻失败、内容 pan 正常接手。内容滚动只被
+    ///   拖后一个触摸采样，体感无延迟；点按不受影响（点按不经过 pan 认出）。
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         guard isDragPan(gestureRecognizer),
               let otherPan = otherGestureRecognizer as? UIPanGestureRecognizer,
               let otherView = otherPan.view,
