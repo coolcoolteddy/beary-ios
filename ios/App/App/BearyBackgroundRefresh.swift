@@ -130,7 +130,10 @@ enum BearyBackgroundRefresh {
                         // （首次后台跑）只记不提醒，不把旧内容当新内容推。
                         if let latest = fresh.first, let seen = seenHead, isNewer(latest, than: seen) {
                             // 自己的新篇不提醒（刚发布完就弹“广场有新日记”是噪音）。
-                            if latest.authorId != SessionManager.shared.currentUser?.id {
+                            // 第 25 轮 59：广场新提醒纳入现有四类开关——任一类开着才发，
+                            // 四类全关即停；不新增开关。说明见设置页通知组末行。
+                            if latest.authorId != SessionManager.shared.currentUser?.id,
+                               BearyLocalNotifications.Kind.allCases.contains(where: { BearyLocalNotifications.shared.isEnabled($0) }) {
                                 guard !isCancelled() else {
                                     completion(false)
                                     return
@@ -173,6 +176,10 @@ enum BearyBackgroundRefresh {
             content: content,
             trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
         )
-        UNUserNotificationCenter.current().add(request)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                NSLog("[BearyBackgroundRefresh] plaza-new notification failed: %@", error.localizedDescription)
+            }
+        }
     }
 }
