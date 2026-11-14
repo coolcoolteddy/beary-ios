@@ -1278,39 +1278,76 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         } else {
             showLoadingState()
         }
-        currentSearchTask = BearyAPI.shared.search(q: trimmed) { [weak self] result in
-            // 第十二轮 02：设备 FTS 与服务端回包并行——服务端回包到达后（仍在
-            // 后台线程）先查本地本人日记索引，再回主线程渲染；FTS 失败／本地
-            // 归档不完整时返回 []，服务端「我的」组原样兜底，不断档。公开组与
-            // 用户组不碰，仍是服务端原样。
-            var ftsMine: [Entry] = []
-            if case .success = result {
-                ftsMine = BearyMineSearchIndex.shared.searchMine(query: trimmed)
+        // 第十二轮 02（搜索链路审计）：设备 FTS 与服务端搜索真正并行——
+        // 两路同时出发，各自完成后在主线程按 searchSeq 合并、逐步更新结果。
+        // 旧写法是服务端回包后才同步查本地索引：慢归档拖住公开组和用户组，
+        // 断网时本地搜索直接跳过。FTS 失败／本地归档不完整时返回 []，
+        // 服务端「我的」组原样兜底，不断档；公开组与用户组不碰，仍是服务端原样。
+        // 下面两路只在主线程读写共享态（serverResult / ftsMine / 各 done 位），
+        // 后台线程只做 FTS 计算、不碰共享态；旧轮回包凭 searchSeq 丢弃。
+        var serverResult: Result<SearchResult, APIError>?
+        var ftsMine: [Entry] = []
+        var ftsDone = false
+        var serverApplied = false
+        // 两路任一到达即调：只能在主线程调用。
+        let applySearchLegs: () -> Void = { [weak self] in
+            guard let self = self else { return }
+            if seq != self.searchSeq { return }
+            guard let serverResult = serverResult else {
+                // FTS 先到：只记结果，等服务端 leg 到达再渲染。
+                return
             }
-            // BearyAPI 回调不在主线程，碰 UI 必须回主线程。
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                if seq != self.searchSeq { return }
-                self.setBoxBusy(false)
-                switch result {
-                case .success(var data):
+            switch serverResult {
+            case .success(var data):
+                if !serverApplied {
+                    serverApplied = true
                     self.recordRecentSearch(trimmed)
                     // sweep32-2：先按服务端原始回包记当批翻页态（游标与 hasMore
                     // 只属于服务端页），再把 FTS 结果并进「我的」组；renderResults
                     // 末尾的 updateSearchFooter 才能据此亮起“加载更多”。
                     self.updateSearchPagination(from: data)
-                    data.mine = self.mergedMine(serverMine: data.mine, ftsMine: ftsMine)
-                    self.renderResults(data: data, query: trimmed)
-                case .failure:
-                    // S7：已有旧结果时不进失败态（showState 会清结果区），
-                    // 只在结果区行内补重试入口，旧结果行原样保留；
-                    // 无旧结果时才进现有失败态。searchSeq 序号守卫在上不动。
-                    if self.showingResults {
-                        self.showFailedStateKeepingResults()
-                    } else {
-                        self.showFailedState()
-                    }
                 }
+                data.mine = self.mergedMine(serverMine: data.mine, ftsMine: ftsMine)
+                self.renderResults(data: data, query: trimmed)
+                // FTS 晚到时再渲一次：同 query 走行复用路径，只补「我的」组行；
+                // 两路都到齐才停框内圈。
+                if ftsDone { self.setBoxBusy(false) }
+            case .failure:
+                guard ftsDone else {
+                    // 服务端已失败、FTS 还在跑：等本地结果，暂不亮失败态。
+                    return
+                }
+                self.setBoxBusy(false)
+                if !ftsMine.isEmpty {
+                    // 断网兜底：只渲本地「我的」组（公开组与用户组不编造数据）；
+                    // 尾行重试入口照旧亮起，提示服务端那半失败了。
+                    let localOnly = SearchResult(users: nil, entries: nil, mine: ftsMine)
+                    self.renderResults(data: localOnly, query: trimmed)
+                    self.setSearchFooter(failed: true)
+                } else if self.showingResults {
+                    // S7：已有旧结果时不进失败态（showState 会清结果区），
+                    // 只在结果区行内补重试入口，旧结果行原样保留。
+                    self.showFailedStateKeepingResults()
+                } else {
+                    self.showFailedState()
+                }
+            }
+        }
+        currentSearchTask = BearyAPI.shared.search(q: trimmed) { result in
+            // BearyAPI 回调不在主线程，碰 UI 与共享态必须回主线程。
+            DispatchQueue.main.async {
+                serverResult = result
+                applySearchLegs()
+            }
+        }
+        // 本地 FTS 腿：与服务端请求同时出发，后台算、回主线程交结果。
+        // searchMine 是同步调用、内部有自己的串行队列，须在后台队列调。
+        DispatchQueue.global(qos: .userInitiated).async {
+            let mine = BearyMineSearchIndex.shared.searchMine(query: trimmed)
+            DispatchQueue.main.async {
+                ftsMine = mine
+                ftsDone = true
+                applySearchLegs()
             }
         }
     }
