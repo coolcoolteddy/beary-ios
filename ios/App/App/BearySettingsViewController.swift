@@ -2667,7 +2667,7 @@ final class BearySettingsViewController: UIViewController {
         guard !isDeleting else { return }
         // 第 5 条定版：默认删除全部日记；显式勾选（默认不勾）才保留公开过的日记。
         var keepPublicDiaries = false
-        BearyConfirmSheet.show(from: self, title: "注销账户", message: "7 天冷静期内登录可取消注销。7 天后账户正式注销，全部日记将被删除。\n\n注销后，你的 Plus、未到账的邀请奖励和收藏会一并作废。", actions: [
+        BearyConfirmSheet.show(from: self, title: "注销账户", message: "7 天冷静期内登录可取消注销。7 天后账户正式注销，默认删除全部日记；注销时可勾选保留公开篇，保留的公开篇作者显示为“用户已注销”。\n\n注销后，你的 Plus、未到账的邀请奖励和收藏会一并作废。", actions: [
             BearyConfirmSheet.Action(title: "继续注销", style: .destructive, handler: { [weak self] in
                 self?.showDeleteSecondConfirm(keepPublicDiaries: keepPublicDiaries)
             }),
