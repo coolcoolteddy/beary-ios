@@ -380,7 +380,12 @@ final class BearySettingsViewController: UIViewController {
 
     // MARK: - 视图
 
-    private let scrollView = UIScrollView()
+    // 审计第 9 项：滚动取消走共享类（见 BearyNativeCommon.BearyCancellableScrollView）——
+    // 本页 delaysContentTouches=false 时，从行按钮（全宽 UIControl）上起滑会滑不动：
+    // 系统默认 touchesShouldCancel 对 UIControl 返回 false，长按后按钮一直占住触摸、
+    // 滚动视图抢不到 pan；共享类对 UIButton 返回 true，拖动即取消按钮跟踪并滚动，
+    // 点按不动仍走 touchUpInside（settingsRowPressUp 的 touchCancel 回弹照常走）。
+    private let scrollView = BearyCancellableScrollView()
     private let contentStack = UIStackView()
     private let closeButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
