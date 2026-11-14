@@ -23,6 +23,11 @@ enum BearyColors {
     /// 只用于删除类与错误文字前景；描边走 BearyColors.alpha(destructiveText, 0.45)。
     /// 失败徽标／横幅底等非文字语义红仍走 red，点赞填色仍走 likeRed，不动。
     static var destructiveText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 107.0/255.0, blue: 97.0/255.0, alpha: 1) : UIColor(red: 201.0/255.0, green: 42.0/255.0, blue: 42.0/255.0, alpha: 1) } }
+    /// 浅色 surface3 弹层上的错误文字专用（第 21 轮审计 B2，2026-11-14 Li 定版）：
+    /// 浅 #BD2424（surface3 #DFDFDF 底约 4.58:1）、深 #FF6B61（surface3 #313138 底约 4.63:1），均 ≥4.5:1。
+    /// 只用于浅色 surface3 弹层上的错误文字（邀请页 messageLabel）；别处错误文字仍走 destructiveText。
+    /// 背景：destructiveText 浅 #C92A2A 在 surface3 #DFDFDF 底上仅约 4.10:1，不达标。
+    static var surface3ErrorText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 107.0/255.0, blue: 97.0/255.0, alpha: 1) : UIColor(red: 189.0/255.0, green: 36.0/255.0, blue: 36.0/255.0, alpha: 1) } }
     /// 点赞填色：亮红 #ff3b30（2026-10-29 Li 定，明显亮于语义红 #e5484d；仅点赞入口用——
     /// 删除按钮走 destructiveText，语义红仍走 red，收藏点亮仍走 orange，不动）。
     static var likeRed: UIColor { UIColor(red: 1.0, green: 59.0/255.0, blue: 48.0/255.0, alpha: 1) }
