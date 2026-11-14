@@ -700,7 +700,9 @@ final class BearyMoodPickerCell: UICollectionViewCell {
             DispatchQueue.main.async {
                 guard self.gifGeneration == generation, self.currentKey == key else { return }
                 self.gifFirstFrame = image
-                if self.gifPlaying == false { self.gifImageView?.image = image }
+                // 原 GIF 未到之前先显缩略图：可见格已置 gifPlaying=true，
+                // 不能再以 playing 为条件挡住缩略图；动画已到才不覆盖它。
+                if self.gifAnimatedImage == nil { self.gifImageView?.image = image }
             }
         }
     }
@@ -739,7 +741,15 @@ final class BearyMoodPickerCell: UICollectionViewCell {
             BearyImageLoader.shared.loadImageData(url: url) { [weak self] result in
                 guard let self = self, self.gifGeneration == generation, self.currentKey == key else { return }
                 guard case .success(let data) = result,
-                      let animated = BearyGIF.animatedImage(data) else { return }
+                      let animated = BearyGIF.animatedImage(data) else {
+                    // 原 GIF 失败：保留已到的缩略图，不留空白；不缓存失败，
+                    // 下次出现时 willDisplay 再调 setPlaying(true) 重试。
+                    DispatchQueue.main.async {
+                        guard self.gifGeneration == generation, self.currentKey == key, self.gifPlaying else { return }
+                        if self.gifAnimatedImage == nil { self.gifImageView?.image = self.gifFirstFrame }
+                    }
+                    return
+                }
                 DispatchQueue.main.async {
                     guard self.gifGeneration == generation, self.currentKey == key, self.gifPlaying else { return }
                     self.gifAnimatedImage = animated
