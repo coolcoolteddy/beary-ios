@@ -985,6 +985,10 @@ final class BearyTimelineCell: UITableViewCell {
     // 自绘卡（标题 11.5 不缩放、正文限 2 行、每 configure 新建缩略图视图）已删。
     private let quoteCard = BearyQuoteCardView()
     private var currentEntry: Entry?
+    /// 内联 GIF 覆盖层（正文＋标题各一）：按 label 实际排版贴动画 GIF，
+    /// 只播可见的；长按 GIF 弹「添加表情」进我的库。
+    private let bodyGIFOverlay = BearyInlineGIFOverlay()
+    private let titleGIFOverlay = BearyInlineGIFOverlay()
     var onEditEntry: ((Entry) -> Void)?
     var onDeleteEntry: ((Entry) -> Void)?
     var onQuoteEntry: ((String) -> Void)?
@@ -1254,6 +1258,8 @@ final class BearyTimelineCell: UITableViewCell {
     /// 不改约束、不碰滚动回调；isHidden 不变时不重复写，避免布局循环。
     override func layoutSubviews() {
         super.layoutSubviews()
+        // 内联 GIF 覆盖层：label 宽变或文本重建后跟帧刷新（签名未变时内部短路，不重载）。
+        refreshGIFOverlays()
         let metaWidth = metaStack.bounds.width
         guard metaWidth > 0 else { return }
         let narrow = metaWidth < 260
@@ -1265,6 +1271,39 @@ final class BearyTimelineCell: UITableViewCell {
         }
         // 限时虚线边框不再在此手工重画 path：BearyDashedBorderView 自身按
         // 约束后的 cardView bounds 重画，引用卡进栈后框高自动跟上。
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        // 离屏即停播（cell 复用池离树时动画不空转）；入窗后刷新（可见才播）。
+        let visible = window != nil
+        bodyGIFOverlay.setVisible(visible)
+        titleGIFOverlay.setVisible(visible)
+        if visible { refreshGIFOverlays() }
+    }
+
+    /// 内联 GIF 覆盖层刷新：正文/标题各配一个，label 宽变或文本重建后
+    /// 跟帧刷新；长按回 fullKey（按 rand 在 entry.images 里找回）。
+    private func refreshGIFOverlays() {
+        let keys = currentEntry?.images ?? []
+        bodyGIFOverlay.attach(
+            to: contentLabel,
+            gifKeys: keys,
+            onLongPressGIF: { [weak self] rand in
+                guard let self = self,
+                      let fullKey = BearyGIF.fullKey(for: rand, in: self.currentEntry?.images ?? []) else { return }
+                BearyGIFAddPresenter.presentAddGIF(from: self, fullKey: fullKey)
+            }
+        )
+        titleGIFOverlay.attach(
+            to: titleLabel,
+            gifKeys: keys,
+            onLongPressGIF: { [weak self] rand in
+                guard let self = self,
+                      let fullKey = BearyGIF.fullKey(for: rand, in: self.currentEntry?.images ?? []) else { return }
+                BearyGIFAddPresenter.presentAddGIF(from: self, fullKey: fullKey)
+            }
+        )
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -1381,6 +1420,9 @@ final class BearyTimelineCell: UITableViewCell {
         nineGridWrapView.isHidden = true
         nineGridWrapView.alpha = 0
         resetImageStripPinch()
+        // 内联 GIF 覆盖层复用时清理（动画停播、图层摘掉，防串位到下一行）。
+        bodyGIFOverlay.clear()
+        titleGIFOverlay.clear()
         stopWeatherLottie()
         weatherIconView = nil
         // 80 包 A4/A2-3④：错峰改 cell.alpha/transform，对称复位，防复用残留。
@@ -1721,12 +1763,12 @@ final class BearyTimelineCell: UITableViewCell {
         let body = entry.content ?? ""
         // 审计 P2-12：标题行（卡片同款，空标题不占位；stack 里隐藏行不占高）。
         let trimmedTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
+        titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
         titleLabel.isHidden = trimmedTitle.isEmpty
         // 标题隐藏时其后间距置 0，正文直接贴头行间距（卡片／详情同款口径；
         // UIStackView 会把 setCustomSpacing 的值算在隐藏行之后，不归零会多 6pt）。
         cardStackReference?.setCustomSpacing(trimmedTitle.isEmpty ? 0 : 6, after: titleLabel)
-        contentLabel.attributedText = BearyText.inlineAttributedText(from: body, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark)
+        contentLabel.attributedText = BearyText.inlineAttributedText(from: body, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
         // TL-3 引用卡（C4 起复用公共 BearyQuoteCardView，不再自绘）：
         // 引用日记在时间线里必须有痕迹，卡内附 42px 引用缩略图行，无图不占位。
         // B-G2 (privacy, server fields first): Quote.gone/locked ARE decoded
@@ -1789,7 +1831,9 @@ final class BearyTimelineCell: UITableViewCell {
                 quoteCard.isHidden = false
             }
         }
-        let imageKeys = (entry.images ?? []).filter { !$0.isEmpty }
+        // 内联 GIF 不进缩略图条（与卡片/详情同款：GIF 已插进正文/标题里播，
+        // 再进图条会同一张图出现两次）；图条只放照片。
+        let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && !$0.hasSuffix(".gif") }
         resetImageStripPinch()
         thumbsScrollView.isHidden = imageKeys.isEmpty
         thumbsHeightConstraint?.constant = imageKeys.isEmpty ? 0 : 216
@@ -1912,7 +1956,8 @@ final class BearyTimelineCell: UITableViewCell {
 
     @objc private func didTapThumb(_ sender: UITapGestureRecognizer) {
         guard let entry = currentEntry else { return }
-        let keys = (entry.images ?? []).filter { !$0.isEmpty }
+        // 与缩略图条同口径过滤（GIF 不进图条，index 才对得上）。
+        let keys = (entry.images ?? []).filter { !$0.isEmpty && !$0.hasSuffix(".gif") }
         let index = sender.view?.tag ?? 0
         guard index >= 0 && index < keys.count else { return }
         onTapImages?(keys, index, sender.view.map { $0.convert($0.bounds, to: nil) }, (sender.view as? UIImageView)?.image)

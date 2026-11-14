@@ -1305,6 +1305,18 @@ final class BearyImageLoader {
     /// 磁盘命中时底层任务永不 resume，磁盘未命中时由后台队列 resume 一次；
     /// 调用方在后台队列 resume 前已全部取消则不再 resume。
     /// B4：同 URL 不同尺寸亦不再各起下载链——磁盘读与下载按账号 + 完整
+    /// 原始字节加载（GIF 用）：内存 → 磁盘 → 网络同桶同 TTL，只回原始字节
+    /// 不解码；回调线程不保证主线程，调用方自行切主线程。
+    func loadImageData(url: URL, completion: @escaping (Result<Data, BearyImageLoadError>) -> Void) {
+        let bucket = currentAccountId
+        _ = loadRawData(for: url, bucket: bucket) { result in
+            switch result {
+            case .success(let pair): completion(.success(pair.data))
+            case .failure(let err): completion(.failure(err))
+            }
+        }
+    }
+
     /// URL 在原始字节层共享（见 loadRawData），各尺寸只各自解码、各自
     /// 按尺寸键存内存；磁盘文件本身早已按 URL 共享。
     @discardableResult
@@ -1938,6 +1950,12 @@ enum BearyText {
         guard bearMoodKeys.contains(key) else { return nil }
         return "[mood:\(key)]"
     }
+    /// 内联 GIF 记号属性（附件上存 rand，解析时按 rand 在 gifImageKeys 里找回完整 key）。
+    static let inlineGifKeyAttribute = NSAttributedString.Key(rawValue: "BearyInlineGifKey")
+    static func inlineGIFToken(for randKey: String) -> String? {
+        guard !randKey.isEmpty, randKey.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789").contains($0) }) else { return nil }
+        return "[gif:\(randKey)]"
+    }
     /// 附件 → 记号：附件字符本身是 U+FFFC，绝不能原样落库；无记号属性的
     /// 未知附件直接跳过，不让占位符污染正文。
     static func inlinePlainText(from attributed: NSAttributedString?) -> String {
@@ -1945,7 +1963,9 @@ enum BearyText {
         var out = ""
         let str = attributed.string as NSString
         attributed.enumerateAttributes(in: NSRange(location: 0, length: attributed.length), options: []) { attrs, range, _ in
-            if let key = attrs[inlineMoodKeyAttribute] as? String, let token = inlineMoodToken(for: key) {
+            if let rand = attrs[inlineGifKeyAttribute] as? String, let token = inlineGIFToken(for: rand) {
+                out += token
+            } else if let key = attrs[inlineMoodKeyAttribute] as? String, let token = inlineMoodToken(for: key) {
                 out += token
             } else if attrs[.attachment] == nil {
                 out += str.substring(with: range)
@@ -1977,10 +1997,41 @@ enum BearyText {
         result.addAttribute(.font, value: font, range: NSRange(location: 0, length: 1))
         return result
     }
-    static func inlineAttributedText(from plain: String, font: UIFont, color: UIColor, paragraphStyle: NSParagraphStyle?, dark: Bool) -> NSAttributedString {
+    /// 记号 → GIF 附件：尺寸与心情同款（字号 1.2 倍、descender 基线）；
+    /// image 是首帧（有缓存首帧时用它，否则 surface2 圆角占位）；动画不走
+    /// 附件——编辑器只显首帧静态图，卡片/详情/时间线走覆盖层播。
+    static func inlineGIFAttachment(randKey: String, font: UIFont, firstFrame: UIImage? = nil) -> NSAttributedString? {
+        guard inlineGIFToken(for: randKey) != nil else { return nil }
+        let emoteSize = font.pointSize * 1.2
+        let attachment = NSTextAttachment()
+        attachment.image = firstFrame ?? inlineGIFPlaceholderImage(size: emoteSize)
+        attachment.bounds = CGRect(x: 0, y: font.descender, width: emoteSize, height: emoteSize)
+        let result = NSMutableAttributedString(attachment: attachment)
+        result.addAttribute(inlineGifKeyAttribute, value: randKey, range: NSRange(location: 0, length: 1))
+        result.addAttribute(.font, value: font, range: NSRange(location: 0, length: 1))
+        return result
+    }
+
+    /// GIF 占位：surface2 圆角矩形（首帧未到时露底，不留空白）。
+    static func inlineGIFPlaceholderImage(size: CGFloat) -> UIImage? {
+        let side = max(1, size)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format)
+        return renderer.image { _ in
+            BearyColors.surface2.setFill()
+            UIBezierPath(roundedRect: CGRect(x: 0, y: 0, width: side, height: side), cornerRadius: side * 0.2).fill()
+        }
+    }
+
+    /// 记号 → 富文本：心情与 GIF 共用同一正则分派；未解析到的记号留原文
+    /// （未知心情 key、无对应 image key 的 GIF、旧客户端的手打文本都留原文，不崩）。
+    /// gifImageKeys：本篇 images 里的完整 key（解析 [gif:] 时按 rand 找回）；
+    /// gifFirstFrames：rand → 已缓存的首帧（编辑器回填时用，缺了即占位）。
+    static func inlineAttributedText(from plain: String, font: UIFont, color: UIColor, paragraphStyle: NSParagraphStyle?, dark: Bool, gifImageKeys: [String]? = nil, gifFirstFrames: [String: UIImage]? = nil) -> NSAttributedString {
         var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
         if let paragraphStyle = paragraphStyle { attrs[.paragraphStyle] = paragraphStyle }
-        guard let regex = try? NSRegularExpression(pattern: "\\[mood:([a-z]+)\\]", options: []) else {
+        guard let regex = try? NSRegularExpression(pattern: "\\[mood:([a-z]+)\\]|\\[gif:([a-z0-9]+)\\]", options: []) else {
             return NSAttributedString(string: plain, attributes: attrs)
         }
         let ns = plain as NSString
@@ -1991,11 +2042,21 @@ enum BearyText {
             if range.location > cursor {
                 result.append(NSAttributedString(string: ns.substring(with: NSRange(location: cursor, length: range.location - cursor)), attributes: attrs))
             }
-            let key = ns.substring(with: match.range(at: 1))
-            if let attachment = inlineAttachment(for: key, font: font, dark: dark) {
-                result.append(attachment)
+            if match.range(at: 1).location != NSNotFound {
+                let key = ns.substring(with: match.range(at: 1))
+                if let attachment = inlineAttachment(for: key, font: font, dark: dark) {
+                    result.append(attachment)
+                } else {
+                    result.append(NSAttributedString(string: ns.substring(with: range), attributes: attrs))
+                }
             } else {
-                result.append(NSAttributedString(string: ns.substring(with: range), attributes: attrs))
+                let rand = ns.substring(with: match.range(at: 2))
+                if let keys = gifImageKeys, BearyGIF.fullKey(for: rand, in: keys) != nil,
+                   let gifAttachment = inlineGIFAttachment(randKey: rand, font: font, firstFrame: gifFirstFrames?[rand]) {
+                    result.append(gifAttachment)
+                } else {
+                    result.append(NSAttributedString(string: ns.substring(with: range), attributes: attrs))
+                }
             }
             cursor = range.location + range.length
         }
@@ -2007,12 +2068,16 @@ enum BearyText {
     /// 可见字数：一个记号只算 1 字（图占 1 格），供草稿箱字数等纯文本面用；
     /// 编辑器内直接用 attributed 长度（附件本就是 1 格），不用本函数。
     static func inlineVisibleCount(of plain: String) -> Int {
-        guard let regex = try? NSRegularExpression(pattern: "\\[mood:([a-z]+)\\]", options: []) else { return plain.count }
+        guard let regex = try? NSRegularExpression(pattern: "\\[mood:([a-z]+)\\]|\\[gif:([a-z0-9]+)\\]", options: []) else { return plain.count }
         let ns = plain as NSString
         var count = plain.count
         for match in regex.matches(in: plain, options: [], range: NSRange(location: 0, length: ns.length)) {
-            let key = ns.substring(with: match.range(at: 1))
-            if bearMoodKeys.contains(key) { count -= (match.range.length - 1) }
+            if match.range(at: 1).location != NSNotFound {
+                let key = ns.substring(with: match.range(at: 1))
+                if bearMoodKeys.contains(key) { count -= (match.range.length - 1) }
+            } else {
+                count -= (match.range.length - 1)
+            }
         }
         return count
     }
@@ -2113,6 +2178,19 @@ struct UploadResponse: Decodable {
     var key: String?
     /// 实况视频 key（服务端 live_key；仅附带 videoDataUrl 的实况上传才有）。
     var liveKey: String?
+    /// GIF 上传时库已满 100（服务端 library_full；图本身已上传，只是不进库）。
+    var libraryFull: Bool?
+}
+
+/// 个人 GIF 库列表回包（GET /beary/api/gif-library）。
+struct GIFLibraryListResponse: Decodable {
+    var keys: [String]?
+}
+
+/// 个人 GIF 库添加回包（POST /beary/api/gif-library/add；已在库里时 added=false）。
+struct GIFLibraryAddResponse: Decodable {
+    var ok: Bool?
+    var added: Bool?
 }
 
 struct CreateResponse: Decodable {
@@ -2159,6 +2237,22 @@ extension BearyAPI {
         if let t = thumbDataUrl { body["thumb"] = t }
         if let v = videoDataUrl { body["videoDataUrl"] = v }
         return request("/beary/api/images/upload", method: "POST", jsonBody: body, uploadProgress: uploadProgress, completion: completion)
+    }
+
+    /// 个人 GIF 库：GET /beary/api/gif-library，返回本人库 key 列表（最新在前，上限 100）。
+    func gifLibraryList(completion: @escaping (Result<GIFLibraryListResponse, APIError>) -> Void) {
+        request("/beary/api/gif-library", completion: completion)
+    }
+
+    /// 个人 GIF 库：POST /beary/api/gif-library/add {key}；满 100 时 409 'library full'，
+    /// 已在库里时 200 {ok:true, added:false}；key 不可见时 403 'not viewable'。
+    func gifLibraryAdd(key: String, completion: @escaping (Result<GIFLibraryAddResponse, APIError>) -> Void) {
+        request("/beary/api/gif-library/add", method: "POST", jsonBody: ["key": key], completion: completion)
+    }
+
+    /// 个人 GIF 库：POST /beary/api/gif-library/remove {key}；只删行，不删文件。
+    func gifLibraryRemove(key: String, completion: @escaping (Result<Void, APIError>) -> Void) {
+        requestVoid("/beary/api/gif-library/remove", method: "POST", jsonBody: ["key": key], completion: completion)
     }
 
     /// 发帖：content 必填 ≤2000 字；images 是已上传的 R2 key 数组（须归属本人且存在）；

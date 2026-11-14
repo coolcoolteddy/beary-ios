@@ -15,6 +15,8 @@ import UIKit
 // 播放仍走 BearyEmoteView 自带的 16 项模型缓存与 48MB 成本预算。
 // 分组：默认组（调用方传入的 moodOrder 32 只熊脸，首位补“无”）在前，
 // 万圣节组 6 款、春节组 6 款在后；节日组现阶段不做领取门禁，人人可见可用。
+// “我的 GIF”组（个人 GIF 库，最新在前，上限 100）排节日组之后，pill 条
+// 右侧另有 ＋ 上传入口（官方 icon_image_add，不进组、不抬起、不带圆点）。
 // 点选心情是插入式（与旧 callout 同口径）：插进光标处、不收起，方便连着插多个；
 // 首位“无”只清单独心情字段（selectedMood），点选即由调用方关闭本 sheet。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
@@ -23,9 +25,11 @@ enum BearyMoodPickerSheet {
 
     /// 从 presenter 弹出心情底 sheet；返回 sheet 实例（调用方弱持有，供“无”分支关闭）。
     /// moodKeys：调用方传入的默认组 key（即 Composer 的 moodOrder，不在本文件另抄一份）。
+    /// gifKeys：个人 GIF 库键（最新在前）；onSelectGIF：点“我的 GIF”组里的 GIF
+    /// 时调（传完整 key）；onUploadGIF：点 pill 条右侧 ＋ 上传入口时调。
     @discardableResult
-    static func show(from presenter: UIViewController, moodKeys: [String], onSelect: @escaping (String) -> Void) -> BearyMoodPickerSheetViewController {
-        let sheet = BearyMoodPickerSheetViewController(moodKeys: moodKeys, onSelect: onSelect)
+    static func show(from presenter: UIViewController, moodKeys: [String], gifKeys: [String] = [], onSelect: @escaping (String) -> Void, onSelectGIF: ((String) -> Void)? = nil, onUploadGIF: (() -> Void)? = nil) -> BearyMoodPickerSheetViewController {
+        let sheet = BearyMoodPickerSheetViewController(moodKeys: moodKeys, gifKeys: gifKeys, onSelect: onSelect, onSelectGIF: onSelectGIF, onUploadGIF: onUploadGIF)
         let delegate = BearyBottomSheetTransitioningDelegate()
         sheet.sheetDelegate = delegate
         sheet.transitioningDelegate = delegate
@@ -47,17 +51,23 @@ enum BearyMoodPickerSheet {
 
 final class BearyMoodPickerSheetViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, BearyBottomSheetVoiceOver {
 
-    /// 表情组：默认组 key 由调用方传入（moodOrder），节日组走 BearyText 的共享表。
+    /// 表情组：默认组 key 由调用方传入（moodOrder），节日组走 BearyText 的共享表；
+    /// “我的 GIF”组 key 来自个人 GIF 库（打开时从服务端刷新，见 refreshLibrary）。
     private struct MoodGroup {
         let id: String
         let title: String
         let keys: [String]
         let representativeKey: String
+        /// 非空时 pill 用这张官方图标（不走 Lottie）；“我的 GIF”组用 icon_image。
+        let representativeIconName: String?
     }
 
     private let onSelect: (String) -> Void
-    private let groups: [MoodGroup]
+    private let onSelectGIF: ((String) -> Void)?
+    private let onUploadGIF: (() -> Void)?
+    private var groups: [MoodGroup]
     private var selectedGroupIndex = 0
+    private var libraryObserver: NSObjectProtocol?
 
     /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页同款做法），
     /// 否则容器在呈现中途释放、进退场动画丢 delegate。
@@ -75,24 +85,33 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     private var pillItemButtons: [UIButton] = []
     private var pillIconSlots: [UIView] = []
     private var pillDots: [UIView] = []
+    /// “我的 GIF”组为空时的空提示（点 ＋ 上传一张）。
+    private let emptyHintLabel = UILabel()
     private var lastLayoutWidth: CGFloat = 0
     private var lastLayoutContainerHeight: CGFloat = 0
 
     /// BearyBottomSheetVoiceOver：出现时首焦点落标题。
     var bottomSheetInitialAccessibilityElement: AnyObject? { titleLabel }
 
-    init(moodKeys: [String], onSelect: @escaping (String) -> Void) {
+    init(moodKeys: [String], gifKeys: [String], onSelect: @escaping (String) -> Void, onSelectGIF: ((String) -> Void)? = nil, onUploadGIF: (() -> Void)? = nil) {
         self.onSelect = onSelect
+        self.onSelectGIF = onSelectGIF
+        self.onUploadGIF = onUploadGIF
         self.groups = [
-            MoodGroup(id: "default", title: "心情", keys: ["none"] + moodKeys, representativeKey: moodKeys.first ?? "agree"),
-            MoodGroup(id: "halloween", title: "万圣节", keys: BearyText.halloweenMoodKeys, representativeKey: "pumpkin"),
-            MoodGroup(id: "spring", title: "春节", keys: BearyText.springMoodKeys, representativeKey: "lantern"),
+            MoodGroup(id: "default", title: "心情", keys: ["none"] + moodKeys, representativeKey: moodKeys.first ?? "agree", representativeIconName: nil),
+            MoodGroup(id: "halloween", title: "万圣节", keys: BearyText.halloweenMoodKeys, representativeKey: "pumpkin", representativeIconName: nil),
+            MoodGroup(id: "spring", title: "春节", keys: BearyText.springMoodKeys, representativeKey: "lantern", representativeIconName: nil),
+            MoodGroup(id: "mygif", title: "我的 GIF", keys: gifKeys, representativeKey: "", representativeIconName: "icon_image"),
         ]
         super.init(nibName: nil, bundle: nil)
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        if let observer = libraryObserver { NotificationCenter.default.removeObserver(observer) }
     }
 
     private var selectedGroup: MoodGroup { groups[selectedGroupIndex] }
@@ -103,7 +122,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         let nameFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
         var maxNameHeight: CGFloat = 0
         for key in selectedGroup.keys {
-            let name = key == "none" ? "无" : (BearyText.moodNames[key] ?? key)
+            let name = key.hasSuffix(".gif") ? "" : (key == "none" ? "无" : (BearyText.moodNames[key] ?? key))
             let nameWidth = max(width - 4, 0)
             let nameHeight = (name as NSString).boundingRect(
                 with: CGSize(width: nameWidth, height: CGFloat.greatestFiniteMagnitude),
@@ -116,8 +135,10 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         return max(72, 46 + 4 + maxNameHeight + 8)
     }
 
-    /// 网格内容总高（sectionInset 上 4＋行高＋行距＋下 20）。
+    /// 网格内容总高（sectionInset 上 4＋行高＋行距＋下 20）；“我的 GIF”组
+    /// 为空时留 120 给空提示（否则 sheet 缩到只剩 chrome）。
     private func gridContentHeight(forWidth width: CGFloat) -> CGFloat {
+        if selectedGroup.keys.isEmpty { return selectedGroup.id == "mygif" ? 120 : 0 }
         let columns: CGFloat = 4
         let totalSpacing: CGFloat = 18 * 2 + 6 * (columns - 1)
         let itemWidth = max(44, (width - totalSpacing) / columns)
@@ -169,6 +190,14 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         emoteCollectionView = collection
         view.addSubview(collection)
 
+        emptyHintLabel.translatesAutoresizingMaskIntoConstraints = false
+        emptyHintLabel.text = "还没有 GIF，点 ＋ 上传一张"
+        emptyHintLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        emptyHintLabel.textColor = BearyColors.gray
+        emptyHintLabel.textAlignment = .center
+        emptyHintLabel.isHidden = true
+        view.addSubview(emptyHintLabel)
+
         // 悬浮 pill 组选择条：胶囊贴选择器底部、内容区上方悬浮（照截图的 pill 形态）。
         pillView.translatesAutoresizingMaskIntoConstraints = false
         pillView.backgroundColor = BearyColors.surface2
@@ -191,15 +220,28 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             iconSlot.isUserInteractionEnabled = false
             button.addSubview(iconSlot)
             pillIconSlots.append(iconSlot)
-            let emoteView = BearyEmoteView(key: group.representativeKey, animated: true)
-            emoteView.translatesAutoresizingMaskIntoConstraints = false
-            emoteView.isUserInteractionEnabled = false
-            iconSlot.addSubview(emoteView)
+            // “我的 GIF”组：官方 icon_image（墨色，不走 Lottie）；其余组走代表表情。
+            let iconView: UIView
+            if let iconName = group.representativeIconName {
+                let imageView = UIImageView()
+                imageView.translatesAutoresizingMaskIntoConstraints = false
+                imageView.contentMode = .scaleAspectFit
+                imageView.tintColor = BearyColors.ink
+                imageView.image = BearyIconImages.image(named: iconName, pointSize: 36)
+                imageView.isUserInteractionEnabled = false
+                iconView = imageView
+            } else {
+                let emoteView = BearyEmoteView(key: group.representativeKey, animated: true)
+                emoteView.translatesAutoresizingMaskIntoConstraints = false
+                emoteView.isUserInteractionEnabled = false
+                iconView = emoteView
+            }
+            iconSlot.addSubview(iconView)
             NSLayoutConstraint.activate([
-                emoteView.topAnchor.constraint(equalTo: iconSlot.topAnchor),
-                emoteView.bottomAnchor.constraint(equalTo: iconSlot.bottomAnchor),
-                emoteView.leadingAnchor.constraint(equalTo: iconSlot.leadingAnchor),
-                emoteView.trailingAnchor.constraint(equalTo: iconSlot.trailingAnchor),
+                iconView.topAnchor.constraint(equalTo: iconSlot.topAnchor),
+                iconView.bottomAnchor.constraint(equalTo: iconSlot.bottomAnchor),
+                iconView.leadingAnchor.constraint(equalTo: iconSlot.leadingAnchor),
+                iconView.trailingAnchor.constraint(equalTo: iconSlot.trailingAnchor),
             ])
             let dot = UIView()
             dot.translatesAutoresizingMaskIntoConstraints = false
@@ -220,6 +262,30 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
                 dot.heightAnchor.constraint(equalToConstant: 6),
             ])
         }
+        // 上传入口：pill 条最右一项（官方 icon_image_add，手绘图＋加号徽章），
+        // 不进组、不抬起、不带圆点；点按走 onUploadGIF（编辑器弹相册选 GIF）。
+        let uploadButton = UIButton(type: .custom)
+        uploadButton.translatesAutoresizingMaskIntoConstraints = false
+        uploadButton.accessibilityLabel = "上传 GIF"
+        uploadButton.accessibilityTraits = [.button]
+        uploadButton.addTarget(self, action: #selector(pillItemTapped(_:)), for: .touchUpInside)
+        uploadButton.bearyAddPressFeedback()
+        uploadButton.tag = groups.count
+        pillView.addSubview(uploadButton)
+        pillItemButtons.append(uploadButton)
+        let uploadIcon = UIImageView()
+        uploadIcon.translatesAutoresizingMaskIntoConstraints = false
+        uploadIcon.contentMode = .scaleAspectFit
+        uploadIcon.tintColor = BearyColors.ink
+        uploadIcon.image = BearyIconImages.image(named: "icon_image_add", pointSize: 36)
+        uploadIcon.isUserInteractionEnabled = false
+        uploadButton.addSubview(uploadIcon)
+        NSLayoutConstraint.activate([
+            uploadIcon.centerXAnchor.constraint(equalTo: uploadButton.centerXAnchor),
+            uploadIcon.centerYAnchor.constraint(equalTo: uploadButton.centerYAnchor),
+            uploadIcon.widthAnchor.constraint(equalToConstant: 36),
+            uploadIcon.heightAnchor.constraint(equalToConstant: 36),
+        ])
         refreshPillSelection(animated: false)
 
         let collectionHeight = collection.heightAnchor.constraint(equalToConstant: 400)
@@ -246,8 +312,11 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
 
             pillView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             pillView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
-            pillView.widthAnchor.constraint(equalToConstant: CGFloat(groups.count) * Self.pillItemWidth + 16),
+            pillView.widthAnchor.constraint(equalToConstant: CGFloat(groups.count + 1) * Self.pillItemWidth + 16),
             pillView.heightAnchor.constraint(equalToConstant: Self.pillHeight),
+
+            emptyHintLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            emptyHintLabel.topAnchor.constraint(equalTo: collection.topAnchor, constant: 44),
         ])
         for (index, button) in pillItemButtons.enumerated() {
             NSLayoutConstraint.activate([
@@ -257,6 +326,8 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
                 button.leadingAnchor.constraint(equalTo: pillView.leadingAnchor, constant: 8 + CGFloat(index) * Self.pillItemWidth),
             ])
         }
+        refreshEmptyHint()
+        refreshLibrary()
     }
 
     override func viewDidLayoutSubviews() {
@@ -322,13 +393,52 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     private static let pillSelectedRaise: CGFloat = 14
 
     @objc private func pillItemTapped(_ sender: UIButton) {
+        // 最右一项是上传入口（tag == groups.count），不进组、不抬起。
+        if sender.tag == groups.count {
+            onUploadGIF?()
+            return
+        }
         selectGroup(at: sender.tag, animated: true)
+    }
+
+    /// 打开时从服务端拉一次库（失败静默用缓存）；增删后通知到时跟帧刷新
+    /// “我的 GIF”组（只在正看着该组时重刷网格与 sheet 高）。
+    private func refreshLibrary() {
+        libraryObserver = NotificationCenter.default.addObserver(forName: BearyGIFLibrary.libraryDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self = self else { return }
+            let keys = BearyGIFLibrary.cachedKeys()
+            guard let index = self.groups.firstIndex(where: { $0.id == "mygif" }) else { return }
+            let group = self.groups[index]
+            guard group.keys != keys else { return }
+            self.groups[index] = MoodGroup(id: group.id, title: group.title, keys: keys, representativeKey: group.representativeKey, representativeIconName: group.representativeIconName)
+            if self.selectedGroup.id == "mygif" {
+                self.emoteCollectionView?.reloadData()
+                self.updatePreferredContentSize()
+            }
+            self.refreshEmptyHint()
+        }
+        BearyGIFLibrary.refresh()
+    }
+
+    private func refreshEmptyHint() {
+        emptyHintLabel.isHidden = !(selectedGroup.id == "mygif" && selectedGroup.keys.isEmpty)
+    }
+
+    /// “我的 GIF”组内长按 cell：删库内 GIF（只删库行，不删文件、不影响已发日记）。
+    private func confirmDeleteGIF(key: String) {
+        BearyConfirmSheet.show(from: self, title: "从我的 GIF 里删除？", message: nil, actions: [
+            BearyConfirmSheet.Action(title: "取消", style: .cancel),
+            BearyConfirmSheet.Action(title: "删除", style: .destructive) {
+                BearyGIFLibrary.remove(key: key)
+            },
+        ])
     }
 
     private func selectGroup(at index: Int, animated: Bool) {
         guard groups.indices.contains(index), index != selectedGroupIndex else { return }
         selectedGroupIndex = index
         refreshPillSelection(animated: animated)
+        refreshEmptyHint()
         // 节日组只有 6 款（2 行），sheet 随之缩短；网格内容切换只走 opacity，
         // 高度变化走容器帧动画，减动效时两者都瞬时。
         let applyHeight = { [weak self] in
@@ -394,7 +504,10 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "bearyMoodPickerCell", for: indexPath) as? BearyMoodPickerCell else {
             return UICollectionViewCell()
         }
-        cell.configure(key: selectedGroup.keys[indexPath.item])
+        let key = selectedGroup.keys[indexPath.item]
+        cell.configure(key: key)
+        // “我的 GIF”组 cell 长按删库（只删库行）；其余组长按无动作。
+        cell.onDeleteGIF = selectedGroup.id == "mygif" ? { [weak self] gifKey in self?.confirmDeleteGIF(key: gifKey) } : nil
         return cell
     }
 
@@ -405,9 +518,15 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     }
 
     /// 点选即回调（插入式：不收起，方便连着插多个；“无”由调用方清心情字段并关闭）。
+    /// “我的 GIF”组点选走 onSelectGIF（传完整 key），其余组走 onSelect。
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: false)
-        onSelect(selectedGroup.keys[indexPath.item])
+        let key = selectedGroup.keys[indexPath.item]
+        if selectedGroup.id == "mygif" {
+            onSelectGIF?(key)
+        } else {
+            onSelect(key)
+        }
     }
 
     /// 可见才播：cell 进入可视区即起播。
@@ -431,6 +550,14 @@ final class BearyMoodPickerCell: UICollectionViewCell {
     private var emoteView: BearyEmoteView?
     private var noneImageView: UIImageView?
     private var currentKey: String?
+    /// “我的 GIF”组 cell：46 槽位里贴 GIF；先贴首帧 JPEG 缩略图（快），
+    /// 可见时再取整 GIF 动画；长按删库（只删库行，不删文件）。
+    private var gifImageView: UIImageView?
+    private var gifFirstFrame: UIImage?
+    private var gifAnimatedImage: UIImage?
+    private var gifGeneration = 0
+    private var gifPlaying = false
+    var onDeleteGIF: ((String) -> Void)?
     private let nameLabel = UILabel()
 
     override init(frame: CGRect) {
@@ -459,6 +586,9 @@ final class BearyMoodPickerCell: UICollectionViewCell {
             nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 2),
             nameLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -2),
         ])
+        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
+        longPress.minimumPressDuration = 0.5
+        contentView.addGestureRecognizer(longPress)
     }
 
     required init?(coder: NSCoder) {
@@ -468,6 +598,13 @@ final class BearyMoodPickerCell: UICollectionViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         emoteView?.stop()
+        gifGeneration += 1
+        gifFirstFrame = nil
+        gifAnimatedImage = nil
+        gifPlaying = false
+        gifImageView?.image = nil
+        gifImageView?.isHidden = true
+        onDeleteGIF = nil
     }
 
     /// 回应 sheet cell 同款按压态（surface2 底，只画在 46 槽位圆角底片上）。
@@ -479,6 +616,8 @@ final class BearyMoodPickerCell: UICollectionViewCell {
 
     func configure(key: String) {
         currentKey = key
+        if key.hasSuffix(".gif") { configureGIF(key: key); return }
+        stopGIF()
         nameLabel.text = key == "none" ? "无" : (BearyText.moodNames[key] ?? key)
         nameLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
         nameLabel.adjustsFontForContentSizeCategory = true
@@ -525,10 +664,90 @@ final class BearyMoodPickerCell: UICollectionViewCell {
         }
     }
 
+    /// “我的 GIF”组 cell：名签留空；先贴首帧 JPEG 缩略图（快），播时再取
+    /// 整 GIF 动画；setPlaying 启停复用心情 cell 的 willDisplay 口径。
+    private func configureGIF(key: String) {
+        emoteView?.stop()
+        emoteView?.removeFromSuperview()
+        emoteView = nil
+        noneImageView?.isHidden = true
+        nameLabel.text = ""
+        gifGeneration += 1
+        let generation = gifGeneration
+        gifFirstFrame = nil
+        gifAnimatedImage = nil
+        gifPlaying = false
+        if gifImageView == nil {
+            let imageView = UIImageView()
+            imageView.translatesAutoresizingMaskIntoConstraints = false
+            imageView.contentMode = .scaleAspectFit
+            imageView.clipsToBounds = true
+            emoteSlot.addSubview(imageView)
+            NSLayoutConstraint.activate([
+                imageView.topAnchor.constraint(equalTo: emoteSlot.topAnchor),
+                imageView.bottomAnchor.constraint(equalTo: emoteSlot.bottomAnchor),
+                imageView.leadingAnchor.constraint(equalTo: emoteSlot.leadingAnchor),
+                imageView.trailingAnchor.constraint(equalTo: emoteSlot.trailingAnchor),
+            ])
+            gifImageView = imageView
+        }
+        gifImageView?.isHidden = false
+        gifImageView?.image = nil
+        guard let url = BearyImageURLs.imageURL(key: key, thumb: true) else { return }
+        BearyImageLoader.shared.loadImageData(url: url) { [weak self] result in
+            guard let self = self, self.gifGeneration == generation, self.currentKey == key else { return }
+            guard case .success(let data) = result, let image = UIImage(data: data) else { return }
+            DispatchQueue.main.async {
+                guard self.gifGeneration == generation, self.currentKey == key else { return }
+                self.gifFirstFrame = image
+                if self.gifPlaying == false { self.gifImageView?.image = image }
+            }
+        }
+    }
+
+    private func stopGIF() {
+        gifGeneration += 1
+        gifFirstFrame = nil
+        gifAnimatedImage = nil
+        gifPlaying = false
+        gifImageView?.image = nil
+        gifImageView?.isHidden = true
+    }
+
+    @objc private func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began,
+              let key = currentKey, key.hasSuffix(".gif") else { return }
+        onDeleteGIF?(key)
+    }
+
     /// 可见性启停（willDisplay/didEndDisplaying 调）：播放只走 play/stop，
     /// 不重建视图、不回 0 帧重播开场。
     func setPlaying(_ playing: Bool) {
         guard currentKey != "none" else { return }
+        if let key = currentKey, key.hasSuffix(".gif") {
+            gifPlaying = playing
+            if playing == false {
+                gifImageView?.image = gifFirstFrame
+                return
+            }
+            if let animated = gifAnimatedImage {
+                gifImageView?.image = animated
+                return
+            }
+            guard let url = BearyImageURLs.imageURL(key: key, thumb: false) else { return }
+            let generation = gifGeneration
+            BearyImageLoader.shared.loadImageData(url: url) { [weak self] result in
+                guard let self = self, self.gifGeneration == generation, self.currentKey == key else { return }
+                guard case .success(let data) = result,
+                      let animated = BearyGIF.animatedImage(data) else { return }
+                DispatchQueue.main.async {
+                    guard self.gifGeneration == generation, self.currentKey == key, self.gifPlaying else { return }
+                    self.gifAnimatedImage = animated
+                    self.gifImageView?.image = animated
+                }
+            }
+            return
+        }
         if playing {
             emoteView?.play()
         } else {

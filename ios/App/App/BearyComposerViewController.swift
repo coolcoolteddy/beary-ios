@@ -1,6 +1,7 @@
 import UIKit
 import Photos
 import PhotosUI
+import UniformTypeIdentifiers
 
 // ===== beary 原生编辑器（第二阶段 + 主线闭环第一块 + 网页对齐批）=====
 // 只负责写日记：正文 + 心情 + 天气 + @ + 引用 + 图片（上限 9 张）。
@@ -475,6 +476,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 审计二轮 08：组词期间切主题被 refreshInlineMoodImages 跳过时记待刷新，
     /// 组词落字后补执行一次（textViewDidChange 里检测）。
     private var inlineMoodRefreshPending = false
+    /// 内联 GIF：已插进正文/标题的完整 key（插入顺序；发布时与 images 合并
+    /// 成 entry.images，见 uploadedImageKeys）。首帧缓存供编辑器回填时
+    /// 贴静态图（编辑器里 GIF 只显首帧，不播动画）。
+    private var inlineGifKeys: [String] = []
+    private var gifFirstFrames: [String: UIImage] = [:]
+    /// 相册 GIF 选择器在途标记：picker 回调到时凭它分流进 GIF 路
+    /// （见 picker 代理开头的 gifPickerActive 判断）；置位放在 present
+    /// 前一刻、回调里复位，present 未发生时不残留。
+    private var gifPickerActive = false
+    /// GIF 上传在途标记：一次只传一张，传完才接下一张（上传中再点上传入口
+    /// 直接 toast，不并行）。
+    private var gifUploadInFlight = false
     /// B2：关闭进行中守卫——didTapCancel（取消钮）与边缘关闭共用同一入口，
     /// 快速连点只接一次关闭流程；在途关闭再次点按直接忽略（返回 false，
     /// 边缘手势把视图滑回原位）。成功关闭时随编辑器一起消失，不复位；
@@ -1763,7 +1776,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 之后 typingAttributes 复位，免得附件后的打字跟了附件字体。
     private func setHeadlineText(_ plain: String?) {
         let text = (plain ?? "").replacingOccurrences(of: "\n", with: " ")
-        headlineField.attributedText = BearyText.inlineAttributedText(from: text, font: headlineFont, color: BearyColors.ink, paragraphStyle: nil, dark: headlineIsDark)
+        headlineField.attributedText = BearyText.inlineAttributedText(from: text, font: headlineFont, color: BearyColors.ink, paragraphStyle: nil, dark: headlineIsDark, gifImageKeys: inlineGifKeys, gifFirstFrames: gifFirstFrames)
         headlineField.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
         refreshHeadlineChrome()
     }
@@ -1780,7 +1793,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private static func truncatedHeadline(_ text: String) -> String {
         var result = text
         while result.unicodeScalars.count > headlineMaxLength {
-            if let range = result.range(of: #"\[mood:[a-z_]+\]$"#, options: .regularExpression) {
+            if let range = result.range(of: #"\[mood:[a-z_]+\]$|\[gif:[a-z0-9]+\]$"#, options: .regularExpression) {
                 result.removeSubrange(range)
             } else {
                 result = String(result.dropLast())
@@ -4270,8 +4283,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func presentMoodPickerSheet() {
         if quotePanelOpen { return }
         hideCallout(animated: false)
-        moodPickerSheet = BearyMoodPickerSheet.show(from: self, moodKeys: moodOrder) { [weak self] key in
+        moodPickerSheet = BearyMoodPickerSheet.show(from: self, moodKeys: moodOrder, gifKeys: BearyGIFLibrary.cachedKeys()) { [weak self] key in
             self?.didSelectMood(key)
+        } onSelectGIF: { [weak self] key in
+            self?.didSelectGIF(key)
+        } onUploadGIF: { [weak self] in
+            self?.didTapUploadGIF()
         }
     }
 
@@ -5170,7 +5187,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func setBodyAttributedText(_ plain: String?) {
-        textView.attributedText = BearyText.inlineAttributedText(from: plain ?? "", font: bodyFont, color: BearyColors.ink, paragraphStyle: bodyParagraphStyle(), dark: traitCollection.userInterfaceStyle == .dark)
+        textView.attributedText = BearyText.inlineAttributedText(from: plain ?? "", font: bodyFont, color: BearyColors.ink, paragraphStyle: bodyParagraphStyle(), dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: inlineGifKeys, gifFirstFrames: gifFirstFrames)
         textView.typingAttributes = [.font: bodyFont, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
         updateCountLabel()
     }
@@ -5187,8 +5204,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 无内联心情时不重建：重建会把非心情附件（如粘贴进来的图片）
         // 经 inlinePlainText 丢掉，还会把选区压成光标；只有真有熊脸附件
         // 时才需要换深浅变体（动态墨色本身随主题自动解析，无需重建）。
+        // GIF 同款守门：首帧到站后也靠这次重建把占位换成首帧（见 didSelectGIF）。
         guard containsInlineMood(textView.attributedText)
-            || containsInlineMood(headlineField.attributedText) else { return }
+            || containsInlineMood(headlineField.attributedText)
+            || containsInlineGIF(textView.attributedText)
+            || containsInlineGIF(headlineField.attributedText) else { return }
         let bodySelection = textView.selectedRange
         let headlineSelection = headlineField.selectedRange
         setBodyAttributedText(committedContent())
@@ -5210,6 +5230,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard let attributed = attributed, attributed.length > 0 else { return false }
         var found = false
         attributed.enumerateAttribute(BearyText.inlineMoodKeyAttribute, in: NSRange(location: 0, length: attributed.length), options: []) { value, _, stop in
+            if value != nil {
+                found = true
+                stop.pointee = true
+            }
+        }
+        return found
+    }
+
+    /// 是否含内联 GIF 附件（主题切换重建的守门，与心情同款）。
+    private func containsInlineGIF(_ attributed: NSAttributedString?) -> Bool {
+        guard let attributed = attributed, attributed.length > 0 else { return false }
+        var found = false
+        attributed.enumerateAttribute(BearyText.inlineGifKeyAttribute, in: NSRange(location: 0, length: attributed.length), options: []) { value, _, stop in
             if value != nil {
                 found = true
                 stop.pointee = true
@@ -5448,7 +5481,195 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         textView.selectedRange = NSRange(location: safeLocation + 1, length: 0)
     }
 
-    // MARK: - 图片条
+    // MARK: - 内联 GIF（自传 GIF：心情选择器里上传/点选，插进正文或标题）
+
+    /// “我的 GIF”组点选：key 已是完整 key（服务端回的 image key），直接插
+    /// 进光标处（标题/正文焦点口径与心情同款，见 insertGIFAttachmentAtCursor）。
+    private func didSelectGIF(_ key: String) {
+        guard key.hasSuffix(".gif"), let rand = BearyGIF.randKey(from: key) else { return }
+        prefetchGIFFirstFrame(key: key)
+        insertGIFAttachmentAtCursor(key: key, randKey: rand)
+    }
+
+    /// GIF 首帧预取（编辑器里只显首帧）：缩略图到站后记缓存，若该 GIF 仍在
+    /// 文中，重建一次把占位换成首帧。
+    private func prefetchGIFFirstFrame(key: String) {
+        guard let rand = BearyGIF.randKey(from: key), gifFirstFrames[rand] == nil,
+              let url = BearyImageURLs.imageURL(key: key, thumb: true) else { return }
+        BearyImageLoader.shared.loadImageData(url: url) { [weak self] result in
+            guard let self = self, case .success(let data) = result, let image = UIImage(data: data) else { return }
+            DispatchQueue.main.async {
+                self.gifFirstFrames[rand] = image
+                if self.inlineGifKeys.contains(key) { self.refreshInlineMoodImages() }
+            }
+        }
+    }
+
+    /// pill 条 ＋ 上传入口：一次只传一张；9 张满（照片＋已插 GIF 合计）或
+    /// 上传中时 toast 拦截；心情 sheet 是已弹出的 VC，等它退场完再弹相册，
+    /// 否则 present 会撞上退场动画。
+    private func didTapUploadGIF() {
+        if gifUploadInFlight {
+            showToast(message: "GIF 正在上传")
+            return
+        }
+        if imageItems.count + referencedGifKeys().count >= Self.maxImages {
+            showToast(message: "最多 9 张图片")
+            return
+        }
+        let presentPicker = { [weak self] in
+            guard let self = self else { return }
+            // 置位放在 present 前一刻：present 若未发生，标志不残留，
+            // 之后照片 picker 的回调不会误进 GIF 分流。
+            self.gifPickerActive = true
+            var config = PHPickerConfiguration(photoLibrary: .shared())
+            config.filter = .images
+            config.selectionLimit = 1
+            let picker = PHPickerViewController(configuration: config)
+            picker.delegate = self
+            self.present(picker, animated: true)
+        }
+        if let sheet = moodPickerSheet {
+            sheet.dismiss(animated: BearyMotion.animated(true), completion: presentPicker)
+        } else {
+            presentPicker()
+        }
+    }
+
+    /// PHPicker 回调的 GIF 分流（picker 代理开头先判 gifPickerActive）：
+    /// picker 自身先 dismiss（心情 sheet 已在弹相册前退场）；空选/取消
+    /// 直接复位；只取第 1 个结果；原始文件数据不转码。
+    private func handleGIFPickerResults(picker: PHPickerViewController, results: [PHPickerResult]) {
+        picker.dismiss(animated: BearyMotion.animated(true))
+        defer { gifPickerActive = false }
+        guard let result = results.first else { return }
+        let provider = result.itemProvider
+        guard provider.hasItemConformingToTypeIdentifier(UTType.gif.identifier) else {
+            showToast(message: "只能选 GIF")
+            return
+        }
+        provider.loadFileRepresentation(forTypeIdentifier: UTType.gif.identifier) { [weak self] url, error in
+            guard let self = self else { return }
+            guard error == nil, let url = url, let data = try? Data(contentsOf: url) else {
+                DispatchQueue.main.async { self.showToast(message: "GIF 上传失败，请重试") }
+                return
+            }
+            DispatchQueue.main.async { self.finishGIFUpload(data: data) }
+        }
+    }
+
+    /// GIF 校验＋上传：原始字节直接传 data:image/gif;base64（不走 JPEG 转码）；
+    /// 本地先验 magic/宽高/帧数/1MB（超了直接 toast，不发请求）；服务端 413
+    /// 'gif too large' 同样 toast「GIF 不能超过 1MB」；上传成功后记 key、
+    /// 插进光标处；库满时服务端仍回 key，GIF 照插、另 toast 提醒删库。
+    private func finishGIFUpload(data: Data) {
+        guard BearyGIF.isGIFData(data), let info = BearyGIF.info(data), info.w > 0, info.h > 0, info.frames > 0 else {
+            showToast(message: "GIF 上传失败，请重试")
+            return
+        }
+        if info.w > BearyGIF.maxSide || info.h > BearyGIF.maxSide || info.frames > BearyGIF.maxFrames {
+            showToast(message: "这个 GIF 加不了")
+            return
+        }
+        if data.count > BearyGIF.maxBytes {
+            showToast(message: "GIF 不能超过 1MB")
+            return
+        }
+        guard let firstFrame = BearyGIF.firstFrameImage(data) else {
+            showToast(message: "GIF 上传失败，请重试")
+            return
+        }
+        let thumbData = BearyImagePrep.thumbData(firstFrame)
+        gifUploadInFlight = true
+        BearyAPI.shared.uploadImage(dataUrl: "data:image/gif;base64,\(data.base64EncodedString())", width: info.w, height: info.h, thumbDataUrl: thumbData.map { "data:image/jpeg;base64,\($0.base64EncodedString())" }) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.gifUploadInFlight = false
+                switch result {
+                case .success(let response):
+                    guard let key = response.key, key.hasSuffix(".gif"), let rand = BearyGIF.randKey(from: key) else {
+                        self.showToast(message: "GIF 上传失败，请重试")
+                        return
+                    }
+                    if response.libraryFull == true {
+                        self.showToast(message: "表情库满了，先删掉一些再添加")
+                    }
+                    self.gifFirstFrames[rand] = firstFrame
+                    self.insertGIFAttachmentAtCursor(key: key, randKey: rand)
+                case .failure(let error):
+                    if case .server(let code, _) = error, code == "gif too large" {
+                        self.showToast(message: "GIF 不能超过 1MB")
+                    } else {
+                        self.showToast(message: "GIF 上传失败，请重试")
+                    }
+                }
+            }
+        }
+    }
+
+    /// GIF 插进光标处：焦点口径照抄 insertMoodImageAtCursor（标题获焦插标题、
+    /// 正文获焦插正文、都没焦点按上次焦点兜底、从未获焦插正文末尾；组词先
+    /// 提交落字再插）——为避改动工作路径，焦点块照抄一份不重构。
+    private func insertGIFAttachmentAtCursor(key: String, randKey: String) {
+        if inlineGifKeys.contains(key) == false { inlineGifKeys.append(key) }
+        let firstFrame = gifFirstFrames[randKey]
+        if headlineField.isFirstResponder || lastFocusedComposerInput == .headline {
+            if !headlineField.isFirstResponder {
+                headlineField.becomeFirstResponder()
+                headlineField.selectedRange = NSRange(location: headlineField.attributedText.length, length: 0)
+            }
+            if headlineField.markedTextRange != nil {
+                headlineField.unmarkText()
+            }
+            insertGIFAttachment(into: headlineField, randKey: randKey, firstFrame: firstFrame, font: headlineFont)
+            headlineDidChange()
+            return
+        }
+        if textView.isFirstResponder || lastFocusedComposerInput == .body {
+            if !textView.isFirstResponder {
+                textView.becomeFirstResponder()
+            }
+            if textView.markedTextRange != nil {
+                textView.unmarkText()
+            }
+            insertGIFAttachment(into: textView, randKey: randKey, firstFrame: firstFrame, font: bodyFont)
+            textViewDidChange(textView)
+            return
+        }
+        textView.becomeFirstResponder()
+        textView.selectedRange = NSRange(location: textView.attributedText.length, length: 0)
+        insertGIFAttachment(into: textView, randKey: randKey, firstFrame: firstFrame, font: bodyFont)
+        textViewDidChange(textView)
+    }
+
+    /// 把一个 GIF 附件插进指定 UITextView 的当前选区（有选区则替换选区），
+    /// 插完光标落在图后 1 格，并把 typingAttributes 复位回该框的正文字体
+    /// （与 insertMoodAttachment 同款，免得图后打字跟了附件字体）。
+    private func insertGIFAttachment(into textView: UITextView, randKey: String, firstFrame: UIImage?, font: UIFont) {
+        guard let attachment = BearyText.inlineGIFAttachment(randKey: randKey, font: font, firstFrame: firstFrame) else { return }
+        let range = textView.selectedRange
+        let mutable = NSMutableAttributedString(attributedString: textView.attributedText ?? NSAttributedString())
+        let safeLocation = min(range.location, mutable.length)
+        let safeLength = min(range.length, mutable.length - safeLocation)
+        mutable.replaceCharacters(in: NSRange(location: safeLocation, length: safeLength), with: attachment)
+        textView.attributedText = mutable
+        if textView === headlineField {
+            textView.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
+        } else {
+            textView.typingAttributes = [.font: bodyFont, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
+        }
+        textView.selectedRange = NSRange(location: safeLocation + 1, length: 0)
+    }
+
+    /// 正文/标题里实际引用的 GIF key（按 inlineGifKeys 顺序过滤引用）：
+    /// 删掉 GIF 后 key 不再进 images，GC 可回收；9 张上限与发布都按此口径计。
+    private func referencedGifKeys() -> [String] {
+        let text = headlineText + "\n" + committedContent()
+        return inlineGifKeys.filter { key in
+            guard let rand = BearyGIF.randKey(from: key) else { return false }
+            return text.contains("[gif:\(rand)]")
+        }
+    }
 
     private func createImageItem(localImage: UIImage?, key: String?, uploading: Bool, localFile: String?, failed: Bool) -> ComposerImageItem {
         let container = UIView()
@@ -5992,7 +6213,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 编辑器改版：弹出框打开时点其他工具钮，先收起框再走各自处理。
         hideCallout(animated: false)
         // P2：9 图上限到达时不再完全静默，给 toast（不改按钮置灰口径）。
-        if imageItems.count >= BearyComposerViewController.maxImages {
+        // GIF 也占 1 张：照片条＋已插 GIF 合计满 9 即拦（发布时服务端同口径）。
+        if imageItems.count + referencedGifKeys().count >= BearyComposerViewController.maxImages {
             showToast(message: "最多 9 张图片")
             return
         }
@@ -6008,6 +6230,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        // GIF 分流：上传入口弹的相册只取 GIF 原始文件，不走下面照片/实况路。
+        if gifPickerActive {
+            handleGIFPickerResults(picker: picker, results: results)
+            return
+        }
         picker.dismiss(animated: BearyMotion.animated(true))
         for result in results {
             if imageItems.count >= BearyComposerViewController.maxImages {
@@ -6577,6 +6804,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 keys.append(key)
             }
         }
+        // 内联 GIF 也进 images（按引用顺序，见 referencedGifKeys）：
+        // 发布/更新/脏检查都走这里，删掉 GIF 后 key 不再进，GC 可回收。
+        keys.append(contentsOf: referencedGifKeys())
         return keys
     }
 
@@ -6615,6 +6845,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 加载期间改过，补拉在途输入未冻结（见 refreshPublishingInputFreeze），无条件重填
         // 会把手改静默盖回服务端旧值；与气温/位置/@ 的 editQuoteFetchAttempted 守卫同款口径。
         if !editQuoteFetchAttempted {
+            // 内联 GIF 预填：先从 entry.images 里分出 .gif 键（只进 inlineGifKeys，
+            // 不进图片条），再 setBody/setHeadline——否则首渲时 [gif:] 解析不到 key。
+            // 补拉二次调用不重置（用户可能已在加载期间增删 GIF）。
+            inlineGifKeys = (entry.images ?? []).filter { $0.hasSuffix(".gif") }
+            for key in inlineGifKeys { prefetchGIFFirstFrame(key: key) }
             setBodyAttributedText(entry.content)
             applyBodyLineHeight()
             // 109：编辑回填标题进新输入框（编辑永久可改）；无标题时字段留空。
@@ -6671,6 +6906,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         maybePresentStoredQuotePrompt()
         startEditTimer()
         for key in entry.images ?? [] {
+            // 内联 GIF 不进图片条（只进 inlineGifKeys，见上），否则条里会多一张静态图。
+            guard key.hasSuffix(".gif") == false else { continue }
             let item = createImageItem(localImage: nil, key: key, uploading: false, localFile: nil, failed: false)
             // 编辑回填带实况：原图实况 key 随项带回，不动的图 PUT 时原样
             // 发回 live_videos；删图/裁剪会清掉对应项，PUT 映射随之变。
@@ -7123,6 +7360,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: state, liveVideoKey: item.liveVideoKey, liveVideoFile: item.liveVideoFile))
         }
+        // 内联 GIF 随草稿走：以已上传态追加（无本地文件；恢复时只进
+        // inlineGifKeys、不进图片条，见 restoreDraft/loadDraftFromBox）。
+        for key in referencedGifKeys() {
+            images.append(BearyDraftImageItem(localFile: nil, serverKey: key, state: .uploaded))
+        }
         // @ 展示名口径与 refreshRecipientRow 一致（展示名 / @handle / “用户”兜底），
         // 只为恢复 chip 显示；发布仍以 mentioned_user_id 为准。
         var recipientNameValue: String?
@@ -7282,6 +7524,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.currentDraftId = draft.draftId
                 self.clearedCurrentDraftId = nil
                 self.draftClientReq = draft.clientReq
+                // 内联 GIF 预填：先从 draft.images 里分出 .gif 键（只进 inlineGifKeys，
+                // 不进图片条），再 setBody/setHeadline——否则首渲时 [gif:] 解析不到 key。
+                self.inlineGifKeys = draft.images.compactMap { $0.serverKey }.filter { $0.hasSuffix(".gif") }
+                for key in self.inlineGifKeys { self.prefetchGIFFirstFrame(key: key) }
                 self.setBodyAttributedText(draft.content)
                 self.applyBodyLineHeight()
                 // 恢复后光标置末尾（接着写）：未出现时由 viewDidAppear 兜底，已聚焦且
@@ -7311,6 +7557,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.refreshQuoteSection()
                 self.refreshLocationRow()
                 for img in draft.images {
+                    // 内联 GIF 不进图片条（只进 inlineGifKeys，见上）。
+                    guard img.serverKey?.hasSuffix(".gif") != true else { continue }
                     // 新模型：旧版存下的 failed 项（上传失败态）归一化为待传——
                     // 本地文件在，发布时由发布中心上传；编辑模式仍按 state 原样建项。
                     let failed = self.isEditMode && (img.state == .failed)
@@ -7346,7 +7594,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 本地图后台解码：失败态不解码（重试时再读盘）；解码失败且有 key 时退回远程缩略图。
                 // B1：待传实况视频同批读回内存（见 decodeRestoredImages），
                 // 读不到的记 liveVideoMissing，续传时跳过、不静默变静态。
-                let decodingImages = draft.images
+                // 内联 GIF 不进解码（无本地文件，见上）。
+                let decodingImages = draft.images.filter { $0.serverKey?.hasSuffix(".gif") != true }
                 self.decodeRestoredImages(decodingImages, accountId: restoreAccountId) { [weak self] decoded, liveVideos in
                     guard let self = self else { return }
                     self.applyRestoredImages(decoded: decoded, liveVideos: liveVideos)
@@ -7719,6 +7968,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshVisibilityButton()
         setQuotePanelOpen(false)
         removeAllImageViews()
+        // 内联 GIF 随篇清掉（首帧缓存同清；上传在途的 GIF 回包后仍插进
+        // 新篇——用户可删，不静默丢上传）。
+        inlineGifKeys = []
+        gifFirstFrames = [:]
         // 只清视图与槽位，不碰存储：删篇由调用方决定（丢弃路径先调 clearDraftAndFiles
         // 删本篇，保留路径先调 saveDraftNow 落盘本篇）；这里再整库清会误删其他篇。
         currentDraftId = nil
@@ -7778,6 +8031,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         publishedCurrentDraft = false
         currentDraftId = draft.draftId
         draftClientReq = draft.clientReq
+        // 内联 GIF 预填：先从 draft.images 里分出 .gif 键（只进 inlineGifKeys，
+        // 不进图片条），再 setBody/setHeadline——否则首渲时 [gif:] 解析不到 key。
+        inlineGifKeys = draft.images.compactMap { $0.serverKey }.filter { $0.hasSuffix(".gif") }
+        for key in inlineGifKeys { prefetchGIFFirstFrame(key: key) }
         setBodyAttributedText(draft.content)
         applyBodyLineHeight()
         // 草稿续写：标题回填进新输入框。
@@ -7796,6 +8053,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshLocationRow()
         setQuotePanelOpen(false)
         for img in draft.images {
+            // 内联 GIF 不进图片条（只进 inlineGifKeys，见上）。
+            guard img.serverKey?.hasSuffix(".gif") != true else { continue }
             // 新模型：旧版存下的 failed 项（上传失败态）归一化为待传——
             // 本地文件在，发布时由发布中心上传；编辑模式仍按 state 原样建项。
             let failed = isEditMode && (img.state == .failed)
@@ -7818,7 +8077,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 本地图后台解码（失败态不解码，重试点图时再读盘），解完再续传。
         // B1：待传实况视频同批读回内存（见 decodeRestoredImages），
         // 读不到的记 liveVideoMissing，续传时跳过、不静默变静态。
-        let decodingImages = draft.images
+        // 内联 GIF 不进解码（无本地文件，见上）。
+        let decodingImages = draft.images.filter { $0.serverKey?.hasSuffix(".gif") != true }
         decodeRestoredImages(decodingImages, accountId: composerOriginAccountId ?? BearyDraftStore.currentAccountId) { [weak self] decoded, liveVideos in
             guard let self = self else { return }
             self.applyRestoredImages(decoded: decoded, liveVideos: liveVideos)
