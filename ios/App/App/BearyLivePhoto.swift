@@ -576,9 +576,11 @@ final class BearyLivePhotoLoader {
 /// 实况就绪后显现，长按由调用方调 startPlayback；自身不接任何手势，
 /// 点按/滑动/缩放等原有交互一律透传给下层视图。
 /// 角标与加载态：只要配了 liveKey 就亮左上“实况”角标（网页版同款：
-/// 黑底 55%、白字 11pt bold、左上 6pt），加载中/加载失败都亮——用户
-/// 能分清“是实况但没加载出来”还是“根本不是实况”；加载中另有居中转圈，
-/// 长按不是空操作（加载中转圈可见，失败时长按重试一次）。
+/// 黑底 55%、白字 11pt bold、左上 6pt），加载中亮“实况”＋居中转圈；
+/// 加载失败时角标改写“实况加载失败”，与就绪态区分开——用户能分清
+/// “是实况但没加载出来”还是“根本不是实况”；失败时长按重试一次。
+/// 读屏（第 25 轮 71、72）：角标是本视图唯一的无障碍元素，上面挂
+/// “播放实况／重试实况”自定义操作，失败时标签也说明加载失败。
 final class BearyLivePhotoView: UIView {
     private let liveView = PHLivePhotoView()
     private let photoContentMode: PHImageContentMode
@@ -588,6 +590,8 @@ final class BearyLivePhotoView: UIView {
     private var pendingStaticKey: String?
     private var pendingLiveKey: String?
     private var isLoading = false
+    /// 实况加载失败后为真：角标改写失败文案、读屏操作改成重试（第 25 轮 72）。
+    private var loadFailed = false
     private let badgeView = UIView()
     private let badgeLabel = UILabel()
     private let spinner = UIActivityIndicatorView(style: .medium)
@@ -661,6 +665,36 @@ final class BearyLivePhotoView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// 读屏操作与失败说明（第 25 轮 71、72）：角标是本视图唯一的无障碍
+    /// 元素，在它上面挂自定义操作——就绪时“播放实况”，失败时“重试实况”；
+    /// 失败时角标文字与读屏标签都说明加载失败，加载中不挂操作。
+    private func updateAccessibility() {
+        if loadFailed {
+            badgeLabel.text = "实况加载失败"
+            badgeLabel.accessibilityLabel = "实况照片，加载失败"
+            badgeLabel.accessibilityHint = "实况加载失败，长按重试"
+            badgeLabel.accessibilityCustomActions = [
+                UIAccessibilityCustomAction(name: "重试实况") { [weak self] _ in
+                    return self?.startPlayback() ?? false
+                }
+            ]
+        } else if liveView.livePhoto != nil {
+            badgeLabel.text = "实况"
+            badgeLabel.accessibilityLabel = "实况照片"
+            badgeLabel.accessibilityHint = nil
+            badgeLabel.accessibilityCustomActions = [
+                UIAccessibilityCustomAction(name: "播放实况") { [weak self] _ in
+                    return self?.startPlayback() ?? false
+                }
+            ]
+        } else {
+            badgeLabel.text = "实况"
+            badgeLabel.accessibilityLabel = "实况照片"
+            badgeLabel.accessibilityHint = isLoading ? "正在加载实况" : nil
+            badgeLabel.accessibilityCustomActions = nil
+        }
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         badgeView.layer.cornerRadius = badgeView.bounds.height / 2
@@ -684,8 +718,10 @@ final class BearyLivePhotoView: UIView {
         pendingLiveKey = liveKey
         badgeView.isHidden = false
         isLoading = true
+        loadFailed = false
         spinner.startAnimating()
         isHidden = false
+        updateAccessibility()
         loadToken += 1
         let token = loadToken
         BearyLivePhotoLoader.shared.load(staticKey: staticKey, liveKey: liveKey, contentMode: photoContentMode) { [weak self] photo in
@@ -694,12 +730,16 @@ final class BearyLivePhotoView: UIView {
             self.spinner.stopAnimating()
             if let photo = photo {
                 self.liveView.livePhoto = photo
+                self.loadFailed = false
             } else {
-                // 失败仍亮角标（不静默退化成纯静态），currentLiveKey 清掉，
-                // 下次 configure 或长按重试可重新加载；加载中的同 key 调用
-                // 仍由 token＋currentLiveKey 守门，不会重复拉。
+                // 失败仍亮角标（不静默退化成纯静态），但角标改写失败文案、
+                // 读屏操作改成重试，与就绪态区分开（第 25 轮 72）；
+                // currentLiveKey 清掉，下次 configure 或长按重试可重新加载；
+                // 加载中的同 key 调用仍由 token＋currentLiveKey 守门，不会重复拉。
                 self.currentLiveKey = nil
+                self.loadFailed = true
             }
+            self.updateAccessibility()
         }
     }
 
@@ -709,11 +749,13 @@ final class BearyLivePhotoView: UIView {
         pendingStaticKey = nil
         pendingLiveKey = nil
         isLoading = false
+        loadFailed = false
         spinner.stopAnimating()
         badgeView.isHidden = true
         liveView.livePhoto = nil
         isHidden = true
         suppressTapUntil = nil
+        updateAccessibility()
     }
 
     /// 长按播实况：已就绪即播；加载中已有转圈可见（不是空操作）；加载
