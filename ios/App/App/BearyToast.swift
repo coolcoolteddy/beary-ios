@@ -119,6 +119,18 @@ enum BearyToast {
         return constant < 0 ? constant : fallback
     }
 
+    /// 发布 pill 的底锚（2026-11-14 盖底栏修）：Chrome 底栏/FAB 顶沿的 layout
+    /// 锚点；找不到 Chrome 时返回 nil，调用方回落安全区常数。锚点是 layout
+    /// 位置，不受藏栏 transform 影响——栏藏起时锚点仍在栏将回到的位置上，
+    /// pill 永远悬在栏上方 12pt，不会像旧的一次性常数那样在栏藏起回落 -32
+    /// 时落进底栏带里（底栏顶在安全区底之上 64pt，-32 正好盖住它上半截，
+    /// 而发布成功后 showPage(.timeline) 又把栏升回 pill 底下）。
+    /// fileprivate：发布 pill 与 toast 同文件。
+    fileprivate static func publishPillTopAnchor(in container: UIView) -> NSLayoutYAxisAnchor? {
+        guard let chrome = chromeViewController(for: container) else { return nil }
+        return chrome.publishPillObstructionTopAnchor()
+    }
+
     /// 响应链找容器所属 VC（子视图→父视图→根视图→VC）。
     private static func viewController(for view: UIView) -> UIViewController? {
         var responder: UIResponder? = view
@@ -342,8 +354,9 @@ private final class BearyToastView: UIView {
 
 // MARK: - 发布后台化底部 pill（Threads Posting/Posted 同款位置）
 
-/// 发布后台化底部 pill：与 BearyToast 同落点（底栏/FAB 之上 12pt 或安全区
-/// -32，见 BearyToast.bottomConstant）、同 surface3 底、ink 字、14pt
+/// 发布后台化底部 pill：底贴底栏/FAB 顶沿之上 12pt（layout 锚点，见
+/// BearyToast.publishPillTopAnchor；栏藏起时锚点不动，pill 永远悬在栏
+/// 上方、不盖栏；找不到 Chrome 时回落安全区常数）、同 surface3 底、ink 字、14pt
 /// medium、10/18 内边距、半高圆角、hairline 阴影。
 /// 结构：文案 label（进行中「正在发布…」）＋ 底部 2pt 进度条（track
 /// BearyColors.line、fill ink，内缩 14pt、底边之上 6pt，避开 pill 圆角）；
@@ -363,9 +376,20 @@ enum BearyPublishPill {
         let pill = BearyPublishPillView()
         container.addSubview(pill)
         container.bringSubviewToFront(pill)
-        let bottomConstraint = pill.bottomAnchor.constraint(
-            equalTo: container.safeAreaLayoutGuide.bottomAnchor,
-            constant: BearyToast.bottomConstant(for: container))
+        // 2026-11-14 盖底栏修：pill 底贴底栏/FAB 顶沿之上 12pt（layout 锚点，
+        // 藏栏 transform 不动锚点，栏回来时 pill 已在它上方、不盖栏）。
+        // 旧口径用一次性安全区常数（BearyToast.bottomConstant）：栏藏起时
+        // 回落 -32、正好落进底栏带（底栏顶在安全区底之上 64pt），栏一回来
+        // 就被盖住，且常数只在 show 时算一次、永不重算。找不到 Chrome
+        // 时仍回落旧常数（宿主不是 Chrome 容器时无栏可锚）。
+        let bottomConstraint: NSLayoutConstraint
+        if let topAnchor = BearyToast.publishPillTopAnchor(in: container) {
+            bottomConstraint = pill.bottomAnchor.constraint(equalTo: topAnchor, constant: -12)
+        } else {
+            bottomConstraint = pill.bottomAnchor.constraint(
+                equalTo: container.safeAreaLayoutGuide.bottomAnchor,
+                constant: BearyToast.bottomConstant(for: container))
+        }
         NSLayoutConstraint.activate([
             pill.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             pill.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 20),
