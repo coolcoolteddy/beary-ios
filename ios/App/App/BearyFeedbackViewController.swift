@@ -482,7 +482,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         // 补缺 P3-34：绿勾走官方包 icon_check，不用“✓”文本。
         let badgeCheck = UIImageView(image: BearyIconImages.image(named: "icon_check", pointSize: 16))
         badgeCheck.translatesAutoresizingMaskIntoConstraints = false
-        badgeCheck.tintColor = .white
+        // 绿底深浅同值，勾固定深墨 onBrand（不用 ink：深色下 ink 变近白，白勾/绿底仅约 2.38:1；黑勾约 8.8:1）。
+        badgeCheck.tintColor = BearyColors.onBrand
         badgeCheck.contentMode = .scaleAspectFit
         statusBadge.translatesAutoresizingMaskIntoConstraints = false
         statusBadge.backgroundColor = BearyColors.green
@@ -938,12 +939,12 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             let ready: Bool
             if let urlValue = url {
                 self.replaceZipURL(urlValue)
-                self.statusLabel.text = "反馈数据已准备就绪"
-                self.statusBadge.isHidden = false
+                self.setStatusTextFaded("反馈数据已准备就绪")
+                self.showStatusBadgeFaded()
                 ready = true
             } else {
                 self.zipReady = false
-                self.statusLabel.text = "反馈数据准备失败"
+                self.setStatusTextFaded("反馈数据准备失败")
                 self.statusBadge.isHidden = true
                 BearyAppLog.event("feedback zip failed")
                 ready = false
@@ -1107,8 +1108,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             // 与 submitTapped 两处守卫同口径，防多窗口叠出。
             guard self.view.window != nil, self.presentedViewController == nil else { return }
             guard ready, let url = self.zipURL else {
-                BearyToast.show(in: self.view, message: "日志包准备失败")
-                BearyHaptics.rejectionWarning()
+                BearyToast.show(in: self.view, message: "日志包准备失败，请重试")
+                self.playDenyShake(on: self.shareButton)
                 return
             }
             // 分享内容只含日志包 zip 一个文件，不含描述与图片 / 视频。
@@ -1132,7 +1133,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             // 与 submitTapped 两处守卫同口径，防多窗口叠出。
             guard self.view.window != nil, self.presentedViewController == nil else { return }
             guard ready else {
-                BearyToast.show(in: self.view, message: "日志包准备失败")
+                BearyToast.show(in: self.view, message: "日志包准备失败，请重试")
                 BearyHaptics.rejectionWarning()
                 return
             }
@@ -1145,6 +1146,20 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 BearyHaptics.rejectionWarning()
             }
         }
+    }
+
+    /// 分享失败拒绝动效（设置页同款：摇头＋warning 震动＋拒绝音效；
+    /// 减动效时只跳过视觉抖动，震动与音效照常给）。
+    private func playDenyShake(on button: UIButton) {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+        if UIAccessibility.isReduceMotionEnabled { return }
+        button.layer.removeAnimation(forKey: "bearyFeedbackDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = BearyMotion.screen
+        button.layer.add(shake, forKey: "bearyFeedbackDenyShake")
     }
 
     // MARK: - 邮件（系统 MFMailCompose；未配邮箱时按种类分流）
