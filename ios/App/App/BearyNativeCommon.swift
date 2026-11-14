@@ -3460,11 +3460,16 @@ enum BearyVisibility {
 enum BearyVisibilityText {
     static func publishedRelativeString(publishedAtMs: Int?) -> String? {
         guard let ms = publishedAtMs, ms > 0 else { return nil }
+        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
         if diff < 60 { return "刚刚" }
         if diff < 3600 { return "\(Int(diff / 60)) 分钟前" }
         if diff < 86400 { return "\(Int(diff / 3600)) 小时前" }
-        return "\(Int(diff / 86400)) 天前"
+        // 7 天口径（2026-11-15 Li 定，全站日记时间统一）：7 天内用相对时间，
+        // 7 天外回落绝对时间 M月d日 H:mm。截断放在共用工具里，所有调用点
+        // （详情、卡片、私信、通知、我的页）自动跟这条口径，不用各处另处理。
+        if diff < 7 * 86400 { return "\(Int(diff / 86400)) 天前" }
+        return BearyText.monthDayHourMinuteFormatter.string(from: date)
     }
 }
 

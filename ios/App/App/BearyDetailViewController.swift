@@ -144,7 +144,7 @@ final class BearyDetailViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let contentColumnView = UIView()
     /// 批 B 头行栈：首页卡片 headerStack 同款（spacing 0 + setCustomSpacing 对照表，
-    /// 见 updateDiaryStackSpacing；@ 行藏时作者行改钉头像顶、顶约束停用，
+    /// 见 updateDiaryStackSpacing；@ 行藏时作者行改钉头像顶、头行顶约束保持激活，
     /// @ 行显时顶距 17 走头行顶约束）。
     /// 只放 @ 行、作者行、限时行；标题/正文一律在下方的 bodyStack 全宽排布。
     private let headerStack = UIStackView()
@@ -156,6 +156,10 @@ final class BearyDetailViewController: UIViewController {
     /// 只在 recipientRow 藏时激活（见 updateDiaryStackSpacing）；
     /// @ 行显时停用、改走头行顶约束。
     private var authorRowTopConstraint: NSLayoutConstraint?
+    /// @ 行零高约束：@ 行藏时用 required 把它压到 0 高（只在 @ 行藏时激活，见 updateDiaryStackSpacing）。
+    /// 132 真机实测：@ 行隐藏后仍占约 12pt 高，栈内链把作者行往下顶，#1443 的钉顶约束
+    /// 被栈内部约束顶掉，名字顶比头像顶低约 16pt；零高约束钉死它。
+    private var recipientRowZeroHeightConstraint: NSLayoutConstraint?
     /// 正文栈顶：取头像底与头行底两者较大者 + 6（紧贴用户名下方，取规范标题→正文档 6；
     /// 原 16 有标题／14 无标题，见规范 §3；该槽位改动须走规范同步）；正文全宽，
     /// 头像底约束保留（正文必须 clearance 头像底）。
@@ -923,7 +927,7 @@ final class BearyDetailViewController: UIViewController {
         // 一旦某一路异常即全崩，故改本地常量激活、彻底去掉强制解包，行为不变。
         let narrowLeading = columnNarrowLeading
         let narrowTrailing = columnNarrowTrailing
-        // 批 B：头像顶 16；头行顶：无 @ 行时作者行钉头像顶（顶约束停用）、
+        // 批 B：头像顶 16；头行顶：无 @ 行时作者行钉头像顶（头行顶约束保持激活、16）、
         // 有 @ 行时 17，见 updateDiaryStackSpacing（@ 行显隐的 1pt 差值保留）。
         // 头行右缩进恒 0：⋯ 已挪到顶栏（与返回钮平行），作者行不再给 ⋯ 留位，
         // 日期为行内最右元素；正文栈左右与内容列齐平、右缩进恒 0。
@@ -1051,6 +1055,8 @@ final class BearyDetailViewController: UIViewController {
         // 作者行顶对齐约束：初始不激活，只在 @ 行藏时启用（见 updateDiaryStackSpacing）。
         // 建在此处：authorRow 已入栈、avatarButton 已入内容列，两端已同属内容列层级。
         authorRowTopConstraint = authorRow.topAnchor.constraint(equalTo: avatarButton.topAnchor)
+        // @ 行零高约束：初始不激活，只在 @ 行藏时启用（见 updateDiaryStackSpacing）。
+        recipientRowZeroHeightConstraint = recipientRow.heightAnchor.constraint(equalToConstant: 0)
 
         nameButton.titleLabel?.font = BearyDynamicType.cardTitleFont()
         nameButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -1343,26 +1349,29 @@ final class BearyDetailViewController: UIViewController {
     /// 三条约束定（见 buildLayout／buildCardHeader）；标题→正文 6（标题隐藏时 0）、
     /// 正文→图片 14、图片→引用 12、引用→定位 12、定位→操作行 14、操作行→回应行 12；
     /// 批 E 位置行插在引用卡与操作行之间（无位置时整组隐藏、不留空行）；
-    /// 头行顶：@ 行藏时作者行钉头像顶（顶约束停用）、@ 行显时 17。
+    /// 头行顶：@ 行藏时作者行钉头像顶（头行顶约束保持激活、16）、@ 行显时 17。
     private func updateDiaryStackSpacing() {
         // 作者行顶部统一 16（2026-11-05 ChatGPT 间距跟进）：@ 行显隐的 1pt
         // 差值保留（16／17），只改基线不改相对行为。
         // 名字行偏下（卡片同款，129 真机实测：名字比头像顶低约 10pt，
         // 时间约 11pt）：#1145 的字体行高算顶距没修动；#1288 的钉中心也没修住——
         // 20pt 的行钉在 40pt 头像中心上，用户名顶仍比头像顶低 (40−20)/2 ≈ 10pt，
-        // 居中从来不是顶对齐。改钉顶部：@ 行藏时作者行顶 == 头像顶，用户名顶
-        // 即头像顶（常见态约 +0.3pt；皇冠／心情可见时栈顶比用户名顶高约一个
-        // 下行距，用户名约 +4pt，见 PR 正文）；行真高、基线几何、残余间距
-        // 一律不再影响；顶约束本分支停用。
-        // @ 行显时恢复顶约束、顶距 17，保持顶对齐不动。
+        // 居中从来不是顶对齐。#1443 改钉顶部：@ 行藏时作者行顶 == 头像顶，但 132 真机
+        // 实测仍低约 16pt——钉顶约束钉的是栈内子视图，栈内它上方的 @ 行隐藏后仍占
+        // 约 12pt 高，栈内链把作者行往下顶，外部钉顶约束被栈内部约束顶掉。本次三处
+        // 一致钉死：@ 行藏时头行顶约束保持激活（16，不再停用）＋ @ 行 required 零高
+        // 压零 ＋ 作者行钉顶保留；@ 行显时恢复顶约束、顶距 17，保持顶对齐不动。
+        // 行内名字顶比行顶低约 4-5pt 是按钮内字高居中（正常 leading），不在本次范围。
         if recipientRow.isHidden {
-            headerStackTopConstraint?.isActive = false
+            headerStackTopConstraint?.isActive = true
+            headerStackTopConstraint?.constant = 16
             authorRowTopConstraint?.isActive = true
         } else {
             authorRowTopConstraint?.isActive = false
             headerStackTopConstraint?.isActive = true
             headerStackTopConstraint?.constant = 17
         }
+        recipientRowZeroHeightConstraint?.isActive = recipientRow.isHidden
         headerStack.setCustomSpacing(recipientRow.isHidden ? 0 : 4, after: recipientRow)
         headerStack.setCustomSpacing(4, after: authorRow)
         // 正文紧贴用户名下方：头行→正文栈间距取规范标题→正文档 6（原 16 有标题／
@@ -1706,8 +1715,8 @@ final class BearyDetailViewController: UIViewController {
     }
 
     /// 首页卡片头部渲染同款：头像（含首字母兜底）+ @ 行 + 名／徽章／皇冠／
-    /// 时间（绝对时间 M月d日 H:mm，小时不补零；详情不跟首页的相对时间口径，
-    /// 见预览映射表）+ 天气 15 图标 + 心情（20 熊图 + 13 灰字）。
+    /// 时间（相对时间，与私信/通知/广场卡同口径，7 天外回绝对时间；2026-11-15 改，取代绝对时间）
+    /// + 天气 15 图标 + 心情（20 熊图 + 13 灰字）。
     /// 空项一律隐藏、不留空位；心情 key 不变时复用播放器（深浅由其内部切换）。
     /// 旧日记心情改位：心情不再单独贴在作者行，改跟在正文最后一个字
     /// 后面——用静态熊图附件直接缀在正文 attributed 串末尾（紧贴末字、
@@ -1782,10 +1791,13 @@ final class BearyDetailViewController: UIViewController {
         avatarInitialLabel.text = String(authorNameValue.prefix(1)).uppercased()
         if let createdAt = entry.createdAt {
             // 冲突清单第 4 条：公开内容显示「编辑于 X」（编辑过才显；私密不显）。
-            let createdText = BearyDiaryCardCell.feedTimeString(ms: createdAt)
+            // 时间一律相对时间（与私信/通知/广场卡同口径：刚刚/X 分钟前/X 小时前/X 天前，
+            // 7 天外回绝对时间，见 BearyVisibilityText.publishedRelativeString；2026-11-15 改，取代绝对时间）。
+            let createdText = BearyVisibilityText.publishedRelativeString(publishedAtMs: createdAt) ?? BearyDiaryCardCell.feedTimeString(ms: createdAt)
             if BearyEphemeral.isEffectivelyPublic(entry),
                let updatedAt = entry.updatedAt, updatedAt > createdAt {
-                timeLabel.text = "\(createdText) · 编辑于 \(BearyDiaryCardCell.feedTimeString(ms: updatedAt))"
+                let editedText = BearyVisibilityText.publishedRelativeString(publishedAtMs: updatedAt) ?? BearyDiaryCardCell.feedTimeString(ms: updatedAt)
+                timeLabel.text = "\(createdText) · 编辑于 \(editedText)"
             } else {
                 timeLabel.text = createdText
             }
