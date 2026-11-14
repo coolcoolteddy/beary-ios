@@ -2404,8 +2404,12 @@ class BearyDiaryCardCell: UITableViewCell {
         self.isExpanded = isExpanded
         let authorNameValue = bearyDeletedAuthorDisplayName(entry.authorName) ?? "beary 用户"
         nameLabel.text = authorNameValue
-        if let createdMs = entry.createdAt, createdMs > 0 {
-            timeLabel.text = BearyDiaryCardCell.feedTimeString(ms: createdMs)
+        // 我的页时间改相对时间（与 feed 模式同口径：有效公开取发布时间，否则取创建时间；
+        // 共用 BearyVisibilityText.publishedRelativeString，不另造工具）。
+        if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt) {
+            timeLabel.text = relative
+        } else if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.createdAt) {
+            timeLabel.text = relative
         } else {
             timeLabel.text = nil
         }
