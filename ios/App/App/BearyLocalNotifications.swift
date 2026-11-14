@@ -196,7 +196,7 @@ final class BearyLocalNotifications {
                 return BearyBeijingDay.dayKey(ofMs: createdAt) == todayKey
             }
             if !(isToday && hasEntryToday) {
-                desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: "今天还没有写日记，写一点，留一点。"))
+                desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: "今天还没写日记"))
             }
         }
 
