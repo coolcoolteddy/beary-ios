@@ -17,9 +17,10 @@ import SQLite3
 ///   分词（建 3 字子串索引，子串可搜；2 字及以下查询没有 trigram 可匹配，
 ///   走 LIKE 兜底查 title/body），与服务端 LIKE“整串子串匹配”的口径对齐。
 /// - 索引文件按账号分放 Application Support：
-///   `beary_mine_search_<accountId>.sqlite3`；指纹（FNV-1a，覆盖 id／
-///   created_at／标题／正文）不变时不重建，改动才重建；分词方案另记
-///   schema_version，方案变了强制重建（指纹不覆盖分词器）。
+///   `beary_mine_search_<accountId>.sqlite3`；归档修订号
+///   （BearyEntrySyncStore.archiveRevision，活盘日内容每变一次 +1）
+///   不变时不读全量、不算指纹，只查 FTS + 按 id 取命中；变了才读全量、
+///   算指纹（FNV-1a，覆盖 id／created_at／标题／正文）重建。
 /// - 同步调用，调用方须在后台队列调（搜索回包线程即可）；内部串行队列
 ///   串起全部 SQLite 访问。FTS5 不可用或打开失败时返回 []，服务端兜底。
 final class BearyMineSearchIndex {
@@ -53,14 +54,18 @@ final class BearyMineSearchIndex {
         guard let accountId = SessionManager.shared.currentUser?.id else { return [] }
         guard let phrase = ftsPhraseQuery(query) else { return [] }
         guard openIfNeeded(accountId: accountId) else { return [] }
-        guard let entries = BearyEntrySyncStore.loadAllEntries(accountId: accountId) else { return [] }
-        rebuildIfNeeded(entries: entries)
-        var byId: [String: Entry] = [:]
-        byId.reserveCapacity(entries.count)
-        for entry in entries {
-            if let id = entry.id {
-                byId[id] = entry
+        // 修订号快查：本地归档不完整时返回 []（调用方用服务端兜底）；
+        // 修订号与上次见到的不一致时才读全量、算指纹重建，否则跳过
+        // 全量读盘与全量指纹，只查 FTS + 按 id 取命中。
+        guard BearyEntrySyncStore.isArchiveComplete(accountId: accountId) else { return [] }
+        let revision = BearyEntrySyncStore.archiveRevision(accountId: accountId)
+        var loadedEntries: [Entry]? = nil
+        if storedRevision() != revision {
+            guard let entries = BearyEntrySyncStore.loadAllEntries(accountId: accountId) else { return [] }
+            if rebuildIfNeeded(entries: entries) {
+                storeRevision(revision)
             }
+            loadedEntries = entries
         }
         // 只搜已索引列（title/body）；entry_id 与 created_at 为 UNINDEXED 存量列，
         // 不进倒排、只用于取 id 与排序。
@@ -102,17 +107,40 @@ final class BearyMineSearchIndex {
         while results.count < pageSize {
             sqlite3_bind_int(stmt, Int32(offsetParam), Int32(offset))
             sqlite3_reset(stmt)
-            var pageCount = 0
+            var pageIds: [String] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
                 guard let text = sqlite3_column_text(stmt, 0) else { continue }
-                pageCount += 1
-                if let entry = byId[String(cString: text)], !BearyEphemeral.isExpired(entry) {
+                pageIds.append(String(cString: text))
+            }
+            guard !pageIds.isEmpty else { break }
+            offset += pageIds.count
+            // 命中取回：刚重建过时手头已有全量快照，直接按 id 挑；否则只读
+            // 命中 id 所在的日文件（最新日优先、找齐即停），不读全量。
+            let pageEntries: [Entry]
+            if let loaded = loadedEntries {
+                let wanted = Set(pageIds)
+                pageEntries = loaded.filter { $0.id.map { wanted.contains($0) } ?? false }
+            } else {
+                guard let loaded = BearyEntrySyncStore.loadEntries(accountId: accountId, byIds: Set(pageIds)) else { return [] }
+                pageEntries = loaded
+            }
+            var pageById: [String: Entry] = [:]
+            pageById.reserveCapacity(pageEntries.count)
+            for entry in pageEntries {
+                if let id = entry.id {
+                    pageById[id] = entry
+                }
+            }
+            // 建索引后才过期的篇：入库时还是存活态，查询时按当前时间再挡一道。
+            // 过滤放截取之前：每页先取命中 id、按 id 取回正文再滤掉过期篇，
+            // 凑够 20 条有效结果或取不到行为止——首批 20 条全过期也不丢
+            // 后面的有效匹配。
+            for id in pageIds {
+                if let entry = pageById[id], !BearyEphemeral.isExpired(entry) {
                     results.append(entry)
                     if results.count >= pageSize { break }
                 }
             }
-            guard pageCount > 0 else { break }
-            offset += pageCount
         }
         return results
     }
@@ -224,13 +252,37 @@ final class BearyMineSearchIndex {
         sqlite3_step(stmt)
     }
 
-    private func rebuildIfNeeded(entries: [Entry]) {
+    private func storedRevision() -> Int? {
+        let sql = "SELECT value FROM mine_meta WHERE key = 'revision'"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW, let text = sqlite3_column_text(stmt, 0) else { return nil }
+        return Int(String(cString: text))
+    }
+
+    private func storeRevision(_ value: Int) {
+        let sql = "INSERT OR REPLACE INTO mine_meta(key, value) VALUES ('revision', ?)"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return }
+        defer { sqlite3_finalize(stmt) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        String(value).withCString { ptr in
+            sqlite3_bind_text(stmt, 1, ptr, -1, transient)
+        }
+        sqlite3_step(stmt)
+    }
+
+    /// 指纹覆盖 id／created_at／标题／正文：任一改动都触发重建；指纹不变不重建。
+    /// 返回索引是否已是这批快照的最新态（指纹本就一致，或重建成功并已存指纹）；
+    /// 重建失败返回 false——调用方不记修订号，下次搜索重试。
+    private func rebuildIfNeeded(entries: [Entry]) -> Bool {
         let fingerprint = fingerprint(entries: entries)
         // 分词方案变了也重建（兜底：正常流程由 openIfNeeded 的删表重建＋清指纹
         // 触发；这里不记版本——版本只在删表重建成功后记，否则会把旧分词的
         // 表误标成新版本）。
-        guard fingerprint != storedFingerprint() || storedSchemaVersion() != currentSchemaVersion else { return }
-        guard sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else { return }
+        guard fingerprint != storedFingerprint() || storedSchemaVersion() != currentSchemaVersion else { return true }
+        guard sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else { return false }
         var ok = sqlite3_exec(db, "DELETE FROM mine_fts", nil, nil, nil) == SQLITE_OK
         if ok {
             let sql = "INSERT INTO mine_fts(entry_id, title, body, created_at) VALUES (?, ?, ?, ?)"
@@ -258,8 +310,10 @@ final class BearyMineSearchIndex {
         }
         if ok, sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK {
             storeFingerprint(fingerprint)
+            return true
         } else {
             sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            return false
         }
     }
 
