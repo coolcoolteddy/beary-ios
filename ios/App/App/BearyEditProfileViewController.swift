@@ -1347,6 +1347,11 @@ class BearyEditProfileViewController: UIViewController {
             case "name_no_text": return "昵称需至少包含一个文字或数字"
             case "signature_too_long": return "签名最多 60 个字"
             case "avatar_too_large": return "头像太大了，换一张小一点的吧"
+            // 2026-11-14 换头像保存失败实证：服务端 BEARY_IMAGES（R2）绑定
+            // 被缺绑定的部署清掉后，头像上传走 avatar_upload_failed；
+            // 旧口径没映射这两个码，一律只显示“保存失败，请重试”。
+            case "avatar_upload_failed": return "头像上传失败，请重试"
+            case "invalid_avatar": return "头像格式不正确，换一张图试试"
             case "cover_too_large": return "这张图太大了，换一张小一点的吧"
             default: return "保存失败，请重试"
             }
