@@ -1793,14 +1793,15 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 strongSelf.showDraftToast(message: "删除失败，请重试")
                 return
             }
+            // 2026-11-14 点仍要关闭后已删草稿复活修：删盘成功即通知编辑器，
+            // 不再只认开箱时拍的 currentDraftId 快照——恢复可能还没落地，
+            // 盒子那时根本不知道这篇就是正在写的那篇；编辑器收到后自行
+            // 判断（只认当前握着的那篇），并把该 id 记进已删集合，拦住
+            // 随后落地的恢复。6 秒内点撤销会把草稿插回箱里，编辑器侧
+            // 已清的槽位由 onUndoCurrentDraft 接回。
+            strongSelf.onDeleteCurrentDraft?(draftValue.draftId)
             if let currentIndex = strongSelf.drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) {
                 strongSelf.drafts.remove(at: currentIndex)
-                // DF-2：删的是编辑器正在写的那篇时通知编辑器（容器接线后编辑器清 draftId）。
-                // 注意：6 秒内点撤销会把草稿插回箱里，但编辑器侧已清的槽位不会自动接回，
-                // 容器需决定撤销后是否重新打开该篇（见交回说明）。
-                if let current = strongSelf.currentDraftId, current == draftValue.draftId {
-                    strongSelf.onDeleteCurrentDraft?(draftValue.draftId)
-                }
             }
             if strongSelf.drafts.isEmpty {
                 // 删到空时无剩余卡片可保留，走原有全量渲染出空态。
