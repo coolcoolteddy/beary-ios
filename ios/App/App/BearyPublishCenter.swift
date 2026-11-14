@@ -105,6 +105,9 @@ struct BearyPublishJob {
     /// 成功回调：新日记 id＋本次发布的代次。
     let onPublished: ((String, UUID) -> Void)?
     let onRequireLogin: (() -> Void)?
+    /// 第 25 轮 18 项：实况失败等“打开草稿重试”入口——编辑器已退场时由容器
+    /// 打开草稿箱；nil 时失败只按 pill／toast 展示，不提供入口。
+    let onOpenDraft: (() -> Void)?
 }
 
 /// 发布进度：单调、不回退。按步骤（图片 0..<n、POST 为第 n 步）记账：
@@ -271,6 +274,9 @@ final class BearyPublishCenter {
             failedJobs.removeValue(forKey: key)
             clearPublishFailureMark(draftId: job.snapshot.draftId, accountId: job.snapshot.accountId)
         }
+        // 第 25 轮 17 项：发布前一次性估算全部步骤的总预算（图片＋POST），
+        // 再开始第一步——进度分母从一开始就是总量，首图传完不再冲到 0.95。
+        seedTotalEstimate(for: job, into: runningJob.progress)
         if let host = job.hostView {
             let pill = BearyPublishPill.show(in: host)
             currentPill = pill
@@ -311,9 +317,31 @@ final class BearyPublishCenter {
                 case .success:
                     runningJob.sourcePublished = true
                     self.uploadNext(runningJob)
-                case .failure:
-                    // 原日记公开失败：原日记未动、新篇未发，草稿保留。
-                    self.fail(runningJob, message: "原日记公开失败，请重试")
+                case .failure(let error):
+                    // 第 25 轮 20 项：网络失败结果未知（超时也可能服务端已公开）——
+                    // 先查原篇当前状态再定文案：已公开即继续发新篇；仍私密即原口径
+                    // 失败；查询本身也失败时明说结果未知，不谎称未公开。非网络失败
+                    // 是服务端已明确拒绝，结果已知，直接按原口径失败。
+                    if case .network = error {
+                        BearyAPI.shared.fetchEntry(id: sourceId) { [weak self, weak runningJob] fetchResult in
+                            DispatchQueue.main.async {
+                                guard let self = self, let runningJob = runningJob, !runningJob.finished else { return }
+                                switch fetchResult {
+                                case .success(let entry):
+                                    if entry.isPublic == true || entry.visibility == "public" {
+                                        runningJob.sourcePublished = true
+                                        self.uploadNext(runningJob)
+                                    } else {
+                                        self.fail(runningJob, message: "原日记公开失败，请重试")
+                                    }
+                                case .failure:
+                                    self.fail(runningJob, message: "网络不稳定，原日记是否已公开未知，请打开草稿查看后重试")
+                                }
+                            }
+                        }
+                    } else {
+                        self.fail(runningJob, message: "原日记公开失败，请重试")
+                    }
                 }
             }
         }
@@ -402,6 +430,7 @@ final class BearyPublishCenter {
             var fullMimeType = "image/jpeg"
             if image.uploadMode == .original, let originalFile = image.originalFile,
                let rawData = BearyDraftImageStore.originalData(for: originalFile),
+               rawData.count <= 5 * 1024 * 1024,
                let strippedData = BearyImagePrep.strippedGPSData(rawData),
                let detectedMime = BearyImagePrep.mimeType(of: strippedData),
                BearyImagePrep.originalUploadMimeTypes.contains(detectedMime),
@@ -452,7 +481,11 @@ final class BearyPublishCenter {
                         // 实况回包缺 live_key = 视频没落下：按失败处理，
                         // 不把实况当静态图发出（与编辑器 uploadPrepared 同口径）。
                         if videoData != nil, resp.liveKey == nil || resp.liveKey?.isEmpty == true {
-                            self.fail(runningJob, message: self.partialFailureMessage("实况视频上传失败，请点图重试", runningJob: runningJob))
+                            // 第 25 轮 18 项：编辑器已退场、pill 不可点，“请点图重试”
+                            // 无处可点——改提示打开草稿重试，并经 fail() 的草稿入口
+                            // 呈现（见 openDraftOnFailure）。
+                            runningJob.openDraftOnFailure = true
+                            self.fail(runningJob, message: "实况视频上传失败，已保存为草稿，请打开草稿重试")
                             return
                         }
                         runningJob.uploadResults[index] = key
@@ -613,6 +646,18 @@ final class BearyPublishCenter {
             // 本任务的 pill 已被新任务接管（或本任务无 pill）：成功不另弹
             // 反馈，onPublished 的切页即反馈；只把当前 pill 的篇数刷下来。
             refreshPillTitle()
+            if let container = terminalToastContainer(for: runningJob) {
+                // 第 25 轮 16 项：pill 已被新任务接管时，成功结果同样以 toast 留档。
+                BearyToast.show(in: container, message: "已发布")
+            }
+        }
+        // 第 25 轮 15 项：最终成功回包再次核对发起账号——uploadNext 只在每步前
+        // 校验，POST 回包前切号仍可能让旧账号结果走到新账号容器；失配时不走
+        // onPublished（容器按当前账号刷新与 upsert 都不属于旧账号）。草稿清理
+        // 仍按快照账号做（服务端已落盘），pill 照常显示已发布。
+        if let expected = snapshot.originAccountId,
+           BearyAPI.shared.authAccountId != expected {
+            return
         }
         runningJob.job.onPublished?(entryId, runningJob.job.publishToken)
     }
@@ -633,6 +678,18 @@ final class BearyPublishCenter {
         BearyHaptics.rejectionWarning()
         BearySoundPlayer.play(.refuseBonk)
         recordFailure(runningJob, message: message)
+        if runningJob.openDraftOnFailure, let openDraft = runningJob.job.onOpenDraft,
+           let container = terminalToastContainer(for: runningJob) {
+            // 第 25 轮 18 项：实况视频上传失败——编辑器已退场、pill 不可点，
+            // 故本次失败不走 pill，改以带“打开草稿”入口的 toast 呈现；
+            // pill 与 toast 同落点，叠加会互挡，只留 toast。
+            if runningJob.pill === currentPill {
+                runningJob.pill?.dismiss()
+                currentPill = nil
+            }
+            BearyToast.show(in: container, message: message, actionTitle: "打开草稿", action: openDraft)
+            return
+        }
         if let pill = runningJob.pill, pill === currentPill {
             pill.finishFailure(message: message)
             currentPill = nil
@@ -714,7 +771,8 @@ final class BearyPublishCenter {
             sourceAlreadyPublished: failed.sourcePublished || failed.job.sourceAlreadyPublished,
             hostView: failed.job.hostView ?? Self.keyWindowRootView(),
             onPublished: failed.job.onPublished,
-            onRequireLogin: failed.job.onRequireLogin)
+            onRequireLogin: failed.job.onRequireLogin,
+            onOpenDraft: failed.job.onOpenDraft)
         failedJobs.removeValue(forKey: draftId)
         clearPublishFailureMark(draftId: failed.job.snapshot.draftId, accountId: failed.job.snapshot.accountId)
         guard start(job: retryJob) else { return .alreadyRunning }
@@ -934,6 +992,53 @@ final class BearyPublishCenter {
         runningJob.pill?.setProgress(min(value, 0.95), animated: false)
     }
 
+    /// 第 25 轮 16／18 项：终态结果被接管时的 toast 落点——宿主容器优先
+    /// （编辑器已退场也还在），没有宿主时退回当前 pill 的容器。
+    private func terminalToastContainer(for runningJob: RunningJob) -> UIView? {
+        runningJob.job.hostView ?? currentPill?.superview
+    }
+
+    /// 第 25 轮 17 项：发布前按全部图片＋POST 一次性立总预算（口径与各步
+    /// 起传时的 setEstimate 一致：base64 体量＋固定开销；原图模式按原图
+    /// 文件计，不按压缩 JPEG 计）。文件已缺失的步先不立预算（起传时按
+    /// 失败处理，不虚增分母）；已有服务端 key 的图不上传，不占预算。
+    /// 只读文件大小，不读文件内容；fileURL 用当前账号解析——起飞前账号
+    /// 校验随后即拦失配，失配任务不展示进度，误算无害。
+    private func seedTotalEstimate(for job: BearyPublishJob, into progress: BearyPublishProgress) {
+        for (index, image) in job.images.enumerated() {
+            if image.serverKey != nil { continue }
+            guard let localFile = image.localFile else { continue }
+            var bytes: Int64 = 0
+            if image.uploadMode == .original,
+               let originalFile = image.originalFile,
+               let size = fileSize(BearyDraftImageStore.fileURL(for: originalFile)) {
+                bytes += Int64(Self.base64Length(size)) + 23
+            } else if let size = fileSize(BearyDraftImageStore.fileURL(for: localFile)) {
+                bytes += Int64(Self.base64Length(size)) + 23
+            } else {
+                continue
+            }
+            if let thumbSize = fileSize(BearyDraftImageStore.fileURL(for: BearyDraftImageStore.thumbFileName(for: localFile))) {
+                bytes += Int64(Self.base64Length(thumbSize)) + 23
+            }
+            if let videoFile = image.liveVideoFile,
+               let videoSize = fileSize(BearyDraftImageStore.fileURL(for: videoFile)) {
+                bytes += Int64(Self.base64Length(videoSize)) + 27
+            } else if let videoData = image.liveVideoData {
+                bytes += Int64(Self.base64Length(videoData.count)) + 27
+            }
+            bytes += 100
+            progress.setEstimate(step: index, bytes: bytes)
+        }
+        progress.setEstimate(step: job.images.count, bytes: Int64(job.snapshot.content.utf8.count + 1024))
+    }
+
+    private func fileSize(_ url: URL?) -> Int? {
+        guard let url = url,
+              let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber else { return nil }
+        return size.intValue
+    }
+
     /// base64 体量：4 * ceil(n / 3)，不物化字符串。
     private static func base64Length(_ byteCount: Int) -> Int {
         return 4 * ((byteCount + 2) / 3)
@@ -955,6 +1060,9 @@ final class BearyPublishCenter {
         var uploadInFlight = 0
         var uploadFinished = 0
         var sourcePublished: Bool
+        /// 第 25 轮 18 项：本次失败是否走“打开草稿重试”入口（实况回包缺
+        /// live_key 时置位，见 uploadNext；fail() 据此改走带入口的 toast）。
+        var openDraftOnFailure = false
         var progress = BearyPublishProgress()
         /// 最新上报进度（0...1，展示封顶前的值；pill 状态表读它）。
         var lastProgress: Double = 0
