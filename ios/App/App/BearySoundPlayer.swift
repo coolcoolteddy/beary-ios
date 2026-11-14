@@ -244,6 +244,15 @@ enum BearySoundPlayer {
         prewarmScheduled = true
         poolLock.unlock()
         poolQueue.async {
+            // 预热先配会话：buildPlayer 的 prepareToPlay 可能先激活默认会话、
+            // 打断其他 App 的音频；先走 ensureAudioSession（.ambient +
+            // mixWithOthers，sessionConfigured 防重复配置），配不上就不预热，
+            // 与播放路径静默失败口径一致。只改顺序，不改会话参数。
+            do {
+                try ensureAudioSession()
+            } catch {
+                return
+            }
             for sound in prewarmSounds {
                 poolLock.lock()
                 let count = pooledPlayers[sound]?.count ?? 0
