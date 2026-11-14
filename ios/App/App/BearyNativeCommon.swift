@@ -2473,7 +2473,54 @@ enum BearyImagePrep {
     }
 
     static func dataURL(_ data: Data) -> String {
-        return "data:image/jpeg;base64," + data.base64EncodedString()
+        return dataURL(data, mimeType: "image/jpeg")
+    }
+
+    /// mime 感知版：原图按实测格式发（HEIC 发 data:image/heic;base64,...），
+    /// 压缩图仍走默认 image/jpeg。mimeType 由调用方用 mimeType(of:) 认出。
+    static func dataURL(_ data: Data, mimeType: String) -> String {
+        return "data:" + mimeType + ";base64," + data.base64EncodedString()
+    }
+
+    /// 按 magic bytes 认图片格式（与服务端 sniffImageFormat 同口径）：
+    /// jpeg / png / webp / heic；认不出返 nil（调用方回落压缩）。
+    static func mimeType(of data: Data) -> String? {
+        guard data.count >= 12 else { return nil }
+        let bytes = [UInt8](data.prefix(12))
+        if bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF { return "image/jpeg" }
+        if bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 { return "image/png" }
+        if bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 && bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50 { return "image/webp" }
+        if bytes[4] == 0x66 && bytes[5] == 0x74 && bytes[6] == 0x79 && bytes[7] == 0x70 {
+            let brand = String(bytes: bytes[8...11], encoding: .ascii) ?? ""
+            if ["heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs"].contains(brand) { return "image/heic" }
+        }
+        return nil
+    }
+
+    /// 原图像素尺寸（不解码像素，只读图片头；读不到返 nil）。
+    static func pixelSize(of data: Data) -> (width: Int, height: Int)? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else { return nil }
+        guard let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int else { return nil }
+        return (width, height)
+    }
+
+    /// 原图剥 GPS（只删定位，保留其他元数据；无 GPS 原样返回；剥失败返 nil）。
+    /// 口径同 #1426 实况视频（只删位置项、失败绝不发带 GPS 的原始字节）：
+    /// 用 CGImageDestination 拷源图数据、不重编码像素，只删 GPS 字典。
+    /// HEIC 剥不了 GPS 时返 nil——调用方回落压缩，绝不发带定位的原图。
+    static func strippedGPSData(_ data: Data) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        guard let type = CGImageSourceGetType(source) else { return nil }
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else { return nil }
+        guard properties[kCGImagePropertyGPSDictionary] != nil else { return data }
+        var mutableProperties = properties
+        mutableProperties.removeValue(forKey: kCGImagePropertyGPSDictionary)
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, type, 1, nil) else { return nil }
+        CGImageDestinationAddImageFromSource(destination, source, 0, mutableProperties as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
     }
 }
 
