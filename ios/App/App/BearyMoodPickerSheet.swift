@@ -222,7 +222,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         return true
     }
 
-    /// 打开时从服务端拉一次库（失败静默用缓存）；增删后通知到时按 key 增量
+    /// 打开时从服务端拉一次库（失败只 toast，有缓存保留内容）；增删后通知到时按 key 增量
     /// 插删“自定义”组（已有项不重建、不清首帧与动画，只有新项入场；
     /// 共同项相对顺序变了才整刷）。
     private func refreshLibrary() {
@@ -254,18 +254,51 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             }
             self.updatePreferredContentSize()
         }
-        BearyGIFLibrary.refresh()
+        loadLibrary()
+    }
+
+    /// 拉库：失败时有缓存保留内容、只 toast 提示刷新失败（不再静默冒充成功）。
+    private func loadLibrary() {
+        BearyGIFLibrary.refresh { [weak self] result in
+            guard let self = self else { return }
+            if case .failed(let cached) = result, cached.isEmpty == false {
+                BearyToast.show(in: self.view, message: "刷新失败，请重试")
+            }
+        }
     }
 
     /// “自定义”组内长按 cell：删库内图片（只删库行，不删文件、不影响已发日记）。
+    /// 服务端确认成功才算删掉；失败保留原项，摇头＋toast，下次同步还会出现。
     private func confirmDeleteGIF(key: String) {
         BearyConfirmSheet.show(from: self, title: "从自定义里删除？", message: nil, actions: [
-            BearyConfirmSheet.Action(title: "删除", style: .destructive) {
-                BearyGIFLibrary.remove(key: key)
+            BearyConfirmSheet.Action(title: "删除", style: .destructive) { [weak self] in
+                BearyGIFLibrary.remove(key: key) { success in
+                    guard success == false else { return }
+                    self?.playDeleteGIFfailedFeedback(forKey: key)
+                }
             },
         ])
     }
 
+    /// 删除失败反馈：0.38s 摇头＋toast“删除失败，请重试”；减动效时跳过视觉摇头。
+    private func playDeleteGIFfailedFeedback(forKey key: String) {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+        if UIAccessibility.isReduceMotionEnabled == false {
+            var target: UIView? = emoteCollectionView
+            if let index = groups.firstIndex(where: { $0.id == "mygif" }),
+               let keyIndex = groups[index].keys.firstIndex(of: key) {
+                target = emoteCollectionView?.cellForItem(at: IndexPath(item: keyIndex + 1, section: 0)) ?? target
+            }
+            target?.layer.removeAnimation(forKey: "bearyMoodPickerDeleteFailShake")
+            let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+            shake.values = [0, -8, 8, -5, 5, 0]
+            shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+            shake.duration = BearyMotion.screen
+            target?.layer.add(shake, forKey: "bearyMoodPickerDeleteFailShake")
+        }
+        BearyToast.show(in: view, message: "删除失败，请重试")
+    }
     // MARK: - 网格
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
