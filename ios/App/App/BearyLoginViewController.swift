@@ -779,7 +779,9 @@ final class BearyLoginViewController: UIViewController {
     /// d 为像素比；g 是 WebGL GPU 字符串，原生无对应采集口径，不编造、不带。
     private func deviceSignals() -> [String: Any] {
         let bounds = UIScreen.main.bounds
-        return ["w": Int(bounds.width), "h": Int(bounds.height), "d": Double(UIScreen.main.scale)]
+        // 2026-11-14：补 model（本机友好型号名）——服务端直接采用，登录建会话即存对型号，
+        // 不再依赖 UA 里的 iPhone 标记推断；w/h/d 原样保留（网页同款）。
+        return ["w": Int(bounds.width), "h": Int(bounds.height), "d": Double(UIScreen.main.scale), "model": BearyAPI.deviceModelName()]
     }
 
     /// 审计登录杂项：锚定口径 ^[^@\s]+@[^@\s]+\.[^@\s]+$（恰好一个 @、两边
