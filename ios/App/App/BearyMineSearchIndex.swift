@@ -59,7 +59,10 @@ final class BearyMineSearchIndex {
         }
         // 只搜已索引列（title/body）；entry_id 与 created_at 为 UNINDEXED 存量列，
         // 不进倒排、只用于取 id 与排序。
-        let sql = "SELECT entry_id FROM mine_fts WHERE mine_fts MATCH ? ORDER BY created_at DESC, entry_id DESC LIMIT ?"
+        // 建索引后才过期的篇：入库时还是存活态，查询时按当前时间再挡一道。
+        // 过滤放截取之前：按页取（LIMIT 20 OFFSET k），每页先滤掉过期篇，
+        // 凑够 20 条有效结果或取不到行为止——首批 20 条全过期也不丢后面的有效匹配。
+        let sql = "SELECT entry_id FROM mine_fts WHERE mine_fts MATCH ? ORDER BY created_at DESC, entry_id DESC LIMIT ? OFFSET ?"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return [] }
         defer { sqlite3_finalize(stmt) }
@@ -68,13 +71,24 @@ final class BearyMineSearchIndex {
             sqlite3_bind_text(stmt, 1, ptr, -1, transient)
         }
         sqlite3_bind_int(stmt, 2, Int32(pageSize))
-        var ids: [String] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            guard let text = sqlite3_column_text(stmt, 0) else { continue }
-            ids.append(String(cString: text))
+        var results: [Entry] = []
+        var offset = 0
+        while results.count < pageSize {
+            sqlite3_bind_int(stmt, 3, Int32(offset))
+            sqlite3_reset(stmt)
+            var pageCount = 0
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let text = sqlite3_column_text(stmt, 0) else { continue }
+                pageCount += 1
+                if let entry = byId[String(cString: text)], !BearyEphemeral.isExpired(entry) {
+                    results.append(entry)
+                    if results.count >= pageSize { break }
+                }
+            }
+            guard pageCount > 0 else { break }
+            offset += pageCount
         }
-        // 建索引后才过期的篇：入库时还是存活态，查询时按当前时间再挡一道。
-        return ids.compactMap { byId[$0] }.filter { !BearyEphemeral.isExpired($0) }
+        return results
     }
 
     // MARK: - 索引维护
