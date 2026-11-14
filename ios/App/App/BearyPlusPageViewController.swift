@@ -89,7 +89,7 @@ final class BearyPlusPageViewController: UIViewController {
         labelValue.textColor = BearyColors.gray
         labelValue.textAlignment = .center
         labelValue.numberOfLines = 0
-        labelValue.text = "基础功能免费使用，Plus 带来更多个性化体验。"
+        labelValue.text = "基础功能免费使用。"
         return labelValue
     }()
 
