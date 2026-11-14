@@ -3776,8 +3776,13 @@ final class BearySettingsViewController: UIViewController {
                 // 拒绝两种语义，返回 false 时手势在 .began 即被拦下、不弹确认；
                 // 有内容（文字或附件）时拒绝滑走，用户走顶栏关闭钮弹
                 // “放弃这份反馈？”确认（与编辑资料页同款取舍，见 PR 描述）。
+                // 第 19 轮审计 A3：准备附件期间也拒绝滑走，与关闭钮共用
+                // guardZipInFlightForExit（同一提示）；准备完成后退出与
+                // 关闭钮走同一路径（有内容弹确认、无内容直接退出）。
                 settingsPageEdgeDismiss.shouldAllowInteractiveDismiss = { [weak feedbackVC] in
-                    !(feedbackVC?.hasFeedbackContent ?? false)
+                    guard let feedbackVC = feedbackVC else { return true }
+                    guard feedbackVC.guardZipInFlightForExit() else { return false }
+                    return !feedbackVC.hasFeedbackContent
                 }
             }
             settingsPageEdgeDismiss.attach(to: vc)
