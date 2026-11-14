@@ -27,7 +27,8 @@ struct BearyStoredAccount: Codable {
 
     /// r25-7：Keychain 删除失败后置旗——凭据删不掉、账号无法移除，
     /// 冷启动不再把它当有效账号；下次 save 成功重建记录时清掉标记（自愈）。
-    /// 合成 Codable 对带默认值的属性用 decodeIfPresent，旧 JSON 无此键可解出 false。
+    /// 注意：合成 Codable 对缺键的非可选属性直接抛错，不会用默认值兜底，
+    /// 故 r25-7 之前存的旧记录（无此键）须走下方自定义 init(from:) 兼容。
     var unrecoverable: Bool = false
 
     /// 列表行展示名：显示名 → 邮箱前缀 → @handle → ID。
@@ -39,6 +40,24 @@ struct BearyStoredAccount: Codable {
         }
         if let handle = handle, !handle.isEmpty { return "@" + handle }
         return "ID \(userId)"
+    }
+}
+
+extension BearyStoredAccount {
+    /// 自定义解码：除 unrecoverable 外与合成逻辑一致；unrecoverable 缺键时
+    /// 按 false 解码，兼容 r25-7 之前存的旧记录。放 extension 而非 struct 内，
+    /// 以免自定义 init 压掉 save() 在用的成员逐项构造器。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        userId = try container.decode(Int.self, forKey: .userId)
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
+        handle = try container.decodeIfPresent(String.self, forKey: .handle)
+        email = try container.decodeIfPresent(String.self, forKey: .email)
+        avatarURL = try container.decodeIfPresent(String.self, forKey: .avatarURL)
+        token = try container.decode(String.self, forKey: .token)
+        tokenExpiresAtMs = try container.decodeIfPresent(Double.self, forKey: .tokenExpiresAtMs)
+        savedAtMs = try container.decode(Double.self, forKey: .savedAtMs)
+        unrecoverable = try container.decodeIfPresent(Bool.self, forKey: .unrecoverable) ?? false
     }
 }
 
