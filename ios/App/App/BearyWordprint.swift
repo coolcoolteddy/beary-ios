@@ -91,8 +91,48 @@ final class BearyWordprintView: UIView {
     private final class RowView: UIView {
         var onActivate: (() -> Bool)?
 
+        /// A11：仅 hero 可点行开启按压反馈；compact 行不点，不给按下态。
+        var isPressEnabled = false
+
         override func accessibilityActivate() -> Bool {
             onActivate?() ?? false
+        }
+
+        // A11：UIButton 版按压反馈是 UIControl 专属，词行是 UIView＋手势，
+        // 故在此自带同款手感（同 BearyCalloutPicker 菜单行）：轻震＋微缩＋
+        // 微暗，0.18s（BearyMotion.micro），松手／取消回弹。
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesBegan(touches, with: event)
+            guard isPressEnabled else { return }
+            BearyHaptics.press()
+            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
+                           delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
+                           animations: {
+                               self.transform = CGAffineTransform(scaleX: 0.98, y: 0.98)
+                               self.alpha = 0.6
+                           })
+        }
+
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesEnded(touches, with: event)
+            guard isPressEnabled else { return }
+            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
+                           delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
+                           animations: {
+                               self.transform = .identity
+                               self.alpha = 1
+                           })
+        }
+
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesCancelled(touches, with: event)
+            guard isPressEnabled else { return }
+            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
+                           delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
+                           animations: {
+                               self.transform = .identity
+                               self.alpha = 1
+                           })
         }
     }
 
@@ -311,6 +351,7 @@ final class BearyWordprintView: UIView {
         ])
         if mode == .hero {
             row.isUserInteractionEnabled = true
+            row.isPressEnabled = true
             let tap = UITapGestureRecognizer(target: self, action: #selector(rowTapped(_:)))
             row.addGestureRecognizer(tap)
             row.isAccessibilityElement = true
@@ -481,6 +522,8 @@ final class BearyWordprintDetailViewController: UIViewController {
             barBackground.heightAnchor.constraint(equalToConstant: 8).isActive = true
             let countLabel = UILabel()
             countLabel.font = BearyDynamicType.numberFont()
+            // A10：计数已走 numberFont（scaled），补自动更新开关，与同行月份名同步跟随系统字号。
+            countLabel.adjustsFontForContentSizeCategory = true
             countLabel.textColor = BearyColors.gray
             countLabel.text = "\(monthCount) 篇"
             row.addArrangedSubview(monthLabel)
