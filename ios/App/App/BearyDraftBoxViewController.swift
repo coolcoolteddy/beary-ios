@@ -984,7 +984,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             deleteButton.setImage(trashImage, for: .normal)
         }
         deleteButton.imageView?.contentMode = .scaleAspectFit
-        deleteButton.tintColor = BearyColors.red
+        deleteButton.tintColor = BearyColors.destructiveText
         // 无障碍：照抄回收站口径，把草稿标题拼进按钮名（“删除草稿，标题”）；
         // 无标题草稿用时间文案兜底，不读出空名；删除行为本身不动。
         let draftName = (draftValue.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1088,7 +1088,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         case .saved, .partial:
             statusLabel.textColor = BearyColors.blue
         case .failed:
-            statusLabel.textColor = BearyColors.red
+            statusLabel.textColor = BearyColors.destructiveText
         }
         // 保存状态独立成行、左对齐（末尾 spacer 撑满行宽，视觉位置与原来行内左置一致）。
         let statusRow = UIStackView()

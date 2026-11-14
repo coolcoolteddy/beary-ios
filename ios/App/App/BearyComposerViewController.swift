@@ -5002,7 +5002,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             draftStatusLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
         } else {
             draftStatusLabel.text = "草稿保存失败"
-            draftStatusLabel.textColor = BearyColors.red
+            draftStatusLabel.textColor = BearyColors.destructiveText
             draftStatusLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
         }
         // 窄屏 5 项之 3：独立行文案与工具行组同源（级别逻辑、文案、颜色一处定，
@@ -5340,7 +5340,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 审计-编辑器详情：超限时数字不再隐藏——只显红环用户算不出超了
             // 多少；未超限时仍只留圆环（原口径不动）。
             charCountLabel.text = "\(count)"
-            charCountLabel.textColor = BearyColors.red
+            charCountLabel.textColor = BearyColors.destructiveText
             charCountLabel.isHidden = false
         } else {
             charProgressLayer?.strokeColor = BearyColors.blue.cgColor
@@ -5757,7 +5757,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         failLabel.translatesAutoresizingMaskIntoConstraints = false
         failLabel.text = "上传失败，点按重试"
         failLabel.font = BearyDynamicType.captionFont()
-        failLabel.textColor = BearyColors.red
+        failLabel.textColor = BearyColors.destructiveText
         failLabel.textAlignment = .center
         // 扫包 130（#1253 回归）：文案 9 字 × 12pt 约 108pt，缩略图仅 84pt、
         // failStack 两侧各留 4pt 后只剩 76pt，单行会被截成“上传失败，…”、
@@ -9840,7 +9840,7 @@ private final class ComposerImageItem {
 // 4. 草稿 v3 多槽：正文/心情/图片/天气/@/引用全部进草稿，杀 App 后原样恢复；
 //    发布成功与丢弃只清本篇（currentDraftId），不碰其他篇。
 // 5. 发布/保存无确认弹框（决议第 3 项 B）：点发布/保存直接发；有失败图时 toast 拦截不发（决议第 5 项 A）。
-// 6. 超 2000 字红字提示用 BearyColors.red（网页 --red #e5484d，浅深同值），字数圆环同步变红；
+// 6. 超 2000 字红字提示用 BearyColors.destructiveText，字数圆环仍走 BearyColors.red 同步变红；
 //    图片 × 衬底用 BearyColors.scrim（固定深色半透明，深色下 ink 是近白、白字会看不清）；
 //    上传失败图为行内红底块（红 10% 底 + “上传失败，点按重试”），发布时有失败图 toast 拦截不发。
 //    其余白字只出现在恒定橙底上（心情 chip 回退名）与墨底上（发布 pill），浅深皆可读。

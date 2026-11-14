@@ -1127,7 +1127,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         fieldErrorLabel.translatesAutoresizingMaskIntoConstraints = false
         fieldErrorLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         fieldErrorLabel.adjustsFontForContentSizeCategory = true
-        fieldErrorLabel.textColor = BearyColors.red
+        fieldErrorLabel.textColor = BearyColors.destructiveText
         fieldErrorLabel.numberOfLines = 0
         fieldErrorLabel.text = Self.formErrorText
         fieldErrorLabel.isHidden = true
@@ -1364,9 +1364,9 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         let titleCount = (titleField.text ?? "").count
         let detailCount = detailView.text.count
         titleCountLabel.text = "\(titleCount)/\(Self.titleLimit)"
-        titleCountLabel.textColor = titleCount > Self.titleLimit ? BearyColors.red : BearyColors.gray
+        titleCountLabel.textColor = titleCount > Self.titleLimit ? BearyColors.destructiveText : BearyColors.gray
         detailCountLabel.text = "\(detailCount)/\(Self.detailLimit)"
-        detailCountLabel.textColor = detailCount > Self.detailLimit ? BearyColors.red : BearyColors.gray
+        detailCountLabel.textColor = detailCount > Self.detailLimit ? BearyColors.destructiveText : BearyColors.gray
     }
 
     /// 11：提交钮启用态唯一入口——提交锁期间直接返回，标题变化不得重新启用提交钮。
