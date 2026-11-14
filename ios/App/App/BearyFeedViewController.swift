@@ -249,8 +249,8 @@ class BearyFeedViewController: UIViewController {
         // 按下要等滚动判定才送达按钮，.84 按压慢半拍；关掉后触摸立即送达，
         // 滚动仍可经 canCancelContentTouches（默认 true）取消按钮跟踪（touchCancel 已接回弹）。
         tv.delaysContentTouches = false
-        // 跟手批：默认减速（.normal）松手后滑得太远，改 .fast 让滚动更快停稳。
-        tv.decelerationRate = .fast
+        // 2026-11-14 Li 定：减速不设 .fast，与我的页一致走默认 .normal，
+        // 一甩滑得远、手感统一（原跟手批 .fast 让首页一甩就停）。
         tv.delegate = self
         tv.dataSource = self
         tv.addSubview(pullView)

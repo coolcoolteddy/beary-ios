@@ -2518,8 +2518,8 @@ class BearyTimelineViewController: UIViewController {
         tv.contentInsetAdjustmentBehavior = .never
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         tv.delaysContentTouches = false
-        // 跟手批：默认减速（.normal）松手后滑得太远，改 .fast 让滚动更快停稳。
-        tv.decelerationRate = .fast
+        // 2026-11-14 Li 定：减速不设 .fast，与我的页一致走默认 .normal，
+        // 一甩滑得远、手感统一（原跟手批 .fast 让时间线一甩就停）。
         tv.register(BearyTimelineCell.self, forCellReuseIdentifier: BearyTimelineCell.reuseIdentifier)
         tv.delegate = self
         tv.dataSource = self
