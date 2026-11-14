@@ -491,7 +491,7 @@ final class BearyMessagesViewController: UIViewController {
         let anchor = anchorForVisibleTopRow(in: oldRows)
         let oldHeight = tableView.contentSize.height
         let responseOffsetY = tableView.contentOffset.y
-        if let batch = diffBatch(from: oldRows, to: newRows) {
+        if !oldRows.isEmpty, let batch = diffBatch(from: oldRows, to: newRows) {
             // 小改动：按行更新——删/插/移/重载各走各的口径；模型已是新态，
             // batch 内只做视图侧的对应操作（删用旧下标、插用新下标）。
             mergedBatchInFlight = true
@@ -514,7 +514,10 @@ final class BearyMessagesViewController: UIViewController {
                 }
             })
         } else {
-            // 大改动 / key 冲突：全量重建仍走 reloadData，但同样按锚点保位。
+            // 大改动 / key 冲突 / 旧表为空（首拉）：全量重建仍走 reloadData，
+            // 但同样按锚点保位。旧表为空时不能走 batch：表从未向 dataSource
+            // 要过行数，batch 里 UIKit 读到的更新前行数已是新值，行数对不
+            // 上直接 abort（消息页首开闪退即此坑）。
             tableView.reloadData()
             tableView.layoutIfNeeded()
             restoreAnchor(anchor, oldHeight: oldHeight, responseOffsetY: responseOffsetY)
