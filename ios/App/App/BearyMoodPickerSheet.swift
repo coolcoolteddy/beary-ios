@@ -222,17 +222,36 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         return true
     }
 
-    /// 打开时从服务端拉一次库（失败静默用缓存）；增删后通知到时跟帧刷新
-    /// “自定义”组（只在正看着该组时重刷网格与 sheet 高）。
+    /// 打开时从服务端拉一次库（失败静默用缓存）；增删后通知到时按 key 增量
+    /// 插删“自定义”组（已有项不重建、不清首帧与动画，只有新项入场；
+    /// 共同项相对顺序变了才整刷）。
     private func refreshLibrary() {
         libraryObserver = NotificationCenter.default.addObserver(forName: BearyGIFLibrary.libraryDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self = self else { return }
             let keys = BearyGIFLibrary.cachedKeys()
             guard let index = self.groups.firstIndex(where: { $0.id == "mygif" }) else { return }
+            let oldKeys = self.groups[index].keys
+            guard oldKeys != keys else { return }
             let group = self.groups[index]
-            guard group.keys != keys else { return }
             self.groups[index] = MoodGroup(id: group.id, title: group.title, keys: keys)
-            self.emoteCollectionView?.reloadData()
+            guard self.selectedGroup.id == "mygif", let collectionView = self.emoteCollectionView else {
+                return
+            }
+            let oldSet = Set(oldKeys)
+            let newSet = Set(keys)
+            // 首格是 ＋ 添加格（item 0），库图 keys[i] 在 item i+1。
+            let deleted = oldKeys.enumerated().compactMap { newSet.contains($0.element) ? nil : IndexPath(item: $0.offset + 1, section: 0) }
+            let inserted = keys.enumerated().compactMap { oldSet.contains($0.element) ? nil : IndexPath(item: $0.offset + 1, section: 0) }
+            // 共同项相对顺序不变时才增量插删（正常增删都满足）；顺序变了整刷兜底。
+            let orderKept = oldKeys.filter { newSet.contains($0) } == keys.filter { oldSet.contains($0) }
+            if orderKept, !(deleted.isEmpty && inserted.isEmpty) {
+                collectionView.performBatchUpdates({
+                    if !deleted.isEmpty { collectionView.deleteItems(at: deleted) }
+                    if !inserted.isEmpty { collectionView.insertItems(at: inserted) }
+                }, completion: nil)
+            } else {
+                collectionView.reloadData()
+            }
             self.updatePreferredContentSize()
         }
         BearyGIFLibrary.refresh()
