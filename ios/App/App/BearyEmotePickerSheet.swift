@@ -94,6 +94,11 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     }
     private var sheetHeightConstraint: NSLayoutConstraint?
     private var sheetBottomConstraint: NSLayoutConstraint?
+    /// 本次拖动起手时 sheetView 底安全区 inset（静止态）：
+    /// 上拖时 sheetView 离开 Home Indicator，底安全区 inset 按上移量缩小，
+    /// 底 pin 安全区的表情列表会被推回原位、与弹窗脱节；.changed 用它把
+    /// 缩掉的部分补回来（最多补到静止值，无 Home Indicator 的设备为 0、不补）。
+    private var dragRestBottomInset: CGFloat = 0
     /// VoiceOver 焦点返回：与通知弹层同口径（BearyNotificationsViewController），
     /// init 时记下 Sheet 外当前焦点元素（通常为触发回应的入口控件）；关闭后
     /// 把焦点还回去。weak 持有：触发控件是列表 cell 内元素，复用/离屏后失效
@@ -292,9 +297,17 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     @objc private func sheetPanGesture(_ gesture: UIPanGestureRecognizer) {
         let translation = gesture.translation(in: view)
         switch gesture.state {
+        case .began:
+            // 记下静止态底安全区 inset，供上拖安全区补偿封顶用。
+            dragRestBottomInset = sheetView.safeAreaInsets.bottom
         case .changed:
             let offset = BearySheetDrag.offset(for: translation.y)
             sheetView.transform = CGAffineTransform(translationX: 0, y: offset)
+            // 上拖安全区补偿：sheetView 上移时底安全区 inset 按上移量缩小，
+            // 底 pin 安全区的表情列表会被推回原位、与弹窗脱节；用
+            // additionalSafeAreaInsets 把缩掉的部分补回来，列表跟弹窗 1:1
+            // 一起动。下拖时底安全区不缩小，无需补偿；复位时补 0。
+            additionalSafeAreaInsets.bottom = offset < 0 ? min(-offset, dragRestBottomInset) : 0
             // 审计第 14 项：遮罩跟手变淡，与游客提示同口径（共用映射）。
             scrimView.alpha = BearySheetDrag.scrimAlpha(forDragOffset: offset, sheetHeight: sheetView.bounds.height)
         case .ended:
@@ -304,6 +317,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
             } else {
                 let restore = {
                     self.sheetView.transform = .identity
+                    self.additionalSafeAreaInsets.bottom = 0
                     self.scrimView.alpha = 1
                 }
                 if UIAccessibility.isReduceMotionEnabled {
@@ -316,6 +330,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         case .cancelled, .failed:
             let restore = {
                 self.sheetView.transform = .identity
+                self.additionalSafeAreaInsets.bottom = 0
                 self.scrimView.alpha = 1
             }
             if UIAccessibility.isReduceMotionEnabled {
