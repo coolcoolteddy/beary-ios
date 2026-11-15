@@ -330,20 +330,27 @@ final class BearyLocalNotifications {
     }
 
     /// 差分提交（第 5 项）：在串行队列上执行，提交前再验代次与账号；
-    /// 清掉失效的（已关开关 / 已删篇 / 已撤回 / 已过期），补上新增的；
-    /// 同 id 重排即覆盖（UNUserNotificationCenter 同 id 替换旧待发送）。
+    /// 清掉失效的（已关开关 / 已删篇 / 已撤回 / 已过期），只提交新增
+    /// 或变化的；触发时刻与正文都相同的已排提醒不再重复提交。
     /// 音效只在这里设一次（content.sound）：音效支按 kind 在此取专属音效文件。
     private func commitDesired(_ desired: [DesiredRequest], center: UNUserNotificationCenter, accountId: Int, generation gen: UInt64, calendar: Calendar) {
         guard isCurrentCommit(gen, accountId: accountId) else { return }
         let desiredIds = Set(desired.map(\.identifier))
         center.getPendingNotificationRequests { [weak self] requests in
             guard let self = self else { return }
-            let pendingIds = Set(requests.map(\.identifier).filter { $0.hasPrefix("beary.local.") })
-            let stale = pendingIds.subtracting(desiredIds)
+            var pending: [String: UNNotificationRequest] = [:]
+            for request in requests where request.identifier.hasPrefix("beary.local.") {
+                pending[request.identifier] = request
+            }
+            let stale = Set(pending.keys).subtracting(desiredIds)
             self.commitQueue.async {
                 guard self.isCurrentCommit(gen, accountId: accountId) else { return }
                 if !stale.isEmpty { center.removePendingNotificationRequests(withIdentifiers: Array(stale)) }
                 for item in desired {
+                    if let existing = pending[item.identifier],
+                       Self.isSameReminder(existing, as: item, calendar: calendar) {
+                        continue
+                    }
                     let content = UNMutableNotificationContent()
                     content.body = item.body
                     content.sound = UNNotificationSound(named: UNNotificationSoundName(item.kind.soundFileName))
@@ -356,6 +363,21 @@ final class BearyLocalNotifications {
                 }
             }
         }
+    }
+
+    /// 已排提醒与期望是否一致：触发时刻（到分钟）与正文都相同即视为同一条，
+    /// 不再重复提交。时刻按触发器的日历分量比对——期望的触发器同样只含
+    /// 年月日时分，秒级差异不进入触发器，不参与比较。
+    private static func isSameReminder(_ request: UNNotificationRequest, as item: DesiredRequest, calendar: Calendar) -> Bool {
+        guard request.content.body == item.body,
+              let trigger = request.trigger as? UNCalendarNotificationTrigger else { return false }
+        let wanted = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: item.fireDate)
+        let existing = trigger.dateComponents
+        return existing.year == wanted.year
+            && existing.month == wanted.month
+            && existing.day == wanted.day
+            && existing.hour == wanted.hour
+            && existing.minute == wanted.minute
     }
 
     // MARK: - 日期
