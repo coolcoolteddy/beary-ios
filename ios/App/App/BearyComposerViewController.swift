@@ -4515,37 +4515,25 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         calloutDismissView.passthroughRects = [toolbarContainer.convert(toolbarContainer.bounds, to: calloutDismissView)]
     }
 
-    /// 底部弹窗点选心情：插入式（取代旧“再点已选项取消”口径）——把熊脸图
-    /// 插进光标处；插完不收起，方便连着插多个（数量不限，见
-    /// insertMoodImageAtCursor）；单独心情字段一字不动。取消单独心情不走这里——
-    /// 默认组里再点已选中的心情，sheet 调 onClearMood（见 presentMoodPickerSheet）：
-    /// selectedMood 置空、chip 行同步隐藏、草稿落盘、关闭选择器（焦点由底部弹窗
-    /// 容器还给触发钮）。编辑保存时 selectedMood 为 nil 即按 updateEntry 省略口径
-    /// 发出，与天气清除同款。
+    /// 底部弹窗点选心情：插入式——把熊脸图插进光标处；插完不收起，方便连着插
+    /// 多个（数量不限，同一心情可重复插，见 insertMoodImageAtCursor）；单独心情
+    /// 字段一字不动。删插进正文的心情走键盘删除键（光标移到它后面按删除，一个删一个）。
     private func didSelectMood(_ key: String) {
         insertMoodImageAtCursor(key)
     }
 
     /// 弹出心情底部选择器（2026-11-11，取代心情尖角 callout）：
     /// 默认组即 moodOrder 32 只（见 BearyMoodPickerSheet），天气框若开着先收起；
-    /// 引用面板打开时不弹出（与旧 showCallout 同口径）。再点已选中的心情即取消
-    /// 单独心情（onClearMood）：selectedMood 置空、chip 行同步隐藏、草稿落盘、
-    /// 关闭选择器。
+    /// 引用面板打开时不弹出（与旧 showCallout 同口径）。点选只插入，不取消单独心情。
     private func presentMoodPickerSheet() {
         if quotePanelOpen { return }
         hideCallout(animated: false)
-        moodPickerSheet = BearyMoodPickerSheet.show(from: self, moodKeys: moodOrder, gifKeys: BearyGIFLibrary.cachedKeys(), selectedMood: selectedMood) { [weak self] key in
+        moodPickerSheet = BearyMoodPickerSheet.show(from: self, moodKeys: moodOrder, gifKeys: BearyGIFLibrary.cachedKeys()) { [weak self] key in
             self?.didSelectMood(key)
         } onSelectGIF: { [weak self] key in
             self?.didSelectGIF(key)
         } onUploadGIF: { [weak self] in
             self?.didTapUploadGIF()
-        } onClearMood: { [weak self] in
-            guard let self = self else { return }
-            self.selectedMood = nil
-            self.refreshSelectedChips()
-            self.scheduleDraftSave()
-            self.moodPickerSheet?.dismiss(animated: BearyMotion.animated(true))
         }
     }
 

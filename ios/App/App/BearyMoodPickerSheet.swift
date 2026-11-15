@@ -17,21 +17,19 @@ import UIKit
 // 节日组现阶段不做领取门禁，人人可见可用。“自定义”组（个人自定义心情图库，
 // 最新在前，上限 100）排节日组之后，首格是 ＋ 添加格（官方 icon_image_add，
 // 点按走 onUploadGIF）；库里既有 GIF（播动画）也有常规图（只显静态图）。
-// 点选心情是插入式（与旧 callout 同口径）：插进光标处、不收起，方便连着插多个；
-// 再点已选中的心情即取消选中（selectedMood 置空，见 onClearMood）。
+// 点选心情是插入式（与旧 callout 同口径）：插进光标处、不收起，方便连着插多个，
+// 同一心情可重复插；删插进正文的心情走键盘删除键（光标移到它后面按删除，一个删一个）。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 enum BearyMoodPickerSheet {
 
-    /// 从 presenter 弹出心情底 sheet；返回 sheet 实例（调用方弱持有，供再点已选中的
-    /// 清心情分支关闭）。moodKeys：调用方传入的默认组 key（即 Composer 的 moodOrder，
+    /// 从 presenter 弹出心情底 sheet；返回 sheet 实例（调用方弱持有）。moodKeys：调用方传入的默认组 key（即 Composer 的 moodOrder，
     /// 不在本文件另抄一份）。gifKeys：个人自定义心情图库键（最新在前）；
     /// onSelectGIF：点“自定义”组里的图时调（传完整 key）；onUploadGIF：点“自定义”
-    /// 组首格 ＋ 添加格时调。selectedMood：调用方当前单独心情（默认组里与之同 key
-    /// 的格子标已选，再点即调 onClearMood 取消选中）。
+    /// 组首格 ＋ 添加格时调。
     @discardableResult
-    static func show(from presenter: UIViewController, moodKeys: [String], gifKeys: [String] = [], onSelect: @escaping (String) -> Void, onSelectGIF: ((String) -> Void)? = nil, onUploadGIF: (() -> Void)? = nil, selectedMood: String? = nil, onClearMood: (() -> Void)? = nil) -> BearyMoodPickerSheetViewController {
-        let sheet = BearyMoodPickerSheetViewController(moodKeys: moodKeys, gifKeys: gifKeys, onSelect: onSelect, onSelectGIF: onSelectGIF, onUploadGIF: onUploadGIF, selectedMood: selectedMood, onClearMood: onClearMood)
+    static func show(from presenter: UIViewController, moodKeys: [String], gifKeys: [String] = [], onSelect: @escaping (String) -> Void, onSelectGIF: ((String) -> Void)? = nil, onUploadGIF: (() -> Void)? = nil) -> BearyMoodPickerSheetViewController {
+        let sheet = BearyMoodPickerSheetViewController(moodKeys: moodKeys, gifKeys: gifKeys, onSelect: onSelect, onSelectGIF: onSelectGIF, onUploadGIF: onUploadGIF)
         let delegate = BearyBottomSheetTransitioningDelegate()
         sheet.sheetDelegate = delegate
         sheet.transitioningDelegate = delegate
@@ -67,9 +65,6 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     private let onSelect: (String) -> Void
     private let onSelectGIF: ((String) -> Void)?
     private let onUploadGIF: (() -> Void)?
-    /// 调用方当前单独心情（默认组里同 key 的格子标已选，再点即取消选中）。
-    private let selectedMood: String?
-    private let onClearMood: (() -> Void)?
     private var groups: [MoodGroup]
     private var selectedGroupIndex = 0
     private var libraryObserver: NSObjectProtocol?
@@ -96,12 +91,10 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     /// BearyBottomSheetVoiceOver：出现时首焦点落标题。
     var bottomSheetInitialAccessibilityElement: AnyObject? { titleLabel }
 
-    init(moodKeys: [String], gifKeys: [String], onSelect: @escaping (String) -> Void, onSelectGIF: ((String) -> Void)? = nil, onUploadGIF: (() -> Void)? = nil, selectedMood: String? = nil, onClearMood: (() -> Void)? = nil) {
+    init(moodKeys: [String], gifKeys: [String], onSelect: @escaping (String) -> Void, onSelectGIF: ((String) -> Void)? = nil, onUploadGIF: (() -> Void)? = nil) {
         self.onSelect = onSelect
         self.onSelectGIF = onSelectGIF
         self.onUploadGIF = onUploadGIF
-        self.selectedMood = selectedMood
-        self.onClearMood = onClearMood
         self.groups = [
             MoodGroup(id: "default", title: "心情", keys: moodKeys, representativeKey: moodKeys.first ?? "agree", representativeIconName: nil),
             MoodGroup(id: "newyear", title: "元旦", keys: BearyText.newyearMoodKeys, representativeKey: "clockstrikesmidnight", representativeIconName: nil),
@@ -481,9 +474,6 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         }
         let key = selectedGroup.id == "mygif" ? selectedGroup.keys[indexPath.item - 1] : selectedGroup.keys[indexPath.item]
         cell.configure(key: key)
-        // 已选中的心情（调用方 selectedMood）标 surface2 底（与按压高亮同色）；
-        // 只有默认组会命中，其余组恒为 false。
-        cell.showsSelected = selectedGroup.id == "default" && key == selectedMood
         // “自定义”组 cell 长按删库（只删库行）；其余组长按无动作。
         cell.onDeleteGIF = selectedGroup.id == "mygif" ? { [weak self] gifKey in self?.confirmDeleteGIF(key: gifKey) } : nil
         return cell
@@ -495,10 +485,8 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         return CGSize(width: width, height: cellHeight(forWidth: width))
     }
 
-    /// 点选即回调（插入式：不收起，方便连着插多个）。“自定义”组首格 ＋ 添加格
-    /// 走 onUploadGIF；其余格走 onSelectGIF（传完整 key）。默认组里再点已选中的
-    /// 心情即取消选中：调 onClearMood（调用方清 selectedMood 并关闭本 sheet），
-    /// 不插入。
+    /// 点选即回调（插入式：不收起，方便连着插多个，同一心情可重复插）。
+    /// “自定义”组首格 ＋ 添加格走 onUploadGIF；其余格走 onSelectGIF（传完整 key）。
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: false)
         if selectedGroup.id == "mygif" {
@@ -510,10 +498,6 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             return
         }
         let key = selectedGroup.keys[indexPath.item]
-        if key == selectedMood {
-            onClearMood?()
-            return
-        }
         onSelect(key)
     }
 
@@ -539,10 +523,6 @@ final class BearyMoodPickerCell: UICollectionViewCell {
     /// “自定义”组首格 ＋ 添加格的图标（官方 icon_image_add，40pt）。
     private var addImageView: UIImageView?
     private var currentKey: String?
-    /// 已选中的心情（调用方 selectedMood）：标 surface2 底，与按压高亮同色。
-    var showsSelected = false {
-        didSet { refreshHighlight() }
-    }
     /// “自定义”组 cell：46 槽位里贴图；先贴首帧 JPEG 缩略图（快），
     /// GIF 可见时再取整图播动画，常规图只留首帧静态；长按删库（只删库行，不删文件）。
     private var gifImageView: UIImageView?
@@ -592,7 +572,6 @@ final class BearyMoodPickerCell: UICollectionViewCell {
         super.prepareForReuse()
         emoteView?.stop()
         addImageView?.isHidden = true
-        showsSelected = false
         accessibilityLabel = nil
         gifGeneration += 1
         gifFirstFrame = nil
@@ -603,14 +582,13 @@ final class BearyMoodPickerCell: UICollectionViewCell {
         onDeleteGIF = nil
     }
 
-    /// 回应 sheet cell 同款按压态（surface2 底，只画在 46 槽位圆角底片上）；
-    /// 已选态（showsSelected）同色常亮，松手不丢选中态。
+    /// 回应 sheet cell 同款按压态（surface2 底，只画在 46 槽位圆角底片上）。
     override var isHighlighted: Bool {
         didSet { refreshHighlight() }
     }
 
     private func refreshHighlight() {
-        highlightView.backgroundColor = (isHighlighted || showsSelected) ? BearyColors.surface2 : .clear
+        highlightView.backgroundColor = isHighlighted ? BearyColors.surface2 : .clear
     }
 
     /// “自定义”组首格 ＋ 添加格：官方 icon_image_add 原图（40pt，与旧“无”格
