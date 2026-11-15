@@ -197,8 +197,8 @@ struct Entry: Codable {
     var isPinned: Bool { pinned == 1 }
     /// 时间胶囊 v1：后端已部署字段（is_capsule 0/1、capsule_unlock_at 毫秒戳、
     /// capsule_district 区级文本），convertFromSnakeCase 直解。
-    /// 注意：ios/Docs/time-capsule-fields.md 仍写旧名 capsule_buried /
-    /// capsule_unlock_date，那是错的，以此处为准（#1345 另行修正文档，本支不动它）。
+    /// 注意：ios/Docs/time-capsule-fields.md 曾写旧名 capsule_buried /
+    /// capsule_unlock_date，#1345 已修正文档为现名，以文档与此处为准。
     var isCapsule: Int?
     var capsuleUnlockAt: Int?
     var capsuleDistrict: String?
