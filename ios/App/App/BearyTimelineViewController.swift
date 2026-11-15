@@ -2344,7 +2344,6 @@ class BearyTimelineViewController: UIViewController {
     /// 为假时彻底删除不做本地 -1，回落整页重拉校验，不谎报。
     private var trashCountKnown = false
     private var countsValue: TlCounts?
-    private var loginNotified = false
 
     private var calendarCache: [String: BearyCalendarMonthResponse] = [:]
     private var calendarFetching: Set<String> = []
@@ -3216,7 +3215,6 @@ class BearyTimelineViewController: UIViewController {
         timelinePageFailureCount = 0
         timelinePageRetryNotBefore = nil
         timelineUnauthorized = false
-        loginNotified = false
         // R15-P1-1：读盘快照即 .all 档的上次成功结果，记入内存快照——
         // 切回全部时有快照直接显示，不必清表等网络。
         filterSnapshots[.all] = FilterSnapshot(entries: snap.entries, hasMore: snap.hasMore, trashCount: snap.trashCount, counts: countsValue)
@@ -3258,14 +3256,12 @@ class BearyTimelineViewController: UIViewController {
             // 只重置瞬时标记，不动模型与状态。
             timelinePageFailed = false
             timelineUnauthorized = false
-            loginNotified = false
         } else {
             timelineEntries = []
             timelineHasMore = false
             timelineState = .idle
             timelineUnauthorized = false
             timelinePageFailed = false
-            loginNotified = false
         }
         if calendarAnchor == nil {
             calendarAnchor = BearyBeijingDay.todayComponents()
@@ -5348,13 +5344,6 @@ class BearyTimelineViewController: UIViewController {
             }
         }
         return (rows, sections, stagger)
-    }
-
-    private func notifyLoginOnce() {
-        if !loginNotified {
-            loginNotified = true
-            onRequireLogin?()
-        }
     }
 
     // MARK: - 日历拉取与渲染

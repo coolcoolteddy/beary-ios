@@ -6182,15 +6182,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshAttachmentAccessibilityLabels()
     }
 
-    /// 新模型：本地图就绪（已显示本地图、已落盘）——停转圈、清上传态，
-    /// 发布钮恢复由调用方调 updatePublishState。编辑模式不用本函数
-    ///（上传态由 markUploaded/markFailed 接管）。
-    private func markLocalReady(_ item: ComposerImageItem) {
-        item.uploading = false
-        item.spinner.stopSpinning()
-        item.removeButton.accessibilityLabel = "删除图片"
-    }
-
     private func markFailed(_ item: ComposerImageItem) {
         item.uploading = false
         item.failed = true
@@ -6404,7 +6395,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func restartUploadForRestoredItem(_ item: ComposerImageItem) {
         // 新模型：新建态不重启上传——本地图只存本地，发布时由发布中心统一上传；
-        // 撤销恢复的项若仍在读图窗口，编码完成块会经 markLocalReady 清上传态。
+        // 撤销恢复的项若仍在读图窗口，读图完成后走 startUpload 重启上传，
+        // 上传态由 markUploaded/markFailed 清理。
         guard isEditMode else { return }
         if let name = item.localFile {
             let ownerAccountId = composerOriginAccountId ?? BearyDraftStore.currentAccountId
@@ -7821,13 +7813,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard isEditMode, editQuoteFetchFailed, !editQuoteFetchInFlight,
               let entryId = editingEntry?.id, !entryId.isEmpty else { return }
         fetchEditEntryForMissingQuote(entryId: entryId)
-    }
-
-    /// 回填后原引用的有效 id（setup 时 content 为空的引用视为已删、不算原引用，
-    /// 否则改动判定会把“没改过”误判为改过）。
-    private func originalQuoteId() -> String? {
-        guard let quote = editingEntry?.quote, let quoteId = quote.id, quote.content != nil else { return nil }
-        return quoteId
     }
 
     /// 编辑期内的本地文件（本轮新选的图）：取消/保存成功后删本地文件，不留孤文件；

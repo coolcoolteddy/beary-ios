@@ -4249,26 +4249,6 @@ final class BearyChromeViewController: UIViewController {
 
 // MARK: - 审计 5 三档外观开关（与 BearyChromeViewController 同文件）
 
-/// 玻璃底（网页 .profile-menu :376/:746 口径：bg 52% + blur32）。
-/// 范围（视觉清单第 12 项）：菜单区域，玻璃范围 Token 允许，保留不动。
-/// iOS 无公开 blur 半径参数：iOS 26+ 用 UIGlassEffect（系统玻璃，tint 52%），
-/// 低版本用 systemMaterial + 52% contentView 底色（与顶栏 makeGlassView 同口径，
-/// 该 helper 的 tint 入参语义与此一致）。
-private func bearyMenuGlassView() -> UIVisualEffectView {
-    let view: UIVisualEffectView
-    if #available(iOS 26.0, *) {
-        let effect = UIGlassEffect()
-        effect.tintColor = BearyColors.alpha(BearyColors.bg, 0.52)
-        view = UIVisualEffectView(effect: effect)
-    } else {
-        view = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
-        view.contentView.backgroundColor = BearyColors.alpha(BearyColors.bg, 0.52)
-    }
-    // 撤回批（2026-10-27）：外观卡背板只做视觉，永不拦截触摸；卡内开关/按钮在上层接管。
-    view.isUserInteractionEnabled = false
-    return view
-}
-
 extension BearyChromeViewController: UIPopoverPresentationControllerDelegate {
     /// 玻璃菜单/开关卡在 iPhone 上也保持 popover 形态，不自适应为底 sheet
     ///（菜单锚在头像、卡片居中，sheet 会改写两者的锚定表现）。
