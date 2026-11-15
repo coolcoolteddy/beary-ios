@@ -1196,38 +1196,39 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 applyTransform(animated: false)
             } else if panMode == 2 {
                 // 纵向甩关闭跟手（#431 渲染口径为准：位移 + 底色/chrome 淡）：
-                // 上下对称，图跟手指走，进度取位移绝对值。
+                // 上下对称，图跟手指走，进度取位移绝对值。横向分量冻在
+                // 仲裁值（≤12pt，不复位，避免仲裁瞬间横跳），松手回弹时一并归零。
                 hideNeighbor()
-                tx = 0
                 ty = translation.y
                 applyTransform(animated: false)
                 applyDismissDragProgress(abs(ty) / 320)
             } else if panMode == 1 {
                 // 横向翻页跟手，只跟横向；相邻图同步贴在边上跟手（见 updateNeighbor）。
+                // 纵向分量冻在仲裁值（≤12pt，不复位，避免仲裁瞬间纵跳），松手回弹时一并归零。
                 tx = translation.x
-                ty = 0
                 updateNeighbor(forDragX: tx)
                 applyTransform(animated: false)
             } else {
-                // 未定：位移过 12pt 才定向——纵向占优（往上或往下都一样）进
-                // 纵向甩关闭，其余进横向翻页；定向前图不动，避免斜拖中途跳变。
-                // 定向后不再改向（横向中途不再切纵向，反之亦然）。
+                // 未定：方向仲裁仍按 12pt（纵向占优进甩关闭，其余进横向
+                // 翻页；定向后不再改向），但仲裁前图已按手指位移 1:1 跟手
+                // （tx/ty 即累计位移），不再静止等 12pt 再跳到手指位置；
+                // 仲裁瞬间不复位正交分量，锁定后只跟锁定轴——全程无跳变。
+                tx = translation.x
+                ty = translation.y
                 if max(abs(translation.x), abs(translation.y)) > 12 {
                     if abs(translation.y) > abs(translation.x) {
                         panMode = 2
                         dismissDragActive = true
                         hideNeighbor()
-                        tx = 0
-                        ty = translation.y
                         applyTransform(animated: false)
                         applyDismissDragProgress(abs(ty) / 320)
                     } else {
                         panMode = 1
-                        tx = translation.x
-                        ty = 0
                         updateNeighbor(forDragX: tx)
                         applyTransform(animated: false)
                     }
+                } else {
+                    applyTransform(animated: false)
                 }
             }
         } else if sender.state == .ended || sender.state == .cancelled {
