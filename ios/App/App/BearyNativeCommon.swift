@@ -3460,7 +3460,8 @@ enum BearyVisibility {
         return true
     }
 
-    /// 三档选择器（底部弹窗形态，iPad 无需 popover 锚点）：当前档带 ✓ 前缀；
+    /// 三档选择器（底部弹窗形态，iPad 无需 popover 锚点）：当前档挂官方
+    /// icon_check 图标＋标题加粗（r21-A13，文字勾号“✓”改官方图标）；
     /// 选同档时调用方按无变化处理（不发请求、不清限时标记）。
     /// 限时与仅好友互斥规则不动：本选择器不提供限时档，手动改档恒清限时标记。
     /// 存活限时篇例外：当前档明确标为“限时”（置灰 ✓ 行，不可点），三档均不带 ✓；
@@ -3469,8 +3470,7 @@ enum BearyVisibility {
         let currentValue = current(for: entry)
         let isLiveEphemeral = BearyEphemeral.isLive(entry)
         var actions: [BearyConfirmSheet.Action] = all.map { value in
-            let title = (!isLiveEphemeral && value == currentValue ? "✓ " : "") + title(for: value)
-            return BearyConfirmSheet.Action(title: title, style: .default) { onPick(value) }
+            return BearyConfirmSheet.Action(title: title(for: value), style: .default, handler: { onPick(value) }, isSelected: !isLiveEphemeral && value == currentValue)
         }
         if isLiveEphemeral {
             actions.insert(BearyConfirmSheet.Action(title: "✓ 限时", style: .default, isEnabled: false), at: 0)
