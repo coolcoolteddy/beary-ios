@@ -119,6 +119,11 @@ class BearyBottomSheetPresentationController: UIPresentationController {
     /// 本次拖动实际作用到弹窗上的位移（最后一次传给 applySheetTransform 的 ty）：
     /// 松手关／回弹按它裁决，不按手势原始位移（原始位移含内容滚动那段）。
     private var appliedDragOffset: CGFloat = 0
+    /// 本次拖动起手时弹窗底安全区 inset（静止态的 safeAreaInsets.bottom）：
+    /// 上拖时视图离开 Home Indicator，系统底 inset 按上移量缩小，底 pin 安全区
+    /// 的内容会被推回原位、与弹窗脱节；applySheetTransform 用它把缩掉的
+    /// 部分补回来（最多补到静止值，无 Home Indicator 的设备为 0、不补）。
+    private var dragRestBottomInset: CGFloat = 0
 
     /// 关闭请求：默认直接 dismiss；子类重写改走自己的关闭路径
     ///（如登录弹窗的 cancelFromSheet——先停倒计时与在途任务）。
@@ -131,6 +136,18 @@ class BearyBottomSheetPresentationController: UIPresentationController {
     /// 注意：进退场动画不走本方法，chrome 由 setSheetPresented 驱动（见下）。
     func applySheetTransform(_ transform: CGAffineTransform) {
         presentedView?.transform = transform
+        // 上拖安全区补偿：弹窗上移 ty（负值）时，系统底安全区 inset 按上移量
+        // 缩小（视图离开 Home Indicator），底 pin 安全区的内容会被推回原位、
+        // 与弹窗脱节；用 additionalSafeAreaInsets 把缩掉的部分补回来，内容
+        // 相对弹窗固定、拖动全程跟弹窗 1:1 一起动。下拖时底安全区不缩小
+        //（已贴底），无需补偿；复位（identity）时补 0。补偿量按静止底 inset
+        // 封顶，无 Home Indicator 的设备静止值为 0、不补，不会推过头。
+        let ty = transform.ty
+        if ty < 0 {
+            presentedViewController.additionalSafeAreaInsets.bottom = min(-ty, dragRestBottomInset)
+        } else {
+            presentedViewController.additionalSafeAreaInsets.bottom = 0
+        }
     }
 
     /// 出现/关闭终态（只赋值、不自带动效，调用方须在动画块内调，
@@ -275,6 +292,9 @@ class BearyBottomSheetPresentationController: UIPresentationController {
     private func cleanupAfterTransition() {
         dimView.removeFromSuperview()
         applyPresentationProgress(1)
+        // 拖动补偿清零：退场完成／呈现失败后不留 additionalSafeAreaInsets，
+        // 同一 VC 若再呈现，底安全区从系统值重算。
+        presentedViewController.additionalSafeAreaInsets.bottom = 0
     }
 
     /// VoiceOver：sheet 出现完成即聚焦首元素（钩子，见 BearyBottomSheetVoiceOver；
@@ -372,6 +392,8 @@ class BearyBottomSheetPresentationController: UIPresentationController {
         switch gesture.state {
         case .began:
             // 记下起手命中的滚动视图；本次手势内只认它，接手状态清零。
+            // 同时记下静止态底安全区 inset，供上拖安全区补偿封顶用。
+            dragRestBottomInset = presentedView.safeAreaInsets.bottom
             dragScrollView = scrollView(at: gesture.location(in: presentedView))
             dragTakeoverTranslation = nil
             appliedDragOffset = 0
