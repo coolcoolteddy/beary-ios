@@ -1,9 +1,8 @@
 # 埋进地图的时间胶囊 · 后端字段说明（2026-10-30）
 
-> 现状（2026-11-12）：App 端时间胶囊实现已撤回，当前 main 无 capsule 代码（`git grep capsule` 在 ios/App 为 0）；本文档字段口径以服务端实测为准（线上公开列表回包含 `is_capsule` / `capsule_unlock_at` / `capsule_district`）。
+> 现状（2026-11-15）：App 端时间胶囊实现已在 main（`BearyLocation.swift` 的 `BearyTimeCapsule`、编辑器埋藏入口、地图标注、`BearyAPI.swift` 字段透传）；本文档字段口径以服务端实测为准（线上公开列表回包含 `is_capsule` / `capsule_unlock_at` / `capsule_district`）。
 > 本文件是 App 端时间胶囊批的后端对接说明，**不是已执行的迁移**。本仓库是 iOS 仓库，
-> 没有 worker.js；后端批拿到本文件后再执行。App 端已先行透传字段：后端上线前，
-> 服务端忽略未知键时胶囊不持久化，属于已知缺口（与批 E location 同款），见末尾“上线前缺口”。
+> 没有 worker.js；后端批拿到本文件后再执行。
 
 ## 1. 数据模型：只存三样，不存精确经纬度
 
@@ -30,7 +29,7 @@ ALTER TABLE entries ADD COLUMN capsule_district TEXT;
 否则 400；不要静默接受“埋了但没区级/没日期”的半吊子胶囊）。
 - 编辑 `PUT /beary/api/entries/:id`：**不碰胶囊字段**（App 端编辑 PUT 根本不发三键；服务端收到三键时也应忽略，
 否则 15 分钟内改正文会顺带改掉埋点）。取消埋藏走同一 PUT：body 为
-`{"is_capsule": 0, "capsule_unlock_at": null, "capsule_district": null}`（App 端已实现 `cancelCapsule`）。
+`{"is_capsule": 0, "capsule_unlock_at": null, "capsule_district": null}`（App 端无 `cancelCapsule` 函数；取消走 `BearyAPI.updateEntry(clearCapsule: true)`，见 `BearyNativeCommon.swift`，PUT 发 `is_capsule: 0` 且两键显式 null；唯一调用方为地图页 `BearyDiaryMapViewController.performUnbury`）。
 - 列表与单篇响应：凡返回日记行处一律透传三字段（与 `location_name` / `location_district` 同款透传口径）；
 **不要在服务端做脱敏截断**：未解锁时他人只见占位是 App 端弹卡口径，服务端截断会让作者视角也丢区级。
 - 可见性切换（visibility 接口）不直接改三字段，但须执行第 3 节的下线规则。

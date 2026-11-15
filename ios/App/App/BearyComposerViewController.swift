@@ -1240,8 +1240,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     override func viewDidLoad() {
         super.viewDidLoad()
         NSLog("[Diag] composer-viewDidLoad-enter")
-        // 临时诊断（81 包，定根因后删除）。
-        DiagFile.mark("viewDidLoad-enter")
         // 编辑器页底改与首页（广场）同色：玻璃背板已撤，实色 bg 底（浅白／深纯黑）；
         // 顶栏／标题／正文／工具栏均为 clear，自动跟页底走；后续 build* 加的
         // 子视图自然在其上；呈现层文件不动，卡片内按钮点亮色与功能全不动。
@@ -1291,8 +1289,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 第三轮审计第 5 项：编辑中切号立即冻结（见 handleEditOriginAccountChanged）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleEditOriginAccountChanged), name: .bearyUserDidChange, object: nil)
         NSLog("[Diag] composer-viewDidLoad-exit")
-        // 临时诊断（81 包，定根因后删除）。
-        DiagFile.mark("viewDidLoad-exit")
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -1373,12 +1369,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
            abs(selectedChipsRow.bounds.width - selectedChipsLastLayoutWidth) > 0.5 {
             layoutSelectedChips()
         }
-        // 临时诊断（82 包追加，定根因后删除）：入口每调一次记一次，不节流。
-        DiagFile.mark("composer-layout")
         let w = view.bounds.width
         guard w > 0, w != lastLayoutWidth else {
-            // 临时诊断（86 包，定根因后删除）：布局方法出口（宽门挡住的早退路径）。
-            DiagFile.mark("composer-layout-exit")
             return
         }
         lastLayoutWidth = w
@@ -1387,8 +1379,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 0.5pt 防抖门限，高度不变不赋值，不会与布局轮次成环）。
         updateTextViewHeight()
         updatePreferredContentSize()
-        // 临时诊断（86 包，定根因后删除）：布局方法出口。
-        DiagFile.mark("composer-layout-exit")
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -1400,8 +1390,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             toolbarBottomToKeyboardConstraint?.isActive = true
             toolbarBottomToSafeAreaConstraint?.isActive = false
         }
-        // 临时诊断（86 包，定根因后删除）。
-        DiagFile.mark("composer-willAppear")
         // 编辑模式回到页面时重调 startEditTimer（只藏倒计时 label + 刷新状态行），
         // 从选图/弹窗回来后状态行显隐不错位；startEditTimer 本身幂等。
         if isEditMode {
@@ -1450,8 +1438,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         maybePresentStoredQuotePrompt()
         maybePresentEditCheckpointPrompt()
         NSLog("[Diag] composer-viewDidAppear")
-        // 临时诊断（81 包，定根因后删除）。
-        DiagFile.mark("viewDidAppear")
         // 打开即聚焦正文：编辑器唯一目的就是写，首屏就绪后直接可打字；只做一次，
         // 从选图/弹窗回来不抢焦点；有草稿时光标置末尾，接着写。
         // 与草稿恢复/图片续传无冲突：恢复在 viewDidLoad 已完成，续传是后台任务。
@@ -1666,17 +1652,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 顶部 @ 行不在内容栈里：出现时 sheet 高另加它（面板打开时走视口档，不到此处）。
         let mentionTopHeight = mentionTopRow.isHidden ? 0 : Self.mentionTopRowHeight
         let total = fitted.height + 60 + toolbarHeight + mentionTopHeight
-        // 临时诊断（82 包追加，定根因后删除）：total 每轮都记，看是否漂移。
-        DiagFile.mark("composer-prefSize total=\(String(format: "%.1f", total))")
         guard abs(preferredContentSize.height - total) > 0.5 else {
-            // 临时诊断（86 包，定根因后删除）：方法出口（0.5pt 门限挡住的早退路径）。
-            DiagFile.mark("composer-prefSize-exit")
             return
         }
         preferredContentSize = CGSize(width: fittingWidth, height: total)
         setNeedsLayoutUnlessPresenting()
-        // 临时诊断（86 包，定根因后删除）：方法出口。
-        DiagFile.mark("composer-prefSize-exit")
     }
 
     /// 87 包修法：转场进行中只改 preferredContentSize，不同步触发 superview 布局。
@@ -1686,10 +1666,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 不新增状态（呈现控制器类是 SceneDelegate.swift 文件私有的，跨文件读 flag
     /// 要改可见性，反而更重）。
     private func setNeedsLayoutUnlessPresenting() {
-        if isBeingPresented {
-            // 临时诊断（87 包，定根因后删除）：证明转场里确实走了跳过分支。
-            DiagFile.mark("composer-prefSize-skipTrans")
-        } else {
+        if !isBeingPresented {
             view.superview?.setNeedsLayout()
         }
     }
@@ -3996,9 +3973,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             showToast(message: "请先关闭引用面板")
             return
         }
-        let oldStrip = activeToolStrip
         activeToolStrip = (activeToolStrip == strip) ? nil : strip
-        DiagFile.mark("weather-diag setToolStrip \(String(describing: oldStrip)) -> \(String(describing: activeToolStrip))")
         refreshToolStrip()
     }
 
@@ -4969,7 +4944,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 填上之后类型可在选择器里手改、气温在框内步进器里手改（小项 2）；
     /// 再点天气钮会重新自动填（覆盖手改，#427 口径不变）。
     @objc private func didTapWeatherTool() {
-        DiagFile.mark("weather-diag didTapWeatherTool")
         hideLocationPopover(animated: false)
         showCallout(trigger: weatherToolButton)
         weatherFetchGeneration += 1
@@ -10015,8 +9989,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     @objc private func keyboardWillShow(_ notification: Notification) {
         NSLog("[Diag] composer-keyboard-willShow")
-        // 临时诊断（81 包，定根因后删除）。
-        DiagFile.mark("keyboard-willShow")
         applyKeyboard(notification, showing: true)
     }
 
