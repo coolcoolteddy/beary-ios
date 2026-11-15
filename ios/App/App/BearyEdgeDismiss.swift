@@ -40,6 +40,11 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
     private var underlyingViewPrepared = false
     private weak var preparedUnderlyingView: UIView?
 
+    /// 底层画面准备的代次：每次 prepareUnderlyingView 认领／插入时 +1。
+    /// removePreparedUnderlyingViewAfterReset 的延迟清理只认领它调度时
+    /// 那一代；新一拖已认领底层画面时，旧清理不再碰它。
+    private var underlyingGeneration = 0
+
     /// 完成模式回调：设置后本控制器不再驱动交互式过渡，只在边缘滑过阈值
     /// （35% 宽度或右滑速度 >800）时调一次回调，关闭由回调方自己的流程完成。
     /// 返回值：true 表示退出已在进行（即将关页，或草稿保存已提交、关页随后发生）；
@@ -93,19 +98,35 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
     // MARK: - R14 P2-13：返回目标底层画面
 
     /// 拖动开始即把返回目标页提前放进底层：presenting 方的 view 插到
-    /// presented view 下方（仅当它当前不在窗口里、且 presented view 未带
-    /// 位移时；上一轮复位动画未跑完就又开拖时跳过，本轮按旧口径走）。
+    /// presented view 下方。上一轮复位弹簧未跑完就又开拖时（0.26s 窗口内）：
+    /// 底层画面若还在（延迟清理未到），直接认领、不重复插，代次往前推，
+    /// 让旧的延迟清理失效——否则旧清理会在新拖进行中把底层画面撤掉，
+    /// 拖动露窗口底；若已撤掉，先把视图归位再插（新一拖取代未跑完的
+    /// 复位弹簧），不再按旧口径跳过。
     /// 提前插入会触发 presenting 方的 appearance 回调，与正式退场时同一
     /// 套回调（feed 只做本地复位、chrome 的启动 veil 与引导均有已播／已见
     /// 守卫），只是时机从退场提前到开拖，不引入新副作用。
     private func prepareUnderlyingView(for presented: UIViewController) {
         guard let underlying = presented.presentingViewController?.view else { return }
-        guard underlying.window == nil, presented.view.transform == .identity else { return }
         guard let superview = presented.view.superview else { return }
+        // 上一轮的底层画面还在：直接认领，不重复插。
+        if underlying.window != nil, underlying.superview == superview {
+            preparedUnderlyingView = underlying
+            underlyingViewPrepared = true
+            underlyingGeneration += 1
+            return
+        }
+        // 底层画面已在别处（正走退场转场、已被容器接管）时不动它。
+        guard underlying.window == nil else { return }
+        // 新一拖取代未跑完的复位弹簧：先把视图归位再插。
+        if presented.view.transform != .identity {
+            presented.view.transform = .identity
+        }
         underlying.frame = presented.view.frame
         superview.insertSubview(underlying, belowSubview: presented.view)
         preparedUnderlyingView = underlying
         underlyingViewPrepared = true
+        underlyingGeneration += 1
     }
 
     /// 取消／被拒／未过阈值：复位动画跑完后再撤提前插入的底层画面——
@@ -116,8 +137,10 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
         guard underlyingViewPrepared, let underlying = preparedUnderlyingView, let presented = presentedVC else { return }
         // 延迟与复位动画同长（#1000 的 motion.normal 0.26s 弹簧复位）；减动效时复位是瞬时的，延迟取 0。
         let delay = UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal
+        // 只认领调度时那一代：新一拖已认领底层画面时，旧清理不再碰它。
+        let generation = underlyingGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak underlying, weak presented] in
-            guard let self = self, self.underlyingViewPrepared, let underlying = underlying, let presented = presented else { return }
+            guard let self = self, self.underlyingViewPrepared, self.underlyingGeneration == generation, let underlying = underlying, let presented = presented else { return }
             guard underlying.superview == presented.view.superview, presented.view.window != nil else { return }
             underlying.removeFromSuperview()
             self.underlyingViewPrepared = false
