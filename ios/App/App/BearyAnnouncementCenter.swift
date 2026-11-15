@@ -119,7 +119,7 @@ final class BearyAnnouncementCenter {
         // 发布后再弹——否则本次构建号会被提前记为已结算，该包公告永不弹
         // （130 包实证：公告晚于装包发布，首启即烧掉了本次跨越）。
         guard let ann = candidate else {
-            let hasCurrentTarget = list.contains { $0.isAfterUpdate && ($0.targetBuild ?? Int.max) <= current }
+            let hasCurrentTarget = list.contains { $0.isAfterUpdate && ($0.targetBuild ?? Int.max) == current }
             if hasCurrentTarget {
                 UserDefaults.standard.set(current, forKey: lastBuildKey)
             }
