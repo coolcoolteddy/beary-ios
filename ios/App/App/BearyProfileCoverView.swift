@@ -3,7 +3,7 @@ import ImageIO
 import UIKit
 
 public enum ProfileCoverTheme: String, CaseIterable {
-    case china, usa, japan, germany, canada, korea, qixi, christmas, newyear, easter, lantern
+    case china, usa, japan, germany, canada, korea, qixi, christmas, newyear, easter, lantern, midautumn
 }
 
 public final class ProfileCoverView: UIView {
@@ -22,6 +22,9 @@ public final class ProfileCoverView: UIView {
     private var egg: CGFloat = 0
     /// 七夕彩蛋：两只喜鹊靠拢进度 0→1，跟倾斜挂钩（倾斜越深靠得越近），慢缓动。
     private var converge: CGFloat = 0
+    /// 孔明灯上飘相位（秒）：step() 每帧按 dt 累加，进页／停播时复位；
+    /// 只给中秋用（drawMidautumn），其余主题不读。
+    private var lanternPhase: CGFloat = 0
     private var tilt: CGPoint = .zero
     private var neutral: CGPoint?
     private var orientation: UIInterfaceOrientation?
@@ -66,6 +69,11 @@ public final class ProfileCoverView: UIView {
             names.append("flower-lantern")
             names.append("lantern-lights-near")
             names.append("lantern-lights-far")
+        case .midautumn:
+            // 中秋：动态物是一盏孔明灯（120×110 静态贴图，上飘由 App 实现）；
+            // 彩蛋一张（月亮里玉兔捣药金色剪影），与第 7 帧对齐、只在触发后出现。
+            names.append("sky-lantern")
+            names.append("jade-rabbit-egg")
         }
         var images: [String: UIImage] = [:]
         for name in names {
@@ -120,6 +128,7 @@ public final class ProfileCoverView: UIView {
     public func restartVisit() {
         egg = 0
         converge = 0
+        lanternPhase = 0
         hold = 0
         shown = false
         revealing = false
@@ -148,6 +157,7 @@ public final class ProfileCoverView: UIView {
         hold = 0
         egg = 0
         converge = 0
+        lanternPhase = 0
         revealing = false
         setNeedsDisplay()
     }
@@ -160,6 +170,7 @@ public final class ProfileCoverView: UIView {
     /// 由共享驱动每帧调用：只算姿态、不直接画；变化小于阈值时跳过重画。
     fileprivate func step(gravity: CMAcceleration?, dt: CGFloat) {
         guard let gravity else { return }
+        lanternPhase += dt
         let current = window?.windowScene?.interfaceOrientation ?? .portrait
         if current != orientation {
             neutral = nil
@@ -325,6 +336,8 @@ public final class ProfileCoverView: UIView {
             drawEaster(ctx, depth: depth, vertical: vertical, padded: padded)
         case .lantern:
             drawLantern(ctx, depth: depth, travel: travel, vertical: vertical, padded: padded)
+        case .midautumn:
+            drawMidautumn(ctx, depth: depth, travel: travel, vertical: vertical, padded: padded)
         case .germany, .canada, .korea:
             drawAdditionalTheme(ctx, x: x, y: y, travel: travel, midX: midX, nearX: nearX, vertical: vertical)
         }
@@ -519,6 +532,47 @@ public final class ProfileCoverView: UIView {
                width: lanternWidth, height: lanternHeight, angle: 0.03 * travel, alpha: 1)
     }
 
+    /// 中秋（深蓝夜色水墨）：图集只含背景，孔明灯由动态物层单独贴；
+    /// 彩蛋一张是与第 7 帧对齐的整帧透明层（月亮里玉兔捣药金色剪影）。
+    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
+    /// 三层位移（第 1→13 帧全程）：远 24／中 36／前景 60；帧内位移即
+    /// (T/2)*depth——彩蛋跟远层／月亮走（±12px），孔明灯也在天上、跟远层走。
+    /// 彩蛋（jade-rabbit-egg.png，1024×323）：月亮里玉兔捣药金色剪影
+    /// （alpha 框 x888–916、y138–170，正落在月盘里），倾斜保持 0.45 秒后
+    /// 随 egg 淡入（触发走共享 step 逻辑，与圣诞同款；每次进页 restartVisit 可再触发）。
+    /// 孔明灯（sky-lantern.png，120×110）：三盏错开相位循环上飘（周期约
+    /// 14 秒，底部淡入、顶部淡出）；上飘由 App 实现——ProfileCoverView
+    /// 用 step() 的 dt 累一个 lanternPhase（进页／停播时复位），灯的位置
+    /// （x 180／480／760）与大小（宽 56）是我定的，想挪直接改这两个数。
+    private func drawMidautumn(_ ctx: CGContext, depth: CGFloat, travel: CGFloat, vertical: CGFloat, padded: CGRect) {
+        let scaleX = padded.width / 1024
+        let scaleY = padded.height / 323
+        // 远层位移与图集帧内 baked 的一致（第 1→13 帧全程远 24，即 ±12*depth）；
+        // 彩蛋与孔明灯都按它平移才贴得住月亮／天空。
+        let farX = 12 * depth * scaleX
+        // 彩蛋：月亮里玉兔捣药金色剪影，整帧透明层与第 7 帧对齐。
+        if egg > 0.001 {
+            bitmap("jade-rabbit-egg", in: ctx,
+                   center: CGPoint(x: padded.midX + farX, y: padded.midY),
+                   width: padded.width, height: padded.height, angle: 0, alpha: egg)
+        }
+        // 孔明灯：三盏错开相位循环上飘（周期 14 秒，从 y≈290 升到 y≈30）。
+        let lanternWidth: CGFloat = 56
+        let lanternHeight = lanternWidth * 110 / 120
+        let period: CGFloat = 14
+        let rise: CGFloat = 260
+        for (index, baseX) in [180, 480, 760].enumerated() {
+            let phase = (lanternPhase / period + CGFloat(index) / 3).truncatingRemainder(dividingBy: 1)
+            let fade = min(phase / 0.15, (1 - phase) / 0.15, 1)
+            guard fade > 0 else { continue }
+            let centerY = 290 - phase * rise
+            bitmap("sky-lantern", in: ctx,
+                   center: CGPoint(x: -32 + CGFloat(baseX) * scaleX + farX + 6 * travel * scaleX,
+                                   y: -12 + centerY * scaleY + vertical),
+                   width: lanternWidth, height: lanternHeight, angle: 0.03 * travel, alpha: fade)
+        }
+    }
+
     private func drawAdditionalTheme(_ ctx: CGContext, x: CGFloat, y: CGFloat, travel: CGFloat,
                                      midX: CGFloat, nearX: CGFloat, vertical: CGFloat) {
         let strength = min(1, hypot(x, y))
@@ -685,7 +739,7 @@ public final class ProfileCoverView: UIView {
 
 /// 封面底图缓存：读盘＋解码只在后台串行队列做，主线程只贴图。
 /// 有界：最多留 3 张（最近用的），超了逐出最久未用的；收到内存警告时清库。
-/// 每张全幅图集 5120×969 ≈ 19 MiB，11 张全留理论约 209 MiB；封顶 3 张后
+/// 每张全幅图集 5120×969 ≈ 19 MiB，12 张全留理论约 228 MiB；封顶 3 张后
 /// 稳态约 57 MiB。preload 保留：设置页进页仍预热，逐出只发生在解码完成
 /// 入库时；已显示的封面持有自己的 backdrop 强引用，清库/逐出不会让首屏
 /// 变空白；未命中时 draw() 走 poster 兜底（与原来 backdrop == nil 的分支
@@ -768,7 +822,7 @@ private final class CoverBackdropCache: NSObject {
     /// 后台队列做、不碰主线程；帧切分按底图实际尺寸动态算，不用改 drawBackdrop。
     /// 第十轮 07：显式立即解码（kCGImageSourceShouldCacheImmediately），像素在
     /// 后台队列解完再交付主线程，首帧绘制不回主线程解压；须配合按需加载＋内存
-    /// 预算，十一张不一次全解。
+    /// 预算，十二张不一次全解。
     private static func decoded(theme: ProfileCoverTheme) -> CGImage? {
         guard let url = Bundle.main.url(forResource: theme.rawValue + "-depth", withExtension: "png"),
               let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
