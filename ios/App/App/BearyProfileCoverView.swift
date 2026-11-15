@@ -3,7 +3,7 @@ import ImageIO
 import UIKit
 
 public enum ProfileCoverTheme: String, CaseIterable {
-    case china, usa, japan, germany, canada, korea, qixi, christmas, newyear, easter, lantern, midautumn
+    case china, usa, japan, germany, canada, korea, qixi, christmas, newyear, easter, lantern, midautumn, muertos
 }
 
 public final class ProfileCoverView: UIView {
@@ -25,6 +25,9 @@ public final class ProfileCoverView: UIView {
     /// 孔明灯上飘相位（秒）：step() 每帧按 dt 累加，进页／停播时复位；
     /// 只给中秋用（drawMidautumn），其余主题不读。
     private var lanternPhase: CGFloat = 0
+    /// 花瓣飘落相位（秒）：step() 每帧按 dt 累加，进页／停播时复位；
+    /// 只给亡灵节用（drawMuertos），其余主题不读。
+    private var petalPhase: CGFloat = 0
     private var tilt: CGPoint = .zero
     private var neutral: CGPoint?
     private var orientation: UIInterfaceOrientation?
@@ -74,6 +77,14 @@ public final class ProfileCoverView: UIView {
             // 彩蛋一张（月亮里玉兔捣药金色剪影），与第 7 帧对齐、只在触发后出现。
             names.append("sky-lantern")
             names.append("jade-rabbit-egg")
+        case .muertos:
+            // 亡灵节：动态物是四片万寿菊花瓣（单张裁切，飘落由 App 实现）；
+            // 彩蛋一张（金色花环，烛光里浮现），只在触发后出现。
+            names.append("marigold-petal-1")
+            names.append("marigold-petal-2")
+            names.append("marigold-petal-3")
+            names.append("marigold-petal-4")
+            names.append("golden-marigold-wreath")
         }
         var images: [String: UIImage] = [:]
         for name in names {
@@ -129,6 +140,7 @@ public final class ProfileCoverView: UIView {
         egg = 0
         converge = 0
         lanternPhase = 0
+        petalPhase = 0
         hold = 0
         shown = false
         revealing = false
@@ -158,6 +170,7 @@ public final class ProfileCoverView: UIView {
         egg = 0
         converge = 0
         lanternPhase = 0
+        petalPhase = 0
         revealing = false
         setNeedsDisplay()
     }
@@ -171,6 +184,7 @@ public final class ProfileCoverView: UIView {
     fileprivate func step(gravity: CMAcceleration?, dt: CGFloat) {
         guard let gravity else { return }
         lanternPhase += dt
+        petalPhase += dt
         let current = window?.windowScene?.interfaceOrientation ?? .portrait
         if current != orientation {
             neutral = nil
@@ -338,6 +352,8 @@ public final class ProfileCoverView: UIView {
             drawLantern(ctx, depth: depth, travel: travel, vertical: vertical, padded: padded)
         case .midautumn:
             drawMidautumn(ctx, depth: depth, travel: travel, vertical: vertical, padded: padded)
+        case .muertos:
+            drawMuertos(ctx, depth: depth, travel: travel, vertical: vertical, padded: padded)
         case .germany, .canada, .korea:
             drawAdditionalTheme(ctx, x: x, y: y, travel: travel, midX: midX, nearX: nearX, vertical: vertical)
         }
@@ -572,6 +588,58 @@ public final class ProfileCoverView: UIView {
                    width: lanternWidth, height: lanternHeight, angle: 0.03 * travel, alpha: fade)
         }
     }
+    /// 亡灵节（深紫夜＋万寿菊花丛）：图集只含背景，花瓣与花环由 App 单独贴。
+    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
+    /// 三层位移（第 1→13 帧全程）：远 24／中 36／前景 60；帧内位移即
+    /// (T/2)*depth——花环在糖骷髅正上方、跟前景走（±30px），花瓣飘在前景、
+    /// 跟前景走一半（±15px）。
+    /// 彩蛋（golden-marigold-wreath.png，130×130、中央镂空）：金色花环浮在
+    /// 糖骷髅正上方的干净夜空里（中心帧坐标 (501, 95)，宽 130），倾斜保持
+    /// 0.45 秒后随 egg 淡入（触发走共享 step 逻辑，与圣诞同款；每次进页
+    /// restartVisit 可再触发），配一层金色烛光晕；位置是我定的，想挪直接改
+    /// 这两个数。
+    /// 花瓣（marigold-petal-1～4.png，从一张四瓣图裁开，各瓣原生比不同）：
+    /// 四片错开相位循环飘落（周期约 12 秒，从 y≈-30 落到 y≈350，首尾淡入淡出），
+    /// 横向轻摆 ±20px、微转；落点（x 150／420／680／900）与大小（宽 46）是我
+    /// 定的，想挪直接改这两个数。
+    private func drawMuertos(_ ctx: CGContext, depth: CGFloat, travel: CGFloat, vertical: CGFloat, padded: CGRect) {
+        let scaleX = padded.width / 1024
+        let scaleY = padded.height / 323
+        // 前景位移与图集帧内 baked 的一致（第 1→13 帧全程前景 60，即 ±30*depth）；
+        // 花环与花瓣都按它平移才贴得住糖骷髅／花丛。
+        let foregroundX = 30 * depth * scaleX
+        // 彩蛋：金色花环，糖骷髅正上方的干净夜空里，烛光晕里浮现。
+        if egg > 0.001 {
+            let wreathCenter = CGPoint(x: -32 + 501 * scaleX + foregroundX,
+                                       y: -12 + 95 * scaleY + vertical)
+            let gold = UIColor(red: 1, green: 0.69, blue: 0.34, alpha: 1)
+            glow(ctx, center: wreathCenter, rx: 78, ry: 78, color: gold, alpha: 0.28 * egg)
+            bitmap("golden-marigold-wreath", in: ctx,
+                   center: wreathCenter, width: 130, height: 130, angle: 0, alpha: egg)
+        }
+        // 花瓣：四片错开相位循环飘落（周期 12 秒，从 y≈-30 落到 y≈350）。
+        let petalWidth: CGFloat = 46
+        let petalSizes: [(key: String, aspect: CGFloat, baseX: CGFloat)] = [
+            ("marigold-petal-1", 426 / 490, 150),
+            ("marigold-petal-2", 417 / 683, 420),
+            ("marigold-petal-3", 229 / 438, 680),
+            ("marigold-petal-4", 373 / 550, 900),
+        ]
+        let period: CGFloat = 12
+        let fall: CGFloat = 380
+        for (index, petal) in petalSizes.enumerated() {
+            let phase = (petalPhase / period + CGFloat(index) / 4).truncatingRemainder(dividingBy: 1)
+            let fade = min(phase / 0.12, (1 - phase) / 0.12, 1)
+            guard fade > 0 else { continue }
+            let sway = 20 * sin(phase * .pi * 4 + CGFloat(index))
+            let centerY = -30 + phase * fall
+            bitmap(petal.key, in: ctx,
+                   center: CGPoint(x: -32 + (petal.baseX + sway) * scaleX + foregroundX * 0.5,
+                                   y: -12 + centerY * scaleY + vertical),
+                   width: petalWidth, height: petalWidth * petal.aspect,
+                   angle: 0.15 * sin(phase * .pi * 2 + CGFloat(index)) + 0.03 * travel, alpha: fade)
+        }
+    }
 
     private func drawAdditionalTheme(_ ctx: CGContext, x: CGFloat, y: CGFloat, travel: CGFloat,
                                      midX: CGFloat, nearX: CGFloat, vertical: CGFloat) {
@@ -739,7 +807,7 @@ public final class ProfileCoverView: UIView {
 
 /// 封面底图缓存：读盘＋解码只在后台串行队列做，主线程只贴图。
 /// 有界：最多留 3 张（最近用的），超了逐出最久未用的；收到内存警告时清库。
-/// 每张全幅图集 5120×969 ≈ 19 MiB，12 张全留理论约 228 MiB；封顶 3 张后
+/// 每张全幅图集 5120×969 ≈ 19 MiB，13 张全留理论约 247 MiB；封顶 3 张后
 /// 稳态约 57 MiB。preload 保留：设置页进页仍预热，逐出只发生在解码完成
 /// 入库时；已显示的封面持有自己的 backdrop 强引用，清库/逐出不会让首屏
 /// 变空白；未命中时 draw() 走 poster 兜底（与原来 backdrop == nil 的分支
@@ -822,7 +890,7 @@ private final class CoverBackdropCache: NSObject {
     /// 后台队列做、不碰主线程；帧切分按底图实际尺寸动态算，不用改 drawBackdrop。
     /// 第十轮 07：显式立即解码（kCGImageSourceShouldCacheImmediately），像素在
     /// 后台队列解完再交付主线程，首帧绘制不回主线程解压；须配合按需加载＋内存
-    /// 预算，十二张不一次全解。
+    /// 预算，十三张不一次全解。
     private static func decoded(theme: ProfileCoverTheme) -> CGImage? {
         guard let url = Bundle.main.url(forResource: theme.rawValue + "-depth", withExtension: "png"),
               let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
