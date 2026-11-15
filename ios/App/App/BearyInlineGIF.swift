@@ -338,10 +338,10 @@ enum BearyGIFAddPresenter {
                 BearyGIFLibrary.add(key: fullKey) { result in
                     DispatchQueue.main.async {
                         switch result {
-                        case .added: BearyToast.show(in: vc.view, message: "已添加到我的 GIF")
+                        case .added: BearyToast.show(in: vc.view, message: "已添加到自定义")
                         case .alreadyAdded: BearyToast.show(in: vc.view, message: "已添加过")
                         case .full: BearyToast.show(in: vc.view, message: "表情库满了，先删掉一些再添加")
-                        case .notViewable: BearyToast.show(in: vc.view, message: "这个 GIF 已经加不了了")
+                        case .notViewable: BearyToast.show(in: vc.view, message: "这个图片已经加不了了")
                         case .failed: BearyToast.show(in: vc.view, message: "添加失败，请重试")
                         }
                     }
