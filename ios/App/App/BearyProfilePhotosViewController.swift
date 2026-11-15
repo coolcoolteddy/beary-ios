@@ -332,21 +332,45 @@ final class BearyProfilePhotosViewController: UIViewController {
         // 第 22 轮 B5：重算走实时互关态（currentMutualFriend），不沿用进页旧值；
         // 无容器刷新时也不直接返回，仍走下面的实时重滤。
         if let fresh = onRefreshEntries?() {
-            let newPhotos = BearyProfileViewController.profilePhotoItems(from: fresh.entries, isOwnProfile: ownProfileValue, isMutualFriend: currentMutualFriend)
-            if photosSignature(newPhotos) != photosSignature(photosValue) {
-                diaryEntriesValue = fresh.entries
-                photosHasMore = fresh.hasMore && authorIdValue != nil
-                photosValue = newPhotos
-                photosFromCache = false
-                photosFreshConfirmed = true
-                photosPartialFailed = false
-                photosRefreshFailed = false
-                photosPageLoadFailed = false
-                collectionView.reloadData()
-                updateTitleAndEmpty()
-                updatePhotosStatusLabel()
-                if ownProfileValue, !newPhotos.isEmpty {
-                    savePhotosSnapshotIfNeeded()
+            // 第 12 轮审计 5：父页只给第一页，整批覆盖会丢掉照片页自己续拉的
+            // 后续页。按日记 ID 合并：父页范围内的条目以父页新版为准（删图/
+            // 换图生效），超出父页尾游标的旧条目保留；父页已确认无更多页时
+            // 才整批替换。日记按 createdAt 倒序、id 倒序排列（与续拉游标同口径）。
+            let mergedEntries: [Entry]?
+            if fresh.hasMore, let tail = fresh.entries.last,
+               let tailCreated = tail.createdAt, let tailId = tail.id {
+                let freshIds = Set(fresh.entries.compactMap { $0.id })
+                let kept = diaryEntriesValue.filter { entry in
+                    guard let id = entry.id, !freshIds.contains(id) else { return false }
+                    let created = entry.createdAt ?? 0
+                    return created < tailCreated || (created == tailCreated && id < tailId)
+                }
+                mergedEntries = fresh.entries + kept
+            } else if fresh.hasMore {
+                // 有更多页却无尾游标，父页数据异常，不动本页列表。
+                mergedEntries = nil
+            } else {
+                mergedEntries = fresh.entries
+            }
+            if let mergedEntries {
+                let newPhotos = BearyProfileViewController.profilePhotoItems(from: mergedEntries, isOwnProfile: ownProfileValue, isMutualFriend: currentMutualFriend)
+                if photosSignature(newPhotos) != photosSignature(photosValue) {
+                    diaryEntriesValue = mergedEntries
+                    // 父页“无更多页”才可信——本页此前已翻到尾时父页的 hasMore
+                    // 仍为 true，不得把已确认的翻到尾翻回有更多页。
+                    if !fresh.hasMore { photosHasMore = false }
+                    photosValue = newPhotos
+                    photosFromCache = false
+                    photosFreshConfirmed = true
+                    photosPartialFailed = false
+                    photosRefreshFailed = false
+                    photosPageLoadFailed = false
+                    collectionView.reloadData()
+                    updateTitleAndEmpty()
+                    updatePhotosStatusLabel()
+                    if ownProfileValue, !newPhotos.isEmpty {
+                        savePhotosSnapshotIfNeeded()
+                    }
                 }
             }
         }
