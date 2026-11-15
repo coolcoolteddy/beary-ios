@@ -855,7 +855,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 后台冲刷失败待提示：保存回调在后台触发时 toast 用户看不到，记下来
     /// 回前台时再提示；只记编辑模式——新建态失败已有失败红字状态行，不重复提示。
     private var backgroundFlushFailed = false
-    private var editTimer: Timer?
     private var imageItems: [ComposerImageItem] = [] {
         didSet { editorEditVersion += 1 }
     }
@@ -1142,7 +1141,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let imageUndoBar = UIView()
     private let imageUndoLabel = UILabel()
     private let imageUndoButton = BearyHit44Button(type: .system)
-    // 状态行：编辑倒计时 + 草稿状态 + 字数圆环
+    // 状态行：草稿状态 + 字数圆环
     private let statusRow = UIStackView()
     /// 窄屏 5 项之 4：状态行内的弹性 spacer（无内容、无高度，只占剩余宽）——
     /// refreshStatusRowVisibility 判“有无实际内容”时须排除它，否则 spacer 永真、
@@ -1154,7 +1153,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 第二轮增量审计第 6 项：图片条固定高约束（96）。无图隐藏整条时须停用它，
     /// 否则隐藏的 arranged 子项仍被自身 96 必需高撑住、与 stack 的隐藏折叠冲突。
     private var imageStripHeightConstraint: NSLayoutConstraint?
-    private let editTimerLabel = UILabel()
     private let draftStatusGroup = UIStackView()
     private let draftStatusIcon = UIImageView()
     private let draftStatusLabel = UILabel()
@@ -1402,10 +1400,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         // 临时诊断（86 包，定根因后删除）。
         DiagFile.mark("composer-willAppear")
-        // 编辑模式回到页面时重调 startEditTimer（只藏倒计时 label + 刷新状态行），
-        // 从选图/弹窗回来后状态行显隐不错位；startEditTimer 本身幂等。
+        // 编辑模式回到页面时重刷状态行显隐，
+        // 从选图/弹窗回来后状态行显隐不错位；refreshStatusRowVisibility 本身幂等。
         if isEditMode {
-            startEditTimer()
+            refreshStatusRowVisibility()
         }
     }
 
@@ -1416,12 +1414,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if isBeingDismissed {
             reanchorToolbarForDismiss()
         }
-        // B5-3：编辑计时器（已取消倒计时，见 startEditTimer）在页面关闭/被 modal
-        // 盖住时即失效，不再只靠 deinit；editTimer 现恒为 nil，本处只作对称清理。
         // draftTimer 是 0.4s 一次性防抖，到点自释，不在这里失效（否则会丢
         // 一笔待保存的草稿）；deinit 仍保留作兜底。
-        editTimer?.invalidate()
-        editTimer = nil
     }
 
     /// 关闭退场 B 修法：退场开始时把工具栏底锚从键盘顶换成自身 safeArea 底，
@@ -1472,7 +1466,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     deinit {
         draftTimer?.invalidate()
-        editTimer?.invalidate()
         pendingUndoTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
@@ -2948,9 +2941,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.contentStack.setCustomSpacing(12, after: self.textView)
                 self.contentStack.setCustomSpacing(4, after: self.imageScrollView)
                 // 窄屏 5 项之 4：状态行不再无条件复原 isHidden=false＋间距 8——
-                // 新建模式倒计时本就隐藏，复原会把 26pt 空白行带回来；经
-                // refreshStatusRowVisibility 按倒计时实际显隐恢复（编辑态显示＋8、
-                // 新建态隐藏＋0）。
+                // 状态行现无内容，复原会把 26pt 空白行带回来；经
+                // refreshStatusRowVisibility 按实际显隐恢复（无内容隐藏＋0）。
                 self.refreshStatusRowVisibility()
                 self.contentStack.setCustomSpacing(0, after: self.quoteSection)
                 // 各区显隐按正常态重算（选择条、@ 行、引用区）。
@@ -5066,12 +5058,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         openToolStrip(.recipient)
     }
 
-    // MARK: - 状态行（编辑倒计时 + 草稿状态；字数圆环已移入工具栏右端）
+    // MARK: - 状态行（草稿状态；字数圆环已移入工具栏右端）
 
     private func buildStatusRow() {
-        editTimerLabel.font = BearyDynamicType.numberFont()
-        editTimerLabel.textColor = BearyColors.gray
-        editTimerLabel.isHidden = true
         // P2-12：工具栏内联状态行同缺陷一并改——captionFont（12 regular scaled，
         // 规范 §11）＋跟随系统字号，宽度不足时换行、不截尾。
         draftStatusLabel.font = BearyDynamicType.captionFont()
@@ -5103,10 +5092,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         statusRow.alignment = .center
         statusRow.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(statusRow)
-        statusRow.addArrangedSubview(editTimerLabel)
         statusRow.addArrangedSubview(statusRowSpacer)
         // v6-6：草稿保存文案组已挪到工具栏右端（buildToolbarRow），不再进状态行；
-        // 状态行只留编辑倒计时。组内图标／文案／级别逻辑（updateDraftStatusLabel）一字不动。
+        // 状态行不再有常驻内容。组内图标／文案／级别逻辑（updateDraftStatusLabel）一字不动。
         // C1：字数圆环已移入工具栏左图标组 charGroupStack（数字已隐藏，只留圆环），
         // 圆环尺寸与形层仍在此处创建（视图归属不影响形层）。
         NSLayoutConstraint.activate([
@@ -5116,7 +5104,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             charRingView.heightAnchor.constraint(equalToConstant: 18),
         ])
         // 窄屏 5 项之 4：最低高约束单独存引用——无内容隐藏整行时停用它，
-        // 有内容（编辑倒计时）时恢复；不存引用就无法在隐藏态停用，空行塌不掉。
+        // 有内容时恢复；不存引用就无法在隐藏态停用，空行塌不掉。
         let statusRowMinHeight = statusRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 18)
         statusRowMinHeight.isActive = true
         statusRowMinHeightConstraint = statusRowMinHeight
@@ -5139,14 +5127,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         charRingView.layer.addSublayer(progress)
         charTrackLayer = track
         charProgressLayer = progress
-        // 窄屏 5 项之 4：建完即按实际内容定显隐与间距——新建模式倒计时隐藏，
-        // 整行直接隐藏＋间距清零，不留 18＋8＝26pt 空白；编辑模式由 startEditTimer
-        // 经本函数恢复（见下）。
+        // 窄屏 5 项之 4：建完即按实际内容定显隐与间距——状态行现无内容，
+        // 整行直接隐藏＋间距清零，不留 18＋8＝26pt 空白。
         refreshStatusRowVisibility()
     }
 
-    /// 窄屏 5 项之 4：状态行显隐的唯一口径。状态行当前唯一常驻内容是
-    /// 编辑倒计时（草稿组已移工具栏、字数圆环已移工具栏左组），故“有内容”
+    /// 窄屏 5 项之 4：状态行显隐的唯一口径。状态行当前无常驻内容
+    /// （编辑倒计时已删，草稿组已移工具栏、字数圆环已移工具栏左组），故“有内容”
     /// ＝除弹性 spacer 外有可见 arranged 子项；以后若有新内容进本行，
     /// 本判据自动覆盖，不必再为新项另写显隐。
     /// 无内容：整行隐藏＋最低高约束停用＋后间距清零，三处缺一都会残留空白。
@@ -5166,7 +5153,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 草稿状态文案跟随保存级别：2 草稿已保存 / 1 文字已保存，图片未保存 / 0 失败红字。
-    /// 编辑模式不显示（网页编辑态同款：状态行只留倒计时与字数）。
+    /// 编辑模式不显示（网页编辑态同款：状态行只留字数）。
     /// animated 为真时，图标与文字在原位淡变 0.18s——只在最新一版落盘
     /// 的回包里传真，平时调用不重播。
     private func updateDraftStatusLabel(animated: Bool = false) {
@@ -5363,18 +5350,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let trailingWidth: CGFloat = draftStatusLabel.isHidden ? 15 : 15 + 5 + labelWidth
         setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 6 * 24 + 8 + charGroupWidth + trailingWidth, containerWidth: width), in: toolRow)
     }
-
-    // MARK: - 编辑倒计时（已取消：冲突清单第 4 条取消 15 分钟锁，编辑永久可改。
-    // 本函数只剩隐藏倒计时 label + 刷新状态行显隐（调用点不动）；计时器不再启动。
-
-    private func startEditTimer() {
-        editTimer?.invalidate()
-        editTimer = nil
-        editTimerLabel.isHidden = true
-        // 窄屏 5 项之 4：倒计时显隐即状态行显隐，编辑模式这里把整行藏掉。
-        refreshStatusRowVisibility()
-    }
-
 
     // MARK: - 正文与字数
 
@@ -7741,7 +7716,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshQuoteSection()
         refreshToolStrip()
         maybePresentStoredQuotePrompt()
-        startEditTimer()
+        refreshStatusRowVisibility()
         // 2026-11-14（132 真机）：编辑回填按 key 去重后追加——补拉二次调用
         // setupEditContent 时图片回填段无守卫（正文/心情等段有 editQuoteFetchAttempted
         // 守卫），重复回填会把同一张图插两遍，条里看起来像“编辑一次多一张图”；
