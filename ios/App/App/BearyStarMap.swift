@@ -390,19 +390,29 @@ enum BearyStarMap {
             keywordsById[id] = keys
             for key in keys { docFreq[key, default: 0] += 1 }
         }
+        // 心情 / 地点键：逐对循环内只做查表，不再每对重复 trim 与 placeKey
+        //（r18 ㊳；关键词的 keywordsById / docFreq 早已预计算，不动）。
+        var moodById: [String: String] = [:]
+        var placeKeyById: [String: String] = [:]
+        for entry in visible {
+            guard let id = entry.id else { continue }
+            let mood = (entry.mood ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !mood.isEmpty { moodById[id] = mood }
+            if let place = placeKey(entry, viewerIsAuthor: viewerIsAuthor) {
+                placeKeyById[id] = place
+            }
+        }
         let freqCap = max(2, visible.count / 2)
         var edges: [StarMapEdge] = []
         for i in visible.indices {
             for j in visible.indices where j > i {
                 guard let a = visible[i].id, let b = visible[j].id else { continue }
                 var reasons: [StarMapEdgeReason] = []
-                let moodA = (visible[i].mood ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                let moodB = (visible[j].mood ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                if !moodA.isEmpty, moodA == moodB {
+                if let moodA = moodById[a], moodA == moodById[b] {
                     reasons.append(StarMapEdgeReason(kind: .mood, detail: moodA, tokens: []))
                 }
-                if let placeA = placeKey(visible[i], viewerIsAuthor: viewerIsAuthor),
-                   let placeB = placeKey(visible[j], viewerIsAuthor: viewerIsAuthor),
+                if let placeA = placeKeyById[a],
+                   let placeB = placeKeyById[b],
                    placeA == placeB {
                     reasons.append(StarMapEdgeReason(kind: .place, detail: placeA, tokens: []))
                 }
@@ -464,7 +474,9 @@ struct StarMapDiff {
 //
 // 只缓存近期访问过的范围（内存，不落盘）：
 // - 键 = 账号桶 + 作者 + 角色 + 分片 + 日记版本 + 算法版本；任一分量变了
-//   即 miss 重建，不存在“旧模型配新数据”。切连线类型不走这里——
+//   即 miss 重建。指纹不含天气、互动数等轻量字段，命中时 VC 按 id 从
+//   最新日记重绑 Entry（见 rebindCachedModelEntries），不直接用旧副本。
+//   切连线类型不走这里——
 //   didTapFilterPill 只改 edgeFilter 后调 applyModelToSky，在已有
 //   model.edges 上按 kind 过滤，模型本身不重建（见 VC）。
 // - 冷开落盘未做：是否值得落盘（存星点与边的 ID、关系类型）待真机实测
