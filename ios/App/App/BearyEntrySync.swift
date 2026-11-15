@@ -380,13 +380,13 @@ final class BearyEntrySync {
     /// r17-C2 中断记 partial（已在同步队列上调用）：仍有可读旧数据时把状态记为
     /// partial（盘上是上一份完整版本，仍可读；无可读数据时不记状态，下次 kick 从头跑）。
     private func markDiaryPartial(accountId: Int) {
-        guard BearyEntrySyncStore.hasReadableData(accountId: accountId) else { return }
-        _ = BearySyncStateStore.save(stateURL: BearyEntrySyncStore.stateFileURL(accountId: accountId), status: "partial", itemCount: BearyEntrySyncStore.readableItemCount(accountId: accountId))
+        guard let count = BearyEntrySyncStore.readableDataSummary(accountId: accountId) else { return }
+        _ = BearySyncStateStore.save(stateURL: BearyEntrySyncStore.stateFileURL(accountId: accountId), status: "partial", itemCount: count)
     }
 
     private func markTrashPartial(accountId: Int) {
-        guard BearyTrashSyncStore.hasReadableData(accountId: accountId) else { return }
-        _ = BearySyncStateStore.save(stateURL: BearyTrashSyncStore.stateFileURL(accountId: accountId), status: "partial", itemCount: BearyTrashSyncStore.readableItemCount(accountId: accountId))
+        guard let count = BearyTrashSyncStore.readableDataSummary(accountId: accountId) else { return }
+        _ = BearySyncStateStore.save(stateURL: BearyTrashSyncStore.stateFileURL(accountId: accountId), status: "partial", itemCount: count)
     }
 
     /// 发布成功：onPublished 只给 entryId，单篇拉取后 upsert 落盘（失败静默）。
