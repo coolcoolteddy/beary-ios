@@ -52,9 +52,8 @@ public final class ProfileCoverView: UIView {
             names.append("christmas-snowflakes")
             names.append("christmas-egg-globe")
         case .newyear:
-            // 元旦：动态物是金色烟花余烬一张 PNG；彩蛋一张（左上夜空一朵金色
-            // 烟花，中心 (300, 65)），与第 7 帧对齐。
-            names.append("newyear-embers")
+            // 元旦 v2 窗框版：彩蛋一张（7 颗金色四角星的整帧透明层，与第 7 帧
+            // 对齐），跟远层走；v1 小镇版的余烬层已随重画去掉，v2 烟花全在图集里。
             names.append("newyear-egg-burst")
         }
         var images: [String: UIImage] = [:]
@@ -410,38 +409,26 @@ public final class ProfileCoverView: UIView {
                center: CGPoint(x: padded.midX + subjectX, y: padded.midY),
                width: 600 * scaleX, height: 323 * scaleY, angle: 0, alpha: 1)
     }
-    /// 元旦（中式木刻版画、深蓝夜＋金色烟花）：图集只含背景，余烬由动态物层单独贴；
-    /// 彩蛋一张是与第 7 帧对齐的整帧透明层（左上夜空一朵金色烟花，中心 (300, 65)）。
+    /// 元旦 v2（木窗框雪夜、深蓝夜＋金色烟花）：图集 5 列 × 3 行 13 帧，
+    /// 三层视差已 baked 进帧——远层帧移 1(f−6) px（±6）、中层 2(f−6) px
+    /// （±12）、近层 3(f−6) px（±18），窗框在底图里全程静止。
+    /// 彩蛋一张是与第 7 帧对齐的整帧透明层：7 颗金色四角星（(843,49) 在右上
+    /// 大金烟花里，另 6 颗 (150,62)、(320,108)、(430,48)、(600,38)、
+    /// (250,212)、(950,192) 布满天空），跟远层走。
     /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
-    /// v26 模型：烟花按远近分三层视差——大红烟花最近，帧移 3(f−6) px（±18）；
-    /// (580,132) 那朵小白烟花居中，帧移 2(f−6) px（±12）；顶部小白烟花群最远，
-    /// 帧移 1(f−6) px（±6）。桥/小镇/行人/河面/倒影全在 far 层静止。
-    /// v22 曾把河面倒影也放进结构层，倒影紧贴桥左拱、动起来像桥在动，
-    /// 且它遮住的 inpaint 是抹平的水面、露出时像一块糊斑，v23 已去掉。
-    /// v24 曾把中央高楼暖色墙面抓进红掩膜抹糊，改迟滞掩膜后已修。
-    /// App 侧动态层跟图集同速：余烬是近层大红烟花的火星（18*depth），
-    /// 彩蛋是远层小金烟花（6*depth）。
-    /// 余烬是烟花的火星，跟烟花同速（structureX），不再用主体速率 24*depth。
+    /// App 侧动态层跟图集同速：彩蛋跟远层，帧移 1(f−6) px 即 6*depth
+    /// （depth ∈ [−1, 1]，f = (depth+1)*6）。
     private func drawNewyear(_ ctx: CGContext, depth: CGFloat, vertical: CGFloat, padded: CGRect) {
         let scaleX = padded.width / 1024
-        let scaleY = padded.height / 323
-        // 各层位移与图集帧内 baked 的一致（帧 f=(depth+1)*6）：近层 3(f−6) px
-        // 即 18*depth，中层 2(f−6) px 即 12*depth，远层 1(f−6) px 即 6*depth。
-        // 余烬是近层大红烟花的火星，跟近层同速；彩蛋是远层小金烟花，跟远层同速。
-        let nearX = 18 * depth * scaleX
-        let farX = 6 * depth * scaleX
-        // 彩蛋：左上夜空一朵金色烟花，倾斜保持 0.45 秒后随 egg 淡入（触发走共享
+        // 彩蛋：7 颗金色四角星，倾斜保持 0.45 秒后随 egg 淡入（触发走共享
         // step 逻辑，与圣诞同款；每次进页 restartVisit 可再触发）。
+        // farX = 6*depth = (f−6)，即远层帧移 1×(n−7) px（n 为 1 起帧号）。
+        let farX = 6 * depth * scaleX
         if egg > 0.001 {
             bitmap("newyear-egg-burst", in: ctx,
                    center: CGPoint(x: padded.midX + farX, y: padded.midY),
                    width: padded.width, height: padded.height, angle: 0, alpha: egg)
         }
-        // 余烬动态物：PNG 左上角对帧坐标 (212, 0)、600×323，中心即帧中心
-        // (512, 161.5)；padded.midY 已含 vertical，不再另加。跟近层大红烟花同速 nearX。
-        bitmap("newyear-embers", in: ctx,
-               center: CGPoint(x: padded.midX + nearX, y: padded.midY),
-               width: 600 * scaleX, height: 323 * scaleY, angle: 0, alpha: 1)
     }
 
     private func drawAdditionalTheme(_ ctx: CGContext, x: CGFloat, y: CGFloat, travel: CGFloat,
