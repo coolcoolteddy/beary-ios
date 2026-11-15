@@ -3,7 +3,7 @@ import ImageIO
 import UIKit
 
 public enum ProfileCoverTheme: String, CaseIterable {
-    case china, usa, japan, germany, canada, korea, qixi, christmas, newyear
+    case china, usa, japan, germany, canada, korea, qixi, christmas, newyear, easter
 }
 
 public final class ProfileCoverView: UIView {
@@ -55,6 +55,11 @@ public final class ProfileCoverView: UIView {
             // 元旦 v2 窗框版：彩蛋一张（7 颗金色四角星的整帧透明层，与第 7 帧
             // 对齐），跟远层走；v1 小镇版的余烬层已随重画去掉，v2 烟花全在图集里。
             names.append("newyear-egg-burst")
+        case .easter:
+            // 复活节：动态物是一颗粉色樱花纹彩蛋（立在草地上）；金蛋一张
+            // （兔子右侧草丛），与第 7 帧对齐、只在触发后出现。
+            names.append("easter-painted-egg")
+            names.append("easter-golden-egg")
         }
         var images: [String: UIImage] = [:]
         for name in names {
@@ -310,6 +315,8 @@ public final class ProfileCoverView: UIView {
             drawChristmas(ctx, depth: depth, vertical: vertical, padded: padded)
         case .newyear:
             drawNewyear(ctx, depth: depth, vertical: vertical, padded: padded)
+        case .easter:
+            drawEaster(ctx, depth: depth, vertical: vertical, padded: padded)
         case .germany, .canada, .korea:
             drawAdditionalTheme(ctx, x: x, y: y, travel: travel, midX: midX, nearX: nearX, vertical: vertical)
         }
@@ -429,6 +436,36 @@ public final class ProfileCoverView: UIView {
                    center: CGPoint(x: padded.midX + farX, y: padded.midY),
                    width: padded.width, height: padded.height, angle: 0, alpha: egg)
         }
+    }
+
+    /// 复活节（透明水彩、白天浅色场景）：图集只含背景，粉色樱花纹彩蛋由动态物层单独贴；
+    /// 金蛋一张是与第 7 帧对齐的整帧透明层（兔子右侧草丛）。
+    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
+    /// 三层位移（第 1→13 帧全程）：远 24／中 36／前景 60；帧 f=(depth+1)*6，
+    /// 中层帧内位移 3(f−6) px 即 18*depth——彩蛋与金蛋都跟中层走（±18px）。
+    /// 动态彩蛋（easter-painted-egg.png，512×560）：画在开阔草地上、兔子左侧，
+    /// 中心帧坐标 (380, 269)、宽 90，底边贴草地（y≈318）；交付里只说“落在草地上”、
+    /// 没给位置，这个点是我定的，想挪直接改这两个数。金蛋：倾斜保持 0.45 秒后
+    /// 随 egg 淡入（触发走共享 step 逻辑，与圣诞同款；每次进页 restartVisit 可再触发）。
+    private func drawEaster(_ ctx: CGContext, depth: CGFloat, vertical: CGFloat, padded: CGRect) {
+        let scaleX = padded.width / 1024
+        let scaleY = padded.height / 323
+        // 中层位移与图集帧内 baked 的一致（帧 f 中层平移 3(f−6) px，f=(depth+1)*6，
+        // 即 18*depth）；彩蛋与金蛋都按它平移才贴得住草地。
+        let middleX = 18 * depth * scaleX
+        // 金蛋：兔子右侧草丛，整帧透明层与第 7 帧对齐（金蛋 bbox x801–851、y240–281）。
+        if egg > 0.001 {
+            bitmap("easter-golden-egg", in: ctx,
+                   center: CGPoint(x: padded.midX + middleX, y: padded.midY),
+                   width: padded.width, height: padded.height, angle: 0, alpha: egg)
+        }
+        // 动态彩蛋：PNG 512×560，宽 90、高 90*560/512；中心帧坐标 (380, 269)。
+        let eggWidth: CGFloat = 90
+        let eggHeight = eggWidth * 560 / 512
+        bitmap("easter-painted-egg", in: ctx,
+               center: CGPoint(x: -32 + 380 * scaleX + middleX,
+                               y: -12 + 269 * scaleY + vertical),
+               width: eggWidth, height: eggHeight, angle: 0, alpha: 1)
     }
 
     private func drawAdditionalTheme(_ ctx: CGContext, x: CGFloat, y: CGFloat, travel: CGFloat,
@@ -597,7 +634,7 @@ public final class ProfileCoverView: UIView {
 
 /// 封面底图缓存：读盘＋解码只在后台串行队列做，主线程只贴图。
 /// 有界：最多留 3 张（最近用的），超了逐出最久未用的；收到内存警告时清库。
-/// 每张全幅图集 5120×969 ≈ 19 MiB，9 张全留理论约 171 MiB；封顶 3 张后
+/// 每张全幅图集 5120×969 ≈ 19 MiB，10 张全留理论约 190 MiB；封顶 3 张后
 /// 稳态约 57 MiB。preload 保留：设置页进页仍预热，逐出只发生在解码完成
 /// 入库时；已显示的封面持有自己的 backdrop 强引用，清库/逐出不会让首屏
 /// 变空白；未命中时 draw() 走 poster 兜底（与原来 backdrop == nil 的分支
@@ -680,7 +717,7 @@ private final class CoverBackdropCache: NSObject {
     /// 后台队列做、不碰主线程；帧切分按底图实际尺寸动态算，不用改 drawBackdrop。
     /// 第十轮 07：显式立即解码（kCGImageSourceShouldCacheImmediately），像素在
     /// 后台队列解完再交付主线程，首帧绘制不回主线程解压；须配合按需加载＋内存
-    /// 预算，九张不一次全解。
+    /// 预算，十张不一次全解。
     private static func decoded(theme: ProfileCoverTheme) -> CGImage? {
         guard let url = Bundle.main.url(forResource: theme.rawValue + "-depth", withExtension: "png"),
               let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
