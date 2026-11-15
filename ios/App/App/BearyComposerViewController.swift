@@ -579,7 +579,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 心情/天气旧条带已删（见下），入口只走天气尖角弹出框（心情已迁底部弹窗），不再走本值；
     /// 旧附加栏三态随双重入口删除而整组拆除，不再有“附加栏撑着显示天气行”的压制状态机。
     private enum ToolStrip {
-        case mood, weather, recipient
+        case recipient
     }
     private var activeToolStrip: ToolStrip?
     /// C11：删图撤销缓冲（单槽，只留最近一次删除）：项本身不改字段（key/localFile/
@@ -2996,7 +2996,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 2026-10-31：限时行已删，原“锚限时行顶”档并入工具栏档（心情/天气旧条带
     /// 已删、入口只走弹出框，不再为其预留行高；新建态滚动区因此下探 48pt）。
     private func updateScrollBottomAnchoring() {
-        let otherStripOpen = activeToolStrip != nil && activeToolStrip != .mood && activeToolStrip != .weather && !quotePanelOpen
+        let otherStripOpen = activeToolStrip != nil && !quotePanelOpen
         scrollBottomToToolbarConstraint?.isActive = !quotePanelOpen && !otherStripOpen
         scrollBottomToStripConstraint?.isActive = otherStripOpen
         scrollBottomToViewConstraint?.isActive = quotePanelOpen
@@ -3989,18 +3989,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     // MARK: - C1 选择条与已选 Chip 行（替代旧附加选项栏）
-
-    /// 工具栏钮：再点已展开的条即收起，点另一条直接切换；引用面板打开时不切换。
-    private func setToolStrip(_ strip: ToolStrip?) {
-        if quotePanelOpen {
-            showToast(message: "请先关闭引用面板")
-            return
-        }
-        let oldStrip = activeToolStrip
-        activeToolStrip = (activeToolStrip == strip) ? nil : strip
-        DiagFile.mark("weather-diag setToolStrip \(String(describing: oldStrip)) -> \(String(describing: activeToolStrip))")
-        refreshToolStrip()
-    }
 
     /// Chip 行点按：只打开对应条（不做收起切换，Chip 本身就是“已选”指示）。
     private func openToolStrip(_ strip: ToolStrip) {
@@ -5024,7 +5012,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     @objc private func didTapRecipientTool() {
         // A2：工具栏 @ 直连选人面板，跳过 @ 选择条（选择条仍由正文下方 @ chip
         // 打开，供已选态清除/重选；@ 提醒无按篇开关）。
-        // 引用面板打开时工具栏本身已藏，此处不再走 setToolStrip 的面板守卫。
+        // 引用面板打开时工具栏本身已藏，此处不再另做面板守卫。
         // 编辑器改版：弹出框打开时点其他工具钮，先收起框再走各自处理。
         // 审计 1：切到写给工具时，在途的天气展示意图作废。
         invalidatePendingCalloutPresentation()
