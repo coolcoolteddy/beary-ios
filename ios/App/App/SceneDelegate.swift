@@ -4346,6 +4346,11 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
     private let sheetTopBorderView = UIView()
     private var grabberInstalled = false
     private var sheetHeight: CGFloat = 0
+    /// 本次拖动起手时 presentedView 底安全区 inset（静止态）：
+    /// 上拖时编辑器视图离开 Home Indicator，底安全区 inset 按上移量缩小，
+    /// 底 pin 安全区的工具栏会被推回原位、与弹窗脱节；handleGrabberPan 用它
+    /// 把缩掉的部分补回来（最多补到静止值，无 Home Indicator 的设备为 0、不补）。
+    private var dragRestBottomInset: CGFloat = 0
     /// 审计 2026-11-02 弹窗组：见 BearyComposerSheetTransitioningDelegate。
     var dimTapHandler: (() -> Void)?
     var dismissalHandler: (() -> Void)?
@@ -4507,11 +4512,22 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         guard let presentedView = presentedView, let container = containerView else { return }
         let translation = pan.translation(in: container).y
         switch pan.state {
+        case .began:
+            // 记下静止态底安全区 inset，供上拖安全区补偿封顶用。
+            dragRestBottomInset = presentedView.safeAreaInsets.bottom
         case .changed:
             // 抓手批统一口径：下滑跟手，上滑阻尼微移（不扩高、不关闭）。
             let drag = BearySheetDrag.offset(for: translation)
             presentedView.transform = CGAffineTransform(translationX: 0, y: drag)
             sheetShadowView.transform = presentedView.transform
+            // 上拖安全区补偿：presentedView 上移时底安全区 inset 按上移量
+            // 缩小，底 pin 安全区的工具栏会被推回原位、与弹窗脱节；用
+            // additionalSafeAreaInsets 把缩掉的部分补回来，工具栏跟弹窗
+            // 1:1 一起动。下拖时底安全区不缩小，无需补偿；复位时补 0。
+            // 注意：键盘抬起时工具栏改锚到键盘顶（编辑器内切换），不走安全
+            // 区，补偿此时对工具栏无影响、无害；键盘收起时工具栏回安全区锚，
+            // 补偿生效。
+            presentedViewController.additionalSafeAreaInsets.bottom = drag < 0 ? min(-drag, dragRestBottomInset) : 0
             // 审计第 14 项：原口径不动，改走共用映射（其余面板与此同口径）。
             dimmingView.alpha = BearySheetDrag.scrimAlpha(forDragOffset: drag, sheetHeight: sheetHeight)
         case .ended:
@@ -4524,6 +4540,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
                 let restore = {
                     presentedView.transform = .identity
                     self.sheetShadowView.transform = .identity
+                    self.presentedViewController.additionalSafeAreaInsets.bottom = 0
                     self.dimmingView.alpha = 1
                 }
                 if UIAccessibility.isReduceMotionEnabled {
@@ -4540,6 +4557,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             let restore = {
                 presentedView.transform = .identity
                 self.sheetShadowView.transform = .identity
+                self.presentedViewController.additionalSafeAreaInsets.bottom = 0
                 self.dimmingView.alpha = 1
             }
             if UIAccessibility.isReduceMotionEnabled {
