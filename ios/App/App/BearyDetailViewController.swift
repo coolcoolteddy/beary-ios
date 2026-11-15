@@ -2386,9 +2386,9 @@ final class BearyDetailViewController: UIViewController {
     /// 条内走 thumb 图（首页同款），点图进灯箱仍按原图 key 打开。
     private func renderImages() {
         resetImageStripPinch()
-        // 内联 GIF 不进图条（与卡片同款：GIF 已插进正文/标题里播，再进图条
+        // 内联图不进图条（与卡片同款：已插进正文/标题里播，再进图条
         // 会同一张图出现两次）；图条只放照片。
-        let allKeys = (entry.images ?? []).filter { !$0.isEmpty && !$0.hasSuffix(".gif") }
+        let allKeys = (entry.images ?? []).filter { !$0.isEmpty && BearyGIF.isInlineImageKey($0, content: entry.content ?? "") == false }
         imageKeys = allKeys
         let keys = Array(allKeys.prefix(9))
         updateNineGridButton(count: keys.count)

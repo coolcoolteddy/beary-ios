@@ -2571,12 +2571,12 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 即清掉（旧静态图、纯静态新图一律走这里，不动原静态加载）。
     private func renderImages(keys: [String], dims: [String: [Int]]?, liveVideos: [String: String]? = nil) {
         resetImageStripPinch()
-        // 内联 GIF 不进图条：GIF 已插进正文/标题里播，再进图条会同一张图
+        // 内联图不进图条：已插进正文/标题里播，再进图条会同一张图
         // 出现两次（正文动画＋图条静态）；图条只放照片。
         // 112：卡片图片条上限 9 张（详情侧同款 Array(allKeys.prefix(9))）。
         // 脏数据超 9 张时先截断再渲染，灯箱 keys 同步取截断后列表，
         // 第 10 张起既不渲染也不进灯箱；逐项再 guard 三池下标，防池化异常越界。
-        let keys = Array(keys.filter { $0.hasSuffix(".gif") == false }.prefix(9))
+        let keys = Array(keys.filter { BearyGIF.isInlineImageKey($0, content: currentEntry?.content ?? "") == false }.prefix(9))
         currentImageKeys = keys
         updateNineGridButton(count: keys.count)
         if imageSlots.isEmpty { makeImageSlots() }

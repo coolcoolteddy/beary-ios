@@ -1,16 +1,19 @@
 import UIKit
 import ImageIO
 
-// ===== 用户自传 GIF：内联 GIF 记号 [gif:<rand>] =====
-// 正文/标题里的 GIF 只存记号（rand = 服务端 image key 里的随机部分，
+// ===== 用户自传 GIF：内联图片记号 [gif:<rand>] =====
+// 正文/标题里的自定义心情图只存记号（rand = 服务端 image key 里的随机部分，
 // 如 `123/1794482000000_ab12cd34.gif` → `ab12cd34`），完整 key 随日记
 // images 数组走（发布/更新/GC 共用照片口径）；旧客户端看不到图时只显示
-// 记号原文，不崩。卡片/详情/时间线用覆盖层播动画（UILabel 不能直接播附件
-// 动画）；编辑器里只显首帧静态图（与心情附件同款静态口径，动画在卡片/
-// 详情/时间线里播）。减动效下一律首帧静态图。
+// 记号原文，不崩。记号名仍叫 gif，常规图片（JPEG/PNG）也走同一记号；
+// 只有 .gif 才播动画，非 gif 只显首帧静态图。卡片/详情/时间线用覆盖层
+// 播动画（UILabel 不能直接播附件动画）；编辑器里只显首帧静态图（与心情
+// 附件同款静态口径，动画在卡片/详情/时间线里播）。减动效下一律首帧静态图。
 // 服务端口径（见 ~/workspace/beary-gif-upload-server.diff）：GIF 解码后
 // 1MB 上限（照片仍 5MB）、单边 ≤1000px、帧数 ≤200；取图按 key 鉴权，
 // 引用日记作者本人与本人库成员放行；库只引用 key、不复制文件。
+// 自定义库放宽到常规图片的服务端 diff 见
+// ~/workspace/beary-gif-library-images-server.diff（/add 端点放宽 .gif 校验）。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 enum BearyGIF {
@@ -71,9 +74,10 @@ enum BearyGIF {
         return (w, h, frames)
     }
 
-    /// 首帧静态图（减动效 / 编辑器 / 占位都用它）。
+    /// 首帧静态图（减动效 / 编辑器 / 占位都用它；CGImageSource 首帧解码
+    /// 对 JPEG/PNG 同样成立，不只限 GIF——非 gif 的自定义心情图也靠它显静态图）。
     static func firstFrameImage(_ data: Data) -> UIImage? {
-        guard isGIFData(data), let source = CGImageSourceCreateWithData(data as CFData, nil),
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let cg = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
         return UIImage(cgImage: cg)
     }
@@ -121,16 +125,40 @@ enum BearyGIF {
         return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
     }
 
-    /// 完整 key → rand 部分（`123/1794482000000_ab12cd34.gif` → `ab12cd34`）。
+    /// 自定义心情图片后缀（GIF 与常规图；与服务端 imageKey 允许的扩展一致，
+    /// 见 ~/workspace/beary-gif-upload-server.diff）。
+    static let imageExtensions = ["gif", "jpg", "jpeg", "png", "webp"]
+
+    /// key 是不是自定义心情图片 key（只看后缀；是不是“内联进正文”另见
+    /// isInlineImageKey——普通照片也是同款 key，只看后缀分不出来）。
+    static func isImageKey(_ key: String) -> Bool {
+        let lower = key.lowercased()
+        return imageExtensions.contains { lower.hasSuffix(".\($0)") }
+    }
+
+    /// 完整 key → rand 部分（`123/1794482000000_ab12cd34.gif` → `ab12cd34`；
+    /// 常规图同款，`..._ab12cd34.jpg` → `ab12cd34`）。
     static func randKey(from fullKey: String) -> String? {
         let last = fullKey.split(separator: "/").last.map(String.init) ?? fullKey
         guard let underscore = last.lastIndex(of: "_") else { return nil }
         let rand = String(last[last.index(after: underscore)...])
-        guard rand.hasSuffix(".gif") else { return nil }
-        let bare = String(rand.dropLast(4))
+        guard let dot = rand.lastIndex(of: ".") else { return nil }
+        let ext = String(rand[rand.index(after: dot)...]).lowercased()
+        guard imageExtensions.contains(ext) else { return nil }
+        let bare = String(rand[..<dot])
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789")
         guard !bare.isEmpty, bare.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return nil }
         return bare
+    }
+
+    /// key 是不是内联进正文/标题的自定义心情图（只进 inlineGifKeys、不进图片条/
+    /// 图条；其余 key 仍按普通照片走）。GIF 沿旧口径一律算内联（老数据里删掉
+    /// 记号的孤儿 GIF 仍不进图条，与改前一致）；常规图只认正文里的 [gif:]
+    /// 记号引用——普通照片也是同款 key，不看记号分不出来。
+    static func isInlineImageKey(_ key: String, content: String) -> Bool {
+        if key.lowercased().hasSuffix(".gif") { return true }
+        guard let rand = randKey(from: key) else { return false }
+        return content.contains("[gif:\(rand)]")
     }
 
     /// rand → 完整 key（在 entry.images 里按 rand 后缀找回）。
@@ -310,10 +338,10 @@ enum BearyGIFAddPresenter {
                 BearyGIFLibrary.add(key: fullKey) { result in
                     DispatchQueue.main.async {
                         switch result {
-                        case .added: BearyToast.show(in: vc.view, message: "已添加到我的 GIF")
+                        case .added: BearyToast.show(in: vc.view, message: "已添加到自定义")
                         case .alreadyAdded: BearyToast.show(in: vc.view, message: "已添加过")
                         case .full: BearyToast.show(in: vc.view, message: "表情库满了，先删掉一些再添加")
-                        case .notViewable: BearyToast.show(in: vc.view, message: "这个 GIF 已经加不了了")
+                        case .notViewable: BearyToast.show(in: vc.view, message: "这个图片已经加不了了")
                         case .failed: BearyToast.show(in: vc.view, message: "添加失败，请重试")
                         }
                     }
