@@ -1,25 +1,36 @@
 import UIKit
 
-// 快照列表（2026-11-11 产品冲突清单第 4 条定版）：详情页 ••• 菜单「快照」进入，
-// 仅作者本人可见；只列最近 7 天内产生的文字版本，星标版长期保留；点行进对比页。
+// 快照列表（2026-11-14 Li 定版，照截图改成底部弹窗两层中的列表层）：
+// 详情页 ••• 菜单「快照」进入，仅作者本人可见；只列最近 7 天内产生的文字版本，
+// 星标版长期保留。排序沿用服务端口径：created_at 倒序，星标不置顶（只豁免 7 天清理）。
+// 行：首行绝对时间（yyyy-MM-dd HH:mm:ss，等宽数字）＋星标 ★，次行固定
+// 「纯文本 · 保存成功」（快照只存文字、存下来即保存成功，服务端无逐条状态字段）；
+// 点行进预览层。右上「清空快照」删全部（含已加星标），先弹确认、不可撤销。
+// 字号照截图实测：标题 pageTitleFont 17 粗体、说明与副行 captionFont 12、行时间 17 半粗。
 
 final class BearySnapshotListViewController: UIViewController {
-    var onRestored: (() -> Void)?
+    /// 恢复到编辑器：预览层点「恢复到编辑器」后经本层透传给详情页
+    /// （快照文字载入编辑器，手动保存；不调 POST restore、不直接写库）。
+    var onRestoreSnapshotToEditor: ((BearyEntrySnapshot) -> Void)?
 
     private let entry: Entry
     private var snapshots: [BearyEntrySnapshot] = []
     private var loadFailed = false
 
+    /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页/公告同款做法）。
+    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
+
+    private let grabberView = UIView()
+    private let titleLabel = UILabel()
+    private let clearButton = UIButton(type: .system)
+    private let descriptionLabel = UILabel()
     private let tableView = UITableView(frame: .zero, style: .plain)
-    private let emptyLabel: UILabel = {
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.secondaryFont()
-        label.textColor = BearyColors.gray
-        label.textAlignment = .center
-        label.numberOfLines = 0
-        return label
-    }()
+    private let emptyLabel = UILabel()
+    private var tableHeightConstraint: NSLayoutConstraint?
+
+    /// 行高 64：时间 17＋副行 12＋行距＋上下留白；表最多露 6 行，超出滚动。
+    private static let rowHeight: CGFloat = 64
+    private static let maxTableHeight: CGFloat = 384
 
     init(entry: Entry) {
         self.entry = entry
@@ -30,37 +41,106 @@ final class BearySnapshotListViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.bg
-        title = "快照"
-        if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 24) {
-            navigationItem.leftBarButtonItem = UIBarButtonItem(image: backImage, style: .plain, target: self, action: #selector(closeTapped))
-        } else {
-            navigationItem.leftBarButtonItem = UIBarButtonItem(title: "返回", style: .plain, target: self, action: #selector(closeTapped))
-        }
-        navigationItem.leftBarButtonItem?.tintColor = BearyColors.ink
+        view.backgroundColor = BearyColors.surface3
+        view.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        view.layer.masksToBounds = true
+
+        grabberView.translatesAutoresizingMaskIntoConstraints = false
+        grabberView.backgroundColor = BearyColors.gray
+        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
+        view.addSubview(grabberView)
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = "本地快照"
+        titleLabel.font = BearyDynamicType.pageTitleFont()
+        titleLabel.textColor = BearyColors.ink
+        view.addSubview(titleLabel)
+
+        clearButton.translatesAutoresizingMaskIntoConstraints = false
+        clearButton.setImage(BearyIconImages.image(named: "icon_trash", pointSize: 16), for: .normal)
+        clearButton.setTitle("清空快照", for: .normal)
+        clearButton.titleLabel?.font = BearyDynamicType.buttonFont()
+        clearButton.setTitleColor(BearyColors.orange, for: .normal)
+        clearButton.tintColor = BearyColors.orange
+        clearButton.imageEdgeInsets = UIEdgeInsets(top: 0, left: -4, bottom: 0, right: 4)
+        clearButton.addTarget(self, action: #selector(clearTapped), for: .touchUpInside)
+        clearButton.bearyAddPressFeedback()
+        view.addSubview(clearButton)
+
+        descriptionLabel.translatesAutoresizingMaskIntoConstraints = false
+        descriptionLabel.font = BearyDynamicType.captionFont()
+        descriptionLabel.textColor = BearyColors.gray
+        descriptionLabel.numberOfLines = 0
+        descriptionLabel.text = "日记内容丢失或异常时，可尝试通过快照找回。仅保留最近七天的文字版本，保存在本机，不含图片和附件。"
+        view.addSubview(descriptionLabel)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
-        tableView.backgroundColor = BearyColors.bg
+        tableView.backgroundColor = BearyColors.surface3
         tableView.separatorColor = BearyColors.line
+        tableView.separatorInset = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 0)
+        tableView.rowHeight = Self.rowHeight
+        tableView.estimatedRowHeight = Self.rowHeight
         tableView.dataSource = self
         tableView.delegate = self
+        tableView.register(BearySnapshotRowCell.self, forCellReuseIdentifier: "BearySnapshotRowCell")
         view.addSubview(tableView)
+
+        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        emptyLabel.font = BearyDynamicType.secondaryFont()
+        emptyLabel.textColor = BearyColors.gray
+        emptyLabel.textAlignment = .center
+        emptyLabel.numberOfLines = 0
         view.addSubview(emptyLabel)
+
+        let tableHeight = tableView.heightAnchor.constraint(equalToConstant: 0)
+        tableHeightConstraint = tableHeight
         NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop),
+            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
+            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
+
+            titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
+            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+
+            clearButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            clearButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+
+            descriptionLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            descriptionLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            descriptionLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+
+            tableView.topAnchor.constraint(equalTo: descriptionLabel.bottomAnchor, constant: 8),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            tableHeight,
+            tableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+
+            emptyLabel.centerXAnchor.constraint(equalTo: tableView.centerXAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: tableView.centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
             emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
         ])
         loadSnapshots()
     }
 
-    @objc private func closeTapped() {
-        dismiss(animated: BearyMotion.animated(true))
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updatePreferredContentSize()
+    }
+
+    /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档变化时跟帧补齐。
+    /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
+    func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
+        let width = view.bounds.width > 0 ? view.bounds.width : 375
+        let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
+        let size = view.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+        let height = ceil(size.height) + extraBottomInset
+        let preferred = CGSize(width: width, height: height)
+        if preferredContentSize != preferred {
+            preferredContentSize = preferred
+        }
     }
 
     private func loadSnapshots() {
@@ -78,6 +158,7 @@ final class BearySnapshotListViewController: UIViewController {
                     BearyToast.show(in: self.view, message: "快照加载失败，请重试")
                 }
                 self.refreshEmptyState()
+                self.updateTableHeight()
                 self.tableView.reloadData()
             }
         }
@@ -95,10 +176,98 @@ final class BearySnapshotListViewController: UIViewController {
         }
     }
 
-    private func previewText(for snapshot: BearyEntrySnapshot) -> String {
-        let text = [snapshot.title, snapshot.content].compactMap { $0 }.joined(separator: "\n")
-        let firstLine = text.components(separatedBy: .newlines).first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        return firstLine ?? ""
+    private func updateTableHeight() {
+        // 空态留 76pt 给居中的空提示；有行时按行数算、最多露 6 行。
+        let height = snapshots.isEmpty ? 76 : min(CGFloat(snapshots.count) * Self.rowHeight, Self.maxTableHeight)
+        if tableHeightConstraint?.constant != height {
+            tableHeightConstraint?.constant = height
+        }
+    }
+
+    @objc private func clearTapped() {
+        BearyConfirmSheet.show(from: self, title: "清空快照？", message: "将删除这篇日记的全部快照，包括已加星标的版本，此操作不可撤销。", actions: [
+            BearyConfirmSheet.Action(title: "清空", style: .destructive, handler: { [weak self] in
+                self?.clearSnapshots()
+            }),
+            BearyConfirmSheet.Action(title: "取消", style: .cancel, handler: {}),
+        ])
+    }
+
+    private func clearSnapshots() {
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        BearyAPI.shared.clearSnapshots(entryId: entryId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success:
+                    self.loadFailed = false
+                    self.snapshots = []
+                    self.refreshEmptyState()
+                    self.updateTableHeight()
+                    self.tableView.reloadData()
+                    BearyToast.show(in: self.view, message: "快照已清空")
+                case .failure:
+                    BearyToast.show(in: self.view, message: "操作失败，请重试")
+                }
+            }
+        }
+    }
+}
+
+// MARK: - 弹出（公告底 sheet 同款容器口径）
+
+extension BearySnapshotListViewController {
+    static func show(from presenter: UIViewController, entry: Entry, onRestoreSnapshotToEditor: ((BearyEntrySnapshot) -> Void)?) {
+        let sheet = BearySnapshotListViewController(entry: entry)
+        sheet.onRestoreSnapshotToEditor = onRestoreSnapshotToEditor
+        let delegate = BearyBottomSheetTransitioningDelegate()
+        sheet.sheetDelegate = delegate
+        sheet.transitioningDelegate = delegate
+        sheet.modalPresentationStyle = .custom
+        sheet.loadViewIfNeeded()
+        let presenterWidth = presenter.view.bounds.width
+        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
+        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
+        sheet.view.setNeedsLayout()
+        sheet.view.layoutIfNeeded()
+        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
+        presenter.present(sheet, animated: BearyMotion.animated(true))
+    }
+}
+
+// MARK: - 行
+
+private final class BearySnapshotRowCell: UITableViewCell {
+    private let timeLabel = UILabel()
+    private let subtitleLabel = UILabel()
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        backgroundColor = BearyColors.surface3
+        accessoryType = .disclosureIndicator
+        timeLabel.translatesAutoresizingMaskIntoConstraints = false
+        timeLabel.font = BearyDynamicType.tabularDigitsFont(ofSize: 17, weight: .semibold)
+        timeLabel.textColor = BearyColors.ink
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        subtitleLabel.font = BearyDynamicType.captionFont()
+        subtitleLabel.textColor = BearyColors.gray
+        contentView.addSubview(timeLabel)
+        contentView.addSubview(subtitleLabel)
+        NSLayoutConstraint.activate([
+            timeLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 11),
+            timeLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            timeLabel.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
+            subtitleLabel.topAnchor.constraint(equalTo: timeLabel.bottomAnchor, constant: 3),
+            subtitleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func configure(with snapshot: BearyEntrySnapshot) {
+        timeLabel.text = snapshot.isStarred ? "\(snapshot.displayDateString)  ★" : snapshot.displayDateString
+        subtitleLabel.text = "纯文本 · 保存成功"
     }
 }
 
@@ -110,41 +279,30 @@ extension BearySnapshotListViewController: UITableViewDataSource, UITableViewDel
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "BearySnapshotCell")
-            ?? UITableViewCell(style: .subtitle, reuseIdentifier: "BearySnapshotCell")
-        let snapshot = snapshots[indexPath.row]
-        let dateText = snapshot.createdAt.map { BearyDiaryCardCell.feedTimeString(ms: $0) } ?? ""
-        cell.textLabel?.text = snapshot.isStarred ? "\(dateText)  ★" : dateText
-        cell.textLabel?.font = BearyDynamicType.smallSemiboldFont()
-        cell.textLabel?.textColor = BearyColors.ink
-        cell.detailTextLabel?.text = previewText(for: snapshot)
-        cell.detailTextLabel?.font = BearyDynamicType.smallBodyFont()
-        cell.detailTextLabel?.textColor = BearyColors.gray
-        cell.detailTextLabel?.numberOfLines = 2
-        cell.backgroundColor = BearyColors.bg
-        cell.accessoryType = .disclosureIndicator
+        guard let cell = tableView.dequeueReusableCell(withIdentifier: "BearySnapshotRowCell", for: indexPath) as? BearySnapshotRowCell else {
+            return UITableViewCell()
+        }
+        cell.configure(with: snapshots[indexPath.row])
         return cell
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: BearyMotion.animated(true))
         let snapshot = snapshots[indexPath.row]
-        let compareVC = BearySnapshotCompareViewController(
+        BearySnapshotPreviewViewController.show(
+            from: self,
             entryId: entry.id ?? "",
             snapshot: snapshot,
-            currentContent: entry.content ?? "",
-            currentTitle: entry.title
-        )
-        compareVC.onStarChanged = { [weak self] snapshotId, starred in
-            guard let self = self else { return }
-            if let row = self.snapshots.firstIndex(where: { $0.id == snapshotId }) {
-                self.snapshots[row].starred = starred ? 1 : 0
-                self.tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
+            onStarChanged: { [weak self] snapshotId, starred in
+                guard let self = self else { return }
+                if let row = self.snapshots.firstIndex(where: { $0.id == snapshotId }) {
+                    self.snapshots[row].starred = starred ? 1 : 0
+                    self.tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
+                }
+            },
+            onRestoreToEditor: { [weak self] snapshot in
+                self?.onRestoreSnapshotToEditor?(snapshot)
             }
-        }
-        compareVC.onRestored = { [weak self] in
-            self?.onRestored?()
-        }
-        navigationController?.pushViewController(compareVC, animated: BearyMotion.animated(true))
+        )
     }
 }
