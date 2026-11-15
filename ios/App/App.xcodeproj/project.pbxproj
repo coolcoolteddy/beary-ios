@@ -173,6 +173,11 @@
 		3BE240829E877D8C524F09EA /* easter-depth.png in Resources */ = {isa = PBXBuildFile; fileRef = CC96A3E9EB81F192D31BE647 /* easter-depth.png */; };
 		52721587D3AB173FD1E20C16 /* easter-painted-egg.png in Resources */ = {isa = PBXBuildFile; fileRef = EC827862216C190F45828D3B /* easter-painted-egg.png */; };
 		861764255311FCCA633A1890 /* easter-golden-egg.png in Resources */ = {isa = PBXBuildFile; fileRef = F59B1F70A1063CEF752B30A3 /* easter-golden-egg.png */; };
+		8DC9938B483D4640B8D85133 /* lantern-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = A97983F955BE470D90092340 /* lantern-poster.png */; };
+		9A10557F1DC84F53BD155584 /* lantern-depth.png in Resources */ = {isa = PBXBuildFile; fileRef = 4C9CE04C19DE4F2E9E987AA8 /* lantern-depth.png */; };
+		4DF1FE1AEEBD4E1F9888528E /* flower-lantern.png in Resources */ = {isa = PBXBuildFile; fileRef = 654552E87F964734B3909B7E /* flower-lantern.png */; };
+		BB449323B2664114A8094EFD /* lantern-lights-near.png in Resources */ = {isa = PBXBuildFile; fileRef = 3C80E10C127A4576AE48184F /* lantern-lights-near.png */; };
+		84878DAC0C884AACB1E5DE7D /* lantern-lights-far.png in Resources */ = {isa = PBXBuildFile; fileRef = 0CF493B761EC48FB829DF5A6 /* lantern-lights-far.png */; };
 		D395C5A456F0D264FAA5D081 /* china-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = F61DF01274DB03D3F0AB6FE0 /* china-poster.png */; };
 		1938F81450975213C5CE2010 /* japan-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = B18573473A12570FBD9DB089 /* japan-poster.png */; };
 		C73ABC14EF8C1B595064A827 /* usa-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = 95FB0D0AFDFEF9F5C38C947B /* usa-poster.png */; };
@@ -864,6 +869,11 @@
 		CC96A3E9EB81F192D31BE647 /* easter-depth.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/easter-depth.png; sourceTree = "<group>"; };
 		EC827862216C190F45828D3B /* easter-painted-egg.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/easter-painted-egg.png; sourceTree = "<group>"; };
 		F59B1F70A1063CEF752B30A3 /* easter-golden-egg.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/easter-golden-egg.png; sourceTree = "<group>"; };
+		A97983F955BE470D90092340 /* lantern-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/lantern-poster.png; sourceTree = "<group>"; };
+		4C9CE04C19DE4F2E9E987AA8 /* lantern-depth.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/lantern-depth.png; sourceTree = "<group>"; };
+		654552E87F964734B3909B7E /* flower-lantern.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/flower-lantern.png; sourceTree = "<group>"; };
+		3C80E10C127A4576AE48184F /* lantern-lights-near.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/lantern-lights-near.png; sourceTree = "<group>"; };
+		0CF493B761EC48FB829DF5A6 /* lantern-lights-far.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/lantern-lights-far.png; sourceTree = "<group>"; };
 		C69BECF80F639F3B86A1C5F7 /* BearyFestivalWallpapers.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = BearyFestivalWallpapers.json; sourceTree = "<group>"; };
 		37B9943EDEF2C3A792782E9E /* agree_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree_dark.json; sourceTree = "<group>"; };
 		4ED6BF206A0F34DF117D855A /* crown.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieCrown/crown.json; sourceTree = "<group>"; };
@@ -2112,6 +2122,11 @@
 				CC96A3E9EB81F192D31BE647 /* easter-depth.png */,
 				EC827862216C190F45828D3B /* easter-painted-egg.png */,
 				F59B1F70A1063CEF752B30A3 /* easter-golden-egg.png */,
+				A97983F955BE470D90092340 /* lantern-poster.png */,
+				4C9CE04C19DE4F2E9E987AA8 /* lantern-depth.png */,
+				654552E87F964734B3909B7E /* flower-lantern.png */,
+				3C80E10C127A4576AE48184F /* lantern-lights-near.png */,
+				0CF493B761EC48FB829DF5A6 /* lantern-lights-far.png */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -2781,6 +2796,11 @@
 				3BE240829E877D8C524F09EA /* easter-depth.png in Resources */,
 				52721587D3AB173FD1E20C16 /* easter-painted-egg.png in Resources */,
 				861764255311FCCA633A1890 /* easter-golden-egg.png in Resources */,
+				8DC9938B483D4640B8D85133 /* lantern-poster.png in Resources */,
+				9A10557F1DC84F53BD155584 /* lantern-depth.png in Resources */,
+				4DF1FE1AEEBD4E1F9888528E /* flower-lantern.png in Resources */,
+				BB449323B2664114A8094EFD /* lantern-lights-near.png in Resources */,
+				84878DAC0C884AACB1E5DE7D /* lantern-lights-far.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

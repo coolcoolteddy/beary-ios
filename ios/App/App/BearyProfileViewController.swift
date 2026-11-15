@@ -787,13 +787,13 @@ class BearyProfileViewController: UIViewController {
     /// 门控：封面款走 ProfileCoverView（陀螺仪分层视差），不走节日款的
     /// BearyFestivalWallpaperView、不压深色遮罩。
     enum FestivalTheme: String {
-        case none, halloween, spring, china, usa, japan, germany, canada, korea, qixi, christmas, newyear, easter
+        case none, halloween, spring, china, usa, japan, germany, canada, korea, qixi, christmas, newyear, easter, lantern
         var wallpaperTheme: BearyFestivalWallpaperView.Theme? {
             switch self {
             case .none: return nil
             case .halloween: return .halloween
             case .spring: return .spring
-            case .china, .usa, .japan, .germany, .canada, .korea, .qixi, .christmas, .newyear, .easter: return nil
+            case .china, .usa, .japan, .germany, .canada, .korea, .qixi, .christmas, .newyear, .easter, .lantern: return nil
             }
         }
         var coverTheme: ProfileCoverTheme? {
@@ -808,6 +808,7 @@ class BearyProfileViewController: UIViewController {
             case .christmas: return .christmas
             case .newyear: return .newyear
             case .easter: return .easter
+            case .lantern: return .lantern
             case .none, .halloween, .spring: return nil
             }
         }
@@ -826,6 +827,7 @@ class BearyProfileViewController: UIViewController {
             case .christmas: return "圣诞 · 壁炉"
             case .newyear: return "元旦 · 烟花"
             case .easter: return "复活节 · 彩蛋"
+            case .lantern: return "元宵 · 花灯"
             }
         }
     }
