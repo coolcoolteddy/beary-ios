@@ -182,6 +182,13 @@
 		C97BC7E76FF72124A96904A1 /* midautumn-depth.png in Resources */ = {isa = PBXBuildFile; fileRef = ED1749644703DB6E1431ED9C /* midautumn-depth.png */; };
 		DF48325B64FFE7964ECAEE26 /* jade-rabbit-egg.png in Resources */ = {isa = PBXBuildFile; fileRef = 3932401E313509629B4262C2 /* jade-rabbit-egg.png */; };
 		38A4B6A8C6FBFC994E94F05B /* sky-lantern.png in Resources */ = {isa = PBXBuildFile; fileRef = DB456BCCEE04FB607A18D071 /* sky-lantern.png */; };
+		C375F1187C7647458CBAB604 /* muertos-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = BD6DEA993DB64863AFEAB8A2 /* muertos-poster.png */; };
+		9165DEF61078452BBEDBD85C /* muertos-depth.png in Resources */ = {isa = PBXBuildFile; fileRef = 5CC95E4E25324D71844D0F61 /* muertos-depth.png */; };
+		5457C8D0CCA44A62BCE0954C /* golden-marigold-wreath.png in Resources */ = {isa = PBXBuildFile; fileRef = 58FBFB66CCC94F668EA8D12B /* golden-marigold-wreath.png */; };
+		02E67CE62DD2464D8568CDBF /* marigold-petal-1.png in Resources */ = {isa = PBXBuildFile; fileRef = 070E3D5C534C4DEF9240E533 /* marigold-petal-1.png */; };
+		0E1172DF924A44789502E1B1 /* marigold-petal-2.png in Resources */ = {isa = PBXBuildFile; fileRef = 700BCB7FD3714D819FF46A5B /* marigold-petal-2.png */; };
+		3ECCD08AA61A4AAF80F7D299 /* marigold-petal-3.png in Resources */ = {isa = PBXBuildFile; fileRef = 83F9E849A8524DB6B1B70A05 /* marigold-petal-3.png */; };
+		F276C9FD124549078D3CAB5B /* marigold-petal-4.png in Resources */ = {isa = PBXBuildFile; fileRef = 6D27C7127DA84CBEA31FF651 /* marigold-petal-4.png */; };
 		D395C5A456F0D264FAA5D081 /* china-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = F61DF01274DB03D3F0AB6FE0 /* china-poster.png */; };
 		1938F81450975213C5CE2010 /* japan-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = B18573473A12570FBD9DB089 /* japan-poster.png */; };
 		C73ABC14EF8C1B595064A827 /* usa-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = 95FB0D0AFDFEF9F5C38C947B /* usa-poster.png */; };
@@ -882,6 +889,13 @@
 		ED1749644703DB6E1431ED9C /* midautumn-depth.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/midautumn-depth.png; sourceTree = "<group>"; };
 		3932401E313509629B4262C2 /* jade-rabbit-egg.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/jade-rabbit-egg.png; sourceTree = "<group>"; };
 		DB456BCCEE04FB607A18D071 /* sky-lantern.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/sky-lantern.png; sourceTree = "<group>"; };
+		BD6DEA993DB64863AFEAB8A2 /* muertos-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/muertos-poster.png; sourceTree = "<group>"; };
+		5CC95E4E25324D71844D0F61 /* muertos-depth.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/muertos-depth.png; sourceTree = "<group>"; };
+		58FBFB66CCC94F668EA8D12B /* golden-marigold-wreath.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/golden-marigold-wreath.png; sourceTree = "<group>"; };
+		070E3D5C534C4DEF9240E533 /* marigold-petal-1.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/marigold-petal-1.png; sourceTree = "<group>"; };
+		700BCB7FD3714D819FF46A5B /* marigold-petal-2.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/marigold-petal-2.png; sourceTree = "<group>"; };
+		83F9E849A8524DB6B1B70A05 /* marigold-petal-3.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/marigold-petal-3.png; sourceTree = "<group>"; };
+		6D27C7127DA84CBEA31FF651 /* marigold-petal-4.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/marigold-petal-4.png; sourceTree = "<group>"; };
 		C69BECF80F639F3B86A1C5F7 /* BearyFestivalWallpapers.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = BearyFestivalWallpapers.json; sourceTree = "<group>"; };
 		37B9943EDEF2C3A792782E9E /* agree_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree_dark.json; sourceTree = "<group>"; };
 		4ED6BF206A0F34DF117D855A /* crown.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieCrown/crown.json; sourceTree = "<group>"; };
@@ -2139,6 +2153,13 @@
 				ED1749644703DB6E1431ED9C /* midautumn-depth.png */,
 				3932401E313509629B4262C2 /* jade-rabbit-egg.png */,
 				DB456BCCEE04FB607A18D071 /* sky-lantern.png */,
+				BD6DEA993DB64863AFEAB8A2 /* muertos-poster.png */,
+				5CC95E4E25324D71844D0F61 /* muertos-depth.png */,
+				58FBFB66CCC94F668EA8D12B /* golden-marigold-wreath.png */,
+				070E3D5C534C4DEF9240E533 /* marigold-petal-1.png */,
+				700BCB7FD3714D819FF46A5B /* marigold-petal-2.png */,
+				83F9E849A8524DB6B1B70A05 /* marigold-petal-3.png */,
+				6D27C7127DA84CBEA31FF651 /* marigold-petal-4.png */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -2817,6 +2838,13 @@
 				C97BC7E76FF72124A96904A1 /* midautumn-depth.png in Resources */,
 				DF48325B64FFE7964ECAEE26 /* jade-rabbit-egg.png in Resources */,
 				38A4B6A8C6FBFC994E94F05B /* sky-lantern.png in Resources */,
+				C375F1187C7647458CBAB604 /* muertos-poster.png in Resources */,
+				9165DEF61078452BBEDBD85C /* muertos-depth.png in Resources */,
+				5457C8D0CCA44A62BCE0954C /* golden-marigold-wreath.png in Resources */,
+				02E67CE62DD2464D8568CDBF /* marigold-petal-1.png in Resources */,
+				0E1172DF924A44789502E1B1 /* marigold-petal-2.png in Resources */,
+				3ECCD08AA61A4AAF80F7D299 /* marigold-petal-3.png in Resources */,
+				F276C9FD124549078D3CAB5B /* marigold-petal-4.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
