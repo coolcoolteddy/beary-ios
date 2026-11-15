@@ -1827,7 +1827,13 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 if let cardView = strongSelf.cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button {
                     cardView.isUserInteractionEnabled = true
                     strongSelf.playDenyFeedback()
-                    strongSelf.denyShake(on: cardView)
+                    // 删盘失败：卡片可能带着左滑位移进来（拖动进删不先复位），
+                    // 不复位就停在半偏移位；先弹簧归位、摇头等归位完成后再抖
+                    //（与发布中拒删分支同口径，免得摇头与归位抢 transform）。
+                    strongSelf.resetDraftDragCard(cardView) { [weak self] in
+                        guard let strongSelf = self else { return }
+                        strongSelf.denyShake(on: cardView)
+                    }
                 }
                 if let deleteButton = strongSelf.deleteEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button {
                     deleteButton.isEnabled = true
