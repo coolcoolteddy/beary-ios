@@ -170,6 +170,11 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
             // .changed 直接按手指位移改视图 transform，松手过阈值再走正常 dismiss。
             prepareUnderlyingView(for: presented)
         case .changed:
+            // 被拒的手势不跟手：.began 里 return 并不会停掉 recognizer，手指
+            // 继续滑仍会送 .changed；不拦这里，被拒的手势（引用面板开着）
+            // 照样把视图拖走，松手又在 dismissRejected 分支直接 return，
+            // 视图就冻在半偏移位。见 .ended 的 dismissRejected 分支。
+            guard !dismissRejected else { return }
             // 1:1 跟手：视图随手指右移（只向右，不向左出屏）。完成模式与普通模式同款。
             // 位移取在不动的 referenceView 坐标系里（见 handler 顶部注释），
             // 取在被拖动的 view 自身坐标系里只有一半。
@@ -185,7 +190,11 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
             dismissRejected = false
         case .ended:
             // 被拒的手势直接清理：不震动、不调完成回调、不 finish（页面并未关闭）。
+            // 兜底复位：视图绝不能停在半偏移位——.changed 即使被拦，也可能带
+            // 残留位移（上一轮复位动画未跑完又开拖）；任何未真正 dismiss 的
+            // 手势结束都必须把视图滑回原位，不能只靠某一条复位路径。
             if dismissRejected {
+                resetCompletionFollow(view: view)
                 dismissRejected = false
                 interaction = nil
                 completionMode = false
