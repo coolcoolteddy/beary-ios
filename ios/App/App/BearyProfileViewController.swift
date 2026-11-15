@@ -1812,7 +1812,7 @@ class BearyProfileViewController: UIViewController {
     /// 新机制（2026-10-29 视差补充口径，取代“洗向底色”）：收起后的 header
     /// 不是单独淡入的新条，而是封面本身随滚动慢慢变模糊、收成 header——
     /// 预模糊 18px 图交叉淡入 ≈ 模糊度 0→18px 随行程连续加深，行程走完后
-    /// 模糊层顶冻结在带底边 - 234，带内恒为模糊封面本身（不另起白玻璃条）；
+    /// 模糊层顶冻结在带底边 - 跟踪图高，带内恒为模糊封面本身（不另起白玻璃条）；
     /// 用户名最后才浮上来（模糊走完后按遮挡比例淡入）。
     /// 滚动回调里只改背景顶约束常量与 alpha，不调 layoutIfNeeded、
     /// 不做图片加载、不改文案；几何只在布局变化时算一次（背景自然顶与
@@ -1830,10 +1830,11 @@ class BearyProfileViewController: UIViewController {
     }()
 
     /// header 背景图（v22，2026-10-30）：与封面同一张 UIImage（布局时同步引用，不加载），
-    /// aspectFill、与真封面同几何（表框左／表宽、234 高、顶 = 自然顶 - 上滑量 - 54），
-    /// 由 header 容器裁剪；y=0 时 header 区域像素与真封面完全相同、无跳变；
-    /// 上滑时与真封面 1:1 同速同框上移（视差 0.3 已删），到锁定点后顶冻结在
-    /// 带底边 - 234、带内恒为封面底部本身（即封面锁定成 header，不另起模糊层）。
+    /// aspectFill、与真封面同几何（表框左／表宽、静态款 234 高／景深与墙纸款
+    /// 180 高、顶 = 自然顶 - 上滑量 - 顶偏），由 header 容器裁剪；y=0 时 header
+    /// 区域像素与真封面完全相同、无跳变；上滑时与真封面 1:1 同速同框上移
+    ///（视差 0.3 已删），到锁定点后顶冻结在带底边 - 跟踪图高、带内恒为封面
+    /// 底部本身（即封面锁定成 header，不另起模糊层）。
     /// 无封面默认背景时无图、背景色为主题底色（见 updateStickyHeaderLayout；
     /// #528 起跟踪图一律隐藏，吸顶 header 本身即主题底色）。
     private let stickyHeaderBgImageView: UIImageView = {
@@ -1848,7 +1849,9 @@ class BearyProfileViewController: UIViewController {
 
     /// header 内默认背景的文字 logo（v22，2026-10-30）：与封面区 wordmark 同图，
     /// 放进跟踪图内、中心在图顶 + 144（= 图顶预留 54 + 封面半高 90，即封面中心
-    /// 在跟踪图内的位置；coverH 变了要同步改），故随跟踪图自动 1:1 跟随与锁定；
+    /// 在跟踪图内的位置；coverH 变了要同步改——景深／墙纸款跟踪图 180 高时
+    /// 中心应为图顶 + 90；但 wordmark 自 #528 起恒隐藏，此处暂不动），故随跟踪图
+    /// 自动 1:1 跟随与锁定；
     /// 透明度与封面区 wordmark 同值淡出（后半段 1→0）；#528 起跟踪图一律隐藏，
     /// 锁定后 header 为主题底色，不再是纯橙。
     private let stickyWordmarkView: UIImageView = {
@@ -1895,8 +1898,12 @@ class BearyProfileViewController: UIViewController {
     private lazy var stickyHeaderBgLeadingConstraint: NSLayoutConstraint = stickyHeaderBgImageView.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor)
     private lazy var stickyHeaderBgTopConstraint: NSLayoutConstraint = stickyHeaderBgImageView.topAnchor.constraint(equalTo: stickyHeaderView.topAnchor)
     private lazy var stickyHeaderBgWidthConstraint: NSLayoutConstraint = stickyHeaderBgImageView.widthAnchor.constraint(equalToConstant: 0)
+    /// 跟踪图高约束（2026-11-15 景深重影修法：此前是 buildStickyHeader 里
+    /// 写死的 234 匿名约束，改不成——景深／墙纸款的活视图只有 180 高，跟踪图
+    /// 须同高，见 stickyHeaderTrackHeight）。
+    private lazy var stickyHeaderBgHeightConstraint: NSLayoutConstraint = stickyHeaderBgImageView.heightAnchor.constraint(equalToConstant: 234)
     /// 背景 header 模糊覆盖层（Li 2026-10-31）：与跟踪封面图同几何（同 leading/top/
-    /// 宽度/234 高约束常量，在 updateStickyHeaderLayout 里与背景图同值同步），
+    /// 宽度/高度约束常量，在 updateStickyHeaderLayout 里与背景图同值同步），
     /// 内容为预模糊封面图（半径 25，与封面下拉模糊同款，不逐帧现算高斯）；
     /// 滚动回调只改 alpha（0→1 交叉淡入 = 模糊度渐进加深），不改约束、不加载图片。
     /// 无封面照片（默认主题底色/加载态）时无图可糊，恒隐藏。
@@ -1914,6 +1921,8 @@ class BearyProfileViewController: UIViewController {
     private lazy var stickyHeaderBlurLeadingConstraint: NSLayoutConstraint = stickyHeaderBlurImageView.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor)
     private lazy var stickyHeaderBlurTopConstraint: NSLayoutConstraint = stickyHeaderBlurImageView.topAnchor.constraint(equalTo: stickyHeaderView.topAnchor)
     private lazy var stickyHeaderBlurWidthConstraint: NSLayoutConstraint = stickyHeaderBlurImageView.widthAnchor.constraint(equalToConstant: 0)
+    /// 模糊层高约束：与跟踪图同值同步（见 stickyHeaderTrackHeight）。
+    private lazy var stickyHeaderBlurHeightConstraint: NSLayoutConstraint = stickyHeaderBlurImageView.heightAnchor.constraint(equalToConstant: 234)
     /// 预模糊图对应的源图（identity 比对：源图变了才重算，不逐帧现算）。
     private var stickyHeaderBlurSourceImage: UIImage?
     /// 景深封面吸顶跟踪图缓存：海报图／节日款快照按主题缓存一次，滚动回调不再读盘；
@@ -1933,6 +1942,19 @@ class BearyProfileViewController: UIViewController {
     /// updateCoverStretch 同值），滚动回调取此常量、不取拉伸中的 live 约束（下拉复位动画
     /// 0.28s 内 live 值会抖）；改封面高时此处与三处同改，另 stickyWordmark 的 144 也要同步。
     private let profileCoverHeight: CGFloat = 180
+    /// 吸顶跟踪图高度（2026-11-15 景深重影修法）：静态封面款 234——静态图
+    /// 234 高、顶伸出带子 54；景深款与节日墙纸款的活视图钉在 coverClipView
+    /// 四边上、只有 180 高，跟踪图须同为 180，否则海报特征比活封面高约
+    /// 34pt（火车 f≈0.37，差 −54×(1−f)）、上滑淡入即重影。#850/#862 只
+    /// 解决了海报“有没有”，没核对这个高度差。高度跟当前主题走，布局时
+    /// 同步进高约束（见 updateStickyHeaderLayout），滚动回调只读此值。
+    private var stickyHeaderTrackHeight: CGFloat {
+        festivalTheme.coverTheme != nil || festivalTheme.wallpaperTheme != nil ? profileCoverHeight : 234
+    }
+    /// 吸顶跟踪图顶偏（跟踪图高与活封面 180 的差）：静态款 54，景深／墙纸款 0。
+    private var stickyHeaderTrackTopInset: CGFloat {
+        stickyHeaderTrackHeight - profileCoverHeight
+    }
     /// 第四轮第 1 项：封面照片加载失败标记——失败时恢复默认 wordmark 显示，
     /// 封面带点按改走重拉（见 coverViewTapped），不再剩空带。
     private var coverLoadFailed = false
@@ -2342,11 +2364,11 @@ class BearyProfileViewController: UIViewController {
             stickyHeaderBgLeadingConstraint,
             stickyHeaderBgTopConstraint,
             stickyHeaderBgWidthConstraint,
-            stickyHeaderBgImageView.heightAnchor.constraint(equalToConstant: 234),
+            stickyHeaderBgHeightConstraint,
             stickyHeaderBlurLeadingConstraint,
             stickyHeaderBlurTopConstraint,
             stickyHeaderBlurWidthConstraint,
-            stickyHeaderBlurImageView.heightAnchor.constraint(equalToConstant: 234),
+            stickyHeaderBlurHeightConstraint,
             // 默认背景 wordmark：跟踪图内封面中心（图顶 + 144），随跟踪图自动跟随与锁定。
             stickyWordmarkView.centerXAnchor.constraint(equalTo: stickyHeaderBgImageView.centerXAnchor),
             stickyWordmarkView.centerYAnchor.constraint(equalTo: stickyHeaderBgImageView.topAnchor, constant: 144),
@@ -2361,7 +2383,8 @@ class BearyProfileViewController: UIViewController {
 
     /// 跟踪图同步（Li 2026-11-02 定：背景上滑时逐渐变 header，推翻 #528
     /// 跟踪图隐藏口径）：吸顶容器里的图与真封面同一张 UIImage、同一几何
-    /// （表框左／表宽、234 高、顶随上滑 1:1、锁定后冻结），容器淡入时与下方
+    /// （表框左／表宽、静态款 234 高／景深与墙纸款 180 高、顶随上滑 1:1、
+    /// 锁定后冻结），容器淡入时与下方
     /// 真封面像素对齐，故不再有黑块盖在照片上、也无接缝；到锁定点后模糊层
     /// 再按遮挡进度交叉淡入，背景即逐渐变成 header。无封面照片时仍无图、
     /// 容器即主题底色（默认背景本来就是底色，无图可跟）。
@@ -2470,21 +2493,27 @@ class BearyProfileViewController: UIViewController {
             stickyHeaderHeightConstraint.constant = headerHeight
         }
         stickyHeaderBottom = headerHeight
-        // 背景图与真封面同几何（表框左 / 表宽、234 高、顶 = 自然顶 - 上滑量
-        // - 54），由容器裁剪到 header 范围；y=0 时与封面像素完全
-        // 相同、无跳变；锁定后顶由滚动回调冻结在带底边 - 234。
+        // 背景图与真封面同几何（表框左 / 表宽、静态款 234 高／景深与墙纸款
+        // 180 高、顶 = 自然顶 - 上滑量 - 顶偏），由容器裁剪到 header 范围；
+        // y=0 时与封面像素完全相同、无跳变；锁定后顶由滚动回调冻结在带底边
+        // - 跟踪图高（见 stickyHeaderTrackHeight）。
         if stickyHeaderBgLeadingConstraint.constant != tableFrame.minX {
             stickyHeaderBgLeadingConstraint.constant = tableFrame.minX
         }
         // 跟踪图顶是滚动回调的专属状态：布局只更新自然顶锚点，不得把顶打回
-        // 自然顶——已上滑时顶应为自然顶 - 上滑量 - 54（或锁定值），布局打回后、
+        // 自然顶——已上滑时顶应为自然顶 - 上滑量 - 顶偏（或锁定值），布局打回后、
         // 下次滚动事件前跟踪图与真封面错位；切 tab 回页不触发滚动事件，错位
         // 即常驻成背景重影（带内一片＋下方真封面一片＋接缝）。
         stickyHeaderBgNaturalTop = tableFrame.minY
         if stickyHeaderBgWidthConstraint.constant != tableFrame.width {
             stickyHeaderBgWidthConstraint.constant = tableFrame.width
         }
-        // 模糊层几何与背景图同值（leading/top/宽同常量，见上；高恒 234 不变）。
+        // 跟踪图高跟当前主题走（静态款 234／景深与墙纸款 180，见
+        // stickyHeaderTrackHeight）：切主题后布局即同步，不等滚动回调。
+        if stickyHeaderBgHeightConstraint.constant != stickyHeaderTrackHeight {
+            stickyHeaderBgHeightConstraint.constant = stickyHeaderTrackHeight
+        }
+        // 模糊层几何与背景图同值（leading/top/宽/高同常量，见上）。
         if stickyHeaderBlurLeadingConstraint.constant != tableFrame.minX {
             stickyHeaderBlurLeadingConstraint.constant = tableFrame.minX
         }
@@ -2494,12 +2523,16 @@ class BearyProfileViewController: UIViewController {
         if stickyHeaderBlurWidthConstraint.constant != tableFrame.width {
             stickyHeaderBlurWidthConstraint.constant = tableFrame.width
         }
-        // 布局时顶复位只在未上滑时做（静止态几何：自然顶 - 54，与裁剪区内图顶
-        // 一致）；已上滑时顶一律由滚动回调接管，布局不得写顶。
+        if stickyHeaderBlurHeightConstraint.constant != stickyHeaderTrackHeight {
+            stickyHeaderBlurHeightConstraint.constant = stickyHeaderTrackHeight
+        }
+        // 布局时顶复位只在未上滑时做（静止态几何：自然顶 - 顶偏，与裁剪区内
+        // 图顶一致；静态款顶偏 54／景深与墙纸款 0）；已上滑时顶一律由滚动
+        // 回调接管，布局不得写顶。
         let layoutUp = tableView.contentOffset.y + tableView.contentInset.top
         if layoutUp <= 0 {
-            if stickyHeaderBgTopConstraint.constant != tableFrame.minY - 54 {
-                stickyHeaderBgTopConstraint.constant = tableFrame.minY - 54
+            if stickyHeaderBgTopConstraint.constant != tableFrame.minY - stickyHeaderTrackTopInset {
+                stickyHeaderBgTopConstraint.constant = tableFrame.minY - stickyHeaderTrackTopInset
             }
         }
         // 封面图同步（见 syncStickyHeaderCover）：布局时同步一次，滚动时
@@ -2530,7 +2563,7 @@ class BearyProfileViewController: UIViewController {
     /// v22 封面滚动态（2026-10-30，取代视差 0.3＋上滑模糊 header＋旧名字淡入）：
     /// 2026-11-02：跟踪图已恢复可见，下述 1:1 跟随几何即背景变 header 的本体。
     /// 跟踪图与真封面 1:1 同速同框上移、底贴 header 底边时锁定成 header
-    ///（顶冻结在带底边 - 234，带内恒为封面底部本身）；头像 84→70 底部对齐
+    ///（顶冻结在带底边 - 跟踪图高，带内恒为封面底部本身）；头像 84→70 底部对齐
     /// 缩小、之后随页面 1:1 进入 header 后消失；名字以下整段不再跟移，
     /// 头像-用户名距离恒 14（静止态与滚动态一致）；18b：头像容器自身在
     /// 锁定前 32pt 窗口内做 8pt 回落 bump（见头像段公式），窗口外恒 0、
@@ -2610,12 +2643,12 @@ class BearyProfileViewController: UIViewController {
         defaultWordmarkView.alpha = 1 - rampProgress
         stickyWordmarkView.alpha = 1 - rampProgress
         // 跟踪图：1:1 跟随、锁定后顶冻结（底贴 header 底边）；下拉区（up≤0）header 整体隐藏。
-        let bgTop = max(stickyHeaderBgNaturalTop - up - 54, headerHeight - 234)
+        let bgTop = max(stickyHeaderBgNaturalTop - up - stickyHeaderTrackTopInset, headerHeight - stickyHeaderTrackHeight)
         if stickyHeaderBgTopConstraint.constant != bgTop {
             stickyHeaderBgTopConstraint.constant = bgTop
         }
         // 模糊层与跟踪图同几何：此前模糊层顶只在布局时同步，滚动中顶停在
-        // 静止值 -54、锁定后跟踪图顶已冻到带底边 -234，两图错位 61pt，
+        // 静止值 - 顶偏、锁定后跟踪图顶已冻到带底边 - 跟踪图高，两图错位 61pt，
         // 模糊交叉淡入时会跳一格；现滚动中同步同值，模糊即原图同框加深。
         if stickyHeaderBlurTopConstraint.constant != bgTop {
             stickyHeaderBlurTopConstraint.constant = bgTop
