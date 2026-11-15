@@ -89,6 +89,13 @@ class BearyEditProfileViewController: UIViewController {
     private var pendingCoverDataURL: String?
     private var coverChanged = false
     private var coverRemoved = false
+    /// 横幅当前贴的主题视图（个人页 profileCoverView／festivalWallpaperView
+    /// 同款）：主题态时盖住 coverImageView 的位置，.none 时撤掉。
+    private var bannerCoverView: ProfileCoverView?
+    private var bannerWallpaperView: BearyFestivalWallpaperView?
+    private var bannerDimView: UIView?
+    /// initialCoverUrl 只拉一次（主题态进页不拉图；切回 .none 时现取）。
+    private var didLoadInitialCover = false
     /// 本次选图目标：打开相册时固定（见 avatarButtonTapped / coverTapped），
     /// 之后随 didFinishPicking 的读取闭包与裁剪确认闭包传递，不再重读可变状态。
     private enum PickTarget {
@@ -441,9 +448,9 @@ class BearyEditProfileViewController: UIViewController {
                 avatarImageView.bearySetImage(url: avatarURLValue, placeholder: nil)
             }
         }
-        if let coverPath = initialCoverUrl, let coverURLValue = BearyImageURLs.avatarURL(coverPath) {
-            coverImageView.bearySetImage(url: coverURLValue, placeholder: nil)
-        }
+        // 横幅按当前生效封面贴：主题非 .none 贴主题活展示，否则显自定义上传图
+        //（个人页 applyFestivalTheme 同款口径）。
+        applyCoverBanner()
         // F14：网页编辑页本就没有移除封面入口，移除钮整组删除（保存逻辑的
         // cover=null 路径保留作将来入口复用，但本页不再提供移除操作）。
         updateDynamicLayerColors()
@@ -600,6 +607,7 @@ class BearyEditProfileViewController: UIViewController {
         copyLinkButton.layer.bearyDynamicBorderColor = BearyColors.line
         // 头像圈色与个人主页同款（bg；动态色，深浅切换时重赋）。
         avatarImageView.layer.bearyDynamicBorderColor = BearyColors.bg
+        updateBannerDim()
     }
 
     /// F15：表单标签（网页 ed-rlabel 口径：宽 58、15/600）。
@@ -961,7 +969,7 @@ class BearyEditProfileViewController: UIViewController {
 
     /// 景深背景应用（个人页旧款 handleFestivalThemePicked 同款口径）：
     /// 返回 true 仅表示已应用；Plus 门控时 toast 并返回 false（存量不动，
-    /// 新页停留）。本页只写 UserDefaults 存量、不直接贴主题视图；
+    /// 新页停留）。写 UserDefaults 存量后立即按同一口径重贴本页横幅；
     /// 回个人页时由保存重拉或取消收口重贴。
     private func handleDepthThemePicked(_ option: BearyProfileViewController.FestivalTheme, isPlus: Bool? = nil) -> Bool {
         // Plus 门控（优先用选择页回前台时刚拉到的 fresh 值，兜底才用 /me 的
@@ -973,6 +981,7 @@ class BearyEditProfileViewController: UIViewController {
             return false
         }
         UserDefaults.standard.set(option.rawValue, forKey: festivalThemeDefaultsKey)
+        applyCoverBanner()
         return true
     }
 
@@ -986,6 +995,113 @@ class BearyEditProfileViewController: UIViewController {
         guard let raw = UserDefaults.standard.string(forKey: festivalThemeDefaultsKey),
               let theme = BearyProfileViewController.FestivalTheme(rawValue: raw) else { return .none }
         return theme
+    }
+
+    /// 横幅按当前生效封面贴（个人页 applyFestivalTheme 同款口径）：
+    /// 存量主题非 .none 时贴主题活展示（景深封面走 ProfileCoverView，
+    /// 节日墙纸走 BearyFestivalWallpaperView），主题为 .none 时显自
+    /// 定义上传封面。主题视图插在 coverImageView 之下，封面点按钮与
+    /// 头像包的层级不动；切回 .none 时撤掉主题视图。
+    private func applyCoverBanner() {
+        let theme = storedFestivalTheme()
+        if let coverTheme = theme.coverTheme {
+            // 景深封面：个人页同款活展示；海报图缺失即创建失败、不改存量，
+            // 回落自定义图（个人页同款探针）。
+            guard Bundle.main.url(forResource: theme.rawValue + "-poster", withExtension: "png") != nil else {
+                removeBannerThemeViews()
+                showCustomCoverImage()
+                return
+            }
+            removeBannerThemeViews()
+            let coverView = ProfileCoverView(theme: coverTheme)
+            coverView.translatesAutoresizingMaskIntoConstraints = false
+            coverView.accessibilityElementsHidden = true
+            scrollView.insertSubview(coverView, belowSubview: coverImageView)
+            NSLayoutConstraint.activate([
+                coverView.topAnchor.constraint(equalTo: coverImageView.topAnchor),
+                coverView.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
+                coverView.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
+                coverView.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
+            ])
+            coverView.restartVisit()
+            bannerCoverView = coverView
+            coverImageView.isHidden = true
+            return
+        }
+        if let wallpaperTheme = theme.wallpaperTheme {
+            // 节日墙纸：个人页同款活展示；创建失败回落自定义图。
+            do {
+                let wallpaperView = try BearyFestivalWallpaperView(theme: wallpaperTheme)
+                removeBannerThemeViews()
+                wallpaperView.translatesAutoresizingMaskIntoConstraints = false
+                wallpaperView.accessibilityElementsHidden = true
+                scrollView.insertSubview(wallpaperView, belowSubview: coverImageView)
+                NSLayoutConstraint.activate([
+                    wallpaperView.topAnchor.constraint(equalTo: coverImageView.topAnchor),
+                    wallpaperView.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
+                    wallpaperView.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
+                    wallpaperView.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
+                ])
+                bannerWallpaperView = wallpaperView
+                // 深色压暗一档（个人页 updateFestivalDim 同款）。
+                let dimView = UIView()
+                dimView.translatesAutoresizingMaskIntoConstraints = false
+                dimView.backgroundColor = .black
+                dimView.isUserInteractionEnabled = false
+                dimView.accessibilityElementsHidden = true
+                scrollView.insertSubview(dimView, belowSubview: coverImageView)
+                NSLayoutConstraint.activate([
+                    dimView.topAnchor.constraint(equalTo: coverImageView.topAnchor),
+                    dimView.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
+                    dimView.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
+                    dimView.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
+                ])
+                bannerDimView = dimView
+                updateBannerDim()
+                coverImageView.isHidden = true
+            } catch {
+                removeBannerThemeViews()
+                showCustomCoverImage()
+            }
+            return
+        }
+        removeBannerThemeViews()
+        showCustomCoverImage()
+    }
+
+    /// 撤掉横幅上的主题视图（切回 .none／换主题时调用；不碰 coverImageView）。
+    private func removeBannerThemeViews() {
+        if let coverView = bannerCoverView {
+            coverView.isPlaying = false
+            coverView.removeFromSuperview()
+            bannerCoverView = nil
+        }
+        if let wallpaperView = bannerWallpaperView {
+            wallpaperView.isAnimationEnabled = false
+            wallpaperView.removeFromSuperview()
+            bannerWallpaperView = nil
+        }
+        bannerDimView?.removeFromSuperview()
+        bannerDimView = nil
+    }
+
+    /// .none 态：显自定义上传封面。进页时还没拉过图才走 initialCoverUrl
+    ///（主题态进页不拉图；切回 .none 时现取，避免横幅空着；已裁剪待存
+    /// 的新图直接用 coverImageView 现有的 image，不重拉）。
+    private func showCustomCoverImage() {
+        coverImageView.isHidden = false
+        if !didLoadInitialCover,
+           let coverPath = initialCoverUrl,
+           let coverURLValue = BearyImageURLs.avatarURL(coverPath) {
+            didLoadInitialCover = true
+            coverImageView.bearySetImage(url: coverURLValue, placeholder: nil)
+        }
+    }
+
+    /// 墙纸压暗（个人页 updateFestivalDim 同款：深色 0.35、浅色 0）；
+    /// 深浅切换时由 updateDynamicLayerColors 复核。
+    private func updateBannerDim() {
+        bannerDimView?.alpha = traitCollection.userInterfaceStyle == .dark ? 0.35 : 0
     }
 
     @objc private func coverTapped() {
@@ -1577,6 +1693,11 @@ extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
                         strongSelf.coverChanged = true
                         strongSelf.coverRemoved = false
                         strongSelf.coverImageView.image = cropped
+                        // 换自定义封面即清景深主题存量（个人页同款口径：生效封面
+                        // 只认其一；不清则保存后个人页按存量重贴主题、新封面一直
+                        // 被盖住）。与选主题即时写存量同款：取消也不恢复。
+                        UserDefaults.standard.set(BearyProfileViewController.FestivalTheme.none.rawValue, forKey: strongSelf.festivalThemeDefaultsKey)
+                        strongSelf.applyCoverBanner()
                     }
                 }
             }
