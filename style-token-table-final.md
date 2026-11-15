@@ -100,6 +100,7 @@
 - 品牌橙 #ff9500：品牌与情感，收藏点亮、FAB 保持橙；橙底前景走 onBrand 恒墨色，不得用白。
 - 点赞填色 likeRed #ff3b30；语义红 #e5484d 只给删除；语义绿 #2fbf71 只给正向语义。
 - 破坏性文字 token destructiveText（2026-11-12 第十轮新增）：浅 #C92A2A（白底 5.46:1）、深 #FF6B61（surface0 #0B0B0D 底 7.05:1），均 ≥4.5:1；删除类文字（退出其他设备、清空等）走 destructiveText，不走语义红 #E5484D（白底仅 3.91:1，不达标，不再做正文色）；错误文字统一走 destructiveText；destructive 红边框同步 45%（2026-11-12 第十四轮定版）。
+- surface3 弹层错误文字 token surface3ErrorText（2026-11-14 第 21 轮 B2 Li 定版）：浅 #BD2424（surface3 #DFDFDF 底约 4.58:1）、深 #FF6B61（surface3 #313138 底约 4.63:1），均 ≥4.5:1；只用于浅色 surface3 弹层上的错误文字（邀请页 messageLabel），别处错误文字仍走 destructiveText（destructiveText 浅 #C92A2A 在 surface3 底上仅约 4.10:1，不达标）。
 - 反馈粒子颜色须与点按后填色一致（#891／#863）：点赞液滴只 #ff3b30 单色、7 滴、2–4pt；收藏星星只 #ff9500 单色、7 颗、2.5–4.5pt；不配浅色渐变。
 - 写日记页底色与首页同色（BearyColors.bg，#901）。
 - 蓝＝状态提示：浅 #007aff／深 #0a84ff，未读点必须蓝；未读角标专用深蓝 #0066CC（白字 5.57:1）；蓝色只剩提示：草稿已保存类状态文案、协议链接蓝字＋下划线。
