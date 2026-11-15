@@ -3493,21 +3493,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 checkView.layer.cornerRadius = 12
                 checkView.layer.masksToBounds = true
                 checkView.isUserInteractionEnabled = false
-                let checkLabel = UILabel()
-                checkLabel.translatesAutoresizingMaskIntoConstraints = false
-                checkLabel.font = UIFont.boldSystemFont(ofSize: 14)
-                checkLabel.textColor = BearyColors.bg
-                checkLabel.textAlignment = .center
-                checkLabel.text = "✓"
-                checkView.addSubview(checkLabel)
+                // r21-A13 跟进：引用行选中徽标改官方 icon_check，不再用文字“✓”
+                //（与通知复选同口径：底是 ink、对勾取反色 bg）。
+                let checkImageView = UIImageView()
+                checkImageView.translatesAutoresizingMaskIntoConstraints = false
+                checkImageView.contentMode = .scaleAspectFit
+                checkImageView.tintColor = BearyColors.bg
+                checkImageView.image = BearyIconImages.image(named: "icon_check", pointSize: 14)
+                checkView.addSubview(checkImageView)
                 rowButton.addSubview(checkView)
                 NSLayoutConstraint.activate([
                     checkView.topAnchor.constraint(equalTo: rowButton.topAnchor, constant: 16),
                     checkView.trailingAnchor.constraint(equalTo: rowButton.trailingAnchor, constant: -2),
                     checkView.widthAnchor.constraint(equalToConstant: 24),
                     checkView.heightAnchor.constraint(equalToConstant: 24),
-                    checkLabel.centerXAnchor.constraint(equalTo: checkView.centerXAnchor),
-                    checkLabel.centerYAnchor.constraint(equalTo: checkView.centerYAnchor),
+                    checkImageView.centerXAnchor.constraint(equalTo: checkView.centerXAnchor),
+                    checkImageView.centerYAnchor.constraint(equalTo: checkView.centerYAnchor),
                 ])
             }
             var lastBottomAnchor: NSLayoutYAxisAnchor = contentLabel.bottomAnchor
