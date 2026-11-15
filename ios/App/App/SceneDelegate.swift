@@ -111,9 +111,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
         }
     }
 
-    /// B10：退后台停 matrix 动画、回前台恢复（此前无此处理）；经容器 chrome 转发。
     func sceneDidEnterBackground(_ scene: UIScene) {
-        (window?.rootViewController as? BearyChromeViewController)?.pauseSideMatrixAnimation()
         // 遮罩幂等补位：若 resignActive 路径被系统打断未盖上，此处再盖一次。
         if let window = window {
             BearyAppLockManager.shared.installShield(on: window)
@@ -173,7 +171,6 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
         BearyLocalNotifications.shared.refreshAll()
         // 遮罩回前台无验证直接撤掉（回前台不锁的口径不变）。
         BearyAppLockManager.shared.removeShield()
-        (window?.rootViewController as? BearyChromeViewController)?.resumeSideMatrixAnimation()
         // fixall-sync 5-27 集成接线：被守卫挡下的同步在回前台时重跑（内部去重已覆盖已同步/在途）。
         BearyEntrySync.shared.kickForCurrentUser()
     }
@@ -490,17 +487,6 @@ final class BearyChromeViewController: UIViewController {
     private var feedCenterXConstraint: NSLayoutConstraint?
     /// 桌面式当前状态（updateDesktopLayout 的幂等守卫：状态不变直接返回，绝不在布局回调里反复开关约束）
     private var desktopActive = false
-    /// 视觉清单第 4 项（已定设计）：两侧背景层已停用——不再建层、不再平铺、
-    /// 不再跑 30s 循环动画；字段保留仅供 pause/resume/update 空操作守卫，
-    /// 内容列 600 与底栏/FAB 原布局一字不动。官方图片资源不删除、不修改。
-    private var sideDecoLeft: UIView?
-    private var sideDecoRight: UIView?
-    private var sideDecoLeftWidth: NSLayoutConstraint?
-    private var sideDecoRightWidth: NSLayoutConstraint?
-    /// 上次建 matrix 时的容器尺寸（bounds 变化才重建，避免布局回调里反复建图）。
-    private var sideDecoBuiltSize: CGSize?
-    /// 减动效变化观察者（A10）：减动效开关翻转时停/启 matrix 动画。
-    private var reduceMotionObserver: NSObjectProtocol?
     /// 邀请弹窗模态的 transitioningDelegate（弱引用，必须强持有到 dismiss 完成；
     /// 宽屏居中与窄屏底 sheet 各持一个，互不覆盖持有）
     private var inviteCentered: BearyCenteredTransitioningDelegate?
@@ -1141,17 +1127,6 @@ final class BearyChromeViewController: UIViewController {
         buildChrome()
         // 开发者模式变化：横幅显隐＋位置＋各页内边距同步（见 handleDevModeChanged）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleDevModeChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
-        // 视觉清单第 4 项：两侧背景层已停用——buildSideDeco 现为空操作，
-        // 调用保留仅为恢复口；布局由 viewDidLayoutSubviews 驱动的部分随之失效。
-        buildSideDeco()
-        // A10：订阅减动效开关变化（与 EmotePlayer 同口径的通知名）；视觉清单第 4 项后背景层已停用，此订阅仅走空操作。
-        reduceMotionObserver = NotificationCenter.default.addObserver(forName: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            if UIAccessibility.isReduceMotionEnabled {
-                self?.pauseSideMatrixAnimation()
-            } else {
-                self?.resumeSideMatrixAnimation()
-            }
-        }
         // 初始态：本地有有效会话 cookie 时首帧直接按缓存登录态出（登录钮藏），
         // 后台验出 401 才切游客态；无 cookie 时仍按游客首帧。旧口径“恒按未登录首帧”
         // 会让已登录用户每次重开都先见登录钮、几秒后才翻态，体感即“检测几秒是否登录”。
@@ -1691,10 +1666,7 @@ final class BearyChromeViewController: UIViewController {
         super.traitCollectionDidChange(previousTraitCollection)
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
             updateStatusBarFromTrait()
-            // M11（91 包）：复制层 tile 图在重建时按当前深浅解析，换主题强制重建以换图集变体。
-            sideDecoBuiltSize = nil
-            updateSideDecoLayout()
-            }
+        }
     }
 
     /// 状态栏跟随系统深浅：深色 → 浅字，浅色 → 深字。
@@ -1936,8 +1908,6 @@ final class BearyChromeViewController: UIViewController {
         super.viewDidLayoutSubviews()
         // 旋转/多任务改 bounds 时重算桌面式（iPad 旋转不改 size class，trait 回调靠不住，以 bounds 为准）
         updateDesktopLayout()
-        // 审计 2：两侧背景层随 bounds 重算（窄屏隐藏、宽屏定宽/重建）。
-        updateSideDecoLayout()
         // 22(b) Plan A：顶栏高恒为安全区顶 + 108（显隐不再塌高）；安全区变化
         // （旋转/分屏）时恒纠正高度，收起态同步把上移量纠正为新高度，
         // 否则 transform 仍是旧高度、顶栏会露出半截。
@@ -4152,51 +4122,6 @@ final class BearyChromeViewController: UIViewController {
         }
         configureComposerPresentation(c, forEdit: true)
         topmostViewController().present(c, animated: BearyMotion.animated(true))
-    }
-
-    // MARK: - 审计 2 两侧 side-matrix 背景层（仅宽 ≥821）【视觉清单第 4 项已停用，以下为历史口径】
-    /// 网页锚点 teddy_site/beary.html:201-210（.side-matrix：sideFlow 30s linear
-    /// infinite、图标透明度 .34、减动效停播）与 :1061-1062（左右 .side-deco 容器）
-    /// 及 :2419-2421（SIDE_TILE / SIDE_FILES）。
-    /// 纯装饰：容器插在 view 最底层（at:0，页/栏在其上）、isUserInteractionEnabled=false，
-    /// 不拦截触摸；内容列 600、底栏、FAB 的约束一字不动，只在两侧留白处铺图。
-    /// 资产：用且只用网页那套图形——img.teddyhn.com/logos 的 5 张原图已落本地图集
-    /// （beary-logos.zip 原文件，浅色原图 + 深色 -white 变体，不再用主站资产代位）：
-    /// icon=side_beary_icon（beary-icon-large）、stack=side_beary_stack
-    /// （beary-logo-stacked）、wordmark=side_beary_word（beary-wordmark）、
-    /// part-envelope=side_part_envelope、part-notebook=side_part_notebook。
-    /// 原图不 tint、不 template（网页亦不着色，深色靠 -white 变体），透明度 .34。
-    /// 平铺周期与网页一致（横 4 格 344pt、纵 2 格 164pt 的整数倍 328pt），
-    /// 30s 平移动画循环回跳时图案无缝。
-    /// 视觉清单第 4 项：两侧背景层已停用，本函数不再建层（原两侧容器、
-    /// 宽度约束与 insertSubview 全部移除）；调用点 viewDidLoad 保留调用，
-    /// 以便日后若恢复只需改回本函数一处。官方图片资源不删除、不修改。
-    private func buildSideDeco() {
-        // 已停用：不创建 sideDecoLeft/Right，不插 view 最底层。
-    }
-
-    /// 视觉清单第 4 项：两侧背景层已停用——本函数只把可能残留的容器藏起，
-    /// 不定宽、不重建、不启动画；内容列与底栏布局不受影响。
-    private func updateSideDecoLayout() {
-        sideDecoLeft?.isHidden = true
-        sideDecoRight?.isHidden = true
-    }
-
-    /// 视觉清单第 4 项：两侧背景层已停用，matrix 动画已不存在；本函数保留
-    /// 仅作 SceneDelegate 生命周期调用点的空操作（容器恒为 nil，循环无操作）。
-    /// A10/B10 旧语义（退后台/减动效停播 30s 循环）随停用一并失效。
-    fileprivate func pauseSideMatrixAnimation() {
-        for container in [sideDecoLeft, sideDecoRight] {
-            for matrix in container?.subviews ?? [] {
-                matrix.layer.removeAllAnimations()
-                matrix.transform = .identity
-            }
-        }
-    }
-
-    fileprivate func resumeSideMatrixAnimation() {
-        // 视觉清单第 4 项：背景层已停用，不重建、不启动画；仅走 update 的藏起守卫。
-        updateSideDecoLayout()
     }
 
     // MARK: - 桌面式布局（仅 iPad 且宽 ≥821，与网页 @media 断点一致）
