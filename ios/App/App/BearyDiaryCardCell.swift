@@ -2293,12 +2293,6 @@ class BearyDiaryCardCell: UITableViewCell {
         onAuthorTapped?()
     }
 
-    /// C6 菜单编辑资格：本人即可（冲突清单第 4 条取消 15 分钟锁，编辑永久可改）。
-    /// iCity：编辑锁已取消，与可见性无关。
-    private func isCardMenuEditAvailable(entry: Entry) -> Bool {
-        entry.isMine == true
-    }
-
     // MARK: - configure（首页模式）
 
     func configure(with entry: Entry) {

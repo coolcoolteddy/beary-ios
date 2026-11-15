@@ -225,7 +225,7 @@ enum BearySheetDrag {
 
 /// 玻璃适用范围 Token（视觉清单第 12 项）：系统材质（UIGlassEffect /
 /// systemMaterial 降级）只允许在栏与菜单区域使用——顶栏、底栏衬底、顶栏内
-/// 登录 pill、菜单卡（bearyMenuGlassView）。窗口 / 弹窗 / Toast / 浮动按钮
+/// 登录 pill、菜单卡（BearyGlass.effectView）。窗口 / 弹窗 / Toast / 浮动按钮
 /// 一律不用系统材质，改走实色底（见各调用点注释）。
 /// 注意：本令推翻 Li 2026-10-26“所有窗口弹窗与全 App 按钮都用官方玻璃”
 /// 的旧令，可逆——恢复旧令 = 把本支删掉的玻璃背板原样贴回（见 PR 描述清单）。
