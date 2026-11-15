@@ -25,7 +25,8 @@ import UIKit
 //   旧回包一律丢弃。
 // - 建图缓存（r17 C5）：recompute 先按「账号桶 + 作者 + 角色 + 分片 +
 //   日记版本 + 算法版本」查 BearyStarMapCache（内存、最近 4 个范围），
-//   命中直接复用模型；miss 才后台 buildModel，建好存回缓存。切连线类型
+//   命中直接复用模型；miss 才后台 buildModel，建好存回缓存。r17-19：
+//   指纹按数据修订号备忘，数据没变时切分片不再主线程重算。切连线类型
 //   不重建模型——didTapFilterPill 只改 edgeFilter 后调 applyModelToSky，
 //   在已有 model.edges 上按 kind 过滤。退出 / 401 由 SessionManager
 //   purgeLocalSnapshotsForCurrentAccount 按账号桶清缓存。
@@ -139,7 +140,19 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     // MARK: - 状态
 
-    private var allEntries: [Entry] = []
+    private var allEntries: [Entry] = [] {
+        // r17-19：数据修订号——赋值、下标改写、removeAll 等变异方法都会
+        // 触发 didSet（初始化赋值不触发，修订号初值 0 即可）；recompute
+        // 凭它复用分片指纹，数据没变时切分片不再重算指纹。
+        didSet { entriesRevision += 1 }
+    }
+    /// r17-19：allEntries 的修订号（见上），与分片指纹备忘的键。
+    private var entriesRevision = 0
+    /// r17-19：分片指纹备忘——键「分片 + 角色 + 修订号」，值是
+    /// diaryVersion 的结果；数据没变时切分片直接复用，不再拼全片
+    /// 正文重算。最近 8 个键，超了逐最久未用。
+    private var fingerprintMemo: [String: String] = [:]
+    private var fingerprintMemoOrder: [String] = []
     private var filteredEntries: [Entry] = []
     private var slice: StarMapSlice = .all
     private var edgeFilter: StarMapEdgeKind? = nil
@@ -804,13 +817,28 @@ final class BearyDiaryStarMapViewController: UIViewController {
         // r17 C5：先查建图缓存——键含账号桶 + 作者 + 角色 + 分片 + 日记版本
         // + 算法版本；命中即复用模型，不进后台建图（「本月 → 去年 → 本月」
         // 第二次进本月即命中）。miss 才后台建图，建好存回缓存。
+        // r17-19：指纹按数据修订号备忘——数据没变时切分片直接复用上次
+        // 的指纹，不再拼全片正文重算；数据变了（修订号变了）才重算一次。
+        let memoKey = "\(slice.cacheKey)|\(viewerIsAuthor)|\(entriesRevision)"
+        let diaryVersion: String
+        if let memo = fingerprintMemo[memoKey] {
+            diaryVersion = memo
+        } else {
+            diaryVersion = BearyStarMap.diaryVersion(entries: sliceEntries, viewerIsAuthor: viewerIsAuthor)
+            fingerprintMemo[memoKey] = diaryVersion
+            fingerprintMemoOrder.append(memoKey)
+            while fingerprintMemoOrder.count > 8, let oldest = fingerprintMemoOrder.first {
+                fingerprintMemoOrder.removeFirst()
+                fingerprintMemo.removeValue(forKey: oldest)
+            }
+        }
         let cacheKey = BearyStarMapCache.key(
             account: BearyStarMapCache.accountKey(
                 viewerId: SessionManager.shared.currentUser?.id,
                 authorId: authorId,
                 viewerIsAuthor: viewerIsAuthor),
             slice: slice,
-            diaryVersion: BearyStarMap.diaryVersion(entries: sliceEntries, viewerIsAuthor: viewerIsAuthor))
+            diaryVersion: diaryVersion)
         if let cached = BearyStarMapCache.lookup(key: cacheKey) {
             // 同步命中：generation 刚 +1、无在途旧回包可冲掉它，直接换入。
             model = cached
