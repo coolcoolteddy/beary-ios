@@ -1,12 +1,16 @@
 import UIKit
 
-// ===== 个人 GIF 库（微信表情包模式）：服务端按账号存，App 端按账号缓存 =====
-// 上传/添加过的 GIF 存进自己的库，在哪都能用；库里只存 key、不复制文件。
+// ===== 个人自定义心情图库（微信表情包模式）：服务端按账号存，App 端按账号缓存 =====
+// 上传/添加过的自定义心情图存进自己的库，在哪都能用；库里只存 key、不复制文件。
 // 上限 100 个，满了先删再加（add 满时服务端 409 'library full'）。
 // 心情选择器打开时 refresh 一次（失败静默用缓存）；增删后发通知，
-// 选择器在前台时跟帧刷新“我的 GIF”组。服务端接口与表见
+// 选择器在前台时跟帧刷新“自定义”组。服务端接口与表见
 // ~/workspace/beary-gif-upload-server.diff（GET /beary/api/gif-library、
 // POST /beary/api/gif-library/add|remove；表 beary_gif_library）。
+// 库放宽到常规图片：上传端点本来就接受 jpeg/png/webp/heic/gif；
+// /add 端点放宽 .gif 校验的服务端 diff 见
+// ~/workspace/beary-gif-library-images-server.diff（部署前 add 常规图会 400，
+// 客户端静默忽略、不阻断插入）。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 enum BearyGIFLibrary {
@@ -21,7 +25,7 @@ enum BearyGIFLibrary {
     static func cachedKeys(accountId: Int? = BearyDraftStore.currentAccountId) -> [String] {
         guard let data = UserDefaults.standard.data(forKey: cacheKey(accountId: accountId)),
               let keys = try? JSONDecoder().decode([String].self, from: data) else { return [] }
-        return keys.filter { $0.hasSuffix(".gif") }
+        return keys.filter { BearyGIF.isImageKey($0) }
     }
 
     private static func saveCache(_ keys: [String], accountId: Int?) {
@@ -41,7 +45,7 @@ enum BearyGIFLibrary {
                 guard BearyDraftStore.currentAccountId == accountId else { return }
                 switch result {
                 case .success(let resp):
-                    let keys = (resp.keys ?? []).filter { $0.hasSuffix(".gif") }
+                    let keys = (resp.keys ?? []).filter { BearyGIF.isImageKey($0) }
                     saveCache(keys, accountId: accountId)
                     NotificationCenter.default.post(name: libraryDidChangeNotification, object: nil)
                     completion?(keys)

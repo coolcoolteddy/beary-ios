@@ -1828,9 +1828,9 @@ final class BearyTimelineCell: UITableViewCell {
                 quoteCard.isHidden = false
             }
         }
-        // 内联 GIF 不进缩略图条（与卡片/详情同款：GIF 已插进正文/标题里播，
+        // 内联图不进缩略图条（与卡片/详情同款：已插进正文/标题里播，
         // 再进图条会同一张图出现两次）；图条只放照片。
-        let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && !$0.hasSuffix(".gif") }
+        let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && BearyGIF.isInlineImageKey($0, content: entry.content ?? "") == false }
         resetImageStripPinch()
         thumbsScrollView.isHidden = imageKeys.isEmpty
         thumbsHeightConstraint?.constant = imageKeys.isEmpty ? 0 : 216
@@ -1954,8 +1954,8 @@ final class BearyTimelineCell: UITableViewCell {
 
     @objc private func didTapThumb(_ sender: UITapGestureRecognizer) {
         guard let entry = currentEntry else { return }
-        // 与缩略图条同口径过滤（GIF 不进图条，index 才对得上）。
-        let keys = (entry.images ?? []).filter { !$0.isEmpty && !$0.hasSuffix(".gif") }
+        // 与缩略图条同口径过滤（内联图不进图条，index 才对得上）。
+        let keys = (entry.images ?? []).filter { !$0.isEmpty && BearyGIF.isInlineImageKey($0, content: entry.content ?? "") == false }
         let index = sender.view?.tag ?? 0
         guard index >= 0 && index < keys.count else { return }
         onTapImages?(keys, index, sender.view.map { $0.convert($0.bounds, to: nil) }, (sender.view as? UIImageView)?.image)
