@@ -1835,6 +1835,16 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 strongSelf.showDraftToast(message: "删除失败，请重试")
                 return
             }
+            // 2026-11-14 点仍要关闭后已删草稿复活修：删盘成功即通知编辑器，
+            // 不再只认开箱时拍的 currentDraftId 快照——恢复可能还没落地，
+            // 盒子那时根本不知道这篇就是正在写的那篇；编辑器收到后自行
+            // 判断（只认当前握着的那篇），并把该 id 记进已删集合，拦住
+            // 随后落地的恢复。6 秒内点撤销会把草稿插回箱里，编辑器侧
+            // 已清的槽位由 onUndoCurrentDraft 接回。
+            // 注意：通知放这里（删盘成功回调）而不是收起完成处——收起
+            // 动画 0.26s 内盒子若被关掉，收起完成回调拿不到 self，通知
+            // 就永远发不出去，编辑器侧的恢复仍会把已删草稿填回来。
+            strongSelf.onDeleteCurrentDraft?(draftValue.draftId)
             strongSelf.collapseDeletedCardAndRemove(draftValue: draftValue)
         }
     }
@@ -1871,18 +1881,13 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     }
 
     /// 删盘成功且收起完成（减动效直接）后的内存移除与撤销条：
-    /// 从内存列表移除并通知编辑器（若删的是正在写的那篇），空箱走全量
-    /// 渲染出空态，否则只摘被删卡片；本笔计时未起时出条并起 6 秒计时。
+    /// 从内存列表移除，空箱走全量渲染出空态，否则只摘被删卡片；
+    /// 本笔计时未起时出条并起 6 秒计时。编辑器通知在 finishDelete
+    /// 的删盘成功回调里发，不在这里（见该处注释）。
     private func removeDeletedDraftFromList(draftValue: BearyDraft) {
         guard pendingUndos.contains(where: { $0.draft.draftId == draftValue.draftId }) else { return }
         if let currentIndex = drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) {
             drafts.remove(at: currentIndex)
-            // DF-2：删的是编辑器正在写的那篇时通知编辑器（容器接线后编辑器清 draftId）。
-            // 注意：6 秒内点撤销会把草稿插回箱里，但编辑器侧已清的槽位不会自动接回，
-            // 容器需决定撤销后是否重新打开该篇（见交回说明）。
-            if let current = currentDraftId, current == draftValue.draftId {
-                onDeleteCurrentDraft?(draftValue.draftId)
-            }
         }
         if drafts.isEmpty {
             // 删到空时无剩余卡片可保留，走原有全量渲染出空态。
