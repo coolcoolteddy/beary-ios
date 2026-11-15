@@ -178,6 +178,10 @@
 		4DF1FE1AEEBD4E1F9888528E /* flower-lantern.png in Resources */ = {isa = PBXBuildFile; fileRef = 654552E87F964734B3909B7E /* flower-lantern.png */; };
 		BB449323B2664114A8094EFD /* lantern-lights-near.png in Resources */ = {isa = PBXBuildFile; fileRef = 3C80E10C127A4576AE48184F /* lantern-lights-near.png */; };
 		84878DAC0C884AACB1E5DE7D /* lantern-lights-far.png in Resources */ = {isa = PBXBuildFile; fileRef = 0CF493B761EC48FB829DF5A6 /* lantern-lights-far.png */; };
+		7777E9E7D53A9D62FAB4CAAE /* midautumn-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = 9A267C68B565CED50C518B2D /* midautumn-poster.png */; };
+		C97BC7E76FF72124A96904A1 /* midautumn-depth.png in Resources */ = {isa = PBXBuildFile; fileRef = ED1749644703DB6E1431ED9C /* midautumn-depth.png */; };
+		DF48325B64FFE7964ECAEE26 /* jade-rabbit-egg.png in Resources */ = {isa = PBXBuildFile; fileRef = 3932401E313509629B4262C2 /* jade-rabbit-egg.png */; };
+		38A4B6A8C6FBFC994E94F05B /* sky-lantern.png in Resources */ = {isa = PBXBuildFile; fileRef = DB456BCCEE04FB607A18D071 /* sky-lantern.png */; };
 		D395C5A456F0D264FAA5D081 /* china-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = F61DF01274DB03D3F0AB6FE0 /* china-poster.png */; };
 		1938F81450975213C5CE2010 /* japan-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = B18573473A12570FBD9DB089 /* japan-poster.png */; };
 		C73ABC14EF8C1B595064A827 /* usa-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = 95FB0D0AFDFEF9F5C38C947B /* usa-poster.png */; };
@@ -874,6 +878,10 @@
 		654552E87F964734B3909B7E /* flower-lantern.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/flower-lantern.png; sourceTree = "<group>"; };
 		3C80E10C127A4576AE48184F /* lantern-lights-near.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/lantern-lights-near.png; sourceTree = "<group>"; };
 		0CF493B761EC48FB829DF5A6 /* lantern-lights-far.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/lantern-lights-far.png; sourceTree = "<group>"; };
+		9A267C68B565CED50C518B2D /* midautumn-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/midautumn-poster.png; sourceTree = "<group>"; };
+		ED1749644703DB6E1431ED9C /* midautumn-depth.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/midautumn-depth.png; sourceTree = "<group>"; };
+		3932401E313509629B4262C2 /* jade-rabbit-egg.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/jade-rabbit-egg.png; sourceTree = "<group>"; };
+		DB456BCCEE04FB607A18D071 /* sky-lantern.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/sky-lantern.png; sourceTree = "<group>"; };
 		C69BECF80F639F3B86A1C5F7 /* BearyFestivalWallpapers.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = BearyFestivalWallpapers.json; sourceTree = "<group>"; };
 		37B9943EDEF2C3A792782E9E /* agree_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree_dark.json; sourceTree = "<group>"; };
 		4ED6BF206A0F34DF117D855A /* crown.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieCrown/crown.json; sourceTree = "<group>"; };
@@ -2127,6 +2135,10 @@
 				654552E87F964734B3909B7E /* flower-lantern.png */,
 				3C80E10C127A4576AE48184F /* lantern-lights-near.png */,
 				0CF493B761EC48FB829DF5A6 /* lantern-lights-far.png */,
+				9A267C68B565CED50C518B2D /* midautumn-poster.png */,
+				ED1749644703DB6E1431ED9C /* midautumn-depth.png */,
+				3932401E313509629B4262C2 /* jade-rabbit-egg.png */,
+				DB456BCCEE04FB607A18D071 /* sky-lantern.png */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -2801,6 +2813,10 @@
 				4DF1FE1AEEBD4E1F9888528E /* flower-lantern.png in Resources */,
 				BB449323B2664114A8094EFD /* lantern-lights-near.png in Resources */,
 				84878DAC0C884AACB1E5DE7D /* lantern-lights-far.png in Resources */,
+				7777E9E7D53A9D62FAB4CAAE /* midautumn-poster.png in Resources */,
+				C97BC7E76FF72124A96904A1 /* midautumn-depth.png in Resources */,
+				DF48325B64FFE7964ECAEE26 /* jade-rabbit-egg.png in Resources */,
+				38A4B6A8C6FBFC994E94F05B /* sky-lantern.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
