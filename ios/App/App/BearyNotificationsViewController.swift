@@ -298,6 +298,12 @@ final class BearyNotificationsViewController: UIViewController {
     private var cardAnimatingExpanding = false
     private var cardAnimationGeneration = 0
     private var cardAnimator: UIViewPropertyAnimator?
+    /// 第七轮 7：收起快照——展开区收起时先把可见子行拍成静态图贴在原位，
+    /// 行表直接删行落终值（无高度插值、无约束打架），再把快照整体向上收起；
+    /// 动画期间禁滚（快照贴在 view 坐标里，不跟表滚），减动效不走本路径。
+    private var collapseSnapshotView: UIView?
+    private var collapseSnapshotAnimator: UIViewPropertyAnimator?
+    private var collapseSnapshotScrollWasEnabled = true
     /// C-G4：首拉 401 清列表后立起的“需重拉”旗——新账号首拉的触发器（见
     /// clearItemsAfterUnauthorized 与 refreshListIfUnreadChanged / 轻量刷新成功分支）。
     private var needsReloadAfterUnauthorized = false
@@ -1216,7 +1222,7 @@ final class BearyNotificationsViewController: UIViewController {
                     // 与最新消息 ID（recordFullLoadUnread 内从 items 首条取）。
                     strongSelf.recordFullLoadUnread(version: list.msgVersion ?? list.version ?? list.messageVersion)
                     // P1-22：整页重载前先灭卡片动画（见 cancelCardAnimation），
-                    // 否则收起 completion 会按旧下标删行。
+                    // 否则在途快照残留旧坐标、展开 completion 事后清掉新旗标。
                     strongSelf.cancelCardAnimation()
                     strongSelf.rebuildDisplayRows()
                     strongSelf.tableView.reloadData()
@@ -1271,8 +1277,8 @@ final class BearyNotificationsViewController: UIViewController {
     /// 角标同步归零：publishUnread(0) 把旧账号角标清掉，底栏不残留旧数。
     /// P1-21：清态时 bumpAuthEpoch()——此前在途请求的回包随后一律过期，
     /// 各请求回包的代次校验（见 isStaleRequestEpoch）会把它们丢弃。
-    /// P1-22：清态重载前先灭卡片动画（见 cancelCardAnimation），避免收起
-    /// completion 按旧下标删行。
+    /// P1-22：清态重载前先灭卡片动画（见 cancelCardAnimation），摘掉在途
+    /// 收起快照、让展开 completion 代次失效。
     /// 注意：本方法不调 saveNotificationCache——hasSuccessfulLoad 已先置
     /// false，deinit/viewWillDisappear 的写回守卫本身就不会以空列表覆缓存，
     /// 且静态缓存已在调用点先行置 nil。
@@ -1623,8 +1629,9 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     /// 点卡只展开/收起：展开是整区高度生长（网页 .nt-syslist grid-template-rows
-    /// 0fr→1fr .34s 缓动口径），chevron 转 .3s；收起无动画、直接删行落终值
-    /// （多行高度插值必留残影，见收起分支注释）。
+    /// 0fr→1fr .34s 缓动口径），chevron 转 .3s；收起是快照整体收起（第七轮 7：
+    /// 可见子行先拍静态图、行表直接删行落终值，再把快照向上收到卡片底边，
+    /// 卡片锚在点按时的屏幕位置；无高度插值、无约束打架）。
     /// 减动效直接重载，不播动画；C-G11：动画中同卡再点可反转（网页
     /// grid-template-rows 过渡天然可反转），异卡仍忽略、防坐标错乱。
     private func toggleCard(kind: NotificationRowKind) {
@@ -1724,34 +1731,87 @@ final class BearyNotificationsViewController: UIViewController {
                 tableView.reloadData()
                 return
             }
-            // 收起无动画：多行高度插值动画在约束打架下必留残影——
-            // 行高往 0 缩时头像 42 + 上下 16 的内容装不进，bottomGuard
-            // （999）与行高约束互斥，文本被纵向压扁；几十行同时插值，
-            // 蓝底与竖线逐帧上移叠出拖影；App 动效铁律亦禁高度逐帧动画。
-            // 故收起直接落终值（与减动效路径一致）：先改展开态、重建行表、
-            // 再 .none 删行；chevron 同步直落，不转。
+            // 第七轮 7：收起不做多行高度插值——行高往 0 缩时头像 42 + 上下 16
+            // 的内容装不进，bottomGuard（999）与行高约束互斥，文本被纵向压扁；
+            // 几十行同时插值，蓝底与竖线逐帧上移叠出拖影；App 动效铁律亦禁高度
+            // 逐帧动画。故收起走快照整体收起：可见子行先拍静态图，行表直接删行
+            // 落终值（与减动效路径一致），快照再向上收到卡片底边；卡片锚在点按
+            // 时的屏幕位置，动画期间禁滚（快照贴在 view 坐标里，不跟表滚）。
             if isSysKind {
                 isSysExpanded = false
             } else {
                 isActExpanded = false
             }
+            // 1. 删行前拍快照：可见子行区域的静态图，及其在 view 里的落点。
+            let firstRect = tableView.rectForRow(at: IndexPath(row: collapsing.first!, section: 0))
+            let lastRect = tableView.rectForRow(at: IndexPath(row: collapsing.last!, section: 0))
+            let collapsingRegion = firstRect.union(lastRect)
+            let visibleRegion = collapsingRegion.intersection(CGRect(origin: tableView.contentOffset, size: tableView.bounds.size))
+            let cardScreenYBefore = tableView.convert(tableView.rectForRow(at: IndexPath(row: cardRow, section: 0)), to: view).minY
+            let snapshotScreenFrame = tableView.convert(visibleRegion, to: view)
+            let snapshot = visibleRegion.isNull ? nil : tableView.resizableSnapshotView(from: visibleRegion, afterScreenUpdates: false, withCapInsets: .zero)
             let deleted = collapsing.map({ IndexPath(row: $0, section: 0) })
             rebuildDisplayRows()
             tableView.performBatchUpdates({
                 self.tableView.deleteRows(at: deleted, with: .none)
             }, completion: nil)
-            if let cardCell = tableView.cellForRow(at: IndexPath(row: cardRow, section: 0)) as? BearyNotificationCell {
-                cardCell.setChevronExpanded(false)
+            tableView.layoutIfNeeded()
+            // 2. 卡片与 chevron：卡片下标在删行后可能前移，按新行表重找。
+            let newCardRow = displayRows.firstIndex(where: { $0.kind == kind })
+            if let newCardRow = newCardRow,
+               let cardCell = tableView.cellForRow(at: IndexPath(row: newCardRow, section: 0)) as? BearyNotificationCell {
+                UIView.animate(withDuration: BearyMotion.micro) {
+                    cardCell.setChevronExpanded(false)
+                }
             }
+            // 3. 锚点：删行可能因 contentSize 缩短钳制偏移、把卡片顶移，
+            // 把卡片送回点按时的屏幕位置（钳制到合法范围，尽力而为）。
+            if let newCardRow = newCardRow {
+                let cardScreenYAfter = tableView.convert(tableView.rectForRow(at: IndexPath(row: newCardRow, section: 0)), to: view).minY
+                let dy = cardScreenYAfter - cardScreenYBefore
+                if dy != 0 {
+                    var offset = tableView.contentOffset
+                    offset.y += dy
+                    let maxOffsetY = max(0, tableView.contentSize.height - tableView.bounds.height)
+                    offset.y = min(max(offset.y, 0), maxOffsetY)
+                    tableView.setContentOffset(offset, animated: false)
+                }
+            }
+            guard let snapshot = snapshot else {
+                // 无可见子行：直接落终值（与旧行为一致）。
+                return
+            }
+            // 4. 快照贴回原位（卡片底边起），整体向上收起。
+            snapshot.clipsToBounds = true
+            snapshot.frame = snapshotScreenFrame
+            view.addSubview(snapshot)
+            collapseSnapshotView = snapshot
+            collapseSnapshotScrollWasEnabled = tableView.isScrollEnabled
+            tableView.isScrollEnabled = false
+            isCardAnimating = true
+            cardAnimatingKind = kind
+            cardAnimatingExpanding = false
+            cardAnimationGeneration += 1
+            let generation = cardAnimationGeneration
+            let collapsedFrame = CGRect(x: snapshot.frame.minX, y: snapshot.frame.minY, width: snapshot.frame.width, height: 0)
+            let animator = UIViewPropertyAnimator(duration: BearyMotion.localStateDuration, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
+            animator.addAnimations({
+                snapshot.frame = collapsedFrame
+            })
+            animator.addCompletion({ [weak self] _ in
+                guard let strongSelf = self, generation == strongSelf.cardAnimationGeneration else { return }
+                strongSelf.removeCollapseSnapshot()
+                strongSelf.cardAnimatingKind = nil
+                strongSelf.isCardAnimating = false
+            })
+            collapseSnapshotAnimator = animator
+            animator.startAnimation()
         }
     }
 
-    /// P1-22（选方案 A：整页/翻页重载前先灭动画，不改收起 completion 的旧下标删行）：
-    /// 沿用 reverseCardAnimation 的反转路径前半段——代次 +1 让在途动画
-    /// completion 失效、停掉 animator、清动画旗标与零高行，但不改展开态、
-    /// 不重建行表：随后的 rebuildDisplayRows + reloadData 全量接管，收起
-    /// completion 再也不会按动画开始时捕获的旧 collapsing 下标删行
-    /// （整页/翻页中途收起动画仍在跑时，旧下标在新行表里可能指向另一行）。
+    /// P1-22（整页/翻页重载前先灭动画）：代次 +1 让在途动画 completion
+    /// 失效、停掉 animator、清动画旗标与零高行、摘掉收起快照，但不改展开态、
+    /// 不重建行表：随后的 rebuildDisplayRows + reloadData 全量接管。
     /// 减动效与收起空行两处 reloadData 不走本方法：它们在 isCardAnimating
     /// 守卫之后，不可能与在途动画并存（见 toggleCard）。
     private func cancelCardAnimation() {
@@ -1764,14 +1824,30 @@ final class BearyNotificationsViewController: UIViewController {
         cardAnimatingKind = nil
         isCardAnimating = false
         zeroHeightRows.removeAll()
+        // 第七轮 7：收起快照在途时同样摘掉（重载后行表全量接管，快照
+        // 贴在旧坐标上不得残留）、恢复滚动。
+        removeCollapseSnapshot()
+    }
+
+    /// 第七轮 7：收起快照收尾（动画 completion / 打断 / 重载前灭动画共用）：
+    /// 停掉快照动画、摘掉快照 view、恢复滚动；幂等。
+    private func removeCollapseSnapshot() {
+        if let animator = collapseSnapshotAnimator {
+            collapseSnapshotAnimator = nil
+            animator.stopAnimation(true)
+        }
+        collapseSnapshotView?.removeFromSuperview()
+        collapseSnapshotView = nil
+        tableView.isScrollEnabled = collapseSnapshotScrollWasEnabled
+        collapseSnapshotScrollWasEnabled = true
     }
 
     /// C-G11：动画中同卡再点的反转。先让旧动画代次失效再定格在当前
     /// 位置（旧 completion 因代次不符直接返回，不会清新旗标），再按
     /// 打断时的真实状态走反方向：
     /// - 展开中被打断：展开态已置 true、行已插入，重进 toggleCard 即走收起分支；
-    /// - 收起中被打断：展开态仍 true、行仍在表、高度正往 0 缩，直接清
-    ///   zeroHeightRows 并播一次生长动画回到满高（展开态不动）。
+    /// - 收起快照在途被打断（第七轮 7）：摘掉快照、恢复滚动，重进 toggleCard
+    ///   即走展开分支（展开态已是 false、行已删）。
     /// 减动效路径不走动画，本方法不会被调用。
     private func reverseCardAnimation(kind: NotificationRowKind) {
         let wasExpanding = cardAnimatingExpanding
@@ -1788,35 +1864,21 @@ final class BearyNotificationsViewController: UIViewController {
             toggleCard(kind: kind)
             return
         }
-        guard let cardRow = displayRows.firstIndex(where: { $0.kind == kind }) else { return }
-        zeroHeightRows.removeAll()
-        if let cardCell = tableView.cellForRow(at: IndexPath(row: cardRow, section: 0)) as? BearyNotificationCell {
-            UIView.animate(withDuration: BearyMotion.micro) {
-                cardCell.setChevronExpanded(true)
-            }
+        // 第七轮 7：收起快照在途被打断——摘掉快照、恢复滚动，重进
+        // toggleCard 即走展开分支。旧零高收起路径已随快照收起移除，
+        // wasExpanding == false 时只可能是快照在途；无快照则直接返回。
+        if collapseSnapshotView != nil {
+            removeCollapseSnapshot()
+            toggleCard(kind: kind)
+            return
         }
-        isCardAnimating = true
-        cardAnimatingKind = kind
-        cardAnimatingExpanding = true
-        cardAnimationGeneration += 1
-        let generation = cardAnimationGeneration
-        let animator = UIViewPropertyAnimator(duration: BearyMotion.localStateDuration, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
-        animator.addAnimations({
-            self.tableView.beginUpdates()
-            self.tableView.endUpdates()
-        })
-        animator.addCompletion({ [weak self] _ in
-            guard let strongSelf = self, generation == strongSelf.cardAnimationGeneration else { return }
-            strongSelf.zeroHeightRows.removeAll()
-            strongSelf.cardAnimatingKind = nil
-            strongSelf.isCardAnimating = false
-            // 零高期隐藏的无障碍恢复（与展开 animator completion 同口径）。
-            for visibleCell in strongSelf.tableView.visibleCells {
-                visibleCell.accessibilityElementsHidden = false
-            }
-        })
-        cardAnimator = animator
-        animator.startAnimation()
+    }
+
+    /// 第七轮 12：只刷新哨兵行——加载态翻转时行数不变（哨兵一直在位），
+    /// 整表重载会丢滚动锚点；三态已同高 56，这里只换行内图标/文案。
+    private func refreshSentinelRow() {
+        guard showsSentinelRow else { return }
+        tableView.reloadRows(at: [IndexPath(row: displayRows.count, section: 0)], with: .none)
     }
 
     private func loadMore() {
@@ -1825,7 +1887,7 @@ final class BearyNotificationsViewController: UIViewController {
         }
         guard let cursor = cursorForLastItem() else {
             hasMore = false
-            // P1-22：重载前先灭卡片动画，避免收起 completion 按旧下标删行。
+            // P1-22：重载前先灭卡片动画（见 cancelCardAnimation），摘掉在途快照。
             cancelCardAnimation()
             tableView.reloadData()
             // 第 17 轮 12：无更多页即哨兵消失，外层合并列表同步重读快照。
@@ -1836,7 +1898,8 @@ final class BearyNotificationsViewController: UIViewController {
         loadMoreFailed = false
         // P1-22：哨兵重载前同样先灭卡片动画（见 cancelCardAnimation）。
         cancelCardAnimation()
-        tableView.reloadData()
+        // 第七轮 12：只翻哨兵加载态、行数不变，只刷新哨兵行，不整表重载。
+        refreshSentinelRow()
         // 第 17 轮 12：翻页开始即同步外层合并列表，哨兵行进加载态。
         notifyMergeSnapshotChanged()
         // M12：翻页追加的行身份（卡种 + 通知下标），用于成功后 insertRows 而非整表重载。
@@ -1852,7 +1915,8 @@ final class BearyNotificationsViewController: UIViewController {
                 // P1-21：代次已变 → 旧账号回包丢弃；哨兵重绘回闲置态，不弹失败 toast。
                 if strongSelf.isStaleRequestEpoch(requestEpoch) {
                     strongSelf.cancelCardAnimation()
-                    strongSelf.tableView.reloadData()
+                    // 第七轮 12：只翻哨兵态，只刷新哨兵行。
+                    strongSelf.refreshSentinelRow()
                     // 第 17 轮 12：取消即同步外层合并列表，哨兵行回闲置态。
                     strongSelf.notifyMergeSnapshotChanged()
                     return
@@ -1861,7 +1925,8 @@ final class BearyNotificationsViewController: UIViewController {
                 // 旧已读态的行、不写未读数；哨兵重绘回闲置态并同步外层。
                 guard operationGen == strongSelf.readOperationGeneration else {
                     strongSelf.cancelCardAnimation()
-                    strongSelf.tableView.reloadData()
+                    // 第七轮 12：只翻哨兵态，只刷新哨兵行。
+                    strongSelf.refreshSentinelRow()
                     strongSelf.notifyMergeSnapshotChanged()
                     return
                 }
@@ -1905,7 +1970,7 @@ final class BearyNotificationsViewController: UIViewController {
                     // 此时回退整表 reloadData，避免 insertRows 坐标不一致崩溃。
                     let preRebuildRows = strongSelf.displayRows
                     // P1-22：重建行表前先灭卡片动画——insert 与回退 reloadData
-                    // 两路都不再与收起 completion 的旧下标删行竞态。
+                    // 两路都不再与在途卡片动画（展开 completion、收起快照）竞态。
                     strongSelf.cancelCardAnimation()
                     strongSelf.rebuildDisplayRows()
                     let preKeys = preRebuildRows.map({ strongSelf.displayRowIdentity(row: $0) })
@@ -1920,11 +1985,12 @@ final class BearyNotificationsViewController: UIViewController {
                 case .failure:
                     // 401 不清列表（全局 onUnauthorized 已由容器接管）；其余失败只 toast，
                     // 不产生新行，哨兵留位、滚出再滚回才重触（见 scrollViewDidScroll 重 arm）。
-                    // P1-22：失败重载前先灭卡片动画，避免收起 completion 按旧下标删行。
+                    // P1-22：失败前先灭卡片动画（见 cancelCardAnimation），摘掉在途快照。
                     strongSelf.loadMoreFailed = true
                     strongSelf.showToast(message: "加载失败")
                     strongSelf.cancelCardAnimation()
-                    strongSelf.tableView.reloadData()
+                    // 第七轮 12：失败只翻哨兵态，只刷新哨兵行。
+                    strongSelf.refreshSentinelRow()
                     // 第 17 轮 12：翻页失败即同步外层合并列表，哨兵行进失败态。
                     strongSelf.notifyMergeSnapshotChanged()
                 }
@@ -2968,9 +3034,10 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
 
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
         if indexPath.row == displayRows.count {
-            // C-G6：网页 .more-sentinel 闲置总高 = min-height 24 + padding 10/22
-            // = 56，不是 24；忙时 40 不在本项范围、保持。
-            return isLoadingMore ? 40 : 56
+            // 第七轮 12：哨兵三态同高 56（网页 .more-sentinel 闲置总高 =
+            // min-height 24 + padding 10/22 = 56）；加载中只换行内转圈、
+            // 失败只换行内文案，不再 40/56 来回跳；态变只刷新哨兵行。
+            return 56
         }
         if zeroHeightRows.contains(indexPath.row) {
             return 0
