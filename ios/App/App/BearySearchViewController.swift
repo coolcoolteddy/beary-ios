@@ -174,6 +174,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         UserDefaults.standard.removeObject(forKey: legacyRecentSearchesKey)
     }
     private var recentButtons: [UIButton] = []
+    /// 最近搜索展开/收起钮（复用，不随展开/收起重建）。
+    private var recentExpandButton: UIButton?
     /// R13 (c)：最近搜索展开态，只影响展示，不改存储。
     private var isRecentSearchesExpanded = false
 
@@ -1484,11 +1486,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     private func renderRecentSearches() {
+        // 整区淡入只在从隐藏变为可见时播一次；已可见时重建不再闪。
+        let wasHidden = recentWrap.isHidden
         for view in recentStack.arrangedSubviews {
             recentStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
         recentButtons = []
+        recentExpandButton = nil
         let terms = loadRecentSearches()
         if terms.isEmpty {
             recentWrap.isHidden = true
@@ -1526,45 +1531,19 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // R13 (c)：默认只展最近 4 条，展开后看全部；上限 8 条不变，每条仍 44pt。
         let visibleTerms = isRecentSearchesExpanded ? terms : Array(terms.prefix(4))
         for term in visibleTerms {
-            let button = UIButton(type: .custom)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.setTitle(term, for: .normal)
-            button.setTitleColor(BearyColors.ink, for: .normal)
-            button.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
-            button.titleLabel?.adjustsFontForContentSizeCategory = true
-            button.backgroundColor = BearyColors.surface2
-            button.layer.cornerRadius = BearyCorners.single
-            button.layer.masksToBounds = true
-            button.contentHorizontalAlignment = .left
-            button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
-            button.heightAnchor.constraint(equalToConstant: 44).isActive = true
-            button.accessibilityLabel = "搜索" + term
-            button.addTarget(self, action: #selector(recentSearchTapped(_:)), for: .touchUpInside)
-            button.bearyAddPressFeedback()
+            let button = makeRecentTermButton(term: term)
             recentStack.addArrangedSubview(button)
             recentButtons.append(button)
         }
         // R13 (c)：超过 4 条时加展开/收起钮（与词条同款 44pt 行），点按只改展示。
         if terms.count > 4 {
-            let expandButton = UIButton(type: .custom)
-            expandButton.translatesAutoresizingMaskIntoConstraints = false
-            expandButton.setTitle(isRecentSearchesExpanded ? "收起最近搜索" : "展开最近搜索", for: .normal)
-            expandButton.setTitleColor(BearyColors.ink, for: .normal)
-            expandButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
-            expandButton.titleLabel?.adjustsFontForContentSizeCategory = true
-            expandButton.backgroundColor = BearyColors.surface2
-            expandButton.layer.cornerRadius = BearyCorners.single
-            expandButton.layer.masksToBounds = true
-            expandButton.contentHorizontalAlignment = .left
-            expandButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
-            expandButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
-            expandButton.accessibilityLabel = isRecentSearchesExpanded ? "收起最近搜索" : "展开最近搜索"
-            expandButton.addTarget(self, action: #selector(toggleRecentSearchesExpanded), for: .touchUpInside)
-            expandButton.bearyAddPressFeedback()
+            let expandButton = makeRecentExpandButton()
+            recentExpandButton = expandButton
             recentStack.addArrangedSubview(expandButton)
         }
         recentWrap.isHidden = false
-        if !UIAccessibility.isReduceMotionEnabled {
+        // 整区淡入只在从隐藏变为可见时播一次；已可见时不重播（展开/收起不再闪）。
+        if wasHidden, !UIAccessibility.isReduceMotionEnabled {
             recentWrap.alpha = 0
             UIView.animate(withDuration: BearyMotion.micro, animations: {
                 self.recentWrap.alpha = 1
@@ -1574,10 +1553,95 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
     }
 
-    /// R13 (c)：展开/收起最近搜索，只改展示，不改存储。
+    /// 最近搜索词条行（与展开/收起钮同款 44pt 行）。
+    private func makeRecentTermButton(term: String) -> UIButton {
+        let button = UIButton(type: .custom)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setTitle(term, for: .normal)
+        button.setTitleColor(BearyColors.ink, for: .normal)
+        button.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
+        button.titleLabel?.adjustsFontForContentSizeCategory = true
+        button.backgroundColor = BearyColors.surface2
+        button.layer.cornerRadius = BearyCorners.single
+        button.layer.masksToBounds = true
+        button.contentHorizontalAlignment = .left
+        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+        button.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        button.accessibilityLabel = "搜索" + term
+        button.addTarget(self, action: #selector(recentSearchTapped(_:)), for: .touchUpInside)
+        button.bearyAddPressFeedback()
+        return button
+    }
+
+    /// 最近搜索展开/收起钮（与词条同款 44pt 行）。
+    private func makeRecentExpandButton() -> UIButton {
+        let expandButton = UIButton(type: .custom)
+        expandButton.translatesAutoresizingMaskIntoConstraints = false
+        expandButton.setTitle(isRecentSearchesExpanded ? "收起最近搜索" : "展开最近搜索", for: .normal)
+        expandButton.setTitleColor(BearyColors.ink, for: .normal)
+        expandButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
+        expandButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        expandButton.backgroundColor = BearyColors.surface2
+        expandButton.layer.cornerRadius = BearyCorners.single
+        expandButton.layer.masksToBounds = true
+        expandButton.contentHorizontalAlignment = .left
+        expandButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+        expandButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        expandButton.accessibilityLabel = isRecentSearchesExpanded ? "收起最近搜索" : "展开最近搜索"
+        expandButton.addTarget(self, action: #selector(toggleRecentSearchesExpanded), for: .touchUpInside)
+        expandButton.bearyAddPressFeedback()
+        return expandButton
+    }
+
+    /// R13 (c)：展开/收起最近搜索，只改展示，不改存储；复用已有行，只增删变化的词条，高度变化一次协调布局。
     @objc private func toggleRecentSearchesExpanded() {
         isRecentSearchesExpanded.toggle()
-        renderRecentSearches()
+        updateRecentSearchesExpanded()
+    }
+
+    /// 展开/收起只动变化的词条行，不重建整区、不重播整区淡入。
+    private func updateRecentSearchesExpanded() {
+        let terms = loadRecentSearches()
+        // 行未建好、词条不足、整区隐藏或行数对不上时，回落到全量重建。
+        let expectedCurrentCount = isRecentSearchesExpanded ? 4 : terms.count
+        guard terms.count > 4,
+              !recentWrap.isHidden,
+              let expandButton = recentExpandButton,
+              let expandIndex = recentStack.arrangedSubviews.firstIndex(of: expandButton),
+              recentButtons.count == expectedCurrentCount else {
+            renderRecentSearches()
+            return
+        }
+        let applyChange = {
+            if self.isRecentSearchesExpanded {
+                // 只补展开后新增的词条，依次插在展开/收起钮之前，顺序不变。
+                var insertIndex = expandIndex
+                for term in terms.dropFirst(4) {
+                    let button = self.makeRecentTermButton(term: term)
+                    self.recentStack.insertArrangedSubview(button, at: insertIndex)
+                    insertIndex += 1
+                    self.recentButtons.append(button)
+                }
+            } else {
+                // 只摘展开后多出的词条，保留前 4 条与标题行。
+                for button in self.recentButtons.dropFirst(4) {
+                    self.recentStack.removeArrangedSubview(button)
+                    button.removeFromSuperview()
+                }
+                self.recentButtons = Array(self.recentButtons.prefix(4))
+            }
+            expandButton.setTitle(self.isRecentSearchesExpanded ? "收起最近搜索" : "展开最近搜索", for: .normal)
+            expandButton.accessibilityLabel = self.isRecentSearchesExpanded ? "收起最近搜索" : "展开最近搜索"
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            applyChange()
+            view.layoutIfNeeded()
+        } else {
+            applyChange()
+            UIView.animate(withDuration: BearyMotion.normal, animations: {
+                self.view.layoutIfNeeded()
+            })
+        }
     }
 
     @objc private func recentSearchTapped(_ sender: UIButton) {
