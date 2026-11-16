@@ -627,6 +627,10 @@ class BearyProfileViewController: UIViewController {
     /// 数据未变时复用旧视图，不重建、不重下图（防切 tab / 回填时墙闪一下）。
     private var cachedPhotosFooterView: UIView?
     private var cachedPhotosFooterSignature: String?
+    /// 脚部容器复用：refreshFooter 每次重建都换新容器、重装
+    /// tableFooterView；复用同一容器只改高度与子视图，脚部身份稳定，
+    /// 滚动锚点补偿也只须处理高度变化本身。
+    private var profileFooterContainerView: UIView?
     /// 审计-个人页设置：照片墙淡入去重——上次已淡入过的墙签名，签名不变不重播。
     private var lastPhotosFooterFadeSignature: String?
     /// 第三轮第 7 项：照片墙单格加载失败的图 key 集合（失败格显“重试”文案，
@@ -2879,7 +2883,7 @@ class BearyProfileViewController: UIViewController {
     /// 布局抵消守卫：若某次布局把 contentView 的 center 拉回（transform 值
     /// 还在、视觉却回落到行顶），其 transformed frame 顶会小于跟移值，
     /// 此时按差值把 center 补回，不调 layout、不启动画；正常态差值为 0、
-    /// 不动。脚部为新容器时 transform 本就为 identity，赋值即落位。
+    /// 不动。脚部容器复用后 transform 仍在容器上，与目标不同才赋值。
     private func syncProfileRowFollowShift() {
         let shift = profileRowFollowShift
         let target = CGAffineTransform(translationX: 0, y: shift)
@@ -7001,6 +7005,23 @@ class BearyProfileViewController: UIViewController {
     private weak var profileErrorRetryButton: UIButton?
 
     private func refreshFooter() {
+        // 跳动修复：脚部重建前记锚点——视口顶在内容里的位置、旧脚部顶、
+        // 旧墙底（内容坐标）。墙长高后，视口顶若在旧墙底之下，说明用户
+        // 正在看墙下内容（地图/星图/状态行），重建后按墙底位移同量补
+        // contentOffset，入口行视觉不动；视口顶在墙上时不补。
+        let anchorOffsetY = tableView.contentOffset.y
+        let oldFooterView = tableView.tableFooterView
+        let oldFooterHeight = oldFooterView?.frame.height ?? 0
+        let footerTopOld = tableView.contentSize.height - oldFooterHeight
+        let oldWallBottomInFooter: CGFloat = {
+            if let photosView = cachedPhotosFooterView, photosView.superview === oldFooterView {
+                return photosView.frame.maxY
+            }
+            // 无墙：插入点 = 模块组底 + 16（有模块时），否则脚部顶。
+            let modulesHeight = (isOwnProfile && !modulesContainer.isHidden && modulesContainer.superview === oldFooterView) ? modulesContainer.frame.height : 0
+            return modulesHeight > 0 ? modulesHeight + 16 : 0
+        }()
+        let oldWallBottomY = footerTopOld + oldWallBottomInFooter
         let kind: String
         let stateView: UIView?
         // 32 注销口径：已注销用户脚部只显“用户已注销”，不展示任何列表、
@@ -7113,17 +7134,30 @@ class BearyProfileViewController: UIViewController {
             // 行内子视图仍走上面一次激活的约束（按行 bounds 排布）。
             mapEntryRow.translatesAutoresizingMaskIntoConstraints = true
             starEntryRow.translatesAutoresizingMaskIntoConstraints = true
-            let container = UIView(frame: CGRect(x: 0, y: 0, width: footerWidth, height: 0))
+            // 脚部容器复用（见 profileFooterContainerView）：同一容器只改
+            // 高度与子视图，不反复重装 tableFooterView；旧子视图本轮
+            // 全部重接，先清掉，免得旧状态脚部残留。
+            let container: UIView
+            if let reused = profileFooterContainerView {
+                container = reused
+            } else {
+                container = UIView(frame: CGRect(x: 0, y: 0, width: footerWidth, height: 0))
+                profileFooterContainerView = container
+            }
             var totalHeight: CGFloat = 0
             // tab 与卡片贴在一起（2026-10-31）：模块组从 header 搬到这里，
-            // 排在表格行下方、照片区之前。脚部每次重建都是新容器，addSubview
-            // 会自动把模块容器从旧脚部摘到新脚部，模块卡本身不重建；
-            // 切 tab 时脚部重建、模块组原位不动。隐藏时不占位（脚部与改前一致）。
-            // 上一轮脚部容器已丢弃，锚在它上面的模块约束先关掉，免得残留。
+            // 排在表格行下方、照片区之前。脚部容器复用，模块容器本轮重接
+            // 进同一容器，模块卡本身不重建；切 tab 时脚部重建、模块组原位不动。
+            // 隐藏时不占位（脚部与改前一致）。
+            // 模块约束先关掉再重建，免得残留。
             modulesFooterTopConstraint?.isActive = false
             modulesFooterLeadingConstraint?.isActive = false
             modulesFooterWidthConstraint?.isActive = false
             modulesFooterHeightConstraint?.isActive = false
+            container.subviews.forEach { $0.removeFromSuperview() }
+            // 复用容器时 alpha 可能残留上一次淡入的中间值，先归 1，
+            // 末尾的空态/照片淡入再按需重播。
+            container.alpha = 1
             if isOwnProfile, !modulesContainer.isHidden {
                 // 模块组宽度 = 表格行内容列宽：≤820 为屏宽−32（左右各 16）、
                 // ≥821 为 600 居中列（脚部容器本身已被表宽锁 600，故 x=0 贴满列宽）；
@@ -7177,6 +7211,31 @@ class BearyProfileViewController: UIViewController {
             }
             container.frame = CGRect(x: 0, y: 0, width: footerWidth, height: totalHeight)
             tableView.tableFooterView = container
+            // 跳动修复：墙底位移补偿——脚部重建后先落布局，再看墙底在
+            // 内容坐标里移动了多少（只算墙本身上下内容的移动，不算状态
+            // 脚部等墙下变化）。同时满足才补：行区没动（脚部顶未移）、
+            // 墙底确实移动、视口顶在旧墙底之下（用户正在看墙下内容）。
+            // 拖动/减速中不补，免得与手势抢偏移；直接落位不动画，与
+            // 脚部重建同帧，入口行视觉不动。
+            if !tableView.isDragging && !tableView.isDecelerating {
+                tableView.layoutIfNeeded()
+                let newFooterHeight = container.frame.height
+                let footerTopNew = tableView.contentSize.height - newFooterHeight
+                let newWallBottomInFooter: CGFloat = {
+                    if let photosView = photosView {
+                        return photosView.frame.maxY
+                    }
+                    let modulesHeight = (isOwnProfile && !modulesContainer.isHidden && modulesContainer.superview === container) ? modulesContainer.frame.height : 0
+                    return modulesHeight > 0 ? modulesHeight + 16 : 0
+                }()
+                let newWallBottomY = footerTopNew + newWallBottomInFooter
+                let wallShift = newWallBottomY - oldWallBottomY
+                if abs(wallShift) > 0.5, abs(footerTopNew - footerTopOld) < 0.5, anchorOffsetY >= oldWallBottomY {
+                    let minOffsetY = -tableView.adjustedContentInset.top
+                    let maxOffsetY = max(minOffsetY, tableView.contentSize.height - tableView.bounds.height + tableView.adjustedContentInset.bottom)
+                    tableView.contentOffset.y = min(max(anchorOffsetY + wallShift, minOffsetY), maxOffsetY)
+                }
+            }
         } else if let stateValue = stateView {
             // 宽未量出时先按旧路放状态脚部，下一轮 refreshFooter（布局后）再补入口行。
             tableView.tableFooterView = stateValue
@@ -7207,8 +7266,8 @@ class BearyProfileViewController: UIViewController {
                 photosView.alpha = 1
             })
         }
-        // 112：脚部每次重建都是新容器，transform 回到 identity——按当前
-        // 跟移值补上，否则末行→脚部间隙在重建后先错后对（行已跟移、脚部未跟移）。
+        // 112：脚部容器复用后 transform 仍在容器上；重建后仍按当前
+        // 跟移值补一次，免得末行→脚部间隙先错后对（行已跟移、脚部未跟移）。
         if let footer = tableView.tableFooterView {
             footer.transform = CGAffineTransform(translationX: 0, y: profileRowFollowShift)
         }
