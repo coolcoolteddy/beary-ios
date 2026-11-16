@@ -3875,6 +3875,8 @@ enum BearyBlockFlow {
                         case .success:
                             guard BearyIdentityGuard.stillValid(identity) else { onDone?(false); return }
                             BearyBlockedStore.markBlocked(userId)
+                            // 跳动审计第 6 条：拉黑即断互关，该作者的仅好友引用验证标记同清。
+                            BearyDiaryCardCell.invalidateQuoteMutualAccess(forAuthorId: userId)
                             NotificationCenter.default.post(name: .bearyDidBlockUser, object: userId)
                             BearyToast.show(in: vc.view, message: "已拉黑")
                             onDone?(true)

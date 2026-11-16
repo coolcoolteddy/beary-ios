@@ -459,6 +459,8 @@ class BearyDiaryCardCell: UITableViewCell {
         quoteFailedIds = []
         quoteLoadingIds = []
         quoteCacheOrder = []
+        // 账号/刷新失效：互关验证结果与引用缓存同清，下次按现行关系重验。
+        quoteMutualAccessBuckets = [:]
     }
 
     /// 换桶：桶变了才清空（同桶重调不丢缓存）；Feed 切号与冷启动首桶均走这里。
@@ -511,6 +513,7 @@ class BearyDiaryCardCell: UITableViewCell {
         quoteCache.removeValue(forKey: quoteId)
         quoteCacheOrder.removeAll { $0 == quoteId }
         quoteFailedIds.remove(quoteId)
+        invalidateQuoteMutualAccess(forQuoteId: quoteId)
     }
 
     /// 定向失效：被引篇删除/转非公开时清掉该篇在全部桶里的引用缓存与失败态，
@@ -522,6 +525,54 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         quoteFailedIds.remove(id)
         quoteLoadingIds.remove(id)
+        invalidateQuoteMutualAccess(forQuoteId: id)
+    }
+
+    /// 仅好友引用互关验证结果（跳动审计第 6 条）：已确认互关的引用按账号分桶保存。
+    /// 键 "authorId:quoteId"，只记本次 viewer 对该引用的访问结论，不改写原日记的
+    /// 可见性字段。重配时命中即直接落全文，不再发请求、不再触发行重载，检查-重载
+    /// 循环到此终止。失效见 resetQuoteFetchState（账号/刷新）、invalidateQuote
+    /// （被引篇可见性变化）、invalidateQuoteMutualAccess（关系变化）。
+    private static var quoteMutualAccessBuckets: [String: Set<String>] = [:]
+    private static func quoteMutualAccessKey(authorId: Int, quoteId: String) -> String {
+        "\(authorId):\(quoteId)"
+    }
+
+    /// 读：当前账号桶里该（作者，引用）是否已验证互关。
+    static func hasQuoteMutualAccess(authorId: Int, quoteId: String) -> Bool {
+        quoteMutualAccessBuckets[currentQuoteBucket()]?.contains(quoteMutualAccessKey(authorId: authorId, quoteId: quoteId)) == true
+    }
+
+    /// 写：互关回包确认后记下，供重配时直接落全文。
+    static func markQuoteMutualAccess(authorId: Int, quoteId: String) {
+        quoteMutualAccessBuckets[currentQuoteBucket(), default: []].insert(quoteMutualAccessKey(authorId: authorId, quoteId: quoteId))
+    }
+
+    /// 关系变化失效：取关/拉黑/关注变化时清掉当前桶里该作者的全部验证标记；
+    /// authorId 为 nil 时清当前桶全部（保守清理，与 quoteCache 同口径）。
+    static func invalidateQuoteMutualAccess(forAuthorId authorId: Int? = nil) {
+        let bucket = currentQuoteBucket()
+        guard var marks = quoteMutualAccessBuckets[bucket] else { return }
+        if let authorId = authorId {
+            let prefix = "\(authorId):"
+            marks = marks.filter { !$0.hasPrefix(prefix) }
+        } else {
+            marks.removeAll()
+        }
+        quoteMutualAccessBuckets[bucket] = marks
+    }
+
+    /// 被引篇可见性失效：删/转非公开时清掉该 quoteId 在全部桶里的验证标记。
+    static func invalidateQuoteMutualAccess(forQuoteId quoteId: String) {
+        guard !quoteId.isEmpty else { return }
+        let suffix = ":\(quoteId)"
+        for bucket in quoteMutualAccessBuckets.keys {
+            // Set 没有 removeAll(where:)（只有无参版），用 filter 重建集合。
+            if var marks = quoteMutualAccessBuckets[bucket] {
+                marks = marks.filter { !$0.hasSuffix(suffix) }
+                quoteMutualAccessBuckets[bucket] = marks
+            }
+        }
     }
 
     private var currentEntry: Entry?
@@ -2846,11 +2897,37 @@ class BearyDiaryCardCell: UITableViewCell {
             // 审计 2026-11-02 第十节：仅好友档互关通道——先占位（fail-closed），
             // 服务端 state 确认互关后再补全文；cell 已复用（quoteTapId 已变）时丢弃。
             if quoteVisibility == "friends", let quoteId = quoteId, !quoteId.isEmpty, let authorId = quoteAuthorId, SessionManager.shared.isLoggedIn {
+                // 跳动审计第 6 条：已验证互关的引用直接落全文，不再发请求、不再触发
+                // 行重载——重配时不再进入“占位→请求→补全文→重载→重配”循环。
+                // 行高由外层 configure / 回包分支结算，这里只落卡。
+                if BearyDiaryCardCell.hasQuoteMutualAccess(authorId: authorId, quoteId: quoteId) {
+                    presentQuoteCard(
+                        authorName: authorName,
+                        authorAvatar: authorAvatar,
+                        content: content,
+                        images: images,
+                        dims: dims,
+                        createdAt: createdAt,
+                        isPublic: true,
+                        gone: gone,
+                        locked: locked,
+                        quoteId: quoteId,
+                        quoteAuthorId: quoteAuthorId,
+                        quoteIsMine: quoteIsMine,
+                        hostIsPublic: hostIsPublic,
+                        quotePublishedAt: quotePublishedAt,
+                        authorHandle: authorHandle,
+                        quoteVisibility: quoteVisibility
+                    )
+                    return
+                }
                 BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self] result in
                     DispatchQueue.main.async {
                         guard let strongSelf = self, strongSelf.quoteTapId == quoteId else { return }
                         guard case .success(let state) = result,
                               (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false)) else { return }
+                        // 先记标记再落卡：重配/重载期间的再次 configure 即命中缓存路径。
+                        BearyDiaryCardCell.markQuoteMutualAccess(authorId: authorId, quoteId: quoteId)
                         strongSelf.presentQuoteCard(
                             authorName: authorName,
                             authorAvatar: authorAvatar,
