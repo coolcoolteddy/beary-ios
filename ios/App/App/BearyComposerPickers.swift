@@ -560,32 +560,43 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// 卡片底恰贴键盘顶沿，焦点切到搜索框时系统发 WillChangeFrame（候选栏显隐），
     /// 帧顶贴着或略低于已抬升的卡片底时门禁会误判 false，把抬升整个撤销；
     /// initialKeyboardHeight 已在 willAppear 消费，不会再抬第二次，卡片跌回屏底。
-    /// iPad 端：居中卡片按卡片底沿与键盘顶沿的重叠量上抬（+14 间隙，L11 口径保留），
-    /// 不重叠时不动；动画走键盘曲线。
+    /// iPad 端：居中卡片按未避让基准帧的底沿与键盘顶沿的重叠量上抬（+14 间隙，
+    /// L11 口径保留），不重叠时不动；不再拿当前已抬起的帧判相交——第一次抬升后
+    /// 卡片底已在键盘顶沿之上，重复键盘帧会误判为不再遮挡、把抬升撤销后又抬起，
+    /// 来回跳。相同键盘帧且目标值未变时去重，不重复布局；动画走键盘曲线。
     /// keyboardHeight 供 updateSheetHeight 计可用高（手机端 = 到键盘顶沿的距离，
     /// iPad 端同样计入后由那里的键盘适配高上限再约束一次）。
     private func applyKeyboardFrame(_ frame: CGRect, note: Notification?) {
-        keyboardFrameInView = frame
         view.layoutIfNeeded()
-        let sheetFrame = sheetView.frame
-        let overlapsSheet = frame.isEmpty == false && frame.intersects(sheetFrame)
+        // iPad 端：以未避让的基准帧判重叠并算抬升量——基准帧底沿 = view 中线 +
+        // 卡片高/2（centerY 约束归零时的卡片帧），与当前抬升量无关。旧代码拿当前
+        // 已抬起的帧判相交：第一次抬升后卡片底已在键盘顶沿之上（留 14pt 间隙），
+        // 再收到相同/相近键盘帧时相交为 false，便把抬升整个撤销，下一帧又抬起，
+        // 来回跳。键盘高度变化时帧必变，会按基准帧重算。
+        let baselineMaxY = view.bounds.midY + sheetView.frame.height / 2
+        let baselineOverlap = frame.isEmpty == false && baselineMaxY > frame.minY
+        let targetLift: CGFloat = baselineOverlap ? -(baselineMaxY - frame.minY + 14) : 0
+        let targetKeyboardHeight: CGFloat
         if isPadLayout {
-            keyboardHeight = overlapsSheet ? max(view.bounds.height - frame.minY, 0) : 0
+            targetKeyboardHeight = baselineOverlap ? max(view.bounds.height - frame.minY, 0) : 0
         } else if frame.isEmpty {
-            keyboardHeight = 0
+            targetKeyboardHeight = 0
         } else {
-            keyboardHeight = max(view.bounds.height - frame.minY, 0)
+            targetKeyboardHeight = max(view.bounds.height - frame.minY, 0)
         }
+        // 相同键盘帧去重：帧未变且本次目标值与当前值一致时不再重复布局；布局
+        // 模式切换清掉抬升量后目标值与当前值不同，不命中去重，仍会重算。
+        if frame.isEmpty == false, frame == keyboardFrameInView, keyboardHeight == targetKeyboardHeight {
+            if isPadLayout, padCenterYConstraint?.constant == targetLift { return }
+            if isPadLayout == false, phoneBottomConstraint?.constant == -targetKeyboardHeight { return }
+        }
+        keyboardFrameInView = frame
+        keyboardHeight = targetKeyboardHeight
         if let bottomConstraint = phoneBottomConstraint, !isPadLayout {
             bottomConstraint.constant = -keyboardHeight
         }
         if isPadLayout {
-            if overlapsSheet {
-                let overlap = sheetFrame.maxY - frame.minY
-                padCenterYConstraint?.constant = overlap > 0 ? -(overlap + 14) : 0
-            } else {
-                padCenterYConstraint?.constant = 0
-            }
+            padCenterYConstraint?.constant = targetLift
         }
         animateKeyboardLayout(note)
     }
