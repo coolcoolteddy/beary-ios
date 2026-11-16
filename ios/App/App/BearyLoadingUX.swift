@@ -29,6 +29,18 @@ final class BearySkeletonCardView: UIView {
     }
 
     private var blocks: [UIView] = []
+    private let imageBlock = UIView()
+    private var imageHeightConstraint: NSLayoutConstraint?
+
+    /// 无图款：图片块高置 0，骨架只剩头部＋标题＋正文（约 142pt），与无图真卡同高；
+    /// 有图款 370pt。首页三行骨架高矮搭配，夹住真实卡片高度区间。
+    var showsImage: Bool = true {
+        didSet {
+            guard showsImage != oldValue else { return }
+            imageBlock.isHidden = !showsImage
+            imageHeightConstraint?.constant = showsImage ? 216 : 0
+        }
+    }
     private let shimmerContainer = UIView()
     private let gradientLayer = CAGradientLayer()
     private let maskLayer = CAShapeLayer()
@@ -49,8 +61,7 @@ final class BearySkeletonCardView: UIView {
         let titleBar = bar(height: 16)
         let bodyBar1 = bar(height: 12)
         let bodyBar2 = bar(height: 12)
-        // 图片块 216 高
-        let imageBlock = UIView()
+        // 图片块 216 高（无图款把高置 0，骨架随之矮 228pt）
         imageBlock.backgroundColor = Self.skeletonBaseColor()
         imageBlock.layer.cornerRadius = 12
         blocks = [avatar, nameBar, timeBar, titleBar, bodyBar1, bodyBar2, imageBlock]
@@ -73,6 +84,8 @@ final class BearySkeletonCardView: UIView {
         // 扫光动画无任何路径会被移除；关时若骨架仍在显示需恢复扫光
         //（与 BearyWebRingSpinnerView 同口径）。
         NotificationCenter.default.addObserver(self, selector: #selector(reduceMotionChanged), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
+        let imageHeight = imageBlock.heightAnchor.constraint(equalToConstant: 216)
+        imageHeightConstraint = imageHeight
         NSLayoutConstraint.activate([
             avatar.topAnchor.constraint(equalTo: topAnchor, constant: 16),
             avatar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
@@ -101,7 +114,7 @@ final class BearySkeletonCardView: UIView {
             imageBlock.topAnchor.constraint(equalTo: bodyBar2.bottomAnchor, constant: 12),
             imageBlock.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             imageBlock.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            imageBlock.heightAnchor.constraint(equalToConstant: 216),
+            imageHeight,
             imageBlock.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
             shimmerContainer.topAnchor.constraint(equalTo: topAnchor),
             shimmerContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -227,10 +240,16 @@ final class BearySkeletonCell: UITableViewCell {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    /// 首页骨架高矮搭配：带图 370pt、无图约 142pt；默认带图，其他页用法不变。
+    func configure(showsImage: Bool) {
+        skeletonView.showsImage = showsImage
+    }
+
     override func prepareForReuse() {
         super.prepareForReuse()
         alpha = 1
         transform = .identity
+        skeletonView.showsImage = true
     }
 }
 
