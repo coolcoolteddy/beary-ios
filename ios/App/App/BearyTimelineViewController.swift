@@ -2606,6 +2606,9 @@ class BearyTimelineViewController: UIViewController {
     // 审计-时间线：表头回收站钮改 BearyHit44Button，视觉帧不动、热区扩至 44×44。
     private let trashButton = BearyHit44Button(type: .system)
     private let countsLabel = UILabel()
+    /// 计数行最小高度约束（跳动修）：行高钉死一行，见 buildHeader 内注释；
+    /// 字号变化时在 traitCollectionDidChange 里随新字号重算。
+    private var countsLabelMinHeightConstraint: NSLayoutConstraint?
     // 审计-时间线：表头统计/重试钮改 BearyHit44Button，视觉帧不动、热区扩至 44×44（正常态禁用，失败态可点时生效）。
     private let statsButton = BearyHit44Button(type: .system)
     private let calendarCard = BearyCalendarCardView()
@@ -4185,6 +4188,14 @@ class BearyTimelineViewController: UIViewController {
         countsLabel.font = BearyDynamicType.captionFont()
         countsLabel.adjustsFontForContentSizeCategory = true
         countsLabel.textColor = BearyColors.gray
+        // 跳动修：计数行恒占一行高。首屏 fitted 时计数为空，空文本 label 在
+        // fitting 下高度塌掉，表头算短；计数写入后重算长出一行，整列瞬间下跳。
+        // 行高钉死一行（≥ 行高：有文案时内在高度若略大仍以其为准，不裁剪），
+        // 首帧即按有计数的高度搭，计数写入不再改表头高。字号变化时约束常量
+        // 在 traitCollectionDidChange 里随新字号重算。
+        let countsMinHeight = countsLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: countsLabel.font.lineHeight)
+        countsMinHeight.isActive = true
+        countsLabelMinHeightConstraint = countsMinHeight
 
         statsButton.translatesAutoresizingMaskIntoConstraints = false
         statsButton.contentHorizontalAlignment = .left
@@ -4585,6 +4596,8 @@ class BearyTimelineViewController: UIViewController {
             updateVisFilterButton()
             // R15-L1：钮宽变了，分行判定重算（窄屏/大字号下筛子与日期分行）。
             updateFilterRowLayout()
+            // 跳动修：计数行最小高度随新字号重算（否则大字号下行高钉死旧值、文案被裁）。
+            countsLabelMinHeightConstraint?.constant = countsLabel.font.lineHeight
         }
     }
 
