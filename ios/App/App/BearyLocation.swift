@@ -185,6 +185,20 @@ enum BearyLocationDisplayNames {
             completion(line)
         }
     }
+
+    /// 同步取缓存的地名行：当前语言的解析缓存已命中时直接返回按显示口径算出的行文
+    /// （脱敏与 displayLine 完全一致）；未命中返回 nil，调用方走原存文本＋异步回包。
+    /// 只读缓存，不触发解析；切语言后键里的语言变了，旧缓存自然不再命中。
+    /// 调用方须在主线程调用。
+    static func cachedDisplayLine(for entry: Entry) -> String? {
+        guard let lat = entry.locationLatitude, let lng = entry.locationLongitude,
+              (-90...90).contains(lat), (-180...180).contains(lng), (lat != 0 || lng != 0) else { return nil }
+        guard let names = cache[cacheKey(latitude: lat, longitude: lng)] else { return nil }
+        return BearyLocationDisplay.display(
+            location: DiaryLocation(name: names.name, district: names.district, latitude: lat, longitude: lng),
+            isPublic: BearyEphemeral.isEffectivelyPublic(entry),
+            viewerIsAuthor: BearyLocationDisplay.viewerIsAuthor(entry: entry))
+    }
 }
 
 /// 地图聚合组：本人按精确地点名 + 区级聚合（同名换区拆成不同组；
