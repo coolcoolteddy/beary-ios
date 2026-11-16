@@ -62,10 +62,12 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 不进“未能在地图上定位”，点按可重试；重算时随未定位列表一并清掉。
     private var transientFailedGroups: [BearyLocationMapGroup] = []
     private var selectedGroup: BearyLocationMapGroup?
-    /// r17-m3：从详情回到原处的专用记忆——进入详情的地点组 key、列表
+    /// r17-m3：从详情回到原处的专用记忆——进入详情的地点组 id、列表
     /// 偏移、该组篇 id 快照。只读返回时恢复选中组与列表位置；组内篇变了
     /// 才给该地点列表一次 0.18 秒淡变。
-    private var returnGroupKey: String?
+    /// 按 id 不按 key 记：同名不同区的两组 key 相同，凭 key 恢复会取错组
+    ///（BearyLocationMapGroup 注释：key 只作展示文本，不作身份）。
+    private var returnGroupId: String?
     private var returnTableOffset: CGPoint?
     private var returnGroupEntryIds: [String]?
     private var pendingMapReturnRestore = false
@@ -277,6 +279,11 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         }
         // C4：只读返回不重拉（详情真有变化时容器按 id 扇出 applyEditedEntry /
         // removeDeletedEntry）；切账号是唯一重拉路径，appear 不再无条件刷新。
+        // 跳动审计第三批 #6：只读返回当场消费本次恢复——viewWillAppear 在
+        // 详情返回时即触发；只靠 regroup 消费时，旗标会一直滞留到下一次
+        // 重算才生效，期间用户的新操作会被旧恢复覆盖。已在 regroup 里
+        // 消费过时旗标已清，此处是 no-op，不会双份恢复。
+        restoreMapReturnContextIfNeeded()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -738,13 +745,13 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     /// 切账号后旧身份的返回记忆作废，不带到新身份。
     private func clearMapReturnContext() {
-        returnGroupKey = nil
+        returnGroupId = nil
         returnTableOffset = nil
         returnGroupEntryIds = nil
         pendingMapReturnRestore = false
     }
 
-    /// r17-m3：从详情只读返回后的恢复——选中组（regroup 已按 key 重绑）
+    /// r17-m3：从详情只读返回后的恢复——选中组（regroup 已按 id 重绑）
     /// 与列表位置按记忆恢复；组内篇变了／组没了才给该地点列表一次
     /// 0.18 秒淡变（其余组与地图不动、不重播）。
     private func restoreMapReturnContextIfNeeded() {
@@ -758,8 +765,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         }
         restoreOffset()
         DispatchQueue.main.async(execute: restoreOffset)
-        guard let key = returnGroupKey else { return }
-        if let group = groups.first(where: { $0.key == key }) {
+        guard let groupId = returnGroupId else { return }
+        if let group = groups.first(where: { $0.id == groupId }) {
             selectedGroup = group
             let currentIds = group.entries.compactMap { $0.id }
             if currentIds != returnGroupEntryIds {
@@ -1265,6 +1272,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     }
 
     private func selectGroup(_ group: BearyLocationMapGroup) {
+        // 跳动审计第三批 #6：用户选了新组，旧的详情返回记忆作废——
+        // 不清的话下一次重算会把选中组与列表位置拉回旧状态。
+        clearMapReturnContext()
         selectedGroup = group
         selectedEntryDisplayLines.removeAll()
         tableView.reloadData()
@@ -1278,6 +1288,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 进入同一组日记（selectGroup），这是唯一的返回入口——此前
     /// selectedGroup = nil 只在切账号时出现，无用户可点的清除选中。
     @objc private func didTapShowAllLocations() {
+        // 同上：清除选中即用户新操作，旧返回记忆作废。
+        clearMapReturnContext()
         selectedGroup = nil
         tableView.reloadData()
         if tableView.numberOfSections > 0, tableView.numberOfRows(inSection: 0) > 0 {
@@ -1529,8 +1541,10 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             if let selected = selectedGroup {
                 guard indexPath.row < selected.entries.count else { return }
                 // r17-m3：记住进入详情的地点组 ID 与列表位置、该组篇快照；
-                // 返回时由 regroupAndGeocode 恢复（只读返回保留选中组与列表位置）。
-                returnGroupKey = selected.key
+                // 返回时在 viewWillAppear 当场消费恢复（只读返回保留选中组
+                // 与列表位置）；详情有改动时容器扇出的 regroup 也会消费，
+                // 旗标只生效一次。按 id 记，不按 key（同名不同区 key 会撞）。
+                returnGroupId = selected.id
                 returnTableOffset = tableView.contentOffset
                 returnGroupEntryIds = selected.entries.compactMap { $0.id }
                 pendingMapReturnRestore = true
