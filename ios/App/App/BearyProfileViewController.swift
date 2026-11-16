@@ -6432,16 +6432,12 @@ class BearyProfileViewController: UIViewController {
                     self.tableView.insertRows(at: inserted, with: .none)
                 }, completion: { [weak self] _ in self?.animateNewRows(delayStep: 0.05, yOffset: 24) })
             } else if didShowProfileSkeleton, BearyMotion.animated(true) {
-                // 加载三件套·骨架淡出＋内容入场：整表 0.26s 交叉溶解（骨架同步
-                // 淡出），内容再从上到下每块错开 60ms、依次淡入并上移 8px。
+                // 加载三件套·骨架淡出：只做一次 0.26s 交叉溶解，真实行直接落
+                // 最终位置，不再在淡变完成后又把刚淡出的行藏起来重播一次。
                 didShowProfileSkeleton = false
                 UIView.transition(with: tableView, duration: BearyMotion.normal, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
                     self.tableView.reloadData()
-                }, completion: { [weak self] _ in
-                    guard let self = self else { return }
-                    let cells = (self.tableView.indexPathsForVisibleRows ?? []).sorted().compactMap { self.tableView.cellForRow(at: $0) }
-                    BearyLoadingUX.staggerIn(cells: cells, delayStep: 0.06, yOffset: 8)
-                })
+                }, completion: nil)
             } else {
                 didShowProfileSkeleton = false
                 tableView.reloadData()
