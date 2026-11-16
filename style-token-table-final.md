@@ -140,6 +140,7 @@
 - 热力图字号（2026-11-07 定，D-2 定档）：月份名 12 regular scaled（captionFont）、星期名 12 regular scaled（captionFont）、数值 12 semibold scaled（numberFont）。
 - 动态曲线：基础字号走 scaledFont 跟随系统字号；固定高度容器（顶栏、modal 顶栏）走 cappedFont，上限 20；固定高度容器内量宽须用与渲染同一字体（cappedFont 量宽），否则大字号下量宽与渲染脱节。
 - 迁移节奏：新代码走语义入口；旧裸字号按页分批迁移，不一次性全量；Wordprint 编码字号（13＋4×ratio、15＋7×ratio 两处）已跟随系统字号（scaledFont，底数不变；辅助功能档下计数放不下时换到下一行，平时布局不动）。等宽字体（idValueLabel 等宽 15 粗）豁免，不纳入语义入口；后续各页迁移时，无入口字号先按已有入口归位，归位不了的新增入口（尺寸＋字重＋scaled）并同步进规范，不必逐项问。
+- 衬线（2026-11-16 Li 定）：大标题用衬线、其余系统字体；衬线＝iOS 自带 New York＋宋体（UIFont.withDesign(.serif)，不装字体），字号字重不变。走衬线 7 处：个人页姓名／设置页账号名／年报年度关键词（同走 heroNameFont 24 heavy）、年度回顾页主标题「(年) 年度回顾」22 heavy、邀请页主标题「邀请好友」21 heavy、空态主标题（BearyStateView 共享入口 15 bold，覆盖全站 23 处调用）、星图空态「这里还没有星星」16 bold、登录页「欢迎回来」15 bold、引导页各页标题 26 bold。
 
 ## 12. 文案风格
 
