@@ -4341,3 +4341,92 @@ extension BearyDiaryCardCell {
         return true
     }
 }
+
+// MARK: - 行高估算（estimatedHeightForRowAt 用）
+//
+// 背景：三处日记列表（首页/个人页/时间线）都用 automaticDimension + 固定
+// estimatedRowHeight（220/220/180），纯文字卡约 150pt、有图卡 400pt+，
+// 估算与真实差近 200pt，表在滚动中逐行量出真实高度时 contentSize 不断
+// 修正，滚动指示条跳变、reload 后滚动位置漂移。
+// 本估算只复刻布局里决定高度的量，不碰真实行高计算：正文用与
+// measuredFoldOverflow 同款 boundingRect（diaryBodyFont 16 + 行高倍数），
+// 其余按约束与 updateDiaryStackSpacing 的对照表逐项累加。引用卡/回应行等
+// 可变行取固定近似值，估算允许几十 pt 的误差，目标是把误差从 200pt 级
+// 降下来，不是逐像素复刻。
+extension BearyDiaryCardCell {
+
+    /// 正文纯文本高度：与 attributedBody 同款字体 + 行高倍数，只量文字本身，
+    /// 不含心情缀尾附件（附件只占末行尾部，可忽略）。
+    static func estimatedTextHeight(_ text: String, width: CGFloat, lineHeightMultiple: CGFloat) -> CGFloat {
+        guard !text.isEmpty, width > 0 else { return 0 }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = lineHeightMultiple
+        paragraph.lineBreakMode = .byCharWrapping
+        let attr = NSAttributedString(string: text, attributes: [
+            .font: BearyDynamicType.diaryBodyFont(),
+            .paragraphStyle: paragraph,
+        ])
+        return attr.boundingRect(
+            with: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        ).height
+    }
+
+    /// 单行高（与 measuredFoldOverflow 同款 "X" 量法，供折叠 6 行封顶用）。
+    static func estimatedSingleLineHeight(lineHeightMultiple: CGFloat) -> CGFloat {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = lineHeightMultiple
+        paragraph.lineBreakMode = .byCharWrapping
+        let attr = NSAttributedString(string: "X", attributes: [
+            .font: BearyDynamicType.diaryBodyFont(),
+            .paragraphStyle: paragraph,
+        ])
+        return attr.boundingRect(
+            with: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        ).height
+    }
+
+    /// 卡片行高估算（首页/个人页共用）。正文列宽按约束取：左 68
+    /// （16 边距 + 头像 40 + 12 间距）、右 16；行高倍数 1.6 与卡片一致。
+    static func estimatedCardHeight(for entry: Entry, mode: BearyDiaryCardMode, expanded: Bool, firstRow: Bool, tableWidth: CGFloat) -> CGFloat {
+        let contentWidth = max(0, tableWidth - 84)
+        let text = entry.content ?? ""
+        let fullHeight = estimatedTextHeight(text, width: contentWidth, lineHeightMultiple: 1.6)
+        let singleHeight = estimatedSingleLineHeight(lineHeightMultiple: 1.6)
+        let lines = singleHeight > 0 ? Int(ceil(fullHeight / singleHeight - 0.01)) : 0
+        // 与 measuredFoldOverflow 同口径：≤300 字恒不折叠。
+        let overflow = text.count > 300 && lines > 6
+        var textHeight = fullHeight
+        // 只有心情缀尾、无正文时占一行（bodyWithTrailingMood 仍会缀一个附件）。
+        if text.isEmpty, (entry.mood ?? "").isEmpty == false { textHeight = singleHeight }
+        if overflow && !expanded { textHeight = CGFloat(6) * singleHeight }
+
+        let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && !BearyGIF.isInlineImageKey($0, content: text) }
+        let hasImages = !imageKeys.isEmpty
+        let hasTitle = !(entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasQuote = entry.quote != nil || entry.quoteId != nil
+        let hasLocation = !(entry.locationName ?? "").isEmpty || !(entry.locationDistrict ?? "").isEmpty
+        let hasEmotes = (entry.emotes ?? []).contains { ($0.count ?? 0) > 0 }
+
+        var height: CGFloat = (mode == .profile && firstRow) ? 30 : 16  // 顶距（个人页首卡 30）
+        if mode == .profile && entry.isPinned { height += 25 }          // 置顶行 15 + 间距 10
+        height += 40   // 头行（头像 40）
+        if (entry.mentionedName ?? "").isEmpty == false { height += 21 } // @ 行 17 + 间距 4
+        if BearyEphemeral.isLive(entry) { height += 19 }                 // 限时行 15 + 间距 4
+        height += 6    // 头行→正文
+        if hasTitle { height += 20 + 6 }                                 // 标题行 + 间距
+        height += textHeight
+        if overflow { height += 6 + 20 + 14 } else { height += 14 }      // 折叠钮行 / 正文→下行
+        if hasImages { height += 216 + 12 }                              // 图片条 + 间距
+        if imageKeys.count > 3 { height += 32 + 12 }                     // 九宫格入口 + 间距
+        if hasQuote { height += 72 + 12 }                                // 引用卡（近似）+ 间距
+        if hasLocation { height += 18 + 14 }                             // 位置行 + 间距
+        height += 24   // 操作行（图标 24）
+        if hasEmotes { height += 12 + 30 }                               // 回应行（近似）+ 间距
+        height += 18   // 底线 17 + 1
+        return height
+    }
+}

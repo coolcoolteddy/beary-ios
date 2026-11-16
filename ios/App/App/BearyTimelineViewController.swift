@@ -6899,6 +6899,54 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         return sections[section].entries.count
     }
 
+    /// 时间线行高估算（正文行高倍数 1.75、不折叠，与卡片 1.6/6 行封顶不同口径，
+    /// 见 configure 内 8-13 注释）。正文列宽按约束取：内容列左 36 + 栈左右各 16，
+    /// 右 16，共 84。引用卡/足行等可变行取固定近似值，允许几十 pt 误差。
+    private func estimatedTimelineRowHeight(for entry: Entry, tableWidth: CGFloat) -> CGFloat {
+        let contentWidth = max(0, tableWidth - 84)
+        let text = entry.content ?? ""
+        let textHeight = BearyDiaryCardCell.estimatedTextHeight(text, width: contentWidth, lineHeightMultiple: 1.75)
+        let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && !BearyGIF.isInlineImageKey($0, content: text) }
+        let hasImages = !imageKeys.isEmpty
+        let hasTitle = !(entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasQuote = entry.quote != nil || entry.quoteId != nil
+        let hasLocation = !(entry.locationName ?? "").isEmpty || !(entry.locationDistrict ?? "").isEmpty
+        let likeCount = entry.likeCount ?? 0
+        let emoteTotal = (entry.emotes ?? []).reduce(0) { $0 + ($1.count ?? 0) }
+        let bookmarkCount = entry.bookmarkCount ?? 0
+        let hasFootCounts = BearyEphemeral.isEffectivelyPublic(entry) && (likeCount > 0 || emoteTotal > 0 || bookmarkCount > 0)
+
+        var height: CGFloat = 6 + 14  // 列顶 + 栈顶
+        height += 28   // meta 行（⋯钮 28）
+        height += 12   // meta→正文
+        if hasTitle { height += 20 + 6 }                              // 标题行 + 间距
+        height += textHeight
+        height += 14   // 正文→下行
+        if hasImages { height += 216 + 12 }                           // 图片条 + 间距
+        if imageKeys.count > 3 { height += 32 + 12 }                  // 九宫格入口 + 间距
+        if hasQuote { height += 72 + 12 }                             // 引用卡（近似）+ 间距
+        if hasLocation { height += 18 + 14 }                          // 位置行 + 间距
+        if hasFootCounts { height += 17 + 12 }                        // 计数足行 + 间距
+        if entry.isMine == true { height += 17 }                      // 编辑行
+        height += 6 + 8  // 栈底 + 列底
+        return height
+    }
+
+    /// 估算用表宽：布局前 bounds 仍为 0 时按 view 宽、再按屏宽回落。
+    private func estimationTableWidth(using tableView: UITableView) -> CGFloat {
+        if tableView.bounds.width > 0 { return tableView.bounds.width }
+        if view.bounds.width > 0 { return view.bounds.width }
+        return UIScreen.main.bounds.width
+    }
+
+    func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
+        // 固定 estimatedRowHeight 180 与真实行高（纯文字约 170、有图 400+）差近
+        // 200pt，滚动中 contentSize 不断修正会漂移；按模型逐行估算。
+        let sections = currentSections()
+        guard indexPath.section < sections.count, indexPath.row < sections[indexPath.section].entries.count else { return 180 }
+        return estimatedTimelineRowHeight(for: sections[indexPath.section].entries[indexPath.row], tableWidth: estimationTableWidth(using: tableView))
+    }
+
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let sections = currentSections()
         guard indexPath.section < sections.count, indexPath.row < sections[indexPath.section].entries.count else {
