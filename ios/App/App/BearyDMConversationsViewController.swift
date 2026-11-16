@@ -337,7 +337,9 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     /// 大字号下空文案换行变高，底线随之撑高、不钉死 160。
     /// #711 修红：#706 已退役旧 emptyLabel，空／失败态现由 conversationStateView
     /// 承载（其标题／副文案为内部 label，外部量不到）；此处按状态视图的实际字号
-    /// （标题 15 粗体）与空态内容重算——§12 空态现为主句＋「去找好友」动作钮
+    /// （标题 15 粗体）与空态内容重算——量高字体须与显示字体一致（此处与
+    /// BearyStateView 空态主标题同为系统字体 15 粗体，克制版已退回系统字体），
+    /// 否则量得的高度与实际渲染对不上；§12 空态现为主句＋「去找好友」动作钮
     /// （StateView 默认 secondaryOutline 常规档，高 44），副文案已去掉；
     /// 48 余量仍盖住失败态多出的副文案行，两态共用同一底线。
     private var adaptiveEmptyMinHeight: CGFloat {

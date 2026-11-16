@@ -219,7 +219,7 @@ final class BearyInviteViewController: UIViewController {
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "邀请好友"
-        titleLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 21, weight: .heavy), maximumPointSize: 28)
+        titleLabel.font = BearyDynamicType.cappedFont(for: BearyDynamicType.serif(UIFont.systemFont(ofSize: 21, weight: .heavy)), maximumPointSize: 28)
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
 
