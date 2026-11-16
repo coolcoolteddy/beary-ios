@@ -3256,6 +3256,12 @@ class BearyProfileViewController: UIViewController {
         // F17：每次强制布局前先按显隐刷新间距链（隐藏容器间隙归零）。
         updateHeaderSpacing()
         headerLaidOutWidth = widthValue
+        // 表头跳动修：量高前记下当前已装高度。旧路把 frame 先压到 1 再比
+        // frame.height != fittingHeight，恒成立、每次都重装 tableHeaderView；
+        // 且重装是瞬时落位——资料回包墙/统计行一出现，表头变高、下面整列
+        // 日记瞬间移位。现只在高度真变时重装，并走 0.26s 过渡（规范 normal 档）。
+        let oldHeight = headerView.frame.height
+        let hadHeader = tableView.tableHeaderView != nil
         headerView.frame = CGRect(x: 0, y: 0, width: widthValue, height: 1)
         headerView.setNeedsLayout()
         headerView.layoutIfNeeded()
@@ -3264,9 +3270,28 @@ class BearyProfileViewController: UIViewController {
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         ).height
-        if headerView.frame.height != fittingHeight {
+        if oldHeight != fittingHeight {
             headerView.frame = CGRect(x: 0, y: 0, width: widthValue, height: fittingHeight)
-            tableView.tableHeaderView = headerView
+            if hadHeader {
+                // 已装表头才做动画：首装直接落位（封面 180 首帧最终态，不做展开动画）。
+                let delta = fittingHeight - oldHeight
+                let offsetY = tableView.contentOffset.y
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: {
+                    self.tableView.beginUpdates()
+                    self.tableView.tableHeaderView = self.headerView
+                    self.tableView.endUpdates()
+                    // 已滚动时把可见行钉在原地：增高量由已滚出屏幕的表头吸掉，
+                    // 行不动、只表头在视口外长；未滚动（offset 0）时不补偿，
+                    // 列表随表头展开自然下移 0.26s，封面不被顶出屏幕。
+                    if offsetY > 0 {
+                        var offset = self.tableView.contentOffset
+                        offset.y = max(0, offsetY + delta)
+                        self.tableView.contentOffset = offset
+                    }
+                })
+            } else {
+                tableView.tableHeaderView = headerView
+            }
         }
         // 全修 6-3 同步点：头部重布局（转屏/显隐变化）后下划线基座几何已变，
         // 约束锚点不再自动跟随，须直设终值 transform 重算一次（非动画；切 tab
