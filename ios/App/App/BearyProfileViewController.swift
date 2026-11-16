@@ -6751,13 +6751,23 @@ class BearyProfileViewController: UIViewController {
                 switch result {
                 case .success(let listValue):
                     let fresh = listValue.entries ?? []
-                    strongSelf.reconcileEntries(fresh: fresh)
+                    // 回填分流：没变不重载，变了只更受影响行——卡片不重配、
+                    // 图片不重下，已显示内容不闪（见 reconcileEntries）。
+                    let outcome = strongSelf.reconcileEntries(fresh: fresh)
                     if fresh.count < strongSelf.tabPageLimit {
                         strongSelf.setHasMore(hasMore: false)
                     }
-                    strongSelf.tableView.reloadData()
-                    // M10：回填用淡入/滑入新行（已有行不重播），不用整表瞬换观感。
-                    strongSelf.animateNewRows()
+                    switch outcome {
+                    case .unchanged:
+                        break
+                    case .updatedRows(let rows):
+                        // 只更内容变了的旧行（无新增行，animateNewRows 不用跑）。
+                        strongSelf.tableView.reloadRows(at: rows, with: .none)
+                    case .structural:
+                        strongSelf.tableView.reloadData()
+                        // M10：回填用淡入/滑入新行（已有行不重播），不用整表瞬换观感。
+                        strongSelf.animateNewRows()
+                    }
                     // 109：后台回填成功且未切走（上方 tabAtStart 守卫已保证）时清掉
                     // 其他 tab 残留的全局 tabError，否则 switchTab 缓存路径先 refreshFooter
                     // 仍会先判 tabError 而显旧 tab 的失败脚部；失败分支口径不动，
@@ -6788,7 +6798,18 @@ class BearyProfileViewController: UIViewController {
     /// 任一展示字段变化即判为变化、用新数据；折叠态不由 Entry 携带，
     /// 它存在独立的 expandedEntryIds（按日记 ID 记），setEntries 不动它，
     /// 故取新数据不丢折叠态；个人页无其他按篇存的界面状态。
-    private func reconcileEntries(fresh: [Entry]) {
+    /// 回填对账结果：没变／只有旧行内容变了／行结构变了（增删、换序）。
+    private enum ReconcileOutcome {
+        case unchanged
+        case updatedRows([IndexPath])
+        case structural
+    }
+
+    private func reconcileEntries(fresh: [Entry]) -> ReconcileOutcome {
+        // 表格只显示 displayedEntries：日记 tab 仅前 3 篇（＋更多按钮行），
+        // 其余 tab 才等于 currentEntries；变化比对必须按显示行算，
+        // 否则 reloadRows 的 IndexPath 会越界崩溃。
+        let oldDisplayed = displayedEntries
         var oldById: [String: Entry] = [:]
         for entryValue in currentEntries {
             if let entryId = entryValue.id {
@@ -6836,6 +6857,21 @@ class BearyProfileViewController: UIViewController {
             }
         }
         setEntries(entries: merged)
+        // 没变不重载：显示行数、ID 顺序、展示签名全同即列表没变；只变了旧行
+        // 内容时回受影响行，调用方定向 reloadRows；行结构变了才整表重载。
+        // Entry 是 struct，不比对象身份，只比 ID 与签名。日记 tab 只显示
+        // 前 3 篇，模型里第 4 篇之后的变化不算显示变化，不触发重载。
+        let newDisplayed = displayedEntries
+        guard newDisplayed.count == oldDisplayed.count else { return .structural }
+        var updated: [IndexPath] = []
+        for (index, oldEntry) in oldDisplayed.enumerated() {
+            let newEntry = newDisplayed[index]
+            guard oldEntry.id == newEntry.id else { return .structural }
+            if entrySignature(entryValue: oldEntry) != entrySignature(entryValue: newEntry) {
+                updated.append(IndexPath(row: index, section: 0))
+            }
+        }
+        return updated.isEmpty ? .unchanged : .updatedRows(updated)
     }
 
     /// 展示签名：与时间线第 5 项（#574）的 entrySignature 同口径，
