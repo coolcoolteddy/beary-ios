@@ -1661,10 +1661,9 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         switch gesture.state {
         case .changed:
             let offset = BearySheetDrag.offset(for: translation.y)
-            // 把手在内容顶端：下滑时把滚动锁回顶部，避免与滚动回弹打架。
-            if translation.y > 0 {
-                sheetScrollView.contentOffset = .zero
-            }
+            // 把手拖动只动面板，不碰列表滚动位置：列表滚到下面时
+            // 下拉把手又弹回，也要保留原阅读位置。把手在固定头部里，
+            // 与滚动视图是不同手势，不存在与滚动回弹打架的问题。
             sheetView.transform = CGAffineTransform(translationX: 0, y: offset)
             // 审计第 14 项：遮罩跟手变淡，与游客提示同口径（共用映射）。
             backdropButton.alpha = BearySheetDrag.scrimAlpha(forDragOffset: offset, sheetHeight: sheetView.bounds.height)
