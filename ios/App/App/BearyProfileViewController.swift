@@ -3249,9 +3249,42 @@ class BearyProfileViewController: UIViewController {
         layoutHeaderForced(widthValue: widthValue)
     }
 
+    /// 弹性封面拉伸态快照（layoutHeaderForced 专用）：量高须按自然态量，
+    /// 但正在下拉拉伸时不能把跟手的封面打回自然态——手指停住不动时没有
+    /// 后续滚动事件，封面会一直缩回去，直到再动手指。量高前快照、量高
+    /// 后原样恢复；整段在同一同步调用内、渲染前恢复，视觉上不闪。
+    /// 未拉伸时快照即自然态，恢复是 no-op。
+    private struct CoverStretchSnapshot {
+        let top: CGFloat
+        let height: CGFloat
+        let leading: CGFloat
+        let trailing: CGFloat
+        let blurAlpha: CGFloat
+    }
+
+    private func coverStretchSnapshot() -> CoverStretchSnapshot {
+        CoverStretchSnapshot(
+            top: coverTopConstraint.constant,
+            height: coverHeightConstraint.constant,
+            leading: coverLeadingConstraint.constant,
+            trailing: coverTrailingConstraint.constant,
+            blurAlpha: coverBlurImageView.alpha
+        )
+    }
+
+    private func restoreCoverStretch(_ snapshot: CoverStretchSnapshot) {
+        coverTopConstraint.constant = snapshot.top
+        coverHeightConstraint.constant = snapshot.height
+        coverLeadingConstraint.constant = snapshot.leading
+        coverTrailingConstraint.constant = snapshot.trailing
+        setCoverBlurAlpha(snapshot.blurAlpha)
+    }
+
     private func layoutHeaderForced(widthValue: CGFloat) {
         // 弹性封面复位：强制量高须按自然态（180/0）量，拉伸态量出的高度会虚增
-        // （下拉刷新回包时量高即此场景）；若仍在下拉中，下一次滚动事件会重新施加拉伸。
+        // （下拉刷新回包时量高即此场景）；量高后把快照的拉伸态恢复（见上），
+        // 下拉中异步量高不再打断跟手的封面。
+        let stretchSnapshot = coverStretchSnapshot()
         resetCoverStretch()
         // F17：每次强制布局前先按显隐刷新间距链（隐藏容器间隙归零）。
         updateHeaderSpacing()
@@ -3274,6 +3307,8 @@ class BearyProfileViewController: UIViewController {
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         ).height
+        // 量高已按自然态算完，把跟手的拉伸态恢复（未拉伸时快照即自然态，恢复是 no-op）。
+        restoreCoverStretch(stretchSnapshot)
         let targetSize = CGSize(width: widthValue, height: fittingHeight)
         headerView.frame = CGRect(origin: .zero, size: targetSize)
         guard oldSize != targetSize else {
