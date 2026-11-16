@@ -32,7 +32,7 @@ final class BearySkeletonCardView: UIView {
     private let imageBlock = UIView()
     private var imageHeightConstraint: NSLayoutConstraint?
 
-    /// 无图款：图片块高置 0，骨架只剩头部＋标题＋正文（约 142pt），与无图真卡同高；
+    /// 无图款：图片块高置 0，骨架只剩头部＋标题＋正文（154pt），与无图真卡同高；
     /// 有图款 370pt。首页三行骨架高矮搭配，夹住真实卡片高度区间。
     var showsImage: Bool = true {
         didSet {
@@ -221,6 +221,12 @@ final class BearySkeletonCell: UITableViewCell {
 
     static let reuseIdentifier = "BearySkeletonCell"
 
+    /// 骨架行估算高度，与 BearySkeletonCardView 的约束链同源：
+    /// 有图 138 + 216 + 16 = 370，无图 138 + 0 + 16 = 154。
+    /// estimatedHeightForRowAt 与 configure(showsImage:) 共用，免得分叉。
+    static let estimatedHeightWithImage: CGFloat = 370
+    static let estimatedHeightWithoutImage: CGFloat = 154
+
     private let skeletonView = BearySkeletonCardView()
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
@@ -240,7 +246,7 @@ final class BearySkeletonCell: UITableViewCell {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    /// 首页骨架高矮搭配：带图 370pt、无图约 142pt；默认带图，其他页用法不变。
+    /// 首页骨架高矮搭配：带图 370pt、无图 154pt；默认带图，其他页用法不变。
     func configure(showsImage: Bool) {
         skeletonView.showsImage = showsImage
     }
