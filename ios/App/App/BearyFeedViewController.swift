@@ -2771,11 +2771,15 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate, U
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         // 加载三件套·骨架行（扫光在 cell 内自启动，减动效静态）。
+        // 高矮搭配：0/2 行带图 370pt、1 行无图约 142pt，夹住真实卡片高度区间。
         if showingSkeleton {
             if let cell = tableView.dequeueReusableCell(withIdentifier: BearySkeletonCell.reuseIdentifier) as? BearySkeletonCell {
+                cell.configure(showsImage: indexPath.row % 2 == 0)
                 return cell
             }
-            return BearySkeletonCell(style: .default, reuseIdentifier: BearySkeletonCell.reuseIdentifier)
+            let cell = BearySkeletonCell(style: .default, reuseIdentifier: BearySkeletonCell.reuseIdentifier)
+            cell.configure(showsImage: indexPath.row % 2 == 0)
+            return cell
         }
         // iCity：最近公开模块已删，行序 = [广场正流][失败行]；末页无文字行。
         let entries = plazaEntries()
