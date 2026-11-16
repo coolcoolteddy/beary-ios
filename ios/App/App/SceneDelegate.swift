@@ -263,8 +263,9 @@ final class BearyChromeViewController: UIViewController {
     /// 液态玻璃顶边自带高光恰落在屏幕顶边即用户报的那条白线，顶边推出屏外
     /// 12pt 后高光落在屏外，底边仍为安全区顶 + 60（高同步 +12 补回）。
     /// 顶栏是覆盖层而非把页往下推的栈元素。显隐不再驱动各页 contentInset：
-    /// 容器版 applyHeaderTopInsets 仅剩 viewDidLayoutSubviews 布局纠正一处
-    /// 调用，各页懒建初值仍走页侧 helper。
+    /// 容器版 applyHeaderTopInsets 只把各页收敛到各自恒定态（首页显示态、他页收起态），
+    /// 调用点：viewDidLayoutSubviews 布局纠正与开发者横幅开关；切页时只准备入场页，
+    /// 见 applyHeaderTopInsetForPage；各页懒建初值同样走各自恒定态。
     private var headerVisible = true
     private var topHeightConstraint: NSLayoutConstraint?
     /// 开发者模式横幅（2026-11-08 新增）：开着时顶上挂一条 36pt 橙条防忘关；
@@ -1007,7 +1008,7 @@ final class BearyChromeViewController: UIViewController {
     @objc private func handleDevModeChanged(_ note: Notification) {
         devBannerView?.isHidden = !BearyDeveloperMode.shared.isEnabled
         updateDevBannerPosition()
-        applyHeaderTopInsets(visible: headerVisible)
+        applyHeaderTopInsets()
     }
 
     /// 开发者模式横幅位置：顶栏显示时贴顶栏下方，收起时贴安全区顶。
@@ -1714,8 +1715,8 @@ final class BearyChromeViewController: UIViewController {
     /// 也不再有每帧改 inset 触发的重新布局开销。顶栏是覆盖层（页框本就贴
     /// view.top），恒占位不挤页。减动效分支保留：直设终值。
     /// 注意：本函数不再调 applyHeaderTopInsets；布局纠正（旋转/分屏/首建）
-    /// 仍走 viewDidLayoutSubviews 与各页懒建初值（原口径不动），真机须复核
-    /// 首访他页顶距是否在交叉淡入内干净收敛（见提交说明）。
+    /// 仍走 viewDidLayoutSubviews 与各页懒建初值，各页顶距只认各自恒定态，
+    /// 真机须复核首访他页顶距是否在交叉淡入内干净收敛（见提交说明）。
     private func setHeaderVisible(_ visible: Bool, animated: Bool) {
         headerVisible = visible
         // 上移量取顶栏自身当前高度（布局后即安全区顶 + 60）；未布局时
@@ -1736,19 +1737,40 @@ final class BearyChromeViewController: UIViewController {
         updateDevBannerPosition(animated: animated)
     }
 
-    /// 顶栏透度批：容器统一发内边距。只发已建页（常驻/已懒建），未建页在 ensure* 创建时
-    /// 按当前 headerVisible 取初值（见各 ensure* 末尾），setHeaderVisible 切页时再统一改一次。
+    /// 顶栏透度批：各页顶距只认各自的恒定态，与当前选中页无关——首页恒显示态
+    /// （内容区预留顶栏 108pt），他页恒收起态 0（顶栏只在首页出现，从不盖在他页上）。
+    /// 此前向所有已建页广播当前页的值（`visible: page == .home`），切页时会把正在
+    /// 淡出的离场页顶距翻掉（消息页 0→60 瞬间下移，顶栏与列表一起跳；反向首页的
+    /// contentInset 也会在淡出中塌掉 108pt）。故只在布局纠正点（旋转/分屏、开发者
+    /// 横幅开关）把各页收敛到各自恒定态；切页时只准备入场页，见 applyHeaderTopInsetForPage。
+    /// 只发已建页（常驻/已懒建），未建页在 ensure* 创建时按各自恒定态取初值。
     /// 占位页无滚动视图、内容居中，不发内边距（其居中偏移见 BearyPlaceholderViewController）。
-    private func applyHeaderTopInsets(visible: Bool) {
-        feedVC?.applyHeaderTopInset(visible: visible)
-        notifVC?.applyHeaderTopInset(visible: visible)
-        timelineVC?.applyHeaderTopInset(visible: visible)
-        profileVC?.applyHeaderTopInset(visible: visible)
-        userVC?.applyHeaderTopInset(visible: visible)
-        searchVC?.applyHeaderTopInset(visible: visible)
-        friendsVC?.applyHeaderTopInset(visible: visible)
-        conversationsVC?.applyHeaderTopInset(visible: visible)
-        messagesVC?.applyHeaderTopInset(visible: visible)
+    private func applyHeaderTopInsets() {
+        feedVC?.applyHeaderTopInset(visible: true)
+        notifVC?.applyHeaderTopInset(visible: false)
+        timelineVC?.applyHeaderTopInset(visible: false)
+        profileVC?.applyHeaderTopInset(visible: false)
+        userVC?.applyHeaderTopInset(visible: false)
+        searchVC?.applyHeaderTopInset(visible: false)
+        friendsVC?.applyHeaderTopInset(visible: false)
+        conversationsVC?.applyHeaderTopInset(visible: false)
+        messagesVC?.applyHeaderTopInset(visible: false)
+    }
+
+    /// 切页入场准备：只给入场页发一次顶距（首页显示态、他页收起态），在淡入开始前
+    /// 把它的布局定好；离场页保持原样直到淡出结束，不碰。
+    private func applyHeaderTopInsetForPage(_ page: ContainerPage) {
+        switch page {
+        case .home: feedVC?.applyHeaderTopInset(visible: true)
+        case .notif: notifVC?.applyHeaderTopInset(visible: false)
+        case .timeline: timelineVC?.applyHeaderTopInset(visible: false)
+        case .me: profileVC?.applyHeaderTopInset(visible: false)
+        case .user: userVC?.applyHeaderTopInset(visible: false)
+        case .search: searchVC?.applyHeaderTopInset(visible: false)
+        case .friends: friendsVC?.applyHeaderTopInset(visible: false)
+        case .conversations: conversationsVC?.applyHeaderTopInset(visible: false)
+        case .messages: messagesVC?.applyHeaderTopInset(visible: false)
+        }
     }
 
     /// 栏显隐：动画可中断、可交互，reduced-motion 下直接设终值（与原栏动画同口径）。
@@ -1952,8 +1974,9 @@ final class BearyChromeViewController: UIViewController {
         // 开发者模式横幅：安全区顶变了（旋转/分屏），位置跟变。
         updateDevBannerPosition()
         // 顶栏透度批：安全区顶变了，Feed/时间线的属性内边距（含安全区顶）必须跟变；
+        // 各页收敛到各自恒定态（首页显示态、他页收起态），与当前选中页无关；
         // 各页 helper 自带“值不变跳过”，故此处全量重发是无害 no-op（消息页下拉刷新中被守卫挡下，见其 helper）。
-        applyHeaderTopInsets(visible: headerVisible)
+        applyHeaderTopInsets()
     }
 
     @objc private func didTapLogo() { showPage(.home) }
@@ -2127,8 +2150,8 @@ final class BearyChromeViewController: UIViewController {
         // L3：原生列表出现时原生栏保持在最上层（列表 view 后加，会盖住先加的栏；分段器在页之上、FAB 之下）。
         bringChromeToFront()
         feedVC = f
-        // 顶栏透度批：懒建初值按当前栏态（showPage 随后还会走 setHeaderVisible 统一改一次）。
-        f.applyHeaderTopInset(visible: headerVisible)
+        // 顶栏透度批：懒建初值即恒定态（首页显示态；切页入场准备见 applyHeaderTopInsetForPage）。
+        f.applyHeaderTopInset(visible: true)
         return f
     }
 
@@ -2380,6 +2403,10 @@ final class BearyChromeViewController: UIViewController {
         // 下方 setHeaderVisible 的 0.26s layoutIfNeeded 动画会把整页从左上零帧动画到满帧；
         // 此处先非动画布局一次定帧，动画只剩顶栏高度变化。只布局不动数据/分页/错峰滑入。
         view.layoutIfNeeded()
+        // 切页入场顶距准备：只给入场页发一次顶距（首页显示态、他页收起态），在淡入
+        // 开始前把布局定好；离场页保持原样直到淡出结束。100 包消息页 60pt 残态的根因
+        // 是懒建初值曾按旧栏态取，现初值已是各自恒定态，不再需要切页广播。
+        applyHeaderTopInsetForPage(page)
         // 切页生命周期 7 号（最小化）：进时间线页时显式启动倒计时
         //（离页钩子在上方切离分支；其他页进页逻辑已有 showPage 各分支兜底）。
         if page == .timeline {
@@ -2453,13 +2480,6 @@ final class BearyChromeViewController: UIViewController {
         // setHeaderVisible 的 0.26s 高度动效（减动效时内部直达）；页的透明度淡入
         // 见上方复加段（仅 alpha，不含 M4 的滑动）。
         setHeaderVisible(page == .home, animated: true)
-        // 100 包消息页顶部空隙修：22(b) Plan A 后 setHeaderVisible 不再发 inset，
-        // 而切页前 ensure* 与 view.layoutIfNeeded 已按旧栏态（从首页来时为真）
-        // 把消息页 inset 钉在 60，切页本身不触发容器 viewDidLayoutSubviews，
-        // 故 60 残态一直留到下次旋转/分屏——消息页顶多出 60pt 空白。
-        // 只在切页点（离散状态切换，非滚动动画）补发一次：他页得收起态 0、
-        // 首页得显示态 60；滚动藏栏仍走 setHeaderVisible，不经此，不回跳内容。
-        applyHeaderTopInsets(visible: page == .home)
         // E 批搜索藏栏（Li 2026-10-24 拍板：搜索页打开时 bnav + FAB 都藏）：
         // 容器切页只改 isHidden、不触发子页 appearance 回调，故藏/恢复只能落
         // 在唯一切页点 showPage，不走 SearchVC 生命周期（详情/登录等模态盖在
@@ -2552,7 +2572,7 @@ final class BearyChromeViewController: UIViewController {
         }
         addPageVC(vc, page: .notif)
         notifVC = vc
-        vc.applyHeaderTopInset(visible: headerVisible)
+        vc.applyHeaderTopInset(visible: false)
         return vc
     }
 
@@ -2682,7 +2702,7 @@ final class BearyChromeViewController: UIViewController {
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         addPageVC(vc, page: .timeline)
         timelineVC = vc
-        vc.applyHeaderTopInset(visible: headerVisible)
+        vc.applyHeaderTopInset(visible: false)
         return vc
     }
 
@@ -2709,7 +2729,7 @@ final class BearyChromeViewController: UIViewController {
         wireProfileVC(vc, modal: false)
         addPageVC(vc, page: .me)
         profileVC = vc
-        vc.applyHeaderTopInset(visible: headerVisible)
+        vc.applyHeaderTopInset(visible: false)
         return vc
     }
 
@@ -2746,7 +2766,7 @@ final class BearyChromeViewController: UIViewController {
         vc.onBack = { [weak self] in self?.showPage(.home) }
         addPageVC(vc, page: .search)
         searchVC = vc
-        vc.applyHeaderTopInset(visible: headerVisible)
+        vc.applyHeaderTopInset(visible: false)
         return vc
     }
 
@@ -2768,7 +2788,7 @@ final class BearyChromeViewController: UIViewController {
         vc.onBackToMessages = { [weak self] in self?.showPage(.messages) }
         addPageVC(vc, page: .friends)
         friendsVC = vc
-        vc.applyHeaderTopInset(visible: headerVisible)
+        vc.applyHeaderTopInset(visible: false)
         return vc
     }
 
@@ -2793,7 +2813,7 @@ final class BearyChromeViewController: UIViewController {
         vc.onOpenNotificationDetail = { [weak self] detailVC in self?.presentNotificationDetail(detailVC) }
         addPageVC(vc, page: .messages)
         messagesVC = vc
-        vc.applyHeaderTopInset(visible: headerVisible)
+        vc.applyHeaderTopInset(visible: false)
         return vc
     }
 
@@ -2809,7 +2829,7 @@ final class BearyChromeViewController: UIViewController {
         }
         addPageVC(vc, page: .conversations)
         conversationsVC = vc
-        vc.applyHeaderTopInset(visible: headerVisible)
+        vc.applyHeaderTopInset(visible: false)
         return vc
     }
 
@@ -2942,7 +2962,7 @@ final class BearyChromeViewController: UIViewController {
         addPageVC(vc, page: .user)
         userVC = vc
         userTargetKey = key
-        vc.applyHeaderTopInset(visible: headerVisible)
+        vc.applyHeaderTopInset(visible: false)
         return vc
     }
 
