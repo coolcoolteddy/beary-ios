@@ -1713,7 +1713,7 @@ class BearyDiaryCardCell: UITableViewCell {
         // 个人主页：回应行高在初次布局（宽未落位、走估算）与落位后不一致时，
         // 行高会变一次；此前个人主页没有行高重算回调（首页有 onNeedsRowReload），
         // 行高停留在初算值、内容溢出或回缩即表现为滑动抽搐。异步通知一次，
-        // 控制器走 reloadRows(.none) 重算该行（可见行才刷，见控制器接线）。
+        // 控制器走 begin/end 平滑重算该行（可见行才刷，见控制器接线）。
         if cardMode == .profile, emoteHeightChanged,
            let entryIdValue = cellEntryId,
            let settledHeight = emoteRowHeightConstraint?.constant {
@@ -1801,7 +1801,7 @@ class BearyDiaryCardCell: UITableViewCell {
                     contentLabel.numberOfLines = 0
                 }
             }
-            // 行高：只刷本可见行（控制器 reloadRows .none），不 reloadData、
+            // 行高：只刷本可见行（控制器 begin/end 平滑重算），不 reloadData、
             // 不滚动——阅读位置不动。异步发，避免在 trait 传播中途改表；
             // 复用或又变档时凭 entryId + 档位复核，过期通知丢弃。
             let entryIdValue = cellEntryId
