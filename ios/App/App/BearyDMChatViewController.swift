@@ -1336,11 +1336,12 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }
     }
 
-    /// 向上翻 older：before_id 取最旧一条 id；回包时先校验当前视口——
-    /// 锚点行仍可见且用户未滑离顶部时才按发请求时的锚点恢复 offset；
-    /// 用户已滑走时不用锚点覆盖当前位置，改为按插入高度平移当前视口
-    /// （前插行会把绝对位置顶下去，平移后用户看到的内容原地不动）；
-    /// 锚点丢失且用户仍在顶部时才回落到整表高度差口径。
+    /// 向上翻 older：before_id 取最旧一条 id；写盘完成、换数据前在同一主线程
+    /// 时刻重采样当前首个可见消息及其视口内偏移，更新后按该消息的新位置补偿
+    /// （前插行会把绝对位置顶下去，补偿后用户看到的内容原地不动）；
+    /// 回包时取的视口值在异步写盘窗口内可能已过期（用户继续滚动），
+    /// 不再用它覆盖位置；锚点消息已不在新表里时才按写盘完成时刻的视口
+    /// 平移插入高度。
     private func loadOlder() {
         // 数据互斥仍保留单向旧口径：最新页在途时翻旧不并发（等下次滚动再触发），
         // 避免两路回包交错改表；反向（翻旧在途时下拉刷新）不再静默吞，见 loadLatest 的排队。
@@ -1349,13 +1350,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         guard ensureIdentityCurrent() else { return }
         olderLoading = true
         setOlderLoadingState(loading: true, failed: false)
-        let anchorId = oldestId
-        let anchorViewportOffset: CGFloat = {
-            let rect = tableView.rectForRow(at: IndexPath(row: 0, section: 0))
-            return rect.origin.y - tableView.contentOffset.y
-        }()
         let oldHeight = tableView.contentSize.height
-        let oldOffsetY = tableView.contentOffset.y
         // 请求时捕获账号 + 代次：回包时任一不匹配即丢弃（见 isRequestCurrent）。
         let requestAccountId = SessionManager.shared.currentUser?.id
         let requestEpoch = BearyAPI.shared.authEpoch
@@ -1375,15 +1370,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 }
                 switch result {
                 case .success(let history):
-                    // 回包时视口校验（在改数据前取当前态）：锚点行 = 旧首条（row 0）。
-                    // 滑走判定 = 锚点行已不在可见区，或拖动/减速中视口已离开顶部
-                    // 触发区（>120，与 scrollViewDidScroll 的翻页阈值同口径）；
-                    // 单纯拖动/减速本身不判滑走——手指仍按在顶部等待时，锚点恢复
-                    // 正是抵消上方新行对视口的顶推，跳过它反而会顶跳。
-                    let responseOffsetY = self.tableView.contentOffset.y
-                    let anchorStillVisible = self.tableView.indexPathsForVisibleRows?.contains(IndexPath(row: 0, section: 0)) == true
-                    let userIsScrolling = self.tableView.isDragging || self.tableView.isDecelerating
-                    let userMovedAway = !anchorStillVisible || (userIsScrolling && responseOffsetY > 120)
+                    // 视口锚点不在回包时拍定：异步写盘窗口内用户可能继续滚动，
+                    // 回包时的值到换数据时已过期；改在 applyMerged 开头重采样。
                     let older = self.resolvedSenders(Array(history.resolvedMessages.reversed()))
                     self.hasMoreOlder = history.resolvedMessages.count >= 30
                     // 2026-11-04 乐观发送：翻旧回包同样先留住待发行再拼回末尾，
@@ -1394,6 +1382,17 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     // 合并；两路共享同一套刷新尾巴（锚点保位、排队刷新）。
                     let applyMerged: ([BearyAPI.DMMessage]) -> Void = { [weak self] merged in
                         guard let self = self else { return }
+                        // 写盘完成时刻重采样（与 loadLatest 同口径）：在换数据、更新表格
+                        // 前的同一主线程时刻拍定当前首个可见消息及其视口内偏移；
+                        // 更新后按该消息的新位置补偿，拖动期间的相对位移一并保留。
+                        let freshAnchorIndexPath = self.tableView.indexPathsForVisibleRows?.sorted().first
+                        let freshAnchorMessageId = freshAnchorIndexPath.flatMap { $0.row < self.messages.count ? self.messages[$0.row].id : nil }
+                        let freshAnchorViewportOffset: CGFloat = {
+                            guard let freshAnchorIndexPath = freshAnchorIndexPath else { return 0 }
+                            let rect = self.tableView.rectForRow(at: freshAnchorIndexPath)
+                            return rect.origin.y - self.tableView.contentOffset.y
+                        }()
+                        let freshOffsetY = self.tableView.contentOffset.y
                         let pending = self.pendingTemps()
                         self.messages = merged
                         self.messages += pending
@@ -1405,14 +1404,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         self.olderLoading = false
                         self.setOlderLoadingState(loading: false, failed: false)
                         let delta = self.tableView.contentSize.height - oldHeight
-                        if userMovedAway {
-                            // 不用发请求时的锚点覆盖当前位置：按插入高度平移当前视口。
-                            self.tableView.contentOffset = CGPoint(x: 0, y: responseOffsetY + delta)
-                        } else if let anchorIndex = self.messages.firstIndex(where: { $0.id == anchorId }) {
+                        if let anchorId = freshAnchorMessageId,
+                           let anchorIndex = self.messages.firstIndex(where: { $0.id == anchorId }) {
+                            // 写盘完成时刻的首个可见消息复位，视口内容原地不动。
                             let rect = self.tableView.rectForRow(at: IndexPath(row: anchorIndex, section: 0))
-                            self.tableView.contentOffset = CGPoint(x: 0, y: rect.origin.y - anchorViewportOffset)
+                            self.tableView.contentOffset = CGPoint(x: 0, y: rect.origin.y - freshAnchorViewportOffset)
                         } else {
-                            self.tableView.contentOffset = CGPoint(x: 0, y: oldOffsetY + delta)
+                            // 锚点消息已不在新表里：按写盘完成时刻的视口平移插入高度。
+                            self.tableView.contentOffset = CGPoint(x: 0, y: freshOffsetY + delta)
                         }
                         // 排队过的下拉刷新：翻旧结束即跑（刷新控件一直转圈未停）。
                         if self.refreshQueued {
