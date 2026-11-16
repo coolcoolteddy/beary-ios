@@ -1461,10 +1461,18 @@ final class BearyNotificationsViewController: UIViewController {
         customPullEndInFlight = true
         // 收回动画全程仍持刷新旗（同广场端）：跟随侧不中途重写 pullView.frame。
         // A5-3：下拉刷新收回同样查减动效开关——减动效时直接复位并停圈。
+        // 广场端同款保护：结束时只收指示器——若刷新在途用户已滑到深处（或仍按住拖动），
+        // 不再把 contentOffset 拽回 0 顶部，只复位内边距、藏指示头，留在原位置；
+        // 仍停在下拉位的才按旧口径回到 0（指示区须收掉）。
+        // 下拉位 = -84（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
+        let stillAtPullPosition = !self.tableView.isDragging
+            && self.tableView.contentOffset.y <= -84 + 8
         let pullOut = {
             self.tableView.contentInset.top = 0
             self.tableView.scrollIndicatorInsets.top = 0
-            self.tableView.contentOffset = CGPoint(x: 0, y: 0)
+            if stillAtPullPosition {
+                self.tableView.contentOffset = CGPoint(x: 0, y: 0)
+            }
             self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
         }
         if UIAccessibility.isReduceMotionEnabled {

@@ -3813,12 +3813,20 @@ class BearyTimelineViewController: UIViewController {
         // 收回动画全程仍持刷新旗（同广场端）：跟随侧不中途重写 pullView.frame。
         let baseTop = view.safeAreaInsets.top + (headerTopInsetVisible ? 60 : 0)
         let baseBottom = 90 + view.safeAreaInsets.bottom
+        // 广场端同款保护：结束时只收指示器——若刷新在途用户已滑到深处（或仍按住拖动），
+        // 不再把 contentOffset 拽回 -baseTop 顶部，只复位内边距、藏指示头，留在原位置；
+        // 仍停在下拉位的才按旧口径回到 -baseTop（指示区须收掉）。
+        // 下拉位 = -(baseTop + 84)（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
+        let stillAtPullPosition = !self.tableView.isDragging
+            && self.tableView.contentOffset.y <= -(baseTop + 84) + 8
         let pullOut = {
             self.tableView.contentInset.top = baseTop
             self.tableView.contentInset.bottom = baseBottom
             self.tableView.scrollIndicatorInsets.top = baseTop
             self.tableView.scrollIndicatorInsets.bottom = baseBottom
-            self.tableView.contentOffset = CGPoint(x: 0, y: -baseTop)
+            if stillAtPullPosition {
+                self.tableView.contentOffset = CGPoint(x: 0, y: -baseTop)
+            }
             self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
         }
         if UIAccessibility.isReduceMotionEnabled {

@@ -7762,10 +7762,18 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         isCustomPullRefreshing = false
         customPullEndScheduled = false
         let baseline = profilePullBaselineTop()
+        // 广场端同款保护：结束时只收指示器——若刷新在途用户已滑到深处（或仍按住拖动），
+        // 不再把 contentOffset 拽回 -baseline 顶部，只复位内边距、藏指示头，留在原位置；
+        // 仍停在下拉位的才按旧口径回到 -baseline（指示区须收掉）。
+        // 下拉位 = -(baseline + 84)（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
+        let stillAtPullPosition = !self.tableView.isDragging
+            && self.tableView.contentOffset.y <= -(baseline + 84) + 8
         let pullOut = {
             self.tableView.contentInset.top = baseline
             self.tableView.scrollIndicatorInsets.top = baseline
-            self.tableView.contentOffset = CGPoint(x: 0, y: -baseline)
+            if stillAtPullPosition {
+                self.tableView.contentOffset = CGPoint(x: 0, y: -baseline)
+            }
             self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
         }
         if UIAccessibility.isReduceMotionEnabled {
