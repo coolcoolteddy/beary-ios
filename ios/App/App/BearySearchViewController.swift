@@ -1924,7 +1924,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
         // 同关键词重渲（拉黑／举报过滤后重渲）按 key 复用行节点，不整体重建；
         // 换关键词时行内高亮文案随 query 走，必须重建（见 syncResultRowsReuse）。
+        // 第七轮 02：同关键词重渲才保位——FTS 晚到会把「我的」组行插到
+        // 当前视口上方；换关键词是全新一批，不保旧锚点。
+        var reuseAnchor: SearchResultAnchor? = nil
         if lastResultQuery == query {
+            reuseAnchor = captureFirstVisibleResultAnchor()
             syncResultRowsReuse(mineEntries: mineEntries, publicEntries: publicEntries, users: users, query: query)
         } else {
             clearResultRows()
@@ -1983,6 +1987,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // （clearResultRows / syncResultRowsReuse 已摘旧横幅；新词成功渲染时
         // 本调用自行摘横幅）。放行入场动画之前，横幅先占位、行在其下入场。
         updateStaleResultsBanner()
+        // 第七轮 02：横幅也可能插在结果上方，恢复放在横幅落位之后、
+        // 入场动画之前，一次把锚点行顶回原视口位置。
+        restoreResultAnchor(reuseAnchor)
         // M11：结果区首次出现/换批时行错峰滑入；同一批仅内容变化的行淡入。
         animateResultRows(query: query)
         // S5：渲染完成、行帧已定，可见行（+下一屏）的关注状态优先请求。
@@ -2167,6 +2174,55 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
     }
 
+    /// 第七轮 01＋02：搜索保位锚点——首个可见结果行的稳定 key
+    /// （日记行 "entry:<id>"、用户行 userKey 口径）＋其插入前的行顶。
+    /// 恢复时按同一 key 找到新行顶，用“新顶 − 旧顶”的位移去修正当前
+    /// 偏移，而不是把旧偏移原样写回去：恢复若晚于用户拖动发生，
+    /// 当前偏移里已含手势位移，只补插入造成的位移，手势位移不被覆盖。
+    /// 锚点行被删/被重建后按 key 查不到时不修正，不硬保。
+    private struct SearchResultAnchor {
+        let key: String
+        let oldTop: CGFloat
+    }
+
+    private func captureFirstVisibleResultAnchor() -> SearchResultAnchor? {
+        guard showingResults, resultsStack.isHidden == false else { return nil }
+        scrollView.layoutIfNeeded()
+        // 行视图按 entryRowById / userRowByKey 反查，分区头与旧结果
+        // 横幅不在两表里，天然排除。
+        var keyByView: [ObjectIdentifier: String] = [:]
+        keyByView.reserveCapacity(entryRowById.count + userRowByKey.count)
+        for (entryId, row) in entryRowById { keyByView[ObjectIdentifier(row)] = "entry:" + entryId }
+        for (key, row) in userRowByKey { keyByView[ObjectIdentifier(row)] = key }
+        let offsetY = scrollView.contentOffset.y
+        let viewportBottom = offsetY + scrollView.bounds.height
+        for view in resultsStack.arrangedSubviews {
+            guard let key = keyByView[ObjectIdentifier(view)] else { continue }
+            let frame = view.convert(view.bounds, to: scrollView)
+            guard frame.maxY > offsetY, frame.minY < viewportBottom else { continue }
+            return SearchResultAnchor(key: key, oldTop: frame.minY)
+        }
+        return nil
+    }
+
+    private func restoreResultAnchor(_ anchor: SearchResultAnchor?) {
+        guard let anchor = anchor else { return }
+        scrollView.layoutIfNeeded()
+        // 锚点行可能被重建（签名变了）：按 key 查现行映射表，不按旧视图。
+        let rowView: UIView?
+        if anchor.key.hasPrefix("entry:") {
+            rowView = entryRowById[String(anchor.key.dropFirst("entry:".count))]
+        } else {
+            rowView = userRowByKey[anchor.key]
+        }
+        guard let rowView = rowView, rowView.superview != nil else { return }
+        let shift = rowView.convert(rowView.bounds, to: scrollView).minY - anchor.oldTop
+        guard shift != 0 else { return }
+        let minY = -scrollView.adjustedContentInset.top
+        let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom)
+        scrollView.contentOffset.y = min(max(scrollView.contentOffset.y + shift, minY), maxY)
+    }
+
     /// 扫 bug 第 9 项：翻页增量追加（仅 loadMore 调用）。
     /// 现行 loadMore 完成时调 renderResults，而 renderResults 开头
     /// clearResultRows() 会拆掉全部结果行再按合并后全量重建——页数越多
@@ -2202,6 +2258,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         resultsStack.isHidden = false
         stateRingView.isHidden = true
         BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
+        // 第七轮 01：三组插行前先记首个可见结果锚点（本组新行可能落
+        // 在当前视口上方）；插完按锚点修正偏移，正在看的内容不动。
+        let pageAnchor = captureFirstVisibleResultAnchor()
         var mineRows: [UIView] = []
         var newEntryIds: [String] = []
         for entry in mine {
@@ -2235,6 +2294,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         insertSectionRows(mineRows, section: 0, title: "我的日记")
         insertSectionRows(publicRows, section: 1, title: "公开日记")
         insertSectionRows(userRows, section: 2, title: "用户")
+        // 第七轮 01：先按锚点修正偏移，再给新行动画——动画只动
+        // alpha/位移 transform，不改布局帧，恢复不被动画带偏。
+        restoreResultAnchor(pageAnchor)
         // 同关键词追加：animateResultRows 只遍历本批新行 key 错峰滑入，
         // 已有行不动（与 renderResults 末尾同一入口；旧路全量查表见该函数）。
         animateResultRows(query: query, newEntryIds: newEntryIds, newUserKeys: newUserKeys)
