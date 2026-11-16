@@ -6437,7 +6437,12 @@ class BearyProfileViewController: UIViewController {
                 didShowProfileSkeleton = false
                 UIView.transition(with: tableView, duration: BearyMotion.normal, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
                     self.tableView.reloadData()
-                }, completion: nil)
+                }, completion: { [weak self] _ in
+                    // 首屏入场走 animateNewRows（与 staggerIn 同款 60ms 步进、8px 上移），
+                    // 顺带把已播日记 ID 记进 animatedRowIds；切回旧标签/分页时
+                    // animateNewRows 只播未播过的新行，已有行不重播。
+                    self?.animateNewRows(delayStep: 0.06, yOffset: 8)
+                })
             } else {
                 didShowProfileSkeleton = false
                 tableView.reloadData()
