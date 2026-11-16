@@ -1,10 +1,12 @@
+import AuthenticationServices
+import CryptoKit
 import Foundation
 import UIKit
 
-// ===== 原生登录页 =====
+// ===== 原生登录页（全页，2026-11-16：底 sheet 弹窗改全页，Li 已点头，按登录页预览做）=====
 // 容器接线（总协调收尾）：由 SceneDelegate 的 presentLogin present 本页，
 // 本页只通过回调交回结果，不自己 dismiss（容器拥有 presentation，负责关闭）：
-//   - onLoggedIn：验码成功（服务端 {ok: true}，会话 cookie 已由 URLSession.shared 存入
+//   - onLoggedIn：验码成功（服务端 {ok: true}，会话 cookie 已由 BearyAPI 专用会话存入
 //     共享存储）；容器随后调 SessionManager.refreshMe 刷新登录态。回调携带邀请绑定
 //     文案（String?，未填邀请码时为 nil）：容器在 dismiss + refreshMe 后用 BearyToast
 //     呈现一次（日期补全见 BearyReferralFeedback.toastText）；登录页内不再指望行内
@@ -13,20 +15,23 @@ import UIKit
 //   - onGuestMode：用户点“先逛逛（游客模式）”；容器负责 dismiss 并进入游客态。
 // 容器侧待续写意图（SceneDelegate.pendingComposerAfterLogin）：写作入口在未登录
 // 时弹本页前记下意图，本页成功（onLoggedIn）后容器在 dismiss + refreshMe
-// 确认登录后自动开编辑器；取消（onCancelled，含关闭钮／遮罩点按／抓手拖动
-// 的 cancelFromSheet）与游客模式（onGuestMode）均清除意图。本页不感知该标记，
-// 只按原样交回三个回调，不自己 dismiss、不改登录逻辑。
-// 页面元素（对照网页版登录框 beary.html 的 lgm 系列）：邮箱输入 + 获取验证码 +
-// 6 位验证码输入 + 邀请码输入（选填）+ 隐私协议复选框 + 登录钮 + 游客钮 + 关闭钮。
-// 文案与尺寸：wordmark 为 LogoHorizontal 官方资产（高 28，全屏页左对齐、Sheet 弹窗居中）、
-// 全屏页副标题“邮箱验证码登录，无需密码；新邮箱登录即注册”14 灰（Sheet 弹窗无副标题，
-// 改标题“欢迎回来”17 半粗体居中）、字段 label 11/600、输入框高 48 圆角 12 surface2 底、
-// 发码钮高 44（行高 48 内居中）圆角 12、登录钮高 44 圆角 12（墨底白字，
-// Sheet 弹窗橙底已删，登录钮统一墨底；U1 标题前景走 bg）。
+// 确认登录后自动开编辑器；取消（onCancelled）与游客模式（onGuestMode）均清除意图。
+// 本页不感知该标记，只按原样交回三个回调，不自己 dismiss、不改登录逻辑。
+// 页面元素（登录页预览同款）：顶部官方横版 logo（28px 一笔画熊＋beary 字标，居中）、
+// 大标题“欢迎回来”（衬线，UIFont.withDesign(.serif)，iOS 自带 New York＋宋体，
+// 其余全部系统字体）、标题下一只 hug 表情熊（BearyEmoteView，点按重播一次）、
+// 黑底 Apple 官方登录钮（ASAuthorizationAppleIDButton，深色走白底样式）、
+// 细线分隔“或”、次要钮“使用其他邮箱登录”（点开同页展开邮箱＋6 位验证码表单）、
+// 底部法律行“继续即代表你同意《隐私政策》和《用户协议》”（两词点开现有 App 内法律页）。
+// 邮箱验证码流程一字不动：邮箱输入 + 获取验证码 + 6 位验证码输入 + 邀请码输入（选填，
+// 收在“有邀请码？”行后）+ 登录钮 + 游客钮 + 关闭钮；登录钮启用条件与网页 lgSyncGo
+// 同口径（邮箱合法 + 验证码 6 位），原协议复选框随“继续即代表同意”文案取消，
+// 点登录／Apple 登录即代表同意，不再单独勾选。
+// 文案与尺寸：字段 label 11/600、输入框高 48 圆角 12 surface2 底、发码钮高 44
+// （行高 48 内居中）圆角 12、登录钮高 44 圆角 12（surface2 柔和灰底 + ink 字，
+// 2026-11-14 Li 定）、Apple 钮与邮箱钮高 48 圆角 12。
 // 颜色一律走 BearyColors，不新增字面量颜色；
-// 图标走 icon_close/icon_check/icon_chevron_right/icon_chevron_down 资产；
-// 全屏页不使用液态玻璃效果，Sheet 弹窗的玻璃由 BearyLoginSheet 容器提供
-// （顶栏同款 UIGlassEffect，Li 2026-11-02 批准的 BearyGlass token 例外）。
+// 图标走 icon_close/icon_check/icon_chevron_right/icon_chevron_down 资产。
 //
 // 发码/验码一律走 BearyAPI（BearyAPI.sendCode、
 // BearyAPI.verify 返回完整响应体含 pending_delete）：本页不再有本地账户请求实现。
@@ -34,12 +39,21 @@ import UIKit
 // 按钮文案“发送中…”保持。登录成功判定只认验码 {ok: true}，
 // 不认 refreshMe（容器随后才刷新）；BearyAPI 的发码/验码不触发 onUnauthorized，
 // 不会触发 401 清用户态的连锁。
-// 登录钮启用条件与网页 lgSyncGo 同口径：复选框勾选 + 邮箱合法 + 验证码 6 位。
+// Apple 登录走 BearyAPI.appleLogin（POST /api/account/apple-login）：
+// ASAuthorizationAppleIDProvider 首次要 fullName＋email，带 nonce（SHA-256 后给 Apple，
+// 原 nonce 一并给服务端核对）；服务端验 RS256 后按 Apple sub 找账号／关联／新建，
+// 发与邮箱验证码登录同一套 session／token；不存 identityToken。
+// 登录失败反馈走全站口径：摇头（transform 平移关键帧，见 playDenyShake，
+// 与详情页 playDenyShake 同款）＋ BearyHaptics.rejectionWarning ＋ BearyToast，
+// 行内红字仍保留（标出哪个字段错）；不乐观更新——成功只认服务端 {ok: true}。
 // N13：邮箱口径与网页 lgEmailOk 同款 /.+@.+\..+/（任意非空＋@＋任意非空＋.＋任意非空）；
 // 发码、登录按钮启用与两处拦截共用 isEmailValid，不再用更严的服务端口径前置拦截。
 // 协议链接说明：网页复选框文案里的《隐私政策》/《用户协议》链向 /privacy、/terms；
 // 原生不走系统浏览器：点链接 present 设置页同款 App 内原生法律页 BearyLegalTextViewController
-//（BearyLegalServerText 服务器＋缓存＋包内兜底，设置页 presentLegalText 同款路径、全屏 modal）；点文案其他位置仍切换勾选。
+//（BearyLegalServerText 服务器＋缓存＋包内兜底，设置页 presentLegalText 同款路径、全屏 modal）。
+//
+// 多账号上限 3 个（BearyAccountVault.maxAccounts）走容器 refreshMe 后的快照口径，
+// Apple 登录与邮箱登录同一条路，不另写限流；第 4 个由设置页添加前拦截（现有提示不动）。
 
 final class BearyLoginViewController: UIViewController {
     /// 登录成功（验码 {ok: true}）。容器随后刷新登录态并关闭本页。
@@ -53,28 +67,20 @@ final class BearyLoginViewController: UIViewController {
     var onCancelled: (() -> Void)?
     /// 用户点“先逛逛（游客模式）”。本页不自己 dismiss，容器负责关闭并进入游客态。
     var onGuestMode: (() -> Void)?
-    /// Sheet 弹窗模式（Li 2026-11-02 批准：登录改底 sheet 弹窗）：由 BearyLoginSheet.make()
-    /// 在 present 前置 true，只改呈现与文案排布，登录逻辑（发码/验码/邀请码/协议）一字不动。
-    /// false = 原全屏页（保留作回退，当前无调用点走全屏）。
-    var sheetMode = false
-    /// Sheet transitioningDelegate 强持有（UIViewController.transitioningDelegate 为弱引用，
-    /// 调用方不另持有；随本页释放）。
-    var loginSheetDelegate: BearyBottomSheetTransitioningDelegate?
     /// 法律文字页的 EdgeDismiss 强持有（transitioningDelegate 弱引用）。
     private var legalTextEdgeDismiss: BearyEdgeDismissController?
 
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let stackView = UIStackView()
+    private let closeButton = BearyHit44Button(type: .system)
     private let logoRow = UIView()
     private let logoImageView = UIImageView()
-    private let subtitleLabel = UILabel()
     private let emailField = UITextField()
     private let codeField = UITextField()
     private let sendButton = UIButton(type: .system)
     private let loginButton = UIButton(type: .system)
     private let guestButton = UIButton(type: .custom)
-    private let guestNoteLabel = UILabel()
     private let inviteField = UITextField()
     private let messageLabel = UILabel()
     /// 字段旁提示，各贴在对应字段框下方：邮箱错／验证码状态／邀请码错；
@@ -89,20 +95,36 @@ final class BearyLoginViewController: UIViewController {
     /// 浅色 #C81E1E（白底 5.74:1），深色沿用 #E5484D（黑底 5.37:1）；
     /// 单一固定深红会顾此失彼（#C81E1E 黑底仅 3.66:1），故必须动态分值。
     private static let loginErrorRed = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 0.898, green: 0.282, blue: 0.302, alpha: 1) : UIColor(red: 200.0/255.0, green: 30.0/255.0, blue: 30.0/255.0, alpha: 1) }
-    private let agreeButton = BearyHit44Button(type: .system)
-    /// 协议文案用 UITextView 承载可点链接（UILabel 接不住链接点按）；点按走 App 内原生法律页。
-    private let agreeLabel = UITextView()
-    private let agreeRow = UIView()
-    /// Sheet 弹窗专属：标题“欢迎回来”（全屏页无此标题）。
+    /// 底部法律行用 UITextView 承载可点链接（UILabel 接不住链接点按）；点按走 App 内原生法律页。
+    private let legalLabel = UITextView()
+    /// 大标题“欢迎回来”（衬线，见 serifTitleFont）。
     private let welcomeTitleLabel = UILabel()
-    /// Sheet 弹窗专属：邀请码收起行（全屏页邀请码常显，无此行）。
+    /// 标题下一只 hug 表情熊（BearyEmoteView，点按从头播一次）。
+    private let hugEmoteView = BearyEmoteView(key: "hug", animated: false)
+    private let hugEmoteButton = UIButton(type: .custom)
+    /// Apple 官方登录钮（深色走白底样式，档位变化时重建，见 rebuildAppleButton）。
+    private var appleButton: ASAuthorizationAppleIDButton?
+    private let appleButtonContainer = UIView()
+    /// “使用其他邮箱登录”次要钮与“或”分隔行。
+    private let emailLoginButton = UIButton(type: .system)
+    private let dividerRow = UIView()
+    /// 邮箱登录表单是否展开（默认收起，只留 Apple 钮＋“使用其他邮箱登录”钮）。
+    private var isEmailFormExpanded = false
+    /// 邮箱表单容器（邮箱／验证码／邀请码／登录钮）：收起时整组隐藏。
+    private let emailFormStack = UIStackView()
+    /// Apple 登录进行态（系统授权框＋服务端请求在途时禁用 Apple 钮）。
+    private var isAppleSigningIn = false
+    /// 本次 Apple 登录的 raw nonce（SHA-256 后给 Apple，原值给服务端核对）。
+    private var appleNonce: String?
+    /// Apple 登录在途任务（关闭时取消）与待确认的注销冷静期凭证。
+    private var appleLoginTask: URLSessionDataTask?
+    private var pendingAppleCredential: (token: String, nonce: String, fullName: String?, email: String?)?
+    /// 邀请码收起行（点按展开/收起字段；字段文本保留，登录照常读取）。
     private let inviteDisclosureRow = InviteDisclosureRowView()
     private let inviteDisclosureLabel = UILabel()
     private let inviteDisclosureChevron = UIImageView()
-    /// Sheet 弹窗：邀请码展开态（收起时只留收起行，字段隐藏但文本保留，登录照常读取）。
+    /// 邀请码展开态（收起时只留收起行，字段隐藏但文本保留，登录照常读取）。
     private var inviteExpanded = false
-    /// Sheet 弹窗：上次上报的内容高，变化 <0.5 不重复设 preferredContentSize，防布局循环。
-    private var lastSheetPreferredHeight: CGFloat = 0
     private var emailInputContainer: BearyInputContainer?
     private var codeInputContainer: BearyInputContainer?
     private var inviteInputContainer: BearyInputContainer?
@@ -117,10 +139,6 @@ final class BearyLoginViewController: UIViewController {
         bar.items = [flex, done]
         return bar
     }()
-    private var isAgreed = false
-    /// 扫荡组 A：协议勾选框与文案首行居中的约束（首行中心随字号档位变，
-    /// 档位变化时在 traitCollectionDidChange 里按新行高重算常量）。
-    private var agreeCenterYConstraint: NSLayoutConstraint?
     /// L1：验证码行横排/纵排两套约束——默认横排（验证码框 + 右侧发码钮）；
     /// 无障碍大字号档或行宽摆不下时纵排（验证码框在上、发码钮整行在下），
     /// 切换只在 viewDidLayoutSubviews / traitCollectionDidChange 里按需做一次。
@@ -158,11 +176,12 @@ final class BearyLoginViewController: UIViewController {
         countdownTimer?.invalidate()
         sendCodeTask?.cancel()
         verifyTask?.cancel()
+        appleLoginTask?.cancel()
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = sheetMode ? UIColor.clear : BearyColors.bg
+        view.backgroundColor = BearyColors.bg
         buildLayout()
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
@@ -170,33 +189,29 @@ final class BearyLoginViewController: UIViewController {
         updateButtonStates()
     }
 
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        // 标题熊离窗即停播（引导页同款：表情视图离窗停播，不在后台空转）。
+        hugEmoteView.stop()
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // L1：验证码行横/纵排按实测宽与字号档切换（行宽在两种排布下不变，
         // 判定翻转时才换约束，不会来回抖）。
         updateCodeRowStackingIfNeeded()
-        guard sheetMode else { return }
-        // Sheet 高跟内容走：栈高 + 上下内边距（12/12）+ 安全区底（Home 条）；
-        // 邀请展开/收起、字号档位变化时重算，presentation 控制器跟帧走。
-        // 2026-11-04 收矮：上下内边距 16/24 → 12/12，空提示行不占位（见 showMessage），
-        // 只收空气、不动字段与按钮尺寸。
-        let height = stackView.bounds.height + 12 + 12 + view.safeAreaInsets.bottom
-        guard height > 0, abs(height - lastSheetPreferredHeight) > 0.5 else { return }
-        lastSheetPreferredHeight = height
-        preferredContentSize = CGSize(width: 0, height: height)
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // 协议复选框描边是 CGColor：深浅切换时走已有刷新重赋（勾选态橙边、未选 line 边）。
+        // Apple 钮深浅样式随系统外观走：外观变了就重建（黑底↔白底，见 rebuildAppleButton）。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            refreshAgreeBox()
+            rebuildAppleButton()
         }
-        // 扫荡组 A：大字号档位变化时，协议首行中心与登录钮 attributed
+        // 扫荡组 A：大字号档位变化时，登录钮 attributed
         // 标题都要按新字号重建（标题只在文案变化时重建，档位变化不
         // 触发它，故先清 currentLoginTitle 再调 updateButtonStates）。
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
-            agreeCenterYConstraint?.constant = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)).lineHeight / 2
             currentLoginTitle = nil
             updateButtonStates()
             // L1：字号档变化可能改变验证码行横/纵排判定。
@@ -263,31 +278,99 @@ final class BearyLoginViewController: UIViewController {
         scrollView.addSubview(contentView)
         contentView.addSubview(stackView)
 
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.backgroundColor = BearyColors.surface2
+        closeButton.layer.cornerRadius = 16
+        closeButton.tintColor = BearyColors.ink
+        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
+        closeButton.accessibilityLabel = "关闭"
+        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
+        let closeRow = UIView()
+        closeRow.translatesAutoresizingMaskIntoConstraints = false
+        closeRow.addSubview(closeButton)
+
         // wordmark 走 LogoHorizontal 官方资产（imageset 自带深色 logo-white 变体，
-        // 深色自动切换，不手动判断）；logoRow 承接原标题的 stack 槽位以保证左对齐。
+        // 深色自动切换，不手动判断）；预览同款居中。
         logoRow.translatesAutoresizingMaskIntoConstraints = false
         logoImageView.translatesAutoresizingMaskIntoConstraints = false
         logoImageView.image = UIImage(named: "LogoHorizontal")
         logoImageView.contentMode = .scaleAspectFit
         logoRow.addSubview(logoImageView)
 
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.text = "邮箱验证码登录，无需密码；新邮箱登录即注册"
-        subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        subtitleLabel.adjustsFontForContentSizeCategory = true
-        subtitleLabel.textColor = BearyColors.gray
-        subtitleLabel.numberOfLines = 0
-
-        // Sheet 弹窗标题“欢迎回来”（全屏页无此标题，副标题只在全屏页出现）。
+        // 大标题“欢迎回来”：衬线（2026-11-16 Li 定，withDesign(.serif)，
+        // iOS 自带 New York＋宋体，不用另外装字体；其余全部系统字体）。
         welcomeTitleLabel.translatesAutoresizingMaskIntoConstraints = false
         welcomeTitleLabel.text = "欢迎回来"
-        welcomeTitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .bold))
+        welcomeTitleLabel.font = Self.serifTitleFont()
         welcomeTitleLabel.adjustsFontForContentSizeCategory = true
         welcomeTitleLabel.textColor = BearyColors.ink
         welcomeTitleLabel.textAlignment = .center
 
-        // Sheet 弹窗邀请码收起行：点按展开/收起字段（字段文本保留，登录照常读取）；
-        // 全屏页邀请码常显，不用此行。
+        // 标题下一只 hug 表情熊（BearyEmoteView，引导页同款；点按从头播一次）。
+        hugEmoteView.translatesAutoresizingMaskIntoConstraints = false
+        hugEmoteView.isUserInteractionEnabled = false
+        hugEmoteButton.translatesAutoresizingMaskIntoConstraints = false
+        hugEmoteButton.backgroundColor = UIColor.clear
+        hugEmoteButton.accessibilityLabel = "小熊"
+        hugEmoteButton.addTarget(self, action: #selector(hugEmoteTapped), for: .touchUpInside)
+        hugEmoteButton.bearyAddPressFeedback()
+        hugEmoteButton.addSubview(hugEmoteView)
+        NSLayoutConstraint.activate([
+            hugEmoteView.centerXAnchor.constraint(equalTo: hugEmoteButton.centerXAnchor),
+            hugEmoteView.centerYAnchor.constraint(equalTo: hugEmoteButton.centerYAnchor),
+            hugEmoteView.widthAnchor.constraint(equalToConstant: 64),
+            hugEmoteView.heightAnchor.constraint(equalToConstant: 64),
+        ])
+
+        // Apple 官方登录钮（ASAuthorizationAppleIDButton，深色走白底样式）。
+        appleButtonContainer.translatesAutoresizingMaskIntoConstraints = false
+        rebuildAppleButton()
+
+        // 细线分隔“或”。
+        dividerRow.translatesAutoresizingMaskIntoConstraints = false
+        let dividerLeft = UIView()
+        dividerLeft.backgroundColor = BearyColors.line
+        dividerLeft.translatesAutoresizingMaskIntoConstraints = false
+        let dividerLabel = UILabel()
+        dividerLabel.text = "或"
+        dividerLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        dividerLabel.adjustsFontForContentSizeCategory = true
+        dividerLabel.textColor = BearyColors.gray
+        dividerLabel.translatesAutoresizingMaskIntoConstraints = false
+        let dividerRight = UIView()
+        dividerRight.backgroundColor = BearyColors.line
+        dividerRight.translatesAutoresizingMaskIntoConstraints = false
+        dividerRow.addSubview(dividerLeft)
+        dividerRow.addSubview(dividerLabel)
+        dividerRow.addSubview(dividerRight)
+        NSLayoutConstraint.activate([
+            dividerLeft.leadingAnchor.constraint(equalTo: dividerRow.leadingAnchor),
+            dividerLeft.centerYAnchor.constraint(equalTo: dividerRow.centerYAnchor),
+            dividerLeft.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
+            dividerLabel.leadingAnchor.constraint(equalTo: dividerLeft.trailingAnchor, constant: 12),
+            dividerLabel.centerYAnchor.constraint(equalTo: dividerRow.centerYAnchor),
+            dividerRight.leadingAnchor.constraint(equalTo: dividerLabel.trailingAnchor, constant: 12),
+            dividerRight.trailingAnchor.constraint(equalTo: dividerRow.trailingAnchor),
+            dividerRight.centerYAnchor.constraint(equalTo: dividerRow.centerYAnchor),
+            dividerRight.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
+            dividerLeft.widthAnchor.constraint(equalTo: dividerRight.widthAnchor),
+        ])
+
+        // “使用其他邮箱登录”次要钮（细线框白底黑字，点开同页展开邮箱表单）。
+        emailLoginButton.translatesAutoresizingMaskIntoConstraints = false
+        emailLoginButton.backgroundColor = BearyColors.bg
+        emailLoginButton.layer.cornerRadius = 12
+        emailLoginButton.layer.borderWidth = 1
+        emailLoginButton.layer.bearyDynamicBorderColor = BearyColors.line
+        emailLoginButton.setTitle("使用其他邮箱登录", for: .normal)
+        emailLoginButton.setTitleColor(BearyColors.ink, for: .normal)
+        emailLoginButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+        emailLoginButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        emailLoginButton.addTarget(self, action: #selector(emailLoginTapped), for: .touchUpInside)
+        emailLoginButton.bearyAddPressFeedback()
+
+        // 邀请码收起行：点按展开/收起字段（字段文本保留，登录照常读取）。
         inviteDisclosureRow.translatesAutoresizingMaskIntoConstraints = false
         inviteDisclosureLabel.translatesAutoresizingMaskIntoConstraints = false
         inviteDisclosureLabel.text = "有邀请码？"
@@ -326,7 +409,7 @@ final class BearyLoginViewController: UIViewController {
         configureEmailField()
         configureCodeField()
         configureInviteField()
-        configureAgreeRow()
+        configureLegalLine()
 
         sendButton.translatesAutoresizingMaskIntoConstraints = false
         sendButton.layer.cornerRadius = 12
@@ -372,26 +455,17 @@ final class BearyLoginViewController: UIViewController {
             loginSpinner.heightAnchor.constraint(equalToConstant: 20),
         ])
 
-        // 游客次钮：全屏页为 sendButton 未启用态的次级口径（surface2 底 + gray 字），
-        // Sheet 弹窗改纯文字链（墨字、无底），全弹窗唯一重色仍是橙登录钮。
-        // .custom 类型避免 system 钮的点按标题变暗；不受登录钮启用条件约束，任何时候可点。
+        // 游客次钮：纯文字链（墨字、无底），不受登录钮启用条件约束，任何时候可点。
+        // .custom 类型避免 system 钮的点按标题变暗。
         guestButton.translatesAutoresizingMaskIntoConstraints = false
-        guestButton.backgroundColor = sheetMode ? UIColor.clear : BearyColors.surface2
-        guestButton.layer.cornerRadius = 12
+        guestButton.backgroundColor = UIColor.clear
         guestButton.setTitle("先逛逛（游客模式）", for: .normal)
-        guestButton.setTitleColor(sheetMode ? BearyColors.ink : BearyColors.gray, for: .normal)
-        guestButton.setTitleColor(sheetMode ? BearyColors.ink : BearyColors.gray, for: .disabled)
+        guestButton.setTitleColor(BearyColors.ink, for: .normal)
+        guestButton.setTitleColor(BearyColors.ink, for: .disabled)
         guestButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
         guestButton.titleLabel?.adjustsFontForContentSizeCategory = true
         guestButton.addTarget(self, action: #selector(guestTapped), for: .touchUpInside)
         guestButton.bearyAddPressFeedback()
-
-        guestNoteLabel.translatesAutoresizingMaskIntoConstraints = false
-        guestNoteLabel.text = "游客可浏览公开日记，登录后可写日记、点赞、回应和收藏。"
-        guestNoteLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        guestNoteLabel.adjustsFontForContentSizeCategory = true
-        guestNoteLabel.textColor = BearyColors.gray
-        guestNoteLabel.numberOfLines = 0
 
         let emailContainer = makeFieldContainer(field: emailField)
         emailInputContainer = emailContainer
@@ -407,65 +481,67 @@ final class BearyLoginViewController: UIViewController {
         let emailLabel = makeFieldLabel(text: "邮箱")
         let codeLabel = makeFieldLabel(text: "验证码")
         let inviteLabel = makeFieldLabel(text: "邀请码（选填）")
-        stackView.addArrangedSubview(logoRow)
-        if sheetMode {
-            stackView.addArrangedSubview(welcomeTitleLabel)
-        } else {
-            stackView.addArrangedSubview(subtitleLabel)
-        }
-        stackView.addArrangedSubview(emailLabel)
-        stackView.addArrangedSubview(emailContainer)
-        stackView.addArrangedSubview(emailErrorLabel)
-        stackView.addArrangedSubview(codeLabel)
-        stackView.addArrangedSubview(codeRow)
-        stackView.addArrangedSubview(codeStatusLabel)
-        if sheetMode {
-            stackView.addArrangedSubview(inviteDisclosureRow)
-        }
-        stackView.addArrangedSubview(inviteLabel)
-        stackView.addArrangedSubview(inviteContainer)
-        stackView.addArrangedSubview(inviteErrorLabel)
-        stackView.addArrangedSubview(messageLabel)
-        stackView.addArrangedSubview(agreeRow)
-        stackView.addArrangedSubview(loginButton)
-        stackView.addArrangedSubview(guestButton)
-        if !sheetMode {
-            stackView.addArrangedSubview(guestNoteLabel)
-        }
-        // Sheet 弹窗：邀请码收起（只留收起行，字段隐藏但文本保留）；邀请 label 在
-        // Sheet 弹窗里不出现（收起行即字段说明），仅全屏页用。
-        if sheetMode {
-            inviteLabel.isHidden = true
-            inviteContainer.isHidden = true
-        }
-        if sheetMode {
-            stackView.setCustomSpacing(12, after: logoRow)
-            stackView.setCustomSpacing(14, after: welcomeTitleLabel)
-        } else {
-            stackView.setCustomSpacing(5, after: logoRow)
-            stackView.setCustomSpacing(20, after: subtitleLabel)
-        }
-        stackView.setCustomSpacing(7, after: emailLabel)
-        stackView.setCustomSpacing(4, after: emailContainer)
-        stackView.setCustomSpacing(10, after: emailErrorLabel)
-        stackView.setCustomSpacing(7, after: codeLabel)
-        stackView.setCustomSpacing(4, after: codeRow)
-        stackView.setCustomSpacing(10, after: codeStatusLabel)
-        if sheetMode {
-            stackView.setCustomSpacing(7, after: inviteDisclosureRow)
-        }
-        stackView.setCustomSpacing(7, after: inviteLabel)
-        stackView.setCustomSpacing(4, after: inviteContainer)
-        stackView.setCustomSpacing(8, after: inviteErrorLabel)
-        stackView.setCustomSpacing(8, after: messageLabel)
-        stackView.setCustomSpacing(10, after: agreeRow)
-        stackView.setCustomSpacing(10, after: loginButton)
-        stackView.setCustomSpacing(8, after: guestButton)
 
-        // Sheet 弹窗：logo 居中（全屏页左对齐）；宽高比约束与原值一致。
-        let logoXConstraint = sheetMode
-            ? logoImageView.centerXAnchor.constraint(equalTo: logoRow.centerXAnchor)
-            : logoImageView.leadingAnchor.constraint(equalTo: logoRow.leadingAnchor)
+        // 邮箱表单组：邮箱／验证码／邀请码／登录钮，收起时整组隐藏；
+        // 内部间距与原值一致。
+        emailFormStack.translatesAutoresizingMaskIntoConstraints = false
+        emailFormStack.axis = .vertical
+        emailFormStack.spacing = 0
+        emailFormStack.addArrangedSubview(emailLabel)
+        emailFormStack.addArrangedSubview(emailContainer)
+        emailFormStack.addArrangedSubview(codeLabel)
+        emailFormStack.addArrangedSubview(codeRow)
+        emailFormStack.addArrangedSubview(inviteDisclosureRow)
+        emailFormStack.addArrangedSubview(inviteLabel)
+        emailFormStack.addArrangedSubview(inviteContainer)
+        emailFormStack.addArrangedSubview(messageLabel)
+        emailFormStack.addArrangedSubview(loginButton)
+        emailFormStack.setCustomSpacing(7, after: emailLabel)
+        emailFormStack.setCustomSpacing(10, after: emailContainer)
+        emailFormStack.setCustomSpacing(7, after: codeLabel)
+        emailFormStack.setCustomSpacing(10, after: codeRow)
+        emailFormStack.setCustomSpacing(7, after: inviteDisclosureRow)
+        emailFormStack.setCustomSpacing(7, after: inviteLabel)
+        emailFormStack.setCustomSpacing(8, after: inviteContainer)
+        emailFormStack.setCustomSpacing(8, after: messageLabel)
+        emailFormStack.isHidden = true
+        // 邀请码收起（只留收起行，字段隐藏但文本保留）；邀请 label 在
+        // 收起态不出现（收起行即字段说明）。
+        inviteLabel.isHidden = true
+        inviteContainer.isHidden = true
+
+        // 小熊居中包一层（stack 为 fill 对齐，直接放按钮会被拉满宽）。
+        let hugEmoteWrap = UIView()
+        hugEmoteWrap.translatesAutoresizingMaskIntoConstraints = false
+        hugEmoteWrap.addSubview(hugEmoteButton)
+        NSLayoutConstraint.activate([
+            hugEmoteButton.centerXAnchor.constraint(equalTo: hugEmoteWrap.centerXAnchor),
+            hugEmoteButton.centerYAnchor.constraint(equalTo: hugEmoteWrap.centerYAnchor),
+            hugEmoteButton.widthAnchor.constraint(equalToConstant: 72),
+            hugEmoteButton.heightAnchor.constraint(equalToConstant: 72),
+        ])
+
+        stackView.addArrangedSubview(closeRow)
+        stackView.addArrangedSubview(logoRow)
+        stackView.addArrangedSubview(welcomeTitleLabel)
+        stackView.addArrangedSubview(hugEmoteWrap)
+        stackView.addArrangedSubview(appleButtonContainer)
+        stackView.addArrangedSubview(dividerRow)
+        stackView.addArrangedSubview(emailLoginButton)
+        stackView.addArrangedSubview(emailFormStack)
+        stackView.addArrangedSubview(legalLabel)
+        stackView.addArrangedSubview(guestButton)
+        stackView.setCustomSpacing(24, after: closeRow)
+        stackView.setCustomSpacing(20, after: logoRow)
+        stackView.setCustomSpacing(12, after: welcomeTitleLabel)
+        stackView.setCustomSpacing(24, after: hugEmoteWrap)
+        stackView.setCustomSpacing(20, after: appleButtonContainer)
+        stackView.setCustomSpacing(20, after: dividerRow)
+        stackView.setCustomSpacing(16, after: emailLoginButton)
+        stackView.setCustomSpacing(16, after: emailFormStack)
+        stackView.setCustomSpacing(8, after: legalLabel)
+
+        // logo 居中；宽高比约束与原值一致。
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
@@ -482,11 +558,21 @@ final class BearyLoginViewController: UIViewController {
             stackView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -22),
             stackView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             stackView.widthAnchor.constraint(lessThanOrEqualToConstant: 432),
+            // Hit44：行高放开到 44（钮 32 居中，上下各留 6），热区不再被 32 高行截断；钮视觉尺寸不变。
+            closeRow.heightAnchor.constraint(equalToConstant: 44),
+            closeButton.widthAnchor.constraint(equalToConstant: 32),
+            closeButton.heightAnchor.constraint(equalToConstant: 32),
+            closeButton.trailingAnchor.constraint(equalTo: closeRow.trailingAnchor),
+            closeButton.centerYAnchor.constraint(equalTo: closeRow.centerYAnchor),
             logoRow.heightAnchor.constraint(equalToConstant: 28),
-            logoXConstraint,
+            logoImageView.centerXAnchor.constraint(equalTo: logoRow.centerXAnchor),
             logoImageView.topAnchor.constraint(equalTo: logoRow.topAnchor),
             logoImageView.bottomAnchor.constraint(equalTo: logoRow.bottomAnchor),
             logoImageView.widthAnchor.constraint(equalTo: logoImageView.heightAnchor, multiplier: logoAspectRatio()),
+            hugEmoteWrap.heightAnchor.constraint(equalToConstant: 72),
+            appleButtonContainer.heightAnchor.constraint(equalToConstant: 48),
+            dividerRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 20),
+            emailLoginButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 48),
             messageLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
             emailErrorLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
             codeStatusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
@@ -497,18 +583,6 @@ final class BearyLoginViewController: UIViewController {
             guestButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             codeRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 48),
             sendButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            agreeButton.leadingAnchor.constraint(equalTo: agreeRow.leadingAnchor),
-            // 2026-10-29 第 8 项：勾选框与文案首行垂直居中对齐。旧口径 top+11 /
-            // bottom−11 把钮中心钉在行顶下 22pt，而文案首行中心在 label 顶下
-            // 约半行高处（14pt 字约 8.5pt），故钮比首行低约 13pt（photo-14 实证）。
-            // 改锚：钮 centerY = label 顶 + 14pt 字行高/2（多行文案时以首行为准，
-            // 行高改由 label 决定）；44 热区由 BearyHit44Button 保证。
-            agreeButton.widthAnchor.constraint(equalToConstant: 22),
-            agreeButton.heightAnchor.constraint(equalToConstant: 22),
-            agreeLabel.leadingAnchor.constraint(equalTo: agreeButton.trailingAnchor, constant: 10),
-            agreeLabel.trailingAnchor.constraint(equalTo: agreeRow.trailingAnchor),
-            agreeLabel.topAnchor.constraint(equalTo: agreeRow.topAnchor),
-            agreeLabel.bottomAnchor.constraint(equalTo: agreeRow.bottomAnchor),
         ])
         // L1：验证码行横排/纵排两套约束（默认横排；大字号档或行宽不够时
         // 纵排，见 updateCodeRowStackingIfNeeded）。
@@ -532,10 +606,38 @@ final class BearyLoginViewController: UIViewController {
             sendButton.bottomAnchor.constraint(equalTo: codeRow.bottomAnchor),
         ]
         NSLayoutConstraint.activate(codeRowHorizontalConstraints)
-        // 协议勾选框与文案首行居中（见属性注释；档位变化时重算常量）。
-        let agreeCenterY = agreeButton.centerYAnchor.constraint(equalTo: agreeLabel.topAnchor, constant: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)).lineHeight / 2)
-        agreeCenterY.isActive = true
-        agreeCenterYConstraint = agreeCenterY
+    }
+
+    /// 大标题衬线字体（2026-11-16 Li 定）：登录页「欢迎回来」15 bold 走衬线，
+    /// 字号字重不变，只换设计（withDesign(.serif)，iOS 自带 New York＋宋体）；
+    /// 取不到衬线设计时回退系统字体，不崩。
+    private static func serifTitleFont() -> UIFont {
+        let base = UIFont.systemFont(ofSize: 15, weight: .bold)
+        if let serif = base.fontDescriptor.withDesign(.serif) {
+            return BearyDynamicType.scaledFont(for: UIFont(descriptor: serif, size: 15))
+        }
+        return BearyDynamicType.scaledFont(for: base)
+    }
+
+    /// Apple 官方登录钮重建：ASAuthorizationAppleIDButton 不支持运行时换样式，
+    /// 外观变了就重建——浅色黑底（白苹果 logo）、深色白底（黑苹果 logo），
+    /// 圆角 12、全宽、高 48（容器定高，钮贴容器四边）。
+    private func rebuildAppleButton() {
+        appleButton?.removeFromSuperview()
+        let style: ASAuthorizationAppleIDButton.Style = traitCollection.userInterfaceStyle == .dark ? .white : .black
+        let button = ASAuthorizationAppleIDButton(authorizationButtonType: .signIn, authorizationButtonStyle: style)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.cornerRadius = 12
+        button.addTarget(self, action: #selector(appleLoginTapped), for: .touchUpInside)
+        appleButtonContainer.addSubview(button)
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(equalTo: appleButtonContainer.leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: appleButtonContainer.trailingAnchor),
+            button.topAnchor.constraint(equalTo: appleButtonContainer.topAnchor),
+            button.bottomAnchor.constraint(equalTo: appleButtonContainer.bottomAnchor),
+        ])
+        appleButton = button
+        appleButton?.isEnabled = !isAppleSigningIn
     }
 
     /// wordmark 宽高比：取 LogoHorizontal 资产实际尺寸；资产缺失时退 1，避免布局歧义。
@@ -624,45 +726,33 @@ final class BearyLoginViewController: UIViewController {
         inviteField.addTarget(self, action: #selector(textChanged), for: .editingChanged)
     }
 
-    private func configureAgreeRow() {
-        agreeRow.translatesAutoresizingMaskIntoConstraints = false
-        agreeButton.translatesAutoresizingMaskIntoConstraints = false
-        agreeButton.layer.cornerRadius = 4
-        agreeButton.layer.borderWidth = 1
-        agreeButton.layer.bearyDynamicBorderColor = BearyColors.line
-        agreeButton.backgroundColor = BearyColors.surface2
-        agreeButton.accessibilityLabel = "我已阅读并同意《隐私政策》和《用户协议》"
-        // 读屏入口：agreeLabel 不在无障碍树里（不读两遍），两条协议各给勾选框
-        // 一个自定义操作，VoiceOver 用户在勾选框上划动即可分别打开，不另占焦点位。
-        agreeButton.accessibilityCustomActions = [
-            UIAccessibilityCustomAction(name: "打开隐私政策", target: self, selector: #selector(openPrivacyFromAccessibility)),
-            UIAccessibilityCustomAction(name: "打开用户协议", target: self, selector: #selector(openTermsFromAccessibility)),
-        ]
-        agreeButton.addTarget(self, action: #selector(agreeTapped), for: .touchUpInside)
-        agreeButton.bearyAddPressFeedback()
-        // 协议文案里的两个协议名是真链接（App 内原生法律页打开），其余文字点按仍切换勾选。
-        agreeLabel.translatesAutoresizingMaskIntoConstraints = false
-        agreeLabel.isEditable = false
-        agreeLabel.isScrollEnabled = false
-        // 审计登录杂项：协议行已有 agreeButton 的无障碍 label 同文案，agreeLabel
-        // 本身不再作为无障碍元素（VoiceOver 不读两遍），且不可选中 / 复制。
-        agreeLabel.isAccessibilityElement = false
-        agreeLabel.isSelectable = false
-        agreeLabel.backgroundColor = UIColor.clear
-        agreeLabel.textContainerInset = UIEdgeInsets.zero
-        agreeLabel.textContainer.lineFragmentPadding = 0
-        agreeLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        agreeLabel.adjustsFontForContentSizeCategory = true
-        agreeLabel.textColor = BearyColors.gray
-        agreeLabel.linkTextAttributes = [
+    /// 法律行（2026-11-16 登录页重做）：不再是勾选框，登录即代表同意；
+    /// 文案「继续即代表你同意《隐私政策》和《用户协议》」，两个协议名是
+    /// 真链接（App 内原生法律页打开），其余文字点按无动作。
+    private func configureLegalLine() {
+        legalLabel.translatesAutoresizingMaskIntoConstraints = false
+        legalLabel.isEditable = false
+        legalLabel.isScrollEnabled = false
+        legalLabel.isSelectable = false
+        legalLabel.backgroundColor = UIColor.clear
+        legalLabel.textContainerInset = UIEdgeInsets.zero
+        legalLabel.textContainer.lineFragmentPadding = 0
+        legalLabel.textAlignment = .center
+        legalLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        legalLabel.adjustsFontForContentSizeCategory = true
+        legalLabel.textColor = BearyColors.gray
+        legalLabel.linkTextAttributes = [
             .foregroundColor: BearyColors.blue,
             .underlineStyle: NSUnderlineStyle.single.rawValue,
         ]
-        let fullText = "我已阅读并同意《隐私政策》和《用户协议》"
+        let fullText = "继续即代表你同意《隐私政策》和《用户协议》"
         let attributed = NSMutableAttributedString(string: fullText, attributes: [
-            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)),
+            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13)),
             .foregroundColor: BearyColors.gray,
         ])
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        attributed.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: attributed.length))
         let privacyRange = (fullText as NSString).range(of: "隐私政策")
         if privacyRange.location != NSNotFound, let privacyURL = URL(string: "https://teddyhn.com/privacy") {
             attributed.addAttribute(.link, value: privacyURL, range: privacyRange)
@@ -671,35 +761,29 @@ final class BearyLoginViewController: UIViewController {
         if termsRange.location != NSNotFound, let termsURL = URL(string: "https://teddyhn.com/terms") {
             attributed.addAttribute(.link, value: termsURL, range: termsRange)
         }
-        agreeLabel.attributedText = attributed
-        agreeLabel.delegate = self
-        // 手势挂在整行 agreeRow 上：UITextView 不可选时系统链接交互不触发，
-        // 挂在其上的自定义手势也不可靠；整行是普通 UIView，触摸直达。
-        agreeRow.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(agreeTextTapped(_:))))
-        agreeRow.addSubview(agreeButton)
-        agreeRow.addSubview(agreeLabel)
-        refreshAgreeBox()
+        legalLabel.attributedText = attributed
+        legalLabel.delegate = self
+        legalLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(legalTextTapped(_:))))
+        // 读屏入口：法律行本身可读，两条协议各给一个自定义操作，
+        // VoiceOver 用户在法律行上划动即可分别打开。
+        legalLabel.isAccessibilityElement = true
+        legalLabel.accessibilityLabel = fullText
+        legalLabel.accessibilityCustomActions = [
+            UIAccessibilityCustomAction(name: "打开隐私政策", target: self, selector: #selector(openPrivacyFromAccessibility)),
+            UIAccessibilityCustomAction(name: "打开用户协议", target: self, selector: #selector(openTermsFromAccessibility)),
+        ]
     }
 
-    /// F1：点中文案非链接处切换勾选；点在链接上时直接打开法律页。
-    /// 注意：agreeLabel 不可选（#631：不读两遍、不可选中复制），系统链接交互
-    /// 不触发，故不能像以前那样在链接处 return 放行，必须在此直接打开。
-    @objc private func agreeTextTapped(_ gesture: UITapGestureRecognizer) {
-        // 手势挂在整行上：点在勾选框 44pt 热区内时让按钮自己处理，避免双重触发。
-        let rowPoint = gesture.location(in: agreeRow)
-        if agreeButton.frame.insetBy(dx: -11, dy: -11).contains(rowPoint) {
-            return
-        }
-        let point = gesture.location(in: agreeLabel)
-        let index = agreeLabel.layoutManager.characterIndex(for: point, in: agreeLabel.textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
-        let plainText = agreeLabel.attributedText?.string ?? ""
-        let textLength = (plainText as NSString).length
-        if index < textLength, let attributed = agreeLabel.attributedText,
+    /// 点中文案链接处打开法律页；点在非链接处无动作（不再切换勾选）。
+    /// 注意：legalLabel 不可选，系统链接交互不触发，必须在此直接打开。
+    @objc private func legalTextTapped(_ gesture: UITapGestureRecognizer) {
+        let point = gesture.location(in: legalLabel)
+        let index = legalLabel.layoutManager.characterIndex(for: point, in: legalLabel.textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
+        let textLength = (legalLabel.attributedText?.string as NSString?)?.length ?? 0
+        if index < textLength, let attributed = legalLabel.attributedText,
            let url = attributed.attribute(.link, at: index, effectiveRange: nil) as? URL {
             openLegalPage(url: url)
-            return
         }
-        agreeTapped()
     }
 
     /// 打开 App 内原生法律页（设置页同款 BearyLegalTextViewController、全屏 modal、
@@ -743,28 +827,6 @@ final class BearyLoginViewController: UIViewController {
     @objc private func openTermsFromAccessibility() -> Bool {
         if let url = URL(string: "https://teddyhn.com/terms") { openLegalPage(url: url) }
         return true
-    }
-
-    private func refreshAgreeBox() {
-        // 第 25 轮 21-26（项26）：同步选中状态，读屏用户才能确认授权选择。
-        agreeButton.isSelected = isAgreed
-        agreeButton.accessibilityValue = isAgreed ? "已勾选" : "未勾选"
-        if isAgreed {
-            agreeButton.backgroundColor = BearyColors.ink
-            agreeButton.layer.bearyDynamicBorderColor = BearyColors.ink
-            agreeButton.tintColor = BearyColors.bg
-            agreeButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 13), for: .normal)
-        } else {
-            agreeButton.backgroundColor = BearyColors.surface2
-            agreeButton.layer.bearyDynamicBorderColor = BearyColors.line
-            agreeButton.setImage(nil, for: .normal)
-        }
-    }
-
-    @objc private func agreeTapped() {
-        isAgreed.toggle()
-        refreshAgreeBox()
-        updateButtonStates()
     }
 
     // MARK: - 状态与文案
@@ -836,6 +898,27 @@ final class BearyLoginViewController: UIViewController {
         emailInputContainer?.isError = failed && errorField == .email
         codeInputContainer?.isError = failed && errorField == .code
         inviteInputContainer?.isError = failed && errorField == .invite
+        // 2026-11-16 登录页重做：失败走全站拒绝口径——摇头＋震动＋拒绝音＋toast，
+        // 行内红字保留；成功与清空不触发。
+        if failed {
+            playDenyShake()
+            BearyToast.show(in: view, message: text)
+        }
+    }
+
+    /// 登录失败的拒绝动效：0.38s 摇头＋warning 震动＋拒绝音效
+    /// （与详情/盲盒 playDenyShake 同口径；减动效时只跳过视觉抖动，
+    /// 震动与音效照常给）。摇整列 stack（表单收起时仍在树上可见）。
+    private func playDenyShake() {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+        if UIAccessibility.isReduceMotionEnabled { return }
+        stackView.layer.removeAnimation(forKey: "bearyLoginDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = BearyMotion.screen
+        stackView.layer.add(shake, forKey: "bearyLoginDenyShake")
     }
 
     private func setLoginTitle(_ text: String) {
@@ -863,19 +946,17 @@ final class BearyLoginViewController: UIViewController {
         }
         let sendEnabled = emailValid && !isSendingCode && countdownRemaining == nil && !isVerifying
         sendButton.isEnabled = sendEnabled
-        if sheetMode {
-            // Sheet 弹窗：发码钮为浅色次级钮（全弹窗唯一重色是橙登录钮），
-            // 启用态墨字、未启用态灰字；底色恒 surface2，不走墨底。
-            sendButton.backgroundColor = BearyColors.surface2
-        } else {
-            sendButton.backgroundColor = sendEnabled ? BearyColors.ink : BearyColors.surface2
-        }
-        let sendTitleColor = sendEnabled ? (sheetMode ? BearyColors.ink : BearyColors.bg) : BearyColors.gray
+        // 2026-11-16 登录页重做：发码钮恒 surface2（登录钮之外不另设重色），
+        // 启用态墨字、未启用态灰字。
+        sendButton.backgroundColor = BearyColors.surface2
+        let sendTitleColor = sendEnabled ? BearyColors.ink : BearyColors.gray
         sendButton.setTitleColor(sendTitleColor, for: .normal)
         sendButton.setTitleColor(sendTitleColor, for: .disabled)
         sendButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: sendEnabled ? .semibold : .medium))
 
-        let loginEnabled = isAgreed && emailValid && code.count == 6 && !isVerifying
+        // 登录启用条件：邮箱合法＋验证码 6 位（2026-11-16 登录页重做：协议勾选
+        // 已取消，登录即代表同意，不再参与启用条件）。
+        let loginEnabled = emailValid && code.count == 6 && !isVerifying
         loginButton.isEnabled = loginEnabled
         loginButton.alpha = loginEnabled ? 1 : 0.35
         // 第 25 轮 21-26（项23）：验码期间冻结邮箱／验证码／邀请码字段，
@@ -960,6 +1041,8 @@ final class BearyLoginViewController: UIViewController {
         sendCodeTask = nil
         verifyTask?.cancel()
         verifyTask = nil
+        appleLoginTask?.cancel()
+        appleLoginTask = nil
         onCancelled?()
     }
 
@@ -972,15 +1055,8 @@ final class BearyLoginViewController: UIViewController {
         inviteDisclosureRow.accessibilityValue = "已展开"
     }
 
-    /// Sheet 容器关闭路径（遮罩点按 / 抓手拖动）：与关闭钮同一取消路径——
-    /// 先停倒计时与在途任务，再交 onCancelled；容器不得绕开本方法直接 dismiss，
-    /// 否则添加账号会话守卫 stays armed。
-    func cancelFromSheet() {
-        closeTapped()
-    }
-
-    /// Sheet 弹窗邀请码收起行点按：展开/收起字段（文本保留，登录照常读取）；
-    /// 展开后栈高变化，viewDidLayoutSubviews 重算 preferredContentSize，sheet 跟帧走。
+    /// 邀请码收起行点按：展开/收起字段（文本保留，登录照常读取）；
+    /// 展开后栈高变化，滚动内容自适应。
     @objc private func inviteDisclosureTapped() {
         inviteExpanded.toggle()
         inviteInputContainer?.isHidden = !inviteExpanded
@@ -996,6 +1072,22 @@ final class BearyLoginViewController: UIViewController {
         countdownDeadline = nil
         sentCodeEmail = nil
         onGuestMode?()
+    }
+
+    /// “使用其他邮箱登录”：展开／收起邮箱表单（同页展开，登录流程一字不动）；
+    /// 收起时顺带收键盘。
+    @objc private func emailLoginTapped() {
+        isEmailFormExpanded.toggle()
+        emailFormStack.isHidden = !isEmailFormExpanded
+        emailLoginButton.accessibilityValue = isEmailFormExpanded ? "已展开" : "已收起"
+        if !isEmailFormExpanded {
+            view.endEditing(true)
+        }
+    }
+
+    /// 标题小熊点按：从头播一次（引导页同款 replayFromStart）。
+    @objc private func hugEmoteTapped() {
+        hugEmoteView.replayFromStart()
     }
 
     @objc private func sendCodeTapped() {
@@ -1113,6 +1205,105 @@ final class BearyLoginViewController: UIViewController {
         }
     }
 
+    // MARK: - Apple 登录
+
+    /// Apple 登录入口：生成 raw nonce（SHA-256 后给 Apple，原值给服务端核对），
+    /// 首次要 fullName＋email；系统授权框由 ASAuthorizationController 弹出。
+    @objc private func appleLoginTapped() {
+        guard !isAppleSigningIn else { return }
+        let rawNonce = randomNonceString()
+        appleNonce = rawNonce
+        let provider = ASAuthorizationAppleIDProvider()
+        let request = provider.createRequest()
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = sha256Hex(rawNonce)
+        let controller = ASAuthorizationController(authorizationRequests: [request])
+        controller.delegate = self
+        controller.presentationContextProvider = self
+        isAppleSigningIn = true
+        appleButton?.isEnabled = false
+        controller.performRequests()
+    }
+
+    /// 32 字节随机 raw nonce（URL 安全 base64，Apple 只要求 nonce 为字符串；
+    /// 服务端按本页发去的原值核对，与编码方式无关）。
+    private func randomNonceString() -> String {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        return Data(bytes).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    /// SHA-256 十六进制（服务端核对 nonce 用；服务端已有同款 sha256hex）。
+    private func sha256Hex(_ string: String) -> String {
+        let digest = SHA256.hash(data: Data(string.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Apple 登录服务端请求：与验码同一套会话／响应处理；成功走 onLoggedIn?(nil)＋loginChime，
+    /// 注销冷静期复用确认流程（确认后用存下的凭证再调一次，confirm_cancel=true）。
+    private func appleLogin(identityToken: String, nonce: String, fullName: String?, email: String?, confirmCancel: Bool) {
+        appleLoginTask = BearyAPI.shared.appleLogin(
+            identityToken: identityToken,
+            nonce: nonce,
+            fullName: fullName,
+            email: email,
+            dev: deviceSignals(),
+            confirmCancel: confirmCancel
+        ) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.appleLoginTask = nil
+                strongSelf.isAppleSigningIn = false
+                strongSelf.appleButton?.isEnabled = true
+                switch result {
+                case .success(let resp):
+                    if resp.pendingDelete == true {
+                        if confirmCancel {
+                            // 二次确认后仍回 pending_delete 不应出现：不断循环，直接报失败。
+                            strongSelf.showMessage("Apple 登录失败，请重试")
+                        } else {
+                            strongSelf.pendingAppleCredential = (token: identityToken, nonce: nonce, fullName: fullName, email: email)
+                            strongSelf.presentApplePendingDeleteConfirm(deleteAt: resp.deleteAt)
+                        }
+                    } else if resp.ok == true {
+                        // 验证组④同款：登录成功即注销已取消，清掉注销时持久化的 delete_at。
+                        UserDefaults.standard.removeObject(forKey: "bearyPendingDeleteAt")
+                        strongSelf.pendingAppleCredential = nil
+                        BearySoundPlayer.play(.loginChime)
+                        strongSelf.onLoggedIn?(nil)
+                    } else {
+                        strongSelf.showMessage(resp.message ?? resp.error ?? "Apple 登录失败，请重试")
+                    }
+                case .failure(.cancelled):
+                    break
+                case .failure(.server(let message, _)):
+                    strongSelf.showMessage(message)
+                case .failure(.network):
+                    strongSelf.showMessage("网络不稳定，请稍后再试")
+                case .failure:
+                    strongSelf.showMessage("Apple 登录失败，请重试")
+                }
+            }
+        }
+    }
+
+    /// Apple 登录的注销冷静期确认：文案与邮箱登录同款（见 pendingDeleteMessage），
+    /// 确认后用存下的凭证再调一次 appleLogin（confirm_cancel=true）。
+    private func presentApplePendingDeleteConfirm(deleteAt: Int?) {
+        BearyConfirmSheet.show(from: self, title: "账号正在注销中", message: pendingDeleteMessage(deleteAt: deleteAt), actions: [
+            BearyConfirmSheet.Action(title: "暂不登录", style: .cancel),
+            BearyConfirmSheet.Action(title: "继续登录", style: .default) { [weak self] in
+                guard let strongSelf = self, let cred = strongSelf.pendingAppleCredential else { return }
+                strongSelf.isAppleSigningIn = true
+                strongSelf.appleButton?.isEnabled = false
+                strongSelf.appleLogin(identityToken: cred.token, nonce: cred.nonce, fullName: cred.fullName, email: cred.email, confirmCancel: true)
+            },
+        ])
+    }
+
     /// 审计登录杂项（高）：验码成功分支的邀请绑定反馈，落点改为进 App 后
     /// BearyToast 一次——文案经 onLoggedIn 回调带给容器，容器在 dismiss +
     /// refreshMe 后呈现（Plus 到期日补全见 BearyReferralFeedback.toastText，
@@ -1145,8 +1336,8 @@ final class BearyLoginViewController: UIViewController {
         onLoggedIn?(text)
     }
 
-    /// 注销冷静期确认：文案与网页端 lgDelCfm 同款（“暂不登录 / 继续登录”）。
-    private func presentPendingDeleteConfirm(email: String, code: String, inviteCode: String, deleteAt: Int?) {
+    /// 注销冷静期文案（网页端 lgDelCfm 同款口径）：邮箱登录与 Apple 登录共用。
+    private func pendingDeleteMessage(deleteAt: Int?) -> String {
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         // 验证组⑧：deleteAt 缺失时不得按 epoch 渲染（1970 年）；无截止日时
         // 只提示注销中，不拼倒计时与日期（缺失字段不等于 1970）。
@@ -1171,7 +1362,12 @@ final class BearyLoginViewController: UIViewController {
             let dateText = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(deleteAt) / 1000.0))
             message = "距离正式注销还剩：\(leftText)（\(dateText)）。继续登录将取消注销。"
         }
-        BearyConfirmSheet.show(from: self, title: "账号正在注销中", message: message, actions: [
+        return message
+    }
+
+    /// 注销冷静期确认：文案与网页端 lgDelCfm 同款（“暂不登录 / 继续登录”）。
+    private func presentPendingDeleteConfirm(email: String, code: String, inviteCode: String, deleteAt: Int?) {
+        BearyConfirmSheet.show(from: self, title: "账号正在注销中", message: pendingDeleteMessage(deleteAt: deleteAt), actions: [
             BearyConfirmSheet.Action(title: "暂不登录", style: .cancel),
             BearyConfirmSheet.Action(title: "继续登录", style: .default) { [weak self] in
                 guard let strongSelf = self else { return }
@@ -1299,7 +1495,7 @@ extension BearyLoginViewController: UITextFieldDelegate {
 
 extension BearyLoginViewController: UITextViewDelegate {
     func textView(_ textView: UITextView, shouldInteractWith URL: URL, in characterRange: NSRange, interaction: UITextItemInteraction) -> Bool {
-        // 系统链接交互只在可选时触发（本页 agreeLabel 不可选，实际走 agreeTextTapped
+        // 系统链接交互只在可选时触发（本页 legalLabel 不可选，实际走 legalTextTapped
         // 的直接打开路径）；此处保留作兜底，与手势共用同一打开入口，不走系统浏览器。
         openLegalPage(url: URL)
         return false
@@ -1326,14 +1522,6 @@ enum BearyReferralFeedback {
     }
 }
 
-// MARK: - BearyBottomSheetVoiceOver（r29-14：底部弹窗出现时首焦点）
-
-extension BearyLoginViewController: BearyBottomSheetVoiceOver {
-    /// 出现时 VoiceOver 聚焦 sheet 专属标题“欢迎回来”（EmotePicker/DraftBox/
-    /// Notifications 三处先例一律聚焦标题；全屏页不走本容器，钩子不生效）。
-    var bottomSheetInitialAccessibilityElement: AnyObject? { welcomeTitleLabel }
-}
-
 // MARK: - 邀请码收起行读屏激活（审计 ①-P1）
 //
 // inviteDisclosureRow 是普通 UIView＋点按手势：isAccessibilityElement、
@@ -1349,5 +1537,39 @@ private final class InviteDisclosureRowView: UIView {
     override func accessibilityActivate() -> Bool {
         onActivate?()
         return true
+    }
+}
+
+// MARK: - Apple 登录（ASAuthorizationControllerDelegate）
+
+extension BearyLoginViewController: ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
+    @objc func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        return view.window ?? ASPresentationAnchor()
+    }
+
+    func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
+        guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+              let tokenData = credential.identityToken,
+              let identityToken = String(data: tokenData, encoding: .utf8),
+              let nonce = appleNonce else {
+            // identityToken 取不到 = 授权本身没给凭证，按失败处理（不静默）。
+            isAppleSigningIn = false
+            appleButton?.isEnabled = true
+            showMessage("Apple 登录失败，请重试")
+            return
+        }
+        // 姓名与邮箱只在首次授权时给；后续登录 Apple 不再返回，服务端以 token 内
+        // 断言为准（full_name 仅新建账号时写一次）。
+        let fullName = [credential.fullName?.givenName, credential.fullName?.familyName]
+            .compactMap { $0 }.joined(separator: " ")
+        appleLogin(identityToken: identityToken, nonce: nonce, fullName: fullName.isEmpty ? nil : fullName, email: credential.email, confirmCancel: false)
+    }
+
+    func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
+        isAppleSigningIn = false
+        appleButton?.isEnabled = true
+        // 用户取消：静默，不报失败、不摇头（系统授权框取消是正常操作）。
+        if let authError = error as? ASAuthorizationError, authError.code == .canceled { return }
+        showMessage("Apple 登录失败，请重试")
     }
 }
