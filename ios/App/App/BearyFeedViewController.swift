@@ -2083,22 +2083,19 @@ class BearyFeedViewController: UIViewController {
     private func finishFirstLoadIfNeeded() {
         if plazaFirstDone && isFirstLoad {
             isFirstLoad = false
-            let visible = (tableView.indexPathsForVisibleRows ?? []).sorted()
             if didShowSkeleton {
                 didShowSkeleton = false
-                // 加载三件套·骨架淡出＋内容入场：整表 0.26s 交叉溶解（骨架同步
-                // 淡出），内容再从上到下每块错开 60ms、依次淡入并上移 8px。
+                // 加载三件套·骨架淡出：只做一次 0.26s 交叉溶解，真实行直接落
+                // 最终位置，不再在淡变完成后又把刚淡出的行藏起来重播一次
+                // （双重入场会闪一下；完成回调也不再补播，切页后无残留动画）。
                 if BearyMotion.animated(true) {
                     UIView.transition(with: tableView, duration: BearyMotion.normal, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
                         self.tableView.reloadData()
-                    }, completion: { [weak self] _ in
-                        guard let self = self else { return }
-                        let paths = (self.tableView.indexPathsForVisibleRows ?? []).sorted()
-                        let cells = paths.compactMap { self.tableView.cellForRow(at: $0) }
-                        BearyLoadingUX.staggerIn(cells: cells, delayStep: 0.06, yOffset: 8)
-                    })
+                    }, completion: nil)
                 } else {
-                    staggerFadeCells(at: visible, kind: .firstLoad)
+                    // 减动效：直接换上真实行（只跳过动画）；此前走
+                    // staggerFadeCells 会因减动效立即返回、骨架行一直留着。
+                    tableView.reloadData()
                 }
                 return
             }
