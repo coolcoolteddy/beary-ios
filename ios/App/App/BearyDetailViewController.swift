@@ -2613,9 +2613,12 @@ final class BearyDetailViewController: UIViewController {
 
     /// D1（审计五轮第 6 项，规范 §6）：点赞数变化时 0.18s opacity 交叉淡变
     /// （BearyMotion.localStateDuration，站内 contentLabel 同款 transitionCrossDissolve）；
-    /// 数字未变、减动效开、或按钮未进窗口时直设终值；宽度按现行算式直设、不参与淡变；
-    /// 0 仍走现行分支（setTitle(nil)＋宽只剩图标宽），语义不动。
+    /// 数字未变、减动效开、或按钮未进窗口时直设终值；宽度与数字同 0.18s 走——
+    /// 约束先改终值，再在同 dur 的 animate 里 layoutIfNeeded，栈内邻钮
+    /// （收藏/分享）平滑滑到终位，不再瞬间横移；0 仍走现行分支
+    /// （setTitle(nil)＋宽只剩图标宽），语义不动。
     private func setLikeTitle(_ title: String?, width: CGFloat) {
+        let oldWidth = likeButtonWidthConstraint?.constant ?? width
         likeButtonWidthConstraint?.constant = width
         guard likeButton.title(for: .normal) != title,
               !UIAccessibility.isReduceMotionEnabled,
@@ -2626,6 +2629,13 @@ final class BearyDetailViewController: UIViewController {
         UIView.transition(with: likeButton, duration: BearyMotion.localStateDuration, options: .transitionCrossDissolve, animations: {
             self.likeButton.setTitle(title, for: .normal)
         })
+        // 宽度变化与数字淡变同 0.18s：约束已是终值，layoutIfNeeded 把栈内
+        // 邻钮平滑推到终位；宽未变（同位数）时不另启动画。
+        if oldWidth != width, let stackView = likeButton.superview {
+            UIView.animate(withDuration: BearyMotion.localStateDuration, animations: {
+                stackView.layoutIfNeeded()
+            })
+        }
     }
 
     /// 点赞点亮走红色、收藏点亮走橙色，与现有先行反馈口径；数字只 setTitle，不重建行。
