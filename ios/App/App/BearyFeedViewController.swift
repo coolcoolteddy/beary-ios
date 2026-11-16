@@ -1595,11 +1595,22 @@ class BearyFeedViewController: UIViewController {
         return indexPaths(for: entryId).first
     }
 
-    /// 详情返回定位（guarded）：只滚已在列表里的 id，绝不插入、不拉取；
-    /// 不在列表里时什么都不做。
-    func scrollToEntryId(_ entryId: String) {
+    /// 详情打开时记下该篇相对视口的位置（行顶相对可见区顶）；不在列表里时返回 nil。
+    func detailReturnAnchor(for entryId: String) -> CGFloat? {
+        guard let path = indexPath(for: entryId) else { return nil }
+        tableView.layoutIfNeeded()
+        return tableView.rectForRow(at: path).origin.y - tableView.contentOffset.y
+    }
+
+    /// 详情关闭时把该篇放回打开时的视口位置；已在原位（±1pt）或不在列表里时不动。
+    func restoreDetailReturnAnchor(entryId: String, viewportOffset: CGFloat) {
         guard let path = indexPath(for: entryId) else { return }
-        tableView.scrollToRow(at: path, at: .middle, animated: false)
+        tableView.layoutIfNeeded()
+        let targetY = tableView.rectForRow(at: path).origin.y - viewportOffset
+        guard abs(targetY - tableView.contentOffset.y) >= 1 else { return }
+        let minY = -tableView.contentInset.top
+        let maxY = max(minY, tableView.contentSize.height - tableView.bounds.height + tableView.contentInset.bottom)
+        tableView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
     }
 
     /// F8：同一篇的全部可见行。

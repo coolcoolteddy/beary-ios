@@ -6112,10 +6112,30 @@ class BearyTimelineViewController: UIViewController {
         return false
     }
 
-    /// 详情返回定位（guarded）：只在已加载分区里找，找到即按现行定位体验滚动高亮；
-    /// 未加载时什么都不做（不插入、不追拉）。
-    func scrollToEntryIdIfPresent(_ entryId: String) {
-        _ = tryLocateInLoadedSections(entryId: entryId)
+    /// 详情打开时记下该篇相对视口的位置（行顶相对可见区顶）；不在已加载分区里时返回 nil。
+    func detailReturnAnchor(for entryId: String) -> CGFloat? {
+        let sections = currentSections()
+        for (sectionIndex, section) in sections.enumerated() {
+            guard let row = section.entries.firstIndex(where: { $0.id == entryId }) else { continue }
+            tableView.layoutIfNeeded()
+            return tableView.rectForRow(at: IndexPath(row: row, section: sectionIndex)).origin.y - tableView.contentOffset.y
+        }
+        return nil
+    }
+
+    /// 详情关闭时把该篇放回打开时的视口位置；已在原位（±1pt）或不在已加载分区里时不动。
+    func restoreDetailReturnAnchor(entryId: String, viewportOffset: CGFloat) {
+        let sections = currentSections()
+        for (sectionIndex, section) in sections.enumerated() {
+            guard let row = section.entries.firstIndex(where: { $0.id == entryId }) else { continue }
+            tableView.layoutIfNeeded()
+            let targetY = tableView.rectForRow(at: IndexPath(row: row, section: sectionIndex)).origin.y - viewportOffset
+            guard abs(targetY - tableView.contentOffset.y) >= 1 else { return }
+            let minY = -tableView.contentInset.top
+            let maxY = max(minY, tableView.contentSize.height - tableView.bounds.height + tableView.contentInset.bottom)
+            tableView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
+            return
+        }
     }
 
     /// 6A：滚动到指定行并闪一下（两段 async：先等重载落定，再等滚动落定取 cell）。
