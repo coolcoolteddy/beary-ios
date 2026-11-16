@@ -617,8 +617,9 @@ final class BearyYearReviewViewController: UIViewController {
     /// 切回时恢复；首次进入的年份无记录，回到顶部。
     private var yearScrollOffsets: [Int: CGFloat] = [:]
     /// 本次渲染已恢复到的偏移（nil = 本次渲染尚未恢复）：词汇指纹
-    /// 后到回调凭此判断恢复是否已跑过——跑过才做锚点补偿，未跑过
-    /// （缓存命中同步插回）则由渲染末尾的恢复一次到位，不再重复补。
+    /// 后到回调凭此判断恢复是否已跑过、用户是否已滚动。wordprintAsync
+    /// 命中缓存也是 main.async 回调，没有“同步插回”；恢复总在回调前
+    /// 跑过，nil 只作防御（此时按当前偏移判断顶部场景）。
     private var yearRestoreAppliedOffset: CGFloat?
     /// 词汇指纹在途代次：renderSelectedYear 每调一次即 +1；过期回调
     /// （旧年 / 旧语料）到达时凭此丢弃，最终只留最后选中的年份。
@@ -987,12 +988,13 @@ final class BearyYearReviewViewController: UIViewController {
                   self.wordprintRequest == request,
                   self.selectedYear == wordprintValue.year else { return }
             // 栈顶插入会把下方内容顶下去：先插行，再按插入高度补偿，
-            // 阅读锚点不动。恢复是否已跑过决定补法——
-            // · 同步插回（缓存命中、恢复未跑）：不补，渲染末尾的恢复
-            //   会按完整内容一次到位；
-            // · 异步后到（恢复已跑）且用户未滚动：按完整内容重算该年
+            // 阅读锚点不动。wordprintAsync 命中缓存也是 DispatchQueue.main.async
+            // 回调，没有“同步插回”——恢复总在回调前跑过，补法按当时状态分：
+            // · 顶部场景（该年保存的位置就是顶部、用户未滚动）：不改偏移，
+            //   把布局放进动画，让摘要平滑滑下、词行随之淡入；
+            // · 恢复已跑且用户未滚动、保存了非顶部位置：按完整内容重算该年
             //   保存的位置（插前恢复值在短内容上可能被夹过）；
-            // · 异步后到且用户已滚动：只补插入高度，保住当前阅读行。
+            // · 恢复已跑且用户已滚动：只补插入高度，保住当前阅读行。
             let insertedRow: UIView
             if !wordprintValue.items.isEmpty {
                 self.wordprintView.configure(with: wordprintValue, scope: self.scopeValue)
@@ -1002,11 +1004,39 @@ final class BearyYearReviewViewController: UIViewController {
                 insertedRow = bearyMakeWordprintScopeBadge(scope: self.scopeValue)
             }
             self.dynamicStack.insertArrangedSubview(insertedRow, at: 0)
+            // 顶部场景：该年保存的位置就是顶部，且用户自恢复后没有滚动
+            // （恢复未跑时以当前停在顶部为准）。此时屏幕上正看着摘要，
+            // 词行插在栈顶会把摘要顶下去 insertedHeight；旧路先 layoutIfNeeded
+            // 瞬间落位、再只给词行淡入，摘要是跳下去的。这里把布局放进
+            // 同一次动画，让下方内容平滑滑下、词行随之淡入，偏移保持 0，
+            // 词行最终仍在顶部可见。已滚动、或保存了非顶部位置的场景
+            // 走下面的偏移补偿，不动。
+            let savedOffset = self.yearScrollOffsets[self.selectedYear] ?? 0
+            let isTopScene: Bool = {
+                guard savedOffset == 0 else { return false }
+                if let restoredOffset = self.yearRestoreAppliedOffset {
+                    return self.contentScrollView.contentOffset.y == restoredOffset
+                }
+                return self.contentScrollView.contentOffset.y == 0
+            }()
+            if isTopScene {
+                self.yearRestoreAppliedOffset = self.contentScrollView.contentOffset.y
+                if UIAccessibility.isReduceMotionEnabled || insertedRow.window == nil {
+                    self.view.layoutIfNeeded()
+                    insertedRow.alpha = 1
+                } else {
+                    insertedRow.alpha = 0
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+                        self.view.layoutIfNeeded()
+                        insertedRow.alpha = 1
+                    })
+                }
+                return
+            }
             self.view.layoutIfNeeded()
             let insertedHeight = insertedRow.frame.height + self.dynamicStack.spacing
             if let restoredOffset = self.yearRestoreAppliedOffset {
                 if self.contentScrollView.contentOffset.y == restoredOffset {
-                    let savedOffset = self.yearScrollOffsets[self.selectedYear] ?? 0
                     let maxOffset = max(0, self.contentScrollView.contentSize.height - self.contentScrollView.bounds.height)
                     let targetOffset = min(max(savedOffset, 0), maxOffset)
                     self.contentScrollView.setContentOffset(CGPoint(x: 0, y: targetOffset), animated: false)
@@ -1030,8 +1060,8 @@ final class BearyYearReviewViewController: UIViewController {
         }
 
         // 切回看过的年份恢复上次阅读位置；首次进入的年份回到顶部。
-        // 词汇指纹若已同步插回（缓存命中），此时内容已完整，直接一次到位；
-        // 若还在后台算，回调里再按锚点补一次，见上。
+        // 词汇指纹一律异步回（命中缓存也不例外），此时内容尚未完整；
+        // 回调里再按锚点处理一次，见上。
         restoreYearScrollOffset()
     }
 
