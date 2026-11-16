@@ -2503,12 +2503,26 @@ final class BearyDetailViewController: UIViewController {
         }
         detailLocationLabel.text = line
         updateDetailBottomRowVisibility()
+        // 跳动审计第 12 条：缓存命中时首帧直接用解析后的行文，不等异步回包，
+        // 天气组首帧即在终位；缓存未命中才走异步回包。
+        if let cached = BearyLocationDisplayNames.cachedDisplayLine(for: entry) {
+            detailLocationLabel.text = cached
+            updateDetailBottomRowVisibility()
+            return
+        }
         // 2026-11-14 存经纬度：有坐标时按当前语言重取地名；失败／无坐标时保留原存文本行。
         let entryId = entry.id
         BearyLocationDisplayNames.displayLine(for: entry) { [weak self] resolved in
             guard let self = self, let resolved = resolved, self.entry.id == entryId else { return }
+            // 文案没变不碰布局；变了用 0.18s 局部过渡推天气组，不瞬间横移
+            // （卡片 refreshLocationRow 同款口径；减动效／未进窗口时直设终值）。
+            guard resolved != self.detailLocationLabel.text else { return }
             self.detailLocationLabel.text = resolved
             self.updateDetailBottomRowVisibility()
+            guard !UIAccessibility.isReduceMotionEnabled, self.detailLocationLineRow.window != nil else { return }
+            UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: {
+                self.detailLocationLineRow.layoutIfNeeded()
+            })
         }
     }
 
