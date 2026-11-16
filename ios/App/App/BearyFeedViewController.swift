@@ -2398,7 +2398,14 @@ class BearyFeedViewController: UIViewController {
             guard let strongSelf = self, let targetCell = cell else { return }
             guard let path = strongSelf.tableView.indexPath(for: targetCell) else { return }
             if strongSelf.tableView.indexPathsForVisibleRows?.contains(path) == true {
-                strongSelf.tableView.reloadRows(at: [path], with: .none)
+                // 引用异步落位 / 字号切换已在 cell 内就地改好内容，这里只重算行高：
+                // begin/end 走 normal（0.26s）平滑伸缩（引用展开同款口径），
+                // 不用 reloadRows(.none) 瞬间跳变；只刷可见行，离屏行下次布局
+                // 自动取新高，行上内容不动、阅读位置不动。
+                UIView.animate(withDuration: BearyMotion.normal) {
+                    strongSelf.tableView.beginUpdates()
+                    strongSelf.tableView.endUpdates()
+                }
             }
         }
         // L21（91 包）：展开/收起专用——cell 内容已在 foldTapped 里就地改好，
