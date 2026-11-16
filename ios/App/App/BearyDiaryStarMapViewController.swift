@@ -193,6 +193,10 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var returnScrollOffset: CGPoint?
     private var returnEntrySnapshot: (id: String, title: String?, content: String?, visibility: String)?
     private var pendingReturnRestore = false
+    /// 跳动审计第三批第 5 条：恢复代次——只读返回的恢复只在当次返回有效；
+    /// 用户新的筛选／选择、切账号、新的进入详情都会递增，下一轮异步补设
+    /// 偏移前先对代次，过期即丢弃，不覆盖新的操作。
+    private var returnRestoreGeneration = 0
     private var yearRowHeight: NSLayoutConstraint?
     private var monthRowHeight: NSLayoutConstraint?
     /// 审计 15 项第 2 项：图例→年行→月行→筛选行的三段间距单独持有，
@@ -310,6 +314,10 @@ final class BearyDiaryStarMapViewController: UIViewController {
         }
         // C4：只读返回不重拉（详情真有变化时容器按 id 扇出 applyEditedEntry /
         // removeDeletedEntry）；切账号是唯一重拉路径，appear 不再无条件刷新。
+        // 跳动审计第三批第 5 条：只读返回的恢复在这里当即消费，不再留给
+        // applyModelToSky——后者还会被筛选、重试、缓存命中、后台建模回包、
+        // 空态等晚到调用触发，旧恢复会在用户已做新操作后把旧选中态与旧偏移拉回来。
+        restoreDetailReturnContextIfNeeded()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -1040,9 +1048,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
             statusLabel.accessibilityLabel = status
             statusLabel.accessibilityHint = nil
         }
-        // r17-m3：从详情回来后的恢复统一收在这里（模型已落定，选中态与
-        // 滚动位置按记忆恢复；无返回记忆时不做任何事）。
-        restoreDetailReturnContextIfNeeded()
+        // 跳动审计第三批第 5 条：详情返回的恢复不在这里消费——它在
+        // viewWillAppear 里当即消费；留在这里会让筛选／重试／缓存命中／
+        // 后台建模回包／空态等晚到的 applyModelToSky 把旧选中态与旧偏移拉回来。
     }
 
     // MARK: - C4 详情往返只传变化
@@ -1131,7 +1139,14 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     // MARK: - 点按：星 / 线 / 重叠 / 背景
 
+    /// 跳动审计第三批第 5 条：用户做了新的筛选／选择后，旧的返回恢复即
+    /// 失效——代次递增，下一轮异步补设偏移时对不上代次就丢弃。
+    private func invalidateReturnRestore() {
+        returnRestoreGeneration += 1
+    }
+
     private func clearSelection() {
+        invalidateReturnRestore()
         selectedStarId = nil
         selectedEdgeId = nil
         showingOverlapSheet = false
@@ -1142,6 +1157,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 
     private func didTapStar(_ entry: Entry) {
+        invalidateReturnRestore()
         selectedStarId = entry.id
         selectedEdgeId = nil
         showingOverlapSheet = false
@@ -1152,6 +1168,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 
     private func didTapEdge(_ edge: StarMapEdge) {
+        invalidateReturnRestore()
         selectedEdgeId = edge.id
         selectedStarId = nil
         showingOverlapSheet = false
@@ -1164,6 +1181,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 
     private func showOverlapSheet(_ entries: [Entry]) {
+        invalidateReturnRestore()
         selectedStarId = nil
         selectedEdgeId = nil
         showingOverlapSheet = true
@@ -1353,6 +1371,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 
     private func showEdgeListSheet() {
+        invalidateReturnRestore()
         // 审计 R3-1：连线列表是独立的底卡展示态（与重叠列表同款），打开时
         // 明确切换过去，不借用选中星星的状态来间接控制显隐。
         selectedStarId = nil
@@ -1518,6 +1537,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
             returnEntrySnapshot = nil
         }
         pendingReturnRestore = true
+        // 新一次进入详情：旧恢复的异步补设（若有在途）随代次作废。
+        returnRestoreGeneration += 1
         onOpenEntry?(entry)
     }
 
@@ -1528,6 +1549,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         returnScrollOffset = nil
         returnEntrySnapshot = nil
         pendingReturnRestore = false
+        returnRestoreGeneration += 1
     }
 
     /// r17-m3：从详情只读返回后的恢复——选中态与滚动位置按记忆恢复；
@@ -1537,12 +1559,18 @@ final class BearyDiaryStarMapViewController: UIViewController {
         pendingReturnRestore = false
         guard let offset = returnScrollOffset else { return }
         // 滚动位置：先恢复（内容高可能随底卡重建变化，下一帧再校一次）。
+        // 下一帧补设前先对代次：用户已做新筛选／选择、或进了新一次详情，
+        // 代次已变，过期补设直接丢弃，不覆盖新的操作。
+        let generation = returnRestoreGeneration
         let restoreOffset = { [weak self] in
             guard let self = self else { return }
             self.scrollView.setContentOffset(offset, animated: false)
         }
         restoreOffset()
-        DispatchQueue.main.async(execute: restoreOffset)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, generation == self.returnRestoreGeneration else { return }
+            restoreOffset()
+        }
         if let starId = returnStarId, let entry = model.entryById[starId] {
             // 星还在：恢复选中与底卡；打开那篇变了才淡变一次。
             var changed = false
