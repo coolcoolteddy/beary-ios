@@ -1654,6 +1654,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 旧结果所属的词（“下方是「旧词」的结果”）。横幅是 resultsStack 的首个
     /// arranged 子视图，与分区头同字号/同灰；成功重渲/清结果时随
     /// clearResultRows 一并摘掉（引用见 removeStaleResultsBanner）。
+    /// 插/摘/换文案时按横幅高度变化量同步修正滚动偏移，可见结果行停在
+    /// 原屏幕位置（见 adjustContentOffsetForBannerHeightDelta）。
     private var staleResultsBanner: UIView?
 
     private func updateStaleResultsBanner() {
@@ -1661,15 +1663,21 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         guard showingResults,
               let rendered = lastRenderedQuery, !rendered.isEmpty,
               rendered != lastQuery else {
-            removeStaleResultsBanner()
+            // 结果行原样保留时摘条：按横幅高度反向修正偏移，可见行不顶上来。
+            removeStaleResultsBanner(preserveAnchor: !resultsStack.isHidden)
             return
         }
         let text = "下方是「\(rendered)」的结果"
         if let banner = staleResultsBanner, banner.superview == resultsStack,
            let label = banner.subviews.first as? UILabel {
+            // 同横幅只换文案：高度可能随词长/字号变化，按差量补偏移。
+            let oldHeight = banner.frame.height
             label.text = text
+            view.layoutIfNeeded()
+            adjustContentOffsetForBannerHeightDelta(banner.frame.height - oldHeight)
             return
         }
+        let oldHeight = staleResultsBanner?.frame.height ?? 0
         removeStaleResultsBanner()
         let wrap = UIView()
         wrap.translatesAutoresizingMaskIntoConstraints = false
@@ -1689,13 +1697,32 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         ])
         staleResultsBanner = wrap
         resultsStack.insertArrangedSubview(wrap, at: 0)
+        // 横幅插在栈首位会把其下所有结果行整体顶下去：按新旧横幅高度差
+        // 同步修正偏移，让当前可见结果行停在原屏幕位置。
+        view.layoutIfNeeded()
+        adjustContentOffsetForBannerHeightDelta(wrap.frame.height - oldHeight)
     }
 
-    private func removeStaleResultsBanner() {
+    private func removeStaleResultsBanner(preserveAnchor: Bool = false) {
         guard let banner = staleResultsBanner else { return }
+        let height = banner.frame.height
         staleResultsBanner = nil
         resultsStack.removeArrangedSubview(banner)
         banner.removeFromSuperview()
+        guard preserveAnchor else { return }
+        view.layoutIfNeeded()
+        adjustContentOffsetForBannerHeightDelta(-height)
+    }
+
+    /// 横幅高度变化量反向修正滚动偏移：插条/换文案变高时多滚差量，
+    /// 摘条时少滚差量，可见结果行屏幕位置不变。偏移钳制在合法范围，
+    /// 内容短到滚不动时无法全额补偿（原地顶移不可避免）。
+    /// 调用方须先 layoutIfNeeded 再量高度、再算 contentSize 上限。
+    private func adjustContentOffsetForBannerHeightDelta(_ delta: CGFloat) {
+        guard delta != 0 else { return }
+        let minY = -scrollView.contentInset.top
+        let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom)
+        scrollView.contentOffset.y = min(max(scrollView.contentOffset.y + delta, minY), maxY)
     }
 
     /// 尾行四态（与时间线/个人主页尾行同形态；搜索进行时不显示尾行，只转框内圈）：
