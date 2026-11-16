@@ -2769,6 +2769,26 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate, U
         return count
     }
 
+    func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
+        // 固定 estimatedRowHeight 220 与真实卡高（纯文字约 150、有图 400+）差近
+        // 200pt，滚动中 contentSize 不断修正会漂移；按模型逐行估算。
+        if showingSkeleton { return 370 }
+        let entries = plazaEntries()
+        guard indexPath.row >= 0, indexPath.row < entries.count else { return 220 }
+        let entry = entries[indexPath.row]
+        let expanded = BearyDiaryCardCell.expandedEntryIds.contains(entry.id ?? "")
+        return BearyDiaryCardCell.estimatedCardHeight(for: entry, mode: .feed, expanded: expanded, firstRow: false, tableWidth: estimationTableWidth(using: tableView))
+    }
+
+    /// 估算用表宽：布局前 bounds 仍为 0 时按 view 宽、再按屏宽回落
+    /// （iPad 600 列上限只在布局后体现在 bounds 上，布局前回落值会偏大，
+    /// 估算行数偏少，真实布局后自动修正，不影响可见行）。
+    private func estimationTableWidth(using tableView: UITableView) -> CGFloat {
+        if tableView.bounds.width > 0 { return tableView.bounds.width }
+        if view.bounds.width > 0 { return view.bounds.width }
+        return UIScreen.main.bounds.width
+    }
+
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         // 加载三件套·骨架行（扫光在 cell 内自启动，减动效静态）。
         // 高矮搭配：0/2 行带图 370pt、1 行无图约 142pt，夹住真实卡片高度区间。
