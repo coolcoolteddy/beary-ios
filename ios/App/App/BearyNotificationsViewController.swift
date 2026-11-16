@@ -428,7 +428,7 @@ final class BearyNotificationsViewController: UIViewController {
     private lazy var stateTitleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        label.font = BearyDynamicType.scaledFont(for: BearyDynamicType.serif(UIFont.systemFont(ofSize: 15)))
         label.textColor = BearyColors.ink
         label.textAlignment = .center
         label.adjustsFontForContentSizeCategory = true

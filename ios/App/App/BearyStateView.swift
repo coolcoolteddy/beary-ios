@@ -173,7 +173,11 @@ final class BearyStateView: UIView {
         ])
     }
 
-    /// 一次配齐。kind 只决定加载转圈与否（loading 时图标换转圈、动作钮隐藏）；
+    /// 一次配齐。kind 只决定加载转圈与否（loading 时图标换转圈、动作钮隐藏）
+    /// 与标题字体：只有空态（.empty）主标题走衬线（2026-11-16 Li 定）；
+    /// 加载中／失败／登录态标题是功能状态文字，保持系统字体。同一视图可能
+    /// 先后配成不同 kind（如好友页 emptyStateView 先配 .error 后配 .empty），
+    /// 故每次 configure 都按 kind 重设字体，不只依赖初值。
     /// 其余行一律按参数有无显隐：iconName 为 nil 则图标圆整行隐藏，actionTitle 为 nil
     /// 则动作钮隐藏；actionStyle 变化时动作钮按新样式重建（工厂钮样式在 init 后不可换）。
     func configure(kind: BearyStateKind, title: String?, subtitle: String?, iconName: String?, actionTitle: String?, actionStyle: BearyButtonStyle = .secondaryOutline(.regular), onAction: (() -> Void)? = nil) {
@@ -197,6 +201,8 @@ final class BearyStateView: UIView {
         }
         titleLabel.text = title
         titleLabel.isHidden = (title == nil)
+        // 衬线只作用于空态主标题（见本函数文档）；非空态保持系统字体。
+        titleLabel.font = BearyDynamicType.scaledFont(for: kind == .empty ? BearyDynamicType.serif(UIFont.boldSystemFont(ofSize: 15)) : UIFont.boldSystemFont(ofSize: 15))
         subtitleLabel.text = subtitle
         subtitleLabel.isHidden = (subtitle == nil)
         self.actionHandler = onAction

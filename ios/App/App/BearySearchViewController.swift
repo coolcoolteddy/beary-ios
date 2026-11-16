@@ -720,7 +720,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateCircle.addSubview(stateRingView)
 
         stateTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        stateTitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
+        stateTitleLabel.font = BearyDynamicType.scaledFont(for: BearyDynamicType.serif(UIFont.boldSystemFont(ofSize: 15)))
         stateTitleLabel.adjustsFontForContentSizeCategory = true
         stateTitleLabel.textColor = BearyColors.ink
         stateTitleLabel.textAlignment = .center

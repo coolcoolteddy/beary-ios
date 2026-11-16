@@ -529,7 +529,7 @@ class BearyFeedViewController: UIViewController {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "还没有公开的日记"
         feedEmptyTitleLabel = titleLabel
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        titleLabel.font = BearyDynamicType.scaledFont(for: BearyDynamicType.serif(UIFont.systemFont(ofSize: 15)))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center

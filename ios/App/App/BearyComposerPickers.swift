@@ -760,6 +760,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateIcon.tintColor = BearyColors.ink
         stateRetryButton.isHidden = true
         stateRetryBottomConstraint?.isActive = false
+        // 2026-11-16 衬线口径：只有无结果空态主句（kind "none"）走衬线；
+        // 加载中「正在找」／失败「搜索失败」／初始提示「@ 谁」是功能状态
+        // 文字，保持系统字体。字号字重不变（15 bold）。
+        stateTitle.font = BearyDynamicType.scaledFont(for: kind == "none" ? BearyDynamicType.serif(UIFont.boldSystemFont(ofSize: 15)) : UIFont.boldSystemFont(ofSize: 15))
         if kind == "loading" {
             // 2026-10-29 第 22 项：加载态中央图标（showState 先置 @，转圈由 setCenterBusy 换官方刷新图标并加旋转，
             // 与搜索日记页“中央可见转中央”同规则；框里放大镜此时静态）。
