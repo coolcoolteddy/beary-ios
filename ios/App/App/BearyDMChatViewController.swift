@@ -658,6 +658,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     /// 输入框高度跟内容走：空态一行，随输入长高，到五行封顶后框内滚动（isScrollEnabled 已开）。
     /// 用 sizeThatFits 量内容高、按当前字号算一/五行上下限；只在变化时改约束，避免布局往复。
+    /// 行数变化时高度改动走 0.18s 布局动画（BearyMotion.localStateDuration，局部状态档）：
+    /// 在底部时 contentOffset 同量跟进、末条消息钉在原地；读旧消息时不碰 offset、
+    /// 列表顶边不动、阅读位置自然保留。键盘仍由 keyboardLayoutGuide 跟随，
+    /// 本动画只动输入栏高度，不与键盘动画争抢。
     private func updateInputTextViewHeight() {
         let width = inputTextView.bounds.width
         guard width > 0 else { return }
@@ -667,9 +671,27 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         let maxHeight = font.lineHeight * 5 + insets
         let fitting = inputTextView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
         let height = min(max(fitting, minHeight), maxHeight)
-        if inputTextViewHeightConstraint?.constant != height {
-            inputTextViewHeightConstraint?.constant = height
+        guard let constraint = inputTextViewHeightConstraint, constraint.constant != height else { return }
+        // 同字号同宽下 sizeThatFits 按行高阶梯变，高度变化即行数变化。
+        let delta = height - constraint.constant
+        constraint.constant = height
+        let atBottom = isNearBottom()
+        guard BearyMotion.animated(true) else {
+            view.layoutIfNeeded()
+            if atBottom { scrollToBottomIfNeeded() }
+            return
         }
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+            self.view.layoutIfNeeded()
+            if atBottom {
+                // 输入栏长高、列表底边上移时，把 offset 同量下移，末条消息钉在原地；
+                // 输入栏缩回时反向。夹在合法偏移区间内，不越界。
+                let top = -self.tableView.adjustedContentInset.top
+                let bottom = max(top, self.tableView.contentSize.height - self.tableView.bounds.height + self.tableView.adjustedContentInset.bottom)
+                self.tableView.contentOffset.y = min(max(self.tableView.contentOffset.y + delta, top), bottom)
+            }
+            // 不在底部时不碰 contentOffset：列表顶边不动，阅读位置自然保留。
+        }, completion: nil)
     }
 
     /// 输入框占位与接近 2000 字计数（审计）：占位随有无文字显隐；
