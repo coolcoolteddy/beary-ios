@@ -1768,6 +1768,12 @@ extension UIImageView {
     }
 
     func bearySetImage(url: URL?, placeholder: UIImage? = nil, downsampleToWidth: CGFloat? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil) {
+        // 同图重配：目标与当前一致且已有显示图时保留，不清图、不重下，
+        // 慢网下不闪成占位；在途的同 URL 加载继续跑，不取消。换图、
+        // 复用到其他日记（URL 不同）或图还没显示出来时照旧走加载。
+        if let url = url, url == (objc_getAssociatedObject(self, &bearyImageURLKey) as? URL), self.image != nil {
+            return
+        }
         if let old = objc_getAssociatedObject(self, &bearyImageTaskKey) as? URLSessionDataTask {
             old.cancel()
         }
@@ -1813,6 +1819,12 @@ extension UIImageView {
     /// 容器尺寸由调用方预先固定（卡片图片条 216 高、宽按宽高比预留），
     /// 本方法不改布局、不跳动；小图失败不挡原图加载。
     func bearySetImageWithBlurUp(url: URL?, downsampleToWidth: CGFloat? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil) {
+        // 同图重配：目标与当前一致且已有显示图时保留，不清 nil、不重下，
+        // 慢网下不闪成占位；在途的同 URL 加载继续跑，不取消。换图、
+        // 复用到其他日记（URL 不同）或图还没显示出来时照旧走加载。
+        if let url = url, url == (objc_getAssociatedObject(self, &bearyImageURLKey) as? URL), self.image != nil {
+            return
+        }
         if let old = objc_getAssociatedObject(self, &bearyImageTaskKey) as? URLSessionDataTask {
             old.cancel()
         }
