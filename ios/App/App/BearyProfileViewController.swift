@@ -3322,20 +3322,29 @@ class BearyProfileViewController: UIViewController {
         }
         if hadHeader {
             // 已装表头才做动画：首装直接落位（封面 180 首帧最终态，不做展开动画）。
-            let delta = fittingHeight - oldSize.height
             let offsetY = tableView.contentOffset.y
+            // 锚点：视口顶部所在行。视口顶部在表头内时无行——此时视口
+            // 顶部内容本身没动（增高发生在表头下方），不补偿；只有视
+            // 口顶部已是行（表头已滚出屏幕）时，才把锚点行钉回原视口
+            // 位置。旧路 offsetY > 0 即补整量 delta，封面仍在眼前也
+            // 会被硬顶 delta。
+            let anchorPath = tableView.indexPathForRow(at: CGPoint(x: tableView.bounds.midX, y: offsetY))
+            let anchorViewportOffset: CGFloat? = {
+                guard let path = anchorPath else { return nil }
+                return tableView.rectForRow(at: path).origin.y - offsetY
+            }()
             UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: {
                 self.tableView.beginUpdates()
                 self.tableView.tableHeaderView = self.headerView
                 self.tableView.endUpdates()
-                // 已滚动时把可见行钉在原地：增高量由已滚出屏幕的表头吸掉，
-                // 行不动、只表头在视口外长；未滚动（offset 0）时不补偿，
-                // 列表随表头展开自然下移 0.26s，封面不被顶出屏幕。
-                if offsetY > 0 {
-                    var offset = self.tableView.contentOffset
-                    offset.y = max(0, offsetY + delta)
-                    self.tableView.contentOffset = offset
-                }
+                // 拖动中不强行覆盖手势；无锚点（视口顶部在表头内）时不补偿。
+                guard let path = anchorPath, let anchorViewportOffset = anchorViewportOffset,
+                      !self.tableView.isDragging, !self.tableView.isDecelerating else { return }
+                let minY = -self.tableView.adjustedContentInset.top
+                let maxY = max(minY, self.tableView.contentSize.height - self.tableView.bounds.height + self.tableView.adjustedContentInset.bottom)
+                var offset = self.tableView.contentOffset
+                offset.y = min(max(self.tableView.rectForRow(at: path).origin.y - anchorViewportOffset, minY), maxY)
+                self.tableView.contentOffset = offset
             })
         } else {
             tableView.tableHeaderView = headerView
