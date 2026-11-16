@@ -499,7 +499,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         emptyIcon.tintColor = BearyStarMapNight.selected
         emptyIcon.contentMode = .scaleAspectFit
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-        emptyLabel.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 16))
+        emptyLabel.font = BearyDynamicType.cappedFont(for: BearyDynamicType.serif(UIFont.boldSystemFont(ofSize: 16)))
         emptyLabel.adjustsFontForContentSizeCategory = true
         emptyLabel.textColor = BearyStarMapNight.primaryText
         emptyLabel.textAlignment = .center
