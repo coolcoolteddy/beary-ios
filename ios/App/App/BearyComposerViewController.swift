@@ -3788,8 +3788,35 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 第二轮增量审计第 6 项：96 必需高随显隐启停——隐藏时停用，否则隐藏的
     /// arranged 子项仍被自身必需高撑住、与 stack 的隐藏折叠冲突（UISV-hiding）。
     private func refreshImageStripVisibility() {
-        imageScrollView.isHidden = imageItems.isEmpty
-        imageStripHeightConstraint?.isActive = !imageItems.isEmpty
+        let shouldShow = !imageItems.isEmpty
+        let heightActive = imageStripHeightConstraint?.isActive ?? false
+        // 减弱动效开启时不做动画，直接落到终态。
+        let duration = UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal
+        if shouldShow {
+            // 已显示或正在显示中：不重复开动画。
+            guard imageScrollView.isHidden || !heightActive else { return }
+            // 先取消隐藏再长高：若先启 96 高再取消隐藏，stack 的隐藏折叠会
+            // 把正文先顶下去、图片条后出现，顺序反了。
+            imageScrollView.isHidden = false
+            UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState], animations: {
+                self.imageStripHeightConstraint?.isActive = true
+                self.view.layoutIfNeeded()
+            })
+        } else {
+            // 已隐藏或正在隐藏中：不重复开动画。
+            guard !imageScrollView.isHidden && heightActive else { return }
+            // 先缩高度、动画走完再隐藏：若先 isHidden = true，stack 的
+            // UISV-hiding 会立即把整条折掉，正文先跳、动画后跑，顺序反了。
+            UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState], animations: {
+                self.imageStripHeightConstraint?.isActive = false
+                self.view.layoutIfNeeded()
+            }, completion: { _ in
+                // 完成时若中途又加了图，不藏。
+                if self.imageItems.isEmpty {
+                    self.imageScrollView.isHidden = true
+                }
+            })
+        }
     }
 
     // MARK: - 工具栏（C1：左 [图片][心情][天气][@][引用]、右 [字数圆环]；
