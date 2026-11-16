@@ -489,7 +489,6 @@ final class BearyMessagesViewController: UIViewController {
         // B3：锚点只按行 ID 记——首个可见行的 key + 视口内偏移；
         // 旧表为空即首拉，不记锚点、不动偏移。
         let anchor = anchorForVisibleTopRow(in: oldRows)
-        let oldHeight = tableView.contentSize.height
         let responseOffsetY = tableView.contentOffset.y
         if !oldRows.isEmpty, let batch = diffBatch(from: oldRows, to: newRows) {
             // 小改动：按行更新——删/插/移/重载各走各的口径；模型已是新态，
@@ -504,7 +503,7 @@ final class BearyMessagesViewController: UIViewController {
                 self.tableView.reloadRows(at: batch.reloads, with: .none)
             }, completion: { _ in
                 self.mergedBatchInFlight = false
-                self.restoreAnchor(anchor, oldHeight: oldHeight, responseOffsetY: responseOffsetY)
+                self.restoreAnchor(anchor, responseOffsetY: responseOffsetY)
                 self.updateMergedVisibility()
                 self.playStaggeredEntranceIfNeeded()
                 self.checkNotifSeenIfVisible()
@@ -520,7 +519,7 @@ final class BearyMessagesViewController: UIViewController {
             // 上直接 abort（消息页首开闪退即此坑）。
             tableView.reloadData()
             tableView.layoutIfNeeded()
-            restoreAnchor(anchor, oldHeight: oldHeight, responseOffsetY: responseOffsetY)
+            restoreAnchor(anchor, responseOffsetY: responseOffsetY)
             updateMergedVisibility()
             playStaggeredEntranceIfNeeded()
             checkNotifSeenIfVisible()
@@ -626,26 +625,71 @@ final class BearyMessagesViewController: UIViewController {
         return batch
     }
 
+    /// B3：可见顶行锚点——key + 视口内偏移；nearby 存锚点前后各 5 行的
+    /// 旧绝对 y，锚点行消失时找邻近存活行保位。
+    private struct VisibleTopAnchor {
+        let key: String
+        let viewportOffset: CGFloat
+        /// 按旧下标排序的 (key, 更新前绝对 y)，含锚点行本身。
+        let nearby: [(key: String, oldY: CGFloat)]
+    }
+
     /// B3：首个可见行的锚点（key + 视口内偏移）——保位按行 ID，不只保偏移数值。
-    private func anchorForVisibleTopRow(in rows: [MergedRow]) -> (key: String, viewportOffset: CGFloat)? {
+    private func anchorForVisibleTopRow(in rows: [MergedRow]) -> VisibleTopAnchor? {
         guard let path = tableView.indexPathsForVisibleRows?.sorted().first,
               path.row < rows.count else { return nil }
         let rect = tableView.rectForRow(at: path)
-        return (key: key(for: rows[path.row]), viewportOffset: rect.origin.y - tableView.contentOffset.y)
+        let lo = max(0, path.row - 5)
+        let hi = min(rows.count - 1, path.row + 5)
+        var nearby: [(key: String, oldY: CGFloat)] = []
+        nearby.reserveCapacity(hi - lo + 1)
+        for row in lo...hi {
+            let r = tableView.rectForRow(at: IndexPath(row: row, section: 0))
+            nearby.append((key: key(for: rows[row]), oldY: r.origin.y))
+        }
+        return VisibleTopAnchor(
+            key: key(for: rows[path.row]),
+            viewportOffset: rect.origin.y - tableView.contentOffset.y,
+            nearby: nearby
+        )
     }
 
-    /// B3：有插入/移动时把锚点行放回原视口位置；锚点行已消失时按插入
-    /// 高度平移当刻视口；无锚点（首拉/旧表为空）时不动偏移。
-    private func restoreAnchor(_ anchor: (key: String, viewportOffset: CGFloat)?, oldHeight: CGFloat, responseOffsetY: CGFloat) {
+    /// B3：只补偿更新导致的锚点位移，不覆盖更新期间用户产生的位移——
+    /// 完成时先取当刻偏移，与更新前偏移之差即用户在 batch 动画期间滚
+    /// 的量，加进目标偏移里；锚点行已消失时找邻近仍存在行，按它新旧
+    /// 绝对位置之差平移，不再用整表高度差（底部增删也会被算进去）；
+    /// 锚点及附近行全消失时不动偏移。无锚点（首拉/旧表为空）时不动偏移。
+    private func restoreAnchor(_ anchor: VisibleTopAnchor?, responseOffsetY: CGFloat) {
         guard let anchor = anchor else { return }
         tableView.layoutIfNeeded()
+        // 用户在 batch 动画期间滚的量：完成时偏移 − 更新前偏移；
+        // 用户没动时为 0，目标与旧行为一致。
+        let userDelta = tableView.contentOffset.y - responseOffsetY
         if let newIndex = mergedRows.firstIndex(where: { key(for: $0) == anchor.key }) {
             let rect = tableView.rectForRow(at: IndexPath(row: newIndex, section: 0))
-            tableView.contentOffset = CGPoint(x: 0, y: rect.origin.y - anchor.viewportOffset)
-        } else {
-            let delta = tableView.contentSize.height - oldHeight
-            tableView.contentOffset = CGPoint(x: 0, y: responseOffsetY + delta)
+            setClampedContentOffsetY(rect.origin.y - anchor.viewportOffset + userDelta)
+            return
         }
+        // 锚点行已消失：从锚点旧位置向两侧找最近的仍存在行。
+        guard let anchorPos = anchor.nearby.firstIndex(where: { $0.key == anchor.key }) else { return }
+        for distance in 1...5 {
+            for pos in [anchorPos - distance, anchorPos + distance] {
+                guard anchor.nearby.indices.contains(pos) else { continue }
+                let candidate = anchor.nearby[pos]
+                guard let newIndex = mergedRows.firstIndex(where: { key(for: $0) == candidate.key }) else { continue }
+                let rect = tableView.rectForRow(at: IndexPath(row: newIndex, section: 0))
+                setClampedContentOffsetY(responseOffsetY + (rect.origin.y - candidate.oldY) + userDelta)
+                return
+            }
+        }
+        // 锚点及附近行全消失：不动偏移。
+    }
+
+    /// 偏移 clamp 到合法区间，避免目标越界后回弹。
+    private func setClampedContentOffsetY(_ y: CGFloat) {
+        let top = -tableView.adjustedContentInset.top
+        let bottom = max(top, tableView.contentSize.height - tableView.bounds.height + tableView.adjustedContentInset.bottom)
+        tableView.contentOffset = CGPoint(x: 0, y: min(max(y, top), bottom))
     }
 
     /// 通知行错峰入场：重建后对可见新行播（前 24 行、alpha 0、y -24、
