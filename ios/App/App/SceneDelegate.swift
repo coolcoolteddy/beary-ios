@@ -4756,6 +4756,12 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
     }
 
     override func dismissalTransitionWillBegin() {
+        // 退场守卫（弹窗退场守卫修复第 2 项）：退场动画器同样驱动 presentedView.transform
+        // （下滑出屏），退场期间 containerViewWillLayoutSubviews 若写 frame 即写在
+        // 非 identity transform 下、frame 未定义；此前 isTransitioning 只在入场置位，
+        // 退场期间守卫放行。入场同款口径：退场起手置位、退场结束复位（取消退场也复位，
+        // 恢复正常写帧）。
+        isTransitioning = true
         if UIAccessibility.isReduceMotionEnabled {
             dimmingView.alpha = 0
         } else if let coordinator = presentedViewController.transitionCoordinator {
@@ -4789,6 +4795,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
     }
 
     override func dismissalTransitionDidEnd(_ completed: Bool) {
+        isTransitioning = false
         if completed {
             // 审计 2026-11-02 弹窗组：取消路径同时清遮罩与阴影，再通知调用方清理。
             dimmingView.removeFromSuperview()
