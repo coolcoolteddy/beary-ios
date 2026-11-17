@@ -12,9 +12,9 @@ import NaturalLanguage
 // - 空态塌掉：调用方（ProfileVC renderModules）按本层返回的空信号整卡隐藏，
 //   不留空标题；唯一例外是「那年今日」空态——预览明确要求显示解释性空态卡
 //   （「往年今天还没有日记，不编造」），那不是空标题，是有文案的空态。
-// - 年度回顾入口卡仍只本人可见；但词汇指纹（年报首屏主视觉 + 写作统计卡
-//   紧凑版）本人与他人均可见：他人态只按公开篇统计并标注「仅公开篇」，
-//   见 BearyWordprint.swift 与本文件 wordprint() 的双层 fail-closed 过滤。
+// - 年度回顾入口卡与词汇指纹（年报首屏主视觉 + 写作统计卡
+//   紧凑版）只本人可见（#112 他人页模块组不渲染）；统计仍走
+//   BearyWordprint.swift 与本文件 wordprint() 的双层 fail-closed 过滤。
 // - 主题氛围不是一张卡：见 BearyProfileThemeTint（默认墨色现行，不新增 theme_tint 列，
 //   可自选功能待 Li 另定后再把该列绑到 applyProfileThemeTint 的入参上）。
 
@@ -322,8 +322,7 @@ enum BearyProfilePersonalLogic {
     /// emoji（见 isCountableWord）；同一篇内重复按实际次数计入总次数，
     /// 出现篇数与月份分布按篇计（每篇每词每月各计 1 次）。
     /// fail-closed：入参即使是未过滤的全量语料，本函数也先走 visibleEntries
-    /// 再过滤一次——他人态私密篇独有的词进不了词表，私密篇集中的月份也不会
-    /// 在他人月份分布里冒头；无 createdAt 的条目无法归属年份，不计入。
+    /// 再过滤一次；无 createdAt 的条目无法归属年份，不计入。
     /// 不新增写库：纯内存计算，调用方传入的已是内存语料；切年份只重算当选年份。
     /// 注意：NLTokenizer 是设备端分词，无网络、无新依赖；分词质量以系统为准，
     /// 不自写二元切分（自写切分会把「秋天」切成「秋」「天」或拼出不存在的词）。
@@ -592,10 +591,10 @@ enum BearyProfilePersonalLogic {
 
 // MARK: - 年报最小版（词汇指纹为主视觉）
 //
-// 可达性：本人经年度回顾入口卡，他人经写作统计卡（点整卡进本页）——
-// 两路传入的都是调用方已按 visibleEntries 过滤的语料，本页再以
-// filteredEntries（构造时过滤一次）+ wordprint 内部过滤一次兜底；
-// 他人页通篇只按公开篇统计，首屏指纹徽标行明确标注「仅公开篇」。
+// 可达性：只本人可达——本人经年度回顾入口卡或写作统计卡（点整卡进本页），
+// 他人页模块组不渲染（#112），本页不可达他人态。传入的都是调用方已按
+// visibleEntries 过滤的语料，本页再以 filteredEntries（构造时过滤一次）
+// + wordprint 内部过滤一次兜底。
 // 每年一张：年份选择器只列有词条目的年份（availableYears），切年份时
 // renderSelectedYear 先清空动态栈再重建——旧年词行绝不残留到新年；
 // 每次只算当选年份。同一次打开内切回看过的年份，聚合结果取缓存、
@@ -604,8 +603,7 @@ enum BearyProfilePersonalLogic {
 // 词汇指纹走后台算 + 内存缓存（键 = 账号 / 年份 /
 // 语料指纹，不写库）：其余各节同步建好立即呈现，词行算完后插回栈顶，
 // 顺序与同步版最终一致；快速连点年份时旧年结果凭代次丢弃。
-// 无词时指纹一节整节省略（不留空标题），但口径徽标行仍单独出现，
-// 避免他人页在无词年里丢了「仅公开篇」标注。
+// 无词时指纹一节整节省略（不留空标题），但口径徽标行仍单独出现。
 
 final class BearyYearReviewViewController: UIViewController {
 
@@ -647,7 +645,7 @@ final class BearyYearReviewViewController: UIViewController {
         if let authorId = filteredEntries.compactMap({ $0.authorId }).first {
             return "author:\(authorId)"
         }
-        return isOwnFlag ? "own:unknown" : "other:unknown"
+        return "own:unknown"
     }
 
     private let titleLabel: UILabel = {
@@ -808,10 +806,6 @@ final class BearyYearReviewViewController: UIViewController {
         renderSelectedYear()
     }
 
-    private var scopeValue: BearyWordprintScope {
-        return isOwnFlag ? .own : .other
-    }
-
     /// [24] 小项 5：年报脚注唯一出处（空年与非空年共用，防两处文案漂移）。
     private func makeYearReviewFootnote() -> UILabel {
         let footnote = UILabel()
@@ -888,7 +882,7 @@ final class BearyYearReviewViewController: UIViewController {
         let calendar = Self.beijingCalendar
         let yearEntriesValue = BearyProfilePersonalLogic.yearEntries(entries: filteredEntries, year: selectedYear, calendar: calendar)
         guard !yearEntriesValue.isEmpty else {
-            dynamicStack.addArrangedSubview(bearyMakeWordprintScopeBadge(scope: scopeValue))
+            dynamicStack.addArrangedSubview(bearyMakeWordprintScopeBadge())
             let emptyLabel = UILabel()
             emptyLabel.numberOfLines = 0
             emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
@@ -1013,11 +1007,11 @@ final class BearyYearReviewViewController: UIViewController {
             // · 恢复已跑且用户已滚动：只补插入高度，保住当前阅读行。
             let insertedRow: UIView
             if !wordprintValue.items.isEmpty {
-                self.wordprintView.configure(with: wordprintValue, scope: self.scopeValue)
+                self.wordprintView.configure(with: wordprintValue)
                 insertedRow = self.wordprintView
             } else {
                 // 无词时整节省略，只留口径行（与同步版一致）。
-                insertedRow = bearyMakeWordprintScopeBadge(scope: self.scopeValue)
+                insertedRow = bearyMakeWordprintScopeBadge()
             }
             self.dynamicStack.insertArrangedSubview(insertedRow, at: 0)
             // 顶部场景：该年保存的位置就是顶部，且用户自恢复后没有滚动
@@ -1101,7 +1095,7 @@ final class BearyYearReviewViewController: UIViewController {
 
     private func presentWordDetail(item: BearyProfilePersonalLogic.WordprintItem) {
         guard presentedViewController == nil else { return }
-        let detail = BearyWordprintDetailViewController(item: item, year: selectedYear, scope: scopeValue)
+        let detail = BearyWordprintDetailViewController(item: item, year: selectedYear)
         detail.modalPresentationStyle = .pageSheet
         present(detail, animated: BearyMotion.animated(true), completion: nil)
     }
