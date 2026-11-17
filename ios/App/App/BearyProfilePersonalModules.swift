@@ -609,6 +609,14 @@ enum BearyProfilePersonalLogic {
 
 final class BearyYearReviewViewController: UIViewController {
 
+    /// 北京时间日历（Asia/Shanghai）——年度回顾的年份归属、连续天数、
+    /// 词汇指纹一律按北京时间算，不跟设备时区；与个人页 beijingCalendar 同口径。
+    private static var beijingCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+        return calendar
+    }
+
     private let filteredEntries: [Entry]
     private let isOwnFlag: Bool
     private let availableYearValues: [Int]
@@ -722,7 +730,7 @@ final class BearyYearReviewViewController: UIViewController {
     init(year: Int, allEntries: [Entry], isOwn: Bool) {
         self.filteredEntries = BearyProfilePersonalLogic.visibleEntries(allEntries, isOwn: isOwn)
         self.isOwnFlag = isOwn
-        let years = BearyProfilePersonalLogic.availableYears(entries: allEntries, isOwn: isOwn, calendar: .current)
+        let years = BearyProfilePersonalLogic.availableYears(entries: allEntries, isOwn: isOwn, calendar: Self.beijingCalendar)
         self.availableYearValues = years
         self.selectedYear = years.contains(year) ? year : (years.first ?? year)
         super.init(nibName: nil, bundle: nil)
@@ -877,7 +885,7 @@ final class BearyYearReviewViewController: UIViewController {
             arrangedView.removeFromSuperview()
         }
 
-        let calendar = Calendar.current
+        let calendar = Self.beijingCalendar
         let yearEntriesValue = BearyProfilePersonalLogic.yearEntries(entries: filteredEntries, year: selectedYear, calendar: calendar)
         guard !yearEntriesValue.isEmpty else {
             dynamicStack.addArrangedSubview(bearyMakeWordprintScopeBadge(scope: scopeValue))
