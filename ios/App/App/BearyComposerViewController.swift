@@ -6683,6 +6683,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                                         BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
                                                         // 身份已变：本项只剩预览图可传，按压缩计，不进确认。
                                                         item.uploadMode = .compressed
+                                                        // 已定项也清占位上传态，否则批收尾跳过它、圈永久转。
+                                                        self.markUploadIdle(item)
                                                         self.notePickPrepFinished(item)
                                                         return
                                                     }
@@ -6706,10 +6708,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                                 if let videoFile = videoFile {
                                                     item.liveVideoFile = videoFile
                                                 }
-                                                // 未确认的项停转圈、露预览（不等上传），发布钮不被锁死。
-                                                if item.uploadMode == nil {
-                                                    self.markUploadIdle(item)
-                                                }
+                                                // 准备完成即停占位转圈：建项时的 uploading=true 只是
+                                                // “正在准备图片”占位、不是在途上传；已定为压缩的项
+                                                // 也须清掉，否则批收尾的 !item.uploading 门禁拦住它、
+                                                // 上传从不起传，圈永久转。真正上传由批收尾起传
+                                                //（startUpload → markUploading）重新置态。
+                                                self.markUploadIdle(item)
                                                 self.saveDraftNow()
                                                 self.updatePublishState()
                                                 self.notePickPrepFinished(item)
@@ -6812,6 +6816,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                         BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
                                         // 身份已变：本项只剩预览图可传，按压缩计，不进确认。
                                         item.uploadMode = .compressed
+                                        // 已定项也清占位上传态，否则批收尾跳过它、圈永久转。
+                                        self.markUploadIdle(item)
                                         self.notePickPrepFinished(item)
                                         return
                                     }
@@ -6832,10 +6838,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                     // 上传时走 startUpload 的重编兜底（见上传入口）。
                                     item.uploadMode = .compressed
                                 }
-                                // 未确认的项停转圈、露预览（不等上传），发布钮不被锁死。
-                                if item.uploadMode == nil {
-                                    self.markUploadIdle(item)
-                                }
+                                // 准备完成即停占位转圈：建项时的 uploading=true 只是
+                                // “正在准备图片”占位、不是在途上传；已定为压缩的项
+                                // 也须清掉，否则批收尾的 !item.uploading 门禁拦住它、
+                                // 上传从不起传，圈永久转。真正上传由批收尾起传
+                                //（startUpload → markUploading）重新置态。
+                                self.markUploadIdle(item)
                                 self.saveDraftNow()
                                 self.updatePublishState()
                                 self.notePickPrepFinished(item)
