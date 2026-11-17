@@ -291,12 +291,14 @@ final class BearyStarMapTests: XCTestCase {
         XCTAssertEqual(ownModel.edges[0].reasons.filter { $0.kind == .place }.map { $0.detail }, ["示例咖啡馆"])
     }
 
-    func testMoodAndWordEdges() throws {
+    func testWordEdgesIgnoreMood() throws {
+        // 两篇同心情：心情不再连线；只剩同词边（共享“桂花”）。
         let a = try entry("{\"id\":\"b_ma\",\"content\":\"湖边桂花开了。\",\"mood\":\"happy\",\"is_public\":true}")
         let b = try entry("{\"id\":\"b_mb\",\"content\":\"桂花香满路。\",\"mood\":\"happy\",\"is_public\":true}")
         let model = BearyStarMap.buildModel(entries: [a, b], viewerIsAuthor: true)
         XCTAssertEqual(model.edges.count, 1)
-        XCTAssertTrue(model.edges[0].reasons.contains(where: { $0.kind == .mood && $0.detail == "happy" }))
+        XCTAssertEqual(model.edges[0].reasons.count, 1)
+        XCTAssertEqual(model.edges[0].reasons[0].kind, .word)
         let wordReasons = model.edges[0].reasons.filter { $0.kind == .word }
         XCTAssertEqual(wordReasons.count, 1)
         XCTAssertTrue(wordReasons[0].tokens.contains("桂花"))
@@ -304,7 +306,7 @@ final class BearyStarMapTests: XCTestCase {
 
     func testHighFrequencyWordDoesNotConnect() throws {
         // 4 篇都含“今天”：文档频率 4 > 上限 max(2, 4/2)=2，高频词不连线；
-        // 且各篇心情不同、无地点，避免其他原因成边。
+        // 心情字段留作旧数据（心情不再连线），无地点，避免其他原因成边。
         let jsons = [
             "{\"id\":\"b_hf1\",\"content\":\"今天。\",\"mood\":\"happy\",\"is_public\":true}",
             "{\"id\":\"b_hf2\",\"content\":\"今天好。\",\"mood\":\"cry\",\"is_public\":true}",
@@ -324,16 +326,15 @@ final class BearyStarMapTests: XCTestCase {
         XCTAssertTrue(model.edges.isEmpty)
     }
 
-    func testWordCountRadiusBrightness() throws {
+    func testWordCountRadius() throws {
         let e = try entry("{\"id\":\"b_wc\",\"title\":\"标题\",\"content\":\"正文 四字。\",\"mood\":\"happy\",\"is_public\":true}")
         // 标题 2 + 正文去空白 5 = 7。
         XCTAssertEqual(BearyStarMap.wordCount(e), 7)
         XCTAssertTrue(BearyStarMap.radius(forWordCount: 700) > BearyStarMap.radius(forWordCount: 7))
         XCTAssertEqual(BearyStarMap.radius(forWordCount: 0), 6)
-        XCTAssertEqual(BearyStarMap.brightness(forMoodKey: "happy"), 1.0)
-        XCTAssertEqual(BearyStarMap.brightness(forMoodKey: "cry"), 0.40)
-        XCTAssertEqual(BearyStarMap.brightness(forMoodKey: "some_future_key"), 0.75)
-        XCTAssertEqual(BearyStarMap.brightness(forMoodKey: nil), 0.70)
+        // 亮度不再按心情分档：固定 0.70。
+        let model = BearyStarMap.buildModel(entries: [e], viewerIsAuthor: true)
+        XCTAssertEqual(model.stars[0].brightness, 0.70)
     }
 
     func testSlicingAndDefaultSlice() throws {
@@ -367,10 +368,10 @@ final class BearyStarMapTests: XCTestCase {
         var edited = b
         edited.content = "桂花落了一地。"
         XCTAssertNotEqual(BearyStarMap.diaryVersion(entries: [a, edited], viewerIsAuthor: true), base)
-        // 改心情：亮度与同心情边都变，指纹必须变。
+        // 改心情：心情不再进模型，指纹必须不变。
         var moodEdited = b
         moodEdited.mood = "happy"
-        XCTAssertNotEqual(BearyStarMap.diaryVersion(entries: [a, moodEdited], viewerIsAuthor: true), base)
+        XCTAssertEqual(BearyStarMap.diaryVersion(entries: [a, moodEdited], viewerIsAuthor: true), base)
         // 改公开态：过滤集合变，指纹必须变。
         var visEdited = b
         visEdited.isPublic = false
@@ -429,11 +430,11 @@ final class BearyStarMapTests: XCTestCase {
 
     func testDiffFindsNewStarsAndEdges() throws {
         let a = try entry("{\"id\":\"b_d1\",\"content\":\"湖边桂花开了。\",\"mood\":\"happy\",\"is_public\":true}")
-        let b = try entry("{\"id\":\"b_d2\",\"content\":\"桂花香满路。\",\"mood\":\"happy\",\"is_public\":true}")
+        let b = try entry("{\"id\":\"b_d2\",\"content\":\"湖边桂花香。\",\"mood\":\"happy\",\"is_public\":true}")
         let old = BearyStarMap.buildModel(entries: [a, b], viewerIsAuthor: true)
         XCTAssertEqual(old.edges.count, 1)
-        // 新增一篇：同心情 + 同词，与旧两篇各连一条新线。
-        let c = try entry("{\"id\":\"b_d3\",\"content\":\"桂花落在湖边。\",\"mood\":\"happy\",\"is_public\":true}")
+        // 新增一篇：与旧两篇各连一条新线（同词）。
+        let c = try entry("{\"id\":\"b_d3\",\"content\":\"桂花落，花开花香。\",\"mood\":\"happy\",\"is_public\":true}")
         let new = BearyStarMap.buildModel(entries: [a, b, c], viewerIsAuthor: true)
         let diff = BearyStarMap.diff(old: old, new: new)
         XCTAssertEqual(diff.newStarIds, ["b_d3"])
@@ -442,28 +443,30 @@ final class BearyStarMapTests: XCTestCase {
         XCTAssertTrue(diff.newEdgeIds.allSatisfy { $0.contains("b_d3") })
         XCTAssertTrue(diff.removedEdgeIds.isEmpty)
         // 旧 a–b 边仍在，但“桂花”文档频率升到 3、超上限 max(2, 3/2)=2，
-        // 同词理由被抑制，只剩同心情——算理由变，不算新线。
+        // 同词理由被抑制，只剩“湖边”“边桂”——算理由变，不算新线。
         XCTAssertEqual(diff.changedEdgeIds, [old.edges[0].id])
     }
 
     func testDiffChangedEdgeReasonsOnly() throws {
-        // 两篇同心情 + 同词：边带 mood 与 word 两条理由。
+        // 两篇同词：边带一条 word 理由。
         let a = try entry("{\"id\":\"b_r1\",\"content\":\"湖边桂花开了。\",\"mood\":\"happy\",\"is_public\":true}")
         let b = try entry("{\"id\":\"b_r2\",\"content\":\"桂花香满路。\",\"mood\":\"happy\",\"is_public\":true}")
         let old = BearyStarMap.buildModel(entries: [a, b], viewerIsAuthor: true)
         XCTAssertEqual(old.edges.count, 1)
-        XCTAssertEqual(old.edges[0].reasons.count, 2)
-        // 只改一篇心情：边还在（同词），理由少一条 mood——只算理由变，
+        XCTAssertEqual(old.edges[0].reasons.count, 1)
+        XCTAssertEqual(old.edges[0].reasons[0].kind, .word)
+        // 只改一篇正文：边还在（同词），共享词从“桂花”变成三词——只算理由变，
         // 不算新线、不算新星。
-        var moodEdited = b
-        moodEdited.mood = "cry"
-        let new = BearyStarMap.buildModel(entries: [a, moodEdited], viewerIsAuthor: true)
+        var contentEdited = b
+        contentEdited.content = "湖边桂花香。"
+        let new = BearyStarMap.buildModel(entries: [a, contentEdited], viewerIsAuthor: true)
         let diff = BearyStarMap.diff(old: old, new: new)
         XCTAssertEqual(diff.newStarIds, [])
         XCTAssertEqual(diff.newEdgeIds, [])
         XCTAssertEqual(diff.changedEdgeIds, [old.edges[0].id])
         XCTAssertEqual(new.edges[0].reasons.count, 1)
         XCTAssertEqual(new.edges[0].reasons[0].kind, .word)
+        XCTAssertEqual(new.edges[0].reasons[0].tokens, ["桂花", "湖边", "边桂"])
     }
 
     func testDiffRemovedStarsAndFirstLoad() throws {

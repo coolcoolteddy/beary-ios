@@ -7,8 +7,8 @@ import Foundation
 // UI（BearyDiaryStarMapViewController）只渲染本文件算出的模型，不自算过滤与连线。
 //
 // 口径（与预览一致，偏离处有注）：
-// - 星：过滤后每篇一篇。大小 = 字数，亮度 = 心情，位置 = 日记 id 确定性哈希。
-// - 连线：同心情 / 同地点 / 同词，三者可并存于一对篇之间（一条边带多条原因）。
+// - 星：过滤后每篇一篇。大小 = 字数，亮度固定，位置 = 日记 id 确定性哈希。
+// - 连线：同地点 / 同词，两者可并存于一对篇之间（一条边带多条原因）。
 // - 他人视角 fail-closed：过滤与连线都在过滤后的集合上算，私密篇连同它的
 //   连线一并消失；他人地点键只用区级，精确名永远不作兜底、不进原因文案。
 // - 草稿与回收站篇不进：数据源是作者日记列表（已发布篇），本文件不再二次区分。
@@ -17,17 +17,16 @@ import Foundation
 
 /// 星图边的原因种类（过滤 chips 与原因文案共用）。
 enum StarMapEdgeKind: String {
-    case mood
     case place
     case word
 }
 
-/// 一条连线原因。detail 的含义按 kind 而定：mood = 心情 key，place = 地点键，
+/// 一条连线原因。detail 的含义按 kind 而定：place = 地点键，
 /// word = ""（共享词放 tokens）。展示层据此翻译成中文，纯逻辑层不绑
 /// BearyText（BearyNativeCommon 不进测试 target），避免测试 target 依赖膨胀。
 struct StarMapEdgeReason: Equatable {
     let kind: StarMapEdgeKind
-    /// mood/place 的键；word 时为空串。
+    /// place 的键；word 时为空串。
     let detail: String
     /// word 时的共享词（已按字符串排序、展示层再截断）；其余 kind 为空。
     let tokens: [String]
@@ -41,7 +40,7 @@ struct StarMapStar {
     let y: Double
     /// 半径 pt：6...20，见 radius(forWordCount:)。
     let radius: CGFloat
-    /// 亮度 0.40...1.0，见 brightness(forMoodKey:)。
+    /// 亮度固定 0.70（心情已去掉，不再按心情分档）。
     let brightness: CGFloat
     let wordCount: Int
 }
@@ -97,11 +96,11 @@ enum BearyStarMap {
 
     /// 建模算法版本：buildModel / 过滤 / 关键词 / 地点键任一口径改了即 +1，
     /// 旧缓存键随之失效，不用手动清盘。缓存键里只认本值，不认 App 版本号。
-    static let algorithmVersion = 1
+    static let algorithmVersion = 2
 
     /// 日记版本指纹：分片内可见篇的建模输入摘要。覆盖 buildModel 消费的
     /// 全部字段——过滤（id / 占位 / 公开态 / 限时到期 / 标题 / 正文 /
-    /// 图片 / 引用）、字数与亮度（标题 / 正文 / 心情）、地点键
+    /// 图片 / 引用）、字数（标题 / 正文）、地点键
     /// （精确名 / 区级）、同词（标题 / 正文）与分片归属（createdAt），
     /// 另含 viewer 角色（本人 / 他人地点键与过滤口径不同）。
     /// 改正文会改整片的词频与文档频率上限，故指纹按整片算，不按单篇失效：
@@ -122,7 +121,6 @@ enum BearyStarMap {
             joined += (entry.id ?? "")
                 + "\u{1}" + (entry.title ?? "")
                 + "\u{1}" + (entry.content ?? "")
-                + "\u{1}" + (entry.mood ?? "")
                 + "\u{1}" + (entry.locationName ?? "")
                 + "\u{1}" + (entry.locationDistrict ?? "")
                 + "\u{1}" + pub
@@ -184,24 +182,6 @@ enum BearyStarMap {
     /// 放大一档以保证小屏上最小星仍可点；字数 0 → 6）。
     static func radius(forWordCount count: Int) -> CGFloat {
         6 + min(14, CGFloat(max(0, count)) / 40)
-    }
-
-    /// 亮度：预览四档（开心 1 / 平静 .75 / 想念 .55 / 低落 .4）映射到
-    /// App 的 40 个心情 key。无心情与未知 key 一律回中档 0.70——
-    /// 不冒充最亮、也不打到最暗；亮度只是展示分层，不作任何门控。
-    static func brightness(forMoodKey key: String?) -> CGFloat {
-        guard let key = key, !key.isEmpty else { return 0.70 }
-        switch key {
-        case "happy", "love", "cheer", "applause", "proud", "thanks", "zap",
-             "wave", "wink", "kiss", "hug", "pat", "comfort", "determined":
-            return 1.0
-        case "cry", "angry":
-            return 0.40
-        case "lonely", "confused", "facepalm", "sorry", "sleepy":
-            return 0.55
-        default:
-            return 0.75
-        }
     }
 
     // MARK: - 星位：FNV-1a 64 位确定性哈希（不用 Swift Hasher）
@@ -376,7 +356,7 @@ enum BearyStarMap {
                 x: pos.x,
                 y: pos.y,
                 radius: radius(forWordCount: count),
-                brightness: brightness(forMoodKey: entry.mood),
+                brightness: 0.70,
                 wordCount: count
             ))
             entryById[id] = entry
@@ -390,14 +370,11 @@ enum BearyStarMap {
             keywordsById[id] = keys
             for key in keys { docFreq[key, default: 0] += 1 }
         }
-        // 心情 / 地点键：逐对循环内只做查表，不再每对重复 trim 与 placeKey
+        // 地点键：逐对循环内只做查表，不再每对重复 trim 与 placeKey
         //（r18 ㊳；关键词的 keywordsById / docFreq 早已预计算，不动）。
-        var moodById: [String: String] = [:]
         var placeKeyById: [String: String] = [:]
         for entry in visible {
             guard let id = entry.id else { continue }
-            let mood = (entry.mood ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !mood.isEmpty { moodById[id] = mood }
             if let place = placeKey(entry, viewerIsAuthor: viewerIsAuthor) {
                 placeKeyById[id] = place
             }
@@ -408,9 +385,6 @@ enum BearyStarMap {
             for j in visible.indices where j > i {
                 guard let a = visible[i].id, let b = visible[j].id else { continue }
                 var reasons: [StarMapEdgeReason] = []
-                if let moodA = moodById[a], moodA == moodById[b] {
-                    reasons.append(StarMapEdgeReason(kind: .mood, detail: moodA, tokens: []))
-                }
                 if let placeA = placeKeyById[a],
                    let placeB = placeKeyById[b],
                    placeA == placeB {
