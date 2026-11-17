@@ -77,7 +77,6 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     var containerHeight: CGFloat = 800
 
     private let grabberView = UIView()
-    private let closeButton = BearyButton.closeButton()
     private let titleLabel = UILabel()
     private var emoteCollectionView: UICollectionView?
     private var collectionHeightConstraint: NSLayoutConstraint?
@@ -166,12 +165,6 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         grabberView.backgroundColor = BearyColors.gray
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
         view.addSubview(grabberView)
-
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
-        closeButton.accessibilityLabel = "关闭"
-        view.addSubview(closeButton)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "选择心情"
@@ -272,14 +265,9 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
             grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
 
-            closeButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 16),
-            closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
-
             titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 14),
             titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18),
-            titleLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -12),
+            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
 
             collection.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
             collection.leadingAnchor.constraint(equalTo: view.leadingAnchor),
