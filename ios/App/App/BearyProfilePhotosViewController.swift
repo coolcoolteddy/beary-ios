@@ -524,6 +524,30 @@ final class BearyProfilePhotosViewController: UIViewController {
             // 逐张替换或移除，不在首个无图续页回包时整批丢掉。
             self.pendingCachedPhotos = restored
             self.photosFromCache = true
+            // exp2-#7：快照恢复同时回填续拉游标——快照存的 hasMore 与 entries
+            // 此前只用来拼照片：diaryEntriesValue 仍空、photosHasMore 仍是进页
+            // 旧值，续拉在取尾游标处取不到就把 hasMore 置 false 静默返回，
+            // 第 61 张起再也拉不到。本处把 snap.entries 按 id 去重并进
+            // diaryEntriesValue（按 createdAt／id 倒序，与续拉游标同口径），
+            // photosHasMore 任一来源为真即有更多页（快照的“已翻到尾”只在
+            // 未确认新回包时可信，已确认翻到尾时本恢复根本不跑，见上守门）；
+            // 滚到底即可继续拉下一页，断网时走已有失败态（toast＋重试节＋
+            // “显示的是上次的数据”）。新回包一到仍整批覆盖（见首拉成功分支）。
+            self.photosHasMore = snap.hasMore || self.photosHasMore
+            var seenEntryIds = Set(self.diaryEntriesValue.compactMap { $0.id })
+            var mergedEntries = self.diaryEntriesValue
+            for entry in snap.entries {
+                guard let entryId = entry.id, !entryId.isEmpty, !seenEntryIds.contains(entryId) else { continue }
+                seenEntryIds.insert(entryId)
+                mergedEntries.append(entry)
+            }
+            mergedEntries.sort {
+                let leftCreated = $0.createdAt ?? 0
+                let rightCreated = $1.createdAt ?? 0
+                if leftCreated != rightCreated { return leftCreated > rightCreated }
+                return ($0.id ?? "") > ($1.id ?? "")
+            }
+            self.diaryEntriesValue = mergedEntries
             self.collectionView.reloadData()
             self.updateTitleAndEmpty()
         }
