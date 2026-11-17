@@ -2319,6 +2319,10 @@ class BearyTimelineViewController: UIViewController {
     /// 骨架是否实际出过屏：首屏回包时内容按 60ms/8px 入场，骨架背景视图
     /// 0.26s 淡出再摘（见 updateChrome）。
     private var didShowTimelineSkeleton = false
+    /// 本页是否已展示过日记行：首进冷启动的首屏直接落位，不播 60ms/8px
+    /// 入场错峰（行先摆低 8pt 再上移即“往上移动一下”）；之后重载
+    /// 仍按旧口径错峰入场。
+    private var hasShownTimelineRows = false
     /// 加载三件套·底部脚部（加载中 3 个跳动圆点 / 没有更多了 / 失败重试）。
     private let timelineLoadMoreFooterView = BearyLoadMoreFooterView()
     private var lastTimelineFooterSignature = ""
@@ -3248,6 +3252,8 @@ class BearyTimelineViewController: UIViewController {
         }
         clearStaggerEntries()
         tableView.reloadData()
+        // 缓存快照已落表：本页已有行，之后首屏回包的新行错峰口径不变。
+        hasShownTimelineRows = true
         updateTrashTitle()
         updateCountsLabel()
         refreshHeaderHeight()
@@ -5041,13 +5047,18 @@ class BearyTimelineViewController: UIViewController {
             // diff 已插删改，跳过整表重载。
         } else {
             tableView.reloadData()
-            if didShowTimelineSkeleton {
+            if didShowTimelineSkeleton && hasShownTimelineRows {
                 // 加载三件套·骨架淡出后内容入场：首屏行从上到下每块错开 60ms、
                 // 依次淡入并上移 8px（骨架背景视图由 updateChrome 0.26s 淡出）。
                 tableView.layoutIfNeeded()
                 let cells = (tableView.indexPathsForVisibleRows ?? []).sorted().compactMap { tableView.cellForRow(at: $0) }
                 BearyLoadingUX.staggerIn(cells: cells, delayStep: 0.06, yOffset: 8)
             }
+        }
+        // 首屏已落表：之后重载恢复 60ms/8px 入场错峰；本次是否错峰
+        // 由上面分支在置位前判定，故首进直接落位、之后仍错峰。
+        if !timelineEntries.isEmpty || !dayEntries.isEmpty {
+            hasShownTimelineRows = true
         }
         updateChrome()
         if isCustomPullRefreshing {
