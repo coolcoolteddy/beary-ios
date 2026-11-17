@@ -774,7 +774,8 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
                 anyUnread: card.anyUnread,
                 isSystem: card.kind == .system,
                 expanded: false,
-                highlight: card.highlight
+                highlight: card.highlight,
+                mergedList: true
             )
             cell.setDetailChevron()
             // 复用 cell 的动画残留复位；未知 key 不置 alpha=0（pass 里统一播，
@@ -791,8 +792,9 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
             ) as? BearyNotificationCell else {
                 return UITableViewCell()
             }
-            // 信件行是顶层行（非卡片内嵌套）：头像 x=20、分隔线起于行左缘。
-            cell.configure(with: item, nested: false, highlight: notifChild.highlightForDetail(item))
+            // 信件行是顶层行（非卡片内嵌套）：头像 x=16、分隔线缩进 16、
+            // 行高 72、图标垂直居中，与私信行统一（mergedList）。
+            cell.configure(with: item, nested: false, highlight: notifChild.highlightForDetail(item), mergedList: true)
             if knownNotifKeys.contains(key(for: row)) {
                 cell.alpha = 1
                 cell.transform = .identity

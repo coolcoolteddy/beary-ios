@@ -1638,7 +1638,7 @@ final class BearyNotificationsViewController: UIViewController {
                 return
             }
             // 收起无动画：多行高度插值动画在约束打架下必留残影——
-            // 行高往 0 缩时头像 42 + 上下 16 的内容装不进，bottomGuard
+            // 行高往 0 缩时头像 42 + 上下 16 的内容装不进，底 guard
             // （999）与行高约束互斥，文本被纵向压扁；几十行同时插值，
             // 蓝底与竖线逐帧上移叠出拖影；App 动效铁律亦禁高度逐帧动画。
             // 故收起直接落终值（与减动效路径一致）：先改展开态、重建行表、
@@ -3469,6 +3469,9 @@ class BearyNotificationCell: UITableViewCell {
 
     private var avatarLeadingConstraint: NSLayoutConstraint?
     private var separatorLeadingConstraint: NSLayoutConstraint?
+    private var avatarTopConstraint: NSLayoutConstraint?
+    private var avatarCenterYConstraint: NSLayoutConstraint?
+    private var avatarBottomGuardConstraint: NSLayoutConstraint?
     private var dotTrailingToContentConstraint: NSLayoutConstraint?
     private var dotTrailingToChevronConstraint: NSLayoutConstraint?
 
@@ -3548,11 +3551,14 @@ class BearyNotificationCell: UITableViewCell {
         dotTrailingToChevronConstraint?.isActive = false
         unreadBgLeadingConstraint = unreadBgView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 0)
         unreadBgLeadingConstraint?.isActive = true
+        // 头像垂直锚点：默认顶锚 14（独立通知页现行）；合并消息页改居中（见 applyAvatarVerticalStyle）。
+        avatarTopConstraint = avatarImageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14)
+        avatarCenterYConstraint = avatarImageView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
+        avatarTopConstraint?.isActive = true
         NSLayoutConstraint.activate([
             unreadBgView.topAnchor.constraint(equalTo: contentView.topAnchor),
             unreadBgView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
             unreadBgView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            avatarImageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
             avatarImageView.widthAnchor.constraint(equalToConstant: 42),
             avatarImageView.heightAnchor.constraint(equalToConstant: 42),
             avatarFallbackLabel.centerXAnchor.constraint(equalTo: avatarImageView.centerXAnchor),
@@ -3602,10 +3608,10 @@ class BearyNotificationCell: UITableViewCell {
             nestedLineView.topAnchor.constraint(equalTo: contentView.topAnchor),
             nestedLineView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
-        // 底线贴行底时行高由内容撑起：头像 42 + 上下 16 即最小 74。
-        let bottomGuard = contentView.bottomAnchor.constraint(greaterThanOrEqualTo: avatarImageView.bottomAnchor, constant: 16)
-        bottomGuard.priority = UILayoutPriority(999)
-        bottomGuard.isActive = true
+        // 底线贴行底时行高由内容撑起：头像 42 + 顶 14 + 底 16 即最小 72。
+        avatarBottomGuardConstraint = contentView.bottomAnchor.constraint(greaterThanOrEqualTo: avatarImageView.bottomAnchor, constant: 16)
+        avatarBottomGuardConstraint?.priority = UILayoutPriority(999)
+        avatarBottomGuardConstraint?.isActive = true
     }
 
     required init?(coder: NSCoder) {
@@ -3651,6 +3657,10 @@ class BearyNotificationCell: UITableViewCell {
         chevronView.image = nil
         avatarLeadingConstraint?.constant = 16
         separatorLeadingConstraint?.constant = 0
+        // 头像垂直锚点复位到独立页基线（顶锚 14 + 底 guard 16）；合并页 configure 再按 mergedList 改。
+        avatarCenterYConstraint?.isActive = false
+        avatarTopConstraint?.isActive = true
+        avatarBottomGuardConstraint?.constant = 16
         nestedLineView.isHidden = true
         unreadBgView.backgroundColor = .clear
         unreadBgLeadingConstraint?.constant = 0
@@ -3766,10 +3776,28 @@ class BearyNotificationCell: UITableViewCell {
         applyCardCategoryColors(isSystem: isSystem, anyUnread: anyUnread)
     }
 
+    /// 合并消息页口径：头像改垂直居中（与私信行同款；居中 42 圆在 72 高行内
+    /// 上下各 15，底 guard 相应改为 15）；独立通知页仍走顶锚 14 + 底 guard 16。
+    /// 只由两 configure 方法的 mergedList 分支调；复用复位见 prepareForReuse。
+    private func applyAvatarVerticalStyle(mergedList: Bool) {
+        if mergedList {
+            avatarTopConstraint?.isActive = false
+            avatarCenterYConstraint?.isActive = true
+            avatarBottomGuardConstraint?.constant = 15
+        } else {
+            avatarCenterYConstraint?.isActive = false
+            avatarTopConstraint?.isActive = true
+            avatarBottomGuardConstraint?.constant = 16
+        }
+    }
+
     /// 折叠卡卡面：系统卡橙 14% 底 + mail 图，互动卡未读蓝 12% 底 + heart 图、
     /// 已读灰底＋墨图标（第十轮 #15）；未读底一律蓝 9%（网页 .nt-item.sys.unread，
     /// 互动卡同样带 sys 类）。
-    func configureAsCard(title: String, excerpt: String, timeMs: Int?, anyUnread: Bool, isSystem: Bool, expanded: Bool, highlight: Bool) {
+    /// - Parameter mergedList: 合并消息页时 true：分隔线缩进 16、标题/摘要不用
+    ///   1.5 倍行高、头像垂直居中，与私信行统一；独立通知页传 false（默认）。
+    func configureAsCard(title: String, excerpt: String, timeMs: Int?, anyUnread: Bool, isSystem: Bool, expanded: Bool, highlight: Bool, mergedList: Bool = false) {
+        applyAvatarVerticalStyle(mergedList: mergedList)
         cancelAvatarLoad()
         hideFollowAction()
         avatarRetryURL = nil
@@ -3785,8 +3813,8 @@ class BearyNotificationCell: UITableViewCell {
         avatarFallbackLabel.isHidden = true
         kindBadgeView.isHidden = true
         nestedLineView.isHidden = true
-        titleLabel.attributedText = BearyNotificationCell.lineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping)
-        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(excerpt, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray)
+        titleLabel.attributedText = BearyNotificationCell.lineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5)
+        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(excerpt, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5)
         lastTimeMs = timeMs
         timeLabel.text = BearyNotificationCell.timeText(ms: timeMs)
         chevronView.isHidden = false
@@ -3795,15 +3823,16 @@ class BearyNotificationCell: UITableViewCell {
         dotTrailingToContentConstraint?.isActive = false
         dotTrailingToChevronConstraint?.isActive = true
         avatarLeadingConstraint?.constant = 16
-        separatorLeadingConstraint?.constant = 0
+        separatorLeadingConstraint?.constant = mergedList ? 16 : 0
         nestedLineView.isHidden = true
     }
 
-    /// 网页 .nt-body line-height 1.5：标题 16→24、摘要 14→21，
-    /// 与上下 16 padding 合计行高约 78（现行无行高倍数被压到 74）。
-    private static func lineHeightText(_ string: String, font: UIFont, color: UIColor, lineBreakMode: NSLineBreakMode = .byTruncatingTail) -> NSAttributedString {
+    /// 网页 .nt-body line-height 1.5：标题 16→约 29、摘要 14→约 25，
+    /// 与上下 14 padding 合计行高约 84；合并消息页传 multiple 1.0
+    ///（与私信行同款无倍数行高），行高由底 guard 72 兜底。
+    private static func lineHeightText(_ string: String, font: UIFont, color: UIColor, lineBreakMode: NSLineBreakMode = .byTruncatingTail, multiple: CGFloat = 1.5) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineHeightMultiple = 1.5
+        paragraph.lineHeightMultiple = multiple
         paragraph.lineBreakMode = lineBreakMode
         return NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
     }
@@ -3863,9 +3892,12 @@ class BearyNotificationCell: UITableViewCell {
         return "给你的日记贴了小熊回应"
     }
 
-    func configure(with item: NotificationItem, nested: Bool, highlight: Bool) {
+    /// - Parameter mergedList: 合并消息页时 true：分隔线缩进 16、标题/摘要不用
+    ///   1.5 倍行高、头像垂直居中，与私信行统一；独立通知页传 false（默认）。
+    func configure(with item: NotificationItem, nested: Bool, highlight: Bool, mergedList: Bool = false) {
         // 复用行先清关注动作区；关注行由 VC 随后调 configureFollowCard 补上。
         hideFollowAction()
+        applyAvatarVerticalStyle(mergedList: mergedList)
         let itemType = item.type ?? ""
         let isSystemStyle = itemType == "system" || itemType == "letter"
         let isUnread = (item.read ?? true) == false
@@ -3877,7 +3909,7 @@ class BearyNotificationCell: UITableViewCell {
         // 补缺 P3-37：嵌套头像 x 按文件头注释口径（网页 .nt-sysin：头像 x=50、分隔线起于 30）统一为 50；
         // 真实像素未经真机截图量取，待 Li 真机核实（不得以本值冒充实测值）。
         avatarLeadingConstraint?.constant = nested ? 50 : 16
-        separatorLeadingConstraint?.constant = nested ? 30 : 0
+        separatorLeadingConstraint?.constant = mergedList ? 16 : (nested ? 30 : 0)
         nestedLineView.isHidden = !nested
         chevronView.isHidden = true
         dotTrailingToContentConstraint?.isActive = true
@@ -3919,7 +3951,7 @@ class BearyNotificationCell: UITableViewCell {
             }
             avatarFallbackLabel.isHidden = true
             kindBadgeView.isHidden = true
-            titleLabel.attributedText = BearyNotificationCell.lineHeightText(titleText, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping)
+            titleLabel.attributedText = BearyNotificationCell.lineHeightText(titleText, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5)
         } else {
             // 互动行：42 圆头像（无图回退首字母 15/700 灰）+ 右下角 19 号类型角标。
             avatarImageView.backgroundColor = BearyColors.line
@@ -3990,13 +4022,13 @@ class BearyNotificationCell: UITableViewCell {
                 }
             }
             let titleParagraph = NSMutableParagraphStyle()
-            titleParagraph.lineHeightMultiple = 1.5
+            titleParagraph.lineHeightMultiple = mergedList ? 1.0 : 1.5
             titleParagraph.lineBreakMode = .byCharWrapping
             title.addAttribute(.paragraphStyle, value: titleParagraph, range: NSRange(location: 0, length: title.length))
             titleLabel.attributedText = title
         }
 
-        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(item.excerpt ?? "", font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray)
+        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(item.excerpt ?? "", font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5)
         lastTimeMs = item.createdAt
         timeLabel.text = BearyNotificationCell.timeText(ms: item.createdAt)
     }
