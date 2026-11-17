@@ -3490,6 +3490,10 @@ class BearyNotificationCell: UITableViewCell {
     private var avatarTopConstraint: NSLayoutConstraint?
     private var avatarCenterYConstraint: NSLayoutConstraint?
     private var avatarBottomGuardConstraint: NSLayoutConstraint?
+    /// 标题栈顶锚点：独立页沿用内容顶 +14；合并页改锚头像顶
+    ///（见 applyAvatarVerticalStyle），标题字形顶对齐圆圈顶。
+    private var bodyStackTopToContentConstraint: NSLayoutConstraint?
+    private var bodyStackTopToAvatarConstraint: NSLayoutConstraint?
     private var dotTrailingToContentConstraint: NSLayoutConstraint?
     private var dotTrailingToChevronConstraint: NSLayoutConstraint?
 
@@ -3571,6 +3575,11 @@ class BearyNotificationCell: UITableViewCell {
         avatarTopConstraint = avatarImageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14)
         avatarCenterYConstraint = avatarImageView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
         avatarTopConstraint?.isActive = true
+        // 标题栈顶锚点：默认内容顶 +14（独立通知页现行）；合并页改锚头像顶
+        //（见 applyAvatarVerticalStyle），头像锚默认不激活。
+        bodyStackTopToContentConstraint = bodyStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14)
+        bodyStackTopToAvatarConstraint = bodyStack.topAnchor.constraint(equalTo: avatarImageView.topAnchor, constant: 0)
+        bodyStackTopToContentConstraint?.isActive = true
         NSLayoutConstraint.activate([
             unreadBgView.topAnchor.constraint(equalTo: contentView.topAnchor),
             unreadBgView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
@@ -3600,7 +3609,6 @@ class BearyNotificationCell: UITableViewCell {
             kindIconView.widthAnchor.constraint(equalToConstant: 11),
             kindIconView.heightAnchor.constraint(equalToConstant: 11),
             bodyStack.leadingAnchor.constraint(equalTo: avatarImageView.trailingAnchor, constant: 12),
-            bodyStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
             bodyStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
             followActionStack.leadingAnchor.constraint(equalTo: bodyStack.leadingAnchor),
             followActionStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
@@ -3678,6 +3686,8 @@ class BearyNotificationCell: UITableViewCell {
         avatarCenterYConstraint?.isActive = false
         avatarTopConstraint?.isActive = true
         avatarBottomGuardConstraint?.constant = 16
+        bodyStackTopToAvatarConstraint?.isActive = false
+        bodyStackTopToContentConstraint?.isActive = true
         bodyStack.spacing = 2
         nestedLineView.isHidden = true
         unreadBgView.backgroundColor = .clear
@@ -3787,16 +3797,26 @@ class BearyNotificationCell: UITableViewCell {
 
     /// 合并消息页口径：头像改垂直居中（与私信行同款；居中 42 圆在 72 高行内
     /// 上下各 15，底 guard 相应改为 15）；独立通知页仍走顶锚 14 + 底 guard 16。
+    /// 合并页标题栈顶同时改锚头像顶，标题字形顶对齐圆圈顶。
     /// 只由两 configure 方法的 mergedList 分支调；复用复位见 prepareForReuse。
     private func applyAvatarVerticalStyle(mergedList: Bool) {
         if mergedList {
             avatarTopConstraint?.isActive = false
             avatarCenterYConstraint?.isActive = true
             avatarBottomGuardConstraint?.constant = 15
+            // 标题顶对齐圆圈顶：16 粗标题字形顶比 label 框顶低 ascender-capHeight
+            //（默认字号约 4pt），标题栈顶改锚头像顶再上移该量，字形顶即落到头像顶；
+            // 按当前字号实算，大字号下仍对齐。时间在标题行内跟首行基线，不用另动。
+            let titleFont = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+            bodyStackTopToAvatarConstraint?.constant = -(titleFont.ascender - titleFont.capHeight)
+            bodyStackTopToContentConstraint?.isActive = false
+            bodyStackTopToAvatarConstraint?.isActive = true
         } else {
             avatarCenterYConstraint?.isActive = false
             avatarTopConstraint?.isActive = true
             avatarBottomGuardConstraint?.constant = 16
+            bodyStackTopToAvatarConstraint?.isActive = false
+            bodyStackTopToContentConstraint?.isActive = true
         }
     }
 
