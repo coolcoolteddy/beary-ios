@@ -1023,23 +1023,25 @@ public final class BearyEmoteView: UIView {
     /// 动画填充色（多帧）不在资产里出现，未覆盖也不回退——保持原样，不劣化。
     private static func bakeFillColors(into layer: CALayer) {
         if let shapeLayer = layer as? CAShapeLayer,
-           let fillColor = staticFillColor(of: shapeLayer) {
-            shapeLayer.fillColor = fillColor
+           let value = staticFillColorValue(of: shapeLayer) {
+            // 直接用 KVC 写入：`toValue` 是 `Any?`，`as? CGColor` 会被编译器
+            // 判为“向 CoreFoundation 类型的条件转换恒成功”而报错；KVC 不必转换。
+            shapeLayer.setValue(value, forKey: "fillColor")
         }
         layer.sublayers?.forEach { bakeFillColors(into: $0) }
     }
 
-    /// 从挂在 `fillColor` 键上的动画里取静态填充色；无动画或取不到时回 nil。
-    private static func staticFillColor(of shapeLayer: CAShapeLayer) -> CGColor? {
+    /// 从挂在 `fillColor` 键上的动画里取静态填充色的原始值；无动画或值为空时回 nil。
+    private static func staticFillColorValue(of shapeLayer: CAShapeLayer) -> Any? {
         guard let animation = shapeLayer.animation(forKey: "fillColor") else { return nil }
         if let basic = animation as? CABasicAnimation {
-            return basic.toValue as? CGColor
+            return basic.toValue
         }
         if let group = animation as? CAAnimationGroup {
             for sub in group.animations ?? [] {
                 if let basic = sub as? CABasicAnimation,
-                   let color = basic.toValue as? CGColor {
-                    return color
+                   let value = basic.toValue {
+                    return value
                 }
             }
         }
