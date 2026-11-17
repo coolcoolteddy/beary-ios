@@ -3269,6 +3269,32 @@ final class BearyDetailViewController: UIViewController {
                 guard let self = self else { return }
                 self.presentSnapshotList()
             })
+            // 第二批体验检查第 6 项：本人主动离线保存（仅作者本人）——
+            // 文字 JSON 与原图字节另存 Application Support 持久目录，
+            // 不走 24h/200MB 的 Caches 缓存、不参与淘汰；已保存时改取消。
+            if let entryId = entry.id, !entryId.isEmpty {
+                let saved = BearyOfflineSaveManager.shared.isSaved(entryId: entryId)
+                actions.append(BearyConfirmSheet.Action(title: saved ? "取消离线保存" : "离线保存", style: saved ? .destructive : .default) { [weak self] in
+                    guard let self = self else { return }
+                    if saved {
+                        let removed = BearyOfflineSaveManager.shared.remove(entryId: entryId)
+                        BearyToast.show(in: self.view, message: removed ? "已取消离线保存" : "取消失败，请重试")
+                    } else {
+                        BearyOfflineSaveManager.shared.save(entry: self.entry) { result in
+                            switch result {
+                            case .success(let outcome):
+                                if outcome.failedKeys.isEmpty {
+                                    BearyToast.show(in: self.view, message: "已离线保存")
+                                } else {
+                                    BearyToast.show(in: self.view, message: "已离线保存，部分图片下载失败")
+                                }
+                            case .failure:
+                                BearyToast.show(in: self.view, message: "离线保存失败，请重试")
+                            }
+                        }
+                    }
+                })
+            }
             actions.append(BearyConfirmSheet.Action(title: "修改权限", style: .default) { [weak self] in
                 guard let self = self else { return }
                 self.visibilityTapped()
