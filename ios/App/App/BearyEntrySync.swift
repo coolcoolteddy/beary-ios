@@ -82,6 +82,11 @@ enum BearySyncState {
 extension Notification.Name {
     /// 第四轮审计 15：同步状态变迁广播（主线程发出；设置页据此刷新同步状态行）。
     static let bearySyncStateDidChange = Notification.Name("bearySyncStateDidChange")
+    /// 发布后补拉待办变迁广播（主线程发出；时间线据此刷新当日面板）。
+    /// userInfo: ["dayKey": String, "resolved": Bool]——resolved=true 指
+    /// 该日待办已清干净（已落盘 / 已删 / 触顶摘除），时间线凭它决定是否
+    /// 静默重拉该日；resolved=false 是该日新出现待办，只刷新表头“同步中”。
+    static let bearyPendingRefetchDidChange = Notification.Name("bearyPendingRefetchDidChange")
 }
 
 /// 登录后全量同步编排：后台翻页拉取 + 整批提交，不碰任何 UI。
@@ -129,6 +134,22 @@ final class BearyEntrySync {
     /// 只在内存里记（重启后队列本就为空，无需落盘）。
     private let purgeGenerationLock = NSLock()
     private var purgeGenerationByAccount: [Int: Int] = [:]
+    /// 发布后补拉待办（第三批体验检查第 1 项）：在途重拉的账号集合
+    /// （只在同步串行队列上读写）；重拉按入队快照逐条跑完一轮即停，
+    /// 不无限循环、不重复触发。
+    private var refetchDrainingAccountIds = Set<Int>()
+    /// 待办日集合（主线程读）：当前账号下有补拉待办的北京日；时间线凭它
+    /// 在当日面板表头标“同步中”。只在主线程更新，随待办变化广播
+    /// bearyPendingRefetchDidChange。
+    private(set) var pendingRefetchDayKeys: Set<String> = []
+    private var pendingRefetchAccountId: Int?
+
+    /// 该日是否有发布后补拉待办（落盘前不把这篇当作不存在）。
+    /// 账号绑定：切号后旧账号的集合不再生效，新账号由 kick 时重推。
+    func hasPendingRefetch(dayKey: String) -> Bool {
+        guard pendingRefetchAccountId == SessionManager.shared.currentUser?.id else { return false }
+        return pendingRefetchDayKeys.contains(dayKey)
+    }
 
     /// 退出/401 清理某账号快照时调：先令该账号排队写盘失效，再删文件
     /// （调用方 SessionManager.purgeLocalSnapshots，须在删文件前调）。
@@ -373,6 +394,11 @@ final class BearyEntrySync {
                 self.trashRuns[userId] = trashRun
                 self.fetchTrashPage(run: trashRun)
             }
+            // 发布后补拉待办：与全量同步守卫无关——本启动已同步过也照样重拉
+            // （回前台 / 下拉刷新都经 kickForCurrentUser 进这里）；先推主线
+            // 程快照（跨启动残留的待办也要在当日面板标“同步中”），再重拉。
+            self.publishPendingRefetch(accountId: userId)
+            self.drainPendingRefetch(accountId: userId)
             self.publishCombinedSyncState(for: userId)
         }
     }
@@ -394,8 +420,13 @@ final class BearyEntrySync {
             self.trashRuns.removeAll()
             self.diarySyncIdentity.removeAll()
             self.trashSyncIdentity.removeAll()
+            // 发布后补拉待办：退出即停整轮重拉（在途回包由主线程账号守卫拦下）；
+            // 待办文件随账号桶由 purgeAccount 清掉，主线程快照同步清空。
+            self.refetchDrainingAccountIds.removeAll()
             DispatchQueue.main.async {
                 self.currentFailedLegTitles = []
+                self.pendingRefetchAccountId = nil
+                self.pendingRefetchDayKeys = []
                 guard self.currentSyncState != .usingLocal else { return }
                 self.currentSyncState = .usingLocal
                 NotificationCenter.default.post(name: .bearySyncStateDidChange, object: nil)
@@ -415,21 +446,153 @@ final class BearyEntrySync {
         _ = BearySyncStateStore.save(stateURL: BearyTrashSyncStore.stateFileURL(accountId: accountId), status: "partial", itemCount: count)
     }
 
-    /// 发布成功：onPublished 只给 entryId，单篇拉取后 upsert 落盘（失败静默）。
+    /// 发布成功：onPublished 只给 entryId，单篇拉取后 upsert 落盘。
+    /// 第三批体验检查第 1 项：拉取失败或落盘写失败不再静默丢弃——记入
+    /// 持久化补拉待办，下次 kick / 回前台时重拉并落盘；落盘成功即摘待办。
     func upsertPublished(entryId: String, accountId: Int) {
         BearyAPI.shared.fetchEntry(id: entryId) { result in
             // 回调线程不固定；账号守卫在主线程做（与全站 currentUser 读取口径一致），
             // 落盘写走同步队列（不卡主线程，同时记写盘代际供提交守卫判断）。
             DispatchQueue.main.async {
                 guard SessionManager.shared.currentUser?.id == accountId else { return }
-                guard case .success(let entry) = result else { return }
-                BearyEntrySync.shared.runDiaryDiskWrite(accountId: accountId) {
-                    // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
-                    let ok = BearyEntrySyncStore.upsertEntry(accountId: accountId, entry: entry)
-                    if !ok { NSLog("[BearyEntrySync] upsertEntry failed account=%d entry=%@", accountId, entry.id ?? "-") }
+                switch result {
+                case .failure:
+                    BearyEntrySync.shared.enqueuePendingRefetch(entryId: entryId, accountId: accountId)
+                case .success(let entry):
+                    BearyEntrySync.shared.runDiaryDiskWrite(accountId: accountId) {
+                        // r17-C2：落盘写返回结果，失败记日志并记待办（下次 kick 重拉）。
+                        let ok = BearyEntrySyncStore.upsertEntry(accountId: accountId, entry: entry)
+                        if ok {
+                            BearyEntrySync.shared.dequeuePendingRefetch(entryId: entryId, accountId: accountId)
+                        } else {
+                            NSLog("[BearyEntrySync] upsertEntry failed account=%d entry=%@", accountId, entry.id ?? "-")
+                            BearyEntrySync.shared.enqueuePendingRefetch(entryId: entryId, accountId: accountId)
+                        }
+                    }
                 }
             }
         }
+    }
+
+    /// 补拉失败记待办：入队 + 推主线程快照（时间线标“同步中”）。
+    /// 待办文件读写走同步串行队列（与落盘写同一队列，不另起锁）。
+    func enqueuePendingRefetch(entryId: String, accountId: Int) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            let dayKey = BearyBeijingDay.dayKey(ofMs: Int(Date().timeIntervalSince1970 * 1000)) ?? ""
+            if BearyEntrySyncStore.addPendingPublishRefetch(accountId: accountId, entryId: entryId, dayKey: dayKey) {
+                NSLog("[BearyEntrySync] pending refetch enqueued account=%d entry=%@", accountId, entryId)
+            } else {
+                NSLog("[BearyEntrySync] pending refetch enqueue failed account=%d entry=%@", accountId, entryId)
+            }
+            self.publishPendingRefetch(accountId: accountId)
+        }
+    }
+
+    /// 补拉落盘成功摘待办：摘队 + 推主线程快照（时间线清“同步中”并重拉该日）。
+    func dequeuePendingRefetch(entryId: String, accountId: Int) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            _ = BearyEntrySyncStore.removePendingPublishRefetch(accountId: accountId, entryId: entryId)
+            self.publishPendingRefetch(accountId: accountId)
+        }
+    }
+
+    /// 待办文件变了之后同步主线程快照（只在同步串行队列上调）：读盘取当日
+    /// 集合，变了才更新并广播——只广播变了的日：新出现的日（resolved=false）
+    /// 与刚清干净的日（resolved=true）；attempts 自增不广播，不扰动时间线。
+    private func publishPendingRefetch(accountId: Int) {
+        let items = BearyEntrySyncStore.loadPendingPublishRefetch(accountId: accountId)
+        let dayKeys = Set(items.map { $0.dayKey })
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            guard SessionManager.shared.currentUser?.id == accountId else { return }
+            let oldKeys = self.pendingRefetchAccountId == accountId ? self.pendingRefetchDayKeys : []
+            self.pendingRefetchAccountId = accountId
+            self.pendingRefetchDayKeys = dayKeys
+            for dayKey in oldKeys.symmetricDifference(dayKeys) {
+                let resolved = !dayKeys.contains(dayKey)
+                NotificationCenter.default.post(name: .bearyPendingRefetchDidChange, object: nil, userInfo: ["dayKey": dayKey, "resolved": resolved])
+            }
+        }
+    }
+
+    /// 发布后补拉待办重拉（kick / 回前台触发点调；只在同步串行队列上调）：
+    /// 按入队快照逐条单篇拉取，跑完一轮即停；在途不重复触发。
+    private func drainPendingRefetch(accountId: Int) {
+        guard !refetchDrainingAccountIds.contains(accountId) else { return }
+        let items = BearyEntrySyncStore.loadPendingPublishRefetch(accountId: accountId)
+        guard !items.isEmpty else { return }
+        refetchDrainingAccountIds.insert(accountId)
+        // 退出清理代次：快照取自 kick 时，写盘前按它复核——退出后才执行的
+        // 写盘一律丢弃，不重建已清缓存（与 runDiaryDiskWrite 同款）。
+        drainPendingRefetchItems(items, index: 0, accountId: accountId, purgeGeneration: purgeGeneration(forAccountId: accountId))
+    }
+
+    private func drainPendingRefetchItems(_ items: [BearyEntrySyncStore.PendingPublishRefetch], index: Int, accountId: Int, purgeGeneration: Int) {
+        // 只在同步串行队列上调；跑完快照即清在途标志。
+        guard index < items.count else {
+            refetchDrainingAccountIds.remove(accountId)
+            return
+        }
+        let item = items[index]
+        BearyAPI.shared.fetchEntry(id: item.entryId) { [weak self] result in
+            guard let self = self else { return }
+            // 账号守卫在主线程做（与 upsertPublished 同口径）；切号即停整轮。
+            DispatchQueue.main.async {
+                guard SessionManager.shared.currentUser?.id == accountId else {
+                    self.queue.async { self.refetchDrainingAccountIds.remove(accountId) }
+                    return
+                }
+                self.queue.async {
+                    self.finishPendingRefetchItem(item, accountId: accountId, result: result, purgeGeneration: purgeGeneration)
+                    self.drainPendingRefetchItems(items, index: index + 1, accountId: accountId, purgeGeneration: purgeGeneration)
+                }
+            }
+        }
+    }
+
+    /// 单条重拉收尾（只在同步串行队列上调）：落盘成功或 404（服务端已删）
+    /// 即摘待办；其他失败记一次 attempts，触顶即摘（不再无限重发）。
+    /// 写盘前验退出清理代次并记写盘代际（与 runDiaryDiskWrite 同款，否
+    /// 则全量同步提交守卫看不到这次写盘）。
+    private func finishPendingRefetchItem(_ item: BearyEntrySyncStore.PendingPublishRefetch, accountId: Int, result: Result<Entry, APIError>, purgeGeneration: Int) {
+        var items = BearyEntrySyncStore.loadPendingPublishRefetch(accountId: accountId)
+        // 该条可能已被 upsertPublished 成功分支摘掉——不在队里即跳过。
+        guard let idx = items.firstIndex(where: { $0.entryId == item.entryId }) else { return }
+        switch result {
+        case .success(let entry):
+            guard purgeGeneration == self.purgeGeneration(forAccountId: accountId) else { return }
+            diaryWriteSequence += 1
+            if BearyEntrySyncStore.upsertEntry(accountId: accountId, entry: entry) {
+                items.remove(at: idx)
+                _ = BearyEntrySyncStore.savePendingPublishRefetch(accountId: accountId, items: items)
+                publishPendingRefetch(accountId: accountId)
+            } else {
+                NSLog("[BearyEntrySync] pending refetch upsert failed account=%d entry=%@", accountId, item.entryId)
+                bumpPendingRefetchAttempt(items: &items, index: idx, accountId: accountId)
+            }
+        case .failure(let error):
+            if case .notFound = error {
+                items.remove(at: idx)
+                _ = BearyEntrySyncStore.savePendingPublishRefetch(accountId: accountId, items: items)
+                publishPendingRefetch(accountId: accountId)
+            } else {
+                bumpPendingRefetchAttempt(items: &items, index: idx, accountId: accountId)
+            }
+        }
+    }
+
+    /// 单条重拉失败记一次 attempts（只在同步串行队列上调）：触顶即摘待办，
+    /// 不再无限重发（下次全量同步仍会拉回）；未触顶只存盘、不广播。
+    private func bumpPendingRefetchAttempt(items: inout [BearyEntrySyncStore.PendingPublishRefetch], index: Int, accountId: Int) {
+        items[index].attempts += 1
+        if items[index].attempts >= BearyEntrySyncStore.publishRefetchMaxAttempts {
+            NSLog("[BearyEntrySync] pending refetch attempts exhausted account=%d entry=%@", accountId, items[index].entryId)
+            items.remove(at: index)
+        }
+        _ = BearyEntrySyncStore.savePendingPublishRefetch(accountId: accountId, items: items)
+        publishPendingRefetch(accountId: accountId)
     }
 
     /// 编辑成功：onUpdated 直接给完整 Entry，upsert 落盘。
@@ -596,6 +759,19 @@ final class BearyEntrySync {
                 if ok {
                     self.diaryFailedAccountId = nil
                     self.syncedAccountIdThisLaunch = run.accountId
+                    // 发布后补拉待办：本轮全量同步已拉回的篇不再待补拉——
+                    // 把已在拉到集合里的待办摘掉（“同步中”后缀随之清掉，
+                    // 不等下次 kick 的重拉）；本轮没拉到的待办留待重拉。
+                    let fetchedIds = Set(run.entryIdsByDay.values.flatMap { $0 })
+                    if !fetchedIds.isEmpty {
+                        var pending = BearyEntrySyncStore.loadPendingPublishRefetch(accountId: run.accountId)
+                        let before = pending.count
+                        pending.removeAll { fetchedIds.contains($0.entryId) }
+                        if pending.count != before {
+                            _ = BearyEntrySyncStore.savePendingPublishRefetch(accountId: run.accountId, items: pending)
+                            self.publishPendingRefetch(accountId: run.accountId)
+                        }
+                    }
                 } else {
                     self.diaryFailedAccountId = run.accountId
                 }

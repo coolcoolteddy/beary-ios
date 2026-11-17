@@ -648,6 +648,70 @@ enum BearyEntrySyncStore {
         try? FileManager.default.removeItem(at: url)
     }
 
+    // MARK: - 发布后补拉待办（第三批体验检查第 1 项）
+    //
+    // 发布成功先显“已发布”，单篇补拉（upsertPublished）失败时记一笔待办，
+    // 下次 kick / 回前台时重拉并落盘。文件与分批进度文件同款口径：账号桶
+    // 内单文件 beary_publish_refetch.json、原子写；损坏按无待办处理
+    // （下次全量同步仍会拉回，不丢日记数据）。dayKey 是入队时的北京日
+    // （发布当日）：落盘前时间线凭它在当日面板表头标“同步中”，而不是把
+    // 这篇当作不存在。落盘成功 / 404（服务端已删）/ attempts 触顶即摘，
+    // 不无限重发。退出清账号桶时本文件随桶清掉。
+
+    /// 发布后补拉待办单条：entryId + 入队时北京日 + 入队毫秒戳 + 已失败次数。
+    struct PendingPublishRefetch: Codable, Equatable {
+        var entryId: String
+        var dayKey: String
+        var enqueuedAtMs: Int
+        var attempts: Int
+    }
+
+    /// 单条最多重拉次数：触顶即摘待办（不再无限重发；下次全量同步仍会拉回）。
+    static let publishRefetchMaxAttempts = 10
+
+    private static let publishRefetchFileName = "beary_publish_refetch.json"
+
+    private static func publishRefetchURL(accountId: Int) -> URL? {
+        accountDir(accountId: accountId)?.appendingPathComponent(publishRefetchFileName)
+    }
+
+    /// 读发布后补拉待办（无文件 / 损坏返回空数组——损坏按无待办处理）。
+    static func loadPendingPublishRefetch(accountId: Int) -> [PendingPublishRefetch] {
+        guard let url = publishRefetchURL(accountId: accountId),
+              let data = try? Data(contentsOf: url),
+              let items = try? JSONDecoder().decode([PendingPublishRefetch].self, from: data) else { return [] }
+        return items
+    }
+
+    /// 存发布后补拉待办（空数组即清待办；写失败返回 false）。
+    @discardableResult
+    static func savePendingPublishRefetch(accountId: Int, items: [PendingPublishRefetch]) -> Bool {
+        guard let url = publishRefetchURL(accountId: accountId),
+              let data = try? JSONEncoder().encode(items) else { return false }
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch { return false }
+    }
+
+    /// 入队（同 id 已在队里不重复记；返回是否已在队里）。
+    @discardableResult
+    static func addPendingPublishRefetch(accountId: Int, entryId: String, dayKey: String) -> Bool {
+        var items = loadPendingPublishRefetch(accountId: accountId)
+        guard !items.contains(where: { $0.entryId == entryId }) else { return true }
+        items.append(PendingPublishRefetch(entryId: entryId, dayKey: dayKey, enqueuedAtMs: Int(Date().timeIntervalSince1970 * 1000), attempts: 0))
+        return savePendingPublishRefetch(accountId: accountId, items: items)
+    }
+
+    /// 摘队（不在队里也返回 true）。
+    @discardableResult
+    static func removePendingPublishRefetch(accountId: Int, entryId: String) -> Bool {
+        var items = loadPendingPublishRefetch(accountId: accountId)
+        items.removeAll { $0.entryId == entryId }
+        return savePendingPublishRefetch(accountId: accountId, items: items)
+    }
+
     /// 审计 P2-22：退出/注销时清该账号全部日记落盘（活盘 + staging + .bak +
     /// 状态文件全清；草稿桶不在此列，见 signOutLocally）。
     static func purgeAccount(accountId: Int) {
