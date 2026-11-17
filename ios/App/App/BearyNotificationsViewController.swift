@@ -45,10 +45,12 @@ import UIKit
 //   失败态按“加载失败 / 重试”显示；登录提示一集只发一次，成功加载后清零。
 // 角标：未读数每次变化都在主线程 post NotificationCenter，
 //   name = BearyNotificationsViewController.unreadChangedNotificationName
-//   （即 "BearyUnreadChanged"），userInfo = ["unread": Int, "sysUnread": Int]；
-//   sysUnread 随 unread 一起透传，底栏接线由总协调收尾做，本文件不碰底栏、不碰 SceneDelegate。
+//   （即 "BearyUnreadChanged"），userInfo = ["unread": Int, "sysUnread": Int, "stale": Bool]；
+//   sysUnread 随 unread 一起透传；stale = 轻量刷新失败后旧数是否已过期。
+//   底栏角标由 SceneDelegate 订阅本通知接线（消息段贴 BearyBadgeLabel）。
 // 轻量刷新：60 秒定时 + 回前台各一次 limit=2 拉取，只更新未读数与角标，
-//   不动列表；401 与其他失败一律静默忽略。limit 取 2 不取 1 的原因见
+//   不动列表；失败不改旧数、不弹 toast、不调度重试，只记 stale 并随通知
+//   发出（底栏角标置灰、消息页内给重试入口）。limit 取 2 不取 1 的原因见
 //   refreshUnreadCountLightly：后端 limit<=1 轻路径只回空 items，拿不到最新消息 ID。
 // D3-App 门控重拉（切回/回前台看新消息，但不违背“切 tab 不重复拉取”）：
 //   门控条件是服务端消息版本号或最新消息 ID，替代旧的仅比（未读总数、
@@ -122,6 +124,12 @@ final class BearyNotificationsViewController: UIViewController {
     /// 当前系统未读数（与最近一次角标通知一致；容器也可直接读它）。
     var currentSysUnread: Int {
         return sysUnreadTotal
+    }
+
+    /// 当前未读数是否已过期（上次轻量刷新失败后立起，成功后清掉）：
+    /// 容器（消息页）据此显隐页内过期提示与重试入口。
+    var isUnreadCountStale: Bool {
+        return unreadCountStale
     }
 
     private let pageLimit = 30
@@ -240,6 +248,11 @@ final class BearyNotificationsViewController: UIViewController {
     private var followCardOperationGeneration: [Int: Int] = [:]
     private var lastPublishedUnread = -1
     private var lastPublishedSysUnread = -1
+    /// 轻量刷新过期旗：上次轻量刷新失败后立起（旧未读数可能已过期），
+    /// 成功后清掉；失败不改旧数、不 toast、不调度重试，只随角标通知
+    /// 发出（底栏角标置灰、消息页内给重试入口）。
+    private var unreadCountStale = false
+    private var lastPublishedStale = false
     /// 上次整页加载时的未读数快照（门控用，与 unreadTotal 严格分开）：
     /// nil = 尚未整页成功加载过，门控不触发（首拉/重试仍由 viewDidLoad 与
     /// 失败态按钮负责）。轻量刷新只更新 unreadTotal/sysUnreadTotal，绝不写
@@ -862,7 +875,8 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     /// 轻量刷新 + D3-App 门控（60 秒轮询、回前台、viewWillAppear 的统一入口）：
-    /// 先轻量拉取，只更新未读数与角标（不动列表、不动失败态；失败静默忽略），
+    /// 先轻量拉取，只更新未读数与角标（不动列表、不动失败态；失败只记 stale，
+    /// 不改旧数、不 toast），
     /// 再把服务端消息版本号或最新消息 ID 与上次整页加载快照比对——任一变化
     /// 才 loadFirstPage 整页重拉，都不变不发整页请求。字段来源（已核实，非推测）：
     /// GET /beary/api/notifications 的响应体（worker.js 该路由全量路径回
@@ -906,6 +920,7 @@ final class BearyNotificationsViewController: UIViewController {
                     if let sysValue = list.sysUnread {
                         strongSelf.sysUnreadTotal = max(0, sysValue)
                     }
+                    strongSelf.unreadCountStale = false
                     strongSelf.publishUnread(strongSelf.unreadTotal)
                     strongSelf.updateReadAllButton()
                     // C-G4：401 清场后轻量刷新一旦成功（说明已重新登录），
@@ -925,7 +940,13 @@ final class BearyNotificationsViewController: UIViewController {
                         strongSelf.loadFirstPage()
                     }
                 case .failure:
-                    break
+                    // 轻量刷新失败：旧数保留（不归零）、不 toast、不调度重试；
+                    // 只有已成功加载过（有旧数在屏上）才记 stale——首拉
+                    // 从未成功时屏上本无旧数，无所谓过期。
+                    if strongSelf.hasSuccessfulLoad {
+                        strongSelf.unreadCountStale = true
+                        strongSelf.publishUnread(strongSelf.unreadTotal)
+                    }
                 }
             }
         }
@@ -1216,6 +1237,7 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.hasMore = false
                     strongSelf.loadMoreFailed = false
                     strongSelf.computeHasMore(fetchedCount: strongSelf.items.count, requestedLimit: requestedLimit)
+                    strongSelf.unreadCountStale = false
                     strongSelf.publishUnread(strongSelf.unreadTotal)
                     // 整页成功加载：门控快照与本次未读数同值，之后轻量比对以此为准；
                     // D3-App：同时落版本号（响应未带时为 nil，旧快照版本号保留）
@@ -1306,6 +1328,7 @@ final class BearyNotificationsViewController: UIViewController {
         needsReloadAfterUnauthorized = true
         notifPageEntered = false
         displayHighlightWatermarkMs = nil
+        unreadCountStale = false
         publishUnread(0)
         cancelCardAnimation()
         BearyAPI.shared.bumpAuthEpoch()
@@ -1346,6 +1369,7 @@ final class BearyNotificationsViewController: UIViewController {
         displayedPageAccountId = nil
         loadMoreFailed = false
         needsReloadAfterUnauthorized = true
+        unreadCountStale = false
         publishUnread(0)
         cancelCardAnimation()
         tableView.reloadData()
@@ -2167,6 +2191,7 @@ final class BearyNotificationsViewController: UIViewController {
                     }
                     strongSelf.unreadTotal = 0
                     strongSelf.sysUnreadTotal = 0
+                    strongSelf.unreadCountStale = false
                     strongSelf.publishUnread(0)
                     // 本页全部已读成功：列表已读态与服务端一致，快照同步归零，
                     // 否则下次轻量比对会把这次已读误判为变化而多拉一次整页。
@@ -2742,15 +2767,16 @@ final class BearyNotificationsViewController: UIViewController {
     private func publishUnread(_ value: Int) {
         let clamped = max(0, value)
         let sysClamped = max(0, sysUnreadTotal)
-        if clamped == lastPublishedUnread && sysClamped == lastPublishedSysUnread {
+        if clamped == lastPublishedUnread && sysClamped == lastPublishedSysUnread && unreadCountStale == lastPublishedStale {
             return
         }
         lastPublishedUnread = clamped
         lastPublishedSysUnread = sysClamped
+        lastPublishedStale = unreadCountStale
         NotificationCenter.default.post(
             name: Self.unreadChangedNotificationName,
             object: nil,
-            userInfo: ["unread": clamped, "sysUnread": sysClamped]
+            userInfo: ["unread": clamped, "sysUnread": sysClamped, "stale": unreadCountStale]
         )
     }
 
@@ -5320,6 +5346,13 @@ extension BearyNotificationsViewController {
     /// 开头即把 firstLoadFailed 复位，容器据快照收失败行）。
     func retryFirstLoadForMerge() {
         loadFirstPage()
+    }
+
+    /// 轻量刷新重试入口（消息页过期横条的“重试”走这里）：只重拉
+    /// 未读数（refreshUnreadCountLightly），不整页重拉、不动列表；
+    /// 首载进行中时轻量入口自身守卫直接回，横条等下次通知再刷新。
+    func retryUnreadRefresh() {
+        refreshUnreadCountLightly()
     }
 
     /// 哨兵滚出视野后的失败旗重 arm（原 scrollViewDidScroll 口径，合并列表

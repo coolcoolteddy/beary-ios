@@ -24,6 +24,9 @@ import UIKit
 // 有缓存先显缓存行，无数据时表先空着，数据到了行直接出现；失败组
 // 走该组原有失败态（失败行／全量失败态），不再画转圈。
 //
+// 过期横条：通知轻量刷新失败（旧未读数可能已过期）时顶栏下贴一条
+// “未读数可能已过期 ＋ 重试”，只在页内解释、不弹 toast；成功后自动收起。
+//
 // 已看水印：行级——任一通知行露出视口交集 ≥24pt 即记一次／访问
 // （子页 markNotifPageEntered 旗保证同一次访问只记一次；离页复位）。
 // 会话行不触发。seen 水印只影响行高亮，不改服务端未读数。
@@ -86,6 +89,12 @@ final class BearyMessagesViewController: UIViewController {
 
     private let titleLabel = UILabel()
     private var topBarTopConstraint: NSLayoutConstraint?
+    /// 轻量刷新过期横条：通知未读数过期时显（文案＋“重试”），
+    /// 失败不弹 toast，只在这里解释；成功后随通知自动收起。
+    private let staleBanner = UIView()
+    private let staleLabel = UILabel()
+    private let staleRetryButton = UIButton(type: .system)
+    private var staleBannerHeightConstraint: NSLayoutConstraint?
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let stateContainer = UIView()
     private let stateView = BearyStateView()
@@ -152,6 +161,32 @@ final class BearyMessagesViewController: UIViewController {
         stateView.translatesAutoresizingMaskIntoConstraints = false
         stateContainer.addSubview(stateView)
 
+        // 轻量刷新过期横条（默认收起、高 0）：通知未读数过期时在顶栏下
+        // 贴一条“未读数可能已过期 ＋ 重试”，只在页内解释、不弹 toast；
+        // 高度约束随显隐在 36/0 之间切（见 updateStaleBanner）。
+        staleBanner.translatesAutoresizingMaskIntoConstraints = false
+        staleBanner.backgroundColor = BearyColors.surface1
+        staleBanner.isHidden = true
+        view.addSubview(staleBanner)
+        staleLabel.translatesAutoresizingMaskIntoConstraints = false
+        staleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        staleLabel.adjustsFontForContentSizeCategory = true
+        staleLabel.textColor = BearyColors.gray
+        staleLabel.text = "未读数可能已过期"
+        staleBanner.addSubview(staleLabel)
+        staleRetryButton.translatesAutoresizingMaskIntoConstraints = false
+        staleRetryButton.setTitle("重试", for: .normal)
+        staleRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13))
+        staleRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        staleRetryButton.setTitleColor(BearyColors.blue, for: .normal)
+        staleRetryButton.accessibilityLabel = "重试刷新未读数"
+        staleRetryButton.addTarget(self, action: #selector(staleRetryTapped), for: .touchUpInside)
+        staleRetryButton.bearyAddPressFeedback()
+        staleBanner.addSubview(staleRetryButton)
+        let staleHeight = staleBanner.heightAnchor.constraint(equalToConstant: 0)
+        staleBannerHeightConstraint = staleHeight
+        staleHeight.isActive = true
+
         topBarTopConstraint?.isActive = true
         NSLayoutConstraint.activate([
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -168,11 +203,20 @@ final class BearyMessagesViewController: UIViewController {
             userListButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             userListButton.widthAnchor.constraint(equalToConstant: 44),
             userListButton.heightAnchor.constraint(equalToConstant: 44),
-            tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            tableView.topAnchor.constraint(equalTo: staleBanner.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            stateContainer.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            stateContainer.topAnchor.constraint(equalTo: staleBanner.bottomAnchor),
+            staleBanner.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            staleBanner.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            staleBanner.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            staleLabel.leadingAnchor.constraint(equalTo: staleBanner.leadingAnchor, constant: 16),
+            staleLabel.centerYAnchor.constraint(equalTo: staleBanner.centerYAnchor),
+            staleRetryButton.trailingAnchor.constraint(equalTo: staleBanner.trailingAnchor, constant: -16),
+            staleRetryButton.centerYAnchor.constraint(equalTo: staleBanner.centerYAnchor),
+            staleRetryButton.widthAnchor.constraint(equalToConstant: 44),
+            staleRetryButton.heightAnchor.constraint(equalToConstant: 36),
             stateContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             stateContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             stateContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -235,6 +279,11 @@ final class BearyMessagesViewController: UIViewController {
             return self.view.window != nil && !self.view.isHidden
         }
 
+        // 过期横条订阅：通知页轻量刷新成功／失败都随角标通知发 stale，
+        // 本页据此显隐横条（须在子页 viewDidLoad 首拉之前注册，否则
+        // 首个通知会漏接）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleUnreadChanged(_:)), name: BearyNotificationsViewController.unreadChangedNotificationName, object: nil)
+
         // 只触发 viewDidLoad 首拉（通知子页末尾 startPolling＋loadFirstPage、
         // 私信子页末尾 load），不 addSubview——子页 view 不进层级。
         addChild(notifChild)
@@ -245,6 +294,11 @@ final class BearyMessagesViewController: UIViewController {
         conversationsChild.didMove(toParent: self)
 
         updateMergedRows()
+        updateStaleBanner(stale: notifChild.isUnreadCountStale)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     override func viewDidLayoutSubviews() {
@@ -261,6 +315,37 @@ final class BearyMessagesViewController: UIViewController {
 
     @objc private func userListTapped() {
         onOpenUserList?()
+    }
+
+    /// 过期横条订阅回调：通知页轻量刷新成功（stale=false）或失败
+    ///（stale=true）都随角标通知发来，本页只取 stale 显隐横条。
+    @objc private func handleUnreadChanged(_ note: Notification) {
+        let stale = note.userInfo?["stale"] as? Bool ?? false
+        updateStaleBanner(stale: stale)
+    }
+
+    /// 过期横条显隐：过期时展开（高 36），新鲜时收起（高 0）；
+    /// 每次通知都重算，按钮随之恢复可用（重试点按后先禁用防连点，
+    /// 回包即随通知恢复）。显隐变化时带 0.26s 布局动画（减动效直落终值）。
+    private func updateStaleBanner(stale: Bool) {
+        staleRetryButton.isEnabled = true
+        guard staleBanner.isHidden == stale else { return }
+        staleBanner.isHidden = !stale
+        staleBannerHeightConstraint?.constant = stale ? 36 : 0
+        if UIAccessibility.isReduceMotionEnabled {
+            view.layoutIfNeeded()
+        } else {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState], animations: {
+                self.view.layoutIfNeeded()
+            })
+        }
+    }
+
+    /// 过期横条“重试”：只重拉未读数（轻量刷新），不整页重拉；
+    /// 点按后先禁用防连点，回包即随通知恢复可用。
+    @objc private func staleRetryTapped() {
+        staleRetryButton.isEnabled = false
+        notifChild.retryUnreadRefresh()
     }
 
     /// 容器顶栏显隐同步：顶栏显示时本页顶栏顶距 = 安全区顶 + 60（顶栏内容区高），
@@ -314,6 +399,7 @@ final class BearyMessagesViewController: UIViewController {
         conversationsChild.pageDidEnter()
         notifChild.refreshListIfUnreadChangedWithoutMarking()
         updateMergedRows()
+        updateStaleBanner(stale: notifChild.isUnreadCountStale)
         checkNotifSeenIfVisible()
     }
 

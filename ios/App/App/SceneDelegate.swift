@@ -1099,6 +1099,41 @@ final class BearyChromeViewController: UIViewController {
         applyHeaderTopInsets()
     }
 
+    /// 底栏消息段角标：通知页每次未读数变化（轻量刷新成功／失败、标已读、
+    /// 清场归零）都随 BearyUnreadChanged 发来；失败时旧数保留、stale 为真。
+    @objc private func handleUnreadChanged(_ note: Notification) {
+        let unread = note.userInfo?["unread"] as? Int ?? 0
+        let stale = note.userInfo?["stale"] as? Bool ?? false
+        if Thread.isMainThread {
+            updateMessageBadge(unread: unread, stale: stale)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.updateMessageBadge(unread: unread, stale: stale)
+            }
+        }
+    }
+
+    /// 底栏消息段角标：有未读才显（>99 显示 99+）；过期态改空心灰
+    ///（透明底＋灰描边＋灰字，不占额外空间），数字保留不归零；
+    /// 新鲜态恢复蓝底白字。深浅切换时描边色走 bearyDynamicBorderColor 重刷。
+    private func updateMessageBadge(unread: Int, stale: Bool) {
+        guard let badge = messagesBadgeLabel else { return }
+        badge.isHidden = unread <= 0
+        badge.text = unread > 99 ? "99+" : "\(unread)"
+        if stale {
+            badge.backgroundColor = .clear
+            badge.layer.bearyDynamicBorderColor = BearyColors.gray
+            badge.layer.borderWidth = 1
+            badge.textColor = BearyColors.gray
+        } else {
+            badge.backgroundColor = BearyColors.blue
+            badge.layer.bearyDynamicBorderColor = nil
+            badge.layer.borderWidth = 0
+            badge.textColor = .white
+        }
+        badge.accessibilityLabel = stale ? "未读数可能已过期，\(unread) 条" : "\(unread) 条未读"
+    }
+
     /// 开发者模式横幅位置：顶栏显示时贴顶栏下方，收起时贴安全区顶。
     private func updateDevBannerPosition(animated: Bool = false) {
         guard let top = devBannerTopConstraint else { return }
@@ -1230,6 +1265,8 @@ final class BearyChromeViewController: UIViewController {
         buildChrome()
         // 开发者模式变化：横幅显隐＋位置＋各页内边距同步（见 handleDevModeChanged）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleDevModeChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
+        // 底栏消息角标：订阅通知页的未读数变化（见 handleUnreadChanged）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleUnreadChanged(_:)), name: BearyNotificationsViewController.unreadChangedNotificationName, object: nil)
         // 视觉清单第 4 项：两侧背景层已停用——buildSideDeco 现为空操作，
         // 调用保留仅为恢复口；布局由 viewDidLayoutSubviews 驱动的部分随之失效。
         buildSideDeco()
@@ -1890,6 +1927,8 @@ final class BearyChromeViewController: UIViewController {
                 seg.accessibilityElementsHidden = !visible
                 seg.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
             }
+            // 角标挂在分段器名下，随栏同进退（藏栏时一起下去，恢复时一起回来），
+            // 不另设 alpha/transform（与分段器同设会双倍位移）。
             self.bottomBlurView?.alpha = visible ? 1 : 0
             self.bottomBlurView?.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
             self.bottomFadePad?.alpha = visible ? 1 : 0
