@@ -587,13 +587,18 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                             }
                             return
                         }
+                        // 审计第十一轮 #2：替换前记下可见锚点与旧签名——
+                        // 此时仍是旧列表；合并在后台跑完才到这里，锚点
+                        // 必须在赋值前取，否则取到的已是新列表。
+                        let anchor = self.captureVisibleConversationAnchor()
+                        let previousSignature = Self.conversationsSignature(self.conversations)
                         self.conversations = merged
                         // 会话列表快照：成功回包即写盘（按账号分桶），冷启动先显旧会话。
                         if let uid = SessionManager.shared.currentUser?.id {
                             BearyDMConversationsCache.save(bucket: "\(uid)", conversations: self.conversations)
                         }
                         self.loadFailed = false
-                        self.finishConversationsLoad()
+                        self.finishConversationsLoad(anchor: anchor, previousSignature: previousSignature)
                     }
                 case .failure:
                     // 服务端失败：本地 BearyDMStore 会话先显（仅本地有消息的对方），
@@ -612,21 +617,70 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                             }
                             return
                         }
+                        // 审计第十一轮 #2：与成功支同口径，替换前记锚点与旧签名。
+                        let anchor = self.captureVisibleConversationAnchor()
+                        let previousSignature = Self.conversationsSignature(self.conversations)
                         self.conversations = merged
                         self.loadFailed = true
-                        self.finishConversationsLoad()
+                        self.finishConversationsLoad(anchor: anchor, previousSignature: previousSignature)
                     }
                 }
             }
         }
     }
 
+    /// 审计第十一轮 #2：数据替换前记下首条可见会话锚点——稳定用户 ID
+    /// （与 willDisplay 的行 key 同口径）＋该行相对列表顶部的距离；
+    /// 替换重排后按同一会话恢复相对位置，会话已删时取同行号最近相邻行。
+    private struct DMConversationAnchor {
+        let key: String
+        let row: Int
+        let offsetFromTop: CGFloat
+    }
+
+    private static func conversationAnchorKey(_ conv: BearyAPI.DMConversation) -> String {
+        conv.peer?.id.map { "dm-\($0)" } ?? "dm-\(conv.peer?.handle ?? conv.peer?.displayName ?? "")"
+    }
+
+    private func captureVisibleConversationAnchor() -> DMConversationAnchor? {
+        guard !showingSkeleton,
+              let indexPath = tableView.indexPathsForVisibleRows?.first,
+              indexPath.row < conversations.count else { return nil }
+        let rect = tableView.rectForRow(at: indexPath)
+        return DMConversationAnchor(
+            key: Self.conversationAnchorKey(conversations[indexPath.row]),
+            row: indexPath.row,
+            offsetFromTop: rect.minY - tableView.contentOffset.y
+        )
+    }
+
+    private func restoreVisibleConversationAnchor(_ anchor: DMConversationAnchor?) {
+        guard let anchor = anchor, !conversations.isEmpty else { return }
+        tableView.layoutIfNeeded()
+        // 同一会话仍在：按 key 找；已删：取同行号最近相邻行（末尾夹紧）。
+        let row = conversations.firstIndex(where: { Self.conversationAnchorKey($0) == anchor.key })
+            ?? min(anchor.row, conversations.count - 1)
+        let rect = tableView.rectForRow(at: IndexPath(row: row, section: 0))
+        let minY = -tableView.contentInset.top
+        let maxY = max(minY, tableView.contentSize.height - tableView.bounds.height + tableView.contentInset.bottom)
+        let y = min(max(rect.minY - anchor.offsetFromTop, minY), maxY)
+        tableView.setContentOffset(CGPoint(x: 0, y: y), animated: false)
+    }
+
     /// 首拉落定（成功或失败）后的统一收尾：空态＋重载＋快照变化通知。
     /// 第七轮 #4：成功/失败两支的合并都改异步后，收尾改由各支完成回调调，
     /// 不再由 switch 后同步执行（同步 mergedConversations 仍留给测试调用）。
-    private func finishConversationsLoad() {
+    /// 审计第十一轮 #2：数据无变化时跳过重载（可见位置本就没动）；
+    /// 有变化时重载后按替换前记的锚点恢复可见会话的相对位置。
+    private func finishConversationsLoad(anchor: DMConversationAnchor? = nil, previousSignature: String? = nil) {
         updateEmptyState()
-        tableView.reloadData()
+        if let previousSignature = previousSignature,
+           Self.conversationsSignature(conversations) == previousSignature {
+            // 无变化：不重载，位置不动。
+        } else {
+            tableView.reloadData()
+            restoreVisibleConversationAnchor(anchor)
+        }
         // 合并列表：首拉落定（成功或失败）即快照变化，容器重排并
         // 按两组落定情况收顶部唯一转圈；旧号回包早退不调。
         notifyDMConversationsMergeChanged()
