@@ -71,6 +71,10 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     private var returnTableOffset: CGPoint?
     private var returnGroupEntryIds: [String]?
     private var pendingMapReturnRestore = false
+    /// 跳动审计第八轮第 1 项：返回恢复的代次——星图同款。下一轮异步
+    /// 补设偏移前对代次；用户已选新组／开始拖动／切账号／进了新一次
+    /// 详情时代次已变，过期补设直接丢弃，不覆盖新的位置。
+    private var returnRestoreGeneration = 0
     /// 文本 → 坐标的本页内存缓存（只活在本页实例里，deinit 即丢；绝不写盘）。
     private var geocodeCache: [String: CLLocationCoordinate2D] = [:]
     /// 地点组当语言展示名（2026-11-14 存经纬度）：组键是存量文本（旧语言），有坐标的组按
@@ -755,6 +759,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         returnTableOffset = nil
         returnGroupEntryIds = nil
         pendingMapReturnRestore = false
+        // 旧恢复的异步补设（若有在途）随代次作废。
+        returnRestoreGeneration += 1
     }
 
     /// r17-m3：从详情只读返回后的恢复——选中组（regroup 已按 id 重绑）
@@ -765,12 +771,18 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         pendingMapReturnRestore = false
         guard let offset = returnTableOffset else { return }
         // 列表位置：先恢复（reloadData 后内容高已定，下一帧再校一次）。
+        // 下一帧补设前先对代次：用户已选新组／开始拖动、或进了新一次
+        // 详情，代次已变，过期补设直接丢弃，不覆盖新的位置。
+        let generation = returnRestoreGeneration
         let restoreOffset = { [weak self] in
             guard let self = self else { return }
             self.tableView.setContentOffset(offset, animated: false)
         }
         restoreOffset()
-        DispatchQueue.main.async(execute: restoreOffset)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, generation == self.returnRestoreGeneration else { return }
+            restoreOffset()
+        }
         guard let groupId = returnGroupId else { return }
         if let group = groups.first(where: { $0.id == groupId }) {
             selectedGroup = group
@@ -1296,6 +1308,12 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         }
     }
 
+    /// 跳动审计第八轮第 1 项：用户开始拖动，旧的返回恢复即失效——
+    /// 代次递增，下一轮异步补设偏移时对不上代次就丢弃，不覆盖拖动后的新位置。
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        returnRestoreGeneration += 1
+    }
+
     /// 标题旁「所有地点」：清除选中、回到地点列表。点标记／点地点行
     /// 进入同一组日记（selectGroup），这是唯一的返回入口——此前
     /// selectedGroup = nil 只在切账号时出现，无用户可点的清除选中。
@@ -1525,6 +1543,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             returnTableOffset = tableView.contentOffset
             returnGroupEntryIds = selected.entries.compactMap { $0.id }
             pendingMapReturnRestore = true
+            // 新一次进入详情：旧恢复的异步补设（若有在途）随代次作废。
+            returnRestoreGeneration += 1
             onOpenEntry?(selected.entries[indexPath.row])
         } else {
             // 地点列表行：与点地图标记同一入口（selectGroup），进同一组日记。
