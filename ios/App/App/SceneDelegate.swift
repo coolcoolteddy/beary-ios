@@ -4464,7 +4464,14 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         if UIAccessibility.isReduceMotionEnabled {
             dimmingView.alpha = 1
         } else if let coordinator = presentedViewController.transitionCoordinator {
-            coordinator.animate(alongsideTransition: { _ in self.dimmingView.alpha = 1 }, completion: nil)
+            // 跳动审计第三批第 11 项：阴影与 sheet 同步入场——动画器只动 sheet 的
+            // transform（从下方滑入），阴影此前以完整形态先落在终位。阴影先置与
+            // sheet 同款初态（下移一整个 sheet 高），再随转场协调器一起滑到终态。
+            sheetShadowView.transform = CGAffineTransform(translationX: 0, y: frameOfPresentedViewInContainerView.height)
+            coordinator.animate(alongsideTransition: { _ in
+                self.dimmingView.alpha = 1
+                self.sheetShadowView.transform = .identity
+            }, completion: nil)
         } else {
             dimmingView.alpha = 1
         }
@@ -4474,7 +4481,13 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         if UIAccessibility.isReduceMotionEnabled {
             dimmingView.alpha = 0
         } else if let coordinator = presentedViewController.transitionCoordinator {
-            coordinator.animate(alongsideTransition: { _ in self.dimmingView.alpha = 0 }, completion: nil)
+            // 跳动审计第三批第 11 项：阴影与 sheet 同步退场——退场动画器把 sheet
+            // 下滑一整个容器高，阴影此前留在终位、待 sheet 走后再消失。
+            let drop = containerView?.bounds.height ?? 0
+            coordinator.animate(alongsideTransition: { _ in
+                self.dimmingView.alpha = 0
+                self.sheetShadowView.transform = CGAffineTransform(translationX: 0, y: drop)
+            }, completion: nil)
         } else {
             dimmingView.alpha = 0
         }
@@ -4503,6 +4516,10 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             dimmingView.removeFromSuperview()
             sheetShadowView.removeFromSuperview()
             dismissalHandler?()
+        } else {
+            // 跳动审计第三批第 11 项：退场取消时把阴影复位到终态（退场起手时已把它
+            // 播向下滑出屏，不复位会残留错位阴影）。
+            sheetShadowView.transform = .identity
         }
     }
 
@@ -4526,7 +4543,11 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             }
             sheetHeight = frame.height
             // 阴影层与 sheet 同框、跟 sheet 帧走（跟手下滑时 transform 由 pan 回调同步）。
-            sheetShadowView.frame = frame
+            // 跳动审计第三批第 11 项：阴影布局只写 bounds/center，不写 frame——
+            // 阴影在转场期间带非 identity transform（与 sheet 同步滑入/滑出），
+            // transform 下 frame 无定义（90 包修法同款口径，见 presentedView 的守卫）。
+            sheetShadowView.bounds = CGRect(origin: .zero, size: frame.size)
+            sheetShadowView.center = CGPoint(x: frame.midX, y: frame.midY)
             sheetShadowView.layer.shadowPath = UIBezierPath(
                 roundedRect: sheetShadowView.bounds,
                 byRoundingCorners: [.topLeft, .topRight],

@@ -114,10 +114,22 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
         // 布局回调里被移入本容器（转场动画仍直接作用于 presentedView 本身）。
         cardFrameView.backgroundColor = .clear
         container.addSubview(cardFrameView)
+        // 跳动审计第三批第 11 项：阴影与卡片同步入场——动画器只动 presentedView
+        // 的 alpha/位移，阴影此前以完整形态先落在终位。阴影先置与卡片同款初态
+        // （alpha 0 + 下偏 4% 卡高），再随转场协调器与遮罩一起动画到终态。
+        let shadowOffset = frameOfPresentedViewInContainerView.height * 0.04
+        cardShadowView.alpha = 0
+        cardShadowView.transform = CGAffineTransform(translationX: 0, y: shadowOffset)
         if let coordinator = presentedViewController.transitionCoordinator {
-            coordinator.animate(alongsideTransition: { _ in self.dimmingView.alpha = 1 }, completion: nil)
+            coordinator.animate(alongsideTransition: { _ in
+                self.dimmingView.alpha = 1
+                self.cardShadowView.alpha = 1
+                self.cardShadowView.transform = .identity
+            }, completion: nil)
         } else {
             dimmingView.alpha = 1
+            cardShadowView.alpha = 1
+            cardShadowView.transform = .identity
         }
     }
 
@@ -131,10 +143,18 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
     }
 
     override func dismissalTransitionWillBegin() {
+        // 跳动审计第三批第 11 项：阴影与卡片同步退场——与动画器的淡出 + 下偏同款。
+        let shadowOffset = frameOfPresentedViewInContainerView.height * 0.04
         if let coordinator = presentedViewController.transitionCoordinator {
-            coordinator.animate(alongsideTransition: { _ in self.dimmingView.alpha = 0 }, completion: nil)
+            coordinator.animate(alongsideTransition: { _ in
+                self.dimmingView.alpha = 0
+                self.cardShadowView.alpha = 0
+                self.cardShadowView.transform = CGAffineTransform(translationX: 0, y: shadowOffset)
+            }, completion: nil)
         } else {
             dimmingView.alpha = 0
+            cardShadowView.alpha = 0
+            cardShadowView.transform = CGAffineTransform(translationX: 0, y: shadowOffset)
         }
     }
 
@@ -146,6 +166,11 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
             cardShadowView.removeFromSuperview()
             cardFrameView.removeFromSuperview()
             dismissalHandler?()
+        } else {
+            // 跳动审计第三批第 11 项：退场取消时把阴影复位到终态（退场起手时已把它
+            // 播向淡出 + 下偏，不复位会残留半透明错位阴影）。
+            cardShadowView.alpha = 1
+            cardShadowView.transform = .identity
         }
     }
 
@@ -177,7 +202,11 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
             presentedView.center = CGPoint(x: frame.width / 2, y: frame.height / 2)
             applyCardChrome()
         }
-        cardShadowView.frame = frame
+        cardShadowView.bounds = CGRect(origin: .zero, size: frame.size)
+        cardShadowView.center = CGPoint(x: frame.midX, y: frame.midY)
+        // 跳动审计第三批第 11 项：阴影布局只写 bounds/center，不写 frame——
+        // 阴影在转场期间带非 identity transform（与卡片同步淡入/位移），
+        // transform 下 frame 无定义（内层 presentedView 同款口径，见上）。
         // 审计 E2 第 14 项：shadowPath 仅在尺寸变化时更新，不逐帧重算。
         // 冻结令（2026-11-02 Li 新令）：阴影 path 属冻结范围，本支不改计算方式，
         // 原“按实际圆角计算”修法已 revert，见 PR 描述“因冻结未做的样式统一项”。
