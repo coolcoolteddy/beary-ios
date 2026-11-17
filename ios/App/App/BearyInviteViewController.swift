@@ -5,7 +5,7 @@ import UIKit
 // 网页对照：beary.html 的 inviteModal（1287–1302）+ ivRender（1611 起）+
 // ivDoBind（1656 起）+ openInvite（1631 起，打开时先 ivRender 再 fetchMe 刷新）。
 // 内容口径与网页一致：
-//   - 标题“邀请好友”+ 副标题“好友填写邀请码并通过审核后，双方各得 30 天 Plus；邀请作废则不发放”；
+//   - 标题“邀请好友”+ 副标题“好友填写邀请码绑定后，双方各得 30 天 Plus；邀请作废则不发放”；
 //   - 邀请码展示 + “复制”钮（复制后 1.6 秒内显示“已复制”，与网页 ivCopied 同口径）；
 //   - （2026-10-29 第 4 项：风控提示行已删，零残留；风控逻辑本身不动。）
 //   - 统计“已邀请 N 人 · 累计获得 M 天 Plus（rewardMonths × 30）”（accounts /me 的 referral
@@ -35,6 +35,11 @@ final class BearyInviteViewController: UIViewController {
     var onClose: (() -> Void)?
     /// 未登录时调用，容器接登录页；为 nil 时页内显示“请先登录”。
     var onRequireLogin: (() -> Void)?
+    /// 首页打开时才显示“不再提示”钮（Plus 页打开时不显示，入口本身不提供关闭）。
+    /// 点后首页顶栏礼物钮永久隐藏，邀请入口只留 Plus 页。
+    var showsHomeDismissButton = false
+    /// 用户点“不再提示”：容器持久化隐藏首页礼物钮并关闭本页。
+    var onDismissHomePrompt: (() -> Void)?
 
     private let scrollView = UIScrollView()
     private let contentView = UIView()
@@ -61,6 +66,8 @@ final class BearyInviteViewController: UIViewController {
     // 邀请失败态重试钮：Hit44 口径——BearyHit44Button 扩触摸帧 + 下方 ≥44 帧约束，
     // 文案/字色/字号/按压反馈均不动（见 buildLayout 处注释）。
     private let retryButton = BearyHit44Button(type: .system)
+    // 首页提示的“不再提示”钮：与重试钮同款 Hit44，栈末项，仅首页打开时显示。
+    private let dismissPromptButton = BearyHit44Button(type: .system)
 
     private var inviteCode: String?
     private var referral: ReferralInfo?
@@ -241,7 +248,7 @@ final class BearyInviteViewController: UIViewController {
         titleLabel.textColor = BearyColors.ink
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.text = "好友填写邀请码并通过审核后，双方各得 30 天 Plus；邀请作废则不发放"
+        subtitleLabel.text = "好友填写邀请码绑定后，双方各得 30 天 Plus；邀请作废则不发放"
         subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
@@ -354,6 +361,17 @@ final class BearyInviteViewController: UIViewController {
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         retryButton.bearyAddPressFeedback()
 
+        // “不再提示”：灰字文本钮，与重试钮同款 Hit44；仅首页打开时显示，
+        // Plus 页打开时隐藏（入口本身不提供关闭）。
+        dismissPromptButton.translatesAutoresizingMaskIntoConstraints = false
+        dismissPromptButton.setTitle("不再提示", for: .normal)
+        dismissPromptButton.setTitleColor(BearyColors.gray, for: .normal)
+        dismissPromptButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        dismissPromptButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        dismissPromptButton.isHidden = !showsHomeDismissButton
+        dismissPromptButton.addTarget(self, action: #selector(dismissPromptTapped), for: .touchUpInside)
+        dismissPromptButton.bearyAddPressFeedback()
+
         stackView.addArrangedSubview(titleLabel)
         stackView.addArrangedSubview(subtitleLabel)
         stackView.addArrangedSubview(codeBox)
@@ -363,6 +381,7 @@ final class BearyInviteViewController: UIViewController {
         stackView.addArrangedSubview(bindHintLabel)
         stackView.addArrangedSubview(messageLabel)
         stackView.addArrangedSubview(retryButton)
+        stackView.addArrangedSubview(dismissPromptButton)
         stackView.setCustomSpacing(5, after: titleLabel)
         stackView.setCustomSpacing(20, after: subtitleLabel)
         stackView.setCustomSpacing(10, after: codeBox)
@@ -371,6 +390,7 @@ final class BearyInviteViewController: UIViewController {
         stackView.setCustomSpacing(8, after: bindRow)
         stackView.setCustomSpacing(8, after: bindHintLabel)
         stackView.setCustomSpacing(8, after: messageLabel)
+        stackView.setCustomSpacing(12, after: retryButton)
 
         NSLayoutConstraint.activate([
             // 审计 10 项：关闭行钉面板顶、行宽与面板同宽（关闭钮贴面板右缘）；
@@ -428,6 +448,9 @@ final class BearyInviteViewController: UIViewController {
             // 弹窗随之长高约一档，文案样式与位置左右不动。
             retryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
             retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            // “不再提示”钮与重试钮同口径：帧本身 ≥44×44，隐藏态不占高。
+            dismissPromptButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            dismissPromptButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
     }
 
@@ -715,13 +738,13 @@ final class BearyInviteViewController: UIViewController {
             } else if status == "granted" {
                 setLabelTextFaded(boundLabel, "已通过 \(inviterName) 的邀请加入 beary")
                 boundCheckIcon.isHidden = false
-            } else if status == "flagged" || status == "granting" {
-                // 补缺 P3-32：pending/flagged/granting 不再一律“已通过”；绿勾只属 granted。
-                setLabelTextFaded(boundLabel, "待发放 · \(inviterName) 的邀请")
+            } else if status == "flagged" {
+                // flagged 是服务端风控拦截（同 IP / 邀请人被封），须站长在管理端放行或作废——此处“待审核”属实。
+                setLabelTextFaded(boundLabel, "待审核 · \(inviterName) 的邀请")
                 boundCheckIcon.isHidden = true
             } else {
-                // pending 与未知态保守显“待审核”，不谎称已通过。
-                setLabelTextFaded(boundLabel, "待审核 · \(inviterName) 的邀请")
+                // pending / granting 是结算中（绑定即结算，无人工审核），不再称“待审核”。
+                setLabelTextFaded(boundLabel, "待发放 · \(inviterName) 的邀请")
                 boundCheckIcon.isHidden = true
             }
             boundRow.isHidden = false
@@ -808,6 +831,10 @@ final class BearyInviteViewController: UIViewController {
 
     @objc private func closeTapped() {
         onClose?()
+    }
+
+    @objc private func dismissPromptTapped() {
+        onDismissHomePrompt?()
     }
 
     @objc private func retryTapped() {

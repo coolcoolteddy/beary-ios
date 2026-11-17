@@ -351,7 +351,7 @@ final class BearyPlusPageViewController: UIViewController {
         descLabel.adjustsFontForContentSizeCategory = true
         descLabel.textColor = BearyColors.gray
         descLabel.numberOfLines = 0
-        descLabel.text = "好友绑定并通过审核后，双方各得 30 天 Plus"
+        descLabel.text = "好友绑定邀请码后，双方各得 30 天 Plus"
         row.addSubview(descLabel)
         let inviteButton = UIButton(type: .custom)
         inviteButton.translatesAutoresizingMaskIntoConstraints = false
