@@ -1097,6 +1097,12 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 
     // MARK: - E-G12 淡入转场 + 回到原处关场
+    /// 下甩关闭跟手缩放：与 applyDismissDragProgress 共用同一进度 p = |ty|/320；
+    /// 关场阈值 120pt 处 p=0.375、scale≈0.78；拖得越远越小，下限 0.7 兜底。
+    private func dismissDragScale(forProgress progress: CGFloat) -> CGFloat {
+        max(0.7, 1 - 0.6 * max(0, min(1, progress)))
+    }
+
 
     func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
         return BearyImageViewerFadeAnimator(presenting: true)
@@ -1176,6 +1182,11 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
 
     @objc private func pinchChanged(_ sender: UIPinchGestureRecognizer) {
         if isNavigating == true {
+        // 下甩关闭拖动中不接捏合：pinchScale0 会取到跟手缩小后的 scale（<1），
+        // .changed 里 max(1, …) 会把图瞬间弹回 1 倍；且 pinchActive 会冻住 panChanged。
+        if dismissDragActive {
+            return
+        }
             return
         }
         if sender.state == .began {
@@ -1277,6 +1288,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 ty = translation.y
                 applyTransform(animated: false)
                 applyDismissDragProgress(abs(ty) / 320)
+                scale = dismissDragScale(forProgress: abs(ty) / 320)
             } else if panMode == 1 {
                 // 横向翻页跟手，只跟横向；相邻图同步贴在边上跟手（见 updateNeighbor）。
                 // 纵向分量冻在仲裁值（≤12pt，不复位，避免仲裁瞬间纵跳），松手回弹时一并归零。
@@ -1300,6 +1312,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                         hideNeighbor()
                         applyTransform(animated: false)
                         applyDismissDragProgress(abs(ty) / 320)
+                        scale = dismissDragScale(forProgress: abs(ty) / 320)
                     } else {
                         panMode = 1
                         updateNeighbor(forDragX: tx)
@@ -1333,6 +1346,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                     tx = 0
                     ty = 0
                     // 审计残留第 10 项：背景/chrome 复位原在动画块外同步调用，
+                    scale = 1
                     // 瞬间跳回、图片却随后滑回，视觉错位；现经 additionalAnimations
                     // 与图片回弹放进同一弹簧块（0.26s／damping 0.7＋松手速度归一化，
                     // 减动效开时直切终态），阈值与弹簧参数均不动。
