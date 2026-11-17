@@ -2856,6 +2856,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func beginQuotePanelCrossfade() -> Int? {
+        // 先递增代次：本次截图失败也让上一淡变的完成回调失效，不再多调一次高度。
+        quotePanelTransitionSeq += 1
         // 快进重开（上一淡变未完又开关）时先清掉在途快照，不留残影。
         quotePanelTransitionSnapshot?.removeFromSuperview()
         quotePanelTransitionSnapshot = nil
@@ -2866,7 +2868,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         snapshot.frame = rect
         view.addSubview(snapshot)
-        quotePanelTransitionSeq += 1
         quotePanelTransitionSnapshot = snapshot
         return quotePanelTransitionSeq
     }
