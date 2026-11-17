@@ -2787,7 +2787,9 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate, U
     func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
         // 固定 estimatedRowHeight 220 与真实卡高（纯文字约 150、有图 400+）差近
         // 200pt，滚动中 contentSize 不断修正会漂移；按模型逐行估算。
-        if showingSkeleton { return 370 }
+        if showingSkeleton {
+            return indexPath.row % 2 == 0 ? BearySkeletonCell.estimatedHeightWithImage : BearySkeletonCell.estimatedHeightWithoutImage
+        }
         let entries = plazaEntries()
         guard indexPath.row >= 0, indexPath.row < entries.count else { return 220 }
         let entry = entries[indexPath.row]
@@ -2806,7 +2808,7 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate, U
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         // 加载三件套·骨架行（扫光在 cell 内自启动，减动效静态）。
-        // 高矮搭配：0/2 行带图 370pt、1 行无图约 142pt，夹住真实卡片高度区间。
+        // 高矮搭配：0/2 行带图 370pt、1 行无图 154pt，夹住真实卡片高度区间。
         if showingSkeleton {
             if let cell = tableView.dequeueReusableCell(withIdentifier: BearySkeletonCell.reuseIdentifier) as? BearySkeletonCell {
                 cell.configure(showsImage: indexPath.row % 2 == 0)
