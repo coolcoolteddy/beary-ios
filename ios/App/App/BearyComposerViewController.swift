@@ -1489,9 +1489,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 呈现/安全区再补一份顶 inset，scrollFocusedFieldIntoView 按 contentInset.top
         // 算可视区顶就会错位；本页滚动区顶已锚顶栏底、不贴安全区，.never 让数学精确。
         scrollView.contentInsetAdjustmentBehavior = .never
-        // 2026-11-01：外层滚动区不再设 delegate——它只为已删除的标题
-        // 聚焦守卫服务（用户拖动清守卫），守卫删了，delegate 一并撤掉；
-        // 内层正文 textView 另有自己的 delegate，不受此影响。
+        // 2026-11-16 跳动审计第三批第 3 条：外层滚动区设 delegate，只为
+        // 键盘快照服务——键盘显示期间用户主动拖动（scrollViewWillBeginDragging）
+        // 即作废弹出前存的旧位置，收起时不再滚回；类已随 UITextViewDelegate
+        // 间接遵循 UIScrollViewDelegate，不再另声明。
+        scrollView.delegate = self
         scrollView.delaysContentTouches = false
         scrollView.keyboardDismissMode = .onDrag
         let dismissTap = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboardTap))
@@ -10117,7 +10119,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 编辑器批第 5 项：键盘高度存属性供 updateTextViewHeight 封顶扣减。
         currentKeyboardHeight = height
         // 2026-10-29 第 28 项：弹出跃迁（此前不可见 → 现在有高度）时保存原位；
-        // 帧变化不重复保存；收起时在完成回调里恢复原位（clamp 到收起后的合法范围）。
+        // 帧变化不重复保存；收起时在同一动画周期内恢复原位（clamp 到收起后的
+        // 合法范围；键盘显示期间用户主动拖动后快照作废、不恢复）。
         let wasVisible = keyboardVisible
         let isHiding = !showing || height == 0
         if showing && height > 0 && !wasVisible {
@@ -10142,6 +10145,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 属系统曲线同步，保留不重写（不要当作通用约束动画口径扩散）。
             self.updateTextViewHeight()
             self.view.layoutIfNeeded()
+            // 2026-11-16 跳动审计第三批第 3 条：收起恢复并进同一动画周期——
+            // 按收起后合法范围 clamp 弹出前存的旧位置，随键盘动画一起回位，
+            // 不再在完成回调里另起一段动画（收起时内容先跟布局走、动画结束
+            // 后再动一次，就是报的“又移动一次”）。键盘显示期间用户主动拖过，
+            // 快照已在 scrollViewWillBeginDragging 里作废，这里不恢复。
+            if isHiding, let saved = self.keyboardSavedContentOffset {
+                self.keyboardSavedContentOffset = nil
+                let minY = -self.scrollView.contentInset.top
+                let maxY = max(minY, self.scrollView.contentSize.height + self.scrollView.contentInset.bottom - self.scrollView.bounds.height)
+                let restoredY = min(max(saved.y, minY), maxY)
+                if abs(restoredY - self.scrollView.contentOffset.y) >= 2 {
+                    self.scrollView.setContentOffset(CGPoint(x: self.scrollView.contentOffset.x, y: restoredY), animated: false)
+                }
+            }
             // 64 包反馈修（第 13 项）：不再给 textView 内层加键盘底 inset——旧代码内外两层
             // 同加 keyboardHeight，空态下内层可视高 =  bounds 高 − 键盘高成负值，caret
             // 可见性计算退化、contentOffset 自己往上跳（占位 label 随之下滑），即 Li 报的
@@ -10159,21 +10176,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 2026-10-31：inset 落定后的修正只做一次、且一律带键盘曲线
             // 动效——旧代码这里是 animated:false 的瞬时修正，键盘动画刚
             // 把内容顶上去、完成回调又无动效改回去，就是“上滑后闪回来”。
-            // 收起恢复原位同样带曲线动效，不再瞬时跳回。
-            if isHiding {
-                if let saved = self.keyboardSavedContentOffset {
-                    self.keyboardSavedContentOffset = nil
-                    let minY = -self.scrollView.contentInset.top
-                    let maxY = max(minY, self.scrollView.contentSize.height + self.scrollView.contentInset.bottom - self.scrollView.bounds.height)
-                    let restoredY = min(max(saved.y, minY), maxY)
-                    if abs(restoredY - self.scrollView.contentOffset.y) >= 2 {
-                        let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
-                        UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: {
-                            self.scrollView.setContentOffset(CGPoint(x: self.scrollView.contentOffset.x, y: restoredY), animated: false)
-                        })
-                    }
-                }
-            } else {
+            // 2026-11-16 跳动审计第三批第 3 条：收起恢复已并进键盘动画
+            // 本身（见动画块），完成回调不再另起一段滚动；这里只剩弹出
+            // 后的焦点滚动消化。
+            if !isHiding {
                 // 光标已在可视区时 scrollFocused 内部 no-op；键盘在途
                 // 中点按记下的 pending 在此统一消化，只做一次。
                 self.pendingFocusScrollAfterKeyboard = false
@@ -10503,5 +10509,15 @@ extension BearyComposerViewController {
     }
 }
 
-// 2026-11-01：外层滚动区 UIScrollViewDelegate 扩展已随标题聚焦守卫删除
-// （它只为守卫清快照服务；delegate 赋值亦已在 buildLayout 撤掉）。
+// 2026-11-16 跳动审计第三批第 3 条：外层滚动区拖动回调只为键盘快照服务——
+// 键盘显示期间用户主动拖动，弹出前存的旧位置作废，收起时不再滚回，避免盖掉
+// 用户刚滚到的位置；keyboardDismissMode = .onDrag 下拖动本身就会触发收键盘，
+// 拖动先于收键盘通知到达，快照清得及时。内层正文 textView 另有自己的 delegate，
+// 其拖动不走这里（identity 守卫）；类已随 UITextViewDelegate 间接遵循
+// UIScrollViewDelegate，不再另声明。
+extension BearyComposerViewController {
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard scrollView === self.scrollView, keyboardVisible else { return }
+        keyboardSavedContentOffset = nil
+    }
+}
