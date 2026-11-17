@@ -146,6 +146,15 @@ final class BearyNotificationsViewController: UIViewController {
     private struct NotificationDisplayRow {
         let kind: NotificationRowKind
         let itemIndex: Int?
+        /// 聚合组下标（nil = 单条）：组内成员下标按时间倒序（最新在前），
+        /// itemIndex 取组内最新一条（代表条），外观/时间/跳转都走代表条。
+        let groupItemIndices: [Int]?
+
+        init(kind: NotificationRowKind, itemIndex: Int?, groupItemIndices: [Int]? = nil) {
+            self.kind = kind
+            self.itemIndex = itemIndex
+            self.groupItemIndices = groupItemIndices
+        }
     }
 
     /// 跨实例缓存快照（网页 openNotifs ntItemsCache 口径）：已读态与展开态
@@ -180,6 +189,9 @@ final class BearyNotificationsViewController: UIViewController {
     private var displayRows: [NotificationDisplayRow] = []
     private var isSysExpanded = false
     private var isActExpanded = false
+    /// 聚合头像组展开态：按组 key 持有（不随 cell 复用丢失；重建行表时
+    /// 不重置，刷新后恢复展开态，与卡片展开态同口径）。
+    private var expandedGroupKeys: Set<String> = []
     /// seen 水印（fix 3）：未读高亮与未读点分离——点只看 read，未读即亮；
     /// 高亮只给“上次进页后新到”的未读。进页时：displayWatermark 取上次
     /// 进页存下的时间戳（无存值 = 首次进页，高亮全部未读），随后把本次
@@ -1505,6 +1517,61 @@ final class BearyNotificationsViewController: UIViewController {
         return t != "system" && t != "letter" && t != "dm"
     }
 
+    /// 多人通知聚合（2026-11-18 Li 定）：同一动作、同一目标、≥2 人合并一条。
+    /// 分组键：like/bookmark/emote 按（动作＋entry_id）；follow 目标即本人，
+    /// 按动作本身。mention 不聚合（@ 提醒各有各的上下文）；无 entry_id 的
+    /// like/bookmark/emote 同样不聚合（目标不明，宁单条不错组）。
+    private func notificationGroupKey(for index: Int) -> String? {
+        guard index < items.count else { return nil }
+        let item = items[index]
+        let type = item.type ?? ""
+        switch type {
+        case "like", "bookmark", "emote":
+            guard let entryId = item.entryId, !entryId.isEmpty else { return nil }
+            return type + ":" + entryId
+        case "follow":
+            return "follow"
+        default:
+            return nil
+        }
+    }
+
+    /// 互动行分组：槽位按首次出现顺序（即时间倒序）——单条占一槽，一组占一槽，
+    /// 组按组内最新一条时间排序；组内下标按时间倒序（最新在前）；单人组仍为单条。
+    private func groupedActRows(from actIndices: [Int]) -> [NotificationDisplayRow] {
+        enum Slot {
+            case single(Int)
+            case group(String)
+        }
+        var slots: [Slot] = []
+        var groups: [String: [Int]] = [:]
+        for index in actIndices {
+            guard let key = notificationGroupKey(for: index) else {
+                slots.append(.single(index))
+                continue
+            }
+            if groups[key] == nil {
+                groups[key] = []
+                slots.append(.group(key))
+            }
+            // 注意：groups[key]?.append 写不回字典（下标返回数组拷贝），
+            // 须用 default: 原地改。
+            groups[key, default: []].append(index)
+        }
+        return slots.map { slot in
+            switch slot {
+            case .single(let index):
+                return NotificationDisplayRow(kind: .actItem, itemIndex: index)
+            case .group(let key):
+                let memberIndices = groups[key] ?? []
+                guard memberIndices.count >= 2 else {
+                    return NotificationDisplayRow(kind: .actItem, itemIndex: memberIndices.first)
+                }
+                return NotificationDisplayRow(kind: .actItem, itemIndex: memberIndices.first, groupItemIndices: memberIndices)
+            }
+        }
+    }
+
     /// 行表重建：letter 扁平置顶 → 系统卡（+ 展开时的系统行）→ 互动卡（+ 展开时的互动行）。
     /// 展开态由 isSysExpanded/isActExpanded 持有，重建不重置，刷新后恢复展开态。
     private func rebuildDisplayRows() {
@@ -1532,9 +1599,7 @@ final class BearyNotificationsViewController: UIViewController {
         if !actIndices.isEmpty {
             rows.append(NotificationDisplayRow(kind: .actCard, itemIndex: nil))
             if isActExpanded {
-                for index in actIndices {
-                    rows.append(NotificationDisplayRow(kind: .actItem, itemIndex: index))
-                }
+                rows.append(contentsOf: groupedActRows(from: actIndices))
             }
         }
         displayRows = rows
@@ -2286,6 +2351,55 @@ final class BearyNotificationsViewController: UIViewController {
         }
     }
 
+    /// 聚合行点按：组内每条先乐观标已读（失败各按单条回滚口径），再一次性跳转——
+    /// entry 组进组内最新一条的日记详情，follow 组进组内最新关注方的主页。
+    /// 聚合 follow 行不画回关钮（归属不明），进主页回关。
+    private func openGroupNotification(_ row: NotificationDisplayRow) {
+        guard let memberIndices = row.groupItemIndices, !memberIndices.isEmpty else { return }
+        let members = memberIndices.compactMap { $0 < items.count ? items[$0] : nil }
+        guard let representative = members.first else { return }
+        var newlyReadCount = 0
+        for index in memberIndices where index < items.count {
+            if (items[index].read ?? true) == false, items[index].id != nil {
+                items[index].read = true
+                newlyReadCount += 1
+                markSingleRead(items[index], at: index)
+            }
+        }
+        if newlyReadCount > 0 {
+            unreadTotal = max(0, unreadTotal - newlyReadCount)
+            publishUnread(unreadTotal)
+            updateReadAllButton()
+            recordFullLoadUnread()
+            applyReadAppearanceToVisibleRows()
+            notifyMergeSnapshotChanged()
+        }
+        let type = representative.type ?? ""
+        if type == "follow" {
+            if let actorId = representative.actorId {
+                onOpenUser?(actorId)
+            }
+            return
+        }
+        if let entryIdValue = representative.entryId, !entryIdValue.isEmpty {
+            onEntrySelected?(entryIdValue)
+        }
+    }
+
+    /// 聚合头像组展开/收起：VC 只记 key，行高生长走 begin/endUpdates
+    ///（automaticDimension 行按内容重算，72→88）；栈内圆圈散开由 cell 播。
+    private func toggleGroupExpanded(key: String, cell: BearyNotificationCell) {
+        let expanding = !expandedGroupKeys.contains(key)
+        if expanding {
+            expandedGroupKeys.insert(key)
+        } else {
+            expandedGroupKeys.remove(key)
+        }
+        cell.setGroupExpanded(expanding, animated: true)
+        tableView.beginUpdates()
+        tableView.endUpdates()
+    }
+
     /// C-G10：已读态变化直接改可见行/卡的 class（背景 + 未读点），不走
     /// reloadRows——网页 ntMarkRead 是 remove('unread') + 摘点，不重载行；
     /// reloadRows 的淡入会让整行闪一下，且不可见行本来就由 cellForRow 按
@@ -2301,7 +2415,15 @@ final class BearyNotificationsViewController: UIViewController {
                 if let itemIndex = row.itemIndex, itemIndex < items.count {
                     let item = items[itemIndex]
                     let isSystemStyle = item.type == "system" || item.type == "letter"
-                    cell.setReadAppearance(isUnread: (item.read ?? true) == false, isSystemStyle: isSystemStyle, highlight: shouldHighlight(item: item))
+                    if let groupIndices = row.groupItemIndices {
+                        // 聚合行：未读点与高亮看组内任一成员（代表条已读不代表全读）。
+                        let members = groupIndices.compactMap { $0 < items.count ? items[$0] : nil }
+                        let anyUnread = members.contains(where: { ($0.read ?? true) == false })
+                        let anyHighlight = members.contains(where: { shouldHighlight(item: $0) })
+                        cell.setReadAppearance(isUnread: anyUnread, isSystemStyle: isSystemStyle, highlight: anyHighlight)
+                    } else {
+                        cell.setReadAppearance(isUnread: (item.read ?? true) == false, isSystemStyle: isSystemStyle, highlight: shouldHighlight(item: item))
+                    }
                 }
             case .sysCard:
                 let sysIndices = items.indices.filter({ items[$0].type == "system" })
@@ -2776,8 +2898,25 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
             }
         case .sysItem, .actItem:
             if let itemIndex = row.itemIndex {
-                cell.configure(with: items[itemIndex], nested: true, highlight: shouldHighlight(item: items[itemIndex]))
-                configureFollowCardIfNeeded(cell: cell, itemIndex: itemIndex)
+                if let groupIndices = row.groupItemIndices, groupIndices.count >= 2 {
+                    // 聚合行：头像组＋多人标题；聚合 follow 行不画回关钮（归属不明），
+                    // 聚合行一律不走单条关注卡。
+                    let members = groupIndices.compactMap { $0 < items.count ? items[$0] : nil }
+                    let groupKey = notificationGroupKey(for: itemIndex) ?? ""
+                    cell.configureAsGroup(
+                        representative: items[itemIndex],
+                        members: members,
+                        nested: true,
+                        highlight: members.contains(where: { shouldHighlight(item: $0) }),
+                        expanded: expandedGroupKeys.contains(groupKey)
+                    ) { [weak self, weak cell] in
+                        guard let strongSelf = self, let cell = cell else { return }
+                        strongSelf.toggleGroupExpanded(key: groupKey, cell: cell)
+                    }
+                } else {
+                    cell.configure(with: items[itemIndex], nested: true, highlight: shouldHighlight(item: items[itemIndex]))
+                    configureFollowCardIfNeeded(cell: cell, itemIndex: itemIndex)
+                }
             }
         }
         // 审计复核：展开动画期间行高为 0，行仍在层级里、VoiceOver 可聚焦。
@@ -2811,7 +2950,11 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
             toggleCard(kind: .actCard)
         case .letter, .sysItem, .actItem:
             if let itemIndex = row.itemIndex {
-                openNotification(items[itemIndex], at: itemIndex)
+                if row.groupItemIndices != nil {
+                    openGroupNotification(row)
+                } else {
+                    openNotification(items[itemIndex], at: itemIndex)
+                }
             }
         }
     }
@@ -3276,6 +3419,237 @@ private final class BearyLetterModalButton: UIButton {
 
 // MARK: - 通知行 cell（网页 .nt-item 口径）
 
+/// 聚合行左侧可展开头像组（2026-11-18 Li 定）：圆形头像向右重叠排列，
+/// 每个压住前一个的三分之一（42pt 圆、间距 28）；最多 4 个圆，超 4 人时
+/// 前 3 个为头像、第 4 个圆显示“+数字”（数字＝剩余人数）；点按后头像
+/// 依次向右散开成一排（间距 50，每个间隔 40ms），下方淡入 11pt 灰名字；
+/// 再点一次从右往左依次收回。减动效直接落终值。
+/// 圆带 2pt 页面底色描边分隔（bearyDynamicBorderColor，深浅切换自动重刷）；
+/// 头像加载走 BearyImageLoader（42×scale 下采样），失败留首字母占位、
+/// 无重试钮；复用/重配时取消在途加载、复位收起态。点按用透明 UIButton
+/// 覆盖栈区（UIControl 点按不触发 didSelectRowAt，回关钮同款原理）。
+final class BearyAvatarStackView: UIView {
+
+    static let avatarDiameter: CGFloat = 42
+    static let collapsedPitch: CGFloat = 28
+    static let expandedPitch: CGFloat = 50
+    /// 展开高：头像 42 ＋ 4 间隙 ＋ 名字 14。
+    static let expandedHeight: CGFloat = 60
+
+    static func collapsedWidth(count: Int) -> CGFloat {
+        guard count > 0 else { return 0 }
+        return avatarDiameter + CGFloat(count - 1) * collapsedPitch
+    }
+
+    static func expandedWidth(count: Int) -> CGFloat {
+        guard count > 0 else { return 0 }
+        return avatarDiameter + CGFloat(count - 1) * expandedPitch
+    }
+
+    private struct Circle {
+        let container: UIView
+        let nameLabel: UILabel
+        var task: URLSessionDataTask?
+    }
+
+    private var circles: [Circle] = []
+    private var onToggle: (() -> Void)?
+    private var loadGeneration = 0
+    private(set) var isExpanded = false
+    private(set) var circleCount = 0
+
+    private lazy var tapButton: UIButton = {
+        let button = UIButton(type: .custom)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.backgroundColor = .clear
+        button.isAccessibilityElement = true
+        button.addTarget(self, action: #selector(stackTapped), for: .touchUpInside)
+        return button
+    }()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        addSubview(tapButton)
+        NSLayoutConstraint.activate([
+            tapButton.topAnchor.constraint(equalTo: topAnchor),
+            tapButton.leadingAnchor.constraint(equalTo: leadingAnchor),
+            tapButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+            tapButton.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    /// actors：按时间倒序（最新在前）；overflowCount > 0 时末圆为“+N”不配名字。
+    func configure(actors: [(name: String, avatarURL: URL?)], overflowCount: Int, expanded: Bool, onToggle: @escaping () -> Void) {
+        reset()
+        self.onToggle = onToggle
+        self.isExpanded = expanded
+        for actor in actors {
+            circles.append(makeAvatarCircle(name: actor.name, avatarURL: actor.avatarURL))
+        }
+        if overflowCount > 0 {
+            circles.append(makeOverflowCircle(count: overflowCount))
+        }
+        circleCount = circles.count
+        tapButton.accessibilityLabel = expanded ? "收起头像" : "展开头像"
+        bringSubviewToFront(tapButton)
+        layoutCircles(animated: false)
+    }
+
+    /// 复用/重配：取消在途头像加载（回调凭代次作废）、拆掉旧圆、复位收起态。
+    func reset() {
+        for circle in circles {
+            circle.task?.cancel()
+            circle.container.removeFromSuperview()
+            circle.nameLabel.removeFromSuperview()
+        }
+        circles.removeAll()
+        loadGeneration += 1
+        onToggle = nil
+        isExpanded = false
+        circleCount = 0
+    }
+
+    /// 点按切换：改圆圈位置＋名字淡入淡出；栈宽/高约束由 cell 同步改，
+    /// 行高生长由 VC 的 begin/endUpdates 驱动。
+    func setExpanded(_ expanded: Bool, animated: Bool) {
+        guard expanded != isExpanded else { return }
+        isExpanded = expanded
+        tapButton.accessibilityLabel = expanded ? "收起头像" : "展开头像"
+        layoutCircles(animated: animated)
+    }
+
+    @objc private func stackTapped() {
+        onToggle?()
+    }
+
+    private func makeCircleContainer() -> UIView {
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.backgroundColor = BearyColors.line
+        container.layer.cornerRadius = Self.avatarDiameter / 2
+        container.layer.borderWidth = 2
+        container.layer.bearyDynamicBorderColor = BearyColors.bg
+        container.clipsToBounds = true
+        return container
+    }
+
+    private func makeNameLabel(text: String) -> UILabel {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
+        label.textColor = BearyColors.gray
+        label.adjustsFontForContentSizeCategory = true
+        label.textAlignment = .center
+        label.text = text
+        label.alpha = 0
+        label.numberOfLines = 1
+        label.lineBreakMode = .byTruncatingTail
+        return label
+    }
+
+    private func makeAvatarCircle(name: String, avatarURL: URL?) -> Circle {
+        let container = makeCircleContainer()
+        let imageView = UIImageView()
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.contentMode = .scaleAspectFill
+        imageView.clipsToBounds = true
+        container.addSubview(imageView)
+        NSLayoutConstraint.activate([
+            imageView.topAnchor.constraint(equalTo: container.topAnchor),
+            imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        // 首字母占位与单头像同款（15/700 灰）；无图直接露占位，不走加载。
+        let displayName = name.isEmpty ? "beary 用户" : name
+        let fallbackLabel = UILabel()
+        fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
+        fallbackLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
+        fallbackLabel.textColor = BearyColors.gray
+        fallbackLabel.adjustsFontForContentSizeCategory = true
+        fallbackLabel.textAlignment = .center
+        fallbackLabel.text = String(displayName.prefix(1)).uppercased()
+        container.addSubview(fallbackLabel)
+        NSLayoutConstraint.activate([
+            fallbackLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            fallbackLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
+        let nameLabel = makeNameLabel(text: displayName)
+        addSubview(container)
+        addSubview(nameLabel)
+        var circle = Circle(container: container, nameLabel: nameLabel, task: nil)
+        if let url = avatarURL {
+            let generation = loadGeneration
+            circle.task = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: Self.avatarDiameter * UIScreen.main.scale) { [weak self, weak imageView, weak fallbackLabel] result in
+                guard let strongSelf = self, generation == strongSelf.loadGeneration else { return }
+                guard let imageView = imageView, let fallbackLabel = fallbackLabel else { return }
+                switch result {
+                case .success(let image):
+                    imageView.image = image
+                    fallbackLabel.isHidden = true
+                case .failure:
+                    // 失败留首字母占位、无重试钮。
+                    imageView.image = nil
+                    fallbackLabel.isHidden = false
+                }
+            }
+        }
+        return circle
+    }
+
+    private func makeOverflowCircle(count: Int) -> Circle {
+        let container = makeCircleContainer()
+        let countLabel = UILabel()
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        countLabel.textColor = BearyColors.ink
+        countLabel.adjustsFontForContentSizeCategory = true
+        countLabel.textAlignment = .center
+        countLabel.text = "+\(count)"
+        container.addSubview(countLabel)
+        NSLayoutConstraint.activate([
+            countLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            countLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
+        // +N 圆无名字：名字位留空 label（alpha 恒 0），布局与头像圆一致。
+        let nameLabel = makeNameLabel(text: "")
+        addSubview(container)
+        addSubview(nameLabel)
+        return Circle(container: container, nameLabel: nameLabel, task: nil)
+    }
+
+    private func circleCenterX(at index: Int, expanded: Bool) -> CGFloat {
+        let pitch = expanded ? Self.expandedPitch : Self.collapsedPitch
+        return Self.avatarDiameter / 2 + CGFloat(index) * pitch
+    }
+
+    private func layoutCircles(animated: Bool) {
+        let animate = animated && BearyMotion.animated(true)
+        for (index, circle) in circles.enumerated() {
+            let centerX = circleCenterX(at: index, expanded: isExpanded)
+            let containerFrame = CGRect(x: centerX - Self.avatarDiameter / 2, y: 0, width: Self.avatarDiameter, height: Self.avatarDiameter)
+            // 名字宽 50 居中于圆心，超长截断；头像下方 4pt 间隙。
+            let nameFrame = CGRect(x: centerX - 25, y: Self.avatarDiameter + 4, width: 50, height: 14)
+            let apply = {
+                circle.container.frame = containerFrame
+                circle.nameLabel.frame = nameFrame
+                circle.nameLabel.alpha = self.isExpanded ? 1 : 0
+            }
+            if animate {
+                // 散开从左往右、收回从右往左：收回时倒序延时。
+                let staggerIndex = isExpanded ? index : (circles.count - 1 - index)
+                UIView.animate(withDuration: BearyMotion.normal, delay: TimeInterval(staggerIndex) * 0.04, options: [.curveEaseInOut], animations: apply, completion: nil)
+            } else {
+                apply()
+            }
+        }
+    }
+}
+
 class BearyNotificationCell: UITableViewCell {
 
     private var avatarTask: URLSessionDataTask?
@@ -3497,6 +3871,14 @@ class BearyNotificationCell: UITableViewCell {
     private var dotTrailingToContentConstraint: NSLayoutConstraint?
     private var dotTrailingToChevronConstraint: NSLayoutConstraint?
 
+    /// 聚合头像组：单头像位替换为头像栈；bodyStack 左缘在单头像/栈之间切换。
+    private let avatarStackView = BearyAvatarStackView()
+    private var bodyStackLeadingToAvatarConstraint: NSLayoutConstraint?
+    private var bodyStackLeadingToStackConstraint: NSLayoutConstraint?
+    private var avatarStackWidthConstraint: NSLayoutConstraint?
+    private var avatarStackHeightConstraint: NSLayoutConstraint?
+    private var avatarStackBottomGuard: NSLayoutConstraint?
+
     private let separatorView: UIView = {
         let separator = UIView()
         separator.translatesAutoresizingMaskIntoConstraints = false
@@ -3545,6 +3927,9 @@ class BearyNotificationCell: UITableViewCell {
         contentView.addSubview(popperView)
         contentView.addSubview(kindBadgeView)
         contentView.addSubview(avatarRetryButton)
+        avatarStackView.translatesAutoresizingMaskIntoConstraints = false
+        avatarStackView.isHidden = true
+        contentView.addSubview(avatarStackView)
         contentView.addSubview(bodyStack)
         contentView.addSubview(unreadDotView)
         contentView.addSubview(chevronView)
@@ -3569,6 +3954,21 @@ class BearyNotificationCell: UITableViewCell {
         separatorLeadingConstraint?.isActive = true
         dotTrailingToContentConstraint?.isActive = true
         dotTrailingToChevronConstraint?.isActive = false
+        // bodyStack 左缘：单头像行钉头像右缘＋12，聚合行钉头像栈右缘＋12；
+        // 栈与单头像同顶（14）、同左缘（跟 avatarLeadingConstraint 走嵌套缩进）。
+        bodyStackLeadingToAvatarConstraint = bodyStack.leadingAnchor.constraint(equalTo: avatarImageView.trailingAnchor, constant: 12)
+        bodyStackLeadingToStackConstraint = bodyStack.leadingAnchor.constraint(equalTo: avatarStackView.trailingAnchor, constant: 12)
+        avatarStackWidthConstraint = avatarStackView.widthAnchor.constraint(equalToConstant: 42)
+        avatarStackHeightConstraint = avatarStackView.heightAnchor.constraint(equalToConstant: 42)
+        avatarStackBottomGuard = contentView.bottomAnchor.constraint(greaterThanOrEqualTo: avatarStackView.bottomAnchor, constant: 14)
+        avatarStackBottomGuard?.priority = UILayoutPriority(999)
+        bodyStackLeadingToAvatarConstraint?.isActive = true
+        avatarStackWidthConstraint?.isActive = true
+        avatarStackHeightConstraint?.isActive = true
+        NSLayoutConstraint.activate([
+            avatarStackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
+            avatarStackView.leadingAnchor.constraint(equalTo: avatarImageView.leadingAnchor),
+        ])
         unreadBgLeadingConstraint = unreadBgView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 0)
         unreadBgLeadingConstraint?.isActive = true
         // 头像垂直锚点：默认顶锚 14（独立通知页现行）；合并消息页改居中（见 applyAvatarVerticalStyle）。
@@ -3608,7 +4008,6 @@ class BearyNotificationCell: UITableViewCell {
             kindIconView.centerYAnchor.constraint(equalTo: kindBadgeView.centerYAnchor),
             kindIconView.widthAnchor.constraint(equalToConstant: 11),
             kindIconView.heightAnchor.constraint(equalToConstant: 11),
-            bodyStack.leadingAnchor.constraint(equalTo: avatarImageView.trailingAnchor, constant: 12),
             bodyStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
             followActionStack.leadingAnchor.constraint(equalTo: bodyStack.leadingAnchor),
             followActionStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
@@ -3653,6 +4052,7 @@ class BearyNotificationCell: UITableViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         cancelAvatarLoad()
+        resetAvatarStack()
         avatarRetryURL = nil
         avatarRetryActorName = ""
         avatarRetryButton.isHidden = true
@@ -3938,6 +4338,7 @@ class BearyNotificationCell: UITableViewCell {
     func configure(with item: NotificationItem, nested: Bool, highlight: Bool, mergedList: Bool = false) {
         // 复用行先清关注动作区；关注行由 VC 随后调 configureFollowCard 补上。
         hideFollowAction()
+        resetAvatarStack()
         applyAvatarVerticalStyle(mergedList: mergedList)
         bodyStack.spacing = mergedList ? 4 : 2
         let itemType = item.type ?? ""
@@ -4073,6 +4474,116 @@ class BearyNotificationCell: UITableViewCell {
         excerptLabel.attributedText = BearyNotificationCell.lineHeightText(item.excerpt ?? "", font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: mergedList ? 12 : 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5)
         lastTimeMs = item.createdAt
         timeLabel.text = BearyNotificationCell.timeText(ms: item.createdAt)
+    }
+
+    /// 聚合行配置（2026-11-18 Li 定）：单头像换成可展开头像组，标题为
+    /// 多人名＋动词（2 人「A 和 B …」，3 人及以上人名以、连接、末两人以和
+    /// 连接；名字段整体粗体、动词常规，与单行同口径）；副标题与时间走
+    /// 组内最新一条（代表条）；未读点与高亮看组内任一成员。聚合行不画
+    /// 类型角标（动作已在动词里）与关注卡（回关归属不明）；emote 组不贴
+    /// 表情附件（各成员表情可能不同，动词已说明动作）。
+    /// 注：服务端通知暂无日记标题字段，标题仍用现行动词（「赞了你的日记」），
+    /// 《标题》文案待后端在通知里补 e.title 后再换（须 Li 点头）。
+    func configureAsGroup(representative: NotificationItem, members: [NotificationItem], nested: Bool, highlight: Bool, expanded: Bool, onToggle: @escaping () -> Void) {
+        hideFollowAction()
+        resetAvatarStack()
+        cancelAvatarLoad()
+        avatarRetryURL = nil
+        avatarRetryActorName = ""
+        avatarRetryButton.isHidden = true
+        avatarImageView.isHidden = true
+        avatarFallbackLabel.isHidden = true
+        avatarIconView.isHidden = true
+        popperView.stop()
+        popperView.isHidden = true
+        kindBadgeView.isHidden = true
+        avatarLeadingConstraint?.constant = nested ? 50 : 16
+        separatorLeadingConstraint?.constant = nested ? 30 : 0
+        nestedLineView.isHidden = !nested
+        chevronView.isHidden = true
+        dotTrailingToContentConstraint?.isActive = true
+        dotTrailingToChevronConstraint?.isActive = false
+
+        let anyUnread = members.contains(where: { ($0.read ?? true) == false })
+        applyUnreadHighlight(highlight: highlight, blueAlpha: 0.07, nested: nested)
+        unreadDotView.isHidden = !anyUnread
+
+        // 头像组：≤4 人全显示，超 4 人前 3 个头像＋第 4 个圆“+数字”。
+        let shownMembers = members.count > 4 ? Array(members.prefix(3)) : members
+        let overflowCount = members.count > 4 ? members.count - 3 : 0
+        let actors: [(name: String, avatarURL: URL?)] = shownMembers.map { member in
+            let deletedName = bearyDeletedAuthorDisplayName(member.actorName) ?? ""
+            let displayName = deletedName.isEmpty ? "beary 用户" : deletedName
+            return (name: displayName, avatarURL: BearyImageURLs.avatarURL(member.actorAvatar))
+        }
+        avatarStackView.configure(actors: actors, overflowCount: overflowCount, expanded: expanded, onToggle: onToggle)
+        avatarStackView.isHidden = false
+        let circleCount = avatarStackView.circleCount
+        avatarStackWidthConstraint?.constant = expanded ? BearyAvatarStackView.expandedWidth(count: circleCount) : BearyAvatarStackView.collapsedWidth(count: circleCount)
+        avatarStackHeightConstraint?.constant = expanded ? BearyAvatarStackView.expandedHeight : BearyAvatarStackView.avatarDiameter
+        avatarStackBottomGuard?.isActive = true
+        bodyStackLeadingToAvatarConstraint?.isActive = false
+        bodyStackLeadingToStackConstraint?.isActive = true
+
+        let displayNames = members.map { member -> String in
+            let deletedName = bearyDeletedAuthorDisplayName(member.actorName) ?? ""
+            return deletedName.isEmpty ? "beary 用户" : deletedName
+        }
+        let namesText: String
+        if displayNames.count == 2 {
+            namesText = displayNames[0] + " 和 " + displayNames[1]
+        } else if displayNames.count > 2 {
+            let head = displayNames.dropLast().joined(separator: "、")
+            namesText = head + " 和 " + (displayNames.last ?? "")
+        } else {
+            namesText = displayNames.first ?? "beary 用户"
+        }
+        let title = NSMutableAttributedString()
+        title.append(NSAttributedString(
+            string: namesText,
+            attributes: [
+                .font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)),
+                .foregroundColor: BearyColors.ink,
+            ]
+        ))
+        let verbText = BearyNotificationCell.verb(for: representative.type)
+        title.append(NSAttributedString(
+            string: " " + verbText,
+            attributes: [
+                .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)),
+                .foregroundColor: BearyColors.ink,
+            ]
+        ))
+        let titleParagraph = NSMutableParagraphStyle()
+        titleParagraph.lineHeightMultiple = 1.5
+        titleParagraph.lineBreakMode = .byCharWrapping
+        title.addAttribute(.paragraphStyle, value: titleParagraph, range: NSRange(location: 0, length: title.length))
+        titleLabel.attributedText = title
+
+        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(representative.excerpt ?? "", font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray)
+        lastTimeMs = representative.createdAt
+        timeLabel.text = BearyNotificationCell.timeText(ms: representative.createdAt)
+    }
+
+    /// 头像组展开/收起（VC 的 toggleGroupExpanded 调）：栈宽/高约束同步改，
+    /// 圆圈散开/收回由栈自己播；行高生长由 VC 的 begin/endUpdates 驱动。
+    func setGroupExpanded(_ expanded: Bool, animated: Bool) {
+        guard !avatarStackView.isHidden else { return }
+        let count = avatarStackView.circleCount
+        avatarStackWidthConstraint?.constant = expanded ? BearyAvatarStackView.expandedWidth(count: count) : BearyAvatarStackView.collapsedWidth(count: count)
+        avatarStackHeightConstraint?.constant = expanded ? BearyAvatarStackView.expandedHeight : BearyAvatarStackView.avatarDiameter
+        avatarStackView.setExpanded(expanded, animated: animated)
+    }
+
+    /// 聚合态复位：拆头像栈、恢复单头像约束（prepareForReuse 与单条 configure 共用）。
+    private func resetAvatarStack() {
+        avatarStackView.reset()
+        avatarStackView.isHidden = true
+        avatarStackBottomGuard?.isActive = false
+        bodyStackLeadingToStackConstraint?.isActive = false
+        bodyStackLeadingToAvatarConstraint?.isActive = true
+        avatarImageView.isHidden = false
+        kindBadgeView.isHidden = false
     }
 
     /// 好友第一期：关注提醒卡动作区状态（VC 按关注方 id 持有，不随 cell 复用丢失）。
