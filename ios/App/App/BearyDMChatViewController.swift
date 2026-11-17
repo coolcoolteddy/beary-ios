@@ -1350,7 +1350,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         guard ensureIdentityCurrent() else { return }
         olderLoading = true
         setOlderLoadingState(loading: true, failed: false)
-        let oldHeight = tableView.contentSize.height
         // 请求时捕获账号 + 代次：回包时任一不匹配即丢弃（见 isRequestCurrent）。
         let requestAccountId = SessionManager.shared.currentUser?.id
         let requestEpoch = BearyAPI.shared.authEpoch
@@ -1383,16 +1382,25 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     let applyMerged: ([BearyAPI.DMMessage]) -> Void = { [weak self] merged in
                         guard let self = self else { return }
                         // 写盘完成时刻重采样（与 loadLatest 同口径）：在换数据、更新表格
-                        // 前的同一主线程时刻拍定当前首个可见消息及其视口内偏移；
+                        // 前的同一主线程时刻拍定当前首个可见消息、其视口内偏移与旧表高；
                         // 更新后按该消息的新位置补偿，拖动期间的相对位移一并保留。
                         let freshAnchorIndexPath = self.tableView.indexPathsForVisibleRows?.sorted().first
-                        let freshAnchorMessageId = freshAnchorIndexPath.flatMap { $0.row < self.messages.count ? self.messages[$0.row].id : nil }
+                        let freshAnchorMessage = freshAnchorIndexPath.flatMap { $0.row < self.messages.count ? self.messages[$0.row] : nil }
+                        let freshAnchorMessageId = freshAnchorMessage?.id
+                        // 待发消息没有服务端 id：用本地临时键 localKey 作稳定锚点，
+                        // 更新后待发仍拼在表尾（pendingTemps），可按 localKey 复位，
+                        // 减少落入高度差兜底的机会。
+                        let freshAnchorLocalKey = freshAnchorMessageId == nil ? freshAnchorMessage?.localKey : nil
                         let freshAnchorViewportOffset: CGFloat = {
                             guard let freshAnchorIndexPath = freshAnchorIndexPath else { return 0 }
                             let rect = self.tableView.rectForRow(at: freshAnchorIndexPath)
                             return rect.origin.y - self.tableView.contentOffset.y
                         }()
                         let freshOffsetY = self.tableView.contentOffset.y
+                        // 旧表高与 freshOffsetY 同一时刻拍定：请求发出时取的表高
+                        // 在网络＋写盘窗口内可能已过期（可见 cell 图片加载改行高），
+                        // 兜底的 delta 须用换数据前的这一刻作基线。
+                        let freshOldHeight = self.tableView.contentSize.height
                         let pending = self.pendingTemps()
                         self.messages = merged
                         self.messages += pending
@@ -1403,14 +1411,20 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         // 此处 reloadData＋layout 已完成，方可放行。
                         self.olderLoading = false
                         self.setOlderLoadingState(loading: false, failed: false)
-                        let delta = self.tableView.contentSize.height - oldHeight
+                        let delta = self.tableView.contentSize.height - freshOldHeight
                         if let anchorId = freshAnchorMessageId,
                            let anchorIndex = self.messages.firstIndex(where: { $0.id == anchorId }) {
                             // 写盘完成时刻的首个可见消息复位，视口内容原地不动。
                             let rect = self.tableView.rectForRow(at: IndexPath(row: anchorIndex, section: 0))
                             self.tableView.contentOffset = CGPoint(x: 0, y: rect.origin.y - freshAnchorViewportOffset)
+                        } else if let anchorKey = freshAnchorLocalKey,
+                                  let anchorIndex = self.messages.firstIndex(where: { $0.localKey == anchorKey }) {
+                            // 待发锚点按 localKey 复位，视口内容原地不动。
+                            let rect = self.tableView.rectForRow(at: IndexPath(row: anchorIndex, section: 0))
+                            self.tableView.contentOffset = CGPoint(x: 0, y: rect.origin.y - freshAnchorViewportOffset)
                         } else {
-                            // 锚点消息已不在新表里：按写盘完成时刻的视口平移插入高度。
+                            // 锚点消息已不在新表里：按与 freshOffsetY 同一时刻的旧表高
+                            // 算插入高度，平移视口。
                             self.tableView.contentOffset = CGPoint(x: 0, y: freshOffsetY + delta)
                         }
                         // 排队过的下拉刷新：翻旧结束即跑（刷新控件一直转圈未停）。
