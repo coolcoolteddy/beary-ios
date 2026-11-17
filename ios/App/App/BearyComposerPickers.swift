@@ -179,15 +179,15 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         backdropButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
         backdropButton.bearyAddPressFeedback()
 
-        // 审计 D-16：浮层背景与回应 Sheet 一致走 surface3（深色 #313138；
-        // 浅色下 surface3 #DFDFDF 略深于 bg 白，观感微分层）；全屏页面仍用 bg，不动。
-        sheetView.backgroundColor = BearyColors.surface3
+        // 2026-11-17 写日记页弹窗贴底定版：浮层背景走 surface1（深色 #18181C；
+        // 浅色 #F5F5F5 只比 bg 白高一档），不再走 surface3；全屏页面仍用 bg，不动。
+        sheetView.backgroundColor = BearyColors.surface1
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         // 阴影：手机端走底 sheet 档；iPad 卡片走 raised 档（2026-11-02 定版第 2 组，
         // 旧 0.30/30/(0, 24) 档已废弃），此处不再自写数值。
 
-        // 抓手走 gray：底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #DFDFDF）
-        // 只差 4 阶、浅色下几不可见（#1286 档距拉大后；深色亦只差约 9 阶）。
+        // 抓手走 gray：底是 surface1，line（浅 #DBDBDB）与 surface1（浅 #F5F5F5）
+        // 差约 26 阶、浅色下可见；深色亦分得清。
         grabberView.backgroundColor = BearyColors.gray
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
 
@@ -980,8 +980,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         separator.translatesAutoresizingMaskIntoConstraints = false
         // 8-4：分隔线收进统一样式——基线厚已是 1pt，0.55 是颜色透明度（非厚度），
         // 现改全强度 line 色（动态色本身，不走 withAlphaComponent，8-1 同款）。
-        // 例外：行底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #DFDFDF）只差
-        // 4 阶、浅色下几不可见（#1286 档距拉大后），此处改走 gray。
+        // 例外：行底是 surface1，line（浅 #DBDBDB）与 surface1（浅 #F5F5F5）差
+        // 约 26 阶、浅色下可见，此处仍走 gray。
         separator.backgroundColor = BearyColors.gray
         // 审计 9 层级：占位在下、头像在上（其余子视图顺序与旧版一致）。
         // 审计 D-12：行按压底片——铺满整行、垫在全部内容之下，只换底色不缩放，
@@ -1431,7 +1431,8 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.surface3
+        // 2026-11-17 写日记页弹窗贴底定版：埋胶囊底 sheet 走 surface1，不再走 surface3。
+        view.backgroundColor = BearyColors.surface1
         view.layer.cornerRadius = BearySheetChrome.topCornerRadius
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true

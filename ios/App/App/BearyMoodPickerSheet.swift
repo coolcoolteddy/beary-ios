@@ -157,7 +157,8 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.surface3
+        // 2026-11-17 写日记页弹窗贴底定版：心情选择 sheet 走 surface1，不再走 surface3。
+        view.backgroundColor = BearyColors.surface1
         view.layer.cornerRadius = BearySheetChrome.topCornerRadius
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
@@ -186,7 +187,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         layout.sectionInset = UIEdgeInsets(top: 4, left: 18, bottom: 20, right: 18)
         let collection = UICollectionView(frame: .zero, collectionViewLayout: layout)
         collection.translatesAutoresizingMaskIntoConstraints = false
-        collection.backgroundColor = BearyColors.surface3
+        collection.backgroundColor = BearyColors.surface1
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         collection.delaysContentTouches = false
         collection.dataSource = self

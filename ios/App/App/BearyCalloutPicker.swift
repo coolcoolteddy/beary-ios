@@ -119,10 +119,10 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     private static let optionSpacing: CGFloat = 8
     private static let fadeWidth: CGFloat = 28
 
-    /// 浮层底走 surface3（2026-11-07 微明度定版：旧硬编码值深 #26262c／浅 #F5F5F5
-    /// 已随 surface 单值废止，改走 surface3 token）。
+    /// 浮层底走 surface1（2026-11-17 写日记页弹窗贴底定版：surface3 深 #313138／
+    /// 浅 #DFDFDF 在黑底 #0B0B0D 上亮四档、太飘；改走 surface1 只比页面底高一档）。
     private static var calloutBackgroundColor: UIColor {
-        BearyColors.surface3
+        BearyColors.surface1
     }
 
     private let backgroundLayer = CAShapeLayer()
