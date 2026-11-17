@@ -717,6 +717,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 同账号重登 id 不变，校验通过、同一草稿可续写；编辑模式不设它
     /// （saveDraftNow 在编辑态本就是空操作，见 saveDraftNow 首行守卫）。
     private var publishOriginAccountId: Int?
+    /// 原日记已公开的引用 id（部分成功后重试用）：从草稿箱打开／恢复草稿时
+    /// 认草稿持久标记（draft.sourcePublished），只在引用仍是同一篇原日记
+    /// 时有效——换引用／删引用即失效，门禁重走；点发布时据此跳过门禁与
+    /// setVisibility，只发新篇（见 didTapPublish 与 handOverToPublishCenter）。
+    /// 切篇／清空时随发布绑定一起清掉，下文按新篇草稿重读。
+    private var sourceAlreadyPublishedQuoteId: String?
     /// 打开编辑器时绑定的账号（#1009 P0-1 同款绑定，本支扩展到编辑态）：
     /// viewDidLoad 即记下打开时的账号，之后检查点保存／恢复／清除与编辑
     /// PUT 一律认它，不随重登改写。编辑态不写草稿、publishOriginAccountId
@@ -8253,6 +8259,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.selectedRecipient = self.restoredRecipient(from: draft)
                 self.notifyRecipient = draft.notifyRecipient
                 self.selectedQuote = self.restoredQuote(from: draft)
+                // 原日记已公开态：同 loadDraftFromBox，只认本篇草稿的持久标记。
+                self.sourceAlreadyPublishedQuoteId = draft.sourcePublished ? draft.quoteId : nil
                 // 批 E：草稿位置恢复（两段文本＋经纬度，2026-11-14 Li 定改存经纬度）；双空即无位置，不留空行。
                 let restoredLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict, latitude: draft.locationLatitude, longitude: draft.locationLongitude, country: draft.locationCountry, region: draft.locationRegion, city: draft.locationCity, street: draft.locationStreet)
                 self.selectedLocation = restoredLocation.isEmpty ? nil : restoredLocation
@@ -8491,8 +8499,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         clearedCurrentDraftId = nil
         draftClientReq = nil
         // 发布绑定与打开时绑定随篇清掉：丢弃/发布成功后不再有“本篇发起账号”，
-        // 下一篇发布重新捕获，不被旧绑定误拦。
+        // 下一篇发布重新捕获，不被旧绑定误拦。原日记已公开态同清。
         publishOriginAccountId = nil
+        sourceAlreadyPublishedQuoteId = nil
         composerOriginAccountId = nil
         draftStatusLevel = nil
         updateDraftStatusLabel()
@@ -8737,6 +8746,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         publishedCurrentDraft = false
         // 空白新篇不再继承上一篇的发布绑定与部分成功态。
         publishOriginAccountId = nil
+        sourceAlreadyPublishedQuoteId = nil
         composerOriginAccountId = nil
         draftStatusLevel = nil
         updateCountLabel()
@@ -8779,9 +8789,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updateDraftStatusLabel()
         draftTimer?.invalidate()
         removeAllImageViews()
-        // 切篇即换发布绑定：上一篇的发起账号与部分成功态不带到新篇，
-        // 新篇首次点发布时重新捕获。
+        // 切篇即换发布绑定：上一篇的发起账号不带到新篇，新篇首次点发布时
+        // 重新捕获；原日记已公开态例外——下文按新篇草稿持久标记重读
+        // （见 selectedQuote 恢复处的 sourceAlreadyPublishedQuoteId）。
         publishOriginAccountId = nil
+        sourceAlreadyPublishedQuoteId = nil
         // P0-1：切篇即按箱内草稿所属的当前账号重绑打开时绑定——箱内
         // 草稿来自当前账号桶，之后自动保存写该账号的桶，不沿用旧绑定。
         composerOriginAccountId = currentAccountIdForPublish()
@@ -8810,6 +8822,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedRecipient = restoredRecipient(from: draft)
         notifyRecipient = draft.notifyRecipient
         selectedQuote = restoredQuote(from: draft)
+        // 原日记已公开态：只认本篇草稿的持久标记，引用仍是同一篇原日记
+        // 时点发布跳过门禁、只发新篇（见 didTapPublish）。
+        sourceAlreadyPublishedQuoteId = draft.sourcePublished ? draft.quoteId : nil
         // 批 E：草稿箱打开某篇时位置同款恢复。
         let boxLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict, latitude: draft.locationLatitude, longitude: draft.locationLongitude, country: draft.locationCountry, region: draft.locationRegion, city: draft.locationCity, street: draft.locationStreet)
         selectedLocation = boxLocation.isEmpty ? nil : boxLocation
@@ -9615,13 +9630,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 保持私密发布即把本篇改回私密再发（引用保留）；删除引用即清引用再公开。
             // 门禁弹框本身是模态 alert，框在时编辑器动不了；三条出路提交的都是
             // 本快照（删除/保持私密只改快照副本对应字段，现场值改动不进载荷）。
-            // 部分成功后重试不再走本函数内分支：编辑器交接后即退出，
-            // 部分成功态不跨编辑器实例；重发即从草稿箱重开再点发布，
-            // 门禁重走一遍、setVisibility 对已公开原日记幂等重发。
-            if self.selectedVisibilityPublished, let pendingQuote = self.selectedQuote, pendingQuote.isDeleted == false, pendingQuote.isPublic != true {
-                // #43：门禁弹框是模态 sheet，框在时编辑器动不了；先解冻，
-                // 否则点「取消」回编辑器时会一直冻着（门禁无取消回调）。
-                // 任一出路都走 handOver，交接时重新冻结。
+            // 部分成功后重试：首选发布中心一键重试（pill 状态表／草稿箱重试钮，
+            // 跳过 setVisibility 只发新篇）；从草稿箱重开再点发布也行——编辑器
+            // 读草稿持久标记后跳过门禁、只发新篇，不再重发 setVisibility。
+            // #43：门禁弹框是模态 sheet，框在时编辑器动不了；先解冻，
+            // 否则点「取消」回编辑器时会一直冻着（门禁无取消回调）。
+            // 任一出路都走 handOver，交接时重新冻结。
+            if self.selectedVisibilityPublished, let pendingQuote = self.selectedQuote, pendingQuote.isDeleted == false, pendingQuote.isPublic != true, !self.isSourceAlreadyPublished(pendingQuote) {
                 self.isPublishing = false
                 self.updatePublishState()
                 let mine = BearyQuoteGate.sourceIsMine(isMine: pendingQuote.isMine, authorId: pendingQuote.authorId)
@@ -9678,6 +9693,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
+    /// 原日记是否已公开（部分成功后重试）：持久标记的引用 id 与当前引用一致才认；
+    /// 换引用／删引用即失效，门禁重走；无引用（entryId 为空）时不认。
+    private func isSourceAlreadyPublished(_ quote: SelectedQuote) -> Bool {
+        guard let quoteId = sourceAlreadyPublishedQuoteId else { return false }
+        return quoteId == quote.entryId
+    }
+
     /// 发布后台化交接（新建发布专用）：快照与图片清单交给发布中心，
     /// 编辑器立即退出，发布在后台继续跑。调用前须已落盘成功
     /// （saveDraftNow 回调里调）。代次过期（新一轮发布已开始）
@@ -9727,6 +9749,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             images: images,
             publishTogether: publishTogether,
             publishToken: publishToken,
+            // 原日记已公开时只发新篇：标记须与本次快照的引用一致才带
+            // （两边同为 nil 即无引用时不认，见 isSourceAlreadyPublished）。
+            sourceAlreadyPublished: sourceAlreadyPublishedQuoteId != nil && sourceAlreadyPublishedQuoteId == snapshot.quoteId,
             hostView: presentingViewController?.view,
             onPublished: onPublished,
             onRequireLogin: onRequireLogin)

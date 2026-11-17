@@ -107,6 +107,9 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     private var draftCardsAnimatedOnce = false
     private var deleteEntries: [(button: UIButton, draftValue: BearyDraft)] = []
     private var lostEntries: [(button: UIButton, draftValue: BearyDraft)] = []
+    /// 发布失败重试钮（草稿持久标记 lastPublishFailure 非空的卡才有）：
+    /// 与 deleteEntries／lostEntries 同款（按钮＋草稿）查表。
+    private var retryEntries: [(button: UIButton, draftValue: BearyDraft)] = []
     /// DF-1/DF-2：编辑器当前正在写的那篇 draftId（由容器/编辑器在呈现草稿箱后设置；
     /// 未设置时“正在写”标记不显示、删正在写回调不触发）。容器接线由总协调收尾。
     var currentDraftId: String?
@@ -889,6 +892,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         cardEntries = []
         deleteEntries = []
         lostEntries = []
+        retryEntries = []
         if draftsLoadFailed {
             subLabel.text = nil
             subWrap.isHidden = true
@@ -1138,6 +1142,30 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         statusRow.addArrangedSubview(statusLabel)
         let metaSpacer = UIView()
         statusRow.addArrangedSubview(metaSpacer)
+        // 发布失败行：草稿箱是失败的持久落点——失败文案红字（单行截断，
+        // 全文见 pill 状态表／失败 toast）＋重试钮；原日记已公开时钮文
+        // “只重试新篇”，点按走发布中心一键重试，不重开编辑器。
+        // 带钮时状态文案须可截断（原 required 抗压会把钮挤出卡外），钮本身不截断。
+        if let failureMessage = draftValue.lastPublishFailure {
+            statusLabel.text = failureMessage
+            statusLabel.textColor = BearyColors.destructiveText
+            statusLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+            let retryButton = BearyHit44Button(type: .custom)
+            retryButton.setTitle(draftValue.sourcePublished ? "只重试新篇" : "重试", for: .normal)
+            retryButton.setTitleColor(BearyColors.ink, for: .normal)
+            retryButton.titleLabel?.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
+            retryButton.backgroundColor = BearyColors.surface2
+            retryButton.layer.cornerRadius = 999
+            retryButton.layer.masksToBounds = true
+            retryButton.contentEdgeInsets = UIEdgeInsets(top: 2.5, left: 9, bottom: 2.5, right: 9)
+            retryButton.accessibilityLabel = draftValue.sourcePublished ? "只重试新篇，不再公开原日记" : "重试发布这篇草稿"
+            retryButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+            retryButton.addTarget(self, action: #selector(retryPublishTapped(_:)), for: .touchUpInside)
+            retryButton.bearyAddPressFeedback()
+            retryButton.translatesAutoresizingMaskIntoConstraints = false
+            statusRow.addArrangedSubview(retryButton)
+            retryEntries.append((button: retryButton, draftValue: draftValue))
+        }
         // 状态行与字数/心情行之间留 8pt（与内层 spacing 的 6pt 叠加后接近网页 meta 的 8pt 上边距）。
         // metaColumn 上边距仍取原 metaRow 的 2pt，行距 6pt 与内层 spacing 一致。
         let metaColumn = UIStackView()
@@ -1177,7 +1205,12 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         let nameSummary = summary.count > 80 ? String(summary.prefix(80)) + "…" : summary
         nameParts.append(nameSummary)
         nameParts.append(draftTimeText(updatedAtSeconds: draftValue.updatedAt))
-        nameParts.append(saveStatusText(status))
+        // 发布失败的卡：读屏名念失败全文，不念通用保存状态。
+        if let failureMessage = draftValue.lastPublishFailure {
+            nameParts.append(failureMessage)
+        } else {
+            nameParts.append(saveStatusText(status))
+        }
         card.accessibilityLabel = nameParts.joined(separator: "，")
         return card
     }
@@ -1880,6 +1913,33 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                     }
                 }
                 return
+            }
+        }
+    }
+
+    /// 发布失败重试（草稿箱入口）：中心有失败原任务且草稿未被改过时一键
+    /// 重跑（原日记已公开即只重试新篇），随后退箱、进度看 Chrome 上的胶囊；
+    /// 中心无原任务（如重启后）或草稿已改过时改走正常打开编辑器再点发布——
+    /// 编辑器读草稿持久标记后仍跳过门禁与 setVisibility，只发新篇。
+    @objc private func retryPublishTapped(_ sender: UIButton) {
+        guard let draftValue = retryEntries.first(where: { $0.button === sender })?.draftValue else { return }
+        if BearyPublishCenter.shared.isPublishing(draftId: draftValue.draftId) {
+            showDraftToast(message: "发布中…")
+            return
+        }
+        switch BearyPublishCenter.shared.retryPublish(draftId: draftValue.draftId) {
+        case .started:
+            // 重试已接管，退箱看胶囊（toast 会随箱一起退场，不另弹）。
+            exitWithUndoGuard(confirmTitle: "仍要继续") { [weak self] in
+                self?.dismissWithExitAnimation { }
+            }
+        case .alreadyRunning:
+            showDraftToast(message: "发布中…")
+        case .needsEditor:
+            exitWithUndoGuard(confirmTitle: "仍要继续") { [weak self] in
+                self?.dismissWithExitAnimation { [weak self] in
+                    self?.onOpenHandler(draftValue)
+                }
             }
         }
     }

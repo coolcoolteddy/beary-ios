@@ -101,6 +101,10 @@ struct BearyPublishJob {
     /// 本次发布的代次（容器每次开编辑器发一个）：成功时原样回传给
     /// onPublished，供容器侧比对——旧代次的成功回调不得 dismiss／切页。
     let publishToken: UUID
+    /// 原日记在本次发布前已公开（编辑器读草稿持久标记所得，或中心
+    /// 一键重试沿用上次部分成功态）：只发新篇，不再走门禁与 setVisibility；
+    /// start() 内同样守卫，publishTogether 与本标记同真时以后者为准。
+    let sourceAlreadyPublished: Bool = false
     weak var hostView: UIView?
     /// 成功回调：新日记 id＋本次发布的代次。
     let onPublished: ((String, UUID) -> Void)?
@@ -169,8 +173,10 @@ private final class BearyPublishProgress {
 /// 调用方留页并 toast「发布中…」）。
 /// 流程：起飞前账号校验 →（一并公开时）setVisibility → 本地图片并行
 /// 上传（拿到 keys，按原序组装）→ publishEntry。任一步失败即停，草稿
-/// 保留（交接前已落盘），pill 显示现有失败文案；成功清草稿与本地
-/// 图片、pill 对勾「已发布」、走 onPublished。
+/// 保留（交接前已落盘），失败文案走 pill（本任务的 pill 仍在时）或 toast
+/// （pill 已被新任务接管时，带重试入口），并留失败记录＋草稿持久标记
+/// （pill 点开的状态表与草稿箱重试入口共用；原日记已公开时只重试新篇）；
+/// 成功清草稿与本地图片、pill 对勾「已发布」、走 onPublished。
 /// 杀 App／切后台时发布即停、草稿可重试（不加后台任务）；单张上传
 /// 成功即把 key 写回草稿，失败重试只重传未成功的图（见 persistUploadedKey）。
 final class BearyPublishCenter {
@@ -186,10 +192,16 @@ final class BearyPublishCenter {
     private let ioQueue = DispatchQueue(label: "beary.publishCenter", qos: .userInitiated)
 
     private var running: [String: RunningJob] = [:]
-    /// 当前可见的 pill（同一时刻只一块；新任务接管时旧 pill 被 show 移除，
-    /// 旧任务的后续 pill 更新随之静默——它的成功仍走 onPublished，
-    /// 失败则草稿保留在草稿箱、可重发）。
+    /// 当前可见的 pill（同一时刻只一块；新任务接管时旧 pill 被 show 移除）。
+    /// 多篇并行时 pill 报篇数（「正在发布 N 篇」）、点开列各篇状态；
+    /// 被接管任务的失败不再走 pill，改走 toast＋失败记录＋草稿箱重试入口。
     private weak var currentPill: BearyPublishPillView?
+    /// 发布失败记录（key = draftId ?? clientReq）：原任务＋失败文案＋
+    /// 失败时原日记是否已公开＋失败时草稿原样（重试指纹）。供 pill 状态表
+    /// 与一键重试用；重试开始／新一轮发布开始即失效（另见 start()）；
+    /// 超 10 条时丢最旧一条。草稿删除不另行通知——重试前按指纹核对，
+    /// 草稿不在即失效、改走编辑器。
+    private var failedJobs: [String: FailedPublish] = [:]
 
     private init() {}
 
@@ -197,6 +209,50 @@ final class BearyPublishCenter {
     func isPublishing(draftId: String?) -> Bool {
         guard let key = draftId else { return false }
         return running[key] != nil
+    }
+
+    /// 一键重试的结果：started = 已开始重跑；alreadyRunning = 该篇已在发布中；
+    /// needsEditor = 中心无原任务／草稿已变／草稿不在，请从草稿箱打开再发布
+    /// （编辑器读草稿持久标记后仍跳过门禁与 setVisibility，只发新篇）。
+    enum PublishRetryResult {
+        case started
+        case alreadyRunning
+        case needsEditor
+    }
+
+    /// 一次失败的发布：原任务（快照＋图片＋回调）＋失败文案＋失败时原日记
+    /// 是否已公开＋失败时草稿原样（重试指纹）。草稿为 nil = 失败时草稿已不在，
+    /// 重试一律走编辑器。
+    private struct FailedPublish {
+        let job: BearyPublishJob
+        let message: String
+        let sourcePublished: Bool
+        let failedAt: Date
+        let draft: BearyDraft?
+
+        /// 草稿仍与失败时一致（正文／标题／心情／天气／引用／@／位置／
+        /// 可见性／图片清单逐项比对；updatedAt 每次保存都刷新，不能当改过依据）。
+        func matches(draft: BearyDraft) -> Bool {
+            guard let base = self.draft else { return false }
+            guard draft.content == base.content,
+                  draft.title == base.title,
+                  draft.mood == base.mood,
+                  draft.weather == base.weather,
+                  draft.temperature == base.temperature,
+                  draft.quoteId == base.quoteId,
+                  draft.recipientId == base.recipientId,
+                  draft.locationName == base.locationName,
+                  draft.locationDistrict == base.locationDistrict,
+                  draft.locationLatitude == base.locationLatitude,
+                  draft.locationLongitude == base.locationLongitude,
+                  draft.visibilitySegmentIndex == base.visibilitySegmentIndex,
+                  draft.ephemeralEnabled == base.ephemeralEnabled,
+                  draft.images.count == base.images.count else { return false }
+            for (current, old) in zip(draft.images, base.images) {
+                guard current.localFile == old.localFile, current.serverKey == old.serverKey else { return false }
+            }
+            return true
+        }
     }
 
     /// 交接一支发布任务。返回 false = 同一草稿已有在途任务，本次拒收，
@@ -212,20 +268,32 @@ final class BearyPublishCenter {
         guard running[key] == nil else { return false }
         let runningJob = RunningJob(job: job)
         running[key] = runningJob
+        // 新一轮发布开始即清旧失败记录与草稿持久标记（失败行与重试入口
+        // 随之消失；本轮再失败由 fail() 重写）。只在有记录时写盘，
+        // 不给首次发布多一次写盘。
+        if failedJobs[key] != nil {
+            failedJobs.removeValue(forKey: key)
+            clearPublishFailureMark(draftId: job.snapshot.draftId, accountId: job.snapshot.accountId)
+        }
         if let host = job.hostView {
             let pill = BearyPublishPill.show(in: host)
             currentPill = pill
             runningJob.pill = pill
+            pill.setTapHandler { [weak self] in self?.presentStatusSheet() }
+            refreshPillTitle()
         }
         // 起飞前账号校验：快照发起账号与当前账号失配即中止、不发请求，
         // 草稿保留（交接前已落盘），pill 用现有账号失配文案。
-        // 此时原日记尚未公开，用 plain 文案（部分成功文案见 runPost 前校验）。
+        // 原日记已公开的重试（sourceAlreadyPublished）同样可能在此失配，
+        // 文案认 RunningJob 的部分成功态，不再一律按未公开写。
         if let expected = job.snapshot.originAccountId,
            BearyAPI.shared.authAccountId != expected {
-            fail(runningJob, message: accountMismatchMessage(sourceAlreadyPublished: false))
+            fail(runningJob, message: accountMismatchMessage(sourceAlreadyPublished: runningJob.sourcePublished))
             return true
         }
-        if job.publishTogether {
+        // 原日记已公开（编辑器持久标记／一键重试沿用）时跳过 setVisibility，
+        // 只发新篇；publishTogether 与本标记同真时以后者为准。
+        if job.publishTogether && !job.sourceAlreadyPublished {
             runSetVisibility(runningJob)
         } else {
             uploadNext(runningJob)
@@ -544,26 +612,43 @@ final class BearyPublishCenter {
         }
         BearyHaptics.publishSuccess()
         BearySoundPlayer.play(.publishSuccess)
-        if runningJob.pill === currentPill {
-            runningJob.pill?.finishSuccess()
+        if let pill = runningJob.pill, pill === currentPill {
+            pill.finishSuccess()
             currentPill = nil
+        } else {
+            // 本任务的 pill 已被新任务接管（或本任务无 pill）：成功不另弹
+            // 反馈，onPublished 的切页即反馈；只把当前 pill 的篇数刷下来。
+            refreshPillTitle()
         }
         runningJob.job.onPublished?(entryId, runningJob.job.publishToken)
     }
 
-    /// 失败：停掉任务、草稿保留（交接前已落盘，不再重存）、拒绝震动、
-    /// pill 显示现有失败文案。401 另走登录入口（见 fail(error:)）。
+    /// 失败：停掉任务、草稿保留（交接前已落盘，不再重存）、拒绝震动＋拒绝音、
+    /// 失败留档（内存记录＋草稿持久标记，见 recordFailure）。pill 是本任务的
+    /// 才走 pill 显示失败文案；pill 已被新任务接管（或本任务无 pill）时改走
+    /// 与 pill 无关的 toast 补一条（带重试入口），否则旧任务失败全程不可见；
+    /// 401 另走登录入口（见 fail(error:)）。
     private func fail(_ runningJob: RunningJob, message: String) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard !runningJob.finished else { return }
         runningJob.finished = true
         running.removeValue(forKey: runningJob.key)
+        // 拒绝反馈：震动＋拒绝音成对（成功侧 publishSuccess 震动＋回应音同款）；
+        // 旧版只有震动没有音，失败与成功不对称。401 路径另见 fail(error:)，
+        // 其反馈是登录入口本身，不另补音。
         BearyHaptics.rejectionWarning()
-        if runningJob.pill === currentPill {
-            runningJob.pill?.finishFailure(message: message)
+        BearySoundPlayer.play(.refuseBonk)
+        recordFailure(runningJob, message: message)
+        if let pill = runningJob.pill, pill === currentPill {
+            pill.finishFailure(message: message)
             currentPill = nil
+        } else {
+            // pill 已被新任务接管时不把失败文案写进新 pill（旧注释亦如此），
+            // 但不再静默：toast 2–4 秒自撤、只短暂盖住新 pill，进度不受影响，
+            // 失败文案与重试入口仍有文字可查。
+            showFailureToast(runningJob: runningJob, message: message)
+            refreshPillTitle()
         }
-        // pill 已被新任务接管时不另弹 toast 盖住新 pill；草稿仍在草稿箱可重发。
     }
 
     /// 失败（带原始错误）：按旧 performPublish 分流——部分成功先行，
@@ -601,6 +686,197 @@ final class BearyPublishCenter {
             return
         }
         fail(runningJob, message: Self.message(forPublishError: error))
+    }
+
+    // MARK: - 失败可见与一键重试
+
+    /// 一键重试：用失败时保留的原任务重跑；原日记已公开时只重试新篇
+    /// （跳过 setVisibility，见 start() 内守卫），其余原样重跑
+    /// （图片重传、同一 clientReq 幂等）。调用方在主线程调（后台线程调时自动 hop，
+    /// 与 start() 同款）。
+    @discardableResult
+    func retryPublish(draftId: String) -> PublishRetryResult {
+        if !Thread.isMainThread {
+            var result: PublishRetryResult = .needsEditor
+            DispatchQueue.main.sync { result = retryPublish(draftId: draftId) }
+            return result
+        }
+        guard let failed = failedJobs[draftId] else { return .needsEditor }
+        let key = failed.job.snapshot.draftId ?? failed.job.snapshot.clientReq
+        guard running[key] == nil else { return .alreadyRunning }
+        // 草稿指纹：失败后被改过（正文／标题／图片等任一动过）即不原样重跑，
+        // 改走编辑器——编辑器读草稿持久标记后仍跳过门禁与 setVisibility，
+        // 只发新篇。草稿已不在同样走编辑器。
+        if let draftIdValue = failed.job.snapshot.draftId {
+            guard let draft = BearyDraftStore.loadAll(forAccount: failed.job.snapshot.accountId)
+                    .first(where: { $0.draftId == draftIdValue }),
+                  failed.matches(draft: draft) else { return .needsEditor }
+        }
+        let retryJob = BearyPublishJob(
+            snapshot: failed.job.snapshot,
+            images: failed.job.images,
+            publishTogether: failed.job.publishTogether,
+            sourceAlreadyPublished: failed.sourcePublished || failed.job.sourceAlreadyPublished,
+            hostView: failed.job.hostView ?? Self.keyWindowRootView(),
+            onPublished: failed.job.onPublished,
+            onRequireLogin: failed.job.onRequireLogin)
+        failedJobs.removeValue(forKey: draftId)
+        clearPublishFailureMark(draftId: failed.job.snapshot.draftId, accountId: failed.job.snapshot.accountId)
+        guard start(job: retryJob) else { return .alreadyRunning }
+        return .started
+    }
+
+    /// 失败留档：内存记录供 pill 状态表与一键重试；持久标记写草稿，
+    /// 草稿箱据此出失败行与重试入口（重启后仍在）。写盘走 ioQueue 串行，
+    /// 与清标记按调用顺序落盘。记录超 10 条时丢最旧一条。
+    private func recordFailure(_ runningJob: RunningJob, message: String) {
+        let snapshot = runningJob.job.snapshot
+        let sourcePublished = runningJob.sourcePublished
+        let record = FailedPublish(
+            job: runningJob.job,
+            message: message,
+            sourcePublished: sourcePublished,
+            failedAt: Date(),
+            draft: snapshot.draftId.flatMap { draftId in
+                BearyDraftStore.loadAll(forAccount: snapshot.accountId).first(where: { $0.draftId == draftId })
+            }
+        )
+        failedJobs[runningJob.key] = record
+        if failedJobs.count > 10,
+           let oldestKey = failedJobs.min(by: { $0.value.failedAt < $1.value.failedAt })?.key {
+            failedJobs.removeValue(forKey: oldestKey)
+        }
+        guard let draftId = snapshot.draftId else { return }
+        let accountId = snapshot.accountId
+        BearyDraftStore.ioQueue.async {
+            guard var draft = BearyDraftStore.loadAll(forAccount: accountId).first(where: { $0.draftId == draftId }) else { return }
+            draft.lastPublishFailure = message
+            draft.sourcePublished = sourcePublished
+            _ = BearyDraftStore.save(draft, forAccount: accountId)
+        }
+    }
+
+    /// 新一轮发布开始即清旧失败标记（失败行与重试入口随之消失；本轮再失败
+    /// 由 fail() 重写）。只在内存里有失败记录时调（见 start()／retryPublish），
+    /// 不给首次发布多一次写盘；与记标记同走 ioQueue 串行，清与写按调用顺序落盘。
+    private func clearPublishFailureMark(draftId: String?, accountId: Int?) {
+        guard let draftId = draftId else { return }
+        BearyDraftStore.ioQueue.async {
+            guard var draft = BearyDraftStore.loadAll(forAccount: accountId).first(where: { $0.draftId == draftId }),
+                  draft.lastPublishFailure != nil || draft.sourcePublished else { return }
+            draft.lastPublishFailure = nil
+            draft.sourcePublished = false
+            _ = BearyDraftStore.save(draft, forAccount: accountId)
+        }
+    }
+
+    /// 被接管任务的失败 toast：与 pill 无关的通道，带重试入口；容器优先用
+    /// 本任务的 hostView（Chrome 视图），没有时退回 key window 根视图，
+    /// 仍没有则不弹（不崩、不补假反馈）。重试走一键重试；中心无原任务时
+    /// （如重启后）改提示从草稿箱打开再发布。
+    private func showFailureToast(runningJob: RunningJob, message: String) {
+        guard let container = runningJob.job.hostView ?? Self.keyWindowRootView() else { return }
+        let retryTitle = runningJob.sourcePublished ? "只重试新篇" : "重试"
+        let key = runningJob.key
+        BearyToast.show(in: container, message: message, actionTitle: retryTitle) { [weak self] in
+            guard let self = self else { return }
+            if self.retryPublish(draftId: key) == .needsEditor,
+               let fallbackContainer = self.currentPill?.superview ?? Self.keyWindowRootView() {
+                BearyToast.show(in: fallbackContainer, message: "请从草稿箱打开这篇再发布")
+            }
+        }
+    }
+
+    /// 胶囊标题：单篇沿用「正在发布…」，多篇并行时报篇数；失败／成功后篇数
+    /// 回落，剩一篇即回单篇文案。只写当前 pill（被接管的旧 pill 已不在容器里）。
+    private func refreshPillTitle() {
+        guard let pill = currentPill else { return }
+        let count = running.count
+        pill.setTitle(count > 1 ? "正在发布 \(count) 篇" : "正在发布…")
+    }
+
+    /// 胶囊点按：列出各篇状态（在途＋最近失败），失败项各带重试入口。
+    /// 草稿已不在的失败记录先清掉，不列已删的篇。无在途也无失败记录时不弹。
+    private func presentStatusSheet() {
+        guard let container = currentPill?.superview ?? Self.keyWindowRootView(),
+              let presenter = Self.topViewController(from: container) else { return }
+        // 草稿已不在的失败记录先清掉，不列已删的篇；只当记录账号就是当前
+        // 账号时才按缺失判过期（切号后旧号草稿不在当前桶里，不算已删）。
+        // 先算 key 再删，不在 filter 闭包里改字典（遍历中修改会 crash）。
+        // 读库失败时不判过期：loadAll 失败回 [] 不代表无草稿（见 loadAll 注释），
+        // 此时直接列出现有记录，不删。
+        if case .success(let allDrafts) = BearyDraftStore.loadAllResult() {
+            let draftIds = Set(allDrafts.map { $0.draftId })
+            let currentAccountId = BearyDraftStore.currentAccountId
+            let staleKeys = failedJobs.values
+                .filter { record in
+                    guard let draftId = record.job.snapshot.draftId,
+                          record.job.snapshot.accountId == currentAccountId else { return false }
+                    return !draftIds.contains(draftId)
+                }
+                .map { $0.job.snapshot.draftId ?? $0.job.snapshot.clientReq }
+            for key in staleKeys { failedJobs.removeValue(forKey: key) }
+        }
+        let failedList = failedJobs.values.sorted(by: { $0.failedAt > $1.failedAt })
+        let runningList = running.values.sorted(by: { $0.startedAt < $1.startedAt })
+        guard !runningList.isEmpty || !failedList.isEmpty else { return }
+        var lines: [String] = []
+        for job in runningList {
+            lines.append("“\(Self.previewText(for: job.job.snapshot))” 发布中 \(Int((job.lastProgress * 100).rounded()))%")
+        }
+        for record in failedList {
+            lines.append("“\(Self.previewText(for: record.job.snapshot))” 发布失败：\(record.message)")
+        }
+        let alert = UIAlertController(title: "发布状态", message: lines.joined(separator: "\n"), preferredStyle: .alert)
+        for record in failedList {
+            let preview = Self.previewText(for: record.job.snapshot)
+            let title = record.sourcePublished ? "只重试新篇“\(preview)”" : "重试“\(preview)”"
+            let key = record.job.snapshot.draftId ?? record.job.snapshot.clientReq
+            alert.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
+                guard let self = self else { return }
+                if self.retryPublish(draftId: key) == .needsEditor,
+                   let fallbackContainer = self.currentPill?.superview ?? Self.keyWindowRootView() {
+                    BearyToast.show(in: fallbackContainer, message: "请从草稿箱打开这篇再发布")
+                }
+            })
+        }
+        alert.addAction(UIAlertAction(title: "关闭", style: .cancel))
+        presenter.present(alert, animated: true)
+    }
+
+    /// 状态表里的篇目短名：标题优先，无标题取正文前 10 字（去空白换行），再无取“这篇日记”。
+    private static func previewText(for snapshot: PublishSnapshot) -> String {
+        let title = (snapshot.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty { return String(title.prefix(12)) }
+        let body = snapshot.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if body.isEmpty { return "这篇日记" }
+        let prefix = String(body.prefix(10))
+        return body.count > 10 ? prefix + "…" : prefix
+    }
+
+    /// key window 根视图（toast／重试 pill 无 hostView 时的落点；后台／无窗口时 nil）。
+    private static func keyWindowRootView() -> UIView? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        for scene in scenes {
+            if let window = scene.windows.first(where: { $0.isKeyWindow }) {
+                return window.rootViewController?.view
+            }
+        }
+        return scenes.first?.windows.first?.rootViewController?.view
+    }
+
+    /// 容器所属 VC（响应链往上找），有 presented 时认顶层，供状态表 present 用。
+    private static func topViewController(from view: UIView) -> UIViewController? {
+        var responder: UIResponder? = view
+        while let current = responder {
+            if let vc = current as? UIViewController {
+                var top = vc
+                while let presented = top.presentedViewController { top = presented }
+                return top
+            }
+            responder = current.next
+        }
+        return nil
     }
 
     // MARK: - 文案与进度口径
@@ -642,6 +918,8 @@ final class BearyPublishCenter {
 
     private func reportProgress(_ runningJob: RunningJob, value: Double) {
         dispatchPrecondition(condition: .onQueue(.main))
+        // 最新进度先记在任务上（pill 状态表读它；pill 本身只认当前任务）。
+        runningJob.lastProgress = value
         guard runningJob.pill === currentPill else { return }
         // 展示封顶 0.95：上传字节发完、等服务端回包期间不先满格；
         // 成功瞬间才走满 1.0（见 finishSuccess）。
@@ -670,13 +948,19 @@ final class BearyPublishCenter {
         var uploadFinished = 0
         var sourcePublished: Bool
         var progress = BearyPublishProgress()
+        /// 最新上报进度（0...1，展示封顶前的值；pill 状态表读它）。
+        var lastProgress: Double = 0
+        /// 任务开始时刻（pill 状态表里在途任务按它排序）。
+        let startedAt = Date()
         var pill: BearyPublishPillView?
         var finished = false
 
         init(job: BearyPublishJob) {
             self.job = job
             self.key = job.snapshot.draftId ?? job.snapshot.clientReq
-            self.sourcePublished = false
+            // 原日记已公开可能是本次 setVisibility 的结果，也可能是重试带入的
+            // 已有态（编辑器持久标记／一键重试沿用），后者起跑即为 true。
+            self.sourcePublished = job.sourceAlreadyPublished
         }
     }
 }
