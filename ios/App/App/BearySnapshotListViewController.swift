@@ -31,6 +31,9 @@ final class BearySnapshotListViewController: UIViewController {
     /// 行高 64：时间 17＋副行 12＋行距＋上下留白；表最多露 6 行，超出滚动。
     private static let rowHeight: CGFloat = 64
     private static let maxTableHeight: CGFloat = 384
+    /// 空态表高 76：加载态即按此预留，面板打开就不以 0 高亮相；空态/失败回包后
+    /// 高度不变，有行时再按行数长（走底 sheet 同一次尺寸动画）。
+    private static let emptyTableHeight: CGFloat = 76
 
     init(entry: Entry) {
         self.entry = entry
@@ -93,7 +96,7 @@ final class BearySnapshotListViewController: UIViewController {
         emptyLabel.numberOfLines = 0
         view.addSubview(emptyLabel)
 
-        let tableHeight = tableView.heightAnchor.constraint(equalToConstant: 0)
+        let tableHeight = tableView.heightAnchor.constraint(equalToConstant: Self.emptyTableHeight)
         tableHeightConstraint = tableHeight
         NSLayoutConstraint.activate([
             grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding),
@@ -178,7 +181,7 @@ final class BearySnapshotListViewController: UIViewController {
 
     private func updateTableHeight() {
         // 空态留 76pt 给居中的空提示；有行时按行数算、最多露 6 行。
-        let height = snapshots.isEmpty ? 76 : min(CGFloat(snapshots.count) * Self.rowHeight, Self.maxTableHeight)
+        let height = snapshots.isEmpty ? Self.emptyTableHeight : min(CGFloat(snapshots.count) * Self.rowHeight, Self.maxTableHeight)
         if tableHeightConstraint?.constant != height {
             tableHeightConstraint?.constant = height
         }
