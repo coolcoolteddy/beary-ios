@@ -979,15 +979,13 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         let fallbackLabel: UILabel
         let nameLabel: UILabel
         let handleLabel: UILabel
-        let rowHighlight: UIView
         var avatarURL: URL?
-        init(row: UIButton, avatarView: UIImageView, fallbackLabel: UILabel, nameLabel: UILabel, handleLabel: UILabel, rowHighlight: UIView) {
+        init(row: UIButton, avatarView: UIImageView, fallbackLabel: UILabel, nameLabel: UILabel, handleLabel: UILabel) {
             self.row = row
             self.avatarView = avatarView
             self.fallbackLabel = fallbackLabel
             self.nameLabel = nameLabel
             self.handleLabel = handleLabel
-            self.rowHighlight = rowHighlight
         }
     }
 
@@ -1033,24 +1031,13 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         chevron.translatesAutoresizingMaskIntoConstraints = false
         chevron.tintColor = BearyColors.gray
         chevron.contentMode = .scaleAspectFit
-        let rowHighlight = UIView()
-        rowHighlight.translatesAutoresizingMaskIntoConstraints = false
-        rowHighlight.backgroundColor = .clear
-        rowHighlight.isUserInteractionEnabled = false
         // 审计 9 层级：占位在下、头像在上（其余子视图顺序与旧版一致）。
-        // 审计 D-12：行按压底片——铺满整行、垫在全部内容之下，只换底色不缩放，
-        // isUserInteractionEnabled 关掉，否则底片会吞行点按。
-        row.addSubview(rowHighlight)
         row.addSubview(fallbackLabel)
         row.addSubview(avatarView)
         row.addSubview(nameLabel)
         row.addSubview(handleLabel)
         row.addSubview(chevron)
         NSLayoutConstraint.activate([
-            rowHighlight.topAnchor.constraint(equalTo: row.topAnchor),
-            rowHighlight.bottomAnchor.constraint(equalTo: row.bottomAnchor),
-            rowHighlight.leadingAnchor.constraint(equalTo: row.leadingAnchor),
-            rowHighlight.trailingAnchor.constraint(equalTo: row.trailingAnchor),
             // 32 清单第 25 项：头像改居中锚定（原上下各 10 定死 64 高）；行高改由内容撑起，见下方 ≥64。
             avatarView.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             avatarView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
@@ -1076,20 +1063,16 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             chevron.heightAnchor.constraint(equalToConstant: 16),
         ])
         row.addTarget(self, action: #selector(didTapRow(_:)), for: .touchUpInside)
-        row.addTarget(self, action: #selector(rowPressDown(_:)), for: [.touchDown, .touchDragEnter])
-        row.addTarget(self, action: #selector(rowPressUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
         // 起手态：无头像态（头像藏、占位显）；configure 会按实际用户改写。
         avatarView.isHidden = true
         fallbackLabel.isHidden = false
-        return RecipientRowViews(row: row, avatarView: avatarView, fallbackLabel: fallbackLabel, nameLabel: nameLabel, handleLabel: handleLabel, rowHighlight: rowHighlight)
+        return RecipientRowViews(row: row, avatarView: avatarView, fallbackLabel: fallbackLabel, nameLabel: nameLabel, handleLabel: handleLabel)
     }
 
     /// 更新一行内容：只改变化字段（审计 16）。
     /// 头像 URL 不变时不重调 bearySetImage，在途加载、已到图、已失败态一律保留，
     /// 失败占位也不会被重建抹掉；URL 变化时才起新加载（旧任务由 bearySetImage 取消）。
     private func configureRecipientRow(_ views: RecipientRowViews, user: SearchUser, index: Int) {
-        // 复用行底片归零：上一轮按压残留的 hov 色不带到新一轮。
-        views.rowHighlight.backgroundColor = .clear
         let name: String
         if let display = user.displayName {
             name = display
@@ -1218,7 +1201,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         }
         var newButtons: [UIButton] = []
         var newViews: [RecipientRowViews] = []
-        var newHighlights: [UIView] = []
         var usedKeys = Set<String>()
         for (index, user) in users.enumerated() {
             let key = user.id.map(String.init)
@@ -1240,12 +1222,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             rowsStack.insertArrangedSubview(rowViews.row, at: index + 1)
             newButtons.append(rowViews.row)
             newViews.append(rowViews)
-            newHighlights.append(rowViews.rowHighlight)
         }
         rowButtons = newButtons
         rowUsers = users
         recipientRowViews = newViews
-        rowHighlightViews = newHighlights
         // M8：搜索结果行淡入错峰（减动效跳过；审计 P2-24：只播新 key 行——
         // 同一选人会话内多次搜索，已播过的行不重播；错峰序号按本轮新行动）。
         // sheet 高度由 viewDidLayoutSubviews 的 updateSheetHeight 跟进，键盘事件下的
@@ -1268,8 +1248,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     }
 
     private var rowButtons: [UIButton] = []
-    /// 审计 D-12：与 rowButtons 一一对应的行按压底片（见 renderRows），按下时显 hov 底色。
-    private var rowHighlightViews: [UIView] = []
     private var rowUsers: [SearchUser] = []
     /// 审计 16：与 rowButtons/rowUsers 并行的行视图束（渲染时同步重建）。
     private var recipientRowViews: [RecipientRowViews] = []
@@ -1291,33 +1269,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     func transitionSheetHeight() -> CGFloat {
         view.layoutIfNeeded()
         return sheetView.bounds.height
-    }
-
-    /// 审计 D-12：行按压视觉态（此前只有震动）——按下 0.10s 淡入 hov 底色；
-    /// 只动底片背景，不动 transform，故整行不缩放。松开/取消见 rowPressUp。
-    @objc private func rowPressDown(_ sender: UIButton) {
-        guard let highlight = rowHighlight(for: sender) else { return }
-        UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0, animations: {
-            highlight.backgroundColor = BearyColors.hov
-        })
-    }
-
-    /// 审计 D-12：松开、滑出、取消时底色恢复（与按下同 0.10s 淡出；点按成功时
-    /// didTapRow 随即 dismiss，淡出是否播完不影响结果）。
-    @objc private func rowPressUp(_ sender: UIButton) {
-        guard let highlight = rowHighlight(for: sender) else { return }
-        UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0, animations: {
-            highlight.backgroundColor = .clear
-        })
-    }
-
-    private func rowHighlight(for sender: UIButton) -> UIView? {
-        for index in 0..<rowButtons.count {
-            if index < rowHighlightViews.count && rowButtons[index] == sender {
-                return rowHighlightViews[index]
-            }
-        }
-        return nil
     }
 
     @objc private func didTapRow(_ sender: UIButton) {
