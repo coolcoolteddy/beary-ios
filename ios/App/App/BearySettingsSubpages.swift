@@ -722,6 +722,16 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
     /// 当前屏上逐篇行的记录（与移除钮 tag 下标一一对应；每次 render 重建时同步更新）。
     private var currentRecords: [BearyOfflineSaveRecord] = []
 
+    /// 子页标题收进类里（同 BearyDevicesViewController 各子页自带参数的口径）；
+    /// 调用方直接 BearyOfflineSaveViewController()，不用再传标题。
+    init() {
+        super.init(title: "离线保存")
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         render()
