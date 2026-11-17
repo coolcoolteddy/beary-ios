@@ -575,6 +575,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 正文 UITextView 关滚动、随内容生长，故无 textarea 内部滚动需要另存）。
     private var quotePanelSavedScrollOffset = CGPoint.zero
     private var quotePanelSavedScrollValid = false
+    /// 引用面板开关交叉淡变：在途快照（旧内容）与代次。快照只盖滚动区＋工具栏
+    /// （顶栏不入镜）；淡变期间 sheet 高不动，淡完再跟进，代次用于快进重开时
+    /// 让过期完成的回调不再结算 sheet 高。
+    private var quotePanelTransitionSnapshot: UIView?
+    private var quotePanelTransitionSeq = 0
     /// C1：工具栏上方选择条：同一时刻最多展开一条（写给），nil=全部收起。
     /// 心情/天气旧条带已删（见下），入口只走天气尖角弹出框（心情已迁底部弹窗），不再走本值；
     /// 旧附加栏三态随双重入口删除而整组拆除，不再有“附加栏撑着显示天气行”的压制状态机。
@@ -2842,6 +2847,44 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
+    /// 引用面板开关交叉淡变：快照盖住滚动区＋工具栏旧内容（顶栏不入镜），布局
+    /// 在快照下瞬间换好，旧快照淡出即新旧内容在同一容器里交叉淡变。淡变期间
+    /// sheet 高不动（外框不动、快照与滚动区严丝合缝），淡完再跟进 sheet 高。
+    private func quotePanelTransitionRect() -> CGRect {
+        let top = scrollView.frame.minY
+        return CGRect(x: 0, y: top, width: view.bounds.width, height: max(0, view.bounds.height - top))
+    }
+
+    private func beginQuotePanelCrossfade() -> Int? {
+        // 快进重开（上一淡变未完又开关）时先清掉在途快照，不留残影。
+        quotePanelTransitionSnapshot?.removeFromSuperview()
+        quotePanelTransitionSnapshot = nil
+        let rect = quotePanelTransitionRect()
+        guard rect.height > 0, view.bounds.width > 0,
+              let snapshot = view.resizableSnapshotView(from: rect, afterScreenUpdates: true, withCapInsets: .zero) else {
+            return nil
+        }
+        snapshot.frame = rect
+        view.addSubview(snapshot)
+        quotePanelTransitionSeq += 1
+        quotePanelTransitionSnapshot = snapshot
+        return quotePanelTransitionSeq
+    }
+
+    private func endQuotePanelCrossfade(seq: Int, duration: TimeInterval) {
+        guard let snapshot = quotePanelTransitionSnapshot, seq == quotePanelTransitionSeq else { return }
+        UIView.animate(withDuration: duration, animations: {
+            snapshot.alpha = 0
+        }, completion: { [weak self] _ in
+            guard let self = self, seq == self.quotePanelTransitionSeq else { return }
+            snapshot.removeFromSuperview()
+            if self.quotePanelTransitionSnapshot === snapshot {
+                self.quotePanelTransitionSnapshot = nil
+            }
+            self.updatePreferredContentSize()
+        })
+    }
+
     /// 引用面板 qp-mode 整编形态（网页 qpEnterMode/qpExitMode 同款）：
     /// 打开时只留面板：正文/图片条/工具栏/附加栏/天气/状态行/写给/心情/引用区/规则框
     /// 全部隐藏，发布钮隐藏、取消变“返回”；关闭时只退面板，不走整编取消流程，
@@ -2856,6 +2899,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quotePanelAnimatedRowKeys.removeAll()
             quotePanelSavedScrollOffset = scrollView.contentOffset
             quotePanelSavedScrollValid = true
+            // 跳动审计第三批第 10 条：先拍旧内容快照再换布局——快照盖住滚动区＋
+            // 工具栏（顶栏不入镜），布局在快照下瞬间换好，旧快照淡出即新旧内容
+            // 在同一容器里交叉淡变；减动效或快照失败时 crossfadeSeq 为 nil，走旧路。
+            let crossfadeSeq = UIAccessibility.isReduceMotionEnabled ? nil : beginQuotePanelCrossfade()
             view.endEditing(true)
             // 引用面板整编态下正文同藏（109：标题输入区同藏，关闭时同恢复）。
             headlineWrap.isHidden = true
@@ -2908,16 +2955,25 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 此处面板已显示，再落一次布局，帧 settle 后才起转圈，转圈首帧即在面板内。
             view.layoutIfNeeded()
             loadQuotePanelTab()
-            // M6：面板打开带透明度过渡（高度随 preferredContentSize 由呈现层跟进；减动效直设终值）。
-            if UIAccessibility.isReduceMotionEnabled {
+            // M6：面板打开带透明度过渡。交叉淡变时面板本身直接落终值 alpha 1，
+            // 旧快照在其上淡出即交叉淡变；sheet 高在淡变结束后再跟进（淡变期间
+            // 外框不动，快照与滚动区严丝合缝）。减动效直设终值并立即跟进 sheet 高；
+            // 快照失败时走旧路（面板自身 alpha 0→1，sheet 高同步跟进）。
+            if let seq = crossfadeSeq {
                 quotePanel.alpha = 1
+                endQuotePanelCrossfade(seq: seq, duration: BearyMotion.normal)
+            } else if UIAccessibility.isReduceMotionEnabled {
+                quotePanel.alpha = 1
+                updatePreferredContentSize()
             } else {
                 quotePanel.alpha = 0
                 UIView.animate(withDuration: BearyMotion.normal) { self.quotePanel.alpha = 1 }
+                updatePreferredContentSize()
             }
         } else {
             // M6：关闭先 0.18s 淡出再恢复各区（减动效直接恢复）；恢复后重算 sheet 高。
-            let applyClose = {
+            // 交叉淡变时 sheet 高改在淡变结束后再跟进（deferPreferredSize）。
+            let applyClose = { (deferPreferredSize: Bool) in
                 self.quoteTabStack.isHidden = true
                 self.scrollView.contentInset.top = 0
                 self.quotePanel.isHidden = true
@@ -2976,20 +3032,27 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 if self.scrollView.contentInset.top != 0 {
                     self.scrollView.contentInset.top = 0
                 }
-                self.updatePreferredContentSize()
+                if !deferPreferredSize {
+                    self.updatePreferredContentSize()
+                }
             }
             if UIAccessibility.isReduceMotionEnabled {
-                applyClose()
+                applyClose(false)
+            } else if let seq = beginQuotePanelCrossfade() {
+                // 交叉淡变：先在不可见状态下恢复布局与保存的偏移（快照盖着），
+                // 再淡出旧快照显出编辑器；sheet 高在淡变结束后再跟进。
+                applyClose(true)
+                self.quotePanel.alpha = 1
+                endQuotePanelCrossfade(seq: seq, duration: BearyMotion.micro)
             } else {
                 UIView.animate(withDuration: BearyMotion.micro, animations: {
                     self.quotePanel.alpha = 0
                 }, completion: { _ in
-                    applyClose()
+                    applyClose(false)
                     self.quotePanel.alpha = 1
                 })
             }
         }
-        updatePreferredContentSize()
     }
 
     /// C1：scrollView 底锚三档切换——引用面板打开时锚整页底（工具栏与选择条都藏，
