@@ -1438,10 +1438,18 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             var config = cell.defaultContentConfiguration()
             let title = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if !title.isEmpty {
-                config.text = title
+                // 标题里的记号同样转回熊脸附件（与卡片标题同款）。
+                config.attributedText = BearyText.inlineAttributedText(from: title, font: config.textProperties.font, color: config.textProperties.color, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
             } else {
                 let body = (entry.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                config.text = body.isEmpty ? "" : String(body.prefix(24))  // 109：无标题又无正文不再显“日记”占位
+                if body.isEmpty {
+                    config.text = ""  // 109：无标题又无正文不再显“日记”占位
+                } else {
+                    // 先全文渲染再取前 24 个可见字：记号已是单个附件格，
+                    // 不会在记号中间截断（先截 24 字再渲染会把记号切一半、原文露出）。
+                    let rendered = BearyText.inlineAttributedText(from: body, font: config.textProperties.font, color: config.textProperties.color, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
+                    config.attributedText = rendered.attributedSubstring(from: NSRange(location: 0, length: min(24, rendered.length)))
+                }
             }
             var secondary = ""
             if let created = entry.createdAt, created > 0 {

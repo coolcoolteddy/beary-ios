@@ -2740,7 +2740,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         contentLabel.clipsToBounds = true
         // 横向栈内正文先让位：固定 44 宽缩略图不被挤，正文换行承接剩余宽度。
         contentLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        contentLabel.attributedText = highlightedText(contentText, query: query, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, lineHeightMultiple: 1.6, lineBreakMode: .byCharWrapping)
+        contentLabel.attributedText = highlightedMoodText(contentText, query: query, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, lineHeightMultiple: 1.6, lineBreakMode: .byCharWrapping, gifImageKeys: entry.images)
 
         // 第十三轮第 2 项：搜索结果行加标题（作者·日期 → 标题 → 正文 → 图片）。
         // 标题用卡片同款 16.5 粗体（cardTitleFont）、最多两行截尾；命中词走
@@ -2757,7 +2757,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         if trimmedTitle.isEmpty {
             titleLabel.isHidden = true
         } else {
-            titleLabel.attributedText = highlightedText(trimmedTitle, query: query, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, lineBreakMode: .byTruncatingTail)
+            titleLabel.attributedText = highlightedMoodText(trimmedTitle, query: query, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, lineBreakMode: .byTruncatingTail, gifImageKeys: entry.images)
         }
 
         let bodyRow = UIStackView()
@@ -3464,6 +3464,37 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             }
             let nsRange = NSRange(range, in: text)
             result.setAttributes(markAttributes, range: nsRange)
+            searchStart = range.upperBound
+        }
+        return result
+    }
+
+    /// 正文/标题：先走卡片同款 mood 渲染（[mood:]/[gif:] 记号转附件），
+    /// 再叠加搜索词高亮。命中在渲染后的串上按字符找——附件在串里占 1 格
+    /// U+FFFC，命中词不可能含它，命中区不会盖到附件上；两层不互相顶掉。
+    private func highlightedMoodText(_ text: String, query: String, font: UIFont, color: UIColor, lineHeightMultiple: CGFloat = 0, lineBreakMode: NSLineBreakMode = .byWordWrapping, gifImageKeys: [String]? = nil) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = lineBreakMode
+        if lineHeightMultiple > 0 {
+            paragraph.lineHeightMultiple = lineHeightMultiple
+        }
+        let base = BearyText.inlineAttributedText(from: text, font: font, color: color, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: gifImageKeys)
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty, !text.isEmpty else { return base }
+        let result = NSMutableAttributedString(attributedString: base)
+        let markAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: color,
+            .paragraphStyle: paragraph,
+            BearyRoundedMarkLabel.markColorKey: BearyColors.orange.withAlphaComponent(0.24),
+        ]
+        let plain = result.string
+        var searchStart = plain.startIndex
+        while searchStart < plain.endIndex {
+            guard let range = plain.range(of: trimmedQuery, options: [.caseInsensitive], range: searchStart..<plain.endIndex) else {
+                break
+            }
+            result.setAttributes(markAttributes, range: NSRange(range, in: plain))
             searchStart = range.upperBound
         }
         return result
