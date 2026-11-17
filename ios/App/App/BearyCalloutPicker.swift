@@ -144,6 +144,7 @@ final class BearyBubbleMenuView: UIView {
         }
 
         @objc private func didTap() {
+            BearyHaptics.press()
             onTap?(key)
         }
 
@@ -153,8 +154,8 @@ final class BearyBubbleMenuView: UIView {
             return true
         }
 
-        // 按压反馈：微缩，松手/取消回弹（UIButton 版按压反馈是
-        // UIControl 专属，视图行自带同款手感）。
+        // 按压反馈：按下只微缩，松手/取消回弹；轻震只在点按确认时（didTap）
+        // 给一次，滑出取消不震（按下即震会让取消的手势也白震一次）。
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
             super.touchesBegan(touches, with: event)
             UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
