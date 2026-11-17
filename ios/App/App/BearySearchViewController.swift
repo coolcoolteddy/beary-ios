@@ -3042,8 +3042,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             row.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
         row.addTarget(self, action: #selector(userRowTapped(_:)), for: .touchUpInside)
-        row.addTarget(self, action: #selector(rowTouchDown(_:)), for: .touchDown)
-        row.addTarget(self, action: #selector(rowTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         // 审计：搜索行 VoiceOver 带“用户”上下文，不再只读名字。
         row.accessibilityLabel = "用户：" + displayName
         // 好友第一期：紧凑版状态机钮（仅登录、非本人、未拉黑时出现；游客/本人/
@@ -3277,8 +3275,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 审计三轮 06：记下本行内容签名，供同关键词重渲比对复用。
         entryRowContentSignatures[entryId] = entryRowContentSignature(entry: entry, isMineGroup: isMineGroup)
         row.addTarget(self, action: #selector(entryRowTapped(_:)), for: .touchUpInside)
-        row.addTarget(self, action: #selector(rowTouchDown(_:)), for: .touchDown)
-        row.addTarget(self, action: #selector(rowTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         // r13-3：读屏串只拼实际存在的信息——日记，标题，作者，日期，可见范围，
         // 正文摘要，图片数量；正文截断为摘要，不把全文塞进 label。
         // 可见范围与行内 pill 同口径：限时／仅好友／私密（我的组）／公开。
@@ -3815,17 +3811,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 return
             }
         }
-    }
-
-    /// 按下态底色：网页 .srch-user:active 用 hov；日记行同口径跟随。
-    /// 只留视觉反馈，不震：震动已移到点按确认回调（userRowTapped / entryRowTapped），
-    /// 滑动取消（touchCancel / 滑出）不震。
-    @objc private func rowTouchDown(_ sender: UIButton) {
-        sender.backgroundColor = BearyColors.hov
-    }
-
-    @objc private func rowTouchUp(_ sender: UIButton) {
-        sender.backgroundColor = UIColor.clear
     }
 
     // MARK: - 文本工具
