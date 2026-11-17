@@ -104,7 +104,9 @@ struct BearyPublishJob {
     /// 原日记在本次发布前已公开（编辑器读草稿持久标记所得，或中心
     /// 一键重试沿用上次部分成功态）：只发新篇，不再走门禁与 setVisibility；
     /// start() 内同样守卫，publishTogether 与本标记同真时以后者为准。
-    let sourceAlreadyPublished: Bool = false
+    /// 须是 var：let 带默认值不进成员逐项构造器（SE-0242 只认 var），
+    /// 写 let 会让两处构造点报 extra argument（2026-11-17 本支 CI 实证）。
+    var sourceAlreadyPublished: Bool = false
     weak var hostView: UIView?
     /// 成功回调：新日记 id＋本次发布的代次。
     let onPublished: ((String, UUID) -> Void)?
@@ -716,6 +718,7 @@ final class BearyPublishCenter {
             snapshot: failed.job.snapshot,
             images: failed.job.images,
             publishTogether: failed.job.publishTogether,
+            publishToken: failed.job.publishToken,
             sourceAlreadyPublished: failed.sourcePublished || failed.job.sourceAlreadyPublished,
             hostView: failed.job.hostView ?? Self.keyWindowRootView(),
             onPublished: failed.job.onPublished,
