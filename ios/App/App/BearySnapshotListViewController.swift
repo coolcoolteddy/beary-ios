@@ -55,7 +55,7 @@ final class BearySnapshotListViewController: UIViewController {
         view.addSubview(grabberView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.text = "本地快照"
+        titleLabel.text = "云端快照"
         titleLabel.font = BearyDynamicType.pageTitleFont()
         titleLabel.textColor = BearyColors.ink
         view.addSubview(titleLabel)
@@ -75,7 +75,7 @@ final class BearySnapshotListViewController: UIViewController {
         descriptionLabel.font = BearyDynamicType.captionFont()
         descriptionLabel.textColor = BearyColors.gray
         descriptionLabel.numberOfLines = 0
-        descriptionLabel.text = "日记内容丢失或异常时，可尝试通过快照找回。仅保留最近七天的文字版本，保存在本机，不含图片和附件。"
+        descriptionLabel.text = "日记内容丢失或异常时，可尝试通过快照找回。仅保留最近七天的文字版本，保存在云端，断网时无法查看，不含图片和附件。"
         view.addSubview(descriptionLabel)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
