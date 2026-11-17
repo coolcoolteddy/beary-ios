@@ -2683,6 +2683,11 @@ final class BearyChromeViewController: UIViewController {
             // 两组转发集中在消息页 pageDidEnter 内）。
             messagesVC?.pageDidEnter()
         }
+        if page == .friends {
+            // 好友页进页重拉（与消息页同口径）：只在 viewDidLoad 拉一次时，
+            // 首拉失败／回空后切走再进不再重拉，会一直停在失败／空态；进页即重拉自愈。
+            friendsVC?.pageDidEnter()
+        }
     }
 
     /// 容器页解析：消息/时间线/我/搜索/他人主页走真实现（邀请已改弹窗，不再是容器页）。
