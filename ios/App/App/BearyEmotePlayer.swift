@@ -1009,6 +1009,43 @@ public final class BearyEmoteView: UIView {
         return CachedEmote(animation: animation, loopStart: loopStart, loopEnd: loopEnd, endFrame: endFrame, estimatedCostBytes: estimatedCost)
     }
 
+    /// 离窗静态渲染前，把填充色烘进模型值。
+    ///
+    /// 根因（深色模式节日表情只剩描边线框，用户 2026-11-17 上报）：
+    /// Lottie 4.6.1 的 Core Animation 后端对静态（单帧）属性本应直接写模型值，
+    /// 但它认定 `CAShapeLayer.fillColor` 的默认值是 nil，而实际默认值是
+    /// 不透明黑；于是白/紫填充没写进模型，只挂了一个同值的 `CABasicAnimation`。
+    /// `layer.render(in:)` 只读模型值、忽略动画，填充就按黑色画出——深色底上
+    /// 隐形。描边不受影响（`strokeColor` 默认确为 nil，已直接写入模型）；
+    /// 浅色版填充本就是黑色、与模型默认值相同，故浅色模式看不出问题。
+    /// 全量 480 个 JSON 的填充色均为静态单帧，故只处理 `CABasicAnimation`
+    /// 即可覆盖全部资产；动画组里包一层同值基础动画时也一并解开。
+    /// 动画填充色（多帧）不在资产里出现，未覆盖也不回退——保持原样，不劣化。
+    private static func bakeFillColors(into layer: CALayer) {
+        if let shapeLayer = layer as? CAShapeLayer,
+           let fillColor = staticFillColor(of: shapeLayer) {
+            shapeLayer.fillColor = fillColor
+        }
+        layer.sublayers?.forEach { bakeFillColors(into: $0) }
+    }
+
+    /// 从挂在 `fillColor` 键上的动画里取静态填充色；无动画或取不到时回 nil。
+    private static func staticFillColor(of shapeLayer: CAShapeLayer) -> CGColor? {
+        guard let animation = shapeLayer.animation(forKey: "fillColor") else { return nil }
+        if let basic = animation as? CABasicAnimation {
+            return basic.toValue as? CGColor
+        }
+        if let group = animation as? CAAnimationGroup {
+            for sub in group.animations ?? [] {
+                if let basic = sub as? CABasicAnimation,
+                   let color = basic.toValue as? CGColor {
+                    return color
+                }
+            }
+        }
+        return nil
+    }
+
     /// Lottie 静态帧渲染（供无 PNG 的节日心情做内联附件图）：
     /// 用同一份模型缓存（cachedEmoteEntry，命中即零解析）；未命中时同步解析
     /// （节日 JSON 仅 10–40KB，一次解析在点按链路上可接受）；
@@ -1032,6 +1069,9 @@ public final class BearyEmoteView: UIView {
         view.frame = CGRect(origin: .zero, size: size)
         view.currentFrame = cached.staticFrame
         view.layoutIfNeeded()
+        // 离窗 render 只读模型值：先把 Lottie 未写入模型的填充色烘进去，
+        // 否则深色版的白/紫填充会被画成黑色、在深色底上隐形（见 bakeFillColors）。
+        bakeFillColors(into: view.layer)
         let format = UIGraphicsImageRendererFormat()
         format.scale = UIScreen.main.scale
         format.opaque = false
