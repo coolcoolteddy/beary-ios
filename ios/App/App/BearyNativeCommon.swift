@@ -1715,6 +1715,17 @@ private var bearyImageTaskKey: UInt8 = 0
 private var bearyImageURLKey: UInt8 = 0
 private var bearyImageRingKey: UInt8 = 0
 private var bearyImageFullLoadedKey: UInt8 = 0
+private var bearyImageRequestStartedAtKey: UInt8 = 0
+private var bearyImageShownKindKey: UInt8 = 0
+
+/// 已显示图是缩略图还是完整图（审计跳动第 1 项）：只凭 image != nil
+/// 分不清“只有缩略图”与“完整图已到”，同图重配/重试会误判；由
+/// bearySetImage / bearySetImageWithBlurUp 在每次赋值时同步维护。
+private enum BearyShownImageKind: Int {
+    case none = 0
+    case thumbnail = 1
+    case full = 2
+}
 
 extension UIView {
     /// 动画批 11 号离屏停播：递归停掉子树内全部 BearyEmoteView。cell 的
@@ -1776,11 +1787,47 @@ extension UIImageView {
         set { objc_setAssociatedObject(self, &bearyImageFullLoadedKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
     }
 
+    /// 当前 URL 的请求是否仍有效（审计跳动第 1 项）：发起时记下时间，
+    /// 回调终态（成功/非取消失败）时清掉；被取消的回调不碰它（新请求
+    /// 已接管，旧回调的 current == url 守卫也会先拦住）。
+    /// 任务槽不能用来判断在途——loadDetailed 返回的合并代理任务从不
+    /// 改 state，内存命中时还直接返回 nil 任务、主线程异步交付。
+    /// 任务槽非空（网络链路）：300 秒无交付视为已死（purge/逐出取消
+    /// 订阅时不回调），放行重发；任务槽为空只发生在内存命中：发起后
+    /// 5 秒内视为在途，超了就当作交付已被吞掉（切号/过期/逐出），可重发。
+    private var bearyImageRequestInFlight: Bool {
+        guard let startedAt = objc_getAssociatedObject(self, &bearyImageRequestStartedAtKey) as? Date else { return false }
+        let age = Date().timeIntervalSince(startedAt)
+        if objc_getAssociatedObject(self, &bearyImageTaskKey) is URLSessionDataTask {
+            return age < 300
+        }
+        return age < 5
+    }
+
+    private func bearyImageRequestStarted() {
+        objc_setAssociatedObject(self, &bearyImageRequestStartedAtKey, Date(), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+
+    private func bearyImageRequestFinished() {
+        objc_setAssociatedObject(self, &bearyImageRequestStartedAtKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+
+    /// 当前显示的图是缩略图还是完整图（审计跳动第 1 项；重试分支共用）：
+    /// 只在本扩展内给 image 赋值时同步改，外部不直接改这些 imageView。
+    private var bearyShownImageKind: BearyShownImageKind {
+        get { BearyShownImageKind(rawValue: (objc_getAssociatedObject(self, &bearyImageShownKindKey) as? NSNumber)?.intValue ?? 0) ?? .none }
+        set { objc_setAssociatedObject(self, &bearyImageShownKindKey, NSNumber(value: newValue.rawValue), .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
+    }
+
     func bearySetImage(url: URL?, placeholder: UIImage? = nil, downsampleToWidth: CGFloat? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil) {
-        // 同图重配：目标与当前一致且已有显示图时保留，不清图、不重下，
-        // 慢网下不闪成占位；在途的同 URL 加载继续跑，不取消。换图、
-        // 复用到其他日记（URL 不同）或图还没显示出来时照旧走加载。
-        if let url = url, url == (objc_getAssociatedObject(self, &bearyImageURLKey) as? URL), self.image != nil {
+        // 同图重配：目标与当前一致时保留——在途请求继续跑，不取消；
+        // 完整图或缩略图已显示，不重下；有占位图时同样保留（占位图
+        // 本身就是可见内容）。只有 URL 变了、或上次已失败（无在途
+        // 请求、无显示图、无占位图）才走下面的取消＋重加载。
+        // 旧判断只看 image != nil：在途加载时 image 还是 nil，重配会
+        // 取消旧请求再重发（审计跳动第 1 项）。
+        if let url = url, url == (objc_getAssociatedObject(self, &bearyImageURLKey) as? URL),
+           bearyImageRequestInFlight || bearyShownImageKind != .none || self.image != nil {
             return
         }
         if let old = objc_getAssociatedObject(self, &bearyImageTaskKey) as? URLSessionDataTask {
@@ -1790,24 +1837,30 @@ extension UIImageView {
         objc_setAssociatedObject(self, &bearyImageURLKey, url, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         self.image = placeholder
         bearyImageFullLoaded = false
+        bearyShownImageKind = .none
         guard let url = url else {
             objc_setAssociatedObject(self, &bearyImageTaskKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            bearyImageRequestFinished()
             return
         }
         if placeholder == nil {
             bearyAttachWebRingSpinner()
         }
         let startedAt = Date()
+        bearyImageRequestStarted()
         let task = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: downsampleToWidth) { [weak self] result in
             guard let self = self else { return }
             let current = objc_getAssociatedObject(self, &bearyImageURLKey) as? URL
             guard current == url else { return }
             // 取消先 return：同 URL 重发时旧回调不得摘掉新任务的转圈。
+            // 被取消的回调不碰在途位（新请求已接管）。
             if case .failure(let err) = result, case .cancelled = err { return }
             self.bearyRemoveWebRingSpinner()
+            self.bearyImageRequestFinished()
             switch result {
             case .success(let img):
                 self.bearyImageFullLoaded = true
+                self.bearyShownImageKind = .full
                 let slowLoad = Date().timeIntervalSince(startedAt) >= 0.15
                 if slowLoad && self.alpha == 1 && BearyMotion.animated(true) {
                     self.alpha = 0
@@ -1830,12 +1883,16 @@ extension UIImageView {
     /// 容器尺寸由调用方预先固定（卡片图片条 216 高、宽按宽高比预留），
     /// 本方法不改布局、不跳动；小图失败不挡原图加载。
     func bearySetImageWithBlurUp(url: URL?, downsampleToWidth: CGFloat? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil, forceRetry: Bool = false) {
-        // 同图重配：目标与当前一致、且完整图已显示时保留，不清 nil、不重下，
-        // 慢网下不闪成占位；在途的同 URL 加载继续跑，不取消。换图、
-        // 复用到其他日记（URL 不同）或图还没显示出来时照旧走加载。
-        // 只有缩略图时不算加载完成，重配要重新请求完整图；
+        // 同图重配：目标与当前一致时保留——在途请求（小图或完整图）
+        // 继续跑，不取消、不清 nil；完整图已显示，不重下。
+        // 只有 URL 变了、或上次两路都已失败（无在途请求、无显示图）
+        // 才走下面的取消＋重加载。
+        // 旧判断只看 image != nil：小图未到时 image 还是 nil，重配会
+        // 取消旧请求再重发（审计跳动第 1 项）。
+        // 只有缩略图时不算加载完成（#1764）：重配要重新请求完整图；
         // forceRetry（重试按钮）绕过守卫，一定重新请求。
-        if !forceRetry, let url = url, url == (objc_getAssociatedObject(self, &bearyImageURLKey) as? URL), self.image != nil, bearyImageFullLoaded {
+        if !forceRetry, let url = url, url == (objc_getAssociatedObject(self, &bearyImageURLKey) as? URL),
+           bearyImageRequestInFlight || (self.image != nil && bearyImageFullLoaded) {
             return
         }
         if let old = objc_getAssociatedObject(self, &bearyImageTaskKey) as? URLSessionDataTask {
@@ -1847,13 +1904,16 @@ extension UIImageView {
         alpha = 1
         self.image = nil
         bearyImageFullLoaded = false
+        bearyShownImageKind = .none
         guard let url = url else {
             objc_setAssociatedObject(self, &bearyImageTaskKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            bearyImageRequestFinished()
             return
         }
         // 占位图未到之前挂转圈（占位图一到即摘，与 bearySetImage 同口径）。
         bearyAttachWebRingSpinner()
         let startedAt = Date()
+        bearyImageRequestStarted()
         let tinyTask = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: 32) { [weak self] result in
             guard let self = self else { return }
             let current = objc_getAssociatedObject(self, &bearyImageURLKey) as? URL
@@ -1861,6 +1921,7 @@ extension UIImageView {
             if case .failure(let err) = result, case .cancelled = err { return }
             if case .success(let tiny) = result {
                 self.image = tiny
+                self.bearyShownImageKind = .thumbnail
                 self.bearyRemoveWebRingSpinner()
             }
             self.bearyLoadFullForBlurUp(url: url, downsampleToWidth: downsampleToWidth, startedAt: startedAt, onFailure: onFailure)
@@ -1875,9 +1936,11 @@ extension UIImageView {
             guard current == url else { return }
             if case .failure(let err) = result, case .cancelled = err { return }
             self.bearyRemoveWebRingSpinner()
+            self.bearyImageRequestFinished()
             switch result {
             case .success(let img):
                 self.bearyImageFullLoaded = true
+                self.bearyShownImageKind = .full
                 let slowLoad = Date().timeIntervalSince(startedAt) >= 0.15
                 if slowLoad && self.alpha == 1 && BearyMotion.animated(true) {
                     self.image = img
