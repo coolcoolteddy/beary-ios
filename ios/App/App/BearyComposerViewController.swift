@@ -2550,7 +2550,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteFetchFailedRow.addArrangedSubview(fetchFailedSpacer)
         quoteFetchFailedRow.addArrangedSubview(quoteFetchFailedRetryButton)
         quoteFetchFailedRow.isHidden = true
-        contentStack.addArrangedSubview(quoteSection)
+        // 引用卡置顶：插到标题下方、正文上方（原在内容栈末尾，须下滑才完整可见）。
+        // 以 textView 定位插入点，不依赖固定下标；textView 不在栈内时兜底追加。
+        if let textIndex = contentStack.arrangedSubviews.firstIndex(of: textView) {
+            contentStack.insertArrangedSubview(quoteSection, at: textIndex)
+        } else {
+            contentStack.addArrangedSubview(quoteSection)
+        }
         quoteSection.addArrangedSubview(quoteCardWrap)
         quoteSection.addArrangedSubview(quoteDeletedRow)
         quoteSection.addArrangedSubview(quoteUnavailableRow)
@@ -2569,7 +2575,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quoteCardRemoveButton.heightAnchor.constraint(equalToConstant: 28),
         ])
         refreshQuoteSection()
-        contentStack.setCustomSpacing(0, after: quoteSection)
+        // 卡片在标题与正文之间：卡后留 12pt（与正文后间距同节奏），不贴正文。
+        contentStack.setCustomSpacing(12, after: quoteSection)
     }
 
     /// 引用区状态：stack 内的隐藏项自动塌掉（UIStackView 口径），无需改约束。
@@ -3010,7 +3017,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // refreshStatusRowVisibility 按倒计时实际显隐恢复（编辑态显示＋8、
                 // 新建态隐藏＋0）。
                 self.refreshStatusRowVisibility()
-                self.contentStack.setCustomSpacing(0, after: self.quoteSection)
+                // 引用卡在标题与正文之间，关闭恢复时卡后间距按建栈原值 12 还原。
+                self.contentStack.setCustomSpacing(12, after: self.quoteSection)
                 // 各区显隐按正常态重算（选择条、@ 行、引用区）。
                 self.refreshToolStrip()
                 self.refreshRecipientRow()
