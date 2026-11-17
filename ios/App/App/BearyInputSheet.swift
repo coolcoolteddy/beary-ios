@@ -2,8 +2,7 @@ import UIKit
 
 // ===== 输入型底 sheet（编辑器气温输入框迁移，2026-11-11）=====
 // 仓内首个带输入框的底 sheet：走共享底部弹窗容器 BearyBottomSheet（与确认弹窗
-// 同款呈现与关闭流程：弹簧 0.38s 上升、背后缩 0.92、遮罩 0.45、下拖关/弹回；
-// 右上角叉叉关闭由本 sheet 自己保留）。结构照抄 BearyAnnouncementSheet
+// 同款呈现与关闭流程：弹簧 0.38s 上升、背后缩 0.92、遮罩 0.45、下拖关/弹回）。结构照抄 BearyAnnouncementSheet
 // （enum show(from:...) ＋ ViewController、sheetDelegate 强持有、
 // modalPresentationStyle=.custom、进场前 loadViewIfNeeded＋算内容高＋
 // updatePreferredContentSize）。
@@ -19,7 +18,7 @@ import UIKit
 // 按钮顺序按 BearyConfirmSheet 口径：非取消在上、取消垫底（确定、清除在上，
 // 取消垫底）；清除钮只在传了 onClear 时出现。点按按钮先关 sheet、关完再跑
 // 回调（回调里再弹 sheet 或出 toast 时不叠在正在退场的 sheet 上）；
-// 叉叉/遮罩/下滑关闭只关 sheet、不跑任何回调。
+// 遮罩/下滑关闭只关 sheet、不跑任何回调。
 // 滚动结构：表单区走 UIScrollView＋内容容器（grabber→标题→说明→输入框在
 // 滚动区内，确定/清除/取消按钮组固定在底部），键盘顶−56 封顶截断内容高时
 // 表单纵向滚动、按钮组不被遮挡；updatePreferredContentSize 改为滚动内容高
@@ -78,7 +77,6 @@ final class BearyInputSheetViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let scrollContentView = UIView()
     private let grabberView = UIView()
-    private let closeButton = BearyButton.closeButton()
     private let titleLabel = UILabel()
     private let messageLabel = UILabel()
     private let inputField = UITextField()
@@ -106,7 +104,7 @@ final class BearyInputSheetViewController: UIViewController {
         view.layer.masksToBounds = true
 
         // 表单区滚动容器：grabber→标题→说明→输入框挂内容容器内纵向滚动，
-        // 按钮组留在 view 上固定底部；叉叉也留在 view 上，不跟内容滚动。
+        // 按钮组留在 view 上固定底部。
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scrollView)
         scrollContentView.translatesAutoresizingMaskIntoConstraints = false
@@ -116,11 +114,6 @@ final class BearyInputSheetViewController: UIViewController {
         grabberView.backgroundColor = BearyColors.gray
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
         scrollContentView.addSubview(grabberView)
-
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
-        view.addSubview(closeButton)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = sheetTitle
@@ -199,14 +192,9 @@ final class BearyInputSheetViewController: UIViewController {
             grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
             grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
 
-            closeButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 16),
-            closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
-
             titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
             titleLabel.leadingAnchor.constraint(equalTo: scrollContentView.leadingAnchor, constant: 16),
-            titleLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -12),
+            titleLabel.trailingAnchor.constraint(equalTo: scrollContentView.trailingAnchor, constant: -16),
 
             messageLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
             messageLabel.leadingAnchor.constraint(equalTo: scrollContentView.leadingAnchor, constant: 16),
