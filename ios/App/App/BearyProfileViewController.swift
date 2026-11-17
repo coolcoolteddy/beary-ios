@@ -6607,12 +6607,22 @@ class BearyProfileViewController: UIViewController {
         tryLocatePending()
     }
 
-    /// 详情返回定位（guarded）：只在已加载的日记列表里找，找到即按现行定位体验滚动；
-    /// 不在列表里时什么都不做（不插入、不切 tab、不追拉）。
-    func scrollToEntryIdIfPresent(_ entryId: String) {
-        // 批 C：只在展示行里找——3 篇外的日记不在列表里，按本方法原注释“什么都不做”。
+    /// 详情打开时记下该篇相对视口的位置（行顶相对可见区顶）；不在展示行里时返回 nil。
+    func detailReturnAnchor(for entryId: String) -> CGFloat? {
+        guard let row = displayedEntries.firstIndex(where: { $0.id == entryId }) else { return nil }
+        tableView.layoutIfNeeded()
+        return tableView.rectForRow(at: IndexPath(row: row, section: 0)).origin.y - tableView.contentOffset.y
+    }
+
+    /// 详情关闭时把该篇放回打开时的视口位置；已在原位（±1pt）或不在展示行里时不动。
+    func restoreDetailReturnAnchor(entryId: String, viewportOffset: CGFloat) {
         guard let row = displayedEntries.firstIndex(where: { $0.id == entryId }) else { return }
-        scrollToProfileRow(row: row, entryId: entryId)
+        tableView.layoutIfNeeded()
+        let targetY = tableView.rectForRow(at: IndexPath(row: row, section: 0)).origin.y - viewportOffset
+        guard abs(targetY - tableView.contentOffset.y) >= 1 else { return }
+        let minY = -tableView.contentInset.top
+        let maxY = max(minY, tableView.contentSize.height - tableView.bounds.height + tableView.contentInset.bottom)
+        tableView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
     }
 
     private func tryLocatePending() {

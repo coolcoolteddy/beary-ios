@@ -252,6 +252,16 @@ final class BearyChromeViewController: UIViewController {
     private var notificationDetailEdgeDismiss: BearyEdgeDismissController?
     /// 日记详情页 modal 的 EdgeDismiss 强持有（见 presentDetail）。
     private var detailEdgeDismiss: BearyEdgeDismissController?
+    /// 详情只读返回的定位上下文：只记来源列表＋该篇在打开时的视口内位置；
+    /// 关闭时仅恢复来源列表，不再向三列表广播 scrollToRow(.middle)。
+    /// 来源不明（搜索/深链/引用卡/通知等）时为 nil，关闭时什么都不做。
+    private enum DetailReturnSource { case feed, timeline, profile }
+    private struct DetailReturnContext {
+        let source: DetailReturnSource
+        let entryId: String
+        let viewportOffset: CGFloat
+    }
+    private var pendingDetailReturn: DetailReturnContext?
     /// 私信聊天页 modal 的 EdgeDismiss 强持有（见 presentDMChat）。
     private var dmChatEdgeDismiss: BearyEdgeDismissController?
     /// 编辑器 modal 的 EdgeDismiss 强持有（见 configureComposerPresentation；
@@ -2095,7 +2105,7 @@ final class BearyChromeViewController: UIViewController {
         let f = BearyFeedViewController()
         f.onEntrySelected = { [weak self] entry in
             // 6A：卡片点开不再进详情，走 gotoEntry（自己→时间线定位，他人→作者主页定位）。
-            self?.gotoEntryImmediately(entry: entry)
+            self?.gotoEntryImmediately(entry: entry, source: .feed)
         }
         // 点头像或作者名开作者主页（modal，与详情作者点击同口径）。
         f.onOpenUser = { [weak self] userId in
@@ -2684,7 +2694,7 @@ final class BearyChromeViewController: UIViewController {
         // Q5 空态 CTA 接线：时间线空态“写一篇”与 FAB 同去向（未登录时 presentComposer 内弹原生登录页）。
         vc.onCompose = { [weak self] in self?.presentComposer() }
         vc.onOpenEntry = { [weak self] entry in
-            self?.gotoEntryImmediately(entry: entry)
+            self?.gotoEntryImmediately(entry: entry, source: .timeline)
         }
         // 收尾接线：编辑（无详情宿主）、删除（网页确认流程）、引用定位、互动同步首页。
         vc.onEditEntry = { [weak self] entry in
@@ -2719,10 +2729,10 @@ final class BearyChromeViewController: UIViewController {
         }
         profileBuiltForUserId = SessionManager.shared.currentUser?.id
         vc.onOpenEntry = { [weak self] entry in
-            self?.gotoEntryImmediately(entry: entry)
+            self?.gotoEntryImmediately(entry: entry, source: .profile)
         }
         vc.onOpenFreshEntry = { [weak self] entry in
-            self?.gotoEntryImmediately(entry: entry, skipSupplement: true)
+            self?.gotoEntryImmediately(entry: entry, skipSupplement: true, source: .profile)
         }
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         // 收尾接线：返回/退出/编辑资料/齿轮菜单/行内互动（P3/P11，见 wireProfileVC）。
@@ -3685,17 +3695,17 @@ final class BearyChromeViewController: UIViewController {
     /// （不比旧“不存在”toast 更差，且不丢用户刚点开的内容）。
     /// id-only 入口（搜索/消息/深链/引用卡）无卡片数据，仍走 fetch-first 的
     /// gotoEntry(entryId:) 不变；旧 fetch-first 的 gotoEntry(entry:) 已随本项退役。
-    private func gotoEntryImmediately(entry: Entry, skipSupplement: Bool = false) {
+    private func gotoEntryImmediately(entry: Entry, skipSupplement: Bool = false, source: DetailReturnSource? = nil) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         // R22-A1：发起时固定账号、会话代次与日记 ID，回包逐一复核。
         let request = captureDetailFetchRequest(entryId: entryId)
         if skipSupplement {
             // 提速：调用方刚为可见性校验拉过同一单篇，详情直接用这份新鲜数据渲染，
             // 不再后台补拉一次（计数 / 回应无需再等一次往返对齐）。
-            guard presentDetail(entry: entry) != nil else { return }
+            guard presentDetail(entry: entry, source: source) != nil else { return }
             return
         }
-        guard let detail = presentDetail(entry: entry) else { return }
+        guard let detail = presentDetail(entry: entry, source: source) else { return }
         // B3：发补拉时记下各互动字段当前值；回包合并时只合并期间没有变化的字段。
         let supplementBaseline = detail.captureSupplementBaseline()
         BearyAPI.shared.fetchEntry(id: entryId) { [weak self, weak detail] result in
@@ -3845,8 +3855,9 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// 日记详情页（2026-10-28 v5 mock 定版）：全屏 EdgeDismiss 模态；回调接线：
-    /// 关闭后各列表 guarded 定位回该卡；编辑／删除先关详情再走既有流程；
-    /// 作者／引用点按先关详情再路由（防 modal 叠 modal）；可见性与互动变化同步各列表。
+    /// 关闭后只恢复来源列表在打开时记下的视口位置（其余列表不动、已可见的行不动）；
+    /// 编辑／删除先关详情再走既有流程；作者／引用点按先关详情再路由（防 modal 叠 modal）；
+    /// 可见性与互动变化同步各列表。
     /// 审计 P0-1：拉黑作者判定（作者本人永不命中；游客不承接拉黑表）。
     private func isBlockedAuthor(_ entry: Entry) -> Bool {
         if SessionManager.shared.isGuestMode { return false }
@@ -3856,13 +3867,20 @@ final class BearyChromeViewController: UIViewController {
     }
 
     @discardableResult
-    private func presentDetail(entry: Entry) -> BearyDetailViewController? {
+    private func presentDetail(entry: Entry, source: DetailReturnSource? = nil) -> BearyDetailViewController? {
         // 开发者模式假日记（仅内存）：点进详情被拦截——假篇没有真实后端记录，详情页的点赞等互动会发带假 id 的请求。
         if entry.id?.hasPrefix("dev-") == true {
             BearyToast.show(in: view.window ?? view, message: "预览数据，无法打开详情")
             return nil
         }
         if topmostViewController() is BearyDetailViewController { return nil }
+        // 详情打开时记下来源列表＋该篇的视口内位置，供关闭时恢复；来源不明或该篇
+        // 不在来源列表里时不记（关闭时什么都不做）。每次打开都重记，旧上下文作废。
+        if let source = source, let entryId = entry.id, let offset = detailReturnAnchor(for: source, entryId: entryId) {
+            pendingDetailReturn = DetailReturnContext(source: source, entryId: entryId, viewportOffset: offset)
+        } else {
+            pendingDetailReturn = nil
+        }
         // 审计 P0-1：拉黑作者的卡片数据不得出全文——进详情前先转占位。
         var entry = entry
         if isBlockedAuthor(entry) {
@@ -3881,9 +3899,7 @@ final class BearyChromeViewController: UIViewController {
         // 可定位崩在 present 前、进页中、还是渲染后）。
         DiagFile.mark("detail.present id=\(entry.id ?? "?")")
         detail.onDismissed = { [weak self] entryId in
-            self?.feedVC?.scrollToEntryId(entryId)
-            self?.timelineVC?.scrollToEntryIdIfPresent(entryId)
-            self?.profileVC?.scrollToEntryIdIfPresent(entryId)
+            self?.restoreDetailReturnPosition(entryId: entryId)
         }
         detail.onEdit = { [weak self, weak detail] entry in
             detail?.dismiss(animated: BearyMotion.animated(true)) {
@@ -3930,6 +3946,30 @@ final class BearyChromeViewController: UIViewController {
         detail.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         topmostViewController().present(detail, animated: BearyMotion.animated(true))
         return detail
+    }
+
+    /// 详情打开时问来源列表要该篇的视口内位置（行顶相对可见区顶）；该篇不在
+    /// 来源列表里时返回 nil（关闭时不恢复）。
+    private func detailReturnAnchor(for source: DetailReturnSource, entryId: String) -> CGFloat? {
+        switch source {
+        case .feed: return feedVC?.detailReturnAnchor(for: entryId)
+        case .timeline: return timelineVC?.detailReturnAnchor(for: entryId)
+        case .profile: return profileVC?.detailReturnAnchor(for: entryId)
+        }
+    }
+
+    /// 详情只读返回：只把来源列表里该篇放回打开时的视口位置；上下文已消费
+    /// （一次有效）、id 对不上、或该篇已不在列表里时什么都不做——其余列表
+    /// 全程不动，已在原位的行也不动。
+    private func restoreDetailReturnPosition(entryId: String) {
+        guard let context = pendingDetailReturn else { return }
+        pendingDetailReturn = nil
+        guard context.entryId == entryId else { return }
+        switch context.source {
+        case .feed: feedVC?.restoreDetailReturnAnchor(entryId: entryId, viewportOffset: context.viewportOffset)
+        case .timeline: timelineVC?.restoreDetailReturnAnchor(entryId: entryId, viewportOffset: context.viewportOffset)
+        case .profile: profileVC?.restoreDetailReturnAnchor(entryId: entryId, viewportOffset: context.viewportOffset)
+        }
     }
 
     /// iCity：拉黑后离页——modal 主页先 dismiss 再回首页，.user 页直接回首页；
