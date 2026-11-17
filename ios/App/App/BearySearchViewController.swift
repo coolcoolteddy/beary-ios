@@ -705,8 +705,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 loadMore()
             }
         }
-            }
-        }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -772,16 +770,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         let targetY = min(max(savedY, minY), maxY)
         guard abs(targetY - scrollView.contentOffset.y) >= 1 else { return }
         scrollView.contentOffset = CGPoint(x: 0, y: targetY)
-    }
-
-    /// T3：详情打开时记下该篇相对视口的位置（行顶相对可见区顶）；不在
-    /// 结果列表里时返回 nil（与广场／时间线／个人页同口径，见 SceneDelegate
-    /// detailReturnAnchor）。关闭时由 restoreDetailReturnAnchor 放回原位。
-    func detailReturnAnchor(for entryId: String) -> CGFloat? {
-        guard let row = entryRowById[entryId] else { return nil }
-        scrollView.layoutIfNeeded()
-        let rowTop = row.convert(CGPoint.zero, to: scrollView).y
-        return rowTop - scrollView.contentOffset.y
     }
 
     /// T3：详情关闭时把该篇放回打开时的视口位置；已在原位（±1pt）或

@@ -284,7 +284,15 @@ final class BearyChromeViewController: UIViewController {
         let entryId: String
         let viewportOffset: CGFloat
         /// 搜索来源的关键词：关闭时关键词变了（换词重搜）不恢复旧位置。
-        let searchQuery: String? = nil
+        let searchQuery: String?
+        /// 显式 init：合成 memberwise init 在本工程工具链下不接受
+        /// searchQuery 实参（sideload 报 extra argument），此处明写。
+        init(source: DetailReturnSource, entryId: String, viewportOffset: CGFloat, searchQuery: String? = nil) {
+            self.source = source
+            self.entryId = entryId
+            self.viewportOffset = viewportOffset
+            self.searchQuery = searchQuery
+        }
     }
     private var pendingDetailReturn: DetailReturnContext?
     /// 第七轮审计 01：详情返回锚点的标签页来源——标签 modal 是临时页，

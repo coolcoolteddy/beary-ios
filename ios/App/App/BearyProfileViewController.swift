@@ -6763,7 +6763,6 @@ class BearyProfileViewController: UIViewController {
     func restorePhotosDetailReturnAnchor(entryId: String, viewportOffset: CGFloat) {
         presentedPhotosVC?.restoreDetailReturnAnchor(entryId: entryId, viewportOffset: viewportOffset)
     }
-    }
 
     /// 详情关闭时把该篇放回打开时的视口位置；已在原位（±1pt）或不在展示行里时不动。
     func restoreDetailReturnAnchor(entryId: String, viewportOffset: CGFloat) {
