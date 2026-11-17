@@ -97,7 +97,6 @@ final class BearyConfirmSheetViewController: UIViewController {
     var sheetDelegate: BearyBottomSheetTransitioningDelegate?
 
     private let grabberView = UIView()
-    private let closeButton = BearyButton.closeButton()
     private let titleLabel = UILabel()
     private let messageLabel = UILabel()
     private let buttonStack = UIStackView()
@@ -136,11 +135,6 @@ final class BearyConfirmSheetViewController: UIViewController {
         grabberView.backgroundColor = BearyColors.gray
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
         view.addSubview(grabberView)
-
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
-        view.addSubview(closeButton)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = sheetTitle
@@ -239,14 +233,9 @@ final class BearyConfirmSheetViewController: UIViewController {
             grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
             grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
 
-            closeButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 16),
-            closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
-
             titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
             titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            titleLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -12),
+            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
         ])
         if hasMessage {
             NSLayoutConstraint.activate([
@@ -305,11 +294,6 @@ final class BearyConfirmSheetViewController: UIViewController {
         dismiss(animated: BearyMotion.animated(true)) {
             action.handler?()
         }
-    }
-
-    @objc private func closeTapped() {
-        dismiss(animated: BearyMotion.animated(true))
-        resolveDismissWithoutAction()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
