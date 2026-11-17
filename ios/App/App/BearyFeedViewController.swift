@@ -100,6 +100,11 @@ class BearyFeedViewController: UIViewController {
     private var pullEngageTranslation: CGFloat?
     private var customPullEndScheduled = false
     private var plazaError = false
+    /// since 补拉缺口态：hasGap 回包后置位，游标钉在缺口前的旧表头
+    /// （plazaGapCursor），重试/再刷新仍从它起拉、不越过缺口；无缺口
+    /// 成功或全量首拉后清掉。随切段槽走，不跨段复用。
+    private var plazaHasGap = false
+    private var plazaGapCursor: (key: Int, id: String)?
     /// 切段缓存（Li 2026-11-02 定：切段直接显缓存，不重拉；刷新走下拉）：
     /// 每段各存一份内存列表与分页态；plazaRaw 与分页变量恒为“当前段”的
     /// live 镜像，切段时先把 live 写回出段槽、再把入段槽读回 live。
@@ -116,6 +121,10 @@ class BearyFeedViewController: UIViewController {
         /// 审计 14-1：原始页末条游标随槽走（满页全被过滤时仍推进）。
         var nextPageBefore: Int? = nil
         var nextPageBeforeId: String? = nil
+        /// since 补拉缺口态随槽走：缺口游标锚在缺口前的旧表头，只在本段内复用。
+        var hasGap = false
+        var gapCursorKey: Int? = nil
+        var gapCursorId: String? = nil
     }
     private var plazaSegmentCache = FeedSegmentCache()
     private var followingSegmentCache = FeedSegmentCache()
@@ -135,7 +144,10 @@ class BearyFeedViewController: UIViewController {
             error: plazaError,
             lastLoadAt: lastFeedLoadAt,
             nextPageBefore: plazaNextPageBefore,
-            nextPageBeforeId: plazaNextPageBeforeId
+            nextPageBeforeId: plazaNextPageBeforeId,
+            hasGap: plazaHasGap,
+            gapCursorKey: plazaGapCursor?.key,
+            gapCursorId: plazaGapCursor?.id
         )
         if feedFollowingSegment {
             followingSegmentCache = slot
@@ -155,6 +167,12 @@ class BearyFeedViewController: UIViewController {
         lastFeedLoadAt = slot.lastLoadAt
         plazaNextPageBefore = slot.nextPageBefore
         plazaNextPageBeforeId = slot.nextPageBeforeId
+        plazaHasGap = slot.hasGap
+        if let gapKey = slot.gapCursorKey, let gapId = slot.gapCursorId {
+            plazaGapCursor = (key: gapKey, id: gapId)
+        } else {
+            plazaGapCursor = nil
+        }
     }
 
     private var currentSegmentLoaded: Bool {
@@ -1353,6 +1371,7 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaReachedEnd = rawEntries.count < strongSelf.firstPageLimit
                     strongSelf.plazaError = false
                     strongSelf.setRefreshFailedBannerVisible(false)
+                    strongSelf.clearPlazaGapState()
                     strongSelf.lastFeedLoadAt = Date()
                     // 审计 13：界面先应用（落表 + 状态），写盘异步在后、不卡首帧。
                     // 加载三件套·骨架淡出：骨架出过屏时不直接 reloadData，
@@ -1411,9 +1430,25 @@ class BearyFeedViewController: UIViewController {
         // Scope 带关联值且未声明 Equatable，故按 rawValue 比对（广场/关注段
         // rawValue 本就不同，Feed 的 feedScope 只取这两档，够用）。
         let sinceScopeRaw = feedScope.rawValue
-        guard let head = plazaRaw.first,
-              let cursor = feedSortKey(head),
-              let headId = head.id, !headId.isEmpty else {
+        guard let head = plazaRaw.first else {
+            loadPlazaFirstPage(diffMode: true)
+            return
+        }
+        // 缺口游标优先：带缺口的上次刷新已把游标钉在缺口前的旧表头，
+        // 重试/再刷新仍从它起拉，不越过缺口；锚定条目已不在表里
+        // （切段/快照恢复等整表替换后）时游标作废、回落当前表头。
+        let gapCursor: (key: Int, id: String)? = {
+            guard let gap = plazaGapCursor,
+                  plazaRaw.contains(where: { $0.id == gap.id }) else { return nil }
+            return gap
+        }()
+        if gapCursor == nil, plazaHasGap || plazaGapCursor != nil {
+            plazaHasGap = false
+            plazaGapCursor = nil
+        }
+        let cursor = gapCursor?.key ?? feedSortKey(head)
+        let headId = gapCursor?.id ?? head.id
+        guard let cursor, let headId, !headId.isEmpty else {
             loadPlazaFirstPage(diffMode: true)
             return
         }
@@ -1441,7 +1476,8 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaLoading = false
                     strongSelf.plazaFirstPageInFlight = false
                     strongSelf.loadPlazaFirstPage(diffMode: true)
-                case .success(let (fresh, _)):
+                case .success(let result):
+                    let fresh = result.entries
                     // 审计-广场：since 前插同首拉口径，广场段滤掉非有效公开篇；
                     // 关注段不滤（仅好友篇合法，见 loadPlazaFirstPage 注释）。
                     let scopeFiltered = strongSelf.feedFollowingSegment ? fresh : fresh.filter { BearyEphemeral.isEffectivelyPublic($0) }
@@ -1451,6 +1487,13 @@ class BearyFeedViewController: UIViewController {
                     }
                     // 关注流二次过滤（仅 following 段）。
                     let newItems = strongSelf.feedFollowingSegment ? strongSelf.filteredFollowingEntries(baseNewItems) : baseNewItems
+                    if result.hasGap {
+                        // 补拉未接上旧表头：新篇仍前插展示，但游标钉在本次
+                        // 请求用的旧表头、不越过缺口；置失败态、给缺口提示，
+                        // 失败行点按重试重拉 since（再失败回落全量）。
+                        strongSelf.handlePlazaSinceGap(newItems: newItems, requestCursor: cursor, requestCursorId: headId)
+                        return
+                    }
                     if newItems.isEmpty {
                         strongSelf.plazaLoading = false
                         strongSelf.plazaFirstPageInFlight = false
@@ -1467,6 +1510,8 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaFirstDone = true
                     strongSelf.plazaError = false
                     strongSelf.setRefreshFailedBannerVisible(false)
+                    strongSelf.plazaHasGap = false
+                    strongSelf.plazaGapCursor = nil
                     strongSelf.lastFeedLoadAt = Date()
                     BearyTimelinePrefetch.maybePrefetch()
                     // B1：段守卫写盘（同首拉守卫），仅好友篇不落盘。
@@ -1487,10 +1532,49 @@ class BearyFeedViewController: UIViewController {
         }
     }
 
+    /// since 补拉带缺口：已收集的新篇仍前插展示，但游标钉在本次请求用的
+    /// 旧表头（requestCursor），不越过缺口；不写盘新表头——磁盘快照仍以
+    /// 旧表头为准，冷启后仍从缺口前起拉。置失败态、给缺口提示，失败行
+    /// 点按重试重拉 since；since 再失败走原有口径回落全量首拉。
+    private func handlePlazaSinceGap(newItems: [Entry], requestCursor: Int, requestCursorId: String) {
+        plazaGapCursor = (key: requestCursor, id: requestCursorId)
+        plazaHasGap = true
+        plazaError = true
+        if !newItems.isEmpty {
+            plazaRaw = newItems + plazaRaw
+            firstPageIds = plazaRaw.prefix(firstPageLimit).compactMap { $0.id }
+        }
+        plazaLoading = false
+        plazaFirstPageInFlight = false
+        plazaFirstDone = true
+        lastFeedLoadAt = Date()
+        BearyTimelinePrefetch.maybePrefetch()
+        // 行数变了（新行＋失败行）：不走插行批更新，直接整表重刷，防行数对不上。
+        tableView.reloadData()
+        finishFirstLoadIfNeeded()
+        updateOverlayState()
+        maybeEndRefreshing()
+        BearyToast.show(in: view, message: "中间还有内容未补齐")
+    }
+
+    /// 全量首拉成功即清缺口态：模型已整表换新，缺口不再是 since 缺口，
+    /// 未加载的深度走正常分页。
+    private func clearPlazaGapState() {
+        plazaHasGap = false
+        plazaGapCursor = nil
+    }
+
     /// 审计 P2-13：失败行重试不再无条件重拉首页——已有页时按末条游标续拉
     /// 下一页（保住已加载的页与滚动位置），首拉失败（空列表）时才重拉首页。
     private func retryPlazaAfterError() {
         guard !plazaLoading else { return }
+        if plazaHasGap {
+            // 缺口重试：从缺口前的旧表头游标重拉 since，不越过缺口；
+            // 再失败走 since 失败口径回落全量，无缺口成功后清缺口态。
+            loadPlazaSince()
+            tableView.reloadData()
+            return
+        }
         if plazaRaw.isEmpty {
             // 109：空表重试与首屏同口径启动中央转圈（refreshAllInternal 的
             // showCentralSpinner && plazaRaw.isEmpty 分支同款调用）；此前该路径
@@ -1944,6 +2028,7 @@ class BearyFeedViewController: UIViewController {
             plazaHasMore = hasMoreOverride ?? (fresh.count >= firstPageLimit)
             plazaReachedEnd = !(hasMoreOverride ?? (fresh.count >= firstPageLimit))
             plazaError = false
+            clearPlazaGapState()
             lastFeedLoadAt = Date()
             // B1：段守卫写盘——正在关注段公开篇不得混入广场桶。
             saveCurrentFeedHead(entries: fresh, hasMore: plazaHasMore)
@@ -2036,6 +2121,7 @@ class BearyFeedViewController: UIViewController {
         plazaHasMore = hasMoreOverride ?? (deduped.count >= firstPageLimit)
         plazaReachedEnd = !(hasMoreOverride ?? (deduped.count >= firstPageLimit))
         plazaError = false
+        clearPlazaGapState()
         lastFeedLoadAt = Date()
         // B1：段守卫写盘——正在关注段公开篇不得混入广场桶。
         saveCurrentFeedHead(entries: deduped, hasMore: plazaHasMore)
@@ -2594,12 +2680,15 @@ class BearyFeedViewController: UIViewController {
     // MARK: - 失败行 cell
 
     /// F18：失败态为空块形态（wifi.slash 图标 + “加载失败” + 描边重试钮），不再是行内橙字。
-    private func errorCell(for tableView: UITableView, onRetry: @escaping () -> Void) -> UITableViewCell {
+    /// message 为 nil 时用默认“加载失败，重试”；缺口态传缺口提示。
+    private func errorCell(for tableView: UITableView, message: String? = nil, onRetry: @escaping () -> Void) -> UITableViewCell {
         if let cell = tableView.dequeueReusableCell(withIdentifier: "BearyFeedErrorCell") as? BearyFeedErrorCell {
+            cell.configure(message: message)
             cell.onRetry = onRetry
             return cell
         }
         let made = BearyFeedErrorCell(style: .default, reuseIdentifier: "BearyFeedErrorCell")
+        made.configure(message: message)
         made.onRetry = onRetry
         return made
     }
@@ -3120,7 +3209,7 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate, U
         if indexPath.row >= 0, indexPath.row < entries.count {
             return feedCell(for: tableView, entry: entries[indexPath.row], indexPath: indexPath)
         }
-        return errorCell(for: tableView) { [weak self] in
+        return errorCell(for: tableView, message: plazaHasGap ? "中间还有内容未补齐" : nil) { [weak self] in
             self?.retryPlazaAfterError()
         }
     }
@@ -3346,11 +3435,17 @@ class BearyFeedErrorCell: UITableViewCell {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// 缺口/失败文案：nil 复位默认“加载失败，重试”；复用时由 errorCell 重设。
+    func configure(message: String?) {
+        messageLabel.text = message ?? "加载失败，重试"
+    }
+
     override func prepareForReuse() {
         super.prepareForReuse()
         // 80 包 A4：错峰改 cell.alpha/transform，对称复位。
         alpha = 1
         transform = .identity
+        messageLabel.text = "加载失败，重试"
         onRetry = nil
     }
 
