@@ -162,10 +162,6 @@ final class BearyDetailViewController: UIViewController {
     /// 只在 recipientRow 藏时激活（见 updateDiaryStackSpacing）；
     /// @ 行显时停用、改走头行顶约束。
     private var authorRowTopConstraint: NSLayoutConstraint?
-    /// @ 行零高约束：@ 行藏时用 required 把它压到 0 高（只在 @ 行藏时激活，见 updateDiaryStackSpacing）。
-    /// 132 真机实测：@ 行隐藏后仍占约 12pt 高，栈内链把作者行往下顶，#1443 的钉顶约束
-    /// 被栈内部约束顶掉，名字顶比头像顶低约 16pt；零高约束钉死它。
-    private var recipientRowZeroHeightConstraint: NSLayoutConstraint?
     /// 正文栈顶：取头像底与头行底两者较大者 + 6（紧贴用户名下方，取规范标题→正文档 6；
     /// 原 16 有标题／14 无标题，见规范 §3；该槽位改动须走规范同步）；正文全宽，
     /// 头像底约束保留（正文必须 clearance 头像底）。
@@ -1074,8 +1070,6 @@ final class BearyDetailViewController: UIViewController {
         // 作者行顶对齐约束：初始不激活，只在 @ 行藏时启用（见 updateDiaryStackSpacing）。
         // 建在此处：authorRow 已入栈、avatarButton 已入内容列，两端已同属内容列层级。
         authorRowTopConstraint = authorRow.topAnchor.constraint(equalTo: avatarButton.topAnchor)
-        // @ 行零高约束：初始不激活，只在 @ 行藏时启用（见 updateDiaryStackSpacing）。
-        recipientRowZeroHeightConstraint = recipientRow.heightAnchor.constraint(equalToConstant: 0)
 
         nameButton.titleLabel?.font = BearyDynamicType.cardTitleFont()
         nameButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -1372,26 +1366,35 @@ final class BearyDetailViewController: UIViewController {
     private func updateDiaryStackSpacing() {
         // 作者行顶部统一 16（2026-11-05 ChatGPT 间距跟进）：@ 行显隐的 1pt
         // 差值保留（16／17），只改基线不改相对行为。
-        // 名字行偏下（卡片同款，129 真机实测：名字比头像顶低约 10pt，
-        // 时间约 11pt）：#1145 的字体行高算顶距没修动；#1288 的钉中心也没修住——
+        // 名字行偏下：#1145 的字体行高算顶距没修动；#1288 的钉中心也没修住——
         // 20pt 的行钉在 40pt 头像中心上，用户名顶仍比头像顶低 (40−20)/2 ≈ 10pt，
-        // 居中从来不是顶对齐。#1443 改钉顶部：@ 行藏时作者行顶 == 头像顶，但 132 真机
-        // 实测仍低约 16pt——钉顶约束钉的是栈内子视图，栈内它上方的 @ 行隐藏后仍占
-        // 约 12pt 高，栈内链把作者行往下顶，外部钉顶约束被栈内部约束顶掉。本次三处
-        // 一致钉死：@ 行藏时头行顶约束保持激活（16，不再停用）＋ @ 行 required 零高
-        // 压零 ＋ 作者行钉顶保留；@ 行显时恢复顶约束、顶距 17，保持顶对齐不动。
-        // 行内名字顶比行顶低约 4-5pt 是按钮内字高居中（正常 leading），不在本次范围。
+        // 居中从来不是顶对齐。#1443 改钉顶部（作者行顶 == 头像顶），#1702 又加
+        // @ 行 required 零高压零，但 133 真机实测名字顶仍比头像顶低约 13.5pt
+        // （像素实测：头像顶 130.0pt、名字墨顶 146.7pt；行顶比头像顶低约 12pt，
+        // 与 132 实测的“@ 行隐藏后仍占约 12pt 高”一致）——钉顶约束在真机上不成立，
+        // 栈内链（隐藏的 @ 行占高）把作者行往下顶，外部钉顶约束被顶掉。
+        // 999 顶钉（body.top == 头行底 + 6）也动不了名字：作者行是 .firstBaseline
+        // 栈，行内名字位置由基线定、与行高无关，停用顶钉只改正文顶、不改名字。
+        // 故结构修：@ 行藏时直接把它移出头行栈（不留隐藏占位），显时插回首位；
+        // 栈里只剩作者行时，作者行顶 == 头行顶 == 头像顶，不靠约束优先级硬顶。
+        // 行内名字墨顶比行顶低约 4pt 是字体 leading（正常），不在本次范围。
         if recipientRow.isHidden {
+            if recipientRow.superview != nil {
+                headerStack.removeArrangedSubview(recipientRow)
+                recipientRow.removeFromSuperview()
+            }
             headerStackTopConstraint?.isActive = true
             headerStackTopConstraint?.constant = 16
             authorRowTopConstraint?.isActive = true
         } else {
+            if recipientRow.superview == nil {
+                headerStack.insertArrangedSubview(recipientRow, at: 0)
+            }
+            headerStack.setCustomSpacing(4, after: recipientRow)
             authorRowTopConstraint?.isActive = false
             headerStackTopConstraint?.isActive = true
             headerStackTopConstraint?.constant = 17
         }
-        recipientRowZeroHeightConstraint?.isActive = recipientRow.isHidden
-        headerStack.setCustomSpacing(recipientRow.isHidden ? 0 : 4, after: recipientRow)
         headerStack.setCustomSpacing(4, after: authorRow)
         // 正文紧贴用户名下方：头行→正文栈间距取规范标题→正文档 6（原 16 有标题／
         // 14 无标题，见规范 §3；该槽位改动须走规范同步）。头像底约束保留——
@@ -1401,13 +1404,6 @@ final class BearyDetailViewController: UIViewController {
         bodyStackTopFromAvatarConstraint?.constant = headerBodyGap
         bodyStackTopFromHeaderConstraint?.constant = headerBodyGap
         bodyStackTopPinConstraint?.constant = headerBodyGap
-        // 详情与卡片的镜像处理：卡片正文缩进到名字列（body.leading == header.leading），
-        // 故卡片可停用贴头像底约束；详情正文全宽（body.leading == 内容列），必须 clearance
-        // 头像底，贴头像底约束须保留。保留它时 999 的顶钉（body.top == 头行底 + 6）会把
-        // 头行栈拉长到头像底（40pt），栈内作者行被拉伸、名字在拉伸后的行内居中，落在
-        // 头像中线——133 截图实证。故详情停用顶钉：正文顶即 max(头像底，头行底) + 6，
-        // 头行高时顶钉值与 ≥ 约束一致，行为不变。
-        bodyStackTopPinConstraint?.isActive = false
         // 失败横幅→标题 12：横幅隐藏时栈自动忽略，不留空隙。
         bodyStack.setCustomSpacing(12, after: staleBannerView)
         // 标题贴着正文走：标题→正文 6（ChatGPT 间距跟进，#904 为 4）；标题隐藏时其后间距置 0，正文直接贴头行间距。
