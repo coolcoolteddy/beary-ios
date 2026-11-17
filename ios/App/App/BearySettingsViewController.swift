@@ -427,6 +427,8 @@ final class BearySettingsViewController: UIViewController {
     private var diagDisclosure: SettingsDisclosure?
     private var plusDisclosure: SettingsDisclosure?
     private var accountDisclosure: SettingsDisclosure?
+    /// 存储空间行尾用量文案（通用组；viewWillAppear 重算，见 refreshStorageSize）。
+    private var storageSizeDetailLabel: UILabel?
     /// 导出行：仍在 buildSecuritySection 内建（导出按钮与副文案属性
     /// 的接线不动），只改承载位置——不再进安全组，改交账号披露组；
     /// buildLayout 先调 buildSecuritySection、后调 buildAccountActionSection，
@@ -541,6 +543,7 @@ final class BearySettingsViewController: UIViewController {
         refreshDMLevelRow()
         refreshNotificationHintRow()
         refreshDeveloperModeRow()
+        refreshStorageSize()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -3409,6 +3412,18 @@ final class BearySettingsViewController: UIViewController {
         soundSwitchRow.spacing = 12
         soundSwitchRow.alignment = .center
         rows.append(soundSwitchRow)
+        // 体验检查第 8 项：存储空间行（通用组；行尾显当前账号本机占用总量，
+        // 点进存储空间页按图片缓存／日记与广场快照／草稿与私信三类分别计大小）。
+        // 无图标：官方包无存储类图标，不复用他行图标、不自绘，沿用音效行无图标口径。
+        let storageSizeDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
+        storageSizeDetail.text = "正在计算…"
+        storageSizeDetailLabel = storageSizeDetail
+        let storageContent = makeRow(title: "存储空间", detailLabel: storageSizeDetail, showChevron: true)
+        let storageButton = UIButton(type: .custom)
+        storageButton.accessibilityLabel = "存储空间"
+        storageButton.addTarget(self, action: #selector(openStoragePage), for: .touchUpInside)
+        storageButton.bearyAddPressHaptic()
+        rows.append(makeSettingsTappableRow(content: storageContent, button: storageButton))
         // 2026-10-29 第 10 项：通用组版本行已删，版本只留页底脚注一处
         // （见 buildVersionFooter，Bundle 动态读，不写死）。
         // D2：诊断日志开关行（复用消息角标开关行样式：标题 + 说明 + UISwitch；
@@ -3888,6 +3903,22 @@ final class BearySettingsViewController: UIViewController {
         vc.modalPresentationStyle = .fullScreen
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         presentSettingsPage(vc)
+    }
+
+    /// 体验检查第 8 项：存储空间页（反馈页同款全屏 modal + fadeRise）。
+    @objc private func openStoragePage() {
+        let vc = BearyStorageSettingsViewController()
+        vc.modalPresentationStyle = .fullScreen
+        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        presentSettingsPage(vc)
+    }
+
+    /// 存储空间行尾用量：每次回到设置页重算（清理后返回即刷新）。
+    private func refreshStorageSize() {
+        guard let label = storageSizeDetailLabel else { return }
+        BearyStorageUsage.compute(accountId: SessionManager.shared.currentUser?.id) { [weak label] sizes in
+            label?.text = BearyStorageUsage.formatted(sizes.total)
+        }
     }
 
     // MARK: - 反馈与建议（2026-10-28 反馈 v3，路线 A）

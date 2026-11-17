@@ -655,13 +655,15 @@ final class BearyImageLoader {
     /// 此前注释所谓“代次屏障使旧写入被弃写”承诺大于代码保证。现写盘侧
     /// 在同一锁内先验代次再落盘，本方法在同一锁内先推进代次再删目录，
     /// 两者任一先行，最终状态都是目录已删、旧写入未落盘。
-    func purgeAccount(_ id: Int) {
+    /// 未登录时桶为 guest（bucketName(nil)；存储空间页游客态清理走这里，
+    /// 与登录态同口径：代次推进与目录删除在 diskWriteLock 内原子完成）。
+    func purgeAccount(_ id: Int?) {
         // 审计 r1-images 第 2 项：整桶逐出戳，交付时核对（见 finishDelivery）。
         recordEvictionStamps(prefixes: ["\(bucketName(id))|"], bucket: id)
         cancelInFlight(forBucket: id)
         cache.removeAllObjects()
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("BearyImageCache").appendingPathComponent("\(id)")
+            .appendingPathComponent("BearyImageCache").appendingPathComponent(bucketName(id))
         // 代次推进与目录删除在 diskWriteLock 内原子完成（见本方法注释）；
         // 写盘侧的校验＋落盘在同一锁内，两者互斥，旧写入不再重建目录。
         diskWriteLock.lock()
@@ -672,7 +674,7 @@ final class BearyImageLoader {
         diskWriteLock.unlock()
         // 审计三轮 23 项：目录已删，累计字节随之作废（下次写该桶时重新校准一次）。
         diskCacheLock.lock()
-        diskCacheTotals["\(id)"] = nil
+        diskCacheTotals[bucketName(id)] = nil
         diskCacheLock.unlock()
     }
 

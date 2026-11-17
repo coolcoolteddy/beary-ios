@@ -386,19 +386,22 @@ final class SessionManager {
     /// 账号隔离 4 号：显式退出清态时清掉该账号的图片缓存（内存全清 +
     /// 该账号磁盘目录删除）。切换账号（不退出）不走这里，旧账号磁盘保留、
     /// 仅由容器 setAccount 切键 + 清内存，见 SceneDelegate onUserChanged。
+    /// 未登录时桶为 guest（见两加载器的 purgeAccount），同样按桶清理。
     private func purgeImageCacheForCurrentAccount() {
-        guard let id = currentUser?.id else {
-            // 无当前账号时仍清共享 URLCache（旧行为）；账号定向缓存无账号可清。
-            URLCache.shared.removeAllCachedResponses()
-            return
-        }
-        purgeImageCache(forAccountId: id)
+        purgeImageCache(forAccountId: currentUser?.id)
+    }
+
+    /// 存储空间页：仅清当前账号的图片缓存（与退出清理同一路径，
+    /// 见 purgeImageCache；不碰保管库、不改登录态）。
+    func clearImageCacheForCurrentAccount() {
+        purgeImageCacheForCurrentAccount()
     }
 
     /// 账号定向的图片/实况缓存清理（第七轮审计 03：清理须明确指定原账号，
     /// 不得再按调用时刻的当前账号推断）。共享 URLCache 的清理与账号无关、
-    /// 任何调用路径都做（见旧注释）；账号定向的两桶只清传入的账号。
-    private func purgeImageCache(forAccountId id: Int) {
+    /// 任何调用路径都做（见旧注释）；账号定向的两桶只清传入的账号，
+    /// 未登录时传入 nil 即清 guest 桶。
+    private func purgeImageCache(forAccountId id: Int?) {
         // 秒开-网络层：先清共享 URLCache（与当前用户无关，任何调用路径都清）。
         // API 与图片会话现已 urlCache=nil，理论上不再向它写；但历史版本 /
         // 其他 .shared 调用仍可能留有私密体，退出时一并清掉，杜绝
@@ -424,6 +427,34 @@ final class SessionManager {
         guard let id = currentUser?.id else { return }
         purgeLocalSnapshots(forAccountId: id)
         BearyFeedCache.forgetUserId()
+    }
+
+    /// 存储空间页：仅清当前账号的可重同步本地快照（与退出清理同一清单，
+    /// 见 purgeLocalSnapshots；草稿与私信不在清单内，不碰保管库、不改登录态）。
+    func clearLocalSnapshotsForCurrentAccount() {
+        guard let id = currentUser?.id else {
+            clearGuestSnapshots()
+            return
+        }
+        purgeLocalSnapshots(forAccountId: id)
+    }
+
+    /// 存储空间页游客态：只清 guest 桶的字符串桶快照（广场/正在关注/
+    /// 时间线/个人页/统计/相册/许愿墙/私信会话/详情/星图内存）。
+    /// 日记同步、回收站、月历与通知快照是整型账号桶，游客没有，不清；
+    /// 清单以 purgeLocalSnapshots 为准，新增快照类型时两处同改。
+    private func clearGuestSnapshots() {
+        BearyFeedCache.purge(bucket: "guest")
+        BearyFeedCache.purge(bucket: BearyFeedCache.followingBucket(userId: nil))
+        BearyStarMapCache.purge(viewerBucket: "guest")
+        BearyTimelineCache.purge(bucket: "guest")
+        BearyProfileCache.purge(bucket: "guest")
+        BearyProfileStatsCache.purge(bucket: "guest")
+        BearyWishWallCache.purge(bucket: "guest")
+        BearyProfilePhotosCache.purge(bucket: "guest")
+        BearyDMConversationsCache.purge(bucket: "guest")
+        BearyDetailCache.purge(bucket: "guest")
+        BearySharedEntryLoader.shared.invalidateAll()
     }
 
     /// 账号定向的日记快照清理（第七轮审计 03：清理须明确指定原账号）。

@@ -225,8 +225,10 @@ final class BearyLivePhotoLoader {
     /// 第十轮 08 同款：代次推进与目录删除在 diskWriteLock 内原子完成，
     /// 写盘侧的校验＋落盘在同一锁内，两者任一先行，最终状态都是目录已删、
     /// 旧写入未落盘。
-    func purgeAccount(_ id: Int) {
-        let bucket = "\(id)"
+    /// 未登录时桶为 guest（bucketName(nil)；存储空间页游客态清理走这里，
+    /// 与登录态同口径，见本方法注释的代次屏障）。
+    func purgeAccount(_ id: Int?) {
+        let bucket = id.map(String.init) ?? "guest"
         stateLock.lock()
         let stale = inFlightTasks[bucket] ?? []
         inFlightTasks[bucket] = nil
