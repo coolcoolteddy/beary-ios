@@ -273,14 +273,18 @@ final class BearyChromeViewController: UIViewController {
     /// 标签聚合页 modal 的 EdgeDismiss 强持有（见 presentTagPage）。
     private var tagPageEdgeDismiss: BearyEdgeDismissController?
     /// 详情只读返回的定位上下文：只记来源列表＋该篇在打开时的视口内位置；
-    /// 关闭时仅恢复来源列表，不再向三列表广播 scrollToRow(.middle)。
+    /// 关闭时仅恢复来源列表，不再向各来源列表广播 scrollToRow(.middle)。
     /// 来源不明（深链/引用卡/通知等）时为 nil，关闭时什么都不做。
     /// T3：搜索亦为来源——从搜索结果进详情，关闭时放回该篇打开时的视口位置。
-    private enum DetailReturnSource { case feed, timeline, profile, tag, search }
+    /// 搜索与照片墙同样是来源列表：搜索记关键词＋行 id＋视口偏移，
+    /// 照片墙记打开详情那张照片的篇 id＋视口偏移（见各页锚点方法）。
+    private enum DetailReturnSource { case feed, timeline, profile, tag, search, photos }
     private struct DetailReturnContext {
         let source: DetailReturnSource
         let entryId: String
         let viewportOffset: CGFloat
+        /// 搜索来源的关键词：关闭时关键词变了（换词重搜）不恢复旧位置。
+        let searchQuery: String? = nil
     }
     private var pendingDetailReturn: DetailReturnContext?
     /// 第七轮审计 01：详情返回锚点的标签页来源——标签 modal 是临时页，
@@ -2790,6 +2794,7 @@ final class BearyChromeViewController: UIViewController {
                         // 唯一纠错路径。
                         self.feedVC?.removeDeletedEntry(entryId: entryId)
                         self.profileVC?.removeDeletedEntry(entryId: entryId)
+                        self.searchVC?.removeDeletedEntry(entryId: entryId)
                         // 审计 2026-11-02 第十节：被引篇删除时定向失效引用缓存，
                         // 旧引用卡不再按删除前拉到的全文渲染。
                         BearyDiaryCardCell.invalidateQuote(id: entryId)
@@ -2885,6 +2890,11 @@ final class BearyChromeViewController: UIViewController {
         vc.onOpenFreshEntry = { [weak self] entry in
             self?.gotoEntryImmediately(entry: entry, skipSupplement: true, source: .profile)
         }
+        // 照片墙进详情走独立来源（锚点问照片墙要该篇首张照片的视口位置，
+        // 而非个人页列表行），见 photosDetailReturnAnchor。
+        vc.onOpenEntryFromPhotos = { [weak self] entry in
+            self?.gotoEntryImmediately(entry: entry, source: .photos)
+        }
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         // 收尾接线：返回/退出/编辑资料/齿轮菜单/行内互动（P3/P11，见 wireProfileVC）。
         wireProfileVC(vc, modal: false)
@@ -2920,7 +2930,8 @@ final class BearyChromeViewController: UIViewController {
                 self?.presentUserProfile(handle: handle)
             }
         }, onOpenEntry: { [weak self] entryId in
-            // T3：搜索进详情记下来源，供关闭时把该篇放回打开时的视口位置。
+            // 搜索进详情同样记返回锚点（关键词＋行 id＋视口偏移），
+            // 关闭时回原行原位，见 presentDetail / restoreDetailReturnPosition。
             self?.gotoEntry(entryId: entryId, source: .search)
         })
         // 收尾接线：搜索返回回首页（S4 返回行）。
@@ -4116,7 +4127,9 @@ final class BearyChromeViewController: UIViewController {
         // 详情打开时记下来源列表＋该篇的视口内位置，供关闭时恢复；来源不明或该篇
         // 不在来源列表里时不记（关闭时什么都不做）。每次打开都重记，旧上下文作废。
         if let source = source, let entryId = entry.id, let offset = detailReturnAnchor(for: source, entryId: entryId) {
-            pendingDetailReturn = DetailReturnContext(source: source, entryId: entryId, viewportOffset: offset)
+            // 搜索多记一份关键词：关闭时换过词就不恢复旧位置（行可能已是另一批）。
+            let searchQuery = source == .search ? searchVC?.renderedQueryForReturn : nil
+            pendingDetailReturn = DetailReturnContext(source: source, entryId: entryId, viewportOffset: offset, searchQuery: searchQuery)
         } else {
             pendingDetailReturn = nil
         }
@@ -4186,6 +4199,7 @@ final class BearyChromeViewController: UIViewController {
             self?.feedVC?.applyEditedEntry(updated)
             self?.timelineVC?.applyEditedEntry(updated)
             self?.profileVC?.applyEditedEntry(updated)
+            self?.searchVC?.applyEditedEntry(updated)
             if let uid = SessionManager.shared.currentUser?.id {
                 BearyEntrySync.shared.upsertEdited(entry: updated, accountId: uid)
             }
@@ -4196,6 +4210,7 @@ final class BearyChromeViewController: UIViewController {
             // （失败回滚口径不动——详情侧仍按确认态回滚，本处只写确认值）。
             self?.timelineVC?.applyInteraction(entryId: entryId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
             self?.profileVC?.applyInteraction(entryId: entryId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
+            self?.searchVC?.applyInteraction(entryId: entryId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
         }
         detail.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         topmostViewController().present(detail, animated: BearyMotion.animated(true))
@@ -4211,6 +4226,7 @@ final class BearyChromeViewController: UIViewController {
         case .profile: return profileVC?.detailReturnAnchor(for: entryId)
         case .tag: return detailReturnTagPage?.detailReturnAnchor(for: entryId)
         case .search: return searchVC?.detailReturnAnchor(for: entryId)
+        case .photos: return profileVC?.photosDetailReturnAnchor(for: entryId)
         }
     }
 
@@ -4236,9 +4252,10 @@ final class BearyChromeViewController: UIViewController {
             return timelineVC?.detailSourceView(for: entryId)
         case .profile:
             return profileVC?.detailSourceView(for: entryId)
-        case .tag, .search, .none:
-            // 标签聚合页／搜索页没有 detailSourceView：落到下方回落链，
-            // 问不到即 nil、动画器走淡入淡出兜底。
+        case .tag, .search, .photos, .none:
+            // 标签聚合页／搜索页／照片墙没有 detailSourceView：落到下方回落链，
+            // 问不到即 nil、动画器走淡入淡出兜底（照片墙那篇在个人页列表里，
+            // 回落链末尾的 profileVC 能问到）。
             break
         }
         if let view = activeNotificationDetailVC?.detailSourceView(for: entryId) { return view }
@@ -4266,7 +4283,8 @@ final class BearyChromeViewController: UIViewController {
         case .timeline: timelineVC?.restoreDetailReturnAnchor(entryId: context.entryId, viewportOffset: context.viewportOffset)
         case .profile: profileVC?.restoreDetailReturnAnchor(entryId: context.entryId, viewportOffset: context.viewportOffset)
         case .tag: detailReturnTagPage?.restoreDetailReturnAnchor(entryId: context.entryId, viewportOffset: context.viewportOffset)
-        case .search: searchVC?.restoreDetailReturnAnchor(entryId: context.entryId, viewportOffset: context.viewportOffset)
+        case .search: searchVC?.restoreDetailReturnAnchor(entryId: context.entryId, viewportOffset: context.viewportOffset, query: context.searchQuery)
+        case .photos: profileVC?.restorePhotosDetailReturnAnchor(entryId: context.entryId, viewportOffset: context.viewportOffset)
         }
     }
 
