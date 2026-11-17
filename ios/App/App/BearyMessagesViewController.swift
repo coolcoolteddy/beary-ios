@@ -474,6 +474,14 @@ final class BearyMessagesViewController: UIViewController {
     private var mergedBatchInFlight = false
     private var pendingMergedRows: [MergedRow]?
 
+    /// B3：更新期间用户实际滚的量——只在拖动/减速时由 scrollViewDidScroll
+    /// 累计；系统因内容变化自己调的偏移（reload 后 clamp、batch 动画内
+    /// 的调整）不计入。恢复时只补这部分，不再拿“完成时偏移 − 更新前
+    /// 偏移”当用户滚动量（那会把系统的调整也算进去、再补一次）。
+    private var userScrollDeltaDuringUpdate: CGFloat = 0
+    private var lastTrackedOffsetY: CGFloat = 0
+    private var trackingUserScrollDelta = false
+
     private func updateMergedRows() {
         let newRows = rebuildMergedRows()
         if mergedBatchInFlight {
@@ -494,6 +502,13 @@ final class BearyMessagesViewController: UIViewController {
             // 小改动：按行更新——删/插/移/重载各走各的口径；模型已是新态，
             // batch 内只做视图侧的对应操作（删用旧下标、插用新下标）。
             mergedBatchInFlight = true
+            // 开始记录更新期间的用户滚动：batch 动画是异步的，用户可能
+            // 在动画期间拖动；只计拖动/减速产生的位移，系统的调整不计。
+            // reload 路径是同步调用栈（reloadData＋layoutIfNeeded＋
+            // restoreAnchor 一气呵成），用户滚动插不进来，不用记录。
+            userScrollDeltaDuringUpdate = 0
+            lastTrackedOffsetY = tableView.contentOffset.y
+            trackingUserScrollDelta = true
             tableView.performBatchUpdates({
                 self.tableView.deleteRows(at: batch.deletions, with: .fade)
                 self.tableView.insertRows(at: batch.insertions, with: .fade)
@@ -655,16 +670,23 @@ final class BearyMessagesViewController: UIViewController {
     }
 
     /// B3：只补偿更新导致的锚点位移，不覆盖更新期间用户产生的位移——
-    /// 完成时先取当刻偏移，与更新前偏移之差即用户在 batch 动画期间滚
-    /// 的量，加进目标偏移里；锚点行已消失时找邻近仍存在行，按它新旧
-    /// 绝对位置之差平移，不再用整表高度差（底部增删也会被算进去）；
-    /// 锚点及附近行全消失时不动偏移。无锚点（首拉/旧表为空）时不动偏移。
+    /// 用户滚动量只取更新期间拖动/减速累计的那部分（scrollViewDidScroll
+    /// 里记），不拿“完成时偏移 − 更新前偏移”当用户滚动量：那段差值
+    /// 里还混着系统自己调的偏移（reload 后 clamp、batch 动画内的调整），
+    /// 全算进去就是在系统已调过的位置上再补一次；锚点行已消失时找邻近
+    /// 仍存在行，按它新旧绝对位置之差平移，不再用整表高度差（底部增删
+    /// 也会被算进去）；锚点及附近行全消失时不动偏移。无锚点（首拉/旧表
+    /// 为空）时不动偏移。
     private func restoreAnchor(_ anchor: VisibleTopAnchor?, responseOffsetY: CGFloat) {
+        // 停止记录并一次性取走累计值：此后的偏移变化（含下面
+        // setClampedContentOffsetY 自己的写入）不再是更新期间的用户滚动。
+        // 同步的 reload 路径没开过记录，取到的就是 0——用户滚动插不进
+        // 同步调用栈，reload 期间的 clamp 是系统调整，本来就不该补。
+        trackingUserScrollDelta = false
+        let userDelta = userScrollDeltaDuringUpdate
+        userScrollDeltaDuringUpdate = 0
         guard let anchor = anchor else { return }
         tableView.layoutIfNeeded()
-        // 用户在 batch 动画期间滚的量：完成时偏移 − 更新前偏移；
-        // 用户没动时为 0，目标与旧行为一致。
-        let userDelta = tableView.contentOffset.y - responseOffsetY
         if let newIndex = mergedRows.firstIndex(where: { key(for: $0) == anchor.key }) {
             let rect = tableView.rectForRow(at: IndexPath(row: newIndex, section: 0))
             setClampedContentOffsetY(rect.origin.y - anchor.viewportOffset + userDelta)
@@ -970,6 +992,17 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === tableView else { return }
+        // 更新期间的用户滚动：只在拖动/减速时累计本次回调与上次观测
+        // 到的偏移之差；上次观测值每次回调都刷新，系统在两次用户回调
+        // 之间调的偏移不会被算进用户总量。系统调整（reload 后 clamp、
+        // batch 动画内调整）发生时不在拖动/减速态，不计入。
+        if trackingUserScrollDelta {
+            let currentY = tableView.contentOffset.y
+            if tableView.isDragging || tableView.isDecelerating {
+                userScrollDeltaDuringUpdate += currentY - lastTrackedOffsetY
+            }
+            lastTrackedOffsetY = currentY
+        }
         // 哨兵滚出视野清失败旗重 arm（子页原口径，改由容器表驱动）。
         let visible = tableView.indexPathsForVisibleRows ?? []
         var sentinelVisible = false
