@@ -18,9 +18,21 @@ public final class ProfileCoverView: UIView {
     /// art 图：init 先按原样加载（只建对象不解码，首帧不阻塞）；后台预解码完
     /// 后在主线程把解码后的图换进来（见 predecodeArt），没解完之前绘制与原来一致。
     private var art: [String: UIImage]
-    /// 底图：后台全幅解码后回填主线程；没到之前 draw() 走 poster 兜底。
+    /// 底图：后台全幅解码后回填主线程；没到之前 poster 层兜底。
     private var backdrop: CGImage?
     private var backdropFrames: [Int: UIImage] = [:]
+    /// 底图图层：两帧交叉淡入（见 updateBackdropLayers）。draw() 不再重采样底图；
+    /// 帧切换只换 contents、混合只改透明度、位置只改 frame，由合成器完成。
+    /// 子图层恒在自身绘制内容之上，故叠加层画在独立的 overlayView 里、盖在底图容器之上。
+    private let backdropContainer = UIView()
+    private let overlayView = CoverOverlayView()
+    private let backdropBackLayer = CALayer()
+    private let backdropFrontLayer = CALayer()
+    private let posterLayer = CALayer()
+    /// 最近一次 step() 算出的底图姿态（供 layout 时重算图层帧用；与 drawOverlay 同一套公式）。
+    private var currentDepth: CGFloat = 0
+    private var currentVertical: CGFloat = 0
+    private var currentBackdropFirstIndex = -1
     private var egg: CGFloat = 0
     /// 七夕彩蛋：两只喜鹊靠拢进度 0→1，跟倾斜挂钩（倾斜越深靠得越近），慢缓动。
     private var converge: CGFloat = 0
@@ -104,9 +116,26 @@ public final class ProfileCoverView: UIView {
         super.init(frame: .zero)
         isOpaque = true
         backgroundColor = UIColor(red: 0.23, green: 0.27, blue: 0.30, alpha: 1)
-        contentMode = .redraw
+        clipsToBounds = true
         isUserInteractionEnabled = false
         isAccessibilityElement = false
+        // 底图走图层、叠加层走 overlayView：子图层恒在自身绘制内容之上，
+        // 底图图层必须在叠加层之下，故分两层视图（底图容器在下、overlayView 在上）。
+        backdropBackLayer.contentsGravity = .resize
+        backdropFrontLayer.contentsGravity = .resize
+        posterLayer.contentsGravity = .resize
+        backdropContainer.layer.addSublayer(backdropBackLayer)
+        backdropContainer.layer.addSublayer(backdropFrontLayer)
+        backdropContainer.layer.addSublayer(posterLayer)
+        backdropContainer.isUserInteractionEnabled = false
+        overlayView.owner = self
+        overlayView.isUserInteractionEnabled = false
+        overlayView.isAccessibilityElement = false
+        overlayView.backgroundColor = .clear
+        overlayView.isOpaque = false
+        overlayView.contentMode = .redraw
+        addSubview(backdropContainer)
+        addSubview(overlayView)
         NotificationCenter.default.addObserver(self, selector: #selector(activityChanged(_:)),
             name: UIApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(willResignActive(_:)),
@@ -119,6 +148,8 @@ public final class ProfileCoverView: UIView {
             guard let self, let image else { return }
             self.backdrop = image
             self.backdropFrames = [:]
+            self.currentBackdropFirstIndex = -1
+            self.updateBackdropLayers()
             // 海报已按零倾斜帧构图画着：有海报时分层内容短交叉淡入，
             // 无海报时直接切分层帧（淡入无物可衬会透出底色）。
             if self.art[theme.rawValue + "-poster"] != nil {
@@ -126,7 +157,7 @@ public final class ProfileCoverView: UIView {
             } else {
                 self.layeredBlend = 1
             }
-            self.setNeedsDisplay()
+            self.overlayView.setNeedsDisplay()
         }
         // art 图后台预解码：init 只建 UIImage 对象不解码，首次 draw() 才在主线程
         // 解码——七夕彩蛋首次展开要一次解 6 张全帧图，那一帧就是毛刺。照底图缓存
@@ -136,7 +167,7 @@ public final class ProfileCoverView: UIView {
         Self.predecodeArt(images: images, urls: urls) { [weak self] decoded in
             guard let self, !decoded.isEmpty else { return }
             for (key, image) in decoded { self.art[key] = image }
-            if self.window != nil { self.setNeedsDisplay() }
+            if self.window != nil { self.overlayView.setNeedsDisplay() }
         }
     }
 
@@ -185,6 +216,13 @@ public final class ProfileCoverView: UIView {
         refreshActivity()
     }
 
+    public override func layoutSubviews() {
+        super.layoutSubviews()
+        backdropContainer.frame = bounds
+        overlayView.frame = bounds
+        updateBackdropLayers()
+    }
+
     /// Call on each new visit to the profile to make the hidden detail available again.
     public func restartVisit() {
         egg = 0
@@ -196,7 +234,10 @@ public final class ProfileCoverView: UIView {
         revealing = false
         neutral = nil
         tilt = .zero
-        setNeedsDisplay()
+        currentDepth = 0
+        currentVertical = 0
+        updateBackdropLayers()
+        overlayView.setNeedsDisplay()
     }
 
     @objc private func activityChanged(_ notification: Notification) { refreshActivity() }
@@ -222,7 +263,10 @@ public final class ProfileCoverView: UIView {
         lanternPhase = 0
         petalPhase = 0
         revealing = false
-        setNeedsDisplay()
+        currentDepth = 0
+        currentVertical = 0
+        updateBackdropLayers()
+        overlayView.setNeedsDisplay()
     }
 
     private func stop() {
@@ -244,7 +288,7 @@ public final class ProfileCoverView: UIView {
     @objc private func fadeTick(_ link: CADisplayLink) {
         let progress = min(1, (CACurrentMediaTime() - fadeStart) / 0.25)
         layeredBlend = progress
-        setNeedsDisplay()
+        overlayView.setNeedsDisplay()
         if progress >= 1 {
             link.invalidate()
             fadeLink = nil
@@ -295,8 +339,13 @@ public final class ProfileCoverView: UIView {
         tilt = next
         egg = detail
         converge = nextConverge
+        // 底图图层每帧都跟姿态走（只改图层属性，不重画；与 drawOverlay 同一套公式）。
+        // 叠加层仍走下面的阈值节流。
+        currentDepth = min(1, max(-1, tilt.x + 0.16 * tilt.y))
+        currentVertical = 3 * tilt.y
+        updateBackdropLayers()
         guard delta >= 0.002 else { return }
-        setNeedsDisplay()
+        overlayView.setNeedsDisplay()
     }
 
     private func response(_ raw: CGFloat) -> CGFloat {
@@ -305,10 +354,11 @@ public final class ProfileCoverView: UIView {
         return (raw < 0 ? -1 : 1) * (magnitude - 0.06) / 0.94
     }
 
-    public override func draw(_ rect: CGRect) {
-        guard bounds.width > 0, bounds.height > 0, let ctx = UIGraphicsGetCurrentContext() else { return }
-        backgroundColor?.setFill()
-        ctx.fill(bounds)
+    /// 叠加层绘制（由 CoverOverlayView 的 draw() 转调）：底图已改走图层，这里只画
+    /// 动态物／彩蛋／光晕／线条；底图未到时不画（poster 层在底下兜底，与原来
+    /// backdrop == nil 时只画 poster 的行为一致）。
+    fileprivate func drawOverlay(in ctx: CGContext) {
+        guard backdrop != nil else { return }
         let size = Self.artSize
         let fit = max(bounds.width / size.width, bounds.height / size.height)
         let canvas = CGRect(origin: .zero, size: size)
@@ -322,10 +372,6 @@ public final class ProfileCoverView: UIView {
         ctx.scaleBy(x: 1.037, y: 1.037)
         ctx.translateBy(x: -size.width / 2, y: -size.height / 2)
         let zeroTiltPoster = canvas.insetBy(dx: -32, dy: -12)
-        if backdrop == nil, let poster = art[theme.rawValue + "-poster"] {
-            poster.draw(in: zeroTiltPoster)
-            return
-        }
         if layeredBlend < 1, let poster = art[theme.rawValue + "-poster"] {
             poster.draw(in: zeroTiltPoster)
             ctx.setAlpha(layeredBlend)
@@ -337,7 +383,7 @@ public final class ProfileCoverView: UIView {
         let midX = 4 * depth, nearX = 20 * depth
         let gold = UIColor(red: 1, green: 0.69, blue: 0.34, alpha: 1)
         let padded = canvas.insetBy(dx: -32, dy: -12).offsetBy(dx: 0, dy: vertical)
-        drawBackdrop(in: padded, depth: depth)
+        // 底图已改走图层（updateBackdropLayers），这里不再画。
         switch theme {
         case .china:
             let width: CGFloat = 190
@@ -439,7 +485,7 @@ public final class ProfileCoverView: UIView {
 
     /// 七夕（金粉描线，深靛底）：图集只含背景，喜鹊由动态物层单独贴；
     /// 彩蛋六张全是与第 7 帧对齐的整帧透明层。坐标全按帧坐标（1024×323）
-    /// 算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
+    /// 算、再乘 padded 的拉伸比换到画布坐标，与 canvasRectToView 同一套映射。
     /// 视差翻倍版（2026-11-13 Li 定：13 帧看着没区别，旧版太 subtle）：
     /// 帧 f 结构平移 2(f−6) px（±12）、主体平移 4(f−6) px（±24）。
     private func drawQixi(_ ctx: CGContext, depth: CGFloat, vertical: CGFloat, padded: CGRect) {
@@ -508,7 +554,7 @@ public final class ProfileCoverView: UIView {
 
     /// 圣诞（北欧木刻、深蓝雪夜）：图集只含背景，雪花由动态物层单独贴；
     /// 彩蛋一张是与第 7 帧对齐的整帧透明层（水晶球内金晕＋雪点）。
-    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
+    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 canvasRectToView 同一套映射。
     /// 视差翻倍版：帧 f 结构平移 2(f−6) px（±12）、主体平移 4(f−6) px（±24）。
     private func drawChristmas(_ ctx: CGContext, depth: CGFloat, vertical: CGFloat, padded: CGRect) {
         let scaleX = padded.width / 1024
@@ -537,7 +583,7 @@ public final class ProfileCoverView: UIView {
     /// 彩蛋一张是与第 7 帧对齐的整帧透明层：7 颗金色四角星（(843,49) 在右上
     /// 大金烟花里，另 6 颗 (150,62)、(320,108)、(430,48)、(600,38)、
     /// (250,212)、(950,192) 布满天空），跟远层走。
-    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
+    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 canvasRectToView 同一套映射。
     /// App 侧动态层跟图集同速：彩蛋跟远层，帧移 1(f−6) px 即 6*depth
     /// （depth ∈ [−1, 1]，f = (depth+1)*6）。
     private func drawNewyear(_ ctx: CGContext, depth: CGFloat, vertical: CGFloat, padded: CGRect) {
@@ -555,7 +601,7 @@ public final class ProfileCoverView: UIView {
 
     /// 复活节（透明水彩、白天浅色场景）：图集只含背景，粉色樱花纹彩蛋由动态物层单独贴；
     /// 金蛋一张是与第 7 帧对齐的整帧透明层（兔子右侧草丛）。
-    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
+    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 canvasRectToView 同一套映射。
     /// 三层位移（第 1→13 帧全程）：远 24／中 36／前景 60；帧 f=(depth+1)*6，
     /// 中层帧内位移 3(f−6) px 即 18*depth——彩蛋与金蛋都跟中层走（±18px）。
     /// 动态彩蛋（easter-painted-egg.png，512×560）：画在开阔草地上、兔子左侧，
@@ -585,7 +631,7 @@ public final class ProfileCoverView: UIView {
     /// 元宵（深红夜景剪纸风）：图集只含背景，莲花灯由动态物层单独贴；
     /// 万灯齐明光效按图层拆成两片（近景片跟近景灯笼、远景片跟远景），
     /// 与第 7 帧对齐、只在触发后随 egg 淡入。
-    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
+    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 canvasRectToView 同一套映射。
     /// 四层位移（第 1→13 帧全程）：远 24／中 36／近 48／前景 60；帧内位移即
     /// (T/2)*depth——花灯浮在水面跟中层走（±18px），光效近景片跟近景（±24px）、
     /// 远景片跟远景（±12px）。中景片与前景片为空：光晕够不着桥面水纹与梅花枝，
@@ -628,7 +674,7 @@ public final class ProfileCoverView: UIView {
 
     /// 中秋（深蓝夜色水墨）：图集只含背景，孔明灯由动态物层单独贴；
     /// 彩蛋一张是与第 7 帧对齐的整帧透明层（月亮里玉兔捣药金色剪影）。
-    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
+    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 canvasRectToView 同一套映射。
     /// 三层位移（第 1→13 帧全程）：远 24／中 36／前景 60；帧内位移即
     /// (T/2)*depth——彩蛋跟远层／月亮走（±12px），孔明灯也在天上、跟远层走。
     /// 彩蛋（jade-rabbit-egg.png，1024×323）：月亮里玉兔捣药金色剪影
@@ -667,7 +713,7 @@ public final class ProfileCoverView: UIView {
         }
     }
     /// 亡灵节（深紫夜＋万寿菊花丛）：图集只含背景，花瓣与花环由 App 单独贴。
-    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 drawBackdrop 同一套映射。
+    /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 canvasRectToView 同一套映射。
     /// 三层位移（第 1→13 帧全程）：远 24／中 36／前景 60；帧内位移即
     /// (T/2)*depth——花环在糖骷髅正上方、跟前景走（±30px），花瓣飘在前景、
     /// 跟前景走一半（±15px）。
@@ -801,8 +847,23 @@ public final class ProfileCoverView: UIView {
         default: break
         }
     }
-    private func drawBackdrop(in destination: CGRect, depth: CGFloat) {
-        guard let backdrop else { return }
+    /// 画布坐标 → 视图坐标的映射（与 drawOverlay 里的 ctx 变换同一套数学：
+    /// translate(mid) → scale(fit) → scale(extraScale) → translate(-size/2)）。
+    /// 底图用 extraScale 1.037（draw 里 1.037 那步之后画）；poster 在 1.037 之前画，
+    /// 故 poster 传 1.0。D 分支（叠加层改图层）复用同一组 helper，改动时两处同步。
+    private func canvasRectToView(_ rect: CGRect, extraScale: CGFloat = 1.037) -> CGRect {
+        guard bounds.width > 0, bounds.height > 0 else { return .zero }
+        let size = Self.artSize
+        let k = max(bounds.width / size.width, bounds.height / size.height) * extraScale
+        return CGRect(x: bounds.midX + k * (rect.minX - size.width / 2),
+                      y: bounds.midY + k * (rect.minY - size.height / 2),
+                      width: rect.width * k, height: rect.height * k)
+    }
+
+    /// 底图帧选择（与原来 drawBackdrop 同一套数学）：返回相邻两帧与混合比；
+    /// 图层版只换 contents＋透明度，不再逐帧重采样。
+    private func backdropFramePair(depth: CGFloat) -> (firstIndex: Int, first: UIImage?, second: UIImage?, blend: CGFloat) {
+        guard let backdrop else { return (6, nil, nil, 0) }
         // 底图为全幅图集：按 5 列 × 3 行切帧，每帧 1024×323。
         let tileWidth = CGFloat(backdrop.width) / 5
         let tileHeight = CGFloat(backdrop.height) / 3
@@ -811,21 +872,52 @@ public final class ProfileCoverView: UIView {
         let second = min(12, first + 1)
         let blend = position - CGFloat(first)
         backdropFrames = backdropFrames.filter { $0.key == first || $0.key == second }
+        return (first, image(at: first), second != first && blend > 0.001 ? image(at: second) : nil, blend)
+    }
 
-        func image(at index: Int) -> UIImage? {
-            if let cached = backdropFrames[index] { return cached }
-            let tile = CGRect(x: CGFloat(index % 5) * tileWidth, y: CGFloat(index / 5) * tileHeight,
-                              width: tileWidth, height: tileHeight)
-            guard let image = backdrop.cropping(to: tile) else { return nil }
-            let result = UIImage(cgImage: image)
-            backdropFrames[index] = result
-            return result
-        }
+    private func image(at index: Int) -> UIImage? {
+        if let cached = backdropFrames[index] { return cached }
+        guard let backdrop else { return nil }
+        let tileWidth = CGFloat(backdrop.width) / 5
+        let tileHeight = CGFloat(backdrop.height) / 3
+        let tile = CGRect(x: CGFloat(index % 5) * tileWidth, y: CGFloat(index / 5) * tileHeight,
+                          width: tileWidth, height: tileHeight)
+        guard let image = backdrop.cropping(to: tile) else { return nil }
+        let result = UIImage(cgImage: image)
+        backdropFrames[index] = result
+        return result
+    }
 
-        image(at: first)?.draw(in: destination)
-        if second != first, blend > 0.001 {
-            image(at: second)?.draw(in: destination, blendMode: .normal, alpha: blend)
+    /// 底图图层刷新：帧切换只换 contents，混合只改透明度，位置只改 frame；
+    /// 不触发任何重画。poster 层在底图未到时显示、到了即藏。
+    private func updateBackdropLayers() {
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let size = Self.artSize
+        let canvas = CGRect(origin: .zero, size: size)
+        if backdrop == nil {
+            posterLayer.isHidden = false
+            backdropBackLayer.isHidden = true
+            backdropFrontLayer.isHidden = true
+            posterLayer.frame = canvasRectToView(canvas, extraScale: 1.0)
+            if posterLayer.contents == nil {
+                posterLayer.contents = art[theme.rawValue + "-poster"]?.cgImage
+            }
+            return
         }
+        posterLayer.isHidden = true
+        let padded = canvas.insetBy(dx: -32, dy: -12).offsetBy(dx: 0, dy: currentVertical)
+        let frame = canvasRectToView(padded)
+        let pair = backdropFramePair(depth: currentDepth)
+        backdropBackLayer.isHidden = false
+        backdropBackLayer.frame = frame
+        backdropFrontLayer.frame = frame
+        if pair.firstIndex != currentBackdropFirstIndex {
+            currentBackdropFirstIndex = pair.firstIndex
+            backdropBackLayer.contents = pair.first?.cgImage
+            backdropFrontLayer.contents = pair.second?.cgImage
+        }
+        backdropFrontLayer.isHidden = pair.second == nil
+        backdropFrontLayer.opacity = Float(pair.blend)
     }
 
     private func bitmap(_ key: String, in ctx: CGContext, center: CGPoint, width: CGFloat, height: CGFloat,
@@ -881,6 +973,18 @@ public final class ProfileCoverView: UIView {
     }
 
     private func unit(_ x: CGFloat) -> CGFloat { min(1, max(0, x)) }
+}
+
+/// 叠加层绘制视图：底图已改走图层（子图层恒在自身绘制内容之上），故叠加层
+///（动态物／彩蛋／光晕／线条）必须画在独立的 overlayView 里、盖在底图容器之上。
+/// 自身不画背景（容器底色透出来），bounds 变化时 .redraw。
+private final class CoverOverlayView: UIView {
+    weak var owner: ProfileCoverView?
+
+    override func draw(_ rect: CGRect) {
+        guard bounds.width > 0, bounds.height > 0, let ctx = UIGraphicsGetCurrentContext() else { return }
+        owner?.drawOverlay(in: ctx)
+    }
 }
 
 /// 封面底图缓存：读盘＋解码只在后台串行队列做，主线程只贴图。
@@ -965,7 +1069,7 @@ private final class CoverBackdropCache: NSObject {
     /// 全幅解码：底图是 5×3 帧条图集，ImageIO 缩略图的 maxPixelSize 按整图最长边
     /// 封顶——#846 用 720 封顶整张 5120×969 图集，每帧只剩 144×45，行里放大 7 倍多
     /// 才糊成这样（主体是单独贴的高清图，所以只有背景糊）。改回全幅解码，仍在
-    /// 后台队列做、不碰主线程；帧切分按底图实际尺寸动态算，不用改 drawBackdrop。
+    /// 后台队列做、不碰主线程；帧切分按底图实际尺寸动态算，不用改帧切分逻辑。
     /// 第十轮 07：显式立即解码（kCGImageSourceShouldCacheImmediately），像素在
     /// 后台队列解完再交付主线程，首帧绘制不回主线程解压；须配合按需加载＋内存
     /// 预算，十三张不一次全解。
