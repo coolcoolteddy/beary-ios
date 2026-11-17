@@ -101,6 +101,23 @@ final class BearyEntrySync {
     /// 第四轮审计 15：只读同步状态快照（主线程读）——设置页据此展示四态。
     /// 各腿状态变迁时由同步串行队列算好、dispatch 到主线程更新并广播。
     private(set) var currentSyncState: BearySyncState = .usingLocal
+    /// 数据状态页：失败腿标题（主线程读，与 currentSyncState 同批更新；
+    /// 取值“日记”/“回收站”，空即两腿都未失败——失败原因只记到腿一级，
+    /// 更细的原因（拉取/写盘/超限/游标）现行同步代码不存，不编造）。
+    private(set) var currentFailedLegTitles: [String] = []
+
+    /// 数据状态页：两腿最近一次都 complete 的时间——各腿状态文件
+    /// （BearySyncStateStore，complete/partial）里的 updatedAt，取较晚者；
+    /// 任一腿缺失或为 partial 时，没有确认过的整合同步时间，返回 nil。
+    /// 只读磁盘状态文件，不碰内存同步态；主线程调用。
+    func lastCombinedSyncDate() -> Date? {
+        guard let accountId = SessionManager.shared.currentUser?.id else { return nil }
+        guard let diary = BearySyncStateStore.load(stateURL: BearyEntrySyncStore.stateFileURL(accountId: accountId)),
+              diary.status == "complete",
+              let trash = BearySyncStateStore.load(stateURL: BearyTrashSyncStore.stateFileURL(accountId: accountId)),
+              trash.status == "complete" else { return nil }
+        return Date(timeIntervalSince1970: max(diary.updatedAt, trash.updatedAt))
+    }
     /// 日记写盘代际：每次日记落盘写（发布/编辑 upsert、删帖、日加载写透）
     /// 都在同步串行队列上 +1；全量同步开始时记下基线，提交前比对——
     /// 拉取开始后发生过写盘即旧快照已过期，跳过本次提交保旧盘，下次 kick 重跑。
@@ -260,9 +277,17 @@ final class BearyEntrySync {
         } else {
             state = .usingLocal
         }
+        // 失败腿在同步串行队列上算好、随状态一起推到主线程（主线程不直接读
+        // 两腿失败账号，避免与队列写竞态）；状态不变只换腿时也要更新标题，
+        // 故标题赋值放在状态去重守卫之前。
+        let failedLegTitles: [String] = [
+            diaryFailedAccountId == accountId ? "日记" : nil,
+            trashFailedAccountId == accountId ? "回收站" : nil,
+        ].compactMap { $0 }
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             guard SessionManager.shared.currentUser?.id == accountId else { return }
+            self.currentFailedLegTitles = failedLegTitles
             guard self.currentSyncState != state else { return }
             self.currentSyncState = state
             NotificationCenter.default.post(name: .bearySyncStateDidChange, object: nil)
@@ -370,6 +395,7 @@ final class BearyEntrySync {
             self.diarySyncIdentity.removeAll()
             self.trashSyncIdentity.removeAll()
             DispatchQueue.main.async {
+                self.currentFailedLegTitles = []
                 guard self.currentSyncState != .usingLocal else { return }
                 self.currentSyncState = .usingLocal
                 NotificationCenter.default.post(name: .bearySyncStateDidChange, object: nil)
