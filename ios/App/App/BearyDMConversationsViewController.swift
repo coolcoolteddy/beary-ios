@@ -715,6 +715,8 @@ final class BearyDMConversationCell: UITableViewCell {
     private var unreadBadgeMinWidthConstraint: NSLayoutConstraint?
     private var unreadBadgeZeroWidthConstraint: NSLayoutConstraint?
     private var unreadBadgeHeightConstraint: NSLayoutConstraint?
+    /// 标题顶锚点：改锚头像顶，标题字形顶对齐圆圈顶（常数见 configure）。
+    private var nameLabelTopToAvatarConstraint: NSLayoutConstraint?
     /// 新一轮 01：本行会话的最后消息时间（毫秒），供页面分钟边界刷新时重算时间标签。
     private var lastAtMs: Int?
 
@@ -748,7 +750,7 @@ final class BearyDMConversationCell: UITableViewCell {
         nameLabel.textColor = BearyColors.ink
         nameLabel.numberOfLines = 1
         snippetLabel.translatesAutoresizingMaskIntoConstraints = false
-        snippetLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        snippetLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         snippetLabel.adjustsFontForContentSizeCategory = true
         snippetLabel.textColor = BearyColors.gray
         snippetLabel.numberOfLines = 1
@@ -774,6 +776,10 @@ final class BearyDMConversationCell: UITableViewCell {
         contentView.addSubview(timeLabel)
         contentView.addSubview(unreadBadge)
         contentView.addSubview(separatorView)
+        // 标题顶锚头像顶：名称字形顶比 label 框顶低 ascender-capHeight，
+        // 上移该量后字形顶落到头像顶（常数由 configure 按当前字号重算）。
+        nameLabelTopToAvatarConstraint = nameLabel.topAnchor.constraint(equalTo: avatarView.topAnchor, constant: -(nameLabel.font.ascender - nameLabel.font.capHeight))
+        nameLabelTopToAvatarConstraint?.isActive = true
         NSLayoutConstraint.activate([
             // 行高改文字栈决定：头像垂直居中，上下各留最小 14（行高下限 72 兜底）。
             avatarView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
@@ -782,14 +788,16 @@ final class BearyDMConversationCell: UITableViewCell {
             avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             avatarView.widthAnchor.constraint(equalToConstant: 44),
             avatarView.heightAnchor.constraint(equalToConstant: 44),
-            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
             nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -8),
-            snippetLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
+            // 标题／摘要间距 4：与日记卡片头副标题一致（12pt、标题行下 4pt）；
+            // 行高仍由 72 下限兜底（标题约 20＋4＋摘要约 15＋上下 14 ≈ 67）。
+            snippetLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
             snippetLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
             snippetLabel.trailingAnchor.constraint(lessThanOrEqualTo: unreadBadge.leadingAnchor, constant: -8),
             snippetLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
-            timeLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            // 时间跟标题顶走（现行两顶差 2pt 不变），标题上移时时间同步上移。
+            timeLabel.topAnchor.constraint(equalTo: nameLabel.topAnchor, constant: 2),
             timeLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             unreadBadge.topAnchor.constraint(equalTo: timeLabel.bottomAnchor, constant: 6),
             unreadBadge.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
@@ -851,6 +859,8 @@ final class BearyDMConversationCell: UITableViewCell {
     func configure(conversation: BearyAPI.DMConversation) {
         let peer = conversation.peer
         let displayName = (peer?.displayName?.isEmpty == false) ? peer!.displayName! : "beary 用户"
+        // 标题顶对齐圆圈顶：按当前名称字号重算字形顶偏移（默认字号约 4pt）。
+        nameLabelTopToAvatarConstraint?.constant = -(nameLabel.font.ascender - nameLabel.font.capHeight)
         nameLabel.text = displayName
         // 审计：摘要空行折叠——空白摘要整行隐藏，不留空白行。
         let snippet = (conversation.lastBody ?? "").trimmingCharacters(in: .whitespacesAndNewlines)

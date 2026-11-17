@@ -484,7 +484,7 @@ final class BearyNotificationSkeletonCell: UITableViewCell {
         contentView.addSubview(shimmerView)
         NSLayoutConstraint.activate([
             // 与真实行同几何：头像 42、左 16、顶 14；角标圆 19 压头像右下角；
-            // 标题行左 70、摘要行同左，行高下限 70。
+            // 标题行左 70、摘要行同左，行高下限 72（与合并页统一后的真实行同高）。
             avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
             avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             avatarView.widthAnchor.constraint(equalToConstant: 42),
@@ -501,7 +501,7 @@ final class BearyNotificationSkeletonCell: UITableViewCell {
             excerptBar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 70),
             excerptBar.widthAnchor.constraint(equalTo: contentView.widthAnchor, multiplier: 0.5),
             excerptBar.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
-            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 70),
+            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
             shimmerView.topAnchor.constraint(equalTo: contentView.topAnchor),
             shimmerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             shimmerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
