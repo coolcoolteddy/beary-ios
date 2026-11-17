@@ -2933,6 +2933,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private func makePrivatePill(friendsOnly: Bool = false, ephemeralLive: Bool = false) -> UIView {
         let pill = UIView()
         pill.translatesAutoresizingMaskIntoConstraints = false
+        // 2026-11-18：metaStack 是 .fill 分布，pill 只设抗压、不设贴紧时，
+        // 默认贴紧度 250 低于日期 label（251），剩余宽度全灌进 pill、蓝底
+        // 拉满整行（搜索页实证）。贴紧＋抗压均提到 required 后 pill 只取
+        // 内容宽，剩余宽度由日期 label 吸掉（左对齐文字，视觉不变）。
+        // 同款口径见 BlindBox pillLabel（2026-11-04）、Composer statusPill。
+        pill.setContentHuggingPriority(.required, for: .horizontal)
+        pill.setContentCompressionResistancePriority(.required, for: .horizontal)
         pill.backgroundColor = friendsOnly ? BearyColors.surface2 : BearyColors.alpha(BearyColors.blue, 0.13)
         pill.layer.cornerRadius = 11
         pill.layer.masksToBounds = true
