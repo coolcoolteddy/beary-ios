@@ -1601,7 +1601,6 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
     private let onUnburied: (String) -> Void
 
     private let grabberView = UIView()
-    private let closeButton = BearyButton.closeButton()
     private let districtIconView = UIImageView()
     private let districtLabel = UILabel()
     private let dateTitleLabel = UILabel()
@@ -1650,11 +1649,6 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
         grabberView.backgroundColor = BearyColors.gray
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
         view.addSubview(grabberView)
-
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
-        view.addSubview(closeButton)
 
         districtIconView.translatesAutoresizingMaskIntoConstraints = false
         districtIconView.image = BearyIconImages.image(named: "district-range", pointSize: 28)
@@ -1724,11 +1718,6 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
             grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
             grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
 
-            closeButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 16),
-            closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
-
             districtIconView.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
             districtIconView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             districtIconView.widthAnchor.constraint(equalToConstant: 28),
@@ -1736,7 +1725,7 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
 
             districtLabel.centerYAnchor.constraint(equalTo: districtIconView.centerYAnchor),
             districtLabel.leadingAnchor.constraint(equalTo: districtIconView.trailingAnchor, constant: 12),
-            districtLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -12),
+            districtLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
             dateTitleLabel.topAnchor.constraint(equalTo: districtIconView.bottomAnchor, constant: 16),
             dateTitleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
