@@ -82,6 +82,14 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     private var emoteCollectionView: UICollectionView?
     private var collectionHeightConstraint: NSLayoutConstraint?
     private let pillView = UIView()
+    /// 底部栏横向滚动容器：12 组 × 60pt ＝ 736pt 宽，任何宽度的 sheet 都装不下；
+    /// 此前整条写死 736 宽、居中后两端被 sheet（masksToBounds）裁掉一半。
+    /// 改成栏内横滑：栏宽只取能完整放下整数个图标的最大值（16＋60×k），
+    /// 多余组在 scrollView 里滑；静止时两端图标完整可见。
+    private let pillScrollView = UIScrollView()
+    private let pillContentView = UIView()
+    private var pillWidthConstraint: NSLayoutConstraint?
+    private var pillMaskLayer: CAShapeLayer?
     private var pillItemButtons: [UIButton] = []
     private var pillIconSlots: [UIView] = []
     private var pillDots: [UIView] = []
@@ -205,6 +213,17 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         pillView.layer.masksToBounds = false
         BearyShadow.applyRaised(to: pillView.layer)
         view.addSubview(pillView)
+        // 栏内横滑容器：顶部比 pill 高 14pt——选中图标上抬 14pt、顶部 4pt
+        // 探出胶囊，须可见；遮罩（胶囊＋顶部通条）见 updatePillMask。
+        pillScrollView.translatesAutoresizingMaskIntoConstraints = false
+        pillScrollView.backgroundColor = .clear
+        pillScrollView.showsHorizontalScrollIndicator = false
+        pillScrollView.showsVerticalScrollIndicator = false
+        pillScrollView.delaysContentTouches = false
+        pillScrollView.contentInsetAdjustmentBehavior = .never
+        pillView.addSubview(pillScrollView)
+        pillContentView.translatesAutoresizingMaskIntoConstraints = false
+        pillScrollView.addSubview(pillContentView)
         for (index, group) in groups.enumerated() {
             let button = UIButton(type: .custom)
             button.translatesAutoresizingMaskIntoConstraints = false
@@ -213,7 +232,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             button.addTarget(self, action: #selector(pillItemTapped(_:)), for: .touchUpInside)
             button.bearyAddPressFeedback()
             button.tag = index
-            pillView.addSubview(button)
+            pillContentView.addSubview(button)
             pillItemButtons.append(button)
             let iconSlot = UIView()
             iconSlot.translatesAutoresizingMaskIntoConstraints = false
@@ -288,15 +307,31 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
 
             pillView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             pillView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
-            pillView.widthAnchor.constraint(equalToConstant: CGFloat(groups.count) * Self.pillItemWidth + 16),
             pillView.heightAnchor.constraint(equalToConstant: Self.pillHeight),
+
+            pillScrollView.topAnchor.constraint(equalTo: pillView.topAnchor, constant: -Self.pillSelectedRaise),
+            pillScrollView.bottomAnchor.constraint(equalTo: pillView.bottomAnchor),
+            pillScrollView.leadingAnchor.constraint(equalTo: pillView.leadingAnchor),
+            pillScrollView.trailingAnchor.constraint(equalTo: pillView.trailingAnchor),
+            pillContentView.topAnchor.constraint(equalTo: pillScrollView.contentLayoutGuide.topAnchor, constant: Self.pillSelectedRaise),
+            pillContentView.bottomAnchor.constraint(equalTo: pillScrollView.contentLayoutGuide.bottomAnchor),
+            pillContentView.leadingAnchor.constraint(equalTo: pillScrollView.contentLayoutGuide.leadingAnchor),
+            pillContentView.trailingAnchor.constraint(equalTo: pillScrollView.contentLayoutGuide.trailingAnchor),
+            pillContentView.widthAnchor.constraint(equalToConstant: pillContentWidth),
+            pillContentView.heightAnchor.constraint(equalToConstant: Self.pillHeight),
         ])
+        // 栏宽取能完整放下整数个图标的最大值（16＋60×k，左右至少留 16pt 边距），
+        // 旋转／分屏后在 viewDidLayoutSubviews 跟帧重算；多余组在栏内横滑。
+        let pillWidth = pillView.widthAnchor.constraint(equalToConstant: pillContentWidth)
+        pillWidthConstraint = pillWidth
+        pillWidth.isActive = true
+        updatePillWidth()
         for (index, button) in pillItemButtons.enumerated() {
             NSLayoutConstraint.activate([
-                button.topAnchor.constraint(equalTo: pillView.topAnchor),
-                button.bottomAnchor.constraint(equalTo: pillView.bottomAnchor),
+                button.topAnchor.constraint(equalTo: pillContentView.topAnchor),
+                button.bottomAnchor.constraint(equalTo: pillContentView.bottomAnchor),
                 button.widthAnchor.constraint(equalToConstant: Self.pillItemWidth),
-                button.leadingAnchor.constraint(equalTo: pillView.leadingAnchor, constant: 8 + CGFloat(index) * Self.pillItemWidth),
+                button.leadingAnchor.constraint(equalTo: pillContentView.leadingAnchor, constant: 8 + CGFloat(index) * Self.pillItemWidth),
             ])
         }
         refreshLibrary()
@@ -304,6 +339,8 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updatePillWidth()
+        updatePillMask()
         if let windowHeight = view.window?.bounds.height, windowHeight > 0 {
             containerHeight = windowHeight
         }
@@ -360,6 +397,8 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
 
     private static let pillHeight: CGFloat = 56
     private static let pillItemWidth: CGFloat = 60
+    /// 栏内容总宽：组数 × 60 ＋ 16（首尾各 8pt 内边距）。
+    private var pillContentWidth: CGFloat { CGFloat(groups.count) * Self.pillItemWidth + 16 }
     /// 选中组图标上抬高度（图标 36pt 在 56pt 胶囊内居中时顶边距 10pt，
     /// 上抬 14pt 后顶端探出胶囊 4pt，与截图的抬起形态一致）。
     private static let pillSelectedRaise: CGFloat = 14
@@ -400,6 +439,11 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         guard groups.indices.contains(index), index != selectedGroupIndex else { return }
         selectedGroupIndex = index
         refreshPillSelection(animated: animated)
+        // 选中组滑进栏内可见（栏宽不够放全部 12 组时，点按尾部组后自动跟进）。
+        // x 与内容坐标一致（内容左缘即内容区左缘），y 不可竖滑、取 0 即可。
+        pillScrollView.layoutIfNeeded()
+        let frame = pillItemButtons[index].frame
+        pillScrollView.scrollRectToVisible(CGRect(x: frame.minX - 8, y: 0, width: frame.width + 16, height: pillScrollView.bounds.height), animated: animated)
         // 节日组只有 6 款（2 行），sheet 随之缩短；网格内容切换只走 opacity，
         // 高度变化走容器帧动画，减动效时两者都瞬时。
         let applyHeight = { [weak self] in
@@ -432,6 +476,33 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             reloadGrid()
             applyHeight()
         }
+    }
+
+    /// 栏宽：取能完整放下整数个图标的最大值（16＋60×k），左右至少留 16pt
+    /// 边距；旋转／分屏后跟帧重算。定宽后两端图标完整、无半切。
+    private func updatePillWidth() {
+        let sheetWidth = view.bounds.width > 0 ? view.bounds.width : 375
+        let count = max(1, Int((sheetWidth - 48) / Self.pillItemWidth))
+        let width = CGFloat(count) * Self.pillItemWidth + 16
+        if pillWidthConstraint?.constant != width {
+            pillWidthConstraint?.constant = width
+        }
+    }
+
+    /// 底部栏遮罩：胶囊体（圆角 28）＋顶部 14pt 通条。选中图标上抬 14pt、
+    /// 顶部 4pt 探出胶囊，通条让它可见；左右两端仍按胶囊圆角裁，横滑时
+    /// 图标从圆角处出入、不浮到胶囊外面。栏宽随屏变，每布局刷一次。
+    private func updatePillMask() {
+        let bounds = pillScrollView.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let path = UIBezierPath()
+        path.append(UIBezierPath(rect: CGRect(x: 0, y: 0, width: bounds.width, height: Self.pillSelectedRaise)))
+        path.append(UIBezierPath(roundedRect: CGRect(x: 0, y: Self.pillSelectedRaise, width: bounds.width, height: Self.pillHeight), cornerRadius: Self.pillHeight / 2))
+        let mask = pillMaskLayer ?? CAShapeLayer()
+        mask.path = path.cgPath
+        mask.frame = bounds
+        pillScrollView.layer.mask = mask
+        pillMaskLayer = mask
     }
 
     /// 选中态：选中组图标上抬（只动 transform）＋下方小圆点显现（只动 opacity）；
