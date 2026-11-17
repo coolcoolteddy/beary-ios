@@ -20,12 +20,9 @@ import UIKit
 // 本支未动子页自身的表委托路径，独立页行为一字不动。独立会话页
 // （showPage(.conversations)）同样不动。
 //
-// 加载态（第十轮 #20，取代 2026-11-03 定死的顶部唯一转圈）：首拉
-// 未落定组在表内出结构化骨架行——通知组 3 行通知骨架（头像＋角标圆＋
-// 标题／时间／摘要条）、私信组 3 行会话骨架（头像／名称／摘要三段式），
-// 两组结构一眼可分、无文字、不冒充用户内容。先回来的组行先显，未落定
-// 组仍留骨架行；两组都落定骨架即退。失败组不画骨架，走该组原有失败态
-//（失败行／全量失败态），不再画转圈。
+// 加载态：消息页不是日记页，不画骨架屏。首拉未落定组不补占位行——
+// 有缓存先显缓存行，无数据时表先空着，数据到了行直接出现；失败组
+// 走该组原有失败态（失败行／全量失败态），不再画转圈。
 //
 // 已看水印：行级——任一通知行露出视口交集 ≥24pt 即记一次／访问
 // （子页 markNotifPageEntered 旗保证同一次访问只记一次；离页复位）。
@@ -54,8 +51,7 @@ final class BearyMessagesViewController: UIViewController {
     /// 通知卡面点按：传建好的详情页，容器接线到 SceneDelegate 包 nav 呈现。
     var onOpenNotificationDetail: ((BearyNotificationDetailViewController) -> Void)?
 
-    /// 合并行：通知卡／通知信件行／私信会话行／两组失败行／分页哨兵行／
-    /// 两组首拉骨架行（无文字的结构占位，不冒充用户内容）。
+    /// 合并行：通知卡／通知信件行／私信会话行／两组失败行／分页哨兵行。
     private enum MergedRow {
         case notifCard(NotifMergeCardData)
         case notifLetter(NotificationItem)
@@ -63,10 +59,6 @@ final class BearyMessagesViewController: UIViewController {
         case notifFailure
         case dmFailure
         case sentinel
-        /// 首拉骨架行序号（同组 0..<skeletonRowCount）：key 唯一，
-        /// diff 才认得出每行、不会因 key 冲突退回全量重建。
-        case notifSkeleton(Int)
-        case dmSkeleton(Int)
     }
 
     private let titleLabel = UILabel()
@@ -74,9 +66,6 @@ final class BearyMessagesViewController: UIViewController {
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let stateContainer = UIView()
     private let stateView = BearyStateView()
-    /// 首拉骨架行数（每组 3 行，与广场／地图／私信页同款）。
-    private let skeletonRowCount = 3
-
     /// 通知组：既有通知页实例（与铃铛页同类、不同实例）；只当数据源与
     /// 逻辑持有者，view 不进层级（见文件头注释）。
     private let notifChild = BearyNotificationsViewController()
@@ -131,8 +120,6 @@ final class BearyMessagesViewController: UIViewController {
         tableView.register(BearyNotificationCell.self, forCellReuseIdentifier: "BearyNotificationCell")
         tableView.register(BearyNotificationTrailingCell.self, forCellReuseIdentifier: "BearyNotificationTrailingCell")
         tableView.register(BearyDMConversationCell.self, forCellReuseIdentifier: "dmConversationCell")
-        tableView.register(BearyNotificationSkeletonCell.self, forCellReuseIdentifier: BearyNotificationSkeletonCell.reuseIdentifier)
-        tableView.register(BearyDMConversationSkeletonCell.self, forCellReuseIdentifier: BearyDMConversationSkeletonCell.reuseIdentifier)
         tableView.register(MergedFailureCell.self, forCellReuseIdentifier: "MergedFailureCell")
         view.addSubview(tableView)
 
@@ -318,7 +305,7 @@ final class BearyMessagesViewController: UIViewController {
             return item.createdAt ?? 0
         case .conversation(let conv):
             return conv.lastAt ?? 0
-        case .notifFailure, .dmFailure, .sentinel, .notifSkeleton, .dmSkeleton:
+        case .notifFailure, .dmFailure, .sentinel:
             return 0
         }
     }
@@ -327,7 +314,7 @@ final class BearyMessagesViewController: UIViewController {
         switch row {
         case .notifCard, .notifLetter:
             return true
-        case .conversation, .notifFailure, .dmFailure, .sentinel, .notifSkeleton, .dmSkeleton:
+        case .conversation, .notifFailure, .dmFailure, .sentinel:
             return false
         }
     }
@@ -336,7 +323,7 @@ final class BearyMessagesViewController: UIViewController {
         switch row {
         case .notifCard, .notifLetter, .conversation:
             return true
-        case .notifFailure, .dmFailure, .sentinel, .notifSkeleton, .dmSkeleton:
+        case .notifFailure, .dmFailure, .sentinel:
             return false
         }
     }
@@ -362,20 +349,15 @@ final class BearyMessagesViewController: UIViewController {
             return "dm-failure"
         case .sentinel:
             return "sentinel"
-        case .notifSkeleton(let index):
-            return "skeleton-notif-\(index)"
-        case .dmSkeleton(let index):
-            return "skeleton-dm-\(index)"
         }
     }
 
     /// 交错排序：时间倒序（nil 视作 0 最老）；同时间戳通知行在前；
     /// 时间与种类都相同则保原序（先通知卡／信件、后会话的组内次序）。
-    /// 骨架行只在该组首载未落定时出现（数据行之后、失败行之前），
-    /// 失败行只在该组首次失败且贡献 0 行时出现（通知失败行在前、私信
-    /// 失败行在后），排在数据行与骨架行之后、哨兵行之前；哨兵行仅当通知组
-    /// hasMore || isLoadingMore 时出现。本函数是唯一拼装点——不留
-    /// “先通知后会话”的旧拼装路径。
+    /// 首载未落定组不补占位行；失败行只在该组首次失败且贡献 0 行时出现
+    /// （通知失败行在前、私信失败行在后），排在数据行之后、哨兵行之前；
+    /// 哨兵行仅当通知组 hasMore || isLoadingMore 时出现。本函数是唯一
+    /// 拼装点——不留“先通知后会话”的旧拼装路径。
     private func rebuildMergedRows() -> [MergedRow] {
         let notif = notifChild.mergeSnapshot
         let dm = conversationsChild.mergeSnapshot
@@ -397,15 +379,8 @@ final class BearyMessagesViewController: UIViewController {
             return a.offset < b.offset
         }).map({ $0.element })
         var rows = sorted
-        // 第十轮 #20：首拉未落定组在数据行后补结构化骨架行（每组 3 行，
-        // 通知骨架与会话骨架结构不同、无文字）；已落定组不补。先回来的
-        // 组行先显、未落定组仍留骨架；两组都落定骨架即退。
-        if notif.isFirstPending {
-            rows += (0..<skeletonRowCount).map { .notifSkeleton($0) }
-        }
-        if dm.isFirstPending {
-            rows += (0..<skeletonRowCount).map { .dmSkeleton($0) }
-        }
+        // 消息页不画骨架屏：首载未落定组不补占位行，先回来的组行先显，
+        // 未落定组那段表先空着，数据到了行直接出现。
         if notif.firstLoadFailed && !notif.hasRows {
             rows.append(.notifFailure)
         }
@@ -419,8 +394,9 @@ final class BearyMessagesViewController: UIViewController {
     }
 
     /// 表与态互斥显隐。
-    /// - 有数据行 → 显表（骨架行／失败行若有则跟在数据行后）；
-    /// - 无数据行且任一组首载未落定 → 显表内的骨架行（不显态容器、不转圈）；
+    /// - 有数据行 → 显表（失败行若有则跟在数据行后）；
+    /// - 无数据行且任一组首载未落定 → 显空表（不显态容器、不画骨架、不转圈），
+    ///   数据到了行直接出现；
     /// - 无数据行且两组均已落定 → 全量态（任一组失败取失败态，两组都
     ///   失败取通知文案，均成功取合并空态），表隐藏。
     private func updateMergedVisibility() {
@@ -563,10 +539,6 @@ final class BearyMessagesViewController: UIViewController {
         case .sentinel:
             let snap = notifChild.mergeSnapshot
             return "sentinel|\(snap.isLoadingMore)|\(snap.loadMoreFailed)"
-        case .notifSkeleton(let index):
-            return "skeleton-notif-\(index)"
-        case .dmSkeleton(let index):
-            return "skeleton-dm-\(index)"
         }
     }
 
@@ -869,20 +841,6 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
                 onAction: { [weak self] in self?.conversationsChild.refresh() }
             )
             return cell
-        case .notifSkeleton:
-            // 通知骨架行：结构与通知行一致（头像＋角标圆＋标题／时间／摘要条），
-            // 无文字、不冒充用户内容；不可点（见 didSelectRowAt）。
-            return tableView.dequeueReusableCell(
-                withIdentifier: BearyNotificationSkeletonCell.reuseIdentifier,
-                for: indexPath
-            )
-        case .dmSkeleton:
-            // 私信骨架行：结构与会话行一致（头像／名称／摘要三段式），
-            // 无文字、不冒充用户内容；不可点（见 didSelectRowAt）。
-            return tableView.dequeueReusableCell(
-                withIdentifier: BearyDMConversationSkeletonCell.reuseIdentifier,
-                for: indexPath
-            )
         case .sentinel:
             guard let cell = tableView.dequeueReusableCell(
                 withIdentifier: "BearyNotificationTrailingCell",
@@ -985,9 +943,6 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
             notifChild.loadMoreForMerge()
         case .notifFailure, .dmFailure:
             // 失败行本身不可点，重试走行内按钮（selectionStyle 已 none）。
-            break
-        case .notifSkeleton, .dmSkeleton:
-            // 骨架行不可点（无内容可进；selectionStyle 已 none）。
             break
         }
     }
