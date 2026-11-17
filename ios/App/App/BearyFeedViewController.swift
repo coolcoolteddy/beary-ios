@@ -212,6 +212,10 @@ class BearyFeedViewController: UIViewController {
     /// 态不变时不重复调容器，避免滚动事件刷屏。
     private var lastFeedScrollOffsetY: CGFloat = 0
     private var feedChromeHidden = false
+    /// 冷启动落点：首个真实布局后一次性置顶的标记（见 viewDidLayoutSubviews）。
+    private var coldStartTopPinned = false
+    /// 用户已开始拖动列表（scrollViewWillBeginDragging 置位）：冷启动置顶只在用户动手前做。
+    private var feedUserHasScrolled = false
 
     /// 有新内容 pill（网页 #newPill 口径：ink 底、bg 字、13 semibold、999 圆角、padding 9/16，
     /// 阴影 0 6px 18px rgba(0,0,0,.22)，
@@ -770,6 +774,19 @@ class BearyFeedViewController: UIViewController {
         updateFootLogo()
         // 顶栏透度批：安全区变化时按已存栏态重算（容器 viewDidLayoutSubviews 也会重发，双重 no-op）。
         applyHeaderTopInset(visible: headerTopInsetVisible)
+        // 冷启动落点：顶距分两段长出来——建页时窗口未入窗、安全区顶为 0，
+        // applyHeaderTopInset 只算出 116；入窗后安全区顶 59、顶距变 175。
+        // 而 offset 在冷启动全程从未被显式置顶（置顶只在回顶／切段／pill
+        // 三处，均不走冷启动），终态会差一个安全区顶、盲盒卡被切掉半截、
+        // 首篇日记顶上来。首个真实安全区布局到后一次性置顶（此时首帧未出，
+        // 用户尚未可滚动）；只做一次，用户已拖动过则不再动，不干扰后续
+        // 滚动／旋转／回顶。表头高度本身不参与：表头顶沿即内容 0 点，只有
+        // offset 能切掉它，高度变化只推行。
+        if !coldStartTopPinned && !feedUserHasScrolled
+            && view.safeAreaInsets.top > 0 && tableView.bounds.width > 0 {
+            coldStartTopPinned = true
+            tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: false)
+        }
         if pullView.frame.width != tableView.bounds.width {
             pullView.frame.size.width = tableView.bounds.width
         }
@@ -2965,6 +2982,7 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate, U
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         guard scrollView === tableView else { return }
+        feedUserHasScrolled = true
         BearyImagePrefetcher.shared.cancel()
     }
 
