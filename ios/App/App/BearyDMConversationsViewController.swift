@@ -785,7 +785,10 @@ final class BearyDMConversationCell: UITableViewCell {
             nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
             nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -8),
-            snippetLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
+            // 标题／摘要间距 1→5：1pt 时两行贴得太近（2026-11-17 Li 截图上报）；
+            // 规范表无消息行标题／摘要间距项，按 +4pt 取；行高仍由 72 下限兜底
+            //（顶 14＋标题约 20＋5＋摘要约 16＋底 14 ≈ 69）。
+            snippetLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 5),
             snippetLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
             snippetLabel.trailingAnchor.constraint(lessThanOrEqualTo: unreadBadge.leadingAnchor, constant: -8),
             snippetLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
