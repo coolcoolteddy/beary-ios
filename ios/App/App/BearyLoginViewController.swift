@@ -62,7 +62,6 @@ final class BearyLoginViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let stackView = UIStackView()
-    private let closeButton = BearyHit44Button(type: .system)
     private let logoRow = UIView()
     private let logoImageView = UIImageView()
     private let subtitleLabel = UILabel()
@@ -260,33 +259,6 @@ final class BearyLoginViewController: UIViewController {
         scrollView.addSubview(contentView)
         contentView.addSubview(stackView)
 
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.backgroundColor = sheetMode ? UIColor.clear : BearyColors.surface2
-        closeButton.layer.cornerRadius = 16
-        closeButton.tintColor = BearyColors.ink
-        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
-        if sheetMode {
-            // Sheet 弹窗：关闭钮为玻璃圆钮（玻璃插 index 0，BearyGlassButton 同款；
-            // 玻璃层不参与触摸，点按仍归按钮本体；圆角 16 自裁剪）。
-            let closeGlass = BearyGlass.effectView(tint: BearyGlass.neutralTint)
-            closeGlass.layer.cornerRadius = 16
-            closeGlass.clipsToBounds = true
-            closeGlass.translatesAutoresizingMaskIntoConstraints = false
-            closeButton.insertSubview(closeGlass, at: 0)
-            NSLayoutConstraint.activate([
-                closeGlass.topAnchor.constraint(equalTo: closeButton.topAnchor),
-                closeGlass.bottomAnchor.constraint(equalTo: closeButton.bottomAnchor),
-                closeGlass.leadingAnchor.constraint(equalTo: closeButton.leadingAnchor),
-                closeGlass.trailingAnchor.constraint(equalTo: closeButton.trailingAnchor),
-            ])
-        }
-        closeButton.accessibilityLabel = "关闭"
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
-        let closeRow = UIView()
-        closeRow.translatesAutoresizingMaskIntoConstraints = false
-        closeRow.addSubview(closeButton)
-
         // wordmark 走 LogoHorizontal 官方资产（imageset 自带深色 logo-white 变体，
         // 深色自动切换，不手动判断）；logoRow 承接原标题的 stack 槽位以保证左对齐。
         logoRow.translatesAutoresizingMaskIntoConstraints = false
@@ -431,7 +403,6 @@ final class BearyLoginViewController: UIViewController {
         let emailLabel = makeFieldLabel(text: "邮箱")
         let codeLabel = makeFieldLabel(text: "验证码")
         let inviteLabel = makeFieldLabel(text: "邀请码（选填）")
-        stackView.addArrangedSubview(closeRow)
         stackView.addArrangedSubview(logoRow)
         if sheetMode {
             stackView.addArrangedSubview(welcomeTitleLabel)
@@ -463,7 +434,6 @@ final class BearyLoginViewController: UIViewController {
             inviteLabel.isHidden = true
             inviteContainer.isHidden = true
         }
-        stackView.setCustomSpacing(12, after: closeRow)
         if sheetMode {
             stackView.setCustomSpacing(12, after: logoRow)
             stackView.setCustomSpacing(14, after: welcomeTitleLabel)
@@ -508,12 +478,6 @@ final class BearyLoginViewController: UIViewController {
             stackView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -22),
             stackView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             stackView.widthAnchor.constraint(lessThanOrEqualToConstant: 432),
-            // Hit44：行高放开到 44（钮 32 居中，上下各留 6），热区不再被 32 高行截断；钮视觉尺寸不变。
-            closeRow.heightAnchor.constraint(equalToConstant: 44),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
-            closeButton.trailingAnchor.constraint(equalTo: closeRow.trailingAnchor),
-            closeButton.centerYAnchor.constraint(equalTo: closeRow.centerYAnchor),
             logoRow.heightAnchor.constraint(equalToConstant: 28),
             logoXConstraint,
             logoImageView.topAnchor.constraint(equalTo: logoRow.topAnchor),
