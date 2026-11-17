@@ -1096,7 +1096,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         }
         // DF-1 “忽略丢失图片”可点清除 chip：只针对已无物可续传的失败图
         // （本地文件与服务端 key 皆无，网页 imgs_lost 的等价情形）；点一下清掉
-        // 这些图项与提示，可续传的失败图仍走原有“文字已保存，图片未保存”状态行。
+        // 这些图项与提示，可续传的失败图仍走“图片已存本机，待上传”状态行。
         if hasUnrecoverableImage(for: draftValue) {
             // Hit44：视觉约 19 高不动；纵向扩区以流式容器 bounds 为限（独占一行时到不了满 44），
             // 横向已够宽不扩；同行／邻行均为非交互 label／chip，不抢其他按钮热区。
@@ -1135,7 +1135,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         switch status {
         case .saved, .partial:
             statusLabel.textColor = BearyColors.blue
-        case .failed:
+        case .unreadable, .failed:
             statusLabel.textColor = BearyColors.destructiveText
         }
         // 保存状态独立成行、左对齐（末尾 spacer 撑满行宽，视觉位置与原来行内左置一致）。
@@ -1523,20 +1523,27 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     private enum DraftSaveStatus {
         case saved
         case partial
+        case unreadable
         case failed
     }
 
     /// v3 没有显式的保存失败标记，状态由图片项推导：
-    /// 失败且本地文件与服务端 key 皆无（无物可续传）→ 失败红字；
-    /// 其余失败项（本地文件尚在、可续传）→ 文字已保存、图片未保存；
-    /// B1：pending 项（已落盘引用、尚未上传）同样是“图片未保存”，
-    /// 不再按旧口径算“草稿已保存”——与编辑器 lvl1 文案一致；
-    /// 无失败/待传项 → 草稿已保存。
+    /// 失败且本地文件与服务端 key 皆无（无物可续传）→ 失败红字“草稿保存失败，请重试”；
+    /// 本地文件在但读不出（归一化派生的 .unreadable）→ 红字“有图片无法恢复，请重新选择”；
+    /// 其余失败项（本地文件尚在、可续传）与 pending 项（已落盘引用、尚未上传）
+    /// → 蓝字“图片已存本机，待上传”——文件已存本机，只是还没上传，不说“未保存”；
+    /// 无失败/待传/损坏项 → 草稿已保存。
+    /// 优先级：无物可续传 > 读不出 > 待上传；与编辑器口径一致（本地文件完整的图
+    /// 是正常态，不算未保存）。
     private func saveStatus(for draftValue: BearyDraft) -> DraftSaveStatus {
         var hasFailedImage = false
         var hasUnrecoverableImage = false
         var hasPendingImage = false
+        var hasUnreadableImage = false
         for item in draftValue.images {
+            if item.state == .unreadable {
+                hasUnreadableImage = true
+            }
             if item.state == .failed {
                 hasFailedImage = true
                 if item.localFile == nil && item.serverKey == nil {
@@ -1550,6 +1557,9 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         if hasUnrecoverableImage {
             return .failed
         }
+        if hasUnreadableImage {
+            return .unreadable
+        }
         if hasFailedImage || hasPendingImage {
             return .partial
         }
@@ -1560,8 +1570,9 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     private func saveStatusText(_ status: DraftSaveStatus) -> String {
         switch status {
         case .saved: return "草稿已保存"
-        case .partial: return "文字已保存，图片未保存"
-        case .failed: return "草稿保存失败"
+        case .partial: return "图片已存本机，待上传"
+        case .unreadable: return "有图片无法恢复，请重新选择"
+        case .failed: return "草稿保存失败，请重试"
         }
     }
 
