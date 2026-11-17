@@ -174,8 +174,8 @@ final class BearyDetailViewController: UIViewController {
     private var bodyStackTopFromHeaderConstraint: NSLayoutConstraint?
     private var bodyStackTopPinConstraint: NSLayoutConstraint?
     private let separatorView = UIView()
-    // 审计-编辑器详情：关闭钮视觉仍为 15pt 文字、高 52，宽按标题固有宽
-    // （约 30pt）不足 44——改 Hit44 扩热区，视觉一字不动。
+    // 返回钮：icon_back 图标钮、顶栏高 44（全站 modal 顶栏同款，见个人页顶栏）；
+    // Hit44 扩热区，视觉不动。
     private let closeButton = BearyHit44Button(type: .custom)
     private let avatarButton = BearyHit44Button(type: .custom)
     private let avatarImageView = UIImageView()
@@ -884,9 +884,10 @@ final class BearyDetailViewController: UIViewController {
     private func buildLayout() {
         // 顶栏：只剩左上文字“关闭”（15pt 墨字），右侧不放任何图标。
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        // 扫查组：此前裸 15pt；顶栏钉高 52，走 cappedFont（与许愿墙顶栏同口径），不撑破顶栏。
         // 全屏页左上角统一左箭头：此前是文字“关闭”，现改 icon_back 图标钮
-        // （左上角位置与 52 高顶栏不动，行为仍是 closeTapped 关页）。
+        // （行为仍是 closeTapped 关页）。顶栏高 44（全站 modal 顶栏同款，见个人页
+        // 顶栏）：52 是文字“关闭”时代的遗留，图标钮中心比底层页面低 4pt，滑动返回
+        // 时两个返回箭头不在一条线（01:26 截图实证）。
         closeButton.setTitle(nil, for: .normal)
         closeButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
         closeButton.tintColor = BearyColors.ink
@@ -966,7 +967,7 @@ final class BearyDetailViewController: UIViewController {
         NSLayoutConstraint.activate([
             closeButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            closeButton.heightAnchor.constraint(equalToConstant: 52),
+            closeButton.heightAnchor.constraint(equalToConstant: 44),
             scrollView.topAnchor.constraint(equalTo: closeButton.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -1136,7 +1137,7 @@ final class BearyDetailViewController: UIViewController {
         // authorRow 入栈已移到皇冠块之前（见上，118 闪退修复），此处不再重复添加。
         // 右上角 ⋯ 钮：时间线 moreButton 同款（21pt 灰色、28 框、44 热区），图标恒为三点。
         // 2026-11-12：从作者行挪到顶栏——挂 view（不跟内容滚动），右缘与返回钮
-        // 左缘对称（安全区 ±16），中心线与返回钮（closeButton，52 高）对齐。
+        // 左缘对称（安全区 ±16），中心线与返回钮（closeButton，44 高）对齐。
         moreButton.translatesAutoresizingMaskIntoConstraints = false
         moreButton.setImage(BearyFeedIconCache.image(named: "icon_more", pointSize: 24), for: .normal)
         moreButton.tintColor = BearyColors.gray
