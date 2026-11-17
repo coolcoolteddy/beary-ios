@@ -12,7 +12,7 @@ import CoreLocation
 // 坐标：地图渲染时按文本现场地理编码，坐标只存在本页实例的内存缓存里（随页销毁），
 // 永不写盘、不进日记行、不进任何持久化缓存——与“经纬度不持久化”一致。
 // 代价（方案 A 已定取舍）：本人地图也只能做到文本级聚合点，不是 POI 米级精确打点；
-// 文本歧义/离线时点位可能漂移，编不到的组进“未能在地图上定位”列表，仍可点进日记。
+// 文本歧义/离线时点位可能漂移，编不到的组在原行标“未能在地图上定位”，仍可点进日记。
 // 同步（C3）：本页不轮询、不另建地图缓存——全量日记走地图/星图共用入口
 // （BearySharedEntryLoader：内存短缓存 → 完整按日存档 → 网络，同一账号
 // 同一 scope 的在途请求共用一批回包；存档不完整时回落网络，不认半截盘）；
@@ -24,7 +24,7 @@ import CoreLocation
 // 本地原地更新，不重走全量分页。删除/回收站/注销走服务端列表变化，下次打开自然同步。
 // 切账号：appear 时发现 viewer 变了即按新身份重算（本人↔他人口径切换）并重拉。
 // 列表：未选中时 main 区即地点列表（地点名＋篇数，含尚在编码中的组，
-// 编不出坐标的组走“未能在地图上定位”专区）；点地点行与点地图标记
+// 编不出坐标的组仍留在原位、行内标“未能在地图上定位”）；点地点行与点地图标记
 // 进同一组日记（selectGroup），标题旁「所有地点」清除选中回列表。
 
 /// 地图大头针（P1-6）：同名不同区的两组展示名（key）可以相同，
@@ -1297,16 +1297,12 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         }
     }
 
-    /// 未选中时 main 区列出的地点组：已定位 + 尚在编码中的组；已判为
-    /// 未定位／暂时失败的组走各自专区，不在这里重复。编码完成前组就
-    /// 在列表里，可点进日记，不必等坐标解析出来。
+    /// 未选中时 main 区列出的地点组：全部组按原顺序常驻，编码结果只改
+    /// 行内状态、不搬组——编不出／暂时失败的组仍留在原位，行内标出
+    /// “未定位／定位失败，点此重试”，避免异步回包把正在看的行搬走。
+    /// 编码完成前组就在列表里，可点进日记，不必等坐标解析出来。
     private var listedGroups: [BearyLocationMapGroup] {
-        groups.filter { group in
-            // 按 id 不按 key：同名不同区的两组 key 相同，一组未定位
-            // 不能把同名的另一组也从列表里带走。
-            !unlocatedGroups.contains(where: { $0.id == group.id })
-                && !transientFailedGroups.contains(where: { $0.id == group.id })
-        }
+        groups
     }
 
     // MARK: - MKMapViewDelegate
@@ -1366,20 +1362,15 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     }
 
     // MARK: - UITableViewDataSource / Delegate
-    // section 构成是动态的：main 恒在；unlocated 仅在有编不出坐标的普通组时在。
-    // 旧代码用固定 section 0/1，下标会随 section 出现而错位，故一律经 sectionKind 换算。
+    // 只有 main 一个 section：地点组常驻原位，编码失败只改行内状态，
+    // 不再另开专区搬组——异步回包不再把正在看的行移走。
 
     private enum DiaryMapSection {
         case main
-        case transient
-        case unlocated
     }
 
     private var diaryMapSections: [DiaryMapSection] {
-        var sections: [DiaryMapSection] = [.main]
-        if !transientFailedGroups.isEmpty { sections.append(.transient) }
-        if !unlocatedGroups.isEmpty { sections.append(.unlocated) }
-        return sections
+        [.main]
     }
 
     func numberOfSections(in tableView: UITableView) -> Int {
@@ -1387,31 +1378,17 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        switch diaryMapSections[section] {
-        case .transient:
-            return transientFailedGroups.count
-        case .unlocated:
-            return unlocatedGroups.count
-        case .main:
-            if let selected = selectedGroup { return selected.entries.count }
-            // 骨架态：无组时出骨架行，不留“还没有带位置的日记”假空态。
-            if isLoadingEntries, groups.isEmpty { return skeletonRowCount }
-            // 未选中时 main 区是地点列表（每行一地点）；无组时只留一行提示。
-            if groups.isEmpty { return 1 }
-            return listedGroups.count
-        }
+        if let selected = selectedGroup { return selected.entries.count }
+        // 骨架态：无组时出骨架行，不留“还没有带位置的日记”假空态。
+        if isLoadingEntries, groups.isEmpty { return skeletonRowCount }
+        // 未选中时 main 区是地点列表（每行一地点）；无组时只留一行提示。
+        if groups.isEmpty { return 1 }
+        return listedGroups.count
     }
 
     func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        switch diaryMapSections[section] {
-        case .transient:
-            return "定位失败（网络问题）"
-        case .unlocated:
-            return "未能在地图上定位"
-        case .main:
-            if let selected = selectedGroup { return "\(selected.key) · \(selected.count) 篇" }
-            return nil
-        }
+        if let selected = selectedGroup { return "\(selected.key) · \(selected.count) 篇" }
+        return nil
     }
 
     /// 选中组时 main 区头：标题（组名＋篇数）旁给「所有地点」返回入口；
@@ -1455,104 +1432,87 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        switch diaryMapSections[indexPath.section] {
-        case .transient:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapGroupCell", for: indexPath)
-            let group = transientFailedGroups[indexPath.row]
+        if let selected = selectedGroup {
+            let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapCell", for: indexPath)
+            let entry = selected.entries[indexPath.row]
             var config = cell.defaultContentConfiguration()
-            config.text = group.key
-            config.secondaryText = "\(group.count) 篇 · 点此重试定位"
-            cell.contentConfiguration = config
-            cell.accessoryType = .disclosureIndicator
-            return cell
-        case .unlocated:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapGroupCell", for: indexPath)
-            let group = unlocatedGroups[indexPath.row]
-            var config = cell.defaultContentConfiguration()
-            config.text = group.key
-            config.secondaryText = "\(group.count) 篇 · 点此查看日记"
-            cell.contentConfiguration = config
-            cell.accessoryType = .disclosureIndicator
-            return cell
-        case .main:
-            if let selected = selectedGroup {
-                let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapCell", for: indexPath)
-                let entry = selected.entries[indexPath.row]
-                var config = cell.defaultContentConfiguration()
-                let title = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                if !title.isEmpty {
-                    config.text = title
-                } else {
-                    let body = (entry.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                    config.text = body.isEmpty ? "" : String(body.prefix(24))  // 109：无标题又无正文不再显“日记”占位
-                }
-                var secondary = ""
-                if let created = entry.createdAt, created > 0 {
-                    secondary = BearyDiaryCardCell.feedTimeString(ms: created)
-                }
-                if let line = BearyLocationDisplay.display(entry: entry) {
-                    // 2026-11-14 存经纬度：有坐标的篇按当前语言重取位置行，解析出后只刷该行。
-                    let shown = (entry.id.flatMap { selectedEntryDisplayLines[$0] }) ?? line
-                    secondary = secondary.isEmpty ? shown : "\(secondary) · \(shown)"
-                    resolveSelectedEntryDisplayLine(for: entry)
-                }
-                config.secondaryText = secondary.isEmpty ? nil : secondary
-                cell.contentConfiguration = config
-                cell.accessoryType = .disclosureIndicator
-                return cell
+            let title = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !title.isEmpty {
+                config.text = title
+            } else {
+                let body = (entry.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                config.text = body.isEmpty ? "" : String(body.prefix(24))  // 109：无标题又无正文不再显“日记”占位
             }
-            if isLoadingEntries, groups.isEmpty {
-                return tableView.dequeueReusableCell(withIdentifier: BearySkeletonCell.reuseIdentifier, for: indexPath)
+            var secondary = ""
+            if let created = entry.createdAt, created > 0 {
+                secondary = BearyDiaryCardCell.feedTimeString(ms: created)
             }
-            if groups.isEmpty {
-                let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapCell", for: indexPath)
-                var config = cell.defaultContentConfiguration()
-                config.text = "还没有带位置的日记"
-                config.secondaryText = nil
-                cell.contentConfiguration = config
-                cell.selectionStyle = .none
-                return cell
+            if let line = BearyLocationDisplay.display(entry: entry) {
+                // 2026-11-14 存经纬度：有坐标的篇按当前语言重取位置行，解析出后只刷该行。
+                let shown = (entry.id.flatMap { selectedEntryDisplayLines[$0] }) ?? line
+                secondary = secondary.isEmpty ? shown : "\(secondary) · \(shown)"
+                resolveSelectedEntryDisplayLine(for: entry)
             }
-            // 未选中：地点列表行——地点名＋篇数，点行与点地图标记进同一组日记。
-            let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapGroupCell", for: indexPath)
-            let group = listedGroups[indexPath.row]
-            var config = cell.defaultContentConfiguration()
-            // 2026-11-14 存经纬度：有坐标的组按当前语言重取过展示名时用它，否则用组键（存量文本）。
-            config.text = groupDisplayNames[group.id] ?? group.key
-            config.secondaryText = "\(group.count) 篇"
+            config.secondaryText = secondary.isEmpty ? nil : secondary
             cell.contentConfiguration = config
             cell.accessoryType = .disclosureIndicator
             return cell
         }
+        if isLoadingEntries, groups.isEmpty {
+            return tableView.dequeueReusableCell(withIdentifier: BearySkeletonCell.reuseIdentifier, for: indexPath)
+        }
+        if groups.isEmpty {
+            let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapCell", for: indexPath)
+            var config = cell.defaultContentConfiguration()
+            config.text = "还没有带位置的日记"
+            config.secondaryText = nil
+            cell.contentConfiguration = config
+            cell.selectionStyle = .none
+            return cell
+        }
+        // 未选中：地点列表行——地点名＋篇数，点行与点地图标记进同一组日记。
+        // 编码失败的行留在原位，行内标出状态：暂时失败可点按重试，
+        // 未定位仍可点进日记；行不搬组，异步回包不再推走下方内容。
+        let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapGroupCell", for: indexPath)
+        let group = listedGroups[indexPath.row]
+        var config = cell.defaultContentConfiguration()
+        // 2026-11-14 存经纬度：有坐标的组按当前语言重取过展示名时用它，否则用组键（存量文本）。
+        config.text = groupDisplayNames[group.id] ?? group.key
+        if transientFailedGroups.contains(where: { $0.id == group.id }) {
+            config.secondaryText = "\(group.count) 篇 · 定位失败，点此重试"
+        } else if unlocatedGroups.contains(where: { $0.id == group.id }) {
+            config.secondaryText = "\(group.count) 篇 · 未能在地图上定位"
+        } else {
+            config.secondaryText = "\(group.count) 篇"
+        }
+        cell.contentConfiguration = config
+        cell.accessoryType = .disclosureIndicator
+        return cell
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        switch diaryMapSections[indexPath.section] {
-        case .transient:
-            // 暂时失败组点按重试整轮编码：缓存组仍即时成图，代次换代后
+        if let selected = selectedGroup {
+            guard indexPath.row < selected.entries.count else { return }
+            // r17-m3：记住进入详情的地点组 ID 与列表位置、该组篇快照；
+            // 返回时在 viewWillAppear 当场消费恢复（只读返回保留选中组
+            // 与列表位置）；详情有改动时容器扇出的 regroup 也会消费，
+            // 旗标只生效一次。按 id 记，不按 key（同名不同区 key 会撞）。
+            returnGroupId = selected.id
+            returnTableOffset = tableView.contentOffset
+            returnGroupEntryIds = selected.entries.compactMap { $0.id }
+            pendingMapReturnRestore = true
+            onOpenEntry?(selected.entries[indexPath.row])
+        } else {
+            // 地点列表行：与点地图标记同一入口（selectGroup），进同一组日记。
+            // 暂时失败的行点按重试整轮编码：缓存组仍即时成图，代次换代后
             // 旧链丢弃；不做单组链（会与在途整轮链抢代次与标记）。
-            regroupAndGeocode()
-            return
-        case .unlocated:
-            selectGroup(unlocatedGroups[indexPath.row])
-            return
-        case .main:
-            if let selected = selectedGroup {
-                guard indexPath.row < selected.entries.count else { return }
-                // r17-m3：记住进入详情的地点组 ID 与列表位置、该组篇快照；
-                // 返回时在 viewWillAppear 当场消费恢复（只读返回保留选中组
-                // 与列表位置）；详情有改动时容器扇出的 regroup 也会消费，
-                // 旗标只生效一次。按 id 记，不按 key（同名不同区 key 会撞）。
-                returnGroupId = selected.id
-                returnTableOffset = tableView.contentOffset
-                returnGroupEntryIds = selected.entries.compactMap { $0.id }
-                pendingMapReturnRestore = true
-                onOpenEntry?(selected.entries[indexPath.row])
+            guard indexPath.row < listedGroups.count else { return }
+            let group = listedGroups[indexPath.row]
+            if transientFailedGroups.contains(where: { $0.id == group.id }) {
+                regroupAndGeocode()
             } else {
-                // 地点列表行：与点地图标记同一入口（selectGroup），进同一组日记。
-                guard indexPath.row < listedGroups.count else { return }
-                selectGroup(listedGroups[indexPath.row])
+                selectGroup(group)
             }
         }
     }
