@@ -419,6 +419,10 @@ class BearyEditProfileViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // 景深背景门控初值：与九宫格门控同口径读共享会话 currentUser.plus。
+        // 此前初值 false，且正常入口（带 userId）从不走 refreshLinkRowFromMe
+        // 的 /me 补写，Plus 用户进页即被判非 Plus，封面行全锁“Plus 专属”。
+        fetchedPlus = SessionManager.shared.currentUser?.plus == true
         view.backgroundColor = BearyColors.bg
         buildLayout()
         // U3：输入框 Return 收起/切换 + 滑动收键盘 + 键盘顶起时调 inset
@@ -975,6 +979,9 @@ class BearyEditProfileViewController: UIViewController {
     /// 由 handleDepthThemePicked 弹 toast）；应用成功新页自行关闭。
     /// 呈现口径与个人页旧款同款（窄屏全屏＋左边缘右滑，宽屏默认呈现）。
     private func presentDepthBackgroundPicker() {
+        // 进选择页前按共享会话重读一次 Plus 态：本页打开期间刚到账的 Plus
+        //（邀请绑定后 refreshMe 已写回 currentUser）不等下次进页即生效。
+        fetchedPlus = SessionManager.shared.currentUser?.plus == true
         let picker = BearyDepthBackgroundViewController(
             currentTheme: storedFestivalTheme(),
             isPlus: fetchedPlus,
@@ -1000,8 +1007,9 @@ class BearyEditProfileViewController: UIViewController {
     /// 新页停留）。写 UserDefaults 存量后立即按同一口径重贴本页横幅；
     /// 回个人页时由保存重拉或取消收口重贴。
     private func handleDepthThemePicked(_ option: BearyProfileViewController.FestivalTheme, isPlus: Bool? = nil) -> Bool {
-        // Plus 门控（优先用选择页回前台时刚拉到的 fresh 值，兜底才用 /me 的
-        // fetchedPlus；未到按非 Plus 计、不静默放行；beary 无内购，只提示不卖）：
+        // Plus 门控（优先用选择页回前台时刚拉到的 fresh 值，兜底才用本页的
+        // fetchedPlus（共享会话 currentUser.plus 的快照，见 viewDidLoad）；
+        // 未到按非 Plus 计、不静默放行；beary 无内购，只提示不卖）：
         // 默认档人人可回，非 Plus 选节日档只提示。
         let plus = isPlus ?? fetchedPlus
         if option != .none, !plus {
