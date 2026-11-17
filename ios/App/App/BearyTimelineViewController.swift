@@ -3082,10 +3082,17 @@ class BearyTimelineViewController: UIViewController {
         let top = view.safeAreaInsets.top + (visible ? 60 : 0) + BearyDeveloperMode.shared.devBannerInset
         let bottom = BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
         if tableView.contentInset.top != top || tableView.contentInset.bottom != bottom {
+            // 冷启动/首进回顶：内边距变大时偏移不动，标题行会顶进状态栏区
+            //（首建时 inset 0→安全区顶、偏移仍停 0）；仅当正停在旧顶（容差
+            // 1pt，与 isAtTop 同口径）才跟到新顶，深处滚动位置不动。
+            let wasAtTop = tableView.contentOffset.y <= -tableView.contentInset.top + 1
             tableView.contentInset.top = top
             tableView.contentInset.bottom = bottom
             tableView.scrollIndicatorInsets.top = top
             tableView.scrollIndicatorInsets.bottom = bottom
+            if wasAtTop {
+                tableView.contentOffset = CGPoint(x: 0, y: -top)
+            }
         }
     }
 
