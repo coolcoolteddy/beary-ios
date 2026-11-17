@@ -1,0 +1,4525 @@
+import UIKit
+import Photos
+
+// ===== BearyDiaryCardCell 共享日记卡片（B 批卡片合并）=====
+// 首页 BearyFeedCell 与个人主页 BearyProfileEntryCell 的合并体，两页共用一处
+// 实现。两页卡片骨架相同（2026-11-05 日记布局统一：头行独占一行——头像 40 +
+// 写给行 / 标题行；其下正文栈全宽——标题 / 正文 / 折叠 / 图片条 216 / 引用卡 /
+// 操作行 / 回应行 / 底线 1），但互动架构与若干视觉本就不同，合并时以 cardMode
+// 区分，不擅自统一：
+//  - 标题行对齐（Li 2026-10-27 定：两页统一 .firstBaseline，按文字基线对齐）。
+//  - 互动架构：feed 模式 cell 内直发 API（点赞/收藏/回应，成功失败路径
+//    就地同步）；profile 模式 cell 只转发回调（onLike/onBookmark/onEmoteTap
+//    等），API 与就地同步归控制器（syncInteraction(entry:interactionDisabled:)）。
+//  - 视觉分歧点（各保各的）：正文字号 feed 16 / profile 15；0 赞时 feed
+//    显示“0”、profile 隐藏数字位；未赞色 feed 爱心 ink + 计数灰、profile
+//    爱心与计数同灰；取消赞预态 feed ink / profile 灰；写给行字号 feed
+//    12 粗体 / profile 13 常规；心情行间距 feed 3 / profile 4；操作行
+//    feed 右上角公开小地球、profile 同款（A-2 补齐）；折叠 feed 实测溢出（300 字 +
+//    实测超 6 行）/ profile 只计 300 字；图片槽底色 feed line / profile surface2。
+//  - 统一项：回应流一律 Feed 流式换行 BearyEmoteFlowView（profile 单行横滑
+//    emoteScrollView 废弃）；图片失败重试一律 Feed 口径（头像/主图均有重试钮，
+//    profile 主图槽位补重试）；引用卡一律共享 BearyQuoteCardView（profile
+//    圆角 12→8、补左侧线，内边距与字号不动）；回应 chip 一律 BearyEmoteChipView
+//    （自带 trait 重刷边框）；操作行一律 BearyActionStackView（point 透传，
+//    Hit44 热区不再被 22pt 高的操作行截掉）；回应 chip 点击层与 + 钮一律
+//    BearyHit44Button（视觉尺寸不变，只扩热区）。
+// 必须保留的既有成果：94 包主图 9 槽位复用（两页都走槽位，复用即取消在途
+// 下载）；#67 互动就地同步（两套 syncInteraction 均保留，成功与失败路径不再
+// reload 换 cell）；#70 Profile 引用缩略图池化（已下沉到 BearyQuoteCardView
+// 内置 thumbPool）；69 批天气 Lottie 管控（本 cell 只用静态天气图标，不碰
+// 播放器）、点赞先行反馈口径与 pre-unlike/收藏先行例外（只搬运、不改语义）。
+// 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
+
+/// 卡片模式：feed = 首页（广场），profile = 个人主页（三页签）。
+/// cell 实例一生只属于一张表，mode 在创建时定死，不中途切换。
+enum BearyDiaryCardMode {
+    case feed
+    case profile
+}
+
+// MARK: - E1-5：本文件内图标重绘缓存（原首页文件内私有，现共享给两页 cell 与引用卡）
+
+/// BearyIconImages 每次调用都重绘一次 PNG；卡片内的调用全部经此缓存，
+/// key = 名字 + 尺寸（template 图与 tint 无关，深浅模式共用同一缓存图）。
+enum BearyFeedIconCache {
+    // 审计-性能：图标重绘缓存补条数上限（名字 × 尺寸组合本就有限，
+    // countLimit 只作后备，不作日常淘汰依据；NSCache 内存压力下仍自动逐出）。
+    private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 300
+        return cache
+    }()
+    static func image(named name: String, pointSize: CGFloat) -> UIImage? {
+        let key = "\(name)#\(pointSize)" as NSString
+        if let hit = cache.object(forKey: key) { return hit }
+        guard let made = BearyIconImages.image(named: name, pointSize: pointSize) else { return nil }
+        cache.setObject(made, forKey: key)
+        return made
+    }
+}
+
+// MARK: - 图片失败重试（清单第 13 项首页部分：主卡图片 + 头像；合并后两页同款）
+
+/// 纯图标重试钮（用户定形态就是图标，不要文字按钮）：28pt bg 色圆盘 + icon_refresh（#224 误用 icon_restore 已回退；icon_restore 是回收站恢复图标，不得用于重试）。
+/// 只由失败回调显示；点按先藏、重载成功后保持隐藏、再失败则重新出现。
+/// 加载中与成功态不碰——成功路径不回调，图标自然不会出现。
+final class BearyFeedRetryButton: UIButton {
+    weak var targetImageView: UIImageView?
+    var retryURL: URL?
+    /// 重试沿用首次加载口径：图片槽走模糊到清晰（见 bearyFeedLoadImage），
+    /// 头像等不走。本标志由 bearyFeedLoadImage 在挂重试钮时写入。
+    var retryBlurUp = false
+    // B 组：帧 28 时 point 外扩至 44（头像帧另改 44 后本扩不生效，图片重试仍靠它）。
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let dx: CGFloat = bounds.width < 44 ? (44 - bounds.width) / 2 : 0
+        let dy: CGFloat = bounds.height < 44 ? (44 - bounds.height) / 2 : 0
+        if dx == 0 && dy == 0 { return super.point(inside: point, with: event) }
+        return bounds.insetBy(dx: -dx, dy: -dy).contains(point)
+    }
+}
+
+func bearyFeedRetryButton(target: Any?, action: Selector) -> BearyFeedRetryButton {
+    let btn = BearyFeedRetryButton(type: .system)
+    btn.translatesAutoresizingMaskIntoConstraints = false
+    btn.setImage(BearyFeedIconCache.image(named: "icon_refresh", pointSize: 24), for: .normal)
+    btn.tintColor = BearyColors.gray
+    btn.backgroundColor = BearyColors.bg
+    btn.layer.cornerRadius = BearyCorners.single
+    btn.clipsToBounds = true
+    btn.isHidden = true
+    btn.accessibilityLabel = "重新加载图片"
+    btn.addTarget(target, action: action, for: .touchUpInside)
+    btn.bearyAddPressFeedback()
+    return btn
+}
+
+/// 经 bearySetImage 的 onFailure 钩子加载：失败（取消除外，复用取消不算失败）时亮重试图标。
+/// blurUp=true 时走模糊到清晰（32px 小图占位 → 原图 1.04→1 缩放淡入），
+/// 只用于卡片/详情图片槽；头像等传 false，走原口径。
+func bearyFeedLoadImage(into imageView: UIImageView, url: URL?, retryButton: BearyFeedRetryButton, downsampleToWidth: CGFloat? = nil, blurUp: Bool = false) {
+    retryButton.targetImageView = imageView
+    retryButton.retryURL = url
+    retryButton.retryBlurUp = blurUp
+    retryButton.isHidden = true
+    if blurUp {
+        imageView.bearySetImageWithBlurUp(url: url, downsampleToWidth: downsampleToWidth, onFailure: { [weak retryButton] _ in
+            retryButton?.isHidden = false
+        })
+        return
+    }
+    imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: downsampleToWidth, onFailure: { [weak retryButton] _ in
+        retryButton?.isHidden = false
+    })
+}
+
+func bearyFeedPerformRetry(_ button: BearyFeedRetryButton) {
+    guard let imageView = button.targetImageView, let url = button.retryURL else { return }
+    // 80 包 B3-2：重试时图框已布局，按实测框宽下采样（未布局时传 nil 走原路）。
+    let retryDownsample = imageView.bounds.width > 0 ? imageView.bounds.width * UIScreen.main.scale : nil
+    if button.retryBlurUp {
+        // forceRetry 绕过“同 URL＋image 非空”守卫：缩略图已显示时也一定重发完整图请求。
+        imageView.bearySetImageWithBlurUp(url: url, downsampleToWidth: retryDownsample, onFailure: { [weak button] _ in
+            button?.isHidden = false
+        }, forceRetry: true)
+    } else {
+        imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: retryDownsample, onFailure: { [weak button] _ in
+            button?.isHidden = false
+        })
+    }
+    // 请求已启动（url 非空时上述调用一定建了新任务）再藏按钮；失败时 onFailure 重亮。
+    button.isHidden = true
+}
+
+// MARK: - 操作行透传栈（A 批小修：actionStack 命中截断）
+
+/// 普通 UIStackView、无高度约束、高度由 22pt 级子视图撑开时，子视图的
+/// BearyHit44Button 扩后热区（上下各 11pt）会超出栈 bounds 而被截掉；
+/// 本栈重写 point(inside:)：点落在栈内照常，落在外时只当它命中了某个
+/// UIButton 子孙的扩后热区才放行（视觉尺寸与布局一字不动，只扩热区）。
+final class BearyActionStackView: UIStackView {
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        if super.point(inside: point, with: event) {
+            return true
+        }
+        for sub in arrangedSubviews {
+            if self.hitExpandedButton(in: sub, point: point) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// 追加 1（B 法，今为兜底）：点赞—收藏间距改 BearySpace.xxl（24）后，
+    /// 两钮 44pt 热区之间已留 4pt 间隙、不再重叠（见 actionStack 注释的算法），
+    /// 本分支不再是重叠带的分流主路径；仅保留作舍入/边界点的确定性兜底——多钮
+    /// 同时命中时按视觉中心最近者胜，单钮命中时走默认路径，spacer、公开行
+    /// 等其他视图行为一字不动。旧行为注记：间距 16 时两 44pt 热区重叠 4pt，
+    /// UIKit 默认按子视图逆序命中，重叠带一律落到右侧钮。
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard self.point(inside: point, with: event) else { return nil }
+        var claimants: [UIButton] = []
+        collectClaimingButtons(in: self, point: point, event: event, into: &claimants)
+        if claimants.count >= 2 {
+            var best: UIButton?
+            var bestDistance: CGFloat = .greatestFiniteMagnitude
+            for button in claimants {
+                let center = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: self)
+                let distance = abs(center.x - point.x)
+                if distance < bestDistance {
+                    bestDistance = distance
+                    best = button
+                }
+            }
+            return best
+        }
+        return super.hitTest(point, with: event)
+    }
+
+    /// 递归收集扩后热区命中该点的 UIButton 子孙（隐藏/不可交互/透明者不算，
+    /// 与 UIKit hitTest 的可达条件一致；isEnabled 不参与判定，禁用钮仍占位吞点，
+    /// 与现行行为一致）。
+    private func collectClaimingButtons(in view: UIView, point: CGPoint, event: UIEvent?, into out: inout [UIButton]) {
+        for sub in view.subviews {
+            guard sub.isHidden == false, sub.alpha >= 0.01, sub.isUserInteractionEnabled else { continue }
+            if let button = sub as? UIButton {
+                let local = sub.convert(point, from: self)
+                if button.point(inside: local, with: event) {
+                    out.append(button)
+                }
+            }
+            collectClaimingButtons(in: sub, point: point, event: event, into: &out)
+        }
+    }
+
+    private func hitExpandedButton(in view: UIView, point: CGPoint) -> Bool {
+        if view.isHidden {
+            return false
+        }
+        if let button = view as? UIButton {
+            let local = view.convert(point, from: self)
+            if button.point(inside: local, with: nil) {
+                return true
+            }
+        }
+        for sub in view.subviews {
+            if self.hitExpandedButton(in: sub, point: point) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+// MARK: - 回应 chip（A 批小修：边框深浅切换不跟随）
+
+/// 两页原 chip 都是 UIView 容器 + 内层横排（播放器 24 + 计数）+ 透明点击层；
+/// 本组件收敛为一处，并自带 traitCollectionDidChange 重刷边框（CGColor
+/// 赋值时固化，不重赋即停留在旧主题色）——个人主页 chip 边框深浅切换不
+/// 跟随的问题由此根治，cell 侧不再另起一套遍历重刷（二选一，只此一套）。
+/// 点击层为 BearyHit44Button（视觉仍为整 chip 尺寸，只扩热区）；mine 态：
+/// 底色 hov、边框 ink、计数 ink 粗体；非 mine：底色 surface2、边框 line、计数 gray。
+final class BearyEmoteChipView: UIView {
+
+    private let row = UIStackView()
+    private let countLabel = UILabel()
+    private var emotePlayer: BearyEmoteView?
+    private var mineFlag = false
+    /// 透明点击层：cell 侧挂 target、写 tag、控 enabled；热区由父类扩到 44。
+    let overlayButton = BearyHit44Button(type: .custom)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        layer.cornerRadius = BearyCorners.single
+        layer.borderWidth = 1
+        clipsToBounds = true
+        row.axis = .horizontal
+        row.spacing = 6
+        row.alignment = .center
+        row.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        row.addArrangedSubview(countLabel)
+        addSubview(row)
+        overlayButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(overlayButton)
+        NSLayoutConstraint.activate([
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            overlayButton.topAnchor.constraint(equalTo: topAnchor),
+            overlayButton.bottomAnchor.constraint(equalTo: bottomAnchor),
+            overlayButton.leadingAnchor.constraint(equalTo: leadingAnchor),
+            overlayButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+            heightAnchor.constraint(equalToConstant: 32),
+        ])
+        self.applyChrome()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    /// pill 形兜底：圆角恒取高的一半，任何高度下都是 pill 形（32 高时即 16，与旧值一致）；
+    /// 即使某路残留 transform 使 bounds 翻倍，显示圆角仍为显示高的一半。
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if bounds.height > 0 {
+            layer.cornerRadius = bounds.height / 2
+        }
+    }
+    /// 池化渲染：样式/计数/tag 由调用方随后写 overlayButton；key 不变且已在播时
+    /// 不重播（每次渲染都 play() 会从 0 帧重画描线）、停播时恢复播放；key 变了
+    /// 才换播放器；不重建容器与约束。
+    func render(key: String, count: Int, mine: Bool) {
+        mineFlag = mine
+        countLabel.font = BearyDynamicType.numberFont()
+        countLabel.textColor = mine ? BearyColors.ink : BearyColors.gray
+        countLabel.text = "\(count)"
+        if let current = emotePlayer, current.emoteKey == key {
+            if current.isPlayingNow == false {
+                current.play()
+            }
+        } else {
+            emotePlayer?.stop()
+            emotePlayer?.removeFromSuperview()
+            let next = BearyEmoteView(key: key, animated: true)
+            next.translatesAutoresizingMaskIntoConstraints = false
+            row.insertArrangedSubview(next, at: 0)
+            NSLayoutConstraint.activate([
+                next.widthAnchor.constraint(equalToConstant: 24),
+                next.heightAnchor.constraint(equalToConstant: 24),
+            ])
+            emotePlayer = next
+        }
+        self.applyChrome()
+    }
+
+    var player: BearyEmoteView? {
+        return emotePlayer
+    }
+
+    func stopPlayer() {
+        emotePlayer?.stop()
+    }
+
+    private func applyChrome() {
+        backgroundColor = mineFlag ? BearyColors.hov : BearyColors.surface2
+        layer.bearyDynamicBorderColor = (mineFlag ? BearyColors.ink : BearyColors.line)
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            self.applyChrome()
+        }
+    }
+}
+
+// MARK: - 虚线 + 钮：34px 圆圈、CAShapeLayer 虚线边框、灰色加号（网页 .emote-add 口径）
+
+/// 首页原 BearyFeedDashedAddButton，合并时父类由 UIButton 换为
+/// BearyHit44Button（视觉 34×34 不变，热区扩到 44）；虚线描边仍自带 trait 重刷。
+final class BearyDiaryCardDashedAddButton: BearyHit44Button {
+
+    private let dashedLayer = CAShapeLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        dashedLayer.fillColor = UIColor.clear.cgColor
+        dashedLayer.lineWidth = 1
+        dashedLayer.lineDashPattern = [4, 3]
+        updateStrokeColor()
+        layer.addSublayer(dashedLayer)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func updateStrokeColor() {
+        dashedLayer.strokeColor = BearyColors.line.cgColor
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        dashedLayer.frame = bounds
+        dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).cgPath
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        updateStrokeColor()
+    }
+}
+
+// MARK: - 日记卡片 cell（首页 F1–F13 ＋个人主页列表行合并体）
+
+class BearyDiaryCardCell: UITableViewCell {
+
+    let cardMode: BearyDiaryCardMode
+
+    // MARK: 首页模式回调（cell 内直发 API，成功失败经此回传控制器）
+
+    /// 点图片条时触发（传图片下标与被点缩略图在 window 下的矩形，控制器开图片查看器；不再进详情；矩形供关场回到原处用；另传被点缩略图已显示的 UIImage，灯箱打开先显它）。
+    var onImageTapped: ((Int, CGRect?, UIImage?) -> Void)?
+    /// 九宫格入口点按：容器接线（Plus 门控 + 开网格都在容器侧，本处只转发）。
+    var onNineGridTapped: (() -> Void)?
+    /// 引用卡点按：传引用 id（容器先 fetchEntry 校验可见性再放行，私密时显占位）。
+    var onQuoteSelected: ((String) -> Void)?
+    /// 点赞/收藏成功后回传（控制器用 applyInteraction 同步模型并刷新该行）。
+    var onInteractionChanged: ((String, Int?, Bool?, Bool?) -> Void)?
+    /// 回应成功后回传聚合 emotes（控制器走现有 applyInteraction 只刷该行）。
+    var onEmoteChanged: ((String, [EmoteCount]?) -> Void)?
+    /// 回应行 + 号被点时转发（控制器弹出统一回应 Sheet）。
+    var onEmoteAddRequested: (() -> Void)?
+    var onRequireLogin: (() -> Void)?
+    var onActionFailed: (() -> Void)?
+    /// 回应失败后回传（控制器弹 toast；点赞/收藏失败仍走 onActionFailed 的 alert，不混用）。
+    var onEmoteFailed: (() -> Void)?
+    var onShareRequested: ((Entry) -> Void)?
+    /// 可见性切换（⋯ 菜单“修改权限”触发）：本人卡片公开↔私密，目标态由控制器按当前模型算。
+    var onPublishTapped: (() -> Void)?
+    /// 卡片菜单举报：仅他人公开卡出现，控制器走 BearyReportFlow。
+    var onReportRequested: ((Entry) -> Void)?
+    /// 2026-10-31 卡片 ⋯ 菜单（时间线风格）：控制器弹 actionSheet，管理类操作
+    /// （编辑／修改权限／删除／举报）走原 onPublishTapped／onContextMenuEdit／
+    /// onContextMenuDelete／onReportRequested 同一路；点赞／收藏／分享是互动，
+    /// 仍留在底部操作行，不进菜单。
+    var onMoreRequested: ((Entry, UIView) -> Void)?
+    /// 点头像或作者名：打开作者主页。
+    var onAuthorTapped: (() -> Void)?
+    /// C6 卡片上下文菜单：编辑/删除转发给控制器（容器接线到编辑器与删除确认流程）；
+    /// 首页与个人主页两模式共用同一对回调（分享/收藏走 cell 内已有按钮路径）。
+    var onContextMenuEdit: (() -> Void)?
+    var onContextMenuDelete: (() -> Void)?
+    /// 折叠切换 / 引用异步落位后，行高需重算时通知控制器 reloadRows（.none，无动画）。
+    var onNeedsRowReload: (() -> Void)?
+    /// L21（91 包）：仅展开/收起路径用——控制器改走 performBatchUpdates 平滑伸缩，
+    /// 正文 0.22s 交叉淡入在 cell 内做；引用异步落位仍走 onNeedsRowReload。
+    var onNeedsFoldAnimation: (() -> Void)?
+    /// fixall-cell 6-4：回应行高变化时的控制器 batch 口径（与折叠同款）。
+    /// 控制器接线后 renderEmotes(animatedLayout:) 不再在 cell 内播 flow 位移动画，
+    /// 而是调本回调、由控制器 performBatchUpdates 平滑伸缩行高；未接线时
+    /// （本分支单独合入前）仍走 cell 内原有 0.26s flow 位移动画，不回退为瞬变。
+    /// 减动效下两种路径均为直设终值。
+    var onNeedsEmoteRowAnimation: (() -> Void)?
+
+    // MARK: 个人主页模式回调（cell 只转发，API 归控制器）
+
+    var onLike: (() -> Void)?
+    var onBookmark: (() -> Void)?
+    var onShare: (() -> Void)?
+    var onEmoteTap: ((String) -> Void)?
+    var onEmoteAdd: (() -> Void)?
+    /// A1（个人主页模式）：非公开卡片点“+”时转发——控制器弹“公开后才能回应”
+    /// toast，不打开选择器；chip 本身已禁用，点按无事件，故提示只能挂在“+”钮上。
+    var onEmoteAddNotPublic: (() -> Void)?
+    var onQuoteTap: (() -> Void)?
+    var onFoldToggle: (() -> Void)?
+    /// N7 主页图片灯箱：图片条点按回调（keys=本条图 key，index=点按位置），
+    /// VC 侧复用独立文件内的 BearyEntryImageViewerViewController 全屏弹出（时间线同款）；
+    /// 另传被点缩略图已显示的 UIImage，灯箱打开先显它。
+    var onTapImages: (([String], Int, CGRect?, UIImage?) -> Void)?
+
+    /// 折叠展开态按条目持久化（首页模式；滚动复用、整表刷新都不收起），与网页 __foldOpen 同口径。
+    static var expandedEntryIds: Set<String> = []
+    /// 引用单篇缓存（首页模式 F11）：quoteId -> 拉到的整条 Entry；失败集合避免滚动时反复重拉；
+    /// 下拉刷新时由 resetQuoteFetchState 清空，失败引用在刷新后可重试。
+    /// 审计 2026-11-02 第十节：按账号分桶——桶 key 为当前登录用户 id（游客为 guest），
+    /// 切号即换桶，旧号缓存绝不渲染给新身份（广场组 Feed 内换桶重置另行负责，
+    /// 本分桶为纵深防御：即使换桶重置漏调，旧桶也不会被新身份命中）。
+    /// TTL 数值未定（须 Li 确认），本支不编造数值、不设过期时间，见 PR 未做项。
+    private static var quoteCacheBuckets: [String: [String: Entry]] = [:]
+    private static func currentQuoteBucket() -> String {
+        if let id = SessionManager.shared.currentUser?.id { return String(id) }
+        return "guest"
+    }
+    /// 当前账号桶的引用缓存（读写均走本桶；外部 removeValue/下标写入同样经此代理）。
+    static var quoteCache: [String: Entry] {
+        get { quoteCacheBuckets[currentQuoteBucket()] ?? [:] }
+        set { quoteCacheBuckets[currentQuoteBucket()] = newValue }
+    }
+    static var quoteFailedIds: Set<String> = []
+    static var quoteLoadingIds: Set<String> = []
+    static var quoteCacheOwnerKey: String?
+    /// LRU 顺序（队尾最新）；只由本文件内的 cachedQuote/storeQuote 维护，
+    /// 外部直删 quoteCache 时残留的旧键在下次命中/写入时惰性清理。
+    private static var quoteCacheOrder: [String] = []
+    static let quoteCacheLimit = 100
+    /// 引用 fetch 代次：每次 resetQuoteFetchState（下拉刷新/内存警告/
+    /// 换桶清空）+1。fetch 发起时捕获当时桶 + 代次，回包写缓存前双重
+    /// 复核，任一不符即过期回包（审计第 5 项残留缺口：刷新清空后在途
+    /// 旧请求仍可写入当前新号桶）。
+    private static var quoteFetchGeneration = 0
+
+    static func resetQuoteFetchState() {
+        quoteFetchGeneration += 1
+        quoteCacheBuckets = [:]
+        quoteFailedIds = []
+        quoteLoadingIds = []
+        quoteCacheOrder = []
+        // 账号/刷新失效：互关验证结果与引用缓存同清，下次按现行关系重验。
+        quoteMutualAccessBuckets = [:]
+    }
+
+    /// 换桶：桶变了才清空（同桶重调不丢缓存）；Feed 切号与冷启动首桶均走这里。
+    static func switchQuoteCacheOwner(to bucket: String) {
+        guard bucket != quoteCacheOwnerKey else { return }
+        quoteCacheOwnerKey = bucket
+        resetQuoteFetchState()
+    }
+
+    /// 读缓存：命中时把键移到队尾（最新用过），保持 LRU 顺序。
+    static func cachedQuote(for quoteId: String) -> Entry? {
+        guard let entry = quoteCache[quoteId] else {
+            quoteCacheOrder.removeAll { $0 == quoteId }
+            return nil
+        }
+        quoteCacheOrder.removeAll { $0 == quoteId }
+        quoteCacheOrder.append(quoteId)
+        return entry
+    }
+
+    /// 写缓存：定量 100，超量从队头逐出最久未用；写入失败集合里若有该 id
+    /// 一并清除（成功拉到即不再是失败态）。
+    static func storeQuote(_ entry: Entry, for quoteId: String) {
+        _ = storeQuote(entry, for: quoteId, requestBucket: currentQuoteBucket(), generation: quoteFetchGeneration)
+    }
+
+    /// 写缓存（带请求校验）：仅当请求桶仍为当前桶且代次仍为当前代次时写入；
+    /// 过期回包返回 false，且不写缓存、不动失败集与 LRU。服务端实际
+    /// visibility 原样存入，绝不根据正文是否非空推断公开状态（公开判定在
+    /// 落卡处走 isEffectivelyPublic，本处只存不判）。
+    @discardableResult
+    static func storeQuote(_ entry: Entry, for quoteId: String, requestBucket: String, generation: Int) -> Bool {
+        guard requestBucket == currentQuoteBucket(), generation == quoteFetchGeneration else { return false }
+        quoteCache[quoteId] = entry
+        quoteFailedIds.remove(quoteId)
+        quoteCacheOrder.removeAll { $0 == quoteId }
+        quoteCacheOrder.append(quoteId)
+        while quoteCacheOrder.count > quoteCacheLimit {
+            let oldest = quoteCacheOrder.removeFirst()
+            quoteCache.removeValue(forKey: oldest)
+        }
+        return true
+    }
+
+    /// 定向失效（删除/转私密/举报/拉黑清行时调）：清掉该篇作为被引源的
+    /// 缓存与失败态，下次 configure 重新拉取、按现行可见性渲染占位；
+    /// 在途 loading 不动——在途回包落的是服务端现态（私密占位/失败），
+    /// 不会把旧正文写回，动 loading 反而会让重配重复发请求。
+    static func invalidateQuote(forQuoteId quoteId: String) {
+        quoteCache.removeValue(forKey: quoteId)
+        quoteCacheOrder.removeAll { $0 == quoteId }
+        quoteFailedIds.remove(quoteId)
+        invalidateQuoteMutualAccess(forQuoteId: quoteId)
+    }
+
+    /// 定向失效：被引篇删除/转非公开时清掉该篇在全部桶里的引用缓存与失败态，
+    /// 下次渲染重新拉取、不再按旧可见性出全文（只收紧，不放宽）。
+    static func invalidateQuote(id: String) {
+        guard !id.isEmpty else { return }
+        for bucket in quoteCacheBuckets.keys {
+            quoteCacheBuckets[bucket]?.removeValue(forKey: id)
+        }
+        quoteFailedIds.remove(id)
+        quoteLoadingIds.remove(id)
+        invalidateQuoteMutualAccess(forQuoteId: id)
+    }
+
+    /// 仅好友引用互关验证结果（跳动审计第 6 条）：已确认互关的引用按账号分桶保存。
+    /// 键 "authorId:quoteId"，只记本次 viewer 对该引用的访问结论，不改写原日记的
+    /// 可见性字段。重配时命中即直接落全文，不再发请求、不再触发行重载，检查-重载
+    /// 循环到此终止。失效见 resetQuoteFetchState（账号/刷新）、invalidateQuote
+    /// （被引篇可见性变化）、invalidateQuoteMutualAccess（关系变化）。
+    private static var quoteMutualAccessBuckets: [String: Set<String>] = [:]
+    private static func quoteMutualAccessKey(authorId: Int, quoteId: String) -> String {
+        "\(authorId):\(quoteId)"
+    }
+
+    /// 读：当前账号桶里该（作者，引用）是否已验证互关。
+    static func hasQuoteMutualAccess(authorId: Int, quoteId: String) -> Bool {
+        quoteMutualAccessBuckets[currentQuoteBucket()]?.contains(quoteMutualAccessKey(authorId: authorId, quoteId: quoteId)) == true
+    }
+
+    /// 写：互关回包确认后记下，供重配时直接落全文。
+    static func markQuoteMutualAccess(authorId: Int, quoteId: String) {
+        quoteMutualAccessBuckets[currentQuoteBucket(), default: []].insert(quoteMutualAccessKey(authorId: authorId, quoteId: quoteId))
+    }
+
+    /// 关系变化失效：取关/拉黑/关注变化时清掉当前桶里该作者的全部验证标记；
+    /// authorId 为 nil 时清当前桶全部（保守清理，与 quoteCache 同口径）。
+    static func invalidateQuoteMutualAccess(forAuthorId authorId: Int? = nil) {
+        let bucket = currentQuoteBucket()
+        guard var marks = quoteMutualAccessBuckets[bucket] else { return }
+        if let authorId = authorId {
+            let prefix = "\(authorId):"
+            marks = marks.filter { !$0.hasPrefix(prefix) }
+        } else {
+            marks.removeAll()
+        }
+        quoteMutualAccessBuckets[bucket] = marks
+    }
+
+    /// 被引篇可见性失效：删/转非公开时清掉该 quoteId 在全部桶里的验证标记。
+    static func invalidateQuoteMutualAccess(forQuoteId quoteId: String) {
+        guard !quoteId.isEmpty else { return }
+        let suffix = ":\(quoteId)"
+        for bucket in quoteMutualAccessBuckets.keys {
+            // Set 没有 removeAll(where:)（只有无参版），用 filter 重建集合。
+            if var marks = quoteMutualAccessBuckets[bucket] {
+                marks = marks.filter { !$0.hasSuffix(suffix) }
+                quoteMutualAccessBuckets[bucket] = marks
+            }
+        }
+    }
+
+    private var currentEntry: Entry?
+    /// 就地同步用条目 id（首页 currentEntryIdValue 与个人主页 cellEntryId 合并为一处；
+    /// 个人主页控制器以 cellEntryId 读取，故本属性为 internal，不再是原同文件 fileprivate）。
+    var cellEntryId: String?
+    private var currentImageKeys: [String] = []
+    /// 内联 GIF 覆盖层（正文＋标题各一）：按 label 实际排版贴动画 GIF，
+    /// 只播可见的；长按 GIF 弹「添加表情」进我的库。
+    private let bodyGIFOverlay = BearyInlineGIFOverlay()
+    private let titleGIFOverlay = BearyInlineGIFOverlay()
+    private var isExpanded = false
+    /// 快连点代次（首页模式，2026-10-29 及时性口径）：点按不再锁按钮丢点按，
+    /// 每次点按代次 +1 并立即按本次点按态渲染；在途回包代次落后于最新代次时
+    /// 直接丢弃，不得覆盖更新的点按态；个人主页模式由控制器持代次，cell 不用。
+    private var likeSeq = 0
+    private var likeConfirmedSeq = 0
+    private var bookmarkSeq = 0
+    private var bookmarkConfirmedSeq = 0
+    /// 最后服务端确认态（首页模式）：configure 与服务端同步（syncInteraction）
+    /// 时刷新；最新请求失败时回滚到这里，不回滚到中间态。
+    private var confirmedLiked = false
+    private var confirmedLikeCount = 0
+    private var confirmedBookmarked = false
+    /// 跟手批：按下已给过先行反馈（轻震/预取消赞），抬起确认时不再重播。
+    private var likePressPreviewActive = false
+    /// 点赞钮显式宽约束：见 updateLikeButton / applyLikeButtonState 的宽度算法。
+    private var likeButtonWidthConstraint: NSLayoutConstraint?
+    /// 折叠溢出判定缓存（首页模式 nil = 未测）：300 字以上且实测超 6 行才溢出。
+    private var foldOverflow: Bool?
+    /// 80 包 B12：折叠实测缓存（entryId + 宽度 + 字号 16 + 字号类别 + 字数 + 文本哈希），
+    /// 跨复用命中，文本/宽度/字号类别变化即换键（审计第 27 项：字号档变了实测
+    /// 行数会变，旧档结论不得复用）；超 200 条清库防无界增长。
+    private var foldOverflowCache: [String: Bool] = [:]
+    /// 回应行当前快照（按 count 降序；chip 点选按下标取 key；成功后由服务端聚合覆盖）。
+    private var currentEmoteList: [EmoteCount] = []
+    /// 个人主页模式 chip key 快照（与 currentEmoteList 同序，点选按下标取 key）。
+    private var chipKeys: [String] = []
+    /// 80 包 B4-1：回应 chip 池——chip 容器留池复用，只在 key 变化时换播放器。
+    /// 审计第 7 项（收窄后修）：池不再按位置下标取 chip，改按表情 key 取 chip。
+    /// 旧按位复用在 count 降序变化时，会把原槽位 chip 的播放器换成另一只熊；
+    /// 按 key 复用后，排序变化只是同一节点换位，计数只改文字，不重建播放器。
+    private var emoteChipPoolByKey: [String: BearyEmoteChipView] = [:]
+    private var isEmoteBusy = false
+    /// 回应先行反馈在途态（首页模式，点赞/收藏同款口径）：点选后 chip 行立即按
+    /// 先行值重绘、API 在后台跑，成功对齐服务端值、失败回滚。旧 E3-3 pending
+    /// 半透明视觉随先行反馈废止（先行 chip 全量显示，不再 0.6 置灰）。
+    private var emoteFlightKey: String?
+    private var emoteFlightAdded = false
+    private var emoteFlightOriginal: [EmoteCount]?
+    private var emoteFlightServerEmotes: [EmoteCount]?
+    private var emoteFlightFailed = false
+    private var emoteFlightUnauthorized = false
+    private var emoteFlightAPIDone = false
+    /// 摘下在途：退场动画播完前回包到达时先记结果、不抢动画中的 chip。
+    private var emoteFlightRemovalStaged = false
+    /// 表情 sheet 选中锁（首页模式）：选定后 140ms 内再选直接丢弃（网页 emotePickLock 同口径）。
+    private var emotePickLocked = false
+    /// 引用卡点按态：gone/locked 不动作；加载失败点按重试；其余一律经容器先校验再放行。
+    private var quoteTapId: String?
+    private var quoteTapGoneOrLocked = false
+    private var quoteTapLoadFailed = false
+    /// 112：本卡当前正在等回包的 quoteId（发起卡与等待中的同 quoteId 卡同置）。
+    /// 回包到达时只补刷 quoteAwaitingId == 该 quoteId 的可见卡，已落卡/已失败的卡不重配；
+    /// 复用与下一次 configureQuoteFeed 入口处清零，防等待标记串位到新篇。
+    private var quoteAwaitingId: String?
+    private var emoteRowHeightConstraint: NSLayoutConstraint?
+    /// 109：个人页首卡顶留白标志（仅 .profile 模式、表格第 0 行由容器在
+    /// configure 前置 true）。tab 跟移 transform 最大下移 16pt（见
+    /// BearyProfileViewController.applyProfileBelowShift：墙→标签布局间隙 16
+    /// 即封顶值），而首卡内容顶原为 cell 顶 +14、限时虚线框顶为 +6——
+    /// tab 视觉底边 = header 底 −2 +16 = 首卡顶 +14，恰好压住虚线框顶边、
+    /// 贴住内容顶；第二张卡以下不受影响（tab 只压首卡区）。
+    /// 首卡时右列顶 14→30、虚线框顶 6→22：tab 底边到框顶留 8pt、到内容顶
+    /// 留 16pt。不改 tab 跟移行为本身，只给首卡加留白。
+    /// 110 修正（109 #277 的漏项）：首卡留白只动了右列与框顶，头像顶
+    /// 约束仍是 build 里写死的 +14——相对右列（30）头像高出 16pt、相对
+    /// 框顶（22）高出 8pt，限时首卡头像上半部穿出虚线框、框顶圆角弧线
+    /// 从头像左上切过，看起来像头像“上移了”。实测头像锚点并未被连带
+    /// 抬高（恒为 contentView.top +14，不锚右列/框顶），错的是留白没跟
+    /// 上头像；修法以头像归位为准：首卡头像顶同右列取 30（与作者行顶
+    /// 对齐），框顶仍 22（框完整包住头像，上下各留 8pt），不用框去迁就
+    /// 错位头像；非首卡与首页/时间线一字不动。
+    var profileFirstRow = false
+    /// 个人页“更多日记”行上方：本卡为日记 tab 最后一篇且后接“更多日记”行时，
+    /// 卡片底线整段塌掉（高 1 → 0 并隐藏，不留空占位）。#360 删的是“更多日记”
+    /// 行自带的顶线，本卡底线是另一条（同为 1pt、BearyColors.line、全宽、
+    /// 贴 cell 底），故 #360 后截图里仍可见一条粗线。仅个人页容器在
+    /// configure 前置 true；其余行、首页模式一律不动；复用时复位。
+    var suppressBottomSeparator = false
+    private var separatorHeightConstraint: NSLayoutConstraint?
+    private var headerStackTopConstraint: NSLayoutConstraint?
+    private var avatarTopConstraint: NSLayoutConstraint?
+    /// 作者行顶对齐约束：titleStack.top == avatarContainer.top（用户名顶部与头像顶部平行）。
+    /// 只在 pinRow 与 recipientRow 都藏时激活（见 updateDiaryStackSpacing）；
+    /// 有行在作者行之上时停用、改走头行顶约束。
+    private var authorRowTopConstraint: NSLayoutConstraint?
+    /// 置顶行／@ 行零高约束：对应行藏时用 required 把它压到 0 高（只在对应行藏时激活，见 updateDiaryStackSpacing）。
+    /// 132 真机实测（详情同款）：隐藏行仍占约 12pt 高，栈内链把作者行往下顶，#1443 的
+    /// 钉顶约束被栈内部约束顶掉；零高约束钉死它。
+    private var pinRowZeroHeightConstraint: NSLayoutConstraint?
+    private var recipientRowZeroHeightConstraint: NSLayoutConstraint?
+    /// 头行右缩进恒 −16；⋯ 留位走标题行末 titleMoreSpacer，不再按本人／他人改右缩进。
+    private var headerStackTrailingConstraint: NSLayoutConstraint?
+    /// 正文栈顶：头行底 + 6（紧贴用户名下方，取规范标题→正文档 6）；
+    /// 头像底约束保留但停用（见 updateDiaryStackSpacing：#1184 后正文栈左缘在名字列、
+    /// 头像列下方无文字，头像底不再是下限）；两条 required ≥ 约束定下限，
+    /// 一条 999 的 = 约束把栈顶拉回头行底 + 6。
+    private var bodyStackTopFromAvatarConstraint: NSLayoutConstraint?
+    private var bodyStackTopFromHeaderConstraint: NSLayoutConstraint?
+    private var bodyStackTopPinConstraint: NSLayoutConstraint?
+    /// L21（91 包，个人主页模式）：本卡正文是否超过 300 字（折叠按钮是否适用），
+    /// configure 时记下，供 setFoldDisplay 就地切换显示用，不再每次重算。
+    private var foldApplies = false
+    /// 就地同步用已显示态（个人主页模式；configure 写入、syncInteraction 维护）：
+    /// 点赞数、收藏态、回应行显示签名，供判等与失败复原用，不另建模型副本。
+    private var cellLikedByMe = false
+    private var cellLikeCount = 0
+    private var cellBookmarkedByMe = false
+    /// 个人页控制器快连点时读取可见行最新点按态（不依赖 configure 时捕获的旧 entry；
+    /// cellLikedByMe/cellLikeCount 由就地同步维护，恒等于最后一次点按态）。
+    var profileLikeState: (liked: Bool, count: Int) { (cellLikedByMe, cellLikeCount) }
+    var profileBookmarkedState: Bool { cellBookmarkedByMe }
+    private var cellEmoteSignature = ""
+    /// 回应行签名守卫有效标记：仅 renderEmotes 完成一次拆建后才置真，
+    /// prepareForReuse 时清掉。没有它时，复用后首次渲染空列表会因
+    /// 签名同为空串而误判“无变化”跳过拆建、旧篇 chip 残留。
+    private var cellEmoteSignatureValid = false
+    /// 个人主页模式互动禁用态（控制器 busy 集合现算后传入，渲染与同步共用）。
+    private var profileDisabled = false
+    private var authorTapInstalled = false
+
+    // MARK: 左列头像（F4：无图时背后首字母圆透出；合并后两页同款容器 + 重试钮）
+
+    private let avatarContainer: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.backgroundColor = BearyColors.line
+        v.layer.cornerRadius = 20
+        v.clipsToBounds = true
+        return v
+    }()
+
+    private let avatarInitialLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = UIFont.boldSystemFont(ofSize: 16)
+        lb.textColor = BearyColors.gray
+        lb.textAlignment = .center
+        return lb
+    }()
+
+    private let avatarImageView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.contentMode = .scaleAspectFill
+        v.clipsToBounds = true
+        v.layer.cornerRadius = 20
+        v.backgroundColor = BearyColors.alpha(BearyColors.line, 0)
+        return v
+    }()
+
+    /// 头像失败重试钮（清单第 13 项）：放 avatarContainer 内（avatarImageView 的兄弟层，
+    /// 不拦截作者点按手势；隐藏时不占交互），失败时亮、点按重载头像。
+    private lazy var avatarRetryButton: BearyFeedRetryButton = {
+        return bearyFeedRetryButton(target: self, action: #selector(feedRetryTapped(_:)))
+    }()
+
+    // MARK: 头行
+
+    // 112 视觉扫查：@ 行图标用 icon_at（编辑器/草稿箱/消息页 @ 同款），不用 icon_mail 信封。
+    private let recipientIconView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.image = BearyFeedIconCache.image(named: "icon_at", pointSize: 13)
+        v.tintColor = BearyColors.ink
+        v.contentMode = .scaleAspectFit
+        return v
+    }()
+
+    private let recipientLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.textColor = BearyColors.ink
+        lb.numberOfLines = 1
+        return lb
+    }()
+
+    private lazy var recipientRow: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [recipientIconView, recipientLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = self.cardMode == .feed ? 5 : 4
+        st.alignment = .center
+        return st
+    }()
+
+    /// 批 E 卡片位置行：官方 icon_location 13 灰 + 位置文案；公开篇作者本人
+    /// 也只看区级（与他人视角一致），不再另附提示行。无位置、或他人视角
+    /// 下无区级、或公开篇无区级时整组隐藏，不留空行。
+    private let locationIconView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.image = BearyLocationIcon.image(pointSize: 13)
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        return v
+    }()
+
+    private let locationLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        lb.lineBreakMode = .byTruncatingTail
+        return lb
+    }()
+
+    /// 地址与天气之间的间隔（宽 4，与栈间距 4 合计 12pt；无地址时与地址组
+    /// 同藏，天气顶到左边缘；固定宽，不被栈拉伸）。
+    private let locationWeatherSpacer: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        return v
+    }()
+
+    /// 行尾吸余 spacer：满宽行富余宽度全由它吸掉（横向抱紧／抗压均为 1），
+    /// 天气组贴在地址右侧、不被顶到右边缘；无地址时它仍在行尾，天气顶左。
+    /// 不接手势，不挡卡片点按。
+    private let locationTrailingSpacer: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isUserInteractionEnabled = false
+        v.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
+        v.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
+        return v
+    }()
+
+    /// 底行（左下角、正文区下面）：地址在左、天气组在地址右侧；无地址时
+    /// 地址组与间隔同藏，天气组顶到左边缘；地址与天气全无时整行由
+    /// updateBottomRowVisibility 藏起、不占位。行尾 locationTrailingSpacer
+    /// 吸掉富余宽度，天气组贴地址、不顶右缘。
+    private lazy var locationLineRow: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [locationIconView, locationLabel, locationWeatherSpacer, weatherGroup, locationTrailingSpacer])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 4
+        st.alignment = .center
+        return st
+    }()
+
+    private lazy var locationStack: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [locationLineRow])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .vertical
+        st.spacing = 4
+        st.isHidden = true
+        return st
+    }()
+
+    private let nameLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.cardTitleFont()
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.ink
+        lb.numberOfLines = 1
+        return lb
+    }()
+
+    private let crownView: BearyCrownView = {
+        let v = BearyCrownView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        return v
+    }()
+
+    /// 皇冠容器：卡片/详情作者行是 .firstBaseline 栈，纯 UIView 的基线就是底边，
+    /// 皇冠直接进栈时底边钉在名字基线上，中心比名字大写字母中心高约
+    /// (19 − capHeight)/2 ≈ 3.6pt，即肉眼可见的“偏上”。容器与名字等高、
+    /// 底边钉基线，皇冠在容器内居中后中心即落在 cap 中心附近（SF 度量下
+    /// label 高度中心与 cap 中心差 <0.3pt），且等高约束随动态字号自动跟随。
+    /// 隐藏时容器与皇冠同藏，不留 19pt 空位。
+    private let crownWrapView: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        return v
+    }()
+
+    private let timeLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        return lb
+    }()
+
+    private let weatherImageView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        v.isHidden = true
+        return v
+    }()
+
+    /// 天气图标的 15×15 盒：图标在盒内居中；盒与气温标签同在左下角天气行。
+    /// （原在作者行 timeLabel 旁做基线对齐，2026-11-10 移入正文区下面的天气行，
+    /// 盒改为固定 15 高，不再与 timeLabel 等高。）
+    private let weatherWrapLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.isHidden = true
+        return lb
+    }()
+
+    /// 卡片作者行气温（跟天气图标走同一处：有后端 temperature_c 才显，无值不留空位）。
+    private let weatherTempLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        lb.isHidden = true
+        lb.setContentHuggingPriority(.required, for: .horizontal)
+        lb.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return lb
+    }()
+
+    /// 卡片中文天气名（BearyText.weatherNames：晴／多云／阴……；无 key 或查不到
+    /// 映射时隐藏、不留空位，与气温同款 13pt 动态字号灰字）。
+    private let weatherNameLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        lb.isHidden = true
+        lb.setContentHuggingPriority(.required, for: .horizontal)
+        lb.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return lb
+    }()
+
+    /// 天气组（图标 15 + 中文名 + 气温，间距 6，与旧天气行同款；并进地址行后
+    /// 仍是独立一组，三个子视图各自显隐、全藏时整组不占位）。
+    private lazy var weatherGroup: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [weatherWrapLabel, weatherNameLabel, weatherTempLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 6
+        st.alignment = .center
+        return st
+    }()
+
+    private var moodEmoteView: BearyEmoteView?
+    /// E3：落点行天气 Lottie 覆盖层（仅 gotoEntry 落点行创建；其他行恒为 nil，
+    /// 天气标只显示底层 wx 静态图）。停播时摘层即回到静态图，不改静态图本身。
+    private var weatherEmoteView: BearyEmoteView?
+
+    private let moodLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        return lb
+    }()
+
+    private lazy var moodStack: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [moodLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = self.cardMode == .feed ? 3 : 4
+        st.alignment = .center
+        st.isHidden = true
+        return st
+    }()
+
+    private lazy var titleStack: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [nameLabel, crownWrapView, titleSpacerLabel, timeLabel, moodStack])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        // 姓名→皇冠间距 6（2026-11-05 ChatGPT 间距跟进；徽章已下线摘掉，
+        // 皇冠直接贴名字；整行统一间距，名字→皇冠、皇冠→时间等同值）。
+        st.spacing = 6
+        // 标题行对齐（Li 2026-10-27 定：两页统一按文字基线对齐）：feed 与
+        // profile 均为 .firstBaseline（网页口径 display:flex;align-items:baseline，
+        // 16.5 名与 14 时间、天气、心情按基线对齐）。
+        st.alignment = .firstBaseline
+        st.distribution = .fill
+        return st
+    }()
+
+    /// 标题行弹性垫片：横向 hugging/compression 均为最低（1），独吞标题行全部
+    /// 剩余宽度，使徽章/皇冠紧贴名字、日期留在右缘；空间不足时垫片先缩到 0，
+    /// 再由名字（defaultLow）截断。空 UILabel 自带基线，不破坏 firstBaseline 对齐。
+    private let titleSpacerLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        return lb
+    }()
+
+    /// R4 App：日记标题行（非作者行 titleStack）。16.5pt 粗体，走
+    /// BearyDynamicType.cardTitleFont()（scaledFont）+ adjustsFontForContentSizeCategory；
+    /// 两行截断（小屏及大字号下单行易截断，放宽至 2 行；仍截尾，不另发明文案）；空标题时
+    /// isHidden，stack 不为其留高度、不留空行（见 updateEntryTitle）。
+    private let entryTitleLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.cardTitleFont()
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.ink
+        lb.numberOfLines = 2
+        lb.lineBreakMode = .byTruncatingTail
+        lb.isHidden = true
+        return lb
+    }()
+
+    private let contentLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.diaryBodyFont()
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.ink
+        lb.numberOfLines = 0
+        // P3-3：长串断行——超长无空格 token 按字符断行，不溢出；字号行高不动。
+        lb.lineBreakMode = .byCharWrapping
+        return lb
+    }()
+
+    private lazy var foldButton: UIButton = {
+        let btn = BearyHit44Button(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        btn.titleLabel?.adjustsFontForContentSizeCategory = true
+        btn.setTitleColor(BearyColors.gray, for: .normal)
+        btn.tintColor = BearyColors.gray
+        btn.setImage(BearyFeedIconCache.image(named: "icon_chevron_down", pointSize: 14), for: .normal)
+        btn.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 0)
+        btn.contentHorizontalAlignment = .left
+        // 首页口径带内边距（4/2/4/2），个人主页口径无内边距，各保各的。
+        if self.cardMode == .feed {
+            btn.contentEdgeInsets = UIEdgeInsets(top: 4, left: 2, bottom: 4, right: 2)
+        }
+        btn.isHidden = true
+        btn.addTarget(self, action: #selector(foldButtonTapped), for: .touchUpInside)
+        btn.bearyAddPressHaptic()
+        return btn
+    }()
+
+    /// 九宫格入口：图片数 > 3 时在图片条下方弹起；纯文字 pill（官方手绘包里
+    /// 无现成网格图标，不自绘）。样式走规范 token：surface2 底、墨字、13 semibold、
+    /// 圆角 single 12、高 32。点按走 onNineGridTapped，Plus 门控在容器侧。
+    private lazy var nineGridButton: UIButton = {
+        let btn = BearyHit44Button(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        btn.titleLabel?.adjustsFontForContentSizeCategory = true
+        btn.setTitle("九宫格", for: .normal)
+        btn.setTitleColor(BearyColors.ink, for: .normal)
+        btn.backgroundColor = BearyColors.surface2
+        btn.layer.cornerRadius = 12
+        btn.clipsToBounds = true
+        btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
+        btn.bearyAddPressHaptic()
+        return btn
+    }()
+
+    /// 九宫格按钮容器：左贴内容缘，栈内隐藏时自动压零、不留空位。
+    private lazy var nineGridWrapView: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        v.alpha = 0
+        v.addSubview(nineGridButton)
+        NSLayoutConstraint.activate([
+            nineGridButton.leadingAnchor.constraint(equalTo: v.leadingAnchor),
+            nineGridButton.topAnchor.constraint(equalTo: v.topAnchor),
+            nineGridButton.bottomAnchor.constraint(equalTo: v.bottomAnchor),
+            nineGridButton.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        return v
+    }()
+
+    private let quoteView = BearyQuoteCardView()
+
+    private let imagesScrollView: UIScrollView = {
+        let sv = UIScrollView()
+        sv.translatesAutoresizingMaskIntoConstraints = false
+        sv.showsHorizontalScrollIndicator = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        sv.delaysContentTouches = false
+        sv.isHidden = true
+        return sv
+    }()
+
+    private let imagesStack: UIStackView = {
+        let st = UIStackView()
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 8
+        st.alignment = .fill
+        st.distribution = .fill
+        return st
+    }()
+
+    private lazy var likeButton: UIButton = {
+        let btn = BearyHit44Button(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.titleLabel?.font = BearyDynamicType.tabularDigitsFont(ofSize: 14)
+        btn.titleLabel?.adjustsFontForContentSizeCategory = true
+        btn.contentEdgeInsets = UIEdgeInsets.zero
+        btn.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        btn.addTarget(self, action: #selector(likeButtonTapped), for: .touchUpInside)
+        btn.addTarget(self, action: #selector(iconTouchDown(_:)), for: .touchDown)
+        btn.addTarget(self, action: #selector(iconTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        // 跟手批：按下即预览、抬起在外/滚动取消即复原（API 只在抬起确认时发）。
+        btn.addTarget(self, action: #selector(likePressDown), for: .touchDown)
+        btn.addTarget(self, action: #selector(likePressCancelled), for: [.touchUpOutside, .touchCancel])
+        return btn
+    }()
+
+    private lazy var bookmarkButton: UIButton = {
+        let btn = BearyHit44Button(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.addTarget(self, action: #selector(bookmarkButtonTapped), for: .touchUpInside)
+        // W6：原 iconTouchDown 只缩 .84，改通用按压（缩 .84 + .light），点赞钮不动（已有 likePressDown）。
+        btn.bearyAddPressFeedback()
+        return btn
+    }()
+
+    private lazy var shareButton: UIButton = {
+        let btn = BearyHit44Button(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.setImage(BearyFeedIconCache.image(named: "icon_share", pointSize: 24), for: .normal)
+        btn.tintColor = BearyColors.gray
+        btn.addTarget(self, action: #selector(shareButtonTapped), for: .touchUpInside)
+        // W6：同收藏钮，改通用按压（缩 .84 + .light）。
+        btn.bearyAddPressFeedback()
+        return btn
+    }()
+
+    /// 分享钮隐藏时的槽位占位：非公开卡没有分享钮，栈尾留一个与分享钮同
+    /// 框 24pt 的空位，行尾槽位不随分享显隐变化。收藏改到点赞右边当邻居
+    /// 后不再依赖它定位（见 actionStack）。空白 UIView 默认不拦截触摸、
+    /// 不进无障碍；只占位，不画任何东西。
+    private lazy var shareSlotSpacer: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        v.isAccessibilityElement = false
+        v.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        v.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        return v
+    }()
+
+    // MARK: 回应行（网页 .emote-row 口径：chip + 行末 + 钮，自动换行；两页统一流式）
+
+    private let emoteFlowView: BearyEmoteFlowView = {
+        let v = BearyEmoteFlowView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        return v
+    }()
+
+    /// 首页模式 + 钮：虚线 34 圆圈（原 BearyFeedDashedAddButton，父类已换 Hit44）。
+    private var feedAddButton: BearyDiaryCardDashedAddButton?
+    /// 个人主页模式 + 钮：与首页同款虚线 34 圆圈（原实心 32 圆钮已随本修统一删除）。
+    private var profileAddButton: BearyDiaryCardDashedAddButton?
+
+    /// 2026-10-31 卡片 ⋯ 菜单钮（时间线风格）：官方 icon_more 横向三点 21pt 灰色、
+    /// 28×28 帧（BearyHit44Button 扩后热区仍 44），挂 contentView 右上角、对齐标题行；
+    /// 本人卡与他人公开卡均显（本人：编辑／修改权限／删除；他人：举报），其余藏。
+    /// 标题行末的 titleMoreSpacer（28 宽 + 8 间距）给 ⋯ 留位，头行右缩进恒 −16，
+    /// 操作行不再随本人／他人左移（旧小地球 −52 口径随本批废止）。
+    private lazy var moreButton: UIButton = {
+        let btn = BearyHit44Button(type: .custom)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.setImage(BearyFeedIconCache.image(named: "icon_more", pointSize: 24), for: .normal)
+        btn.tintColor = BearyColors.gray
+        btn.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        btn.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        btn.addTarget(self, action: #selector(moreTapped), for: .touchUpInside)
+        btn.bearyAddPressFeedback()
+        btn.accessibilityLabel = "更多操作"
+        btn.isHidden = true
+        return btn
+    }()
+
+    /// 标题行末 ⋯ 留位垫片：宽 28，与 ⋯（28 框、右沿 −16）之间隔标题行间距 8，
+    /// 标题内容末缘恒为 −52；⋯ 藏时垫片同步藏，标题行恢复满宽。
+    private let titleMoreSpacer: UILabel = {
+        // 空 UILabel 自带基线，不破坏标题行 firstBaseline 对齐（titleSpacerLabel 同款口径）。
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        return lb
+    }()
+
+    private lazy var actionStack: BearyActionStackView = {
+        // 收藏挪到点赞右边当邻居：点赞留左，收藏紧邻其右，分享仍钉右缘。
+        // 顺序 [点赞， 收藏， spacer， 分享， 占位 spacer]；中部 spacer（最低
+        // hugging / 最低抗压）吸掉全部剩余宽度，分享位置一字不动。两模式共用
+        // 同一 actionStack（广场 .feed / 个人页 .profile 均走此栈），改一处
+        // 即全覆盖，无分叉面。
+        // 点赞—收藏间距单独 BearySpace.xxl（24，规范 §3）：栈 spacing 仍 16，
+        // 落在收藏—spacer 与 spacer—分享之间，被 spacer 宽度吸收。24 不是
+        // 16：两钮框均为 24，BearyHit44Button 各向外扩 (44-24)/2 = 10，
+        // 间距 16 时两 44pt 热区重叠 10+10-16 = 4pt；间距 24 时留
+        // 24-10-10 = 4pt 间隙、严格不交。点赞有数时框更宽、外扩更小、间隙
+        // 更大，最坏情况即 0 赞图标-only。视觉尺寸不动：收藏仍 21 视觉、
+        // 24 框，行尾右沿仍钉在右列右缘；分享隐藏时占位 spacer 仍占分享槽位。
+        let actionSpacer = UIView()
+        actionSpacer.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
+        actionSpacer.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
+        let st = BearyActionStackView(arrangedSubviews: [likeButton, bookmarkButton, actionSpacer, shareButton, shareSlotSpacer])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 16
+        st.setCustomSpacing(BearySpace.xxl, after: likeButton)
+        st.alignment = .center
+        return st
+    }()
+
+    /// 游客详情（作者主页展开态）：登录提示条，lazy 只创建一次，默认隐藏，
+    /// 仅由个人主页模式 configure 在游客展开态时显示（见该方法末尾的游客分支；
+    /// Feed 的 configure(with:) 从不碰它）。整行 44pt 可点，点按走 onRequireLogin
+    ///（容器接登录提示 Sheet，本 cell 不建 Sheet）；isGuestMode 由协调员在
+    /// SessionManager 加，只读、不在本文件定义。
+    private lazy var guestLoginPromptButton: UIButton = {
+        let btn = BearyHit44Button(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        btn.setTitle("登录后可点赞、回应、收藏 ›", for: .normal)
+        btn.setTitleColor(BearyColors.gray, for: .normal)
+        btn.setTitleColor(BearyColors.gray, for: .highlighted)
+        btn.adjustsImageWhenHighlighted = false
+        btn.contentHorizontalAlignment = .left
+        btn.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        btn.isHidden = true
+        btn.addTarget(self, action: #selector(guestLoginPromptTapped), for: .touchUpInside)
+        btn.bearyAddPressFeedback()
+        return btn
+    }()
+
+    @objc private func guestLoginPromptTapped() {
+        onRequireLogin?()
+    }
+
+    /// 头行栈（2026-11-05 日记布局统一：头像 + 昵称行独占一行，标题/正文不再侵入）：
+    /// 只放置顶行、写给行、作者行、限时行；左缘贴头像右缘（间距 12），右缩进 16。
+    private lazy var headerStack: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [pinRow, recipientRow, titleStack, ephemeralRow])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .vertical
+        st.alignment = .fill
+        st.distribution = .fill
+        // 两栈共用 spacing 0 + 一张对照表（见 updateDiaryStackSpacing）。
+        st.spacing = 0
+        return st
+    }()
+
+    /// 正文栈（2026-11-05 日记布局统一）：标题、折叠正文、图片条、引用卡、
+    /// 位置行、操作行、游客提示条、回应行一律全宽——左缘与内容左缘齐平（16），
+    /// 不再缩进到昵称位置；顶缘取头像底与头行底较大者 + 间距（见 setupConstraints）。
+    private lazy var bodyStack: BearyPassThroughStackView = {
+        quoteView.translatesAutoresizingMaskIntoConstraints = false
+        let st = BearyPassThroughStackView(arrangedSubviews: [entryTitleLabel, contentLabel, foldButton, imagesScrollView, nineGridWrapView, quoteView, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
+        // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
+        st.passThroughRoot = emoteFlowView
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .vertical
+        st.alignment = .fill
+        st.distribution = .fill
+        // fixall-cell 2-2：两模式共用 spacing 0 + 一张对照表（见 updateDiaryStackSpacing），
+        // 不再靠个人页的基底 spacing 10 补 quote/images/action 三处空缺。
+        st.spacing = 0
+        return st
+    }()
+
+    private let separatorView: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.backgroundColor = BearyColors.line
+        return v
+    }()
+
+    /// 限时倒计时行（头行作者行下方、正文栈标题上方；仅存活期显示，灰字 12pt）。
+    private let ephemeralLabel: UILabel = {
+        let l = UILabel()
+        l.translatesAutoresizingMaskIntoConstraints = false
+        l.font = UIFont.systemFont(ofSize: 12)
+        l.textColor = BearyColors.gray
+        l.isHidden = true
+        return l
+    }()
+
+
+    private lazy var ephemeralRow: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [ephemeralLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 4
+        st.alignment = .center
+        st.isHidden = true
+        return st
+    }()
+
+    /// 置顶标识行（卡片最上方，仅个人页显示）：官方 icon_pin 15（模板图＋橙 tint，
+    /// BearyFeedIconCache 同款缓存口径）＋ 12 semibold 文案；文案色走 deepOrangeText
+    /// （文字前景 token，浅色为深橙 #C2410C、深色为预览橙 #ff9500）；非置顶整组隐藏，不留空行。
+    /// 2026-11-03 Li 再纠正：置顶标识仅限个人页，广场不画（pinRow 按 cardMode 隐藏）。
+    private let pinIconView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.image = BearyFeedIconCache.image(named: "icon_pin", pointSize: 15)
+        v.tintColor = BearyColors.orange
+        v.contentMode = .scaleAspectFit
+        return v
+    }()
+
+    private let pinLabel: UILabel = {
+        let l = UILabel()
+        l.translatesAutoresizingMaskIntoConstraints = false
+        l.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
+        l.textColor = BearyColors.deepOrangeText
+        l.text = "置顶"
+        return l
+    }()
+
+    private lazy var pinRow: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [pinIconView, pinLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 4
+        st.alignment = .center
+        st.isHidden = true
+        return st
+    }()
+
+    /// 限时卡虚线边框（BearyDashedBorderView：1.5pt dashed、line 色、圆角 16；
+    /// 由约束钉在 contentView 上、自身布局时按 bounds 重画，不再由 cell 的
+    /// layoutSubviews 按当时 bounds 手工算 path，防行高落定后框高停留在旧矩形）。
+    private let ephemeralBorderView = BearyDashedBorderView()
+    private var ephemeralBorderTopConstraint: NSLayoutConstraint?
+
+    private var imageHeightConstraint: NSLayoutConstraint?
+    private var separatorTopGap: CGFloat {
+        // 底线距正文栈 17（线高 1：16 + 1，正文栈底到 cell 底总距仍 18，行高与篇间节奏不变）。
+        return 17
+    }
+
+    /// 94 包：图片槽位复用——9 只槽位在 init 时一次建好挂进 imagesStack
+    /// （条目图片上限 9 张），configure 只改图/宽/显隐，prepareForReuse
+    /// 只取消在途加载并隐藏，不再每次销毁重建 UIImageView。合并后首页也走
+    /// 槽位（原首页每 configure 新建一批视图）；每槽位带 Feed 口径重试钮
+    /// （个人主页原槽位无重试，合并后补齐，池化保留）。
+    private var imageSlots: [UIImageView] = []
+    private var imageSlotWidthConstraints: [NSLayoutConstraint] = []
+    private var imageSlotRetryButtons: [BearyFeedRetryButton] = []
+    /// 实况覆盖层（与槽位一一对应）与每槽长按手势：平时隐藏、静态帧仍是
+    /// 原槽位 UIImageView；实况就绪后覆盖层显现，长按播实况，点按进灯箱
+    /// 不动（长按后的抬手点按凭覆盖层的 suppressTapUntil 压住一次）。
+    private var imageSlotLiveViews: [BearyLivePhotoView] = []
+    private var imageSlotLivePresses: [UILongPressGestureRecognizer?] = []
+
+    /// 图片条捏合拼图：双指捏合把间距 8 → 0、圆角 12 → 0（图贴在一起且无圆角），张开恢复 8 / 12。
+    /// 只动 imagesStack.spacing 与槽位圆角，不动槽宽/高，不缩放单张图；灯箱自带的
+    /// 单图捏合缩放不在此改动范围。滚动视图本身未开 zoom（min/max 均为 1），
+    /// 其内置捏合手势不会抢占本手势。
+    private var stripPinchStartProgress: CGFloat = 0
+    private var stripPinchJoined = false
+
+    private func installImageStripPinch() {
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(imageStripPinched(_:)))
+        pinch.delegate = self
+        imagesScrollView.addGestureRecognizer(pinch)
+    }
+
+    /// 捏合跟手圆角：progress 0 → 圆角 12，progress 1（贴合）→ 圆角 0，与间距同一进度走，
+    /// 不在松手瞬间跳变；只改槽位图层圆角，不动其他圆角。
+    private func applyImageStripCornerRadius(progress: CGFloat) {
+        let radius = 12 * (1 - max(0, min(1, progress)))
+        for slot in imageSlots { slot.layer.cornerRadius = radius }
+    }
+
+    @objc private func imageStripPinched(_ gesture: UIPinchGestureRecognizer) {
+        // 单图时无间距可收，不接管手势（也不禁滚动）。
+        let visibleCount = imageSlots.filter { !$0.isHidden }.count
+        guard visibleCount >= 2 else { return }
+        switch gesture.state {
+        case .began:
+            // 以当前实际间距起算，防上一轮贴合动画中途被新一轮捏合打断时跳变。
+            stripPinchStartProgress = max(0, min(1, 1 - imagesStack.spacing / 8))
+            imagesScrollView.isScrollEnabled = false
+        case .changed:
+            // scale < 1 为捏合（progress 增大、间距收小），scale > 1 为张开（反向）；
+            // 从贴合态起手张开同样走这条式子，不会出现“贴合后张开无效”。
+            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
+            imagesStack.spacing = 8 * (1 - progress)
+            applyImageStripCornerRadius(progress: progress)
+            // 审计动效组：跟手过程只改值 + setNeedsLayout，不逐帧强制 layout；
+            // 下一 runloop 布局即下一帧见效，跟手感不变；松手后的落点动画
+            // （.ended 的 UIView.animate 内）仍用 layoutIfNeeded 做结算。
+            imagesScrollView.setNeedsLayout()
+        case .ended, .cancelled, .failed:
+            imagesScrollView.isScrollEnabled = true
+            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
+            let wasJoined = stripPinchJoined
+            stripPinchJoined = progress >= 0.5
+            // 拼合/张开落点到位时各轻震一次：只在 .ended 且落点状态真的变化时震，
+            // 跟手过程、取消/失败、原地未变都不震；震动走 BearyHaptics 口径，
+            // 不拿减动效门控（两者不是一回事，见 BearyHaptics 头注释）。
+            if gesture.state == .ended && wasJoined != stripPinchJoined {
+                BearyHaptics.press()
+            }
+            // 捏合拼图落点走拖拽收尾统一弹簧 0.26s／damping 0.7（落点动画
+            // 属性是间距／圆角、非缩放量，捏合速度无直接映射，初速度取 0）；减动效直接落终值，不播弹簧。
+            if UIAccessibility.isReduceMotionEnabled {
+                self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
+                self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
+                self.imagesScrollView.layoutIfNeeded()
+            } else {
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+                    self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
+                    self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
+                    self.imagesScrollView.layoutIfNeeded()
+                })
+            }
+        default:
+            break
+        }
+    }
+
+    private func resetImageStripPinch() {
+        stripPinchJoined = false
+        imagesStack.spacing = 8
+        applyImageStripCornerRadius(progress: 0)
+        imagesScrollView.isScrollEnabled = true
+    }
+
+    /// 九宫格入口隐藏动画代次：收起动画完成时若已有新一轮展开，须以新态为准、不再藏。
+    private var nineGridHideToken = 0
+
+    /// 九宫格入口显隐：图片数 > 3 才出现；状态真变时才动（复用滚动不闪）。
+    /// 出现走规范 §6 局部状态 0.18s 淡入，减动效直设；收起先淡出、完成再藏。
+    private func updateNineGridButton(count: Int) {
+        let shouldShow = count > 3
+        guard nineGridWrapView.isHidden != shouldShow else { return }
+        nineGridHideToken += 1
+        let animated = window != nil && !UIAccessibility.isReduceMotionEnabled
+        if shouldShow {
+            nineGridWrapView.isHidden = false
+            nineGridWrapView.alpha = animated ? 0 : 1
+            if animated {
+                UIView.animate(withDuration: 0.18) {
+                    self.nineGridWrapView.alpha = 1
+                }
+            }
+        } else {
+            if animated {
+                let token = nineGridHideToken
+                UIView.animate(withDuration: 0.18, animations: {
+                    self.nineGridWrapView.alpha = 0
+                }, completion: { _ in
+                    guard token == self.nineGridHideToken else { return }
+                    self.nineGridWrapView.isHidden = true
+                    self.updateDiaryStackSpacing()
+                })
+            } else {
+                nineGridWrapView.isHidden = true
+                nineGridWrapView.alpha = 0
+            }
+        }
+        updateDiaryStackSpacing()
+    }
+
+    @objc private func nineGridButtonTapped() {
+        onNineGridTapped?()
+    }
+
+    private func makeImageSlots() {
+        guard imageSlots.isEmpty else { return }
+        for index in 0..<9 {
+            let slot = UIImageView()
+            slot.translatesAutoresizingMaskIntoConstraints = false
+            // 槽底色各保各的：首页 line、个人主页 surface2。
+            slot.backgroundColor = cardMode == .feed ? BearyColors.line : BearyColors.surface2
+            slot.contentMode = .scaleAspectFill
+            slot.clipsToBounds = true
+            slot.layer.cornerRadius = 12
+            slot.isUserInteractionEnabled = true
+            slot.tag = index
+            slot.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(imageTapped(_:))))
+            slot.isHidden = true
+            let liveView = BearyLivePhotoView(contentMode: .aspectFill)
+            slot.addSubview(liveView)
+            NSLayoutConstraint.activate([
+                liveView.topAnchor.constraint(equalTo: slot.topAnchor),
+                liveView.bottomAnchor.constraint(equalTo: slot.bottomAnchor),
+                liveView.leadingAnchor.constraint(equalTo: slot.leadingAnchor),
+                liveView.trailingAnchor.constraint(equalTo: slot.trailingAnchor),
+            ])
+            imageSlotLiveViews.append(liveView)
+            imageSlotLivePresses.append(nil)
+            imagesStack.addArrangedSubview(slot)
+            let widthConstraint = slot.widthAnchor.constraint(equalToConstant: 280)
+            // 隐藏槽位时 UIStackView 的 UISV-hiding 约束需压过槽位宽度：
+            // 宽约束降到 999（仍主导宽度、捏合改 constant 不受影响），
+            // 高度约束不动。
+            widthConstraint.priority = UILayoutPriority(999)
+            imageSlotWidthConstraints.append(widthConstraint)
+            NSLayoutConstraint.activate([
+                widthConstraint,
+                slot.heightAnchor.constraint(equalToConstant: 216),
+            ])
+            let retry = bearyFeedRetryButton(target: self, action: #selector(feedRetryTapped(_:)))
+            slot.addSubview(retry)
+            NSLayoutConstraint.activate([
+                retry.centerXAnchor.constraint(equalTo: slot.centerXAnchor),
+                retry.centerYAnchor.constraint(equalTo: slot.centerYAnchor),
+                retry.widthAnchor.constraint(equalToConstant: 28),
+                retry.heightAnchor.constraint(equalToConstant: 28),
+            ])
+            imageSlotRetryButtons.append(retry)
+            imageSlots.append(slot)
+        }
+        installImageStripPinch()
+    }
+
+    init(style: UITableViewCell.CellStyle, reuseIdentifier: String?, mode: BearyDiaryCardMode) {
+        self.cardMode = mode
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        self.build()
+    }
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        // 仅作兜底（两页 VC 一律走带 mode 的创建，不依赖本初始化）；
+        // 默认 feed，与原 BearyFeedCell 的默认行为一致。
+        self.cardMode = .feed
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        self.build()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func build() {
+        selectionStyle = .none
+        backgroundColor = BearyColors.bg
+        contentView.backgroundColor = BearyColors.bg
+        // @ 行字号各保各的：首页 12 粗体、个人主页 13 常规；文案由 configure 按 mentionedName 写“@名”。
+        // 113：底数不动，只加 scaledFont + adjusts（#322/#324 时间线 @ 行同款做法）。
+        recipientLabel.font = cardMode == .feed ? BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12)) : BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        recipientLabel.adjustsFontForContentSizeCategory = true
+        recipientLabel.text = nil
+        // 首页皇冠带网页 drop-shadow（0 1px 1px 黑 30%），个人主页无阴影。
+        if cardMode == .feed {
+            crownView.layer.shadowColor = UIColor.black.cgColor
+            crownView.layer.shadowOpacity = 0.30
+            crownView.layer.shadowOffset = CGSize(width: 0, height: 1)
+            crownView.layer.shadowRadius = 1
+        }
+        // 引用卡点按分流：首页 gone/locked 不动作、加载失败重试、公开/未公开分流；
+        // 个人主页 gone 卡也透传（allowGoneTap），控制器弹提示。
+        quoteView.allowGoneTap = (cardMode == .profile)
+        quoteView.onTapped = { [weak self] in self?.quoteViewTapped() }
+        quoteView.onRetryTapped = { [weak self] in self?.retryQuoteFetch() }
+        quoteView.onExpansionChanged = { [weak self] in self?.notifyQuoteExpanded() }
+        avatarContainer.addSubview(avatarInitialLabel)
+        avatarContainer.addSubview(avatarImageView)
+        avatarContainer.addSubview(avatarRetryButton)
+        contentView.addSubview(avatarContainer)
+        contentView.addSubview(headerStack)
+        contentView.addSubview(bodyStack)
+        imagesScrollView.addSubview(imagesStack)
+        contentView.addSubview(separatorView)
+        // 限时虚线边框视图（插最底层、不挡内容；平时隐藏，不影响普通卡）。
+        ephemeralBorderView.translatesAutoresizingMaskIntoConstraints = false
+        ephemeralBorderView.isHidden = true
+        contentView.insertSubview(ephemeralBorderView, at: 0)
+        let ephemeralTop = ephemeralBorderView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6)
+        ephemeralBorderTopConstraint = ephemeralTop
+        NSLayoutConstraint.activate([
+            ephemeralTop,
+            ephemeralBorderView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            ephemeralBorderView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            ephemeralBorderView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6),
+        ])
+        // 2026-10-31：长按上下文菜单已归并进右上角 ⋯ 菜单（时间线风格），本行不再挂
+        // UIContextMenuInteraction；长按不再弹菜单，管理类操作一律走 ⋯。
+        // ⋯ 挂 contentView 右上角（对齐标题行），标题行末 titleMoreSpacer 给它留位。
+        contentView.addSubview(moreButton)
+        titleStack.addArrangedSubview(titleMoreSpacer)
+        NSLayoutConstraint.activate([
+            moreButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            moreButton.centerYAnchor.constraint(equalTo: titleStack.centerYAnchor),
+        ])
+        makeImageSlots()
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        titleSpacerLabel.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
+        titleSpacerLabel.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
+        crownView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        crownWrapView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 皇冠在等高容器内居中（容器底边钉基线，中心即 cap 中心）。
+        crownWrapView.addSubview(crownView)
+        // 置顶图钉固定 15×15（两模式同款，不靠 stack 固有尺寸浮动；可隐藏行内
+        // 固定尺寸用 999，免与 stack 的零尺寸约束冲突出警告——同 recipientIconView
+        // 首页分支口径，此前漏成 required，顶着 feed 下恒藏 pinRow 的压扁）。
+        let pinIconWidth = pinIconView.widthAnchor.constraint(equalToConstant: 15)
+        pinIconWidth.priority = UILayoutPriority(999)
+        let pinIconHeight = pinIconView.heightAnchor.constraint(equalToConstant: 15)
+        pinIconHeight.priority = UILayoutPriority(999)
+        NSLayoutConstraint.activate([pinIconWidth, pinIconHeight])
+        NSLayoutConstraint.activate([
+            crownView.centerXAnchor.constraint(equalTo: crownWrapView.centerXAnchor),
+            crownView.centerYAnchor.constraint(equalTo: crownWrapView.centerYAnchor),
+        ])
+        // 天气图标在包内居中（15×15 盒固定，图标在盒内居中；盒不再与
+        // timeLabel 等高，天气行高由气温标签字号定）。
+        weatherWrapLabel.addSubview(weatherImageView)
+        NSLayoutConstraint.activate([
+            weatherImageView.centerXAnchor.constraint(equalTo: weatherWrapLabel.centerXAnchor),
+            weatherImageView.centerYAnchor.constraint(equalTo: weatherWrapLabel.centerYAnchor),
+            weatherImageView.widthAnchor.constraint(equalToConstant: 15),
+            weatherImageView.heightAnchor.constraint(equalToConstant: 15),
+        ])
+        weatherWrapLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        moodStack.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let imageHeight = imagesScrollView.heightAnchor.constraint(equalToConstant: 0)
+        imageHeightConstraint = imageHeight
+        let likeWidth = likeButton.widthAnchor.constraint(equalToConstant: 24)
+        likeWidth.isActive = true
+        likeButtonWidthConstraint = likeWidth
+        let emoteHeight = emoteFlowView.heightAnchor.constraint(equalToConstant: 0)
+        emoteRowHeightConstraint = emoteHeight
+        let headerTop = headerStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16)
+        headerStackTopConstraint = headerTop
+        // 110：头像顶约束显式持有，首卡与头行同值跟移（见 updateDiaryStackSpacing）。
+        let avatarTop = avatarContainer.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16)
+        avatarTopConstraint = avatarTop
+        // 作者行顶对齐约束：初始不激活，只在两行都藏时启用（见 updateDiaryStackSpacing）。
+        // 建在此处：titleStack 与 avatarContainer 此时已同属 contentView 层级。
+        authorRowTopConstraint = titleStack.topAnchor.constraint(equalTo: avatarContainer.topAnchor)
+        // 两行零高约束：初始不激活，只在对应行藏时启用（见 updateDiaryStackSpacing）。
+        pinRowZeroHeightConstraint = pinRow.heightAnchor.constraint(equalToConstant: 0)
+        recipientRowZeroHeightConstraint = recipientRow.heightAnchor.constraint(equalToConstant: 0)
+        var extraConstraints: [NSLayoutConstraint] = []
+        if cardMode == .profile {
+            // 个人主页口径：点赞高 22、收藏/分享 21×21（原 required 约束）。
+            extraConstraints.append(likeButton.heightAnchor.constraint(equalToConstant: 24))
+            extraConstraints.append(bookmarkButton.widthAnchor.constraint(equalToConstant: 24))
+            extraConstraints.append(bookmarkButton.heightAnchor.constraint(equalToConstant: 24))
+            extraConstraints.append(shareButton.widthAnchor.constraint(equalToConstant: 24))
+            extraConstraints.append(shareButton.heightAnchor.constraint(equalToConstant: 24))
+            extraConstraints.append(recipientIconView.widthAnchor.constraint(equalToConstant: 13))
+            extraConstraints.append(recipientIconView.heightAnchor.constraint(equalToConstant: 13))
+            extraConstraints.append(crownView.widthAnchor.constraint(equalToConstant: 19))
+            extraConstraints.append(crownView.heightAnchor.constraint(equalToConstant: 19))
+            extraConstraints.append(crownWrapView.widthAnchor.constraint(equalToConstant: 19))
+            extraConstraints.append(crownWrapView.heightAnchor.constraint(equalTo: nameLabel.heightAnchor))
+            extraConstraints.append(weatherWrapLabel.widthAnchor.constraint(equalToConstant: 15))
+            extraConstraints.append(weatherWrapLabel.heightAnchor.constraint(equalToConstant: 15))
+        } else {
+            // fixall-cell 8-12：首页收藏/分享与个人页同款 21×21 尺寸约束，
+            // 原 2pt 内边距依赖删除（内边距 + 无约束曾使图标框随内容浮动）。
+            // 标题行内可隐藏子视图的固定尺寸用 999 优先级，避免与 stack 的
+            // 零尺寸约束冲突出警告。
+            extraConstraints.append(bookmarkButton.widthAnchor.constraint(equalToConstant: 24))
+            extraConstraints.append(bookmarkButton.heightAnchor.constraint(equalToConstant: 24))
+            extraConstraints.append(shareButton.widthAnchor.constraint(equalToConstant: 24))
+            extraConstraints.append(shareButton.heightAnchor.constraint(equalToConstant: 24))
+            let recipientIconHeight = recipientIconView.heightAnchor.constraint(equalToConstant: 13)
+            recipientIconHeight.priority = UILayoutPriority(999)
+            let crownWidth = crownView.widthAnchor.constraint(equalToConstant: 19)
+            crownWidth.priority = UILayoutPriority(999)
+            let crownWrapWidth = crownWrapView.widthAnchor.constraint(equalToConstant: 19)
+            crownWrapWidth.priority = UILayoutPriority(999)
+            let crownWrapHeight = crownWrapView.heightAnchor.constraint(equalTo: nameLabel.heightAnchor)
+            crownWrapHeight.priority = UILayoutPriority(999)
+            extraConstraints.append(crownWrapWidth)
+            extraConstraints.append(crownWrapHeight)
+            let weatherWidth = weatherWrapLabel.widthAnchor.constraint(equalToConstant: 15)
+            weatherWidth.priority = UILayoutPriority(999)
+            extraConstraints.append(recipientIconView.widthAnchor.constraint(equalToConstant: 13))
+            extraConstraints.append(recipientIconHeight)
+            extraConstraints.append(crownWidth)
+            extraConstraints.append(crownView.heightAnchor.constraint(equalToConstant: 19))
+            extraConstraints.append(weatherWidth)
+            let weatherWrapHeight = weatherWrapLabel.heightAnchor.constraint(equalToConstant: 15)
+            weatherWrapHeight.priority = UILayoutPriority(999)
+            extraConstraints.append(weatherWrapHeight)
+        }
+        // 批 E 位置行图钉：与详情/时间线同款 13×13。之前没钉尺寸，.fill 行里
+        // 图钉框（hugging 250）比文案（251）先吸满多余宽度，scaleAspectFit 把
+        // 针居中在拉宽的框里，针落列中、地址贴右缘。位置行按篇目隐藏，固定尺寸
+        // 用 999 优先级，免与 stack 的零尺寸约束冲突出警告（同 recipientIconView
+        // 首页分支口径）。
+        let locationIconWidth = locationIconView.widthAnchor.constraint(equalToConstant: 13)
+        locationIconWidth.priority = UILayoutPriority(999)
+        let locationIconHeight = locationIconView.heightAnchor.constraint(equalToConstant: 13)
+        locationIconHeight.priority = UILayoutPriority(999)
+        extraConstraints.append(locationIconWidth)
+        extraConstraints.append(locationIconHeight)
+        // 地址与天气的间隔固定 4 宽（与栈间距合计 12pt）；隐藏时栈自动压零。
+        let locationWeatherSpacerWidth = locationWeatherSpacer.widthAnchor.constraint(equalToConstant: 4)
+        locationWeatherSpacerWidth.priority = UILayoutPriority(999)
+        extraConstraints.append(locationWeatherSpacerWidth)
+        if headerStackTrailingConstraint == nil {
+            headerStackTrailingConstraint = headerStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
+        }
+        // 正文栈顶（2026-11-05 日记布局统一）：取头像底与头行底较大者 + 间距。
+        // 初始间距按无标题 14 取，configure 经 updateDiaryStackSpacing 按标题显隐重定；
+        // 两条 required ≥ 定下限，999 的 = 把栈顶拉回头行底 + 间距（头像更高时该条自动断开）。
+        let bodyTopFromAvatar = bodyStack.topAnchor.constraint(greaterThanOrEqualTo: avatarContainer.bottomAnchor, constant: 14)
+        bodyStackTopFromAvatarConstraint = bodyTopFromAvatar
+        let bodyTopFromHeader = bodyStack.topAnchor.constraint(greaterThanOrEqualTo: headerStack.bottomAnchor, constant: 8)
+        bodyStackTopFromHeaderConstraint = bodyTopFromHeader
+        let bodyTopPin = bodyStack.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 8)
+        bodyTopPin.priority = UILayoutPriority(999)
+        bodyStackTopPinConstraint = bodyTopPin
+        if separatorHeightConstraint == nil {
+            separatorHeightConstraint = separatorView.heightAnchor.constraint(equalToConstant: 1)
+        }
+        NSLayoutConstraint.activate([
+            avatarTop,
+            avatarContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            avatarContainer.widthAnchor.constraint(equalToConstant: 40),
+            avatarContainer.heightAnchor.constraint(equalToConstant: 40),
+            avatarInitialLabel.centerXAnchor.constraint(equalTo: avatarContainer.centerXAnchor),
+            avatarInitialLabel.centerYAnchor.constraint(equalTo: avatarContainer.centerYAnchor),
+            avatarImageView.topAnchor.constraint(equalTo: avatarContainer.topAnchor),
+            avatarImageView.leadingAnchor.constraint(equalTo: avatarContainer.leadingAnchor),
+            avatarImageView.trailingAnchor.constraint(equalTo: avatarContainer.trailingAnchor),
+            avatarImageView.bottomAnchor.constraint(equalTo: avatarContainer.bottomAnchor),
+            avatarRetryButton.centerXAnchor.constraint(equalTo: avatarContainer.centerXAnchor),
+            avatarRetryButton.centerYAnchor.constraint(equalTo: avatarContainer.centerYAnchor),
+            avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
+            avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
+            headerTop,
+            headerStack.leadingAnchor.constraint(equalTo: avatarContainer.trailingAnchor, constant: 12),
+            headerStackTrailingConstraint!,
+            // 2026-11-08 正文栈左缘对齐名字列：旧版取 16（与头像同左缘），正文/位置/
+            // 操作行全落在头像列下方；改走 headerStack 左缘（头像右 + 12），头像列下方不再有文字。
+            // 正文栈内图片、引用、回应行随栈同移，保持一列。
+            bodyStack.leadingAnchor.constraint(equalTo: headerStack.leadingAnchor),
+            bodyStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            bodyTopFromAvatar,
+            bodyTopFromHeader,
+            bodyTopPin,
+            imageHeight,
+            emoteHeight,
+            imagesStack.topAnchor.constraint(equalTo: imagesScrollView.contentLayoutGuide.topAnchor),
+            imagesStack.bottomAnchor.constraint(equalTo: imagesScrollView.contentLayoutGuide.bottomAnchor),
+            imagesStack.leadingAnchor.constraint(equalTo: imagesScrollView.contentLayoutGuide.leadingAnchor),
+            imagesStack.trailingAnchor.constraint(equalTo: imagesScrollView.contentLayoutGuide.trailingAnchor),
+            imagesStack.heightAnchor.constraint(equalTo: imagesScrollView.frameLayoutGuide.heightAnchor),
+            separatorView.topAnchor.constraint(equalTo: bodyStack.bottomAnchor, constant: separatorTopGap),
+            separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            separatorHeightConstraint!,
+            separatorView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ] + extraConstraints)
+        // imagesScrollView 的高度只由 imageHeightConstraint 驱动（216 有图 / 0 无图）。
+        imageHeight.isActive = true
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // 回应行高随 flow 实测走（两模式）；折叠判定以实测行宽为准，初次
+        // configure 时 cell 宽可能尚未落位（用屏宽估算），布局落位后若溢出
+        // 结论变了，在此纠正一次（结论稳定后不再变动，不会往复）。
+        let emoteHeightChanged = updateEmoteRowHeight()
+        // 限时虚线边框不再在此手工重画 path：BearyDashedBorderView 自身按
+        // 约束后的 bounds 重画，行高落定后框高自动跟上（首卡顶 22 见下）。
+        // 个人主页：回应行高在初次布局（宽未落位、走估算）与落位后不一致时，
+        // 行高会变一次；此前个人主页没有行高重算回调（首页有 onNeedsRowReload），
+        // 行高停留在初算值、内容溢出或回缩即表现为滑动抽搐。异步通知一次，
+        // 控制器走 begin/end 平滑重算该行（可见行才刷，见控制器接线）。
+        if cardMode == .profile, emoteHeightChanged,
+           let entryIdValue = cellEntryId,
+           let settledHeight = emoteRowHeightConstraint?.constant {
+            let key = (entryId: entryIdValue, height: settledHeight)
+            if lastEmoteHeightNotified?.entryId != key.entryId || lastEmoteHeightNotified?.height != key.height {
+                lastEmoteHeightNotified = key
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, self.cellEntryId == entryIdValue,
+                          self.emoteRowHeightConstraint?.constant == settledHeight else { return }
+                    self.onNeedsRowReload?()
+                }
+            }
+        }
+        guard cardMode == .feed else { return }
+        if currentEntry != nil, contentLabel.bounds.width > 0 {
+            let overflow = measuredFoldOverflow(contentWidth: contentLabel.bounds.width)
+            if overflow != foldOverflow {
+                foldOverflow = overflow
+                applyFoldVisibility(overflow: overflow)
+                updateDiaryStackSpacing()
+            }
+        }
+        // 内联 GIF 覆盖层：label 宽变或文本重建后跟帧刷新（签名未变时内部短路，不重载）。
+        refreshGIFOverlays()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        // 离屏即停播（cell 复用池离树时动画不空转）；入窗后刷新（可见才播）。
+        let visible = window != nil
+        bodyGIFOverlay.setVisible(visible)
+        titleGIFOverlay.setVisible(visible)
+        if visible { refreshGIFOverlays() }
+    }
+
+    /// 内联 GIF 覆盖层刷新：正文/标题各配一个，label 宽变或文本重建后
+    /// 跟帧刷新；长按回 fullKey（按 rand 在 entry.images 里找回）。
+    private func refreshGIFOverlays() {
+        let keys = currentEntry?.images ?? []
+        bodyGIFOverlay.attach(
+            to: contentLabel,
+            gifKeys: keys,
+            onLongPressGIF: { [weak self] rand in
+                guard let self = self,
+                      let fullKey = BearyGIF.fullKey(for: rand, in: self.currentEntry?.images ?? []) else { return }
+                BearyGIFAddPresenter.presentAddGIF(from: self, fullKey: fullKey)
+            }
+        )
+        titleGIFOverlay.attach(
+            to: entryTitleLabel,
+            gifKeys: keys,
+            onLongPressGIF: { [weak self] rand in
+                guard let self = self,
+                      let fullKey = BearyGIF.fullKey(for: rand, in: self.currentEntry?.images ?? []) else { return }
+                BearyGIFAddPresenter.presentAddGIF(from: self, fullKey: fullKey)
+            }
+        )
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // 限时虚线描边色由 BearyDashedBorderView 自身在 trait 变化时重刷。
+        // 首页模式：心情与公开行边框需重刷（chip 边框已由 BearyEmoteChipView
+        // 自带 trait 重刷，此处不再调 renderEmotes——两套并存已摘掉一套）。
+        // 旧心情改位：主题切换时正文末尾心情附件需换深浅变体，故两模式
+        // 都重建正文（仅换附件变体，折叠态与行数不动）。
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle, let e = currentEntry {
+            contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: 16, moodKey: e.mood)
+        }
+        // 审计第 27 项：内容字号档变化时立即重建可见卡片富文本——
+        // attributed 字号不随 adjustsFont 自动跟随，旧口径要等下次 configure
+        // 才重解，字号切换当下卡片停留在旧字号。纯文本 label 靠 adjustsFont
+        // 自动跟随，不在此重设。previous 为 nil 时不是一次变化（首现），不触发。
+        if previousTraitCollection != nil,
+           previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory,
+           let e = currentEntry {
+            updateEntryTitle(e.title)
+            if cardMode == .feed {
+                updateContentAndFold()
+            } else {
+                contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: 16, moodKey: e.mood)
+                if foldApplies {
+                    setFoldDisplay(expanded: isExpanded, animated: false)
+                } else {
+                    contentLabel.numberOfLines = 0
+                }
+            }
+            // 行高：只刷本可见行（控制器 begin/end 平滑重算），不 reloadData、
+            // 不滚动——阅读位置不动。异步发，避免在 trait 传播中途改表；
+            // 复用或又变档时凭 entryId + 档位复核，过期通知丢弃。
+            let entryIdValue = cellEntryId
+            let categoryValue = traitCollection.preferredContentSizeCategory
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.cellEntryId == entryIdValue, self.currentEntry != nil,
+                      self.traitCollection.preferredContentSizeCategory == categoryValue else { return }
+                self.onNeedsRowReload?()
+            }
+        }
+        // 主题/字号档变化后正文/标题已重建，GIF 覆盖层跟帧刷新（签名未变时短路）。
+        refreshGIFOverlays()
+        guard cardMode == .feed else { return }
+        if currentEntry == nil { return }
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            refreshMoodView()
+            refreshMoreRow()
+        }
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        resetImageStripPinch()
+        // iCity 举报退场动画只动 contentView（alpha/transform），复用时复位，防残留到下一行。
+        contentView.alpha = 1
+        contentView.transform = .identity
+        // 审计动效组：错峰入场动的是 cell 本体（alpha/transform），复用时须同步
+        // 复位本体并清掉在途（含延迟未起播）动画，防残留到下一行。
+        layer.removeAllAnimations()
+        alpha = 1
+        transform = .identity
+        profileFirstRow = false
+        suppressBottomSeparator = false
+        separatorHeightConstraint?.constant = 1
+        avatarTopConstraint?.constant = 14
+        // 限时态复位：倒计时行与虚线边框藏起、底线恢复，防残留到下一行。
+        ephemeralRow.isHidden = true
+        ephemeralLabel.text = nil
+        // 置顶标识行复位，防上一行置顶串位到下一行。
+        pinRow.isHidden = true
+        // 批 E：位置行复位，防上一行位置串位到下一行。
+        locationStack.isHidden = true
+        locationLabel.text = nil
+        ephemeralBorderView.isHidden = true
+        separatorView.isHidden = false
+        // 皇冠动效复用时停播，防串位到下一行。
+        crownView.stop()
+        onImageTapped = nil
+        onQuoteSelected = nil
+        onInteractionChanged = nil
+        onEmoteChanged = nil
+        onEmoteAddRequested = nil
+        onRequireLogin = nil
+        onActionFailed = nil
+        onShareRequested = nil
+        onPublishTapped = nil
+        onMoreRequested = nil
+        onReportRequested = nil
+        onAuthorTapped = nil
+        onNeedsRowReload = nil
+        onNeedsFoldAnimation = nil
+        onNeedsEmoteRowAnimation = nil
+        // fixall-cell 6-12：复用时清点赞残留态——爆点微粒层与填充淡入
+        // （0.55s 动画窗口内复用曾使微粒串位到新篇按钮上）。
+        BearyIconMotion.clearLikeBurst(on: likeButton)
+        BearyIconMotion.clearFillFade(on: likeButton)
+        BearyBurstParticles.clear(from: likeButton)
+        BearyBurstParticles.clear(from: bookmarkButton)
+        onContextMenuEdit = nil
+        onContextMenuDelete = nil
+        onLike = nil
+        onBookmark = nil
+        onShare = nil
+        onEmoteTap = nil
+        onEmoteAdd = nil
+        onEmoteAddNotPublic = nil
+        onQuoteTap = nil
+        onFoldToggle = nil
+        onTapImages = nil
+        onNineGridTapped = nil
+        nineGridHideToken += 1
+        nineGridWrapView.isHidden = true
+        nineGridWrapView.alpha = 0
+        currentEntry = nil
+        cellEntryId = nil
+        currentImageKeys = []
+        // 内联 GIF 覆盖层复用时清理（动画停播、图层摘掉，防串位到下一行）。
+        bodyGIFOverlay.clear()
+        titleGIFOverlay.clear()
+        isExpanded = false
+        likeSeq = 0
+        likeConfirmedSeq = 0
+        bookmarkSeq = 0
+        bookmarkConfirmedSeq = 0
+        confirmedLiked = false
+        confirmedLikeCount = 0
+        confirmedBookmarked = false
+        likePressPreviewActive = false
+        foldOverflow = nil
+        foldApplies = false
+        cellLikedByMe = false
+        cellLikeCount = 0
+        cellBookmarkedByMe = false
+        cellEmoteSignature = ""
+        cellEmoteSignatureValid = false
+        profileDisabled = false
+        // 80 包 A4：错峰改 cell.alpha/transform，对称复位。
+        alpha = 1
+        transform = .identity
+        // 80 包 B4-1：池 chip 离树时先停其播放器，复用分支按 key 决定重播或重建。
+        // 圆角长方形根治：chip-out 会把摘下 chip 缩到 0.5 后留池，复用时若不复位
+        // transform，flow 按帧设 frame 会使 bounds 翻倍、固定 16 圆角显示成 8、
+        // 内容缩半——截图第三只 chip 即此状；此处与 renderEmotes 复用处双重复位。
+        for chip in emoteChipPoolByKey.values {
+            chip.stopPlayer()
+            chip.transform = .identity
+            chip.alpha = 1
+        }
+        currentEmoteList = []
+        chipKeys = []
+        isEmoteBusy = false
+        emoteFlightKey = nil
+        emoteFlightAdded = false
+        emoteFlightOriginal = nil
+        emoteFlightServerEmotes = nil
+        emoteFlightFailed = false
+        emoteFlightUnauthorized = false
+        emoteFlightAPIDone = false
+        emoteFlightRemovalStaged = false
+        emotePickLocked = false
+        quoteTapId = nil
+        quoteTapGoneOrLocked = false
+        quoteTapLoadFailed = false
+        quoteAwaitingId = nil
+        for sub in emoteFlowView.subviews {
+            sub.removeFromSuperview()
+        }
+        emoteRowHeightConstraint?.constant = 0
+        likeButton.setTitle(nil, for: .normal)
+        moreButton.isHidden = true
+        titleMoreSpacer.isHidden = true
+        headerStackTrailingConstraint?.constant = -16
+        // 游客详情复位：提示条默认藏、操作行与回应行默认显，防游客展开态
+        // 串位到复用的下一张卡；下一次 configure 的游客分支会重新定显隐。
+        guestLoginPromptButton.isHidden = true
+        actionStack.isHidden = false
+        emoteFlowView.isHidden = false
+        likeButtonWidthConstraint?.constant = 24
+        likeButton.isEnabled = true
+        bookmarkButton.isEnabled = true
+        likeButton.imageView?.transform = .identity
+        bookmarkButton.imageView?.transform = .identity
+        avatarImageView.bearySetImage(url: nil, placeholder: nil)
+        avatarInitialLabel.text = nil
+        avatarRetryButton.isHidden = true
+        avatarRetryButton.retryURL = nil
+        recipientRow.isHidden = true
+        recipientLabel.text = nil
+        // 94 包：槽位复用——只取消在途加载并隐藏，不摘不销毁；重试钮同步隐藏。
+        for (slotIndex, slot) in imageSlots.enumerated() {
+            slot.bearySetImage(url: nil)
+            slot.isHidden = true
+            if slotIndex < imageSlotRetryButtons.count {
+                imageSlotRetryButtons[slotIndex].isHidden = true
+                imageSlotRetryButtons[slotIndex].retryURL = nil
+            }
+            // 实况覆盖层同步清掉（在途加载凭 token 丢弃，复用不串位到下一行）。
+            if slotIndex < imageSlotLiveViews.count {
+                imageSlotLiveViews[slotIndex].clear()
+            }
+            if slotIndex < imageSlotLivePresses.count, let press = imageSlotLivePresses[slotIndex] {
+                slot.removeGestureRecognizer(press)
+                imageSlotLivePresses[slotIndex] = nil
+            }
+        }
+        imagesScrollView.isHidden = true
+        imageHeightConstraint?.constant = 0
+        nameLabel.text = nil
+        timeLabel.text = nil
+        entryTitleLabel.text = nil
+        entryTitleLabel.isHidden = true
+        contentLabel.attributedText = nil
+        contentLabel.text = nil
+        foldButton.isHidden = true
+        quoteView.clear()
+        quoteView.isHidden = true
+        setCrownHidden(true)
+        stopWeatherLottie()
+        weatherImageView.image = nil
+        weatherImageView.isHidden = true
+        weatherWrapLabel.isHidden = true
+        weatherNameLabel.text = nil
+        weatherNameLabel.isHidden = true
+        weatherTempLabel.text = nil
+        weatherTempLabel.isHidden = true
+        locationWeatherSpacer.isHidden = true
+        moodStack.isHidden = true
+        moodEmoteView?.removeFromSuperview()
+        moodEmoteView = nil
+        moodLabel.text = nil
+    }
+
+    // MARK: - 文案与样式 helpers
+
+    /// F3：时间一律 M月d日 H:mm（小时不补零，网页 fmtDate 口径；今天也不只显示 H:mm）。
+    /// 80 包 B4-1：时间 formatter 静态复用（主线程 UI 路径使用，原每次调用新建）。
+    private static let diaryTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "M月d日 H:mm"
+        return f
+    }()
+
+    static func feedTimeString(ms: Int) -> String {
+        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        return diaryTimeFormatter.string(from: date)
+    }
+
+    /// F2：正文 16pt（首页）、行高 1.6（段落样式实现，非默认行高）。
+    private func attributedBody(_ text: String, fontSize: CGFloat) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = 1.6
+        // P3-3：富文本段落样式会覆盖 label 的 lineBreakMode，此处同步按字符断行（字号行高不动）。
+        paragraph.lineBreakMode = .byCharWrapping
+        // C8 + R8 卡片内部分：正文字号一律走 scaledFont（两模式统一
+        // diaryBodyFont 16，默认档点数不变）；contentLabel 侧
+        // 已置 adjustsFontForContentSizeCategory，但富文本字号不随它自动重解，
+        // 由 trait handler 在字号档变化时重建（审计第 27 项；离屏卡下次
+        // configure 同样按新档重解）；装饰性小字不动。
+        let bodyFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: fontSize))
+        // 内联心情：正文里的记号转回熊脸附件（与编辑器同一中间层），
+        // 附件字号跟随正文字号；旧心情缀尾仍由 bodyWithTrailingMood 另 append。
+        // 内联 GIF 同款：记号按 entry.images 解析，动画走覆盖层播（见 refreshGIFOverlays）。
+        return BearyText.inlineAttributedText(from: text, font: bodyFont, color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: currentEntry?.images)
+    }
+
+    /// 旧日记心情改位：心情不再单独贴在作者行，改跟在正文最后一个字
+    /// 后面——用静态熊图附件直接缀在正文 attributed 串末尾（紧贴末字、
+    /// 无空格）；无心情时原样返回。深浅变体按当前 trait 取，主题切换
+    /// 时由 trait handler 重建正文换变体。
+    private func bodyWithTrailingMood(_ text: String, fontSize: CGFloat, moodKey: String?) -> NSAttributedString {
+        let base = attributedBody(text, fontSize: fontSize)
+        guard let key = moodKey, !key.isEmpty,
+              let image = BearyEmoteImages.image(for: key, dark: traitCollection.userInterfaceStyle == .dark) else { return base }
+        let font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: fontSize))
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        let emoteSize = font.pointSize * 1.2
+        attachment.bounds = CGRect(x: 0, y: font.descender, width: emoteSize, height: emoteSize)
+        let result = NSMutableAttributedString(attributedString: base)
+        result.append(NSAttributedString(attachment: attachment))
+        return result
+    }
+
+    /// R4 App：日记标题渲染（两路 configure 共用，模型 Entry.title 由 A4-App
+    /// 已透传，本处只做渲染、不加模型字段）。空白/缺失标题时 text 清空且
+    /// isHidden，stack 不留空行、不预留高度；卡片高度随内容。
+    private func updateEntryTitle(_ rawTitle: String?) {
+        let trimmed = rawTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty {
+            entryTitleLabel.attributedText = nil
+            entryTitleLabel.isHidden = true
+        } else {
+            // 标题里的记号同样转回熊脸附件（卡片标题 16.5 粗体）；GIF 同款按
+            // entry.images 解析，动画走覆盖层播（见 refreshGIFOverlays）。
+            entryTitleLabel.attributedText = BearyText.inlineAttributedText(from: trimmed, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: currentEntry?.images)
+            entryTitleLabel.isHidden = false
+        }
+    }
+
+    /// R9 A 卡片部分：只补无障碍标签，不改视觉与热区。点赞含状态与计数
+    /// （“点赞，12”/“已点赞，12”）；零赞时只读“点赞”，与详情口径一致
+    /// （详情零赞不显示数字、读屏名就是“点赞”，旧口径卡片读“点赞，0”）；
+    /// 收藏含状态（“收藏”/“已收藏”）；分享为功能标签“分享”。来源按模式取：feed 走
+    /// currentEntry，profile 走 cellLikedByMe/cellLikeCount/cellBookmarkedByMe；
+    /// profile 就地同步时 applyLike 与 applyProfileBookmark 先后各调一次，
+    /// 末次调用时三项均为最新值。
+    private func refreshActionAccessibility() {
+        let liked: Bool
+        let likeCount: Int
+        let bookmarked: Bool
+        if cardMode == .profile {
+            liked = cellLikedByMe
+            likeCount = cellLikeCount
+            bookmarked = cellBookmarkedByMe
+        } else {
+            liked = currentEntry?.likedByMe ?? false
+            likeCount = currentEntry?.likeCount ?? 0
+            bookmarked = currentEntry?.bookmarkedByMe ?? false
+        }
+        likeButton.accessibilityLabel = likeCount <= 0 ? "点赞" : "\(liked ? "已点赞" : "点赞")，\(likeCount)"
+        bookmarkButton.accessibilityLabel = bookmarked ? "已收藏" : "收藏"
+        shareButton.accessibilityLabel = "分享"
+    }
+
+    /// 空名回退一律为“beary 用户”（不再以 Li 的 handle "teddy" 充当他人名，避免错归属）。
+    private func displayAuthorName(_ rawName: String?) -> String {
+        // 32 注销口径：后端 author_name 下发“已注销用户”，卡片与引用卡统一显“用户已注销”。
+        if rawName == "已注销用户" {
+            return "用户已注销"
+        }
+        if let rawName = rawName, !rawName.isEmpty {
+            return rawName
+        }
+        return "beary 用户"
+    }
+
+    /// F5：216 高按宽高比定宽（网页 stripW 同口径：0.55–2.22 倍高夹取，无尺寸老图默认 280）。
+    private func stripWidth(forKey key: String, dims: [String: [Int]]?, height: CGFloat) -> CGFloat {
+        if let dims = dims, let d = dims[key], d.count >= 2, d[0] > 0, d[1] > 0 {
+            let raw = height * CGFloat(d[0]) / CGFloat(d[1])
+            let low = height * 0.55
+            let high = height * 2.22
+            return round(max(low, min(high, raw)))
+        }
+        return 280
+    }
+
+    /// fixall-cell 2-2：两模式共用一张对照表。收敛前差异逐项核查结果：
+    /// - 写给行后：feed 3 / profile 4，无网页口径引文 → 统一为 4。
+    /// - 正文后：feed 为折叠显 6 / 隐 14，profile 恒 6；但 profile 折叠隐藏时
+    ///   实际落点是基底 spacing 14，与 feed 隐 14 一致 → 统一为折叠显 6 / 隐 14。
+    /// - 折叠后：feed 显式 14，profile 落点基底 14 → 统一显式 14。
+    /// - 引用/图片/操作行后：两模式实际均为 12 → 统一显式 12。
+    /// - 顶距：feed 16（写给行可见 17）/ profile 16（2026-11-05 ChatGPT 间距
+    ///   跟进统一；个人页首卡 30 是例外，保留为唯一模式差异）。
+    private func updateDiaryStackSpacing() {
+        // 作者行顶部统一 16（2026-11-05 ChatGPT 间距跟进）：@ 行显隐的 1pt
+        // 差值保留（16／17），只改基线不改相对行为；个人页首卡 30 与置顶 +25
+        // 是例外，一字不动。
+        // 名字行偏下（129 真机实测：名字比头像顶低约 10pt，时间约 11pt，
+        // 天气图标同行跟走——整行 titleStack 被往下顶）：#1145 的字体行高
+        // 算顶距没修动；#1288 的钉中心也没修住——20pt 的行钉在 40pt 头像
+        // 中心上，用户名顶仍比头像顶低 (40−20)/2 ≈ 10pt，居中从来不是顶对齐。
+        // #1443 改钉顶部：两行都藏时作者行顶 == 头像顶，但 132 真机实测详情仍低
+        // 约 16pt——钉顶约束钉的是栈内子视图，栈内它上方的隐藏行仍占约 12pt 高，
+        // 栈内链把作者行往下顶，外部钉顶约束被栈内部约束顶掉。本次三处一致钉死：
+        // 两行都藏时头行顶约束保持激活（16／首卡 30，不再停用）＋ 两行 required
+        // 零高压零 ＋ 作者行钉顶保留；有行在作者行之上时恢复顶约束、保持顶对齐不动。
+        if pinRow.isHidden && recipientRow.isHidden {
+            headerStackTopConstraint?.isActive = true
+            headerStackTopConstraint?.constant = cardMode == .feed ? 16 : (profileFirstRow ? 30 : 16)
+            authorRowTopConstraint?.isActive = true
+        } else {
+            authorRowTopConstraint?.isActive = false
+            headerStackTopConstraint?.isActive = true
+            headerStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 16 : 17) : (profileFirstRow ? 30 : 16)
+        }
+        pinRowZeroHeightConstraint?.isActive = pinRow.isHidden
+        recipientRowZeroHeightConstraint?.isActive = recipientRow.isHidden
+        // 首卡虚线框顶 6→22（底边仍距 cell 底 6，不整体下移），tab 视觉底边
+        // （首卡顶 +14）到框顶留 8pt；其余一律 6。
+        ephemeralBorderTopConstraint?.constant = (cardMode == .profile && profileFirstRow) ? 22 : 6
+        // 110：头像顶与头行顶同值（个人页首卡 30、其余 16；首页恒 16）——
+        // 有行在作者行之上时头像顶与作者行顶对齐；两行都藏时作者行改为与
+        // 头像顶对齐（见上），头像顶不动，首卡限时框（顶 22）仍完整包住
+        // 头像（30..70，框顶留 8pt）；框路径一字不动，不用框迁就错位头像。
+        // 置顶时头像同步下移置顶行高（15）＋行间距（10）＝ 25，使头像仍与作者行对齐、
+        // 置顶行落在卡片最上方（预览口径：标识在作者行之上）；未置顶时一字不动。
+        let pinOffset: CGFloat = pinRow.isHidden ? 0 : 25
+        avatarTopConstraint?.constant = (cardMode == .feed ? 16 : (profileFirstRow ? 30 : 16)) + pinOffset
+        headerStack.setCustomSpacing(pinRow.isHidden ? 0 : 10, after: pinRow)
+        headerStack.setCustomSpacing(recipientRow.isHidden ? 0 : 4, after: recipientRow)
+        headerStack.setCustomSpacing(4, after: titleStack)
+        // 正文紧贴用户名下方：头行→正文栈间距取规范标题→正文档 6（原 16 有标题／
+        // 14 无标题，见规范 §3；该槽位改动须走规范同步）。头像底约束停用——#1184
+        // 后正文栈左缘在名字列（头像右 +12）、头像列下方无文字，头像底不再是
+        // 正文顶的下限；正文顶即头行底 + 6。限时行是头行末行，其后间距即该值。
+        let headerBodyGap: CGFloat = 6
+        bodyStackTopFromAvatarConstraint?.isActive = false
+        bodyStackTopFromHeaderConstraint?.constant = headerBodyGap
+        bodyStackTopPinConstraint?.constant = headerBodyGap
+        // 标题贴着正文走：标题→正文 6（ChatGPT 间距跟进，#904 为 4）；标题隐藏时其后间距置 0，正文直接贴头行间距。
+        bodyStack.setCustomSpacing(entryTitleLabel.isHidden ? 0 : 6, after: entryTitleLabel)
+        // 正文→图片 14（ChatGPT 间距跟进）：正文后（折叠隐藏时）与折叠钮后的间距；
+        // 正文→展开全文仍为 6（折叠钮显时），不动。
+        bodyStack.setCustomSpacing(foldButton.isHidden ? 14 : 6, after: contentLabel)
+        bodyStack.setCustomSpacing(14, after: foldButton)
+        // 图片→定位 12（ChatGPT 间距跟进）：图片条与定位行中间隔着引用卡，
+        // 两段相邻间距（图片→引用、引用→定位）各取 12（天气已并进定位行）；
+        // 九宫格按钮在图片条与引用卡之间时，图片条→按钮、按钮→引用卡各取 12。
+        bodyStack.setCustomSpacing(12, after: imagesScrollView)
+        bodyStack.setCustomSpacing(12, after: nineGridWrapView)
+        bodyStack.setCustomSpacing(12, after: quoteView)
+        // 批 E：位置行→操作行 14（ChatGPT 间距跟进，#904 为 8）；位置行隐藏时 stack 自动忽略该间距，不留空隙。
+        bodyStack.setCustomSpacing(14, after: locationStack)
+        // 操作行→回应行 12（ChatGPT 间距跟进，#904 为 10）。
+        bodyStack.setCustomSpacing(12, after: actionStack)
+    }
+
+    /// 正文列内容宽：左右各 16，共 32（2026-11-05 日记布局统一后标题/正文/
+    /// 回应行一律全宽；旧右列宽屏宽 −84 已作废）。
+    private func bodyColumnWidthEstimate() -> CGFloat {
+        let cellWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width
+        return max(0, cellWidth - 32)
+    }
+
+    /// 批 E 卡片位置行刷新：文案与脱敏全走 BearyLocationDisplay.display（展示层实时判定，
+    /// 不读服务端截断值）；公开翻私密/删除/恢复时调用方重 configure 即同步，无需本行另存状态。
+    /// 口径（2026-11-10 Li 定）：公开篇作者本人也只看区级，不再附提示行；
+    /// 非公开篇作者本人看精确名；他人只到区级、无区级不显示。
+    /// display 返回 nil 时整组隐藏（无位置、他人视角无区级、公开篇无区级），不留空行。
+    private func refreshLocationRow(entry: Entry) {
+        guard let line = BearyLocationDisplay.display(entry: entry) else {
+            locationLabel.text = nil
+            updateBottomRowVisibility()
+            return
+        }
+        locationLabel.text = line
+        updateBottomRowVisibility()
+        // 跳动审计第 12 条：缓存命中时首帧直接用解析后的行文，不等异步回包，
+        // 天气组首帧即在终位；缓存未命中才走异步回包。
+        if let cached = BearyLocationDisplayNames.cachedDisplayLine(for: entry) {
+            locationLabel.text = cached
+            updateBottomRowVisibility()
+            return
+        }
+        // 2026-11-14 存经纬度：有坐标时按当前语言重取地名；失败／无坐标时保留原存文本行。
+        // 复用守卫以 cellEntryId 为准（configure 已先赋值；复用后旧回调凭 id 不符丢弃）。
+        let entryId = entry.id
+        BearyLocationDisplayNames.displayLine(for: entry) { [weak self] resolved in
+            guard let self = self, let resolved = resolved, self.cellEntryId == entryId else { return }
+            // 文案没变不碰布局；变了用 0.18s 局部过渡推天气组，不瞬间横移
+            // （点赞宽度同款口径：约束直设改动画＋layoutIfNeeded；减动效／未进窗口时直设终值）。
+            guard resolved != self.locationLabel.text else { return }
+            self.locationLabel.text = resolved
+            self.updateBottomRowVisibility()
+            guard !UIAccessibility.isReduceMotionEnabled, self.locationLineRow.window != nil else { return }
+            UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: {
+                self.locationLineRow.layoutIfNeeded()
+            })
+        }
+    }
+
+    /// 底行（地址＋天气）显隐：地址与天气任一有内容即显，全无即整行隐藏、
+    /// 不占位；无地址时地址组与间隔同藏，天气顶到左边缘。
+    private func updateBottomRowVisibility() {
+        let hasLocation = !(locationLabel.text ?? "").isEmpty
+        let hasWeather = !weatherWrapLabel.isHidden || !weatherNameLabel.isHidden || !weatherTempLabel.isHidden
+        locationIconView.isHidden = !hasLocation
+        locationLabel.isHidden = !hasLocation
+        locationWeatherSpacer.isHidden = !hasLocation
+        locationStack.isHidden = !hasLocation && !hasWeather
+    }
+
+    /// 置顶标识行刷新：只认 entry.isPinned（显式 1）；隐藏后 stack 自动压为 0，不留空行。
+    /// 2026-11-03 Li 再纠正：置顶标识仅限个人页，广场整行隐藏（pinOffset 随 pinRow.isHidden 自动归零）。
+    /// 计数与内容同时渲染：本行只随 configure 走，不单独播动效。
+    private func refreshPinRow(entry: Entry) {
+        pinRow.isHidden = cardMode == .feed || !entry.isPinned
+    }
+
+    /// 旧心情改位：作者行心情位一律隐藏，心情改缀正文末尾
+    /// （见 bodyWithTrailingMood）；旧播放器视图一并摘掉。
+    private func refreshMoodView() {
+        moodStack.isHidden = true
+        moodLabel.text = nil
+        moodEmoteView?.removeFromSuperview()
+        moodEmoteView = nil
+    }
+
+
+    /// E3：天气 key → Lottie 资源 key（编辑器选择器同款映射，唯 night 对应 moon）。
+    private static func weatherLottieKey(for weatherKey: String) -> String {
+        weatherKey == "night" ? "moon" : weatherKey
+    }
+
+    /// E3：gotoEntry 落点行天气标播 Lottie。仅落点控制器在定位落定后调用；
+    /// 其他行从不调用，天气标保持底层 wx 静态图。覆盖层贴在 weatherImageView
+    /// 上（编辑器选择器同款 BearyEmoteView + LottieWeather 资源；深浅切换与
+    /// 减动效静态帧均由播放器内部口径处理，解析中/失败时回退 wx 静态图）。
+    /// 已有同 key 覆盖层时只重播，不重建，避免落点重复调用时从头闪一下。
+    func playWeatherLottie() {
+        guard let weatherKey = currentEntry?.weather, !weatherKey.isEmpty, weatherImageView.isHidden == false else { return }
+        if let current = weatherEmoteView, current.emoteKey == Self.weatherLottieKey(for: weatherKey) {
+            current.play()
+            return
+        }
+        stopWeatherLottie()
+        let emoteView = BearyEmoteView(key: Self.weatherLottieKey(for: weatherKey), animated: true, fallbackImage: weatherImageView.image)
+        emoteView.isUserInteractionEnabled = false
+        emoteView.translatesAutoresizingMaskIntoConstraints = false
+        weatherImageView.addSubview(emoteView)
+        NSLayoutConstraint.activate([
+            emoteView.leadingAnchor.constraint(equalTo: weatherImageView.leadingAnchor),
+            emoteView.trailingAnchor.constraint(equalTo: weatherImageView.trailingAnchor),
+            emoteView.topAnchor.constraint(equalTo: weatherImageView.topAnchor),
+            emoteView.bottomAnchor.constraint(equalTo: weatherImageView.bottomAnchor),
+        ])
+        weatherEmoteView = emoteView
+    }
+
+    /// E3：停播落点天气 Lottie 并摘掉覆盖层，底层 wx 静态图即恢复。
+    /// 复用、重配、滑出可视区（播放器离窗自停 + 复用/重配摘层）与新落点
+    /// 盖掉旧落点时均走此路，不留错播与空转。
+    func stopWeatherLottie() {
+        weatherEmoteView?.stop()
+        weatherEmoteView?.removeFromSuperview()
+        weatherEmoteView = nil
+    }
+
+    @objc private func authorTapped() {
+        onAuthorTapped?()
+    }
+
+    /// C6 菜单编辑资格：本人即可（冲突清单第 4 条取消 15 分钟锁，编辑永久可改）。
+    /// iCity：编辑锁已取消，与可见性无关。
+    private func isCardMenuEditAvailable(entry: Entry) -> Bool {
+        entry.isMine == true
+    }
+
+    // MARK: - configure（首页模式）
+
+    func configure(with entry: Entry) {
+        stopWeatherLottie()
+        currentEntry = entry
+        cellEntryId = entry.id
+        // 快连点确认态初值：configure 的 entry 来自服务端数据，即确认态。
+        confirmedLiked = entry.likedByMe ?? false
+        confirmedLikeCount = entry.likeCount ?? 0
+        confirmedBookmarked = entry.bookmarkedByMe ?? false
+        if let entryIdValue = entry.id {
+            isExpanded = BearyDiaryCardCell.expandedEntryIds.contains(entryIdValue)
+        } else {
+            isExpanded = false
+        }
+
+        // F4：头像。无 URL 时 imageView 为空、背后首字母圆透出；有 URL 时照片盖住首字母。
+        // 失败时 avatarRetryButton 亮重试图标（无 URL 不算失败，不亮）。
+        let authorNameValue = displayAuthorName(entry.authorName)
+        avatarInitialLabel.text = String(authorNameValue.prefix(1)).uppercased()
+        if !authorTapInstalled {
+            authorTapInstalled = true
+            avatarImageView.isUserInteractionEnabled = true
+            nameLabel.isUserInteractionEnabled = true
+            avatarImageView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(authorTapped)))
+            nameLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(authorTapped)))
+        }
+        bearyFeedLoadImage(into: avatarImageView, url: BearyImageURLs.avatarURL(entry.authorAvatar), retryButton: avatarRetryButton, downsampleToWidth: 40 * UIScreen.main.scale)
+
+        // iCity @ 标签：有 mentionedName 即显“@名”（替代旧“写给 X”文案），无则隐藏。
+        if let mentioned = entry.mentionedName, !mentioned.isEmpty {
+            recipientRow.isHidden = false
+            // 32 注销口径：被 @ 者已注销时显“@用户已注销”，不用后端原名。
+            recipientLabel.text = "@" + (bearyDeletedAuthorDisplayName(mentioned) ?? mentioned)
+        } else {
+            recipientRow.isHidden = true
+            recipientLabel.text = nil
+        }
+
+        // F2/F13：名 16.5 粗体。Plus 皇冠按网页复刻：authorPlus==1 时显示。
+        // 无残留空位：crownView 是 titleStack 的 arrangedSubview，隐藏后 stack 自动
+        // 将其尺寸压为 0，间距只算在可见项之间；19pt 宽约束是 999 优先级，不与压零冲突。
+        nameLabel.text = authorNameValue
+        setCrownHidden((entry.authorPlus ?? 0) != 1 || !crownView.hasCrown)
+
+        // F3：时间一律相对时间（与私信/通知同口径，7 天外回绝对时间；2026-11-15 改，取代绝对时间）。
+        // 广场卡有效公开且有 publishedAt 时按发布时间相对；其余按创建时间相对。
+        if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt) {
+            timeLabel.text = relative
+        } else {
+            timeLabel.text = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.createdAt) ?? BearyDiaryCardCell.feedTimeString(ms: entry.createdAt ?? 0)
+        }
+
+        // F10：天气图标 15px（icon_wx_<weatherKey>，取不到图时隐藏、不留空）。
+        if let weatherKey = entry.weather, !weatherKey.isEmpty {
+            if let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + BearyText.weatherStaticKey(for: weatherKey), pointSize: 15) {
+                weatherImageView.image = weatherImage
+                weatherImageView.isHidden = false
+                weatherWrapLabel.isHidden = false
+            } else {
+                weatherImageView.image = nil
+                weatherImageView.isHidden = true
+                weatherWrapLabel.isHidden = true
+            }
+        } else {
+            weatherImageView.image = nil
+            weatherImageView.isHidden = true
+            weatherWrapLabel.isHidden = true
+        }
+        // 中文天气名（BearyText.weatherNames）：有映射才显，无 key 或查不到
+        // 映射时隐藏、不留空位。
+        if let weatherKey = entry.weather, !weatherKey.isEmpty, let weatherName = BearyText.weatherNames[weatherKey] {
+            weatherNameLabel.text = weatherName
+            weatherNameLabel.isHidden = false
+        } else {
+            weatherNameLabel.text = nil
+            weatherNameLabel.isHidden = true
+        }
+        // 天气图标改动态 Lottie（落点行 playWeatherLottie 同款；无天气时其内守卫停播）。
+        playWeatherLottie()
+        // 气温跟天气图标走同一处：有值显“18°”，无值隐藏、不留空位。
+        if let temp = entry.temperatureC, entry.weather != nil, !entry.weather!.isEmpty {
+            weatherTempLabel.text = "\(temp)°"
+            weatherTempLabel.isHidden = false
+        } else {
+            weatherTempLabel.text = nil
+            weatherTempLabel.isHidden = true
+        }
+        // 底行显隐跟图标／中文名／气温走：三者全无时整行隐藏、不占位
+        // （地址行随后 refreshLocationRow 再结算一次）。
+        updateBottomRowVisibility()
+
+        // F9：心情。
+        refreshMoodView()
+
+        // 置顶标识行（卡片最上方；两模式同款）。
+        refreshPinRow(entry: entry)
+
+        // R4 App：日记标题在作者行（titleStack）与正文之间，空标题不占位。
+        updateEntryTitle(entry.title)
+
+        // F6：正文折叠。
+        updateContentAndFold()
+
+        // F11：引用 lite 卡（见 configureQuoteFeed）。
+        configureQuoteFeed(for: entry)
+
+        // F5：图片条 216 高、按宽高比定宽、圆角 12、间距 8、横向滚动（94 包槽位复用）。
+        renderImages(keys: entry.images ?? [], dims: entry.imgDims, liveVideos: entry.liveVideos)
+        // 批 E：位置行（图片条之后、操作行之前）。
+        refreshLocationRow(entry: entry)
+
+        // F7/F8：点赞、收藏、分享（按钮状态见 updateLikeButton / updateBookmarkButton；
+        // 互动门控见 updateActionInteractivity，与详情 isPublic == true 一致）。
+        updateLikeButton()
+        updateBookmarkButton()
+        updateActionInteractivity()
+        refreshMoreRow()
+        refreshEphemeralState(entry: entry)
+        // 回应行：操作行下方、行上边距 10（见 updateDiaryStackSpacing）。
+        renderEmotes()
+        updateDiaryStackSpacing()
+    }
+
+    // MARK: - configure（个人主页模式）
+
+    func configure(entry: Entry, isExpanded: Bool, interactionDisabled: Bool) {
+        stopWeatherLottie()
+        // 跟手批：记下本卡赞态，供按下预览与取消复原用（configure 是唯一写入点）。
+        currentEntry = entry
+        cellEntryId = entry.id
+        cellLikedByMe = entry.likedByMe ?? false
+        cellLikeCount = entry.likeCount ?? 0
+        cellBookmarkedByMe = entry.bookmarkedByMe ?? false
+        profileDisabled = interactionDisabled
+        self.isExpanded = isExpanded
+        let authorNameValue = bearyDeletedAuthorDisplayName(entry.authorName) ?? "beary 用户"
+        nameLabel.text = authorNameValue
+        // 我的页时间改相对时间（与 feed 模式同口径：有效公开取发布时间，否则取创建时间；
+        // 共用 BearyVisibilityText.publishedRelativeString，不另造工具）。
+        if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt) {
+            timeLabel.text = relative
+        } else if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.createdAt) {
+            timeLabel.text = relative
+        } else {
+            timeLabel.text = nil
+        }
+        if let avatarPath = entry.authorAvatar, let avatarURLValue = BearyImageURLs.avatarURL(avatarPath) {
+            avatarInitialLabel.isHidden = true
+            // 合并后补齐：头像失败也有 Feed 口径重试钮（原个人主页只走普通加载，无重试）。
+            bearyFeedLoadImage(into: avatarImageView, url: avatarURLValue, retryButton: avatarRetryButton, downsampleToWidth: 40 * UIScreen.main.scale)
+        } else {
+            avatarImageView.bearySetImage(url: nil)
+            avatarRetryButton.isHidden = true
+            avatarRetryButton.retryURL = nil
+            avatarInitialLabel.isHidden = false
+            avatarInitialLabel.text = String(authorNameValue.prefix(1)).uppercased()
+        }
+        // iCity @ 标签：有 mentionedName 即显“@名”，无则隐藏。
+        if let mentioned = entry.mentionedName, !mentioned.isEmpty {
+            recipientRow.isHidden = false
+            // 32 注销口径：被 @ 者已注销时显“@用户已注销”，不用后端原名。
+            recipientLabel.text = "@" + (bearyDeletedAuthorDisplayName(mentioned) ?? mentioned)
+        } else {
+            recipientRow.isHidden = true
+            recipientLabel.text = nil
+        }
+        // Plus 皇冠按 authorPlus 显示
+        // （1:1 复刻，推翻清单 14；authorPlus 为 Int，0/缺失 = 不显示）。
+        rowCrownHiddenUpdate(entry: entry)
+        // 天气图标（icon_wx_<key>，取不到图时隐藏、不留空）。
+        if let weatherKey = entry.weather, !weatherKey.isEmpty, let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + BearyText.weatherStaticKey(for: weatherKey), pointSize: 15) {
+            weatherImageView.image = weatherImage
+            weatherImageView.isHidden = false
+            weatherWrapLabel.isHidden = false
+        } else {
+            weatherImageView.image = nil
+            weatherImageView.isHidden = true
+            weatherWrapLabel.isHidden = true
+        }
+        // 中文天气名（BearyText.weatherNames）：有映射才显，无 key 或查不到
+        // 映射时隐藏、不留空位。
+        if let weatherKey = entry.weather, !weatherKey.isEmpty, let weatherName = BearyText.weatherNames[weatherKey] {
+            weatherNameLabel.text = weatherName
+            weatherNameLabel.isHidden = false
+        } else {
+            weatherNameLabel.text = nil
+            weatherNameLabel.isHidden = true
+        }
+        // 天气图标改动态 Lottie（落点行 playWeatherLottie 同款；无天气时其内守卫停播）。
+        playWeatherLottie()
+        // #427 的气温显示保留；作者行心情位按 #421 新模型一律隐藏
+        // （refreshMoodView），心情缀正文末尾，不恢复旧心情标签。
+        if let temp = entry.temperatureC, entry.weather != nil, !entry.weather!.isEmpty {
+            weatherTempLabel.text = "\(temp)°"
+            weatherTempLabel.isHidden = false
+        } else {
+            weatherTempLabel.text = nil
+            weatherTempLabel.isHidden = true
+        }
+        // 底行显隐跟图标／中文名／气温走：三者全无时整行隐藏、不占位
+        // （地址行随后 refreshLocationRow 再结算一次）。
+        updateBottomRowVisibility()
+        refreshMoodView()
+        // 置顶标识行（卡片最上方；两模式同款）。
+        refreshPinRow(entry: entry)
+        // R4 App：日记标题在作者行（titleStack）与正文之间，空标题不占位。
+        updateEntryTitle(entry.title)
+        // 正文 + 300 字折叠（网页 renderPublic foldLong 口径；折叠态收起 6 行）。
+        let bodyText = entry.content ?? ""
+        contentLabel.attributedText = bodyWithTrailingMood(bodyText, fontSize: 16, moodKey: entry.mood)
+        foldApplies = bodyText.count > 300
+        foldButton.isHidden = !foldApplies
+        if foldApplies {
+            setFoldDisplay(expanded: isExpanded, animated: false)
+        } else {
+            contentLabel.numberOfLines = 0
+        }
+        configureQuoteProfile(entry: entry)
+        // 图片条 216 高、按宽高比定宽（原 stripW 口径；94 包槽位复用 + 合并后补重试）。
+        renderImages(keys: entry.images ?? [], dims: entry.imgDims, liveVideos: entry.liveVideos)
+        // 批 E：位置行（个人页模式同款，图片条之后、操作行之前）。
+        refreshLocationRow(entry: entry)
+        // 点赞 / 收藏 / 分享（已赞为红色、已收藏为橙色；忙时整行互动禁用）。
+        // 计数位宽度由显式约束定，不靠按钮固有宽：按钮固有宽不含标题边距，
+        // 栈按固有宽给帧时标题框只剩边距差，数字会被裁成左半弧。
+        // 0 赞隐藏数字位，只剩爱心；非 0 按实测字宽给足整段标题宽。
+        applyLikeButtonState(liked: entry.likedByMe ?? false, count: entry.likeCount ?? 0)
+        applyProfileBookmarkState(bookmarked: entry.bookmarkedByMe ?? false)
+        likeButton.isEnabled = !interactionDisabled
+        bookmarkButton.isEnabled = !interactionDisabled
+        shareButton.isEnabled = !interactionDisabled
+        let publicOK = BearyEphemeral.isEffectivelyPublic(entry)
+        shareButton.isHidden = publicOK == false
+        shareSlotSpacer.isHidden = !shareButton.isHidden
+        // 2026-10-29 100 包反馈第 4 项根因 A：个人页 configure 此前从未调
+        // refreshMoreRow，而 prepareForReuse 把 moreButton 藏起，导致本人
+        // 卡在个人页上根本没有地球切换钮（广场 configure 有此调用，故只坏
+        // 个人页一面）。此处补上，与广场 configure 同款。
+        refreshMoreRow()
+        renderEmotes()
+        // 游客详情（只读）：游客展开态藏操作行与回应行，改显登录提示条
+        //（提示条占操作行原位：操作行隐藏后 stack 将其压为 0，提示条紧接
+        // 图片条后、间距沿用图片条后的 10）；非展开、登录态一律恢复原样。
+        // Feed 的 configure(with:) 不走本分支，行为不动。
+        let guestExpanded = SessionManager.shared.isGuestMode && isExpanded
+        actionStack.isHidden = guestExpanded
+        emoteFlowView.isHidden = guestExpanded
+        guestLoginPromptButton.isHidden = !guestExpanded
+        refreshEphemeralState(entry: entry)
+        updateDiaryStackSpacing()
+    }
+
+    /// 皇冠显隐唯一入口：容器与皇冠同藏同显，容器留在栈内时不留 19pt 空位。
+    private func setCrownHidden(_ hidden: Bool) {
+        crownWrapView.isHidden = hidden
+        crownView.isHidden = hidden
+        if hidden { crownView.stop() } else { crownView.start() }
+    }
+
+    private func rowCrownHiddenUpdate(entry: Entry) {
+        // 个人主页原口径：authorPlus==0 即隐藏；合并后补 Feed 的资产缺失守卫
+        // （资产缺失时不再留 19pt 空盒，资产在时行为一字不动）。
+        setCrownHidden((entry.authorPlus ?? 0) == 0 || !crownView.hasCrown)
+    }
+
+    // MARK: - 图片条（94 包槽位复用，两页同款；失败重试 Feed 口径）
+
+    /// 实况：调用方传本条 entry.liveVideos；无实况的图映射里无项，覆盖层
+    /// 即清掉（旧静态图、纯静态新图一律走这里，不动原静态加载）。
+    private func renderImages(keys: [String], dims: [String: [Int]]?, liveVideos: [String: String]? = nil) {
+        resetImageStripPinch()
+        // 内联图不进图条：已插进正文/标题里播，再进图条会同一张图
+        // 出现两次（正文动画＋图条静态）；图条只放照片。
+        // 112：卡片图片条上限 9 张（详情侧同款 Array(allKeys.prefix(9))）。
+        // 脏数据超 9 张时先截断再渲染，灯箱 keys 同步取截断后列表，
+        // 第 10 张起既不渲染也不进灯箱；逐项再 guard 三池下标，防池化异常越界。
+        let keys = Array(keys.filter { BearyGIF.isInlineImageKey($0, content: currentEntry?.content ?? "") == false }.prefix(9))
+        currentImageKeys = keys
+        updateNineGridButton(count: keys.count)
+        if imageSlots.isEmpty { makeImageSlots() }
+        if keys.isEmpty {
+            imagesScrollView.isHidden = true
+            imageHeightConstraint?.constant = 0
+            for (slotIndex, slot) in imageSlots.enumerated() {
+                slot.bearySetImage(url: nil)
+                slot.isHidden = true
+                if slotIndex < imageSlotRetryButtons.count {
+                    imageSlotRetryButtons[slotIndex].isHidden = true
+                    imageSlotRetryButtons[slotIndex].retryURL = nil
+                }
+                setLiveOverlay(index: slotIndex, staticKey: nil, liveKey: nil)
+            }
+            return
+        }
+        imagesScrollView.isHidden = false
+        imageHeightConstraint?.constant = 216
+        for (imageIndex, imageKey) in keys.enumerated() {
+            // 详情侧同款守卫：槽位池、重试钮池、宽约束池须同下标，任一池短了都跳过该图、不下标越界。
+            guard imageIndex < imageSlots.count, imageIndex < imageSlotRetryButtons.count,
+                  imageIndex < imageSlotWidthConstraints.count else { continue }
+            let slot = imageSlots[imageIndex]
+            slot.tag = imageIndex
+            let strip = stripWidth(forKey: imageKey, dims: dims, height: 216)
+            // 卡片糊修复：216 条直接走全尺寸图——缩略图长边只有 480px，
+            // 3× 机上宽图条要 1438px，缩略图拉大 3 倍必糊；全尺寸 1600px 够用。
+            bearyFeedLoadImage(into: slot, url: BearyImageURLs.imageURL(key: imageKey, thumb: false), retryButton: imageSlotRetryButtons[imageIndex], downsampleToWidth: strip * UIScreen.main.scale, blurUp: true)
+            imageSlotWidthConstraints[imageIndex].constant = strip
+            slot.isHidden = false
+            setLiveOverlay(index: imageIndex, staticKey: imageKey, liveKey: liveVideos?[imageKey])
+        }
+        for (slotIndex, slot) in imageSlots.dropFirst(keys.count).enumerated() {
+            slot.bearySetImage(url: nil)
+            slot.isHidden = true
+            let retryIndex = keys.count + slotIndex
+            if retryIndex < imageSlotRetryButtons.count {
+                imageSlotRetryButtons[retryIndex].isHidden = true
+                imageSlotRetryButtons[retryIndex].retryURL = nil
+            }
+            setLiveOverlay(index: retryIndex, staticKey: nil, liveKey: nil)
+        }
+    }
+
+    /// 实况覆盖层开关：有 liveKey 时配覆盖层并给槽位挂长按手势（只挂实况槽，
+    /// 静态槽不挂、点按无延迟）；无 liveKey 时清覆盖层并摘长按手势。
+    private func setLiveOverlay(index: Int, staticKey: String?, liveKey: String?) {
+        guard index >= 0, index < imageSlotLiveViews.count, index < imageSlots.count,
+              index < imageSlotLivePresses.count else { return }
+        let overlay = imageSlotLiveViews[index]
+        let slot = imageSlots[index]
+        if let liveKey = liveKey, !liveKey.isEmpty, let staticKey = staticKey, !staticKey.isEmpty {
+            overlay.configure(staticKey: staticKey, liveKey: liveKey)
+            if imageSlotLivePresses[index] == nil {
+                let press = UILongPressGestureRecognizer(target: self, action: #selector(liveLongPressed(_:)))
+                press.minimumPressDuration = 0.4
+                slot.addGestureRecognizer(press)
+                imageSlotLivePresses[index] = press
+            }
+        } else {
+            overlay.clear()
+            if let press = imageSlotLivePresses[index] {
+                slot.removeGestureRecognizer(press)
+                imageSlotLivePresses[index] = nil
+            }
+        }
+    }
+
+    @objc private func liveLongPressed(_ sender: UILongPressGestureRecognizer) {
+        let index = sender.view?.tag ?? -1
+        guard index >= 0, index < imageSlotLiveViews.count else { return }
+        let overlay = imageSlotLiveViews[index]
+        if sender.state == .began {
+            overlay.startPlayback()
+            // 抬手点按压制：播完抬手那次点按不进灯箱（3 秒覆盖按住时长）。
+            overlay.suppressTapUntil = Date().addingTimeInterval(3)
+        } else if sender.state == .ended || sender.state == .cancelled {
+            let until = Date().addingTimeInterval(0.35)
+            if let existing = overlay.suppressTapUntil, existing > until {
+                // 按住超 0.35 秒后的抬手仍在 began 的 3 秒窗内，不缩短。
+            } else {
+                overlay.suppressTapUntil = until
+            }
+        }
+    }
+
+    /// 图片重试（头像与图片条共用）：先藏图标再重载，成功保持隐藏、再失败重新亮起。
+    @objc private func feedRetryTapped(_ sender: BearyFeedRetryButton) {
+        bearyFeedPerformRetry(sender)
+    }
+
+    // MARK: - 折叠（首页实测溢出 / 个人主页 300 字门槛，各保各的）
+
+    /// F5：按行判定折叠——先过 300 字门槛（网页 renderPublic foldLong 同口径），
+    /// 再实测行数：≤6 行摘按钮（网页 pruneFolds 同口径；网页 .txt-fold 10.5em ÷ 1.6 行高 ≈ 6 行）。
+    /// 行高取实测（16pt × 1.6 段落样式），不硬编码 24，避免字体度量偏差。
+    private func measuredFoldOverflow(contentWidth: CGFloat) -> Bool {
+        let fullText = currentEntry?.content ?? ""
+        if fullText.isEmpty || fullText.count <= 300 || contentWidth <= 0 { return false }
+        let foldCacheKey = "\(currentEntry?.id ?? "")|\(Int(contentWidth.rounded()))|16|\(traitCollection.preferredContentSizeCategory.rawValue)|\(fullText.count)|\(fullText.hashValue)"
+        if let cached = foldOverflowCache[foldCacheKey] { return cached }
+        let full = attributedBody(fullText, fontSize: 16)
+        let fullHeight = full.boundingRect(
+            with: CGSize(width: contentWidth, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        ).height
+        let singleHeight = attributedBody("X", fontSize: 16).boundingRect(
+            with: CGSize(width: contentWidth, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        ).height
+        if singleHeight <= 0 { return false }
+        let lines = Int(ceil(fullHeight / singleHeight - 0.01))
+        let overflow = lines > 6
+        if foldOverflowCache.count > 200 { foldOverflowCache.removeAll() }
+        foldOverflowCache[foldCacheKey] = overflow
+        return overflow
+    }
+
+    /// M7：折叠箭头与编辑器附加栏同口径——0.18s 旋转动画；变换未变时不播（复用/重渲染不闪）。
+    /// 折叠正文无透明度动画是刻意选择（与网页一致），不补。
+    private func animateFoldArrow(expanded: Bool) {
+        let target = expanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : .identity
+        guard foldButton.imageView?.transform != target else { return }
+        if UIAccessibility.isReduceMotionEnabled {
+            foldButton.imageView?.transform = target
+        } else {
+            UIView.animate(withDuration: BearyMotion.micro) { self.foldButton.imageView?.transform = target }
+        }
+    }
+
+    private func applyFoldVisibility(overflow: Bool) {
+        contentLabel.numberOfLines = isExpanded ? 0 : (overflow ? 6 : 0)
+        if overflow {
+            foldButton.isHidden = false
+            foldButton.setTitle(isExpanded ? "收起" : "展开全文", for: .normal)
+            animateFoldArrow(expanded: isExpanded)
+        } else {
+            foldButton.isHidden = true
+        }
+    }
+
+    private func updateContentAndFold() {
+        let fullText = currentEntry?.content ?? ""
+        contentLabel.attributedText = bodyWithTrailingMood(fullText, fontSize: 16, moodKey: currentEntry?.mood)
+        let width = contentLabel.bounds.width > 0 ? contentLabel.bounds.width : bodyColumnWidthEstimate()
+        let overflow = measuredFoldOverflow(contentWidth: width)
+        foldOverflow = overflow
+        applyFoldVisibility(overflow: overflow)
+    }
+
+    /// 展开态（只读，供控制器判断本次点按是展开还是收起）。
+    var isFoldExpanded: Bool { isExpanded }
+
+    /// 收起锚点：折叠钮中心在指定视图坐标系里的 Y（传表即内容坐标）。
+    /// 控制器在收起时用它锚定滚动——钮在屏幕上的位置不动，日记就不被顶到上面。
+    /// 钮隐藏时返回 nil，调用方回落原口径。
+    func foldButtonCenterY(in view: UIView) -> CGFloat? {
+        guard !foldButton.isHidden else { return nil }
+        let center = CGPoint(x: foldButton.bounds.midX, y: foldButton.bounds.midY)
+        return foldButton.convert(center, to: view).y
+    }
+
+    /// L21（91 包，个人主页模式）：展开/收起显示切换（标题/箭头/行数三件与 configure 原口径一致）。
+    /// animated 时正文 0.22s 交叉淡入，行高由控制器 performBatchUpdates 平滑伸缩。
+    func setFoldDisplay(expanded: Bool, animated: Bool) {
+        guard foldApplies else { return }
+        let apply = {
+            self.foldButton.setTitle(expanded ? "收起" : "展开全文", for: .normal)
+            self.foldButton.imageView?.transform = expanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : .identity
+            self.contentLabel.numberOfLines = expanded ? 0 : 6
+        }
+        if animated {
+            UIView.transition(with: contentLabel, duration: BearyMotion.normal, options: .transitionCrossDissolve, animations: apply)
+        } else {
+            apply()
+        }
+    }
+
+    @objc private func foldButtonTapped() {
+        if cardMode == .profile {
+            onFoldToggle?()
+            return
+        }
+        // F6：展开/收起平滑切换（91 包 L21，已推翻即时切换定版）：正文 0.22s 交叉淡入，
+        // 行高由控制器 performBatchUpdates 平滑伸缩；引用异步落位仍走 onNeedsRowReload。
+        guard let entryIdValue = cellEntryId else { return }
+        if isExpanded {
+            BearyDiaryCardCell.expandedEntryIds.remove(entryIdValue)
+            isExpanded = false
+        } else {
+            BearyDiaryCardCell.expandedEntryIds.insert(entryIdValue)
+            isExpanded = true
+        }
+        UIView.transition(with: contentLabel, duration: BearyMotion.normal, options: .transitionCrossDissolve, animations: {
+            self.updateContentAndFold()
+        })
+        updateDiaryStackSpacing()
+        onNeedsFoldAnimation?()
+    }
+
+    // MARK: - 引用 lite 卡（首页异步 / 个人主页同步，各保各的；视图共享）
+
+    /// 引用卡统一落点（首页模式）。服务端 attachQuotes 直传 gone/locked（Quote 模型已解码，
+    /// F3 收尾）；字段非空时优先用字段判定，缺失时回退 is_public + 正文启发式：
+    /// iCity viewer 实时判定：作者本人（quoteIsMine 或 quoteAuthorId == 当前用户）或被引篇已公开
+    /// 才显全文，否则 showGone 占位（占位不带日期与缩略图，见 BearyQuoteCardView.showGone）。
+    /// - gone：gone 态 → “引用的日记已删除”（点按无动作）；
+    /// - locked / 未公开：→ 引用规则简化占位文案（见 BearyQuoteGate.placeholderText；
+    ///   曾公开“该日记已设为私密”＋提醒句，从未公开“该日记未公开”），点按无动作；
+    /// - 正文空：未公开→未公开占位，其余→已删占位；
+    /// - 正文非空但 viewer 非作者且未公开：占位（绝不凭“正文非空”推断作者身份，fail-closed）。
+    /// 缩略图门控：仅被引公开或 viewer 为作者时出。
+    private func presentQuoteCard(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int?, isPublic: Bool?, gone: Bool?, locked: Bool?, quoteId: String?, quoteAuthorId: Int?, quoteIsMine: Bool?, hostIsPublic: Bool, quotePublishedAt: Int? = nil, authorHandle: String? = nil, quoteVisibility: String? = nil) {
+        // 112：落卡即不再等待，回包补刷不再重复命中本卡。
+        quoteAwaitingId = nil
+        quoteTapId = quoteId
+        quoteTapGoneOrLocked = false
+        quoteTapLoadFailed = false
+        if gone == true {
+            quoteTapGoneOrLocked = true
+            quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
+            quoteView.isHidden = false
+            return
+        }
+        if locked == true {
+            quoteTapGoneOrLocked = true
+            let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quotePublishedAt, locked: true, visibility: quoteVisibility)
+            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
+            quoteView.isHidden = false
+            return
+        }
+        if content.isEmpty {
+            quoteTapGoneOrLocked = true
+            if isPublic == false {
+                let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quotePublishedAt, locked: false, visibility: quoteVisibility)
+                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
+            } else {
+                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
+            }
+            quoteView.isHidden = false
+            return
+        }
+        let viewerId = SessionManager.shared.currentUser?.id
+        let viewerIsAuthor = quoteIsMine == true || (quoteAuthorId != nil && viewerId != nil && quoteAuthorId == viewerId)
+        guard viewerIsAuthor || isPublic == true else {
+            quoteTapGoneOrLocked = true
+            let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quotePublishedAt, locked: false, visibility: quoteVisibility)
+            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
+            quoteView.isHidden = false
+            // 审计 2026-11-02 第十节：仅好友档互关通道——先占位（fail-closed），
+            // 服务端 state 确认互关后再补全文；cell 已复用（quoteTapId 已变）时丢弃。
+            if quoteVisibility == "friends", let quoteId = quoteId, !quoteId.isEmpty, let authorId = quoteAuthorId, SessionManager.shared.isLoggedIn {
+                // 跳动审计第 6 条：已验证互关的引用直接落全文，不再发请求、不再触发
+                // 行重载——重配时不再进入“占位→请求→补全文→重载→重配”循环。
+                // 行高由外层 configure / 回包分支结算，这里只落卡。
+                if BearyDiaryCardCell.hasQuoteMutualAccess(authorId: authorId, quoteId: quoteId) {
+                    presentQuoteCard(
+                        authorName: authorName,
+                        authorAvatar: authorAvatar,
+                        content: content,
+                        images: images,
+                        dims: dims,
+                        createdAt: createdAt,
+                        isPublic: true,
+                        gone: gone,
+                        locked: locked,
+                        quoteId: quoteId,
+                        quoteAuthorId: quoteAuthorId,
+                        quoteIsMine: quoteIsMine,
+                        hostIsPublic: hostIsPublic,
+                        quotePublishedAt: quotePublishedAt,
+                        authorHandle: authorHandle,
+                        quoteVisibility: quoteVisibility
+                    )
+                    return
+                }
+                BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let strongSelf = self, strongSelf.quoteTapId == quoteId else { return }
+                        guard case .success(let state) = result,
+                              (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false)) else { return }
+                        // 先记标记再落卡：重配/重载期间的再次 configure 即命中缓存路径。
+                        BearyDiaryCardCell.markQuoteMutualAccess(authorId: authorId, quoteId: quoteId)
+                        strongSelf.presentQuoteCard(
+                            authorName: authorName,
+                            authorAvatar: authorAvatar,
+                            content: content,
+                            images: images,
+                            dims: dims,
+                            createdAt: createdAt,
+                            isPublic: true,
+                            gone: gone,
+                            locked: locked,
+                            quoteId: quoteId,
+                            quoteAuthorId: quoteAuthorId,
+                            quoteIsMine: quoteIsMine,
+                            hostIsPublic: hostIsPublic,
+                            quotePublishedAt: quotePublishedAt,
+                            authorHandle: authorHandle,
+                            quoteVisibility: quoteVisibility
+                        )
+                        strongSelf.updateDiaryStackSpacing()
+                        strongSelf.onNeedsRowReload?()
+                    }
+                }
+            }
+            return
+        }
+        quoteView.configure(
+            authorName: authorName,
+            authorAvatar: authorAvatar,
+            content: content,
+            images: images,
+            dims: dims,
+            createdAt: createdAt,
+            allowThumbs: isPublic == true || viewerIsAuthor,
+            authorHandle: authorHandle,
+            sourceTappable: true,
+            quoteId: quoteId
+        )
+        quoteView.isHidden = false
+    }
+
+    /// F2：引用卡点按分流。首页模式：gone/locked 不动作；加载失败点按重试；
+    /// 其余一律传引用 id，容器先 fetchEntry 校验可见性再放行（私密时显占位，不凭渲染时快照放行）。
+    /// 个人主页模式：正常与 gone 卡都透传 onQuoteTap，控制器弹提示或打开目标。
+    private func quoteViewTapped() {
+        if cardMode == .profile {
+            onQuoteTap?()
+            return
+        }
+        if quoteTapGoneOrLocked { return }
+        if quoteTapLoadFailed {
+            retryQuoteFetch()
+            return
+        }
+        guard let quoteIdValue = quoteTapId, !quoteIdValue.isEmpty else { return }
+        onQuoteSelected?(quoteIdValue)
+    }
+
+    private func retryQuoteFetch() {
+        guard let entryValue = currentEntry, let quoteIdValue = entryValue.quoteId, !quoteIdValue.isEmpty else { return }
+        BearyDiaryCardCell.quoteFailedIds.remove(quoteIdValue)
+        configureQuoteFeed(for: entryValue)
+    }
+
+    /// 112：加载中占位——纯文字，不是骨架屏。复用引用卡现成的 gone 行
+    /// （图标仍是原引用图标 icon_quote，不新加图标语义），点按无动作
+    /// （quoteTapId 为空，quoteViewTapped 本就 return；gone 标志位保持 false，
+    /// 不与真正的 gone/locked 态混淆）。
+    private func showQuoteLoadingPlaceholder(quoteId: String) {
+        quoteAwaitingId = quoteId
+        quoteTapId = nil
+        quoteTapGoneOrLocked = false
+        quoteTapLoadFailed = false
+        quoteView.showGone(message: "引用加载中…")
+        quoteView.isHidden = false
+    }
+
+    /// 112：回包到达时补刷同表内仍在等该 quoteId 的可见卡（第二张同引用卡）。
+    /// 只命中 quoteAwaitingId == quoteId 的卡：其 configureQuoteFeed 走
+    /// quoteCache / quoteFailedIds 分支落卡或失败态，不重复发请求；
+    /// 已落卡的卡不重配。宿主卡由回包分支自己落卡，此处跳过 self。
+    /// 找不到 UITableView（卡未挂表）时不做事——离屏卡下次 configure 命中缓存。
+    private func refreshWaitingQuoteCells(quoteId: String) {
+        var tableView: UITableView?
+        var view = superview
+        while let current = view {
+            if let table = current as? UITableView { tableView = table; break }
+            view = current.superview
+        }
+        guard let table = tableView else { return }
+        for case let waiter as BearyDiaryCardCell in table.visibleCells {
+            guard waiter !== self, waiter.cardMode == .feed,
+                  waiter.quoteAwaitingId == quoteId,
+                  let waiterEntry = waiter.currentEntry else { continue }
+            waiter.configureQuoteFeed(for: waiterEntry)
+            waiter.updateDiaryStackSpacing()
+            waiter.onNeedsRowReload?()
+        }
+    }
+
+    /// 引用卡展开后通知表格重算行高（审计第十轮第 4 项）：卡片内部只改行数，
+    /// 行高归表格所有；begin/end 更新走 motion.normal（0.26s）平滑过渡，
+    /// 不做突然跳变。找不到表（卡未挂表）时不做事。
+    private func notifyQuoteExpanded() {
+        var tableView: UITableView?
+        var view = superview
+        while let current = view {
+            if let table = current as? UITableView { tableView = table; break }
+            view = current.superview
+        }
+        guard let tableView = tableView else { return }
+        UIView.animate(withDuration: BearyMotion.normal) {
+            tableView.beginUpdates()
+            tableView.endUpdates()
+        }
+    }
+
+    private func configureQuoteFeed(for entry: Entry) {
+        quoteView.clear()
+        quoteView.isHidden = true
+        quoteTapId = nil
+        quoteTapGoneOrLocked = false
+        quoteTapLoadFailed = false
+        quoteAwaitingId = nil
+        if let quoteValue = entry.quote {
+            presentQuoteCard(
+                authorName: displayAuthorName(quoteValue.authorName ?? entry.authorName),
+                authorAvatar: quoteValue.authorAvatar ?? entry.authorAvatar,
+                content: quoteValue.content ?? "",
+                images: quoteValue.images ?? [],
+                dims: quoteValue.imgDims,
+                createdAt: quoteValue.createdAt,
+                // 审计 2026-11-02 第十节：直传引用体同样走有效态（过期即非公开），
+                // 绝不凭正文非空反推公开；仅好友档由 presentQuoteCard 内互关通道复核。
+                isPublic: quoteValue.isEffectivelyPublic,
+                gone: quoteValue.gone,
+                locked: quoteValue.locked,
+                quoteId: quoteValue.id,
+                quoteAuthorId: quoteValue.authorId,
+                quoteIsMine: quoteValue.isMine,
+                hostIsPublic: BearyEphemeral.isEffectivelyPublic(entry),
+                quotePublishedAt: quoteValue.publishedAt,
+                authorHandle: quoteValue.authorHandle,
+                quoteVisibility: quoteValue.visibility
+            )
+            return
+        }
+        guard let quoteIdValue = entry.quoteId, !quoteIdValue.isEmpty else { return }
+        if let cachedEntry = BearyDiaryCardCell.cachedQuote(for: quoteIdValue) {
+            presentQuoteCard(
+                authorName: displayAuthorName(cachedEntry.authorName),
+                authorAvatar: cachedEntry.authorAvatar,
+                content: cachedEntry.content ?? "",
+                images: cachedEntry.images ?? [],
+                dims: cachedEntry.imgDims,
+                createdAt: cachedEntry.createdAt,
+                // 审计 2026-11-02 第十节：缓存命中同样走 viewer 实时判定——
+                // 作者本人或当前有效公开才显全文，绝不以“有正文即公开”反推；
+                // 仅好友档由 presentQuoteCard 内互关通道复核。
+                // 审计-广场：公开态只认服务端 isPublic + 限时过期（isEffectivelyPublic），
+                // 正文非空只证明服务端给了内容（仅好友篇也会给好友看正文），绝不反推公开。
+                isPublic: BearyEphemeral.isEffectivelyPublic(cachedEntry),
+                gone: nil,
+                locked: nil,
+                quoteId: quoteIdValue,
+                quoteAuthorId: cachedEntry.authorId,
+                quoteIsMine: cachedEntry.isMine,
+                hostIsPublic: BearyEphemeral.isEffectivelyPublic(entry),
+                quotePublishedAt: cachedEntry.publishedAt,
+                authorHandle: cachedEntry.authorHandle,
+                quoteVisibility: cachedEntry.visibility
+            )
+            return
+        }
+        // F3：拉取失败只记加载失败态，不再记“已删除”；卡片可点重试。
+        if BearyDiaryCardCell.quoteFailedIds.contains(quoteIdValue) {
+            quoteTapId = quoteIdValue
+            quoteTapLoadFailed = true
+            quoteView.showLoadFailed(message: "引用加载失败，重试")
+            quoteView.isHidden = false
+            return
+        }
+        // 112：同 quoteId 已在途时不再重复发请求，但不再直接 return 藏卡——
+        // 给等待卡一个“加载中”文字占位，回包到达时由发起卡补刷（见下）。
+        if BearyDiaryCardCell.quoteLoadingIds.contains(quoteIdValue) {
+            showQuoteLoadingPlaceholder(quoteId: quoteIdValue)
+            return
+        }
+        BearyDiaryCardCell.quoteLoadingIds.insert(quoteIdValue)
+        showQuoteLoadingPlaceholder(quoteId: quoteIdValue)
+        let hostEntryIdValue = entry.id
+        // 审计第 5 项残留：发起时捕获请求桶 + 代次；刷新清空/换桶后到达的
+        // 旧回包在写缓存前即丢弃，不得写入当前（新号）桶。
+        let requestBucket = BearyDiaryCardCell.currentQuoteBucket()
+        let requestGeneration = BearyDiaryCardCell.quoteFetchGeneration
+        BearyAPI.shared.fetchEntry(id: quoteIdValue) { [weak self] result in
+            DispatchQueue.main.async {
+                // 过期回包：不写缓存、不落卡、不记失败；也不清在途位——
+                // 该位可能已属新代次同 id 请求，清掉会让新请求被误判为未在途而重复发。
+                guard requestBucket == BearyDiaryCardCell.currentQuoteBucket(),
+                      requestGeneration == BearyDiaryCardCell.quoteFetchGeneration else { return }
+                BearyDiaryCardCell.quoteLoadingIds.remove(quoteIdValue)
+                switch result {
+                case .success(let fetchedEntry):
+                    guard BearyDiaryCardCell.storeQuote(fetchedEntry, for: quoteIdValue, requestBucket: requestBucket, generation: requestGeneration) else { return }
+                    // 宿主复用走了也先补刷等待卡（缓存已落，等待卡命中缓存不重发）；
+                    // 再按宿主身份决定宿主自己是否落卡。
+                    guard let strongSelf = self else { return }
+                    strongSelf.refreshWaitingQuoteCells(quoteId: quoteIdValue)
+                    guard strongSelf.cellEntryId == hostEntryIdValue else { return }
+                    strongSelf.presentQuoteCard(
+                        authorName: strongSelf.displayAuthorName(fetchedEntry.authorName),
+                        authorAvatar: fetchedEntry.authorAvatar,
+                        content: fetchedEntry.content ?? "",
+                        images: fetchedEntry.images ?? [],
+                        dims: fetchedEntry.imgDims,
+                        createdAt: fetchedEntry.createdAt,
+                        // 审计 2026-11-02 第十节：拉取回包同样走 viewer 实时判定，
+                        // 绝不以“有正文即公开”反推；仅好友档由 presentQuoteCard 内互关通道复核。
+                        // 审计-广场：同缓存分支，公开态只认服务端字段，不以正文非空反推。
+                        isPublic: BearyEphemeral.isEffectivelyPublic(fetchedEntry),
+                        gone: nil,
+                        locked: nil,
+                        quoteId: quoteIdValue,
+                        quoteAuthorId: fetchedEntry.authorId,
+                        quoteIsMine: fetchedEntry.isMine,
+                        hostIsPublic: BearyEphemeral.isEffectivelyPublic(entry),
+                        quotePublishedAt: fetchedEntry.publishedAt,
+                        authorHandle: fetchedEntry.authorHandle,
+                        quoteVisibility: fetchedEntry.visibility
+                    )
+                    strongSelf.updateDiaryStackSpacing()
+                    strongSelf.onNeedsRowReload?()
+                case .failure:
+                    BearyDiaryCardCell.quoteFailedIds.insert(quoteIdValue)
+                    // 失败同样补刷等待卡：等待卡命中失败分支显“加载失败，重试”，
+                    // 不再全程停在“加载中”占位；宿主复用走了也先补刷等待卡。
+                    guard let strongSelf = self else { return }
+                    strongSelf.refreshWaitingQuoteCells(quoteId: quoteIdValue)
+                    guard strongSelf.cellEntryId == hostEntryIdValue else { return }
+                    strongSelf.quoteAwaitingId = nil
+                    strongSelf.quoteTapId = quoteIdValue
+                    strongSelf.quoteTapLoadFailed = true
+                    strongSelf.quoteView.showLoadFailed(message: "引用加载失败，重试")
+                    strongSelf.quoteView.isHidden = false
+                    strongSelf.updateDiaryStackSpacing()
+                    strongSelf.onNeedsRowReload?()
+                }
+            }
+        }
+    }
+
+    /// 引用卡（个人主页模式，同步）：按返回形状推断
+    /// （首页行同口径）：正文空 + 未公开 = 锁定；正文空 + 其他 = 已删除；正文非空 = 正常卡。
+    /// 锁定占位走引用规则简化文案（见 BearyQuoteGate.placeholderText；locked 体按
+    /// published_at 区分曾公开/从未公开）。缩略图门控与网页 quoteThumbsHtml 同口径：
+    /// 公开或本人日记才出图。
+    /// 正常卡不带“投递中”pill（个人主页原口径）；gone 卡点按透传控制器（allowGoneTap）。
+    private func configureQuoteProfile(entry: Entry) {
+        quoteView.clear()
+        guard let quoteValue = entry.quote else {
+            if let quoteId = entry.quoteId, !quoteId.isEmpty {
+                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
+                quoteView.isHidden = false
+            } else {
+                quoteView.isHidden = true
+            }
+            return
+        }
+        let quoteContent = quoteValue.content ?? ""
+        if quoteContent.isEmpty {
+            // 审计 2026-11-02 第十节：个人主页模式同样走有效态（过期即非公开）。
+            if quoteValue.isEffectivelyPublic == false {
+                let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quoteValue.publishedAt, locked: quoteValue.locked == true, visibility: quoteValue.visibility)
+                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quoteValue.authorHandle, sourceDateMs: quoteValue.createdAt)
+            } else {
+                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
+            }
+            quoteView.isHidden = false
+            return
+        }
+        // iCity viewer 判定（个人主页模式同款）：作者本人或当前有效公开才全文，否则占位。
+        // （仅好友档互关通道本模式暂不接——维持现行占位 fail-closed，不放宽；
+        // 个人页组如需接通可复用 BearyQuoteGate.resolveQuoteFullAccess。）
+        let viewerId = SessionManager.shared.currentUser?.id
+        let viewerIsAuthor = quoteValue.isMine == true || (quoteValue.authorId != nil && viewerId != nil && quoteValue.authorId == viewerId)
+        guard viewerIsAuthor || quoteValue.isEffectivelyPublic else {
+            let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quoteValue.publishedAt, locked: false, visibility: quoteValue.visibility)
+            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quoteValue.authorHandle, sourceDateMs: quoteValue.createdAt)
+            quoteView.isHidden = false
+            return
+        }
+        quoteView.configure(
+            authorName: displayAuthorName(quoteValue.authorName),
+            authorAvatar: quoteValue.authorAvatar,
+            content: quoteContent,
+            images: quoteValue.images ?? [],
+            dims: quoteValue.imgDims,
+            createdAt: quoteValue.createdAt,
+            allowThumbs: quoteValue.isEffectivelyPublic || viewerIsAuthor,
+            authorHandle: quoteValue.authorHandle,
+            sourceTappable: true,
+            quoteId: quoteValue.id
+        )
+        quoteView.isHidden = false
+    }
+
+    // MARK: - 点赞 / 收藏 / 公开行（两模式各保语义）
+
+    /// D1（审计五轮第 6 项，规范 §6）：点赞数变化时 0.18s opacity 交叉淡变
+    /// （BearyMotion.localStateDuration，站内 contentLabel 同款 transitionCrossDissolve）；
+    /// 数字未变、减动效开、或按钮未进窗口时直设终值；宽度与数字同 0.18s 走——
+    /// 约束先改终值，再在同 dur 的 animate 里 layoutIfNeeded，栈内邻钮
+    /// （收藏/分享）平滑滑到终位，不再瞬间横移；0 仍走现行分支
+    /// （setTitle(nil)＋宽只剩图标宽），语义不动。
+    private func setLikeTitle(_ title: String?, width: CGFloat) {
+        let oldWidth = likeButtonWidthConstraint?.constant ?? width
+        likeButtonWidthConstraint?.constant = width
+        guard likeButton.title(for: .normal) != title,
+              !UIAccessibility.isReduceMotionEnabled,
+              likeButton.window != nil else {
+            likeButton.setTitle(title, for: .normal)
+            return
+        }
+        UIView.transition(with: likeButton, duration: BearyMotion.localStateDuration, options: .transitionCrossDissolve, animations: {
+            self.likeButton.setTitle(title, for: .normal)
+        })
+        // 宽度变化与数字淡变同 0.18s：约束已是终值，layoutIfNeeded 把栈内
+        // 邻钮平滑推到终位；宽未变（同位数）时不另启动画。
+        if oldWidth != width, let stackView = likeButton.superview {
+            UIView.animate(withDuration: BearyMotion.localStateDuration, animations: {
+                stackView.layoutIfNeeded()
+            })
+        }
+    }
+
+    private func updateLikeButton() {
+        let liked = currentEntry?.likedByMe ?? false
+        let countValue = currentEntry?.likeCount ?? 0
+        let heartImage = BearyFeedIconCache.image(named: liked ? "icon_heart_fill" : "icon_heart", pointSize: 24) ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 24)
+        likeButton.setImage(heartImage, for: .normal)
+        // 计数位宽度由显式约束定，不靠按钮固有宽：按钮固有宽不含标题边距，
+        // 栈按固有宽给帧时标题框只剩边距差，数字会被裁成左半弧。
+        // 2026-10-29 Li 定：赞为 0 时只隐藏数字（图标保留且仍可点按，保留点赞入口），
+        // 宽度只剩图标宽，不留数字位；时间线按数显隐（图标＋数字同藏）的地方不动。
+        let imageWidth = heartImage?.size.width ?? 22
+        if countValue <= 0 {
+            setLikeTitle(nil, width: imageWidth)
+        } else {
+            let titleText = "\(countValue)"
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))]).width)
+            setLikeTitle(titleText, width: imageWidth + 6 + titleWidth)
+        }
+        // 2026-10-29 100 包反馈第 6 项：卡片脚三钮未点亮统一为同一灰
+        // （此前爱心未赞为墨色 ink、收藏/分享为灰，三钮色不一致；旧 fixall-cell
+        // 8-9 的“未赞爱心墨色”网页口径就此作废，图标与计数同灰）。
+        // 点亮态爱心与计数同为点赞亮红（BearyColors.likeRed = #ff3b30）。
+        likeButton.tintColor = liked ? BearyColors.likeRed : BearyColors.gray
+        likeButton.setTitleColor(liked ? BearyColors.likeRed : BearyColors.gray, for: .normal)
+        likeButton.imageView?.transform = .identity
+        refreshActionAccessibility()
+    }
+
+    /// 点赞钮渲染（个人主页模式；configure 与就地同步共用；同步侧先调它
+    /// 再播爆点，爆点不被 transform 复位打断）。
+    /// 2026-10-29 100 包反馈第 6 项：未赞态两模式统一——爱心与计数同灰
+    /// （旧 fixall-cell 8-9 的未赞爱心墨色口径作废）。
+    /// 2026-10-29 Li 定：赞为 0 时只隐藏数字（图标保留且仍可点按），宽度只剩图标宽。
+    /// 已赞态爱心与计数同为点赞亮红（BearyColors.likeRed = #ff3b30）。
+    private func applyLikeButtonState(liked: Bool, count: Int) {
+        let likedImageName = liked ? "icon_heart_fill" : "icon_heart"
+        let likedImage = BearyFeedIconCache.image(named: likedImageName, pointSize: 24)
+        likeButton.setImage(likedImage, for: .normal)
+        let imageWidth = likedImage?.size.width ?? 22
+        if count <= 0 {
+            setLikeTitle(nil, width: imageWidth)
+        } else {
+            let titleText = "\(count)"
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))]).width)
+            setLikeTitle(titleText, width: imageWidth + 6 + titleWidth)
+        }
+        likeButton.tintColor = liked ? BearyColors.likeRed : BearyColors.gray
+        likeButton.setTitleColor(liked ? BearyColors.likeRed : BearyColors.gray, for: .normal)
+        likeButton.imageView?.transform = .identity
+        refreshActionAccessibility()
+    }
+
+    private func applyProfileBookmarkState(bookmarked: Bool) {
+        let bookmarkImageName = bookmarked ? "icon_bookmark_fill" : "icon_bookmark"
+        bookmarkButton.setImage(BearyFeedIconCache.image(named: bookmarkImageName, pointSize: 24), for: .normal)
+        bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
+        refreshActionAccessibility()
+    }
+
+    /// 取消点赞 pre-unlike（首页模式；网页 .pre-unlike 同款：心形缩 .8 + 填充先清），
+    /// 失败由完成回调调 updateLikeButton 恢复。未赞色与第 6 项统一为灰。
+    private func applyPreUnlike() {
+        let outlineImage = BearyFeedIconCache.image(named: "icon_heart", pointSize: 24) ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 24)
+        likeButton.setImage(outlineImage, for: .normal)
+        likeButton.tintColor = BearyColors.gray
+        likeButton.setTitleColor(BearyColors.gray, for: .normal)
+        BearyIconMotion.animateIconScale(on: likeButton, to: 0.8)
+    }
+
+    /// 取消赞预态（个人主页模式；首页 applyPreUnlike 同款，未赞色与第 6 项统一为灰）：
+    /// 先换空心图 + 灰色 + 缩 .8，失败由控制器 reload 复原。
+    private func applyCellPreUnlike() {
+        likeButton.setImage(BearyFeedIconCache.image(named: "icon_heart", pointSize: 24), for: .normal)
+        likeButton.tintColor = BearyColors.gray
+        likeButton.setTitleColor(BearyColors.gray, for: .normal)
+        BearyIconMotion.animateIconScale(on: likeButton, to: 0.8)
+    }
+
+    private func updateBookmarkButton() {
+        let bookmarked = currentEntry?.bookmarkedByMe ?? false
+        let bookmarkImage = BearyFeedIconCache.image(named: bookmarked ? "icon_bookmark_fill" : "icon_bookmark", pointSize: 24) ?? BearyFeedIconCache.image(named: "icon_bookmark", pointSize: 24)
+        bookmarkButton.setImage(bookmarkImage, for: .normal)
+        bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
+        refreshActionAccessibility()
+    }
+
+    /// 作者本人判定（现行口径复用，不新造：isMine 为 true，或 authorId == 当前登录用户 id；
+    /// 详情 BearyDetailViewController.init 与本文件引用卡 viewerIsAuthor 同款 OR 口径）。
+    private func isEntryAuthor(_ entry: Entry) -> Bool {
+        if entry.isMine == true { return true }
+        if let aid = entry.authorId, let uid = SessionManager.shared.currentUser?.id { return aid == uid }
+        return false
+    }
+
+    /// 2026-10-31 私密自互动口径：点赞／收藏门控为“有效公开 或 作者本人”（详情同口径）；
+    /// 分享不动，仍仅有效公开才有。注意：后端目前仍以 published=1 拦私密互动（见 PR 说明），
+    /// 作者私密点赞／收藏的服务端请求仍会 404 并走既有失败回滚，本处只改 App 侧放行。
+    /// F7/F8（首页模式）：首页与详情互动门控统一为上述口径。
+    private func updateActionInteractivity() {
+        // 审计 P0-4：有效态门控（过期限时篇不放行点赞/收藏/分享；作者本人例外只放行点赞/收藏）。
+        // 2026-10-29 及时性口径：在途请求不再禁用按钮——快连点每次都必须立即
+        // 落地，防重入只靠代次守卫，不靠按钮禁用。
+        let publicOK = currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false
+        let interactOK = publicOK || (currentEntry.map(isEntryAuthor) ?? false)
+        likeButton.isEnabled = interactOK
+        bookmarkButton.isEnabled = interactOK
+        likeButton.alpha = interactOK ? 1.0 : 0.4
+        bookmarkButton.alpha = interactOK ? 1.0 : 0.4
+        // 网页口径：shBtn 仅 is_public 时输出——非公开卡直接没有分享钮（不禁用占位）。
+        shareButton.isHidden = publicOK == false
+        shareSlotSpacer.isHidden = !shareButton.isHidden
+    }
+
+    /// 拒绝动效（首页模式；网页 .deny shakeX .4s 同口径）：左右小幅抖动，reduced-motion 时跳过。
+    /// 可见性切换失败的拒绝动效：摇头 + warning 震动（playDenyShake 内含），
+    /// 控制器回滚本地态后调用，toast 由控制器发。
+    func playPublishDenyShake() {
+        playDenyShake(on: moreButton)
+    }
+
+    /// 审计 P2-23：个人页控制器侧门控拒绝动效（与详情页同口径：摇头＋warning 震动）。
+    func playLikeDenyShake() {
+        playDenyShake(on: likeButton)
+    }
+
+    func playBookmarkDenyShake() {
+        playDenyShake(on: bookmarkButton)
+    }
+
+    private func playDenyShake(on button: UIButton) {
+        // 拒绝震动不拿减动效门控：减动效只跳过视觉抖动，震动照常给。
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+        if UIAccessibility.isReduceMotionEnabled { return }
+        button.layer.removeAnimation(forKey: "bearyDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = BearyMotion.screen
+        button.layer.add(shake, forKey: "bearyDenyShake")
+    }
+
+    /// 2026-10-31 卡片 ⋯ 显隐（时间线风格）：本人卡或他人公开卡显，其余藏；
+    /// 头行右缩进恒 −16，⋯ 留位走标题行末 titleMoreSpacer。
+    func refreshPublishRow() {
+        refreshMoreRow()
+    }
+    private func refreshEphemeralState(entry: Entry) {
+        // 限时存活期：倒计时行显 + 虚线边框显；到期或非限时一律按普通卡。
+        // 2026-10-31 107 真机报：首页限时篇下方没有分割线。旧口径是存活期
+        // “底线藏（边框代之）”，即 separatorView.isHidden = live，导致限时篇
+        // 下方与下一篇之间无实线。修法：首页模式（.feed）存活期底线也显，
+        // 与普通篇一致（1pt、BearyColors.line、贴 cell 底、全宽）；虚线框
+        // 内缩 dx 8 / dy 6、底边在 cell 底上方 6pt，底线在 cell 底 1pt 内，
+        // 两者相隔约 3pt 以上，不重叠、不遮盖。个人主页模式保持旧口径不动。
+        let live = BearyEphemeral.isLive(entry)
+        if live, let until = entry.ephemeralUntil {
+            ephemeralLabel.text = BearyEphemeral.remainingText(until: until)
+            ephemeralRow.isHidden = false
+        } else {
+            ephemeralLabel.text = nil
+            ephemeralRow.isHidden = true
+        }
+        // 个人页最后一篇后接“更多日记”行时底线整段塌掉（高 0 并隐藏），
+        // 其余行沿用旧口径（首页存活期限时篇也显底线；个人页存活期限时篇藏底线但高仍 1）。
+        separatorView.isHidden = ((cardMode == .feed) ? false : live) || suppressBottomSeparator
+        separatorHeightConstraint?.constant = suppressBottomSeparator ? 0 : 1
+        ephemeralBorderView.isHidden = !live
+        setNeedsLayout()
+    }
+
+    private func refreshMoreRow() {
+        guard let entry = currentEntry else {
+            moreButton.isHidden = true
+            titleMoreSpacer.isHidden = true
+            return
+        }
+        // ⋯ 常驻条件：本人卡（编辑／修改权限／删除）或他人公开卡（举报）；
+        // 他人私密卡无菜单项，钮与垫片同藏，标题行恢复满宽。
+        let show = entry.isMine == true || BearyEphemeral.isEffectivelyPublic(entry)
+        moreButton.isHidden = !show
+        titleMoreSpacer.isHidden = !show
+        headerStackTrailingConstraint?.constant = -16
+    }
+
+    @objc private func moreTapped() {
+        guard let entry = currentEntry else { return }
+        onMoreRequested?(entry, moreButton)
+    }
+
+    /// 互动就地同步（首页模式，卡顿批）：只改点赞/收藏/回应三处控件，不重建图片/
+    /// 正文/引用、不重算行高。控制器同步（跨页回传）与自家回包共用：
+    /// 与当前显示相等时跳过——自家回包不再打断正在播的点赞爆点与 chip-in；
+    /// 回应先按已显示顺序合并回包（见 BearyEmoteOrder），再判等；
+    /// 不可见行不调用（模型已由控制器改好，滑回显示时 configure 自然取新值）。
+    func syncInteraction(entryId: String, likeCount: Int?, likedByMe: Bool?, bookmarkedByMe: Bool?, emotes: [EmoteCount]?) {
+        guard cellEntryId == entryId else { return }
+        var likeChanged = false
+        if let v = likeCount, v != (currentEntry?.likeCount ?? 0) {
+            currentEntry?.likeCount = v
+            likeChanged = true
+        }
+        if let v = likedByMe, v != (currentEntry?.likedByMe ?? false) {
+            currentEntry?.likedByMe = v
+            likeChanged = true
+        }
+        if likeChanged { updateLikeButton() }
+        // 控制器经服务端全副本同步的值即确认态：快连点下失败回滚滚到这里，
+        // 不滚到控制器旧模型或本次点按前的中间态。
+        if let v = likedByMe {
+            confirmedLiked = v
+            confirmedLikeCount = currentEntry?.likeCount ?? 0
+        }
+        if let v = bookmarkedByMe {
+            confirmedBookmarked = v
+        }
+        var bookmarkChanged = false
+        if let v = bookmarkedByMe, v != (currentEntry?.bookmarkedByMe ?? false) {
+            currentEntry?.bookmarkedByMe = v
+            bookmarkChanged = true
+        }
+        if bookmarkChanged { updateBookmarkButton() }
+        if let server = emotes {
+            let merged = BearyEmoteOrder.merged(previous: currentEntry?.emotes, server: server)
+            if BearyEmoteOrder.signature(merged) != BearyEmoteOrder.signature(currentEntry?.emotes) {
+                currentEntry?.emotes = merged
+                renderEmotes()
+            }
+        }
+    }
+
+    /// 互动就地同步（个人主页模式，卡顿批）：只改点赞/收藏/回应三处与按钮启用态，
+    /// 不重建图片/引用/正文、不重算行高。点赞/收藏恒按 entry 重绘
+    /// （失败复原靠它把按下预览刷回原态）；回应只在显示签名变化时
+    /// 重绘 chip 行（签名相等即跳过，避免无谓重启播放器）。
+    /// 调用方保证先改模型再调本方法；行不可见时控制器不调（模型已改，
+    /// 滑回显示时 configure 自然取新值）。
+    func syncInteraction(entry: Entry, interactionDisabled: Bool, animatedEmoteLayout: Bool = false) {
+        guard cellEntryId == entry.id else { return }
+        currentEntry = entry
+        cellLikedByMe = entry.likedByMe ?? false
+        cellLikeCount = entry.likeCount ?? 0
+        applyLikeButtonState(liked: cellLikedByMe, count: cellLikeCount)
+        cellBookmarkedByMe = entry.bookmarkedByMe ?? false
+        applyProfileBookmarkState(bookmarked: cellBookmarkedByMe)
+        likeButton.isEnabled = !interactionDisabled
+        bookmarkButton.isEnabled = !interactionDisabled
+        shareButton.isEnabled = !interactionDisabled
+        // 2026-10-29 100 包反馈第 4 项根因 B：就地同步此前不跟可见性走——
+        // 个人页原地翻公开/私密后，分享钮显隐仍停在旧态（私密→公开仍藏、
+        // 公开→私密仍显），失败回滚后文案也停在目标态（⋯ 菜单内无文案态可停）。
+        // 此处按新 entry 的有效态同步两处（与 profile configure 同款口径；
+        // 控制器失败回滚同样走本方法，文案随之回到原态）。
+        shareButton.isHidden = BearyEphemeral.isEffectivelyPublic(entry) == false
+        shareSlotSpacer.isHidden = !shareButton.isHidden
+        refreshMoreRow()
+        // 批 E 补漏：就地同步此前不刷位置行——可见行经本方法同步新模型
+        // （如详情编辑回传带定位的 entry）后，位置行仍停在旧 configure 态，
+        // 直到整行重配才变；此处与 configure 同款刷新，nil 即隐藏不留空行。
+        refreshLocationRow(entry: entry)
+        profileDisabled = interactionDisabled
+        let candidate = BearyEmoteOrder.signature((entry.emotes ?? []).sorted { ($0.count ?? 0) > ($1.count ?? 0) }.filter { ($0.emote ?? "").isEmpty == false })
+        if candidate != cellEmoteSignature {
+            renderEmotes(animatedLayout: animatedEmoteLayout)
+        } else {
+            // A1：签名未变时就地同步也须走同一公开门控，否则会把
+            // updateEmoteInteractivity 置灰/禁用的 chip 重新放行。
+            updateEmoteInteractivity()
+        }
+    }
+
+    /// 卡顿批：就地同步后直接对同 cell 补弹（不再 reload 换 cell）。
+    func playBookmarkPop() {
+        BearyIconMotion.playBookmarkPop(on: bookmarkButton)
+    }
+
+    /// 收藏变橙时炸星星（只在变橙时调；取消收藏不调）。
+    func playBookmarkBurst() {
+        BearyBurstParticles.burstStar(from: bookmarkButton)
+    }
+
+    /// 点赞爆点（Li 2026-10-27 新规格）：与填色同起，点按确认时播；
+    /// 取消点赞不调用（取消时由调用方清在飞微粒）。
+    func playLikeBurst() {
+        BearyIconMotion.playLikeBurst(on: likeButton)
+        BearyBurstParticles.burstLike(from: likeButton)
+    }
+
+    /// 清掉在飞的炸开微粒（取消点赞时，屏幕只反映最新点按态）。
+    func clearLikeBurst() {
+        BearyIconMotion.clearLikeBurst(on: likeButton)
+        BearyBurstParticles.clear(from: likeButton)
+    }
+
+    // MARK: - 交互
+
+    /// F1：点图进查看器（带下标）；正文点按走行导航进详情（展开只走「展开全文」钮）。
+    /// 重试图标可见时点按只走重试，不进查看器（钮是槽位子视图，父层手势可能同收该点按）。
+    @objc private func imageTapped(_ sender: UITapGestureRecognizer) {
+        // 实况长按后的抬手点按：压住一次，不进灯箱（覆盖层在长按 began 时
+        // 已置 3 秒窗，ended 后又延 0.35 秒；窗外点按照常进灯箱）。
+        let tappedIndex = sender.view?.tag ?? -1
+        if tappedIndex >= 0, tappedIndex < imageSlotLiveViews.count,
+           let until = imageSlotLiveViews[tappedIndex].suppressTapUntil, until > Date() {
+            return
+        }
+        if cardMode == .feed {
+            if let iv = sender.view as? UIImageView,
+               iv.subviews.contains(where: { ($0 as? BearyFeedRetryButton)?.isHidden == false }) {
+                return
+            }
+            let index = sender.view?.tag ?? 0
+            if index < 0 || index >= currentImageKeys.count { return }
+            onImageTapped?(index, sender.view.map { $0.convert($0.bounds, to: nil) }, (sender.view as? UIImageView)?.image)
+            return
+        }
+        // N7 主页图片条点按：下标取自槽位 tag，keys 为 configure 存下的本条图 key；
+        // 手势截获此次点按，行点按进详情（didSelectRowAt）不再触发（时间线／首页同款守卫）；
+        // 卡片其他区域无手势，仍走 didSelectRowAt 进详情。
+        let index = sender.view?.tag ?? 0
+        guard index >= 0, index < currentImageKeys.count else { return }
+        onTapImages?(currentImageKeys, index, sender.view.map { $0.convert($0.bounds, to: nil) }, (sender.view as? UIImageView)?.image)
+    }
+
+    /// 按压反馈（预览 v3 定版：按下 0.95 / 0.1s、松手弹簧 1.03 → 0.99 → 1 / motion.micro 0.18s，
+    /// 走按钮层，与共用按压路径同款核心；震动仍由各点按流程自理，不在此补）。
+    @objc private func iconTouchDown(_ sender: UIButton) {
+        BearyIconMotion.pressDownVisual(on: sender)
+    }
+
+    @objc private func iconTouchUp(_ sender: UIButton) {
+        BearyIconMotion.pressUp(on: sender)
+    }
+
+    /// 跟手批：按下即给先行反馈（轻震/预取消赞），手指的按压不等抬起；
+    /// 首页模式守卫与 likeTapped 完全一致（公开、已登录、非忙碌、有 id），不满足不预览；
+    /// 个人主页模式守卫为登录态（原口径）；API 仍只在抬起确认时发。
+    @objc private func likePressDown() {
+        if cardMode == .profile {
+            guard SessionManager.shared.isLoggedIn else { return }
+            if cellLikedByMe {
+                applyCellPreUnlike()
+            }
+            // 审计动效组：按下只做视觉预态（按压缩放由 iconTouchDown 给），
+            // 震动＋音效移到抬起确认后播（个人页由控制器补，首页由 feedLikeTapped 播），
+            // 取消时只复位视觉预态（见 likePressCancelled）；此处先 prepare。
+            BearyHaptics.prepareLike()
+            likePressPreviewActive = true
+            return
+        }
+        // 及时性口径：按下预览不拿在途请求门控——在途时按下仍按当前
+        // （最新点按态）模型给预览，抬起取消时复原到同一模型。
+        // 2026-10-31 私密自互动口径：按下预览守卫与抬起确认同款（有效公开 或 作者本人）。
+        guard currentEntry.map({ BearyEphemeral.isEffectivelyPublic($0) || isEntryAuthor($0) }) ?? false else { return }
+        guard SessionManager.shared.isLoggedIn else { return }
+        guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
+        if currentEntry?.likedByMe == true {
+            applyPreUnlike()
+        }
+        // 审计动效组：按下只做视觉预态（同上），震动＋音效移到抬起确认后播；
+        // 此处先 prepare，确认时 likeTap 低延迟。
+        BearyHaptics.prepareLike()
+        likePressPreviewActive = true
+    }
+
+    /// 跟手批：抬起在外或滚动取消时复原按下预览（API 未发，状态一字未动）。
+    @objc private func likePressCancelled() {
+        guard likePressPreviewActive else { return }
+        likePressPreviewActive = false
+        if cardMode == .profile {
+            if cellLikedByMe {
+                likeButton.setImage(BearyFeedIconCache.image(named: "icon_heart_fill", pointSize: 24), for: .normal)
+                likeButton.tintColor = BearyColors.likeRed
+                likeButton.setTitleColor(BearyColors.likeRed, for: .normal)
+            }
+            likeButton.imageView?.transform = .identity
+            return
+        }
+        updateLikeButton()
+    }
+
+    @objc private func likeButtonTapped() {
+        if cardMode == .profile {
+            // 按下没给过预览（极少数触摸直达抬起）才在这里补一次，避免与按下预览重复；
+            // 预览本身不随抬起消失，留给控制器 API 回包后的同步复原。
+            if likePressPreviewActive == false {
+                likePressDown()
+            }
+            likePressPreviewActive = false
+            onLike?()
+            return
+        }
+        self.feedLikeTapped()
+    }
+
+    /// F8（首页模式）：点赞——Li 2026-10-27 定全量先行：抬起确认时立即填红色、
+    /// 计数 +1，不等服务端；回包后以服务端值为准对齐，成功补爆点（填充已先行，
+    /// 不再重播填充淡入）；失败按原模型回滚 + 拒绝动效 + 通用提示。
+    /// 取消点赞双向即时（2026-10-29 定版，覆盖 pre-unlike 只改视图旧口径）：
+    /// 抬起确认时立即褪色、计数 -1，失败同样回滚。
+    private func feedLikeTapped() {
+        // 按下已给过先行反馈时抬起不再重播（否则震动来两次）；
+        // 守卫失败时把按下预览复原（按下与抬起之间状态几乎不可能变，纯防御）。
+        let hadPressPreview = likePressPreviewActive
+        likePressPreviewActive = false
+        func restorePressPreview() {
+            updateLikeButton()
+        }
+        guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else {
+            if hadPressPreview { restorePressPreview() }
+            return
+        }
+        if !(currentEntry.map({ BearyEphemeral.isEffectivelyPublic($0) || isEntryAuthor($0) }) ?? false) {
+            if hadPressPreview { restorePressPreview() }
+            return
+        }
+        if SessionManager.shared.isLoggedIn == false {
+            if hadPressPreview { restorePressPreview() }
+            onRequireLogin?()
+            return
+        }
+        // 2026-10-29 及时性口径：快连点不再丢点按——每次点按都立即按本次
+        // 点按后的态渲染（填色＋计数点按瞬间就变，不等服务端）；在途请求只
+        // 带代次，过期回包直接丢弃，不得覆盖更新的点按态。
+        let currentlyLiked = currentEntry?.likedByMe ?? false
+        let originalCount = currentEntry?.likeCount ?? 0
+        // 审计动效组：按下已改为纯视觉预态，故确认时恒播震动＋音效（不再以
+        // hadPressPreview 跳过）；hadPressPreview 只用于上方守卫失败时复位视觉。
+        if currentlyLiked == false {
+            BearyHaptics.likeTap()
+            BearySoundPlayer.play(.likePop)
+        } else {
+            applyPreUnlike()
+            // 取消点赞与点赞对称：确认时同样补一次 likeTap（按下仅 prepare，不双震）。
+            BearyHaptics.likeTap()
+            BearySoundPlayer.play(.unlikeSoft)
+        }
+        let targetLiked = currentlyLiked == false
+        if targetLiked {
+            // 点赞全量先行（Li 2026-10-27 定）：抬起确认时立即填亮红、计数 +1；
+            // 液体炸开与填色同起——点按确认时即播，不再等服务端回包。
+            currentEntry?.likedByMe = true
+            currentEntry?.likeCount = originalCount + 1
+            updateLikeButton()
+            playLikeBurst()
+        } else {
+            // 取消点赞双向即时（2026-10-29 定版）：抬起确认时立即褪色、计数 -1；
+            // 按下预览（applyPreUnlike 的空心 + .8）与新模型渲染一致，不闪；
+            // 若上一轮炸开微粒还在飞，一并清掉，屏幕只反映最新点按态。
+            currentEntry?.likedByMe = false
+            currentEntry?.likeCount = max(0, originalCount - 1)
+            updateLikeButton()
+            clearLikeBurst()
+        }
+        likeSeq += 1
+        let reqSeq = likeSeq
+        BearyAPI.shared.toggleLike(id: entryIdValue, liked: targetLiked) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                // 代次守卫：复用换条或已有更新点按时，过期回包直接丢弃。
+                guard strongSelf.cellEntryId == entryIdValue, reqSeq == strongSelf.likeSeq else { return }
+                strongSelf.likeConfirmedSeq = reqSeq
+                BearyIconMotion.animateIconScale(on: strongSelf.likeButton, to: 1)
+                strongSelf.updateActionInteractivity()
+                switch result {
+                case .success(let resp):
+                    let newLiked = resp.liked ?? targetLiked
+                    strongSelf.currentEntry?.likedByMe = newLiked
+                    if let countValue = resp.count {
+                        strongSelf.currentEntry?.likeCount = countValue
+                    }
+                    strongSelf.confirmedLiked = newLiked
+                    strongSelf.confirmedLikeCount = strongSelf.currentEntry?.likeCount ?? 0
+                    strongSelf.updateLikeButton()
+                    // 炸开已在点按时播过，成功回包不再重播（否则已填好的爱心
+                    // 会再炸一次）；取消点赞不炸。
+                    strongSelf.onInteractionChanged?(entryIdValue, strongSelf.currentEntry?.likeCount, newLiked, nil)
+                case .failure(let err):
+                    // 失败回滚到最后服务端确认态（不是本次点按前的中间态），
+                    // 再走既有失败路径（拒绝动效 + 通用提示），不另起一套。
+                    strongSelf.currentEntry?.likedByMe = strongSelf.confirmedLiked
+                    strongSelf.currentEntry?.likeCount = strongSelf.confirmedLikeCount
+                    strongSelf.updateLikeButton()
+                    if case .unauthorized = err {
+                        strongSelf.onRequireLogin?()
+                    } else {
+                        strongSelf.playDenyShake(on: strongSelf.likeButton)
+                        strongSelf.onActionFailed?()
+                    }
+                }
+            }
+        }
+    }
+
+    @objc private func bookmarkButtonTapped() {
+        if cardMode == .profile {
+            onBookmark?()
+            return
+        }
+        self.feedBookmarkTapped()
+    }
+
+    /// F8（首页模式）：收藏先行切换、失败回滚 + 拒绝动效；先行期间不再半透明/禁用
+    /// （方案一，Li 2026-10-28 定）；2026-10-29 及时性口径：快连点每次都立即
+    /// 落地，防重入只靠代次守卫，过期回包直接丢弃。
+    /// 成功后以服务端值为准并经控制器全副本同步。
+    private func feedBookmarkTapped() {
+        guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
+        if !(currentEntry.map({ BearyEphemeral.isEffectivelyPublic($0) || isEntryAuthor($0) }) ?? false) { return }
+        if SessionManager.shared.isLoggedIn == false {
+            onRequireLogin?()
+            return
+        }
+        let currentlyBookmarked = currentEntry?.bookmarkedByMe ?? false
+        let flipped = currentlyBookmarked == false
+        currentEntry?.bookmarkedByMe = flipped
+        updateBookmarkButton()
+        BearyIconMotion.playBookmarkPop(on: bookmarkButton)
+        if flipped { playBookmarkBurst() }
+        // 2026-11-14 取消收藏单独一个音（Li 定）：改用 delete_swoosh，不再与取消点赞共用 unlike_soft。
+        if flipped { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.deleteSwoosh) }
+        bookmarkSeq += 1
+        let reqSeq = bookmarkSeq
+        BearyAPI.shared.toggleBookmark(id: entryIdValue) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                // 代次守卫：复用换条或已有更新点按时，过期回包直接丢弃。
+                guard strongSelf.cellEntryId == entryIdValue, reqSeq == strongSelf.bookmarkSeq else { return }
+                strongSelf.bookmarkConfirmedSeq = reqSeq
+                switch result {
+                case .success(let resp):
+                    let newBookmarked = resp.bookmarked ?? flipped
+                    strongSelf.currentEntry?.bookmarkedByMe = newBookmarked
+                    strongSelf.confirmedBookmarked = newBookmarked
+                    strongSelf.updateBookmarkButton()
+                    strongSelf.updateActionInteractivity()
+                    strongSelf.onInteractionChanged?(entryIdValue, nil, nil, newBookmarked)
+                case .failure(let err):
+                    // 失败回滚到最后服务端确认态，再走既有失败路径。
+                    strongSelf.currentEntry?.bookmarkedByMe = strongSelf.confirmedBookmarked
+                    strongSelf.updateBookmarkButton()
+                    strongSelf.updateActionInteractivity()
+                    if case .unauthorized = err {
+                        strongSelf.onRequireLogin?()
+                    } else {
+                        strongSelf.playDenyShake(on: strongSelf.bookmarkButton)
+                        strongSelf.onActionFailed?()
+                    }
+                }
+            }
+        }
+    }
+
+    @objc private func shareButtonTapped() {
+        if cardMode == .profile {
+            onShare?()
+            return
+        }
+        // 分享用原生分享 sheet（控制器侧 present，payload 见 presentShareSheet）。
+        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
+        if let entryValue = currentEntry {
+            onShareRequested?(entryValue)
+        }
+    }
+
+    // MARK: - 回应行（网页 .emote-row 口径；两页统一流式换行）
+
+    /// 回应行高（首页模式）：flow 实测换行高；行宽取 flow 实测宽，落位前用正文列宽估算。
+    /// fixall-cell 5-18（cell 侧）：行高约束只在变化超 0.5pt 时写（原判等保留并
+    /// 收紧为 0.5pt 门限，与引用卡同款，防布局抖动反复写约束）。
+    /// 注意：height(forWidth:) 与 BearyEmoteFlowView.layoutSubviews 的双份换行
+    /// 算法抽取需改 BearyEmoteFlowView.swift，不在本批三个文件内，未动；
+    /// 请协调人另派该文件（两处循环除设 frame 外完全一致，抽成同一
+    /// layoutItems(forWidth:) 即可，cell 侧调用口径不变）。
+    /// 返回本轮是否改写了行高约束（调用方据此决定是否通知控制器重算行高）。
+    @discardableResult
+    private func updateEmoteRowHeight() -> Bool {
+        let width = emoteFlowView.bounds.width > 0 ? emoteFlowView.bounds.width : bodyColumnWidthEstimate()
+        let height = emoteFlowView.height(forWidth: width)
+        if let current = emoteRowHeightConstraint?.constant, abs(current - height) > 0.5 {
+            emoteRowHeightConstraint?.constant = height
+            return true
+        }
+        return false
+    }
+
+    /// 回应行高落定通知去重（entryId + 高度）：布局中行高初算与落位宽不一致
+    /// 时会变一次，通知控制器重算该行；同一 (entry, 高度) 只通知一次，防
+    /// reloadRows → 再布局 → 再通知的循环。
+    private var lastEmoteHeightNotified: (entryId: String, height: CGFloat)?
+
+    /// F7：回应 chip 按 count 降序（网页 emoteChipsHtml 同口径）。按 key 取 chip（动画用）。
+    /// 查 chipKeys（已建 chip 的紧凑 key 表，与 overlay tag 对齐），不用 currentEmoteList
+    /// （空 key 项不建 chip，两表下标会错位）。
+    private func chipView(forKey key: String) -> BearyEmoteChipView? {
+        guard let index = chipKeys.firstIndex(where: { $0 == key }) else { return nil }
+        for sub in emoteFlowView.subviews {
+            guard let chip = sub as? BearyEmoteChipView, chip.overlayButton.tag == index else { continue }
+            return chip
+        }
+        return nil
+    }
+
+    /// 贴上动效：chip-in 弹入 + 熊图 wiggle（详情页同款口径，网页 chipIn/emoteWiggle）；
+    /// reduced-motion 时不动画。
+    private func playChipIn(forKey key: String, completion: (() -> Void)? = nil) {
+        if UIAccessibility.isReduceMotionEnabled { completion?(); return }
+        emoteFlowView.layoutIfNeeded()
+        guard let chip = chipView(forKey: key) else { completion?(); return }
+        chip.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
+        chip.alpha = 0
+        UIView.animateKeyframes(withDuration: BearyMotion.screen, delay: 0, options: [], animations: {
+            UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.6) {
+                chip.transform = CGAffineTransform(scaleX: 1.12, y: 1.12)
+                chip.alpha = 1
+            }
+            UIView.addKeyframe(withRelativeStartTime: 0.6, relativeDuration: 0.4) {
+                chip.transform = .identity
+                chip.alpha = 1
+            }
+        }, completion: { _ in completion?() })
+        if let emoteView = chip.player {
+            UIView.animateKeyframes(withDuration: BearyMotion.screen, delay: 0, options: [], animations: {
+                UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.3) {
+                    emoteView.transform = CGAffineTransform(rotationAngle: -0.1745).scaledBy(x: 1.3, y: 1.3)
+                }
+                UIView.addKeyframe(withRelativeStartTime: 0.3, relativeDuration: 0.3) {
+                    emoteView.transform = CGAffineTransform(rotationAngle: 0.1396).scaledBy(x: 1.15, y: 1.15)
+                }
+                UIView.addKeyframe(withRelativeStartTime: 0.6, relativeDuration: 0.4) {
+                    emoteView.transform = .identity
+                }
+            }, completion: nil)
+        }
+    }
+
+    /// 摘下动效：chip-out 缩没（网页 .chip-out .2s），只播动画、不重绘行；
+    /// 离行与否由调用方在 completion 里决定（先行摘下：动画完再离行）。
+    /// 减动效或 chip 已不在行时立即调 completion。
+    func animateEmoteChipOut(key: String, completion: @escaping () -> Void) {
+        if UIAccessibility.isReduceMotionEnabled {
+            completion()
+            return
+        }
+        guard let chip = chipView(forKey: key) else {
+            completion()
+            return
+        }
+        UIView.animate(withDuration: BearyMotion.micro, animations: {
+            chip.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
+            chip.alpha = 0
+        }, completion: { _ in completion() })
+    }
+
+    /// 贴上动效外部入口（个人页控制器先行反馈用）：与 playChipIn 同款。
+    func animateEmoteChipIn(key: String) {
+        playChipIn(forKey: key)
+    }
+
+    /// 拒绝动效：摇指定 chip（找不到时摇 + 钮；失败回滚用）。
+    func shakeEmoteChip(key: String) {
+        if let chip = chipView(forKey: key) {
+            playDenyShake(on: chip.overlayButton)
+        } else {
+            shakeEmoteAddButton()
+        }
+    }
+
+    /// 拒绝动效：摇行末 + 钮（先行贴上失败回滚用）。
+    func shakeEmoteAddButton() {
+        for sub in emoteFlowView.subviews {
+            if let button = sub as? BearyDiaryCardDashedAddButton {
+                playDenyShake(on: button)
+                return
+            }
+        }
+    }
+
+    /// 回应行统一渲染：count 降序（网页 emoteChipsHtml 同口径），mine 高亮，末尾常驻 + 按钮。
+    /// 80 包 B4-1：chip 池化——只把 chip 从 flow 摘下留池，不销毁；本轮未复用
+    /// 的池 chip 不再上树（仍留池供下轮）。
+    /// 审计第 7 项（收窄后修）：池按表情 key 取，不再按位置下标取。排序变化时
+    /// 同一 key 的原节点按新顺序重新上树（只移动位置，不换播放器、不重播开场）；
+    /// 计数变化时复用 chip 的 render 只改文字与选中态（同 key 播放器守卫在
+    /// BearyEmoteChipView.render 内：已在播不重建，停播才恢复播放）；只有本轮
+    /// 新出现的 key 才新建 chip、建新播放器播放入场。tag 仍按本轮排序下标写，
+    /// 与 chipKeys / 点选下标对齐（tag 不再等于池下标）。
+    /// animatedLayout：用户动作（先行贴/摘、回滚）时 + 钮与已存 chip 随新布局平滑移位
+    /// （flow 帧动画，只动位置，不重播已有 chip）；服务端对齐与初始渲染走瞬时。
+    private func renderEmotes(animatedLayout: Bool = false) {
+        let list = (currentEntry?.emotes ?? []).sorted(by: { ($0.count ?? 0) > ($1.count ?? 0) })
+        let newSignature = BearyEmoteOrder.signature(list.filter { ($0.emote ?? "").isEmpty == false })
+        if cellEmoteSignatureValid && newSignature == cellEmoteSignature {
+            // 签名一致：chip 行内容无变化，跳过拆建。连续点按/回包对齐时
+            // 第二次渲染若在 0.26s 位移动画中途拆掉在场 chip 再重建，
+            // 第一个 chip 就会先消失再出现；此处只刷新互动启用态
+            // （busy 等状态可能已变，内容未变），行高与 + 钮均不受影响。
+            updateEmoteInteractivity()
+            return
+        }
+        // 卡片重排位移（与详情页 #1415 同款）：记下本轮在场 chip 与 + 钮重排前的中心，
+        // 重排落位后对位移者用 transform 平移回旧位再滑到新位（见下 animatedLayout 分支）。
+        // 新 chip（本轮刚建）不在此列，入场关键帧自理；复用 chip 以对象为准。
+        var reorderPreviousCenters: [ObjectIdentifier: CGPoint] = [:]
+        for sub in emoteFlowView.subviews {
+            reorderPreviousCenters[ObjectIdentifier(sub)] = sub.center
+        }
+        for sub in emoteFlowView.subviews {
+            sub.removeFromSuperview()
+        }
+        currentEmoteList = list
+        chipKeys = []
+        var chipIndex = 0
+        var seenKeys = Set<String>()
+        for item in list {
+            guard let key = item.emote, !key.isEmpty,
+                  BearyEmoteKeys.bearFaceKeys.contains(key) else {
+                // 个人主页原口径：空 key 不建 chip；首页原口径不设防，此处两页
+                // 统一跳过空 key（空 key 的 BearyEmoteView 本就无图可播）。
+                // 非熊脸兜底（与详情/回应墙同口径）：库里已清存量非熊脸行，
+                // 卡片仍过滤一次，旧缓存里残留的非熊脸也不会再画出来。
+                continue
+            }
+            // 同 key 只留首个：按 key 复用下同一节点不能同时占两个槽位，
+            // 否则第二次上树会把第一次的位置挤掉；模型侧本就按 key 去重，
+            // 此处只作防重复建 chip 的兜底（详情页同口径）。
+            guard seenKeys.insert(key).inserted else { continue }
+            let mine = item.mine ?? false
+            let count = item.count ?? 0
+            chipKeys.append(key)
+            let chip: BearyEmoteChipView
+            if let reused = emoteChipPoolByKey[key] {
+                chip = reused
+                // 圆角长方形根治：复用 chip 须先复位 transform（chip-out 残留 0.5
+                // 会使 flow 设 frame 时 bounds 翻倍、圆角与内容同缩一半）；
+                // alpha 同复位，防 chip-out 残留 0 的 chip 被无入场动画的
+                // 渲染路径（计数/排序/服务端对齐）复用后一直不可见。
+                // 后续若调用方播 playChipIn，会自行重设起态，不受此次复位影响。
+                chip.transform = .identity
+                chip.alpha = 1.0
+                chip.render(key: key, count: count, mine: mine)
+                chip.overlayButton.tag = chipIndex
+            } else {
+                let made = BearyEmoteChipView()
+                made.render(key: key, count: count, mine: mine)
+                made.overlayButton.tag = chipIndex
+                made.overlayButton.addTarget(self, action: #selector(emoteChipTapped(_:)), for: .touchUpInside)
+                made.overlayButton.bearyAddPressFeedback()
+                emoteChipPoolByKey[key] = made
+                chip = made
+            }
+            emoteFlowView.addSubview(chip)
+            chipIndex += 1
+        }
+        // 就地同步判等用（个人主页模式）：本轮实际渲染的 chip 签名。
+        cellEmoteSignature = newSignature
+        cellEmoteSignatureValid = true
+        var emoteHeightChanged = false
+        if cardMode == .feed {
+            let addButton: BearyDiaryCardDashedAddButton
+            if let reused = feedAddButton {
+                addButton = reused
+            } else {
+                let made = BearyDiaryCardDashedAddButton(frame: .zero)
+                made.translatesAutoresizingMaskIntoConstraints = false
+                made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 24), for: .normal)
+                made.tintColor = BearyColors.gray
+                made.accessibilityLabel = "贴一只小熊"
+                made.widthAnchor.constraint(equalToConstant: 34).isActive = true
+                made.heightAnchor.constraint(equalToConstant: 34).isActive = true
+                made.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
+                // W6：同收藏钮，改通用按压（缩 .84 + .light）。
+                made.bearyAddPressFeedback()
+                feedAddButton = made
+                addButton = made
+            }
+            emoteFlowView.addSubview(addButton)
+            emoteHeightChanged = updateEmoteRowHeight()
+        } else {
+            let addButton: BearyDiaryCardDashedAddButton
+            if let reused = profileAddButton {
+                addButton = reused
+            } else {
+                let made = BearyDiaryCardDashedAddButton(frame: .zero)
+                made.translatesAutoresizingMaskIntoConstraints = false
+                made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 24), for: .normal)
+                made.tintColor = BearyColors.gray
+                made.accessibilityLabel = "贴一只小熊"
+                made.widthAnchor.constraint(equalToConstant: 34).isActive = true
+                made.heightAnchor.constraint(equalToConstant: 34).isActive = true
+                made.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
+                made.bearyAddPressFeedback()
+                profileAddButton = made
+                addButton = made
+            }
+            emoteFlowView.addSubview(addButton)
+            emoteHeightChanged = updateEmoteRowHeight()
+        }
+        updateEmoteInteractivity()
+        // 卡片重排位移（与详情页 #1415 同款）：控制器接线后 cell 内原有 flow
+        // 位移动画被 batch 回调取代，但 batch（performBatchUpdates(nil)）只动
+        // 行高、同行重排时无物可动，且重建是先拆后建、chip 新帧落在动画块外，
+        // 所以数量变化引起的重排一直直接跳位。改后：先把 flow 按新顺序落位
+        // （行高变化先结算），再把位移的在场 chip／+ 钮用 transform 平移回旧位、
+        // 0.26s（§6 normal）滑到新位；只走 transform，不重播已有 chip 的入场
+        // 动效；新 chip 入场关键帧不动；减动效、行宽为 0 时直落终值。
+        // 行高变化仍走控制器 batch 回调（折叠同款口径），与本位移动画各管一端，
+        // 不叠加：落位已在 batch 前结算，batch 内 chip 帧不再变化。
+        if animatedLayout, UIAccessibility.isReduceMotionEnabled == false, emoteFlowView.bounds.width > 0 {
+            emoteFlowView.layoutIfNeeded()
+            var sliding: [UIView] = []
+            for sub in emoteFlowView.subviews {
+                guard let oldCenter = reorderPreviousCenters[ObjectIdentifier(sub)],
+                      sub.transform == .identity else { continue }
+                let newCenter = sub.center
+                if oldCenter != newCenter {
+                    sub.transform = CGAffineTransform(translationX: oldCenter.x - newCenter.x, y: oldCenter.y - newCenter.y)
+                    sliding.append(sub)
+                }
+            }
+            if !sliding.isEmpty {
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+                    for view in sliding { view.transform = .identity }
+                }
+            }
+            if let batchAnimation = onNeedsEmoteRowAnimation {
+                batchAnimation()
+            } else {
+                emoteFlowView.setNeedsLayout()
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut]) {
+                    self.emoteFlowView.layoutIfNeeded()
+                }
+            }
+        } else if emoteHeightChanged, UIAccessibility.isReduceMotionEnabled == false,
+                  let entryIdValue = cellEntryId,
+                  let settledHeight = emoteRowHeightConstraint?.constant {
+            // 非用户动作的渲染（服务端对齐、失败复原）也改了行高：表内缓存行高
+            // 仍是旧值，下次批更新才纠正，页面随之无故滑动（位置变化后再点回应
+            // 时下滑即此因）。此处异步通知一次，让表立即取新高；复核 entryId
+            // 与高度，防复用／又变高后过期通知误触发（个人主页布局通知同款口径）。
+            // 异步发：防 configure／reloadRows 的更新块内嵌套批更新。
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.cellEntryId == entryIdValue,
+                      self.emoteRowHeightConstraint?.constant == settledHeight else { return }
+                self.onNeedsEmoteRowAnimation?()
+            }
+        }
+    }
+
+    /// F7：互动门控与详情一致（首页模式 isPublic == true 才可互动）；先行反馈后
+    /// 在途 chip 全量显示（旧 E3-3 pending 0.6 已废止，点赞/收藏同款口径）。
+    /// A1（个人主页模式）：照抄首页口径——非公开日记的回应 chip 置灰禁用
+    ///（overlay isEnabled=false + chip alpha=0.4），作者本人对自己私密日记
+    /// 的回应同样不放行（无 isMine 例外）；“+”钮只控 busy 不按公开态
+    /// 禁用/置灰，否则非公开提示（见 emoteAddTapped）无从触发。
+    private func updateEmoteInteractivity() {
+        if cardMode == .profile {
+            // 审计 P0-4：有效态门控（过期限时篇不放行回应）。
+            let publicOK = currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false
+            for sub in emoteFlowView.subviews {
+                if let chip = sub as? BearyEmoteChipView {
+                    chip.overlayButton.isEnabled = publicOK && !profileDisabled
+                    sub.alpha = publicOK ? 1.0 : 0.4
+                } else if let button = sub as? UIButton {
+                    button.isEnabled = !profileDisabled
+                }
+            }
+            return
+        }
+        // 审计 P0-4：有效态门控（过期限时篇不放行回应）。
+        let publicOK = currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false
+        for sub in emoteFlowView.subviews {
+            if let button = sub as? UIButton {
+                button.isEnabled = publicOK && isEmoteBusy == false
+                if publicOK == false {
+                    button.alpha = 0.4
+                } else {
+                    button.alpha = 1.0
+                }
+                continue
+            }
+            guard let chip = sub as? BearyEmoteChipView else { continue }
+            let overlay = chip.overlayButton
+            overlay.isEnabled = publicOK && isEmoteBusy == false
+            if publicOK == false {
+                sub.alpha = 0.4
+            } else {
+                sub.alpha = 1.0
+            }
+        }
+    }
+
+    @objc private func emoteChipTapped(_ sender: UIButton) {
+        if cardMode == .profile {
+            // A1 纵深守卫：chip 非公开时本已禁用（点按无事件），此处再拦一道，
+            // 确保私密日记的回应绝不经本路径转发（含作者本人）。
+            if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
+            let index = sender.tag
+            guard index >= 0, index < chipKeys.count else { return }
+            onEmoteTap?(chipKeys[index])
+            return
+        }
+        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
+        if SessionManager.shared.isLoggedIn == false {
+            onRequireLogin?()
+            return
+        }
+        if isEmoteBusy { return }
+        let index = sender.tag
+        if index < 0 || index >= chipKeys.count { return }
+        let tappedKey = chipKeys[index]
+        if tappedKey.isEmpty { return }
+        chooseEmote(key: tappedKey)
+    }
+
+    @objc private func emoteAddTapped() {
+        if cardMode == .profile {
+            // A1：非公开卡片点“+”不打开选择器，改走提示回调（控制器弹 toast）
+            // 并返回，杜绝旧静默丢弃；公开卡片原样走 onEmoteAdd。
+            if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) {
+                onEmoteAddNotPublic?()
+                return
+            }
+            onEmoteAdd?()
+            return
+        }
+        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
+        if SessionManager.shared.isLoggedIn == false {
+            onRequireLogin?()
+            return
+        }
+        if isEmoteBusy { return }
+        onEmoteAddRequested?()
+    }
+
+    /// 首贴面板选定后的入口（首页模式）：按条目 id 校验（面板弹出期间 cell 可能已被复用），
+    /// 校验失败静默丢弃；未登录时走 onRequireLogin；选定后 140ms 锁内再选丢弃。
+    func handleEmoteSheetPick(entryIdValue: String, key: String) {
+        if cellEntryId != entryIdValue { return }
+        if key.isEmpty { return }
+        if emotePickLocked { return }
+        if SessionManager.shared.isLoggedIn == false {
+            onRequireLogin?()
+            return
+        }
+        emotePickLocked = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { [weak self] in
+            guard let strongSelf = self else { return }
+            strongSelf.emotePickLocked = false
+            if strongSelf.cellEntryId != entryIdValue { return }
+            strongSelf.chooseEmote(key: key)
+        }
+    }
+
+    /// 贴/摘回应的唯一入口（首页模式；chip 与首贴面板共用，多选）：
+    /// 同只再点即撤下那只；点自己没贴过的只直接 POST 新增，绝不因点新回应
+    /// 而摘掉用户已贴的另一只；只有被点的那只计数变化。
+    /// 先行反馈（点赞/收藏同款口径）：贴上立即进场 + 计数 +1，摘下先播退场
+    /// 动画再离行，API 在后台跑；成功对齐服务端值，失败回滚 + 拒绝动效。
+    private func chooseEmote(key: String) {
+        if key.isEmpty || isEmoteBusy { return }
+        guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
+        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
+        if SessionManager.shared.isLoggedIn == false {
+            onRequireLogin?()
+            return
+        }
+        var tappedMine = false
+        for item in currentEmoteList {
+            guard let itemKey = item.emote, !itemKey.isEmpty else { continue }
+            if itemKey == key && item.mine == true {
+                tappedMine = true
+            }
+        }
+        emoteFlightKey = key
+        emoteFlightAdded = tappedMine == false
+        emoteFlightOriginal = currentEntry?.emotes ?? []
+        emoteFlightServerEmotes = nil
+        emoteFlightFailed = false
+        emoteFlightUnauthorized = false
+        emoteFlightAPIDone = false
+        emoteFlightRemovalStaged = false
+        isEmoteBusy = true
+        updateEmoteInteractivity()
+        if tappedMine {
+            // 摘下：先播退场动画再离行；API 立即发出，回包到达若动画未完
+            // 先记结果、不抢动画中的 chip，动画完再对齐或回滚。
+            emoteFlightRemovalStaged = true
+            animateEmoteChipOut(key: key) { [weak self] in
+                guard let strongSelf = self, strongSelf.cellEntryId == entryIdValue else { return }
+                strongSelf.emoteFlightRemovalStaged = false
+                if strongSelf.emoteFlightFailed {
+                    if strongSelf.emoteFlightUnauthorized {
+                        // 未登录：先行态静默复原，再走登录页（不摇不 toast）。
+                        strongSelf.currentEntry?.emotes = strongSelf.emoteFlightOriginal ?? []
+                        strongSelf.renderEmotes()
+                        strongSelf.onEmoteChanged?(entryIdValue, strongSelf.emoteFlightOriginal)
+                        strongSelf.clearEmoteFlight()
+                        strongSelf.onRequireLogin?()
+                    } else {
+                        strongSelf.rollbackEmoteFlight(entryIdValue: entryIdValue)
+                    }
+                    return
+                }
+                let removal = strongSelf.emoteDelta((strongSelf.emoteFlightOriginal ?? []), key: key, added: false)
+                strongSelf.currentEntry?.emotes = removal
+                strongSelf.renderEmotes(animatedLayout: true)
+                strongSelf.onEmoteChanged?(entryIdValue, removal)
+                if strongSelf.emoteFlightAPIDone {
+                    strongSelf.alignEmoteFlight(entryIdValue: entryIdValue)
+                }
+            }
+            postEmoteOnce(key: key)
+            return
+        }
+        let optimistic = emoteDelta((currentEntry?.emotes ?? []), key: key, added: true)
+        currentEntry?.emotes = optimistic
+        renderEmotes(animatedLayout: true)
+        playChipIn(forKey: key)
+        onEmoteChanged?(entryIdValue, optimistic)
+        postEmoteOnce(key: key)
+    }
+
+    /// 先行增量：贴上时该 key 计数 +1（无此 key 则 mine 新建 1）；摘下时
+    /// 计数 −1（到 0 即整项消失，mine 恒 false 化——服务端同只 POST 即撤下）。
+    private func emoteDelta(_ list: [EmoteCount], key: String, added: Bool) -> [EmoteCount] {
+        var out: [EmoteCount] = []
+        var found = false
+        for var item in list {
+            guard let itemKey = item.emote, !itemKey.isEmpty else { continue }
+            if itemKey == key {
+                found = true
+                if added {
+                    item.count = (item.count ?? 0) + 1
+                    item.mine = true
+                    out.append(item)
+                } else {
+                    let next = (item.count ?? 0) - 1
+                    if next > 0 {
+                        item.count = next
+                        item.mine = false
+                        out.append(item)
+                    }
+                }
+            } else {
+                out.append(item)
+            }
+        }
+        if added && found == false {
+            out.append(EmoteCount(emote: key, count: 1, mine: true))
+        }
+        return out
+    }
+
+    /// 在途 POST（首页模式）：只发请求与终态处理，先行渲染由 chooseEmote 做。
+    /// cell 复用后回包到达时直接丢弃（不碰新条目）。
+    private func postEmoteOnce(key: String) {
+        guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
+        BearyAPI.shared.postEmote(id: entryIdValue, emote: key) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self, strongSelf.cellEntryId == entryIdValue else { return }
+                switch result {
+                case .success(let resp):
+                    // 表情排序批：回包先按已显示顺序合并（新贴追加末尾），再对齐；
+                    // 直接覆盖回包顺序会把刚贴的 count=1 按聚合顺序顶到前面。
+                    let merged = resp.emotes.map { BearyEmoteOrder.merged(previous: strongSelf.currentEntry?.emotes, server: $0) }
+                    strongSelf.emoteFlightServerEmotes = merged
+                    strongSelf.emoteFlightAPIDone = true
+                    if strongSelf.emoteFlightRemovalStaged {
+                        return
+                    }
+                    strongSelf.alignEmoteFlight(entryIdValue: entryIdValue)
+                case .failure(let err):
+                    if strongSelf.emoteFlightRemovalStaged {
+                        strongSelf.emoteFlightFailed = true
+                        if case .unauthorized = err {
+                            strongSelf.emoteFlightUnauthorized = true
+                        }
+                        strongSelf.emoteFlightAPIDone = true
+                        return
+                    }
+                    if case .unauthorized = err {
+                        // 未登录：先行态静默复原，再走登录页（不摇不 toast）。
+                        strongSelf.currentEntry?.emotes = strongSelf.emoteFlightOriginal ?? []
+                        strongSelf.renderEmotes()
+                        strongSelf.onEmoteChanged?(entryIdValue, strongSelf.emoteFlightOriginal)
+                        strongSelf.clearEmoteFlight()
+                        strongSelf.onRequireLogin?()
+                        return
+                    }
+                    strongSelf.rollbackEmoteFlight(entryIdValue: entryIdValue)
+                }
+            }
+        }
+    }
+
+    /// 成功对齐：服务端值与先行值一致时不动（不重建、不重播已有 chip）；
+    /// 不一致时瞬时重绘（非用户动作，不带位移动画）并通知容器。
+    private func alignEmoteFlight(entryIdValue: String) {
+        let merged = emoteFlightServerEmotes ?? currentEntry?.emotes
+        if let merged = merged, BearyEmoteOrder.signature(merged) != BearyEmoteOrder.signature(currentEntry?.emotes) {
+            currentEntry?.emotes = merged
+            renderEmotes()
+            onEmoteChanged?(entryIdValue, merged)
+        }
+        clearEmoteFlight()
+    }
+
+    /// 失败回滚：恢复点选前快照（位移带动画），摘下失败时被摘 chip 带出现
+    /// 动画回来，再补拒绝动效（摇头 + toast）；容器同步回滚值。
+    private func rollbackEmoteFlight(entryIdValue: String) {
+        let key = emoteFlightKey
+        let wasAdded = emoteFlightAdded
+        let original = emoteFlightOriginal ?? []
+        currentEntry?.emotes = original
+        renderEmotes(animatedLayout: true)
+        if wasAdded == false, let backKey = key {
+            playChipIn(forKey: backKey)
+            shakeEmoteChip(key: backKey)
+        } else {
+            shakeEmoteAddButton()
+        }
+        onEmoteFailed?()
+        onEmoteChanged?(entryIdValue, original)
+        clearEmoteFlight()
+    }
+
+    private func clearEmoteFlight() {
+        isEmoteBusy = false
+        emoteFlightKey = nil
+        emoteFlightAdded = false
+        emoteFlightOriginal = nil
+        emoteFlightServerEmotes = nil
+        emoteFlightFailed = false
+        emoteFlightUnauthorized = false
+        emoteFlightAPIDone = false
+        emoteFlightRemovalStaged = false
+        updateEmoteInteractivity()
+    }
+}
+
+// UITableViewCell 在新 SDK 下已自带 UIGestureRecognizerDelegate 遵循，
+    // 故此处不再重复声明协议、方法改 override；行为与 #429 原意一致。
+extension BearyDiaryCardCell {
+    override func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // 只放行本图片条捏合与条自身滚动平移的共存：捏合 began 即禁了条的
+        // 滚动，故自家平移本就滑不动；外层列表的竖滑若也放行，两指捏合时
+        // 手指稍带竖向漂移就会一边捏合一边滚页。先识别意图者胜：捏合先成立
+        // 则外层平移失败，竖滑先成立则捏合失败，不再双轨并行。
+        // 该 delegate 只挂在捏合手势上，不影响点赞、点图等其他手势。
+        return otherGestureRecognizer is UIPanGestureRecognizer
+            && otherGestureRecognizer.view === imagesScrollView
+    }
+
+    /// 时间线多图卡片捏合优先于外层列表竖滑：落在图片条上的双指捏合，
+    /// 要求外层滚动视图的平移等它先失败——捏合一旦成立，外层平移随之失败；
+    /// 单指滑动时捏合无从成立，直接放行，不拖慢列表滚动。只认外层滚动视图
+    /// 的平移（UITableView 的竖滑），条自身平移仍走上面的共存口径；详情页
+    /// 不走这条，不动。两指同向平移（双指滚页）时捏合始终不成立，外层竖滑
+    /// 须等手指抬起、捏合失败后才认，是本修法的已知取舍。
+    override func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer.view === imagesScrollView,
+              otherGestureRecognizer is UIPanGestureRecognizer,
+              let otherScrollView = otherGestureRecognizer.view as? UIScrollView,
+              otherScrollView !== imagesScrollView,
+              gestureRecognizer.numberOfTouches >= 2,
+              imageSlots.filter({ !$0.isHidden }).count >= 2 else { return false }
+        return true
+    }
+}
+
+// MARK: - 行高估算（estimatedHeightForRowAt 用）
+//
+// 背景：三处日记列表（首页/个人页/时间线）都用 automaticDimension + 固定
+// estimatedRowHeight（220/220/180），纯文字卡约 150pt、有图卡 400pt+，
+// 估算与真实差近 200pt，表在滚动中逐行量出真实高度时 contentSize 不断
+// 修正，滚动指示条跳变、reload 后滚动位置漂移。
+// 本估算只复刻布局里决定高度的量，不碰真实行高计算：正文用与
+// measuredFoldOverflow 同款 boundingRect（diaryBodyFont 16 + 行高倍数），
+// 其余按约束与 updateDiaryStackSpacing 的对照表逐项累加。引用卡/回应行等
+// 可变行取固定近似值，估算允许几十 pt 的误差，目标是把误差从 200pt 级
+// 降下来，不是逐像素复刻。
+extension BearyDiaryCardCell {
+
+    /// 正文纯文本高度：与 attributedBody 同款字体 + 行高倍数，只量文字本身，
+    /// 不含心情缀尾附件（附件只占末行尾部，可忽略）。
+    static func estimatedTextHeight(_ text: String, width: CGFloat, lineHeightMultiple: CGFloat) -> CGFloat {
+        guard !text.isEmpty, width > 0 else { return 0 }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = lineHeightMultiple
+        paragraph.lineBreakMode = .byCharWrapping
+        let attr = NSAttributedString(string: text, attributes: [
+            .font: BearyDynamicType.diaryBodyFont(),
+            .paragraphStyle: paragraph,
+        ])
+        return attr.boundingRect(
+            with: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        ).height
+    }
+
+    /// 单行高（与 measuredFoldOverflow 同款 "X" 量法，供折叠 6 行封顶用）。
+    static func estimatedSingleLineHeight(lineHeightMultiple: CGFloat) -> CGFloat {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = lineHeightMultiple
+        paragraph.lineBreakMode = .byCharWrapping
+        let attr = NSAttributedString(string: "X", attributes: [
+            .font: BearyDynamicType.diaryBodyFont(),
+            .paragraphStyle: paragraph,
+        ])
+        return attr.boundingRect(
+            with: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        ).height
+    }
+
+    /// 卡片行高估算（首页/个人页共用）。正文列宽按约束取：左 68
+    /// （16 边距 + 头像 40 + 12 间距）、右 16；行高倍数 1.6 与卡片一致。
+    static func estimatedCardHeight(for entry: Entry, mode: BearyDiaryCardMode, expanded: Bool, firstRow: Bool, tableWidth: CGFloat) -> CGFloat {
+        let contentWidth = max(0, tableWidth - 84)
+        let text = entry.content ?? ""
+        let fullHeight = estimatedTextHeight(text, width: contentWidth, lineHeightMultiple: 1.6)
+        let singleHeight = estimatedSingleLineHeight(lineHeightMultiple: 1.6)
+        let lines = singleHeight > 0 ? Int(ceil(fullHeight / singleHeight - 0.01)) : 0
+        // 与 measuredFoldOverflow 同口径：≤300 字恒不折叠。
+        let overflow = text.count > 300 && lines > 6
+        var textHeight = fullHeight
+        // 只有心情缀尾、无正文时占一行（bodyWithTrailingMood 仍会缀一个附件）。
+        if text.isEmpty, (entry.mood ?? "").isEmpty == false { textHeight = singleHeight }
+        if overflow && !expanded { textHeight = CGFloat(6) * singleHeight }
+
+        let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && !BearyGIF.isInlineImageKey($0, content: text) }
+        let hasImages = !imageKeys.isEmpty
+        let hasTitle = !(entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasQuote = entry.quote != nil || entry.quoteId != nil
+        let hasLocation = !(entry.locationName ?? "").isEmpty || !(entry.locationDistrict ?? "").isEmpty
+        let hasEmotes = (entry.emotes ?? []).contains { ($0.count ?? 0) > 0 }
+
+        var height: CGFloat = (mode == .profile && firstRow) ? 30 : 16  // 顶距（个人页首卡 30）
+        if mode == .profile && entry.isPinned { height += 25 }          // 置顶行 15 + 间距 10
+        height += 40   // 头行（头像 40）
+        if (entry.mentionedName ?? "").isEmpty == false { height += 21 } // @ 行 17 + 间距 4
+        if BearyEphemeral.isLive(entry) { height += 19 }                 // 限时行 15 + 间距 4
+        height += 6    // 头行→正文
+        if hasTitle { height += 20 + 6 }                                 // 标题行 + 间距
+        height += textHeight
+        if overflow { height += 6 + 20 + 14 } else { height += 14 }      // 折叠钮行 / 正文→下行
+        if hasImages { height += 216 + 12 }                              // 图片条 + 间距
+        if imageKeys.count > 3 { height += 32 + 12 }                     // 九宫格入口 + 间距
+        if hasQuote { height += 72 + 12 }                                // 引用卡（近似）+ 间距
+        if hasLocation { height += 18 + 14 }                             // 位置行 + 间距
+        height += 24   // 操作行（图标 24）
+        if hasEmotes { height += 12 + 30 }                               // 回应行（近似）+ 间距
+        height += 18   // 底线 17 + 1
+        return height
+    }
+}

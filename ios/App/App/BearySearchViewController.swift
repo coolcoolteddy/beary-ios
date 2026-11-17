@@ -1,0 +1,3462 @@
+import UIKit
+import CoreText
+
+// ===== beary 原生搜索页 =====
+// 网页对照：~/workspace/teddy_site/beary.html 内 #searchPage（结构、文案、状态口径）
+//   与 .srch-* CSS（尺寸见行内注释）；后端对照：~/workspace/teddy_beary/worker.js
+//   GET /beary/api/search（见下方“接口对照”）。
+// 容器契约：本页只负责搜索与渲染，不含顶栏/底栏分段器（容器 SceneDelegate 侧提供，
+//   与其他内容页同口径）；点用户只回调 onOpenUser、点日记只回调 onOpenEntry，
+//   点返回只回调 onBack，跳转与个人主页打开一律由容器接线，本页不 present、不 push、不碰导航。
+// 页结构（网页 #searchPage 同口径）：页顶返回行（返回钮 + “搜索”标题，随内容滚出）
+//   + 搜索框（sticky：滚出后贴在安全区顶 6px 处）+ 状态区 / 结果区。
+//   （2026-10-29 第 21 项：框下“正在搜索…”行已删；搜索进行时只转框内圈，尾行仅用于失败重试。）
+// 分区顺序（网页 renderSrchResults 同口径）：我的日记 → 公开日记 → 用户。
+// 约束：颜色只用 BearyColors；图标只走 icon_* 资产 + BearyIconImages；
+//   不新增 UIGlassEffect，不用 SF Symbol；部署目标 iOS 15.0、Swift 5.0——
+//   只用闭包回调，不用 async/await，不用 if-let 简写；无 force unwrap；
+//   不用裸 id 变量名（条目标识一律叫 entryId、用户标识一律叫 userId）。
+
+// MARK: - 接口对照（已在 worker.js 核实，BearyAPI.search 已存在，本文件不改接口层）
+//
+//   GET /beary/api/search?q=
+//   - 空 q：服务端直接返回 { users: [], entries: [] }（无 mine 键）。
+//   - q 截断到 50 字再 LIKE 匹配（服务端 slice(0, 50)；客户端只 trim，不再截断）。
+//   - users：LIMIT 8，按 display_name/handle 匹配；字段 id/display_name/handle/
+//     avatar_url（/beary/api/users/:id/avatar?v=N，无头像为 null）/
+//     cover_url（有封面才给，无封面为 null）——与现有 SearchUser 模型对齐。
+//   - entries：LIMIT 20，仅已公开（publish_at <= now），按 created_at DESC；
+ //     翻页（sweep32-2）：传 before（末条 created_at）+ before_id（末条 id），
+//     与列表同口径 created_at DESC + id DESC；mine 同口径各 LIMIT 20，
+//     users 按 id 升序只传 before_id（LIMIT 8）。三组共用同一套游标参，
+//     故翻页按组各发一请求、只取本组结果合并（见 loadMore），不混用游标。
+//     字段 id/content/images/created_at/author_id/author_name/author_avatar/
+//     like_count。
+//   - mine：仅登录会话返回（未登录为 null），本人全部日记按正文匹配，LIMIT 20，
+ //     翻页同 entries 口径（before + before_id）；
+//     字段 id/content/images/created_at/publish_at/is_public；
+//     本页只取其中未公开（is_public != true）与存活限时篇进“我的日记”组
+//     （审计 2026-11-02 第十节：存活限时篇不再无处可寻；三档 pill 见 makePrivatePill），
+//     与网页 renderSrchResults 的 mine 过滤口径一致；未登录时服务端不给 mine，
+//     私密分组自然不出现，不靠客户端登录态再拦一道。
+//   - 免登录可搜公开内容：该接口本身不要求会话（无 session 时只缺 mine）。
+//   - 回调线程：BearyAPI 回调不在主线程，碰 UI 前必须 DispatchQueue.main.async。
+
+// 113：最近搜索标题行——只扩“清除”热区、不撑高行高：
+// BearyHit44Button 的 point(inside:) 已扩到 44，但栈行本身的 hitTest 在点落到
+// 行外（与下一行 8pt 间距内）时不会转发；本行重写 point(inside:)/hitTest，
+// 把清除钮扩后矩形内的点也认作行内并转发给钮，视觉帧与行高一字不动。
+// 行上方的扩出部分仍在父栈 hit 路径之外（容器边界所限），不虚报 44。
+final class BearySearchRecentHeaderRow: UIStackView {
+    weak var clearButton: UIButton?
+
+    private func expandedClearRect() -> CGRect? {
+        guard let button = clearButton else { return nil }
+        let dx: CGFloat = button.bounds.width < 44 ? (44 - button.bounds.width) / 2 : 0
+        let dy: CGFloat = button.bounds.height < 44 ? (44 - button.bounds.height) / 2 : 0
+        return button.frame.insetBy(dx: -dx, dy: -dy)
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        if super.point(inside: point, with: event) { return true }
+        guard let rect = expandedClearRect() else { return false }
+        return rect.contains(point)
+    }
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if let button = clearButton, let rect = expandedClearRect(), rect.contains(point) {
+            let local = convert(point, to: button)
+            if button.point(inside: local, with: event) { return button }
+        }
+        return super.hitTest(point, with: event)
+    }
+}
+
+final class BearySearchViewController: UIViewController, UITextFieldDelegate, UIScrollViewDelegate {
+
+    // MARK: - 对外 API（容器按此接线，勿改名）
+
+    /// 点返回行：容器负责关闭本页（接线由总协调收尾，本页只留回调）。
+    var onBack: (() -> Void)?
+
+    /// 点用户行：传出整条 SearchUser，容器负责打开该用户主页。
+    init(onOpenUser: @escaping (SearchUser) -> Void, onOpenEntry: @escaping (String) -> Void) {
+        self.onOpenUserHandler = onOpenUser
+        self.onOpenEntryHandler = onOpenEntry
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    // MARK: - 状态
+
+    private let onOpenUserHandler: (SearchUser) -> Void
+    private let onOpenEntryHandler: (String) -> Void
+
+    private var searchTimer: Timer?
+    private var lastNavigationAt: Date?
+    /// 顶栏透度批：容器最后一次发来的栏态（本页属性内边距不含安全区顶，见 applyHeaderTopInset）。
+    private var headerTopInsetVisible = false
+    private var searchFieldToBoxTrailing: NSLayoutConstraint?
+    private var searchFieldToClearLeading: NSLayoutConstraint?
+    private var boxTopConstraint: NSLayoutConstraint?
+    // P2-1：600 列口径（与个人主页 isDesktopColumn 同口径：宽 ≥821 才锁 600，
+    // 宽 ≤820 走满宽）——上限约束与满宽约束二选一，见 updateColumnLayout。
+    private var contentStackWidthCap: NSLayoutConstraint?
+    private var contentStackFullWidth: NSLayoutConstraint?
+    private var searchBoxWidthCap: NSLayoutConstraint?
+    private var searchBoxFullWidth: NSLayoutConstraint?
+    private var searchSeq: Int = 0
+    /// S10：在途搜索请求（新搜索先取消上一路；searchSeq 保留作第二道防线）。
+    private var currentSearchTask: URLSessionDataTask?
+    private var lastQuery: String = ""
+    private var showingResults: Bool = false
+    private var searchBoxFocused: Bool = false
+    // 88 包 M13：结果区底部常驻尾行（对齐时间线/个人主页尾行形态）。
+    // sweep32-2：尾行新增“加载更多”态（加载中转圈、失败重试复用重试钮）；
+    // 仍是 44 高居中形态，三态互斥显隐，见 updateSearchFooter。
+    private let searchFooterRow = UIView()
+    private let searchFooterRetryButton = BearyButton.retryPage()
+    private let searchFooterLoadMoreButton = BearyButton.retryPill()
+    private let searchFooterSpinnerView = UIImageView()
+    // sweep32-2 翻页状态：三组各有 hasMore 与游标（游标取服务端回包原始
+    // 末条，不取客户端过滤后末条——过滤掉的拉黑/过期行仍占服务端页内位置，
+    // 用过滤后末条当游标会把已回包的行重拉一遍，LIMIT 截断下还可能卡住进度）。
+    private var isLoadingMore = false
+    private var loadMoreFailed = false
+    /// 第 14 轮审计 6：按组保留翻页失败态——重试只补失败的组，不重发已成功组。
+    private var loadMoreFailedPublic = false
+    private var loadMoreFailedMine = false
+    private var loadMoreFailedUsers = false
+    /// 尾行重试当前是翻页重试（true）还是整搜重试（false，见 showFailedStateKeepingResults）。
+    private var searchFooterRetryIsLoadMore = false
+    private var currentLoadMoreTasks: [URLSessionDataTask] = []
+    private var searchHasMorePublic = false
+    private var searchHasMoreMine = false
+    private var searchHasMoreUsers = false
+    private var searchPublicCursorBefore: Int?
+    private var searchPublicCursorId: String?
+    private var searchMineCursorBefore: Int?
+    private var searchMineCursorId: String?
+    private var searchUsersCursorId: Int?
+    /// Q9 最近搜索：只存本机 UserDefaults，不走服务端；最多 8 条，新在前、去重。
+    /// 按账号分桶：登录时键为 bearyRecentSearches_<uid>；未登录（含游客模式）
+    /// 一律走独立 guest 桶 bearyRecentSearches_guest，登录后不并入任何账号桶。
+    /// sweep32-3：旧单键 bearyRecentSearches 是改动前游客的存放键，登录时
+    /// 不再把它并入账号桶（旧迁移函数已删）；它只在游客态一次性并入 guest 桶。
+    private let legacyRecentSearchesKey = "bearyRecentSearches"
+    private let guestRecentSearchesKey = "bearyRecentSearches_guest"
+    private var recentSearchesKey: String {
+        if let uid = SessionManager.shared.currentUser?.id {
+            return "bearyRecentSearches_\(uid)"
+        }
+        return guestRecentSearchesKey
+    }
+
+    /// 游客桶升级迁移（一次性、幂等，仅游客态）：旧单键仍有记录时，把旧记录
+    /// 并入 guest 桶后（去重、上限 8 条），清旧键；旧记录不擅自删除——合并
+    /// 后才清键，guest 桶已有记录时旧记录排在桶记录之后。登录态不调用，
+    /// 游客记录永不进入账号桶。
+    private func migrateLegacyToGuestBucketIfNeeded() {
+        guard SessionManager.shared.currentUser?.id == nil else { return }
+        let legacy = UserDefaults.standard.stringArray(forKey: legacyRecentSearchesKey) ?? []
+        guard !legacy.isEmpty else { return }
+        var merged = UserDefaults.standard.stringArray(forKey: guestRecentSearchesKey) ?? []
+        for item in legacy where !merged.contains(item) {
+            merged.append(item)
+        }
+        if merged.count > 8 {
+            merged = Array(merged.prefix(8))
+        }
+        UserDefaults.standard.set(merged, forKey: guestRecentSearchesKey)
+        UserDefaults.standard.removeObject(forKey: legacyRecentSearchesKey)
+    }
+    private var recentButtons: [UIButton] = []
+    /// R13 (c)：最近搜索展开态，只影响展示，不改存储。
+    private var isRecentSearchesExpanded = false
+
+    private var userButtons: [UIButton] = []
+    private var rowUsers: [SearchUser] = []
+    /// 好友第一期（关注/回关模型）：搜索用户行紧凑版状态机（关注/已关注/
+    /// 回关/互关）。状态按行实时调 state 接口取（不靠缓存）；状态未到时
+    /// 行内钮画与按钮同宽同形的灰色圆角骨架块且不可点（r29-10，不再用可点
+    /// 「关注」冒充未知态，不用转圈、不用「加载中」文字）；读失败画「重试」，
+    /// 点按重拉。
+    private var followStates: [String: BearyFollowState] = [:]
+    /// r29-10：关注状态读失败的行（followStates 仍缺失）——按钮画「重试」，
+    /// 点按重拉；重发/成功/清表后清除，不把失败画成确定态。键与 followStates
+    /// 同口径（账号＋用户，见 followStateKey），切号后不串号。
+    private var followStateFailedIds: Set<String> = []
+    /// r29-10：骨架态定高约束（按钮无文案时按字号算高，下限 28；离开骨架态
+    /// 即撤掉，行重建/清表时随表清空）。
+    private var followButtonSkeletonHeightConstraints: [Int: NSLayoutConstraint] = [:]
+    private var followStateLoadingIds: Set<String> = []
+    /// S5：关注状态请求排队——建行时不再立即请求；可见行（+下一屏）优先，
+    /// 其余排队；同时在途上限 3。结果区失效时待办整批丢弃（见 clearResultRows）。
+    private var followStatePendingIds: [Int] = []
+    /// r11-11：滚动重排节流——上次重排关注请求队列时的 contentOffset.y；
+    /// 滚动回调只在偏移移动超过一行后才重测重排，微小 contentOffset
+    /// 变化不再重复 layoutIfNeeded＋全量量帧＋排序；滚动停稳时强制
+    /// 重排一次，停稳态队列与改前一致。
+    private var lastFollowReorderOffsetY: CGFloat?
+    /// r11-11：滚动重排节流步长——用户行默认高 72pt（见 makeUserRow，
+    /// 大字号下只会更高）；滚动不足一行时可见行集合至多差一行，
+    /// 重排收益小于整批测量成本。
+    private let followReorderMinScrollDelta: CGFloat = 72
+    private var followStateInFlightCount = 0
+    private let followStateMaxConcurrent = 3
+    private var followButtonUserIds: [UIButton: Int] = [:]
+    private var followButtonsByUserId: [Int: UIButton] = [:]
+    // 按钮普查（#672 同款口径）：搜索关注钮乐观更新＋定宽＋代次防过期回包。
+    private var followActionSeqByUserId: [Int: Int] = [:]
+    private var confirmedFollowStates: [String: BearyFollowState] = [:]
+    /// r25-6：关注态缓存键含当前账号 ID 与目标用户 ID——切号后旧账号的
+    /// 迟到回包写不进新号缓存（切号清空已有，见 clearResultRows）。
+    private func followStateKey(userId: Int) -> String {
+        "\(SessionManager.shared.currentUser?.id ?? -1):\(userId)"
+    }
+    private var followButtonWidthConstraints: [Int: NSLayoutConstraint] = [:]
+    private var followButtonMeasuredCategory: UIContentSizeCategory?
+    private var entryButtons: [UIButton] = []
+    private var rowEntryIds: [String] = []
+    /// 5-20：行身份 -> 视图映射（同批动画按 key 查表，不按下标配对）。
+    private var entryRowById: [String: UIButton] = [:]
+    private var userRowByKey: [String: UIButton] = [:]
+    /// 审计三轮 06：行内容签名（与 entryRowById / userRowByKey 同步维护，
+    /// clearResultRows 时一并清空）——同关键词重渲复用旧行前先比对签名。
+    private var entryRowContentSignatures: [String: String] = [:]
+    private var userRowContentSignatures: [String: String] = [:]
+    /// 用户行 key 口径与 animateResultRows 的 nextKeys 一致：id 优先，无 id 则 @handle，无两者则无 key。
+    private func userKey(for user: SearchUser) -> String? {
+        if let userId = user.id {
+            return "user:\(userId)"
+        } else if let handle = user.handle, !handle.isEmpty {
+            return "user:@\(handle)"
+        }
+        return nil
+    }
+    // 图片失败重试槽位（日记首图）：随行重建而丢弃，见文件末尾
+    // BearySearchImageRetry；clearResultRows 时连同行一起清空。
+    private var imageRetryHolders: [BearySearchImageRetry] = []
+    /// 扫 bug 第 9 项：三组分区头（增量追加的落点锚点）。renderResults
+    /// 全量建行时同步登记，clearResultRows 时同步清零；appendResultRows
+    /// 靠它们找“本组末尾”（头之后、下个分区头之前），本组此前无行时
+    /// 才补建分区头。行与头只在这两处增删，锚点与栈内实际一致。
+    private var mineSectionHeader: UIView?
+    private var publicSectionHeader: UIView?
+    private var usersSectionHeader: UIView?
+
+    // MARK: - 视图
+
+    // 审计第 9 项：滚动取消走共享类（见 BearyNativeCommon.BearyCancellableScrollView）——
+    // 从结果行按钮上起滑时滚动视图能抢到 pan，点按行为不变；搜索输入框不在本滚动区内。
+    private let scrollView = BearyCancellableScrollView()
+    private let contentStack = UIStackView()
+    private let columnWrap = UIView()
+
+    // 页顶返回行：网页 .tl-backrow——返回钮 44 + gap 10 + “搜索”标题 16/700，
+    // 上下 padding 0（行高仍 44，图标 24 居中，视觉不变；7-3 约束写法改 44×44）；
+    // 返回钮用 beary-back 24 墨（icon_back 资产，网页
+    // #srchBack .icon-btn 口径：.icon 24 + .icon-btn ink 色；.tl-acts 的
+    // 17px 规则只管 .tl-acts 内按钮，不适用于搜索返回行）。
+    private let backRowView = UIView()
+    private let backButton = BearyHit44Button(type: .custom)
+    private let backTitleLabel = UILabel()
+
+    // 搜索框占位：框体本身是 view 级 sticky 视图，流内留 50 高占位，版式不跳动。
+    private let boxPlaceholderView = UIView()
+
+    // 框下预留行：网页 .srch-hint——恒高 24、12.5 灰、gap 6、左右 padding 4，
+
+    // 搜索框：网页 .srch-box——高 50、边框 1.5 line、圆角 999（半高 25）、左右 16、gap 9。
+    private let searchBoxView = UIView()
+    private let searchIconView = UIImageView()
+    private let boxRingView = UIImageView()
+    private let searchField = UITextField()
+    private let clearButton = BearyHit44Button(type: .custom)
+
+    // 结果区：换关键词时整体重建（行内高亮文案随 query 走，必须重建）；
+    // 同关键词重渲（拉黑/举报过滤）按 key 复用行节点（见 syncResultRowsReuse），
+    // 不再每次重渲都拆掉全部行重建；翻页改增量追加（见 appendResultRows）。
+    private let resultsStack = UIStackView()
+
+    // 状态区：网页 .addr-state——容器 padding 28/20/20；圆 54、图标 25、标题 15、副文案 12。
+    private let stateWrap = UIView()
+    private let stateStack = UIStackView()
+    private let stateCircle = UIView()
+    private let stateIconView = UIImageView()
+    private let stateRingView = UIImageView()
+    private let stateTitleLabel = UILabel()
+    private let stateSubLabel = UILabel()
+    private let retryButton = BearyButton.retryPage()
+    /// 8-6：搜索错误重试态改走统一 BearyStateView（标题“搜索失败”+ 副文案 +
+    /// 紧凑描边重试钮，动作复用 retryTapped）；其余状态仍走 bespoke stateStack。
+    /// errorStateView 放在 errorStateWrap 内（与 stateWrap 同槽位、互斥显隐）：
+    /// wrap 作 contentStack 的 arranged subview，隐藏时栈自动塌掉，不用在
+    /// stateWrap 内做约束组互换（隐藏视图 + 失活约束易留布局歧义）。
+    private let errorStateWrap = UIView()
+    private let errorStateView = BearyStateView()
+    /// Q9 最近搜索容器：插在状态区与结果区之间，只在初始态有记录时显示。
+    private let recentWrap = UIView()
+    private let recentStack = UIStackView()
+
+    // MARK: - 生命周期
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = BearyColors.bg
+        buildViews()
+        buildConstraints()
+        showInitialState()
+        // 审计 P2-20：搜索页监听拉黑/举报即时清行并清 quoteCache。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
+        // 好友第一期：别处回关/取关后，搜索行状态机同步重拉（不靠旧状态）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleFollowChangedNotification(_:)), name: .bearyFriendsChanged, object: nil)
+        // 开发者模式变化：强制空态 / 报错态 / 加载态（见 handleDevModeChanged）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleDevModeChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
+        // 审计：监听账号切换，切号时清空搜索结果、关注态与私密行（见 handleUserChanged）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleUserChanged), name: .bearyUserDidChange, object: nil)
+        // 扫荡组 A：键盘弹起时给滚动区补底部留白（见 keyboardWillShow /
+        // keyboardWillChangeFrame；DM 聊天页同口径三通知全注册）。
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+
+    /// 扫荡组 A：键盘弹起时滚动区底部留白——此前本页从不监听键盘，
+    /// scrollView 底部留白恒为 90，键盘（约 300 高）弹起后会盖住结果区
+    /// 末尾几行：不先拖动收键盘就点不到它们。登录页已有同款键盘留白
+    /// 处理，本页按同口径补齐（只动 bottom，top 仍由 applyHeaderTopInset 管）。
+    private var keyboardBottomInset: CGFloat = 0
+
+    @objc private func keyboardWillShow(_ notification: Notification) {
+        updateKeyboardBottomInset(from: notification)
+    }
+
+    @objc private func keyboardWillChangeFrame(_ notification: Notification) {
+        // WillShow 只在键盘初次弹起发一次；切换输入法（候选栏高度变）、
+        // iPad 浮动键盘拖动、键盘高度变化只走 WillChangeFrame。不补它，
+        // 底部留白就停在旧高度，末行要么被新键盘盖住、要么浮动键盘移走
+        // 后仍留一片空白。本方法与 WillShow 同口径逐次重算、不累加。
+        updateKeyboardBottomInset(from: notification)
+    }
+
+    @objc private func keyboardWillHide(_ notification: Notification) {
+        keyboardBottomInset = 0
+        applyKeyboardBottomInset()
+    }
+
+    /// 键盘帧统一换算（WillShow / WillChangeFrame 共用）：
+    /// 底栏占位与安全区由 chromeBottomInset 一次算清，键盘只补安全区之上的
+    /// 遮挡部分（帧底边贴视图底边才计，浮动键盘不贴底计 0），安全区不重复计。
+    private func updateKeyboardBottomInset(from notification: Notification) {
+        guard let frameValue = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
+        // 聊天/登录同款：先转窗口坐标再算实际遮挡；贴底键盘按遮挡垫底，
+        // 浮动键盘（底边未贴视图底边）不垫空白——搜索框在顶部本就不会被盖住。
+        let frameInView = view.convert(frameValue.cgRectValue, from: nil)
+        if frameInView.maxY >= view.bounds.height - 1 {
+            keyboardBottomInset = max(0, view.bounds.height - frameInView.minY - view.safeAreaInsets.bottom)
+        } else {
+            keyboardBottomInset = 0
+        }
+        applyKeyboardBottomInset()
+    }
+
+    private func applyKeyboardBottomInset() {
+        let chrome = BearyChrome.chromeBottomInset(includesFab: false, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
+        scrollView.contentInset.bottom = chrome + keyboardBottomInset
+        scrollView.scrollIndicatorInsets.bottom = chrome + keyboardBottomInset
+    }
+
+    /// 补缺 P2-21：搜索拉黑判定（与 SceneDelegate isBlockedAuthor 同口径：游客不承接拉黑表，
+    /// 作者本人永不命中；其余走 BearyBlockedStore 同步缓存，点按路径不发网络）。
+    private func isBlockedForSearch(userId: Int?) -> Bool {
+        if SessionManager.shared.isGuestMode { return false }
+        guard let userId = userId else { return false }
+        if let viewerId = SessionManager.shared.currentUser?.id, viewerId == userId { return false }
+        return BearyBlockedStore.isBlocked(userId)
+    }
+
+    /// 审计 P2-20：拉黑作者——用户行与该作者全部日记行一并清掉，引用缓存同清。
+    @objc private func handleBlockedUserNotification(_ note: Notification) {
+        guard let userId = note.object as? Int else { return }
+        removeBlockedUserFromResults(userId: userId)
+    }
+
+    /// 拉黑清行共用路径（广播与点按守卫同走）：从上次渲染数据中摘掉该用户与该作者全部日记行并重渲染。
+    private func removeBlockedUserFromResults(userId: Int) {
+        guard var data = lastRenderedData, let query = lastRenderedQuery, showingResults else { return }
+        var removedIds: [String] = []
+        for list in [data.entries, data.mine] {
+            for e in list ?? [] where e.authorId == userId {
+                if let id = e.id { removedIds.append(id) }
+            }
+        }
+        data.users?.removeAll { $0.id == userId }
+        data.entries?.removeAll { $0.authorId == userId }
+        data.mine?.removeAll { $0.authorId == userId }
+        lastRenderedData = data
+        for id in removedIds { BearyDiaryCardCell.quoteCache.removeValue(forKey: id) }
+        renderResults(data: data, query: query)
+    }
+
+    /// 审计 P2-20：举报日记——公开组与我的组里该篇一并清掉，引用缓存同清。
+    @objc private func handleReportedEntryNotification(_ note: Notification) {
+        guard let entryId = note.object as? String, !entryId.isEmpty, var data = lastRenderedData, let query = lastRenderedQuery, showingResults else { return }
+        data.entries?.removeAll { $0.id == entryId }
+        data.mine?.removeAll { $0.id == entryId }
+        lastRenderedData = data
+        BearyDiaryCardCell.quoteCache.removeValue(forKey: entryId)
+        renderResults(data: data, query: query)
+    }
+
+    /// 顶栏透度批（容器调用，见 SceneDelegate.applyHeaderTopInsets）：主滚动视图即 scrollView。
+    /// 本页滚动框顶锚页安全区（容器页顶改 view.top 后，页安全区顶仍为容器安全区顶，框绝对位置不变），
+    /// 故属性内边距只需 60/0：显示 60、收起 0，视觉顶距即安全区顶 + 60 / 安全区顶。
+    /// 本页在容器里恒收起，显示值只经容器统一发一次；sticky 框逻辑（safeTop 与占位同移 S）不受影响。
+    /// 本页无公开回顶方法、无 contentOffset 在顶判定（容器回顶走 BFS 的 -contentInset.top，收起态为 0）。
+    func applyHeaderTopInset(visible: Bool) {
+        headerTopInsetVisible = visible
+        let top: CGFloat = (visible ? 60 : 0) + BearyDeveloperMode.shared.devBannerInset
+        if scrollView.contentInset.top != top {
+            scrollView.contentInset.top = top
+            scrollView.scrollIndicatorInsets.top = top
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateColumnLayout()
+        updateStickyBoxPosition()
+        // 8-11：状态圆圆角走高/2（54 圆 -> 27），不再只靠手写 27；
+        // bounds 在首次布局后才定，故此处跟随布局刷新（只动 layer，不改约束）。
+        if stateCircle.bounds.height > 0 {
+            stateCircle.layer.cornerRadius = stateCircle.bounds.height / 2
+        }
+        // 旋转/列宽变化后刷新阴影 path（path 与 bounds 绑定，旧 path 会错位）。
+        updateSearchBoxShadow()
+    }
+
+    /// P2-1：仅 iPad 且宽 ≥821 时内容列 600 / 搜索框 568 居中，其余内容列满宽 /
+    /// 搜索框 = 屏宽 -32；与个人主页 isDesktopColumn（仅 iPad ≥821）同口径，不自创第三种。
+    private func updateColumnLayout() {
+        let desktop = BearyDesktop.isWide(view.bounds.width)
+        contentStackWidthCap?.isActive = desktop
+        contentStackFullWidth?.isActive = !desktop
+        searchBoxWidthCap?.isActive = desktop
+        searchBoxFullWidth?.isActive = !desktop
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        updateStickyBoxPosition()
+        // S5：滚动露出新行时，屏外排队的关注状态按可见优先重排队头；
+        // 无待办时不做帧量算。
+        // r11-11：滚动重排节流——偏移不足一行不重测（可见行集合至多
+        // 差一行，重排收益小于整批测量成本）；停稳时见下方两个回调
+        // 强制重排，停稳态队列与改前一致。
+        if !followStatePendingIds.isEmpty,
+           shouldReorderFollowStatesForScroll(offsetY: scrollView.contentOffset.y) {
+            requestFollowStatesForVisibleRows()
+        }
+    }
+
+    /// r11-11：滚动重排节流判定——首次滚动（无上次记录）或偏移自上次
+    /// 重排移动超过一行时重排；否则跳过本次测量。
+    private func shouldReorderFollowStatesForScroll(offsetY: CGFloat) -> Bool {
+        guard let last = lastFollowReorderOffsetY else { return true }
+        return abs(offsetY - last) >= followReorderMinScrollDelta
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        // r11-11：拖动停稳（不再减速）时强制重排一次，停稳态队列与改前一致。
+        if !decelerate, !followStatePendingIds.isEmpty {
+            requestFollowStatesForVisibleRows()
+        }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        // r11-11：减速停稳时强制重排一次，停稳态队列与改前一致。
+        if !followStatePendingIds.isEmpty {
+            requestFollowStatesForVisibleRows()
+        }
+    }
+
+    /// sticky 框体吸顶（6-2）：顶约束固定 48（栈顶 4 + 返回行 44，见 1-4），
+    /// 吸顶位移只走 transform，滚动回调不再改约束：占位在视野内时框体跟随占位，
+    /// 占位滚出后框体贴安全区顶 6px（网页 top:6px）。占位高度 50 不变。
+    /// 框体无 transform 时顶在安全区顶 +48 处，故 transform.y = 目标顶距 - 48：
+    /// 占位可见时 >= 0（跟随占位），滚出后 -42（贴顶 6）。
+    private func updateStickyBoxPosition() {
+        let safeTop = view.safeAreaLayoutGuide.layoutFrame.minY
+        let placeholderTop = boxPlaceholderView.convert(CGPoint.zero, to: view).y
+        let target = max(6, placeholderTop - safeTop)
+        searchBoxView.transform = CGAffineTransform(translationX: 0, y: target - 48)
+    }
+
+    @objc private func backTapped() {
+        onBack?()
+    }
+
+
+    /// U4：仅首次出现聚焦输入框；从详情返回时不再重弹键盘。
+    private var searchFieldFocusedOnce = false
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 网页 openSearch 会在 120ms 后聚焦输入框；原生页打开即聚焦，同口径。
+        if !searchFieldFocusedOnce {
+            searchFieldFocusedOnce = true
+            searchField.becomeFirstResponder()
+        }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        // 64 包反馈修：退出搜索页键盘跟随收走——模态/ push 离开走本回调时先收键盘，
+        // 容器 isHidden 切页不触发本回调，另由 SceneDelegate.showPage 离搜索分支收键盘。
+        view.endEditing(true)
+        // 网页 closeSearch 口径：清防抖计时、序号 +1 使在途请求回包失效。
+        searchTimer?.invalidate()
+        searchTimer = nil
+        searchSeq += 1
+        // 翻页在途离页：取消任务并复位加载态——旧回包凭序号丢弃、不调
+        // finishOne，若不复位则 pending 永不到 0，回来后尾行转圈卡死、
+        // “加载更多”再也点不动；新搜索另有 resetSearchPagination 兜底。
+        for task in currentLoadMoreTasks { task.cancel() }
+        currentLoadMoreTasks = []
+        isLoadingMore = false
+        updateSearchFooter()
+    }
+
+    /// 切页生命周期 7 号（最小化）：容器切页只改 isHidden，本回调不触发，
+    /// 故容器 showPage 在离页时显式调本钩子，只覆盖序号失效（收键盘已有
+    /// showPage 的 view.endEditing，不重复）。
+    func pageDidLeave() {
+        searchTimer?.invalidate()
+        searchTimer = nil
+        searchSeq += 1
+        // 翻页在途离页：取消任务并复位加载态——旧回包凭序号丢弃、不调
+        // finishOne，若不复位则 pending 永不到 0，回来后尾行转圈卡死、
+        // “加载更多”再也点不动；新搜索另有 resetSearchPagination 兜底。
+        for task in currentLoadMoreTasks { task.cancel() }
+        currentLoadMoreTasks = []
+        isLoadingMore = false
+        updateSearchFooter()
+    }
+
+    deinit {
+        searchTimer?.invalidate()
+        NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .bearyFriendsChanged, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        updateBorderColors()
+        // 按钮普查：字号档变了，搜索关注钮定宽按新字号重算（个人页同款）。
+        if followButtonMeasuredCategory != traitCollection.preferredContentSizeCategory {
+            for button in followButtonsByUserId.values {
+                applyFollowButtonFixedWidth(button)
+                // r29-10：骨架态高度随字号档重算，态变不跳高。
+                if let userId = followButtonUserIds[button], followStates[followStateKey(userId: userId)] == nil, !followStateFailedIds.contains(followStateKey(userId: userId)) {
+                    setFollowButtonSkeletonHeight(button, userId: userId, show: true)
+                }
+            }
+        }
+    }
+
+    // MARK: - 搭建
+
+    private func buildViews() {
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.keyboardDismissMode = .onDrag
+        scrollView.delegate = self
+        // 底留白 90：与 Feed/时间线/消息同口径，末行不再被底栏分段器盖住。
+        scrollView.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: BearyChrome.chromeBottomInset(includesFab: false, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom), right: 0)
+        scrollView.scrollIndicatorInsets = scrollView.contentInset
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
+        view.addSubview(scrollView)
+
+        columnWrap.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(columnWrap)
+
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.axis = .vertical
+        contentStack.spacing = 0
+        // 列内边距 16 由 stack layoutMargins 承担（网页 #searchPage .pf-col padding 16
+        // 同口径）：列本身不再收窄，见 buildConstraints。
+        contentStack.isLayoutMarginsRelativeArrangement = true
+        contentStack.layoutMargins = UIEdgeInsets(top: 0, left: BearySpace.lg, bottom: 0, right: BearySpace.lg)
+        columnWrap.addSubview(contentStack)
+
+        // 页顶返回行（流内，随内容滚出；框体 sticky 后它已滚出视野）。
+        backRowView.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(backRowView)
+
+        backButton.translatesAutoresizingMaskIntoConstraints = false
+        backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        backButton.tintColor = BearyColors.ink
+        backButton.accessibilityLabel = "返回"
+        backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
+        backButton.bearyAddPressFeedback()
+        backRowView.addSubview(backButton)
+
+        backTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        backTitleLabel.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 16))
+        backTitleLabel.adjustsFontForContentSizeCategory = true
+        backTitleLabel.textColor = BearyColors.ink
+        backTitleLabel.text = "搜索"
+        backRowView.addSubview(backTitleLabel)
+
+        // 搜索框占位（流内 50 高）。
+        boxPlaceholderView.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(boxPlaceholderView)
+
+        // 搜索框：view 级视图（sticky 用，见 updateStickyBoxPosition），
+        // 后于 scrollView 加入视图层级，滚动内容从它下方滑过时被盖住。
+        searchBoxView.translatesAutoresizingMaskIntoConstraints = false
+        searchBoxView.backgroundColor = BearyColors.surface2
+        searchBoxView.layer.borderWidth = 0
+        searchBoxView.layer.cornerRadius = 25
+        // 阴影须画出框外，masksToBounds 必须关；框内元素均有内边距，不会溢出圆角。
+        searchBoxView.layer.masksToBounds = false
+        view.addSubview(searchBoxView)
+
+        searchIconView.translatesAutoresizingMaskIntoConstraints = false
+        searchIconView.image = BearyIconImages.image(named: "icon_search", pointSize: 21)
+        searchIconView.tintColor = BearyColors.gray
+        searchIconView.contentMode = .scaleAspectFit
+        searchBoxView.addSubview(searchIconView)
+
+        boxRingView.translatesAutoresizingMaskIntoConstraints = false
+        boxRingView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 21)
+        boxRingView.tintColor = BearyColors.gray
+        boxRingView.contentMode = .scaleAspectFit
+        boxRingView.isHidden = true
+        searchBoxView.addSubview(boxRingView)
+
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        searchField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
+        searchField.adjustsFontForContentSizeCategory = true
+        searchField.textColor = BearyColors.ink
+        // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径）。
+        searchField.attributedPlaceholder = NSAttributedString(string: "搜索日记或用户", attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
+        ])
+        searchField.returnKeyType = .search
+        searchField.autocorrectionType = .no
+        searchField.delegate = self
+        searchField.addTarget(self, action: #selector(searchFieldChanged), for: .editingChanged)
+        searchBoxView.addSubview(searchField)
+
+        clearButton.translatesAutoresizingMaskIntoConstraints = false
+        // 112：帧本身扩到 44×44（见约束处），淡底圆不再由按钮底色画满帧，
+        // 改内嵌 26×26 居中圆视图：视觉圆心/半径与原来完全一致，图标仍 13pt 居中。
+        // 按钮底透明，BearyHit44Button 的 point(inside:) 扩区此时已是冗余兜底（帧已 44）。
+        clearButton.backgroundColor = UIColor.clear
+        let clearVisual = UIView()
+        clearVisual.translatesAutoresizingMaskIntoConstraints = false
+        clearVisual.backgroundColor = BearyColors.surface2
+        clearVisual.layer.cornerRadius = 13
+        clearVisual.clipsToBounds = true
+        clearVisual.isUserInteractionEnabled = false
+        clearButton.addSubview(clearVisual)
+        NSLayoutConstraint.activate([
+            clearVisual.centerXAnchor.constraint(equalTo: clearButton.centerXAnchor),
+            clearVisual.centerYAnchor.constraint(equalTo: clearButton.centerYAnchor),
+            clearVisual.widthAnchor.constraint(equalToConstant: 26),
+            clearVisual.heightAnchor.constraint(equalToConstant: 26),
+        ])
+        clearButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 13), for: .normal)
+        clearButton.tintColor = BearyColors.gray
+        clearButton.isHidden = true
+        clearButton.addTarget(self, action: #selector(clearTapped), for: .touchUpInside)
+        clearButton.bearyAddPressFeedback()
+        searchBoxView.addSubview(clearButton)
+
+        // 状态区（初始/加载/无结果/失败四态共用一处容器，互斥显示）
+        stateWrap.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(stateWrap)
+
+        stateStack.translatesAutoresizingMaskIntoConstraints = false
+        stateStack.axis = .vertical
+        stateStack.alignment = .center
+        stateStack.spacing = 0
+        stateWrap.addSubview(stateStack)
+
+        stateCircle.translatesAutoresizingMaskIntoConstraints = false
+        // 空态圈视觉统一：与 BearyStateView 同款——浅灰底无描边墨图标
+        //（黑白灰新标准，橙圈已删）。
+        stateCircle.backgroundColor = BearyColors.surface2
+        stateCircle.layer.borderWidth = 0
+        // 8-11：初值 27 = 54/2（首次布局前 bounds 未定时的正确帧；布局后由
+        // viewDidLayoutSubviews 按高/2 重算，见该处注释）。
+        stateCircle.layer.cornerRadius = 27
+        stateCircle.layer.masksToBounds = true
+        stateStack.addArrangedSubview(stateCircle)
+
+        stateIconView.translatesAutoresizingMaskIntoConstraints = false
+        // 8-12 例外：状态圆内图标 25 不归 21 档——它是 54 圆的圆内比例，
+        // 统一组件 BearyStateView 同款 54 圆亦用 25，故保留。
+        stateIconView.image = BearyIconImages.image(named: "icon_search", pointSize: 25)
+        stateIconView.tintColor = BearyColors.ink
+        stateIconView.contentMode = .scaleAspectFit
+        stateCircle.addSubview(stateIconView)
+
+        stateRingView.translatesAutoresizingMaskIntoConstraints = false
+        stateRingView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 25)
+        stateRingView.tintColor = BearyColors.gray
+        stateRingView.contentMode = .scaleAspectFit
+        stateRingView.isHidden = true
+        stateCircle.addSubview(stateRingView)
+
+        stateTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        stateTitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
+        stateTitleLabel.adjustsFontForContentSizeCategory = true
+        stateTitleLabel.textColor = BearyColors.ink
+        stateTitleLabel.textAlignment = .center
+        stateTitleLabel.numberOfLines = 0
+        stateTitleLabel.lineBreakMode = .byCharWrapping
+        stateStack.addArrangedSubview(stateTitleLabel)
+
+        stateSubLabel.translatesAutoresizingMaskIntoConstraints = false
+        stateSubLabel.font = BearyDynamicType.captionFont()
+        stateSubLabel.adjustsFontForContentSizeCategory = true
+        stateSubLabel.textColor = BearyColors.gray
+        stateSubLabel.textAlignment = .center
+        stateSubLabel.numberOfLines = 0
+        stateSubLabel.lineBreakMode = .byCharWrapping
+        stateStack.addArrangedSubview(stateSubLabel)
+
+        // 失败重试：重试两档·整页档（BearyButton.retryPage，紧凑描边 pill 36 高），
+        // 左右内边距 20 保留原网页 .addr-retry 口径。
+        retryButton.translatesAutoresizingMaskIntoConstraints = false
+        retryButton.setTitle("重试", for: .normal)
+        retryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
+        retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButton.retryPageStyle.height).isActive = true
+        retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        retryButton.bearyAddPressFeedback()
+        stateStack.addArrangedSubview(retryButton)
+
+        // 8-6：错误态 BearyStateView（wrap 与 stateWrap 同槽位、互斥显隐；
+        // 内边距 28/20/20 与 bespoke stateStack 同口径，切换只在 showState /
+        // showFailedState 做显隐，不在滚动回调里动约束）。
+        errorStateWrap.translatesAutoresizingMaskIntoConstraints = false
+        errorStateWrap.isHidden = true
+        contentStack.addArrangedSubview(errorStateWrap)
+        errorStateView.translatesAutoresizingMaskIntoConstraints = false
+        errorStateView.configure(kind: .error, title: "搜索失败", subtitle: "检查网络后重试", iconName: "icon_search", actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
+        errorStateWrap.addSubview(errorStateView)
+        NSLayoutConstraint.activate([
+            errorStateView.topAnchor.constraint(equalTo: errorStateWrap.topAnchor, constant: 28),
+            errorStateView.leadingAnchor.constraint(equalTo: errorStateWrap.leadingAnchor, constant: 20),
+            errorStateView.trailingAnchor.constraint(equalTo: errorStateWrap.trailingAnchor, constant: -20),
+            errorStateView.bottomAnchor.constraint(equalTo: errorStateWrap.bottomAnchor, constant: -20),
+        ])
+
+        // Q9 最近搜索区：标题 + 本机记录行（行高 44、圆角 14 卡片口径）；
+        // 内容由 renderRecentSearches 重建，初始态外一律隐藏（见 showState）。
+        recentWrap.translatesAutoresizingMaskIntoConstraints = false
+        recentWrap.isHidden = true
+        contentStack.addArrangedSubview(recentWrap)
+        recentStack.translatesAutoresizingMaskIntoConstraints = false
+        recentStack.axis = .vertical
+        recentStack.spacing = 8
+        recentWrap.addSubview(recentStack)
+        NSLayoutConstraint.activate([
+            recentStack.topAnchor.constraint(equalTo: recentWrap.topAnchor),
+            recentStack.bottomAnchor.constraint(equalTo: recentWrap.bottomAnchor),
+            recentStack.leadingAnchor.constraint(equalTo: recentWrap.leadingAnchor),
+            recentStack.trailingAnchor.constraint(equalTo: recentWrap.trailingAnchor),
+        ])
+
+        // 结果区
+        resultsStack.translatesAutoresizingMaskIntoConstraints = false
+        resultsStack.axis = .vertical
+        resultsStack.spacing = 0
+        contentStack.addArrangedSubview(resultsStack)
+
+        // 88 包 M13：结果区尾行（加载态转圈＋失败重试），平时隐藏；高度 44
+        // 与时间线尾行同口径，内容居中，避免显隐两态约束冲突。
+        searchFooterRow.translatesAutoresizingMaskIntoConstraints = false
+        searchFooterRow.isHidden = true
+        contentStack.addArrangedSubview(searchFooterRow)
+        // 重试两档·整页档（BearyButton.retryPage，与失败态重试钮同档）。
+        searchFooterRetryButton.translatesAutoresizingMaskIntoConstraints = false
+        searchFooterRetryButton.setTitle("重试", for: .normal)
+        searchFooterRetryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
+        searchFooterRetryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButton.retryPageStyle.height).isActive = true
+        searchFooterRetryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        searchFooterRetryButton.bearyAddPressFeedback()
+        searchFooterRow.addSubview(searchFooterRetryButton)
+        // sweep32-2：加载更多钮（与重试钮同工厂紧凑档）与加载中转圈，
+        // 三态互斥显隐（见 updateSearchFooter），约束与重试钮同槽位居中。
+        searchFooterLoadMoreButton.translatesAutoresizingMaskIntoConstraints = false
+        searchFooterLoadMoreButton.setTitle("加载更多", for: .normal)
+        searchFooterLoadMoreButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
+        searchFooterLoadMoreButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height).isActive = true
+        searchFooterLoadMoreButton.addTarget(self, action: #selector(loadMoreTapped), for: .touchUpInside)
+        searchFooterLoadMoreButton.bearyAddPressFeedback()
+        searchFooterRow.addSubview(searchFooterLoadMoreButton)
+        searchFooterSpinnerView.translatesAutoresizingMaskIntoConstraints = false
+        searchFooterSpinnerView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 21)
+        searchFooterSpinnerView.tintColor = BearyColors.gray
+        searchFooterSpinnerView.contentMode = .scaleAspectFit
+        searchFooterSpinnerView.isHidden = true
+        searchFooterRow.addSubview(searchFooterSpinnerView)
+        NSLayoutConstraint.activate([
+            searchFooterRow.heightAnchor.constraint(equalToConstant: 44),
+            searchFooterRetryButton.centerXAnchor.constraint(equalTo: searchFooterRow.centerXAnchor),
+            searchFooterRetryButton.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
+            searchFooterLoadMoreButton.centerXAnchor.constraint(equalTo: searchFooterRow.centerXAnchor),
+            searchFooterLoadMoreButton.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
+            searchFooterSpinnerView.centerXAnchor.constraint(equalTo: searchFooterRow.centerXAnchor),
+            searchFooterSpinnerView.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
+            searchFooterSpinnerView.widthAnchor.constraint(equalToConstant: 21),
+            searchFooterSpinnerView.heightAnchor.constraint(equalToConstant: 21),
+        ])
+
+        updateBorderColors()
+    }
+
+    private func buildConstraints() {
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            // 内容列（P2-1）：宽 ≥821 时 600 居中、宽 ≤820 时满宽（见 updateColumnLayout）；
+            // 16 边距改由 contentStack layoutMargins 承担（窄屏仍是 16）。
+            columnWrap.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            columnWrap.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            columnWrap.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            columnWrap.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            columnWrap.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+
+            contentStack.topAnchor.constraint(equalTo: columnWrap.topAnchor, constant: 4),
+            contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: columnWrap.leadingAnchor, constant: 0),
+            contentStack.trailingAnchor.constraint(lessThanOrEqualTo: columnWrap.trailingAnchor, constant: 0),
+            contentStack.centerXAnchor.constraint(equalTo: columnWrap.centerXAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: columnWrap.bottomAnchor),
+
+            // 页顶返回行：按钮 44 + gap 10 + 标题，上下 padding 0（行高仍 44，图标 24 居中，视觉不变）。
+            backButton.leadingAnchor.constraint(equalTo: backRowView.leadingAnchor),
+            backButton.topAnchor.constraint(equalTo: backRowView.topAnchor, constant: 0),
+            backButton.bottomAnchor.constraint(equalTo: backRowView.bottomAnchor, constant: 0),
+            backButton.widthAnchor.constraint(equalToConstant: 44),
+            backButton.heightAnchor.constraint(equalToConstant: 44),
+            backTitleLabel.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 10),
+            backTitleLabel.centerYAnchor.constraint(equalTo: backButton.centerYAnchor),
+            backTitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: backRowView.trailingAnchor),
+
+            boxPlaceholderView.heightAnchor.constraint(equalToConstant: 50),
+
+
+            // sticky 框体：与列内容同宽（16 边距 + ≤568 居中），顶距固定 48、吸顶位移走 transform。
+            searchBoxView.heightAnchor.constraint(equalToConstant: 50),
+            searchBoxView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            searchBoxView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
+            searchBoxView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+
+            searchIconView.leadingAnchor.constraint(equalTo: searchBoxView.leadingAnchor, constant: 16),
+            searchIconView.centerYAnchor.constraint(equalTo: searchBoxView.centerYAnchor),
+            searchIconView.widthAnchor.constraint(equalToConstant: 21),
+            searchIconView.heightAnchor.constraint(equalToConstant: 21),
+
+            boxRingView.leadingAnchor.constraint(equalTo: searchBoxView.leadingAnchor, constant: 16),
+            boxRingView.centerYAnchor.constraint(equalTo: searchBoxView.centerYAnchor),
+            boxRingView.widthAnchor.constraint(equalToConstant: 21),
+            boxRingView.heightAnchor.constraint(equalToConstant: 21),
+
+            searchField.leadingAnchor.constraint(equalTo: searchBoxView.leadingAnchor, constant: 44),
+            searchField.topAnchor.constraint(equalTo: searchBoxView.topAnchor),
+            searchField.bottomAnchor.constraint(equalTo: searchBoxView.bottomAnchor),
+
+            // 112：清空钮热区帧本身 44×44。视觉圆心须与原来一致：
+            // 原 trailing -12、宽 26，圆心在框右 -25；现 trailing -3、宽 44，
+            // 圆心仍在 -25（-3-22），内嵌 26 圆与 13pt 图标均居中，视觉不动。
+            clearButton.trailingAnchor.constraint(equalTo: searchBoxView.trailingAnchor, constant: -3),
+            clearButton.centerYAnchor.constraint(equalTo: searchBoxView.centerYAnchor),
+            clearButton.widthAnchor.constraint(equalToConstant: 44),
+            clearButton.heightAnchor.constraint(equalToConstant: 44),
+
+            stateStack.topAnchor.constraint(equalTo: stateWrap.topAnchor, constant: 28),
+            stateStack.leadingAnchor.constraint(equalTo: stateWrap.leadingAnchor, constant: 20),
+            stateStack.trailingAnchor.constraint(equalTo: stateWrap.trailingAnchor, constant: -20),
+            stateStack.bottomAnchor.constraint(equalTo: stateWrap.bottomAnchor, constant: -20),
+
+            stateCircle.widthAnchor.constraint(equalToConstant: 54),
+            stateCircle.heightAnchor.constraint(equalToConstant: 54),
+
+            stateIconView.centerXAnchor.constraint(equalTo: stateCircle.centerXAnchor),
+            stateIconView.centerYAnchor.constraint(equalTo: stateCircle.centerYAnchor),
+            stateIconView.widthAnchor.constraint(equalToConstant: 25),
+            stateIconView.heightAnchor.constraint(equalToConstant: 25),
+
+            stateRingView.centerXAnchor.constraint(equalTo: stateCircle.centerXAnchor),
+            stateRingView.centerYAnchor.constraint(equalTo: stateCircle.centerYAnchor),
+            stateRingView.widthAnchor.constraint(equalToConstant: 25),
+            stateRingView.heightAnchor.constraint(equalToConstant: 25),
+        ])
+        // P2-1：列宽二选一约束（初始按桌面态建，viewDidLayoutSubviews 的
+        // updateColumnLayout 按实际宽度纠正；窄屏满宽约束与上限约束永不同时激活）。
+        contentStackWidthCap = contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        contentStackWidthCap?.isActive = true
+        contentStackFullWidth = contentStack.widthAnchor.constraint(equalTo: columnWrap.widthAnchor)
+        contentStackFullWidth?.isActive = false
+        searchBoxWidthCap = searchBoxView.widthAnchor.constraint(lessThanOrEqualToConstant: 568)
+        searchBoxWidthCap?.isActive = true
+        searchBoxFullWidth = searchBoxView.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -32)
+        searchBoxFullWidth?.isActive = false
+        // sticky 框体顶距固定 48（1-4：栈顶 4 + 返回行 44）；吸顶位移走 transform，约束此后不再改动。
+        boxTopConstraint = searchBoxView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 48)
+        boxTopConstraint?.isActive = true
+        // 输入框右缘：清空钮显示时贴清空钮、无清空钮时贴框右 16（两条约束互斥切换）。
+        searchFieldToBoxTrailing = searchField.trailingAnchor.constraint(equalTo: searchBoxView.trailingAnchor, constant: -16)
+        // 112：输入框右缘到清空钮视觉圆左缘仍留 8pt。钮帧已扩到 44，
+        // 视觉圆左缘 = 帧左缘 + 9（(44-26)/2），故此处常量由 -8 改为 +1；
+        // 换算回框右：原 -38-8 = -46，现 -47+1 = -46，输入框宽度原样不变。
+        searchFieldToClearLeading = searchField.trailingAnchor.constraint(equalTo: clearButton.leadingAnchor, constant: 1)
+        searchFieldToBoxTrailing?.isActive = true
+        searchFieldToClearLeading?.isActive = false
+        // 标题与副文案间距：网页 .addr-state b margin-bottom 4；圆到底部文案间距 11。
+        stateStack.setCustomSpacing(11, after: stateCircle)
+        stateStack.setCustomSpacing(4, after: stateTitleLabel)
+        stateStack.setCustomSpacing(10, after: stateSubLabel)
+    }
+
+    /// CGColor 不跟随深浅模式自动变：边框色一律这里集中刷新。
+    /// 2026-11-07 微明度定版：搜索框聚焦不再画蓝边，改走聚焦阴影（见
+    /// updateSearchBoxShadow）；搜索框边框恒为 0，此处不再给它赋边框色。
+    private func updateBorderColors() {
+        retryButton.layer.bearyDynamicBorderColor = BearyColors.line
+        searchFooterRetryButton.layer.bearyDynamicBorderColor = BearyColors.line
+        searchFooterLoadMoreButton.layer.bearyDynamicBorderColor = BearyColors.line
+        updateSearchBoxShadow()
+    }
+
+    /// 搜索框阴影（网页 .srch-box）：常态 hairline；聚焦时改走聚焦阴影
+    /// （2026-11-07 微明度定版：不再画蓝边）；边框恒为 0；
+    /// path 随 bounds 更新见 viewDidLayoutSubviews。
+    private func updateSearchBoxShadow() {
+        let bounds = searchBoxView.bounds
+        guard bounds.width > 0 && bounds.height > 0 else { return }
+        searchBoxView.layer.borderWidth = 0
+        if searchBoxFocused {
+            BearyShadow.applyFocused(to: searchBoxView.layer)
+        } else {
+            BearyShadow.applyHairline(to: searchBoxView.layer)
+        }
+        searchBoxView.layer.shadowPath = UIBezierPath(
+            roundedRect: bounds,
+            cornerRadius: 25
+        ).cgPath
+    }
+
+    // MARK: - 输入与搜索
+
+    /// 清空钮显隐与输入框右缘约束同步切换。
+    private func updateClearButtonVisibility() {
+        let showClear = !(searchField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        clearButton.isHidden = !showClear
+        searchFieldToBoxTrailing?.isActive = !showClear
+        searchFieldToClearLeading?.isActive = showClear
+    }
+
+    @objc private func searchFieldChanged() {
+        updateClearButtonVisibility()
+        searchTimer?.invalidate()
+        searchTimer = nil
+        // 敲键即失效旧请求：序号 +1 使在途搜索回包凭序号丢弃（防抖等待
+        // 期内返回的旧词回包也一样，不写回列表、不写最近搜索），同时取消
+        // 在途搜索任务；防抖只决定新请求何时发起，不再是旧请求失效的时机。
+        searchSeq += 1
+        currentSearchTask?.cancel()
+        currentSearchTask = nil
+        // 中文组词未提交时不发查询：markedTextRange 非空说明输入法正在
+        // 组词，当前文本只是中间态；提交后 editingChanged 会再触发，届时
+        // markedTextRange 已空、防抖计时重新开始，才真正发起搜索。
+        if searchField.markedTextRange != nil { return }
+        // 网页 input 监听口径：250ms 防抖后执行。
+        searchTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            // 二次守卫：计时到期时若仍在组词，跳过本次、不发中间态查询；
+            // 组词提交后的 editingChanged 会重新排期。
+            if self.searchField.markedTextRange != nil { return }
+            self.runSearch(query: self.searchField.text ?? "")
+        }
+    }
+
+    @objc private func clearTapped() {
+        searchField.text = ""
+        updateClearButtonVisibility()
+        searchTimer?.invalidate()
+        runSearch(query: "")
+        searchField.becomeFirstResponder()
+    }
+
+    @objc private func retryTapped() {
+        // sweep32-2：尾行翻页失败的重试只重跑翻页（loadMore 再试），不重跑整搜；
+        // 其余失败态仍按网页口径立即重跑上一次关键词，不走防抖。
+        if loadMoreFailed && searchFooterRetryIsLoadMore {
+            loadMore(retryFailedOnly: true)
+            return
+        }
+        runSearch(query: lastQuery)
+    }
+
+    @objc private func loadMoreTapped() {
+        loadMore()
+    }
+
+    /// sweep32-2 搜索翻页：尾行“加载更多”只在还有下一批时出现。
+    /// 为何按组各发一请求：服务端三组共用同一套 before/before_id 参，
+    /// 一组游标套到另一组会重复或漏项（公开组与“我的”组各按 created_at
+    /// DESC + id DESC、用户组按 id 升序，游标语义本就不同）。故有下一批
+    /// 的组各发一路带本组游标的请求，每路只取本组结果合并，余组丢弃；
+    /// 各路并行、全部回包后统一重渲一次（同关键词同批口径，只淡入新行）。
+    /// 游标与 hasMore 在每路回包后按该路原始末条刷新（不满页即取尽）；
+    /// 某路失败时已成功路的结果照常合并，尾行亮翻页重试（只重跑翻页）；
+    /// .cancelled（新搜索已取消本批翻页）不计失败、不亮尾行。
+    /// 新搜索会使 searchSeq 变化，旧翻页回包凭序号丢弃，不碰 UI。
+    /// 第 14 轮审计 5：结算只由完成回调做——request 在开发者模拟断网/500
+    /// 时同步调失败回调并返回 nil，nil 任务分支再扣一次 pending 会把同一路
+    /// 结算两次；完成回调必调一次（含模拟模式），故不另扣。
+    /// 第 14 轮审计 6：retryFailedOnly 时只发失败组，已成功组等下次正常翻页。
+    private func loadMore(retryFailedOnly: Bool = false) {
+        guard showingResults, !isLoadingMore else { return }
+        guard let query = lastRenderedQuery, !query.isEmpty else { return }
+        guard var merged = lastRenderedData else { return }
+        guard searchHasMorePublic || searchHasMoreMine || searchHasMoreUsers else { return }
+        // 重试只补失败组：无失败组时直接返回，不亮加载态。
+        guard !retryFailedOnly || loadMoreFailedPublic || loadMoreFailedMine || loadMoreFailedUsers else { return }
+        isLoadingMore = true
+        loadMoreFailed = false
+        searchFooterRetryIsLoadMore = false
+        // 正常翻页重算各组失败态；重试不清除——选组要靠它。
+        if !retryFailedOnly {
+            loadMoreFailedPublic = false
+            loadMoreFailedMine = false
+            loadMoreFailedUsers = false
+        }
+        updateSearchFooter()
+        let seq = searchSeq
+        var pending = 0
+        var anyFailed = false
+        var mergedChanged = false
+        // 本批各组新行（原始未过滤；过滤口径统一由 appendResultRows
+        // 按 renderResults 逐字执行，避免两处过滤口径漂移）。
+        var freshMineEntries: [Entry] = []
+        var freshPublicEntries: [Entry] = []
+        var freshUsersList: [SearchUser] = []
+        // 本批翻页内的去重基准：已在屏上的 id（公开/我的按日记 id、用户按 id）。
+        // 公开组与“我的”组去重集合分开：两组并行回包、谁先到谁先占 id 时，
+        // 共用集合会把自己公开篇从公开组里挤掉（“我的”组先占 id，公开组跳过，
+        // 而渲染时“我的”组又只留私密篇，两边都不渲染）；分开后公开篇仍由公开组出。
+        var seenPublicEntryIds = Set<String>(rowEntryIds)
+        var seenMineEntryIds = Set<String>(rowEntryIds)
+        var seenUserIds = Set<Int>()
+        for user in rowUsers {
+            if let userId = user.id {
+                seenUserIds.insert(userId)
+            }
+        }
+        let finishOne = { [weak self] in
+            guard let self = self else { return }
+            pending -= 1
+            if pending > 0 { return }
+            self.currentLoadMoreTasks = []
+            self.isLoadingMore = false
+            self.loadMoreFailed = anyFailed
+            self.searchFooterRetryIsLoadMore = anyFailed
+            if mergedChanged {
+                // 扫 bug 第 9 项：翻页不再全量重渲（renderResults 开头
+                // clearResultRows 会拆掉全部行重建，页越多每翻越重）；
+                // 改增量追加本批新行（游标/hasMore/去重口径不动，见
+                // appendResultRows）；末尾 updateSearchFooter 按新 hasMore
+                // 决定尾行（取尽则隐藏、失败则亮翻页重试）。
+                self.appendResultRows(data: merged, mine: freshMineEntries, publicEntries: freshPublicEntries, users: freshUsersList, query: query)
+            }
+            self.updateSearchFooter()
+        }
+        // 公开组下一批：before + before_id（created_at DESC + id DESC）。
+        // 第 14 轮审计 6：重试只发失败组。
+        if searchHasMorePublic, let before = searchPublicCursorBefore, let beforeId = searchPublicCursorId, !retryFailedOnly || loadMoreFailedPublic {
+            pending += 1
+            let task = BearyAPI.shared.search(q: query, before: before, beforeId: beforeId) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if seq != self.searchSeq { return }
+                    switch result {
+                    case .success(let data):
+                        self.loadMoreFailedPublic = false
+                        if let entries = data.entries {
+                            self.searchHasMorePublic = entries.count == 20
+                            if let last = entries.last, let created = last.createdAt, let entryId = last.id {
+                                self.searchPublicCursorBefore = created
+                                self.searchPublicCursorId = entryId
+                            } else {
+                                self.searchHasMorePublic = false
+                            }
+                            var fresh: [Entry] = []
+                            for entry in entries {
+                                if let entryId = entry.id, !seenPublicEntryIds.contains(entryId) {
+                                    seenPublicEntryIds.insert(entryId)
+                                    fresh.append(entry)
+                                }
+                            }
+                            freshPublicEntries = fresh
+                            if !fresh.isEmpty {
+                                mergedChanged = true
+                                if merged.entries == nil {
+                                    merged.entries = fresh
+                                } else {
+                                    merged.entries?.append(contentsOf: fresh)
+                                }
+                            }
+                        } else {
+                            self.searchHasMorePublic = false
+                        }
+                    case .failure(let error):
+                        if case .cancelled = error {
+                            // 新搜索已取消：序号守卫在上，走到这里只剩本批内取消，
+                            // 不计失败，尾行不亮重试。
+                        } else {
+                            anyFailed = true
+                            self.loadMoreFailedPublic = true
+                        }
+                    }
+                    finishOne()
+                }
+            }
+            if let task = task {
+                currentLoadMoreTasks.append(task)
+            }
+        }
+        // “我的”组下一批：与公开组同口径游标，只取 mine。
+        // 第 14 轮审计 6：重试只发失败组。
+        if searchHasMoreMine, let before = searchMineCursorBefore, let beforeId = searchMineCursorId, !retryFailedOnly || loadMoreFailedMine {
+            pending += 1
+            let task = BearyAPI.shared.search(q: query, before: before, beforeId: beforeId) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if seq != self.searchSeq { return }
+                    switch result {
+                    case .success(let data):
+                        self.loadMoreFailedMine = false
+                        if let mine = data.mine {
+                            self.searchHasMoreMine = mine.count == 20
+                            if let last = mine.last, let created = last.createdAt, let entryId = last.id {
+                                self.searchMineCursorBefore = created
+                                self.searchMineCursorId = entryId
+                            } else {
+                                self.searchHasMoreMine = false
+                            }
+                            var fresh: [Entry] = []
+                            for entry in mine {
+                                if let entryId = entry.id, !seenMineEntryIds.contains(entryId) {
+                                    seenMineEntryIds.insert(entryId)
+                                    fresh.append(entry)
+                                }
+                            }
+                            freshMineEntries = fresh
+                            if !fresh.isEmpty {
+                                mergedChanged = true
+                                if merged.mine == nil {
+                                    merged.mine = fresh
+                                } else {
+                                    merged.mine?.append(contentsOf: fresh)
+                                }
+                            }
+                        } else {
+                            self.searchHasMoreMine = false
+                        }
+                    case .failure(let error):
+                        if case .cancelled = error {
+                        } else {
+                            anyFailed = true
+                            self.loadMoreFailedMine = true
+                        }
+                    }
+                    finishOne()
+                }
+            }
+            if let task = task {
+                currentLoadMoreTasks.append(task)
+            }
+        }
+        // 用户组下一批：只传 before_id（id 升序、id > before_id），不传 before。
+        // 第 14 轮审计 6：重试只发失败组。
+        if searchHasMoreUsers, let userCursor = searchUsersCursorId, !retryFailedOnly || loadMoreFailedUsers {
+            pending += 1
+            let task = BearyAPI.shared.search(q: query, before: nil, beforeId: "\(userCursor)") { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if seq != self.searchSeq { return }
+                    switch result {
+                    case .success(let data):
+                        self.loadMoreFailedUsers = false
+                        if let users = data.users {
+                            self.searchHasMoreUsers = users.count == 8
+                            if let last = users.last, let userId = last.id {
+                                self.searchUsersCursorId = userId
+                            } else {
+                                self.searchHasMoreUsers = false
+                            }
+                            var fresh: [SearchUser] = []
+                            for user in users {
+                                if let userId = user.id, !seenUserIds.contains(userId) {
+                                    seenUserIds.insert(userId)
+                                    fresh.append(user)
+                                }
+                            }
+                            freshUsersList = fresh
+                            if !fresh.isEmpty {
+                                mergedChanged = true
+                                if merged.users == nil {
+                                    merged.users = fresh
+                                } else {
+                                    merged.users?.append(contentsOf: fresh)
+                                }
+                            }
+                        } else {
+                            self.searchHasMoreUsers = false
+                        }
+                    case .failure(let error):
+                        if case .cancelled = error {
+                        } else {
+                            anyFailed = true
+                            self.loadMoreFailedUsers = true
+                        }
+                    }
+                    finishOne()
+                }
+            }
+            if let task = task {
+                currentLoadMoreTasks.append(task)
+            }
+        }
+        // 游标缺失导致一路都没发出（防御）：直接复位尾行，不卡加载态。
+        if pending == 0 {
+            isLoadingMore = false
+            updateSearchFooter()
+        }
+    }
+
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        searchTimer?.invalidate()
+        runSearch(query: textField.text ?? "")
+        textField.resignFirstResponder()
+        return true
+    }
+
+    func textFieldDidBeginEditing(_ textField: UITextField) {
+        searchBoxFocused = true
+        updateBorderColors()
+    }
+
+    func textFieldDidEndEditing(_ textField: UITextField) {
+        searchBoxFocused = false
+        updateBorderColors()
+    }
+
+    private func runSearch(query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        lastQuery = trimmed
+        // 序号防旧请求：每次执行序号 +1，在途回包凭序号失效（与网页 srchSeq 同口径）。
+        searchSeq += 1
+        let seq = searchSeq
+        // S10：先取消上一路在途请求，旧回包由序号守卫丢弃。
+        currentSearchTask?.cancel()
+        currentSearchTask = nil
+        // sweep32-2：新一轮搜索作废上一批的翻页态与在途翻页请求。
+        resetSearchPagination()
+        if trimmed.isEmpty {
+            setBoxBusy(false)
+            showInitialState()
+            return
+        }
+        // 网页口径：已有结果时保持结果区、框内圈转（2026-10-29 第 21 项：框下“正在搜索…”行已删，搜索进行时不再显示尾行）；
+        // 无结果时结果区改加载态（含登录提示）。
+        if showingResults {
+            setBoxBusy(true)
+            // 109：新一轮搜索开始即清失败尾行（setSearchFooter 注释口径：搜索进行时
+            // 不显示尾行，只转框内圈）；失败回包仍可经 showFailedStateKeepingResults 再亮。
+            // 旧回包另有 searchSeq 序号守卫，不会把旧失败亮回新一轮。
+            setSearchFooter(failed: false)
+        } else {
+            showLoadingState()
+        }
+        // 第十二轮 02（搜索链路审计）：设备 FTS 与服务端搜索真正并行——
+        // 两路同时出发，各自完成后在主线程按 searchSeq 合并、逐步更新结果。
+        // 旧写法是服务端回包后才同步查本地索引：慢归档拖住公开组和用户组，
+        // 断网时本地搜索直接跳过。FTS 失败／本地归档不完整时返回 []，
+        // 服务端「我的」组原样兜底，不断档；公开组与用户组不碰，仍是服务端原样。
+        // 下面两路只在主线程读写共享态（serverResult / ftsMine / 各 done 位），
+        // 后台线程只做 FTS 计算、不碰共享态；旧轮回包凭 searchSeq 丢弃。
+        var serverResult: Result<SearchResult, APIError>?
+        var ftsMine: [Entry] = []
+        var ftsDone = false
+        var serverApplied = false
+        // 两路任一到达即调：只能在主线程调用。
+        let applySearchLegs: () -> Void = { [weak self] in
+            guard let self = self else { return }
+            if seq != self.searchSeq { return }
+            guard let serverResult = serverResult else {
+                // FTS 先到：只记结果，等服务端 leg 到达再渲染。
+                return
+            }
+            switch serverResult {
+            case .success(var data):
+                if !serverApplied {
+                    serverApplied = true
+                    self.recordRecentSearch(trimmed)
+                    // sweep32-2：先按服务端原始回包记当批翻页态（游标与 hasMore
+                    // 只属于服务端页），再把 FTS 结果并进「我的」组；renderResults
+                    // 末尾的 updateSearchFooter 才能据此亮起“加载更多”。
+                    self.updateSearchPagination(from: data)
+                }
+                data.mine = self.mergedMine(serverMine: data.mine, ftsMine: ftsMine)
+                self.renderResults(data: data, query: trimmed)
+                // FTS 晚到时再渲一次：同 query 走行复用路径，只补「我的」组行；
+                // 两路都到齐才停框内圈。
+                if ftsDone { self.setBoxBusy(false) }
+            case .failure:
+                guard ftsDone else {
+                    // 服务端已失败、FTS 还在跑：等本地结果，暂不亮失败态。
+                    return
+                }
+                self.setBoxBusy(false)
+                if !ftsMine.isEmpty {
+                    // 断网兜底：只渲本地「我的」组（公开组与用户组不编造数据）；
+                    // 尾行重试入口照旧亮起，提示服务端那半失败了。
+                    let localOnly = SearchResult(users: nil, entries: nil, mine: ftsMine)
+                    self.renderResults(data: localOnly, query: trimmed)
+                    self.setSearchFooter(failed: true)
+                } else if self.showingResults {
+                    // S7：已有旧结果时不进失败态（showState 会清结果区），
+                    // 只在结果区行内补重试入口，旧结果行原样保留。
+                    self.showFailedStateKeepingResults()
+                } else {
+                    self.showFailedState()
+                }
+            }
+        }
+        currentSearchTask = BearyAPI.shared.search(q: trimmed) { result in
+            // BearyAPI 回调不在主线程，碰 UI 与共享态必须回主线程。
+            DispatchQueue.main.async {
+                serverResult = result
+                applySearchLegs()
+            }
+        }
+        // 本地 FTS 腿：与服务端请求同时出发，后台算、回主线程交结果。
+        // searchMine 是同步调用、内部有自己的串行队列，须在后台队列调。
+        DispatchQueue.global(qos: .userInitiated).async {
+            let mine = BearyMineSearchIndex.shared.searchMine(query: trimmed)
+            DispatchQueue.main.async {
+                ftsMine = mine
+                ftsDone = true
+                applySearchLegs()
+            }
+        }
+    }
+
+    /// 框内圈：加载时以转圈替换放大镜（网页 srchSetIconBusy 同款语义）。
+    /// （2026-10-29 第 21 项：框下“正在搜索…”行已删，只留框内圈；
+    /// sweep32-2：尾行另有“加载更多”与翻页失败重试态，见 updateSearchFooter。）
+    private func setBoxBusy(_ busy: Bool) {
+        searchIconView.isHidden = busy
+        boxRingView.isHidden = !busy
+        if busy {
+            BearyIconMotion.startSpin(on: boxRingView, duration: 0.9, key: "bearyBoxSpin")
+        } else {
+            BearyIconMotion.stopSpin(on: boxRingView, key: "bearyBoxSpin")
+        }
+    }
+
+    // MARK: - 状态渲染（网页 srchStateHtml 四态口径）
+
+    private func showState(title: String?, sub: String?, showRetry: Bool, loading: Bool) {
+        // 8-6：非错误态一律藏起错误 wrap（stack arranged subview，隐藏即塌掉）。
+        errorStateWrap.isHidden = true
+        errorStateWrap.alpha = 1
+        let wasStateHidden = stateWrap.isHidden
+        showingResults = false
+        resultsStack.isHidden = true
+        setSearchFooter(failed: false)
+        // Q9：最近搜索只属于初始态，其他状态一律隐藏（初始态由 showInitialState 重亮）。
+        recentWrap.isHidden = true
+        clearResultRows()
+        stateWrap.isHidden = false
+        stateTitleLabel.text = title
+        stateTitleLabel.isHidden = (title == nil)
+        stateSubLabel.text = sub
+        stateSubLabel.isHidden = (sub == nil)
+        retryButton.isHidden = !showRetry
+        stateIconView.isHidden = loading
+        stateRingView.isHidden = !loading
+        if loading {
+            BearyIconMotion.startSpin(on: stateRingView, duration: 1, key: "bearyStateSpin")
+        } else {
+            BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
+        }
+        // 新规矩 (b)：状态区首次出现淡入（同态内文案更换不重播；减动效直显）。
+        if wasStateHidden && !UIAccessibility.isReduceMotionEnabled {
+            stateWrap.alpha = 0
+            UIView.animate(withDuration: BearyMotion.micro, animations: {
+                self.stateWrap.alpha = 1
+            })
+        } else {
+            stateWrap.alpha = 1
+        }
+    }
+
+    private func showInitialState() {
+        // 网页 init 态：放大镜圆 + 仅登录态一句“你的私密日记只有你自己能搜到”。
+        let sub: String?
+        if SessionManager.shared.isLoggedIn {
+            sub = "你的私密日记只有你自己能搜到"
+        } else {
+            sub = nil
+        }
+        showState(title: nil, sub: sub, showRetry: false, loading: false)
+        // Q9：初始态补最近搜索（无记录时整区隐藏）。
+        renderRecentSearches()
+        // 开发者模式强制态（仅内存）：初始态即按强制态渲染。
+        if BearyDevPreviewState.forcedSearch != .none {
+            applyDevForcedSearch()
+        }
+    }
+
+    /// 开发者模式变化：强制态切换直接置态渲染；清除后回初始态。
+    @objc private func handleDevModeChanged(_ note: Notification) {
+        let kind = (note.userInfo?["kind"] as? String) ?? ""
+        guard kind == "forcedSearch" || kind == "account" else { return }
+        if kind == "account" {
+            // 关注态速切：用缓存数据重渲染搜索行关注钮（只改显示，见 applyFollowButtonState）。
+            if let data = lastRenderedData, let query = lastRenderedQuery {
+                renderResults(data: data, query: query)
+            }
+            return
+        }
+        applyDevForcedSearch()
+    }
+
+    /// 开发者模式搜索强制态（仅内存）：error / empty / loading 直接渲染，不发请求。
+    private func applyDevForcedSearch() {
+        switch BearyDevPreviewState.forcedSearch {
+        case .none:
+            showInitialState()
+        case .error:
+            showFailedState()
+        case .empty:
+            showState(title: "没有找到相关日记", sub: "换个词试试", showRetry: false, loading: false)
+        case .loading:
+            showLoadingState()
+        }
+    }
+
+    /// Q9 最近搜索：读本机记录，重建标题 + 行；点行直接搜（不走服务端）。
+    private func loadRecentSearches() -> [String] {
+        migrateLegacyToGuestBucketIfNeeded()
+        return UserDefaults.standard.stringArray(forKey: recentSearchesKey) ?? []
+    }
+
+    private func recordRecentSearch(_ query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return }
+        var list = loadRecentSearches().filter { $0 != trimmed }
+        list.insert(trimmed, at: 0)
+        if list.count > 8 {
+            list = Array(list.prefix(8))
+        }
+        UserDefaults.standard.set(list, forKey: recentSearchesKey)
+    }
+
+    private func renderRecentSearches() {
+        for view in recentStack.arrangedSubviews {
+            recentStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        recentButtons = []
+        let terms = loadRecentSearches()
+        if terms.isEmpty {
+            recentWrap.isHidden = true
+            return
+        }
+        let titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = "最近搜索"
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textColor = BearyColors.gray
+        // A7：一键清除入口（标题行右侧弱化文字钮；只清当前桶记录（登录为账号桶、游客为 guest 桶），
+        // 记录机制与 8 条上限不动；清除后同步重建本区，无记录时整区隐藏）。
+        // 113：钮改 BearyHit44Button（视觉帧不动，热区扩到 44）+ 标题行用
+        // BearySearchRecentHeaderRow 转发扩后热区，行高不撑高。
+        let clearButton = BearyHit44Button(type: .system)
+        clearButton.translatesAutoresizingMaskIntoConstraints = false
+        clearButton.setTitle("清除", for: .normal)
+        clearButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        clearButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        clearButton.setTitleColor(BearyColors.gray, for: .normal)
+        clearButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
+        clearButton.addTarget(self, action: #selector(clearRecentSearchesTapped), for: .touchUpInside)
+        clearButton.bearyAddPressFeedback()
+        clearButton.accessibilityLabel = "清除最近搜索"
+        let headerSpacer = UIView()
+        headerSpacer.translatesAutoresizingMaskIntoConstraints = false
+        headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let headerRow = BearySearchRecentHeaderRow(arrangedSubviews: [titleLabel, headerSpacer, clearButton])
+        headerRow.clearButton = clearButton
+        headerRow.translatesAutoresizingMaskIntoConstraints = false
+        headerRow.axis = .horizontal
+        headerRow.alignment = .center
+        recentStack.addArrangedSubview(headerRow)
+        // R13 (c)：默认只展最近 4 条，展开后看全部；上限 8 条不变，每条仍 44pt。
+        let visibleTerms = isRecentSearchesExpanded ? terms : Array(terms.prefix(4))
+        for term in visibleTerms {
+            let button = UIButton(type: .custom)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.setTitle(term, for: .normal)
+            button.setTitleColor(BearyColors.ink, for: .normal)
+            button.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
+            button.titleLabel?.adjustsFontForContentSizeCategory = true
+            button.backgroundColor = BearyColors.surface2
+            button.layer.cornerRadius = BearyCorners.single
+            button.layer.masksToBounds = true
+            button.contentHorizontalAlignment = .left
+            button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+            button.heightAnchor.constraint(equalToConstant: 44).isActive = true
+            button.accessibilityLabel = "搜索" + term
+            button.addTarget(self, action: #selector(recentSearchTapped(_:)), for: .touchUpInside)
+            button.bearyAddPressFeedback()
+            recentStack.addArrangedSubview(button)
+            recentButtons.append(button)
+        }
+        // R13 (c)：超过 4 条时加展开/收起钮（与词条同款 44pt 行），点按只改展示。
+        if terms.count > 4 {
+            let expandButton = UIButton(type: .custom)
+            expandButton.translatesAutoresizingMaskIntoConstraints = false
+            expandButton.setTitle(isRecentSearchesExpanded ? "收起最近搜索" : "展开最近搜索", for: .normal)
+            expandButton.setTitleColor(BearyColors.ink, for: .normal)
+            expandButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
+            expandButton.titleLabel?.adjustsFontForContentSizeCategory = true
+            expandButton.backgroundColor = BearyColors.surface2
+            expandButton.layer.cornerRadius = BearyCorners.single
+            expandButton.layer.masksToBounds = true
+            expandButton.contentHorizontalAlignment = .left
+            expandButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+            expandButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
+            expandButton.accessibilityLabel = isRecentSearchesExpanded ? "收起最近搜索" : "展开最近搜索"
+            expandButton.addTarget(self, action: #selector(toggleRecentSearchesExpanded), for: .touchUpInside)
+            expandButton.bearyAddPressFeedback()
+            recentStack.addArrangedSubview(expandButton)
+        }
+        recentWrap.isHidden = false
+        if !UIAccessibility.isReduceMotionEnabled {
+            recentWrap.alpha = 0
+            UIView.animate(withDuration: BearyMotion.micro, animations: {
+                self.recentWrap.alpha = 1
+            })
+        } else {
+            recentWrap.alpha = 1
+        }
+    }
+
+    /// R13 (c)：展开/收起最近搜索，只改展示，不改存储。
+    @objc private func toggleRecentSearchesExpanded() {
+        isRecentSearchesExpanded.toggle()
+        renderRecentSearches()
+    }
+
+    @objc private func recentSearchTapped(_ sender: UIButton) {
+        guard let term = sender.title(for: .normal), !term.isEmpty else { return }
+        searchField.text = term
+        updateClearButtonVisibility()
+        searchTimer?.invalidate()
+        runSearch(query: term)
+    }
+
+    /// A7：一键清除最近搜索（当前桶：登录为账号桶、游客为 guest 桶），随后同步重建本区。
+    @objc private func clearRecentSearchesTapped() {
+        UserDefaults.standard.removeObject(forKey: recentSearchesKey)
+        isRecentSearchesExpanded = false
+        renderRecentSearches()
+    }
+
+    private func showLoadingState() {
+        // 加载态：圆内转圈 + 登录态一句“你的私密日记只有你自己能搜到”
+        // （网页 srchStateHtml('loading') 同口径）。
+        let sub: String?
+        if SessionManager.shared.isLoggedIn {
+            sub = "你的私密日记只有你自己能搜到"
+        } else {
+            sub = nil
+        }
+        showState(title: nil, sub: sub, showRetry: false, loading: true)
+    }
+
+    private func showFailedState() {
+        // 8-6：无旧结果的失败态改走统一 BearyStateView（文案与重试动作不变，
+        // 仍是标题“搜索失败”+ 副文案“检查网络后重试”+ 重试钮走 retryTapped）；
+        // 有旧结果的失败仍走结果区尾行重试（showFailedStateKeepingResults），不动。
+        let wasErrorHidden = errorStateWrap.isHidden
+        showingResults = false
+        resultsStack.isHidden = true
+        setSearchFooter(failed: false)
+        recentWrap.isHidden = true
+        clearResultRows()
+        stateWrap.isHidden = true
+        errorStateWrap.isHidden = false
+        // 新规矩 (b) 同口径：错误态首次出现淡入（同态内不重播；减动效直显）。
+        if wasErrorHidden && !UIAccessibility.isReduceMotionEnabled {
+            errorStateWrap.alpha = 0
+            UIView.animate(withDuration: BearyMotion.micro, animations: {
+                self.errorStateWrap.alpha = 1
+            })
+        } else {
+            errorStateWrap.alpha = 1
+        }
+    }
+
+    /// S7：有旧结果时的失败处理——不调 showState（它会清结果区），
+    /// 旧结果行原样保留，失败重试改走结果区尾行。
+    /// 样式与动作复用失败态 retryButton（工厂紧凑描边 pill：标题“重试”/
+    /// 36 高/圆角 18/14 semibold/surface1 底/1 line 边框，点按走同一 retryTapped 立即重跑
+    /// lastQuery，不走防抖。成功/清状态时尾行隐藏。
+    /// B2：旧结果属于上一词时，列表头亮横幅写清出处（见 updateStaleResultsBanner），
+    /// 不让上一词的结果被误读成当前词的结果。
+    private func showFailedStateKeepingResults() {
+        showingResults = true
+        stateWrap.isHidden = true
+        // 8-6 不变量：错误 wrap 只在 showFailedState 可见，其余路径一律藏起。
+        errorStateWrap.isHidden = true
+        // 结果出现时最近搜索区隐藏（只属于初始态）。
+        recentWrap.isHidden = true
+        resultsStack.isHidden = false
+        // 88 包 M13：失败重试改走结果区尾行（原行内重试行已并入尾行）。
+        setSearchFooter(failed: true)
+        updateStaleResultsBanner()
+    }
+
+    /// B2：旧结果保留提示横幅——换词搜索失败、旧结果仍在屏时，列表头写清
+    /// 旧结果所属的词（“下方是「旧词」的结果”）。横幅是 resultsStack 的首个
+    /// arranged 子视图，与分区头同字号/同灰；成功重渲/清结果时随
+    /// clearResultRows 一并摘掉（引用见 removeStaleResultsBanner）。
+    private var staleResultsBanner: UIView?
+
+    private func updateStaleResultsBanner() {
+        // 旧结果所属词与当前搜索词不同时才亮横幅；同词重试失败不亮（结果即当前词的）。
+        guard showingResults,
+              let rendered = lastRenderedQuery, !rendered.isEmpty,
+              rendered != lastQuery else {
+            removeStaleResultsBanner()
+            return
+        }
+        let text = "下方是「\(rendered)」的结果"
+        if let banner = staleResultsBanner, banner.superview == resultsStack,
+           let label = banner.subviews.first as? UILabel {
+            label.text = text
+            return
+        }
+        removeStaleResultsBanner()
+        let wrap = UIView()
+        wrap.translatesAutoresizingMaskIntoConstraints = false
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.gray
+        label.numberOfLines = 0
+        label.text = text
+        wrap.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 12),
+            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 6),
+            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -6),
+            label.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -4),
+        ])
+        staleResultsBanner = wrap
+        resultsStack.insertArrangedSubview(wrap, at: 0)
+    }
+
+    private func removeStaleResultsBanner() {
+        guard let banner = staleResultsBanner else { return }
+        staleResultsBanner = nil
+        resultsStack.removeArrangedSubview(banner)
+        banner.removeFromSuperview()
+    }
+
+    /// 尾行四态（与时间线/个人主页尾行同形态；搜索进行时不显示尾行，只转框内圈）：
+    /// 未出结果时隐藏；出结果后：翻页进行中 → 转圈；翻页失败 → 重试钮
+    /// （走 loadMore 再试）；整搜失败保结果 → 重试钮（走整搜重跑，见
+    /// searchFooterRetryIsLoadMore）；还有下一批 → “加载更多”钮；三组都
+    /// 取尽 → 隐藏。加载更多钮与重试钮同槽位居中、互斥显隐。
+    private func updateSearchFooter() {
+        searchFooterRetryButton.isHidden = true
+        searchFooterLoadMoreButton.isHidden = true
+        searchFooterSpinnerView.isHidden = true
+        BearyIconMotion.stopSpin(on: searchFooterSpinnerView, key: "bearySearchFooterSpin")
+        guard showingResults else {
+            searchFooterRow.isHidden = true
+            return
+        }
+        if isLoadingMore {
+            searchFooterRow.isHidden = false
+            searchFooterSpinnerView.isHidden = false
+            BearyIconMotion.startSpin(on: searchFooterSpinnerView, duration: 0.9, key: "bearySearchFooterSpin")
+        } else if loadMoreFailed {
+            searchFooterRow.isHidden = false
+            searchFooterRetryButton.isHidden = false
+        } else if searchHasMorePublic || searchHasMoreMine || searchHasMoreUsers {
+            searchFooterRow.isHidden = false
+            searchFooterLoadMoreButton.isHidden = false
+        } else {
+            searchFooterRow.isHidden = true
+        }
+    }
+
+    /// 旧调用点兼容：failed 只改整搜失败尾行（重试走整搜重跑），不碰翻页态；
+    /// 翻页态一律由 updateSearchFooter 按 isLoadingMore/loadMoreFailed/hasMore 算。
+    private func setSearchFooter(failed: Bool) {
+        if failed {
+            loadMoreFailed = true
+            searchFooterRetryIsLoadMore = false
+        } else if !searchFooterRetryIsLoadMore {
+            loadMoreFailed = false
+        }
+        updateSearchFooter()
+    }
+
+    /// 新一轮搜索 / 清空时复位翻页态（游标与 hasMore 只属于当批关键词）。
+    private func resetSearchPagination() {
+        for task in currentLoadMoreTasks {
+            task.cancel()
+        }
+        currentLoadMoreTasks = []
+        isLoadingMore = false
+        loadMoreFailed = false
+        loadMoreFailedPublic = false
+        loadMoreFailedMine = false
+        loadMoreFailedUsers = false
+        searchFooterRetryIsLoadMore = false
+        searchHasMorePublic = false
+        searchHasMoreMine = false
+        searchHasMoreUsers = false
+        searchPublicCursorBefore = nil
+        searchPublicCursorId = nil
+        searchMineCursorBefore = nil
+        searchMineCursorId = nil
+        searchUsersCursorId = nil
+    }
+
+    /// 从服务端回包原始数组更新三组 hasMore 与游标（LIMIT：日记组 20、用户组 8；
+    /// 满页即可能还有下一批，不满页即取尽）。游标取原始末条（见属性注释）。
+    private func updateSearchPagination(from data: SearchResult) {
+        if let entries = data.entries {
+            searchHasMorePublic = entries.count == 20
+            if let last = entries.last, let created = last.createdAt, let entryId = last.id {
+                searchPublicCursorBefore = created
+                searchPublicCursorId = entryId
+            } else {
+                searchHasMorePublic = false
+            }
+        } else {
+            searchHasMorePublic = false
+        }
+        if let mine = data.mine {
+            searchHasMoreMine = mine.count == 20
+            if let last = mine.last, let created = last.createdAt, let entryId = last.id {
+                searchMineCursorBefore = created
+                searchMineCursorId = entryId
+            } else {
+                searchHasMoreMine = false
+            }
+        } else {
+            searchHasMoreMine = false
+        }
+        if let users = data.users {
+            searchHasMoreUsers = users.count == 8
+            if let last = users.last, let userId = last.id {
+                searchUsersCursorId = userId
+            } else {
+                searchHasMoreUsers = false
+            }
+        } else {
+            searchHasMoreUsers = false
+        }
+    }
+
+    private func showNoneState(query: String) {
+        // 网页 none 态：标题“没有找到「q」”+ 副文案“换个词试试”。
+        showState(title: "没有找到「" + query + "」", sub: "换个词试试", showRetry: false, loading: false)
+    }
+
+    // MARK: - 结果渲染
+
+    private func clearResultRows() {
+        for view in resultsStack.arrangedSubviews {
+            resultsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        // B2：旧结果提示横幅随结果区一并摘掉（视图已在上循环里移除）。
+        staleResultsBanner = nil
+        mineSectionHeader = nil
+        publicSectionHeader = nil
+        usersSectionHeader = nil
+        userButtons = []
+        rowUsers = []
+        followButtonUserIds = [:]
+        followButtonsByUserId = [:]
+        followStates = [:]
+        followStateFailedIds = []
+        followButtonSkeletonHeightConstraints = [:]
+        followStateLoadingIds = []
+        // S5：结果区失效时取消待办——排队的关注状态请求整批丢弃；
+        // 在途请求无取消句柄，回包由 searchSeq/账号代次守卫丢弃。
+        followStatePendingIds = []
+        // r11-11：行集已失效，上次重排偏移一并作废，下次滚动重排不限流。
+        lastFollowReorderOffsetY = nil
+        followActionSeqByUserId = [:]
+        confirmedFollowStates = [:]
+        followButtonWidthConstraints = [:]
+        entryButtons = []
+        rowEntryIds = []
+        entryRowById = [:]
+        userRowByKey = [:]
+        // 审计三轮 06：内容签名与行映射同步清空。
+        entryRowContentSignatures = [:]
+        userRowContentSignatures = [:]
+        imageRetryHolders = []
+        // 88 包 M13：尾行不属于结果区；成功重渲末尾尾行由 updateSearchFooter 按翻页态重算。
+        setSearchFooter(failed: false)
+    }
+
+    /// 第十二轮 02：设备 FTS 与服务端「我的」组按 entry id 去重合并。
+    /// 服务端仍回「我的」组（上线顺序：App FTS 先行、服务端改动随后），两边
+    /// 同一篇只留一行；按服务端序（created_at DESC, id DESC）重排。不截断——
+    /// 正常态 FTS 结果是服务端全集的子集、并集首批仍是服务端页宽；两边万一
+    /// 有不重合的篇，并集全显、余下仍由翻页按服务端游标续取，不丢篇。
+    /// 无 id 的行渲染时本就建不出行（makeEntryRow 返回 nil），这里一并跳过。
+    private func mergedMine(serverMine: [Entry]?, ftsMine: [Entry]) -> [Entry]? {
+        if ftsMine.isEmpty { return serverMine }
+        var seen = Set<String>()
+        var merged: [Entry] = []
+        for entry in ftsMine {
+            guard let id = entry.id, !seen.contains(id) else { continue }
+            seen.insert(id)
+            merged.append(entry)
+        }
+        for entry in serverMine ?? [] {
+            guard let id = entry.id, !seen.contains(id) else { continue }
+            seen.insert(id)
+            merged.append(entry)
+        }
+        merged.sort { (a, b) in
+            if a.createdAt != b.createdAt { return (a.createdAt ?? 0) > (b.createdAt ?? 0) }
+            return (a.id ?? "") > (b.id ?? "")
+        }
+        return merged
+    }
+
+    /// 审计 P2-20：最近一次成功渲染的原始结果（供拉黑/举报广播过滤后重渲；重渲走
+    /// 同 query 的 lastResultRowKeys，行入场不重播）。
+    private var lastRenderedData: SearchResult?
+    private var lastRenderedQuery: String?
+
+    private func renderResults(data: SearchResult, query: String) {
+        // 开发者模式强制态：在途搜索回包不接受，按强制态渲染。
+        if BearyDevPreviewState.forcedSearch != .none {
+            applyDevForcedSearch()
+            return
+        }
+        lastRenderedData = data
+        lastRenderedQuery = query
+        // 补缺 P3-40：我的组只取确认为私密篇（is_public == false）；缺失字段（nil）不进私密组
+        //（服务端对 mine 下发 is_public，未下发时不按私密误标；原 != true 把缺失也划进私密组）。
+        var mineEntries: [Entry] = []
+        if let mine = data.mine {
+            for entry in mine {
+                // 审计 2026-11-02 第十节：我的组按三档收——私密与仅好友照旧，
+                // 存活限时篇（stored 公开、未过期）同样归本组、不再无处可寻；
+                // 已过期篇两组皆不进（公开组有效态过滤已挡；第十二轮 02：FTS
+                // 建索引时已排除已过期篇，这里再挡一道服务端回包里的过期篇）。
+                if (entry.isPublic == false || BearyEphemeral.isLive(entry)) && !BearyEphemeral.isExpired(entry) {
+                    mineEntries.append(entry)
+                }
+            }
+        }
+        // 64 包回归修：公开组直接用服务端 entries——服务端 SQL 已按 published=1 过滤，
+        // 且公开条目不下发 is_public 字段（2026-10-26 curl 实测 /beary/api/search?q=的 返回
+        // entries 均无 is_public）；旧的 isPublic == true 二次过滤把全部公开条目滤掉，
+        // 导致公开组恒空。我的组保留 is_public 过滤（服务端对 mine 下发 is_public）。
+        // 审计 P0-3 核实：服务端搜索 SQL 已含 ephemeral_until > now 条件（worker.js
+        // 搜索段）与拉黑过滤，故后端无需补；App 侧再加一道有效态过滤作防御
+        // （时钟/缓存边缘下过期限时篇也不进公开组）。
+        let publicEntries = (data.entries ?? []).filter { BearyEphemeral.isEffectivelyPublic($0) }.filter { !isBlockedForSearch(userId: $0.authorId) }
+        let users = (data.users ?? []).filter { !isBlockedForSearch(userId: $0.id) }
+        if mineEntries.isEmpty && publicEntries.isEmpty && users.isEmpty {
+            showNoneState(query: query)
+            return
+        }
+        showingResults = true
+        stateWrap.isHidden = true
+        // 8-6 不变量：成功渲染时错误 wrap 必藏（它与 stateWrap 分属两个 arranged subview）。
+        errorStateWrap.isHidden = true
+        // 结果出现时最近搜索区隐藏（只属于初始态）。
+        recentWrap.isHidden = true
+        // 64 包回归修：成功路径必须把 resultsStack 改回可见——showState（加载/失败/
+        // 无结果/初始）把它藏起后，旧代码只藏 stateWrap、从不恢复 resultsStack，
+        // 结果行加进隐藏的栈，全程不可见。
+        resultsStack.isHidden = false
+        stateRingView.isHidden = true
+        BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
+        // 同关键词重渲（拉黑／举报过滤后重渲）按 key 复用行节点，不整体重建；
+        // 换关键词时行内高亮文案随 query 走，必须重建（见 syncResultRowsReuse）。
+        if lastResultQuery == query {
+            syncResultRowsReuse(mineEntries: mineEntries, publicEntries: publicEntries, users: users, query: query)
+        } else {
+            clearResultRows()
+            // G13：先建行、行数 >0 时再加分区头，避免全部行被跳过时空挂分区头。
+            // 分区顺序与标题按网页 renderSrchResults：我的日记 → 公开日记 → 用户。
+            var mineRows: [UIView] = []
+            for entry in mineEntries {
+                if let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
+                    mineRows.append(row)
+                } else {
+                    // 5-20 nil 同步：makeEntryRow 在 id 缺失时返回 nil，且返回前未向
+                    // entryButtons / rowEntryIds / entryRowById 追加任何表项（追加只在
+                    // 成功末尾原子进行），故三表同步、无需插视觉占位行（插占位行会
+                    // 破坏 G13“全部行被跳过时不挂空分区头”）；animateResultRows 按 key
+                    // 查表，nil 行天然不在动画表中，不会错位到旧行。
+                }
+            }
+            var publicRows: [UIView] = []
+            for entry in publicEntries {
+                if let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
+                    publicRows.append(row)
+                } else {
+                    // 5-20 nil 同步：同上，公开组 nil 行亦不进任何表、不插视觉占位行。
+                }
+            }
+            var userRows: [UIView] = []
+            for user in users {
+                userRows.append(makeUserRow(user: user, query: query))
+            }
+            if !mineRows.isEmpty {
+                let header = makeSectionHeader(title: "我的日记")
+                mineSectionHeader = header
+                resultsStack.addArrangedSubview(header)
+                for row in mineRows {
+                    resultsStack.addArrangedSubview(row)
+                }
+            }
+            if !publicRows.isEmpty {
+                let header = makeSectionHeader(title: "公开日记")
+                publicSectionHeader = header
+                resultsStack.addArrangedSubview(header)
+                for row in publicRows {
+                    resultsStack.addArrangedSubview(row)
+                }
+            }
+            if !userRows.isEmpty {
+                let header = makeSectionHeader(title: "用户")
+                usersSectionHeader = header
+                resultsStack.addArrangedSubview(header)
+                for row in userRows {
+                    resultsStack.addArrangedSubview(row)
+                }
+            }
+        }
+        // B2：拉黑/举报过滤后按旧词重渲时，旧结果提示横幅须重新亮起
+        // （clearResultRows / syncResultRowsReuse 已摘旧横幅；新词成功渲染时
+        // 本调用自行摘横幅）。放行入场动画之前，横幅先占位、行在其下入场。
+        updateStaleResultsBanner()
+        // M11：结果区首次出现/换批时行错峰滑入；同一批仅内容变化的行淡入。
+        animateResultRows(query: query)
+        // S5：渲染完成、行帧已定，可见行（+下一屏）的关注状态优先请求。
+        requestFollowStatesForVisibleRows()
+        // sweep32-2：尾行由 updateSearchFooter 按翻页态算（有下一批即亮“加载更多”）。
+        updateSearchFooter()
+    }
+
+    /// 审计三轮 06：行内容签名——同关键词重渲复用旧行前先比对签名，内容
+    /// 未变才原地保留（图片加载态与入场态不丢）；签名变了说明行上可见
+    /// 内容变了，重建该行。签名覆盖行上全部可见字段（正文、日期、首图、
+    /// 作者/·我的、可见性 pill、已举报态、所属分组）；query 不变故高亮
+    /// 不在签名内（换关键词走全量重建）。行内子视图是建行时局部变量、
+    /// 无现成句柄可原地改字段，故内容变了走重建——重建只发生在内容真
+    /// 变的行上，未变行仍原地保留、不重播入场。
+    private func entryRowContentSignature(entry: Entry, isMineGroup: Bool) -> String {
+        let content = collapsedWhitespace(entry.content ?? "")
+        let firstImage = entry.images?.first ?? ""
+        let reported = entry.id.map { BearyReportedStore.isReported(entryId: $0) } ?? false
+        let isSelf = entry.authorId != nil && entry.authorId == SessionManager.shared.currentUser?.id
+        return [
+            isMineGroup ? "mine" : "public",
+            content,
+            entry.title ?? "",
+            entry.createdAt.map(String.init) ?? "",
+            firstImage,
+            entry.authorName ?? "",
+            isSelf ? "self" : "",
+            entry.isFriendsOnly ? "friends" : "",
+            BearyEphemeral.isLive(entry) ? "live" : "",
+            reported ? "reported" : "",
+        ].joined(separator: "\u{1F}")
+    }
+
+    /// 审计三轮 06：用户行内容签名（名字、handle、头像）；关注态由
+    /// 关注状态机另行维护，不在签名内——重建行时按现行 followStates 重画。
+    private func userRowContentSignature(user: SearchUser) -> String {
+        [
+            userDisplayName(user: user),
+            user.handle ?? "",
+            user.avatarUrl ?? "",
+        ].joined(separator: "\u{1F}")
+    }
+
+    /// 同关键词重渲（拉黑／举报过滤后重渲）：按 key 复用已有行节点，不整体重建——
+    /// 仍在的行原地不动（图片加载态与入场态不丢），消失的行摘除，新增的行新建；
+    /// 顺序变化时先摘后按新顺序重挂（视图对象不变）。换关键词不走这里
+    /// （行内高亮文案随 query 走，必须重建），见 renderResults 分支。
+    /// 注意：follow 相关映射表（followButtonsByUserId 等）不在此重建——
+    /// 复用行的按钮本身即最新乐观态，在途跟随动作的完成回调仍按旧表找钮；
+    /// 摘除行的残留表项随下次换关键词全量重建清掉。imageRetryHolders 同理：
+    /// 旧槽位全留（已摘除行的槽位指向离线视图、点按不到，随下次全量重建清掉），
+    /// 新行建行时追加。
+    private func syncResultRowsReuse(mineEntries: [Entry], publicEntries: [Entry], users: [SearchUser], query: String) {
+        let oldEntryRows = entryRowById
+        let oldUserRows = userRowByKey
+        var reusedEntryIds = Set<String>()
+        var mineRows: [UIButton] = []
+        var mineRowIds: [String] = []
+        for entry in mineEntries {
+            if let entryId = entry.id, reusedEntryIds.contains(entryId) == false, let row = oldEntryRows[entryId],
+               entryRowContentSignatures[entryId] == entryRowContentSignature(entry: entry, isMineGroup: true) {
+                // 审计三轮 06：内容未变才复用旧行；签名变了（正文/首图/状态变了）
+                // 走下面的 makeEntryRow 重建该行，旧行随 keep 集摘除。
+                reusedEntryIds.insert(entryId)
+                mineRows.append(row)
+                mineRowIds.append(entryId)
+            } else if let entryId = entry.id, let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
+                reusedEntryIds.insert(entryId)
+                mineRows.append(row)
+                mineRowIds.append(entryId)
+            }
+        }
+        var publicRows: [UIButton] = []
+        var publicRowIds: [String] = []
+        for entry in publicEntries {
+            if let entryId = entry.id, reusedEntryIds.contains(entryId) == false, let row = oldEntryRows[entryId],
+               entryRowContentSignatures[entryId] == entryRowContentSignature(entry: entry, isMineGroup: false) {
+                // 审计三轮 06：内容未变才复用旧行；签名变了重建该行（同我的组）。
+                reusedEntryIds.insert(entryId)
+                publicRows.append(row)
+                publicRowIds.append(entryId)
+            } else if let entryId = entry.id, let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
+                reusedEntryIds.insert(entryId)
+                publicRows.append(row)
+                publicRowIds.append(entryId)
+            }
+        }
+        var reusedUserKeys = Set<String>()
+        var userRows: [UIButton] = []
+        var rowUsersNew: [SearchUser] = []
+        for user in users {
+            if let key = userKey(for: user), reusedUserKeys.contains(key) == false, let row = oldUserRows[key],
+               userRowContentSignatures[key] == userRowContentSignature(user: user) {
+                reusedUserKeys.insert(key)
+                userRows.append(row)
+                rowUsersNew.append(user)
+            } else {
+                let row = makeUserRow(user: user, query: query)
+                if let key = userKey(for: user) {
+                    reusedUserKeys.insert(key)
+                }
+                userRows.append(row)
+                rowUsersNew.append(user)
+            }
+        }
+        // 拆栈不拆节点：先把旧 arranged 身份全部拿掉（视图本身留着），
+        // 再按新顺序重挂；不在新顺序里的旧视图（含空分区的旧头）彻底摘除。
+        var keep = Set<ObjectIdentifier>()
+        for row in mineRows + publicRows + userRows {
+            keep.insert(ObjectIdentifier(row))
+        }
+        if !mineRows.isEmpty, let header = mineSectionHeader {
+            keep.insert(ObjectIdentifier(header))
+        }
+        if !publicRows.isEmpty, let header = publicSectionHeader {
+            keep.insert(ObjectIdentifier(header))
+        }
+        if !userRows.isEmpty, let header = usersSectionHeader {
+            keep.insert(ObjectIdentifier(header))
+        }
+        for view in resultsStack.arrangedSubviews {
+            resultsStack.removeArrangedSubview(view)
+            if keep.contains(ObjectIdentifier(view)) == false {
+                view.removeFromSuperview()
+            }
+        }
+        if !mineRows.isEmpty {
+            if mineSectionHeader == nil {
+                mineSectionHeader = makeSectionHeader(title: "我的日记")
+            }
+            if let header = mineSectionHeader {
+                resultsStack.addArrangedSubview(header)
+            }
+            for row in mineRows {
+                resultsStack.addArrangedSubview(row)
+            }
+        } else {
+            mineSectionHeader = nil
+        }
+        if !publicRows.isEmpty {
+            if publicSectionHeader == nil {
+                publicSectionHeader = makeSectionHeader(title: "公开日记")
+            }
+            if let header = publicSectionHeader {
+                resultsStack.addArrangedSubview(header)
+            }
+            for row in publicRows {
+                resultsStack.addArrangedSubview(row)
+            }
+        } else {
+            publicSectionHeader = nil
+        }
+        if !userRows.isEmpty {
+            if usersSectionHeader == nil {
+                usersSectionHeader = makeSectionHeader(title: "用户")
+            }
+            if let header = usersSectionHeader {
+                resultsStack.addArrangedSubview(header)
+            }
+            for row in userRows {
+                resultsStack.addArrangedSubview(row)
+            }
+        } else {
+            usersSectionHeader = nil
+        }
+        // 并行表按最终顺序重建（行点按按下标配对 id，必须与展示顺序一致；
+        // 同 id 跨组重复时后者覆盖 entryRowById，与现行建行顺序一致）。
+        entryButtons = mineRows + publicRows
+        rowEntryIds = mineRowIds + publicRowIds
+        entryRowById = [:]
+        for (entryId, row) in zip(rowEntryIds, entryButtons) {
+            entryRowById[entryId] = row
+        }
+        userButtons = userRows
+        rowUsers = rowUsersNew
+        userRowByKey = [:]
+        for (user, row) in zip(rowUsersNew, userRows) {
+            if let key = userKey(for: user) {
+                userRowByKey[key] = row
+            }
+        }
+    }
+
+    /// 扫 bug 第 9 项：翻页增量追加（仅 loadMore 调用）。
+    /// 现行 loadMore 完成时调 renderResults，而 renderResults 开头
+    /// clearResultRows() 会拆掉全部结果行再按合并后全量重建——页数越多
+    /// 每翻一页重建的行越多，已有行的入场态与图片加载态全丢。
+    /// 本函数只追加本批新行：已有行原地不动、不重建、不重播入场；
+    /// 新行按现行分区顺序落到本组末尾，本组此前无行时才补建分区头。
+    /// 不动口径：游标/hasMore/去重仍在 loadMore 数据层（本函数再按
+    /// 行 id/key 挡一道重复行）；过滤口径与 renderResults 逐字一致
+    /// （私密组只取 is_public == false；公开组有效公开 + 未拉黑；
+    /// 用户组未拉黑），避免追加行与全量渲染口径不一致。
+    /// 行数减少的场景（拉黑/举报过滤、新搜索）不走这里，仍走
+    /// renderResults（同关键词时按 key 复用已有行、只增删变化的行；
+    /// 换关键词时全量重建）——增量追加无法表达“删行”。
+    private func appendResultRows(data: SearchResult, mine: [Entry], publicEntries: [Entry], users freshUsers: [SearchUser], query: String) {
+        // 第十一轮 05（短期）：分页追加耗时测量起点——建行＋插栈同步耗时与到
+        // 下一轮 runloop（布局完成）总耗时，随行数与常驻内存打日志；100/300/500
+        // 条下的耗时与内存对比见 PR 描述（Instruments），迁移 UITableView 前的基线。
+        let appendStart = Date()
+        lastRenderedData = data
+        lastRenderedQuery = query
+        // 锚点丢失的防御：栈里有行却三个分区头全无（理论上只可能
+        // 是旧路径残留），退回全量重建，不在无头栈上硬插。
+        if resultsStack.arrangedSubviews.isEmpty == false
+            && mineSectionHeader == nil && publicSectionHeader == nil && usersSectionHeader == nil {
+            renderResults(data: data, query: query)
+            return
+        }
+        showingResults = true
+        stateWrap.isHidden = true
+        // 8-6 不变量：成功渲染时错误 wrap 必藏（与 renderResults 同口径）。
+        errorStateWrap.isHidden = true
+        recentWrap.isHidden = true
+        resultsStack.isHidden = false
+        stateRingView.isHidden = true
+        BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
+        var mineRows: [UIView] = []
+        var newEntryIds: [String] = []
+        for entry in mine {
+            // 与 renderResults 逐字一致：只取确认为私密篇（is_public == false）
+            // 与存活限时篇；缺失字段（nil）不进私密组；已过期篇两组皆不进。
+            guard (entry.isPublic == false || BearyEphemeral.isLive(entry)) && !BearyEphemeral.isExpired(entry) else { continue }
+            guard let entryId = entry.id, rowEntryIds.contains(entryId) == false else { continue }
+            if let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
+                mineRows.append(row)
+                newEntryIds.append(entryId)
+            }
+        }
+        var publicRows: [UIView] = []
+        for entry in publicEntries {
+            if BearyEphemeral.isEffectivelyPublic(entry) == false { continue }
+            if isBlockedForSearch(userId: entry.authorId) { continue }
+            guard let entryId = entry.id, rowEntryIds.contains(entryId) == false else { continue }
+            if let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
+                publicRows.append(row)
+                newEntryIds.append(entryId)
+            }
+        }
+        var userRows: [UIView] = []
+        var newUserKeys: [String] = []
+        for user in freshUsers {
+            if isBlockedForSearch(userId: user.id) { continue }
+            if let key = userKey(for: user), userRowByKey[key] != nil { continue }
+            if let key = userKey(for: user) { newUserKeys.append(key) }
+            userRows.append(makeUserRow(user: user, query: query))
+        }
+        insertSectionRows(mineRows, section: 0, title: "我的日记")
+        insertSectionRows(publicRows, section: 1, title: "公开日记")
+        insertSectionRows(userRows, section: 2, title: "用户")
+        // 同关键词追加：animateResultRows 只遍历本批新行 key 错峰滑入，
+        // 已有行不动（与 renderResults 末尾同一入口；旧路全量查表见该函数）。
+        animateResultRows(query: query, newEntryIds: newEntryIds, newUserKeys: newUserKeys)
+        // 耗时日志：build 为建行＋插栈同步主线程耗时；async 块在下一轮
+        // runloop 执行、布局已完成，total 即 build＋整栈布局耗时。
+        let newRowCount = mineRows.count + publicRows.count + userRows.count
+        let buildMs = Date().timeIntervalSince(appendStart) * 1000
+        let totalRows = rowEntryIds.count + rowUsers.count
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let totalMs = Date().timeIntervalSince(appendStart) * 1000
+            NSLog("[BearySearch] append page: +\(newRowCount) rows, total \(totalRows), build \(String(format: "%.1f", buildMs)) ms, build+layout \(String(format: "%.1f", totalMs)) ms, mem \(String(format: "%.1f", self.searchResidentMemoryMB())) MB")
+        }
+        // S5：新行帧已定，可见行（+下一屏）的关注状态优先请求。
+        requestFollowStatesForVisibleRows()
+    }
+
+    /// 把一组新行插到指定分区的末尾（分区头之后、下个分区头之前）；
+    /// 本组此前无行时，在正确分区位置补建分区头（我的 < 公开 < 用户）。
+    /// 每次落点都现算 firstIndex，不缓存下标，前面分区插行移位不影响。
+    private func insertSectionRows(_ rows: [UIView], section: Int, title: String) {
+        guard rows.isEmpty == false else { return }
+        let headers: [UIView?] = [mineSectionHeader, publicSectionHeader, usersSectionHeader]
+        if headers[section] == nil {
+            var insertAt = resultsStack.arrangedSubviews.count
+            for later in (section + 1)..<headers.count {
+                if let laterHeader = headers[later],
+                   let index = resultsStack.arrangedSubviews.firstIndex(where: { $0 === laterHeader }) {
+                    insertAt = index
+                    break
+                }
+            }
+            let newHeader = makeSectionHeader(title: title)
+            resultsStack.insertArrangedSubview(newHeader, at: insertAt)
+            switch section {
+            case 0: mineSectionHeader = newHeader
+            case 1: publicSectionHeader = newHeader
+            default: usersSectionHeader = newHeader
+            }
+        }
+        let currentHeaders: [UIView?] = [mineSectionHeader, publicSectionHeader, usersSectionHeader]
+        guard let sectionHeader = currentHeaders[section],
+              resultsStack.arrangedSubviews.contains(where: { $0 === sectionHeader }) else { return }
+        var insertAt = resultsStack.arrangedSubviews.count
+        for later in (section + 1)..<currentHeaders.count {
+            if let laterHeader = currentHeaders[later],
+               let index = resultsStack.arrangedSubviews.firstIndex(where: { $0 === laterHeader }) {
+                insertAt = index
+                break
+            }
+        }
+        for row in rows {
+            resultsStack.insertArrangedSubview(row, at: insertAt)
+            insertAt += 1
+        }
+    }
+
+    /// M11 入场口径：换关键词（新一批）→ 全部行错峰滑入；同关键词重渲
+    /// （同一批仅内容变化）→ 仅新出现的行淡入，已有行不动。减动效直设终值。
+    /// 第十一轮 05（短期）：分页追加传本批新行 key（newEntryIds/newUserKeys），
+    /// 同批只遍历新行、不再全量扫 rowEntryIds/rowUsers；未传时（renderResults）
+    /// 走旧路全量查表，行为一字不动。lastResultRowKeys 在快路上增量并入新 key。
+    private var lastResultQuery: String?
+    private var lastResultRowKeys: Set<String> = []
+
+    /// 审计三轮 09：入场终值按业务状态恢复——已举报行终值 0.6（置灰数值不动），
+    /// 其余行终值 1；否则新批入场动画会把置灰抹掉。
+    private func entranceTargetAlpha(forEntryId entryId: String?) -> CGFloat {
+        guard let entryId = entryId, BearyReportedStore.isReported(entryId: entryId) else { return 1 }
+        return 0.6
+    }
+
+    private func animateResultRows(query: String, newEntryIds: [String]? = nil, newUserKeys: [String]? = nil) {
+        let isNewBatch = lastResultQuery != query
+        // 快路只在同批且调用方给了本批新行 key 时走；新批一律全量。
+        var fastEntryIds: [String]? = nil
+        var fastUserKeys: [String]? = nil
+        var nextKeys: Set<String> = []
+        if isNewBatch == false, let entryIds = newEntryIds, let userKeys = newUserKeys {
+            fastEntryIds = entryIds
+            fastUserKeys = userKeys
+        } else {
+            for entryId in rowEntryIds {
+                nextKeys.insert("entry:" + entryId)
+            }
+            for user in rowUsers {
+                if let key = userKey(for: user) {
+                    nextKeys.insert(key)
+                }
+            }
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            lastResultQuery = query
+            if let fastEntryIds = fastEntryIds, let fastUserKeys = fastUserKeys {
+                lastResultRowKeys.formUnion(fastEntryIds.map { "entry:" + $0 })
+                lastResultRowKeys.formUnion(fastUserKeys)
+            } else {
+                lastResultRowKeys = nextKeys
+            }
+            return
+        }
+        if isNewBatch {
+            // 审计：新批错峰延迟封顶 0.24s（此前 48 行末行约 1.41s＋0.26s，与同批分支同口径）。
+            let rowViews: [UIView] = entryButtons + userButtons
+            for (index, rowView) in rowViews.enumerated() {
+                // 审计三轮 09：终值按业务状态恢复，已举报行 0.6、其余行 1。
+                let targetAlpha: CGFloat = index < entryButtons.count && index < rowEntryIds.count
+                    ? entranceTargetAlpha(forEntryId: rowEntryIds[index]) : 1
+                rowView.alpha = 0
+                rowView.transform = CGAffineTransform(translationX: 0, y: 8)
+                let delay = min(Double(index) * 0.03, 0.24)
+                UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: .curveEaseOut, animations: {
+                    rowView.alpha = targetAlpha
+                    rowView.transform = .identity
+                })
+            }
+        } else {
+            // 同批（5-20 / 6-6 / 6-9）：按行身份 key 查视图，不按下标配对；
+            // 仅新行错峰滑入（alpha + y+8、0.26s、0.03 步进封顶 0.24s，与新批同口径），
+            // 已有行不动；查表不到（nil 跳过行）即跳过，不会把动画落到旧行。
+            // 新旧区分走 lastResultRowKeys（Profile animatedRowIds 同款集合口径），
+            // 故 6-9 不需“无法区分则不加”的兜底：区分在静态上已证实。
+            var order = 0
+            let staggerIn: (UIView, CGFloat) -> Void = { rowView, targetAlpha in
+                rowView.alpha = 0
+                rowView.transform = CGAffineTransform(translationX: 0, y: 8)
+                let delay = min(Double(order) * 0.03, 0.24)
+                order += 1
+                UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: .curveEaseOut, animations: {
+                    rowView.alpha = targetAlpha
+                    rowView.transform = .identity
+                })
+            }
+            if let fastEntryIds = fastEntryIds, let fastUserKeys = fastUserKeys {
+                for entryId in fastEntryIds {
+                    let key = "entry:" + entryId
+                    if lastResultRowKeys.contains(key) == false, let rowView = entryRowById[entryId] {
+                        staggerIn(rowView, self.entranceTargetAlpha(forEntryId: entryId))
+                    }
+                }
+                for key in fastUserKeys {
+                    if lastResultRowKeys.contains(key) == false, let rowView = userRowByKey[key] {
+                        staggerIn(rowView, 1)
+                    }
+                }
+            } else {
+                for entryId in rowEntryIds {
+                    let key = "entry:" + entryId
+                    if !lastResultRowKeys.contains(key), let rowView = entryRowById[entryId] {
+                        staggerIn(rowView, self.entranceTargetAlpha(forEntryId: entryId))
+                    }
+                }
+                for user in rowUsers {
+                    guard let key = userKey(for: user), !lastResultRowKeys.contains(key), let rowView = userRowByKey[key] else { continue }
+                    staggerIn(rowView, 1)
+                }
+            }
+        }
+        lastResultQuery = query
+        if let fastEntryIds = fastEntryIds, let fastUserKeys = fastUserKeys {
+            lastResultRowKeys.formUnion(fastEntryIds.map { "entry:" + $0 })
+            lastResultRowKeys.formUnion(fastUserKeys)
+        } else {
+            lastResultRowKeys = nextKeys
+        }
+    }
+
+    /// 第十一轮 05（短期）：进程常驻内存 MB（task_info），供分页追加的耗时日志
+    /// 对照行数看内存增长趋势；精确值以 Instruments Allocations 为准。
+    private func searchResidentMemoryMB() -> Double {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return -1 }
+        return Double(info.resident_size) / 1024 / 1024
+    }
+
+    /// 分区头：网页 .srch-sec——13 bold gray、padding 12/6/4。
+    private func makeSectionHeader(title: String) -> UIView {
+        let wrap = UIView()
+        wrap.translatesAutoresizingMaskIntoConstraints = false
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.gray
+        label.text = title
+        wrap.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 12),
+            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 6),
+            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -6),
+            label.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -4),
+        ])
+        return wrap
+    }
+
+    /// 用户行：网页 .srch-user——padding 9/8、gap 11、头像 44 圆、名字 16.5 bold、
+    /// handle 13 gray、右 chevron 16 gray；无图回退首字母大写、橙 14% 底橙字 17 bold。
+    /// C3：头像三件套改走统一 BearyAvatarView（规格与上句一致；失败态由旧“只亮
+    /// 重试钮”改为与好友/会话一致的“首字母占位＋重试钮”，见 BearyAvatarView 注释）。
+    private func makeUserRow(user: SearchUser, query: String) -> UIButton {
+        let row = UIButton(type: .custom)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.layer.cornerRadius = BearyCorners.single
+        row.layer.masksToBounds = true
+
+        let avatarView = BearyAvatarView()
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+
+        let nameLabel = BearyRoundedMarkLabel()
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = BearyDynamicType.cardTitleFont()
+        nameLabel.textColor = BearyColors.ink
+        nameLabel.numberOfLines = 1
+        nameLabel.clipsToBounds = true
+
+        let handleLabel = BearyRoundedMarkLabel()
+        handleLabel.translatesAutoresizingMaskIntoConstraints = false
+        handleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        handleLabel.textColor = BearyColors.gray
+        handleLabel.numberOfLines = 1
+        handleLabel.clipsToBounds = true
+
+        let chevron = UIImageView(image: BearyIconImages.image(named: "icon_chevron_right", pointSize: 16))
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.tintColor = BearyColors.gray
+        chevron.contentMode = .scaleAspectFit
+
+        let displayName = userDisplayName(user: user)
+        nameLabel.attributedText = highlightedText(displayName, query: query, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink)
+        if let handle = user.handle, !handle.isEmpty {
+            let handleText = NSMutableAttributedString(string: "@")
+            handleText.append(highlightedText(handle, query: query, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13)), color: BearyColors.gray))
+            handleLabel.attributedText = handleText
+            handleLabel.isHidden = false
+        } else {
+            handleLabel.isHidden = true
+        }
+        // C3：头像加载/占位/重试全走 BearyAvatarView（日记首图仍走
+        // BearySearchImageRetry，不动；imageRetryHolders 只剩首图槽位）。
+        avatarView.configure(displayName: displayName, avatarURL: user.avatarUrl.flatMap { BearyImageURLs.avatarURL($0) })
+
+        row.addSubview(avatarView)
+        row.addSubview(nameLabel)
+        row.addSubview(handleLabel)
+        row.addSubview(chevron)
+        NSLayoutConstraint.activate([
+            avatarView.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
+            // R6-1：底部改为 ≤，行高不再锁死 72pt；大字号下由文字栈撑高，默认仍 72pt。
+            avatarView.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -14),
+            avatarView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
+            avatarView.widthAnchor.constraint(equalToConstant: 44),
+            avatarView.heightAnchor.constraint(equalToConstant: 44),
+            nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
+            nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 71),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
+            handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
+            handleLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 71),
+            handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
+            handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -14),
+            chevron.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            chevron.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
+            chevron.widthAnchor.constraint(equalToConstant: 16),
+            chevron.heightAnchor.constraint(equalToConstant: 16),
+            // 8-15：用户行最小 44 高约束（现行行高 72，视觉不变，只保热区下限）。
+            row.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+        ])
+        row.addTarget(self, action: #selector(userRowTapped(_:)), for: .touchUpInside)
+        row.addTarget(self, action: #selector(rowTouchDown(_:)), for: .touchDown)
+        row.addTarget(self, action: #selector(rowTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        // 审计：搜索行 VoiceOver 带“用户”上下文，不再只读名字。
+        row.accessibilityLabel = "用户：" + displayName
+        // 好友第一期：紧凑版状态机钮（仅登录、非本人、未拉黑时出现；游客/本人/
+        // 拉黑无钮；按钮是行内独立 UIControl，点按不触发整行点按）。状态未到
+        // 前画与按钮同宽同形的灰色圆角骨架块且不可点（r29-10），读失败画「重试」点按重拉。
+        if let myId = SessionManager.shared.currentUser?.id, let userId = user.id, userId != myId, !isBlockedForSearch(userId: userId) {
+            // 审计：关注钮视觉高约 28 不变，热区用 Hit44 扩到 44。
+            let followButton = BearyHit44Button(type: .system)
+            followButton.translatesAutoresizingMaskIntoConstraints = false
+            followButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+            followButton.titleLabel?.adjustsFontForContentSizeCategory = true
+            followButton.setTitleColor(BearyColors.ink, for: .normal)
+            followButton.tintColor = BearyColors.ink
+            followButton.layer.cornerRadius = BearyCorners.single
+            followButton.layer.borderWidth = 1
+            followButton.layer.bearyDynamicBorderColor = BearyColors.line
+            followButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 12, bottom: 5, right: 12)
+            followButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 0)
+            followButton.addTarget(self, action: #selector(followButtonTapped(_:)), for: .touchUpInside)
+            followButton.bearyAddPressFeedback()
+            row.addSubview(followButton)
+            NSLayoutConstraint.activate([
+                followButton.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+                followButton.trailingAnchor.constraint(equalTo: chevron.leadingAnchor, constant: -8),
+                followButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
+                nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: followButton.leadingAnchor, constant: -8),
+                handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: followButton.leadingAnchor, constant: -8),
+            ])
+            followButtonUserIds[followButton] = userId
+            followButtonsByUserId[userId] = followButton
+            applyFollowButtonState(followButton, userId: userId)
+            applyFollowButtonFixedWidth(followButton)
+            // S5：建行时不再立即请求关注状态——行帧尚未布局，是否可见未知；
+            // 渲染末尾由 requestFollowStatesForVisibleRows 按可见行优先排队发出。
+        }
+        userButtons.append(row)
+        rowUsers.append(user)
+        if let key = userKey(for: user) {
+            userRowByKey[key] = row
+            // 审计三轮 06：记下本行内容签名，供同关键词重渲比对复用。
+            userRowContentSignatures[key] = userRowContentSignature(user: user)
+        }
+        return row
+    }
+
+    /// 日记行：网页 .srch-entry——padding 14/16（Q1 行内边距统一）、底边 1 line；meta 行 gap 7（作者 14 bold、
+    /// 日期 13 gray）；正文 16、行高 1.6、最多 3 行；首图 44×44 圆角 12 居右。
+    /// 私密组 meta 为“日期 + 私密 pill”（2-3：只留 pill，“· 未公开”文字已删）；
+    /// 公开组 meta 为“作者 + 日期 + · 我的（本人时）”。
+    private func makeEntryRow(entry: Entry, query: String, isMineGroup: Bool) -> UIButton? {
+        guard let entryId = entry.id else { return nil }
+        let row = UIButton(type: .custom)
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        let metaStack = UIStackView()
+        metaStack.translatesAutoresizingMaskIntoConstraints = false
+        metaStack.axis = .horizontal
+        metaStack.spacing = 7
+        metaStack.alignment = .center
+
+        let dateLabel = UILabel()
+        dateLabel.translatesAutoresizingMaskIntoConstraints = false
+        dateLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        dateLabel.adjustsFontForContentSizeCategory = true
+        dateLabel.textColor = BearyColors.gray
+        if let created = entry.createdAt {
+            dateLabel.text = searchDateString(ms: created)
+        }
+
+        let contentText = collapsedWhitespace(entry.content ?? "")
+        let contentLabel = BearyRoundedMarkLabel()
+        contentLabel.translatesAutoresizingMaskIntoConstraints = false
+        contentLabel.numberOfLines = 3
+        contentLabel.lineBreakMode = .byCharWrapping
+        contentLabel.clipsToBounds = true
+        // 横向栈内正文先让位：固定 44 宽缩略图不被挤，正文换行承接剩余宽度。
+        contentLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        contentLabel.attributedText = highlightedText(contentText, query: query, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, lineHeightMultiple: 1.6, lineBreakMode: .byCharWrapping)
+
+        // 第十三轮第 2 项：搜索结果行加标题（作者·日期 → 标题 → 正文 → 图片）。
+        // 标题用卡片同款 16.5 粗体（cardTitleFont）、最多两行截尾；命中词走
+        // highlightedText，与正文同款高亮；无标题时隐藏，stack 不留空行。
+        let trimmedTitle = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let titleLabel = BearyRoundedMarkLabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = BearyDynamicType.cardTitleFont()
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.numberOfLines = 2
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.clipsToBounds = true
+        if trimmedTitle.isEmpty {
+            titleLabel.isHidden = true
+        } else {
+            titleLabel.attributedText = highlightedText(trimmedTitle, query: query, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, lineBreakMode: .byTruncatingTail)
+        }
+
+        let bodyRow = UIStackView()
+        bodyRow.translatesAutoresizingMaskIntoConstraints = false
+        bodyRow.axis = .horizontal
+        bodyRow.spacing = 10
+        bodyRow.alignment = .top
+        bodyRow.addArrangedSubview(contentLabel)
+
+        var thumbWrapView: UIView?
+        // sweep32-6：私密组行也拼首图，与公开组同口径（44×44 圆角 12 居右、
+        // 图失败重试图标同款）；无图时仍不拼图，行版式不变。
+        // 首图包进 44×44 容器：图铺满容器，重试图标（与头像同款纯图标）
+        // 44×44 居中压在图上；UIStackView 只排容器，图标不参与横排、不挤正文。
+        // 行高随之调整：bodyRow 高度取正文与 44 缩略图之大（原私密行只有正文高）。
+        if let images = entry.images, let firstKey = images.first, let url = BearyImageURLs.imageURL(key: firstKey, thumb: true) {
+            let thumb = UIImageView()
+            thumb.translatesAutoresizingMaskIntoConstraints = false
+            thumb.contentMode = .scaleAspectFill
+            thumb.clipsToBounds = true
+            thumb.layer.cornerRadius = 12
+            thumb.layer.masksToBounds = true
+            let thumbRetryButton = UIButton(type: .custom)
+            thumbRetryButton.translatesAutoresizingMaskIntoConstraints = false
+            thumbRetryButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 24), for: .normal)
+            thumbRetryButton.tintColor = BearyColors.ink
+            thumbRetryButton.isHidden = true
+            thumbRetryButton.accessibilityLabel = "重试"
+            thumbRetryButton.accessibilityHint = "重新加载图片"
+            let thumbWrap = UIView()
+            thumbWrap.translatesAutoresizingMaskIntoConstraints = false
+            thumbWrap.addSubview(thumb)
+            thumbWrap.addSubview(thumbRetryButton)
+            NSLayoutConstraint.activate([
+                thumb.topAnchor.constraint(equalTo: thumbWrap.topAnchor),
+                thumb.leadingAnchor.constraint(equalTo: thumbWrap.leadingAnchor),
+                thumb.trailingAnchor.constraint(equalTo: thumbWrap.trailingAnchor),
+                thumb.bottomAnchor.constraint(equalTo: thumbWrap.bottomAnchor),
+                thumbRetryButton.centerXAnchor.constraint(equalTo: thumbWrap.centerXAnchor),
+                thumbRetryButton.centerYAnchor.constraint(equalTo: thumbWrap.centerYAnchor),
+                thumbRetryButton.widthAnchor.constraint(equalToConstant: 44),
+                thumbRetryButton.heightAnchor.constraint(equalToConstant: 44),
+            ])
+            let thumbRetry = BearySearchImageRetry(imageView: thumb, retryButton: thumbRetryButton, imageURL: url)
+            imageRetryHolders.append(thumbRetry)
+            thumbRetry.load()
+            thumbWrapView = thumbWrap
+            bodyRow.addArrangedSubview(thumbWrap)
+        }
+
+        let separator = UIView()
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.backgroundColor = BearyColors.line
+
+        if isMineGroup {
+            // 2-3：私密行只留 pill，不再拼“· 未公开”文字（双重状态文案已删）。
+            // 好友第一期：仅好友篇在我的组里同样只留 pill，文案“仅好友”、蓝档不变。
+            // 审计 2026-11-02 第十节：我的组按三档标 pill——存活限时篇标“限时”
+            // （沿用私密档蓝底，不新发明颜色），仅好友标“仅好友”，其余标“私密”。
+            metaStack.addArrangedSubview(dateLabel)
+            metaStack.addArrangedSubview(makePrivatePill(friendsOnly: entry.isFriendsOnly, ephemeralLive: BearyEphemeral.isLive(entry)))
+        } else {
+            let authorLabel = BearyRoundedMarkLabel()
+            authorLabel.translatesAutoresizingMaskIntoConstraints = false
+            authorLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 14))
+            authorLabel.textColor = BearyColors.ink
+            authorLabel.numberOfLines = 1
+            authorLabel.clipsToBounds = true
+            authorLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            authorLabel.attributedText = highlightedText(entry.authorName ?? "", query: query, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 14)), color: BearyColors.ink)
+            metaStack.addArrangedSubview(authorLabel)
+            metaStack.addArrangedSubview(dateLabel)
+            if let authorId = entry.authorId, let myUserId = SessionManager.shared.currentUser?.id, authorId == myUserId {
+                let mineLabel = UILabel()
+                mineLabel.translatesAutoresizingMaskIntoConstraints = false
+                mineLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+                mineLabel.adjustsFontForContentSizeCategory = true
+                mineLabel.textColor = BearyColors.gray
+                mineLabel.text = "· 我的"
+                metaStack.addArrangedSubview(mineLabel)
+            }
+        }
+
+        // iCity 已举报态：搜索是刻意搜索例外，行保留（不删除），标“已举报”；
+        // 行仍可点进详情重新查看，不置灰（R13 (a) 定版）。
+        if BearyReportedStore.isReported(entryId: entryId) {
+            let reportedLabel = UILabel()
+            reportedLabel.translatesAutoresizingMaskIntoConstraints = false
+            reportedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            reportedLabel.adjustsFontForContentSizeCategory = true
+            reportedLabel.textColor = BearyColors.gray
+            reportedLabel.text = "已举报"
+            metaStack.addArrangedSubview(reportedLabel)
+        }
+
+        let column = UIStackView(arrangedSubviews: [metaStack, titleLabel, bodyRow])
+        column.translatesAutoresizingMaskIntoConstraints = false
+        column.axis = .vertical
+        column.spacing = 5
+        if !titleLabel.isHidden {
+            // meta→标题 12（时间线行同款）、标题→正文 6（卡片／时间线同款）；
+            // 无标题时不设，沿用栈间距 5（meta→正文不变）。
+            column.setCustomSpacing(12, after: metaStack)
+            column.setCustomSpacing(6, after: titleLabel)
+        }
+        row.addSubview(column)
+        row.addSubview(separator)
+        var constraints: [NSLayoutConstraint] = [
+            column.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
+            column.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
+            column.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
+            column.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -14),
+            separator.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            separator.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+            separator.heightAnchor.constraint(equalToConstant: 1),
+        ]
+        if let thumbWrap = thumbWrapView {
+            constraints.append(thumbWrap.widthAnchor.constraint(equalToConstant: 44))
+            constraints.append(thumbWrap.heightAnchor.constraint(equalToConstant: 44))
+        }
+        // 8-15：日记行最小 44 高约束（现行行高远超 44，视觉不变，只保热区下限）。
+        constraints.append(row.heightAnchor.constraint(greaterThanOrEqualToConstant: 44))
+        NSLayoutConstraint.activate(constraints)
+
+        entryRowById[entryId] = row
+        // 审计三轮 06：记下本行内容签名，供同关键词重渲比对复用。
+        entryRowContentSignatures[entryId] = entryRowContentSignature(entry: entry, isMineGroup: isMineGroup)
+        row.addTarget(self, action: #selector(entryRowTapped(_:)), for: .touchUpInside)
+        row.addTarget(self, action: #selector(rowTouchDown(_:)), for: .touchDown)
+        row.addTarget(self, action: #selector(rowTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        // r13-3：读屏串只拼实际存在的信息——日记，标题，作者，日期，可见范围，
+        // 正文摘要，图片数量；正文截断为摘要，不把全文塞进 label。
+        // 可见范围与行内 pill 同口径：限时／仅好友／私密（我的组）／公开。
+        var entryA11yParts: [String] = ["日记"]
+        if let title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            entryA11yParts.append("标题：" + title)
+        }
+        if let author = entry.authorName, !author.isEmpty {
+            entryA11yParts.append("作者：" + author)
+        }
+        if let created = entry.createdAt {
+            entryA11yParts.append(searchDateString(ms: created))
+        }
+        if BearyEphemeral.isLive(entry) {
+            entryA11yParts.append("限时")
+        } else if entry.isFriendsOnly {
+            entryA11yParts.append("仅好友")
+        } else if isMineGroup {
+            entryA11yParts.append("私密")
+        } else {
+            entryA11yParts.append("公开")
+        }
+        if !contentText.isEmpty {
+            let summary = String(contentText.prefix(100))
+            entryA11yParts.append("正文：" + summary + (contentText.count > 100 ? "…" : ""))
+        }
+        if let imageCount = entry.images?.count, imageCount > 0 {
+            entryA11yParts.append("\(imageCount) 张图片")
+        }
+        row.accessibilityLabel = entryA11yParts.joined(separator: "，")
+        entryButtons.append(row)
+        rowEntryIds.append(entryId)
+        return row
+    }
+
+    /// 私密 pill：网页 .tl-pill.priv——12 semibold 蓝字、蓝 13% 底、圆角 11、
+    /// padding 2.5/9、锁图标 12、gap 4。圆角注（2-3 注释与代码对齐）：
+    /// 实测高约 19（默认字号下），圆角 11 已超半高 9.5，视觉近似 pill，
+    /// 故代码保持 11、只改注释，不写 999。字号注：旧注释称 11.5pt 有误，代码实为 12pt
+    /// （11.5＋2.5×2＝16.5 与实测约 19 也不符）；先前固定 12pt 是有意的偏离，规范并无
+    /// 「8-3 豁免」背书（规范全文查无此条），现改为跟随系统字号（scaled）。
+    private func makePrivatePill(friendsOnly: Bool = false, ephemeralLive: Bool = false) -> UIView {
+        let pill = UIView()
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        pill.backgroundColor = friendsOnly ? BearyColors.surface2 : BearyColors.alpha(BearyColors.blue, 0.13)
+        pill.layer.cornerRadius = 11
+        pill.layer.masksToBounds = true
+        // 黑白灰新标准：仅好友 pill 改墨字灰底（与编辑器 chip 同口径）；
+        // 私密/限时仍沿用蓝档（可见性语义，不动）。
+        let lock = UIImageView(image: BearyIconImages.image(named: friendsOnly ? "icon_friends_lock" : "icon_lock", pointSize: 12))
+        lock.translatesAutoresizingMaskIntoConstraints = false
+        lock.tintColor = friendsOnly ? BearyColors.ink : BearyColors.blue
+        lock.contentMode = .scaleAspectFit
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12, weight: .semibold))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = friendsOnly ? BearyColors.ink : BearyColors.blue
+        label.text = ephemeralLive ? "限时" : (friendsOnly ? "仅好友" : "私密")
+        pill.addSubview(lock)
+        pill.addSubview(label)
+        NSLayoutConstraint.activate([
+            lock.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 9),
+            lock.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+            lock.widthAnchor.constraint(equalToConstant: 12),
+            lock.heightAnchor.constraint(equalToConstant: 12),
+            label.leadingAnchor.constraint(equalTo: lock.trailingAnchor, constant: 4),
+            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -9),
+            label.topAnchor.constraint(equalTo: pill.topAnchor, constant: 2.5),
+            label.bottomAnchor.constraint(equalTo: pill.bottomAnchor, constant: -2.5),
+        ])
+        return pill
+    }
+
+    // MARK: - 行点按（只回调，容器接线）
+
+    @objc private func userRowTapped(_ sender: UIButton) {
+        for index in 0..<userButtons.count {
+            if index < rowUsers.count && userButtons[index] == sender {
+                // 补缺 P2-21：点按前比对拉黑表（渲染后新拉黑的竞态兜底）：命中则不行进主页，
+                // 行即时摘掉并 toast，首渲染过滤与广播清行已覆盖常规路径。
+                let user = rowUsers[index]
+                if isBlockedForSearch(userId: user.id) {
+                    if let userId = user.id { removeBlockedUserFromResults(userId: userId) }
+                    BearyToast.show(in: view, message: "该用户已被拉黑")
+                    return
+                }
+                // 导航节流 0.8s（与日记行共用导航时钟），防连点叠页。
+                let now = Date()
+                if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
+                lastNavigationAt = now
+                onOpenUserHandler(user)
+                return
+            }
+        }
+    }
+
+    // MARK: - 好友第一期：搜索用户行紧凑版状态机（关注/回关模型）
+
+    @objc private func handleFollowChangedNotification(_ note: Notification) {
+        // 别处回关/取关后，当前结果行的状态缓存作废、按行重拉（不靠旧状态）。
+        followStates = [:]
+        followStateFailedIds = []
+        refreshFollowButtons()
+    }
+
+    /// 审计：账号切换——清空搜索结果、关注态与私密行（mine 组随结果区同清），
+    /// 不自动用旧关键词给新号重搜；在途搜索/翻页请求先取消、回包再凭 searchSeq
+    /// 序号门控丢弃（切换期间在途请求不写回新号界面）。
+    @objc private func handleUserChanged() {
+        searchSeq += 1
+        currentSearchTask?.cancel()
+        currentSearchTask = nil
+        resetSearchPagination()
+        clearResultRows()
+        lastRenderedData = nil
+        lastRenderedQuery = nil
+        lastResultQuery = nil
+        lastResultRowKeys = []
+        showingResults = false
+        showInitialState()
+    }
+
+    /// S5：关注状态只进排队，不立即发请求——可见行优先由
+    /// requestFollowStatesForVisibleRows 排队头，空闲时按队头逐个发出；
+    /// 已有状态 / 已在途 / 已排队的都不重复进队。
+    /// r25-6：缓存键含当前账号 ID 与目标用户 ID——切号后旧账号的迟到回包
+    /// 写不进新号缓存；在途请求拍账号＋鉴权代次，回包多门校验。
+    private func loadFollowState(userId: Int) {
+        let key = followStateKey(userId: userId)
+        guard followStates[key] == nil,
+              !followStateLoadingIds.contains(key),
+              !followStatePendingIds.contains(userId) else { return }
+        followStatePendingIds.append(userId)
+        pumpFollowStateQueue()
+    }
+
+    /// S5：按并发上限（3）从队头放行；行已被摘除（结果区失效）时不发请求，
+    /// 直接跳过。代次校验在发出时捕获、回调里再验（见 fireFollowStateRequest）。
+    private func pumpFollowStateQueue() {
+        while followStateInFlightCount < followStateMaxConcurrent,
+              let userId = followStatePendingIds.first {
+            followStatePendingIds.removeFirst()
+            guard followButtonsByUserId[userId] != nil else { continue }
+            fireFollowStateRequest(userId: userId)
+        }
+    }
+
+    private func fireFollowStateRequest(userId: Int) {
+        guard let accountId = SessionManager.shared.currentUser?.id else { return }
+        let key = "\(accountId):\(userId)"
+        followStateLoadingIds.insert(key)
+        followStateInFlightCount += 1
+        // r29-10：重发即清失败标记，按钮回到骨架态。
+        followStateFailedIds.remove(key)
+        if let button = followButtonsByUserId[userId] {
+            applyFollowButtonState(button, userId: userId)
+        }
+        // 账号/搜索代次在发出时捕获：搜索已换批、已切号、行已摘除时，
+        // 旧回包直接丢弃，不写 followStates、不碰按钮。
+        // fetchFollowState 无取消句柄，在途请求只能靠这道守卫失效，
+        // 待办则由 clearResultRows 直接清队（见该函数注释）。
+        // r25-6：鉴权代次也拍一份——401 清态后旧回包同样丢弃；键含账号，
+        // 旧账号回包的在途标记清掉也不影响新账号同用户的请求。
+        let seq = searchSeq
+        let epoch = BearyAPI.shared.authEpoch
+        BearyAPI.shared.fetchFollowState(userId: userId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.followStateLoadingIds.remove(key)
+                self.followStateInFlightCount = max(0, self.followStateInFlightCount - 1)
+                guard seq == self.searchSeq,
+                      accountId == SessionManager.shared.currentUser?.id,
+                      epoch == BearyAPI.shared.authEpoch,
+                      self.followButtonsByUserId[userId] != nil else {
+                    self.pumpFollowStateQueue()
+                    return
+                }
+                if case .success(let state) = result {
+                    self.followStates[key] = BearyFollowState(response: state)
+                    self.confirmedFollowStates[key] = BearyFollowState(response: state)
+                    if let button = self.followButtonsByUserId[userId] {
+                        self.applyFollowButtonState(button, userId: userId)
+                    }
+                } else {
+                    // r29-10：读失败时状态保持缺失（不画成确定态），记失败，
+                    // 按钮改画「重试」，点按重拉。
+                    self.followStateFailedIds.insert(key)
+                    if let button = self.followButtonsByUserId[userId] {
+                        self.applyFollowButtonState(button, userId: userId)
+                    }
+                }
+                self.pumpFollowStateQueue()
+            }
+        }
+    }
+
+    /// S5：可见行（+下一屏）的关注状态优先请求，其余排队等空闲。
+    /// 渲染末尾与滚动中调用；布局未算时先 layoutIfNeeded 再量帧。
+    /// 队头重排：可见+下一屏在前（按屏上从上到下），屏外在后；在途的不动。
+    private func requestFollowStatesForVisibleRows() {
+        guard !followButtonsByUserId.isEmpty else { return }
+        scrollView.layoutIfNeeded()
+        let visible = scrollView.bounds
+        let ahead = visible.union(CGRect(x: visible.minX, y: visible.maxY, width: visible.width, height: visible.height))
+        var ordered: [(frame: CGRect, id: Int)] = []
+        for (userId, button) in followButtonsByUserId {
+            guard followStates[followStateKey(userId: userId)] == nil,
+                  !followStateLoadingIds.contains(followStateKey(userId: userId)),
+                  let row = button.superview else { continue }
+            let frame = row.convert(row.bounds, to: scrollView)
+            ordered.append((frame: frame, id: userId))
+        }
+        ordered.sort { a, b in
+            let aAhead = ahead.intersects(a.frame)
+            let bAhead = ahead.intersects(b.frame)
+            if aAhead != bAhead { return aAhead }
+            return a.frame.minY < b.frame.minY
+        }
+        followStatePendingIds = ordered.map { $0.id }
+        // r11-11：记下本次重排时的偏移，供滚动节流判定用（渲染末尾
+        // 的重排同样记，之后滚动不足一行不再重复测量）。
+        lastFollowReorderOffsetY = scrollView.contentOffset.y
+        pumpFollowStateQueue()
+    }
+
+    private func refreshFollowButtons() {
+        for (button, userId) in followButtonUserIds {
+            applyFollowButtonState(button, userId: userId)
+            if followStates[followStateKey(userId: userId)] == nil {
+                loadFollowState(userId: userId)
+            }
+        }
+    }
+
+    /// r29-10：骨架态定高——按钮无文案时无内在高度，按当前字号行高＋上下
+    /// 内边距算高，下限 28（与建行时的 height >= 28 同值），骨架与确认态
+    /// 之间不跳高；字号档变了重算（见 traitCollectionDidChange）。
+    private func setFollowButtonSkeletonHeight(_ button: UIButton, userId: Int, show: Bool) {
+        guard show else {
+            if let constraint = followButtonSkeletonHeightConstraints[userId] {
+                constraint.isActive = false
+                followButtonSkeletonHeightConstraints[userId] = nil
+            }
+            return
+        }
+        let font = button.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        let height = max(28, ceil(font.lineHeight) + button.contentEdgeInsets.top + button.contentEdgeInsets.bottom)
+        if let constraint = followButtonSkeletonHeightConstraints[userId],
+           constraint.firstItem as? UIButton == button {
+            constraint.constant = height
+        } else {
+            // 旧约束属于已摘除的行（复用重渲丢行时不同步清表，见
+            // syncResultRowsReuse；宽约束字典同款），丢弃旧约束、按新按钮重建。
+            followButtonSkeletonHeightConstraints[userId]?.isActive = false
+            let constraint = button.heightAnchor.constraint(equalToConstant: height)
+            constraint.isActive = true
+            followButtonSkeletonHeightConstraints[userId] = constraint
+        }
+    }
+
+    private func applyFollowButtonState(_ button: UIButton, userId: Int) {
+        // 开发者模式关注态速切（仅内存，只改渲染；点按已禁，见 followButtonTapped）。
+        // 有覆盖时直接取覆盖态（恒已知，不走未知态骨架）；无覆盖时走主线 r29-10 逻辑。
+        let stateKey = followStateKey(userId: userId)
+        let resolvedState: BearyFollowState? = {
+            switch BearyDevPreviewState.followStateOverride {
+            case 0: return .none
+            case 1: return .following
+            case 2: return .followedBy
+            case 3: return .mutual
+            default: return followStates[stateKey]
+            }
+        }()
+        guard let state = resolvedState else {
+            // r29-10：未知态不再画成可点「关注」——读失败画「重试」（可点重拉），
+            // 其余画与按钮同宽同形的灰色圆角骨架块（静态，无转圈、无文字），
+            // 按钮 disabled，不弹 toast、不发关注请求。
+            setFollowButtonSkeletonHeight(button, userId: userId, show: !followStateFailedIds.contains(stateKey))
+            if followStateFailedIds.contains(stateKey) {
+                button.backgroundColor = .clear
+                button.setImage(nil, for: .normal)
+                button.setTitle("重试", for: .normal)
+                button.accessibilityLabel = "关注状态加载失败，点按重试"
+                button.isEnabled = true
+                button.isAccessibilityElement = true
+                button.alpha = 1
+            } else {
+                button.backgroundColor = BearyColors.line
+                button.setImage(nil, for: .normal)
+                button.setTitle(nil, for: .normal)
+                button.accessibilityLabel = nil
+                button.isEnabled = false
+                button.isAccessibilityElement = false
+                button.alpha = 1
+            }
+            // r13-4：骨架态关注钮不可点，行上不同步关注操作；失败态同步“重试”。
+            syncFollowAccessibilityAction(for: button, actionName: followStateFailedIds.contains(stateKey) ? "重试" : nil)
+            return
+        }
+        setFollowButtonSkeletonHeight(button, userId: userId, show: false)
+        button.backgroundColor = .clear
+        button.isAccessibilityElement = true
+        switch state {
+        case .none:
+            button.setImage(BearyIconImages.image(named: "icon_user_plus", pointSize: 13), for: .normal)
+            button.setTitle("关注", for: .normal)
+            button.accessibilityLabel = "关注"
+            button.isEnabled = true
+            button.alpha = 1
+        case .following:
+            button.setImage(nil, for: .normal)
+            button.setTitle("已关注", for: .normal)
+            button.accessibilityLabel = "已关注，点按取消关注"
+            button.isEnabled = true
+            button.alpha = 1
+        case .followedBy:
+            button.setImage(BearyIconImages.image(named: "icon_user_plus", pointSize: 13), for: .normal)
+            button.setTitle("回关", for: .normal)
+            button.accessibilityLabel = "回关"
+            button.isEnabled = true
+            button.alpha = 1
+        case .mutual:
+            button.setImage(BearyIconImages.image(named: "icon_user_check", pointSize: 13), for: .normal)
+            button.setTitle("互关", for: .normal)
+            button.accessibilityLabel = "互关，点按取消关注"
+            button.isEnabled = true
+            button.alpha = 1
+        }
+        // r13-4：关注操作名与钮状态同口径同步（关注／取消关注／回关）。
+        let followActionName: String
+        switch state {
+        case .none: followActionName = "关注"
+        case .following, .mutual: followActionName = "取消关注"
+        case .followedBy: followActionName = "回关"
+        }
+        syncFollowAccessibilityAction(for: button, actionName: followActionName)
+    }
+
+    /// r13-4：行上“关注”自定义无障碍操作。
+    /// 父行是 UIButton、读屏时独占焦点，行内关注钮不可达；行保留“进入主页”
+    /// 主操作（点按行），关注走自定义操作（VoiceOver 操作转子），与关注钮
+    /// 状态同口径同步；只改无障碍结构，不改视觉与触摸。
+    private func syncFollowAccessibilityAction(for button: UIButton, actionName: String?) {
+        guard let row = button.superview as? UIButton else { return }
+        guard let actionName = actionName else {
+            row.accessibilityCustomActions = nil
+            return
+        }
+        row.accessibilityCustomActions = [UIAccessibilityCustomAction(name: actionName) { [weak self, weak button] _ in
+            guard let self = self, let button = button, button.isEnabled else { return false }
+            self.followButtonTapped(button)
+            return true
+        }]
+    }
+
+    @objc private func followButtonTapped(_ sender: UIButton) {
+        guard let userId = followButtonUserIds[sender] else { return }
+        // 开发者模式预览态：只改显示，点按不发关注 / 取关请求。
+        if BearyDevPreviewState.followStateOverride != nil {
+            BearyToast.show(in: view, message: "预览态，关注操作已禁用")
+            return
+        }
+        let stateKey = followStateKey(userId: userId)
+        guard let state = followStates[stateKey] else {
+            if followStateFailedIds.contains(stateKey) {
+                // r29-10：失败态点「重试」直接重拉，不弹 toast；
+                // 重拉即回到骨架态。
+                followStateFailedIds.remove(stateKey)
+                loadFollowState(userId: userId)
+                applyFollowButtonState(sender, userId: userId)
+            } else {
+                // 骨架态按钮已 disabled，此处只作兜底：静默重拉，不弹 toast、
+                // 不发关注请求。
+                loadFollowState(userId: userId)
+            }
+            return
+        }
+        switch state {
+        case .none, .followedBy:
+            // 按钮普查（#672 同款口径）：点按瞬间即显最终态，服务端只确认；
+            // 快连点按最后一次点按的态显示，过期在途回包直接丢弃。
+            // r25-6：关注操作回包同样拍账号＋代次，切号后旧回包不写新号缓存。
+            let wasFollowedBy = state == .followedBy
+            let target: BearyFollowState = wasFollowedBy ? .mutual : .following
+            let stateKey = followStateKey(userId: userId)
+            let requestAccountId = SessionManager.shared.currentUser?.id
+            let requestEpoch = BearyAPI.shared.authEpoch
+            followActionSeqByUserId[userId, default: 0] += 1
+            let requestSeq = followActionSeqByUserId[userId] ?? 0
+            followStates[stateKey] = target
+            if let button = followButtonsByUserId[userId] {
+                applyFollowButtonState(button, userId: userId)
+            }
+            BearyAPI.shared.followFriend(userId: userId) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    guard requestSeq == self.followActionSeqByUserId[userId],
+                          requestAccountId == SessionManager.shared.currentUser?.id,
+                          requestEpoch == BearyAPI.shared.authEpoch else { return }
+                    switch result {
+                    case .success:
+                        self.confirmedFollowStates[stateKey] = target
+                        if wasFollowedBy {
+                            // B2：回关确认带上对方 id——通知页只更新此人卡片。
+                            BearyFriends.clearDiaryCachesAndNotify(userId: userId)
+                        }
+                        BearyToast.show(in: self.view, message: wasFollowedBy ? "已互关" : "已关注")
+                    case .failure:
+                        // 失败回滚到最后确认态（不是点按前的中间态），再走拒绝动效。
+                        self.followStates[stateKey] = self.confirmedFollowStates[stateKey] ?? state
+                        if let button = self.followButtonsByUserId[userId] {
+                            self.applyFollowButtonState(button, userId: userId)
+                            self.playFollowDenyShake(on: button)
+                        }
+                        BearyToast.show(in: self.view, message: state == .followedBy ? "回关失败，请重试" : "关注失败，请重试")
+                    }
+                }
+            }
+        case .following, .mutual:
+            // 行内取关走二次确认（与好友列表页 ⋯ 菜单取关同口径，静默解除）；
+            // 确认取关的瞬间即显最终态，服务端只确认，失败回滚＋拒绝动效。
+            BearyFriends.confirmUnfollowAlert(from: self, displayName: "", mutual: state == .mutual) { [weak self] in
+                guard let self = self else { return }
+                let target: BearyFollowState = state == .mutual ? .followedBy : .none
+                // r25-6：取关操作回包同样拍账号＋代次，切号后旧回包不写新号缓存。
+                let stateKey = self.followStateKey(userId: userId)
+                let requestAccountId = SessionManager.shared.currentUser?.id
+                let requestEpoch = BearyAPI.shared.authEpoch
+                self.followActionSeqByUserId[userId, default: 0] += 1
+                let requestSeq = self.followActionSeqByUserId[userId] ?? 0
+                self.followStates[stateKey] = target
+                if let button = self.followButtonsByUserId[userId] {
+                    self.applyFollowButtonState(button, userId: userId)
+                }
+                BearyAPI.shared.unfollowFriend(userId: userId) { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        guard requestSeq == self.followActionSeqByUserId[userId],
+                              requestAccountId == SessionManager.shared.currentUser?.id,
+                              requestEpoch == BearyAPI.shared.authEpoch else { return }
+                        switch result {
+                        case .success:
+                            self.confirmedFollowStates[stateKey] = target
+                            // B2：取关确认带上对方 id——通知页只更新此人卡片。
+                            BearyFriends.clearDiaryCachesAndNotify(userId: userId)
+                        case .failure:
+                            self.followStates[stateKey] = self.confirmedFollowStates[stateKey] ?? state
+                            if let button = self.followButtonsByUserId[userId] {
+                                self.applyFollowButtonState(button, userId: userId)
+                                self.playFollowDenyShake(on: button)
+                            }
+                            BearyToast.show(in: self.view, message: "取消关注失败，请重试")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 搜索关注钮定宽（#672 同款口径）：四态最宽钉宽度约束，态变不顶名字行；
+    /// 字号档变了重算（与个人页 followButtonMeasuredCategory 同款）。
+    private func applyFollowButtonFixedWidth(_ button: UIButton) {
+        guard let userId = followButtonUserIds[button] else { return }
+        let font = button.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        var maxWidth: CGFloat = 0
+        let states: [(imageName: String?, title: String)] = [
+            ("icon_user_plus", "关注"),
+            (nil, "已关注"),
+            ("icon_user_plus", "回关"),
+            ("icon_user_check", "互关"),
+            // r29-10：失败态「重试」同钉宽度，态变不顶名字行、不闪没；
+            // 骨架态无文案，与按钮同宽（定宽约束不变）。
+            (nil, "重试"),
+        ]
+        for config in states {
+            var width = button.contentEdgeInsets.left + button.contentEdgeInsets.right
+            if let name = config.imageName, let image = BearyIconImages.image(named: name, pointSize: 13) {
+                width += image.size.width + button.titleEdgeInsets.left
+            }
+            width += ceil((config.title as NSString).size(withAttributes: [NSAttributedString.Key.font: font]).width)
+            maxWidth = max(maxWidth, width)
+        }
+        if let constraint = followButtonWidthConstraints[userId] {
+            constraint.constant = maxWidth
+        } else {
+            let constraint = button.widthAnchor.constraint(equalToConstant: maxWidth)
+            constraint.isActive = true
+            followButtonWidthConstraints[userId] = constraint
+        }
+        followButtonMeasuredCategory = traitCollection.preferredContentSizeCategory
+    }
+
+    /// 搜索关注钮拒绝动效（个人页 playFollowDenyShake 同款：摇头＋warning 震动＋拒绝音效，toast 由调用方发；
+    /// 减动效时只跳过视觉抖动，震动与音效照常给）。
+    private func playFollowDenyShake(on button: UIButton) {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+        if UIAccessibility.isReduceMotionEnabled { return }
+        button.layer.removeAnimation(forKey: "bearySearchFollowDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = BearyMotion.screen
+        button.layer.add(shake, forKey: "bearySearchFollowDenyShake")
+    }
+
+    @objc private func entryRowTapped(_ sender: UIButton) {
+        for index in 0..<entryButtons.count {
+            if index < rowEntryIds.count && entryButtons[index] == sender {
+                // 导航节流 0.8s（广场同款），防连点叠页。
+                let now = Date()
+                if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
+                lastNavigationAt = now
+                // iCity §12：搜索结果点按记 search_click（只记 id，不记查询词；失败静默）。
+                BearyAPI.shared.sendEvent(eventType: "search_click", targetId: rowEntryIds[index])
+                onOpenEntryHandler(rowEntryIds[index])
+                return
+            }
+        }
+    }
+
+    /// 按下态底色：网页 .srch-user:active 用 hov；日记行同口径跟随。
+    @objc private func rowTouchDown(_ sender: UIButton) {
+        sender.backgroundColor = BearyColors.hov
+        // W6：搜索行已有底色按压反馈，只补 .light 轻震，不叠加缩放。
+        BearyHaptics.press()
+    }
+
+    @objc private func rowTouchUp(_ sender: UIButton) {
+        sender.backgroundColor = UIColor.clear
+    }
+
+    // MARK: - 文本工具
+
+    /// 网页 hlKw 同口径：大小写不敏感、不重叠匹配，命中段橙底 mark。
+    /// 网页 mark 样式：橙 24% 底、圆角 3、左右 padding 1；NSAttributedString 的
+    /// .backgroundColor 画不出圆角，故命中段改记自定义属性，由
+    /// BearyRoundedMarkLabel 在 drawText 里按段画圆角 3 底（见文件末尾）。
+    private func highlightedText(_ text: String, query: String, font: UIFont, color: UIColor, lineHeightMultiple: CGFloat = 0, lineBreakMode: NSLineBreakMode = .byWordWrapping) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = lineBreakMode
+        if lineHeightMultiple > 0 {
+            paragraph.lineHeightMultiple = lineHeightMultiple
+        }
+        let baseAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: color,
+            .paragraphStyle: paragraph,
+        ]
+        let result = NSMutableAttributedString(string: text, attributes: baseAttributes)
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedQuery.isEmpty || text.isEmpty {
+            return result
+        }
+        let markAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: color,
+            .paragraphStyle: paragraph,
+            BearyRoundedMarkLabel.markColorKey: BearyColors.orange.withAlphaComponent(0.24),
+        ]
+        var searchStart = text.startIndex
+        while searchStart < text.endIndex {
+            guard let range = text.range(of: trimmedQuery, options: [.caseInsensitive], range: searchStart..<text.endIndex) else {
+                break
+            }
+            let nsRange = NSRange(range, in: text)
+            result.setAttributes(markAttributes, range: nsRange)
+            searchStart = range.upperBound
+        }
+        return result
+    }
+
+    /// 网页正文展示口径：连续空白折成单个空格后再渲染。
+    private func collapsedWhitespace(_ text: String) -> String {
+        let parts = text.components(separatedBy: CharacterSet.whitespacesAndNewlines).filter({ !$0.isEmpty })
+        return parts.joined(separator: " ")
+    }
+
+    /// 网页 srchDateStr 口径：M 月 d 日（带空格，不带时间、不带年份）。
+    private func searchDateString(ms: Int) -> String {
+        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "zh_CN")
+        fmt.dateFormat = "M 月 d 日"
+        return fmt.string(from: date)
+    }
+
+    /// 网页用户行名字回退口径：display_name || ('@' + handle) || 'beary 用户'。
+    private func userDisplayName(user: SearchUser) -> String {
+        if let display = user.displayName, !display.isEmpty {
+            return display
+        }
+        if let handle = user.handle, !handle.isEmpty {
+            return "@" + handle
+        }
+        return "beary 用户"
+    }
+}
+
+// MARK: - 图片失败重试槽位（日记首图用；用户头像已改走 BearyAvatarView）
+//
+// 形态（用户定）：纯图标，不带文字按钮——icon_refresh 20pt，消息页头像重试（#224 误用 icon_restore 已回退）
+// 同款；按钮无背景无描边，图标色取动态 BearyColors.ink，故深浅切换无需重刷。
+// 状态口径：加载中与成功态沿用现有行为（空白图 / 落图，重试图标隐藏）；
+// 仅失败态亮重试图标，点它重新走 load()（先藏图标回到加载态），成功后图标消失。
+// 代际守卫（消息页 avatarLoadGeneration 同款）：每次 load() 代际 +1，失败回调
+// 凭捕获的代际与当前代际比对，不一致一律丢弃——行重建（本页每次渲染整体重建
+// 结果区，旧行连同 holder 一起被 clearResultRows 丢弃）、换图、重试后，
+// 旧回调均不得亮新行的重试图标。bearySetImage 自身另有目标 URL 比对与取消旧
+// 任务，是第二重守卫；.cancelled 不算失败（bearySetImage 已过滤，不进 onFailure）。
+// 无图槽位（头像为 null、日记无图）不建本槽位、不亮图标；私密组有图时亦建槽位（sweep32-6）。
+
+private final class BearySearchImageRetry: NSObject {
+
+    private let imageView: UIImageView
+    private let retryButton: UIButton
+    private let imageURL: URL
+    private var generation: Int = 0
+
+    init(imageView: UIImageView, retryButton: UIButton, imageURL: URL) {
+        self.imageView = imageView
+        self.retryButton = retryButton
+        self.imageURL = imageURL
+        super.init()
+        retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        retryButton.bearyAddPressFeedback()
+    }
+
+    func load() {
+        generation += 1
+        let capturedGeneration = generation
+        retryButton.isHidden = true
+        imageView.bearySetImage(url: imageURL, placeholder: nil) { [weak self] _ in
+            guard let self = self else { return }
+            guard capturedGeneration == self.generation else { return }
+            self.retryButton.isHidden = false
+        }
+    }
+
+    @objc private func retryTapped() {
+        load()
+    }
+}
+
+// MARK: - 圆角 mark label（网页 mark 圆角 3 的原生等价）
+//
+// NSAttributedString 的 .backgroundColor 是直角底，画不出圆角；本 label 在
+// drawText 前用 CoreText 对 attributedText 做一次同字体/同段落样式的排版，
+// 对带 markColorKey 属性的 run 逐段画圆角 3 填充（左右各扩 1px，
+// 对应网页 mark padding 0 1px），再由 super 画文字。
+// 约束与取舍：排版宽度取 drawText 的 rect，与 UILabel 自身布局同宽；
+// 只画落入 rect 前 numberOfLines 行内的片段（截断行外的命中不画，
+// 与 UILabel 截断后不可见一致）；单行截断尾部的省略号区若恰有命中，
+// 底色可能盖到省略号上——属极少数长文本尾部命中，接受该偏差。
+
+private final class BearyRoundedMarkLabel: UILabel {
+
+    static let markColorKey = NSAttributedString.Key("BearyRoundedMarkColor")
+
+    override func drawText(in rect: CGRect) {
+        guard let attributed = attributedText else {
+            super.drawText(in: rect)
+            return
+        }
+        var hasMark = false
+        attributed.enumerateAttribute(Self.markColorKey, in: NSRange(location: 0, length: attributed.length), options: []) { value, _, stop in
+            if value != nil {
+                hasMark = true
+                stop.pointee = true
+            }
+        }
+        if !hasMark {
+            super.drawText(in: rect)
+            return
+        }
+        let framesetter = CTFramesetterCreateWithAttributedString(attributed)
+        let path = CGPath(rect: rect, transform: nil)
+        let frame = CTFramesetterCreateFrame(framesetter, CFRangeMake(0, 0), path, nil)
+        guard let lines = CTFrameGetLines(frame) as? [CTLine] else {
+            super.drawText(in: rect)
+            return
+        }
+        let maxLines = numberOfLines == 0 ? lines.count : min(numberOfLines, lines.count)
+        var origins = [CGPoint](repeating: CGPoint.zero, count: lines.count)
+        CTFrameGetLineOrigins(frame, CFRangeMake(0, 0), &origins)
+        for lineIndex in 0..<maxLines {
+            let line = lines[lineIndex]
+            let origin = origins[lineIndex]
+            guard let runs = CTLineGetGlyphRuns(line) as? [CTRun] else {
+                continue
+            }
+            for run in runs {
+                let rawAttributes = CTRunGetAttributes(run) as NSDictionary
+                guard let markColor = rawAttributes[Self.markColorKey.rawValue] as? UIColor else {
+                    continue
+                }
+                let runRange = CTRunGetStringRange(run)
+                let offset = CTLineGetOffsetForStringIndex(line, runRange.location, nil)
+                var ascent: CGFloat = 0
+                var descent: CGFloat = 0
+                let runWidth = CTRunGetTypographicBounds(run, CFRangeMake(0, 0), &ascent, &descent, nil)
+                if runWidth <= 0 {
+                    continue
+                }
+                // CoreText 坐标 y 向上、原点在 path 底部；UIKit 坐标 y 向下。
+                let runTop = origin.y + ascent
+                var runRect = CGRect(
+                    x: rect.minX + origin.x + offset,
+                    y: rect.minY + rect.height - runTop,
+                    width: runWidth,
+                    height: ascent + descent
+                )
+                if runRect.maxY < rect.minY || runRect.minY > rect.maxY {
+                    continue
+                }
+                runRect = runRect.insetBy(dx: -1, dy: 0)
+                markColor.setFill()
+                UIBezierPath(roundedRect: runRect, cornerRadius: 3).fill()
+            }
+        }
+        super.drawText(in: rect)
+    }
+}

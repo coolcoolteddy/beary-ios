@@ -1,0 +1,1800 @@
+import UIKit
+import PhotosUI
+
+// ===== beary 原生编辑资料页（只此一文件；不改 BearyAPI.swift、不改 SceneDelegate、不改 pbxproj）=====
+// 对照源（均已先读核实，以服务端为准）：
+// - 网页站内编辑页 ~/workspace/teddy_site/beary.html openEditPage / edSaveAll：
+//   表单 = 头像 / 封面 / 名字 / handle；保存顺序先 handle、后名字。
+// - 账户 Worker ~/workspace/teddy_accounts_v2/worker.js：
+//   POST /api/account/handle：body {handle}，格式 ^[a-z0-9_]{3,20}$，7 天冷却
+//   （首次改名免冷却：服务端仅当已有 handle 且在冷却内才拦；占用返回 taken）。
+//   PUT /api/account/profile：body 按需带 display_name / avatar / cover，
+//   名字 ≤30 字且非空时至少含一个文字；头像须为 data:image/*;base64 且
+//   长度 ≤200000；封面可为 null（移除）或 data:image/*;base64 且 ≤400000。
+//   注意：头像 / 封面没有独立上传端点，网页 edUploadCover / 头像上传同样走
+//   PUT /api/account/profile 的 dataURL 字段，本页与之一致。
+// - 图片压缩口径照网页：头像居中裁正方形 → 256px JPEG 0.85；
+//   封面按 [1280/0.8, 1024/0.72, 880/0.62] 逐档试，取首个 ≤400000 的结果。
+// 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，
+// 不用 if-let 简写；颜色只走 BearyColors；不新增玻璃效果；无 force unwrap；
+// 本页不自己 dismiss，保存 / 取消 / 登录失效一律走回调，容器决定去向与刷新。
+// 批 D 签名行（2026-10-30）：表单在名字行下方加签名行（58 标签 + 单行输入，
+// 占位“写一句属于你的话”，60 字）；保存与名字同走 PUT /api/account/profile
+// （字段 signature，清空发 null）。调用方不改：初值由本页经 /me 取 id 后调
+// 既有 fetchUserProfile 自取；个人页签名编辑同步移除、只留展示。
+// 后端缺口（本 PR 不改后端、不部署）：现行 accounts Worker 的 PUT 分支不处理
+// signature 字段，成功回包也不持久化；补分支后 App 无需再改，见 PR 说明。
+
+private struct BearyHandleUpdateResponse: Decodable {
+    var ok: Bool?
+    var handle: String?
+}
+
+private struct BearyProfileUpdateResponse: Decodable {
+    var ok: Bool?
+    /// 服务端回包是否原样带回 signature（审计-个人页设置：签名诚实口径）。
+    /// 后端 PUT 分支未补之前回包不带该键，本页据此判定“未确认落库”，
+    /// 不写本地已提交态、不调 onSaved；键存在但值为 null = 已确认清空。
+    var signature: String?
+    var signatureKeyPresent: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case signature
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decodeIfPresent(Bool.self, forKey: .ok)
+        signatureKeyPresent = container.contains(.signature)
+        signature = try container.decodeIfPresent(String.self, forKey: .signature)
+    }
+}
+
+class BearyEditProfileViewController: UIViewController {
+
+    /// 保存成功后调用：容器接线到刷新个人主页（与关闭编辑页）。
+    var onSaved: (() -> Void)?
+
+    /// 点关闭时调用：容器接线到关闭编辑页。
+    var onCancel: (() -> Void)?
+
+    /// 保存时会话失效：容器接线到登录页。
+    var onRequireLogin: (() -> Void)?
+
+    private let initialDisplayName: String?
+    private let initialHandle: String?
+    private let initialAvatarUrl: String?
+    private let initialCoverUrl: String?
+
+    init(displayName: String?, handle: String?, avatarUrl: String?, coverUrl: String?, userId: Int? = nil, signature: String? = nil) {
+        self.initialDisplayName = displayName
+        self.initialHandle = handle
+        self.initialAvatarUrl = avatarUrl
+        self.initialCoverUrl = coverUrl
+        // A7：入口同时带已确认的账号 ID 与本人主页已有的签名（首屏直接带初值，
+        // 见 viewDidLoad）；签名缺失时按已知 ID 补查，不等 /me。
+        self.fetchedUserId = userId
+        self.initialSignature = signature
+        self.committedDisplayName = displayName
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    private var pendingAvatarDataURL: String?
+    private var avatarChanged = false
+    private var pendingCoverDataURL: String?
+    private var coverChanged = false
+    private var coverRemoved = false
+    /// 横幅当前贴的主题视图（个人页 profileCoverView／festivalWallpaperView
+    /// 同款）：主题态时盖住 coverImageView 的位置，.none 时撤掉。
+    private var bannerCoverView: ProfileCoverView?
+    private var bannerWallpaperView: BearyFestivalWallpaperView?
+    private var bannerDimView: UIView?
+    /// initialCoverUrl 只拉一次（主题态进页不拉图；切回 .none 时现取）。
+    private var didLoadInitialCover = false
+    /// 本次选图目标：打开相册时固定（见 avatarButtonTapped / coverTapped），
+    /// 之后随 didFinishPicking 的读取闭包与裁剪确认闭包传递，不再重读可变状态。
+    private enum PickTarget {
+        case avatar
+        case cover
+    }
+    private var pendingPickTarget: PickTarget?
+    private var isSaving = false
+    /// 第八轮审计 06：裁剪确认后的压缩在后台跑，期间的并发守门。
+    /// 压缩是异步的，确认回调返回后、压缩完成前存在窗口：保存点按会读到
+    /// 旧的待存标记（新图被静默丢出本次保存），后一次确认会与前一次
+    /// 压缩重叠。isCompressingImage 冻结保存钮（见 updateSaveButtonState），
+    /// imageCompressGeneration 只让最后一次确认的压缩结果落地。
+    private var isCompressingImage = false
+    private var imageCompressGeneration = 0
+    /// 压缩专用串行队列（与编辑器 imagePrepQueue 同口径：userInitiated，
+    /// 后台算、主线程落结果）。
+    private let imageCompressQueue = DispatchQueue(label: "beary.editProfile.imageCompress", qos: .userInitiated)
+    /// Mantis 裁剪回调转接的持有：delegate 是 weak，须强持有直到回调跑完，
+    /// 回调结束由 onFinished 清掉（见下方 presentCropEditor）。
+    private var mantisCropHandler: BearyMantisCropHandler?
+    /// 提交快照（保存三件套第 2 项）：点保存时一次性定格全部提交值，
+    /// 后续 handle / profile 两步只读快照，不再读输入框与待存标记——
+    /// 弱网等待中界面即使能改（现已冻结，见 updateSaveButtonState），
+    /// 提交的也恒为点按时的内容，不出现“界面是新内容、提交的是旧内容”。
+    private struct SaveSnapshot {
+        let displayName: String
+        let handle: String
+        let handleChanged: Bool
+        let nameChanged: Bool
+        let avatarDataURL: String?
+        let avatarChanged: Bool
+        let coverDataURL: String?
+        let coverChanged: Bool
+        let coverRemoved: Bool
+        let signatureValue: String
+        let signatureChanged: Bool
+    }
+    private var savingSnapshot: SaveSnapshot?
+    /// 成功后提交的基线：initialDisplayName 是 let，成功后改名仍需新的
+    /// 比较基线（容器不 dismiss 的兜底下，再点关闭不再误判未保存）。
+    private var committedDisplayName: String?
+    /// 批 D 签名行（2026-10-30：编辑统一到本页，个人页只做展示）：
+    /// A7：入口已带已确认的账号 ID 与本人主页已有的签名时首屏直接带初值
+    /// （见 viewDidLoad）；签名缺失时按已知 ID 补查（fetchInitialSignature）；
+    /// 两者皆无才走旧口径（/me 取 id 再串行拉签名）。/me 本身不下发
+    /// signature，不改 /me；拉不到初值时空输入不发（防把未知旧值误删成空），
+    /// 非空输入仍按改动发。
+    private var initialSignature: String?
+    private var signatureLoaded = false
+    private var signatureEdited = false
+    private var signatureFetchStarted = false
+    /// G3：handle POST 成功后立即记下的已提交 handle（initialHandle 是 let，不可改；
+    /// 重试时以它为准，不再重发已成功的 handle 步）。
+    private var submittedHandle: String?
+    /// G3/U1 共用的 handle 比较基线：已提交的优先于初始值。
+    private var effectiveHandle: String {
+        return submittedHandle ?? initialHandle ?? ""
+    }
+    /// P2-1：600 列上限约束（宽 ≥821 才激活；宽 ≤820 时停用，改由 750 优先级的
+    /// 屏宽 -40 约束撑满，与个人主页 isDesktopColumn 同口径；开关见 viewDidLayoutSubviews）。
+    private var contentColumnWidthCap: NSLayoutConstraint?
+
+    /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明；本页无独立顶栏，
+    /// 以 scrollView 为顶视图——其 top 钉在安全区顶部，minY 偏离即判异常）。
+    private let subpageLayoutGuard = BearySubpageLayoutGuard()
+    private let scrollView: UIScrollView = {
+        let scrollViewValue = UIScrollView()
+        scrollViewValue.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollViewValue.delaysContentTouches = false
+        return scrollViewValue
+    }()
+
+    private let contentStack: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .vertical
+        stackValue.spacing = 16
+        stackValue.alignment = .fill
+        return stackValue
+    }()
+
+    private lazy var closeButton: BearyHit44Button = {
+        let buttonValue = BearyHit44Button(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        // 全屏页左上角统一左箭头：此前是文字“关闭”，现改 icon_back 图标钮
+        // （左上角位置与 44pt 热区不动，行为仍是 closeButtonTapped 走 requestExit）。
+        buttonValue.setTitle(nil, for: .normal)
+        buttonValue.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.accessibilityLabel = "返回"
+        buttonValue.addTarget(self, action: #selector(closeButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
+    private lazy var saveButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("保存", for: .normal)
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
+        // 按钮普查：裸 15pt 粗体改 scaledFont，跟随系统字号（顶行 44 高，最大档不裁剪）。
+        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .bold))
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
+        buttonValue.addTarget(self, action: #selector(saveButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
+    /// 1-8：保存进行态圈转指示（贴在保存钮左侧钮外空隙，不占钮内 44 宽，
+    /// 故标题恒为“保存”，不再改“保存中…”而被裁字）。
+    private let savingSpinner = BearyRefreshIconView()
+
+    private let titleLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = BearyDynamicType.pageTitleFont()
+        labelValue.textColor = BearyColors.ink
+        labelValue.textAlignment = .center
+        labelValue.text = "编辑资料"
+        return labelValue
+    }()
+
+    private let coverImageView: UIImageView = {
+        let imageViewValue = UIImageView()
+        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        imageViewValue.backgroundColor = BearyColors.surface2
+        imageViewValue.contentMode = .scaleAspectFill
+        imageViewValue.clipsToBounds = true
+        // F14：网页 ed-banner 口径——180 高、无圆角。
+        imageViewValue.layer.cornerRadius = 0
+        return imageViewValue
+    }()
+
+    /// F14：头像包容器（80 头像 + 相机角标），封面下半压 28；头像点按钮
+    /// 为 scrollView 级覆盖层（约束锚头像框、后加层级在封面之上，见 buildLayout 末尾），
+    /// 故头像区点按仍走换头像、不与封面点按冲突。
+    private let avatarWrap = UIView()
+
+    private let avatarImageView: UIImageView = {
+        let imageViewValue = UIImageView()
+        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        imageViewValue.backgroundColor = BearyColors.surface2
+        imageViewValue.contentMode = .scaleAspectFill
+        imageViewValue.clipsToBounds = true
+        imageViewValue.layer.cornerRadius = 40
+        // 与个人主页同款：头像圈 3.5pt、圈色走 bg（深浅切换见 updateDynamicLayerColors）。
+        imageViewValue.layer.borderWidth = 3.5
+        return imageViewValue
+    }()
+
+    /// F14：相机角标（网页 ed-ava-cam 口径：27 圆、ink 底、内 14 相机图；
+    /// 2026-11-06 改令：去掉 2pt 白圈描边，角标直接贴底）。
+    private let avatarCamBadge: UIView = {
+        let badge = UIView()
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.backgroundColor = BearyColors.ink
+        badge.layer.cornerRadius = 13.5
+        badge.clipsToBounds = true
+        badge.isUserInteractionEnabled = false
+        let icon = UIImageView()
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.image = BearyIconImages.image(named: "icon_camera", pointSize: 14)
+        icon.tintColor = BearyColors.bg
+        icon.contentMode = .scaleAspectFit
+        badge.addSubview(icon)
+        NSLayoutConstraint.activate([
+            icon.centerXAnchor.constraint(equalTo: badge.centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 14),
+            icon.heightAnchor.constraint(equalToConstant: 14),
+        ])
+        return badge
+    }()
+
+    /// 2026-10-29 第 14 项：封面透明点按钮（avatarTapButton 同款模式）——
+    /// 封面区被提到最上层的内容列间隙盖住时，点按仍能走到换封面。
+    /// 2026-11-06 改令：点封面先弹选择框（图库／景深背景），不再直进图库。
+    private lazy var coverTapButton: UIButton = {
+        let buttonValue = UIButton(type: .custom)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.addTarget(self, action: #selector(presentCoverSourcePicker), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        buttonValue.accessibilityLabel = "更换封面"
+        return buttonValue
+    }()
+
+    /// F14：头像本身就是更换入口（网页 edAvaBtn 口径）；旧并排「更换头像」文字钮取消。
+    private lazy var avatarTapButton: UIButton = {
+        let buttonValue = UIButton(type: .custom)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.addTarget(self, action: #selector(avatarButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        buttonValue.accessibilityLabel = "更换头像"
+        return buttonValue
+    }()
+
+    private let nameField: UITextField = {
+        let fieldValue = UITextField()
+        fieldValue.translatesAutoresizingMaskIntoConstraints = false
+        // F15：网页 ed-rinput 口径——16 字、无边框矩形框；占位文案同网页。
+        // U7：字号跟随系统（默认档 = 16 不变），高度见下方最小高度约束。
+        fieldValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        fieldValue.adjustsFontForContentSizeCategory = true
+        fieldValue.textColor = BearyColors.ink
+        // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径）。
+        fieldValue.attributedPlaceholder = NSAttributedString(string: "给自己起个名字", attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)),
+        ])
+        fieldValue.borderStyle = .none
+        fieldValue.autocorrectionType = .no
+        return fieldValue
+    }()
+
+    private let handlePrefixLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        // 与同行输入框同款 16 scaled。
+        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        labelValue.textColor = BearyColors.gray
+        labelValue.text = "@"
+        return labelValue
+    }()
+
+    private let handleField: UITextField = {
+        let fieldValue = UITextField()
+        fieldValue.translatesAutoresizingMaskIntoConstraints = false
+        // U7：字号跟随系统（默认档 = 16 不变），高度见下方最小高度约束。
+        fieldValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        fieldValue.adjustsFontForContentSizeCategory = true
+        fieldValue.textColor = BearyColors.ink
+        // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径）。
+        fieldValue.attributedPlaceholder = NSAttributedString(string: "小写字母、数字或下划线", attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)),
+        ])
+        fieldValue.borderStyle = .none
+        fieldValue.autocapitalizationType = .none
+        fieldValue.autocorrectionType = .no
+        return fieldValue
+    }()
+
+    /// 批 D 签名行：与名字行同款单行输入（58 标签 + 16 字输入框）；占位与
+    /// 个人页未设占位同文案（去 ›，输入框占位不带箭头）；60 字上限与原个人页
+    /// 弹框截断口径一致（打字即截断见 delegate，保存时再校验一次）。
+    /// 签名行不配图标（表单行统一只有文字标签，不自绘、不补新图标）。
+    private let signatureField: UITextField = {
+        let fieldValue = UITextField()
+        fieldValue.translatesAutoresizingMaskIntoConstraints = false
+        // U7：字号跟随系统（默认档 = 16 不变），高度见下方最小高度约束。
+        fieldValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        fieldValue.adjustsFontForContentSizeCategory = true
+        fieldValue.textColor = BearyColors.ink
+        fieldValue.attributedPlaceholder = NSAttributedString(string: "写一句属于你的话", attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)),
+        ])
+        fieldValue.borderStyle = .none
+        fieldValue.autocorrectionType = .no
+        fieldValue.clearButtonMode = .whileEditing
+        return fieldValue
+    }()
+
+    /// F15：网页 ed-subnote 口径——12 灰、仅「修改后 7 天内不能更改」一行；
+    /// 旧三规则合并长提示取消（格式规则改由占位文案 + 保存校验承担）。
+    private let hintLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = BearyDynamicType.captionFont()
+        labelValue.textColor = BearyColors.gray
+        labelValue.numberOfLines = 0
+        labelValue.lineBreakMode = .byCharWrapping
+        labelValue.text = "修改后 7 天内不能更改"
+        return labelValue
+    }()
+
+    // MARK: - F12 行（主页链接；id 由 /me 补）
+    // C4：邮箱行与账户与安全行已删除，onOpenAccount 回调、emailLabel、
+    // accountRowButton、openAccountPage 一并移除（全仓 grep 确认无调用方）。
+
+    /// /me 补到的用户 id（主页链接优先 @handle、无 handle 才回退 /beary/u/<id>）。
+    private var fetchedUserId: Int?
+    /// /me 补到的 Plus 态（景深背景门控用；未到按非 Plus 计）。
+    private var fetchedPlus = false
+    /// 5-4：/me 加载失败标记（与“未登录”区分：失败=success(nil) 之外的 failure）。
+    private var meFetchFailed = false
+
+    private let linkLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = BearyDynamicType.secondaryFont()
+        labelValue.textColor = BearyColors.gray
+        labelValue.numberOfLines = 1
+        labelValue.lineBreakMode = .byTruncatingTail
+        labelValue.text = "主页链接 teddyhn.com/beary/@用户名"
+        return labelValue
+    }()
+
+    private lazy var copyLinkButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("复制", for: .normal)
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
+        // 按钮普查：复制钮走 smallActionFont（15 bold scaled，规范 §11）。
+        buttonValue.titleLabel?.font = BearyDynamicType.smallActionFont()
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
+        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
+        buttonValue.layer.borderWidth = 1
+        buttonValue.layer.bearyDynamicBorderColor = BearyColors.line
+        buttonValue.layer.cornerRadius = BearyCorners.single
+        buttonValue.addTarget(self, action: #selector(copyLinkButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = BearyColors.bg
+        buildLayout()
+        // U3：输入框 Return 收起/切换 + 滑动收键盘 + 键盘顶起时调 inset
+        //（私信页口径：三通知全齐，帧转视图坐标后算实际遮挡，浮动键盘不按全高垫）。
+        nameField.delegate = self
+        signatureField.delegate = self
+        handleField.delegate = self
+        nameField.returnKeyType = .next
+        signatureField.returnKeyType = .next
+        handleField.returnKeyType = .done
+        signatureField.addTarget(self, action: #selector(signatureFieldChanged), for: .editingChanged)
+        scrollView.keyboardDismissMode = .onDrag
+        NotificationCenter.default.addObserver(self, selector: #selector(editKeyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(editKeyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(editKeyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+        nameField.text = initialDisplayName
+        handleField.text = initialHandle
+        if let avatarPath = initialAvatarUrl, !avatarPath.isEmpty {
+            if avatarPath.hasPrefix("data:"),
+               let commaIndex = avatarPath.firstIndex(of: ","),
+               let avatarData = Data(base64Encoded: String(avatarPath[avatarPath.index(after: commaIndex)...])),
+               let avatarImage = UIImage(data: avatarData) {
+                // /me 下发的 avatar 本就是 data:image;base64（账户 Worker 直接存 dataURL），
+                // BearyImageURLs.avatarURL 遇 data: 会返回 nil，故这里直接解码显示。
+                avatarImageView.image = avatarImage
+            } else if let avatarURLValue = BearyImageURLs.avatarURL(avatarPath) {
+                avatarImageView.bearySetImage(url: avatarURLValue, placeholder: nil)
+            }
+        }
+        // 横幅按当前生效封面贴：主题非 .none 贴主题活展示，否则显自定义上传图
+        //（个人页 applyFestivalTheme 同款口径）。
+        applyCoverBanner()
+        // F14：网页编辑页本就没有移除封面入口，移除钮整组删除（保存逻辑的
+        // cover=null 路径保留作将来入口复用，但本页不再提供移除操作）。
+        updateDynamicLayerColors()
+        // A7：入口同时带已确认的账号 ID 与本人主页已有的签名——首屏直接带初值，
+        // 签名和链接一起显示，不等 /me；签名缺失时按已知 ID 立即补查；
+        // 两者皆无才走旧口径（/me 取 id 再串行拉签名；C4：邮箱行已删，
+        // /me 不再为本页补邮箱，邮箱只在设置页 ID 卡呈现）。
+        if let signature = initialSignature {
+            signatureField.text = signature
+            signatureLoaded = true
+        }
+        if fetchedUserId != nil {
+            // 已确认的 ID：链接行首屏即定稿（@handle 优先、否则 /u/id），
+            // 签名缺失时立即按已知 ID 补查。
+            updateLinkRow()
+            if initialSignature == nil {
+                fetchInitialSignature()
+            }
+        } else {
+            // 13：本地已有当前账号 ID 时先用它拉签名初值，不等 /me；
+            // /me 回来再并行校正链接行（fetchInitialSignature 只取一次）。
+            fetchInitialSignature()
+            refreshLinkRowFromMe()
+        }
+    }
+
+    /// F12：/me 刷新链接行（首启与复制重试共用）：成功记 id、失败记
+    /// meFetchFailed；thenCopy 时拿到 handle/id 即补复制，否则按
+    /// “未登录”或“加载失败”分别提示，不静默。
+    private func refreshLinkRowFromMe(thenCopy: Bool = false) {
+        BearyAPI.shared.fetchMe { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                switch result {
+                case .success(let user):
+                    strongSelf.meFetchFailed = false
+                    strongSelf.fetchedUserId = user?.id
+                    strongSelf.fetchedPlus = user?.plus == true
+                    strongSelf.updateLinkRow()
+                    strongSelf.fetchInitialSignature()
+                    if thenCopy {
+                        if !strongSelf.effectiveHandle.isEmpty || strongSelf.fetchedUserId != nil {
+                            strongSelf.copyLinkButtonTapped()
+                        } else {
+                            strongSelf.presentSimpleAlert(message: "请先登录")
+                        }
+                    }
+                case .failure:
+                    strongSelf.meFetchFailed = true
+                    if thenCopy {
+                        strongSelf.presentSimpleAlert(message: "加载失败，请重试")
+                    }
+                }
+            }
+        }
+    }
+
+    /// F12：主页链接文案（@handle 优先口径：有 handle 用 @handle，无 handle
+    /// 才回退 /u/id，再无回退 @用户名；与个人主页分享、设置页隐私文案一致）。
+    /// 116 数据填入动效：链接行文案随 /me 到达或改名成功变化时只淡入
+    /// 该 label 本身（alpha 0→1、0.26s，不动 transform／布局、不重建
+    /// 节点、不缩放弹一下）；同值不赋值不重播；减动效或未进窗口时
+    /// 直设终值。签名输入框内容为可编辑文档，不做淡入（与编辑器
+    /// 表单回填同口径）。
+    private func setLinkLabelTextFaded(_ text: String) {
+        guard linkLabel.text != text else { return }
+        linkLabel.text = text
+        guard !UIAccessibility.isReduceMotionEnabled, linkLabel.window != nil else {
+            linkLabel.alpha = 1
+            return
+        }
+        linkLabel.alpha = 0
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.linkLabel.alpha = 1
+        })
+    }
+
+    private func updateLinkRow() {
+        if !effectiveHandle.isEmpty {
+            setLinkLabelTextFaded("主页链接 teddyhn.com/beary/@\(effectiveHandle)")
+        } else if let id = fetchedUserId {
+            setLinkLabelTextFaded("主页链接 teddyhn.com/beary/u/\(id)")
+        } else {
+            setLinkLabelTextFaded("主页链接 teddyhn.com/beary/@用户名")
+        }
+    }
+
+    /// 批 D 签名初值：/me 不下发 signature，故用账号 id 调既有公开资料
+    /// 读口（beary Worker profilePayload 已下发 signature，未设为 null）自取；
+    /// 只取一次；回包前用户已动手输入时不覆盖已打内容（以 signatureEdited 为准）。
+    /// 拉取失败不锁死：占位保留，用户现打的非空内容仍可按改动发。
+    /// 13：id 优先取本地会话（SessionManager.shared.currentUser），不等 /me；
+    /// 本地无 id 时仍等 /me 补齐（refreshLinkRowFromMe 成功后会再调一次本函数）。
+    private func fetchInitialSignature() {
+        guard !signatureFetchStarted else { return }
+        guard let id = fetchedUserId ?? SessionManager.shared.currentUser?.id else { return }
+        signatureFetchStarted = true
+        BearyAPI.shared.fetchUserProfile(userIdValue: id) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                switch result {
+                case .success(let profile):
+                    strongSelf.initialSignature = profile.signature
+                    strongSelf.signatureLoaded = true
+                    if !strongSelf.signatureEdited {
+                        strongSelf.signatureField.text = profile.signature
+                    }
+                case .failure:
+                    break
+                }
+            }
+        }
+    }
+
+    @objc private func signatureFieldChanged() {
+        signatureEdited = true
+    }
+
+    /// 批 D 签名改动判定（trim 后比较）：已拉到初值时与初值比；未拉到初值时
+    /// 只有非空输入才算改动——空输入不发，避免把未知的旧签名误删成空。
+    private var signatureHasChange: Bool {
+        let current = (signatureField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if signatureLoaded {
+            let initial = (initialSignature ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return current != initial
+        }
+        return !current.isEmpty
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        subpageLayoutGuard.resetForAppearance()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // P2-1：仅 iPad 且宽 ≥821 才锁 600 上限；其余停用上限，屏宽 -40 约束撑满。
+        contentColumnWidthCap?.isActive = BearyDesktop.isWide(view.bounds.width)
+        subpageLayoutGuard.applyIfNeeded(page: "编辑资料", view: view, topView: scrollView)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 117 终态偏离兜底：动画结束后的最终帧再校一次。
+        subpageLayoutGuard.applyAfterAppearance(page: "编辑资料", view: view, topView: scrollView)
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        updateDynamicLayerColors()
+    }
+
+    private func updateDynamicLayerColors() {
+        copyLinkButton.layer.bearyDynamicBorderColor = BearyColors.line
+        // 头像圈色与个人主页同款（bg；动态色，深浅切换时重赋）。
+        avatarImageView.layer.bearyDynamicBorderColor = BearyColors.bg
+        updateBannerDim()
+    }
+
+    /// F15：表单标签（网页 ed-rlabel 口径：宽 58、15/600）。
+    private func makeFormLabel(_ text: String) -> UILabel {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = BearyDynamicType.smallSemiboldFont()
+        labelValue.textColor = BearyColors.ink
+        labelValue.text = text
+        NSLayoutConstraint.activate([
+            labelValue.widthAnchor.constraint(equalToConstant: 58),
+        ])
+        return labelValue
+    }
+
+    /// F15：表单行包容器（网页 ed-row 口径：上下 15 内边距）。
+    private func makeFormRowWrap(_ inner: UIView) -> UIView {
+        let wrap = UIView()
+        wrap.translatesAutoresizingMaskIntoConstraints = false
+        inner.translatesAutoresizingMaskIntoConstraints = false
+        wrap.addSubview(inner)
+        NSLayoutConstraint.activate([
+            inner.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 15),
+            inner.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
+            inner.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+            inner.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -15),
+        ])
+        return wrap
+    }
+
+    private func makeFormSeparator() -> UIView {
+        let separator = UIView()
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.backgroundColor = BearyColors.line
+        NSLayoutConstraint.activate([
+            separator.heightAnchor.constraint(equalToConstant: 1),
+        ])
+        return separator
+    }
+
+    private func buildLayout() {
+        view.addSubview(scrollView)
+        scrollView.addSubview(contentStack)
+        let topRow = UIStackView(arrangedSubviews: [closeButton, titleLabel, saveButton])
+        topRow.translatesAutoresizingMaskIntoConstraints = false
+        topRow.axis = .horizontal
+        topRow.alignment = .center
+        // F14：头像包容器（80 头像 + 相机角标），封面下半压 28；头像点按钮
+        // 改为 scrollView 级覆盖层（见本函数末尾），不放在 wrap 内。
+        avatarWrap.translatesAutoresizingMaskIntoConstraints = false
+        avatarWrap.addSubview(avatarImageView)
+        avatarWrap.addSubview(avatarCamBadge)
+        NSLayoutConstraint.activate([
+            avatarImageView.topAnchor.constraint(equalTo: avatarWrap.topAnchor),
+            avatarImageView.leadingAnchor.constraint(equalTo: avatarWrap.leadingAnchor),
+            avatarImageView.widthAnchor.constraint(equalToConstant: 80),
+            avatarImageView.heightAnchor.constraint(equalToConstant: 80),
+            avatarImageView.bottomAnchor.constraint(equalTo: avatarWrap.bottomAnchor),
+            avatarCamBadge.widthAnchor.constraint(equalToConstant: 27),
+            avatarCamBadge.heightAnchor.constraint(equalToConstant: 27),
+            avatarCamBadge.trailingAnchor.constraint(equalTo: avatarWrap.leadingAnchor, constant: 80 + 2),
+            avatarCamBadge.bottomAnchor.constraint(equalTo: avatarWrap.bottomAnchor, constant: 2),
+        ])
+        // F15：表单（网页 ed-form 口径：顶边线 + 58 标签行 + 行分隔线）。
+        let nameRow = UIStackView(arrangedSubviews: [makeFormLabel("昵称"), nameField])
+        nameRow.translatesAutoresizingMaskIntoConstraints = false
+        nameRow.axis = .horizontal
+        nameRow.spacing = 14
+        nameRow.alignment = .center
+        let handleInner = UIStackView(arrangedSubviews: [handlePrefixLabel, handleField])
+        handleInner.translatesAutoresizingMaskIntoConstraints = false
+        handleInner.axis = .horizontal
+        handleInner.spacing = 0
+        handleInner.alignment = .center
+        let handleRow = UIStackView(arrangedSubviews: [makeFormLabel("用户名"), handleInner])
+        handleRow.translatesAutoresizingMaskIntoConstraints = false
+        handleRow.axis = .horizontal
+        handleRow.spacing = 14
+        handleRow.alignment = .center
+        // 批 D 签名行：位置在名字行下方（与个人页名字下方签名行对应）、
+        // 用户名行上方；与名字/用户名行同款 58 标签 + 输入框结构。
+        let signatureRow = UIStackView(arrangedSubviews: [makeFormLabel("签名"), signatureField])
+        signatureRow.translatesAutoresizingMaskIntoConstraints = false
+        signatureRow.axis = .horizontal
+        signatureRow.spacing = 14
+        signatureRow.alignment = .center
+        // F15：提示行与标签同宽占位（网页 ed-subnote 左 90 = 页边 18 + 标签 58 + 间隙 14；
+        // 本页内容列左 20，故占位取 58 + 间隙 14，与标签结构对齐）。
+        let hintSpacer = UIView()
+        hintSpacer.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            hintSpacer.widthAnchor.constraint(equalToConstant: 58),
+        ])
+        let hintRow = UIStackView(arrangedSubviews: [hintSpacer, hintLabel])
+        hintRow.translatesAutoresizingMaskIntoConstraints = false
+        hintRow.axis = .horizontal
+        hintRow.spacing = 14
+        hintRow.alignment = .center
+        let hintWrap = UIView()
+        hintWrap.translatesAutoresizingMaskIntoConstraints = false
+        hintRow.translatesAutoresizingMaskIntoConstraints = false
+        hintWrap.addSubview(hintRow)
+        NSLayoutConstraint.activate([
+            hintRow.topAnchor.constraint(equalTo: hintWrap.topAnchor, constant: 8),
+            hintRow.leadingAnchor.constraint(equalTo: hintWrap.leadingAnchor),
+            hintRow.trailingAnchor.constraint(equalTo: hintWrap.trailingAnchor),
+            // 提示行下垫 8pt：文案不再贴着下方的分隔线（原 bottom 0 直贴分隔线）。
+            hintRow.bottomAnchor.constraint(equalTo: hintWrap.bottomAnchor, constant: -8),
+        ])
+        // C4：只读邮箱行已删除（标签 + 灰值 + 「不在这里修改」整行移除；
+        // 邮箱仍在设置页 ID 卡呈现，不在这里改）。
+        let formStack = UIStackView()
+        formStack.translatesAutoresizingMaskIntoConstraints = false
+        formStack.axis = .vertical
+        formStack.spacing = 0
+        formStack.alignment = .fill
+        formStack.addArrangedSubview(makeFormSeparator())
+        formStack.addArrangedSubview(makeFormRowWrap(nameRow))
+        formStack.addArrangedSubview(makeFormSeparator())
+        formStack.addArrangedSubview(makeFormRowWrap(signatureRow))
+        formStack.addArrangedSubview(makeFormSeparator())
+        formStack.addArrangedSubview(makeFormRowWrap(handleRow))
+        formStack.addArrangedSubview(hintWrap)
+        formStack.addArrangedSubview(makeFormSeparator())
+        // F12：主页链接行（网页 ed-linkrow 口径：灰文案 + 复制钮）。
+        let linkRow = UIStackView(arrangedSubviews: [linkLabel, copyLinkButton])
+        linkRow.translatesAutoresizingMaskIntoConstraints = false
+        linkRow.axis = .horizontal
+        linkRow.spacing = 10
+        linkRow.alignment = .center
+        let linkWrap = UIView()
+        linkWrap.translatesAutoresizingMaskIntoConstraints = false
+        linkRow.translatesAutoresizingMaskIntoConstraints = false
+        linkWrap.addSubview(linkRow)
+        NSLayoutConstraint.activate([
+            linkRow.topAnchor.constraint(equalTo: linkWrap.topAnchor, constant: 14),
+            linkRow.leadingAnchor.constraint(equalTo: linkWrap.leadingAnchor),
+            linkRow.trailingAnchor.constraint(equalTo: linkWrap.trailingAnchor),
+            linkRow.bottomAnchor.constraint(equalTo: linkWrap.bottomAnchor),
+            copyLinkButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        // C4：跳设置页的「账户与安全」行已删除（设置页入口现为个人主页齿轮
+        // 直达，不再经编辑页中转；本页只保留 [封面与头像][昵称][用户名 @handle]
+        // [主页链接复制]）。
+        contentStack.addArrangedSubview(topRow)
+        // 1-8：圈转贴在保存钮左侧钮外空隙（不挤占 44 宽标题）。
+        // 保存处理转圈与下拉/加载同款 icon_refresh（#224 误用 icon_restore 已回退）。
+        savingSpinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 32)
+        saveButton.addSubview(savingSpinner)
+        NSLayoutConstraint.activate([
+            savingSpinner.widthAnchor.constraint(equalToConstant: 20),
+            savingSpinner.heightAnchor.constraint(equalToConstant: 20),
+            savingSpinner.centerYAnchor.constraint(equalTo: saveButton.centerYAnchor),
+            savingSpinner.centerXAnchor.constraint(equalTo: saveButton.leadingAnchor, constant: -12),
+        ])
+        contentStack.addArrangedSubview(avatarWrap)
+        contentStack.addArrangedSubview(formStack)
+        contentStack.addArrangedSubview(linkWrap)
+        // 封面已移出内容列（scrollView 级通栏，见下方 coverImageView 约束，不再吃
+        // 内容列左右 20 内边距）；头像半压封面改由顶行后 168 间距实现
+        // （180 封面高 + 16 行距 − 28 半压，与个人主页 -28 同口径）。
+        // F14：头像半压封面（网页 ed-ava-row margin-top:-28 口径），
+        // 封面已在内容列外，故这里直接给定行后间距。
+        contentStack.setCustomSpacing(168, after: topRow)
+        // F12：表单→链接行距 0（链接包容器自带 14 上边距 = 网页 margin-top:14）；
+        // C4：链接行已为末行，旧「链接行→账户行距 26」随账户行一并删除。
+        contentStack.setCustomSpacing(0, after: formStack)
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            // L2：底边改走安全区。
+            scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 12),
+            // L2：内容列最大宽 600 居中——窄屏时宽 = 屏宽 - 32（750 优先级），
+            // 宽 ≥821 时被 600 上限压住并居中（P2-1 开关），宽 ≤820 时上限停用、列宽 = 屏宽 -32 撑满。
+            contentStack.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
+            contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.leadingAnchor, constant: 16),
+            contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.trailingAnchor, constant: -16),
+            contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -20),
+            closeButton.widthAnchor.constraint(equalToConstant: 44),
+            saveButton.widthAnchor.constraint(equalToConstant: 44),
+            coverImageView.heightAnchor.constraint(equalToConstant: 180),
+            // U7：三输入框高度改最小 28（默认档外观不变），大字号时随字长高、不裁字。
+            nameField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
+            signatureField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
+            handleField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
+        ])
+        // 封面通栏 + 点按：封面挂 scrollView、左右贴 frameLayoutGuide（与个人主页
+        // 封面同款通栏）；点封面弹选择框（图库／景深背景，见 presentCoverSourcePicker）。
+        // 头像按钮后加（层级在封面之上），故头像区点按仍走换头像、不与封面冲突。
+        coverImageView.isUserInteractionEnabled = true
+        coverImageView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(presentCoverSourcePicker)))
+        scrollView.addSubview(coverImageView)
+        // 头像半压封面：封面后加会盖住头像的上半 28pt（内容列先加、封面后加，
+        // 层级上封面在内容列之上），故内容列须提至封面之上，头像整圆才可见；
+        // 点按按钮在其后加入、仍保持最上层，换头像点按不受影响。
+        scrollView.bringSubviewToFront(contentStack)
+        // 2026-10-29 第 14 项：封面点按钮贴整幅封面、层级在内容列之上、
+        // 头像钮之下——间隙区点按走换封面，头像区仍走换头像；封面原手势保留作兜底
+        // （按钮盖住整幅封面时手势实际不触发）。
+        scrollView.addSubview(coverTapButton)
+        scrollView.addSubview(avatarTapButton)
+        NSLayoutConstraint.activate([
+            coverImageView.topAnchor.constraint(equalTo: topRow.bottomAnchor, constant: 16),
+            coverImageView.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor),
+            coverImageView.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor),
+            coverTapButton.topAnchor.constraint(equalTo: coverImageView.topAnchor),
+            coverTapButton.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
+            coverTapButton.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
+            coverTapButton.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
+            avatarTapButton.topAnchor.constraint(equalTo: avatarImageView.topAnchor),
+            avatarTapButton.leadingAnchor.constraint(equalTo: avatarImageView.leadingAnchor),
+            avatarTapButton.trailingAnchor.constraint(equalTo: avatarImageView.trailingAnchor),
+            avatarTapButton.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
+        ])
+        // L2（续）：窄屏时内容列宽 = 屏宽 - 32（750 优先级；宽 ≥821 时被 600 上限压住）。
+        let columnWidth = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32)
+        columnWidth.priority = UILayoutPriority(750)
+        columnWidth.isActive = true
+        // P2-1：600 上限改为可开关约束（初始激活，viewDidLayoutSubviews 按实际宽度纠正）。
+        contentColumnWidthCap = contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        contentColumnWidthCap?.isActive = true
+    }
+
+    // MARK: - 动作
+
+    /// U1：未保存改动 = 头像/封面动过，或名字/handle 文本与基线（或已提交 handle）不一致。
+    /// 名字基线是 committedDisplayName（初始值，成功后更新为已提交值）。
+    private var hasUnsavedChanges: Bool {
+        if avatarChanged || coverChanged {
+            return true
+        }
+        let nameValue = (nameField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if nameValue != (committedDisplayName ?? "") {
+            return true
+        }
+        let handleValue = (handleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if handleValue != effectiveHandle {
+            return true
+        }
+        if signatureHasChange {
+            return true
+        }
+        return false
+    }
+
+    /// 统一退出判断（保存三件套第 1 项）：关闭钮与边缘右滑共用的唯一退出口。
+    /// - interactive=true（边缘手势）：返回 true 时手势继续驱动 dismiss，
+    ///   本函数不直接调 onCancel；返回 false 时已拦截（已弹提示 / 确认，
+    ///   确认放弃后走 onCancel）。判断发生在手势 .began（见 BearyEdgeDismiss
+    ///   的 shouldAllowInteractiveDismiss），不是滑完再补确认。
+    /// - interactive=false（关闭钮）：可退出时直接调 onCancel。
+    /// 保存进行中：拦截，不弹放弃确认——请求已发出，放弃改动已无意义；
+    /// 关闭钮保存中仍可点（不静默禁用），点按即弹“正在保存”提示。
+    /// 已有弹层时不再叠弹（返回 false 拦截本次退出）。
+    @discardableResult
+    func requestExit(interactive: Bool) -> Bool {
+        if isSaving {
+            if presentedViewController == nil {
+                presentSimpleAlert(message: "正在保存，请稍候")
+            }
+            return false
+        }
+        guard hasUnsavedChanges else {
+            if !interactive {
+                onCancel?()
+            }
+            return true
+        }
+        if presentedViewController == nil {
+            BearyConfirmSheet.show(from: self, title: "放弃未保存的改动？", message: nil, actions: [
+                BearyConfirmSheet.Action(title: "继续编辑", style: .cancel),
+                BearyConfirmSheet.Action(title: "放弃", style: .destructive) { [weak self] in
+                    self?.onCancel?()
+                },
+            ])
+        }
+        return false
+    }
+
+    @objc private func closeButtonTapped() {
+        // U1 + 三件套第 1 项：关闭钮走统一退出判断，不再自带一份检查。
+        requestExit(interactive: false)
+    }
+
+    // U3：键盘顶起时调 inset（私信页口径：帧先转视图坐标，再算与滚动区
+    // 底边——底锚安全区底——的实际遮挡；iPad 浮动键盘停在中部不贴底时
+    // 不按全高垫，键盘高度／候选栏变化时 WillChangeFrame 跟随重算）。
+    @objc private func editKeyboardWillShow(_ notification: Notification) {
+        applyEditKeyboardInset(notification)
+    }
+
+    @objc private func editKeyboardWillChangeFrame(_ notification: Notification) {
+        applyEditKeyboardInset(notification)
+    }
+
+    private func applyEditKeyboardInset(_ notification: Notification) {
+        guard let value = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
+        let frameInView = view.convert(value.cgRectValue, from: nil)
+        // 实际遮挡只算键盘与滚动区底边的交叠：浮动键盘底边未到滚动区底边
+        // 时底部仍可见，不垫（旧算法只看键盘顶边到屏底的距离，浮动键盘
+        // 停在中部也会算出几百 pt 的 inset）。
+        let scrollBottom = scrollView.frame.maxY
+        let reachesBottom = frameInView.maxY >= scrollBottom && frameInView.minY < scrollBottom
+        let inset: CGFloat = reachesBottom ? max(0, scrollBottom - frameInView.minY) : 0
+        setEditKeyboardInset(inset, notification: notification, keyboardFrameInView: frameInView)
+    }
+
+    // inset／滚到输入框都跟键盘通知的时长和曲线走。
+    private func setEditKeyboardInset(_ inset: CGFloat, notification: Notification, keyboardFrameInView: CGRect?) {
+        let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
+        let curveValue = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue ?? UIView.AnimationCurve.easeInOut.rawValue
+        let options = UIView.AnimationOptions(rawValue: UInt(curveValue << 16))
+        // 当前输入框被键盘盖住时滚到可见，不靠垫底空间。
+        var fieldRect: CGRect?
+        if let keyboardFrame = keyboardFrameInView {
+            for field in [nameField, handleField, signatureField] where field.isFirstResponder {
+                let fieldFrameInView = field.convert(field.bounds, to: view)
+                if fieldFrameInView.intersects(keyboardFrame) {
+                    fieldRect = scrollView.convert(fieldFrameInView, from: view).insetBy(dx: 0, dy: -8)
+                }
+                break
+            }
+        }
+        UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: {
+            self.scrollView.contentInset.bottom = inset
+            self.scrollView.verticalScrollIndicatorInsets.bottom = inset
+            if let fieldRect = fieldRect {
+                self.scrollView.scrollRectToVisible(fieldRect, animated: false)
+            }
+        })
+    }
+
+    @objc private func editKeyboardWillHide(_ notification: Notification) {
+        setEditKeyboardInset(0, notification: notification, keyboardFrameInView: nil)
+    }
+
+    @objc private func avatarButtonTapped() {
+        // 冻结期纵深防御：按钮已禁用，万一经其他路径触发仍直接拦住。
+        guard !isSaving else { return }
+        pendingPickTarget = .avatar
+        presentImagePicker()
+    }
+
+    /// 景深背景新页的 EdgeDismiss 强持有（仅窄屏全屏路用，见 presentDepthBackgroundPicker）。
+    private var depthPickerEdgeDismiss: BearyEdgeDismissController?
+
+    /// 封面来源选择框（个人页 2026-11-06 改令后挪到本页，个人页旧款同款
+    /// 底部弹窗）：图库走既有换封面流程（选图／裁剪／
+    /// 上传链路不变，见 coverTapped）；景深背景进新页选主题。
+    @objc private func presentCoverSourcePicker() {
+        BearyConfirmSheet.show(from: self, title: "封面", message: nil, actions: [
+            BearyConfirmSheet.Action(title: "图库", style: .default) { [weak self] in
+                self?.coverTapped()
+            },
+            BearyConfirmSheet.Action(title: "景深背景", style: .default) { [weak self] in
+                self?.presentDepthBackgroundPicker()
+            },
+            BearyConfirmSheet.Action(title: "取消", style: .cancel),
+        ])
+    }
+
+    /// 景深背景新页：当前主题与 Plus 态传过去，点按回本页应用（门控／失败
+    /// 由 handleDepthThemePicked 弹 toast）；应用成功新页自行关闭。
+    /// 呈现口径与个人页旧款同款（窄屏全屏＋左边缘右滑，宽屏默认呈现）。
+    private func presentDepthBackgroundPicker() {
+        let picker = BearyDepthBackgroundViewController(
+            currentTheme: storedFestivalTheme(),
+            isPlus: fetchedPlus,
+            onPick: { [weak self] theme, isPlus in
+                guard let strongSelf = self else { return false }
+                return strongSelf.handleDepthThemePicked(theme, isPlus: isPlus)
+            })
+        // 全站返回手势补齐：窄屏（iPhone）时本页是自动全屏，没有左边缘
+        // 滑，改走 EdgeDismiss；宽屏（iPad）时本页是居中 sheet，自带下滑
+        // 关闭，不改呈现方式、不接 EdgeDismiss（免得 slide 动画盖掉 sheet）。
+        if traitCollection.horizontalSizeClass == .compact {
+            picker.modalPresentationStyle = .fullScreen
+            let depthPickerEdgeDismiss = BearyEdgeDismissController()
+            depthPickerEdgeDismiss.attach(to: picker)
+            picker.transitioningDelegate = depthPickerEdgeDismiss
+            self.depthPickerEdgeDismiss = depthPickerEdgeDismiss
+        }
+        present(picker, animated: BearyMotion.animated(true))
+    }
+
+    /// 景深背景应用（个人页旧款 handleFestivalThemePicked 同款口径）：
+    /// 返回 true 仅表示已应用；Plus 门控时 toast 并返回 false（存量不动，
+    /// 新页停留）。写 UserDefaults 存量后立即按同一口径重贴本页横幅；
+    /// 回个人页时由保存重拉或取消收口重贴。
+    private func handleDepthThemePicked(_ option: BearyProfileViewController.FestivalTheme, isPlus: Bool? = nil) -> Bool {
+        // Plus 门控（优先用选择页回前台时刚拉到的 fresh 值，兜底才用 /me 的
+        // fetchedPlus；未到按非 Plus 计、不静默放行；beary 无内购，只提示不卖）：
+        // 默认档人人可回，非 Plus 选节日档只提示。
+        let plus = isPlus ?? fetchedPlus
+        if option != .none, !plus {
+            BearyToast.show(in: view, message: "仅 Plus 会员可使用景深背景")
+            return false
+        }
+        UserDefaults.standard.set(option.rawValue, forKey: festivalThemeDefaultsKey)
+        applyCoverBanner()
+        return true
+    }
+
+    /// 景深背景存量键（个人页同款：UserDefaults 按当前账号 id 分键；
+    /// /me 未到时落单键 -1，与个人页兜底一致）。
+    private var festivalThemeDefaultsKey: String {
+        "beary.festivalTheme.\(fetchedUserId ?? -1)"
+    }
+
+    private func storedFestivalTheme() -> BearyProfileViewController.FestivalTheme {
+        guard let raw = UserDefaults.standard.string(forKey: festivalThemeDefaultsKey),
+              let theme = BearyProfileViewController.FestivalTheme(rawValue: raw) else { return .none }
+        return theme
+    }
+
+    /// 横幅按当前生效封面贴（个人页 applyFestivalTheme 同款口径）：
+    /// 存量主题非 .none 时贴主题活展示（景深封面走 ProfileCoverView，
+    /// 节日墙纸走 BearyFestivalWallpaperView），主题为 .none 时显自
+    /// 定义上传封面。主题视图插在 coverImageView 之下，封面点按钮与
+    /// 头像包的层级不动；切回 .none 时撤掉主题视图。
+    private func applyCoverBanner() {
+        let theme = storedFestivalTheme()
+        if let coverTheme = theme.coverTheme {
+            // 景深封面：个人页同款活展示；海报图缺失即创建失败、不改存量，
+            // 回落自定义图（个人页同款探针）。
+            guard Bundle.main.url(forResource: theme.rawValue + "-poster", withExtension: "png") != nil else {
+                removeBannerThemeViews()
+                showCustomCoverImage()
+                return
+            }
+            removeBannerThemeViews()
+            let coverView = ProfileCoverView(theme: coverTheme)
+            coverView.translatesAutoresizingMaskIntoConstraints = false
+            coverView.accessibilityElementsHidden = true
+            scrollView.insertSubview(coverView, belowSubview: coverImageView)
+            NSLayoutConstraint.activate([
+                coverView.topAnchor.constraint(equalTo: coverImageView.topAnchor),
+                coverView.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
+                coverView.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
+                coverView.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
+            ])
+            coverView.restartVisit()
+            bannerCoverView = coverView
+            coverImageView.isHidden = true
+            return
+        }
+        if let wallpaperTheme = theme.wallpaperTheme {
+            // 节日墙纸：个人页同款活展示；创建失败回落自定义图。
+            do {
+                let wallpaperView = try BearyFestivalWallpaperView(theme: wallpaperTheme)
+                removeBannerThemeViews()
+                wallpaperView.translatesAutoresizingMaskIntoConstraints = false
+                wallpaperView.accessibilityElementsHidden = true
+                scrollView.insertSubview(wallpaperView, belowSubview: coverImageView)
+                NSLayoutConstraint.activate([
+                    wallpaperView.topAnchor.constraint(equalTo: coverImageView.topAnchor),
+                    wallpaperView.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
+                    wallpaperView.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
+                    wallpaperView.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
+                ])
+                bannerWallpaperView = wallpaperView
+                // 深色压暗一档（个人页 updateFestivalDim 同款）。
+                let dimView = UIView()
+                dimView.translatesAutoresizingMaskIntoConstraints = false
+                dimView.backgroundColor = .black
+                dimView.isUserInteractionEnabled = false
+                dimView.accessibilityElementsHidden = true
+                scrollView.insertSubview(dimView, belowSubview: coverImageView)
+                NSLayoutConstraint.activate([
+                    dimView.topAnchor.constraint(equalTo: coverImageView.topAnchor),
+                    dimView.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
+                    dimView.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
+                    dimView.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
+                ])
+                bannerDimView = dimView
+                updateBannerDim()
+                coverImageView.isHidden = true
+            } catch {
+                removeBannerThemeViews()
+                showCustomCoverImage()
+            }
+            return
+        }
+        removeBannerThemeViews()
+        showCustomCoverImage()
+    }
+
+    /// 撤掉横幅上的主题视图（切回 .none／换主题时调用；不碰 coverImageView）。
+    private func removeBannerThemeViews() {
+        if let coverView = bannerCoverView {
+            coverView.isPlaying = false
+            coverView.removeFromSuperview()
+            bannerCoverView = nil
+        }
+        if let wallpaperView = bannerWallpaperView {
+            wallpaperView.isAnimationEnabled = false
+            wallpaperView.removeFromSuperview()
+            bannerWallpaperView = nil
+        }
+        bannerDimView?.removeFromSuperview()
+        bannerDimView = nil
+    }
+
+    /// .none 态：显自定义上传封面。进页时还没拉过图才走 initialCoverUrl
+    ///（主题态进页不拉图；切回 .none 时现取，避免横幅空着；已裁剪待存
+    /// 的新图直接用 coverImageView 现有的 image，不重拉）。
+    private func showCustomCoverImage() {
+        coverImageView.isHidden = false
+        if !didLoadInitialCover,
+           let coverPath = initialCoverUrl,
+           let coverURLValue = BearyImageURLs.avatarURL(coverPath) {
+            didLoadInitialCover = true
+            coverImageView.bearySetImage(url: coverURLValue, placeholder: nil)
+        }
+    }
+
+    /// 墙纸压暗（个人页 updateFestivalDim 同款：深色 0.35、浅色 0）；
+    /// 深浅切换时由 updateDynamicLayerColors 复核。
+    private func updateBannerDim() {
+        bannerDimView?.alpha = traitCollection.userInterfaceStyle == .dark ? 0.35 : 0
+    }
+
+    @objc private func coverTapped() {
+        guard !isSaving else { return }
+        pendingPickTarget = .cover
+        presentImagePicker()
+    }
+
+    /// F12：主页链接复制（@handle 优先口径：有 handle 复制 @handle 链，无 handle
+    /// 才回退 /u/id，两者皆无时请先登录；与个人主页分享口径一致）。
+    @objc private func copyLinkButtonTapped() {
+        if !effectiveHandle.isEmpty {
+            UIPasteboard.general.string = "https://teddyhn.com/beary/@\(effectiveHandle)"
+        } else if let id = fetchedUserId {
+            UIPasteboard.general.string = "https://teddyhn.com/beary/u/\(id)"
+        } else if meFetchFailed {
+            // 5-4：已登录但 /me 加载失败时不误报“请先登录”，给重试
+            // （重新拉 /me 再刷新链接行，拿到 id/handle 即补复制）。
+            // 原 alert 无标题，底 sheet 标题传空（只显说明＋按钮，不另起文案）。
+            BearyConfirmSheet.show(from: self, title: "", message: "主页链接加载失败", actions: [
+                BearyConfirmSheet.Action(title: "取消", style: .cancel),
+                BearyConfirmSheet.Action(title: "重试", style: .default) { [weak self] in
+                    self?.refreshLinkRowFromMe(thenCopy: true)
+                },
+            ])
+            return
+        } else {
+            presentSimpleAlert(message: "请先登录")
+            return
+        }
+        copyLinkButton.setTitle("已复制", for: .normal)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.copyLinkButton.setTitle("复制", for: .normal)
+        }
+    }
+
+    /// 2026-10-29 第 13 项：老式 UIImagePickerController 进程内加载图库才出界面，
+    /// 是“点头像等一会才弹出”的根源（点按与 present 之间并无权限/网络异步，
+    /// 慢在 picker 自身的图库加载）。改走 PHPickerViewController（编辑器与反馈页
+    /// 同款）：系统外进程、点按即 present、无权限门；图片加载放选后做。
+    /// 选后仍走现有 presentCropEditor（头像 1:1、封面按预览比例）与上传链路。
+    private func presentImagePicker() {
+        var config = PHPickerConfiguration()
+        config.selectionLimit = 1
+        config.filter = .images
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = self
+        present(picker, animated: BearyMotion.animated(true), completion: nil)
+    }
+
+    private func presentSimpleAlert(message: String) {
+        // 原 UIAlertController(.alert) 单「知道了」钮，改走共享底部弹窗
+        // （无标题确认框同款做法：标题传空，只显说明＋按钮）。
+        BearyConfirmSheet.show(from: self, title: "", message: message, actions: [
+            BearyConfirmSheet.Action(title: "知道了", style: .default),
+        ])
+    }
+
+    // MARK: - 保存（网页 edSaveAll 顺序：先 handle、后 profile）
+
+    @objc private func saveButtonTapped() {
+        // 第八轮审计 06：压缩在途时也不接保存点按——保存快照在点按时
+        // 一次性定格待存标记，压缩未完成时点保存会把新图静默丢出本次
+        // 保存；保存钮在压缩期间已禁用（见 updateSaveButtonState），
+        // 这里是同一口径的兜底。
+        guard !isSaving, !isCompressingImage else { return }
+        let nameValue = (nameField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let handleValue = (handleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !nameValue.isEmpty && nameValue.utf16.count > 30 {
+            presentSimpleAlert(message: "显示名称最多 30 个字")
+            return
+        }
+        if !nameValue.isEmpty && nameValue.rangeOfCharacter(from: .alphanumerics) == nil {
+            presentSimpleAlert(message: "昵称需至少包含一个文字或数字")
+            return
+        }
+        let signatureValue = (signatureField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if signatureValue.utf16.count > 60 {
+            presentSimpleAlert(message: "签名最多 60 个字")
+            return
+        }
+        if handleValue != effectiveHandle {
+            if !isValidHandle(handleValue) {
+                presentSimpleAlert(message: "用户名需 3–20 位小写字母、数字或下划线")
+                return
+            }
+        }
+        // 三件套第 2 项：点按时一次性定格完整提交快照（名字、签名、头像、
+        // 封面全在此时取值），后续两步只读快照；校验用的也是同一批点按时读到的值。
+        let snapshot = SaveSnapshot(
+            displayName: nameValue,
+            handle: handleValue,
+            handleChanged: handleValue != effectiveHandle,
+            nameChanged: nameValue != (committedDisplayName ?? ""),
+            avatarDataURL: avatarChanged ? pendingAvatarDataURL : nil,
+            avatarChanged: avatarChanged,
+            coverDataURL: coverChanged ? pendingCoverDataURL : nil,
+            coverChanged: coverChanged,
+            coverRemoved: coverRemoved,
+            signatureValue: signatureValue,
+            signatureChanged: signatureHasChange)
+        savingSnapshot = snapshot
+        isSaving = true
+        updateSaveButtonState()
+        if snapshot.handleChanged {
+            BearyAPI.shared.request("/api/account/handle", method: "POST", jsonBody: ["handle": handleValue]) { [weak self] (result: Result<BearyHandleUpdateResponse, APIError>) in
+                DispatchQueue.main.async {
+                    guard let strongSelf = self else { return }
+                    switch result {
+                    case .success:
+                        // G3：handle 成功后立即记下已提交 handle；第二步资料失败时
+                        // 重试以它为准，跳过已成功的 handle 步，不再重发同一 handle。
+                        strongSelf.submittedHandle = handleValue
+                        // 5-3：改名成功后立即刷新链接行，否则复制新链、显示旧链分裂。
+                        strongSelf.updateLinkRow()
+                        strongSelf.saveProfile(snapshot: snapshot)
+                    case .failure(let err):
+                        strongSelf.finishSavingWithError(message: strongSelf.handleErrorMessage(err: err))
+                    }
+                }
+            }
+        } else {
+            saveProfile(snapshot: snapshot)
+        }
+    }
+
+    /// M14 改（1-8）：保存进行态标题恒为“保存”，只加左侧圈转指示；
+    /// 旧“保存中…”4 字在 44 宽钮内会被裁字，故不再改标题，另加禁用。
+    /// 三件套第 2 项冻结：保存期间除保存钮外，名字 / 签名 / 用户名输入框
+    /// 与头像 / 封面换图入口一并禁用（旧口径只禁保存钮，弱网等待中继续
+    /// 编辑会与快照脱节）；关闭钮不禁用，点按走统一退出判断（保存中弹提示，
+    /// 见 requestExit），不静默无反应；复制链接是只读操作，不冻结。
+    private func updateSaveButtonState() {
+        // 第八轮审计 06：压缩在途时保存钮也禁用（其余冻结项仍只看 isSaving）。
+        saveButton.isEnabled = !isSaving && !isCompressingImage
+        saveButton.setTitle("保存", for: .normal)
+        nameField.isEnabled = !isSaving
+        signatureField.isEnabled = !isSaving
+        handleField.isEnabled = !isSaving
+        avatarTapButton.isEnabled = !isSaving
+        coverTapButton.isEnabled = !isSaving
+        if isSaving {
+            savingSpinner.startSpinning()
+        } else {
+            savingSpinner.stopSpinning()
+        }
+    }
+
+    /// 第二步资料保存：只读点按时定格的快照，不读输入框、不读待存标记。
+    private func saveProfile(snapshot: SaveSnapshot) {
+        var body: [String: Any] = [:]
+        if snapshot.nameChanged {
+            body["display_name"] = snapshot.displayName
+        }
+        if snapshot.avatarChanged, let avatarDataURL = snapshot.avatarDataURL {
+            body["avatar"] = avatarDataURL
+        }
+        // 批 D 签名：与名字/头像/封面同走 PUT /api/account/profile，字段名
+        // signature，清空发 null（与原个人页弹框口径一致）；只在有改动时发，
+        // 未改动不发，避免无意义写。注意后端缺口（见本文件顶注与 PR 说明）：
+        // 现行 accounts Worker 的 PUT 分支不处理 signature，成功回包也不持久化；
+        // 本页仍按字段名透传，后端补分支后 App 无需再改；回包未原样带回
+        // signature 时走 finishSavingSuccess 的诚实分支（不写已提交态、不调
+        // onSaved、只给中性提示），不本地谎报已改。
+        if snapshot.signatureChanged {
+            if snapshot.signatureValue.isEmpty {
+                body["signature"] = NSNull()
+            } else {
+                body["signature"] = snapshot.signatureValue
+            }
+        }
+        if snapshot.coverChanged {
+            // 5-15 死分支标注：coverRemoved 当前不可达——移除入口已删
+            // （见 viewDidLoad F14 注释），全文件没有任何地方置 true，
+            // 仅在裁剪确认时复位 false；保留作将来移除入口复用，
+            // 清理时须连同本分支的 cover = NSNull() 一起处理。
+            if snapshot.coverRemoved {
+                body["cover"] = NSNull()
+            } else if let coverDataURL = snapshot.coverDataURL {
+                body["cover"] = coverDataURL
+            }
+        }
+        if body.isEmpty {
+            finishSavingSuccess()
+            return
+        }
+        BearyAPI.shared.request("/api/account/profile", method: "PUT", jsonBody: body) { [weak self] (result: Result<BearyProfileUpdateResponse, APIError>) in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                switch result {
+                case .success(let response):
+                    strongSelf.finishSavingSuccess(profileResponse: response)
+                case .failure(let err):
+                    // 审计-个人页设置：两步保存分裂态提示区分——handle 步已成功、
+                    // 资料步失败时明示用户名已保存，重试不再重发 handle（G3 已跳过），
+                    // 避免用户误以为两步全失败而重复改名。
+                    var message = strongSelf.profileErrorMessage(err: err)
+                    if let snapshot = strongSelf.savingSnapshot, snapshot.handleChanged,
+                       strongSelf.submittedHandle == snapshot.handle {
+                        message += "，用户名已保存"
+                    }
+                    strongSelf.finishSavingWithError(message: message)
+                }
+            }
+        }
+    }
+
+    private func finishSavingSuccess() {
+        finishSavingSuccess(profileResponse: nil)
+    }
+
+    private func finishSavingSuccess(profileResponse: BearyProfileUpdateResponse?) {
+        // 三件套第 3 项：先把已提交快照写进 SessionManager.currentUser
+        // 统一快照（名字 / 用户名 / 头像），再走 onSaved 通知容器刷新个人页
+        // 与信息流——下次打开编辑资料的初值即新值，不再是旧值。
+        // 快照缺失时（理论上到不了：两步入口都先置快照）只做原有成功路径。
+        // 审计-个人页设置（签名“假成功”诚实口径，根治在后端 PUT 分支）：
+        // 签名有改动时，只有回包原样带回提交值才算确认落库；未确认时不写
+        // 签名已提交态（initialSignature 不动、输入框原样保留），先由
+        // verifySignatureAfterSave 后台读一次公开资料核对：核对上即按确认
+        // 处理并调 onSaved，核对不上/读失败才提示——不再让用户回个人页确认。
+        // 名字 / 头像 / 封面仍按原口径写已提交态（不在本条审计范围内）。
+        if let snapshot = savingSnapshot {
+            // 静态性能修复：头像替换落库成功即逐出旧头像的本机缓存（此前只靠
+            // 24 小时 TTL 自然过期）。initialAvatarUrl 在本页仍是保存前的值，
+            // 故此处取到的即旧头像；新头像是 dataURL 时 avatarURL 为 nil，
+            // 与旧 URL 一定不同，不会误删新图；旧头像本身就是 dataURL 时
+            // avatarURL 为 nil（dataURL 走直接解码、不走加载器缓存），无可逐出。
+            if snapshot.avatarChanged,
+               let oldAvatarURL = BearyImageURLs.avatarURL(initialAvatarUrl),
+               oldAvatarURL != BearyImageURLs.avatarURL(snapshot.avatarDataURL) {
+                BearyImageLoader.shared.evictURLs([oldAvatarURL])
+            }
+            let signatureConfirmed: Bool
+            if snapshot.signatureChanged, let response = profileResponse {
+                let expected: String? = snapshot.signatureValue.isEmpty ? nil : snapshot.signatureValue
+                signatureConfirmed = response.signatureKeyPresent && response.signature == expected
+            } else {
+                signatureConfirmed = !snapshot.signatureChanged
+            }
+            committedDisplayName = snapshot.displayName
+            if snapshot.signatureChanged && signatureConfirmed {
+                initialSignature = snapshot.signatureValue
+                signatureLoaded = true
+                signatureEdited = false
+            }
+            avatarChanged = false
+            coverChanged = false
+            coverRemoved = false
+            pendingAvatarDataURL = nil
+            pendingCoverDataURL = nil
+            SessionManager.shared.applyEditedProfile(
+                displayName: snapshot.displayName,
+                handle: snapshot.handle,
+                avatarDataURL: snapshot.avatarChanged ? snapshot.avatarDataURL : nil)
+            // 第八轮审计 05：封面改动后立即刷新 /me 同步 coverVer——
+            // PUT 回包不下发新 ver，applyEditedProfile 也碰不到封面，
+            // 不刷的话下次进编辑页仍按旧 ver 拼封面 URL、显示旧封面。
+            // 只在封面真改动时刷一次（名字 / 头像 / 签名保存不触发）；
+            // refreshMe 成功即写回 currentUser（含新 coverVer）＋快照，
+            // 失败不影响已保存的资料（下次 refreshMe 再同步）。
+            if snapshot.coverChanged || snapshot.coverRemoved {
+                SessionManager.shared.refreshMe()
+            }
+            savingSnapshot = nil
+            isSaving = false
+            updateSaveButtonState()
+            if snapshot.signatureChanged && !signatureConfirmed {
+                verifySignatureAfterSave(expected: snapshot.signatureValue.isEmpty ? nil : snapshot.signatureValue)
+                return
+            }
+            onSaved?()
+            return
+        }
+        savingSnapshot = nil
+        isSaving = false
+        updateSaveButtonState()
+        onSaved?()
+    }
+
+    /// 18：PUT 回包未确认签名时，后台读一次公开资料核对，不再让用户回个人页确认。
+    /// 核对上（读回值与提交值一致）即按确认处理并调 onSaved；读回值不一致时提示
+    /// “签名尚未同步”，读失败或无账号 id 时给中性提示；两种情况输入框都原样保留、
+    /// 不调 onSaved，可直接重试。
+    private func verifySignatureAfterSave(expected: String?) {
+        guard let id = fetchedUserId ?? SessionManager.shared.currentUser?.id else {
+            BearyToast.show(in: view, message: "资料已提交，签名同步状态未确认，请稍后查看")
+            return
+        }
+        BearyAPI.shared.fetchUserProfile(userIdValue: id) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                switch result {
+                case .success(let profile):
+                    if profile.signature == expected {
+                        strongSelf.initialSignature = expected
+                        strongSelf.signatureLoaded = true
+                        strongSelf.signatureEdited = false
+                        strongSelf.onSaved?()
+                    } else {
+                        BearyToast.show(in: strongSelf.view, message: "签名尚未同步，请稍后再试")
+                    }
+                case .failure:
+                    BearyToast.show(in: strongSelf.view, message: "资料已提交，签名同步状态未确认，请稍后查看")
+                }
+            }
+        }
+    }
+
+    private func finishSavingWithError(message: String) {
+        // 失败恢复：快照丢弃（重试时按当前输入重新定格），但待存标记与
+        // 已提交 handle 保留（G3：重试跳过已成功的 handle 步）；输入框内容
+        // 全程未被清空或回滚，解冻后原样保留，可直接重试。
+        savingSnapshot = nil
+        isSaving = false
+        updateSaveButtonState()
+        // 保存失败：拒绝动效（卡片同款摇头 + warning 震动，减动效只跳过视觉抖动）；
+        // 本地草稿保留在输入框内（不清空、不回滚输入），服务端未写入，可直接重试，
+        // 改动不静默丢失；登录失效仍走 onRequireLogin（见 profileErrorMessage）。
+        playDenyShake(on: saveButton)
+        presentSimpleAlert(message: message)
+    }
+
+    /// 拒绝动效（卡片 playDenyShake 同口径：values [0,-8,8,-5,5,0] / 0.38s）。
+    private func playDenyShake(on button: UIButton) {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+        if UIAccessibility.isReduceMotionEnabled { return }
+        button.layer.removeAnimation(forKey: "bearyDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = BearyMotion.screen
+        button.layer.add(shake, forKey: "bearyDenyShake")
+    }
+
+    private func handleErrorMessage(err: APIError) -> String {
+        switch err {
+        case .unauthorized:
+            onRequireLogin?()
+            return "登录已过期，请重新登录"
+        case .server(let code, _):
+            switch code {
+            case "taken": return "这个用户名已被占用"
+            case "cooldown": return "用户名修改后，7 天内不能再改"
+            case "bad_handle": return "用户名需 3–20 位小写字母、数字或下划线"
+            default: return "用户名修改失败，请重试"
+            }
+        default:
+            return "用户名修改失败，请重试"
+        }
+    }
+
+    private func profileErrorMessage(err: APIError) -> String {
+        switch err {
+        case .unauthorized:
+            onRequireLogin?()
+            return "登录已过期，请重新登录"
+        case .server(let code, _):
+            switch code {
+            case "name_taken": return "这个昵称已被使用"
+            case "name_too_long": return "显示名称最多 30 个字"
+            case "name_no_text": return "昵称需至少包含一个文字或数字"
+            case "signature_too_long": return "签名最多 60 个字"
+            case "avatar_too_large": return "头像太大了，换一张小一点的吧"
+            // 2026-11-14 换头像保存失败实证：服务端 BEARY_IMAGES（R2）绑定
+            // 被缺绑定的部署清掉后，头像上传走 avatar_upload_failed；
+            // 旧口径没映射这两个码，一律只显示“保存失败，请重试”。
+            case "avatar_upload_failed": return "头像上传失败，请重试"
+            case "invalid_avatar": return "头像格式不正确，换一张图试试"
+            case "cover_too_large": return "这张图太大了，换一张小一点的吧"
+            default: return "保存失败，请重试"
+            }
+        default:
+            return "保存失败，请重试"
+        }
+    }
+
+    private func isValidHandle(_ value: String) -> Bool {
+        guard value.count >= 3, value.count <= 20 else { return false }
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789_")
+        return value.unicodeScalars.allSatisfy { allowed.contains($0) }
+    }
+
+    // MARK: - 图片压缩（网页 edUploadCover / 头像 256px 口径）
+
+    private func dataURLForAvatar(image: UIImage) -> String? {
+        let image = normalizeImage(image: image)
+        let side = min(image.size.width, image.size.height)
+        guard side > 0 else { return nil }
+        let crop = CGRect(x: (image.size.width - side) / 2, y: (image.size.height - side) / 2, width: side, height: side)
+        guard let cropped = cropImage(image: image, rect: crop) else { return nil }
+        let resized = resizeImage(image: cropped, maxDimension: 256)
+        for quality in [CGFloat(0.85), CGFloat(0.7), CGFloat(0.5)] {
+            if let data = resized.jpegData(compressionQuality: quality) {
+                let dataURL = "data:image/jpeg;base64," + data.base64EncodedString()
+                if dataURL.count <= 200000 {
+                    return dataURL
+                }
+            }
+        }
+        return nil
+    }
+
+    private func dataURLForCover(image: UIImage) -> String? {
+        let image = normalizeImage(image: image)
+        let tries: [(CGFloat, CGFloat)] = [(1280, 0.8), (1024, 0.72), (880, 0.62)]
+        for (maxWidth, quality) in tries {
+            let resized = resizeImage(image: image, maxDimension: maxWidth)
+            if let data = resized.jpegData(compressionQuality: quality) {
+                let dataURL = "data:image/jpeg;base64," + data.base64EncodedString()
+                if dataURL.count <= 400000 {
+                    return dataURL
+                }
+            }
+        }
+        return nil
+    }
+
+    /// 把带方向信息的照片先画成方向朝上的图，避免 cgImage 裁剪坐标错位。
+    private func normalizeImage(image: UIImage) -> UIImage {
+        if image.imageOrientation == .up {
+            return image
+        }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = image.scale
+        let renderer = UIGraphicsImageRenderer(size: image.size, format: format)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: image.size))
+        }
+    }
+
+    private func cropImage(image: UIImage, rect: CGRect) -> UIImage? {
+        guard let cgImage = image.cgImage else { return nil }
+        let scale = image.scale
+        let pixelRect = CGRect(x: rect.origin.x * scale, y: rect.origin.y * scale, width: rect.size.width * scale, height: rect.size.height * scale)
+        guard let cropped = cgImage.cropping(to: pixelRect) else { return nil }
+        return UIImage(cgImage: cropped, scale: scale, orientation: image.imageOrientation)
+    }
+
+    private func resizeImage(image: UIImage, maxDimension: CGFloat) -> UIImage {
+        let longest = max(image.size.width, image.size.height)
+        guard longest > maxDimension else { return image }
+        let ratio = maxDimension / longest
+        let target = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: target, format: format)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
+        }
+    }
+}
+
+// MARK: - 图片选择
+
+extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        // 取消（空结果）不弹任何提示；同时清掉本次目标，避免旧目标残留到
+        // 之后到达的慢读图片上。已捕获目标的在途读取不受影响（目标已随
+        // 各自闭包传递，不再读 pendingPickTarget）。
+        guard let result = results.first else {
+            pendingPickTarget = nil
+            picker.dismiss(animated: BearyMotion.animated(true))
+            return
+        }
+        // 审计第 4 项：打开相册时固定的目标在此同步取走并立即清掉，
+        // 之后只随闭包传递；头像慢读期间再点开/取消封面选图，也改不动
+        // 这次读取与裁剪的目标。
+        guard let target = pendingPickTarget else {
+            picker.dismiss(animated: BearyMotion.animated(true))
+            return
+        }
+        pendingPickTarget = nil
+        let provider = result.itemProvider
+        guard provider.canLoadObject(ofClass: UIImage.self) else {
+            picker.dismiss(animated: BearyMotion.animated(true)) { [weak self] in
+                self?.presentSimpleAlert(message: "图片读取失败")
+            }
+            return
+        }
+        // 审计第 3 项：相册退场与图片读取并行进行，两者都完成才呈现裁剪页。
+        // 旧代码 dismiss 无 completion、随后立即异步读图：快图先于退场结束
+        // 到达时，退场中的相册仍算 presentedViewController，裁剪页被
+        // presentCropEditor 的检查静默丢弃且无重试、无提示。本处用完成
+        // 回调协调，不加固定延迟；裁剪页自身的 presented 检查仍保留，
+        // 只不再因“正在退场的相册”误杀。
+        var dismissFinished = false
+        var loadFinished = false
+        var loadedImage: UIImage?
+        let deliver: () -> Void = { [weak self] in
+            guard dismissFinished, loadFinished else { return }
+            guard let strongSelf = self else { return }
+            guard let image = loadedImage else {
+                strongSelf.presentSimpleAlert(message: "图片读取失败")
+                return
+            }
+            // 清单第 3 项（编辑资料部分）：选图后先过通用裁剪页，
+            // 不再像以前那样直接用原图走压缩。裁剪确认才走原有换图/保存流程
+            // （dataURL 压缩 + pending 标记 + 预览替换，保存仍走 PUT
+            // /api/account/profile）；裁剪取消不回调、不碰任何待保存状态。
+            // 裁剪走 Mantis（3.1.1，见下方 presentCropEditor）：
+            // 头像 1:1、封面按本页预览比例，见下方 presentCropEditor。
+            strongSelf.presentCropEditor(image: image, target: target)
+        }
+        picker.dismiss(animated: BearyMotion.animated(true)) {
+            dismissFinished = true
+            deliver()
+        }
+        provider.loadObject(ofClass: UIImage.self) { object, _ in
+            DispatchQueue.main.async {
+                loadFinished = true
+                loadedImage = object as? UIImage
+                deliver()
+            }
+        }
+    }
+
+    /// 选图 → 裁剪：头像方形窗（1:1），封面按本页封面预览比例
+    /// （coverImageView 宽 / 160 高；布局未出时按内容列宽推算）。
+    /// 取消：裁剪页自己 dismiss，不回调，本页状态全程不动。
+    /// target 由 didFinishPicking 捕获后传入：裁剪比例与确认接收均用
+    /// 这个传入值，不在到达/确认时刻重读可变状态。
+    private func presentCropEditor(image: UIImage, target: PickTarget) {
+        // 冻结期不接选图：选图加载是异步的，保存点按与图片到达之间有窗口；
+        // 保存中到达的图片直接丢弃（不改待存标记、不换预览），存完可重选。
+        guard !isSaving else { return }
+        if presentedViewController != nil { return }
+        let aspectRatio: CGFloat
+        if target == .avatar {
+            aspectRatio = 1
+        } else {
+            // F14：封面预览高已改 180，裁剪窗比例同步。
+            let previewWidth = coverImageView.bounds.width
+            if previewWidth > 0 {
+                aspectRatio = previewWidth / 180
+            } else {
+                let columnWidth = min(max(view.bounds.width - 40, 0), 600)
+                aspectRatio = columnWidth > 0 ? columnWidth / 180 : 2
+            }
+        }
+        // Mantis 裁剪（3.1.1）：固定比例、确认先退场再回调（#952 同款口径），
+        // 回调体未动。
+        let cropVC = BearyMantisCrop.makeCropViewController(image: image, aspectRatio: aspectRatio)
+        let handler = BearyMantisCropHandler(onCrop: { [weak self] cropped in
+            guard let strongSelf = self else { return }
+            // 冻结期不接受裁剪确认：裁剪页确认时自己 dismiss，本页只须
+            // 忽略回调，待存标记与预览都不动（与 presentCropEditor 的丢弃同口径）。
+            guard !strongSelf.isSaving else { return }
+            // 第八轮审计 06：压缩放后台，主线程只更新按钮与最终预览。
+            // dataURLForAvatar/dataURLForCover 在主线程连续做缩放、JPEG 编码、
+            // Base64（封面最坏三档全尺寸重绘＋编码），确认点按后界面会卡一下。
+            // 压缩本身只碰像素数据（normalize/resize 各自新建
+            // UIGraphicsImageRenderer，裁剪页的 cropWithGeometry 已是同款后台
+            // 口径），可以离主线程；待存标记与预览仍在主线程落结果。
+            strongSelf.imageCompressGeneration += 1
+            let generation = strongSelf.imageCompressGeneration
+            strongSelf.isCompressingImage = true
+            strongSelf.updateSaveButtonState()
+            strongSelf.imageCompressQueue.async { [weak strongSelf] in
+                guard let strongSelf = strongSelf else { return }
+                let dataURL = target == .avatar
+                    ? strongSelf.dataURLForAvatar(image: cropped)
+                    : strongSelf.dataURLForCover(image: cropped)
+                DispatchQueue.main.async { [weak strongSelf] in
+                    guard let strongSelf = strongSelf else { return }
+                    // 只让最后一次确认的压缩结果落地；已过期的压缩直接丢弃，
+                    // isCompressingImage 由在途的最新一次压缩复位。
+                    guard generation == strongSelf.imageCompressGeneration else { return }
+                    strongSelf.isCompressingImage = false
+                    strongSelf.updateSaveButtonState()
+                    // 保存冻结期：压缩完成时已在保存中，按冻结口径丢弃
+                    // （与 presentCropEditor 的丢弃同口径），不改待存标记、不换预览。
+                    guard !strongSelf.isSaving else { return }
+                    if target == .avatar {
+                        guard let dataURL = dataURL else {
+                            strongSelf.presentSimpleAlert(message: "头像太大了，换一张小一点的吧")
+                            return
+                        }
+                        strongSelf.pendingAvatarDataURL = dataURL
+                        strongSelf.avatarChanged = true
+                        strongSelf.avatarImageView.image = cropped
+                    } else {
+                        guard let dataURL = dataURL else {
+                            strongSelf.presentSimpleAlert(message: "这张图太大了，换一张小一点的吧")
+                            return
+                        }
+                        strongSelf.pendingCoverDataURL = dataURL
+                        strongSelf.coverChanged = true
+                        strongSelf.coverRemoved = false
+                        strongSelf.coverImageView.image = cropped
+                        // 换自定义封面即清景深主题存量（个人页同款口径：生效封面
+                        // 只认其一；不清则保存后个人页按存量重贴主题、新封面一直
+                        // 被盖住）。与选主题即时写存量同款：取消也不恢复。
+                        UserDefaults.standard.set(BearyProfileViewController.FestivalTheme.none.rawValue, forKey: strongSelf.festivalThemeDefaultsKey)
+                        strongSelf.applyCoverBanner()
+                    }
+                }
+            }
+        }, onFinished: { [weak self] in
+            self?.mantisCropHandler = nil
+        })
+        mantisCropHandler = handler
+        cropVC.delegate = handler
+        present(cropVC, animated: BearyMotion.animated(true))
+    }
+}
+
+// MARK: - UITextFieldDelegate（U3：名字 Return 切到 handle，handle Return 收键盘）
+
+extension BearyEditProfileViewController: UITextFieldDelegate {
+    /// F13：网页 maxlength 口径——打字即截断（名字 30、签名 60、用户名 20；输入法
+    /// 组字中不截断，组字结束后的超长部分在下一次输入时截断）。
+    /// 计数单位与服务端一致：服务端用 JS `.length`（UTF-16 码元）判上限，
+    /// 故这里也按 `utf16.count` 计；截断按字素簇累加，绝不拆开一个表情或
+    /// 代理对（旧口径按 `String.count` 字素簇计，30 个生僻表情在客户端能
+    /// 通过、服务端算 60 码元会拒）。
+    private func truncatedToUTF16Limit(_ value: String, limit: Int) -> String {
+        var result = ""
+        var total = 0
+        for ch in value {
+            let w = ch.utf16.count
+            if total + w > limit { break }
+            total += w
+            result.append(ch)
+        }
+        return result
+    }
+
+    func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
+        if textField.markedTextRange != nil { return true }
+        let maxLength: Int
+        if textField === nameField {
+            maxLength = 30
+        } else if textField === signatureField {
+            maxLength = 60
+        } else if textField === handleField {
+            maxLength = 20
+        } else {
+            return true
+        }
+        let current = textField.text ?? ""
+        guard let swiftRange = Range(range, in: current) else { return true }
+        let proposed = current.replacingCharacters(in: swiftRange, with: string)
+        if proposed.utf16.count > maxLength {
+            textField.text = truncatedToUTF16Limit(proposed, limit: maxLength)
+            // 审计-个人页设置：超长粘贴截断时 toast 提示（单字键入到顶不提示，
+            // 免得每敲一字都弹；多字替换视为粘贴才提示；光标落末尾是
+            // 程序赋值固有行为，本条只补提示，不改光标逻辑）。
+            if string.count > 1 {
+                BearyToast.show(in: view, message: "超出上限的部分已截断")
+            }
+            return false
+        }
+        return true
+    }
+
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        if textField === nameField {
+            signatureField.becomeFirstResponder()
+        } else if textField === signatureField {
+            handleField.becomeFirstResponder()
+        } else if textField === handleField {
+            textField.resignFirstResponder()
+        }
+        return true
+    }
+}

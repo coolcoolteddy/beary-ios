@@ -1,0 +1,11 @@
+{
+  "appId": "com.teddyhn.beary",
+  "appName": "beary",
+  "webDir": "www",
+  "server": {
+    "cleartext": false
+  },
+  "ios": {
+    "contentInset": "always"
+  }
+}

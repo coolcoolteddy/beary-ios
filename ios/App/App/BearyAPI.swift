@@ -1,0 +1,2168 @@
+import Foundation
+
+// ===== beary 原生接口层（第一阶段）=====
+// 后端：Cloudflare Workers（teddy-beary + teddy-accounts-v2），无需重写数据库。
+// 约定：
+// - 所有请求带 Origin: https://teddyhn.com（写接口 CSRF 校验要求；读接口无害）。
+// - 会话 cookie teddy_session 走共享 HTTPCookieStorage，由 SessionManager 原生侧独占（批一删网页同步）。
+// - 分页一律游标式（before + before_id），与网页端同口径；广场服务端排序 published_at DESC, id DESC
+//   （iCity：客户端不自排，游标同步用 published_at）；其他 scope 排序口径不变。
+// - 模型字段全部 optional：服务端增减字段不断解码；调用方用 ?? 兜底。
+
+enum APIError: Error {
+    case network(Error)
+    /// 5-31：非标准错误体时也携带服务端原始信息片段（截断后，供 toast/日志
+    /// 用；分流不变，仍是 .http 不升 .server）。标准错误体仍走 .server(码, 状态)。
+    /// 无片段时为 nil；现有裸 `case .http:` 匹配不受第二值影响。
+    case http(Int, String?)
+    /// 审计第 9 项：同时保留业务码与 HTTP 状态。status 由 mapStatus /
+    /// 隔离请求等已知 HTTP 状态的路径下发；verify / bind / sendCode 等
+    /// 展示文案路径（第一值是 message 而非业务码）传 nil，不凭文案判权限。
+    case server(String, Int?)
+    case decoding(Error)
+    case unauthorized
+    /// 审计 P1-7：带原因的 401（/me 专用）：服务端体含 reason（banned/kicked/expired）
+    /// 与 message；revoked 原因一次性发放，fetchMe 处解出后经 refreshMe 透传界面层分流提示。
+    /// 其余请求仍走裸 .unauthorized（全局 onUnauthorized 口径不变）。
+    case authFailure(reason: String?, message: String?)
+    case notFound
+    case cancelled
+}
+
+extension APIError {
+    /// 审计第 9 项：权限失效统一判定（私信页用；其他页原有 .server 分流不动）。
+    /// - 裸 HTTP 403；
+    /// - 带业务码的 403（.server 第二值 = 403，旧 mapStatus 丢状态时漏网的正是这类）；
+    /// - 业务码本身表权限失效（dm_not_allowed / blocked），即使状态未保留。
+    /// 非 403 的 .server（如 rate_limited）不在此列，仍走通用 toast / loadFailed。
+    var isPermissionDenied: Bool {
+        switch self {
+        case .http(let status, _):
+            return status == 403
+        case .server(let code, let status):
+            if status == 403 { return true }
+            let normalized = code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return normalized == "dm_not_allowed" || normalized == "blocked"
+        default:
+            return false
+        }
+    }
+
+    /// 档位不允许（私信横幅分支，非会话关闭）：仅 dm_not_allowed。
+    /// .http 沿旧口径看原始片段含码；.server 看业务码精确相等（码已是精确字段，不再含码子串）。
+    var isDMNotAllowed: Bool {
+        switch self {
+        case .http(let status, let snippet):
+            return status == 403 && snippet?.contains("dm_not_allowed") == true
+        case .server(let code, _):
+            return code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "dm_not_allowed"
+        default:
+            return false
+        }
+    }
+
+    /// 超时／结果未知：底层 URLError 为超时或连接中途丢失时，请求是否
+    /// 已落库无法从客户端确认，调用方不得按“肯定没发出去”处理，也不得
+    /// 鼓励用户无条件立即重发（私信无去重键，重发可能重复落库）。
+    var isTimeoutOrUnknownResult: Bool {
+        guard case .network(let underlying) = self,
+              let urlError = underlying as? URLError else { return false }
+        return urlError.code == .timedOut || urlError.code == .networkConnectionLost
+    }
+}
+
+// MARK: - 数据模型
+
+struct EmoteCount: Codable {
+    var emote: String?
+    var count: Int?
+    var mine: Bool?
+}
+
+struct Quote: Codable {
+    var id: String?
+    var content: String?
+    var images: [String]?
+    /// 被引用篇自己的图片尺寸（直传引用分支用它，不再误用宿主 entry.imgDims）。
+    /// 实测：工作区 worker 的 attachQuotes 目前不返回 img_dims（直传 quote 只有 id/author/content/images/
+    /// created_at/is_public/gone/locked），故本字段现阶段恒为 nil；字段先行补位，待服务端透传后直接可用。
+    /// 当前引用缩略图已固定 42x42，不依赖本字段（旧 stripW 的 153 兜底宽已随 strip 函数一并删除）。
+    var imgDims: [String: [Int]]?
+    var createdAt: Int?
+    var isPublic: Bool?
+    /// 服务端 attachQuotes 直传的引用态（F3 收尾补解码）：gone=原篇已删，locked=原篇未公开。
+    var gone: Bool?
+    var locked: Bool?
+    var authorName: String?
+    var authorAvatar: String?
+    var authorPlus: Int?
+    /// iCity viewer 判定用：被引篇作者 id / 是否为当前查看者本人（服务端按 viewer 下发；
+    /// 缺失时调用方按 fail-closed 处理，不凭正文非空推断作者身份）。
+    /// 默认 nil：本地构造引用体（如编辑器回传）可省略，解码缺失时同为 nil。
+    var authorId: Int? = nil
+    var isMine: Bool? = nil
+    /// 引用规则简化（2026-10-31）：后端直传的被引篇作者 handle（来源行用）与
+    /// 最近一次公开时间（locked 体区分曾公开/从未公开用；毫秒，nil 即从未公开）。
+    var authorHandle: String? = nil
+    var publishedAt: Int? = nil
+    /// 好友第一期：被引篇可见性三档（private/friends/public；服务端未透传时 nil，
+    /// 调用方按旧 locked/isPublic 口径兜底，绝不凭缺失推断为仅好友）。
+    var visibility: String? = nil
+    /// 审计 2026-11-02 第十节：被引篇限时到期戳（毫秒；服务端 attachQuotes 透传后
+    /// 判定可算有效态；缺失时调用方按 isPublic 原值兜底，绝不凭缺失推断已过期）。
+    var ephemeralUntil: Int? = nil
+
+    /// 引用有效公开态：公开且未过期；仅好友/私密/过期一律 false（fail-closed）。
+    var isEffectivelyPublic: Bool {
+        guard isPublic == true else { return false }
+        if let until = ephemeralUntil, until <= Int(Date().timeIntervalSince1970 * 1000) { return false }
+        return true
+    }
+}
+
+/// 全量同步落盘用：Entry 加 Encodable（只补编码能力，不改字段语义；
+/// 解码仍走 convertFromSnakeCase，编码配 convertToSnakeCase 往返）。
+/// 32 注销口径：后端下发的“已注销用户”在 App 界面统一显“用户已注销”
+/// （个人页／卡片／详情／时间线／引用卡／@ 行／通知同口径；后端原串不动，
+/// 网页仍显已注销用户，见 PR 说明残留）。
+func bearyDeletedAuthorDisplayName(_ raw: String?) -> String? {
+    raw == "已注销用户" ? "用户已注销" : raw
+}
+
+struct Entry: Codable {
+    var id: String?
+    var authorId: Int?
+    var authorName: String?
+    var authorAvatar: String?
+    var authorCover: String?
+    var authorPlus: Int?
+    var content: String?
+    /// A4-App（App 端标题，不依赖卡片渲染子项）：服务端 title 字段透传用；
+    /// 卡片渲染与空标题占位均未定，本处只做模型字段，不做任何展示回退。
+    var title: String?
+    var images: [String]?
+    /// 实况映射（服务端 live_videos，convertFromSnakeCase 直解）：静态图 key →
+    /// 视频 key（视频 key = 静态图 key + "_live"）；nil/空 = 旧纯静态图，按无
+    /// 实况处理。无实况的图不出现在映射里。
+    var liveVideos: [String: String]?
+    var imgDims: [String: [Int]]?
+    var mood: String?
+    var weather: String?
+    /// 天气气温（摄氏度整数，后端 temperature_c；字段未上线时服务端不回传即 nil，卡片不显示气温）。
+    var temperatureC: Int?
+    /// 批 E 日记位置（2026-11-14 Li 改版：地点改存经纬度，推翻方案 A 只存文本口径；
+    /// 服务端字段 location_name / location_district / location_lat / location_lng
+    /// 经 convertFromSnakeCase 直解；服务端未透传时为 nil，展示层按无位置处理）。
+    var locationName: String?
+    var locationDistrict: String?
+    /// 日记地点经纬度（2026-11-14 Li 定，见 BearyLocation.swift；旧日记无本字段时为 nil，
+    /// 只显示原存地名。埋藏定位仍只存区级名、不存经纬度，与本字段无关）。
+    var locationLatitude: Double?
+    var locationLongitude: Double?
+    var quoteId: String?
+    var quote: Quote?
+    var createdAt: Int?
+    var publishAt: Int?
+    /// 旧 B 方案公开倒计时截止（iCity 已废弃：服务端不再写 pending，字段仅保留解码兼容，
+    /// 不得再用于任何 UI 或门控判断；可见性唯一事实来源是 isPublic + publishedAt）。
+    var publishPendingUntil: Int?
+    var editDeadline: Int?
+    /// 冲突清单第 4 条：最后一次编辑时刻（毫秒，后端 updated_at；未编辑过为 nil）。
+    /// 公开内容凭它显示「编辑于 X」；卡片不加「已修订」标记。
+    var updatedAt: Int?
+    var isPublic: Bool?
+    /// iCity：最近一次公开时间（毫秒；私密态为 nil；服务端按 24 小时冷却刷新）。
+    var publishedAt: Int?
+    /// 好友第一期：可见性三档（private/friends/public；旧行缺失时 nil，调用方
+    /// 按 isPublic 兜底：true=公开、其余=私密，不把缺失误标为仅好友）。
+    var visibility: String?
+
+    /// 仅好友判定：只认显式 friends 值；缺失/其他值一律不算（fail-closed）。
+    var isFriendsOnly: Bool { visibility == "friends" }
+    /// 引用规则简化来源行：被引篇作者 handle（后端直传时才有；缺失时来源行不编造）。
+    var authorHandle: String? = nil
+    /// 限时日记：到期时间戳（毫秒）；nil = 非限时。存活期（now < 该值）才算限时态，
+    /// 到期后按普通私密渲染（见 BearyEphemeral）。
+    var ephemeralUntil: Int?
+    /// iCity @：被 @ 者 id（可空）与显示名（卡片/详情 @ 标签用）。
+    var mentionedUserId: Int?
+    var mentionedName: String?
+    var isLocked: Bool?
+    var isMine: Bool?
+    /// 日记置顶（后端并行施工中）：个人页 scope=author 列表下发 pinned 0/1 与
+    /// pinned_at（毫秒，null = 未置顶）；广场／时间线／搜索等其他列表不带置顶排序。
+    var pinned: Int?
+    var pinnedAt: Int?
+    /// 置顶判定：只认显式 1；缺失／其他值一律不算（fail-closed，与 isFriendsOnly 同口径）。
+    var isPinned: Bool { pinned == 1 }
+    /// 时间胶囊 v1：后端已部署字段（is_capsule 0/1、capsule_unlock_at 毫秒戳、
+    /// capsule_district 区级文本），convertFromSnakeCase 直解。
+    /// 注意：ios/Docs/time-capsule-fields.md 仍写旧名 capsule_buried /
+    /// capsule_unlock_date，那是错的，以此处为准（#1345 另行修正文档，本支不动它）。
+    var isCapsule: Int?
+    var capsuleUnlockAt: Int?
+    var capsuleDistrict: String?
+    /// 埋藏判定：只认显式 1（fail-closed，与 isPinned 同口径）。
+    var isCapsuleBuried: Bool { isCapsule == 1 }
+    /// iCity 私密占位：服务端对非作者的私密单篇只下发 {placeholder: true, id, published: 0}，
+    /// 详情页凭此只显一句“该日记已设为私密”，不带标题／封面／时间／作者名。
+    var placeholder: Bool?
+    var likeCount: Int?
+    var likedByMe: Bool?
+    var bookmarkedByMe: Bool?
+    var bookmarkCount: Int?
+    var bmAt: Int?
+    var recipientId: Int?
+    var recipientName: String?
+    var emotes: [EmoteCount]?
+}
+
+struct TlCounts: Decodable {
+    var total: Int?
+    var priv: Int?
+    var pub: Int?
+    var nextPub: Int?
+}
+
+struct EntryList: Decodable {
+    var entries: [Entry]?
+    // W12 立规矩：mailboxCount 里的 "mailbox" 是内部标识符（与服务端
+    // 字段口径对齐），不得进入任何用户侧字符串；字段名一律不改
+    // （测试与服务端口径在用）。用户侧文案已 grep 确认无“信箱”“出土”，
+    // 后续新增文案也不得复用该标识作展示文案。
+    var mailboxCount: Int?
+    var trashCount: Int?
+    var tlCounts: TlCounts?
+    var deliveredTotal: Int?
+    /// 旧广场附加字段（iCity 已删模块：客户端不再渲染它；字段仅保留解码兼容，
+    /// 服务端停发后自然为 nil）。
+    var recentPublished: [Entry]?
+}
+
+/// B 方案公开/取消响应：服务端 POST /publish 与 /publish/cancel 均返回
+/// {ok, publish_pending_until, published}（published 为 0/1 数字；取消成功时 publish_pending_until 为 null）。
+/// 旧公开/取消响应（iCity：调用方改走 setVisibility 的 VisibilityResponse；本结构仅保留解码兼容）。
+struct PublishResponse: Decodable {
+    var ok: Bool?
+    var publishPendingUntil: Int?
+    var published: Int?
+    var publishedAt: Int?
+}
+
+/// iCity 可见性切换响应：POST /beary/api/entries/:id/visibility → {published, published_at}。
+struct VisibilityResponse: Decodable {
+    var ok: Bool?
+    var published: Int?
+    var publishedAt: Int?
+    /// 好友第一期：切换后的实际可见性三档（服务端透传时调用方按它同步本地模型）。
+    var visibility: String?
+    /// 审计 2026-11-02 第十节：切换后的限时到期戳（毫秒；服务端透传时调用方按它
+    /// 同步本地模型；缺失 = 手动翻转已清限时标记，调用方写回 nil）。
+    var ephemeralUntil: Int?
+}
+
+/// iCity 举报响应：成功 {ok: true}；重复举报 {ok: true, duplicate: true, reported: true}。
+struct ReportResponse: Decodable {
+    var ok: Bool?
+    var duplicate: Bool?
+    var reported: Bool?
+}
+
+/// iCity 拉黑列表响应：{blocked: [ids]}（id 可能是数字或字符串，兼容两种写法）。
+struct BlocksResponse: Decodable {
+    var blocked: [Int]?
+
+    enum CodingKeys: String, CodingKey {
+        case blocked
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let ints = try? container.decode([Int].self, forKey: .blocked) {
+            blocked = ints
+        } else if let texts = try? container.decode([String].self, forKey: .blocked) {
+            blocked = texts.compactMap { Int($0) }
+        } else {
+            blocked = nil
+        }
+    }
+}
+
+/// 与过去的自己对话响应：列表 / 创建 / 撤回（模型见 BearyPastSelf.swift）。
+struct PastSelfListResponse: Decodable {
+    var messages: [PastSelfMessage]?
+}
+
+struct PastSelfCreateResponse: Decodable {
+    var ok: Bool?
+    var message: PastSelfMessage?
+}
+
+struct PastSelfOkResponse: Decodable {
+    var ok: Bool?
+}
+
+/// iCity 回收站恢复响应：服务端返回恢复后的实际可见性（published 0/1 或 is_public 二选一，
+/// 均缺失时调用方按“已恢复”通用文案 + 时间线重拉为准，不猜原态）。
+struct RestoreResponse: Decodable {
+    var ok: Bool?
+    var published: Int?
+    var isPublic: Bool?
+    /// 好友第一期：恢复后的实际可见性三档（服务端透传时调用方按它分流文案）。
+    var visibility: String?
+}
+
+struct NotificationItem: Codable {
+    var id: Int?
+    var type: String?
+    var emote: String?
+    var entryId: String?
+    var createdAt: Int?
+    var read: Bool?
+    var actorId: Int?
+    var actorName: String?
+    var actorAvatar: String?
+    var title: String?
+    var body: String?
+    var excerpt: String?
+}
+
+struct NotificationList: Decodable {
+    var items: [NotificationItem]?
+    var unread: Int?
+    var sysUnread: Int?
+    var total: Int?
+    /// D3-App 门控用服务端消息版本号：服务端实际下发 msg_version
+    /// （convertFromSnakeCase 解为 msgVersion）；审计 P2-19 前 App 只认
+    /// version/messageVersion，实测永远接不到，门控恒走 latestId 回落。
+    /// 三写法全兼容，优先 msgVersion。
+    var version: Int?
+    var messageVersion: Int?
+    var msgVersion: Int?
+}
+
+struct SearchUser: Decodable {
+    var id: Int?
+    var displayName: String?
+    var handle: String?
+    var avatarUrl: String?
+    var coverUrl: String?
+}
+
+struct SearchResult: Decodable {
+    var users: [SearchUser]?
+    var entries: [Entry]?
+    var mine: [Entry]?
+}
+
+struct ReferralInfo: Decodable {
+    var bound: Bool?
+    var bindOpen: Bool?
+    var bindDeadline: Int?
+    var invitedCount: Int?
+    var rewardMonths: Int?
+    var enabled: Bool?
+    var inviterName: String?
+    var status: String?
+    var boundAt: Int?
+}
+
+struct MeUser: Decodable {
+    var id: Int?
+    var email: String?
+    var displayName: String?
+    var handle: String?
+    var avatar: String?
+    var coverVer: Int?
+    var createdAt: Int?
+    var plus: Bool?
+    var plusUntil: Int?
+    var plusFree: Bool?
+    var isAdmin: Bool?
+    var inviteCode: String?
+    var referral: ReferralInfo?
+    /// F 批账号页补充（模型字段补充，BearyAPI.swift 不新增方法）：服务端旧版 /me 曾下发
+    /// serial_id（TD-000001 式），现行 /me 不再下发；字段留作可选，服务端将来恢复下发时
+    /// 账号页 ID 行直接显示它，未下发时账号页按 @handle / 数字 id 回退，绝不编造。
+    var serialId: String?
+}
+
+struct MeResponse: Decodable {
+    var user: MeUser?
+}
+
+/// 验码完整响应体（accounts /api/account/verify）。
+/// 成功：ok=true，另带 isNew 与 referral（邀请绑定结果，老用户带码登录时也可能有）；
+/// 注销冷静期：HTTP 200 但 ok 缺失，pendingDelete=true + deleteAt（毫秒时间戳），
+/// 调用方须二次确认后再带 confirmCancel 重调；失败体：error/message 由本文件
+/// verify() 转成 .server(展示文案)，不走通用 mapStatus（避免 401 清用户态）。
+struct VerifyReferral: Decodable {
+    var ok: Bool?
+    var status: String?
+    var error: String?
+}
+
+struct VerifyResponse: Decodable {
+    var ok: Bool?
+    var pendingDelete: Bool?
+    var deleteAt: Int?
+    var isNew: Bool?
+    var error: String?
+    var message: String?
+    var referral: VerifyReferral?
+}
+
+/// 回收站页（服务端 GET /beary/api/trash：{items, has_more}）。
+/// TrashItem / TrashPage 的唯一定义在本文件；BearyTrashViewController 只调方法，
+/// 不再自带同名模型（TR-3 收尾已去重）。
+/// 落盘用：Codable（解码沿用自定义 init 容 String/Int 两种 id；编码固定写 String id，
+/// 与 convertToSnakeCase 配对往返）；删帖进桶用 memberwise init 本地构造。
+struct TrashItem: Codable {
+    var id: String
+    var content: String?
+    var createdAt: Int?
+    var publishAt: Int?
+    /// iCity：回收站原可见性（服务端 trash 列表返回；旧行缺失时为 nil，恢复按私密处理）。
+    var published: Int?
+    /// 好友第一期：回收站原可见性三档（服务端透传时恢复文案/时间线 pill 按它走）。
+    var visibility: String?
+    var deletedAt: Int?
+    var daysLeft: Int?
+    /// 回收站原篇标题（服务端透传；旧缓存缺本键时按 nil 解码）。
+    var title: String? = nil
+    /// 回收站原篇图片 keys（服务端透传；App 只取数量，不下载旧图）。
+    var imageKeys: [String]? = nil
+
+    // CodingKeys 取 camelCase 名：BearyAPI 的 decoder 用 convertFromSnakeCase，
+    // 会把服务端 created_at/publish_at/deleted_at/days_left 转成这些名再匹配；
+    // 不要给它们写 snake_case rawValue，否则与策略叠加后匹配失败。
+    enum CodingKeys: String, CodingKey {
+        case id
+        case content
+        case createdAt
+        case publishAt
+        case published
+        case visibility
+        case deletedAt
+        case daysLeft
+        case title
+        case imageKeys = "images"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let textId = try? container.decode(String.self, forKey: .id) {
+            id = textId
+        } else if let numericId = try? container.decode(Int.self, forKey: .id) {
+            id = "\(numericId)"
+        } else {
+            // R16-14（收窄口径）：既不是字符串也不是整数的 id 不再回退为 ""，
+            // 改为抛出 DecodingError，阻止无效记录进入缓存（整页解码失败 →
+            // 请求走 failure，旧缓存保留、下次重拉，不写脏盘）。
+            // 空 id 发起恢复/删除已有入口守卫（BearyTrashViewController
+            // rowIdentifier 851、restoreTapped 1139、purgeTapped 1217），此处不重复加。
+            throw DecodingError.dataCorruptedError(forKey: .id, in: container, debugDescription: "TrashItem id 既不是字符串也不是整数，拒绝无效记录进缓存")
+        }
+        content = try container.decodeIfPresent(String.self, forKey: .content)
+        createdAt = try container.decodeIfPresent(Int.self, forKey: .createdAt)
+        publishAt = try container.decodeIfPresent(Int.self, forKey: .publishAt)
+        published = try container.decodeIfPresent(Int.self, forKey: .published)
+        visibility = try container.decodeIfPresent(String.self, forKey: .visibility)
+        deletedAt = try container.decodeIfPresent(Int.self, forKey: .deletedAt)
+        daysLeft = try container.decodeIfPresent(Int.self, forKey: .daysLeft)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        imageKeys = try container.decodeIfPresent([String].self, forKey: .imageKeys)
+    }
+
+    /// 本地构造（删帖进回收站桶）：id 即 entryIdentifier；deletedAt 为删除时刻毫秒，
+    /// daysLeft 按服务端 30 天保留口径；下次静默刷新用服务端值纠正残差。
+    /// title / imageKeys / visibility 由调用方从原 Entry 透传（R16-3：此前
+    /// memberwise init 不接收这三个字段，本地删帖进桶的条目从一开始就丢了
+    /// 标题与图片数，离线重读后 trashSummary 只能回落到正文/“无文字”）。
+    /// 质保三轮 T3-C1：published 也随 Entry 原值带上（共四字段），彻底删除后
+    /// 图片缓存精确逐出才有效；缺失时按 nil 由服务端纠正。
+    init(id: String, content: String?, createdAt: Int?, publishAt: Int?, deletedAt: Int?, daysLeft: Int?, published: Int? = nil, visibility: String? = nil, title: String? = nil, imageKeys: [String]? = nil) {
+        self.id = id
+        self.content = content
+        self.createdAt = createdAt
+        self.publishAt = publishAt
+        self.published = published
+        self.visibility = visibility
+        self.deletedAt = deletedAt
+        self.daysLeft = daysLeft
+        self.title = title
+        self.imageKeys = imageKeys
+    }
+
+    /// 落盘编码：id 固定写 String（解码端 String 分支命中）；其余字段与解码同名，
+    /// 编码策略 convertToSnakeCase 与解码端 convertFromSnakeCase 配对。
+    /// 第十轮 03：title 与 imageKeys 也写回——旧版 encode 漏了这两字段，
+    /// trash.json 往返即丢（回收站标题退化成正文摘要、彻底删除后图片缓存
+    /// 精确逐出失效）；解码端已是 decodeIfPresent，旧缓存缺键仍能读。
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(content, forKey: .content)
+        try container.encodeIfPresent(createdAt, forKey: .createdAt)
+        try container.encodeIfPresent(publishAt, forKey: .publishAt)
+        try container.encodeIfPresent(published, forKey: .published)
+        try container.encodeIfPresent(visibility, forKey: .visibility)
+        try container.encodeIfPresent(deletedAt, forKey: .deletedAt)
+        try container.encodeIfPresent(daysLeft, forKey: .daysLeft)
+        try container.encodeIfPresent(title, forKey: .title)
+        try container.encodeIfPresent(imageKeys, forKey: .imageKeys)
+    }
+}
+
+struct TrashPage: Decodable {
+    var items: [TrashItem]
+    var hasMore: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case items
+        case hasMore
+    }
+
+    /// R16-13：必需字段严格解码——items / hasMore 缺失即抛解码失败，
+    /// 经 request 走 .failure(.decoding)，同步腿中止、UI 腿走失败态，
+    /// 原本地回收站快照保留，绝不默认 [] / false 后整桶覆写 trash.json。
+    /// 此前 decodeIfPresent ?? [] / ?? false 会把异常响应当成“回收站为空”。
+    /// 服务端 GET /beary/api/trash 恒下发 {items, has_more}（worker.js
+    /// 实证），正常响应不受影响。同步腿不读 hasMore（只用 items.count < 50
+    /// 作末页判断），UI 腿读它——缺失时两条腿都应失败，而非各取默认值。
+    /// 与 R16-4 同一类防护（分页响应缺失必需字段即失败、保旧快照）、
+    /// 不同数据桶：entries 字段在其他调用方处合法缺失故只能在同步调用
+    /// 点守卫，TrashPage 只被回收站两条腿消费故可直接在解码层收紧。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        items = try container.decode([TrashItem].self, forKey: .items)
+        hasMore = try container.decode(Bool.self, forKey: .hasMore)
+    }
+}
+
+/// 邀请补绑响应（accounts POST /api/account/referral/bind：{ok, status}）。
+struct ReferralBindResponse: Decodable {
+    var ok: Bool?
+    var status: String?
+    var error: String?
+    var message: String?
+}
+
+struct ServerErrorBody: Decodable {
+    var error: String?
+    var message: String?
+    /// /me 401 体带 reason（expired/kicked/banned）；其余接口无此字段时为 nil。
+    var reason: String?
+}
+
+// MARK: - 客户端
+
+final class BearyAPI {
+    static let shared = BearyAPI()
+
+    /// 401 时调用（SessionManager 接管：清本地用户态；界面层可再接登录页）。
+    var onUnauthorized: (() -> Void)?
+
+    /// 账号隔离 3 号：鉴权代际。SessionManager 在权威登录态变迁时
+    /// bumpAuthEpoch()；request/requestVoid 在发起时捕获当前值，回包 401
+    /// 时 epoch 已变说明请求属于旧登录态，只返回 .unauthorized，不触发
+    /// onUnauthorized（旧 401 不得把新账号界面切成未登录）。
+    /// 账号隔离改造：epoch 与 authAccountId 同属鉴权态，统一走一条串行
+    /// 队列读写（发起线程、回包后台线程、主线程三方都不再直接碰存储值）；
+    /// authAccountId 由 SessionManager 在每次权威提交/清态时同步设置，
+    /// 发布重试前同时比对两者，任一变化即停重试（见 requestAttempt）。
+    private var _authEpoch = 0
+    private var _authAccountId: Int?
+    private let authStateQueue = DispatchQueue(label: "com.teddyhn.beary.authState")
+
+    var authEpoch: Int {
+        authStateQueue.sync { _authEpoch }
+    }
+
+    var authAccountId: Int? {
+        authStateQueue.sync { _authAccountId }
+    }
+
+    func bumpAuthEpoch() {
+        authStateQueue.sync { _authEpoch += 1 }
+    }
+
+    /// 第 7 轮 #7：加载回包过期判定（账号 ID + 鉴权代次双重校验）。
+    /// 只比账号 ID 不够：A→B→A 快切后旧 A 请求回包时账号 ID 再次
+    /// 相等，会通过旧校验、把过期数据写回新列表；authEpoch 在每次
+    /// 权威登录态变迁时单调 +1（见 SessionManager），两次切号后
+    /// 代次已变，旧回包凭代次丢弃。调用方在请求发起时同时捕获
+    /// （账号 ID，authEpoch），回包时凭本方法判定；纯函数，可用
+    /// 可控代次单测复现（见 BearyCoreTests 的
+    /// BearyAccountLoadStalenessTests）。
+    static func isStaleAccountLoad(requestAccountId: Int?, requestEpoch: Int, currentAccountId: Int?, currentEpoch: Int) -> Bool {
+        requestAccountId != currentAccountId || requestEpoch != currentEpoch
+    }
+
+    /// 权威登录态提交/清态时同步更新账号身份（SessionManager 调用，
+    /// 与 bumpAuthEpoch 同队列；nil = 无当前账号）。不走本方法只 bump
+    /// epoch 的旧路径一律补上本调用，否则重试前的账号比对永远对不上。
+    func setAuthAccountId(_ id: Int?) {
+        authStateQueue.sync { _authAccountId = id }
+    }
+
+    /// 固定站点域名字面量恒可解析，故此处一次 force unwrap 安全，调用处一律用本常量。
+    private static let baseURL = URL(string: "https://teddyhn.com")!
+    private let session: URLSession
+    private let decoder: JSONDecoder
+
+    /// B2：查关系在途去重表（见 fetchFollowState）与串行队列——主页、
+    /// 通知卡等各处同时查同一人时只发一条请求，回包分发给所有等在途者。
+    private var inFlightFollowStates: [Int: [(Result<FollowStateResponse, APIError>) -> Void]] = [:]
+    private let followStateQueue = DispatchQueue(label: "beary.followState")
+
+    /// 秒开-网络层：API 专用会话（不再用 URLSession.shared）。
+    /// 同一会话对象全 App 复用，同一 host（teddyhn.com）上的请求共享
+    /// keep-alive 连接池与 HTTP/2 多路复用，不再每类请求各建连接；
+    /// 每 host 6 并发与图片加载器同口径（见 BearyImageLoader），避免
+    /// 连接抖动。cookie 仍走共享 HTTPCookieStorage，登录 cookie 流程不变。
+    /// urlCache = nil：JSON 回包服务端一律 private, no-store，URLCache
+    /// 本就存不下；显式关掉可防止账号无关的共享缓存层误持私密体。
+    /// 注意：这里绝不手动设 Accept-Encoding——系统不设时自动协商
+    /// gzip/deflate/br 并透明解压；手动设会关掉透明解压，回包 gzip
+    /// 字节将直接进 JSON 解码而失败。压缩收益来自服务端（见后端
+    /// 秒开-网络层 patch 的 json() gzip 分支），App 侧零改动即享。
+    /// 上传进度 delegate：只实现 didSendBodyData（上传字节回调）与
+    /// didCompleteWithError（清掉已完成任务的登记）。
+    /// 其余 delegate 方法一律不实现——回包、鉴权、重定向等行为与无
+    /// delegate 时完全一致；尤其不实现 didReceive data/response，
+    /// 否则 completion-handler 任务收不到回包体。
+    /// 回调在会话自建的 delegate 队列（串行）上触发，登记表用锁保护；
+    /// 进度闭包由调用方自己 hop 到主线程。
+    final class BearyUploadProgressDelegate: NSObject, URLSessionTaskDelegate {
+        private var handlers: [Int: (Int64, Int64) -> Void] = [:]
+        private let lock = NSLock()
+
+        func observe(task: URLSessionTask, handler: @escaping (Int64, Int64) -> Void) {
+            lock.lock()
+            handlers[task.taskIdentifier] = handler
+            lock.unlock()
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+            lock.lock()
+            let handler = handlers[task.taskIdentifier]
+            lock.unlock()
+            handler?(totalBytesSent, totalBytesExpectedToSend)
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            lock.lock()
+            handlers.removeValue(forKey: task.taskIdentifier)
+            lock.unlock()
+        }
+    }
+
+    /// 上传进度登记表（单例会话共用；注入会话无 delegate 时 observe 只是登记、
+    /// 永远不回调，调用方进度停在估计值、完成时跳终值）。
+    static let uploadProgressDelegate = BearyUploadProgressDelegate()
+
+    static func makeDedicatedSession() -> URLSession {
+        let config = URLSessionConfiguration.default
+        config.httpMaximumConnectionsPerHost = 6
+        config.httpCookieStorage = HTTPCookieStorage.shared
+        config.httpCookieAcceptPolicy = .always
+        config.httpShouldSetCookies = true
+        config.urlCache = nil
+        return URLSession(configuration: config, delegate: uploadProgressDelegate, delegateQueue: nil)
+    }
+
+    init(session: URLSession? = nil) {
+        self.session = session ?? Self.makeDedicatedSession()
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        self.decoder = d
+    }
+
+    /// PastSelf 专用的 plain 解码器（不带 convertFromSnakeCase）。
+    /// PastSelfMessage 用显式 snake_case CodingKeys，与全局 convert 解码器
+    /// 叠加会 keyNotFound；PastSelf 三个端点的成功体只走本解码器，
+    /// 错误体仍走全局 decoder，全局 decoder 本身不动（其余类型依赖它）。
+    private static let pastSelfDecoder = JSONDecoder()
+
+    enum Scope {
+        case plaza
+        case delivered
+        case timeline
+        case mine
+        // W12 立规矩：mailbox 是内部 scope 标识（服务端口径），rawValue
+        // "mailbox" 一律不改，不得进入任何用户侧字符串（见 mailboxCount 处注释）。
+        case mailbox
+        case author(Int)
+        case authorLiked(Int)
+        case saved
+        case liked
+        /// 好友第一期：好友栏 scope（好友的公开 + 仅好友篇，created_at DESC；不走广场快照）。
+        case friends
+        /// 关注流 scope（我关注的人的公开篇，published_at DESC；不走广场快照）。
+        case following
+        var rawValue: String {
+            switch self {
+            case .plaza: return "plaza"
+            case .delivered: return "delivered"
+            case .timeline: return "timeline"
+            case .mine: return "mine"
+            case .mailbox: return "mailbox"
+            case .author: return "author"
+            case .authorLiked: return "author_liked"
+            case .saved: return "saved"
+            case .liked: return "liked"
+            case .friends: return "friends"
+            case .following: return "following"
+            }
+        }
+        var authorId: Int? {
+            switch self {
+            case .author(let id): return id
+            case .authorLiked(let id): return id
+            default: return nil
+            }
+        }
+    }
+
+    /// 5-28 端点超时（只覆盖上传与发布两个长耗时端点，其余走 URLSession 默认 60s）：
+    /// 上传为 base64 dataURL 大体（原图 ≤5MB + 缩略图 ≤2MB，编码后更大），
+    /// 慢网下默认 60s 不够；发布体小但服务端落库 + 幂等校验，同样放宽。
+    /// 显式 timeout 参数优先于本表；上传/发布方法本体在 BearyNativeCommon
+    /// 的 BearyAPI 扩展里，调用方不传 timeout 即自动命中本表，无需改调用方。
+    private static let uploadTimeout: TimeInterval = 180
+    private static let publishTimeout: TimeInterval = 120
+    private func defaultTimeout(for path: String, method: String) -> TimeInterval? {
+        if method == "POST" && path == "/beary/api/images/upload" { return Self.uploadTimeout }
+        if method == "POST" && path == "/beary/api/entries" { return Self.publishTimeout }
+        return nil
+    }
+
+    // 原始请求：只负责发请求，不做业务映射
+    private func perform(
+        _ path: String,
+        query: [String: String] = [:],
+        method: String = "GET",
+        jsonBody: [String: Any]? = nil,
+        timeout: TimeInterval? = nil,
+        onUploadProgress: ((Int64, Int64) -> Void)? = nil,
+        completion: @escaping (Data?, Int, Error?) -> Void
+    ) -> URLSessionDataTask? {
+        guard var url = URL(string: path, relativeTo: Self.baseURL)?.absoluteURL else {
+            completion(nil, 0, nil)
+            return nil
+        }
+        if !query.isEmpty {
+            var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            comps?.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
+            if let u = comps?.url { url = u }
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        if let t = timeout ?? defaultTimeout(for: path, method: method) {
+            req.timeoutInterval = t
+        }
+        req.setValue("https://teddyhn.com", forHTTPHeaderField: "Origin")
+        if let body = jsonBody {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        }
+        let task = session.dataTask(with: req) { data, response, error in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            // 反馈日志：只记方法 + path + 状态码（path 本身不含 query，见 perform
+            // 入参；query / body / header 一律不记，见 BearyAppLog 排除清单）。
+            BearyAppLog.api(method: method, path: path, status: status)
+            completion(data, status, error)
+        }
+        // 上传进度：在 resume 之前登记，首个 didSendBodyData 即进回调，不丢拍。
+        if let onUploadProgress {
+            Self.uploadProgressDelegate.observe(task: task, handler: onUploadProgress)
+        }
+        task.resume()
+        return task
+    }
+
+    // MARK: - 显式凭据请求（账号隔离改造）
+
+    /// 隔离会话：ephemeral + 不接共享 cookie 存储 + 不自动存取 cookie。
+    /// 显式凭据请求只走这里：既不读共享桶里的当前账号 cookie，也不在
+    /// 回包时把服务端 Set-Cookie 写进共享桶——切换预检与非当前账号移除
+    /// 在途时，后台的正常请求仍按原账号 cookie 发，不会串号。
+    /// 注意：init 注入的 session 只影响共享路径；隔离路径恒用本会话，
+    /// 即使测试注入了共享 session 也不会污染。
+    private static let isolatedSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        return URLSession(configuration: config)
+    }()
+
+    /// 显式凭据原始请求：与 perform 同构，唯一区别是凭据来源——
+    /// 不靠共享 CookieStorage，请求头显式带 Cookie: teddy_session=<token>。
+    /// token 来自钥匙串保管库（本机已保存账号），不经任何其他账号的
+    /// cookie；服务端 Set-Cookie（若有）因 httpShouldSetCookies=false
+    /// 不会落进共享桶。
+    private func performIsolated(
+        _ path: String,
+        query: [String: String] = [:],
+        method: String = "GET",
+        jsonBody: [String: Any]? = nil,
+        token: String,
+        timeout: TimeInterval? = nil,
+        completion: @escaping (Data?, Int, Error?) -> Void
+    ) -> URLSessionDataTask? {
+        guard var url = URL(string: path, relativeTo: Self.baseURL)?.absoluteURL else {
+            completion(nil, 0, nil)
+            return nil
+        }
+        if !query.isEmpty {
+            var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            comps?.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
+            if let u = comps?.url { url = u }
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        if let t = timeout ?? defaultTimeout(for: path, method: method) {
+            req.timeoutInterval = t
+        }
+        req.setValue("https://teddyhn.com", forHTTPHeaderField: "Origin")
+        req.setValue("teddy_session=\(token)", forHTTPHeaderField: "Cookie")
+        if let body = jsonBody {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        }
+        let task = Self.isolatedSession.dataTask(with: req) { data, response, error in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            BearyAppLog.api(method: method, path: path, status: status)
+            completion(data, status, error)
+        }
+        task.resume()
+        return task
+    }
+
+    /// 显式凭据通用请求：只给隔离路径（切换预检、移除、导出）用。
+    /// 401 一律只返回 .unauthorized，永不触发 onUnauthorized（隔离请求
+    /// 的 401 只说明目标账号会话已死，不得清当前账号的登录态）。
+    /// 不做发布重试（隔离路径没有发布调用方；重试只属于共享路径的
+    /// request/requestAttempt，见该处账号比对守卫）。
+    func requestWithToken<T: Decodable>(
+        _ path: String,
+        query: [String: String] = [:],
+        method: String = "GET",
+        jsonBody: [String: Any]? = nil,
+        token: String,
+        timeout: TimeInterval? = nil,
+        completion: @escaping (Result<T, APIError>) -> Void
+    ) -> URLSessionDataTask? {
+        // 开发者模式网络模拟（仅内存）：断网 / 500 直接失败、不发请求（绕开重试）；
+        // 弱网把最终回包延迟 2.5 秒再调。登录验证码直调 perform，不在模拟内。
+        switch BearyDevPreviewState.networkSimulation {
+        case .offline:
+            completion(.failure(.network(URLError(.notConnectedToInternet))))
+            return nil
+        case .serverError:
+            completion(.failure(.http(500, "开发者模式模拟：接口报错")))
+            return nil
+        case .slow, .normal:
+            break
+        }
+        let outerCompletion = completion
+        let completion: (Result<T, APIError>) -> Void = BearyDevPreviewState.networkSimulation == .slow
+            ? { result in DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { outerCompletion(result) } }
+            : outerCompletion
+        return performIsolated(path, query: query, method: method, jsonBody: jsonBody, token: token, timeout: timeout) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let e = error as NSError?, e.code == NSURLErrorCancelled { completion(.failure(.cancelled)); return }
+            if let e = error { completion(.failure(.network(e))); return }
+            if status == 401 { completion(.failure(.unauthorized)); return }
+            if status == 404 { completion(.failure(.notFound)); return }
+            if !(200...299).contains(status) {
+                if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
+                    completion(.failure(.server(code, status))); return
+                }
+                completion(.failure(.http(status, self.errorSnippet(from: data)))); return
+            }
+            guard let data = data else { completion(.failure(.http(status, nil))); return }
+            do {
+                completion(.success(try self.decoder.decode(T.self, from: data)))
+            } catch {
+                completion(.failure(.decoding(error)))
+            }
+        }
+    }
+
+    /// 切换预检专用 /me：与 fetchMe 同解码口径（带 reason 的 401 透传
+    /// .authFailure、无 reason 的 401 回 nil），但走隔离请求、不读不写
+    /// 共享 cookie、不触发 onUnauthorized。调用方（SessionManager）只
+    /// 在回包 user.id 与目标一致时才统一提交切换，失败时原账号原样不动。
+    func fetchMeWithToken(_ token: String, completion: @escaping (Result<MeUser?, APIError>) -> Void) {
+        performIsolated("/api/account/me", method: "GET", token: token) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let e = error as NSError?, e.code == NSURLErrorCancelled { completion(.failure(.cancelled)); return }
+            if let e = error { completion(.failure(.network(e))); return }
+            if status == 401 {
+                if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data),
+                   let reason = eb.reason, !reason.isEmpty {
+                    completion(.failure(.authFailure(reason: reason, message: eb.message)))
+                } else {
+                    completion(.success(nil))
+                }
+                return
+            }
+            guard (200...299).contains(status), let data = data else {
+                if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
+                    completion(.failure(.server(code, status)))
+                } else {
+                    completion(.failure(.http(status, self.errorSnippet(from: data))))
+                }
+                return
+            }
+            do {
+                completion(.success(try self.decoder.decode(MeResponse.self, from: data).user))
+            } catch {
+                completion(.failure(.decoding(error)))
+            }
+        }
+    }
+
+    /// 非当前账号移除专用登出：POST /beary/api/logout 走隔离请求，
+    /// 只清目标账号的服务端会话；401 同样算成功（会话已死，无需再清）。
+    /// 成功/失败都不碰共享 cookie 与 currentUser，调用方只在成功时删保管库项。
+    func logoutWithToken(_ token: String, completion: @escaping (Result<Void, APIError>) -> Void) {
+        performIsolated("/beary/api/logout", method: "POST", token: token) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let e = error as NSError?, e.code == NSURLErrorCancelled { completion(.failure(.cancelled)); return }
+            if let e = error { completion(.failure(.network(e))); return }
+            if status == 401 { completion(.success(())); return }
+            if !(200...299).contains(status) {
+                if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
+                    completion(.failure(.server(code, status))); return
+                }
+                completion(.failure(.http(status, self.errorSnippet(from: data)))); return
+            }
+            completion(.success(()))
+        }
+    }
+
+    /// 导出专用分页取数：与 fetchEntries 同 query 口径（scope/limit/
+    /// before/before_id），但走隔离请求、凭据固定为导出账号的 token。
+    /// 导出链在每步边界另做账号变化检查（见设置页）；本方法本身不判
+    /// 断当前账号，只保证发出的数据恒属 token 账号。
+    func fetchEntriesWithToken(
+        _ token: String,
+        scope: Scope,
+        limit: Int = 20,
+        before: Int? = nil,
+        beforeId: String? = nil,
+        completion: @escaping (Result<EntryList, APIError>) -> Void
+    ) {
+        var q: [String: String] = ["scope": scope.rawValue, "limit": "\(min(max(limit, 1), 50))"]
+        if let b = before { q["before"] = "\(b)" }
+        if let bid = beforeId { q["before_id"] = bid }
+        if let aid = scope.authorId { q["author_id"] = "\(aid)" }
+        requestWithToken("/beary/api/entries", query: q, token: token, completion: completion)
+    }
+
+    // 状态码分流（401/404/业务错误码/HTTP 错误共用；401 默认通知 onUnauthorized，
+    // suppressUnauthorized 为真时只返回 .unauthorized，不触发 onUnauthorized；
+    // 账号隔离 3 号：epoch 与发起时不一致时同样只返回、不触发）。
+    private func mapStatus(_ status: Int, data: Data?, error: Error?, suppressUnauthorized: Bool = false, epoch: Int? = nil) -> APIError? {
+        if let e = error as NSError?, e.code == NSURLErrorCancelled { return .cancelled }
+        if let e = error { return .network(e) }
+        if status == 401 {
+            if !suppressUnauthorized, epoch == nil || epoch == authEpoch { onUnauthorized?() }
+            return .unauthorized
+        }
+        if status == 404 { return .notFound }
+        if !(200...299).contains(status) {
+            if let data = data, let eb = try? decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
+                return .server(code, status)
+            }
+            return .http(status, errorSnippet(from: data))
+        }
+        return nil
+    }
+
+    /// 5-31：非标准错误体的原始信息片段（截断 120 字，供 toast/日志用）。
+    /// 优先体里的 message / error 文本（error 码已在上层升 .server 时用过，
+    /// 走到这里说明 error 为空，此时 message 仍有价值），否则原始体文本；
+    /// 空体 / 非文本体返回 nil。只做信息携带，不改任何分流。
+    private func errorSnippet(from data: Data?) -> String? {
+        guard let data = data, !data.isEmpty else { return nil }
+        if let eb = try? decoder.decode(ServerErrorBody.self, from: data) {
+            for text in [eb.message, eb.error] {
+                if let t = text?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
+                    return String(t.prefix(120))
+                }
+            }
+        }
+        guard let raw = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else { return nil }
+        return String(raw.prefix(120))
+    }
+
+    /// 5-28 发布重试可重试的失败：网络失败（请求未达或回包丢失，服务端
+    /// 即使已落库也有 clientReq 幂等兜底）、5xx，以及 408/429（移动网关
+    /// 伪超时/限流，稍后重发可成功）。401 / 404 / 业务码
+    /// （create_dup 等）/ 解析失败不重试：前者重发无意义且 401 回调不得
+    /// 重复触发，后者靠调用方手动重试（草稿 clientReq 全程复用）。
+    private static func isTransientPublishError(_ error: APIError) -> Bool {
+        switch error {
+        case .network: return true
+        case .http(let status, _): return status >= 500 || status == 408 || status == 429
+        default: return false
+        }
+    }
+
+    @discardableResult
+    func request<T: Decodable>(
+        _ path: String,
+        query: [String: String] = [:],
+        method: String = "GET",
+        jsonBody: [String: Any]? = nil,
+        suppressUnauthorized: Bool = false,
+        timeout: TimeInterval? = nil,
+        payloadDecoder: JSONDecoder? = nil,
+        uploadProgress: ((Int64, Int64) -> Void)? = nil,
+        completion: @escaping (Result<T, APIError>) -> Void
+    ) -> URLSessionDataTask? {
+        let epoch = authEpoch
+        let accountId = authAccountId
+        // 开发者模式网络模拟（仅内存）：断网 / 500 直接失败、不发请求（绕开重试）；
+        // 弱网把最终回包延迟 2.5 秒再调。登录验证码直调 perform，不在模拟内。
+        switch BearyDevPreviewState.networkSimulation {
+        case .offline:
+            completion(.failure(.network(URLError(.notConnectedToInternet))))
+            return nil
+        case .serverError:
+            completion(.failure(.http(500, "开发者模式模拟：接口报错")))
+            return nil
+        case .slow, .normal:
+            break
+        }
+        let outerCompletion = completion
+        let completion: (Result<T, APIError>) -> Void = BearyDevPreviewState.networkSimulation == .slow
+            ? { result in DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { outerCompletion(result) } }
+            : outerCompletion
+        // 审计-性能：重试口径统一收进这里。
+        // 发布（POST /beary/api/entries，publishEntry 唯一调用方）指数退避
+        // 重试最多 3 次（1s→2s→4s，原“立即重试 1 次”改为退避序列）；
+        // GET 统一重试 1 次、仅网络错误（读请求幂等，5xx 不重试，避免把
+        // 服务端压力放大一倍）；上传（POST /beary/api/images/upload）
+        // 只加超时、不重试（重发会重复落图）。
+        // 返回值是首发任务，重试任务不经返回值返回（发布流程不中途取消
+        // 在途请求）；epoch 沿用首发值，账户已切换时重试回包的 401 同样
+        // 被 epoch 守卫压住，不踢新号。
+        // 账号隔离改造：首发同时捕获 authAccountId；重试前重比 epoch 与
+        // 账号，任一变化即停重试（原失败原样返回，不再用新账号的共享
+        // cookie 重发——首发与重试之间切号是本改造要堵的串号口）。
+        // epoch 401 压制逻辑（mapStatus）同样原样保留。
+        // payloadDecoder 仅改成功体解码器（默认全局 decoder）；错误体与
+        // mapStatus 仍走全局 decoder，不受本参数影响。
+        let isPublish = (method == "POST" && path == "/beary/api/entries")
+        let retriesLeft = isPublish ? 3 : (method == "GET" ? 1 : 0)
+        return requestAttempt(path, query: query, method: method, jsonBody: jsonBody,
+                              suppressUnauthorized: suppressUnauthorized, timeout: timeout,
+                              epoch: epoch, accountId: accountId,
+                              retriesLeft: retriesLeft, retryBackoff: isPublish, retryDelay: 0,
+                              payloadDecoder: payloadDecoder,
+                              uploadProgress: uploadProgress,
+                              completion: completion)
+    }
+
+    private func requestAttempt<T: Decodable>(
+        _ path: String,
+        query: [String: String],
+        method: String,
+        jsonBody: [String: Any]?,
+        suppressUnauthorized: Bool,
+        timeout: TimeInterval?,
+        epoch: Int,
+        accountId: Int?,
+        retriesLeft: Int,
+        retryBackoff: Bool,
+        retryDelay: TimeInterval,
+        payloadDecoder: JSONDecoder?,
+        uploadProgress: ((Int64, Int64) -> Void)? = nil,
+        completion: @escaping (Result<T, APIError>) -> Void
+    ) -> URLSessionDataTask? {
+        return perform(path, query: query, method: method, jsonBody: jsonBody, timeout: timeout, onUploadProgress: uploadProgress) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let apiErr = self.mapStatus(status, data: data, error: error, suppressUnauthorized: suppressUnauthorized, epoch: epoch) {
+                // 审计-性能：重试条件按通道分流——发布走网络错误、5xx
+                // 与 408/429，GET 只走网络错误；退避只属于发布（1s→2s→4s，上限 4s），
+                // GET 重试立即发（单次、读请求，延迟收益低）。
+                let retryable: Bool
+                if retryBackoff {
+                    retryable = Self.isTransientPublishError(apiErr)
+                } else if case .network = apiErr {
+                    retryable = true
+                } else {
+                    retryable = false
+                }
+                if retriesLeft > 0 && retryable {
+                    // 重试前比对：epoch 或账号任一已变（切换/退出/新登录
+                    // 都推 epoch 并重设账号），说明共享 cookie 已不属于
+                    // 首发账号——停重试，原失败原样返回，不重发、不补 401。
+                    if epoch == self.authEpoch && accountId == self.authAccountId {
+                        let nextDelay: TimeInterval = retryBackoff ? (retryDelay == 0 ? 1 : min(retryDelay * 2, 4)) : 0
+                        let retryBlock = { [weak self] in
+                            guard let self = self else { return }
+                            // 退避等待期间切号同样停重试：等待结束时再比一次。
+                            guard epoch == self.authEpoch && accountId == self.authAccountId else {
+                                completion(.failure(apiErr))
+                                return
+                            }
+                            _ = self.requestAttempt(path, query: query, method: method, jsonBody: jsonBody,
+                                                    suppressUnauthorized: suppressUnauthorized, timeout: timeout,
+                                                    epoch: epoch, accountId: accountId,
+                                                    retriesLeft: retriesLeft - 1, retryBackoff: retryBackoff, retryDelay: nextDelay,
+                                                    payloadDecoder: payloadDecoder, uploadProgress: uploadProgress, completion: completion)
+                        }
+                        if nextDelay > 0 {
+                            DispatchQueue.global().asyncAfter(deadline: .now() + nextDelay, execute: retryBlock)
+                        } else {
+                            retryBlock()
+                        }
+                        return
+                    }
+                }
+                completion(.failure(apiErr))
+                return
+            }
+            guard let data = data else {
+                completion(.failure(.http(status, nil)))
+                return
+            }
+            do {
+                completion(.success(try (payloadDecoder ?? self.decoder).decode(T.self, from: data)))
+            } catch {
+                completion(.failure(.decoding(error)))
+            }
+        }
+    }
+
+    /// 无 body 响应请求：只看状态码（标已读、退出、删帖、回收站恢复/彻底删除等）。
+    /// 发码/验码不用它（它们要透传服务端 message 并返回完整响应体，见下方专法）。
+    @discardableResult
+    func requestVoid(
+        _ path: String,
+        query: [String: String] = [:],
+        method: String = "GET",
+        jsonBody: [String: Any]? = nil,
+        suppressUnauthorized: Bool = false,
+        completion: @escaping (Result<Void, APIError>) -> Void
+    ) -> URLSessionDataTask? {
+        let epoch = authEpoch
+        // 开发者模式网络模拟（仅内存）：断网 / 500 直接失败、不发请求；
+        // 弱网把最终回包延迟 2.5 秒再调。登录验证码直调 perform，不在模拟内。
+        switch BearyDevPreviewState.networkSimulation {
+        case .offline:
+            completion(.failure(.network(URLError(.notConnectedToInternet))))
+            return nil
+        case .serverError:
+            completion(.failure(.http(500, "开发者模式模拟：接口报错")))
+            return nil
+        case .slow, .normal:
+            break
+        }
+        let outerCompletion = completion
+        let completion: (Result<Void, APIError>) -> Void = BearyDevPreviewState.networkSimulation == .slow
+            ? { result in DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { outerCompletion(result) } }
+            : outerCompletion
+        return perform(path, query: query, method: method, jsonBody: jsonBody) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let apiErr = self.mapStatus(status, data: data, error: error, suppressUnauthorized: suppressUnauthorized, epoch: epoch) {
+                completion(.failure(apiErr))
+                return
+            }
+            completion(.success(()))
+        }
+    }
+
+    // MARK: - 日记
+
+    func fetchEntries(
+        scope: Scope,
+        limit: Int = 20,
+        before: Int? = nil,
+        beforeId: String? = nil,
+        since: Int? = nil,
+        sinceId: String? = nil,
+        vis: String? = nil,
+        completion: @escaping (Result<EntryList, APIError>) -> Void
+    ) {
+        var q: [String: String] = ["scope": scope.rawValue, "limit": "\(min(max(limit, 1), 50))"]
+        // 时间线可见性筛子（scope=timeline）：vis=all 时不发参数（= 缺省口径，
+        // 默认请求与旧请求一字不差）；其余四档才发 vis，避免旧服务端误解。
+        if let v = vis, !v.isEmpty { q["vis"] = v }
+        // 113 since 契约：since=<毫秒时间戳> + 可选 since_id 决胜，排序仍 DESC；
+        // plaza=published_at、saved=bm.created_at、其余=created_at（游标取数是调用方责任）；
+        // 不带 since 的请求一字不动；since 与 before 同传 400——故 since 在途时
+        // 一律不发 before/before_id（调用方误传也由本处压住，不发 400 请求）。
+        if let s = since {
+            q["since"] = "\(s)"
+            if let sid = sinceId, !sid.isEmpty { q["since_id"] = sid }
+        } else {
+            if let b = before { q["before"] = "\(b)" }
+            if let bid = beforeId { q["before_id"] = bid }
+        }
+        if let aid = scope.authorId { q["author_id"] = "\(aid)" }
+        request("/beary/api/entries", query: q, completion: completion)
+    }
+
+    /// 113 since 增量取数（含截断 gap-fill）：首发 since 一页（limit 50 封顶）；
+    /// 未截断（< limit）即返回；截断时（== limit）以末条为 before 游标向后
+    /// 续拉，直到撞见 knownIds（旧表头）或页不满或最多再拉 4 页——>50 条新篇
+    /// 的缺口由此补齐，不靠下次刷新（下次游标已是最新，缺口永不到）。
+    /// gap-fill 页失败时返回已收集到的新篇（不整批作废）；首发 since 失败时
+    /// 原样返回失败，调用方回落全量口径。sortKey 由调用方按 scope 给
+    /// （plaza=publishedAt、saved=bmAt、其余=createdAt），取不到游标时停拉。
+    /// 返回首包 EntryList 供调用方取计数（since 回包仅不含 recent_published）。
+    func fetchEntriesSince(
+        scope: Scope,
+        since: Int,
+        sinceId: String?,
+        sortKey: @escaping (Entry) -> Int?,
+        knownIds: Set<String>,
+        vis: String? = nil,
+        completion: @escaping (Result<([Entry], EntryList), APIError>) -> Void
+    ) {
+        fetchEntries(scope: scope, limit: 50, since: since, sinceId: sinceId, vis: vis) { [weak self] result in
+            guard let strongSelf = self else { return }
+            switch result {
+            case .failure(let error):
+                completion(.failure(error))
+            case .success(let list):
+                let collected = list.entries ?? []
+                guard collected.count >= 50 else {
+                    completion(.success((collected, list)))
+                    return
+                }
+                strongSelf.fetchSinceGap(
+                    scope: scope, sortKey: sortKey, knownIds: knownIds,
+                    collected: collected, firstList: list, remainingPages: 4, vis: vis, completion: completion
+                )
+            }
+        }
+    }
+
+    private func fetchSinceGap(
+        scope: Scope,
+        sortKey: @escaping (Entry) -> Int?,
+        knownIds: Set<String>,
+        collected: [Entry],
+        firstList: EntryList,
+        remainingPages: Int,
+        vis: String? = nil,
+        completion: @escaping (Result<([Entry], EntryList), APIError>) -> Void
+    ) {
+        guard remainingPages > 0,
+              let last = collected.last,
+              let lastKey = sortKey(last), let lastId = last.id, !lastId.isEmpty else {
+            completion(.success((collected, firstList)))
+            return
+        }
+        fetchEntries(scope: scope, limit: 50, before: lastKey, beforeId: lastId, vis: vis) { [weak self] result in
+            guard let strongSelf = self else { return }
+            switch result {
+            case .failure:
+                // gap-fill 页失败：返回已收集的新篇，不整批作废。
+                completion(.success((collected, firstList)))
+            case .success(let list):
+                let batch = list.entries ?? []
+                if batch.isEmpty {
+                    completion(.success((collected, firstList)))
+                    return
+                }
+                var merged = collected
+                var hitKnown = false
+                for entry in batch {
+                    if let entryId = entry.id, knownIds.contains(entryId) {
+                        hitKnown = true
+                        break
+                    }
+                    merged.append(entry)
+                }
+                if hitKnown || batch.count < 50 {
+                    completion(.success((merged, firstList)))
+                } else {
+                    strongSelf.fetchSinceGap(
+                        scope: scope, sortKey: sortKey, knownIds: knownIds,
+                        collected: merged, firstList: firstList,
+                        remainingPages: remainingPages - 1, completion: completion
+                    )
+                }
+            }
+        }
+    }
+
+    func fetchEntry(id: String, completion: @escaping (Result<Entry, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/entries/\(safe)", completion: completion)
+    }
+
+    // MARK: - 通知与搜索
+
+    func fetchNotifications(
+        limit: Int = 30,
+        before: String? = nil,
+        suppressUnauthorized: Bool = false,
+        completion: @escaping (Result<NotificationList, APIError>) -> Void
+    ) {
+        var q: [String: String] = ["limit": "\(min(max(limit, 1), 200))"]
+        if let b = before { q["before"] = b }
+        request("/beary/api/notifications", query: q, suppressUnauthorized: suppressUnauthorized, completion: completion)
+    }
+
+    /// id 为 nil = 全部标已读。
+    func markNotificationRead(id: Int?, completion: @escaping (Result<Void, APIError>) -> Void) {
+        var body: [String: Any] = [:]
+        if let id = id { body["id"] = id }
+        requestVoid("/beary/api/notifications/read", method: "POST", jsonBody: body, completion: completion)
+    }
+
+    /// B2：同会话首屏搜索复用——完全相同的首屏 /search 请求在短时内只发一次，
+    /// 全站搜索与编辑器选人共用同一份缓存（选人只取其中的用户组）。
+    /// 仅首屏（无游标）进缓存；翻页请求走另一重载、每次都走网络。
+    /// 内存缓存，随会话丢弃；命中须账号一致（authAccountId），不跨号复用
+    /// “我的”组等鉴权敏感内容。
+    private static let searchFirstPageTTL: TimeInterval = 60
+    /// 搜索首页缓存容量上限：写时清过期＋超量淘最旧（按 at 最旧先淘），
+    /// 避免长会话多词搜索把旧结果体一直留在内存（见 storeSearchFirstPage）。
+    private static let searchFirstPageCacheMaxEntries = 50
+    private var searchFirstPageCache: [String: (at: Date, accountId: Int?, result: SearchResult)] = [:]
+    private let searchFirstPageCacheLock = NSLock()
+
+    private func cachedSearchFirstPage(q: String) -> SearchResult? {
+        searchFirstPageCacheLock.lock()
+        defer { searchFirstPageCacheLock.unlock() }
+        guard let entry = searchFirstPageCache[q] else { return nil }
+        guard entry.accountId == authAccountId,
+              Date().timeIntervalSince(entry.at) < Self.searchFirstPageTTL else {
+            searchFirstPageCache.removeValue(forKey: q)
+            return nil
+        }
+        return entry.result
+    }
+
+    /// 写缓存：只由 search(q:completion:) 的网络回包调用，入参 accountId /
+    /// epoch 为发起时捕获的值（见 search）。写入前凭 isStaleAccountLoad
+    /// 复核：发起后已切号的晚到回包不落盘（此处再守一次，防以后新增调用方
+    /// 漏传）；写入时先清过期条目（不等下次同词查询才删），再按容量上限
+    /// 淘最旧条目；最后按捕获的账号与同一 now 落盘，不再读现值。
+    /// 锁内读 authAccountId/authEpoch 与 cachedSearchFirstPage 同口径
+    /// （authStateQueue 与 searchFirstPageCacheLock 是两个不同队列，
+    /// 无嵌套反向持有）。
+    private func storeSearchFirstPage(q: String, result: SearchResult, accountId: Int?, epoch: Int) {
+        searchFirstPageCacheLock.lock()
+        defer { searchFirstPageCacheLock.unlock() }
+        guard !Self.isStaleAccountLoad(requestAccountId: accountId, requestEpoch: epoch, currentAccountId: authAccountId, currentEpoch: authEpoch) else { return }
+        let now = Date()
+        let expiredKeys = searchFirstPageCache.filter { now.timeIntervalSince($0.value.at) >= Self.searchFirstPageTTL }.map(\.key)
+        for key in expiredKeys {
+            searchFirstPageCache.removeValue(forKey: key)
+        }
+        while searchFirstPageCache.count >= Self.searchFirstPageCacheMaxEntries,
+              let oldestKey = searchFirstPageCache.min(by: { $0.value.at < $1.value.at })?.key {
+            searchFirstPageCache.removeValue(forKey: oldestKey)
+        }
+        searchFirstPageCache[q] = (at: now, accountId: accountId, result: result)
+    }
+
+    @discardableResult
+    func search(q: String, completion: @escaping (Result<SearchResult, APIError>) -> Void) -> URLSessionDataTask? {
+        if let cached = cachedSearchFirstPage(q: q) {
+            // 与网络回包同一异步口径：调用方在回调里切主线程并凭序号守卫
+            // 丢弃旧回包，同步回包会打乱该时序，故仍异步回包；无在途任务可取消。
+            DispatchQueue.global(qos: .userInitiated).async { completion(.success(cached)) }
+            return nil
+        }
+        // 发起时捕获（账号 ID，authEpoch）：回包写缓存前凭它复核，
+        // 发起后切号的晚到回包不落盘（见 storeSearchFirstPage）。
+        // 回包本身仍原样交调用方（调用方凭序号守卫丢弃旧回包做展示），
+        // 本处只守缓存写入，不改投递语义。
+        let requestAccountId = authAccountId
+        let requestEpoch = authEpoch
+        return search(q: q, before: nil, beforeId: nil) { [weak self] result in
+            if case .success(let data) = result {
+                self?.storeSearchFirstPage(q: q, result: data, accountId: requestAccountId, epoch: requestEpoch)
+            }
+            completion(result)
+        }
+    }
+
+    /// sweep32-2 搜索翻页：服务端游标与列表同口径——日记组（entries/mine）
+    /// 按 created_at DESC + id DESC，传 before（末条 created_at 毫秒）+
+    /// before_id（末条 id）取下一批（各 LIMIT 20）；用户组按 id 升序，只传
+    /// before_id（末条用户 id，id > before_id）取下一批（LIMIT 8）。
+    /// 注意同一请求的三组共用同一套游标参：调用方翻页时按组各发一请求、
+    /// 只取该组结果（见 BearySearchViewController.loadMore），不把一组的
+    /// 游标套到另一组，否则会重复或漏项。
+    @discardableResult
+    func search(q: String, before: Int?, beforeId: String?, completion: @escaping (Result<SearchResult, APIError>) -> Void) -> URLSessionDataTask? {
+        var query: [String: String] = ["q": q]
+        if let beforeValue = before {
+            query["before"] = "\(beforeValue)"
+        }
+        if let beforeIdValue = beforeId, !beforeIdValue.isEmpty {
+            query["before_id"] = beforeIdValue
+        }
+        return request("/beary/api/search", query: query, completion: completion)
+    }
+
+    // MARK: - 账户与会话
+
+    /// 401 = 未登录，不是错误：无 reason 的通用 401 返回 nil（旧口径不变）。
+    /// 审计 P1-7：带 reason 的 401（封禁/踢下线/过期）透传 .authFailure——revoked
+    /// 原因服务端一次性发放（读后即删），此处不经通用 mapStatus（它会丢体），
+    /// 直接 perform 解体；且不触发全局 onUnauthorized（登录态变迁走 refreshMe）。
+    func fetchMe(completion: @escaping (Result<MeUser?, APIError>) -> Void) {
+        perform("/api/account/me", method: "GET") { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let e = error as NSError?, e.code == NSURLErrorCancelled { completion(.failure(.cancelled)); return }
+            if let e = error { completion(.failure(.network(e))); return }
+            if status == 401 {
+                if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data),
+                   let reason = eb.reason, !reason.isEmpty {
+                    completion(.failure(.authFailure(reason: reason, message: eb.message)))
+                } else {
+                    completion(.success(nil))
+                }
+                return
+            }
+            guard (200...299).contains(status), let data = data else {
+                if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
+                    completion(.failure(.server(code, status)))
+                } else {
+                    completion(.failure(.http(status, self.errorSnippet(from: data))))
+                }
+                return
+            }
+            do {
+                completion(.success(try self.decoder.decode(MeResponse.self, from: data).user))
+            } catch {
+                completion(.failure(.decoding(error)))
+            }
+        }
+    }
+
+    /// 发码：body 只带 email，不再带人机验证 token。
+    /// 失败时 .server 携带服务端 message 展示文案（不是通用 mapStatus 的 error 码），
+    /// 调用方直接展示即可；网络失败为 .network，取消为 .cancelled。
+    /// 完成回调不在主线程发（与本文件其他方法同口径），调用方碰 UI 前自行回主线程。
+    @discardableResult
+    func sendCode(email: String, completion: @escaping (Result<Void, APIError>) -> Void) -> URLSessionDataTask? {
+        return perform("/api/account/send-code", method: "POST", jsonBody: ["email": email]) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let apiErr = self.accountActionError(status, data: data, error: error, fallback: "发送失败") {
+                completion(.failure(apiErr))
+                return
+            }
+            completion(.success(()))
+        }
+    }
+
+    /// 本机友好型号名（如 iPhone 17 Pro）：hw.machine 标识查表，未知新型号回退 "iPhone"／"iPad"。
+    /// 2026-11-14：登录设备曾显示“浏览器”——原生 URLSession 的 UA 不含 iPhone 标记，
+    /// 服务端 deviceLabel 的 iPhone 分支走不通；现登录验码与 session-device 补报改传
+    /// 显式 model，服务端直接采用，不再依赖 UA 推断。
+    static func deviceModelName() -> String {
+        var size = 0
+        sysctlbyname("hw.machine", nil, &size, nil, 0)
+        if size > 0 {
+            var machine = [CChar](repeating: 0, count: size)
+            if sysctlbyname("hw.machine", &machine, &size, nil, 0) == 0 {
+                let identifier = machine.withUnsafeBufferPointer { buffer in
+                    guard let base = buffer.baseAddress else { return "" }
+                    return String(cString: base)
+                }
+                if let name = modelNameByIdentifier[identifier] { return name }
+                if identifier.hasPrefix("iPhone") { return "iPhone" }
+                if identifier.hasPrefix("iPad") { return "iPad" }
+            }
+        }
+        return "iPhone"
+    }
+
+    /// hw.machine 标识 → 营销型号名（近年代 iPhone 全系；新机型未入库时走上方回退）。
+    private static let modelNameByIdentifier: [String: String] = [
+        "iPhone18,1": "iPhone 17 Pro",
+        "iPhone18,2": "iPhone 17 Pro Max",
+        "iPhone18,3": "iPhone 17",
+        "iPhone18,4": "iPhone Air",
+        "iPhone17,1": "iPhone 16 Pro",
+        "iPhone17,2": "iPhone 16 Pro Max",
+        "iPhone17,3": "iPhone 16",
+        "iPhone17,4": "iPhone 16 Plus",
+        "iPhone17,5": "iPhone 16e",
+        "iPhone16,1": "iPhone 15 Pro",
+        "iPhone16,2": "iPhone 15 Pro Max",
+        "iPhone15,4": "iPhone 15",
+        "iPhone15,5": "iPhone 15 Plus",
+        "iPhone15,2": "iPhone 14 Pro",
+        "iPhone15,3": "iPhone 14 Pro Max",
+        "iPhone14,7": "iPhone 14",
+        "iPhone14,8": "iPhone 14 Plus",
+        "iPhone14,2": "iPhone 13 Pro",
+        "iPhone14,3": "iPhone 13 Pro Max",
+        "iPhone14,4": "iPhone 13 mini",
+        "iPhone14,5": "iPhone 13",
+        "iPhone13,1": "iPhone 12 mini",
+        "iPhone13,2": "iPhone 12",
+        "iPhone13,3": "iPhone 12 Pro",
+        "iPhone13,4": "iPhone 12 Pro Max",
+        "iPhone12,1": "iPhone 11",
+        "iPhone12,3": "iPhone 11 Pro",
+        "iPhone12,5": "iPhone 11 Pro Max",
+        "iPhone12,8": "iPhone SE (2nd generation)",
+        "iPhone14,6": "iPhone SE (3rd generation)",
+        "iPhone11,2": "iPhone XS",
+        "iPhone11,4": "iPhone XS Max",
+        "iPhone11,6": "iPhone XS Max",
+        "iPhone11,8": "iPhone XR",
+        "iPhone10,3": "iPhone X",
+        "iPhone10,6": "iPhone X",
+    ]
+
+    /// 验码：返回完整响应体（含 pending_delete 冷静期与 referral 绑定结果），不只看状态码。
+    /// body 与网页 lgVerify 同口径：恒带 invite_code（空串也带，上层须先 trim + 大写），
+    /// 恒带 dev（设备信号，能取到的字段才带）；confirmCancel 仅二次确认时带 true。
+    /// 本方法不走通用 mapStatus、不触发 onUnauthorized（登录请求不该清用户态）。
+    /// 失败时 .server 携带服务端 message 展示文案；完成回调不在主线程发。
+    @discardableResult
+    func verify(email: String, code: String, inviteCode: String?, dev: [String: Any]?, confirmCancel: Bool, completion: @escaping (Result<VerifyResponse, APIError>) -> Void) -> URLSessionDataTask? {
+        var body: [String: Any] = ["email": email, "code": code, "invite_code": inviteCode ?? ""]
+        if let dev = dev, !dev.isEmpty { body["dev"] = dev }
+        if confirmCancel { body["confirm_cancel"] = true }
+        return perform("/api/account/verify", method: "POST", jsonBody: body) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let e = error as NSError?, e.code == NSURLErrorCancelled {
+                completion(.failure(.cancelled))
+                return
+            }
+            if let e = error {
+                completion(.failure(.network(e)))
+                return
+            }
+            if let data = data, let resp = try? self.decoder.decode(VerifyResponse.self, from: data) {
+                if resp.pendingDelete == true { completion(.success(resp)); return }
+                if resp.ok == true { completion(.success(resp)); return }
+                let message = resp.message ?? resp.error ?? "验证失败"
+                completion(.failure(.server(message, nil)))
+                return
+            }
+            if !(200...299).contains(status) {
+                completion(.failure(.http(status, self.errorSnippet(from: data))))
+                return
+            }
+            completion(.failure(.decoding(NSError(domain: "BearyAPI", code: -1, userInfo: nil))))
+        }
+    }
+
+    /// 发码/验码共用的失败映射：不触发 onUnauthorized，只把服务端 message 透传为 .server。
+    private func accountActionError(_ status: Int, data: Data?, error: Error?, fallback: String) -> APIError? {
+        if let e = error as NSError?, e.code == NSURLErrorCancelled { return .cancelled }
+        if let e = error { return .network(e) }
+        if (200...299).contains(status) { return nil }
+        if let data = data, let body = try? decoder.decode(ServerErrorBody.self, from: data) {
+            if let message = body.message, !message.isEmpty { return .server(message, nil) }
+            if let code = body.error, !code.isEmpty { return .server(code, status) }
+        }
+        return .http(status, errorSnippet(from: data))
+    }
+
+    /// 登出：网页 pmLogout 走 POST /beary/api/logout（beary Worker，清会话并清 cookie），
+    /// 不是 accounts 的 /api/account/logout（两者服务端都会删会话，但以网页口径为准）。
+    func logout(completion: @escaping (Result<Void, APIError>) -> Void) {
+        requestVoid("/beary/api/logout", method: "POST", suppressUnauthorized: true) { result in
+            switch result {
+            case .success: completion(.success(()))
+            case .failure(.unauthorized): completion(.success(()))
+            case .failure(let e): completion(.failure(e))
+            }
+        }
+    }
+
+    // MARK: - 邀请门控与补绑（accounts /me 口径）
+
+    /// 邀请补绑：POST /api/account/referral/bind {code}，code 由调用方 trim + 大写。
+    /// 成功返回 {ok, status}（granted/flagged/pending 等）；失败时 .server 携带
+    /// 服务端 message 展示文案（自邀/已绑定/超 30 天/功能未开启等），完成回调不在主线程发。
+    @discardableResult
+    func bindReferral(code: String, completion: @escaping (Result<ReferralBindResponse, APIError>) -> Void) -> URLSessionDataTask? {
+        return perform("/api/account/referral/bind", method: "POST", jsonBody: ["code": code]) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let e = error as NSError?, e.code == NSURLErrorCancelled {
+                completion(.failure(.cancelled))
+                return
+            }
+            if let e = error {
+                completion(.failure(.network(e)))
+                return
+            }
+            if let data = data, let resp = try? self.decoder.decode(ReferralBindResponse.self, from: data) {
+                if resp.ok == true { completion(.success(resp)); return }
+                let message = resp.message ?? resp.error ?? "绑定失败，请稍后再试"
+                completion(.failure(.server(message, nil)))
+                return
+            }
+            if !(200...299).contains(status) {
+                completion(.failure(.http(status, self.errorSnippet(from: data))))
+                return
+            }
+            completion(.failure(.decoding(NSError(domain: "BearyAPI", code: -1, userInfo: nil))))
+        }
+    }
+
+    // MARK: - B 方案公开 / 取消（网页 doPublish / doPublishCancel 同款端点，见 teddy_beary/worker.js）
+
+    /// 旧公开端点（iCity 已废弃：调用方改走 setVisibility；仅保留，调用点已全部迁移）。
+    /// 服务端兼容语义改为立即公开，但 App 不再使用。
+    func requestPublish(id: String, completion: @escaping (Result<PublishResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/entries/\(safe)/publish", method: "POST", completion: completion)
+    }
+
+    /// 旧取消公开端点（iCity 已废弃：调用方改走 setVisibility 显式目标态；仅保留，调用点已全部迁移）。
+    func cancelPublish(id: String, completion: @escaping (Result<PublishResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/entries/\(safe)/publish/cancel", method: "POST", completion: completion)
+    }
+
+    // MARK: - iCity 可见性切换 / 举报 / 拉黑 / 行为事件
+
+    /// 可见性切换：POST /beary/api/entries/:id/visibility {published: 0|1}（显式目标态，禁 toggle）。
+    /// 响应回权威 {published, published_at}，调用方以响应目标态为准同步本地模型。
+    func setVisibility(id: String, published: Int, completion: @escaping (Result<VisibilityResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/entries/\(safe)/visibility", method: "POST", jsonBody: ["published": published], completion: completion)
+    }
+
+    /// 好友第一期：可见性三档切换：POST /beary/api/entries/:id/visibility {visibility}。
+    /// 后端未上线/旧版返回非 200 时调用方按失败处理（不静默改本地态）；旧 {published}
+    /// 口径保留在上一个重载里，调用方按需选用，不混发。
+    func setVisibility(id: String, visibility: String, completion: @escaping (Result<VisibilityResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/entries/\(safe)/visibility", method: "POST", jsonBody: ["visibility": visibility], completion: completion)
+    }
+
+    // MARK: - 日记置顶（路由已在线；非 200 一律走调用方失败态）
+
+    /// 置顶／取消置顶响应：POST /pin → {ok, pinned: true, pinned_at}；
+    /// POST /unpin → {ok, pinned: false}。错误：未登录 401、不存在 404、非作者 403、列不可用 503。
+    struct PinResponse: Decodable {
+        var ok: Bool?
+        var pinned: Bool?
+        var pinnedAt: Int?
+    }
+
+    /// 置顶：POST /beary/api/entries/:id/pin（无 body）。单槽位：服务端替换旧置顶篇；
+    /// App 端替换先经 BearyDiaryPin.confirmReplacement 确认，取消时绝不调本接口。
+    func pinEntry(id: String, completion: @escaping (Result<PinResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/entries/\(safe)/pin", method: "POST", completion: completion)
+    }
+
+    /// 取消置顶：POST /beary/api/entries/:id/unpin（无 body）。
+    func unpinEntry(id: String, completion: @escaping (Result<PinResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/entries/\(safe)/unpin", method: "POST", completion: completion)
+    }
+
+    // MARK: - 好友第一期（路由已在线；非 200 一律走调用方失败态）
+
+    /// 好友用户行：服务端 GET /friends/list、/following、/followers 的用户形状
+    /// （handle/显示名/头像）。
+    struct FriendUser: Codable {
+        var id: Int?
+        var displayName: String?
+        var handle: String?
+        var avatarUrl: String?
+        var createdAt: Int?
+    }
+
+    struct FriendListResponse: Decodable {
+        var friends: [FriendUser]?
+        var users: [FriendUser]?
+        /// 两种回包形状兼容：friends 优先，缺失时取 users；调用方统一用 resolvedFriends。
+        var resolvedFriends: [FriendUser] { friends ?? users ?? [] }
+    }
+
+    struct FriendOkResponse: Decodable {
+        var ok: Bool?
+        var error: String?
+        var message: String?
+    }
+
+    /// 与某人的关系态：GET /friends/state?user_id= → {following: 我是否关他,
+    /// followed_by: 他是否关我, mutual: 是否互关}。按钮与卡片状态一律实时取它，
+    /// 不靠本地缓存（方案四节）。
+    struct FollowStateResponse: Decodable {
+        var following: Bool?
+        var followedBy: Bool?
+        var mutual: Bool?
+    }
+
+    /// 关注：POST /beary/api/friends/follow {user_id}。单向关注、幂等；不可关自己、
+    /// 任一方向拉黑 403；成功给对方写一条 type='follow' 通知行（含回关那次）。
+    func followFriend(userId: Int, completion: @escaping (Result<FriendOkResponse, APIError>) -> Void) {
+        request("/beary/api/friends/follow", method: "POST", jsonBody: ["user_id": userId], completion: completion)
+    }
+
+    /// 取关：POST /beary/api/friends/unfollow {user_id}。删我关对方的一行，静默；
+    /// 互关时取关退为对方单向关注我。
+    func unfollowFriend(userId: Int, completion: @escaping (Result<FriendOkResponse, APIError>) -> Void) {
+        request("/beary/api/friends/unfollow", method: "POST", jsonBody: ["user_id": userId], completion: completion)
+    }
+
+    /// 互关好友：GET /beary/api/friends/list（两个方向都有行）。
+    func fetchFriends(completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
+        request("/beary/api/friends/list", completion: completion)
+    }
+
+    /// 我关注的人：GET /beary/api/friends/following。
+    func fetchFollowing(completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
+        request("/beary/api/friends/following", completion: completion)
+    }
+
+    /// 关注我的人：GET /beary/api/friends/followers。
+    func fetchFollowers(completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
+        request("/beary/api/friends/followers", completion: completion)
+    }
+
+    /// B2：同会话在途去重——主页、通知卡等各处同时查同一人时只发一条
+    /// 请求，回包后把结果分发给所有等在途的 completion；失败同样分发
+    /// （各调用方按自己的失败态处理）。只去重“在途”，不缓存结果：
+    /// 关系是实时态，不得用旧回包代替新查；回包队列口径不动（request
+    /// 的回调在哪个队列，本分发就在哪个队列，调用方照常自行切 main）。
+    func fetchFollowState(userId: Int, completion: @escaping (Result<FollowStateResponse, APIError>) -> Void) {
+        var isFirst = false
+        followStateQueue.sync {
+            if inFlightFollowStates[userId] != nil {
+                inFlightFollowStates[userId]?.append(completion)
+            } else {
+                inFlightFollowStates[userId] = [completion]
+                isFirst = true
+            }
+        }
+        guard isFirst else { return }
+        request("/beary/api/friends/state", query: ["user_id": "\(userId)"]) { [weak self] (result: Result<FollowStateResponse, APIError>) in
+            guard let self = self else { return }
+            var waiters: [(Result<FollowStateResponse, APIError>) -> Void] = []
+            self.followStateQueue.sync {
+                waiters = self.inFlightFollowStates.removeValue(forKey: userId) ?? []
+            }
+            for waiter in waiters { waiter(result) }
+        }
+    }
+
+    // MARK: - 好友私信第一期（路由已在线；非 200 一律走调用方失败态）
+    //
+    // 路径口径：任务书与方案第七节写的是 /friends/dm/*，即 friends 命名空间下的
+    // dm 子路径；App 沿用本文件好友接口的 /beary/api/friends/ 前缀，故全路径为
+    // /beary/api/friends/dm/*。若后端实际挂在其他前缀，本组调用会 404——PR 描述
+    // 里已请后端确认前缀，合入前以后端实测为准。
+
+    /// 私信会话：对方信息 + 最后一条正文 + 最后时间 + 未读数（按最后时间倒序）。
+    /// 后端字段名未在方案里钉死，解码时多键兼容：对方对象取 user/peer/other/
+    /// friend，扁平时取 user_id/display_name/handle/avatar_url；最后一条取
+    /// last_body/last_message/body/snippet；最后时间取 last_at/last_time/
+    /// updated_at（秒级值统一换算为毫秒）；未读取 unread_count/unread。
+    struct DMConversation: Codable {
+        var peer: FriendUser?
+        var lastBody: String?
+        var lastAt: Int?
+        var unreadCount: Int?
+
+        private enum Keys: String, CodingKey {
+            case user, peer, other, friend
+            case userId, displayName, handle, avatarUrl
+            case lastBody, lastMessage, lastText, body, snippet
+            case lastAt, lastTime, updatedAt, lastMessageAt
+            case unreadCount, unread
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: Keys.self)
+            if let nested = try? container.decode(FriendUser.self, forKey: .user) {
+                peer = nested
+            } else if let nested = try? container.decode(FriendUser.self, forKey: .peer) {
+                peer = nested
+            } else if let nested = try? container.decode(FriendUser.self, forKey: .other) {
+                peer = nested
+            } else if let nested = try? container.decode(FriendUser.self, forKey: .friend) {
+                peer = nested
+            } else {
+                var flat = FriendUser(id: nil, displayName: nil, handle: nil, avatarUrl: nil, createdAt: nil)
+                flat.id = try? container.decode(Int.self, forKey: .userId)
+                flat.displayName = try? container.decode(String.self, forKey: .displayName)
+                flat.handle = try? container.decode(String.self, forKey: .handle)
+                flat.avatarUrl = try? container.decode(String.self, forKey: .avatarUrl)
+                peer = flat.id == nil && flat.displayName == nil && flat.handle == nil ? nil : flat
+            }
+            lastBody = (try? container.decode(String.self, forKey: .lastBody))
+                ?? (try? container.decode(String.self, forKey: .lastMessage))
+                ?? (try? container.decode(String.self, forKey: .lastText))
+                ?? (try? container.decode(String.self, forKey: .body))
+                ?? (try? container.decode(String.self, forKey: .snippet))
+            let rawLastAt = (try? container.decode(Int.self, forKey: .lastAt))
+                ?? (try? container.decode(Int.self, forKey: .lastTime))
+                ?? (try? container.decode(Int.self, forKey: .updatedAt))
+                ?? (try? container.decode(Int.self, forKey: .lastMessageAt))
+            if let raw = rawLastAt {
+                // 秒级时间戳（< 1e11）换算为毫秒，与全站毫秒口径一致。
+                lastAt = raw < 100_000_000_000 ? raw * 1000 : raw
+            }
+            unreadCount = (try? container.decode(Int.self, forKey: .unreadCount))
+                ?? (try? container.decode(Int.self, forKey: .unread))
+        }
+
+        /// 本地会话并入用：服务端未下发时由 BearyDMStore 拼装（仅本地有消息的对方）。
+        init(peer: FriendUser?, lastBody: String?, lastAt: Int?, unreadCount: Int?) {
+            self.peer = peer
+            self.lastBody = lastBody
+            self.lastAt = lastAt
+            self.unreadCount = unreadCount
+        }
+
+        /// 会话列表磁盘快照用：只写规范键（对方对象走 user 键，解码时 user
+        /// 优先命中；lastBody/lastAt/unreadCount 走主鍵），与 init(from:) 互逆。
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: Keys.self)
+            try container.encodeIfPresent(peer, forKey: .user)
+            try container.encodeIfPresent(lastBody, forKey: .lastBody)
+            try container.encodeIfPresent(lastAt, forKey: .lastAt)
+            try container.encodeIfPresent(unreadCount, forKey: .unreadCount)
+        }
+    }
+
+    struct DMConversationsResponse: Decodable {
+        var conversations: [DMConversation]?
+        var list: [DMConversation]?
+        var resolvedConversations: [DMConversation] { conversations ?? list ?? [] }
+    }
+
+    /// 私信单条：id 倒序下发；sender_id 判左右（自己发 = 右侧）。
+    /// 注意：后端 history 实际不下发 sender_id，只给 from_me（自己发 = true），
+    /// 故 senderId 经常是 nil——聊天页在入库前须用 fromMe 补全 senderId，
+    /// 否则本地 store 按“无 id/无 senderId 的脏行跳过”会把整页历史丢光。
+    struct DMMessage: Decodable {
+        var id: Int?
+        var senderId: Int?
+        var fromMe: Bool? = nil
+        var body: String?
+        var createdAt: Int?
+        // 2026-11-04 乐观发送：仅本地待发行的临时键（UUID），服务端从不下发、
+        // 本地 store 从不保存（无 id 的行入库时即被跳过）；聊天页凭它认待发行、
+        // 失败态与重发，服务端行认领后即丢弃。Optional 带默认值，解码不受影响。
+        var localKey: String? = nil
+    }
+
+    struct DMHistoryResponse: Decodable {
+        var messages: [DMMessage]?
+        var items: [DMMessage]?
+        var resolvedMessages: [DMMessage] { messages ?? items ?? [] }
+    }
+
+    /// 发私信：POST /beary/api/friends/dm/send {user_id, body}。正文去空后
+    /// 非空且 ≤2000 字（App 先拦一道，后端再校验）；档位不允许/拉黑 403、游客 401。
+    func sendDM(userId: Int, body: String, completion: @escaping (Result<FriendOkResponse, APIError>) -> Void) {
+        request("/beary/api/friends/dm/send", method: "POST", jsonBody: ["user_id": userId, "body": body], completion: completion)
+    }
+
+    /// 会话列表：GET /beary/api/friends/dm/conversations（全部有往来的对方，
+    /// 拉黑任一方向除外；仅本地有消息的对方由 BearyDMStore 并入）。
+    func fetchDMConversations(completion: @escaping (Result<DMConversationsResponse, APIError>) -> Void) {
+        request("/beary/api/friends/dm/conversations", completion: completion)
+    }
+
+    /// 历史：GET /beary/api/friends/dm/history?user_id=&before_id=&limit=
+    /// （按 id 倒序、默认 30、上限 50；before_id 翻 older）。档位不允许/拉黑 403。
+    func fetchDMHistory(userId: Int, beforeId: Int? = nil, limit: Int = 30, completion: @escaping (Result<DMHistoryResponse, APIError>) -> Void) {
+        var query: [String: String] = ["user_id": "\(userId)", "limit": "\(limit)"]
+        if let beforeId = beforeId { query["before_id"] = "\(beforeId)" }
+        request("/beary/api/friends/dm/history", query: query, completion: completion)
+    }
+
+    /// 清未读：POST /beary/api/friends/dm/read {user_id}（同时清该对方的 dm 通知行）。
+    /// 无 body 响应，走 requestVoid（只看状态码）。
+    func markDMRead(userId: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
+        requestVoid("/beary/api/friends/dm/read", method: "POST", jsonBody: ["user_id": userId], completion: completion)
+    }
+
+    /// 私信权限档位：GET /beary/api/friends/dm/prefs → {dm_level}；
+    /// anyone=所有人可私信我、followers=仅关注我的人、friends=仅好友、none=任何人不可。
+    /// 无记录时服务端默认 anyone。
+    struct DMLevelResponse: Decodable {
+        var dmLevel: String?
+    }
+
+    /// 私信权限保存回包：POST /beary/api/friends/dm/prefs {dm_level} → {ok, dm_level}。
+    struct DMLevelSaveResponse: Decodable {
+        var ok: Bool?
+        var dmLevel: String?
+    }
+
+    /// 对某人发私信是否允许：GET /beary/api/friends/dm/can?user_id=X → {allowed}；
+    /// 自己返回 allowed:false。档位不允许与拉黑在 can 里均为 false 不区分，
+    /// 403 错误串才区分 dm_not_allowed 与 blocked（聊天页据此分流）。
+    struct DMCanResponse: Decodable {
+        var allowed: Bool?
+    }
+
+    func fetchDMLevel(completion: @escaping (Result<DMLevelResponse, APIError>) -> Void) {
+        request("/beary/api/friends/dm/prefs", completion: completion)
+    }
+
+    func saveDMLevel(_ level: String, completion: @escaping (Result<DMLevelSaveResponse, APIError>) -> Void) {
+        request("/beary/api/friends/dm/prefs", method: "POST", jsonBody: ["dm_level": level], completion: completion)
+    }
+
+    func fetchDMCan(userId: Int, completion: @escaping (Result<DMCanResponse, APIError>) -> Void) {
+        request("/beary/api/friends/dm/can", query: ["user_id": "\(userId)"], completion: completion)
+    }
+
+    /// 引用计数（2026-10-31 引用规则简化）：GET /beary/api/entries/:id/quote-count
+    /// → {ok, id, quote_count}，只计现存行（不含回收站）；未登录 401、查无行 404、
+    /// 非原作者 403。调用方只用它做改私密前的提醒：失败一律 fail-open（不拦切换），
+    /// 不把计数当门控。convertFromSnakeCase 下 quote_count 直解为 quoteCount。
+    struct QuoteCountResponse: Decodable {
+        var ok: Bool?
+        var id: String?
+        var quoteCount: Int?
+    }
+
+    func fetchQuoteCount(id: String, completion: @escaping (Result<QuoteCountResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/entries/\(safe)/quote-count", completion: completion)
+    }
+
+    /// 举报：POST /beary/api/reports {entry_id, reason}（reason 为封禁五类之一）。
+    /// 重复举报返回已举报态，不建新行、不重复计数。
+    func reportEntry(entryId: String, reason: String, completion: @escaping (Result<ReportResponse, APIError>) -> Void) {
+        request("/beary/api/reports", method: "POST", jsonBody: ["entry_id": entryId, "reason": reason], completion: completion)
+    }
+
+    /// 拉黑：POST /beary/api/blocks {user_id}。
+    func blockUser(userId: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
+        requestVoid("/beary/api/blocks", method: "POST", jsonBody: ["user_id": userId], completion: completion)
+    }
+
+    /// 解除拉黑：DELETE /beary/api/blocks/:user。
+    func unblockUser(userId: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
+        requestVoid("/beary/api/blocks/\(userId)", method: "DELETE", completion: completion)
+    }
+
+    // MARK: - 功能许愿墙（2026-10-29 补缺第 21 项；后端备改动未部署前 404 即走失败态）
+    /// 许愿条目（服务端 beary_wishes 行 + 聚合计数；myVote：1 赞成 / -1 反对 / nil 未投）。
+    struct WishItem: Decodable {
+        var id: Int?
+        var authorId: Int?
+        var authorName: String?
+        var authorAvatar: String?
+        var title: String?
+        var detail: String?
+        var status: String?
+        var upCount: Int?
+        var downCount: Int?
+        var myVote: Int?
+        var createdAt: Int?
+    }
+    /// 列表回包（服务端按净赞成降序排好，App 不再重排）。
+    struct WishListResponse: Decodable {
+        var wishes: [WishItem]?
+    }
+    /// 投票回包（服务端权威计数，乐观更新后以此对齐）。
+    struct WishVoteResponse: Decodable {
+        var ok: Bool?
+        var up: Int?
+        var down: Int?
+        var myVote: Int?
+    }
+
+    /// 列表：GET /beary/api/wishes（游客可看，myVote 仅登录态下发）。
+    func fetchWishes(completion: @escaping (Result<WishListResponse, APIError>) -> Void) {
+        request("/beary/api/wishes", completion: completion)
+    }
+
+    /// 发起：POST /beary/api/wishes {title, detail}（仅 Plus，服务端校验；回包为新建条目）。
+    func createWish(title: String, detail: String, completion: @escaping (Result<WishItem, APIError>) -> Void) {
+        request("/beary/api/wishes", method: "POST", jsonBody: ["title": title, "detail": detail], completion: completion)
+    }
+
+    /// 投票：POST /beary/api/wishes/:id/vote {vote: 1|-1|0}（0 = 取消本票；每人每条一票）。
+    func voteWish(id: Int, vote: Int, completion: @escaping (Result<WishVoteResponse, APIError>) -> Void) {
+        request("/beary/api/wishes/\(id)/vote", method: "POST", jsonBody: ["vote": vote], completion: completion)
+    }
+
+    /// 管理员标记已完成：POST /beary/api/wishes/:id/status {status: "done"}。
+    func markWishDone(id: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
+        requestVoid("/beary/api/wishes/\(id)/status", method: "POST", jsonBody: ["status": "done"], completion: completion)
+    }
+
+    /// 我的拉黑列表：GET /beary/api/blocks → {blocked: [ids]}。
+    func fetchBlocks(completion: @escaping (Result<BlocksResponse, APIError>) -> Void) {
+        request("/beary/api/blocks", completion: completion)
+    }
+
+    // MARK: - 与过去的自己对话（后端契约；非 200 时调用方静默走本地存储）
+
+    /// 列表：GET /beary/api/past-self/messages → {messages: [...]}。
+    /// 服务端约束（后端施工时必做）：仅作者本人可读；绝不进广场、不发通知；
+    /// 原篇删除/私密不改行本身，可见性由客户端 viewerVisibility 每渲染重算。
+    func fetchPastSelfMessages(completion: @escaping (Result<PastSelfListResponse, APIError>) -> Void) {
+        request("/beary/api/past-self/messages", payloadDecoder: Self.pastSelfDecoder, completion: completion)
+    }
+
+    /// 留话：POST /beary/api/past-self/messages {origin_entry_id, body, deliver_on}
+    /// → {ok, message}。服务端校验：原篇须为作者本人所有；同一链同一时间
+    /// 只允许一条未送达留话（重复提交返回业务码，调用方不重试、不覆盖）。
+    func createPastSelfMessage(originEntryId: String, body: String, deliverOn: String, completion: @escaping (Result<PastSelfCreateResponse, APIError>) -> Void) {
+        request("/beary/api/past-self/messages", method: "POST", jsonBody: ["origin_entry_id": originEntryId, "body": body, "deliver_on": deliverOn], payloadDecoder: Self.pastSelfDecoder, completion: completion)
+    }
+
+    /// 撤回：POST /beary/api/past-self/messages/:id/revoke → {ok}。
+    /// 服务端校验：仅作者、仅未送达行可撤回；已送达行撤回返回业务码。
+    func revokePastSelfMessage(id: String, completion: @escaping (Result<PastSelfOkResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/past-self/messages/\(safe)/revoke", method: "POST", payloadDecoder: Self.pastSelfDecoder, completion: completion)
+    }
+
+    /// 行为事件：POST /beary/api/events {event_type, target_id?, duration_ms?}。
+    /// 仅 app_open / dwell / search_click 由客户端上报（阅读、翻转、搜索计数由后端记）。
+    /// 上报失败不得阻塞流程、不得弹 toast：调用方忽略失败；suppressUnauthorized 避免
+    /// 游客态 401 触发全局 onUnauthorized（游客事件服务端记 user_id NULL）。
+    func sendEvent(eventType: String, targetId: String? = nil, durationMs: Int? = nil, completion: ((Result<Void, APIError>) -> Void)? = nil) {
+        var body: [String: Any] = ["event_type": eventType]
+        if let targetId = targetId { body["target_id"] = targetId }
+        if let durationMs = durationMs { body["duration_ms"] = durationMs }
+        requestVoid("/beary/api/events", method: "POST", jsonBody: body, suppressUnauthorized: true) { result in
+            completion?(result)
+        }
+    }
+
+    /// 回收站恢复（带原可见性回包）：POST /beary/api/trash/:id/restore。
+    func restoreTrashDetail(id: String, completion: @escaping (Result<RestoreResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/trash/\(safe)/restore", method: "POST", completion: completion)
+    }
+
+    // MARK: - 日记删除与回收站
+
+    /// 删帖：DELETE /beary/api/entries/:id（iCity：公开/私密均可删进回收站，仅作者可删）。
+    func deleteEntry(id: String, completion: @escaping (Result<Void, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        requestVoid("/beary/api/entries/\(safe)", method: "DELETE", completion: completion)
+    }
+
+    /// 回收站分页：GET /beary/api/trash?limit=50&before&before_id（deleted_at DESC, id DESC）。
+    /// before 传上一页末条的 deleted_at（毫秒，字符串形式）；beforeId 传其 id；
+    /// 首页两者皆传 nil。服务端 30 天保留，过期自动彻底删除。
+    func fetchTrash(before: String?, beforeId: String?, completion: @escaping (Result<TrashPage, APIError>) -> Void) {
+        var q: [String: String] = ["limit": "50"]
+        if let before = before, !before.isEmpty { q["before"] = before }
+        if let beforeId = beforeId, !beforeId.isEmpty { q["before_id"] = beforeId }
+        request("/beary/api/trash", query: q, completion: completion)
+    }
+
+    /// 恢复（旧无回包版；回收站页改走 restoreTrashDetail 按原可见性分流 toast）。
+    /// 服务端按 trash 原值写回 published + published_at（旧行按私密 + NULL 恢复）。
+    func restoreTrash(id: String, completion: @escaping (Result<Void, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        requestVoid("/beary/api/trash/\(safe)/restore", method: "POST", completion: completion)
+    }
+
+    /// 彻底删除：DELETE /beary/api/trash/:id（不可恢复；过期或已变化返回 409）。
+    func purgeTrash(id: String, completion: @escaping (Result<Void, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        requestVoid("/beary/api/trash/\(safe)", method: "DELETE", completion: completion)
+    }
+}
+
+// MARK: - 反馈日志（2026-10-28 反馈 v3，路线 A：不做后端，走邮件附件）
+
+/// App 通用日志：反馈页日志包（zip）的日志来源。只记事件名与 API 方法 /
+/// 路径 / 状态码，绝不记用户内容——调用方只能传固定事件名，禁止把正文、
+/// 标题、邮箱、token、会话值、错误描述原文拼进事件；API 日志只记 path（不记
+/// query、不记 body、不记 header），query 里可能含搜索词等用户输入。
+/// 文件 beary-app.log 写 Documents 目录，上限 1MB，超了截旧留新（保留后
+/// 512KB、从首个换行处起）；不进设备备份（与 DiagFile 同口径）。
+/// 与 DiagFile 的区别：DiagFile 是诊断打点（可由设置页开关关闭），本日志是
+/// 反馈日志管线，始终开启——否则用户关了诊断开关后反馈 zip 里就没有日志。
+/// 部署目标 iOS 15.0、Swift 5.0：只用闭包回调，不用 async/await，不用 if-let 简写。
+enum BearyAppLog {
+    static let fileName = "beary-app.log"
+    static let maxBytes = 1_048_576
+    private static let keepBytes = 524_288
+    private static let queue = DispatchQueue(label: "beary.applog.io", qos: .utility)
+    private static var writesSinceTrim = 0
+    /// 仅 queue 上使用，串行故安全（DateFormatter 非线程安全，不可跨队列共用）。
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f
+    }()
+
+    static var url: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(fileName)
+    }
+
+    /// 固定事件名日志（如 "app launch"、"feedback mail sent"）。
+    static func event(_ name: String) {
+        let now = Date()
+        queue.async {
+            appendLine("\(timeFormatter.string(from: now)) \(name)\n")
+            writesSinceTrim += 1
+            if writesSinceTrim >= 50 {
+                writesSinceTrim = 0
+                trimIfNeeded()
+            }
+        }
+    }
+
+    /// API 调用日志：只记方法 + path + 状态码（path 本身不含 query，见 perform）。
+    static func api(method: String, path: String, status: Int) {
+        event("api \(method) \(path) -> \(status)")
+    }
+
+    /// 供 zip 打包读取：调用方须在后台队列调用（同步读文件，不上主线程）。
+    static func readData() -> Data? {
+        return try? Data(contentsOf: url)
+    }
+
+    /// 调用方须在 queue 上（见 event）。
+    private static func appendLine(_ line: String) {
+        guard let data = line.data(using: .utf8) else { return }
+        let u = url
+        if FileManager.default.fileExists(atPath: u.path) {
+            if let handle = try? FileHandle(forWritingTo: u) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                try? handle.close()
+            }
+        } else {
+            try? data.write(to: u, options: .atomic)
+        }
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        var mutable = u
+        try? mutable.setResourceValues(values)
+    }
+
+    /// 调用方须在 queue 上（见 event）：超上限时保留后 512KB，从首个换行处起。
+    private static func trimIfNeeded() {
+        let u = url
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: u.path),
+              let size = attrs[.size] as? NSNumber, size.intValue > maxBytes else { return }
+        guard let data = try? Data(contentsOf: u) else { return }
+        let tail = data.suffix(keepBytes)
+        if let newlineIndex = tail.firstIndex(of: UInt8(ascii: "\n")) {
+            let trimmed = tail[tail.index(after: newlineIndex)...]
+            try? Data(trimmed).write(to: u, options: .atomic)
+        } else {
+            try? Data(tail).write(to: u, options: .atomic)
+        }
+    }
+}

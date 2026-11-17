@@ -1,0 +1,255 @@
+import UIKit
+
+// ===== BearyButton 按钮工厂（B 批）=====
+// 四类样式（各页实测形态的归纳口径，见下方各 case 注释；数值即原各页数值，
+// 工厂只收敛写法，不改任何一处视觉）：
+//  .primaryPill：高 44、圆角 single（12）；柔和灰底（surface2）+ ink 字
+//    （2026-11-14 Li 定：纯白／纯黑墨底太突兀，改走 surface2，与心情选择器
+//    pill 同款；字仍走 ink，深浅对比都够），或橙底 + onBrand 深墨字
+//    （视觉清单第 5 项：橙底前景固定深墨色，不用深色下会变白的 ink；
+//    引导/主操作，Onboarding 主钮同款口径）。
+//  .secondaryOutline：高 44/36、圆角 single（12）、1pt line 边框 + surface2 底 + ink 字
+//    （2026-11-14 同上：原 surface1 在深色 sheet 上仍显纯黑，改 surface2）。
+//    （搜索页“清空搜索”44/22 同款；36/18 为其紧凑版）。
+//  .destructiveOutline：高 36/44、圆角 single（12）、1pt 45% 红边框 + 红字 + surface1 底
+//    （回收站“彻底删除”红字口径，边框按任务要求取 45% 红而非 line）。
+//  .iconCircleClose：视觉 32×32、圆角 16、surface2 底、icon_close 15 + ink tint；
+//    热区 44×44 由父类 BearyHit44Button 的 point(inside:) 自动扩（视觉帧不动）。
+// 使用范围：只供后续与本批内新写处使用——各页已有按钮一律不动，不为统一而全量重写。
+// 约束约定：工厂只定视觉（底色/字色/边框/圆角/默认字号），不替调用方下尺寸约束；
+// 调用方按 style.height 下高约束（pill/outline 44 或 36；关闭钮 32×32）。
+// 默认字号（调用方可事后改 titleLabel?.font 覆盖）：pill/outline 常规 16 semibold，
+// 紧凑 14 semibold（搜索 CTA 同款；U8 起三款均走 scaledFont 不封顶，见 titleFont）；
+// 关闭钮文字兜底 15。
+// 边框色是 CGColor、赋值时固化：traitCollectionDidChange 内经 refreshChrome() 重赋，
+// 深浅切换后边框不再停留在旧主题色。工厂钮一律 .custom 类型（UIButton(type:) 工厂
+// 方法无法走子类初始化链；Pickers 旧关闭钮是 .system，换工厂后按压反馈仍由调用方的
+// bearyAddPressFeedback 提供，行为不变）。
+// 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
+
+enum BearyButtonTone: Equatable {
+    case ink
+    case orange
+}
+
+enum BearyButtonSize: Equatable {
+    case regular
+    case compact
+}
+
+enum BearyButtonStyle: Equatable {
+    case primaryPill(BearyButtonTone)
+    case secondaryOutline(BearyButtonSize)
+    case destructiveOutline(BearyButtonSize)
+    case iconCircleClose
+
+    /// 调用方下高约束时取本值；关闭钮取 32（视觉），热区由父类扩到 44。
+    var height: CGFloat {
+        switch self {
+        case .primaryPill:
+            return 44
+        case .secondaryOutline(let size):
+            return size == .regular ? 44 : 36
+        case .destructiveOutline(let size):
+            return size == .regular ? 44 : 36
+        case .iconCircleClose:
+            return 32
+        }
+    }
+
+    var cornerRadius: CGFloat {
+        switch self {
+        case .primaryPill:
+            return BearyCorners.single
+        case .secondaryOutline(let size):
+            return BearyCorners.single
+        case .destructiveOutline(let size):
+            return BearyCorners.single
+        case .iconCircleClose:
+            return 16
+        }
+    }
+
+    /// 默认标题字号（紧凑 14 / 常规 16，与搜索 CTA / 通知弹窗主副钮同款）。
+    /// U8：primaryPill、secondaryOutline、destructiveOutline 三款一律走
+    /// scaledFont 跟随系统字号，不再封顶 20pt；基准字号不变（常规 16 / 紧凑 14），
+    /// 不自定新字号数值。iconCircleClose 例外不动（此前已是 scaledFont 15）。
+    var titleFont: UIFont {
+        switch self {
+        case .primaryPill:
+            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+        case .secondaryOutline(let size):
+            if size == .compact {
+                return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+            }
+            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+        case .destructiveOutline(let size):
+            if size == .compact {
+                return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+            }
+            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+        case .iconCircleClose:
+            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        }
+    }
+}
+
+class BearyButton: BearyHit44Button {
+
+    let style: BearyButtonStyle
+
+    /// 投票选中态（仅许愿墙两票钮经 applyVoteSelected 设定后非 nil；其余工厂钮恒 nil，
+    /// refreshChrome 仍走原样式边框，不受影响）。
+    private var voteSelected: Bool?
+
+    init(style: BearyButtonStyle) {
+        self.style = style
+        super.init(frame: .zero)
+        self.applyStyle()
+    }
+
+    required init?(coder: NSCoder) {
+        self.style = .secondaryOutline(.regular)
+        super.init(coder: coder)
+        self.applyStyle()
+    }
+
+    /// 快捷构造：带标题的工厂钮（标题仍可事后改 setTitle 覆盖）。
+    static func make(style: BearyButtonStyle, title: String) -> BearyButton {
+        let button = BearyButton(style: style)
+        button.setTitle(title, for: .normal)
+        return button
+    }
+
+    /// 快捷构造：关闭圆钮（surface2 底 32 圆钮 + icon_close 15；资产缺失时“✕”文字兜底）。
+    /// 关闭口径（2026-11-04 定）：全屏页左上角左箭头返回、非全屏弹窗右上角叉叉关闭；本圆钮用于弹窗右上角关闭。
+    static func closeButton() -> BearyButton {
+        return BearyButton(style: .iconCircleClose)
+    }
+
+    /// 重试类描边 pill 唯一档：常规描边款（44 高 / 圆角 12 / 14 semibold）。
+    /// 搜索页两处重试钮共用本工厂，不再各写一套尺寸。
+    /// 重试两档（ChatGPT 界面清单第 5 件：跨页分裂收敛，两档并存、不强行统一成一种）：
+    ///  行内档 retryInline()：卡片行内失败态——无边框/无底色、ink 字、14 bold、左对齐
+    ///    （原设置子页两处手写规格原样收进工厂；沿原写法用固定 14 bold，不走
+    ///    cappedFont/scaledFont，与原视觉逐字一致；热区仍由 BearyHit44Button 扩到 44pt）。
+    ///  整页档 retryPage()：整页/尾行失败态——即 retryPageStyle（secondaryOutline(.regular)：
+    ///    44 高/圆角 12/1pt line 边框 + surface1 底 + ink 字、14 semibold；左右内边距 20
+    ///    由调用方下，工厂只定底色/字色/边框/圆角/字号）。
+    ///  两档只定视觉；target/回调/启用条件一律由调用方下，工厂不动行为语义。
+    static let retryPageStyle: BearyButtonStyle = .secondaryOutline(.regular)
+
+    /// 行内重试：行内文字钮（设置子页失败行用）。标题固定“重试”，其余视觉见上方两档注释。
+    static func retryInline() -> BearyHit44Button {
+        let button = BearyHit44Button(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setTitle("重试", for: .normal)
+        button.setTitleColor(BearyColors.ink, for: .normal)
+        button.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        button.contentHorizontalAlignment = .left
+        return button
+    }
+
+    /// 整页重试：与既有 retryPill() 同一规格；retryPill() 保留供时间线/个人主页等
+    /// 既有调用方，新写与本次收敛的搜索页走本名，档名即语义。
+    static func retryPage() -> BearyButton {
+        return BearyButton(style: retryPageStyle)
+    }
+
+    static func retryPill() -> BearyButton {
+        return BearyButton(style: retryPageStyle)
+    }
+
+    /// 投票选中态公共样式（许愿墙赞成/反对钮共用）：选中 = ink 底 + bg 字——bg 与 ink
+    /// 恒成反色（深浅下 bg 自动跟随，不写死 .white）；未选中 = 透明底 + ink 字 + 25% ink 边框。
+    /// 只管投票选中文字/底色；公开 pill 橙色、donePill 绿色不在此方法管辖内，一律不动。
+    func applyVoteSelected(_ selected: Bool) {
+        voteSelected = selected
+        if selected {
+            backgroundColor = BearyColors.ink
+            setTitleColor(BearyColors.bg, for: .normal)
+            layer.bearyDynamicBorderColor = BearyColors.ink
+        } else {
+            backgroundColor = .clear
+            setTitleColor(BearyColors.ink, for: .normal)
+            layer.bearyDynamicBorderColor = BearyColors.ink.withAlphaComponent(0.25)
+        }
+    }
+
+    private func applyStyle() {
+        layer.cornerRadius = style.cornerRadius
+        layer.masksToBounds = true
+        titleLabel?.font = style.titleFont
+        // U8：工厂钮一律跟随系统字号（titleFont 三款走 scaledFont 不封顶；
+        // 关闭钮此前已是 scaledFont，不动）；
+        // 调用方事后覆写 titleLabel?.font 时须自行重配 scaledFont/cappedFont + 本开关。
+        titleLabel?.adjustsFontForContentSizeCategory = true
+        switch style {
+        case .primaryPill(let tone):
+            layer.borderWidth = 0
+            if tone == .ink {
+                // 2026-11-14 Li 定：纯白／纯黑墨底太突兀，改 surface2 柔和灰底 + ink 字
+                //（深色 ink 字 245 配 surface2 约 14:1、浅色墨字配 surface2 约 17:1）。
+                backgroundColor = BearyColors.surface2
+                setTitleColor(BearyColors.ink, for: .normal)
+                tintColor = BearyColors.ink
+            } else {
+                // 视觉清单第 5 项：橙底保留，前景固定深墨色 onBrand（不用 ink，
+                // ink 深色下变近白、橙底白字对比度不足；onBrand 深浅恒墨色）。
+                backgroundColor = BearyColors.orange
+                setTitleColor(BearyColors.onBrand, for: .normal)
+                tintColor = BearyColors.onBrand
+            }
+        case .secondaryOutline:
+            // 2026-11-14 Li 定：同上，surface1 在深色 sheet 上仍显纯黑，改 surface2。
+            backgroundColor = BearyColors.surface2
+            setTitleColor(BearyColors.ink, for: .normal)
+            tintColor = BearyColors.ink
+            layer.borderWidth = 1
+            layer.bearyDynamicBorderColor = BearyColors.line
+        case .destructiveOutline:
+            backgroundColor = BearyColors.surface1
+            setTitleColor(BearyColors.destructiveText, for: .normal)
+            tintColor = BearyColors.destructiveText
+            layer.borderWidth = 1
+            layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.destructiveText, 0.45)
+        case .iconCircleClose:
+            backgroundColor = BearyColors.surface2
+            tintColor = BearyColors.ink
+            accessibilityLabel = "关闭"
+            if let closeImage = BearyIconImages.image(named: "icon_close", pointSize: 15) {
+                setImage(closeImage, for: .normal)
+            } else {
+                // I15 同款兜底：icon_close 资产随包发布，正常路径恒取到图；
+                // 此文字分支仅作资产缺失时的兜底，保证关闭入口永在。
+                setTitle("✕", for: .normal)
+                setTitleColor(BearyColors.ink, for: .normal)
+            }
+        }
+    }
+
+    /// 深浅切换重刷：CALayer borderColor 赋值时固化，不重赋即停留在旧主题色。
+    /// 背景/字色是 UIColor 动态色，系统自动跟随，无需重赋；destructiveText 45% 边框由 bearyDynamicBorderColor 集中重刷，重赋同值无害。
+    /// 投票钮例外：边框须按投票态重赋，否则会被下面 secondaryOutline 分支刷回 line 色。
+    func refreshChrome() {
+        if let selected = voteSelected {
+            applyVoteSelected(selected)
+            return
+        }
+        switch style {
+        case .secondaryOutline:
+            layer.bearyDynamicBorderColor = BearyColors.line
+        case .destructiveOutline:
+            layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.destructiveText, 0.45)
+        case .primaryPill, .iconCircleClose:
+            break
+        }
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            self.refreshChrome()
+        }
+    }
+}

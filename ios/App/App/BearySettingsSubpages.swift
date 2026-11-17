@@ -1,0 +1,828 @@
+import UIKit
+
+/// 设置子页布局守卫（116 真机：设置页点进的子页顶栏落到屏中部、正文全空）。
+/// 115 设置页本身已有同款守卫（#352，其注释自认根因未证实：呈现时 view 帧／
+/// 安全区异常把顶栏顶到屏中部），但子页一律没有——子页与设置页同款
+/// fullScreen + fadeRise 呈现，同一呈现异常落到子页身上时无任何复位。
+/// 守卫只做三件事（每出现一次、在首次布局时跑一次）：
+/// ① view.frame 偏离窗口 bounds >0.5pt → 复位回窗口 bounds；
+/// ② view.transform 非单位阵（转场中断残留位移）→ 清掉；
+/// ③ 顶栏 minY 偏离 safeAreaInsets.top >20pt → 重布局一次。
+/// 不重建节点、不重播动效、不改数据与门控。评估与否、触发与否各记 [Diag]
+/// 一行，复现时凭日志一次定位是帧、位移还是约束问题。
+/// 117 真机教训：首次布局常落在转场动画中途（此时帧还是对的），一次性评估
+/// 随即消费掉；偏移若落在呈现完成、后一次布局解析之后，就再也不会被校正——
+/// 截图 5 页（标题落屏中、正文全空）正是终态偏离、守卫已 spent 的样子。
+/// 因此呈现完成时（viewDidAppear）必须再跑一次：applyAfterAppearance 不受
+/// didEvaluate 限制，复位后才算评估完成；动画已结束，复位无视觉跳变。
+final class BearySubpageLayoutGuard {
+    private var didEvaluate = false
+    func resetForAppearance() { didEvaluate = false }
+    /// 呈现完成时的再评估：先复位再跑，与 viewDidLayoutSubviews 的那次无关。
+    @discardableResult
+    func applyAfterAppearance(page: String, view: UIView, topView: UIView?, contentViews: [UIView] = [], presentation: String? = nil) -> Bool {
+        didEvaluate = false
+        return applyIfNeeded(page: page, view: view, topView: topView, contentViews: contentViews, presentation: presentation)
+    }
+    @discardableResult
+    func applyIfNeeded(page: String, view: UIView, topView: UIView?, contentViews: [UIView] = [], presentation: String? = nil) -> Bool {
+        guard !didEvaluate, let window = view.window else { return false }
+        let bounds = window.bounds
+        guard bounds.width > 0, bounds.height > 0, view.bounds.width > 0 else { return false }
+        didEvaluate = true
+        let frameOff = abs(view.frame.origin.x) > 0.5 || abs(view.frame.origin.y) > 0.5
+            || abs(view.frame.width - bounds.width) > 0.5 || abs(view.frame.height - bounds.height) > 0.5
+        let transformOff = !view.transform.isIdentity
+        let topOff = topView.map { abs($0.frame.minY - view.safeAreaInsets.top) > 20 } ?? false
+        // 118 真机教训：三项全通过仍可能坏——坏的是顶栏高度（顶栏顶正常、
+        // 高度吃掉全部可用高度、内容区高度归零），三项里没有一项量高度。
+        // 故日志必须记顶栏高度与内容区帧，一次定位到底是帧、位移、顶栏位置
+        // 还是顶栏高度/内容区高度问题；高度本身由约束上界治（见
+        // BearySubpageTopBarHeight），守卫只记不治，不再加一层通用守卫。
+        let topHeightOff = topView.map { $0.frame.height > BearySubpageTopBarHeight.max } ?? false
+        let contentFrames = contentViews.map { NSCoder.string(for: $0.frame) }.joined(separator: " | ")
+        NSLog("[Diag] subpage-layout page=%@ view=%@ top=%@ topH=%@ safeArea=%@ frameOff=%@ transformOff=%@ topOff=%@ topHeightOff=%@ content=[%@] presentation=%@",
+              page, NSCoder.string(for: view.frame),
+              topView.map { NSCoder.string(for: $0.frame) } ?? "nil",
+              topView.map { String(format: "%.1f", $0.frame.height) } ?? "nil",
+              NSCoder.string(for: view.safeAreaInsets),
+              frameOff ? "Y" : "N", transformOff ? "Y" : "N", topOff ? "Y" : "N", topHeightOff ? "Y" : "N",
+              contentFrames, presentation ?? "nil")
+        guard frameOff || transformOff || topOff else { return false }
+        if frameOff { view.frame = bounds }
+        if transformOff { view.transform = .identity }
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        NSLog("[Diag] subpage-layout-reset page=%@", page)
+        return true
+    }
+}
+
+/// 子页顶栏高度上下界（公共路径修法，与设置主页同口径）。
+/// 根因（117/118 真机 + 截图像素实测）：子页顶栏此前只钉了高度下界（>= 52），
+/// 子视图约束又全是不等式（centerY + 上下 >= 6 / <= -6），高度没有任何上界；
+/// 顶栏底边经滚动区/正文区/列表链到页底，内容区（scrollView/textView/tableView）
+/// 又都没有固有高度——整条竖向链多出一个自由度。实测解算结果是顶栏吃掉全部
+/// 可用高度、内容区高度归零：诊断页顶栏顶 61pt（正常安全区顶）、高约 734pt，
+/// 操作行被顶到 817pt、正文区只剩约 1pt；隐私/协议/拉黑三页顶栏高约 780pt、
+/// 内容区约 0pt；设备页（滚动区底钉 view.bottom）顶栏高约 814pt、滚动区约 0pt。
+/// 此时守卫三项全通过：view.frame == 窗口 bounds、transform 是单位阵、顶栏 minY
+/// == 安全区顶——坏的是顶栏高度，三项里没有一项量它；重布局也只会把同一套
+/// 约束再解出同一个结果，所以 #535 的呈现完成再校兜不住。
+/// 修法：与设置主页（>= 52 且 <= 88）同口径给顶栏加上界；88 内仍有余量，
+/// 大字号下顶栏可长到 88，内容区永远有高度，坏状态直接不在可行解里。
+/// 全量审计（以 BearySettingsViewController 全部呈现点为准，补查结论）：
+/// 本支 5 处改动实际覆盖 8 页——壳子页（会员来源明细、登录设备，子类调
+/// super.viewDidLoad 故同走壳顶栏）、法律页（隐私政策、用户协议）、诊断日志、
+/// 已拉黑用户、反馈与改进；原先只报“5 处”是代码落点数，不是页数。
+/// 刻意排除、经逐页核实不存在无界顶栏、不动的页：功能许愿墙（列表页与发起页
+/// 顶栏均钉死 == 52，无拉伸自由度）；编辑资料页（无独立顶栏，关闭/标题/保存
+/// 是内容栈内的横排 topRow，高度由 44pt 按钮固有高度决定）；添加账号登录页
+/// （栈式布局，关闭行 44、logo 行 28、字段 48、按钮 44 全部钉死高度）；使用指南
+/// （容器引导页，无顶栏视图）；系统弹窗与分享单（UIAlertController /
+/// UIActivityViewController，无自定义顶栏）。上述排除页若仍见标题落屏中、
+/// 正文全空，即非本机制，需凭新截图另查，不要再往本处加界。
+enum BearySubpageTopBarHeight {
+    static let min: CGFloat = 52
+    static let max: CGFloat = 88
+    static func constraints(for topBar: UIView) -> [NSLayoutConstraint] {
+        [topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: min),
+         topBar.heightAnchor.constraint(lessThanOrEqualToConstant: max)]
+    }
+}
+
+// ===== 设置子页：会员来源明细 / 登录设备（2026-10-29 第 7、11 项）=====
+// 两页原先以内联卡/内联展开的形式挤在设置页内（Plus 组的来源明细卡、
+// 账号与安全组的设备展开列表），本批各抽成独立页：设置页只留一行
+// （行尾官方包右箭头 icon_chevron_right，点击进入），列表内容照原样搬过来
+// （行格式、当前设备绿 pill、地区与上次活跃时间、空态与失败重试均不变）。
+// 接口现状（2026-10-29 已确认）：GET /api/account/plus-detail 与
+// GET /api/account/sessions 均已下发明细，直接接，不用等后端；设置页已拉到
+// 的数据经构造器传入，未拉到时子页自己拉一次（失败态行内重试）。
+// 子页口径与设置页一致：全屏 modal + fadeRise（容器侧接线）、左上文字
+// 「关闭」15pt 墨字、标题 17 bold；动效只走 transform/opacity（本页无进场
+// 动效，只有失败重试与行内淡入沿用设置页 fadeInNewStackRows 口径的静态显隐，
+// 减动效直显）；图标一律官方包，不自绘。
+
+/// 子页通用壳：顶栏（关闭 + 居中标题）+ 滚动内容列；子类往 contentStack 里填卡片。
+class BearySettingsSubpageViewController: UIViewController {
+    private let pageTitle: String
+    let contentStack = UIStackView()
+    /// 116 子页空白守卫：顶栏视图由 viewDidLoad 局部变量改为属性，供守卫读取 minY。
+    private let subpageLayoutGuard = BearySubpageLayoutGuard()
+    private var topBarView: UIView?
+    /// 滚动区同样提为属性，供守卫日志记滚动区帧与内容栈高度。
+    private let contentScrollView = UIScrollView()
+    /// 审计-个人页设置：子页壳 iPad 列宽——顶栏与内容列的宽度约束，
+    /// viewDidLayoutSubviews 按 ≥821 时 600 居中、≤820 全宽减 32 更新常量
+    /// （断点条件无法用纯约束表达；只在值变化时赋值，避免布局循环）。
+    private var subpageTopBarWidthConstraint: NSLayoutConstraint?
+    private var subpageContentWidthConstraint: NSLayoutConstraint?
+
+    init(title: String) {
+        self.pageTitle = title
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .fullScreen
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = BearyColors.bg
+        let topBar = UIView()
+        topBar.translatesAutoresizingMaskIntoConstraints = false
+        // 109：子页壳关闭钮改 BearyHit44Button——视觉（15pt 墨字、无尺寸约束）
+        // 不变，仅 point(inside:) 把热区扩到 44pt；对照组设置主页/法律页/
+        // 诊断页/拉黑页关闭钮均为 BearyHit44Button，本壳此前是普通钮（约 30×18pt）。
+        // 全屏页左上角统一左箭头：此前是文字“关闭”，现改 icon_back 图标钮
+        // （左上角位置与 44pt 热区不动，行为仍是 closeTapped 关页）。
+        let closeButton = BearyHit44Button(type: .custom)
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.setTitle(nil, for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        closeButton.tintColor = BearyColors.ink
+        closeButton.accessibilityLabel = "返回"
+        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
+        let titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = pageTitle
+        // 32 清单第 13 项：子页顶栏标题/关闭走 cappedFont（上限 20，许愿墙/反馈顶栏同口径）。
+        titleLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.textAlignment = .center
+        topBar.addSubview(closeButton)
+        topBar.addSubview(titleLabel)
+        view.addSubview(topBar)
+        topBarView = topBar
+        contentScrollView.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        contentScrollView.delaysContentTouches = false
+        view.addSubview(contentScrollView)
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.axis = .vertical
+        contentStack.spacing = 20
+        contentStack.alignment = .fill
+        contentScrollView.addSubview(contentStack)
+        // 审计-个人页设置：子页壳 iPad 列宽与设置主页/法律/诊断/拉黑对齐——
+        // ≥821 时顶栏与内容列同为 600 居中，≤820 时顶栏全宽、内容列全宽减 32
+        // （壳原有 -32 内边距不变，不改主页 -40 口径）；宽度常量由
+        // viewDidLayoutSubviews 按当前屏宽更新（见 updateSubpageColumnWidths）。
+        subpageTopBarWidthConstraint = topBar.widthAnchor.constraint(equalToConstant: view.bounds.width)
+        subpageContentWidthConstraint = contentStack.widthAnchor.constraint(equalToConstant: max(view.bounds.width - 32, 0))
+        NSLayoutConstraint.activate([
+            topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            subpageTopBarWidthConstraint!,
+            closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
+            closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            closeButton.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            closeButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
+            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
+            contentScrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            contentScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            contentScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            // 审计-个人页设置：子页壳底部钉安全区（原 view.bottomAnchor，
+            // 末行内容会沉到 Home 指示条下；法律/诊断/拉黑页已是安全区口径）。
+            contentScrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            contentStack.topAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.topAnchor, constant: 16),
+            contentStack.centerXAnchor.constraint(equalTo: contentScrollView.frameLayoutGuide.centerXAnchor),
+            subpageContentWidthConstraint!,
+            contentStack.bottomAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.bottomAnchor, constant: -24),
+        ] + BearySubpageTopBarHeight.constraints(for: topBar))
+    }
+
+    @objc private func closeTapped() {
+        dismiss(animated: BearyMotion.animated(true), completion: nil)
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        subpageLayoutGuard.resetForAppearance()
+    }
+
+    /// 审计-个人页设置：按当前屏宽更新子页壳列宽（仅 iPad ≥821 锁 600，
+    /// 其余全宽 / 内容列全宽减 32）；旋转/分屏时 viewDidLayoutSubviews
+    /// 再跑即纠正，不另监听尺寸变化。
+    private func updateSubpageColumnWidths() {
+        let viewWidth = view.bounds.width
+        guard viewWidth > 0 else { return }
+        let topBarWidth = BearyDesktop.isWide(viewWidth) ? 600 : viewWidth
+        let contentWidth = BearyDesktop.isWide(viewWidth) ? 600 : max(viewWidth - 32, 0)
+        if subpageTopBarWidthConstraint?.constant != topBarWidth {
+            subpageTopBarWidthConstraint?.constant = topBarWidth
+        }
+        if subpageContentWidthConstraint?.constant != contentWidth {
+            subpageContentWidthConstraint?.constant = contentWidth
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateSubpageColumnWidths()
+        subpageLayoutGuard.applyIfNeeded(page: pageTitle, view: view, topView: topBarView, contentViews: [contentScrollView, contentStack], presentation: "fullScreen+fadeRise")
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 117 终态偏离兜底：动画结束后的最终帧再校一次，不受首次布局那次限制。
+        subpageLayoutGuard.applyAfterAppearance(page: pageTitle, view: view, topView: topBarView, contentViews: [contentScrollView, contentStack], presentation: "fullScreen+fadeRise")
+    }
+
+    /// 行间分隔线 backgroundColor 走动态 UIColor、自动跟随，不用重刷；
+    /// 当前设备 curPill 绿边是固定绿，不动。
+
+    /// 分组卡（设置页 makeGroupCard 同款视觉：卡内标题、圆角 20、
+    /// 行间 1px 分隔线、行内容左右 16、上下 14）。
+    func makeGroupCard(title: String?, rows: [UIView]) -> UIView {
+        let card = UIView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        // 卡片底色走 surface1（页上卡片层；2026-11-07 微明度定版：1px 外框已去掉）。
+        card.backgroundColor = BearyColors.surface1
+        card.layer.borderWidth = 0
+        card.layer.cornerRadius = BearyCorners.single
+        card.clipsToBounds = true
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 0
+        stack.alignment = .fill
+        card.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: card.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+        ])
+        if let titleText = title {
+            // 审计第二波 4a：卡内标题改走 makeSectionTitle（P1-7 同口径，
+            // 见本文件 makeSectionTitle；此前内联 12 号固定字、单行）。
+            let titleLabelValue = makeSectionTitle(titleText)
+            titleLabelValue.translatesAutoresizingMaskIntoConstraints = false
+            let titleWrap = UIView()
+            titleWrap.translatesAutoresizingMaskIntoConstraints = false
+            titleWrap.addSubview(titleLabelValue)
+            NSLayoutConstraint.activate([
+                titleLabelValue.topAnchor.constraint(equalTo: titleWrap.topAnchor, constant: 16),
+                titleLabelValue.leadingAnchor.constraint(equalTo: titleWrap.leadingAnchor, constant: 16),
+                titleLabelValue.trailingAnchor.constraint(equalTo: titleWrap.trailingAnchor, constant: -16),
+                titleLabelValue.bottomAnchor.constraint(equalTo: titleWrap.bottomAnchor, constant: -8),
+            ])
+            stack.addArrangedSubview(titleWrap)
+        }
+        for (index, row) in rows.enumerated() {
+            if index > 0 {
+                let separator = UIView()
+                separator.translatesAutoresizingMaskIntoConstraints = false
+                separator.backgroundColor = BearyColors.line
+                NSLayoutConstraint.activate([separator.heightAnchor.constraint(equalToConstant: 1)])
+                stack.addArrangedSubview(separator)
+            }
+            let wrap = UIView()
+            wrap.translatesAutoresizingMaskIntoConstraints = false
+            row.translatesAutoresizingMaskIntoConstraints = false
+            wrap.addSubview(row)
+            NSLayoutConstraint.activate([
+                row.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 14),
+                row.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 16),
+                row.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -16),
+                row.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -14),
+            ])
+            stack.addArrangedSubview(wrap)
+        }
+        return card
+    }
+
+    /// 审计第二波 4a：按第一波 P1-7（设置页 makeLabel）同口径接动态字体——
+    /// 默认字号下与原值一致，大字号档跟随系统缩放；行尾按字符换行。
+    func makeLabel(font: UIFont, color: UIColor, lines: Int = 1) -> UILabel {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: font)
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = color
+        label.numberOfLines = lines
+        label.lineBreakMode = .byCharWrapping
+        return label
+    }
+
+    /// 审计第二波 4a：卡内分组标题（设置页 makeSectionTitle 同口径）——
+    /// 12px 灰、字距 1px、多行自适应（大字号下可换行，标题包容器上下
+    /// 约束已定、行高随文字自动撑开，不钉固定高度）。
+    func makeSectionTitle(_ text: String) -> UILabel {
+        let label = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray)
+        label.numberOfLines = 0
+        label.attributedText = NSAttributedString(string: text, attributes: [.kern: 1, .font: label.font])
+        return label
+    }
+}
+
+// MARK: - 会员来源明细页（第 7 项）
+
+final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
+    private var statusText: String
+    private var personalText: String
+    private var grants: [BearyPlusGrant]?
+    private var loadFailed: Bool
+    /// A2：设置页的 Plus 共享加载结果（同会话在途结果共用）；为 nil 时
+    /// 退回旧口径自拉（防御性兜底，设置页现行必传）。
+    private var sharedLoad: BearySharedLoad<BearyPlusDetailResponse>?
+    /// 109：重试在途锁 + 代次——重试只置空数据发请求时，连点会多发请求、
+    /// 后到失败回包还会覆盖先到成功回包；在途重试直接忽略，代次再拦过期回包。
+    private var isRetrying = false
+    private var retryGeneration = 0
+    /// 116：发放行入场错峰只播一次（首个数据 render 且已进窗口时）；
+    /// 传入数据首帧（viewDidLoad 时窗口未进）不播、直接显；失败／
+    /// 加载态 render 不置位，重试成功后仍可播一次。
+    private var grantsRowsAnimated = false
+
+    /// 设置页已拉到的 plusDetail 经 status/personal 文案与 grants 传入；
+    /// grants 为 nil 且未失败时本页接设置页同一份在途结果（A2），不再自己另发请求。
+    init(statusText: String, personalText: String, grants: [BearyPlusGrant]?, failed: Bool, sharedLoad: BearySharedLoad<BearyPlusDetailResponse>? = nil) {
+        self.statusText = statusText
+        self.personalText = personalText
+        self.grants = grants
+        self.loadFailed = failed
+        self.sharedLoad = sharedLoad
+        super.init(title: "会员来源明细")
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        if grants == nil && !loadFailed {
+            if let sharedLoad = sharedLoad {
+                // A2：接设置页同会话在途结果——在途则等同一份回包，已取到
+                // 则直接用缓存；失败则走失败态。回包已在主线程（见 loader）。
+                sharedLoad.load { [weak self] result in
+                    guard let self = self else { return }
+                    switch result {
+                    case .success(let detail):
+                        self.statusText = Self.statusText(detail: detail)
+                        self.personalText = Self.personalText(detail: detail)
+                        // 服务端 grants 为 nil 即确认无发放记录，落 [] 显空态，
+                        // 不留 nil 致 render 误判为“加载中”。
+                        self.grants = detail.grants ?? []
+                        self.loadFailed = false
+                    case .failure:
+                        self.loadFailed = true
+                    }
+                    self.render()
+                }
+            } else {
+                BearyAPI.shared.fetchPlusDetail { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        switch result {
+                        case .success(let detail):
+                            self.statusText = Self.statusText(detail: detail)
+                            self.personalText = Self.personalText(detail: detail)
+                            self.grants = detail.grants
+                            self.loadFailed = false
+                        case .failure:
+                            self.loadFailed = true
+                        }
+                        self.render()
+                    }
+                }
+            }
+        }
+        render()
+    }
+
+    /// 设置页 fillPlusDetail 同款状态文案（本页自拉路径用；设置页传入路径不用它）。
+    private static func statusText(detail: BearyPlusDetailResponse) -> String {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        if detail.permanent == true { return "Plus 会员 · 永久" }
+        if let effective = detail.effectiveUntil, effective > now {
+            return "Plus 会员 · 至 " + BearyAccountText.dateString(ms: effective)
+        }
+        return "普通用户"
+    }
+
+    private static func personalText(detail: BearyPlusDetailResponse) -> String {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        let personal = detail.personalUntil ?? 0
+        let freeUntil = detail.freeUntil ?? 0
+        if detail.permanent == true { return "永久会员" }
+        if personal > now {
+            var text = "至 " + BearyAccountText.dateString(ms: personal)
+            if freeUntil > 0 && personal > freeUntil {
+                text += " · 限免结束后保留 \((personal - freeUntil) / 86400000) 天"
+            } else if freeUntil > now {
+                text += " · 与限免期重叠"
+            }
+            return text
+        }
+        return "暂无（好友注册并绑定邀请码，双方各得 +30 天）"
+    }
+
+    private func render() {
+        for view in contentStack.arrangedSubviews {
+            contentStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        let statusLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
+        statusLabel.text = statusText
+        statusLabel.textAlignment = .right
+        let statusTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        statusTitle.text = "当前状态"
+        statusTitle.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        let statusRow = UIStackView(arrangedSubviews: [statusTitle, statusLabel])
+        statusRow.axis = .horizontal
+        statusRow.spacing = 12
+        statusRow.alignment = .center
+        let personalLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
+        personalLabel.text = personalText
+        personalLabel.textAlignment = .right
+        let personalTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        personalTitle.text = "专属会员"
+        personalTitle.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        let personalRow = UIStackView(arrangedSubviews: [personalTitle, personalLabel])
+        personalRow.axis = .horizontal
+        personalRow.spacing = 12
+        personalRow.alignment = .center
+        contentStack.addArrangedSubview(makeGroupCard(title: "Plus 会员", rows: [statusRow, personalRow]))
+
+        var grantRows: [UIView] = []
+        if grants == nil && !loadFailed {
+            // 自拉进行中：先显加载行，不闪空态（回包后 render 重绘）。
+            let spinner = BearyRefreshIconView()
+            // 栈内固有尺寸与旧 medium 圈一致（20pt 图）。
+            spinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
+            spinner.startSpinning()
+            let loadingLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray)
+            loadingLabel.text = "加载中…"
+            let loadingRow = UIStackView(arrangedSubviews: [spinner, loadingLabel])
+            loadingRow.axis = .horizontal
+            loadingRow.spacing = 8
+            loadingRow.alignment = .center
+            grantRows.append(loadingRow)
+        } else if loadFailed {
+            let failedLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
+            failedLabel.text = "加载失败"
+            grantRows.append(failedLabel)
+            // 重试两档·行内档（BearyButton.retryInline）：文案/布局/target 不变，
+            // 仅把手写规格收进工厂；109 热区仍由 BearyHit44Button 扩到 44pt。
+            let retryButton = BearyButton.retryInline()
+            retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+            retryButton.bearyAddPressFeedback()
+            grantRows.append(retryButton)
+        } else if let list = grants, !list.isEmpty {
+            for grant in list {
+                let nameLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+                nameLabel.text = BearyAccountText.grantSourceName(grant.source)
+                let detailLabel = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
+                detailLabel.text = BearyAccountText.dateString(ms: grant.createdAt) + " · " + BearyAccountText.grantValueText(days: grant.days)
+                let rowStack = UIStackView(arrangedSubviews: [nameLabel, detailLabel])
+                rowStack.axis = .vertical
+                rowStack.spacing = 4
+                grantRows.append(rowStack)
+            }
+        } else {
+            let emptyLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
+            emptyLabel.text = "暂无发放记录"
+            grantRows.append(emptyLabel)
+        }
+        contentStack.addArrangedSubview(makeGroupCard(title: "来源明细", rows: grantRows))
+        // 116：发放行数据到达时错峰滑入（新内容 only：本页行每次 render
+        // 重建，故以首个数据 render + 已进窗口为播一次的守卫；行本身
+        // alpha／y+6、0.26s、0.03 步进，减动效直显；加载／失败／空态
+        // 行不走本分支——grants 为 nil 或失败时不置位）。
+        if !grantsRowsAnimated, grants != nil, !loadFailed,
+           view.window != nil, !UIAccessibility.isReduceMotionEnabled {
+            grantsRowsAnimated = true
+            var delay: TimeInterval = 0
+            for row in grantRows {
+                let targetAlpha = row.alpha
+                row.alpha = 0
+                row.transform = CGAffineTransform(translationX: 0, y: 6)
+                UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: [.curveEaseOut], animations: {
+                    row.alpha = targetAlpha
+                    row.transform = .identity
+                })
+                delay = min(delay + 0.03, 0.24)
+            }
+        }
+    }
+
+    @objc private func retryTapped() {
+        // 109：在途重试直接忽略（不重复发请求）；先 render 加载态——
+        // grants=nil 且 !loadFailed 时 render 出转圈“加载中…”行，失败态重试钮
+        // 随之离场（等价于禁用，在途无可点之钮）；回包后恢复。
+        guard !isRetrying else { return }
+        isRetrying = true
+        retryGeneration += 1
+        let gen = retryGeneration
+        grants = nil
+        loadFailed = false
+        render()
+        BearyAPI.shared.fetchPlusDetail { [weak self] result in
+            DispatchQueue.main.async {
+                // 先解锁再判代次：成功/失败/过期回包一律解锁，不留死锁。
+                self?.isRetrying = false
+                guard let self = self, self.retryGeneration == gen else { return }
+                switch result {
+                case .success(let detail):
+                    self.statusText = Self.statusText(detail: detail)
+                    self.personalText = Self.personalText(detail: detail)
+                    self.grants = detail.grants
+                    self.loadFailed = false
+                case .failure:
+                    self.loadFailed = true
+                }
+                self.render()
+            }
+        }
+    }
+}
+
+// MARK: - 登录设备页（第 11 项）
+
+final class BearyDevicesViewController: BearySettingsSubpageViewController {
+    private var sessions: [BearyAccountSession]?
+    private var loadFailed: Bool
+    private var countText: String?
+    /// A2：设置页的设备共享加载结果（同会话在途结果共用）；为 nil 时
+    /// 退回旧口径自拉（防御性兜底，设置页现行必传）。
+    private var sharedLoad: BearySharedLoad<BearyAccountSessionsResponse>?
+    /// 109：同会员来源明细页——重试在途锁 + 代次，防连点多发与过期回包覆盖。
+    private var isRetrying = false
+    private var retryGeneration = 0
+    /// 116：设备行入场错峰只播一次（首个数据 render 且已进窗口时）；
+    /// 传入数据首帧（viewDidLoad 时窗口未进）不播、直接显；失败／
+    /// 加载态 render 不置位，重试成功后仍可播一次。
+    private var deviceRowsAnimated = false
+    /// 2026-11-14：当前会话型号补报只发一次（本页生命周期内）；失败时复位，下次加载可再试。
+    private var didReportCurrentDevice = false
+
+    /// 设置页已拉到的 sessions 传入（A2：nil = 还没取到，[] = 确认是空，
+    /// 两者不再混同）；为 nil 且未失败时本页接设置页同一份在途结果，不再自己另发请求。
+    /// 退出其他设备钮不进本页，仍留在设置页（任务只说列表另做一页）。
+    init(sessions: [BearyAccountSession]?, failed: Bool, countText: String?, sharedLoad: BearySharedLoad<BearyAccountSessionsResponse>? = nil) {
+        self.sessions = sessions
+        self.loadFailed = failed
+        self.countText = countText
+        self.sharedLoad = sharedLoad
+        super.init(title: "登录设备")
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        if sessions == nil && !loadFailed {
+            if let sharedLoad = sharedLoad {
+                // A2：接设置页同会话在途结果——在途则等同一份回包，已取到
+                // 则直接用缓存；失败则走失败态。回包已在主线程（见 loader）。
+                sharedLoad.load { [weak self] result in
+                    guard let self = self else { return }
+                    switch result {
+                    case .success(let resp):
+                        self.sessions = resp.sessions ?? []
+                        if let active = resp.activeCount {
+                            self.countText = "共 \(active) 台设备（活跃）"
+                        } else {
+                            self.countText = "共 \((resp.sessions ?? []).count) 台设备"
+                        }
+                        self.loadFailed = false
+                    case .failure:
+                        self.loadFailed = true
+                    }
+                    self.render()
+                    self.reportCurrentDeviceIfNeeded()
+                }
+            } else {
+                BearyAPI.shared.fetchAccountSessions { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        switch result {
+                        case .success(let resp):
+                            self.sessions = resp.sessions ?? []
+                            if let active = resp.activeCount {
+                                self.countText = "共 \(active) 台设备（活跃）"
+                            } else {
+                                self.countText = "共 \((resp.sessions ?? []).count) 台设备"
+                            }
+                            self.loadFailed = false
+                        case .failure:
+                            self.loadFailed = true
+                        }
+                        self.render()
+                        self.reportCurrentDeviceIfNeeded()
+                    }
+                }
+            }
+        }
+        render()
+    }
+
+    private func render() {
+        for view in contentStack.arrangedSubviews {
+            contentStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        var countLabelView: UILabel?
+        if let count = countText {
+            let countLabel = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
+            countLabel.text = count
+            countLabelView = countLabel
+            contentStack.addArrangedSubview(countLabel)
+        }
+        var rows: [UIView] = []
+        if sessions == nil && !loadFailed {
+            // 自拉进行中：先显加载行，不闪空态（回包后 render 重绘）。
+            let spinner = BearyRefreshIconView()
+            // 栈内固有尺寸与旧 medium 圈一致（20pt 图）。
+            spinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
+            spinner.startSpinning()
+            let loadingLabel = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
+            loadingLabel.text = "加载中…"
+            let loadingRow = UIStackView(arrangedSubviews: [spinner, loadingLabel])
+            loadingRow.axis = .horizontal
+            loadingRow.spacing = 8
+            loadingRow.alignment = .center
+            rows.append(loadingRow)
+        } else if loadFailed {
+            let failedLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
+            failedLabel.text = "加载失败"
+            rows.append(failedLabel)
+            // 重试两档·行内档（BearyButton.retryInline）：文案/布局/target 不变，
+            // 仅把手写规格收进工厂；109 热区仍由 BearyHit44Button 扩到 44pt。
+            let retryButton = BearyButton.retryInline()
+            retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+            retryButton.bearyAddPressFeedback()
+            rows.append(retryButton)
+        } else if let list = sessions, !list.isEmpty {
+            for session in list {
+                rows.append(sessionRow(session: session))
+            }
+        } else {
+            let emptyLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
+            emptyLabel.text = "暂无登录设备"
+            rows.append(emptyLabel)
+        }
+        contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: rows))
+        // 116：设备行数据到达时错峰滑入（alpha＋y+6、0.26s、0.03 步进；
+        // 行每次 render 重建，故以首个数据 render＋已进窗口为播一次的
+        // 守卫；传入数据首帧因窗口未进不播、直接显；加载／失败态
+        // render 不置位，重试成功后仍可播一次；减动效直显；目标
+        // alpha 按行原值取（各行均为 1，不再有过期行降透明度）。
+        if !deviceRowsAnimated, sessions != nil, !loadFailed,
+           view.window != nil, !UIAccessibility.isReduceMotionEnabled {
+            deviceRowsAnimated = true
+            // 116：计数文案随数据到达只淡入本身（无位移）。
+            if let countLabelView = countLabelView {
+                countLabelView.alpha = 0
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut], animations: {
+                    countLabelView.alpha = 1
+                })
+            }
+            var delay: TimeInterval = 0
+            for row in rows {
+                let targetAlpha = row.alpha
+                row.alpha = 0
+                row.transform = CGAffineTransform(translationX: 0, y: 6)
+                UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: [.curveEaseOut], animations: {
+                    row.alpha = targetAlpha
+                    row.transform = .identity
+                })
+                delay = min(delay + 0.03, 0.24)
+            }
+        }
+    }
+
+    /// 设置页 rebuildSessions 同款行格式：设备名 15 墨 + 状态 pill
+    /// （「当前」11/700 绿字绿边、「已过期」11/700 灰字灰边，内边距 1/7、
+    /// 圆角 8）+ 副文案 13 灰「地区 · 上次活跃 dateTime」；过期行不再
+    /// 整行降透明度，设备名／地区／上次活跃时间保持正常对比度。
+    private func sessionRow(session: BearyAccountSession) -> UIView {
+        let devLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        devLabel.text = BearyAccountText.deviceName(session: session)
+        var lineParts: [UIView] = [devLabel]
+        // 状态 pill 同款几何（11/700、1pt 边、圆角 8、内边距 1/7），
+        // 文字与边框同色走 token：当前深绿（#1320 对比度）、已过期灰。
+        let makeStatusPill: (String, UIColor) -> UIView = { text, color in
+            let pillLabel = self.makeLabel(font: UIFont.systemFont(ofSize: 11, weight: .bold), color: color)
+            pillLabel.text = text
+            let pill = UIView()
+            pill.translatesAutoresizingMaskIntoConstraints = false
+            pill.layer.borderWidth = 1
+            pill.layer.bearyDynamicBorderColor = color
+            pill.layer.cornerRadius = 8
+            pill.clipsToBounds = true
+            pill.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+            pillLabel.translatesAutoresizingMaskIntoConstraints = false
+            pill.addSubview(pillLabel)
+            NSLayoutConstraint.activate([
+                pillLabel.topAnchor.constraint(equalTo: pill.topAnchor, constant: 1),
+                pillLabel.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 7),
+                pillLabel.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -7),
+                pillLabel.bottomAnchor.constraint(equalTo: pill.bottomAnchor, constant: -1),
+            ])
+            return pill
+        }
+        if session.isCurrent == true {
+            lineParts.append(makeStatusPill("当前", BearyColors.deepGreenText))
+        }
+        if session.expired == true {
+            lineParts.append(makeStatusPill("已过期", BearyColors.gray))
+        }
+        if session.isCurrent == true || session.expired == true {
+            lineParts.append(UIView())
+        }
+        let lineRow = UIStackView(arrangedSubviews: lineParts)
+        lineRow.axis = .horizontal
+        lineRow.spacing = 8
+        lineRow.alignment = .center
+        let region = (session.region ?? "").isEmpty ? "未知地区" : (session.region ?? "")
+        let meta = region + " · 上次活跃 " + BearyAccountText.dateTimeString(ms: session.lastActive)
+        let metaLabel = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
+        metaLabel.text = meta
+        let rowStack = UIStackView(arrangedSubviews: [lineRow, metaLabel])
+        rowStack.axis = .vertical
+        rowStack.spacing = 4
+        return rowStack
+    }
+
+    /// 当前会话设备型号补报（2026-11-14）：老会话登录时未采集型号、列表显示“浏览器”时，
+    /// 用显式型号调一次 session-device 补上，成功后重拉列表刷新显示；已有标签绝不覆盖。
+    /// 只在当前会话 device 为空或“浏览器”时触发，本页生命周期内最多一次（失败复位可再试）。
+    private func reportCurrentDeviceIfNeeded() {
+        guard !didReportCurrentDevice else { return }
+        guard let current = sessions?.first(where: { $0.isCurrent == true }) else { return }
+        let dev = current.device ?? ""
+        guard dev.isEmpty || dev == "浏览器" else { return }
+        didReportCurrentDevice = true
+        BearyAPI.shared.reportSessionDevice(model: BearyAPI.deviceModelName()) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard case .success = result else {
+                    self.didReportCurrentDevice = false
+                    return
+                }
+                // 补报成功：重拉一次列表（不走共享缓存，取最新 device），刷新显示。
+                BearyAPI.shared.fetchAccountSessions { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        guard case .success(let resp) = result else { return }
+                        self.sessions = resp.sessions ?? []
+                        if let active = resp.activeCount {
+                            self.countText = "共 \(active) 台设备（活跃）"
+                        } else {
+                            self.countText = "共 \((resp.sessions ?? []).count) 台设备"
+                        }
+                        self.loadFailed = false
+                        self.render()
+                    }
+                }
+            }
+        }
+    }
+
+    @objc private func retryTapped() {
+        // 109：同会员来源明细页——在途重试直接忽略，先 render 加载态
+        // （sessions=nil 且 !loadFailed 时 render 出转圈“加载中…”行，
+        // 失败态重试钮随之离场，等价于禁用），回包后恢复。
+        guard !isRetrying else { return }
+        isRetrying = true
+        retryGeneration += 1
+        let gen = retryGeneration
+        sessions = nil
+        loadFailed = false
+        render()
+        BearyAPI.shared.fetchAccountSessions { [weak self] result in
+            DispatchQueue.main.async {
+                // 先解锁再判代次：成功/失败/过期回包一律解锁，不留死锁。
+                self?.isRetrying = false
+                guard let self = self, self.retryGeneration == gen else { return }
+                switch result {
+                case .success(let resp):
+                    self.sessions = resp.sessions ?? []
+                    if let active = resp.activeCount {
+                        self.countText = "共 \(active) 台设备（活跃）"
+                    } else {
+                        self.countText = "共 \((resp.sessions ?? []).count) 台设备"
+                    }
+                    self.loadFailed = false
+                case .failure:
+                    self.loadFailed = true
+                }
+                self.render()
+                self.reportCurrentDeviceIfNeeded()
+            }
+        }
+    }
+}

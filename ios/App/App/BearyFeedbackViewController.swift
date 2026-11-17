@@ -1,0 +1,1515 @@
+import UIKit
+import MessageUI
+import PhotosUI
+import UniformTypeIdentifiers
+import Darwin
+
+// ===== 反馈与改进（2026-10-28 反馈 v3，路线 A：不做后端，走邮件附件）=====
+// 界面按 v4 预览（与 v3 差异仅底部）：子页全屏 modal + fadeRise，左上文字
+// 「关闭」15pt 墨字、标题 17；顶部状态行「反馈数据已准备就绪」+ beary 绿勾；
+// 问题描述区：系统 UISegmentedControl（问题反馈 / 优化建议，选中段墨底 +
+// 反色字，既定样式，不自造分段控件）+ 编辑器正文同款 UITextView；图片或视频
+// （可选，最多 5 个）添加卡（手绘 icon_image）；设备信息卡 8 行；底部依次为
+// 墨底主钮「撰写反馈邮件」、secondaryOutline「分享诊断日志」（手绘 icon_share）、
+// 「诊断」分组 + secondaryOutline「仅发送日志」；发送说明收进提交提示旁
+// 的帮助入口（info 图标，点按底部弹窗展示，不常驻页底）。
+// 组件规矩（2026-10-28 Li 定，长期有效）：组件一律走 iOS 系统组件
+// （UIButton / UITextView / PHPicker / MFMailCompose / UIActivityViewController），
+// 图标只用手绘官方包（icon_image、icon_share 均取 89 包 xcassets；资产缺失时
+// 只显示文字，不自绘、不混 SF Symbol 做主图标，系统组件自带的除外）。
+// 部署目标 iOS 15.0、Swift 5.0：只用闭包回调，不用 async/await，不用 if-let 简写。
+
+// MARK: - 设备信息（卡片 9 行与 device-info.txt 同值）
+
+enum BearyFeedbackDeviceInfo {
+    static func rows() -> [(key: String, value: String)] {
+        let device = UIDevice.current
+        let wasMonitoring = device.isBatteryMonitoringEnabled
+        device.isBatteryMonitoringEnabled = true
+        let batteryState = device.batteryState
+        let batteryLevel = device.batteryLevel
+        device.isBatteryMonitoringEnabled = wasMonitoring
+        let batteryStateText: String
+        switch batteryState {
+        case .charging:
+            batteryStateText = "充电中"
+        case .full:
+            batteryStateText = "已充满"
+        case .unplugged:
+            batteryStateText = "未充电"
+        default:
+            batteryStateText = "未知"
+        }
+        let batteryLevelText: String
+        if batteryLevel < 0 {
+            batteryLevelText = "未知"
+        } else {
+            batteryLevelText = "\(Int(round(batteryLevel * 100)))%"
+        }
+        let memoryText = String(format: "%.2f GB", Double(ProcessInfo.processInfo.physicalMemory) / 1_000_000_000.0)
+        let diskText: String
+        if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory()),
+           let free = attrs[.systemFreeSize] as? NSNumber {
+            diskText = String(format: "%.1f GB", free.doubleValue / 1_000_000_000.0)
+        } else {
+            diskText = "未知"
+        }
+        let appVersionShort = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        let appVersionBuild = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+        // 补缺 P3-34：设备信息补构建号（设置页脚注同款两值）；补缺 P3-35：设备名称行删除（用户自定名称进附件属隐私）。
+        let appVersion = "\(appVersionShort)（构建号 \(appVersionBuild)）"
+        return [
+            ("设备型号", machineIdentifier()),
+            ("系统名称", device.systemName),
+            ("系统版本", device.systemVersion),
+            ("应用版本", appVersion),
+            ("电池状态", batteryStateText),
+            ("电池电量", batteryLevelText),
+            ("总内存", memoryText),
+            ("可用磁盘空间", diskText),
+        ]
+    }
+
+    static func text() -> String {
+        return rows().map { "\($0.key)：\($0.value)" }.joined(separator: "\n")
+    }
+
+    private static func machineIdentifier() -> String {
+        var size = 0
+        sysctlbyname("hw.machine", nil, &size, nil, 0)
+        guard size > 0 else { return UIDevice.current.model }
+        var machine = [CChar](repeating: 0, count: size)
+        let result = sysctlbyname("hw.machine", &machine, &size, nil, 0)
+        guard result == 0 else { return UIDevice.current.model }
+        return machine.withUnsafeBufferPointer { buffer in
+            guard let base = buffer.baseAddress else { return UIDevice.current.model }
+            return String(cString: base)
+        }
+    }
+}
+
+// MARK: - 最小 zip（stored 条目，不引新依赖）
+
+/// zip 选择（2026-10-28 汇报用）：工程已有 SPM 但只接了 Lottie；为这一个
+/// 功能新增 ZIPFoundation 远端依赖会给每次 CI 构建加一次远端拉取与版本解析，
+/// 且 zip 内容很小（日志上限 1MB + 设备信息 + 诊断日志 200 行），stored 条目
+/// 足够；故不用 Compression 的 deflate（ZIP 要 raw deflate，Compression 给的
+/// 是 zlib 包裹格式，剥头剥尾易碎），也不引新库，手写 stored zip（本地头 +
+/// 中央目录 + 结束记录，CRC32 表驱动，ASCII 文件名，macOS 解包器可读）。
+enum BearyZipBuilder {
+    private static let crcTable: [UInt32] = {
+        var table = [UInt32](repeating: 0, count: 256)
+        for i in 0..<256 {
+            var c = UInt32(i)
+            for _ in 0..<8 {
+                if c & 1 != 0 {
+                    c = 0xEDB88320 ^ (c >> 1)
+                } else {
+                    c = c >> 1
+                }
+            }
+            table[i] = c
+        }
+        return table
+    }()
+
+    private static func crc32(_ data: Data) -> UInt32 {
+        var crc: UInt32 = 0xFFFFFFFF
+        for byte in data {
+            crc = crcTable[Int((crc ^ UInt32(byte)) & 0xFF)] ^ (crc >> 8)
+        }
+        return crc ^ 0xFFFFFFFF
+    }
+
+    private static func append16(_ value: UInt16, to data: inout Data) {
+        var v = value.littleEndian
+        withUnsafeBytes(of: &v) { data.append(contentsOf: $0) }
+    }
+
+    private static func append32(_ value: UInt32, to data: inout Data) {
+        var v = value.littleEndian
+        withUnsafeBytes(of: &v) { data.append(contentsOf: $0) }
+    }
+
+    /// files：(文件名，内容)。文件名须 ASCII 且单文件 < 4GB（日志包远小于此）。
+    static func build(files: [(name: String, data: Data)]) -> Data? {
+        guard files.count < 65536 else { return nil }
+        var out = Data()
+        var central = Data()
+        var offset: UInt32 = 0
+        for file in files {
+            guard let nameData = file.name.data(using: .utf8),
+                  nameData.count < 65536,
+                  file.data.count <= Int(UInt32.max) else { return nil }
+            let crc = crc32(file.data)
+            let size = UInt32(file.data.count)
+            var local = Data()
+            append32(0x04034b50, to: &local)
+            append16(20, to: &local)
+            append16(0, to: &local)
+            append16(0, to: &local)
+            append16(0, to: &local)
+            append16(0, to: &local)
+            append32(crc, to: &local)
+            append32(size, to: &local)
+            append32(size, to: &local)
+            append16(UInt16(nameData.count), to: &local)
+            append16(0, to: &local)
+            local.append(nameData)
+            local.append(file.data)
+            append32(0x02014b50, to: &central)
+            append16(20, to: &central)
+            append16(20, to: &central)
+            append16(0, to: &central)
+            append16(0, to: &central)
+            append16(0, to: &central)
+            append16(0, to: &central)
+            append32(crc, to: &central)
+            append32(size, to: &central)
+            append32(size, to: &central)
+            append16(UInt16(nameData.count), to: &central)
+            append16(0, to: &central)
+            append16(0, to: &central)
+            append16(0, to: &central)
+            append16(0, to: &central)
+            append32(0, to: &central)
+            append32(offset, to: &central)
+            central.append(nameData)
+            out.append(local)
+            offset += UInt32(local.count)
+        }
+        let centralSize = UInt32(central.count)
+        let centralOffset = offset
+        out.append(central)
+        append32(0x06054b50, to: &out)
+        append16(0, to: &out)
+        append16(0, to: &out)
+        append16(UInt16(files.count), to: &out)
+        append16(UInt16(files.count), to: &out)
+        append32(centralSize, to: &out)
+        append32(centralOffset, to: &out)
+        append16(0, to: &out)
+        return out
+    }
+}
+
+// MARK: - 反馈页
+
+final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, PHPickerViewControllerDelegate, MFMailComposeViewControllerDelegate {
+
+    private enum PendingMailKind {
+        case submit
+        case logOnly
+    }
+
+    private struct Attachment {
+        let data: Data
+        let mimeType: String
+        let fileName: String
+    }
+
+    private let scrollView = UIScrollView()
+    private let contentStack = UIStackView()
+    /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
+    private let subpageLayoutGuard = BearySubpageLayoutGuard()
+    private var topBarView: UIView?
+    /// 审计五轮第 1 项（R2）：821 断点——600 上限只在宽屏激活，窄屏靠 750 等式取全宽减 32。
+    private var topBarWidthCap: NSLayoutConstraint?
+    private var contentWidthCap: NSLayoutConstraint?
+    private var feedbackColumnIsWide = false
+    private let statusLabel = UILabel()
+    private let statusBadge = UIView()
+    private let typeSegmented = UISegmentedControl(items: ["问题反馈", "优化建议"])
+    private let textView = UITextView()
+    private let placeholderLabel = UILabel()
+    private let attachLabelButton = UIButton(type: .custom)
+    // B6 附件读取进度（原位、附件卡内）：转圈 +「正在读取 N 个附件」，
+    // 初始隐藏且高度约束为 0，不占卡片高度。
+    private let attachProgressSpinner = UIActivityIndicatorView(style: .medium)
+    private let attachProgressLabel = UILabel()
+    private let attachProgressRow = UIStackView()
+    private var attachProgressHeight: NSLayoutConstraint?
+    private var attachProgressTopConstraint: NSLayoutConstraint?
+    // Hit44：行高由左钮 44 钉死、居中对齐，清除钮纵向扩区恰填满行高；横向各扩约 7，不及左间距 8 与右 inset 14，不抢左钮热区。
+    private let attachClearButton = BearyHit44Button(type: .system)
+    private let submitButton = BearyButton.make(style: .primaryPill(.ink), title: "撰写反馈邮件")
+    private let submitHintLabel = UILabel()
+    private let shareButton = BearyButton.make(style: .secondaryOutline(.regular), title: "分享诊断日志")
+    private let logOnlyButton = BearyButton.make(style: .secondaryOutline(.regular), title: "仅发送日志")
+
+    private var attachments: [Attachment] = []
+    /// 审计反馈清除回填：附件选择代次。每轮选择占一个代次，清除或重选时
+    /// 代次 +1 使旧轮在途读取失效，旧轮完成时直接丢弃（审计 N5：读取已改
+    /// 串行链式，旧轮完成回调到达时同样直接丢弃）。
+    private var attachmentGeneration = 0
+    /// B6 当前批次读取态：true = 本批附件还在读取，邮件生成暂缓；
+    /// total/done 为本批总数与已完成数（成功与失败都算完成）。
+    private var attachmentReading = false
+    private var attachmentReadingTotal = 0
+    private var attachmentReadingDone = 0
+    /// B6 暂缓的提交：提交点按时本批未就绪，读完后用刚就绪的这批附件继续提交。
+    private var pendingSubmitAfterAttachments = false
+    /// 审计 N5 预算（Li 定 50MB）：本轮新选附件累计字节上限。超限项跳过不读／
+    /// 不存，已选的不动；单视频 50MiB 上限（P2-26）不动，另行先查。
+    private static let feedbackAttachmentBatchBudgetBytes = 50 * 1024 * 1024
+    /// 审计 N5：本代次在途附件读取的 Progress。重选/清除时 cancel() 它们，
+    /// 使失效批次的读取尽早停下，而不只是等回调跑完再丢弃结果。
+    /// Progress.cancel() 是否真能中断 NSItemProvider 的底层读取需真机验证，
+    /// 回调内的代次检查仍作第二道防线。
+    private var attachmentLoadProgresses: [(generation: Int, progress: Progress)] = []
+    private let attachmentLoadLock = NSLock()
+    private var zipURL: URL?
+    private var zipReady = false
+    /// 审计反馈分享防重：zip 生成进行中标记与排队回调。ensureZip 已在途时
+    /// 后续调用只排队、不另起生成任务，生成完成时按序回放同一结果。
+    private var zipInFlight = false
+    private var pendingZipCompletions: [(Bool) -> Void] = []
+    private var pendingMailKind: PendingMailKind = .submit
+
+    private static let recipient = "hi@teddyhn.com"
+    /// 审计 r2 D4：原页底 footnote 全文，移入帮助入口展示（不是删除）。
+    /// 第十轮审计 dsh II-3：71 字长句按句拆三行短句，措辞不变，只加换行。
+    private static let sendHelpText = "反馈发送走邮件到 hi@teddyhn.com。\n未配置邮箱时，仅复制反馈文字，附件不随复制发出。\n分享或仅发送日志时只发日志包，不含描述与附件。"
+    private static let descriptionPlaceholder = "请描述遇到的问题：在哪个页面、做了什么操作、看到了什么…"
+
+    /// 116 数据填入动效：状态文案变化时只淡入该 label 本身、徽标由
+    /// 隐藏变可见时只淡入徽标本身（alpha 0→1、0.18s，不动 transform／
+    /// 布局、不重建节点）；同值不赋值不重播；减动效或未进窗口时直设终值。
+    private func setStatusTextFaded(_ text: String) {
+        guard statusLabel.text != text else { return }
+        statusLabel.text = text
+        guard !UIAccessibility.isReduceMotionEnabled, statusLabel.window != nil else {
+            statusLabel.alpha = 1
+            return
+        }
+        statusLabel.alpha = 0
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.statusLabel.alpha = 1
+        })
+    }
+
+    private func showStatusBadgeFaded() {
+        let wasHidden = statusBadge.isHidden
+        statusBadge.isHidden = false
+        guard wasHidden, !UIAccessibility.isReduceMotionEnabled, statusBadge.window != nil else {
+            statusBadge.alpha = 1
+            return
+        }
+        statusBadge.alpha = 0
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.statusBadge.alpha = 1
+        })
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = BearyColors.bg
+        BearyAppLog.event("feedback open")
+        buildChrome()
+        buildContent()
+        updateSubmitEnabled()
+        refreshAttachUI()
+        // r24-#6：首次生成统一走 ensureZip，与分享/提交按需生成共享同一
+        // 在途标记 zipInFlight；在途时点分享只排队，不另起重复生成。
+        // ensureZip 回调内已更新 zipURL / zipReady 与状态文案（含失败态），
+        // 与此前直接调 generateZip 的终态一致。
+        ensureZip { _ in }
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        cancelInFlightAttachmentLoads()
+        cleanupZip()
+    }
+
+    /// 审计 N5：保存一项附件读取的 Progress，供重选/清除时取消。
+    private func trackAttachmentLoad(_ progress: Progress, generation: Int) {
+        attachmentLoadLock.lock()
+        attachmentLoadProgresses.append((generation: generation, progress: progress))
+        attachmentLoadLock.unlock()
+    }
+
+    /// 审计 N5：清掉指定代次已完成的读取记录（只清该代次，不碰新代次）。
+    private func clearTrackedAttachmentLoads(for generation: Int) {
+        attachmentLoadLock.lock()
+        attachmentLoadProgresses.removeAll { $0.generation == generation }
+        attachmentLoadLock.unlock()
+    }
+
+    /// 审计 N5：取消全部在途附件读取（重选/清除/页面释放时调用）。
+    private func cancelInFlightAttachmentLoads() {
+        attachmentLoadLock.lock()
+        let progresses = attachmentLoadProgresses
+        attachmentLoadProgresses = []
+        attachmentLoadLock.unlock()
+        progresses.forEach { $0.progress.cancel() }
+    }
+
+    /// 审计 16 项第 3 项：大小未知时的有上限读取——最多读 maxBytes 字节，
+    /// 不把整文件读进内存；调用方以“读满上限”判定文件超出剩余预算。
+    private static func boundedData(contentsOf url: URL, maxBytes: Int) -> Data? {
+        guard maxBytes > 0, let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        return handle.readData(ofLength: maxBytes)
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        subpageLayoutGuard.resetForAppearance()
+        // 邮箱配置可能在切出期间改动，回前台重算动态提示。
+        refreshSubmitHint()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 审计五轮第 1 项（R2）：821 断点——宽 ≥821 时顶栏/内容列 600 居中，≤820 时全宽减 32；
+        // 600 上限只在宽屏激活（窄屏 750 等式已定宽，旧常驻上限会把 820 宽压成 600）。
+        // 状态不变不开关，避免布局循环（详情页同款）。
+        let wide = view.bounds.width >= 821
+        if wide != feedbackColumnIsWide {
+            feedbackColumnIsWide = wide
+            topBarWidthCap?.isActive = wide
+            contentWidthCap?.isActive = wide
+        }
+        subpageLayoutGuard.applyIfNeeded(page: "反馈与改进", view: view, topView: topBarView, contentViews: [scrollView, contentStack], presentation: "fullScreen+fadeRise")
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 117 终态偏离兜底：动画结束后的最终帧再校一次。
+        subpageLayoutGuard.applyAfterAppearance(page: "反馈与改进", view: view, topView: topBarView, contentViews: [scrollView, contentStack], presentation: "fullScreen+fadeRise")
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // 审计五轮第 1 项（R9 残余）：字号档变了重设分段器 attributes——setTitleTextAttributes
+        // 里的字体只在赋值时解析一次，不跟随 Dynamic Type（搜索框同款，见 #1301）。
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            typeSegmented.setTitleTextAttributes([.font: BearyDynamicType.smallBodyFont()], for: .normal)
+            typeSegmented.setTitleTextAttributes([.font: BearyDynamicType.smallSemiboldFont(), .foregroundColor: BearyColors.bg], for: .selected)
+        }
+    }
+
+    // MARK: - 顶栏（诊断页同款：52 高、左上文字关闭 15、标题 17 居中）
+
+    private func buildChrome() {
+        let closeButton = BearyHit44Button(type: .system)
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.setTitle(nil, for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        closeButton.tintColor = BearyColors.ink
+        closeButton.accessibilityLabel = "返回"
+        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
+
+        let titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.textAlignment = .center
+        titleLabel.text = "反馈与改进"
+
+        let topBar = UIView()
+        topBar.translatesAutoresizingMaskIntoConstraints = false
+        topBar.backgroundColor = BearyColors.bg
+        topBar.addSubview(closeButton)
+        topBar.addSubview(titleLabel)
+        view.addSubview(topBar)
+        topBarView = topBar
+        // 审计五轮第 1 项（R2）：顶栏与内容列同宽居中（详情页同款：821 断点，≤820 全宽减 32，
+        // ≥821 时 600 居中；600 上限只在宽屏激活，见 viewDidLayoutSubviews）。
+        let topBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -32)
+        topBarWidthEquality.priority = UILayoutPriority(750)
+        topBarWidthCap = topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        topBarWidthCap?.isActive = false
+        NSLayoutConstraint.activate([
+            topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            topBar.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            topBar.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
+            topBarWidthEquality,
+            closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
+            closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            closeButton.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            closeButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
+            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
+        ] + BearySubpageTopBarHeight.constraints(for: topBar))
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
+        scrollView.keyboardDismissMode = .onDrag
+        view.addSubview(scrollView)
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+        ])
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.axis = .vertical
+        contentStack.spacing = 0
+        contentStack.alignment = .fill
+        scrollView.addSubview(contentStack)
+        // 审计五轮第 1 项（R2）：iPad 600 居中（详情页同款，含 750 宽度等式防短内容压塌；
+        // 600 上限只在宽屏激活，见 viewDidLayoutSubviews）。
+        let contentWidthEquality = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32)
+        contentWidthEquality.priority = UILayoutPriority(750)
+        contentWidthCap = contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        contentWidthCap?.isActive = false
+        NSLayoutConstraint.activate([
+            contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 12),
+            contentStack.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
+            contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 16),
+            contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -16),
+            contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -20),
+            contentWidthEquality,
+        ])
+    }
+
+    // MARK: - 内容（自上而下：状态卡 → 描述 → 附件 → 设备 → 提交 → 分享 → 诊断）
+
+    private func buildContent() {
+        let statusCard = makeCard()
+        let statusRow = UIStackView()
+        statusRow.translatesAutoresizingMaskIntoConstraints = false
+        statusRow.axis = .horizontal
+        statusRow.alignment = .center
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .medium))
+        statusLabel.adjustsFontForContentSizeCategory = true
+        statusLabel.textColor = BearyColors.ink
+        statusLabel.text = "反馈数据准备中…"
+        // 补缺 P3-34：绿勾走官方包 icon_check，不用“✓”文本。
+        let badgeCheck = UIImageView(image: BearyIconImages.image(named: "icon_check", pointSize: 16))
+        badgeCheck.translatesAutoresizingMaskIntoConstraints = false
+        badgeCheck.tintColor = .white
+        badgeCheck.contentMode = .scaleAspectFit
+        statusBadge.translatesAutoresizingMaskIntoConstraints = false
+        statusBadge.backgroundColor = BearyColors.green
+        statusBadge.layer.cornerRadius = 13
+        statusBadge.clipsToBounds = true
+        statusBadge.isHidden = true
+        statusBadge.addSubview(badgeCheck)
+        NSLayoutConstraint.activate([
+            statusBadge.widthAnchor.constraint(equalToConstant: 26),
+            statusBadge.heightAnchor.constraint(equalToConstant: 26),
+            badgeCheck.centerXAnchor.constraint(equalTo: statusBadge.centerXAnchor),
+            badgeCheck.centerYAnchor.constraint(equalTo: statusBadge.centerYAnchor),
+            badgeCheck.widthAnchor.constraint(equalToConstant: 16),
+            badgeCheck.heightAnchor.constraint(equalToConstant: 16),
+        ])
+        statusRow.addArrangedSubview(statusLabel)
+        statusRow.addArrangedSubview(UIView())
+        statusRow.addArrangedSubview(statusBadge)
+        statusCard.addSubview(statusRow)
+        NSLayoutConstraint.activate([
+            statusRow.topAnchor.constraint(equalTo: statusCard.topAnchor, constant: 14),
+            statusRow.leadingAnchor.constraint(equalTo: statusCard.leadingAnchor, constant: 14),
+            statusRow.trailingAnchor.constraint(equalTo: statusCard.trailingAnchor, constant: -14),
+            statusRow.bottomAnchor.constraint(equalTo: statusCard.bottomAnchor, constant: -14),
+        ])
+
+        let descLabel = makeSectionLabel("问题描述")
+        let descCard = makeCard()
+        typeSegmented.translatesAutoresizingMaskIntoConstraints = false
+        typeSegmented.selectedSegmentIndex = 0
+        typeSegmented.selectedSegmentTintColor = BearyColors.ink
+        typeSegmented.setTitleTextAttributes([.font: BearyDynamicType.smallBodyFont()], for: .normal)
+        typeSegmented.setTitleTextAttributes([.font: BearyDynamicType.smallSemiboldFont(), .foregroundColor: BearyColors.bg], for: .selected)
+        let textContainer = UIView()
+        textContainer.translatesAutoresizingMaskIntoConstraints = false
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        textView.delegate = self
+        textView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        textView.adjustsFontForContentSizeCategory = true
+        textView.textColor = BearyColors.ink
+        textView.backgroundColor = .clear
+        textView.textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
+        textView.textContainer.lineFragmentPadding = 0
+        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
+        placeholderLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        placeholderLabel.adjustsFontForContentSizeCategory = true
+        placeholderLabel.textColor = BearyColors.gray
+        placeholderLabel.numberOfLines = 0
+        placeholderLabel.text = Self.descriptionPlaceholder
+        textContainer.addSubview(textView)
+        textContainer.addSubview(placeholderLabel)
+        NSLayoutConstraint.activate([
+            textView.topAnchor.constraint(equalTo: textContainer.topAnchor),
+            textView.leadingAnchor.constraint(equalTo: textContainer.leadingAnchor),
+            textView.trailingAnchor.constraint(equalTo: textContainer.trailingAnchor),
+            textView.bottomAnchor.constraint(equalTo: textContainer.bottomAnchor),
+            placeholderLabel.topAnchor.constraint(equalTo: textContainer.topAnchor, constant: 8),
+            placeholderLabel.leadingAnchor.constraint(equalTo: textContainer.leadingAnchor),
+            placeholderLabel.trailingAnchor.constraint(equalTo: textContainer.trailingAnchor),
+        ])
+        let descInner = UIStackView(arrangedSubviews: [typeSegmented, textContainer])
+        descInner.translatesAutoresizingMaskIntoConstraints = false
+        descInner.axis = .vertical
+        descInner.spacing = 12
+        descCard.addSubview(descInner)
+        NSLayoutConstraint.activate([
+            typeSegmented.heightAnchor.constraint(equalToConstant: 36),
+            textContainer.heightAnchor.constraint(equalToConstant: 160),
+            descInner.topAnchor.constraint(equalTo: descCard.topAnchor, constant: 12),
+            descInner.leadingAnchor.constraint(equalTo: descCard.leadingAnchor, constant: 12),
+            descInner.trailingAnchor.constraint(equalTo: descCard.trailingAnchor, constant: -12),
+            descInner.bottomAnchor.constraint(equalTo: descCard.bottomAnchor, constant: -12),
+        ])
+
+        let mediaLabel = makeSectionLabel("图片或视频（可选，最多 5 个）")
+        let attachCard = makeCard()
+        attachLabelButton.translatesAutoresizingMaskIntoConstraints = false
+        attachLabelButton.setTitle("添加图片或视频", for: .normal)
+        attachLabelButton.setTitleColor(BearyColors.ink, for: .normal)
+        // 按钮普查：裸 16pt medium 改 scaledFont，跟随系统字号（行高 44，最大档不裁剪）。
+        attachLabelButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .medium))
+        attachLabelButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        if let attachIcon = BearyIconImages.image(named: "icon_image", pointSize: 18) {
+            attachLabelButton.setImage(attachIcon, for: .normal)
+        }
+        attachLabelButton.tintColor = BearyColors.gray
+        attachLabelButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 0)
+        attachLabelButton.accessibilityLabel = "添加图片或视频"
+        attachLabelButton.addTarget(self, action: #selector(pickTapped), for: .touchUpInside)
+        attachLabelButton.bearyAddPressFeedback()
+        attachClearButton.translatesAutoresizingMaskIntoConstraints = false
+        attachClearButton.setTitle("清除", for: .normal)
+        attachClearButton.setTitleColor(BearyColors.gray, for: .normal)
+        // 按钮普查：裸 15pt 改 scaledFont，跟随系统字号（与左钮同行高 44）。
+        attachClearButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        attachClearButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        attachClearButton.accessibilityLabel = "清除已选附件"
+        attachClearButton.addTarget(self, action: #selector(clearAttachmentsTapped), for: .touchUpInside)
+        attachClearButton.bearyAddPressFeedback()
+        attachClearButton.isHidden = true
+        let attachRow = UIStackView(arrangedSubviews: [attachLabelButton, attachClearButton])
+        attachRow.translatesAutoresizingMaskIntoConstraints = false
+        attachRow.axis = .horizontal
+        attachRow.alignment = .center
+        attachRow.spacing = 8
+        attachCard.addSubview(attachRow)
+        NSLayoutConstraint.activate([
+            attachRow.topAnchor.constraint(equalTo: attachCard.topAnchor, constant: 8),
+            attachRow.leadingAnchor.constraint(equalTo: attachCard.leadingAnchor, constant: 14),
+            attachRow.trailingAnchor.constraint(equalTo: attachCard.trailingAnchor, constant: -14),
+            attachLabelButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        // B6：附件读取进度行（原位、附件卡内）：默认隐藏、高度 0；
+        // 选择器关闭即显，读完原位淡出。
+        attachProgressSpinner.translatesAutoresizingMaskIntoConstraints = false
+        attachProgressSpinner.color = BearyColors.gray
+        attachProgressLabel.translatesAutoresizingMaskIntoConstraints = false
+        // 审计 r2 ①-2：裸 14pt 改 scaled（规范 §11 footNoteFont 同值 14 regular；
+        // 代码侧尚无 footNoteFont 入口，本处用等值 scaledFont，不另开入口）。
+        attachProgressLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        attachProgressLabel.adjustsFontForContentSizeCategory = true
+        attachProgressLabel.textColor = BearyColors.gray
+        attachProgressRow.translatesAutoresizingMaskIntoConstraints = false
+        attachProgressRow.axis = .horizontal
+        attachProgressRow.alignment = .center
+        attachProgressRow.spacing = 8
+        attachProgressRow.isHidden = true
+        attachProgressRow.addArrangedSubview(attachProgressSpinner)
+        attachProgressRow.addArrangedSubview(attachProgressLabel)
+        attachCard.addSubview(attachProgressRow)
+        let attachProgressHeightValue = attachProgressRow.heightAnchor.constraint(equalToConstant: 0)
+        attachProgressHeight = attachProgressHeightValue
+        let attachProgressTopValue = attachProgressRow.topAnchor.constraint(equalTo: attachRow.bottomAnchor, constant: 4)
+        attachProgressTopConstraint = attachProgressTopValue
+        NSLayoutConstraint.activate([
+            attachProgressTopValue,
+            attachProgressRow.leadingAnchor.constraint(equalTo: attachCard.leadingAnchor, constant: 14),
+            attachProgressRow.trailingAnchor.constraint(equalTo: attachCard.trailingAnchor, constant: -14),
+            attachProgressRow.bottomAnchor.constraint(equalTo: attachCard.bottomAnchor, constant: -8),
+            attachProgressHeightValue,
+        ])
+
+        let deviceLabel = makeSectionLabel("设备信息")
+        let deviceCard = makeCard()
+        let deviceStack = UIStackView()
+        deviceStack.translatesAutoresizingMaskIntoConstraints = false
+        deviceStack.axis = .vertical
+        deviceStack.spacing = 0
+        let deviceRows = BearyFeedbackDeviceInfo.rows()
+        for (index, row) in deviceRows.enumerated() {
+            let keyLabel = UILabel()
+            keyLabel.translatesAutoresizingMaskIntoConstraints = false
+            keyLabel.font = BearyDynamicType.smallBodyFont()
+            keyLabel.adjustsFontForContentSizeCategory = true
+            keyLabel.textColor = BearyColors.gray
+            keyLabel.text = row.key
+            let valueLabel = UILabel()
+            valueLabel.translatesAutoresizingMaskIntoConstraints = false
+            valueLabel.font = BearyDynamicType.smallBodyFont()
+            valueLabel.adjustsFontForContentSizeCategory = true
+            valueLabel.textColor = BearyColors.ink
+            valueLabel.textAlignment = .right
+            valueLabel.text = row.value
+            let kvRow = UIStackView(arrangedSubviews: [keyLabel, valueLabel])
+            kvRow.translatesAutoresizingMaskIntoConstraints = false
+            kvRow.axis = .horizontal
+            kvRow.alignment = .center
+            deviceStack.addArrangedSubview(kvRow)
+            NSLayoutConstraint.activate([
+                // 审计 r2 ①-2：42 改为最小 42，大字号下随内容撑高。
+                kvRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 42),
+            ])
+            if index < deviceRows.count - 1 {
+                let separator = UIView()
+                separator.translatesAutoresizingMaskIntoConstraints = false
+                separator.backgroundColor = BearyColors.line
+                deviceStack.addArrangedSubview(separator)
+                NSLayoutConstraint.activate([
+                    separator.heightAnchor.constraint(equalToConstant: 1),
+                ])
+            }
+        }
+        deviceCard.addSubview(deviceStack)
+        NSLayoutConstraint.activate([
+            deviceStack.topAnchor.constraint(equalTo: deviceCard.topAnchor),
+            deviceStack.leadingAnchor.constraint(equalTo: deviceCard.leadingAnchor, constant: 14),
+            deviceStack.trailingAnchor.constraint(equalTo: deviceCard.trailingAnchor, constant: -14),
+            deviceStack.bottomAnchor.constraint(equalTo: deviceCard.bottomAnchor),
+        ])
+
+        submitButton.translatesAutoresizingMaskIntoConstraints = false
+        submitButton.addTarget(self, action: #selector(submitTapped), for: .touchUpInside)
+        submitButton.bearyAddPressFeedback()
+        // 主按钮只打开邮件撰写框、本身不完成提交：按钮下只显示
+        // 「这次会发生什么」（第十轮审计 dsh II-3 动态一行），目的地、
+        // 未配邮箱 fallback、附件与日志包范围见 refreshSubmitHint；
+        // 三句完整说明仍在旁边的帮助入口里。
+        submitHintLabel.translatesAutoresizingMaskIntoConstraints = false
+        submitHintLabel.font = BearyDynamicType.secondaryFont()
+        submitHintLabel.adjustsFontForContentSizeCategory = true
+        submitHintLabel.textColor = BearyColors.gray
+        submitHintLabel.numberOfLines = 0
+        submitHintLabel.textAlignment = .center
+        refreshSubmitHint()
+        // 审计 r2 D4：帮助入口（info 图标，点按底部弹窗展示发送说明全文）。
+        let helpButton = BearyHit44Button(type: .system)
+        helpButton.translatesAutoresizingMaskIntoConstraints = false
+        helpButton.setImage(BearyIconImages.image(named: "icon_info", pointSize: 24), for: .normal)
+        helpButton.tintColor = BearyColors.gray
+        helpButton.accessibilityLabel = "反馈发送说明"
+        helpButton.addTarget(self, action: #selector(helpTapped), for: .touchUpInside)
+        helpButton.bearyAddPressFeedback()
+        let submitHintRow = UIStackView(arrangedSubviews: [submitHintLabel, helpButton])
+        submitHintRow.translatesAutoresizingMaskIntoConstraints = false
+        submitHintRow.axis = .horizontal
+        submitHintRow.alignment = .center
+        submitHintRow.spacing = 4
+        shareButton.translatesAutoresizingMaskIntoConstraints = false
+        if let shareIcon = BearyIconImages.image(named: "icon_share", pointSize: 18) {
+            shareButton.setImage(shareIcon, for: .normal)
+        }
+        shareButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 0)
+        shareButton.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
+        shareButton.bearyAddPressFeedback()
+        let diagLabel = makeSectionLabel("诊断")
+        logOnlyButton.translatesAutoresizingMaskIntoConstraints = false
+        logOnlyButton.addTarget(self, action: #selector(logOnlyTapped), for: .touchUpInside)
+        logOnlyButton.bearyAddPressFeedback()
+
+        // 审计 r2 D4：页底 footnote 已移入 submitHintLabel 旁的帮助入口（见 helpTapped），
+        // 此处不再常驻显示；fallback 与附件限制句是移入、不是删除。
+        let views: [UIView] = [statusCard, descLabel, descCard, mediaLabel, attachCard, deviceLabel, deviceCard, submitButton, submitHintRow, shareButton, diagLabel, logOnlyButton]
+        for viewItem in views {
+            contentStack.addArrangedSubview(viewItem)
+        }
+        contentStack.setCustomSpacing(20, after: statusCard)
+        contentStack.setCustomSpacing(8, after: descLabel)
+        contentStack.setCustomSpacing(20, after: descCard)
+        contentStack.setCustomSpacing(8, after: mediaLabel)
+        contentStack.setCustomSpacing(20, after: attachCard)
+        contentStack.setCustomSpacing(8, after: deviceLabel)
+        contentStack.setCustomSpacing(20, after: deviceCard)
+        contentStack.setCustomSpacing(8, after: submitButton)
+        contentStack.setCustomSpacing(12, after: submitHintRow)
+        contentStack.setCustomSpacing(20, after: shareButton)
+        contentStack.setCustomSpacing(8, after: diagLabel)
+        NSLayoutConstraint.activate([
+            submitButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
+            shareButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
+            logOnlyButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
+        ])
+    }
+
+    private func makeCard() -> UIView {
+        let card = UIView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.backgroundColor = BearyColors.surface1
+        card.layer.cornerRadius = 12
+        card.layer.borderWidth = 0
+        card.clipsToBounds = true
+        return card
+    }
+
+    private func makeSectionLabel(_ text: String) -> UILabel {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.secondaryFont()
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.gray
+        label.text = text
+        return label
+    }
+
+    private func updateSubmitEnabled() {
+        let hasText = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        submitButton.isEnabled = hasText
+        submitButton.alpha = hasText ? 1.0 : 0.4
+    }
+
+    /// 第十轮审计 dsh II-3：提交钮下的动态一行，只说「这次会发生什么」。
+    /// 已配邮箱：目的地＋本次附件总数（用户附件＋日志包，日志包就绪时算 1 个，
+    /// 与 presentMailComposer 实际组装的附件一致）；未配邮箱：只说复制 fallback，
+    /// 与 presentMailComposer 的复制分流一致。附件增减／日志包就绪或失效／
+    /// 回前台时刷新（见 refreshAttachUI、ensureZip、cleanupZip、viewWillAppear）。
+    private func refreshSubmitHint() {
+        guard MFMailComposeViewController.canSendMail() else {
+            submitHintLabel.text = "未配置邮箱：只复制文字，不含附件。"
+            return
+        }
+        let count = attachments.count + (zipReady ? 1 : 0)
+        if count > 0 {
+            submitHintLabel.text = "将发送到 hi@teddyhn.com（含 \(count) 个附件），还需在邮件里再按一次发送。"
+        } else {
+            submitHintLabel.text = "将发送到 hi@teddyhn.com，还需在邮件里再按一次发送。"
+        }
+    }
+
+    private func refreshAttachUI() {
+        if attachments.isEmpty {
+            attachLabelButton.setTitle("添加图片或视频", for: .normal)
+            attachLabelButton.accessibilityLabel = "添加图片或视频"
+            attachClearButton.isHidden = true
+        } else {
+            // 审计 r2 D3：可见标题只留「已选 N 个」，点按重选的说明仍在无障碍名称里。
+            attachLabelButton.setTitle("已选 \(attachments.count) 个", for: .normal)
+            attachLabelButton.accessibilityLabel = "已选 \(attachments.count) 个，点按重选"
+            attachClearButton.isHidden = false
+        }
+        refreshSubmitHint()
+    }
+
+    /// B6：附件读取进度（原位、附件卡内）。选择器关闭即显「正在读取 N 个附件」，
+    /// 每完成一项按实际完成数更新「已读取 k/N」（成功与失败都算完成）。
+    /// 只在主线程调用；代次已变的旧轮调用一律忽略。
+    private func showAttachmentProgress(total: Int) {
+        attachmentReading = true
+        attachmentReadingTotal = total
+        attachmentReadingDone = 0
+        let text = "正在读取 \(total) 个附件"
+        attachProgressLabel.text = text
+        attachProgressLabel.accessibilityLabel = text
+        attachProgressRow.alpha = 1
+        attachProgressRow.isHidden = false
+        attachProgressTopConstraint?.constant = 4
+        attachProgressHeight?.constant = 24
+        attachProgressSpinner.startAnimating()
+    }
+
+    private func noteAttachmentReadFinished(generation: Int) {
+        guard attachmentReading, generation == attachmentGeneration else { return }
+        attachmentReadingDone += 1
+        let done = attachmentReadingDone
+        let total = attachmentReadingTotal
+        let text = "已读取 \(done)/\(total)"
+        attachProgressLabel.text = text
+        attachProgressLabel.accessibilityLabel = text
+    }
+
+    /// B6：本批就绪后进度在原位淡出（减动效时直接隐藏）；淡出完成时若
+    /// 已有新一批在读，不碰新批的进度行（见 attachmentReading 守卫）。
+    private func hideAttachmentProgress() {
+        attachmentReading = false
+        attachProgressSpinner.stopAnimating()
+        guard !UIAccessibility.isReduceMotionEnabled else {
+            attachProgressRow.isHidden = true
+            attachProgressTopConstraint?.constant = 0
+            attachProgressHeight?.constant = 0
+            return
+        }
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.attachProgressRow.alpha = 0
+        }, completion: { [weak self] _ in
+            guard let self = self, !self.attachmentReading else { return }
+            self.attachProgressRow.isHidden = true
+            self.attachProgressTopConstraint?.constant = 0
+            self.attachProgressHeight?.constant = 0
+            self.attachProgressRow.alpha = 1
+        })
+    }
+
+    private func deviceInfoText() -> String {
+        return BearyFeedbackDeviceInfo.text()
+    }
+
+    private func typePrefix() -> String {
+        return typeSegmented.selectedSegmentIndex == 1 ? "[优化建议]" : "[问题反馈]"
+    }
+
+    private func submitBodyText() -> String {
+        let description = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return description + "\n\n--- 设备信息 ---\n" + deviceInfoText()
+    }
+
+    // MARK: - zip 生成（进页时生成一次；分享 / 仅发送日志按需重生成）
+
+    private func generateZip(completion: @escaping (URL?) -> Void) {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let infoData = BearyFeedbackDeviceInfo.text().data(using: .utf8) ?? Data()
+            var files: [(name: String, data: Data)] = [("device-info.txt", infoData)]
+            if let appData = BearyAppLog.readData() {
+                files.append(("beary-app.log", appData))
+            }
+            if let diagData = try? Data(contentsOf: DiagFile.url) {
+                files.append(("beary-diag.log", diagData))
+            }
+            guard let zipData = BearyZipBuilder.build(files: files) else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            // 第七轮审计 04：每次生成用唯一文件名。固定名会被串行的下一次
+            // 生成覆盖，两个反馈页实例也会互相干扰；UUID 后缀保证各次生成
+            // 互不覆盖。邮件附件名仍是 beary-feedback-logs.zip（那是附件
+            // 显示名，与磁盘路径无关，不动）。
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("beary-feedback-logs-\(UUID().uuidString).zip")
+            do {
+                try zipData.write(to: url, options: .atomic)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else {
+                        // 页面已在生成中途释放：本次生成的文件无人持有，立即
+                        // 删掉，否则它会以孤儿形态留在 tmp（此前固定名 +
+                        // zipURL 未保存正是孤儿来源；退页取消生成没有现成
+                        // 取消句柄——打包是 utility 队列上一次同步 build，
+                        // 完成后清理是等价的兜底）。
+                        try? FileManager.default.removeItem(at: url)
+                        return
+                    }
+                    completion(url)
+                }
+            } catch {
+                DispatchQueue.main.async { completion(nil) }
+            }
+        }
+    }
+
+    /// 补缺 P3-34：tmp zip 清理（发送/分享完成与页面关闭时删；文件已删则 zipReady 视为失效，下次 ensureZip 重生成）。
+    private func cleanupZip() {
+        if let url = zipURL {
+            try? FileManager.default.removeItem(at: url)
+        }
+        zipURL = nil
+        zipReady = false
+        refreshSubmitHint()
+    }
+
+    /// 第七轮审计 04：换新 zip 时先删旧文件。首次生成与重生成都走
+    /// ensureZip、共用同一 zipInFlight 在途标记（见 r24-#6），两次生成
+    /// 不重叠；各写唯一文件名，旧文件不再被新文件覆盖，必须显式删掉，
+    /// 否则旧文件成孤儿。分享/邮件流程不受影响：分享面板打开期间
+    /// zipReady 为真、ensureZip 不重生成；邮件附件是读进内存的数据副本。
+    private func replaceZipURL(_ url: URL) {
+        if let old = zipURL, old != url {
+            try? FileManager.default.removeItem(at: old)
+        }
+        zipURL = url
+        zipReady = true
+    }
+
+    private func ensureZip(completion: @escaping (Bool) -> Void) {
+        if zipReady, let url = zipURL, FileManager.default.fileExists(atPath: url.path) {
+            completion(true)
+            return
+        }
+        zipReady = false
+        // 审计反馈分享防重：生成已在途时只排队，不另起重复任务。
+        if zipInFlight {
+            pendingZipCompletions.append(completion)
+            return
+        }
+        zipInFlight = true
+        pendingZipCompletions.append(completion)
+        generateZip { [weak self] url in
+            guard let self = self else { return }
+            let ready: Bool
+            if let urlValue = url {
+                self.replaceZipURL(urlValue)
+                self.statusLabel.text = "反馈数据已准备就绪"
+                self.statusBadge.isHidden = false
+                ready = true
+            } else {
+                self.zipReady = false
+                self.statusLabel.text = "反馈数据准备失败"
+                self.statusBadge.isHidden = true
+                BearyAppLog.event("feedback zip failed")
+                ready = false
+            }
+            self.zipInFlight = false
+            // 日志包就绪／失败会改变动态提示里的附件数。
+            self.refreshSubmitHint()
+            let pending = self.pendingZipCompletions
+            self.pendingZipCompletions = []
+            for pendingCompletion in pending {
+                pendingCompletion(ready)
+            }
+        }
+    }
+
+    /// 审计反馈分享防重：zip 生成等待期间，分享与仅发送日志两钮同置忙碌
+    /// 外观（沿用提交钮已有的 isEnabled + alpha 0.4 口径），不改文案与选项。
+    private func setShareButtonsBusy(_ busy: Bool) {
+        shareButton.isEnabled = !busy
+        shareButton.alpha = busy ? 0.4 : 1.0
+        logOnlyButton.isEnabled = !busy
+        logOnlyButton.alpha = busy ? 0.4 : 1.0
+    }
+
+    // MARK: - 操作
+
+    /// 编辑资料页 hasUnsavedChanges／requestExit 口径的反馈页照抄版
+    /// （只抄口径，不跨页调用）：有内容 = 描述去空白后非空（与
+    /// updateSubmitEnabled 的 hasText 同算式），或附件非空。反馈页
+    /// 只有顶栏关闭钮；左缘右滑由设置页 presentSettingsPage 的 EdgeDismiss
+    /// 守卫拦（本函数自身无 interactive 分支）。
+    /// 注意：internal 而非 private——设置页 presentSettingsPage 的 EdgeDismiss
+    /// 守卫要读它（有内容时拒绝左缘右滑，改走顶栏关闭钮的放弃确认）。
+    var hasFeedbackContent: Bool {
+        let hasText = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return hasText || !attachments.isEmpty
+    }
+
+    @objc private func closeTapped() {
+        // zip 生成在途（首次生成与按需重生成共用同一 zipInFlight 标记，
+        // 见 r24-#6）时先拦：与编辑资料页“保存中拦截、不弹放弃确认”
+        // 同口径；提示走本页已有的 BearyToast，不另起 alert。已有弹层时不叠弹。
+        if zipInFlight {
+            if presentedViewController == nil {
+                BearyToast.show(in: view, message: "正在准备附件，请稍候")
+            }
+            return
+        }
+        guard hasFeedbackContent else {
+            dismiss(animated: BearyMotion.animated(true))
+            return
+        }
+        guard presentedViewController == nil else { return }
+        // 第四轮审计 12：居中 Alert 改底部弹窗（文案不变；点“放弃反馈”
+        // 先关 sheet 再关反馈页，不叠层）。
+        BearyConfirmSheet.show(from: self, title: "放弃这份反馈？", message: nil, actions: [
+            BearyConfirmSheet.Action(title: "放弃反馈", style: .destructive, handler: { [weak self] in
+                self?.dismiss(animated: BearyMotion.animated(true))
+            }),
+            BearyConfirmSheet.Action(title: "继续编辑", style: .cancel),
+        ])
+    }
+
+    /// 审计 r2 D4：帮助入口——以本页已用的底部弹窗样式展示发送说明全文。
+    @objc private func helpTapped() {
+        guard presentedViewController == nil else { return }
+        BearyConfirmSheet.show(from: self, title: "反馈发送说明", message: Self.sendHelpText, actions: [
+            BearyConfirmSheet.Action(title: "知道了", style: .cancel),
+        ])
+    }
+
+    @objc private func pickTapped() {
+        var config = PHPickerConfiguration()
+        config.filter = .any(of: [.images, .videos])
+        config.selectionLimit = 5
+        config.preferredAssetRepresentationMode = .current
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = self
+        present(picker, animated: BearyMotion.animated(true))
+    }
+
+    @objc private func clearAttachmentsTapped() {
+        // 审计反馈清除回填：代次 +1 使在途读取失效，旧轮结果不再回填。
+        // 审计 N5：先 cancel() 在途读取，再递增代次。
+        cancelInFlightAttachmentLoads()
+        attachmentGeneration += 1
+        attachments = []
+        // B6：清除同时撤掉读取进度与暂缓的提交（本次提交不再继续）。
+        pendingSubmitAfterAttachments = false
+        if attachmentReading {
+            hideAttachmentProgress()
+        }
+        refreshAttachUI()
+    }
+
+    @objc private func submitTapped() {
+        let description = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !description.isEmpty else {
+            BearyToast.show(in: view, message: "请先填写问题描述")
+            BearyHaptics.rejectionWarning()
+            return
+        }
+        // B6：当前批次未就绪时暂缓生成邮件——先记下，等本批读完再用
+        // 刚就绪的这批附件继续提交，不带走上一批。
+        if attachmentReading {
+            pendingSubmitAfterAttachments = true
+            BearyToast.show(in: view, message: "附件正在读取，读完后继续发送")
+            return
+        }
+        proceedWithSubmit()
+    }
+
+    /// B6 提交续行：正文与附件在此刻定格为同一份提交数据（snapshot），
+    /// 之后再选附件、再读新批，都不再影响这次邮件组装。
+    private func proceedWithSubmit() {
+        let description = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !description.isEmpty else {
+            BearyToast.show(in: view, message: "请先填写问题描述")
+            BearyHaptics.rejectionWarning()
+            return
+        }
+        let body = submitBodyText()
+        let batch = attachments
+        pendingMailKind = .submit
+        if zipReady {
+            // 113：双击提交守卫——zip 已就绪时直接弹撰写框，连点会叠 present；
+            // 审计登录杂项：与 shareTapped / logOnlyTapped 同口径，统一守卫
+            // view.window != nil 且 presentedViewController == nil。
+            guard view.window != nil, presentedViewController == nil else { return }
+            presentMailComposer(body: body, attachments: batch)
+        } else {
+            // 清理后二次提交先重生成（不直接判失败）；重生成失败才走无 zip 发送。
+            ensureZip { [weak self] ready in
+                guard let self = self else { return }
+                if ready {
+                    // 审计登录杂项：ensureZip 回调分支补 presented 守卫（此前无守卫，
+                    // 页面已不在窗口或已有面板时仍 present，可能撞车）。
+                    guard self.view.window != nil, self.presentedViewController == nil else { return }
+                    self.presentMailComposer(body: body, attachments: batch)
+                } else {
+                    // zip 缺失时发送仍可继续（不带 zip）：先 toast 明说，待 toast 可见
+                    // 后再弹出邮件撰写框，避免撰写框盖住 toast 导致说明不可见。
+                    BearyToast.show(in: self.view, message: "日志包准备失败，本次反馈不含日志包")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.1) { [weak self] in
+                        // 审计登录杂项：2.1 秒延迟分支补 view.window 守卫，与
+                        // shareTapped / logOnlyTapped 同口径（此前只守 presented）。
+                        guard let self = self, self.view.window != nil, self.presentedViewController == nil else { return }
+                        self.presentMailComposer(body: body, attachments: batch)
+                    }
+                }
+            }
+        }
+    }
+
+    @objc private func shareTapped() {
+        setShareButtonsBusy(true)
+        ensureZip { [weak self] ready in
+            guard let self = self else { return }
+            self.setShareButtonsBusy(false)
+            // 审计反馈分享防重：回调时页面已不在窗口或已有面板时不 present，
+            // 与 submitTapped 两处守卫同口径，防多窗口叠出。
+            guard self.view.window != nil, self.presentedViewController == nil else { return }
+            guard ready, let url = self.zipURL else {
+                BearyToast.show(in: self.view, message: "日志包准备失败")
+                BearyHaptics.rejectionWarning()
+                return
+            }
+            // 分享内容只含日志包 zip 一个文件，不含描述与图片 / 视频。
+            let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            sheet.popoverPresentationController?.sourceView = self.shareButton
+            sheet.popoverPresentationController?.sourceRect = self.shareButton.bounds
+            sheet.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+                BearyAppLog.event(completed ? "feedback share completed" : "feedback share cancelled")
+                self?.cleanupZip()
+            }
+            self.present(sheet, animated: BearyMotion.animated(true))
+        }
+    }
+
+    @objc private func logOnlyTapped() {
+        setShareButtonsBusy(true)
+        ensureZip { [weak self] ready in
+            guard let self = self else { return }
+            self.setShareButtonsBusy(false)
+            // 审计反馈分享防重：回调时页面已不在窗口或已有面板时不 present，
+            // 与 submitTapped 两处守卫同口径，防多窗口叠出。
+            guard self.view.window != nil, self.presentedViewController == nil else { return }
+            guard ready else {
+                BearyToast.show(in: self.view, message: "日志包准备失败")
+                BearyHaptics.rejectionWarning()
+                return
+            }
+            self.pendingMailKind = .logOnly
+            if MFMailComposeViewController.canSendMail() {
+                self.presentLogOnlyComposer()
+            } else {
+                // 仅发送日志无文字可复制，不走复制 fallback：toast 明说两条出路。
+                BearyToast.show(in: self.view, message: "请先配置邮箱，或改用“分享诊断日志”")
+                BearyHaptics.rejectionWarning()
+            }
+        }
+    }
+
+    // MARK: - 邮件（系统 MFMailCompose；未配邮箱时按种类分流）
+
+    /// 邮件只带本次确认的附件：正文与附件由调用方在提交时定格为同一份
+    /// 提交数据（body/batch），组装时不再读 live 状态（B6）。
+    private func presentMailComposer(body: String, attachments batch: [Attachment]) {
+        // 审计登录杂项：入口统一守卫（本方法所有调用点此前各守各的，现入口
+        // 再拦一层：不在窗口或已有面板时不 present，防双击撞车）。
+        guard view.window != nil, presentedViewController == nil else { return }
+        guard MFMailComposeViewController.canSendMail() else {
+            // 补缺 P3-34：复制 fallback 只复制描述文字，设备信息与附件不随复制发出，toast 明说。
+            UIPasteboard.general.string = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            BearyToast.show(in: view, message: "未配置邮箱，已仅复制反馈文字，附件不随复制发出")
+            BearyAppLog.event("feedback mail no account copy fallback")
+            return
+        }
+        // 静态性能修复：撰写器路径不再同步读 zip。zip 已就绪时先在后台读文件，
+        // 读完回主线程再组装撰写器；读失败则 toast 停留原页、不弹撰写器。
+        // zip 从未就绪的提交兜底路径（zipReady 为 false）仍按原口径直接发、不带 zip。
+        if zipReady, let url = zipURL {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let zipData = try? Data(contentsOf: url)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    guard self.view.window != nil, self.presentedViewController == nil else { return }
+                    guard let zipData = zipData else {
+                        BearyToast.show(in: self.view, message: "日志包读取失败，请重试")
+                        BearyHaptics.rejectionWarning()
+                        BearyAppLog.event("feedback mail zip read failed")
+                        return
+                    }
+                    self.presentMailComposer(withZipData: zipData, body: body, attachments: batch)
+                }
+            }
+            return
+        }
+        presentMailComposer(withZipData: nil, body: body, attachments: batch)
+    }
+
+    /// 组装并弹出反馈撰写器（须在主线程调用）。zipData 为 nil 表示不带日志包；
+    /// body/batch 为提交时定格的同一份数据，不读 live 正文与附件数组（B6）。
+    private func presentMailComposer(withZipData zipData: Data?, body: String, attachments batch: [Attachment]) {
+        let composer = MFMailComposeViewController()
+        composer.mailComposeDelegate = self
+        composer.setToRecipients([Self.recipient])
+        composer.setSubject("\(typePrefix()) beary 反馈")
+        composer.setMessageBody(body, isHTML: false)
+        if let zipData = zipData {
+            composer.addAttachmentData(zipData, mimeType: "application/zip", fileName: "beary-feedback-logs.zip")
+        }
+        for attachment in batch {
+            composer.addAttachmentData(attachment.data, mimeType: attachment.mimeType, fileName: attachment.fileName)
+        }
+        present(composer, animated: BearyMotion.animated(true))
+    }
+
+    private func presentLogOnlyComposer() {
+        // 与 presentMailComposer 同口径：zip 读文件移到后台，读失败 toast 停留原页。
+        guard let url = zipURL else {
+            presentLogOnlyComposer(withZipData: nil)
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let zipData = try? Data(contentsOf: url)
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                guard self.view.window != nil, self.presentedViewController == nil else { return }
+                guard let zipData = zipData else {
+                    BearyToast.show(in: self.view, message: "日志包读取失败，请重试")
+                    BearyHaptics.rejectionWarning()
+                    BearyAppLog.event("feedback log mail zip read failed")
+                    return
+                }
+                self.presentLogOnlyComposer(withZipData: zipData)
+            }
+        }
+    }
+
+    /// 组装并弹出仅日志撰写器（须在主线程调用）。zipData 为 nil 表示不带日志包。
+    private func presentLogOnlyComposer(withZipData zipData: Data?) {
+        let composer = MFMailComposeViewController()
+        composer.mailComposeDelegate = self
+        composer.setToRecipients([Self.recipient])
+        composer.setSubject("[日志] beary 诊断日志")
+        composer.setMessageBody("beary 诊断日志见附件。", isHTML: false)
+        if let zipData = zipData {
+            composer.addAttachmentData(zipData, mimeType: "application/zip", fileName: "beary-feedback-logs.zip")
+        }
+        present(composer, animated: BearyMotion.animated(true))
+    }
+
+    func mailComposeController(_ controller: MFMailComposeViewController, didFinishWith result: MFMailComposeResult, error: Error?) {
+        let kind = pendingMailKind
+        controller.dismiss(animated: BearyMotion.animated(true)) { [weak self] in
+            guard let self = self else { return }
+            // 邮件流程结束即删 tmp zip（撰写框持有的是附件数据副本，不读文件）。
+            self.cleanupZip()
+            let noun = kind == .logOnly ? "日志" : "反馈"
+            switch result {
+            case .sent:
+                BearyToast.show(in: self.view, message: "\(noun)已发送")
+                BearyHaptics.publishSuccess()
+                BearyAppLog.event(kind == .logOnly ? "feedback log mail sent" : "feedback mail sent")
+            case .saved:
+                BearyToast.show(in: self.view, message: "\(noun)已保存为草稿")
+                BearyAppLog.event(kind == .logOnly ? "feedback log mail saved" : "feedback mail saved")
+            case .cancelled:
+                BearyToast.show(in: self.view, message: "已取消")
+                BearyAppLog.event(kind == .logOnly ? "feedback log mail cancelled" : "feedback mail cancelled")
+            case .failed:
+                BearyToast.show(in: self.view, message: "\(noun)发送失败，请重试")
+                BearyHaptics.rejectionWarning()
+                BearyAppLog.event(kind == .logOnly ? "feedback log mail failed" : "feedback mail failed")
+            @unknown default:
+                BearyToast.show(in: self.view, message: "\(noun)发送失败，请重试")
+                BearyHaptics.rejectionWarning()
+            }
+        }
+    }
+
+    // MARK: - 图片 / 视频选择（系统 PHPicker，最多 5 个）
+
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: BearyMotion.animated(true))
+        guard !results.isEmpty else { return }
+        // 审计 N5：先取消旧轮在途读取，再占新代次。Progress.cancel() 是否真能
+        // 中断 NSItemProvider 的底层读取需真机验证，代次丢弃仍作第二道防线。
+        cancelInFlightAttachmentLoads()
+        // 审计反馈清除回填：本轮选择占一个新代次，旧轮在途读取即失效。
+        attachmentGeneration += 1
+        let generation = attachmentGeneration
+        // B6：选择器关闭即显读取进度（原位），每完成一项更新已读数。
+        showAttachmentProgress(total: results.count)
+        let lock = NSLock()
+        var loaded: [Attachment?] = Array(repeating: nil, count: results.count)
+        var failedCount = 0
+        /// 审计 P2-26：超限视频计数（单视频上限 50MB，见 movie 分支先查大小再读）。
+        var oversizedCount = 0
+        /// 审计 N5 预算：本轮已接受附件累计字节数；超预算被拒的项数（只拒新项）。
+        var loadedBytes = 0
+        var budgetRejectedCount = 0
+        var nextIndex = 0
+        // 审计 N5：有界读取——一次只读一个附件，读完再读下一个，避免 5 个大视频
+        // 同时在途、同时分配 Data 冲高峰值内存。整批预算见
+        // feedbackAttachmentBatchBudgetBytes（Li 定 50MB），超限项跳过不存。
+        var loadNext: (() -> Void)?
+        loadNext = { [weak self] in
+            // 审计 16 项第 2 项：链路终点即断开自引用环（loadNext 置 nil），
+            // 释放闭包捕获的整批 loaded 数据；代次失效、页面释放同样是终点。
+            guard let self = self else {
+                loadNext = nil
+                return
+            }
+            lock.lock()
+            guard nextIndex < results.count else {
+                lock.unlock()
+                // 全部读完：代次已失效则直接丢弃，不回填、不弹失败提示。
+                let finished = loaded
+                let failures = failedCount
+                let oversized = oversizedCount
+                let budgetRejected = budgetRejectedCount
+                // 审计 16 项第 2 项：本批读完，断开 loadNext 自引用环。
+                loadNext = nil
+                self.clearTrackedAttachmentLoads(for: generation)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, self.attachmentGeneration == generation else { return }
+                    self.attachments = finished.compactMap { $0 }
+                    self.refreshAttachUI()
+                    // B6：本批就绪，进度在原位淡出。
+                    self.hideAttachmentProgress()
+                    if failures > 0 || budgetRejected > 0 {
+                        var parts: [String] = []
+                        if failures > 0 {
+                            parts.append(oversized > 0
+                                ? "有 \(failures) 个附件未能加载，其中 \(oversized) 个视频超过 50MB"
+                                : "有 \(failures) 个附件未能加载")
+                        }
+                        if budgetRejected > 0 {
+                            parts.append("附件总大小超过 50MB，已跳过 \(budgetRejected) 个附件")
+                        }
+                        BearyToast.show(in: self.view, message: parts.joined(separator: "；"))
+                    }
+                    // B6：提交点按时本批未就绪，现已就绪——用刚定格的这批附件继续提交。
+                    if self.pendingSubmitAfterAttachments {
+                        self.pendingSubmitAfterAttachments = false
+                        self.proceedWithSubmit()
+                    }
+                }
+                return
+            }
+            let index = nextIndex
+            nextIndex += 1
+            lock.unlock()
+            // 代次已失效时不再发起新的读取；在途的那一项由回调内的代次检查拦截。
+            // 审计 16 项第 2 项：代次失效即链路终点，断开自引用环。
+            guard self.attachmentGeneration == generation else {
+                loadNext = nil
+                return
+            }
+            let provider = results[index].itemProvider
+            if provider.canLoadObject(ofClass: UIImage.self) {
+                let progress = provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+                    defer { loadNext?() }
+                    // B6：每完成一项（成功与失败都算）回主线程计一次已读数；
+                    // 派发在 defer 的 loadNext 之前，计数一定先于整批就绪回调。
+                    DispatchQueue.main.async { [weak self] in self?.noteAttachmentReadFinished(generation: generation) }
+                    // 审计 N5：代次已失效时不做 jpeg 转换，避免为已丢弃的批次分配内存。
+                    guard let self = self, self.attachmentGeneration == generation else { return }
+                    guard let image = object as? UIImage,
+                          let jpeg = BearyImagePrep.jpegData(image) else {
+                        lock.lock()
+                        failedCount += 1
+                        lock.unlock()
+                        return
+                    }
+                    lock.lock()
+                    // 审计 N5 预算：本项加入后超 50MB 则跳过不存，已接受的不动。
+                    if loadedBytes + jpeg.data.count > Self.feedbackAttachmentBatchBudgetBytes {
+                        budgetRejectedCount += 1
+                    } else {
+                        loadedBytes += jpeg.data.count
+                        loaded[index] = Attachment(data: jpeg.data, mimeType: "image/jpeg", fileName: "feedback-image-\(index + 1).jpg")
+                    }
+                    lock.unlock()
+                }
+                self.trackAttachmentLoad(progress, generation: generation)
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
+                let progress = provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { [weak self] url, _ in
+                    defer { loadNext?() }
+                    // B6：同图片分支，每完成一项回主线程计一次已读数。
+                    DispatchQueue.main.async { [weak self] in self?.noteAttachmentReadFinished(generation: generation) }
+                    guard let self = self, self.attachmentGeneration == generation else { return }
+                    guard let urlValue = url else {
+                        lock.lock()
+                        failedCount += 1
+                        lock.unlock()
+                        return
+                    }
+                    // 审计 P2-26：视频先查大小再读——超过 50MB 不读入内存（邮箱附件与
+                    // 内存双重保护），计失败并在汇总提示里单独说明超限个数。
+                    if let attrs = try? FileManager.default.attributesOfItem(atPath: urlValue.path),
+                       let size = attrs[.size] as? NSNumber, size.intValue > 50 * 1024 * 1024 {
+                        lock.lock()
+                        failedCount += 1
+                        oversizedCount += 1
+                        lock.unlock()
+                        return
+                    }
+                    // 审计 16 项第 3 项：预算按实际字节数结算——已知大小只做读前预判
+                    // （已超剩余预算则不读不存），不提前扣账；读失败不占预算；
+                    // 大小未知时有上限读取（最多读剩余预算 + 1 字节），超了按预算拒绝。
+                    var knownSize: Int?
+                    if let attrs = try? FileManager.default.attributesOfItem(atPath: urlValue.path),
+                       let size = attrs[.size] as? NSNumber {
+                        knownSize = size.intValue
+                    }
+                    lock.lock()
+                    if let knownSize = knownSize,
+                       loadedBytes + knownSize > Self.feedbackAttachmentBatchBudgetBytes {
+                        budgetRejectedCount += 1
+                        lock.unlock()
+                        return
+                    }
+                    let remainingBudget = Self.feedbackAttachmentBatchBudgetBytes - loadedBytes
+                    lock.unlock()
+                    // 审计 N5：读文件前再查一次代次，避免为已失效批次分配 Data。
+                    guard self.attachmentGeneration == generation else { return }
+                    let data: Data?
+                    if knownSize != nil {
+                        data = try? Data(contentsOf: urlValue)
+                    } else {
+                        // 大小未知：有上限读取；剩余预算已空时直接按预算拒绝。
+                        guard remainingBudget >= 0 else {
+                            lock.lock()
+                            budgetRejectedCount += 1
+                            lock.unlock()
+                            return
+                        }
+                        data = Self.boundedData(contentsOf: urlValue, maxBytes: remainingBudget + 1)
+                    }
+                    guard let data = data else {
+                        lock.lock()
+                        failedCount += 1
+                        lock.unlock()
+                        return
+                    }
+                    let ext = urlValue.pathExtension.lowercased()
+                    let mime: String
+                    if ext == "mov" {
+                        mime = "video/quicktime"
+                    } else if ext == "mp4" {
+                        mime = "video/mp4"
+                    } else {
+                        mime = "application/octet-stream"
+                    }
+                    let name = urlValue.lastPathComponent.isEmpty ? "feedback-video-\(index + 1).mov" : urlValue.lastPathComponent
+                    lock.lock()
+                    // 实际字节数结算：查大小后文件变大、或大小未知时读满上限的，
+                    // 都按预算拒绝、不存。
+                    if loadedBytes + data.count > Self.feedbackAttachmentBatchBudgetBytes {
+                        budgetRejectedCount += 1
+                        lock.unlock()
+                        return
+                    }
+                    loadedBytes += data.count
+                    loaded[index] = Attachment(data: data, mimeType: mime, fileName: name)
+                    lock.unlock()
+                }
+                self.trackAttachmentLoad(progress, generation: generation)
+            } else {
+                // B6：不支持的类型也算完成一项（先派发计数，再 loadNext，
+                // 计数一定先于整批就绪回调）。
+                DispatchQueue.main.async { [weak self] in self?.noteAttachmentReadFinished(generation: generation) }
+                lock.lock()
+                failedCount += 1
+                lock.unlock()
+                loadNext?()
+            }
+        }
+        loadNext?()
+    }
+
+    // MARK: - UITextViewDelegate / 键盘
+
+    func textViewDidChange(_ textView: UITextView) {
+        placeholderLabel.isHidden = !textView.text.isEmpty
+        updateSubmitEnabled()
+    }
+
+    // 审计 15 项第 10 项：与编辑器同口径——键盘帧转窗口坐标后算与滚动区
+    // （底锚安全区）的实际遮挡，跟随系统时长与曲线；浮动键盘、分屏、
+    // 高度变化只发 WillChangeFrame 时同样跟上，不再按屏幕高度全量垫。
+    @objc private func keyboardWillShow(_ note: Notification) {
+        guard let value = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
+        let frameInView = view.convert(value.cgRectValue, from: nil)
+        // U2：照抄编辑器选人框 ComposerPickers:572-579 与私信页 #704 的口径——
+        // 先判键盘帧与输入框是否相交，再算重叠；浮动键盘停在中部未碰输入框时
+        // 不再大值垫 inset。贴底键盘的重叠量口径与旧代码一致。
+        view.layoutIfNeeded()
+        let inputFrame = view.convert(textView.bounds, from: textView)
+        let overlapsInput = frameInView.isEmpty == false && frameInView.intersects(inputFrame)
+        let bottom = overlapsInput ? max(0, view.bounds.maxY - view.safeAreaInsets.bottom - frameInView.minY) : 0
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
+        UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {
+            self.scrollView.contentInset.bottom = bottom
+            self.scrollView.verticalScrollIndicatorInsets.bottom = bottom
+        })
+    }
+
+    @objc private func keyboardWillHide(_ note: Notification) {
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
+        UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {
+            self.scrollView.contentInset.bottom = 0
+            self.scrollView.verticalScrollIndicatorInsets.bottom = 0
+        })
+    }
+}

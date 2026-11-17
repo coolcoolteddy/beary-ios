@@ -1,0 +1,151 @@
+import UIKit
+
+/// 图片加载转圈（网页同款，不用下拉刷新那套 icon_refresh）。
+///
+/// 网页口径（beary.html .imgbox::after，图片转圈 v3）：
+/// 18pt 圆圈、2pt 描边、底圈走 --line、顶上一段走 --gray、0.8s 线性无限旋转、
+/// 居中、不拦截点按、加载失败时隐藏（.img-err::after display:none）。
+/// 原生复现：底圈用 line 色整圆，亮弧用 gray 色 90° 圆弧（从顶部起），整层旋转；
+/// 减动效时不转（网页 @media reduce 口径：animation:none，圆圈静止）。
+/// 灯箱是黑底，用 bright 版：底圈白 30%、亮弧纯白，其余口径不变。
+final class BearyWebRingSpinnerView: UIView {
+
+    private let trackLayer = CAShapeLayer()
+    private let arcLayer = CAShapeLayer()
+    private var bright: Bool
+    private var spinning = false
+
+    /// 审计 15 项第 15 项：允许调用方在加载占位期间切换前景口径
+    /// （如灯箱浅色占位底上改用主题色圈），切换后立即重算颜色。
+    func setBright(_ bright: Bool) {
+        guard self.bright != bright else { return }
+        self.bright = bright
+        updateColors()
+    }
+
+    init(bright: Bool = false) {
+        self.bright = bright
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+        layer.addSublayer(trackLayer)
+        layer.addSublayer(arcLayer)
+        trackLayer.fillColor = UIColor.clear.cgColor
+        trackLayer.lineWidth = 2
+        arcLayer.fillColor = UIColor.clear.cgColor
+        arcLayer.lineWidth = 2
+        arcLayer.lineCap = .butt
+        updateColors()
+        // 2026-11-05 转圈恢复：回前台时重加旋转动画（与 BearyRefreshIconView
+        // 同口径；系统切后台会剥掉图层动画，spinning 仍为真时不补就一直静态）。
+        NotificationCenter.default.addObserver(self, selector: #selector(foregroundResume), name: UIApplication.willEnterForegroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(foregroundResume), name: UIApplication.didBecomeActiveNotification, object: nil)
+        // 审计 N4：实时响应减动效切换——运行中开启减动效时，已加上的无限
+        // 旋转动画无任何路径会被移除；关时若仍在加载中需恢复旋转。
+        NotificationCenter.default.addObserver(self, selector: #selector(reduceMotionChanged), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: CGSize { CGSize(width: 18, height: 18) }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let inset: CGFloat = 1 // 描边 2pt，圆心半径 = (18 - 2) / 2
+        let rect = bounds.insetBy(dx: inset, dy: inset)
+        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        trackLayer.frame = bounds
+        trackLayer.path = UIBezierPath(ovalIn: rect).cgPath
+        arcLayer.frame = bounds
+        // 亮弧：从顶部（-90°）起 90°，对应网页 border-top-color 那一段。
+        arcLayer.path = UIBezierPath(
+            arcCenter: center,
+            radius: rect.width / 2,
+            startAngle: -CGFloat.pi / 2,
+            endAngle: 0,
+            clockwise: true
+        ).cgPath
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        updateColors()
+    }
+
+    private func updateColors() {
+        if bright {
+            trackLayer.strokeColor = UIColor(white: 1, alpha: 0.3).cgColor
+            arcLayer.strokeColor = UIColor.white.cgColor
+        } else {
+            trackLayer.strokeColor = BearyColors.line.cgColor
+            arcLayer.strokeColor = BearyColors.gray.cgColor
+        }
+    }
+
+    /// 与 BearyRefreshIconView 同款调用口径：start/stop 即显/藏。
+    func startSpinning() {
+        // 2026-11-05 转圈恢复：去掉“已在转就直接返回”的短路——动画丢了
+        // （上屏前起转、切后台被剥）之后再调 startSpinning 也会被 guard 吞掉，
+        // 图标永久静态。改成先清掉旧动画再重加（与 BearyIconMotion.startSpin
+        // 同口径）；重复调只会替换同 key 动画，不叠加。
+        spinning = true
+        isHidden = false
+        alpha = 1
+        layer.removeAnimation(forKey: "web-ring-spin")
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        addSpinAnimation()
+    }
+
+    /// 进窗口时若仍在转态，重加旋转动画：viewDidLoad 同步链路里起转时
+    /// 视图还没进窗口，动画加不上且 spinning 已真，后续 startSpinning
+    /// 也补不上；进窗口即补（与 BearyRefreshIconView 同口径）。
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil, spinning, !UIAccessibility.isReduceMotionEnabled else { return }
+        addSpinAnimation()
+    }
+
+    /// 回前台时若仍在转态，重加旋转动画（切后台/拉通知中心回来时
+    /// 系统会剥掉图层动画）。
+    @objc private func foregroundResume() {
+        guard spinning, !UIAccessibility.isReduceMotionEnabled else { return }
+        addSpinAnimation()
+    }
+
+    /// 减动效开关变化（审计 N4，与 BearyRefreshIconView 同口径）：
+    /// 开→停掉在转的动画，spinning 保持 true、静态圆环仍可见；
+    /// 关→仅仍在加载且在窗口内时恢复旋转；离页或加载已完成均不重起
+    ///（未进窗口时由 didMoveToWindow 补加）。
+    @objc private func reduceMotionChanged() {
+        guard spinning else { return }
+        if UIAccessibility.isReduceMotionEnabled {
+            layer.removeAnimation(forKey: "web-ring-spin")
+        } else {
+            guard window != nil else { return }
+            addSpinAnimation()
+        }
+    }
+
+    private func addSpinAnimation() {
+        layer.removeAnimation(forKey: "web-ring-spin")
+        let anim = CABasicAnimation(keyPath: "transform.rotation.z")
+        anim.fromValue = 0
+        anim.toValue = Double.pi * 2
+        anim.duration = 0.8
+        anim.repeatCount = .infinity
+        layer.add(anim, forKey: "web-ring-spin")
+    }
+
+    func stopSpinning() {
+        spinning = false
+        layer.removeAnimation(forKey: "web-ring-spin")
+        isHidden = true
+    }
+}
