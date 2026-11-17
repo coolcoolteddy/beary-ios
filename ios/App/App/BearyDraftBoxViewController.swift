@@ -5,7 +5,7 @@ import UIKit
 // 形态：overFullScreen 自包含呈现；遮罩统一走 BearySheetChrome scrim 0.45、出现时 0.26s 淡入
 // （2026-10-28 Li 令统一，此前全透明例外已撤销，见 buildViews 注释）；
 // 点遮罩关闭（backdrop 点击走 closeDraftBox，行为不变）；
-// iPhone 为底部 sheet、最大高度 82vh；iPad（宽 ≥821）为居中 440 宽卡片。
+// iPhone 为底部 sheet；iPad（宽 ≥821）为居中 440 宽卡片；面板高度按内容算、320 封顶（第 13 项）。
 // 数据只读草稿 v3（BearyDraftFiles.swift）：v3 存储是多槽数组文件 beary_draft_v3.json，
 // 本弹层按 updatedAt 倒序列出全部草稿；旧 v2 单槽由存储层首次读取时迁入 v3，
 // 本文件不做迁移、不改存储结构本身。
@@ -13,10 +13,9 @@ import UIKit
 // 同款）；删除为本地操作：只删该篇（图片文件不动，6 秒撤销期内可原样恢复），
 // 删后出 6 秒撤销条，超时丢弃暂存；不碰服务端。
 // 调用约定：点“新建日记”只回调 onNew，点卡片只回调 onOpen 并传出该篇草稿；
-// 弹窗审计 E1-18 统一退场：关闭、打开、新建三路共用同一退场——先播 0.26s
-// 退场动画、dismiss 后再调回调，编辑器侧不再另行 dismiss（旧路径经
-// BearyDraftBoxInstantAnimator 瞬时消失，绕过了退场动画）；关闭路回调为空，
-// 不重复播动画；关闭与打开/新建均不删任何草稿。
+// 弹窗审计 E1-18 统一退场（第 13 项）：关闭、打开、新建三路共用同一退场——
+// 转场动画器播 0.26s 退场动画、dismiss 后再调回调，编辑器侧不再另行 dismiss；
+// 关闭路回调为空，不重复播动画；关闭与打开/新建均不删任何草稿。
 // 约束：颜色只用 BearyColors（遮罩走 BearySheetChrome.scrimColor）；不新增液态玻璃效果；
 // 动画遵守 reduced-motion；部署目标 iOS 15.0、Swift 5.0——只用闭包回调，
 // 不用 async/await，不用 if-let 简写。
@@ -171,7 +170,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     private let fixedHeaderView = UIView()
     private let headerWrap = UIView()
     private let titleLabel = UILabel()
-    private let closeButton = BearyButton.closeButton()
     private let subWrap = UIView()
     private let subLabel = UILabel()
     private let newButton = BearyDraftBoxDashedButton(type: .custom)
@@ -191,6 +189,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     private let bottomSpacer = UIView()
 
     private var sheetHeightConstraint: NSLayoutConstraint?
+    /// 第 13 项：面板高度只按内容算，320 只作封顶（不再写死 320 高）。
+    private let draftBoxMaxHeight: CGFloat = 320
     private var sheetWidthConstraint: NSLayoutConstraint?
     private var phoneConstraints: [NSLayoutConstraint] = []
     private var padConstraints: [NSLayoutConstraint] = []
@@ -429,8 +429,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         // 审计第 10 项：把手行不进滚动栈，改由下方固定头部容器收纳。
         // 2026-10-30 抓手批：把手行只有 14pt 高，手指很难稳定抓中。
         // 热区以抓手为中心、宽 120、高 32（抓手 10–14 上下各扩余量），
-        // 该区内只有不拦截触摸的把手与居中标题，右上角关闭钮在区外，
-        // 不会被误吞；热区不进 stack、不推开标题，布局与视觉不动。
+        // 该区内只有不拦截触摸的把手与居中标题；热区不进 stack、
+        // 不推开标题，布局与视觉不动。
         // 热区直接挂在 sheetView 上（在滚动视图之上），竖向 pan 不再
         // 被 sheetScrollView 抢走；原把手行手势保留，两者同走
         // handlePanGesture，位移口径一致。
@@ -452,26 +452,16 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         titleLabel.textAlignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         headerWrap.addSubview(titleLabel)
-        // 关闭钮视觉由 BearyButton.iconCircleClose 工厂定（surface2 底 32 圆钮 + icon_close 15，
-        // 资产缺失时工厂自带“✕”文字兜底）；这里只保留动作与按压反馈。
-        closeButton.addTarget(self, action: #selector(closeBox), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        headerWrap.addSubview(closeButton)
         NSLayoutConstraint.activate([
             titleLabel.centerXAnchor.constraint(equalTo: headerWrap.centerXAnchor),
-            // Hit44：头高改由关闭钮链驱动（钮 32 + 上 6 + 下 6 = 44），热区不再被约 34 高头截断；
-            // 标题底改 ≤，标题仍顶锚 6、位置不动。
+            // 第 13 项：删 × 后头高不再由关闭钮链驱动，改钉死 44（原钮 32 + 上 6 + 下 6），
+            // 热区不再被约 34 高头截断；标题仍顶锚 6、位置不动，标题底改 ≤。
+            headerWrap.heightAnchor.constraint(equalToConstant: 44),
             titleLabel.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 6),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: headerWrap.bottomAnchor, constant: -4),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
-            closeButton.trailingAnchor.constraint(equalTo: headerWrap.trailingAnchor, constant: -16),
-            closeButton.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 6),
-            closeButton.bottomAnchor.constraint(equalTo: headerWrap.bottomAnchor, constant: -6),
         ])
         // 审计第 10 项（草稿箱部分）：头部固定在面板顶部——把手行与
-        // 标题/关闭行移出滚动栈，钉在 sheetView 顶部的固定容器内；
+        // 标题行移出滚动栈，钉在 sheetView 顶部的固定容器内；
         // 滚动区改为从容器下方起，余下内容（副标题起）按原顺序仍在
         // 滚动栈内。关闭动作、标题文案、抓手样式与头高均不动。
         fixedHeaderView.backgroundColor = BearyColors.surface3
@@ -493,7 +483,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             headerWrap.trailingAnchor.constraint(equalTo: fixedHeaderView.trailingAnchor),
             headerWrap.bottomAnchor.constraint(equalTo: fixedHeaderView.bottomAnchor),
         ])
-        // 抓手热区仍压在最上层（居中 120 宽，关闭钮在其范围外，不被挡）。
+        // 抓手热区仍压在最上层（居中 120 宽）。
         sheetView.bringSubviewToFront(grabHitView)
 
         subLabel.font = UIFont.systemFont(ofSize: 12)
@@ -645,7 +635,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             contentStack.widthAnchor.constraint(equalTo: sheetScrollView.frameLayoutGuide.widthAnchor),
         ])
 
-        let heightConstraint = sheetView.heightAnchor.constraint(equalToConstant: 320)
+        // 第 13 项：初值即按内容量（量不到时取封顶值兜底），之后每次布局由 updateSheetHeight 跟进。
+        let heightConstraint = sheetView.heightAnchor.constraint(equalToConstant: draftBoxContentHeight() ?? draftBoxMaxHeight)
         heightConstraint.isActive = true
         sheetHeightConstraint = heightConstraint
 
@@ -705,23 +696,23 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     /// 初始高（加载态），回包后由 transitionSheetHeightToContent 一次量高、
     /// 一段动画过渡到内容态；否则回包晚于入场、两态高度不同时，底部固定的
     /// iPhone 面板顶边会突然上跳。
+    /// 第 13 项：量高口径改走 draftBoxContentHeight（按内容算、320 封顶）。
     private func updateSheetHeight() {
         guard draftsInitialLoaded else { return }
-        guard let target = measuredSheetHeight() else { return }
+        let sheetWidth = isPadLayout ? min(440, view.bounds.width - 80) : view.bounds.width
+        if let widthConstraint = sheetWidthConstraint, isPadLayout {
+            widthConstraint.constant = max(sheetWidth, 0)
+        }
+        guard let target = draftBoxContentHeight() else { return }
         if let heightConstraint = sheetHeightConstraint, abs(heightConstraint.constant - target) > 0.5 {
             heightConstraint.constant = target
         }
     }
 
-    /// 与 updateSheetHeight 同一套量高口径（固定头高＋滚动内容高，上限 82%
-    /// 屏高）；返回 nil 表示本次不改高。
-    private func measuredSheetHeight() -> CGFloat? {
-        let maxHeight = view.bounds.height * 0.82
-        guard maxHeight > 0 else { return nil }
+    /// 第 13 项：面板高度按内容算，320 只作封顶；量不到（未布局／内容未就绪）时回 nil，调用方保持原高。
+    private func draftBoxContentHeight() -> CGFloat? {
         let sheetWidth = isPadLayout ? min(440, view.bounds.width - 80) : view.bounds.width
-        if let widthConstraint = sheetWidthConstraint, isPadLayout {
-            widthConstraint.constant = max(sheetWidth, 0)
-        }
+        guard sheetWidth > 0 else { return nil }
         // 审计第 10 项：面板总高 = 固定头部高（把手 + 标题行）+ 滚动内容高；
         // 头部已移出滚动栈，故此处须把两部分相加，否则面板会矮一截。
         let headerHeight = fixedHeaderView.systemLayoutSizeFitting(
@@ -735,14 +726,15 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             verticalFittingPriority: .fittingSizeLevel
         ).height
         guard fittingHeight > 100 else { return nil }
-        return min(fittingHeight, maxHeight)
+        return min(fittingHeight, draftBoxMaxHeight)
     }
 
     /// 审计第 8 轮第 5 项：首轮数据就绪后统一量一次高，用同一段动画过渡
     /// 面板与内容（减动效直接落定）。须在 renderDrafts 之后、下一轮布局之前调，
     /// 否则布局回路会先把新高直接写上去，顶边照样一跳。
+    /// 第 13 项：量高口径改走 draftBoxContentHeight（按内容算、320 封顶）。
     private func transitionSheetHeightToContent() {
-        guard let target = measuredSheetHeight(),
+        guard let target = draftBoxContentHeight(),
               let heightConstraint = sheetHeightConstraint,
               abs(heightConstraint.constant - target) > 0.5 else { return }
         heightConstraint.constant = target
@@ -1626,7 +1618,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         }
     }
 
-    /// 四路统一离场守卫：关闭钮／遮罩／把手下滑（均走 closeBox）、新建、
+    /// 四路统一离场守卫：遮罩／把手下滑（均走 closeBox）、新建、
     /// 点开另一篇共用。撤销只活在箱内 pendingUndos 内存（deinit 即清计时器
     /// 与队列），故 6 秒窗内任一路离箱都会丢撤销：有可撤销笔时一律先弹确认，
     /// 确认才执行该路的离场动作，取消则保留箱内状态与撤销队列；无待撤销笔
@@ -1660,8 +1652,10 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     }
 
     /// 弹窗审计 E1-18 统一退场完成回调：关闭、打开、新建三路共用同一
-    /// 退场（遮罩 0.26s 淡出 + 面板滑出走拖拽收尾统一弹簧 0.26s／damping 0.7，减动效直 dismiss），
-    /// dismiss 完成后才调 completion（即原 onNew/onOpen 回调）。
+    /// 退场（第 13 项：退场动画改由转场动画器播——遮罩 0.26s 淡出 + 面板滑出
+    /// 走拖拽收尾统一弹簧 0.26s／damping 0.7，减动效直 dismiss；本函数不再手动播，
+    /// 外部／系统直接 dismiss 同样走动画器，不再瞬时消失），dismiss 完成后
+    /// 才调 completion（即原 onNew/onOpen 回调）。
     /// 退场在途时再点按一律忽略：不重复播动画，也不让“关闭后又打开”
     /// 的回调在关闭完成后再执行；先到的一路为准。
     private func dismissWithExitAnimation(completion: (() -> Void)?) {
@@ -1684,7 +1678,17 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             dismiss(animated: false, completion: wrappedCompletion)
             return
         }
-        // 第 30 项：遮罩 0.26s 单独淡出（与面板滑出解耦；面板滑出走拖拽收尾统一弹簧 0.26s／damping 0.7）。
+        // 第 13 项：退场动画由转场动画器播（见 BearyDraftBoxAnimator），
+        // 本函数只调 dismiss(animated: true)，不再手动播——同一关闭只播一次退场动画。
+        dismiss(animated: true, completion: wrappedCompletion)
+    }
+
+    /// 第 13 项：退场动画的唯一实现，供退场动画器调用——遮罩 0.26s 单独淡出
+    /// （与面板滑出解耦；面板滑出走拖拽收尾统一弹簧 0.26s／damping 0.7）。
+    /// 完成时调 completion（动画器随后 completeTransition）；退场在途时置
+    /// isDismissing，防关闭／新建／点开路重复触发。
+    func playDismissExitAnimation(completion: @escaping () -> Void) {
+        isDismissing = true
         UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
             self.backdropButton.alpha = 0
         })
@@ -1696,7 +1700,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 self.sheetView.transform = CGAffineTransform(translationX: 0, y: self.sheetView.bounds.height)
             }
         }, completion: { _ in
-            self.dismiss(animated: false, completion: wrappedCompletion)
+            completion()
         })
     }
 
@@ -1744,15 +1748,15 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                     self.sheetView.transform = .identity
                     self.backdropButton.alpha = 1
                 }
-                // 无障碍：拖拽取消后面板仍开着，焦点回到面板内的关闭钮，
+                // 无障碍：拖拽取消后面板仍开着，焦点回到面板标题，
                 // 不送回面板后的编辑器触发入口（面板未关，送回去会穿透）。
                 if UIAccessibility.isReduceMotionEnabled {
                     restore()
-                    UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
+                    UIAccessibility.post(notification: .layoutChanged, argument: self.titleLabel)
                 } else {
                     let offset = BearySheetDrag.offset(for: translation.y)
                     UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore) { _ in
-                        UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
+                        UIAccessibility.post(notification: .layoutChanged, argument: self.titleLabel)
                     }
                 }
             }
@@ -1761,13 +1765,13 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 self.sheetView.transform = .identity
                 self.backdropButton.alpha = 1
             }
-            // 无障碍：同上，取消／失败后焦点回面板内关闭钮。
+            // 无障碍：同上，取消／失败后焦点回面板标题。
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
-                UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
+                UIAccessibility.post(notification: .layoutChanged, argument: self.titleLabel)
             } else {
                 UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore) { _ in
-                    UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
+                    UIAccessibility.post(notification: .layoutChanged, argument: self.titleLabel)
                 }
             }
         default:
@@ -2232,23 +2236,26 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     }
 }
 
-// MARK: - 自包含呈现：瞬时转场 + sheet 自身动效
+// MARK: - 自包含呈现：入场瞬时转场 + 手动入场动效，退场走动画器
 
-/// 呈现/关闭本身不播系统动画，sheet 的滑入/淡入/滑出由本控制器在
-/// viewWillAppear/viewDidAppear/closeBox 里做（与网页 .32s/.25s 同口径），
+/// 呈现本身不播系统动画，sheet 的滑入/淡入由本控制器在
+/// viewWillAppear/viewDidAppear 里手动做（与网页 .32s/.25s 同口径），
 /// 调用方无论 present(animated:) 传 true 还是 false，效果一致。
+/// 退场（第 13 项）改由动画器播统一退场动画：任何一路 dismiss（含外部／
+/// 系统直接 dismiss）都走同一退场，不再瞬时消失；关闭／新建／点开三路
+/// 只调 dismiss(animated: true)，不再各自手动播，同一关闭只播一次。
 private final class BearyDraftBoxTransitionDelegate: NSObject, UIViewControllerTransitioningDelegate {
 
     func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
-        return BearyDraftBoxInstantAnimator(isPresenting: true)
+        return BearyDraftBoxAnimator(isPresenting: true)
     }
 
     func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
-        return BearyDraftBoxInstantAnimator(isPresenting: false)
+        return BearyDraftBoxAnimator(isPresenting: false)
     }
 }
 
-private final class BearyDraftBoxInstantAnimator: NSObject, UIViewControllerAnimatedTransitioning {
+private final class BearyDraftBoxAnimator: NSObject, UIViewControllerAnimatedTransitioning {
 
     private let isPresenting: Bool
 
@@ -2258,7 +2265,10 @@ private final class BearyDraftBoxInstantAnimator: NSObject, UIViewControllerAnim
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return 0
+        if isPresenting || UIAccessibility.isReduceMotionEnabled {
+            return 0
+        }
+        return BearyMotion.normal
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -2267,12 +2277,22 @@ private final class BearyDraftBoxInstantAnimator: NSObject, UIViewControllerAnim
             if let toView = transitionContext.view(forKey: .to) {
                 container.addSubview(toView)
             }
-        } else {
-            if let fromView = transitionContext.view(forKey: .from) {
-                fromView.removeFromSuperview()
-            }
+            transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+            return
         }
-        transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+        let fromView = transitionContext.view(forKey: .from)
+        guard let box = transitionContext.viewController(forKey: .from) as? BearyDraftBoxViewController,
+              !UIAccessibility.isReduceMotionEnabled else {
+            fromView?.removeFromSuperview()
+            transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+            return
+        }
+        box.playDismissExitAnimation {
+            if !transitionContext.transitionWasCancelled {
+                fromView?.removeFromSuperview()
+            }
+            transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+        }
     }
 }
 
