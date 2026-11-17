@@ -108,6 +108,12 @@ final class BearyNotificationsViewController: UIViewController {
     /// 详情页据此重配可见行的回关钮，不整表重载。
     var onFollowStateChangedForDetail: ((Int) -> Void)?
 
+    /// 详情页单条标已读失败回滚通知：markSingleRead 失败回滚时传该条 id，
+    /// 详情页据此把本地拷贝改回未读并重画该行（源页回滚只刷源表与合并
+    /// 快照，详情页本地拷贝不在其中）。详情页在 viewWillAppear 接线、
+    /// viewWillDisappear 清掉；未接线时不影响任何行为。
+    var onSingleReadRollback: ((Int) -> Void)?
+
     /// 当前未读数（与最近一次角标通知一致；容器也可直接读它）。
     var currentUnread: Int {
         return unreadTotal
@@ -2354,6 +2360,8 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.recordFullLoadUnread()
                     strongSelf.applyReadAppearanceToVisibleRows()
                     strongSelf.notifyMergeSnapshotChanged()
+                    // 详情页本地拷贝不在源表回滚范围内，另行通知它改回未读。
+                    strongSelf.onSingleReadRollback?(notificationId)
                     // 失败有反馈：摇头＋warning 震动＋拒绝音效＋toast（此前静默
                     // 回滚，用户不知道标已读没成）。
                     strongSelf.playDenyShakeForRow(notificationId: notificationId)
@@ -4660,10 +4668,18 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
             guard let view = self?.view else { return }
             BearyToast.show(in: view, message: message)
         }
+        // 单条标已读失败回滚：源页回滚只刷源表与合并快照，本页本地拷贝
+        // 须另行改回未读并重画该行（见 applyLocalReadRollback）。
+        notifSource.onSingleReadRollback = { [weak self] notificationId in
+            self?.applyLocalReadRollback(notificationId: notificationId)
+        }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        // 详情页不在前台时不再接回滚通知；回页时 viewWillAppear 重读
+        // 快照 reloadData，状态以源页为准。
+        notifSource.onSingleReadRollback = nil
         // 容器恢复合并模式宿主（信件模态挂容器 view、toast 投容器 view）。
         onDetailWillDisappear?()
     }
@@ -4719,7 +4735,43 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
         // onOpenUser → 个人页（旧行为整行点按即进个人页，这里同口径，
         // 不另给人名／头像加独立按钮）；entry 行 → 日记详情；dm 行 →
         // 会话页；无 entry 的系统／信件行 → 信件模态（挂本页 view）。
-        notifSource.openItemForDetail(items[indexPath.row])
+        let tappedItem = items[indexPath.row]
+        notifSource.openItemForDetail(tappedItem)
+        // 乐观已读就地清点：源页 openNotification 只改源模型＋源表，
+        // 本页 items 是 card.items 的值拷贝、源表也不在本页层级，点按后
+        // 本页须自己同步本地拷贝并就地改该行 class（蓝点＋高亮），不
+        // reloadRows；此前只靠 viewWillAppear 重进才 reloadData，故蓝点
+        // 与高亮要点开、返回、再进才消失。
+        applyLocalRead(itemId: tappedItem.id, at: indexPath)
+    }
+
+    /// 详情页乐观已读就地清点：只改本地拷贝与该可见行 class（与源页
+    /// applyReadAppearanceToVisibleRows 同口径，不 reloadRows、不闪行）；
+    /// 已读行／无 id 行不做任何事。
+    private func applyLocalRead(itemId: Int?, at indexPath: IndexPath) {
+        guard let itemId = itemId,
+              indexPath.row < items.count,
+              items[indexPath.row].id == itemId,
+              (items[indexPath.row].read ?? true) == false else { return }
+        items[indexPath.row].read = true
+        guard let cell = tableView.cellForRow(at: indexPath) as? BearyNotificationCell else { return }
+        let item = items[indexPath.row]
+        let isSystemStyle = item.type == "system" || item.type == "letter"
+        // 已读后高亮判定恒 false（shouldHighlight 先判 read），直接灭。
+        cell.setReadAppearance(isUnread: false, isSystemStyle: isSystemStyle, highlight: false)
+    }
+
+    /// 单条标已读失败回滚：把本地拷贝改回未读并重画该行（只改该行 class，
+    /// 不 reloadRows）；行已不在本页列表时不做任何事（回页重读快照为准）。
+    private func applyLocalReadRollback(notificationId: Int) {
+        guard let row = items.firstIndex(where: { $0.id == notificationId }),
+              (items[row].read ?? true) == true else { return }
+        items[row].read = false
+        let indexPath = IndexPath(row: row, section: 0)
+        guard let cell = tableView.cellForRow(at: indexPath) as? BearyNotificationCell else { return }
+        let item = items[row]
+        let isSystemStyle = item.type == "system" || item.type == "letter"
+        cell.setReadAppearance(isUnread: true, isSystemStyle: isSystemStyle, highlight: notifSource.highlightForDetail(item))
     }
 }
 
