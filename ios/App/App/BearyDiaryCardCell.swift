@@ -115,18 +115,20 @@ func bearyFeedLoadImage(into imageView: UIImageView, url: URL?, retryButton: Bea
 
 func bearyFeedPerformRetry(_ button: BearyFeedRetryButton) {
     guard let imageView = button.targetImageView, let url = button.retryURL else { return }
-    button.isHidden = true
     // 80 包 B3-2：重试时图框已布局，按实测框宽下采样（未布局时传 nil 走原路）。
     let retryDownsample = imageView.bounds.width > 0 ? imageView.bounds.width * UIScreen.main.scale : nil
     if button.retryBlurUp {
+        // forceRetry 绕过“同 URL＋image 非空”守卫：缩略图已显示时也一定重发完整图请求。
         imageView.bearySetImageWithBlurUp(url: url, downsampleToWidth: retryDownsample, onFailure: { [weak button] _ in
             button?.isHidden = false
+        }, forceRetry: true)
+    } else {
+        imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: retryDownsample, onFailure: { [weak button] _ in
+            button?.isHidden = false
         })
-        return
     }
-    imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: retryDownsample, onFailure: { [weak button] _ in
-        button?.isHidden = false
-    })
+    // 请求已启动（url 非空时上述调用一定建了新任务）再藏按钮；失败时 onFailure 重亮。
+    button.isHidden = true
 }
 
 // MARK: - 操作行透传栈（A 批小修：actionStack 命中截断）

@@ -1714,6 +1714,7 @@ final class BearyImagePrefetcher {
 private var bearyImageTaskKey: UInt8 = 0
 private var bearyImageURLKey: UInt8 = 0
 private var bearyImageRingKey: UInt8 = 0
+private var bearyImageFullLoadedKey: UInt8 = 0
 
 extension UIView {
     /// 动画批 11 号离屏停播：递归停掉子树内全部 BearyEmoteView。cell 的
@@ -1767,6 +1768,14 @@ extension UIImageView {
         objc_setAssociatedObject(self, &bearyImageRingKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
     }
 
+    /// 完整图是否已成功显示（与“只有缩略图”区分）：BlurUp 小图成功后
+    /// image 已非空，但完整图未到；重试/重配时只凭 image != nil 会误判
+    /// 为已加载完成而直接返回，导致完整图永远不再请求。
+    private var bearyImageFullLoaded: Bool {
+        get { (objc_getAssociatedObject(self, &bearyImageFullLoadedKey) as? Bool) ?? false }
+        set { objc_setAssociatedObject(self, &bearyImageFullLoadedKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
+    }
+
     func bearySetImage(url: URL?, placeholder: UIImage? = nil, downsampleToWidth: CGFloat? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil) {
         // 同图重配：目标与当前一致且已有显示图时保留，不清图、不重下，
         // 慢网下不闪成占位；在途的同 URL 加载继续跑，不取消。换图、
@@ -1780,6 +1789,7 @@ extension UIImageView {
         bearyRemoveWebRingSpinner()
         objc_setAssociatedObject(self, &bearyImageURLKey, url, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         self.image = placeholder
+        bearyImageFullLoaded = false
         guard let url = url else {
             objc_setAssociatedObject(self, &bearyImageTaskKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             return
@@ -1797,6 +1807,7 @@ extension UIImageView {
             self.bearyRemoveWebRingSpinner()
             switch result {
             case .success(let img):
+                self.bearyImageFullLoaded = true
                 let slowLoad = Date().timeIntervalSince(startedAt) >= 0.15
                 if slowLoad && self.alpha == 1 && BearyMotion.animated(true) {
                     self.alpha = 0
@@ -1818,11 +1829,13 @@ extension UIImageView {
     /// （transform + opacity，0.3s）；瞬时命中缓存时直设不闪。
     /// 容器尺寸由调用方预先固定（卡片图片条 216 高、宽按宽高比预留），
     /// 本方法不改布局、不跳动；小图失败不挡原图加载。
-    func bearySetImageWithBlurUp(url: URL?, downsampleToWidth: CGFloat? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil) {
-        // 同图重配：目标与当前一致且已有显示图时保留，不清 nil、不重下，
+    func bearySetImageWithBlurUp(url: URL?, downsampleToWidth: CGFloat? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil, forceRetry: Bool = false) {
+        // 同图重配：目标与当前一致、且完整图已显示时保留，不清 nil、不重下，
         // 慢网下不闪成占位；在途的同 URL 加载继续跑，不取消。换图、
         // 复用到其他日记（URL 不同）或图还没显示出来时照旧走加载。
-        if let url = url, url == (objc_getAssociatedObject(self, &bearyImageURLKey) as? URL), self.image != nil {
+        // 只有缩略图时不算加载完成，重配要重新请求完整图；
+        // forceRetry（重试按钮）绕过守卫，一定重新请求。
+        if !forceRetry, let url = url, url == (objc_getAssociatedObject(self, &bearyImageURLKey) as? URL), self.image != nil, bearyImageFullLoaded {
             return
         }
         if let old = objc_getAssociatedObject(self, &bearyImageTaskKey) as? URLSessionDataTask {
@@ -1833,6 +1846,7 @@ extension UIImageView {
         transform = .identity
         alpha = 1
         self.image = nil
+        bearyImageFullLoaded = false
         guard let url = url else {
             objc_setAssociatedObject(self, &bearyImageTaskKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             return
@@ -1863,6 +1877,7 @@ extension UIImageView {
             self.bearyRemoveWebRingSpinner()
             switch result {
             case .success(let img):
+                self.bearyImageFullLoaded = true
                 let slowLoad = Date().timeIntervalSince(startedAt) >= 0.15
                 if slowLoad && self.alpha == 1 && BearyMotion.animated(true) {
                     self.image = img
