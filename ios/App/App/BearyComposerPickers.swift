@@ -179,15 +179,15 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         backdropButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
         backdropButton.bearyAddPressFeedback()
 
-        // 审计 D-16：浮层背景与回应 Sheet 一致走 surface3（深色 #313138；
-        // 浅色下 surface3 #DFDFDF 略深于 bg 白，观感微分层）；全屏页面仍用 bg，不动。
+        // 审计 D-16：浮层背景与回应 Sheet 一致走 surface3（深色 #18181C；
+        // 浅色下 surface3 #F5F5F5 几贴 bg 白，观感贴底）；全屏页面仍用 bg，不动。
         sheetView.backgroundColor = BearyColors.surface3
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         // 阴影：手机端走底 sheet 档；iPad 卡片走 raised 档（2026-11-02 定版第 2 组，
         // 旧 0.30/30/(0, 24) 档已废弃），此处不再自写数值。
 
-        // 抓手走 gray：底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #DFDFDF）
-        // 只差 4 阶、浅色下几不可见（#1286 档距拉大后；深色亦只差约 9 阶）。
+        // 抓手走 gray：底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #F5F5F5）
+        // 对比约 1.27:1、浅色下几不可见（#1286 档距拉大后；深色差约 34 阶）。
         grabberView.backgroundColor = BearyColors.gray
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
 

@@ -410,8 +410,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         sheetScrollView.addSubview(contentStack)
 
-        // 抓手走 gray：底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #DFDFDF）
-        // 只差 4 阶、浅色下几不可见（#1286 档距拉大后；深色亦只差约 9 阶）。
+        // 抓手走 gray：底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #F5F5F5）
+        // 对比约 1.27:1、浅色下几不可见（#1286 档距拉大后；深色差约 34 阶）。
         handleView.backgroundColor = BearyColors.gray
         handleView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
         handleView.translatesAutoresizingMaskIntoConstraints = false
@@ -2278,8 +2278,8 @@ private final class BearyDraftBoxDashedButton: BearyHit44Button {
         super.init(frame: frame)
         // 撤回批（2026-10-27）：虚线钮去玻璃留虚线——玻璃 subview 会拦截触摸致死钮，删掉，
         // 只留 dashedLayer 描边（原 75 包形态）。
-        // 描边走 gray：钮底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #DFDFDF）
-        // 只差 4 阶、浅色下几不可见（#1286 档距拉大后；深色亦只差约 9 阶）。
+        // 描边走 gray：钮底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #F5F5F5）
+        // 对比约 1.27:1、浅色下几不可见（#1286 档距拉大后；深色差约 34 阶）。
         dashedLayer.fillColor = UIColor.clear.cgColor
         dashedLayer.strokeColor = BearyColors.gray.cgColor
         dashedLayer.lineWidth = 1.5

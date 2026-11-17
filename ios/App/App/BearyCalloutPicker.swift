@@ -40,8 +40,8 @@ final class BearyCalloutDismissView: UIView {
 }
 
 /// 时间线筛子尖角气泡（11b：筛子从系统 actionSheet 改回尖角气泡）。
-/// 壳口径沿用旧编辑器尖角框同款：框体圆角 16、尖角高 10/半宽 8、浅色 #DFDFDF /
-/// 深色 #313138（surface3）、hairline 阴影；框外收起直接复用 BearyCalloutDismissView
+/// 壳口径沿用旧编辑器尖角框同款：框体圆角 16、尖角高 10/半宽 8、浅色 #F5F5F5 /
+/// 深色 #18181C（surface3）、hairline 阴影；框外收起直接复用 BearyCalloutDismissView
 /// （不另写收起层）。尖角改放框顶（筛子钮在表头、气泡朝下展开，框在钮下方、尖角向上
 /// 指钮中心——与旧编辑器“框在上、尖角朝下指钮”镜像）。
 /// 出现/消失只走 transform/opacity（0.18s、6pt；减动效静态直出，本视图不自播动画）。
@@ -209,7 +209,7 @@ final class BearyBubbleMenuView: UIView {
             if index > 0 {
                 let separator = UIView()
                 // 分隔线走 gray：气泡底是 surface3，line（浅 #DBDBDB）与 surface3
-                // （浅 #DFDFDF）只差 4 阶、浅色下几不可见（#1286 档距拉大后）。
+                // （浅 #F5F5F5）对比约 1.27:1、浅色下几不可见（#1286 档距拉大后）。
                 separator.backgroundColor = BearyColors.gray
                 separator.translatesAutoresizingMaskIntoConstraints = false
                 separator.heightAnchor.constraint(equalToConstant: Self.separatorHeight).isActive = true

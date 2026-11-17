@@ -7146,8 +7146,8 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         // P3-30 修正（2026-11-14，132 真机）：编辑钮底色不能直接走 ink——
         // ink 深色下是近白 #F5F5F5，而 UIContextualAction 的标题字固定白色，
         // 深色下白底白字（对比约 1.1:1）完全看不清（截图实测）。按 trait 分流：
-        // 浅色仍走 ink 黑底（白字对比约 21:1）；深色走 surface3 #313138 深灰
-        //（白字对比约 13:1，且与页底 #0B0B0D 可区分）。删除钮（destructive
+        // 浅色仍走 ink 黑底（白字对比约 21:1）；深色走 surface3 #18181C 深灰
+        //（白字对比约 17.7:1；与页底 #0B0B0D 只差一档，靠白字认出按钮）。删除钮（destructive
         // 系统红）本身可读，不动。
         edit.backgroundColor = UIColor { trait in
             trait.userInterfaceStyle == .dark
