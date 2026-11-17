@@ -41,10 +41,11 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     private static let arrowHalfWidth: CGFloat = 8
     private static let cornerRadius: CGFloat = BearyCorners.single
 
-    /// 浮层底走 surface3（审计 ③-5：旧硬编码值深 #26262C／浅 #F5F5F5
-    /// 已废止，改走 surface3 常量；常量现行值由 #1286 微明度同步）。
+    /// 浮层底走 surface1（2026-11-17 写日记页弹窗贴底定版：surface3 在黑底上
+    /// 亮四档、太飘；改走 surface1 只比页面底高一档。旧硬编码值深 #26262C／
+    /// 浅 #F5F5F5 已废止，改走 token）。
     private static var popoverBackgroundColor: UIColor {
-        BearyColors.surface3
+        BearyColors.surface1
     }
 
     private let backgroundLayer = CAShapeLayer()
@@ -142,8 +143,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         manualButton.setTitleColor(BearyColors.ink, for: .normal)
         manualButton.layer.cornerRadius = 999
         manualButton.layer.borderWidth = 1
-        // 描边走 gray：浮层底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #DFDFDF）
-        // 只差 4 阶、浅色下几不可见（#1286 档距拉大后；深色亦只差约 9 阶）。
+        // 描边走 gray：浮层底是 surface1，line（浅 #DBDBDB）与 surface1（浅 #F5F5F5）
+        // 差约 26 阶、浅色下可见；深色亦分得清。
         manualButton.layer.bearyDynamicBorderColor = BearyColors.gray
         manualButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
         manualButton.setContentHuggingPriority(.required, for: .horizontal)
@@ -159,7 +160,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         relocateButton.setTitleColor(BearyColors.ink, for: .normal)
         relocateButton.layer.cornerRadius = 999
         relocateButton.layer.borderWidth = 1
-        // 描边走 gray：同 manualButton，浮层底 surface3 上 line 几不可见。
+        // 描边走 gray：同 manualButton，浮层底 surface1 上 line 可见。
         relocateButton.layer.bearyDynamicBorderColor = BearyColors.gray
         relocateButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
         relocateButton.setContentHuggingPriority(.required, for: .horizontal)

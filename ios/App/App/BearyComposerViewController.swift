@@ -2754,10 +2754,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanelRows.translatesAutoresizingMaskIntoConstraints = false
         quotePanelRows.axis = .vertical
         quotePanelRows.spacing = 0
-        // 112 v2 修正：列表栈是引用面板的同一面背板，跟面板一起走 surface3，
-        // 与其他 sheet 一致；行底不再另铺灰块。单改面板底会被列表栈的 bg 盖住，
+        // 112 v2 修正：列表栈是引用面板的同一面背板，跟面板一起走 surface1，
+        // 与其他写日记页弹窗一致；行底不再另铺灰块。单改面板底会被列表栈的 bg 盖住，
         // 列表态看不出变化、有行又有失败态时还会上下拼色。
-        quotePanelRows.backgroundColor = BearyColors.surface3
+        quotePanelRows.backgroundColor = BearyColors.surface1
         contentStack.addArrangedSubview(quotePanel)
         quotePanel.addSubview(quotePanelRows)
         quotePanel.addSubview(quotePanelStateStack)
@@ -2793,10 +2793,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 审计 R9 A：面板不再让三态提示画在 0 高容器外——内容全部收进
         // 有高度的容器内，溢出直接裁掉。
         quotePanel.clipsToBounds = true
-        // 引用面板背板跟其他 sheet 一致走 surface3（2026-10-29 第 26 项把背板改回
-        // bg 的旧理由已作废：当时是内缩灰色容器才有方框感，现在面板全幅展开，
+        // 引用面板背板跟写日记页其他弹窗一致走 surface1（2026-11-17 贴底定版；
+        // 2026-10-29 第 26 项把背板改回 bg 的旧理由已作废：当时是内缩灰色容器才有方框感，现在面板全幅展开，
         // 不再是内缩容器；tab 条仍为独立控制行、未动）。
-        quotePanel.backgroundColor = BearyColors.surface3
+        quotePanel.backgroundColor = BearyColors.surface1
         quotePanel.isHidden = true
         contentStack.setCustomSpacing(16, after: quotePanel)
     }

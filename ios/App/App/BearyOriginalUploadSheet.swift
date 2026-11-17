@@ -116,7 +116,8 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.surface3
+        // 2026-11-17 写日记页弹窗贴底定版：原图选择 sheet 走 surface1，不再走 surface3。
+        view.backgroundColor = BearyColors.surface1
         view.layer.cornerRadius = BearySheetChrome.topCornerRadius
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.clipsToBounds = true
