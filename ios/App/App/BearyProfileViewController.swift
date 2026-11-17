@@ -7171,6 +7171,11 @@ class BearyProfileViewController: UIViewController {
 
     /// 80 包 A3-1：脚部种类记忆——空态脚部只在种类变化时淡入，已有空态不重播。
     private var lastProfileFooterKind: String?
+    /// 跳动修复（第 8 轮第 2 项）：拖动/减速中跳过的墙底位移补偿待办——
+    /// 只记计算所需输入（重建时的锚点、旧墙底、旧脚部顶），不记位移数；
+    /// 滚动结束时再算一次并应用。滚动结束前脚部又重建时以最新一次为准
+    /// （直接覆盖，旧的作废，不叠加）。
+    private var pendingPhotowallCompensation: (anchorOffsetY: CGFloat, oldWallBottomY: CGFloat, footerTopOld: CGFloat)?
     /// 批 E 挪位：地图入口行内约束（图标/文案/箭头/热区）只激活一次；
     /// 行本身在 refreshFooter 里逐次重设 frame 并换进新脚部容器。
     private var mapEntryInternalConstraintsActivated = false
@@ -7395,6 +7400,8 @@ class BearyProfileViewController: UIViewController {
             // 拖动/减速中不补，免得与手势抢偏移；直接落位不动画，与
             // 脚部重建同帧，入口行视觉不动。
             if !tableView.isDragging && !tableView.isDecelerating {
+                // 本次直接补了（或守卫没过），就是最新一次处理，旧待办作废。
+                pendingPhotowallCompensation = nil
                 tableView.layoutIfNeeded()
                 let newFooterHeight = container.frame.height
                 let footerTopNew = tableView.contentSize.height - newFooterHeight
@@ -7412,6 +7419,11 @@ class BearyProfileViewController: UIViewController {
                     let maxOffsetY = max(minOffsetY, tableView.contentSize.height - tableView.bounds.height + tableView.adjustedContentInset.bottom)
                     tableView.contentOffset.y = min(max(anchorOffsetY + wallShift, minOffsetY), maxOffsetY)
                 }
+            } else {
+                // 跳动修复（第 8 轮第 2 项）：拖动/减速中不补，免得与手势抢偏移，
+                // 但这次更新不能直接丢——记下待办，滚动结束后再算一次；滚动结束
+                // 前脚部又重建时直接覆盖，以最新一次为准。
+                pendingPhotowallCompensation = (anchorOffsetY: anchorOffsetY, oldWallBottomY: oldWallBottomY, footerTopOld: footerTopOld)
             }
         } else if let stateValue = stateView {
             // 宽未量出时先按旧路放状态脚部，下一轮 refreshFooter（布局后）再补入口行。
@@ -7447,6 +7459,36 @@ class BearyProfileViewController: UIViewController {
         // 跟移值补一次，免得末行→脚部间隙先错后对（行已跟移、脚部未跟移）。
         if let footer = tableView.tableFooterView {
             footer.transform = CGAffineTransform(translationX: 0, y: profileRowFollowShift)
+        }
+    }
+
+    /// 跳动修复（第 8 轮第 2 项）：拖动/减速中跳过的墙底位移补偿，滚动结束
+    /// 后再算一次。按当前脚部重算新墙底与新脚部顶，守卫与直接补偿相同
+    /// （墙底确实移动、行区没动、重建时与现在的视口顶都在旧墙底之下），
+    /// 通过才按当前偏移 + 墙底位移落位（不拿旧锚点直接盖，避免抹掉手势
+    /// 期间的位移）；上下限钳制与直接补偿一致。无论补没补，待办只用一次。
+    private func applyPendingPhotowallCompensation() {
+        guard let pending = pendingPhotowallCompensation else { return }
+        pendingPhotowallCompensation = nil
+        guard let container = profileFooterContainerView, tableView.tableFooterView === container else { return }
+        tableView.layoutIfNeeded()
+        let newFooterHeight = container.frame.height
+        let footerTopNew = tableView.contentSize.height - newFooterHeight
+        let newWallBottomInFooter: CGFloat = {
+            if let photosView = cachedPhotosFooterView, photosView.superview === container {
+                return photosView.frame.maxY
+            }
+            let modulesHeight = (isOwnProfile && !modulesContainer.isHidden && modulesContainer.superview === container) ? modulesContainer.frame.height : 0
+            return modulesHeight > 0 ? modulesHeight + 16 : 0
+        }()
+        let newWallBottomY = footerTopNew + newWallBottomInFooter
+        let wallShift = newWallBottomY - pending.oldWallBottomY
+        let currentOffsetY = tableView.contentOffset.y
+        if abs(wallShift) > 0.5, abs(footerTopNew - pending.footerTopOld) < 0.5,
+           pending.anchorOffsetY >= pending.oldWallBottomY, currentOffsetY >= pending.oldWallBottomY {
+            let minOffsetY = -tableView.adjustedContentInset.top
+            let maxOffsetY = max(minOffsetY, tableView.contentSize.height - tableView.bounds.height + tableView.adjustedContentInset.bottom)
+            tableView.contentOffset.y = min(max(currentOffsetY + wallShift, minOffsetY), maxOffsetY)
         }
     }
 
@@ -10037,6 +10079,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         if scrollView.contentOffset.y <= -scrollView.contentInset.top && !isCustomPullRefreshing {
             resetCoverStretch()
         }
+        // 跳动修复（第 8 轮第 2 项）：减速结束，补算拖动期间跳过的墙底位移补偿。
+        applyPendingPhotowallCompensation()
     }
 
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
@@ -10066,6 +10110,11 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             // 故此次动画不会被打架，封面一次平滑回自然态。
             resetCoverStretchAnimated()
             beginCustomPullRefresh()
+        }
+        if !decelerate {
+            // 跳动修复（第 8 轮第 2 项）：手指松开且不再减速，滚动真正结束，
+            // 补算拖动期间跳过的墙底位移补偿；还要减速的等 didEndDecelerating。
+            applyPendingPhotowallCompensation()
         }
     }
 
