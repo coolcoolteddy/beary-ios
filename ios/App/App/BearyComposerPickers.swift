@@ -7,7 +7,7 @@ import UIKit
 // 圆角 20/20/0/0、阴影 0 −12 32 rgba(0,0,0,.22)；宽 ≥821 时居中 440
 // 全圆角 20 + 边框 1 + 阴影 0 24 60 rgba(0,0,0,.30)；自定义抓手 40×4（不用系统抓手）。
 // 遮罩为通用 0.45 黑遮罩（网页 .modal .backdrop 口径），点遮罩关闭；第 30 项起遮罩与面板
-// 转场解耦（BearyRecipientSheetTransition）：面板上滑／下滑，遮罩只做 0.26s 透明度淡入／淡出，
+// 转场解耦（BearySheetSlideTransition）：面板上滑／下滑，遮罩只做 0.26s 透明度淡入／淡出，
 // 遮罩本身永不位移、永不瞬间消失；键盘弹出时 sheet
 // 底边抬到键盘上方（此前由 UISheet 承担的避让，改自定义 sheet 后在本文件内补上）。
 // 搜索框为图标 + “搜索昵称或 @用户名”；init/loading/none/fail 四态齐全；
@@ -19,7 +19,7 @@ import UIKit
 
 // MARK: - @ 选人（底 sheet；单选、本人已过滤）
 
-final class BearyRecipientPickerViewController: UIViewController, UITextFieldDelegate {
+final class BearyRecipientPickerViewController: UIViewController, UITextFieldDelegate, BearySheetTransitionable {
 
     /// 点行回传（调用方写 selectedRecipient；本页随后自行 dismiss）。
     /// iCity：@ 提醒无按篇开关——第二参仅为签名兼容保留，调用方忽略。
@@ -28,7 +28,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     var notifyRecipient = true
 
     /// 第 30 项：专属转场强持有（transitioningDelegate 弱引用）。
-    private let sheetTransition = BearyRecipientSheetTransition()
+    private let sheetTransition = BearySheetSlideTransition()
 
     override init(nibName: String?, bundle: Bundle?) {
         super.init(nibName: nibName, bundle: bundle)
@@ -1341,11 +1341,20 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     }
 }
 
-/// 第 30 项：@ 选人专属过渡——此前本页无 transitioningDelegate，系统默认把整个 view（含遮罩）
+/// 底 sheet 滑入／滑出转场统一口径（面板上滑／下滑 0.26s，遮罩只淡透明度、
+/// 永不位移）：@ 选人 sheet 与选择引用 sheet 共用 BearySheetSlideTransition；
+/// 各 sheet 只需实现三处过渡钩子（遮罩 alpha／面板位移／面板高）。
+protocol BearySheetTransitionable: AnyObject {
+    func transitionSetScrimAlpha(_ alpha: CGFloat)
+    func transitionSetSheetOffset(_ offsetY: CGFloat)
+    func transitionSheetHeight() -> CGFloat
+}
+
+/// 第 30 项：底 sheet 专属过渡——此前本页无 transitioningDelegate，系统默认把整个 view（含遮罩）
 /// 一起从底部滑入，遮罩顶缘的深浅差异线 visibly 从下方扫上来；关闭时遮罩同样随面板下滑。
 /// 改后与回应 Sheet 同口径解耦：面板上滑／下滑均走 motion.normal 0.26s，遮罩只做透明度 0.26s 淡入／淡出，
 /// 遮罩本身永不位移、永不瞬间消失。面板本身的上滑、抓手、圆角一字不动。
-final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioningDelegate, UIViewControllerAnimatedTransitioning {
+final class BearySheetSlideTransition: NSObject, UIViewControllerTransitioningDelegate, UIViewControllerAnimatedTransitioning {
 
     private var presenting = true
 
@@ -1367,7 +1376,7 @@ final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioni
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
         let key: UITransitionContextViewControllerKey = presenting ? .to : .from
-        guard let sheet = transitionContext.viewController(forKey: key) as? BearyRecipientPickerViewController else {
+        guard let sheet = transitionContext.viewController(forKey: key) as? BearySheetTransitionable else {
             transitionContext.completeTransition(false)
             return
         }
@@ -1408,6 +1417,273 @@ final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioni
         UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut], animations: {
             sheet.transitionSetScrimAlpha(0)
         })
+    }
+}
+
+// MARK: - 写日记页选择引用（通顶底 sheet）
+
+/// 选择引用底 sheet（2026-11-17 Li 定：内嵌面板改通顶底部弹窗）：
+/// 内容仍是编辑器自有的 quoteTabStack + quotePanel 两棵视图（行渲染／加载／
+/// 选行逻辑全留在编辑器，不搬家）；本页只负责呈现——遮罩点按关、抓手下滑关、
+/// 通顶高度、iPad 居中卡片。手机端顶贴安全区 +8、底贴屏底；iPad（≥821）
+/// 居中 440 宽卡片、上下各留 8。底色走 surface1（写日记页弹窗定版色）。
+/// 关闭一律走 onRequestClose 回编辑器（编辑器跑 setQuotePanelOpen(false)
+/// 做卸载＋状态收敛），本页不直接 dismiss、不碰编辑器状态。
+/// 转场与 @ 选人 sheet 同款 BearySheetSlideTransition（面板滑入／滑出 0.26s，
+/// 遮罩只淡透明度不位移）。
+final class BearyQuoteSheetViewController: UIViewController, BearySheetTransitionable {
+
+    /// 关闭请求：遮罩点按／关闭钮／抓手下滑达阈值时调用，编辑器据此关面板。
+    var onRequestClose: (() -> Void)?
+
+    private let sheetTransition = BearySheetSlideTransition()
+
+    override init(nibName: String?, bundle: Bundle?) {
+        super.init(nibName: nibName, bundle: bundle)
+        modalPresentationStyle = .overFullScreen
+        transitioningDelegate = sheetTransition
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private let backdropButton = UIButton(type: .custom)
+    private let sheetView = UIView()
+    private let grabberWrap = UIView()
+    private let grabberView = UIView()
+    private let grabHitView = BearyGrabHitView()
+    private let headerTitle = UILabel()
+    private let closeButton = BearyButton.closeButton()
+    /// tab 条宿主：编辑器把 quoteTabStack 挂进来（36 高、左右 16）。
+    let tabHost = UIView()
+    /// 面板滚动区：编辑器把 quotePanel 挂进来，内容高由面板内在高定。
+    let panelScrollView = BearyCancellableScrollView()
+
+    private var isPadLayout = false
+    private var phoneConstraints: [NSLayoutConstraint] = []
+    private var padConstraints: [NSLayoutConstraint] = []
+    private var sheetWidthConstraint: NSLayoutConstraint?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = UIColor.clear
+        buildViews()
+        buildSheetConstraints()
+        applySheetChrome()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateLayoutModeIfNeeded()
+        updateSheetWidthIfNeeded()
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 形态（与 @ 选人 sheet 同款）。
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            applySheetChrome()
+        }
+    }
+
+    private func buildViews() {
+        backdropButton.backgroundColor = BearySheetChrome.scrimColor
+        backdropButton.accessibilityLabel = "关闭"
+        backdropButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
+        backdropButton.bearyAddPressFeedback()
+
+        // 底色走 surface1（写日记页弹窗定版色；与 @ 选人 sheet 的 surface3 不同，
+        // 本页不跟全 App sheet 色，只跟写日记页弹窗口径）。
+        sheetView.backgroundColor = BearyColors.surface1
+        sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
+
+        grabberView.backgroundColor = BearyColors.gray
+        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
+
+        headerTitle.text = "选择引用"
+        headerTitle.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
+        headerTitle.adjustsFontForContentSizeCategory = true
+        headerTitle.textColor = BearyColors.ink
+
+        closeButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
+
+        tabHost.backgroundColor = UIColor.clear
+        panelScrollView.backgroundColor = UIColor.clear
+        panelScrollView.delaysContentTouches = false
+
+        for v in [backdropButton, sheetView, grabberWrap, grabberView, grabHitView, headerTitle, closeButton, tabHost, panelScrollView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+        }
+        view.addSubview(backdropButton)
+        view.addSubview(sheetView)
+        sheetView.addSubview(grabberWrap)
+        // 抓手批同款：热区挂在 sheetView 顶部，关闭钮透传。
+        grabHitView.passthroughView = closeButton
+        grabHitView.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(grabberPanGesture(_:))))
+        sheetView.addSubview(grabHitView)
+        sheetView.addSubview(headerTitle)
+        grabberWrap.addSubview(grabberView)
+        sheetView.addSubview(closeButton)
+        sheetView.addSubview(tabHost)
+        sheetView.addSubview(panelScrollView)
+        NSLayoutConstraint.activate([
+            backdropButton.topAnchor.constraint(equalTo: view.topAnchor),
+            backdropButton.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            backdropButton.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            backdropButton.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            grabberWrap.topAnchor.constraint(equalTo: sheetView.topAnchor),
+            grabberWrap.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
+            grabberWrap.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
+            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
+            grabberView.centerXAnchor.constraint(equalTo: grabberWrap.centerXAnchor),
+            grabberView.topAnchor.constraint(equalTo: grabberWrap.topAnchor, constant: BearySheetChrome.grabberTop),
+            grabberView.bottomAnchor.constraint(equalTo: grabberWrap.bottomAnchor),
+            grabHitView.topAnchor.constraint(equalTo: sheetView.topAnchor),
+            grabHitView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
+            grabHitView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+            grabHitView.heightAnchor.constraint(equalToConstant: 70),
+            // 标题行与 @ 选人 sheet 同节奏：标题顶距抓手底 14，左缘 16，叉叉与标题同中心。
+            headerTitle.topAnchor.constraint(equalTo: grabberWrap.bottomAnchor, constant: 14),
+            headerTitle.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
+            closeButton.centerYAnchor.constraint(equalTo: headerTitle.centerYAnchor),
+            closeButton.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -16),
+            closeButton.widthAnchor.constraint(equalToConstant: 32),
+            closeButton.heightAnchor.constraint(equalToConstant: 32),
+            tabHost.topAnchor.constraint(equalTo: closeButton.bottomAnchor, constant: 12),
+            tabHost.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
+            tabHost.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -16),
+            tabHost.heightAnchor.constraint(equalToConstant: 36),
+            panelScrollView.topAnchor.constraint(equalTo: tabHost.bottomAnchor, constant: 8),
+            panelScrollView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
+            panelScrollView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+            panelScrollView.bottomAnchor.constraint(equalTo: sheetView.safeAreaLayoutGuide.bottomAnchor, constant: -8),
+        ])
+    }
+
+    // MARK: - 自定义 sheet 布局（手机端通顶底 sheet / 宽 ≥821 居中卡片）
+
+    private func buildSheetConstraints() {
+        let widthConstraint = sheetView.widthAnchor.constraint(equalToConstant: 440)
+        sheetWidthConstraint = widthConstraint
+        // 通顶：顶边两模式共用（贴安全区顶 +8），底边按模式分（手机贴屏底、iPad 贴安全区底 -8）。
+        let topConstraint = sheetView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8)
+        topConstraint.isActive = true
+        phoneConstraints = [
+            sheetView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            sheetView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            sheetView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ]
+        padConstraints = [
+            sheetView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            widthConstraint,
+            sheetView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
+        ]
+        NSLayoutConstraint.activate(phoneConstraints)
+    }
+
+    private func updateLayoutModeIfNeeded() {
+        let pad = view.bounds.width >= 821
+        if pad == isPadLayout {
+            return
+        }
+        isPadLayout = pad
+        if pad {
+            NSLayoutConstraint.deactivate(phoneConstraints)
+            NSLayoutConstraint.activate(padConstraints)
+        } else {
+            NSLayoutConstraint.deactivate(padConstraints)
+            NSLayoutConstraint.activate(phoneConstraints)
+        }
+        applySheetChrome()
+    }
+
+    private func updateSheetWidthIfNeeded() {
+        guard isPadLayout, let widthConstraint = sheetWidthConstraint else { return }
+        let target = min(440, view.bounds.width - 80)
+        if abs(widthConstraint.constant - target) > 0.5 {
+            widthConstraint.constant = max(target, 0)
+        }
+    }
+
+    private func applySheetChrome() {
+        if isPadLayout {
+            sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+        } else {
+            sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        }
+        sheetView.layer.borderWidth = 0
+        BearyShadow.applyRaised(to: sheetView.layer)
+    }
+
+    @objc private func didTapClose() {
+        requestClose()
+    }
+
+    private func requestClose() {
+        if let onRequestClose = onRequestClose {
+            onRequestClose()
+        } else {
+            dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
+        }
+    }
+
+    /// 抓手下滑跟手（与 @ 选人 sheet 同口径）：下滑超 80pt 或快速下滑（速度 > 600）
+    /// 关闭，否则 0.26s 弹簧弹回原位；上滑阻尼微移后回弹，不扩高、不关闭。
+    /// 只动 transform，不改约束，与转场不打架。
+    @objc private func grabberPanGesture(_ gesture: UIPanGestureRecognizer) {
+        let translation = gesture.translation(in: view)
+        switch gesture.state {
+        case .changed:
+            let offset = BearySheetDrag.offset(for: translation.y)
+            sheetView.transform = CGAffineTransform(translationX: 0, y: offset)
+            backdropButton.alpha = BearySheetDrag.scrimAlpha(forDragOffset: offset, sheetHeight: sheetView.bounds.height)
+        case .ended:
+            let velocity = gesture.velocity(in: view).y
+            if translation.y > 80 || velocity > 600 {
+                requestClose()
+            } else {
+                let restore = {
+                    self.sheetView.transform = .identity
+                    self.backdropButton.alpha = 1
+                }
+                if UIAccessibility.isReduceMotionEnabled {
+                    restore()
+                } else {
+                    let offset = BearySheetDrag.offset(for: translation.y)
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore)
+                }
+            }
+        case .cancelled, .failed:
+            let restore = {
+                self.sheetView.transform = .identity
+                self.backdropButton.alpha = 1
+            }
+            if UIAccessibility.isReduceMotionEnabled {
+                restore()
+            } else {
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore)
+            }
+        default:
+            break
+        }
+    }
+
+    // MARK: - BearySheetTransitionable
+
+    func transitionSetScrimAlpha(_ alpha: CGFloat) {
+        backdropButton.alpha = alpha
+    }
+
+    func transitionSetSheetOffset(_ offsetY: CGFloat) {
+        sheetView.transform = offsetY == 0 ? .identity : CGAffineTransform(translationX: 0, y: offsetY)
+    }
+
+    func transitionSheetHeight() -> CGFloat {
+        view.layoutIfNeeded()
+        return sheetView.bounds.height
     }
 }
 
