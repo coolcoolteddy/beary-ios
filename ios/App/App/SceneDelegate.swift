@@ -402,6 +402,12 @@ final class BearyChromeViewController: UIViewController {
     private var profileBuiltForUserId: Int?
     /// 礼物钮门控缓存（A4）：取自 refreshMe 的 user.referral.enabled，不再单独拉取 /me。
     private var referralEnabled = false
+    /// 首页邀请提示“不再提示”持久化（UserDefaults，全设备生效，与 BearyAppLock 开关同口径）：
+    /// 点后首页顶栏礼物钮永久隐藏，邀请入口只留 Plus 页；不设恢复入口。
+    private static let homeInvitePromptDismissedKey = "beary_invite_home_prompt_dismissed"
+    private static var isHomeInvitePromptDismissed: Bool {
+        UserDefaults.standard.bool(forKey: homeInvitePromptDismissedKey)
+    }
     private var userTargetKey: String?
     private enum UserTarget { case id(Int); case handle(String) }
     private var pendingUserTarget: UserTarget?
@@ -1952,8 +1958,9 @@ final class BearyChromeViewController: UIViewController {
         setTopButtonVisible(loginButton, visible: user == nil)
         // A4：礼物钮仅登录且 referral.enabled 时显（enabled 由 applyLoginState 从 refreshMe 的 user.referral 取值，不再单独拉取）。
         // S10：refreshMe 失败时 onUserChanged 不触发，旧值自然保留，不按关闭处理。
+        // “不再提示”后永久隐藏（isHomeInvitePromptDismissed），入口只留 Plus 页。
         if let user = user { referralEnabled = user.referral?.enabled ?? false }
-        setTopButtonVisible(giftButton, visible: user != nil && referralEnabled)
+        setTopButtonVisible(giftButton, visible: user != nil && referralEnabled && !Self.isHomeInvitePromptDismissed)
         if user == nil {
             referralEnabled = false
             // 审计 P0-1：退出后清拉黑缓存（防漏到下个账号；下次登录时 refresh 重拉）。
@@ -2883,6 +2890,12 @@ final class BearyChromeViewController: UIViewController {
         topmostViewController().present(vc, animated: BearyMotion.animated(true))
     }
 
+    /// 首页“不再提示”：记持久化隐藏、藏礼物钮（走 setTopButtonVisible，间距同步由其收尾）；关闭由调用方经 onClose 走。
+    private func dismissHomeInvitePrompt() {
+        UserDefaults.standard.set(true, forKey: Self.homeInvitePromptDismissedKey)
+        setTopButtonVisible(giftButton, visible: false)
+    }
+
     /// 邀请弹窗：礼物钮点开的不再是整页切换，而是与编辑器同款的模态——
     /// 宽 ≥821 时居中卡片（BearyCenteredTransitioningDelegate），宽 ≤820 时底 sheet
     /// （BearyComposerSheetTransitioningDelegate，带抓手与下滑关闭）；内容、门控与
@@ -2900,6 +2913,12 @@ final class BearyChromeViewController: UIViewController {
             return
         }
         let vc = BearyInviteViewController()
+        // 首页打开的邀请提示带“不再提示”：点后首页礼物钮永久隐藏，入口只留 Plus 页。
+        vc.showsHomeDismissButton = true
+        vc.onDismissHomePrompt = { [weak self, weak vc] in
+            self?.dismissHomeInvitePrompt()
+            vc?.onClose?()
+        }
         vc.onClose = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         // 审计 2026-11-02 弹窗组：两形态统一为点遮罩关闭，且关闭一律走取消路径
