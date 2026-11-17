@@ -166,9 +166,10 @@ private final class WishRowView: UIView {
     @objc private func doneTapped() { onMarkDone?() }
 
     @objc private func expandTapped() {
-        // P2-10：高度一次落终值（不做高度插值动画），视觉衔接走内容淡入/transform；
-        // 收起时恢复滚动偏移，使标题停在原位（内容缩短导致 scrollView 钳制偏移时
-        // 标题本会被顶移，恢复后标题位置不变）。减动效时全部瞬时落位。
+        // P2-10 / jump6-4：展开收起以本行标题为锚点——先落定旧布局，再切状态，
+        // 高度与滚动偏移放在同一个动画里走，标题屏幕位置不动；内容缩短导致
+        // 锚点位置无法保留时，偏移按合法范围平滑调整，不瞬时钳制。
+        // 减动效时全部瞬时落位。
         isDetailExpanded.toggle()
         let expanding = isDetailExpanded
         var enclosingScroll: UIScrollView?
@@ -177,27 +178,42 @@ private final class WishRowView: UIView {
             if let scroll = view as? UIScrollView { enclosingScroll = scroll; break }
             current = view.superview
         }
-        let oldOffset = enclosingScroll?.contentOffset
+        // 先落定旧布局，再读锚点：标题在滚动内容里的 y 减去当前偏移 = 屏幕位置。
+        if let scroll = enclosingScroll { scroll.layoutIfNeeded() } else { superview?.layoutIfNeeded() }
+        let anchorViewportY: CGFloat? = {
+            guard let scroll = enclosingScroll else { return nil }
+            let titleFrame = titleLabel.convert(titleLabel.bounds, to: scroll)
+            return titleFrame.minY - scroll.contentOffset.y
+        }()
         detailLabel.layer.removeAllAnimations()
         updateExpandVisibility()
-        // 高度一次落终值：先强制布局到最终态，再起内容动效，不让高度慢慢长出来。
-        // 须连同滚动容器一起布局，否则 contentSize 未刷新、后一步的偏移钳制读到旧值。
-        if let scroll = enclosingScroll { scroll.layoutIfNeeded() } else { superview?.layoutIfNeeded() }
-        if let scroll = enclosingScroll, let old = oldOffset {
+        // 布局与偏移同进一个动画：高度平滑过渡，下方各行跟着走，不再瞬间落位；
+        // 偏移在动画内写到钳制后的目标值，被钳制时标题平滑滑到可保留的位置。
+        let applyAnchorOffset: () -> Void = {
+            guard let scroll = enclosingScroll, let viewportY = anchorViewportY else { return }
+            let titleFrame = self.titleLabel.convert(self.titleLabel.bounds, to: scroll)
             let minY = -scroll.contentInset.top
             let maxY = max(scroll.contentSize.height - scroll.bounds.height + scroll.contentInset.bottom, minY)
-            scroll.contentOffset = CGPoint(x: old.x, y: min(max(old.y, minY), maxY))
+            scroll.contentOffset = CGPoint(x: scroll.contentOffset.x, y: min(max(titleFrame.minY - viewportY, minY), maxY))
         }
-        guard expanding, BearyMotion.animated(true) else {
+        guard BearyMotion.animated(true) else {
+            if let scroll = enclosingScroll { scroll.layoutIfNeeded() } else { superview?.layoutIfNeeded() }
+            applyAnchorOffset()
             detailLabel.alpha = 1
             detailLabel.transform = .identity
             return
         }
-        detailLabel.alpha = 0
-        detailLabel.transform = CGAffineTransform(translationX: 0, y: 4)
-        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.curveEaseOut], animations: {
-            self.detailLabel.alpha = 1
-            self.detailLabel.transform = .identity
+        if expanding {
+            detailLabel.alpha = 0
+            detailLabel.transform = CGAffineTransform(translationX: 0, y: 4)
+        }
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut], animations: {
+            if let scroll = enclosingScroll { scroll.layoutIfNeeded() } else { self.superview?.layoutIfNeeded() }
+            applyAnchorOffset()
+            if expanding {
+                self.detailLabel.alpha = 1
+                self.detailLabel.transform = .identity
+            }
         }, completion: nil)
     }
 
@@ -695,6 +711,9 @@ final class BearyWishWallViewController: UIViewController {
                     // 审计登录杂项：与 viewWillAppear 同款，列表成功回包时也刷新 Plus 门。
                     self.refreshPlusGate()
                     let serverWishes = resp.wishes ?? []
+                    // jump6-5：先记下当前首个可见愿望的阅读锚点，再替换 wishes；
+                    // renderWishes 重排后按该锚点恢复阅读位置，替换快照不顶走当前行。
+                    let visibleAnchor = self.captureVisibleWishAnchor()
                     // r17-C9：回包后按 ID 替换——在途投票的条目保留本地乐观票态
                     //（选中态与票数），其余以服务端为准；行按 ID 复用，展开态不丢。
                     var merged: [BearyAPI.WishItem] = []
@@ -717,7 +736,7 @@ final class BearyWishWallViewController: UIViewController {
                     }
                     self.showingCachedWishes = false
                     self.wishStaleLabel.isHidden = true
-                    self.renderWishes()
+                    self.renderWishes(restoring: visibleAnchor)
                     // 确认结果为空时旧快照失效，下次不再先恢复已撤的愿望；非空则落快照。
                     // 审计第 14 轮 4：快照只存服务端确认数据——在途投票的乐观票数
                     // 只留在内存展示（merged），不进快照；投票失败回滚时快照不被
@@ -784,7 +803,9 @@ final class BearyWishWallViewController: UIViewController {
     /// 展开态存在行视图自身，复用即保留（仅详情文本变化时 configure 内部复位）；
     /// 仅新增 ID 建行并入场错峰；消失 ID 摘除；顺序变化时同批行先摘后按服务端
     /// 顺序重挂（视图对象不变，展开态与按压态不丢）。服务端顺序即净赞成降序，不重排。
-    private func renderWishes() {
+    /// jump6-5：restoring 非空时，重排布局后按锚点 ID 恢复阅读位置（锚点被删
+    /// 时取邻近仍存在的愿望）；首贴快照时传 nil，不恢复。
+    private func renderWishes(restoring anchor: VisibleWishAnchor? = nil) {
         let oldRows = rowViews
         wishEmptyStateView.isHidden = !wishes.isEmpty
         var newRows: [WishRowView] = []
@@ -814,6 +835,9 @@ final class BearyWishWallViewController: UIViewController {
         // 摘除只脱离栈布局，不销毁视图，故复用行的展开态保留。
         for row in orderedRows { row.removeFromSuperview() }
         for row in orderedRows { contentStack.addArrangedSubview(row) }
+        // jump6-5：布局落定后再恢复锚点——新行淡入只动 alpha/transform，
+        // 不影响行高与偏移，故恢复放在淡入之前，减动效时同样恢复。
+        restoreVisibleWishAnchor(anchor)
         if !BearyMotion.animated(true) { return }
         for (index, row) in newRows.enumerated() {
             row.alpha = 0
@@ -823,6 +847,46 @@ final class BearyWishWallViewController: UIViewController {
                 row.transform = .identity
             }, completion: nil)
         }
+    }
+
+    /// jump6-5：首个可见愿望的阅读锚点——ID、它相对滚动视口的 y、在旧列表里的序号。
+    /// 须在 wishes 被新数据替换前调用（行仍挂在旧布局上，帧可读）。
+    private typealias VisibleWishAnchor = (id: Int, viewportY: CGFloat, index: Int)
+
+    private func captureVisibleWishAnchor() -> VisibleWishAnchor? {
+        guard !wishes.isEmpty else { return nil }
+        let visibleRect = CGRect(x: 0, y: scrollView.contentOffset.y, width: scrollView.bounds.width, height: scrollView.bounds.height)
+        for (index, item) in wishes.enumerated() {
+            guard let id = item.id, let row = rowViews[id] else { continue }
+            let frame = row.convert(row.bounds, to: scrollView)
+            guard frame.intersects(visibleRect) else { continue }
+            return (id: id, viewportY: frame.minY - scrollView.contentOffset.y, index: index)
+        }
+        return nil
+    }
+
+    /// jump6-5：按锚点 ID 恢复阅读位置；锚点已删时取新列表里离原序号最近的愿望。
+    /// 瞬时写回偏移——锚点行借此停在原屏幕位置，不跟随重排漂移。
+    private func restoreVisibleWishAnchor(_ anchor: VisibleWishAnchor?) {
+        guard let anchor = anchor else { return }
+        scrollView.layoutIfNeeded()
+        var targetId = anchor.id
+        if rowViews[targetId] == nil {
+            let ids = wishes.compactMap { $0.id }
+            guard !ids.isEmpty else { return }
+            var best = 0
+            var bestDistance = Int.max
+            for (i, _) in ids.enumerated() {
+                let distance = abs(i - anchor.index)
+                if distance < bestDistance { bestDistance = distance; best = i }
+            }
+            targetId = ids[best]
+        }
+        guard let row = rowViews[targetId] else { return }
+        let frame = row.convert(row.bounds, to: scrollView)
+        let minY = -scrollView.contentInset.top
+        let maxY = max(scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom, minY)
+        scrollView.contentOffset = CGPoint(x: scrollView.contentOffset.x, y: min(max(frame.minY - anchor.viewportY, minY), maxY))
     }
 
     private func indexOfWish(_ id: Int) -> Int? { wishes.firstIndex { $0.id == id } }
