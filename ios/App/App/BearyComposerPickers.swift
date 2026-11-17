@@ -45,12 +45,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let grabberWrap = UIView()
     private let grabberView = UIView()
     /// 2026-10-30 抓手批：此前只有抓手视觉、没有 pan 手势。透明热区
-    /// 盖在 sheet 顶部 70pt（抓手行 + 标题行），右上角关闭钮经
-    /// BearyGrabHitView 透传，不会被误吞；搜索框顶在 y70，正在热区
+    /// 盖在 sheet 顶部 70pt（抓手行 + 标题行）；搜索框顶在 y70，正在热区
     /// 边界之外，不受影响。
     private let grabHitView = BearyGrabHitView()
     private let headerTitle = UILabel()
-    private let closeButton = BearyButton.closeButton()
     private let searchBox = UIView()
     private let searchIcon = UIImageView()
     private let searchField = UITextField()
@@ -95,6 +93,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// 键盘通知给的是屏幕坐标，直接对 view.bounds.height 算高度在浮动键盘、
     /// 分屏/台前调度下会错位，故一律先经屏幕坐标空间 convert。
     private var keyboardFrameInView: CGRect = .zero
+    /// 第 10 项：sheet 最大高度——高度按内容算（见 updateSheetHeight），320 只作封顶，
+    /// 不再是写死高；首帧未布局前先以封顶值占位，首轮布局即被内容高替换。
+    private let sheetMaxHeight: CGFloat = 320
     private var sheetHeightConstraint: NSLayoutConstraint?
     private var sheetWidthConstraint: NSLayoutConstraint?
     /// L11：iPad 居中卡片的 centerY 约束——键盘弹出时按遮挡量上抬，收起时归零。
@@ -199,10 +200,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         headerTitle.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
         headerTitle.adjustsFontForContentSizeCategory = true
         headerTitle.textColor = BearyColors.ink
-        // 关闭钮视觉由 BearyButton.iconCircleClose 工厂定（surface2 底 32 圆钮 + icon_close 15）；
-        // 这里只保留动作与按压反馈，不再重复写底色/圆角。
-        closeButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
         // 编辑器批搜索框去 exotic 化：原自定义动态底色/边框 + 999 圆角在 96 包真机上
         // 整棵子树不画（帧 44pt 证实存在、预测区像素纯白；静态查不到隐藏/透明/遮挡路径）。
         // v2 黑白灰：底由 faint 改 surface2（输入框层底色），圆角
@@ -286,19 +283,16 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateRetryButton.isHidden = true
         stateRetryButton.addTarget(self, action: #selector(didTapStateRetry), for: .touchUpInside)
         stateRetryButton.bearyAddPressFeedback()
-        for v in [backdropButton, sheetView, grabberWrap, grabberView, grabHitView, headerTitle, closeButton, searchBox, searchIcon, searchField, notifyRow, notifyCheckButton, listContainer, listScrollView, rowsStack, resultsLabelWrap, resultsLabel, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
+        for v in [backdropButton, sheetView, grabberWrap, grabberView, grabHitView, headerTitle, searchBox, searchIcon, searchField, notifyRow, notifyCheckButton, listContainer, listScrollView, rowsStack, resultsLabelWrap, resultsLabel, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
         view.addSubview(backdropButton)
         view.addSubview(sheetView)
         sheetView.addSubview(grabberWrap)
-        // 2026-10-30 抓手批：热区挂在 sheetView 顶部，关闭钮透传。
-        grabHitView.passthroughView = closeButton
         grabHitView.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(grabberPanGesture(_:))))
         sheetView.addSubview(grabHitView)
         sheetView.addSubview(headerTitle)
         grabberWrap.addSubview(grabberView)
-        sheetView.addSubview(closeButton)
         sheetView.addSubview(searchBox)
         searchBox.addSubview(searchIcon)
         searchBox.addSubview(searchField)
@@ -340,13 +334,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             grabHitView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
             grabHitView.heightAnchor.constraint(equalToConstant: 70),
             // v2：标题行无图标圈——标题顶距 14（与旧 40 行同中心：旧中心为
-            // 抓手底 4＋20，新中心为 14＋标题半高≈24），左缘 16，叉叉与标题同中心。
+            // 抓手底 4＋20，新中心为 14＋标题半高≈24），左缘 16，右缘贴视图边距。
             headerTitle.topAnchor.constraint(equalTo: grabberWrap.bottomAnchor, constant: 14),
             headerTitle.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
-            closeButton.centerYAnchor.constraint(equalTo: headerTitle.centerYAnchor),
-            closeButton.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -16),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
+            headerTitle.trailingAnchor.constraint(lessThanOrEqualTo: sheetView.trailingAnchor, constant: -16),
             searchBox.topAnchor.constraint(equalTo: headerTitle.bottomAnchor, constant: 12),
             searchBox.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
             searchBox.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -16),
@@ -413,7 +404,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     // MARK: - 自定义 sheet 布局（手机端底 sheet / 宽 ≥821 居中卡片）
 
     private func buildSheetConstraints() {
-        let heightConstraint = sheetView.heightAnchor.constraint(equalToConstant: 320)
+        let heightConstraint = sheetView.heightAnchor.constraint(equalToConstant: sheetMaxHeight)
         heightConstraint.isActive = true
         sheetHeightConstraint = heightConstraint
         let widthConstraint = sheetView.widthAnchor.constraint(equalToConstant: 440)
@@ -531,10 +522,11 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             let keyboardFitHeight = keyboardTop - 14 - view.safeAreaInsets.top
             maxHeight = min(maxHeight, max(keyboardFitHeight, 0))
         }
-        return min(metrics.fittingHeight, maxHeight)
+        return min(metrics.fittingHeight, maxHeight, sheetMaxHeight)
     }
 
-    /// sheet 高 = 内容高，上限 82vh（键盘弹出时手机端上限改按键盘上方的可见高计）。
+    /// sheet 高 = 内容高，上限 82vh（键盘弹出时手机端上限改按键盘上方的可见高计），
+    /// 且不超过 320（第 10 项封顶；超出部分由 listScrollView 滚动承担）。
     private func updateSheetHeight() {
         let containerHeight = view.bounds.height
         guard containerHeight > 0 else { return }
@@ -701,7 +693,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
 
     /// 2026-10-30 抓手批：@ 选人 sheet 抓手下滑跟手——下滑超 80pt
     /// 或快速下滑（速度 > 600）关闭，否则统一弹簧（0.26s／damping 0.7＋松手速度）弹回原位；上滑不动
-    /// （弹窗贴底，底部不空）。遮罩点按关闭与关闭钮均不动。
+    /// （弹窗贴底，底部不空）。遮罩点按关闭不动。
     /// 注意：键盘抬升走约束（phoneBottomConstraint / padCenterY），
     /// 本处理只动 transform，不改约束，两者不打架。
     @objc private func grabberPanGesture(_ gesture: UIPanGestureRecognizer) {
