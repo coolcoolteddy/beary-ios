@@ -87,6 +87,7 @@ enum BearyProfilePersonalLogic {
         var totalChars: Int
         /// 最常写时段：2 小时桶（00–02 … 22–24）中条数最多者；无条目时为 nil。
         /// 平手取最早时段（稳定、不随字典序抖动）。
+        /// 须领先桶至少 2 篇且严格领先第二名，否则为 nil（样本不足或并列时不宣称“最常”）。
         var bestSlotStartHour: Int?
         var currentStreakDays: Int
         var topMoodKey: String?
@@ -115,14 +116,21 @@ enum BearyProfilePersonalLogic {
         }
         var bestSlot: Int?
         var bestSlotCount = 0
+        var secondSlotCount = 0
         for startHour in stride(from: 0, through: 22, by: 2) {
             let count = slotCounts[startHour] ?? 0
             if count > bestSlotCount {
+                secondSlotCount = bestSlotCount
                 bestSlotCount = count
                 bestSlot = startHour
+            } else if count > secondSlotCount {
+                secondSlotCount = count
             }
         }
-        if bestSlotCount == 0 { bestSlot = nil }
+        // 最低样本量门槛：领先桶至少 2 篇、且严格领先第二名，否则不宣称“最常”，
+        // 置 nil 由调用方显示“—”。1 篇即冠名与并列（平手）都在此过滤；
+        // 平手取最早的扫描逻辑本身不动——平手时 secondSlotCount == bestSlotCount。
+        if bestSlotCount < 2 || secondSlotCount >= bestSlotCount { bestSlot = nil }
         return WritingStats(
             total: total,
             totalChars: totalChars,
