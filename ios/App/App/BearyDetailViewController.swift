@@ -1400,6 +1400,13 @@ final class BearyDetailViewController: UIViewController {
         bodyStackTopFromAvatarConstraint?.constant = headerBodyGap
         bodyStackTopFromHeaderConstraint?.constant = headerBodyGap
         bodyStackTopPinConstraint?.constant = headerBodyGap
+        // 详情与卡片的镜像处理：卡片正文缩进到名字列（body.leading == header.leading），
+        // 故卡片可停用贴头像底约束；详情正文全宽（body.leading == 内容列），必须 clearance
+        // 头像底，贴头像底约束须保留。保留它时 999 的顶钉（body.top == 头行底 + 6）会把
+        // 头行栈拉长到头像底（40pt），栈内作者行被拉伸、名字在拉伸后的行内居中，落在
+        // 头像中线——133 截图实证。故详情停用顶钉：正文顶即 max(头像底，头行底) + 6，
+        // 头行高时顶钉值与 ≥ 约束一致，行为不变。
+        bodyStackTopPinConstraint?.isActive = false
         // 失败横幅→标题 12：横幅隐藏时栈自动忽略，不留空隙。
         bodyStack.setCustomSpacing(12, after: staleBannerView)
         // 标题贴着正文走：标题→正文 6（ChatGPT 间距跟进，#904 为 4）；标题隐藏时其后间距置 0，正文直接贴头行间距。
