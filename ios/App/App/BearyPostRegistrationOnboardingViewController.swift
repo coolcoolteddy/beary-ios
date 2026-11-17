@@ -35,8 +35,10 @@ enum BearyOnboardingPalette {
 extension UIFont {
     static func onboardingSerif(ofSize size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
         let base = UIFont.systemFont(ofSize: size, weight: weight)
-        if let serif = base.withDesign(.serif) {
-            return serif
+        // UIKit 没有 UIFont.withDesign（那是 SwiftUI Font 的 API）：走
+        // UIFontDescriptor.withDesign(.serif) 再拼回 UIFont。
+        if let descriptor = base.fontDescriptor.withDesign(.serif) {
+            return UIFont(descriptor: descriptor, size: size)
         }
         return base
     }
