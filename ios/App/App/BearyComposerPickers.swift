@@ -468,18 +468,20 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         }
     }
 
-    /// sheet 高 = 内容高，上限 82vh（键盘弹出时手机端上限改按键盘上方的可见高计）。
-    private func updateSheetHeight() {
+    /// 内容量出的 sheet 度量（与键盘无关）：宽度、标题高、搜索框高、内容拟合高。
+    /// updateSheetHeight 与 applyKeyboardFrame 共用——同一键盘终帧算出同一目标高，
+    /// 键盘事件不再先按旧高算位移、等布局遍改高后再算一次（第 5 轮第 2 项）。
+    private struct SheetContentMetrics {
+        var sheetWidth: CGFloat
+        var titleHeight: CGFloat
+        var searchHeight: CGFloat
+        var fittingHeight: CGFloat
+    }
+
+    private func sheetContentMetrics() -> SheetContentMetrics? {
         let containerHeight = view.bounds.height
-        guard containerHeight > 0 else { return }
+        guard containerHeight > 0 else { return nil }
         let sheetWidth = isPadLayout ? min(440, view.bounds.width - 80) : view.bounds.width
-        if let widthConstraint = sheetWidthConstraint, isPadLayout {
-            widthConstraint.constant = max(sheetWidth, 0)
-        }
-        if let listBottom = listBottomConstraint {
-            let pad = 14 + (isPadLayout ? 0 : view.safeAreaInsets.bottom)
-            listBottom.constant = -pad
-        }
         let searchHeight = searchBox.systemLayoutSizeFitting(
             CGSize(width: max(sheetWidth - 32, 0), height: 0),
             withHorizontalFittingPriority: .required,
@@ -507,10 +509,16 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // v2：标题行橙圈已删，行高由标题本身定，标题高取 intrinsic，首帧为 0 时兜底 20）。
         let titleHeight = max(headerTitle.intrinsicContentSize.height, 20)
         let fittingHeight = 14 + 14 + titleHeight + 12 + searchHeight + 10 + listHeight + bottomPad
-        // 审计 D-4：可用高按键盘顶沿计——手机端键盘顶沿即为可见高（此前 iPad 直接
-        // 不扣键盘高度，浮动/分屏键盘会盖住居中卡片）；iPad 另受“上抬后卡片顶不得
-        // 顶出安全区”约束：卡片底 = 键盘顶 - 14，故高上限 = 键盘顶 - 14 - 安全区顶。
-        // 超出上限的部分由 listScrollView 滚动承担（列表区已是滚动容器，行不裁）。
+        return SheetContentMetrics(sheetWidth: sheetWidth, titleHeight: titleHeight, searchHeight: searchHeight, fittingHeight: fittingHeight)
+    }
+
+    /// 给定键盘高（view 坐标下键盘顶沿到 view 底的距离）算 sheet 目标高。
+    /// 审计 D-4：可用高按键盘顶沿计——手机端键盘顶沿即为可见高（此前 iPad 直接
+    /// 不扣键盘高度，浮动/分屏键盘会盖住居中卡片）；iPad 另受“上抬后卡片顶不得
+    /// 顶出安全区”约束：卡片底 = 键盘顶 - 14，故高上限 = 键盘顶 - 14 - 安全区顶。
+    /// 超出上限的部分由 listScrollView 滚动承担（列表区已是滚动容器，行不裁）。
+    private func targetSheetHeight(keyboardHeight: CGFloat, metrics: SheetContentMetrics) -> CGFloat {
+        let containerHeight = view.bounds.height
         let visibleHeight: CGFloat
         if isPadLayout {
             visibleHeight = containerHeight
@@ -523,7 +531,23 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             let keyboardFitHeight = keyboardTop - 14 - view.safeAreaInsets.top
             maxHeight = min(maxHeight, max(keyboardFitHeight, 0))
         }
-        let target = min(fittingHeight, maxHeight)
+        return min(metrics.fittingHeight, maxHeight)
+    }
+
+    /// sheet 高 = 内容高，上限 82vh（键盘弹出时手机端上限改按键盘上方的可见高计）。
+    private func updateSheetHeight() {
+        let containerHeight = view.bounds.height
+        guard containerHeight > 0 else { return }
+        let sheetWidth = isPadLayout ? min(440, view.bounds.width - 80) : view.bounds.width
+        if let widthConstraint = sheetWidthConstraint, isPadLayout {
+            widthConstraint.constant = max(sheetWidth, 0)
+        }
+        if let listBottom = listBottomConstraint {
+            let pad = 14 + (isPadLayout ? 0 : view.safeAreaInsets.bottom)
+            listBottom.constant = -pad
+        }
+        guard let metrics = sheetContentMetrics() else { return }
+        let target = targetSheetHeight(keyboardHeight: keyboardHeight, metrics: metrics)
         if let heightConstraint = sheetHeightConstraint, abs(heightConstraint.constant - target) > 0.5 {
             heightConstraint.constant = target
         }
@@ -560,44 +584,91 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// 卡片底恰贴键盘顶沿，焦点切到搜索框时系统发 WillChangeFrame（候选栏显隐），
     /// 帧顶贴着或略低于已抬升的卡片底时门禁会误判 false，把抬升整个撤销；
     /// initialKeyboardHeight 已在 willAppear 消费，不会再抬第二次，卡片跌回屏底。
-    /// iPad 端：居中卡片按未避让基准帧的底沿与键盘顶沿的重叠量上抬（+14 间隙，
-    /// L11 口径保留），不重叠时不动；不再拿当前已抬起的帧判相交——第一次抬升后
-    /// 卡片底已在键盘顶沿之上，重复键盘帧会误判为不再遮挡、把抬升撤销后又抬起，
-    /// 来回跳。相同键盘帧且目标值未变时去重，不重复布局；动画走键盘曲线。
+    /// iPad 端（第 5 轮第 1、2 项）：先按“容器＋内容＋键盘”算出目标高度，再用
+    /// 目标高度构造未避让基准帧（居中、目标高），与换算到同一坐标系的键盘矩形
+    /// 求交——只有真正遮挡时才避让；浮动键盘在弹窗旁边、或底边已在弹窗上方时
+    /// 不算遮挡。随后一次性提交高度与位置约束，不再先按旧高算位移、等布局遍
+    /// 改高后再算一次；相同键盘终帧得到相同的目标尺寸与位置，去重直接比目标值。
+    /// 遮挡时分两种：键盘横向盖住整个弹窗（停靠键盘）按旧口径整张抬到键盘顶沿
+    /// 之上（+14 间隙，L11 口径保留），高度上限仍按键盘顶沿计；浮动键盘只遮住
+    /// 局部时，只抬到露出被遮的输入框（搜索框），不整张抬，高度也不再按键盘顶
+    /// 沿压（keyboardHeight 归 0，使 updateSheetHeight 算出同一目标高）。
     /// keyboardHeight 供 updateSheetHeight 计可用高（手机端 = 到键盘顶沿的距离，
     /// iPad 端同样计入后由那里的键盘适配高上限再约束一次）。
     private func applyKeyboardFrame(_ frame: CGRect, note: Notification?) {
-        view.layoutIfNeeded()
-        // iPad 端：以未避让的基准帧判重叠并算抬升量——基准帧底沿 = view 中线 +
-        // 卡片高/2（centerY 约束归零时的卡片帧），与当前抬升量无关。旧代码拿当前
-        // 已抬起的帧判相交：第一次抬升后卡片底已在键盘顶沿之上（留 14pt 间隙），
-        // 再收到相同/相近键盘帧时相交为 false，便把抬升整个撤销，下一帧又抬起，
-        // 来回跳。键盘高度变化时帧必变，会按基准帧重算。
-        let baselineMaxY = view.bounds.midY + sheetView.frame.height / 2
-        let baselineOverlap = frame.isEmpty == false && baselineMaxY > frame.minY
-        let targetLift: CGFloat = baselineOverlap ? -(baselineMaxY - frame.minY + 14) : 0
-        let targetKeyboardHeight: CGFloat
-        if isPadLayout {
-            targetKeyboardHeight = baselineOverlap ? max(view.bounds.height - frame.minY, 0) : 0
-        } else if frame.isEmpty {
-            targetKeyboardHeight = 0
-        } else {
-            targetKeyboardHeight = max(view.bounds.height - frame.minY, 0)
+        guard isPadLayout else {
+            // 手机端：原逻辑不动。
+            let targetKeyboardHeight: CGFloat = frame.isEmpty ? 0 : max(view.bounds.height - frame.minY, 0)
+            // 相同键盘帧去重：帧未变且本次目标值与当前值一致时不再重复布局。
+            if frame.isEmpty == false, frame == keyboardFrameInView, keyboardHeight == targetKeyboardHeight,
+               phoneBottomConstraint?.constant == -targetKeyboardHeight {
+                return
+            }
+            keyboardFrameInView = frame
+            keyboardHeight = targetKeyboardHeight
+            if let bottomConstraint = phoneBottomConstraint {
+                bottomConstraint.constant = -keyboardHeight
+            }
+            animateKeyboardLayout(note)
+            return
+        }
+        // iPad 端：目标高度先行——高度与位置都由同一组目标值一次提交，
+        // 随后布局遍里 updateSheetHeight 用同一 keyboardHeight 算出同一目标高，不二次改高。
+        guard let metrics = sheetContentMetrics() else { return }
+        let heightNoKeyboard = targetSheetHeight(keyboardHeight: 0, metrics: metrics)
+        let baselineRect = CGRect(
+            x: (view.bounds.width - metrics.sheetWidth) / 2,
+            y: view.bounds.midY - heightNoKeyboard / 2,
+            width: metrics.sheetWidth,
+            height: heightNoKeyboard
+        )
+        var targetHeight = heightNoKeyboard
+        var targetLift: CGFloat = 0
+        var targetKeyboardHeight: CGFloat = 0
+        if frame.isEmpty == false, frame.intersects(baselineRect) {
+            let keyboardTop = frame.minY
+            if frame.minX <= baselineRect.minX, frame.maxX >= baselineRect.maxX {
+                // 停靠/全宽键盘：整张抬到键盘顶沿之上，高度上限按键盘顶沿计。
+                targetKeyboardHeight = max(view.bounds.height - keyboardTop, 0)
+                targetHeight = targetSheetHeight(keyboardHeight: targetKeyboardHeight, metrics: metrics)
+                let rect = CGRect(
+                    x: baselineRect.minX,
+                    y: view.bounds.midY - targetHeight / 2,
+                    width: metrics.sheetWidth,
+                    height: targetHeight
+                )
+                targetLift = rect.maxY > keyboardTop ? -(rect.maxY - keyboardTop + 14) : 0
+            } else {
+                // 浮动键盘局部遮挡：只抬到露出被遮的输入框（搜索框），不整张抬、不压高。
+                // 搜索框在 sheet 内偏移：抓手 14 + 标题顶 14 + 标题高 + 标题到搜索 12。
+                let searchTop = baselineRect.minY + 14 + 14 + metrics.titleHeight + 12
+                let searchRect = CGRect(
+                    x: baselineRect.minX + 16,
+                    y: searchTop,
+                    width: max(metrics.sheetWidth - 32, 0),
+                    height: metrics.searchHeight
+                )
+                if frame.intersects(searchRect) {
+                    let neededLift = searchRect.maxY - keyboardTop + 14
+                    // 抬升后卡片顶不得顶出安全区。
+                    let maxLift = max(0, baselineRect.minY - view.safeAreaInsets.top)
+                    targetLift = -min(max(0, neededLift), maxLift)
+                }
+            }
         }
         // 相同键盘帧去重：帧未变且本次目标值与当前值一致时不再重复布局；布局
         // 模式切换清掉抬升量后目标值与当前值不同，不命中去重，仍会重算。
-        if frame.isEmpty == false, frame == keyboardFrameInView, keyboardHeight == targetKeyboardHeight {
-            if isPadLayout, padCenterYConstraint?.constant == targetLift { return }
-            if isPadLayout == false, phoneBottomConstraint?.constant == -targetKeyboardHeight { return }
+        if frame == keyboardFrameInView, keyboardHeight == targetKeyboardHeight,
+           abs((sheetHeightConstraint?.constant ?? 0) - targetHeight) <= 0.5,
+           padCenterYConstraint?.constant == targetLift {
+            return
         }
         keyboardFrameInView = frame
         keyboardHeight = targetKeyboardHeight
-        if let bottomConstraint = phoneBottomConstraint, !isPadLayout {
-            bottomConstraint.constant = -keyboardHeight
+        if let heightConstraint = sheetHeightConstraint, abs(heightConstraint.constant - targetHeight) > 0.5 {
+            heightConstraint.constant = targetHeight
         }
-        if isPadLayout {
-            padCenterYConstraint?.constant = targetLift
-        }
+        padCenterYConstraint?.constant = targetLift
         animateKeyboardLayout(note)
     }
 
