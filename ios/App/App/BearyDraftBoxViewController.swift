@@ -1994,11 +1994,57 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             (drafts.firstIndex(where: { $0.draftId == entry.draftValue.draftId }) ?? Int.max) < restoredIndex
         }.count
         let clamped = min(position, cardEntries.count)
+        // 审计第 7 轮第 3 项：插卡前采样当前可见卡片锚点——写盘是异步的，
+        // 点撤销后、回调到达前用户可能已滚动；插入布局后按锚点恢复偏移，
+        // 插在视口上方的卡片不再把正在看的内容推走。
+        let anchor = firstVisibleCardAnchor()
         cardEntries.insert((button: card, draftValue: draftValue), at: clamped)
         listStack.insertArrangedSubview(card, at: min(clamped, listStack.arrangedSubviews.count))
         subWrap.isHidden = false
         hintWrap.isHidden = false
         subLabel.text = "共 \(drafts.count) 份 · 仅保存在本设备"
+        restoreVisibleCardAnchor(anchor, restoredCard: card)
+    }
+
+    /// 插卡前采样首个可见卡片：draftId＋它相对可视区域顶部的距离。
+    private func firstVisibleCardAnchor() -> (draftId: String, viewportOffset: CGFloat)? {
+        let visibleRect = CGRect(origin: sheetScrollView.contentOffset, size: sheetScrollView.bounds.size)
+        for entry in cardEntries {
+            let frameInScroll = entry.button.convert(entry.button.bounds, to: sheetScrollView)
+            if frameInScroll.intersects(visibleRect) {
+                return (entry.draftValue.draftId, frameInScroll.minY - sheetScrollView.contentOffset.y)
+            }
+        }
+        return nil
+    }
+
+    /// 插入并布局后按锚点恢复偏移；恢复的卡片在视口内时，卡片淡入与列表
+    /// 重排走同一 0.26s 过渡。用户正在拖动／减速时只直设偏移，不与手势抢动画。
+    private func restoreVisibleCardAnchor(_ anchor: (draftId: String, viewportOffset: CGFloat)?, restoredCard: UIButton) {
+        let animated = BearyMotion.animated(true) && !sheetScrollView.isDragging && !sheetScrollView.isDecelerating
+        view.layoutIfNeeded()
+        guard let anchor,
+              let anchorEntry = cardEntries.first(where: { $0.draftValue.draftId == anchor.draftId }) else {
+            return
+        }
+        let anchorFrame = anchorEntry.button.convert(anchorEntry.button.bounds, to: sheetScrollView)
+        let targetY = anchorFrame.minY - anchor.viewportOffset
+        let maxY = max(sheetScrollView.contentSize.height - sheetScrollView.bounds.height, 0)
+        let clampedY = min(max(targetY, 0), maxY)
+        // 布局已落定后再判恢复卡片是否在视口内（插卡前的帧还是 0，不可信）；
+        // 在视口内时先置淡入初态，再与偏移恢复走同一动画。减动效时不碰 alpha。
+        let restoredFrame = restoredCard.convert(restoredCard.bounds, to: sheetScrollView)
+        let visibleRect = CGRect(origin: sheetScrollView.contentOffset, size: sheetScrollView.bounds.size)
+        let restoredVisible = restoredFrame.intersects(visibleRect)
+        if animated && restoredVisible {
+            restoredCard.alpha = 0
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
+                self.sheetScrollView.contentOffset = CGPoint(x: 0, y: clampedY)
+                restoredCard.alpha = 1
+            })
+        } else {
+            sheetScrollView.contentOffset = CGPoint(x: 0, y: clampedY)
+        }
     }
 
     /// R21-B1：撤销写盘失败时把未落盘的草稿从内存与列表里摘掉（不让内存态冒充已恢复）；
