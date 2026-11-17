@@ -91,7 +91,6 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
     var containerHeight: CGFloat = 800
 
     private let grabberView = UIView()
-    private let closeButton = BearyButton.closeButton()
     private let titleLabel = UILabel()
     private let originalButton = UIButton(type: .custom)
     private let compressedButton = UIButton(type: .custom)
@@ -126,10 +125,6 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
         grabberView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(grabberView)
 
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(closeButton)
-
         titleLabel.text = "选择上传方式"
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
         titleLabel.textColor = BearyColors.ink
@@ -159,13 +154,9 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
             grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
             grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-            closeButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
-            closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
             titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 14),
             titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            titleLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -8),
+            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
             originalButton.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
             originalButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
             originalButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
