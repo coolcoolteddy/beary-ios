@@ -908,14 +908,42 @@ class BearyEditProfileViewController: UIViewController {
     private func applyEditKeyboardInset(_ notification: Notification) {
         guard let value = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
         let frameInView = view.convert(value.cgRectValue, from: nil)
-        let inset = max(0, view.bounds.height - frameInView.minY - view.safeAreaInsets.bottom)
-        scrollView.contentInset.bottom = inset
-        scrollView.verticalScrollIndicatorInsets.bottom = inset
+        // 实际遮挡只算键盘与滚动区底边的交叠：浮动键盘底边未到滚动区底边
+        // 时底部仍可见，不垫（旧算法只看键盘顶边到屏底的距离，浮动键盘
+        // 停在中部也会算出几百 pt 的 inset）。
+        let scrollBottom = scrollView.frame.maxY
+        let reachesBottom = frameInView.maxY >= scrollBottom && frameInView.minY < scrollBottom
+        let inset: CGFloat = reachesBottom ? max(0, scrollBottom - frameInView.minY) : 0
+        setEditKeyboardInset(inset, notification: notification, keyboardFrameInView: frameInView)
+    }
+
+    // inset／滚到输入框都跟键盘通知的时长和曲线走。
+    private func setEditKeyboardInset(_ inset: CGFloat, notification: Notification, keyboardFrameInView: CGRect?) {
+        let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
+        let curveValue = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue ?? UIView.AnimationCurve.easeInOut.rawValue
+        let options = UIView.AnimationOptions(rawValue: UInt(curveValue << 16))
+        // 当前输入框被键盘盖住时滚到可见，不靠垫底空间。
+        var fieldRect: CGRect?
+        if let keyboardFrame = keyboardFrameInView {
+            for field in [nameField, handleField, signatureField] where field.isFirstResponder {
+                let fieldFrameInView = field.convert(field.bounds, to: view)
+                if fieldFrameInView.intersects(keyboardFrame) {
+                    fieldRect = scrollView.convert(fieldFrameInView, from: view).insetBy(dx: 0, dy: -8)
+                }
+                break
+            }
+        }
+        UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: {
+            self.scrollView.contentInset.bottom = inset
+            self.scrollView.verticalScrollIndicatorInsets.bottom = inset
+            if let fieldRect = fieldRect {
+                self.scrollView.scrollRectToVisible(fieldRect, animated: false)
+            }
+        })
     }
 
     @objc private func editKeyboardWillHide(_ notification: Notification) {
-        scrollView.contentInset.bottom = 0
-        scrollView.verticalScrollIndicatorInsets.bottom = 0
+        setEditKeyboardInset(0, notification: notification, keyboardFrameInView: nil)
     }
 
     @objc private func avatarButtonTapped() {
