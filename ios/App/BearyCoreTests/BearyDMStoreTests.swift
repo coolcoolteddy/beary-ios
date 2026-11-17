@@ -469,4 +469,136 @@ final class BearyDMStoreTests: XCTestCase {
         XCTAssertEqual(loadPendings(accountId: 9020, peerId: 5).map { $0.localKey }, ["k1"])
         XCTAssertEqual(loadPendings(accountId: 9020, peerId: 7).map { $0.localKey }, ["k3"])
     }
+
+    // MARK: - 测量：整库写回性能（measure/dm-store-write-perf，测完删支）
+    //
+    // 只测不改：不改产品代码、不迁移存储，仅在测试侧计时并打印 [DM-PERF] 行供 CI 日志读取。
+    // 消息正文约 30 字，与真实私信同量级。结论只保证“耗时随库增长”，不保证真机体感。
+
+    private func perfFileBytes(accountId: Int) -> Int {
+        (try? FileManager.default.attributesOfItem(atPath: storeFile(accountId: accountId).path)[.size] as? Int) ?? -1
+    }
+
+    private func perfFileMtime(accountId: Int) -> Date? {
+        try? FileManager.default.attributesOfItem(atPath: storeFile(accountId: accountId).path)[.modificationDate] as? Date
+    }
+
+    /// 一次 persistMessages 的端到端耗时（调用 → completion 回主线程），含排队＋合并＋整库编码＋原子写。
+    private func perfPersist(accountId: Int, peer peerId: Int, messages: [BearyAPI.DMMessage]) -> (ms: Double, saved: Bool, mergedCount: Int) {
+        let exp = expectation(description: "perfPersist")
+        let start = CFAbsoluteTimeGetCurrent()
+        var ms = -1.0
+        var saved = false
+        var mergedCount = -1
+        BearyDMStore.persistMessages(accountId: accountId, peer: peer(id: peerId), messages: messages) { outcome in
+            ms = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            if case .merged(let merged, let s) = outcome { saved = s; mergedCount = merged.count }
+            exp.fulfill()
+        }
+        waitForExpectations(timeout: 120)
+        return (ms, saved, mergedCount)
+    }
+
+    /// 种子：totalMessages 条分 peerCount 个会话、id 全局连续，每会话一次整批 persist 写入。
+    private func perfSeed(accountId: Int, peerCount: Int, totalMessages: Int) {
+        let perPeer = totalMessages / peerCount
+        var nextId = 1
+        for p in 1...peerCount {
+            let batch = (0..<perPeer).map { i in
+                message(id: nextId + i, body: "测量正文第 \(nextId + i) 条，约三十字长度的私信内容。")
+            }
+            nextId += perPeer
+            let r = perfPersist(accountId: accountId, peer: p, messages: batch)
+            XCTAssertTrue(r.saved, "种子写入应成功 peer=\(p)")
+            XCTAssertEqual(r.mergedCount, perPeer)
+        }
+    }
+
+    /// ① persist 单次耗时 vs 该账号总消息数（1k / 10k / 50k）× 会话数（1 / 20 / 100）。
+    func testPerfPersistIncrementalVsTotal() {
+        let scales: [(total: Int, peers: Int)] = [
+            (1_000, 1), (1_000, 20),
+            (10_000, 1), (10_000, 20), (10_000, 100),
+            (50_000, 1), (50_000, 20), (50_000, 100),
+        ]
+        for (index, scale) in scales.enumerated() {
+            let accountId = 9100 + index
+            perfSeed(accountId: accountId, peerCount: scale.peers, totalMessages: scale.total)
+            let bytes = perfFileBytes(accountId: accountId)
+            XCTAssertGreaterThan(bytes, 0, "种子文件应存在")
+            // 10 条新消息（模拟一拍轮询拉到的新消息）。
+            let fresh = (1...10).map { message(id: scale.total + $0, body: "测量新增第 \($0) 条，约三十字长度的私信内容。") }
+            let incr = perfPersist(accountId: accountId, peer: 1, messages: fresh)
+            XCTAssertTrue(incr.saved)
+            print("[DM-PERF] persist total=\(scale.total) peers=\(scale.peers) bytes=\(bytes) incr10ms=\(String(format: "%.2f", incr.ms)) saved=\(incr.saved)")
+            // 同批重复（已在库里，合并去重后无新行）——轮询回包无新消息的等价场景。
+            let mtimeBeforeDup = perfFileMtime(accountId: accountId)
+            let dup = perfPersist(accountId: accountId, peer: 1, messages: fresh)
+            let mtimeAfterDup = perfFileMtime(accountId: accountId)
+            print("[DM-PERF] persist-dup total=\(scale.total) peers=\(scale.peers) dup10ms=\(String(format: "%.2f", dup.ms)) saved=\(dup.saved) mtimeChanged=\(mtimeBeforeDup != mtimeAfterDup) bytesAfter=\(perfFileBytes(accountId: accountId))")
+            // 空批——loadLatest 空回包直接透传 persistMessages 的场景。
+            let mtimeBeforeEmpty = perfFileMtime(accountId: accountId)
+            let empty = perfPersist(accountId: accountId, peer: 1, messages: [])
+            let mtimeAfterEmpty = perfFileMtime(accountId: accountId)
+            print("[DM-PERF] persist-empty total=\(scale.total) peers=\(scale.peers) emptyMs=\(String(format: "%.2f", empty.ms)) saved=\(empty.saved) mtimeChanged=\(mtimeBeforeEmpty != mtimeAfterEmpty) bytesAfter=\(perfFileBytes(accountId: accountId))")
+        }
+    }
+
+    /// ② 首次打开聊天页的整库解码耗时（丢内存索引 → loadAll 读盘＋解码；另拆纯编码耗时）。
+    func testPerfFirstOpenDecode() {
+        let scales: [(total: Int, peers: Int)] = [(1_000, 1), (10_000, 1), (10_000, 20), (50_000, 1)]
+        for (index, scale) in scales.enumerated() {
+            let accountId = 9200 + index
+            perfSeed(accountId: accountId, peerCount: scale.peers, totalMessages: scale.total)
+            let bytes = perfFileBytes(accountId: accountId)
+            // 丢内存索引，模拟首次打开：下一次访问重新整库读盘＋解码。
+            BearyDMStore.testBaseDirectory = tmpDir
+            let t0 = CFAbsoluteTimeGetCurrent()
+            let outcome = BearyDMStore.loadAll(accountId: accountId)
+            let loadMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            guard case .loaded(let all) = outcome else { XCTFail("种子库应可读"); return }
+            // 纯编码：整库字典 → Data（不含写盘）。
+            let t1 = CFAbsoluteTimeGetCurrent()
+            let encoded = BearyDMStoreCore.encode(all)
+            let encodeMs = (CFAbsoluteTimeGetCurrent() - t1) * 1000
+            XCTAssertNotNil(encoded)
+            print("[DM-PERF] decode total=\(scale.total) peers=\(scale.peers) bytes=\(bytes) loadAllMs=\(String(format: "%.2f", loadMs)) encodeMs=\(String(format: "%.2f", encodeMs))")
+            // 异步 messages()：首次访问走 cachedAll → loadAll，含主线程回切。
+            BearyDMStore.testBaseDirectory = tmpDir
+            let exp = expectation(description: "perfMessages")
+            let t2 = CFAbsoluteTimeGetCurrent()
+            var rows = -1
+            BearyDMStore.messages(accountId: accountId, peerId: 1) { list in
+                rows = list.count
+                exp.fulfill()
+            }
+            waitForExpectations(timeout: 120)
+            let msgMs = (CFAbsoluteTimeGetCurrent() - t2) * 1000
+            print("[DM-PERF] messages total=\(scale.total) peers=\(scale.peers) messagesMs=\(String(format: "%.2f", msgMs)) rows=\(rows)")
+        }
+    }
+
+    /// ③ 会话列表同步入口 localConversations 在写盘进行时的主线程等待时间。
+    func testPerfSyncEntryBlockedDuringWrite() {
+        let accountId = 9300
+        perfSeed(accountId: accountId, peerCount: 1, totalMessages: 50_000)
+        // 三轮：每轮先发一笔 5000 条新消息的写盘（不等待），紧接着在测试线程调同步入口；
+        // syncOnIO 会等到在途写盘完成——测到的就是主线程同款等待（最坏情况：调用撞上在途写盘）。
+        for round in 1...3 {
+            let batch = (1...5_000).map { message(id: 50_000 + (round - 1) * 5_000 + $0, body: "测量大批量第 \($0) 条，约三十字长度的私信内容。") }
+            let exp = expectation(description: "perfBigPersist r\(round)")
+            let t0 = CFAbsoluteTimeGetCurrent()
+            var persistMs = -1.0
+            BearyDMStore.persistMessages(accountId: accountId, peer: peer(id: 2), messages: batch) { _ in
+                persistMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+                exp.fulfill()
+            }
+            let s0 = CFAbsoluteTimeGetCurrent()
+            let convs = BearyDMStore.localConversations(accountId: accountId)
+            let blockedMs = (CFAbsoluteTimeGetCurrent() - s0) * 1000
+            waitForExpectations(timeout: 120)
+            XCTAssertEqual(convs.count, 2)
+            print("[DM-PERF] sync-blocked round=\(round) totalBefore=50000 bigBatch=5000 blockedMs=\(String(format: "%.2f", blockedMs)) persistMs=\(String(format: "%.2f", persistMs)) bytes=\(perfFileBytes(accountId: accountId))")
+        }
+    }
 }
