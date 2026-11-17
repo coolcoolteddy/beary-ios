@@ -8,7 +8,7 @@ import UIKit
 // 按压高亮（surface2 底）、遮罩 0.45、抓手顶距 10、iPad ≥821 宽屏分支
 // （全圆角 20 + 1px line 边框 + 底部偏移 24 的浮起卡片；移动端顶部圆角
 // 20、无边框、贴底）。个人主页侧收敛点：遮罩 0.6→0.45、抓手顶距 12→10、
-// 行距 6→10、槽位 44→46、固定高 480→min(540, 70% 高) 动态高、补宽屏分支、
+// 行距 6→10、槽位 44→46、固定高 480→按内容算、480 封顶、补宽屏分支、
 // 补按压高亮、关闭走减动效口径。两页原调用点改为本 Sheet，各自旧实现已删。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
@@ -80,7 +80,6 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     private let sheetView = UIView()
     private let grabView = UIView()
     private let titleLabel = UILabel()
-    private let closeButton = BearyHit44Button(type: .system)
     /// 审计 D-7：手势门控按布局后实测帧划分，需持有 collection 引用（见 gestureRecognizerShouldBegin）。
     private var emoteCollectionView: UICollectionView?
     /// 视觉批 2-2：本次打开时读到的最近使用列表（倒序、最多 8 个）；空时不建
@@ -92,6 +91,8 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         if hasRecentSection, section == 0 { return recentEmoteKeys }
         return BearyEmoteKeys.bearFaces
     }
+    /// 弹窗高度封顶 480：内容不足 480 时按内容高，超出时封顶、列表内部滚动。
+    private let maxSheetHeight: CGFloat = 480
     private var sheetHeightConstraint: NSLayoutConstraint?
     private var sheetBottomConstraint: NSLayoutConstraint?
     /// 本次拖动起手时 sheetView 底安全区 inset（静止态）：
@@ -146,16 +147,6 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         titleLabel.textColor = BearyColors.ink
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         sheetView.addSubview(titleLabel)
-        closeButton.setImage(BearyFeedIconCache.image(named: "icon_close", pointSize: 15), for: .normal)
-        closeButton.tintColor = BearyColors.ink
-        closeButton.backgroundColor = BearyColors.surface2
-        closeButton.layer.cornerRadius = 16
-        closeButton.clipsToBounds = true
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
-        closeButton.accessibilityLabel = "关闭"
-        sheetView.addSubview(closeButton)
         let layout = UICollectionViewFlowLayout()
         layout.minimumInteritemSpacing = 6
         layout.minimumLineSpacing = 10
@@ -174,7 +165,8 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         collection.register(BearyEmotePickerSectionHeaderView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader, withReuseIdentifier: "bearyEmotePickerSectionHeader")
         emoteCollectionView = collection
         sheetView.addSubview(collection)
-        let heightConstraint = sheetView.heightAnchor.constraint(equalToConstant: 480)
+        // 初值取封顶值，首帧布局即按内容重算（见 updateSheetHeightToContent）。
+        let heightConstraint = sheetView.heightAnchor.constraint(equalToConstant: maxSheetHeight)
         sheetHeightConstraint = heightConstraint
         let bottomConstraint = sheetView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         sheetBottomConstraint = bottomConstraint
@@ -199,10 +191,6 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
             grabView.heightAnchor.constraint(equalToConstant: 4),
             titleLabel.topAnchor.constraint(equalTo: grabView.bottomAnchor, constant: 14),
             titleLabel.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 18),
-            closeButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            closeButton.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -16),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
             collection.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
             collection.bottomAnchor.constraint(equalTo: sheetView.safeAreaLayoutGuide.bottomAnchor),
             collection.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
@@ -223,11 +211,23 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        let target = min(540, view.bounds.height * 0.7)
+        updateSheetHeightToContent()
+        updateSheetChrome()
+    }
+
+    /// 高度按内容算、480 封顶：抓手区（顶 10＋高 4）＋标题行（距抓手 14＋标题
+    /// 实测高）＋列表顶距 12＋列表内容实测高＋底安全区；内容超 480 时封顶、
+    /// 列表内部滚动。另以 70% 屏高为屏内上限（横屏沿用旧口径，避免弹窗顶出屏幕）。
+    private func updateSheetHeightToContent() {
+        guard let collection = emoteCollectionView else { return }
+        collection.layoutIfNeeded()
+        let contentHeight = collection.collectionViewLayout.collectionViewContentSize.height
+        guard contentHeight > 0 else { return }
+        let headerHeight: CGFloat = 10 + 4 + 14 + titleLabel.intrinsicContentSize.height + 12
+        let target = min(headerHeight + contentHeight + sheetView.safeAreaInsets.bottom, maxSheetHeight, view.bounds.height * 0.7)
         if target > 0, sheetHeightConstraint?.constant != target {
             sheetHeightConstraint?.constant = target
         }
-        updateSheetChrome()
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -263,7 +263,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     }
 
     /// VoiceOver 双指 scrub（无障碍退出手势）：走原关闭请求 closeTapped，与
-    /// 遮罩点按、关闭钮同一口径。本 Sheet 无未保存草稿与在途操作（点选即
+    /// 遮罩点按同一口径。本 Sheet 无未保存草稿与在途操作（点选即
     /// 时回调 onPick、由调用方关闭），故无需另设“未保存/操作在途”门控；
     /// 焦点返回由 viewDidDisappear 统一处理。
     override func accessibilityPerformEscape() -> Bool {
@@ -273,14 +273,12 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
 
     /// 审计 D-7：下滑关闭的起手门——不再用固定 y < 70（原门控盖住首行上缘约 8pt：
     /// 抓手顶 10 + 高 4 → 标题顶 +14 → 列表顶 = 标题底 +12，首行上缘约 y=62）。
-    /// 改按布局后实测帧划分：关闭钮（含 BearyHit44Button 向外扩的 6pt 热区）与
-    /// 列表区一律不接手，只在列表顶以上的头部区（抓手/标题行）起手；标题随
+    /// 改按布局后实测帧划分：列表区一律不接手，只在列表顶以上的头部区（抓手/标题行）起手；标题随
     /// 系统字号长高时列表顶同步下移，门控同步跟随，不再错位。
     /// 关闭距离 80pt 与速度 600 阈值不动（见 sheetPanGesture）。
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard gestureRecognizer.view === sheetView else { return true }
         let point = gestureRecognizer.location(in: sheetView)
-        if closeButton.frame.insetBy(dx: -6, dy: -6).contains(point) { return false }
         if let collection = emoteCollectionView {
             return point.y < collection.frame.minY
         }
@@ -436,8 +434,8 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         didPickEmote = false
         emoteCollectionView?.isUserInteractionEnabled = true
         // VoiceOver 焦点返回：仅真正被 dismiss 时还（被上层弹窗盖住时
-        // isBeingDismissed 为 false，不抢焦点）。关闭钮/遮罩/下滑/退出手势
-        // 与点选后调用方关闭五路皆汇到此处，无需各路重复发。
+        // isBeingDismissed 为 false，不抢焦点）。遮罩/下滑/退出手势
+        // 与点选后调用方关闭四路皆汇到此处，无需各路重复发。
         if isBeingDismissed, let element = previousFocusedElement {
             UIAccessibility.post(notification: .layoutChanged, argument: element)
             previousFocusedElement = nil
