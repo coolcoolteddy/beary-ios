@@ -414,7 +414,7 @@ private final class BearyDepthBackgroundCell: UITableViewCell {
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
-        selectionStyle = .default
+        selectionStyle = .none
         contentView.addSubview(previewContainer)
         previewContainer.addSubview(dimView)
         contentView.addSubview(nameLabel)

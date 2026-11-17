@@ -243,6 +243,7 @@ private final class BearySnapshotRowCell: UITableViewCell {
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
+        selectionStyle = .none
         backgroundColor = BearyColors.surface3
         accessoryType = .disclosureIndicator
         timeLabel.translatesAutoresizingMaskIntoConstraints = false

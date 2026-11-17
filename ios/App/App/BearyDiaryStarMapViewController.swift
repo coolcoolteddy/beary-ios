@@ -1776,10 +1776,7 @@ extension BearyDiaryStarMapViewController: UITableViewDataSource, UITableViewDel
         cell.textLabel?.text = "\(reasons)：\(firstName) 与 \(secondName)"
         cell.backgroundColor = .clear
         cell.contentView.backgroundColor = .clear
-        cell.selectionStyle = .default
-        let pressedView = UIView()
-        pressedView.backgroundColor = UIColor(white: 1, alpha: 0.06)
-        cell.selectedBackgroundView = pressedView
+        cell.selectionStyle = .none
         cell.accessoryType = .disclosureIndicator
         cell.tintColor = BearyStarMapNight.secondaryText
         // 读屏口径与旧行按钮一致（#1035 画布连线元素同款提示）。

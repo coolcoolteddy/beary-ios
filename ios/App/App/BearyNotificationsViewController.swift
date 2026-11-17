@@ -3502,9 +3502,7 @@ class BearyNotificationCell: UITableViewCell {
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
-        let selectedBackground = UIView()
-        selectedBackground.backgroundColor = BearyColors.hov
-        selectedBackgroundView = selectedBackground
+        selectionStyle = .none
         // 高度生长动画中行高缩到 0 时内容不得溢出到相邻行。
         clipsToBounds = true
         let bodyStack = UIStackView(arrangedSubviews: [titleRowStack, excerptLabel])
