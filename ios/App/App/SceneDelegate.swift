@@ -414,9 +414,12 @@ final class BearyChromeViewController: UIViewController {
     private var pageColumns: [ContainerPage: PageColumn] = [:]
     /// G27（S10 后）：门控取自 refreshMe 结果，不再单独拉取；refreshMe 失败时
     /// onUserChanged 不触发，旧 enabled 自然保留，不按关闭处理。
-    /// 教程首次启动自动弹出（审计 N1 容器侧）：每进程只自动弹一次，
-    /// 避免教程页未置 seen 标记时 viewDidAppear 重复触发。
-    private var tutorialAutoPresented = false
+    /// 注册后引导接线：定位到的城市（引导走完后传给 ID 卡表单预填；冷启动
+    /// 补弹表单时已无定位结果，表单城市空着由用户自填）。
+    private var pendingLocatedCity: (country: String, region: String, city: String)?
+    /// 注册后链路收尾：邀请绑定文案暂存，等引导＋ID 卡走完再 toast 一次
+    ///（引导全屏盖住主页时 toast 不可读，故不立即弹）。
+    private var pendingReferralToast: String?
     /// 登录循环修：自动弹登录定时器（401 后 1.2 秒延迟弹 + .me 门延迟弹）同一时刻
     /// 只排一个——排队时已有待触发的直接跳过，触发时先清标记再走原有守卫；显式
     /// 登录路径（顶栏 pill、onRequireLogin、编辑器未登录）不受影响。
@@ -1392,8 +1395,8 @@ final class BearyChromeViewController: UIViewController {
         // （已播过／兜底已清）直接触发。
         runLaunchVeilIfNeeded()
         if launchVeilView == nil {
-            maybePresentOnboardingOnFirstLaunch()
-            // App 公告栏：veil 已去、引导已触发（或已见过）后检查；拉取失败静默。
+            maybePresentPendingPostRegistrationOnboarding()
+            // App 公告栏：veil 已去、注册后引导待办已触发（或已见过/无待办）后检查；拉取失败静默。
             BearyAnnouncementCenter.shared.checkOnLaunch(from: self)
         }
     }
@@ -1691,9 +1694,9 @@ final class BearyChromeViewController: UIViewController {
         launchVeilSloganView = nil
         launchVeilSloganAnimation = nil
         // veil 完成点（正常揭开／减动效／兜底三路汇合）：viewDidAppear 里因
-        // veil 仍在而未触发的自动引导，在此补触发；重复调用由
-        // tutorialAutoPresented 守卫挡下。
-        maybePresentOnboardingOnFirstLaunch()
+        // veil 仍在而未触发的注册后引导待办，在此补触发；重复调用由
+        // presentedViewController == nil 与 seen/pending 守卫挡下。
+        maybePresentPendingPostRegistrationOnboarding()
         // App 公告栏：与自动引导同一点触发，拉取每进程只发一次、重复调用走缓存。
         BearyAnnouncementCenter.shared.checkOnLaunch(from: self)
     }
@@ -3055,29 +3058,47 @@ final class BearyChromeViewController: UIViewController {
             // 新号登录成功先解 arm（当前态即新号，不得再恢复原号），
             // 再 dismiss + refreshMe 立新态、快照新号。
             SessionManager.shared.completeAccountAddSession()
+            // dismiss 前先取新注册标志（dismiss 后登录页可能释放）。
+            let isNewRegistration = vc?.loggedInIsNew ?? false
             vc?.dismiss(animated: BearyMotion.animated(true)) {
                 SessionManager.shared.refreshMe { [weak self] _ in
                     DispatchQueue.main.async {
                         guard let self = self else { return }
-                        // 审计登录杂项：邀请绑定反馈落点——进 App 后 BearyToast 一次
-                        //（登录页内行文案随 dismiss 消失，不再指望被读到；Plus 到期日
-                        // 由 refreshMe 后的 currentUser.plusUntil 补全）。
-                        // 注意：原代码以 referralText 非空为守卫直接 return，会把
-                        // 下面的待续写恢复一并跳过，故此处先 toast（有文案时）、
-                        // 再消费意图，两路互不阻塞。
-                        if let text = referralText, !text.isEmpty {
-                            self.showToast(message: BearyReferralFeedback.toastText(base: text, plusUntil: SessionManager.shared.currentUser?.plusUntil))
-                        }
                         // 登录→写日记恢复：写作入口触发登录门时记下的意图，
                         // 在此消费一次。只在 refreshMe 已确认登录、且栈上无
                         // 编辑器、无其他 modal 在前时开编辑器；条件不满足
                         // 直接丢弃意图（见 pendingComposerAfterLogin 注释），
-                        // 不自动重试、不留到下次登录。
+                        // 不自动重试、不留到下次登录。写第一篇优先于注册后引导。
                         let shouldResumeComposer = self.pendingComposerAfterLogin
                         self.pendingComposerAfterLogin = false
                         if shouldResumeComposer && SessionManager.shared.isLoggedIn
                             && !self.isComposerPresented() && self.presentedViewController == nil {
+                            // 审计登录杂项：邀请绑定反馈落点——进 App 后 BearyToast 一次。
+                            if let text = referralText, !text.isEmpty {
+                                self.showToast(message: BearyReferralFeedback.toastText(base: text, plusUntil: SessionManager.shared.currentUser?.plusUntil))
+                            }
                             self.presentComposer()
+                            return
+                        }
+                        // 新注册：走注册后引导（只给新注册用户、只弹一次）。
+                        // 邀请绑定文案暂存，等引导＋ID 卡链路走完再 toast
+                        //（引导全屏盖住主页时 toast 不可读，故不立即弹）。
+                        if isNewRegistration, let userId = SessionManager.shared.currentUser?.id, SessionManager.shared.isLoggedIn,
+                            !BearyIDCardStore.isOnboardingSeen(userId: userId),
+                            self.presentedViewController == nil {
+                            if let text = referralText, !text.isEmpty {
+                                self.pendingReferralToast = BearyReferralFeedback.toastText(base: text, plusUntil: SessionManager.shared.currentUser?.plusUntil)
+                            }
+                            BearyIDCardStore.markOnboardingPending(userId: userId)
+                            self.presentPostRegistrationOnboarding()
+                            return
+                        }
+                        // 其余登录：原有行为（邀请绑定 toast；无待续写意图）。
+                        // 注意：原代码以 referralText 非空为守卫直接 return，会把
+                        // 下面的待续写恢复一并跳过，故上面先消费意图再 toast，
+                        // 两路互不阻塞。
+                        if let text = referralText, !text.isEmpty {
+                            self.showToast(message: BearyReferralFeedback.toastText(base: text, plusUntil: SessionManager.shared.currentUser?.plusUntil))
                         }
                     }
                 }
@@ -3499,21 +3520,89 @@ final class BearyChromeViewController: UIViewController {
         onboarding.present(vc, animated: BearyMotion.animated(true))
     }
 
-    /// 首次启动自动弹出：只针对真正的新用户——seen 未置位且本地无保存会话。
-    /// 会话判断不用 isLoggedIn：它只是 currentUser != nil，冷启动 /me 未回包时
-    /// 恒为假，会把升级的老登录用户误判为新用户；hasCachedSession 同步读本地
-    /// teddy_session cookie（存在且未过期），/me 回包前即可判定，升级的老登录
-    /// 用户有 cookie→不出现，新装用户无 cookie→出现。
-    /// 每进程只尝试一次；已有 modal 在前时不弹（seen 不写，下次冷启动再试）。
-    /// 呈现时机：只在启动 veil 完成后触发（见 viewDidAppear 与 removeLaunchVeil）。
-    /// 旧版教程 seen key 已废弃，全仓不得再有引用。
-    private func maybePresentOnboardingOnFirstLaunch() {
-        guard !tutorialAutoPresented else { return }
-        tutorialAutoPresented = true
-        guard !UserDefaults.standard.bool(forKey: BearyOnboardingViewController.seenKey) else { return }
-        guard !SessionManager.shared.hasCachedSession else { return }
+    // MARK: - 注册后引导（2026-11-18 Li 定，按注册后引导预览做 App 实现）
+
+    /// 冷启动补触发（veil 完成后，见 viewDidAppear 与 removeLaunchVeil）：
+    /// 新注册登录时立 pending，中途被杀则下次冷启动凭它恢复引导；引导已走完
+    /// 但表单未弹过（如 400ms 窗口内被杀）时补弹表单。两者都只弹一次。
+    /// 已有 modal 在前时不弹（pending/seen 不动，下次冷启动再试）。
+    private func maybePresentPendingPostRegistrationOnboarding() {
+        guard SessionManager.shared.isLoggedIn else { return }
+        guard let userId = SessionManager.shared.currentUser?.id else { return }
         guard presentedViewController == nil else { return }
-        presentOnboarding(mode: .firstLaunch)
+        if BearyIDCardStore.isOnboardingPending(userId: userId) && !BearyIDCardStore.isOnboardingSeen(userId: userId) {
+            presentPostRegistrationOnboarding()
+            return
+        }
+        if BearyIDCardStore.isOnboardingSeen(userId: userId) && !BearyIDCardStore.isFormSeen(userId: userId) {
+            presentIDCardFormIfNeeded()
+        }
+    }
+
+    /// 注册后引导：P0–P3 → 位置 → 通知 → 结束页（全屏）。只给新注册用户。
+    /// 走完后写 seen、关本页、400ms 后弹 ID 卡表单。
+    /// 首启 v3 引导已退役（新用户不再看两遍 P0–P3；v3 仅设置页重播保留）。
+    private func presentPostRegistrationOnboarding() {
+        let flow = BearyPostRegistrationOnboardingViewController()
+        flow.modalPresentationStyle = .fullScreen
+        flow.onFinished = { [weak self, weak flow] in
+            guard let strongSelf = self, let flowVC = flow else { return }
+            guard let userId = SessionManager.shared.currentUser?.id else { return }
+            strongSelf.pendingLocatedCity = flowVC.locatedCity
+            BearyIDCardStore.markOnboardingSeen(userId: userId)
+            flowVC.dismiss(animated: BearyMotion.animated(true)) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    strongSelf.presentIDCardFormIfNeeded()
+                }
+            }
+        }
+        topmostViewController().present(flow, animated: BearyMotion.animated(true))
+    }
+
+    /// ID 卡表单（进主页后约 400ms 弹，只弹一次）。
+    private func presentIDCardFormIfNeeded() {
+        guard let userId = SessionManager.shared.currentUser?.id else { return }
+        guard !BearyIDCardStore.isFormSeen(userId: userId) else { return }
+        guard presentedViewController == nil else { return }
+        BearyIDCardStore.markFormSeen(userId: userId)
+        let displayName = SessionManager.shared.currentUser?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let initialNickname = displayName.isEmpty ? "Teddy" : displayName
+        let locatedCity = pendingLocatedCity
+        pendingLocatedCity = nil
+        BearyIDCardFormSheet.show(from: topmostViewController(), initialNickname: initialNickname, locatedCity: locatedCity, onGenerate: { [weak self] data in
+            guard let strongSelf = self else { return }
+            BearyIDCardStore.save(data, userId: SessionManager.shared.currentUser?.id)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.38) {
+                strongSelf.presentIDCardSheet(data: data)
+            }
+        }, onSkip: { [weak self] defaultData in
+            guard let strongSelf = self else { return }
+            BearyIDCardStore.save(defaultData, userId: SessionManager.shared.currentUser?.id)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.38) {
+                strongSelf.presentIDCardSheet(data: defaultData)
+            }
+        }, onDismissedWithoutChoice: { [weak self] in
+            self?.finishPostRegistrationChain()
+        })
+    }
+
+    /// ID 卡（可翻转）：生成/跳过 380ms 后弹。
+    private func presentIDCardSheet(data: BearyIDCardData) {
+        guard let user = SessionManager.shared.currentUser else { return }
+        guard presentedViewController == nil else { return }
+        let stats = BearyIDCardStore.stats(userId: user.id, createdAtMs: user.createdAt)
+        let avatarURL = BearyImageURLs.avatarURL(user.avatar)
+        BearyIDCardSheet.show(from: topmostViewController(), cardData: data, stats: stats, isPlus: user.plus ?? false, avatarURL: avatarURL, onDismissed: { [weak self] in
+            self?.finishPostRegistrationChain()
+        })
+    }
+
+    /// 注册后链路收尾：表单/卡片都关了之后，把暂存的邀请绑定文案 toast 一次。
+    private func finishPostRegistrationChain() {
+        if let text = pendingReferralToast {
+            pendingReferralToast = nil
+            showToast(message: text)
+        }
     }
 
     /// 回收站：全屏 modal，关闭钮由 TrashVC 自带（onClose 设置后才显示）。
