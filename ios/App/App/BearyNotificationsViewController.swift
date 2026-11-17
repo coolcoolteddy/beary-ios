@@ -3428,7 +3428,7 @@ class BearyNotificationCell: UITableViewCell {
 
 
     /// 标题＋摘要竖排栈：标题行（标题＋时间）与摘要行；间距默认 2（独立通知页现行），
-    /// 合并消息页改 5，与私信行标题／摘要间距一致（见 configureAsCard／configure 的 mergedList 分支）。
+    /// 合并消息页改 4，与日记卡片头副标题（12pt、标题行下 4pt）一致。
     private let bodyStack: UIStackView = {
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -3440,7 +3440,7 @@ class BearyNotificationCell: UITableViewCell {
     private let excerptLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         label.textColor = BearyColors.gray
         label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = 1
@@ -3828,7 +3828,7 @@ class BearyNotificationCell: UITableViewCell {
     ///   且不显示右三角；独立通知页传 false（默认），下箭头展开行为不变。
     func configureAsCard(title: String, excerpt: String, timeMs: Int?, anyUnread: Bool, isSystem: Bool, expanded: Bool, highlight: Bool, mergedList: Bool = false) {
         applyAvatarVerticalStyle(mergedList: mergedList)
-        bodyStack.spacing = mergedList ? 5 : 2
+        bodyStack.spacing = mergedList ? 4 : 2
         cancelAvatarLoad()
         hideFollowAction()
         avatarRetryURL = nil
@@ -3845,7 +3845,7 @@ class BearyNotificationCell: UITableViewCell {
         kindBadgeView.isHidden = true
         nestedLineView.isHidden = true
         titleLabel.attributedText = BearyNotificationCell.lineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5)
-        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(excerpt, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5)
+        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(excerpt, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: mergedList ? 12 : 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5)
         lastTimeMs = timeMs
         timeLabel.text = BearyNotificationCell.timeText(ms: timeMs)
         if mergedList {
@@ -3939,7 +3939,7 @@ class BearyNotificationCell: UITableViewCell {
         // 复用行先清关注动作区；关注行由 VC 随后调 configureFollowCard 补上。
         hideFollowAction()
         applyAvatarVerticalStyle(mergedList: mergedList)
-        bodyStack.spacing = mergedList ? 5 : 2
+        bodyStack.spacing = mergedList ? 4 : 2
         let itemType = item.type ?? ""
         let isSystemStyle = itemType == "system" || itemType == "letter"
         let isUnread = (item.read ?? true) == false
@@ -4070,7 +4070,7 @@ class BearyNotificationCell: UITableViewCell {
             titleLabel.attributedText = title
         }
 
-        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(item.excerpt ?? "", font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5)
+        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(item.excerpt ?? "", font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: mergedList ? 12 : 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5)
         lastTimeMs = item.createdAt
         timeLabel.text = BearyNotificationCell.timeText(ms: item.createdAt)
     }

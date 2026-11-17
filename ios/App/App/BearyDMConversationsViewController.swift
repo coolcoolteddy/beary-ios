@@ -750,7 +750,7 @@ final class BearyDMConversationCell: UITableViewCell {
         nameLabel.textColor = BearyColors.ink
         nameLabel.numberOfLines = 1
         snippetLabel.translatesAutoresizingMaskIntoConstraints = false
-        snippetLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        snippetLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         snippetLabel.adjustsFontForContentSizeCategory = true
         snippetLabel.textColor = BearyColors.gray
         snippetLabel.numberOfLines = 1
@@ -790,10 +790,9 @@ final class BearyDMConversationCell: UITableViewCell {
             avatarView.heightAnchor.constraint(equalToConstant: 44),
             nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -8),
-            // 标题／摘要间距 1→5：1pt 时两行贴得太近（2026-11-17 Li 截图上报）；
-            // 规范表无消息行标题／摘要间距项，按 +4pt 取；行高仍由 72 下限兜底
-            //（顶 14＋标题约 20＋5＋摘要约 16＋底 14 ≈ 69）。
-            snippetLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 5),
+            // 标题／摘要间距 4：与日记卡片头副标题一致（12pt、标题行下 4pt）；
+            // 行高仍由 72 下限兜底（标题约 20＋4＋摘要约 15＋上下 14 ≈ 67）。
+            snippetLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
             snippetLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
             snippetLabel.trailingAnchor.constraint(lessThanOrEqualTo: unreadBadge.leadingAnchor, constant: -8),
             snippetLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
