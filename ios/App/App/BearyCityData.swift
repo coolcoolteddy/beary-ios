@@ -249,8 +249,15 @@ enum BearyCityData {
             matchedRegion = matchedCountry.regions.first(where: { normalize($0.name) == normalize(rawRegion) })
         }
         var matchedCity: String?
-        if let matchedRegion = matchedRegion, let rawCity = city, !rawCity.isEmpty {
-            matchedCity = matchedRegion.cities.first(where: { normalize($0) == normalize(rawCity) })
+        if let matchedRegion = matchedRegion {
+            if let rawCity = city, !rawCity.isEmpty {
+                matchedCity = matchedRegion.cities.first(where: { normalize($0) == normalize(rawCity) })
+            }
+            // 直辖市：locality 常为空，市本身就是地级市（cities 表里就是它自己）；
+            // 没匹配到城市时直接用地区名当城市（北京／上海／天津／重庆）。
+            if matchedCity == nil, matchedRegion.cities.contains(where: { normalize($0) == normalize(matchedRegion.name) }) {
+                matchedCity = matchedRegion.name
+            }
         }
         return (matchedCountry.name, matchedRegion?.name, matchedCity)
     }

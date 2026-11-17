@@ -99,6 +99,8 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     private var locationChoiceMade = false
     private var locationCityText = "未获取定位"
     private var isRequestingLocation = false
+    /// 定位请求代次：旧请求晚到时丢弃，不覆盖新请求的状态（跳步后落地的旧结果同此）。
+    private var locationGeneration = 0
     private var reminderOn = BearyLocalNotifications.shared.isEnabled(.dailyReminder)
     private var notificationChoiceMade = false
     private var isRequestingNotification = false
@@ -135,6 +137,8 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     private var panTargetStep: Step?
     private var panTargetDirection: Direction?
     private var panTargetView: UIView?
+    /// 拖动待定：.began 时速度常为 ~0，方向等 changed 里按累计位移定（M5）。
+    private var panPending = false
 
     deinit {
         typewriterTimer?.invalidate()
@@ -157,6 +161,19 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         stopTypewriter()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // P3 打字机：页面被盖住又回来时从断点续打（不重置已打的字）。
+        if step == .p3, typewriterTimer == nil, typedCount < Self.typewriterSuffix.count {
+            if UIAccessibility.isReduceMotionEnabled {
+                typedLabel?.text = Self.typewriterSuffix
+                typedCount = Self.typewriterSuffix.count
+            } else {
+                scheduleNextTypewriterChar(after: 0.15)
+            }
+        }
     }
 
     // MARK: - Chrome
@@ -359,7 +376,8 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     }
 
     private func goTo(_ newStep: Step, direction: Direction, animated: Bool) {
-        guard newStep != step, !isTransitioning else { return }
+        // M4：拖动进行中不响应按钮——否则两套转场同时往容器里装页。
+        guard newStep != step, !isTransitioning, !panActive else { return }
         let oldStep = step
         let oldView = currentStepView
         if oldStep == .p3 {
@@ -434,20 +452,35 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         switch gesture.state {
         case .began:
             guard !isTransitioning, !panActive else { return }
-            let velocity = gesture.velocity(in: containerView)
-            guard abs(velocity.x) > abs(velocity.y) else { return }
-            let direction: Direction = velocity.x < 0 ? .forward : .back
-            let targetRaw = direction == .forward ? step.rawValue + 1 : step.rawValue - 1
-            guard let targetStep = Step(rawValue: targetRaw) else { return }
-            let width = containerView.bounds.width
-            let targetView = stepView(for: targetStep)
-            let offset: CGFloat = direction == .forward ? width : -width
-            installStepView(targetView, initialTransform: CGAffineTransform(translationX: offset, y: 0))
-            panActive = true
-            panTargetStep = targetStep
-            panTargetDirection = direction
-            panTargetView = targetView
+            // M5：.began 时速度常为 ~0，方向不在这里定——changed 里按累计位移定。
+            panPending = true
         case .changed:
+            if panPending, !panActive {
+                // 转场进行中先等着（按钮刚点了翻页），转场完再认方向。
+                guard !isTransitioning else { return }
+                let translation = gesture.translation(in: containerView)
+                // 竖向为主：本手势不认，交给 scroll view。
+                if abs(translation.y) > abs(translation.x), abs(translation.y) > 10 {
+                    panPending = false
+                    return
+                }
+                guard abs(translation.x) > 10 else { return }
+                let direction: Direction = translation.x < 0 ? .forward : .back
+                let targetRaw = direction == .forward ? step.rawValue + 1 : step.rawValue - 1
+                guard let targetStep = Step(rawValue: targetRaw) else {
+                    panPending = false
+                    return
+                }
+                let width = containerView.bounds.width
+                let targetView = stepView(for: targetStep)
+                let offset: CGFloat = direction == .forward ? width : -width
+                installStepView(targetView, initialTransform: CGAffineTransform(translationX: offset, y: 0))
+                panActive = true
+                panTargetStep = targetStep
+                panTargetDirection = direction
+                panTargetView = targetView
+                panPending = false
+            }
             guard panActive, let direction = panTargetDirection, let targetView = panTargetView, let currentView = currentStepView else { return }
             let width = containerView.bounds.width
             let translation = gesture.translation(in: containerView).x
@@ -461,6 +494,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             let targetOffset: CGFloat = direction == .forward ? width : -width
             targetView.transform = CGAffineTransform(translationX: targetOffset + clamped, y: 0)
         case .ended, .cancelled, .failed:
+            panPending = false
             guard panActive else { return }
             settlePan(gesture)
         default:
@@ -1123,17 +1157,21 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     private func requestLocation() {
         guard !isRequestingLocation else { return }
         isRequestingLocation = true
+        locationGeneration += 1
+        let generation = locationGeneration
         if !isTransitioning && !panActive {
             refreshCurrentStep()
         }
         BearyOneShotLocation.request { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
+                // 旧请求晚到了：新请求已在跑，别动它的状态。
+                guard generation == strongSelf.locationGeneration else { return }
                 strongSelf.isRequestingLocation = false
                 switch result {
                 case .coordinate(let latitude, let longitude):
                     strongSelf.locationGranted = true
-                    strongSelf.reverseGeocode(latitude: latitude, longitude: longitude)
+                    strongSelf.reverseGeocode(latitude: latitude, longitude: longitude, generation: generation)
                 case .denied, .unavailable:
                     strongSelf.locationGranted = false
                     strongSelf.locationChoiceMade = true
@@ -1144,13 +1182,18 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         }
     }
 
-    private func reverseGeocode(latitude: Double, longitude: Double) {
+    private func reverseGeocode(latitude: Double, longitude: Double, generation: Int) {
         let location = CLLocation(latitude: latitude, longitude: longitude)
         CLGeocoder().reverseGeocodeLocation(location) { [weak self] placemarks, _ in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
+                // 旧请求或已离开位置步：结果丢弃，不写 locatedCity（表单不该用
+                // 用户没在位置步上确认过的城市预填）。
+                guard generation == strongSelf.locationGeneration, strongSelf.step == .location else { return }
                 let place = placemarks?.first
-                let matched = BearyCityData.match(country: place?.country, region: place?.administrativeArea, city: place?.locality)
+                // 直辖市 locality 常为空，区在 subLocality 里；match 层会把直辖市
+                // 的地区名本身当城市（M8）。
+                let matched = BearyCityData.match(country: place?.country, region: place?.administrativeArea, city: place?.locality ?? place?.subLocality)
                 strongSelf.locationChoiceMade = true
                 if let matchedCity = matched {
                     if let region = matchedCity.region, let city = matchedCity.city {
@@ -1319,9 +1362,13 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
                 if settings.authorizationStatus == .notDetermined {
                     strongSelf.isRequestingNotification = true
                     strongSelf.refreshNotificationStepIfVisible()
-                    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in
+                    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
                         DispatchQueue.main.async {
                             strongSelf.isRequestingNotification = false
+                            // M2：被拒时提醒开关同步关掉——否则设置页读到开、系统却不发通知，两边不一致。
+                            if !granted {
+                                strongSelf.reminderOn = false
+                            }
                             strongSelf.notificationChoiceMade = true
                             strongSelf.refreshNotificationStepIfVisible()
                         }

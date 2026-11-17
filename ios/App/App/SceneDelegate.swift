@@ -420,6 +420,21 @@ final class BearyChromeViewController: UIViewController {
     /// 注册后链路收尾：邀请绑定文案暂存，等引导＋ID 卡走完再 toast 一次
     ///（引导全屏盖住主页时 toast 不可读，故不立即弹）。
     private var pendingReferralToast: String?
+    /// ID 卡表单不早于此刻弹：结束页关掉后 400ms 内，viewDidAppear 的补触发
+    /// 要让路（M1——否则表单在关页瞬间就弹，400ms 延迟被绕过）。
+    private var formNotBefore = Date.distantPast
+    /// 表单正在展示（内存态）：markFormSeen 改在退出回调里记之后，防重复弹。
+    private var isIDCardFormPresenting = false
+    /// 邀请绑定文案持久化键（按用户分键）：链路中途被杀时，下次冷启动凭它补弹。
+    private static func referralToastKey(userId: Int) -> String {
+        "beary_post_registration_referral_toast_\(userId)"
+    }
+    /// 邀请绑定文案暂存（内存＋UserDefaults 双份）：引导＋ID 卡链路走完再 toast。
+    private func stashReferralToast(_ text: String, userId: Int) {
+        let toastText = BearyReferralFeedback.toastText(base: text, plusUntil: SessionManager.shared.currentUser?.plusUntil)
+        pendingReferralToast = toastText
+        UserDefaults.standard.set(toastText, forKey: Self.referralToastKey(userId: userId))
+    }
     /// 登录循环修：自动弹登录定时器（401 后 1.2 秒延迟弹 + .me 门延迟弹）同一时刻
     /// 只排一个——排队时已有待触发的直接跳过，触发时先清标记再走原有守卫；显式
     /// 登录路径（顶栏 pill、onRequireLogin、编辑器未登录）不受影响。
@@ -3084,13 +3099,17 @@ final class BearyChromeViewController: UIViewController {
                         // 邀请绑定文案暂存，等引导＋ID 卡链路走完再 toast
                         //（引导全屏盖住主页时 toast 不可读，故不立即弹）。
                         if isNewRegistration, let userId = SessionManager.shared.currentUser?.id, SessionManager.shared.isLoggedIn,
-                            !BearyIDCardStore.isOnboardingSeen(userId: userId),
-                            self.presentedViewController == nil {
+                            !BearyIDCardStore.isOnboardingSeen(userId: userId) {
+                            // B2：先立 pending、暂存 toast，再看有没有 modal——modal 在前时
+                            // 本轮不弹，pending 已立，下次冷启动／modal 清掉后凭它恢复，
+                            // 不再丢引导；toast 也不走通用路，等链路走完再弹。
                             if let text = referralText, !text.isEmpty {
-                                self.pendingReferralToast = BearyReferralFeedback.toastText(base: text, plusUntil: SessionManager.shared.currentUser?.plusUntil)
+                                self.stashReferralToast(text, userId: userId)
                             }
                             BearyIDCardStore.markOnboardingPending(userId: userId)
-                            self.presentPostRegistrationOnboarding()
+                            if self.presentedViewController == nil {
+                                self.presentPostRegistrationOnboarding()
+                            }
                             return
                         }
                         // 其余登录：原有行为（邀请绑定 toast；无待续写意图）。
@@ -3485,6 +3504,8 @@ final class BearyChromeViewController: UIViewController {
         vc.onLoggedIn = { [weak self, weak vc, weak onboarding] referralText in
             // 新号登录成功先解 arm（当前态即新号，不得再恢复原号）。
             SessionManager.shared.completeAccountAddSession()
+            // M9：dismiss 前先取新注册标志（dismiss 后登录页可能释放）。
+            let isNewRegistration = vc?.loggedInIsNew ?? false
             // 登录页瞬时撤掉（不播滑下，避免成功路径上引导页闪现两次动效），
             // 随后引导层淡出；seen 写在登录成功时（与 /me 成败无关）。
             // 引导层立即淡出（不等 /me），避免 /me 等待期间用户在引导页上
@@ -3493,6 +3514,23 @@ final class BearyChromeViewController: UIViewController {
                 guard let self = self else { return }
                 UserDefaults.standard.set(true, forKey: BearyOnboardingViewController.seenKey)
                 onboarding?.dismiss(animated: BearyMotion.animated(true))
+                // M9：这里注册的新号也走注册后引导——先等 /me 回来再定身份
+                //（登录刚成功时 currentUser 还是旧号），toast 暂存不立即弹。
+                if isNewRegistration {
+                    SessionManager.shared.refreshMe { [weak self] _ in
+                        DispatchQueue.main.async { [weak self] in
+                            guard let self = self, SessionManager.shared.isLoggedIn,
+                                  let userId = SessionManager.shared.currentUser?.id,
+                                  !BearyIDCardStore.isOnboardingSeen(userId: userId) else { return }
+                            if let text = referralText, !text.isEmpty {
+                                self.stashReferralToast(text, userId: userId)
+                            }
+                            BearyIDCardStore.markOnboardingPending(userId: userId)
+                            self.maybePresentPendingPostRegistrationOnboarding()
+                        }
+                    }
+                    return
+                }
                 // 审计登录杂项：邀请绑定反馈落点——引导层淡出、露出主页时 toast
                 // 一次基础文案（此时 refreshMe 尚未回包，Plus 到期日补全只在主
                 // 登录路径做；firstLaunch 随后开编辑器时 toast 会被全屏编辑器盖住，
@@ -3535,7 +3573,24 @@ final class BearyChromeViewController: UIViewController {
             return
         }
         if BearyIDCardStore.isOnboardingSeen(userId: userId) && !BearyIDCardStore.isFormSeen(userId: userId) {
+            // M1：结束页关掉后 400ms 内不弹，等 onFinished 的定时器。
+            guard Date() >= formNotBefore else { return }
             presentIDCardFormIfNeeded()
+            return
+        }
+        if BearyIDCardStore.isCardPending(userId: userId) {
+            // B1：生成/跳过后 380ms 窗口内被 modal 挡住或被杀，凭已存的卡数据补弹。
+            if let saved = BearyIDCardStore.load(userId: userId) {
+                presentIDCardSheet(data: saved)
+                return
+            }
+            BearyIDCardStore.clearCardPending(userId: userId)
+        }
+        // 链路已走完、但邀请绑定 toast 还没弹（卡片打开时被杀）：补弹一次。
+        if let text = UserDefaults.standard.string(forKey: Self.referralToastKey(userId: userId)) {
+            UserDefaults.standard.removeObject(forKey: Self.referralToastKey(userId: userId))
+            pendingReferralToast = nil
+            showToast(message: text)
         }
     }
 
@@ -3547,10 +3602,15 @@ final class BearyChromeViewController: UIViewController {
         flow.modalPresentationStyle = .fullScreen
         flow.onFinished = { [weak self, weak flow] in
             guard let strongSelf = self, let flowVC = flow else { return }
-            guard let userId = SessionManager.shared.currentUser?.id else { return }
-            strongSelf.pendingLocatedCity = flowVC.locatedCity
-            BearyIDCardStore.markOnboardingSeen(userId: userId)
+            // M3：先关本页（即使用户已登出/切换，点「进入beary」也不能卡在结束页），
+            // 再看用户还在不在——在才写 seen、排表单。
+            let locatedCity = flowVC.locatedCity
             flowVC.dismiss(animated: BearyMotion.animated(true)) {
+                guard let userId = SessionManager.shared.currentUser?.id else { return }
+                strongSelf.pendingLocatedCity = locatedCity
+                BearyIDCardStore.markOnboardingSeen(userId: userId)
+                // M1：表单不早于关页后 400ms（viewDidAppear 的补触发要让路）。
+                strongSelf.formNotBefore = Date().addingTimeInterval(0.4)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                     strongSelf.presentIDCardFormIfNeeded()
                 }
@@ -3563,26 +3623,39 @@ final class BearyChromeViewController: UIViewController {
     private func presentIDCardFormIfNeeded() {
         guard let userId = SessionManager.shared.currentUser?.id else { return }
         guard !BearyIDCardStore.isFormSeen(userId: userId) else { return }
+        guard !isIDCardFormPresenting else { return }
         guard presentedViewController == nil else { return }
-        BearyIDCardStore.markFormSeen(userId: userId)
+        // B3：seen 不在这里记，改在三个退出回调里记——表单开着被杀时，
+        // 下次冷启动能补弹（只弹一次靠 isFormSeen，见 markFormSeen）。
+        isIDCardFormPresenting = true
         let displayName = SessionManager.shared.currentUser?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let initialNickname = displayName.isEmpty ? "Teddy" : displayName
         let locatedCity = pendingLocatedCity
         pendingLocatedCity = nil
         BearyIDCardFormSheet.show(from: topmostViewController(), initialNickname: initialNickname, locatedCity: locatedCity, onGenerate: { [weak self] data in
             guard let strongSelf = self else { return }
-            BearyIDCardStore.save(data, userId: SessionManager.shared.currentUser?.id)
+            strongSelf.isIDCardFormPresenting = false
+            BearyIDCardStore.markFormSeen(userId: userId)
+            BearyIDCardStore.save(data, userId: userId)
+            // B1：卡片待弹先记下来——380ms 窗口内有 modal 在前或被杀时，下次冷启动补弹。
+            BearyIDCardStore.markCardPending(userId: userId)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.38) {
                 strongSelf.presentIDCardSheet(data: data)
             }
         }, onSkip: { [weak self] defaultData in
             guard let strongSelf = self else { return }
-            BearyIDCardStore.save(defaultData, userId: SessionManager.shared.currentUser?.id)
+            strongSelf.isIDCardFormPresenting = false
+            BearyIDCardStore.markFormSeen(userId: userId)
+            BearyIDCardStore.save(defaultData, userId: userId)
+            BearyIDCardStore.markCardPending(userId: userId)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.38) {
                 strongSelf.presentIDCardSheet(data: defaultData)
             }
         }, onDismissedWithoutChoice: { [weak self] in
-            self?.finishPostRegistrationChain()
+            guard let strongSelf = self else { return }
+            strongSelf.isIDCardFormPresenting = false
+            BearyIDCardStore.markFormSeen(userId: userId)
+            strongSelf.finishPostRegistrationChain()
         })
     }
 
@@ -3590,17 +3663,49 @@ final class BearyChromeViewController: UIViewController {
     private func presentIDCardSheet(data: BearyIDCardData) {
         guard let user = SessionManager.shared.currentUser else { return }
         guard presentedViewController == nil else { return }
-        let stats = BearyIDCardStore.stats(userId: user.id, createdAtMs: user.createdAt)
+        // M7：统计读盘放后台（loadAllEntries 是同步读盘），算好再回主线程弹卡片。
+        let userId = user.id
+        let createdAtMs = user.createdAt
         let avatarURL = BearyImageURLs.avatarURL(user.avatar)
-        BearyIDCardSheet.show(from: topmostViewController(), cardData: data, stats: stats, isPlus: user.plus ?? false, avatarURL: avatarURL, onDismissed: { [weak self] in
-            self?.finishPostRegistrationChain()
-        })
+        let isPlus = user.plus ?? false
+        // M6：卡号用真值——/me 下发的 serial_id（TD-000001 式），没有时按账号页
+        // 同款回退（@handle／数字 id），绝不编造；预览的 № 0001 是 mock。
+        let serialText: String?
+        if let serial = user.serialId, !serial.isEmpty {
+            serialText = serial
+        } else if let handle = user.handle, !handle.isEmpty {
+            serialText = "@" + handle
+        } else if let id = user.id {
+            serialText = "\(id)"
+        } else {
+            serialText = nil
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let stats = BearyIDCardStore.stats(userId: userId, createdAtMs: createdAtMs)
+            DispatchQueue.main.async { [weak self] in
+                guard let strongSelf = self else { return }
+                // B1：后台算数期间有 modal 上来时不硬弹，pending 留着下次再试。
+                guard strongSelf.presentedViewController == nil else { return }
+                BearyIDCardStore.clearCardPending(userId: userId)
+                BearyIDCardSheet.show(from: strongSelf.topmostViewController(), cardData: data, stats: stats, isPlus: isPlus, avatarURL: avatarURL, serialText: serialText, onDismissed: { [weak self] in
+                    self?.finishPostRegistrationChain()
+                })
+            }
+        }
     }
 
     /// 注册后链路收尾：表单/卡片都关了之后，把暂存的邀请绑定文案 toast 一次。
     private func finishPostRegistrationChain() {
-        if let text = pendingReferralToast {
-            pendingReferralToast = nil
+        // 内存那份优先；被杀后只剩持久化那份（链路走完才清）。
+        var text = pendingReferralToast
+        pendingReferralToast = nil
+        if text == nil, let userId = SessionManager.shared.currentUser?.id {
+            text = UserDefaults.standard.string(forKey: Self.referralToastKey(userId: userId))
+        }
+        if let userId = SessionManager.shared.currentUser?.id {
+            UserDefaults.standard.removeObject(forKey: Self.referralToastKey(userId: userId))
+        }
+        if let text = text {
             showToast(message: text)
         }
     }

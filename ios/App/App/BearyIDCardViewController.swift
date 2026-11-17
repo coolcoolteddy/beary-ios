@@ -230,6 +230,9 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         cityButton.contentHorizontalAlignment = .left
         cityButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 28)
         cityButton.titleLabel?.font = UIFont.systemFont(ofSize: 16)
+        // 三级全名长时缩字不截尾（「中国 · 内蒙古自治区 · 锡林郭勒盟」）。
+        cityButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        cityButton.titleLabel?.minimumScaleFactor = 0.7
         cityButton.addTarget(self, action: #selector(cityButtonTapped), for: .touchUpInside)
         cityContainer.addSubview(cityButton)
         let cityChevron = UIImageView(image: UIImage(systemName: "chevron.right"))
@@ -655,8 +658,8 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
 
 enum BearyIDCardSheet {
 
-    static func show(from presenter: UIViewController, cardData: BearyIDCardData, stats: BearyIDCardStore.Stats, isPlus: Bool, avatarURL: URL?, onDismissed: @escaping () -> Void) {
-        let sheet = BearyIDCardSheetViewController(cardData: cardData, stats: stats, isPlus: isPlus, avatarURL: avatarURL)
+    static func show(from presenter: UIViewController, cardData: BearyIDCardData, stats: BearyIDCardStore.Stats, isPlus: Bool, avatarURL: URL?, serialText: String?, onDismissed: @escaping () -> Void) {
+        let sheet = BearyIDCardSheetViewController(cardData: cardData, stats: stats, isPlus: isPlus, avatarURL: avatarURL, serialText: serialText)
         sheet.onDismissed = onDismissed
         let delegate = BearyBottomSheetTransitioningDelegate()
         sheet.sheetDelegate = delegate
@@ -684,6 +687,7 @@ final class BearyIDCardSheetViewController: UIViewController {
     private let stats: BearyIDCardStore.Stats
     private let isPlus: Bool
     private let avatarURL: URL?
+    private let serialText: String?
     private var didCallDismissed = false
     private var extraBottomInset: CGFloat = 0
 
@@ -691,11 +695,12 @@ final class BearyIDCardSheetViewController: UIViewController {
     private let cardView = BearyIDCardView()
     private let plusSwitch = UISwitch()
 
-    init(cardData: BearyIDCardData, stats: BearyIDCardStore.Stats, isPlus: Bool, avatarURL: URL?) {
+    init(cardData: BearyIDCardData, stats: BearyIDCardStore.Stats, isPlus: Bool, avatarURL: URL?, serialText: String?) {
         self.cardData = cardData
         self.stats = stats
         self.isPlus = isPlus
         self.avatarURL = avatarURL
+        self.serialText = serialText
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -766,7 +771,7 @@ final class BearyIDCardSheetViewController: UIViewController {
         stack.addArrangedSubview(grabberWrap)
         // 卡片（点按绕 Y 轴翻转）。
         cardView.translatesAutoresizingMaskIntoConstraints = false
-        cardView.configure(data: cardData, stats: stats, isPlus: isPlus, avatarURL: avatarURL)
+        cardView.configure(data: cardData, stats: stats, isPlus: isPlus, avatarURL: avatarURL, serialText: serialText)
         cardView.heightAnchor.constraint(equalTo: cardView.widthAnchor, multiplier: 1.0 / 1.586).isActive = true
         let cardTap = UITapGestureRecognizer(target: self, action: #selector(cardTapped))
         cardView.addGestureRecognizer(cardTap)
@@ -839,7 +844,11 @@ final class BearyIDCardSheetViewController: UIViewController {
             // 背面自带绕 Y 轴 180° 的预旋转，直接画会镜像：先归零再画。
             faceView.layer.transform = CATransform3DIdentity
         }
-        let renderer = UIGraphicsImageRenderer(size: faceView.bounds.size)
+        // 存图用 3x 渲染（屏上卡片只有约 272×171pt，默认倍率存出来才约 800×500px）。
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 3
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: faceView.bounds.size, format: format)
         let image = renderer.image { _ in
             faceView.drawHierarchy(in: faceView.bounds, afterScreenUpdates: true)
         }
@@ -887,6 +896,13 @@ final class BearyIDCardView: UIView {
     private var avatarPhotoView: UIImageView?
     private var avatarGlyphView: UIImageView?
     private var compact = false
+    /// configure 的入参存一份：layoutSubviews 里 compact 翻面时重建卡片用（M10）。
+    private var configuredData: BearyIDCardData?
+    private var configuredStats: BearyIDCardStore.Stats?
+    private var configuredAvatarURL: URL?
+    private var configuredSerialText: String?
+    /// 翻转进行中：连点两次不叠加动画（面与点按次数对不上）。
+    private var isFlipping = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -928,12 +944,29 @@ final class BearyIDCardView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(data: BearyIDCardData, stats: BearyIDCardStore.Stats, isPlus: Bool, avatarURL: URL?) {
+    func configure(data: BearyIDCardData, stats: BearyIDCardStore.Stats, isPlus: Bool, avatarURL: URL?, serialText: String?) {
         self.isPlus = isPlus
+        configuredData = data
+        configuredStats = stats
+        configuredAvatarURL = avatarURL
+        configuredSerialText = serialText
         // 窄屏卡片收紧内距（320 宽机型仍须装下背面全部内容）。
         compact = bounds.width > 0 ? bounds.width < 340 : UIScreen.main.bounds.width < 388
         buildFront()
-        buildBack(data: data, stats: stats, avatarURL: avatarURL)
+        buildBack(data: data, stats: stats, avatarURL: avatarURL, serialText: serialText)
+        updatePlusBadge()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // M10：实际宽度定下来后再定 compact——configure 时 bounds 还是 0
+        //（屏幕宽回退在 iPad 分屏里判错），旋转／分屏变宽后也要重算。
+        guard bounds.width > 0 else { return }
+        let newCompact = bounds.width < 340
+        guard newCompact != compact, let data = configuredData, let stats = configuredStats else { return }
+        compact = newCompact
+        buildFront()
+        buildBack(data: data, stats: stats, avatarURL: configuredAvatarURL, serialText: configuredSerialText)
         updatePlusBadge()
     }
 
@@ -950,6 +983,7 @@ final class BearyIDCardView: UIView {
 
     /// 点卡片绕 Y 轴 0.55s 弹簧翻转；减动效时直接换面。
     func flip(animated: Bool) {
+        guard !isFlipping else { return }
         isShowingBack.toggle()
         let target: CGFloat = isShowingBack ? CGFloat.pi : 0
         let applyTransform = {
@@ -959,7 +993,10 @@ final class BearyIDCardView: UIView {
             self.flipContainer.layer.transform = transform
         }
         if animated && BearyMotion.animated(true) {
-            UIView.animate(withDuration: 0.55, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: applyTransform, completion: nil)
+            isFlipping = true
+            UIView.animate(withDuration: 0.55, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: applyTransform, completion: { [weak self] _ in
+                self?.isFlipping = false
+            })
         } else {
             applyTransform()
         }
@@ -972,6 +1009,8 @@ final class BearyIDCardView: UIView {
     // MARK: - Front（干净纯白：logo 行＋标语＋翻转提示）
 
     private func buildFront() {
+        // 重建先清旧子视图（layoutSubviews 里 compact 翻面时重建，见 M10）。
+        frontView.subviews.forEach { $0.removeFromSuperview() }
         // 顶行：横版 logo 19 高＋「ID」。
         let topRow = UIStackView()
         topRow.translatesAutoresizingMaskIntoConstraints = false
@@ -982,6 +1021,11 @@ final class BearyIDCardView: UIView {
         logoImage.contentMode = .scaleAspectFit
         logoImage.translatesAutoresizingMaskIntoConstraints = false
         logoImage.heightAnchor.constraint(equalToConstant: 19).isActive = true
+        // 只定高不定宽时帧是原图内在宽（@2x 155pt／@3x 103pt），图在框里留白、
+        // 「ID」偏移随倍率变——按原图宽高比定宽，框即图。
+        if let logo = logoImage.image {
+            logoImage.widthAnchor.constraint(equalTo: logoImage.heightAnchor, multiplier: logo.size.width / logo.size.height).isActive = true
+        }
         topRow.addArrangedSubview(logoImage)
         let idLabel = UILabel()
         idLabel.font = UIFont.systemFont(ofSize: 13, weight: .bold)
@@ -1034,11 +1078,13 @@ final class BearyIDCardView: UIView {
 
     // MARK: - Back（分段：黑带＋名字＋明细＋统计）
 
-    private func buildBack(data: BearyIDCardData, stats: BearyIDCardStore.Stats, avatarURL: URL?) {
+    private func buildBack(data: BearyIDCardData, stats: BearyIDCardStore.Stats, avatarURL: URL?, serialText: String?) {
+        // 重建先清旧子视图（layoutSubviews 里 compact 翻面时重建，见 M10）。
+        backView.subviews.forEach { $0.removeFromSuperview() }
         let bandHeight: CGFloat = compact ? 35 : 39
         let avatarDiameter: CGFloat = compact ? 36 : 46
         let bodyGap: CGFloat = compact ? 5 : 8
-        // 黑带：白 logo 21 高＋「ID」，右端「№ 0001」。
+        // 黑带：白 logo 21 高＋「ID」，右端卡号（真值，见 M6）。
         let band = UIView()
         band.translatesAutoresizingMaskIntoConstraints = false
         band.backgroundColor = .black
@@ -1060,6 +1106,10 @@ final class BearyIDCardView: UIView {
         bandLogo.contentMode = .scaleAspectFit
         bandLogo.translatesAutoresizingMaskIntoConstraints = false
         bandLogo.heightAnchor.constraint(equalToConstant: 21).isActive = true
+        // 同正面：按原图宽高比定宽，框即图（只定高时帧是内在宽，留白且偏移随倍率变）。
+        if let logo = bandLogo.image {
+            bandLogo.widthAnchor.constraint(equalTo: bandLogo.heightAnchor, multiplier: logo.size.width / logo.size.height).isActive = true
+        }
         bandRow.addArrangedSubview(bandLogo)
         let bandIDLabel = UILabel()
         bandIDLabel.font = UIFont.systemFont(ofSize: 15, weight: .bold)
@@ -1071,7 +1121,13 @@ final class BearyIDCardView: UIView {
         numberLabel.translatesAutoresizingMaskIntoConstraints = false
         numberLabel.font = UIFont.systemFont(ofSize: 11, weight: .semibold)
         numberLabel.textColor = UIColor(white: 1, alpha: 0.75)
-        numberLabel.text = "№ 0001"
+        // M6：卡号用真值（serial_id／@handle／数字 id，见 SceneDelegate），
+        // 没有真值时不显示这一行，不编造。
+        if let serialText = serialText {
+            numberLabel.text = "№ \(serialText)"
+        } else {
+            numberLabel.isHidden = true
+        }
         band.addSubview(numberLabel)
         NSLayoutConstraint.activate([
             bandRow.leadingAnchor.constraint(equalTo: band.leadingAnchor, constant: 16),
@@ -1138,6 +1194,10 @@ final class BearyIDCardView: UIView {
         nameLabel.font = UIFont.systemFont(ofSize: 19, weight: .bold)
         nameLabel.textColor = BearyOnboardingPalette.ink
         nameLabel.text = data.nickname
+        // 长昵称不顶皇冠：先缩字，缩到头再截尾。
+        nameLabel.adjustsFontSizeToFitWidth = true
+        nameLabel.minimumScaleFactor = 0.7
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         nameRow.addArrangedSubview(nameLabel)
         let badge = makePlusBadge()
         plusBadge = badge
@@ -1146,7 +1206,8 @@ final class BearyIDCardView: UIView {
         let joinedLabel = UILabel()
         joinedLabel.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
         joinedLabel.textColor = UIColor(red: 199.0 / 255.0, green: 116.0 / 255.0, blue: 0.0 / 255.0, alpha: 1)
-        joinedLabel.text = "今天加入 beary"
+        // 注册当天才说「今天加入」；冷启动补弹时可能已是几天后，改说加入日期。
+        joinedLabel.text = stats.joinDays == 1 ? "今天加入 beary" : "加入于 \(stats.sinceText)"
         nameStack.addArrangedSubview(joinedLabel)
         // 明细格（生日只月日／城市只城市名／SINCE；没填的不显示）。
         let detailsContainer = UIView()
@@ -1235,6 +1296,9 @@ final class BearyIDCardView: UIView {
         valueView.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
         valueView.textColor = BearyOnboardingPalette.ink
         valueView.text = value
+        // 长城市名（如克孜勒苏柯尔克孜自治州）缩字不截尾。
+        valueView.adjustsFontSizeToFitWidth = true
+        valueView.minimumScaleFactor = 0.7
         cell.addArrangedSubview(valueView)
         return cell
     }
@@ -1251,6 +1315,8 @@ final class BearyIDCardView: UIView {
         numberLabel.font = UIFont.systemFont(ofSize: compact ? 15 : 17, weight: .bold)
         numberLabel.textColor = BearyOnboardingPalette.ink
         numberLabel.text = "\(number)"
+        numberLabel.adjustsFontSizeToFitWidth = true
+        numberLabel.minimumScaleFactor = 0.7
         numberRow.addArrangedSubview(numberLabel)
         let unitLabel = UILabel()
         unitLabel.font = UIFont.systemFont(ofSize: 10.5)

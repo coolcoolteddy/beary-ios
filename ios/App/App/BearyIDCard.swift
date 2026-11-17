@@ -73,6 +73,20 @@ enum BearyIDCardStore {
         UserDefaults.standard.set(true, forKey: key("idcard_form_seen", userId: userId))
     }
 
+    /// ID 卡待弹：生成/跳过后 380ms 窗口内有 modal 在前、或被杀时，凭它下次
+    /// 冷启动补弹（卡数据已存，见 save/load）。卡片弹出后清掉。
+    static func isCardPending(userId: Int?) -> Bool {
+        UserDefaults.standard.bool(forKey: key("idcard_pending", userId: userId))
+    }
+
+    static func markCardPending(userId: Int?) {
+        UserDefaults.standard.set(true, forKey: key("idcard_pending", userId: userId))
+    }
+
+    static func clearCardPending(userId: Int?) {
+        UserDefaults.standard.removeObject(forKey: key("idcard_pending", userId: userId))
+    }
+
     // MARK: - Card data
 
     static func save(_ data: BearyIDCardData, userId: Int?) {
