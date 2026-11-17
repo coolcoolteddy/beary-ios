@@ -184,6 +184,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         tableViewTopToTopBarConstraint?.isActive = true
 
         NotificationCenter.default.addObserver(self, selector: #selector(friendsChanged), name: .bearyFriendsChanged, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(userBlocked(_:)), name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(userChanged), name: .bearyUserDidChange, object: nil)
         load()
     }
@@ -251,6 +252,18 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     @objc private func friendsChanged() {
         // 别处回关/取关后本页若还开着，重拉一次（不叠加 toast、不抢焦点）。
         load()
+    }
+
+    /// 个人页拉黑后就地删行：拉黑成功只发 .bearyDidBlockUser（object 为对方 id，
+    /// BearyNativeCommon confirmBlock），不发 .bearyFriendsChanged，取关链路不动；
+    /// 拉黑即断互关，被拉黑者不再是好友，点按即最终态——只删该行，不重拉。
+    /// 不在列表里时（别处拉黑的非好友）直接忽略。
+    @objc private func userBlocked(_ note: Notification) {
+        guard let userId = note.object as? Int,
+              let index = friends.firstIndex(where: { $0.id == userId }) else { return }
+        friends.remove(at: index)
+        updateTitleAndEmptyState()
+        tableView.deleteRows(at: [IndexPath(row: index, section: 0)], with: .fade)
     }
 
     @objc private func userChanged() {
