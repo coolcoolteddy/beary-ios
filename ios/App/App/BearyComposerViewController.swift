@@ -6187,6 +6187,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
+    /// 9 张上限的剩余名额：普通图＋已引用的内联图合计（与发布口径 uploadedImageKeys 一致）。
+    private func remainingImageSlots() -> Int {
+        Self.maxImages - imageItems.count - referencedGifKeys().count
+    }
+
     private func createImageItem(localImage: UIImage?, key: String?, uploading: Bool, localFile: String?, failed: Bool) -> ComposerImageItem {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -6525,6 +6530,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     @objc private func didTapUndoRemovedImage() {
         guard let pending = pendingRemovedImage else { return }
+        // 满 9 张时不插回：撤销即确认删除，缓冲提交、toast 提示。
+        if remainingImageSlots() <= 0 {
+            commitPendingRemoval()
+            showToast(message: "最多 9 张图片")
+            return
+        }
         pendingUndoTimer?.invalidate()
         pendingUndoTimer = nil
         pendingRemovedImage = nil
@@ -6751,7 +6762,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         var config = PHPickerConfiguration()
-        config.selectionLimit = BearyComposerViewController.maxImages - imageItems.count
+        config.selectionLimit = remainingImageSlots()
         // 实况：filter 含 livePhotos，实况资产才能以 PHLivePhoto 取到视频部分；
         // 非实况资产仍走原 UIImage 路径（见 picker 分流），filter 本身不改上限与顺序。
         config.filter = .any(of: [.images, .livePhotos])
@@ -6770,7 +6781,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         picker.dismiss(animated: BearyMotion.animated(true))
         for result in results {
-            if imageItems.count >= BearyComposerViewController.maxImages {
+            if imageItems.count + referencedGifKeys().count >= BearyComposerViewController.maxImages {
                 break
             }
             let provider = result.itemProvider
