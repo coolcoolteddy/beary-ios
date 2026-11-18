@@ -838,7 +838,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             draftId: currentDraftId,
             accountId: currentAccountIdForPublish(),
             imageLocalFiles: imageItems.compactMap { $0.localFile },
-            images: imageItems.map { BearyPublishImage(localFile: $0.localFile, serverKey: $0.key, liveVideoKey: $0.liveVideoKey, liveVideoFile: $0.liveVideoFile, liveVideoData: $0.liveVideoData) })
+            images: imageItems.map { BearyPublishImage(localFile: $0.localFile, serverKey: $0.key, liveVideoKey: $0.liveVideoKey, liveVideoFile: $0.liveVideoFile, liveVideoData: $0.liveVideoData, uploadMode: $0.uploadMode, originalFile: $0.originalFile) })
     }
     private var didAutoFocus = false
     // 标题行已去掉：进页拉回旗标与 ensureTitleRowVisibleOnEntry 已整段删除
