@@ -1490,7 +1490,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 出现走规范 §6 局部状态 0.18s 淡入，减动效直设；收起先淡出、完成再藏。
     private func updateNineGridButton(count: Int) {
         let shouldShow = count > 3
-        guard nineGridWrapView.isHidden != shouldShow else { return }
+        guard nineGridWrapView.isHidden == shouldShow else { return }
         nineGridHideToken += 1
         let animated = window != nil && !UIAccessibility.isReduceMotionEnabled
         if shouldShow {
