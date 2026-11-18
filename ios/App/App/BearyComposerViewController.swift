@@ -7847,7 +7847,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 不进图片条；[gif:] 记号引用的才是内联图，见 BearyGIF.isInlineImageKey），
             // 再 setBody/setHeadline——否则首渲时 [gif:] 解析不到 key。
             // 补拉二次调用不重置（用户可能已在加载期间增删自定义图）。
-            inlineGifKeys = (entry.images ?? []).filter { BearyGIF.isInlineImageKey($0, content: entry.content ?? "") }
+            inlineGifKeys = (entry.images ?? []).filter { BearyGIF.isInlineImageKey($0, content: entry.content ?? "", title: entry.title ?? "") }
             for key in inlineGifKeys { prefetchGIFFirstFrame(key: key) }
             setBodyAttributedText(entry.content)
             applyBodyLineHeight()
@@ -7925,7 +7925,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         var seenImageKeys = Set(imageItems.compactMap { $0.key })
         for key in entry.images ?? [] {
             // 内联图不进图片条（只进 inlineGifKeys，见上），否则条里会多一张静态图。
-            guard BearyGIF.isInlineImageKey(key, content: entry.content ?? "") == false else { continue }
+            guard BearyGIF.isInlineImageKey(key, content: entry.content ?? "", title: entry.title ?? "") == false else { continue }
             guard !seenImageKeys.contains(key) else { continue }
             seenImageKeys.insert(key)
             let item = createImageItem(localImage: nil, key: key, uploading: false, localFile: nil, failed: false)
@@ -8551,7 +8551,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 内联图预填：先从 draft.images 里分出内联图片键（只进 inlineGifKeys，
                 // 不进图片条；[gif:] 记号引用的才是内联图，见 BearyGIF.isInlineImageKey），
                 // 再 setBody/setHeadline——否则首渲时 [gif:] 解析不到 key。
-                self.inlineGifKeys = draft.images.compactMap { $0.serverKey }.filter { BearyGIF.isInlineImageKey($0, content: draft.content) }
+                self.inlineGifKeys = draft.images.compactMap { $0.serverKey }.filter { BearyGIF.isInlineImageKey($0, content: draft.content, title: draft.title ?? "") }
                 for key in self.inlineGifKeys { self.prefetchGIFFirstFrame(key: key) }
                 self.setBodyAttributedText(draft.content)
                 self.applyBodyLineHeight()
@@ -8585,7 +8585,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.refreshLocationRow()
                 for img in draft.images {
                     // 内联图不进图片条（只进 inlineGifKeys，见上）。
-                    guard img.serverKey.map({ BearyGIF.isInlineImageKey($0, content: draft.content) }) != true else { continue }
+                    guard img.serverKey.map({ BearyGIF.isInlineImageKey($0, content: draft.content, title: draft.title ?? "") }) != true else { continue }
                     // 新模型：旧版存下的 failed 项（上传失败态）归一化为待传——
                     // 本地文件在，发布时由发布中心上传；编辑模式仍按 state 原样建项。
                     let failed = self.isEditMode && (img.state == .failed)
@@ -8639,7 +8639,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // B1：待传实况视频同批读回内存（见 decodeRestoredImages），
                 // 读不到的记 liveVideoMissing，续传时跳过、不静默变静态。
                 // 内联图不进解码（无本地文件，见上）。
-                let decodingImages = draft.images.filter { $0.serverKey.map({ BearyGIF.isInlineImageKey($0, content: draft.content) }) != true }
+                let decodingImages = draft.images.filter { $0.serverKey.map({ BearyGIF.isInlineImageKey($0, content: draft.content, title: draft.title ?? "") }) != true }
                 self.decodeRestoredImages(decodingImages, accountId: restoreAccountId) { [weak self] decoded, liveVideos in
                     guard let self = self else { return }
                     self.applyRestoredImages(decoded: decoded, liveVideos: liveVideos)
@@ -9113,7 +9113,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 内联图预填：先从 draft.images 里分出内联图片键（只进 inlineGifKeys，
         // 不进图片条；[gif:] 记号引用的才是内联图，见 BearyGIF.isInlineImageKey），
         // 再 setBody/setHeadline——否则首渲时 [gif:] 解析不到 key。
-        inlineGifKeys = draft.images.compactMap { $0.serverKey }.filter { BearyGIF.isInlineImageKey($0, content: draft.content) }
+        inlineGifKeys = draft.images.compactMap { $0.serverKey }.filter { BearyGIF.isInlineImageKey($0, content: draft.content, title: draft.title ?? "") }
         for key in inlineGifKeys { prefetchGIFFirstFrame(key: key) }
         setBodyAttributedText(draft.content)
         applyBodyLineHeight()
@@ -9138,7 +9138,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         setQuotePanelOpen(false)
         for img in draft.images {
             // 内联图不进图片条（只进 inlineGifKeys，见上）。
-            guard img.serverKey.map({ BearyGIF.isInlineImageKey($0, content: draft.content) }) != true else { continue }
+            guard img.serverKey.map({ BearyGIF.isInlineImageKey($0, content: draft.content, title: draft.title ?? "") }) != true else { continue }
             // 新模型：旧版存下的 failed 项（上传失败态）归一化为待传——
             // 本地文件在，发布时由发布中心上传；编辑模式仍按 state 原样建项。
             let failed = isEditMode && (img.state == .failed)
@@ -9179,7 +9179,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // B1：待传实况视频同批读回内存（见 decodeRestoredImages），
         // 读不到的记 liveVideoMissing，续传时跳过、不静默变静态。
         // 内联图不进解码（无本地文件，见上）。
-        let decodingImages = draft.images.filter { $0.serverKey.map({ BearyGIF.isInlineImageKey($0, content: draft.content) }) != true }
+        let decodingImages = draft.images.filter { $0.serverKey.map({ BearyGIF.isInlineImageKey($0, content: draft.content, title: draft.title ?? "") }) != true }
         decodeRestoredImages(decodingImages, accountId: composerOriginAccountId ?? BearyDraftStore.currentAccountId) { [weak self] decoded, liveVideos in
             guard let self = self else { return }
             self.applyRestoredImages(decoded: decoded, liveVideos: liveVideos)
