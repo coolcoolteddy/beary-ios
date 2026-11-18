@@ -183,9 +183,11 @@ final class BearyTagEntriesViewController: UIViewController {
             self.loadingIndicator.stopAnimating()
             switch result {
             case .success(let list):
+                // 整表更新前记下首个可见日记，reload 后按它恢复滚动位置。
+                let anchor = self.captureScrollAnchor()
                 self.entries = list.entries ?? []
                 self.hasMore = (list.entries ?? []).count >= Self.pageSize
-                self.tableView.reloadData()
+                self.reloadDataPreservingScrollPosition(anchor: anchor)
                 self.refreshStateLabel()
             case .failure:
                 self.loadFailed = true
@@ -203,14 +205,60 @@ final class BearyTagEntriesViewController: UIViewController {
             switch result {
             case .success(let list):
                 let page = list.entries ?? []
-                self.entries.append(contentsOf: page)
+                // 页间可能重叠：按日记 ID 去重，只追加本页没出现过的新篇。
+                let anchor = self.captureScrollAnchor()
+                var seenIds = Set(self.entries.compactMap { $0.id })
+                let fresh = page.filter { entry in
+                    guard let id = entry.id else { return true }
+                    guard !seenIds.contains(id) else { return false }
+                    seenIds.insert(id)
+                    return true
+                }
                 self.hasMore = page.count >= Self.pageSize
-                self.tableView.reloadData()
+                guard !fresh.isEmpty else { return }
+                let startIndex = self.entries.count
+                self.entries.append(contentsOf: fresh)
+                if self.tableView.numberOfRows(inSection: 0) == startIndex {
+                    // 纯追加只插新行：旧 cell 不重建，头像/图片不闪。
+                    let indexPaths = (startIndex..<(startIndex + fresh.count)).map { IndexPath(row: $0, section: 0) }
+                    self.tableView.insertRows(at: indexPaths, with: .none)
+                } else {
+                    // 表行数与模型对不上时才整表重载，并按首个可见日记恢复滚动。
+                    self.reloadDataPreservingScrollPosition(anchor: anchor)
+                }
             case .failure:
                 // 分页失败不弹失败态（已有内容可看），下一轮滑到底再试一次。
                 break
             }
         }
+    }
+
+    /// 整表 reload 前的首个可见锚点：日记 ID + 该行顶缘到视口顶的距离。
+    private struct ScrollAnchor {
+        let entryId: String
+        let topOffset: CGFloat
+    }
+
+    private func captureScrollAnchor() -> ScrollAnchor? {
+        guard let first = tableView.indexPathsForVisibleRows?.min(by: { $0.row < $1.row }),
+              first.row >= 0, first.row < entries.count,
+              let entryId = entries[first.row].id else { return nil }
+        let rect = tableView.rectForRow(at: first)
+        return ScrollAnchor(entryId: entryId, topOffset: rect.minY - tableView.contentOffset.y)
+    }
+
+    /// 整表 reload 后按锚点日记恢复滚动位置（找不到锚点日记时不动）。
+    private func reloadDataPreservingScrollPosition(anchor: ScrollAnchor?) {
+        tableView.reloadData()
+        guard let anchor = anchor,
+              let row = entries.firstIndex(where: { $0.id == anchor.entryId }) else { return }
+        tableView.layoutIfNeeded()
+        let rect = tableView.rectForRow(at: IndexPath(row: row, section: 0))
+        var offsetY = rect.minY - anchor.topOffset
+        let topLimit = -tableView.adjustedContentInset.top
+        let bottomLimit = max(topLimit, tableView.contentSize.height - tableView.bounds.height + tableView.adjustedContentInset.bottom)
+        offsetY = min(max(offsetY, topLimit), bottomLimit)
+        tableView.setContentOffset(CGPoint(x: 0, y: offsetY), animated: false)
     }
 
     private func refreshStateLabel() {
@@ -327,6 +375,24 @@ extension BearyTagEntriesViewController: UITableViewDataSource, UITableViewDeleg
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         entries.count
+    }
+
+    func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
+        // 固定 estimatedRowHeight 240 与真实卡高（纯文字约 150、有图 400+）差近
+        // 200pt，滚动中 contentSize 不断修正会漂移；与首页同款，按模型逐行估算。
+        guard indexPath.row >= 0, indexPath.row < entries.count else { return 240 }
+        let entry = entries[indexPath.row]
+        let expanded = BearyDiaryCardCell.expandedEntryIds.contains(entry.id ?? "")
+        return BearyDiaryCardCell.estimatedCardHeight(for: entry, mode: .feed, expanded: expanded, firstRow: false, tableWidth: estimationTableWidth(using: tableView))
+    }
+
+    /// 估算用表宽：布局前 bounds 仍为 0 时按 view 宽、再按屏宽回落
+    /// （iPad 600 列上限只在布局后体现在 bounds 上，布局前回落值会偏大，
+    /// 估算行数偏少，真实布局后自动修正，不影响可见行）。
+    private func estimationTableWidth(using tableView: UITableView) -> CGFloat {
+        if tableView.bounds.width > 0 { return tableView.bounds.width }
+        if view.bounds.width > 0 { return view.bounds.width }
+        return UIScreen.main.bounds.width
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
