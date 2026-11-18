@@ -3388,9 +3388,13 @@ class BearyTimelineViewController: UIViewController {
             }
             // 回收站桶同增：删帖即进回收站，下次进回收站页先读本地就能看到该条
             //（桶不存在时不建半截桶，进页走网络首拉；下次静默刷新用服务端值纠正残差）。
+            // 26-25：进桶写走同步队列（不卡主线程删行）；进页读桶走同一队列
+            //（loadFirstPage 经 runDiskWrite），先入队先执行，删完立刻进页仍能看到该条。
             // r17-C2：进桶写返回结果，失败记日志（无桶可写时返回 true，不记日志）。
-            if !BearyTrashSyncStore.prependDeleted(accountId: uid, entry: entry) {
-                NSLog("[BearyEntrySync] prependDeleted failed account=%d entry=%@", uid, entry.id ?? "-")
+            BearyEntrySync.shared.runTrashDiskWrite(accountId: uid) {
+                if !BearyTrashSyncStore.prependDeleted(accountId: uid, entry: entry) {
+                    NSLog("[BearyEntrySync] prependDeleted failed account=%d entry=%@", uid, entry.id ?? "-")
+                }
             }
         }
         let newSections = currentSections()

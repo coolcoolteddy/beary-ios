@@ -780,8 +780,7 @@ enum BearyTrashSyncStore {
     /// 全量回收站同步开始时记基线，提交前比对——拉取开始后发生过写盘
     /// 即旧快照已过期，跳过本次提交保旧盘，下次 kick 重跑。
     /// 计数放桶上而不用同步实例的队列：删帖进桶 prependDeleted 是桶的静态
-    /// 入口、调用方在主线程，锁内计数保证主线程写与同步队列提交读之间
-    /// 不丢代际；静默刷新写盘同样记代际（其数据更新鲜，跳过旧快照提交
+    /// 入口，锁内计数保证进桶写与同步队列提交读之间不丢代际；静默刷新写盘同样记代际（其数据更新鲜，跳过旧快照提交
     /// 是正确的保守选择，下次 kick 再对齐）。
     private static let writeSequenceLock = NSLock()
     private static var writeSequence = 0
@@ -1015,8 +1014,9 @@ enum BearyTrashSyncStore {
     /// 删帖进桶：新删的 deletedAt 最大，按服务端序插到头部。
     /// 桶不存在时不建半截桶（进回收站页走网络首拉，登录同步会建整桶）；下次静默刷新用服务端值纠正残差。
     /// 返回值：true = 桶状态已正确（无桶可写时同样 true，不是失败）；false = 应写未写成。
-    /// 审计新一轮 #4：本入口在主线程同步调用，读-改-写进写锁——与同步
-    /// 队列的分批合并/收尾互斥，合并侧再读不到进桶前的旧快照。
+    /// 审计新一轮 #4：读-改-写进写锁——与同步队列的分批合并/收尾互斥，
+    /// 合并侧再读不到进桶前的旧快照。26-25：调用方经 runTrashDiskWrite
+    /// 投到同步队列，不再主线程同步调；代际仍由本入口在锁内记一次。
     @discardableResult
     static func prependDeleted(accountId: Int, entry: Entry) -> Bool {
         trashFileLock.lock()
