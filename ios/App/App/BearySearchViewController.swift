@@ -109,6 +109,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var searchBoxWidthCap: NSLayoutConstraint?
     private var searchBoxFullWidth: NSLayoutConstraint?
     private var searchSeq: Int = 0
+    /// 审计 26-21：离页时若正处加载态／框忙态，记下被中断的那一轮，返回时由
+    /// viewDidAppear 用框内文本重发一次查询；非加载态离页不记、不重发。
+    private var searchInterruptedOnLeave = false
     /// S10：在途搜索请求（新搜索先取消上一路；searchSeq 保留作第二道防线）。
     private var currentSearchTask: URLSessionDataTask?
     private var lastQuery: String = ""
@@ -506,12 +509,33 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// U4：仅首次出现聚焦输入框；从详情返回时不再重弹键盘。
     private var searchFieldFocusedOnce = false
 
+    /// 审计 26-21：离页收尾——停框内圈与状态区转圈。旧回包凭 searchSeq 守卫丢弃，
+    /// 永远走不到 setBoxBusy(false)，不收尾则转圈卡死；离页前正加载则记旗标，
+    /// 返回时由 viewDidAppear 重发查询。
+    private func stopSearchSpinnersForLeave() {
+        searchInterruptedOnLeave = !boxRingView.isHidden || !stateRingView.isHidden
+        setBoxBusy(false)
+        stateRingView.isHidden = true
+        BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // 网页 openSearch 会在 120ms 后聚焦输入框；原生页打开即聚焦，同口径。
         if !searchFieldFocusedOnce {
             searchFieldFocusedOnce = true
             searchField.becomeFirstResponder()
+        }
+        // 审计 26-21：离页中断的那轮搜索返回后重发——框内有文本按当前文本重查，
+        // 无文本退回初始态；非中断返回（看详情回来等）不重发。
+        if searchInterruptedOnLeave {
+            searchInterruptedOnLeave = false
+            let query = searchField.text ?? ""
+            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                showInitialState()
+            } else {
+                runSearch(query: query)
+            }
         }
     }
 
@@ -531,6 +555,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         currentLoadMoreTasks = []
         isLoadingMore = false
         updateSearchFooter()
+        // 审计 26-21：停框内圈与状态区转圈（旧回包被序号守卫丢弃，不会收尾）。
+        stopSearchSpinnersForLeave()
     }
 
     /// 切页生命周期 7 号（最小化）：容器切页只改 isHidden，本回调不触发，
@@ -547,6 +573,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         currentLoadMoreTasks = []
         isLoadingMore = false
         updateSearchFooter()
+        // 审计 26-21：停框内圈与状态区转圈（旧回包被序号守卫丢弃，不会收尾）。
+        stopSearchSpinnersForLeave()
     }
 
     deinit {
