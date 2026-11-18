@@ -178,6 +178,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// （见 animationController(forDismissed:)），不再碰。
     private var underlyingViewPrepared = false
     private weak var preparedUnderlyingView: UIView?
+    private var dismissDragGeneration = 0
+    /// 下甩拖动代次：每次新拖动开始即 +1；上一轮取消后待执行的延迟清理
+    /// 凭发起时代次校验，代次已变（新拖动已开始）即丢弃，避免它在新拖动
+    /// 进行中把底页撤掉、遮罩淡出后露黑底（第三轮审计第 31 项）。
 
     init(imageKeys: [String], startIndex: Int) {
         self.imageKeys = imageKeys
@@ -1087,8 +1091,11 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         guard underlyingViewPrepared, let underlying = preparedUnderlyingView else { return }
         // 延迟与复位动画同长（motion.normal 0.26s 弹簧复位）；减动效时复位是瞬时的，延迟取 0。
         let delay = UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal
+        let generation = dismissDragGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak underlying] in
             guard let self = self, self.underlyingViewPrepared, let underlying = underlying else { return }
+            // 新拖动已开始时丢弃上一轮的清理：底页仍归新拖动用，撤掉会露黑底。
+            guard generation == self.dismissDragGeneration else { return }
             guard underlying.superview == self.view.superview, self.view.window != nil else { return }
             underlying.removeFromSuperview()
             self.underlyingViewPrepared = false
@@ -1280,6 +1287,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             suppressNextStageTapAfterLive = false
             // 灯箱对子统一定位：panMode 与 dismissDragActive 同步清零
             // （0=未定，1=横向翻页，2=纵向甩关闭；dismissDragActive 即 panMode==2）。
+            // 新拖动开始即递增代次，使上一轮取消后待执行的延迟清理失效。
+            dismissDragGeneration += 1
             panMode = 0
             dismissDragActive = false
         } else if sender.state == .changed {
