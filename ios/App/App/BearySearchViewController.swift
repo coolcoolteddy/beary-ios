@@ -2025,14 +2025,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 }
             }
         }
-        // 64 包回归修：公开组直接用服务端 entries——服务端 SQL 已按 published=1 过滤，
-        // 且公开条目不下发 is_public 字段（2026-10-26 curl 实测 /beary/api/search?q=的 返回
-        // entries 均无 is_public）；旧的 isPublic == true 二次过滤把全部公开条目滤掉，
-        // 导致公开组恒空。我的组保留 is_public 过滤（服务端对 mine 下发 is_public）。
-        // 审计 P0-3 核实：服务端搜索 SQL 已含 ephemeral_until > now 条件（worker.js
-        // 搜索段）与拉黑过滤，故后端无需补；App 侧再加一道有效态过滤作防御
-        // （时钟/缓存边缘下过期限时篇也不进公开组）。
-        let publicEntries = (data.entries ?? []).filter { BearyEphemeral.isEffectivelyPublic($0) }.filter { !isBlockedForSearch(userId: $0.authorId) }
+        // 审计 #19：公开组不再以 isPublic == true 为必要条件——服务端 SQL 已按
+        // published=1 过滤并写死 is_public: true、visibility: "public"；任一公开
+        // 信号即可，缺 is_public 不再丢行；仍挡过期篇作防御（时钟/缓存边缘）。
+        // 我的组保留 is_public 过滤（服务端对 mine 下发 is_public）。
+        let publicEntries = (data.entries ?? []).filter { ($0.visibility == "public" || $0.isPublic == true) && !BearyEphemeral.isExpired($0) }.filter { !isBlockedForSearch(userId: $0.authorId) }
         let users = (data.users ?? []).filter { !isBlockedForSearch(userId: $0.id) }
         if mineEntries.isEmpty && publicEntries.isEmpty && users.isEmpty {
             showNoneState(query: query)
@@ -2359,8 +2356,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 新行按现行分区顺序落到本组末尾，本组此前无行时才补建分区头。
     /// 不动口径：游标/hasMore/去重仍在 loadMore 数据层（本函数再按
     /// 行 id/key 挡一道重复行）；过滤口径与 renderResults 逐字一致
-    /// （私密组只取 is_public == false；公开组有效公开 + 未拉黑；
-    /// 用户组未拉黑），避免追加行与全量渲染口径不一致。
+    /// （私密组只取 is_public == false；公开组公开信号（visibility/is_public 任一）
+    /// + 未过期 + 未拉黑；用户组未拉黑），避免追加行与全量渲染口径不一致。
     /// 行数减少的场景（拉黑/举报过滤、新搜索）不走这里，仍走
     /// renderResults（同关键词时按 key 复用已有行、只增删变化的行；
     /// 换关键词时全量重建）——增量追加无法表达“删行”。
@@ -2403,7 +2400,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         var publicRows: [UIView] = []
         for entry in publicEntries {
-            if BearyEphemeral.isEffectivelyPublic(entry) == false { continue }
+            // 审计 #19：与 renderResults 逐字一致——公开信号（visibility/is_public 任一）
+            // 即可，不过期、不拉黑；缺 is_public 不丢行。
+            if (entry.visibility == "public" || entry.isPublic == true) == false || BearyEphemeral.isExpired(entry) { continue }
             if isBlockedForSearch(userId: entry.authorId) { continue }
             guard let entryId = entry.id, rowEntryIds.contains(entryId) == false else { continue }
             if let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
