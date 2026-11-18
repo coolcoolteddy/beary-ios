@@ -176,8 +176,7 @@ final class BearyGrabHitView: UIView {
 }
 
 /// 审计第 9 项：滚动取消共享类——抽取首页（BearyFeedTableView）、个人页
-/// （BearyProfileTableView）、CalloutPicker（BearyCalloutScrollView）已有的
-/// 滚动取消策略。背景：滚动容器 delaysContentTouches=false 时，UIKit 默认
+/// （BearyProfileTableView）已有的滚动取消策略。背景：滚动容器 delaysContentTouches=false 时，UIKit 默认
 /// touchesShouldCancel 对 UIControl 返回 false，从按钮上起滑时按钮会一直占住
 /// 触摸、滚动视图抢不到 pan；返回 true 则拖动时按钮收到 touchCancel（各页已有的
 /// touchCancel 回弹/复位照常走），点按不动仍走 touchUpInside。

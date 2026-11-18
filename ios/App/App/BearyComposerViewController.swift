@@ -503,16 +503,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var selectedWeather: String? {
         didSet { editorEditVersion += 1 }
     }
-    /// 天气气温（摄氏度整数）：自动填或手改后才有值；清天气类型时同清。
+    /// 天气气温（摄氏度整数）：自动填后才有值；无天气类型时为空。
     private var selectedTemperature: Int? {
         didSet { editorEditVersion += 1 }
     }
-    /// 当地天气取数代次：快速连点天气钮时旧回包过期作废，不覆盖新一次的结果；
-    /// 手选天气/手改气温时亦 +1，使在途自动填回包过期作废、不覆盖手改值。
-    /// 再点天气钮会重新取数（代次再 +1），仍按 #427 口径覆盖手改。
+    /// 当地天气取数代次：选新地点/切草稿/重置空白时旧回包过期作废，不覆盖
+    /// 新一次的结果；再选地点会重新取数（代次再 +1）。
     private var weatherFetchGeneration = 0
-    /// 批 E 编辑器位置：已确认的位置（只有文本，无坐标）。nil = 未定位；
-    /// 定位失败不改本值（失败只 toast、不静默清掉已确认的位置；从未确认过时行即隐藏 = 未定位态）。
+    /// 批 E 编辑器位置：已确认的位置（两段文本＋经纬度，2026-11-14 Li 定改存经纬度）。
+    /// nil = 未定位；选地点面板里点 × 清除，失败不改本值（已确认过的位置
+    /// 不被失败清掉；从未确认过时底部元信息行即隐藏 = 未定位态）。
     private var selectedLocation: DiaryLocation? {
         didSet { editorEditVersion += 1 }
     }
@@ -1109,7 +1109,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 自定义选择器是否正开着：半屏弹窗下键盘回来会盖住弹窗下半与正文，
     /// 插图后键盘保持收起、表情直接落在可见的正文区；关弹窗后再点正文继续输。
     private var isGIFPickerOpen: Bool { gifPickerSheet?.view.window != nil }
-    private let weatherToolButton = BearyComposerToolButton(type: .system)
     private let recipientToolButton = BearyComposerToolButton(type: .system)
     private let quoteToolButton = BearyComposerToolButton(type: .system)
     /// 标签完整版（2026-11-18）：工具栏 # 钮（文字 #，无官方 hashtag 图标资产）；
@@ -1131,76 +1130,26 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 准备发布行高：chip 行 30 ＋上下边距各 6；限时态另加注行 16 ＋间距 4。
     private static let publishVisibilityRowHeight: CGFloat = 42
     private static let publishVisibilityRowNoteHeight: CGFloat = 20
-    // 编辑器改版（2026-10-29）：天气尖角弹出框（取代旧选择条）+ 框外收起层。
-    // 心情选择器已删（2026-11-18，心情改为正文键入 [mood:xxx]），此处只留天气框。
-    private let weatherCallout = BearyCalloutPickerView()
-    private let calloutDismissView = BearyCalloutDismissView()
-    /// 批 E 定位气泡与专属框外收起层（不复用 calloutDismissView：天气框与定位气泡
-    /// 的显隐状态机各自独立，复用会使一方收起时误关另一方）。
-    private let locationPopover = BearyLocationPopoverView()
-    private let locationDismissView = BearyCalloutDismissView()
-    private var locationPopoverOpen = false
-    /// 批 E 编辑器下方定位行（精确地点名 + 公开提示副行；无位置时整行隐藏，不留空行）。
-    private let locationRowStack = UIStackView()
-    private let locationLineRow = UIStackView()
-    private let locationIconView = UIImageView()
-    private let locationLabel = UILabel()
-    // 按钮普查：视觉 24×24，热区用 Hit44 扩到 44（视觉不动；左右邻居为文字行，无互叠按钮）。
-    private let locationClearButton = BearyHit44Button(type: .system)
-    private let locationNoteLabel = UILabel()
-    /// 天气弹出框是否打开（心情选择器已删，不再共用本状态机）。
-    private var weatherCalloutOpen = false
-    /// 审计第 31 项：打开当前框的触发钮（工具钮或已选 chip，二选一的实际点按者）。
-    /// 关闭还焦点只认它；程序性收起（换工具/面板/发布/取消等）不还焦点，故
-    /// 本字段只在用户主动关闭时由 hideCallout(restoreFocus: true) 消费。
-    private weak var calloutAccessibilityTrigger: UIView?
-    private var calloutTransitionGeneration = 0
-    /// 审计 1：浮层展示意图代次（与天气取数代次、转场代次分开）。
-    /// 天气钮点按时记下当次意图；点按定位/自定义/写给/引用等其他工具、
-    /// 或另一次显式 showCallout 时 +1，旧意图即失效——天气回包仍按
-    /// weatherFetchGeneration 正常落数、正常 toast，只是末尾不再抢开天气框。
-    private var calloutPresentationGeneration = 0
-    private func invalidatePendingCalloutPresentation() {
-        calloutPresentationGeneration += 1
-    }
-    private static let calloutTransitionDuration: TimeInterval = BearyMotion.micro
-    private static let calloutTransitionOffset: CGFloat = 6
-    private static let calloutHeight: CGFloat = 78
-    /// [24] 小项 2：天气框高约束（基准 78；步进器附属行显时 += 附属行高，
-    /// 见 updateWeatherCalloutHeight）。
-    private var weatherCalloutHeightConstraint: NSLayoutConstraint?
-
-    /// [24] 小项 2：天气框高 = 基准 + 附属行显隐对应的增量；框未搭建时
-    /// 约束为 nil，直接跳过（refreshSelectedChips 在搭建前也可能调到）。
-    private func updateWeatherCalloutHeight() {
-        guard let constraint = weatherCalloutHeightConstraint else { return }
-        constraint.constant = Self.calloutHeight + weatherCallout.accessoryExtraHeight
-    }
-    // C1：已选中项轻量 Chip 行（正文下方）：天气/写给各一枚，点 chip 打开对应选择条。
+    /// 底部元信息行（2026-11-18 定位重做，预览 v2）：内容栈最末（引用卡下方、
+    /// 工具栏上方）：定位钮（图钉＋地名，点按重开选地点面板）＋天气 chip
+    /// （图标＋天气名＋气温，仅展示、不可点）。无地点时天气 chip 在左下角；
+    /// 有地点时天气 chip 在定位右边（见 refreshMetaRow）。
+    private let metaRowStack = UIStackView()
+    private let locationMetaButton = BearyHit44Button(type: .system)
+    private let metaRowSpacer = UIView()
+    // C1：已选中项轻量 Chip 行（正文下方）：写给一枚，点 chip 打开对应选择条；
+    // 天气已移到底部元信息行（见 buildMetaRow），只展示、不可点。
     private let selectedChipsRow = UIStackView()
     /// 标签完整版（2026-11-18）：标签 chips 横向滚动行（selectedChipsRow 下方），
     /// 无标签时隐藏、不占位；chip 点 × 移除该标签（见 refreshTagsRow）。
     private let tagsScrollView = UIScrollView()
     private let tagsStackView = UIStackView()
-    /// 审计 P1-3：Chip 行首行（天气/写给单行态）；写给换行时脱离本行、改作
-    /// selectedChipsRow 的第二行（见 layoutSelectedChips），不另建容器。
+    /// Chip 行首行（只剩写给一枚；天气已移到底部元信息行）。
     private let selectedChipsFirstRow = UIStackView()
-    /// 审计 P1-3：写给当前是否在独立第二行；viewDidLayoutSubviews 宽变化时
-    /// 凭此 + 宽门限决定是否重算，避免移行触发布局 → 再移行的循环。
-    private var selectedChipsRecipientOnSecondRow = false
-    private var selectedChipsLastLayoutWidth: CGFloat = -1
-    /// [24] 审计后续小项 2：气温步进器已收进天气框附属行，不再进 chip 行；
-    /// 窄屏第二行包壳与换行兜底随之删除（步进器不再参与首行宽度计算）。
     /// 审计 P1-8：选择条转场代次——每次 refreshToolStrip 显隐变化即 +1；旧转场
     /// 的 completion 凭代次过期作废，不再碰视图，快速连点只收敛到最后状态。
     private var toolStripTransitionGeneration = 0
     private let weatherChipButton = BearyHit44Button(type: .system)
-    /// 气温步进器（只在已选天气时显）：− / 数值 / +，点数值弹系统输入框直输；
-    /// 无气温时点 ± 先落到 18° 再调（不凭空猜一个当地值当起点以外的数）。
-    private let tempStepperStack = UIStackView()
-    private let tempMinusButton = BearyHit44Button(type: .system)
-    private let tempLabelButton = BearyHit44Button(type: .system)
-    private let tempPlusButton = BearyHit44Button(type: .system)
     private let recipientChipButton = BearyHit44Button(type: .system)
     // C11：删图撤销条（图片条下方）：文案 + 撤销钮，10 秒到期自动消失并提交删除。
     private let imageUndoBar = UIView()
@@ -1317,16 +1266,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 109：内容栈首项为新标题输入区（见 buildHeadlineField），其下为正文。
         buildTextArea()
         buildSelectedChipsRow()
-        buildLocationRow()
         buildImageRow()
         buildImageUndoBar()
         buildToolbarRow()
-        buildCallouts()
-        buildLocationPopover()
         buildStatusRow()
         buildRecipientRow()
         buildQuoteSection()
         buildQuotePanel()
+        // 底部元信息行（定位＋天气）进内容栈最末（引用卡下方、工具栏上方，
+        // 见 buildMetaRow），须在 buildQuotePanel 之后建，顺序即栈顺序。
+        buildMetaRow()
         // 第三轮审计第 5 项：打开编辑器即绑定原账号（先于 setupEditContent /
         // restoreDraft 记下，检查点读写与编辑 PUT 都认它，不随重登改写；
         // 见 composerOriginAccountId，与 #1009 P0-1 同一绑定）。
@@ -1369,7 +1318,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 全走已有刷新函数重算。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             refreshSelectedChips()
-            syncWeatherToolButton()
+            refreshMetaRow()
             // 审计 15 项第 5 项：此前此处紧接着又调一次 refreshSelectedChips
             // （补丁叠加留下的重复调用），已删——一次刷新即含图标与换行重算。
             refreshInlineMoodImages()
@@ -1425,25 +1374,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshDraftPillWidth()
         // 109：工具栏宽变化（旋转/分屏/居中列切换）时重算草稿状态适配，320 宽下只留对勾、宽回升恢复文案。
         applyDraftStatusToolbarFit()
-        // 编辑器改版（2026-10-29）：弹出框打开时，尖角跟随工具栏图标中心；
-        // 放宽门之前（键盘只动工具栏纵向时宽门会早退，但锚点仍需每轮重算；
-        // 仅改尖角图层路径与收起层穿透区，不触发布局环）。
-        if weatherCalloutOpen {
-            updateCalloutArrowPositions()
-        }
-        // 审计 15 项第 9 项：定位气泡打开后，布局变化（键盘弹出、旋转、
-        // 分屏致工具栏移动）同样要更新箭头与收起层穿透区坐标——只更新坐标，
-        // 不重建视图；此前 viewDidLayoutSubviews 只处理心情/天气气泡。
-        if locationPopoverOpen {
-            updateLocationPopoverArrow()
-            locationDismissView.passthroughRects = [toolbarContainer.convert(toolbarContainer.bounds, to: locationDismissView)]
-        }
-        // 审计 P1-3：宽变化（旋转/分屏/居中列切换）时重算 Chip 行换行；同宽不重算，
-        // 移行本身触发布局也不会再进本分支，不成环。宽门限 0.5pt 与 sheet 高同款。
-        if selectedChipsRow.bounds.width > 0,
-           abs(selectedChipsRow.bounds.width - selectedChipsLastLayoutWidth) > 0.5 {
-            layoutSelectedChips()
-        }
         // 临时诊断（82 包追加，定根因后删除）：入口每调一次记一次，不节流。
         DiagFile.mark("composer-layout")
         let w = view.bounds.width
@@ -3022,8 +2952,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             selectedChipsRow.isHidden = true
             imageUndoBar.isHidden = true
             statusRow.isHidden = true
-            // 审计：定位行与引用面板互斥，打开面板时同藏（关闭时由 refreshLocationRow 按地点数据恢复）。
-            locationRowStack.isHidden = true
+            // 审计：底部元信息行与引用面板互斥，打开面板时同藏（关闭时由 refreshMetaRow 按地点/天气数据恢复）。
+            metaRowStack.isHidden = true
             // 顶部 @ 行同其他编辑器 chrome 一并隐藏（否则会与面板 tab 条重叠）。
             refreshMentionTopRow()
             updateScrollBottomAnchoring()
@@ -3055,8 +2985,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             visibilityButton.isHidden = true
             // 任务2：引用面板打开时准备发布行同其他 chrome 一并隐藏。
             refreshPublishVisibilityRow()
-            // 弹出框若开着也一并收起，不让它浮在面板上。
-            hideCallout(animated: false)
             refreshQuoteTabs()
             // 录屏批 (e)：原顺序先 layout 再显示面板，转圈在 load 里起在面板布局
             // 落定之前，首帧会落在面板收起态位置（编辑器中央一闪）再跳到面板里；
@@ -3126,8 +3054,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.refreshQuoteSection()
                 self.refreshImageStripVisibility()
                 self.refreshImageUndoBar()
-                // 审计：定位行按地点数据恢复（有地点才显示，无地点仍隐藏）。
-                self.refreshLocationRow()
+                // 审计：底部元信息行按地点/天气数据恢复（有地点或天气才显示，两者皆无仍隐藏）。
+                self.refreshMetaRow()
                 // 任务2：面板关闭后准备发布行按正常态（正文非空即显）恢复。
                 self.refreshPublishVisibilityRow()
                 if self.quotePanelSavedScrollValid {
@@ -3267,8 +3195,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             isEphemeral = true
         }
         refreshVisibilityButton()
-        // 批 E：段位切换时位置行副行（公开后他人仅见区级）同步变，防滞后。
-        refreshLocationRow()
         scheduleDraftSave()
         if isEphemeral {
             // 行已删，24 小时规则在编辑器内只剩此处一次提示（恢复草稿进限时态不重复提示）。
@@ -4080,7 +4006,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageToolButton.tintColor = BearyColors.ink
         imageToolButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
         imageToolButton.bearyAddPressFeedback()
-        // 批 E：定位钮插在图片钮右边、自定义钮之前（左组顺序：图片 → 定位 → 自定义 → 天气 → @ → 引用）。
+        // 批 E：定位钮插在图片钮右边、自定义钮之前（左组顺序：图片 → 定位 → 自定义 → @ → 引用 → #；天气钮已删，天气自动显示在底部元信息行）。
         locationToolButton.setImage(BearyLocationIcon.image(pointSize: 24), for: .normal)
         locationToolButton.accessibilityLabel = "添加位置"
         locationToolButton.tintColor = BearyColors.ink
@@ -4091,12 +4017,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         gifToolButton.tintColor = BearyColors.ink
         gifToolButton.addTarget(self, action: #selector(didTapGIFTool), for: .touchUpInside)
         gifToolButton.bearyAddPressFeedback()
-        // 天气钮图标随选中天气变（见 syncWeatherToolButton，网页 syncWxBtn 同款同步）。
-        weatherToolButton.setImage(BearyIconImages.image(named: "icon_weather_tool", pointSize: 24), for: .normal)
-        weatherToolButton.accessibilityLabel = "选择天气"
-        weatherToolButton.tintColor = BearyColors.ink
-        weatherToolButton.addTarget(self, action: #selector(didTapWeatherTool), for: .touchUpInside)
-        weatherToolButton.bearyAddPressFeedback()
         recipientToolButton.setImage(BearyIconImages.image(named: "icon_at", pointSize: 24), for: .normal)
         recipientToolButton.accessibilityLabel = "@ 谁"
         recipientToolButton.tintColor = BearyColors.ink
@@ -4116,7 +4036,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarContainer.translatesAutoresizingMaskIntoConstraints = false
         toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolRow.translatesAutoresizingMaskIntoConstraints = false
-        for button in [imageToolButton, locationToolButton, gifToolButton, weatherToolButton, recipientToolButton, quoteToolButton, tagToolButton] {
+        for button in [imageToolButton, locationToolButton, gifToolButton, recipientToolButton, quoteToolButton, tagToolButton] {
             button.translatesAutoresizingMaskIntoConstraints = false
             button.widthAnchor.constraint(equalToConstant: 24).isActive = true
             button.heightAnchor.constraint(equalToConstant: 24).isActive = true
@@ -4164,7 +4084,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolRow.addArrangedSubview(imageToolButton)
         toolRow.addArrangedSubview(locationToolButton)
         toolRow.addArrangedSubview(gifToolButton)
-        toolRow.addArrangedSubview(weatherToolButton)
         toolRow.addArrangedSubview(recipientToolButton)
         toolRow.addArrangedSubview(quoteToolButton)
         toolRow.addArrangedSubview(tagToolButton)
@@ -4248,11 +4167,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// C1：引用唯一入口（工具栏引用钮）开关 qp-mode 面板（C6：编辑模式也可改引用，不再早退）。
     @objc private func didTapQuoteTool() {
-        // 编辑器改版：弹出框打开时点其他工具钮，先收起框再走各自处理。
-        // 审计 1：切到引用工具时，在途的天气展示意图作废。
-        invalidatePendingCalloutPresentation()
-        hideCallout(animated: false)
-        hideLocationPopover(animated: false)
         // P1-14：冻结之外的第二道守卫（按钮禁用本已拦点按，防其他调用路径）。
         if isPublishing {
             showToast(message: isEditMode ? "保存中…" : "发布中…")
@@ -4332,9 +4246,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// Chip 行点按：只打开对应条（不做收起切换，Chip 本身就是“已选”指示）。
     private func openToolStrip(_ strip: ToolStrip) {
         if quotePanelOpen { return }
-        // 编辑器改版：同一时刻只开一个选择器——开写给条时若弹出框开着，先收起框
-        //（旧时切条即关上一条，弹出框不走 activeToolStrip，故此处显式收）。
-        hideCallout(animated: false)
         activeToolStrip = strip
         refreshToolStrip()
     }
@@ -4464,305 +4375,167 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updatePreferredContentSize()
     }
 
-    // MARK: - 编辑器改版（2026-10-29）：天气尖角弹出框
+    // MARK: - 底部元信息行与选地点面板（2026-11-18 定位重做，预览 v2）
 
-    /// 弹出框搭建：框体与框外收起层常驻 view（隐藏时 isHidden），约束一次激活；
-    /// 框左右与工具栏同宽（iPad 居中 608 列下自动跟随），框底贴工具栏顶 8pt 上方；
-    /// 框是覆盖层（不推限时行、不改 sheet 高），打开时短暂盖住限时行，点框外即收起。
-    private func buildCallouts() {
-        weatherCallout.translatesAutoresizingMaskIntoConstraints = false
-        calloutDismissView.translatesAutoresizingMaskIntoConstraints = false
-        weatherCallout.isHidden = true
-        calloutDismissView.isHidden = true
-        // 审计第 31 项：框外点按与 VoiceOver 逃离是同一用户主动关闭路径，
-        // 关闭后把焦点还给触发钮（hideCallout 的 restoreFocus 分支定落点）。
-        calloutDismissView.onTapOutside = { [weak self] in self?.hideCallout(animated: true, restoreFocus: true) }
-        weatherCallout.onAccessibilityEscape = { [weak self] in self?.hideCallout(animated: true, restoreFocus: true) }
-        // 心情选择器已删（2026-11-18），此处不再配 moodCallout。
-        // v6-8：天气框首位补“无”（清除）选项，键为 "none"，图为官方 icon_close 原图
-        //（见 weatherNoneImage；大小与其它天气图标一致 40pt、同色墨色模板）。
-        // 选中态口径（审计 E2 第 11 项）：已选天气在框内以 1pt 墨色描边标出
-        //（见 CalloutPicker refreshSelectedStates）；打开框时按当前 selectedWeather
-        // 同步；无天气时无行高亮。
-        weatherCallout.configure(
-            options: [BearyCalloutPickerView.Option(key: "none", accessibilityLabel: "无")] + weatherOrder.map { key in
-                BearyCalloutPickerView.Option(key: key, accessibilityLabel: "天气：" + (BearyText.weatherNames[key] ?? key))
-            },
-            onSelect: { [weak self] key in self?.didSelectWeatherFromCallout(key) },
-            imageProvider: { [weak self] key, _ in
-                if key == "none" { return self?.weatherNoneImage() }
-                return BearyIconImages.image(named: "icon_wx_\(key)", pointSize: 40)
-            },
-            // 天气选项贴动态 Lottie（night→moon；"无"不贴，保持静态）。
-            emoteKeyProvider: { key in key == "none" ? nil : BearyText.weatherLottieKey(for: key) },
-            selectedKey: selectedWeather
-        )
-        // [24] 小项 2：气温步进器以附属行身份挂进天气框（不进 chip 行），
-        // 框内点按步进器不触发框外收起（附属行在收起层之上、与框同层级）。
-        weatherCallout.setAccessoryView(tempStepperStack)
-        // 审计二轮 09：脚注高随字号/宽度变化时，框高约束跟着刷新。
-        weatherCallout.onFooterHeightChange = { [weak self] in self?.updateWeatherCalloutHeight() }
-        // 收起层先加、框后加：框在收起层之上，框内点按不触发框外收起。
-        view.addSubview(calloutDismissView)
-        view.addSubview(weatherCallout)
-        weatherCalloutHeightConstraint = weatherCallout.heightAnchor.constraint(equalToConstant: Self.calloutHeight)
-        NSLayoutConstraint.activate([
-            calloutDismissView.topAnchor.constraint(equalTo: view.topAnchor),
-            calloutDismissView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            calloutDismissView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            calloutDismissView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            weatherCallout.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
-            weatherCallout.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
-            weatherCallout.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor, constant: -8),
-            weatherCalloutHeightConstraint!,
-        ])
-        updateWeatherCalloutHeight()
+    /// 底部元信息行搭建：进 contentStack 最末（引用卡下方、工具栏上方），
+    /// 定位钮（图钉＋地名，点按重开选地点面板）＋天气 chip（图标＋天气名＋
+    /// 气温，仅展示、不可点）＋尾部弹性空位（两项左对齐）。无地点时天气
+    /// chip 在左下角；有地点时天气 chip 在定位右边（见 refreshMetaRow）。
+    private func buildMetaRow() {
+        metaRowStack.axis = .horizontal
+        metaRowStack.spacing = 8
+        metaRowStack.alignment = .center
+        metaRowStack.translatesAutoresizingMaskIntoConstraints = false
+        locationMetaButton.translatesAutoresizingMaskIntoConstraints = false
+        locationMetaButton.setImage(BearyLocationIcon.image(pointSize: 16), for: .normal)
+        locationMetaButton.tintColor = BearyColors.gray
+        locationMetaButton.titleLabel?.font = BearyDynamicType.secondaryFont()
+        locationMetaButton.setTitleColor(BearyColors.gray, for: .normal)
+        locationMetaButton.titleLabel?.numberOfLines = 1
+        locationMetaButton.titleLabel?.lineBreakMode = .byTruncatingTail
+        locationMetaButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        locationMetaButton.addTarget(self, action: #selector(didTapMetaLocationRow), for: .touchUpInside)
+        locationMetaButton.bearyAddPressFeedback()
+        locationMetaButton.setContentHuggingPriority(.required, for: .horizontal)
+        locationMetaButton.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        // 天气 chip：与旧 chip 行同款 pill 样式（圆角 999、surface2 底、
+        // 内边距 7/12/7/12、13 号字），移到底部元信息行后仅作展示，
+        // 不再点按、不再开天气框。
+        weatherChipButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        weatherChipButton.titleLabel?.numberOfLines = 1
+        weatherChipButton.titleLabel?.lineBreakMode = .byTruncatingTail
+        weatherChipButton.titleLabel?.adjustsFontSizeToFitWidth = false
+        weatherChipButton.setTitleColor(BearyColors.ink, for: .normal)
+        weatherChipButton.backgroundColor = BearyColors.surface2
+        weatherChipButton.layer.cornerRadius = 999
+        weatherChipButton.layer.masksToBounds = true
+        weatherChipButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
+        weatherChipButton.isHidden = true
+        weatherChipButton.isUserInteractionEnabled = false
+        weatherChipButton.translatesAutoresizingMaskIntoConstraints = false
+        weatherChipButton.setContentHuggingPriority(.required, for: .horizontal)
+        weatherChipButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        metaRowSpacer.translatesAutoresizingMaskIntoConstraints = false
+        metaRowSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        metaRowSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        metaRowStack.addArrangedSubview(locationMetaButton)
+        metaRowStack.addArrangedSubview(weatherChipButton)
+        metaRowStack.addArrangedSubview(metaRowSpacer)
+        contentStack.addArrangedSubview(metaRowStack)
+        contentStack.setCustomSpacing(0, after: metaRowStack)
+        refreshMetaRow()
     }
 
-    /// 打开天气弹出框：Chip 行点按只打开对应框（不做收起切换，Chip 本身就是“已选”指示；
-    /// 与旧 openToolStrip 同口径）。
-    /// 审计第 31 项：trigger 须传实际点按者（工具钮或 chip），关闭还焦点认它。
-    /// 本函数只开天气框（心情选择器已删）。
-    private func showCallout(trigger: UIView) {
-        if quotePanelOpen { return }
-        if weatherCalloutOpen { return }
-        // 审计 1：本次显式展示即为最新意图，在途的天气展示意图作废。
-        invalidatePendingCalloutPresentation()
-        // 同一时刻只开一个选择器：写给条若开着，先关条再开框（旧时切条即关上一条）。
-        if activeToolStrip == .recipient {
-            activeToolStrip = nil
-            refreshToolStrip()
-        }
-        calloutTransitionGeneration += 1
-        weatherCalloutOpen = true
-        calloutAccessibilityTrigger = trigger
-        // 审计 E2 第 11 项补步：configure 只在搭建时调一次，编辑/草稿的天气
-        // 晚于搭建才落定，故每次打开天气框都按当前 selectedWeather 同步一次，
-        // 否则重开框或编辑带天气的草稿时选中态仍是旧的。
-        weatherCallout.setSelectedKey(selectedWeather)
-        // [24] 小项 2：打开前按当前天气态定框高（有天气则含步进器行）。
-        weatherCallout.setAccessoryVisible(selectedWeather != nil)
-        updateWeatherCalloutHeight()
-        let target = weatherCallout
-        calloutDismissView.isHidden = false
-        target.isHidden = false
-        target.setEmoteOverlaysPlaying(true)
-        // 审计第 31 项：收起层盖住编辑器全域（仅工具栏穿透），触摸上背景内容
-        // 已不可达；但 VoiceOver 滑动不走 hitTest，不置 modal 仍能滑到被遮的
-        // 编辑器内容，故打开时把框体置为模态、只限框内子树（含天气附属行步进器）。
-        // modal 只影响 VoiceOver 导航，不改触摸穿透，工具栏点按口径不变；
-        // VoiceOver 用户出框走逃离手势（见 buildCallouts 的 onAccessibilityEscape）。
-        target.accessibilityViewIsModal = true
-        view.layoutIfNeeded()
-        updateCalloutArrowPositions()
-        // 审计第 31 项：打开后把 VoiceOver 焦点送进框内（已选优先、否则首个可见
-        // 选项；框内出现是同屏布局变化，用 layoutChanged，不用 screenChanged）。
-        // 下一 runloop 再发：若期间已关闭（weatherCalloutOpen 已变或框已隐藏）则不发，
-        // 不把焦点送进已关的框。未开 VoiceOver 时 post 为空操作。
-        DispatchQueue.main.async { [weak self, weak target] in
-            guard let self = self, let target = target,
-                  self.weatherCalloutOpen, !target.isHidden,
-                  let element = target.initialAccessibilityElement else { return }
-            UIAccessibility.post(notification: .layoutChanged, argument: element)
-        }
-        if UIAccessibility.isReduceMotionEnabled || view.window == nil {
-            target.alpha = 1
-            target.transform = .identity
-            return
-        }
-        target.alpha = 0
-        target.transform = CGAffineTransform(translationX: 0, y: Self.calloutTransitionOffset)
-        UIView.animate(
-            withDuration: Self.calloutTransitionDuration,
-            delay: 0,
-            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
-            animations: {
-                target.alpha = 1
-                target.transform = .identity
-            }
-        )
-    }
-
-    /// 审计第 31 项：restoreFocus 只在用户主动关闭时传 true（框外点按、
-    /// 逃离手势、同钮再点、点选收起）；换工具/面板/发布/取消/倒计时等程序性
-    /// 收起一律默认 false，不把焦点从新界面抢回触发钮。还焦点只在框真正
-    /// 隐藏后发（动画路径走 completion，代次过期则不发旧焦点）。
-    private func hideCallout(animated: Bool, restoreFocus: Bool = false) {
-        guard weatherCalloutOpen else { return }
-        weatherCalloutOpen = false
-        calloutTransitionGeneration += 1
-        let generation = calloutTransitionGeneration
-        let target = weatherCallout
-        let trigger = calloutAccessibilityTrigger
-        calloutAccessibilityTrigger = nil
-        if !animated || UIAccessibility.isReduceMotionEnabled || view.window == nil {
-            target.isHidden = true
-            target.setEmoteOverlaysPlaying(false)
-            target.alpha = 1
-            target.transform = .identity
-            target.accessibilityViewIsModal = false
-            calloutDismissView.isHidden = true
-            if restoreFocus, let element = calloutFocusReturnElement(trigger: trigger) {
-                UIAccessibility.post(notification: .layoutChanged, argument: element)
-            }
-            return
-        }
-        UIView.animate(
-            withDuration: Self.calloutTransitionDuration,
-            delay: 0,
-            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
-            animations: {
-                target.alpha = 0
-                target.transform = CGAffineTransform(translationX: 0, y: Self.calloutTransitionOffset)
-            },
-            completion: { [weak self] finished in
-                guard let self = self, finished, generation == self.calloutTransitionGeneration else { return }
-                target.isHidden = true
-                target.setEmoteOverlaysPlaying(false)
-                target.alpha = 1
-                target.transform = .identity
-                target.accessibilityViewIsModal = false
-                self.calloutDismissView.isHidden = true
-                if restoreFocus, let element = self.calloutFocusReturnElement(trigger: trigger) {
-                    UIAccessibility.post(notification: .layoutChanged, argument: element)
-                }
-            }
-        )
-    }
-
-    /// 审计第 31 项：关闭还焦点落点。首选打开时的实际触发钮；触发钮已隐藏
-    /// 或离线时（例如经 chip 点“无”清掉天气、chip 行随之隐藏）退到
-    /// 天气工具钮；两者都不可达时返回 nil，调用方不发焦点通知。
-    /// 只读 isHidden/window，不改任何按钮显隐与业务态。
-    private func calloutFocusReturnElement(trigger: UIView?) -> UIView? {
-        if let trigger = trigger, !trigger.isHidden, trigger.window != nil {
-            return trigger
-        }
-        let fallback = weatherToolButton
-        if !fallback.isHidden, fallback.window != nil {
-            return fallback
-        }
-        return nil
-    }
-
-    // MARK: - 批 E 定位行与定位气泡
-
-    /// 编辑器下方定位行：进 contentStack、紧跟已选 chip 行（viewDidLoad 里
-    /// buildSelectedChipsRow 之后立即建，顺序即栈顺序）；无位置时整行隐藏，不留空行。
-    private func buildLocationRow() {
-        locationIconView.translatesAutoresizingMaskIntoConstraints = false
-        locationIconView.image = BearyLocationIcon.image(pointSize: 16)
-        locationIconView.tintColor = BearyColors.gray
-        locationIconView.contentMode = .scaleAspectFit
-        locationLabel.translatesAutoresizingMaskIntoConstraints = false
-        locationLabel.font = BearyDynamicType.secondaryFont()
-        locationLabel.textColor = BearyColors.gray
-        locationLabel.numberOfLines = 1
-        locationLabel.lineBreakMode = .byTruncatingTail
-        // 清除钮用官方 icon_close（铁律：不用自绘 ×、不用 SF Symbol）。
-        locationClearButton.translatesAutoresizingMaskIntoConstraints = false
-        locationClearButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 16), for: .normal)
-        locationClearButton.tintColor = BearyColors.gray
-        locationClearButton.accessibilityLabel = "清除位置"
-        locationClearButton.addTarget(self, action: #selector(didTapClearLocation), for: .touchUpInside)
-        locationNoteLabel.translatesAutoresizingMaskIntoConstraints = false
-        locationNoteLabel.font = UIFont.systemFont(ofSize: 12)
-        locationNoteLabel.textColor = BearyColors.gray
-        locationNoteLabel.numberOfLines = 0
-        locationLineRow.axis = .horizontal
-        locationLineRow.spacing = 6
-        locationLineRow.alignment = .center
-        locationLineRow.translatesAutoresizingMaskIntoConstraints = false
-        locationLineRow.addArrangedSubview(locationIconView)
-        locationLineRow.addArrangedSubview(locationLabel)
-        locationLineRow.addArrangedSubview(locationClearButton)
-        locationRowStack.axis = .vertical
-        locationRowStack.spacing = 2
-        locationRowStack.translatesAutoresizingMaskIntoConstraints = false
-        locationRowStack.addArrangedSubview(locationLineRow)
-        locationRowStack.addArrangedSubview(locationNoteLabel)
-        contentStack.addArrangedSubview(locationRowStack)
-        NSLayoutConstraint.activate([
-            locationIconView.widthAnchor.constraint(equalToConstant: 16),
-            locationIconView.heightAnchor.constraint(equalToConstant: 16),
-            locationClearButton.widthAnchor.constraint(equalToConstant: 24),
-            locationClearButton.heightAnchor.constraint(equalToConstant: 24),
-        ])
-        refreshLocationRow()
-    }
-
-    /// 定位行刷新：行文案 = 精确地点名；公开段位且有区级时加橙色副行
-    /// “公开后他人仅见区级（X）”。可见性段位切换时也要调本函数（见
-    /// restoreVisibility/可见性切换调用点），否则副行会滞后于段位。
-    /// animated 只在确认新地点时传 true：只让位置行 0.18 秒淡入／淡变，
-    /// 其余刷新（草稿恢复、可见性切换、清除）直接换字，不带动效。
-    private func refreshLocationRow(animated: Bool = false) {
-        // 审计：引用面板打开期间定位行保持隐藏——面板内异步地点刷新
-        // （草稿恢复／发布门禁／可见性切档）不得把它重新显示出来。
+    /// 底部元信息行刷新：定位钮（有地点才显）＋天气 chip（有天气才显）；
+    /// 两者皆无时整行隐藏、不占位。引用面板打开期间整行隐藏（面板内异步
+    /// 刷新不得把它重新显示出来，与旧 refreshLocationRow 同款守卫）。
+    /// animated 只在选定/清除地点时传 true：定位钮淡入＋天气 chip 位移
+    /// （FLIP：先记 chip 旧帧，再改布局、按帧差反向位移、动画归零），
+    /// 取消定位时 chip 滑回左下角；其余刷新直接换字，不带动效。
+    /// 天气 chip 图标走 icon_wx_*，9 个天气资产已核齐全、无缺款；
+    /// drizzle/hail/overcast 无专属静态图与中文名，就近取 rain/snow/cloudy
+    /// 的图与名，不再隐藏。图标只是视觉辅助：accessibilityLabel 一律保留
+    /// 完整表述（“天气：晴”），不只靠图标传达信息。
+    private func refreshMetaRow(animated: Bool = false) {
         if quotePanelOpen {
-            locationRowStack.isHidden = true
+            metaRowStack.isHidden = true
             return
         }
-        guard let location = selectedLocation, !location.isEmpty, let name = location.name ?? location.district else {
-            locationRowStack.isHidden = true
-            locationRowStack.alpha = 1
-            locationLabel.text = nil
-            locationNoteLabel.text = nil
-            locationNoteLabel.isHidden = true
-            return
-        }
-        locationRowStack.isHidden = false
-        locationLabel.text = name
-        if selectedVisibilityPublished, let district = location.district, district != name {
-            locationNoteLabel.text = "公开后他人仅见区级（\(district)）"
-            locationNoteLabel.isHidden = false
+        // 天气 chip 内容（原 refreshSelectedChips 的天气段，整段移入此处）。
+        if let weather = selectedWeather, let name = BearyText.weatherNames[BearyText.weatherStaticKey(for: weather)] {
+            weatherChipButton.isHidden = false
+            let weatherTitle = selectedTemperature != nil ? "\(name) \(selectedTemperature!)°" : name
+            weatherChipButton.setTitle(weatherTitle, for: .normal)
+            let icon = BearyIconImages.image(named: "icon_wx_\(BearyText.weatherStaticKey(for: weather))", pointSize: 16)
+            if icon == nil {
+                NSLog("[BearyComposer] selected weather chip icon missing key=%@", weather)
+            }
+            weatherChipButton.setImage(icon, for: .normal)
+            weatherChipButton.tintColor = BearyColors.ink
+            // 天气 chip 图标贴动态 Lottie（底层静态图作 fallback）。
+            if let host = weatherChipButton.imageView {
+                refreshWeatherEmoteOverlay(&weatherChipEmoteView, on: host, lottieKey: BearyText.weatherLottieKey(for: weather), fallbackImage: icon)
+            }
+            weatherChipButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: icon == nil ? 0 : 5, bottom: 0, right: 0)
+            weatherChipButton.accessibilityLabel = selectedTemperature != nil ? "天气：\(name) \(selectedTemperature!)°" : "天气：" + name
         } else {
-            locationNoteLabel.text = nil
-            locationNoteLabel.isHidden = true
+            weatherChipButton.isHidden = true
+            weatherChipButton.setImage(nil, for: .normal)
+            refreshWeatherEmoteOverlay(&weatherChipEmoteView, on: weatherChipButton, lottieKey: nil, fallbackImage: nil)
         }
+        let hasLocation: Bool
+        let locationName: String?
+        if let location = selectedLocation, !location.isEmpty {
+            hasLocation = true
+            locationName = BearyLocationDisplay.dedupedAddressName(location.name ?? location.district ?? "")
+        } else {
+            hasLocation = false
+            locationName = nil
+        }
+        // 动画只在定位显隐变化且天气 chip 可见时做：先记 chip 旧帧（未布局时
+        // 帧为零，直接跳过位移、只落终态）。
+        let hadLocation = !locationMetaButton.isHidden
+        let chipFrameBefore = weatherChipButton.frame
+        if hasLocation, let name = locationName {
+            locationMetaButton.isHidden = false
+            locationMetaButton.setTitle(name, for: .normal)
+            locationMetaButton.accessibilityLabel = "位置：\(name)，点按可重新选择"
+        } else {
+            locationMetaButton.isHidden = true
+            locationMetaButton.setTitle(nil, for: .normal)
+        }
+        metaRowStack.isHidden = locationMetaButton.isHidden && weatherChipButton.isHidden
         updatePreferredContentSize()
-        guard animated, !UIAccessibility.isReduceMotionEnabled, view.window != nil else {
-            locationRowStack.alpha = 1
+        guard animated, !UIAccessibility.isReduceMotionEnabled, view.window != nil,
+              !weatherChipButton.isHidden, hadLocation != hasLocation,
+              chipFrameBefore.width > 0 else {
+            locationMetaButton.alpha = 1
+            locationMetaButton.transform = .identity
+            weatherChipButton.transform = .identity
             return
         }
-        locationRowStack.alpha = 0
+        // FLIP：chip 从旧帧滑到新帧；定位钮出现时淡入（消失时已直接隐藏，不淡出）。
+        view.layoutIfNeeded()
+        let deltaX = chipFrameBefore.minX - weatherChipButton.frame.minX
+        if deltaX != 0 {
+            weatherChipButton.transform = CGAffineTransform(translationX: deltaX, y: 0)
+        }
+        if hasLocation {
+            locationMetaButton.alpha = 0
+        }
         UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
-            self.locationRowStack.alpha = 1
+            self.weatherChipButton.transform = .identity
+            self.locationMetaButton.alpha = 1
         })
     }
 
-    @objc private func didTapClearLocation() {
-        selectedLocation = nil
-        refreshLocationRow()
-        scheduleDraftSave()
-        updatePublishState()
+    /// 点底部位置行重开选地点面板（重选或清除，与工具栏定位钮同款入口）。
+    @objc private func didTapMetaLocationRow() {
+        presentLocationPickerSheet()
     }
 
-    /// 定位气泡搭建：框体与专属框外收起层常驻 view（隐藏时 isHidden），约束一次激活；
-    /// 框左右与工具栏同宽（iPad 居中列下自动跟随），框底贴工具栏顶 8pt 上方；
-    /// 框是覆盖层（不推限时行、不改 sheet 高），与天气框同口径。
-    private func buildLocationPopover() {
-        locationPopover.translatesAutoresizingMaskIntoConstraints = false
-        locationDismissView.translatesAutoresizingMaskIntoConstraints = false
-        locationPopover.isHidden = true
-        locationDismissView.isHidden = true
-        locationPopover.delegate = self
-        locationDismissView.onTapOutside = { [weak self] in self?.hideLocationPopover(animated: true, restoreFocus: true) }
-        view.addSubview(locationDismissView)
-        view.addSubview(locationPopover)
-        NSLayoutConstraint.activate([
-            locationDismissView.topAnchor.constraint(equalTo: view.topAnchor),
-            locationDismissView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            locationDismissView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            locationDismissView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            locationPopover.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
-            locationPopover.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
-            locationPopover.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor, constant: -8),
-        ])
+    /// 弹出选地点底 sheet（2026-11-18 定位重做）：选定即落定（行显示、草稿
+    /// 跟随保存；有坐标时天气跟新地点走）；点卡上 × 即清除（行隐藏、天气滑回左下角）。
+    private func presentLocationPickerSheet() {
+        BearyLocationPicker.show(from: self, currentLocation: selectedLocation) { [weak self] location in
+            guard let self = self else { return }
+            self.selectedLocation = location
+            self.refreshMetaRow(animated: true)
+            self.scheduleDraftSave()
+            // 有坐标时天气跟新地点走（无坐标的手输地名不改天气）。
+            if let latitude = location.latitude, let longitude = location.longitude {
+                self.refreshWeatherForLocation(latitude: latitude, longitude: longitude)
+            }
+        } onClear: { [weak self] in
+            guard let self = self else { return }
+            self.selectedLocation = nil
+            self.refreshMetaRow(animated: true)
+            self.scheduleDraftSave()
+        }
     }
 
     @objc private func didTapLocationTool() {
-        // 同一时刻只开一个选择器：引用面板开着时不抢（与天气框同款守卫）。
+        // 同一时刻只开一个选择器：引用面板开着时不抢（与旧气泡同款守卫）。
         if quotePanelOpen {
             showToast(message: "请先关闭引用面板")
             return
@@ -4771,109 +4544,52 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             showToast(message: isEditMode ? "保存中…" : "发布中…")
             return
         }
-        // 审计 1：切到定位工具时，在途的天气展示意图作废（定位点按本身
-        // 不递增 weatherFetchGeneration、不取消天气请求，只拦末尾抢开）。
-        invalidatePendingCalloutPresentation()
-        if locationPopoverOpen {
-            hideLocationPopover(animated: true, restoreFocus: true)
-            return
-        }
-        hideCallout(animated: false)
         if activeToolStrip != nil {
             activeToolStrip = nil
             refreshToolStrip()
         }
-        locationPopoverOpen = true
-        locationDismissView.isHidden = false
-        locationDismissView.passthroughRects = [toolbarContainer.convert(toolbarContainer.bounds, to: locationDismissView)]
-        locationPopover.isHidden = false
-        // 无障碍：位置浮层照抄天气框口径——打开置为模态（VoiceOver 不滑
-        // 到被遮的编辑器内容；触摸穿透不动，工具栏仍可点），下一 runloop 把
-        // 焦点送进框内状态行；期间已关闭则不发。
-        locationPopover.accessibilityViewIsModal = true
-        view.layoutIfNeeded()
-        updateLocationPopoverArrow()
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self, self.locationPopoverOpen, !self.locationPopover.isHidden else { return }
-            UIAccessibility.post(notification: .layoutChanged, argument: self.locationPopover.initialAccessibilityElement)
-        }
-        if UIAccessibility.isReduceMotionEnabled || view.window == nil {
-            locationPopover.alpha = 1
-            locationPopover.transform = .identity
-        } else {
-            locationPopover.alpha = 0
-            locationPopover.transform = CGAffineTransform(translationX: 0, y: 6)
-            UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
-                self.locationPopover.alpha = 1
-                self.locationPopover.transform = .identity
-            })
-        }
-        // 已有已确认的地点时先展示它（草稿／已确认的地名与区级），不重新定位；
-        // 没有时才自动定位；点气泡里的「重新定位」才取当前位置。
-        if let location = selectedLocation, !location.isEmpty {
-            locationPopover.showPrefilled(location)
-        } else {
-            locationPopover.startAutoLocate()
-        }
+        presentLocationPickerSheet()
     }
 
-    /// 无障碍：restoreFocus 只在用户主动关闭时传 true（框外点按、同钮再点、
-    /// 头部确认落定）；程序性收起（换工具／发布／取消等）默认 false，不把
-    /// 焦点从新界面抢回触发钮。还焦点只在框真正隐藏后发。
-    private func hideLocationPopover(animated: Bool, restoreFocus: Bool = false) {
-        guard locationPopoverOpen else { return }
-        locationPopoverOpen = false
-        locationPopover.cancelRequests()
-        if !animated || UIAccessibility.isReduceMotionEnabled || view.window == nil {
-            locationPopover.isHidden = true
-            locationPopover.alpha = 1
-            locationPopover.transform = .identity
-            locationPopover.accessibilityViewIsModal = false
-            locationDismissView.isHidden = true
-            if restoreFocus, !locationToolButton.isHidden, locationToolButton.window != nil {
-                UIAccessibility.post(notification: .layoutChanged, argument: locationToolButton)
-            }
+    /// 天气自动显示（2026-11-18 定位重做）：进编辑器即自动取当地天气，不再手动设。
+    /// 已有天气时不重取（编辑回填/草稿恢复的已存天气优先）；无天气时按地点坐标
+    /// 优先、GPS 其次、IP 回落的顺序取；失败静默（无 toast、不编假数据）。
+    /// 多路入口（草稿恢复／编辑回填／草稿箱打开／重置空白／检查点恢复）都走这里，
+    /// 代次守卫保证只有最后一次调用的回包落数。
+    private func autoFillWeatherIfNeeded() {
+        guard selectedWeather == nil else { return }
+        weatherFetchGeneration += 1
+        let generation = weatherFetchGeneration
+        if let location = selectedLocation, location.hasCoordinates,
+           let latitude = location.latitude, let longitude = location.longitude {
+            fetchWeatherWith(latitude: latitude, longitude: longitude, generation: generation)
             return
         }
-        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
-            self.locationPopover.alpha = 0
-            self.locationPopover.transform = CGAffineTransform(translationX: 0, y: 6)
-        }, completion: { [weak self] _ in
-            guard let self = self, !self.locationPopoverOpen else { return }
-            self.locationPopover.isHidden = true
-            self.locationPopover.alpha = 1
-            self.locationPopover.transform = .identity
-            self.locationPopover.accessibilityViewIsModal = false
-            self.locationDismissView.isHidden = true
-            if restoreFocus, !self.locationToolButton.isHidden, self.locationToolButton.window != nil {
-                UIAccessibility.post(notification: .layoutChanged, argument: self.locationToolButton)
+        BearyOneShotLocation.request { [weak self] locationResult in
+            DispatchQueue.main.async {
+                guard let self = self, self.weatherFetchGeneration == generation else { return }
+                switch locationResult {
+                case .coordinate(let latitude, let longitude):
+                    self.fetchWeatherWith(latitude: latitude, longitude: longitude, generation: generation)
+                case .denied, .unavailable:
+                    self.fetchWeatherWith(latitude: nil, longitude: nil, generation: generation)
+                }
             }
-        })
+        }
     }
 
-    /// 尖角跟随定位钮中心（与 updateCalloutArrowPositions 同款换算）。
-    private func updateLocationPopoverArrow() {
-        let center = locationToolButton.convert(CGPoint(x: locationToolButton.bounds.midX, y: locationToolButton.bounds.midY), to: locationPopover)
-        locationPopover.arrowCenterX = center.x
-    }
-
-    /// 尖角跟随触发图标中心：图标中心转到框坐标系；收起层穿透区同步为工具栏帧
-    /// （工具栏按钮仍可点按，其余区域点按收起）。iPad 居中列下框与工具栏同宽同列，
-    /// 换算自动对齐，不另算居中偏移。
-    private func updateCalloutArrowPositions() {
-        guard weatherCalloutOpen else { return }
-        let callout = weatherCallout
-        let anchor = weatherToolButton
-        let center = anchor.convert(CGPoint(x: anchor.bounds.midX, y: anchor.bounds.midY), to: callout)
-        callout.arrowCenterX = center.x
-        calloutDismissView.passthroughRects = [toolbarContainer.convert(toolbarContainer.bounds, to: calloutDismissView)]
+    /// 选定新地点后天气跟地点走：按新坐标重取（在途自动填回包过期作废）；
+    /// 失败静默（不 toast、不编假数据、不清现有天气）。
+    private func refreshWeatherForLocation(latitude: Double, longitude: Double) {
+        weatherFetchGeneration += 1
+        let generation = weatherFetchGeneration
+        fetchWeatherWith(latitude: latitude, longitude: longitude, generation: generation)
     }
 
     /// 弹出自定义图片底部选择器（2026-11-18：心情组已删，只剩“自定义”组）：
-    /// 天气框若开着先收起；引用面板打开时不弹出（与旧 showCallout 同口径）。
+    /// 引用面板打开时不弹出。
     private func presentGIFPickerSheet() {
         if quotePanelOpen { return }
-        hideCallout(animated: false)
         gifPickerSheet = BearyMoodPickerSheet.show(from: self, gifKeys: BearyGIFLibrary.cachedKeys()) { [weak self] key in
             self?.didSelectGIF(key)
         } onUploadGIF: { [weak self] in
@@ -4881,75 +4597,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 弹出框点选天气：沿用旧条口径（点即选中、再点不取消）；点选即收起。
-    @objc private func didTapTempMinus() {
-        adjustTemperature(by: -1)
-    }
-
-    @objc private func didTapTempPlus() {
-        adjustTemperature(by: 1)
-    }
-
-    /// 气温 ±1：无气温时先落到 18°（不以方向猜 17°/19°）；范围钉死 -60…60°。
-    /// 手改气温：在途自动填回包即过期作废，不覆盖手改值（见 weatherFetchGeneration）。
-    private func adjustTemperature(by delta: Int) {
-        guard selectedWeather != nil else { return }
-        weatherFetchGeneration += 1
-        let next: Int
-        if let current = selectedTemperature {
-            next = current + delta
-        } else {
-            next = 18
-        }
-        selectedTemperature = min(60, max(-60, next))
-        refreshSelectedChips()
-        scheduleDraftSave()
-        updatePublishState()
-    }
-
-    /// 点气温数值：底 sheet 直输整数（-60…60°）；留空点确定即清除气温（只清气温、不动类型）。
-    @objc private func didTapTempLabel() {
-        guard selectedWeather != nil else { return }
-        BearyInputSheet.show(
-            from: self,
-            title: "气温",
-            message: "输入摄氏度整数，留空即清除",
-            placeholder: "例如 18",
-            initialText: selectedTemperature.map { "\($0)" },
-            onConfirm: { [weak self] raw in
-                guard let self = self else { return }
-                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed.isEmpty {
-                    // 手改气温（直输清空亦算手改）：在途自动填回包过期作废。
-                    self.weatherFetchGeneration += 1
-                    self.selectedTemperature = nil
-                } else if let value = Int(trimmed) {
-                    // 手改气温（直输亦算手改）：在途自动填回包过期作废。
-                    self.weatherFetchGeneration += 1
-                    self.selectedTemperature = min(60, max(-60, value))
-                } else {
-                    // 非法输入：toast 后关闭 sheet、不保存不刷新（原 alert 点确定后
-                    // 无论如何都会关闭，新 sheet 同款：先关 sheet、关完再跑回调）。
-                    self.showToast(message: "气温请输入整数")
-                    return
-                }
-                self.refreshSelectedChips()
-                self.scheduleDraftSave()
-                self.updatePublishState()
-            },
-            onClear: { [weak self] in
-                // 手改气温（清除亦算手改）：在途自动填回包过期作废。
-                self?.weatherFetchGeneration += 1
-                self?.selectedTemperature = nil
-                self?.refreshSelectedChips()
-                self?.scheduleDraftSave()
-                self?.updatePublishState()
-            }
-        )
-    }
-
     /// 天气动态图标覆盖层（BearyEmoteView，底层静态图作 fallback；与落点行同款）。
-    private var weatherToolEmoteView: BearyEmoteView?
     private var weatherChipEmoteView: BearyEmoteView?
     private var quoteWeatherEmoteViews: [BearyEmoteView] = []
 
@@ -4989,94 +4637,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteWeatherEmoteViews.removeAll()
     }
 
-    /// 工具栏天气钮图标随选中天气变（网页 syncWxBtn 同款）：未选回通用天气图标，
-    /// 已选换该天气图标；两态均为墨色。这是旧 refreshWeatherButtons 里唯一现行
-    /// 副作用（其余皆为已删旧天气条带的按钮样式），旧条带删除后抽为独立函数。
-    private func syncWeatherToolButton() {
-        if let weather = selectedWeather {
-            if let icon = BearyIconImages.image(named: "icon_wx_\(BearyText.weatherStaticKey(for: weather))", pointSize: 24) {
-                weatherToolButton.setImage(icon, for: .normal)
-            }
-            weatherToolButton.tintColor = BearyColors.ink
-            // 已选态：天气图标贴动态 Lottie（底层静态图作 fallback）。
-            if let host = weatherToolButton.imageView {
-                refreshWeatherEmoteOverlay(&weatherToolEmoteView, on: host, lottieKey: BearyText.weatherLottieKey(for: weather), fallbackImage: weatherToolButton.image(for: .normal))
-            }
-        } else {
-            if let icon = BearyIconImages.image(named: "icon_weather_tool", pointSize: 24) {
-                weatherToolButton.setImage(icon, for: .normal)
-            }
-            weatherToolButton.tintColor = BearyColors.ink
-            // 未选态 icon_weather_tool 保持静态，摘掉覆盖层。
-            refreshWeatherEmoteOverlay(&weatherToolEmoteView, on: weatherToolButton, lottieKey: nil, fallbackImage: nil)
-        }
-    }
-
-    /// v6-8：点首位“无”即清除已选天气（weather 置空），工具栏天气钮经
-    /// syncWeatherToolButton 回到无天气态（通用天气图标），chip 行同步隐藏天气 chip。
-    private func didSelectWeatherFromCallout(_ key: String) {
-        // 手选天气：在途自动填回包即过期作废（见 weatherFetchGeneration），
-        // 迟到回包不再覆盖本次手选；再点天气钮重新自动填时仍覆盖手改（#427 口径不变）。
-        weatherFetchGeneration += 1
-        // 手改类型：换类型气温保留；点“无”清类型时气温同清，不留孤气温。
-        if key == "none" {
-            selectedWeather = nil
-            selectedTemperature = nil
-        } else {
-            selectedWeather = key
-        }
-        syncWeatherToolButton()
-        refreshSelectedChips()
-        scheduleDraftSave()
-        updatePublishState()
-        hideCallout(animated: true, restoreFocus: true)
-    }
-
-    /// v6-8“无”选项图（40pt，与其它天气图标同尺寸）：审计 15 项第 7 项——
-    /// 此前虚线圆＋icon_plus 旋 45° 拼叉号属于改造官方图标造型，已改为
-    /// 直接用官方 icon_close 原图（模板渲染、由弹出框按钮 tint 着色）。
-    private func weatherNoneImage() -> UIImage? {
-        BearyIconImages.image(named: "icon_close", pointSize: 40)
-    }
-
-    /// 已选 Chip 行：只显示已选项（天气/写给各一枚），无已选时整行塌掉；
+    /// 已选 Chip 行：只显示已选项（写给一枚），无已选时整行塌掉；
     /// 间距随显隐切换（隐藏时置 0，否则隐藏行仍残留 8pt 空隙，见面板间隙修复同款）。
-    /// 审计 16 项：天气去“天气 ·”前缀，改官方图标＋值（天气走
-    /// icon_wx_*，40 只深浅与 9 个天气资产已核齐全、无缺款）；
     /// 22 方向：收件人 chip 改“提到 昵称”。图标只是视觉辅助：accessibilityLabel 一律保留完整表述
-    /// （“天气：晴”“提到：昵称”），不只靠图标传达信息。
-    /// 图标计入按钮 intrinsicContentSize，P1-3 换行总宽自动含图标宽。
+    /// （“提到：昵称”），不只靠图标传达信息。天气 chip 已移到底部元信息行（见 refreshMetaRow）。
     private func refreshSelectedChips() {
-        // 天气 chip 与工具栏、引用行共用 weatherStaticKey：drizzle/hail/overcast
-        // 无专属静态图与中文名，就近取 rain/snow/cloudy 的图与名，不再隐藏。
-        if let weather = selectedWeather, let name = BearyText.weatherNames[BearyText.weatherStaticKey(for: weather)] {
-            weatherChipButton.isHidden = false
-            let weatherTitle = selectedTemperature != nil ? "\(name) \(selectedTemperature!)°" : name
-            weatherChipButton.setTitle(weatherTitle, for: .normal)
-            let icon = BearyIconImages.image(named: "icon_wx_\(BearyText.weatherStaticKey(for: weather))", pointSize: 16)
-            if icon == nil {
-                NSLog("[BearyComposer] selected weather chip icon missing key=%@", weather)
-            }
-            weatherChipButton.setImage(icon, for: .normal)
-            weatherChipButton.tintColor = BearyColors.ink
-            // 天气 chip 图标贴动态 Lottie（底层静态图作 fallback）。
-            if let host = weatherChipButton.imageView {
-                refreshWeatherEmoteOverlay(&weatherChipEmoteView, on: host, lottieKey: BearyText.weatherLottieKey(for: weather), fallbackImage: icon)
-            }
-            weatherChipButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: icon == nil ? 0 : 5, bottom: 0, right: 0)
-            weatherChipButton.accessibilityLabel = selectedTemperature != nil ? "天气：\(name) \(selectedTemperature!)°" : "天气：" + name
-        } else {
-            weatherChipButton.isHidden = true
-            weatherChipButton.setImage(nil, for: .normal)
-            refreshWeatherEmoteOverlay(&weatherChipEmoteView, on: weatherChipButton, lottieKey: nil, fallbackImage: nil)
-        }
-        // 气温步进器只跟天气类型走：有类型才显，无类型（“无”）时连气温同清、不留孤气温。
-        // [24] 小项 2：步进器在天气框附属行里（见 buildCallouts），此处只管
-        // 附属行显隐 + 框高，不再管 chip 行里的步进器。
-        weatherCallout.setAccessoryVisible(selectedWeather != nil)
-        updateWeatherCalloutHeight()
-        tempLabelButton.setTitle(selectedTemperature != nil ? "\(selectedTemperature!)°" : "气温", for: .normal)
-        tempLabelButton.accessibilityLabel = selectedTemperature != nil ? "气温：\(selectedTemperature!)°，点按可输入" : "气温：未设置，点按可输入"
         let recipientName: String?
         if let user = selectedRecipient {
             if let display = user.displayName {
@@ -5104,74 +4669,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // refreshSelectedChips，故此处一处挂钩即全覆盖。
         mentionTopName = recipientName
         refreshMentionTopRow()
-        let anyChipVisible = !weatherChipButton.isHidden || !recipientChipButton.isHidden || !selectedTags.isEmpty
+        let anyChipVisible = !recipientChipButton.isHidden || !selectedTags.isEmpty
         contentStack.setCustomSpacing(anyChipVisible ? 8 : 0, after: selectedChipsRow)
-        // 审计 P1-3：显隐/文案变化后即重算换行（宽变化另由 viewDidLayoutSubviews 驱动）。
-        layoutSelectedChips()
-    }
-
-    /// 审计 P1-3：两 chip 收缩优先级与换行。
-    /// 单行态：天气自然宽（hugging + 抗压缩双 required，文字不缩小、不截断），
-    /// 写给占剩余（hugging/compression 双 low：有富余则伸满、空间紧则先缩），
-    /// 写给标题单行尾截断、字号固定 13（adjustsFontSizeToFitWidth 关，不缩字）。
-    /// 空间不足（单行总宽 > 行宽）且写给与天气同显时：写给脱离首行、
-    /// 独立成第二行（满宽、尾截断），天气保持自然宽不动——不缩小全部文字。
-    /// 写给单独出现时不换行（满宽即剩余，超长只尾截断）。
-    /// [24] 小项 2：步进器已收进天气框，首行只剩天气／写给两项，
-    /// 窄屏第二行兜底（步进器包壳）已随之删除，不再有步进器换行态。
-    /// 只在换行态真正变化时移视图；同态重算不碰层级，不触发布局环。
-    /// （移行不改行宽，viewDidLayoutSubviews 的宽门限仍挡得住重入。）
-    private func layoutSelectedChips() {
-        guard isViewLoaded else { return }
-        // 行宽：布局后取实测宽；首帧布局前行宽为 0 时按内容栈边距（左右各 16）
-        // 从视图/屏幕宽估算，与 updatePreferredContentSize 首帧估算同口径。
-        let available: CGFloat
-        if selectedChipsRow.bounds.width > 0 {
-            available = selectedChipsRow.bounds.width
-        } else if view.bounds.width > 0 {
-            available = view.bounds.width - 32
-        } else {
-            let screenWidth = view.window?.bounds.width ?? UIScreen.main.bounds.width
-            available = screenWidth - 32
-        }
-        guard available > 0 else { return }
-        selectedChipsLastLayoutWidth = available
-        let weatherVisible = !weatherChipButton.isHidden
-        let recipientVisible = !recipientChipButton.isHidden
-        guard recipientVisible, weatherVisible else {
-            // 写给单独出现或未出现：单行态即是终态（未出现时首行只剩隐藏项，塌高为 0）。
-            if selectedChipsRecipientOnSecondRow {
-                selectedChipsRow.removeArrangedSubview(recipientChipButton)
-                selectedChipsFirstRow.addArrangedSubview(recipientChipButton)
-                selectedChipsRecipientOnSecondRow = false
-            }
-            return
-        }
-        // 写给换行总宽：天气／写给自然宽＋间距。
-        // [24] 小项 2：步进器已收进天气框，不再计入首行宽。
-        var singleLineWidth: CGFloat = 0
-        var visibleCount = 0
-        for button in [weatherChipButton, recipientChipButton] where !button.isHidden {
-            singleLineWidth += button.intrinsicContentSize.width
-            visibleCount += 1
-        }
-        if visibleCount > 1 {
-            singleLineWidth += CGFloat(visibleCount - 1) * selectedChipsFirstRow.spacing
-        }
-        let wrapRecipient = singleLineWidth > available
-        guard wrapRecipient != selectedChipsRecipientOnSecondRow else { return }
-        selectedChipsRecipientOnSecondRow = wrapRecipient
-        if wrapRecipient {
-            selectedChipsFirstRow.removeArrangedSubview(recipientChipButton)
-            selectedChipsRow.addArrangedSubview(recipientChipButton)
-        } else {
-            selectedChipsRow.removeArrangedSubview(recipientChipButton)
-            selectedChipsFirstRow.addArrangedSubview(recipientChipButton)
-        }
     }
 
     private func buildSelectedChipsRow() {
-        // 外层改竖栈：首行 +（换行时）写给第二行；单行态第二行不存在，竖栈不增高。
+        // 外层竖栈：首行（写给一枚）为唯一子项；无已选时整行塌高为 0。
         selectedChipsRow.axis = .vertical
         selectedChipsRow.spacing = 8
         selectedChipsRow.alignment = .fill
@@ -5182,7 +4685,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedChipsFirstRow.translatesAutoresizingMaskIntoConstraints = false
         selectedChipsRow.addArrangedSubview(selectedChipsFirstRow)
         let chips: [(button: BearyHit44Button, action: Selector)] = [
-            (weatherChipButton, #selector(didTapWeatherChip)),
             (recipientChipButton, #selector(didTapRecipientChip)),
         ]
         for chip in chips {
@@ -5201,36 +4703,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             chip.button.translatesAutoresizingMaskIntoConstraints = false
             selectedChipsFirstRow.addArrangedSubview(chip.button)
         }
-        // [24] 小项 2：气温步进器不再挂 chip 首行，改挂天气框附属行
-        //（buildCallouts 里 setAccessoryView）；只在已选天气时显（见 refreshSelectedChips）。
-        tempStepperStack.axis = .horizontal
-        tempStepperStack.spacing = 4
-        tempStepperStack.alignment = .center
-        tempStepperStack.backgroundColor = BearyColors.surface2
-        tempStepperStack.layer.cornerRadius = 999
-        tempStepperStack.layer.masksToBounds = true
-        tempStepperStack.translatesAutoresizingMaskIntoConstraints = false
-        tempStepperStack.isHidden = true
-        for (button, title, action) in [
-            (tempMinusButton, "−", #selector(didTapTempMinus)),
-            (tempLabelButton, "气温", #selector(didTapTempLabel)),
-            (tempPlusButton, "+", #selector(didTapTempPlus)),
-        ] as [(BearyHit44Button, String, Selector)] {
-            button.setTitle(title, for: .normal)
-            button.setTitleColor(BearyColors.ink, for: .normal)
-            button.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
-            button.contentEdgeInsets = UIEdgeInsets(top: 7, left: 10, bottom: 7, right: 10)
-            button.addTarget(self, action: action, for: .touchUpInside)
-            button.bearyAddPressFeedback()
-            button.translatesAutoresizingMaskIntoConstraints = false
-            tempStepperStack.addArrangedSubview(button)
-        }
-        tempStepperStack.setContentHuggingPriority(.required, for: .horizontal)
-        tempStepperStack.setContentCompressionResistancePriority(.required, for: .horizontal)
-        // 不进 chip 行：buildCallouts 里以附属行身份挂进天气框。
-        // 审计 P1-3：天气自然宽不让步；写给低优先级，占剩余、紧时先缩先截断。
-        weatherChipButton.setContentHuggingPriority(.required, for: .horizontal)
-        weatherChipButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 审计 P1-3：写给低优先级，占剩余、紧时先缩先截断。
         recipientChipButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
         recipientChipButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         contentStack.addArrangedSubview(selectedChipsRow)
@@ -5290,74 +4763,30 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     @objc private func didTapGIFTool() {
-        // 审计 1：切到自定义工具时，在途的天气展示意图作废。
-        invalidatePendingCalloutPresentation()
-        hideLocationPopover(animated: false)
         presentGIFPickerSheet()
-    }
-
-    /// [24] 小项 1：天气钮点按即打开天气选择器，不再等自动取数回包才开
-    ///（旧口径：先 fetchLocalWeather、回包尾部才 showCallout，网络慢/
-    /// 取不到时选择器迟迟不开，看起来像要点两次）。自动取数仍在后台走：
-    /// 取到后填类型与气温（手选/手改气温仍凭 weatherFetchGeneration 使
-    /// 在途回包过期作废，不覆盖手改）；取不到只 toast，不编假数据。
-    /// 回包不再抢开选择器——用户若已手动关框，回包只落数不重开。
-    /// 填上之后类型可在选择器里手改、气温在框内步进器里手改（小项 2）；
-    /// 再点天气钮会重新自动填（覆盖手改，#427 口径不变）。
-    @objc private func didTapWeatherTool() {
-        DiagFile.mark("weather-diag didTapWeatherTool")
-        hideLocationPopover(animated: false)
-        showCallout(trigger: weatherToolButton)
-        weatherFetchGeneration += 1
-        let generation = weatherFetchGeneration
-        // 天气 GPS（2026-11-04）：点天气钮时才走定位，不在启动时弹权限；一次定位即可。
-        // 拒绝/受限/定位失败/超时 → 回落 IP 链路（不传经纬度），回落成功后提示一句；
-        // 回落也取不到时沿用旧 toast，不填假数据。代次守卫不变：手改后在途回包一律作废。
-        BearyOneShotLocation.request { [weak self] locationResult in
-            DispatchQueue.main.async {
-                guard let self = self, self.weatherFetchGeneration == generation else { return }
-                switch locationResult {
-                case .coordinate(let latitude, let longitude):
-                    self.fetchWeatherWith(latitude: latitude, longitude: longitude, generation: generation, fallbackTip: nil)
-                case .denied:
-                    self.fetchWeatherWith(latitude: nil, longitude: nil, generation: generation, fallbackTip: "未获得位置权限，已按网络位置填写天气")
-                case .unavailable:
-                    self.fetchWeatherWith(latitude: nil, longitude: nil, generation: generation, fallbackTip: "定位失败，已按网络位置填写天气")
-                }
-            }
-        }
     }
 
     /// 天气取数（GPS 链路与 IP 回落链路共用）：成功填类型与气温、回落成功提示一句；
     /// 失败沿用旧 toast，不编假数据。
-    private func fetchWeatherWith(latitude: Double?, longitude: Double?, generation: Int, fallbackTip: String?) {
+    /// 天气取数（地点坐标／GPS／IP 回落三路共用）：成功填类型与气温、刷新底部
+    /// 元信息行并保存草稿；失败静默——不再有手动选天气的入口，失败只留空、
+    /// 不 toast、不编假数据。weatherKey 为 nil 时整组不写（旧类型配新气温会存进草稿）。
+    private func fetchWeatherWith(latitude: Double?, longitude: Double?, generation: Int) {
         BearyAPI.shared.fetchLocalWeather(latitude: latitude, longitude: longitude) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self, self.weatherFetchGeneration == generation else { return }
                 switch result {
                 case .success(let fetched):
                     // 审计 26-14：自动填充是一组更新——天气代码认不出（weatherKey
-                    // 为 nil）时不只写新气温：旧类型配新气温会存进草稿。整组不写、
-                    // 不保存，复用失败分支的 toast 提示手选。
-                    guard let key = fetched.weatherKey else {
-                        self.showToast(message: "没取到当地天气，请手动选")
-                        return
-                    }
+                    // 为 nil）时不只写新气温：旧类型配新气温会存进草稿。整组不写、不保存。
+                    guard let key = fetched.weatherKey else { return }
                     self.selectedWeather = key
                     self.selectedTemperature = fetched.temperature
-                    self.syncWeatherToolButton()
-                    self.refreshSelectedChips()
+                    self.refreshMetaRow()
                     self.scheduleDraftSave()
                     self.updatePublishState()
-                    // 框还开着时同步框内选中态与步进器显隐；框已关则不重开。
-                    if self.weatherCalloutOpen {
-                        self.weatherCallout.setSelectedKey(self.selectedWeather)
-                    }
-                    if let tip = fallbackTip {
-                        self.showToast(message: tip)
-                    }
                 case .failure:
-                    self.showToast(message: "没取到当地天气，请手动选")
+                    break
                 }
             }
         }
@@ -5367,16 +4796,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // A2：工具栏 @ 直连选人面板，跳过 @ 选择条（选择条仍由正文下方 @ chip
         // 打开，供已选态清除/重选；@ 提醒无按篇开关）。
         // 引用面板打开时工具栏本身已藏，此处不再走 setToolStrip 的面板守卫。
-        // 编辑器改版：弹出框打开时点其他工具钮，先收起框再走各自处理。
-        // 审计 1：切到写给工具时，在途的天气展示意图作废。
-        invalidatePendingCalloutPresentation()
-        hideCallout(animated: false)
-        hideLocationPopover(animated: false)
         didTapPickRecipient()
-    }
-
-    @objc private func didTapWeatherChip() {
-        showCallout(trigger: weatherChipButton)
     }
 
     @objc private func didTapRecipientChip() {
@@ -5708,7 +5128,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func setToolbarToolRowSpacing(_ spacing: CGFloat, in toolRow: UIStackView) {
         if toolRow.spacing != spacing { toolRow.spacing = spacing }
         let cap = max(0, spacing / 2)
-        for button in [imageToolButton, locationToolButton, gifToolButton, weatherToolButton, recipientToolButton, quoteToolButton, tagToolButton] {
+        for button in [imageToolButton, locationToolButton, gifToolButton, recipientToolButton, quoteToolButton] {
             button.maxSideExpansion = cap
         }
     }
@@ -6151,14 +5571,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 前捕获 publishVisibility），视觉上“切成功了”实则无效。
         // 2026-10-31：限时开关已删，钮冻结只看在途态（限时态本身不再锁钮，菜单仍可点开重选）。
         visibilityButton.isEnabled = !frozen
-        // P1-14：冻结清单补齐全部入口——草稿 pill、引用钮、三枚已选 Chip、
+        // P1-14：冻结清单补齐全部入口——草稿 pill、引用钮、已选 Chip（写给）、
         // @ 清除、引用卡 ×（含已删行“移除”）；其余入口见下。
         draftPillButton.isEnabled = !frozen
         // 窄屏 5 项之 3：独立行重试钮同属发布冻结清单——在途点重试会与
         // 发布流程并发写同一篇草稿，冻结与工具栏其他入口同口径恢复。
         draftStatusRetryButton.isEnabled = !frozen
         quoteToolButton.isEnabled = !frozen
-        weatherChipButton.isEnabled = !frozen
         recipientChipButton.isEnabled = !frozen
         recipientClearButton.isEnabled = !frozen
         // 例外：通知复选框编辑态本就禁用（refreshRecipientRow 的编辑锁定），
@@ -6166,19 +5585,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         notifyCheckButton.isEnabled = !frozen && !isEditMode
         quoteCardRemoveButton.isEnabled = !frozen
         quoteDeletedRemoveButton.isEnabled = !frozen
-        weatherToolButton.isEnabled = !frozen
         gifToolButton.isEnabled = !frozen
         recipientToolButton.isEnabled = !frozen
-        // quote-freeze：气温步进/直输与标题清除钮此前不在冻结清单——
-        // 快照已保证改动不进载荷，但冻结清单按任务口径补齐，免得用户
-        // 在途改了却以为本次提交会带上。位置工具钮同理补齐（其 handler
-        // 本就有 isPublishing 第二道守卫，此处是第一道禁用）。
-        tempMinusButton.isEnabled = !frozen
-        tempPlusButton.isEnabled = !frozen
-        tempLabelButton.isEnabled = !frozen
+        // 底部元信息行定位钮同理补齐（其 handler 本就有 isPublishing 第二道守卫，此处是第一道禁用）。
         headlineClearButton.isEnabled = !frozen
         headlineClearHitButton.isEnabled = !frozen
         locationToolButton.isEnabled = !frozen
+        locationMetaButton.isEnabled = !frozen
         imageUndoButton.isEnabled = !frozen
         imageToolButton.isEnabled = !frozen
         for item in imageItems {
@@ -7101,8 +6514,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     @objc private func didTapAddImage() {
-        // 编辑器改版：弹出框打开时点其他工具钮，先收起框再走各自处理。
-        hideCallout(animated: false)
         // P2：9 图上限到达时不再完全静默，给 toast（不改按钮置灰口径）。
         // GIF 也占 1 张：照片条＋已插 GIF 合计满 9 即拦（发布时服务端同口径）。
         if imageItems.count + referencedGifKeys().count >= BearyComposerViewController.maxImages {
@@ -8208,7 +7619,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if !editQuoteFetchAttempted {
             selectedTemperature = entry.temperatureC
         }
-        syncWeatherToolButton()
         refreshSelectedChips()
         refreshTagsRow()
         // 批 E：编辑回填位置（首次回填才以服务端原值为准；补拉二次调用时用户可能已改选，
@@ -8218,7 +7628,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             originalLocation = editLocation.isEmpty ? nil : editLocation
             selectedLocation = originalLocation
         }
-        refreshLocationRow()
+        refreshMetaRow()
+        // 编辑无已存天气时自动取当地天气（见 autoFillWeatherIfNeeded；有已存天气不重取）。
+        autoFillWeatherIfNeeded()
         // 补拉重填（setupEditContent 二次调用）不碰 @ 态：用户可能已在加载期间改选/清除，
         // 首次回填时才以服务端原 @ 为准（editQuoteFetchAttempted 此时仍为 false）。
         if !editQuoteFetchAttempted {
@@ -8852,8 +8264,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 篇的图片、误删其他篇图片。恢复与清理现用同一份数据。
             // 第 11 轮审计 02：读失败时直接跳过恢复与清理（loadAllResult 的
             // failure 不得当成“无草稿”，见 loadAll 注释）。
-            guard case .success(let allDrafts) = BearyDraftStore.loadAllResult(forAccount: restoreAccountId) else { return }
-            guard let draft = allDrafts.first else { return }
+            guard case .success(let allDrafts) = BearyDraftStore.loadAllResult(forAccount: restoreAccountId) else {
+                // 读盘失败即按无草稿处理：新编辑器仍自动取当地天气（主线程调，见 autoFillWeatherIfNeeded）。
+                DispatchQueue.main.async { [weak self] in self?.autoFillWeatherIfNeeded() }
+                return
+            }
+            guard let draft = allDrafts.first else {
+                // 无草稿即新编辑器：自动取当地天气（主线程调，见 autoFillWeatherIfNeeded）。
+                DispatchQueue.main.async { [weak self] in self?.autoFillWeatherIfNeeded() }
+                return
+            }
             // 回收无主文件（杀 App 后、首存前产生的孤文件）：多槽下必须保留全部草稿
             // 与全部编辑检查点的引用并集，只留本篇会误删其他篇与检查点的本地图片。
             // 检查点任一读失败时本轮跳过清理（宁留孤文件、不误删检查点图）。
@@ -8905,7 +8325,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 天气 chip 会被刷成隐藏、随后赋值却不再刷新（与草稿箱打开路径一致）。
                 self.refreshSelectedChips()
                 self.refreshTagsRow()
-                self.syncWeatherToolButton()
                 self.restoreVisibility(index: draft.visibilitySegmentIndex, ephemeral: draft.ephemeralEnabled)
                 self.selectedRecipient = self.restoredRecipient(from: draft)
                 self.notifyRecipient = draft.notifyRecipient
@@ -8915,7 +8334,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.selectedLocation = restoredLocation.isEmpty ? nil : restoredLocation
                 self.refreshRecipientRow()
                 self.refreshQuoteSection()
-                self.refreshLocationRow()
+                self.refreshMetaRow()
+                // 草稿无已存天气时自动取当地天气（见 autoFillWeatherIfNeeded；有已存天气不重取）。
+                self.autoFillWeatherIfNeeded()
                 for img in draft.images {
                     // 内联图不进图片条（只进 inlineGifKeys，见上）。
                     guard img.serverKey.map({ BearyGIF.isInlineImageKey($0, content: draft.content, title: draft.title ?? "") }) != true else { continue }
@@ -9014,7 +8435,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             isEphemeral = false
         }
         refreshVisibilityButton()
-        refreshLocationRow()
+        refreshMetaRow()
     }
 
     /// v3 引用快照还原为选引用对象：quoteId 为空即无引用；已删标记照原样带回，
@@ -9370,7 +8791,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 批 E：重置为空白时位置与编辑原快照同清，行随之隐藏。
         selectedLocation = nil
         originalLocation = nil
-        refreshLocationRow()
+        refreshMetaRow()
         refreshTagsRow()
         // 112：空白新日记不得继承上一篇的可见性/限时态——编辑器每次
         // 默认私密、不记住上次选择。
@@ -9396,7 +8817,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftStatusLevel = nil
         updateCountLabel()
         updatePublishState()
-        syncWeatherToolButton()
         refreshRecipientRow()
         refreshQuoteSection()
         refreshToolStrip()
@@ -9407,6 +8827,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updateTextViewHeight()
         lastTextViewContentHeight = textView.contentSize.height
         updatePreferredContentSize()
+        // 空白新篇无天气：自动取当地天气（见 autoFillWeatherIfNeeded）。
+        autoFillWeatherIfNeeded()
     }
 
     /// 草稿箱打开某篇：正文/心情/图片/天气/@/引用按 v3 原样恢复；之后再保存、
@@ -9467,7 +8889,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 批 E：草稿箱打开某篇时位置同款恢复。
         let boxLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict, latitude: draft.locationLatitude, longitude: draft.locationLongitude)
         selectedLocation = boxLocation.isEmpty ? nil : boxLocation
-        refreshLocationRow()
+        refreshMetaRow()
         setQuotePanelOpen(false)
         for img in draft.images {
             // 内联图不进图片条（只进 inlineGifKeys，见上）。
@@ -9521,7 +8943,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             self.updatePublishState()
         }
         updateCountLabel()
-        syncWeatherToolButton()
         refreshRecipientRow()
         refreshQuoteSection()
         refreshToolStrip()
@@ -9534,6 +8955,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updateTextViewHeight()
         lastTextViewContentHeight = textView.contentSize.height
         updatePreferredContentSize()
+        // 箱内草稿无已存天气时自动取当地天气（见 autoFillWeatherIfNeeded；有已存天气不重取）。
+        autoFillWeatherIfNeeded()
     }
 
     /// 只拆视图不删文件（切草稿时旧篇文件仍归旧篇所有，删文件只在丢弃/发布成功时做）。
@@ -9817,15 +9240,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 restoreCheckpointQuote(quoteId: quoteId)
             }
         }
-        syncWeatherToolButton()
         refreshSelectedChips()
         refreshTagsRow()
-        refreshLocationRow()
+        refreshMetaRow()
         rebuildImageItemsFromCheckpoint(checkpoint.images, accountId: checkpoint.accountId)
         refreshImageStripVisibility()
         updateTextViewHeight()
         updatePublishState()
         showToast(message: "已恢复上次没保存的修改")
+        // 检查点无已存天气时自动取当地天气（见 autoFillWeatherIfNeeded；有已存天气不重取）。
+        autoFillWeatherIfNeeded()
     }
 
     /// 检查点引用换篇恢复：按 id 拉被引篇，按选引用页同款字段重建 lockedQuote；
@@ -9993,9 +9417,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // B2：到此已确定退出，立下进行中标记（编辑态同步关、新建态异步
         // 保存关，两分支都走本标记）。
         isClosing = true
-        // B 修法：取消退场前先收起未收的弹出框（无动画，退场不带它滑）；到此已确定退出
-        //（编辑态与新建态两分支随后都走 onCancelled），守卫分支（发布在途／面板态／已有弹层）已在上文返回。
-        hideCallout(animated: false)
         if isEditMode {
             // A2（Notion 2026-11-10）：取消时有未保存修改先确认；无修改按旧口径直接关。
             // 旧「决议第 4 项 B：取消直接关，不弹确认」已由 Li 2026-11-10 授权作废。
@@ -10177,8 +9598,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             showToast(message: editQuoteFetchFailed ? "引用的日记还没加载成功，点引用区“重试”后再保存" : "引用的日记正在加载，稍后再保存")
             return
         }
-        // 批 E：发布/保存时先收定位气泡，防气泡确认与发布请求竞态。
-        hideLocationPopover(animated: false)
         if !SessionManager.shared.isLoggedIn {
             // G26：登录态未知（网络失败）时不弹登录页，改给网络不稳定提示。
             if SessionManager.shared.authUnknown {
@@ -10294,9 +9713,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.selectedVisibilityFriends = false
                     self.isEphemeral = false
                     self.refreshVisibilityButton()
-                    // 门禁改档与常规切档同口径：位置行副行（公开后他人仅见区级）
-                    // 须同步变，否则发布失败留在编辑器时位置行仍留公开说明。
-                    self.refreshLocationRow()
                     var gated = snapshot
                     gated.published = 0
                     gated.visibility = "private"
@@ -10539,8 +9955,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         } else {
                             updated.quote = nil
                         }
-                        // B 修法：编辑保存成功退场前先收起弹出框（无动画；编辑器不关闭时本分支不跑，不误收）。
-                        self.hideCallout(animated: false)
                         self.onUpdated?(updated)
                     }
                 case .failure(let error):
@@ -11051,125 +10465,5 @@ private final class BearyQuoteStatusPillView: UIView {
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         applyColors()
-    }
-}
-
-// MARK: - 批 E 定位气泡回调
-
-extension BearyComposerViewController: BearyLocationPopoverDelegate {
-    func locationPopover(_ popover: BearyLocationPopoverView, didConfirm location: DiaryLocation) {
-        // 确认即落定（点建议也是直接落定，不再等头部确认钮）；气泡关闭、行显示、草稿跟随保存。
-        selectedLocation = location
-        hideLocationPopover(animated: true, restoreFocus: true)
-        refreshLocationRow(animated: true)
-        scheduleDraftSave()
-        updatePublishState()
-    }
-
-    func locationPopoverDidFail(_ popover: BearyLocationPopoverView, message: String) {
-        // 权限被拒/定位失败：只 toast，绝不关气泡——气泡已原地转手动输入，
-        // 关掉会把用户刚切到的输入框一起关掉；失败本身不产生位置值，
-        // 已确认过的位置不被失败清掉（见 selectedLocation 注释），从未确认过时行即隐藏。
-        showToast(message: message)
-    }
-}
-
-
-extension BearyComposerViewController {
-    // 2026-11-01：标题聚焦守卫复查函数已随标题滚动链删除。
-    /// 标题失焦只刷新标题 chrome（原 textFieldDidEndEditing，
-    /// 改走 textViewDidEndEditing）；正文失焦不走本分支。
-    func textViewDidEndEditing(_ textView: UITextView) {
-        guard textView === headlineField else { return }
-        refreshHeadlineChrome()
-    }
-
-    /// 标题单行守卫（原 textFieldShouldReturn + shouldChangeCharacters，改走
-    /// UITextViewDelegate）：回车跳正文；粘贴里的换行压成空格；30 字封顶按
-    /// 最终序列化标题的码点算（与 headlineDidChange / truncatedHeadline 的
-    /// 服务端口径一致，附件按记号全长计、非 1 格），组词中不拦；正文一律放行。
-    func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
-        guard textView === headlineField else { return true }
-        if headlineField.markedTextRange != nil { return true }
-        if text == "\n" {
-            self.textView.becomeFirstResponder()
-            return false
-        }
-        let sanitized = text.replacingOccurrences(of: "\n", with: " ")
-        let current = headlineField.attributedText ?? NSAttributedString()
-        // 长度口径统一（旧公式混用三者是本修法的根因）：
-        // 选区与 NSRange 一律 UTF-16（current.length、range.length、(String as NSString).length）；
-        // 业务限长一律对最终序列化标题（附件已还原为记号的 inlinePlainText）按码点计，
-        // 与 headlineDidChange / truncatedHeadline 的服务端口径一致，同一公式里不混用 .length 与 .count。
-        // 旧公式 current.length - range.length + sanitized.count 把 UTF-16 长与字素簇数相加：
-        // 20 个普通 emoji 时 UTF-16 已 40、码点才 20，继续敲普通字会误走超限分支被吞还弹提示。
-        // 基数 = 删掉待替换段后的序列化标题码点数；被替换段里的熊脸附件按记号全长计（非 1 格），
-        // 删它能腾出的格数旧公式（按 attributed 1 格算）会算少。
-        let base = NSMutableAttributedString(attributedString: current)
-        base.deleteCharacters(in: range)
-        let baseCodePoints = BearyText.inlinePlainText(from: base).unicodeScalars.count
-        if baseCodePoints + sanitized.unicodeScalars.count <= Self.headlineMaxLength {
-            if sanitized == text { return true }
-            let mutable = NSMutableAttributedString(attributedString: current)
-            mutable.replaceCharacters(in: range, with: sanitized)
-            // 手动塞入的纯文本绝不能带心情记号属性：replaceCharacters 塞纯
-            // 字符串时会继承落点旁的字符属性，紧贴熊脸附件粘贴时粘入的文字
-            // 可能带上 inlineMoodKeyAttribute，发出时整段会被转成一个记号、
-            // 原文字静默丢失；此处把插入段清成标题正文属性。
-            // 插入段与光标一律 UTF-16：emoji 一个字素簇占 2 个 UTF-16 单位，
-            // 用 .count 会让属性清理短一截、光标落在插入段中间。
-            let insertedLength = (sanitized as NSString).length
-            let inserted = NSRange(location: range.location, length: insertedLength)
-            if inserted.length > 0 {
-                mutable.removeAttribute(BearyText.inlineMoodKeyAttribute, range: inserted)
-                mutable.addAttributes([.font: headlineFont, .foregroundColor: BearyColors.ink], range: inserted)
-            }
-            headlineField.attributedText = mutable
-            headlineField.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
-            headlineField.selectedRange = NSRange(location: range.location + insertedLength, length: 0)
-            headlineDidChange()
-            return false
-        }
-        // 超限：只塞进剩下的码点数，余下丢掉并弹一次提示（原 shouldChange 同款口径）。
-        // 按字素簇逐个取、按码点累计，永不拆散一个组合表情：
-        // ZWJ 全家福 1 簇计 7 码点（见 truncatedHeadline 注释），占满剩余格即停，
-        // 不像旧 prefix(remaining) 那样把“剩余格”当成簇数/UTF-16 长混算。
-        let remaining = max(0, Self.headlineMaxLength - baseCodePoints)
-        var kept = ""
-        var keptCodePoints = 0
-        for character in sanitized {
-            let characterCodePoints = character.unicodeScalars.count
-            guard keptCodePoints + characterCodePoints <= remaining else { break }
-            kept.append(character)
-            keptCodePoints += characterCodePoints
-        }
-        let mutable = NSMutableAttributedString(attributedString: current)
-        mutable.replaceCharacters(in: range, with: kept)
-        // 同上：超限分支手动塞入段同样清掉可能继承的心情记号属性；长度用 UTF-16。
-        let insertedLength = (kept as NSString).length
-        let inserted = NSRange(location: range.location, length: insertedLength)
-        if inserted.length > 0 {
-            mutable.removeAttribute(BearyText.inlineMoodKeyAttribute, range: inserted)
-            mutable.addAttributes([.font: headlineFont, .foregroundColor: BearyColors.ink], range: inserted)
-        }
-        headlineField.attributedText = mutable
-        headlineField.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
-        headlineField.selectedRange = NSRange(location: range.location + insertedLength, length: 0)
-        showHeadlineLimitToastIfNeeded()
-        headlineDidChange()
-        return false
-    }
-}
-
-// 2026-11-16 跳动审计第三批第 3 条：外层滚动区拖动回调只为键盘快照服务——
-// 键盘显示期间用户主动拖动，弹出前存的旧位置作废，收起时不再滚回，避免盖掉
-// 用户刚滚到的位置；keyboardDismissMode = .onDrag 下拖动本身就会触发收键盘，
-// 拖动先于收键盘通知到达，快照清得及时。内层正文 textView 另有自己的 delegate，
-// 其拖动不走这里（identity 守卫）；类已随 UITextViewDelegate 间接遵循
-// UIScrollViewDelegate，不再另声明。
-extension BearyComposerViewController {
-    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-        guard scrollView === self.scrollView, keyboardVisible else { return }
-        keyboardSavedContentOffset = nil
     }
 }

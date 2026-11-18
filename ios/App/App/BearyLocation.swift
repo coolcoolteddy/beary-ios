@@ -108,6 +108,70 @@ enum BearyLocationDisplay {
         }
         return nil
     }
+
+    /// 写路径地名派生（搜索结果/逆地理编码/附近 POI 共用）：优先用
+    /// placemark.name，缺失时拼路名＋门牌号；结果统一过地址去重
+    /// （见 dedupedAddressName），不把重复段存进日记。
+    static func name(from placemark: CLPlacemark) -> String? {
+        if let name = placemark.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            return dedupedAddressName(name)
+        }
+        let parts = [placemark.thoroughfare, placemark.subThoroughfare]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !parts.isEmpty else { return nil }
+        return dedupedAddressName(parts.joined(separator: " "))
+    }
+
+    /// 地址去重（2026-11-18 定位重做）：同一段地址不得重复出现（如
+    /// “朝晖路 248 弄 248 弄 21 号”里的“248 弄”）。只处理两种实测形态：
+    /// 按空白分词后紧邻重复的词组、与无空白时紧邻重复的字符段；重复段
+    /// 须含数字才删（防误删正常叠词），最多清两轮。
+    static func dedupedAddressName(_ raw: String) -> String {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        for _ in 0..<2 {
+            let deduped = dedupedAddressNameOnce(text)
+            guard deduped != text else { break }
+            text = deduped
+        }
+        return text
+    }
+
+    private static func dedupedAddressNameOnce(_ text: String) -> String {
+        // 形态一：按空白分词，紧邻重复的词组（含数字才删，如“248 弄”）。
+        let tokens = text.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+        if tokens.count >= 2 {
+            for count in (1...min(3, tokens.count / 2)).reversed() {
+                for start in 0...(tokens.count - count * 2) {
+                    let first = tokens[start..<(start + count)]
+                    let second = tokens[(start + count)..<(start + count * 2)]
+                    guard first.elementsEqual(second) else { continue }
+                    let joined = first.joined(separator: " ")
+                    guard joined.rangeOfCharacter(from: .decimalDigits) != nil else { continue }
+                    var result = tokens
+                    result.removeSubrange((start + count)..<(start + count * 2))
+                    return result.joined(separator: " ")
+                }
+            }
+        }
+        // 形态二：无空白，紧邻重复的字符段（含数字才删、段长 ≥ 3，如“248弄”）。
+        let chars = Array(text)
+        if chars.count >= 6 {
+            for length in (3...(chars.count / 2)).reversed() {
+                for start in 0...(chars.count - length * 2) {
+                    let first = chars[start..<(start + length)]
+                    let second = chars[(start + length)..<(start + length * 2)]
+                    guard first.elementsEqual(second) else { continue }
+                    let segment = String(first)
+                    guard segment.rangeOfCharacter(from: .decimalDigits) != nil else { continue }
+                    var result = chars
+                    result.removeSubrange((start + length)..<(start + length * 2))
+                    return String(result)
+                }
+            }
+        }
+        return text
+    }
 }
 
 /// 按当前系统语言重取地名（2026-11-14 Li 定，推翻方案 A“只存地点文字、不存经纬度”口径）：
