@@ -210,7 +210,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
         self.initialIndex = self.currentIndex
         super.init(nibName: nil, bundle: nil)
-        // E-G12：网页灯箱开场 200ms 淡入；关场见 BearyImageViewerReturnAnimator
+        // 灯箱开场原位缩放（Li 2026-11-18 定）：从被点缩略图位放大到满屏，
+        // 无原处／无图／减动效时淡入兜底；关场见 BearyImageViewerReturnAnimator
         //（回到原处动效，缺原处时淡出兜底），不用默认滑入滑出。
         modalPresentationStyle = .fullScreen
         transitioningDelegate = self
@@ -1128,7 +1129,17 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         return originFrameInWindow
     }
 
-    /// 回到原处路径专用：原图藏起，改由 container 里的临时图做主角；
+    /// 开场原位缩放用图与原处：viewDidLoad 里 loadCurrent 已把调用方传的
+    /// 缩略图上屏（无缩略图时屏上无图），故读 imageView.image；
+    /// 原处读 present 前调用方传入的 originFrameInWindow。任一缺失
+    /// 或矩形退化时返回 nil，动画器走淡入兜底。
+    func presentZoomInfo() -> (image: UIImage, origin: CGRect)? {
+        guard let origin = originFrameInWindow, origin.width > 0, origin.height > 0,
+              let image = imageView.image, image.size.width > 0, image.size.height > 0 else { return nil }
+        return (image, origin)
+    }
+
+    /// 回到原处／开场缩放路径共用：原图藏起，改由 container 里的临时图做主角；
     /// 淡出兜底路径不调它，旧图随 fromView 一起淡出。
     func setDismissImageHidden(_ hidden: Bool) {
         imageView.isHidden = hidden
@@ -1219,7 +1230,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
 
 
     func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
-        return BearyImageViewerFadeAnimator(presenting: true)
+        return BearyImageViewerZoomAnimator(viewer: self)
     }
 
     func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
@@ -1783,29 +1794,78 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 }
 
-/// 网页灯箱同款纯透明度转场：只做开场 200ms 淡入。
-private final class BearyImageViewerFadeAnimator: NSObject, UIViewControllerAnimatedTransitioning {
-    private let presenting: Bool
+/// 开场原位缩放动画器（Li 2026-11-18 定）：点开图片时从被点缩略图
+/// 在 window 下的矩形放大到满屏 aspectFit 位，与关场
+/// BearyImageViewerReturnAnimator 对称；无原处／无图／减动效时
+/// 走 0.25s 淡入兜底（旧 BearyImageViewerFadeAnimator 行为，本类取代它）。
+///
+/// 交接细节：真图在缩放全程藏起、只由 container 里的临时快照做主角，
+/// toView（底色遮罩＋chrome）同步淡入，背景随缩放渐暗；结束时临时图
+/// 与真图同框同图，撤掉临时图即无缝交接，不闪。圆角 12→0 跟随缩放，
+/// 与卡片缩略图圆角对齐。
+private final class BearyImageViewerZoomAnimator: NSObject, UIViewControllerAnimatedTransitioning {
+    private weak var viewer: BearyEntryImageViewerViewController?
 
-    init(presenting: Bool) {
-        self.presenting = presenting
+    init(viewer: BearyEntryImageViewerViewController) {
+        self.viewer = viewer
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return 0.25
+        return BearyMotion.normal
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
-        let duration = transitionDuration(using: transitionContext)
+        let container = transitionContext.containerView
         guard let toView = transitionContext.view(forKey: .to) else {
             transitionContext.completeTransition(false)
             return
         }
-        transitionContext.containerView.addSubview(toView)
+        toView.frame = container.bounds
+        container.addSubview(toView)
+        toView.layoutIfNeeded()
+
+        let reduceMotion = UIAccessibility.isReduceMotionEnabled
+        guard reduceMotion == false,
+              toView.bounds.width > 0, toView.bounds.height > 0,
+              let viewer = viewer,
+              let zoom = viewer.presentZoomInfo() else {
+            // 兜底：减动效、无图、无原处——走 0.25s 淡入，与旧开场一致。
+            toView.alpha = 0
+            UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
+                toView.alpha = 1
+            }, completion: { _ in
+                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+            })
+            return
+        }
+
+        // 主路径：真图藏起，临时快照从原处矩形放大到满屏 aspectFit 位；
+        // toView 同步淡入；结束时临时图与真图同框同图，撤掉即无缝交接。
+        let image = zoom.image
+        let fit = min(toView.bounds.width / image.size.width, toView.bounds.height / image.size.height)
+        let targetRect = CGRect(
+            x: (toView.bounds.width - image.size.width * fit) / 2,
+            y: (toView.bounds.height - image.size.height * fit) / 2,
+            width: image.size.width * fit,
+            height: image.size.height * fit
+        )
+        viewer.setDismissImageHidden(true)
         toView.alpha = 0
-        UIView.animate(withDuration: duration, delay: 0, options: presenting ? .curveEaseOut : .curveEaseIn, animations: {
+        let tempView = UIImageView(image: image)
+        tempView.contentMode = .scaleAspectFit
+        tempView.clipsToBounds = true
+        tempView.layer.cornerRadius = 12
+        tempView.frame = container.convert(zoom.origin, from: nil)
+        container.addSubview(tempView)
+        // 与关场同款临界阻尼弹簧（阻尼 1.0，不超调）：临时图单调趋近
+        // 目标矩形，不会先冲过满屏位再弹回。
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 1.0, initialSpringVelocity: 0, options: .curveEaseOut, animations: {
             toView.alpha = 1
+            tempView.frame = container.convert(targetRect, from: toView)
+            tempView.layer.cornerRadius = 0
         }, completion: { _ in
+            viewer.setDismissImageHidden(false)
+            tempView.removeFromSuperview()
             transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
         })
     }
