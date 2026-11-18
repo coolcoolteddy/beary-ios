@@ -221,6 +221,11 @@ final class BearyMessagesViewController: UIViewController {
         // 私信组接线与会话列表页同口径；嵌入态无返回钮、组头顶栏已在子页内折叠。
         conversationsChild.onRequireLogin = { [weak self] in self?.onRequireLogin?() }
         conversationsChild.onMergeSnapshotChanged = { [weak self] in self?.updateMergedRows() }
+        // 会话删除失败 toast 投容器 view（子页 view 不进层级，同通知组口径）。
+        conversationsChild.toastOverride = { [weak self] message in
+            guard let view = self?.view else { return }
+            BearyToast.show(in: view, message: message)
+        }
         conversationsChild.setEmbedded()
         conversationsChild.applyHeaderTopInset(visible: false)
         // 私信轮询可见门控（通知页同款）：嵌入态子页 view 不进层级，
@@ -997,6 +1002,43 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
         case .notifFailure, .dmFailure:
             // 失败行本身不可点，重试走行内按钮（selectionStyle 已 none）。
             break
+        }
+    }
+
+    /// 左滑删除单条：信件行删该条通知，会话行删该会话；卡片（系统消息／
+    /// 互动消息）与失败行／哨兵行不给左滑。行消失／回来走子页快照变化的
+    /// diff，容器不直接改行；失败时子页回滚＋toast，diff 把行插回来。
+    /// 删除调用延后一拍：等左滑收起后再走快照 diff，免得在 swipe 进行中
+    /// 做 batch 更新。
+    func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        guard indexPath.row < mergedRows.count else { return nil }
+        switch mergedRows[indexPath.row] {
+        case .notifLetter(let item):
+            guard let notificationId = item.id else { return nil }
+            let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
+                guard let self = self else { done(false); return }
+                BearyHaptics.press()
+                done(true)
+                DispatchQueue.main.async {
+                    self.notifChild.deleteNotification(id: notificationId) { _ in }
+                }
+            }
+            delete.accessibilityLabel = "删除这条通知"
+            return UISwipeActionsConfiguration(actions: [delete])
+        case .conversation(let conv):
+            guard let peerId = conv.peer?.id else { return nil }
+            let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
+                guard let self = self else { done(false); return }
+                BearyHaptics.press()
+                done(true)
+                DispatchQueue.main.async {
+                    self.conversationsChild.deleteConversation(peerId: peerId) { _ in }
+                }
+            }
+            delete.accessibilityLabel = "删除这个会话"
+            return UISwipeActionsConfiguration(actions: [delete])
+        case .notifCard, .notifFailure, .dmFailure, .sentinel:
+            return nil
         }
     }
 

@@ -212,6 +212,8 @@ final class BearyNotificationsViewController: UIViewController {
     private var firstLoadFailed = false
     private var isMarkingAllRead = false
     private var markingReadIds: Set<Int> = []
+    /// 左滑删除在途 id 集合：同一条删除只发一次 POST，失败回滚前不重复删。
+    private var deletingNotificationIds: Set<Int> = []
     /// 第三轮审计 01：单条与全部已读共用的操作代次——全部已读成功时 +1，
     /// 在途单条的失败回滚凭发起时代次校验，代次已变即作废，不把已清零的
     /// 未读数加回来。只认本代次，不认账号代次（同账号内全部已读不会 bump
@@ -2574,6 +2576,81 @@ final class BearyNotificationsViewController: UIViewController {
                     // 回滚，用户不知道标已读没成）。
                     strongSelf.playDenyShakeForRow(notificationId: notificationId)
                     strongSelf.showToast(message: "标为已读失败，请重试")
+                }
+            }
+        }
+    }
+
+    /// 左滑删除单条通知（通知详情页行与消息页信件行共用）：乐观从源列表
+    /// 移除＋未读数回落＋快照通知＋缓存写盘，服务端确认；失败按 id 与时间
+    /// 倒序重插回原位（行＋未读数＋快照＋缓存），toast 提示。无 id 的行不删；
+    /// 同一条在途只发一次；切号后到达的旧回包丢弃、不回滚新账号。
+    /// completion 在主线程回 true（服务端确认）/ false（失败已回滚）。
+    func deleteNotification(id: Int, completion: ((Bool) -> Void)? = nil) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else {
+            completion?(false)
+            return
+        }
+        if deletingNotificationIds.contains(id) {
+            completion?(false)
+            return
+        }
+        deletingNotificationIds.insert(id)
+        let item = items[index]
+        let wasUnread = (item.read ?? true) == false
+        let wasSystem = item.type == "system"
+        items.remove(at: index)
+        if wasUnread {
+            unreadTotal = max(0, unreadTotal - 1)
+            if wasSystem {
+                sysUnreadTotal = max(0, sysUnreadTotal - 1)
+            }
+            publishUnread(unreadTotal)
+            updateReadAllButton()
+            recordFullLoadUnread()
+        }
+        notifyMergeSnapshotChanged()
+        saveNotificationCache()
+        let requestEpoch = BearyAPI.shared.authEpoch
+        BearyAPI.shared.deleteNotification(id: id) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.deletingNotificationIds.remove(id)
+                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                    completion?(false)
+                    return
+                }
+                switch result {
+                case .success:
+                    completion?(true)
+                case .failure:
+                    // 失败回滚：行不在列表时才按时间倒序（createdAt、id）插回
+                    // 原位并补未读数——行已由重拉带回来时，服务端真相已结算
+                    // 未读数，不重复插、不重复 +1。
+                    if strongSelf.items.firstIndex(where: { $0.id == id }) == nil {
+                        let insertAt = strongSelf.items.firstIndex(where: {
+                            ($0.createdAt ?? 0) < (item.createdAt ?? 0)
+                                || (($0.createdAt ?? 0) == (item.createdAt ?? 0) && ($0.id ?? 0) < id)
+                        }) ?? strongSelf.items.count
+                        strongSelf.items.insert(item, at: insertAt)
+                        if wasUnread {
+                            strongSelf.unreadTotal += 1
+                            if wasSystem {
+                                strongSelf.sysUnreadTotal += 1
+                            }
+                            strongSelf.publishUnread(strongSelf.unreadTotal)
+                            strongSelf.updateReadAllButton()
+                            strongSelf.recordFullLoadUnread()
+                        }
+                        strongSelf.notifyMergeSnapshotChanged()
+                        strongSelf.saveNotificationCache()
+                    }
+                    // 失败有反馈：震动＋拒绝音效＋toast（行重回列表即是回滚本身；
+                    // 不复用 playDenyShakeForRow——它按旧下标找行，删后重插下标已变）。
+                    BearyHaptics.rejectionWarning()
+                    BearySoundPlayer.play(.refuseBonk)
+                    strongSelf.showToast(message: "删除失败，请重试")
+                    completion?(false)
                 }
             }
         }
@@ -5438,6 +5515,38 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
         let isSystemStyle = item.type == "system" || item.type == "letter"
         // 已读后高亮判定恒 false（shouldHighlight 先判 read），直接灭。
         cell.setReadAppearance(isUnread: false, isSystemStyle: isSystemStyle, highlight: false)
+    }
+
+    /// 左滑删除单条通知：只给「删除」一个红色动作（卡片本身不加左滑）。
+    /// 无 id 的行不删。本地先行移除＋淡出，源页同步删（未读数／快照／缓存
+    /// 一并走源页）；服务端失败时源页回滚＋toast，本页按 completion 把行
+    /// 插回原位。减动效时行直接消失／出现，不播淡入淡出。
+    func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        guard indexPath.row < items.count,
+              let notificationId = items[indexPath.row].id else { return nil }
+        let item = items[indexPath.row]
+        let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
+            guard let self = self else { done(false); return }
+            BearyHaptics.press()
+            self.items.remove(at: indexPath.row)
+            tableView.deleteRows(at: [indexPath], with: BearyMotion.animated(true) ? .fade : .none)
+            self.notifSource.deleteNotification(id: notificationId) { [weak self] success in
+                guard let self = self else { return }
+                if success { return }
+                // 失败回滚：源页已把行插回源列表，本页按时间倒序插回本地拷贝；
+                // 行已回来（重进页重读快照）时不重复插。
+                guard self.items.firstIndex(where: { $0.id == notificationId }) == nil else { return }
+                let insertAt = self.items.firstIndex(where: {
+                    ($0.createdAt ?? 0) < (item.createdAt ?? 0)
+                        || (($0.createdAt ?? 0) == (item.createdAt ?? 0) && ($0.id ?? 0) < notificationId)
+                }) ?? self.items.count
+                self.items.insert(item, at: insertAt)
+                self.tableView.insertRows(at: [IndexPath(row: insertAt, section: 0)], with: BearyMotion.animated(true) ? .fade : .none)
+            }
+            done(true)
+        }
+        delete.accessibilityLabel = "删除这条通知"
+        return UISwipeActionsConfiguration(actions: [delete])
     }
 
     /// 单条标已读失败回滚：把本地拷贝改回未读并重画该行（只改该行 class，

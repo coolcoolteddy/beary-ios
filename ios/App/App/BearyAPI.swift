@@ -1384,6 +1384,12 @@ final class BearyAPI {
         requestVoid("/beary/api/notifications/read", method: "POST", jsonBody: body, completion: completion)
     }
 
+    /// 左滑删除单条通知：POST /beary/api/notifications/delete {id}。
+    /// 服务端接口随本支后端 diff 上线；未上线前调失败即按乐观更新口径回滚（行回来＋提示），不做本地隐藏。
+    func deleteNotification(id: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
+        requestVoid("/beary/api/notifications/delete", method: "POST", jsonBody: ["id": id], completion: completion)
+    }
+
     /// B2：同会话首屏搜索复用——完全相同的首屏 /search 请求在短时内只发一次，
     /// 全站搜索与编辑器选人共用同一份缓存（选人只取其中的用户组）。
     /// 仅首屏（无游标）进缓存；翻页请求走另一重载、每次都走网络。
@@ -1961,6 +1967,12 @@ final class BearyAPI {
     /// 无 body 响应，走 requestVoid（只看状态码）。
     func markDMRead(userId: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
         requestVoid("/beary/api/friends/dm/read", method: "POST", jsonBody: ["user_id": userId], completion: completion)
+    }
+
+    /// 左滑删除单个会话：POST /beary/api/friends/dm/conversations/delete {user_id}。
+    /// 服务端接口随本支后端 diff 上线（仅删我这一侧的会话，对方记录不动）；未上线前调失败即按乐观更新口径回滚，不做本地隐藏。
+    func deleteDMConversation(userId: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
+        requestVoid("/beary/api/friends/dm/conversations/delete", method: "POST", jsonBody: ["user_id": userId], completion: completion)
     }
 
     /// 私信权限档位：GET /beary/api/friends/dm/prefs → {dm_level}；
