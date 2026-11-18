@@ -1998,6 +1998,12 @@ final class BearyAPI {
         request("/beary/api/reports", method: "POST", jsonBody: ["entry_id": entryId, "reason": reason], completion: completion)
     }
 
+    /// 按用户举报：POST /beary/api/reports {user_id, reason}（对方无公开日记时也能举报）。
+    /// 后端备改动未部署前 400 即走失败态；重复举报返回已举报态，不建新行。
+    func reportUser(userId: Int, reason: String, completion: @escaping (Result<ReportResponse, APIError>) -> Void) {
+        request("/beary/api/reports", method: "POST", jsonBody: ["user_id": userId, "reason": reason], completion: completion)
+    }
+
     /// 拉黑：POST /beary/api/blocks {user_id}。
     func blockUser(userId: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
         requestVoid("/beary/api/blocks", method: "POST", jsonBody: ["user_id": userId], completion: completion)
