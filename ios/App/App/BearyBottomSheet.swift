@@ -4,8 +4,9 @@ import UIKit
 // 用法：任何弹窗 VC 设 modalPresentationStyle = .custom，transitioningDelegate =
 // BearyBottomSheetTransitioningDelegate()（或传 presentationControllerFactory
 // 供自定义子类，如登录弹窗的 chrome + 键盘逻辑）；容器负责其余全部：
-// 出现——弹窗弹簧 0.38s / damping 0.7 从底部升起，背后页面同步缩 0.92 倍、
-// 圆角 16pt、黑色遮罩压暗 0.45；拖动——弹窗可上下拖，下滑 1:1 跟手、上滑
+// 出现——弹窗弹簧 0.38s / damping 0.7 从底部升起，背后页面在弹窗高于容器一半时
+// 同步缩 0.92 倍、圆角 16pt（Li 2026-11-18 定：半屏及更矮的弹窗不缩背景，
+// 只压暗遮罩；门槛见 BearyBottomSheet.backgroundShrinkHeightRatio）、黑色遮罩压暗 0.45；拖动——弹窗可上下拖，下滑 1:1 跟手、上滑
 // 按 0.3 阻力折算，松手下拖超 80pt 或下甩速度 > 600pt/s 关闭、否则弹簧
 // （0.26s / damping 0.7）弹回；关闭——背后页面同步恢复。遮罩点按与拖动关闭都走 requestDismiss
 //（子类可重写，如登录弹窗改走 cancelFromSheet——先停倒计时与在途任务，
@@ -21,10 +22,13 @@ import UIKit
 // 样板后再分批迁移，不要一次全改。
 
 enum BearyBottomSheet {
-    /// 背后页面缩小倍数（出现时 1 → 0.92）。
+    /// 背后页面缩小倍数（出现时 1 → 0.92，仅高于门槛的弹窗用，见 backgroundShrinkHeightRatio）。
     static let backgroundScale: CGFloat = 0.92
-    /// 背后页面圆角（出现时原值 → 16pt）。
+    /// 背后页面圆角（出现时原值 → 16pt，仅高于门槛的弹窗用）。
     static let backgroundCornerRadius: CGFloat = 16
+    /// 背后页面缩小门槛（Li 2026-11-18 定）：弹窗高度超过容器高度一半才缩背景；
+    /// 半屏及更矮的弹窗只压暗遮罩、背景不动（半屏表情弹窗正好在分界线上、不缩）。
+    static let backgroundShrinkHeightRatio: CGFloat = 0.5
     /// 遮罩压暗（黑色，出现时 0 → 0.45，与 BearySheetChrome.scrimAlpha 同值）。
     static let dimAlpha: CGFloat = 0.45
     /// 出现/关闭弹簧时长（present/dismiss 用，走 motion.screen 0.38s）。
@@ -152,22 +156,35 @@ class BearyBottomSheetPresentationController: UIPresentationController {
 
     /// 出现/关闭终态（只赋值、不自带动效，调用方须在动画块内调，
     /// 否则直落终值无过渡；减动效路径直接调本方法即终态）。
-    /// presented=true：遮罩 0.45、背后缩 0.92、圆角 16；
+    /// presented=true：遮罩 0.45；背后页面只在弹窗高于容器一半时缩 0.92、圆角 16，
+    /// 半屏及更矮的弹窗背景不动（见 shouldShrinkBackground）；
     /// presented=false：遮罩 0、背后恢复原样。
     /// 子类重写时先调 super 再同步自己的 chrome 终态。
     func setSheetPresented(_ presented: Bool) {
         applyPresentationProgress(presented ? 0 : 1)
     }
 
+    /// 背后页面是否做缩小：只有弹窗高度超过容器高度一半时才缩（Li 2026-11-18 定）。
+    /// 高度取 frameOfPresentedViewInContainerView 的实际值——子类重写帧
+    ///（登录／输入／标签选择器）时跟重写值走；容器未备好时不缩。
+    /// 每次调 applyPresentationProgress 都重算：拖动中帧被冻住、高度不变，
+    /// 故拖动过程不会中途突然缩／突然不缩。
+    private var shouldShrinkBackground: Bool {
+        guard let container = containerView else { return false }
+        return frameOfPresentedViewInContainerView.height > container.bounds.height * BearyBottomSheet.backgroundShrinkHeightRatio
+    }
+
     /// 出现进度 0（完全出现）→ 1（完全关闭）对应的遮罩与背后页面状态；
     /// 拖动时按位移比例调，出现/关闭动画调两端。
+    /// 遮罩始终按进度压暗；背后缩小只在 shouldShrinkBackground 为真时做，
+    /// 矮弹窗全程背景不动（拖动、减动效直落终态同样走这里，不会另起行为）。
     /// 本方法不走虚方法表：transitionWillBegin/DidEnd 的非动画路径调它，
     /// 避免子类 chrome 在未摆好前被虚调用提前置终态（见登录弹窗注释）。
     func applyPresentationProgress(_ progress: CGFloat) {
         let p = max(0, min(1, progress))
         dimView.alpha = BearyBottomSheet.dimAlpha * (1 - p)
         guard let backgroundView = presentingViewController.view else { return }
-        if p >= 1 {
+        if p >= 1 || !shouldShrinkBackground {
             backgroundView.transform = backgroundOriginalTransform
             backgroundView.layer.cornerRadius = backgroundOriginalCornerRadius
             backgroundView.layer.masksToBounds = backgroundOriginalMasksToBounds
