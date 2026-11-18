@@ -3443,8 +3443,15 @@ final class BearyAvatarStackView: UIView {
     static let avatarDiameter: CGFloat = 42
     static let collapsedPitch: CGFloat = 28
     static let expandedPitch: CGFloat = 50
-    /// 展开高：头像 42 ＋ 4 间隙 ＋ 名字 14。
-    static let expandedHeight: CGFloat = 60
+    /// 名字行高：11pt 名字缩放后的实际行高，向上取整防截断；大字号下随字体
+    /// 长大，不再固定 14（审计第 10 项：固定 14 在大字号下会纵向截断名字）。
+    static var nameHeight: CGFloat {
+        ceil(BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11)).lineHeight)
+    }
+    /// 展开高：头像 42 ＋ 4 间隙 ＋ 名字实际行高。
+    static var expandedHeight: CGFloat {
+        avatarDiameter + 4 + nameHeight
+    }
 
     static func collapsedWidth(count: Int) -> CGFloat {
         guard count > 0 else { return 0 }
@@ -3642,8 +3649,8 @@ final class BearyAvatarStackView: UIView {
         for (index, circle) in circles.enumerated() {
             let centerX = circleCenterX(at: index, expanded: isExpanded)
             let containerFrame = CGRect(x: centerX - Self.avatarDiameter / 2, y: 0, width: Self.avatarDiameter, height: Self.avatarDiameter)
-            // 名字宽 50 居中于圆心，超长截断；头像下方 4pt 间隙。
-            let nameFrame = CGRect(x: centerX - 25, y: Self.avatarDiameter + 4, width: 50, height: 14)
+            // 名字宽 50 居中于圆心，超长截断；头像下方 4pt 间隙，高取缩放后实际行高。
+            let nameFrame = CGRect(x: centerX - 25, y: Self.avatarDiameter + 4, width: 50, height: Self.nameHeight)
             let apply = {
                 circle.container.frame = containerFrame
                 circle.nameLabel.frame = nameFrame
