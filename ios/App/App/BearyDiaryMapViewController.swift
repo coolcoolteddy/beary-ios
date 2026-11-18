@@ -725,13 +725,15 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         var cachedLocated: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)] = []
         var pendingGroups: [BearyLocationMapGroup] = []
         for group in groups {
-            if let cached = geocodeCache[geocodeCacheKey(for: group)] {
-                cachedLocated.append((group, cached))
-            } else if let stored = storedCoordinate(for: group) {
-                // 2026-11-14 存经纬度：有存量坐标的组直接落钉，不再按文本编码；
+            if let stored = storedCoordinate(for: group) {
+                // 审计第三轮 #29：实际坐标优先——组内存量坐标有则直接落钉；
+                // 文字编码缓存按组 ID（名 + 区）记，地点名和区不变时 ID 不变，
+                // 编辑新增实际经纬度后重算若先命中旧文字坐标，新坐标永远读不到。
                 // 不进 geocodeCache——编辑改了坐标后重算须读新值，缓存会留旧钉。
-                // 无坐标的旧日记才走文本编码链（+切语言校验修）。
                 cachedLocated.append((group, stored))
+            } else if let cached = geocodeCache[geocodeCacheKey(for: group)] {
+                // 无存量坐标的组才复用文字编码缓存；其余无坐标的旧日记走文本编码链。
+                cachedLocated.append((group, cached))
             } else {
                 pendingGroups.append(group)
             }
