@@ -5749,7 +5749,20 @@ class BearyProfileViewController: UIViewController {
                         }
                     }
                 case .failure:
-                    break
+                    // #37 回包丢失兜底：创建失败可能是服务端已保存、回包
+                    // 丢了。再拉一次列表；若服务端已有内容全等的行，
+                    // mergeServerRows 会让本地行认领服务端 id，不再重推。
+                    // 拉取也失败则静默，下次同步再对齐。
+                    BearyAPI.shared.fetchPastSelfMessages { [weak self] refetch in
+                        DispatchQueue.main.async {
+                            guard let strongSelf = self, let store = strongSelf.pastSelfStore() else { return }
+                            guard case .success(let response) = refetch else { return }
+                            store.mergeServerRows(response.messages ?? [])
+                            if strongSelf.isOwnProfile {
+                                strongSelf.renderPastSelf(visible: strongSelf.pastSelfVisibleEntries())
+                            }
+                        }
+                    }
                 }
             }
         }
