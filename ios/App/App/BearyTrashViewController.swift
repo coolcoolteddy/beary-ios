@@ -1474,7 +1474,11 @@ private enum TrashText {
     /// 小时不补零；ms 无效时回落下方的旧绝对格式）。
     /// G8：显示用 formatter 统一设北京时区，与服务端日界一致。
     static func createdLabel(ms: Int) -> String {
-        if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
+        // #32：共用函数 7 天外也返回绝对串（M月d日 H:mm，设备时区、无跨年分支），
+        // 直接 early-return 会吞掉下方的跨年分支；只在 7 天内用它做相对显示，
+        // 7 天及以外落回下方的跨年分支（同年 M月d日 H:mm／跨年 yyyy年M月d日，北京时间）。
+        let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
+        if diff < 7 * 86400, let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
             return relative
         }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
