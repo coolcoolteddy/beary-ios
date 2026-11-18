@@ -2,8 +2,8 @@ import UIKit
 
 // ===== 日记星图（星空页，2026-10-30；预览：日记星图屏）=====
 // 入口：我的页（他人主页同款行）→ 日记地图行下一行“日记星图”。
-// 本页只渲染 BearyStarMap 算出的模型：大小 = 字数、亮度 = 心情、
-// 连线 = 同心情 / 同地点 / 同词；星位由日记 id 确定性哈希，不随机飘。
+// 本页只渲染 BearyStarMap 算出的模型：大小 = 字数、亮度固定、
+// 连线 = 同地点 / 同词；星位由日记 id 确定性哈希，不随机飘。
 // 点星进详情（走调用方 onOpenEntry，与日记地图同约定）；点线出底卡，
 // 列出连起来的两篇与连线原因（点卡内篇名同样进详情）；
 // 两颗星点位重叠时点按出重叠列表，不让下层星永远点不到。
@@ -696,16 +696,15 @@ final class BearyDiaryStarMapViewController: UIViewController {
         // 日期入口标题与菜单随当前分片与数据刷新（拉取回包后年份会变）。
         dateEntryButton.setTitle(sliceButtonTitle(), for: .normal)
         dateEntryButton.menu = dateRangeMenu()
-        // 连线过滤：全部 / 同心情 / 同地点 / 同词（只滤线，不滤星）。
+        // 连线过滤：全部 / 同地点 / 同词（只滤线，不滤星）。
         let filters: [(String, StarMapEdgeKind?)] = [
-            ("全部连线", nil), ("同心情", .mood), ("同地点", .place), ("同词", .word),
+            ("全部连线", nil), ("同地点", .place), ("同词", .word),
         ]
         for (title, kind) in filters {
             let button = pillButton(title: title, selected: edgeFilter == kind, action: #selector(didTapFilterPill(_:)))
             switch kind {
-            case .mood: button.tag = 1
-            case .place: button.tag = 2
-            case .word: button.tag = 3
+            case .place: button.tag = 1
+            case .word: button.tag = 2
             case .none: button.tag = 0
             }
             filterStack.addArrangedSubview(button)
@@ -775,7 +774,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     /// L3：图例入口——原常驻顶部的长图例文本改点按弹说明。
     @objc private func didTapLegend() {
-        BearyConfirmSheet.show(from: self, title: "图例", message: "星越大字越多，亮度代表心情；连线表示同心情、同地点或同词。点星进详情，点线看原因。", actions: [
+        BearyConfirmSheet.show(from: self, title: "图例", message: "星越大字越多；连线表示同地点或同词。点星进详情，点线看原因。", actions: [
             BearyConfirmSheet.Action(title: "知道了", style: .default),
         ])
     }
@@ -791,9 +790,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     @objc private func didTapFilterPill(_ sender: UIButton) {
         switch sender.tag {
-        case 1: edgeFilter = .mood
-        case 2: edgeFilter = .place
-        case 3: edgeFilter = .word
+        case 1: edgeFilter = .place
+        case 2: edgeFilter = .word
         default: edgeFilter = nil
         }
         clearSelection()
@@ -875,7 +873,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         }
     }
 
-    /// ⑧：缓存命中模型的 Entry 重绑——指纹只守建模输入（标题/正文/心情/
+    /// ⑧：缓存命中模型的 Entry 重绑——指纹只守建模输入（标题/正文/
     /// 地点/可见性等），天气、互动数等轻量字段不在指纹里；命中时星位与
     /// 连线可直接复用，但星内 Entry 与 entryById 须按 id 换成 allEntries
     /// 里的最新副本，否则切走再回来会把旧天气/旧互动数换回来。allEntries
@@ -1056,7 +1054,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     // MARK: - C4 详情往返只传变化
 
     /// 编辑/可见性变化按 id 原地更新，不重拉网络。
-    /// 星图所用字段（标题/正文→字数、心情→亮度、地点→连线、创建日→分片、
+    /// 星图所用字段（标题/正文→字数、地点→连线、创建日→分片、
     /// 可见性→出星资格、图片/引用→出星资格）变了 → 重建受影响的范围
     /// （recompute，后台重算模型；分片与滚动位置不动，选中星仍在时底卡
     /// 即时按新 Entry 刷新）；其余字段（天气、互动数等）→ 只换模型里的
@@ -1076,7 +1074,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
             }
             return
         }
-        // 选中线涉及本篇时，编辑可能改了连线原因（心情/地点/同词）——
+        // 选中线涉及本篇时，编辑可能改了连线原因（地点/同词）——
         // 原因须等后台模型重算，底卡先回默认态，不留旧原因。
         if let edgeId = selectedEdgeId,
            model.edges.contains(where: { $0.id == edgeId && ($0.firstId == entryId || $0.secondId == entryId) }) {
@@ -1101,13 +1099,12 @@ final class BearyDiaryStarMapViewController: UIViewController {
         recompute()
     }
 
-    /// 星图所用字段是否变了：标题/正文（字数→星体大小）、心情（亮度）、
+    /// 星图所用字段是否变了：标题/正文（字数→星体大小）、
     /// 地点（地点键→连线）、创建日（分片归属）、可见性档（出星资格）、
     /// 图片/引用（纯心情项的出星资格）。天气、互动数、截止日等不在此列。
     private func starFieldsChanged(old: Entry, updated: Entry) -> Bool {
         if (old.title ?? "") != (updated.title ?? "") { return true }
         if (old.content ?? "") != (updated.content ?? "") { return true }
-        if (old.mood ?? "") != (updated.mood ?? "") { return true }
         if DiaryLocation(entry: old) != DiaryLocation(entry: updated) { return true }
         if old.createdAt != updated.createdAt { return true }
         if BearyVisibility.current(for: old) != BearyVisibility.current(for: updated) { return true }
@@ -1344,7 +1341,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         // L3：底卡默认隐藏，选中后由展示函数自己取消隐藏。
         sheetCard.isHidden = false
         // r17-m1：底卡标题不再是笼统的「连线 · …」，直接收成具体关系
-        //（如「同心情：开心；同地点：宁波」）；原因文案本身一字不动。
+        //（如「同地点：宁波；同词：桂花」）；原因文案本身一字不动。
         let reasons = edge.reasons.map { reasonText($0) }.joined(separator: "；")
         let first = model.entryById[edge.firstId]
         let second = model.entryById[edge.secondId]
@@ -1483,8 +1480,6 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     private func reasonText(_ reason: StarMapEdgeReason) -> String {
         switch reason.kind {
-        case .mood:
-            return "同心情：\(BearyText.moodNames[reason.detail] ?? reason.detail)"
         case .place:
             return "同地点：\(reason.detail)"
         case .word:
@@ -1861,7 +1856,7 @@ private final class StarMapSkyView: UIView {
 
     /// 第十一轮 02：未选中时连线显示预算——模型本身的边一字不动（后台建模仍
     /// 算全部关联），只限制画布每帧实际绘制的边数。420pt 高的画布上 600 条
-    /// 线已是密网，再多也分辨不出，反而拖慢每帧绘制（200 篇同心情理论
+    /// 线已是密网，再多也分辨不出，反而拖慢每帧绘制（200 篇理论
     /// 最多 19,900 条）。选中某颗星时，与该星相连的边全部画出，其余仍受
     /// 预算约束；选中某条线时该线必画。建层与点按命中都走同一 displayedEdges，
     /// 看不见的线也点不到。
@@ -2407,12 +2402,10 @@ private final class StarMapSkyView: UIView {
         return name
     }
 
-    /// 连线原因文案：与 VC.showEdgeSheet 经 reasonText 拼的标题同文案（同三档），
+    /// 连线原因文案：与 VC.showEdgeSheet 经 reasonText 拼的标题同文案（同两档），
     /// 两处改动须同步。
     private func edgeReasonText(_ reason: StarMapEdgeReason) -> String {
         switch reason.kind {
-        case .mood:
-            return "同心情：\(BearyText.moodNames[reason.detail] ?? reason.detail)"
         case .place:
             return "同地点：\(reason.detail)"
         case .word:
