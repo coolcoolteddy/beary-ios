@@ -149,6 +149,12 @@ class BearyProfileViewController: UIViewController {
     /// 列表行点按：传整条 Entry，容器接线到详情页。
     var onOpenEntry: ((Entry) -> Void)?
 
+    /// 卡片标签点按：打开标签聚合页（容器接线，见 SceneDelegate.presentTagPage）。
+    /// 第七轮审计 01：旧 openTagPage 自建标签页推在主页 modal nav 内，
+    /// 点日记走主页的 dismiss-then-detail、连主页带标签页一起丢；
+    /// 且标签页内作者头像是未接线的裸 push，改走容器统一路由。
+    var onOpenTag: ((String) -> Void)?
+
     /// 提速：引用卡点按专用——传刚为可见性校验拉到的新鲜 Entry，容器
     /// 接线到详情页且跳过后台补拉（未接线时调用方回落 onOpenEntry 原路径）。
     var onOpenFreshEntry: ((Entry) -> Void)?
@@ -8336,31 +8342,12 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
     /// 2026-11-11 迁底部弹窗（BearyConfirmSheet；原 actionSheet 文案／顺序／
     /// 语义全保留，iPad popover 锚点随迁移删去）。
     /// 冲突清单第 4 条：编辑永久可改，不再按 15 分钟门控。
-    /// 标签完整版（2026-11-18）：卡片标签点按——推标签聚合页。行点按转容器
-    /// 原有 onOpenEntry；本页无 onOpenUser（单人页），作者头像直接推该作者
-    /// 的个人页（闭包按本页同款转发；拉黑后退回聚合页）。
+    /// 标签完整版（2026-11-18）：卡片标签点按——走容器统一标签路由。
+    /// 行点按转容器原有 onOpenEntry。
+    /// 第七轮审计 01：标签页自成 modal（SceneDelegate.presentTagPage），
+    /// 详情盖在标签页上、关详情回标签列表；本页不再自建标签页／不再裸推作者页。
     private func openTagPage(_ tag: String) {
-        let page = BearyTagEntriesViewController(tag: tag)
-        page.onOpenEntry = { [weak self] entry in
-            self?.onOpenEntry?(entry)
-        }
-        page.onOpenUser = { [weak self] userId in
-            guard let self = self else { return }
-            let profile = BearyProfileViewController(userIdValue: userId, viewerUserIdValue: SessionManager.shared.currentUser?.id)
-            profile.onOpenEntry = self.onOpenEntry
-            profile.onOpenFreshEntry = self.onOpenFreshEntry
-            profile.onRequireLogin = self.onRequireLogin
-            profile.onEditEntry = self.onEditEntry
-            profile.onDeleteEntry = self.onDeleteEntry
-            profile.onBlockedUser = { [weak self] _ in
-                self?.navigationController?.popViewController(animated: true)
-            }
-            self.navigationController?.pushViewController(profile, animated: true)
-        }
-        page.onRequireLogin = { [weak self] in
-            self?.onRequireLogin?()
-        }
-        navigationController?.pushViewController(page, animated: true)
+        onOpenTag?(tag)
     }
 
     private func presentCardMoreMenu(entry: Entry, sourceView: UIView) {

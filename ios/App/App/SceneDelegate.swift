@@ -252,16 +252,22 @@ final class BearyChromeViewController: UIViewController {
     private var notificationDetailEdgeDismiss: BearyEdgeDismissController?
     /// 日记详情页 modal 的 EdgeDismiss 强持有（见 presentDetail）。
     private var detailEdgeDismiss: BearyEdgeDismissController?
+    /// 标签聚合页 modal 的 EdgeDismiss 强持有（见 presentTagPage）。
+    private var tagPageEdgeDismiss: BearyEdgeDismissController?
     /// 详情只读返回的定位上下文：只记来源列表＋该篇在打开时的视口内位置；
     /// 关闭时仅恢复来源列表，不再向三列表广播 scrollToRow(.middle)。
     /// 来源不明（搜索/深链/引用卡/通知等）时为 nil，关闭时什么都不做。
-    private enum DetailReturnSource { case feed, timeline, profile }
+    private enum DetailReturnSource { case feed, timeline, profile, tag }
     private struct DetailReturnContext {
         let source: DetailReturnSource
         let entryId: String
         let viewportOffset: CGFloat
     }
     private var pendingDetailReturn: DetailReturnContext?
+    /// 第七轮审计 01：详情返回锚点的标签页来源——标签 modal 是临时页，
+    /// 不进 feed/timeline/profile 三常驻页；打开详情时记下点按时最上层
+    /// 那页（嵌套标签页以顶层为准），关闭时只恢复它。
+    private weak var detailReturnTagPage: BearyTagEntriesViewController?
     /// 私信聊天页 modal 的 EdgeDismiss 强持有（见 presentDMChat）。
     private var dmChatEdgeDismiss: BearyEdgeDismissController?
     /// 编辑器 modal 的 EdgeDismiss 强持有（见 configureComposerPresentation；
@@ -2123,6 +2129,11 @@ final class BearyChromeViewController: UIViewController {
         f.onOpenUser = { [weak self] userId in
             self?.presentUserProfile(userId: userId)
         }
+        // 第七轮审计 01：卡片标签点按走容器统一标签路由（见 presentTagPage）——
+        // 本页无导航栈，标签页自成 modal，详情盖在标签页上、关详情回标签列表。
+        f.onOpenTag = { [weak self] tag in
+            self?.presentTagPage(tag: tag)
+        }
         // 收尾补线（总协调）：Feed 卡片内点赞/收藏未登录时走登录页，与详情/编辑器同口径；
         // Feed 是底层常驻页、无需先 dismiss，直接 present 登录页。
         f.onRequireLogin = { [weak self] in
@@ -3200,6 +3211,13 @@ final class BearyChromeViewController: UIViewController {
         vc.onDeleteEntry = { [weak self] entry in
             self?.confirmAndDeleteEntry(entry)
         }
+        // 第七轮审计 01：卡片标签点按走容器统一标签路由（见 presentTagPage）——
+        // modal 他人主页与「我的」页共用：标签页自成 modal，详情盖在标签页上、
+        // 关详情回标签列表；旧 openTagPage 的 nav push 在 modal 内会随
+        // dismiss-then-detail 丢页、在根容器页是静默空操作，均已作废。
+        vc.onOpenTag = { [weak self] tag in
+            self?.presentTagPage(tag: tag)
+        }
         // B6：退出只发一次：成功才清本地态，
         // 失败 toast“退出失败，请重试”并保留会话（401 由 BearyAPI.logout 侧映射为成功，此处不另判）。
         vc.onLogout = { [weak self] in
@@ -3617,6 +3635,54 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
+    /// 第七轮审计 01：标签聚合页统一路由——标签页自成一个全屏 modal nav
+    /// （与他人主页 modal 同款：系统导航栏隐藏、自有顶栏、EdgeDismiss 边缘
+    /// 右滑 dismiss），详情盖在标签页之上、关闭后回到原标签列表：
+    /// 详情由 topmost 弹出（即标签 nav 之上），全程不经过任何 dismiss，
+    /// 标签 modal 与其下的主页／广场全程不动。
+    /// 广场／「我的」是根容器直属子页、无 UINavigationController，
+    /// 旧 openTagPage 的 navigationController?.push 是静默空操作，
+    /// 故两处一律走这里，标签页从此处处能打开。
+    /// 主页列表直接点卡片仍走主页原有的 dismiss-then-detail（6A 定版），
+    /// 不受影响——只有经标签页点卡片才走这里的盖在上面。
+    private func presentTagPage(tag: String) {
+        let page = BearyTagEntriesViewController(tag: tag)
+        page.onOpenEntry = { [weak self, weak page] entry in
+            self?.openTagEntry(entry, from: page)
+        }
+        // 标签页内点作者头像：走 SceneDelegate presentUserProfileVC，
+        // 嵌套个人页自成 modal、关后回标签页；不留未接线的裸 push。
+        page.onOpenUser = { [weak self] userId in
+            self?.presentUserProfile(userId: userId)
+        }
+        page.onRequireLogin = { [weak self] in
+            self?.presentLoginGate()
+        }
+        let nav = UINavigationController(rootViewController: page)
+        nav.isNavigationBarHidden = true
+        nav.modalPresentationStyle = .fullScreen
+        page.onBack = { [weak nav] in
+            nav?.dismiss(animated: BearyMotion.animated(true))
+        }
+        // G1：边缘返回——根页右滑关整个标签 modal；嵌套标签页（栈内第 2 层起）
+        // 不走这里（shouldAllow 拦下），由系统导航 pop 手势＋自有顶栏返回钮回上一级。
+        let tagEdgeDismiss = BearyEdgeDismissController()
+        tagEdgeDismiss.shouldAllowInteractiveDismiss = { [weak nav] in
+            nav?.viewControllers.count == 1
+        }
+        tagEdgeDismiss.attach(to: nav)
+        nav.transitioningDelegate = tagEdgeDismiss
+        self.tagPageEdgeDismiss = tagEdgeDismiss
+        topmostViewController().present(nav, animated: BearyMotion.animated(true))
+    }
+
+    /// 标签页内点卡片进详情：先把本页记为详情返回锚点的来源（嵌套标签页
+    /// 以点按时最上层那页为准），再走 gotoEntryImmediately（source: .tag）。
+    private func openTagEntry(_ entry: Entry, from page: BearyTagEntriesViewController?) {
+        detailReturnTagPage = page
+        gotoEntryImmediately(entry: entry, source: .tag)
+    }
+
     private func presentUserProfileVC(_ vc: BearyProfileViewController) {
         vc.title = "个人主页"
         vc.onOpenEntry = { [weak self] entry in
@@ -3648,7 +3714,10 @@ final class BearyChromeViewController: UIViewController {
         userProfileEdgeDismiss.attach(to: nav)
         nav.transitioningDelegate = userProfileEdgeDismiss
         self.userProfileEdgeDismiss = userProfileEdgeDismiss
-        present(nav, animated: BearyMotion.animated(true))
+        // 第七轮审计 01：从最上层 present——标签页内点作者头像时标签 modal
+        // 已在前，自 present 会因已在 presenting 而失败；无 modal 时
+        // topmost 即自身，行为与旧口径一致。
+        topmostViewController().present(nav, animated: BearyMotion.animated(true))
     }
 
     /// 通知详情页（真交错支）：合并列表卡面点按推的新页，呈现口径与
@@ -3979,6 +4048,7 @@ final class BearyChromeViewController: UIViewController {
         case .feed: return feedVC?.detailReturnAnchor(for: entryId)
         case .timeline: return timelineVC?.detailReturnAnchor(for: entryId)
         case .profile: return profileVC?.detailReturnAnchor(for: entryId)
+        case .tag: return detailReturnTagPage?.detailReturnAnchor(for: entryId)
         }
     }
 
@@ -3993,6 +4063,7 @@ final class BearyChromeViewController: UIViewController {
         case .feed: feedVC?.restoreDetailReturnAnchor(entryId: entryId, viewportOffset: context.viewportOffset)
         case .timeline: timelineVC?.restoreDetailReturnAnchor(entryId: entryId, viewportOffset: context.viewportOffset)
         case .profile: profileVC?.restoreDetailReturnAnchor(entryId: entryId, viewportOffset: context.viewportOffset)
+        case .tag: detailReturnTagPage?.restoreDetailReturnAnchor(entryId: entryId, viewportOffset: context.viewportOffset)
         }
     }
 
