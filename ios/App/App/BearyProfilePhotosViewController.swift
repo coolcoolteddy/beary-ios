@@ -966,15 +966,16 @@ final class BearyProfilePhotosViewController: UIViewController {
                             strongSelf.presentedViewer?.pruneImageKeys(removedKeys)
                         }
                         if let viewer = strongSelf.presentedViewController as? BearyEntryImageViewerViewController {
-                            let oldKeySet = Set(oldKeys)
-                            let addedPhotos = strongSelf.photosValue.filter { !oldKeySet.contains($0.imageKey) }
-                            var addedLiveVideos: [String: String] = [:]
-                            for photo in addedPhotos {
+                            // 审计 8 第 1 项：非纯追加时按网格有序列表整体同步灯箱，
+                            // 不再把新图追加到末尾（旧写法会让灯箱顺序与网格分叉，
+                            // 下标再去查网格就串到别篇）；当前图凭标识保住。
+                            var allLiveVideos: [String: String] = [:]
+                            for photo in strongSelf.photosValue {
                                 if let liveKey = photo.entry.liveVideos?[photo.imageKey] {
-                                    addedLiveVideos[photo.imageKey] = liveKey
+                                    allLiveVideos[photo.imageKey] = liveKey
                                 }
                             }
-                            viewer.appendImageKeys(addedPhotos.map { $0.imageKey }, liveVideos: addedLiveVideos.isEmpty ? nil : addedLiveVideos, hasMorePages: strongSelf.photosHasMore)
+                            viewer.syncImageKeys(newKeys, liveVideos: allLiveVideos.isEmpty ? nil : allLiveVideos, hasMorePages: strongSelf.photosHasMore, entryIds: strongSelf.photosValue.map { $0.entry.id })
                         }
                         if strongSelf.photosValue.isEmpty, !appended.isEmpty {
                             strongSelf.fetchMoreWhileEmptyIfNeeded()
@@ -1000,7 +1001,7 @@ final class BearyProfilePhotosViewController: UIViewController {
                                     newLiveVideos[photo.imageKey] = liveKey
                                 }
                             }
-                            viewer.appendImageKeys(newPhotos.map { $0.imageKey }, liveVideos: newLiveVideos.isEmpty ? nil : newLiveVideos, hasMorePages: strongSelf.photosHasMore)
+                            viewer.appendImageKeys(newPhotos.map { $0.imageKey }, liveVideos: newLiveVideos.isEmpty ? nil : newLiveVideos, hasMorePages: strongSelf.photosHasMore, entryIds: newPhotos.map { $0.entry.id })
                         }
                         // 116：续拉新格错峰滑入（已有格不重播）；放完成回调里，
                         // 此时新格已建好，可见判断才准。
@@ -1084,16 +1085,15 @@ final class BearyProfilePhotosViewController: UIViewController {
         fetchNextPageIfNeeded()
     }
 
-    /// #28：灯箱下标是灯箱自身顺序里的位置，纯重排后与网格下标可能分叉；
-    /// 先按灯箱该下标的照片 key 在网格当下的 photosValue 里找，找不到
-    /// （key 已失效／本地图模式无 key）再回落下标；都越界返回 nil。
-    private func gridIndex(forViewerIndex viewerIndex: Int, viewer: BearyEntryImageViewerViewController) -> Int? {
-        if let key = viewer.imageKey(at: viewerIndex),
-           let found = photosValue.firstIndex(where: { $0.imageKey == key }) {
-            return found
+    /// 审计 8 第 1 项：凭 (entryId, imageKey) 双标识在实时网格里定位照片
+    /// 下标；entryId 缺失时退化为按 imageKey 单一定位（imageKey 本身是
+    /// 唯一存储 key）；双标识与单 key 都找不到时返回 nil。
+    private func photoIndex(forEntryId entryId: String?, imageKey: String) -> Int? {
+        if let entryId = entryId,
+           let index = photosValue.firstIndex(where: { $0.imageKey == imageKey && $0.entry.id == entryId }) {
+            return index
         }
-        guard viewerIndex >= 0, viewerIndex < photosValue.count else { return nil }
-        return viewerIndex
+        return photosValue.firstIndex(where: { $0.imageKey == imageKey })
     }
 
     private func presentLightbox(startIndex: Int, originFrame: CGRect? = nil, thumbnail: UIImage? = nil) {
@@ -1118,7 +1118,7 @@ final class BearyProfilePhotosViewController: UIViewController {
                 wallLiveVideos[photo.imageKey] = liveKey
             }
         }
-let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wallLiveVideos.isEmpty ? nil : wallLiveVideos, startIndex: startIndex)
+let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wallLiveVideos.isEmpty ? nil : wallLiveVideos, startIndex: startIndex, entryIds: photosValue.map { $0.entry.id })
         presentedViewer = viewer
         viewer.initialThumbnail = thumbnail
         viewer.originFrameInWindow = originFrame
@@ -1126,20 +1126,18 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wa
         // 灯箱翻到末尾要下一页时由这里触发网格续拉。
         viewer.hasMorePages = photosHasMore
         viewer.onRequestMorePages = { [weak self] in self?.requestNextPageFromLightbox() }
-        // C3：关场回当前照片——#28 按灯箱该下标的照片 key 在网格当下
-        // photosValue 里找格（纯重排后灯箱下标与网格下标分叉）；查不到
-        // 再回落下标。在视口内才给矩形与焦点视图，格不在视口内时返回
-        // nil、走淡出兜底。
-        viewer.dismissOriginProvider = { [weak self, weak viewer] index in
-            guard let self = self, let viewer = viewer,
-                  let gridIndex = self.gridIndex(forViewerIndex: index, viewer: viewer) else { return nil }
-            let path = IndexPath(item: gridIndex, section: 0)
+        // 审计 8 第 1 项：关场回当前照片——凭 (entryId, imageKey) 在实时
+        // 网格里定位，不用灯箱下标（后台回包重排后下标会串到别篇）；
+        // 在视口内才给矩形与焦点视图，格不在视口内时返回 nil、走淡出兜底。
+        viewer.dismissOriginKeyProvider = { [weak self] entryId, imageKey in
+            guard let self = self, let index = self.photoIndex(forEntryId: entryId, imageKey: imageKey) else { return nil }
+            let path = IndexPath(item: index, section: 0)
             guard let cell = self.collectionView.cellForItem(at: path) else { return nil }
             let frame = cell.convert(cell.bounds, to: nil)
             return (frame: frame, element: cell)
         }
         viewer.modalPresentationStyle = .fullScreen
-        viewer.onViewEntryAtIndex = { [weak self, weak viewer] tappedIndex in
+        viewer.onViewEntryAtKey = { [weak self, weak viewer] entryId, imageKey in
             guard let strongSelf = self, let viewerValue = viewer else { return }
             // r24-#2：灯箱打开期间身份变了（返回后 viewWillAppear 会重拉），
             // 此处不再按旧快照开旧账号的日记详情，只关灯箱。
@@ -1147,10 +1145,13 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wa
                 viewerValue.dismiss(animated: BearyMotion.animated(true), completion: nil)
                 return
             }
-            // #28：按灯箱该下标的照片 key 在网格当下 photosValue 里找日记，
-            // 纯重排后灯箱下标与网格下标分叉；查不到再回落下标。
-            guard let gridIndex = strongSelf.gridIndex(forViewerIndex: tappedIndex, viewer: viewerValue) else { return }
-            let targetEntry = strongSelf.photosValue[gridIndex].entry
+            // 审计 8 第 1 项：凭 (entryId, imageKey) 在实时网格里定位目标
+            // 日记；找不到（该图已被重滤撤下）时只关灯箱，不开错篇。
+            guard let index = strongSelf.photoIndex(forEntryId: entryId, imageKey: imageKey) else {
+                viewerValue.dismiss(animated: BearyMotion.animated(true), completion: nil)
+                return
+            }
+            let targetEntry = strongSelf.photosValue[index].entry
             viewerValue.dismiss(animated: BearyMotion.animated(true)) {
                 strongSelf.onOpenEntry?(targetEntry)
             }
