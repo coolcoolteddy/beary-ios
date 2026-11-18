@@ -4504,8 +4504,8 @@ class BearyNotificationCell: UITableViewCell {
     /// 组内最新一条（代表条）；未读点与高亮看组内任一成员。聚合行不画
     /// 类型角标（动作已在动词里）与关注卡（回关归属不明）；emote 组不贴
     /// 表情附件（各成员表情可能不同，动词已说明动作）。
-    /// 注：服务端通知暂无日记标题字段，标题仍用现行动词（「赞了你的日记」），
-    /// 《标题》文案待后端在通知里补 e.title 后再换（须 Li 点头）。
+    /// 注：后端已在通知里补 e.title（2026-11-18 Li 定），代表条有标题时动词后加《标题》，
+    /// 无标题（null/空/旧缓存）仍用现行动词（「赞了你的日记」）。
     func configureAsGroup(representative: NotificationItem, members: [NotificationItem], nested: Bool, highlight: Bool, expanded: Bool, onToggle: @escaping () -> Void) {
         hideFollowAction()
         resetAvatarStack()
@@ -4576,6 +4576,17 @@ class BearyNotificationCell: UITableViewCell {
                 .foregroundColor: BearyColors.ink,
             ]
         ))
+        // 聚合行《标题》（2026-11-18 Li 定，后端已补 e.title）：代表条有标题时动词后加《标题》，
+        // 无标题（null/空/旧缓存）保持现行动词文案不变。
+        if let entryTitle = representative.entryTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !entryTitle.isEmpty {
+            title.append(NSAttributedString(
+                string: "《" + entryTitle + "》",
+                attributes: [
+                    .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)),
+                    .foregroundColor: BearyColors.ink,
+                ]
+            ))
+        }
         let titleParagraph = NSMutableParagraphStyle()
         titleParagraph.lineHeightMultiple = 1.5
         titleParagraph.lineBreakMode = .byCharWrapping
