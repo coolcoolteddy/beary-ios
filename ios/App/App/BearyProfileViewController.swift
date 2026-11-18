@@ -1961,6 +1961,11 @@ class BearyProfileViewController: UIViewController {
     /// 节日款快照失败时缓存留空、下次同步再试）。
     private var stickyHeaderDepthPosterImage: UIImage?
     private var stickyHeaderDepthPosterTheme: String?
+    /// 后台取图进行中标记（只在主线程读写）：海报解码／节日款快照各记正在做的
+    /// 主题，滚动／布局回调不再重复发起；取图完成回主线程时凭此＋主题守卫
+    /// 验旧——主题已换走就丢弃，不把旧主题的图贴到新主题上。
+    private var stickyHeaderDepthPosterLoadingTheme: String?
+    private var stickyHeaderFestivalSnapshotTheme: String?
     /// 模糊起止的锚点（见 updateProfileCoverScroll 内注释）：头像被 header 盖住
     /// 75% 时起糊，盖满后再上滑 100pt 到满糊；只读当前帧几何算，不存跨帧起点，
     /// 程序化跳位、回顶、转屏都不会卡在旧进度。
@@ -2429,7 +2434,8 @@ class BearyProfileViewController: UIViewController {
             // 海报缺失时退回现行隐藏（不凭空造图）。
             if stickyHeaderDepthPosterTheme != festivalTheme.rawValue {
                 stickyHeaderDepthPosterTheme = festivalTheme.rawValue
-                stickyHeaderDepthPosterImage = loadStickyHeaderDepthPoster(themeRaw: festivalTheme.rawValue)
+                // 旧海报先留着挡白块，读盘＋解码在后台做，到了回主线程再换。
+                requestStickyHeaderDepthPoster(themeRaw: festivalTheme.rawValue)
             }
             if let poster = stickyHeaderDepthPosterImage {
                 if stickyHeaderBgImageView.image !== poster {
@@ -2444,14 +2450,15 @@ class BearyProfileViewController: UIViewController {
             // 节日款（万圣节／春节）走节日墙纸视图，coverTheme 为 nil，#850 的
             // 海报分支覆盖不到，跟踪图一直是空的——123 上节日款仍有白块即由此来。
             // 改用墙纸视图当前画面快照作跟踪图（与海报图同做法：静态底片＋
-            // 同一套 1:1 跟随＋锁定几何）；主题变了先清旧图，快照失败（视图未
-            // 布局好）时下次同步再试，不留错主题的旧图。
+            // 同一套 1:1 跟随＋锁定几何）；快照在后台做（见
+            // requestStickyHeaderFestivalSnapshot），主题变了先留旧图挡白块、
+            // 新快照到了再换；视图未布局好时本次不发起，下次同步再试。
             if stickyHeaderDepthPosterTheme != festivalTheme.rawValue {
                 stickyHeaderDepthPosterTheme = festivalTheme.rawValue
-                stickyHeaderDepthPosterImage = nil
-            }
-            if stickyHeaderDepthPosterImage == nil {
-                stickyHeaderDepthPosterImage = snapshotStickyHeaderFestivalWallpaper()
+                // 旧主题快照先留着挡白块，等新快照到了再换（见 requestStickyHeaderFestivalSnapshot）。
+                requestStickyHeaderFestivalSnapshot()
+            } else if stickyHeaderDepthPosterImage == nil {
+                requestStickyHeaderFestivalSnapshot()
             }
             if let snapshot = stickyHeaderDepthPosterImage {
                 if stickyHeaderBgImageView.image !== snapshot {
@@ -2478,24 +2485,64 @@ class BearyProfileViewController: UIViewController {
 
     /// 景深封面吸顶跟踪图取图：与封面款资源探针同口径（<主题>-poster.png），
     /// 仅主题切换时调一次（见 syncStickyHeaderCover 的缓存守卫），滚动回调不读盘。
-    private func loadStickyHeaderDepthPoster(themeRaw: String) -> UIImage? {
-        guard let url = Bundle.main.url(forResource: themeRaw + "-poster", withExtension: "png"),
-              let data = try? Data(contentsOf: url) else { return nil }
-        return UIImage(data: data)
+    /// 读盘＋解码在后台队列做（与 CoverBackdropCache.decoded 同口径：
+    /// kCGImageSourceShouldCacheImmediately 让像素在后台解完，首帧绘制不再回
+    /// 主线程解压），解完回主线程上屏；此前在滚动／布局回调里同步
+    /// Data(contentsOf:)＋UIImage(data:)，首次切主题会卡主线程一帧。
+    /// 完成时凭主题守卫验旧——主题已换走就丢弃；取不到图时缓存留空、吸顶
+    /// 背景按原口径隐藏，不凭空造图。
+    private func requestStickyHeaderDepthPoster(themeRaw: String) {
+        guard stickyHeaderDepthPosterLoadingTheme != themeRaw else { return }
+        stickyHeaderDepthPosterLoadingTheme = themeRaw
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let image: UIImage? = {
+                guard let url = Bundle.main.url(forResource: themeRaw + "-poster", withExtension: "png"),
+                      let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+                let options: [CFString: Any] = [kCGImageSourceShouldCacheImmediately: true]
+                guard let cgImage = CGImageSourceCreateImageAtIndex(source, 0, options as CFDictionary) else { return nil }
+                return UIImage(cgImage: cgImage)
+            }()
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.stickyHeaderDepthPosterLoadingTheme = nil
+                guard self.stickyHeaderDepthPosterTheme == themeRaw else { return }
+                self.stickyHeaderDepthPosterImage = image
+                self.syncStickyHeaderCover()
+            }
+        }
     }
 
     /// 节日款吸顶跟踪图取图：节日款（万圣节／春节）无海报图资源，coverTheme
     /// 为 nil，#850 的海报分支覆盖不到——123 上节日款仍是白块即由此来。
-    /// 改用墙纸视图当前画面快照（与海报图同做法：静态底片＋同一套跟随几何）；
-    /// 视图未布局好时 bounds 为空、返回 nil，下次同步再试。
-    private func snapshotStickyHeaderFestivalWallpaper() -> UIImage? {
-        guard let wallpaperView = festivalWallpaperView,
-              wallpaperView.bounds.width > 0, wallpaperView.bounds.height > 0 else { return nil }
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = UIScreen.main.scale
-        let renderer = UIGraphicsImageRenderer(bounds: wallpaperView.bounds, format: format)
-        return renderer.image { context in
-            wallpaperView.layer.render(in: context.cgContext)
+    /// 改用墙纸视图当前画面快照（与海报图同做法：静态底片＋同一套跟随几何）。
+    /// 快照在后台队列做：墙纸视图的画面是 CALayer 树（各层 contents 已是解码好
+    /// 的 CGImage），layer.render 只做合成，不碰 UIView 绘制，故可离主线程；
+    /// bounds 与 scale 在主线程先取好传进去。视图未布局好时 bounds 为空、本次
+    /// 不发起，下次同步再试；快照失败时缓存留空、下次同步再试，不留错主题旧图。
+    /// 完成时凭主题守卫＋视图 identity 验旧——主题已换走或墙纸视图已换就丢弃。
+    private func requestStickyHeaderFestivalSnapshot() {
+        let themeRaw = festivalTheme.rawValue
+        guard stickyHeaderFestivalSnapshotTheme != themeRaw,
+              let wallpaperView = festivalWallpaperView,
+              wallpaperView.bounds.width > 0, wallpaperView.bounds.height > 0 else { return }
+        stickyHeaderFestivalSnapshotTheme = themeRaw
+        let bounds = wallpaperView.bounds
+        let scale = UIScreen.main.scale
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = scale
+            let renderer = UIGraphicsImageRenderer(bounds: bounds, format: format)
+            let snapshot = renderer.image { context in
+                wallpaperView.layer.render(in: context.cgContext)
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.stickyHeaderFestivalSnapshotTheme = nil
+                guard self.stickyHeaderDepthPosterTheme == themeRaw,
+                      self.festivalWallpaperView === wallpaperView else { return }
+                self.stickyHeaderDepthPosterImage = snapshot
+                self.syncStickyHeaderCover()
+            }
         }
     }
 
@@ -9778,6 +9825,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             defaultWordmarkView.isHidden = true
             profileCoverVisible = false
             updateProfileCoverVisibility()
+            // 切主题即预热吸顶跟踪图：海报读盘＋解码在后台做，不等首次滚动／布局
+            // 回调才发起，滚动时大概率已就绪。
+            syncStickyHeaderCover()
             if persist {
                 UserDefaults.standard.set(effective.rawValue, forKey: festivalThemeDefaultsKey)
             }
@@ -9833,6 +9883,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         updateFestivalDim()
         festivalWallpaperVisible = false
         updateFestivalWallpaperVisibility()
+        // 切主题即预热吸顶跟踪图：快照在后台做，不等首次滚动／布局回调才发起
+        // （视图刚建好未布局时 bounds 为空、本次不发起，下次同步再试）。
+        syncStickyHeaderCover()
         if persist {
             UserDefaults.standard.set(effective.rawValue, forKey: festivalThemeDefaultsKey)
         }
