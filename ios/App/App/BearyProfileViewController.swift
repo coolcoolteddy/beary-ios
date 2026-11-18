@@ -1546,9 +1546,10 @@ class BearyProfileViewController: UIViewController {
     /// 现行两者调同一函数、无守卫，每调一次即发一次 POST，同一行会重复
     /// 创建；在途时后调者直接返回，等回包。
     private var pastSelfCreateInFlight: Set<String> = []
-    /// 待撤回的本地 id：创建未回包时点的撤回，服务端从未签发该 id，不能拿
-    /// 本地 ps_… id 发撤回（无行可撤）；先记下，创建回包一到即按服务端
-    /// id 补发（见 pastSelfPushCreate 成功分支）。
+    /// 待撤回确认的 id：创建未回包时点的撤回记本地 id（服务端从未签发该
+    /// id，不能拿本地 ps_… id 发撤回；创建回包一到即按服务端 id 补发，
+    /// 见 pastSelfPushCreate 成功分支）；服务端已知行点的撤回记服务端
+    /// id，撤回确认回包到了才提示「已撤回」（见 pastSelfPushRevoke）。
     private var pastSelfPendingRevokeLocalIds: Set<String> = []
     /// 已送达留话 id（已在送达卡里出现过）：回前台 / 时间显著变化时复核
     /// 日期，只有此前没出现过的刚到期 id 才滑入；旧行不再重复动画。
@@ -5232,8 +5233,11 @@ class BearyProfileViewController: UIViewController {
                 pastSelfPendingRevokeLocalIds.insert(waiting.id)
                 BearyToast.show(in: view, message: "正在同步撤回")
             } else {
+                // 服务端已知行：先记待确认，撤回确认回包到了才提示「已撤回」，
+                // 不在发请求前谎称已撤回；失败在 pastSelfPushRevoke 里明示。
+                pastSelfPendingRevokeLocalIds.insert(waiting.id)
                 pastSelfPushRevoke(waiting.id)
-                BearyToast.show(in: view, message: "已撤回")
+                BearyToast.show(in: view, message: "正在同步撤回")
             }
             // 本地通知：撤回即取消该留话的送达提醒。
             BearyLocalNotifications.shared.refreshAll(force: true)
@@ -5753,11 +5757,24 @@ class BearyProfileViewController: UIViewController {
 
     private func pastSelfPushRevoke(_ id: String) {
         BearyAPI.shared.revokePastSelfMessage(id: id) { [weak self] result in
-            // 撤回成功即记确认：下次同步不再重发（服务端撤回已幂等，重发无副
-            // 作用、只浪费请求）；失败静默，下次同步再补推。
-            guard case .success = result else { return }
             DispatchQueue.main.async {
-                self?.pastSelfStore()?.markRevokeSynced(id: id)
+                guard let strongSelf = self, let store = strongSelf.pastSelfStore() else { return }
+                switch result {
+                case .success:
+                    // 撤回已获服务端确认：记确认，下次同步不再重发（服务端撤回
+                    // 已幂等，重发无副作用、只浪费请求）；本会话正在等的这次
+                    // 撤回才提示「已撤回」，同步默默补推的不弹旧 toast。
+                    store.markRevokeSynced(id: id)
+                    if strongSelf.pastSelfPendingRevokeLocalIds.remove(id) != nil, strongSelf.isOwnProfile {
+                        BearyToast.show(in: strongSelf.view, message: "已撤回")
+                    }
+                case .failure:
+                    // 撤回未获确认：本地撤回仍保留，下次同步再补推；本会话
+                    // 正在等的这次撤回才明示，不静默。
+                    if strongSelf.pastSelfPendingRevokeLocalIds.remove(id) != nil, strongSelf.isOwnProfile {
+                        BearyToast.show(in: strongSelf.view, message: "撤回还没同步，之后会自动再试")
+                    }
+                }
             }
         }
     }
