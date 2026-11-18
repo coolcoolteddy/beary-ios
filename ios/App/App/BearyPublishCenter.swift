@@ -33,6 +33,11 @@ struct PublishSnapshot {
     /// 发布快照里的地点经纬度（2026-11-14 Li 定改存经纬度，随文本一起发）。
     let locationLatitude: Double?
     let locationLongitude: Double?
+    /// 2026-11-19 七组版：定位地址精度分级字段（随地点一起发，取自 placemark）。
+    let locationCountry: String?
+    let locationRegion: String?
+    let locationCity: String?
+    let locationStreet: String?
     let clientReq: String
     /// 快照拍定时的发起账号：发布中心起飞前再校验一次，防门禁/
     /// setVisibility 在途期间账号已变仍把旧篇以新账号发出。
@@ -483,7 +488,9 @@ final class BearyPublishCenter {
             mentionedUserId: snapshot.mentionedUserId, title: snapshot.title, ephemeral: snapshot.ephemeral,
             clientReq: snapshot.clientReq, locationName: snapshot.locationName,
             locationDistrict: snapshot.locationDistrict, locationLatitude: snapshot.locationLatitude,
-            locationLongitude: snapshot.locationLongitude, temperature: snapshot.temperature,
+            locationLongitude: snapshot.locationLongitude, locationCountry: snapshot.locationCountry,
+            locationRegion: snapshot.locationRegion, locationCity: snapshot.locationCity,
+            locationStreet: snapshot.locationStreet, temperature: snapshot.temperature,
             liveVideos: runningJob.liveVideos.isEmpty ? nil : runningJob.liveVideos,
             visibility: snapshot.visibility,
             isCapsule: snapshot.capsuleUnlockAt == nil ? nil : 1,

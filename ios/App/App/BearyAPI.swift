@@ -165,6 +165,13 @@ struct Entry: Codable {
     /// 只显示原存地名。埋藏定位仍只存区级名、不存经纬度，与本字段无关）。
     var locationLatitude: Double?
     var locationLongitude: Double?
+    /// 2026-11-19 七组版：定位地址精度分级字段（服务端 entries 列
+    /// location_country / location_region / location_city / location_street，
+    /// convertFromSnakeCase 直解；后端未部署前不回传即 nil，显示层向粗回退）。
+    var locationCountry: String?
+    var locationRegion: String?
+    var locationCity: String?
+    var locationStreet: String?
     var quoteId: String?
     var quote: Quote?
     var createdAt: Int?
@@ -405,6 +412,14 @@ struct MeUser: Decodable {
     /// serial_id（TD-000001 式），现行 /me 不再下发；字段留作可选，服务端将来恢复下发时
     /// 账号页 ID 行直接显示它，未下发时账号页按 @handle / 数字 id 回退，绝不编造。
     var serialId: String?
+    /// 2026-11-19 七组版：ID 卡背面数据（服务端 diff 在
+    /// ~/workspace/settings-reorg-server-diff/，只备不部署——后端未部署前
+    /// /me 不下发这三项，均为 nil，ID 卡上显“–”，绝不编造）。
+    /// accountRegion：最近一次登录会话的地区；handleChangeCount：改名次数
+    /// （handle_history 计数）；handleChangedAt：上次改名时间（毫秒时间戳）。
+    var accountRegion: String?
+    var handleChangeCount: Int?
+    var handleChangedAt: Int?
 }
 
 struct MeResponse: Decodable {
@@ -1978,6 +1993,23 @@ final class BearyAPI {
 
     func fetchDMCan(userId: Int, completion: @escaping (Result<DMCanResponse, APIError>) -> Void) {
         request("/beary/api/friends/dm/can", query: ["user_id": "\(userId)"], completion: completion)
+    }
+
+    /// 定位地址精度（2026-11-19 七组版）：GET/POST /beary/api/account/location-precision
+    /// → {precision}；precision 为七档字符串（earth/region/country/city/district/street/detail）。
+    /// 服务端 diff 在 ~/workspace/settings-reorg-server-diff/，只备不部署——后端未部署前
+    /// GET 404，调用方按默认区县（district）处理；POST 失败时本地档位照常生效，下次进页再同步。
+    struct LocationPrecisionResponse: Decodable {
+        var ok: Bool?
+        var precision: String?
+    }
+
+    func fetchLocationPrecision(completion: @escaping (Result<LocationPrecisionResponse, APIError>) -> Void) {
+        request("/beary/api/account/location-precision", completion: completion)
+    }
+
+    func saveLocationPrecision(_ precision: String, completion: @escaping (Result<LocationPrecisionResponse, APIError>) -> Void) {
+        request("/beary/api/account/location-precision", method: "POST", jsonBody: ["precision": precision], completion: completion)
     }
 
     /// 引用计数（2026-10-31 引用规则简化）：GET /beary/api/entries/:id/quote-count
