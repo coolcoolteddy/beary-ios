@@ -4586,13 +4586,11 @@ class BearyNotificationCell: UITableViewCell {
         // 聚合行《标题》（2026-11-18 Li 定，后端已补 e.title）：代表条有标题时动词后加《标题》，
         // 无标题（null/空/旧缓存）保持现行动词文案不变。
         if let entryTitle = representative.entryTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !entryTitle.isEmpty {
-            title.append(NSAttributedString(
-                string: "《" + entryTitle + "》",
-                attributes: [
-                    .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)),
-                    .foregroundColor: BearyColors.ink,
-                ]
-            ))
+            let titleFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+            let titleAttrs: [NSAttributedString.Key: Any] = [.font: titleFont, .foregroundColor: BearyColors.ink]
+            title.append(NSAttributedString(string: "《", attributes: titleAttrs))
+            title.append(BearyText.inlineAttributedText(from: BearyText.stripTrailingPartialInlineToken(entryTitle), font: titleFont, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: nil))
+            title.append(NSAttributedString(string: "》", attributes: titleAttrs))
         }
         let titleParagraph = NSMutableParagraphStyle()
         titleParagraph.lineHeightMultiple = 1.5
@@ -4600,7 +4598,7 @@ class BearyNotificationCell: UITableViewCell {
         title.addAttribute(.paragraphStyle, value: titleParagraph, range: NSRange(location: 0, length: title.length))
         titleLabel.attributedText = title
 
-        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(representative.excerpt ?? "", font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray)
+        excerptLabel.attributedText = BearyNotificationCell.moodLineHeightText(representative.excerpt ?? "", font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray, dark: traitCollection.userInterfaceStyle == .dark)
         lastTimeMs = representative.createdAt
         timeLabel.text = BearyNotificationCell.timeText(ms: representative.createdAt)
     }
