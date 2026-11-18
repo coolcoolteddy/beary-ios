@@ -460,6 +460,15 @@ final class BearyWishWallViewController: UIViewController {
     private var wishesFreshConfirmed = false
     /// r17-C9：在途投票的 wish id——回包按 ID 替换时保留这些条目的本地乐观票态。
     private var voteInflight: Set<Int> = []
+    /// 审计 26 #34：每条愿望的本地写入版本——投票 / 标记完成每次经服务端
+    /// 确认成功都 +1；列表回包合并时与发起时记下的版本比对，版本变了说明
+    /// 该条在列表请求发出后又有写操作成功落库，服务端快照早于这次写入，
+    /// 本地已确认的票态与 status 不得被旧快照覆盖，确认基线也不得被污染。
+    private var wishWriteVersion: [Int: Int] = [:]
+    /// 审计 26 #35：串行队列里待发投票请求的结算回调（仅登录补投用）——
+    /// 随待发目标一起被更新的点按覆盖；最终结算时由调用方核对确认票
+    /// 是否等于补投目标票，相等才提示“已补投”。
+    private var votePendingCompletion: [Int: (Bool) -> Void] = [:]
     /// 13：600 上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews；Feed 断点同款）。
     private var colCapConstraints: [NSLayoutConstraint] = []
     /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
@@ -679,6 +688,9 @@ final class BearyWishWallViewController: UIViewController {
         wishListGeneration += 1
         wishListAccountId = currentAccountId
         let generation = wishListGeneration
+        // 审计 26 #34：发起时记下每条愿望的写入版本，供回包合并时比对——
+        // 版本变了说明该条在请求发出后又有写操作成功落库，快照已旧。
+        let requestWriteVersions = wishWriteVersion
         // r17-C9：有快照首屏时静默刷新，不盖加载态；无快照时走原有加载态。
         // 重试时先收起旧失败态（失败回包会重显），不让它在刷新期间继续占位。
         if showingCachedWishes {
@@ -725,10 +737,25 @@ final class BearyWishWallViewController: UIViewController {
                             server.upCount = local.upCount
                             server.downCount = local.downCount
                         }
+                        // 审计 26 #34：写入版本变了，说明该条在列表请求发出后又有
+                        // 投票 / 标记完成成功落库，服务端快照早于这次写入——本地已确认
+                        // 的票态与 status 不得被旧快照覆盖（在途票沿用上分支的保留）。
+                        if let id = server.id, let localIndex = self.indexOfWish(id),
+                           (self.wishWriteVersion[id] ?? 0) != (requestWriteVersions[id] ?? 0) {
+                            let local = self.wishes[localIndex]
+                            server.myVote = local.myVote
+                            server.upCount = local.upCount
+                            server.downCount = local.downCount
+                            server.status = local.status
+                        }
                         merged.append(server)
                     }
                     self.wishes = merged
                     for item in self.wishes where item.id != nil && !self.voteInflight.contains(item.id!) {
+                        // 审计 26 #34：写入版本变了时确认基线不得用旧快照重播种——
+                        // 写成功分支已把确认基线刷新到新值，旧快照会把它污染回旧值，
+                        // 之后投票失败回滚就会滚到这个被污染的旧基线。
+                        if (self.wishWriteVersion[item.id!] ?? 0) != (requestWriteVersions[item.id!] ?? 0) { continue }
                         self.confirmedSeeded.insert(item.id!)
                         self.confirmedVote[item.id!] = item.myVote
                         self.confirmedUp[item.id!] = item.upCount ?? 0
@@ -899,7 +926,10 @@ final class BearyWishWallViewController: UIViewController {
     /// （含过期失败）直接丢弃，不得覆盖更新的点按态、不得触发回滚；只有最新一代
     /// 回包生效：成功以服务端计数对齐并刷新确认态，失败回滚到最后确认态
     /// （confirmedVote/confirmedUp/confirmedDown）+ 摇头 + toast。
-    private func voteTapped(wishId: Int, target: Int) {
+    /// 审计 26 #35：absolute 为 true 时（登录补投）不走 toggle，直接提交目标票态；
+    /// onSettled 在本次投票最终结算时回调（成功 true、失败 false），过期回包
+    /// 被代次守卫丢弃时不回调。
+    private func voteTapped(wishId: Int, target: Int, absolute: Bool = false, onSettled: ((Bool) -> Void)? = nil) {
         if isGuest {
             // 审计登录杂项：投票前先存待重放意图，登录成功后补投并 toast
             //（此前登录后不重放刚才那一票且无提示）。
@@ -907,7 +937,7 @@ final class BearyWishWallViewController: UIViewController {
             presentLoginPage()
             return
         }
-        guard let index = indexOfWish(wishId) else { return }
+        guard let index = indexOfWish(wishId) else { onSettled?(false); return }
         let current = wishes[index]
         // 确认态兜底：本条若从未经过列表/新建播种（如行复用路径），
         // 以本次点按前的显示态为确认基线，失败回滚才有可回的态。
@@ -915,7 +945,9 @@ final class BearyWishWallViewController: UIViewController {
         // 三态票数算法（每次都从当前显示态算增量，故快连点不算错）：
         // 先减掉当前票（赞成 -1 或反对 -1），再加新票；再点同票 = 取消（新票 nil，
         // 只减不加）；赞成↔反对改投 = 一边 -1、另一边 +1；计数下限钳 0。
-        let newVote: Int? = (current.myVote == target) ? nil : target
+        // 审计 26 #35：absolute 时新票即目标票，不 toggle——同向票已显示
+        // 也要把目标票发给服务端确认（补投），不能算成撤票。
+        let newVote: Int? = absolute ? target : ((current.myVote == target) ? nil : target)
         var next = current
         var up = current.upCount ?? 0
         var down = current.downCount ?? 0
@@ -937,9 +969,10 @@ final class BearyWishWallViewController: UIViewController {
         // 前一请求结束后再提交最新目标（见 sendVoteRequest 回调）。
         if voteInFlight.contains(wishId) {
             votePendingTarget[wishId] = sendVote
+            if let onSettled = onSettled { votePendingCompletion[wishId] = onSettled }
             return
         }
-        sendVoteRequest(wishId: wishId, sendVote: sendVote, gen: gen)
+        sendVoteRequest(wishId: wishId, sendVote: sendVote, gen: gen, onSettled: onSettled)
     }
 
     /// 发一次投票写请求（串行队列的唯一发请求入口）：记在途，回调结束时先清
@@ -950,7 +983,7 @@ final class BearyWishWallViewController: UIViewController {
     /// 也要结算，否则脏标记永久拦住后续快照确认态）；有待发目标时本次回包是
     /// 中间态，成功只刷新确认态（待发请求失败时回滚到它）、不碰界面、不播
     /// 音效，失败静默，随即发出最新目标。
-    private func sendVoteRequest(wishId: Int, sendVote: Int, gen: Int) {
+    private func sendVoteRequest(wishId: Int, sendVote: Int, gen: Int, onSettled: ((Bool) -> Void)? = nil) {
         voteInFlight.insert(wishId)
         voteInflight.insert(wishId)
         BearyAPI.shared.voteWish(id: wishId, vote: sendVote) { [weak self] result in
@@ -963,6 +996,9 @@ final class BearyWishWallViewController: UIViewController {
                 // 串行：请求期间又有新点按——只提交最后目标票态。
                 if let pending = self.votePendingTarget[wishId] {
                     self.votePendingTarget.removeValue(forKey: wishId)
+                    // 审计 26 #35：待发请求的结算回调随目标一起转交——最终结算时
+                    // 由调用方核对确认票是否等于补投目标票，相等才提示“已补投”。
+                    let pendingCompletion = self.votePendingCompletion.removeValue(forKey: wishId)
                     // R22 #8：中间态成功回包只刷新确认态（待发请求失败时回滚
                     // 到它）、不碰界面、不播音效。
                     if case .success(let resp) = result {
@@ -970,8 +1006,10 @@ final class BearyWishWallViewController: UIViewController {
                         self.confirmedVote[wishId] = resp.myVote
                         self.confirmedUp[wishId] = resp.up ?? self.confirmedUp[wishId] ?? 0
                         self.confirmedDown[wishId] = resp.down ?? self.confirmedDown[wishId] ?? 0
+                        // 审计 26 #34：中间态写请求也已服务端确认，写入版本 +1。
+                        self.wishWriteVersion[wishId, default: 0] += 1
                     }
-                    self.sendVoteRequest(wishId: wishId, sendVote: pending, gen: self.voteGeneration[wishId] ?? gen)
+                    self.sendVoteRequest(wishId: wishId, sendVote: pending, gen: self.voteGeneration[wishId] ?? gen, onSettled: pendingCompletion ?? onSettled)
                     return
                 }
                 // 代次守卫（点赞 likeSeq 同款）：已有更新点按时过期回包直接丢弃，
@@ -991,6 +1029,9 @@ final class BearyWishWallViewController: UIViewController {
                     self.confirmedUp[wishId] = confirmed.upCount ?? 0
                     self.confirmedDown[wishId] = confirmed.downCount ?? 0
                     self.rowViews[wishId]?.configure(item: confirmed, isAdmin: self.isAdmin)
+                    // 审计 26 #34：写请求服务端确认成功，写入版本 +1（列表旧快照不得再覆盖）。
+                    self.wishWriteVersion[wishId, default: 0] += 1
+                    onSettled?(true)
                 case .failure:
                     // 失败回滚口径（点赞同款）：滚到最后服务端确认态，不是本次
                     // 点按前的中间态——快连点下中间态已被更新点按覆盖，滚回去即错。
@@ -1003,6 +1044,7 @@ final class BearyWishWallViewController: UIViewController {
                     self.rowViews[wishId]?.shake()
                     BearyHaptics.rejectionWarning()
                     BearyToast.show(in: self.view, message: "投票失败，请稍后再试")
+                    onSettled?(false)
                 }
             }
         }
@@ -1027,6 +1069,8 @@ final class BearyWishWallViewController: UIViewController {
                 guard let self = self, let idx = self.indexOfWish(wishId), self.markDoneGeneration[wishId] == gen else { return }
                 switch result {
                 case .success:
+                    // 审计 26 #34：标记完成服务端确认成功，写入版本 +1（列表旧快照不得再改回未完成）。
+                    self.wishWriteVersion[wishId, default: 0] += 1
                     BearyToast.show(in: self.view, message: "已标记完成")
                 case .failure:
                     // 只滚 status：其余字段（票数等）以当前显示态为准，
@@ -1055,9 +1099,10 @@ final class BearyWishWallViewController: UIViewController {
             SessionManager.shared.refreshMe { _ in
                 DispatchQueue.main.async {
                     self?.refreshPlusGate()
-                    // 审计登录杂项：登录成功后补投待重放的那一票并 toast；登录页
-                    // 带来的邀请绑定文案（若有）与补投提示合为一次 toast（新 toast
-                    // 会盖掉旧 toast，分开发会丢一条）。补投后重拉列表以服务端为准。
+                    // 审计登录杂项：登录成功后补投待重放的那一票；登录页
+                    // 带来的邀请绑定文案（若有）单独一次 toast。补投提示不在
+                    // 这里写死——审计 26 #35：只在服务端成功回包后才提示“已补投”
+                    //（见下方补投回调），失败或愿望不在列表时不提示。补投后重拉列表以服务端为准。
                     var messages: [String] = []
                     if let referralText = referralText, !referralText.isEmpty {
                         messages.append(BearyReferralFeedback.toastText(base: referralText, plusUntil: SessionManager.shared.currentUser?.plusUntil))
@@ -1066,8 +1111,13 @@ final class BearyWishWallViewController: UIViewController {
                     // 意图保留，待下次成功登录再重放。
                     if let pending = self?.pendingVote, !(self?.isGuest ?? true) {
                         self?.pendingVote = nil
-                        self?.voteTapped(wishId: pending.wishId, target: pending.target)
-                        messages.append("已补投刚才那一票")
+                        // 审计 26 #35：补投提交绝对目标票态，不走 voteTapped 的 toggle
+                        //（同向票已显示时 toggle 会算出撤票）；“已补投”只在服务端成功
+                        // 回包、且确认票等于目标票时才提示，失败或愿望不在列表时不提示。
+                        self?.voteTapped(wishId: pending.wishId, target: pending.target, absolute: true) { [weak self] success in
+                            guard let self = self, success, self.confirmedVote[pending.wishId] == pending.target else { return }
+                            BearyToast.show(in: self.view, message: "已补投刚才那一票")
+                        }
                     }
                     if !messages.isEmpty, let view = self?.view {
                         BearyToast.show(in: view, message: messages.joined(separator: "，"))
