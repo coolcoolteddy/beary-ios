@@ -50,6 +50,8 @@ final class BearyMessagesViewController: UIViewController {
     var onOpenDM: ((BearyAPI.FriendUser) -> Void)?
     /// 通知卡面点按：传建好的详情页，容器接线到 SceneDelegate 包 nav 呈现。
     var onOpenNotificationDetail: ((BearyNotificationDetailViewController) -> Void)?
+    /// 底栏消息角标变化回调：快照变化／进页／离页时调，容器接线到底栏数字角标同步。
+    var onMessagesUnreadChanged: (() -> Void)?
 
     /// 合并行：通知卡／通知信件行／私信会话行／两组失败行／分页哨兵行。
     private enum MergedRow {
@@ -271,6 +273,20 @@ final class BearyMessagesViewController: UIViewController {
         notifChild.isRefreshingForRetap || conversationsChild.isRefreshingForRetap
     }
 
+    /// 底栏消息角标未读总数：通知卡内未读条数 ＋ 信件行未读条数 ＋ 各会话未读数之和；
+    /// 只读两组合并快照，不记已读、不调接口。通知卡按卡内 items 的 read 逐条计
+    ///（快照卡面自带全部条目，与 cellForRowAt 的 anyUnread 同口径）。
+    var unreadMessagesCount: Int {
+        let notif = notifChild.mergeSnapshot
+        let cardUnread = notif.cards.reduce(0) { $0 + $1.items.filter({ ($0.read ?? true) == false }).count }
+        let letterUnread = notif.letters.filter({ ($0.read ?? true) == false }).count
+        let dmUnread = conversationsChild.mergeSnapshot.conversations.reduce(0) { $0 + ($1.unreadCount ?? 0) }
+        return cardUnread + letterUnread + dmUnread
+    }
+
+    /// 底栏消息角标态：未读总数大于 0 时亮。
+    var hasUnreadMessages: Bool { unreadMessagesCount > 0 }
+
     func scrollToTop() {
         tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: BearyMotion.animated(true))
     }
@@ -295,9 +311,11 @@ final class BearyMessagesViewController: UIViewController {
     }
 
     /// 容器切页离页钩子：停通知轮询、写回通知缓存（与铃铛页同口径）。
+    /// 离页再同步一次底栏角标（访问期间可见行记已看可能已改未读态）。
     func pageDidLeave() {
         notifChild.pageDidLeave()
         conversationsChild.pageDidLeave()
+        onMessagesUnreadChanged?()
     }
 
     /// 聊天页关闭后的刷新（容器 presentDMChat onClosed 接线）：会话组重拉
@@ -496,9 +514,10 @@ final class BearyMessagesViewController: UIViewController {
         let newRows = rebuildMergedRows()
         if mergedBatchInFlight {
             pendingMergedRows = newRows
-            return
+        } else {
+            applyMergedRows(newRows)
         }
-        applyMergedRows(newRows)
+        onMessagesUnreadChanged?()
     }
 
     private func applyMergedRows(_ newRows: [MergedRow]) {

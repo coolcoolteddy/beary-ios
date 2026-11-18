@@ -313,6 +313,15 @@ final class BearyChromeViewController: UIViewController {
     /// 底栏：官方分段选择器（BearyHit44SegmentedControl 仅扩热区至 44pt，
     /// 与已拆除的时间线筛选条同款热区扩类；系统自绘玻璃与选中 pill，不再自绘 pill）。
     private var bottomSegmented: BearyHit44SegmentedControl!
+    /// 底栏消息角标：消息段图标右上角蓝色数字角标 pill（BearyColors.blue 底、白字
+    /// bold 10pt，>99 显示 99+）；同款见会话行未读角标
+    ///（BearyDMConversationsViewController 约 765 行）。
+    /// 未读总数由消息页快照算（见 BearyMessagesViewController.unreadMessagesCount），
+    /// 本处只负责显隐与数字，不记已读。挂在分段器自身名下，随栏同显隐。
+    private var messagesBadgeLabel: UILabel?
+    /// 角标几何（字号变化时重算，同会话行 updateUnreadBadgeGeometry 口径）。
+    private var messagesBadgeHeightConstraint: NSLayoutConstraint?
+    private var messagesBadgeMinWidthConstraint: NSLayoutConstraint?
     /// 分段器后方的模糊衬底（Li 2026-10-26：分段器太透，加一层模糊）：
     /// systemMaterial，随深浅自适应；与分段器同中心同尺寸（288×58，见下方约束），
     /// 保证盖住分段器全幅与边缘抗锯齿；永不拦截触摸（isUserInteractionEnabled 恒 false，
@@ -905,6 +914,36 @@ final class BearyChromeViewController: UIViewController {
             seg.widthAnchor.constraint(equalToConstant: 288),
             seg.heightAnchor.constraint(equalToConstant: 58),
         ])
+        // 底栏消息角标：蓝色数字角标 pill 挂在分段器自身名下，随栏同显隐、不拦截触摸。
+        // 位置：消息段（index 2）图标右上角——段宽 72（288/4），段中心 x=180、
+        // 图标 24pt 故右上角 (192, 17)；相对栏中心 (144, 29) 偏移 (+48, -12)。
+        // 高 17、宽 ≥17 随数字自适应（1 位 17pt 起，99+ 最宽约 28pt），
+        // 右缘到邻段（x=216）留 10pt 以上，不顶邻段、不盖图标主体。
+        let badge = UILabel()
+        badge.font = BearyDynamicType.scaledFont(for: .boldSystemFont(ofSize: 10))
+        badge.adjustsFontForContentSizeCategory = true
+        badge.textColor = .white
+        badge.backgroundColor = BearyColors.blue
+        badge.textAlignment = .center
+        badge.layer.cornerRadius = 8.5
+        badge.clipsToBounds = true
+        badge.isHidden = true
+        badge.isUserInteractionEnabled = false
+        badge.isAccessibilityElement = false
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        seg.addSubview(badge)
+        messagesBadgeLabel = badge
+        let badgeHeight = badge.heightAnchor.constraint(equalToConstant: 17)
+        messagesBadgeHeightConstraint = badgeHeight
+        let badgeMinWidth = badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 17)
+        messagesBadgeMinWidthConstraint = badgeMinWidth
+        NSLayoutConstraint.activate([
+            badgeHeight,
+            badgeMinWidth,
+            badge.centerXAnchor.constraint(equalTo: seg.centerXAnchor, constant: 48),
+            badge.centerYAnchor.constraint(equalTo: seg.centerYAnchor, constant: -12),
+        ])
+        updateMessagesBadgeGeometry()
         // ---- FAB：实色橙色圆钮，与网页 .fab 同尺寸同位置 ----
         // 三层结构：阴影载体在后（本体 clipsToBounds
         // 会裁自身阴影，故阴影另挂一层）、实色本体居中、按钮在最上只负责点击与图标。
@@ -1740,6 +1779,9 @@ final class BearyChromeViewController: UIViewController {
             sideDecoBuiltSize = nil
             updateSideDecoLayout()
             }
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            updateMessagesBadgeGeometry()
+        }
     }
 
     /// 状态栏跟随系统深浅：深色 → 浅字，浅色 → 深字。
@@ -2086,6 +2128,32 @@ final class BearyChromeViewController: UIViewController {
         case 3: didTapMe()
         default: break
         }
+    }
+
+    /// 底栏消息角标同步：消息页未建时无数据，保持藏；数字 0 藏、>99 显 99+；
+    /// 只在显隐或数字变化时改，不反复写。
+    private func updateMessagesTabBadge() {
+        guard let messages = messagesVC, let badge = messagesBadgeLabel else { return }
+        let count = messages.unreadMessagesCount
+        let shouldShow = count > 0
+        let text = count > 99 ? "99+" : "\(count)"
+        let needsVisibilityChange = badge.isHidden == shouldShow
+        let needsTextChange = shouldShow && badge.text != text
+        guard needsVisibilityChange || needsTextChange else { return }
+        badge.text = text
+        badge.isHidden = !shouldShow
+    }
+
+    /// 未读角标几何跟随系统字号（同会话行 updateUnreadBadgeGeometry 口径）：
+    /// 实际高 = max(17, ceil(字体行高) + 4)，默认字号下 ceil(12.1) + 4 = 17，
+    /// 默认视觉不变；最小宽 ≥ 实际高、圆角 = 高 / 2。
+    private func updateMessagesBadgeGeometry() {
+        guard let badge = messagesBadgeLabel else { return }
+        badge.font = BearyDynamicType.scaledFont(for: .boldSystemFont(ofSize: 10))
+        let badgeHeight = max(17, ceil(badge.font.lineHeight) + 4)
+        messagesBadgeHeightConstraint?.constant = badgeHeight
+        messagesBadgeMinWidthConstraint?.constant = badgeHeight
+        badge.layer.cornerRadius = badgeHeight / 2
     }
 
     /// 底栏读屏代理点按：与点分段器同路——切段走 valueChanged，点已选段走重拍。
@@ -2866,8 +2934,10 @@ final class BearyChromeViewController: UIViewController {
         vc.onOpenUser = { [weak self] userId in self?.presentUserProfile(userId: userId) }
         vc.onOpenDM = { [weak self] peer in self?.presentDMChat(peer: peer) }
         vc.onOpenNotificationDetail = { [weak self] detailVC in self?.presentNotificationDetail(detailVC) }
+        vc.onMessagesUnreadChanged = { [weak self] in self?.updateMessagesTabBadge() }
         addPageVC(vc, page: .messages)
         messagesVC = vc
+        updateMessagesTabBadge()
         vc.applyHeaderTopInset(visible: false)
         return vc
     }
