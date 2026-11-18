@@ -53,7 +53,7 @@ final class BearyQuoteCardView: UIView {
     }()
 
     /// 引用规则简化来源行（2026-10-31）：内容上方一行，12px 灰字（比正文 13 小一档），
-    /// 格式“引用自 @handle · 日期”（日期走现行卡片 feedTimeString 口径）。
+    /// 格式“引用自 @handle · 日期”（日期走共用相对时间口径，7 天内相对、7 天外绝对）。
     /// 可点条件由调用方按 viewer 权限给（sourceTappable）：有权限看原文时点按走 onTapped
     /// 进原日记详情；占位态（已私密/已删除）下只展示、不点按、不泄露正文。
     /// 本行即原尾部日期的归宿：尾部 dateLabel 随之删除，同一卡不再出现两次日期。
@@ -407,7 +407,7 @@ final class BearyQuoteCardView: UIView {
             return "引用自已删除的日记"
         }
         let handleText = (handle ?? "").isEmpty ? nil : "@\(handle!)"
-        let dateText = (dateMs ?? 0) > 0 ? BearyDiaryCardCell.feedTimeString(ms: dateMs!) : nil
+        let dateText = (dateMs ?? 0) > 0 ? (BearyVisibilityText.publishedRelativeString(publishedAtMs: dateMs) ?? BearyDiaryCardCell.feedTimeString(ms: dateMs!)) : nil
         if let handleText = handleText, let dateText = dateText {
             return "引用自 \(handleText) · \(dateText)"
         }

@@ -3506,8 +3506,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         return parts.joined(separator: " ")
     }
 
-    /// 网页 srchDateStr 口径：M 月 d 日（带空格，不带时间、不带年份）。
+    /// 搜索结果日记行日期：7 天内相对时间、7 天外绝对时间（共用口径）。
     private func searchDateString(ms: Int) -> String {
+        if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
+            return relative
+        }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "zh_CN")

@@ -3789,10 +3789,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         return parts.joined(separator: "，")
     }
 
-    /// [24] 小项 6：面板行日期统一为项目主流口径 M月d日 H:mm（小时不补零；
-    /// 旧注“与网页 fmtDate 同款”有误：卡片/详情/通知/时间线引用一律 H:mm，
-    /// 本处原 HH:mm 是唯一偏离的日记日期行，已改齐）。
+    /// 面板行日期：7 天内相对时间、7 天外绝对时间（共用口径；小时不补零）。
     private func quoteRowDate(ms: Int) -> String {
+        if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
+            return relative
+        }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "zh_CN")
