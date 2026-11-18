@@ -447,6 +447,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 let temps = self.messages.filter { $0.localKey != nil }
                 let server = (self.messages.filter { $0.localKey == nil } + missing).sorted { ($0.id ?? 0) < ($1.id ?? 0) }
                 self.messages = server + temps
+                // 审计 26-7：首批本地消息已上表即结束首屏加载态——
+                // 否则加载视图先显、再被本地内容盖住，直至网络回包才收起；与网络回包同款收起。
+                self.firstLoadPending = false
+                self.firstLoadStateView.isHidden = true
                 self.tableView.reloadData()
                 self.scrollToBottomIfNeeded()
             }
