@@ -2444,7 +2444,7 @@ final class BearySettingsViewController: UIViewController {
         setLabelTextFaded(idCreatedLabel, BearyAccountText.dateString(ms: user.createdAt))
         // ID 卡会员行：只留状态词（Plus 会员 / 普通用户），不走 plus-detail；
         // 全修 3-2：到期日、永久、内测限免一律只留在 Plus 组，不在此重复。
-        setLabelTextFaded(idPlusLabel, user.plus == true ? "Plus 会员" : "普通用户")
+        setLabelTextFaded(idPlusLabel, BearyDeveloperMode.effectivePlus(user.plus == true) ? "Plus 会员" : "普通用户")
         // 第四轮审计 15：同步状态行跟 /me 到达一起刷新（进页时 buildIdCard
         // 已按快照写过初值；同步进行中变迁靠广播补刷，见 viewDidLoad）。
         refreshSyncStateRow()
@@ -4072,9 +4072,9 @@ final class BearySettingsViewController: UIViewController {
     private var isPlusMember: Bool {
         if let detail = plusDetail {
             let now = Int(Date().timeIntervalSince1970 * 1000)
-            return detail.permanent == true || (detail.effectiveUntil ?? 0) > now
+            return BearyDeveloperMode.effectivePlus(detail.permanent == true || (detail.effectiveUntil ?? 0) > now)
         }
-        return SessionManager.shared.currentUser?.plus == true
+        return BearyDeveloperMode.effectivePlus(SessionManager.shared.currentUser?.plus == true)
     }
 
     @objc private func openPlusPage() {

@@ -779,6 +779,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard isEditMode else { return }
         refreshEditOriginFreeze()
     }
+
+    /// 开发者模式 Plus 开关变化（.bearyDeveloperModeChanged kind "plus"）：
+    /// 清掉本会话缓存的 Plus 态，下次取 Plus 态时重拉并按新开关算。
+    @objc private func handleDeveloperPlusChanged(_ note: Notification) {
+        guard (note.userInfo?["kind"] as? String) == "plus" else { return }
+        cachedPlusStatus = nil
+    }
     private func refreshEditOriginFreeze() {
         guard isEditMode else { return }
         let mismatched = isEditOriginMismatch()
@@ -1348,6 +1355,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         NotificationCenter.default.addObserver(self, selector: #selector(presentBackgroundFlushFailureIfNeeded), name: UIApplication.willEnterForegroundNotification, object: nil)
         // 第三轮审计第 5 项：编辑中切号立即冻结（见 handleEditOriginAccountChanged）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleEditOriginAccountChanged), name: .bearyUserDidChange, object: nil)
+        // 开发者模式 Plus 开关变化：清掉本会话缓存的 Plus 态，下次取时重拉并按新开关算。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleDeveloperPlusChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
         NSLog("[Diag] composer-viewDidLoad-exit")
         // 临时诊断（81 包，定根因后删除）。
         DiagFile.mark("viewDidLoad-exit")
@@ -7849,7 +7858,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             DispatchQueue.main.async {
                 var isPlus = false
                 if case .success(let user) = result {
-                    isPlus = user?.plus == true
+                    isPlus = BearyDeveloperMode.effectivePlus(user?.plus == true)
                 }
                 self?.cachedPlusStatus = isPlus
                 completion(isPlus)

@@ -5,7 +5,7 @@ extension Notification.Name {
     /// 开发者模式变化广播；userInfo["kind"] 说明变了哪一项，
     /// 各页按 kind 决定是轻量重渲染还是走网络重拉：
     /// enabled / date / font / appearance / fakeEntries /
-    /// forcedTimeline / forcedTrash / forcedSearch / forcedMap / account / preview。
+    /// forcedTimeline / forcedTrash / forcedSearch / forcedMap / account / preview / plus。
     static let bearyDeveloperModeChanged = Notification.Name("bearyDeveloperModeChanged")
 }
 
@@ -20,6 +20,26 @@ final class BearyDeveloperMode {
     /// 开发者模式总开关（持久化；模拟态本身不持久，重启即清）。
     var isEnabled: Bool {
         UserDefaults.standard.bool(forKey: Self.enabledKey)
+    }
+
+    private static let plusOverrideKey = "beary_developer_mode_plus_override"
+
+    /// Plus 权限覆盖（开发测试用，持久化在 UserDefaults；只在本机生效，
+    /// 不动服务端、不影响真实 Plus 状态；关掉即恢复真实状态）。
+    /// 退出开发者模式后不生效（见 effectivePlus），重进开发者模式恢复。
+    var plusOverride: Bool {
+        UserDefaults.standard.bool(forKey: Self.plusOverrideKey)
+    }
+
+    func setPlusOverride(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: Self.plusOverrideKey)
+        postChange(kind: "plus")
+    }
+
+    /// 把真实 Plus 值换成本机生效值：真实已开通保持开通；覆盖开着且
+    /// 开发者模式开着时一律按开通（本机所有 Plus 判定都走这里）。
+    static func effectivePlus(_ real: Bool) -> Bool {
+        real || (shared.isEnabled && shared.plusOverride)
     }
 
     /// 横幅条高度（开着 36pt，关着 0）；各页 applyHeaderTopInset 叠加此值。

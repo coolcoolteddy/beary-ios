@@ -162,7 +162,7 @@ enum BearyNineGridPresenter {
     /// Plus 专属（2026-11-03 Li 定版：九宫格版式只给 Plus 开）；非 Plus 走景深背景
     /// 同款 Plus 专属提示口径，不开网格。图片上限 9 张与图片条一致。
     static func present(from viewController: UIViewController, imageKeys: [String], liveVideos: [String: String]?) {
-        guard SessionManager.shared.currentUser?.plus == true else {
+        guard BearyDeveloperMode.effectivePlus(SessionManager.shared.currentUser?.plus == true) else {
             BearyToast.show(in: viewController.view, message: "仅 Plus 会员可使用九宫格版式")
             return
         }

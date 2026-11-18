@@ -21,7 +21,7 @@ final class BearyDeveloperModeViewController: BearySettingsSubpageViewController
         super.viewDidLoad()
 
         let note = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
-        note.text = "以下全部只放内存预览，不写本地库、不上云；退出开发者模式即清掉。时间旅行只改显示，写操作一律走真实日期。"
+        note.text = "以下全部只放内存预览，不写本地库、不上云；退出开发者模式即清掉。时间旅行只改显示，写操作一律走真实日期。Plus 权限开关除外：状态保存在本机，关掉即恢复真实状态。"
         contentStack.addArrangedSubview(note)
 
         contentStack.addArrangedSubview(makeGroupCard(title: "开发者模式", rows: [
@@ -33,6 +33,12 @@ final class BearyDeveloperModeViewController: BearySettingsSubpageViewController
                     BearyDeveloperMode.shared.exit(window: self.view.window)
                     self.dismiss(animated: true)
                 }
+            },
+        ]))
+
+        contentStack.addArrangedSubview(makeGroupCard(title: "Plus 测试", rows: [
+            switchRow(title: "Plus 权限", detail: "仅本机测试用：打开后本机按 Plus 会员显示，关掉即恢复", isOn: BearyDeveloperMode.shared.plusOverride) { isOn in
+                BearyDeveloperMode.shared.setPlusOverride(isOn)
             },
         ]))
 

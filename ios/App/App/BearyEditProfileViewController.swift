@@ -488,7 +488,7 @@ class BearyEditProfileViewController: UIViewController {
                 case .success(let user):
                     strongSelf.meFetchFailed = false
                     strongSelf.fetchedUserId = user?.id
-                    strongSelf.fetchedPlus = user?.plus == true
+                    strongSelf.fetchedPlus = BearyDeveloperMode.effectivePlus(user?.plus == true)
                     strongSelf.updateLinkRow()
                     strongSelf.fetchInitialSignature()
                     if thenCopy {

@@ -180,7 +180,8 @@ final class BearyDepthBackgroundViewController: UIViewController {
                 guard let self else { return }
                 guard sequence == self.plusStatusRequestSequence else { return }
                 guard BearyDraftStore.currentAccountId == accountId else { return }
-                guard case .success(let user) = result, let plus = user?.plus else { return }
+                guard case .success(let user) = result, let rawPlus = user?.plus else { return }
+                let plus = BearyDeveloperMode.effectivePlus(rawPlus)
                 if let userId = user?.id, let accountId, userId != accountId { return }
                 guard plus != self.isPlusValue else { return }
                 self.isPlusValue = plus
