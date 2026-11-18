@@ -28,7 +28,7 @@ What is checked (code -> catalog, one direction only):
      iconName/default arguments alike.
   2. Dynamic families, expanded from their code-side key lists:
      - emote_<key> and emote_<key>_dark for every key in
-       BearyEmotePickerSheet.all + BearyComposerViewController.moodOrder
+       BearyEmotePickerSheet.all
        (covers UIImage(named: "emote_\\(key)") / "..._dark").
      - icon_wx_<key> for every key in BearyComposerViewController.weatherOrder
        (covers "icon_wx_\\(key)" / "icon_wx_" + weatherKey).
@@ -176,12 +176,10 @@ def main():
     # BearyBadgeImages.swift 已随徽章系统全删（#905），徽章族校验早已退役，
     # 此处旧的读文件是死代码（badges 读后无处使用），删掉，免得文件不存在时整个检查崩掉。
 
+    # 2026-11-18：写日记页心情选择器已删，其 moodOrder 随之删除；emote 族
+    # 只剩 BearyEmotePickerSheet.all 一个来源（40 只，含旧默认组全部 32 只，
+    # 覆盖不少——删 moodOrder 前已逐项核对）。
     emote_keys = set(
-        parse_key_array(
-            composer, "BearyComposerViewController.moodOrder",
-            r"moodOrder\s*:\s*\[String\]\s*=\s*\[(.*?)\]",
-        )
-    ) | set(
         parse_key_array(
             picker, "BearyEmotePickerSheet.all",
             r"static\s+let\s+all\s*:\s*\[String\]\s*=\s*\[(.*?)\]",
