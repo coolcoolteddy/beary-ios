@@ -3374,7 +3374,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 面板行：完整 lite 卡（网页 diaryCardLite 同款：头像 40 + 名 + 日期 + 全文 +
-    /// 118 图片条 + 天气图标；名截断优先；Plus 皇冠已按清单取消显示；iCity：无 pill）。
+    /// 118 图片条 + 天气图标；名截断优先；Plus 皇冠已按清单取消显示）。
     /// 112：行内无动作行（无赞/收藏/分享入口），唯一点按目标是整行选引用；
     /// 头行 stack 与分隔线设不可交互、图条点按走同一选篇路径，行内不留
     /// 第二触摸目标（看不见又能点的半截热区）。
@@ -3472,7 +3472,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 avatarFallback.isHidden = false
                 avatarFallback.text = String(authorName.prefix(1)).uppercased()
             }
-            // 头行：名（截断优先）+ 皇冠 + 日期 + 天气，横向 stack（iCity：无 pill）。
+            // 头行：名（截断优先）+ 皇冠 + 日期 + 天气，横向 stack。
             let headerStack = UIStackView()
             headerStack.translatesAutoresizingMaskIntoConstraints = false
             headerStack.axis = .horizontal
@@ -3512,23 +3512,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 dateLabel.text = nil
             }
             headerStack.addArrangedSubview(dateLabel)
-            // 112 引用列表 v2：状态 pill 放在作者名与时间之后、同一头行；
-            // 三态按真实可见性实时取（不写死）：存活期限时 → 虚线边蓝字“限时”，
-            // 有效公开 → 实线边橙字“公开”，其余 → 实线边蓝字“私密”。
-            // 颜色口径走现行三色制（公开橙 #ff9500、私密蓝 #007aff/#0a84ff），不自创新色；
-            // 天气图标仍在 pill 之后，名截断优先、pill 不让步。
-            let statusPill = BearyQuoteStatusPillView()
-            statusPill.translatesAutoresizingMaskIntoConstraints = false
-            if BearyEphemeral.isLive(entry) {
-                statusPill.configure(text: "限时", style: .limited)
-            } else if BearyEphemeral.isEffectivelyPublic(entry) {
-                statusPill.configure(text: "公开", style: .public)
-            } else {
-                statusPill.configure(text: "私密", style: .private)
-            }
-            statusPill.setContentHuggingPriority(.required, for: .horizontal)
-            statusPill.setContentCompressionResistancePriority(.required, for: .horizontal)
-            headerStack.addArrangedSubview(statusPill)
             if let weather = entry.weather {
                 let weatherView = UIImageView()
                 weatherView.translatesAutoresizingMaskIntoConstraints = false
@@ -3556,8 +3539,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     quoteWeatherEmoteViews.append(overlay)
                 }
             }
-            // iCity 倒计时 pill 已废，但 112 v2 起选篇行挂状态 pill（见头行 statusPill，
-            // 非倒计时）；私密与公开行此前无 pill，现按真实可见性补齐三态。
+            // iCity 倒计时 pill 已废。
             let contentLabel = UILabel()
             contentLabel.translatesAutoresizingMaskIntoConstraints = false
             contentLabel.numberOfLines = 0
@@ -10467,83 +10449,6 @@ private final class ComposerImageItem {
 //    已保存为草稿，联网后可重试”，失败一律保留草稿。
 // 7. 第四项：键盘跟随 WillChangeFrame（旋转/表情键盘/悬浮键盘拖动）；打开编辑器自动聚焦一次，
 //    有草稿时光标置末尾；选图按选择顺序占位插入（.ordered + 先建项后填图），读图失败直接移除占位项。
-
-// MARK: - 112 引用列表 v2 状态 pill（预览 preview-quote-list-status-v2-20261031.html）
-//
-// 裸字 + 细边、无底色块：公开橙实线、私密蓝实线、限时橙虚线；字 12、内边距 2/8。
-// 虚线用 CAShapeLayer 自画（1.5pt、dash [4, 3]），
-// 布局时按当前 bounds 重画；深浅切换时重解动态蓝（orange 为固定色，无需重解）。
-// 仅展示、不拦截点按（行按钮的点按选引用行为不动）。
-private final class BearyQuoteStatusPillView: UIView {
-
-    enum Style {
-        case `public`
-        case `private`
-        case limited
-    }
-
-    private let label = UILabel()
-    private let dashedLayer = CAShapeLayer()
-    private var style: Style = .public
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 12)
-        label.numberOfLines = 1
-        addSubview(label)
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-        ])
-        layer.cornerRadius = 999
-        layer.masksToBounds = true
-        dashedLayer.fillColor = UIColor.clear.cgColor
-        dashedLayer.lineWidth = 1.5
-        dashedLayer.lineDashPattern = [4, 3]
-        layer.addSublayer(dashedLayer)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func configure(text: String, style: Style) {
-        self.style = style
-        label.text = text
-        applyColors()
-        setNeedsLayout()
-    }
-
-    private func applyColors() {
-        let color: UIColor = (style == .public) ? BearyColors.orange : BearyColors.blue
-        label.textColor = (style == .public) ? BearyColors.deepOrangeText : BearyColors.blue
-        if style == .limited {
-            layer.borderWidth = 0
-            dashedLayer.strokeColor = color.cgColor
-            dashedLayer.isHidden = false
-        } else {
-            dashedLayer.isHidden = true
-            layer.borderWidth = 1.5
-            layer.bearyDynamicBorderColor = color
-        }
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        if style == .limited {
-            dashedLayer.frame = bounds
-            dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).cgPath
-        }
-    }
-
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        applyColors()
-    }
-}
 
 // MARK: - 批 E 定位气泡回调
 
