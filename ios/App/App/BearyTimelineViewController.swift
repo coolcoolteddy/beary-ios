@@ -2616,9 +2616,8 @@ class BearyTimelineViewController: UIViewController {
     // 审计-时间线：表头统计/重试钮改 BearyHit44Button，视觉帧不动、热区扩至 44×44（正常态禁用，失败态可点时生效）。
     private let statsButton = BearyHit44Button(type: .system)
     private let calendarCard = BearyCalendarCardView()
-    /// R15-L1：表头筛选行——筛子钮 + 选中日日期（窄屏/大字号时分行，
-    /// 见 updateFilterRowLayout；日期原文案在当日面板组头，见 dayPanelTitleParts）。
-    private let filterDateLabel = UILabel()
+    /// 表头筛选行——只放筛子钮（当前可见范围：全部／公开／私密／限时／
+    /// 仅好友）；日期只在当日面板组头出现，见 dayPanelTitleParts。
     private let filterRow = UIStackView()
     private var headerStack: UIStackView?
     private var lastHeaderWidth: CGFloat = 0
@@ -4290,25 +4289,17 @@ class BearyTimelineViewController: UIViewController {
         visFilterButton.addTarget(self, action: #selector(didTapVisFilter), for: .touchUpInside)
         visFilterButton.bearyAddPressFeedback()
         updateVisFilterButton()
-        // R15-L1：筛选行旁放选中日日期（与当日面板组头同值，见 updateFilterDateLabel）；
-        // 窄屏/大字号放不下时整行改竖排、日期藏掉（下方当日面板组头已显示同日，见 updateFilterRowLayout）。
-        filterDateLabel.translatesAutoresizingMaskIntoConstraints = false
-        filterDateLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
-        filterDateLabel.adjustsFontForContentSizeCategory = true
-        filterDateLabel.textColor = BearyColors.ink
-        filterDateLabel.numberOfLines = 0
-        filterDateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 筛选行只放筛子钮（当前可见范围）；日期不在此重复——只在下方
+        // 当日面板组头出现（日期＋星期＋篇数，见 dayPanelTitleParts）。
         filterRow.translatesAutoresizingMaskIntoConstraints = false
         filterRow.axis = .horizontal
         filterRow.alignment = .center
         filterRow.spacing = 8
         filterRow.addArrangedSubview(visFilterButton)
-        filterRow.addArrangedSubview(filterDateLabel)
         filterRow.addArrangedSubview(UIView())
-        updateFilterDateLabel()
 
         // R15-L1：表头顺序改为标题与回收站 → 统计（共 X 篇／已连续写 X 天，
-        // 紧贴标题「时间线」下方，2026-11-12 Li 定）→ 日历 → 筛选和日期 → 日记；
+        // 紧贴标题「时间线」下方，2026-11-12 Li 定）→ 日历 → 筛选 → 日记；
         // ≥821pt 居中列 / ≤820pt 全宽列与左右各 16 边距一律不动
         // （见下方约束与 SceneDelegate 宽度口径）。
         let stack = UIStackView(arrangedSubviews: [titleRow, countsLabel, statsButton, calendarCard, filterRow])
@@ -4334,67 +4325,12 @@ class BearyTimelineViewController: UIViewController {
     /// 宽一就绪即由 viewDidLayoutSubviews 消费重算，不静默丢弃。
     private var headerHeightNeedsRefresh = false
 
-    /// R15-L1：筛选行旁的选中日日期（与当日面板组头同值，只取日期段；
-    /// 未选日时隐藏整段；竖排时也隐藏——日期另起一行会与下方当日面板组头
-    /// 同日重复，面板组头已含日期＋星期＋篇数）。文本变化本身触发内在尺寸失效，走布局通道
-    /// 重算表头高，本方法不直接调 refreshHeaderHeight（防重入循环）。
-    private func updateFilterDateLabel() {
-        guard let key = selectedDayKey else {
-            filterDateLabel.isHidden = true
-            filterDateLabel.text = nil
-            return
-        }
-        let head = dayPanelTitleParts(key: key).head
-        guard !head.isEmpty else {
-            filterDateLabel.isHidden = true
-            filterDateLabel.text = nil
-            return
-        }
-        if filterDateLabel.text != head {
-            filterDateLabel.text = head
-        }
-        filterDateLabel.isHidden = (filterRow.axis == .vertical)
-    }
-
-    /// R15-L1：筛选与日期分行判定——筛子钮实宽 + 间距 + 日期实宽放不进
-    /// 表头可用宽（表宽 − 左右各 16）时整行改竖排（筛子在上、日期在下、
-    /// 左对齐），放得下时恢复横排。只在轴向真变时改，不触发布局抖动；
-    /// 大字号下筛子钮宽已由 updateVisFilterButton 按新字号重算（见
-    /// traitCollectionDidChange），本判定读到的即新宽。
-    /// 竖排时日期藏掉：另起一行会与下方当日面板组头同日重复（面板组头已含
-    /// 日期＋星期＋篇数），不丢信息；横排时恢复显示。显隐判定只以轴向为准，
-    /// 不读 label.isHidden——没选中日时本方法开头即强制回横排（原 guard 以
-    /// isHidden 为条件，藏 label 会逼布局翻回横排，与竖排藏日期打架）。
-    private func updateFilterRowLayout() {
-        guard selectedDayKey != nil else {
-            if filterRow.axis != .horizontal {
-                filterRow.axis = .horizontal
-                filterRow.alignment = .center
-            }
-            return
-        }
-        let available = tableView.bounds.width - 32
-        guard available > 0 else { return }
-        let buttonWidth = visFilterButtonWidthConstraint?.constant ?? visFilterButton.intrinsicContentSize.width
-        let dateWidth = filterDateLabel.intrinsicContentSize.width
-        // 审计四轮第 1 项：行内三元素两段间距（按钮→日期、日期→弹性空白），
-        // 须算两段 spacing，只算一段会在临界宽度下误判横排而实际超宽。
-        let needsVertical = buttonWidth + filterRow.spacing * 2 + dateWidth > available
-        let newAxis: NSLayoutConstraint.Axis = needsVertical ? .vertical : .horizontal
-        if filterRow.axis != newAxis {
-            filterRow.axis = newAxis
-            filterRow.alignment = needsVertical ? .leading : .center
-        }
-        filterDateLabel.isHidden = needsVertical
-    }
-
     private func refreshHeaderHeight() {
         let width = tableView.bounds.width
         guard width > 0 else {
             headerHeightNeedsRefresh = true
             return
         }
-        updateFilterRowLayout()
         headerHeightNeedsRefresh = false
         lastHeaderWidth = width
         headerContainer.frame = CGRect(x: 0, y: 0, width: width, height: 0)
@@ -4412,7 +4348,6 @@ class BearyTimelineViewController: UIViewController {
     private func fittingHeaderHeight() -> CGFloat {
         let width = tableView.bounds.width
         guard width > 0 else { return headerContainer.frame.height }
-        updateFilterRowLayout()
         headerContainer.frame = CGRect(x: 0, y: 0, width: width, height: 0)
         let size = headerContainer.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
@@ -4629,8 +4564,6 @@ class BearyTimelineViewController: UIViewController {
         // 字号变化时筛子钮显式宽度随新字号重算（否则标题仍按旧宽截断）。
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
             updateVisFilterButton()
-            // R15-L1：钮宽变了，分行判定重算（窄屏/大字号下筛子与日期分行）。
-            updateFilterRowLayout()
             // 跳动修：计数行最小高度随新字号重算（否则大字号下行高钉死旧值、文案被裁）。
             countsLabelMinHeightConstraint?.constant = countsLabel.font.lineHeight
         }
@@ -5630,8 +5563,6 @@ class BearyTimelineViewController: UIViewController {
             calendarCard.render(days: days, mode: .month, weekKeys: currentWeekKeys())
         }
         updateStatsLine()
-        // R15-L1：选日/切月后表头筛选行旁的日期同步（与当日面板组头同值）。
-        updateFilterDateLabel()
         updateCalendarTodayButton()
     }
 
@@ -6458,6 +6389,22 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
+    /// 选中日是否落在日历当前显示的视图之外：月视图比显示月，周视图比
+    /// 锚点所在周（周一至周日）。日历状态未就绪时按在视图内算（短式不变）。
+    private func isSelectedDayOutsideCalendarView(year: Int, month: Int, day: Int) -> Bool {
+        switch calendarMode {
+        case .month:
+            guard let displayed = calendarDisplayedMonth else { return false }
+            return displayed.year != year || displayed.month != month
+        case .week:
+            guard let anchor = calendarAnchor,
+                  let monday = BearyBeijingDay.mondayOf(year: anchor.year, month: anchor.month, day: anchor.day),
+                  let mondayNumber = BearyBeijingDay.dayNumber(year: monday.year, month: monday.month, day: monday.day),
+                  let dayNumber = BearyBeijingDay.dayNumber(year: year, month: month, day: day) else { return false }
+            return dayNumber < mondayNumber || dayNumber > mondayNumber + 6
+        }
+    }
+
     /// TL-7 当日面板表头（第 7 项两段式 + 第 15 项网页口径）：
     /// 日期一段（15pt 加粗墨色，如“10 月 25 日”，星期不在此段）；
     /// 星期·篇数·状态一段（12pt 灰色，如“周日 · 1 篇 · 都私密”，篇数带空格）。
@@ -6466,6 +6413,12 @@ class BearyTimelineViewController: UIViewController {
     /// “日期段不保留”）已废止——失败文案本身不再兼重试入口。
     /// head/suffix 分段供表头富文本使用（日期加粗 15 + 后段灰色 12）；
     /// failed 供组头决定是否出日期旁重试钮。
+    /// 日期去重：日期只在此处出现，表头筛选行不再重复（只留筛子钮，见
+    /// filterRow）。日历标题是“日历翻到了哪月／哪周”，此处是“下面正在看
+    /// 哪天”——翻到无记录的月／周时选区保留原日（见 tryStepFollowSelection），
+    /// 两处所指可能不同月；此时 head 带年份写全（“2026 年 11 月 18 日”），
+    /// 让正在看的那天自带年月，与日历标题一眼分清；在当前日历视图内时仍
+    /// 写短式（“11 月 18 日”），不加噪音。
     private func dayPanelTitleParts(key: String) -> (head: String, suffix: String, failed: Bool) {
         let parts = key.split(separator: "-")
         guard parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) else { return (key, "", false) }
@@ -6477,7 +6430,9 @@ class BearyTimelineViewController: UIViewController {
                 weekdayText = names[weekday - 1]
             }
         }
-        let head = "\(month) 月 \(day) 日"
+        let head = isSelectedDayOutsideCalendarView(year: year, month: month, day: day)
+            ? "\(year) 年 \(month) 月 \(day) 日"
+            : "\(month) 月 \(day) 日"
         if dayState == .failed {
             return (head, " · 加载失败", true)
         }
