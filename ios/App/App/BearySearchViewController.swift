@@ -1310,12 +1310,21 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         var ftsMine: [Entry] = []
         var ftsDone = false
         var serverApplied = false
+        var localFirstShown = false
         // 两路任一到达即调：只能在主线程调用。
         let applySearchLegs: () -> Void = { [weak self] in
             guard let self = self else { return }
             if seq != self.searchSeq { return }
             guard let serverResult = serverResult else {
-                // FTS 先到：只记结果，等服务端 leg 到达再渲染。
+                // 审计 #20：FTS 先到且本地有命中时先渲仅「我的」组的临时结果，
+                // 不等服务端回包；服务端到达后全量重渲。走同一 renderResults，
+                // 「我的」组过滤与失败分支的 localOnly 同口径；框内圈照旧等
+                // 两路到齐才停。
+                if !localFirstShown, !ftsMine.isEmpty {
+                    localFirstShown = true
+                    let localOnly = SearchResult(users: nil, entries: nil, mine: ftsMine)
+                    self.renderResults(data: localOnly, query: trimmed)
+                }
                 return
             }
             switch serverResult {

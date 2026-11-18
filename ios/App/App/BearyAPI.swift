@@ -751,16 +751,23 @@ final class BearyAPI {
         }
     }
 
-    /// 5-28 端点超时（只覆盖上传与发布两个长耗时端点，其余走 URLSession 默认 60s）：
+    /// 5-28 端点超时（上传与发布两个长耗时端点放宽、搜索 GET 收紧，
+    /// 其余走 URLSession 默认 60s）：
     /// 上传为 base64 dataURL 大体（原图 ≤5MB + 缩略图 ≤2MB，编码后更大），
     /// 慢网下默认 60s 不够；发布体小但服务端落库 + 幂等校验，同样放宽。
     /// 显式 timeout 参数优先于本表；上传/发布方法本体在 BearyNativeCommon
     /// 的 BearyAPI 扩展里，调用方不传 timeout 即自动命中本表，无需改调用方。
     private static let uploadTimeout: TimeInterval = 180
     private static let publishTimeout: TimeInterval = 120
+    // 审计 #20：搜索 GET 显式短超时——同类轻量 GET（天气，BearyNativeCommon
+    // fetchLocalWeather）取 10s；默认 60s 下弱网挂起时失败兜底也要等满
+    // 60s 才亮本地组。GET 网络错会重试 1 次（见 request），故最坏约 20s
+    // 才进失败分支，仍远短于默认 60s。
+    private static let searchTimeout: TimeInterval = 10
     private func defaultTimeout(for path: String, method: String) -> TimeInterval? {
         if method == "POST" && path == "/beary/api/images/upload" { return Self.uploadTimeout }
         if method == "POST" && path == "/beary/api/entries" { return Self.publishTimeout }
+        if method == "GET" && path == "/beary/api/search" { return Self.searchTimeout }
         return nil
     }
 
