@@ -3396,11 +3396,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         for entry in entries {
             // 审计 P0-2：选择引用加卡片同款 viewer 门控——赞过/收藏 tab 里翻回私密的
             // 他人日记不得出全文：只显占位行、不可选（作者本人或有效公开才出全文行）。
+            // 审计 26-12：仅好友档例外——先占位、互关确认后补全文行（见
+            // requestQuoteFriendsOnlyAccess，与草稿恢复 :8645 同口径），预览与选择
+            // 共用同一道门，未确认前一律 fail-closed 留占位。
             // 占位主句与引用卡新口径一致（私密档“该日记已设为私密”；仅好友档走 10a 定版
             // “该日记仅好友可见”；picker 行无 published_at 可靠区分，不挂“已转”提醒句）。
             let viewerId = SessionManager.shared.currentUser?.id
             let quoteIsAuthor = entry.isMine == true || (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId)
-            if !quoteIsAuthor && !BearyEphemeral.isEffectivelyPublic(entry) {
+            if !quoteIsAuthor && !BearyEphemeral.isEffectivelyPublic(entry) && !quoteFriendsOnlyAllowedEntryIds.contains(entry.id ?? "") {
+                if entry.isFriendsOnly {
+                    requestQuoteFriendsOnlyAccess(entry: entry)
+                }
                 let lockedButton = UIButton(type: .custom)
                 lockedButton.translatesAutoresizingMaskIntoConstraints = false
                 lockedButton.isEnabled = false
@@ -3507,8 +3513,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             headerStack.addArrangedSubview(dateLabel)
             // 112 引用列表 v2：状态 pill 放在作者名与时间之后、同一头行；
-            // 三态按真实可见性实时取（不写死）：存活期限时 → 虚线边蓝字“限时”，
-            // 有效公开 → 实线边橙字“公开”，其余 → 实线边蓝字“私密”。
+            // 四态按真实可见性实时取（不写死）：存活期限时 → 虚线边蓝字“限时”，
+            // 有效公开 → 实线边橙字“公开”，仅好友 → 实线边蓝字“仅好友”
+            // （蓝档与私密同色，不新发明颜色；搜索页同口径），其余 → 实线边蓝字“私密”。
             // 颜色口径走现行三色制（公开橙 #ff9500、私密蓝 #007aff/#0a84ff），不自创新色；
             // 天气图标仍在 pill 之后，名截断优先、pill 不让步。
             let statusPill = BearyQuoteStatusPillView()
@@ -3517,6 +3524,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 statusPill.configure(text: "限时", style: .limited)
             } else if BearyEphemeral.isEffectivelyPublic(entry) {
                 statusPill.configure(text: "公开", style: .public)
+            } else if entry.isFriendsOnly {
+                statusPill.configure(text: "仅好友", style: .private)
             } else {
                 statusPill.configure(text: "私密", style: .private)
             }
@@ -3721,12 +3730,58 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updatePreferredContentSize()
     }
 
+    /// 引用面板仅好友行互关校验（与草稿恢复 verifyRestoredQuote :8645 同口径：
+    /// fetchFollowState 的 mutual，或 following＋followedBy 双向；其余一律
+    /// fail-closed）。发起时拍鉴权快照（authEpoch＋authAccountId，BearyQuoteGate
+    /// r29-5 同口径），回包失配不解锁；确认互关后记入允许集并重渲当前 tab，
+    /// 占位行即升为全文可选行。非互关／失败／面板已关／行已不在列表时不动作。
+    private func requestQuoteFriendsOnlyAccess(entry: Entry) {
+        guard SessionManager.shared.isLoggedIn,
+              let authorId = entry.authorId,
+              let entryId = entry.id, !entryId.isEmpty,
+              !quoteFriendsOnlyAllowedEntryIds.contains(entryId),
+              !quoteFriendsOnlyPendingEntryIds.contains(entryId) else { return }
+        quoteFriendsOnlyPendingEntryIds.insert(entryId)
+        let tab = quotePanelTab
+        let requestEpoch = BearyAPI.shared.authEpoch
+        let requestAccountId = BearyAPI.shared.authAccountId
+        BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self] stateResult in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.quoteFriendsOnlyPendingEntryIds.remove(entryId)
+                guard requestEpoch == BearyAPI.shared.authEpoch,
+                      requestAccountId == BearyAPI.shared.authAccountId else { return }
+                let mutual: Bool = {
+                    if case .success(let state) = stateResult {
+                        return (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false))
+                    }
+                    return false
+                }()
+                guard mutual else { return }
+                self.quoteFriendsOnlyAllowedEntryIds.insert(entryId)
+                guard self.quotePanelOpen, tab == self.quotePanelTab else { return }
+                if let cached = self.quotePanelCache[tab], cached.contains(where: { $0.id == entryId }) {
+                    self.renderQuotePanelRows(entries: cached)
+                } else if self.quotePanelRowEntries.contains(where: { $0.id == entryId }) {
+                    self.renderQuotePanelRows(entries: self.quotePanelRowEntries)
+                }
+            }
+        }
+    }
+
     /// 面板行与日记的并行映射（行按钮按顺序与 entries 对应，渲染时同步重建）。
     private var quotePanelRowEntries: [Entry] = []
     private var quotePanelRowButtons: [UIButton] = []
     /// 审计 P2-24：引用面板已播入场行的键集（搜索页 lastResultRowKeys 同口径）——
     /// 换 tab 重建时只播新 key 行，已播行不重播；面板每次打开时清空（见 setQuotePanelOpen）。
     private var quotePanelAnimatedRowKeys: Set<String> = []
+    /// 审计 26-12：本轮编辑器内已验互关的仅好友引用篇 id 集——行渲染门控
+    /// 的同步放行依据（异步校验见 requestQuoteFriendsOnlyAccess；未登录／
+    /// 失败／非互关一律不进集，fail-closed）。
+    private var quoteFriendsOnlyAllowedEntryIds: Set<String> = []
+    /// 审计 26-12：仅好友互关校验在途篇 id 集——重渲时不重复发起同一篇的
+    /// 请求（fetchFollowState 本身亦按作者去重在途请求）。
+    private var quoteFriendsOnlyPendingEntryIds: Set<String> = []
 
     /// 112：图条点按 → 按宿主行钮走同一选篇路径（图条是 UIScrollView 子视图，
     /// 点按默认落不到行钮；横滑仍由 pan 接管，点按与滑动不冲突）。
