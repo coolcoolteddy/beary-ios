@@ -9537,6 +9537,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if img.liveVideoKey == nil {
                 item.liveVideoFile = img.liveVideoFile
             }
+            // 原图确认：恢复上传方式标记。老草稿（无方式且无原图文件）
+            // 按压缩计，保持旧行为（重开即续传，不弹确认）；原图文件
+            // 已不在时按压缩回落，不静默丢图。
+            item.uploadMode = BearyUploadMode(rawValue: img.uploadMode ?? "")
+            item.originalFile = img.originalFile
+            item.originalBytes = img.originalBytes
+            item.originalOversize = img.originalOversize
+            if item.uploadMode == .original, let originalFile = item.originalFile,
+               !BearyDraftImageStore.originalExists(originalFile) {
+                item.uploadMode = .compressed
+                item.originalFile = nil
+                item.originalBytes = nil
+                item.originalOversize = false
+                item.fellBackFromOriginal = true
+            } else if item.uploadMode == nil, item.originalFile == nil {
+                item.uploadMode = .compressed
+            }
             insertImageItem(item)
             if img.localFile == nil, let key = img.serverKey, let url = BearyImageURLs.imageURL(key: key, thumb: true) {
                 item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 84 * UIScreen.main.scale)
