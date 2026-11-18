@@ -74,7 +74,15 @@ final class BearyLoginViewController: UIViewController {
     private let guestNoteLabel = UILabel()
     private let inviteField = UITextField()
     private let messageLabel = UILabel()
-    /// 登录错误提示专用红（仅本页 messageLabel 用，不动共享 BearyColors.red）：
+    /// 字段旁提示，各贴在对应字段框下方：邮箱错／验证码状态／邀请码错；
+    /// 验证码“已发送至…”只放 codeStatusLabel（绿），不再走共用的 messageLabel。
+    private let emailErrorLabel = UILabel()
+    private let codeStatusLabel = UILabel()
+    private let inviteErrorLabel = UILabel()
+    /// 当前键盘顶边（视图坐标）：键盘已在时切输入框不触发键盘帧通知，
+    /// 用它把新焦点滚到键盘上方；键盘收起时清掉。
+    private var keyboardTopY: CGFloat?
+    /// 登录错误提示专用红（仅本页提示 label 用，不动共享 BearyColors.red）：
     /// 浅色 #C81E1E（白底 5.74:1），深色沿用 #E5484D（黑底 5.37:1）；
     /// 单一固定深红会顾此失彼（#C81E1E 黑底仅 3.66:1），故必须动态分值。
     private static let loginErrorRed = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 0.898, green: 0.282, blue: 0.302, alpha: 1) : UIColor(red: 200.0/255.0, green: 30.0/255.0, blue: 30.0/255.0, alpha: 1) }
@@ -358,6 +366,19 @@ final class BearyLoginViewController: UIViewController {
         // 2026-11-04 收矮：无文案时整行隐藏、不占 18pt + 8pt 间距；有文案时由 showMessage 恢复显示。
         messageLabel.isHidden = true
 
+        // 字段旁提示：与 messageLabel 同字号同口径，无文案时隐藏、不占高；
+        // 颜色由 showMessage 按文案定（发码成功绿、字段错红）。
+        for label in [emailErrorLabel, codeStatusLabel, inviteErrorLabel] {
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            label.adjustsFontForContentSizeCategory = true
+            label.numberOfLines = 0
+            label.isHidden = true
+        }
+        emailErrorLabel.textColor = Self.loginErrorRed
+        codeStatusLabel.textColor = Self.loginErrorRed
+        inviteErrorLabel.textColor = Self.loginErrorRed
+
         loginButton.translatesAutoresizingMaskIntoConstraints = false
         // 2026-11-14 Li 定：纯白／纯黑墨底太突兀，登录钮改 surface2 柔和灰底 + ink 字
         //（标题前景见 setLoginTitle，同改 ink）。
@@ -419,13 +440,16 @@ final class BearyLoginViewController: UIViewController {
         }
         stackView.addArrangedSubview(emailLabel)
         stackView.addArrangedSubview(emailContainer)
+        stackView.addArrangedSubview(emailErrorLabel)
         stackView.addArrangedSubview(codeLabel)
         stackView.addArrangedSubview(codeRow)
+        stackView.addArrangedSubview(codeStatusLabel)
         if sheetMode {
             stackView.addArrangedSubview(inviteDisclosureRow)
         }
         stackView.addArrangedSubview(inviteLabel)
         stackView.addArrangedSubview(inviteContainer)
+        stackView.addArrangedSubview(inviteErrorLabel)
         stackView.addArrangedSubview(messageLabel)
         stackView.addArrangedSubview(agreeRow)
         stackView.addArrangedSubview(loginButton)
@@ -448,14 +472,17 @@ final class BearyLoginViewController: UIViewController {
             stackView.setCustomSpacing(20, after: subtitleLabel)
         }
         stackView.setCustomSpacing(7, after: emailLabel)
-        stackView.setCustomSpacing(10, after: emailContainer)
+        stackView.setCustomSpacing(4, after: emailContainer)
+        stackView.setCustomSpacing(10, after: emailErrorLabel)
         stackView.setCustomSpacing(7, after: codeLabel)
-        stackView.setCustomSpacing(10, after: codeRow)
+        stackView.setCustomSpacing(4, after: codeRow)
+        stackView.setCustomSpacing(10, after: codeStatusLabel)
         if sheetMode {
             stackView.setCustomSpacing(7, after: inviteDisclosureRow)
         }
         stackView.setCustomSpacing(7, after: inviteLabel)
-        stackView.setCustomSpacing(8, after: inviteContainer)
+        stackView.setCustomSpacing(4, after: inviteContainer)
+        stackView.setCustomSpacing(8, after: inviteErrorLabel)
         stackView.setCustomSpacing(8, after: messageLabel)
         stackView.setCustomSpacing(10, after: agreeRow)
         stackView.setCustomSpacing(10, after: loginButton)
@@ -493,6 +520,9 @@ final class BearyLoginViewController: UIViewController {
             logoImageView.bottomAnchor.constraint(equalTo: logoRow.bottomAnchor),
             logoImageView.widthAnchor.constraint(equalTo: logoImageView.heightAnchor, multiplier: logoAspectRatio()),
             messageLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
+            emailErrorLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
+            codeStatusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
+            inviteErrorLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
             // L1：按钮与验证码行由固定高改最小高——大字号下由内容撑高，
             // 默认字号仍为原值（登录/游客钮 44、验证码行 48、发码钮 44）。
             loginButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
@@ -794,6 +824,8 @@ final class BearyLoginViewController: UIViewController {
 
     /// U2：字段级错误只标对应框——showMessage 的 errorField 参数；
     /// 不传 = 不标字段（网络/服务端/通用失败），只留行内红字。
+    /// 字段旁提示：发码成功（ok）只放验证码框下方 codeStatusLabel（绿）；
+    /// 字段错只放对应字段框下方（红字＋红边）；通用失败仍走原 messageLabel。
     private enum LoginErrorField { case email, code, invite }
 
     /// 第六轮 07：脱敏邮箱，只露首字符与域名，如 teddy@example.com → t***@example.com，
@@ -805,14 +837,24 @@ final class BearyLoginViewController: UIViewController {
     }
 
     private func showMessage(_ text: String, ok: Bool = false, errorField: LoginErrorField? = nil) {
-        messageLabel.text = text
-        messageLabel.isHidden = text.isEmpty
+        let failed = !text.isEmpty && !ok
+        // 发码成功提示只放验证码框下方；字段错只放对应字段框下方；不标字段的
+        // 通用失败仍走原 messageLabel；清空（text 为空）时四处同清。
+        let isCodeSent = ok && text.hasPrefix("验证码已发送至")
+        emailErrorLabel.text = failed && errorField == .email ? text : ""
+        emailErrorLabel.isHidden = emailErrorLabel.text?.isEmpty ?? true
+        codeStatusLabel.text = isCodeSent || (failed && errorField == .code) ? text : ""
+        codeStatusLabel.textColor = ok ? BearyColors.deepGreenText : Self.loginErrorRed
+        codeStatusLabel.isHidden = codeStatusLabel.text?.isEmpty ?? true
+        inviteErrorLabel.text = failed && errorField == .invite ? text : ""
+        inviteErrorLabel.isHidden = inviteErrorLabel.text?.isEmpty ?? true
+        messageLabel.text = !isCodeSent && (ok || (failed && errorField == nil)) ? text : ""
+        messageLabel.isHidden = messageLabel.text?.isEmpty ?? true
         messageLabel.textColor = ok ? BearyColors.deepGreenText : Self.loginErrorRed
         // 审计登录杂项：输入容器已实现 isError 红边，行内失败时同步点亮、
         // 成功 / 清空时复位（此前只写行内红字，从未设置 isError）。
         // U2：字段错只标对应框，网络/服务端错不标字段——此前任意错误
         // 三个框同时变红，用户看不出哪里填错。
-        let failed = !text.isEmpty && !ok
         emailInputContainer?.isError = failed && errorField == .email
         codeInputContainer?.isError = failed && errorField == .code
         inviteInputContainer?.isError = failed && errorField == .invite
@@ -916,7 +958,7 @@ final class BearyLoginViewController: UIViewController {
             countdownDeadline = nil
             countdownRemaining = nil
             sentCodeEmail = nil
-            if messageLabel.text?.hasPrefix("验证码已发送至") == true {
+            if codeStatusLabel.text?.hasPrefix("验证码已发送至") == true {
                 showMessage("")
             }
         }
@@ -1148,25 +1190,50 @@ final class BearyLoginViewController: UIViewController {
         // 本页三个输入框（邮箱／验证码／邀请码）取当前 firstResponder 的那一个；
         // 键盘弹出时必有一个输入框持有焦点，取不到则不垫。
         view.layoutIfNeeded()
+        let activeField = [emailField, codeField, inviteField].first(where: { $0.isFirstResponder })
         let overlapsInput: Bool
-        if let activeField = [emailField, codeField, inviteField].first(where: { $0.isFirstResponder }) {
+        if let activeField = activeField {
             let inputFrame = view.convert(activeField.bounds, from: activeField)
             overlapsInput = frameInView.isEmpty == false && frameInView.intersects(inputFrame)
         } else {
             overlapsInput = false
         }
         let bottom = overlapsInput ? max(0, view.bounds.maxY - view.safeAreaInsets.bottom - frameInView.minY) : 0
+        keyboardTopY = frameInView.isEmpty ? nil : frameInView.minY
         let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
         let curveRaw = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
         UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {
             self.scrollView.contentInset.bottom = bottom
             self.scrollView.verticalScrollIndicatorInsets.bottom = bottom
+            // 视线留在当前输入框附近：只垫 inset 不滚动时，被键盘盖住的框仍藏在
+            // 键盘后、须用户手动拖；盖住时把它滚到键盘上方 12pt，跟键盘同动画。
+            if overlapsInput, let activeField = activeField {
+                self.scrollFieldIntoView(activeField, keyboardTop: frameInView.minY, animated: false)
+            }
         })
     }
 
     @objc private func keyboardWillHide(_ notification: Notification) {
         scrollView.contentInset.bottom = 0
         scrollView.verticalScrollIndicatorInsets.bottom = 0
+        keyboardTopY = nil
+    }
+
+    /// 把输入框滚到键盘上方 12pt（键盘已盖住它时才动；否则不动，免得焦点
+    /// 切换时页面乱跳）。animated=false 时由调用方的动画块驱动（如键盘跟随）。
+    private func scrollFieldIntoView(_ field: UITextField, keyboardTop: CGFloat, animated: Bool) {
+        let inputFrame = view.convert(field.bounds, from: field)
+        let overlap = inputFrame.maxY + 12 - keyboardTop
+        guard overlap > 0 else { return }
+        let bottom = max(0, view.bounds.maxY - view.safeAreaInsets.bottom - keyboardTop)
+        let maxOffsetY = max(0, scrollView.contentSize.height - scrollView.bounds.height + bottom)
+        let targetY = min(maxOffsetY, scrollView.contentOffset.y + overlap)
+        guard targetY != scrollView.contentOffset.y else { return }
+        if animated {
+            UIView.animate(withDuration: 0.25) { self.scrollView.contentOffset.y = targetY }
+        } else {
+            scrollView.contentOffset.y = targetY
+        }
     }
 
     // 发码/验码走 BearyAPI（见头注释）；本页不再保留本地账户请求实现。
@@ -1204,6 +1271,12 @@ extension BearyLoginViewController: UITextFieldDelegate {
         textField.text = String(digits.prefix(6))
         textChanged()
         return false
+    }
+
+    func textFieldDidBeginEditing(_ textField: UITextField) {
+        // 键盘已在时切输入框不触发键盘帧通知：用上次键盘顶边把新焦点滚到键盘上方。
+        guard let top = keyboardTopY else { return }
+        scrollFieldIntoView(textField, keyboardTop: top, animated: true)
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
