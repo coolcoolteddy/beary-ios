@@ -2,7 +2,7 @@ import UIKit
 
 // ===== 盲盒交换流程页（全屏 modal，反馈页 / 许愿墙同款：fullScreen + fadeRise）=====
 // 步骤：登录提示（游客）→ 选池（自己的旧公开篇可选，私密 / 当日新公开置灰禁用）
-// → 放进池子 → 开盒 → 匿名收到卡（仅小熊回应；评论钮置灰；无作者名、无主页入口、
+// → 放进池子 → 开盒 → 匿名收到卡（仅小熊回应；无评论、无作者名、无主页入口、
 // 无追踪、无私信、无分享、无引用、无点赞、无收藏）→ 撤回 / 举报 / 占位。
 // 匿名保证：本页永不渲染作者信息，也不调用通用 /entries/:id/emote（见 BearyBlindBox
 // 文件头 U1）；举报走既有 BearyReportFlow（只传 entry_id），举报成功后本篇对举报人
@@ -201,10 +201,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private let emoteScroll = UIScrollView()
     private let emoteStack = UIStackView()
     private let emoteAddButton = BearyButton.make(style: .secondaryOutline(.compact), title: "贴一只小熊")
-    private let commentButton = BearyButton.make(style: .secondaryOutline(.compact), title: "评论")
     private let reportButton = BearyButton.make(style: .secondaryOutline(.compact), title: "举报")
     private let withdrawButton = BearyButton.make(style: .destructiveOutline(.compact), title: "撤回交换")
-    private let refreshStateButton = BearyButton.make(style: .secondaryOutline(.compact), title: "刷新交换状态")
 
     private let placeholderLabel = UILabel()
     private let placeholderView = UIView()
@@ -587,15 +585,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         emoteAddButton.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
         emoteAddButton.bearyAddPressFeedback()
 
-        // 评论钮：盲盒日记无评论入口，按钮留位以明示不可用，不藏。
-        // 审计登录杂项：补 accessibilityHint（VoiceOver 读到原因），并改为可点
-        // 弱提示——点按只 toast 说明，不进评论流程；视觉仍保持 0.45 置灰。
-        commentButton.translatesAutoresizingMaskIntoConstraints = false
-        commentButton.isEnabled = true
-        commentButton.alpha = 0.45
-        commentButton.accessibilityHint = "盲盒日记暂不支持评论"
-        commentButton.addTarget(self, action: #selector(commentUnavailableTapped), for: .touchUpInside)
-
+        // 无评论入口：没有的功能不留占位（2026-11-18 Li 定），评论钮已删。
         reportButton.translatesAutoresizingMaskIntoConstraints = false
         reportButton.addTarget(self, action: #selector(reportTapped), for: .touchUpInside)
         reportButton.bearyAddPressFeedback()
@@ -609,15 +599,20 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         withdrawButton.addTarget(self, action: #selector(withdrawTapped), for: .touchUpInside)
         withdrawButton.bearyAddPressFeedback()
 
-        refreshStateButton.translatesAutoresizingMaskIntoConstraints = false
-        refreshStateButton.addTarget(self, action: #selector(refreshStateTapped), for: .touchUpInside)
-        refreshStateButton.bearyAddPressFeedback()
-
-        let actionRow = UIStackView(arrangedSubviews: [commentButton, reportButton, withdrawButton])
+        // 操作行只留真实可用的两个动作，按内容宽左对齐安静排布；
+        // 尾部 spacer 吃掉剩余宽度，举报／撤回不被拉宽、不互挤。
+        // 刷新钮已删：进页 loadInitial 拉取、回页 viewWillAppear 静默重拉，
+        // 状态变化走各动作自己的回包，不靠手动刷新。
+        reportButton.setContentHuggingPriority(.required, for: .horizontal)
+        withdrawButton.setContentHuggingPriority(.required, for: .horizontal)
+        let actionSpacer = UIView()
+        actionSpacer.translatesAutoresizingMaskIntoConstraints = false
+        actionSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let actionRow = UIStackView(arrangedSubviews: [reportButton, withdrawButton, actionSpacer])
         actionRow.axis = .horizontal
         actionRow.spacing = 8
         actionRow.translatesAutoresizingMaskIntoConstraints = false
-        let stack = UIStackView(arrangedSubviews: [receivedPillWrap, receivedTitleLabel, receivedDateLabel, receivedContentLabel, imagesStack, emoteScroll, emoteAddButton, actionRow, refreshStateButton])
+        let stack = UIStackView(arrangedSubviews: [receivedPillWrap, receivedTitleLabel, receivedDateLabel, receivedContentLabel, imagesStack, emoteScroll, emoteAddButton, actionRow])
         stack.axis = .vertical
         stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -1439,12 +1434,24 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     // MARK: - 匿名小熊回应（仅熊脸选择器；乐观更新、失败回滚）
 
+    /// chip 用小图：原图 72pt 直接设给按钮，UIButton 不替调用方缩图，
+    /// imageView 72pt 高塞进 36pt chip、又被 masksToBounds 切掉，只剩顶部
+    ///（133 真机：只看得见爱心、熊脸基本在 chip 外）。缩到 22pt 再设，
+    /// 熊脸完整可见、与 chip 高度匹配。
+    private static func chipEmoteImage(_ face: UIImage, side: CGFloat = 22) -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = face.scale > 0 ? face.scale : UIScreen.main.scale
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format)
+        return renderer.image { _ in face.draw(in: CGRect(x: 0, y: 0, width: side, height: side)) }
+    }
+
     private func renderEmoteChips() {
         for sub in emoteStack.arrangedSubviews {
             emoteStack.removeArrangedSubview(sub)
             sub.removeFromSuperview()
         }
         var visibleEmoteCount = 0
+        let isDarkTrait = traitCollection.userInterfaceStyle == .dark
         for count in receivedEmotes {
             guard let key = count.emote, let total = count.count, total > 0 else { continue }
             visibleEmoteCount += 1
@@ -1452,13 +1459,24 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             chip.setTitle("\(total)", for: .normal)
             chip.emoteKey = key
             chip.translatesAutoresizingMaskIntoConstraints = false
-            let dark = traitCollection.userInterfaceStyle == .dark
-            if let face = BearyEmoteImages.image(for: key, dark: dark) {
-                chip.setImage(face, for: .normal)
+            // 取图按 chip 底色、不按系统主题：已选态底是墨色（浅色下近黑、
+            // 深色下近白），未选态底是 surface2（浅色下浅灰、深色下深灰）；
+            // 线稿须与底色反色才可见。浅色原图是深色线稿，在墨底上看不见
+            //（133 真机三 chip 全已选，熊脸只剩橙色点缀），已选态浅色下改取
+            // 深色版（白色线稿），其余组合沿用原按主题取图的口径。
+            let mine = count.mine == true
+            let darkAsset = mine != isDarkTrait
+            if let face = BearyEmoteImages.image(for: key, dark: darkAsset) {
+                chip.setImage(Self.chipEmoteImage(face), for: .normal)
                 chip.imageView?.contentMode = .scaleAspectFit
             }
-            chip.imageEdgeInsets.left = -4
-            if count.mine == true {
+            // 左右各留 10pt 边距，图与计数之间留 6pt；删掉原来的
+            // imageEdgeInsets.left = -4——它把 chip 内在宽压掉 4pt，
+            // 计数顶到右缘只剩约 1pt 边距，看着像被切掉一半。
+            chip.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+            chip.imageEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 6)
+            chip.setContentCompressionResistancePriority(.required, for: .horizontal)
+            if mine {
                 chip.backgroundColor = BearyColors.ink
                 chip.setTitleColor(BearyColors.bg, for: .normal)
                 chip.tintColor = BearyColors.bg
@@ -1594,12 +1612,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         present(sheet, animated: BearyMotion.animated(true), completion: nil)
     }
 
-    // MARK: - 举报 / 撤回 / 刷新
-
-    /// 审计登录杂项：评论不可用弱提示（按钮本身不进评论流程）。
-    @objc private func commentUnavailableTapped() {
-        BearyToast.show(in: view, message: "盲盒日记暂不支持评论")
-    }
+    // MARK: - 举报 / 撤回
 
     @objc private func reportTapped() {
         guard let entryId = received?.entryId, entryId.isEmpty == false else { return }
@@ -1652,11 +1665,6 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 }
             },
         ])
-    }
-
-    @objc private func refreshStateTapped() {
-        guard let exchangeId = exchangeId else { return }
-        refreshExchangeDetail(id: exchangeId, silent: false)
     }
 
     // MARK: - 错误文案（404 未必是服务端未上线，也可能是路由或单据不存在，不谎称网络问题）
