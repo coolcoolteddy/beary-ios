@@ -42,6 +42,12 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         guard currentIndex >= 0, currentIndex < imageKeys.count else { return nil }
         return imageKeys[currentIndex]
     }
+    /// #28：调用方按 key 在网格里定位——灯箱与网格顺序分叉（纯重排）
+    /// 时灯箱下标不可信，先问灯箱要该下标的照片 key，再按 key 查网格。
+    func imageKey(at index: Int) -> String? {
+        guard index >= 0, index < imageKeys.count else { return nil }
+        return imageKeys[index]
+    }
     private let imageView = UIImageView()
     // 灯箱相邻图：拖动时贴在当前图边上同步跟手的那一张（见 updateNeighbor）。
     // 单图轨道没有分页容器，旧路径是当前图先滑出、再换图滑入，两图从不同时

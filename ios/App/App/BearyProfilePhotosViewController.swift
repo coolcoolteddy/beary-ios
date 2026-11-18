@@ -1009,6 +1009,18 @@ final class BearyProfilePhotosViewController: UIViewController {
         fetchNextPageIfNeeded()
     }
 
+    /// #28：灯箱下标是灯箱自身顺序里的位置，纯重排后与网格下标可能分叉；
+    /// 先按灯箱该下标的照片 key 在网格当下的 photosValue 里找，找不到
+    /// （key 已失效／本地图模式无 key）再回落下标；都越界返回 nil。
+    private func gridIndex(forViewerIndex viewerIndex: Int, viewer: BearyEntryImageViewerViewController) -> Int? {
+        if let key = viewer.imageKey(at: viewerIndex),
+           let found = photosValue.firstIndex(where: { $0.imageKey == key }) {
+            return found
+        }
+        guard viewerIndex >= 0, viewerIndex < photosValue.count else { return nil }
+        return viewerIndex
+    }
+
     private func presentLightbox(startIndex: Int, originFrame: CGRect? = nil, thumbnail: UIImage? = nil) {
         // r24-#2：开灯箱前核对身份——身份已变先刷新本页、不展示旧账号的
         // 旧 key（尤其旧账号私密照）；刷新完成前不进灯箱。
@@ -1039,11 +1051,14 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wa
         // 灯箱翻到末尾要下一页时由这里触发网格续拉。
         viewer.hasMorePages = photosHasMore
         viewer.onRequestMorePages = { [weak self] in self?.requestNextPageFromLightbox() }
-        // C3：关场回当前照片——按下标找网格里对应的格；在视口内才给
-        // 矩形与焦点视图，格不在视口内时返回 nil、走淡出兜底。
-        viewer.dismissOriginProvider = { [weak self] index in
-            guard let self = self, index >= 0, index < self.photosValue.count else { return nil }
-            let path = IndexPath(item: index, section: 0)
+        // C3：关场回当前照片——#28 按灯箱该下标的照片 key 在网格当下
+        // photosValue 里找格（纯重排后灯箱下标与网格下标分叉）；查不到
+        // 再回落下标。在视口内才给矩形与焦点视图，格不在视口内时返回
+        // nil、走淡出兜底。
+        viewer.dismissOriginProvider = { [weak self, weak viewer] index in
+            guard let self = self, let viewer = viewer,
+                  let gridIndex = self.gridIndex(forViewerIndex: index, viewer: viewer) else { return nil }
+            let path = IndexPath(item: gridIndex, section: 0)
             guard let cell = self.collectionView.cellForItem(at: path) else { return nil }
             let frame = cell.convert(cell.bounds, to: nil)
             return (frame: frame, element: cell)
@@ -1057,8 +1072,10 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wa
                 viewerValue.dismiss(animated: BearyMotion.animated(true), completion: nil)
                 return
             }
-            guard tappedIndex >= 0, tappedIndex < strongSelf.photosValue.count else { return }
-            let targetEntry = strongSelf.photosValue[tappedIndex].entry
+            // #28：按灯箱该下标的照片 key 在网格当下 photosValue 里找日记，
+            // 纯重排后灯箱下标与网格下标分叉；查不到再回落下标。
+            guard let gridIndex = strongSelf.gridIndex(forViewerIndex: tappedIndex, viewer: viewerValue) else { return }
+            let targetEntry = strongSelf.photosValue[gridIndex].entry
             viewerValue.dismiss(animated: BearyMotion.animated(true)) {
                 strongSelf.onOpenEntry?(targetEntry)
             }
