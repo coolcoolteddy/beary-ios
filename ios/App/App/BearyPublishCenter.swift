@@ -443,9 +443,18 @@ final class BearyPublishCenter {
         // 只有拿到 entry id 才清草稿与本地图片（与旧 clearPublishedDraft 同款，
         // 只是编辑器已退场，不再清内存槽位与刷新草稿 pill；删图显式传快照账号，
         // 不跟当前账号——成功回包时账号可能已变，默认桶会删错地方）。
-        BearyDraftImageStore.deletePairsIfUnreferencedAsync(snapshot.imageLocalFiles, excludingDraftId: snapshot.draftId, forAccount: snapshot.accountId)
+        // 审计 26-3：先删草稿记录，确认成功后再清图（与编辑器
+        // clearDraftAndFiles 同款顺序）。旧顺序先清图后删记录，删记录
+        // 写盘失败时会留下指向已清附件的草稿记录；删记录失败时附件
+        // 保留，残留草稿仍在草稿箱可见、可手动删。
         if let draftIdValue = snapshot.draftId {
-            BearyDraftStore.deleteAsync(draftId: draftIdValue, forAccount: snapshot.accountId)
+            BearyDraftStore.deleteAsyncReporting(draftId: draftIdValue, forAccount: snapshot.accountId) { deleted in
+                guard deleted else { return }
+                BearyDraftImageStore.deletePairsIfUnreferencedAsync(snapshot.imageLocalFiles, excludingDraftId: nil, forAccount: snapshot.accountId)
+            }
+        } else {
+            // 无草稿记录：只有未落盘的本地图，直接清掉。
+            BearyDraftImageStore.deletePairsIfUnreferencedAsync(snapshot.imageLocalFiles, excludingDraftId: nil, forAccount: snapshot.accountId)
         }
         BearyHaptics.publishSuccess()
         BearySoundPlayer.play(.publishSuccess)
