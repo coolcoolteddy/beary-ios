@@ -580,6 +580,10 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         let old = allEntries[index]
         applyEditedFields(to: &allEntries[index], from: entry)
         let updated = allEntries[index]
+        // 审计 #30：位置行缓存以日记 id 为键，编辑后旧行文即失效——
+        // 无论地点变没变都先清掉，否则列表行优先用缓存旧值、解析守卫
+        // 又拦住新解析，旧行文被锁死到切组／切账号才清。
+        selectedEntryDisplayLines.removeValue(forKey: entryId)
         let locationChanged = DiaryLocation(entry: old) != DiaryLocation(entry: updated)
         let visibilityChanged = BearyVisibility.current(for: old) != BearyVisibility.current(for: updated)
         // 时间胶囊 v1：胶囊态变了（埋／取消／解锁戳／区级）即进出地图资格
@@ -1079,10 +1083,16 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 成功记下并只刷该行；失败／无坐标时留原存文本行。只活本页内存。
     private func resolveSelectedEntryDisplayLine(for entry: Entry) {
         guard let entryId = entry.id, selectedEntryDisplayLines[entryId] == nil else { return }
+        // 审计 #30：记下解析时的坐标；回调写入前核对当前坐标一致，
+        // 编辑后发出的新解析未回包前，旧解析回包直接丢弃、不写缓存。
+        let requestedLatitude = entry.locationLatitude
+        let requestedLongitude = entry.locationLongitude
         BearyLocationDisplayNames.displayLine(for: entry) { [weak self] resolved in
             guard let self = self, let resolved = resolved,
                   let selected = self.selectedGroup,
-                  selected.entries.contains(where: { $0.id == entryId }),
+                  let current = selected.entries.first(where: { $0.id == entryId }),
+                  current.locationLatitude == requestedLatitude,
+                  current.locationLongitude == requestedLongitude,
                   self.selectedEntryDisplayLines[entryId] != resolved else { return }
             self.selectedEntryDisplayLines[entryId] = resolved
             guard let mainSection = self.diaryMapSections.firstIndex(of: .main),
