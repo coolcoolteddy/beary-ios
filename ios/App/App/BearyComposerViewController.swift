@@ -940,9 +940,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     ///   列表行（那年今日/对话原篇、地图列表、星图 sheet）的“无标题又无
     ///   正文显日记”回退一并去掉，改为空串（只剩日期/副文案可读）。
     /// - 数据口径：只复用现行数据字段（Entry.title、BearyDraft.title、
-    ///   publish/update API 的 title 参数），不复用旧前端代码；编辑永久可改
-    ///   （冲突清单第 4 条取消 15 分钟锁），标题改动与正文同窗口，
-    ///   无需另设标题门控。
+    ///   publish/update API 的 title 参数），不复用旧前端代码；编辑时限按
+    ///   2026-11-18 定版（非 Plus 发布后 1 小时内可改，超过 1 小时只能 Plus 改），
+    ///   标题改动与正文同窗口，无需另设标题门控。
     /// - 清空语义：编辑时字段清空 → PUT 发显式空串，服务端归一化为空
     ///   标题 NULL（即清掉旧标题）；新建时空字段按省略不传（同为无标题）。
     private let headlineWrap = UIView()
@@ -10567,6 +10567,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 return "图片已失效，请重新添加"
             case "invalid image ownership":
                 return "图片归属异常，请重新添加"
+            case "edit_expired":
+                // 编辑时限（2026-11-18 Li 定版）：编辑器打开时在 1 小时内、保存时已过 1 小时，
+                // 服务端 PUT 同样校验并回本码，按此码弹 Plus 提示，不走通用「保存失败」。
+                return "发布超过 1 小时，仅 Plus 会员可继续编辑"
             default:
                 return "保存失败，请重试"
             }
@@ -10944,7 +10948,8 @@ private final class ComposerImageItem {
 //    视为已删，不回填、保存时即丢弃（与网页编辑同款）。
 // 3. 编辑模式：init(entry:) 进入；正文/心情/天气/图片/引用/@ 可改；不读不写 beary_draft_v3（
 //    scheduleDraftSave/saveDraftNow 在编辑模式直接 return）；取消时不删原日记，直接关（决议第 4 项 B）；
-//    保存走 PUT，编辑永久可改（冲突清单第 4 条取消 15 分钟锁），与可见性无关；
+//    保存走 PUT，编辑时限按 2026-11-18 定版（非 Plus 发布后 1 小时内可改，超过 1 小时
+//    只能 Plus 改；服务端 PUT 同样校验，超限回 edit_expired），与可见性无关；
 //    成功后删本轮新选图的本地文件（原日记的图 localFile 为 nil，不受影响），失败不删、留着重试。
 // 4. 草稿 v3 多槽：正文/心情/图片/天气/@/引用全部进草稿，杀 App 后原样恢复；
 //    发布成功与丢弃只清本篇（currentDraftId），不碰其他篇。

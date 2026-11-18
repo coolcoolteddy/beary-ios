@@ -3172,7 +3172,8 @@ final class BearyDetailViewController: UIViewController {
     /// 顺序/语义全保留）：本人篇 编辑／快照／修改权限／删除；他人公开篇
     /// 举报（已举报置灰）／拉黑；游客无菜单（⋯ 已藏）。iPad popover 锚点随迁移
     /// 删去，底部弹窗不再需要。点赞／收藏／分享是互动，仍在底部操作行，不进菜单。
-    /// 冲突清单第 4 条：编辑永久可改，不再按 15 分钟门控。
+    /// 编辑时限（2026-11-18 Li 定版）：非 Plus 发布后 1 小时内可改，超过 1 小时只能 Plus 改；
+    /// 门控在容器 presentComposerForEdit，菜单项本身不置灰。
     private func presentDetailMoreMenu() {
         if isGuest { return }
         var actions: [BearyConfirmSheet.Action] = []
