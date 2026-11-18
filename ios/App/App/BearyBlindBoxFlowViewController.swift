@@ -925,6 +925,12 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 self.setStep(.pool)
                 // 存档已含全量（hasMore 为假）时不再发网络请求。
                 needsNetwork = snap.hasMore
+                // 盲盒 #40：快照只覆盖到上次缓存的头，快照头之后的新日记
+                // （另一设备新建或改公开）不在快照里；只向更早翻页永远拉
+                // 不到它们。有快照时仍拉一次首屏做增量对齐，只把快照头之后
+                // 的新条目并到队首并刷新列表；失败时静默保留缓存，不报错、
+                // 不清空。向更早翻页仍走下面的旧逻辑。
+                self.refreshPoolHead(generation: generation)
             }
             if needsNetwork {
                 // 存档有内容时从窗口末条续拉，只补窗口外的旧篇，不重拉第 1 页。
@@ -933,6 +939,32 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 } else {
                     self.loadPoolEntriesPage(before: nil, beforeId: nil, page: 1, generation: generation)
                 }
+            }
+        }
+    }
+
+    /// 盲盒 #40：快照头增量对齐。先显示缓存，同时拉一次首屏：只把快照头之后
+    /// 的新条目（另一设备新建或改公开）按服务端顺序并到队首并刷新列表；
+    /// 回包失败时静默保留缓存，不报错、不清空。向更早翻页的逻辑不动。
+    private func refreshPoolHead(generation: Int) {
+        guard let headCreatedAt = poolCollected.first?.createdAt else { return }
+        BearyAPI.shared.fetchEntries(scope: .timeline, limit: 50, before: nil, beforeId: nil) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self, generation == self.poolLoadGeneration else { return }
+                guard case .success(let list) = result else { return }
+                let fresh = (list.entries ?? []).filter { entry in
+                    guard let id = entry.id, id.isEmpty == false, self.poolSeenIds.contains(id) == false,
+                          let createdAt = entry.createdAt, createdAt >= headCreatedAt else { return false }
+                    return true
+                }
+                guard fresh.isEmpty == false else { return }
+                for entry in fresh {
+                    if let id = entry.id, id.isEmpty == false { self.poolSeenIds.insert(id) }
+                }
+                self.poolCollected.insert(contentsOf: fresh, at: 0)
+                self.poolEntries = self.poolCollected
+                self.renderPoolRows()
+                self.updatePoolHint()
             }
         }
     }
