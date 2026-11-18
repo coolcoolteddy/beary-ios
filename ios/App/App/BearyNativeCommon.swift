@@ -2061,7 +2061,7 @@ enum BearyText {
     ]
 
     /// 节日心情 key：只有 LottieEmotes/ 下深浅 JSON，无 PNG 静态图；
-    /// 不进 moodOrder（资产检查只认 PNG）、不进回应侧 BearyEmoteKeys.all；
+    /// 不进资产检查（只认 PNG）、不进回应侧 BearyEmoteKeys.all；
     /// 内联渲染走 Lottie 静态帧（见 inlineAttachment），不走 PNG 口径；
     /// 现阶段不做领取门禁，人人可见可用。
     static let newyearMoodKeys: [String] = [
@@ -2140,8 +2140,8 @@ enum BearyText {
     /// 编辑器里心情是图片附件，正文/标题落库与后端都只存纯文本，故附件在
     /// 发出/存草稿时转成记号 `[mood:<key>]`，读回编辑器/卡片/详情时再转回图。
     /// 前 32 只熊脸（后 8 只非熊脸已删，不进记号集）＋节日 200 款；
-    /// moodOrder 32 只与本集前 32 项逐项一致，改默认组要同步两处；
-    /// 节日款不在 moodOrder 里（资产检查只认 PNG），只进本集与 moodNames。
+    /// 前 32 只即旧编辑器默认组（2026-11-18 选择器已删，不再另抄一份）；
+    /// 节日款只进本集与 moodNames（资产检查只认 PNG）。
     /// 未知 key 的记号原样当文字，不凭空变图。用户手打的同形文字也会在读回时变图，
     /// 这是记号方案固有的撞形口径，已在交回说明里写明。
     static let bearMoodKeys: [String] = [

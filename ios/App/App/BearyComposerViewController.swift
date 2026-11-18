@@ -329,7 +329,7 @@ private final class BearyBodyTextView: UITextView {
     }
 }
 
-/// U3：编辑器工具栏六钮专用热区钮（图片／定位／心情／天气／@／引用）。
+/// U3：编辑器工具栏六钮专用热区钮（图片／定位／自定义／天气／@／引用）。
 /// 根因：六钮视觉帧 24pt，父类 BearyHit44Button 对称各扩 10pt 至 44pt；
 /// 工具行间距 16 时中心距 24+16=40 < 44，相邻热区重叠 4pt，窄屏间距压到 8 时
 /// 中心距 32、重叠 12pt，交界处点按落到后加的右钮。
@@ -397,21 +397,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
-
-    // MARK: - 心情顺序（硬编码，勿用 moodNames.keys.sorted()，会打乱原顺序）
-
-    /// 心情顺序 = 熊脸 32 只（后 8 只非熊脸已删，不进选择器、不进记号集）。
-    /// 注意：此处必须保持字面数组写法，不能改成 BearyText.bearMoodKeys 引用——
-    /// CI 的 scripts/check-beary-assets.py 用正则直接抠本文件 moodOrder 的
-    /// 字面数组校验 emote 资产，改引用会使该检查报 key source not found 而全红
-    /// （#421 合入后 CI 红的根因）。moodOrder 32 只与 bearMoodKeys 前 32 项逐项一致，
-    /// 改默认组要同步两处；bearMoodKeys 另有节日 12 款（不进 moodOrder、不进资产检查）。
-    private let moodOrder: [String] = [
-        "agree", "happy", "applause", "cheer", "comfort", "confused", "love", "determined",
-        "facepalm", "shy", "goodnight", "hug", "wink", "idea", "kiss", "thinking",
-        "listening", "lonely", "speechless", "nope", "surprised", "pat", "peek", "sleepy",
-        "proud", "shrug", "sorry", "cry", "angry", "thanks", "zap", "wave",
-    ]
 
     /// 天气顺序：与 BearyText.weatherNames 字面顺序一致（勿用字典 keys 排序，会打乱顺序）。
     private let weatherOrder: [String] = [
@@ -485,7 +470,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var selectedMood: String? {
         didSet { editorEditVersion += 1 }
     }
-    /// 插入式心情的上次焦点框：点选心情钮/弹出框选项时焦点可能已被
+    /// 插入式图片的上次焦点框：点选自定义钮/弹出框选项时焦点可能已被
     /// 拾取动作带走，单靠 isFirstResponder 会误判；本字段记最后一次
     /// 获焦的框（标题/正文），兜底时仍插到上次光标所在的框。
     private enum ComposerInput { case headline, body }
@@ -581,7 +566,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var quotePanelTransitionSnapshot: UIView?
     private var quotePanelTransitionSeq = 0
     /// C1：工具栏上方选择条：同一时刻最多展开一条（写给），nil=全部收起。
-    /// 心情/天气旧条带已删（见下），入口只走天气尖角弹出框（心情已迁底部弹窗），不再走本值；
+    /// 心情/天气旧条带已删（见下），入口只走天气尖角弹出框（心情入口已删），不再走本值；
     /// 旧附加栏三态随双重入口删除而整组拆除，不再有“附加栏撑着显示天气行”的压制状态机。
     private enum ToolStrip {
         case mood, weather, recipient
@@ -1060,13 +1045,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 行高仍由子项固有高撑着、会把工具行顶下去；隐藏时钉 0、显示时停用。
     private var draftStatusBannerHeightConstraint: NSLayoutConstraint?
     private let imageToolButton = BearyComposerToolButton(type: .system)
-    /// 批 E 定位钮：工具栏左组第 2 位（图片右边、心情之前，预览 v2 定版；v1 的心情/天气并列位置已作废）。
+    /// 批 E 定位钮：工具栏左组第 2 位（图片右边、自定义之前，预览 v2 定版；v1 的心情/天气并列位置已作废）。
     private let locationToolButton = BearyComposerToolButton(type: .system)
-    private let moodToolButton = BearyComposerToolButton(type: .system)
-    /// 心情入口钮（点开底部弹窗心情选择器，见 presentMoodPickerSheet）。
-    /// 2026-11-11：心情选择器由尖角弹出框迁为底部弹窗（BearyMoodPickerSheet），
-    /// 本文件只留天气尖角弹出框。
-    private weak var moodPickerSheet: BearyMoodPickerSheetViewController?
+    private let gifToolButton = BearyComposerToolButton(type: .system)
+    /// 自定义入口钮（点开底部弹窗自定义图片选择器，见 presentGIFPickerSheet）。
+    /// 2026-11-18：写日记页心情选择器已删（心情改为正文键入 [mood:xxx]），
+    /// 本钮只开“自定义”组（个人自定义心情图库，GIF 与常规图）。
+    private weak var gifPickerSheet: BearyMoodPickerSheetViewController?
     private let weatherToolButton = BearyComposerToolButton(type: .system)
     private let recipientToolButton = BearyComposerToolButton(type: .system)
     private let quoteToolButton = BearyComposerToolButton(type: .system)
@@ -1076,7 +1061,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 编辑模式隐藏（编辑不改可见性）；限时态即公开语义，不再另设锁定开关。
     private let visibilityButton = UIButton(type: .system)
     // 编辑器改版（2026-10-29）：天气尖角弹出框（取代旧选择条）+ 框外收起层。
-    // 心情选择器 2026-11-11 已迁底部弹窗（BearyMoodPickerSheet），不再走 callout。
+    // 心情选择器已删（2026-11-18，心情改为正文键入 [mood:xxx]），此处只留天气框。
     private let weatherCallout = BearyCalloutPickerView()
     private let calloutDismissView = BearyCalloutDismissView()
     /// 批 E 定位气泡与专属框外收起层（不复用 calloutDismissView：天气框与定位气泡
@@ -1092,7 +1077,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // 按钮普查：视觉 24×24，热区用 Hit44 扩到 44（视觉不动；左右邻居为文字行，无互叠按钮）。
     private let locationClearButton = BearyHit44Button(type: .system)
     private let locationNoteLabel = UILabel()
-    /// 天气弹出框是否打开（心情选择器已迁底部弹窗，不再共用本状态机）。
+    /// 天气弹出框是否打开（心情选择器已删，不再共用本状态机）。
     private var weatherCalloutOpen = false
     /// 审计第 31 项：打开当前框的触发钮（工具钮或已选 chip，二选一的实际点按者）。
     /// 关闭还焦点只认它；程序性收起（换工具/面板/发布/取消等）不还焦点，故
@@ -1100,7 +1085,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private weak var calloutAccessibilityTrigger: UIView?
     private var calloutTransitionGeneration = 0
     /// 审计 1：浮层展示意图代次（与天气取数代次、转场代次分开）。
-    /// 天气钮点按时记下当次意图；点按定位/心情/写给/引用等其他工具、
+    /// 天气钮点按时记下当次意图；点按定位/自定义/写给/引用等其他工具、
     /// 或另一次显式 showCallout 时 +1，旧意图即失效——天气回包仍按
     /// weatherFetchGeneration 正常落数、正常 toast，只是末尾不再抢开天气框。
     private var calloutPresentationGeneration = 0
@@ -1120,9 +1105,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard let constraint = weatherCalloutHeightConstraint else { return }
         constraint.constant = Self.calloutHeight + weatherCallout.accessoryExtraHeight
     }
-    // C1：已选中项轻量 Chip 行（正文下方）：心情/天气/写给各一枚，点 chip 打开对应选择条。
+    // C1：已选中项轻量 Chip 行（正文下方）：天气/写给各一枚，点 chip 打开对应选择条。
     private let selectedChipsRow = UIStackView()
-    /// 审计 P1-3：Chip 行首行（心情/天气/写给单行态）；写给换行时脱离本行、改作
+    /// 审计 P1-3：Chip 行首行（天气/写给单行态）；写给换行时脱离本行、改作
     /// selectedChipsRow 的第二行（见 layoutSelectedChips），不另建容器。
     private let selectedChipsFirstRow = UIStackView()
     /// 审计 P1-3：写给当前是否在独立第二行；viewDidLayoutSubviews 宽变化时
@@ -1134,7 +1119,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 审计 P1-8：选择条转场代次——每次 refreshToolStrip 显隐变化即 +1；旧转场
     /// 的 completion 凭代次过期作废，不再碰视图，快速连点只收敛到最后状态。
     private var toolStripTransitionGeneration = 0
-    private let moodChipButton = BearyHit44Button(type: .system)
     private let weatherChipButton = BearyHit44Button(type: .system)
     /// 气温步进器（只在已选天气时显）：− / 数值 / +，点数值弹系统输入框直输；
     /// 无气温时点 ± 先落到 18° 再调（不凭空猜一个当地值当起点以外的数）。
@@ -1302,9 +1286,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // 深浅切换时 CGColor 只在赋值时解析一次，必须重赋：心情环描边、
+        // 深浅切换时 CGColor 只在赋值时解析一次，必须重赋：
         // 天气 chip 描边、通知复选框描边、草稿 pill 描边、字数圆环轨道色
-        // 全走已有刷新函数重算（心情熊图深浅变体由播放器内部切换，不重建条）。
+        // 全走已有刷新函数重算。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             refreshSelectedChips()
             syncWeatherToolButton()
@@ -2023,7 +2007,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func headlineDidChange() {
-        // 审计第 26 项：标题变化（打字、清标题、心情插入、粘贴改写均走这里）
+        // 审计第 26 项：标题变化（打字、清标题、图片插入、粘贴改写均走这里）
         // 递增编辑版本，使在途的异步草稿恢复不再覆盖已填的标题。
         editorEditVersion += 1
         refreshHeadlineChrome()
@@ -2893,7 +2877,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 引用面板 qp-mode 整编形态（网页 qpEnterMode/qpExitMode 同款）：
-    /// 打开时只留面板：正文/图片条/工具栏/附加栏/天气/状态行/写给/心情/引用区/规则框
+    /// 打开时只留面板：正文/图片条/工具栏/附加栏/天气/状态行/写给/引用区/规则框
     /// 全部隐藏，发布钮隐藏、取消变“返回”；关闭时只退面板，不走整编取消流程，
     /// 并恢复打开前保存的外层滚动位置。编辑模式同样可用（C6），不再早退。
     private func setQuotePanelOpen(_ open: Bool) {
@@ -3893,7 +3877,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    // MARK: - 工具栏（C1：左 [图片][心情][天气][@][引用]、右 [字数圆环]；
+    // MARK: - 工具栏（C1：左 [图片][定位][自定义][天气][@][引用]、右 [字数圆环]；
     // 草稿 pill 已随编辑器改版（2026-10-29）移到顶栏发布钮左边，不再在此处；
     // 容器贴键盘上方、不在内容栈里，见 buildLayout；本函数只布容器内部，
     // 分隔线 + 工具行约束不变，工具行左右仍与内容栈边距同宽 16）
@@ -3918,17 +3902,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageToolButton.tintColor = BearyColors.ink
         imageToolButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
         imageToolButton.bearyAddPressFeedback()
-        // 批 E：定位钮插在图片钮右边、心情钮之前（左组顺序：图片 → 定位 → 心情 → 天气 → @ → 引用）。
+        // 批 E：定位钮插在图片钮右边、自定义钮之前（左组顺序：图片 → 定位 → 自定义 → 天气 → @ → 引用）。
         locationToolButton.setImage(BearyLocationIcon.image(pointSize: 24), for: .normal)
         locationToolButton.accessibilityLabel = "添加位置"
         locationToolButton.tintColor = BearyColors.ink
         locationToolButton.addTarget(self, action: #selector(didTapLocationTool), for: .touchUpInside)
         locationToolButton.bearyAddPressFeedback()
-        moodToolButton.setImage(BearyIconImages.image(named: "icon_mood", pointSize: 24), for: .normal)
-        moodToolButton.accessibilityLabel = "选择心情"
-        moodToolButton.tintColor = BearyColors.ink
-        moodToolButton.addTarget(self, action: #selector(didTapMoodTool), for: .touchUpInside)
-        moodToolButton.bearyAddPressFeedback()
+        gifToolButton.setImage(BearyIconImages.image(named: "icon_image", pointSize: 24), for: .normal)
+        gifToolButton.accessibilityLabel = "自定义"
+        gifToolButton.tintColor = BearyColors.ink
+        gifToolButton.addTarget(self, action: #selector(didTapGIFTool), for: .touchUpInside)
+        gifToolButton.bearyAddPressFeedback()
         // 天气钮图标随选中天气变（见 syncWeatherToolButton，网页 syncWxBtn 同款同步）。
         weatherToolButton.setImage(BearyIconImages.image(named: "icon_weather_tool", pointSize: 24), for: .normal)
         weatherToolButton.accessibilityLabel = "选择天气"
@@ -3948,7 +3932,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarContainer.translatesAutoresizingMaskIntoConstraints = false
         toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolRow.translatesAutoresizingMaskIntoConstraints = false
-        for button in [imageToolButton, locationToolButton, moodToolButton, weatherToolButton, recipientToolButton, quoteToolButton] {
+        for button in [imageToolButton, locationToolButton, gifToolButton, weatherToolButton, recipientToolButton, quoteToolButton] {
             button.translatesAutoresizingMaskIntoConstraints = false
             button.widthAnchor.constraint(equalToConstant: 24).isActive = true
             button.heightAnchor.constraint(equalToConstant: 24).isActive = true
@@ -3993,7 +3977,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarContainer.addSubview(toolRow)
         toolRow.addArrangedSubview(imageToolButton)
         toolRow.addArrangedSubview(locationToolButton)
-        toolRow.addArrangedSubview(moodToolButton)
+        toolRow.addArrangedSubview(gifToolButton)
         toolRow.addArrangedSubview(weatherToolButton)
         toolRow.addArrangedSubview(recipientToolButton)
         toolRow.addArrangedSubview(quoteToolButton)
@@ -4221,8 +4205,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 关闭后把焦点还给触发钮（hideCallout 的 restoreFocus 分支定落点）。
         calloutDismissView.onTapOutside = { [weak self] in self?.hideCallout(animated: true, restoreFocus: true) }
         weatherCallout.onAccessibilityEscape = { [weak self] in self?.hideCallout(animated: true, restoreFocus: true) }
-        // 心情选择器 2026-11-11 已迁底部弹窗（BearyMoodPickerSheet，首位“无”与
-        // 插入式口径随 didSelectMood 一并搬过去），此处不再配 moodCallout。
+        // 心情选择器已删（2026-11-18），此处不再配 moodCallout。
         // v6-8：天气框首位补“无”（清除）选项，键为 "none"，图为官方 icon_close 原图
         //（见 weatherNoneImage；大小与其它天气图标一致 40pt、同色墨色模板）。
         // 选中态口径（审计 E2 第 11 项）：已选天气在框内以 1pt 墨色描边标出
@@ -4266,7 +4249,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 打开天气弹出框：Chip 行点按只打开对应框（不做收起切换，Chip 本身就是“已选”指示；
     /// 与旧 openToolStrip 同口径）。
     /// 审计第 31 项：trigger 须传实际点按者（工具钮或 chip），关闭还焦点认它。
-    /// 心情选择器已迁底部弹窗（见 presentMoodPickerSheet），本函数只开天气框。
+    /// 本函数只开天气框（心情选择器已删）。
     private func showCallout(trigger: UIView) {
         if quotePanelOpen { return }
         if weatherCalloutOpen { return }
@@ -4483,7 +4466,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 定位气泡搭建：框体与专属框外收起层常驻 view（隐藏时 isHidden），约束一次激活；
     /// 框左右与工具栏同宽（iPad 居中列下自动跟随），框底贴工具栏顶 8pt 上方；
-    /// 框是覆盖层（不推限时行、不改 sheet 高），与心情/天气框同口径。
+    /// 框是覆盖层（不推限时行、不改 sheet 高），与天气框同口径。
     private func buildLocationPopover() {
         locationPopover.translatesAutoresizingMaskIntoConstraints = false
         locationDismissView.translatesAutoresizingMaskIntoConstraints = false
@@ -4505,7 +4488,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     @objc private func didTapLocationTool() {
-        // 同一时刻只开一个选择器：引用面板开着时不抢（与心情/天气框同款守卫）。
+        // 同一时刻只开一个选择器：引用面板开着时不抢（与天气框同款守卫）。
         if quotePanelOpen {
             showToast(message: "请先关闭引用面板")
             return
@@ -4530,7 +4513,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         locationDismissView.isHidden = false
         locationDismissView.passthroughRects = [toolbarContainer.convert(toolbarContainer.bounds, to: locationDismissView)]
         locationPopover.isHidden = false
-        // 无障碍：位置浮层照抄心情／天气框口径——打开置为模态（VoiceOver 不滑
+        // 无障碍：位置浮层照抄天气框口径——打开置为模态（VoiceOver 不滑
         // 到被遮的编辑器内容；触摸穿透不动，工具栏仍可点），下一 runloop 把
         // 焦点送进框内状态行；期间已关闭则不发。
         locationPopover.accessibilityViewIsModal = true
@@ -4612,22 +4595,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         calloutDismissView.passthroughRects = [toolbarContainer.convert(toolbarContainer.bounds, to: calloutDismissView)]
     }
 
-    /// 底部弹窗点选心情：插入式——把熊脸图插进光标处；插完不收起，方便连着插
-    /// 多个（数量不限，同一心情可重复插，见 insertMoodImageAtCursor）；单独心情
-    /// 字段一字不动。删插进正文的心情走键盘删除键（光标移到它后面按删除，一个删一个）。
-    private func didSelectMood(_ key: String) {
-        insertMoodImageAtCursor(key)
-    }
-
-    /// 弹出心情底部选择器（2026-11-11，取代心情尖角 callout）：
-    /// 默认组即 moodOrder 32 只（见 BearyMoodPickerSheet），天气框若开着先收起；
-    /// 引用面板打开时不弹出（与旧 showCallout 同口径）。点选只插入，不取消单独心情。
-    private func presentMoodPickerSheet() {
+    /// 弹出自定义图片底部选择器（2026-11-18：心情组已删，只剩“自定义”组）：
+    /// 天气框若开着先收起；引用面板打开时不弹出（与旧 showCallout 同口径）。
+    private func presentGIFPickerSheet() {
         if quotePanelOpen { return }
         hideCallout(animated: false)
-        moodPickerSheet = BearyMoodPickerSheet.show(from: self, moodKeys: moodOrder, gifKeys: BearyGIFLibrary.cachedKeys()) { [weak self] key in
-            self?.didSelectMood(key)
-        } onSelectGIF: { [weak self] key in
+        gifPickerSheet = BearyMoodPickerSheet.show(from: self, gifKeys: BearyGIFLibrary.cachedKeys()) { [weak self] key in
             self?.didSelectGIF(key)
         } onUploadGIF: { [weak self] in
             self?.didTapUploadGIF()
@@ -4788,44 +4761,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         BearyIconImages.image(named: "icon_close", pointSize: 40)
     }
 
-    /// 审计 16 项：心情 chip 图标——官方 emote 静态 PNG 按 16pt 重绘。
-    /// UIButton.setImage 不缩放，原图 72pt 会撑爆 chip；重绘保留原色（不用
-    /// BearyIconImages 的 alwaysTemplate，线条稿深浅变体靠 _dark 资产本身）。
-    /// 深色资产缺失时 BearyEmoteImages 已按 C3 上报并返回 nil，此处不另找替代、
-    /// 不回退浅色版、不混 SF Symbol，chip 只剩值文本、无障碍仍读完整表述。
-    private func selectedMoodChipIcon(for key: String) -> UIImage? {
-        let dark = traitCollection.userInterfaceStyle == .dark
-        guard let base = BearyEmoteImages.image(for: key, dark: dark) else { return nil }
-        let size = CGSize(width: 16, height: 16)
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = UIScreen.main.scale
-        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
-            base.draw(in: CGRect(origin: .zero, size: size))
-        }
-    }
-
-    /// 已选 Chip 行：只显示已选项（心情/天气/写给各一枚），无已选时整行塌掉；
+    /// 已选 Chip 行：只显示已选项（天气/写给各一枚），无已选时整行塌掉；
     /// 间距随显隐切换（隐藏时置 0，否则隐藏行仍残留 8pt 空隙，见面板间隙修复同款）。
-    /// 审计 16 项：心情／天气去“心情 ·”“天气 ·”前缀，改官方图标＋值（心情走
-    /// emote 静态图、天气走 icon_wx_*，40 只深浅与 9 个天气资产已核齐全、无缺款）；
+    /// 审计 16 项：天气去“天气 ·”前缀，改官方图标＋值（天气走
+    /// icon_wx_*，40 只深浅与 9 个天气资产已核齐全、无缺款）；
     /// 22 方向：收件人 chip 改“提到 昵称”。图标只是视觉辅助：accessibilityLabel 一律保留完整表述
-    /// （“心情：开心”“天气：晴”“提到：昵称”），不只靠图标传达信息。
+    /// （“天气：晴”“提到：昵称”），不只靠图标传达信息。
     /// 图标计入按钮 intrinsicContentSize，P1-3 换行总宽自动含图标宽。
     private func refreshSelectedChips() {
-        if let mood = selectedMood, let name = BearyText.moodNames[mood] {
-            moodChipButton.isHidden = false
-            moodChipButton.setTitle(name, for: .normal)
-            let icon = selectedMoodChipIcon(for: mood)
-            if icon == nil {
-                NSLog("[BearyComposer] selected mood chip icon missing key=%@", mood)
-            }
-            moodChipButton.setImage(icon, for: .normal)
-            moodChipButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: icon == nil ? 0 : 5, bottom: 0, right: 0)
-            moodChipButton.accessibilityLabel = "心情：" + name
-        } else {
-            moodChipButton.isHidden = true
-            moodChipButton.setImage(nil, for: .normal)
-        }
         if let weather = selectedWeather, let name = BearyText.weatherNames[weather] {
             weatherChipButton.isHidden = false
             let weatherTitle = selectedTemperature != nil ? "\(name) \(selectedTemperature!)°" : name
@@ -4881,20 +4824,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // refreshSelectedChips，故此处一处挂钩即全覆盖。
         mentionTopName = recipientName
         refreshMentionTopRow()
-        let anyChipVisible = !moodChipButton.isHidden || !weatherChipButton.isHidden || !recipientChipButton.isHidden
+        let anyChipVisible = !weatherChipButton.isHidden || !recipientChipButton.isHidden
         contentStack.setCustomSpacing(anyChipVisible ? 8 : 0, after: selectedChipsRow)
         // 审计 P1-3：显隐/文案变化后即重算换行（宽变化另由 viewDidLayoutSubviews 驱动）。
         layoutSelectedChips()
     }
 
-    /// 审计 P1-3：三 chip 收缩优先级与换行。
-    /// 单行态：心情/天气自然宽（hugging + 抗压缩双 required，文字不缩小、不截断），
+    /// 审计 P1-3：两 chip 收缩优先级与换行。
+    /// 单行态：天气自然宽（hugging + 抗压缩双 required，文字不缩小、不截断），
     /// 写给占剩余（hugging/compression 双 low：有富余则伸满、空间紧则先缩），
     /// 写给标题单行尾截断、字号固定 13（adjustsFontSizeToFitWidth 关，不缩字）。
-    /// 空间不足（单行总宽 > 行宽）且写给与心情/天气同显时：写给脱离首行、
-    /// 独立成第二行（满宽、尾截断），心情/天气保持自然宽不动——不缩小全部文字。
+    /// 空间不足（单行总宽 > 行宽）且写给与天气同显时：写给脱离首行、
+    /// 独立成第二行（满宽、尾截断），天气保持自然宽不动——不缩小全部文字。
     /// 写给单独出现时不换行（满宽即剩余，超长只尾截断）。
-    /// [24] 小项 2：步进器已收进天气框，首行只剩心情／天气／写给三项，
+    /// [24] 小项 2：步进器已收进天气框，首行只剩天气／写给两项，
     /// 窄屏第二行兜底（步进器包壳）已随之删除，不再有步进器换行态。
     /// 只在换行态真正变化时移视图；同态重算不碰层级，不触发布局环。
     /// （移行不改行宽，viewDidLayoutSubviews 的宽门限仍挡得住重入。）
@@ -4913,10 +4856,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         guard available > 0 else { return }
         selectedChipsLastLayoutWidth = available
-        let moodVisible = !moodChipButton.isHidden
         let weatherVisible = !weatherChipButton.isHidden
         let recipientVisible = !recipientChipButton.isHidden
-        guard recipientVisible, moodVisible || weatherVisible else {
+        guard recipientVisible, weatherVisible else {
             // 写给单独出现或未出现：单行态即是终态（未出现时首行只剩隐藏项，塌高为 0）。
             if selectedChipsRecipientOnSecondRow {
                 selectedChipsRow.removeArrangedSubview(recipientChipButton)
@@ -4925,11 +4867,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             return
         }
-        // 写给换行总宽：心情／天气／写给自然宽＋间距。
+        // 写给换行总宽：天气／写给自然宽＋间距。
         // [24] 小项 2：步进器已收进天气框，不再计入首行宽。
         var singleLineWidth: CGFloat = 0
         var visibleCount = 0
-        for button in [moodChipButton, weatherChipButton, recipientChipButton] where !button.isHidden {
+        for button in [weatherChipButton, recipientChipButton] where !button.isHidden {
             singleLineWidth += button.intrinsicContentSize.width
             visibleCount += 1
         }
@@ -4960,7 +4902,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedChipsFirstRow.translatesAutoresizingMaskIntoConstraints = false
         selectedChipsRow.addArrangedSubview(selectedChipsFirstRow)
         let chips: [(button: BearyHit44Button, action: Selector)] = [
-            (moodChipButton, #selector(didTapMoodChip)),
             (weatherChipButton, #selector(didTapWeatherChip)),
             (recipientChipButton, #selector(didTapRecipientChip)),
         ]
@@ -5007,9 +4948,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         tempStepperStack.setContentHuggingPriority(.required, for: .horizontal)
         tempStepperStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 不进 chip 行：buildCallouts 里以附属行身份挂进天气框。
-        // 审计 P1-3：心情/天气自然宽不让步；写给低优先级，占剩余、紧时先缩先截断。
-        moodChipButton.setContentHuggingPriority(.required, for: .horizontal)
-        moodChipButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 审计 P1-3：天气自然宽不让步；写给低优先级，占剩余、紧时先缩先截断。
         weatherChipButton.setContentHuggingPriority(.required, for: .horizontal)
         weatherChipButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         recipientChipButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -5050,11 +4989,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.setCustomSpacing(0, after: imageUndoBar)
     }
 
-    @objc private func didTapMoodTool() {
-        // 审计 1：切到心情工具时，在途的天气展示意图作废。
+    @objc private func didTapGIFTool() {
+        // 审计 1：切到自定义工具时，在途的天气展示意图作废。
         invalidatePendingCalloutPresentation()
         hideLocationPopover(animated: false)
-        presentMoodPickerSheet()
+        presentGIFPickerSheet()
     }
 
     /// [24] 小项 1：天气钮点按即打开天气选择器，不再等自动取数回包才开
@@ -5128,10 +5067,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         hideCallout(animated: false)
         hideLocationPopover(animated: false)
         didTapPickRecipient()
-    }
-
-    @objc private func didTapMoodChip() {
-        presentMoodPickerSheet()
     }
 
     @objc private func didTapWeatherChip() {
@@ -5380,7 +5315,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func setToolbarToolRowSpacing(_ spacing: CGFloat, in toolRow: UIStackView) {
         if toolRow.spacing != spacing { toolRow.spacing = spacing }
         let cap = max(0, spacing / 2)
-        for button in [imageToolButton, locationToolButton, moodToolButton, weatherToolButton, recipientToolButton, quoteToolButton] {
+        for button in [imageToolButton, locationToolButton, gifToolButton, weatherToolButton, recipientToolButton, quoteToolButton] {
             button.maxSideExpansion = cap
         }
     }
@@ -5685,8 +5620,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// D 批：发布/保存请求在途时冻结编辑输入（发布钮本身由上方的 updatePublishState
-    /// 单独管禁用，本函数不动它）：正文不可改；心情/天气（含工具栏天气钮与附加栏
-    /// 开关，这两处是心情/天气行的入口）与图片（添加钮 + 每项移除/裁剪钮 + 条内
+    /// 单独管禁用，本函数不动它）：正文不可改；天气（含工具栏天气钮与附加栏
+    /// 开关，这两处是天气行的入口）与图片（添加钮 + 每项移除/裁剪钮 + 条内
     /// 点按重试走容器手势，一并关容器交互）不可点。挂在 updatePublishState 里，
     /// 故 performUpdate 的成功与失败分支只要走原有的
     /// isPublishing = false + updatePublishState() 即恢复，无需各分支另写恢复。
@@ -5720,7 +5655,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 发布流程并发写同一篇草稿，冻结与工具栏其他入口同口径恢复。
         draftStatusRetryButton.isEnabled = !frozen
         quoteToolButton.isEnabled = !frozen
-        moodChipButton.isEnabled = !frozen
         weatherChipButton.isEnabled = !frozen
         recipientChipButton.isEnabled = !frozen
         recipientClearButton.isEnabled = !frozen
@@ -5730,7 +5664,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteCardRemoveButton.isEnabled = !frozen
         quoteDeletedRemoveButton.isEnabled = !frozen
         weatherToolButton.isEnabled = !frozen
-        moodToolButton.isEnabled = !frozen
+        gifToolButton.isEnabled = !frozen
         recipientToolButton.isEnabled = !frozen
         // quote-freeze：气温步进/直输与标题清除钮此前不在冻结清单——
         // 快照已保证改动不进载荷，但冻结清单按任务口径补齐，免得用户
@@ -5771,71 +5705,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshPublishButtonWidth()
     }
 
-    /// 心情插入式（熊脸图版）：点选心情不再改单独心情字段，也不再插名文本，
-    /// 而是把熊脸图片附件直接插进光标处。标题与正文都是 UITextView，都能放
-    /// 附件（标题换单行 UITextView 就是为此）；插完光标在图后面、焦点留在该框。
-    /// 落库中间层：附件发出/存草稿时转记号 `[mood:<key>]`（见 BearyText），
-    /// 读回时再转回图；附件在 attributed 里占 1 格，字数与 30 字标题封顶都按
-    /// 可见格算。光标处理与旧名文本版同款：标题获焦插标题、正文获焦插正文，
-    /// 两框都没焦点时按上次焦点框兜底、从未获焦插正文末尾；组词先提交落字再插。
-    /// 数量不限：每次点选新插一段，不替换、不设上限，同心情可重复、不同心情
-    /// 可混插；弹出框点选后不收起，可连着插多个。旧心情字段一字不动。
-    private func insertMoodImageAtCursor(_ key: String) {
-        guard BearyText.bearMoodKeys.contains(key) else { return }
-        let dark = traitCollection.userInterfaceStyle == .dark
-        if headlineField.isFirstResponder || lastFocusedComposerInput == .headline {
-            if !headlineField.isFirstResponder {
-                headlineField.becomeFirstResponder()
-                headlineField.selectedRange = NSRange(location: headlineField.attributedText.length, length: 0)
-            }
-            if headlineField.markedTextRange != nil {
-                headlineField.unmarkText()
-            }
-            insertMoodAttachment(into: headlineField, key: key, font: headlineFont, dark: dark)
-            headlineDidChange()
-            return
-        }
-        if textView.isFirstResponder || lastFocusedComposerInput == .body {
-            if !textView.isFirstResponder {
-                textView.becomeFirstResponder()
-            }
-            if textView.markedTextRange != nil {
-                textView.unmarkText()
-            }
-            insertMoodAttachment(into: textView, key: key, font: bodyFont, dark: dark)
-            textViewDidChange(textView)
-            return
-        }
-        textView.becomeFirstResponder()
-        textView.selectedRange = NSRange(location: textView.attributedText.length, length: 0)
-        insertMoodAttachment(into: textView, key: key, font: bodyFont, dark: dark)
-        textViewDidChange(textView)
-    }
-
-    /// 把一个熊脸附件插进指定 UITextView 的当前选区（有选区则替换选区），
-    /// 插完光标落在图后 1 格，并把 typingAttributes 复位回该框的正文字体，
-    /// 免得图后打字跟了附件字体。
-    private func insertMoodAttachment(into textView: UITextView, key: String, font: UIFont, dark: Bool) {
-        guard let attachment = BearyText.inlineAttachment(for: key, font: font, dark: dark) else { return }
-        let range = textView.selectedRange
-        let mutable = NSMutableAttributedString(attributedString: textView.attributedText ?? NSAttributedString())
-        let safeLocation = min(range.location, mutable.length)
-        let safeLength = min(range.length, mutable.length - safeLocation)
-        mutable.replaceCharacters(in: NSRange(location: safeLocation, length: safeLength), with: attachment)
-        textView.attributedText = mutable
-        if textView === headlineField {
-            textView.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
-        } else {
-            textView.typingAttributes = [.font: bodyFont, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
-        }
-        textView.selectedRange = NSRange(location: safeLocation + 1, length: 0)
-    }
-
-    // MARK: - 内联图片（自定义心情图：心情选择器里上传/点选，插进正文或标题；
+    // MARK: - 内联图片（自定义心情图：自定义选择器里上传/点选，插进正文或标题；
     // GIF 与常规图同一 [gif:] 记号，常规图只显首帧静态）
 
     /// “自定义”组点选：key 已是完整 key（服务端回的 image key），直接插
-    /// 进光标处（标题/正文焦点口径与心情同款，见 insertGIFAttachmentAtCursor）；
+    /// 进光标处（标题/正文焦点口径：获焦插该框、两框都没焦点按上次焦点框兜底，
+    /// 见 insertGIFAttachmentAtCursor）；
     /// GIF 与常规图同一记号，常规图只显首帧静态（见 BearyGIF）。
     private func didSelectGIF(_ key: String) {
         guard let rand = BearyGIF.randKey(from: key) else { return }
@@ -5858,7 +5733,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// “自定义”组首格 ＋ 添加格：一次只传一张；9 张满（照片＋已插自定义图合计）或
-    /// 上传中时 toast 拦截；心情 sheet 是已弹出的 VC，等它退场完再弹相册，
+    /// 上传中时 toast 拦截；自定义 sheet 是已弹出的 VC，等它退场完再弹相册，
     /// 否则 present 会撞上退场动画。相册不过滤 GIF（.images 全选，见 handleGIFPickerResults）。
     private func didTapUploadGIF() {
         if gifUploadInFlight {
@@ -5881,7 +5756,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             picker.delegate = self
             self.present(picker, animated: true)
         }
-        if let sheet = moodPickerSheet {
+        if let sheet = gifPickerSheet {
             sheet.dismiss(animated: BearyMotion.animated(true), completion: presentPicker)
         } else {
             presentPicker()
@@ -5889,7 +5764,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// PHPicker 回调的自定义心情图片分流（picker 代理开头先判 gifPickerActive）：
-    /// picker 自身先 dismiss（心情 sheet 已在弹相册前退场）；空选/取消直接复位；
+    /// picker 自身先 dismiss（自定义 sheet 已在弹相册前退场）；空选/取消直接复位；
     /// 只取第 1 个结果。GIF 走原始文件数据不转码（1MB 上限，见 finishGIFUpload）；
     /// 其余图片取注册类型里第一个图片类型标识读原始文件（fetchOriginalFile 同款
     /// 取法），解成 UIImage 后走照片口径（见 finishImageUpload）。
@@ -6077,7 +5952,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 自定义心情图插进光标处：焦点口径照抄 insertMoodImageAtCursor（标题获焦插标题、
+    /// 自定义心情图插进光标处：焦点口径（标题获焦插标题、
     /// 正文获焦插正文、都没焦点按上次焦点兜底、从未获焦插正文末尾；组词先
     /// 提交落字再插）——为避改动工作路径，焦点块照抄一份不重构。
     private func insertGIFAttachmentAtCursor(key: String, randKey: String) {
@@ -6114,7 +5989,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 把一个 GIF 附件插进指定 UITextView 的当前选区（有选区则替换选区），
     /// 插完光标落在图后 1 格，并把 typingAttributes 复位回该框的正文字体
-    /// （与 insertMoodAttachment 同款，免得图后打字跟了附件字体）。
+    /// （免得图后打字跟了附件字体）。
     private func insertGIFAttachment(into textView: UITextView, randKey: String, firstFrame: UIImage?, font: UIFont) {
         guard let attachment = BearyText.inlineGIFAttachment(randKey: randKey, font: font, firstFrame: firstFrame) else { return }
         let range = textView.selectedRange
