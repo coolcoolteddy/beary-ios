@@ -58,7 +58,26 @@ final class BearyMessagesViewController: UIViewController {
         case conversation(BearyAPI.DMConversation)
         case notifFailure
         case dmFailure
-        case sentinel
+        case sentinel(MergedSentinelState)
+    }
+
+    /// 分页哨兵行构建时拍下的分页态：加载中／失败／闲置。行内自带状态，
+    /// 差分签名、cell 显示与行高都读它，不再读实时快照——否则哨兵同位
+    /// 仅状态变化时，新旧行签名恒等、可见 cell 切不到失败／重试文案。
+    private enum MergedSentinelState: String {
+        case loading
+        case failed
+        case idle
+
+        init(isLoadingMore: Bool, loadMoreFailed: Bool) {
+            if isLoadingMore {
+                self = .loading
+            } else if loadMoreFailed {
+                self = .failed
+            } else {
+                self = .idle
+            }
+        }
     }
 
     private let titleLabel = UILabel()
@@ -388,7 +407,7 @@ final class BearyMessagesViewController: UIViewController {
             rows.append(.dmFailure)
         }
         if notif.hasMore || notif.isLoadingMore {
-            rows.append(.sentinel)
+            rows.append(.sentinel(MergedSentinelState(isLoadingMore: notif.isLoadingMore, loadMoreFailed: notif.loadMoreFailed)))
         }
         return rows
     }
@@ -536,9 +555,8 @@ final class BearyMessagesViewController: UIViewController {
             return "notif-failure"
         case .dmFailure:
             return "dm-failure"
-        case .sentinel:
-            let snap = notifChild.mergeSnapshot
-            return "sentinel|\(snap.isLoadingMore)|\(snap.loadMoreFailed)"
+        case .sentinel(let state):
+            return "sentinel|\(state.rawValue)"
         }
     }
 
@@ -841,19 +859,19 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
                 onAction: { [weak self] in self?.conversationsChild.refresh() }
             )
             return cell
-        case .sentinel:
+        case .sentinel(let state):
             guard let cell = tableView.dequeueReusableCell(
                 withIdentifier: "BearyNotificationTrailingCell",
                 for: indexPath
             ) as? BearyNotificationTrailingCell else {
                 return UITableViewCell()
             }
-            let snap = notifChild.mergeSnapshot
-            if snap.isLoadingMore {
+            switch state {
+            case .loading:
                 cell.configureLoading()
-            } else if snap.loadMoreFailed {
+            case .failed:
                 cell.configureFailed()
-            } else {
+            case .idle:
                 cell.configureIdle()
             }
             return cell
@@ -862,10 +880,10 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
 
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
         // 哨兵行高与子页原口径一致（忙 40、闲 56）；其余行自动高。
-        guard indexPath.row < mergedRows.count, case .sentinel = mergedRows[indexPath.row] else {
+        guard indexPath.row < mergedRows.count, case .sentinel(let state) = mergedRows[indexPath.row] else {
             return UITableView.automaticDimension
         }
-        return notifChild.mergeSnapshot.isLoadingMore ? 40 : 56
+        return state == .loading ? 40 : 56
     }
 
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
@@ -936,9 +954,9 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
             BearyHaptics.press()
             guard let peer = conv.peer, peer.id != nil else { return }
             onOpenDM?(peer)
-        case .sentinel:
+        case .sentinel(let state):
             // 失败态哨兵行点按重试（loadMore 开头即清失败旗，在途守卫防连点）。
-            guard notifChild.mergeSnapshot.loadMoreFailed else { return }
+            guard state == .failed else { return }
             BearyHaptics.press()
             notifChild.loadMoreForMerge()
         case .notifFailure, .dmFailure:
