@@ -9909,7 +9909,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         // #43：图片清单用点按时刻拍进快照的那份，不再从当前 imageItems
         // 现场组装——写盘窗口内新增/删除的图片不得混进本次发布。
-        let images = snapshot.images
+        var images = snapshot.images
+        // 审计 #45：新建发布也要把正文/标题实际引用的内联 GIF / 自定义心情图 key 带上——
+        // 它们只存 [gif:<rand>] 记号、完整 key 随日记 images 走；只收图片条会漏 key，
+        // 服务端收不到、渲染时 [gif:...] 留原文。已上传态（无本地文件），中心直接记结果；
+        // 条内已有同 key 的不重复。
+        var seenKeys = Set(images.compactMap { $0.serverKey })
+        for key in referencedGifKeys() where !seenKeys.contains(key) {
+            seenKeys.insert(key)
+            images.append(BearyPublishImage(localFile: nil, serverKey: key, liveVideoKey: nil, liveVideoFile: nil, liveVideoData: nil))
+        }
         // 2026-11-14：交接前取消编辑器侧在途上传——中心是唯一上传方。
         // 不取消时，编辑器在途的上传与中心对同一张图的上传会各落一个 key，
         // 多一个孤儿图（且浪费一份上行流量）；取消只 bump 代次（迟到回包由
