@@ -1510,7 +1510,10 @@ private enum TrashText {
         if calendar.isDateInYesterday(date) {
             return "昨天"
         }
-        formatter.dateFormat = "M月d日"
+        // 跨年显示年份（规范 §12）：同年「M月d日」，跨年「yyyy年M月d日」。
+        let year = calendar.component(.year, from: date)
+        let currentYear = calendar.component(.year, from: Date())
+        formatter.dateFormat = year == currentYear ? "M月d日" : "yyyy年M月d日"
         return formatter.string(from: date)
     }
 

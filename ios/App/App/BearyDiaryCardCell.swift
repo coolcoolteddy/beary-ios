@@ -2098,16 +2098,11 @@ class BearyDiaryCardCell: UITableViewCell {
 
     /// F3：时间一律 M月d日 H:mm（小时不补零，网页 fmtDate 口径；今天也不只显示 H:mm）。
     /// 80 包 B4-1：时间 formatter 静态复用（主线程 UI 路径使用，原每次调用新建）。
-    private static let diaryTimeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = "M月d日 H:mm"
-        return f
-    }()
-
+    /// 共用绝对时间回落（publishedRelativeString 无效 ms 时的兜底）：
+    /// 同年「M月d日 H:mm」，跨年「yyyy年M月d日」，北京时间。
     static func feedTimeString(ms: Int) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        return diaryTimeFormatter.string(from: date)
+        return BearyText.absoluteDateString(from: date)
     }
 
     /// F2：正文 16pt（首页）、行高 1.6（段落样式实现，非默认行高）。
