@@ -2130,6 +2130,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 headlineLimitToastShown = false
             }
         }
+        updatePublishState()
         scheduleDraftSave()
     }
 
@@ -2524,6 +2525,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             _ = notify
             self.editMentionCleared = false
             self.refreshRecipientRow()
+            self.updatePublishState()
             // 选完人立即打开写给条：只刷新时 activeToolStrip 仍不是 .recipient，
             // 显隐门控会把整栈藏住、底部 @ 条选完人不出现；openToolStrip 先收框、
             // 置 activeToolStrip = .recipient 再刷新。
@@ -2546,6 +2548,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshRecipientRow()
         refreshToolStrip()
         saveDraftNow()
+        updatePublishState()
     }
 
     @objc private func didTapNotifyCheck() {
@@ -2734,6 +2737,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             saveDraftNow()
         }
         refreshQuoteSection()
+        updatePublishState()
     }
 
     /// 引用规则简化存量提示：编辑已公开篇且其引用仍私密时，作者打开编辑器即提示
@@ -2769,6 +2773,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             guard let self = self else { return }
             self.lockedQuote = nil
             self.refreshQuoteSection()
+            self.updatePublishState()
             self.showToast(message: "引用已移除，保存后生效")
         }, onKeepPrivate: {})
     }
@@ -3907,6 +3912,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 saveDraftNow()
             }
             refreshQuoteSection()
+            updatePublishState()
             if let cached = quotePanelCache[quotePanelTab] {
                 renderQuotePanelRows(entries: cached)
             } else {
@@ -3924,6 +3930,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         setQuotePanelOpen(false)
         refreshQuoteSection()
+        updatePublishState()
     }
 
     /// 审计 R9 ⑤：引用候选行无障碍名，按「作者、标题、正文摘要、图片数量」
@@ -4261,6 +4268,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             guard let self = self else { return }
             self.selectedTags = tags
             self.refreshTagsRow()
+            self.updatePublishState()
         }
     }
 
@@ -4304,6 +4312,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard sender.tag < selectedTags.count else { return }
         selectedTags.remove(at: sender.tag)
         refreshTagsRow()
+        updatePublishState()
     }
 
     // MARK: - C1 选择条与已选 Chip 行（替代旧附加选项栏）
@@ -4726,6 +4735,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedLocation = nil
         refreshLocationRow()
         scheduleDraftSave()
+        updatePublishState()
     }
 
     /// 定位气泡搭建：框体与专属框外收起层常驻 view（隐藏时 isHidden），约束一次激活；
@@ -4894,6 +4904,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedTemperature = min(60, max(-60, next))
         refreshSelectedChips()
         scheduleDraftSave()
+        updatePublishState()
     }
 
     /// 点气温数值：底 sheet 直输整数（-60…60°）；留空点确定即清除气温（只清气温、不动类型）。
@@ -4924,6 +4935,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
                 self.refreshSelectedChips()
                 self.scheduleDraftSave()
+                self.updatePublishState()
             },
             onClear: { [weak self] in
                 // 手改气温（清除亦算手改）：在途自动填回包过期作废。
@@ -4931,6 +4943,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self?.selectedTemperature = nil
                 self?.refreshSelectedChips()
                 self?.scheduleDraftSave()
+                self?.updatePublishState()
             }
         )
     }
@@ -5015,6 +5028,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         syncWeatherToolButton()
         refreshSelectedChips()
         scheduleDraftSave()
+        updatePublishState()
         hideCallout(animated: true, restoreFocus: true)
     }
 
@@ -5334,6 +5348,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.syncWeatherToolButton()
                     self.refreshSelectedChips()
                     self.scheduleDraftSave()
+                    self.updatePublishState()
                     // 框还开着时同步框内选中态与步进器显隐；框已关则不重开。
                     if self.weatherCalloutOpen {
                         self.weatherCallout.setSelectedKey(self.selectedWeather)
@@ -6093,8 +6108,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // B2：关闭进行中时发布钮亦禁用——关闭保存与发布提交不得并发
         //（发布会另起一条 saveDraftNow + 请求链，与关闭保存抢同一篇草稿）。
         // 切到另一账号时冻结（editOriginFrozen，第三轮审计第 5 项），切回原账号即解冻。
+        // 编辑态脏门（2026-11-18 Li 定）：内容与原文一致时保存钮置灰不可点，
+        // 任一改动即恢复可点；新建态不受此门限制。
         let uploadGate = isEditMode && hasUploadingImage()
-        publishButton.isEnabled = !isPublishing && !isClosing && !isDraftExitSaving && !uploadGate && !editQuoteFetchFailed && !editQuoteFetchInFlight && !editOriginFrozen && !trimmedContent().isEmpty
+        let editDirty = !isEditMode || isEditDirtyVsOriginal()
+        publishButton.isEnabled = !isPublishing && !isClosing && !isDraftExitSaving && !uploadGate && !editQuoteFetchFailed && !editQuoteFetchInFlight && !editOriginFrozen && !trimmedContent().isEmpty && editDirty
         refreshPublishAppearance()
         refreshPublishBusyState()
         refreshPublishingInputFreeze()
@@ -9536,8 +9554,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 编辑检查点（审计四轮增量 09）
 
-    /// 当前编辑与服务端原文是否不一致（正文/标题/心情/天气/气温/位置/图片/实况/引用/写给）。
-    /// 与原文一致时不写检查点（已有的也清掉），避免无意义的恢复提示。
+    /// 当前编辑与服务端原文是否不一致（正文/标题/心情/天气/气温/位置/图片/实况/标签/引用/@）。
+    /// 与原文一致时不写检查点（已有的也清掉），避免无意义的恢复提示；
+    /// 编辑态保存钮的启用态也复用本口径（见 updatePublishState）。
     /// 编辑期 @ 生效值三态折算（与 performUpdate 的 PUT 口径同款）：
     /// 已改选 → 新 id；已清除 → nil；未动 → 原 @ id。
     private func currentMentionedUserId() -> Int? {
@@ -9557,7 +9576,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if uploadedImageKeys() != (entry.images ?? []) { return true }
         if imageItems.contains(where: { $0.key == nil && $0.localFile != nil }) { return true }
         if uploadedLiveVideos() != (entry.liveVideos ?? [:]) { return true }
-        if lockedQuote?.entryId != originalQuoteId() { return true }
+        if selectedTags != originalTags { return true }
+        // 引用：补拉在途/失败时 lockedQuote 尚未回填（nil），此时不判脏——
+        // 否则打开即误判改过，退出会误弹丢弃提示；重试成功回填后即恢复准确。
+        if !editQuoteFetchInFlight && !editQuoteFetchFailed && lockedQuote?.entryId != originalQuoteId() { return true }
         if currentMentionedUserId() != entry.mentionedUserId { return true }
         return false
     }
@@ -11036,6 +11058,7 @@ extension BearyComposerViewController: BearyLocationPopoverDelegate {
         hideLocationPopover(animated: true, restoreFocus: true)
         refreshLocationRow(animated: true)
         scheduleDraftSave()
+        updatePublishState()
     }
 
     func locationPopoverDidFail(_ popover: BearyLocationPopoverView, message: String) {
