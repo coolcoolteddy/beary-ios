@@ -354,12 +354,18 @@ final class BearyProfilePhotosViewController: UIViewController {
             }
             if let mergedEntries {
                 let newPhotos = BearyProfileViewController.profilePhotoItems(from: mergedEntries, isOwnProfile: ownProfileValue, isMutualFriend: currentMutualFriend)
-                if photosSignature(newPhotos) != photosSignature(photosValue) {
-                    diaryEntriesValue = mergedEntries
-                    // 父页“无更多页”才可信——本页此前已翻到尾时父页的 hasMore
-                    // 仍为 true，不得把已确认的翻到尾翻回有更多页。
-                    if !fresh.hasMore { photosHasMore = false }
-                    photosValue = newPhotos
+                // 签名须在提交新模型前算——先提交再比会恒等、永不 reload。
+                let signatureChanged = photosSignature(newPhotos) != photosSignature(photosValue)
+                // 第 26 轮审计 #22：签名（ID＋图片 key）不变时也要提交新模型——
+                // 纯文字编辑、liveVideos 关联变化、父页 hasMore 由真变假都不
+                // 改签名，旧模型会让灯箱（liveVideos／查看日记）与「还有更多」
+                // 一直读旧值；只在签名变时才 reloadData／落快照，滚动位置不动。
+                diaryEntriesValue = mergedEntries
+                // 父页“无更多页”才可信——本页此前已翻到尾时父页的 hasMore
+                // 仍为 true，不得把已确认的翻到尾翻回有更多页。
+                if !fresh.hasMore { photosHasMore = false }
+                photosValue = newPhotos
+                if signatureChanged {
                     photosFromCache = false
                     photosFreshConfirmed = true
                     photosPartialFailed = false
