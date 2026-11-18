@@ -7258,7 +7258,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // 同样剥离后再进内存续传；剥离失败按读不到处理（data 为 nil →
                     // liveVideoMissing，提示重新选择），不把带 GPS 的旧文件发出。
                     // 已剥离过的文件走 helper 的无位置项快路径，原样返回，不重写。
-                    let restoredVideo = BearyDraftImageStore.videoData(for: videoName).flatMap { BearyLivePhoto.videoDataByStrippingLocation($0) }
+                    let restoredVideo = BearyDraftImageStore.videoData(for: videoName, accountId: accountId).flatMap { BearyLivePhoto.videoDataByStrippingLocation($0) }
                     liveVideos.append((videoName: videoName, data: restoredVideo))
                 }
             }
