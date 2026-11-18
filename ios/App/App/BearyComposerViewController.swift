@@ -7310,9 +7310,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                                         return
                                                     }
                                                     item.localFile = saved
-                                                    // 原图落点（见 applyOriginalData）：HEIC/JPEG ≤5MB
-                                                    // 才存 .orig、保持未确认；超限打标回落、RAW 等
-                                                    // 非 HEIC/JPEG 直接按压缩计。
+                                                    // 原图落点（见 applyOriginalData）：≤5MB 才存 .orig、保持未确认；
+                                                    // 超限打标回落；格式不限（截图等任何格式都可原图）。
                                                     if let fetchedData = fetchedData {
                                                         self.applyOriginalData(fetchedData, for: item, stillName: saved)
                                                     } else if fetchedOversize {
@@ -7440,9 +7439,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                         return
                                     }
                                     item.localFile = saved
-                                    // 原图落点（见 applyOriginalData）：HEIC/JPEG ≤5MB
-                                    // 才存 .orig、保持未确认；超限打标回落、RAW 等
-                                    // 非 HEIC/JPEG 直接按压缩计。
+                                    // 原图落点（见 applyOriginalData）：≤5MB 才存 .orig、保持未确认；
+                                    // 超限打标回落；格式不限（截图等任何格式都可原图）。
                                     if let fetchedData = fetchedData {
                                         self.applyOriginalData(fetchedData, for: item, stillName: saved)
                                     } else if fetchedOversize {
@@ -7806,17 +7804,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 批内全部准备完成后的收尾：先起传本批已定项（超限/RAW 回落的压缩项，
+    /// 批内全部准备完成后的收尾：先起传本批已定项（超限回落的压缩项，
     /// 不等用户选）；仍有未确认项时弹确认弹窗；全批都已定且有超限项时 toast 一句。
+    /// 计数只算仍在条里的项（准备中被删的项已不在 imageItems，不计入总数）。
     private func maybePresentUploadChoiceSheet() {
         let batch = pendingChoiceBatchItems
         pendingChoiceBatchItems = []
         guard !batch.isEmpty else { return }
+        let liveBatch = batch.filter { item in imageItems.contains { $0 === item } }
         var oversizeCount = 0
-        for item in batch {
-            if item.originalOversize {
-                oversizeCount += 1
+        var oversizeCompressedBytes = 0
+        for item in liveBatch where item.originalOversize {
+            oversizeCount += 1
+            if let name = item.localFile, let url = BearyDraftImageStore.fileURL(for: name),
+               let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber {
+                oversizeCompressedBytes += size.intValue
             }
+        }
+        for item in batch {
             if item.key == nil, !item.uploading, !item.failed, item.uploadMode != nil,
                let image = item.imageView.image {
                 startUpload(for: item, image: image)
@@ -7824,7 +7829,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         if hasUndecidedImage() {
             if !uploadChoiceSheetVisible {
-                presentUploadChoiceSheet(oversizeCount: oversizeCount)
+                presentUploadChoiceSheet(oversizeCount: oversizeCount, oversizeCompressedBytes: oversizeCompressedBytes)
             }
             return
         }
@@ -7854,8 +7859,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 弹原图/压缩确认弹窗（面向当前全部未确认项）：先取 Plus 态，再按
     /// 各原图字节和与压缩字节和建模；关闭（×/下拉）后不做任何事，待确认条留着重开。
-    /// oversizeCount 只在批收尾那次传（弹窗脚注用）；待确认条/发布重开时传 0。
-    private func presentUploadChoiceSheet(oversizeCount: Int = 0, allowRetry: Bool = true) {
+    /// 选择按整批算：弹窗张数 = 待确认项＋本批已自动压缩的超限项（总数），
+    /// 压缩行体积含超限项的压缩字节；oversizeCount 与 oversizeCompressedBytes
+    /// 只在批收尾那次传（弹窗脚注用），待确认条/发布重开时传 0。
+    private func presentUploadChoiceSheet(oversizeCount: Int = 0, oversizeCompressedBytes: Int = 0, allowRetry: Bool = true) {
         let undecided = undecidedImageItems()
         guard !undecided.isEmpty, !uploadChoiceSheetVisible else { return }
         // 2026-11-14：选图刚结束时相册可能还在退场动画里，presentedViewController
@@ -7868,7 +7875,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
                 guard let self = self else { return }
                 self.uploadChoiceSheetRetryPending = false
-                self.presentUploadChoiceSheet(oversizeCount: oversizeCount, allowRetry: false)
+                self.presentUploadChoiceSheet(oversizeCount: oversizeCount, oversizeCompressedBytes: oversizeCompressedBytes, allowRetry: false)
             }
             return
         }
@@ -7885,7 +7892,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     compressedBytes += size.intValue
                 }
             }
-            let model = BearyOriginalUploadSheetModel(count: undecided.count, originalBytes: originalBytes, compressedBytes: compressedBytes, oversizeCount: oversizeCount, isPlus: isPlus)
+            let model = BearyOriginalUploadSheetModel(count: undecided.count + oversizeCount, originalBytes: originalBytes, compressedBytes: compressedBytes + oversizeCompressedBytes, oversizeCount: oversizeCount, isPlus: isPlus)
             self.uploadChoiceSheetVisible = true
             let sheet = BearyOriginalUploadSheet.show(from: self, model: model, onPickOriginal: { [weak self] in
                 guard let self = self else { return }
@@ -7928,7 +7935,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 原图起传：读 .orig、剥 GPS、按实测格式发；任一步失败 → 回落压缩并提示，
-    /// 绝不发带 GPS 或格式不明的原图。
+    /// 绝不发带 GPS 或格式不明的原图。可发格式见
+    /// BearyImagePrep.originalUploadMimeTypes（与服务端 allowlist 同口径）；
+    /// TIFF/DNG 服务端不收、mimeType 也认不出，仍回落压缩并提示。
     private func startOriginalUpload(for item: ComposerImageItem) {
         if item.liveVideoMissing {
             showToast(message: "这张实况需重新选择")
@@ -7942,7 +7951,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
            let rawData = BearyDraftImageStore.originalData(for: originalFile),
            let strippedData = BearyImagePrep.strippedGPSData(rawData),
            let detectedMime = BearyImagePrep.mimeType(of: strippedData),
-           detectedMime == "image/heic" || detectedMime == "image/jpeg",
+           BearyImagePrep.originalUploadMimeTypes.contains(detectedMime),
            let pixelSize = BearyImagePrep.pixelSize(of: strippedData),
            pixelSize.width > 0, pixelSize.height > 0 {
             stripped = strippedData
@@ -8060,15 +8069,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         fetchOriginalResourceData(resource, completion: completion)
     }
 
-    /// 原图落点判定（Li 2026-11-12 20:56 定：原图只放 HEIC/JPEG、5MB 以内）：
-    /// HEIC/JPEG ≤5MB → 存 .orig、记字节、保持未确认（等用户在弹窗里选）；
-    /// DNG/TIFF/PNG 等非 HEIC/JPEG 原图（RAW 在内）→ 直接按压缩计，
-    /// 不尝试传原文件、不进待确认集；.orig 落盘失败 → 按压缩计，不卡住。
+    /// 原图落点判定（Li 2026-11-12 定：原图只放 5MB 以内；2026-11-18 Li 定：
+    /// 截图也要原图——格式门槛去掉，任何格式都可存 .orig、进待确认集；
+    /// 原图是否真能发由起传时按实测格式与服务端口径再判（见 startOriginalUpload），
+    /// 发不出时按现有路回落压缩并提示。超限（>5MB）在取原图时已提前截断，
+    /// 不进这里（见 fetchOriginalResourceData）。orig 落盘失败 → 按压缩计，不卡住。
     private func applyOriginalData(_ data: Data, for item: ComposerImageItem, stillName: String) {
-        guard let mime = BearyImagePrep.mimeType(of: data), mime == "image/heic" || mime == "image/jpeg" else {
-            item.uploadMode = .compressed
-            return
-        }
         if let originalFile = BearyDraftImageStore.saveOriginal(data: data, forStill: stillName) {
             item.originalFile = originalFile
             item.originalBytes = data.count
@@ -10866,7 +10872,7 @@ private final class ComposerImageItem {
     /// 合入后变基好接：届时发布中心按本标记逐项取原图或压缩字节上传。
     var uploadMode: BearyUploadMode?
     /// 原图本地文件名（与静图同 stem 的 <uuid>.orig）；nil=无原图
-    ///（压缩项/裁剪项/老草稿/RAW 等非 HEIC/JPEG 原图）。
+    ///（压缩项/裁剪项/老草稿/未取到原图时）。
     var originalFile: String?
     /// 原图字节数（弹窗展示用；恢复时读持久化值，不重读文件）。
     var originalBytes: Int?
