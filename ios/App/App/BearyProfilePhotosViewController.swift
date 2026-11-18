@@ -972,6 +972,27 @@ final class BearyProfilePhotosViewController: UIViewController {
         }
     }
 
+    /// 审计三轮 #26：灯箱续页入口——与网格重试按钮走同一入口
+    /// （retryNextPage 先清两失败旗再拉页），失败态下灯箱请求不再被
+    /// fetchNextPageIfNeeded 的守卫静默拦掉。每次请求必须有收尾，不静默
+    /// 死锁：在途请求由回包的 appendImageKeys／notifyMorePagesFailed 收尾；
+    /// 未拉起且已确认无更多页时同步告诉灯箱（复位标志、恢复回绕）；
+    /// 未拉起且仍有更多页时给失败回调收尾，下次向前滑可再试。
+    /// 用 presentedViewer 而不用 presentedViewController：首开即末张时
+    /// maybeRequestMorePages 在 viewDidLoad 里就发请求，此时呈现关系未必
+    /// 已建立，presentedViewer 在 present 之前已赋值。
+    private func requestNextPageFromLightbox() {
+        guard let viewer = presentedViewer else { return }
+        let wasFetching = photosFetching
+        retryNextPage()
+        if photosFetching || wasFetching { return }
+        if !photosHasMore {
+            viewer.appendImageKeys([], liveVideos: nil, hasMorePages: false)
+        } else {
+            viewer.notifyMorePagesFailed()
+        }
+    }
+
     /// 尾部重试唯一入口：先撤重试节（不 reload，保滚动位置），再走已有
     /// 翻页入口；photosFetching 守门保证点按只触发一次，不自动循环重拉。
     /// 空相册失败走空态重试按钮进同一入口：只清空态失败态、不删节（没插过节）。
@@ -1017,7 +1038,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wa
         // C1：网格和灯箱订阅同一个分页结果——网格续拉的新页追加进灯箱；
         // 灯箱翻到末尾要下一页时由这里触发网格续拉。
         viewer.hasMorePages = photosHasMore
-        viewer.onRequestMorePages = { [weak self] in self?.fetchNextPageIfNeeded() }
+        viewer.onRequestMorePages = { [weak self] in self?.requestNextPageFromLightbox() }
         // C3：关场回当前照片——按下标找网格里对应的格；在视口内才给
         // 矩形与焦点视图，格不在视口内时返回 nil、走淡出兜底。
         viewer.dismissOriginProvider = { [weak self] index in

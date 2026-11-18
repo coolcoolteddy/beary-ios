@@ -676,11 +676,14 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         updateLoadMoreHint()
     }
 
-    /// C1：边缘提示——只在已加载末尾、还有后续页时显（「正在加载更多照片」，
-    /// 失败时为「更多照片加载失败，继续滑动重试」）；其余位置隐藏。
+    /// C1：边缘提示——只在已加载末尾、还有后续页、且“请求在途或刚失败”
+    /// 时显（「正在加载更多照片」／失败时为「更多照片加载失败，继续滑动重试」）；
+    /// 其余位置隐藏。审计三轮 #27：空页回包后无请求在途时不留「正在加载
+    /// 更多照片」转圈——闲置有后续页时隐藏，用户再次向前滑即重新请求。
     private func updateLoadMoreHint() {
         let show = onRequestMorePages != nil && hasMorePages && !imageKeys.isEmpty
             && currentIndex == imageKeys.count - 1
+            && (isRequestingMorePages || loadMoreFailed)
         loadMoreStack.isHidden = !show
         guard show else {
             loadMoreSpinner.stopAnimating()
@@ -1378,9 +1381,14 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             // （>60）与速度（>700）阈值不变；取消态落入下方 else 回弹
             // 分支，恢复当前位置、相邻图同步退回屏外再隐藏（与纵向
             // 分支“取消态一律弹回”一致）。
-            if sender.state == .ended && imageKeys.count > 1 && (distancePages || flickPages) {
-                // 位移达标按位移方向，快甩达标按末速度方向。
-                let direction = distancePages ? (totalDx < 0 ? 1 : -1) : (velocity.x < 0 ? 1 : -1)
+            // 审计三轮 #27：单张时横滑不翻页，但向前滑且有后续页时仍进
+            // navigate 请求续页（navigate 内单张分支只请求、不翻页）；
+            // 向后滑或确认末页时仍走下方回弹。位移达标按位移方向，
+            // 快甩达标按末速度方向。
+            let direction = distancePages ? (totalDx < 0 ? 1 : -1) : (velocity.x < 0 ? 1 : -1)
+            let singlePhotoForwardRequest = imageKeys.count == 1 && direction == 1
+                && (hasMorePages || isRequestingMorePages)
+            if sender.state == .ended && (imageKeys.count > 1 || singlePhotoForwardRequest) && (distancePages || flickPages) {
                 navigate(direction: direction)
             } else {
                 // 横向弹回：本分支要同步驱动相邻图，不能走 applyTransform
@@ -1437,8 +1445,33 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         return BearyImageLoader.shared.cachedImage(url: url, downsampleToWidth: pageWidthValue() * UIScreen.main.scale)
     }
 
+    /// 审计三轮 #26／#27：越过已加载末尾向网格要下一页（多张回绕拦住时与
+    /// 单张向前滑时共用）——只发一次，回包／失败前不再重复要；新页到了且
+    /// 仍停在越过末尾那张时由 appendImageKeys 自动往前翻。单张时只请求、
+    /// 不翻页；手指已离开，直接弹回当前图。
+    private func requestMorePagesBeyondEnd() {
+        pendingAdvanceFromIndex = currentIndex
+        if !isRequestingMorePages {
+            isRequestingMorePages = true
+            loadMoreFailed = false
+            onRequestMorePages?()
+        }
+        updateLoadMoreHint()
+        resetZoom(animated: true)
+    }
+
     private func navigate(direction: Int) {
-        if imageKeys.count <= 1 || isNavigating == true {
+        if isNavigating == true {
+            return
+        }
+        if imageKeys.count <= 1 {
+            // 审计三轮 #27：单张时不翻页，但向前越过末尾仍可向网格要下一页
+            //（首开即末张时 maybeRequestMorePages 已发过首轮请求；空页回包
+            // 后无新图，靠这里再次触发续页，不用关灯箱重开）。向后翻与确认
+            // 末页时仍直接返回，走 pan 的回弹。
+            if direction == 1, hasMorePages || isRequestingMorePages {
+                requestMorePagesBeyondEnd()
+            }
             return
         }
         let next = currentIndex + direction
@@ -1456,14 +1489,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             // 只拦向前越过末尾：从首张往回翻不在此列（updateNeighbor
             // 同口径只拦向前，首张往回仍正常回绕到末张）。
             if hasMorePages || isRequestingMorePages {
-                pendingAdvanceFromIndex = currentIndex
-                if !isRequestingMorePages {
-                    isRequestingMorePages = true
-                    loadMoreFailed = false
-                    onRequestMorePages?()
-                }
-                updateLoadMoreHint()
-                resetZoom(animated: true)
+                requestMorePagesBeyondEnd()
                 return
             }
         }
