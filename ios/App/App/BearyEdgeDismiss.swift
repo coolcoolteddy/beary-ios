@@ -51,6 +51,13 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
     /// false 表示本次取消被拒（拖动中途状态变了），本控制器把跟手滑走的视图滑回原位。
     var onEdgeSwipeCompleted: (() -> Bool)?
 
+    /// 详情只读返回：来源列表第一次被露出前预恢复锚点（不消费上下文）——
+    /// 边缘拖动 .began 插底层画面时、正式退场动画起播前各调一次；只把来源
+    /// 列表放回打开时的视口位置，正式的消费型恢复仍由 viewDidDisappear 的
+    /// onDismissed 走（已在原位时 ±1pt 守卫直接不动，不产生二次跳变）。
+    /// 未设置时（编辑器／私信等其他页）什么都不做。
+    var onSourceViewWillReveal: (() -> Void)?
+
     /// 完成模式开拖前的预检：返回 false 时不启动 1:1 跟手、不 dismiss，
     /// 调用方自行处理（例如发布在途只 toast）。未设置时沿旧口径直接允许。
     /// 判断发生在手势 .began，而不是滑完 .ended 后补确认——先拦截，视图才不会
@@ -88,7 +95,7 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
             underlyingViewPrepared = false
             preparedUnderlyingView = nil
         }
-        return BearySlideTransitionAnimator(isPresenting: false)
+        return BearySlideTransitionAnimator(isPresenting: false, onDismissWillStart: onSourceViewWillReveal)
     }
 
     func interactionControllerForDismissal(using animator: UIViewControllerAnimatedTransitioning) -> UIViewControllerInteractiveTransitioning? {
@@ -114,6 +121,9 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
             preparedUnderlyingView = underlying
             underlyingViewPrepared = true
             underlyingGeneration += 1
+            // 已在上一拖露出过、预恢复已做过；再调一次无害（不消费上下文，
+            // 已在原位时 ±1pt 守卫直接不动）。
+            onSourceViewWillReveal?()
             return
         }
         // 底层画面已在别处（正走退场转场、已被容器接管）时不动它。
@@ -127,6 +137,10 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
         preparedUnderlyingView = underlying
         underlyingViewPrepared = true
         underlyingGeneration += 1
+        // 来源页刚被插进层级、手指尚未拖出第一帧：先把来源列表放回打开时
+        // 的视口位置，再让用户看到它（同步在 .began 主线程内做完，下一帧
+        // 渲染时位置已是对的；不消费上下文，正式恢复仍走 viewDidDisappear）。
+        onSourceViewWillReveal?()
     }
 
     /// 取消／被拒／未过阈值：复位动画跑完后再撤提前插入的底层画面——
@@ -275,9 +289,13 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
 private final class BearySlideTransitionAnimator: NSObject, UIViewControllerAnimatedTransitioning {
 
     private let isPresenting: Bool
+    /// 正式退场起播前调一次（来源页刚被插进容器、尚未露出一帧时）；
+    /// 其余页不设，行为不变。
+    private let onDismissWillStart: (() -> Void)?
 
-    init(isPresenting: Bool) {
+    init(isPresenting: Bool, onDismissWillStart: (() -> Void)? = nil) {
         self.isPresenting = isPresenting
+        self.onDismissWillStart = onDismissWillStart
         super.init()
     }
 
@@ -312,6 +330,11 @@ private final class BearySlideTransitionAnimator: NSObject, UIViewControllerAnim
         } else {
             container.insertSubview(toView, belowSubview: fromView)
             toView.frame = transitionContext.finalFrame(for: toVC)
+            // 详情只读返回：退场动画起播前先把来源列表放回打开时的视口位置——
+            // 此时来源页刚被插进容器、尚未露出一帧；等 viewDidDisappear 再恢复
+            // 会在动画结束时改 contentOffset，产生一次跳变。本回调只预恢复、
+            // 不消费上下文，正式恢复仍走 viewDidDisappear 的 onDismissed。
+            onDismissWillStart?()
             let width = container.bounds.width
             // 拖拽收尾统一弹簧 0.26s／damping 0.7：交互式过渡的 animator
             // 实例在手势开始时已建、无松手速度可传，故初速度取 0。
