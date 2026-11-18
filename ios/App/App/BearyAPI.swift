@@ -325,6 +325,9 @@ struct NotificationItem: Codable {
     var title: String?
     var body: String?
     var excerpt: String?
+    /// 日记标题（服务端 entry_title，convertFromSnakeCase 解码；2026-11-18 后端补 e.title）：
+    /// 聚合行代表条有标题时动词后加《标题》，无标题（null/空/旧缓存）保持现行动词文案。
+    var entryTitle: String?
 }
 
 struct NotificationList: Decodable {
