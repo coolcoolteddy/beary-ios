@@ -223,7 +223,12 @@ enum BearyDraftImageStore {
 
     /// B1：读回落盘的实况 mov（空文件按缺失计，调用方按“视频已丢”处理）。
     static func videoData(for name: String) -> Data? {
-        guard let url = fileURL(for: name),
+        return videoData(for: name, accountId: BearyDraftStore.currentAccountId)
+    }
+
+    /// 捕获账号版读视频：从指定账号的图片目录读，不读全局当前账号。
+    static func videoData(for name: String, accountId: Int?) -> Data? {
+        guard let url = fileURL(for: name, accountId: accountId),
               let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
         return data
     }
