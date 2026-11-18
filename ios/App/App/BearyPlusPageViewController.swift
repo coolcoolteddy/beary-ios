@@ -4,12 +4,11 @@ import UIKit
 // 口径（2026-11-04 Li 拍板）：先上展示页，价格与支付方式未定，页上如实写
 // “价格与支付方式待定”，不编价格、不接内购／网页支付、不动后端。
 // 文案与布局以预览 v4（.pptr/plus-preview/plus.html、plus-off/on-v4.png）为准。
-// 两态：未开通——墨色实心“开通 Plus”钮＋灰字“价格与支付方式待定”，不显示
-// “开通即同意《Plus 会员服务协议》”协议行（r10 #10：协议正文未定，等正式开通、
-// 有真实协议正文后再恢复）；已开通——描边“Plus 已开通”钮＋仅蓝色《Plus 会员服务协议》入口。
-// 占位行为：点开通弹“价格与支付方式待定”，点协议入口弹“《Plus 会员服务协议》
-// 正文待定”——协议正文没写，绝不现编正文。状态由调用方传入（/me 的 plus），
-// 本页不拉接口、不写后端。
+// 两态：未开通——墨色实心“去邀请”钮（接真实邀请页 BearyInviteViewController，
+// 与“免费得 Plus”行同入口）＋灰字“价格与支付方式待定”；已开通——页尾无按钮，
+// 状态只由顶部“已开通”交代。协议正文未定：全仓无《Plus 会员服务协议》正文，
+// 协议入口已去掉，绝不现编正文；等正式开通、有真实协议正文后再恢复。
+// 状态由调用方传入（/me 的 plus），本页不拉接口、不写后端。
 
 final class BearyPlusPageViewController: UIViewController {
 
@@ -100,6 +99,8 @@ final class BearyPlusPageViewController: UIViewController {
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.layer.cornerRadius = BearyCorners.single
         buttonValue.clipsToBounds = true
+        buttonValue.addTarget(self, action: #selector(inviteButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
         return buttonValue
     }()
 
@@ -112,18 +113,6 @@ final class BearyPlusPageViewController: UIViewController {
         labelValue.textAlignment = .center
         labelValue.text = "价格与支付方式待定"
         return labelValue
-    }()
-
-    private lazy var agreementButton: UIButton = {
-        let buttonValue = UIButton(type: .custom)
-        buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.titleLabel?.font = BearyDynamicType.captionFont()
-        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
-        buttonValue.titleLabel?.numberOfLines = 0
-        buttonValue.titleLabel?.textAlignment = .center
-        buttonValue.addTarget(self, action: #selector(agreementButtonTapped), for: .touchUpInside)
-        buttonValue.bearyAddPressFeedback()
-        return buttonValue
     }()
 
     override func viewDidLoad() {
@@ -394,56 +383,31 @@ final class BearyPlusPageViewController: UIViewController {
         spacer.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         contentStack.addArrangedSubview(spacer)
 
+        // 已开通：页尾无按钮，状态只由顶部“已开通”交代；协议正文未定，
+        // 协议入口已去掉（见文件头注释），不留死入口。
+        guard !isPlusValue else { return }
+
+        // 未开通：主入口是真实动作“去邀请”，与“免费得 Plus”行同入口
+        // （BearyInviteViewController）；购买未开放只由 priceNoteLabel
+        // 一行灰字交代，不用大按钮占位。
         let foot = UIView()
         foot.translatesAutoresizingMaskIntoConstraints = false
         foot.addSubview(mainButton)
-        if isPlusValue {
-            mainButton.setTitle("Plus 已开通", for: .normal)
-            mainButton.setTitleColor(BearyColors.ink, for: .normal)
-            mainButton.backgroundColor = BearyColors.bg
-            mainButton.layer.borderWidth = 1
-            mainButton.layer.bearyDynamicBorderColor = BearyColors.line
-            // 已开通态不是动作：置灰不可点，只作状态展示。
-            mainButton.isEnabled = false
-            let agreementText = NSAttributedString(
-                string: "《Plus 会员服务协议》",
-                attributes: [.font: BearyDynamicType.captionFont(), .foregroundColor: BearyColors.blue, .underlineStyle: NSUnderlineStyle.single.rawValue])
-            agreementButton.setAttributedTitle(agreementText, for: .normal)
-            foot.addSubview(agreementButton)
-            NSLayoutConstraint.activate([
-                mainButton.topAnchor.constraint(equalTo: foot.topAnchor, constant: 24),
-                mainButton.leadingAnchor.constraint(equalTo: foot.leadingAnchor, constant: 16),
-                mainButton.trailingAnchor.constraint(equalTo: foot.trailingAnchor, constant: -16),
-                mainButton.heightAnchor.constraint(equalToConstant: 44),
-                agreementButton.topAnchor.constraint(equalTo: mainButton.bottomAnchor, constant: 14),
-                agreementButton.centerXAnchor.constraint(equalTo: foot.centerXAnchor),
-                agreementButton.leadingAnchor.constraint(greaterThanOrEqualTo: foot.leadingAnchor, constant: 16),
-                agreementButton.trailingAnchor.constraint(lessThanOrEqualTo: foot.trailingAnchor, constant: -16),
-                agreementButton.bottomAnchor.constraint(equalTo: foot.bottomAnchor, constant: -32),
-            ])
-        } else {
-            mainButton.setTitle("暂未开放", for: .normal)
-            mainButton.setTitleColor(BearyColors.ink, for: .normal)
-            mainButton.backgroundColor = BearyColors.bg
-            mainButton.layer.borderWidth = 1
-            mainButton.layer.bearyDynamicBorderColor = BearyColors.line
-            // 暂未开放态不是动作：置灰不可点，只作状态展示。
-            mainButton.isEnabled = false
-            foot.addSubview(priceNoteLabel)
-            // r10 #10：开通未开放时不显示「开通即同意《Plus 会员服务协议》」协议行——
-            // 协议正文未定，等正式开通、有真实协议正文后再恢复该行。
-            NSLayoutConstraint.activate([
-                mainButton.topAnchor.constraint(equalTo: foot.topAnchor, constant: 24),
-                mainButton.leadingAnchor.constraint(equalTo: foot.leadingAnchor, constant: 16),
-                mainButton.trailingAnchor.constraint(equalTo: foot.trailingAnchor, constant: -16),
-                mainButton.heightAnchor.constraint(equalToConstant: 44),
-                priceNoteLabel.topAnchor.constraint(equalTo: mainButton.bottomAnchor, constant: 12),
-                priceNoteLabel.centerXAnchor.constraint(equalTo: foot.centerXAnchor),
-                priceNoteLabel.leadingAnchor.constraint(greaterThanOrEqualTo: foot.leadingAnchor, constant: 16),
-                priceNoteLabel.trailingAnchor.constraint(lessThanOrEqualTo: foot.trailingAnchor, constant: -16),
-                priceNoteLabel.bottomAnchor.constraint(equalTo: foot.bottomAnchor, constant: -32),
-            ])
-        }
+        mainButton.setTitle("去邀请", for: .normal)
+        mainButton.setTitleColor(BearyColors.bg, for: .normal)
+        mainButton.backgroundColor = BearyColors.ink
+        foot.addSubview(priceNoteLabel)
+        NSLayoutConstraint.activate([
+            mainButton.topAnchor.constraint(equalTo: foot.topAnchor, constant: 24),
+            mainButton.leadingAnchor.constraint(equalTo: foot.leadingAnchor, constant: 16),
+            mainButton.trailingAnchor.constraint(equalTo: foot.trailingAnchor, constant: -16),
+            mainButton.heightAnchor.constraint(equalToConstant: 44),
+            priceNoteLabel.topAnchor.constraint(equalTo: mainButton.bottomAnchor, constant: 12),
+            priceNoteLabel.centerXAnchor.constraint(equalTo: foot.centerXAnchor),
+            priceNoteLabel.leadingAnchor.constraint(greaterThanOrEqualTo: foot.leadingAnchor, constant: 16),
+            priceNoteLabel.trailingAnchor.constraint(lessThanOrEqualTo: foot.trailingAnchor, constant: -16),
+            priceNoteLabel.bottomAnchor.constraint(equalTo: foot.bottomAnchor, constant: -32),
+        ])
         contentStack.addArrangedSubview(foot)
     }
 
@@ -451,14 +415,6 @@ final class BearyPlusPageViewController: UIViewController {
 
     @objc private func backButtonTapped() {
         dismiss(animated: BearyMotion.animated(true), completion: nil)
-    }
-
-    @objc private func mainButtonTapped() {
-        BearyToast.show(in: view, message: "价格与支付方式待定")
-    }
-
-    @objc private func agreementButtonTapped() {
-        BearyToast.show(in: view, message: "《Plus 会员服务协议》正文待定")
     }
 
     @objc private func inviteButtonTapped() {
