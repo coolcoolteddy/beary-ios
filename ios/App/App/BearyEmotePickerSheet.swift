@@ -549,19 +549,11 @@ final class BearyEmotePickerSectionHeaderView: UICollectionReusableView {
 final class BearyEmotePickerSheetCell: UICollectionViewCell {
 
     private let emoteSlot = UIView()
-    /// 1-6：按压高亮底片——只盖 46 槽位、圆角 12，画在槽位之后、熊图之下；
-    /// 原整格 faint 底（格宽约 96.5、槽位仅 46）按压面远大于熊图，已撤。
-    private let highlightView = UIView()
     private var emoteView: BearyEmoteView?
     private let nameLabel = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        highlightView.translatesAutoresizingMaskIntoConstraints = false
-        highlightView.backgroundColor = .clear
-        highlightView.layer.cornerRadius = 12
-        highlightView.layer.masksToBounds = true
-        contentView.addSubview(highlightView)
         emoteSlot.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(emoteSlot)
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -570,10 +562,6 @@ final class BearyEmotePickerSheetCell: UICollectionViewCell {
         nameLabel.numberOfLines = 0
         contentView.addSubview(nameLabel)
         NSLayoutConstraint.activate([
-            highlightView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            highlightView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            highlightView.widthAnchor.constraint(equalToConstant: 46),
-            highlightView.heightAnchor.constraint(equalToConstant: 46),
             emoteSlot.topAnchor.constraint(equalTo: contentView.topAnchor),
             emoteSlot.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             emoteSlot.widthAnchor.constraint(equalToConstant: 46),
@@ -591,14 +579,6 @@ final class BearyEmotePickerSheetCell: UICollectionViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         emoteView?.stop()
-    }
-
-    /// U9：回应 sheet cell 按压态（surface2 底），首页与个人主页统一都有。
-    /// 1-6：高亮只画在 46 槽位圆角底片上，不再铺满整格。
-    override var isHighlighted: Bool {
-        didSet {
-            highlightView.backgroundColor = isHighlighted ? BearyColors.surface2 : .clear
-        }
     }
 
     /// G21：dark 死参数已从签名去掉（深浅由播放器内部处理）。
