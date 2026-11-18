@@ -1516,3 +1516,57 @@ final class BearyDiaryPinAccountTests: XCTestCase {
         XCTAssertEqual(BearyDiaryPin.currentPinnedEntryId, "b_pinA")
     }
 }
+
+// MARK: - T3：搜索摘要优先命中词附近的句子
+final class BearySearchSnippetTests: XCTestCase {
+
+    func testHitInLaterSentenceStartsAtThatSentence() {
+        let text = "今天天气很好。我去公园散步，看到一只小猫在晒太阳。晚上回家写日记。"
+        let snippet = BearySearchSnippet.snippet(for: text, query: "小猫")
+        XCTAssertTrue(snippet.contains("小猫"))
+        XCTAssertFalse(snippet.contains("今天天气很好"))
+        XCTAssertTrue(snippet.hasPrefix("…"))
+        XCTAssertTrue(snippet.hasSuffix("…"))
+    }
+
+    func testHitInFirstSentenceHasNoLeadingEllipsis() {
+        let text = "小猫在晒太阳。今天天气很好。"
+        let snippet = BearySearchSnippet.snippet(for: text, query: "小猫")
+        XCTAssertTrue(snippet.hasPrefix("小猫"))
+        XCTAssertTrue(snippet.contains("小猫"))
+    }
+
+    func testHitInLastSentenceHasNoTrailingEllipsis() {
+        let text = "第一句。第二句提到关键词结束"
+        let snippet = BearySearchSnippet.snippet(for: text, query: "关键词")
+        XCTAssertEqual(snippet, "…第二句提到关键词结束")
+    }
+
+    func testNoHitFallsBackToPrefix() {
+        let text = String(repeating: "啊", count: 150)
+        let snippet = BearySearchSnippet.snippet(for: text, query: "不存在")
+        XCTAssertEqual(snippet.count, 121)
+        XCTAssertTrue(snippet.hasSuffix("…"))
+    }
+
+    func testShortTextWithoutHitIsUnchanged() {
+        XCTAssertEqual(BearySearchSnippet.snippet(for: "今天很开心", query: "难过"), "今天很开心")
+    }
+
+    func testEmptyQueryFallsBackToPrefix() {
+        let text = String(repeating: "啊", count: 150)
+        XCTAssertEqual(BearySearchSnippet.snippet(for: text, query: "  ").count, 121)
+    }
+
+    func testMultiWordQueryFallsBackToFirstHitToken() {
+        let text = "今天天气很好，适合出门。"
+        let snippet = BearySearchSnippet.snippet(for: text, query: "北京 天气")
+        XCTAssertTrue(snippet.contains("天气"))
+    }
+
+    func testEntryDecodesServerSnippet() throws {
+        let json = "{\"id\":\"b_snip1\",\"content\":\"今天天气很好。我去公园散步。\",\"snippet\":\"…公园散步…\",\"created_at\":1761000000000}"
+        let entry = try bearyDecoder().decode(Entry.self, from: Data(json.utf8))
+        XCTAssertEqual(entry.snippet, "…公园散步…")
+    }
+}
