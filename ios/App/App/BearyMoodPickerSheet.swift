@@ -452,7 +452,11 @@ final class BearyMoodPickerCell: UICollectionViewCell {
             DispatchQueue.main.async {
                 guard self.gifGeneration == generation, self.currentKey == key else { return }
                 self.gifFirstFrame = image
-                if self.gifPlaying == false { self.gifImageView?.image = image }
+                // 静态图直接贴；动图在动画图未就绪前先贴缩略图占位，
+                // 动画图就绪后再替换（已在播动画时不拿缩略图盖掉它）。
+                if self.gifAnimatedImage == nil || self.gifPlaying == false {
+                    self.gifImageView?.image = image
+                }
             }
         }
     }
@@ -475,31 +479,37 @@ final class BearyMoodPickerCell: UICollectionViewCell {
     /// 可见性启停（willDisplay/didEndDisplaying 调）：播放只走 play/stop，
     /// 不重建视图、不回 0 帧重播开场。
     func setPlaying(_ playing: Bool) {
-        if let key = currentKey, BearyGIF.isImageKey(key) {
-            gifPlaying = playing
-            if playing == false {
-                gifImageView?.image = gifFirstFrame
-                return
-            }
-            // 常规图只有首帧静态，不拉整图、不播动画。
-            guard key.lowercased().hasSuffix(".gif") else { return }
-            if let animated = gifAnimatedImage {
-                gifImageView?.image = animated
-                return
-            }
-            guard let url = BearyImageURLs.imageURL(key: key, thumb: false) else { return }
-            let generation = gifGeneration
-            BearyImageLoader.shared.loadImageData(url: url) { [weak self] result in
-                guard let self = self, self.gifGeneration == generation, self.currentKey == key else { return }
-                guard case .success(let data) = result,
-                      let animated = BearyGIF.animatedImage(data) else { return }
-                DispatchQueue.main.async {
-                    guard self.gifGeneration == generation, self.currentKey == key, self.gifPlaying else { return }
-                    self.gifAnimatedImage = animated
-                    self.gifImageView?.image = animated
-                }
+        guard let key = currentKey, BearyGIF.isImageKey(key) else { return }
+        // 先判是不是 GIF 再改播放态：常规图（JPEG/PNG 等）不播动画，
+        // 若先把 gifPlaying 置 true 再提前返回，缩略图回包时会被
+        // gifPlaying 门控挡住、格子一直空白。静态图只贴已到的首帧，
+        // 未到则保持 gifPlaying 为 false，等缩略图回包直接贴。
+        guard key.lowercased().hasSuffix(".gif") else {
+            if playing, let firstFrame = gifFirstFrame {
+                gifImageView?.image = firstFrame
             }
             return
+        }
+        gifPlaying = playing
+        if playing == false {
+            gifImageView?.image = gifFirstFrame
+            return
+        }
+        if let animated = gifAnimatedImage {
+            gifImageView?.image = animated
+            return
+        }
+        guard let url = BearyImageURLs.imageURL(key: key, thumb: false) else { return }
+        let generation = gifGeneration
+        BearyImageLoader.shared.loadImageData(url: url) { [weak self] result in
+            guard let self = self, self.gifGeneration == generation, self.currentKey == key else { return }
+            guard case .success(let data) = result,
+                  let animated = BearyGIF.animatedImage(data) else { return }
+            DispatchQueue.main.async {
+                guard self.gifGeneration == generation, self.currentKey == key, self.gifPlaying else { return }
+                self.gifAnimatedImage = animated
+                self.gifImageView?.image = animated
+            }
         }
     }
 }
