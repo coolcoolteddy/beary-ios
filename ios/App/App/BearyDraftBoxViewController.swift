@@ -1398,8 +1398,11 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         return false
     }
 
-    /// “忽略丢失图片”chip 点按：清掉已无物可续传的失败图项并后台写盘、重渲卡片
+    /// “忽略丢失图片”chip 点按：清掉已无物可续传的失败图项并后台写盘、只刷新这一张卡
     /// （网页点 imgs_lost chip 清标记 + 重渲的等价动作；可续传图项不受影响）。
+    /// 审计第 8 轮第 9 项：旧流程先 renderDrafts() 又在写盘成功回调里再
+    /// renderDrafts()，整列卡片重建两次、可见位置也无保留；现只原位替换
+    /// 这一张卡，写盘成功直接结束，失败才按磁盘重读恢复该卡并 toast。
     @objc private func clearLostTapped(_ sender: UIButton) {
         var targetDraft: BearyDraft?
         for entry in lostEntries {
@@ -1417,23 +1420,60 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 drafts[offset] = draftValue
             }
         }
-        // 5-19：清除后立即重渲（renderDrafts 内按新 images 重算 saveStatus
-        // 刷新状态行），不等磁盘写盘回包；写盘失败时原失败分支仍从磁盘
-        // 重读恢复并 toast，不让“已清除”的 UI 盖住实际仍在的内容。
-        renderDrafts()
-        // G5：改用带 Bool 回调的写盘；失败时从磁盘重读恢复内存态并 toast，
-        // 不让“已清除”的 UI 盖住实际仍在的磁盘内容。
+        // 清除后立即只刷新这一张卡（图片计数、状态行、“忽略丢失图片” chip
+        // 都随新卡重算），不等磁盘写盘回包；其余卡片不动、滚动位置由锚点保留。
+        replaceCard(for: draftValue)
+        // G5：改用带 Bool 回调的写盘；写盘成功直接结束，不再重渲；
+        // 失败时从磁盘重读恢复该卡并 toast，不让“已清除”的 UI 盖住实际仍在的内容。
         BearyDraftStore.saveAsyncReporting(draftValue) { [weak self] ok in
             guard let strongSelf = self else { return }
             if ok {
-                strongSelf.renderDrafts()
-            } else {
-                strongSelf.loadDrafts {
+                return
+            }
+            strongSelf.loadDrafts {
+                if let restored = strongSelf.drafts.first(where: { $0.draftId == draftValue.draftId }) {
+                    strongSelf.replaceCard(for: restored)
+                } else {
                     strongSelf.renderDrafts()
-                    strongSelf.showDraftToast(message: "保存失败，图片提示还在")
                 }
+                strongSelf.showDraftToast(message: "保存失败，图片提示还在")
             }
         }
+    }
+
+    /// 审计第 8 轮第 9 项：只原位替换 draftId 对应的那一张卡，不重建整列。
+    /// 旧卡摘掉、新卡按 drafts 里的排位插回同一位置（复用 insertRestoredCard
+    /// 的可见锚点口径，卡片变矮不再把正在看的内容推走）；其余卡片、滚动
+    /// 位置都不动。失败态／找不到旧卡时退回全量渲染。
+    private func replaceCard(for draftValue: BearyDraft) {
+        guard !draftsLoadFailed else {
+            renderDrafts()
+            return
+        }
+        guard let oldEntryIndex = cardEntries.firstIndex(where: { $0.draftValue.draftId == draftValue.draftId }),
+              let stackIndex = listStack.arrangedSubviews.firstIndex(where: { $0 === cardEntries[oldEntryIndex].button }) else {
+            renderDrafts()
+            return
+        }
+        let oldCard = cardEntries[oldEntryIndex].button
+        // 插卡前采样当前可见卡片锚点（见 insertRestoredCard）：替换布局后
+        // 按锚点恢复偏移，卡片变矮不推走正在看的内容。
+        let anchor = firstVisibleCardAnchor()
+        listStack.removeArrangedSubview(oldCard)
+        oldCard.removeFromSuperview()
+        cardEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+        deleteEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+        lostEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+        // makeCard 会把删除钮／丢失图钮登记进 deleteEntries／lostEntries（与 renderDrafts 同路），
+        // 卡片登记追加在末尾，再挪回旧卡的位置，保持卡片数组与栈内顺序一致。
+        let card = makeCard(for: draftValue)
+        if let appendedIndex = cardEntries.firstIndex(where: { $0.draftValue.draftId == draftValue.draftId }),
+           appendedIndex != oldEntryIndex {
+            let entry = cardEntries.remove(at: appendedIndex)
+            cardEntries.insert(entry, at: min(oldEntryIndex, cardEntries.count))
+        }
+        listStack.insertArrangedSubview(card, at: min(stackIndex, listStack.arrangedSubviews.count))
+        restoreVisibleCardAnchor(anchor, restoredCard: card)
     }
 
     // MARK: - 文案推导（网页口径移植）
