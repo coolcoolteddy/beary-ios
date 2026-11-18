@@ -233,16 +233,16 @@ final class BearyEntrySync {
         }
     }
 
-    /// 回收站落盘写投递口（与 runDiaryDiskWrite 同款）：走同步队列并记
-    /// 写盘代际，供回收站提交守卫判断。现行调用方（回收站页静默刷新走
-    /// runDiskWrite、删帖进桶走 prependDeleted）均经 saveAll 记代际，
-    /// 故本入口现阶段无调用方，供后续调用方统一走队列时用。
+    /// 回收站落盘写投递口：走同步队列，不卡主线程。代际不在此记——
+    /// 各回收站写入口（prependDeleted／saveAll／removeItem）已在写锁内
+    /// 记一次（见 noteTrashWrite），本入口再记会重复计数（回收站页
+    /// 恢复写走 runDiskWrite 同款口径，见 BearyTrashViewController）。
+    /// 首个调用方：时间线删帖进桶（26-25）。
     /// 退出清理代次同款复核。
     func runTrashDiskWrite(accountId: Int, _ work: @escaping () -> Void) {
         let generation = purgeGeneration(forAccountId: accountId)
         queue.async { [weak self] in
             guard let self = self, generation == self.purgeGeneration(forAccountId: accountId) else { return }
-            BearyTrashSyncStore.noteTrashWrite()
             work()
         }
     }
