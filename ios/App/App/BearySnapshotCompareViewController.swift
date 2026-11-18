@@ -83,9 +83,10 @@ final class BearySnapshotPreviewViewController: UIViewController {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.6
         paragraph.lineBreakMode = .byCharWrapping
-        contentTextView.attributedText = NSAttributedString(
-            string: Self.displayText(title: snapshot.title, content: snapshot.content ?? ""),
-            attributes: [.font: BearyDynamicType.smallBodyFont(), .foregroundColor: BearyColors.ink, .paragraphStyle: paragraph])
+        // 快照正文里的 [mood:] 记号走卡片同款渲染（原先纯文本直显，
+        // 记号原文会露出来）；行高/断行口径与原来一致。快照不存图片，
+        // [gif:] 记号按既有兜底留原文。
+        contentTextView.attributedText = BearyText.inlineAttributedText(from: Self.displayText(title: snapshot.title, content: snapshot.content ?? ""), font: BearyDynamicType.smallBodyFont(), color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: nil)
         view.addSubview(contentTextView)
 
         noteLabel.translatesAutoresizingMaskIntoConstraints = false

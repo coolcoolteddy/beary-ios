@@ -1017,8 +1017,11 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         titleLabel.numberOfLines = 1
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.textAlignment = .left
-        titleLabel.text = titleText
         titleLabel.isHidden = titleText.isEmpty
+        if !titleText.isEmpty {
+            // 标题里的记号同样转回熊脸附件（与卡片标题同款）。
+            titleLabel.attributedText = BearyText.inlineAttributedText(from: titleText, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: draftValue.images.compactMap { $0.serverKey })
+        }
         inner.addArrangedSubview(titleLabel)
 
         let summaryLabel = UILabel()
@@ -1028,11 +1031,12 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         summaryLabel.numberOfLines = 2
         summaryLabel.textAlignment = .left
         let summary = bodyPreviewText(for: draftValue)
-        if let attributed = attributedText(summary, lineHeightMultiple: 1.6, font: summaryLabel.font) {
-            summaryLabel.attributedText = attributed
-        } else {
-            summaryLabel.text = summary
-        }
+        // 摘要是草稿正文原文，含 [mood:]/[gif:] 记号：走卡片同款渲染，
+        // 行高 1.6、尾部截断口径与原来一致。
+        let summaryStyle = NSMutableParagraphStyle()
+        summaryStyle.lineHeightMultiple = 1.6
+        summaryStyle.lineBreakMode = .byTruncatingTail
+        summaryLabel.attributedText = BearyText.inlineAttributedText(from: summary, font: summaryLabel.font, color: BearyColors.ink, paragraphStyle: summaryStyle, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: draftValue.images.compactMap { $0.serverKey })
         inner.addArrangedSubview(summaryLabel)
 
         // 审计第 2 项：meta 区改流式布局 + 状态独立成行。顺序与原来一致：
@@ -1531,17 +1535,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         dayFormatter.timeZone = beijingZone
         dayFormatter.dateFormat = "M月d日"
         return dayFormatter.string(from: date)
-    }
-
-    private func attributedText(_ text: String?, lineHeightMultiple: CGFloat, font: UIFont?) -> NSAttributedString? {
-        guard let text = text, let font = font else { return nil }
-        let style = NSMutableParagraphStyle()
-        style.lineHeightMultiple = lineHeightMultiple
-        style.lineBreakMode = .byTruncatingTail
-        return NSAttributedString(string: text, attributes: [
-            .font: font,
-            .paragraphStyle: style,
-        ])
     }
 
     // MARK: - 入场/退场动效

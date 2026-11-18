@@ -955,14 +955,14 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         summaryLabel.font = BearyDynamicType.diaryBodyFont()
         summaryLabel.adjustsFontForContentSizeCategory = true
         summaryLabel.textColor = BearyColors.ink
-        // P3-3：日记摘要长串按字符断行，不溢出；字号行高不动（富文本段落同步见 TrashText.lineSpaced）。
+        // P3-3：日记摘要长串按字符断行，不溢出；字号行高不动（富文本段落同步见下）。
         summaryLabel.lineBreakMode = .byCharWrapping
-        summaryLabel.attributedText = TrashText.lineSpaced(
-            text: trashSummary(trashValue),
-            font: BearyDynamicType.diaryBodyFont(),
-            lineHeightMultiple: 1.6,
-            color: BearyColors.ink
-        )
+        // 摘要是日记正文原文，含 [mood:]/[gif:] 记号：走卡片同款渲染，
+        // 行高 1.6、字符断行口径与原来一致。
+        let summaryStyle = NSMutableParagraphStyle()
+        summaryStyle.lineHeightMultiple = 1.6
+        summaryStyle.lineBreakMode = .byCharWrapping
+        summaryLabel.attributedText = BearyText.inlineAttributedText(from: trashSummary(trashValue), font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, paragraphStyle: summaryStyle, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: trashValue.imageKeys)
 
         let metaLabel = UILabel()
         metaLabel.numberOfLines = 0
@@ -1209,8 +1209,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     }
 
     /// 审计-时间线：回收站按钮无障碍 label 带条目标识——TrashItem 无标题字段，以正文首行截断作标识（空正文时回落“这篇日记”）。
+    /// 读屏不读记号原文：[mood:]/[gif:] 记号（含尾部截断一半的）先去掉。
     private func trashRowTitle(_ trashValue: TrashItem) -> String {
-        let raw = (trashValue.content ?? "").replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        var raw = (trashValue.content ?? "").replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        if let regex = try? NSRegularExpression(pattern: "\\[mood:[a-z]+\\]|\\[gif:[a-z0-9]+\\]|\\[(mood|gif):[a-z0-9]*$", options: []) {
+            raw = regex.stringByReplacingMatches(in: raw, options: [], range: NSRange(location: 0, length: (raw as NSString).length), withTemplate: "")
+            raw = raw.trimmingCharacters(in: .whitespaces)
+        }
         if raw.isEmpty { return "这篇日记" }
         return String(raw.prefix(20))
     }

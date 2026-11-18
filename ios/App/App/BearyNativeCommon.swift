@@ -2336,6 +2336,15 @@ enum BearyText {
         return count
     }
 
+    /// 截断文本尾部的半截记号：服务端摘要按字切片，可能正好切在
+    /// [mood:]/[gif:] 记号中间，残段无法匹配、渲染时会原文露出；
+    /// 渲染前去掉。完整记号以 ] 结尾，不会被本正则误伤。
+    static func stripTrailingPartialInlineToken(_ text: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: "\\[(mood|gif):[a-z0-9]*$", options: []) else { return text }
+        let range = NSRange(location: 0, length: (text as NSString).length)
+        return regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
+    }
+
     /// 天气 key → 中文名（与网页 WX_DEFS 同集 9 种）。
     static let weatherNames: [String: String] = [
         "sun": "晴", "cloud": "多云", "cloudy": "阴", "rain": "雨", "snow": "雪",

@@ -2779,7 +2779,8 @@ final class BearyNotificationsViewController: UIViewController {
             iconName: iconName,
             quoteText: quoteText,
             quoteMeta: quoteMeta,
-            goEntryId: goEntryId
+            goEntryId: goEntryId,
+            dark: traitCollection.userInterfaceStyle == .dark
         )
         modal.onGo = { [weak self] entryId in
             guard let strongSelf = self else { return }
@@ -3047,7 +3048,7 @@ private class BearyLetterModal {
     private var quoteBottomToContent: NSLayoutConstraint?
     private var buttonRatioConstraint: NSLayoutConstraint?
 
-    init(title: String, body: String, iconName: String, quoteText: String?, quoteMeta: String?, goEntryId: String?) {
+    init(title: String, body: String, iconName: String, quoteText: String?, quoteMeta: String?, goEntryId: String?, dark: Bool = false) {
         self.goEntryId = goEntryId
         self.isPopper = (iconName == "icon_popper")
         self.isMail = (iconName == "icon_mail")
@@ -3091,7 +3092,7 @@ private class BearyLetterModal {
         bodyLabel.numberOfLines = 0
         bodyLabel.lineBreakMode = .byCharWrapping
         // C-G8：网页 .letter-body line-height 1.9，App 原无行高倍数。
-        bodyLabel.attributedText = BearyLetterModal.lineHeightText(body, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.9)
+        bodyLabel.attributedText = BearyLetterModal.moodLineHeightText(body, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.9, dark: dark)
         quoteWrap.translatesAutoresizingMaskIntoConstraints = false
         quoteWrap.backgroundColor = BearyColors.surface2
         quoteWrap.layer.cornerRadius = 12
@@ -3113,7 +3114,7 @@ private class BearyLetterModal {
         quoteMetaLabel.numberOfLines = 0
         if let quoteText = quoteText, let quoteMeta = quoteMeta {
             // C-G17：网页 .lq-txt line-height 1.75，App 原无行高。
-            quoteTextLabel.attributedText = BearyLetterModal.lineHeightText(quoteText, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75)
+            quoteTextLabel.attributedText = BearyLetterModal.moodLineHeightText(quoteText, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75, dark: dark)
             quoteMetaLabel.text = quoteMeta
             quoteWrap.isHidden = false
         } else {
@@ -3309,11 +3310,20 @@ private class BearyLetterModal {
         return NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
     }
 
+    /// 信件正文/引用走心情渲染：服务端 body 可能内嵌日记正文切片
+    /// （如转回私密通知），含 [mood:] 记号原文；与卡片同款渲染。
+    private static func moodLineHeightText(_ string: String, font: UIFont, color: UIColor, multiple: CGFloat, dark: Bool) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = multiple
+        paragraph.lineBreakMode = .byCharWrapping
+        return BearyText.inlineAttributedText(from: BearyText.stripTrailingPartialInlineToken(string), font: font, color: color, paragraphStyle: paragraph, dark: dark, gifImageKeys: nil)
+    }
+
     /// 信件模态引用预览随后补全：引用区随正文一起进滚动区，按钮仍固定在滚动区下方。
     func fillQuote(text: String, meta: String) {
         // C-G17：随后补全的引用同样带 1.75 行高（与 init 分支一致）。
         let isNewQuote = quoteWrap.isHidden
-        quoteTextLabel.attributedText = BearyLetterModal.lineHeightText(text, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75)
+        quoteTextLabel.attributedText = BearyLetterModal.moodLineHeightText(text, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75, dark: overlayView.traitCollection.userInterfaceStyle == .dark)
         quoteMetaLabel.text = meta
         quoteWrap.isHidden = false
         bodyBottomToContent?.isActive = false
@@ -4244,8 +4254,8 @@ class BearyNotificationCell: UITableViewCell {
         avatarFallbackLabel.isHidden = true
         kindBadgeView.isHidden = true
         nestedLineView.isHidden = true
-        titleLabel.attributedText = BearyNotificationCell.lineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5)
-        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(excerpt, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: mergedList ? 12 : 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5)
+        titleLabel.attributedText = BearyNotificationCell.moodLineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
+        excerptLabel.attributedText = BearyNotificationCell.moodLineHeightText(excerpt, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: mergedList ? 12 : 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
         lastTimeMs = timeMs
         timeLabel.text = BearyNotificationCell.timeText(ms: timeMs)
         if mergedList {
@@ -4275,6 +4285,18 @@ class BearyNotificationCell: UITableViewCell {
         paragraph.lineHeightMultiple = multiple
         paragraph.lineBreakMode = lineBreakMode
         return NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
+    }
+
+    /// 摘要/标题走心情渲染：服务端 excerpt/body 是日记正文切片，
+    /// 含 [mood:]/[gif:] 记号原文；与卡片同款 inlineAttributedText，
+    /// 行高默认 1.5、断行口径与 lineHeightText 一致；合并列表传
+    /// multiple 1.0（与私信行同款无倍数行高）。通知无条目图，
+    /// [gif:] 记号按既有兜底留原文。
+    private static func moodLineHeightText(_ string: String, font: UIFont, color: UIColor, lineBreakMode: NSLineBreakMode = .byTruncatingTail, multiple: CGFloat = 1.5, dark: Bool) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = multiple
+        paragraph.lineBreakMode = lineBreakMode
+        return BearyText.inlineAttributedText(from: BearyText.stripTrailingPartialInlineToken(string), font: font, color: color, paragraphStyle: paragraph, dark: dark, gifImageKeys: nil)
     }
 
     /// 审计-性能：逐行新建 DateFormatter 改静态复用（每种格式一个静态实例，
@@ -4394,7 +4416,7 @@ class BearyNotificationCell: UITableViewCell {
             }
             avatarFallbackLabel.isHidden = true
             kindBadgeView.isHidden = true
-            titleLabel.attributedText = BearyNotificationCell.lineHeightText(titleText, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5)
+            titleLabel.attributedText = BearyNotificationCell.moodLineHeightText(titleText, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
         } else {
             // 互动行：42 圆头像（无图回退首字母 15/700 灰）+ 右下角 19 号类型角标。
             avatarImageView.backgroundColor = BearyColors.line
@@ -4471,7 +4493,7 @@ class BearyNotificationCell: UITableViewCell {
             titleLabel.attributedText = title
         }
 
-        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(item.excerpt ?? "", font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: mergedList ? 12 : 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5)
+        excerptLabel.attributedText = BearyNotificationCell.moodLineHeightText(item.excerpt ?? "", font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: mergedList ? 12 : 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
         lastTimeMs = item.createdAt
         timeLabel.text = BearyNotificationCell.timeText(ms: item.createdAt)
     }
