@@ -1363,10 +1363,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // 看门狗修法（2026-10-27，74 包 .ips 定案）：布局轮次里重算 preferred 会与呈现层
     // 容器布局成环——测量值每轮漂移 >0.5pt 时 0.5pt 门限防不住，主线程转圈 10 秒触发
-    // 系统 scene-update 看门狗杀进程。故只在宽变化时重算；天气开关/附加栏/图片/
+    // 系统 scene-update 看门狗杀进程。故只在宽或滚动区高变化时重算；天气开关/附加栏/图片/
     // 正文/引用等各入口都直接调 updatePreferredContentSize，不走这里，不会丢更新。
     // 首帧：viewDidLoad 已算一次，首个非 0 宽布局再纠正一次（lastLayoutWidth 初值 -1）。
     private var lastLayoutWidth: CGFloat = -1
+    // 审计 7-9：滚动区高上次值（初值 -1）。键盘升降只动工具栏锚点（keyboardLayoutGuide），
+    // view 帧不动、滚动区帧变，故高门跟 scrollView.bounds.height 而非 view 高；
+    // 门限 0.5pt，与 updatePreferredContentSize 同款防环口径。
+    private var lastLayoutHeight: CGFloat = -1
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
@@ -1397,12 +1401,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 临时诊断（82 包追加，定根因后删除）：入口每调一次记一次，不节流。
         DiagFile.mark("composer-layout")
         let w = view.bounds.width
-        guard w > 0, w != lastLayoutWidth else {
-            // 临时诊断（86 包，定根因后删除）：布局方法出口（宽门挡住的早退路径）。
+        // 审计 7-9：视口高也进重算门——键盘升降只动工具栏锚点（keyboardLayoutGuide），
+        // view 帧不动、滚动区帧变，旧宽门会把纯高变跳过，正文高滞留旧视口值。
+        // 高门限 0.5pt（与 updatePreferredContentSize 同款防环口径）；正文高本身
+        // 只改内容高、不改滚动区帧，不成环。
+        let h = scrollView.bounds.height
+        guard w > 0, w != lastLayoutWidth || abs(h - lastLayoutHeight) > 0.5 else {
+            // 临时诊断（86 包，定根因后删除）：布局方法出口（宽/高门挡住的早退路径）。
             DiagFile.mark("composer-layout-exit")
             return
         }
         lastLayoutWidth = w
+        lastLayoutHeight = h
         updateColumnConstraints()
         // P1-18：宽变化时先同步正文区高度再算 sheet 高（updateTextViewHeight 自带
         // 0.5pt 防抖门限，高度不变不赋值，不会与布局轮次成环）。
@@ -10464,6 +10474,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 而非下一布局帧跳变。
             // 6-3 例外：本 layoutIfNeeded 在键盘动画内、duration/curve 均取键盘通知，
             // 属系统曲线同步，保留不重写（不要当作通用约束动画口径扩散）。
+            // 审计 7-9：先布局、再算高——工具栏底锚 keyboardLayoutGuide，键盘帧变后
+            // 须先跑一轮 layoutIfNeeded 让滚动区帧落到新高，updateTextViewHeight 读到的
+            // scrollView.bounds.height 才是新视口高；旧顺序（先算高、后布局）读到旧高，
+            // 正文先按旧高撑开、下一布局帧再缩回。曲线/时长不动，两次 layoutIfNeeded
+            // 同在键盘动画块内、随同一曲线走。
+            self.view.layoutIfNeeded()
             self.updateTextViewHeight()
             self.view.layoutIfNeeded()
             // 2026-11-16 跳动审计第三批第 3 条：收起恢复并进同一动画周期——
