@@ -52,6 +52,8 @@ final class BearyMessagesViewController: UIViewController {
     var onOpenNotificationDetail: ((BearyNotificationDetailViewController) -> Void)?
     /// 底栏消息角标变化回调：快照变化／进页／离页时调，容器接线到底栏数字角标同步。
     var onMessagesUnreadChanged: (() -> Void)?
+    /// 系统通知／信件行点按：传建好的整页阅读页，容器接线到 SceneDelegate 包 nav 呈现。
+    var onOpenLetterPage: ((BearyLetterViewController) -> Void)?
 
     /// 合并行：通知卡／通知信件行／私信会话行／两组失败行／分页哨兵行。
     private enum MergedRow {
@@ -190,10 +192,10 @@ final class BearyMessagesViewController: UIViewController {
         notifChild.onFollowStateChangedForDetail = { [weak self] actorId in
             self?.activeDetailVC?.refreshFollowButtons(actorId: actorId)
         }
-        // 合并模式宿主：信件模态挂容器 view、toast 投容器 view（子页 view
+        notifChild.onOpenLetterPage = { [weak self] letterVC in self?.onOpenLetterPage?(letterVC) }
+        // 合并模式宿主：toast 投容器 view（子页 view
         // 不进层级时原 view 不可见，旧投法会看不见；详情页打开时详情页
         // 自己改挂，关闭时容器恢复，见 restoreMergedHosts）。
-        notifChild.letterModalHostView = view
         notifChild.toastOverride = { [weak self] message in
             guard let view = self?.view else { return }
             BearyToast.show(in: view, message: message)
@@ -326,10 +328,9 @@ final class BearyMessagesViewController: UIViewController {
         notifChild.refreshListIfUnreadChangedWithoutMarking()
     }
 
-    /// 详情页关闭时恢复合并模式宿主（信件模态挂容器 view、toast 投容器 view）。
+    /// 详情页关闭时恢复合并模式宿主（toast 投容器 view）。
     /// 详情页 viewWillAppear 时详情页自己改挂，见详情页类。
     private func restoreMergedHosts() {
-        notifChild.letterModalHostView = view
         notifChild.toastOverride = { [weak self] message in
             guard let view = self?.view else { return }
             BearyToast.show(in: view, message: message)
