@@ -1436,7 +1436,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     }
 
     @objc private func emoteChipTapped(_ sender: UIButton) {
-        guard let chip = sender as? BlindBoxEmoteChipButton, chip.emoteKey.isEmpty == false, reactBusy == false, let exchangeId = exchangeId else { return }
+        guard let chip = sender as? BlindBoxEmoteChipButton, chip.emoteKey.isEmpty == false, reactBusy == false, withdrawBusy == false, let exchangeId = exchangeId else { return }
         let key = chip.emoteKey
         // 2026-10-29 即时性口径：点按瞬间先改填色与计数，服务端回包只做确认，失败回滚。
         let previous = receivedEmotes
@@ -1490,7 +1490,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     }
 
     @objc private func emoteAddTapped() {
-        guard let exchangeId = exchangeId, reactBusy == false else { return }
+        guard let exchangeId = exchangeId, reactBusy == false, withdrawBusy == false else { return }
         if presentedViewController != nil { return }
         // 选择器本身只出熊脸（BearyEmoteKeys.bearFaces），与小熊回应墙同口径。
         let sheet = BearyEmotePickerSheetViewController()
@@ -1564,7 +1564,14 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 BearyAPI.shared.withdrawBlindBoxExchange(id: exchangeId) { result in
                     DispatchQueue.main.async {
                         self.withdrawBusy = false
-                        guard let accountId = request.accountId, self.isCurrentBlindBoxResponse(accountId: accountId, generation: request.generation) else { return }
+                        // 审计 26-38：撤回终态不与回应共用代次——撤回确认后发出
+                        // 的回应会把共享代次推后，旧守卫会把已成功的撤回回包
+                        // 当旧回包丢掉（服务端已撤回、客户端却停在原日记）。
+                        // 撤回回包只认账号与交换 ID，不认共享代次；切号 /
+                        // 换交换后旧撤回回包仍丢弃。
+                        guard let accountId = request.accountId,
+                              accountId == SessionManager.shared.currentUser?.id,
+                              exchangeId == self.exchangeId else { return }
                         switch result {
                         case .success:
                             // 审计新一轮 02：撤回成功即让此前全部在途详情请求失效
