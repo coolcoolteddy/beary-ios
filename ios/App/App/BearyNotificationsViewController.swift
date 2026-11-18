@@ -268,6 +268,25 @@ final class BearyNotificationsViewController: UIViewController {
     /// 写盘时再核对一次与当前登录账号一致，不直接用当前登录 ID。
     private var displayedPageAccountId: Int?
     private var isCustomPullRefreshing = false
+    /// 合并消息页下拉刷新宿主表：嵌入态子页 view 不进层级、自身滚动代理收不到拖动，
+    /// 下拉指示器改挂宿主表（容器表），由容器表滚动驱动；为 nil 时用自身表（独立通知页原口径）。
+    /// 与 letterModalHostView / hostVisibilityProvider 同款宿主注入口径。
+    var pullHostTableView: UITableView? {
+        didSet {
+            guard isViewLoaded else { return }
+            if let host = pullHostTableView {
+                if pullView.superview !== host {
+                    pullView.removeFromSuperview()
+                    host.addSubview(pullView)
+                }
+            } else if pullView.superview !== tableView {
+                pullView.removeFromSuperview()
+                tableView.addSubview(pullView)
+            }
+        }
+    }
+    /// 下拉指示器实际挂靠的表：有宿主时为宿主表，否则为自身表。
+    private var pullTableView: UITableView { pullHostTableView ?? tableView }
     /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
     private var customPullEndInFlight = false
     /// 顶栏透度批：容器最后一次发来的栏态（本页属性内边距不含安全区顶，见 applyHeaderTopInset）。
@@ -374,7 +393,7 @@ final class BearyNotificationsViewController: UIViewController {
         table.register(BearyNotificationTrailingCell.self, forCellReuseIdentifier: "BearyNotificationTrailingCell")
         table.delegate = self
         table.dataSource = self
-        table.addSubview(pullView)
+        pullTableView.addSubview(pullView)
         return table
     }()
 
@@ -1414,23 +1433,23 @@ final class BearyNotificationsViewController: UIViewController {
         if isCustomPullRefreshing {
             return
         }
-        if !tableView.isDragging {
+        if !pullTableView.isDragging {
             pullEngageTranslation = nil
-            pullView.frame = CGRect(x: 0, y: -116, width: tableView.bounds.width, height: 116)
+            pullView.frame = CGRect(x: 0, y: -116, width: pullTableView.bounds.width, height: 116)
             pullIconView.setPullProgress(0)
             return
         }
         // 顶栏透度批：在顶/下拉判定改以 -contentInset.top 为基准（现行收起态内边距 0 时与旧 y<=0/>0 等价）。
-        let contentRaw = max(0, -(tableView.contentOffset.y + tableView.contentInset.top))
-        let panTranslation = tableView.panGestureRecognizer.translation(in: tableView).y
-        if tableView.contentOffset.y <= -tableView.contentInset.top && pullEngageTranslation == nil {
+        let contentRaw = max(0, -(pullTableView.contentOffset.y + pullTableView.contentInset.top))
+        let panTranslation = pullTableView.panGestureRecognizer.translation(in: pullTableView).y
+        if pullTableView.contentOffset.y <= -pullTableView.contentInset.top && pullEngageTranslation == nil {
             pullEngageTranslation = panTranslation
-        } else if tableView.contentOffset.y > -tableView.contentInset.top {
+        } else if pullTableView.contentOffset.y > -pullTableView.contentInset.top {
             pullEngageTranslation = nil
         }
         let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
         let indicatorHeight = min(fingerRaw * 0.48, 116)
-        pullView.frame = CGRect(x: 0, y: indicatorHeight - 116 - contentRaw, width: tableView.bounds.width, height: 116)
+        pullView.frame = CGRect(x: 0, y: indicatorHeight - 116 - contentRaw, width: pullTableView.bounds.width, height: 116)
         if indicatorHeight <= 0 {
             pullIconView.setPullProgress(0)
         } else {
@@ -1452,13 +1471,13 @@ final class BearyNotificationsViewController: UIViewController {
         // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
         // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”；
         // 旧 0.32s 默认 easeInOut 零初速起手、与手指甩速脱节，手感发轻。
-        tableView.setContentOffset(tableView.contentOffset, animated: false)
+        pullTableView.setContentOffset(pullTableView.contentOffset, animated: false)
         // A5-3：下拉刷新进场查减动效开关——减动效时直接落位，不播 0.38s 动画。
         let pullIn = {
-            self.tableView.contentInset.top = 84
-            self.tableView.scrollIndicatorInsets.top = 84
-            self.tableView.contentOffset = CGPoint(x: 0, y: -84)
-            self.pullView.frame = CGRect(x: 0, y: -84, width: self.tableView.bounds.width, height: 84)
+            self.pullTableView.contentInset.top = 84
+            self.pullTableView.scrollIndicatorInsets.top = 84
+            self.pullTableView.contentOffset = CGPoint(x: 0, y: -84)
+            self.pullView.frame = CGRect(x: 0, y: -84, width: self.pullTableView.bounds.width, height: 84)
         }
         if UIAccessibility.isReduceMotionEnabled {
             pullIn()
@@ -1483,15 +1502,15 @@ final class BearyNotificationsViewController: UIViewController {
         // 不再把 contentOffset 拽回 0 顶部，只复位内边距、藏指示头，留在原位置；
         // 仍停在下拉位的才按旧口径回到 0（指示区须收掉）。
         // 下拉位 = -84（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
-        let stillAtPullPosition = !self.tableView.isDragging
-            && self.tableView.contentOffset.y <= -84 + 8
+        let stillAtPullPosition = !self.pullTableView.isDragging
+            && self.pullTableView.contentOffset.y <= -84 + 8
         let pullOut = {
-            self.tableView.contentInset.top = 0
-            self.tableView.scrollIndicatorInsets.top = 0
+            self.pullTableView.contentInset.top = 0
+            self.pullTableView.scrollIndicatorInsets.top = 0
             if stillAtPullPosition {
-                self.tableView.contentOffset = CGPoint(x: 0, y: 0)
+                self.pullTableView.contentOffset = CGPoint(x: 0, y: 0)
             }
-            self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
+            self.pullView.frame = CGRect(x: 0, y: -116, width: self.pullTableView.bounds.width, height: 116)
         }
         if UIAccessibility.isReduceMotionEnabled {
             pullOut()
@@ -3053,8 +3072,32 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
         }
     }
 
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    /// 合并消息页容器表驱动下拉刷新：容器表滚动时跟随指示器。
+    /// 子页 view 不进层级时自身 scrollViewDidScroll 收不到拖动，容器 scrollViewDidScroll 调这里补上；
+    /// 独立通知页时容器不调，自身 scrollViewDidScroll 调同一方法。
+    func handlePullHostScrollDidScroll() {
         updateCustomPullIndicator()
+    }
+
+    /// 合并消息页容器表松手：满 140pt 行程才触发刷新，与独立通知页 scrollViewDidEndDragging 同口径；
+    /// 返回是否触发了刷新（容器据此同时重拉私信组）。程序触发的 refresh() 不走这里。
+    @discardableResult
+    func handlePullHostScrollDidEndDragging(willDecelerate decelerate: Bool) -> Bool {
+        // 自定义下拉触发：手指原始行程满 140pt 松手才刷新（原网页 TRIGRAW 口径 205pt，App 侧本支改短，见 PR 描述）。
+        let panTranslation = pullTableView.panGestureRecognizer.translation(in: pullTableView).y
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        pullEngageTranslation = nil
+        if fingerRaw >= 140 && !isLoadingFirstPage && !isCustomPullRefreshing {
+            // M12（91 包）：自定义下拉触发（满 140pt 松手）给一次轻触觉；程序触发的 refresh() 不走这里。
+            BearyHaptics.press()
+            beginCustomPullRefresh()
+            return true
+        }
+        return false
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        handlePullHostScrollDidScroll()
         // 翻页失败重 arm：哨兵滚出视野后清失败旗，下次滚回/近底再触。
         if loadMoreFailed {
             let visibleRows = tableView.indexPathsForVisibleRows ?? []
@@ -3073,15 +3116,7 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        // 自定义下拉触发：手指原始行程满 140pt 松手才刷新（原网页 TRIGRAW 口径 205pt，App 侧本支改短，见 PR 描述）。
-        let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
-        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
-        pullEngageTranslation = nil
-        if fingerRaw >= 140 && !isLoadingFirstPage && !isCustomPullRefreshing {
-            // M12（91 包）：自定义下拉触发（满 140pt 松手）给一次轻触觉；程序触发的 refresh() 不走这里。
-            BearyHaptics.press()
-            beginCustomPullRefresh()
-        }
+        _ = handlePullHostScrollDidEndDragging(willDecelerate: decelerate)
     }
 }
 
