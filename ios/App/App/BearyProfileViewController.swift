@@ -5784,10 +5784,13 @@ class BearyProfileViewController: UIViewController {
                 currentWalkEntry = next
                 lastWalkId = next.id
                 renderRandom(visible: pool)
-                if headerWidthValue > 0 { layoutHeaderForced(widthValue: headerWidthValue) }
+                // 随机卡内容换了高度：只重算表头脚部高度钉住旧值（与
+                // thisDay 展开同款），须一并重算脚部。
+                pastSelfRefreshLayout()
             } else {
                 currentWalkEntry = nil
                 randomCard.isHidden = true
+                pastSelfRefreshLayout()
                 BearyToast.show(in: view, message: "这篇日记已不存在")
             }
             return
@@ -5802,6 +5805,8 @@ class BearyProfileViewController: UIViewController {
             // 池空：旧代码静默返回、无任何提示；明示并藏卡，不留旧篇空壳。
             BearyToast.show(in: view, message: "这里还没有日记")
             renderRandom(visible: pool)
+            // 藏卡改了脚部高度，一并重算脚部（同下换篇过渡）。
+            pastSelfRefreshLayout()
             return
         }
         if pool.count <= 1 {
@@ -5823,12 +5828,15 @@ class BearyProfileViewController: UIViewController {
     private func animateRandomSwap(to entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else {
             renderRandom(visible: BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend))
+            pastSelfRefreshLayout()
             return
         }
         randomWalkSwapEntryId = entryId
         guard !UIAccessibility.isReduceMotionEnabled, randomContentStack.window != nil else {
             applyRandomEntryContent(entry)
             randomContentStack.alpha = 1
+            // 直换路径：内容已换，脚部高度须立即重算（无淡变遮挡）。
+            pastSelfRefreshLayout()
             randomWalkSwapEntryId = nil
             return
         }
@@ -5837,6 +5845,11 @@ class BearyProfileViewController: UIViewController {
         }, completion: { [weak self] _ in
             guard let self = self, self.randomWalkSwapEntryId == entryId else { return }
             self.applyRandomEntryContent(entry)
+            // 淡出间隙（卡片正不可见）：新内容已落位、旧脚部高度仍钉着
+            // 上一篇的量——此时重算脚部，高度变化不露在用户眼前，
+            // 再淡入新篇；否则多余高度会被最低吸附的词行区吃掉，
+            // 在词汇指纹卡内留出异常空隙。
+            self.pastSelfRefreshLayout()
             UIView.animate(withDuration: 0.09, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
                 self.randomContentStack.alpha = 1
             }, completion: { [weak self] _ in
