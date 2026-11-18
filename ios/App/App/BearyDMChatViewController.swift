@@ -56,6 +56,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     // 空态走 BearyStateView（仅无消息时显，与 emptyLabel/loadFailedStateView 同槽位居中、互斥；
     // 会话已关闭分支仍用 emptyLabel）。
     private let emptyStateView = BearyStateView()
+    /// 审计第 26 项第 1 项：会话失效遮罩——当前无账号（退出/过期/他设备登出）
+    /// 时盖住已加载的私信内容，不关页、不清表；同号重新验证成功后撤掉。
+    /// 纯不透明底色、无文案，不复用空态/加载态（两者都带文案且各有互斥逻辑）；
+    /// 只盖顶栏以下的内容区，顶栏返回钮仍可点，permBanner（无消息内容）不盖。
+    private let sessionMaskView = UIView()
     // 审计第 19 项：首次加载态复用 BearyStateView（转圈 +“加载中…”），不加骨架屏。
     // 只在“首次请求且尚无本地/旧消息”时出现；有旧消息时保留内容后台刷新。
     private let firstLoadStateView = BearyStateView()
@@ -368,6 +373,20 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             emptyStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
         ])
 
+        // 审计第 26 项第 1 项：会话失效遮罩（见声明处注释）。最后加进视图层级，
+        // 盖在列表/输入条/pill/空态之上；默认隐藏，进页时按当前登录态定初始显隐。
+        sessionMaskView.translatesAutoresizingMaskIntoConstraints = false
+        sessionMaskView.backgroundColor = BearyColors.bg
+        sessionMaskView.isHidden = true
+        view.addSubview(sessionMaskView)
+        NSLayoutConstraint.activate([
+            sessionMaskView.topAnchor.constraint(equalTo: tableView.topAnchor),
+            sessionMaskView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            sessionMaskView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            sessionMaskView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        updateSessionMask()
+
         // 2026-11-04 键盘跟随：输入条底直接锚系统 keyboardLayoutGuide 顶——
         // 贴底键盘弹起时输入条底恰贴键盘顶、跟系统动画走；浮动键盘不占底部，
         // guide 高为 0，输入条留在底部不动；旧手算 constant（applyKeyboard）
@@ -631,12 +650,26 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }
     }
 
+    /// 审计第 26 项第 1 项：会话失效时只遮内容，不关页、不清表。
+    /// 当前无账号即显示遮罩；同号在时撤掉（重登同号时广播会再走这里）；
+    /// 切号不碰遮罩，关页逻辑接管。
+    private func updateSessionMask() {
+        let sessionInvalid = SessionManager.shared.currentUser == nil
+        sessionMaskView.isHidden = !sessionInvalid
+        tableView.accessibilityElementsHidden = sessionInvalid
+        inputBar.accessibilityElementsHidden = sessionInvalid
+    }
+
     /// 账号变化广播：切到另一账号即清旧内容关页；同号重登/取消恢复只续绑
-    /// 代次（本页仍是该账号的页，在途旧回包凭请求时捕获的代次丢弃）；
-    /// 退出/过期（当前无账号）不关页——下次动作走原有登录门，重登同号
-    /// 仍留本页，重登他号再由此关页。
+    /// 代次（本页仍是该账号的页，在途旧回包凭请求时捕获的代次丢弃），
+    /// 并撤掉会话失效遮罩恢复显示；
+    /// 退出/过期（当前无账号）不关页——只显示遮罩盖住已加载的私信，
+    /// 下次动作走原有登录门，重登同号仍留本页，重登他号再由此关页。
     @objc private func handleUserChanged() {
-        guard let currentId = SessionManager.shared.currentUser?.id else { return }
+        guard let currentId = SessionManager.shared.currentUser?.id else {
+            updateSessionMask()
+            return
+        }
         guard currentId == storeAccountId else {
             closeForIdentityChange()
             return
@@ -644,6 +677,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         if BearyAPI.shared.authEpoch != identityGeneration {
             identityGeneration = BearyAPI.shared.authEpoch
         }
+        updateSessionMask()
     }
 
     func textViewDidChange(_ textView: UITextView) {
