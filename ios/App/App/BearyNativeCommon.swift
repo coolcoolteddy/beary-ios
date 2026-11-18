@@ -2304,6 +2304,44 @@ enum BearyText {
         }
     }
 
+    // MARK: - 正文仅表情放大（2026-11-18 Li 定）
+
+    /// 仅表情放大倍数：与写日记页同款 ×2（参考图实测放大后约 2.2 倍，取 2 倍）。
+    static let emojiOnlyFontScale: CGFloat = 2
+
+    /// 正文是否“仅含 ≤3 个表情”：除空白外只剩表情字符、个数 1...3。
+    /// 空白（空格/换行）不计；[mood:]/[gif:] 记号是文字，不算表情。
+    /// 口径与写日记页 #1964（BearyComposerViewController 的同名私有实现）
+    /// 一字相同——该支未合入、写日记页文件不能动，故这里单写一份；
+    /// #1964 合入后两处统一到这里，删作曲侧的私有副本。
+    static func isEmojiOnlyBodyText(_ plain: String) -> Bool {
+        let meaningful = plain.filter { !$0.isWhitespace }
+        guard (1...3).contains(meaningful.count) else { return false }
+        return meaningful.allSatisfy { isEmojiCluster($0) }
+    }
+
+    /// 一个字素簇是否表情：至少一个“表情呈现”码点（或 VS16 序列），
+    /// 且全部码点都是表情相关。Swift 的 Unicode.Scalar.Properties 没有
+    /// Emoji_Component 一项，组件类码点改按值认：ZWJ、VS15/VS16、键帽
+    /// （20E3 与 0-9/#/*）、标签字符（E0020–E007F，地区旗）。
+    /// 这样纯数字、字母、“#”等不算表情；组合表情（ZWJ 全家、肤色、❤️、1️⃣）算一个。
+    private static func isEmojiCluster(_ ch: Character) -> Bool {
+        let scalars = ch.unicodeScalars
+        guard scalars.contains(where: { $0.properties.isEmojiPresentation || $0.value == 0xFE0F }) else { return false }
+        return scalars.allSatisfy { s in
+            s.properties.isEmoji || s.properties.isEmojiModifier
+                || s.value == 0x200D || s.value == 0xFE0F || s.value == 0xFE0E || s.value == 0x20E3
+                || (0x30...0x39).contains(s.value) || s.value == 0x23 || s.value == 0x2A
+                || (0xE0020...0xE007F).contains(s.value)
+        }
+    }
+
+    /// 正文生效字号：仅表情（≤3 个、无其他文字）时基准字号 ×2，否则基准字号。
+    /// 与写日记页同款算法（bodyFont.withSize(pointSize × 2））。
+    static func effectiveBodyFont(_ baseFont: UIFont, for plain: String) -> UIFont {
+        isEmojiOnlyBodyText(plain) ? baseFont.withSize(baseFont.pointSize * emojiOnlyFontScale) : baseFont
+    }
+
     /// 记号 → 富文本：心情与 GIF 共用同一正则分派；未解析到的记号留原文
     /// （未知心情 key、无对应 image key 的 GIF、旧客户端的手打文本都留原文，不崩）。
     /// gifImageKeys：本篇 images 里的完整 key（解析 [gif:] 时按 rand 找回）；

@@ -1871,7 +1871,7 @@ class BearyDiaryCardCell: UITableViewCell {
         // 旧心情改位：主题切换时正文末尾心情附件需换深浅变体，故两模式
         // 都重建正文（仅换附件变体，折叠态与行数不动）。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle, let e = currentEntry {
-            contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: 16, moodKey: e.mood)
+            contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: bodyFontSize(for: e.content ?? ""), moodKey: e.mood)
         }
         // 审计第 27 项：内容字号档变化时立即重建可见卡片富文本——
         // attributed 字号不随 adjustsFont 自动跟随，旧口径要等下次 configure
@@ -1884,7 +1884,7 @@ class BearyDiaryCardCell: UITableViewCell {
             if cardMode == .feed {
                 updateContentAndFold()
             } else {
-                contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: 16, moodKey: e.mood)
+                contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: bodyFontSize(for: e.content ?? ""), moodKey: e.mood)
                 if foldApplies {
                     setFoldDisplay(expanded: isExpanded, animated: false)
                 } else {
@@ -2114,6 +2114,12 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     /// F2：正文 16pt（首页）、行高 1.6（段落样式实现，非默认行高）。
+    /// 正文仅表情放大（2026-11-18 Li 定）：1–3 个纯表情时字号 ×2，
+    /// 显示与量算（折叠判断、行高估算）都走 bodyFontSize(for:)，行高倍数 1.6 跟字号走。
+    private func bodyFontSize(for text: String) -> CGFloat {
+        BearyText.isEmojiOnlyBodyText(text) ? 16 * BearyText.emojiOnlyFontScale : 16
+    }
+
     private func attributedBody(_ text: String, fontSize: CGFloat) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.6
@@ -2658,7 +2664,7 @@ class BearyDiaryCardCell: UITableViewCell {
         updateEntryTitle(entry.title)
         // 正文 + 300 字折叠（网页 renderPublic foldLong 口径；折叠态收起 6 行）。
         let bodyText = entry.content ?? ""
-        contentLabel.attributedText = bodyWithTrailingMood(bodyText, fontSize: 16, moodKey: entry.mood)
+        contentLabel.attributedText = bodyWithTrailingMood(bodyText, fontSize: bodyFontSize(for: bodyText), moodKey: entry.mood)
         foldApplies = bodyText.count > 300
         foldButton.isHidden = !foldApplies
         if foldApplies {
@@ -2828,15 +2834,17 @@ class BearyDiaryCardCell: UITableViewCell {
     private func measuredFoldOverflow(contentWidth: CGFloat) -> Bool {
         let fullText = currentEntry?.content ?? ""
         if fullText.isEmpty || fullText.count <= 300 || contentWidth <= 0 { return false }
-        let foldCacheKey = "\(currentEntry?.id ?? "")|\(Int(contentWidth.rounded()))|16|\(traitCollection.preferredContentSizeCategory.rawValue)|\(fullText.count)|\(fullText.hashValue)"
+        // 折叠量算与显示同字号（仅表情放大时也用放大字号量，缓存键带字号）。
+        let size = bodyFontSize(for: fullText)
+        let foldCacheKey = "\(currentEntry?.id ?? "")|\(Int(contentWidth.rounded()))|\(Int(size))|\(traitCollection.preferredContentSizeCategory.rawValue)|\(fullText.count)|\(fullText.hashValue)"
         if let cached = foldOverflowCache[foldCacheKey] { return cached }
-        let full = attributedBody(fullText, fontSize: 16)
+        let full = attributedBody(fullText, fontSize: size)
         let fullHeight = full.boundingRect(
             with: CGSize(width: contentWidth, height: CGFloat.greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             context: nil
         ).height
-        let singleHeight = attributedBody("X", fontSize: 16).boundingRect(
+        let singleHeight = attributedBody("X", fontSize: size).boundingRect(
             with: CGSize(width: contentWidth, height: CGFloat.greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             context: nil
@@ -2874,7 +2882,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private func updateContentAndFold() {
         let fullText = currentEntry?.content ?? ""
-        contentLabel.attributedText = bodyWithTrailingMood(fullText, fontSize: 16, moodKey: currentEntry?.mood)
+        contentLabel.attributedText = bodyWithTrailingMood(fullText, fontSize: bodyFontSize(for: fullText), moodKey: currentEntry?.mood)
         let width = contentLabel.bounds.width > 0 ? contentLabel.bounds.width : bodyColumnWidthEstimate()
         let overflow = measuredFoldOverflow(contentWidth: width)
         foldOverflow = overflow
@@ -4534,13 +4542,17 @@ extension BearyDiaryCardCell {
 
     /// 正文纯文本高度：与 attributedBody 同款字体 + 行高倍数，只量文字本身，
     /// 不含心情缀尾附件（附件只占末行尾部，可忽略）。
-    static func estimatedTextHeight(_ text: String, width: CGFloat, lineHeightMultiple: CGFloat) -> CGFloat {
+    /// isEmojiOnly 为 true 时按放大字号量（与显示同字号）；默认 false，
+    /// 时间线行（1.75 倍、不放大口径）不传，保持原口径。
+    static func estimatedTextHeight(_ text: String, width: CGFloat, lineHeightMultiple: CGFloat, isEmojiOnly: Bool = false) -> CGFloat {
         guard !text.isEmpty, width > 0 else { return 0 }
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = lineHeightMultiple
         paragraph.lineBreakMode = .byCharWrapping
+        let baseFont = BearyDynamicType.diaryBodyFont()
+        let font = isEmojiOnly ? baseFont.withSize(baseFont.pointSize * BearyText.emojiOnlyFontScale) : baseFont
         let attr = NSAttributedString(string: text, attributes: [
-            .font: BearyDynamicType.diaryBodyFont(),
+            .font: font,
             .paragraphStyle: paragraph,
         ])
         return attr.boundingRect(
@@ -4551,12 +4563,14 @@ extension BearyDiaryCardCell {
     }
 
     /// 单行高（与 measuredFoldOverflow 同款 "X" 量法，供折叠 6 行封顶用）。
-    static func estimatedSingleLineHeight(lineHeightMultiple: CGFloat) -> CGFloat {
+    static func estimatedSingleLineHeight(lineHeightMultiple: CGFloat, isEmojiOnly: Bool = false) -> CGFloat {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = lineHeightMultiple
         paragraph.lineBreakMode = .byCharWrapping
+        let baseFont = BearyDynamicType.diaryBodyFont()
+        let font = isEmojiOnly ? baseFont.withSize(baseFont.pointSize * BearyText.emojiOnlyFontScale) : baseFont
         let attr = NSAttributedString(string: "X", attributes: [
-            .font: BearyDynamicType.diaryBodyFont(),
+            .font: font,
             .paragraphStyle: paragraph,
         ])
         return attr.boundingRect(
@@ -4571,8 +4585,10 @@ extension BearyDiaryCardCell {
     static func estimatedCardHeight(for entry: Entry, mode: BearyDiaryCardMode, expanded: Bool, firstRow: Bool, tableWidth: CGFloat) -> CGFloat {
         let contentWidth = max(0, tableWidth - 84)
         let text = entry.content ?? ""
-        let fullHeight = estimatedTextHeight(text, width: contentWidth, lineHeightMultiple: 1.6)
-        let singleHeight = estimatedSingleLineHeight(lineHeightMultiple: 1.6)
+        // 仅表情放大时正文与单行高都按放大字号量（与显示同字号）。
+        let emojiOnly = BearyText.isEmojiOnlyBodyText(text)
+        let fullHeight = estimatedTextHeight(text, width: contentWidth, lineHeightMultiple: 1.6, isEmojiOnly: emojiOnly)
+        let singleHeight = estimatedSingleLineHeight(lineHeightMultiple: 1.6, isEmojiOnly: emojiOnly)
         let lines = singleHeight > 0 ? Int(ceil(fullHeight / singleHeight - 0.01)) : 0
         // 与 measuredFoldOverflow 同口径：≤300 字恒不折叠。
         let overflow = text.count > 300 && lines > 6
