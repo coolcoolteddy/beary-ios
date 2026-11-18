@@ -1819,7 +1819,7 @@ extension UIImageView {
         set { objc_setAssociatedObject(self, &bearyImageShownKindKey, NSNumber(value: newValue.rawValue), .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
     }
 
-    func bearySetImage(url: URL?, placeholder: UIImage? = nil, downsampleToWidth: CGFloat? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil) {
+    func bearySetImage(url: URL?, placeholder: UIImage? = nil, downsampleToWidth: CGFloat? = nil, onSuccess: ((UIImage) -> Void)? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil) {
         // 同图重配：目标与当前一致时保留——在途请求继续跑，不取消；
         // 完整图或缩略图已显示，不重下；有占位图时同样保留（占位图
         // 本身就是可见内容）。只有 URL 变了、或上次已失败（无在途
@@ -1861,6 +1861,7 @@ extension UIImageView {
             case .success(let img):
                 self.bearyImageFullLoaded = true
                 self.bearyShownImageKind = .full
+                onSuccess?(img)
                 let slowLoad = Date().timeIntervalSince(startedAt) >= 0.15
                 if slowLoad && self.alpha == 1 && BearyMotion.animated(true) {
                     self.alpha = 0
@@ -1882,7 +1883,7 @@ extension UIImageView {
     /// （transform + opacity，0.3s）；瞬时命中缓存时直设不闪。
     /// 容器尺寸由调用方预先固定（卡片图片条 216 高、宽按宽高比预留），
     /// 本方法不改布局、不跳动；小图失败不挡原图加载。
-    func bearySetImageWithBlurUp(url: URL?, downsampleToWidth: CGFloat? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil, forceRetry: Bool = false) {
+    func bearySetImageWithBlurUp(url: URL?, downsampleToWidth: CGFloat? = nil, onSuccess: ((UIImage) -> Void)? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil, forceRetry: Bool = false) {
         // 同图重配：目标与当前一致时保留——在途请求（小图或完整图）
         // 继续跑，不取消、不清 nil；完整图已显示，不重下。
         // 只有 URL 变了、或上次两路都已失败（无在途请求、无显示图）
@@ -1923,13 +1924,16 @@ extension UIImageView {
                 self.image = tiny
                 self.bearyShownImageKind = .thumbnail
                 self.bearyRemoveWebRingSpinner()
+                // 32px 小图与原图同宽高比：先按它纠一次槽宽，条带首帧即接近终宽，
+                // 原图到后 onSuccess 再按精确尺寸复核一次（差值 ≤0.5pt 时不动）。
+                onSuccess?(tiny)
             }
-            self.bearyLoadFullForBlurUp(url: url, downsampleToWidth: downsampleToWidth, startedAt: startedAt, onFailure: onFailure)
+            self.bearyLoadFullForBlurUp(url: url, downsampleToWidth: downsampleToWidth, startedAt: startedAt, onSuccess: onSuccess, onFailure: onFailure)
         }
         objc_setAssociatedObject(self, &bearyImageTaskKey, tinyTask, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
     }
 
-    private func bearyLoadFullForBlurUp(url: URL, downsampleToWidth: CGFloat?, startedAt: Date, onFailure: ((BearyImageLoadError) -> Void)?) {
+    private func bearyLoadFullForBlurUp(url: URL, downsampleToWidth: CGFloat?, startedAt: Date, onSuccess: ((UIImage) -> Void)? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil) {
         let task = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: downsampleToWidth) { [weak self] result in
             guard let self = self else { return }
             let current = objc_getAssociatedObject(self, &bearyImageURLKey) as? URL
@@ -1941,6 +1945,7 @@ extension UIImageView {
             case .success(let img):
                 self.bearyImageFullLoaded = true
                 self.bearyShownImageKind = .full
+                onSuccess?(img)
                 let slowLoad = Date().timeIntervalSince(startedAt) >= 0.15
                 if slowLoad && self.alpha == 1 && BearyMotion.animated(true) {
                     self.image = img

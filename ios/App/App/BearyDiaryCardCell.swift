@@ -70,6 +70,9 @@ final class BearyFeedRetryButton: UIButton {
     /// 重试沿用首次加载口径：图片槽走模糊到清晰（见 bearyFeedLoadImage），
     /// 头像等不走。本标志由 bearyFeedLoadImage 在挂重试钮时写入。
     var retryBlurUp = false
+    /// 重试沿用首次加载的成功回调（图片条按实测尺寸纠槽宽，见 bearyFeedLoadImage）：
+    /// 失败重试成功后同样纠宽，否则重试回来的图仍停在 280 默认宽下被裁切。
+    var retryOnSuccess: ((UIImage) -> Void)?
     // B 组：帧 28 时 point 外扩至 44（头像帧另改 44 后本扩不生效，图片重试仍靠它）。
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         let dx: CGFloat = bounds.width < 44 ? (44 - bounds.width) / 2 : 0
@@ -94,21 +97,37 @@ func bearyFeedRetryButton(target: Any?, action: Selector) -> BearyFeedRetryButto
     return btn
 }
 
+/// 图片条槽宽（卡片／详情同款夹取口径）：高 216、宽按实测宽高比定，
+/// 0.55–2.22 倍高夹取；尺寸无效（0 或 nil）时回落 280 默认宽。
+/// 旧口径只认服务端 imgDims，而服务端现阶段恒不下发（恒 nil），
+/// 槽宽恒为 280：竖图 3:4 在 280×216 框里 aspectFill 要裁掉约 42% 高、
+/// 9:16 裁约 55%、截图上下文字同被裁掉；横图 16:9 也裁约 27% 高。
+/// 调用方在图到后拿 UIImage.size 走本函数纠宽（见卡片／详情 renderImages），
+/// 高 216、圆角 12、间距 8 一字不动，只纠被裁掉的部分。
+func bearyStripWidth(forImageSize size: CGSize, height: CGFloat) -> CGFloat {
+    guard size.width > 0, size.height > 0 else { return 280 }
+    let raw = height * size.width / size.height
+    return round(max(height * 0.55, min(height * 2.22, raw)))
+}
+
 /// 经 bearySetImage 的 onFailure 钩子加载：失败（取消除外，复用取消不算失败）时亮重试图标。
 /// blurUp=true 时走模糊到清晰（32px 小图占位 → 原图 1.04→1 缩放淡入），
 /// 只用于卡片/详情图片槽；头像等传 false，走原口径。
-func bearyFeedLoadImage(into imageView: UIImageView, url: URL?, retryButton: BearyFeedRetryButton, downsampleToWidth: CGFloat? = nil, blurUp: Bool = false) {
+/// onSuccess：图到后回调（小图与原图各一次，宽高比一致），图片条用它按
+/// 实测尺寸纠槽宽；不传时行为与原来一致。
+func bearyFeedLoadImage(into imageView: UIImageView, url: URL?, retryButton: BearyFeedRetryButton, downsampleToWidth: CGFloat? = nil, blurUp: Bool = false, onSuccess: ((UIImage) -> Void)? = nil) {
     retryButton.targetImageView = imageView
     retryButton.retryURL = url
     retryButton.retryBlurUp = blurUp
+    retryButton.retryOnSuccess = onSuccess
     retryButton.isHidden = true
     if blurUp {
-        imageView.bearySetImageWithBlurUp(url: url, downsampleToWidth: downsampleToWidth, onFailure: { [weak retryButton] _ in
+        imageView.bearySetImageWithBlurUp(url: url, downsampleToWidth: downsampleToWidth, onSuccess: onSuccess, onFailure: { [weak retryButton] _ in
             retryButton?.isHidden = false
         })
         return
     }
-    imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: downsampleToWidth, onFailure: { [weak retryButton] _ in
+    imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: downsampleToWidth, onSuccess: onSuccess, onFailure: { [weak retryButton] _ in
         retryButton?.isHidden = false
     })
 }
@@ -119,11 +138,11 @@ func bearyFeedPerformRetry(_ button: BearyFeedRetryButton) {
     let retryDownsample = imageView.bounds.width > 0 ? imageView.bounds.width * UIScreen.main.scale : nil
     if button.retryBlurUp {
         // forceRetry 绕过“同 URL＋image 非空”守卫：缩略图已显示时也一定重发完整图请求。
-        imageView.bearySetImageWithBlurUp(url: url, downsampleToWidth: retryDownsample, onFailure: { [weak button] _ in
+        imageView.bearySetImageWithBlurUp(url: url, downsampleToWidth: retryDownsample, onSuccess: button.retryOnSuccess, onFailure: { [weak button] _ in
             button?.isHidden = false
         }, forceRetry: true)
     } else {
-        imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: retryDownsample, onFailure: { [weak button] _ in
+        imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: retryDownsample, onSuccess: button.retryOnSuccess, onFailure: { [weak button] _ in
             button?.isHidden = false
         })
     }
@@ -2219,6 +2238,21 @@ class BearyDiaryCardCell: UITableViewCell {
         return 280
     }
 
+    /// 图到后按实测尺寸纠槽宽（见 bearyStripWidth 注释：imgDims 恒 nil，
+    /// 初宽恒 280，竖图会被 aspectFill 裁掉近半）。只改宽约束 constant，
+    /// 高 216 与行高一字不动，不触发行高重算、不跳动；差值 ≤0.5pt 不动，
+    /// 小图／原图两次回调收敛在同一值。复用守卫：槽位须仍属本 key，
+    /// 换篇／换图后的迟到回调直接丢弃。
+    private func applyStripWidthCorrection(imageIndex: Int, imageKey: String, image: UIImage) {
+        guard imageIndex >= 0, imageIndex < currentImageKeys.count,
+              currentImageKeys[imageIndex] == imageKey,
+              imageIndex < imageSlotWidthConstraints.count else { return }
+        let target = bearyStripWidth(forImageSize: image.size, height: 216)
+        let constraint = imageSlotWidthConstraints[imageIndex]
+        guard abs(target - constraint.constant) > 0.5 else { return }
+        constraint.constant = target
+    }
+
     /// fixall-cell 2-2：两模式共用一张对照表。收敛前差异逐项核查结果：
     /// - 写给行后：feed 3 / profile 4，无网页口径引文 → 统一为 4。
     /// - 正文后：feed 为折叠显 6 / 隐 14，profile 恒 6；但 profile 折叠隐藏时
@@ -2762,8 +2796,15 @@ class BearyDiaryCardCell: UITableViewCell {
             let strip = stripWidth(forKey: imageKey, dims: dims, height: 216)
             // 卡片糊修复：216 条直接走全尺寸图——缩略图长边只有 480px，
             // 3× 机上宽图条要 1438px，缩略图拉大 3 倍必糊；全尺寸 1600px 够用。
-            bearyFeedLoadImage(into: slot, url: BearyImageURLs.imageURL(key: imageKey, thumb: false), retryButton: imageSlotRetryButtons[imageIndex], downsampleToWidth: strip * UIScreen.main.scale, blurUp: true)
+            // 图到后按实测尺寸纠宽（imgDims 恒 nil，初宽恒 280 会裁竖图）；
+            // 缓存已命中时加载层直接返回不回调，同步按现图纠一次。
+            bearyFeedLoadImage(into: slot, url: BearyImageURLs.imageURL(key: imageKey, thumb: false), retryButton: imageSlotRetryButtons[imageIndex], downsampleToWidth: strip * UIScreen.main.scale, blurUp: true, onSuccess: { [weak self] image in
+                self?.applyStripWidthCorrection(imageIndex: imageIndex, imageKey: imageKey, image: image)
+            })
             imageSlotWidthConstraints[imageIndex].constant = strip
+            if let shownImage = slot.image {
+                applyStripWidthCorrection(imageIndex: imageIndex, imageKey: imageKey, image: shownImage)
+            }
             slot.isHidden = false
             setLiveOverlay(index: imageIndex, staticKey: imageKey, liveKey: liveVideos?[imageKey])
         }
