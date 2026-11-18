@@ -1918,21 +1918,36 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     /// M12：按行身份算出新增行并 insertRows；旧哨兵行（加载态）在旧坐标下删掉。
+    /// 第 26 轮审计 7：身份相同的旧行也可能显示内容变了——新页的互动并入前面
+    /// 已有的一组时，组代表条（memberIndices.first）不变，行身份（kind +
+    /// itemIndex）不变，旧行会留着单人外观、直到滚出再滚回才重配。
+    /// 所以同身份的行再比内容签名（成员 ID、未读、标题输入），变了的定点
+    /// reloadRows；单人变多人可能改行高，同批锚住首个可见行、更新后按锚点回位。
     private func insertAppendedDisplayRows(oldRows: [NotificationDisplayRow], oldSentinelRow: Bool) {
-        var oldKeys: Set<String> = []
+        var oldRowsByIdentity: [String: NotificationDisplayRow] = [:]
         for row in oldRows {
-            oldKeys.insert(displayRowIdentity(row: row))
+            oldRowsByIdentity[displayRowIdentity(row: row)] = row
         }
         var inserted: [IndexPath] = []
+        var changed: [IndexPath] = []
         for index in displayRows.indices {
-            if !oldKeys.contains(displayRowIdentity(row: displayRows[index])) {
+            let row = displayRows[index]
+            guard let oldRow = oldRowsByIdentity[displayRowIdentity(row: row)] else {
                 inserted.append(IndexPath(row: index, section: 0))
+                continue
+            }
+            if displayRowContentSignature(row: row) != displayRowContentSignature(row: oldRow) {
+                changed.append(IndexPath(row: index, section: 0))
             }
         }
         let newSentinelRow = showsSentinelRow
-        if inserted.isEmpty && !(oldSentinelRow && !newSentinelRow) {
+        if inserted.isEmpty && changed.isEmpty && !(oldSentinelRow && !newSentinelRow) {
             return
         }
+        // 锚点：首个可见行在视口内的偏移，批量更新后按它回位（只在有定点
+        // 更新时需要——新行只追加在表尾，不会顶动视口）。
+        let anchorPath = changed.isEmpty ? nil : tableView.indexPathsForVisibleRows?.sorted().first
+        let anchorOffset = anchorPath.map { tableView.rectForRow(at: $0).origin.y - tableView.contentOffset.y }
         tableView.performBatchUpdates({
             if oldSentinelRow && !newSentinelRow {
                 self.tableView.deleteRows(at: [IndexPath(row: oldRows.count, section: 0)], with: .automatic)
@@ -1940,7 +1955,20 @@ final class BearyNotificationsViewController: UIViewController {
             if !inserted.isEmpty {
                 self.tableView.insertRows(at: inserted, with: .automatic)
             }
-        }, completion: nil)
+            if !changed.isEmpty {
+                // C-G10 的“已读只改 class、不 reloadRows”是防整行闪一下；
+                // 这里是单人→多人这种结构变化（头像栈/标题/行高都换），
+                // 只改 class 换不出多人外观，必须重配；动画用 .none，不淡入。
+                self.tableView.reloadRows(at: changed, with: .none)
+            }
+        }, completion: { [weak self] _ in
+            guard let strongSelf = self,
+                  let anchorPath = anchorPath,
+                  let anchorOffset = anchorOffset,
+                  anchorPath.row < strongSelf.displayRows.count else { return }
+            let newTop = strongSelf.tableView.rectForRow(at: anchorPath).origin.y
+            strongSelf.tableView.contentOffset.y = newTop - anchorOffset
+        })
     }
 
     private func displayRowIdentity(row: NotificationDisplayRow) -> String {
@@ -1953,6 +1981,40 @@ final class BearyNotificationsViewController: UIViewController {
         case .actItem: kindText = "actItem"
         }
         return kindText + ":" + String(row.itemIndex ?? -1)
+    }
+
+    /// 行显示内容签名：身份（kind + itemIndex）之外的显示输入。翻页追加时
+    /// 旧行身份不变也可能内容变了（新成员并入已有组、卡面摘要随新页变了），
+    /// 凭它定点更新。只取 cellForRowAt 实际渲染的输入：成员 ID（组员变化）、
+    /// 成员未读、成员名与代表条标题（多人标题）、卡面最新条与未读汇总。
+    /// 旧行结构体是重建前拍下的，成员下标在追加后的 items 里仍有效。
+    private func displayRowContentSignature(row: NotificationDisplayRow) -> String {
+        switch row.kind {
+        case .sysCard:
+            let sysIndices = items.indices.filter({ items[$0].type == "system" })
+            let latest = sysIndices.first.map({ items[$0] })
+            let anyUnread = sysIndices.contains(where: { (items[$0].read ?? true) == false })
+            return "sysCard:\(latest?.id ?? -1):\(latest?.actorName ?? ""):\(anyUnread):\(isSysExpanded)"
+        case .actCard:
+            let actIndices = items.indices.filter({ Self.isInteractionType(items[$0].type) })
+            let latest = actIndices.first.map({ items[$0] })
+            let anyUnread = actIndices.contains(where: { (items[$0].read ?? true) == false })
+            return "actCard:\(latest?.id ?? -1):\(latest?.actorName ?? ""):\(anyUnread):\(isActExpanded)"
+        case .letter, .sysItem:
+            guard let itemIndex = row.itemIndex, itemIndex < items.count else { return "\(row.kind):-" }
+            let item = items[itemIndex]
+            return "\(row.kind):\(item.id ?? -1):\(item.read ?? true):\(item.actorName ?? ""):\(item.entryTitle ?? "")"
+        case .actItem:
+            if let groupIndices = row.groupItemIndices, groupIndices.count >= 2 {
+                let members = groupIndices.compactMap({ $0 < items.count ? items[$0] : nil })
+                let memberSig = members.map({ "\($0.id ?? -1)|\($0.read ?? true)|\($0.actorName ?? "")" }).joined(separator: ",")
+                let representative = row.itemIndex.flatMap({ $0 < items.count ? items[$0] : nil })
+                return "actItem:group:\(memberSig):\(representative?.type ?? ""):\(representative?.entryTitle ?? "")"
+            }
+            guard let itemIndex = row.itemIndex, itemIndex < items.count else { return "actItem:-" }
+            let item = items[itemIndex]
+            return "actItem:\(item.id ?? -1):\(item.read ?? true):\(item.actorName ?? ""):\(item.type ?? ""):\(item.entryTitle ?? "")"
+        }
     }
 
     /// hasMore 口径与网页一致：total 优先（total > 已加载数才有更多）；
