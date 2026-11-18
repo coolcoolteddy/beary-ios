@@ -401,6 +401,7 @@ final class BearyQuoteCardView: UIView {
 
     /// 来源行文案组装（handle/日期皆无时返回 nil，调用方据此隐藏整行，不编造）。
     /// deleted 时无可信 handle/日期，固定写“引用自已删除的日记”。
+    /// 注意：dateText 为 String?，不得直接插值（会原样显示 Optional("...")）。
     private static func sourceRowText(handle: String?, dateMs: Int?, deleted: Bool) -> String? {
         if deleted {
             return "引用自已删除的日记"
@@ -413,7 +414,10 @@ final class BearyQuoteCardView: UIView {
         if let handleText = handleText {
             return "引用自 \(handleText)"
         }
-        return "引用自 · \(dateText)"
+        if let dateText = dateText {
+            return "引用自 · \(dateText)"
+        }
+        return nil
     }
 
     /// 来源行唯一写入口：configure 与 showGone 均走这里，保证两态口径一致。
