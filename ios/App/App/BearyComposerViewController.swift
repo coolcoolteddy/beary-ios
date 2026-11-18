@@ -5202,7 +5202,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 规范 §11）＋跟随系统字号，宽度不足时换行、不截尾。
         draftStatusLabel.font = BearyDynamicType.captionFont()
         draftStatusLabel.adjustsFontForContentSizeCategory = true
-        draftStatusLabel.textColor = BearyColors.blue
+        draftStatusLabel.textColor = BearyColors.deepBlueText
         // 109：压缩阻力默认值仍 749（lvl1/失败长文案窄屏受压时先换行，见 P2-12）；
         // lvl2 已保存态在 updateDraftStatusLabel 里拉到 required、走
         // applyDraftStatusToolbarFit 的保全/只留对勾口径。
@@ -5319,11 +5319,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 109：文案缩短为「已保存」（对勾图标已在左侧，合起来即「✓ 已保存」，意思不变），
             // 压缩阻力拉到 required，优先保全文案、不再被左侧图标组与字数圆环挤成「草…」。
             draftStatusLabel.text = "已保存"
-            draftStatusLabel.textColor = BearyColors.blue
+            draftStatusLabel.textColor = BearyColors.deepBlueText
             draftStatusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         } else if level == 1 {
             draftStatusLabel.text = "已保存，图片还没上传完"
-            draftStatusLabel.textColor = BearyColors.blue
+            draftStatusLabel.textColor = BearyColors.deepBlueText
             draftStatusLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
         } else {
             draftStatusLabel.text = "草稿保存失败"
@@ -7942,7 +7942,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             BearyIconMotion.startSpin(on: draftStatusIcon, duration: 0.9, key: "bearyDraftSavingSpin")
         }
         draftStatusLabel.text = "保存中…"
-        draftStatusLabel.textColor = BearyColors.blue
+        draftStatusLabel.textColor = BearyColors.deepBlueText
         draftTimer?.invalidate()
         // 网页 queueSaveDraft 防抖 400ms（原先 500ms）。
         // R14 P1-7：发火即清引用——此前一次性计时器发火后引用仍非空，
@@ -8073,7 +8073,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             draftStatusIcon.isHidden = false
             BearyIconMotion.startSpin(on: draftStatusIcon, duration: 0.9, key: "bearyDraftSavingSpin")
             draftStatusLabel.text = "保存中…"
-            draftStatusLabel.textColor = BearyColors.blue
+            draftStatusLabel.textColor = BearyColors.deepBlueText
         } else {
             BearyIconMotion.stopSpin(on: draftStatusIcon, key: "bearyDraftSavingSpin")
             updateDraftStatusLabel()
@@ -10437,7 +10437,7 @@ private final class BearyQuoteStatusPillView: UIView {
 
     private func applyColors() {
         let color: UIColor = (style == .public) ? BearyColors.orange : BearyColors.blue
-        label.textColor = (style == .public) ? BearyColors.deepOrangeText : BearyColors.blue
+        label.textColor = (style == .public) ? BearyColors.deepOrangeText : BearyColors.deepBlueText
         if style == .limited {
             layer.borderWidth = 0
             dashedLayer.strokeColor = color.cgColor

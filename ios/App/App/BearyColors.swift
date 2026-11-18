@@ -47,6 +47,10 @@ enum BearyColors {
     /// 浅色白底对比约 7.13:1、绿底 0.12 浅底对比约 6.42:1；深色黑底对比约 9.46:1。
     /// 只用于文字前景；语义绿填充 #2fbf71 底色不动。
     static var deepGreenText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 52.0/255.0, green: 199.0/255.0, blue: 89.0/255.0, alpha: 1) : UIColor(red: 22.0/255.0, green: 101.0/255.0, blue: 52.0/255.0, alpha: 1) } }
+    /// 正文用深蓝（第一轮审计第 11 项，2026-11-18 Li 定版）：浅 #0066CC / 深 #0A84FF。
+    /// 浅色白底对比约 5.57:1、深色底 #0B0B0D 对比约 5.39:1，均 ≥4.5:1；#007AFF 白底仅约 4.02:1，不做小字色。
+    /// 只用于小字蓝文字前景（编辑器草稿状态文案、引用状态 pill 非公开标签）；图标／描边／圆环仍走 blue，不动。
+    static var deepBlueText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 10.0/255.0, green: 132.0/255.0, blue: 1.0, alpha: 1) : UIColor(red: 0.0, green: 102.0/255.0, blue: 204.0/255.0, alpha: 1) } }
     /// 网页 --line：浅 #dbdbdb / 深 #3a3a40（深色带蓝偏，单 white 值复现不了）。
     static var line: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 58.0/255.0, green: 58.0/255.0, blue: 64.0/255.0, alpha: 1) : UIColor(white: 0.86, alpha: 1) } }
     /// 网页 --bg：浅 #fff / 深 #0B0B0D（2026-11-07 微明度定版推翻 2026-10-27 纯黑决定：
