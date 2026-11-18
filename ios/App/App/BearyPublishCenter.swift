@@ -25,6 +25,8 @@ struct PublishSnapshot {
     let capsuleDistrict: String?
     let mentionedUserId: Int?
     let title: String?
+    /// 标签完整版（2026-11-18）：新建时选中的标签列；空组不发 tags 键。
+    let tags: [String]?
     var ephemeral: Int?
     let locationName: String?
     let locationDistrict: String?
@@ -407,6 +409,7 @@ final class BearyPublishCenter {
             visibility: snapshot.visibility,
             isCapsule: snapshot.capsuleUnlockAt == nil ? nil : 1,
             capsuleUnlockAt: snapshot.capsuleUnlockAt, capsuleDistrict: snapshot.capsuleDistrict,
+            tags: snapshot.tags,
             uploadProgress: progressHandler
         ) { [weak self, weak runningJob] result in
             DispatchQueue.main.async {

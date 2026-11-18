@@ -369,6 +369,8 @@ class BearyDiaryCardCell: UITableViewCell {
     var onNineGridTapped: (() -> Void)?
     /// 引用卡点按：传引用 id（容器先 fetchEntry 校验可见性再放行，私密时显占位）。
     var onQuoteSelected: ((String) -> Void)?
+    /// 标签完整版（2026-11-18）：卡片上标签 chip 点按，传标签原文；容器推聚合页。
+    var onTagTapped: ((String) -> Void)?
     /// 点赞/收藏成功后回传（控制器用 applyInteraction 同步模型并刷新该行）。
     var onInteractionChanged: ((String, Int?, Bool?, Bool?) -> Void)?
     /// 回应成功后回传聚合 emotes（控制器走现有 applyInteraction 只刷该行）。
@@ -838,6 +840,34 @@ class BearyDiaryCardCell: UITableViewCell {
         return st
     }()
 
+    /// 标签完整版（2026-11-18）：标签 chips 横向滚动行（位置行之后、操作行
+    /// 之前）。横向滚动不换行：标签多时向右滑看全，不撑高卡片；行高固定 28，
+    /// chip 高 28、圆角 14，点按走 onTagTapped。无标签时整行隐藏、不占位。
+    private lazy var tagsStack: UIStackView = {
+        let st = UIStackView()
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 8
+        st.alignment = .center
+        return st
+    }()
+
+    private lazy var tagsScrollView: UIScrollView = {
+        let sv = UIScrollView()
+        sv.translatesAutoresizingMaskIntoConstraints = false
+        sv.showsHorizontalScrollIndicator = false
+        sv.isHidden = true
+        sv.addSubview(tagsStack)
+        NSLayoutConstraint.activate([
+            tagsStack.topAnchor.constraint(equalTo: sv.topAnchor),
+            tagsStack.bottomAnchor.constraint(equalTo: sv.bottomAnchor),
+            tagsStack.leadingAnchor.constraint(equalTo: sv.leadingAnchor),
+            tagsStack.trailingAnchor.constraint(equalTo: sv.trailingAnchor),
+            tagsStack.heightAnchor.constraint(equalToConstant: 28),
+        ])
+        return sv
+    }()
+
     private let nameLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
@@ -1253,7 +1283,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 不再缩进到昵称位置；顶缘取头像底与头行底较大者 + 间距（见 setupConstraints）。
     private lazy var bodyStack: BearyPassThroughStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = BearyPassThroughStackView(arrangedSubviews: [entryTitleLabel, contentLabel, foldButton, imagesScrollView, nineGridWrapView, quoteView, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
+        let st = BearyPassThroughStackView(arrangedSubviews: [entryTitleLabel, contentLabel, foldButton, imagesScrollView, nineGridWrapView, quoteView, locationStack, tagsScrollView, actionStack, guestLoginPromptButton, emoteFlowView])
         // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
         st.passThroughRoot = emoteFlowView
         st.translatesAutoresizingMaskIntoConstraints = false
@@ -1898,6 +1928,13 @@ class BearyDiaryCardCell: UITableViewCell {
         // 批 E：位置行复位，防上一行位置串位到下一行。
         locationStack.isHidden = true
         locationLabel.text = nil
+        // 标签完整版（2026-11-18）：标签行复位，防上一行标签串位到下一行。
+        tagsScrollView.isHidden = true
+        for view in tagsStack.arrangedSubviews {
+            tagsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        onTagTapped = nil
         ephemeralBorderView.isHidden = true
         separatorView.isHidden = false
         // 皇冠动效复用时停播，防串位到下一行。
@@ -2239,8 +2276,10 @@ class BearyDiaryCardCell: UITableViewCell {
         bodyStack.setCustomSpacing(12, after: imagesScrollView)
         bodyStack.setCustomSpacing(12, after: nineGridWrapView)
         bodyStack.setCustomSpacing(12, after: quoteView)
-        // 批 E：位置行→操作行 14（ChatGPT 间距跟进，#904 为 8）；位置行隐藏时 stack 自动忽略该间距，不留空隙。
-        bodyStack.setCustomSpacing(14, after: locationStack)
+        // 批 E：位置行→标签行 12；标签行→操作行 14（标签完整版 2026-11-18）；
+        // 任一行隐藏时 stack 自动忽略该间距，不留空隙。
+        bodyStack.setCustomSpacing(12, after: locationStack)
+        bodyStack.setCustomSpacing(14, after: tagsScrollView)
         // 操作行→回应行 12（ChatGPT 间距跟进，#904 为 10）。
         bodyStack.setCustomSpacing(12, after: actionStack)
     }
@@ -2287,6 +2326,42 @@ class BearyDiaryCardCell: UITableViewCell {
                 self.locationLineRow.layoutIfNeeded()
             })
         }
+    }
+
+    /// 标签完整版（2026-11-18）：标签 chips 行刷新。无标签（nil 或空组）时
+    /// 整行隐藏、不占位；有标签时每枚 chip 显示“#标签”，点按走 onTagTapped。
+    /// chip 是普通 UIButton（28 高、圆角 14、surface2 底），不是 Hit44 钮——
+    /// 行高 28 是卡片内联 chip 的尺寸，不是独立操作按钮。
+    private func refreshTagsRow(entry: Entry) {
+        for view in tagsStack.arrangedSubviews {
+            tagsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        guard let tags = entry.tags, !tags.isEmpty else {
+            tagsScrollView.isHidden = true
+            return
+        }
+        for tag in tags {
+            let chip = UIButton(type: .system)
+            chip.translatesAutoresizingMaskIntoConstraints = false
+            chip.setTitle("#" + tag, for: .normal)
+            chip.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+            chip.setTitleColor(BearyColors.ink, for: .normal)
+            chip.backgroundColor = BearyColors.surface2
+            chip.layer.cornerRadius = 14
+            chip.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+            chip.heightAnchor.constraint(equalToConstant: 28).isActive = true
+            chip.addTarget(self, action: #selector(tagChipTapped(_:)), for: .touchUpInside)
+            chip.accessibilityLabel = "标签 \(tag)"
+            tagsStack.addArrangedSubview(chip)
+        }
+        tagsScrollView.isHidden = false
+    }
+
+    @objc private func tagChipTapped(_ sender: UIButton) {
+        guard let title = sender.title(for: .normal) else { return }
+        let tag = title.hasPrefix("#") ? String(title.dropFirst()) : title
+        onTagTapped?(tag)
     }
 
     /// 底行（地址＋天气）显隐：地址与天气任一有内容即显，全无即整行隐藏、
@@ -2477,6 +2552,8 @@ class BearyDiaryCardCell: UITableViewCell {
         renderImages(keys: entry.images ?? [], dims: entry.imgDims, liveVideos: entry.liveVideos)
         // 批 E：位置行（图片条之后、操作行之前）。
         refreshLocationRow(entry: entry)
+        // 标签完整版（2026-11-18）：标签行（位置行之后、操作行之前）。
+        refreshTagsRow(entry: entry)
 
         // F7/F8：点赞、收藏、分享（按钮状态见 updateLikeButton / updateBookmarkButton；
         // 互动门控见 updateActionInteractivity，与详情 isPublic == true 一致）。
@@ -2589,6 +2666,8 @@ class BearyDiaryCardCell: UITableViewCell {
         renderImages(keys: entry.images ?? [], dims: entry.imgDims, liveVideos: entry.liveVideos)
         // 批 E：位置行（个人页模式同款，图片条之后、操作行之前）。
         refreshLocationRow(entry: entry)
+        // 标签完整版（2026-11-18）：标签行（位置行之后、操作行之前）。
+        refreshTagsRow(entry: entry)
         // 点赞 / 收藏 / 分享（已赞为红色、已收藏为橙色；忙时整行互动禁用）。
         // 计数位宽度由显式约束定，不靠按钮固有宽：按钮固有宽不含标题边距，
         // 栈按固有宽给帧时标题框只剩边距差，数字会被裁成左半弧。

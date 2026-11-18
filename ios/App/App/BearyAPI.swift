@@ -147,6 +147,9 @@ struct Entry: Codable {
     var liveVideos: [String: String]?
     var imgDims: [String: [Int]]?
     var mood: String?
+    /// 日记标签（2026-11-18 标签完整版）：服务端 beary_entry_tags 关联表下发，
+    /// convertFromSnakeCase 直解；无标签为空数组（富化恒给字段），旧数据缺字段时 nil 按无标签处理。
+    var tags: [String]?
     var weather: String?
     /// 天气气温（摄氏度整数，后端 temperature_c；字段未上线时服务端不回传即 nil，卡片不显示气温）。
     var temperatureC: Int?
@@ -215,6 +218,17 @@ struct Entry: Codable {
     var recipientId: Int?
     var recipientName: String?
     var emotes: [EmoteCount]?
+}
+
+/// 标签完整版（2026-11-18）：GET /beary/api/tags 的单条——标签名 + 该标签的本人篇数。
+struct BearyTag: Decodable {
+    var tag: String
+    var count: Int?
+}
+
+/// GET /beary/api/tags 回包：{tags: [BearyTag]}。
+struct MyTagsResponse: Decodable {
+    var tags: [BearyTag]?
 }
 
 struct TlCounts: Decodable {
@@ -704,6 +718,8 @@ final class BearyAPI {
         case friends
         /// 关注流 scope（我关注的人的公开篇，published_at DESC；不走广场快照）。
         case following
+        /// 标签聚合 scope（带该标签的日记，created_at DESC；tag 经 query 传）。
+        case tag(String)
         var rawValue: String {
             switch self {
             case .plaza: return "plaza"
@@ -717,12 +733,19 @@ final class BearyAPI {
             case .liked: return "liked"
             case .friends: return "friends"
             case .following: return "following"
+            case .tag: return "tag"
             }
         }
         var authorId: Int? {
             switch self {
             case .author(let id): return id
             case .authorLiked(let id): return id
+            default: return nil
+            }
+        }
+        var tagValue: String? {
+            switch self {
+            case .tag(let t): return t
             default: return nil
             }
         }
@@ -1211,7 +1234,18 @@ final class BearyAPI {
             if let bid = beforeId { q["before_id"] = bid }
         }
         if let aid = scope.authorId { q["author_id"] = "\(aid)" }
+        if let t = scope.tagValue { q["tag"] = t }
         request("/beary/api/entries", query: q, completion: completion)
+    }
+
+    /// 我的标签：GET /beary/api/tags → [BearyTag]（登录；失败原样回传，调用方按无旧标签处理）。
+    func fetchMyTags(completion: @escaping (Result<[BearyTag], APIError>) -> Void) {
+        request("/beary/api/tags") { (result: Result<MyTagsResponse, APIError>) in
+            switch result {
+            case .success(let resp): completion(.success(resp.tags ?? []))
+            case .failure(let error): completion(.failure(error))
+            }
+        }
     }
 
     /// 113 since 增量取数（含截断 gap-fill）：首发 since 一页（limit 50 封顶）；
