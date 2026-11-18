@@ -186,6 +186,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     /// 触顶时标题“加载更多”、分页中途失败时标题“重试”，平时隐藏。
     private let poolLoadMoreButton = BearyButton.make(style: .secondaryOutline(.compact), title: "加载更多")
     private let openSection = UIView()
+    /// 开盒区退场快照：setStep(.received) 过渡时盖在开盒区原位做淡出，
+    /// 动画结束只移除快照，开盒区本身在过渡开始时就已藏起（见 setStep）。
+    private var openSectionExitSnapshot: UIView?
     private let openButton = BearyButton.make(style: .primaryPill(.ink), title: "开盒")
     private let openHintLabel = UILabel()
 
@@ -736,21 +739,51 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         case .received:
             receivedView.isHidden = false
             if exitOpenSection {
-                // 一出一进共用 0.25 秒：开盒区短距上退＋淡出，收到日记短距下入＋淡入；
+                // 一出一进共用 0.26 秒：开盒区短距上退＋淡出，收到日记短距下入＋淡入；
                 // 动效只走 transform 与 opacity，不动布局。
-                receivedView.alpha = 0
-                receivedView.transform = CGAffineTransform(translationX: 0, y: 12)
-                UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-                    self.openSection.alpha = 0
-                    self.openSection.transform = CGAffineTransform(translationX: 0, y: -8)
-                    self.receivedView.alpha = 1
-                    self.receivedView.transform = .identity
-                }, completion: { [weak self] _ in
-                    guard let self = self else { return }
-                    self.openSection.isHidden = true
-                    self.openSection.alpha = 1
-                    self.openSection.transform = .identity
-                })
+                // 旧实现先让开盒区原地淡出、动画结束才 isHidden 藏起：退场期间
+                // 开盒区仍占高度，收到日记先在下方淡入完、随后才随布局塌陷往
+                // 上跳一次。改为快照退场：开盒区立即藏起，收到日记一步布局到
+                // 最终位置，淡出的只是盖在原位的快照，结束时只移除快照。
+                openSectionExitSnapshot?.removeFromSuperview()
+                openSectionExitSnapshot = nil
+                if let snapshot = openSection.snapshotView(afterScreenUpdates: true) {
+                    // 快照是非排列子视图，不参与 contentStack 布局，固定在开盒区原位。
+                    snapshot.frame = openSection.frame
+                    contentStack.addSubview(snapshot)
+                    openSectionExitSnapshot = snapshot
+                    openSection.isHidden = true
+                    view.layoutIfNeeded()
+                    receivedView.alpha = 0
+                    receivedView.transform = CGAffineTransform(translationX: 0, y: 12)
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+                        snapshot.alpha = 0
+                        snapshot.transform = CGAffineTransform(translationX: 0, y: -8)
+                        self.receivedView.alpha = 1
+                        self.receivedView.transform = .identity
+                    }, completion: { [weak self] _ in
+                        guard let self = self else { return }
+                        if self.openSectionExitSnapshot === snapshot {
+                            self.openSectionExitSnapshot = nil
+                        }
+                        snapshot.removeFromSuperview()
+                    })
+                } else {
+                    // 快照失败时退回旧路径：动画结束再藏开盒区。
+                    receivedView.alpha = 0
+                    receivedView.transform = CGAffineTransform(translationX: 0, y: 12)
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+                        self.openSection.alpha = 0
+                        self.openSection.transform = CGAffineTransform(translationX: 0, y: -8)
+                        self.receivedView.alpha = 1
+                        self.receivedView.transform = .identity
+                    }, completion: { [weak self] _ in
+                        guard let self = self else { return }
+                        self.openSection.isHidden = true
+                        self.openSection.alpha = 1
+                        self.openSection.transform = .identity
+                    })
+                }
             } else {
                 receivedView.alpha = 1
                 receivedView.transform = .identity
