@@ -212,6 +212,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             self?.hideLoadingState()
             self?.renderDrafts()
             self?.draftsInitialLoaded = true
+            self?.transitionSheetHeightToContent()
             self?.tryPlayEntrance()
         }
     }
@@ -700,9 +701,23 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         }
     }
 
+    /// 审计第 8 轮第 5 项：首轮数据未到时不跟内容改面板高——面板保持
+    /// 初始高（加载态），回包后由 transitionSheetHeightToContent 一次量高、
+    /// 一段动画过渡到内容态；否则回包晚于入场、两态高度不同时，底部固定的
+    /// iPhone 面板顶边会突然上跳。
     private func updateSheetHeight() {
+        guard draftsInitialLoaded else { return }
+        guard let target = measuredSheetHeight() else { return }
+        if let heightConstraint = sheetHeightConstraint, abs(heightConstraint.constant - target) > 0.5 {
+            heightConstraint.constant = target
+        }
+    }
+
+    /// 与 updateSheetHeight 同一套量高口径（固定头高＋滚动内容高，上限 82%
+    /// 屏高）；返回 nil 表示本次不改高。
+    private func measuredSheetHeight() -> CGFloat? {
         let maxHeight = view.bounds.height * 0.82
-        guard maxHeight > 0 else { return }
+        guard maxHeight > 0 else { return nil }
         let sheetWidth = isPadLayout ? min(440, view.bounds.width - 80) : view.bounds.width
         if let widthConstraint = sheetWidthConstraint, isPadLayout {
             widthConstraint.constant = max(sheetWidth, 0)
@@ -719,11 +734,22 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         ).height
-        guard fittingHeight > 100 else { return }
-        let target = min(fittingHeight, maxHeight)
-        if let heightConstraint = sheetHeightConstraint, abs(heightConstraint.constant - target) > 0.5 {
-            heightConstraint.constant = target
-        }
+        guard fittingHeight > 100 else { return nil }
+        return min(fittingHeight, maxHeight)
+    }
+
+    /// 审计第 8 轮第 5 项：首轮数据就绪后统一量一次高，用同一段动画过渡
+    /// 面板与内容（减动效直接落定）。须在 renderDrafts 之后、下一轮布局之前调，
+    /// 否则布局回路会先把新高直接写上去，顶边照样一跳。
+    private func transitionSheetHeightToContent() {
+        guard let target = measuredSheetHeight(),
+              let heightConstraint = sheetHeightConstraint,
+              abs(heightConstraint.constant - target) > 0.5 else { return }
+        heightConstraint.constant = target
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
+            self.view.layoutIfNeeded()
+        })
     }
 
     private func updateBottomSpacer() {
@@ -822,6 +848,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 self?.hideLoadingState()
                 self?.renderDrafts()
                 self?.draftsInitialLoaded = true
+                self?.transitionSheetHeightToContent()
                 self?.tryPlayEntrance()
             }
         }
@@ -1709,19 +1736,76 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     }
 
     /// M20：撤销条淡入/滑入（减动效直接显示）。
+    /// 审计第 8 轮第 6 项：条在滚动栈内占位，显隐只动画条本身会让列表
+    /// 瞬间错位——显隐与布局（layoutIfNeeded）走同一段动画，并按首个
+    /// 可见卡片锚点恢复偏移，正在看的卡片不动。
     private func showUndoAnimated() {
+        undoWrap.isHidden = false
         undoWrap.alpha = 1
         undoWrap.transform = .identity
-        undoWrap.isHidden = false
         if UIAccessibility.isReduceMotionEnabled {
             return
         }
+        let anchor = firstVisibleCardAnchor()
         undoWrap.alpha = 0
         undoWrap.transform = CGAffineTransform(translationX: 0, y: 8)
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
-            self.undoWrap.alpha = 1
-            self.undoWrap.transform = .identity
-        })
+        if BearyMotion.animated(true) && !sheetScrollView.isDragging && !sheetScrollView.isDecelerating {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
+                self.undoWrap.alpha = 1
+                self.undoWrap.transform = .identity
+                self.view.layoutIfNeeded()
+                if let targetY = self.anchorContentOffsetY(for: anchor) {
+                    self.sheetScrollView.contentOffset.y = targetY
+                }
+            })
+        } else {
+            undoWrap.alpha = 1
+            undoWrap.transform = .identity
+            view.layoutIfNeeded()
+            if let targetY = anchorContentOffsetY(for: anchor) {
+                sheetScrollView.contentOffset.y = targetY
+            }
+        }
+    }
+
+    /// 审计第 8 轮第 6 项：撤销条到期隐藏与显示同口径——淡出＋布局收起
+    /// 走同一段动画，并按首个可见卡片锚点恢复偏移；最后一条过期时眼前
+    /// 的卡片不再往上跳。减动效／拖动中直接落定（拖动时只直设偏移，
+    /// 不与手势抢动画）。
+    private func hideUndoAnimated() {
+        guard !undoWrap.isHidden else { return }
+        if UIAccessibility.isReduceMotionEnabled {
+            undoWrap.isHidden = true
+            undoWrap.alpha = 1
+            undoWrap.transform = .identity
+            return
+        }
+        let anchor = firstVisibleCardAnchor()
+        if BearyMotion.animated(true) && !sheetScrollView.isDragging && !sheetScrollView.isDecelerating {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
+                self.undoWrap.alpha = 0
+                self.undoWrap.isHidden = true
+                self.view.layoutIfNeeded()
+                if let targetY = self.anchorContentOffsetY(for: anchor) {
+                    self.sheetScrollView.contentOffset.y = targetY
+                }
+            }, completion: { [weak self] _ in
+                guard let self else { return }
+                // 隐藏动画期内又有新删笔时条已重新出现，不复位它的初态。
+                if self.pendingUndos.isEmpty {
+                    self.undoWrap.alpha = 1
+                    self.undoWrap.transform = .identity
+                }
+            })
+        } else {
+            undoWrap.isHidden = true
+            undoWrap.alpha = 1
+            undoWrap.transform = .identity
+            view.layoutIfNeeded()
+            if let targetY = anchorContentOffsetY(for: anchor) {
+                sheetScrollView.contentOffset.y = targetY
+            }
+        }
     }
 
     @objc private func cardTouchDown(_ sender: UIButton) {
@@ -2011,19 +2095,28 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         return nil
     }
 
+    /// 按锚点卡片算布局落定后的滚动偏移（锚点卡片相对视口的位置不变）；
+    /// 锚点卡片已不在列表时返回 nil。调用方须先让布局落定再调（动画块内
+    /// 先 layoutIfNeeded 再读帧，或布局已完成后直接调）。
+    private func anchorContentOffsetY(for anchor: (draftId: String, viewportOffset: CGFloat)?) -> CGFloat? {
+        guard let anchor,
+              let anchorEntry = cardEntries.first(where: { $0.draftValue.draftId == anchor.draftId }) else {
+            return nil
+        }
+        let anchorFrame = anchorEntry.button.convert(anchorEntry.button.bounds, to: sheetScrollView)
+        let targetY = anchorFrame.minY - anchor.viewportOffset
+        let maxY = max(sheetScrollView.contentSize.height - sheetScrollView.bounds.height, 0)
+        return min(max(targetY, 0), maxY)
+    }
+
     /// 插入并布局后按锚点恢复偏移；恢复的卡片在视口内时，卡片淡入与列表
     /// 重排走同一 0.26s 过渡。用户正在拖动／减速时只直设偏移，不与手势抢动画。
     private func restoreVisibleCardAnchor(_ anchor: (draftId: String, viewportOffset: CGFloat)?, restoredCard: UIButton) {
         let animated = BearyMotion.animated(true) && !sheetScrollView.isDragging && !sheetScrollView.isDecelerating
         view.layoutIfNeeded()
-        guard let anchor,
-              let anchorEntry = cardEntries.first(where: { $0.draftValue.draftId == anchor.draftId }) else {
+        guard let clampedY = anchorContentOffsetY(for: anchor) else {
             return
         }
-        let anchorFrame = anchorEntry.button.convert(anchorEntry.button.bounds, to: sheetScrollView)
-        let targetY = anchorFrame.minY - anchor.viewportOffset
-        let maxY = max(sheetScrollView.contentSize.height - sheetScrollView.bounds.height, 0)
-        let clampedY = min(max(targetY, 0), maxY)
         // 布局已落定后再判恢复卡片是否在视口内（插卡前的帧还是 0，不可信）；
         // 在视口内时先置淡入初态，再与偏移恢复走同一动画。减动效时不碰 alpha。
         let restoredFrame = restoredCard.convert(restoredCard.bounds, to: sheetScrollView)
@@ -2064,9 +2157,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     /// 条已在屏时只改文案不重播入场动效（已有元素不重播）。
     private func refreshUndoBar() {
         guard !pendingUndos.isEmpty else {
-            undoWrap.isHidden = true
-            undoWrap.alpha = 1
-            undoWrap.transform = .identity
+            hideUndoAnimated()
             return
         }
         if pendingUndos.count == 1, let only = pendingUndos.first {
