@@ -852,6 +852,13 @@ class BearyDiaryCardCell: UITableViewCell {
         return st
     }()
 
+    /// 标签行可视高度约束（28pt）：只在有标签时启用；无标签时停用，
+    /// 让 bodyStack 把隐藏的整行压为 0。定高不能常驻——隐藏的
+    /// arrangedSubview 若仍带高度约束会被栈重新撑开。
+    private lazy var tagsScrollViewHeightConstraint: NSLayoutConstraint = {
+        tagsScrollView.heightAnchor.constraint(equalToConstant: 28)
+    }()
+
     private lazy var tagsScrollView: UIScrollView = {
         let sv = UIScrollView()
         sv.translatesAutoresizingMaskIntoConstraints = false
@@ -859,10 +866,10 @@ class BearyDiaryCardCell: UITableViewCell {
         sv.isHidden = true
         sv.addSubview(tagsStack)
         NSLayoutConstraint.activate([
-            tagsStack.topAnchor.constraint(equalTo: sv.topAnchor),
-            tagsStack.bottomAnchor.constraint(equalTo: sv.bottomAnchor),
-            tagsStack.leadingAnchor.constraint(equalTo: sv.leadingAnchor),
-            tagsStack.trailingAnchor.constraint(equalTo: sv.trailingAnchor),
+            tagsStack.topAnchor.constraint(equalTo: sv.contentLayoutGuide.topAnchor),
+            tagsStack.bottomAnchor.constraint(equalTo: sv.contentLayoutGuide.bottomAnchor),
+            tagsStack.leadingAnchor.constraint(equalTo: sv.contentLayoutGuide.leadingAnchor),
+            tagsStack.trailingAnchor.constraint(equalTo: sv.contentLayoutGuide.trailingAnchor),
             tagsStack.heightAnchor.constraint(equalToConstant: 28),
         ])
         return sv
@@ -1930,6 +1937,7 @@ class BearyDiaryCardCell: UITableViewCell {
         locationLabel.text = nil
         // 标签完整版（2026-11-18）：标签行复位，防上一行标签串位到下一行。
         tagsScrollView.isHidden = true
+        tagsScrollViewHeightConstraint.isActive = false
         for view in tagsStack.arrangedSubviews {
             tagsStack.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -2334,6 +2342,7 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         guard let tags = entry.tags, !tags.isEmpty else {
             tagsScrollView.isHidden = true
+            tagsScrollViewHeightConstraint.isActive = false
             return
         }
         for tag in tags {
@@ -2351,6 +2360,7 @@ class BearyDiaryCardCell: UITableViewCell {
             tagsStack.addArrangedSubview(chip)
         }
         tagsScrollView.isHidden = false
+        tagsScrollViewHeightConstraint.isActive = true
     }
 
     @objc private func tagChipTapped(_ sender: UIButton) {
@@ -4577,6 +4587,7 @@ extension BearyDiaryCardCell {
         let hasQuote = entry.quote != nil || entry.quoteId != nil
         let hasLocation = !(entry.locationName ?? "").isEmpty || !(entry.locationDistrict ?? "").isEmpty
         let hasEmotes = (entry.emotes ?? []).contains { ($0.count ?? 0) > 0 }
+        let hasTags = !(entry.tags ?? []).isEmpty
 
         var height: CGFloat = (mode == .profile && firstRow) ? 30 : 16  // 顶距（个人页首卡 30）
         if mode == .profile && entry.isPinned { height += 25 }          // 置顶行 15 + 间距 10
@@ -4591,6 +4602,7 @@ extension BearyDiaryCardCell {
         if imageKeys.count > 3 { height += 32 + 12 }                     // 九宫格入口 + 间距
         if hasQuote { height += 72 + 12 }                                // 引用卡（近似）+ 间距
         if hasLocation { height += 18 + 14 }                             // 位置行 + 间距
+        if hasTags { height += 28 + 14 }                                 // 标签行 28 + 标签行→操作行间距 14
         height += 24   // 操作行（图标 24）
         if hasEmotes { height += 12 + 30 }                               // 回应行（近似）+ 间距
         height += 18   // 底线 17 + 1
