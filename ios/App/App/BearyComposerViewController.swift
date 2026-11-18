@@ -959,6 +959,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var bodyFont: UIFont {
         BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
     }
+    /// 正文仅表情放大倍数：参考图实测放大后约 2.2 倍，取 2 倍。
+    private static let emojiOnlyFontScale: CGFloat = 2
+    /// 当前正文是否处于“仅表情放大”态（textViewDidChange / 回填时更新）。
+    private var bodyEmojiOnlyEnlarged = false
+    /// 正文当前生效字号：仅表情（≤3 个、无其他文字、无附件）时 2 倍，否则 bodyFont。
+    private var effectiveBodyFont: UIFont {
+        bodyEmojiOnlyEnlarged ? bodyFont.withSize(bodyFont.pointSize * Self.emojiOnlyFontScale) : bodyFont
+    }
     private var headlineIsDark: Bool { traitCollection.userInterfaceStyle == .dark }
     /// 新建/草稿用：无标题按 nil（省略不传，服务端即 NULL）。
     private var headlineForCreate: String? {
@@ -1077,6 +1085,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 2026-11-18：写日记页心情选择器已删（心情改为正文键入 [mood:xxx]），
     /// 本钮只开“自定义”组（个人自定义心情图库，GIF 与常规图）。
     private weak var gifPickerSheet: BearyMoodPickerSheetViewController?
+    /// 自定义选择器是否正开着：半屏弹窗下键盘回来会盖住弹窗下半与正文，
+    /// 插图后键盘保持收起、表情直接落在可见的正文区；关弹窗后再点正文继续输。
+    private var isGIFPickerOpen: Bool { gifPickerSheet?.view.window != nil }
     private let weatherToolButton = BearyComposerToolButton(type: .system)
     private let recipientToolButton = BearyComposerToolButton(type: .system)
     private let quoteToolButton = BearyComposerToolButton(type: .system)
@@ -1350,9 +1361,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         // 正文动态字号跟随（UITextView 不自动跟档位，标题同款手动刷新）：
         // 字号变了才重设，不打断正在输入的正文；已有文本走回填同款重刷。
-        if textView.font?.pointSize != bodyFont.pointSize {
-            textView.font = bodyFont
-            textView.typingAttributes = [.font: bodyFont, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
+        if textView.font?.pointSize != effectiveBodyFont.pointSize {
+            textView.font = effectiveBodyFont
+            textView.typingAttributes = [.font: effectiveBodyFont, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
             placeholderLabel.font = bodyFont
             // fixedLineHeightMultiple 为 nil = 未设倍数覆盖，按默认 1.0 计（偏移 0）；约束只在
             // buildTextArea 后存在，而那里恒设 1.7，故该回退实际走不到，仅过编译。
@@ -2224,7 +2235,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 styled.append(current.attributedSubstring(from: range))
             } else {
                 var newAttrs = attrs
-                newAttrs[.font] = bodyFont
+                newAttrs[.font] = effectiveBodyFont
                 newAttrs[.foregroundColor] = BearyColors.ink
                 newAttrs[.paragraphStyle] = paragraph
                 styled.append(NSAttributedString(string: fullString.substring(with: range), attributes: newAttrs))
@@ -5629,6 +5640,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updateCountLabel()
         updatePublishState()
         scheduleDraftSave()
+        // 正文仅表情放大：≤3 个纯表情时 2 倍字，4 个以上或有文字时恢复正常
+        //（组词中不切，落字后下一轮 textViewDidChange 补上）。
+        updateBodyEmojiOnlyFont()
         // S10：contentSize 高度不变时跳过高度重算（同行内敲字不触发布局）；
         // 折行、增删、旋转都会改变 contentSize 高度，变化时正常重算并更新缓存。
         // 高度计算公式与下限不动（见 updateTextViewHeight）。
@@ -5658,6 +5672,82 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         return BearyText.inlinePlainText(from: mutable)
     }
 
+    // MARK: - 正文仅表情放大（2026-11-18 Li 定）
+
+    /// 正文是否“仅含 ≤3 个表情”：除空白外只剩表情字符、个数 1...3。
+    /// 空白（空格/换行）不计；[mood:]/[gif:] 记号是文字，不算表情。
+    private static func isEmojiOnlyBodyText(_ plain: String) -> Bool {
+        let meaningful = plain.filter { !$0.isWhitespace }
+        guard (1...3).contains(meaningful.count) else { return false }
+        return meaningful.allSatisfy { isEmojiCluster($0) }
+    }
+
+    /// 一个字素簇是否表情：至少一个“表情呈现”码点（或 VS16 序列），
+    /// 且全部码点都是表情相关。Swift 的 Unicode.Scalar.Properties 没有
+    /// Emoji_Component 一项，组件类码点改按值认：ZWJ、VS15/VS16、键帽
+    /// （20E3 与 0-9/#/*）、标签字符（E0020–E007F，地区旗）。
+    /// 这样纯数字、字母、“#”等不算表情；组合表情（ZWJ 全家、肤色、❤️、1️⃣）算一个。
+    private static func isEmojiCluster(_ ch: Character) -> Bool {
+        let scalars = ch.unicodeScalars
+        guard scalars.contains(where: { $0.properties.isEmojiPresentation || $0.value == 0xFE0F }) else { return false }
+        return scalars.allSatisfy { s in
+            s.properties.isEmoji || s.properties.isEmojiModifier
+                || s.value == 0x200D || s.value == 0xFE0F || s.value == 0xFE0E || s.value == 0x20E3
+                || (0x30...0x39).contains(s.value) || s.value == 0x23 || s.value == 0x2A
+                || (0xE0020...0xE007F).contains(s.value)
+        }
+    }
+
+    /// 正文有无任何附件（内联图/熊脸/粘贴图）：有附件即不是纯表情。
+    /// 注意 inlinePlainText 会把无记号的粘贴图直接丢掉，故不能只凭纯文本判断。
+    private static func bodyHasAttachment(_ attributed: NSAttributedString?) -> Bool {
+        guard let attributed = attributed, attributed.length > 0 else { return false }
+        var found = false
+        attributed.enumerateAttribute(.attachment, in: NSRange(location: 0, length: attributed.length), options: []) { value, _, stop in
+            if value != nil {
+                found = true
+                stop.pointee = true
+            }
+        }
+        return found
+    }
+
+    /// 按当前正文重算“仅表情放大”态并落字体：态变了才动（不打断输入）；
+    /// 组词中不切，落字后下一轮 textViewDidChange 补上。
+    private func updateBodyEmojiOnlyFont() {
+        guard textView.markedTextRange == nil else { return }
+        let only = Self.isEmojiOnlyBodyText(committedContent()) && !Self.bodyHasAttachment(textView.attributedText)
+        guard only != bodyEmojiOnlyEnlarged else { return }
+        bodyEmojiOnlyEnlarged = only
+        applyEffectiveBodyFont()
+    }
+
+    /// 把当前生效字号落到正文：全文文字格换字体、附件格不动；typingAttributes 同步；
+    /// 字符偏移不变，光标与选区原地保留（程序化重建不触发 textViewDidChange，不重入）。
+    private func applyEffectiveBodyFont() {
+        let font = effectiveBodyFont
+        let current = textView.attributedText ?? NSAttributedString()
+        let savedRange = textView.selectedRange
+        if current.length > 0 {
+            let styled = NSMutableAttributedString()
+            let fullString = current.string as NSString
+            current.enumerateAttributes(in: NSRange(location: 0, length: current.length), options: []) { attrs, range, _ in
+                if attrs[.attachment] != nil {
+                    styled.append(current.attributedSubstring(from: range))
+                } else {
+                    var newAttrs = attrs
+                    newAttrs[.font] = font
+                    styled.append(NSAttributedString(string: fullString.substring(with: range), attributes: newAttrs))
+                }
+            }
+            textView.attributedText = styled
+            textView.selectedRange = clampedSelection(savedRange, in: styled.length)
+        }
+        textView.font = font
+        textView.typingAttributes = [.font: font, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
+        textView.layoutIfNeeded()
+    }
+
     /// 正文回填统一入口：记号转回熊脸附件（与标题 setHeadlineText 同款中间层），
     /// typingAttributes 复位为正文字体 + 1.7 行高，免得附件后打字跟错样式。
     private func bodyParagraphStyle() -> NSMutableParagraphStyle {
@@ -5668,8 +5758,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func setBodyAttributedText(_ plain: String?) {
-        textView.attributedText = BearyText.inlineAttributedText(from: plain ?? "", font: bodyFont, color: BearyColors.ink, paragraphStyle: bodyParagraphStyle(), dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: inlineGifKeys, gifFirstFrames: gifFirstFrames)
-        textView.typingAttributes = [.font: bodyFont, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
+        // 回填也按仅表情口径取字号：纯表情草稿恢复后仍放大；含记号的正文是文字，走正常字号。
+        let text = plain ?? ""
+        bodyEmojiOnlyEnlarged = Self.isEmojiOnlyBodyText(text)
+        let font = effectiveBodyFont
+        textView.attributedText = BearyText.inlineAttributedText(from: text, font: font, color: BearyColors.ink, paragraphStyle: bodyParagraphStyle(), dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: inlineGifKeys, gifFirstFrames: gifFirstFrames)
+        textView.typingAttributes = [.font: font, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
         updateCountLabel()
     }
 
@@ -6175,7 +6269,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if inlineGifKeys.contains(key) == false { inlineGifKeys.append(key) }
         let firstFrame = gifFirstFrames[randKey]
         if headlineField.isFirstResponder || lastFocusedComposerInput == .headline {
-            if !headlineField.isFirstResponder {
+            if !isGIFPickerOpen, !headlineField.isFirstResponder {
                 headlineField.becomeFirstResponder()
                 headlineField.selectedRange = NSRange(location: headlineField.attributedText.length, length: 0)
             }
@@ -6187,7 +6281,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         if textView.isFirstResponder || lastFocusedComposerInput == .body {
-            if !textView.isFirstResponder {
+            if !isGIFPickerOpen, !textView.isFirstResponder {
                 textView.becomeFirstResponder()
             }
             if textView.markedTextRange != nil {
@@ -6197,7 +6291,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             textViewDidChange(textView)
             return
         }
-        textView.becomeFirstResponder()
+        if !isGIFPickerOpen {
+            textView.becomeFirstResponder()
+        }
         textView.selectedRange = NSRange(location: textView.attributedText.length, length: 0)
         insertGIFAttachment(into: textView, randKey: randKey, firstFrame: firstFrame, font: bodyFont)
         textViewDidChange(textView)

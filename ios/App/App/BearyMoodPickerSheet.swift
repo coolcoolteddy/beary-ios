@@ -6,7 +6,8 @@ import UIKit
 // 只剩“自定义”组（个人自定义心情图库，最新在前，上限 100，首格是 ＋ 添加格）。
 // 走共享底部弹窗容器 BearyBottomSheet（弹簧 0.38s 上升、背后缩 0.92、遮罩 0.45、
 // 下拖超 80pt 或速度 >600pt/s 关闭、否则 0.26s/damping 0.7 弹回；减动效瞬时）。
-// 高度上限 88% 容器高（规范 §6：底 sheet 高 min(内容高, 88% 容器高)）。
+// 高度上限 50% 容器高（2026-11-18 Li 定：半屏，弹出时正文仍可见；规范 §6 通用上限
+// 88%，本 sheet 例外；内容不足半屏时按内容高，不硬撑空白）。
 // 点选即插入（不收起，方便连着插多个）；删插进正文的图走键盘删除键。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
@@ -61,7 +62,6 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     var containerHeight: CGFloat = 800
 
     private let grabberView = UIView()
-    private let closeButton = BearyButton.closeButton()
     private let titleLabel = UILabel()
     private var emoteCollectionView: UICollectionView?
     private var collectionHeightConstraint: NSLayoutConstraint?
@@ -122,12 +122,6 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
         view.addSubview(grabberView)
 
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
-        closeButton.accessibilityLabel = "关闭"
-        view.addSubview(closeButton)
-
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "自定义"
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
@@ -161,14 +155,9 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
             grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
 
-            closeButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 16),
-            closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
-
             titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 14),
             titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18),
-            titleLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -12),
+            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
 
             collection.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
             collection.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -204,11 +193,11 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     }
 
     /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档/分组变化时跟帧补齐。
-    /// 高 = 抓手＋标题＋网格（不超 88% 容器高）＋底部留白；网格超高时内部滚动。
+    /// 高 = 抓手＋标题＋网格（不超 50% 容器高）＋底部留白；网格超高时内部滚动。
     /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         let width = view.bounds.width > 0 ? view.bounds.width : 375
-        let maxHeight = max(0, containerHeight * 0.88)
+        let maxHeight = max(0, containerHeight * 0.5)
         let safeBottom = view.safeAreaInsets.bottom > 0 ? view.safeAreaInsets.bottom : extraBottomInset
         let bottomPad = safeBottom + 16
         let titleHeight = titleLabel.intrinsicContentSize.height
