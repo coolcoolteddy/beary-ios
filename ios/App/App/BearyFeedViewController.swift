@@ -2370,6 +2370,9 @@ class BearyFeedViewController: UIViewController {
         cell.onQuoteSelected = { [weak self] quoteId in
             self?.onQuoteEntrySelected?(quoteId)
         }
+        cell.onTagTapped = { [weak self] tag in
+            self?.openTagPage(tag)
+        }
         cell.onInteractionChanged = { [weak self] changedEntryIdValue, likeCountValue, likedValue, bookmarkedValue in
             self?.applyInteraction(entryId: changedEntryIdValue, likeCount: likeCountValue, likedByMe: likedValue, bookmarkedByMe: bookmarkedValue, emotes: nil)
         }
@@ -2530,6 +2533,22 @@ class BearyFeedViewController: UIViewController {
     /// 举报（已举报置灰）；取消垫底。点赞／收藏／分享是互动，仍在底部操作行，
     /// 不进菜单；长按菜单已随 ⋯ 归并删除。iPad popover 锚点随迁移删去，底部弹窗不再需要。
     /// 冲突清单第 4 条：编辑永久可改，不再按 15 分钟门控。
+    /// 标签完整版（2026-11-18）：卡片标签点按——推标签聚合页；行点按与作者
+    /// 头像转容器原有闭包（onEntrySelected／onOpenUser）。
+    private func openTagPage(_ tag: String) {
+        let page = BearyTagEntriesViewController(tag: tag)
+        page.onOpenEntry = { [weak self] entry in
+            self?.onEntrySelected?(entry)
+        }
+        page.onOpenUser = { [weak self] userId in
+            self?.onOpenUser?(userId)
+        }
+        page.onRequireLogin = { [weak self] in
+            self?.onRequireLogin?()
+        }
+        navigationController?.pushViewController(page, animated: true)
+    }
+
     private func presentCardMoreMenu(entry: Entry) {
         var actions: [BearyConfirmSheet.Action] = []
         if entry.isMine == true {

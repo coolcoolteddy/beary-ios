@@ -8289,6 +8289,33 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
     /// 2026-11-11 迁底部弹窗（BearyConfirmSheet；原 actionSheet 文案／顺序／
     /// 语义全保留，iPad popover 锚点随迁移删去）。
     /// 冲突清单第 4 条：编辑永久可改，不再按 15 分钟门控。
+    /// 标签完整版（2026-11-18）：卡片标签点按——推标签聚合页。行点按转容器
+    /// 原有 onOpenEntry；本页无 onOpenUser（单人页），作者头像直接推该作者
+    /// 的个人页（闭包按本页同款转发；拉黑后退回聚合页）。
+    private func openTagPage(_ tag: String) {
+        let page = BearyTagEntriesViewController(tag: tag)
+        page.onOpenEntry = { [weak self] entry in
+            self?.onOpenEntry?(entry)
+        }
+        page.onOpenUser = { [weak self] userId in
+            guard let self = self else { return }
+            let profile = BearyProfileViewController(userIdValue: userId, viewerUserIdValue: SessionManager.shared.currentUser?.id)
+            profile.onOpenEntry = self.onOpenEntry
+            profile.onOpenFreshEntry = self.onOpenFreshEntry
+            profile.onRequireLogin = self.onRequireLogin
+            profile.onEditEntry = self.onEditEntry
+            profile.onDeleteEntry = self.onDeleteEntry
+            profile.onBlockedUser = { [weak self] _ in
+                self?.navigationController?.popViewController(animated: true)
+            }
+            self.navigationController?.pushViewController(profile, animated: true)
+        }
+        page.onRequireLogin = { [weak self] in
+            self?.onRequireLogin?()
+        }
+        navigationController?.pushViewController(page, animated: true)
+    }
+
     private func presentCardMoreMenu(entry: Entry, sourceView: UIView) {
         var actions: [BearyConfirmSheet.Action] = []
         if entry.isMine == true {
@@ -9228,6 +9255,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
             }
         }
         cellValue.onQuoteTap = { [weak self] in self?.handleCellQuoteTap(entry: entryValue) }
+        cellValue.onTagTapped = { [weak self] tag in self?.openTagPage(tag) }
         cellValue.onFoldToggle = { [weak self] in self?.handleCellFoldToggle(entryId: entryId) }
         // 116：行高重算回调（首页同款口径）：引用/内容高度落定后行高需重算时
         // 走 begin/end 平滑伸缩（0.26s），只刷新可见行；此前个人主页未接此回调，行高

@@ -470,6 +470,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var selectedMood: String? {
         didSet { editorEditVersion += 1 }
     }
+    /// 标签完整版（2026-11-18）：本篇选中的标签列（原序保留）；编辑回填、
+    /// 草稿保存/恢复、检查点保存/恢复、发布快照均走本字段。
+    private var selectedTags: [String] = [] {
+        didSet { editorEditVersion += 1 }
+    }
+    /// 编辑原篇的标签列（首次回填时拍定；PUT 只在 selectedTags 与它不同时发 tags）。
+    private var originalTags: [String] = []
     /// 插入式图片的上次焦点框：点选自定义钮/弹出框选项时焦点可能已被
     /// 拾取动作带走，单靠 isFirstResponder 会误判；本字段记最后一次
     /// 获焦的框（标题/正文），兜底时仍插到上次光标所在的框。
@@ -810,6 +817,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             capsuleDistrict: capsuleBuried ? capsuleDistrict : nil,
             mentionedUserId: selectedRecipient?.id,
             title: headlineForCreate,
+            tags: selectedTags,
             ephemeral: isEphemeral ? 1 : nil,
             locationName: selectedLocation?.name,
             locationDistrict: selectedLocation?.district,
@@ -1055,6 +1063,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let weatherToolButton = BearyComposerToolButton(type: .system)
     private let recipientToolButton = BearyComposerToolButton(type: .system)
     private let quoteToolButton = BearyComposerToolButton(type: .system)
+    /// 标签完整版（2026-11-18）：工具栏 # 钮（文字 #，无官方 hashtag 图标资产）；
+    /// 点按弹标签选择器（见 didTapTagTool）。
+    private let tagToolButton = BearyComposerToolButton(type: .system)
     private let draftPillButton = UIButton(type: .system)
     /// 顶栏可见性钮（2026-10-30 建、2026-10-31 改三态、12b 改点开菜单）：锁＝私密、地球＝公开、
     /// 时钟＝限时，点开系统 UIMenu 直选四档；取代正文区分段，为唯一可见性入口；
@@ -1107,6 +1118,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
     // C1：已选中项轻量 Chip 行（正文下方）：天气/写给各一枚，点 chip 打开对应选择条。
     private let selectedChipsRow = UIStackView()
+    /// 标签完整版（2026-11-18）：标签 chips 横向滚动行（selectedChipsRow 下方），
+    /// 无标签时隐藏、不占位；chip 点 × 移除该标签（见 refreshTagsRow）。
+    private let tagsScrollView = UIScrollView()
+    private let tagsStackView = UIStackView()
     /// 审计 P1-3：Chip 行首行（天气/写给单行态）；写给换行时脱离本行、改作
     /// selectedChipsRow 的第二行（见 layoutSelectedChips），不另建容器。
     private let selectedChipsFirstRow = UIStackView()
@@ -3929,10 +3944,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteToolButton.tintColor = BearyColors.ink
         quoteToolButton.addTarget(self, action: #selector(didTapQuoteTool), for: .touchUpInside)
         quoteToolButton.bearyAddPressFeedback()
+        tagToolButton.setTitle("#", for: .normal)
+        tagToolButton.titleLabel?.font = UIFont.systemFont(ofSize: 20, weight: .bold)
+        tagToolButton.setTitleColor(BearyColors.ink, for: .normal)
+        tagToolButton.accessibilityLabel = "添加标签"
+        tagToolButton.addTarget(self, action: #selector(didTapTagTool), for: .touchUpInside)
+        tagToolButton.bearyAddPressFeedback()
         toolbarContainer.translatesAutoresizingMaskIntoConstraints = false
         toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolRow.translatesAutoresizingMaskIntoConstraints = false
-        for button in [imageToolButton, locationToolButton, gifToolButton, weatherToolButton, recipientToolButton, quoteToolButton] {
+        for button in [imageToolButton, locationToolButton, gifToolButton, weatherToolButton, recipientToolButton, quoteToolButton, tagToolButton] {
             button.translatesAutoresizingMaskIntoConstraints = false
             button.widthAnchor.constraint(equalToConstant: 24).isActive = true
             button.heightAnchor.constraint(equalToConstant: 24).isActive = true
@@ -3981,6 +4002,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolRow.addArrangedSubview(weatherToolButton)
         toolRow.addArrangedSubview(recipientToolButton)
         toolRow.addArrangedSubview(quoteToolButton)
+        toolRow.addArrangedSubview(tagToolButton)
         // v6-5：字数圆环并进左侧图标组——不再被 spacer 顶到右端；圆环本身不是按钮，
         // 与引用钮之间无热区重叠问题，故引用→圆环用自定义间距 8（见下方 setCustomSpacing），
         // 不占 toolRow.spacing 的 20；数字已隐藏，只留圆环。
@@ -4071,6 +4093,58 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         setQuotePanelOpen(!quotePanelOpen)
+    }
+
+    /// 标签完整版（2026-11-18）：工具栏 # 钮——弹标签选择器（可挑旧标签、可新建）；
+    /// 确定后把选中列记进 selectedTags 并刷新标签 chips 行。
+    @objc private func didTapTagTool() {
+        BearyTagPicker.show(from: self, selected: selectedTags) { [weak self] tags in
+            guard let self = self else { return }
+            self.selectedTags = tags
+            self.refreshTagsRow()
+        }
+    }
+
+    /// 标签完整版（2026-11-18）：标签 chips 行刷新。无标签时整行隐藏、不占位；
+    /// 有标签时每枚 chip 显示“#标签 ×”，点按移除该标签（不弹选择器）。
+    private func refreshTagsRow() {
+        for view in tagsStackView.arrangedSubviews {
+            tagsStackView.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        guard !selectedTags.isEmpty else {
+            tagsScrollView.isHidden = true
+            contentStack.setCustomSpacing(0, after: tagsScrollView)
+            return
+        }
+        for (index, tag) in selectedTags.enumerated() {
+            let chip = BearyHit44Button(type: .system)
+            chip.setTitle("#" + tag + " ×", for: .normal)
+            chip.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+            chip.titleLabel?.numberOfLines = 1
+            chip.titleLabel?.lineBreakMode = .byTruncatingTail
+            chip.titleLabel?.adjustsFontSizeToFitWidth = false
+            chip.setTitleColor(BearyColors.ink, for: .normal)
+            chip.backgroundColor = BearyColors.surface2
+            chip.layer.cornerRadius = 999
+            chip.layer.masksToBounds = true
+            chip.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
+            chip.tag = index
+            chip.addTarget(self, action: #selector(didTapTagChip(_:)), for: .touchUpInside)
+            chip.bearyAddPressFeedback()
+            chip.translatesAutoresizingMaskIntoConstraints = false
+            chip.accessibilityLabel = "移除标签 " + tag
+            tagsStackView.addArrangedSubview(chip)
+        }
+        tagsScrollView.isHidden = false
+        contentStack.setCustomSpacing(8, after: tagsScrollView)
+    }
+
+    /// 标签 chip 点按：按下标移除该标签（标题含 × 后缀，不从标题反解析原文）。
+    @objc private func didTapTagChip(_ sender: UIButton) {
+        guard sender.tag < selectedTags.count else { return }
+        selectedTags.remove(at: sender.tag)
+        refreshTagsRow()
     }
 
     // MARK: - C1 选择条与已选 Chip 行（替代旧附加选项栏）
@@ -4824,7 +4898,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // refreshSelectedChips，故此处一处挂钩即全覆盖。
         mentionTopName = recipientName
         refreshMentionTopRow()
-        let anyChipVisible = !weatherChipButton.isHidden || !recipientChipButton.isHidden
+        let anyChipVisible = !weatherChipButton.isHidden || !recipientChipButton.isHidden || !selectedTags.isEmpty
         contentStack.setCustomSpacing(anyChipVisible ? 8 : 0, after: selectedChipsRow)
         // 审计 P1-3：显隐/文案变化后即重算换行（宽变化另由 viewDidLayoutSubviews 驱动）。
         layoutSelectedChips()
@@ -4955,6 +5029,26 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientChipButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         contentStack.addArrangedSubview(selectedChipsRow)
         contentStack.setCustomSpacing(0, after: selectedChipsRow)
+        // 标签完整版（2026-11-18）：标签 chips 横向滚动行（selectedChipsRow 下方），
+        // 无标签时隐藏、不占位；chip 点 × 移除该标签（见 refreshTagsRow）。
+        tagsScrollView.showsHorizontalScrollIndicator = false
+        tagsScrollView.isHidden = true
+        tagsScrollView.translatesAutoresizingMaskIntoConstraints = false
+        tagsStackView.axis = .horizontal
+        tagsStackView.spacing = 8
+        tagsStackView.alignment = .center
+        tagsStackView.translatesAutoresizingMaskIntoConstraints = false
+        tagsScrollView.addSubview(tagsStackView)
+        NSLayoutConstraint.activate([
+            tagsStackView.topAnchor.constraint(equalTo: tagsScrollView.topAnchor),
+            tagsStackView.bottomAnchor.constraint(equalTo: tagsScrollView.bottomAnchor),
+            tagsStackView.leadingAnchor.constraint(equalTo: tagsScrollView.leadingAnchor),
+            tagsStackView.trailingAnchor.constraint(equalTo: tagsScrollView.trailingAnchor),
+            tagsStackView.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        tagsScrollView.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        contentStack.addArrangedSubview(tagsScrollView)
+        contentStack.setCustomSpacing(0, after: tagsScrollView)
     }
 
     /// C11：删图撤销条（图片条下方）：文案 + 撤销钮；显隐与间距由 refreshImageUndoBar 管。
@@ -7666,6 +7760,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             selectedMood = entry.mood
             selectedWeather = entry.weather
+            // 标签完整版（2026-11-18）：编辑回填标签列，同时拍原快照（PUT 比对用）。
+            selectedTags = entry.tags ?? []
+            originalTags = selectedTags
         }
         // 气温只首次回填：补拉二次调用 setupEditContent 时用户可能已在加载
         // 期间手改气温，无条件重填会把手改静默盖回服务端旧值；与正文/标题/
@@ -7675,6 +7772,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         syncWeatherToolButton()
         refreshSelectedChips()
+        refreshTagsRow()
         // 批 E：编辑回填位置（首次回填才以服务端原值为准；补拉二次调用时用户可能已改选，
         // 不覆盖——与 @ 的 editQuoteFetchAttempted 守卫同款口径）。
         if !editQuoteFetchAttempted {
@@ -8213,6 +8311,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             locationLatitude: selectedLocation?.latitude,
             locationLongitude: selectedLocation?.longitude,
             visibilitySegmentIndex: selectedVisibilityFriends ? 2 : (selectedVisibilityPublished ? 1 : 0),
+            tags: selectedTags,
             ephemeralEnabled: isEditMode ? false : isEphemeral,
             recipientId: recipientUserId,
             recipientName: recipientNameValue,
@@ -8363,9 +8462,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.selectedMood = draft.mood
                 self.selectedWeather = draft.weather
                 self.selectedTemperature = draft.temperature
+                self.selectedTags = draft.tags ?? []
                 // 草稿恢复先赋值后刷新：先刷新时天气还是旧值（nil），步进器与
                 // 天气 chip 会被刷成隐藏、随后赋值却不再刷新（与草稿箱打开路径一致）。
                 self.refreshSelectedChips()
+                self.refreshTagsRow()
                 self.syncWeatherToolButton()
                 self.restoreVisibility(index: draft.visibilitySegmentIndex, ephemeral: draft.ephemeralEnabled)
                 self.selectedRecipient = self.restoredRecipient(from: draft)
@@ -8808,6 +8909,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedMood = nil
         selectedWeather = nil
         selectedTemperature = nil
+        selectedTags = []
+        originalTags = []
         // 切空白：上一篇在途自动填天气回包即过期作废，不写进新篇（见 weatherFetchGeneration）。
         weatherFetchGeneration += 1
         selectedRecipient = nil
@@ -8817,6 +8920,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedLocation = nil
         originalLocation = nil
         refreshLocationRow()
+        refreshTagsRow()
         // 112：空白新日记不得继承上一篇的可见性/限时态——编辑器每次
         // 默认私密、不记住上次选择。
         selectedVisibilityPublished = false
@@ -8898,11 +9002,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 草稿续写：标题回填进新输入框。
         setHeadlineText(draft.title)
         selectedMood = draft.mood
+        selectedTags = draft.tags ?? []
         selectedWeather = draft.weather
         selectedTemperature = draft.temperature
         // 切草稿：上一篇在途自动填天气回包即过期作废，不覆盖新篇天气（见 weatherFetchGeneration）。
         weatherFetchGeneration += 1
         refreshSelectedChips()
+        refreshTagsRow()
         restoreVisibility(index: draft.visibilitySegmentIndex, ephemeral: draft.ephemeralEnabled)
         selectedRecipient = restoredRecipient(from: draft)
         notifyRecipient = draft.notifyRecipient
@@ -9039,6 +9145,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             mood: selectedMood,
             weather: selectedWeather,
             temperature: selectedTemperature,
+            tags: selectedTags,
             locationName: selectedLocation?.name,
             locationDistrict: selectedLocation?.district,
             locationLatitude: selectedLocation?.latitude,
@@ -9214,10 +9321,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedMood = checkpoint.mood
         selectedWeather = checkpoint.weather
         selectedTemperature = checkpoint.temperature
+        selectedTags = checkpoint.tags ?? []
+        // 原快照仍以服务端原篇为准（不是检查点值），否则恢复后的标签改动
+        // 与原快照相同、PUT 漏发 tags，改动丢了。
+        originalTags = editingEntry?.tags ?? []
         let checkpointLocation = DiaryLocation(name: checkpoint.locationName, district: checkpoint.locationDistrict, latitude: checkpoint.locationLatitude, longitude: checkpoint.locationLongitude)
         selectedLocation = checkpointLocation.isEmpty ? nil : checkpointLocation
         syncWeatherToolButton()
         refreshSelectedChips()
+        refreshTagsRow()
         refreshLocationRow()
         rebuildImageItemsFromCheckpoint(checkpoint.images, accountId: checkpoint.accountId)
         refreshImageStripVisibility()
@@ -9766,13 +9878,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let updateClearMentioned: Bool = (selectedRecipient == nil && editMentionCleared)
         // 批 E：编辑位置——与原快照比对，未动省略、改选两键算清（有值发值、无值发 null）、清除两键皆 null。
         let locationChanged = selectedLocation != originalLocation
+        // 标签完整版（2026-11-18）：编辑标签——与原篇比对，未动省略（服务端保留原值）、
+        // 动了发整组（空数组 = 清掉全部标签）。
+        let tagsChanged = selectedTags != originalTags
         // 编辑实况映射：新映射非空即发；新映射为空但原篇有实况时发显式
         // 空映射清掉原实况；原篇本就无实况且新映射为空时省略（纯静态编辑
         // body 不变）。uploadedLiveVideos() 算两次是同一内存快照，无副作用。
         let editLiveVideos: [String: String]? = uploadedLiveVideos().isEmpty
             ? ((editingEntry?.liveVideos?.isEmpty == false) ? [:] : nil)
             : uploadedLiveVideos()
-                BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil, locationLatitude: locationChanged ? selectedLocation?.latitude : nil, locationLongitude: locationChanged ? selectedLocation?.longitude : nil, clearLocationCoords: locationChanged && selectedLocation?.latitude == nil, temperature: selectedTemperature, liveVideos: editLiveVideos) { [weak self] result in
+                BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil, locationLatitude: locationChanged ? selectedLocation?.latitude : nil, locationLongitude: locationChanged ? selectedLocation?.longitude : nil, clearLocationCoords: locationChanged && selectedLocation?.latitude == nil, temperature: selectedTemperature, liveVideos: editLiveVideos, tags: tagsChanged ? selectedTags : nil) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -9803,6 +9918,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         updated.liveVideos = self.uploadedLiveVideos().isEmpty ? nil : self.uploadedLiveVideos()
                         updated.mood = self.selectedMood
                         updated.weather = self.selectedWeather
+                        // 标签完整版（2026-11-18）：编辑成功后本地副本跟随标签终态。
+                        updated.tags = self.selectedTags
                         updated.temperatureC = self.selectedTemperature
                         // 批 E：编辑成功后本地副本跟随位置终态，列表行不靠重拉才变。
                         updated.locationName = self.selectedLocation?.name
