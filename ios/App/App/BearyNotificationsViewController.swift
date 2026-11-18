@@ -2351,15 +2351,26 @@ final class BearyNotificationsViewController: UIViewController {
         }
     }
 
-    /// 聚合行点按：组内每条先乐观标已读（失败各按单条回滚口径），再一次性跳转——
-    /// entry 组进组内最新一条的日记详情，follow 组进组内最新关注方的主页。
+    /// 聚合行点按：先乐观标已读（失败各按单条回滚口径），再一次性跳转——
+    /// entry 组进组内最新一条的日记详情（组内各条同属一篇，全标已读）；
+    /// follow 组只进组内最新关注方的主页，只标代表条已读，其余成员保持
+    /// 未读、留待逐条点开再标；代表条 actorId 为空打不开主页时整组都不标。
     /// 聚合 follow 行不画回关钮（归属不明），进主页回关。
     private func openGroupNotification(_ row: NotificationDisplayRow) {
         guard let memberIndices = row.groupItemIndices, !memberIndices.isEmpty else { return }
         let members = memberIndices.compactMap { $0 < items.count ? items[$0] : nil }
         guard let representative = members.first else { return }
+        let type = representative.type ?? ""
+        let isFollowGroup = type == "follow"
+        // follow 组只打开代表条一人的主页：代表条 actorId 为空时连主页都
+        // 打不开，整组都不标已读；否则只标代表条一条。
+        if isFollowGroup, representative.actorId == nil {
+            return
+        }
+        let representativeIndex = memberIndices.first(where: { $0 < items.count })
+        let indicesToMarkRead = isFollowGroup ? (representativeIndex.map { [$0] } ?? []) : memberIndices
         var newlyReadCount = 0
-        for index in memberIndices where index < items.count {
+        for index in indicesToMarkRead where index < items.count {
             if (items[index].read ?? true) == false, items[index].id != nil {
                 items[index].read = true
                 newlyReadCount += 1
@@ -2374,7 +2385,6 @@ final class BearyNotificationsViewController: UIViewController {
             applyReadAppearanceToVisibleRows()
             notifyMergeSnapshotChanged()
         }
-        let type = representative.type ?? ""
         if type == "follow" {
             if let actorId = representative.actorId {
                 onOpenUser?(actorId)
