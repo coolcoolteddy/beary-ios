@@ -368,6 +368,11 @@ final class BearySettingsViewController: UIViewController {
     private var switchCardBuilt = false
     private var isSwitchingAccount = false
     private var isRemovingAccount = false
+    /// 第四轮审计 39：切换与移除按目标账号串行化的在途目标号。
+    /// 切换在途时同号移除入口拒绝，反之亦然（不同号互不阻塞）；
+    /// 与 isSwitchingAccount / isRemovingAccount 同步置位与清零。
+    private var switchingAccountId: Int?
+    private var removingAccountId: Int?
     private var isLoggingOutOthers = false
     private var isDeleting = false
     private var isExporting = false
@@ -1882,6 +1887,14 @@ final class BearySettingsViewController: UIViewController {
             showToast("正在注销，请稍后再切换账号")
             return
         }
+        // 第四轮审计 39：同号移除在途时不许切过去——移除已发出目标号
+        // 的服务端登出、无法撤回，此时切号预检一旦通过就会带着已死
+        // 的会话提交成功（见 SessionManager.removeAccount 注释）。
+        // 不同号的移除不阻塞。
+        guard removingAccountId != accountIdValue else {
+            showToast("正在移除该账号，请稍后再切换")
+            return
+        }
         if expiredSwitchUserIds.contains(accountIdValue) {
             // 该号会话已被上次切换预检证实失效：不再发注定 401 的预检，
             // 直走过期重登（与下面 .expired 分支同一入口）。
@@ -1890,6 +1903,7 @@ final class BearySettingsViewController: UIViewController {
             return
         }
         isSwitchingAccount = true
+        switchingAccountId = accountIdValue
         // 116 后扫查：切换要等一次 /me 网络往返，旧代码这段时间按钮毫无变化，
         // 点按像没点中。点下立刻置灰+禁用（成功时整组行重建，失败时下面复原）。
         sender.isEnabled = false
@@ -1897,6 +1911,7 @@ final class BearySettingsViewController: UIViewController {
         SessionManager.shared.switchToAccount(userId: accountIdValue) { [weak self] result in
             guard let self = self else { return }
             self.isSwitchingAccount = false
+            self.switchingAccountId = nil
             sender.isEnabled = true
             sender.alpha = 1
             switch result {
@@ -1976,6 +1991,13 @@ final class BearySettingsViewController: UIViewController {
     @objc private func removeAccountButtonTapped(_ sender: UIButton) {
         let accountIdValue = sender.tag
         guard !isRemovingAccount else { return }
+        // 第四轮审计 39：同号切换在途时不弹移除确认——切号预检一旦
+        // 通过即提交，确认后发出的移除登出会把刚切好的会话撤掉。
+        // 不同号的切换不阻塞。
+        guard switchingAccountId != accountIdValue else {
+            showToast("正在切换到该账号，请稍后再移除")
+            return
+        }
         let isCurrent = SessionManager.shared.currentUser?.id == accountIdValue
         let title = isCurrent ? "移除当前账号" : "移除账号"
         let message = "该账号将在本设备退出登录，其他账号不受影响。"
@@ -1983,10 +2005,18 @@ final class BearySettingsViewController: UIViewController {
         BearyConfirmSheet.show(from: self, title: title, message: message, actions: [
             BearyConfirmSheet.Action(title: "移除", style: .destructive) { [weak self] in
                 guard let self = self else { return }
+                // 第四轮审计 39：确认前复核——弹窗期间同号切换可能已启动，
+                // 此时发出的移除登出会撤掉刚切好的会话，直接拒绝、不发请求。
+                guard self.switchingAccountId != accountIdValue else {
+                    self.showToast("正在切换到该账号，请稍后再移除")
+                    return
+                }
                 self.isRemovingAccount = true
+                self.removingAccountId = accountIdValue
                 SessionManager.shared.removeAccount(userId: accountIdValue) { [weak self] result in
                     guard let self = self else { return }
                     self.isRemovingAccount = false
+                    self.removingAccountId = nil
                     switch result {
                     case .removed:
                         self.refreshAccountSwitchSection()
