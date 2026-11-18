@@ -364,8 +364,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 公开接口
 
-    /// 发布成功，传新日记 id。
-    var onPublished: ((String) -> Void)?
+    /// 发布成功，传新日记 id＋本次发布的代次（容器开编辑器时发的
+    /// publishToken，中心原样回传；容器凭它判断回调是否仍是最新发布）。
+    var onPublished: ((String, UUID) -> Void)?
+    /// 本次发布的代次：容器每次开编辑器发一个，交接时带进发布任务；
+    /// 未走容器入口时为编辑器自带的默认值，成功回调会被容器判为过期。
+    var publishToken = UUID()
     /// 编辑保存成功：传更新后的完整 Entry（内容/图片/心情/天气/引用均为编辑器终态，
     /// 引用已清时 quoteId 与 quote 均为 nil）。调用方据此定向刷新各面（不整表刷新）。
     var onUpdated: ((Entry) -> Void)?
@@ -9920,6 +9924,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             snapshot: snapshot,
             images: images,
             publishTogether: publishTogether,
+            publishToken: publishToken,
             hostView: presentingViewController?.view,
             onPublished: onPublished,
             onRequireLogin: onRequireLogin)

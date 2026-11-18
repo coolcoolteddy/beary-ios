@@ -64,15 +64,21 @@ struct BearyPublishImage {
 /// 一次后台发布任务：快照＋图片清单＋门禁出路＋宿主视图＋回包闭包。
 /// hostView 只弱持有（Chrome 的 view，编辑器退出后 pill 挂在它上面）；
 /// onPublished/onRequireLogin 是编辑器交接来的容器闭包值（不持有编辑器
-/// 本身），编辑器已退场时照常执行（SceneDelegate.onPublished 的 dismiss
-/// 在无 presented 页时为空操作、后续切时间线照常）。
+/// 本身），编辑器已退场时照常执行。onPublished 回传本次发布的代次
+/// （publishToken），容器只在代次仍是最新且顶层无其他 modal 时才
+/// dismiss＋切时间线；否则只刷新列表——旧发布的成功回调不得关掉用户
+/// 后来打开的页面（如下一篇编辑器）。
 struct BearyPublishJob {
     let snapshot: PublishSnapshot
     let images: [BearyPublishImage]
     /// 门禁选了「一并公开」：先 setVisibility 公开原日记，再发新篇。
     let publishTogether: Bool
+    /// 本次发布的代次（容器每次开编辑器发一个）：成功时原样回传给
+    /// onPublished，供容器侧比对——旧代次的成功回调不得 dismiss／切页。
+    let publishToken: UUID
     weak var hostView: UIView?
-    let onPublished: ((String) -> Void)?
+    /// 成功回调：新日记 id＋本次发布的代次。
+    let onPublished: ((String, UUID) -> Void)?
     let onRequireLogin: (() -> Void)?
 }
 
@@ -466,7 +472,7 @@ final class BearyPublishCenter {
             runningJob.pill?.finishSuccess()
             currentPill = nil
         }
-        runningJob.job.onPublished?(entryId)
+        runningJob.job.onPublished?(entryId, runningJob.job.publishToken)
     }
 
     /// 失败：停掉任务、草稿保留（交接前已落盘，不再重存）、拒绝震动、
