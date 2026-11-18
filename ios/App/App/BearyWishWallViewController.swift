@@ -14,19 +14,20 @@ import UIKit
 // POST /beary/api/wishes/:id/vote、POST /beary/api/wishes/:id/status）已于
 // 2026-10-29 部署上线；接口失败时本页走失败态（重试钮），不编造假数据。
 
-// MARK: - 行视图（纯代码行：标题 / 详情 / 发起人时间 / 净赞成 / 两票钮 / 状态 pill）
+// MARK: - 行视图（纯代码行：标题 / 已完成静态结果 / 详情 / 发起人时间 / 两票钮＋净赞成 / 状态 pill）
 
 private final class WishRowView: UIView {
     private let titleLabel = UILabel()
     private let detailLabel = UILabel()
     private let metaLabel = UILabel()
     private let netLabel = UILabel()
-    // 08：投票区换行——voteRow 提为属性，另备一行 voteRowWrapped（仅换行态显形，内为弹性
-    // spacer + netLabel，净数贴右缘）；换行态由 layoutSubviews 的 updateVoteWrap 判定。
+    /// 任务 9：已完成行的静态结果（“赞成 N · 反对 M · 净赞成 ±K”），接在标题行
+    /// （含「已完成」pill）下方；仅已完成时显形，未完成时隐藏不占位。
+    private let doneResultLabel = UILabel()
+    // 任务 9：投票区只剩一行 voteRow；净赞成窄屏收起（隐藏）不再换行到第二行，
+    // 收起态由 layoutSubviews 的 updateNetCollapse 判定（取代 08 的换行行）。
     private var voteRow: UIStackView!
-    private let voteRowWrapped = UIStackView()
-    private let voteWrapSpacer = UIView()
-    private var isVoteWrapped = false
+    private var isNetCollapsed = false
     private let donePill = UILabel()
     // 展开/收起钮：视觉仍为 13pt 文字固有高，热区由 BearyHit44Button 的 point(inside:) 向外扩到 44pt（不改约束、不改文案）。
     private let expandButton = BearyHit44Button(type: .system)
@@ -75,6 +76,12 @@ private final class WishRowView: UIView {
         netLabel.font = BearyDynamicType.numberFont()
         netLabel.adjustsFontForContentSizeCategory = true
         netLabel.textColor = BearyColors.gray
+        // 任务 9：已完成静态结果行——与作者时间同档的 12 灰字弱信息行，只读不点。
+        doneResultLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        doneResultLabel.adjustsFontForContentSizeCategory = true
+        doneResultLabel.textColor = BearyColors.gray
+        doneResultLabel.numberOfLines = 0
+        doneResultLabel.isHidden = true
         // 28：donePill 文字与底色均走动态色（文字 BearyColors.deepGreenText，底色经
         // BearyColors.alpha 重解，不再硬编码绿值与 alpha 底）；公开 pill 橙色
         // 不在本文件，绝不动。固定 56×18 容器配 cappedFont 上限 14（31），
@@ -117,14 +124,6 @@ private final class WishRowView: UIView {
         voteRow.axis = .horizontal
         voteRow.spacing = 8
         voteRow.alignment = .center
-        // 08：换行行的第二行——弹性 spacer 把净数顶到右缘；默认隐藏，UIStackView 不为隐藏行占位。
-        voteWrapSpacer.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
-        voteWrapSpacer.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
-        voteRowWrapped.addArrangedSubview(voteWrapSpacer)
-        voteRowWrapped.axis = .horizontal
-        voteRowWrapped.spacing = 8
-        voteRowWrapped.alignment = .center
-        voteRowWrapped.isHidden = true
         // 15：标题与 donePill 放同一横向容器——pill 占 56 宽时标题只剩剩余宽换行，
         // 首行不再被右上角悬浮 pill 盖住；未完成时 pill 隐藏，stack 自动不占位，标题回满宽。
         titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -134,9 +133,9 @@ private final class WishRowView: UIView {
         titleRow.axis = .horizontal
         titleRow.spacing = 8
         titleRow.alignment = .top
-        // 15：竖向栈减一层——netLabel 已随 voteRow 进操作行，不再单列；作者时间
-        // metaLabel 仍为单独弱信息行，标题与 donePill 的同容器（titleRow）原样不动。
-        let stack = UIStackView(arrangedSubviews: [titleRow, detailLabel, expandButton, metaLabel, voteRow, voteRowWrapped, doneButton])
+        // 任务 9：已完成静态结果行接在标题行下方；竖向栈减一层——换行行已删，
+        // 净赞成窄屏收起（隐藏）不再单列；作者时间 metaLabel 仍为单独弱信息行。
+        let stack = UIStackView(arrangedSubviews: [titleRow, doneResultLabel, detailLabel, expandButton, metaLabel, voteRow, doneButton])
         stack.axis = .vertical
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -223,33 +222,24 @@ private final class WishRowView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         updateExpandVisibility()
-        updateVoteWrap()
+        updateNetCollapse()
     }
 
-    /// 08：投票区宽度不足时净赞成自动换行——单行最少需要两票钮 + 净数 + 三处 8 间距
-    /// （spacer 可压到 0）；超宽才换行，正常字号横向布局一字不动。两票钮始终同行相邻，
-    /// 只挪净数；仅在换行态变化时才在两行之间搬 label，避免 layoutSubviews 内改布局引发循环。
-    private func updateVoteWrap() {
+    /// 任务 9：投票区宽度不足时净赞成直接收起（隐藏），不再换行占第二行——
+    /// 两票钮各带自家票数，净数可由两数相减得出，窄屏收起不丢信息；单行最少
+    /// 需要两票钮 + 净数 + 三处 8 间距（spacer 可压到 0）；仅在收起态变化时
+    /// 改属性，避免 layoutSubviews 内改布局引发循环。
+    private func updateNetCollapse() {
         let availWidth = bounds.width - 32
         guard availWidth > 0 else { return }
         let needed = upButton.intrinsicContentSize.width
             + downButton.intrinsicContentSize.width
             + netLabel.intrinsicContentSize.width
             + 8 * 3
-        let shouldWrap = needed > availWidth
-        guard shouldWrap != isVoteWrapped else { return }
-        isVoteWrapped = shouldWrap
-        if shouldWrap {
-            voteRow.removeArrangedSubview(netLabel)
-            netLabel.removeFromSuperview()
-            voteRowWrapped.addArrangedSubview(netLabel)
-            voteRowWrapped.isHidden = false
-        } else {
-            voteRowWrapped.removeArrangedSubview(netLabel)
-            netLabel.removeFromSuperview()
-            voteRow.addArrangedSubview(netLabel)
-            voteRowWrapped.isHidden = true
-        }
+        let shouldCollapse = needed > availWidth
+        guard shouldCollapse != isNetCollapsed else { return }
+        isNetCollapsed = shouldCollapse
+        netLabel.isHidden = shouldCollapse
     }
 
     private func updateExpandVisibility() {
@@ -333,13 +323,16 @@ private final class WishRowView: UIView {
         let done = item.status == "done"
         isDoneRow = done
         donePill.isHidden = !done
-        // 已完成即闭环：票钮置灰不可点（禁用态本身即不可用示意，不另弹 toast）。
+        // 任务 9：已完成即闭环——灰掉的投票按钮整行去掉，改由一行静态结果
+        // （赞成 N · 反对 M · 净赞成 ±K）接在「已完成」状态下方；未完成时
+        // 投票行照常显示，两票钮各带自家票数。静态行只读，点按无反应。
+        doneResultLabel.text = "赞成 \(up) · 反对 \(down) · 净赞成 \(net >= 0 ? "+" : "")\(net)"
+        doneResultLabel.isHidden = !done
+        voteRow.isHidden = done
         // 扫 bug 定版第 6 项：投票不再有在途禁用——在途时票钮保持可点，
         // configure 只按已完成态禁用，不把在途行提前解开/锁住。
         upButton.isEnabled = !done
         downButton.isEnabled = !done
-        upButton.alpha = done ? 0.4 : 1
-        downButton.alpha = done ? 0.4 : 1
         doneButton.isHidden = !(isAdmin && !done)
     }
 
