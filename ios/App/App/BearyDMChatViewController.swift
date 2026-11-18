@@ -463,6 +463,21 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 let existingIds = Set(self.messages.compactMap { $0.id })
                 let missing = local.filter { m in !(m.id.map { existingIds.contains($0) } ?? false) }
                 guard !missing.isEmpty else { return }
+                // 审计 26-8：本地恢复不再无条件滚到底——复用 loadLatest 的口径，
+                // 改表前先拍底部态与锚点（首个可见行 + 视口内偏移）；近底才跟随
+                // 到底，离底时复位锚点、保留当前阅读位置，不打断正在读旧消息的用户。
+                // 底部态须用改表前的值：reload 后新消息撑高表，再判会把在底部的
+                // 用户误判为离底。空表 isNearBottom 恒真，首开仍到底。
+                let wasNearBottomBeforeReload = self.isNearBottom()
+                let restoreAnchorIndexPath = self.tableView.indexPathsForVisibleRows?.sorted().first
+                let restoreAnchorMessageId = restoreAnchorIndexPath.flatMap { $0.row < self.messages.count ? self.messages[$0.row].id : nil }
+                let restoreAnchorViewportOffset: CGFloat = {
+                    guard let restoreAnchorIndexPath = restoreAnchorIndexPath else { return 0 }
+                    let rect = self.tableView.rectForRow(at: restoreAnchorIndexPath)
+                    return rect.origin.y - self.tableView.contentOffset.y
+                }()
+                let restoreOffsetY = self.tableView.contentOffset.y
+                let restoreOldHeight = self.tableView.contentSize.height
                 let temps = self.messages.filter { $0.localKey != nil }
                 let server = (self.messages.filter { $0.localKey == nil } + missing).sorted { ($0.id ?? 0) < ($1.id ?? 0) }
                 self.messages = server + temps
@@ -471,7 +486,19 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 self.firstLoadPending = false
                 self.firstLoadStateView.isHidden = true
                 self.tableView.reloadData()
-                self.scrollToBottomIfNeeded()
+                self.tableView.layoutIfNeeded()
+                if wasNearBottomBeforeReload {
+                    self.scrollToBottomIfNeeded()
+                } else if let anchorId = restoreAnchorMessageId,
+                          let anchorIndex = self.messages.firstIndex(where: { $0.id == anchorId }) {
+                    // 读旧消息：改表前拍的锚点行复位，视口内容原地不动。
+                    let rect = self.tableView.rectForRow(at: IndexPath(row: anchorIndex, section: 0))
+                    self.tableView.contentOffset = CGPoint(x: 0, y: rect.origin.y - restoreAnchorViewportOffset)
+                } else {
+                    // 锚点行已不在新表里：按插入高度平移当刻视口，内容仍原地不动。
+                    let delta = self.tableView.contentSize.height - restoreOldHeight
+                    self.tableView.contentOffset = CGPoint(x: 0, y: restoreOffsetY + delta)
+                }
             }
             // 审计四轮增量 12：恢复上次未落盘的待发——按存储状态如实回显
             //（不自动重发；服务端已有该行时 loadLatest 认领即清掉）。
@@ -494,10 +521,30 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.fadedRowKeys.insert("msg-pending-\(p.localKey)")
                 }
                 guard !restored.isEmpty else { return }
+                // 审计 26-8：同历史恢复——改表前先拍底部态与锚点，近底才跟随
+                // 到底，离底时复位锚点、保留当前阅读位置。
+                let wasNearBottomBeforeReload = self.isNearBottom()
+                let restoreAnchorIndexPath = self.tableView.indexPathsForVisibleRows?.sorted().first
+                let restoreAnchorMessageId = restoreAnchorIndexPath.flatMap { $0.row < self.messages.count ? self.messages[$0.row].id : nil }
+                let restoreAnchorViewportOffset: CGFloat = {
+                    guard let restoreAnchorIndexPath = restoreAnchorIndexPath else { return 0 }
+                    let rect = self.tableView.rectForRow(at: restoreAnchorIndexPath)
+                    return rect.origin.y - self.tableView.contentOffset.y
+                }()
                 self.messages += restored
                 self.updateEmptyState()
                 self.tableView.reloadData()
-                self.scrollToBottomIfNeeded()
+                self.tableView.layoutIfNeeded()
+                if wasNearBottomBeforeReload {
+                    self.scrollToBottomIfNeeded()
+                } else if let anchorId = restoreAnchorMessageId,
+                          let anchorIndex = self.messages.firstIndex(where: { $0.id == anchorId }) {
+                    // 读旧消息：改表前拍的锚点行复位，视口内容原地不动。
+                    let rect = self.tableView.rectForRow(at: IndexPath(row: anchorIndex, section: 0))
+                    self.tableView.contentOffset = CGPoint(x: 0, y: rect.origin.y - restoreAnchorViewportOffset)
+                }
+                // 锚点行不在新表里（首个可见行是无 id 的待发行）时不另行平移：
+                // 待发只拼在末尾，原有行位置不变，contentOffset 不动即保留锚点。
             }
         }
         // 新一轮 01：回前台刷新可见行的时间标签（相对时间分钟边界外，前台恢复即刷新）。
