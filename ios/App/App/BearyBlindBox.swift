@@ -73,9 +73,12 @@ enum BlindBoxDate {
         return Int(start.timeIntervalSince1970 * 1000)
     }
 
-    /// 卡片日期：M月d日 H:mm（与时间线引用日期同口径）。
+    /// 卡片日期：7 天内相对时间、7 天外绝对时间（共用口径）。
     static func displayString(ms: Int?) -> String {
         guard let ms = ms, ms > 0 else { return "" }
+        if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
+            return relative
+        }
         let fmt = DateFormatter()
         fmt.timeZone = shanghai
         fmt.locale = Locale(identifier: "zh_CN")

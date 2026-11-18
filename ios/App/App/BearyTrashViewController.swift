@@ -1470,11 +1470,13 @@ private enum TrashText {
         return NSAttributedString(string: text, attributes: attributes)
     }
 
-    /// [24] 小项 6：同年 M月d日 H:mm，跨年 yyyy年M月d日（不走今天/昨天特例；小时不补零，
-    /// 与项目主流日记日期口径一致；旧 HH:mm 注“网页 fmtDayTime 同款”
-    /// 与现行卡片/详情 H:mm 主流冲突，已按 App 内主流改齐）。
+    /// [24] 小项 6：7 天内相对时间、7 天外绝对时间（共用口径，M月d日 H:mm；
+    /// 小时不补零；ms 无效时回落下方的旧绝对格式）。
     /// G8：显示用 formatter 统一设北京时区，与服务端日界一致。
     static func createdLabel(ms: Int) -> String {
+        if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
+            return relative
+        }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
