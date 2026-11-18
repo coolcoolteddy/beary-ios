@@ -930,14 +930,18 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     /// 认领窗口（审计四轮增量 05）：服务端时间须落在待发时间前后窗口内——
     /// 下限 5 秒容时钟偏差，上限 60 秒防晚到的同文案行被旧待发误认领。
     /// 窗口拦不住先失败、后成功同文场景（A 先失败、B 后成功时 A 仍在窗内），
-    /// 该场景靠 reconcilePendingSends 排除失败行。完整精确认领须后端在
-    /// 历史接口透传客户端消息 ID，见 PR 描述待办。
+    /// 该场景靠 reconcilePendingSends 排除失败行。审计第 26 轮第 5 项起，
+    /// 带客户端 ID 的服务端行只走 ID 精确认领、不走本窗口（见 reconcilePendingSends）；
+    /// 本窗口只作无 ID 旧消息的回退。
     private static let claimWindowBeforeMs = 5000
     private static let claimWindowAfterMs = 60000
 
-    /// 待发行与服务端行配对认领：按发送顺序，服务端行须是本人、正文相同、
-    /// 服务端时间落在待发时间前后窗口内（前 5 秒容时钟偏差、后 60 秒防晚到
-    /// 同文案行被旧待发误认领）；一条服务端行只认领一条待发（同文案连发不串位）。
+    /// 待发行与服务端行配对认领：先按客户端消息 ID 精确配对——服务端行
+    /// clientMessageId 等于待发 localKey 即认领（与正文、时间无关）；带 ID 的
+    /// 服务端行只认自己的待发，不参与正文＋窗口回退（否则同文连发会串位）。
+    /// 无 ID 的旧消息回退到原口径：服务端行须是本人、正文相同、服务端时间
+    /// 落在待发时间前后窗口内（前 5 秒容时钟偏差、后 60 秒防晚到同文案行被
+    /// 旧待发误认领）；一条服务端行只认领一条待发（同文案连发不串位）。
     /// 认领到的待发丢弃（服务端行已在列表里，不闪动、不重播）；未认领的待发
     /// 重新拼到末尾（失败态跟随 localKey 保留）。
     /// 审计第 17 轮第 6 项：失败行（failedSendKeys）不参与认领，留在末尾
@@ -956,12 +960,17 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 continue
             }
             if let idx = messages.indices.first(where: { i in
-                !usedServer.contains(i) &&
-                messages[i].localKey == nil &&
-                messages[i].senderId == myId &&
-                messages[i].body == temp.body &&
-                (messages[i].createdAt ?? 0) >= (temp.createdAt ?? 0) - Self.claimWindowBeforeMs &&
-                (messages[i].createdAt ?? 0) <= (temp.createdAt ?? 0) + Self.claimWindowAfterMs
+                guard !usedServer.contains(i),
+                      messages[i].localKey == nil,
+                      messages[i].senderId == myId else { return false }
+                // ID 精确认领：与正文、时间无关。
+                if messages[i].clientMessageId == key { return true }
+                // 无 ID 旧消息回退：带 ID 的服务端行只认自己的待发，不走正文＋窗口。
+                guard messages[i].clientMessageId == nil,
+                      messages[i].body == temp.body,
+                      (messages[i].createdAt ?? 0) >= (temp.createdAt ?? 0) - Self.claimWindowBeforeMs,
+                      (messages[i].createdAt ?? 0) <= (temp.createdAt ?? 0) + Self.claimWindowAfterMs else { return false }
+                return true
             }) {
                 usedServer.insert(idx)
                 failedSendKeys.remove(key)
@@ -1004,7 +1013,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         reloadPendingRow(key: key)
         let requestAccountId = SessionManager.shared.currentUser?.id
         let requestEpoch = BearyAPI.shared.authEpoch
-        BearyAPI.shared.sendDM(userId: userId, body: body) { [weak self] result in
+        // 审计第 26 轮第 5 项：重发沿用首次发送的 localKey 作客户端消息 ID，
+        // 不生成新 ID——服务端认同一条消息。
+        BearyAPI.shared.sendDM(userId: userId, body: body, clientMessageId: key) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.retryingKeys.remove(key)
@@ -1637,7 +1648,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             // 见 isRequestCurrent）。
             let requestAccountId = submitAccountId
             let requestEpoch = submitEpoch
-            BearyAPI.shared.sendDM(userId: userId, body: body) { [weak self] result in
+            // 审计第 26 轮第 5 项：把本地待发的 localKey（UUID）随请求带给服务端
+            // 作客户端消息 ID，历史回包按此 ID 精确认领。
+            BearyAPI.shared.sendDM(userId: userId, body: body, clientMessageId: key) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     // 切号夹在发送与回包之间时旧回包直接丢弃：不撤行、不 toast、

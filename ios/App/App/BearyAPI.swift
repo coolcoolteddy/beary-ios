@@ -1901,6 +1901,12 @@ final class BearyAPI {
         // 本地 store 从不保存（无 id 的行入库时即被跳过）；聊天页凭它认待发行、
         // 失败态与重发，服务端行认领后即丢弃。Optional 带默认值，解码不受影响。
         var localKey: String? = nil
+        // 审计第 26 轮第 5 项：服务端透传的客户端消息 ID（history 回 client_message_id，
+        // 全局 convertFromSnakeCase 解码即落到本字段）。发送时把本地 localKey（UUID）
+        // 随请求带给服务端，历史回包按此 ID 精确认领，不再只靠正文＋时间窗口；
+        // 无 ID 的旧消息（服务端部署前发出）走原窗口回退。仅服务端行携带，本地
+        // 待发行不填本字段（认领时拿待发的 localKey 与服务端行的本字段比对）。
+        var clientMessageId: String? = nil
     }
 
     struct DMHistoryResponse: Decodable {
@@ -1909,10 +1915,14 @@ final class BearyAPI {
         var resolvedMessages: [DMMessage] { messages ?? items ?? [] }
     }
 
-    /// 发私信：POST /beary/api/friends/dm/send {user_id, body}。正文去空后
+    /// 发私信：POST /beary/api/friends/dm/send {user_id, body, client_message_id?}。正文去空后
     /// 非空且 ≤2000 字（App 先拦一道，后端再校验）；档位不允许/拉黑 403、游客 401。
-    func sendDM(userId: Int, body: String, completion: @escaping (Result<FriendOkResponse, APIError>) -> Void) {
-        request("/beary/api/friends/dm/send", method: "POST", jsonBody: ["user_id": userId, "body": body], completion: completion)
+    /// 审计第 26 轮第 5 项：clientMessageId 传本地待发的 localKey（UUID），服务端存下并
+    /// 在 history 里透传回 client_message_id，供聊天页按 ID 精确认领；重发沿用同一 ID。
+    func sendDM(userId: Int, body: String, clientMessageId: String? = nil, completion: @escaping (Result<FriendOkResponse, APIError>) -> Void) {
+        var payload: [String: Any] = ["user_id": userId, "body": body]
+        if let clientMessageId, !clientMessageId.isEmpty { payload["client_message_id"] = clientMessageId }
+        request("/beary/api/friends/dm/send", method: "POST", jsonBody: payload, completion: completion)
     }
 
     /// 会话列表：GET /beary/api/friends/dm/conversations（全部有往来的对方，
