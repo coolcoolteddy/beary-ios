@@ -4791,7 +4791,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 副作用（其余皆为已删旧天气条带的按钮样式），旧条带删除后抽为独立函数。
     private func syncWeatherToolButton() {
         if let weather = selectedWeather {
-            if let icon = BearyIconImages.image(named: "icon_wx_\(weather)", pointSize: 24) {
+            if let icon = BearyIconImages.image(named: "icon_wx_\(BearyText.weatherStaticKey(for: weather))", pointSize: 24) {
                 weatherToolButton.setImage(icon, for: .normal)
             }
             weatherToolButton.tintColor = BearyColors.ink
@@ -4843,11 +4843,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// （“天气：晴”“提到：昵称”），不只靠图标传达信息。
     /// 图标计入按钮 intrinsicContentSize，P1-3 换行总宽自动含图标宽。
     private func refreshSelectedChips() {
-        if let weather = selectedWeather, let name = BearyText.weatherNames[weather] {
+        // 天气 chip 与工具栏、引用行共用 weatherStaticKey：drizzle/hail/overcast
+        // 无专属静态图与中文名，就近取 rain/snow/cloudy 的图与名，不再隐藏。
+        if let weather = selectedWeather, let name = BearyText.weatherNames[BearyText.weatherStaticKey(for: weather)] {
             weatherChipButton.isHidden = false
             let weatherTitle = selectedTemperature != nil ? "\(name) \(selectedTemperature!)°" : name
             weatherChipButton.setTitle(weatherTitle, for: .normal)
-            let icon = BearyIconImages.image(named: "icon_wx_\(weather)", pointSize: 16)
+            let icon = BearyIconImages.image(named: "icon_wx_\(BearyText.weatherStaticKey(for: weather))", pointSize: 16)
             if icon == nil {
                 NSLog("[BearyComposer] selected weather chip icon missing key=%@", weather)
             }
