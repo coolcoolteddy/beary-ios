@@ -1459,8 +1459,11 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 } else {
                     // 先全文渲染再取前 24 个可见字：记号已是单个附件格，
                     // 不会在记号中间截断（先截 24 字再渲染会把记号切一半、原文露出）。
+                    // 按字素簇取前 24 字再换算 UTF-16 长度：原生 Emoji（代理对、
+                    // ZWJ 序列、旗帜、肤色修饰）按整个可见字符计，不会被切一半。
                     let rendered = BearyText.inlineAttributedText(from: body, font: config.textProperties.font, color: config.textProperties.color, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
-                    config.attributedText = rendered.attributedSubstring(from: NSRange(location: 0, length: min(24, rendered.length)))
+                    let prefixLength = rendered.string.prefix(24).utf16.count
+                    config.attributedText = rendered.attributedSubstring(from: NSRange(location: 0, length: prefixLength))
                 }
             }
             var secondary = ""
