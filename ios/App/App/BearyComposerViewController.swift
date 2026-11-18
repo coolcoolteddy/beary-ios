@@ -3838,14 +3838,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         pendingUploadBarLabel.textColor = BearyColors.ink
         pendingUploadBarLabel.translatesAutoresizingMaskIntoConstraints = false
         pendingUploadBar.addSubview(pendingUploadBarLabel)
-        pendingUploadBarChevron.image = UIImage(systemName: "chevron.right")
+        pendingUploadBarChevron.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 14)
         pendingUploadBarChevron.tintColor = BearyColors.gray
         pendingUploadBarChevron.contentMode = .scaleAspectFit
         pendingUploadBarChevron.translatesAutoresizingMaskIntoConstraints = false
         pendingUploadBar.addSubview(pendingUploadBarChevron)
         contentStack.addArrangedSubview(pendingUploadBar)
         NSLayoutConstraint.activate([
-            pendingUploadBar.heightAnchor.constraint(equalToConstant: 44),
+            pendingUploadBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             pendingUploadBarLabel.centerYAnchor.constraint(equalTo: pendingUploadBar.centerYAnchor),
             pendingUploadBarLabel.leadingAnchor.constraint(equalTo: pendingUploadBar.leadingAnchor, constant: 16),
             pendingUploadBarLabel.trailingAnchor.constraint(lessThanOrEqualTo: pendingUploadBarChevron.leadingAnchor, constant: -8),
