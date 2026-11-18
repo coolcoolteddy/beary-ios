@@ -2551,6 +2551,16 @@ class BearyTimelineViewController: UIViewController {
 
     /// 下拉刷新指示：官方刷新图标（32pt，全 App 统一 icon_refresh）。
     private let refreshIconView = BearyRefreshIconView()
+
+    /// 已有内容刷新失败条（私信会话列表／广场同款）：已有内容时首拉失败不 toast、
+    /// 不清列表，内容顶下方出“未能刷新 · 重试”常驻条；成功或下次刷新时收起。
+    /// 显隐只切换表顶约束，不碰 contentOffset、不清列表。
+    private let refreshFailedBanner = UIView()
+    private let refreshFailedLabel = UILabel()
+    private let refreshFailedRetryButton = UIButton(type: .system)
+    private var refreshFailedBannerTopConstraint: NSLayoutConstraint?
+    private var tableViewTopToViewTopConstraint: NSLayoutConstraint?
+    private var tableViewTopToBannerConstraint: NSLayoutConstraint?
     /// 自定义下拉刷新进行中标志（消息页 isCustomPullRefreshing 同款）。
     private var isCustomPullRefreshing = false
     /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
@@ -2629,11 +2639,47 @@ class BearyTimelineViewController: UIViewController {
         view.backgroundColor = BearyColors.bg
         buildHeader()
         view.addSubview(tableView)
+        // 已有内容刷新失败条（私信会话列表／广场同款）：常驻于内容顶下方、列表上方
+        //（非弹框、非 toast，失败不消失直至下次成功）；点“重试”走下拉同入口，
+        // 只重拉，不改列表与滚动位置。
+        refreshFailedBanner.translatesAutoresizingMaskIntoConstraints = false
+        refreshFailedBanner.backgroundColor = BearyColors.alpha(BearyColors.red, 0.12)
+        refreshFailedBanner.isHidden = true
+        view.addSubview(refreshFailedBanner)
+        refreshFailedLabel.translatesAutoresizingMaskIntoConstraints = false
+        refreshFailedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        refreshFailedLabel.adjustsFontForContentSizeCategory = true
+        refreshFailedLabel.textColor = BearyColors.ink
+        refreshFailedLabel.text = "未能刷新"
+        refreshFailedBanner.addSubview(refreshFailedLabel)
+        refreshFailedRetryButton.translatesAutoresizingMaskIntoConstraints = false
+        refreshFailedRetryButton.setTitle("重试", for: .normal)
+        refreshFailedRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        refreshFailedRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        refreshFailedRetryButton.setTitleColor(BearyColors.ink, for: .normal)
+        refreshFailedRetryButton.accessibilityLabel = "重试"
+        refreshFailedRetryButton.accessibilityHint = "重新拉取时间线列表，不改变当前列表位置"
+        refreshFailedRetryButton.addTarget(self, action: #selector(refreshFailedRetryTapped), for: .touchUpInside)
+        refreshFailedRetryButton.bearyAddPressFeedback()
+        refreshFailedBanner.addSubview(refreshFailedRetryButton)
+        refreshFailedBannerTopConstraint = refreshFailedBanner.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: (headerTopInsetVisible ? 60 : 0) + BearyDeveloperMode.shared.devBannerInset)
+        refreshFailedBannerTopConstraint?.isActive = true
+        tableViewTopToViewTopConstraint = tableView.topAnchor.constraint(equalTo: view.topAnchor)
+        tableViewTopToBannerConstraint = tableView.topAnchor.constraint(equalTo: refreshFailedBanner.bottomAnchor)
+        tableViewTopToViewTopConstraint?.isActive = true
         NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: view.topAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            refreshFailedBanner.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            refreshFailedBanner.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            refreshFailedBanner.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            refreshFailedLabel.leadingAnchor.constraint(equalTo: refreshFailedBanner.leadingAnchor, constant: 16),
+            refreshFailedLabel.centerYAnchor.constraint(equalTo: refreshFailedBanner.centerYAnchor),
+            refreshFailedRetryButton.trailingAnchor.constraint(equalTo: refreshFailedBanner.trailingAnchor, constant: -16),
+            refreshFailedRetryButton.centerYAnchor.constraint(equalTo: refreshFailedBanner.centerYAnchor),
+            refreshFailedRetryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            refreshFailedRetryButton.leadingAnchor.constraint(greaterThanOrEqualTo: refreshFailedLabel.trailingAnchor, constant: 8),
         ])
         setupStickyHeader()
         // R15-L1：悬浮日历失败横幅已由卡内重试行取代，不再建横幅；
@@ -3083,6 +3129,7 @@ class BearyTimelineViewController: UIViewController {
         // 容器重发顶距会打断指示器。
         guard !isCustomPullRefreshing else { return }
         let top = view.safeAreaInsets.top + (visible ? 60 : 0) + BearyDeveloperMode.shared.devBannerInset
+        refreshFailedBannerTopConstraint?.constant = (visible ? 60 : 0) + BearyDeveloperMode.shared.devBannerInset
         let bottom = BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
         if tableView.contentInset.top != top || tableView.contentInset.bottom != bottom {
             // 冷启动/首进回顶：内边距变大时偏移不动，标题行会顶进状态栏区
@@ -3281,6 +3328,8 @@ class BearyTimelineViewController: UIViewController {
             timelineUnauthorized = false
             timelinePageFailed = false
             loginNotified = false
+            // 清表即无内容：失败条不留（后续首拉结果自会再定）。
+            setRefreshFailedBannerVisible(false)
         }
         if calendarAnchor == nil {
             calendarAnchor = BearyBeijingDay.todayComponents()
@@ -4009,6 +4058,9 @@ class BearyTimelineViewController: UIViewController {
     /// 下一分区组头顶进悬浮区时，吸顶条 transform.ty 随之变负、被顶上去
     /// （标准顶替；滑出容器顶沿的部分被裁掉，不改高度、不改约束）。
     private func updateStickyHeader() {
+        // 刷新失败条在屏时吸顶日期头让位：两者同占内容顶区，叠加会重叠且错位；
+        // 条收起后 updateStickyHeader 重入即恢复。
+        if !refreshFailedBanner.isHidden { hideStickyHeader(); return }
         guard tableView.window != nil else { hideStickyHeader(); return }
         let sections = currentSections()
         let count = min(tableView.numberOfSections, sections.count)
@@ -4815,6 +4867,8 @@ class BearyTimelineViewController: UIViewController {
             }
             return
         }
+        // 本次刷新真正启动：旧失败条收起，本次结果自会再定。
+        setRefreshFailedBannerVisible(false)
         // 开发者模式强制态（仅内存）：不发请求，按强制态渲染。
         if BearyDevPreviewState.forcedTimeline != .none {
             applyDevForcedTimeline()
@@ -4945,6 +4999,11 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.refreshHeaderHeight()
                 case .failure(let error):
                     strongSelf.timelineState = .failed
+                    // 已有内容时首拉失败不 toast、不清列表，改由列表顶的原位失败条提示
+                    //（私信会话列表／广场同款）；空表仍走 updateChrome 的居中失败态。
+                    if hadOldRows {
+                        strongSelf.setRefreshFailedBannerVisible(true)
+                    }
                     // 切筛子失败不排错峰：旧档行仍在，失败态不播入场。
                     strongSelf.pendingFilterSwitchOldIds = nil
                     if case .unauthorized = error {
@@ -6640,6 +6699,19 @@ class BearyTimelineViewController: UIViewController {
     /// 调用签名与文案、触发时机不变。
     private func showTimelineToast(message: String) {
         BearyToast.show(in: view, message: message)
+    }
+
+    /// 已有内容刷新失败条显隐（私信会话列表／广场同款）：只换表顶约束，不碰
+    /// contentOffset、不清列表，滚动位置不动；显隐变化后吸顶日期头重算（条在屏时让位）。
+    private func setRefreshFailedBannerVisible(_ visible: Bool) {
+        refreshFailedBanner.isHidden = !visible
+        tableViewTopToViewTopConstraint?.isActive = !visible
+        tableViewTopToBannerConstraint?.isActive = visible
+        updateStickyHeader()
+    }
+
+    @objc private func refreshFailedRetryTapped() {
+        reloadTimeline(keepSelectedDay: true)
     }
 
     private func updateFooter() {
