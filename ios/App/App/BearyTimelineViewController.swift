@@ -3350,6 +3350,11 @@ class BearyTimelineViewController: UIViewController {
         // deleteRows（Invalid update 闪退）。seq 守卫会把这类旧回包
         // 丢弃（仅停菊花/收刷新头，不动模型与表）。
         timelineFirstPageSeq += 1
+        // 删帖同时作废在途当日回包——删除前发出的 fetchDayEntries
+        // 旧回包仍含本篇，到达后会整批替换当日面板并写回日缓存；
+        // dayLoadSeq 守卫把它丢弃（回落分支的 refreshAfterDetailChange
+        // 已间接推进序号，此处只覆盖常规路径）。
+        dayLoadSeq += 1
         // P1-8：先于模型/分区处理加计数——即使模型里已无该篇而走下方
         // refreshAfterDetailChange 回落，删帖成功进回收站的事实不变；
         // 回落的首拉成功后 trashCountValue 会被服务端值覆盖校准，不会累加。
