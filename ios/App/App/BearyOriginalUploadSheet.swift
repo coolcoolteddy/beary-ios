@@ -155,7 +155,7 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
         view.addSubview(footnoteLabel)
 
         NSLayoutConstraint.activate([
-            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop),
+            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding),
             grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
             grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
@@ -200,11 +200,11 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         button.addSubview(subtitleLabel)
         var constraints: [NSLayoutConstraint] = [
-            titleLabel.topAnchor.constraint(equalTo: button.topAnchor, constant: 10),
+            titleLabel.topAnchor.constraint(equalTo: button.topAnchor, constant: BearySheetChrome.listRowVerticalPadding),
             titleLabel.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 16),
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
             subtitleLabel.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 16),
-            subtitleLabel.bottomAnchor.constraint(lessThanOrEqualTo: button.bottomAnchor, constant: -10),
+            subtitleLabel.bottomAnchor.constraint(lessThanOrEqualTo: button.bottomAnchor, constant: -BearySheetChrome.listRowVerticalPadding),
         ]
         if showsCrown, let crownImage = UIImage(named: "crown") {
             let crownView = UIImageView(image: crownImage)
@@ -262,9 +262,9 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
         let width = view.bounds.width > 0 ? view.bounds.width : 375
         let maxHeight = max(0, containerHeight * 0.88)
         let safeBottom = view.safeAreaInsets.bottom > 0 ? view.safeAreaInsets.bottom : extraBottomInset
-        let bottomPad = safeBottom + 16
+        let bottomPad = safeBottom + BearySheetChrome.listBottomPadding
         let titleHeight = titleLabel.intrinsicContentSize.height
-        let chrome = BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 14 + titleHeight + 12
+        let chrome = BearySheetChrome.listTopPadding + BearySheetChrome.grabberHeight + 14 + titleHeight + 12
         var contentHeight: CGFloat = 64 + 12 + 64
         if !footnoteLabel.isHidden {
             let footnoteHeight = footnoteLabel.sizeThatFits(CGSize(width: max(width - 40, 0), height: CGFloat.greatestFiniteMagnitude)).height

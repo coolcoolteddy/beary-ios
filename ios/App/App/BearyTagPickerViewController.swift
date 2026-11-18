@@ -204,7 +204,7 @@ final class BearyTagPickerViewController: UIViewController {
             scrollContentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
             scrollContentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
 
-            grabberView.topAnchor.constraint(equalTo: scrollContentView.topAnchor, constant: BearySheetChrome.grabberTop),
+            grabberView.topAnchor.constraint(equalTo: scrollContentView.topAnchor, constant: BearySheetChrome.listTopPadding),
             grabberView.centerXAnchor.constraint(equalTo: scrollContentView.centerXAnchor),
             grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
             grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
@@ -243,7 +243,7 @@ final class BearyTagPickerViewController: UIViewController {
 
             buttonStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             buttonStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -BearySheetChrome.listBottomPadding),
         ])
 
         refreshConfirmTitle()
@@ -262,7 +262,7 @@ final class BearyTagPickerViewController: UIViewController {
         let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
         let contentHeight = scrollContentView.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height
         let buttonsHeight = buttonStack.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height
-        let height = ceil(contentHeight) + ceil(buttonsHeight) + 16 + view.safeAreaInsets.bottom + extraBottomInset
+        let height = ceil(contentHeight) + ceil(buttonsHeight) + BearySheetChrome.listBottomPadding + view.safeAreaInsets.bottom + extraBottomInset
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred

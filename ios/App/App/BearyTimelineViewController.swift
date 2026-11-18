@@ -2182,7 +2182,7 @@ class BearyTimelineViewController: UIViewController {
     /// 时间线可见性筛子（好友第一期 §八）：五档互斥，默认全部。
     /// 档位名不用 `private` 作 case 名（关键字），另取 privatePosts 等名、
     /// queryValue 映射回后端 vis 取值；全部档 queryValue 为 nil（不发参数）。
-    private enum TimelineVisFilter: CaseIterable {
+    fileprivate enum TimelineVisFilter: CaseIterable {
         case all, publicPosts, privatePosts, ephemeral, friendsOnly
         var title: String {
             switch self {
@@ -2230,19 +2230,12 @@ class BearyTimelineViewController: UIViewController {
     private let visFilterButton = BearyHit44Button(type: .system)
     /// 筛子钮显式宽度约束：UIButton 固有宽度不计 titleEdgeInsets（见 updateVisFilterButton）。
     private var visFilterButtonWidthConstraint: NSLayoutConstraint?
-    /// 11b 筛子尖角气泡（BearyBubbleMenuView，见 BearyCalloutPicker.swift）
-    /// + 复用的框外收起层（BearyCalloutDismissView，与编辑器尖角框同款）。
-    /// 气泡以 frame 定位在 VC view 上（不在表头内，避免随表滚动错位）；
+    /// 筛子走底部 sheet（2026-11-18：尖角气泡改 BearyBottomSheet，见文件末
+    /// BearyVisFilterSheetViewController；旧 BearyBubbleMenuView 已删）。
     /// 入口钮本身不动（#612 定圆角 17 的口径原样保留）。
-    private let visFilterBubble = BearyBubbleMenuView()
-    private let visFilterDismissView = BearyCalloutDismissView()
     /// 冷启动框架先行：首个宽就绪布局时先画日历框（当日周/月格＋占位圆点），
     /// 月份圆点由随后回包异步填入；只 prime 一次，后续由月份回包驱动。
     private var calendarFramePrimed = false
-    private var visFilterBubbleOpen = false
-    private var visFilterBubbleGeneration = 0
-    private static let visFilterBubbleTransitionDuration: TimeInterval = BearyMotion.micro
-    private static let visFilterBubbleTransitionOffset: CGFloat = 6
     // 崩溃 1（21:33/21:50 两次 Invalid_Batch_Updates）：首屏加载此前无在途守卫，
     // 重拍 tab/下拉/登录翻转/发布都可重入 loadTimelineFirstPage；旧回包按陈旧
     // oldSections diff 时表早已不是旧快照即崩。seq 令牌：每次首屏加载 +1，
@@ -2769,7 +2762,7 @@ class BearyTimelineViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         stopCountdownTimer()
-        hideVisFilterBubble(animated: false)
+        dismissVisFilterSheet()
     }
 
     /// 审计-时间线：Timer 自保失效——容器切页走 pageDidLeave、模态离页走 viewWillDisappear，
@@ -2798,7 +2791,7 @@ class BearyTimelineViewController: UIViewController {
 
     func pageDidLeave() {
         stopCountdownTimer()
-        hideVisFilterBubble(animated: false)
+        dismissVisFilterSheet()
     }
 
     /// 底栏复位（时间线页从不藏栏，故任何时刻亮回都是正确态；animated:false
@@ -2834,101 +2827,49 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
-    /// 切筛子：点按展开尖角气泡选择（11b，替代系统 actionSheet；不摊五段条）。
-    /// 五档、默认全部、进页回全部、切档错峰均不动，只换呈现形态。
-    /// 当前档仍列出（半粗体 + 对勾），点按即无操作、只收气泡。
+    /// 切筛子：点按弹出底部 sheet 选择（2026-11-18：尖角气泡改底 sheet，
+    /// 替代系统 actionSheet；不摊五段条）。五档、默认全部、进页回全部、
+    /// 切档错峰均不动，只换呈现形态。当前档仍列出（半粗体 + 对勾），
+    /// 点按即无操作、只收 sheet。
     @objc private func didTapVisFilter() {
-        if visFilterBubbleOpen {
-            hideVisFilterBubble(animated: true)
-            return
-        }
-        showVisFilterBubble()
+        guard presentedViewController == nil else { return }
+        presentVisFilterSheet()
     }
 
-    /// 11b：气泡搭建一次、之后只刷新选中态与位置。气泡贴在触发钮下方、
-    /// 左缘与钮左缘对齐（左右 16pt 边距内钳制），尖角顶点对准钮中心。
-    /// 钮在滚动表头内、只会随滚动上移，故下方展开在常规屏高下不溢出底边。
-    private func showVisFilterBubble() {
-        if visFilterBubble.superview == nil {
-            visFilterBubble.configure(
-                rows: TimelineVisFilter.allCases.map { BearyBubbleMenuView.Row(key: "\($0)", title: $0.title) },
-                selectedKey: "\(timelineVisFilter)",
-                onSelect: { [weak self] key in
-                    guard let self = self,
-                          let tier = TimelineVisFilter.allCases.first(where: { "\($0)" == key }) else { return }
-                    // 先收气泡再切档：切档会 scrollToTop + 重拉，与收起动画并行会抢布局。
-                    self.hideVisFilterBubble(animated: false)
-                    self.applyVisFilter(tier)
-                })
-            visFilterBubble.isHidden = true
-            view.addSubview(visFilterDismissView)
-            view.addSubview(visFilterBubble)
+    /// 弹出可见性筛选底 sheet：行上下内边距 8、顶留白 6、底留白 10、
+    /// 行内元素间距 8、无分隔线（规范 §1 列表 sheet 值）。
+    /// 篇数只取服务端下发的三档（全部／公开／私密）；限时／仅好友无
+    /// 服务端计数，不显示、不编造 0。
+    private func presentVisFilterSheet() {
+        let counts: [TimelineVisFilter: Int]
+        if let c = countsValue {
+            counts = [.all: c.total ?? 0, .publicPosts: c.pub ?? 0, .privatePosts: c.priv ?? 0]
+        } else {
+            counts = [:]
         }
-        visFilterBubble.setSelectedKey("\(timelineVisFilter)")
-        view.layoutIfNeeded()
-        let buttonFrame = visFilterButton.convert(visFilterButton.bounds, to: view)
-        let bubbleWidth: CGFloat = 200
-        let maxX = max(16, view.bounds.width - 16 - bubbleWidth)
-        let bubbleX = min(max(buttonFrame.minX, 16), maxX)
-        let bubbleHeight = BearyBubbleMenuView.menuHeight(rowCount: TimelineVisFilter.allCases.count)
-        visFilterBubble.frame = CGRect(x: bubbleX, y: buttonFrame.maxY + 6, width: bubbleWidth, height: bubbleHeight)
-        visFilterBubble.arrowCenterX = buttonFrame.midX - bubbleX
-        visFilterDismissView.frame = view.bounds
-        visFilterDismissView.passthroughRects = [buttonFrame]
-        visFilterDismissView.onTapOutside = { [weak self] in self?.hideVisFilterBubble(animated: true) }
-        visFilterDismissView.isHidden = false
-        visFilterBubble.isHidden = false
-        view.bringSubviewToFront(visFilterDismissView)
-        view.bringSubviewToFront(visFilterBubble)
-        visFilterBubbleGeneration += 1
-        visFilterBubbleOpen = true
-        // 入场只走 transform/opacity（减动效静态直出）。
-        if UIAccessibility.isReduceMotionEnabled || view.window == nil {
-            visFilterBubble.alpha = 1
-            visFilterBubble.transform = .identity
-            return
-        }
-        visFilterBubble.alpha = 0
-        visFilterBubble.transform = CGAffineTransform(translationX: 0, y: -Self.visFilterBubbleTransitionOffset)
-        UIView.animate(
-            withDuration: Self.visFilterBubbleTransitionDuration,
-            delay: 0,
-            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
-            animations: { [weak self] in
-                self?.visFilterBubble.alpha = 1
-                self?.visFilterBubble.transform = .identity
-            }
-        )
+        let sheet = BearyVisFilterSheetViewController(selected: timelineVisFilter, counts: counts, onPick: { [weak self] tier in
+            // 先收 sheet 再切档：切档会 scrollToTop + 重拉，与收起动画并行会抢布局（气泡版同款顺序）。
+            self?.applyVisFilter(tier)
+        })
+        let delegate = BearyBottomSheetTransitioningDelegate()
+        sheet.sheetDelegate = delegate
+        sheet.transitioningDelegate = delegate
+        sheet.modalPresentationStyle = .custom
+        sheet.loadViewIfNeeded()
+        let presenterWidth = view.bounds.width
+        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
+        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
+        sheet.view.setNeedsLayout()
+        sheet.view.layoutIfNeeded()
+        sheet.updatePreferredContentSize(extraBottomInset: view.safeAreaInsets.bottom)
+        present(sheet, animated: BearyMotion.animated(true))
     }
 
-    private func hideVisFilterBubble(animated: Bool) {
-        guard visFilterBubbleOpen else { return }
-        visFilterBubbleOpen = false
-        visFilterBubbleGeneration += 1
-        let generation = visFilterBubbleGeneration
-        if !animated || UIAccessibility.isReduceMotionEnabled || view.window == nil {
-            visFilterBubble.isHidden = true
-            visFilterBubble.alpha = 1
-            visFilterBubble.transform = .identity
-            visFilterDismissView.isHidden = true
-            return
+    /// 离页时收起在场的筛选 sheet（viewWillDisappear／pageDidLeave 共用）。
+    private func dismissVisFilterSheet() {
+        if let sheet = presentedViewController as? BearyVisFilterSheetViewController {
+            sheet.dismiss(animated: false)
         }
-        UIView.animate(
-            withDuration: Self.visFilterBubbleTransitionDuration,
-            delay: 0,
-            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
-            animations: { [weak self] in
-                self?.visFilterBubble.alpha = 0
-                self?.visFilterBubble.transform = CGAffineTransform(translationX: 0, y: -Self.visFilterBubbleTransitionOffset)
-            },
-            completion: { [weak self] finished in
-                guard let self = self, finished, generation == self.visFilterBubbleGeneration else { return }
-                self.visFilterBubble.isHidden = true
-                self.visFilterBubble.alpha = 1
-                self.visFilterBubble.transform = .identity
-                self.visFilterDismissView.isHidden = true
-            }
-        )
     }
 
     /// 切档：按新 vis 重取列表，分页游标随新筛子重置（首屏 force 全量，
@@ -7642,6 +7583,192 @@ enum BearyCalendarSnapshotStore {
         ioQueue.async {
             guard let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("\(directoryPrefix)_\(accountId)", isDirectory: true) else { return }
             try? FileManager.default.removeItem(at: dir)
+        }
+    }
+}
+
+// MARK: - 时间线可见性筛选底 sheet
+
+/// 时间线可见性筛选底 sheet（2026-11-18：尖角气泡改底部 sheet）。
+/// 5 行：文字左对齐、无分隔线、篇数靠右、选中行最右打勾；行上下内边距 8、
+/// 顶留白 6、底留白 10、行内元素间距 8（BearySheetChrome 列表值）。
+/// 篇数只显调用方给的三档（全部／公开／私密）；无计数档不显示、不编造。
+/// 点一行即选定并收起，收起后由调用方切档；抓手下滑／点外收起走容器。
+final class BearyVisFilterSheetViewController: UIViewController {
+
+    /// 与 fileprivate enum 配对：init 参数走本别名，须同为 fileprivate（否则
+    /// 编译器按 private 别名卡初始化器级别）。
+    fileprivate typealias Filter = BearyTimelineViewController.TimelineVisFilter
+
+    private let selected: Filter
+    private let counts: [Filter: Int]
+    private let onPick: (Filter) -> Void
+
+    /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页同款做法）。
+    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
+
+    private let grabberView = UIView()
+    private let stackView = UIStackView()
+
+    /// 初始化器须与参数类型同级：Filter 是 fileprivate 枚举，init 只给同文件内的
+    /// presentVisFilterSheet 用，故也声明为 fileprivate。
+    fileprivate init(selected: Filter, counts: [Filter: Int], onPick: @escaping (Filter) -> Void) {
+        self.selected = selected
+        self.counts = counts
+        self.onPick = onPick
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = BearyColors.surface3
+        view.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        view.layer.masksToBounds = true
+
+        grabberView.translatesAutoresizingMaskIntoConstraints = false
+        grabberView.backgroundColor = BearyColors.gray
+        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
+        view.addSubview(grabberView)
+
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        stackView.axis = .vertical
+        stackView.spacing = 0
+        view.addSubview(stackView)
+
+        for filter in Filter.allCases {
+            let row = RowView(filter: filter, count: counts[filter], selected: filter == selected)
+            row.onTap = { [weak self] tier in
+                guard let self = self else { return }
+                // 点当前档也只收起、不切档（调用方 applyVisFilter 有同值早退）。
+                self.dismiss(animated: BearyMotion.animated(true)) {
+                    self.onPick(tier)
+                }
+            }
+            stackView.addArrangedSubview(row)
+        }
+
+        NSLayoutConstraint.activate([
+            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding),
+            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
+            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
+
+            stackView.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: BearySheetChrome.listTopPadding),
+            stackView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            stackView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            stackView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -BearySheetChrome.listBottomPadding),
+        ])
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updatePreferredContentSize()
+    }
+
+    /// 按当前宽度算内容高，推给容器当 sheet 高（标签选择器同款公式）。
+    func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
+        let width = view.bounds.width > 0 ? view.bounds.width : 375
+        let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
+        let contentHeight = view.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height
+        let safeBottom = view.safeAreaInsets.bottom > 0 ? view.safeAreaInsets.bottom : extraBottomInset
+        let height = ceil(contentHeight) + safeBottom
+        let preferred = CGSize(width: width, height: height)
+        if preferredContentSize != preferred {
+            preferredContentSize = preferred
+        }
+    }
+
+    /// 选项行（气泡版 RowView 同款：普通 UIView＋手势，选中行半粗体＋对勾，
+    /// 未选中行垫同宽空位、标题不漂移；按压轻震＋微缩）。
+    private final class RowView: UIView {
+        let filter: Filter
+        var onTap: ((Filter) -> Void)?
+
+        private let titleLabel = UILabel()
+        private let countLabel = UILabel()
+        private let checkImageView = UIImageView()
+
+        init(filter: Filter, count: Int?, selected: Bool) {
+            self.filter = filter
+            super.init(frame: .zero)
+            backgroundColor = .clear
+            titleLabel.translatesAutoresizingMaskIntoConstraints = false
+            titleLabel.font = BearyDynamicType.scaledFont(for: selected ? UIFont.boldSystemFont(ofSize: 15) : UIFont.systemFont(ofSize: 15))
+            titleLabel.adjustsFontForContentSizeCategory = true
+            titleLabel.textColor = BearyColors.ink
+            titleLabel.text = filter.title
+            countLabel.translatesAutoresizingMaskIntoConstraints = false
+            countLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            countLabel.adjustsFontForContentSizeCategory = true
+            countLabel.textColor = BearyColors.gray
+            countLabel.text = count.map { "\($0) 篇" }
+            checkImageView.translatesAutoresizingMaskIntoConstraints = false
+            checkImageView.contentMode = .scaleAspectFit
+            checkImageView.tintColor = BearyColors.ink
+            // 未选中行不挂图、但留 24 宽位，标题与篇数不漂移（气泡版垫透明图同款）。
+            checkImageView.image = selected ? BearyIconImages.image(named: "icon_check", pointSize: 24) : nil
+            addSubview(titleLabel)
+            addSubview(countLabel)
+            addSubview(checkImageView)
+            NSLayoutConstraint.activate([
+                checkImageView.widthAnchor.constraint(equalToConstant: 24),
+                checkImageView.heightAnchor.constraint(equalToConstant: 24),
+                checkImageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                checkImageView.centerYAnchor.constraint(equalTo: centerYAnchor),
+                countLabel.trailingAnchor.constraint(equalTo: checkImageView.leadingAnchor, constant: -BearySheetChrome.listRowElementSpacing),
+                countLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+                titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+                titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: countLabel.leadingAnchor, constant: -BearySheetChrome.listRowElementSpacing),
+                titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+                titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: BearySheetChrome.listRowVerticalPadding),
+                titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -BearySheetChrome.listRowVerticalPadding),
+                heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
+            ])
+            isAccessibilityElement = true
+            accessibilityLabel = filter.title + (count.map { "，\($0) 篇" } ?? "")
+            accessibilityTraits = selected ? [.button, .selected] : [.button]
+            let tap = UITapGestureRecognizer(target: self, action: #selector(didTap))
+            addGestureRecognizer(tap)
+        }
+
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        @objc private func didTap() {
+            onTap?(filter)
+        }
+
+        override func accessibilityActivate() -> Bool {
+            onTap?(filter)
+            return true
+        }
+
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesBegan(touches, with: event)
+            BearyHaptics.press()
+            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
+                           delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
+                           animations: { self.transform = CGAffineTransform(scaleX: 0.98, y: 0.98) })
+        }
+
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesEnded(touches, with: event)
+            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
+                           delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
+                           animations: { self.transform = .identity })
+        }
+
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesCancelled(touches, with: event)
+            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
+                           delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
+                           animations: { self.transform = .identity })
         }
     }
 }

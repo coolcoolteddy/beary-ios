@@ -148,6 +148,15 @@ enum BearySheetChrome {
     static let grabberHeight: CGFloat = 4
     static let grabberTop: CGFloat = 10
     static let grabberCornerRadius: CGFloat = 2
+    /// 列表式底部 sheet 统一间距（2026-11-18 定，时间线筛选 sheet 起，见规范 §1）：
+    /// 行上下内边距 8、顶留白 6、底留白 10、行内元素间距 8、无分隔线。
+    /// 只适用于纯选项列表型 sheet（时间线筛选、标签、快照、上传方式、@ 选人）；
+    /// 抓手本身仍走 grabberTop 10 的通用 chrome——列表 sheet 的顶留白 6
+    /// 指抓手到 sheet 顶边的距离，调用方按本值约束抓手顶，不改 grabberTop。
+    static let listRowVerticalPadding: CGFloat = 8
+    static let listTopPadding: CGFloat = 6
+    static let listBottomPadding: CGFloat = 10
+    static let listRowElementSpacing: CGFloat = 8
     static let scrimAlpha: CGFloat = 0.45
     static var scrimColor: UIColor { BearyColors.scrim.withAlphaComponent(scrimAlpha) }
     static var shadowColor: CGColor { UIColor.black.cgColor }
