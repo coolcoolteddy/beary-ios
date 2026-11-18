@@ -3370,7 +3370,8 @@ class BearyTimelineViewController: UIViewController {
         guard !occurrences.isEmpty else {
             // 模型里没有（已被别处清掉），退回原有整页重拉保底；同时把
             // 快照同步写回（模型里已无本篇），免得重拉失败时快照复活它。
-            if let uid = SessionManager.shared.currentUser?.id {
+            // 筛子档不写盘：快照只代表全部档，筛后快照会污染下次冷启动。
+            if timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
                 BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
             }
             refreshAfterDetailChange()
@@ -3437,7 +3438,8 @@ class BearyTimelineViewController: UIViewController {
         // 删帖复活修：此前删帖只清了日落盘与内存模型，没写时间线首屏
         // 快照——冷启动先渲染快照，已删篇会先回来、要等一次静默刷新成功
         // 才纠掉，弱网/刷新失败时就一直复活。此处删帖即把快照同步写回。
-        if let uid = SessionManager.shared.currentUser?.id {
+        // 筛子档不写盘：快照只代表全部档，筛后快照会污染下次冷启动。
+        if timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
             BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
         }
         // 连续删帖防撞：表当前已渲染行数须与 oldSections 一致才发批更新；
@@ -3581,7 +3583,8 @@ class BearyTimelineViewController: UIViewController {
             refreshHeaderHeight()
         }
         // 首屏快照同步写回（删帖同款）：冷启动先渲染快照，旧字段不得复活。
-        if let uid = SessionManager.shared.currentUser?.id {
+        // 筛子档不写盘：快照只代表全部档，筛后快照会污染下次冷启动。
+        if timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
             BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
         }
         // 可见行足数重渲（applyInteraction 同款）：模型已改，滑回显示时
