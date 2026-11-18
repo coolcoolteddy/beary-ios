@@ -5130,9 +5130,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 guard let self = self, self.weatherFetchGeneration == generation else { return }
                 switch result {
                 case .success(let fetched):
-                    if let key = fetched.weatherKey {
-                        self.selectedWeather = key
+                    // 审计 26-14：自动填充是一组更新——天气代码认不出（weatherKey
+                    // 为 nil）时不只写新气温：旧类型配新气温会存进草稿。整组不写、
+                    // 不保存，复用失败分支的 toast 提示手选。
+                    guard let key = fetched.weatherKey else {
+                        self.showToast(message: "没取到当地天气，请手动选")
+                        return
                     }
+                    self.selectedWeather = key
                     self.selectedTemperature = fetched.temperature
                     self.syncWeatherToolButton()
                     self.refreshSelectedChips()
