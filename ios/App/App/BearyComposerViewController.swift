@@ -437,12 +437,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         /// B6 暂时看不到态：回包占位/明确无权限时只剩 id，不按正常 lite 卡显示，
         /// 见 refreshQuoteSection；下次恢复重新校验，可恢复（不落盘标记）。
         let isUnavailable: Bool
+        /// 审计 26-2 恢复占位态：草稿快照未验权前不渲染旧正文/缩略图，
+        /// refreshQuoteSection 只露“暂时看不到”占位行；验权通过后由
+        /// applyRestoredQuoteVerified 换成服务端回包（不带本标记），终态
+        /// （已删/无权限）同样换掉本标记。只控显示，不清快照数据。
+        let isPendingVerification: Bool
 
         /// 修红（#632 合入后 CI 红）：合成逐成员 init 只含 13 个无默认值字段，
         /// 不含带默认值的 visibility/ephemeralUntil/isUnavailable，故 #632 新增的
         /// 5 处 15 参构造编译不过；此处显式 init 把三字段放末尾并给默认值，新旧
         /// 6 处构造全兼容。
-        init(entryId: String, content: String, createdAt: Int?, authorName: String?, authorAvatar: String?, authorId: Int?, isMine: Bool?, authorHandle: String?, images: [String], isPublic: Bool?, publishAt: Int?, imgDims: [String: [Int]]?, isDeleted: Bool, visibility: String? = nil, ephemeralUntil: Int? = nil, isUnavailable: Bool = false) {
+        init(entryId: String, content: String, createdAt: Int?, authorName: String?, authorAvatar: String?, authorId: Int?, isMine: Bool?, authorHandle: String?, images: [String], isPublic: Bool?, publishAt: Int?, imgDims: [String: [Int]]?, isDeleted: Bool, visibility: String? = nil, ephemeralUntil: Int? = nil, isUnavailable: Bool = false, isPendingVerification: Bool = false) {
             self.entryId = entryId
             self.content = content
             self.createdAt = createdAt
@@ -459,6 +464,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             self.imgDims = imgDims
             self.isDeleted = isDeleted
             self.isUnavailable = isUnavailable
+            self.isPendingVerification = isPendingVerification
         }
     }
 
@@ -2607,9 +2613,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             updatePreferredContentSize()
             return
         }
-        if shown.isUnavailable {
-            // B6 暂时看不到：不画共享卡（旧预览正文/缩略图已清），只留灰字行 + “移除”钮；
-            // 引用 ID 仍占槽位（清除后才可经工具栏引用钮再选；下次恢复重新校验，可恢复）。
+        if shown.isUnavailable || shown.isPendingVerification {
+            // B6 暂时看不到 / 审计 26-2 未验权占位：不画共享卡（旧预览正文/缩略图
+            // 不渲染），只留灰字行 + “移除”钮；isUnavailable 是旧预览已清，
+            // isPendingVerification 是快照未验权（旧正文/缩略图在内存里、验权
+            // 通过前不显示，验权失败也不误判丢失）；两种态引用 ID 都仍占槽位
+            // （清除后才可经工具栏引用钮再选；下次恢复重新校验，可恢复）。
             quoteCardWrap.isHidden = true
             quoteDeletedRow.isHidden = true
             quoteFetchFailedRow.isHidden = true
@@ -2621,9 +2630,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteUnavailableRow.isHidden = true
         quoteFetchFailedRow.isHidden = true
         quoteCardWrap.isHidden = false
-        // allowThumbs: true 沿用旧编辑器行为——已选引用在本地草稿预览中恒出图；
-        // 列表侧的 isPublic/本人门控不适用于编辑器预览（预览不出公开发布）。
-        quoteCard.configure(authorName: shown.authorName ?? "", authorAvatar: shown.authorAvatar, content: shown.content, images: shown.images, dims: shown.imgDims, createdAt: shown.createdAt, allowThumbs: true, authorHandle: shown.authorHandle, sourceTappable: false, quoteId: shown.entryId)
+        // 审计 26-2：allowThumbs 不再恒 true——与列表/详情同门（D8c）：
+        // 只当来源有效公开或本人时出图；已过限时（isPublic 已按过期重算为
+        // false）的引用不再出旧缩略图。未验权快照到不了这里（占位分支先返回）。
+        quoteCard.configure(authorName: shown.authorName ?? "", authorAvatar: shown.authorAvatar, content: shown.content, images: shown.images, dims: shown.imgDims, createdAt: shown.createdAt, allowThumbs: shown.isPublic == true || shown.isMine == true, authorHandle: shown.authorHandle, sourceTappable: false, quoteId: shown.entryId)
         updatePreferredContentSize()
     }
 
@@ -8588,6 +8598,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// v3 引用快照还原为选引用对象：quoteId 为空即无引用；已删标记照原样带回，
     /// 快照正文在已删态下不展示（见 refreshQuoteSection 的已删行）。
+    /// 审计 26-2：非已删快照恢复即带 isPendingVerification 占位标记——
+    /// 两条恢复路径（restoreDraft / 草稿箱）共用此处，验权通过前只露占位行，
+    /// 不渲染旧正文与缩略图。
     private func restoredQuote(from draft: BearyDraft) -> SelectedQuote? {
         guard let quoteEntryId = draft.quoteId else { return nil }
         // 审计 2026-11-02 第十节：草稿还原同样走有效态——存量限时篇过期后
@@ -8598,12 +8611,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if let until = draft.quoteEphemeralUntil, until <= nowMs { return false }
             return pub
         }()
-        return SelectedQuote(entryId: quoteEntryId, content: draft.quoteContent ?? "", createdAt: draft.quoteCreatedAt, authorName: draft.quoteAuthorName, authorAvatar: draft.quoteAuthorAvatar, authorId: nil, isMine: nil, authorHandle: nil, images: draft.quoteImages, isPublic: restoredIsPublic, publishAt: nil, imgDims: nil, isDeleted: draft.quoteDeleted, visibility: draft.quoteVisibility, ephemeralUntil: draft.quoteEphemeralUntil)
+        return SelectedQuote(entryId: quoteEntryId, content: draft.quoteContent ?? "", createdAt: draft.quoteCreatedAt, authorName: draft.quoteAuthorName, authorAvatar: draft.quoteAuthorAvatar, authorId: nil, isMine: nil, authorHandle: nil, images: draft.quoteImages, isPublic: restoredIsPublic, publishAt: nil, imgDims: nil, isDeleted: draft.quoteDeleted, visibility: draft.quoteVisibility, ephemeralUntil: draft.quoteEphemeralUntil, isPendingVerification: draft.quoteDeleted == false)
     }
 
     /// 恢复后校验引用是否还在：快照只能证明“选过”，不能证明“还在”。
     /// 只读单篇接口；仅 notFound 才翻为已删态并落盘标记（下次恢复直接显已删，
-    /// 不再请求），其他失败（离线/未登录/服务端错）一律保留快照，不误判已删。
+    /// 不再请求），403（isPermissionDenied）与 404 同等处理为终态——收起引用
+    /// 卡并清除旧快照（不是删除，不挂已删行）；其他失败（离线/未登录/服务端
+    /// 错）一律保留快照，不误判已删（占位行继续显示，下次恢复重新校验）。
     /// 回包时若引用已被用户换掉或清除，不碰当前引用。
     /// B6：回包占位/明确无权限时收起旧预览（清正文/缩略图，ID 与移除入口保留）。
     private func verifyRestoredQuote() {
@@ -8654,6 +8669,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 case .failure(let fetchError):
                     if case .notFound = fetchError {
                         self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: "", createdAt: nil, authorName: nil, authorAvatar: nil, authorId: nil, isMine: nil, authorHandle: nil, images: [], isPublic: nil, publishAt: nil, imgDims: nil, isDeleted: true)
+                        self.refreshQuoteSection()
+                        self.refreshToolStrip()
+                        self.saveDraftNow()
+                    } else if fetchError.isPermissionDenied {
+                        // 审计 26-2：403 与 404 同等处理为终态——来源已无权查看，
+                        // 收起引用卡并清除旧快照（selectedQuote 置空 + 落盘，
+                        // 草稿不再带旧引用 id/正文/缩略图）；不是删除，不挂已删行。
+                        self.selectedQuote = nil
                         self.refreshQuoteSection()
                         self.refreshToolStrip()
                         self.saveDraftNow()
