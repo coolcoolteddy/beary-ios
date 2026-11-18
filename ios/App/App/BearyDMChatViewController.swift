@@ -1710,6 +1710,33 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     // MARK: - Table
 
+    /// 私信时间分组阈值（2026-11-18 Li 定）：同人短时间连发归一组，时间只在
+    /// 组尾那条出现一次。改阈值只改这里（毫秒）。
+    private static let dmTimestampGroupWindowMs = 5 * 60 * 1000
+
+    /// 两条消息是否属同一时间组：同人、且后一条比前一条晚不超过阈值。
+    /// 时间缺失或乱序时一律不归组（各自显示时间，fail-safe）。
+    private func isSameTimestampGroup(_ earlier: BearyAPI.DMMessage, _ later: BearyAPI.DMMessage) -> Bool {
+        guard earlier.senderId != nil, earlier.senderId == later.senderId,
+              let earlierMs = earlier.createdAt, let laterMs = later.createdAt else { return false }
+        let gap = laterMs - earlierMs
+        return gap >= 0 && gap <= Self.dmTimestampGroupWindowMs
+    }
+
+    /// 该行是否组尾（显示时间）：没有下一条、下一条不同人或间隔超阈值时是组尾；
+    /// 失败／未确认行永远是组尾（各自带自己的时间／状态）。
+    private func isTimestampGroupTail(at row: Int, showFail: Bool, showUnconfirmed: Bool) -> Bool {
+        if showFail || showUnconfirmed { return true }
+        guard row + 1 < messages.count else { return true }
+        return !isSameTimestampGroup(messages[row], messages[row + 1])
+    }
+
+    /// 该行是否续接上一组（上一条同人且间隔在阈值内）：是则顶部贴紧上一气泡。
+    private func continuesTimestampGroup(at row: Int) -> Bool {
+        guard row > 0 else { return false }
+        return isSameTimestampGroup(messages[row - 1], messages[row])
+    }
+
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         messages.count
     }
@@ -1722,7 +1749,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         let showFail = isMine && message.localKey.map { failedSendKeys.contains($0) } == true
         let showUnconfirmed = isMine && message.localKey.map { unconfirmedSendKeys.contains($0) } == true
         let retryKey = message.localKey
-        cell.configure(message: message, isMine: isMine, showFail: showFail, showUnconfirmed: showUnconfirmed, onRetry: showFail ? { [weak self] in
+        // 私信时间分组（2026-11-18 Li 定）：组内时间只在组尾出现一次，组内气泡贴紧。
+        let showTime = isTimestampGroupTail(at: indexPath.row, showFail: showFail, showUnconfirmed: showUnconfirmed)
+        let tightTop = continuesTimestampGroup(at: indexPath.row)
+        cell.configure(message: message, isMine: isMine, showFail: showFail, showUnconfirmed: showUnconfirmed, showTime: showTime, tightTop: tightTop, onRetry: showFail ? { [weak self] in
             guard let key = retryKey else { return }
             self?.retrySend(key: key)
         } : nil)
@@ -1835,6 +1865,11 @@ private final class BearyDMMessageCell: UITableViewCell {
     private var lastCreatedAtMs: Int?
     /// 第三轮审计 1：本行是否待确认（仅本人行），供分钟刷新时保留「未确认」后缀。
     private var isUnconfirmed = false
+    /// 私信时间分组（2026-11-18 Li 定）：组内气泡贴紧，改边距只改这四个约束。
+    private var mineTopConstraint: NSLayoutConstraint!
+    private var mineBottomConstraint: NSLayoutConstraint!
+    private var theirsTopConstraint: NSLayoutConstraint!
+    private var theirsBottomConstraint: NSLayoutConstraint!
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -1873,15 +1908,17 @@ private final class BearyDMMessageCell: UITableViewCell {
             stack.addArrangedSubview(timeLabel)
             contentView.addSubview(stack)
         }
+        mineTopConstraint = mineStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6)
+        mineBottomConstraint = mineStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6)
+        theirsTopConstraint = theirsStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6)
+        theirsBottomConstraint = theirsStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6)
         NSLayoutConstraint.activate([
-            mineStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
+            mineTopConstraint, mineBottomConstraint,
+            theirsTopConstraint, theirsBottomConstraint,
             mineStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             mineStack.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 104),
-            mineStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6),
-            theirsStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
             theirsStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             theirsStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -104),
-            theirsStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6),
         ])
         // 失败叹号：44 热区包 22 红圆，圆心与本人气泡纵向居中、贴气泡左侧 8pt。
         failButton.translatesAutoresizingMaskIntoConstraints = false
@@ -1935,6 +1972,13 @@ private final class BearyDMMessageCell: UITableViewCell {
         theirsTextLabel.text = nil
         mineTimeLabel.text = nil
         theirsTimeLabel.text = nil
+        // 私信时间分组：复用不得把藏时间／贴紧边距带给下一条。
+        mineTimeLabel.isHidden = false
+        theirsTimeLabel.isHidden = false
+        mineTopConstraint.constant = 6
+        mineBottomConstraint.constant = -6
+        theirsTopConstraint.constant = 6
+        theirsBottomConstraint.constant = -6
         lastCreatedAtMs = nil
         isUnconfirmed = false
         // 失败叹号与重发闭包不得串行（复用 cell 默认无叹号）。
@@ -1971,9 +2015,20 @@ private final class BearyDMMessageCell: UITableViewCell {
         }
     }
 
-    func configure(message: BearyAPI.DMMessage, isMine: Bool, showFail: Bool = false, showUnconfirmed: Bool = false, onRetry: (() -> Void)? = nil) {
+    func configure(message: BearyAPI.DMMessage, isMine: Bool, showFail: Bool = false, showUnconfirmed: Bool = false, showTime: Bool = true, tightTop: Bool = false, onRetry: (() -> Void)? = nil) {
         mineStack.isHidden = !isMine
         theirsStack.isHidden = isMine
+        // 私信时间分组（2026-11-18 Li 定）：非组尾行藏时间、底边贴紧下一气泡；
+        // 续接组的行顶边贴紧上一气泡。组内气泡间距 2+2=4pt，组间仍 6+6=12pt。
+        // 失败／未确认行由调用方恒传 showTime=true，各自带自己的时间／状态。
+        let topPadding: CGFloat = tightTop ? 2 : 6
+        let bottomPadding: CGFloat = showTime ? 6 : 2
+        mineTopConstraint.constant = topPadding
+        mineBottomConstraint.constant = -bottomPadding
+        theirsTopConstraint.constant = topPadding
+        theirsBottomConstraint.constant = -bottomPadding
+        mineTimeLabel.isHidden = !showTime
+        theirsTimeLabel.isHidden = !showTime
         // 失败叹号只挂本人行；对方行、成功行一律不画。
         failButton.isHidden = !(isMine && showFail)
         // 审计四轮 11：失败态变化时同步更新无障碍说明（复用 cell 不得串行）。
