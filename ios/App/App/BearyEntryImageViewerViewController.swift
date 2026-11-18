@@ -109,8 +109,6 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         return buttonValue
     }()
 
-    private var viewEntryBottomToDotsConstraint: NSLayoutConstraint?
-    private var viewEntryBottomToSafeConstraint: NSLayoutConstraint?
     private var dotViews: [UIView] = []
     /// C1 相册分页共享：网格续拉的新页追加到灯箱末尾（见 appendImageKeys）。
     /// hasMorePages 由网格在打开时与每次续拉后同步；onRequestMorePages
@@ -402,13 +400,13 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             closeButton.heightAnchor.constraint(equalToConstant: 32),
         ])
         if hasViewEntry {
-            let toDots = viewEntryButton.bottomAnchor.constraint(equalTo: dotsStack.topAnchor, constant: -16)
-            let toSafe = viewEntryButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24)
-            viewEntryBottomToDotsConstraint = toDots
-            viewEntryBottomToSafeConstraint = toSafe
-            toDots.isActive = !dotsStack.isHidden
-            toSafe.isActive = dotsStack.isHidden
+            // 审计 8 第 7 项：「查看日记」钮始终锚定同一个安全区位置——
+            // 底部安全区上 46pt（= 圆点区 24pt + 圆点高 6pt + 间距 16pt，
+            // 即圆点显示时钮所在的位置）。圆点占独立位置（底部安全区上
+            // 24pt），超 20 张时只隐藏圆点，不再切钮的约束——此前两套
+            // 约束正好相差 22pt，追加照片越过 20 张时钮会突然下移。
             NSLayoutConstraint.activate([
+                viewEntryButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -46),
                 viewEntryButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
                 viewEntryButton.heightAnchor.constraint(equalToConstant: 36),
             ])
@@ -631,7 +629,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 
     /// C1：圆点与总数同步（打开时与追加新页后都走这里）：≤20 张画圆点，
-    /// 超 20 张只留顶部计数；「查看日记」钮的底部锚点随圆点显隐切换。
+    /// 超 20 张只留顶部计数；圆点只显隐自身，「查看日记」钮的底部锚点
+    /// 固定在安全区上 46pt，不随圆点显隐切换（审计 8 第 7 项）。
     /// 第 22 轮 B5：重建时同步清计数显隐（≤1 张藏计数与圆点）。
     private func rebuildDots() {
         for dot in dotViews {
@@ -659,10 +658,6 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 dotsStack.addArrangedSubview(dot)
                 dotViews.append(dot)
             }
-        }
-        if hasViewEntry {
-            viewEntryBottomToDotsConstraint?.isActive = !dotsStack.isHidden
-            viewEntryBottomToSafeConstraint?.isActive = dotsStack.isHidden
         }
     }
 
@@ -1869,12 +1864,26 @@ private final class BearyImageViewerReturnAnimator: NSObject, UIViewControllerAn
         viewer.setDismissChromeHidden(true)
         viewer.setDismissImageHidden(true)
         let startRect = fromView.convert(start.rect, to: container)
-        let tempView = UIImageView(image: start.image)
-        tempView.frame = startRect
-        tempView.contentMode = .scaleToFill
-        tempView.clipsToBounds = true
-        tempView.layer.cornerRadius = 12
-        container.addSubview(tempView)
+        // 审计 8 第 3 项：动画只改外层裁切框的 frame，内层图保持原比例——
+        // 外层 clipView 从等比显示矩形缩到正方形格子，内层图用
+        // .scaleAspectFill 跟随裁切框（与真实格子同一口径，见
+        // BearyProfilePhotoCell photoImageView），动画终点与真实格子
+        // 显示同一块画面。旧写法是单个 .scaleToFill 临时图、frame 从
+        // 等比矩形直变正方形，图中人脸全程被压扁／拉宽，临时图移除
+        // 的那一帧才突然恢复正常。startRect 与目标矩形均为等比缩放
+        // 后的矩形（dismissStartInfo 只含平移＋均匀缩放，无旋转），
+        // aspectFill 在起点即等价于等比全图，途中只改裁切、不拉伸。
+        let clipView = UIView()
+        clipView.frame = startRect
+        clipView.clipsToBounds = true
+        clipView.layer.cornerRadius = 12
+        let tempImageView = UIImageView(image: start.image)
+        tempImageView.frame = clipView.bounds
+        tempImageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        tempImageView.contentMode = .scaleAspectFill
+        tempImageView.clipsToBounds = true
+        clipView.addSubview(tempImageView)
+        container.addSubview(clipView)
         let targetRect = container.convert(origin, from: nil)
         // 关场回原位走临界阻尼弹簧（阻尼 1.0，不超调）：此前阻尼 0.7 的回弹
         // 会短暂冲过目标矩形——临时图先比原处格子矮一截再弹回正常，真机报障
@@ -1883,9 +1892,9 @@ private final class BearyImageViewerReturnAnimator: NSObject, UIViewControllerAn
         // 规范 §6 仍写关场阻尼 0.7，本支改后须同步规范，见 PR 说明。
         UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 1.0, initialSpringVelocity: 0, options: .curveEaseOut, animations: {
             fromView.alpha = 0
-            tempView.frame = targetRect
+            clipView.frame = targetRect
         }, completion: { _ in
-            tempView.removeFromSuperview()
+            clipView.removeFromSuperview()
             transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
         })
     }
