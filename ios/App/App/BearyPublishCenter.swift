@@ -166,8 +166,8 @@ private final class BearyPublishProgress {
 /// 上传（拿到 keys，按原序组装）→ publishEntry。任一步失败即停，草稿
 /// 保留（交接前已落盘），pill 显示现有失败文案；成功清草稿与本地
 /// 图片、pill 对勾「已发布」、走 onPublished。
-/// 杀 App／切后台时发布即停、草稿可重试（不加后台任务）；失败重试
-/// 重传全部图片（不做中途 keys 落盘）。
+/// 杀 App／切后台时发布即停、草稿可重试（不加后台任务）；单张上传
+/// 成功即把 key 写回草稿，失败重试只重传未成功的图（见 persistUploadedKey）。
 final class BearyPublishCenter {
 
     static let shared = BearyPublishCenter()
@@ -391,6 +391,9 @@ final class BearyPublishCenter {
                             runningJob.uploadLiveResults[index] = liveKey
                         }
                         runningJob.uploadFinished += 1
+                        // #52：成功即把 key 写回草稿（见 persistUploadedKey），
+                        // 失败重试从草稿重建任务时这张图直接跳过，不再重传。
+                        self.persistUploadedKey(runningJob, index: index, image: image, key: key, liveKey: resp.liveKey)
                         self.pumpUploads(runningJob)
                         if runningJob.uploadFinished >= runningJob.job.images.count {
                             self.finishUploadsAndPost(runningJob)
@@ -401,6 +404,32 @@ final class BearyPublishCenter {
                 }
             }
         }
+    }
+
+    /// #52：单张上传成功即把 key／liveKey 写回草稿，失败重试不再重传这张图。
+    /// 只更新对应草稿图项的 serverKey／liveVideoKey／state（.uploaded），
+    /// 本地文件与 liveVideoFile 不动；成功清草稿时整篇随之删除，无残留表。
+    /// 主线程同步写：成功回包都在主线程排队，并行 3 路的写回互不交错；
+    /// 写盘失败只丢本次写回（重试时最多重传这一张），不阻塞发布流程。
+    private func persistUploadedKey(_ runningJob: RunningJob, index: Int, image: BearyPublishImage, key: String, liveKey: String?) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let draftId = runningJob.job.snapshot.draftId,
+              let localFile = image.localFile else { return }
+        let accountId = runningJob.job.snapshot.accountId
+        guard var draft = BearyDraftStore.loadAll(forAccount: accountId).first(where: { $0.draftId == draftId }) else { return }
+        // 按本地文件名定位（交接清单与草稿图片同序同源，localFile 唯一）；
+        // 找不到时按同下标兜底（仅当该项尚未有 key）。
+        var target = draft.images.firstIndex(where: { $0.localFile == localFile })
+        if target == nil, index < draft.images.count, draft.images[index].serverKey == nil {
+            target = index
+        }
+        guard let target = target else { return }
+        draft.images[target].serverKey = key
+        if let liveKey = liveKey {
+            draft.images[target].liveVideoKey = liveKey
+        }
+        draft.images[target].state = .uploaded
+        _ = BearyDraftStore.save(draft, forAccount: accountId)
     }
 
     /// 全部图片落袋后按原序组装 keys／liveVideos，再进 POST。
