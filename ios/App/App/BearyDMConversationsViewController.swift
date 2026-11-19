@@ -672,25 +672,35 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         return cell
     }
 
-    // 审计第 19 项：新行首次出现只做透明度过渡（0.22s，减动效直设终值）；
-    // 已播过的行再次出现（滚动回 / reloadData 更新）只复位 alpha，不重播。
-    // 复用 cell 的 alpha 必须显式复位，否则上行动画中途的 cell 会带着半透明进新行。
+    // 审计第 19 项：新行首次出现错峰淡入（广场同款：alpha + y+6、0.26s、
+    // 0.03s 步进、最多延迟 0.24s，减动效直设终值）；已播过的行再次出现
+    // （滚动回 / reloadData 更新）只复位 alpha 与 transform，不重播。
+    // 复用 cell 的 alpha 与 transform 必须显式复位，否则上行动画中途的
+    // cell 会带着半透明/位移进新行。
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
         guard indexPath.row < conversations.count else { return }
         let peer = conversations[indexPath.row].peer
         let key = peer?.id.map { "dm-\($0)" } ?? "dm-\(peer?.handle ?? peer?.displayName ?? "")"
         if fadedRowKeys.contains(key) {
             cell.alpha = 1
+            cell.transform = .identity
             return
         }
         fadedRowKeys.insert(key)
         guard BearyMotion.animated(true) else {
             cell.alpha = 1
+            cell.transform = .identity
             return
         }
+        // 序号取当前可见行中的位置（未计入时退回行号），与广场 stagger 同口径。
         cell.alpha = 0
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: {
+        cell.transform = CGAffineTransform(translationX: 0, y: 6)
+        let visible = (tableView.indexPathsForVisibleRows ?? []).sorted()
+        let order = visible.firstIndex(of: indexPath) ?? indexPath.row
+        let delay = min(Double(order) * 0.03, 0.24)
+        UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: [.curveEaseOut, .allowUserInteraction], animations: {
             cell.alpha = 1
+            cell.transform = .identity
         })
     }
 

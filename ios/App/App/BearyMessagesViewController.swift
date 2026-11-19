@@ -31,7 +31,7 @@ import UIKit
 // hasMore || isLoadingMore 时出现（忙 40、闲 56）；哨兵滚出视野清失败旗
 // 重 arm（子页原 scrollViewDidScroll 口径，改由容器表驱动）。
 // 动效：通知行错峰入场（首 24 行、alpha 0、y -24、0.26s、步进 0.03 封顶
-// 0.24，减动效直落终值）与会话行淡入（0.22s 纯透明度）两套并存、行集不交。
+// 0.24，减动效直落终值）与会话行错峰淡入（0.26s、alpha + y+6）两套并存、行集不交。
 // 空态：两组都空时走合并空态（统一 BearyStateView，不再画通知空态的
 // 动态信封 BearyMailView）；一组空时只显另一组；任一组首次失败且贡献
 // 0 行时在数据行后补失败行（通知失败行在前、私信失败行在后、哨兵行之前）。
@@ -889,7 +889,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
         guard indexPath.row < mergedRows.count else { return }
         let row = mergedRows[indexPath.row]
-        // 会话行错峰淡入（广场同款：alpha + y+6、0.22s、0.03 步进封顶
+        // 会话行错峰淡入（广场同款：alpha + y+6、0.26s、0.03 步进封顶
         // 0.24s；按稳定 ID 已播行不重播，减动效直设终值）。
         if case .conversation = row {
             let k = key(for: row)
