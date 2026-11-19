@@ -132,12 +132,11 @@ final class BearyDeveloperModeViewController: BearySettingsSubpageViewController
                 BearyDevPreviewState.followStateOverride = index == 0 ? nil : index - 1
                 BearyDeveloperMode.shared.postChange(kind: "account")
             },
-            segmentedRow(title: "谁可以私信我", options: ["默认", "所有人", "仅关注我", "仅好友", "任何人不可"], selected: dmLevelIndex()) { index in
+            segmentedRow(title: "谁可以私信我", options: ["默认", "所有人", "Plus 用户", "没有人"], selected: dmLevelIndex()) { index in
                 switch index {
                 case 1: BearyDevPreviewState.dmLevelOverride = "anyone"
-                case 2: BearyDevPreviewState.dmLevelOverride = "followers"
-                case 3: BearyDevPreviewState.dmLevelOverride = "friends"
-                case 4: BearyDevPreviewState.dmLevelOverride = "none"
+                case 2: BearyDevPreviewState.dmLevelOverride = "plus"
+                case 3: BearyDevPreviewState.dmLevelOverride = "none"
                 default: BearyDevPreviewState.dmLevelOverride = nil
                 }
                 BearyDeveloperMode.shared.postChange(kind: "account")
@@ -320,9 +319,8 @@ final class BearyDeveloperModeViewController: BearySettingsSubpageViewController
     private func dmLevelIndex() -> Int {
         switch BearyDevPreviewState.dmLevelOverride {
         case "anyone": return 1
-        case "followers": return 2
-        case "friends": return 3
-        case "none": return 4
+        case "plus": return 2
+        case "none": return 3
         default: return 0
         }
     }
