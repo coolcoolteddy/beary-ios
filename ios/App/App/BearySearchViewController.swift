@@ -317,6 +317,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         showInitialState()
         // 审计 P2-20：搜索页监听拉黑/举报即时清行并清 quoteCache。
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidReportUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
         // 好友第一期：别处回关/取关后，搜索行状态机同步重拉（不靠旧状态）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleFollowChangedNotification(_:)), name: .bearyFriendsChanged, object: nil)
@@ -378,11 +379,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     /// 补缺 P2-21：搜索拉黑判定（与 SceneDelegate isBlockedAuthor 同口径：游客不承接拉黑表，
     /// 作者本人永不命中；其余走 BearyBlockedStore 同步缓存，点按路径不发网络）。
+    /// 举报用户同口径：已举报作者的日记行与用户行同样滤掉。
     private func isBlockedForSearch(userId: Int?) -> Bool {
         if SessionManager.shared.isGuestMode { return false }
         guard let userId = userId else { return false }
         if let viewerId = SessionManager.shared.currentUser?.id, viewerId == userId { return false }
-        return BearyBlockedStore.isBlocked(userId)
+        return BearyBlockedStore.isBlocked(userId) || BearyReportedUserStore.isReportedUser(userId)
     }
 
     /// 审计 P2-20：拉黑作者——用户行与该作者全部日记行一并清掉，引用缓存同清。
@@ -580,6 +582,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     deinit {
         searchTimer?.invalidate()
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .bearyDidReportUser, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyFriendsChanged, object: nil)
         NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillShowNotification, object: nil)

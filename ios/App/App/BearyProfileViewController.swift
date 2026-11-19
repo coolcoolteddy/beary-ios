@@ -2127,6 +2127,7 @@ class BearyProfileViewController: UIViewController {
     deinit {
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .bearyDidReportUser, object: nil)
         // 审计-个人页设置：补注销 bearyFriendsChanged（viewDidLoad 注册、
         // 此前 deinit 漏注销；广播到达已释放实例不再投递）。
         NotificationCenter.default.removeObserver(self, name: .bearyFriendsChanged, object: nil)
@@ -2154,6 +2155,7 @@ class BearyProfileViewController: UIViewController {
         // iCity：举报/拉黑广播——本页同步清掉对应条目（拉黑本页作者时离页由 onBlockedUser 容器接线）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidReportUser, object: nil)
         // 好友第一期：别处接受/删友后，本页关系态与日记列表同步重拉（断友后
         // 对方仅好友篇立即消失，不靠旧缓存）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleFollowChangedNotification(_:)), name: .bearyFriendsChanged, object: nil)

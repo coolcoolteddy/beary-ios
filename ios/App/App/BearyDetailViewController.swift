@@ -765,6 +765,7 @@ final class BearyDetailViewController: UIViewController {
         DiagFile.mark("detail.rendered id=\(entry.id ?? "?")")
         // 审计 P2-20：详情页监听拉黑/举报——页内命中时转占位（不得继续出全文）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidReportUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
         // 审计三轮第二批 9：回前台复核限时到期（后台期间定时器不触发时补位）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleForegroundEphemeralCheck(_:)), name: UIApplication.willEnterForegroundNotification, object: nil)
@@ -778,6 +779,7 @@ final class BearyDetailViewController: UIViewController {
         ephemeralExpiryTimer?.invalidate()
         ephemeralExpiryTimer = nil
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .bearyDidReportUser, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.removeObserver(self, name: UIApplication.willEnterForegroundNotification, object: nil)
     }
@@ -1489,12 +1491,12 @@ final class BearyDetailViewController: UIViewController {
         case keepContent
     }
 
-    /// B1：拉黑作者判定（作者本人永不命中；游客不承接拉黑表；与 SceneDelegate 同口径）。
+    /// B1：拉黑或举报作者判定（作者本人永不命中；游客不承接拉黑／举报表；与 SceneDelegate 同口径）。
     static func isBlockedAuthor(_ entry: Entry) -> Bool {
         if SessionManager.shared.isGuestMode { return false }
         guard let authorId = entry.authorId else { return false }
         if let viewerId = SessionManager.shared.currentUser?.id, viewerId == authorId { return false }
-        return BearyBlockedStore.isBlocked(authorId)
+        return BearyBlockedStore.isBlocked(authorId) || BearyReportedUserStore.isReportedUser(authorId)
     }
 
     /// B1：取数失败分流——明确无权限/找不到即已不可见（撤下全文）；
