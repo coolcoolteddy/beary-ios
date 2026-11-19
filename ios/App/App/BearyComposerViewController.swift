@@ -954,6 +954,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var headlineFont: UIFont {
         BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
     }
+    /// 任务2：空标题视觉分量轻一点——占位文案与已填标题同字号、
+    /// 但只走常规字重（已填标题仍 17 bold）；字号档变化时同款跟随。
+    private var headlinePlaceholderFont: UIFont {
+        BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .regular))
+    }
     /// 正文动态字号（标题 headlineFont 同款口径）：正文、占位、输入属性、
     /// 回填属性统一走这里，不再各写固定 16pt。
     private var bodyFont: UIFont {
@@ -1064,10 +1069,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private static let publishSpinnerTitleInset: CGFloat = 24
     private var draftPillWidthConstraint: NSLayoutConstraint?
     private let toolbarSeparator = UIView()
-    /// 窄屏 5 项之 3：草稿状态独立行（工具栏上方、工具行之上），只承载
-    /// level 0 失败与 level 1 部分保存：完整文案＋重试钮，不再挤进工具行
-    /// 与 7 个图标抢宽。level 2 已保存一般走工具行右端原口径，只留对勾
-    /// 在最小间距下仍装不下时才改走本行（完整文案、不带重试钮）。
+    /// 窄屏 5 项之 3：草稿状态独立行（工具栏上方、工具行之上），任务2 改为
+    /// 补位行：文案常驻工具行右端固定位（见 applyDraftStatusToolbarFit），
+    /// 本行只在文案放不下（窄屏）时补全文案、level 0 时另带重试钮；
+    /// level 2 已保存一般走工具行右端原口径，只留对勾在最小间距下
+    /// 仍装不下时才改走本行（完整文案、不带重试钮）。
     private let draftStatusBanner = UIStackView()
     private let draftStatusBannerLabel = UILabel()
     private let draftStatusRetryButton = BearyHit44Button(type: .system)
@@ -1099,6 +1105,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 时钟＝限时，点开系统 UIMenu 直选四档；取代正文区分段，为唯一可见性入口；
     /// 编辑模式隐藏（编辑不改可见性）；限时态即公开语义，不再另设锁定开关。
     private let visibilityButton = UIButton(type: .system)
+    /// 任务2：准备发布行——顶栏（发布钮）正下方固定行，正文非空的
+    /// “准备发布”态才显；四档直接平铺点选（不再只藏进顶栏可见性菜单），
+    /// 限时后果同行常驻可见（发布前即看得见，不只靠选档后 toast）。
+    private let publishVisibilityRow = UIStackView()
+    private let publishVisibilityChipRow = UIStackView()
+    private let publishVisibilityNoteLabel = UILabel()
+    private var publishVisibilityRowHeightConstraint: NSLayoutConstraint?
+    private var publishVisibilityButtons: [VisibilityChoice: BearyHit44Button] = [:]
+    /// 准备发布行高：chip 行 30 ＋上下边距各 6；限时态另加注行 16 ＋间距 4。
+    private static let publishVisibilityRowHeight: CGFloat = 42
+    private static let publishVisibilityRowNoteHeight: CGFloat = 20
     // 编辑器改版（2026-10-29）：天气尖角弹出框（取代旧选择条）+ 框外收起层。
     // 心情选择器已删（2026-11-18，心情改为正文键入 [mood:xxx]），此处只留天气框。
     private let weatherCallout = BearyCalloutPickerView()
@@ -1280,6 +1297,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         view.backgroundColor = BearyColors.bg
         buildLayout()
         buildTopBar()
+        buildPublishVisibilityRow()
         buildMentionTopRow()
         // 109：内容栈首项为新标题输入区（见 buildHeadlineField），其下为正文。
         buildTextArea()
@@ -1355,7 +1373,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 故手动重建标题 attributed；字号没变时不动，不打断正在输入的标题）。
         if headlineField.font?.pointSize != headlineFont.pointSize {
             headlineField.font = headlineFont
-            headlinePlaceholderLabel.font = headlineFont
+            headlinePlaceholderLabel.font = headlinePlaceholderFont
             setHeadlineText(headlineText)
             headlineHeightConstraint?.constant = max(28, ceil(headlineFont.lineHeight) + 2)
         }
@@ -1504,6 +1522,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 含 emoji 时两者不等（"😀a" 计 2 簇、3 个 UTF-16 单位），
                 // 用 .count 会把光标落在正文中间；attributedText.length 即 UTF-16 长。
                 textView.selectedRange = NSRange(location: textView.attributedText.length, length: 0)
+            } else {
+                // 任务2：空白草稿打开就有落笔位置——光标定在正文开头首行，
+                // 聚焦后即刻可打字，不先点正文。
+                textView.selectedRange = NSRange(location: 0, length: 0)
             }
             textView.becomeFirstResponder()
         }
@@ -1550,6 +1572,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.isLayoutMarginsRelativeArrangement = true
         contentStack.layoutMargins = UIEdgeInsets(top: BearySpace.lg, left: BearySpace.lg, bottom: BearySpace.lg, right: BearySpace.lg)
         view.addSubview(topBar)
+        view.addSubview(publishVisibilityRow)
         view.addSubview(toolbarContainer)
         view.addSubview(toolStripStack)
         view.addSubview(mentionTopRow)
@@ -1592,6 +1615,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarWidthConstraint = toolbarContainer.widthAnchor.constraint(equalToConstant: 608)
         scrollCenterXConstraint = scrollView.centerXAnchor.constraint(equalTo: view.centerXAnchor)
         scrollWidthConstraint = scrollView.widthAnchor.constraint(equalToConstant: 640)
+        // 任务2：准备发布行高约束先建好（初值 0、不占位），显隐由
+        // refreshPublishVisibilityRow 改它；约束在 buildLayout 建、样式在
+        // buildPublishVisibilityRow 建，首帧布局前两者都已就位。
+        publishVisibilityRowHeightConstraint = publishVisibilityRow.heightAnchor.constraint(equalToConstant: 0)
         // 顶部 @ 行高约束先建好（初值 0、不占位），显隐由 refreshMentionTopRow 改它；
         // 约束在 buildLayout 建、样式在 buildMentionTopRow 建，首帧布局前两者都已就位。
         mentionTopRowHeightConstraint = mentionTopRow.heightAnchor.constraint(equalToConstant: 0)
@@ -1601,9 +1628,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             topBarTrailingConstraint!,
             // v6：顶栏高 60，发布钮 36 居中后底部到分界线净留白 12（见 buildTopBar）。
             topBar.heightAnchor.constraint(equalToConstant: 60),
-            // 顶部 @ 行：顶栏下方固定行（无收件人时高 0、不占位），滚动区顶锚它；
+            // 任务2：准备发布行——顶栏正下方固定行（无内容时高 0、不占位），
+            // @ 行顶锚它；左右跟滚动区走（居中 640 列下自动跟随），不另建列约束。
+            publishVisibilityRow.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            publishVisibilityRow.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+            publishVisibilityRow.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            publishVisibilityRowHeightConstraint!,
+            // 顶部 @ 行：准备发布行下方固定行（无收件人时高 0、不占位），滚动区顶锚它；
             // 左右跟滚动区走（居中 640 列下自动跟随），不另建列约束。
-            mentionTopRow.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            mentionTopRow.topAnchor.constraint(equalTo: publishVisibilityRow.bottomAnchor),
             mentionTopRow.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
             mentionTopRow.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
             mentionTopRowHeightConstraint!,
@@ -1709,7 +1742,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let fitted = contentStack.systemLayoutSizeFitting(targetSize, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
         // 顶部 @ 行不在内容栈里：出现时 sheet 高另加它（面板打开时走视口档，不到此处）。
         let mentionTopHeight = mentionTopRow.isHidden ? 0 : Self.mentionTopRowHeight
-        let total = fitted.height + 60 + toolbarHeight + mentionTopHeight
+        // 任务2：准备发布行同样不在内容栈里：出现时 sheet 高另加它。
+        let publishVisibilityHeight = publishVisibilityRow.isHidden ? 0 : (publishVisibilityRowHeightConstraint?.constant ?? 0)
+        let total = fitted.height + 60 + toolbarHeight + mentionTopHeight + publishVisibilityHeight
         // 临时诊断（82 包追加，定根因后删除）：total 每轮都记，看是否漂移。
         DiagFile.mark("composer-prefSize total=\(String(format: "%.1f", total))")
         guard abs(preferredContentSize.height - total) > 0.5 else {
@@ -1960,7 +1995,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         headlineField.delegate = self
         headlineField.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
         headlinePlaceholderLabel.text = "给这篇日记起个标题（可选）"
-        headlinePlaceholderLabel.font = headlineFont
+        headlinePlaceholderLabel.font = headlinePlaceholderFont
         headlinePlaceholderLabel.textColor = BearyColors.gray
         headlinePlaceholderLabel.isUserInteractionEnabled = false
         // 窄屏 5 项之 5：标题清除钮改官方 beary-ui icon_close（16pt，与位置
@@ -2996,6 +3031,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 可见性钮同藏（与发布钮同组，关闭时按编辑模式恢复）。
             draftPillButton.isHidden = true
             visibilityButton.isHidden = true
+            // 任务2：引用面板打开时准备发布行同其他 chrome 一并隐藏。
+            refreshPublishVisibilityRow()
             // 弹出框若开着也一并收起，不让它浮在面板上。
             hideCallout(animated: false)
             refreshQuoteTabs()
@@ -3069,6 +3106,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.refreshImageUndoBar()
                 // 审计：定位行按地点数据恢复（有地点才显示，无地点仍隐藏）。
                 self.refreshLocationRow()
+                // 任务2：面板关闭后准备发布行按正常态（正文非空即显）恢复。
+                self.refreshPublishVisibilityRow()
                 if self.quotePanelSavedScrollValid {
                     self.quotePanelSavedScrollValid = false
                     self.view.layoutIfNeeded()
@@ -3234,6 +3273,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             visibilityButton.accessibilityValue = published ? "公开" : "私密"
         }
         visibilityButton.menu = makeVisibilityMenu()
+        // 任务2：选档变化时准备发布行 chip 选中态与限时注行同步变。
+        refreshPublishVisibilityRow()
     }
 
     @objc private func didTapQuoteTab(_ sender: UIButton) {
@@ -4059,7 +4100,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 容器已由 buildLayout 加到 view 顶栏下方（固定），这里不再进内容栈。
         toolbarContainer.addSubview(toolbarSeparator)
         // 窄屏 5 项之 3：草稿状态独立行（工具栏上方、工具行之上）：文案＋重试钮，
-        // 平时隐藏＋0 高（见 setDraftStatusBannerVisible），只在 level 0／1 时启用；
+        // 平时隐藏＋0 高（见 setDraftStatusBannerVisible）；任务2 改为补位行——
+        // 只在工具行文案放不下（窄屏）时补全文案、level 0 时另带重试钮，
+        // 工具行能放下文案时本行不重复文案（见 applyDraftStatusToolbarFit）。
         // 文案与 draftStatusLabel 同源（见 updateDraftStatusLabel），重试只重跑
         // saveDraftNow（见 didTapDraftStatusRetry），不另起保存语义；重试钮只在
         // 写盘失败（level 0）时显示，图片未保存（level 1）时隐藏（见
@@ -4281,7 +4324,31 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 从当前呈现值接管、代次 +1 使旧 completion 作废，只收敛到最后状态；
     /// 减动效与未挂窗（首帧）直接置终值，不播动画。引用面板打开时的瞬藏走
     /// setQuotePanelOpen 专属路径（面板盖住条带、无可见转场），此处不动它。
+    // 任务2：选择条展开/收起时保住光标行——记光标在滚动内容里的屏上位置
+    // （光标顶相对滚动区可视顶的距离），布局变后把外层偏移补回同一位置，
+    // 光标行不随条带占高变化上下跳动；未在正文输入时返回 nil、不动偏移。
+    private func caretScreenOffsetInScrollContent() -> CGFloat? {
+        guard textView.isFirstResponder, let start = textView.selectedTextRange?.start else { return nil }
+        let caret = textView.caretRect(for: start)
+        guard !caret.isNull, caret.height > 0 else { return nil }
+        let inScroll = textView.convert(caret, to: scrollView)
+        return inScroll.minY - scrollView.contentOffset.y
+    }
+
+    private func restoreCaretScreenOffset(_ anchor: CGFloat) {
+        guard let start = textView.selectedTextRange?.start else { return }
+        let caret = textView.caretRect(for: start)
+        guard !caret.isNull, caret.height > 0 else { return }
+        let inScroll = textView.convert(caret, to: scrollView)
+        let maxY = max(0, scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom)
+        let y = min(max(inScroll.minY - anchor, -scrollView.contentInset.top), maxY)
+        scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: y), animated: false)
+    }
+
     private func refreshToolStrip() {
+        // 任务2：先记光标行锚点（见上）；条带显隐改滚动底锚与正文区高，
+        // 布局落定后按锚点补回偏移（各出口处）。
+        let caretAnchor = caretScreenOffsetInScrollContent()
         // 编辑器改版（2026-10-29）：心情/天气旧条已由尖角弹出框取代；
         // 本支删除旧条带后栈内只剩写给区。2026-10-31：限时行底锚三档随行删除
         //（选择条底已直贴工具栏顶）。
@@ -4297,6 +4364,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             toolStripStack.alpha = 1
             toolStripStack.transform = .identity
             updatePreferredContentSize()
+            view.layoutIfNeeded()
+            if let anchor = caretAnchor { restoreCaretScreenOffset(anchor) }
             return
         }
         toolStripTransitionGeneration += 1
@@ -4326,6 +4395,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         if !needsAnimation {
             view.layoutIfNeeded()
+            if let anchor = caretAnchor { restoreCaretScreenOffset(anchor) }
             updatePreferredContentSize()
             return
         }
@@ -4345,6 +4415,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
                 // 限时行与滚动底锚的约束切换随同一转场走，不瞬跳。
                 self.view.layoutIfNeeded()
+                // 任务2：光标行锚点补回放在同一转场里，与条带位移同步走、不跳帧。
+                if let anchor = caretAnchor { self.restoreCaretScreenOffset(anchor) }
             },
             completion: { [weak self] finished in
                 guard let self = self, finished, generation == self.toolStripTransitionGeneration else { return }
@@ -4357,6 +4429,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
                 // 出场条带占高在动画结束时才塌掉，sheet 高随之重算。
                 self.updatePreferredContentSize()
+                // 任务2：转场结束再按锚点收敛一次（转场内已补过时此处即无操作）。
+                if let anchor = caretAnchor { self.restoreCaretScreenOffset(anchor) }
             }
         )
         // 入场条带在转场期间已可见占高，sheet 高先按含条带算；出场条带
@@ -5277,6 +5351,92 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         openToolStrip(.recipient)
     }
 
+    /// 任务2：准备发布行搭建——顶栏正下方固定行，四档 chip 直接平铺
+    /// （标签 chip 同款：13 regular、圆角 999、内边距 7/12、高 30，点按热区
+    /// 44 靠 BearyHit44Button）；限时后果注行只在限时态出现，发布前即看得见。
+    /// 顶栏可见性菜单钮保留（同旗标、同步刷新），本行是“准备发布”态的直显入口。
+    private func buildPublishVisibilityRow() {
+        publishVisibilityRow.translatesAutoresizingMaskIntoConstraints = false
+        publishVisibilityRow.axis = .vertical
+        publishVisibilityRow.spacing = 4
+        publishVisibilityRow.alignment = .fill
+        publishVisibilityRow.isLayoutMarginsRelativeArrangement = true
+        publishVisibilityRow.layoutMargins = UIEdgeInsets(top: 6, left: 16, bottom: 6, right: 16)
+        publishVisibilityRow.isHidden = true
+        publishVisibilityChipRow.translatesAutoresizingMaskIntoConstraints = false
+        publishVisibilityChipRow.axis = .horizontal
+        publishVisibilityChipRow.spacing = 8
+        publishVisibilityChipRow.alignment = .center
+        publishVisibilityNoteLabel.translatesAutoresizingMaskIntoConstraints = false
+        publishVisibilityNoteLabel.font = BearyDynamicType.captionFont()
+        publishVisibilityNoteLabel.adjustsFontForContentSizeCategory = true
+        publishVisibilityNoteLabel.textColor = BearyColors.gray
+        publishVisibilityNoteLabel.text = "公开 24 小时后自动转私密"
+        publishVisibilityNoteLabel.numberOfLines = 1
+        publishVisibilityNoteLabel.isHidden = true
+        publishVisibilityNoteLabel.accessibilityLabel = "限时：公开 24 小时后自动转私密"
+        let tiers: [(title: String, choice: VisibilityChoice)] = [
+            ("私密", .privateTier),
+            ("仅好友", .friendsTier),
+            ("公开", .publicTier),
+            ("限时", .ephemeralTier),
+        ]
+        for tier in tiers {
+            let chip = BearyHit44Button(type: .system)
+            chip.setTitle(tier.title, for: .normal)
+            chip.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            chip.titleLabel?.adjustsFontForContentSizeCategory = true
+            chip.setTitleColor(BearyColors.gray, for: .normal)
+            chip.backgroundColor = UIColor.clear
+            chip.layer.cornerRadius = 999
+            chip.layer.masksToBounds = true
+            chip.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
+            chip.accessibilityLabel = "可见性：" + tier.title
+            chip.addTarget(self, action: #selector(didTapPublishVisibilityChip(_:)), for: .touchUpInside)
+            chip.bearyAddPressFeedback()
+            chip.translatesAutoresizingMaskIntoConstraints = false
+            publishVisibilityButtons[tier.choice] = chip
+            publishVisibilityChipRow.addArrangedSubview(chip)
+        }
+        publishVisibilityRow.addArrangedSubview(publishVisibilityChipRow)
+        publishVisibilityRow.addArrangedSubview(publishVisibilityNoteLabel)
+        NSLayoutConstraint.activate([
+            publishVisibilityChipRow.heightAnchor.constraint(equalToConstant: 30),
+            publishVisibilityNoteLabel.heightAnchor.constraint(equalToConstant: 16),
+        ])
+        refreshPublishVisibilityRow()
+    }
+
+    @objc private func didTapPublishVisibilityChip(_ sender: UIButton) {
+        guard let choice = publishVisibilityButtons.first(where: { $0.value === sender })?.key else { return }
+        applyVisibilityChoice(choice)
+    }
+
+    /// 任务2：准备发布行显隐与选中态——只在新建态、正文非空（可发布）、
+    /// 引用面板未开时出现；编辑态不改可见性、空正文无可发布内容，均不显。
+    /// 选中 chip 走 surface2 底＋墨字（标签 chip 同款选中态），其余灰字透明底；
+    /// 限时态注行常驻显示后果，发布前即看得见。行高进 sheet 高
+    /// （updatePreferredContentSize 的非面板分支另加本行高）；面板打开时
+    /// 高度走视口档，不在此更新。
+    private func refreshPublishVisibilityRow() {
+        guard isViewLoaded, publishVisibilityRowHeightConstraint != nil else { return }
+        let visible = !isEditMode && !quotePanelOpen && !trimmedContent().isEmpty
+        let current = currentVisibilityChoice()
+        for (choice, chip) in publishVisibilityButtons {
+            let selected = choice == current
+            chip.backgroundColor = selected ? BearyColors.surface2 : UIColor.clear
+            chip.setTitleColor(selected ? BearyColors.ink : BearyColors.gray, for: .normal)
+            chip.accessibilityValue = selected ? "已选" : nil
+        }
+        publishVisibilityNoteLabel.isHidden = !isEphemeral
+        let wasHidden = publishVisibilityRow.isHidden
+        publishVisibilityRow.isHidden = !visible
+        publishVisibilityRowHeightConstraint?.constant = !visible ? 0 : (isEphemeral ? Self.publishVisibilityRowHeight + Self.publishVisibilityRowNoteHeight : Self.publishVisibilityRowHeight)
+        if wasHidden != publishVisibilityRow.isHidden, !quotePanelOpen {
+            updatePreferredContentSize()
+        }
+    }
+
     /// 顶部 @ 行显隐：有收件人且引用面板未开时出现；引用面板打开时同其他 chrome 一并隐藏。
     /// 行高进 sheet 高（updatePreferredContentSize 的非面板分支另加本行高）；面板打开时
     /// 高度走视口档，不在此更新。
@@ -5569,16 +5729,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         if level == 0 || level == 1 {
-            // 独立行承载完整文案＋重试：工具行组不再与图标抢宽，隐藏它；
-            // 文案本身在独立行独占整行宽（320 宽下 288，减重试钮后仍远超 11 字文案宽），不截断。
-            // D4：组隐藏后固定部分只剩图标＋圆环，间距仍按自适应口径（超限时才收窄）。
-            setDraftStatusBannerVisible(true)
+            // 任务2：草稿保存反馈放固定位置——文案常驻工具行右端
+            // （与“保存中…”/“已保存”同一位置），不再随级别跳到独立行；
+            // 独立行只在文案放不下（窄屏）时补全文案，level 0 时另带重试钮。
+            // 0/1 级图标隐藏（网页同款），尾部只剩文案宽；放不下时工具行只留空位。
+            if draftStatusGroup.isHidden { draftStatusGroup.isHidden = false }
+            let labelWidth = draftStatusLabel.intrinsicContentSize.width
+            // 7 钮口径（#1950 标签钮计入）：7×24 图标＋6 段工具间距 20＋引用→圆环 8＋圆环组。
+            let withoutLabel: CGFloat = 7 * 24 + 6 * 20 + 8 + charGroupWidth
+            let labelFits = width >= withoutLabel + labelWidth
+            draftStatusLabel.isHidden = !labelFits
+            draftStatusBannerLabel.isHidden = labelFits
             // P1-8：重试钮只用于写盘失败（level 0）。level 1（文字已保存，图片未保存）
             // 时重跑 saveDraftNow 也救不回图（保存不上传，key 为空的图仍未上传完），不露重试钮；
             // 失败图点图片重试上传（见 didTapImageItem），上传中图等传完自动进下一次保存。
             draftStatusRetryButton.isHidden = (level != 0)
-            if !draftStatusGroup.isHidden { draftStatusGroup.isHidden = true }
-            setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 7 * 24 + 8 + charGroupWidth, containerWidth: width), in: toolRow)
+            setDraftStatusBannerVisible(level == 0 || !labelFits)
+            setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 7 * 24 + 8 + charGroupWidth + (labelFits ? labelWidth : 0), containerWidth: width), in: toolRow)
             return
         }
         // level 2：文案显隐与分流按最小间距 12 判定——12 下装得下文案就显文案、
@@ -5914,6 +6081,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshPublishAppearance()
         refreshPublishBusyState()
         refreshPublishingInputFreeze()
+        // 任务2：正文空/非空翻转即“正在写/准备发布”翻转，发布行显隐同步变。
+        refreshPublishVisibilityRow()
         // 原图确认：发布启用态每次同步时顺带刷新待确认条（未确认项显隐）。
         refreshPendingUploadBar()
     }
