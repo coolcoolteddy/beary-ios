@@ -286,7 +286,8 @@ enum BearyGlass {
 }
 
 /// 渐进模糊（规范 §6 滚动交界）：毛玻璃＋渐变遮罩，模糊从贴体处最强、向内容方向渐弱至透明。
-/// 强度取轻量（无 tint 液态玻璃／超薄材质，内容隐约可见、不断层）。
+/// 强度取轻量（超薄材质，内容隐约可见、不断层；2026-11-19 起不用液态玻璃——
+/// 无 tint 的 UIGlassEffect 在深色下自带亮面、整条垫片泛白，见本类 init 注释）。
 /// 现行只剩底栏一处垫片（.up）：自屏幕底缘向上整高平滑渐变，底部满强度、顶端完全透明
 /// （2026-11-14 Li 定；此前满强度保持到距顶边 12pt 处再淡，整块均匀厚模糊，见 #903）。
 /// 其余 10 处垫片已随 125 移除，不再新增。
@@ -319,13 +320,11 @@ final class BearyProgressiveBlurView: UIView {
 
     init(fade: BearyProgressiveBlur.Fade) {
         self.fade = fade
-        let effect: UIVisualEffect
-        if #available(iOS 26.0, *) {
-            effect = UIGlassEffect()
-        } else {
-            effect = UIBlurEffect(style: .systemUltraThinMaterial)
-        }
-        let effectView = UIVisualEffectView(effect: effect)
+        // 2026-11-19 Li 定：垫片只要纯渐变模糊、不带任何颜色。
+        // 无 tint 的 UIGlassEffect 在深色下自带亮面、整条垫片泛白（iOS 27 实机），
+        // 故全版本统一用 .systemUltraThinMaterial（随深浅自适应、无 tint、无亮面），
+        // 与低版本分支及 init(coder:) 同口径；渐变遮罩与强度口径不动。
+        let effectView = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
         effectView.isUserInteractionEnabled = false
         self.effectView = effectView
         super.init(frame: .zero)
