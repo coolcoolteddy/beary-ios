@@ -3752,10 +3752,13 @@ class BearyTimelineViewController: UIViewController {
         }
         let contentRaw = max(0, -(tableView.contentOffset.y + tableView.contentInset.top))
         let panTranslation = tableView.panGestureRecognizer.translation(in: tableView).y
+        // 锚点一次拖动只锁一次：中途不再凭 offset/inset 阈值清掉——
+        // 顶栏显隐改 contentInset.top（60pt）或重载顶 offset，
+        // 都会把阈值顶到手指下面，旧口径一清锚点 fingerRaw 即归零、
+        // 指示高塌掉，图标还没触发就缩回去。锚点只在拖动结束清
+        // （scrollViewDidEndDragging 与上方 !isDragging 分支）。
         if tableView.contentOffset.y <= -tableView.contentInset.top && pullEngageTranslation == nil {
             pullEngageTranslation = panTranslation
-        } else if tableView.contentOffset.y > -tableView.contentInset.top {
-            pullEngageTranslation = nil
         }
         let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
         let indicatorHeight = min(fingerRaw * 0.48, 116)
@@ -3846,6 +3849,13 @@ class BearyTimelineViewController: UIViewController {
         // 下拉位 = -(baseTop + 84)（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
         let stillAtPullPosition = !self.tableView.isDragging
             && self.tableView.contentOffset.y <= -(baseTop + 84) + 8
+        // 动量截断（进入侧同款）：只在仍停在下拉位时——此时收回动画要接管
+        // offset；松手后的表减速若还在跑，会与收回 easing 双路驱动
+        // contentOffset，图标先往下掉一下再上去；先掐断再播动画。
+        // 用户已滑走时 offset 不参与收回动画，不碰他的滚动。
+        if stillAtPullPosition {
+            tableView.setContentOffset(tableView.contentOffset, animated: false)
+        }
         let pullOut = {
             self.tableView.contentInset.top = baseTop
             self.tableView.contentInset.bottom = baseBottom
