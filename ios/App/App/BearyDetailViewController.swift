@@ -1724,6 +1724,7 @@ final class BearyDetailViewController: UIViewController {
         titleLabel.isHidden = trimmedTitle.isEmpty
 
         // 正文 16pt（diaryBodyFont 即 scaled 16），行高 1.6（首页卡片口径）。
+        // 正文仅表情放大（2026-11-18 Li 定）：1–3 个纯表情时字号 ×2（见 detailBodyAttributedText）。
         // 旧心情改位：心情缀正文末尾（见 detailBodyAttributedText）。
         bodyLabel.attributedText = detailBodyAttributedText(entry.content ?? "", moodKey: entry.mood)
         bodyLabel.isHidden = (entry.content ?? "").isEmpty && (entry.mood ?? "").isEmpty
@@ -1745,7 +1746,9 @@ final class BearyDetailViewController: UIViewController {
     /// 无空格）；无心情时原样返回；正文为空且有心情时只显附件。
     /// 深浅变体按当前 trait 取，主题切换时由 trait handler 重建正文。
     private func detailBodyAttributedText(_ content: String, moodKey: String?) -> NSAttributedString {
-        let font = BearyDynamicType.diaryBodyFont()
+        // 正文仅表情放大：1–3 个纯表情时字号 ×2（与写日记页 #1964、卡片同口径）；
+        // 行高倍数 1.6 跟字号走；心情缀尾附件按生效字号 ×1.2。
+        let font = BearyText.effectiveBodyFont(BearyDynamicType.diaryBodyFont(), for: content)
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.6
         paragraph.lineBreakMode = .byCharWrapping
