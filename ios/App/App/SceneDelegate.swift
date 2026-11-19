@@ -266,6 +266,8 @@ final class BearyChromeViewController: UIViewController {
     private var notificationDetailEdgeDismiss: BearyEdgeDismissController?
     /// 当前打开的通知列表页（弱持有，供详情展开过渡找源行；关页后即释放）。
     private weak var activeNotificationDetailVC: BearyNotificationDetailViewController?
+    /// 信件整页 modal 的 EdgeDismiss 强持有（同口径，见 presentLetterPage）。
+    private var letterEdgeDismiss: BearyEdgeDismissController?
     /// 日记详情页 modal 的 EdgeDismiss 强持有（见 presentDetail）。
     private var detailEdgeDismiss: BearyEdgeDismissController?
     /// 标签聚合页 modal 的 EdgeDismiss 强持有（见 presentTagPage）。
@@ -2692,6 +2694,7 @@ final class BearyChromeViewController: UIViewController {
         vc.onOpenDM = { [weak self] peer in
             self?.presentDMChat(peer: peer)
         }
+        vc.onOpenLetterPage = { [weak self] letterVC in self?.presentLetterPage(letterVC) }
         addPageVC(vc, page: .notif)
         notifVC = vc
         vc.applyHeaderTopInset(visible: false)
@@ -2935,6 +2938,7 @@ final class BearyChromeViewController: UIViewController {
         vc.onOpenDM = { [weak self] peer in self?.presentDMChat(peer: peer) }
         vc.onOpenNotificationDetail = { [weak self] detailVC in self?.presentNotificationDetail(detailVC) }
         vc.onMessagesUnreadChanged = { [weak self] in self?.updateMessagesTabBadge() }
+        vc.onOpenLetterPage = { [weak self] letterVC in self?.presentLetterPage(letterVC) }
         addPageVC(vc, page: .messages)
         messagesVC = vc
         updateMessagesTabBadge()
@@ -3825,6 +3829,19 @@ final class BearyChromeViewController: UIViewController {
         nav.transitioningDelegate = edgeDismiss
         self.notificationDetailEdgeDismiss = edgeDismiss
         self.activeNotificationDetailVC = vc
+        topmostViewController().present(nav, animated: BearyMotion.animated(true))
+    }
+
+    /// 系统通知／信件整页阅读：与 presentNotificationDetail 同口径
+    /// （全屏 nav＋EdgeDismiss，正常推入，不用展开过渡）。
+    private func presentLetterPage(_ vc: BearyLetterViewController) {
+        let nav = UINavigationController(rootViewController: vc)
+        nav.isNavigationBarHidden = true
+        nav.modalPresentationStyle = .fullScreen
+        let edgeDismiss = BearyEdgeDismissController()
+        edgeDismiss.attach(to: nav)
+        nav.transitioningDelegate = edgeDismiss
+        self.letterEdgeDismiss = edgeDismiss
         topmostViewController().present(nav, animated: BearyMotion.animated(true))
     }
 

@@ -36,7 +36,7 @@ import UIKit
 //   system 行带 entry_id → 同样 onEntrySelected（容器校验可见性再定位/占位，
 //   iCity 起不再弹送达信模态）；
 //   无 entry_id 的 system/letter 行 → 先交 onSystemNotificationSelected，
-//   容器未接时本页就地弹系统信模态（title/body，标题含“成就/徽章”换 popper 图）。
+//   容器未接时本页就地开整页阅读（title/body，标题含“成就/徽章”换 popper 图）。
 // - 互动行带 entry_id → onEntrySelected；无 entry_id 只标已读不跳转。
 // - 顶部“全部已读”仅在未读数 > 0 时出现（网页 ntSyncReadAll）；它不等乐观更新，
 //   成功后才整批置已读，失败 toast“操作失败，请重试”+ 全量重拉。
@@ -99,11 +99,11 @@ final class BearyNotificationsViewController: UIViewController {
     ///   关注卡状态变化不走这里（只影响详情页按钮，走 onFollowStateChangedForDetail）。
     /// - toastOverride：设了则 toast 改投指定闭包（合并模式下容器转投当前可见页，
     ///   子页 view 不进层级、原 BearyToast.show(in: view) 会不可见）。
-    /// - letterModalHostView：设了则信件模态改挂该 view（合并模式下容器传自己
-    ///   的 view；详情页打开时详情页自己改挂，关闭时容器恢复）。
+    /// - onOpenLetterPage：无 entry 的 system/letter 行点开的整页阅读页（容器接后
+    ///   交 SceneDelegate 全屏 present；未接线时本页就地 present，见 presentSystemLetter）。
+    var onOpenLetterPage: ((BearyLetterViewController) -> Void)?
     var onMergeSnapshotChanged: (() -> Void)?
     var toastOverride: ((String) -> Void)?
-    weak var letterModalHostView: UIView?
     /// 详情页关注按钮状态变化通知（只在合并模式下容器接）：传关注方 id，
     /// 详情页据此重配可见行的回关钮，不整表重载。
     var onFollowStateChangedForDetail: ((Int) -> Void)?
@@ -251,10 +251,6 @@ final class BearyNotificationsViewController: UIViewController {
     private var lastFullLoadVersion: Int?
     private var lastFullLoadLatestId: Int?
     private var pollTimer: Timer?
-    /// 信件模态持有：BearyLetterModal 是普通类、VC 侧原无引用，show 后除 0.26s
-    /// 入场动画外无人持有，动画一完即释放，按钮／遮罩 target 随之失效、点按静默无反应
-    /// （视图仍在层级里，看着正常）。VC 持住它直到 dismiss 清理，破除该陷阱。
-    private var activeLetterModal: BearyLetterModal?
     private var loginPromptShown = false
     private var visibleState: VisibleState = .loading
     private var hasDisplayedPage = false
@@ -794,7 +790,6 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     /// P3-4：个人主页 updateDynamicLayerColors 同款——本 VC 直接持有的 CGColor 描边集中在此重赋。
-    /// 信件模态按钮另由 BearyLetterModalButton 自身 trait 回调重刷（模态非 VC、VC 侧无引用，见该类注释），不重复持有。
     private func updateDynamicLayerColors() {
         stateButton.refreshChrome()
     }
@@ -2827,8 +2822,10 @@ final class BearyNotificationsViewController: UIViewController {
         BearyToast.show(in: view, message: message)
     }
 
-    /// 系统信模态：容器接了 onSystemNotificationSelected 则先交容器，
-    /// 未接时本页就地弹信件框（title/body；标题含“成就/徽章”换 popper 图）。
+    /// 系统信整页阅读（2026-11-19 Li 定：居中弹窗改整页读）：容器接了
+    /// onSystemNotificationSelected 则先交容器，未接时本页就地开整页
+    /// （title/body；标题含“成就/徽章”换 popper 图）。打开走正常推入
+    /// （SceneDelegate.presentLetterPage），不用展开过渡。
     private func presentSystemLetter(for item: NotificationItem) {
         if let handler = onSystemNotificationSelected {
             handler(item)
@@ -2838,55 +2835,46 @@ final class BearyNotificationsViewController: UIViewController {
         // App 原 ?? 只防 nil，空串标题会原样透传为空标题，此处与下两处同改。
         let rawTitle = item.title ?? ""
         let titleText = rawTitle.isEmpty ? (item.type == "letter" ? "消息" : "通知") : rawTitle
-        // 网页 openLetter 口径：不论 body 是否为空都弹信件模态（空正文只显标题）。
+        // 网页 openLetter 口径：不论 body 是否为空都开整页（空正文只显标题）。
         let isBadgeLetter = titleText.contains("成就") || titleText.contains("徽章")
-        presentLetterModal(
+        let letterVC = BearyLetterViewController(
             title: titleText,
             body: item.body ?? "",
             iconName: isBadgeLetter ? "icon_popper" : "icon_mail",
             quoteText: nil,
             quoteMeta: nil,
-            goEntryId: nil
+            goEntryId: nil,
+            sourceText: item.type == "letter" ? "消息" : "系统消息",
+            timeMs: item.createdAt
         )
+        letterVC.onGoEntry = { [weak self] entryId in
+            self?.onEntrySelected?(entryId)
+        }
+        if let open = onOpenLetterPage {
+            open(letterVC)
+        } else {
+            // 未接线兜底（现行两处创建点都接线，正常走不到这里）：本页就地 present，
+            // 与 SceneDelegate.presentLetterPage 同口径（全屏 nav＋EdgeDismiss）。
+            presentLetterPageDirectly(letterVC)
+        }
     }
 
-    /// 信件模态本体：返回可随后补引用预览的 modal 句柄（无引用时传 nil 两钮参数）。
-    /// 遮罩点按与“稍后/知道了”关闭；“去看看”关闭后走 onEntrySelected。
-    @discardableResult
-    private func presentLetterModal(
-        title: String,
-        body: String,
-        iconName: String,
-        quoteText: String?,
-        quoteMeta: String?,
-        goEntryId: String?
-    ) -> BearyLetterModal {
-        // 先清旧模态（遮罩盖住列表时行点按进不来，正常流程不会重入；防御性处理，
-        // 避免旧 overlay 残留且其 modal 已释放成点不了的死层）。
-        activeLetterModal?.dismissNow()
-        let modal = BearyLetterModal(
-            title: title,
-            body: body,
-            iconName: iconName,
-            quoteText: quoteText,
-            quoteMeta: quoteMeta,
-            goEntryId: goEntryId,
-            dark: traitCollection.userInterfaceStyle == .dark
-        )
-        modal.onGo = { [weak self] entryId in
-            guard let strongSelf = self else { return }
-            strongSelf.onEntrySelected?(entryId)
-        }
-        modal.onDismiss = { [weak self, weak modal] in
-            if let modal = modal, self?.activeLetterModal === modal {
-                self?.activeLetterModal = nil
-            }
-        }
-        // 合并模式下信件模态改挂容器给的 view（子页 view 不进层级时原 view 不可见）。
-        modal.show(in: letterModalHostView ?? view)
-        activeLetterModal = modal
-        return modal
+    /// onOpenLetterPage 未接线时的就地 present 兜底：与 SceneDelegate
+    /// .presentLetterPage 同口径；edgeDismiss 由本页持有
+    /// （transitioningDelegate 弱引用，不持有则手势与动画代理失效）。
+    private func presentLetterPageDirectly(_ letterVC: BearyLetterViewController) {
+        let nav = UINavigationController(rootViewController: letterVC)
+        nav.isNavigationBarHidden = true
+        nav.modalPresentationStyle = .fullScreen
+        let edgeDismiss = BearyEdgeDismissController()
+        edgeDismiss.attach(to: nav)
+        nav.transitioningDelegate = edgeDismiss
+        letterEdgeDismiss = edgeDismiss
+        present(nav, animated: BearyMotion.animated(true))
     }
+
+    /// 就地 present 兜底的 EdgeDismiss 持有（见 presentLetterPageDirectly）。
+    private var letterEdgeDismiss: BearyEdgeDismissController?
 }
 
 // MARK: - UITableViewDataSource / UITableViewDelegate
@@ -3120,70 +3108,114 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
     }
 }
 
-// MARK: - 信件模态（网页 #letterModal 同口径：图标 + 标题 + 正文 + 可选引用 + 按钮行）
+// MARK: - 系统通知／信件整页阅读（2026-11-19 Li 定：居中弹窗改整页读）
+//
+// 顶栏只有左上角返回（标题在内容区衬线大标题）；正文整页可上下滑到底；
+// 无“知道了”按钮。打开走正常推入（SceneDelegate.presentLetterPage：
+// 全屏 nav＋EdgeDismiss），不用展开过渡／morph 动画。
+// 内容口径与旧 BearyLetterModal 一致：图标（徽章信礼花／信封动画／
+// 其余静态图标）＋标题＋来源·时间＋正文（1.9 行高、心情渲染）＋
+// 可选引用块（1.75 行高）＋有去向时“查看这篇日记”入口。
+final class BearyLetterViewController: UIViewController {
 
-/// 审计 2026-11-02 弹窗组：信件模态遮罩层。普通叠加层、非 VC 时 VoiceOver
-/// 两指划（逃离手势）无 VC 可接，须由遮罩层自身响应：沿响应链冒泡到本层时
-/// 走与“知道了/遮罩点按”同一关闭路径并还焦点。卡片圆角 14 不动
-/// （有意网页对照值，不在本支改）。
-private final class BearyLetterModalOverlayView: UIView {
-    var onEscape: (() -> Void)?
-    override func accessibilityPerformEscape() -> Bool {
-        onEscape?()
-        return true
-    }
-}
+    /// “查看这篇日记”点按：先关本页、再由调用方进日记详情（见 goTapped）。
+    var onGoEntry: ((String) -> Void)?
 
-private class BearyLetterModal {
+    private let titleText: String
+    private let bodyText: String
+    private let iconName: String
+    private let sourceText: String
+    private let timeMs: Int?
+    private let goEntryId: String?
 
-    var onGo: ((String) -> Void)?
-    /// dismiss 完成回调（VC 侧清持有用；身份由调用方校验）。
-    var onDismiss: (() -> Void)?
-
-    private let overlayView = BearyLetterModalOverlayView()
-    private let cardView = UIView()
-    private let iconView = UIImageView()
-    /// 信件模态礼花：徽章信（iconName == "icon_popper"）时用动态 BearyPopperView
-    ///（网页 letterIco 同款 NB.popper），不用静态 icon_popper；模态不复用，
-    /// 关闭即丢弃，无需像行 cell 那样在复用时 stop。
-    private let popperView = BearyPopperView()
     private let isPopper: Bool
-    /// 信件模态动态信封：非徽章信（iconName == "icon_mail"）时用 NB.mail
-    ///（网页 .letter-ico 口径：54×54 墨描 + 橙速度线，循环动画），不用静态 icon_mail。
-    private let mailView = BearyMailView()
     private let isMail: Bool
+
+    private let topBar = UIView()
+    private let backButton = UIButton(type: .system)
+    private let scrollView = UIScrollView()
+    private let contentStack = UIStackView()
+    private let iconContainer = UIView()
+    private let iconView = UIImageView()
+    private let popperView = BearyPopperView()
+    private let mailView = BearyMailView()
     private let titleLabel = UILabel()
-    private let bodyScrollView = UIScrollView()
+    private let metaLabel = UILabel()
     private let bodyLabel = UILabel()
     private let quoteWrap = UIView()
     private let quoteBar = UIView()
     private let quoteTextLabel = UILabel()
     private let quoteMetaLabel = UILabel()
-    private let primaryButton = UIButton(type: .system)
-    private let secondaryButton = BearyLetterModalButton(type: .system)
-    private let goEntryId: String?
-    private let scrollContentView = UIView()
-    /// 滚动内容底二选一：无引用时正文贴内容底（隐藏的引用区不占位），有引用时引用区贴内容底。
-    private var bodyBottomToContent: NSLayoutConstraint?
-    private var quoteBottomToContent: NSLayoutConstraint?
-    private var buttonRatioConstraint: NSLayoutConstraint?
+    private let goButton = UIButton(type: .system)
 
-    init(title: String, body: String, iconName: String, quoteText: String?, quoteMeta: String?, goEntryId: String?, dark: Bool = false) {
+    /// 宽屏内容列 600 居中（反馈页同款：821 断点，≤820 全宽减 48）。
+    private var contentWidthCap: NSLayoutConstraint?
+    private var contentIsWide = false
+
+    init(
+        title: String,
+        body: String,
+        iconName: String,
+        quoteText: String?,
+        quoteMeta: String?,
+        goEntryId: String?,
+        sourceText: String,
+        timeMs: Int?
+    ) {
+        self.titleText = title
+        self.bodyText = body
+        self.iconName = iconName
+        self.sourceText = sourceText
+        self.timeMs = timeMs
         self.goEntryId = goEntryId
         self.isPopper = (iconName == "icon_popper")
         self.isMail = (iconName == "icon_mail")
-        // 审计 C-15：信件遮罩统一走 BearySheetChrome.scrimColor（0.45），不再用 BearyColors.scrim（0.60）；
-        // 图片灯箱遮罩属独立用途，本处不动。
-        overlayView.backgroundColor = BearySheetChrome.scrimColor
-        // VoiceOver：弹窗为普通叠加层、非 VC，须显式声明模态，焦点才不越过遮罩
-        // 浏览到底下的通知列表；视觉与关闭行为不变。
-        overlayView.accessibilityViewIsModal = true
-        overlayView.translatesAutoresizingMaskIntoConstraints = false
-        cardView.backgroundColor = BearyColors.surface3
-        // Q1 对照表：卡片圆角 14（网页 .confirm-box 原 16 已按表统一）。
-        cardView.layer.cornerRadius = BearyCorners.single
-        cardView.clipsToBounds = true
-        cardView.translatesAutoresizingMaskIntoConstraints = false
+        super.init(nibName: nil, bundle: nil)
+        if let quoteText = quoteText, let quoteMeta = quoteMeta {
+            pendingQuote = (quoteText, quoteMeta)
+        }
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    /// init 时带的引用（调用方传 nil 时无引用；随后补引用走 fillQuote）。
+    private var pendingQuote: (text: String, meta: String)?
+
+    /// 引用原文（深浅切换重建引用富文本用；无引用时 nil）。
+    private var quotePlainText: String?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = BearyColors.bg
+
+        // 顶栏：详情页同款（44 高、左上角返回 44×44、标题在内容区、不重复）。
+        topBar.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(topBar)
+        backButton.translatesAutoresizingMaskIntoConstraints = false
+        backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        backButton.tintColor = BearyColors.ink
+        backButton.accessibilityLabel = "返回"
+        backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
+        backButton.bearyAddPressFeedback()
+        topBar.addSubview(backButton)
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.backgroundColor = BearyColors.bg
+        // 顶栏已是固定条、底 inset 手动补（viewDidLayoutSubviews），
+        // 不自动叠加安全区内边距，免得手动值与系统值叠成双份（详情页同款）。
+        scrollView.contentInsetAdjustmentBehavior = .never
+        view.addSubview(scrollView)
+
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.axis = .vertical
+        contentStack.alignment = .fill
+        contentStack.spacing = 0
+        scrollView.addSubview(contentStack)
+
+        // 图标行：徽章信礼花 36、信封动画 54、其余静态图标 36，均居中。
+        iconContainer.translatesAutoresizingMaskIntoConstraints = false
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.isHidden = isPopper || isMail
         if !isPopper && !isMail {
@@ -3196,30 +3228,39 @@ private class BearyLetterModal {
         mailView.translatesAutoresizingMaskIntoConstraints = false
         mailView.envelopeColor = BearyColors.ink
         mailView.isHidden = !isMail
+        iconContainer.addSubview(iconView)
+        iconContainer.addSubview(popperView)
+        iconContainer.addSubview(mailView)
+
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        // C-G8：网页 .confirm-box h3 字号 16，不是 17。
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        titleLabel.font = BearyDynamicType.scaledFont(for: Self.serifTitleFont())
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         titleLabel.numberOfLines = 0
-        titleLabel.text = title
-        bodyScrollView.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = titleText
+        titleLabel.accessibilityTraits = .header
+
+        metaLabel.translatesAutoresizingMaskIntoConstraints = false
+        metaLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        metaLabel.adjustsFontForContentSizeCategory = true
+        metaLabel.textColor = BearyColors.gray
+        metaLabel.textAlignment = .center
+        metaLabel.numberOfLines = 0
+        metaLabel.text = metaText()
+
         bodyLabel.translatesAutoresizingMaskIntoConstraints = false
         bodyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
         bodyLabel.adjustsFontForContentSizeCategory = true
         bodyLabel.textColor = BearyColors.ink
         bodyLabel.numberOfLines = 0
         bodyLabel.lineBreakMode = .byCharWrapping
-        // C-G8：网页 .letter-body line-height 1.9，App 原无行高倍数。
-        bodyLabel.attributedText = BearyLetterModal.moodLineHeightText(body, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.9, dark: dark)
+
         quoteWrap.translatesAutoresizingMaskIntoConstraints = false
         quoteWrap.backgroundColor = BearyColors.surface2
         quoteWrap.layer.cornerRadius = 12
         quoteWrap.clipsToBounds = true
         quoteBar.translatesAutoresizingMaskIntoConstraints = false
-        // 引用竖条走 gray：引用块底是 surface2，line（浅 #DBDBDB）与 surface2（浅 #EAEAEA）
-        // 只差 15 阶、浅色下偏弱（#1286 档距拉大后；#1432 同款口径，色值与 #1432 一致）。
         quoteBar.backgroundColor = BearyColors.gray
         quoteTextLabel.translatesAutoresizingMaskIntoConstraints = false
         quoteTextLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
@@ -3232,143 +3273,76 @@ private class BearyLetterModal {
         quoteMetaLabel.adjustsFontForContentSizeCategory = true
         quoteMetaLabel.textColor = BearyColors.gray
         quoteMetaLabel.numberOfLines = 0
-        if let quoteText = quoteText, let quoteMeta = quoteMeta {
-            // C-G17：网页 .lq-txt line-height 1.75，App 原无行高。
-            quoteTextLabel.attributedText = BearyLetterModal.moodLineHeightText(quoteText, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75, dark: dark)
-            quoteMetaLabel.text = quoteMeta
+        quoteWrap.addSubview(quoteBar)
+        quoteWrap.addSubview(quoteTextLabel)
+        quoteWrap.addSubview(quoteMetaLabel)
+        if let quote = pendingQuote {
+            pendingQuote = nil
+            quotePlainText = quote.text
+            quoteTextLabel.attributedText = Self.moodLineHeightText(quote.text, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75, dark: traitCollection.userInterfaceStyle == .dark)
+            quoteMetaLabel.text = quote.meta
             quoteWrap.isHidden = false
         } else {
             quoteWrap.isHidden = true
         }
-        secondaryButton.translatesAutoresizingMaskIntoConstraints = false
-        secondaryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
-        secondaryButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        secondaryButton.setTitleColor(BearyColors.ink, for: .normal)
-        secondaryButton.tintColor = BearyColors.ink
-        secondaryButton.layer.borderWidth = 1
-        // 描边走 gray：卡底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #DFDFDF）
-        // 只差 4 阶、浅色下几不可见（#1286 档距拉大后；深色亦只差约 9 阶）。
-        secondaryButton.layer.bearyDynamicBorderColor = BearyColors.gray
-        // Q1 对照表：pill 按钮圆角 22（网页 .obtn 原 20 已按表统一）。
-        secondaryButton.layer.cornerRadius = BearyCorners.single
-        secondaryButton.setTitle(goEntryId == nil ? "知道了" : "稍后", for: .normal)
-        primaryButton.translatesAutoresizingMaskIntoConstraints = false
-        primaryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
-        primaryButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        primaryButton.setTitleColor(BearyColors.ink, for: .normal)
-        // 2026-11-14 Li 定：纯白／纯黑墨底太突兀，改 surface2 柔和灰底 + ink 字。
-        primaryButton.backgroundColor = BearyColors.surface2
-        primaryButton.layer.cornerRadius = BearyCorners.single
-        primaryButton.setTitle("去看看", for: .normal)
-        primaryButton.isHidden = goEntryId == nil
-    }
 
-    /// VoiceOver 焦点返回：show 时记下弹窗外当前焦点元素（通常为触发行），
-    /// 普通关闭后把焦点还回去；“去看看”跳页时不还（新页自带焦点）。
-    /// weak 持有：触发行是列表 cell，复用/离屏后失效即放弃返回，不强留。
-    private weak var previousFocusedElement: AnyObject?
+        goButton.translatesAutoresizingMaskIntoConstraints = false
+        goButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+        goButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        goButton.setTitleColor(BearyColors.ink, for: .normal)
+        // 2026-11-14 Li 定：纯白／纯黑墨底太突兀，改 surface2 柔和灰底 + ink 字（旧模态“去看看”同款）。
+        goButton.backgroundColor = BearyColors.surface2
+        goButton.layer.cornerRadius = BearyCorners.single
+        goButton.setTitle("查看这篇日记", for: .normal)
+        goButton.isHidden = goEntryId == nil
+        goButton.addTarget(self, action: #selector(goTapped), for: .touchUpInside)
+        goButton.bearyAddPressFeedback()
 
-    func show(in parentView: UIView) {
-        // 打开前先记焦点：遮罩加进层级后当前焦点即被弹窗夺走，此时再记就晚了。
-        // 取焦点 API 以 iOS 17 起可用作守门（旧系统无显式返回、走系统默认行为）。
-        if #available(iOS 17.0, *) {
-            previousFocusedElement = UIAccessibility.focusedElement(using: nil) as? AnyObject
-        }
-        overlayView.addSubview(cardView)
-        cardView.addSubview(iconView)
-        cardView.addSubview(popperView)
-        if isPopper {
-            popperView.start()
-        }
-        cardView.addSubview(mailView)
-        if isMail {
-            mailView.start()
-        }
-        cardView.addSubview(titleLabel)
-        cardView.addSubview(bodyScrollView)
-        // 审计 C-5：正文与引用区共同放入同一个滚动内容容器（阅读顺序 正文→引用），按钮固定在滚动区下方。
-        scrollContentView.translatesAutoresizingMaskIntoConstraints = false
-        bodyScrollView.addSubview(scrollContentView)
-        scrollContentView.addSubview(bodyLabel)
-        scrollContentView.addSubview(quoteWrap)
-        quoteWrap.addSubview(quoteBar)
-        quoteWrap.addSubview(quoteTextLabel)
-        quoteWrap.addSubview(quoteMetaLabel)
-        cardView.addSubview(secondaryButton)
-        cardView.addSubview(primaryButton)
-        parentView.addSubview(overlayView)
-        let buttons = primaryButton.isHidden ? [secondaryButton] : [secondaryButton, primaryButton]
-        let buttonStack = UIStackView(arrangedSubviews: buttons)
-        buttonStack.translatesAutoresizingMaskIntoConstraints = false
-        buttonStack.axis = .horizontal
-        buttonStack.spacing = 10
-        // C-G16：网页 #letterOk flex:1、#letterGo flex:1.5，不是等宽；
-        // 单钮时（去看看隐藏）不激活比例约束，免得隐藏钮约束冲突。
-        buttonStack.distribution = .fill
-        cardView.addSubview(buttonStack)
-        if !primaryButton.isHidden {
-            let ratioConstraint = primaryButton.widthAnchor.constraint(equalTo: secondaryButton.widthAnchor, multiplier: 1.5)
-            ratioConstraint.isActive = true
-            buttonRatioConstraint = ratioConstraint
-        }
-        secondaryButton.addTarget(self, action: #selector(dismissTapped), for: .touchUpInside)
-        secondaryButton.bearyAddPressFeedback()
-        primaryButton.addTarget(self, action: #selector(goTapped), for: .touchUpInside)
-        primaryButton.bearyAddPressFeedback()
-        // 审计 2026-11-02 弹窗组：VoiceOver 逃离手势走普通关闭（还焦点）；
-        // 弱持有，遮罩层由 modal 持有，不成环。
-        overlayView.onEscape = { [weak self] in self?.dismissModalAnimated() }
-        let tap = UITapGestureRecognizer(target: self, action: #selector(overlayTapped(_:)))
-        tap.cancelsTouchesInView = false
-        overlayView.addGestureRecognizer(tap)
+        contentStack.addArrangedSubview(iconContainer)
+        contentStack.addArrangedSubview(titleLabel)
+        contentStack.addArrangedSubview(metaLabel)
+        contentStack.addArrangedSubview(bodyLabel)
+        contentStack.addArrangedSubview(quoteWrap)
+        contentStack.addArrangedSubview(goButton)
+        applyRowSpacing()
+        rebuildAttributedTexts()
+
+        let contentWidthEquality = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -48)
+        contentWidthEquality.priority = UILayoutPriority(750)
+        contentWidthCap = contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        contentWidthCap?.isActive = false
         NSLayoutConstraint.activate([
-            overlayView.leadingAnchor.constraint(equalTo: parentView.leadingAnchor),
-            overlayView.trailingAnchor.constraint(equalTo: parentView.trailingAnchor),
-            overlayView.topAnchor.constraint(equalTo: parentView.topAnchor),
-            overlayView.bottomAnchor.constraint(equalTo: parentView.bottomAnchor),
-            cardView.centerXAnchor.constraint(equalTo: overlayView.centerXAnchor),
-            cardView.centerYAnchor.constraint(equalTo: overlayView.centerYAnchor),
-            cardView.leadingAnchor.constraint(greaterThanOrEqualTo: overlayView.leadingAnchor, constant: 32),
-            cardView.trailingAnchor.constraint(lessThanOrEqualTo: overlayView.trailingAnchor, constant: -32),
-            // C-G15 宽：审计称网页 320，但源码里 .confirm-box max-width 320
-            // 被 .letter-box max-width 420 覆盖——信件模态实际宽就是 420，
-            // App 原 420 已对上，不改；圆角与内边距按 .confirm-box 改 16/24。
-            cardView.widthAnchor.constraint(lessThanOrEqualToConstant: 420),
-            // 审计 15 项第 1 项：整卡高度上限 = 安全区高度 − 32（上下各 16），
-            // 短屏/大字号下卡片不再顶出安全区；正文滚动区 750 优先级先收缩。
-            cardView.heightAnchor.constraint(lessThanOrEqualTo: overlayView.safeAreaLayoutGuide.heightAnchor, constant: -32),
-            iconView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 24),
-            iconView.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
+            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            topBar.heightAnchor.constraint(equalToConstant: 44),
+            backButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            backButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            backButton.widthAnchor.constraint(equalToConstant: 44),
+            backButton.heightAnchor.constraint(equalToConstant: 44),
+            scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 24),
+            contentStack.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
+            contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 24),
+            contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -24),
+            contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -32),
+            contentWidthEquality,
+            iconContainer.heightAnchor.constraint(equalToConstant: 54),
+            iconView.centerXAnchor.constraint(equalTo: iconContainer.centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: iconContainer.centerYAnchor),
             iconView.widthAnchor.constraint(equalToConstant: 36),
             iconView.heightAnchor.constraint(equalToConstant: 36),
-            popperView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 24),
-            popperView.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
+            popperView.centerXAnchor.constraint(equalTo: iconContainer.centerXAnchor),
+            popperView.centerYAnchor.constraint(equalTo: iconContainer.centerYAnchor),
             popperView.widthAnchor.constraint(equalToConstant: 36),
             popperView.heightAnchor.constraint(equalToConstant: 36),
-            mailView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 24),
-            mailView.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
+            mailView.centerXAnchor.constraint(equalTo: iconContainer.centerXAnchor),
+            mailView.centerYAnchor.constraint(equalTo: iconContainer.centerYAnchor),
             mailView.widthAnchor.constraint(equalToConstant: 54),
             mailView.heightAnchor.constraint(equalToConstant: 54),
-            // 标题跟当前可见的图标走：mail 信 54 高、其余 36 高，锚点切换避免重叠
-            //（隐藏视图的约束仍生效，不能共用 iconView 锚点）。
-            titleLabel.topAnchor.constraint(equalTo: isMail ? mailView.bottomAnchor : iconView.bottomAnchor, constant: 10),
-            titleLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 24),
-            titleLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -24),
-            bodyScrollView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
-            bodyScrollView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 24),
-            bodyScrollView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -24),
-            bodyScrollView.heightAnchor.constraint(lessThanOrEqualTo: parentView.heightAnchor, multiplier: 0.52),
-            scrollContentView.topAnchor.constraint(equalTo: bodyScrollView.contentLayoutGuide.topAnchor),
-            scrollContentView.leadingAnchor.constraint(equalTo: bodyScrollView.contentLayoutGuide.leadingAnchor),
-            scrollContentView.trailingAnchor.constraint(equalTo: bodyScrollView.contentLayoutGuide.trailingAnchor),
-            scrollContentView.bottomAnchor.constraint(equalTo: bodyScrollView.contentLayoutGuide.bottomAnchor),
-            scrollContentView.widthAnchor.constraint(equalTo: bodyScrollView.frameLayoutGuide.widthAnchor),
-            bodyLabel.topAnchor.constraint(equalTo: scrollContentView.topAnchor),
-            bodyLabel.leadingAnchor.constraint(equalTo: scrollContentView.leadingAnchor),
-            bodyLabel.trailingAnchor.constraint(equalTo: scrollContentView.trailingAnchor),
-            quoteWrap.topAnchor.constraint(equalTo: bodyLabel.bottomAnchor, constant: 18),
-            quoteWrap.leadingAnchor.constraint(equalTo: scrollContentView.leadingAnchor),
-            quoteWrap.trailingAnchor.constraint(equalTo: scrollContentView.trailingAnchor),
             quoteBar.leadingAnchor.constraint(equalTo: quoteWrap.leadingAnchor),
             quoteBar.topAnchor.constraint(equalTo: quoteWrap.topAnchor),
             quoteBar.bottomAnchor.constraint(equalTo: quoteWrap.bottomAnchor),
@@ -3380,49 +3354,87 @@ private class BearyLetterModal {
             quoteMetaLabel.leadingAnchor.constraint(equalTo: quoteWrap.leadingAnchor, constant: 14),
             quoteMetaLabel.trailingAnchor.constraint(equalTo: quoteWrap.trailingAnchor, constant: -14),
             quoteMetaLabel.bottomAnchor.constraint(equalTo: quoteWrap.bottomAnchor, constant: -12),
-            buttonStack.topAnchor.constraint(equalTo: bodyScrollView.bottomAnchor, constant: 18),
-            buttonStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 24),
-            buttonStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -24),
-            buttonStack.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -24),
-            secondaryButton.heightAnchor.constraint(equalToConstant: 44),
-            primaryButton.heightAnchor.constraint(equalToConstant: 44),
+            goButton.heightAnchor.constraint(equalToConstant: 44),
         ])
-        // 滚动区高度 = 正文 + 引用共同内容高度（750 优先级，超 52% 屏高时被上限压住、可滚动；
-        // 卡片高仍限安全区 − 32，超限时 750 约束先让步，按钮固定在滚动区下方）。
-        let scrollHeight = bodyScrollView.heightAnchor.constraint(equalTo: scrollContentView.heightAnchor)
-        scrollHeight.priority = UILayoutPriority(750)
-        scrollHeight.isActive = true
-        // 内容底二选一：无引用时正文贴内容底（隐藏的引用区不占位），有引用时引用区贴内容底。
-        bodyBottomToContent = bodyLabel.bottomAnchor.constraint(equalTo: scrollContentView.bottomAnchor)
-        quoteBottomToContent = quoteWrap.bottomAnchor.constraint(equalTo: scrollContentView.bottomAnchor)
-        bodyBottomToContent?.isActive = quoteWrap.isHidden
-        quoteBottomToContent?.isActive = !quoteWrap.isHidden
-        if UIAccessibility.isReduceMotionEnabled {
-            overlayView.alpha = 1
-            cardView.transform = CGAffineTransform.identity
-        } else {
-            // C-G17：网页 .confirm.open .confirm-box 走 cfmPop .28s——从
-            // translateY(10px) scale(.95) + 透明到原位；App 原只有遮罩淡入、无卡片 pop。
-            overlayView.alpha = 0
-            cardView.transform = CGAffineTransform(translationX: 0, y: 10).scaledBy(x: 0.95, y: 0.95)
-            UIView.animate(withDuration: BearyMotion.normal) {
-                self.overlayView.alpha = 1
-            }
-            let popAnimator = UIViewPropertyAnimator(duration: 0.28, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
-            popAnimator.addAnimations({
-                self.cardView.transform = CGAffineTransform.identity
-            })
-            popAnimator.startAnimation()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 模态全屏无底栏：滚动区底只留安全区底＋16（详情页同款）。
+        let bottom = 16 + view.safeAreaInsets.bottom
+        if scrollView.contentInset.bottom != bottom {
+            scrollView.contentInset.bottom = bottom
+            scrollView.scrollIndicatorInsets.bottom = bottom
         }
-        // VoiceOver：弹窗出现即聚焦标题。下一 runloop 再发，等布局落位后再取
-        // 标题 frame；若期间已关闭（overlay 已离线）则不发。未开 VoiceOver 时 post 为空操作。
-        DispatchQueue.main.async { [weak self] in
-            guard let strongSelf = self, strongSelf.overlayView.superview != nil else { return }
-            UIAccessibility.post(notification: .screenChanged, argument: strongSelf.titleLabel)
+        // 反馈页同款：821 断点——仅宽屏激活 600 上限；状态不变不开关，避免布局循环。
+        let wide = BearyDesktop.isWide(view.bounds.width)
+        if wide != contentIsWide {
+            contentIsWide = wide
+            contentWidthCap?.isActive = wide
         }
     }
 
-    /// 行高富文本（模态正文 1.9、引用 1.75 用；字号/颜色由调用方传）。
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if isPopper {
+            popperView.start()
+        }
+        if isMail {
+            mailView.start()
+        }
+        // VoiceOver：进页即聚焦标题（旧模态同款）。
+        UIAccessibility.post(notification: .screenChanged, argument: titleLabel)
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // 富文本字号／颜色在构建时解析一次：深浅切换或字号档变化时重建才跟上。
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle
+            || previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            rebuildAttributedTexts()
+        }
+    }
+
+    /// 行间距：隐藏行不占位，间距随引用／去向行的显隐走对应值。
+    private func applyRowSpacing() {
+        contentStack.setCustomSpacing(16, after: iconContainer)
+        contentStack.setCustomSpacing(8, after: titleLabel)
+        contentStack.setCustomSpacing(20, after: metaLabel)
+        if !quoteWrap.isHidden {
+            contentStack.setCustomSpacing(18, after: bodyLabel)
+            contentStack.setCustomSpacing(24, after: quoteWrap)
+        } else {
+            contentStack.setCustomSpacing(24, after: bodyLabel)
+        }
+    }
+
+    /// 来源 · 时间（与列表行同口径：相对时间；无时间只显来源）。
+    private func metaText() -> String {
+        let time = BearyVisibilityText.publishedRelativeString(publishedAtMs: timeMs)
+            ?? (timeMs.map { BearyText.timeString(ms: $0) } ?? "")
+        return time.isEmpty ? sourceText : "\(sourceText) · \(time)"
+    }
+
+    /// 衬线大标题（预览定版样式；withDesign(.serif)，中文回退字体待真机验，
+    /// 与其余衬线标题同口径，见规范表 §11）。
+    private static func serifTitleFont() -> UIFont {
+        let base = UIFont.boldSystemFont(ofSize: 22)
+        if let descriptor = base.fontDescriptor.withDesign(.serif) {
+            return UIFont(descriptor: descriptor, size: 22)
+        }
+        return base
+    }
+
+    /// 正文／引用富文本重建（深浅切换与字号档变化时调用）。
+    private func rebuildAttributedTexts() {
+        let dark = traitCollection.userInterfaceStyle == .dark
+        bodyLabel.attributedText = Self.moodLineHeightText(bodyText, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.9, dark: dark)
+        if let quoteText = quotePlainText, !quoteWrap.isHidden {
+            quoteTextLabel.attributedText = Self.moodLineHeightText(quoteText, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75, dark: dark)
+        }
+    }
+
+    /// 行高富文本（旧模态同款：正文 1.9、引用 1.75）。
     private static func lineHeightText(_ string: String, font: UIFont, color: UIColor, multiple: CGFloat) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = multiple
@@ -3430,8 +3442,8 @@ private class BearyLetterModal {
         return NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
     }
 
-    /// 信件正文/引用走心情渲染：服务端 body 可能内嵌日记正文切片
-    /// （如转回私密通知），含 [mood:] 记号原文；与卡片同款渲染。
+    /// 信件正文／引用走心情渲染：服务端 body 可能内嵌日记正文切片
+    /// （如转回私密通知），含 [mood:] 记号原文；与卡片同款渲染（旧模态同款）。
     private static func moodLineHeightText(_ string: String, font: UIFont, color: UIColor, multiple: CGFloat, dark: Bool) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = multiple
@@ -3439,113 +3451,41 @@ private class BearyLetterModal {
         return BearyText.inlineAttributedText(from: BearyText.stripTrailingPartialInlineToken(string), font: font, color: color, paragraphStyle: paragraph, dark: dark, gifImageKeys: nil)
     }
 
-    /// 信件模态引用预览随后补全：引用区随正文一起进滚动区，按钮仍固定在滚动区下方。
+    /// 引用预览随后补全（旧模态 fillQuote 同款：引用区随正文一起进滚动区）。
     func fillQuote(text: String, meta: String) {
-        // C-G17：随后补全的引用同样带 1.75 行高（与 init 分支一致）。
         let isNewQuote = quoteWrap.isHidden
-        quoteTextLabel.attributedText = BearyLetterModal.moodLineHeightText(text, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75, dark: overlayView.traitCollection.userInterfaceStyle == .dark)
+        quotePlainText = text
+        quoteTextLabel.attributedText = Self.moodLineHeightText(text, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75, dark: traitCollection.userInterfaceStyle == .dark)
         quoteMetaLabel.text = meta
         quoteWrap.isHidden = false
-        bodyBottomToContent?.isActive = false
-        quoteBottomToContent?.isActive = true
-        // 审计 C-20：先一次性落定布局（不进动画块），再仅对新增引用区播 0.18s 透明度过渡；
-        // 已有正文与按钮不重播入场动画。减动效 / 尚未 show / 非新增时直接显现，不播过渡。
-        guard isNewQuote, !UIAccessibility.isReduceMotionEnabled, overlayView.superview != nil else {
+        applyRowSpacing()
+        // 审计 C-20 同款：新增引用区播 0.18s 透明度过渡；已有正文不重播入场动画。
+        // 减动效时直接显现，不播过渡。
+        guard isNewQuote, !UIAccessibility.isReduceMotionEnabled else {
             quoteWrap.alpha = 1
             return
         }
         quoteWrap.alpha = 0
-        overlayView.layoutIfNeeded()
+        view.layoutIfNeeded()
         UIView.animate(withDuration: BearyMotion.micro) {
             self.quoteWrap.alpha = 1
         }
     }
 
-    private var isDismissingModal = false
-
-    /// M13：关闭走 0.26s 淡出动画完成后再移除（减动效直接移除）；去看看在移除后回调。
-    /// restoreFocus：普通关闭（知道了/稍后/遮罩点按）把 VoiceOver 焦点还给 show 时
-    /// 记下的触发元素；“去看看”跳页时为 false，新页自带焦点、不抢回旧列表。
-    private func dismissModalAnimated(restoreFocus: Bool = true, afterDismiss: (() -> Void)? = nil) {
-        guard !isDismissingModal else { return }
-        isDismissingModal = true
-        let cleanup = {
-            self.overlayView.removeFromSuperview()
-            if restoreFocus, let element = self.previousFocusedElement {
-                UIAccessibility.post(notification: .layoutChanged, argument: element)
-                self.previousFocusedElement = nil
-            }
-            afterDismiss?()
-            self.onDismiss?()
-        }
-        if UIAccessibility.isReduceMotionEnabled {
-            cleanup()
-            return
-        }
-        UIView.animate(withDuration: BearyMotion.normal, animations: {
-            self.overlayView.alpha = 0
-        }, completion: { _ in
-            cleanup()
-        })
-    }
-
-    @objc private func dismissTapped() {
-        dismissModalAnimated()
-    }
-
-    /// 立即移除（供新模态顶替旧模态时用，跳过淡出动画；已在 dismiss 中则不动，
-    /// 其进行中的清理仍会回调 onDismiss）。顶替时不还焦点：新模态 show 后会
-    /// 自行聚焦标题，旧模态若先还焦点会被新标题焦点覆盖、徒增一次播报。
-    func dismissNow() {
-        guard !isDismissingModal else { return }
-        isDismissingModal = true
-        overlayView.removeFromSuperview()
-        onDismiss?()
+    @objc private func backTapped() {
+        dismiss(animated: BearyMotion.animated(true))
     }
 
     @objc private func goTapped() {
-        dismissModalAnimated(restoreFocus: false, afterDismiss: { [weak self] in
+        // 旧模态“去看看”同款：先关本页、再进日记详情。
+        dismiss(animated: BearyMotion.animated(true)) { [weak self] in
             if let entryId = self?.goEntryId {
-                self?.onGo?(entryId)
-            }
-        })
-    }
-
-    @objc private func overlayTapped(_ gesture: UITapGestureRecognizer) {
-        if gesture.view == overlayView {
-            let point = gesture.location(in: overlayView)
-            if !cardView.frame.contains(point) {
-                dismissModalAnimated()
+                self?.onGoEntry?(entryId)
             }
         }
     }
 }
 
-// MARK: - 信件模态描边钮（深浅切换时重刷 line 描边）
-//
-// sweep 新发现：BearyLetterModal 是普通类、不是 VC/cell，自身没有 trait 回调，
-// 其 secondaryButton 的 line 描边（CGColor 赋值时解析一次）在打开弹窗后
-// 切换深浅模式会残留旧主题色（浅色 #dbdbdb 残留在深色卡上）。VC 侧 trait 回调
-// 没有该钮的引用可刷，故钮自身在 trait 回调里重刷描边，其余外观（字号/圆角/
-// 边宽）仍由 modal init 原样设置，不改行为。
-
-private final class BearyLetterModalButton: UIButton {
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            // 与初建同口径：卡底 surface3 上 line 几不可见，描边走 gray（见上）。
-            layer.bearyDynamicBorderColor = BearyColors.gray
-        }
-    }
-}
 
 // MARK: - 通知行 cell（网页 .nt-item 口径）
 
@@ -5252,8 +5192,7 @@ extension BearyNotificationsViewController {
     }
 
     /// 合并行／详情行点按：走原 openNotification 全套（乐观已读＋POST、
-    /// entry／个人页／会话／信件模态分流），只把导航交给容器既有回调；
-    /// 信件模态挂 letterModalHostView（合并模式下容器给自己的 view）。
+    /// entry／个人页／会话／信件整页分流），只把导航交给容器既有回调。
     /// 按 id 找下标（翻页／刷新后旧下标可能指错行，id 是唯一稳键）。
     func openItemForDetail(_ item: NotificationItem) {
         guard let id = item.id,
@@ -5291,11 +5230,11 @@ extension BearyNotificationsViewController {
 // （items 原序倒序），每行与行 cell 同款（头像／名＋动词／摘要／时间），
 // 关注行另带回关钮（状态与动作全走子页原有回关逻辑）。
 // 行点按走子页 openItemForDetail 全套分流（进日记详情／个人页／会话／
-// 信件模态），与合并行点按同口径；人名／头像点按：follow 行进个人页
+// 信件整页），与合并行点按同口径；人名／头像点按：follow 行进个人页
 // （原来整行点按就是进个人页，拆成独立按钮后行为不变；其余行人名不
 // 另设按钮，整行点按目的地不变）。
-// 信件模态挂本页 view（子页 letterModalHostView 在 viewWillAppear 改挂、
-// viewWillDisappear 时由容器恢复，见 onDetailWillDisappear）。
+// toast 改挂本页 view（viewWillAppear 改挂、viewWillDisappear 时由容器恢复，
+// 见 onDetailWillDisappear）。
 // 翻页追加的新条目：本页打开期间不实时追（回列表重进即见最新），
 // 但从上层页返回时 viewWillAppear 重读卡快照补齐。
 
@@ -5392,12 +5331,11 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        // 从上层页返回时补齐翻页追加的新条目；信件模态与 toast 改挂本页。
+        // 从上层页返回时补齐翻页追加的新条目；toast 改挂本页。
         if let fresh = notifSource.mergeSnapshot.cards.first(where: { $0.kind == card.kind }) {
             items = fresh.items
             tableView.reloadData()
         }
-        notifSource.letterModalHostView = view
         notifSource.toastOverride = { [weak self] message in
             guard let view = self?.view else { return }
             BearyToast.show(in: view, message: message)
