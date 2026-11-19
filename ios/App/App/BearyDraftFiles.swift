@@ -1403,6 +1403,14 @@ enum BearyDraftStore {
         var mentionedUserId: Int? = nil
         var mentionCleared: Bool = false
         var updatedAt: TimeInterval
+
+        /// 空检查点：标题与正文双空（去首尾空白后）。正文空时发布按钮禁用、
+        /// 提交走不到 performUpdate，这种快照没有任何可提交的修改，只会在
+        /// 下次打开编辑器时误弹恢复框、一点「恢复」就把原文盖空。
+        var isEmptyText: Bool {
+            content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && (title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     /// 检查点文件名：entryId 只留字母/数字/-/_，其余字符换成 "-"，防路径穿越；
