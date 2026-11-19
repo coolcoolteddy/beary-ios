@@ -625,6 +625,13 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             receivedPill.widthAnchor.constraint(equalToConstant: 180),
             receivedPill.heightAnchor.constraint(equalToConstant: 18),
             emoteScroll.heightAnchor.constraint(equalToConstant: 36),
+            // 工厂钮不自带高约束（BearyButton 头注释：调用方按 style.height 下高）：
+            // 此处三钮此前都没下，实高只有标题固有高约 17，与同卡回应 chip（36）
+            // 一边高一边矮；按许愿墙同款口径补 ≥36，大字号下仍随字长高。
+            // 评论／刷新钮已由 #1941 删去，此处不再补。
+            emoteAddButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
+            reportButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
+            withdrawButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.destructiveOutline(.compact).height),
         ])
     }
 
