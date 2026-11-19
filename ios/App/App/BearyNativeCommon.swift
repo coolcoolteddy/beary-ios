@@ -2768,6 +2768,11 @@ enum BearyImagePrep {
         return nil
     }
 
+    /// 原图上传可接受的格式集（与服务端 /beary/api/images/upload 允许集同口径：
+    /// jpeg / png / webp / heic；TIFF/DNG 服务端不收、mimeType 也认不出，
+    /// 仍走起传时回落压缩。编辑器与发布中心两处起传共用，改一处即同步）。
+    static let originalUploadMimeTypes: Set<String> = ["image/jpeg", "image/png", "image/webp", "image/heic"]
+
     /// 原图像素尺寸（不解码像素，只读图片头；读不到返 nil）。
     static func pixelSize(of data: Data) -> (width: Int, height: Int)? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }

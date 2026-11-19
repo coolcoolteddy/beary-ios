@@ -59,6 +59,26 @@ struct BearyPublishImage {
     let liveVideoKey: String?
     let liveVideoFile: String?
     let liveVideoData: Data?
+    /// 原图上传方式（#46）：编辑器交接时传入；.original 且 .orig 在盘时
+    /// 中心按原图上传，否则回落压缩。默认 nil＝压缩（旧调用方兼容，
+    /// 默认值在下方显式 init 参数上；let 属性带默认值时 init 内再赋值
+    /// 会报 may only be initialized once，故此处不写 = nil）。
+    let uploadMode: BearyUploadMode?
+    /// 原图本地文件名（与静图同 stem 的 <uuid>.orig）；nil=无原图。
+    let originalFile: String?
+
+    /// 与 memberwise init 同语义的显式 init：后两个参数保留默认值，
+    /// 旧 5 参数调用方（如详情页恢复发布）无需改动。显式写出是因
+    /// CI 曾报 7 参数调用 extra arguments（#1927），不再依赖合成 init。
+    init(localFile: String?, serverKey: String?, liveVideoKey: String?, liveVideoFile: String?, liveVideoData: Data?, uploadMode: BearyUploadMode? = nil, originalFile: String? = nil) {
+        self.localFile = localFile
+        self.serverKey = serverKey
+        self.liveVideoKey = liveVideoKey
+        self.liveVideoFile = liveVideoFile
+        self.liveVideoData = liveVideoData
+        self.uploadMode = uploadMode
+        self.originalFile = originalFile
+    }
 }
 
 /// 一次后台发布任务：快照＋图片清单＋门禁出路＋宿主视图＋回包闭包。
@@ -303,6 +323,26 @@ final class BearyPublishCenter {
                 }
                 return
             }
+            // #46 原图竞态：选原图后立即发布、编辑器侧原图上传仍在途时被
+            // 交接取消，中心此前只读压缩 JPEG。模式为原图且 .orig 在盘时
+            // 读原图（剥 GPS、按实测格式发，共享格式集），任一步失败回落压缩，
+            // 绝不发带 GPS 或格式不明的原图（与编辑器 startOriginalUpload 同口径）。
+            var fullData = prepared.full.data
+            var fullWidth = prepared.full.w
+            var fullHeight = prepared.full.h
+            var fullMimeType = "image/jpeg"
+            if image.uploadMode == .original, let originalFile = image.originalFile,
+               let rawData = BearyDraftImageStore.originalData(for: originalFile),
+               let strippedData = BearyImagePrep.strippedGPSData(rawData),
+               let detectedMime = BearyImagePrep.mimeType(of: strippedData),
+               BearyImagePrep.originalUploadMimeTypes.contains(detectedMime),
+               let pixelSize = BearyImagePrep.pixelSize(of: strippedData),
+               pixelSize.width > 0, pixelSize.height > 0 {
+                fullData = strippedData
+                fullWidth = pixelSize.width
+                fullHeight = pixelSize.height
+                fullMimeType = detectedMime
+            }
             var videoData = image.liveVideoData
             if videoData == nil, let videoFile = image.liveVideoFile {
                 videoData = BearyDraftImageStore.videoData(for: videoFile)
@@ -314,10 +354,10 @@ final class BearyPublishCenter {
                     return
                 }
             }
-            let dataUrl = BearyImagePrep.dataURL(prepared.full.data)
+            let dataUrl = BearyImagePrep.dataURL(fullData, mimeType: fullMimeType)
             let thumbDataUrl = BearyImagePrep.dataURL(prepared.thumb)
             let videoDataUrl = videoData.map { BearyLivePhoto.videoDataURL($0) }
-            let estimate = Self.base64Length(prepared.full.data.count) + 23
+            let estimate = Self.base64Length(fullData.count) + 23
                 + Self.base64Length(prepared.thumb.count) + 23
                 + (videoData.map { Self.base64Length($0.count) + 27 } ?? 0) + 100
             runningJob.progress.setEstimate(step: step, bytes: Int64(estimate))
@@ -328,7 +368,7 @@ final class BearyPublishCenter {
                     self.reportProgress(runningJob, value: value)
                 }
             }
-            BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: prepared.full.w, height: prepared.full.h, thumbDataUrl: thumbDataUrl, videoDataUrl: videoDataUrl, uploadProgress: progressHandler) { [weak self, weak runningJob] result in
+            BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: fullWidth, height: fullHeight, thumbDataUrl: thumbDataUrl, videoDataUrl: videoDataUrl, uploadProgress: progressHandler) { [weak self, weak runningJob] result in
                 DispatchQueue.main.async {
                     guard let self = self, let runningJob = runningJob, !runningJob.finished else { return }
                     runningJob.uploadInFlight -= 1
