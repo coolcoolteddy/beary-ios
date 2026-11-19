@@ -57,6 +57,10 @@ import CoreText
 /// （空行/拼音组合/落字）基线一致，光标不跳。另正文 textView 显式走
 /// TextKit 1 栈（见 textView 处注释），使 caretRect 覆盖成为实际光标
 /// 来源；#853 基线公式保留作取不到墨水框时的回退。
+/// 光标高与墨水脱钩、并在墨水框上垂直居中（本支）：墨水锚定后纯数字行墨水仅约 11.3pt、
+/// 汉字行约 14.8pt，光标高直接取墨水高则数字行看着短一截（133 截图「111」实测）；
+/// 高改取字体度量 ascender − descender（约 19.1pt），顶 = 墨水顶 − (高 − 墨水高)/2，
+/// 上下一样长、居中在文字上，各行光标同高、同一顶。
 private final class BearyBodyTextView: UITextView {
     /// 正文编辑器恒定的行高倍数，由 Composer 在 buildTextArea 里与 typingAttributes
     /// 用同一个 bodyParagraph 一并设定；本类只用于正文编辑器，倍数恒定。
@@ -104,15 +108,18 @@ private final class BearyBodyTextView: UITextView {
         guard rect.height > 0, let caretFont = caretFont(at: position), caretFont.lineHeight > 0 else { return rect }
         let multiple = fixedLineHeightMultiple ?? lineHeightMultiple(at: position)
         if let multiple = multiple, multiple > 1.0 {
-            // 墨水锚定（本支）：先按本行真实字形的墨水框定光标（见 inkCaretRect），
+            // 光标高与墨水脱钩、并在墨水框上垂直居中（本支）：高取字体度量
+            // ascender − descender（约 19.1pt）；顶 = 墨水顶 − (高 − 墨水高)/2，
+            // 上下一样长、居中在文字上——纯数字行墨水仅约 11.3pt、汉字行约 14.8pt，
+            // 直接取墨水高光标看着短一截；居中后数字／汉字／小写行光标同高、同一顶。
             // 拉丁度量公式只作取不到墨水框时的回退。
-            if let ink = inkCaretRect(for: position, caretX: rect.origin.x, font: caretFont, multiple: multiple) {
-                rect.origin.y = ink.origin.y
-                rect.size.height = ink.height
-                return rect
-            }
             let height = caretFont.ascender - caretFont.descender
             guard height > 0 else { return rect }
+            if let ink = inkCaretRect(for: position, caretX: rect.origin.x, font: caretFont, multiple: multiple) {
+                rect.origin.y = ink.origin.y - (height - ink.height) / 2
+                rect.size.height = height
+                return rect
+            }
             // #853 基线公式回退：顶 = 片段顶 + ascender × (倍数 − 1)，
             // 高 = ascender − descender；super 的 y 不参与。
             if let fragmentTop = lineFragmentTop(for: position, caretX: rect.origin.x) {
@@ -175,7 +182,8 @@ private final class BearyBodyTextView: UITextView {
         return nil
     }
 
-    /// 光标行墨水框（textView 坐标系，只取 y 与高；x 与宽仍取 super）。
+    /// 光标行墨水框（textView 坐标系，调用方取其 y 与高作垂直居中的基准，见 caretRect；
+    /// x 与宽仍取 super）。
     /// 取不到时返回 nil，调用方回退 #853 基线公式。
     private func inkCaretRect(for position: UITextPosition, caretX: CGFloat, font: UIFont, multiple: CGFloat) -> CGRect? {
         guard let probeGlyph = caretLineGlyph(for: position, caretX: caretX) else {
