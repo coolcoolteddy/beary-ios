@@ -74,8 +74,8 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     /// 调用方接成与框外点按同一关闭路径并还焦点。未接时返回 false，不谎称已处理。
     var onAccessibilityEscape: (() -> Void)?
     /// 审计第 31 项：打开时 VoiceOver 首落点——已选中的可见选项优先（与框内
-    /// 选中态同一口径），无选中或选中项取图失败被隐藏时落首个可见选项；
-    /// 全部选项都被隐藏时返回 nil，调用方此时不发焦点通知、不抢焦点。
+    /// 选中态同一口径），无选中时落首个可见选项；D2 起取图失败不再隐藏
+    /// 选项（垫透明占位），故首个选项恒可见，nil 分支仅作防御保留。
     /// 只读现有选项按钮与 isHidden，不改选项内容、布局与选中逻辑。
     var initialAccessibilityElement: UIView? {
         if let selectedKey = selectedKey {
@@ -377,15 +377,19 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     }
 
     /// 深浅切换时重取图（心情 _dark 资产）+ 重算底色与渐隐色。
-    /// 审计登录杂项：取图为 nil 的选项直接隐藏（此前仍是 48×48 空白可点格）；
+    /// D2：取图为 nil 的选项不再隐藏，改垫透明占位图（与气泡菜单行同款
+    /// clearPlaceholderImage，40pt 与天气静态图同尺寸），格子留空位不塌；
     /// 不自绘、不拿 SF Symbol 顶替；资产补齐后 refreshImages 会自动恢复显示。
     /// 注：本选择器为纯图片选项、无文字 label，故“字号改 scaledFont”一项不适用。
     func refreshImages() {
         let dark = traitCollection.userInterfaceStyle == .dark
         for (key, button) in optionButtons {
             let image = imageProvider?(key, dark)
-            button.setImage(image, for: .normal)
-            button.isHidden = (image == nil)
+            // 取图失败垫透明占位：按钮不隐藏，横排宽度与格位不动；动画叠加
+            // 顺序不变，仍以原图走 refreshEmoteOverlay（nil 即撤掉覆盖层）。
+            let displayImage = image ?? BearyBubbleMenuView.clearPlaceholderImage(pointSize: 40)
+            button.setImage(displayImage, for: .normal)
+            button.isHidden = false
             refreshEmoteOverlay(for: key, button: button, image: image)
         }
     }
