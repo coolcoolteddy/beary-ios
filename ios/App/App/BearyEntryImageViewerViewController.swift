@@ -9,6 +9,15 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 第 22 轮 B5：灯箱持有的照片数组是打开时的快照；相册重滤撤下失效
     /// 照片时经 pruneImageKeys 同步更新，故须为 var（旧 let 只读）。
     private var imageKeys: [String]
+    /// 与 imageKeys 等长的所属日记 id（nil = 调用方未提供，按 key 单一定位）；
+    /// 与 imageKeys 同步增删改序，回调凭 (entryId, imageKey) 双标识定位目标。
+    private var imageEntryIds: [String?]
+    /// 当前照片的稳定标识（entryId, imageKey）；本地图模式 entryId 为 nil。
+    private var currentPhotoIdentity: (entryId: String?, imageKey: String)? {
+        guard let key = currentPhotoKey else { return nil }
+        let entryId = (currentIndex >= 0 && currentIndex < imageEntryIds.count) ? imageEntryIds[currentIndex] : nil
+        return (entryId: entryId, imageKey: key)
+    }
     /// 实况映射（静态图 key → 视频 key；nil = 无实况，灯箱纯静态，与旧版一致）。
     /// 调用方在创建时传入本篇 entry.liveVideos（详情/卡片容器/照片墙均已接线）。
     var liveVideos: [String: String]?
@@ -74,6 +83,12 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 批 C：照片页灯箱专用——非 nil 时底部出现“查看日记”钮，点按回传当前图序号
     /// （调用方凭序号找所属日记进详情）；nil 时钮不出现，旧调用方行为一字不动。
     var onViewEntryAtIndex: ((Int) -> Void)?
+    /// 审计 8 第 1 项：按稳定标识回传当前照片（entryId, imageKey）——灯箱
+    /// 列表与网格顺序可能已分叉（后台回包非纯追加时），下标会串到别篇；
+    /// 非 nil 时优先于 onViewEntryAtIndex。
+    var onViewEntryAtKey: ((String?, String) -> Void)?
+    /// 任一“查看日记”入口已接线时才建按钮／置灰门；下标版与标识版同口径。
+    private var hasViewEntry: Bool { onViewEntryAtIndex != nil || onViewEntryAtKey != nil }
 
     private lazy var viewEntryButton: UIButton = {
         // 按钮普查：视觉高 36，热区用 Hit44 扩到 44（上下邻居为圆点指示与安全区，无互叠按钮）。
@@ -163,6 +178,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// dismissViewer）；未提供时沿用 originFrameInWindow／focusReturnElement
     /// 的旧口径。
     var dismissOriginProvider: ((Int) -> (frame: CGRect, element: UIView?)?)?
+    /// 审计 8 第 1 项：按稳定标识（entryId, imageKey）提供关场原处——与
+    /// dismissOriginProvider 同口径，非 nil 时优先；下标版仅供旧调用方。
+    var dismissOriginKeyProvider: ((String?, String) -> (frame: CGRect, element: UIView?)?)?
     /// 无障碍：打开首焦点只发一次。
     private var didPostViewerOpenFocus = false
     /// 关场回到原处：无 dismissOriginProvider 时，只在“当前图就是打开时
@@ -185,6 +203,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
 
     init(imageKeys: [String], startIndex: Int) {
         self.imageKeys = imageKeys
+        self.imageEntryIds = Array(repeating: nil, count: imageKeys.count)
         self.localImages = []
         if startIndex >= 0 && startIndex < imageKeys.count {
             self.currentIndex = startIndex
@@ -200,9 +219,14 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 
     /// 实况入口（旧 init 原样保留，无实况调用方不受影响）。
-    convenience init(imageKeys: [String], liveVideos: [String: String]?, startIndex: Int) {
+    /// entryIds 与 imageKeys 等长时按 (entryId, imageKey) 双标识定位，
+    /// 否则按 key 单一定位；缺省 nil 时行为与旧版一致。
+    convenience init(imageKeys: [String], liveVideos: [String: String]?, startIndex: Int, entryIds: [String?]? = nil) {
         self.init(imageKeys: imageKeys, startIndex: startIndex)
         self.liveVideos = liveVideos
+        if let entryIds = entryIds, entryIds.count == imageKeys.count {
+            self.imageEntryIds = entryIds
+        }
     }
 
     /// 本地图模式入口（个人页头像/封面）：与服务端 key 模式同一查看器、
@@ -213,6 +237,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
 
     init(imageKeys: [String], localImages: [UIImage], startIndex: Int) {
         self.imageKeys = imageKeys
+        self.imageEntryIds = Array(repeating: nil, count: imageKeys.count)
         self.localImages = localImages
         if startIndex >= 0 && startIndex < max(imageKeys.count, localImages.count) {
             self.currentIndex = startIndex
@@ -303,7 +328,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         view.addSubview(loadMoreStack)
         // 批 C：照片页灯箱可能一次带几十张图，圆点全画会溢出屏宽——
         // 超 20 张时只留顶部计数“n / N”，圆点隐藏（旧单篇灯箱 ≤9 张不受影响）。
-        if onViewEntryAtIndex != nil {
+        if hasViewEntry {
             view.addSubview(viewEntryButton)
         }
         // 底部圆点指示器（网页 .lb-dots 口径）：bottom safe+24、gap 8、圆点 6、非当前白 35%、当前白；仅多图显示。
@@ -376,7 +401,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             closeButton.widthAnchor.constraint(equalToConstant: 32),
             closeButton.heightAnchor.constraint(equalToConstant: 32),
         ])
-        if onViewEntryAtIndex != nil {
+        if hasViewEntry {
             let toDots = viewEntryButton.bottomAnchor.constraint(equalTo: dotsStack.topAnchor, constant: -16)
             let toSafe = viewEntryButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24)
             viewEntryBottomToDotsConstraint = toDots
@@ -400,6 +425,12 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         guard displayedImageKey != nil, displayedImageKey == currentPhotoKey else { return }
         // 主动操作即表示抬手误触期已过，待挡的一次点按不再生效。
         suppressNextStageTapAfterLive = false
+        // 审计 8 第 1 项：标识版优先——凭 (entryId, imageKey) 回传当前照片，
+        // 调用方按标识在实时网格里定位，不用已分叉的下标。
+        if let onViewEntryAtKey = onViewEntryAtKey, let identity = currentPhotoIdentity {
+            onViewEntryAtKey(identity.entryId, identity.imageKey)
+            return
+        }
         onViewEntryAtIndex?(currentIndex)
     }
 
@@ -540,7 +571,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 不变，只置灰防误点）。无入口的调用方（详情／时间线）直接返回，
     /// 不实例化懒加载按钮。
     private func updateViewEntryAvailability() {
-        guard onViewEntryAtIndex != nil else { return }
+        guard hasViewEntry else { return }
         let ready = !isNavigating && displayedImageKey != nil && displayedImageKey == currentPhotoKey
         viewEntryButton.isEnabled = ready
     }
@@ -556,13 +587,16 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         guard localImages.isEmpty else { return }
         guard !invalidKeys.isEmpty else { return }
         let currentKey = (currentIndex >= 0 && currentIndex < imageKeys.count) ? imageKeys[currentIndex] : nil
-        let keptKeys = imageKeys.filter { !invalidKeys.contains($0) }
+        let keptIndices = imageKeys.indices.filter { !invalidKeys.contains(imageKeys[$0]) }
+        let keptKeys = keptIndices.map { imageKeys[$0] }
+        let keptEntryIds = keptIndices.map { $0 < imageEntryIds.count ? imageEntryIds[$0] : nil }
         guard keptKeys != imageKeys else { return }
         guard !keptKeys.isEmpty else {
             dismiss(animated: BearyMotion.animated(true), completion: nil)
             return
         }
         imageKeys = keptKeys
+        imageEntryIds = keptEntryIds
         // 审计 15 项第 1 项：屏上图／当前图被撤时立即清掉（见函数头注释）。
         let displayedPhotoPruned = displayedImageKey.map { invalidKeys.contains($0) } ?? false
         let currentPhotoPruned = currentKey.map { invalidKeys.contains($0) } ?? false
@@ -573,10 +607,12 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             showingInitialThumbnail = false
         }
         initialIndex = min(initialIndex, keptKeys.count - 1)
-        zoomHiResKey = nil
-        zoomHiResWidth = 0
-        resetZoom(animated: false)
+        // 审计 8 第 4 项：当前图仍有效时只更新下标／计数／相邻项——缩放、
+        // 平移与屏上图一字不动；当前图确实被撤时才清图、清缩放并切到新图。
         if displayedPhotoPruned || currentPhotoPruned {
+            zoomHiResKey = nil
+            zoomHiResWidth = 0
+            resetZoom(animated: false)
             imageView.image = nil
             displayedImageKey = nil
             showingInitialThumbnail = false
@@ -584,10 +620,14 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             isFailed = false
             retryButton.isHidden = true
             updateViewEntryAvailability()
+            rebuildDots()
+            updateCounter()
+            loadCurrent()
+        } else {
+            rebuildDots()
+            updateCounter()
+            prefetchAdjacent()
         }
-        rebuildDots()
-        updateCounter()
-        loadCurrent()
     }
 
     /// C1：圆点与总数同步（打开时与追加新页后都走这里）：≤20 张画圆点，
@@ -620,7 +660,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 dotViews.append(dot)
             }
         }
-        if onViewEntryAtIndex != nil {
+        if hasViewEntry {
             viewEntryBottomToDotsConstraint?.isActive = !dotsStack.isHidden
             viewEntryBottomToSafeConstraint?.isActive = dotsStack.isHidden
         }
@@ -629,17 +669,20 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// C1：网格和灯箱订阅同一个分页结果——网格续拉的新页按照片 key
     /// 追加到灯箱末尾（去重：已在灯箱里的 key 不重复加）。调用方在
     /// 主线程调；新页到了且用户仍停在越过末尾那张时，自动往前翻一页。
-    func appendImageKeys(_ keys: [String], liveVideos newLiveVideos: [String: String]?, hasMorePages: Bool) {
+    func appendImageKeys(_ keys: [String], liveVideos newLiveVideos: [String: String]?, hasMorePages: Bool, entryIds: [String?]? = nil) {
         self.hasMorePages = hasMorePages
         isRequestingMorePages = false
         loadMoreFailed = false
         let oldCount = imageKeys.count
         var seen = Set(imageKeys)
         var added = 0
-        for key in keys {
+        // entryIds 与 keys 等长时随 key 同步追加，否则补 nil，保持与 imageKeys 等长。
+        let newEntryIds: [String?] = (entryIds?.count == keys.count) ? entryIds! : Array(repeating: nil, count: keys.count)
+        for (offset, key) in keys.enumerated() {
             guard !seen.contains(key) else { continue }
             seen.insert(key)
             imageKeys.append(key)
+            imageEntryIds.append(newEntryIds[offset])
             added += 1
         }
         if let newLiveVideos = newLiveVideos, !newLiveVideos.isEmpty {
@@ -665,6 +708,53 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
               imageKeys.count > oldCount, !isNavigating,
               panGesture?.state != .began, panGesture?.state != .changed else { return }
         navigate(direction: 1)
+    }
+
+    /// 审计 8 第 1 项：后台回包非纯追加时，按网格的有序照片列表整体同步
+    /// 灯箱（不再把新图追加到末尾）。当前图凭 (entryId, imageKey) 保住：
+    /// 仍在列表里时只更新下标／计数／相邻项，缩放、平移与屏上图一字不动；
+    /// 已不在列表里（调用方应先 prune）时按下标就近落位并重载。
+    func syncImageKeys(_ keys: [String], liveVideos newLiveVideos: [String: String]?, hasMorePages: Bool, entryIds: [String?]? = nil) {
+        guard localImages.isEmpty else { return }
+        self.hasMorePages = hasMorePages
+        isRequestingMorePages = false
+        loadMoreFailed = false
+        let currentIdentity = currentPhotoIdentity
+        imageKeys = keys
+        imageEntryIds = (entryIds?.count == keys.count) ? entryIds! : Array(repeating: nil, count: keys.count)
+        if let newLiveVideos = newLiveVideos, !newLiveVideos.isEmpty {
+            liveVideos = newLiveVideos
+        }
+        if let identity = currentIdentity,
+           let keptIndex = keys.indices.first(where: {
+               keys[$0] == identity.imageKey && imageEntryIds[$0] == identity.entryId
+           }) ?? keys.firstIndex(of: identity.imageKey) {
+            currentIndex = keptIndex
+            initialIndex = min(initialIndex, max(keys.count - 1, 0))
+            rebuildDots()
+            updateCounter()
+            updateLoadMoreHint()
+            prefetchAdjacent()
+        } else if keys.isEmpty {
+            dismiss(animated: BearyMotion.animated(true), completion: nil)
+        } else {
+            currentIndex = min(currentIndex, keys.count - 1)
+            initialIndex = min(initialIndex, keys.count - 1)
+            zoomHiResKey = nil
+            zoomHiResWidth = 0
+            resetZoom(animated: false)
+            imageView.image = nil
+            displayedImageKey = nil
+            showingInitialThumbnail = false
+            initialThumbnail = nil
+            isFailed = false
+            retryButton.isHidden = true
+            updateViewEntryAvailability()
+            rebuildDots()
+            updateCounter()
+            updateLoadMoreHint()
+            loadCurrent()
+        }
     }
 
     /// C1：续拉失败时由网格通知——提示切到失败文案，下次越过末尾再请求一次。
@@ -864,7 +954,15 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 沿用调用方传入的 focusReturnElement。
     private func dismissViewer() {
         var returnElement = focusReturnElement
-        if let provider = dismissOriginProvider {
+        // 审计 8 第 1 项：标识版提供方优先——凭 (entryId, imageKey) 问当前
+        // 照片的原处；提供方给不出（格不在视口内）时焦点不回落，走淡出兜底。
+        if let keyProvider = dismissOriginKeyProvider, let identity = currentPhotoIdentity {
+            if let info = keyProvider(identity.entryId, identity.imageKey) {
+                returnElement = info.element
+            } else {
+                returnElement = nil
+            }
+        } else if let provider = dismissOriginProvider {
             if let info = provider(currentIndex) {
                 returnElement = info.element
             } else {
@@ -1023,6 +1121,11 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 存在但给不出（格不在视口内）时不回落旧原处，走淡出兜底。
     /// 没有提供方时沿用旧口径——只在当前图就是打开时那张时回原处。
     func dismissOriginFrame() -> CGRect? {
+        // 审计 8 第 1 项：标识版提供方优先，凭 (entryId, imageKey) 要当前
+        // 照片的原处矩形；给不出时返回 nil、走淡出兜底，不回落旧原处。
+        if let keyProvider = dismissOriginKeyProvider, let identity = currentPhotoIdentity {
+            return keyProvider(identity.entryId, identity.imageKey)?.frame
+        }
         if let provider = dismissOriginProvider {
             return provider(currentIndex)?.frame
         }
