@@ -428,7 +428,8 @@ class BearyProfileViewController: UIViewController {
     private var isCustomPullRefreshing = false
     private var customPullStartTime: Date?
     private var pullEngageTranslation: CGFloat?
-    private var customPullEndScheduled = false
+    /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
+    private var customPullEndInFlight = false
 
     /// 本人判定：viewer 已登录且 profile id 与 viewer 一致；handle 目标在 profile
     /// 解析前按 id 预判（id 目标且与 viewer 相同）先行显示本人元素，解析后复核。
@@ -7930,10 +7931,13 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         }
         let contentRaw = max(0, -(tableView.contentOffset.y + tableView.contentInset.top))
         let panTranslation = tableView.panGestureRecognizer.translation(in: tableView).y
+        // 锚点一次拖动只锁一次：中途不再凭 offset/inset 阈值清掉——
+        // 顶栏显隐改 contentInset.top（60pt）或重载顶 offset，
+        // 都会把阈值顶到手指下面，旧口径一清锚点 fingerRaw 即归零、
+        // 指示高塌掉，图标还没触发就缩回去。锚点只在拖动结束清
+        // （scrollViewDidEndDragging 与上方 !isDragging 分支）。
         if tableView.contentOffset.y <= -tableView.contentInset.top && pullEngageTranslation == nil {
             pullEngageTranslation = panTranslation
-        } else if tableView.contentOffset.y > -tableView.contentInset.top {
-            pullEngageTranslation = nil
         }
         let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
         let indicatorHeight = min(fingerRaw * 0.48, 116)
@@ -7955,6 +7959,10 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         isCustomPullRefreshing = true
         customPullStartTime = Date()
         refreshIconView.startSpinning()
+        // 回程一次到位（其余三页同款）：先掐断松手后的表减速/回弹（位置不动、
+        // 仅停掉动量）。否则表自带物理动画会与下面 easing 动画双路驱动
+        // contentOffset，图标先下降一点再回去。
+        tableView.setContentOffset(tableView.contentOffset, animated: false)
         let baseline = profilePullBaselineTop()
         let pullIn = {
             self.tableView.contentInset.top = baseline + 84
@@ -7982,14 +7990,17 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
     /// （资料 / 标签）都走这里，先到先收（与旧标准头先到先停同口径），
     /// 旧回包丢弃时仍需走这里，不让刷新头永不结束。
     private func endCustomPullRefresh() {
-        if !isCustomPullRefreshing || customPullEndScheduled {
+        if !isCustomPullRefreshing || customPullEndInFlight {
             return
         }
         // 扫 bug 定版第 2 项：去掉 0.5 秒最低展示，回包到即收回，
         // 不再用 asyncAfter 补满剩余时间；0.26s 收回动画与触发口径不动。
-        customPullEndScheduled = true
-        isCustomPullRefreshing = false
-        customPullEndScheduled = false
+        // 手感修：收回动画全程仍持刷新旗（通知／时间线同款）——旧口径在
+        // 收回开始即清旗，动画期间跟随侧与 applyHeaderTopInset 守卫全开，
+        // 直接写 pullView.frame、改 contentInset.top，跟收回 easing 打架，
+        // 图标先往下掉一下再上去；customPullEndScheduled 旧写法是先置 true
+        // 又立即置 false 的空守卫，挡不住二次进入。
+        customPullEndInFlight = true
         let baseline = profilePullBaselineTop()
         // 广场端同款保护：结束时只收指示器——若刷新在途用户已滑到深处（或仍按住拖动），
         // 不再把 contentOffset 拽回 -baseline 顶部，只复位内边距、藏指示头，留在原位置；
@@ -7997,6 +8008,13 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         // 下拉位 = -(baseline + 84)（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
         let stillAtPullPosition = !self.tableView.isDragging
             && self.tableView.contentOffset.y <= -(baseline + 84) + 8
+        // 动量截断（进入侧同款）：只在仍停在下拉位时——此时收回动画要接管
+        // offset；松手后的表减速若还在跑，会与收回 easing 双路驱动
+        // contentOffset，图标先往下掉一下再上去；先掐断再播动画。
+        // 用户已滑走时 offset 不参与收回动画，不碰他的滚动。
+        if stillAtPullPosition {
+            tableView.setContentOffset(tableView.contentOffset, animated: false)
+        }
         let pullOut = {
             self.tableView.contentInset.top = baseline
             self.tableView.scrollIndicatorInsets.top = baseline
@@ -8007,6 +8025,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         }
         if UIAccessibility.isReduceMotionEnabled {
             pullOut()
+            self.isCustomPullRefreshing = false
+            self.customPullEndInFlight = false
             self.refreshIconView.stopSpinning()
             // 顶端残留修法：pullOut 动画期 inset/offset 不同步时瞬时
             // 拉量可能又把封面拉伸+模糊，动画结束时不再有滚动事件来
@@ -8014,6 +8034,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             self.resetCoverStretch()
         } else {
             UIView.animate(withDuration: BearyMotion.normal, animations: pullOut, completion: { _ in
+                self.isCustomPullRefreshing = false
+                self.customPullEndInFlight = false
                 self.refreshIconView.stopSpinning()
                 self.resetCoverStretch()
             })
