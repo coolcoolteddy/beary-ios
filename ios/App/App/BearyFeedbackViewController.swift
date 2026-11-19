@@ -7,12 +7,13 @@ import Darwin
 // ===== 反馈与改进（2026-10-28 反馈 v3，路线 A：不做后端，走邮件附件）=====
 // 界面按 v4 预览（与 v3 差异仅底部）：子页全屏 modal + fadeRise，左上文字
 // 「关闭」15pt 墨字、标题 17；顶部状态行「反馈数据已准备就绪」+ beary 绿勾；
-// 问题描述区：系统 UISegmentedControl（问题反馈 / 优化建议，选中段墨底 +
-// 反色字，既定样式，不自造分段控件）+ 编辑器正文同款 UITextView；图片或视频
-// （可选，最多 5 个）添加卡（手绘 icon_image）；设备信息卡 8 行；底部依次为
-// 墨底主钮「撰写反馈邮件」、secondaryOutline「分享诊断日志」（手绘 icon_share）、
-// 「诊断」分组 + secondaryOutline「仅发送日志」；发送说明收进提交提示旁
-// 的帮助入口（info 图标，点按底部弹窗展示，不常驻页底）。
+// 主路径自上而下连续：问题描述区（系统 UISegmentedControl 问题反馈 /
+// 优化建议，选中段墨底 + 反色字，既定样式，不自造分段控件）+ 编辑器正文
+// 同款 UITextView → 图片或视频（可选，最多 5 个）添加卡（手绘 icon_image）
+// → 墨底主钮「撰写反馈邮件」＋钮旁附件说明；设备信息卡 8 行与分享诊断
+// 日志／仅发送日志收进提交钮下方的「诊断信息」折叠（默认收起，点按展开，
+// 展开动效走局部状态 0.18s、箭头旋转指示，设置页折叠同款）；发送说明收进
+// 提交提示旁的帮助入口（info 图标，点按底部弹窗展示，不常驻页底）。
 // 组件规矩（2026-10-28 Li 定，长期有效）：组件一律走 iOS 系统组件
 // （UIButton / UITextView / PHPicker / MFMailCompose / UIActivityViewController），
 // 图标只用手绘官方包（icon_image、icon_share 均取 89 包 xcassets；资产缺失时
@@ -236,6 +237,13 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     private let submitHintLabel = UILabel()
     private let shareButton = BearyButton.make(style: .secondaryOutline(.regular), title: "分享诊断日志")
     private let logOnlyButton = BearyButton.make(style: .secondaryOutline(.regular), title: "仅发送日志")
+    /// 「诊断信息」折叠（任务 8）：设备信息与日志操作收进提交钮下方的可展开
+    /// 区，默认收起；标题行 + 体栈，设置页折叠同款（icon_chevron_down 16 灰、
+    /// 展开动效走局部状态 0.18s、箭头旋转 π）。
+    private let diagnosticsHeaderButton = UIButton(type: .custom)
+    private let diagnosticsChevron = UIImageView()
+    private let diagnosticsBodyStack = UIStackView()
+    private var diagnosticsExpanded = false
 
     private var attachments: [Attachment] = []
     /// 审计反馈清除回填：附件选择代次。每轮选择占一个代次，清除或重选时
@@ -475,7 +483,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         ])
     }
 
-    // MARK: - 内容（自上而下：状态卡 → 描述 → 附件 → 设备 → 提交 → 分享 → 诊断）
+    // MARK: - 内容（自上而下：状态卡 → 描述 → 附件 → 提交 → 「诊断信息」折叠）
 
     private func buildContent() {
         let statusCard = makeCard()
@@ -686,9 +694,10 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         submitButton.addTarget(self, action: #selector(submitTapped), for: .touchUpInside)
         submitButton.bearyAddPressFeedback()
         // 主按钮只打开邮件撰写框、本身不完成提交：按钮下只显示
-        // 「这次会发生什么」（第十轮审计 dsh II-3 动态一行），目的地、
-        // 未配邮箱 fallback、附件与日志包范围见 refreshSubmitHint；
-        // 三句完整说明仍在旁边的帮助入口里。
+        // 「这次会发生什么」（第十轮审计 dsh II-3 动态一行）：目的地、
+        // 本次附件种类与数量（图片或视频 N 个＋日志包 1 个）、还需在邮件
+        // 里再按一次发送；未配邮箱时说明只复制文字、不含附件、不用发邮件
+        // （见 refreshSubmitHint）；三句完整说明仍在旁边的帮助入口里。
         submitHintLabel.translatesAutoresizingMaskIntoConstraints = false
         submitHintLabel.font = BearyDynamicType.secondaryFont()
         submitHintLabel.adjustsFontForContentSizeCategory = true
@@ -716,14 +725,62 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         shareButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 0)
         shareButton.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
         shareButton.bearyAddPressFeedback()
-        let diagLabel = makeSectionLabel("诊断")
         logOnlyButton.translatesAutoresizingMaskIntoConstraints = false
         logOnlyButton.addTarget(self, action: #selector(logOnlyTapped), for: .touchUpInside)
         logOnlyButton.bearyAddPressFeedback()
 
+        // 「诊断信息」折叠（任务 8）：标题行 + 体栈，设置页折叠同款。
+        // 标题行走本页组标题口径（makeSectionLabel）+ 行尾下箭头（官方包
+        // icon_chevron_down 16 灰）；体默认收起（isHidden，栈自动归零高度），
+        // 内含设备信息（标题 + 8 行卡）与两个日志操作钮。
+        let diagnosticsTitleLabel = makeSectionLabel("诊断信息")
+        diagnosticsChevron.translatesAutoresizingMaskIntoConstraints = false
+        diagnosticsChevron.image = BearyIconImages.image(named: "icon_chevron_down", pointSize: 16)
+        diagnosticsChevron.tintColor = BearyColors.gray
+        diagnosticsChevron.contentMode = .scaleAspectFit
+        NSLayoutConstraint.activate([
+            diagnosticsChevron.widthAnchor.constraint(equalToConstant: 16),
+            diagnosticsChevron.heightAnchor.constraint(equalToConstant: 16),
+        ])
+        let diagnosticsHeaderContent = UIStackView(arrangedSubviews: [diagnosticsTitleLabel, UIView(), diagnosticsChevron])
+        diagnosticsHeaderContent.translatesAutoresizingMaskIntoConstraints = false
+        diagnosticsHeaderContent.axis = .horizontal
+        diagnosticsHeaderContent.spacing = 12
+        diagnosticsHeaderContent.alignment = .center
+        let diagnosticsHeaderWrap = UIView()
+        diagnosticsHeaderWrap.translatesAutoresizingMaskIntoConstraints = false
+        diagnosticsHeaderWrap.addSubview(diagnosticsHeaderContent)
+        diagnosticsHeaderButton.translatesAutoresizingMaskIntoConstraints = false
+        diagnosticsHeaderButton.accessibilityLabel = "诊断信息"
+        diagnosticsHeaderButton.accessibilityValue = "已收起"
+        diagnosticsHeaderButton.addTarget(self, action: #selector(diagnosticsToggleTapped), for: .touchUpInside)
+        diagnosticsHeaderButton.bearyAddPressFeedback()
+        diagnosticsHeaderWrap.addSubview(diagnosticsHeaderButton)
+        NSLayoutConstraint.activate([
+            diagnosticsHeaderContent.topAnchor.constraint(equalTo: diagnosticsHeaderWrap.topAnchor, constant: 14),
+            diagnosticsHeaderContent.leadingAnchor.constraint(equalTo: diagnosticsHeaderWrap.leadingAnchor, constant: 16),
+            diagnosticsHeaderContent.trailingAnchor.constraint(equalTo: diagnosticsHeaderWrap.trailingAnchor, constant: -16),
+            diagnosticsHeaderContent.bottomAnchor.constraint(equalTo: diagnosticsHeaderWrap.bottomAnchor, constant: -14),
+            diagnosticsHeaderButton.topAnchor.constraint(equalTo: diagnosticsHeaderWrap.topAnchor),
+            diagnosticsHeaderButton.leadingAnchor.constraint(equalTo: diagnosticsHeaderWrap.leadingAnchor),
+            diagnosticsHeaderButton.trailingAnchor.constraint(equalTo: diagnosticsHeaderWrap.trailingAnchor),
+            diagnosticsHeaderButton.bottomAnchor.constraint(equalTo: diagnosticsHeaderWrap.bottomAnchor),
+        ])
+        diagnosticsBodyStack.translatesAutoresizingMaskIntoConstraints = false
+        diagnosticsBodyStack.axis = .vertical
+        diagnosticsBodyStack.spacing = 20
+        diagnosticsBodyStack.alignment = .fill
+        diagnosticsBodyStack.isHidden = true
+        diagnosticsBodyStack.addArrangedSubview(deviceLabel)
+        diagnosticsBodyStack.addArrangedSubview(deviceCard)
+        diagnosticsBodyStack.addArrangedSubview(shareButton)
+        diagnosticsBodyStack.addArrangedSubview(logOnlyButton)
+        diagnosticsBodyStack.setCustomSpacing(8, after: deviceLabel)
+
         // 审计 r2 D4：页底 footnote 已移入 submitHintLabel 旁的帮助入口（见 helpTapped），
         // 此处不再常驻显示；fallback 与附件限制句是移入、不是删除。
-        let views: [UIView] = [statusCard, descLabel, descCard, mediaLabel, attachCard, deviceLabel, deviceCard, submitButton, submitHintRow, shareButton, diagLabel, logOnlyButton]
+        // 主路径连续：描述 → 附件 → 提交，设备与日志操作收进提交钮下方的折叠，不再插在中间。
+        let views: [UIView] = [statusCard, descLabel, descCard, mediaLabel, attachCard, submitButton, submitHintRow, diagnosticsHeaderWrap, diagnosticsBodyStack]
         for viewItem in views {
             contentStack.addArrangedSubview(viewItem)
         }
@@ -732,12 +789,9 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         contentStack.setCustomSpacing(20, after: descCard)
         contentStack.setCustomSpacing(8, after: mediaLabel)
         contentStack.setCustomSpacing(20, after: attachCard)
-        contentStack.setCustomSpacing(8, after: deviceLabel)
-        contentStack.setCustomSpacing(20, after: deviceCard)
         contentStack.setCustomSpacing(8, after: submitButton)
-        contentStack.setCustomSpacing(12, after: submitHintRow)
-        contentStack.setCustomSpacing(20, after: shareButton)
-        contentStack.setCustomSpacing(8, after: diagLabel)
+        contentStack.setCustomSpacing(20, after: submitHintRow)
+        contentStack.setCustomSpacing(8, after: diagnosticsHeaderWrap)
         NSLayoutConstraint.activate([
             submitButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
             shareButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
@@ -772,21 +826,50 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 第十轮审计 dsh II-3：提交钮下的动态一行，只说「这次会发生什么」。
-    /// 已配邮箱：目的地＋本次附件总数（用户附件＋日志包，日志包就绪时算 1 个，
-    /// 与 presentMailComposer 实际组装的附件一致）；未配邮箱：只说复制 fallback，
-    /// 与 presentMailComposer 的复制分流一致。附件增减／日志包就绪或失效／
-    /// 回前台时刷新（见 refreshAttachUI、ensureZip、cleanupZip、viewWillAppear）。
+    /// 已配邮箱：目的地＋本次附件种类与数量（用户图片／视频 N 个＋就绪的
+    /// 日志包 1 个，与 presentMailComposer 实际组装的附件一致）＋还需在
+    /// 邮件里再按一次发送；附件数为 0 时不 claim 附件（日志包可能还在准备
+    /// 中），沿用旧文案只说目的地与再按一次发送。未配邮箱：只说复制
+    /// fallback 与不用发邮件，与 presentMailComposer 的复制分流一致。
+    /// 附件增减／日志包就绪或失效／回前台时刷新（见 refreshAttachUI、
+    /// ensureZip、cleanupZip、viewWillAppear）。
     private func refreshSubmitHint() {
         guard MFMailComposeViewController.canSendMail() else {
-            submitHintLabel.text = "未配置邮箱：只复制文字，不含附件。"
+            submitHintLabel.text = "未配置邮箱：只复制文字，不含附件，不用发邮件。"
             return
         }
-        let count = attachments.count + (zipReady ? 1 : 0)
-        if count > 0 {
-            submitHintLabel.text = "将发送到 hi@teddyhn.com（含 \(count) 个附件），还需在邮件里再按一次发送。"
-        } else {
-            submitHintLabel.text = "将发送到 hi@teddyhn.com，还需在邮件里再按一次发送。"
+        var parts: [String] = []
+        if !attachments.isEmpty {
+            parts.append("图片或视频 \(attachments.count) 个")
         }
+        if zipReady {
+            parts.append("日志包 1 个")
+        }
+        guard !parts.isEmpty else {
+            submitHintLabel.text = "将发送到 hi@teddyhn.com，还需在邮件里再按一次发送。"
+            return
+        }
+        submitHintLabel.text = "将发送到 hi@teddyhn.com（附件：\(parts.joined(separator: "＋"))），还需在邮件里再按一次发送。"
+    }
+
+    /// 「诊断信息」折叠翻转——体显隐 + 箭头旋转 π 同在局部状态 0.18s 内
+    /// 完成；减动效时直落终态（设置页 setDisclosureExpanded 同款）。
+    @objc private func diagnosticsToggleTapped() {
+        diagnosticsExpanded.toggle()
+        diagnosticsHeaderButton.accessibilityValue = diagnosticsExpanded ? "已展开" : "已收起"
+        let apply = {
+            self.diagnosticsBodyStack.isHidden = !self.diagnosticsExpanded
+            self.diagnosticsChevron.transform = self.diagnosticsExpanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : CGAffineTransform.identity
+        }
+        guard BearyMotion.animated(true) else {
+            apply()
+            view.layoutIfNeeded()
+            return
+        }
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: {
+            apply()
+            self.view.layoutIfNeeded()
+        })
     }
 
     private func refreshAttachUI() {
