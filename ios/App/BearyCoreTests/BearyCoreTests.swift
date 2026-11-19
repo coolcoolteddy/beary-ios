@@ -633,6 +633,28 @@ final class BearyPastSelfTests: XCTestCase {
         suite.removePersistentDomain(forName: "beary.pastself.tests")
     }
 
+    func testMergeAdoptsLocalOnlyRowWhenServerHasIdenticalContent() throws {
+        // #37 回包丢失兜底：创建回包丢了时，本地 ps_… 行仍 localOnly；
+        // 下次同步拉回内容全等的服务端行时，本地行认领服务端 id，
+        // 只留一行、不再重推；本地已撤回标记保留，待同步补推撤回。
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let store = PastSelfStore(userId: 91, defaults: suite)
+        let created = ms(year: 2025, month: 10, day: 30)
+        let local = store.add(originEntryId: "b_7", body: "待同步句", createdAtMs: created, calendar: calendar)!
+        XCTAssertTrue(store.revoke(messageId: local.id, nowMs: created, today: "2026-01-01"))
+        let serverRow = PastSelfMessage(id: "srv_1", originEntryId: "b_7", chainId: "b_7", authorId: 91, body: "待同步句",
+                                        createdAtMs: created, deliverOn: "2026-10-30", revokedAtMs: nil,
+                                        replyToMessageId: nil, localOnly: false)
+        store.mergeServerRows([serverRow])
+        let rows = store.loadAll()
+        XCTAssertEqual(rows.map { $0.id }, ["srv_1"])
+        XCTAssertFalse(rows.first?.localOnly ?? true)
+        XCTAssertEqual(rows.first?.revokedAtMs, created)
+        XCTAssertFalse(rows.first?.revokeSynced ?? true)
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
     func testCorruptStoreBlocksAllWrites() throws {
         // 审计新一轮 05：存储损坏后，add / revoke / merge / replace / remove
         // 全都不覆盖，原始数据原样保留。

@@ -445,6 +445,28 @@ final class PastSelfStore {
                 row.revokedAtMs = local.revokedAtMs
             }
             row.revokeSynced = serverConfirmedRevoke || (byId[row.id]?.revokeSynced ?? false)
+            // #37 回包丢失兜底：创建回包丢了时，本地 ps_… 行仍 localOnly，
+            // 下次同步会把服务端行与本地行并存、再重推创建造重复。
+            // 本地行从未成功回包、且 origin_entry_id + body + deliver_on
+            // 与服务端行全等时视为同一条：本地行认领服务端 id、清
+            // localOnly，不再重推。取舍：同一原篇同一正文同一送达日的
+            // 两条真实留话会被合并为一条；完整修复（创建请求加稳定
+            // 客户端请求 ID、列表回传它）须服务端改动，见 PR 描述。
+            if byId[row.id] == nil {
+                let dups = byId.values.filter {
+                    $0.localOnly && $0.originEntryId == row.originEntryId
+                        && $0.body == row.body && $0.deliverOn == row.deliverOn
+                }
+                if !dups.isEmpty {
+                    if row.revokedAtMs == nil {
+                        row.revokedAtMs = dups.compactMap { $0.revokedAtMs }.first
+                    }
+                    if dups.contains(where: { $0.revokeSynced }) {
+                        row.revokeSynced = true
+                    }
+                    for dup in dups { byId.removeValue(forKey: dup.id) }
+                }
+            }
             byId[row.id] = row
         }
         // 服务端已删的行不在回包里时不主动清本地（服务端未承诺全量下发），
