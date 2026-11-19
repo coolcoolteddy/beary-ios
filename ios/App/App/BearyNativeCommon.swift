@@ -3975,6 +3975,35 @@ enum BearyReportFlow {
         actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: vc, title: title, message: "举报后这篇日记将从你的信息流消失，不可撤销。", actions: actions)
     }
+
+    /// 按用户举报（聊天页入口；对方无公开日记时也能举报）：与按日记举报同理由、
+    /// 同成功态；后端备改动未部署前提交即 400，走“举报失败，请重试”。
+    static func presentUser(from vc: UIViewController, userId: Int, userName: String? = nil) {
+        guard BearyPresentGuard.canPresent(from: vc) else { return }
+        let name = (userName ?? "").isEmpty ? "这位用户" : userName!
+        let title = "举报\(name)？"
+        var actions: [BearyConfirmSheet.Action] = BearyReportReason.all.map { reason in
+            BearyConfirmSheet.Action(title: reason, style: .default) {
+                let busy = BearyFlowBusy.show(in: vc.view)
+                // 第六轮审计 02：同按日记举报，发起时拍身份快照，成功回包先校验。
+                let identity = BearyIdentityGuard.capture()
+                BearyAPI.shared.reportUser(userId: userId, reason: reason) { result in
+                    DispatchQueue.main.async {
+                        BearyFlowBusy.hide(busy)
+                        switch result {
+                        case .success(let resp):
+                            guard BearyIdentityGuard.stillValid(identity) else { return }
+                            BearyToast.show(in: vc.view, message: resp.duplicate == true ? "已举报" : "已举报，谢谢反馈")
+                        case .failure:
+                            BearyToast.show(in: vc.view, message: "举报失败，请重试")
+                        }
+                    }
+                }
+            }
+        }
+        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
+        BearyConfirmSheet.show(from: vc, title: title, message: nil, actions: actions)
+    }
 }
 
 /// 拉黑流程（他人主页“更多”共用）：确认 → 提交 → 成功后广播，调用方据此清理条目与离场。

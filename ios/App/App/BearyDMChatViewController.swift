@@ -1754,18 +1754,41 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         })
     }
 
-    // 长按复制：未确认/失败记录靠它核对正文；普通消息行同样可复制。
+    // 长按菜单：复制本条消息；对方消息行另附举报／拉黑（对方无公开日记时也能举报／拉黑）。
+    // 自己的消息行只有复制。拉黑成功后离场（本页 modal 全屏 present，走 dismiss）。
     func tableView(_ tableView: UITableView, contextMenuConfigurationForRowAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {
         guard indexPath.row < messages.count else { return nil }
-        let body = messages[indexPath.row].body ?? ""
-        guard !body.isEmpty else { return nil }
+        let message = messages[indexPath.row]
+        let body = message.body ?? ""
+        let peerId = peer.id
+        let isPeerMessage = peerId != nil && message.senderId == peerId
+        guard !body.isEmpty || isPeerMessage else { return nil }
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in
-            let copy = UIAction(title: "复制") { [weak self] _ in
-                UIPasteboard.general.string = body
-                guard let self = self else { return }
-                BearyToast.show(in: self.view, message: "已复制")
+            var children: [UIAction] = []
+            if !body.isEmpty {
+                let copy = UIAction(title: "复制") { [weak self] _ in
+                    UIPasteboard.general.string = body
+                    guard let self = self else { return }
+                    BearyToast.show(in: self.view, message: "已复制")
+                }
+                children.append(copy)
             }
-            return UIMenu(title: "", children: [copy])
+            if isPeerMessage, let pid = peerId {
+                let report = UIAction(title: "举报") { [weak self] _ in
+                    guard let self = self else { return }
+                    BearyReportFlow.presentUser(from: self, userId: pid, userName: self.peer.displayName)
+                }
+                children.append(report)
+                let block = UIAction(title: "拉黑", attributes: [.destructive]) { [weak self] _ in
+                    guard let self = self else { return }
+                    BearyBlockFlow.block(from: self, userId: pid, userName: self.peer.displayName) { [weak self] success in
+                        guard success else { return }
+                        self?.dismiss(animated: true)
+                    }
+                }
+                children.append(block)
+            }
+            return UIMenu(title: "", children: children)
         }
     }
 
