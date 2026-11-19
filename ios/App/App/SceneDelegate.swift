@@ -3988,6 +3988,14 @@ final class BearyChromeViewController: UIViewController {
         detailEdgeDismiss.attach(to: detail)
         detail.transitioningDelegate = detailEdgeDismiss
         self.detailEdgeDismiss = detailEdgeDismiss
+        // 审计 7-6：来源列表在第一次被露出前预恢复锚点——边缘拖动开拖插底层
+        // 画面时、正式退场动画起播前各恢复一次（不消费上下文）；正式的消费型
+        // 恢复仍由 viewDidDisappear 的 onDismissed 走，上下文一次只消费一次。
+        if let entryId = entry.id, !entryId.isEmpty {
+            detailEdgeDismiss.onSourceViewWillReveal = { [weak self] in
+                self?.prepareDetailReturnPosition(entryId: entryId)
+            }
+        }
         // 详情闪退诊断：present 前留一条（与详情 viewDidLoad/rendered 两条对照，
         // 可定位崩在 present 前、进页中、还是渲染后）。
         DiagFile.mark("detail.present id=\(entry.id ?? "?")")
@@ -4052,6 +4060,14 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
+    /// 详情只读返回的预恢复（不消费上下文）：只把来源列表放回打开时的视口
+    /// 位置；上下文留给 viewDidDisappear 的消费型恢复一次消费。拖动取消后
+    /// 来源列表已在正确位置，后续正式关闭时消费型恢复因 ±1pt 守卫不再动。
+    private func prepareDetailReturnPosition(entryId: String) {
+        guard let context = pendingDetailReturn, context.entryId == entryId else { return }
+        applyDetailReturnPosition(context)
+    }
+
     /// 详情只读返回：只把来源列表里该篇放回打开时的视口位置；上下文已消费
     /// （一次有效）、id 对不上、或该篇已不在列表里时什么都不做——其余列表
     /// 全程不动，已在原位的行也不动。
@@ -4059,11 +4075,16 @@ final class BearyChromeViewController: UIViewController {
         guard let context = pendingDetailReturn else { return }
         pendingDetailReturn = nil
         guard context.entryId == entryId else { return }
+        applyDetailReturnPosition(context)
+    }
+
+    /// 三路恢复口径（feed／timeline／profile）不变，只按上下文定向恢复来源列表。
+    private func applyDetailReturnPosition(_ context: DetailReturnContext) {
         switch context.source {
-        case .feed: feedVC?.restoreDetailReturnAnchor(entryId: entryId, viewportOffset: context.viewportOffset)
-        case .timeline: timelineVC?.restoreDetailReturnAnchor(entryId: entryId, viewportOffset: context.viewportOffset)
-        case .profile: profileVC?.restoreDetailReturnAnchor(entryId: entryId, viewportOffset: context.viewportOffset)
-        case .tag: detailReturnTagPage?.restoreDetailReturnAnchor(entryId: entryId, viewportOffset: context.viewportOffset)
+        case .feed: feedVC?.restoreDetailReturnAnchor(entryId: context.entryId, viewportOffset: context.viewportOffset)
+        case .timeline: timelineVC?.restoreDetailReturnAnchor(entryId: context.entryId, viewportOffset: context.viewportOffset)
+        case .profile: profileVC?.restoreDetailReturnAnchor(entryId: context.entryId, viewportOffset: context.viewportOffset)
+        case .tag: detailReturnTagPage?.restoreDetailReturnAnchor(entryId: context.entryId, viewportOffset: context.viewportOffset)
         }
     }
 
