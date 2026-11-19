@@ -1757,7 +1757,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         publishButton.setTitle(isEditMode ? "保存" : "发布", for: .normal)
         // 按钮普查：36 高固定容器，标题走 cappedFont（上限 20，工厂紧凑款同款口径），
         // 默认字号下与原 14 一致，超大字号档不再被固定高度裁剪。
-        publishButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14))
+        publishButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         publishButton.titleLabel?.adjustsFontForContentSizeCategory = true
         publishButton.setImage(BearyIconImages.image(named: "icon_send", pointSize: 24), for: .normal)
         // 顶栏右上角三钮收紧（2026-10-31 真机报间距偏大）：发布 pill 左右内边距 12 → 10，
@@ -1878,7 +1878,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func refreshPublishButtonWidth() {
         // 审计补漏：宽度按标题实际字体算（标题走 cappedFont 上限 20pt，
         // 原写死 14pt 量出的“发布中…”比大字号下实际窄约三分之一，pill 会裁标题）。
-        let font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14))
+        let font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         func textWidth(_ text: String) -> CGFloat {
             return ceil((text as NSString).size(withAttributes: [NSAttributedString.Key.font: font]).width)
         }
@@ -1904,12 +1904,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             publishButton.accessibilityTraits.insert(.notEnabled)
         }
         if publishButton.isEnabled {
-            // 2026-11-14 Li 定：纯白／纯黑墨底太突兀，改 surface2 柔和灰底 + ink 字。
-            publishButton.backgroundColor = BearyColors.surface2
-            publishButton.setTitleColor(BearyColors.ink, for: .normal)
-            publishButton.tintColor = BearyColors.ink
+            // 2026-11-18 Li 定：亮起态须一眼能点——墨底＋bg 字（登录钮／换一篇／
+            // 位置浮层确认钮同款主按钮口径）。旧 surface2 柔和灰底＋墨字与页面白底
+            // 几乎没差，看着就像置灰（2026-11-14 的旧口径作废）。
+            publishButton.backgroundColor = BearyColors.ink
+            publishButton.setTitleColor(BearyColors.bg, for: .normal)
+            publishButton.tintColor = BearyColors.bg
         } else {
-            publishButton.backgroundColor = UIColor.clear
+            publishButton.backgroundColor = BearyColors.surface2
             publishButton.setTitleColor(BearyColors.gray, for: .normal)
             publishButton.tintColor = BearyColors.gray
         }
