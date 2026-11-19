@@ -2882,7 +2882,7 @@ class BearyTimelineViewController: UIViewController {
         view.bringSubviewToFront(visFilterBubble)
         visFilterBubbleGeneration += 1
         visFilterBubbleOpen = true
-        // 入场只走 transform/opacity（编辑器 showCallout 同款；减动效静态直出）。
+        // 入场只走 transform/opacity（减动效静态直出）。
         if UIAccessibility.isReduceMotionEnabled || view.window == nil {
             visFilterBubble.alpha = 1
             visFilterBubble.transform = .identity
