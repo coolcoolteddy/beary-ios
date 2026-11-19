@@ -6853,7 +6853,6 @@ class BearyTimelineViewController: UIViewController {
         actions.append(BearyConfirmSheet.Action(title: "删除", style: .destructive) { [weak self] in
             self?.onDeleteEntry?(entry)
         })
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         // 审计-时间线：present 前统一守卫，已有弹窗时不叠页（筛子呈现留给 11b 气泡，本支不动）。
         guard presentedViewController == nil else { return }
         BearyConfirmSheet.show(from: self, title: "", message: nil, actions: actions)

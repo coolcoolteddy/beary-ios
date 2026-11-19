@@ -3185,7 +3185,6 @@ final class BearyDetailViewController: UIViewController {
                 BearyBlockFlow.block(from: self, userId: authorId, userName: self.entry.authorName, onDone: nil)
             })
         }
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         // 审计 2026-11-02 弹窗组：present 不写死 animated，走减动效口径
         // （BearyConfirmSheet.show 内部已走 BearyMotion.animated）。
         BearyConfirmSheet.show(from: self, title: "", message: nil, actions: actions)

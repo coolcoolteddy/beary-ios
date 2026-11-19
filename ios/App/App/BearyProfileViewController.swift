@@ -8479,7 +8479,6 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                 })
             }
         }
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: self, title: "", message: nil, actions: actions)
     }
 
@@ -8815,7 +8814,6 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                 }
             }
         })
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: self, title: "", message: nil, actions: actions)
     }
 
