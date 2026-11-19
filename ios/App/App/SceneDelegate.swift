@@ -3438,7 +3438,11 @@ final class BearyChromeViewController: UIViewController {
     private func wireProfileVC(_ vc: BearyProfileViewController, modal: Bool) {
         vc.onBack = { [weak self] in
             if modal {
-                self?.dismiss(animated: BearyMotion.animated(true))
+                // 嵌套 modal（标签页 → 个人页）：只关本层个人页 nav、回标签页。
+                // 旧 self?.dismiss 关的是 chrome 直呈的那层（标签 nav），会把
+                // 标签页连个人页一起关掉、落回首页；直呈 modal 时 topmost 即
+                // 本层 nav，行为与旧口径一致。
+                self?.topmostViewController().dismiss(animated: BearyMotion.animated(true))
             } else {
                 self?.showPage(.home)
             }
