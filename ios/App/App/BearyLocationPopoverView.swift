@@ -145,7 +145,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         // 描边走 gray：浮层底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #DFDFDF）
         // 只差 4 阶、浅色下几不可见（#1286 档距拉大后；深色亦只差约 9 阶）。
         manualButton.layer.bearyDynamicBorderColor = BearyColors.gray
-        manualButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
+        // 上下各 8：13pt 标题行高约 16，pill 实高 32，与同行 ✅ 确认钮 32×32 齐平。
+        manualButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
         manualButton.setContentHuggingPriority(.required, for: .horizontal)
         manualButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         manualButton.accessibilityLabel = "自己输入地点"
@@ -161,7 +162,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         relocateButton.layer.borderWidth = 1
         // 描边走 gray：同 manualButton，浮层底 surface3 上 line 几不可见。
         relocateButton.layer.bearyDynamicBorderColor = BearyColors.gray
-        relocateButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
+        relocateButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
         relocateButton.setContentHuggingPriority(.required, for: .horizontal)
         relocateButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         relocateButton.accessibilityLabel = "重新定位到当前位置"
