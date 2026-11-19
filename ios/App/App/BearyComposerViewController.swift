@@ -833,7 +833,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             originAccountId: currentAccountIdForPublish(),
             draftId: currentDraftId,
             accountId: currentAccountIdForPublish(),
-            imageLocalFiles: imageItems.compactMap { $0.localFile })
+            imageLocalFiles: imageItems.compactMap { $0.localFile },
+            images: imageItems.map { BearyPublishImage(localFile: $0.localFile, serverKey: $0.key, liveVideoKey: $0.liveVideoKey, liveVideoFile: $0.liveVideoFile, liveVideoData: $0.liveVideoData) })
     }
     private var didAutoFocus = false
     // 标题行已去掉：进页拉回旗标与 ensureTitleRowVisibleOnEntry 已整段删除
@@ -9792,10 +9793,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         publishGeneration += 1
         let generation = publishGeneration
+        let snapshotVersion = editorEditVersion
+        // #43：拍完快照立即冻结输入——写盘窗口内正文/标题/图片增删/
+        // 可见性全不可改（performUpdate 同款：进函数即立 isPublishing）。
+        // 冻结经 updatePublishState 施加；落盘失败回包时复位解冻
+        //（见 persistPublishSnapshot 失败分支），交接失败分支同款复位。
+        // 待触发的防抖保存一并失效：本次落盘即存最新内容，不再另起一笔。
+        isPublishing = true
+        updatePublishState()
+        draftTimer?.invalidate()
+        draftTimer = nil
         // P1-5：等本次快照的 clientReq 确认落盘，再发首个会改变服务端状态
         // 的请求（发布中心的 setVisibility / publishEntry）。
         // 落盘失败就停在编辑器、保留输入并提示重试，不发请求。
-        let proceedAfterPersist: () -> Void = { [weak self] in
+        let proceedAfterPersist: (PublishSnapshot) -> Void = { [weak self] snapshot in
             guard let self = self else { return }
             // 引用规则简化（2026-10-31）：新建将公开且含私密引用时先拦截，不直接发。
             // 自己来源三选一、他人来源两项（见 BearyQuoteGate.gateEditorPublish）；
@@ -9808,6 +9819,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 部分成功态不跨编辑器实例；重发即从草稿箱重开再点发布，
             // 门禁重走一遍、setVisibility 对已公开原日记幂等重发。
             if self.selectedVisibilityPublished, let pendingQuote = self.selectedQuote, pendingQuote.isDeleted == false, pendingQuote.isPublic != true {
+                // #43：门禁弹框是模态 sheet，框在时编辑器动不了；先解冻，
+                // 否则点「取消」回编辑器时会一直冻着（门禁无取消回调）。
+                // 任一出路都走 handOver，交接时重新冻结。
+                self.isPublishing = false
+                self.updatePublishState()
                 let mine = BearyQuoteGate.sourceIsMine(isMine: pendingQuote.isMine, authorId: pendingQuote.authorId)
                 BearyQuoteGate.gateEditorPublish(from: self, sourceIsMine: mine, sourceIsFriendsOnly: pendingQuote.visibility == "friends", onPublishTogether: { [weak self] in
                     guard let self = self else { return }
@@ -9838,14 +9854,30 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             self.handOverToPublishCenter(snapshot: snapshot, generation: generation, publishTogether: false)
         }
+        persistPublishSnapshot(snapshot: snapshot, generation: generation, snapshotVersion: snapshotVersion, attempt: 0, proceedAfterPersist: proceedAfterPersist)
+    }
+
+    /// #43：发布写盘＋版本复核（saveDraftVersionedForExit 同款模式）：
+    /// 调用前须已立 isPublishing 冻结输入（见 didTapPublish）。
+    /// 成功回包时比对 editorEditVersion：写盘期间有程序性变化
+    /// （图片上传完成写 key、失败置态等仍会递增版本）时重拍快照、
+    /// 重存一轮再交接，最多 3 轮；失败时复位解冻、留页提示重试。
+    private func persistPublishSnapshot(snapshot: PublishSnapshot, generation: Int, snapshotVersion: Int, attempt: Int, proceedAfterPersist: @escaping (PublishSnapshot) -> Void) {
         saveDraftNow { [weak self] result in
             guard let self = self else { return }
             guard result.succeeded else {
                 BearyHaptics.rejectionWarning()
+                self.isPublishing = false
+                self.updatePublishState()
                 self.showAlert(message: "草稿保存失败，本篇未发布，请重试")
                 return
             }
-            proceedAfterPersist()
+            if self.editorEditVersion != snapshotVersion, attempt < 3,
+               let fresh = self.makePublishSnapshot(trimmed: self.trimmedContent()) {
+                self.persistPublishSnapshot(snapshot: fresh, generation: generation, snapshotVersion: self.editorEditVersion, attempt: attempt + 1, proceedAfterPersist: proceedAfterPersist)
+                return
+            }
+            proceedAfterPersist(snapshot)
         }
     }
 
@@ -9871,9 +9903,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if currentDraftId == snapshot.draftId {
             commitPendingRemoval()
         }
-        let images = imageItems.map { item in
-            BearyPublishImage(localFile: item.localFile, serverKey: item.key, liveVideoKey: item.liveVideoKey, liveVideoFile: item.liveVideoFile, liveVideoData: item.liveVideoData)
-        }
+        // #43：图片清单用点按时刻拍进快照的那份，不再从当前 imageItems
+        // 现场组装——写盘窗口内新增/删除的图片不得混进本次发布。
+        let images = snapshot.images
         // 2026-11-14：交接前取消编辑器侧在途上传——中心是唯一上传方。
         // 不取消时，编辑器在途的上传与中心对同一张图的上传会各落一个 key，
         // 多一个孤儿图（且浪费一份上行流量）；取消只 bump 代次（迟到回包由

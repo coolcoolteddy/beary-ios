@@ -44,6 +44,10 @@ struct PublishSnapshot {
     /// P0-2：提交时本篇图片的本地文件名：成功后只删这些文件，
     /// 不碰切篇后新篇的图片。
     let imageLocalFiles: [String]
+    /// #43：点按时刻的图片清单（按编辑器图片条顺序）：交接时直接用它，
+    /// 不再从当前 imageItems 现场组装——写盘窗口内新增/删除的图片
+    /// 不得混进本次发布；成功后删图仍只用上方的 imageLocalFiles。
+    let images: [BearyPublishImage]
 }
 
 /// 交接给发布中心的图片（按编辑器图片条顺序）：已有服务端 key 的
