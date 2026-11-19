@@ -745,6 +745,11 @@ final class BearyLivePhotoView: UIView {
             self.spinner.stopAnimating()
             if let photo = photo {
                 self.liveView.livePhoto = photo
+                // 自动播放实况：开关开且流量节省程序关时，就绪后播一次
+                // （默认关；流量节省开时不自动播，长按仍可随时播）。
+                if BearyLivePhotoAutoplay.shouldAutoplay {
+                    self.liveView.startPlayback(with: .full)
+                }
             } else {
                 // 失败仍亮角标（不静默退化成纯静态），currentLiveKey 清掉，
                 // 下次 configure 或长按重试可重新加载；加载中的同 key 调用

@@ -42,6 +42,20 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
             BearyAppLockManager.shared.onUnlocked = { [weak chrome] in chrome?.startDeferredLaunchVeil() }
             BearyAppLockManager.shared.installColdLockIfNeeded(on: window)
         }
+        // 语言切换（2026-11-19 七组版）：启动时装一次 Bundle 覆盖（上次切过
+        // 中国大陆后重开也要生效）；语言子页切档发广播后重建根界面，使走
+        // Bundle 的文案刷新。不重跑冷启动锁与 deep link（锁只冷启动一次，
+        // deep link 只认启动意图）；旧根的通知订阅随旧根释放而失效
+        // （block 订阅捕 weak self，iOS 9 起 selector 订阅自动注销）。
+        // 注意：目前 App 文案全是硬编码中文、无 .xcstrings/.lproj，重建后
+        // 界面文案暂无可见变化（只对走 Bundle 的第三方文案生效）；完整切换
+        // 须先做全站文案抽取迁移，那是另一个项目，见 PR 正文。
+        BearyAppLanguage.installBundleOverrideIfNeeded()
+        NotificationCenter.default.addObserver(forName: BearyAppLanguage.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self = self, let window = self.window else { return }
+            window.rootViewController = BearyChromeViewController()
+            window.makeKeyAndVisible()
+        }
         // 审计 4 冷启动：建窗后立即补读 connectionOptions，走与 openURLContexts /
         // continue userActivity 同一条 handleDeepLink 链路（SceneDelegate 下方两方法），
         // 不另起解析。urlContexts 命中后不再走 userActivities（两者互斥的同一启动意图）。

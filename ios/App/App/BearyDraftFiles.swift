@@ -85,6 +85,12 @@ struct BearyDraft: Codable {
     var locationDistrict: String? = nil
     var locationLatitude: Double? = nil
     var locationLongitude: Double? = nil
+    /// 2026-11-19 七组版：定位地址精度分级字段（随地点一起存，取自 placemark；
+    /// 老草稿缺本键时按 nil 解码，显示层向粗回退）。
+    var locationCountry: String? = nil
+    var locationRegion: String? = nil
+    var locationCity: String? = nil
+    var locationStreet: String? = nil
     /// 草稿可见性分段 index（0 私密 / 1 公开 / 2 仅好友；老草稿缺本键时按 0 私密解码，
     /// 与编辑器每次默认私密 D4 口径一致）。
     var visibilitySegmentIndex: Int = 0
@@ -1342,6 +1348,11 @@ enum BearyDraftStore {
         var locationDistrict: String?
         var locationLatitude: Double?
         var locationLongitude: Double?
+        /// 2026-11-19 七组版：定位地址精度分级字段；老检查点缺本键时按 nil 解码。
+        var locationCountry: String? = nil
+        var locationRegion: String? = nil
+        var locationCity: String? = nil
+        var locationStreet: String? = nil
         var images: [BearyDraftImageItem]
         var quoteId: String? = nil
         var mentionedUserId: Int? = nil

@@ -175,7 +175,7 @@ enum BearyGIF {
 /// 6 行外的、标题截断掉的都不贴）；宽变时刷新；复用时清理。
 /// 可见性：setVisible(false) 时换首帧静态图（滚动出屏、切 tab、复用前），
 /// setVisible(true) 时换回动画；减动效下 animatedImage 本身即首帧。
-final class BearyInlineGIFOverlay {
+final class BearyInlineGIFOverlay: NSObject {
 
     private weak var label: UILabel?
     private var gifKeys: [String] = []
@@ -186,6 +186,8 @@ final class BearyInlineGIFOverlay {
     private var lastSignature: String = ""
     private var lastWidth: CGFloat = 0
     private var visible: Bool = true
+    /// 流量节省程序开时用户点按播过的 GIF（点一下才动；再点暂停回首帧）。
+    private var playingKeys: Set<String> = []
     /// 长按 GIF 时的回调（randKey → 调用方弹“添加表情”）。
     var onLongPressGIF: ((String) -> Void)?
 
@@ -215,12 +217,21 @@ final class BearyInlineGIFOverlay {
         lastWidth = 0
     }
 
+    /// 当前该 GIF 该显示的图：可见且流量节省关时播动画；流量节省开时
+    /// 只显首帧，用户点一下后（playingKeys）才动；不可见时首帧。
+    private func effectiveImage(for rand: String) -> UIImage? {
+        if visible && (!BearyDataSaver.isEnabled || playingKeys.contains(rand)) {
+            return animatedImages[rand] ?? firstFrames[rand]
+        }
+        return firstFrames[rand]
+    }
+
     func setVisible(_ visible: Bool) {
         guard self.visible != visible else { return }
         self.visible = visible
         for (id, view) in views {
             let rand = id.components(separatedBy: "#").first ?? ""
-            view.image = visible ? (animatedImages[rand] ?? firstFrames[rand]) : firstFrames[rand]
+            view.image = effectiveImage(for: rand)
         }
     }
 
@@ -248,10 +259,15 @@ final class BearyInlineGIFOverlay {
             view.clipsToBounds = true
             view.isUserInteractionEnabled = true
             view.frame = rect
-            view.image = visible ? (animatedImages[rand] ?? firstFrames[rand]) : firstFrames[rand]
+            view.image = effectiveImage(for: rand)
             let press = UILongPressGestureRecognizer(target: self, action: #selector(overlayLongPressed(_:)))
             press.minimumPressDuration = 0.5
             view.addGestureRecognizer(press)
+            // 流量节省开时点一下才动（手势只在流量节省开时接管点按，
+            // 见 gestureRecognizer(_:shouldReceive:)；关时点按照常落到卡片/详情）。
+            let tap = UITapGestureRecognizer(target: self, action: #selector(overlayTapped(_:)))
+            tap.delegate = self
+            view.addGestureRecognizer(tap)
             label.addSubview(view)
             views[id] = view
             loadGIF(randKey: rand)
@@ -267,6 +283,22 @@ final class BearyInlineGIFOverlay {
         for (id, candidate) in views where candidate === view {
             let rand = id.components(separatedBy: "#").first ?? ""
             if !rand.isEmpty { onLongPressGIF?(rand) }
+            return
+        }
+    }
+
+    /// 流量节省开时点按 GIF：播／暂停切换（再点回首帧）。
+    @objc private func overlayTapped(_ sender: UITapGestureRecognizer) {
+        guard BearyDataSaver.isEnabled, let view = sender.view else { return }
+        for (id, candidate) in views where candidate === view {
+            let rand = id.components(separatedBy: "#").first ?? ""
+            guard !rand.isEmpty else { return }
+            if playingKeys.contains(rand) {
+                playingKeys.remove(rand)
+            } else {
+                playingKeys.insert(rand)
+            }
+            candidate.image = effectiveImage(for: rand)
             return
         }
     }
@@ -317,10 +349,18 @@ final class BearyInlineGIFOverlay {
                 for (id, view) in self.views {
                     let rand = id.components(separatedBy: "#").first ?? ""
                     guard rand == randKey else { continue }
-                    view.image = self.visible ? (animated ?? first) : first
+                    view.image = self.effectiveImage(for: rand)
                 }
             }
         }
+    }
+}
+
+// MARK: - 点按手势只在流量节省开时接管
+extension BearyInlineGIFOverlay: UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        // 流量节省关时不接管点按（GIF 按可见性自动播，点按照常落到卡片/详情）。
+        BearyDataSaver.isEnabled
     }
 }
 

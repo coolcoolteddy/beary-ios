@@ -324,229 +324,6 @@ class BearySettingsSubpageViewController: UIViewController {
     }
 }
 
-// MARK: - 会员来源明细页（第 7 项）
-
-final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
-    private var statusText: String
-    private var personalText: String
-    private var grants: [BearyPlusGrant]?
-    private var loadFailed: Bool
-    /// A2：设置页的 Plus 共享加载结果（同会话在途结果共用）；为 nil 时
-    /// 退回旧口径自拉（防御性兜底，设置页现行必传）。
-    private var sharedLoad: BearySharedLoad<BearyPlusDetailResponse>?
-    /// 109：重试在途锁 + 代次——重试只置空数据发请求时，连点会多发请求、
-    /// 后到失败回包还会覆盖先到成功回包；在途重试直接忽略，代次再拦过期回包。
-    private var isRetrying = false
-    private var retryGeneration = 0
-    /// 116：发放行入场错峰只播一次（首个数据 render 且已进窗口时）；
-    /// 传入数据首帧（viewDidLoad 时窗口未进）不播、直接显；失败／
-    /// 加载态 render 不置位，重试成功后仍可播一次。
-    private var grantsRowsAnimated = false
-
-    /// 设置页已拉到的 plusDetail 经 status/personal 文案与 grants 传入；
-    /// grants 为 nil 且未失败时本页接设置页同一份在途结果（A2），不再自己另发请求。
-    init(statusText: String, personalText: String, grants: [BearyPlusGrant]?, failed: Bool, sharedLoad: BearySharedLoad<BearyPlusDetailResponse>? = nil) {
-        self.statusText = statusText
-        self.personalText = personalText
-        self.grants = grants
-        self.loadFailed = failed
-        self.sharedLoad = sharedLoad
-        super.init(title: "会员来源明细")
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        if grants == nil && !loadFailed {
-            if let sharedLoad = sharedLoad {
-                // A2：接设置页同会话在途结果——在途则等同一份回包，已取到
-                // 则直接用缓存；失败则走失败态。回包已在主线程（见 loader）。
-                sharedLoad.load { [weak self] result in
-                    guard let self = self else { return }
-                    switch result {
-                    case .success(let detail):
-                        self.statusText = Self.statusText(detail: detail)
-                        self.personalText = Self.personalText(detail: detail)
-                        // 服务端 grants 为 nil 即确认无发放记录，落 [] 显空态，
-                        // 不留 nil 致 render 误判为“加载中”。
-                        self.grants = detail.grants ?? []
-                        self.loadFailed = false
-                    case .failure:
-                        self.loadFailed = true
-                    }
-                    self.render()
-                }
-            } else {
-                BearyAPI.shared.fetchPlusDetail { [weak self] result in
-                    DispatchQueue.main.async {
-                        guard let self = self else { return }
-                        switch result {
-                        case .success(let detail):
-                            self.statusText = Self.statusText(detail: detail)
-                            self.personalText = Self.personalText(detail: detail)
-                            self.grants = detail.grants
-                            self.loadFailed = false
-                        case .failure:
-                            self.loadFailed = true
-                        }
-                        self.render()
-                    }
-                }
-            }
-        }
-        render()
-    }
-
-    /// 设置页 fillPlusDetail 同款状态文案（本页自拉路径用；设置页传入路径不用它）。
-    private static func statusText(detail: BearyPlusDetailResponse) -> String {
-        let now = Int(Date().timeIntervalSince1970 * 1000)
-        if detail.permanent == true { return "Plus 会员 · 永久" }
-        if let effective = detail.effectiveUntil, effective > now {
-            return "Plus 会员 · 至 " + BearyAccountText.dateString(ms: effective)
-        }
-        return "普通用户"
-    }
-
-    private static func personalText(detail: BearyPlusDetailResponse) -> String {
-        let now = Int(Date().timeIntervalSince1970 * 1000)
-        let personal = detail.personalUntil ?? 0
-        let freeUntil = detail.freeUntil ?? 0
-        if detail.permanent == true { return "永久会员" }
-        if personal > now {
-            var text = "至 " + BearyAccountText.dateString(ms: personal)
-            if freeUntil > 0 && personal > freeUntil {
-                text += " · 限免结束后保留 \((personal - freeUntil) / 86400000) 天"
-            } else if freeUntil > now {
-                text += " · 与限免期重叠"
-            }
-            return text
-        }
-        return "暂无（好友注册并绑定邀请码，双方各得 +30 天）"
-    }
-
-    private func render() {
-        for view in contentStack.arrangedSubviews {
-            contentStack.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        let statusLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
-        statusLabel.text = statusText
-        statusLabel.textAlignment = .right
-        let statusTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
-        statusTitle.text = "当前状态"
-        statusTitle.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        let statusRow = UIStackView(arrangedSubviews: [statusTitle, statusLabel])
-        statusRow.axis = .horizontal
-        statusRow.spacing = 12
-        statusRow.alignment = .center
-        let personalLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
-        personalLabel.text = personalText
-        personalLabel.textAlignment = .right
-        let personalTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
-        personalTitle.text = "专属会员"
-        personalTitle.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        let personalRow = UIStackView(arrangedSubviews: [personalTitle, personalLabel])
-        personalRow.axis = .horizontal
-        personalRow.spacing = 12
-        personalRow.alignment = .center
-        contentStack.addArrangedSubview(makeGroupCard(title: "Plus 会员", rows: [statusRow, personalRow]))
-
-        var grantRows: [UIView] = []
-        if grants == nil && !loadFailed {
-            // 自拉进行中：先显加载行，不闪空态（回包后 render 重绘）。
-            let spinner = BearyRefreshIconView()
-            // 栈内固有尺寸与旧 medium 圈一致（20pt 图）。
-            spinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
-            spinner.startSpinning()
-            let loadingLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray)
-            loadingLabel.text = "加载中…"
-            let loadingRow = UIStackView(arrangedSubviews: [spinner, loadingLabel])
-            loadingRow.axis = .horizontal
-            loadingRow.spacing = 8
-            loadingRow.alignment = .center
-            grantRows.append(loadingRow)
-        } else if loadFailed {
-            let failedLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
-            failedLabel.text = "加载失败"
-            grantRows.append(failedLabel)
-            // 重试两档·行内档（BearyButton.retryInline）：文案/布局/target 不变，
-            // 仅把手写规格收进工厂；109 热区仍由 BearyHit44Button 扩到 44pt。
-            let retryButton = BearyButton.retryInline()
-            retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
-            retryButton.bearyAddPressFeedback()
-            grantRows.append(retryButton)
-        } else if let list = grants, !list.isEmpty {
-            for grant in list {
-                let nameLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
-                nameLabel.text = BearyAccountText.grantSourceName(grant.source)
-                let detailLabel = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
-                detailLabel.text = BearyAccountText.dateString(ms: grant.createdAt) + " · " + BearyAccountText.grantValueText(days: grant.days)
-                let rowStack = UIStackView(arrangedSubviews: [nameLabel, detailLabel])
-                rowStack.axis = .vertical
-                rowStack.spacing = 4
-                grantRows.append(rowStack)
-            }
-        } else {
-            let emptyLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
-            emptyLabel.text = "暂无发放记录"
-            grantRows.append(emptyLabel)
-        }
-        contentStack.addArrangedSubview(makeGroupCard(title: "来源明细", rows: grantRows))
-        // 116：发放行数据到达时错峰滑入（新内容 only：本页行每次 render
-        // 重建，故以首个数据 render + 已进窗口为播一次的守卫；行本身
-        // alpha／y+6、0.26s、0.03 步进，减动效直显；加载／失败／空态
-        // 行不走本分支——grants 为 nil 或失败时不置位）。
-        if !grantsRowsAnimated, grants != nil, !loadFailed,
-           view.window != nil, !UIAccessibility.isReduceMotionEnabled {
-            grantsRowsAnimated = true
-            var delay: TimeInterval = 0
-            for row in grantRows {
-                let targetAlpha = row.alpha
-                row.alpha = 0
-                row.transform = CGAffineTransform(translationX: 0, y: 6)
-                UIView.animate(withDuration: BearyMotion.normal, delay: delay, options: [.curveEaseOut], animations: {
-                    row.alpha = targetAlpha
-                    row.transform = .identity
-                })
-                delay = min(delay + 0.03, 0.24)
-            }
-        }
-    }
-
-    @objc private func retryTapped() {
-        // 109：在途重试直接忽略（不重复发请求）；先 render 加载态——
-        // grants=nil 且 !loadFailed 时 render 出转圈“加载中…”行，失败态重试钮
-        // 随之离场（等价于禁用，在途无可点之钮）；回包后恢复。
-        guard !isRetrying else { return }
-        isRetrying = true
-        retryGeneration += 1
-        let gen = retryGeneration
-        grants = nil
-        loadFailed = false
-        render()
-        BearyAPI.shared.fetchPlusDetail { [weak self] result in
-            DispatchQueue.main.async {
-                // 先解锁再判代次：成功/失败/过期回包一律解锁，不留死锁。
-                self?.isRetrying = false
-                guard let self = self, self.retryGeneration == gen else { return }
-                switch result {
-                case .success(let detail):
-                    self.statusText = Self.statusText(detail: detail)
-                    self.personalText = Self.personalText(detail: detail)
-                    self.grants = detail.grants
-                    self.loadFailed = false
-                case .failure:
-                    self.loadFailed = true
-                }
-                self.render()
-            }
-        }
-    }
-}
-
 // MARK: - 登录设备页（第 11 项）
 
 final class BearyDevicesViewController: BearySettingsSubpageViewController {
@@ -568,7 +345,16 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
 
     /// 设置页已拉到的 sessions 传入（A2：nil = 还没取到，[] = 确认是空，
     /// 两者不再混同）；为 nil 且未失败时本页接设置页同一份在途结果，不再自己另发请求。
-    /// 退出其他设备钮不进本页，仍留在设置页（任务只说列表另做一页）。
+    /// 2026-11-19 七组版：退出其他设备钮已移到本页底部（列表下方）。
+    var onSessionsChanged: (() -> Void)?
+    /// 退出其他设备请求期的忙碌态（钮禁用 + 半透明 + 既有加载图标旋转）。
+    private var isRevokingOthers = false
+    private let logoutOthersButton = BearyHit44Button(type: .system)
+    private let logoutOthersSpinner: BearyRefreshIconView = {
+        let view = BearyRefreshIconView()
+        view.tintColor = BearyColors.destructiveText
+        return view
+    }()
     init(sessions: [BearyAccountSession]?, failed: Bool, countText: String?, sharedLoad: BearySharedLoad<BearyAccountSessionsResponse>? = nil) {
         self.sessions = sessions
         self.loadFailed = failed
@@ -583,6 +369,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        setupLogoutOthersButton()
         if sessions == nil && !loadFailed {
             if let sharedLoad = sharedLoad {
                 // A2：接设置页同会话在途结果——在途则等同一份回包，已取到
@@ -675,6 +462,14 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
             rows.append(emptyLabel)
         }
         contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: rows))
+        // 2026-11-19 七组版：退出其他设备钮放列表下方（仅当还有非当前
+        // 设备时显示；只剩当前设备时无可退出的设备，不显示）。
+        // 样式与旧设置页同款：36 高、13/600、destructiveText 字／边（45%）；
+        // 配置只在 viewDidLoad 做一次（见 setupLogoutOthersButton），
+        // render 只决定加不加进栈，不重复建约束。
+        if let list = sessions, !loadFailed, list.contains(where: { $0.isCurrent != true }) {
+            contentStack.addArrangedSubview(logoutOthersButton)
+        }
         // 116：设备行数据到达时错峰滑入（alpha＋y+6、0.26s、0.03 步进；
         // 行每次 render 重建，故以首个数据 render＋已进窗口为播一次的
         // 守卫；传入数据首帧因窗口未进不播、直接显；加载／失败态
@@ -788,6 +583,91 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
                         self.render()
                     }
                 }
+            }
+        }
+    }
+
+    /// 退出其他设备钮配置（只在 viewDidLoad 做一次：36 高、13/600、
+    /// destructiveText 字／边 45%、圆角 12；忙碌图标挂在钮内右侧）。
+    /// F10 网页 .btn.danger 口径与旧设置页同款；视觉高仍钉死 36，
+    /// 热区由 BearyHit44Button 扩到 44pt。
+    private func setupLogoutOthersButton() {
+        logoutOthersButton.translatesAutoresizingMaskIntoConstraints = false
+        logoutOthersButton.setTitle("退出其他设备", for: .normal)
+        logoutOthersButton.setTitleColor(BearyColors.destructiveText, for: .normal)
+        logoutOthersButton.titleLabel?.font = BearyDynamicType.buttonSmallFont()
+        logoutOthersButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        logoutOthersButton.layer.borderWidth = 1
+        logoutOthersButton.layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.destructiveText, 0.45)
+        logoutOthersButton.layer.cornerRadius = 12
+        logoutOthersButton.addTarget(self, action: #selector(logoutOthersButtonTapped), for: .touchUpInside)
+        logoutOthersButton.bearyAddPressFeedback()
+        logoutOthersButton.addSubview(logoutOthersSpinner)
+        NSLayoutConstraint.activate([
+            logoutOthersButton.heightAnchor.constraint(equalToConstant: 36),
+            logoutOthersSpinner.widthAnchor.constraint(equalToConstant: 20),
+            logoutOthersSpinner.heightAnchor.constraint(equalToConstant: 20),
+            logoutOthersSpinner.trailingAnchor.constraint(equalTo: logoutOthersButton.trailingAnchor, constant: -12),
+            logoutOthersSpinner.centerYAnchor.constraint(equalTo: logoutOthersButton.centerYAnchor),
+        ])
+    }
+
+    @objc private func logoutOthersButtonTapped() {
+        guard !isRevokingOthers else { return }
+        // 第四轮审计 12：居中 Alert 改底部弹窗（文案与退出流程不变）。
+        BearyConfirmSheet.show(from: self, title: "退出其他设备", message: "将退出除当前设备外的所有登录，确定继续？", actions: [
+            BearyConfirmSheet.Action(title: "退出", style: .destructive, handler: { [weak self] in
+                self?.confirmLogoutOthers()
+            }),
+            BearyConfirmSheet.Action(title: "取消", style: .cancel),
+        ])
+    }
+
+    /// 请求期原入口忙碌外观——钮禁用 + 半透明 + 既有加载图标旋转；终结时恢复。
+    private func setLogoutOthersBusy(_ busy: Bool) {
+        logoutOthersButton.isEnabled = !busy
+        logoutOthersButton.alpha = busy ? 0.6 : 1
+        if busy { logoutOthersSpinner.startSpinning() } else { logoutOthersSpinner.stopSpinning() }
+    }
+
+    private func confirmLogoutOthers() {
+        isRevokingOthers = true
+        setLogoutOthersBusy(true)
+        BearyAPI.shared.revokeOtherSessions { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isRevokingOthers = false
+                self.setLogoutOthersBusy(false)
+                switch result {
+                case .success:
+                    BearyToast.show(in: self.view, message: "已退出其他设备")
+                    // 成功后重拉列表刷新显示（不走共享缓存，取最新），
+                    // 再回调设置页刷新它的设备数。
+                    self.reloadSessionsAfterRevoke()
+                    self.onSessionsChanged?()
+                case .failure(let error):
+                    if case .cancelled = error { return }
+                    BearyToast.show(in: self.view, message: "操作失败，请重试")
+                }
+            }
+        }
+    }
+
+    /// 退出其他设备成功后重拉列表：直接调接口（不走共享缓存，取最新），
+    /// 回包后更新列表与计数、重绘；失败时只留旧列表，不弹失败态。
+    private func reloadSessionsAfterRevoke() {
+        BearyAPI.shared.fetchAccountSessions { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard case .success(let resp) = result else { return }
+                self.sessions = resp.sessions ?? []
+                if let active = resp.activeCount {
+                    self.countText = "共 \(active) 台设备（活跃）"
+                } else {
+                    self.countText = "共 \((resp.sessions ?? []).count) 台设备"
+                }
+                self.loadFailed = false
+                self.render()
             }
         }
     }

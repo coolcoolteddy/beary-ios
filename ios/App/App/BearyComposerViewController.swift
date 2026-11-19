@@ -853,6 +853,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             locationDistrict: selectedLocation?.district,
             locationLatitude: selectedLocation?.latitude,
             locationLongitude: selectedLocation?.longitude,
+            locationCountry: selectedLocation?.country,
+            locationRegion: selectedLocation?.region,
+            locationCity: selectedLocation?.city,
+            locationStreet: selectedLocation?.street,
             clientReq: req,
             originAccountId: currentAccountIdForPublish(),
             draftId: currentDraftId,
@@ -8162,6 +8166,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             locationDistrict: selectedLocation?.district,
             locationLatitude: selectedLocation?.latitude,
             locationLongitude: selectedLocation?.longitude,
+            locationCountry: selectedLocation?.country,
+            locationRegion: selectedLocation?.region,
+            locationCity: selectedLocation?.city,
+            locationStreet: selectedLocation?.street,
             visibilitySegmentIndex: selectedVisibilityFriends ? 2 : (selectedVisibilityPublished ? 1 : 0),
             tags: selectedTags,
             ephemeralEnabled: isEditMode ? false : isEphemeral,
@@ -8332,7 +8340,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.notifyRecipient = draft.notifyRecipient
                 self.selectedQuote = self.restoredQuote(from: draft)
                 // 批 E：草稿位置恢复（两段文本＋经纬度，2026-11-14 Li 定改存经纬度）；双空即无位置，不留空行。
-                let restoredLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict, latitude: draft.locationLatitude, longitude: draft.locationLongitude)
+                let restoredLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict, latitude: draft.locationLatitude, longitude: draft.locationLongitude, country: draft.locationCountry, region: draft.locationRegion, city: draft.locationCity, street: draft.locationStreet)
                 self.selectedLocation = restoredLocation.isEmpty ? nil : restoredLocation
                 self.refreshRecipientRow()
                 self.refreshQuoteSection()
@@ -8889,7 +8897,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         notifyRecipient = draft.notifyRecipient
         selectedQuote = restoredQuote(from: draft)
         // 批 E：草稿箱打开某篇时位置同款恢复。
-        let boxLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict, latitude: draft.locationLatitude, longitude: draft.locationLongitude)
+        let boxLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict, latitude: draft.locationLatitude, longitude: draft.locationLongitude, country: draft.locationCountry, region: draft.locationRegion, city: draft.locationCity, street: draft.locationStreet)
         selectedLocation = boxLocation.isEmpty ? nil : boxLocation
         refreshMetaRow()
         setQuotePanelOpen(false)
@@ -9040,6 +9048,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             locationDistrict: selectedLocation?.district,
             locationLatitude: selectedLocation?.latitude,
             locationLongitude: selectedLocation?.longitude,
+            locationCountry: selectedLocation?.country,
+            locationRegion: selectedLocation?.region,
+            locationCity: selectedLocation?.city,
+            locationStreet: selectedLocation?.street,
             images: images,
             quoteId: lockedQuote?.entryId,
             mentionedUserId: currentMentionedUserId(),
@@ -9127,7 +9139,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if checkpoint.mood != entry.mood { return true }
         if checkpoint.weather != entry.weather { return true }
         if checkpoint.temperature != entry.temperatureC { return true }
-        let checkpointLocation = DiaryLocation(name: checkpoint.locationName, district: checkpoint.locationDistrict, latitude: checkpoint.locationLatitude, longitude: checkpoint.locationLongitude)
+        let checkpointLocation = DiaryLocation(name: checkpoint.locationName, district: checkpoint.locationDistrict, latitude: checkpoint.locationLatitude, longitude: checkpoint.locationLongitude, country: checkpoint.locationCountry, region: checkpoint.locationRegion, city: checkpoint.locationCity, street: checkpoint.locationStreet)
         let checkpointLocationValue: DiaryLocation? = checkpointLocation.isEmpty ? nil : checkpointLocation
         if checkpointLocationValue != originalLocation { return true }
         let checkpointKeys = checkpoint.images.compactMap { $0.serverKey }
@@ -9221,7 +9233,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 原快照仍以服务端原篇为准（不是检查点值），否则恢复后的标签改动
         // 与原快照相同、PUT 漏发 tags，改动丢了。
         originalTags = editingEntry?.tags ?? []
-        let checkpointLocation = DiaryLocation(name: checkpoint.locationName, district: checkpoint.locationDistrict, latitude: checkpoint.locationLatitude, longitude: checkpoint.locationLongitude)
+        let checkpointLocation = DiaryLocation(name: checkpoint.locationName, district: checkpoint.locationDistrict, latitude: checkpoint.locationLatitude, longitude: checkpoint.locationLongitude, country: checkpoint.locationCountry, region: checkpoint.locationRegion, city: checkpoint.locationCity, street: checkpoint.locationStreet)
         selectedLocation = checkpointLocation.isEmpty ? nil : checkpointLocation
         // 引用/写给恢复（审计 #47）：写给已清除 → 记 cleared；改选 → 按 id 重建
         // chip（名未知时显“用户”，PUT 值正确）；未动不碰。引用被删 → 清
@@ -9885,7 +9897,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let editLiveVideos: [String: String]? = uploadedLiveVideos().isEmpty
             ? ((editingEntry?.liveVideos?.isEmpty == false) ? [:] : nil)
             : uploadedLiveVideos()
-                BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil, locationLatitude: locationChanged ? selectedLocation?.latitude : nil, locationLongitude: locationChanged ? selectedLocation?.longitude : nil, clearLocationCoords: locationChanged && selectedLocation?.latitude == nil, temperature: selectedTemperature, liveVideos: editLiveVideos, tags: tagsChanged ? selectedTags : nil) { [weak self] result in
+                BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil, locationLatitude: locationChanged ? selectedLocation?.latitude : nil, locationLongitude: locationChanged ? selectedLocation?.longitude : nil, clearLocationCoords: locationChanged && selectedLocation?.latitude == nil, locationCountry: locationChanged ? selectedLocation?.country : nil, locationRegion: locationChanged ? selectedLocation?.region : nil, locationCity: locationChanged ? selectedLocation?.city : nil, locationStreet: locationChanged ? selectedLocation?.street : nil, clearLocationDetail: locationChanged, temperature: selectedTemperature, liveVideos: editLiveVideos, tags: tagsChanged ? selectedTags : nil) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false

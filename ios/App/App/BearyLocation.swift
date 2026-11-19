@@ -10,18 +10,29 @@ import CoreLocation
 //   逆地理编码失败／离线回退显示原存地名；无经纬度的旧日记只显示原存地名，不动。
 // - 地图渲染时优先用存量经纬度直接落钉；无坐标的旧日记仍按文本现场地理编码
 //   （见 BearyDiaryMapViewController，缓存只在内存、随页销毁）。
-// - 展示层实时脱敏：库里保留精确值，非作者一律只渲染区级（公开、仅好友、
-//   私密不分，精确位置只有作者本人在非公开篇可见）；公开翻回私密，精确位置
+// - 展示层实时脱敏（2026-11-19 七组版，定位地址精度七档）：
+//   服务端按作者精度截断存储与展示（细于精度的文本不入库、列表/详情/搜索
+//   下发时再截断一次）；非作者与作者本人看自己的公开篇看到的文案一致——
+//   截断后的最细地域文本（精确名不进公开行）；非公开篇作者本人按自己的
+//   精度封顶（默认区县；地球档不显示位置行）。公开翻回私密，精确位置
 //   立即恢复（因为脱敏不在写库时做，翻转无需回写）。
-// - 作者本人看自己的公开篇也只渲染区级（与他人所见文案一致，不再另附
-//   “公开后他人仅见区级”提示行，2026-11-10 Li 定）；非公开篇作者本人才看精确名。
-// - 他人视角 fail-closed：只有精确名、没有区级文本时，他人行直接不显示位置行，
-//   绝不把精确名当区级兜底露出。
+// - 作者本人看自己的公开篇也只渲染截断后的地域文本（与他人所见文案一致，
+//   不再另附“公开后他人仅见区级”提示行，2026-11-10 Li 定）。
+// - 他人视角 fail-closed：只有精确名、没有地域文本时，他人行直接不显示位置行，
+//   绝不把精确名当地域文本兜底露出。
 
 /// 编辑器/草稿/发布共用的位置值（两段文本＋经纬度）。
 struct DiaryLocation: Equatable {
     var name: String?
     var district: String?
+    /// 2026-11-19 七组版：定位地址精度分级字段（发布时随地点一起存，
+    /// 取自 placemark；缺字段时显示层向粗回退，绝不拿精确名凑数）。
+    /// country：国家；region：省/州（地区/大洲档）；city：城市；
+    /// street：街道名（街名，不含门牌号）。
+    var country: String?
+    var region: String?
+    var city: String?
+    var street: String?
     /// 2026-11-14 Li 定：地点改存经纬度（推翻方案 A 只存文本口径）；写路径下坐标
     /// 恒随文本一起存（定位／搜索结果自带坐标）；显示层按当前语言逆地理编码取地名。
     /// 埋藏定位仍只存区级名、不存经纬度（见 BearyTimeCapsule），与本字段无关。
@@ -29,9 +40,9 @@ struct DiaryLocation: Equatable {
     var longitude: Double?
 
     var isEmpty: Bool {
-        let n = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let d = (district ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        return n.isEmpty && d.isEmpty
+        // 2026-11-19 七组版：精度分级字段也是位置——只剩国家/地区时仍算有位置。
+        let fields = [name, district, country, region, city, street]
+        return fields.allSatisfy { ($0 ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
     /// 坐标是否齐全可用：写路径下坐标恒随文本一起存，旧日记无坐标时为 false；
@@ -41,17 +52,25 @@ struct DiaryLocation: Equatable {
         return (-90...90).contains(lat) && (-180...180).contains(lng) && (lat != 0 || lng != 0)
     }
 
-    init(name: String?, district: String?, latitude: Double? = nil, longitude: Double? = nil) {
+    init(name: String?, district: String?, latitude: Double? = nil, longitude: Double? = nil, country: String? = nil, region: String? = nil, city: String? = nil, street: String? = nil) {
         let n = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let d = (district ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         self.name = n.isEmpty ? nil : n
         self.district = d.isEmpty ? nil : d
+        func clean(_ value: String?) -> String? {
+            let t = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.isEmpty ? nil : t
+        }
+        self.country = clean(country)
+        self.region = clean(region)
+        self.city = clean(city)
+        self.street = clean(street)
         self.latitude = latitude
         self.longitude = longitude
     }
 
     init(entry: Entry) {
-        self.init(name: entry.locationName, district: entry.locationDistrict, latitude: entry.locationLatitude, longitude: entry.locationLongitude)
+        self.init(name: entry.locationName, district: entry.locationDistrict, latitude: entry.locationLatitude, longitude: entry.locationLongitude, country: entry.locationCountry, region: entry.locationRegion, city: entry.locationCity, street: entry.locationStreet)
     }
 }
 
@@ -67,11 +86,11 @@ enum BearyLocationDisplay {
     }
 
     /// 卡片/详情/时间线/地图列表共用的位置行文案。
-    /// 返回 nil = 不显示位置行（无位置、或他人视角下只有精确名无区级、
-    /// 或作者本人看自己的公开篇但无区级）。
-    /// 口径（2026-11-10 Li 定）：公开篇作者本人也只看区级（与他人视角
-    /// 看到的文案一致，不再另附“公开后他人仅见区级”提示行）；非公开篇
-    /// 作者本人看精确名；非作者一律只到区级。
+    /// 返回 nil = 不显示位置行（无位置、或他人视角下只有精确名无地域文本、
+    /// 或作者本人看自己的公开篇但无地域文本）。
+    /// 口径（2026-11-19 七组版，定位地址精度）：非作者与作者本人看自己的公开篇
+    /// 看到的文案一致——服务端按作者精度截断后的最细地域文本（精确名不进公开行）；
+    /// 非公开篇作者本人按自己的精度封顶（默认区县；地球档不显示位置行）。
     static func display(entry: Entry) -> String? {
         return display(
             location: DiaryLocation(entry: entry),
@@ -83,18 +102,18 @@ enum BearyLocationDisplay {
     static func display(location: DiaryLocation, isPublic: Bool, viewerIsAuthor: Bool) -> String? {
         if location.isEmpty { return nil }
         if !viewerIsAuthor {
-            // 非作者一律只到区级：不依赖日记是否公开——仅好友篇 isPublic
-            // 为 false，旧口径会落进精确名分支；没有区级就不显示，绝不
-            // 回退到精确名。
-            return location.district
+            // 非作者：显示服务端按作者精度截断后的最细地域文本（细→粗：街道／区县／
+            // 城市／地区／国家）；精确名不进他人行（与旧口径一致）。
+            return location.street ?? location.district ?? location.city ?? location.region ?? location.country
         }
         if isPublic {
-            // 作者本人看自己的公开篇：直接显示区级（与他人视角一致）；
-            // 无区级不显示，不回退到精确名。
-            return location.district
+            // 作者本人看自己的公开篇：与他人视角一致——按自己的精度封顶后的最细地域文本
+            // （逆地理编码路径也经此封顶，不会绕过服务端的截断）。
+            return BearyLocationPrecision.current.areaText(for: location)
         }
-        // 作者本人看自己的非公开篇（私密／仅好友／限时）：精确名优先，无名退区级。
-        return location.name ?? location.district
+        // 作者本人看自己的非公开篇（私密／仅好友／限时）：按自己的定位地址精度
+        // 封顶（默认区县，与公开口径一致；地球档不显示位置行；缺字段向粗回退）。
+        return BearyLocationPrecision.current.displayText(for: location)
     }
 
     /// 区级文本派生（逆地理编码/搜索 placemark 共用）：
@@ -179,24 +198,24 @@ enum BearyLocationDisplay {
 /// 逆地理编码失败／离线时回退显示原存地名（调用方保留同步算出的原存文本行）；
 /// 无经纬度的旧日记不解析，只显示原存地名。
 /// 地名派生与写路径同口径（placemark.name + district(from:)），只差语言是当前的；
-/// 可见性脱敏与同步 display 完全一致（公开→区级、私密→精确、他人→区级）。
+/// 可见性脱敏与同步 display 完全一致（公开→精度封顶后的地域文本、私密→精度封顶、他人→地域文本）。
 enum BearyLocationDisplayNames {
-    /// 坐标＋语言 → 解析出的（精确名，区级）。只活在内存里，随进程销毁；
+    /// 坐标＋语言 → 解析出的（精确名，区级，国家，省/州，城市，街道）。只活在内存里，随进程销毁；
     /// 切语言后键里的语言变了，旧缓存自然不再命中。失败不缓存，下次渲染再试。
-    private static var cache: [String: (name: String?, district: String?)] = [:]
+    private static var cache: [String: (name: String?, district: String?, country: String?, region: String?, city: String?, street: String?)] = [:]
     /// 在途解析的回调表：同坐标同语言只发一次请求，多处共用回包。
-    private static var pending: [String: [((name: String?, district: String?)?) -> Void]] = [:]
+    private static var pending: [String: [((name: String?, district: String?, country: String?, region: String?, city: String?, street: String?)?) -> Void]] = [:]
 
     private static func cacheKey(latitude: Double, longitude: Double) -> String {
         let lang = Locale.preferredLanguages.first ?? Locale.current.identifier
         return "\(latitude),\(longitude)|\(lang)"
     }
 
-    /// 当前语言的地名（精确名，区级）：有经纬度时逆地理编码取当语言地名；
+    /// 当前语言的地名（精确名，区级，国家，省/州，城市，街道）：有经纬度时逆地理编码取当语言地名；
     /// 失败／无经纬度／解析出空地名时回 nil，调用方保留原存文本。
     /// 回调总在主线程、总异步投递（缓存命中也不例外，调用方在 cellForRow 内调也安全）；
     /// 同一行重复渲染共用一次在途请求。调用方须在主线程调用。
-    static func resolvedNames(for entry: Entry, completion: @escaping ((name: String?, district: String?)?) -> Void) {
+    static func resolvedNames(for entry: Entry, completion: @escaping ((name: String?, district: String?, country: String?, region: String?, city: String?, street: String?)?) -> Void) {
         guard let lat = entry.locationLatitude, let lng = entry.locationLongitude,
               (-90...90).contains(lat), (-180...180).contains(lng), (lat != 0 || lng != 0) else {
             DispatchQueue.main.async { completion(nil) }
@@ -222,12 +241,16 @@ enum BearyLocationDisplayNames {
                 }
                 let name = placemark.name
                 let district = BearyLocationDisplay.district(from: placemark)
-                let resolved = DiaryLocation(name: name, district: district, latitude: lat, longitude: lng)
+                // 精度分级字段随同一份 placemark 一起取（显示层按精度封顶时用，
+                // 缺字段向粗回退；与发布时存库的四字段同口径）。
+                let resolved = DiaryLocation(name: name, district: district, latitude: lat, longitude: lng,
+                                             country: placemark.country, region: placemark.administrativeArea,
+                                             city: placemark.locality, street: placemark.thoroughfare)
                 guard !resolved.isEmpty else {
                     callbacks.forEach { $0(nil) }
                     return
                 }
-                let names = (name, district)
+                let names = (name, district, placemark.country, placemark.administrativeArea, placemark.locality, placemark.thoroughfare)
                 cache[key] = names
                 callbacks.forEach { $0(names) }
             }
@@ -243,7 +266,8 @@ enum BearyLocationDisplayNames {
                 return
             }
             let line = BearyLocationDisplay.display(
-                location: DiaryLocation(name: names.name, district: names.district, latitude: entry.locationLatitude, longitude: entry.locationLongitude),
+                location: DiaryLocation(name: names.name, district: names.district, latitude: entry.locationLatitude, longitude: entry.locationLongitude,
+                                        country: names.country, region: names.region, city: names.city, street: names.street),
                 isPublic: BearyEphemeral.isEffectivelyPublic(entry),
                 viewerIsAuthor: BearyLocationDisplay.viewerIsAuthor(entry: entry))
             completion(line)
@@ -259,7 +283,8 @@ enum BearyLocationDisplayNames {
               (-90...90).contains(lat), (-180...180).contains(lng), (lat != 0 || lng != 0) else { return nil }
         guard let names = cache[cacheKey(latitude: lat, longitude: lng)] else { return nil }
         return BearyLocationDisplay.display(
-            location: DiaryLocation(name: names.name, district: names.district, latitude: lat, longitude: lng),
+            location: DiaryLocation(name: names.name, district: names.district, latitude: lat, longitude: lng,
+                                    country: names.country, region: names.region, city: names.city, street: names.street),
             isPublic: BearyEphemeral.isEffectivelyPublic(entry),
             viewerIsAuthor: BearyLocationDisplay.viewerIsAuthor(entry: entry))
     }
