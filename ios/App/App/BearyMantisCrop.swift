@@ -4,8 +4,13 @@ import Mantis
 // MARK: - Mantis 裁剪接入（Mantis-spm 3.1.1，iOS 15+）
 //
 // 两处调用方（编辑资料头像/封面、编辑器选图）共用。裁剪行为口径：
-// - 固定比例：头像/编辑器 1:1、封面按本页预览比例，比例切换钮不出现
+// - 固定比例：头像 1:1、封面按本页预览比例，比例切换钮不出现
 //   （presetFixedRatioType = .alwaysUsingOnePresetFixedRatio）。
+// - 自由比例：写日记页／编辑日记用（makeFreeCropViewController）：初始不定
+//   比例，裁剪框可自由拖动；工具栏比例钮由库自带，点按弹出原图／1:1／
+//   3:2／5:3／4:3／5:4／7:5／16:9，选一个即锁定该比例，再点比例钮回到
+//   自由拖动（presetFixedRatioType = .canUseMultiplePresetFixedRatio()，
+//   defaultRatio 默认为 0 即初始自由；ratioOptions 默认 .all）。
 // - 旋转拨盘隐藏，只保留双指缩放＋拖动。
 // - 确认先退场再回调（#952 同款口径）：回调里若弹提示（编辑资料图超限）
 //   不会被仍呈现的裁剪页吞掉；取消不回调、不碰调用方状态。
@@ -25,6 +30,20 @@ enum BearyMantisCrop {
     static func makeCropViewController(image: UIImage, aspectRatio: CGFloat) -> Mantis.CropViewController {
         var config = Mantis.Config()
         config.presetFixedRatioType = .alwaysUsingOnePresetFixedRatio(ratio: Double(aspectRatio > 0 ? aspectRatio : 1))
+        config.cropViewConfig.showAttachedRotationControlView = false
+        config.cropViewConfig.maxImagePixelCount = 4096 * 4096
+        let cropViewController = Mantis.cropViewController(image: image, config: config)
+        cropViewController.modalPresentationStyle = .fullScreen
+        return cropViewController
+    }
+
+    /// 按自由比例建一个 Mantis 裁剪页（fullScreen）：写日记页／编辑日记用，
+    /// 新写与编辑走同一条入口（BearyComposerViewController.presentCropEditor），
+    /// 一次改完。初始不定比例、裁剪框可自由拖动，比例钮由库自带；
+    /// 头像／封面不动，仍走上面的固定比例。
+    static func makeFreeCropViewController(image: UIImage) -> Mantis.CropViewController {
+        var config = Mantis.Config()
+        config.presetFixedRatioType = .canUseMultiplePresetFixedRatio()
         config.cropViewConfig.showAttachedRotationControlView = false
         config.cropViewConfig.maxImagePixelCount = 4096 * 4096
         let cropViewController = Mantis.cropViewController(image: image, config: config)

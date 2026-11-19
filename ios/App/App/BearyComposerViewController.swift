@@ -6947,8 +6947,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func presentCropEditor(for item: ComposerImageItem, source: UIImage) {
         // 磁盘读图是异步的：回到主线程时若已有弹窗在上（草稿箱等），不再叠页。
         if presentedViewController != nil { return }
-        // Mantis 裁剪（3.1.1）：固定 1:1、确认先退场再回调；回调体（applyCroppedImage）未动。
-        let cropVC = BearyMantisCrop.makeCropViewController(image: source, aspectRatio: 1)
+        // Mantis 裁剪（3.1.1）：自由比例、可拖动，比例钮由库自带（原图／1:1／
+        // 3:2／4:3／16:9 等）；确认先退场再回调；回调体（applyCroppedImage）未动。
+        // 新写与编辑日记同走本入口（isEditMode 只区分标题与发布文案），一次改完。
+        let cropVC = BearyMantisCrop.makeFreeCropViewController(image: source)
         let handler = BearyMantisCropHandler(onCrop: { [weak self, weak item] cropped in
             guard let self = self, let item = item else { return }
             self.applyCroppedImage(cropped, to: item)
