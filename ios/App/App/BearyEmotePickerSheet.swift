@@ -292,7 +292,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     /// closeTapped，否则统一弹簧（0.26s／damping 0.7＋松手速度）弹回原位，减动效直接落位；取消/失败同样弹回。
     /// 2026-10-30 抓手批：核对过，列表区不盖住抓手行（列表顶约 y58–60，
     /// 抓手在 y10–14），且 pan 是手势而非覆盖视图，不会吞列表点按；
-    /// 故此处只补上滑统一口径（阻尼微移后回弹，不扩高、不关闭），
+    /// 故此处上滑不动（弹窗贴底，底部不空），只下滑关闭；
     /// 阈值 80/600 不动；门控已由审计 D-7 改为实测帧划分（见 gestureRecognizerShouldBegin）。
     @objc private func sheetPanGesture(_ gesture: UIPanGestureRecognizer) {
         let translation = gesture.translation(in: view)

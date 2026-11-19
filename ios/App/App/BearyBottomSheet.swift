@@ -7,7 +7,7 @@ import UIKit
 // 出现——弹窗弹簧 0.38s / damping 0.7 从底部升起，背后页面在弹窗高于容器一半时
 // 同步缩 0.92 倍、圆角 16pt（Li 2026-11-18 定：半屏及更矮的弹窗不缩背景，
 // 只压暗遮罩；门槛见 BearyBottomSheet.backgroundShrinkHeightRatio）、黑色遮罩压暗 0.45；拖动——弹窗可上下拖，下滑 1:1 跟手、上滑
-// 按 0.3 阻力折算，松手下拖超 80pt 或下甩速度 > 600pt/s 关闭、否则弹簧
+// 不动（弹窗始终贴底，往上拉底部不再空出来），松手下拖超 80pt 或下甩速度 > 600pt/s 关闭、否则弹簧
 // （0.26s / damping 0.7）弹回；关闭——背后页面同步恢复。遮罩点按与拖动关闭都走 requestDismiss
 //（子类可重写，如登录弹窗改走 cancelFromSheet——先停倒计时与在途任务，
 // 容器不得绕开它直接 dismiss，否则添加账号会话守卫 stays armed）。
@@ -43,8 +43,6 @@ enum BearyBottomSheet {
     static let dismissDistance: CGFloat = 80
     /// 下拖关闭速度阈值（规范 §6：拖动关闭统一速度 ＞600pt/s）。
     static let dismissVelocity: CGFloat = 600
-    /// 上拖阻力系数（超出静止位置的部分按 0.25 折算，与 BearySheetDrag 同口径）。
-    static let upwardResistance: CGFloat = 0.25
 }
 
 // MARK: - VoiceOver 焦点钩子（r29-14）
@@ -362,10 +360,12 @@ class BearyBottomSheetPresentationController: UIPresentationController {
         return pan === dragPan || extraDragPans.contains(pan)
     }
 
-    /// 拖动位移：下滑 1:1 跟手；上滑按 0.25 阻力折算、上浮封顶 24pt（不扩高、不脱底，只微移）。
+    /// 拖动位移：下滑 1:1 跟手；上滑不动（弹窗始终贴底，往上拉底部不再空出来）。
+    /// 2026-11-19 改：此前上滑按 0.25 阻尼微移、上浮封顶 24pt，弹窗上浮脱底、
+    /// 底部露出一截遮罩后页面，Li 截图报“往上拉时底部会空出来”。
     private static func dragOffset(for translationY: CGFloat) -> CGFloat {
         if translationY >= 0 { return translationY }
-        return max(translationY * BearyBottomSheet.upwardResistance, -24)
+        return 0
     }
 
     /// 拖动进度：下滑位移占弹窗高比例（0 = 静止，1 = 完全滑出）；

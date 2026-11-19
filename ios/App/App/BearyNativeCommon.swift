@@ -200,12 +200,14 @@ final class BearyCancellableScrollView: UIScrollView {
     }
 }
 
-/// 抓手跟手位移统一口径：下滑原样跟手；上滑不扩高、不关闭，只按
-/// 0.25 阻尼跟手微移、上限 24pt，松手 0.26s 弹回原位。
+/// 抓手跟手位移统一口径：下滑原样跟手；上滑不动（不扩高、不关闭、也不上浮，
+/// 弹窗始终贴底，往上拉底部不再空出来）。
+/// 2026-11-19 改：此前上滑按 0.25 阻尼跟手微移、上限 24pt，弹窗上浮脱底、
+/// 底部露出一截遮罩后页面，Li 截图报“往上拉时底部会空出来”。
 enum BearySheetDrag {
     static func offset(for translationY: CGFloat) -> CGFloat {
         if translationY >= 0 { return translationY }
-        return max(translationY * 0.25, -24)
+        return 0
     }
 
     /// 审计第 14 项：拖动进度到遮罩透明度的统一映射——与登录弹窗

@@ -700,8 +700,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     }
 
     /// 2026-10-30 抓手批：@ 选人 sheet 抓手下滑跟手——下滑超 80pt
-    /// 或快速下滑（速度 > 600）关闭，否则统一弹簧（0.26s／damping 0.7＋松手速度）弹回原位；上滑阻尼
-    /// 微移后回弹，不扩高、不关闭。遮罩点按关闭与关闭钮均不动。
+    /// 或快速下滑（速度 > 600）关闭，否则统一弹簧（0.26s／damping 0.7＋松手速度）弹回原位；上滑不动
+    /// （弹窗贴底，底部不空）。遮罩点按关闭与关闭钮均不动。
     /// 注意：键盘抬升走约束（phoneBottomConstraint / padCenterY），
     /// 本处理只动 transform，不改约束，两者不打架。
     @objc private func grabberPanGesture(_ gesture: UIPanGestureRecognizer) {

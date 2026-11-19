@@ -4876,7 +4876,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             // 记下静止态底安全区 inset，供上拖安全区补偿封顶用。
             dragRestBottomInset = presentedView.safeAreaInsets.bottom
         case .changed:
-            // 抓手批统一口径：下滑跟手，上滑阻尼微移（不扩高、不关闭）。
+            // 抓手批统一口径：下滑跟手，上滑不动（弹窗贴底，底部不空）。
             let drag = BearySheetDrag.offset(for: translation)
             presentedView.transform = CGAffineTransform(translationX: 0, y: drag)
             sheetShadowView.transform = presentedView.transform
