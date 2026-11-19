@@ -264,6 +264,8 @@ final class BearyChromeViewController: UIViewController {
     /// 通知详情页 modal 的 EdgeDismiss 强持有（transitioningDelegate 弱引用，
     /// 不持有则手势与动画代理失效，见 presentNotificationDetail）。
     private var notificationDetailEdgeDismiss: BearyEdgeDismissController?
+    /// 当前打开的通知列表页（弱持有，供详情展开过渡找源行；关页后即释放）。
+    private weak var activeNotificationDetailVC: BearyNotificationDetailViewController?
     /// 日记详情页 modal 的 EdgeDismiss 强持有（见 presentDetail）。
     private var detailEdgeDismiss: BearyEdgeDismissController?
     /// 标签聚合页 modal 的 EdgeDismiss 强持有（见 presentTagPage）。
@@ -3752,6 +3754,7 @@ final class BearyChromeViewController: UIViewController {
         edgeDismiss.attach(to: nav)
         nav.transitioningDelegate = edgeDismiss
         self.notificationDetailEdgeDismiss = edgeDismiss
+        self.activeNotificationDetailVC = vc
         topmostViewController().present(nav, animated: BearyMotion.animated(true))
     }
 
@@ -4006,6 +4009,13 @@ final class BearyChromeViewController: UIViewController {
         // 由 viewDidDisappear 的 isBeingDismissed 分支照常触发）。
         let detailEdgeDismiss = BearyEdgeDismissController()
         detailEdgeDismiss.attach(to: detail)
+        // 详情展开过渡（2026-11-18 Li 定）：开场从源行快照 morph 长成整页、
+        // 关场缩回源行（关场时重问提供者、现量现用）；无源行时动画器走兜底。
+        let entryIdForTransition = entry.id
+        detailEdgeDismiss.expandSourceProvider = { [weak self] in
+            guard let self = self, let entryId = entryIdForTransition else { return nil }
+            return self.detailExpandSourceView(for: entryId, source: source)
+        }
         detail.transitioningDelegate = detailEdgeDismiss
         self.detailEdgeDismiss = detailEdgeDismiss
         // 审计 7-6：来源列表在第一次被露出前预恢复锚点——边缘拖动开拖插底层
@@ -4087,6 +4097,33 @@ final class BearyChromeViewController: UIViewController {
     private func prepareDetailReturnPosition(entryId: String) {
         guard let context = pendingDetailReturn, context.entryId == entryId else { return }
         applyDetailReturnPosition(context)
+    }
+
+    /// 详情展开过渡的源行视图（2026-11-18 Li 定）：只返回当前真正在屏上的行。
+    /// 各列表的 detailSourceView 只在行可见时返回 cell（滚出视野即 nil），
+    /// 动画器还会再验祖先显隐与矩形。有明确来源列表时先问它；通知／搜索／
+    /// 深链无 source 时先问通知列表页（在前台时它盖着消息页，同篇行以后者为准），
+    /// 再问消息页与通知页，最后回落三列表——行不在视野内时自然返回 nil，
+    /// 动画器走淡入淡出兜底。列表滚动位置全程不动。
+    private func detailExpandSourceView(for entryId: String, source: DetailReturnSource?) -> UIView? {
+        switch source {
+        case .feed:
+            return feedVC?.detailSourceView(for: entryId)
+        case .timeline:
+            return timelineVC?.detailSourceView(for: entryId)
+        case .profile:
+            return profileVC?.detailSourceView(for: entryId)
+        case .tag, .search, .none:
+            // 标签聚合页／搜索页没有 detailSourceView：落到下方回落链，
+            // 问不到即 nil、动画器走淡入淡出兜底。
+            break
+        }
+        if let view = activeNotificationDetailVC?.detailSourceView(for: entryId) { return view }
+        if let view = messagesVC?.detailSourceView(for: entryId) { return view }
+        if let view = notifVC?.detailSourceView(for: entryId) { return view }
+        if let view = feedVC?.detailSourceView(for: entryId) { return view }
+        if let view = timelineVC?.detailSourceView(for: entryId) { return view }
+        return profileVC?.detailSourceView(for: entryId)
     }
 
     /// 详情只读返回：只把来源列表里该篇放回打开时的视口位置；上下文已消费

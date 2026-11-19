@@ -45,6 +45,12 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
     /// 那一代；新一拖已认领底层画面时，旧清理不再碰它。
     private var underlyingGeneration = 0
 
+    /// 详情展开过渡的源行提供者：返回当前真正在屏上的源行视图（卡片行／通知行），
+    /// 动画器在开场与关场时各问一次、现量现用（关场重量的即关闭终点）。
+    /// 未设置时详情走旧 slide 进出（编辑器等其他全屏 modal 不设、不受影响）；
+    /// 返回 nil（源行已滚出视野／不在当前页）时动画器走淡入淡出兜底。
+    var expandSourceProvider: (() -> UIView?)?
+
     /// 完成模式回调：设置后本控制器不再驱动交互式过渡，只在边缘滑过阈值
     /// （35% 宽度或右滑速度 >800）时调一次回调，关闭由回调方自己的流程完成。
     /// 返回值：true 表示退出已在进行（即将关页，或草稿保存已提交、关页随后发生）；
@@ -84,6 +90,11 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
     // MARK: - UIViewControllerTransitioningDelegate
 
     func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        // 详情展开过渡：设了源行提供者时走快照 morph（无源行时动画器内部
+        // 回落 slide，不改既有行为）；其余 modal 沿用 slide。
+        if expandSourceProvider != nil {
+            return BearyDetailExpandAnimator(isPresenting: true, sourceProvider: expandSourceProvider)
+        }
         return BearySlideTransitionAnimator(isPresenting: true)
     }
 
@@ -94,6 +105,11 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
         if underlyingViewPrepared {
             underlyingViewPrepared = false
             preparedUnderlyingView = nil
+        }
+        // 详情展开过渡：设了源行提供者时走缩回 morph；右滑跟手退场（视图已被
+        // 手势拖离原位）与无源行时动画器内部回落 slide／淡出。
+        if expandSourceProvider != nil {
+            return BearyDetailExpandAnimator(isPresenting: false, sourceProvider: expandSourceProvider)
         }
         return BearySlideTransitionAnimator(isPresenting: false, onDismissWillStart: onSourceViewWillReveal)
     }
@@ -351,5 +367,188 @@ private final class BearySlideTransitionAnimator: NSObject, UIViewControllerAnim
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
             })
         }
+    }
+}
+
+/// 日记详情展开过渡（2026-11-18 Li 定，预览 Space ri-ji-xiang-qing-zhan-kai-guo-du-yu-lan）：
+/// 点卡片／通知行打开详情时，详情从源行的精确位置／大小／圆角连续长成整页；
+/// 返回时沿原路平滑缩回源行。背景列表只变暗（标准 scrim），不缩放、不缩小。
+///
+/// 手感与灯箱进场缩放同档：0.26s（BearyMotion.normal）、临界阻尼弹簧 1.0，
+/// 无超调（灯箱关场阻尼 2026-11-17 #1544 定，0.7 欠阻尼超调约 4.6% 会闪高）。
+/// #1987 灯箱开场缩放支尚未合入 main，本动画器按同一口径独立实现，
+/// 未复用其类；两支都合入后可视情况归一。
+///
+/// 防闪：开场先把详情按终态铺好（layoutIfNeeded）、快照落在源行矩形上再开
+/// 动画，首帧即完整画面，中间不露窗口黑底（灯箱 ReturnAnimator 同款思路，
+/// 关场第一步先把底层页加进容器）。
+/// 兜底：减动效时只淡入淡出、不动位置；开场无源行（深链／搜索／引用）沿用旧
+/// slide 入场；关场源行已滚出视野／无源行时淡出；右滑跟手退场（视图已被手势
+/// 拖离原位）走旧 slide 退场，与拖动连续。详情页自身内容、卡片布局、
+/// 通知逻辑一字不动，只改过渡。
+final class BearyDetailExpandAnimator: NSObject, UIViewControllerAnimatedTransitioning {
+
+    private let isPresenting: Bool
+    private let sourceProvider: (() -> UIView?)?
+
+    init(isPresenting: Bool, sourceProvider: (() -> UIView?)?) {
+        self.isPresenting = isPresenting
+        self.sourceProvider = sourceProvider
+        super.init()
+    }
+
+    func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
+        return BearyMotion.normal
+    }
+
+    func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
+        if isPresenting {
+            animatePresent(using: transitionContext)
+        } else {
+            animateDismiss(using: transitionContext)
+        }
+    }
+
+    // MARK: - 源行矩形
+
+    /// 源行在转场容器里的矩形；行必须真正在屏上才算——任一祖先隐藏／透明、
+    /// 不在窗口里、或矩形不完整落在容器内时返回 nil（调用方走兜底）。
+    /// 隐藏页里的行（cellForRow 仍取得到）由祖先 isHidden 拦住，不会误认。
+    private func sourceRectInContainer(_ sourceView: UIView, container: UIView) -> CGRect? {
+        var ancestor: UIView? = sourceView
+        while let view = ancestor {
+            if view.isHidden || view.alpha == 0 { return nil }
+            ancestor = view.superview
+        }
+        guard sourceView.window != nil else { return nil }
+        let rect = container.convert(sourceView.convert(sourceView.bounds, to: nil), from: nil)
+        guard container.bounds.insetBy(dx: -1, dy: -1).contains(rect) else { return nil }
+        return rect
+    }
+
+    // MARK: - 开场
+
+    private func animatePresent(using transitionContext: UIViewControllerContextTransitioning) {
+        let container = transitionContext.containerView
+        let duration = transitionDuration(using: transitionContext)
+        guard let toVC = transitionContext.viewController(forKey: .to),
+              let toView = transitionContext.view(forKey: .to) else {
+            transitionContext.completeTransition(false)
+            return
+        }
+        let finalFrame = transitionContext.finalFrame(for: toVC)
+        container.addSubview(toView)
+        toView.frame = finalFrame
+        // 首帧提交：详情先按终态排好版，再开动画，中间不闪。
+        toView.layoutIfNeeded()
+        toView.alpha = 0
+        // 减动效：只淡入，不动位置。
+        if UIAccessibility.isReduceMotionEnabled {
+            UIView.animate(withDuration: duration, animations: {
+                toView.alpha = 1
+            }, completion: { _ in
+                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+            })
+            return
+        }
+        guard let provider = sourceProvider,
+              let sourceView = provider(),
+              let sourceRect = sourceRectInContainer(sourceView, container: container),
+              let snapshot = sourceView.snapshotView(afterScreenUpdates: false) else {
+            // 无源行（深链／搜索／引用）或快照失败：沿用旧 slide 入场，
+            // 不改既有行为；toView 已就位，直接淡入亦可，此处交回 slide。
+            toView.alpha = 1
+            BearySlideTransitionAnimator(isPresenting: true).animateTransition(using: transitionContext)
+            return
+        }
+        // 背景列表只变暗（标准 scrim），不缩放。
+        let dimView = UIView(frame: container.bounds)
+        dimView.backgroundColor = BearySheetChrome.scrimColor
+        dimView.alpha = 0
+        container.insertSubview(dimView, belowSubview: toView)
+        let radius = sourceView.layer.cornerRadius
+        snapshot.frame = sourceRect
+        snapshot.layer.cornerRadius = radius
+        snapshot.clipsToBounds = true
+        container.addSubview(snapshot)
+        container.layoutIfNeeded()
+        UIView.animate(withDuration: duration, delay: 0, usingSpringWithDamping: 1.0, initialSpringVelocity: 0, options: .curveEaseOut, animations: {
+            snapshot.frame = finalFrame
+            snapshot.layer.cornerRadius = 0
+            dimView.alpha = 1
+        }, completion: { _ in
+            // 弹簧临界阻尼单调趋近目标，结束时帧即终态；先显式归位再换真页，
+            // 快照与真页同一帧交接，不跳变。
+            snapshot.frame = finalFrame
+            toView.alpha = 1
+            snapshot.removeFromSuperview()
+            dimView.removeFromSuperview()
+            transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+        })
+    }
+
+    // MARK: - 关场
+
+    private func animateDismiss(using transitionContext: UIViewControllerContextTransitioning) {
+        let container = transitionContext.containerView
+        let duration = transitionDuration(using: transitionContext)
+        guard let fromView = transitionContext.view(forKey: .from),
+              let toView = transitionContext.view(forKey: .to),
+              let toVC = transitionContext.viewController(forKey: .to) else {
+            transitionContext.completeTransition(false)
+            return
+        }
+        // 底层页先就位（ReturnAnimator 同款防闪），再做一切动画。
+        toView.frame = transitionContext.finalFrame(for: toVC)
+        container.addSubview(toView)
+        container.addSubview(fromView)
+        // 右滑跟手退场：视图已被手势拖离原位，走旧 slide 退场，与拖动连续。
+        if fromView.transform != .identity {
+            BearySlideTransitionAnimator(isPresenting: false).animateTransition(using: transitionContext)
+            return
+        }
+        // 减动效：只淡出，不动位置。
+        if UIAccessibility.isReduceMotionEnabled {
+            UIView.animate(withDuration: duration, animations: {
+                fromView.alpha = 0
+            }, completion: { _ in
+                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+            })
+            return
+        }
+        // 关场重量的源行位置即关闭终点；源行已滚出视野／无源行／快照失败时淡出。
+        guard let provider = sourceProvider,
+              let sourceView = provider(),
+              let targetRect = sourceRectInContainer(sourceView, container: container),
+              let snapshot = fromView.snapshotView(afterScreenUpdates: false) else {
+            UIView.animate(withDuration: duration, animations: {
+                fromView.alpha = 0
+            }, completion: { _ in
+                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+            })
+            return
+        }
+        let radius = sourceView.layer.cornerRadius
+        // 开场结束时列表是 dim 态：关场先以同等 dim 盖住列表，再随快照缩小淡回。
+        let dimView = UIView(frame: container.bounds)
+        dimView.backgroundColor = BearySheetChrome.scrimColor
+        dimView.alpha = 1
+        container.insertSubview(dimView, aboveSubview: toView)
+        snapshot.frame = container.bounds
+        snapshot.layer.cornerRadius = 0
+        snapshot.clipsToBounds = true
+        container.addSubview(snapshot)
+        fromView.alpha = 0
+        container.layoutIfNeeded()
+        UIView.animate(withDuration: duration, delay: 0, usingSpringWithDamping: 1.0, initialSpringVelocity: 0, options: .curveEaseOut, animations: {
+            snapshot.frame = targetRect
+            snapshot.layer.cornerRadius = radius
+            dimView.alpha = 0
+        }, completion: { _ in
+            snapshot.frame = targetRect
+            snapshot.removeFromSuperview()
+            dimView.removeFromSuperview()
+            transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+        })
     }
 }

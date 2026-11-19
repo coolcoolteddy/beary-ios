@@ -371,6 +371,17 @@ final class BearyMessagesViewController: UIViewController {
         }
     }
 
+    /// 详情展开过渡的源行：带该 entryId 的通知信件行可见时返回 cell
+    /// （供动画器快照 morph）；行不在视野内时返回 nil（动画器走兜底）。
+    /// 通知卡行（.notifCard）开的是通知详情页、不是日记详情，不在此列。
+    func detailSourceView(for entryId: String) -> UIView? {
+        for (row, merged) in mergedRows.enumerated() {
+            guard case .notifLetter(let item) = merged, item.entryId == entryId else { continue }
+            return tableView.cellForRow(at: IndexPath(row: row, section: 0))
+        }
+        return nil
+    }
+
     /// 交错排序：时间倒序（nil 视作 0 最老）；同时间戳通知行在前；
     /// 时间与种类都相同则保原序（先通知卡／信件、后会话的组内次序）。
     /// 首载未落定组不补占位行；失败行只在该组首次失败且贡献 0 行时出现

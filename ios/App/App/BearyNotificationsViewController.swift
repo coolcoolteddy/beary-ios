@@ -2998,6 +2998,19 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
         return cell
     }
 
+    /// 详情展开过渡的源行：带该 entryId 的通知行可见时返回 cell
+    /// （供动画器快照 morph）；行不在视野内时返回 nil（动画器走兜底）。
+    /// displayRows 是展示行（itemIndex 指回 items），卡片折叠行不带 entryId，
+    /// 自然不在此列。
+    func detailSourceView(for entryId: String) -> UIView? {
+        for (rowIndex, row) in displayRows.enumerated() {
+            guard let itemIndex = row.itemIndex, itemIndex < items.count else { continue }
+            guard items[itemIndex].entryId == entryId else { continue }
+            return tableView.cellForRow(at: IndexPath(row: rowIndex, section: 0))
+        }
+        return nil
+    }
+
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: !UIAccessibility.isReduceMotionEnabled)
         if indexPath.row == displayRows.count {
@@ -5386,6 +5399,13 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
                 self?.notifSource.performFollowBackForDetail(actorId: actorId)
             }
         }
+    }
+
+    /// 详情展开过渡的源行：带该 entryId 的通知行可见时返回 cell
+    /// （供动画器快照 morph）；行不在视野内时返回 nil（动画器走兜底）。
+    func detailSourceView(for entryId: String) -> UIView? {
+        guard let row = items.firstIndex(where: { $0.entryId == entryId }) else { return nil }
+        return tableView.cellForRow(at: IndexPath(row: row, section: 0))
     }
 
     // MARK: - Table

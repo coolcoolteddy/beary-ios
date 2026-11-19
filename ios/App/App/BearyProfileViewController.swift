@@ -6729,6 +6729,13 @@ class BearyProfileViewController: UIViewController {
         return tableView.rectForRow(at: IndexPath(row: row, section: 0)).origin.y - tableView.contentOffset.y
     }
 
+    /// 详情展开过渡的源行：行可见时返回 cell（供动画器快照 morph），
+    /// 行不在视野内时返回 nil（动画器走兜底，不碰滚动位置）。
+    func detailSourceView(for entryId: String) -> UIView? {
+        guard let row = displayedEntries.firstIndex(where: { $0.id == entryId }) else { return nil }
+        return tableView.cellForRow(at: IndexPath(row: row, section: 0))
+    }
+
     /// 详情关闭时把该篇放回打开时的视口位置；已在原位（±1pt）或不在展示行里时不动。
     func restoreDetailReturnAnchor(entryId: String, viewportOffset: CGFloat) {
         guard let row = displayedEntries.firstIndex(where: { $0.id == entryId }) else { return }
