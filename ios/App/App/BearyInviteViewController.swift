@@ -10,9 +10,9 @@ import UIKit
 //   - （2026-10-29 第 4 项：风控提示行已删，零残留；风控逻辑本身不动。）
 //   - 统计“已邀请 N 人 · 累计获得 M 天 Plus（rewardMonths × 30）”（accounts /me 的 referral
 //     invited_count / reward_months，只数 granted/pending/granting/flagged）；
-//   - 绑定区三态：已绑定 → “已通过 X 的邀请加入 beary”（status 为 cancelled/expired
-//     时显示“邀请已作废”）；未绑定且 30 天补绑期内 → 输入框 + “绑定”钮 +
-//     “注册后 30 天内可补绑（还剩 N 天 / 还剩不到 1 天）”；其余 → 不显示绑定区。
+//   - 绑定区两态：已绑定 → “已通过 X 的邀请加入 beary”（status 为 cancelled/expired
+//     时显示“邀请已作废”）；未绑定 → 输入框 + “绑定”钮 + “随时可补绑”
+//     （邀请无时间限制，2026-11-19 Li 定）；其余 → 不显示绑定区。
 //   - 绑定结果文案与网页 ivDoBind 同款（granted/flagged/其他成功态、cancelled、
 //     服务端 message 透传、网络异常）。
 // 数据来源：SessionManager.refreshMe（复用本次会话的 /me：已确认字段
@@ -749,27 +749,12 @@ final class BearyInviteViewController: UIViewController {
             }
             boundRow.isHidden = false
         } else if let ref = referral, ref.bindOpen == true {
-            let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-            if let deadline = ref.bindDeadline, deadline <= nowMs {
-                // 审计 P2：补绑已过期——隐藏绑定框，明确显示过期文案，不按“不到 1 天”显示。
-                bindRow.isHidden = true
-                bindHintLabel.isHidden = false
-                setLabelTextFaded(bindHintLabel, "补绑期已过")
-            } else {
-                bindRow.isHidden = false
-                bindHintLabel.isHidden = false
-                if let deadline = ref.bindDeadline {
-                    let days = (deadline - nowMs) / 86400000
-                    if days > 0 {
-                        setLabelTextFaded(bindHintLabel, "注册后 30 天内可补绑（还剩 \(days) 天）")
-                    } else {
-                        setLabelTextFaded(bindHintLabel, "注册后 30 天内可补绑（还剩不到 1 天）")
-                    }
-                } else {
-                    setLabelTextFaded(bindHintLabel, "注册后 30 天内可补绑")
-                }
-                updateBindButton()
-            }
+            // 邀请无时间限制（2026-11-19 Li 定）：服务端不再下发 bind_deadline，
+            // 补绑随时可做，不再算倒计时。
+            bindRow.isHidden = false
+            bindHintLabel.isHidden = false
+            setLabelTextFaded(bindHintLabel, "随时可补绑")
+            updateBindButton()
         } else if referral != nil {
             // 审计 P2：未绑定且补绑窗口已关（bindOpen == false）——给过期文案，不整区静默消失。
             bindHintLabel.isHidden = false
@@ -894,7 +879,7 @@ final class BearyInviteViewController: UIViewController {
                         if resp.status == "granted" {
                             okText = "绑定成功，30 天 Plus 已到账"
                         } else if resp.status == "flagged" {
-                            okText = "绑定已提交，站长审核通过后，你们各得 30 天 Plus"
+                            okText = "绑定已提交，审核通过后你们各得 30 天 Plus"
                         } else {
                             okText = "绑定成功"
                         }

@@ -1128,7 +1128,7 @@ final class BearyLoginViewController: UIViewController {
         if resp.referral?.ok == true || status == "granted" {
             text = "绑定成功，30 天 Plus 已到账"
         } else if status == "flagged" {
-            text = "邀请码已提交，站长审核通过后各得 30 天 Plus"
+            text = "邀请码已提交，审核通过后各得 30 天 Plus"
         } else {
             var failure = "邀请码绑定失败"
             if let err = resp.referral?.error, !err.isEmpty, err != failure {
