@@ -34,6 +34,11 @@ public final class ProfileCoverView: UIView {
     private var hold: CGFloat = 0
     private var shown = false
     private var revealing = false
+    /// 分层首帧淡入进度 0→1：底图解码回填后，海报先按零倾斜帧构图留着，
+    /// 分层内容在其上 0.25s 内交叉淡入，遮住残余前景位差与入场倾斜量。
+    private var layeredBlend: CGFloat = 1
+    private var fadeStart: CFTimeInterval = 0
+    private var fadeLink: CADisplayLink?
 
     public init(theme: ProfileCoverTheme) {
         self.theme = theme
@@ -110,6 +115,13 @@ public final class ProfileCoverView: UIView {
             guard let self, let image else { return }
             self.backdrop = image
             self.backdropFrames = [:]
+            // 海报已按零倾斜帧构图画着：有海报时分层内容短交叉淡入，
+            // 无海报时直接切分层帧（淡入无物可衬会透出底色）。
+            if self.art[theme.rawValue + "-poster"] != nil {
+                self.startLayeredFade()
+            } else {
+                self.layeredBlend = 1
+            }
             self.setNeedsDisplay()
         }
     }
@@ -126,6 +138,7 @@ public final class ProfileCoverView: UIView {
     required init?(coder: NSCoder) { fatalError("Use init(theme:)") }
 
     deinit {
+        fadeLink?.invalidate()
         CoverMotionDriver.shared.detach(self)
         NotificationCenter.default.removeObserver(self)
     }
@@ -178,6 +191,27 @@ public final class ProfileCoverView: UIView {
     private func stop() {
         CoverMotionDriver.shared.detach(self)
         freeze()
+    }
+
+    /// 分层首帧短交叉淡入（0.25s，透明度-only）：CADisplayLink 按帧推进度，
+    /// 淡完自停；deinit 时失效，淡入中途释放不留野链。
+    private func startLayeredFade() {
+        fadeLink?.invalidate()
+        layeredBlend = 0
+        fadeStart = CACurrentMediaTime()
+        let link = CADisplayLink(target: self, selector: #selector(fadeTick(_:)))
+        link.add(to: .main, forMode: .common)
+        fadeLink = link
+    }
+
+    @objc private func fadeTick(_ link: CADisplayLink) {
+        let progress = min(1, (CACurrentMediaTime() - fadeStart) / 0.25)
+        layeredBlend = progress
+        setNeedsDisplay()
+        if progress >= 1 {
+            link.invalidate()
+            fadeLink = nil
+        }
     }
 
     /// 由共享驱动每帧调用：只算姿态、不直接画；变化小于阈值时跳过重画。
@@ -246,12 +280,19 @@ public final class ProfileCoverView: UIView {
         ctx.clip(to: bounds)
         ctx.translateBy(x: bounds.midX, y: bounds.midY)
         ctx.scaleBy(x: fit, y: fit)
-        if backdrop == nil, let poster = art[theme.rawValue + "-poster"] {
-            poster.draw(in: canvas.offsetBy(dx: -size.width / 2, dy: -size.height / 2))
-            return
-        }
+        // 海报与分层帧共用同一套构图：1.037 倍缩放＋扩边（零倾斜时的 padded），
+        // 底图解码回填后切帧不再跳位。分层首帧未淡入完时，海报留在下层衬着。
         ctx.scaleBy(x: 1.037, y: 1.037)
         ctx.translateBy(x: -size.width / 2, y: -size.height / 2)
+        let zeroTiltPoster = canvas.insetBy(dx: -32, dy: -12)
+        if backdrop == nil, let poster = art[theme.rawValue + "-poster"] {
+            poster.draw(in: zeroTiltPoster)
+            return
+        }
+        if layeredBlend < 1, let poster = art[theme.rawValue + "-poster"] {
+            poster.draw(in: zeroTiltPoster)
+            ctx.setAlpha(layeredBlend)
+        }
         let x = tilt.x, y = tilt.y
         let travel = min(1, max(-1, x + 0.22 * y))
         let depth = min(1, max(-1, x + 0.16 * y))
