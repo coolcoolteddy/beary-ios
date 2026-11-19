@@ -573,6 +573,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 编辑回填补拉在途态：true 时引用区失败行暂隐（防重复点重试）、保存钮同样
     /// 禁用（回填未完成时 PUT 同样会误清原引用与原图）；成功或失败回落时清掉。
     private var editQuoteFetchInFlight = false
+    /// 检查点引用换篇恢复失败后待重试的被引篇 id（restoreCheckpointQuote
+    /// 失败时记下，成功时清掉；用户手动改引用时清掉并连同 editQuoteFetchFailed
+    /// 一并复位，防重试拉回已放弃的旧篇）。didTapRetryEditQuoteFetch 凭它
+    /// 区分两种失败：有值 → 重拉检查点引用；为空 → 重拉被编日记补引用体。
+    private var pendingCheckpointQuoteId: String?
     /// 引用 qp-mode 进出时保存/恢复的外层滚动位置（网页 qpPrevScroll 的 sheet 滚动等价；
     /// 正文 UITextView 关滚动、随内容生长，故无 textarea 内部滚动需要另存）。
     private var quotePanelSavedScrollOffset = CGPoint.zero
@@ -2676,6 +2681,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     @objc private func didTapRemoveQuote() {
         if isEditMode {
             lockedQuote = nil
+            clearPendingCheckpointQuoteRetry()
         } else {
             selectedQuote = nil
             saveDraftNow()
@@ -2715,6 +2721,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }, onDeleteQuote: { [weak self] in
             guard let self = self else { return }
             self.lockedQuote = nil
+            self.clearPendingCheckpointQuoteRetry()
             self.refreshQuoteSection()
             self.showToast(message: "引用已移除，保存后生效")
         }, onKeepPrivate: {})
@@ -3843,6 +3850,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if currentSelectedQuoteId != nil && entryId == currentSelectedQuoteId {
             if isEditMode {
                 lockedQuote = nil
+                clearPendingCheckpointQuoteRetry()
             } else {
                 selectedQuote = nil
                 saveDraftNow()
@@ -3858,6 +3866,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let quote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, authorId: entry.authorId, isMine: entry.isMine, authorHandle: entry.authorHandle, images: entry.images ?? [], isPublic: BearyEphemeral.isEffectivelyPublic(entry), publishAt: entry.publishAt, imgDims: entry.imgDims, isDeleted: false, visibility: entry.visibility, ephemeralUntil: entry.ephemeralUntil)
         if isEditMode {
             lockedQuote = quote
+            clearPendingCheckpointQuoteRetry()
         } else {
             selectedQuote = quote
             // 网页选篇后 saveDraftQuiet 立即落盘，不走防抖。
@@ -8114,11 +8123,29 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
+    /// 用户手动改引用（选篇／取消／移除）时，检查点引用重试即作废：失败态
+    /// 与待重试 id 一并复位——失败的旧篇已不在局内，不再禁发、不再重试拉回。
+    /// 只在编辑态清（两旗标本就是编辑回填／检查点恢复专用）。
+    private func clearPendingCheckpointQuoteRetry() {
+        guard isEditMode else { return }
+        pendingCheckpointQuoteId = nil
+        editQuoteFetchFailed = false
+        updatePublishState()
+    }
+
     /// 补拉失败行“重试”：只在失败态重拉，不碰其他编辑器功能；点击时若已在途
     /// （失败行在途暂隐，正常点按到不了这里）或已非编辑态，直接返回。
+    /// #47：检查点引用换篇拉取失败后的重试只重拉该被引篇——旧口径重拉
+    /// 被编日记会走 setupEditContent 全量回填（editQuoteFetchAttempted
+    /// 在检查点恢复路径上从未立起），把检查点恢复的改动盖回服务端旧值，
+    /// 防抖随后判不脏清掉检查点，换篇改动就丢了。
     @objc private func didTapRetryEditQuoteFetch() {
-        guard isEditMode, editQuoteFetchFailed, !editQuoteFetchInFlight,
-              let entryId = editingEntry?.id, !entryId.isEmpty else { return }
+        guard isEditMode, editQuoteFetchFailed, !editQuoteFetchInFlight else { return }
+        if let quoteId = pendingCheckpointQuoteId {
+            restoreCheckpointQuote(quoteId: quoteId)
+            return
+        }
+        guard let entryId = editingEntry?.id, !entryId.isEmpty else { return }
         fetchEditEntryForMissingQuote(entryId: entryId)
     }
 
@@ -9630,16 +9657,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 case .success(let entry):
                     guard let entryId = entry.id, let content = entry.content else {
                         self.editQuoteFetchFailed = true
+                        self.pendingCheckpointQuoteId = quoteId
                         self.refreshQuoteSection()
                         self.updatePublishState()
                         return
                     }
                     self.editQuoteFetchFailed = false
+                    self.pendingCheckpointQuoteId = nil
                     self.lockedQuote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, authorId: entry.authorId, isMine: entry.isMine, authorHandle: entry.authorHandle, images: entry.images ?? [], isPublic: BearyEphemeral.isEffectivelyPublic(entry), publishAt: entry.publishAt, imgDims: entry.imgDims, isDeleted: false, visibility: entry.visibility, ephemeralUntil: entry.ephemeralUntil)
                     self.refreshQuoteSection()
                     self.updatePublishState()
                 case .failure:
                     self.editQuoteFetchFailed = true
+                    self.pendingCheckpointQuoteId = quoteId
                     self.refreshQuoteSection()
                     self.updatePublishState()
                 }
