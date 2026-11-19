@@ -2264,6 +2264,7 @@ class BearyTimelineViewController: UIViewController {
         daySwitchStagger.removeAll()
         daySwitchTitleFade = false
         daySwitchArrivalKey = nil
+        daySwitchSlideDirection = nil
     }
     private var trashCountValue = 0
     /// B5：回收站计数是否已知——首屏/增量刷新取到服务端值或缓存恢复后为真；
@@ -2422,12 +2423,23 @@ class BearyTimelineViewController: UIViewController {
     /// 相邻日预取在途集合（key=北京日）：独立通道专用，与正向单槽
     /// （dayKeyForLoad + dayState）完全分开；同日只发一次，失败不留痕。
     private var dayPrefetchInFlight: Set<String> = []
+    /// 换日滑入方向：以新旧选中日（yyyy-MM-dd，可直接按字典序比）比较定——
+    /// 新日更早往下翻、更晚往上翻。
+    private enum DaySwitchSlideDirection {
+        case earlier  // 新日更早：往下翻，新行自下方（+y）滑入
+        case later    // 新日更晚：往上翻，新行自上方（−y）滑入
+    }
     /// N3：切日入场错峰队列（willDisplay 起播，播过即摘；代际见
     /// daySwitchGeneration，与分页 staggerInsertOrder 同机制不同队列，
     /// 步进 0.03s、封顶 0.24s，下偏 6pt）。selectDay / 清选区 / 整表重载时清掉。
     /// 切日行仍走本口径（与月历一致），不套首屏入场配置。
     private var daySwitchStagger: [IndexPath: Int] = [:]
     private var daySwitchGeneration = 0
+    /// 换日定向滑入方向：新日更早往下翻（行自下方滑入）、更晚往上翻（行自上方滑入），
+    /// 以新旧选中日比较定（selectDay 里置位，提交与回包到达分支共用）。
+    /// 置位时 willDisplay 不走逐行错峰，整版同向齐滑 0.26s；减动效时不置位；
+    /// 与 daySwitchStagger 同生命周期（clearStaggerEntries 清掉）。
+    private var daySwitchSlideDirection: DaySwitchSlideDirection?
     /// N3：切日组头淡入一次性标志（willDisplayHeaderView 消费一次，不重播）。
     private var daySwitchTitleFade = false
     /// N3：切日回包到达时的入场错峰归属（仅 clear:true 的换日回包设置，
@@ -5919,6 +5931,15 @@ class BearyTimelineViewController: UIViewController {
             return
         }
         let hadPanel = selectedDayKey != nil
+        // 换日定向滑入：以新旧选中日比较定方向——新日更早往下翻、更晚往上翻；
+        // 无旧面板（首次）或减动效时不滑，沿用旧错峰入场。方向存在本轮 selectDay
+        // 的状态里，提交（缓存／落盘／网络）与回包到达分支共用；下一轮 selectDay
+        // 开头经 clearStaggerEntries 清掉。
+        daySwitchSlideDirection = {
+            guard UIAccessibility.isReduceMotionEnabled == false,
+                  hadPanel, let oldKey = selectedDayKey, key != oldKey else { return nil }
+            return key < oldKey ? .earlier : .later
+        }()
         selectedDayKey = key
         renderCalendar()
         // N3：换日时日历标题淡入（仅非减动效；只动标题 alpha，不动高度）。
@@ -5973,8 +5994,9 @@ class BearyTimelineViewController: UIViewController {
             }
         }
         // N3：旧日卡片退场（仅非减动效、表已入窗、旧面板存在且有可见行时）：
-        // 只动面板分区可见行（alpha 淡出 + 下移 8，transform/opacity，
-        // 严禁逐帧改 height）；时间线行不动、不重播。退场完成才提交新日，
+        // 只动面板分区可见行（alpha 淡出 + 沿滑入方向滑出，transform/opacity，
+        // 严禁逐帧改 height）；退场与滑入同向：更早的日子往下翻，旧行向上滑出；
+        // 更晚的日子往上翻，旧行向下滑出。退场完成才提交新日，
         // 减动效 / 无可见旧行时直接提交、无动画。
         if reduceMotion == false, tableView.window != nil, hadPanel {
             let exitingCells = tableView.visibleCells.filter { cell in
@@ -5982,10 +6004,11 @@ class BearyTimelineViewController: UIViewController {
                 return path.section == 0
             }
             if exitingCells.isEmpty == false {
+                let exitY: CGFloat = daySwitchSlideDirection == .later ? 8 : -8
                 UIView.animate(withDuration: BearyMotion.micro, animations: {
                     for cell in exitingCells {
                         cell.alpha = 0
-                        cell.transform = CGAffineTransform(translationX: 0, y: 8)
+                        cell.transform = CGAffineTransform(translationX: 0, y: exitY)
                     }
                 }, completion: { _ in commitDaySwitch() })
                 return
@@ -7205,6 +7228,20 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         if let dayOrder = daySwitchStagger[indexPath] {
             daySwitchStagger[indexPath] = nil
             if daySwitchGeneration == staggerGeneration {
+                if let slide = daySwitchSlideDirection {
+                    // 换日定向滑入：整版同向齐滑 0.26s，不逐行错峰（两种动效不打架）。
+                    // 更早的日子往下翻，行自下方滑入；更晚的往上翻，行自上方滑入；
+                    // 入场位移 24pt（与分页追加同口径）。队列播完即清方向。
+                    let entryY: CGFloat = slide == .earlier ? 24 : -24
+                    cell.alpha = 0
+                    cell.transform = CGAffineTransform(translationX: 0, y: entryY)
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: {
+                        cell.alpha = 1
+                        cell.transform = .identity
+                    }, completion: nil)
+                    if daySwitchStagger.isEmpty { daySwitchSlideDirection = nil }
+                    return
+                }
                 cell.alpha = 0
                 cell.transform = CGAffineTransform(translationX: 0, y: 6)
                 let delay = min(Double(dayOrder) * 0.03, 0.24)
