@@ -1755,7 +1755,6 @@ final class BearySettingsViewController: UIViewController {
                     }
                 }
             },
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
         ])
     }
 
@@ -2393,7 +2392,6 @@ final class BearySettingsViewController: UIViewController {
             BearyConfirmSheet.Action(title: "确认注销", style: .destructive, handler: { [weak self] in
                 self?.confirmDeleteAccount(keepPublicDiaries: keepPublicDiaries)
             }),
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
         ])
     }
 
@@ -2627,7 +2625,6 @@ final class BearySettingsViewController: UIViewController {
                     BearyConfirmSheet.Action(title: "继续分享", style: .default, handler: { [weak self] in
                         self?.buildAndShareExport(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries, sensitiveNoticeShown: true, truncated: true, truncatedScopes: exportTruncatedScopes, truncatedReason: exportTruncatedReason)
                     }),
-                    BearyConfirmSheet.Action(title: "取消", style: .cancel),
                 ])
                 return
             }
@@ -2712,12 +2709,6 @@ final class BearySettingsViewController: UIViewController {
             BearyConfirmSheet.show(from: self, title: "导出包含敏感内容", message: "文件包含账户资料、私密日记与登录设备信息，请只分享给可信的对象。", actions: [
                 BearyConfirmSheet.Action(title: "继续分享", style: .default, handler: { [weak self] in
                     self?.buildAndShareExport(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries, sensitiveNoticeShown: true, truncated: truncated, truncatedScopes: truncatedScopes, truncatedReason: truncatedReason)
-                }),
-                BearyConfirmSheet.Action(title: "取消", style: .cancel, handler: { [weak self] in
-                    guard let self = self else { return }
-                    self.isExporting = false
-                    self.exportRowButton.isEnabled = true
-                    self.setExportProgress(nil)
                 }),
             ], onDismissWithoutAction: { [weak self] in
                 guard let self = self else { return }
@@ -4502,7 +4493,6 @@ private final class BearyDiagnosticsViewController: UIViewController {
                 DiagFile.clear()
                 self?.reloadLog()
             }),
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
         ])
     }
 }
@@ -4726,7 +4716,6 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
             BearyConfirmSheet.Action(title: "解除拉黑", style: .destructive, handler: { [weak self] in
                 self?.performUnblock(userId: userId)
             }),
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
         ])
     }
 

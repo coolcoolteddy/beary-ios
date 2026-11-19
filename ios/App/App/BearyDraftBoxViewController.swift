@@ -866,7 +866,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             ? "这些草稿读不出来。清除后 App 内找不回，手机里的备份仍在；新草稿不受影响。"
             : "这些草稿读不出来。清除后无法找回；新草稿不受影响。"
         BearyConfirmSheet.show(from: self, title: "清除无法读取的草稿？", message: message, actions: [
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
             BearyConfirmSheet.Action(title: "清除", style: .destructive) { [weak self] in
                 BearyDraftStore.clearCorruptStoreAsync { [weak self] ok in
                     guard let self = self else { return }
@@ -1632,7 +1631,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 BearyConfirmSheet.Action(title: confirmTitle, style: .destructive) {
                     confirmedExit()
                 },
-                BearyConfirmSheet.Action(title: "取消", style: .cancel),
             ])
             return
         }

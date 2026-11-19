@@ -1639,7 +1639,6 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     @objc private func withdrawTapped() {
         guard withdrawBusy == false, let exchangeId = exchangeId else { return }
         BearyConfirmSheet.show(from: self, title: "撤回交换？", message: "撤回后，对方将无法再查看你交换的这篇日记，今日交换次数不会恢复。", actions: [
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
             BearyConfirmSheet.Action(title: "撤回", style: .destructive) { [weak self] in
                 guard let self = self else { return }
                 self.withdrawBusy = true

@@ -90,7 +90,6 @@ enum BearyFriends {
             message: message,
             actions: [
                 BearyConfirmSheet.Action(title: "取消关注", style: .destructive) { onConfirmed() },
-                BearyConfirmSheet.Action(title: "取消", style: .cancel, handler: nil),
             ]
         )
     }

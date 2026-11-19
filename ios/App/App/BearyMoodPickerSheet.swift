@@ -241,7 +241,6 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     /// “自定义”组内长按 cell：删库内图片（只删库行，不删文件、不影响已发日记）。
     private func confirmDeleteGIF(key: String) {
         BearyConfirmSheet.show(from: self, title: "从自定义里删除？", message: nil, actions: [
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
             BearyConfirmSheet.Action(title: "删除", style: .destructive) {
                 BearyGIFLibrary.remove(key: key)
             },
