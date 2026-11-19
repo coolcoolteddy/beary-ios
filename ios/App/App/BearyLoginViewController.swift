@@ -53,9 +53,6 @@ final class BearyLoginViewController: UIViewController {
     /// 在 present 前置 true，只改呈现与文案排布，登录逻辑（发码/验码/邀请码/协议）一字不动。
     /// false = 原全屏页（保留作回退，当前无调用点走全屏）。
     var sheetMode = false
-    /// Sheet transitioningDelegate 强持有（UIViewController.transitioningDelegate 为弱引用，
-    /// 调用方不另持有；随本页释放）。
-    var loginSheetDelegate: BearyBottomSheetTransitioningDelegate?
     /// 法律文字页的 EdgeDismiss 强持有（transitioningDelegate 弱引用）。
     private var legalTextEdgeDismiss: BearyEdgeDismissController?
 
@@ -159,12 +156,23 @@ final class BearyLoginViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = sheetMode ? UIColor.clear : BearyColors.bg
+        view.backgroundColor = sheetMode ? BearyColors.surface3 : BearyColors.bg
         buildLayout()
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
         updateButtonStates()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // sheetMode 时把自己挂为 presentationController.delegate：present 前
+        // presentationController 为 nil，只能落窗前夕挂；抓手下滑与点外收起
+        // 都先问 delegate，shouldDismiss 返回 false、didAttemptToDismiss 走
+        // cancelFromSheet（取消路径），系统 sheet 不得绕开它直接 dismiss。
+        if sheetMode {
+            presentationController?.delegate = self
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -174,13 +182,24 @@ final class BearyLoginViewController: UIViewController {
         updateCodeRowStackingIfNeeded()
         guard sheetMode else { return }
         // Sheet 高跟内容走：栈高 + 上下内边距（12/12）+ 安全区底（Home 条）；
-        // 邀请展开/收起、字号档位变化时重算，presentation 控制器跟帧走。
+        // 邀请展开/收起、字号档位变化时重算，系统 sheet 跟帧走。
         // 2026-11-04 收矮：上下内边距 16/24 → 12/12，空提示行不占位（见 showMessage），
         // 只收空气、不动字段与按钮尺寸。
         let height = stackView.bounds.height + 12 + 12 + view.safeAreaInsets.bottom
-        guard height > 0, abs(height - lastSheetPreferredHeight) > 0.5 else { return }
+        // Sheet 宽：落窗后跟实测 sheet 宽，未落窗时保留 make() 里写死的宽度
+        //（屏宽 ≥821 为 600、否则屏宽），否则取实测宽。
+        let width: CGFloat
+        if view.window != nil {
+            width = view.bounds.width
+        } else if preferredContentSize.width > 0 {
+            width = preferredContentSize.width
+        } else {
+            width = view.bounds.width
+        }
+        guard height > 0, abs(height - lastSheetPreferredHeight) > 0.5 || abs(width - preferredContentSize.width) > 0.5 else { return }
         lastSheetPreferredHeight = height
-        preferredContentSize = CGSize(width: 0, height: height)
+        preferredContentSize = CGSize(width: width, height: height)
+        BearySystemSheet.refreshDetentsIfNeeded(for: self)
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -977,8 +996,8 @@ final class BearyLoginViewController: UIViewController {
         onCancelled?()
     }
 
-    /// Sheet 容器关闭路径（遮罩点按 / 抓手拖动）：与关闭钮同一取消路径——
-    /// 先停倒计时与在途任务，再交 onCancelled；容器不得绕开本方法直接 dismiss，
+    /// 系统 sheet 关闭路径（抓手下滑／点外收起）：与关闭钮同一取消路径——
+    /// 先停倒计时与在途任务，再交 onCancelled；系统 sheet 不得绕开本方法直接 dismiss，
     /// 否则添加账号会话守卫 stays armed。
     func cancelFromSheet() {
         closeTapped()
@@ -1320,12 +1339,18 @@ enum BearyReferralFeedback {
     }
 }
 
-// MARK: - BearyBottomSheetVoiceOver（r29-14：底部弹窗出现时首焦点）
+// MARK: - 系统 sheet 关闭拦截（2026-11-20 移植：抓手下滑／点外收起都走取消路径）
 
-extension BearyLoginViewController: BearyBottomSheetVoiceOver {
-    /// 出现时 VoiceOver 聚焦 sheet 专属标题“欢迎回来”（EmotePicker/DraftBox/
-    /// Notifications 三处先例一律聚焦标题；全屏页不走本容器，钩子不生效）。
-    var bottomSheetInitialAccessibilityElement: AnyObject? { welcomeTitleLabel }
+extension BearyLoginViewController: UIAdaptivePresentationControllerDelegate {
+    /// 系统 sheet 关闭前拦截：不许直接 dismiss——先停倒计时与在途任务、
+    /// 再交 onCancelled（= 关闭钮路径），否则添加账号会话守卫 stays armed。
+    func presentationControllerShouldDismiss(_ presentationController: UIPresentationController) -> Bool {
+        false
+    }
+
+    func presentationControllerDidAttemptToDismiss(_ presentationController: UIPresentationController) {
+        cancelFromSheet()
+    }
 }
 
 // MARK: - 邀请码收起行读屏激活（审计 ①-P1）
