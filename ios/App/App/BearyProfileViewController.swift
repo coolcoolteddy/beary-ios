@@ -405,6 +405,12 @@ class BearyProfileViewController: UIViewController {
     /// 那年今日同年多篇展开态（默认收起）。
     private var thisDayExpanded = false
     private var tabBackgroundTab: ProfileTab?
+    /// 审计第 8 轮第 2 项：后台回填按分栏记请求代次。tabBackgroundTab 只记一个
+    /// 分栏，快速 A→B→A 会发出两次 A 请求，旧 A 回包仍能通过 currentTab ==
+    /// tabAtStart 改写列表。只有最新请求能写数据、改分页态、清加载标记；
+    /// 旧回包直接丢弃。key 为分栏，三档封顶，不另建全局代次（前台首屏/
+    /// 翻页另有 tabLoading 全局锁，同一时刻只会有一发在途请求，不在本项内）。
+    private var tabBackgroundGeneration: [ProfileTab: Int] = [:]
     // 失败态全量·对账轻提示：后台回填失败只 toast 一次的记账。成功回填时清零，
     // 使下一次失败能再提示；连续失败（切 tab 反复触发）不再重复刷屏。
     // 不改缓存、不改失败态、不弹确认框。
@@ -6846,6 +6852,11 @@ class BearyProfileViewController: UIViewController {
         // false，见回包分支；只置 false 不恢复时新内容到了也翻不了页）。
         setHasMore(hasMore: true)
         let tabAtStart = currentTab
+        // 审计第 8 轮第 2 项：本次回填代次 +1 并随请求记下；回包先比代次，
+        // 旧请求（切 A→B→A 时先发的那发 A）直接丢弃，不写数据、不改分页。
+        let nextGeneration = (tabBackgroundGeneration[currentTab] ?? 0) + 1
+        tabBackgroundGeneration[currentTab] = nextGeneration
+        let requestGeneration = nextGeneration
         // 审计 r7 ⑤：后台回填请求记观看者代次，回包先比代次再对账。
         let requestViewerGeneration = viewerGeneration
         BearyAPI.shared.fetchEntries(scope: scopeValue, limit: tabPageLimit) { [weak self] result in
@@ -6853,7 +6864,12 @@ class BearyProfileViewController: UIViewController {
                 guard let strongSelf = self else { return }
                 // G1：回包时无论当前标签是否切走都清零（守卫只决定是否采用回包，
                 // 不再由“切走后不复位”导致切回旧标签不再刷新）。
-                strongSelf.tabBackgroundTab = nil
+                // 审计第 8 轮第 2 项：只有最新请求能清在途标记；旧回包不清，
+                // 避免旧回包清掉新请求的标记后、切回该 tab 又发一次重复请求。
+                if requestGeneration == strongSelf.tabBackgroundGeneration[tabAtStart],
+                   strongSelf.tabBackgroundTab == tabAtStart {
+                    strongSelf.tabBackgroundTab = nil
+                }
                 // 审计 r7 ⑤：切号后旧回填回包直接丢弃，不把旧观看者会话下
                 // 的可见性结果对账进新账号的列表；tabBackgroundTab 已清，
                 // 下次切回该 tab 仍可正常回填。
@@ -6866,10 +6882,31 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.refreshFooter()
                     return
                 }
+                // 审计第 8 轮第 2 项：代次落后 = 同分栏旧请求回包（切 A→B→A 时
+                // 先发的那发 A），直接丢弃；不写数据、不改分页、不清 tabError。
+                guard requestGeneration == strongSelf.tabBackgroundGeneration[tabAtStart] else {
+                    strongSelf.refreshFooter()
+                    return
+                }
                 guard strongSelf.currentTab == tabAtStart else { return }
                 switch result {
                 case .success(let listValue):
                     let fresh = listValue.entries ?? []
+                    // 审计第 8 轮第 2 项：结构变化前记首个可见日记锚点（id +
+                    // 视口内偏移），reloadData 后按 id 钉回原视口位置，避免
+                    // 行位移让刚出现的卡片消失或换位；锚点行已被删时不复位。
+                    // 拖动/减速中不补偿（与 layoutHeader 锚点同口径）。
+                    let anchorEntryId: String? = {
+                        guard !strongSelf.tableView.isDragging, !strongSelf.tableView.isDecelerating,
+                              let firstVisible = strongSelf.tableView.indexPathsForVisibleRows?.sorted().first,
+                              firstVisible.section == 0, firstVisible.row < strongSelf.displayedEntries.count else { return nil }
+                        return strongSelf.displayedEntries[firstVisible.row].id
+                    }()
+                    let anchorViewportOffset: CGFloat? = {
+                        guard let firstVisible = strongSelf.tableView.indexPathsForVisibleRows?.sorted().first,
+                              firstVisible.section == 0 else { return nil }
+                        return strongSelf.tableView.rectForRow(at: firstVisible).origin.y - strongSelf.tableView.contentOffset.y
+                    }()
                     // 回填分流：没变不重载，变了只更受影响行——卡片不重配、
                     // 图片不重下，已显示内容不闪（见 reconcileEntries）。
                     let outcome = strongSelf.reconcileEntries(fresh: fresh)
@@ -6884,6 +6921,15 @@ class BearyProfileViewController: UIViewController {
                         strongSelf.tableView.reloadRows(at: rows, with: .none)
                     case .structural:
                         strongSelf.tableView.reloadData()
+                        if let anchorId = anchorEntryId,
+                           let anchorOffset = anchorViewportOffset,
+                           let newRow = strongSelf.displayedEntries.firstIndex(where: { $0.id == anchorId }) {
+                            strongSelf.tableView.layoutIfNeeded()
+                            let minY = -strongSelf.tableView.adjustedContentInset.top
+                            let maxY = max(minY, strongSelf.tableView.contentSize.height - strongSelf.tableView.bounds.height + strongSelf.tableView.adjustedContentInset.bottom)
+                            let targetY = strongSelf.tableView.rectForRow(at: IndexPath(row: newRow, section: 0)).origin.y - anchorOffset
+                            strongSelf.tableView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
+                        }
                         // M10：回填用淡入/滑入新行（已有行不重播），不用整表瞬换观感。
                         strongSelf.animateNewRows()
                     }
@@ -6998,6 +7044,10 @@ class BearyProfileViewController: UIViewController {
     private func entrySignature(entryValue: Entry) -> String {
         let emotePart = (entryValue.emotes ?? []).map { "\($0.emote ?? ""):\($0.count ?? 0):\($0.mine ?? false)" }.joined(separator: ",")
         let imagePart = (entryValue.images ?? []).joined(separator: ",")
+        // 审计第 8 轮第 10 项：标签参与卡片绘制（BearyDiaryCardCell 按 entry.tags
+        // 出标签行），仅标签变化时签名必须变化，否则 reconcileEntries 保留
+        // 旧对象、静默重拉后仍显示旧标签。顺序即服务端顺序，换序亦判为变化。
+        let tagsPart = (entryValue.tags ?? []).joined(separator: ",")
         let dimsPart = (entryValue.imgDims ?? [:]).map { "\($0.key):\($0.value.map(String.init).joined(separator: "x"))" }.sorted().joined(separator: ",")
         let livePart = (entryValue.liveVideos ?? [:]).map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ",")
         let quote = entryValue.quote
@@ -7017,6 +7067,7 @@ class BearyProfileViewController: UIViewController {
             entryValue.locationName ?? "",
             entryValue.locationDistrict ?? "",
             imagePart,
+            tagsPart,
             dimsPart,
             livePart,
             entryValue.weather ?? "",
