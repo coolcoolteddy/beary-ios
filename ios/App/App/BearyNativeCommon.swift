@@ -3610,7 +3610,6 @@ enum BearyVisibility {
         if isLiveEphemeral {
             actions.insert(BearyConfirmSheet.Action(title: "✓ 限时", style: .default, isEnabled: false), at: 0)
         }
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: vc, title: "修改权限", message: nil, actions: actions)
     }
 }

@@ -3775,7 +3775,6 @@ final class BearySettingsViewController: UIViewController {
                 self?.saveDMLevel(option.value)
             }, isSelected: option.value == dmLevel)
         }
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: self, title: "谁可以私信我", message: nil, actions: actions)
     }
 

@@ -2584,14 +2584,13 @@ class BearyFeedViewController: UIViewController {
                 })
             }
         }
-        // 扫荡 D：除“取消”外无任何可点项时不 present——正常情况下到不了这里
+        // 扫荡 D：无任何可点项时不 present——正常情况下到不了这里
         //（卡片 ⋯ 只在本人卡或他人公开卡上显示），但限时篇可在卡片渲染后、
         // 点 ⋯ 前过期，有效态翻私密后原菜单项全部落空，只剩一张空表。
         // 注意：他人公开卡本就只有“举报”1 项，故只拦“零项”，不拦“1 项”。
         if actions.isEmpty {
             return
         }
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: self, title: "", message: nil, actions: actions)
     }
 

@@ -514,7 +514,6 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                     }
                 }
             },
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
         ])
     }
 
