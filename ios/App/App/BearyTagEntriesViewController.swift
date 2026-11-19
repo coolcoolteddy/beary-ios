@@ -276,11 +276,14 @@ final class BearyTagEntriesViewController: UIViewController {
         }
         cell.onInteractionChanged = { [weak self] changedEntryId, likeCount, likedByMe, bookmarkedByMe in
             guard let self = self,
-                  let index = self.entries.firstIndex(where: { $0.id == changedEntryId }),
-                  let visible = self.tableView.cellForRow(at: IndexPath(row: index, section: 0)) as? BearyDiaryCardCell else { return }
-            self.entries[index].likeCount = likeCount
-            self.entries[index].likedByMe = likedByMe
-            self.entries[index].bookmarkedByMe = bookmarkedByMe
+                  let index = self.entries.firstIndex(where: { $0.id == changedEntryId }) else { return }
+            // 只写回调中有值的字段（与首页 applyInteraction 同口径）：收藏回包
+            // 只带收藏值，点赞两字段为 nil——全量赋值会把模型 likeCount 清成
+            // nil，滑走再回来 configure 按 ??0 显示，赞数消失。
+            if let v = likeCount { self.entries[index].likeCount = v }
+            if let v = likedByMe { self.entries[index].likedByMe = v }
+            if let v = bookmarkedByMe { self.entries[index].bookmarkedByMe = v }
+            guard let visible = self.tableView.cellForRow(at: IndexPath(row: index, section: 0)) as? BearyDiaryCardCell else { return }
             visible.syncInteraction(entryId: changedEntryId, likeCount: likeCount, likedByMe: likedByMe, bookmarkedByMe: bookmarkedByMe, emotes: nil)
         }
         cell.onEmoteChanged = { [weak self] changedEntryId, emotes in
