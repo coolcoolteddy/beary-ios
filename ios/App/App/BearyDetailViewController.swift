@@ -56,7 +56,15 @@ final class BearyDetailDashedBorderView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         borderLayer.frame = bounds
-        borderLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: BearyCorners.single).cgPath
+        // 描边以 path 为中心：path 贴 bounds 边时，外侧一半落在 layer 背板外被裁掉，
+        // 顶边只剩一半粗、底边却近全粗，上下不一（草稿箱 #2019 同款毛病）。
+        // path 内缩半个线宽，整条描边落进 layer 内，四边同粗；外沿仍贴 bounds、
+        // 圆角同步减半个线宽（BearyCorners.single - halfLine），外形不动。
+        let halfLine = borderLayer.lineWidth / 2
+        borderLayer.path = UIBezierPath(
+            roundedRect: bounds.insetBy(dx: halfLine, dy: halfLine),
+            cornerRadius: BearyCorners.single - halfLine
+        ).cgPath
     }
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)

@@ -365,7 +365,15 @@ final class BearyDiaryCardDashedAddButton: BearyHit44Button {
     override func layoutSubviews() {
         super.layoutSubviews()
         dashedLayer.frame = bounds
-        dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).cgPath
+        // 描边以 path 为中心：path 贴 bounds 边时，外侧一半落在 layer 背板外被裁掉，
+        // 上下粗细不一（草稿箱 #2019 同款毛病）。path 内缩半个线宽（线宽 1 → 0.5），
+        // 整条描边落进 layer 内，四边同粗；外沿仍贴 bounds、圆角同步减半个线宽，
+        // 34px 圆圈外形不动。
+        let halfLine = dashedLayer.lineWidth / 2
+        dashedLayer.path = UIBezierPath(
+            roundedRect: bounds.insetBy(dx: halfLine, dy: halfLine),
+            cornerRadius: bounds.height / 2 - halfLine
+        ).cgPath
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
