@@ -57,10 +57,14 @@ final class BearyProfilePhotosViewController: UIViewController {
     /// 新回包确认、刷新失败时是否只拉到一部分。
     private var photosFromCache = false
     private var photosFreshConfirmed = false
-    private var photosPartialFailed = false
     /// r17-C6：正显快照时后台刷新失败——此时才标“显示的是上次的数据”，
     /// 刷新尚未失败前不标（快照只是先恢复，不等于已失败）。
     private var photosRefreshFailed = false
+    /// r26-#2：快照里游标尚未覆盖的照片——从磁盘快照恢复、其日记还不
+    /// 在已拉范围内的照片。续拉／重滤重建只认已拉日记，这些照片保留
+    /// 在末尾，游标到达其范围后按日记 ID 替换或移除；翻到底仍未出现
+    /// 即丢弃。只缓存本人页（与快照同口径）。
+    private var pendingCachedPhotos: [BearyProfilePhotoItem] = []
 
     /// 第七轮审计 08：权限重验在途守门——防同一时刻重复拉 /friends/state；
     /// permissionsGeneration＋发起时 viewer id 守旧回包（与设置页
@@ -217,9 +221,13 @@ final class BearyProfilePhotosViewController: UIViewController {
     /// r17-C6：快照态提示行——有旧结果且刷新失败时“显示的是上次的数据”，
     /// 只拉到部分时“只加载了一部分”；确认结果为空时不显本行、只显空态。
     /// 高度约束为 0 时塌掉，不占位。
+    /// r26-#4：本行改为独立覆盖层（不参与网格顶部约束，见 viewDidLoad），
+    /// 高度 0↔20 不再顶动网格；“只加载了一部分”已删，翻页失败只走
+    /// toast＋尾部重试节。
     private let photosStatusLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.backgroundColor = BearyColors.bg
         labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
@@ -267,7 +275,10 @@ final class BearyProfilePhotosViewController: UIViewController {
             photosStatusLabel.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
             photosStatusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             photosStatusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            collectionView.topAnchor.constraint(equalTo: photosStatusLabel.bottomAnchor),
+            // r26-#4：网格顶部直接钉顶栏底部，不再钉状态行底部——状态行
+            // 高度 0↔20 时网格顶部不动；状态行是浮在网格上方的覆盖层
+            //（后加进视图层级、不透底），显隐只盖住网格顶部 20pt。
+            collectionView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
             collectionView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             collectionViewWidthConstraint!,
             collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -353,7 +364,13 @@ final class BearyProfilePhotosViewController: UIViewController {
                 mergedEntries = fresh.entries
             }
             if let mergedEntries {
-                let newPhotos = BearyProfileViewController.profilePhotoItems(from: mergedEntries, isOwnProfile: ownProfileValue, isMutualFriend: currentMutualFriend)
+                // r26-#2：合并后的新索引再按已拉范围核对快照——父页范围
+                // 之外的快照照片保留，不因返回一次就闪回加载占位。
+                let newPhotos = mergeUncoveredCachedPhotos(
+                    BearyProfileViewController.profilePhotoItems(from: mergedEntries, isOwnProfile: ownProfileValue, isMutualFriend: currentMutualFriend),
+                    fetchedEntries: mergedEntries,
+                    hasMore: fresh.hasMore ? photosHasMore : false
+                )
                 // 签名须在提交新模型前算——先提交再比会恒等、永不 reload。
                 let signatureChanged = photosSignature(newPhotos) != photosSignature(photosValue)
                 // 第 26 轮审计 #22：签名（ID＋图片 key）不变时也要提交新模型——
@@ -366,9 +383,10 @@ final class BearyProfilePhotosViewController: UIViewController {
                 if !fresh.hasMore { photosHasMore = false }
                 photosValue = newPhotos
                 if signatureChanged {
-                    photosFromCache = false
-                    photosFreshConfirmed = true
-                    photosPartialFailed = false
+                    // r26-#2：仍有未覆盖的快照照片时仍是缓存态，未确认前
+                    // 不标“新回包确认”。
+                    photosFromCache = !pendingCachedPhotos.isEmpty
+                    photosFreshConfirmed = pendingCachedPhotos.isEmpty
                     photosRefreshFailed = false
                     photosPageLoadFailed = false
                     collectionView.reloadData()
@@ -391,14 +409,48 @@ final class BearyProfilePhotosViewController: UIViewController {
         photos.map { "\($0.entry.id ?? "")|\($0.imageKey)" }.joined(separator: ";")
     }
 
+    /// r26-#2：按已拉日记范围核对快照——续拉／重滤重建只认已拉到的
+    /// 日记，快照里游标尚未覆盖的照片保留在末尾；游标到达其范围后
+    /// 按日记 ID 替换或移除（已拉到该篇即以新索引为准）；翻到底仍
+    /// 未出现即已删／不可见，丢弃。空态只在翻到底且无保留照片时才显。
+    private func mergeUncoveredCachedPhotos(_ freshPhotos: [BearyProfilePhotoItem], fetchedEntries: [Entry], hasMore: Bool) -> [BearyProfilePhotoItem] {
+        guard !pendingCachedPhotos.isEmpty else { return freshPhotos }
+        let fetchedIds = Set(fetchedEntries.compactMap { $0.id })
+        let tail = fetchedEntries.last
+        var kept: [BearyProfilePhotoItem] = []
+        for photo in pendingCachedPhotos {
+            guard let entryId = photo.entry.id, !entryId.isEmpty else { continue }
+            // 已拉到该篇：新索引为准，快照旧照丢弃（删图／换图生效）。
+            if fetchedIds.contains(entryId) { continue }
+            // 翻到底：游标之后已无日记，未出现即已删／不可见，丢弃。
+            if !hasMore { continue }
+            if let tail, let tailCreated = tail.createdAt, let tailId = tail.id {
+                let created = photo.entry.createdAt ?? 0
+                // 比已拉最旧一篇更旧：游标尚未覆盖，保留到后续页再核对；
+                // 在已拉范围内却没出现：已删／不可见，丢弃。
+                if created < tailCreated || (created == tailCreated && entryId < tailId) {
+                    kept.append(photo)
+                }
+                continue
+            }
+            // 无尾游标（尚未拉到任何日记）：无法核对，全部保留。
+            kept.append(photo)
+        }
+        pendingCachedPhotos = kept
+        guard !kept.isEmpty else { return freshPhotos }
+        // 保留的快照照片一律比已拉范围更旧，接在新索引末尾。
+        let freshKeys = Set(freshPhotos.map { $0.imageKey })
+        return freshPhotos + kept.filter { !freshKeys.contains($0.imageKey) }
+    }
+
     /// r17-C6：快照态提示行——缓存+刷新失败显“显示的是上次的数据”，
-    /// 新数据只拉到一部分显“只加载了一部分”，其余塌掉不占位。
+    /// 其余塌掉不占位。
+    /// r26-#4：本行改为覆盖层（见 viewDidLoad），高度 0↔20 不再顶动网格；
+    /// 翻页失败不再经本行提示，尾部重试节＋toast 已承载（见失败分支）。
     private func updatePhotosStatusLabel() {
         let text: String?
         if photosFromCache, photosRefreshFailed {
             text = "显示的是上次的数据"
-        } else if photosPartialFailed {
-            text = "只加载了一部分"
         } else {
             text = nil
         }
@@ -468,6 +520,9 @@ final class BearyProfilePhotosViewController: UIViewController {
             }
             guard !restored.isEmpty else { return }
             self.photosValue = restored
+            // r26-#2：恢复的快照照片进待确认集，续拉核对游标范围后再
+            // 逐张替换或移除，不在首个无图续页回包时整批丢掉。
+            self.pendingCachedPhotos = restored
             self.photosFromCache = true
             self.collectionView.reloadData()
             self.updateTitleAndEmpty()
@@ -557,7 +612,12 @@ final class BearyProfilePhotosViewController: UIViewController {
     /// 不用重新拉网）。过滤结果有变且灯箱正开着时关掉灯箱：灯箱按打开时
     /// 的快照导航，“查看日记”再按旧下标取 photosValue 会串到别篇。
     private func applyPermissionsFilter() {
-        let refiltered = BearyProfileViewController.profilePhotoItems(from: diaryEntriesValue, isOwnProfile: ownProfileValue, isMutualFriend: mutualFriendValue)
+        // r26-#2：重滤重建同样只认已拉日记，游标未覆盖的快照照片保留。
+        let refiltered = mergeUncoveredCachedPhotos(
+            BearyProfileViewController.profilePhotoItems(from: diaryEntriesValue, isOwnProfile: ownProfileValue, isMutualFriend: mutualFriendValue),
+            fetchedEntries: diaryEntriesValue,
+            hasMore: photosHasMore
+        )
         guard refiltered.map({ $0.imageKey }) != photosValue.map({ $0.imageKey }) else { return }
         // 分页失败态转空态失败态：重滤把照片滤空时，尾部重试节随隐藏的
         // 网格一起看不见、空态又只认 photosEmptyLoadFailed——不转会让
@@ -591,6 +651,11 @@ final class BearyProfilePhotosViewController: UIViewController {
         mutualFriendValue = false
         diaryEntriesValue = []
         photosValue = []
+        // r26-#2：切号即清待确认的快照照片与缓存态，旧身份的快照不
+        // 得合并进新身份的页面。
+        pendingCachedPhotos = []
+        photosFromCache = false
+        photosRefreshFailed = false
         photosHasMore = false
         photosFetching = false
         photosPageLoadFailed = false
@@ -646,7 +711,6 @@ final class BearyProfilePhotosViewController: UIViewController {
                     strongSelf.photosEmptyLoadFailed = false
                     strongSelf.photosFromCache = false
                     strongSelf.photosFreshConfirmed = true
-                    strongSelf.photosPartialFailed = false
                     strongSelf.photosRefreshFailed = false
                     strongSelf.collectionView.reloadData()
                     // 第 18 轮③：首屏重拉换了新首屏，最近一篇限时到期点可能
@@ -775,7 +839,12 @@ final class BearyProfilePhotosViewController: UIViewController {
     /// 同步撤下灯箱里已失效的照片（灯箱持有的照片数组是打开时的快照）。
     private func refilterPhotosForCurrentVisibility() {
         let oldKeys = photosValue.map { $0.imageKey }
-        let freshPhotos = BearyProfileViewController.profilePhotoItems(from: diaryEntriesValue, isOwnProfile: ownProfileValue, isMutualFriend: currentMutualFriend)
+        // r26-#2：重滤重建同样只认已拉日记，游标未覆盖的快照照片保留。
+        let freshPhotos = mergeUncoveredCachedPhotos(
+            BearyProfileViewController.profilePhotoItems(from: diaryEntriesValue, isOwnProfile: ownProfileValue, isMutualFriend: currentMutualFriend),
+            fetchedEntries: diaryEntriesValue,
+            hasMore: photosHasMore
+        )
         let freshKeys = freshPhotos.map { $0.imageKey }
         guard freshKeys != oldKeys else {
             scheduleExpiryRefilter()
@@ -846,7 +915,13 @@ final class BearyProfilePhotosViewController: UIViewController {
                     let oldKeys = strongSelf.photosValue.map { $0.imageKey }
                     strongSelf.diaryEntriesValue.append(contentsOf: appended)
                     // 第 22 轮 B5：续拉重算走实时互关态（currentMutualFriend），不沿用进页旧值。
-                    strongSelf.photosValue = BearyProfileViewController.profilePhotoItems(from: strongSelf.diaryEntriesValue, isOwnProfile: strongSelf.ownProfileValue, isMutualFriend: strongSelf.currentMutualFriend)
+                    // r26-#2：重建只认已拉日记，游标尚未覆盖的快照照片保留
+                    // 在末尾，不因本页无图就整批丢掉闪回加载占位。
+                    strongSelf.photosValue = strongSelf.mergeUncoveredCachedPhotos(
+                        BearyProfileViewController.profilePhotoItems(from: strongSelf.diaryEntriesValue, isOwnProfile: strongSelf.ownProfileValue, isMutualFriend: strongSelf.currentMutualFriend),
+                        fetchedEntries: strongSelf.diaryEntriesValue,
+                        hasMore: strongSelf.photosHasMore
+                    )
                     // 07：批量更新只插新增格——reloadData 会让所有可见已有格重走
                     // configure（清图＋转圈再加载），改 insertItems 后已有格保留不重配；
                     // 新页照片只追加在末尾，新增项即 oldPhotoCount..<新总数。
@@ -859,9 +934,10 @@ final class BearyProfilePhotosViewController: UIViewController {
                     // r17-C6：新回包确认后缓存态解除、按新索引落快照；
                     // 确认结果为空（已翻到尾仍无照片）时旧快照失效，下次
                     // 不再先恢复已删的照片，空态由 updateTitleAndEmpty 显。
-                    strongSelf.photosFromCache = false
-                    strongSelf.photosFreshConfirmed = true
-                    strongSelf.photosPartialFailed = false
+                    // r26-#2：仍有未覆盖的快照照片时仍是缓存态，未确认前
+                    // 不标“新回包确认”。
+                    strongSelf.photosFromCache = !strongSelf.pendingCachedPhotos.isEmpty
+                    strongSelf.photosFreshConfirmed = strongSelf.pendingCachedPhotos.isEmpty
                     strongSelf.photosRefreshFailed = false
                     strongSelf.updatePhotosStatusLabel()
                     if strongSelf.ownProfileValue {
@@ -952,12 +1028,11 @@ final class BearyProfilePhotosViewController: UIViewController {
                         viewer.notifyMorePagesFailed()
                     }
                     // r17-C6：失败时已有照片照常看；正显快照时标“显示的是
-                    // 上次的数据”，新数据只拉到一部分时标“只加载了一部分”。
+                    // 上次的数据”。
+                    // r26-#4：翻页失败不再经顶部提示行（会顶动网格 20pt），
+                    // 只留 toast＋尾部重试节（已有照片时插第 1 节）。
                     if strongSelf.photosFromCache {
                         strongSelf.photosRefreshFailed = true
-                        strongSelf.updatePhotosStatusLabel()
-                    } else if !strongSelf.photosValue.isEmpty {
-                        strongSelf.photosPartialFailed = true
                         strongSelf.updatePhotosStatusLabel()
                     }
                     if strongSelf.photosValue.isEmpty {
