@@ -1597,6 +1597,9 @@ class BearyFeedViewController: UIViewController {
         target.images = updated.images
         target.mood = updated.mood
         target.weather = updated.weather
+        // 审计 7-5：标签全量拷贝（空数组 = 清掉标签，不是忽略；编辑器回传
+        // updated.tags = selectedTags，清标签时即 []）。
+        target.tags = updated.tags
         target.quoteId = updated.quoteId
         target.quote = updated.quote
         if let v = updated.publishedAt { target.publishedAt = v }
