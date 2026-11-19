@@ -2226,12 +2226,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let savedRange = textView.selectedRange
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.7
-        // 只换呈现属性：附件格原样保留（熊脸图不被纯文本重建吃掉），
+        // 只换呈现属性：附件格原样保留（熊脸图与内联 GIF 不被纯文本重建吃掉），
         // 文字格换正文字体 + 墨色 + 1.7 行高。
         let styled = NSMutableAttributedString()
         let fullString = current.string as NSString
         current.enumerateAttributes(in: NSRange(location: 0, length: current.length), options: []) { attrs, range, _ in
-            if attrs[BearyText.inlineMoodKeyAttribute] != nil {
+            if attrs[BearyText.inlineMoodKeyAttribute] != nil
+                || attrs[BearyText.inlineGifKeyAttribute] != nil {
                 styled.append(current.attributedSubstring(from: range))
             } else {
                 var newAttrs = attrs
