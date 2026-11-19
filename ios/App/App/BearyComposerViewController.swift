@@ -674,6 +674,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// GIF 上传在途标记：一次只传一张，传完才接下一张（上传中再点上传入口
     /// 直接 toast，不并行）。
     private var gifUploadInFlight = false
+    /// 自定义心情图上传发起时的草稿篇 id（#49）：finishGIFUpload /
+    /// finishImageUpload 发起时记下 currentDraftId，回包成功时只认发起那篇
+    /// （nil 表示发起时还是空白未落盘篇，沿 pickDraftId 口径不设防）；
+    /// 切篇后回包仍进自定义库/首帧缓存，只不插进当前篇正文。
+    private var gifUploadDraftId: String?
     /// B2：关闭进行中守卫——didTapCancel（取消钮）与边缘关闭共用同一入口，
     /// 快速连点只接一次关闭流程；在途关闭再次点按直接忽略（返回 false，
     /// 边缘手势把视图滑回原位）。成功关闭时随编辑器一起消失，不复位；
@@ -6000,6 +6005,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         gifUploadInFlight = true
+        gifUploadDraftId = currentDraftId
         imagePrepQueue.async { [weak self] in
             guard BearyGIF.isGIFData(data), let info = BearyGIF.info(data), info.w > 0, info.h > 0, info.frames > 0 else {
                 DispatchQueue.main.async { [weak self] in
@@ -6034,6 +6040,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     DispatchQueue.main.async {
                         guard let self = self else { return }
                         self.gifUploadInFlight = false
+                        self.gifUploadDraftId = nil
                         switch result {
                         case .success(let response):
                             guard let key = response.key, let rand = BearyGIF.randKey(from: key) else {
@@ -6044,7 +6051,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                 self.showToast(message: "表情库满了，先删掉一些再添加")
                             }
                             self.gifFirstFrames[rand] = firstFrame
-                            self.insertGIFAttachmentAtCursor(key: key, randKey: rand)
+                            // #49：回包只认发起那篇——切篇后回包仍进库（服务端 GIF
+                            // 上传自动进库）与首帧缓存，只不插进当前篇正文。
+                            if self.gifUploadDraftId == nil || self.currentDraftId == self.gifUploadDraftId {
+                                self.insertGIFAttachmentAtCursor(key: key, randKey: rand)
+                            }
                         case .failure(let error):
                             if case .server(let code, _) = error, code == "gif too large" {
                                 self.showToast(message: "GIF 不能超过 1MB")
@@ -6070,6 +6081,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         gifUploadInFlight = true
+        gifUploadDraftId = currentDraftId
         imagePrepQueue.async { [weak self] in
             guard let self = self else { return }
             guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.92),
@@ -6099,6 +6111,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     DispatchQueue.main.async {
                         guard let self = self else { return }
                         self.gifUploadInFlight = false
+                        self.gifUploadDraftId = nil
                         switch result {
                         case .success(let response):
                             guard let key = response.key, let rand = BearyGIF.randKey(from: key) else {
@@ -6109,7 +6122,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             // 静默忽略——图照插进正文，只是不进自定义库。
                             BearyGIFLibrary.add(key: key) { _ in }
                             self.gifFirstFrames[rand] = firstFrame
-                            self.insertGIFAttachmentAtCursor(key: key, randKey: rand)
+                            // #49：回包只认发起那篇——切篇后回包仍进自定义库
+                            // 与首帧缓存，只不插进当前篇正文。
+                            if self.gifUploadDraftId == nil || self.currentDraftId == self.gifUploadDraftId {
+                                self.insertGIFAttachmentAtCursor(key: key, randKey: rand)
+                            }
                         case .failure(let error):
                             if case .server(let code, _) = error, code == "too large" {
                                 self.showToast(message: "图片太大，请换一张")
@@ -9030,8 +9047,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshVisibilityButton()
         setQuotePanelOpen(false)
         removeAllImageViews()
-        // 内联 GIF 随篇清掉（首帧缓存同清；上传在途的 GIF 回包后仍插进
-        // 新篇——用户可删，不静默丢上传）。
+        // 内联 GIF 随篇清掉（首帧缓存同清；上传在途的 GIF 回包后只进库
+        // 不再插进新篇，见 finishGIFUpload/finishImageUpload 的发起草稿比对）。
         inlineGifKeys = []
         gifFirstFrames = [:]
         // 只清视图与槽位，不碰存储：删篇由调用方决定（丢弃路径先调 clearDraftAndFiles
