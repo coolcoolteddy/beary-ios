@@ -2429,8 +2429,15 @@ final class BearyDetailViewController: UIViewController {
             slot.tag = imageIndex
             let strip = stripWidth(forKey: imageKey, dims: entry.imgDims, height: 216)
             // 卡片糊同款：详情条也是 216 高，直接走全尺寸图（缩略图 480px 在 3× 机上要拉大到 1438px）。
-            bearyFeedLoadImage(into: slot, url: BearyImageURLs.imageURL(key: imageKey, thumb: false), retryButton: imageSlotRetryButtons[imageIndex], downsampleToWidth: strip * UIScreen.main.scale, blurUp: true)
+            // 图到后按实测尺寸纠宽（imgDims 恒 nil，初宽恒 280 会裁竖图）；
+            // 缓存已命中时加载层直接返回不回调，同步按现图纠一次。
+            bearyFeedLoadImage(into: slot, url: BearyImageURLs.imageURL(key: imageKey, thumb: false), retryButton: imageSlotRetryButtons[imageIndex], downsampleToWidth: strip * UIScreen.main.scale, blurUp: true, onSuccess: { [weak self] image in
+                self?.applyStripWidthCorrection(imageIndex: imageIndex, imageKey: imageKey, image: image)
+            })
             imageSlotWidthConstraints[imageIndex].constant = strip
+            if let shownImage = slot.image {
+                applyStripWidthCorrection(imageIndex: imageIndex, imageKey: imageKey, image: shownImage)
+            }
             slot.isHidden = false
             setLiveOverlay(index: imageIndex, staticKey: imageKey, liveKey: entry.liveVideos?[imageKey])
         }
@@ -2496,6 +2503,20 @@ final class BearyDetailViewController: UIViewController {
             return round(max(low, min(high, raw)))
         }
         return 280
+    }
+
+    /// 图到后按实测尺寸纠槽宽（卡片同款，见 bearyStripWidth 注释：
+    /// imgDims 恒 nil，初宽恒 280，竖图会被 aspectFill 裁掉近半）。
+    /// 只改宽约束 constant，高 216 与行高一字不动，不跳动；差值 ≤0.5pt
+    /// 不动；槽位须仍属本 key，迟到回调直接丢弃。
+    private func applyStripWidthCorrection(imageIndex: Int, imageKey: String, image: UIImage) {
+        guard imageIndex >= 0, imageIndex < imageKeys.count,
+              imageKeys[imageIndex] == imageKey,
+              imageIndex < imageSlotWidthConstraints.count else { return }
+        let target = bearyStripWidth(forImageSize: image.size, height: 216)
+        let constraint = imageSlotWidthConstraints[imageIndex]
+        guard abs(target - constraint.constant) > 0.5 else { return }
+        constraint.constant = target
     }
 
     /// 批 E 详情位置行渲染：刷新点为 renderAll 与字段合并路径（批 B 已删 chips 行，
