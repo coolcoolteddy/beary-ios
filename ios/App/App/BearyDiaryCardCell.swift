@@ -1021,7 +1021,7 @@ class BearyDiaryCardCell: UITableViewCell {
     }()
 
     private lazy var titleStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameLabel, crownWrapView, titleSpacerLabel, timeLabel, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameLabel, crownWrapView, titleSpacerLabel, timeLabel, limitedPillView, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         // 姓名→皇冠间距 6（2026-11-05 ChatGPT 间距跟进；徽章已下线摘掉，
@@ -1255,11 +1255,13 @@ class BearyDiaryCardCell: UITableViewCell {
         let actionSpacer = UIView()
         actionSpacer.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
         actionSpacer.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
-        let st = BearyActionStackView(arrangedSubviews: [likeButton, bookmarkButton, actionSpacer, shareButton, shareSlotSpacer])
+        let st = BearyActionStackView(arrangedSubviews: [likeButton, limitedCountdownIconView, limitedCountdownLabel, bookmarkButton, actionSpacer, shareButton, shareSlotSpacer])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 16
         st.setCustomSpacing(BearySpace.xxl, after: likeButton)
+        st.setCustomSpacing(BearySpace.xs, after: limitedCountdownIconView)
+        st.setCustomSpacing(BearySpace.xxl, after: limitedCountdownLabel)
         st.alignment = .center
         return st
     }()
@@ -1290,9 +1292,9 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     /// 头行栈（2026-11-05 日记布局统一：头像 + 昵称行独占一行，标题/正文不再侵入）：
-    /// 只放置顶行、写给行、作者行、限时行；左缘贴头像右缘（间距 12），右缩进 16。
+    /// 只放置顶行、写给行、作者行；左缘贴头像右缘（间距 12），右缩进 16。
     private lazy var headerStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [pinRow, recipientRow, titleStack, ephemeralRow])
+        let st = UIStackView(arrangedSubviews: [pinRow, recipientRow, titleStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.alignment = .fill
@@ -1327,26 +1329,48 @@ class BearyDiaryCardCell: UITableViewCell {
         return v
     }()
 
-    /// 限时倒计时行（头行作者行下方、正文栈标题上方；仅存活期显示，灰字 12pt）。
-    private let ephemeralLabel: UILabel = {
+    /// 限时虚线气泡（2026-11-19 预览定版）：包住标题＋正文；仅限时篇（存活或已到期）显。
+    /// 平时隐藏，不影响普通卡；限时态下标题／正文 label 移进气泡内文字栈。
+    private let limitedBubbleView = BearyLimitedBubbleView()
+    /// 气泡是否已接管标题／正文（移入移出须幂等，复用与 configure 都可能重复调）。
+    private var limitedBubbleActive = false
+
+    /// 限时倒计时（操作行第一行，紧贴点赞右边；15 semibold，颜色跟随四档状态；
+    /// 仅限时篇显，<1 小时每秒跳一次）。
+    private let limitedCountdownLabel: UILabel = {
         let l = UILabel()
         l.translatesAutoresizingMaskIntoConstraints = false
-        l.font = UIFont.systemFont(ofSize: 12)
-        l.textColor = BearyColors.gray
+        l.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+        l.textColor = BearyColors.limitedCalmCountdown
+        l.numberOfLines = 1
         l.isHidden = true
+        l.setContentHuggingPriority(.required, for: .horizontal)
+        l.setContentCompressionResistancePriority(.required, for: .horizontal)
         return l
     }()
 
-
-    private lazy var ephemeralRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [ephemeralLabel])
-        st.translatesAutoresizingMaskIntoConstraints = false
-        st.axis = .horizontal
-        st.spacing = 4
-        st.alignment = .center
-        st.isHidden = true
-        return st
+    /// 限时倒计时前的小熊脸（2026-11-19 Li 定补）：官方 icon_limited（熊头＋虚线环，
+    /// 与限时档同款），24×24 模板图，tint 跟随倒计时四档颜色；仅限时篇显。
+    private let limitedCountdownIconView: UIImageView = {
+        let v = UIImageView(image: BearyIconImages.image(named: "icon_limited", pointSize: 24))
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.contentMode = .scaleAspectFit
+        v.tintColor = BearyColors.limitedCalmCountdown
+        v.isHidden = true
+        v.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        v.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        v.setContentHuggingPriority(.required, for: .horizontal)
+        v.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return v
     }()
+
+    /// 限时 pill（作者行时间后；13 semibold 蓝档，存活“限时”虚线边／到期“私密”实线边）。
+    private let limitedPillView = BearyLimitedPillView()
+
+    /// 限时倒计时 1 秒 tick：仅存活期限时篇在窗时跑；复用／离窗／到期即停。
+    private var limitedCountdownTimer: Timer?
+    /// 上次应用的倒计时档位：tick 只在档位跃迁时整组重算，其余只刷文字。
+    private var limitedCountdownState: BearyEphemeral.CountdownState?
 
     /// 置顶标识行（卡片最上方，仅个人页显示）：官方 icon_pin 15（模板图＋橙 tint，
     /// BearyFeedIconCache 同款缓存口径）＋ 12 semibold 文案；文案色走 deepOrangeText
@@ -1379,12 +1403,6 @@ class BearyDiaryCardCell: UITableViewCell {
         st.isHidden = true
         return st
     }()
-
-    /// 限时卡虚线边框（BearyDashedBorderView：1.5pt dashed、line 色、圆角 16；
-    /// 由约束钉在 contentView 上、自身布局时按 bounds 重画，不再由 cell 的
-    /// layoutSubviews 按当时 bounds 手工算 path，防行高落定后框高停留在旧矩形）。
-    private let ephemeralBorderView = BearyDashedBorderView()
-    private var ephemeralBorderTopConstraint: NSLayoutConstraint?
 
     private var imageHeightConstraint: NSLayoutConstraint?
     private var separatorTopGap: CGFloat {
@@ -1618,18 +1636,6 @@ class BearyDiaryCardCell: UITableViewCell {
         contentView.addSubview(bodyStack)
         imagesScrollView.addSubview(imagesStack)
         contentView.addSubview(separatorView)
-        // 限时虚线边框视图（插最底层、不挡内容；平时隐藏，不影响普通卡）。
-        ephemeralBorderView.translatesAutoresizingMaskIntoConstraints = false
-        ephemeralBorderView.isHidden = true
-        contentView.insertSubview(ephemeralBorderView, at: 0)
-        let ephemeralTop = ephemeralBorderView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6)
-        ephemeralBorderTopConstraint = ephemeralTop
-        NSLayoutConstraint.activate([
-            ephemeralTop,
-            ephemeralBorderView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
-            ephemeralBorderView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
-            ephemeralBorderView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6),
-        ])
         // 2026-10-31：长按上下文菜单已归并进右上角 ⋯ 菜单（时间线风格），本行不再挂
         // UIContextMenuInteraction；长按不再弹菜单，管理类操作一律走 ⋯。
         // ⋯ 挂 contentView 右上角（对齐标题行），标题行末 titleMoreSpacer 给它留位。
@@ -1815,8 +1821,6 @@ class BearyDiaryCardCell: UITableViewCell {
         // configure 时 cell 宽可能尚未落位（用屏宽估算），布局落位后若溢出
         // 结论变了，在此纠正一次（结论稳定后不再变动，不会往复）。
         let emoteHeightChanged = updateEmoteRowHeight()
-        // 限时虚线边框不再在此手工重画 path：BearyDashedBorderView 自身按
-        // 约束后的 bounds 重画，行高落定后框高自动跟上（首卡顶 22 见下）。
         // 个人主页：回应行高在初次布局（宽未落位、走估算）与落位后不一致时，
         // 行高会变一次；此前个人主页没有行高重算回调（首页有 onNeedsRowReload），
         // 行高停留在初算值、内容溢出或回缩即表现为滑动抽搐。异步通知一次，
@@ -1854,6 +1858,14 @@ class BearyDiaryCardCell: UITableViewCell {
         bodyGIFOverlay.setVisible(visible)
         titleGIFOverlay.setVisible(visible)
         if visible { refreshGIFOverlays() }
+        // 限时倒计时 tick 与 GIF 同步：离窗停、入窗起（存活期限时篇才跑）。
+        if visible {
+            if let entry = currentEntry, entry.ephemeralUntil != nil, BearyEphemeral.isLive(entry) {
+                startLimitedCountdownTimer()
+            }
+        } else {
+            stopLimitedCountdownTimer()
+        }
     }
 
     /// 内联 GIF 覆盖层刷新：正文/标题各配一个，label 宽变或文本重建后
@@ -1882,13 +1894,13 @@ class BearyDiaryCardCell: UITableViewCell {
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // 限时虚线描边色由 BearyDashedBorderView 自身在 trait 变化时重刷。
+        // 限时气泡描边／底色由 BearyLimitedBubbleView 自身在 trait 变化时重刷。
         // 首页模式：心情与公开行边框需重刷（chip 边框已由 BearyEmoteChipView
         // 自带 trait 重刷，此处不再调 renderEmotes——两套并存已摘掉一套）。
         // 旧心情改位：主题切换时正文末尾心情附件需换深浅变体，故两模式
         // 都重建正文（仅换附件变体，折叠态与行数不动）。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle, let e = currentEntry {
-            contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: bodyFontSize(for: e.content ?? ""), moodKey: e.mood)
+            contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: currentBodyFontSize, moodKey: e.mood)
         }
         // 审计第 27 项：内容字号档变化时立即重建可见卡片富文本——
         // attributed 字号不随 adjustsFont 自动跟随，旧口径要等下次 configure
@@ -1901,7 +1913,7 @@ class BearyDiaryCardCell: UITableViewCell {
             if cardMode == .feed {
                 updateContentAndFold()
             } else {
-                contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: bodyFontSize(for: e.content ?? ""), moodKey: e.mood)
+                contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: currentBodyFontSize, moodKey: e.mood)
                 if foldApplies {
                     setFoldDisplay(expanded: isExpanded, animated: false)
                 } else {
@@ -1944,9 +1956,15 @@ class BearyDiaryCardCell: UITableViewCell {
         suppressBottomSeparator = false
         separatorHeightConstraint?.constant = 1
         avatarTopConstraint?.constant = 14
-        // 限时态复位：倒计时行与虚线边框藏起、底线恢复，防残留到下一行。
-        ephemeralRow.isHidden = true
-        ephemeralLabel.text = nil
+        // 限时态复位：气泡／倒计时／pill 藏起、定时器停、正文移回正文栈，防残留到下一行。
+        stopLimitedCountdownTimer()
+        moveTextOutOfLimitedBubble()
+        limitedBubbleView.isHidden = true
+        limitedCountdownLabel.isHidden = true
+        limitedCountdownLabel.text = nil
+        limitedCountdownIconView.isHidden = true
+        limitedPillView.isHidden = true
+        limitedCountdownState = nil
         // 置顶标识行复位，防上一行置顶串位到下一行。
         pinRow.isHidden = true
         // 批 E：位置行复位，防上一行位置串位到下一行。
@@ -1960,7 +1978,6 @@ class BearyDiaryCardCell: UITableViewCell {
             view.removeFromSuperview()
         }
         onTagTapped = nil
-        ephemeralBorderView.isHidden = true
         separatorView.isHidden = false
         // 皇冠动效复用时停播，防串位到下一行。
         crownView.stop()
@@ -2132,11 +2149,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     /// F2：正文 16pt（首页）、行高 1.6（段落样式实现，非默认行高）。
     /// 正文仅表情放大（2026-11-18 Li 定）：1–3 个纯表情时字号 ×2，
-    /// 显示与量算（折叠判断、行高估算）都走 bodyFontSize(for:)，行高倍数 1.6 跟字号走。
-    private func bodyFontSize(for text: String) -> CGFloat {
-        BearyText.isEmojiOnlyBodyText(text) ? 16 * BearyText.emojiOnlyFontScale : 16
-    }
-
+    /// 显示与量算（折叠判断、行高估算）都走 currentBodyFontSize，行高倍数 1.6 跟字号走。
     private func attributedBody(_ text: String, fontSize: CGFloat) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.6
@@ -2283,33 +2296,33 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         pinRowZeroHeightConstraint?.isActive = pinRow.isHidden
         recipientRowZeroHeightConstraint?.isActive = recipientRow.isHidden
-        // 首卡虚线框顶 6→22（底边仍距 cell 底 6，不整体下移），tab 视觉底边
-        // （首卡顶 +14）到框顶留 8pt；其余一律 6。
-        ephemeralBorderTopConstraint?.constant = (cardMode == .profile && profileFirstRow) ? 22 : 6
         // 110：头像顶与头行顶同值（个人页首卡 30、其余 16；首页恒 16）——
         // 有行在作者行之上时头像顶与作者行顶对齐；两行都藏时作者行改为与
-        // 头像顶对齐（见上），头像顶不动，首卡限时框（顶 22）仍完整包住
-        // 头像（30..70，框顶留 8pt）；框路径一字不动，不用框迁就错位头像。
+        // 头像顶对齐（见上），头像顶不动。
         // 置顶时头像同步下移置顶行高（15）＋行间距（10）＝ 25，使头像仍与作者行对齐、
         // 置顶行落在卡片最上方（预览口径：标识在作者行之上）；未置顶时一字不动。
         let pinOffset: CGFloat = pinRow.isHidden ? 0 : 25
         avatarTopConstraint?.constant = (cardMode == .feed ? 16 : (profileFirstRow ? 30 : 16)) + pinOffset
         headerStack.setCustomSpacing(pinRow.isHidden ? 0 : 10, after: pinRow)
         headerStack.setCustomSpacing(recipientRow.isHidden ? 0 : 4, after: recipientRow)
-        headerStack.setCustomSpacing(4, after: titleStack)
         // 正文紧贴用户名下方：头行→正文栈间距取规范标题→正文档 6（原 16 有标题／
-        // 14 无标题，见规范 §3；该槽位改动须走规范同步）。头像底约束停用——#1184
-        // 后正文栈左缘在名字列（头像右 +12）、头像列下方无文字，头像底不再是
-        // 正文顶的下限；正文顶即头行底 + 6。限时行是头行末行，其后间距即该值。
-        let headerBodyGap: CGFloat = 6
+        // 14 无标题，见规范 §3；该槽位改动须走规范同步）。限时卡取 12：
+        // 气泡尖尖高出气泡顶 7.5pt，6pt 间距会被头像底缘压住，12pt 才留足空隙。
+        // 头像底约束停用——#1184 后正文栈左缘在名字列（头像右 +12）、头像列下方
+        // 无文字，头像底不再是正文顶的下限；正文顶即头行底 + 间距。
+        let headerBodyGap: CGFloat = limitedBubbleActive ? 12 : 6
         bodyStackTopFromAvatarConstraint?.isActive = false
         bodyStackTopFromHeaderConstraint?.constant = headerBodyGap
         bodyStackTopPinConstraint?.constant = headerBodyGap
         // 标题贴着正文走：标题→正文 6（ChatGPT 间距跟进，#904 为 4）；标题隐藏时其后间距置 0，正文直接贴头行间距。
-        bodyStack.setCustomSpacing(entryTitleLabel.isHidden ? 0 : 6, after: entryTitleLabel)
-        // 正文→图片 14（ChatGPT 间距跟进）：正文后（折叠隐藏时）与折叠钮后的间距；
-        // 正文→展开全文仍为 6（折叠钮显时），不动。
-        bodyStack.setCustomSpacing(foldButton.isHidden ? 14 : 6, after: contentLabel)
+        // 限时态下标题／正文在气泡内栈里，该间距走气泡内栈（固定 6），正文栈只认气泡后间距。
+        // 正文→下行 14（折叠隐藏时）／6（折叠钮显时，正文→展开全文仍为 6），不动。
+        if limitedBubbleActive {
+            bodyStack.setCustomSpacing(foldButton.isHidden ? 14 : 6, after: limitedBubbleView)
+        } else {
+            bodyStack.setCustomSpacing(entryTitleLabel.isHidden ? 0 : 6, after: entryTitleLabel)
+            bodyStack.setCustomSpacing(foldButton.isHidden ? 14 : 6, after: contentLabel)
+        }
         bodyStack.setCustomSpacing(14, after: foldButton)
         // 图片→定位 12（ChatGPT 间距跟进）：图片条与定位行中间隔着引用卡，
         // 两段相邻间距（图片→引用、引用→定位）各取 12（天气已并进定位行）；
@@ -2696,7 +2709,7 @@ class BearyDiaryCardCell: UITableViewCell {
         updateEntryTitle(entry.title)
         // 正文 + 300 字折叠（网页 renderPublic foldLong 口径；折叠态收起 6 行）。
         let bodyText = entry.content ?? ""
-        contentLabel.attributedText = bodyWithTrailingMood(bodyText, fontSize: bodyFontSize(for: bodyText), moodKey: entry.mood)
+        contentLabel.attributedText = bodyWithTrailingMood(bodyText, fontSize: currentBodyFontSize, moodKey: entry.mood)
         foldApplies = bodyText.count > 300
         foldButton.isHidden = !foldApplies
         if foldApplies {
@@ -2876,16 +2889,15 @@ class BearyDiaryCardCell: UITableViewCell {
         let fullText = currentEntry?.content ?? ""
         if fullText.isEmpty || fullText.count <= 300 || contentWidth <= 0 { return false }
         // 折叠量算与显示同字号（仅表情放大时也用放大字号量，缓存键带字号）。
-        let size = bodyFontSize(for: fullText)
-        let foldCacheKey = "\(currentEntry?.id ?? "")|\(Int(contentWidth.rounded()))|\(Int(size))|\(traitCollection.preferredContentSizeCategory.rawValue)|\(fullText.count)|\(fullText.hashValue)"
+        let foldCacheKey = "\(currentEntry?.id ?? "")|\(Int(contentWidth.rounded()))|\(currentBodyFontSize)|\(traitCollection.preferredContentSizeCategory.rawValue)|\(fullText.count)|\(fullText.hashValue)"
         if let cached = foldOverflowCache[foldCacheKey] { return cached }
-        let full = attributedBody(fullText, fontSize: size)
+        let full = attributedBody(fullText, fontSize: currentBodyFontSize)
         let fullHeight = full.boundingRect(
             with: CGSize(width: contentWidth, height: CGFloat.greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             context: nil
         ).height
-        let singleHeight = attributedBody("X", fontSize: size).boundingRect(
+        let singleHeight = attributedBody("X", fontSize: currentBodyFontSize).boundingRect(
             with: CGSize(width: contentWidth, height: CGFloat.greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             context: nil
@@ -2923,7 +2935,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private func updateContentAndFold() {
         let fullText = currentEntry?.content ?? ""
-        contentLabel.attributedText = bodyWithTrailingMood(fullText, fontSize: bodyFontSize(for: fullText), moodKey: currentEntry?.mood)
+        contentLabel.attributedText = bodyWithTrailingMood(fullText, fontSize: currentBodyFontSize, moodKey: currentEntry?.mood)
         let width = contentLabel.bounds.width > 0 ? contentLabel.bounds.width : bodyColumnWidthEstimate()
         let overflow = measuredFoldOverflow(contentWidth: width)
         foldOverflow = overflow
@@ -3544,28 +3556,124 @@ class BearyDiaryCardCell: UITableViewCell {
     func refreshPublishRow() {
         refreshMoreRow()
     }
+    /// 限时卡渲染（2026-11-19 预览定版）：限时篇（存活或已到期）正文包虚线气泡、
+    /// 倒计时贴点赞右边、作者行挂“限时”／“私密”pill；其余一律按普通卡。
+    /// 2026-10-31 107 真机报：首页限时篇下方没有分割线。旧口径是存活期
+    /// “底线藏（边框代之）”，即 separatorView.isHidden = live，导致限时篇
+    /// 下方与下一篇之间无实线。修法：首页模式（.feed）存活期底线也显，
+    /// 与普通篇一致（1pt、BearyColors.line、贴 cell 底、全宽）；个人主页
+    /// 模式保持旧口径不动（存活期限时篇藏底线但高仍 1）。
     private func refreshEphemeralState(entry: Entry) {
-        // 限时存活期：倒计时行显 + 虚线边框显；到期或非限时一律按普通卡。
-        // 2026-10-31 107 真机报：首页限时篇下方没有分割线。旧口径是存活期
-        // “底线藏（边框代之）”，即 separatorView.isHidden = live，导致限时篇
-        // 下方与下一篇之间无实线。修法：首页模式（.feed）存活期底线也显，
-        // 与普通篇一致（1pt、BearyColors.line、贴 cell 底、全宽）；虚线框
-        // 内缩 dx 8 / dy 6、底边在 cell 底上方 6pt，底线在 cell 底 1pt 内，
-        // 两者相隔约 3pt 以上，不重叠、不遮盖。个人主页模式保持旧口径不动。
+        let hasEphemeral = entry.ephemeralUntil != nil
         let live = BearyEphemeral.isLive(entry)
-        if live, let until = entry.ephemeralUntil {
-            ephemeralLabel.text = BearyEphemeral.remainingText(until: until)
-            ephemeralRow.isHidden = false
+        // pill：限时篇才显（存活“限时”／到期“私密”，蓝档）；其余不显。
+        if hasEphemeral {
+            limitedPillView.isHidden = false
+            limitedPillView.configure(text: live ? "限时" : "私密", expired: !live)
         } else {
-            ephemeralLabel.text = nil
-            ephemeralRow.isHidden = true
+            limitedPillView.isHidden = true
+        }
+        // 气泡＋倒计时：限时篇（存活或到期）才显；其余按普通卡。
+        if hasEphemeral, let until = entry.ephemeralUntil {
+            moveTextIntoLimitedBubble()
+            let state = BearyEphemeral.countdownState(until: until)
+            limitedBubbleView.apply(state: state)
+            limitedBubbleView.isHidden = false
+            limitedCountdownIconView.isHidden = false
+            limitedCountdownIconView.tintColor = BearyEphemeral.countdownColor(for: state)
+            limitedCountdownLabel.isHidden = false
+            limitedCountdownLabel.text = BearyEphemeral.countdownText(until: until)
+            limitedCountdownLabel.textColor = BearyEphemeral.countdownColor(for: state)
+            limitedCountdownState = state
+            // 点赞—图标贴紧 6、图标—倒计时 4、倒计时—收藏留 24（热区不交，同原口径算法）。
+            actionStack.setCustomSpacing(6, after: likeButton)
+            actionStack.setCustomSpacing(BearySpace.xxl, after: limitedCountdownLabel)
+            if live { startLimitedCountdownTimer() } else { stopLimitedCountdownTimer() }
+        } else {
+            moveTextOutOfLimitedBubble()
+            limitedBubbleView.isHidden = true
+            limitedCountdownIconView.isHidden = true
+            limitedCountdownLabel.isHidden = true
+            limitedCountdownLabel.text = nil
+            limitedCountdownState = nil
+            actionStack.setCustomSpacing(BearySpace.xxl, after: likeButton)
+            stopLimitedCountdownTimer()
         }
         // 个人页最后一篇后接“更多日记”行时底线整段塌掉（高 0 并隐藏），
         // 其余行沿用旧口径（首页存活期限时篇也显底线；个人页存活期限时篇藏底线但高仍 1）。
         separatorView.isHidden = ((cardMode == .feed) ? false : live) || suppressBottomSeparator
         separatorHeightConstraint?.constant = suppressBottomSeparator ? 0 : 1
-        ephemeralBorderView.isHidden = !live
         setNeedsLayout()
+    }
+
+    /// 标题／正文移进气泡内文字栈（幂等）：气泡是正文栈首个 arrangedSubview，
+    /// 标题→正文 6 走气泡内栈间距；移出时按原顺序插回正文栈首两位。
+    private func moveTextIntoLimitedBubble() {
+        guard !limitedBubbleActive else { return }
+        limitedBubbleActive = true
+        bodyStack.removeArrangedSubview(entryTitleLabel)
+        entryTitleLabel.removeFromSuperview()
+        bodyStack.removeArrangedSubview(contentLabel)
+        contentLabel.removeFromSuperview()
+        limitedBubbleView.textStack.addArrangedSubview(entryTitleLabel)
+        limitedBubbleView.textStack.addArrangedSubview(contentLabel)
+        if limitedBubbleView.superview == nil {
+            bodyStack.insertArrangedSubview(limitedBubbleView, at: 0)
+        }
+        limitedBubbleView.isHidden = false
+    }
+
+    private func moveTextOutOfLimitedBubble() {
+        guard limitedBubbleActive else { return }
+        limitedBubbleActive = false
+        limitedBubbleView.textStack.removeArrangedSubview(entryTitleLabel)
+        entryTitleLabel.removeFromSuperview()
+        limitedBubbleView.textStack.removeArrangedSubview(contentLabel)
+        contentLabel.removeFromSuperview()
+        bodyStack.removeArrangedSubview(limitedBubbleView)
+        limitedBubbleView.removeFromSuperview()
+        bodyStack.insertArrangedSubview(contentLabel, at: 1)
+        bodyStack.insertArrangedSubview(entryTitleLabel, at: 0)
+    }
+
+    /// 限时卡正文字号（预览口径）：短句 19pt、长文 16.5pt；非限时 16pt。
+    /// 仅表情放大（2026-11-18 Li 定）叠加其上：1–3 个纯表情时基准字号 ×2，
+    /// 显示与量算都走此处，行高倍数 1.6 跟字号走。
+    private var currentBodyFontSize: CGFloat {
+        guard let entry = currentEntry else { return 16 }
+        let base = BearyEphemeral.bodyFontSize(content: entry.content, limited: entry.ephemeralUntil != nil)
+        return BearyText.isEmojiOnlyBodyText(entry.content ?? "") ? base * BearyText.emojiOnlyFontScale : base
+    }
+
+    /// 倒计时 1 秒 tick：只在档位跃迁时整组重算（颜色／边框／pill／底线），
+    /// 其余只刷倒计时文字；到期跃迁由整组重算落定（定时器随之停）。
+    private func startLimitedCountdownTimer() {
+        guard limitedCountdownTimer == nil, window != nil else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            self?.limitedCountdownTick()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        limitedCountdownTimer = timer
+    }
+
+    private func stopLimitedCountdownTimer() {
+        limitedCountdownTimer?.invalidate()
+        limitedCountdownTimer = nil
+    }
+
+    private func limitedCountdownTick() {
+        guard let entry = currentEntry, let until = entry.ephemeralUntil else {
+            stopLimitedCountdownTimer()
+            return
+        }
+        let state = BearyEphemeral.countdownState(until: until)
+        if state != limitedCountdownState {
+            refreshEphemeralState(entry: entry)
+            updateDiaryStackSpacing()
+        } else if BearyEphemeral.isLive(entry) {
+            let text = BearyEphemeral.countdownText(until: until)
+            if limitedCountdownLabel.text != text { limitedCountdownLabel.text = text }
+        }
     }
 
     private func refreshMoreRow() {
@@ -4583,17 +4691,14 @@ extension BearyDiaryCardCell {
 
     /// 正文纯文本高度：与 attributedBody 同款字体 + 行高倍数，只量文字本身，
     /// 不含心情缀尾附件（附件只占末行尾部，可忽略）。
-    /// isEmojiOnly 为 true 时按放大字号量（与显示同字号）；默认 false，
-    /// 时间线行（1.75 倍、不放大口径）不传，保持原口径。
-    static func estimatedTextHeight(_ text: String, width: CGFloat, lineHeightMultiple: CGFloat, isEmojiOnly: Bool = false) -> CGFloat {
+    /// font 为 nil 时按 diaryBodyFont（16）量；时间线行（1.75 倍）不传，保持原口径。
+    static func estimatedTextHeight(_ text: String, width: CGFloat, lineHeightMultiple: CGFloat, font: UIFont? = nil) -> CGFloat {
         guard !text.isEmpty, width > 0 else { return 0 }
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = lineHeightMultiple
         paragraph.lineBreakMode = .byCharWrapping
-        let baseFont = BearyDynamicType.diaryBodyFont()
-        let font = isEmojiOnly ? baseFont.withSize(baseFont.pointSize * BearyText.emojiOnlyFontScale) : baseFont
         let attr = NSAttributedString(string: text, attributes: [
-            .font: font,
+            .font: font ?? BearyDynamicType.diaryBodyFont(),
             .paragraphStyle: paragraph,
         ])
         return attr.boundingRect(
@@ -4604,14 +4709,12 @@ extension BearyDiaryCardCell {
     }
 
     /// 单行高（与 measuredFoldOverflow 同款 "X" 量法，供折叠 6 行封顶用）。
-    static func estimatedSingleLineHeight(lineHeightMultiple: CGFloat, isEmojiOnly: Bool = false) -> CGFloat {
+    static func estimatedSingleLineHeight(lineHeightMultiple: CGFloat, font: UIFont? = nil) -> CGFloat {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = lineHeightMultiple
         paragraph.lineBreakMode = .byCharWrapping
-        let baseFont = BearyDynamicType.diaryBodyFont()
-        let font = isEmojiOnly ? baseFont.withSize(baseFont.pointSize * BearyText.emojiOnlyFontScale) : baseFont
         let attr = NSAttributedString(string: "X", attributes: [
-            .font: font,
+            .font: font ?? BearyDynamicType.diaryBodyFont(),
             .paragraphStyle: paragraph,
         ])
         return attr.boundingRect(
@@ -4623,13 +4726,17 @@ extension BearyDiaryCardCell {
 
     /// 卡片行高估算（首页/个人页共用）。正文列宽按约束取：左 68
     /// （16 边距 + 头像 40 + 12 间距）、右 16；行高倍数 1.6 与卡片一致。
+    /// 限时卡正文在气泡内（边距 32＋气泡左右内边距 52＝84），列宽同值，不用另算。
     static func estimatedCardHeight(for entry: Entry, mode: BearyDiaryCardMode, expanded: Bool, firstRow: Bool, tableWidth: CGFloat) -> CGFloat {
         let contentWidth = max(0, tableWidth - 84)
         let text = entry.content ?? ""
-        // 仅表情放大时正文与单行高都按放大字号量（与显示同字号）。
-        let emojiOnly = BearyText.isEmojiOnlyBodyText(text)
-        let fullHeight = estimatedTextHeight(text, width: contentWidth, lineHeightMultiple: 1.6, isEmojiOnly: emojiOnly)
-        let singleHeight = estimatedSingleLineHeight(lineHeightMultiple: 1.6, isEmojiOnly: emojiOnly)
+        // 限时正文字号（短句 19／长文 16.5）与仅表情放大（×2）叠加，
+        // 与显示（currentBodyFontSize 同口径）同字号量。
+        let hasEphemeral = entry.ephemeralUntil != nil
+        var bodyFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: BearyEphemeral.bodyFontSize(content: text, limited: hasEphemeral)))
+        if BearyText.isEmojiOnlyBodyText(text) { bodyFont = bodyFont.withSize(bodyFont.pointSize * BearyText.emojiOnlyFontScale) }
+        let fullHeight = estimatedTextHeight(text, width: contentWidth, lineHeightMultiple: 1.6, font: bodyFont)
+        let singleHeight = estimatedSingleLineHeight(lineHeightMultiple: 1.6, font: bodyFont)
         let lines = singleHeight > 0 ? Int(ceil(fullHeight / singleHeight - 0.01)) : 0
         // 与 measuredFoldOverflow 同口径：≤300 字恒不折叠。
         let overflow = text.count > 300 && lines > 6
@@ -4650,10 +4757,10 @@ extension BearyDiaryCardCell {
         if mode == .profile && entry.isPinned { height += 25 }          // 置顶行 15 + 间距 10
         height += 40   // 头行（头像 40）
         if (entry.mentionedName ?? "").isEmpty == false { height += 21 } // @ 行 17 + 间距 4
-        if BearyEphemeral.isLive(entry) { height += 19 }                 // 限时行 15 + 间距 4
-        height += 6    // 头行→正文
+        height += hasEphemeral ? 12 : 6    // 头行→正文（限时卡 12，给气泡尖尖留空）
         if hasTitle { height += 20 + 6 }                                 // 标题行 + 间距
         height += textHeight
+        if hasEphemeral { height += 40 }                                // 气泡上下内边距 20 + 20
         if overflow { height += 6 + 20 + 14 } else { height += 14 }      // 折叠钮行 / 正文→下行
         if hasImages { height += 216 + 12 }                              // 图片条 + 间距
         if imageKeys.count > 3 { height += 32 + 12 }                     // 九宫格入口 + 间距
