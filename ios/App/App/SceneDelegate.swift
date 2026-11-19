@@ -750,8 +750,11 @@ final class BearyChromeViewController: UIViewController {
         login.bearyAddPressFeedback()
         login.translatesAutoresizingMaskIntoConstraints = false
         login.sizeToFit()
+        // 高度扫查：登录 pill 与同行礼物／搜索图标钮（makeTopIconButton，40×40）
+        // 同处 actionsStack，旧 32 比邻钮矮 8pt、一边高一边矮；改 40 与邻钮等高
+        //（个人页头行编辑 pill／齿轮钮同为 40 的同款口径）；字号／圆角／宽度不动。
         NSLayoutConstraint.activate([
-            login.heightAnchor.constraint(equalToConstant: 32),
+            login.heightAnchor.constraint(equalToConstant: 40),
             login.widthAnchor.constraint(greaterThanOrEqualToConstant: login.bounds.width + 30),
         ])
         loginButton = login
