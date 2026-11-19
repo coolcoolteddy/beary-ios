@@ -35,6 +35,10 @@ enum BearyDMStore {
         var senderId: Int?
         var body: String?
         var createdAt: Int?
+        // 审计第 26 轮第 5 项：服务端透传的客户端消息 ID（history 回 client_message_id）。
+        // 认领在 persistMessages 合并后的行上跑，不经本字段透传就会在入库时丢掉；
+        // 旧文件无此键，默认值 nil 解码不受影响，无 ID 的旧行走原窗口回退。
+        var clientMessageId: String? = nil
     }
 
     struct StoredConversation: Codable {
@@ -281,7 +285,7 @@ enum BearyDMStore {
     private static func dmMessages(from stored: [StoredMessage]) -> [BearyAPI.DMMessage] {
         stored.compactMap { m -> BearyAPI.DMMessage? in
             guard let id = m.id, let senderId = m.senderId else { return nil }
-            return BearyAPI.DMMessage(id: id, senderId: senderId, body: m.body ?? "", createdAt: m.createdAt)
+            return BearyAPI.DMMessage(id: id, senderId: senderId, body: m.body ?? "", createdAt: m.createdAt, clientMessageId: m.clientMessageId)
         }.sorted { ($0.id ?? 0) < ($1.id ?? 0) }
     }
 
@@ -305,7 +309,7 @@ enum BearyDMStore {
             }
             let (base, corrupt) = cachedAll(accountId: accountId)
             let fresh = dmMessages(from: messages.map {
-                StoredMessage(id: $0.id, senderId: $0.senderId, body: $0.body, createdAt: $0.createdAt)
+                StoredMessage(id: $0.id, senderId: $0.senderId, body: $0.body, createdAt: $0.createdAt, clientMessageId: $0.clientMessageId)
             })
             if corrupt {
                 DispatchQueue.main.async { completion?(.corrupt(fresh)) }
@@ -620,7 +624,7 @@ enum BearyDMStoreCore {
         for m in conv.messages { if let id = m.id { byId[id] = m } }
         for m in messages {
             guard let id = m.id, let senderId = m.senderId else { continue }
-            byId[id] = BearyDMStore.StoredMessage(id: id, senderId: senderId, body: m.body ?? "", createdAt: m.createdAt)
+            byId[id] = BearyDMStore.StoredMessage(id: id, senderId: senderId, body: m.body ?? "", createdAt: m.createdAt, clientMessageId: m.clientMessageId)
         }
         conv.messages = byId.values.sorted { ($0.id ?? 0) < ($1.id ?? 0) }
         store["\(peerId)"] = conv
