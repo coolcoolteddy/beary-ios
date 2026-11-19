@@ -2299,8 +2299,6 @@ final class BearyNotificationsViewController: UIViewController {
                     self.followCardStates[actorId] = wasFollowBack ? .mutual : .following
                     // B2：本页刚确认的态即最新，打戳——进页重验 60s 内不再重复查。
                     self.followCardStateUpdatedAt[actorId] = Date()
-                    // 关注成功给 light 震动（点赞轻震动口径）；取关不给震动。
-                    BearyHaptics.press()
                     // B2：本页卡片已直接更新，不带 id 发广播——带 id 会让本页
                     // 自己的 handleFriendsChanged 再查一次刚确认的态，白发请求；
                     // 其他页只需清缓存信号，无 id 的广播已够。
@@ -3104,14 +3102,11 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
             // 连点不会重复发请求。闲时（非失败）哨兵仍无点击行为；无更多页时
             // 根本没有哨兵行，“到底了”正常态不动；滚动中不自动循环重拉。
             if loadMoreFailed && hasMore && !isLoadingMore {
-                BearyHaptics.press()
                 loadMoreFailed = false
                 loadMore()
             }
             return
         }
-        // W6：行点按补 .light 轻震（哨兵行已提前返回，不震动）。
-        BearyHaptics.press()
         let row = displayRows[indexPath.row]
         switch row.kind {
         case .sysCard:
@@ -5485,7 +5480,6 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: !UIAccessibility.isReduceMotionEnabled)
-        BearyHaptics.press()
         guard indexPath.row < items.count else { return }
         // 行点按全走子页原分流（乐观已读＋POST＋导航）：follow 行 → 容器
         // onOpenUser → 个人页（旧行为整行点按即进个人页，这里同口径，

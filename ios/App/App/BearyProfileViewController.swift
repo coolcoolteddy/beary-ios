@@ -7535,12 +7535,9 @@ class BearyProfileViewController: UIViewController {
                 // 个人页照片墙：长按不给按压效果、不变暗。长按即按住不放的
                 // touchDown，与点按走同一条按压路径（bearyAddPressFeedback 的
                 // touchDown 缩 .84 + 系统 highlighted 压暗），无法只在长按时
-                // 单独关掉；但只补轻震的 bearyAddPressHaptic 不改任何视觉，
-                // 故墙上照片钮改挂它：长按不缩不变暗，点按仍保留轻震（此前
-                // 整颗摘掉连点按轻震也没了，与全 App 按钮轻震口径不一致），
-                // 再关掉系统高亮压暗；点按进灯箱的 touchUpInside 不动。
-                // 仅此一处，不动全 App 反馈。
-                photoButton.bearyAddPressHaptic()
+                // 单独关掉；故墙上照片钮不挂按压反馈，只关掉系统高亮压暗。
+                // 点按进灯箱的 touchUpInside 不动。（2026-11-19 震动精简：
+                // 点按轻震去掉）
                 photoButton.adjustsImageWhenHighlighted = false
                 if photoIndex < wall.count {
                     let imageKey = wall[photoIndex].imageKey
@@ -7613,7 +7610,6 @@ class BearyProfileViewController: UIViewController {
         // 与行点按同款连点守卫（按钮直点不走 didSelectRowAt，须自带；规范 §6 导航连点节流 0.8s）。
         if let guardUntil = rowTapGuardUntil, Date() < guardUntil { return }
         rowTapGuardUntil = Date().addingTimeInterval(0.8)
-        BearyHaptics.press()
         onOpenTimeline?()
     }
 
@@ -8653,8 +8649,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         updateEntryInAllTabs(entry: optimistic)
         syncVisibleCell(entry: optimistic)?.refreshPublishRow()
         BearySoundPlayer.play(.visibilityClick)
-        // 审计动效组：可见性翻转统一为“图标＋pill 文案＋轻震”，此处补轻震。
-        BearyHaptics.press()
+        // 审计动效组：可见性翻转统一为“图标＋pill 文案”。（2026-11-19 震动精简：轻震去掉）
         BearyAPI.shared.setVisibility(id: entryId, visibility: targetVisibility) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -9457,8 +9452,6 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             return
         }
         guard indexPath.row < displayedEntries.count else { return }
-        // W6：行点按补 .light 轻震（放在连点守卫与越界守卫之后，只对真实生效的点按震动）。
-        BearyHaptics.press()
         rowTapGuardUntil = Date().addingTimeInterval(0.8)
         let entryValue = displayedEntries[indexPath.row]
         onOpenEntry?(entryValue)

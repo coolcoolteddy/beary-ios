@@ -3518,8 +3518,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 按下态底色：网页 .srch-user:active 用 hov；日记行同口径跟随。
     @objc private func rowTouchDown(_ sender: UIButton) {
         sender.backgroundColor = BearyColors.hov
-        // W6：搜索行已有底色按压反馈，只补 .light 轻震，不叠加缩放。
-        BearyHaptics.press()
     }
 
     @objc private func rowTouchUp(_ sender: UIButton) {

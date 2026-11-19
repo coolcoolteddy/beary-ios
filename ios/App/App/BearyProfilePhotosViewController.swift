@@ -1212,7 +1212,6 @@ extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollec
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
-        BearyHaptics.press()
         if indexPath.section == 1 {
             retryNextPage()
             return

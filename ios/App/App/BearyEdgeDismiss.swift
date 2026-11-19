@@ -255,8 +255,6 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
             }
             let velocity = pan.velocity(in: referenceView).x
             if progress > 0.35 || velocity > 800 {
-                // U24：完成关闭时给轻触感（取消时无）。
-                BearyHaptics.press()
                 if completionMode {
                     completionMode = false
                     // 松手确认退出仍走原保存流程；被拒（拖动中途状态变了）时滑回原位。

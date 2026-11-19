@@ -1086,7 +1086,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         row.addTarget(self, action: #selector(didTapRow(_:)), for: .touchUpInside)
         row.addTarget(self, action: #selector(rowPressDown(_:)), for: [.touchDown, .touchDragEnter])
         row.addTarget(self, action: #selector(rowPressUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
-        row.bearyAddPressHaptic()
         // 起手态：无头像态（头像藏、占位显）；configure 会按实际用户改写。
         avatarView.isHidden = true
         fallbackLabel.isHidden = false

@@ -1704,8 +1704,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     // M19：新建钮按压底色（与卡片 cardTouchDown/cardTouchUp 同口径）。
     @objc private func newButtonTouchDown(_ sender: UIButton) {
         sender.backgroundColor = BearyColors.surface2
-        // W6：已有底色按压反馈，只补 .light 轻震，不叠加缩放。
-        BearyHaptics.press()
     }
 
     @objc private func newButtonTouchUp(_ sender: UIButton) {
@@ -1850,8 +1848,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
 
     @objc private func cardTouchDown(_ sender: UIButton) {
         sender.backgroundColor = BearyColors.surface2
-        // W6：已有底色按压反馈，只补 .light 轻震，不叠加缩放。
-        BearyHaptics.press()
     }
 
     @objc private func cardTouchUp(_ sender: UIButton) {
