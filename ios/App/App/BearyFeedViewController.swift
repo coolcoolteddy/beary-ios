@@ -309,6 +309,16 @@ class BearyFeedViewController: UIViewController {
     /// （2026-10-30 全 App 统一 icon_refresh：32pt 真尺寸，不再用 medium 圈 ×1.6 放大。）
     private let centralSpinner = BearyRefreshIconView()
 
+    /// 已有内容刷新失败条（私信会话列表同款）：已有内容时刷新失败不 toast、
+    /// 不清列表，内容顶下方出“未能刷新 · 重试”常驻条；成功或下次刷新时收起。
+    /// 显隐只切换表顶约束，不动 contentOffset、不清列表。
+    private let refreshFailedBanner = UIView()
+    private let refreshFailedLabel = UILabel()
+    private let refreshFailedRetryButton = UIButton(type: .system)
+    private var refreshFailedBannerTopConstraint: NSLayoutConstraint?
+    private var tableViewTopToViewTopConstraint: NSLayoutConstraint?
+    private var tableViewTopToBannerConstraint: NSLayoutConstraint?
+
     /// 空态（网页 .empty 口径）：图标 40×40 灰（NB.pencil 一次性描画）、标题 15 ink（图标→标题间距 8）、
     /// 副文案 13 灰、容器 padding 26/20/8。广场空态用 pencil（网页 beary.html:2187 的 nb-once 口径）。
     private weak var feedEmptyPencilView: BearyPencilView?
@@ -376,6 +386,8 @@ class BearyFeedViewController: UIViewController {
         // 清掉，不让旧请求的菊花／节流残留到入段画面上。
         plazaLoading = false
         plazaFirstPageInFlight = false
+        // 切段即换段：出段的刷新失败条不带到入段，入段的拉取结果自会再定。
+        setRefreshFailedBannerVisible(false)
         hideNewContentPill()
         pendingPlaza = nil
         feedFollowingSegment = wantFollowing
@@ -600,6 +612,34 @@ class BearyFeedViewController: UIViewController {
         tableView.prefetchDataSource = self
         view.addSubview(centralSpinner)
         view.addSubview(newContentPill)
+        // 已有内容刷新失败条（私信会话列表同款）：常驻于内容顶下方、列表上方
+        //（非弹框、非 toast，失败不消失直至下次成功）；点“重试”走下拉同入口，
+        // 只重拉，不改列表与滚动位置。
+        refreshFailedBanner.translatesAutoresizingMaskIntoConstraints = false
+        refreshFailedBanner.backgroundColor = BearyColors.alpha(BearyColors.red, 0.12)
+        refreshFailedBanner.isHidden = true
+        view.addSubview(refreshFailedBanner)
+        refreshFailedLabel.translatesAutoresizingMaskIntoConstraints = false
+        refreshFailedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        refreshFailedLabel.adjustsFontForContentSizeCategory = true
+        refreshFailedLabel.textColor = BearyColors.ink
+        refreshFailedLabel.text = "未能刷新"
+        refreshFailedBanner.addSubview(refreshFailedLabel)
+        refreshFailedRetryButton.translatesAutoresizingMaskIntoConstraints = false
+        refreshFailedRetryButton.setTitle("重试", for: .normal)
+        refreshFailedRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        refreshFailedRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        refreshFailedRetryButton.setTitleColor(BearyColors.ink, for: .normal)
+        refreshFailedRetryButton.accessibilityLabel = "重试"
+        refreshFailedRetryButton.accessibilityHint = "重新拉取广场列表，不改变当前列表位置"
+        refreshFailedRetryButton.addTarget(self, action: #selector(refreshFailedRetryTapped), for: .touchUpInside)
+        refreshFailedRetryButton.bearyAddPressFeedback()
+        refreshFailedBanner.addSubview(refreshFailedRetryButton)
+        refreshFailedBannerTopConstraint = refreshFailedBanner.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: (headerTopInsetVisible ? 108 : 0) + 8 + BearyDeveloperMode.shared.devBannerInset)
+        refreshFailedBannerTopConstraint?.isActive = true
+        tableViewTopToViewTopConstraint = tableView.topAnchor.constraint(equalTo: view.topAnchor)
+        tableViewTopToBannerConstraint = tableView.topAnchor.constraint(equalTo: refreshFailedBanner.bottomAnchor)
+        tableViewTopToViewTopConstraint?.isActive = true
         // P2-1：内容列走网页 821 断点——宽 ≥821 时 600 居中，宽 ≤820 时 iPhone 式全宽
         //（600 上限只在 ≥821 激活，开关在 viewDidLayoutSubviews；容器层 SceneDelegate 同断点开关，
         // 本文件不再常驻 600 上限，避免 633–820 档被双重收窄）。
@@ -610,7 +650,15 @@ class BearyFeedViewController: UIViewController {
         let spinnerTop = centralSpinner.topAnchor.constraint(equalTo: view.topAnchor, constant: 40)
         self.centralSpinnerTopConstraint = spinnerTop
         NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            refreshFailedBanner.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            refreshFailedBanner.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            refreshFailedBanner.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            refreshFailedLabel.leadingAnchor.constraint(equalTo: refreshFailedBanner.leadingAnchor, constant: 16),
+            refreshFailedLabel.centerYAnchor.constraint(equalTo: refreshFailedBanner.centerYAnchor),
+            refreshFailedRetryButton.trailingAnchor.constraint(equalTo: refreshFailedBanner.trailingAnchor, constant: -16),
+            refreshFailedRetryButton.centerYAnchor.constraint(equalTo: refreshFailedBanner.centerYAnchor),
+            refreshFailedRetryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            refreshFailedRetryButton.leadingAnchor.constraint(greaterThanOrEqualTo: refreshFailedLabel.trailingAnchor, constant: 8),
             tableView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
             tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
@@ -815,6 +863,7 @@ class BearyFeedViewController: UIViewController {
         guard !isCustomPullRefreshing else { return }
         let safeTop = view.safeAreaInsets.top
         let top = safeTop + (visible ? 108 : 0) + 8 + BearyDeveloperMode.shared.devBannerInset
+        refreshFailedBannerTopConstraint?.constant = (visible ? 108 : 0) + 8 + BearyDeveloperMode.shared.devBannerInset
         let bottom = BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
         if tableView.contentInset.top != top || tableView.contentInset.bottom != bottom {
             tableView.contentInset.top = top
@@ -948,6 +997,9 @@ class BearyFeedViewController: UIViewController {
         if plazaFirstPageInFlight && refreshAllBypassInFlight == false {
             return
         }
+        // 用户主动刷新真正启动：旧失败条收起，本次结果自会再定（静默刷新不走这里，
+        // 不碰旧条，失败条只在下次成功时收）。
+        setRefreshFailedBannerVisible(false)
         // 113：先捕获登录翻转 bypass 再清——清后分支读到的恒为 false，
         // 翻转时就走成了 since，鉴权敏感字段会被旧身份数据污染。
         let loginFlippedBypass = refreshAllBypassInFlight
@@ -1162,8 +1214,8 @@ class BearyFeedViewController: UIViewController {
     /// 无 sort/filter 参数）；客户端自排会打断 before 分页游标、且与网页口径脱节。
     /// 首拉。diffMode：已有内容时回包走 diff 定向更新（下拉刷新/重拍/
     /// 登录翻转都走这里，不再整表替换）；无内容时走旧替换路径。
-    /// silent：后台静默刷新用，失败不 toast、不进错误行（旧内容继续展示，
-    /// 下次进页/下拉再试；旧失败路径的 toast 只留给用户主动触发的刷新）。
+    /// silent：后台静默刷新用，失败不提示、不进错误行（旧内容继续展示，
+    /// 下次进页/下拉再试；原位失败条只留给用户主动触发的刷新）。
     private func loadPlazaFirstPage(diffMode: Bool = false, silent: Bool = false) {
         // 80 包 B4：首拉带代际（revalidate 同口径），旧首拉回包直接丢弃。
         let firstPageGeneration = revalidateGeneration
@@ -1232,6 +1284,7 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.plazaNextPageBefore = nil
                         strongSelf.plazaNextPageBeforeId = nil
                         strongSelf.applyFirstPageDiff(entries, hasMoreOverride: rawEntries.count >= strongSelf.firstPageLimit)
+                        strongSelf.setRefreshFailedBannerVisible(false)
                         // 秒开-启动瘦身：首屏回包已终结，通知容器再发启动期 /me。
                         strongSelf.notifyFirstScreenDoneOnce()
                         return
@@ -1251,6 +1304,7 @@ class BearyFeedViewController: UIViewController {
                     }
                     strongSelf.plazaReachedEnd = rawEntries.count < strongSelf.firstPageLimit
                     strongSelf.plazaError = false
+                    strongSelf.setRefreshFailedBannerVisible(false)
                     strongSelf.lastFeedLoadAt = Date()
                     // 审计 13：界面先应用（落表 + 状态），写盘异步在后、不卡首帧。
                     // 加载三件套·骨架淡出：骨架出过屏时不直接 reloadData，
@@ -1269,7 +1323,8 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.notifyFirstScreenDoneOnce()
                 case .failure:
                     // F6 同口径：广场首拉失败也保留旧模型，空时才进错误行。
-                    // 静默刷新失败不 toast（后台行为不打扰阅读）。
+                    // 已有内容时失败不 toast、不清列表，改由列表顶的原位失败条提示
+                    //（私信会话列表同款）；静默刷新失败不打扰阅读、不出条。
                     strongSelf.plazaLoading = false
                     strongSelf.plazaFirstPageInFlight = false
                     if strongSelf.plazaRaw.isEmpty {
@@ -1284,7 +1339,7 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.finishFirstLoadIfNeeded()
                         strongSelf.updateOverlayState()
                     } else if !silent {
-                        BearyToast.show(in: strongSelf.view, message: "刷新失败")
+                        strongSelf.setRefreshFailedBannerVisible(true)
                     }
                     strongSelf.maybeEndRefreshing()
                     // 秒开-启动瘦身：首屏回包已终结（失败也算终结，/me 不被弱网首拉拖死；
@@ -1363,6 +1418,7 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaFirstPageInFlight = false
                     strongSelf.plazaFirstDone = true
                     strongSelf.plazaError = false
+                    strongSelf.setRefreshFailedBannerVisible(false)
                     strongSelf.lastFeedLoadAt = Date()
                     BearyTimelinePrefetch.maybePrefetch()
                     // B1：段守卫写盘（同首拉守卫），仅好友篇不落盘。
@@ -2327,6 +2383,18 @@ class BearyFeedViewController: UIViewController {
             return
         }
         refreshIconView.stopSpinning()
+    }
+
+    /// 已有内容刷新失败条显隐（私信会话列表同款）：只换表顶约束，不碰
+    /// contentOffset、不清列表，滚动位置不动。
+    private func setRefreshFailedBannerVisible(_ visible: Bool) {
+        refreshFailedBanner.isHidden = !visible
+        tableViewTopToViewTopConstraint?.isActive = !visible
+        tableViewTopToBannerConstraint?.isActive = visible
+    }
+
+    @objc private func refreshFailedRetryTapped() {
+        refreshAllInternal(showCentralSpinner: false)
     }
 
     // MARK: - 失败行 cell

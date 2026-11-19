@@ -7547,8 +7547,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         // 实况上传失败口径（防静默降级）：视频超限在选图时已拒收，这里再守
         // 一道；上传失败、或回包缺 live_key（后端未上线/不匹配）时一律按失败
-        // 处理——亮红底重试块 + toast，发布亦被失败图拦截，绝不把实况当静态
-        // 图发出；点图重试走 startUpload，仍带 liveVideoData 重传。
+        // 处理——只亮图上红底重试块（超限另 toast 明说原因，其余失败不弹全局框），
+        // 发布亦被失败图拦截，绝不把实况当静态图发出；点图重试走 startUpload，
+        // 仍带 liveVideoData 重传。
         if let liveVideoData = liveVideoData, liveVideoData.count > BearyLivePhoto.maxVideoBytes {
             DispatchQueue.main.async {
                 // uploadPrepared 入口已解包 item、self 本就是强引用，
@@ -7586,7 +7587,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         // 不 markUploaded、不进草稿、不让发布把这张当静态图发出。
                         if liveVideoData != nil, resp.liveKey == nil || resp.liveKey?.isEmpty == true {
                             self.markFailed(item)
-                            self.showToast(message: "实况视频上传失败，请点图重试")
                             self.saveDraftNow()
                             self.updatePublishState()
                         } else {
@@ -7619,11 +7619,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     }
                 case .failure:
                     // 失败只亮重试态：图留在条里，点图重试；不弹全局框、不删项。
-                    // 实况失败多一句 toast（实况是用户明确选中的内容，失败须明说，
-                    // 静态失败口径不动；发布时失败图拦截 toast 仍在）。
-                    if liveVideoData != nil {
-                        self.showToast(message: "实况视频上传失败，请点图重试")
-                    }
+                    // 实况与静态同口径——图上重试块已明说失败（发布时失败图拦截 toast 仍在）。
                     self.markFailed(item)
                     self.saveDraftNow()
                     self.updatePublishState()
@@ -9228,9 +9224,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 guard let self = self else { return }
                 if result.succeeded {
                     openBox()
-                } else {
-                    self.showToast(message: "草稿保存失败，请重试")
                 }
+                // 失败不开箱：失败态已由工具行原位状态行（“草稿保存失败”＋重试钮）
+                // 原位提示，不再另弹全局 toast。
             }
         } else {
             openBox()
