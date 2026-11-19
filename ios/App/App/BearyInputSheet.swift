@@ -11,9 +11,11 @@ import UIKit
 // （keyboardTopY 只在登录 sheet 的子类里），所以本 sheet 自带一个小的
 // presentation 子类 BearyInputSheetPresentationController，照抄登录 sheet
 // 的键盘口径：只跟停靠键盘（帧须与容器相交且触到底边），sheet 底贴键盘顶边；
-// 浮动/分屏键盘不动 sheet。输入框在 viewDidAppear 里 becomeFirstResponder
-// （viewDidLoad 时 view 尚未挂窗、首次响应者可能静默失败，见
-// BearyComposerPickers）。键盘 Return（.done）走确定同款路径。
+// 浮动/分屏键盘不动 sheet。输入框在 viewWillAppear 里 becomeFirstResponder
+// （面板已加入转场容器，键盘通知先于进场动画落位，停靠键盘的目标位置参与
+// 同一次入场，不再先落屏底再被键盘抬上去；viewDidLoad 时 view 尚未挂窗、
+// 首次响应者可能静默失败，见 BearyComposerPickers；viewDidAppear 再补一次
+// 当兜底）。键盘 Return（.done）走确定同款路径。
 // 按钮顺序按 BearyConfirmSheet 口径：非取消在上、取消垫底（确定、清除在上，
 // 取消垫底）；清除钮只在传了 onClear 时出现。点按按钮先关 sheet、关完再跑
 // 回调（回调里再弹 sheet 或出 toast 时不叠在正在退场的 sheet 上）；
@@ -221,11 +223,21 @@ final class BearyInputSheetViewController: UIViewController {
         ])
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // 键盘与面板同一次入场：面板已加入转场容器即请求焦点，键盘通知先于
+        // 进场动画落位，停靠键盘的目标位置参与同一次入场；旧版在 viewDidAppear
+        // 才请求焦点，面板先落屏底、进场结束才被键盘抬上去，两步分开可见停顿。
+        inputField.becomeFirstResponder()
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        // viewDidLoad 时 view 尚未挂窗，首次响应者可能静默失败（面板弹出却无键盘，
-        // 见 BearyComposerPickers）；移到 viewDidAppear，面板已上屏、键盘必起。
-        inputField.becomeFirstResponder()
+        // 兜底：viewWillAppear 时焦点请求若静默失败（极少数时序），这里再补一次；
+        // 已是首次响应者时调用无副作用。
+        if !inputField.isFirstResponder {
+            inputField.becomeFirstResponder()
+        }
     }
 
     override func viewDidLayoutSubviews() {
