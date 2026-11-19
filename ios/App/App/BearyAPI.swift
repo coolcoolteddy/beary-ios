@@ -1604,6 +1604,42 @@ final class BearyAPI {
         }
     }
 
+    /// Apple 登录：POST /api/account/apple-login {identity_token, nonce, full_name?, email?, dev?, confirm_cancel?}。
+    /// 响应沿用 VerifyResponse 解码（含 pending_delete 冷静期与 referral 绑定结果），不只看状态码。
+    /// identityToken 只发一次、不存；本方法不走通用 mapStatus、不触发 onUnauthorized（登录请求不该清用户态）。
+    /// 失败时 .server 携带服务端 message 展示文案；完成回调不在主线程发。
+    @discardableResult
+    func appleLogin(identityToken: String, nonce: String, fullName: String?, email: String?, dev: [String: Any]?, confirmCancel: Bool, completion: @escaping (Result<VerifyResponse, APIError>) -> Void) -> URLSessionDataTask? {
+        var body: [String: Any] = ["identity_token": identityToken, "nonce": nonce]
+        if let fullName = fullName, !fullName.isEmpty { body["full_name"] = fullName }
+        if let email = email, !email.isEmpty { body["email"] = email }
+        if let dev = dev, !dev.isEmpty { body["dev"] = dev }
+        if confirmCancel { body["confirm_cancel"] = true }
+        return perform("/api/account/apple-login", method: "POST", jsonBody: body) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let e = error as NSError?, e.code == NSURLErrorCancelled {
+                completion(.failure(.cancelled))
+                return
+            }
+            if let e = error {
+                completion(.failure(.network(e)))
+                return
+            }
+            if let data = data, let resp = try? self.decoder.decode(VerifyResponse.self, from: data) {
+                if resp.pendingDelete == true { completion(.success(resp)); return }
+                if resp.ok == true { completion(.success(resp)); return }
+                let message = resp.message ?? resp.error ?? "Apple 登录失败"
+                completion(.failure(.server(message, nil)))
+                return
+            }
+            if !(200...299).contains(status) {
+                completion(.failure(.http(status, self.errorSnippet(from: data))))
+                return
+            }
+            completion(.failure(.decoding(NSError(domain: "BearyAPI", code: -1, userInfo: nil))))
+        }
+    }
+
     /// 发码/验码共用的失败映射：不触发 onUnauthorized，只把服务端 message 透传为 .server。
     private func accountActionError(_ status: Int, data: Data?, error: Error?, fallback: String) -> APIError? {
         if let e = error as NSError?, e.code == NSURLErrorCancelled { return .cancelled }
