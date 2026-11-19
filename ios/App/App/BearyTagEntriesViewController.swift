@@ -17,6 +17,9 @@ final class BearyTagEntriesViewController: UIViewController {
     var onOpenUser: ((Int) -> Void)?
     /// 未登录时点赞/收藏等互动走游客登录门（容器接线）。
     var onRequireLogin: (() -> Void)?
+    /// 根页顶栏返回走容器（关整个标签 modal）；嵌套标签页的返回由本页
+    /// 先 pop，不走到这里（见 backButtonTapped）。
+    var onBack: (() -> Void)?
 
     private var entries: [Entry] = []
     private var loading = false
@@ -26,6 +29,36 @@ final class BearyTagEntriesViewController: UIViewController {
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let loadingIndicator = UIActivityIndicatorView(style: .large)
     private let stateLabel = UILabel()
+
+    /// 自有顶栏（本页只进 SceneDelegate 的标签 modal nav，系统导航栏隐藏；
+    /// 与个人页 modal 顶栏同款：44pt＋返回钮＋居中标题）。
+    private let topBarView: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = BearyColors.surface1
+        return viewValue
+    }()
+
+    private lazy var topBackButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.accessibilityLabel = "返回"
+        buttonValue.addTarget(self, action: #selector(backButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
+    private let topTitleLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        labelValue.adjustsFontForContentSizeCategory = true
+        labelValue.textColor = BearyColors.ink
+        labelValue.textAlignment = .center
+        return labelValue
+    }()
 
     private static let pageSize = 20
 
@@ -41,7 +74,10 @@ final class BearyTagEntriesViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "#" + tag
+        topTitleLabel.text = "#" + tag
         view.backgroundColor = BearyColors.surface1
+
+        buildTopBar()
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.dataSource = self
@@ -69,7 +105,7 @@ final class BearyTagEntriesViewController: UIViewController {
         view.addSubview(stateLabel)
 
         NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -84,6 +120,55 @@ final class BearyTagEntriesViewController: UIViewController {
         ])
 
         loadFirstPage()
+    }
+
+    private func buildTopBar() {
+        view.addSubview(topBarView)
+        topBarView.addSubview(topBackButton)
+        topBarView.addSubview(topTitleLabel)
+        NSLayoutConstraint.activate([
+            topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            topBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topBarView.heightAnchor.constraint(equalToConstant: 44),
+            topBackButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: BearySpace.lg),
+            topBackButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
+            topBackButton.widthAnchor.constraint(equalToConstant: 44),
+            topBackButton.heightAnchor.constraint(equalToConstant: 44),
+            topTitleLabel.centerXAnchor.constraint(equalTo: topBarView.centerXAnchor),
+            topTitleLabel.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
+            topTitleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: topBackButton.trailingAnchor, constant: 8),
+            topTitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBarView.trailingAnchor, constant: -BearySpace.lg),
+        ])
+    }
+
+    @objc private func backButtonTapped() {
+        // 嵌套标签页（栈内第 2 层起）先 pop 回上一级标签页；
+        // 根页走容器 onBack 关整个标签 modal。
+        if let nav = navigationController, nav.viewControllers.count > 1 {
+            nav.popViewController(animated: true)
+            return
+        }
+        onBack?()
+    }
+
+    /// 详情打开时记下该篇相对视口的位置（行顶相对可见区顶）；不在展示行里时返回 nil。
+    /// 与广场／个人页同款，供 SceneDelegate 的详情返回锚点恢复。
+    func detailReturnAnchor(for entryId: String) -> CGFloat? {
+        guard let row = entries.firstIndex(where: { $0.id == entryId }) else { return nil }
+        tableView.layoutIfNeeded()
+        return tableView.rectForRow(at: IndexPath(row: row, section: 0)).origin.y - tableView.contentOffset.y
+    }
+
+    /// 详情关闭时把该篇放回打开时的视口位置；已在原位（±1pt）或不在展示行里时不动。
+    func restoreDetailReturnAnchor(entryId: String, viewportOffset: CGFloat) {
+        guard let row = entries.firstIndex(where: { $0.id == entryId }) else { return }
+        tableView.layoutIfNeeded()
+        let targetY = tableView.rectForRow(at: IndexPath(row: row, section: 0)).origin.y - viewportOffset
+        guard abs(targetY - tableView.contentOffset.y) >= 1 else { return }
+        let minY = -tableView.contentInset.top
+        let maxY = max(minY, tableView.contentSize.height - tableView.bounds.height + tableView.contentInset.bottom)
+        tableView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
     }
 
     private func loadFirstPage() {
@@ -229,6 +314,7 @@ final class BearyTagEntriesViewController: UIViewController {
             next.onOpenEntry = self.onOpenEntry
             next.onOpenUser = self.onOpenUser
             next.onRequireLogin = self.onRequireLogin
+            next.onBack = self.onBack
             self.navigationController?.pushViewController(next, animated: true)
         }
     }

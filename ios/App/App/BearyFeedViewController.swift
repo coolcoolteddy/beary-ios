@@ -31,6 +31,11 @@ class BearyFeedViewController: UIViewController {
     /// 点头像或作者名：打开作者主页（传作者 id）。
     var onOpenUser: ((Int) -> Void)?
 
+    /// 卡片标签点按：打开标签聚合页（容器接线，见 SceneDelegate.presentTagPage）。
+    /// 本页是根容器直属子页、无 UINavigationController，旧 openTagPage 的
+    /// navigationController?.push 是静默空操作、广场点标签根本打不开。
+    var onOpenTag: ((String) -> Void)?
+
     /// 未登录点赞/收藏时转发（详情页同款接线：SceneDelegate 可接登录占位）。
     var onRequireLogin: (() -> Void)?
     /// 盲盒流程页的 EdgeDismiss 强持有（transitioningDelegate 弱引用）。
@@ -2533,20 +2538,12 @@ class BearyFeedViewController: UIViewController {
     /// 举报（已举报置灰）；取消垫底。点赞／收藏／分享是互动，仍在底部操作行，
     /// 不进菜单；长按菜单已随 ⋯ 归并删除。iPad popover 锚点随迁移删去，底部弹窗不再需要。
     /// 冲突清单第 4 条：编辑永久可改，不再按 15 分钟门控。
-    /// 标签完整版（2026-11-18）：卡片标签点按——推标签聚合页；行点按与作者
-    /// 头像转容器原有闭包（onEntrySelected／onOpenUser）。
+    /// 标签完整版（2026-11-18）：卡片标签点按——走容器统一标签路由；
+    /// 行点按与作者头像转容器原有闭包（onEntrySelected／onOpenUser）。
+    /// 第七轮审计 01：本页无导航栈，旧“自建标签页再 push”打不开，
+    /// 改走 onOpenTag（SceneDelegate.presentTagPage 自成 modal nav）。
     private func openTagPage(_ tag: String) {
-        let page = BearyTagEntriesViewController(tag: tag)
-        page.onOpenEntry = { [weak self] entry in
-            self?.onEntrySelected?(entry)
-        }
-        page.onOpenUser = { [weak self] userId in
-            self?.onOpenUser?(userId)
-        }
-        page.onRequireLogin = { [weak self] in
-            self?.onRequireLogin?()
-        }
-        navigationController?.pushViewController(page, animated: true)
+        onOpenTag?(tag)
     }
 
     private func presentCardMoreMenu(entry: Entry) {
