@@ -29,6 +29,9 @@ struct BearyAnnouncement: Decodable {
 private struct BearyAnnouncementListResponse: Decodable {
     let ok: Bool
     let list: [BearyAnnouncement]
+    // 强制更新 / 柔性提醒 / 远程开关（2026-11-19）：后端同响应带 config 对象，
+    // 缺失时为 nil，中心不动旧存值；全空（0/空数组）时完全无行为。
+    let config: BearyAppConfig?
 }
 
 final class BearyAnnouncementCenter {
@@ -62,10 +65,15 @@ final class BearyAnnouncementCenter {
                 switch result {
                 case .success(let response):
                     guard response.ok else { return }
+                    if let config = response.config {
+                        BearyForceUpdateCenter.shared.store(config: config)
+                    }
                     self.cachedList = response.list
                     self.tryPresent(list: response.list, from: presenter)
                 case .failure:
-                    // 弱网/失败静默：不弹、不记状态，下次启动再拉。
+                    // 弱网/失败静默：公告不弹、不记状态，下次启动再拉；但强制/柔性
+                    // 更新按上次拉到的 config 离线判断（从没拉到过则放行）。
+                    BearyForceUpdateCenter.shared.tryPresentUpdate(from: presenter, announcements: self.cachedList ?? [])
                     break
                 }
             }
@@ -112,6 +120,8 @@ final class BearyAnnouncementCenter {
         }
         let lastBuild = UserDefaults.standard.object(forKey: lastBuildKey) as? Int ?? current
         UserDefaults.standard.set(current, forKey: lastRunBuildKey)
+        // 强制更新 > 柔性提醒 > 公告：更新 UI 弹了就不再弹公告。
+        if BearyForceUpdateCenter.shared.tryPresentUpdate(from: presenter, announcements: list) { return }
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         let shown = shownIds()
         let candidate = list.first { ann in
