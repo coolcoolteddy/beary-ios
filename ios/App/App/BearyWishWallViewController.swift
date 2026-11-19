@@ -21,6 +21,9 @@ private final class WishRowView: UIView {
     private let detailLabel = UILabel()
     private let metaLabel = UILabel()
     private let netLabel = UILabel()
+    /// 已完成行静态结果行（规范 §12 许愿墙）：已完成时投票钮整行去掉，标题行下方接
+    /// 一行静态结果「赞成 N · 反对 M · 净赞成 ±N」；未完成时隐藏，不占位。
+    private let resultLabel = UILabel()
     // 08：投票区换行——voteRow 提为属性，另备一行 voteRowWrapped（仅换行态显形，内为弹性
     // spacer + netLabel，净数贴右缘）；换行态由 layoutSubviews 的 updateVoteWrap 判定。
     private var voteRow: UIStackView!
@@ -75,6 +78,12 @@ private final class WishRowView: UIView {
         netLabel.font = BearyDynamicType.numberFont()
         netLabel.adjustsFontForContentSizeCategory = true
         netLabel.textColor = BearyColors.gray
+        // 已完成行静态结果行：与作者时间弱信息行同档（12 灰字），只在已完成时显形。
+        resultLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        resultLabel.adjustsFontForContentSizeCategory = true
+        resultLabel.textColor = BearyColors.gray
+        resultLabel.numberOfLines = 0
+        resultLabel.isHidden = true
         // 28：donePill 文字与底色均走动态色（文字 BearyColors.deepGreenText，底色经
         // BearyColors.alpha 重解，不再硬编码绿值与 alpha 底）；公开 pill 橙色
         // 不在本文件，绝不动。固定 56×18 容器配 cappedFont 上限 14（31），
@@ -136,7 +145,8 @@ private final class WishRowView: UIView {
         titleRow.alignment = .top
         // 15：竖向栈减一层——netLabel 已随 voteRow 进操作行，不再单列；作者时间
         // metaLabel 仍为单独弱信息行，标题与 donePill 的同容器（titleRow）原样不动。
-        let stack = UIStackView(arrangedSubviews: [titleRow, detailLabel, expandButton, metaLabel, voteRow, voteRowWrapped, doneButton])
+        // 已完成行：resultLabel 紧接标题行下方（仅已完成时显形），投票行另行隐藏（见 configure）。
+        let stack = UIStackView(arrangedSubviews: [titleRow, resultLabel, detailLabel, expandButton, metaLabel, voteRow, voteRowWrapped, doneButton])
         stack.axis = .vertical
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -230,6 +240,8 @@ private final class WishRowView: UIView {
     /// （spacer 可压到 0）；超宽才换行，正常字号横向布局一字不动。两票钮始终同行相邻，
     /// 只挪净数；仅在换行态变化时才在两行之间搬 label，避免 layoutSubviews 内改布局引发循环。
     private func updateVoteWrap() {
+        // 已完成行投票行整行隐藏（见 configure），换行逻辑不再搬净数标签。
+        guard !isDoneRow else { return }
         let availWidth = bounds.width - 32
         guard availWidth > 0 else { return }
         let needed = upButton.intrinsicContentSize.width
@@ -333,13 +345,26 @@ private final class WishRowView: UIView {
         let done = item.status == "done"
         isDoneRow = done
         donePill.isHidden = !done
-        // 已完成即闭环：票钮置灰不可点（禁用态本身即不可用示意，不另弹 toast）。
+        // 已完成即闭环（规范 §12 许愿墙）：投票钮整行去掉，标题行下方接一行静态结果
+        // 「赞成 N · 反对 M · 净赞成 ±N」；未完成时投票行照常显形、静态行隐藏。
         // 扫 bug 定版第 6 项：投票不再有在途禁用——在途时票钮保持可点，
         // configure 只按已完成态禁用，不把在途行提前解开/锁住。
         upButton.isEnabled = !done
         downButton.isEnabled = !done
         upButton.alpha = done ? 0.4 : 1
         downButton.alpha = done ? 0.4 : 1
+        voteRow.isHidden = done
+        if done {
+            voteRowWrapped.isHidden = true
+        } else {
+            // 切回未完成时换行态重算：先复位，下一轮 layoutSubviews 按实宽重判。
+            isVoteWrapped = false
+            voteRowWrapped.isHidden = true
+        }
+        resultLabel.isHidden = !done
+        if done {
+            resultLabel.text = "赞成 \(up) · 反对 \(down) · 净赞成 \(net >= 0 ? "+" : "")\(net)"
+        }
         doneButton.isHidden = !(isAdmin && !done)
     }
 
