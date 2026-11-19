@@ -14,6 +14,36 @@ struct BearyEntrySnapshot: Decodable {
     /// 星标判定：只认显式 1（与 Entry.isPinned 同款 fail-closed 口径）。
     var isStarred: Bool { starred == 1 }
 
+    /// 正文按句切分：句末标点（。！？!?）与换行均为断句点，空句丢弃，
+    /// 句末标点保留。[mood:] 记号先剥掉（预览里它渲染成熊脸图，纯文本
+    /// 副行直接露原文会穿帮）；[gif:] 记号按预览口径留原文。
+    var bodySentences: [String] {
+        let plain = (content ?? "").replacingOccurrences(of: #"\[mood:[^\]]*\]"#, with: "", options: .regularExpression)
+        var sentences: [String] = []
+        var current = ""
+        for ch in plain {
+            current.append(ch)
+            if "。！？!?".contains(ch) || ch == "\n" {
+                let sentence = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !sentence.isEmpty { sentences.append(sentence) }
+                current = ""
+            }
+        }
+        let tail = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !tail.isEmpty { sentences.append(tail) }
+        return sentences
+    }
+
+    /// 列表副行：正文首句；与上一版本（更旧一条）首句相同时，取本版
+    /// 第一句与上一版首句不同的那一句；全版都相同、或正文为空时，
+    /// 回落到首句、再回落到固定文案（空快照沿用旧副行）。
+    func listSubtitle(previousSnapshot: BearyEntrySnapshot? = nil) -> String {
+        let sentences = bodySentences
+        guard let first = sentences.first else { return "纯文本 · 保存成功" }
+        guard let previousFirst = previousSnapshot?.bodySentences.first, previousFirst == first else { return first }
+        return sentences.first(where: { $0 != previousFirst }) ?? first
+    }
+
     /// 展示时间：yyyy-MM-dd HH:mm:ss（设备本地时区）；列表首行与预览副行同款。
     /// 服务端 created_at 是毫秒，相对时间（feedTimeString）不进快照展示。
     var displayDateString: String {
