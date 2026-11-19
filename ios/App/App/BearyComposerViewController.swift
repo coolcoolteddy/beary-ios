@@ -329,14 +329,14 @@ private final class BearyBodyTextView: UITextView {
     }
 }
 
-/// U3：编辑器工具栏七钮专用热区钮（图片／定位／自定义／天气／@／引用／标签）。
-/// 根因：七钮视觉帧 24pt，父类 BearyHit44Button 对称各扩 10pt 至 44pt；
+/// U3：编辑器工具栏六钮专用热区钮（图片／定位／天气／@／引用／标签）。
+/// 根因：六钮视觉帧 24pt，父类 BearyHit44Button 对称各扩 10pt 至 44pt；
 /// 工具行间距 16 时中心距 24+16=40 < 44，相邻热区重叠 4pt，窄屏间距压到 8 时
 /// 中心距 32、重叠 12pt，交界处点按落到后加的右钮。
 /// 修法：横向扩量改由工具行间距实时给定（maxSideExpansion = 间距 / 2），
 /// 相邻热区宽 = 24 + 间距 = 中心距，恰好相接、不互叠；纵向仍扩满 44
 /// （工具行高 ≥44，纵向无相邻钮可叠）。视觉帧、图标、顺序、目标动作一律不动；
-/// 仅七个工具钮用本类，顶栏／重试等其余 Hit44 钮不受影响。
+/// 仅六个工具钮用本类，顶栏／重试等其余 Hit44 钮不受影响。
 /// 按压反馈仍走原 bearyAddPressFeedback（只走 transform／opacity），
 /// 本类不新增交互面，不涉及 tap 高亮与焦点描边。
 /// D6：向外（朝屏幕边缘）的扩量钳制在工具行边界内，不超出屏幕边缘；
@@ -1058,7 +1058,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let toolbarSeparator = UIView()
     /// 窄屏 5 项之 3：草稿状态独立行（工具栏上方、工具行之上），只承载
     /// level 0 失败与 level 1 部分保存：完整文案＋重试钮，不再挤进工具行
-    /// 与 7 个图标抢宽。level 2 已保存一般走工具行右端原口径，只留对勾
+    /// 与 6 个图标抢宽。level 2 已保存一般走工具行右端原口径，只留对勾
     /// 在最小间距下仍装不下时才改走本行（完整文案、不带重试钮）。
     private let draftStatusBanner = UIStackView()
     private let draftStatusBannerLabel = UILabel()
@@ -1070,12 +1070,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 行高仍由子项固有高撑着、会把工具行顶下去；隐藏时钉 0、显示时停用。
     private var draftStatusBannerHeightConstraint: NSLayoutConstraint?
     private let imageToolButton = BearyComposerToolButton(type: .system)
-    /// 批 E 定位钮：工具栏左组第 2 位（图片右边、自定义之前，预览 v2 定版；v1 的心情/天气并列位置已作废）。
+    /// 批 E 定位钮：工具栏左组第 2 位（图片右边，预览 v2 定版；v1 的心情/天气并列位置已作废）。
     private let locationToolButton = BearyComposerToolButton(type: .system)
-    private let gifToolButton = BearyComposerToolButton(type: .system)
-    /// 自定义入口钮（点开底部弹窗自定义图片选择器，见 presentGIFPickerSheet）。
-    /// 2026-11-18：写日记页心情选择器已删（心情改为正文键入 [mood:xxx]），
-    /// 本钮只开“自定义”组（个人自定义心情图库，GIF 与常规图）。
     private weak var gifPickerSheet: BearyMoodPickerSheetViewController?
     private let weatherToolButton = BearyComposerToolButton(type: .system)
     private let recipientToolButton = BearyComposerToolButton(type: .system)
@@ -3993,17 +3989,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageToolButton.tintColor = BearyColors.ink
         imageToolButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
         imageToolButton.bearyAddPressFeedback()
-        // 批 E：定位钮插在图片钮右边、自定义钮之前（左组顺序：图片 → 定位 → 自定义 → 天气 → @ → 引用）。
+        // 批 E：定位钮插在图片钮右边（左组顺序：图片 → 定位 → 天气 → @ → 引用）。
         locationToolButton.setImage(BearyLocationIcon.image(pointSize: 24), for: .normal)
         locationToolButton.accessibilityLabel = "添加位置"
         locationToolButton.tintColor = BearyColors.ink
         locationToolButton.addTarget(self, action: #selector(didTapLocationTool), for: .touchUpInside)
         locationToolButton.bearyAddPressFeedback()
-        gifToolButton.setImage(BearyIconImages.image(named: "icon_image", pointSize: 24), for: .normal)
-        gifToolButton.accessibilityLabel = "自定义"
-        gifToolButton.tintColor = BearyColors.ink
-        gifToolButton.addTarget(self, action: #selector(didTapGIFTool), for: .touchUpInside)
-        gifToolButton.bearyAddPressFeedback()
         // 天气钮图标随选中天气变（见 syncWeatherToolButton，网页 syncWxBtn 同款同步）。
         weatherToolButton.setImage(BearyIconImages.image(named: "icon_weather_tool", pointSize: 24), for: .normal)
         weatherToolButton.accessibilityLabel = "选择天气"
@@ -4029,7 +4020,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarContainer.translatesAutoresizingMaskIntoConstraints = false
         toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolRow.translatesAutoresizingMaskIntoConstraints = false
-        for button in [imageToolButton, locationToolButton, gifToolButton, weatherToolButton, recipientToolButton, quoteToolButton, tagToolButton] {
+        for button in [imageToolButton, locationToolButton, weatherToolButton, recipientToolButton, quoteToolButton, tagToolButton] {
             button.translatesAutoresizingMaskIntoConstraints = false
             button.widthAnchor.constraint(equalToConstant: 24).isActive = true
             button.heightAnchor.constraint(equalToConstant: 24).isActive = true
@@ -4074,7 +4065,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarContainer.addSubview(toolRow)
         toolRow.addArrangedSubview(imageToolButton)
         toolRow.addArrangedSubview(locationToolButton)
-        toolRow.addArrangedSubview(gifToolButton)
         toolRow.addArrangedSubview(weatherToolButton)
         toolRow.addArrangedSubview(recipientToolButton)
         toolRow.addArrangedSubview(quoteToolButton)
@@ -4099,17 +4089,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let spacer = UIView()
         toolRow.addArrangedSubview(spacer)
         toolRow.addArrangedSubview(draftStatusGroup)
-        // 第 7 轮属实项 4：只有 6 段工具钮之间的间距参与热区重叠，正常为 20（toolRow.spacing）。
+        // 第 7 轮属实项 4：只有 5 段工具钮之间的间距参与热区重叠，正常为 20（toolRow.spacing）。
         // 其余 3 段不夹两个热区，可收窄以保窄屏装得下，spacer 本身吸 slack：
         // 标签→圆环 8（圆环不可点），圆环→spacer 0、spacer→草稿组 0。
-        // 按此算：320 宽容器 288 时只留对勾态、字数未超限总宽 = 7×24 + 6×20 + 8 + 18 + 15 = 329 > 288，
-        // 间距自适应收到约 13.2 装下；字数超限（圆环组约 59）时只留对勾也约 322 > 288，
-        // 草稿状态改走独立行（见 applyDraftStatusToolbarFit）。
+        // 按此算：320 宽容器 288 时只留对勾态、字数未超限总宽 = 6×24 + 5×20 + 8 + 18 + 15 = 285 ≤ 288，
+        // 间距 20 装下；字数超限（圆环组约 59）时只留对勾在 20 间距下约 326 > 288，
+        // 间距收到 12 约 286 装下（见 applyDraftStatusToolbarFit）。
         toolRow.setCustomSpacing(8, after: tagToolButton)
         toolRow.setCustomSpacing(0, after: charGroupStack)
         toolRow.setCustomSpacing(0, after: spacer)
         toolbarToolRow = toolRow
-        // U3：初始间距 20 同步七钮横向热区 cap（= 间距 / 2 = 10，相邻热区相接不叠）。
+        // U3：初始间距 20 同步六钮横向热区 cap（= 间距 / 2 = 10，相邻热区相接不叠）。
         setToolbarToolRowSpacing(toolRow.spacing, in: toolRow)
         // 窄屏 5 项之 3：工具行顶锚两档——独立行隐藏时锚分隔线（原 12 间距），
         // 独立行显示时锚独立行底（8 间距）；两档互斥切换，见
@@ -5467,15 +5457,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         saveDraftNow()
     }
 
-    /// D4：工具行间距自适应。fixedWidth 是工具行里除 6 段工具间距外的固定总宽
-    /// （7×24 图标 + 标签→圆环 8 + 圆环组 + 尾部草稿组）；containerWidth 是容器宽。
+    /// D4：工具行间距自适应。fixedWidth 是工具行里除 5 段工具间距外的固定总宽
+    /// （6×24 图标 + 标签→圆环 8 + 圆环组 + 尾部草稿组）；containerWidth 是容器宽。
     /// 20 间距装得下就返回 20；装不下时收窄到刚好装下，下限 12——320 宽、字数超限
-    /// （圆环组约 59）只留对勾态时固定部分约 250，(288−250)/6 ≈ 6.3 < 12，装不下，
-    /// 走独立行兜底（见 applyDraftStatusToolbarFit）。
+    /// （圆环组约 59）只留对勾态时固定部分约 226，(288−226)/5 = 12.4，
+    /// 间距收到约 12.4 装下。
     private func adaptiveToolbarToolRowSpacing(fixedWidth: CGFloat, containerWidth: CGFloat) -> CGFloat {
         let available = containerWidth - fixedWidth
-        guard available < 6 * 20 else { return 20 }
-        return max(12, available / 6)
+        guard available < 5 * 20 else { return 20 }
+        return max(12, available / 5)
     }
 
     /// D4：尾部草稿组当前实际占宽——隐藏时 0；只留对勾时 15；带文案时 15 + gap 5 + 文案宽。
@@ -5485,7 +5475,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         return 15 + 5 + draftStatusLabel.intrinsicContentSize.width
     }
 
-    /// U3：工具行间距与七钮横向热区联动。热区横向扩量 = 间距 / 2 时，
+    /// U3：工具行间距与六钮横向热区联动。热区横向扩量 = 间距 / 2 时，
     /// 相邻热区宽 = 24 + 间距 = 中心距，恰好相接、不互叠（间距 20 → 扩 10、
     /// 热区 44；间距 12 → 扩 6、热区 36）。只改热区 cap，不改视觉帧；间距每次变更都经本函数，
     /// cap 与间距同步（cap 赋值不触发布局，可每轮直设）。
@@ -5494,7 +5484,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func setToolbarToolRowSpacing(_ spacing: CGFloat, in toolRow: UIStackView) {
         if toolRow.spacing != spacing { toolRow.spacing = spacing }
         let cap = max(0, spacing / 2)
-        for button in [imageToolButton, locationToolButton, gifToolButton, weatherToolButton, recipientToolButton, quoteToolButton, tagToolButton] {
+        for button in [imageToolButton, locationToolButton, weatherToolButton, recipientToolButton, quoteToolButton, tagToolButton] {
             button.maxSideExpansion = cap
         }
     }
@@ -5502,12 +5492,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 109：草稿状态在工具栏里的宽度适配（只动 lvl2 文案显隐，不动图标与圆环）。
     /// D4：工具间距正常 20；仅当 20 间距下装不下容器时自适应收窄（下限 12），
     /// 字数环本身永不隐藏；窄屏仍由文案显隐兜底。
-    /// 390 宽：容器 358，7×24 图标 + 6 段工具间距 20 + 标签→圆环 8 + 圆环 18
-    /// + 状态组（对勾 15 + gap 5 + 文案约 39）= 约 373，20 间距下装不下，
-    /// 间距自适应收到约 17.5，完整排下「✓ 已保存」。
-    /// 320 宽：容器 288，只留对勾态、字数未超限 = 7×24 + 6×12 + 8 + 18 + 15 = 281 ≤ 288，
-    /// 间距约 13.2 装下；字数超限（圆环组约 59）时只留对勾也需约 322 > 288，
-    /// 草稿状态改走工具栏上方独立行（完整文案、不带重试钮），工具行组隐藏；
+    /// 390 宽：容器 358，6×24 图标 + 5 段工具间距 20 + 标签→圆环 8 + 圆环 18
+    /// + 状态组（对勾 15 + gap 5 + 文案约 39）= 约 329，20 间距下装得下，
+    /// 间距保持 20，完整排下「✓ 已保存」。
+    /// 320 宽：容器 288，只留对勾态、字数未超限 = 6×24 + 5×12 + 8 + 18 + 15 = 245 ≤ 288，
+    /// 间距 20 装下；字数超限（圆环组约 59）时只留对勾在最小间距下约 286 ≤ 288，
+    /// 仍留在工具行（只留对勾）；文案排不下时兜底只留对勾（文案隐藏），绝不留半截字加省略号；
     /// 文案排不下时兜底只留对勾（文案隐藏），绝不留半截字加省略号；
     /// 宽回升时文案自动恢复（viewDidLayoutSubviews 每轮重算，同值不重设、不成环）。
     /// 窄屏 5 项之 3：全部状态共用本函数分流，不再只有 level 2 走适配、
@@ -5543,7 +5533,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         guard let level = draftStatusLevel, !isEditMode else {
             setDraftStatusBannerVisible(false)
-            setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 7 * 24 + 8 + charGroupWidth + draftStatusGroupWidth(), containerWidth: width), in: toolRow)
+            setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 6 * 24 + 8 + charGroupWidth + draftStatusGroupWidth(), containerWidth: width), in: toolRow)
             return
         }
         if level == 0 || level == 1 {
@@ -5556,29 +5546,29 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 失败图点图片重试上传（见 didTapImageItem），上传中图等传完自动进下一次保存。
             draftStatusRetryButton.isHidden = (level != 0)
             if !draftStatusGroup.isHidden { draftStatusGroup.isHidden = true }
-            setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 7 * 24 + 8 + charGroupWidth, containerWidth: width), in: toolRow)
+            setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 6 * 24 + 8 + charGroupWidth, containerWidth: width), in: toolRow)
             return
         }
         // level 2：文案显隐与分流按最小间距 12 判定——12 下装得下文案就显文案、
         // 间距自适应收窄兜底；只留对勾在 12 下仍装不下时，草稿状态改走独立行。
         let labelWidth = draftStatusLabel.intrinsicContentSize.width
-        // 只留对勾态在最小间距下的定宽：7×24 图标 + 6 段工具间距 12 + 标签→圆环 8
+        // 只留对勾态在最小间距下的定宽：6×24 图标 + 5 段工具间距 12 + 标签→圆环 8
         // + 圆环组 + 对勾 15；spacer 两侧自定义间距为 0、spacer 本身吸 slack，不进算式。
-        let withoutLabel: CGFloat = 7 * 24 + 6 * 12 + 8 + charGroupWidth + 15
+        let withoutLabel: CGFloat = 6 * 24 + 5 * 12 + 8 + charGroupWidth + 15
         if width >= withoutLabel + 5 + labelWidth {
             // 文案在最小间距下装得下：独立行收起，工具行组恢复显示、文案显示，
             // 间距按自适应口径（12…20）收窄兜底。
             setDraftStatusBannerVisible(false)
             if draftStatusGroup.isHidden { draftStatusGroup.isHidden = false }
             if draftStatusLabel.isHidden { draftStatusLabel.isHidden = false }
-            setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 7 * 24 + 8 + charGroupWidth + 15 + 5 + labelWidth, containerWidth: width), in: toolRow)
+            setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 6 * 24 + 8 + charGroupWidth + 15 + 5 + labelWidth, containerWidth: width), in: toolRow)
         } else if width >= withoutLabel {
             // 只留对勾在最小间距下装得下：独立行收起，工具行组恢复显示、文案隐藏，
             // 间距按自适应口径收窄兜底。
             setDraftStatusBannerVisible(false)
             if draftStatusGroup.isHidden { draftStatusGroup.isHidden = false }
             if !draftStatusLabel.isHidden { draftStatusLabel.isHidden = true }
-            setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 7 * 24 + 8 + charGroupWidth + 15, containerWidth: width), in: toolRow)
+            setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 6 * 24 + 8 + charGroupWidth + 15, containerWidth: width), in: toolRow)
         } else {
             // 只留对勾在最小间距下仍装不下：草稿状态改走工具栏上方独立行
             // （完整文案、不带重试钮——level 2 不是写盘失败），工具行组隐藏、
@@ -5586,7 +5576,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             draftStatusRetryButton.isHidden = true
             if !draftStatusGroup.isHidden { draftStatusGroup.isHidden = true }
             setDraftStatusBannerVisible(true)
-            setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 7 * 24 + 8 + charGroupWidth, containerWidth: width), in: toolRow)
+            setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 6 * 24 + 8 + charGroupWidth, containerWidth: width), in: toolRow)
         }
     }
 
@@ -5858,7 +5848,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteCardRemoveButton.isEnabled = !frozen
         quoteDeletedRemoveButton.isEnabled = !frozen
         weatherToolButton.isEnabled = !frozen
-        gifToolButton.isEnabled = !frozen
         recipientToolButton.isEnabled = !frozen
         // quote-freeze：气温步进/直输与标题清除钮此前不在冻结清单——
         // 快照已保证改动不进载荷，但冻结清单按任务口径补齐，免得用户
@@ -6790,6 +6779,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     @objc private func didTapAddImage() {
         // 编辑器改版：弹出框打开时点其他工具钮，先收起框再走各自处理。
         hideCallout(animated: false)
+        // GIF 钮已并进图片钮（2026-11-19 Li 定）：照片与 GIF 二选一；
+        // GIF 走原自定义图库 sheet（见 didTapGIFTool），功能不动。
+        BearyConfirmSheet.show(from: self, title: "添加图片", message: nil, actions: [
+            BearyConfirmSheet.Action(title: "照片", handler: { [weak self] in self?.presentPhotoPicker() }),
+            BearyConfirmSheet.Action(title: "GIF", handler: { [weak self] in self?.didTapGIFTool() }),
+        ])
+    }
+
+    /// 图片钮 → 照片：原 didTapAddImage 的相册流程（多选、上限 9 张）。
+    private func presentPhotoPicker() {
         // P2：9 图上限到达时不再完全静默，给 toast（不改按钮置灰口径）。
         // GIF 也占 1 张：照片条＋已插 GIF 合计满 9 即拦（发布时服务端同口径）。
         if imageItems.count + referencedGifKeys().count >= BearyComposerViewController.maxImages {
