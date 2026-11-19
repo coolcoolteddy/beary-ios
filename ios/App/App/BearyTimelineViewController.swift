@@ -3686,6 +3686,8 @@ class BearyTimelineViewController: UIViewController {
             // 同为服务端权威行，故无条件跟随新值（含清定位时新值为 nil）。
             merged.locationName = freshEntry.locationName
             merged.locationDistrict = freshEntry.locationDistrict
+            // 审计第 8 轮补正（时间线同款）：双副本补丁同步标签——日面板回包拿到新标签后时间线副本也要跟上，否则 timelinePatchChanged 判不出变化、时间线行恒显旧标签；回包缺 tags 字段时保留旧值，不清空（与 emotes 同口径；服务端富化恒给字段）。
+            if let freshTags = freshEntry.tags { merged.tags = freshTags }
             return merged
         }
     }
@@ -5281,6 +5283,8 @@ class BearyTimelineViewController: UIViewController {
             emoteParts.append("\(emote.emote ?? ""):\(emote.count ?? 0):\(emote.mine ?? false)")
         }
         let images = (entry.images ?? []).joined(separator: ",")
+        // 审计第 8 轮补正（时间线同款）：标签参与卡片绘制（BearyDiaryCardCell 按 entry.tags 出标签行），仅标签变化时签名必须变化，否则 applyFirstPageDiff / dayUnchanged / timelinePatchChanged 均判无变化、卡片恒显旧标签。顺序即服务端顺序，换序亦判为变化（与个人页 #1955 同口径）。
+        let tagsPart = (entry.tags ?? []).joined(separator: ",")
         let dims = (entry.imgDims ?? [:]).map { "\($0.key):\($0.value.map(String.init).joined(separator: "x"))" }.sorted().joined(separator: ",")
         let live = (entry.liveVideos ?? [:]).map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ",")
         let quote = entry.quote
@@ -5291,7 +5295,7 @@ class BearyTimelineViewController: UIViewController {
         let quoteImages = (quote?.images ?? []).joined(separator: ",")
         let quoteDims = (quote?.imgDims ?? [:]).map { "\($0.key):\($0.value.map(String.init).joined(separator: "x"))" }.sorted().joined(separator: ",")
         let quotePart = "\(entry.quoteId ?? "")|\(quote?.id ?? "")|\(quote?.content ?? "")|\(quote?.gone ?? false)|\(quote?.locked ?? false)|\(quote?.isPublic ?? false)|\(quoteImages)|\(quoteDims)|\(quote?.authorName ?? "")|\(quote?.authorAvatar ?? "")|\(quote?.authorHandle ?? "")|\(quote?.visibility ?? "")|\(quote?.publishedAt ?? 0)|\(quote?.ephemeralUntil ?? 0)"
-        return "\(entry.content ?? "")|\(entry.isPublic ?? false)|\(entry.visibility ?? "")|\(entry.likeCount ?? 0)|\(entry.likedByMe ?? false)|\(entry.bookmarkedByMe ?? false)|\(entry.bookmarkCount ?? 0)|\(emoteParts.joined(separator: ","))|\(entry.locationName ?? "")|\(entry.locationDistrict ?? "")|\(images)|\(dims)|\(live)|\(entry.weather ?? "")|\(entry.temperatureC.map(String.init) ?? "")|\(entry.mood ?? "")|\(entry.title ?? "")|\(quotePart)|\(entry.authorName ?? "")|\(entry.authorAvatar ?? "")|\(entry.authorPlus ?? 0)|\(entry.mentionedName ?? "")|\(entry.createdAt ?? 0)|\(entry.publishedAt ?? 0)|\(entry.ephemeralUntil ?? 0)"
+        return "\(entry.content ?? "")|\(entry.isPublic ?? false)|\(entry.visibility ?? "")|\(entry.likeCount ?? 0)|\(entry.likedByMe ?? false)|\(entry.bookmarkedByMe ?? false)|\(entry.bookmarkCount ?? 0)|\(emoteParts.joined(separator: ","))|\(entry.locationName ?? "")|\(entry.locationDistrict ?? "")|\(images)|\(tagsPart)|\(dims)|\(live)|\(entry.weather ?? "")|\(entry.temperatureC.map(String.init) ?? "")|\(entry.mood ?? "")|\(entry.title ?? "")|\(quotePart)|\(entry.authorName ?? "")|\(entry.authorAvatar ?? "")|\(entry.authorPlus ?? 0)|\(entry.mentionedName ?? "")|\(entry.createdAt ?? 0)|\(entry.publishedAt ?? 0)|\(entry.ephemeralUntil ?? 0)"
     }
 
     private func loadTimelineNextPage(manual: Bool = false) {
