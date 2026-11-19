@@ -56,8 +56,13 @@ final class BearyTagPickerViewController: UIViewController {
     /// 否则容器在呈现中途释放、进退场动画丢 delegate。
     var sheetDelegate: BearyBottomSheetTransitioningDelegate?
 
-    /// 我用过的标签（GET /beary/api/tags，按篇数倒序）；拉取失败即空列表，
-    /// 选择器仍可用（可新建），不弹失败态。
+    /// 服务端回的历史标签（GET /beary/api/tags，按篇数倒序）。
+    private var serverTags: [BearyTag] = []
+    /// 本次新建、服务端历史里还没有的标签（最新在首位），以及进来时已选、
+    /// 但服务端历史里没有的标签；回包／失败都不清掉，点行可取消选中。
+    private var localTags: [BearyTag] = []
+    /// 面板显示列：本地标签在前、服务端历史在后，按小写 key 去重合并；
+    /// 拉取失败时保持原样，选择器仍可用（可新建），不弹失败态。
     private var myTags: [BearyTag] = []
     /// 已选标签（原序保留）；去重键为小写，用于新标签与旧标签比对。
     private var selectedTags: [String]
@@ -269,14 +274,34 @@ final class BearyTagPickerViewController: UIViewController {
             guard let self = self else { return }
             switch result {
             case .success(let tags):
-                // 已选但不在旧标签里的（新建未发布）不进列表，选中态只由 selectedTags 记；
-                // 列表只显服务端回的旧标签。
-                self.myTags = tags
+                self.serverTags = tags
+                // 服务端已有的本地行不再单存（服务端行带篇数）；服务端没有的
+                // 已选标签补进本地行，面板里有行可点才能取消选中。
+                self.localTags.removeAll { local in
+                    tags.contains { $0.tag.lowercased() == local.tag.lowercased() }
+                }
+                for tag in self.selectedTags {
+                    let key = tag.lowercased()
+                    guard !tags.contains(where: { $0.tag.lowercased() == key }),
+                          !self.localTags.contains(where: { $0.tag.lowercased() == key }) else { continue }
+                    self.localTags.append(BearyTag(tag: tag, count: nil))
+                }
+                self.rebuildMyTags()
             case .failure:
-                self.myTags = []
+                // 失败保留本地行（回包前新建的标签还在首位），只刷新显示。
+                break
             }
             self.refreshTagList()
         }
+    }
+
+    /// 本地标签在前、服务端历史在后，按小写 key 去重合并成显示列。
+    private func rebuildMyTags() {
+        var merged = localTags
+        for tag in serverTags where !merged.contains(where: { $0.tag.lowercased() == tag.tag.lowercased() }) {
+            merged.append(tag)
+        }
+        myTags = merged
     }
 
     private func refreshTagList() {
@@ -324,10 +349,13 @@ final class BearyTagPickerViewController: UIViewController {
             selectedKeys.insert(key)
             selectedTags.append(tag)
         }
-        // 新标签进列表首位（即使服务端还没它，也能立即看到选中态）；重名不重复插行。
-        if !myTags.contains(where: { $0.tag.lowercased() == key }) {
-            myTags.insert(BearyTag(tag: tag, count: nil), at: 0)
+        // 新标签进本地列首位（即使服务端还没它，也能立即看到选中态）；
+        // 服务端已有、本地没有的不重复插行。回包只刷新服务端列，不动本地列。
+        if !serverTags.contains(where: { $0.tag.lowercased() == key })
+            && !localTags.contains(where: { $0.tag.lowercased() == key }) {
+            localTags.insert(BearyTag(tag: tag, count: nil), at: 0)
         }
+        rebuildMyTags()
         newTagField.text = nil
         newTagField.resignFirstResponder()
         refreshConfirmTitle()
