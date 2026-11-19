@@ -140,6 +140,9 @@ struct Entry: Codable {
     /// A4-App（App 端标题，不依赖卡片渲染子项）：服务端 title 字段透传用；
     /// 卡片渲染与空标题占位均未定，本处只做模型字段，不做任何展示回退。
     var title: String?
+    /// 搜索命中片段（服务端 /beary/api/search 下发；未部署前为 nil，行内由
+    /// BearySearchSnippet 就地从全文算——只做模型字段，不做展示回退）。
+    var snippet: String?
     var images: [String]?
     /// 实况映射（服务端 live_videos，convertFromSnakeCase 直解）：静态图 key →
     /// 视频 key（视频 key = 静态图 key + "_live"）；nil/空 = 旧纯静态图，按无

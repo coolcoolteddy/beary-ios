@@ -31,7 +31,9 @@ import CoreText
 //     users 按 id 升序只传 before_id（LIMIT 8）。三组共用同一套游标参，
 //     故翻页按组各发一请求、只取本组结果合并（见 loadMore），不混用游标。
 //     字段 id/content/images/created_at/author_id/author_name/author_avatar/
-//     like_count。
+//     like_count；snippet（命中片段）服务端备 diff 待部署，现行接口不下发，
+//     行内由 BearySearchSnippet 就地从全文算（见 makeEntryRow），下发后优先用
+//     服务端字段；mine 同口径（公开组与“我的”组各 LIMIT 20）。
 //   - mine：仅登录会话返回（未登录为 null），本人全部日记按正文匹配，LIMIT 20，
  //     翻页同 entries 口径（before + before_id）；
 //     字段 id/content/images/created_at/publish_at/is_public；
@@ -116,6 +118,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var currentSearchTask: URLSessionDataTask?
     private var lastQuery: String = ""
     private var showingResults: Bool = false
+    /// T3：切回结果页保留阅读位置——离页（切 tab／进详情）时记下的
+    /// scrollView 纵向偏移；切回时 pageDidReturn 按它恢复（±1pt 内不动）。
+    private var savedResultsOffsetY: CGFloat?
     private var searchBoxFocused: Bool = false
     // 88 包 M13：结果区底部常驻尾行（对齐时间线/个人主页尾行形态）。
     // sweep32-2：尾行新增“加载更多”态（加载中转圈、失败重试复用重试钮）；
@@ -541,6 +546,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        // T3：详情全屏盖住本页时本回调触发，先记下阅读位置再收键盘。
+        if showingResults {
+            savedResultsOffsetY = scrollView.contentOffset.y
+        }
         // 64 包反馈修：退出搜索页键盘跟随收走——模态/ push 离开走本回调时先收键盘，
         // 容器 isHidden 切页不触发本回调，另由 SceneDelegate.showPage 离搜索分支收键盘。
         view.endEditing(true)
@@ -563,6 +572,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 故容器 showPage 在离页时显式调本钩子，只覆盖序号失效（收键盘已有
     /// showPage 的 view.endEditing，不重复）。
     func pageDidLeave() {
+        // T3：切 tab 离页时记下阅读位置（搜索词在 searchField 里、结果行
+        // 在栈里原样保留，不重搜、不清词）；切回由 pageDidReturn 恢复。
+        if showingResults {
+            savedResultsOffsetY = scrollView.contentOffset.y
+        }
         searchTimer?.invalidate()
         searchTimer = nil
         searchSeq += 1
@@ -575,6 +589,43 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         updateSearchFooter()
         // 审计 26-21：停框内圈与状态区转圈（旧回包被序号守卫丢弃，不会收尾）。
         stopSearchSpinnersForLeave()
+    }
+
+    /// T3：切回结果页——搜索词（searchField.text）与结果行离页时原样保留，
+    /// 这里只把离页时记下的阅读位置恢复回来：离页期间重渲／键盘收起导致
+    /// 偏移漂移时才动，±1pt 内不动；无结果时不做任何事、不重搜。
+    /// 容器 showPage 在切回搜索页时调（与个人页 pageDidReturn 同口径）。
+    func pageDidReturn() {
+        guard showingResults, let savedY = savedResultsOffsetY else { return }
+        scrollView.layoutIfNeeded()
+        let minY = -scrollView.contentInset.top
+        let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom)
+        let targetY = min(max(savedY, minY), maxY)
+        guard abs(targetY - scrollView.contentOffset.y) >= 1 else { return }
+        scrollView.contentOffset = CGPoint(x: 0, y: targetY)
+    }
+
+    /// T3：详情打开时记下该篇相对视口的位置（行顶相对可见区顶）；不在
+    /// 结果列表里时返回 nil（与广场／时间线／个人页同口径，见 SceneDelegate
+    /// detailReturnAnchor）。关闭时由 restoreDetailReturnAnchor 放回原位。
+    func detailReturnAnchor(for entryId: String) -> CGFloat? {
+        guard let row = entryRowById[entryId] else { return nil }
+        scrollView.layoutIfNeeded()
+        let rowTop = row.convert(CGPoint.zero, to: scrollView).y
+        return rowTop - scrollView.contentOffset.y
+    }
+
+    /// T3：详情关闭时把该篇放回打开时的视口位置；已在原位（±1pt）或
+    /// 不在列表里时不动（与广场／时间线／个人页同口径）。
+    func restoreDetailReturnAnchor(entryId: String, viewportOffset: CGFloat) {
+        guard let row = entryRowById[entryId] else { return }
+        scrollView.layoutIfNeeded()
+        let rowTop = row.convert(CGPoint.zero, to: scrollView).y
+        let targetY = rowTop - viewportOffset
+        guard abs(targetY - scrollView.contentOffset.y) >= 1 else { return }
+        let minY = -scrollView.contentInset.top
+        let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom)
+        scrollView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
     }
 
     deinit {
@@ -2769,6 +2820,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
 
         let contentText = collapsedWhitespace(entry.content ?? "")
+        // T3：摘要优先命中词附近的句子——服务端下发 snippet 时直接用，
+        // 未下发（现行接口只给全文）时由 BearySearchSnippet 就地算；
+        // 行仍只占 3 行，命中词高亮口径不变。
+        let snippetText: String
+        if let serverSnippet = entry.snippet, !serverSnippet.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            snippetText = collapsedWhitespace(serverSnippet)
+        } else {
+            snippetText = BearySearchSnippet.snippet(for: contentText, query: query)
+        }
         let contentLabel = BearyRoundedMarkLabel()
         contentLabel.translatesAutoresizingMaskIntoConstraints = false
         contentLabel.numberOfLines = 3
@@ -2776,7 +2836,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         contentLabel.clipsToBounds = true
         // 横向栈内正文先让位：固定 44 宽缩略图不被挤，正文换行承接剩余宽度。
         contentLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        contentLabel.attributedText = highlightedMoodText(contentText, query: query, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, lineHeightMultiple: 1.6, lineBreakMode: .byCharWrapping, gifImageKeys: entry.images)
+        contentLabel.attributedText = highlightedMoodText(snippetText, query: query, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, lineHeightMultiple: 1.6, lineBreakMode: .byCharWrapping, gifImageKeys: entry.images)
 
         // 第十三轮第 2 项：搜索结果行加标题（作者·日期 → 标题 → 正文 → 图片）。
         // 标题用卡片同款 16.5 粗体（cardTitleFont）、最多两行截尾；命中词走
@@ -3052,6 +3112,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         lastResultQuery = nil
         lastResultRowKeys = []
         showingResults = false
+        savedResultsOffsetY = nil
         showInitialState()
     }
 

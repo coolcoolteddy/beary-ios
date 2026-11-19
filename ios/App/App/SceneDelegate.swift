@@ -256,8 +256,9 @@ final class BearyChromeViewController: UIViewController {
     private var tagPageEdgeDismiss: BearyEdgeDismissController?
     /// 详情只读返回的定位上下文：只记来源列表＋该篇在打开时的视口内位置；
     /// 关闭时仅恢复来源列表，不再向三列表广播 scrollToRow(.middle)。
-    /// 来源不明（搜索/深链/引用卡/通知等）时为 nil，关闭时什么都不做。
-    private enum DetailReturnSource { case feed, timeline, profile, tag }
+    /// 来源不明（深链/引用卡/通知等）时为 nil，关闭时什么都不做。
+    /// T3：搜索亦为来源——从搜索结果进详情，关闭时放回该篇打开时的视口位置。
+    private enum DetailReturnSource { case feed, timeline, profile, tag, search }
     private struct DetailReturnContext {
         let source: DetailReturnSource
         let entryId: String
@@ -2460,6 +2461,10 @@ final class BearyChromeViewController: UIViewController {
         } else if page == .user {
             userVC?.resumeVisibleEmotes()
             userVC?.pageDidReturn()
+        } else if page == .search {
+            // T3：切回搜索结果页——搜索词与结果行离页时原样保留，这里只恢复
+            // 离页时记下的阅读位置（个人页 pageDidReturn 同口径）。
+            searchVC?.pageDidReturn()
         }
         // 淡入复加：主 tab 0.26s 交叉淡入、搜索页淡入、二级页（.user 等容器页）推入淡入，
         // 均走同一条 showPage 路径；只做透明度动画。减动效或首亮（无离场页）时直接显隐。
@@ -2792,7 +2797,8 @@ final class BearyChromeViewController: UIViewController {
                 self?.presentUserProfile(handle: handle)
             }
         }, onOpenEntry: { [weak self] entryId in
-            self?.gotoEntry(entryId: entryId)
+            // T3：搜索进详情记下来源，供关闭时把该篇放回打开时的视口位置。
+            self?.gotoEntry(entryId: entryId, source: .search)
         })
         // 收尾接线：搜索返回回首页（S4 返回行）。
         // 好友第一期（关注/回关模型）：搜索行回关直接调 follow 接口，不再经通知页。
@@ -3841,7 +3847,7 @@ final class BearyChromeViewController: UIViewController {
 
     /// 只有 id 时（搜索/消息/深链/引用卡）：先拉单篇，再走同一可见性门；
     /// 拉不到（已删/无权）时 toast，不跳页。
-    private func gotoEntry(entryId: String) {
+    private func gotoEntry(entryId: String, source: DetailReturnSource? = nil) {
         guard !entryId.isEmpty else { return }
         showToast(message: "正在打开…")
         // R22-A1：发起时固定账号、会话代次、日记 ID 与快照桶，回包逐一复核。
@@ -3853,7 +3859,7 @@ final class BearyChromeViewController: UIViewController {
                 guard self.isStillSameDetailSession(request) else { return }
                 switch result {
                 case .success(let fetched):
-                    self.routeFetchedEntry(fetched, request: request)
+                    self.routeFetchedEntry(fetched, request: request, source: source)
                 case .failure(let apiError):
                     if case .network = apiError {
                         // 网络失败：先试磁盘快照（看过的旧正文先显），无快照才 toast。
@@ -3864,7 +3870,7 @@ final class BearyChromeViewController: UIViewController {
                             // 旧桶快照不得进新账号页面。
                             guard isStillSameDetailSession(request) else { return }
                             if let cached = snap?.entry {
-                                self.routeFetchedEntry(cached, request: request)
+                                self.routeFetchedEntry(cached, request: request, source: source)
                             } else {
                                 self.showToast(message: "网络不稳定，请稍后再试")
                             }
@@ -3883,7 +3889,7 @@ final class BearyChromeViewController: UIViewController {
     /// R22-A1：request 为发起时钉住的身份——日记 ID 与会话任一失配即静默丢弃
     /// （不 toast：用户可能已切号，旧请求的“不存在”提示不属于新账号）；
     /// authorId 在时以它为准，isMine 只在同一已验证会话且缺作者 ID 时兜底。
-    private func routeFetchedEntry(_ fetched: Entry, request: DetailFetchRequest) {
+    private func routeFetchedEntry(_ fetched: Entry, request: DetailFetchRequest, source: DetailReturnSource? = nil) {
         guard let entryId = fetched.id, !entryId.isEmpty else {
             showToast(message: "这篇日记不存在或已被删除")
             return
@@ -3891,26 +3897,26 @@ final class BearyChromeViewController: UIViewController {
         guard fetched.id == request.entryId, isStillSameDetailSession(request) else { return }
         let viewerIsAuthor = isAuthorOfEntry(fetched, viewerId: request.accountId)
         if viewerIsAuthor {
-            presentDetail(entry: fetched)
+            presentDetail(entry: fetched, source: source)
             return
         }
         // 审计 P0-1：通知/深链/引用卡直达拉黑作者——只出占位，不出全文。
         if isBlockedAuthor(fetched) {
             var placeholderEntry = fetched
             placeholderEntry.placeholder = true
-            presentDetail(entry: placeholderEntry)
+            presentDetail(entry: placeholderEntry, source: source)
             return
         }
         // 审计 2026-11-02 第十节：详情门按三档判定——作者本人全见、有效公开全见、
         // 仅好友只在服务端 state 确认互关时全见、私密占位；state 拉取失败占位
         // （fail-closed）；服务端视角改写口径须抓包核对（见 PR 未做项）。
         if BearyEphemeral.isEffectivelyPublic(fetched), fetched.authorId != nil {
-            presentDetail(entry: fetched)
+            presentDetail(entry: fetched, source: source)
             return
         }
         // 服务端已占位化的 payload 直接进占位（不再为仅好友占位体多拉一次 state）。
         if fetched.placeholder == true {
-            presentDetail(entry: fetched)
+            presentDetail(entry: fetched, source: source)
             return
         }
         if fetched.isFriendsOnly, let authorId = fetched.authorId, SessionManager.shared.isLoggedIn {
@@ -3924,11 +3930,11 @@ final class BearyChromeViewController: UIViewController {
                     switch stateResult {
                     case .success(let state)
                         where (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false)):
-                        self.presentDetail(entry: fetched)
+                        self.presentDetail(entry: fetched, source: source)
                     default:
                         var placeholderEntry = fetched
                         placeholderEntry.placeholder = true
-                        self.presentDetail(entry: placeholderEntry)
+                        self.presentDetail(entry: placeholderEntry, source: source)
                     }
                 }
             }
@@ -3944,7 +3950,7 @@ final class BearyChromeViewController: UIViewController {
         // 正常私密 payload 在此分支外已由服务端占位化，此处为防御性兜底）。
         var placeholderEntry = fetched
         placeholderEntry.placeholder = true
-        presentDetail(entry: placeholderEntry)
+        presentDetail(entry: placeholderEntry, source: source)
     }
 
     /// 日记详情页（2026-10-28 v5 mock 定版）：全屏 EdgeDismiss 模态；回调接线：
@@ -4057,6 +4063,7 @@ final class BearyChromeViewController: UIViewController {
         case .timeline: return timelineVC?.detailReturnAnchor(for: entryId)
         case .profile: return profileVC?.detailReturnAnchor(for: entryId)
         case .tag: return detailReturnTagPage?.detailReturnAnchor(for: entryId)
+        case .search: return searchVC?.detailReturnAnchor(for: entryId)
         }
     }
 
@@ -4085,6 +4092,7 @@ final class BearyChromeViewController: UIViewController {
         case .timeline: timelineVC?.restoreDetailReturnAnchor(entryId: context.entryId, viewportOffset: context.viewportOffset)
         case .profile: profileVC?.restoreDetailReturnAnchor(entryId: context.entryId, viewportOffset: context.viewportOffset)
         case .tag: detailReturnTagPage?.restoreDetailReturnAnchor(entryId: context.entryId, viewportOffset: context.viewportOffset)
+        case .search: searchVC?.restoreDetailReturnAnchor(entryId: context.entryId, viewportOffset: context.viewportOffset)
         }
     }
 
