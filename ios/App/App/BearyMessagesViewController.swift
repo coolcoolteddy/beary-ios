@@ -115,7 +115,7 @@ final class BearyMessagesViewController: UIViewController {
         topBarTopConstraint = topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         // #1256：消息头与时间线头同为 21 bold；此前此处仍是 19。
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 21))
+        titleLabel.font = BearyDynamicType.scaledFont(for: BearyDynamicType.serifDesign(for: UIFont.boldSystemFont(ofSize: 21)))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.text = "消息"

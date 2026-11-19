@@ -128,9 +128,18 @@ extension BearyDynamicType {
         scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
     }
 
+    /// 衬线设计（2026-11-19 Li 定，规范 §11 克制版）：对给定系统字体取 New York＋宋体
+    /// 设计（withDesign(.serif)，不装字体）；取不到时回退原字体。字号字重不变。
+    /// 中文最终回退字体（是否宋体）须真机验证，本入口不做额外渲染工作。
+    static func serifDesign(for font: UIFont) -> UIFont {
+        guard let serif = font.fontDescriptor.withDesign(.serif) else { return font }
+        return UIFont(descriptor: serif, size: font.pointSize)
+    }
+
     /// 语义：个人页姓名展示字。定版值：24 heavy，scaled（规范第 11 节，2026-11-04 Li 定）。
+    /// 衬线（2026-11-19 Li 定）：个人页姓名／设置页账号名／年报年度关键词同走本入口，一处覆盖三点。
     static func heroNameFont() -> UIFont {
-        scaledFont(for: UIFont.systemFont(ofSize: 24, weight: .heavy))
+        scaledFont(for: serifDesign(for: UIFont.systemFont(ofSize: 24, weight: .heavy)))
     }
 
     /// 语义：头像首字展示字。定版值：28 bold，scaled（规范第 11 节，2026-11-04 Li 定）。
