@@ -153,12 +153,12 @@ enum BearyGIF {
 
     /// key 是不是内联进正文/标题的自定义心情图（只进 inlineGifKeys、不进图片条/
     /// 图条；其余 key 仍按普通照片走）。GIF 沿旧口径一律算内联（老数据里删掉
-    /// 记号的孤儿 GIF 仍不进图条，与改前一致）；常规图只认正文里的 [gif:]
+    /// 记号的孤儿 GIF 仍不进图条，与改前一致）；常规图只认标题或正文里的 [gif:]
     /// 记号引用——普通照片也是同款 key，不看记号分不出来。
-    static func isInlineImageKey(_ key: String, content: String) -> Bool {
+    static func isInlineImageKey(_ key: String, content: String, title: String = "") -> Bool {
         if key.lowercased().hasSuffix(".gif") { return true }
         guard let rand = randKey(from: key) else { return false }
-        return content.contains("[gif:\(rand)]")
+        return (title + "\n" + content).contains("[gif:\(rand)]")
     }
 
     /// rand → 完整 key（在 entry.images 里按 rand 后缀找回）。
