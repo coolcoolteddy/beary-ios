@@ -9719,7 +9719,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     /// 隐藏、不留空位（BearyCrownView 既定契约）。
     private func updateCrownDisplay() {
         guard let profileValue = profile else { return }
-        let isPlus = profileValue.plus ?? false
+        let isPlus = BearyDeveloperMode.effectivePlus(profileValue.plus ?? false)
         if isPlus {
             crownView.isHidden = !crownView.hasCrown
             crownView.alpha = 1
@@ -9743,7 +9743,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     /// （窄屏全屏＋左边缘右滑，宽屏默认呈现）；页内状态取当前 profile.plus。
     private func presentPlusPage() {
         guard presentedViewController == nil else { return }
-        let page = BearyPlusPageViewController(isPlus: profile?.plus == true)
+        let page = BearyPlusPageViewController(isPlus: BearyDeveloperMode.effectivePlus(profile?.plus == true))
         if traitCollection.horizontalSizeClass == .compact {
             page.modalPresentationStyle = .fullScreen
             let edgeDismiss = BearyEdgeDismissController()
