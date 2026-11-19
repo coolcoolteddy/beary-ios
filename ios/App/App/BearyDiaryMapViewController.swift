@@ -1543,8 +1543,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
 // MARK: - 时间胶囊 v1：点标记弹卡（只在地图页内，不新文件）
 
-/// 胶囊卡底 sheet：走共享底部弹窗容器 BearyBottomSheet（与确认弹窗同款
-/// 呈现与关闭流程）。卡片用 district-range 图标，只显示区级、解锁日期、
+/// 胶囊卡底 sheet：走系统底部 sheet（UISheetPresentationController，见 BearySystemSheet）。
+/// 卡片用 district-range 图标，只显示区级、解锁日期、
 /// 解锁状态——未解锁只显示占位，不露正文、不露标题、不给进详情；
 /// 已解锁才给「查看日记」，走现有 onOpenEntry 进详情（公开篇向所有人、
 /// 私密篇仅作者，不改可见性，不做解锁即公开）。
@@ -1556,32 +1556,16 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 enum BearyTimeCapsuleCardSheet {
     static func show(from presenter: UIViewController, entry: Entry, onOpenEntry: @escaping (Entry) -> Void, onUnburied: @escaping (String) -> Void) {
         let sheet = BearyTimeCapsuleCardViewController(entry: entry, onOpenEntry: onOpenEntry, onUnburied: onUnburied)
-        let delegate = BearyBottomSheetTransitioningDelegate()
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
-        sheet.loadViewIfNeeded()
-        let presenterWidth = presenter.view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
-        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
-        presenter.present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: presenter)
     }
 }
 
-final class BearyTimeCapsuleCardViewController: UIViewController {
-
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（确认弹窗同款做法）。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
+final class BearyTimeCapsuleCardViewController: UIViewController, BearySystemSheetSizing {
 
     private let entry: Entry
     private let onOpenEntry: (Entry) -> Void
     private let onUnburied: (String) -> Void
 
-    private let grabberView = UIView()
-    private let closeButton = BearyButton.closeButton()
     private let districtIconView = UIImageView()
     private let districtLabel = UILabel()
     private let dateTitleLabel = UILabel()
@@ -1625,16 +1609,6 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
         view.layer.cornerRadius = BearySheetChrome.topCornerRadius
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
-
-        grabberView.translatesAutoresizingMaskIntoConstraints = false
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        view.addSubview(grabberView)
-
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
-        view.addSubview(closeButton)
 
         districtIconView.translatesAutoresizingMaskIntoConstraints = false
         districtIconView.image = BearyIconImages.image(named: "district-range", pointSize: 28)
@@ -1699,24 +1673,16 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
         view.addSubview(actionStack)
 
         NSLayoutConstraint.activate([
-            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop),
-            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-
-            closeButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 16),
-            closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
-
-            districtIconView.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
+            // 顶部留白与旧抓手区等高（抓手顶 10＋高 4＋内容间距 16）：系统抓手占顶区，内容位置不动；
+            // 一律不要 ×，区级行右缘放回内容边 -16。
+            districtIconView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 16),
             districtIconView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             districtIconView.widthAnchor.constraint(equalToConstant: 28),
             districtIconView.heightAnchor.constraint(equalToConstant: 28),
 
             districtLabel.centerYAnchor.constraint(equalTo: districtIconView.centerYAnchor),
             districtLabel.leadingAnchor.constraint(equalTo: districtIconView.trailingAnchor, constant: 12),
-            districtLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -12),
+            districtLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
             dateTitleLabel.topAnchor.constraint(equalTo: districtIconView.bottomAnchor, constant: 16),
             dateTitleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
@@ -1761,7 +1727,7 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
         updatePreferredContentSize()
     }
 
-    /// 按当前宽度算内容高，推给容器当 sheet 高（确认弹窗同款）。
+    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高（确认弹窗同款）。
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         let width = view.bounds.width > 0 ? view.bounds.width : 375
         let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
@@ -1770,6 +1736,7 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
     }
 
@@ -1855,9 +1822,5 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
                 }
             }
         }
-    }
-
-    @objc private func closeTapped() {
-        dismiss(animated: BearyMotion.animated(true))
     }
 }

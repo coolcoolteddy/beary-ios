@@ -2230,7 +2230,7 @@ class BearyTimelineViewController: UIViewController {
     private let visFilterButton = BearyHit44Button(type: .system)
     /// 筛子钮显式宽度约束：UIButton 固有宽度不计 titleEdgeInsets（见 updateVisFilterButton）。
     private var visFilterButtonWidthConstraint: NSLayoutConstraint?
-    /// 筛子走底部 sheet（2026-11-18：尖角气泡改 BearyBottomSheet，见文件末
+    /// 筛子走底部 sheet（2026-11-18：尖角气泡改系统 sheet，见文件末
     /// BearyVisFilterSheetViewController；旧 BearyBubbleMenuView 已删）。
     /// 入口钮本身不动（#612 定圆角 17 的口径原样保留）。
     /// 冷启动框架先行：首个宽就绪布局时先画日历框（当日周/月格＋占位圆点），
@@ -2851,18 +2851,7 @@ class BearyTimelineViewController: UIViewController {
             // 先收 sheet 再切档：切档会 scrollToTop + 重拉，与收起动画并行会抢布局（气泡版同款顺序）。
             self?.applyVisFilter(tier)
         })
-        let delegate = BearyBottomSheetTransitioningDelegate()
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
-        sheet.loadViewIfNeeded()
-        let presenterWidth = view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
-        sheet.updatePreferredContentSize(extraBottomInset: view.safeAreaInsets.bottom)
-        present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: self)
     }
 
     /// 离页时收起在场的筛选 sheet（viewWillDisappear／pageDidLeave 共用）。
@@ -7593,8 +7582,8 @@ enum BearyCalendarSnapshotStore {
 /// 5 行：文字左对齐、无分隔线、篇数靠右、选中行最右打勾；行上下内边距 8、
 /// 顶留白 6、底留白 10、行内元素间距 8（BearySheetChrome 列表值）。
 /// 篇数只显调用方给的三档（全部／公开／私密）；无计数档不显示、不编造。
-/// 点一行即选定并收起，收起后由调用方切档；抓手下滑／点外收起走容器。
-final class BearyVisFilterSheetViewController: UIViewController {
+/// 点一行即选定并收起，收起后由调用方切档；抓手下滑／点外收起走系统 sheet。
+final class BearyVisFilterSheetViewController: UIViewController, BearySystemSheetSizing {
 
     /// 与 fileprivate enum 配对：init 参数走本别名，须同为 fileprivate（否则
     /// 编译器按 private 别名卡初始化器级别）。
@@ -7604,10 +7593,6 @@ final class BearyVisFilterSheetViewController: UIViewController {
     private let counts: [Filter: Int]
     private let onPick: (Filter) -> Void
 
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页同款做法）。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
-
-    private let grabberView = UIView()
     private let stackView = UIStackView()
 
     /// 初始化器须与参数类型同级：Filter 是 fileprivate 枚举，init 只给同文件内的
@@ -7630,11 +7615,6 @@ final class BearyVisFilterSheetViewController: UIViewController {
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
 
-        grabberView.translatesAutoresizingMaskIntoConstraints = false
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        view.addSubview(grabberView)
-
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.axis = .vertical
         stackView.spacing = 0
@@ -7653,12 +7633,8 @@ final class BearyVisFilterSheetViewController: UIViewController {
         }
 
         NSLayoutConstraint.activate([
-            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding),
-            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-
-            stackView.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: BearySheetChrome.listTopPadding),
+            // 顶部留白与旧抓手区等高（顶留白 6＋抓手高 4＋顶留白 6）：系统抓手占顶区，列表位置不动。
+            stackView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding + BearySheetChrome.grabberHeight + BearySheetChrome.listTopPadding),
             stackView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             stackView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             stackView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -BearySheetChrome.listBottomPadding),
@@ -7670,7 +7646,7 @@ final class BearyVisFilterSheetViewController: UIViewController {
         updatePreferredContentSize()
     }
 
-    /// 按当前宽度算内容高，推给容器当 sheet 高（标签选择器同款公式）。
+    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高（标签选择器同款公式）。
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         let width = view.bounds.width > 0 ? view.bounds.width : 375
         let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
@@ -7680,6 +7656,7 @@ final class BearyVisFilterSheetViewController: UIViewController {
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
     }
 

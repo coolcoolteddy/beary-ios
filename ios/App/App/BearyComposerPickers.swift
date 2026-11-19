@@ -1414,8 +1414,7 @@ final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioni
 
 // MARK: - 埋时间胶囊（v1 底 sheet；只在新建模式进，编辑模式不进）
 
-/// 埋胶囊底 sheet：走共享底部弹窗容器 BearyBottomSheet（与确认弹窗同款
-/// 呈现与关闭流程：弹簧 0.4s 上升、背后缩 0.92、遮罩 0.45、下拖关／弹回）。
+/// 埋胶囊底 sheet：走系统底部 sheet（UISheetPresentationController，见 BearySystemSheet）。
 /// 一个日期选择器（解锁日期，默认一年后，最小明天）＋一行当前区级
 /// （打开时按需定位＋逆地理编码取区级，取不到则提示无法埋藏、不让确认）。
 /// 确认只回传（解锁毫秒戳，区级），不发请求、不写盘；调用方记入编辑器
@@ -1424,33 +1423,17 @@ final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioni
 enum BearyCapsuleBurySheet {
     static func show(from presenter: UIViewController, initialUnlockAtMs: Int?, initialDistrict: String?, onConfirm: @escaping (Int, String) -> Void, onClear: (() -> Void)? = nil) {
         let sheet = BearyCapsuleBurySheetViewController(initialUnlockAtMs: initialUnlockAtMs, initialDistrict: initialDistrict, onConfirm: onConfirm, onClear: onClear)
-        let delegate = BearyBottomSheetTransitioningDelegate()
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
-        sheet.loadViewIfNeeded()
-        let presenterWidth = presenter.view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
-        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
-        presenter.present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: presenter)
     }
 }
 
-final class BearyCapsuleBurySheetViewController: UIViewController {
-
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（确认弹窗同款做法）。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
+final class BearyCapsuleBurySheetViewController: UIViewController, BearySystemSheetSizing {
 
     private let initialUnlockAtMs: Int?
     private let initialDistrict: String?
     private let onConfirm: (Int, String) -> Void
     private let onClear: (() -> Void)?
 
-    private let grabberView = UIView()
-    private let closeButton = BearyButton.closeButton()
     private let titleLabel = UILabel()
     private let dateRow = UIStackView()
     private let dateTitleLabel = UILabel()
@@ -1487,16 +1470,6 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
         view.layer.cornerRadius = BearySheetChrome.topCornerRadius
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
-
-        grabberView.translatesAutoresizingMaskIntoConstraints = false
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        view.addSubview(grabberView)
-
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
-        view.addSubview(closeButton)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "埋时间胶囊"
@@ -1571,19 +1544,11 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
         view.addSubview(buttonStack)
 
         NSLayoutConstraint.activate([
-            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop),
-            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-
-            closeButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 16),
-            closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
-
-            titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
+            // 顶部留白与旧抓手区等高（抓手顶 10＋高 4＋标题间距 16）：系统抓手占顶区，标题位置不动；
+            // 一律不要 ×，标题右缘放回内容边 -16。
+            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 16),
             titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            titleLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -12),
+            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
             dateRow.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 16),
             dateRow.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
@@ -1613,7 +1578,7 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
         updatePreferredContentSize()
     }
 
-    /// 按当前宽度算内容高，推给容器当 sheet 高（确认弹窗同款）。
+    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高（确认弹窗同款）。
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         let width = view.bounds.width > 0 ? view.bounds.width : 375
         let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
@@ -1622,6 +1587,7 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
     }
 
@@ -1677,9 +1643,5 @@ final class BearyCapsuleBurySheetViewController: UIViewController {
         dismiss(animated: BearyMotion.animated(true)) { [onClear] in
             onClear?()
         }
-    }
-
-    @objc private func closeTapped() {
-        dismiss(animated: BearyMotion.animated(true))
     }
 }
