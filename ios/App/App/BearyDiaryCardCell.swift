@@ -272,7 +272,7 @@ final class BearyEmoteChipView: UIView {
             overlayButton.bottomAnchor.constraint(equalTo: bottomAnchor),
             overlayButton.leadingAnchor.constraint(equalTo: leadingAnchor),
             overlayButton.trailingAnchor.constraint(equalTo: trailingAnchor),
-            heightAnchor.constraint(equalToConstant: 32),
+            heightAnchor.constraint(equalToConstant: 34),
         ])
         self.applyChrome()
     }
@@ -281,7 +281,7 @@ final class BearyEmoteChipView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// pill 形兜底：圆角恒取高的一半，任何高度下都是 pill 形（32 高时即 16，与旧值一致）；
+    /// pill 形兜底：圆角恒取高的一半，任何高度下都是 pill 形（34 高时即 17）；
     /// 即使某路残留 transform 使 bounds 翻倍，显示圆角仍为显示高的一半。
     override func layoutSubviews() {
         super.layoutSubviews()
