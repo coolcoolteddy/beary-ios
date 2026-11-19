@@ -2059,11 +2059,15 @@ final class BearyAPI {
         request("/beary/api/past-self/messages", payloadDecoder: Self.pastSelfDecoder, completion: completion)
     }
 
-    /// 留话：POST /beary/api/past-self/messages {origin_entry_id, body, deliver_on}
+    /// 留话：POST /beary/api/past-self/messages {origin_entry_id, body, deliver_on, client_req?}
     /// → {ok, message}。服务端校验：原篇须为作者本人所有；同一链同一时间
-    /// 只允许一条未送达留话（重复提交返回业务码，调用方不重试、不覆盖）。
-    func createPastSelfMessage(originEntryId: String, body: String, deliverOn: String, completion: @escaping (Result<PastSelfCreateResponse, APIError>) -> Void) {
-        request("/beary/api/past-self/messages", method: "POST", jsonBody: ["origin_entry_id": originEntryId, "body": body, "deliver_on": deliverOn], payloadDecoder: Self.pastSelfDecoder, completion: completion)
+    /// 只允许一条未送达留话。client_req（#37 完整修复）：创建本地行时生成
+    /// 的稳定 UUID，创建与重试都带同一个；服务端按（作者，client_req）幂等
+    /// 重放已存在的那行，不再报业务码，列表回包也带回它。
+    func createPastSelfMessage(originEntryId: String, body: String, deliverOn: String, clientRequestId: String? = nil, completion: @escaping (Result<PastSelfCreateResponse, APIError>) -> Void) {
+        var jsonBody: [String: Any] = ["origin_entry_id": originEntryId, "body": body, "deliver_on": deliverOn]
+        if let clientRequestId, !clientRequestId.isEmpty { jsonBody["client_req"] = clientRequestId }
+        request("/beary/api/past-self/messages", method: "POST", jsonBody: jsonBody, payloadDecoder: Self.pastSelfDecoder, completion: completion)
     }
 
     /// 撤回：POST /beary/api/past-self/messages/:id/revoke → {ok}。

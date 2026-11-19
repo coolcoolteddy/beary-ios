@@ -33,7 +33,9 @@ import UIKit
 /// author_id / body（留话内容）/ created_at（留话时间，毫秒）/
 /// deliver_on（目标推送日期，本地日 YYYY-MM-DD）/
 /// revoked_at（撤回时间，毫秒；nil = 未撤回）/
-/// reply_to_message_id（接续的上条留话 id；首条为 nil）。
+/// reply_to_message_id（接续的上条留话 id；首条为 nil）/
+/// client_req（#37 完整修复：创建时生成的稳定客户端请求 ID，服务端
+/// 按（作者，client_req）幂等重放已存在的那行，列表回包也带回它）。
 struct PastSelfMessage: Codable, Equatable {
     var id: String
     var originEntryId: String
@@ -44,6 +46,12 @@ struct PastSelfMessage: Codable, Equatable {
     var deliverOn: String
     var revokedAtMs: Int?
     var replyToMessageId: String?
+    /// 稳定客户端请求 ID（UUID）：创建本地行时生成，随行持久化保存；
+    /// 创建与重试都带同一个，App 重启后仍是它，否则幂等不成立。
+    /// 服务端存进 beary_dialogues.client_req 并在回包里带回；本支
+    /// 之前创建的老行没有该字段，解码为 nil，同步时由
+    /// ensureClientRequestId 现生成一个并落盘（之后不再变）。
+    var clientRequestId: String? = nil
     /// 仅本地：true = 尚未同步到服务端（后端 404 / 断网时先落本地）。
     /// 服务端不下发该字段，缺失时按 false 计。
     var localOnly: Bool = false
@@ -61,6 +69,7 @@ struct PastSelfMessage: Codable, Equatable {
         case deliverOn = "deliver_on"
         case revokedAtMs = "revoked_at"
         case replyToMessageId = "reply_to_message_id"
+        case clientRequestId = "client_req"
         case localOnly = "local_only"
         case revokeSynced = "revoke_synced"
     }
@@ -87,6 +96,7 @@ extension PastSelfMessage {
         deliverOn = try container.decode(String.self, forKey: .deliverOn)
         revokedAtMs = try container.decodeIfPresent(Int.self, forKey: .revokedAtMs)
         replyToMessageId = try container.decodeIfPresent(String.self, forKey: .replyToMessageId)
+        clientRequestId = try container.decodeIfPresent(String.self, forKey: .clientRequestId)
         localOnly = try container.decodeIfPresent(Bool.self, forKey: .localOnly) ?? false
         revokeSynced = try container.decodeIfPresent(Bool.self, forKey: .revokeSynced) ?? false
     }
@@ -393,6 +403,9 @@ final class PastSelfStore {
             deliverOn: deliverOn,
             revokedAtMs: nil,
             replyToMessageId: previous?.id,
+            // #37 完整修复：创建本地行时生成稳定客户端请求 ID，随行持久化；
+            // 创建与之后所有重试都带同一个，服务端按它幂等重放。
+            clientRequestId: UUID().uuidString,
             localOnly: true
         )
         all.append(message)
@@ -435,6 +448,36 @@ final class PastSelfStore {
         }
         var byId: [String: PastSelfMessage] = [:]
         for row in all { byId[row.id] = row }
+        // #37 完整修复：先按客户端请求 ID 认领服务端 id，再走主循环的 id 合并。
+        // 创建回包丢了时本地 ps_… 行仍 localOnly；服务端行带回的 client_req
+        // 与本地行创建时生成的 ID 一致即为同一条：把本地行的 id 换成服务端
+        // id、清 localOnly，之后主循环按 id 的撤回保留逻辑把本地撤回标记
+        // 带进服务端行，不丢撤回。认领在三元组兜底（#1923）之前：请求 ID
+        // 是创建时唯一确定的键，三元组（同原篇同正文同送达日）只在请求 ID
+        // 对不上时才用——#1923 的三元组块按 byId[row.id] == nil 判断，
+        // 认领过的行不会再被三元组认。放主循环之前、与 #1923 的插入点
+        // （循环内 revokeSynced 行之后）不重叠，两支合入顺序不影响变基。
+        // 同 id 的行（服务端行就是本地行的新态）不走这里，主循环的精确
+        // id 逻辑已处理；服务端 id 已在库里时本地行是重复残留，直接去掉。
+        for serverRow in server where serverRow.authorId == userId {
+            guard let reqId = serverRow.clientRequestId, !reqId.isEmpty else { continue }
+            guard let dup = byId.values.first(where: { $0.localOnly && $0.clientRequestId == reqId && $0.id != serverRow.id }) else { continue }
+            if byId[serverRow.id] == nil {
+                byId.removeValue(forKey: dup.id)
+                var adopted = dup
+                adopted.id = serverRow.id
+                adopted.localOnly = false
+                byId[serverRow.id] = adopted
+            } else {
+                // 防御：服务端 id 已在库里，本地行是重复残留，直接去掉；
+                // 本地有而库里没有的撤回标记补进库里那行，同步循环会补推撤回。
+                byId.removeValue(forKey: dup.id)
+                if var existing = byId[serverRow.id], existing.revokedAtMs == nil, let revoked = dup.revokedAtMs {
+                    existing.revokedAtMs = revoked
+                    byId[serverRow.id] = existing
+                }
+            }
+        }
         // 审计登录杂项：过滤他人行（服务端混入的非本人 authorId 行不进本用户存储）。
         for var row in server where row.authorId == userId {
             row.localOnly = false
@@ -504,6 +547,20 @@ final class PastSelfStore {
         guard let target = all.firstIndex(where: { $0.id == localId }) else { return }
         all[target] = row
         save(all)
+    }
+
+    /// #37 完整修复：取本地行的稳定客户端请求 ID（创建时生成、随行持久化）。
+    /// 本支之前创建的老行没有该字段时，现生成一个并落盘保存，之后所有
+    /// 重试都复用它；App 重启后仍是同一个 ID，否则幂等不成立。
+    /// 存储损坏或行不存在时返回 nil，调用方按无 client_req 的旧口径发。
+    func ensureClientRequestId(forLocalId localId: String) -> String? {
+        guard case .loaded(var all) = loadOutcome() else { return nil }
+        guard let index = all.firstIndex(where: { $0.id == localId }) else { return nil }
+        if let existing = all[index].clientRequestId, !existing.isEmpty { return existing }
+        let fresh = UUID().uuidString
+        all[index].clientRequestId = fresh
+        save(all)
+        return fresh
     }
 
     /// 撤回回包成功：记该行撤回已确认，同步循环不再重发。

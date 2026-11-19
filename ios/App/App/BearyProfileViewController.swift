@@ -5721,7 +5721,11 @@ class BearyProfileViewController: UIViewController {
         // 在途守卫：同一本地行只发一次创建（同步扫描与手动提交共用一条任务）。
         guard !pastSelfCreateInFlight.contains(localId) else { return }
         pastSelfCreateInFlight.insert(localId)
-        BearyAPI.shared.createPastSelfMessage(originEntryId: message.originEntryId, body: message.body, deliverOn: message.deliverOn) { [weak self] result in
+        // #37 完整修复：创建与重试都带同一个稳定 client_req（创建本地行时
+        // 生成、随行持久化；老行没有时现生成并落盘，之后不再变），服务端
+        // 按它幂等重放，回包丢了也不造重复。
+        let clientRequestId = pastSelfStore()?.ensureClientRequestId(forLocalId: localId)
+        BearyAPI.shared.createPastSelfMessage(originEntryId: message.originEntryId, body: message.body, deliverOn: message.deliverOn, clientRequestId: clientRequestId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self, let store = strongSelf.pastSelfStore() else { return }
                 strongSelf.pastSelfCreateInFlight.remove(localId)

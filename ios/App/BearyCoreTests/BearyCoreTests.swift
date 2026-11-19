@@ -741,6 +741,99 @@ final class BearyPastSelfTests: XCTestCase {
         XCTAssertEqual(decoded.deliverOn, "2026-10-30")
         XCTAssertFalse(decoded.localOnly)
     }
+
+    func testAddAssignsStableClientRequestId() throws {
+        // #37 完整修复：创建本地行时生成稳定客户端请求 ID，随行持久化；
+        // 重读后仍是同一个，两行 ID 不同。
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let store = PastSelfStore(userId: 90, defaults: suite)
+        let created = ms(year: 2025, month: 10, day: 30)
+        let first = store.add(originEntryId: "b_7", body: "第一句", createdAtMs: created, calendar: calendar)!
+        let reqId = first.clientRequestId
+        XCTAssertNotNil(reqId)
+        XCTAssertFalse(reqId!.isEmpty)
+        XCTAssertEqual(PastSelfStore(userId: 90, defaults: suite).loadAll().first?.clientRequestId, reqId)
+        let second = store.add(originEntryId: "b_8", body: "第二句", createdAtMs: created, calendar: calendar)!
+        XCTAssertNotEqual(second.clientRequestId, reqId)
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
+    func testEnsureClientRequestIdBackfillsOldRow() throws {
+        // #37 完整修复：本支之前创建的老行没有 client_req；同步时现生成
+        // 一个并落盘，之后所有重试都复用它，重启后不变。
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let store = PastSelfStore(userId: 90, defaults: suite)
+        let oldJson = """
+        [{"id":"ps_old","origin_entry_id":"b_7","chain_id":"b_7","author_id":90,"body":"老行","created_at":1761780000000,"deliver_on":"2026-10-30","revoked_at":null,"reply_to_message_id":null,"local_only":true}]
+        """
+        suite.set(Data(oldJson.utf8), forKey: "beary.pastSelf.v1.90")
+        XCTAssertNil(store.loadAll().first?.clientRequestId)
+        let first = store.ensureClientRequestId(forLocalId: "ps_old")
+        XCTAssertNotNil(first)
+        XCTAssertFalse(first!.isEmpty)
+        XCTAssertEqual(store.ensureClientRequestId(forLocalId: "ps_old"), first)
+        XCTAssertEqual(store.loadAll().first?.clientRequestId, first)
+        XCTAssertNil(store.ensureClientRequestId(forLocalId: "ps_missing"))
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
+    func testMergeAdoptsLocalOnlyRowByClientRequestId() throws {
+        // #37 完整修复：创建回包丢了时本地 ps_… 行仍 localOnly；下次同步
+        // 拉回带同一 client_req 的服务端行时，本地行认领服务端 id，只留
+        // 一行、不再重推；本地已撤回标记保留，待同步补推撤回。
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let store = PastSelfStore(userId: 90, defaults: suite)
+        let created = ms(year: 2025, month: 10, day: 30)
+        let local = store.add(originEntryId: "b_7", body: "待同步句", createdAtMs: created, calendar: calendar)!
+        XCTAssertTrue(store.revoke(messageId: local.id, nowMs: created, today: "2026-01-01"))
+        let serverRow = PastSelfMessage(id: "42", originEntryId: "b_7", chainId: "b_7", authorId: 90, body: "待同步句",
+                                        createdAtMs: created, deliverOn: "2026-10-30", revokedAtMs: nil,
+                                        replyToMessageId: nil, clientRequestId: local.clientRequestId, localOnly: false)
+        store.mergeServerRows([serverRow])
+        let rows = store.loadAll()
+        XCTAssertEqual(rows.map { $0.id }, ["42"])
+        XCTAssertFalse(rows.first?.localOnly ?? true)
+        XCTAssertEqual(rows.first?.revokedAtMs, created)
+        XCTAssertFalse(rows.first?.revokeSynced ?? true)
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
+    func testMergeByClientRequestIdIgnoresContentMismatch() throws {
+        // #37 完整修复：请求 ID 是创建时唯一确定的键，不依赖正文；服务端
+        // 保证同一（作者，client_req）只对应一行，故正文不同仍认领——
+        // 三元组兜底（#1923）才看正文。
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let store = PastSelfStore(userId: 90, defaults: suite)
+        let created = ms(year: 2025, month: 10, day: 30)
+        let local = store.add(originEntryId: "b_7", body: "甲", createdAtMs: created, calendar: calendar)!
+        let serverRow = PastSelfMessage(id: "43", originEntryId: "b_7", chainId: "b_7", authorId: 90, body: "乙",
+                                        createdAtMs: created, deliverOn: "2026-10-30", revokedAtMs: nil,
+                                        replyToMessageId: nil, clientRequestId: local.clientRequestId, localOnly: false)
+        store.mergeServerRows([serverRow])
+        let rows = store.loadAll()
+        XCTAssertEqual(rows.map { $0.id }, ["43"])
+        XCTAssertEqual(rows.first?.body, "乙")
+        XCTAssertFalse(rows.first?.localOnly ?? true)
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
+    func testClientRequestIdDecodesFromServerJson() throws {
+        // #37 完整修复：服务端回包带 client_req 时解出它；老服务端回包
+        // 没有该字段时解为 nil，不报错（部署前后都兼容）。
+        let withReq = """
+        {"id":"42","origin_entry_id":"b_1","chain_id":"b_1","author_id":90,"body":"一句","created_at":1761780000000,"deliver_on":"2026-10-30","revoked_at":null,"reply_to_message_id":null,"client_req":"550e8400-e29b-41d4-a716-446655440000"}
+        """
+        let decoded = try JSONDecoder().decode(PastSelfMessage.self, from: Data(withReq.utf8))
+        XCTAssertEqual(decoded.clientRequestId, "550e8400-e29b-41d4-a716-446655440000")
+        let withoutReq = """
+        {"id":"42","origin_entry_id":"b_1","chain_id":"b_1","author_id":90,"body":"一句","created_at":1761780000000,"deliver_on":"2026-10-30","revoked_at":null,"reply_to_message_id":null}
+        """
+        XCTAssertNil(try JSONDecoder().decode(PastSelfMessage.self, from: Data(withoutReq.utf8)).clientRequestId)
+    }
 }
 
 // ===== 秒开-网络层：API 专用会话配置 =====
