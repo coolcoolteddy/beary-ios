@@ -241,25 +241,13 @@ enum BearyProfilePersonalLogic {
     // MARK: - 年度回顾
 
     /// 当年条目（本地年），createdAt 降序。
-    /// 当年条目是年度回顾总篇数、最长连续、心情分布与词汇指纹的共同源头。
+    /// 当年条目是年度回顾总篇数、最长连续与词汇指纹的共同源头。
     static func yearEntries(entries: [Entry], year: Int, calendar: Calendar) -> [Entry] {
         entries.filter { entry in
             guard let createdAt = entry.createdAt else { return false }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
             return calendar.component(.year, from: date) == year
         }.sorted { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) }
-    }
-
-    /// 心情分布（年报首屏条形用）：计数降序，平手按 key 升序（稳定）。
-    static func moodDistribution(entries: [Entry]) -> [(key: String, count: Int)] {
-        var counts: [String: Int] = [:]
-        for entry in entries {
-            if let mood = entry.mood, !mood.isEmpty { counts[mood, default: 0] += 1 }
-        }
-        return counts.map { (key: $0.key, count: $0.value) }.sorted {
-            if $0.count != $1.count { return $0.count > $1.count }
-            return $0.key < $1.key
-        }
     }
 
     /// 停用词（中文高频虚词 + 人称代词 + 时间副词骨架；只拦虚词，不拦实词——
@@ -576,10 +564,10 @@ enum BearyProfilePersonalLogic {
     }
 }
 
-// MARK: - 年报最小版（点年度回顾入口后呈现；定版第 8 条：只含四项＋页脚）
+// MARK: - 年报最小版（点年度回顾入口后呈现；定版第 8 条：只含三项＋页脚）
 //
 // 只本人可见（入口卡只本人渲染，故本页不可达他人态）。内容全部来自调用方
-// 传入的当年可见条目，不拉新接口：总篇数 / 最长连续 / 心情分布 / 常出现的词。
+// 传入的当年可见条目，不拉新接口：总篇数 / 最长连续 / 常出现的词。
 // 无词时词一节整节省略（不留空标题）。
 
 // MARK: - 年报最小版（词汇指纹为主视觉）
@@ -605,12 +593,11 @@ final class BearyYearReviewViewController: UIViewController {
     private let isOwnFlag: Bool
     private let availableYearValues: [Int]
     private var selectedYear: Int
-    /// 按年聚合结果缓存（同一次打开内有效）：摘要文案／心情分布只算一次，
+    /// 按年聚合结果缓存（同一次打开内有效）：摘要文案只算一次，
     /// 切回看过的年份直接复用，不再从 filteredEntries 重算。
     /// 词汇指纹不另造缓存——它已有静态缓存（上限 16，按年＋指纹查）。
     private struct YearReviewAggregate {
         let summaryText: String
-        let moodDistribution: [(key: String, count: Int)]
     }
     private var yearAggregateCache: [Int: YearReviewAggregate] = [:]
     /// 各年上次的阅读位置（contentOffset.y）：切年时保存离开的年份，
@@ -807,7 +794,7 @@ final class BearyYearReviewViewController: UIViewController {
         return footnote
     }
 
-    /// 当年聚合计算（摘要文案／心情分布）：纯计算，
+    /// 当年聚合计算（摘要文案）：纯计算，
     /// 结果进 yearAggregateCache，同一次打开内切回该年直接复用。
     private func yearAggregate(for yearEntriesValue: [Entry], year: Int, calendar: Calendar) -> YearReviewAggregate {
         // 总篇数 / 最长连续（当年）。
@@ -820,10 +807,7 @@ final class BearyYearReviewViewController: UIViewController {
         }
         let longest = BearyProfilePersonalLogic.longestStreak(writtenDays: writtenDays, calendar: calendar)
         let summary = "\(year) 年共写 \(yearEntriesValue.count) 篇 · 最长连续 \(longest) 天"
-        return YearReviewAggregate(
-            summaryText: summary,
-            moodDistribution: BearyProfilePersonalLogic.moodDistribution(entries: yearEntriesValue)
-        )
+        return YearReviewAggregate(summaryText: summary)
     }
 
     /// 恢复当前年的阅读位置：有记录回上次离开处，无记录回顶部；
@@ -863,7 +847,7 @@ final class BearyYearReviewViewController: UIViewController {
         prevYearButton.alpha = prevYearButton.isEnabled ? 1 : 0.3
         nextYearButton.alpha = nextYearButton.isEnabled ? 1 : 0.3
 
-        // 先清空再重建：旧年词行、心情条、摘要绝不残留到新年。
+        // 先清空再重建：旧年词行、摘要绝不残留到新年。
         for arrangedView in dynamicStack.arrangedSubviews {
             dynamicStack.removeArrangedSubview(arrangedView)
             arrangedView.removeFromSuperview()
@@ -921,54 +905,6 @@ final class BearyYearReviewViewController: UIViewController {
                 summaryLabel.transform = .identity
                 summaryLabel.alpha = 1
             })
-        }
-
-        // 心情分布（条形按最大值归一，纯 UIView，不引图表库）。
-        let distribution = aggregate.moodDistribution
-        if let maxCount = distribution.first?.count, maxCount > 0 {
-            let moodTitle = UILabel()
-            moodTitle.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))
-            moodTitle.adjustsFontForContentSizeCategory = true
-            moodTitle.textColor = BearyColors.ink
-            moodTitle.text = "心情分布"
-            dynamicStack.addArrangedSubview(moodTitle)
-            for item in distribution.prefix(8) {
-                let row = UIStackView()
-                row.axis = .horizontal
-                row.spacing = 8
-                row.alignment = .center
-                let nameLabel = UILabel()
-                nameLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-                nameLabel.adjustsFontForContentSizeCategory = true
-                nameLabel.textColor = BearyColors.ink
-                nameLabel.text = BearyText.moodNames[item.key] ?? item.key
-                // R7-4：名称按内容自然定宽（原 64pt 必需宽在大字号下会截断）；
-                // 进度条留一条最小宽兜底，避免大字号名称把它挤到零宽。
-                let barBackground = UIView()
-                barBackground.backgroundColor = BearyColors.surface2
-                barBackground.layer.cornerRadius = 4
-                barBackground.clipsToBounds = true
-                let barFill = UIView()
-                barFill.translatesAutoresizingMaskIntoConstraints = false
-                barFill.backgroundColor = BearyColors.orange
-                barBackground.addSubview(barFill)
-                NSLayoutConstraint.activate([
-                    barFill.topAnchor.constraint(equalTo: barBackground.topAnchor),
-                    barFill.leadingAnchor.constraint(equalTo: barBackground.leadingAnchor),
-                    barFill.bottomAnchor.constraint(equalTo: barBackground.bottomAnchor),
-                    barFill.widthAnchor.constraint(equalTo: barBackground.widthAnchor, multiplier: CGFloat(item.count) / CGFloat(maxCount)),
-                ])
-                barBackground.heightAnchor.constraint(equalToConstant: 8).isActive = true
-                barBackground.widthAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
-                let countLabel = UILabel()
-                countLabel.font = BearyDynamicType.numberFont()
-                countLabel.textColor = BearyColors.gray
-                countLabel.text = "\(item.count)"
-                row.addArrangedSubview(nameLabel)
-                row.addArrangedSubview(barBackground)
-                row.addArrangedSubview(countLabel)
-                dynamicStack.addArrangedSubview(row)
-            }
         }
 
         dynamicStack.addArrangedSubview(makeYearReviewFootnote())
