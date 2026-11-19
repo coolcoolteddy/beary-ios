@@ -9193,8 +9193,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 编辑检查点（审计四轮增量 09）
 
-    /// 当前编辑与服务端原文是否不一致（正文/标题/心情/天气/气温/位置/图片/实况）。
+    /// 当前编辑与服务端原文是否不一致（正文/标题/心情/天气/气温/位置/图片/实况/引用/写给）。
     /// 与原文一致时不写检查点（已有的也清掉），避免无意义的恢复提示。
+    /// 编辑期 @ 生效值三态折算（与 performUpdate 的 PUT 口径同款）：
+    /// 已改选 → 新 id；已清除 → nil；未动 → 原 @ id。
+    private func currentMentionedUserId() -> Int? {
+        if let recipient = selectedRecipient { return recipient.id }
+        if editMentionCleared { return nil }
+        return lockedMentionedUserId
+    }
+
     private func isEditDirtyVsOriginal() -> Bool {
         guard let entry = editingEntry else { return false }
         if committedContent() != (entry.content ?? "") { return true }
@@ -9206,6 +9214,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if uploadedImageKeys() != (entry.images ?? []) { return true }
         if imageItems.contains(where: { $0.key == nil && $0.localFile != nil }) { return true }
         if uploadedLiveVideos() != (entry.liveVideos ?? [:]) { return true }
+        if lockedQuote?.entryId != originalQuoteId() { return true }
+        if currentMentionedUserId() != entry.mentionedUserId { return true }
         return false
     }
 
@@ -9241,6 +9251,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             locationLatitude: selectedLocation?.latitude,
             locationLongitude: selectedLocation?.longitude,
             images: images,
+            quoteId: lockedQuote?.entryId,
+            mentionedUserId: currentMentionedUserId(),
+            mentionCleared: selectedRecipient == nil && editMentionCleared,
             updatedAt: Date().timeIntervalSince1970)
     }
 
@@ -9335,6 +9348,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return (key, liveKey)
         }, uniquingKeysWith: { first, _ in first })
         if checkpointLiveVideos != (entry.liveVideos ?? [:]) { return true }
+        if checkpoint.quoteId != originalQuoteId() { return true }
+        if checkpoint.mentionedUserId != entry.mentionedUserId { return true }
+        if checkpoint.mentionCleared, entry.mentionedUserId != nil { return true }
         return false
     }
 
@@ -9417,6 +9433,25 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         originalTags = editingEntry?.tags ?? []
         let checkpointLocation = DiaryLocation(name: checkpoint.locationName, district: checkpoint.locationDistrict, latitude: checkpoint.locationLatitude, longitude: checkpoint.locationLongitude)
         selectedLocation = checkpointLocation.isEmpty ? nil : checkpointLocation
+        // 引用/写给恢复（审计 #47）：写给已清除 → 记 cleared；改选 → 按 id 重建
+        // chip（名未知时显“用户”，PUT 值正确）；未动不碰。引用被删 → 清
+        // lockedQuote；引用换成别篇 → 按 id 拉回被引篇重建（见 restoreCheckpointQuote）。
+        if checkpoint.mentionCleared {
+            selectedRecipient = nil
+            editMentionCleared = true
+        } else if let mentionedId = checkpoint.mentionedUserId, mentionedId != editingEntry?.mentionedUserId {
+            selectedRecipient = SearchUser(id: mentionedId, displayName: nil, handle: nil, avatarUrl: nil, coverUrl: nil)
+            editMentionCleared = false
+        }
+        refreshRecipientRow()
+        if checkpoint.quoteId != lockedQuote?.entryId {
+            if checkpoint.quoteId == nil {
+                lockedQuote = nil
+                refreshQuoteSection()
+            } else if let quoteId = checkpoint.quoteId {
+                restoreCheckpointQuote(quoteId: quoteId)
+            }
+        }
         syncWeatherToolButton()
         refreshSelectedChips()
         refreshTagsRow()
@@ -9426,6 +9461,38 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updateTextViewHeight()
         updatePublishState()
         showToast(message: "已恢复上次没保存的修改")
+    }
+
+    /// 检查点引用换篇恢复：按 id 拉被引篇，按选引用页同款字段重建 lockedQuote；
+    /// 失败时立 editQuoteFetchFailed 禁发（防 PUT 误清引用），检查点留盘不删，
+    /// 下次重进编辑器可再问恢复。
+    private func restoreCheckpointQuote(quoteId: String) {
+        editQuoteFetchInFlight = true
+        refreshQuoteSection()
+        updatePublishState()
+        BearyAPI.shared.fetchEntry(id: quoteId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.editQuoteFetchInFlight = false
+                switch result {
+                case .success(let entry):
+                    guard let entryId = entry.id, let content = entry.content else {
+                        self.editQuoteFetchFailed = true
+                        self.refreshQuoteSection()
+                        self.updatePublishState()
+                        return
+                    }
+                    self.editQuoteFetchFailed = false
+                    self.lockedQuote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, authorId: entry.authorId, isMine: entry.isMine, authorHandle: entry.authorHandle, images: entry.images ?? [], isPublic: BearyEphemeral.isEffectivelyPublic(entry), publishAt: entry.publishAt, imgDims: entry.imgDims, isDeleted: false, visibility: entry.visibility, ephemeralUntil: entry.ephemeralUntil)
+                    self.refreshQuoteSection()
+                    self.updatePublishState()
+                case .failure:
+                    self.editQuoteFetchFailed = true
+                    self.refreshQuoteSection()
+                    self.updatePublishState()
+                }
+            }
+        }
     }
 
     /// 按检查点重建图片条：原图与未上传本地图都建项；本地缩略图后台解码后

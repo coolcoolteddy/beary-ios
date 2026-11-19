@@ -1343,6 +1343,9 @@ enum BearyDraftStore {
         var locationLatitude: Double?
         var locationLongitude: Double?
         var images: [BearyDraftImageItem]
+        var quoteId: String? = nil
+        var mentionedUserId: Int? = nil
+        var mentionCleared: Bool = false
         var updatedAt: TimeInterval
     }
 
