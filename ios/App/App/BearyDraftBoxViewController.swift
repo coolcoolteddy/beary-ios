@@ -2230,7 +2230,7 @@ private final class BearyDraftBoxInstantAnimator: NSObject, UIViewControllerAnim
     }
 }
 
-// MARK: - 虚线边框按钮（网页 .df-new 的 1.5px dashed 边框）
+// MARK: - 虚线边框按钮（与限时气泡同口径：2pt、虚线 [8, 5]）
 
 // 弹窗审计 E1-10：虚线钮走 BearyHit44Button（只扩触摸帧，视觉帧不动；
 // 本钮另有最小 44 高约束，帧本身已达 44，扩热区为兜底）。
@@ -2246,8 +2246,8 @@ private final class BearyDraftBoxDashedButton: BearyHit44Button {
         // 只差 4 阶、浅色下几不可见（#1286 档距拉大后；深色亦只差约 9 阶）。
         dashedLayer.fillColor = UIColor.clear.cgColor
         dashedLayer.strokeColor = BearyColors.gray.cgColor
-        dashedLayer.lineWidth = 1.5
-        dashedLayer.lineDashPattern = [6, 4]
+        dashedLayer.lineWidth = 2
+        dashedLayer.lineDashPattern = [8, 5]
         layer.addSublayer(dashedLayer)
     }
 
