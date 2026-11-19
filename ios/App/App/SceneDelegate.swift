@@ -454,6 +454,11 @@ final class BearyChromeViewController: UIViewController {
     /// （presentComposerForEdit）需带篇目恢复，不在本标记范围，登录后仍需
     /// 用户再次点编辑。
     private var pendingComposerAfterLogin = false
+    /// 发布代次：每次开编辑器（presentComposer）发一个新值，记为最新；
+    /// onPublished 回调须凭它验明仍是最新一次发布，否则（用户等待期间
+    /// 又开下一篇编辑器等）只刷新列表，不 dismiss、不切时间线——旧发布
+    /// 的成功回调不得关掉用户后来打开的页面。
+    private var latestPublishToken = UUID()
     /// 删帖进回收站的在途防重复提交：按日记 id 记在途删除；同一篇首请求
     /// 在途时重开确认框再点直接丢弃，不重发 DELETE。成功／失败（含 401）
     /// 回包时一律清除，失败后用户可再次确认重删，不会被标记永久卡住。
@@ -4051,29 +4056,35 @@ final class BearyChromeViewController: UIViewController {
         // 临时诊断（86 包，定根因后删除）：登录守卫已过。
         DiagFile.mark("presentComposer-authed")
         let c = BearyComposerViewController()
-        c.onPublished = { [weak self] entryId in
-            self?.dismiss(animated: BearyMotion.animated(true)) {
-                // 发帖落点是原生时间线，顺带刷新原生列表与时间线备下次回访。
-                // 64 包反馈修（第 3 项）：写新日记使统计失效（清签名 + 丢当月缓存），
-                // 否则 reloadTimeline 的非强制月份拉取命中旧缓存、统计恒旧。
-                self?.timelineVC?.invalidateStatsLine()
-                self?.showPage(.timeline)
-                self?.timelineVC?.reloadTimeline()
-                self?.feedVC?.refreshAll()
-                // 发布成功落盘：单篇拉取后 upsert 到该北京日文件（失败静默，
-                // 下次同步/切日刷新纠正）；内存日缓存由切日静默刷新接管，不在此处碰。
-                if let uid = SessionManager.shared.currentUser?.id {
-                    BearyEntrySync.shared.upsertPublished(entryId: entryId, accountId: uid)
-                }
-                // 本地通知：落盘是异步拉取，2 秒后重算（当天已写则取消今晚提醒）；
-                // 回前台刷新是兜底。
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    BearyLocalNotifications.shared.refreshAll(force: true)
-                }
+        let publishToken = UUID()
+        latestPublishToken = publishToken
+        c.publishToken = publishToken
+        c.onPublished = { [weak self] entryId, token in
+            guard let self = self else { return }
+            // 列表刷新与落盘：新旧发布都做（新篇已落盘，列表须更新；pill
+            // 已显示「已发布」，此处不再另弹提示）。
+            self.timelineVC?.invalidateStatsLine()
+            self.timelineVC?.reloadTimeline()
+            self.feedVC?.refreshAll()
+            // 发布成功落盘：单篇拉取后 upsert 到该北京日文件（失败静默，
+            // 下次同步/切日刷新纠正）；内存日缓存由切日静默刷新接管，不在此处碰。
+            if let uid = SessionManager.shared.currentUser?.id {
+                BearyEntrySync.shared.upsertPublished(entryId: entryId, accountId: uid)
+            }
+            // 本地通知：落盘是异步拉取，2 秒后重算（当天已写则取消今晚提醒）；
+            // 回前台刷新是兜底。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                BearyLocalNotifications.shared.refreshAll(force: true)
+            }
+            // 只有最新一次发布、且顶层无其他 modal 时，才退场并切时间线；
+            // 否则用户已在用后来打开的页面（下一篇编辑器、详情页等），
+            // 不 dismiss、不切页，也不在别人页上弹首篇通知权限提示。
+            guard token == self.latestPublishToken, self.presentedViewController == nil else { return }
+            self.dismiss(animated: BearyMotion.animated(true)) {
+                // 发帖落点是原生时间线。
+                self.showPage(.timeline)
                 // 门槛 4：写完第一篇日记后再问通知权限（先弹自建说明卡，点了「好」才调系统框）。
-                if let chrome = self {
-                    BearyLocalNotifications.shared.promptAfterFirstEntryIfNeeded(from: chrome)
-                }
+                BearyLocalNotifications.shared.promptAfterFirstEntryIfNeeded(from: self)
             }
         }
         c.onCancelled = { [weak c] in c?.dismiss(animated: BearyMotion.animated(true)) }
