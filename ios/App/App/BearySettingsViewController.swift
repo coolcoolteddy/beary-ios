@@ -3667,10 +3667,31 @@ final class BearySettingsViewController: UIViewController {
         blockedButton.addTarget(self, action: #selector(openBlockedUsers), for: .touchUpInside)
         blockedButton.bearyAddPressHaptic()
         let blockedRow = makeSettingsTappableRow(content: blockedContent, button: blockedButton)
-        // 私信权限行：当前档位中文，点按弹四档 ActionSheet（当前档打勾），选中即 POST。
+        // 私信权限行：当前档位中文，点按弹三档 ActionSheet（当前档打勾），选中即 POST。
+        // 副标题：你关注的人始终可以给你发私信。
         let dmDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         dmDetail.text = "加载中…"
-        let dmContent = makeRow(title: "谁可以私信我", detailLabel: dmDetail, iconName: "icon_comment")
+        dmDetail.numberOfLines = 0
+        dmDetail.textAlignment = .right
+        let dmTitleLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        dmTitleLabel.font = BearyDynamicType.smallBodyFont()
+        dmTitleLabel.text = "谁可以私信我"
+        dmTitleLabel.numberOfLines = 0
+        let dmSubtitleLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray)
+        dmSubtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        dmSubtitleLabel.adjustsFontForContentSizeCategory = true
+        dmSubtitleLabel.text = "你关注的人始终可以给你发私信"
+        dmSubtitleLabel.numberOfLines = 0
+        let dmTextStack = UIStackView(arrangedSubviews: [dmTitleLabel, dmSubtitleLabel])
+        dmTextStack.axis = .vertical
+        dmTextStack.spacing = 2
+        dmTextStack.alignment = .fill
+        dmTextStack.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        let dmContent = UIStackView(arrangedSubviews: [makeRowIcon("icon_comment"), dmTextStack, dmDetail])
+        dmContent.translatesAutoresizingMaskIntoConstraints = false
+        dmContent.axis = .horizontal
+        dmContent.spacing = 12
+        dmContent.alignment = .center
         let dmButton = UIButton(type: .custom)
         dmButton.accessibilityLabel = "谁可以私信我"
         dmButton.addTarget(self, action: #selector(dmLevelRowTapped), for: .touchUpInside)
@@ -3749,10 +3770,12 @@ final class BearySettingsViewController: UIViewController {
 
     private func dmLevelText(_ level: String) -> String {
         switch level {
-        case "anyone": return "所有人都可私信我"
-        case "followers": return "仅关注我的人"
-        case "friends": return "仅好友"
-        case "none": return "任何人都不可私信我"
+        case "anyone": return "所有人"
+        case "plus": return "Plus 用户"
+        case "none": return "没有人"
+        // 旧档 followers/friends 仅作展示兜底（fail-closed，见 E6）：服务端部署时
+        // 一次性迁为「没有人」，迁移前回包若仍是旧值，行文案也不放宽。
+        case "followers", "friends": return "没有人"
         default: return "获取失败，点按重试"
         }
     }
@@ -3765,10 +3788,9 @@ final class BearySettingsViewController: UIViewController {
         }
         guard !dmLevelPosting else { return }
         let options: [(value: String, title: String)] = [
-            ("anyone", "所有人都可私信我"),
-            ("followers", "仅关注我的人"),
-            ("friends", "仅好友"),
-            ("none", "任何人都不可私信我"),
+            ("anyone", "所有人"),
+            ("plus", "Plus 用户"),
+            ("none", "没有人"),
         ]
         var actions: [BearyConfirmSheet.Action] = options.map { option in
             return BearyConfirmSheet.Action(title: option.title, style: .default, handler: { [weak self] in

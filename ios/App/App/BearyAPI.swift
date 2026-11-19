@@ -1946,8 +1946,8 @@ final class BearyAPI {
     }
 
     /// 私信权限档位：GET /beary/api/friends/dm/prefs → {dm_level}；
-    /// anyone=所有人可私信我、followers=仅关注我的人、friends=仅好友、none=任何人不可。
-    /// 无记录时服务端默认 anyone。
+    /// anyone=所有人、plus=Plus 用户、none=没有人。
+    /// 无记录默认档与旧 followers/friends 映射待服务端定（E6）。
     struct DMLevelResponse: Decodable {
         var dmLevel: String?
     }
