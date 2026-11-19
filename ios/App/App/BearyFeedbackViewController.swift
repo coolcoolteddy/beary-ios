@@ -832,6 +832,9 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
     /// B6：本批就绪后进度在原位淡出（减动效时直接隐藏）；淡出完成时若
     /// 已有新一批在读，不碰新批的进度行（见 attachmentReading 守卫）。
+    /// 审计 26-6：约束归零与 layoutIfNeeded() 须在淡出动画块内完成，
+    /// 使进度行边淡边收起；完成回调只负责隐藏，否则下面的表单会在
+    /// 淡出结束后才上跳 28 pt（24 pt 行高＋4 pt 间距）。
     private func hideAttachmentProgress() {
         attachmentReading = false
         attachProgressSpinner.stopAnimating()
@@ -843,11 +846,12 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         }
         UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             self.attachProgressRow.alpha = 0
+            self.attachProgressTopConstraint?.constant = 0
+            self.attachProgressHeight?.constant = 0
+            self.view.layoutIfNeeded()
         }, completion: { [weak self] _ in
             guard let self = self, !self.attachmentReading else { return }
             self.attachProgressRow.isHidden = true
-            self.attachProgressTopConstraint?.constant = 0
-            self.attachProgressHeight?.constant = 0
             self.attachProgressRow.alpha = 1
         })
     }
