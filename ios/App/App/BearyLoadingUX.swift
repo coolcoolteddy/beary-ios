@@ -385,65 +385,6 @@ final class BearySkeletonShimmerView: UIView {
     }
 }
 
-/// 私信会话行骨架：与 BearyDMConversationCell 同结构——头像 44 圆、
-/// 名称条、摘要条三段式；无文字、不冒充用户内容。只在无缓存首拉时出
-///（有缓存／后台重拉／下拉刷新不画骨架，见各页 showingSkeleton）。
-final class BearyDMConversationSkeletonCell: UITableViewCell {
-
-    static let reuseIdentifier = "BearyDMConversationSkeletonCell"
-
-    private let avatarView = UIView()
-    private let nameBar = BearySkeletonShimmerView.bar(width: 120, height: 14)
-    private let snippetBar = BearySkeletonShimmerView.bar(height: 12)
-    private lazy var shimmerView = BearySkeletonShimmerView(blocks: [avatarView, nameBar, snippetBar])
-
-    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
-        super.init(style: style, reuseIdentifier: reuseIdentifier)
-        avatarView.backgroundColor = BearySkeletonShimmerView.baseColor()
-        avatarView.layer.cornerRadius = 22
-        selectionStyle = .none
-        backgroundColor = BearyColors.bg
-        contentView.backgroundColor = BearyColors.bg
-        // 骨架行不进读屏：无文字内容，VoiceOver 直接跳过。
-        isAccessibilityElement = false
-        accessibilityElementsHidden = true
-        avatarView.translatesAutoresizingMaskIntoConstraints = false
-        nameBar.translatesAutoresizingMaskIntoConstraints = false
-        snippetBar.translatesAutoresizingMaskIntoConstraints = false
-        shimmerView.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(avatarView)
-        contentView.addSubview(nameBar)
-        contentView.addSubview(snippetBar)
-        contentView.addSubview(shimmerView)
-        NSLayoutConstraint.activate([
-            // 与真实行同几何：头像 44、左 16、上下各留 14，行高下限 72。
-            avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
-            avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            avatarView.widthAnchor.constraint(equalToConstant: 44),
-            avatarView.heightAnchor.constraint(equalToConstant: 44),
-            nameBar.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
-            nameBar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
-            snippetBar.topAnchor.constraint(equalTo: nameBar.bottomAnchor, constant: 6),
-            snippetBar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
-            snippetBar.widthAnchor.constraint(equalTo: contentView.widthAnchor, multiplier: 0.55),
-            snippetBar.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
-            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
-            shimmerView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            shimmerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            shimmerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            shimmerView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-        ])
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    override func prepareForReuse() {
-        super.prepareForReuse()
-        alpha = 1
-        transform = .identity
-    }
-}
-
 /// 通知行骨架：与 BearyNotificationCell 同结构——头像 42 圆＋右下角
 /// 类型角标圆 19、标题条＋右端时间条、摘要条；无文字、不冒充用户内容。
 /// 与私信骨架的区别正在结构上：通知行有角标圆与时间条，私信行没有——
