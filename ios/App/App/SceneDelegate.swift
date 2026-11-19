@@ -3076,6 +3076,13 @@ final class BearyChromeViewController: UIViewController {
     ///（会话列表行自带对方信息；通知 dm 行现场拼最小 peer）。关闭后刷新
     /// 会话列表与通知未读（两页各走已有刷新入口）。
     private func presentDMChat(peer: BearyAPI.FriendUser) {
+        // 远程开关（2026-11-19）：dm 关掉时不进聊天页，点按只 toast、不跳转；
+        // 消息 tab 本身不动（通知行仍在里面）。四路入口（消息页会话行、通知
+        // 页私信行、会话列表行、他人主页私信钮）都经此处，一处关全关。
+        if BearyForceUpdateCenter.shared.isFeatureDisabled(.dm) {
+            showToast(message: "该功能暂时维护中")
+            return
+        }
         guard peer.id != nil else {
             showToast(message: "打开会话失败，请重试")
             return
@@ -3126,6 +3133,13 @@ final class BearyChromeViewController: UIViewController {
     /// presentLogin，与整页版同路径）。每次点开新建一页，viewDidLoad 拉取最新
     /// 邀请码与统计，不复用旧页；关闭只关弹窗，回到弹窗下的原页（不再强制回首页）。
     private func presentInvite() {
+        // 远程开关（2026-11-19）：invite 关掉时不进邀请页，点按只 toast、不跳转。
+        // 顶栏礼物钮与首页邀请提示都经此处；Plus 页入口另在
+        // BearyPlusPageViewController.inviteButtonTapped 同款关。
+        if BearyForceUpdateCenter.shared.isFeatureDisabled(.invite) {
+            showToast(message: "该功能暂时维护中")
+            return
+        }
         // 游客模式：邀请入口全藏——礼物钮已隐藏，此处再拦一道：任何路径进邀请页
         // 都走登录门，不建 VC、不拉邀请码与统计（Invite VC 自身 load() 的
         // onRequireLogin 是第二道门，非游客未登录时仍走原登录页）；
@@ -3791,7 +3805,7 @@ final class BearyChromeViewController: UIViewController {
                     DispatchQueue.main.async { [weak self] in
                         guard let self = self, mode == .firstLaunch,
                               SessionManager.shared.isLoggedIn else { return }
-                        self.presentComposer()
+                        self.presentComposer(silentDisabled: true)
                     }
                 }
             }
@@ -4574,8 +4588,15 @@ final class BearyChromeViewController: UIViewController {
         return false
     }
 
-    private func presentComposer(openingDraft: BearyDraft? = nil) {
+    /// 远程开关（2026-11-19）：publish 关掉时写新入口不进编辑器，点按只 toast、
+    /// 不跳转；编辑旧日记（presentComposerForEdit）与草稿箱不受影响。silent
+    /// 只给首启自动开编辑器那一处用（无用户点按，关掉时静默跳过、不弹 toast）。
+    private func presentComposer(openingDraft: BearyDraft? = nil, silentDisabled: Bool = false) {
         if isComposerPresented() { return }
+        if BearyForceUpdateCenter.shared.isFeatureDisabled(.publish) {
+            if !silentDisabled { showToast(message: "该功能暂时维护中") }
+            return
+        }
         // 闪退诊断打点（容器侧，只记日志不改行为）：本文件此前无日志，循仓内
         // NSLog("[Tag] ...") 惯例（BearyEmotePlayer 等同款），每调用一次记一行。
         NSLog("[Diag] presentComposer-enter")
