@@ -774,13 +774,14 @@ class BearyDiaryCardCell: UITableViewCell {
         return st
     }()
 
-    /// 批 E 卡片位置行：官方 icon_location 13 灰 + 位置文案；公开篇作者本人
+    /// 批 E 卡片位置行：官方 icon_location 15 灰 + 位置文案（与同行天气
+    /// 图标 15 同高；原 13 与天气图标 15 并排一边高一边矮）；公开篇作者本人
     /// 也只看区级（与他人视角一致），不再另附提示行。无位置、或他人视角
     /// 下无区级、或公开篇无区级时整组隐藏，不留空行。
     private let locationIconView: UIImageView = {
         let v = UIImageView()
         v.translatesAutoresizingMaskIntoConstraints = false
-        v.image = BearyLocationIcon.image(pointSize: 13)
+        v.image = BearyLocationIcon.image(pointSize: 15)
         v.tintColor = BearyColors.gray
         v.contentMode = .scaleAspectFit
         return v
@@ -1716,9 +1717,9 @@ class BearyDiaryCardCell: UITableViewCell {
         // 针居中在拉宽的框里，针落列中、地址贴右缘。位置行按篇目隐藏，固定尺寸
         // 用 999 优先级，免与 stack 的零尺寸约束冲突出警告（同 recipientIconView
         // 首页分支口径）。
-        let locationIconWidth = locationIconView.widthAnchor.constraint(equalToConstant: 13)
+        let locationIconWidth = locationIconView.widthAnchor.constraint(equalToConstant: 15)
         locationIconWidth.priority = UILayoutPriority(999)
-        let locationIconHeight = locationIconView.heightAnchor.constraint(equalToConstant: 13)
+        let locationIconHeight = locationIconView.heightAnchor.constraint(equalToConstant: 15)
         locationIconHeight.priority = UILayoutPriority(999)
         extraConstraints.append(locationIconWidth)
         extraConstraints.append(locationIconHeight)

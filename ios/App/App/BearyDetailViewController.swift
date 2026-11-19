@@ -549,13 +549,14 @@ final class BearyDetailViewController: UIViewController {
     @objc private func nineGridButtonTapped() {
         BearyNineGridPresenter.present(from: self, imageKeys: Array(imageKeys.prefix(9)), liveVideos: entry.liveVideos)
     }
-    /// 批 E 详情位置行：官方 icon_location 13 灰 + 位置文案；公开篇作者本人
+    /// 批 E 详情位置行：官方 icon_location 15 灰 + 位置文案（与同行天气
+    /// 图标 15 同高；原 13 与天气图标 15 并排一边高一边矮）；公开篇作者本人
     /// 也只看区级（与他人视角一致），不再另附提示行。无位置/他人视角无区级/
     /// 公开篇无区级时整组隐藏，不留空行（与卡片同口径）。
     private let detailLocationIconView: UIImageView = {
         let v = UIImageView()
         v.translatesAutoresizingMaskIntoConstraints = false
-        v.image = BearyLocationIcon.image(pointSize: 13)
+        v.image = BearyLocationIcon.image(pointSize: 15)
         v.tintColor = BearyColors.gray
         v.contentMode = .scaleAspectFit
         return v
@@ -1257,13 +1258,13 @@ final class BearyDetailViewController: UIViewController {
 
     /// 批 E 详情位置行（rebase 落点：新骨架正文栈 bodyStack，天气行之后、操作行之前；
     /// 旧详情挂在 chips 行后、引用卡之前，批 B 已删 chips 行与旧 stackView，故改挂正文栈）：
-    /// 官方 icon_location 13 灰 + 位置文案；公开篇作者本人也只看区级，不再另附提示行；
+    /// 官方 icon_location 15 灰 + 位置文案；公开篇作者本人也只看区级，不再另附提示行；
     /// 无位置/他人视角无区级/公开篇无区级时整组隐藏，不留空行（与卡片同口径）。
     private func buildLocation() {
         bodyStack.addArrangedSubview(detailLocationStack)
         NSLayoutConstraint.activate([
-            detailLocationIconView.widthAnchor.constraint(equalToConstant: 13),
-            detailLocationIconView.heightAnchor.constraint(equalToConstant: 13),
+            detailLocationIconView.widthAnchor.constraint(equalToConstant: 15),
+            detailLocationIconView.heightAnchor.constraint(equalToConstant: 15),
         ])
         // 地址与天气的间隔固定 4 宽（与栈间距合计 12pt）；隐藏时栈自动压零。
         let spacerWidth = detailLocationWeatherSpacer.widthAnchor.constraint(equalToConstant: 4)
