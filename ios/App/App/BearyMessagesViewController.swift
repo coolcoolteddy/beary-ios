@@ -196,6 +196,10 @@ final class BearyMessagesViewController: UIViewController {
             guard let view = self?.view else { return }
             BearyToast.show(in: view, message: message)
         }
+        // 合并模式下拉刷新宿主：子页 view 不进层级、自身滚动代理收不到拖动，
+        // 下拉指示器改挂容器表，由容器表滚动驱动（须在 _ = notifChild.view 之前设，
+        // 子页 viewDidLoad 即把指示器挂到宿主表上）。
+        notifChild.pullHostTableView = tableView
         // 嵌入态口径与 #808 一致（表内滚动已交容器表，组头已在子页内去掉），
         // 但高度上报机制退役：容器不再设 onContentHeightChanged。
         notifChild.setEmbedded()
@@ -1010,6 +1014,18 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
             }
         }
         checkNotifSeenIfVisible()
+        // 合并模式下拉刷新：子页 view 不进层级、自身滚动代理收不到拖动，
+        // 指示器跟随改由容器表滚动驱动（通知组自定义下拉头原口径）。
+        notifChild.handlePullHostScrollDidScroll()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard scrollView === tableView else { return }
+        // 合并模式下拉刷新：满行程松手触发通知组自定义下拉头，同时重拉私信组
+        // （与重拍刷新两组口径一致；触发判定与指示器状态都在子页内部）。
+        if notifChild.handlePullHostScrollDidEndDragging(willDecelerate: decelerate) {
+            conversationsChild.refresh()
+        }
     }
 }
 
