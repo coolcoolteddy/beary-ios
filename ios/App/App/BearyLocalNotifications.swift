@@ -171,7 +171,7 @@ final class BearyLocalNotifications {
         let content = UNMutableNotificationContent()
         switch kind {
         case .dailyReminder:
-            content.body = "今天还没有写日记，写一点，留一点。（测试）"
+            content.body = "今天还没有写日记，写一点吧。（测试）"
         case .limitedExpiry:
             content.body = "限时结束了，这篇日记已自动转回私密。（测试）"
         case .pastDay:
@@ -273,7 +273,7 @@ final class BearyLocalNotifications {
             if isToday && hasEntryToday {
                 nextEvening = calendar.date(byAdding: .day, value: 1, to: nextEvening) ?? nextEvening
             }
-            desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: "今天还没有写日记，写一点，留一点。", kind: .dailyReminder))
+            desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: "今天还没有写日记，写一点吧。", kind: .dailyReminder))
         }
 
         // 2. 那年今日：下一个 9:00（北京）；那天往年有日记才排。
