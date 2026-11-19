@@ -2895,6 +2895,10 @@ final class BearySettingsViewController: UIViewController {
         // 任一 scope 触顶即整单走部分导出标注；失败优先于触顶（先判失败）。
         var exportFailedReason: String?
         var exportTruncated = false
+        // 第四轮审计 #41：触顶时原因与 scope 不再只折成布尔——记下触顶的
+        // scope 名与原因，随后传进 buildAndShareExport 写进 JSON。
+        var exportTruncatedScopes: [String] = []
+        var exportTruncatedReason: String?
         var sessionsFailed = false
         // 账号隔离改造：分页中途发现账号变化时 fetchScopePage 以
         // reason="账号已切换" 回包（见该方法）；各 scope 边界的主线程
@@ -2903,11 +2907,15 @@ final class BearySettingsViewController: UIViewController {
         // 审计 B 批：4 路并行回调改串行汇集——会话 → 我的 → 信箱 → 赞过依次
         // 拉取，共享变量只在同一串行链上写，不再并发；判定口径不变（失败
         // 优先于触顶；分页失败与触顶同现时以失败为准，不出文件）。
-        let applyScopeResult: (BearyExportPageResult, inout [Entry]) -> Void = { result, entries in
+        let applyScopeResult: (BearyExportPageResult, inout [Entry], String) -> Void = { result, entries, scopeName in
             entries = result.entries
             if !result.complete {
-                if result.reason == "已达 20 页上限" {
+                if result.reason == "已达 20 页上限" || result.reason == "游标不完整" || result.reason == "游标未推进" {
                     exportTruncated = true
+                    exportTruncatedScopes.append(scopeName)
+                    if exportTruncatedReason == nil {
+                        exportTruncatedReason = result.reason
+                    }
                 } else {
                     exportFailedReason = result.reason ?? "分页失败"
                 }
@@ -2950,7 +2958,7 @@ final class BearySettingsViewController: UIViewController {
                 // 先关 sheet 再拼文件出分享面板，不叠层）。
                 BearyConfirmSheet.show(from: self, title: "部分导出", message: "本次仅导出 \(totalCount) 篇，未包含全部数据。文件包含账户资料、私密日记与登录设备信息，请只分享给可信的对象。是否继续分享这部分数据？", actions: [
                     BearyConfirmSheet.Action(title: "继续分享", style: .default, handler: { [weak self] in
-                        self?.buildAndShareExport(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries, sensitiveNoticeShown: true)
+                        self?.buildAndShareExport(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries, sensitiveNoticeShown: true, truncated: true, truncatedScopes: exportTruncatedScopes, truncatedReason: exportTruncatedReason)
                     }),
                     BearyConfirmSheet.Action(title: "取消", style: .cancel),
                 ])
@@ -2984,7 +2992,7 @@ final class BearySettingsViewController: UIViewController {
                             self.cancelExportForAccountChange()
                             return
                         }
-                        applyScopeResult(result, &mineEntries)
+                        applyScopeResult(result, &mineEntries, "我的日记")
                         self.setExportProgress("正在导出（3/4）私密日记…")
                         self.fetchAllEntries(scope: .mailbox, pin: pin) { result in
                             DispatchQueue.main.async {
@@ -2992,7 +3000,7 @@ final class BearySettingsViewController: UIViewController {
                                     self.cancelExportForAccountChange()
                                     return
                                 }
-                                applyScopeResult(result, &mailboxEntries)
+                                applyScopeResult(result, &mailboxEntries, "私密日记")
                                 self.setExportProgress("正在导出（4/4）赞过…")
                                 self.fetchAllEntries(scope: .liked, pin: pin) { result in
                                     DispatchQueue.main.async {
@@ -3000,7 +3008,7 @@ final class BearySettingsViewController: UIViewController {
                                             self.cancelExportForAccountChange()
                                             return
                                         }
-                                        applyScopeResult(result, &likedEntries)
+                                        applyScopeResult(result, &likedEntries, "赞过")
                                         finish()
                                     }
                                 }
@@ -3019,7 +3027,7 @@ final class BearySettingsViewController: UIViewController {
     /// 全移后台队列（userInitiated），主线程只做进度文案、复原与 present 分享面板；
     /// 后台失败回主线程走原失败分支（同文案 toast + 复原），成功回主线程复原后 present。
     /// 拼装函数只读传入的模型值（export*Dict 均为纯字典映射，不碰 UI），可安全离主线程。
-    private func buildAndShareExport(user: MeUser, pin: BearyExportPin, sessionsResp: BearyAccountSessionsResponse?, mineEntries: [Entry], mailboxEntries: [Entry], likedEntries: [Entry], sensitiveNoticeShown: Bool = false) {
+    private func buildAndShareExport(user: MeUser, pin: BearyExportPin, sessionsResp: BearyAccountSessionsResponse?, mineEntries: [Entry], mailboxEntries: [Entry], likedEntries: [Entry], sensitiveNoticeShown: Bool = false, truncated: Bool = false, truncatedScopes: [String] = [], truncatedReason: String? = nil) {
         // 主线程：进入生成阶段——直出路径沿用已置的 isExporting/禁用态，触顶确认
         // 路径在此重新置位；两种路径都在文件写完后统一复原。
         // 账号隔离改造：生成前（触顶确认后才进本方法，确认到生成之间
@@ -3036,7 +3044,7 @@ final class BearySettingsViewController: UIViewController {
         if !sensitiveNoticeShown {
             BearyConfirmSheet.show(from: self, title: "导出包含敏感内容", message: "文件包含账户资料、私密日记与登录设备信息，请只分享给可信的对象。", actions: [
                 BearyConfirmSheet.Action(title: "继续分享", style: .default, handler: { [weak self] in
-                    self?.buildAndShareExport(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries, sensitiveNoticeShown: true)
+                    self?.buildAndShareExport(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries, sensitiveNoticeShown: true, truncated: truncated, truncatedScopes: truncatedScopes, truncatedReason: truncatedReason)
                 }),
                 BearyConfirmSheet.Action(title: "取消", style: .cancel, handler: { [weak self] in
                     guard let self = self else { return }
@@ -3063,6 +3071,25 @@ final class BearySettingsViewController: UIViewController {
             data["profile"] = self.exportProfileDict(user: user)
             if let resp = sessionsResp, let list = resp.sessions {
                 data["sessions"] = list.map { self.exportSessionDict(session: $0) }
+            }
+            // 第四轮审计 #41：文件自带完整性——complete 区分完整/截断导出；
+            // counts 按组计数（diaries 按我的/信箱分开计，合并数组本身
+            // 只靠 is_private 区分）；截断时另记触顶 scope 与原因。
+            data["complete"] = !truncated
+            var counts: [String: Any] = [:]
+            counts["diaries_mine"] = mineEntries.count
+            counts["diaries_mailbox"] = mailboxEntries.count
+            counts["diaries"] = mineEntries.count + mailboxEntries.count
+            counts["liked_entries"] = likedEntries.count
+            if let resp = sessionsResp, let list = resp.sessions {
+                counts["sessions"] = list.count
+            }
+            data["counts"] = counts
+            if truncated {
+                data["truncated_scopes"] = truncatedScopes
+                if let reason = truncatedReason {
+                    data["truncation_reason"] = reason
+                }
             }
             data["diaries"] = mineEntries.map { self.exportEntryDict(entry: $0, isPrivate: false) } +
                 mailboxEntries.map { self.exportEntryDict(entry: $0, isPrivate: true) }
@@ -3156,7 +3183,7 @@ final class BearySettingsViewController: UIViewController {
     /// complete=false 的情形——某页请求失败（reason="第 X 页失败"，X=depth+1，
     /// depth 从 0 计故首失败页为“第 1 页失败”；回包缺 entries 键、满页末条缺
     /// createdAt 游标均视同本页失败，同 reason）或已取满 20 页仍可能有下一页
-    /// （reason="已达 20 页上限”）。调用方据此 fail-closed（失败）/ 部分标注（触顶），
+    /// （reason="已达 20 页上限”）；满页末条缺 id（游标不完整）与续翻游标未推进亦为截断类（reason="游标不完整"/"游标未推进"）。调用方据此 fail-closed（失败）/ 部分标注（触顶），
     /// 再不允许静默拿已取数据当完整文件出。
     private typealias BearyExportPageResult = (entries: [Entry], complete: Bool, reason: String?)
 
@@ -3182,6 +3209,12 @@ final class BearySettingsViewController: UIViewController {
             completion((entries: accumulated, complete: false, reason: "账号已切换"))
             return
         }
+        // 第四轮审计 #42：半个游标不发请求——before 与 before_id 须同时
+        // 为空（首屏）或同时齐全（续屏）；缺一即按截断回包，不发请求。
+        if (before == nil) != (beforeId == nil || beforeId?.isEmpty == true) {
+            completion((entries: accumulated, complete: false, reason: "游标不完整"))
+            return
+        }
         BearyAPI.shared.fetchEntriesWithToken(pin.token, scope: scope, limit: 50, before: before, beforeId: beforeId) { [weak self] result in
             guard let self = self else {
                 completion((entries: accumulated, complete: false, reason: "第 \(depth + 1) 页失败"))
@@ -3201,6 +3234,8 @@ final class BearySettingsViewController: UIViewController {
                     return
                 }
                 let all = accumulated + entries
+                // 第四轮审计 #42：短页判完整的前提是本次请求游标完整
+                // （首屏无游标、续屏双游标齐全，见入口守卫）。
                 if entries.count < 50 {
                     completion((entries: all, complete: true, reason: nil))
                     return
@@ -3213,7 +3248,19 @@ final class BearySettingsViewController: UIViewController {
                     completion((entries: all, complete: false, reason: "第 \(depth + 1) 页失败"))
                     return
                 }
-                self.fetchScopePage(scope: scope, pin: pin, before: lastCreated, beforeId: last.id, accumulated: all, depth: depth + 1, completion: completion)
+                // 第四轮审计 #42：续翻游标须双字段齐全——末条缺 id 即不续翻，
+                // 按截断处理，不发半个游标（缺 before_id 的请求会丢同毫秒余项）。
+                guard let lastId = last.id, !lastId.isEmpty else {
+                    completion((entries: all, complete: false, reason: "游标不完整"))
+                    return
+                }
+                // 第四轮审计 #42：游标须向前推进——末条与本次请求游标相同
+                // （或比游标更新）即未推进，停链按截断处理，不拿同一页反复请求。
+                if let before = before, let beforeId = beforeId, lastCreated > before || (lastCreated == before && lastId == beforeId) {
+                    completion((entries: all, complete: false, reason: "游标未推进"))
+                    return
+                }
+                self.fetchScopePage(scope: scope, pin: pin, before: lastCreated, beforeId: lastId, accumulated: all, depth: depth + 1, completion: completion)
             case .failure:
                 completion((entries: accumulated, complete: false, reason: "第 \(depth + 1) 页失败"))
             }
