@@ -333,7 +333,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
             grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
             grabberView.centerXAnchor.constraint(equalTo: grabberWrap.centerXAnchor),
-            grabberView.topAnchor.constraint(equalTo: grabberWrap.topAnchor, constant: BearySheetChrome.grabberTop),
+            grabberView.topAnchor.constraint(equalTo: grabberWrap.topAnchor, constant: BearySheetChrome.listTopPadding),
             grabberView.bottomAnchor.constraint(equalTo: grabberWrap.bottomAnchor),
             grabHitView.topAnchor.constraint(equalTo: sheetView.topAnchor),
             grabHitView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
@@ -432,7 +432,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             padCenterY,
             widthConstraint,
         ]
-        let listBottom = listContainer.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor, constant: -14)
+        let listBottom = listContainer.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor, constant: -BearySheetChrome.listBottomPadding)
         listBottom.isActive = true
         listBottomConstraint = listBottom
         NSLayoutConstraint.activate(phoneConstraints)
@@ -987,16 +987,14 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         let fallbackLabel: UILabel
         let nameLabel: UILabel
         let handleLabel: UILabel
-        let separator: UIView
         let rowHighlight: UIView
         var avatarURL: URL?
-        init(row: UIButton, avatarView: UIImageView, fallbackLabel: UILabel, nameLabel: UILabel, handleLabel: UILabel, separator: UIView, rowHighlight: UIView) {
+        init(row: UIButton, avatarView: UIImageView, fallbackLabel: UILabel, nameLabel: UILabel, handleLabel: UILabel, rowHighlight: UIView) {
             self.row = row
             self.avatarView = avatarView
             self.fallbackLabel = fallbackLabel
             self.nameLabel = nameLabel
             self.handleLabel = handleLabel
-            self.separator = separator
             self.rowHighlight = rowHighlight
         }
     }
@@ -1047,13 +1045,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         rowHighlight.translatesAutoresizingMaskIntoConstraints = false
         rowHighlight.backgroundColor = .clear
         rowHighlight.isUserInteractionEnabled = false
-        let separator = UIView()
-        separator.translatesAutoresizingMaskIntoConstraints = false
-        // 8-4：分隔线收进统一样式——基线厚已是 1pt，0.55 是颜色透明度（非厚度），
-        // 现改全强度 line 色（动态色本身，不走 withAlphaComponent，8-1 同款）。
-        // 例外：行底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #DFDFDF）只差
-        // 4 阶、浅色下几不可见（#1286 档距拉大后），此处改走 gray。
-        separator.backgroundColor = BearyColors.gray
         // 审计 9 层级：占位在下、头像在上（其余子视图顺序与旧版一致）。
         // 审计 D-12：行按压底片——铺满整行、垫在全部内容之下，只换底色不缩放，
         // isUserInteractionEnabled 关掉，否则底片会吞行点按。
@@ -1063,7 +1054,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         row.addSubview(nameLabel)
         row.addSubview(handleLabel)
         row.addSubview(chevron)
-        row.addSubview(separator)
         NSLayoutConstraint.activate([
             rowHighlight.topAnchor.constraint(equalTo: row.topAnchor),
             rowHighlight.bottomAnchor.constraint(equalTo: row.bottomAnchor),
@@ -1092,12 +1082,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             chevron.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
             chevron.widthAnchor.constraint(equalToConstant: 16),
             chevron.heightAnchor.constraint(equalToConstant: 16),
-            separator.topAnchor.constraint(equalTo: row.topAnchor),
-            // 8-4 例外：左 68 = 头像左 12 + 宽 44 + 间隙 12，即正文列起点（与名/ handle 左 68 同列），
-            // 属头像对齐，不收进通用分隔线左距，保持不动。
-            separator.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 68),
-            separator.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
-            separator.heightAnchor.constraint(equalToConstant: 1),
         ])
         row.addTarget(self, action: #selector(didTapRow(_:)), for: .touchUpInside)
         row.addTarget(self, action: #selector(rowPressDown(_:)), for: [.touchDown, .touchDragEnter])
@@ -1106,7 +1090,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // 起手态：无头像态（头像藏、占位显）；configure 会按实际用户改写。
         avatarView.isHidden = true
         fallbackLabel.isHidden = false
-        return RecipientRowViews(row: row, avatarView: avatarView, fallbackLabel: fallbackLabel, nameLabel: nameLabel, handleLabel: handleLabel, separator: separator, rowHighlight: rowHighlight)
+        return RecipientRowViews(row: row, avatarView: avatarView, fallbackLabel: fallbackLabel, nameLabel: nameLabel, handleLabel: handleLabel, rowHighlight: rowHighlight)
     }
 
     /// 更新一行内容：只改变化字段（审计 16）。
@@ -1142,9 +1126,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         let fallbackText = String(name.prefix(1)).uppercased()
         if views.fallbackLabel.text != fallbackText {
             views.fallbackLabel.text = fallbackText
-        }
-        if views.separator.isHidden != (index == 0) {
-            views.separator.isHidden = (index == 0)
         }
         // 审计 15：昵称仍为 label；已显示的 @用户名作 value（与昵称相同时不重复读，
         // 如昵称缺失回退为 @用户名、无 handle 时 value 置空——复用行换用户时旧 value 同步清掉）。

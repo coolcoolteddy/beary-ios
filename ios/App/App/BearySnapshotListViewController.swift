@@ -77,8 +77,8 @@ final class BearySnapshotListViewController: UIViewController {
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.backgroundColor = BearyColors.surface3
-        tableView.separatorColor = BearyColors.line
-        tableView.separatorInset = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 0)
+        // 列表 sheet 统一无分隔线（2026-11-18，规范 §1）。
+        tableView.separatorStyle = .none
         tableView.rowHeight = Self.rowHeight
         tableView.estimatedRowHeight = Self.rowHeight
         tableView.dataSource = self
@@ -96,7 +96,7 @@ final class BearySnapshotListViewController: UIViewController {
         let tableHeight = tableView.heightAnchor.constraint(equalToConstant: 0)
         tableHeightConstraint = tableHeight
         NSLayoutConstraint.activate([
-            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop),
+            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding),
             grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
             grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
@@ -115,7 +115,7 @@ final class BearySnapshotListViewController: UIViewController {
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableHeight,
-            tableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            tableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -BearySheetChrome.listBottomPadding),
 
             emptyLabel.centerXAnchor.constraint(equalTo: tableView.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: tableView.centerYAnchor),
