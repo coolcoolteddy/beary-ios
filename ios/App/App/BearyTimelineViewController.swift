@@ -1312,14 +1312,14 @@ final class BearyTimelineCell: UITableViewCell {
         // 限时虚线描边色由 BearyDashedBorderView 自身在 trait 变化时重刷。
         timelineLineView.backgroundColor = BearyColors.line
         dotRingView.backgroundColor = BearyColors.line
-        // C1：私密圆点边框按当前 isPublic 重设（公开 bg、私密蓝），
+        // C1：圆点边框按当前有效态重设（公开橙、仅好友墨、私密蓝），
         // 不得无条件写 bg（否则主题切换后私密蓝圈变隐形）。
         // N1：已公开圆点填充改橙色（与 configure 同口径），主题切换后仍是橙。
         if let entry = currentEntry {
             // 限时已到期按私密算（与 configure 同口径）。
             let published = BearyEphemeral.isEffectivelyPublic(entry)
             dotView.backgroundColor = BearyColors.bg
-            dotView.layer.bearyDynamicBorderColor = (published ? BearyColors.orange : BearyColors.blue)
+            dotView.layer.bearyDynamicBorderColor = published ? BearyColors.orange : (entry.isFriendsOnly ? BearyColors.ink : BearyColors.blue)
         } else {
             dotView.layer.bearyDynamicBorderColor = BearyColors.bg
         }
@@ -1645,8 +1645,9 @@ final class BearyTimelineCell: UITableViewCell {
             dotView.layer.cornerRadius = 4.5
             dotRingView.isHidden = true
         } else if entry.isFriendsOnly {
-            // 好友第一期：仅好友态图标＝官方双人锁（icon_friends_lock），圆点沿用私密档的蓝，
-            // 不新发明颜色；限时互斥，故仅好友档恒不带倒计时行。
+            // 好友第一期：仅好友态图标＝官方双人锁（icon_friends_lock），圆点边色走墨色
+            // （与搜索页／引用面板 pill 的仅好友墨字灰底同口径），与私密蓝边区分；
+            // 限时互斥，故仅好友档恒不带倒计时行。
             pillIconView.image = BearyIconImages.image(named: "icon_friends_lock", pointSize: 14)
             pillIconView.tintColor = BearyColors.timelineIconGray
             dotSizeConstraint?.constant = 9
@@ -1654,7 +1655,7 @@ final class BearyTimelineCell: UITableViewCell {
             dotTopConstraint?.constant = 14.5
             dotView.backgroundColor = BearyColors.bg
             dotView.layer.borderWidth = 2.5
-            dotView.layer.bearyDynamicBorderColor = BearyColors.blue
+            dotView.layer.bearyDynamicBorderColor = BearyColors.ink
             dotView.layer.cornerRadius = 4.5
             dotRingView.isHidden = true
         } else {
