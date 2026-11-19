@@ -303,8 +303,6 @@ final class BearyChromeViewController: UIViewController {
     private var bottomBlurView: UIVisualEffectView?
     /// 渐进模糊垫（规范 §6，统一 12pt 带）：仅保留底栏上沿带；本体布局／尺寸一字不动。
     private var bottomFadePad: BearyProgressiveBlurView?
-    /// 分段器 touchDown 瞬间记录的旧选段（供重拍手势与 valueChanged 时序竞态判定用）。
-    private var segmentIndexAtTouchDown: Int = -1
     /// 同 tab 连点刷新：上一拍重拍的页、时间、上一拍是否只回了顶（未刷新）。
     /// 第二下在 0.35s 内点同 tab 时直接刷新，不等回顶动画走完（见 retapCurrentPage）。
     private var lastRetapPage: ContainerPage?
@@ -872,11 +870,11 @@ final class BearyChromeViewController: UIViewController {
         }
         // 初始 alpha 0（栏藏起），元素同步隐藏，随 setBarsVisible 翻转。
         seg.accessibilityElementsHidden = true
-        seg.addTarget(self, action: #selector(bottomSegmentTouchDown), for: .touchDown)
         seg.addTarget(self, action: #selector(bottomSegmentChanged), for: .valueChanged)
-        let retap = UITapGestureRecognizer(target: self, action: #selector(bottomSegmentTapped(_:)))
-        retap.cancelsTouchesInView = false
-        seg.addGestureRecognizer(retap)
+        // 重拍：点已选段不发 valueChanged，故走分段器自身的 begin/endTracking
+        //（BearyHit44SegmentedControl.onRetapCurrentSegment）；此前挂在分段器上的
+        // UITapGestureRecognizer + .touchDown 快照在真机上从不触发，见该类注释。
+        seg.onRetapCurrentSegment = { [weak self] index in self?.retapBottomSegment(index) }
         seg.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(seg)
         bottomSegmented = seg
@@ -2051,16 +2049,10 @@ final class BearyChromeViewController: UIViewController {
     /// 与首页同口径，不走 navigator.goTab——消息段无旧钮导航可沿用）。
     @objc private func didTapMessages() { showPage(.messages) }
 
-    /// 底栏分段 touchDown：记录旧选段。valueChanged 与点按手势都在 touchUp 时触发、
-    /// 时序不定，故重拍判定不以手势触发时的 selectedSegmentIndex 为准，只认 touchDown 快照。
-    @objc private func bottomSegmentTouchDown() {
-        segmentIndexAtTouchDown = bottomSegmented.selectedSegmentIndex
-    }
-
     /// 底栏分段切换：只在选段变化时触发（点已选段不触发），逐段沿用旧钮的导航调用，
     /// home 走 showPage、其余走 navigator.goTab，与旧钮行为完全一致。
     @objc private func bottomSegmentChanged() {
-        // W6：分段器无 touchDown 事件，切换瞬间补 .light（与重拍手势各管一种点按，不重叠）。
+        // W6：分段器无 touchDown 事件，切换瞬间补 .light（与重拍回调各管一种点按，不重叠）。
         BearyHaptics.press()
         switch bottomSegmented.selectedSegmentIndex {
         case 0: didTapTimeline()
@@ -2088,18 +2080,14 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
-    /// 底栏重拍：UISegmentedControl 点已选段不发 valueChanged，故另加手势补重拍。
-    /// 手势 cancelsTouchesInView=false，不吞控件自身的 valueChanged；点到别的段时
-    /// 因 tapped != touchDown 快照而直接返回，切换只由 valueChanged 处理一次。
-    /// 重拍路径与旧钮完全一致（didTap* → showPage/goTab 的重拍分支：回顶再刷新）。
-    @objc private func bottomSegmentTapped(_ gesture: UITapGestureRecognizer) {
-        guard let seg = bottomSegmented, seg.bounds.width > 0 else { return }
-        let segmentWidth = seg.bounds.width / 4
-        let tapped = min(3, max(0, Int(gesture.location(in: seg).x / segmentWidth)))
-        guard tapped == segmentIndexAtTouchDown else { return }
-        // W6：重拍（点已选段，valueChanged 不发）补 .light；切段时本分支已提前返回，不与上条重叠。
+    /// 底栏重拍：点已选段（valueChanged 不发）回顶／刷新，入口见
+    /// BearyHit44SegmentedControl.onRetapCurrentSegment；切段时不触发，
+    /// 切换只由 valueChanged 处理一次。重拍路径与旧钮完全一致
+    ///（didTap* → showPage/goTab 的重拍分支：回顶再刷新）。
+    private func retapBottomSegment(_ index: Int) {
+        // W6：重拍（点已选段）补 .light；切段时本分支不触发，不与上条重叠。
         BearyHaptics.press()
-        switch tapped {
+        switch index {
         case 0: didTapTimeline()
         case 1: didTapHome()
         case 2: didTapMessages()

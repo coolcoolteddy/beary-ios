@@ -420,6 +420,44 @@ final class BearyHit44SegmentedControl: UISegmentedControl {
         if dx == 0 && dy == 0 { return super.point(inside: point, with: event) }
         return bounds.insetBy(dx: -dx, dy: -dy).contains(point)
     }
+
+    /// 重拍回调：点按已选段抬起时触发，传抬起落点的段号。
+    /// 底栏重拍走这条——与 valueChanged 同一条 UIControl 触摸管线
+    ///（beginTracking/endTracking），不依赖分段器上的 UITapGestureRecognizer
+    /// 与 .touchDown 事件：分段器默认点按动作会抢手势识别、且不发 .touchDown
+    ///（见 SceneDelegate bottomSegmentChanged 的 W6 注释），#457 起挂在分段器
+    /// 上的那只重拍手势在真机上从不触发，touchDown 快照恒为 -1、守卫恒失败，
+    /// 重拍自上线起就没通过。未设回调时（首页顶栏分段器）行为与原来完全一致。
+    var onRetapCurrentSegment: ((Int) -> Void)?
+    private var retapTouchDownIndex: Int = -1
+    private var retapTouchDownLocation: CGPoint = .zero
+
+    override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+        retapTouchDownIndex = selectedSegmentIndex
+        retapTouchDownLocation = touch.location(in: self)
+        return super.beginTracking(touch, with: event)
+    }
+
+    override func endTracking(_ touch: UITouch?, with event: UIEvent?) {
+        super.endTracking(touch, with: event)
+        guard let touch = touch else { return }
+        let location = touch.location(in: self)
+        guard bounds.width > 0, bounds.contains(location) else { return }
+        // 只认点按：抬起位置离按下位置超过 10pt 视为拖动，不算重拍
+        //（与 UITapGestureRecognizer 的位移容差同口径）。
+        guard abs(location.x - retapTouchDownLocation.x) <= 10,
+              abs(location.y - retapTouchDownLocation.y) <= 10 else { return }
+        let count = max(1, numberOfSegments)
+        let segmentWidth = bounds.width / CGFloat(count)
+        let tapped = min(count - 1, max(0, Int(location.x / segmentWidth)))
+        guard tapped == retapTouchDownIndex else { return }
+        onRetapCurrentSegment?(tapped)
+    }
+
+    override func cancelTracking(with event: UIEvent?) {
+        super.cancelTracking(with: event)
+        retapTouchDownIndex = -1
+    }
 }
 
 // MARK: - 图片地址
