@@ -100,8 +100,11 @@ final class BearyLocalNotifications {
 
     // MARK: - 开关
 
+    /// 开关默认值：无已存值时一律关（2026-11-21 首篇弹窗改法：弹窗只问写作提醒，
+    /// 其余三项不再默认开启，留给用户在设置里按需打开）。已存值一律不动，不重置、
+    /// 不覆盖；老用户之前手动改过的开关保持原样。
     func isEnabled(_ kind: Kind) -> Bool {
-        if UserDefaults.standard.object(forKey: kind.defaultsKey) == nil { return true }
+        if UserDefaults.standard.object(forKey: kind.defaultsKey) == nil { return false }
         return UserDefaults.standard.bool(forKey: kind.defaultsKey)
     }
 
@@ -132,8 +135,10 @@ final class BearyLocalNotifications {
         }
     }
 
-    /// 门槛 4：写完第一篇日记后问一次。先弹自建说明卡，点了「好」再调系统框；
-    /// 系统态已决定（已授权／已拒绝）或卡已弹过，均不再弹。
+    /// 门槛 4：写完第一篇日记后问一次。先弹自建说明卡，点了「开启写作提醒」
+    /// 只开每日 21:00 写作提醒这一项（其余三项仍关，留设置里按需开），再调系统框；
+    /// 点「暂时不用」四项全关，不再问。系统态已决定（已授权／已拒绝）或卡已弹过，
+    /// 均不再弹。
     func promptAfterFirstEntryIfNeeded(from presenter: UIViewController) {
         guard !UserDefaults.standard.bool(forKey: Self.firstEntryPromptShownKey) else { return }
         fetchAuthorizationStatus { [weak self, weak presenter] status in
@@ -142,14 +147,17 @@ final class BearyLocalNotifications {
             DispatchQueue.main.async {
                 UserDefaults.standard.set(true, forKey: Self.firstEntryPromptShownKey)
                 BearyConfirmSheet.show(from: presenter, title: "晚上 9 点提醒你写一句", message: nil, actions: [
-                    BearyConfirmSheet.Action(title: "好", style: .default) { [weak self, weak presenter] in
+                    BearyConfirmSheet.Action(title: "开启写作提醒", style: .default) { [weak self, weak presenter] in
                         guard let self = self, let presenter = presenter else { return }
+                        // 只开刚答应的写作提醒一项；其余三项不动（默认关，设置里按需开）。
+                        self.setEnabled(true, for: .dailyReminder)
                         self.requestAuthorizationIfNeeded {
                             BearyToast.show(in: presenter.view, message: "通知权限未开启，去系统设置里打开才生效", actionTitle: "去设置") { [weak self] in
                                 self?.openSystemSettings()
                             }
                         }
-                    }
+                    },
+                    BearyConfirmSheet.Action(title: "暂时不用", style: .cancel) { }
                 ])
             }
         }
