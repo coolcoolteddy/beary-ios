@@ -1138,18 +1138,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 编辑模式隐藏（编辑不改可见性）；限时态即公开语义，不再另设锁定开关。
     private let visibilityButton = UIButton(type: .system)
     /// 任务2：准备发布行——工具栏正上方固定行，正文非空的
-    /// “准备发布”态才显；四档直接平铺点选（不再只藏进顶栏可见性菜单），
-    /// 限时后果同行常驻可见（发布前即看得见，不只靠选档后 toast）。
+    /// “准备发布”态才显；四档直接平铺点选（不再只藏进顶栏可见性菜单）。
     /// 2026-11-22 纵向位置修：此前在顶栏正下方，行一出现即把滚动区顶顶下 42pt、
     /// 标题上方空出一大段（134 实测）；改到底部后只收滚动区底，标题不动。
     private let publishVisibilityRow = UIStackView()
     private let publishVisibilityChipRow = UIStackView()
-    private let publishVisibilityNoteLabel = UILabel()
     private var publishVisibilityRowHeightConstraint: NSLayoutConstraint?
     private var publishVisibilityButtons: [VisibilityChoice: BearyHit44Button] = [:]
-    /// 准备发布行高：chip 行 30 ＋上下边距各 6；限时态另加注行 16 ＋间距 4。
+    /// 准备发布行高：chip 行 30 ＋上下边距各 6。
     private static let publishVisibilityRowHeight: CGFloat = 42
-    private static let publishVisibilityRowNoteHeight: CGFloat = 20
     /// 底部元信息行（2026-11-18 定位重做，预览 v2）：内容栈最末（引用卡下方、
     /// 工具栏上方）：定位钮（图钉＋地名，点按重开选地点面板）＋天气 chip
     /// （图标＋天气名＋气温，仅展示、不可点）。无地点时天气 chip 在左下角；
@@ -3172,7 +3169,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             visibilityButton.accessibilityValue = published ? "公开" : "私密"
         }
         visibilityButton.menu = makeVisibilityMenu()
-        // 任务2：选档变化时准备发布行 chip 选中态与限时注行同步变。
+        // 任务2：选档变化时准备发布行 chip 选中态同步变。
         refreshPublishVisibilityRow()
         refreshTopTitle()
     }
@@ -4819,7 +4816,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 任务2：准备发布行搭建——工具栏正上方固定行，四档 chip 直接平铺
     /// （标签 chip 同款：13 regular、圆角 999、内边距 7/12、高 30，点按热区
-    /// 44 靠 BearyHit44Button）；限时后果注行只在限时态出现，发布前即看得见。
+    /// 44 靠 BearyHit44Button）。
     /// 顶栏可见性菜单钮保留（同旗标、同步刷新），本行是“准备发布”态的直显入口。
     private func buildPublishVisibilityRow() {
         publishVisibilityRow.translatesAutoresizingMaskIntoConstraints = false
@@ -4833,14 +4830,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         publishVisibilityChipRow.axis = .horizontal
         publishVisibilityChipRow.spacing = 8
         publishVisibilityChipRow.alignment = .center
-        publishVisibilityNoteLabel.translatesAutoresizingMaskIntoConstraints = false
-        publishVisibilityNoteLabel.font = BearyDynamicType.captionFont()
-        publishVisibilityNoteLabel.adjustsFontForContentSizeCategory = true
-        publishVisibilityNoteLabel.textColor = BearyColors.gray
-        publishVisibilityNoteLabel.text = "公开 24 小时后自动转私密"
-        publishVisibilityNoteLabel.numberOfLines = 1
-        publishVisibilityNoteLabel.isHidden = true
-        publishVisibilityNoteLabel.accessibilityLabel = "限时：公开 24 小时后自动转私密"
         let tiers: [(title: String, choice: VisibilityChoice)] = [
             ("私密", .privateTier),
             ("仅好友", .friendsTier),
@@ -4865,10 +4854,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             publishVisibilityChipRow.addArrangedSubview(chip)
         }
         publishVisibilityRow.addArrangedSubview(publishVisibilityChipRow)
-        publishVisibilityRow.addArrangedSubview(publishVisibilityNoteLabel)
         NSLayoutConstraint.activate([
             publishVisibilityChipRow.heightAnchor.constraint(equalToConstant: 30),
-            publishVisibilityNoteLabel.heightAnchor.constraint(equalToConstant: 16),
         ])
         refreshPublishVisibilityRow()
     }
@@ -4881,7 +4868,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 任务2：准备发布行显隐与选中态——只在新建态、正文非空（可发布）、
     /// 引用面板未开时出现；编辑态不改可见性、空正文无可发布内容，均不显。
     /// 选中 chip 走 surface2 底＋墨字（标签 chip 同款选中态），其余灰字透明底；
-    /// 限时态注行常驻显示后果，发布前即看得见。行高进 sheet 高
+    /// 行高进 sheet 高
     /// （updatePreferredContentSize 的非面板分支另加本行高）；面板打开时
     /// 高度走视口档，不在此更新。
     private func refreshPublishVisibilityRow() {
@@ -4894,10 +4881,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             chip.setTitleColor(selected ? BearyColors.ink : BearyColors.gray, for: .normal)
             chip.accessibilityValue = selected ? "已选" : nil
         }
-        publishVisibilityNoteLabel.isHidden = !isEphemeral
         let wasHidden = publishVisibilityRow.isHidden
         publishVisibilityRow.isHidden = !visible
-        publishVisibilityRowHeightConstraint?.constant = !visible ? 0 : (isEphemeral ? Self.publishVisibilityRowHeight + Self.publishVisibilityRowNoteHeight : Self.publishVisibilityRowHeight)
+        publishVisibilityRowHeightConstraint?.constant = !visible ? 0 : Self.publishVisibilityRowHeight
         if wasHidden != publishVisibilityRow.isHidden, !quotePanelOpen {
             updatePreferredContentSize()
         }
