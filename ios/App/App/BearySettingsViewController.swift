@@ -1195,10 +1195,12 @@ final class BearySettingsViewController: UIViewController {
         plusWrap.addArrangedSubview(plusGroup.card)
     }
 
-    /// 2026-11-19 七组版：存储与数据卡——管理存储／数据用量，各点进新页面。
+    /// 2026-11-19 七组版：存储与数据卡——管理存储／数据用量／数据状态，各点进新页面。
     /// 管理存储页顶部“已使用 / 总容量”＋彩色存储条＋图例，下面带真实大小的
     /// 四行＋红色“清除所有存储”；数据用量页是流量节省程序／高画质图片／
-    /// 自动播放实况。
+    /// 自动播放实况；数据状态页是日记与回收站的上次同步时间、草稿与私信的
+    /// 仅本设备说明、失败腿与重试（原 ID 卡同步状态行，七组版随 #1990
+    /// 重组移入本组，见 #1795）。
     private func buildStorageDataSection() {
         let storageContent = makeRow(title: "管理存储", iconName: "icon_device", showChevron: true)
         let storageButton = UIButton(type: .custom)
@@ -1208,9 +1210,14 @@ final class BearySettingsViewController: UIViewController {
         let dataUsageButton = UIButton(type: .custom)
         dataUsageButton.accessibilityLabel = "数据用量"
         dataUsageButton.addTarget(self, action: #selector(openDataUsageSettingsPage), for: .touchUpInside)
+        let dataStatusContent = makeRow(title: "数据状态", iconName: "icon_info", showChevron: true)
+        let dataStatusButton = UIButton(type: .custom)
+        dataStatusButton.accessibilityLabel = "数据状态"
+        dataStatusButton.addTarget(self, action: #selector(openDataStatusPage), for: .touchUpInside)
         let group = makeGroupCard(title: "存储与数据", rows: [
             makeSettingsTappableRow(content: storageContent, button: storageButton),
             makeSettingsTappableRow(content: dataUsageContent, button: dataUsageButton),
+            makeSettingsTappableRow(content: dataStatusContent, button: dataStatusButton),
         ])
         storageDataWrap.addArrangedSubview(group.card)
     }
@@ -3484,6 +3491,16 @@ final class BearySettingsViewController: UIViewController {
         presentSettingsPage(page)
     }
 
+
+    /// 数据状态页：存储与数据组“数据状态”行点开的分项页——日记与回收站（上次
+    /// 同步时间）、草稿与私信（仅保存在本设备）、失败时列失败腿并给重试；
+    /// 与登录设备页同款全屏呈现（presentSettingsPage 统一口）。
+    @objc private func openDataStatusPage() {
+        let vc = BearyDataStatusViewController()
+        vc.modalPresentationStyle = .fullScreen
+        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        presentSettingsPage(vc)
+    }
     @objc private func openPrivacyText() {
         presentLegalText(title: "隐私政策", doc: .privacy)
     }
@@ -3687,6 +3704,216 @@ final class BearyLegalTextViewController: UIViewController {
         super.viewDidAppear(animated)
         // 117 终态偏离兜底：动画结束后的最终帧再校一次。
         subpageLayoutGuard.applyAfterAppearance(page: pageTitle, view: view, topView: topBarView, contentViews: [textView], presentation: "fullScreen+fadeRise")
+    }
+}
+
+/// 设置页存储与数据组“数据状态”行点开的分项页（与法律文字页同款全屏子页）：
+/// 只列范围、不暗示全设备一致——
+///   - 日记与回收站：组合状态（日记腿与回收站腿共同决定）＋上次同步时间
+///     （两腿状态文件都 complete 时较晚的 updatedAt，任一腿 partial/缺失
+///     即无确认过的整合同步时间，只显状态文案）；
+///   - 草稿：仅保存在本设备（纯本机文件，无服务端同步）；
+///   - 私信：更早的记录保存在本设备（服务端私信只存 7 天，独立拉取，
+///     不写同步状态）；
+///   - 同步失败：只在组合状态为失败时出现，列失败腿（日记/回收站）＋
+///     “重新同步”钮（走现有 kickForCurrentUser 重试入口）。
+/// 页脚一句定范围：“已同步”指日记与回收站已在所列时间同步完成，
+/// 不包括草稿与私信。
+private final class BearyDataStatusViewController: UIViewController {
+    private let closeButton = BearyHit44Button(type: .system)
+    private let titleLabel = UILabel()
+    private let scrollView = UIScrollView()
+    private let retryButton = BearyHit44Button(type: .system)
+    private var topBarColumnWidth: NSLayoutConstraint?
+    private var contentColumnWidth: NSLayoutConstraint?
+    private let subpageLayoutGuard = BearySubpageLayoutGuard()
+    private var topBarView: UIView?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = BearyColors.bg
+
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.setTitle(nil, for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        closeButton.tintColor = BearyColors.ink
+        closeButton.accessibilityLabel = "返回"
+        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.textAlignment = .center
+        titleLabel.text = "数据状态"
+
+        let topBar = UIView()
+        topBar.translatesAutoresizingMaskIntoConstraints = false
+        topBar.addSubview(closeButton)
+        topBar.addSubview(titleLabel)
+
+        let sync = BearyEntrySync.shared
+        let state = sync.currentSyncState
+        let lastSync = sync.lastCombinedSyncDate()
+        let failedLegs = sync.currentFailedLegTitles
+        var rows: [UIView] = []
+        // 日记与回收站：状态文案＋上次同步时间（无确认过的整合同步时间时只显状态）。
+        let diaryDetail: String
+        if let lastSync {
+            diaryDetail = "\(state.displayText) · 上次同步 \(BearyText.monthDayHourMinuteFormatter.string(from: lastSync))"
+        } else {
+            diaryDetail = state.displayText
+        }
+        rows.append(makeStatusRow(title: "日记与回收站", detail: diaryDetail))
+        rows.append(makeStatusRow(title: "草稿", detail: "仅保存在本设备"))
+        rows.append(makeStatusRow(title: "私信", detail: "更早的记录保存在本设备"))
+        // 失败行只在组合状态为失败时出现（失败腿标题与状态同批更新，
+        // 状态非失败时不认残留标题，避免切号后的旧失败腿误显）。
+        let isFailed = state == .failed && !failedLegs.isEmpty
+        if isFailed {
+            rows.append(makeStatusRow(title: "同步失败", detail: "\(failedLegs.joined(separator: "、"))同步未完成"))
+        }
+
+        let cardStack = UIStackView(arrangedSubviews: rows)
+        cardStack.translatesAutoresizingMaskIntoConstraints = false
+        cardStack.axis = .vertical
+        cardStack.spacing = 12
+        cardStack.isLayoutMarginsRelativeArrangement = true
+        cardStack.layoutMargins = UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        let card = UIView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.backgroundColor = BearyColors.surface1
+        card.layer.cornerRadius = BearyCorners.single
+        card.clipsToBounds = true
+        card.addSubview(cardStack)
+        NSLayoutConstraint.activate([
+            cardStack.topAnchor.constraint(equalTo: card.topAnchor),
+            cardStack.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            cardStack.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            cardStack.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+        ])
+
+        let footnoteLabel = UILabel()
+        footnoteLabel.translatesAutoresizingMaskIntoConstraints = false
+        footnoteLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        footnoteLabel.adjustsFontForContentSizeCategory = true
+        footnoteLabel.textColor = BearyColors.gray
+        footnoteLabel.numberOfLines = 0
+        footnoteLabel.text = "「已同步」指日记与回收站已在所列时间同步完成，不包括草稿与私信。"
+
+        let contentStack = UIStackView(arrangedSubviews: [card, footnoteLabel])
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.axis = .vertical
+        contentStack.spacing = 12
+        contentStack.isLayoutMarginsRelativeArrangement = true
+        contentStack.layoutMargins = UIEdgeInsets(top: 16, left: 0, bottom: 16, right: 0)
+        if isFailed {
+            retryButton.translatesAutoresizingMaskIntoConstraints = false
+            retryButton.setTitle("重新同步", for: .normal)
+            retryButton.setTitleColor(BearyColors.ink, for: .normal)
+            retryButton.titleLabel?.font = BearyDynamicType.smallActionFont()
+            retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
+            retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+            retryButton.bearyAddPressFeedback()
+            contentStack.addArrangedSubview(retryButton)
+        }
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(contentStack)
+        view.addSubview(topBar)
+        view.addSubview(scrollView)
+        topBarView = topBar
+        NSLayoutConstraint.activate([
+            topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
+            closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            closeButton.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            closeButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
+            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
+            scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            scrollView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            contentStack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+            contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+        ] + BearySubpageTopBarHeight.constraints(for: topBar))
+        topBarColumnWidth = topBar.widthAnchor.constraint(equalToConstant: 0)
+        topBarColumnWidth?.isActive = true
+        contentColumnWidth = scrollView.widthAnchor.constraint(equalToConstant: 0)
+        contentColumnWidth?.isActive = true
+        updateSubpageColumnWidths()
+    }
+
+    /// 分项行：标题 15 左、说明 14 灰右（与设置行同款字号口径），多行自撑高。
+    private func makeStatusRow(title: String, detail: String) -> UIView {
+        let titleLabelValue = UILabel()
+        titleLabelValue.translatesAutoresizingMaskIntoConstraints = false
+        titleLabelValue.font = BearyDynamicType.smallBodyFont()
+        titleLabelValue.adjustsFontForContentSizeCategory = true
+        titleLabelValue.textColor = BearyColors.ink
+        titleLabelValue.numberOfLines = 0
+        titleLabelValue.text = title
+        titleLabelValue.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        let detailLabel = UILabel()
+        detailLabel.translatesAutoresizingMaskIntoConstraints = false
+        detailLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        detailLabel.adjustsFontForContentSizeCategory = true
+        detailLabel.textColor = BearyColors.gray
+        detailLabel.numberOfLines = 0
+        detailLabel.textAlignment = .right
+        detailLabel.text = detail
+        let row = UIStackView(arrangedSubviews: [titleLabelValue, detailLabel])
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.axis = .horizontal
+        row.spacing = 12
+        row.alignment = .center
+        return row
+    }
+
+    @objc private func closeTapped() {
+        dismiss(animated: BearyMotion.animated(true))
+    }
+
+    /// 重试走现有同步重跑入口（失败后 synced 标志未置，kick 会重跑；
+    /// 已同步/在途时 kick 内部去重不重复跑）。点按即关页回设置页，
+    /// 行尾状态随广播自动更新。
+    @objc private func retryTapped() {
+        BearyEntrySync.shared.kickForCurrentUser()
+        BearyToast.show(in: view, message: "正在重新同步")
+        dismiss(animated: BearyMotion.animated(true))
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateSubpageColumnWidths()
+        subpageLayoutGuard.applyIfNeeded(page: "数据状态", view: view, topView: topBarView, contentViews: [scrollView], presentation: "fullScreen+fadeRise")
+    }
+
+    private func columnWidth(forViewWidth w: CGFloat) -> CGFloat {
+        BearyDesktop.isWide(w) ? 600 : max(w - 32, 0)
+    }
+
+    private func updateSubpageColumnWidths() {
+        let w = view.bounds.width
+        guard w > 0 else { return }
+        let target = columnWidth(forViewWidth: w)
+        if topBarColumnWidth?.constant != target {
+            topBarColumnWidth?.constant = target
+        }
+        if contentColumnWidth?.constant != target {
+            contentColumnWidth?.constant = target
+        }
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        subpageLayoutGuard.applyAfterAppearance(page: "数据状态", view: view, topView: topBarView, contentViews: [scrollView], presentation: "fullScreen+fadeRise")
     }
 }
 
