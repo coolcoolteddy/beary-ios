@@ -131,4 +131,34 @@ final class BearyEntrySyncStoreTests: XCTestCase {
         XCTAssertFalse(BearyTrashSyncStore.saveAll(accountId: testAccountId, items: [makeTrashItem(id: "t1", deletedAtMs: 1735689600000)]))
         XCTAssertNil(BearyTrashSyncStore.loadAll(accountId: testAccountId))
     }
+
+    // MARK: - 发布后补拉待办（第三批体验检查第 1 项）
+
+    func testPendingPublishRefetchAddLoadRemoveRoundTrip() {
+        XCTAssertEqual(BearyEntrySyncStore.loadPendingPublishRefetch(accountId: testAccountId).count, 0)
+        XCTAssertTrue(BearyEntrySyncStore.addPendingPublishRefetch(accountId: testAccountId, entryId: "e1", dayKey: "2026-11-17"))
+        XCTAssertTrue(BearyEntrySyncStore.addPendingPublishRefetch(accountId: testAccountId, entryId: "e2", dayKey: "2026-11-17"))
+        // 同 id 重复入队不重复记。
+        XCTAssertTrue(BearyEntrySyncStore.addPendingPublishRefetch(accountId: testAccountId, entryId: "e1", dayKey: "2026-11-17"))
+        let loaded = BearyEntrySyncStore.loadPendingPublishRefetch(accountId: testAccountId)
+        XCTAssertEqual(loaded.map({ $0.entryId }), ["e1", "e2"])
+        XCTAssertEqual(loaded.first?.dayKey, "2026-11-17")
+        XCTAssertEqual(loaded.first?.attempts, 0)
+        // 摘队只摘指定 id，不在队里的 id 也返回 true。
+        XCTAssertTrue(BearyEntrySyncStore.removePendingPublishRefetch(accountId: testAccountId, entryId: "e1"))
+        XCTAssertTrue(BearyEntrySyncStore.removePendingPublishRefetch(accountId: testAccountId, entryId: "missing"))
+        XCTAssertEqual(BearyEntrySyncStore.loadPendingPublishRefetch(accountId: testAccountId).map({ $0.entryId }), ["e2"])
+        // 清空即无待办。
+        XCTAssertTrue(BearyEntrySyncStore.savePendingPublishRefetch(accountId: testAccountId, items: []))
+        XCTAssertEqual(BearyEntrySyncStore.loadPendingPublishRefetch(accountId: testAccountId).count, 0)
+    }
+
+    func testPendingPublishRefetchCorruptFileReadsAsEmpty() {
+        // 待办文件损坏按无待办处理（下次全量同步仍会拉回，不拦同步）。
+        XCTAssertTrue(BearyEntrySyncStore.addPendingPublishRefetch(accountId: testAccountId, entryId: "e1", dayKey: "2026-11-17"))
+        let dir = BearyEntrySyncStore.accountDir(accountId: testAccountId)!
+        let url = dir.appendingPathComponent("beary_publish_refetch.json")
+        XCTAssertTrue(FileManager.default.createFile(atPath: url.path, contents: Data("not-json".utf8)))
+        XCTAssertEqual(BearyEntrySyncStore.loadPendingPublishRefetch(accountId: testAccountId).count, 0)
+    }
 }

@@ -2683,6 +2683,8 @@ class BearyTimelineViewController: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(handleDevModeChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
         // 审计-时间线：前台复核（详情页同口径）——后台期间 1 秒 tick 未跑时，到期在回前台时补位。
         NotificationCenter.default.addObserver(self, selector: #selector(handleForegroundEphemeralCheck(_:)), name: UIApplication.willEnterForegroundNotification, object: nil)
+        // 发布后补拉待办变迁（第三批体验检查第 1 项）：选中日有待办入队/落盘时刷新当日面板（表头“同步中”）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handlePendingRefetchChanged(_:)), name: .bearyPendingRefetchDidChange, object: nil)
         // G15 toast 已委托 B 批统一 BearyToast（见 showTimelineToast），
         // 此处不再建常驻 toast 容器。
         // 第 2 项 A 调用点 1/2（初次进入）：置守卫挂起；2026-11-04 不跳日口径：
@@ -3920,6 +3922,19 @@ class BearyTimelineViewController: UIViewController {
     /// 前台复核：后台期间 tick 未跑时，到期在此补位；未到期则不动（1 秒 tick 接续）。
     @objc private func handleForegroundEphemeralCheck(_ note: Notification) {
         sweepEphemeralExpiry()
+    }
+
+    /// 发布后补拉待办变迁（第三批体验检查第 1 项）：只处理选中日——先清
+    /// 分区快照再重载面板分区，刷新表头“同步中”后缀；待办已落盘
+    /// （resolved）时再静默重拉该日，把新篇接进面板（未变时回包不碰表）。
+    @objc private func handlePendingRefetchChanged(_ note: Notification) {
+        guard let dayKey = note.userInfo?["dayKey"] as? String, dayKey == selectedDayKey else { return }
+        cachedSections = nil
+        updateChrome()
+        if !reloadDayPanelSectionIfStable() { tableView.reloadData() }
+        if note.userInfo?["resolved"] as? Bool == true {
+            fetchDayEntries(key: dayKey, clear: false)
+        }
     }
 
     // MARK: - 表头搭建
@@ -6474,6 +6489,11 @@ class BearyTimelineViewController: UIViewController {
             } else if allPrivate {
                 suffix += " · 都私密"
             }
+        }
+        // 第三批体验检查第 1 项：该日有已发布但未落盘的待补拉篇——篇数是
+        // 落盘前的旧数，不按“空日/已齐”显示，缀“同步中”表明还有篇在路上。
+        if BearyEntrySync.shared.hasPendingRefetch(dayKey: key) {
+            suffix += " · 同步中"
         }
         return (head, suffix, false)
     }
