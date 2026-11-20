@@ -67,6 +67,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     /// ＋重试；服务器确认（静默刷新成功提交／网络首拉成功）后清掉。
     private var trashStaleEmpty = false
     private var trashBusyIdentifiers: Set<String> = []
+    /// 恢复请求网络失败后未确认态的 id：请求可能已送达、只是回包丢了，
+    /// 恢复与否未知——行按钮改成「重新检查」，点按先核对服务端状态，
+    /// 确认仍在回收站才可再次恢复；核对完成（在／不在）即清掉。
+    private var trashRecheckIdentifiers: Set<String> = []
     private var restoreEntries: [(button: UIButton, trashValue: TrashItem)] = []
     private var purgeEntries: [(button: UIButton, trashValue: TrashItem)] = []
     private var rowViewsByIdentifier: [String: UIView] = [:]
@@ -1035,9 +1039,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // 扫查组：量宽字体须与钮字体同为 cappedFont，且等宽改下限（广场失败行 R8 同款）——
         // 等宽 + adjusts 会在档位变化时把变大的标题裁掉，下限则允许钮随字号向外生长。
         let restoreButtonFont = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 13))
+        // 「重新检查」态文案更宽，一并计入下限，否则网络失败后切到该态标题被裁。
         let restoreTitleWidth = max(
             ceil(("恢复" as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width),
-            ceil(("恢复中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width)
+            ceil(("恢复中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width),
+            ceil(("重新检查" as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width),
+            ceil(("检查中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width)
         )
         restoreButton.widthAnchor.constraint(greaterThanOrEqualToConstant: (restoreButton.currentImage?.size.width ?? 21) + 5 + restoreTitleWidth + 28).isActive = true
 
@@ -1093,6 +1100,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         ])
         restoreEntries.append((button: restoreButton, trashValue: trashValue))
         purgeEntries.append((button: purgeButton, trashValue: trashValue))
+        // 行是新建的，按钮文案回到「恢复」——若该篇曾留过未确认态标记，
+        // 一并清掉，否则按钮写「恢复」、点按却走「重新检查」，文案与行为对不上。
+        trashRecheckIdentifiers.remove(trashValue.entryIdentifier)
         // 真跟手左滑（扫 bug 第 7 项）：回收站为 stack 卡片、无 tableView
         // 滑动 API，故不用系统侧滑，改用每行一个 UIPanGestureRecognizer
         // 做 1:1 跟手拖动——手指左移卡片即左移，松手够 60pt 出菜单、
@@ -1235,16 +1245,36 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         return "（无文字）"
     }
 
-    /// 审计-时间线：回收站按钮无障碍 label 带条目标识——TrashItem 无标题字段，以正文首行截断作标识（空正文时回落“这篇日记”）。
+    /// 回收站按钮无障碍 label 带条目标识——与卡片摘要同款命名顺序：
+    /// 标题优先 → 净化后的正文前 20 字 →「这篇日记」；当前列表里另有
+    /// 同名篇时补写作日期（标题字段服务端透传；旧缓存缺本键时按 nil 解码）。
     /// 读屏不读记号原文：[mood:]/[gif:] 记号（含尾部截断一半的）先去掉。
     private func trashRowTitle(_ trashValue: TrashItem) -> String {
-        var raw = (trashValue.content ?? "").replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
-        if let regex = try? NSRegularExpression(pattern: "\\[mood:[a-z]+\\]|\\[gif:[a-z0-9]+\\]|\\[(mood|gif):[a-z0-9]*$", options: []) {
-            raw = regex.stringByReplacingMatches(in: raw, options: [], range: NSRange(location: 0, length: (raw as NSString).length), withTemplate: "")
-            raw = raw.trimmingCharacters(in: .whitespaces)
+        let base = trashRowTitleBase(trashValue)
+        guard let createdAt = trashValue.createdAt,
+              trashItems.contains(where: { $0.id != trashValue.id && trashRowTitleBase($0) == base }) else {
+            return base
         }
-        if raw.isEmpty { return "这篇日记" }
-        return String(raw.prefix(20))
+        return "\(base) · \(TrashText.createdLabel(ms: createdAt))"
+    }
+
+    /// 命名顺序本体：标题 → 净化后正文前 20 字 →「这篇日记」。
+    private func trashRowTitleBase(_ trashValue: TrashItem) -> String {
+        let title = sanitizedTrashLabelText(trashValue.title ?? "")
+        if !title.isEmpty { return title }
+        let body = sanitizedTrashLabelText(trashValue.content ?? "")
+        if body.isEmpty { return "这篇日记" }
+        return String(body.prefix(20))
+    }
+
+    /// 读屏不读记号原文：[mood:]/[gif:] 记号（含尾部截断一半的）先去掉，换行折成空格。
+    private func sanitizedTrashLabelText(_ raw: String) -> String {
+        var text = raw.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        if let regex = try? NSRegularExpression(pattern: "\\[mood:[a-z]+\\]|\\[gif:[a-z0-9]+\\]|\\[(mood|gif):[a-z0-9]*$", options: []) {
+            text = regex.stringByReplacingMatches(in: text, options: [], range: NSRange(location: 0, length: (text as NSString).length), withTemplate: "")
+            text = text.trimmingCharacters(in: .whitespaces)
+        }
+        return text
     }
 
     // MARK: - 恢复 / 彻底删除
@@ -1261,6 +1291,11 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         let trashValue = matched.trashValue
         let identifier = trashValue.entryIdentifier
         if identifier.isEmpty || trashBusyIdentifiers.contains(identifier) {
+            return
+        }
+        // 未确认恢复态：按钮是「重新检查」，点按走核对流程，不再直接发恢复请求。
+        if trashRecheckIdentifiers.contains(identifier) {
+            recheckTrashRestore(identifier: identifier, trashValue: trashValue, button: sender)
             return
         }
         trashBusyIdentifiers.insert(identifier)
@@ -1332,9 +1367,105 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 case .failure(let error):
                     if case .unauthorized = error {
                         self.notifyTrashLoginOnce()
+                    } else if case .network = error {
+                        // 网络错误：请求可能已送达、只是回包丢了，恢复与否未确认——
+                        // 不报“恢复失败”，行按钮改成「重新检查」，点按先核对状态。
+                        self.trashRecheckIdentifiers.insert(identifier)
+                        sender.setTitle("重新检查", for: .normal)
+                        sender.accessibilityLabel = "重新检查，\(self.trashRowTitle(trashValue))"
+                        self.showToast(message: "暂未确认是否恢复")
                     } else {
                         self.shakeFailedRow(identifier: identifier)
                         self.showToast(message: "恢复失败，请刷新后重试")
+                    }
+                }
+            }
+        }
+    }
+
+    /// 未确认恢复态的核对：点「重新检查」后翻页查服务端回收站列表，
+    /// 确认该篇是否仍在回收站——在才可再次恢复，不在则行已失效。
+    private func recheckTrashRestore(identifier: String, trashValue: TrashItem, button: UIButton) {
+        trashBusyIdentifiers.insert(identifier)
+        setRowButtonBusy(button, busy: true, busyTitle: "检查中…", idleTitle: "重新检查")
+        // 扫荡 B 同款：核对期间同行彻底删除钮一并禁用，否则核对在途时
+        // 点彻底删除会弹出确认框，与核对结果双请求齐飞。
+        let purgeSibling = purgeEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button
+        purgeSibling?.isEnabled = false
+        purgeSibling?.alpha = 0.5
+        let requestAccountId = SessionManager.shared.currentUser?.id
+        let requestAuthEpoch = BearyAPI.shared.authEpoch
+        recheckTrashRestorePage(identifier: identifier, trashValue: trashValue, button: button, purgeSibling: purgeSibling, requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch, before: nil, beforeId: nil)
+    }
+
+    private func recheckTrashRestorePage(identifier: String, trashValue: TrashItem, button: UIButton, purgeSibling: UIButton?, requestAccountId: Int?, requestAuthEpoch: Int, before: String?, beforeId: String?) {
+        BearyAPI.shared.fetchTrash(before: before, beforeId: beforeId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if self.isStaleTrashRequest(requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch) {
+                    // 旧登录态回包：busy 复位仍执行（否则行按钮永久置灰），
+                    // 未确认态保留，下次点按可再核对。
+                    self.trashBusyIdentifiers.remove(identifier)
+                    self.setRowButtonBusy(button, busy: false, busyTitle: "检查中…", idleTitle: "重新检查")
+                    purgeSibling?.isEnabled = true
+                    purgeSibling?.alpha = 1
+                    return
+                }
+                switch result {
+                case .success(let page):
+                    if page.items.contains(where: { $0.id == identifier }) {
+                        // 仍在回收站：回到可恢复态，按钮恢复「恢复」。
+                        self.trashRecheckIdentifiers.remove(identifier)
+                        self.trashBusyIdentifiers.remove(identifier)
+                        self.setRowButtonBusy(button, busy: false, busyTitle: "检查中…", idleTitle: "恢复")
+                        button.accessibilityLabel = "恢复，\(self.trashRowTitle(trashValue))"
+                        purgeSibling?.isEnabled = true
+                        purgeSibling?.alpha = 1
+                        self.showToast(message: "仍在回收站")
+                        return
+                    }
+                    if page.items.count < 50 {
+                        // 翻到底仍无该篇：已不在回收站，行失效——移除本行并清本地桶，
+                        // 下次进页不再从旧快照把它带回来。是否恢复过无法区分，
+                        // 不猜“已恢复”，只说不在回收站。
+                        self.trashRecheckIdentifiers.remove(identifier)
+                        self.trashBusyIdentifiers.remove(identifier)
+                        purgeSibling?.isEnabled = true
+                        purgeSibling?.alpha = 1
+                        self.removeRow(identifier: identifier)
+                        self.trashRemovedDuringSilentRefresh.insert(identifier)
+                        if let uid = requestAccountId {
+                            BearyEntrySync.shared.runDiskWrite(accountId: uid) {
+                                let ok = BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
+                                if !ok { NSLog("[BearyEntrySync] trash removeItem failed account=%d entry=%@", uid, identifier) }
+                            }
+                        }
+                        self.showToast(message: "这篇已不在回收站")
+                        return
+                    }
+                    guard let last = page.items.last, let lastDeletedAt = last.deletedAt else {
+                        // 游标缺失无法续翻：状态仍未确认，留在「重新检查」态。
+                        self.trashBusyIdentifiers.remove(identifier)
+                        self.setRowButtonBusy(button, busy: false, busyTitle: "检查中…", idleTitle: "重新检查")
+                        purgeSibling?.isEnabled = true
+                        purgeSibling?.alpha = 1
+                        self.showToast(message: "暂未确认是否恢复")
+                        return
+                    }
+                    self.recheckTrashRestorePage(identifier: identifier, trashValue: trashValue, button: button, purgeSibling: purgeSibling, requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch, before: "\(lastDeletedAt)", beforeId: last.id)
+                case .failure(let error):
+                    self.trashBusyIdentifiers.remove(identifier)
+                    self.setRowButtonBusy(button, busy: false, busyTitle: "检查中…", idleTitle: "重新检查")
+                    purgeSibling?.isEnabled = true
+                    purgeSibling?.alpha = 1
+                    if case .unauthorized = error {
+                        self.notifyTrashLoginOnce()
+                    } else if case .network = error {
+                        // 核对本身也断网：状态仍未确认，留在「重新检查」态。
+                        self.showToast(message: "暂未确认是否恢复")
+                    } else {
+                        self.shakeFailedRow(identifier: identifier)
+                        self.showToast(message: "检查失败，请重试")
                     }
                 }
             }
