@@ -1281,6 +1281,8 @@ class BearyFeedViewController: UIViewController {
                     if diffMode && !strongSelf.plazaRaw.isEmpty {
                         // 审计 14-1：diff 只换头窗，旧尾部游标不再与新列表对应，
                         // 清掉后回落可见末条推导；下次分页回包再存原始游标。
+                        // 体验检查第 2 项：被挤出窗口的旧行已保留为尾部头，可见
+                        // 末条仍在它之后，回落推导不再跳过它。
                         strongSelf.plazaNextPageBefore = nil
                         strongSelf.plazaNextPageBeforeId = nil
                         strongSelf.applyFirstPageDiff(entries, hasMoreOverride: rawEntries.count >= strongSelf.firstPageLimit)
@@ -1871,11 +1873,13 @@ class BearyFeedViewController: UIViewController {
 
     /// 首屏 diff 定向更新（下拉刷新/静默刷新/revalidate/pill 共用）：
     /// 新列表 = fresh 头 + 旧尾部（分页已加载的尾部不在回包里，绝不能丢）；
-    /// 删只删旧首屏窗口里消失的行；增按新下标插；顺序变了逐行 move
-    /// （move 保留 cell 实例，展开态不丢）；内容变了只 reload 变了的可见行，
-    /// 仅互动变了就地同步。整表 reloadData 在此路径绝不出现，
-    /// 已展开内容永不折叠（展开态本就由 expandedEntryIds 持久化，
-    /// move/insert/delete 均不重建已有 cell）。
+    /// 窗口内被新篇挤出去的旧行（如旧 A12，新首屏 B、A1～A11 不含它）不是
+    /// 消失了，只是滑出首屏窗口——保留为尾部头，接在 fresh 后面（见下
+    /// 衔接校验）；窗口内真消失的行（比 fresh 末条新却不在回包里）才删；
+    /// 增按新下标插；顺序变了逐行 move（move 保留 cell 实例，展开态不丢）；
+    /// 内容变了只 reload 变了的可见行，仅互动变了就地同步。整表 reloadData
+    /// 在此路径绝不出现，已展开内容永不折叠（展开态本就由 expandedEntryIds
+    /// 持久化，move/insert/delete 均不重建已有 cell）。
     private func applyFirstPageDiff(_ fresh: [Entry], hasMoreOverride: Bool? = nil) {
         // 关注流二次过滤（仅 following 段；旧尾部已在各自入池时滤过）。
         let fresh = feedFollowingSegment ? filteredFollowingEntries(fresh) : fresh
@@ -1911,13 +1915,31 @@ class BearyFeedViewController: UIViewController {
         for (i, e) in oldEntries.enumerated() {
             if let id = e.id, oldIndexById[id] == nil { oldIndexById[id] = i }
         }
-        // 首屏 diff 保留的旧尾只含窗口外分页尾部：窗口内消失的篇只走删除，
-        // 绝不能同时留在新列表里，否则模型与批更新行数对不上必闪退
-        //（旧 [A,B]、新 [C,A] 时旧写法会得模型 [C,A,B] 却删 B 插 C）。
+        // 体验检查第 2 项·首屏衔接：窗口内消失的旧行不再一律删。旧首屏
+        // A1～A12、新首屏 B、A1～A11 时，A12 只是被 B 挤出首屏窗口，不是
+        // 消失了——旧写法把它删掉、又清掉分页游标，下一页从更旧的可见末条
+        //（A13）推导 before，服务端只回比 A13 更旧的条目，A12 永远拉不
+        // 回来。故窗口内消失的旧行以 fresh 末条游标校验衔接：排序键不新于
+        // fresh 末条的，确实排在新窗口之后，保留为尾部头接在 fresh 后面；
+        // 比 fresh 末条新的窗口内消失行才是真消失（删帖/撤回），仍删。
+        // fresh 为空时无末条游标可校验，窗口行一律不保留（回落旧口径）。
+        // 所有保留的旧行（窗口挤出 + 分页尾部）都按本段口径重过滤：广场段
+        // isEffectivelyPublic，正在关注段 filteredFollowingEntries（仅好友
+        // 篇合法，不能拿纯公开口径误杀）——此前分页尾部原样追加，过期/
+        // 翻私密的旧行会借 diff 回到表上。被重过滤筛掉的旧行与删行同一批
+        // 删，模型与批更新行数仍对得上（旧 [A,B]、新 [C,A] 时 B 仍删、A 留）。
         let oldFirstPageIdSet = Set(firstPageIds)
+        let freshLastKey = deduped.last.flatMap { feedSortKey($0) }
         var newList: [Entry] = deduped
         for e in oldEntries {
-            guard let id = e.id, !freshSet.contains(id), !oldFirstPageIdSet.contains(id) else { continue }
+            guard let id = e.id, !freshSet.contains(id) else { continue }
+            let visible = feedFollowingSegment
+                ? !filteredFollowingEntries([e]).isEmpty
+                : BearyEphemeral.isEffectivelyPublic(e)
+            guard visible else { continue }
+            if oldFirstPageIdSet.contains(id) {
+                guard let key = feedSortKey(e), let lastKey = freshLastKey, key <= lastKey else { continue }
+            }
             newList.append(e)
         }
         let newIds = newList.compactMap { $0.id }
@@ -1933,17 +1955,19 @@ class BearyFeedViewController: UIViewController {
                 updates.append(FeedRowUpdate(index: newIdx, entry: e, interactionOnly: true))
             }
         }
-        // 删：旧首屏窗口里消失的行 + 之前挂着的失败行（成功即清失败态）。
+        // 删：旧表里不在新列表里的行（窗口内真消失 + 重过滤筛掉的旧行，
+        // 含分页尾部里过期/翻私密的）+ 之前挂着的失败行（成功即清失败态）。
+        // 保留的旧行（窗口挤出尾部头 + 分页尾部）已在新列表里，不在此列，
+        // 故模型与批更新行数对得上。
         var deletePaths: [IndexPath] = []
         var deleteOldIndices: [Int] = []
         var deletedIdxSeen = Set<Int>()
-        for id in firstPageIds {
-            if freshSet.contains(id) { continue }
-            if let idx = oldIndexById[id], !deletedIdxSeen.contains(idx) {
-                deletedIdxSeen.insert(idx)
-                deletePaths.append(IndexPath(row: idx, section: 0))
-                deleteOldIndices.append(idx)
-            }
+        let newIdSet = Set(newIds)
+        for (idx, e) in oldEntries.enumerated() {
+            guard let id = e.id, !newIdSet.contains(id), !deletedIdxSeen.contains(idx) else { continue }
+            deletedIdxSeen.insert(idx)
+            deletePaths.append(IndexPath(row: idx, section: 0))
+            deleteOldIndices.append(idx)
         }
         if plazaError {
             deletePaths.append(IndexPath(row: oldEntries.count, section: 0))
