@@ -300,13 +300,11 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     }
 }
 
-// MARK: - 自定义图片网格 cell（与回应 Sheet cell 同口径：46 槽位＋按压高亮）
+// MARK: - 自定义图片网格 cell（与回应 Sheet cell 同口径：46 槽位）
 
 final class BearyMoodPickerCell: UICollectionViewCell {
 
     private let emoteSlot = UIView()
-    /// 按压高亮底片——只盖 46 槽位、圆角 12，画在槽位之后、熊图之下。
-    private let highlightView = UIView()
     /// “自定义”组首格 ＋ 添加格的图标（官方 icon_image_add，40pt）。
     private var addImageView: UIImageView?
     private var currentKey: String?
@@ -322,11 +320,6 @@ final class BearyMoodPickerCell: UICollectionViewCell {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        highlightView.translatesAutoresizingMaskIntoConstraints = false
-        highlightView.backgroundColor = .clear
-        highlightView.layer.cornerRadius = 12
-        highlightView.layer.masksToBounds = true
-        contentView.addSubview(highlightView)
         emoteSlot.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(emoteSlot)
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -334,10 +327,6 @@ final class BearyMoodPickerCell: UICollectionViewCell {
         nameLabel.numberOfLines = 0
         contentView.addSubview(nameLabel)
         NSLayoutConstraint.activate([
-            highlightView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            highlightView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            highlightView.widthAnchor.constraint(equalToConstant: 46),
-            highlightView.heightAnchor.constraint(equalToConstant: 46),
             emoteSlot.topAnchor.constraint(equalTo: contentView.topAnchor),
             emoteSlot.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             emoteSlot.widthAnchor.constraint(equalToConstant: 46),
@@ -366,15 +355,6 @@ final class BearyMoodPickerCell: UICollectionViewCell {
         gifImageView?.image = nil
         gifImageView?.isHidden = true
         onDeleteGIF = nil
-    }
-
-    /// 回应 sheet cell 同款按压态（surface2 底，只画在 46 槽位圆角底片上）。
-    override var isHighlighted: Bool {
-        didSet { refreshHighlight() }
-    }
-
-    private func refreshHighlight() {
-        highlightView.backgroundColor = isHighlighted ? BearyColors.surface2 : .clear
     }
 
     /// “自定义”组首格 ＋ 添加格：官方 icon_image_add 原图（40pt，与旧“无”格
