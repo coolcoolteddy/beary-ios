@@ -4517,11 +4517,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         fetchWeatherWith(latitude: latitude, longitude: longitude, generation: generation)
     }
 
-    /// 弹出自定义图片底部选择器（2026-11-18：心情组已删，只剩“自定义”组）：
+    /// 底部弹窗点选节日表情：插入式——把表情图插进光标处；插完不收起，方便连着插
+    /// 多个（数量不限，同一表情可重复插，见 insertMoodImageAtCursor）；单独心情
+    /// 字段一字不动。删插进正文的表情走键盘删除键（光标移到它后面按删除，一个删一个）。
+    private func didSelectMood(_ key: String) {
+        insertMoodImageAtCursor(key)
+    }
+
+    /// 弹出表情底部选择器（2026-11-20：节日组已恢复，10 个节日组＋“自定义”组）：
     /// 引用面板打开时不弹出。
     private func presentGIFPickerSheet() {
         if quotePanelOpen { return }
         gifPickerSheet = BearyMoodPickerSheet.show(from: self, gifKeys: BearyGIFLibrary.cachedKeys()) { [weak self] key in
+            self?.didSelectMood(key)
+        } onSelectGIF: { [weak self] key in
             self?.didSelectGIF(key)
         } onUploadGIF: { [weak self] in
             self?.didTapUploadGIF()
@@ -5552,6 +5561,57 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 标题/图标/边距三处每次变化都重算显式宽度（标题只在这里与 buildTopBar 改，
         // 故此处是唯一需要跟进的运行时更新点；updatePublishState 每次都走这里）。
         refreshPublishButtonWidth()
+    }
+
+    private func insertMoodImageAtCursor(_ key: String) {
+        guard BearyText.bearMoodKeys.contains(key) else { return }
+        let dark = traitCollection.userInterfaceStyle == .dark
+        if headlineField.isFirstResponder || lastFocusedComposerInput == .headline {
+            if !headlineField.isFirstResponder {
+                headlineField.becomeFirstResponder()
+                headlineField.selectedRange = NSRange(location: headlineField.attributedText.length, length: 0)
+            }
+            if headlineField.markedTextRange != nil {
+                headlineField.unmarkText()
+            }
+            insertMoodAttachment(into: headlineField, key: key, font: headlineFont, dark: dark)
+            headlineDidChange()
+            return
+        }
+        if textView.isFirstResponder || lastFocusedComposerInput == .body {
+            if !textView.isFirstResponder {
+                textView.becomeFirstResponder()
+            }
+            if textView.markedTextRange != nil {
+                textView.unmarkText()
+            }
+            insertMoodAttachment(into: textView, key: key, font: bodyFont, dark: dark)
+            textViewDidChange(textView)
+            return
+        }
+        textView.becomeFirstResponder()
+        textView.selectedRange = NSRange(location: textView.attributedText.length, length: 0)
+        insertMoodAttachment(into: textView, key: key, font: bodyFont, dark: dark)
+        textViewDidChange(textView)
+    }
+
+    /// 把一个熊脸附件插进指定 UITextView 的当前选区（有选区则替换选区），
+    /// 插完光标落在图后 1 格，并把 typingAttributes 复位回该框的正文字体，
+    /// 免得图后打字跟了附件字体。
+    private func insertMoodAttachment(into textView: UITextView, key: String, font: UIFont, dark: Bool) {
+        guard let attachment = BearyText.inlineAttachment(for: key, font: font, dark: dark) else { return }
+        let range = textView.selectedRange
+        let mutable = NSMutableAttributedString(attributedString: textView.attributedText ?? NSAttributedString())
+        let safeLocation = min(range.location, mutable.length)
+        let safeLength = min(range.length, mutable.length - safeLocation)
+        mutable.replaceCharacters(in: NSRange(location: safeLocation, length: safeLength), with: attachment)
+        textView.attributedText = mutable
+        if textView === headlineField {
+            textView.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
+        } else {
+            textView.typingAttributes = [.font: bodyFont, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
+        }
+        textView.selectedRange = NSRange(location: safeLocation + 1, length: 0)
     }
 
     // MARK: - 内联图片（自定义心情图：自定义选择器里上传/点选，插进正文或标题；
