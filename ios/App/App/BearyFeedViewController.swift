@@ -398,6 +398,31 @@ class BearyFeedViewController: UIViewController {
         SceneDelegate.chrome?.homeSegmentControl?.selectedSegmentIndex = feedFollowingSegment ? 1 : 0
     }
 
+    /// 登录后切回“正在关注”意图（pendingComposerAfterLogin 同款模式）：
+    /// 未登录时点“正在关注”段触发登录门之前置真；登录成功、用户仍在首页时
+    /// 由容器（presentLogin 的 onLoggedIn）在 refreshMe 确认已登录后消费一次、
+    /// 切入关注流。取消登录／进游客态／登录成功时已不在首页，均直接丢弃，
+    /// 不留到下一次登录时误切（见 resumeFollowingAfterLogin／clearFollowingLoginIntent）。
+    private var pendingFollowingAfterLogin = false
+
+    /// 登录后恢复“正在关注”：消费一次意图，等价于用户登录后又点了一次
+    /// “正在关注”段（走同一 feedSegmentChanged 路径，含快照／首拉与空态；
+    /// 新账号无关注时落在关注流自己的空态“还没有关注的日记”上，不因空弹回广场）。
+    /// 条件不满足（未登录／已在关注段／视图未加载）直接丢弃意图，不自动重试。
+    func resumeFollowingAfterLogin() {
+        let shouldSwitch = pendingFollowingAfterLogin
+        pendingFollowingAfterLogin = false
+        guard shouldSwitch, SessionManager.shared.currentUser?.id != nil, !feedFollowingSegment,
+              isViewLoaded, let control = SceneDelegate.chrome?.homeSegmentControl else { return }
+        control.selectedSegmentIndex = 1
+        feedSegmentChanged(control)
+    }
+
+    /// 丢弃待切关注流意图（取消登录／进游客态／登录成功时已不在首页时由容器调用）。
+    func clearFollowingLoginIntent() {
+        pendingFollowingAfterLogin = false
+    }
+
     /// 当前段的数据口径：广场 = published_at DESC；正在关注 = created_at DESC
     ///（互关仅好友篇没有 published_at，复用广场游标会错页）。
     private var feedScope: BearyAPI.Scope {
@@ -417,6 +442,10 @@ class BearyFeedViewController: UIViewController {
         guard SessionManager.shared.currentUser?.id != nil else {
             feedFollowingSegment = false
             sender.selectedSegmentIndex = 0
+            // 登录后切回“正在关注”意图：记下本次目标，登录成功且仍在首页时
+            // 由 presentLogin 的 onLoggedIn 消费、切入关注流；取消／进游客态
+            // ／登录成功时已不在首页均清除，不留到下次登录。
+            pendingFollowingAfterLogin = true
             if SessionManager.shared.isGuestMode {
                 onRequireLogin?()
             } else {

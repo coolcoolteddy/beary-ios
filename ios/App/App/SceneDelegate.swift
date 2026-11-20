@@ -3232,6 +3232,8 @@ final class BearyChromeViewController: UIViewController {
             // 待续写意图随取消清除：取消即放弃本次写作入口触发的登录，
             // 不得留到用户下一次因别事登录时误开编辑器。
             self?.pendingComposerAfterLogin = false
+            // 待切关注流意图随取消清除（pendingComposerAfterLogin 同口径）。
+            self?.feedVC?.clearFollowingLoginIntent()
             // 添加账号会话守卫：从添加/过期重登进来的取消，在此恢复原会话；
             // 未登录直登时守卫未 arm、cancel 是空操作，原有取消行为不动。
             SessionManager.shared.cancelAccountAddSession()
@@ -3265,6 +3267,16 @@ final class BearyChromeViewController: UIViewController {
                             && !self.isComposerPresented() && self.presentedViewController == nil {
                             self.presentComposer()
                         }
+                        // 登录→正在关注恢复：未登录时点“正在关注”段触发登录门时记下的意图，
+                        // 在此消费一次。只在 refreshMe 已确认登录、且用户仍在首页时切入关注流；
+                        // 已不在首页直接丢弃意图（见 BearyFeedViewController
+                        // resumeFollowingAfterLogin／clearFollowingLoginIntent 注释），
+                        // 不自动重试、不留到下次登录。
+                        if self.currentPage == .home {
+                            self.feedVC?.resumeFollowingAfterLogin()
+                        } else {
+                            self.feedVC?.clearFollowingLoginIntent()
+                        }
                     }
                 }
             }
@@ -3273,6 +3285,8 @@ final class BearyChromeViewController: UIViewController {
         vc.onGuestMode = { [weak self, weak vc] in
             // 游客不写日记：待续写意图随进游客态清除，之后登录不再误开编辑器。
             self?.pendingComposerAfterLogin = false
+            // 待切关注流意图随进游客态清除（游客无正在关注段）。
+            self?.feedVC?.clearFollowingLoginIntent()
             vc?.dismiss(animated: BearyMotion.animated(true)) {
                 self?.enterGuestMode()
             }
