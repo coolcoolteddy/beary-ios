@@ -3630,7 +3630,14 @@ final class BearyChromeViewController: UIViewController {
         isIDCardFormPresenting = true
         let displayName = SessionManager.shared.currentUser?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let initialNickname = displayName.isEmpty ? "Teddy" : displayName
-        let locatedCity = pendingLocatedCity
+        // 城市预填：GPS 定位优先；没有定位时用服务端拉下来的城市（/me 同步已写回本地 store，
+        // 新手机登录后表单直接带出，不用重填；本地也没有时不预填）。
+        var locatedCity = pendingLocatedCity
+        if locatedCity == nil,
+           let saved = BearyIDCardStore.load(userId: userId),
+           let country = saved.country, let region = saved.region, let city = saved.city {
+            locatedCity = (country, region, city)
+        }
         pendingLocatedCity = nil
         BearyIDCardFormSheet.show(from: topmostViewController(), initialNickname: initialNickname, locatedCity: locatedCity, onGenerate: { [weak self] data in
             guard let strongSelf = self else { return }
@@ -3640,7 +3647,12 @@ final class BearyChromeViewController: UIViewController {
             // 生日服务端同步（2026-11-20）：填了生日就上传（只发生日两字段）；
             // 失败静默，下次 /me 成功时由迁移补传。
             if let month = data.birthdayMonth, let day = data.birthdayDay {
-                BearyBirthdaySync.uploadBirthday(month: month, day: day)
+                BearyIDCardSync.uploadBirthday(month: month, day: day)
+            }
+            // 城市服务端同步（2026-11-20）：填了城市就上传（只发城市三字段）；
+            // 失败静默，下次 /me 成功时由迁移补传。
+            if let country = data.country, let region = data.region, let city = data.city {
+                BearyIDCardSync.uploadCity(country: country, region: region, city: city)
             }
             // B1：卡片待弹先记下来——380ms 窗口内有 modal 在前或被杀时，下次冷启动补弹。
             BearyIDCardStore.markCardPending(userId: userId)

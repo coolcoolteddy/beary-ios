@@ -138,46 +138,96 @@ enum BearyIDCardStore {
     }
 }
 
-// MARK: - Birthday server sync（2026-11-20 Li 定服务端同步，只月日）
+// MARK: - ID card server sync（2026-11-20 Li 定：生日只月日、城市三级选，均服务端同步）
 
-/// 生日 PUT 回包（只取 echo 的两个字段；失败时不关心内容）。
+/// 生日/城市 PUT 回包（只取 echo 的字段；失败时不关心内容）。
 /// CodingKeys 显式写 snake_case，不依赖 decoder 的 key 策略。
-private struct BearyBirthdayUpdateResponse: Decodable {
+private struct BearyIDCardUpdateResponse: Decodable {
     var ok: Bool?
     var birthdayMonth: Int?
     var birthdayDay: Int?
+    var country: String?
+    var region: String?
+    var city: String?
 
     enum CodingKeys: String, CodingKey {
         case ok
         case birthdayMonth = "birthday_month"
         case birthdayDay = "birthday_day"
+        case country
+        case region
+        case city
     }
 }
 
-enum BearyBirthdaySync {
-    /// /me 成功后调一次：服务端有生日 → 以服务端为准写回本地卡数据（只动生日两字段，
-    /// 昵称/城市不动）；服务端没有、本地有 → 上传一次做迁移（同值重发是幂等写，不怕重复）；
+enum BearyIDCardSync {
+    /// /me 成功后调一次，生日与城市各自独立，分两个方向：
+    /// 下行——服务端有值 → 以服务端为准写回本地卡数据（只动生日/城市字段，昵称不动；
+    /// 本地还没有卡数据时按服务端值新建一条，昵称取 display_name、缺省为 Teddy，
+    /// 这样新手机登录后 ID 卡不经重填就能显示服务端的值）；
+    /// 上行——服务端没有、本地有 → 上传一次做迁移（同值重发是幂等写，不怕重复）；
     /// 两边都没有 → 什么都不做。失败静默（下次 /me 再试），不阻塞登录流程。
     static func syncFromMe(_ me: MeUser, userId: Int?) {
         guard let userId = userId, userId != 0 else { return }
-        if let month = me.birthdayMonth, let day = me.birthdayDay {
-            // 服务端为准：本地已有卡数据时只改生日；本地还没有卡数据时不新建
-            //（编辑资料页初值直接读 MeUser，不依赖本地那份）。
-            guard var local = BearyIDCardStore.load(userId: userId) else { return }
-            guard local.birthdayMonth != month || local.birthdayDay != day else { return }
-            local.birthdayMonth = month
-            local.birthdayDay = day
-            BearyIDCardStore.save(local, userId: userId)
-            return
+        let serverBirthday: (month: Int, day: Int)? = {
+            guard let month = me.birthdayMonth, let day = me.birthdayDay else { return nil }
+            return (month, day)
+        }()
+        let serverCity: (country: String, region: String, city: String)? = {
+            guard let country = me.country, let region = me.region, let city = me.city else { return nil }
+            return (country, region, city)
+        }()
+        // 下行：服务端有值 → 写回本地（只改动有变化的字段）。
+        if serverBirthday != nil || serverCity != nil {
+            if var local = BearyIDCardStore.load(userId: userId) {
+                var changed = false
+                if let birthday = serverBirthday, (local.birthdayMonth != birthday.month || local.birthdayDay != birthday.day) {
+                    local.birthdayMonth = birthday.month
+                    local.birthdayDay = birthday.day
+                    changed = true
+                }
+                if let city = serverCity, (local.country != city.country || local.region != city.region || local.city != city.city) {
+                    local.country = city.country
+                    local.region = city.region
+                    local.city = city.city
+                    changed = true
+                }
+                if changed { BearyIDCardStore.save(local, userId: userId) }
+            } else {
+                let trimmed = me.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let resolved = (trimmed?.isEmpty == false) ? (trimmed ?? "Teddy") : "Teddy"
+                BearyIDCardStore.save(BearyIDCardData(
+                    nickname: resolved,
+                    birthdayMonth: serverBirthday?.month,
+                    birthdayDay: serverBirthday?.day,
+                    country: serverCity?.country,
+                    region: serverCity?.region,
+                    city: serverCity?.city
+                ), userId: userId)
+            }
         }
-        guard let local = BearyIDCardStore.load(userId: userId),
-              let month = local.birthdayMonth, let day = local.birthdayDay else { return }
-        uploadBirthday(month: month, day: day)
+        // 上行：服务端没有、本地有 → 上传迁移。
+        let local = BearyIDCardStore.load(userId: userId)
+        if serverBirthday == nil,
+           let month = local?.birthdayMonth, let day = local?.birthdayDay {
+            uploadBirthday(month: month, day: day)
+        }
+        if serverCity == nil,
+           let country = local?.country, let region = local?.region, let city = local?.city {
+            uploadCity(country: country, region: region, city: city)
+        }
     }
 
     /// 只发生日两字段的 PUT（不带 display_name，不触发唯一性校验）。
     static func uploadBirthday(month: Int, day: Int) {
-        BearyAPI.shared.request("/api/account/profile", method: "PUT", jsonBody: ["birthday_month": month, "birthday_day": day]) { (result: Result<BearyBirthdayUpdateResponse, APIError>) in
+        BearyAPI.shared.request("/api/account/profile", method: "PUT", jsonBody: ["birthday_month": month, "birthday_day": day]) { (result: Result<BearyIDCardUpdateResponse, APIError>) in
+            // 失败静默：下次 /me 成功时再试；成功也不用再做什么（服务端已有）。
+        }
+    }
+
+    /// 只发城市三字段的 PUT（不带 display_name，不触发唯一性校验）。
+    static func uploadCity(country: String, region: String, city: String) {
+        BearyAPI.shared.request("/api/account/profile", method: "PUT", jsonBody: ["country": country, "region": region, "city": city]) { (result: Result<BearyIDCardUpdateResponse, APIError>) in
             // 失败静默：下次 /me 成功时再试；成功也不用再做什么（服务端已有）。
         }
     }

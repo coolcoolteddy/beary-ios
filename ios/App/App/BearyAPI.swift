@@ -389,6 +389,11 @@ struct MeUser: Decodable {
     /// convertFromSnakeCase，birthday_month / birthday_day 自动映射）。
     var birthdayMonth: Int?
     var birthdayDay: Int?
+    /// 城市服务端同步（2026-11-20）：/me 下发 ID 卡三级选的国家/地区/市
+    ///（未填为 null；字段名与服务端列名相同，直接映射）。
+    var country: String?
+    var region: String?
+    var city: String?
 }
 
 struct MeResponse: Decodable {
