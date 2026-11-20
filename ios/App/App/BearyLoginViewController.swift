@@ -1,4 +1,5 @@
 import Foundation
+import GoogleSignIn
 import UIKit
 
 // ===== 原生登录页 =====
@@ -70,6 +71,9 @@ final class BearyLoginViewController: UIViewController {
     private let codeField = UITextField()
     private let sendButton = UIButton(type: .system)
     private let loginButton = UIButton(type: .system)
+    // Google 登录（2026-11-20）：官方 GIDSignInButton，不自由改样式；
+    // 位置在标题下方、邮箱区上方（Apple 登录按钮预留位同款）。
+    private let googleButton = BearyGoogleSignIn.makeSignInButton()
     private let guestButton = UIButton(type: .custom)
     private let guestNoteLabel = UILabel()
     private let inviteField = UITextField()
@@ -188,6 +192,8 @@ final class BearyLoginViewController: UIViewController {
         // 协议复选框描边是 CGColor：深浅切换时走已有刷新重赋（勾选态橙边、未选 line 边）。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             refreshAgreeBox()
+            // Google 官方按钮深浅款跟随系统（.light/.dark 由 SDK 渲染）。
+            googleButton.colorScheme = BearyGoogleSignIn.currentColorScheme()
         }
         // 扫荡组 A：大字号档位变化时，协议首行中心与登录钮 attributed
         // 标题都要按新字号重建（标题只在文案变化时重建，档位变化不
@@ -385,6 +391,7 @@ final class BearyLoginViewController: UIViewController {
         loginButton.backgroundColor = BearyColors.surface2
         loginButton.layer.cornerRadius = 12
         loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
+        googleButton.addTarget(self, action: #selector(googleSignInTapped), for: .touchUpInside)
         loginButton.bearyAddPressFeedback()
         // 登录处理转圈与下拉/加载同款 icon_refresh（#224 误用 icon_restore 已回退）。
         loginSpinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 32)
@@ -438,6 +445,7 @@ final class BearyLoginViewController: UIViewController {
         } else {
             stackView.addArrangedSubview(subtitleLabel)
         }
+        stackView.addArrangedSubview(googleButton)
         stackView.addArrangedSubview(emailLabel)
         stackView.addArrangedSubview(emailContainer)
         stackView.addArrangedSubview(emailErrorLabel)
@@ -471,6 +479,7 @@ final class BearyLoginViewController: UIViewController {
             stackView.setCustomSpacing(5, after: logoRow)
             stackView.setCustomSpacing(20, after: subtitleLabel)
         }
+        stackView.setCustomSpacing(16, after: googleButton)
         stackView.setCustomSpacing(7, after: emailLabel)
         stackView.setCustomSpacing(4, after: emailContainer)
         stackView.setCustomSpacing(10, after: emailErrorLabel)
@@ -527,6 +536,8 @@ final class BearyLoginViewController: UIViewController {
             // 默认字号仍为原值（登录/游客钮 44、验证码行 48、发码钮 44）。
             loginButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             guestButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            // Google 官方按钮固定高 48（.wide 款，不跟随大字号缩放）。
+            googleButton.heightAnchor.constraint(equalToConstant: 48),
             codeRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 48),
             sendButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             agreeButton.leadingAnchor.constraint(equalTo: agreeRow.leadingAnchor),
@@ -900,6 +911,9 @@ final class BearyLoginViewController: UIViewController {
         let loginEnabled = isAgreed && emailValid && code.count == 6 && !isVerifying
         loginButton.isEnabled = loginEnabled
         loginButton.alpha = loginEnabled ? 1 : 0.35
+        // Google 登录进行时（任一登录在跑）禁点，避免并行登录。
+        googleButton.isEnabled = !isVerifying
+        googleButton.alpha = isVerifying ? 0.5 : 1
         // M14：进行态 = “处理中…”文案 + 圈转指示，不再只有 alpha 变化。
         if isVerifying {
             loginSpinner.startSpinning()
@@ -1110,6 +1124,98 @@ final class BearyLoginViewController: UIViewController {
         }
     }
 
+    // MARK: - Google 登录
+
+    /// Google 登录入口：未配置只提示；须先勾选协议（与邮箱登录钮同口径）；
+    /// 用户在 Google 页取消不弹错。
+    @objc private func googleSignInTapped() {
+        guard BearyGoogleSignIn.isConfigured else {
+            showMessage("Google 登录尚未开通，请稍后再试")
+            return
+        }
+        guard isAgreed else {
+            showMessage("请先阅读并同意《隐私政策》和《用户协议》")
+            return
+        }
+        isVerifying = true
+        updateButtonStates()
+        BearyGoogleSignIn.signIn(from: self) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                switch result {
+                case .success(let token):
+                    strongSelf.googleLogin(idToken: token.idToken, fullName: token.fullName, confirmCancel: false)
+                case .failure(let error):
+                    strongSelf.isVerifying = false
+                    strongSelf.updateButtonStates()
+                    switch error {
+                    case .cancelled:
+                        break
+                    case .notConfigured:
+                        strongSelf.showMessage("Google 登录尚未开通，请稍后再试")
+                    case .failed:
+                        strongSelf.showMessage("Google 登录失败，请重试")
+                    }
+                }
+            }
+        }
+    }
+
+    /// Google 登录的后端验签：与 verify() 同样的成功/失败分支（冷静期二次确认、
+    /// 邀请绑定文案、登录音效共用）。
+    private func googleLogin(idToken: String, fullName: String?, confirmCancel: Bool) {
+        verifyTask = BearyAPI.shared.loginWithGoogle(
+            idToken: idToken,
+            fullName: fullName,
+            dev: deviceSignals(),
+            confirmCancel: confirmCancel
+        ) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.verifyTask = nil
+                strongSelf.isVerifying = false
+                strongSelf.updateButtonStates()
+                switch result {
+                case .success(let resp):
+                    if resp.pendingDelete == true {
+                        if confirmCancel {
+                            strongSelf.showMessage("验证失败，请重试")
+                        } else {
+                            strongSelf.presentGooglePendingDeleteConfirm(idToken: idToken, fullName: fullName, deleteAt: resp.deleteAt)
+                        }
+                    } else if resp.ok == true {
+                        UserDefaults.standard.removeObject(forKey: "bearyPendingDeleteAt")
+                        strongSelf.handleLoginReferralFeedback(resp: resp)
+                        BearySoundPlayer.play(.loginChime)
+                    } else {
+                        strongSelf.showMessage(resp.message ?? resp.error ?? "验证失败，请重试")
+                    }
+                case .failure(.cancelled):
+                    break
+                case .failure(.server(let message, _)):
+                    strongSelf.showMessage(message)
+                case .failure(.network):
+                    strongSelf.showMessage("网络不稳定，请稍后再试")
+                case .failure:
+                    strongSelf.showMessage("验证失败，请重试")
+                }
+            }
+        }
+    }
+
+    /// Google 登录的注销冷静期确认：文案与邮箱登录同款，继续登录重调 Google 登录（带 confirmCancel）。
+    private func presentGooglePendingDeleteConfirm(idToken: String, fullName: String?, deleteAt: Int?) {
+        BearyConfirmSheet.show(from: self, title: "账号正在注销中", message: pendingDeleteMessage(deleteAt: deleteAt), actions: [
+            BearyConfirmSheet.Action(title: "暂不登录", style: .cancel),
+            BearyConfirmSheet.Action(title: "继续登录", style: .default) { [weak self] in
+                guard let strongSelf = self else { return }
+                strongSelf.isVerifying = true
+                strongSelf.updateButtonStates()
+                strongSelf.googleLogin(idToken: idToken, fullName: fullName, confirmCancel: true)
+            },
+        ])
+    }
+
     /// 审计登录杂项（高）：验码成功分支的邀请绑定反馈，落点改为进 App 后
     /// BearyToast 一次——文案经 onLoggedIn 回调带给容器，容器在 dismiss +
     /// refreshMe 后呈现（Plus 到期日补全见 BearyReferralFeedback.toastText，
@@ -1139,8 +1245,8 @@ final class BearyLoginViewController: UIViewController {
         onLoggedIn?(text)
     }
 
-    /// 注销冷静期确认：文案与网页端 lgDelCfm 同款（“暂不登录 / 继续登录”）。
-    private func presentPendingDeleteConfirm(email: String, code: String, deleteAt: Int?) {
+    /// 注销冷静期文案（邮箱/Google 登录共用）：与网页端 lgDelCfm 同款（“暂不登录 / 继续登录”）。
+    private func pendingDeleteMessage(deleteAt: Int?) -> String {
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         // 验证组⑧：deleteAt 缺失时不得按 epoch 渲染（1970 年）；无截止日时
         // 只提示注销中，不拼倒计时与日期（缺失字段不等于 1970）。
@@ -1165,7 +1271,12 @@ final class BearyLoginViewController: UIViewController {
             let dateText = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(deleteAt) / 1000.0))
             message = "距离正式注销还剩：\(leftText)（\(dateText)）。继续登录将取消注销。"
         }
-        BearyConfirmSheet.show(from: self, title: "账号正在注销中", message: message, actions: [
+        return message
+    }
+
+    /// 注销冷静期确认：文案与网页端 lgDelCfm 同款（“暂不登录 / 继续登录”）。
+    private func presentPendingDeleteConfirm(email: String, code: String, deleteAt: Int?) {
+        BearyConfirmSheet.show(from: self, title: "账号正在注销中", message: pendingDeleteMessage(deleteAt: deleteAt), actions: [
             BearyConfirmSheet.Action(title: "暂不登录", style: .cancel),
             BearyConfirmSheet.Action(title: "继续登录", style: .default) { [weak self] in
                 guard let strongSelf = self else { return }

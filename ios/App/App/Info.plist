@@ -32,7 +32,24 @@
 				<string>beary</string>
 			</array>
 		</dict>
+		<!-- Google 登录（2026-11-20）：占位 scheme，Li 在 Google Cloud 建好 iOS OAuth 客户端后，
+		     把反向 client ID（com.googleusercontent.apps.<数字>-<字母数字>）替换这里。 -->
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.teddyhn.beary.google-sign-in</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.000000000000-placeholder</string>
+			</array>
+		</dict>
 	</array>
+	<!-- Google 登录（2026-11-20）：占位 client ID，不是真实值。iOS 客户端 ID 与 Web（server）
+	     客户端 ID 分别填 GIDClientID / GIDServerClientID；后端验 aud 只认 server 客户端 ID，
+	     App 的 GIDServerClientID 须与后端填同一值。 -->
+	<key>GIDClientID</key>
+	<string>GOOGLE_IOS_CLIENT_ID_PLACEHOLDER</string>
+	<key>GIDServerClientID</key>
+	<string>GOOGLE_SERVER_CLIENT_ID_PLACEHOLDER</string>
 	<key>BearyDistributionChannel</key>
 	<string>beta</string>
 	<key>LSRequiresIPhoneOS</key>

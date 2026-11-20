@@ -90,6 +90,7 @@
 		8C1ECC38A4D24D059CA83AF7 /* BearyAnnouncementCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA4119D2276143AC8EAC333C /* BearyAnnouncementCenter.swift */; };
 		98F6D0C43F1147D5B42EED2A /* BearyAnnouncementSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25F2450D7F0A45CE8FB3B641 /* BearyAnnouncementSheet.swift */; };
 		1F6B3477892DECC058DEDB4A /* BearyLoginViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9FF8FF6169D4CB6D168FBE4 /* BearyLoginViewController.swift */; };
+		0DC956B6AC65237C3DCE1E16 /* BearyGoogleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34CA849ED7E1B63373575C35 /* BearyGoogleSignIn.swift */; };
 		BFB44A087D425B5428173C4A /* BearyLoadingUX.swift in Sources */ = {isa = PBXBuildFile; fileRef = 422F818D96F64171D4D9A052 /* BearyLoadingUX.swift */; };
 		869B426E9AA42A1CE7EA84B1 /* BearyTrashViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8090F5EEA8A6BD0781318309 /* BearyTrashViewController.swift */; };
 		3843F17FBF0D34C698F51780 /* BearyEditProfileViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13DFF27B056E1598E555E5A2 /* BearyEditProfileViewController.swift */; };
@@ -810,6 +811,7 @@
 		AA4119D2276143AC8EAC333C /* BearyAnnouncementCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyAnnouncementCenter.swift; sourceTree = "<group>"; };
 		25F2450D7F0A45CE8FB3B641 /* BearyAnnouncementSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyAnnouncementSheet.swift; sourceTree = "<group>"; };
 		B9FF8FF6169D4CB6D168FBE4 /* BearyLoginViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLoginViewController.swift; sourceTree = "<group>"; };
+		34CA849ED7E1B63373575C35 /* BearyGoogleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyGoogleSignIn.swift; sourceTree = "<group>"; };
 		422F818D96F64171D4D9A052 /* BearyLoadingUX.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLoadingUX.swift; sourceTree = "<group>"; };
 		8090F5EEA8A6BD0781318309 /* BearyTrashViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyTrashViewController.swift; sourceTree = "<group>"; };
 		13DFF27B056E1598E555E5A2 /* BearyEditProfileViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEditProfileViewController.swift; sourceTree = "<group>"; };
@@ -1544,6 +1546,7 @@
 				AA4119D2276143AC8EAC333C /* BearyAnnouncementCenter.swift */,
 				25F2450D7F0A45CE8FB3B641 /* BearyAnnouncementSheet.swift */,
 				B9FF8FF6169D4CB6D168FBE4 /* BearyLoginViewController.swift */,
+				34CA849ED7E1B63373575C35 /* BearyGoogleSignIn.swift */,
 				422F818D96F64171D4D9A052 /* BearyLoadingUX.swift */,
 				8090F5EEA8A6BD0781318309 /* BearyTrashViewController.swift */,
 				13DFF27B056E1598E555E5A2 /* BearyEditProfileViewController.swift */,
@@ -2219,6 +2222,7 @@
 			packageProductDependencies = (
 				87E933BE17F8980AC09B76C6 /* Lottie */,
 				F21509B8043C63DCC45389BE /* Mantis */,
+				E4A3D7A5CDFDC1CA70CA2C7E /* GoogleSignIn */,
 			);
 			productName = App;
 			productReference = 504EC3041FED79650016851F /* App.app */;
@@ -2268,6 +2272,7 @@
 			packageReferences = (
 				E86E5ADBF2D28EAEFCAB8A79 /* XCRemoteSwiftPackageReference "lottie-ios" */,
 				91308C669890C453D04C4062 /* XCRemoteSwiftPackageReference "Mantis-spm" */,
+				4D9B69B9A2B9793D04570BEC /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 			);
 			productRefGroup = 504EC3051FED79650016851F /* Products */;
 			projectDirPath = "";
@@ -2939,6 +2944,7 @@
 				8C1ECC38A4D24D059CA83AF7 /* BearyAnnouncementCenter.swift in Sources */,
 				98F6D0C43F1147D5B42EED2A /* BearyAnnouncementSheet.swift in Sources */,
 				1F6B3477892DECC058DEDB4A /* BearyLoginViewController.swift in Sources */,
+				0DC956B6AC65237C3DCE1E16 /* BearyGoogleSignIn.swift in Sources */,
 				BFB44A087D425B5428173C4A /* BearyLoadingUX.swift in Sources */,
 				869B426E9AA42A1CE7EA84B1 /* BearyTrashViewController.swift in Sources */,
 				3843F17FBF0D34C698F51780 /* BearyEditProfileViewController.swift in Sources */,
@@ -3278,6 +3284,14 @@
 				minimumVersion = 3.1.1;
 			};
 		};
+		4D9B69B9A2B9793D04570BEC /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 
@@ -3291,6 +3305,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 91308C669890C453D04C4062 /* XCRemoteSwiftPackageReference "Mantis-spm" */;
 			productName = Mantis;
+		};
+		E4A3D7A5CDFDC1CA70CA2C7E /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4D9B69B9A2B9793D04570BEC /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
