@@ -58,6 +58,14 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     /// 三处调用方保持现行行为）；盲盒调用方把本开关关掉，点选不播音，改由
     /// 盲盒在服务端确认成功后播一次，失败只播拒绝音。
     var playsPickSound = true
+    /// 两种用法：reply（小熊回应，默认；卡片/详情/广场/盲盒四处）与
+    /// composer（编辑器统一表情入口：内置全部 40 只＋自定义组）。
+    /// 回应侧只走默认构造，行为一点不动。
+    enum Mode { case reply, composer }
+    var mode: Mode = .reply
+    /// composer 模式：点自定义组里的图时调（传完整 key）；点 ＋ 添加格时调。
+    var onPickCustomGIF: ((String) -> Void)?
+    var onUploadCustomGIF: (() -> Void)?
 
     /// 本 Sheet 专属过渡（遮罩渐变与弹窗滑入解耦）；强持有，transitioningDelegate 弱引用。
     private let sheetTransition = BearyEmoteSheetTransition()
@@ -90,12 +98,35 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     /// 视觉批 2-2：本次打开时读到的最近使用列表（倒序、最多 8 个）；空时不建
     /// 最近节，collection 退回单节全量网格，不留空行占位。
     private var recentEmoteKeys: [String] = BearyEmoteRecentStore.load()
-    /// 最近节存在时为第 0 节，全量网格顺延为第 1 节；无最近记录时只有全量一节。
-    private var hasRecentSection: Bool { !recentEmoteKeys.isEmpty }
-    private func emoteKeys(forSection section: Int) -> [String] {
-        if hasRecentSection, section == 0 { return recentEmoteKeys }
-        return BearyEmoteKeys.bearFaces
+    /// composer 模式：自定义组 key（最新在前；打开时从服务端刷新，
+    /// 见 refreshCustomLibrary，与心情选择器同口径）。
+    private var customGifKeys: [String] = []
+    private var libraryObserver: NSObjectProtocol?
+
+    deinit {
+        if let observer = libraryObserver { NotificationCenter.default.removeObserver(observer) }
     }
+
+    /// 节划分：reply 模式与旧口径一致（最近使用＋熊脸 32 只）；composer 模式
+    /// 内置放全部 40 只、再加自定义组。最近节存在时为第 0 节，其余顺延。
+    private enum PickerSection { case recent, builtin, custom }
+    private var hasRecentSection: Bool { !recentEmoteKeys.isEmpty }
+    private func pickerSections() -> [PickerSection] {
+        var sections: [PickerSection] = []
+        if hasRecentSection { sections.append(.recent) }
+        sections.append(.builtin)
+        if mode == .composer { sections.append(.custom) }
+        return sections
+    }
+    private func emoteKeys(forSection section: Int) -> [String] {
+        switch pickerSections()[section] {
+        case .recent: return recentEmoteKeys
+        case .builtin: return mode == .composer ? BearyEmoteKeys.all : BearyEmoteKeys.bearFaces
+        case .custom: return customGifKeys
+        }
+    }
+    /// 自定义组格数（含首格 ＋ 添加格）。
+    private func customItemCount() -> Int { customGifKeys.count + 1 }
     /// 弹窗高度封顶 480：内容不足 480 时按内容高，超出时封顶、列表内部滚动。
     private let maxSheetHeight: CGFloat = 480
     private var sheetHeightConstraint: NSLayoutConstraint?
@@ -147,7 +178,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         grabView.clipsToBounds = true
         grabView.translatesAutoresizingMaskIntoConstraints = false
         sheetView.addSubview(grabView)
-        titleLabel.text = "贴一只小熊"
+        titleLabel.text = mode == .composer ? "表情" : "贴一只小熊"
         // 审计 D-13：标题跟系统字号（原 15pt 固定）；标题长高时下方列表顶约束同步下移，门控见 gestureRecognizerShouldBegin。
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
         titleLabel.adjustsFontForContentSizeCategory = true
@@ -170,6 +201,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         collection.delegate = self
         collection.register(BearyEmotePickerSheetCell.self, forCellWithReuseIdentifier: "bearyEmotePickerSheetCell")
         collection.register(BearyEmotePickerSectionHeaderView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader, withReuseIdentifier: "bearyEmotePickerSectionHeader")
+        collection.register(BearyMoodPickerCell.self, forCellWithReuseIdentifier: "bearyMoodPickerCell")
         emoteCollectionView = collection
         sheetView.addSubview(collection)
         // 初值取封顶值，首帧布局即按内容重算（见 updateSheetHeightToContent）。
@@ -203,6 +235,32 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
             collection.bottomAnchor.constraint(equalTo: sheetView.safeAreaLayoutGuide.bottomAnchor),
             collection.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
             collection.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+        ])
+        refreshCustomLibrary()
+    }
+
+    /// composer 模式：打开时从服务端拉一次自定义库（失败静默用缓存）；
+    /// 增删后通知到时跟帧刷新自定义组（与心情选择器同口径）。
+    private func refreshCustomLibrary() {
+        guard mode == .composer else { return }
+        customGifKeys = BearyGIFLibrary.cachedKeys()
+        libraryObserver = NotificationCenter.default.addObserver(forName: BearyGIFLibrary.libraryDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self = self, self.mode == .composer else { return }
+            let keys = BearyGIFLibrary.cachedKeys()
+            guard keys != self.customGifKeys else { return }
+            self.customGifKeys = keys
+            self.emoteCollectionView?.reloadData()
+        }
+        BearyGIFLibrary.refresh()
+    }
+
+    /// 自定义组内长按 cell：删库内图片（只删库行，不删文件、不影响已发日记；
+    /// 与心情选择器同口径）。
+    private func confirmDeleteGIF(key: String) {
+        BearyConfirmSheet.show(from: self, title: "从自定义里删除？", message: nil, actions: [
+            BearyConfirmSheet.Action(title: "删除", style: .destructive) {
+                BearyGIFLibrary.remove(key: key)
+            },
         ])
     }
 
@@ -373,29 +431,61 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     }
 
     func numberOfSections(in collectionView: UICollectionView) -> Int {
-        return hasRecentSection ? 2 : 1
+        return pickerSections().count
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        if pickerSections()[section] == .custom { return customItemCount() }
         return emoteKeys(forSection: section).count
     }
 
+    /// 节标题：最近使用（旧口径）＋自定义（composer 模式）；内置网格不带标题，
+    /// 与旧全量网格同款。回应模式只出最近使用标题。
     func collectionView(_ collectionView: UICollectionView, viewForSupplementaryElementOfKind kind: String, at indexPath: IndexPath) -> UICollectionReusableView {
         guard kind == UICollectionView.elementKindSectionHeader,
-              hasRecentSection, indexPath.section == 0,
               let header = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: "bearyEmotePickerSectionHeader", for: indexPath) as? BearyEmotePickerSectionHeaderView else {
             return UICollectionReusableView()
         }
-        header.configure(title: "最近使用")
+        switch pickerSections()[indexPath.section] {
+        case .recent:
+            header.configure(title: "最近使用")
+        case .custom:
+            header.configure(title: "自定义")
+        case .builtin:
+            return UICollectionReusableView()
+        }
         return header
     }
 
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, referenceSizeForHeaderInSection section: Int) -> CGSize {
-        guard hasRecentSection, section == 0 else { return .zero }
-        return CGSize(width: collectionView.bounds.width, height: 28)
+        switch pickerSections()[section] {
+        case .recent:
+            guard hasRecentSection else { return .zero }
+            return CGSize(width: collectionView.bounds.width, height: 28)
+        case .custom:
+            return CGSize(width: collectionView.bounds.width, height: 28)
+        case .builtin:
+            return .zero
+        }
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        if pickerSections()[indexPath.section] == .custom {
+            guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "bearyMoodPickerCell", for: indexPath) as? BearyMoodPickerCell else {
+                return UICollectionViewCell()
+            }
+            // 首格（item 0）是 ＋ 添加格；其后格子依次对应库图 keys[i-1]。
+            if indexPath.item == 0 {
+                cell.configureAdd(a11yLabel: "添加自定义表情")
+                cell.onDeleteGIF = nil
+                return cell
+            }
+            let key = customGifKeys[indexPath.item - 1]
+            cell.configure(key: key)
+            // cell 长按删库（只删库行）。
+            cell.onDeleteGIF = { [weak self] gifKey in self?.confirmDeleteGIF(key: gifKey) }
+            return cell
+        }
         guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "bearyEmotePickerSheetCell", for: indexPath) as? BearyEmotePickerSheetCell else {
             return UICollectionViewCell()
         }
@@ -407,6 +497,11 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
         let totalSpacing: CGFloat = 18 * 2 + 6 * 3
         let width = max(44, (collectionView.bounds.width - totalSpacing) / 4)
+        // 自定义组 cell 无名签，行高恒 72（与心情选择器同口径）；名签按
+        // 库 key（服务端 image key）量高会撑出多行，故不走内置的名签量高。
+        if pickerSections()[indexPath.section] == .custom {
+            return CGSize(width: width, height: 72)
+        }
         // 审计 D-13：行高按实际文字高度计——名称用与 cell 一致的缩放 11pt 字、
         // 格宽减左右各 2 内边距量取，允许多行；默认字号下 46 + 4 + 单行高 + 8
         // 仍为 72，与原固定高一致；放大后名称换行，行高随之长高，不裁字。
@@ -443,14 +538,38 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        guard !didPickEmote else { return }
-        didPickEmote = true
-        collectionView.isUserInteractionEnabled = false
+        // 自定义组：点选即回调、不收起，方便连着插多个（与心情选择器同口径）；
+        // 首格 ＋ 添加格走上传流程，其余格走自定义插入。
+        if pickerSections()[indexPath.section] == .custom {
+            if indexPath.item == 0 {
+                onUploadCustomGIF?()
+            } else {
+                onPickCustomGIF?(customGifKeys[indexPath.item - 1])
+            }
+            return
+        }
+        // 回应模式：单次点选后禁用，挡住 0.38s 关闭窗口内的二次点选；
+        // composer 模式：不禁用，内置表情可连着插多个。
+        if mode == .reply {
+            guard !didPickEmote else { return }
+            didPickEmote = true
+            collectionView.isUserInteractionEnabled = false
+        }
         let pickedKey = emoteKeys(forSection: indexPath.section)[indexPath.item]
         // 视觉批 2-2：最近行与全量区点选走同一回调前先记最近使用——不另写回应逻辑。
         BearyEmoteRecentStore.record(pickedKey)
-        if playsPickSound { BearySoundPlayer.play(.emoteChirp) }
+        if mode == .reply && playsPickSound { BearySoundPlayer.play(.emoteChirp) }
         onPick?(pickedKey)
+    }
+
+    /// 自定义组 GIF 可见才播、不可见即停（与心情选择器同口径）；内置 cell
+    /// 自带播放逻辑，不经这里。
+    func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
+        (cell as? BearyMoodPickerCell)?.setPlaying(true)
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
+        (cell as? BearyMoodPickerCell)?.setPlaying(false)
     }
 
     override func viewDidDisappear(_ animated: Bool) {

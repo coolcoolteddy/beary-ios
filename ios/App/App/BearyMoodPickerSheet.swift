@@ -400,12 +400,13 @@ final class BearyMoodPickerCell: UICollectionViewCell {
     }
 
     /// “自定义”组首格 ＋ 添加格：官方 icon_image_add 原图（40pt，与旧“无”格
-    /// 同尺寸口径，不走 Lottie）；无名签；无障碍读作“添加新心情”。
-    func configureAdd() {
+    /// 同尺寸口径，不走 Lottie）；无名签；无障碍读法默认“添加新心情”
+    /// （心情选择器），统一表情入口传“添加自定义表情”。
+    func configureAdd(a11yLabel: String = "添加新心情") {
         currentKey = nil
         stopGIF()
         nameLabel.text = ""
-        accessibilityLabel = "添加新心情"
+        accessibilityLabel = a11yLabel
         if addImageView == nil {
             let imageView = UIImageView()
             imageView.translatesAutoresizingMaskIntoConstraints = false
