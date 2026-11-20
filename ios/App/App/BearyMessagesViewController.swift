@@ -7,17 +7,16 @@ import UIKit
 // 信件行）与私信会话行按时间倒序真正交错，最新在最上；同时间戳通知行在前。
 // 行仍按组排（通知在上、私信在下）是 #808 的旧行为，本支不再保留该路径。
 //
-// 架构：容器不再嵌子页 view——子页只当数据源与逻辑持有者（addChild 后
-// 只访问 .view 触发 viewDidLoad 首拉，不 addSubview，避免双 appearance
-// 回调；容器切页本就走 isHidden 切换＋显式 pageDidEnter/pageDidLeave，
-// viewWillAppear 只是兜底）。通知子页与私信子页各自的首拉／轮询／门控／
-// 刷新守卫全不动，容器只读两份合并快照（mergeSnapshot）拼表；快照变化
-// 回调（onMergeSnapshotChanged）驱动重排。
+// 架构：容器不再嵌子页 view——通知数据层与私信子页只当数据源与逻辑持有者
+// （通知数据层显式 start() 启动首拉，不嵌 view；容器切页本就走 isHidden
+// 切换＋显式 pageDidEnter/pageDidLeave）。通知数据层与私信子页各自的首拉／
+// 轮询／门控／刷新守卫全不动，容器只读两份合并快照（mergeSnapshot）拼表；
+// 快照变化回调（onMergeSnapshotChanged）驱动重排。
 //
 // 通知卡面不再原地展开：点按推详情页（BearyNotificationDetailViewController，
 // 见 BearyNotificationsViewController.swift 文件末尾），卡面箭头改右向；
-// 展开动画／零高行／chevron 旋转只留给独立通知页（showPage(.notif)），
-// 本支未动子页自身的表委托路径，独立页行为一字不动。独立会话页
+// 展开动画／零高行／chevron 旋转已随独立通知页一并去掉；
+// 详情页（BearyNotificationDetailViewController）行为不动。独立会话页
 // （showPage(.conversations)）同样不动。
 //
 // 加载态：消息页不是日记页，不画骨架屏。首拉未落定组不补占位行——
@@ -25,11 +24,11 @@ import UIKit
 // 走该组原有失败态（失败行／全量失败态），不再画转圈。
 //
 // 已看水印：行级——任一通知行露出视口交集 ≥24pt 即记一次／访问
-// （子页 markNotifPageEntered 旗保证同一次访问只记一次；离页复位）。
+// （数据层 markNotifPageEntered 旗保证同一次访问只记一次；离页复位）。
 // 会话行不触发。seen 水印只影响行高亮，不改服务端未读数。
-// 分页：通知分页游标续拉（子页 loadMore 全套守卫）；哨兵行仅当
+// 分页：通知分页游标续拉（数据层 loadMore 全套守卫）；哨兵行仅当
 // hasMore || isLoadingMore 时出现（忙 40、闲 56）；哨兵滚出视野清失败旗
-// 重 arm（子页原 scrollViewDidScroll 口径，改由容器表驱动）。
+// 重 arm（原通知页 scrollViewDidScroll 口径，改由容器表驱动）。
 // 动效：通知行错峰入场（首 24 行、alpha 0、y -24、0.26s、步进 0.03 封顶
 // 0.24，减动效直落终值）与会话行淡入（0.22s 纯透明度）两套并存、行集不交。
 // 空态：两组都空时走合并空态（统一 BearyStateView，不再画通知空态的
@@ -89,9 +88,9 @@ final class BearyMessagesViewController: UIViewController {
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let stateContainer = UIView()
     private let stateView = BearyStateView()
-    /// 通知组：既有通知页实例（与铃铛页同类、不同实例）；只当数据源与
-    /// 逻辑持有者，view 不进层级（见文件头注释）。
-    private let notifChild = BearyNotificationsViewController()
+    /// 通知组：通知数据层（原通知页的数据逻辑抽出）；只当数据源与
+    /// 逻辑持有者，不嵌 view（见文件头注释）。
+    private let notifData = BearyNotificationsData()
     /// 私信组：既有会话列表页实例（与会话列表页同类、不同实例）；同上。
     private let conversationsChild = BearyDMConversationsViewController()
 
@@ -182,38 +181,32 @@ final class BearyMessagesViewController: UIViewController {
             stateView.trailingAnchor.constraint(lessThanOrEqualTo: stateContainer.trailingAnchor, constant: -32),
         ])
 
-        // 通知组接线与铃铛页同口径（onSystemNotificationSelected 不接线，
-        // 系统行默认行为留在通知页内部，与铃铛页一致）。
-        notifChild.onEntrySelected = { [weak self] entryId in self?.onOpenEntry?(entryId) }
-        notifChild.onRequireLogin = { [weak self] in self?.onRequireLogin?() }
-        notifChild.onOpenUser = { [weak self] userId in self?.onOpenUser?(userId) }
-        notifChild.onOpenDM = { [weak self] peer in self?.onOpenDM?(peer) }
-        notifChild.onMergeSnapshotChanged = { [weak self] in self?.updateMergedRows() }
-        notifChild.onFollowStateChangedForDetail = { [weak self] actorId in
+        // 通知组接线与原铃铛页同口径（onSystemNotificationSelected 不接线，
+        // 系统行默认行为留在数据层内部，与原铃铛页一致）。
+        notifData.onEntrySelected = { [weak self] entryId in self?.onOpenEntry?(entryId) }
+        notifData.onRequireLogin = { [weak self] in self?.onRequireLogin?() }
+        notifData.onOpenUser = { [weak self] userId in self?.onOpenUser?(userId) }
+        notifData.onOpenDM = { [weak self] peer in self?.onOpenDM?(peer) }
+        notifData.onMergeSnapshotChanged = { [weak self] in self?.updateMergedRows() }
+        notifData.onFollowStateChangedForDetail = { [weak self] actorId in
             self?.activeDetailVC?.refreshFollowButtons(actorId: actorId)
         }
-        notifChild.onOpenLetterPage = { [weak self] letterVC in self?.onOpenLetterPage?(letterVC) }
-        // 合并模式宿主：toast 投容器 view（子页 view
-        // 不进层级时原 view 不可见，旧投法会看不见；详情页打开时详情页
-        // 自己改挂，关闭时容器恢复，见 restoreMergedHosts）。
-        notifChild.toastOverride = { [weak self] message in
+        notifData.onOpenLetterPage = { [weak self] letterVC in self?.onOpenLetterPage?(letterVC) }
+        // 合并模式宿主：toast 投容器 view（数据层无 view，旧投法会看不见；
+        // 详情页打开时详情页自己改挂，关闭时容器恢复，见 restoreMergedHosts）。
+        notifData.toastOverride = { [weak self] message in
             guard let view = self?.view else { return }
             BearyToast.show(in: view, message: message)
         }
-        // 合并模式下拉刷新宿主：子页 view 不进层级、自身滚动代理收不到拖动，
-        // 下拉指示器改挂容器表，由容器表滚动驱动（须在 _ = notifChild.view 之前设，
-        // 子页 viewDidLoad 即把指示器挂到宿主表上）。
-        notifChild.pullHostTableView = tableView
-        // 嵌入态口径与 #808 一致（表内滚动已交容器表，组头已在子页内去掉），
-        // 但高度上报机制退役：容器不再设 onContentHeightChanged。
-        notifChild.setEmbedded()
-        notifChild.applyHeaderTopInset(visible: false)
-        // A5：合并模式子页 view 不进层级（见下 addChild 处），自身
-        // view.window 恒为 nil，通知轮询的可见门控永远判 false、每 60 秒
+        // 合并模式下拉刷新宿主：数据层无滚动代理，下拉指示器改挂容器表，
+        // 由容器表滚动驱动（须在 notifData.start() 之前设，start() 即把指示器
+        // 挂到宿主表上）。
+        notifData.pullHostTableView = tableView
+        // A5：合并模式数据层无 view，通知轮询的可见门控永远判 false、每 60 秒
         // 死在守卫处；宿主把自己的实际可见状态供过去（进窗口且未隐藏，
         // 与容器切 tab 只改 isHidden 的口径一致），合并消息页停在屏上时
-        // 轮询正常跑；独立通知页不设本属性，不受影响。
-        notifChild.hostVisibilityProvider = { [weak self] in
+        // 轮询正常跑。
+        notifData.hostVisibilityProvider = { [weak self] in
             guard let self = self, self.isViewLoaded else { return false }
             return self.view.window != nil && !self.view.isHidden
         }
@@ -235,11 +228,9 @@ final class BearyMessagesViewController: UIViewController {
             return self.view.window != nil && !self.view.isHidden
         }
 
-        // 只触发 viewDidLoad 首拉（通知子页末尾 startPolling＋loadFirstPage、
-        // 私信子页末尾 load），不 addSubview——子页 view 不进层级。
-        addChild(notifChild)
-        _ = notifChild.view
-        notifChild.didMove(toParent: self)
+        // 通知数据层显式启动（缓存秒显＋startPolling＋loadFirstPage）；
+        // 私信子页只触发 viewDidLoad 首拉，不 addSubview——子页 view 不进层级。
+        notifData.start()
         addChild(conversationsChild)
         _ = conversationsChild.view
         conversationsChild.didMove(toParent: self)
@@ -277,14 +268,14 @@ final class BearyMessagesViewController: UIViewController {
     }
 
     var isRefreshingForRetap: Bool {
-        notifChild.isRefreshingForRetap || conversationsChild.isRefreshingForRetap
+        notifData.isRefreshingForRetap || conversationsChild.isRefreshingForRetap
     }
 
     /// 底栏消息角标未读总数：通知卡内未读条数 ＋ 信件行未读条数 ＋ 各会话未读数之和；
     /// 只读两组合并快照，不记已读、不调接口。通知卡按卡内 items 的 read 逐条计
     ///（快照卡面自带全部条目，与 cellForRowAt 的 anyUnread 同口径）。
     var unreadMessagesCount: Int {
-        let notif = notifChild.mergeSnapshot
+        let notif = notifData.mergeSnapshot
         let cardUnread = notif.cards.reduce(0) { $0 + $1.items.filter({ ($0.read ?? true) == false }).count }
         let letterUnread = notif.letters.filter({ ($0.read ?? true) == false }).count
         let dmUnread = conversationsChild.mergeSnapshot.conversations.reduce(0) { $0 + ($1.unreadCount ?? 0) }
@@ -299,28 +290,28 @@ final class BearyMessagesViewController: UIViewController {
     }
 
     /// 重拍刷新：两组各走原有刷新入口（通知组自定义下拉头、会话组重拉），
-    /// 互斥守卫在两子页内部（isLoadingFirstPage／isCustomPullRefreshing／
+    /// 互斥守卫在两组内部（isLoadingFirstPage／isCustomPullRefreshing／
     /// loading 旗），容器不另起一套，不出双份刷新。
     func refresh() {
-        notifChild.refresh()
+        notifData.refresh()
         conversationsChild.refresh()
     }
 
-    /// 容器切页进页钩子（与铃铛页 showPage 分支同口径）：恢复通知轮询，
-    /// 未读数变了才整页重拉（门控在通知页内部）；进页不记已看，已看由
-    /// 通知行可见性门控记（铃铛页进页仍走记已看的原口径）。
+    /// 容器切页进页钩子（与原铃铛页 showPage 分支同口径）：恢复通知轮询，
+    /// 未读数变了才整页重拉（门控在数据层内部）；进页不记已看，已看由
+    /// 通知行可见性门控记（原铃铛页进页仍走记已看的原口径）。
     func pageDidEnter() {
-        notifChild.pageDidEnter()
+        notifData.pageDidEnter()
         conversationsChild.pageDidEnter()
-        notifChild.refreshListIfUnreadChangedWithoutMarking()
+        notifData.refreshListIfUnreadChangedWithoutMarking()
         updateMergedRows()
         checkNotifSeenIfVisible()
     }
 
-    /// 容器切页离页钩子：停通知轮询、写回通知缓存（与铃铛页同口径）。
+    /// 容器切页离页钩子：停通知轮询、写回通知缓存（与原铃铛页同口径）。
     /// 离页再同步一次底栏角标（访问期间可见行记已看可能已改未读态）。
     func pageDidLeave() {
-        notifChild.pageDidLeave()
+        notifData.pageDidLeave()
         conversationsChild.pageDidLeave()
         onMessagesUnreadChanged?()
     }
@@ -330,13 +321,13 @@ final class BearyMessagesViewController: UIViewController {
     /// （私信组路径不触发通知已看）。
     func refreshGroups() {
         conversationsChild.refresh()
-        notifChild.refreshListIfUnreadChangedWithoutMarking()
+        notifData.refreshListIfUnreadChangedWithoutMarking()
     }
 
     /// 详情页关闭时恢复合并模式宿主（toast 投容器 view）。
     /// 详情页 viewWillAppear 时详情页自己改挂，见详情页类。
     private func restoreMergedHosts() {
-        notifChild.toastOverride = { [weak self] message in
+        notifData.toastOverride = { [weak self] message in
             guard let view = self?.view else { return }
             BearyToast.show(in: view, message: message)
         }
@@ -417,7 +408,7 @@ final class BearyMessagesViewController: UIViewController {
     /// 哨兵行仅当通知组 hasMore || isLoadingMore 时出现。本函数是唯一
     /// 拼装点——不留“先通知后会话”的旧拼装路径。
     private func rebuildMergedRows() -> [MergedRow] {
-        let notif = notifChild.mergeSnapshot
+        let notif = notifData.mergeSnapshot
         let dm = conversationsChild.mergeSnapshot
         var dataRows: [MergedRow] = []
         dataRows += notif.cards.map({ .notifCard($0) })
@@ -458,7 +449,7 @@ final class BearyMessagesViewController: UIViewController {
     /// - 无数据行且两组均已落定 → 全量态（任一组失败取失败态，两组都
     ///   失败取通知文案，均成功取合并空态），表隐藏。
     private func updateMergedVisibility() {
-        let notif = notifChild.mergeSnapshot
+        let notif = notifData.mergeSnapshot
         let dm = conversationsChild.mergeSnapshot
         let hasData = mergedRows.contains(where: { isDataRow($0) })
         let anyPending = notif.isFirstPending || dm.isFirstPending
@@ -780,7 +771,7 @@ final class BearyMessagesViewController: UIViewController {
     }
 
     /// 通知行区域可见性门控（行级）：任一通知行露出视口交集 ≥24pt 即记
-    /// 一次／访问；进消息页本身不记；会话行不触发。记一次守卫在子页
+    /// 一次／访问；进消息页本身不记；会话行不触发。记一次守卫在数据层
     /// markNotifPageEntered，离页复位。
     private func checkNotifSeenIfVisible() {
         // 容器切页只改 isHidden：离页、旋转等布局回调也可能走到这里，
@@ -794,7 +785,7 @@ final class BearyMessagesViewController: UIViewController {
             let rect = tableView.rectForRow(at: path)
             let intersection = rect.intersection(tableView.bounds)
             guard intersection.height >= 24 else { continue }
-            notifChild.markNotifGroupViewed()
+            notifData.markNotifGroupViewed()
             return
         }
     }
@@ -846,7 +837,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
             }
             // 信件行是顶层行（非卡片内嵌套）：头像 x=16、分隔线缩进 16、
             // 行高 72、头像垂直居中、标题／摘要间距 5，与私信行统一（mergedList）。
-            cell.configure(with: item, nested: false, highlight: notifChild.highlightForDetail(item), mergedList: true)
+            cell.configure(with: item, nested: false, highlight: notifData.highlightForDetail(item), mergedList: true)
             if knownNotifKeys.contains(key(for: row)) {
                 cell.alpha = 1
                 cell.transform = .identity
@@ -879,7 +870,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
                 iconName: nil,
                 actionTitle: "重试",
                 actionStyle: .secondaryOutline(.regular),
-                onAction: { [weak self] in self?.notifChild.retryFirstLoadForMerge() }
+                onAction: { [weak self] in self?.notifData.retryFirstLoadForMerge() }
             )
             return cell
         case .dmFailure:
@@ -919,7 +910,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
     }
 
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
-        // 哨兵行高与子页原口径一致（忙 40、闲 56）；其余行自动高。
+        // 哨兵行高与原通知页口径一致（忙 40、闲 56）；其余行自动高。
         guard indexPath.row < mergedRows.count, case .sentinel(let state) = mergedRows[indexPath.row] else {
             return UITableView.automaticDimension
         }
@@ -957,10 +948,10 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
                 }
             }
         }
-        // 分页触发（子页原口径：哨兵行或距末尾 3 行（含哨兵行本身）；
+        // 分页触发（原通知页口径：哨兵行或距末尾 3 行（含哨兵行本身）；
         // 守卫全在 loadMore 内，willDisplay 与 scrollViewDidScroll 双路
         // 触发时在途守卫去重，不出双份请求）。
-        let snap = notifChild.mergeSnapshot
+        let snap = notifData.mergeSnapshot
         if snap.hasMore && !snap.isLoadingMore && !snap.loadMoreFailed {
             let isSentinel: Bool
             if case .sentinel = row {
@@ -969,7 +960,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
                 isSentinel = false
             }
             if isSentinel || indexPath.row >= mergedRows.count - 3 {
-                notifChild.loadMoreForMerge()
+                notifData.loadMoreForMerge()
             }
         }
     }
@@ -981,20 +972,20 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
         case .notifCard(let card):
             let detail = BearyNotificationDetailViewController(
                 card: card,
-                notifSource: notifChild,
+                notifSource: notifData,
                 onDetailWillDisappear: { [weak self] in self?.restoreMergedHosts() }
             )
             activeDetailVC = detail
             onOpenNotificationDetail?(detail)
         case .notifLetter(let item):
-            notifChild.openItemForDetail(item)
+            notifData.openItemForDetail(item)
         case .conversation(let conv):
             guard let peer = conv.peer, peer.id != nil else { return }
             onOpenDM?(peer)
         case .sentinel(let state):
             // 失败态哨兵行点按重试（loadMore 开头即清失败旗，在途守卫防连点）。
             guard state == .failed else { return }
-            notifChild.loadMoreForMerge()
+            notifData.loadMoreForMerge()
         case .notifFailure, .dmFailure:
             // 失败行本身不可点，重试走行内按钮（selectionStyle 已 none）。
             break
@@ -1002,8 +993,8 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
     }
 
     /// 左滑删除单条：信件行删该条通知，会话行删该会话；卡片（系统消息／
-    /// 互动消息）与失败行／哨兵行不给左滑。行消失／回来走子页快照变化的
-    /// diff，容器不直接改行；失败时子页回滚＋toast，diff 把行插回来。
+    /// 互动消息）与失败行／哨兵行不给左滑。行消失／回来走数据层快照变化的
+    /// diff，容器不直接改行；失败时数据层回滚＋toast，diff 把行插回来。
     /// 删除调用延后一拍：等左滑收起后再走快照 diff，免得在 swipe 进行中
     /// 做 batch 更新。
     func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
@@ -1016,7 +1007,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
                 BearyHaptics.press()
                 done(true)
                 DispatchQueue.main.async {
-                    self.notifChild.deleteNotification(id: notificationId) { _ in }
+                    self.notifData.deleteNotification(id: notificationId) { _ in }
                 }
             }
             delete.accessibilityLabel = "删除这条通知"
@@ -1051,7 +1042,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
             }
             lastTrackedOffsetY = currentY
         }
-        // 哨兵滚出视野清失败旗重 arm（子页原口径，改由容器表驱动）。
+        // 哨兵滚出视野清失败旗重 arm（原通知页口径，改由容器表驱动）。
         let visible = tableView.indexPathsForVisibleRows ?? []
         var sentinelVisible = false
         for path in visible {
@@ -1061,27 +1052,27 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
             }
         }
         if !sentinelVisible {
-            notifChild.clearLoadMoreFailedForMerge()
+            notifData.clearLoadMoreFailedForMerge()
         }
-        // 近底预取（子页原口径：距底 900px；contentSize 0 时不触发）。
-        let snap = notifChild.mergeSnapshot
+        // 近底预取（原通知页口径：距底 900px；contentSize 0 时不触发）。
+        let snap = notifData.mergeSnapshot
         if snap.hasMore && !snap.isLoadingMore && !snap.loadMoreFailed {
             let contentHeight = scrollView.contentSize.height
             if contentHeight > 0 && scrollView.contentOffset.y + scrollView.bounds.height >= contentHeight - 900 {
-                notifChild.loadMoreForMerge()
+                notifData.loadMoreForMerge()
             }
         }
         checkNotifSeenIfVisible()
-        // 合并模式下拉刷新：子页 view 不进层级、自身滚动代理收不到拖动，
+        // 合并模式下拉刷新：数据层无滚动代理，
         // 指示器跟随改由容器表滚动驱动（通知组自定义下拉头原口径）。
-        notifChild.handlePullHostScrollDidScroll()
+        notifData.handlePullHostScrollDidScroll()
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
         guard scrollView === tableView else { return }
         // 合并模式下拉刷新：满行程松手触发通知组自定义下拉头，同时重拉私信组
-        // （与重拍刷新两组口径一致；触发判定与指示器状态都在子页内部）。
-        if notifChild.handlePullHostScrollDidEndDragging(willDecelerate: decelerate) {
+        // （与重拍刷新两组口径一致；触发判定与指示器状态都在数据层内部）。
+        if notifData.handlePullHostScrollDidEndDragging(willDecelerate: decelerate) {
             conversationsChild.refresh()
         }
     }

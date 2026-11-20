@@ -17,11 +17,11 @@ import ImageIO
 // + 写给展示快照（收信人展示名 / 头像路径；只为恢复 chip 显示，不作身份依据）。
 // + 可见性分段 index（0 私密 / 1 公开；老草稿缺本键时按 0 私密解码）。
 // 排序：updatedAt 倒序（同秒按 draftId 升序兜底，保证顺序稳定）；草稿箱按此顺序列出全部。
-// 迁移：v3 文件不存在时，首次读取把旧 v2 单槽文件 beary_draft_v2.json 迁入 v3
+// 迁移：v3 文件不存在时，首次读取把旧 v1（UserDefaults beary_native_draft_v1）迁入 v3
 // （有实质内容才迁：正文非空，或心情、图片、引用、写给、天气任一非空；
-// 空白旧槽只删文件不建篇）；v3 写盘成功后删除旧 v2 文件，写盘失败则保留旧文件
-// 供下次启动重试。更早的 v1（UserDefaults beary_native_draft_v1）同口径迁入，
-// 成功后删 v1 键。迁移逻辑只在本文件内，旧 v2 类型不向外暴露。
+// 空白旧槽只删键不建篇）；v3 写盘成功后删除 v1 键，写盘失败则保留旧键
+// 供下次启动重试。v2 迁移已去掉（App 未上架，旧草稿基本已转完；
+// 磁盘上若还留着 v2 文件不再读取）。迁移逻辑只在本文件内，旧 v1 类型不向外暴露。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 // MARK: - 草稿模型 v3
@@ -135,14 +135,6 @@ struct BearyDraft: Codable {
     }
 }
 
-/// v2 旧结构（仅用于首次读取迁移；字段与旧单槽 BearyDraft 一致）。
-private struct BearyDraftV2Data: Decodable {
-    var content: String
-    var mood: String?
-    var images: [BearyDraftImageItem]
-    var clientReq: String
-    var updatedAt: TimeInterval
-}
 
 /// v1 旧结构（仅用于首次读取迁移；字段与旧 NativeDraft 一致）。
 private struct BearyDraftV1Data: Decodable {
@@ -691,7 +683,6 @@ enum BearyDraftStore {
     }
 
     private static let fileName = "beary_draft_v3.json"
-    private static let legacyV2FileName = "beary_draft_v2.json"
     private static let v1Key = "beary_native_draft_v1"
 
     /// 账号隔离 1 号：当前账号（容器 onUserChanged 写入）。nil = 未登录，
@@ -801,10 +792,6 @@ enum BearyDraftStore {
         return base.appendingPathComponent(fileName)
     }
 
-    private static func legacyV2FileURL() -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
-        return base.appendingPathComponent(legacyV2FileName)
-    }
 
     /// draftId 口径：新建篇时生成一次的 UUID，之后全程不变，是多槽的唯一键。
     static func newDraftId() -> String {
@@ -967,14 +954,6 @@ enum BearyDraftStore {
             storeCachedRawDrafts(migrated.drafts, forAccount: accountId, readVersion: readVersion)
             lastLoadError = nil
             return .success(sortedNormalized(migrated.drafts, forAccount: accountId))
-        }
-        if let v2url = legacyV2FileURL(), FileManager.default.fileExists(atPath: v2url.path) {
-            let backup = backupCorruptFile(at: v2url)
-            NSLog("[BearyDraft] corrupt legacy v2 store, original kept")
-            let err = LoadError.legacyCorrupt(backupURL: backup)
-            clearCachedDrafts()
-            lastLoadError = err
-            return .failure(err)
         }
         if UserDefaults.standard.data(forKey: v1Key) != nil {
             let err = LoadError.legacyCorrupt(backupURL: nil)
@@ -1261,37 +1240,11 @@ enum BearyDraftStore {
     }
 
     /// 旧数据迁移（不写盘、不删旧源，写盘与删源由 loadAll 根据 saveAll 成败决定）：
-    /// v2 单槽文件优先；无 v2 但有 v1 时迁 v1（key 项转无本地文件的 key 项，
-    /// clientReq 新生成，照常走远程图显示）。有实质内容才成篇，空白旧槽不成篇。
-    /// 返回 foundLegacy = 是否找到任一旧源（v2 文件或 v1 键）。
+    /// v1 键迁入（key 项转无本地文件的 key 项，clientReq 新生成，照常走远程图显示）。
+    /// v2 迁移已去掉（App 未上架，旧草稿基本已转完；磁盘上若还留着 v2 文件不再读取）。
+    /// 有实质内容才成篇，空白旧槽不成篇。
+    /// 返回 foundLegacy = 是否找到 v1 键。
     private static func migrateLegacyDrafts() -> (drafts: [BearyDraft], foundLegacy: Bool) {
-        if let url = legacyV2FileURL(), let data = try? Data(contentsOf: url),
-           let legacy = try? JSONDecoder().decode(BearyDraftV2Data.self, from: data) {
-            let draft = BearyDraft(
-                draftId: newDraftId(),
-                content: legacy.content,
-                mood: legacy.mood,
-                images: legacy.images,
-                clientReq: legacy.clientReq,
-                updatedAt: legacy.updatedAt,
-                weather: nil,
-                recipientId: nil,
-                recipientName: nil,
-                recipientAvatar: nil,
-                notifyRecipient: true,
-                quoteId: nil,
-                quoteAuthorName: nil,
-                quoteAuthorAvatar: nil,
-                quoteCreatedAt: nil,
-                quoteContent: nil,
-                quoteImages: [],
-                quoteIsPublic: nil,
-                quoteDeleted: false)
-            if draft.hasContent {
-                return (drafts: [draft], foundLegacy: true)
-            }
-            return (drafts: [], foundLegacy: true)
-        }
         if let data = UserDefaults.standard.data(forKey: v1Key),
            let v1 = try? JSONDecoder().decode(BearyDraftV1Data.self, from: data) {
             let draft = BearyDraft(
@@ -1322,11 +1275,8 @@ enum BearyDraftStore {
         return (drafts: [], foundLegacy: false)
     }
 
-    /// 删旧源：v2 文件 + v1 键（只在 v3 写盘成功后，或旧槽空白无物可迁时调用）。
+    /// 删旧源：v1 键（只在 v3 写盘成功后，或旧槽空白无物可迁时调用）。
     private static func removeLegacySources() {
-        if let url = legacyV2FileURL() {
-            try? FileManager.default.removeItem(at: url)
-        }
         UserDefaults.standard.removeObject(forKey: v1Key)
     }
 

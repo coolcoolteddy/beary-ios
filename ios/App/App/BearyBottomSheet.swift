@@ -14,8 +14,8 @@ import UIKit
 // 减动效开时：出现/关闭瞬时、拖动关闭无动画直接关、背后页面瞬时恢复。
 // VoiceOver（r29-14）：出现前记 sheet 外焦点、置 presentedView isModal、出现完成
 // 聚焦首元素（BearyBottomSheetVoiceOver 钩子，默认 nil）、关闭完成还焦点、
-// 拖动取消焦点回 sheet 内；范式见 BearyEmotePickerSheet / BearyDraftBoxViewController /
-// BearyNotificationsViewController，真机仍需验 containment 是否如预期。
+// 拖动取消焦点回 sheet 内；范式见 BearyEmotePickerSheet / BearyDraftBoxViewController，
+// 真机仍需验 containment 是否如预期。
 // 右上角叉叉关闭由各弹窗自己保留，容器不管叉叉按钮本身。
 // 本文件只含容器；各弹窗的 chrome（玻璃/抓手/阴影）与内容逻辑留在各自文件。
 // 迁移范围：先登录弹窗当样板（见 BearyLoginSheet.swift），其余弹窗等 Li 看过

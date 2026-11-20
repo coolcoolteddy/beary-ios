@@ -404,7 +404,7 @@ final class BearyChromeViewController: UIViewController {
     var homeSegmentControl: UISegmentedControl?
     // 批一：原生页切换状态。currentPage 为 nil 表示尚未显示任何页（启动时 showPage(.home) 亮原生列表）。
     private enum ContainerPage {
-        case timeline, home, notif, me, search, user
+        case timeline, home, me, search, user
         /// 好友第一期：底栏第四段（互关列表，tab）；会话列表（私信，非 tab 页，
         /// 由好友列表页顶栏进入、返回回好友段）。
         case friends, conversations
@@ -417,7 +417,6 @@ final class BearyChromeViewController: UIViewController {
     // 原生首页：常驻子 VC，hide/show 切换以保留滚动位置
     private var feedVC: BearyFeedViewController?
     // 一次性补齐：新页常驻 VC 与桌面式列约束（宽 ≥821 时内容列 600 居中，与 Feed 同口径）。
-    private var notifVC: BearyNotificationsViewController?
     private var timelineVC: BearyTimelineViewController?
     private var profileVC: BearyProfileViewController?
     private var userVC: BearyProfileViewController?
@@ -517,7 +516,6 @@ final class BearyChromeViewController: UIViewController {
         guard let self = self else { return }
         switch route {
         case .home: self.showPage(.home)
-        case .notifications: self.showPage(.notif)
         case .timeline: self.showPage(.timeline)
         case .profile: self.showPage(.me)
         case .search: self.showPage(.search)
@@ -1344,7 +1342,6 @@ final class BearyChromeViewController: UIViewController {
                     // 无快照时该方法内部回落 reloadTimeline），不再强制清表重拉。
                     if let tl = self.timelineVC { tl.clearDayCacheForAccountChange() }
                     if let tl = self.timelineVC, tl.isViewLoaded { tl.loadTimelineCachedOrRefresh() }
-                    if let nt = self.notifVC, nt.isViewLoaded { nt.refresh() }
                     if let feed = self.feedVC, feed.isViewLoaded { feed.refreshFeed() }
                 }
             } else {
@@ -1361,7 +1358,6 @@ final class BearyChromeViewController: UIViewController {
                     // 则先画该号自己的快照。
                     if let tl = self.timelineVC { tl.clearDayCacheForAccountChange() }
                     if let tl = self.timelineVC, tl.isViewLoaded { tl.loadTimelineCachedOrRefresh() }
-                    if let nt = self.notifVC, nt.isViewLoaded { nt.refresh() }
                     if let feed = self.feedVC, feed.isViewLoaded { feed.refreshFeed() }
                 }
             }
@@ -1376,7 +1372,7 @@ final class BearyChromeViewController: UIViewController {
             guard let self = self else { return }
             BearyHaptics.rejectionWarning()
             // 好友第一期：好友段、消息页与会话列表页同属私密页，401 时先回首页。
-            if self.currentPage == .notif || self.currentPage == .timeline || self.currentPage == .me || self.currentPage == .friends || self.currentPage == .conversations || self.currentPage == .messages {
+            if self.currentPage == .timeline || self.currentPage == .me || self.currentPage == .friends || self.currentPage == .conversations || self.currentPage == .messages {
                 self.showPage(.home)
             }
             self.showToast(message: "请先登录")
@@ -1835,7 +1831,6 @@ final class BearyChromeViewController: UIViewController {
     /// 占位页无滚动视图、内容居中，不发内边距（其居中偏移见 BearyPlaceholderViewController）。
     private func applyHeaderTopInsets() {
         feedVC?.applyHeaderTopInset(visible: true)
-        notifVC?.applyHeaderTopInset(visible: false)
         timelineVC?.applyHeaderTopInset(visible: false)
         profileVC?.applyHeaderTopInset(visible: false)
         userVC?.applyHeaderTopInset(visible: false)
@@ -1850,7 +1845,6 @@ final class BearyChromeViewController: UIViewController {
     private func applyHeaderTopInsetForPage(_ page: ContainerPage) {
         switch page {
         case .home: feedVC?.applyHeaderTopInset(visible: true)
-        case .notif: notifVC?.applyHeaderTopInset(visible: false)
         case .timeline: timelineVC?.applyHeaderTopInset(visible: false)
         case .me: profileVC?.applyHeaderTopInset(visible: false)
         case .user: userVC?.applyHeaderTopInset(visible: false)
@@ -1991,9 +1985,8 @@ final class BearyChromeViewController: UIViewController {
     func setChromeHidden(_ hidden: Bool, animated: Bool) { setBarsVisible(!hidden, animated: animated) }
 
     /// 底栏选中态：分段器选段与 currentPage 双向同步。当前页不是 tab（搜索 /
-    /// 铃铛 / 邀请 / 个人主页）时选段置 noSegment，对应旧“全部灰色、无 pill”口径。
-    /// 铃铛页（.notif）无 tab，置 noSegment；消息页（.messages）与好友列表页
-    /// （.friends，同属消息段子页）均对应底栏第 3 段。
+    /// 邀请 / 个人主页）时选段置 noSegment，对应旧“全部灰色、无 pill”口径。
+    /// 消息页（.messages）与好友列表页（.friends，同属消息段子页）均对应底栏第 3 段。
     /// 程序化设 selectedSegmentIndex 不发 valueChanged，不会与点按手势重入。
     private func updateTabSelection() {
         guard let seg = bottomSegmented else { return }
@@ -2356,12 +2349,12 @@ final class BearyChromeViewController: UIViewController {
     /// 原生页切换：首页与新页均为常驻子 VC（hide/show 保留滚动位置）。
     /// 重拍当前 tab：首页先回顶再刷新（与网页 topThen 同口径），消息页回顶再刷新，时间线重拉。
     private func showPage(_ page: ContainerPage) {
-        // 游客模式（只读）：时间线/我页/铃铛消息页/好友段/消息页不对游客开放，点按一律走登录弹窗，
+        // 游客模式（只读）：时间线/我页/好友段/消息页不对游客开放，点按一律走登录弹窗，
         // 不进页、不弹原登录页；首页/搜索/他人主页（.user）游客可看，直放行。
         // 开发者模式游客预览（仅内存，只改显示）：已登录用户也能复现游客门控；不碰 SessionManager。
         if SessionManager.shared.isGuestMode || BearyDevPreviewState.guestPreview {
             switch page {
-            case .timeline, .me, .notif, .friends, .conversations, .messages:
+            case .timeline, .me, .friends, .conversations, .messages:
                 presentLoginGate()
                 // Tab 错位修：门控拦住切页时，pill 已被点按先翻到新段；
                 // 只恢复 pill 到实际页（currentPage），不跳页、不改门控业务。
@@ -2379,7 +2372,7 @@ final class BearyChromeViewController: UIViewController {
         // toast + 1200ms 后弹登录（见 showTabLoginGate；游客分支已在上方拦下）。
         // 时间线补进本名单：此前非游客未登录态下时间线不在名单里，直接放行，
         // 页里旧内容 + 上次账号缓存照常显示，与消息/我的“请先登录”不一致。
-        if (page == .me || page == .friends || page == .conversations || page == .messages || page == .timeline || page == .notif) && SessionManager.shared.isLoggedIn == false {
+        if (page == .me || page == .friends || page == .conversations || page == .messages || page == .timeline) && SessionManager.shared.isLoggedIn == false {
             if profileMeWaitPending {
                 // 已在等 /me 回包：第二下点按同样只恢复 pill，不重复发请求。
                 updateTabSelection()
@@ -2425,10 +2418,6 @@ final class BearyChromeViewController: UIViewController {
             if page == .home {
                 guard let feed = feedVC else { return }
                 retapCurrentPage(.home, pageVC: feed, isAtTop: feed.isAtTop, isRefreshing: feed.isRefreshingForRetap, scrollToTop: { feed.scrollToTop() }, refresh: { feed.refreshFeed() })
-            } else if page == .notif {
-                if let notifications = notifVC {
-                    retapCurrentPage(.notif, pageVC: notifications, isAtTop: notifications.isAtTop, isRefreshing: notifications.isRefreshingForRetap, scrollToTop: { notifications.scrollToTop() }, refresh: { notifications.refresh() })
-                }
             } else if page == .timeline {
                 if let timeline = timelineVC {
                     // 账号隔离 9 号：刷新分支保留选中日与旧内容（与下拉刷新同口径），
@@ -2477,8 +2466,6 @@ final class BearyChromeViewController: UIViewController {
         // 的收键盘、清错峰队列、消息显式刷新不在此重复）。
         if previousPage == .timeline {
             timelineVC?.pageDidLeave()
-        } else if previousPage == .notif {
-            notifVC?.pageDidLeave()
         } else if previousPage == .messages {
             messagesVC?.pageDidLeave()
         } else if previousPage == .search {
@@ -2619,13 +2606,8 @@ final class BearyChromeViewController: UIViewController {
         }
         // 功能完善批接线：切回消息页瞬间必刷（门控口径：未读数变了才整页重拉，
         // 不变时零请求，不违背“切 tab 不重复拉取”；重拍分支已有无条件刷新，不走这里）。
-        if page == .notif {
-            // 审计-性能：切回消息页恢复 60 秒轮询（离页时 pageDidLeave 已停表）。
-            notifVC?.pageDidEnter()
-            notifVC?.refreshListIfUnreadChanged()
-        }
         if page == .messages {
-            // 消息页进页：嵌入的通知组恢复轮询＋按未读门控刷新（与铃铛页同口径，
+            // 消息页进页：嵌入的通知组恢复轮询＋按未读门控刷新（与原铃铛页口径一致，
             // 两组转发集中在消息页 pageDidEnter 内）。
             messagesVC?.pageDidEnter()
         }
@@ -2634,7 +2616,6 @@ final class BearyChromeViewController: UIViewController {
     /// 容器页解析：消息/时间线/我/搜索/他人主页走真实现（邀请已改弹窗，不再是容器页）。
     private func pageView(for page: ContainerPage) -> UIViewController {
         switch page {
-        case .notif: return ensureNotifVC()
         case .timeline: return ensureTimelineVC()
         case .me: return ensureProfileVC()
         case .search: return ensureSearchVC()
@@ -2674,27 +2655,6 @@ final class BearyChromeViewController: UIViewController {
         bringChromeToFront()
     }
 
-    private func ensureNotifVC() -> BearyNotificationsViewController {
-        if let vc = notifVC { return vc }
-        let vc = BearyNotificationsViewController()
-        vc.onEntrySelected = { [weak self] entryId in
-            self?.gotoEntry(entryId: entryId)
-        }
-        vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
-        // 好友第一期：关注提醒卡点按进对方公开主页；私信行点按进对应会话页
-        //（modal；通知页本身不切走，关会话后仍在通知页）。
-        vc.onOpenUser = { [weak self] userId in
-            self?.presentUserProfile(userId: userId)
-        }
-        vc.onOpenDM = { [weak self] peer in
-            self?.presentDMChat(peer: peer)
-        }
-        vc.onOpenLetterPage = { [weak self] letterVC in self?.presentLetterPage(letterVC) }
-        addPageVC(vc, page: .notif)
-        notifVC = vc
-        vc.applyHeaderTopInset(visible: false)
-        return vc
-    }
 
     /// C6/C7 共用删除执行路径：原时间线 onDeleteEntry 闭包原样抽出
     /// （网页 confirmDelete 文案确认 → deleteEntry → 时间线行级退场 +
@@ -2989,7 +2949,6 @@ final class BearyChromeViewController: UIViewController {
             if let conversations = self?.conversationsVC, conversations.isViewLoaded {
                 conversations.refresh()
             }
-            self?.notifVC?.refreshListIfUnreadChanged()
             if let messages = self?.messagesVC, messages.isViewLoaded {
                 messages.refreshGroups()
             }
@@ -3111,7 +3070,6 @@ final class BearyChromeViewController: UIViewController {
         let title: String
         let message: String
         switch page {
-        case .notif: title = "消息"; message = "这里还没有内容"
         case .timeline: title = "时间线"; message = "这里还没有内容"
         case .me: title = "我"; message = "这里还没有内容"
         case .search: title = "搜索"; message = "这里还没有内容"
@@ -3345,7 +3303,6 @@ final class BearyChromeViewController: UIViewController {
                                 switch page {
                                 case .home: return self.feedVC?.view
                                 case .timeline: return self.timelineVC?.view
-                                case .notif: return self.notifVC?.view
                                 case .me: return self.profileVC?.view
                                 case .search: return self.searchVC?.view
                                 case .user: return self.userVC?.view
@@ -4202,7 +4159,6 @@ final class BearyChromeViewController: UIViewController {
         }
         if let view = activeNotificationDetailVC?.detailSourceView(for: entryId) { return view }
         if let view = messagesVC?.detailSourceView(for: entryId) { return view }
-        if let view = notifVC?.detailSourceView(for: entryId) { return view }
         if let view = feedVC?.detailSourceView(for: entryId) { return view }
         if let view = timelineVC?.detailSourceView(for: entryId) { return view }
         return profileVC?.detailSourceView(for: entryId)

@@ -99,7 +99,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     /// 底 pin 安全区的表情列表会被推回原位、与弹窗脱节；.changed 用它把
     /// 缩掉的部分补回来（最多补到静止值，无 Home Indicator 的设备为 0、不补）。
     private var dragRestBottomInset: CGFloat = 0
-    /// VoiceOver 焦点返回：与通知弹层同口径（BearyNotificationsViewController），
+    /// VoiceOver 焦点返回：与通知详情页同口径，
     /// init 时记下 Sheet 外当前焦点元素（通常为触发回应的入口控件）；关闭后
     /// 把焦点还回去。weak 持有：触发控件是列表 cell 内元素，复用/离屏后失效
     /// 即放弃返回，不强留。取焦点 API 以 iOS 17 起可用作守门，旧系统无显式

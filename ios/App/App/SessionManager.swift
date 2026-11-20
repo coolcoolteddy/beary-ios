@@ -441,8 +441,8 @@ final class SessionManager {
         // B1：正在关注段快照是独立桶，退出时同清，不留旧身份行。
         BearyFeedCache.purge(bucket: BearyFeedCache.followingBucket(userId: id))
         BearyTimelineCache.purge(bucket: "\(id)")
-        // 审计-性能：通知页分键缓存同样在退出时清掉该账号槽位。
-        BearyNotificationsViewController.purgeAccount(id)
+        // 审计-性能：通知数据层分键缓存同样在退出时清掉该账号槽位。
+        BearyNotificationsData.purgeAccount(id)
         BearyProfileCache.purge(bucket: "\(id)")
         // r17-C7：个人页统计卡快照同样在退出时清掉该账号槽位。
         BearyProfileStatsCache.purge(bucket: "\(id)")
