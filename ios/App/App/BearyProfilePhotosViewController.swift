@@ -66,6 +66,76 @@ final class BearyProfilePhotosViewController: UIViewController {
     /// 即丢弃。只缓存本人页（与快照同口径）。
     private var pendingCachedPhotos: [BearyProfilePhotoItem] = []
 
+    /// 体验检查第 11 项：照片按月份分节——扁平 photosValue 仍是唯一事实
+    /// 来源（灯箱／快照／签名全走它），月份节只由它派生，不另存一份
+    /// 列表；createdAt 缺失（nil 或 ≤0）的照片收进尾节“日期未知”。
+    private struct PhotoMonthSection {
+        var key: String
+        var title: String
+        var items: [BearyProfilePhotoItem]
+    }
+
+    /// 月份标题格式（与星图 sheetDateYearFormatter 同款“yyyy年M月”口径，
+    /// 只取年月）；主线程使用，与 BearyAPI timeFormatter 同款做法。
+    private static let photoMonthFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy年M月"
+        return formatter
+    }()
+
+    private var photoSections: [PhotoMonthSection] {
+        var byMonth: [String: [BearyProfilePhotoItem]] = [:]
+        var titles: [String: String] = [:]
+        var order: [String] = []
+        var unknown: [BearyProfilePhotoItem] = []
+        let calendar = Calendar.current
+        for photo in photosValue {
+            guard let ms = photo.entry.createdAt, ms > 0 else {
+                unknown.append(photo)
+                continue
+            }
+            let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+            let components = calendar.dateComponents([.year, .month], from: date)
+            let key = String(format: "%04d-%02d", components.year ?? 0, components.month ?? 0)
+            if byMonth[key] == nil {
+                order.append(key)
+                titles[key] = Self.photoMonthFormatter.string(from: date)
+            }
+            byMonth[key, default: []].append(photo)
+        }
+        // photosValue 已按 createdAt 倒序，order 首次出现即倒序；仍按 key
+        // 倒序排一次，防乱序输入冲掉月份顺序；节内顺序沿用 photosValue。
+        var sections: [PhotoMonthSection] = order.sorted(by: >).compactMap { key in
+            guard let items = byMonth[key], !items.isEmpty else { return nil }
+            return PhotoMonthSection(key: key, title: titles[key] ?? key, items: items)
+        }
+        if !unknown.isEmpty {
+            sections.append(PhotoMonthSection(key: "unknown", title: "日期未知", items: unknown))
+        }
+        return sections
+    }
+
+    /// 翻页失败重试节的下标（只在 photosPageLoadFailed 时存在）：照片节数，
+    /// 不再是写死的 1。
+    private var photosRetrySectionIndex: Int { photoSections.count }
+
+    /// 分节下标 → 灯箱用的扁平下标（灯箱仍持扁平数组，本换算只做桥接）。
+    private func flatIndex(for indexPath: IndexPath) -> Int {
+        var flat = indexPath.item
+        for section in photoSections.prefix(indexPath.section) { flat += section.items.count }
+        return flat
+    }
+
+    /// 灯箱用的扁平下标 → 分节下标（关场回格、续拉新格定位用）。
+    private func indexPath(forFlatIndex flat: Int) -> IndexPath? {
+        var remaining = flat
+        for (section, group) in photoSections.enumerated() {
+            if remaining < group.items.count { return IndexPath(item: remaining, section: section) }
+            remaining -= group.items.count
+        }
+        return nil
+    }
+
     /// 第七轮审计 08：权限重验在途守门——防同一时刻重复拉 /friends/state；
     /// permissionsGeneration＋发起时 viewer id 守旧回包（与设置页
     /// meGeneration、通知页 snapshotGeneration 同款口径）；在途时又来的
@@ -143,6 +213,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         collectionValue.dataSource = self
         collectionValue.register(BearyProfilePhotoCell.self, forCellWithReuseIdentifier: "BearyProfilePhotoCell")
         collectionValue.register(BearyProfilePhotosLoadMoreFooterCell.self, forCellWithReuseIdentifier: "BearyProfilePhotosLoadMoreFooterCell")
+        collectionValue.register(BearyProfilePhotosMonthHeaderView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader, withReuseIdentifier: "BearyProfilePhotosMonthHeader")
         return collectionValue
     }()
 
@@ -235,6 +306,29 @@ final class BearyProfilePhotosViewController: UIViewController {
         return labelValue
     }()
 
+    /// 体验检查第 11 项：年月快速跳转条——横向月份 chip（多于 1 个月节
+    /// 时才出现，单月／无照片时高度 0 不占位）；点按滚到对应月份节头。
+    private let monthJumpScrollView: UIScrollView = {
+        let scrollValue = UIScrollView()
+        scrollValue.translatesAutoresizingMaskIntoConstraints = false
+        scrollValue.showsHorizontalScrollIndicator = false
+        scrollValue.isHidden = true
+        return scrollValue
+    }()
+
+    private let monthJumpStackView: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .horizontal
+        stackValue.spacing = 8
+        stackValue.alignment = .center
+        return stackValue
+    }()
+
+    private var monthJumpHeightConstraint: NSLayoutConstraint?
+    /// 上次按月份节建 chip 时的节 key 串——节不变不重建，保跳转条滚动位置。
+    private var lastMonthJumpKeys = ""
+
     private var photosStatusHeightConstraint: NSLayoutConstraint?
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -249,8 +343,27 @@ final class BearyProfilePhotosViewController: UIViewController {
         view.addSubview(emptyRetryButton)
         view.addSubview(photosLoadingPlaceholderView)
         view.addSubview(photosStatusLabel)
+        view.addSubview(monthJumpScrollView)
+        monthJumpScrollView.addSubview(monthJumpStackView)
         photosStatusHeightConstraint = photosStatusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 0)
         photosStatusHeightConstraint?.isActive = true
+        // 月份跳转条：默认高 0 塌掉（单月／无照片不占位）；多月时 40，
+        // 与网格同宽（锚 collectionView 左右，iPad 600 居中时跟走）。
+        monthJumpHeightConstraint = monthJumpScrollView.heightAnchor.constraint(equalToConstant: 0)
+        monthJumpHeightConstraint?.isActive = true
+        // r26-#4：跳转条直接钉顶栏底部（不钉状态行底部），状态行改钉
+        // 跳转条底部、仍是浮在网格上方的覆盖层——状态行高度 0↔20 只
+        // 盖住网格顶部 20pt，网格顶部（跳转条底部）始终不动。
+        NSLayoutConstraint.activate([
+            monthJumpScrollView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
+            monthJumpScrollView.leadingAnchor.constraint(equalTo: collectionView.leadingAnchor),
+            monthJumpScrollView.trailingAnchor.constraint(equalTo: collectionView.trailingAnchor),
+            monthJumpStackView.topAnchor.constraint(equalTo: monthJumpScrollView.contentLayoutGuide.topAnchor, constant: 6),
+            monthJumpStackView.bottomAnchor.constraint(equalTo: monthJumpScrollView.contentLayoutGuide.bottomAnchor, constant: -6),
+            monthJumpStackView.leadingAnchor.constraint(equalTo: monthJumpScrollView.contentLayoutGuide.leadingAnchor, constant: 16),
+            monthJumpStackView.trailingAnchor.constraint(equalTo: monthJumpScrollView.contentLayoutGuide.trailingAnchor, constant: -16),
+            monthJumpStackView.heightAnchor.constraint(equalToConstant: 28),
+        ])
         // 08：网格不再左右钉满页面——宽约束由 updatePhotosGridWidth 按实宽
         // 定（≥821 取 600 居中，≤820 取全宽），见 viewDidLayoutSubviews。
         collectionViewWidthConstraint = collectionView.widthAnchor.constraint(equalToConstant: view.bounds.width)
@@ -272,13 +385,15 @@ final class BearyProfilePhotosViewController: UIViewController {
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBarView.bottomAnchor, constant: -7),
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: backButton.trailingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBarView.trailingAnchor, constant: -52),
-            photosStatusLabel.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
+            // r26-#4：状态行钉跳转条底部（见上），仍是覆盖层、不顶动网格。
+            photosStatusLabel.topAnchor.constraint(equalTo: monthJumpScrollView.bottomAnchor),
             photosStatusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             photosStatusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            // r26-#4：网格顶部直接钉顶栏底部，不再钉状态行底部——状态行
-            // 高度 0↔20 时网格顶部不动；状态行是浮在网格上方的覆盖层
-            //（后加进视图层级、不透底），显隐只盖住网格顶部 20pt。
-            collectionView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
+            // 月份跳转条在网格上方（多月时 40 高，单月／无照片高 0 塌掉）；
+            // r26-#4：网格顶部直接钉跳转条底部——状态行高度 0↔20 时网格
+            // 顶部不动；状态行是浮在网格上方的覆盖层（后加进视图层级、
+            // 不透底），显隐只盖住网格顶部 20pt，见跳转条锚点处注释。
+            collectionView.topAnchor.constraint(equalTo: monthJumpScrollView.bottomAnchor),
             collectionView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             collectionViewWidthConstraint!,
             collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -753,7 +868,7 @@ final class BearyProfilePhotosViewController: UIViewController {
                         strongSelf.photosEmptyLoadFailed = true
                     } else if !strongSelf.photosPageLoadFailed {
                         strongSelf.photosPageLoadFailed = true
-                        strongSelf.collectionView.insertSections(IndexSet(integer: 1))
+                        strongSelf.collectionView.insertSections(IndexSet(integer: strongSelf.photosRetrySectionIndex))
                     }
                     strongSelf.updateTitleAndEmpty()
                 }
@@ -783,8 +898,8 @@ final class BearyProfilePhotosViewController: UIViewController {
         guard !UIAccessibility.isReduceMotionEnabled else { return }
         collectionView.layoutIfNeeded()
         let newPaths = collectionView.indexPathsForVisibleItems
-            .filter { $0.section == 0 && $0.item >= oldCount }
-            .sorted { $0.item < $1.item }
+            .filter { $0.section < photoSections.count && flatIndex(for: $0) >= oldCount }
+            .sorted { flatIndex(for: $0) < flatIndex(for: $1) }
         var delay: TimeInterval = 0
         for path in newPaths {
             guard let cell = collectionView.cellForItem(at: path) else { continue }
@@ -805,6 +920,8 @@ final class BearyProfilePhotosViewController: UIViewController {
     /// 失败分支也要调本函数，不能只往隐藏的网格里插重试节。
     private func updateTitleAndEmpty() {
         setTitleTextFaded("照片 · \(photosValue.count) 张")
+        // 月份节一变即重算跳转条（本函数是各路数据写回后的公共出口）。
+        updateMonthJumpStrip()
         guard photosValue.isEmpty else {
             emptyLabel.isHidden = true
             emptyRetryButton.isHidden = true
@@ -832,6 +949,62 @@ final class BearyProfilePhotosViewController: UIViewController {
             emptyLabel.isHidden = false
             emptyLabel.text = "还没有照片"
             emptyRetryButton.isHidden = true
+        }
+    }
+
+    /// 体验检查第 11 项：按当前月份节重建跳转条——多于 1 个月节时显
+    /// 横向月份 chip（高度 40），单月／无照片时塌到 0 不占位；节 key
+    /// 串不变不重建，保跳转条滚动位置（updateTitleAndEmpty 是各路
+    /// 数据写回后的公共出口，故跳转条在此处重算）。
+    private func updateMonthJumpStrip() {
+        let sections = photoSections
+        let keys = sections.map { $0.key }.joined(separator: ",")
+        guard sections.count > 1 else {
+            monthJumpScrollView.isHidden = true
+            monthJumpHeightConstraint?.constant = 0
+            lastMonthJumpKeys = keys
+            return
+        }
+        monthJumpScrollView.isHidden = false
+        monthJumpHeightConstraint?.constant = 40
+        guard keys != lastMonthJumpKeys else { return }
+        lastMonthJumpKeys = keys
+        monthJumpStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for (index, section) in sections.enumerated() {
+            let chip = UIButton(type: .custom)
+            chip.translatesAutoresizingMaskIntoConstraints = false
+            chip.setTitle(section.title, for: .normal)
+            chip.setTitleColor(BearyColors.ink, for: .normal)
+            chip.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+            chip.titleLabel?.adjustsFontForContentSizeCategory = true
+            chip.backgroundColor = BearyColors.surface2
+            chip.layer.cornerRadius = 14
+            chip.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+            chip.heightAnchor.constraint(equalToConstant: 28).isActive = true
+            chip.tag = index
+            chip.accessibilityLabel = "跳转到\(section.title)"
+            chip.addTarget(self, action: #selector(monthJumpChipTapped(_:)), for: .touchUpInside)
+            chip.bearyAddPressFeedback()
+            monthJumpStackView.addArrangedSubview(chip)
+        }
+    }
+
+    @objc private func monthJumpChipTapped(_ sender: UIButton) {
+        scrollToMonthSection(sender.tag)
+    }
+
+    /// 点按月份 chip 滚到对应月份节头——按节 header 的布局位置定
+    /// 偏移（不用 scrollToItem，节头会顶到可视区顶沿、header 不被盖住）；
+    /// 取不到 header 布局时退回 scrollToItem。
+    private func scrollToMonthSection(_ section: Int) {
+        guard section >= 0, section < photoSections.count else { return }
+        collectionView.layoutIfNeeded()
+        let indexPath = IndexPath(item: 0, section: section)
+        if let attributes = collectionView.layoutAttributesForSupplementaryElement(ofKind: UICollectionView.elementKindSectionHeader, at: indexPath) {
+            let topInset = collectionView.adjustedContentInset.top
+            collectionView.setContentOffset(CGPoint(x: 0, y: max(attributes.frame.minY - topInset, -topInset)), animated: BearyMotion.animated(true))
+        } else {
+            collectionView.scrollToItem(at: indexPath, at: .top, animated: BearyMotion.animated(true))
         }
     }
 
@@ -902,9 +1075,10 @@ final class BearyProfilePhotosViewController: UIViewController {
     /// 该篇不在墙里时返回 nil（关闭时不恢复）。与广场/时间线同口径，
     /// 只是本页是 collectionView、按篇 id 找首张照片（同篇多图只锚首张）。
     func detailReturnAnchor(for entryId: String) -> CGFloat? {
-        guard let index = photosValue.firstIndex(where: { $0.entry.id == entryId }) else { return nil }
+        guard let index = photosValue.firstIndex(where: { $0.entry.id == entryId }),
+              let path = indexPath(forFlatIndex: index) else { return nil }
         collectionView.layoutIfNeeded()
-        guard let frame = collectionView.layoutAttributesForItem(at: IndexPath(item: index, section: 0))?.frame else { return nil }
+        guard let frame = collectionView.layoutAttributesForItem(at: path)?.frame else { return nil }
         return frame.minY - collectionView.contentOffset.y
     }
 
@@ -913,9 +1087,10 @@ final class BearyProfilePhotosViewController: UIViewController {
     /// 的重算 reload 先于本调用（详情 dismiss 时 appear 在先、onDismissed
     /// 在后），故此处读到的已是重算后的新位置。
     func restoreDetailReturnAnchor(entryId: String, viewportOffset: CGFloat) {
-        guard let index = photosValue.firstIndex(where: { $0.entry.id == entryId }) else { return }
+        guard let index = photosValue.firstIndex(where: { $0.entry.id == entryId }),
+              let path = indexPath(forFlatIndex: index) else { return }
         collectionView.layoutIfNeeded()
-        guard let frame = collectionView.layoutAttributesForItem(at: IndexPath(item: index, section: 0))?.frame else { return }
+        guard let frame = collectionView.layoutAttributesForItem(at: path)?.frame else { return }
         let targetY = frame.minY - viewportOffset
         guard abs(targetY - collectionView.contentOffset.y) >= 1 else { return }
         let minY = -collectionView.contentInset.top
@@ -983,7 +1158,11 @@ final class BearyProfilePhotosViewController: UIViewController {
         // 04：失败后自动入口守门——失败态下 willDisplay 不再自动重拉，只留
         // 手动重试（尾部重试节 / 空态重试按钮）；点“重试”清掉失败态后才再拉。
         guard photosHasMore, !photosFetching, !photosPageLoadFailed, !photosEmptyLoadFailed, let authorId = authorIdValue else { return }
-        guard let lastEntry = diaryEntriesValue.last, let lastCreated = lastEntry.createdAt, let lastId = lastEntry.id else {
+        // 体验检查第 11 项：游标取最后一条带日期（createdAt > 0）＋id 的
+        // 日记——尾篇缺 createdAt 时不再静默停拉，改用更早的有日期篇作
+        // 游标继续拉（去重守门防重复取回）；全无有日期篇时才停（无游标可取）。
+        guard let cursorEntry = diaryEntriesValue.reversed().first(where: { ($0.createdAt ?? 0) > 0 && $0.id != nil }),
+              let lastCreated = cursorEntry.createdAt, let lastId = cursorEntry.id else {
             photosHasMore = false
             return
         }
@@ -1017,6 +1196,9 @@ final class BearyProfilePhotosViewController: UIViewController {
                     }
                     // 续拉页同样按创建时间倒序并案：新页全部更旧，直接追加即可保持倒序。
                     let oldPhotoCount = strongSelf.photosValue.count
+                    // 体验检查第 11 项：批量插格前记下旧月份节数——新页跨月
+                    // 会新增节，节结构一变就不能只插格（见下 performBatchUpdates 前）。
+                    let oldSectionCount = strongSelf.photoSections.count
                     // 第 18 轮①：重滤可能让旧照片因限时到期或关系变化被移除，
                     // 旧照片 key 留作差分基线（见 performBatchUpdates 前的判断）。
                     let oldKeys = strongSelf.photosValue.map { $0.imageKey }
@@ -1089,12 +1271,34 @@ final class BearyProfilePhotosViewController: UIViewController {
                         }
                         return
                     }
+                    // 体验检查第 11 项：月份节结构变了（新页跨月新增节）时
+                    // 批量插格会与数据源节数对不上，整表刷新；节结构不变
+                    // 时仍走批量插格，保已有格不重配（见 07）。重试节旧下标
+                    // 是旧节数（照片节数），不是写死的 1。
+                    if strongSelf.photoSections.count != oldSectionCount {
+                        strongSelf.collectionView.reloadData()
+                        if let viewer = strongSelf.presentedViewController as? BearyEntryImageViewerViewController {
+                            let newPhotos = Array(strongSelf.photosValue.suffix(from: min(oldPhotoCount, strongSelf.photosValue.count)))
+                            var newLiveVideos: [String: String] = [:]
+                            for photo in newPhotos {
+                                if let liveKey = photo.entry.liveVideos?[photo.imageKey] {
+                                    newLiveVideos[photo.imageKey] = liveKey
+                                }
+                            }
+                            viewer.appendImageKeys(newPhotos.map { $0.imageKey }, liveVideos: newLiveVideos.isEmpty ? nil : newLiveVideos, hasMorePages: strongSelf.photosHasMore)
+                        }
+                        strongSelf.staggerNewCells(from: oldPhotoCount)
+                        if strongSelf.photosValue.isEmpty, !appended.isEmpty {
+                            strongSelf.fetchMoreWhileEmptyIfNeeded()
+                        }
+                        return
+                    }
                     strongSelf.collectionView.performBatchUpdates({
                         if hadRetrySection {
-                            strongSelf.collectionView.deleteSections(IndexSet(integer: 1))
+                            strongSelf.collectionView.deleteSections(IndexSet(integer: oldSectionCount))
                         }
                         if newPhotoCount > oldPhotoCount {
-                            let newPaths = (oldPhotoCount..<newPhotoCount).map { IndexPath(item: $0, section: 0) }
+                            let newPaths = (oldPhotoCount..<newPhotoCount).compactMap { strongSelf.indexPath(forFlatIndex: $0) }
                             strongSelf.collectionView.insertItems(at: newPaths)
                         }
                     }, completion: { _ in
@@ -1148,7 +1352,7 @@ final class BearyProfilePhotosViewController: UIViewController {
                         strongSelf.updateTitleAndEmpty()
                     } else if !strongSelf.photosPageLoadFailed {
                         strongSelf.photosPageLoadFailed = true
-                        strongSelf.collectionView.insertSections(IndexSet(integer: 1))
+                        strongSelf.collectionView.insertSections(IndexSet(integer: strongSelf.photosRetrySectionIndex))
                     }
                 }
             }
@@ -1183,7 +1387,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         guard photosHasMore, !photosFetching, authorIdValue != nil else { return }
         if photosPageLoadFailed {
             photosPageLoadFailed = false
-            collectionView.deleteSections(IndexSet(integer: 1))
+            collectionView.deleteSections(IndexSet(integer: photosRetrySectionIndex))
         }
         if photosEmptyLoadFailed {
             photosEmptyLoadFailed = false
@@ -1236,9 +1440,11 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wa
         // 审计 8 第 1 项：关场回当前照片——凭 (entryId, imageKey) 在实时
         // 网格里定位，不用灯箱下标（后台回包重排后下标会串到别篇）；
         // 在视口内才给矩形与焦点视图，格不在视口内时返回 nil、走淡出兜底。
+        // 月份分节后 photoIndex 回的是扁平下标，须经 indexPath(forFlatIndex:)
+        // 换算成（节，项），不能直接当 section 0 的 item。
         viewer.dismissOriginKeyProvider = { [weak self] entryId, imageKey in
-            guard let self = self, let index = self.photoIndex(forEntryId: entryId, imageKey: imageKey) else { return nil }
-            let path = IndexPath(item: index, section: 0)
+            guard let self = self, let index = self.photoIndex(forEntryId: entryId, imageKey: imageKey),
+                  let path = self.indexPath(forFlatIndex: index) else { return nil }
             guard let cell = self.collectionView.cellForItem(at: path) else { return nil }
             let frame = cell.convert(cell.bounds, to: nil)
             return (frame: frame, element: cell)
@@ -1274,19 +1480,21 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wa
 extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
 
     func numberOfSections(in collectionView: UICollectionView) -> Int {
-        // 第 0 节照片，第 1 节只在翻页失败时存在（持续重试入口）。
-        return photosPageLoadFailed ? 2 : 1
+        // 体验检查第 11 项：照片按月份分节，末尾一节只在翻页失败时
+        // 存在（持续重试入口，下标即照片节数）。
+        return photoSections.count + (photosPageLoadFailed ? 1 : 0)
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        if section == 1 {
-            return photosPageLoadFailed ? 1 : 0
+        if section == photosRetrySectionIndex, photosPageLoadFailed {
+            return 1
         }
-        return photosValue.count
+        guard section < photoSections.count else { return 0 }
+        return photoSections[section].items.count
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        if indexPath.section == 1 {
+        if indexPath.section == photosRetrySectionIndex, photosPageLoadFailed {
             guard let footerValue = collectionView.dequeueReusableCell(withReuseIdentifier: "BearyProfilePhotosLoadMoreFooterCell", for: indexPath) as? BearyProfilePhotosLoadMoreFooterCell else {
                 return UICollectionViewCell()
             }
@@ -1296,13 +1504,28 @@ extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollec
         guard let cellValue = collectionView.dequeueReusableCell(withReuseIdentifier: "BearyProfilePhotoCell", for: indexPath) as? BearyProfilePhotoCell else {
             return UICollectionViewCell()
         }
-        let item = photosValue[indexPath.item]
-        cellValue.configure(imageKey: item.imageKey, index: indexPath.item + 1)
+        let item = photoSections[indexPath.section].items[indexPath.item]
+        cellValue.configure(imageKey: item.imageKey, index: flatIndex(for: indexPath) + 1)
         return cellValue
     }
 
+    func collectionView(_ collectionView: UICollectionView, viewForSupplementaryElementOfKind kind: String, at indexPath: IndexPath) -> UICollectionReusableView {
+        guard kind == UICollectionView.elementKindSectionHeader,
+              indexPath.section < photoSections.count,
+              let header = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: "BearyProfilePhotosMonthHeader", for: indexPath) as? BearyProfilePhotosMonthHeaderView else {
+            return UICollectionReusableView()
+        }
+        header.configure(title: photoSections[indexPath.section].title)
+        return header
+    }
+
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, referenceSizeForHeaderInSection section: Int) -> CGSize {
+        guard section < photoSections.count else { return .zero }
+        return CGSize(width: collectionView.bounds.width, height: 36)
+    }
+
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
-        if indexPath.section == 1 {
+        if indexPath.section == photosRetrySectionIndex, photosPageLoadFailed {
             return CGSize(width: collectionView.bounds.width, height: 44)
         }
         let widthValue = collectionView.bounds.width > 0 ? collectionView.bounds.width : view.bounds.width
@@ -1311,15 +1534,20 @@ extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollec
     }
 
     func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
-        // 只看照片节末项；尾部重试节的出现不触发自动翻页。
-        if indexPath.section == 0, indexPath.item == photosValue.count - 1 {
+        // 只看最后一月节末项；尾部重试节的出现不触发自动翻页。
+        guard !photoSections.isEmpty else { return }
+        let lastSection = photoSections.count - 1
+        if indexPath.section == lastSection, indexPath.item == photoSections[lastSection].items.count - 1 {
             fetchNextPageIfNeeded()
         }
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
-        if indexPath.section == 1 {
+        BearyHaptics.press()
+        // 月份分节后重试节下标即照片节数（photosRetrySectionIndex），
+        // 不再是写死的 section 1。
+        if indexPath.section == photosRetrySectionIndex, photosPageLoadFailed {
             retryNextPage()
             return
         }
@@ -1330,7 +1558,7 @@ extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollec
         }
         let originFrame = collectionView.cellForItem(at: indexPath).map { $0.convert($0.bounds, to: nil) }
         let thumbnail = (collectionView.cellForItem(at: indexPath) as? BearyProfilePhotoCell)?.displayedThumbnail
-        presentLightbox(startIndex: indexPath.item, originFrame: originFrame, thumbnail: thumbnail)
+        presentLightbox(startIndex: flatIndex(for: indexPath), originFrame: originFrame, thumbnail: thumbnail)
     }
 }
 
@@ -1493,6 +1721,35 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
     func retryLoading() {
         guard isFailed, let key = loadingKey else { return }
         configure(imageKey: key, index: photoIndex)
+    }
+}
+
+/// 体验检查第 11 项：月份节标题（与本文件同文件，不新增文件）——
+/// 样式沿用表情选择器“最近使用”节标题口径：13 半粗 scaled、灰字、
+/// 左 inset 与网格 sectionInset 左边（BearySpace.lg）对齐；不新增图标与按钮。
+final class BearyProfilePhotosMonthHeaderView: UICollectionReusableView {
+
+    private let titleLabel = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textColor = BearyColors.gray
+        addSubview(titleLabel)
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: BearySpace.lg),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(title: String) {
+        titleLabel.text = title
     }
 }
 
