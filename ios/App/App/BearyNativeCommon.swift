@@ -2611,6 +2611,9 @@ struct UploadResponse: Decodable {
     var liveKey: String?
     /// GIF 上传时库已满 100（服务端 library_full；图本身已上传，只是不进库）。
     var libraryFull: Bool?
+    /// 自定义表情上传去重命中（服务端 duplicate：true；指纹已在库里，
+    /// 直接回了原来那个 key，没再存一份；客户端据此 toast“已经添加过了”）。
+    var duplicate: Bool?
 }
 
 /// 个人 GIF 库列表回包（GET /beary/api/gif-library）。
@@ -2663,10 +2666,13 @@ extension BearyAPI {
     /// 审计-编辑器详情：返回在途任务，供编辑器取消上传用（调用方不
     /// 用时可忽略返回值；上传本身仍不重试，见 request 注释）。
     @discardableResult
-    func uploadImage(dataUrl: String, width: Int, height: Int, thumbDataUrl: String?, videoDataUrl: String? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<UploadResponse, APIError>) -> Void) -> URLSessionDataTask? {
+    func uploadImage(dataUrl: String, width: Int, height: Int, thumbDataUrl: String?, videoDataUrl: String? = nil, fingerprint: String? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<UploadResponse, APIError>) -> Void) -> URLSessionDataTask? {
         var body: [String: Any] = ["dataUrl": dataUrl, "w": width, "h": height]
         if let t = thumbDataUrl { body["thumb"] = t }
         if let v = videoDataUrl { body["videoDataUrl"] = v }
+        // 自定义表情去重指纹（压完文件的 SHA-256 hex）：只表情上传路传，
+        // 普通照片上传不传、服务端不查；命中时服务端直接回旧 key + duplicate。
+        if let fp = fingerprint, !fp.isEmpty { body["fingerprint"] = fp }
         return request("/beary/api/images/upload", method: "POST", jsonBody: body, uploadProgress: uploadProgress, completion: completion)
     }
 
@@ -2677,8 +2683,12 @@ extension BearyAPI {
 
     /// 个人 GIF 库：POST /beary/api/gif-library/add {key}；满 100 时 409 'library full'，
     /// 已在库里时 200 {ok:true, added:false}；key 不可见时 403 'not viewable'。
-    func gifLibraryAdd(key: String, completion: @escaping (Result<GIFLibraryAddResponse, APIError>) -> Void) {
-        request("/beary/api/gif-library/add", method: "POST", jsonBody: ["key": key], completion: completion)
+    /// fingerprint（可选）：压完文件的 SHA-256 hex，只自定义表情上传路传，
+    /// 服务端存进库行、供上传去重查；长按他人图添加时客户端没文件字节、不传。
+    func gifLibraryAdd(key: String, fingerprint: String? = nil, completion: @escaping (Result<GIFLibraryAddResponse, APIError>) -> Void) {
+        var body: [String: Any] = ["key": key]
+        if let fp = fingerprint, !fp.isEmpty { body["fingerprint"] = fp }
+        request("/beary/api/gif-library/add", method: "POST", jsonBody: body, completion: completion)
     }
 
     /// 个人 GIF 库：POST /beary/api/gif-library/remove {key}；只删行，不删文件。
