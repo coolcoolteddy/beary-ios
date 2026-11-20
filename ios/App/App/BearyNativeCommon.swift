@@ -3626,6 +3626,48 @@ enum BearyEphemeral {
         let hours = (ms + 3_599_999) / 3_600_000
         return "限时 · 还剩 \(hours) 小时"
     }
+
+    /// 限时卡四档倒计时态（2026-11-19 预览定版，阈值以预览源码为准）：
+    /// >6 小时充裕、1–6 小时临近、<1 小时紧急、已到期。
+    enum CountdownState: Equatable {
+        case calm, near, urgent, expired
+    }
+    static func countdownState(until: Int, nowMs: Int? = nil) -> CountdownState {
+        let ms = until - (nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Int(Date().timeIntervalSince1970 * 1000))
+        if ms <= 0 { return .expired }
+        if ms < 3_600_000 { return .urgent }
+        if ms < 6 * 3_600_000 { return .near }
+        return .calm
+    }
+    /// 四档倒计时文字色：充裕 #8e8e8a、临近暖黄、紧急橙、到期 #6d6d68。
+    static func countdownColor(for state: CountdownState) -> UIColor {
+        switch state {
+        case .calm: return BearyColors.limitedCalmCountdown
+        case .near: return BearyColors.limitedNear
+        case .urgent: return BearyColors.limitedUrgent
+        case .expired: return BearyColors.limitedExpiredCountdown
+        }
+    }
+    /// 限时卡倒计时文案（预览口径）：≥1 小时“还剩X小时”／“还剩X小时Y分”，
+    /// <1 小时每秒跳“还剩X分Y秒”，已到期“已到期 · 转私密”。
+    static func countdownText(until: Int, nowMs: Int? = nil) -> String {
+        let ms = until - (nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Int(Date().timeIntervalSince1970 * 1000))
+        if ms <= 0 { return "已到期 · 转私密" }
+        if ms < 3_600_000 {
+            let minutes = ms / 60_000
+            let seconds = (ms % 60_000) / 1_000
+            return "还剩\(minutes)分\(seconds)秒"
+        }
+        let hours = ms / 3_600_000
+        let minutes = (ms % 3_600_000) / 60_000
+        if minutes == 0 { return "还剩\(hours)小时" }
+        return "还剩\(hours)小时\(minutes)分"
+    }
+    /// 限时卡正文字号（预览口径）：短句（≤30 字）19pt、长文 16.5pt；非限时 16pt。
+    static func bodyFontSize(content: String?, limited: Bool) -> CGFloat {
+        guard limited else { return 16 }
+        return (content ?? "").count <= 30 ? 19 : 16.5
+    }
 }
 
 /// 审计 2026-11-02 第十节：可见性三档共享口径（已发布日记“修改权限”四处共用）。

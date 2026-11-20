@@ -13,11 +13,12 @@
 // 引用卡（BearyQuoteCardView，viewer 实时判定）；横向 216 图片条（间距 8、圆角 12、
 // 宽按宽高比 0.55–2.22 倍高夹取、无尺寸默认 280、无图高 0）；操作行赞左、收藏紧邻赞右、分享钉右缘
 // （无回应钮）；回应在下方流式 chip 行（BearyEmoteFlowView + 34 虚线 + 钮，
-// 仅熊脸 key 显示，服务端数据不动）；篇末一条 2pt 全宽线收尾（限时存活期藏线改虚线框）。
+// 仅熊脸 key 显示，服务端数据不动）；篇末一条 2pt 全宽线收尾（限时存活期藏线改虚线气泡）。
 // 本人卡右上角 21pt 灰色小地球（28 框、44 热区，对齐作者行；头行右缩进让出 28+8，
 // 以内容列为基准即 −36，等价于首页以整屏为基准的 −52，屏上几何一致；正文栈右缩进恒 0）；
 // 编辑／删除走长按系统上下文菜单（C6 同款，卡片内无 ⋯ 钮，关闭钮保留）。
-// 限时：1.5pt 虚线框圆角 16、左右内缩 8／顶 +6／底按正文栈底 +16 + 倒计时灰字行（作者行下方、标题上方）。
+// 限时：虚线气泡（圆角 22、2pt 虚线、左上角 12 尖尖对头像）包标题＋正文、
+// 倒计时贴点赞右边（15 semibold，四档色）、作者行挂“限时”／“私密”pill。
 // 纵向间距（头行 + 正文栈，2026-11-05 ChatGPT 间距跟进）：@→作者 4、作者→限时 4、
 // 头行→正文栈 16（有标题）／14（无标题）、标题→正文 6、正文→图片 14、
 // 图片→引用 12、引用→定位 12、定位→操作行 14、操作行→回应行 12、
@@ -35,36 +36,6 @@
 
 import UIKit
 import Photos
-
-/// 详情限时虚线边框视图（116 详情框修）：自身按 bounds 重画虚线路径，
-/// 不再由控制器在布局时手动算矩形——正文栈高度落定（引用加载、回应行出现）
-/// 后 bounds 一变就重画，框底不再切穿“＋”回应钮。
-/// 口径不变：1.5pt、虚线 [4,3]、圆角 16、line 色；不拦截点按；深浅切换自刷描边色。
-final class BearyDetailDashedBorderView: UIView {
-    private let borderLayer = CAShapeLayer()
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isUserInteractionEnabled = false
-        backgroundColor = .clear
-        borderLayer.fillColor = UIColor.clear.cgColor
-        borderLayer.lineWidth = 1.5
-        borderLayer.lineDashPattern = [4, 3]
-        borderLayer.strokeColor = BearyColors.line.cgColor
-        layer.addSublayer(borderLayer)
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        borderLayer.frame = bounds
-        borderLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: BearyCorners.single).cgPath
-    }
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
-            borderLayer.strokeColor = BearyColors.line.cgColor
-        }
-    }
-}
 
 final class BearyDetailViewController: UIViewController {
 
@@ -344,7 +315,7 @@ final class BearyDetailViewController: UIViewController {
     }()
     private var moodEmoteView: BearyEmoteView?
     private lazy var authorRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameButton, crownWrapView, titleSpacerLabel, timeLabel, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameButton, crownWrapView, titleSpacerLabel, timeLabel, limitedPillView, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         // 姓名→皇冠间距 6（2026-11-05 ChatGPT 间距跟进；徽章已下线摘掉，
@@ -683,36 +654,47 @@ final class BearyDetailViewController: UIViewController {
     private var staleBannerVisible = false
     private var staleBannerRetrying = false
 
-    private let ephemeralLabel: UILabel = {
+    /// 限时虚线气泡（2026-11-19 预览定版，卡片同款）：包住标题＋正文；
+    /// 仅限时篇（存活或已到期）显，平时隐藏，不影响普通详情。
+    private let limitedBubbleView = BearyLimitedBubbleView()
+    /// 气泡是否已接管标题／正文（移入移出须幂等）。
+    private var limitedBubbleActive = false
+
+    /// 限时倒计时（操作行第一行，紧贴点赞右边；15 semibold，颜色跟随四档状态）。
+    private let limitedCountdownLabel: UILabel = {
         let l = UILabel()
         l.translatesAutoresizingMaskIntoConstraints = false
-        // 扫查组：此前裸 12pt，限时倒计时行不跟随大字号。
-        l.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
-        l.adjustsFontForContentSizeCategory = true
-        l.textColor = BearyColors.gray
+        l.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+        l.textColor = BearyColors.limitedCalmCountdown
+        l.numberOfLines = 1
         l.isHidden = true
+        l.setContentHuggingPriority(.required, for: .horizontal)
+        l.setContentCompressionResistancePriority(.required, for: .horizontal)
         return l
     }()
-    private lazy var ephemeralRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [ephemeralLabel])
-        st.translatesAutoresizingMaskIntoConstraints = false
-        st.axis = .horizontal
-        st.spacing = 4
-        st.alignment = .center
-        st.isHidden = true
-        return st
-    }()
 
-    /// 限时详情虚线边框视图（116 详情框修，取代旧 CAShapeLayer 手动算矩形）：
-    /// 约束钉在内容列上（顶 +6、左右内缩 8、底按正文栈底 +16），
-    /// 自身 layoutSubviews 按 bounds 重画，正文栈高度落定后框底跟着走；
-    /// 插在 contentColumnView 最底层，不盖内容、不拦截点按；存活期底线藏、边框代之。
-    private let ephemeralBorderView: BearyDetailDashedBorderView = {
-        let v = BearyDetailDashedBorderView()
+    /// 限时倒计时前的小熊脸（2026-11-19 Li 定补）：官方 icon_limited（熊头＋虚线环，
+    /// 与限时档同款），24×24 模板图，tint 跟随倒计时四档颜色；仅限时篇显。
+    private let limitedCountdownIconView: UIImageView = {
+        let v = UIImageView(image: BearyIconImages.image(named: "icon_limited", pointSize: 24))
         v.translatesAutoresizingMaskIntoConstraints = false
+        v.contentMode = .scaleAspectFit
+        v.tintColor = BearyColors.limitedCalmCountdown
         v.isHidden = true
+        v.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        v.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        v.setContentHuggingPriority(.required, for: .horizontal)
+        v.setContentCompressionResistancePriority(.required, for: .horizontal)
         return v
     }()
+
+    /// 限时 pill（作者行时间后；13 semibold 蓝档，存活“限时”虚线边／到期“私密”实线边）。
+    private let limitedPillView = BearyLimitedPillView()
+
+    /// 限时倒计时 1 秒 tick：仅存活期限时篇在页时跑；离页／到期即停。
+    private var limitedCountdownTimer: Timer?
+    /// 上次应用的倒计时档位：tick 只在档位跃迁时整组重算，其余只刷文字。
+    private var limitedCountdownState: BearyEphemeral.CountdownState?
     private var imageKeys: [String] = []
 
     init(entry: Entry, isGuest: Bool) {
@@ -805,6 +787,10 @@ final class BearyDetailViewController: UIViewController {
         // 内联 GIF：入页即播（覆盖层按页显隐，不跟滚动）。
         bodyGIFOverlay.setVisible(true)
         titleGIFOverlay.setVisible(true)
+        // 限时倒计时：回页再起 tick（其上弹灯箱／picker 回页同样起播）。
+        if entry.ephemeralUntil != nil, BearyEphemeral.isLive(entry) {
+            startLimitedCountdownTimer()
+        }
         refreshGIFOverlays()
         // 停留计时：只在首次出现时起计；其上再弹灯箱／picker 后回页不重置。
         if dwellStart == nil && !dwellReported {
@@ -817,6 +803,8 @@ final class BearyDetailViewController: UIViewController {
         // 内联 GIF：离页即停（其上弹灯箱／picker 回页时 viewDidAppear 再起播）。
         bodyGIFOverlay.setVisible(false)
         titleGIFOverlay.setVisible(false)
+        // 限时倒计时：离页即停（其上弹灯箱／picker 回页时 viewDidAppear 再起 tick）。
+        stopLimitedCountdownTimer()
         // 只在详情本身被 dismiss 时上报与回调（其上弹灯箱／picker 不触发）。
         guard isBeingDismissed else { return }
         ephemeralExpiryTimer?.invalidate()
@@ -828,7 +816,7 @@ final class BearyDetailViewController: UIViewController {
         }
     }
 
-    /// 深浅切换：虚线边框视图内部自刷描边色（BearyDetailDashedBorderView
+    /// 深浅切换：限时气泡内部自刷底色与描边色（BearyLimitedBubbleView
     /// traitCollectionDidChange），控制器不再手动重画；小地球图标走 template +
     /// 动态灰 tint，系统自动跟随，无需重设；心情播放器内部自带 trait 重刷。
     /// 但正文内联心情附件的深浅变体仍需控制器重建：主题切换时正文末尾
@@ -841,7 +829,7 @@ final class BearyDetailViewController: UIViewController {
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
-            bodyLabel.attributedText = detailBodyAttributedText(entry.content ?? "", moodKey: entry.mood)
+            bodyLabel.attributedText = detailBodyAttributedText(entry.content ?? "", moodKey: entry.mood, fontSize: BearyEphemeral.bodyFontSize(content: entry.content ?? "", limited: entry.ephemeralUntil != nil))
         }
         guard isViewLoaded else { return }
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
@@ -990,7 +978,6 @@ final class BearyDetailViewController: UIViewController {
         ])
 
         buildCardHeader()
-        buildEphemeralRow()
         buildBody()
         buildStaleBanner()
         buildImages()
@@ -1143,22 +1130,6 @@ final class BearyDetailViewController: UIViewController {
             moreButton.centerYAnchor.constraint(equalTo: closeButton.centerYAnchor),
             moreButton.widthAnchor.constraint(equalToConstant: 28),
             moreButton.heightAnchor.constraint(equalToConstant: 28),
-        ])
-    }
-
-    private func buildEphemeralRow() {
-        // 限时倒计时行：只留倒计时灰字，位置在作者行下方、标题上方（与卡片同口径）；
-        // 虚线边框视图挂 contentColumnView 最底层，约束钉住内容列矩形
-        // （顶 +6、左右内缩 8、底按正文栈底 +16），正文栈高度一变框就跟着变，
-        // 不再依赖布局时手动算矩形的旧时机（旧时机下回应行高度落定后框底
-        // 仍停在旧位置，正好切穿“＋”回应钮）。
-        headerStack.addArrangedSubview(ephemeralRow)
-        contentColumnView.insertSubview(ephemeralBorderView, at: 0)
-        NSLayoutConstraint.activate([
-            ephemeralBorderView.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 6),
-            ephemeralBorderView.leadingAnchor.constraint(equalTo: contentColumnView.leadingAnchor, constant: 8),
-            ephemeralBorderView.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor, constant: -8),
-            ephemeralBorderView.bottomAnchor.constraint(equalTo: bodyStack.bottomAnchor, constant: 16),
         ])
     }
 
@@ -1322,11 +1293,15 @@ final class BearyDetailViewController: UIViewController {
         actionSpacer.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
         actionSpacer.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
         actionStack.addArrangedSubview(likeButton)
+        actionStack.addArrangedSubview(limitedCountdownIconView)
+        actionStack.addArrangedSubview(limitedCountdownLabel)
         actionStack.addArrangedSubview(bookmarkButton)
         actionStack.addArrangedSubview(actionSpacer)
         actionStack.addArrangedSubview(shareButton)
         actionStack.addArrangedSubview(shareSlotSpacer)
         actionStack.setCustomSpacing(BearySpace.xxl, after: likeButton)
+        actionStack.setCustomSpacing(BearySpace.xs, after: limitedCountdownIconView)
+        actionStack.setCustomSpacing(BearySpace.xxl, after: limitedCountdownLabel)
         bodyStack.addArrangedSubview(actionStack)
 
         // 游客提示条：与卡片游客展开态同文案，点按走登录提示；整行 44pt 可点。
@@ -1396,17 +1371,23 @@ final class BearyDetailViewController: UIViewController {
         // 正文紧贴用户名下方：头行→正文栈间距取规范标题→正文档 6（原 16 有标题／
         // 14 无标题，见规范 §3；该槽位改动须走规范同步）。头像底约束保留——
         // 正文全宽，必须 clearance 头像底；正文顶即 max(头像底，头行底) + 6，
-        // 常见态（无 @ 行、无限时行）为头像底 + 6。限时行是头行末行，其后间距即该值。
-        let headerBodyGap: CGFloat = 6
+        // 常见态（无 @ 行）为头像底 + 6。限时卡取 12：气泡尖尖高出气泡顶
+        // 7.5pt，6pt 间距会被头像底缘压住，12pt 才留足空隙。
+        let headerBodyGap: CGFloat = limitedBubbleActive ? 12 : 6
         bodyStackTopFromAvatarConstraint?.constant = headerBodyGap
         bodyStackTopFromHeaderConstraint?.constant = headerBodyGap
         bodyStackTopPinConstraint?.constant = headerBodyGap
         // 失败横幅→标题 12：横幅隐藏时栈自动忽略，不留空隙。
         bodyStack.setCustomSpacing(12, after: staleBannerView)
         // 标题贴着正文走：标题→正文 6（ChatGPT 间距跟进，#904 为 4）；标题隐藏时其后间距置 0，正文直接贴头行间距。
-        bodyStack.setCustomSpacing(titleLabel.isHidden ? 0 : 6, after: titleLabel)
-        // 正文→图片 14（ChatGPT 间距跟进，#904 为 10）：正文与图片条直接相邻。
-        bodyStack.setCustomSpacing(14, after: bodyLabel)
+        // 限时态下标题／正文在气泡内栈里，该间距走气泡内栈（固定 6），正文栈只认气泡后间距。
+        if limitedBubbleActive {
+            bodyStack.setCustomSpacing(14, after: limitedBubbleView)
+        } else {
+            bodyStack.setCustomSpacing(titleLabel.isHidden ? 0 : 6, after: titleLabel)
+            // 正文→图片 14（ChatGPT 间距跟进，#904 为 10）：正文与图片条直接相邻。
+            bodyStack.setCustomSpacing(14, after: bodyLabel)
+        }
         // 图片→定位 12（ChatGPT 间距跟进）：图片条与定位行中间隔着引用卡，
         // 两段相邻间距（图片→引用、引用→定位）各取 12（天气已并进定位行）；
         // 九宫格按钮在图片条与引用卡之间时，图片条→按钮、按钮→引用卡各取 12。
@@ -1722,8 +1703,9 @@ final class BearyDetailViewController: UIViewController {
 
         // 正文 16pt（diaryBodyFont 即 scaled 16），行高 1.6（首页卡片口径）。
         // 正文仅表情放大（2026-11-18 Li 定）：1–3 个纯表情时字号 ×2（见 detailBodyAttributedText）。
+        // 限时篇按卡片同款放大：短句 19／长文 16.5（见 BearyEphemeral.bodyFontSize）。
         // 旧心情改位：心情缀正文末尾（见 detailBodyAttributedText）。
-        bodyLabel.attributedText = detailBodyAttributedText(entry.content ?? "", moodKey: entry.mood)
+        bodyLabel.attributedText = detailBodyAttributedText(entry.content ?? "", moodKey: entry.mood, fontSize: BearyEphemeral.bodyFontSize(content: entry.content ?? "", limited: entry.ephemeralUntil != nil))
         bodyLabel.isHidden = (entry.content ?? "").isEmpty && (entry.mood ?? "").isEmpty
 
         renderImages()
@@ -1742,10 +1724,11 @@ final class BearyDetailViewController: UIViewController {
     /// 后面——用静态熊图附件直接缀在正文 attributed 串末尾（紧贴末字、
     /// 无空格）；无心情时原样返回；正文为空且有心情时只显附件。
     /// 深浅变体按当前 trait 取，主题切换时由 trait handler 重建正文。
-    private func detailBodyAttributedText(_ content: String, moodKey: String?) -> NSAttributedString {
+    private func detailBodyAttributedText(_ content: String, moodKey: String?, fontSize: CGFloat = 16) -> NSAttributedString {
         // 正文仅表情放大：1–3 个纯表情时字号 ×2（与写日记页 #1964、卡片同口径）；
         // 行高倍数 1.6 跟字号走；心情缀尾附件按生效字号 ×1.2。
-        let font = BearyText.effectiveBodyFont(BearyDynamicType.diaryBodyFont(), for: content)
+        // 限时篇字号由调用方按 BearyEphemeral.bodyFontSize 传入（短句 19／长文 16.5）。
+        let font = BearyText.effectiveBodyFont(BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: fontSize)), for: content)
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.6
         paragraph.lineBreakMode = .byCharWrapping
@@ -2178,7 +2161,7 @@ final class BearyDetailViewController: UIViewController {
             // 心情只变时也要重建正文，否则新心情附件缀不上旧正文；
             // 必须走 detailBodyAttributedText（内联记号转图 + 旧心情缀末尾），
             // 不能退回纯文本，否则记号原串会直接露出来。
-            bodyLabel.attributedText = detailBodyAttributedText(merged.content ?? "", moodKey: merged.mood)
+            bodyLabel.attributedText = detailBodyAttributedText(merged.content ?? "", moodKey: merged.mood, fontSize: BearyEphemeral.bodyFontSize(content: merged.content ?? "", limited: merged.ephemeralUntil != nil))
             bodyLabel.isHidden = (merged.content ?? "").isEmpty && (merged.mood ?? "").isEmpty
             // 116：后台补齐文案变化时只淡入文案元素。
             if !bodyLabel.isHidden { fadeLabel(bodyLabel) }
@@ -2356,19 +2339,119 @@ final class BearyDetailViewController: UIViewController {
         moreButton.accessibilityLabel = "更多操作"
     }
 
-    /// 限时详情：存活期虚线边框 + 倒计时灰字（只留倒计时行）+ 底线藏（边框代之，
-    /// 首页 refreshEphemeralState 同款）；到期或非限时按普通详情（边框与倒计时行均藏、底线显）。
+    /// 限时详情（2026-11-19 预览定版，卡片同款）：限时篇（存活或已到期）正文包
+    /// 虚线气泡、倒计时贴点赞右边、作者行挂“限时”／“私密”pill；到期或非限时
+    /// 按普通详情（气泡与倒计时行均藏、底线显）。存活期底线藏（气泡代之）。
     private func refreshEphemeralViews() {
+        let hasEphemeral = entry.ephemeralUntil != nil
         let live = BearyEphemeral.isLive(entry)
-        if live, let until = entry.ephemeralUntil {
-            ephemeralLabel.text = BearyEphemeral.remainingText(until: until)
-            ephemeralRow.isHidden = false
+        // pill：限时篇才显（存活“限时”／到期“私密”，蓝档）；其余不显。
+        if hasEphemeral {
+            limitedPillView.isHidden = false
+            limitedPillView.configure(text: live ? "限时" : "私密", expired: !live)
         } else {
-            ephemeralLabel.text = nil
-            ephemeralRow.isHidden = true
+            limitedPillView.isHidden = true
         }
-        ephemeralBorderView.isHidden = !live
+        // 气泡＋倒计时：限时篇（存活或到期）才显；其余按普通详情。
+        if hasEphemeral, let until = entry.ephemeralUntil {
+            moveTextIntoLimitedBubble()
+            let state = BearyEphemeral.countdownState(until: until)
+            limitedBubbleView.apply(state: state)
+            limitedBubbleView.isHidden = false
+            limitedCountdownIconView.isHidden = false
+            limitedCountdownIconView.tintColor = BearyEphemeral.countdownColor(for: state)
+            limitedCountdownLabel.isHidden = false
+            limitedCountdownLabel.text = BearyEphemeral.countdownText(until: until)
+            limitedCountdownLabel.textColor = BearyEphemeral.countdownColor(for: state)
+            limitedCountdownState = state
+            // 点赞—图标贴紧 6、图标—倒计时 4、倒计时—收藏留 24（热区不交，同原口径算法）。
+            actionStack.setCustomSpacing(6, after: likeButton)
+            actionStack.setCustomSpacing(BearySpace.xxl, after: limitedCountdownLabel)
+            if live { startLimitedCountdownTimer() } else { stopLimitedCountdownTimer() }
+        } else {
+            moveTextOutOfLimitedBubble()
+            limitedBubbleView.isHidden = true
+            limitedCountdownIconView.isHidden = true
+            limitedCountdownLabel.isHidden = true
+            limitedCountdownLabel.text = nil
+            limitedCountdownState = nil
+            actionStack.setCustomSpacing(BearySpace.xxl, after: likeButton)
+            stopLimitedCountdownTimer()
+        }
         separatorView.isHidden = live
+        updateDiaryStackSpacing()
+    }
+
+    /// 标题／正文移进气泡内文字栈（幂等）：气泡插到标题原位（失败横幅之后、
+    /// 标题之前；横幅是正文栈首行，气泡不得顶到它前面）；标题→正文 6 走气泡内栈间距；
+    /// 移出时按原顺序插回横幅之后的首两位。
+    private func moveTextIntoLimitedBubble() {
+        guard !limitedBubbleActive else { return }
+        limitedBubbleActive = true
+        bodyStack.removeArrangedSubview(titleLabel)
+        titleLabel.removeFromSuperview()
+        bodyStack.removeArrangedSubview(bodyLabel)
+        bodyLabel.removeFromSuperview()
+        limitedBubbleView.textStack.addArrangedSubview(titleLabel)
+        limitedBubbleView.textStack.addArrangedSubview(bodyLabel)
+        if limitedBubbleView.superview == nil {
+            let bubbleIndex = staleBannerView.superview != nil ? 1 : 0
+            bodyStack.insertArrangedSubview(limitedBubbleView, at: bubbleIndex)
+        }
+        limitedBubbleView.isHidden = false
+    }
+
+    private func moveTextOutOfLimitedBubble() {
+        guard limitedBubbleActive else { return }
+        limitedBubbleActive = false
+        limitedBubbleView.textStack.removeArrangedSubview(titleLabel)
+        titleLabel.removeFromSuperview()
+        limitedBubbleView.textStack.removeArrangedSubview(bodyLabel)
+        bodyLabel.removeFromSuperview()
+        bodyStack.removeArrangedSubview(limitedBubbleView)
+        limitedBubbleView.removeFromSuperview()
+        let titleIndex = staleBannerView.superview != nil ? 1 : 0
+        bodyStack.insertArrangedSubview(bodyLabel, at: titleIndex + 1)
+        bodyStack.insertArrangedSubview(titleLabel, at: titleIndex)
+    }
+
+    /// 倒计时 1 秒 tick：只在档位跃迁时整组重算，其余只刷倒计时文字；
+    /// 到期跃迁走既有 applyEphemeralExpiryIfNeeded 落定（非作者转占位），
+    /// 不在此处自行渲染到期态。
+    private func startLimitedCountdownTimer() {
+        guard limitedCountdownTimer == nil else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            self?.limitedCountdownTick()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        limitedCountdownTimer = timer
+    }
+
+    private func stopLimitedCountdownTimer() {
+        limitedCountdownTimer?.invalidate()
+        limitedCountdownTimer = nil
+    }
+
+    private func limitedCountdownTick() {
+        guard entry.ephemeralUntil != nil else {
+            stopLimitedCountdownTimer()
+            return
+        }
+        let state = BearyEphemeral.countdownState(until: entry.ephemeralUntil!)
+        if state == .expired {
+            stopLimitedCountdownTimer()
+            // 到期落定走既有口径（作者刷新视图、他人转占位）。
+            if !applyEphemeralExpiryIfNeeded() {
+                scheduleEphemeralExpiry()
+            }
+            return
+        }
+        if state != limitedCountdownState {
+            refreshEphemeralViews()
+        } else {
+            let text = BearyEphemeral.countdownText(until: entry.ephemeralUntil!)
+            if limitedCountdownLabel.text != text { limitedCountdownLabel.text = text }
+        }
     }
 
     /// 皇冠显隐：本人卡显皇冠（与名字同行）；他人／游客无皇冠。

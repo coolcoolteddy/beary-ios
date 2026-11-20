@@ -68,6 +68,18 @@ enum BearyColors {
     static var timelineIconGray: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? BearyColors.gray.resolvedColor(with: t) : UIColor(red: 142.0/255.0, green: 142.0/255.0, blue: 147.0/255.0, alpha: 1) } }
     /// 网页 --hov：浅 rgba(17,17,20,.06) / 深 rgba(244,244,248,.08)（悬停/按压底色）。
     static var hov: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 244.0/255.0, green: 244.0/255.0, blue: 248.0/255.0, alpha: 0.08) : UIColor(red: 17.0/255.0, green: 17.0/255.0, blue: 20.0/255.0, alpha: 0.06) } }
+    /// 限时日记虚线气泡四档色（2026-11-19 预览定版，Space xian-shi-ri-ji-yang-shi-yu-lan
+    /// 源码值；深浅同值，浅色下虚线不另加深——预览源码亦如此）：
+    /// 充裕灰 #8f8f8c、临近暖黄 #e8b34b、紧急橙 #ff7a45、到期虚线 #55554f。
+    static var limitedCalmDash: UIColor { UIColor(red: 143.0/255.0, green: 143.0/255.0, blue: 140.0/255.0, alpha: 1) }
+    static var limitedNear: UIColor { UIColor(red: 232.0/255.0, green: 179.0/255.0, blue: 75.0/255.0, alpha: 1) }
+    static var limitedUrgent: UIColor { UIColor(red: 1.0, green: 122.0/255.0, blue: 69.0/255.0, alpha: 1) }
+    static var limitedExpiredDash: UIColor { UIColor(red: 85.0/255.0, green: 85.0/255.0, blue: 79.0/255.0, alpha: 1) }
+    /// 限时倒计时文字色（预览值）：充裕 #8e8e8a、到期 #6d6d68；临近／紧急与虚线同色。
+    static var limitedCalmCountdown: UIColor { UIColor(red: 142.0/255.0, green: 142.0/255.0, blue: 138.0/255.0, alpha: 1) }
+    static var limitedExpiredCountdown: UIColor { UIColor(red: 109.0/255.0, green: 109.0/255.0, blue: 104.0/255.0, alpha: 1) }
+    /// 限时气泡底（预览值）：深 #1d1d1f／浅 #f4f4f2。
+    static var limitedBubbleBg: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 29.0/255.0, green: 29.0/255.0, blue: 31.0/255.0, alpha: 1) : UIColor(red: 244.0/255.0, green: 244.0/255.0, blue: 242.0/255.0, alpha: 1) } }
 
     /// C6：按当前 trait 重解 base 色再降透明度的动态色。0.13 透明底
     /// （私密 pill 蓝底、草稿 chip 灰底、图片未保存红底等）一律走这里，
