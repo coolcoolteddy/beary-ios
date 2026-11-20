@@ -1322,7 +1322,7 @@ class BearyProfileViewController: UIViewController {
     private var statsGridRowTop: UIStackView?
     private var statsGridRowBottom: UIStackView?
 
-    /// 写作统计卡内词汇指纹紧凑版：当年 top 4 + 口径徽标行（他人态「仅公开篇」）。
+    /// 写作统计卡内词汇指纹紧凑版：当年 top 4 + 口径徽标行（只本人可见）。
     /// 词行本身不点——整卡点按进年度回顾，避免词行手势与整卡手势双触发；
     /// 点词看篇数只在年报首屏主视觉里。年份取当年，缺当年时取最近有词条目的年，
     /// 词视图标题行自带年份，绝不把别年的词顶在当年名下。
@@ -4823,7 +4823,7 @@ class BearyProfileViewController: UIViewController {
                     self.statsWordprintView.isHidden = true
                 } else {
                     self.statsWordprintView.isHidden = false
-                    self.statsWordprintView.configure(with: wordprintValue, scope: self.isOwnProfile ? .own : .other)
+                    self.statsWordprintView.configure(with: wordprintValue)
                     // 词行在脚部容器内：脚部高度在 renderModules 末尾已按
                     // 无词行定死，词到后须重算脚部，否则新行被裁掉。
                     // refreshFooter 不回调 renderModules，无递归。
@@ -4927,7 +4927,7 @@ class BearyProfileViewController: UIViewController {
         updateStatsCardAccessibilityLabel(stats: stats, charsText: charsText, moodWeatherParts: parts)
     }
 
-    // MARK: 词汇指纹 —— 点写作统计卡进年度回顾（本人与他人均可）
+    // MARK: 词汇指纹 —— 点写作统计卡进年度回顾（只本人可见）
 
     @objc private func statsCardTapped() {
         openYearReview()

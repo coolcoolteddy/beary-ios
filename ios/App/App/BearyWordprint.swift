@@ -9,10 +9,9 @@ import UIKit
 // - 点词只显示出现篇数 / 总次数 / 月份分布，不展开正文：详情页收到的是
 //   WordprintItem（词 + 计数 + 月份篇数），不带任何 Entry、正文、标题与 id，
 //   类型上就不可能从详情跳回原文。
-// - 他人口径 fail-closed：统计函数内部先按 visibleEntries(isOwn:) 再过滤一次
-//   （调用方传来的已是可见条目，双层过滤；他人态 isPublic != true、占位、无 id
-//   条目一律排除），月份分布同样只从过滤后的条目算——私密篇独有的词进不了
-//   他人词表，私密篇集中的月份也不会在他人月份分布里冒头。
+// - 只本人可见：词汇指纹与年度回顾只在本人页呈现（#112 他人页模块组不渲染），
+//   统计函数内部仍先按 visibleEntries(isOwn:) 再过滤一次（调用方传来的已是
+//   可见条目，双层过滤），月份分布同样只从过滤后的条目算。
 // - 不新增写库：纯内存函数，语料就是个人主页已拉到的作者 scope 全量分页
 //   （modulesCorpus），不拉新接口、不写 UserDefaults / 文件 / 数据库；
 //   切年份只对内存数组重算当选年份，不重拉、不重算其他年份。
@@ -23,22 +22,22 @@ import UIKit
 //   （已核实：248 个 imageset 中无此名；预览页的 fingerprint 是网页 beary-ui
 //   路径，不是 iOS 资产）——此处只引用该名，取不到图时图标位隐藏、只留文字标题，
 //   不用 SF Symbol 顶替、不自绘；Li 补官方包进 xcassets 后自动出现。
-//   仅公开篇徽标引用 imageset 名 "icon_public_only"（#229 已注册），未注册时同样只留文字标注
-//   「仅公开篇」，不自绘、不拼 globe + lock 组合顶替单枚徽标。
 
-/// 统计口径：本人 = 全部篇（含私密）；他人 = 仅公开篇。
-enum BearyWordprintScope {
-    case own
-    case other
-
-    var labelText: String {
-        switch self {
-        case .own:
-            return "全部篇（含私密）"
-        case .other:
-            return "仅公开篇"
-        }
-    }
+/// 口径说明行：只本人可见，灰色说明文字「全部篇（含私密）」。
+func bearyMakeWordprintScopeBadge() -> UIView {
+    let row = UIStackView()
+    row.translatesAutoresizingMaskIntoConstraints = false
+    row.axis = .horizontal
+    row.spacing = 4
+    row.alignment = .center
+    let label = UILabel()
+    label.translatesAutoresizingMaskIntoConstraints = false
+    label.font = BearyDynamicType.captionFont()
+    label.adjustsFontForContentSizeCategory = true
+    label.textColor = BearyColors.gray
+    label.text = "全部篇（含私密）"
+    row.addArrangedSubview(label)
+    return row
 }
 
 enum BearyWordprintMode {
@@ -47,37 +46,6 @@ enum BearyWordprintMode {
     /// 写作统计卡内紧凑版：只显前 4 个词，词行不点——整卡点按进年度回顾，
     /// 避免词行手势与整卡手势双触发；点词看篇数只在首屏主视觉里。
     case compact
-}
-
-/// 仅公开篇徽标行：icon_public_only 资产（#229 已注册）+ 文字标注；资产未到时只留文字。
-/// 他人口径用墨色（BearyColors.ink）：「仅公开篇」是统计范围说明，不是可见性
-/// 状态，不用公开橙／私密蓝——蓝色易与私密混淆；墨色在浅色白底 21.00:1、
-/// surface1 底 19.26:1，深色底 18.04:1，均高于普通文字 4.5:1。本人态仍为灰色说明文字，不动。
-func bearyMakeWordprintScopeBadge(scope: BearyWordprintScope) -> UIView {
-    let row = UIStackView()
-    row.translatesAutoresizingMaskIntoConstraints = false
-    row.axis = .horizontal
-    row.spacing = 4
-    row.alignment = .center
-    if scope == .other, let badgeImage = BearyIconImages.image(named: "icon_public_only", pointSize: 14) {
-        let badgeView = UIImageView(image: badgeImage)
-        badgeView.tintColor = BearyColors.ink
-        badgeView.translatesAutoresizingMaskIntoConstraints = false
-        badgeView.contentMode = .scaleAspectFit
-        NSLayoutConstraint.activate([
-            badgeView.widthAnchor.constraint(equalToConstant: 14),
-            badgeView.heightAnchor.constraint(equalToConstant: 14),
-        ])
-        row.addArrangedSubview(badgeView)
-    }
-    let label = UILabel()
-    label.translatesAutoresizingMaskIntoConstraints = false
-    label.font = BearyDynamicType.captionFont()
-    label.adjustsFontForContentSizeCategory = true
-    label.textColor = scope == .other ? BearyColors.ink : BearyColors.gray
-    label.text = scope.labelText
-    row.addArrangedSubview(label)
-    return row
 }
 
 /// 词汇指纹视图：标题行（指纹图标 + 「词汇指纹」+ 年份）+ 口径徽标行 + 词行。
@@ -202,12 +170,12 @@ final class BearyWordprintView: UIView {
         }
     }
 
-    func configure(with wordprint: BearyProfilePersonalLogic.Wordprint, scope: BearyWordprintScope) {
+    func configure(with wordprint: BearyProfilePersonalLogic.Wordprint) {
         yearLabel.text = "\(wordprint.year) 年"
         for arrangedView in scopeContainer.subviews {
             arrangedView.removeFromSuperview()
         }
-        let badge = bearyMakeWordprintScopeBadge(scope: scope)
+        let badge = bearyMakeWordprintScopeBadge()
         scopeContainer.addSubview(badge)
         NSLayoutConstraint.activate([
             badge.topAnchor.constraint(equalTo: scopeContainer.topAnchor),
@@ -354,12 +322,10 @@ final class BearyWordprintDetailViewController: UIViewController {
 
     private let item: BearyProfilePersonalLogic.WordprintItem
     private let year: Int
-    private let scope: BearyWordprintScope
 
-    init(item: BearyProfilePersonalLogic.WordprintItem, year: Int, scope: BearyWordprintScope) {
+    init(item: BearyProfilePersonalLogic.WordprintItem, year: Int) {
         self.item = item
         self.year = year
-        self.scope = scope
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -421,7 +387,7 @@ final class BearyWordprintDetailViewController: UIViewController {
         yearLabel.text = "\(year) 年"
         stack.addArrangedSubview(yearLabel)
 
-        stack.addArrangedSubview(bearyMakeWordprintScopeBadge(scope: scope))
+        stack.addArrangedSubview(bearyMakeWordprintScopeBadge())
 
         let countsLabel = UILabel()
         countsLabel.numberOfLines = 0
