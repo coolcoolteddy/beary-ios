@@ -138,7 +138,6 @@ extension BearyNineGridViewController: UICollectionViewDataSource, UICollectionV
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
-        BearyHaptics.press()
         // 失败格点按只重试本格图片，不进灯箱（照片页同款）。
         if let photoCell = collectionView.cellForItem(at: indexPath) as? BearyProfilePhotoCell, photoCell.isFailed {
             photoCell.retryLoading()

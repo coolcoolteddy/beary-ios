@@ -2733,8 +2733,7 @@ class BearyFeedViewController: UIViewController {
         // 先行：目标态立即落地（与成功路径同一同步函数，不重建行、不重播动效）。
         applyVisibilityState(entryId: entryId, isPublic: BearyVisibility.isPublicValue(targetVisibility), publishedAt: nil, visibility: targetVisibility, ephemeralUntil: nil)
         BearySoundPlayer.play(.visibilityClick)
-        // 审计动效组：可见性翻转统一为“图标＋pill 文案＋轻震”，此处补轻震。
-        BearyHaptics.press()
+        // 审计动效组：可见性翻转统一为“图标＋pill 文案”。（2026-11-19 震动精简：轻震去掉）
         BearyAPI.shared.setVisibility(id: entryId, visibility: targetVisibility) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -2941,8 +2940,6 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate, U
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: !UIAccessibility.isReduceMotionEnabled)
-        // W6：行点按补 .light 轻震（行本身无按钮，点按即导航/展开均属一次确认）。
-        BearyHaptics.press()
         let entries = plazaEntries()
         if indexPath.row >= 0, indexPath.row < entries.count {
             tryNavigateEntry(entries[indexPath.row])

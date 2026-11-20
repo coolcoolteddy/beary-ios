@@ -1334,8 +1334,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                     self.pooledEntryId = resp.pooledEntryId ?? entryId
                     self.openHintLabel.text = "已放进池子，可以开盒了。"
                     // 第十轮审计文案 f：状态行已说明成功，不再弹同文 Toast；
-                    // 成功反馈只留一次轻震。Toast 文案本身是 §12 定版，一字不动。
-                    BearyHaptics.press()
+                    // Toast 文案本身是 §12 定版，一字不动。
                     self.setStep(.pool)
                 case .failure(let error):
                     var alreadyPooled = self.isAlreadyPooledError(error)

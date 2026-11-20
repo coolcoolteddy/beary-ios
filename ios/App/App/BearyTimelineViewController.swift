@@ -453,7 +453,6 @@ final class BearyCalendarCardView: UIView {
             prevButton.titleLabel?.font = UIFont.systemFont(ofSize: 17)
         }
         prevButton.addTarget(self, action: #selector(didTapPrevious), for: .touchUpInside)
-        prevButton.bearyAddPressHaptic()
 
         nextButton.translatesAutoresizingMaskIntoConstraints = false
         nextButton.backgroundColor = BearyColors.surface2
@@ -940,7 +939,6 @@ final class BearyTimelineCell: UITableViewCell {
         btn.clipsToBounds = true
         btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
-        btn.bearyAddPressHaptic()
         return btn
     }()
 
@@ -6767,8 +6765,7 @@ class BearyTimelineViewController: UIViewController {
         // 先行：目标态立即落地（模型 + 可见行，不整页重拉）。
         applyVisibilityLocally(entryId: entryId, isPublic: BearyVisibility.isPublicValue(targetVisibility), publishedAt: nil, visibility: targetVisibility, ephemeralUntil: nil)
         BearySoundPlayer.play(.visibilityClick)
-        // 审计动效组：可见性翻转统一为“图标＋pill 文案＋轻震”，此处补轻震。
-        BearyHaptics.press()
+        // 审计动效组：可见性翻转统一为“图标＋pill 文案”。（2026-11-19 震动精简：轻震去掉）
         reloadVisibleTimelineRow(entryId: entryId)
         BearyAPI.shared.setVisibility(id: entryId, visibility: targetVisibility) { [weak self] result in
             DispatchQueue.main.async {
@@ -7115,8 +7112,6 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         let now = Date()
         if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
         lastNavigationAt = now
-        // W6：行点按补 .light 轻震。
-        BearyHaptics.press()
         onOpenEntry?(sections[indexPath.section].entries[indexPath.row])
     }
 

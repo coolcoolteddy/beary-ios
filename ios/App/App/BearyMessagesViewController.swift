@@ -979,7 +979,6 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
         guard indexPath.row < mergedRows.count else { return }
         switch mergedRows[indexPath.row] {
         case .notifCard(let card):
-            BearyHaptics.press()
             let detail = BearyNotificationDetailViewController(
                 card: card,
                 notifSource: notifChild,
@@ -988,16 +987,13 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
             activeDetailVC = detail
             onOpenNotificationDetail?(detail)
         case .notifLetter(let item):
-            BearyHaptics.press()
             notifChild.openItemForDetail(item)
         case .conversation(let conv):
-            BearyHaptics.press()
             guard let peer = conv.peer, peer.id != nil else { return }
             onOpenDM?(peer)
         case .sentinel(let state):
             // 失败态哨兵行点按重试（loadMore 开头即清失败旗，在途守卫防连点）。
             guard state == .failed else { return }
-            BearyHaptics.press()
             notifChild.loadMoreForMerge()
         case .notifFailure, .dmFailure:
             // 失败行本身不可点，重试走行内按钮（selectionStyle 已 none）。

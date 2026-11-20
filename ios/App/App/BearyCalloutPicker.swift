@@ -153,11 +153,10 @@ final class BearyBubbleMenuView: UIView {
             return true
         }
 
-        // 按压反馈：轻震＋微缩，松手/取消回弹（UIButton 版按压反馈是
+        // 按压反馈：微缩，松手/取消回弹（UIButton 版按压反馈是
         // UIControl 专属，视图行自带同款手感）。
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
             super.touchesBegan(touches, with: event)
-            BearyHaptics.press()
             UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
                            delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
                            animations: { self.transform = CGAffineTransform(scaleX: 0.98, y: 0.98) })

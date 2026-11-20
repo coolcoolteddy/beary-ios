@@ -620,7 +620,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private var confirmedLiked = false
     private var confirmedLikeCount = 0
     private var confirmedBookmarked = false
-    /// 跟手批：按下已给过先行反馈（轻震/预取消赞），抬起确认时不再重播。
+    /// 跟手批：按下已给过视觉预态（预取消赞），抬起确认时不再重播。
     private var likePressPreviewActive = false
     /// 点赞钮显式宽约束：见 updateLikeButton / applyLikeButtonState 的宽度算法。
     private var likeButtonWidthConstraint: NSLayoutConstraint?
@@ -1088,7 +1088,6 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         btn.isHidden = true
         btn.addTarget(self, action: #selector(foldButtonTapped), for: .touchUpInside)
-        btn.bearyAddPressHaptic()
         return btn
     }()
 
@@ -1107,7 +1106,6 @@ class BearyDiaryCardCell: UITableViewCell {
         btn.clipsToBounds = true
         btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
-        btn.bearyAddPressHaptic()
         return btn
     }()
 
@@ -1169,7 +1167,7 @@ class BearyDiaryCardCell: UITableViewCell {
         let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.addTarget(self, action: #selector(bookmarkButtonTapped), for: .touchUpInside)
-        // W6：原 iconTouchDown 只缩 .84，改通用按压（缩 .84 + .light），点赞钮不动（已有 likePressDown）。
+        // W6：原 iconTouchDown 只缩 .84，改通用按压（只缩放），点赞钮不动（已有 likePressDown）。
         btn.bearyAddPressFeedback()
         return btn
     }()
@@ -3733,7 +3731,7 @@ class BearyDiaryCardCell: UITableViewCell {
         BearyIconMotion.pressUp(on: sender)
     }
 
-    /// 跟手批：按下即给先行反馈（轻震/预取消赞），手指的按压不等抬起；
+    /// 跟手批：按下即给视觉预态（预取消赞），手指的按压不等抬起；
     /// 首页模式守卫与 likeTapped 完全一致（公开、已登录、非忙碌、有 id），不满足不预览；
     /// 个人主页模式守卫为登录态（原口径）；API 仍只在抬起确认时发。
     @objc private func likePressDown() {

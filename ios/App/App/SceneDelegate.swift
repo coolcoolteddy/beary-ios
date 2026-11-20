@@ -1935,7 +1935,6 @@ final class BearyChromeViewController: UIViewController {
             fabDragAnchor = gesture.location(in: view)
             fabDragging = true
             fabDraggedThisTouch = false
-            BearyHaptics.press()
         case .changed:
             guard fabDragging, let anchor = fabDragAnchor else { return }
             let point = gesture.location(in: view)
@@ -2121,8 +2120,6 @@ final class BearyChromeViewController: UIViewController {
     /// 底栏分段切换：只在选段变化时触发（点已选段不触发），逐段沿用旧钮的导航调用，
     /// home 走 showPage、其余走 navigator.goTab，与旧钮行为完全一致。
     @objc private func bottomSegmentChanged() {
-        // W6：分段器无 touchDown 事件，切换瞬间补 .light（与重拍手势各管一种点按，不重叠）。
-        BearyHaptics.press()
         switch bottomSegmented.selectedSegmentIndex {
         case 0: didTapTimeline()
         case 1: didTapHome()
@@ -2184,8 +2181,6 @@ final class BearyChromeViewController: UIViewController {
         let segmentWidth = seg.bounds.width / 4
         let tapped = min(3, max(0, Int(gesture.location(in: seg).x / segmentWidth)))
         guard tapped == segmentIndexAtTouchDown else { return }
-        // W6：重拍（点已选段，valueChanged 不发）补 .light；切段时本分支已提前返回，不与上条重叠。
-        BearyHaptics.press()
         switch tapped {
         case 0: didTapTimeline()
         case 1: didTapHome()
