@@ -581,15 +581,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 编辑回填补拉在途态：true 时引用区失败行暂隐（防重复点重试）、保存钮同样
     /// 禁用（回填未完成时 PUT 同样会误清原引用与原图）；成功或失败回落时清掉。
     private var editQuoteFetchInFlight = false
-    /// 引用 qp-mode 进出时保存/恢复的外层滚动位置（网页 qpPrevScroll 的 sheet 滚动等价；
-    /// 正文 UITextView 关滚动、随内容生长，故无 textarea 内部滚动需要另存）。
-    private var quotePanelSavedScrollOffset = CGPoint.zero
-    private var quotePanelSavedScrollValid = false
-    /// 引用面板开关交叉淡变：在途快照（旧内容）与代次。快照只盖滚动区＋工具栏
-    /// （顶栏不入镜）；淡变期间 sheet 高不动，淡完再跟进，代次用于快进重开时
-    /// 让过期完成的回调不再结算 sheet 高。
-    private var quotePanelTransitionSnapshot: UIView?
-    private var quotePanelTransitionSeq = 0
     /// C1：工具栏上方选择条：同一时刻最多展开一条（写给），nil=全部收起。
     /// 心情/天气旧条带已删（见下），入口只走天气尖角弹出框（心情入口已删），不再走本值；
     /// 旧附加栏三态随双重入口删除而整组拆除，不再有“附加栏撑着显示天气行”的压制状态机。
@@ -909,13 +900,26 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var plusPageEdgeDismiss: BearyEdgeDismissController?
     /// 草稿保存级别：nil=未显示；2=草稿已保存；1=文字已保存，图片未保存；0=保存失败（红字）。
     private var draftStatusLevel: Int?
-    /// 引用内嵌面板状态：当前 tab（timeline/liked/saved）与每 tab 缓存、加载序号。
+    /// 引用选择底 sheet 状态：当前 tab（timeline/liked/saved）与每 tab 缓存、加载序号。
+    /// 面板现为通顶底 sheet（2026-11-17 Li 定），quotePanelOpen = sheet 已打开。
     private var quotePanelOpen = false
     private var quotePanelTab = "timeline"
     private var quotePanelCache: [String: [Entry]] = [:]
     private var quotePanelSeq = 0
     private var quotePanelLoading = false
     private var quotePanelFailed = false
+    /// 引用 sheet 呈现态：通顶底 sheet 实例（每次打开新建，关闭完成置 nil）。
+    private var quoteSheet: BearyQuoteSheetViewController?
+    /// 引用 sheet 转场进行中（present/dismiss 动画 0.26s 内忽略重复开关，避免 present/dismiss 打架）。
+    private var quoteSheetTransitioning = false
+    /// quoteTabStack 在编辑器内的原约束（打开时停用、装进 sheet；关闭时恢复）。
+    private var quoteTabStackHomeConstraints: [NSLayoutConstraint] = []
+    /// quoteTabStack 在 sheet 内的约束（关闭时停用）。
+    private var quoteTabStackSheetConstraints: [NSLayoutConstraint] = []
+    /// quotePanel 在 sheet 滚动区内的约束（关闭时停用）。
+    private var quotePanelSheetConstraints: [NSLayoutConstraint] = []
+    /// quotePanel 在内容栈里的原位置（关闭时插回此处）。
+    private var quotePanelStackIndex = 0
 
     // MARK: - 视图（段落顺序即网页版顺序，见文件头注释）
 
@@ -1248,9 +1252,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var quotePanelStateTopToPanelConstraint: NSLayoutConstraint?
     private var quotePanelStateTopToRowsConstraint: NSLayoutConstraint?
     private var quotePanelStateBottomConstraint: NSLayoutConstraint?
-    /// 录屏批 (b)：引用页标题保存/恢复——打开面板时标题改“选择引用”，关闭时
-    /// 还原打开前的标题（“新日记”/“编辑日记”/“加载日记…”均按原样回，不硬编码）。
-    private var quotePanelSavedTitle: String?
 
     // MARK: - 生命周期
 
@@ -1675,23 +1676,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 verticalFittingPriority: .fittingSizeLevel
             ).height
         }
-        // qp-mode 整编形态：网页 qp-mode 高度——手机端 86vh，≥821px 桌面端
-        // min(620px, 82vh)（beary.html:602/606；居中卡呈现层另有 80% 封顶，
-        // 实际取小，属呈现层口径，本文件不动呈现层）。
-        if quotePanelOpen {
-            // S8：视口以窗口为准（未挂窗回退屏）；桌面判断用窗口宽，不用呈现宽
-            // （居中卡本身只有 640，会误判为窄屏）。阈值 821 / 620 不动。
-            let viewportHeight = view.window?.bounds.height ?? UIScreen.main.bounds.height
-            let windowWidth = view.window?.bounds.width ?? UIScreen.main.bounds.width
-            let target = windowWidth >= 821 ? min(620, viewportHeight * 0.82) : viewportHeight * 0.86
-            guard abs(preferredContentSize.height - target) > 0.5 else { return }
-            preferredContentSize = CGSize(width: fittingWidth, height: target)
-            setNeedsLayoutUnlessPresenting()
-            return
-        }
         let targetSize = CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height)
         let fitted = contentStack.systemLayoutSizeFitting(targetSize, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
-        // 顶部 @ 行不在内容栈里：出现时 sheet 高另加它（面板打开时走视口档，不到此处）。
+        // 顶部 @ 行不在内容栈里：出现时 sheet 高另加它。
         let mentionTopHeight = mentionTopRow.isHidden ? 0 : Self.mentionTopRowHeight
         // 任务2：准备发布行同样不在内容栈里：出现时 sheet 高另加它。
         let publishVisibilityHeight = publishVisibilityRow.isHidden ? 0 : (publishVisibilityRowHeightConstraint?.constant ?? 0)
@@ -1730,8 +1717,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         topSeparator.backgroundColor = BearyColors.line
         // 全屏页左上角统一左箭头：此前是 plain X 叉叉，现改 icon_back 24pt
         // 墨色（深色反白走 ink 动态色）、44pt 热区；VoiceOver 读“返回”。
-        // 行为不变：引用面板打开时本钮只退面板，见 setQuotePanelOpen；
-        // 面板关着时点按仍走 didTapCancel 原取消流程（存草稿/清临时文件）。
+        // 行为不变：引用面板打开时本钮只退面板（面板现为通顶底 sheet，退面板即
+        // 关 sheet，见 didTapCancel 的 quotePanelOpen 分支）；面板关着时点按
+        // 仍走 didTapCancel 原取消流程（存草稿/清临时文件）。
         cancelButton.setTitle(nil, for: .normal)
         cancelButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
         cancelButton.tintColor = BearyColors.ink
@@ -2757,12 +2745,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshQuoteTabs()
         quoteTabStack.isHidden = true
         view.addSubview(quoteTabStack)
-        NSLayoutConstraint.activate([
+        // 通顶底 sheet：tab 条在编辑器内的原约束存下来——打开时停用、装进 sheet
+        // tabHost，关闭时恢复（见 install/uninstallQuotePanel）。
+        quoteTabStackHomeConstraints = [
             quoteTabStack.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 10),
             quoteTabStack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 16),
             quoteTabStack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -16),
             quoteTabStack.heightAnchor.constraint(equalToConstant: 36),
-        ])
+        ]
+        NSLayoutConstraint.activate(quoteTabStackHomeConstraints)
         refreshQuoteTabs()
         quotePanelSpinner.translatesAutoresizingMaskIntoConstraints = false
         quotePanelLoadingLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -2801,11 +2792,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanelRows.translatesAutoresizingMaskIntoConstraints = false
         quotePanelRows.axis = .vertical
         quotePanelRows.spacing = 0
-        // 112 v2 修正：列表栈是引用面板的同一面背板，跟面板一起走 surface3，
-        // 与其他 sheet 一致；行底不再另铺灰块。单改面板底会被列表栈的 bg 盖住，
-        // 列表态看不出变化、有行又有失败态时还会上下拼色。
-        quotePanelRows.backgroundColor = BearyColors.surface3
+        // 112 v2 修正：列表栈是引用面板的同一面背板，跟面板一起走 surface1
+        //（2026-11-17 Li 定：写日记页弹窗底色走 surface1）；行底不再另铺灰块。
+        // 单改面板底会被列表栈的 bg 盖住，列表态看不出变化、有行又有失败态时还会上下拼色。
+        quotePanelRows.backgroundColor = BearyColors.surface1
         contentStack.addArrangedSubview(quotePanel)
+        // 通顶底 sheet：记下面板在内容栈里的原位置，关闭时插回此处。
+        quotePanelStackIndex = contentStack.arrangedSubviews.firstIndex(of: quotePanel) ?? 0
         quotePanel.addSubview(quotePanelRows)
         quotePanel.addSubview(quotePanelStateStack)
         quotePanelStateStack.addArrangedSubview(quotePanelSpinnerWrap)
@@ -2840,10 +2833,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 审计 R9 A：面板不再让三态提示画在 0 高容器外——内容全部收进
         // 有高度的容器内，溢出直接裁掉。
         quotePanel.clipsToBounds = true
-        // 引用面板背板跟其他 sheet 一致走 surface3（2026-10-29 第 26 项把背板改回
-        // bg 的旧理由已作废：当时是内缩灰色容器才有方框感，现在面板全幅展开，
-        // 不再是内缩容器；tab 条仍为独立控制行、未动）。
-        quotePanel.backgroundColor = BearyColors.surface3
+        // 引用面板背板走 surface1（2026-11-17 Li 定：写日记页弹窗底色走 surface1；
+        // 与 composer-popups-surface1 那支同值，合入变基时再对。2026-10-29
+        // 第 26 项把背板改回 bg 的旧理由已作废：当时是内缩灰色容器才有方框感，
+        // 现在面板全幅展开，不再是内缩容器；tab 条仍为独立控制行、未动）。
+        quotePanel.backgroundColor = BearyColors.surface1
         quotePanel.isHidden = true
         contentStack.setCustomSpacing(16, after: quotePanel)
     }
@@ -2889,227 +2883,121 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 引用面板开关交叉淡变：快照盖住滚动区＋工具栏旧内容（顶栏不入镜），布局
-    /// 在快照下瞬间换好，旧快照淡出即新旧内容在同一容器里交叉淡变。淡变期间
-    /// sheet 高不动（外框不动、快照与滚动区严丝合缝），淡完再跟进 sheet 高。
-    private func quotePanelTransitionRect() -> CGRect {
-        let top = scrollView.frame.minY
-        return CGRect(x: 0, y: top, width: view.bounds.width, height: max(0, view.bounds.height - top))
-    }
-
-    private func beginQuotePanelCrossfade() -> Int? {
-        // 快进重开（上一淡变未完又开关）时先清掉在途快照，不留残影。
-        quotePanelTransitionSnapshot?.removeFromSuperview()
-        quotePanelTransitionSnapshot = nil
-        let rect = quotePanelTransitionRect()
-        guard rect.height > 0, view.bounds.width > 0,
-              let snapshot = view.resizableSnapshotView(from: rect, afterScreenUpdates: true, withCapInsets: .zero) else {
-            return nil
-        }
-        snapshot.frame = rect
-        view.addSubview(snapshot)
-        quotePanelTransitionSeq += 1
-        quotePanelTransitionSnapshot = snapshot
-        return quotePanelTransitionSeq
-    }
-
-    private func endQuotePanelCrossfade(seq: Int, duration: TimeInterval) {
-        guard let snapshot = quotePanelTransitionSnapshot, seq == quotePanelTransitionSeq else { return }
-        UIView.animate(withDuration: duration, animations: {
-            snapshot.alpha = 0
-        }, completion: { [weak self] _ in
-            guard let self = self, seq == self.quotePanelTransitionSeq else { return }
-            snapshot.removeFromSuperview()
-            if self.quotePanelTransitionSnapshot === snapshot {
-                self.quotePanelTransitionSnapshot = nil
-            }
-            self.updatePreferredContentSize()
-        })
-    }
-
-    /// 引用面板 qp-mode 整编形态（网页 qpEnterMode/qpExitMode 同款）：
-    /// 打开时只留面板：正文/图片条/工具栏/附加栏/天气/状态行/写给/引用区/规则框
-    /// 全部隐藏，发布钮隐藏、取消变“返回”；关闭时只退面板，不走整编取消流程，
-    /// 并恢复打开前保存的外层滚动位置。编辑模式同样可用（C6），不再早退。
+    /// 选择引用现为通顶底部弹窗（2026-11-17 Li 定：内嵌面板改底 sheet）：
+    /// 内容（tab 条＋行列表＋加载/空态/重试）仍是编辑器自有的 quoteTabStack +
+    /// quotePanel 两棵视图，打开时装进 BearyQuoteSheetViewController 呈现，
+    /// 关闭时搬回原位；行渲染／加载／选行逻辑全不动。编辑器 chrome 不再因
+    /// 面板开关而隐藏／恢复（旧 qp-mode 整编态已删）；标题不再改“选择引用”
+    ///（sheet 自带标题）。#1756 的内嵌面板开关动画随呈现方式走 sheet 转场，
+    /// 合入变基时再对。编辑模式同样可用（C6），不再早退。
     private func setQuotePanelOpen(_ open: Bool) {
         if open == quotePanelOpen {
             return
         }
-        quotePanelOpen = open
+        if quoteSheetTransitioning {
+            return
+        }
         if open {
+            guard presentedViewController == nil else { return }
             // 审计 P2-24：面板新开时入场键集清零（本轮打开内换 tab 不重播，关闭重开再播）。
             quotePanelAnimatedRowKeys.removeAll()
-            quotePanelSavedScrollOffset = scrollView.contentOffset
-            quotePanelSavedScrollValid = true
-            // 跳动审计第三批第 10 条：先拍旧内容快照再换布局——快照盖住滚动区＋
-            // 工具栏（顶栏不入镜），布局在快照下瞬间换好，旧快照淡出即新旧内容
-            // 在同一容器里交叉淡变；减动效或快照失败时 crossfadeSeq 为 nil，走旧路。
-            let crossfadeSeq = UIAccessibility.isReduceMotionEnabled ? nil : beginQuotePanelCrossfade()
             view.endEditing(true)
-            // 引用面板整编态下正文同藏（109：标题输入区同藏，关闭时同恢复）。
-            headlineWrap.isHidden = true
-            textView.isHidden = true
-            imageScrollView.isHidden = true
-            // 第二轮增量审计第 6 项：面板打开时图片条直接藏（不走 refreshImageStripVisibility），
-            // 96 必需高须同步停用；关闭时经 refreshImageStripVisibility 按有无图片恢复。
-            imageStripHeightConstraint?.isActive = false
-            toolbarContainer.isHidden = true
-            toolStripStack.isHidden = true
-            selectedChipsRow.isHidden = true
-            imageUndoBar.isHidden = true
-            statusRow.isHidden = true
-            // 审计：底部元信息行与引用面板互斥，打开面板时同藏（关闭时由 refreshMetaRow 按地点/天气数据恢复）。
-            metaRowStack.isHidden = true
-            // 顶部 @ 行同其他编辑器 chrome 一并隐藏（否则会与面板 tab 条重叠）。
-            refreshMentionTopRow()
-            updateScrollBottomAnchoring()
-            refreshImageUndoBar()
-            quoteSection.isHidden = true
-            // 间隙修复（只动布局）：滚动归零不影响开头已保存的恢复偏移；面板前各区栈间距显式置 0，
-            // 否则隐藏区塌掉后残留 customSpacing 会在面板上方留空隙；tab 条显式可见后先落一次布局，
-            // 再显示面板，首帧即按无间隙高度算。
-            scrollView.contentOffset = CGPoint.zero
-            contentStack.setCustomSpacing(0, after: textView)
-            contentStack.setCustomSpacing(0, after: imageScrollView)
-            contentStack.setCustomSpacing(0, after: statusRow)
-            contentStack.setCustomSpacing(0, after: quoteSection)
-            quoteTabStack.isHidden = false
-            scrollView.contentInset.top = 46
-            view.layoutIfNeeded()
-            quotePanel.isHidden = false
-            // 录屏批 (b)：面板标题不再沿用“新日记”/“编辑日记”，打开前先存原标题。
-            quotePanelSavedTitle = titleLabel.text
-            titleLabel.text = "选择引用"
-            // 全屏左箭头统一：顶栏钮恒为 icon_back、恒读“返回”，面板打开时点它
-            // 仍只退面板（didTapCancel 分支不变）；以下两行与初值相同，仅作显式确认。
-            cancelButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
-            cancelButton.accessibilityLabel = "返回"
-            publishButton.isHidden = true
-            // 编辑器改版：引用面板打开时顶栏草稿 pill 随发布钮同藏（旧时工具栏整体藏，pill 在其中）；
-            // 可见性钮同藏（与发布钮同组，关闭时按编辑模式恢复）。
-            draftPillButton.isHidden = true
-            visibilityButton.isHidden = true
-            // 任务2：引用面板打开时准备发布行同其他 chrome 一并隐藏。
-            refreshPublishVisibilityRow()
+            // 天气 callout 与定位 popover 在 #1985 已删（天气自动显示、
+            // 定位走底 sheet，受 presentedViewController == nil 守卫），无可收。
+            let sheet = BearyQuoteSheetViewController()
+            sheet.onRequestClose = { [weak self] in self?.setQuotePanelOpen(false) }
+            sheet.loadViewIfNeeded()
+            installQuotePanel(into: sheet)
+            quoteSheet = sheet
+            quotePanelOpen = true
+            quoteSheetTransitioning = true
+            present(sheet, animated: BearyMotion.animated(true)) { [weak self] in
+                self?.quoteSheetTransitioning = false
+            }
             refreshQuoteTabs()
-            // 录屏批 (e)：原顺序先 layout 再显示面板，转圈在 load 里起在面板布局
-            // 落定之前，首帧会落在面板收起态位置（编辑器中央一闪）再跳到面板里；
-            // 此处面板已显示，再落一次布局，帧 settle 后才起转圈，转圈首帧即在面板内。
-            view.layoutIfNeeded()
             loadQuotePanelTab()
-            // M6：面板打开带透明度过渡。交叉淡变时面板本身直接落终值 alpha 1，
-            // 旧快照在其上淡出即交叉淡变；sheet 高在淡变结束后再跟进（淡变期间
-            // 外框不动，快照与滚动区严丝合缝）。减动效直设终值并立即跟进 sheet 高；
-            // 快照失败时走旧路（面板自身 alpha 0→1，sheet 高同步跟进）。
-            if let seq = crossfadeSeq {
-                quotePanel.alpha = 1
-                endQuotePanelCrossfade(seq: seq, duration: BearyMotion.normal)
-            } else if UIAccessibility.isReduceMotionEnabled {
-                quotePanel.alpha = 1
-                updatePreferredContentSize()
-            } else {
-                quotePanel.alpha = 0
-                UIView.animate(withDuration: BearyMotion.normal) { self.quotePanel.alpha = 1 }
-                updatePreferredContentSize()
-            }
         } else {
-            // M6：关闭先 0.18s 淡出再恢复各区（减动效直接恢复）；恢复后重算 sheet 高。
-            // 交叉淡变时 sheet 高改在淡变结束后再跟进（deferPreferredSize）。
-            let applyClose = { (deferPreferredSize: Bool) in
-                self.quoteTabStack.isHidden = true
-                self.scrollView.contentInset.top = 0
-                self.quotePanel.isHidden = true
-                // 面板关闭：行天气播放器停播摘掉（isHidden 不离窗，播放器自身不停）。
-                self.clearQuoteWeatherEmotes()
-                // 录屏批 (b/e)：关闭即停转圈、藏加载文案（在途请求的回包另有面板守卫，
-                // 不会把转圈顶回已关闭的面板），标题还原打开前存的那句。
-                self.quotePanelSpinner.stopSpinning()
-                self.quotePanelLoadingLabel.isHidden = true
-                self.refreshQuotePanelStateLayout()
-                if let savedTitle = self.quotePanelSavedTitle {
-                    self.titleLabel.text = savedTitle
-                    self.quotePanelSavedTitle = nil
-                } else {
-                    self.titleLabel.text = self.isEditMode ? "编辑日记" : "新日记"
-                }
-                self.headlineWrap.isHidden = false
-                self.textView.isHidden = false
-                self.toolbarContainer.isHidden = false
-                self.selectedChipsRow.isHidden = false
-                self.quoteSection.isHidden = false
-                // 全屏左箭头统一：退出面板后图标仍是 icon_back（与 buildTopBar
-                // 初值一致），不再换回叉叉；行为仍是 didTapCancel 原流程。
-                self.cancelButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
-                self.cancelButton.accessibilityLabel = "返回"
-                self.publishButton.isHidden = false
-                self.draftPillButton.isHidden = false
-                self.visibilityButton.isHidden = self.isEditMode
-                // 间隙修复的关闭恢复：把打开时置 0 的栈间距按 build 时原值还原（其余区同 build 原值）。
-                self.contentStack.setCustomSpacing(12, after: self.textView)
-                self.contentStack.setCustomSpacing(4, after: self.imageScrollView)
-                // 窄屏 5 项之 4：状态行不再无条件复原 isHidden=false＋间距 8——
-                // 新建模式倒计时本就隐藏，复原会把 26pt 空白行带回来；经
-                // refreshStatusRowVisibility 按倒计时实际显隐恢复（编辑态显示＋8、
-                // 新建态隐藏＋0）。
-                self.refreshStatusRowVisibility()
-                // 引用卡在标题与正文之间，关闭恢复时卡后间距按建栈原值 12 还原。
-                self.contentStack.setCustomSpacing(12, after: self.quoteSection)
-                // 各区显隐按正常态重算（选择条、@ 行、引用区）。
-                self.refreshToolStrip()
-                self.refreshRecipientRow()
-                self.refreshQuoteSection()
-                self.refreshImageStripVisibility()
-                self.refreshImageUndoBar()
-                // 审计：底部元信息行按地点/天气数据恢复（有地点或天气才显示，两者皆无仍隐藏）。
-                self.refreshMetaRow()
-                // 任务2：面板关闭后准备发布行按正常态（正文非空即显）恢复。
-                self.refreshPublishVisibilityRow()
-                if self.quotePanelSavedScrollValid {
-                    self.quotePanelSavedScrollValid = false
-                    self.view.layoutIfNeeded()
-                    // 关闭恢复时偏移钳制到 ≥ 0：负偏移叠加滞留的顶 inset 会把整块
-                    // 内容往下顶（标题行多出空白）；正常态下偏移本就不应为负。
-                    let restoredOffset = self.quotePanelSavedScrollOffset
-                    self.scrollView.setContentOffset(CGPoint(x: restoredOffset.x, y: max(0, restoredOffset.y)), animated: false)
-                }
-                // 关闭完成收敛：若某关闭路径绕过了复位导致顶 inset 滞留（如 46pt），
-                // 在此强制归 0，避免整块内容被往下顶。
-                if self.scrollView.contentInset.top != 0 {
-                    self.scrollView.contentInset.top = 0
-                }
-                if !deferPreferredSize {
-                    self.updatePreferredContentSize()
-                }
+            quotePanelOpen = false
+            // 录屏批 (b/e) 同款：关闭即停转圈、藏加载文案（在途请求的回包另有面板守卫，
+            // 不会把转圈顶回已关闭的面板）。
+            quotePanelSpinner.stopSpinning()
+            quotePanelLoadingLabel.isHidden = true
+            refreshQuotePanelStateLayout()
+            // 面板关闭：行天气播放器停播摘掉（isHidden 不离窗，播放器自身不停）。
+            clearQuoteWeatherEmotes()
+            guard let sheet = quoteSheet else {
+                quoteSheetTransitioning = false
+                return
             }
-            if UIAccessibility.isReduceMotionEnabled {
-                applyClose(false)
-            } else if let seq = beginQuotePanelCrossfade() {
-                // 交叉淡变：先在不可见状态下恢复布局与保存的偏移（快照盖着），
-                // 再淡出旧快照显出编辑器；sheet 高在淡变结束后再跟进。
-                applyClose(true)
-                self.quotePanel.alpha = 1
-                endQuotePanelCrossfade(seq: seq, duration: BearyMotion.micro)
-            } else {
-                UIView.animate(withDuration: BearyMotion.micro, animations: {
-                    self.quotePanel.alpha = 0
-                }, completion: { _ in
-                    applyClose(false)
-                    self.quotePanel.alpha = 1
-                })
+            quoteSheetTransitioning = true
+            sheet.dismiss(animated: BearyMotion.animated(true)) { [weak self] in
+                self?.uninstallQuotePanelFromSheet()
+                self?.quoteSheet = nil
+                self?.quoteSheetTransitioning = false
             }
         }
     }
 
-    /// C1：scrollView 底锚三档切换——引用面板打开时锚整页底（工具栏与选择条都藏，
-    /// 不留空隙）；选择条展开时锚选择条顶（条不盖住正文尾部）；其余时锚工具栏顶。
-    /// 改锚只发生在这两处：选择条刷新（refreshToolStrip）与引用面板开关。
+    /// 打开：把 quoteTabStack 装进 sheet 的 tabHost、quotePanel 装进 sheet 的
+    /// 面板滚动区；两棵视图内部约束不动（tab 条原约束停用、面板在内容栈里的
+    /// 位置记下，关闭时原样搬回）。
+    private func installQuotePanel(into sheet: BearyQuoteSheetViewController) {
+        NSLayoutConstraint.deactivate(quoteTabStackHomeConstraints)
+        quoteTabStack.removeFromSuperview()
+        quoteTabStack.isHidden = false
+        sheet.tabHost.addSubview(quoteTabStack)
+        quoteTabStack.translatesAutoresizingMaskIntoConstraints = false
+        quoteTabStackSheetConstraints = [
+            quoteTabStack.topAnchor.constraint(equalTo: sheet.tabHost.topAnchor),
+            quoteTabStack.leadingAnchor.constraint(equalTo: sheet.tabHost.leadingAnchor),
+            quoteTabStack.trailingAnchor.constraint(equalTo: sheet.tabHost.trailingAnchor),
+            quoteTabStack.bottomAnchor.constraint(equalTo: sheet.tabHost.bottomAnchor),
+        ]
+        NSLayoutConstraint.activate(quoteTabStackSheetConstraints)
+        // 面板：从内容栈摘下，挂进 sheet 滚动区（宽跟滚动区走，高由行／状态内在高定）。
+        quotePanelStackIndex = contentStack.arrangedSubviews.firstIndex(of: quotePanel) ?? quotePanelStackIndex
+        contentStack.removeArrangedSubview(quotePanel)
+        quotePanel.removeFromSuperview()
+        quotePanel.isHidden = false
+        sheet.panelScrollView.addSubview(quotePanel)
+        quotePanel.translatesAutoresizingMaskIntoConstraints = false
+        quotePanelSheetConstraints = [
+            quotePanel.topAnchor.constraint(equalTo: sheet.panelScrollView.contentLayoutGuide.topAnchor),
+            quotePanel.leadingAnchor.constraint(equalTo: sheet.panelScrollView.contentLayoutGuide.leadingAnchor),
+            quotePanel.trailingAnchor.constraint(equalTo: sheet.panelScrollView.contentLayoutGuide.trailingAnchor),
+            quotePanel.bottomAnchor.constraint(equalTo: sheet.panelScrollView.contentLayoutGuide.bottomAnchor),
+            quotePanel.widthAnchor.constraint(equalTo: sheet.panelScrollView.frameLayoutGuide.widthAnchor),
+        ]
+        NSLayoutConstraint.activate(quotePanelSheetConstraints)
+    }
+
+    /// 关闭完成：把两棵视图搬回编辑器原位（tab 条回原约束、面板插回内容栈原位置、
+    /// 栈间距补回、双双隐藏），sheet 实例随后丢弃。
+    private func uninstallQuotePanelFromSheet() {
+        NSLayoutConstraint.deactivate(quoteTabStackSheetConstraints)
+        quoteTabStackSheetConstraints = []
+        quoteTabStack.removeFromSuperview()
+        quoteTabStack.isHidden = true
+        view.addSubview(quoteTabStack)
+        NSLayoutConstraint.activate(quoteTabStackHomeConstraints)
+        NSLayoutConstraint.deactivate(quotePanelSheetConstraints)
+        quotePanelSheetConstraints = []
+        quotePanel.removeFromSuperview()
+        quotePanel.isHidden = true
+        contentStack.insertArrangedSubview(quotePanel, at: min(quotePanelStackIndex, contentStack.arrangedSubviews.count))
+        contentStack.setCustomSpacing(16, after: quotePanel)
+    }
+
+    /// C1：scrollView 底锚两档切换——选择条展开时锚选择条顶（条不盖住正文尾部）；
+    /// 其余时锚工具栏顶。引用面板现为通顶底 sheet（不在滚动区里），不再占一档；
+    /// 改锚只发生在选择条刷新（refreshToolStrip）。
     /// 2026-10-31：限时行已删，原“锚限时行顶”档并入工具栏档（心情/天气旧条带
     /// 已删、入口只走弹出框，不再为其预留行高；新建态滚动区因此下探 48pt）。
     private func updateScrollBottomAnchoring() {
-        let otherStripOpen = activeToolStrip != nil && activeToolStrip != .mood && activeToolStrip != .weather && !quotePanelOpen
-        scrollBottomToToolbarConstraint?.isActive = !quotePanelOpen && !otherStripOpen
+        let otherStripOpen = activeToolStrip != nil && activeToolStrip != .mood && activeToolStrip != .weather
+        scrollBottomToToolbarConstraint?.isActive = !otherStripOpen
         scrollBottomToStripConstraint?.isActive = otherStripOpen
-        scrollBottomToViewConstraint?.isActive = quotePanelOpen
+        scrollBottomToViewConstraint?.isActive = false
     }
 
     /// 12b：编辑器可见性菜单（系统 UIMenu，不自绘新组件；时间线筛子走系统
@@ -4260,12 +4148,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private static let toolStripTransitionDuration: TimeInterval = BearyMotion.micro
     private static let toolStripTransitionOffset: CGFloat = 6
 
-    /// 选择条显隐总口：栈内只剩写给区（心情/天气旧条带已删，入口只走尖角弹出框）；
-    /// 面板打开时整栈隐藏。审计 P1-8：显隐不再瞬切——入场先现身再淡入位移归位，
-    /// 出场先淡出位移、动画跑完才 isHidden。快速连点：新转场 beginFromCurrentState
-    /// 从当前呈现值接管、代次 +1 使旧 completion 作废，只收敛到最后状态；
-    /// 减动效与未挂窗（首帧）直接置终值，不播动画。引用面板打开时的瞬藏走
-    /// setQuotePanelOpen 专属路径（面板盖住条带、无可见转场），此处不动它。
+    /// 选择条显隐总口：栈内只剩写给区（心情/天气旧条带已删，入口只走尖角弹出框）。
+    /// 审计 P1-8：显隐不再瞬切——入场先现身再淡入位移归位，出场先淡出位移、
+    /// 动画跑完才 isHidden。快速连点：新转场 beginFromCurrentState 从当前呈现值
+    /// 接管、代次 +1 使旧 completion 作废，只收敛到最后状态；减动效与未挂窗
+    ///（首帧）直接置终值，不播动画。
     // 任务2：选择条展开/收起时保住光标行——记光标在滚动内容里的屏上位置
     // （光标顶相对滚动区可视顶的距离），布局变后把外层偏移补回同一位置，
     // 光标行不随条带占高变化上下跳动；未在正文输入时返回 nil、不动偏移。
@@ -4286,7 +4173,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let y = min(max(inScroll.minY - anchor, -scrollView.contentInset.top), maxY)
         scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: y), animated: false)
     }
-
     private func refreshToolStrip() {
         // 任务2：先记光标行锚点（见上）；条带显隐改滚动底锚与正文区高，
         // 布局落定后按锚点补回偏移（各出口处）。
@@ -4294,7 +4180,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 编辑器改版（2026-10-29）：心情/天气旧条已由尖角弹出框取代；
         // 本支删除旧条带后栈内只剩写给区。2026-10-31：限时行底锚三档随行删除
         //（选择条底已直贴工具栏顶）。
-        let stackHidden = quotePanelOpen || activeToolStrip != .recipient
+        let stackHidden = activeToolStrip != .recipient
         // iCity：编辑模式 @ 可新增——无 @ 时条内无内容（高度塌为 0），不再整区隐藏；
         // 其余态按条开关显隐。
         recipientSection.isHidden = activeToolStrip != .recipient
@@ -4432,8 +4318,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 底部元信息行刷新：定位钮（有地点才显）＋天气 chip（有天气才显）；
-    /// 两者皆无时整行隐藏、不占位。引用面板打开期间整行隐藏（面板内异步
-    /// 刷新不得把它重新显示出来，与旧 refreshLocationRow 同款守卫）。
+    /// 两者皆无时整行隐藏、不占位。
     /// animated 只在选定/清除地点时传 true：定位钮淡入＋天气 chip 位移
     /// （FLIP：先记 chip 旧帧，再改布局、按帧差反向位移、动画归零），
     /// 取消定位时 chip 滑回左下角；其余刷新直接换字，不带动效。
@@ -4442,10 +4327,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 的图与名，不再隐藏。图标只是视觉辅助：accessibilityLabel 一律保留
     /// 完整表述（“天气：晴”），不只靠图标传达信息。
     private func refreshMetaRow(animated: Bool = false) {
-        if quotePanelOpen {
-            metaRowStack.isHidden = true
-            return
-        }
         // 天气 chip 内容（原 refreshSelectedChips 的天气段，整段移入此处）。
         if let weather = selectedWeather, let name = BearyText.weatherNames[BearyText.weatherStaticKey(for: weather)] {
             weatherChipButton.isHidden = false
@@ -4897,8 +4778,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 顶部 @ 行显隐：有收件人且引用面板未开时出现；引用面板打开时同其他 chrome 一并隐藏。
     /// 行高进 sheet 高（updatePreferredContentSize 的非面板分支另加本行高）；面板打开时
     /// 高度走视口档，不在此更新。
+    /// 顶部 @ 行显隐：有收件人时出现。
+    /// 行高进 sheet 高（updatePreferredContentSize 另加本行高）。
     private func refreshMentionTopRow() {
-        let visible = mentionTopName != nil && !quotePanelOpen
+        let visible = mentionTopName != nil
         if let name = mentionTopName, visible {
             mentionTopPill.setTitle("提到 " + name, for: .normal)
             mentionTopPill.accessibilityLabel = "提到：" + name
@@ -4906,7 +4789,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let wasHidden = mentionTopRow.isHidden
         mentionTopRow.isHidden = !visible
         mentionTopRowHeightConstraint?.constant = visible ? Self.mentionTopRowHeight : 0
-        if wasHidden != mentionTopRow.isHidden, !quotePanelOpen {
+        if wasHidden != mentionTopRow.isHidden {
             updatePreferredContentSize()
         }
     }
@@ -6375,7 +6258,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func refreshImageUndoBar() {
-        let visible = pendingRemovedImage != nil && !quotePanelOpen
+        let visible = pendingRemovedImage != nil
         imageUndoBar.isHidden = !visible
         contentStack.setCustomSpacing(visible ? 8 : 0, after: imageUndoBar)
     }
@@ -7581,13 +7464,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 不计入该一次），已删引用（gone 只有 id、无正文）补拉后仍无正文时不再反复请求。
     private func setupEditContent() {
         guard let entry = editingEntry else { return }
-        // 录屏批 (b) 同款：面板打开时标题归面板（“选择引用”），回填不许把它顶回
-        // “编辑日记”；只把关闭后要还原的标题改成“编辑日记”，关闭时还原即正确。
-        if quotePanelOpen {
-            quotePanelSavedTitle = "编辑日记"
-        } else {
-            titleLabel.text = "编辑日记"
-        }
+        // 面板现为通顶底 sheet（标题在 sheet 里），回填直接写编辑器标题。
+        titleLabel.text = "编辑日记"
         // 正文/标题/心情/天气只首次回填：补拉二次调用 setupEditContent 时用户可能已在
         // 加载期间改过，补拉在途输入未冻结（见 refreshPublishingInputFreeze），无条件重填
         // 会把手改静默盖回服务端旧值；与气温/位置/@ 的 editQuoteFetchAttempted 守卫同款口径。
@@ -7707,11 +7585,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// editQuoteFetchAttempted：已删引用补拉后仍无正文时走正常回填，不再自动重拉。
     private func fetchEditEntryForMissingQuote(entryId: String) {
         editQuoteFetchInFlight = true
-        if quotePanelOpen {
-            quotePanelSavedTitle = "加载日记…"
-        } else {
-            titleLabel.text = "加载日记…"
-        }
+        titleLabel.text = "加载日记…"
         refreshRecipientRow()
         refreshQuoteSection()
         refreshToolStrip()
@@ -7727,11 +7601,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.setupEditContent()
                 case .failure:
                     self.editQuoteFetchFailed = true
-                    if self.quotePanelOpen {
-                        self.quotePanelSavedTitle = "编辑日记"
-                    } else {
-                        self.titleLabel.text = "编辑日记"
-                    }
+                    self.titleLabel.text = "编辑日记"
                     self.refreshQuoteSection()
                     self.updatePublishState()
                     self.showToast(message: "引用的日记加载失败，点引用区“重试”再试一次")
