@@ -1119,7 +1119,6 @@ final class BearyDiaryStarMapViewController: UIViewController {
         target.title = updated.title
         target.content = updated.content
         target.images = updated.images
-        target.mood = updated.mood
         target.weather = updated.weather
         target.locationName = updated.locationName
         target.locationDistrict = updated.locationDistrict
@@ -1288,9 +1287,6 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let starTitle = sheetEntryTitle(entry)
         sheetStack.addArrangedSubview(sheetTitleLabel(starTitle.isEmpty ? sheetDateString(entry) : starTitle))
         var meta = sheetDateString(entry)
-        if let moodKey = entry.mood, !moodKey.isEmpty {
-            meta += " · 心情 \(BearyText.moodNames[moodKey] ?? moodKey)"
-        }
         // 字数直接按当前 Entry 算（与模型同口径 BearyStarMap.wordCount），
         // 不读模型里的星副本：编辑后底卡即时刷新时，后台模型可能还没重算完。
         if model.stars.contains(where: { $0.entry.id == entry.id }) {

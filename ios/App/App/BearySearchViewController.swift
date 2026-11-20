@@ -553,7 +553,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         target.title = updated.title
         target.content = updated.content
         target.images = updated.images
-        target.mood = updated.mood
         target.weather = updated.weather
         target.locationName = updated.locationName
         target.locationDistrict = updated.locationDistrict

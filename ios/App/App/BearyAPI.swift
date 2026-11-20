@@ -149,7 +149,6 @@ struct Entry: Codable {
     /// 实况处理。无实况的图不出现在映射里。
     var liveVideos: [String: String]?
     var imgDims: [String: [Int]]?
-    var mood: String?
     /// 日记标签（2026-11-18 标签完整版）：服务端 beary_entry_tags 关联表下发，
     /// convertFromSnakeCase 直解；无标签为空数组（富化恒给字段），旧数据缺字段时 nil 按无标签处理。
     var tags: [String]?

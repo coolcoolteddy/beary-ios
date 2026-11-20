@@ -84,7 +84,6 @@ struct BearyDraft: Codable {
     var content: String
     /// A4-App：编辑器标题（默认 nil，老草稿缺本键时按 nil 解码，旧构造点不用改）。
     var title: String? = nil
-    var mood: String?
     var images: [BearyDraftImageItem]
     var clientReq: String
     var updatedAt: TimeInterval
@@ -135,8 +134,7 @@ struct BearyDraft: Codable {
     var sourcePublished: Bool = false
 
     /// 有实质内容：空白篇（全空）不迁入、不展示为有效草稿。
-    /// 心情不算内容（网页口径：只选表情、没写字的日记不保存），与编辑器
-    /// saveDraftNow 的 C10 空判定一致；旧槽里纯心情篇迁移时直接丢弃。
+    /// （旧口径“只选心情、没写字的日记不保存”随 entry.mood 字段删除而作废。）
     /// G19：写给口径与草稿箱摘要兜底统一——recipientId != nil 或
     /// recipientName 非空即算有内容（只存了收信人快照、尚未写字也算）。
     var hasContent: Bool {
@@ -156,7 +154,6 @@ struct BearyDraft: Codable {
 /// v2 旧结构（仅用于首次读取迁移；字段与旧单槽 BearyDraft 一致）。
 private struct BearyDraftV2Data: Decodable {
     var content: String
-    var mood: String?
     var images: [BearyDraftImageItem]
     var clientReq: String
     var updatedAt: TimeInterval
@@ -165,7 +162,6 @@ private struct BearyDraftV2Data: Decodable {
 /// v1 旧结构（仅用于首次读取迁移；字段与旧 NativeDraft 一致）。
 private struct BearyDraftV1Data: Decodable {
     var content: String
-    var mood: String?
     var imageKeys: [String]
     var updatedAt: TimeInterval
 }
@@ -1315,7 +1311,6 @@ enum BearyDraftStore {
             let draft = BearyDraft(
                 draftId: newDraftId(),
                 content: legacy.content,
-                mood: legacy.mood,
                 images: legacy.images,
                 clientReq: legacy.clientReq,
                 updatedAt: legacy.updatedAt,
@@ -1342,7 +1337,6 @@ enum BearyDraftStore {
             let draft = BearyDraft(
                 draftId: newDraftId(),
                 content: v1.content,
-                mood: v1.mood,
                 images: v1.imageKeys.map { BearyDraftImageItem(localFile: nil, serverKey: $0, state: .uploaded) },
                 clientReq: newClientReq(),
                 updatedAt: v1.updatedAt,
@@ -1384,7 +1378,6 @@ enum BearyDraftStore {
         var accountId: Int
         var content: String
         var title: String?
-        var mood: String?
         var weather: String?
         var temperature: Int?
         /// 标签完整版（2026-11-18）：检查点里的标签列；老检查点缺本键时按 nil 解码，即无标签。

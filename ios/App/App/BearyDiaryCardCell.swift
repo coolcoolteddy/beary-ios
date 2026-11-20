@@ -995,33 +995,12 @@ class BearyDiaryCardCell: UITableViewCell {
         return st
     }()
 
-    private var moodEmoteView: BearyEmoteView?
     /// E3：落点行天气 Lottie 覆盖层（仅 gotoEntry 落点行创建；其他行恒为 nil，
     /// 天气标只显示底层 wx 静态图）。停播时摘层即回到静态图，不改静态图本身。
     private var weatherEmoteView: BearyEmoteView?
 
-    private let moodLabel: UILabel = {
-        let lb = UILabel()
-        lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        lb.adjustsFontForContentSizeCategory = true
-        lb.textColor = BearyColors.gray
-        lb.numberOfLines = 1
-        return lb
-    }()
-
-    private lazy var moodStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [moodLabel])
-        st.translatesAutoresizingMaskIntoConstraints = false
-        st.axis = .horizontal
-        st.spacing = self.cardMode == .feed ? 3 : 4
-        st.alignment = .center
-        st.isHidden = true
-        return st
-    }()
-
     private lazy var titleStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameLabel, crownWrapView, titleSpacerLabel, timeLabel, limitedPillView, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameLabel, crownWrapView, titleSpacerLabel, timeLabel, limitedPillView])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         // 姓名→皇冠间距 6（2026-11-05 ChatGPT 间距跟进；徽章已下线摘掉，
@@ -1676,7 +1655,6 @@ class BearyDiaryCardCell: UITableViewCell {
             weatherImageView.heightAnchor.constraint(equalToConstant: 15),
         ])
         weatherWrapLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        moodStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         let imageHeight = imagesScrollView.heightAnchor.constraint(equalToConstant: 0)
         imageHeightConstraint = imageHeight
         let likeWidth = likeButton.widthAnchor.constraint(equalToConstant: 24)
@@ -1897,10 +1875,10 @@ class BearyDiaryCardCell: UITableViewCell {
         // 限时气泡描边／底色由 BearyLimitedBubbleView 自身在 trait 变化时重刷。
         // 首页模式：心情与公开行边框需重刷（chip 边框已由 BearyEmoteChipView
         // 自带 trait 重刷，此处不再调 renderEmotes——两套并存已摘掉一套）。
-        // 旧心情改位：主题切换时正文末尾心情附件需换深浅变体，故两模式
+        // 主题切换时正文内联心情附件需换深浅变体，故两模式
         // 都重建正文（仅换附件变体，折叠态与行数不动）。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle, let e = currentEntry {
-            contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: currentBodyFontSize, moodKey: e.mood)
+            contentLabel.attributedText = attributedBody(e.content ?? "", fontSize: currentBodyFontSize)
         }
         // 审计第 27 项：内容字号档变化时立即重建可见卡片富文本——
         // attributed 字号不随 adjustsFont 自动跟随，旧口径要等下次 configure
@@ -1913,7 +1891,7 @@ class BearyDiaryCardCell: UITableViewCell {
             if cardMode == .feed {
                 updateContentAndFold()
             } else {
-                contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: currentBodyFontSize, moodKey: e.mood)
+                contentLabel.attributedText = attributedBody(e.content ?? "", fontSize: currentBodyFontSize)
                 if foldApplies {
                     setFoldDisplay(expanded: isExpanded, animated: false)
                 } else {
@@ -1936,7 +1914,6 @@ class BearyDiaryCardCell: UITableViewCell {
         guard cardMode == .feed else { return }
         if currentEntry == nil { return }
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            refreshMoodView()
             refreshMoreRow()
         }
     }
@@ -2130,10 +2107,6 @@ class BearyDiaryCardCell: UITableViewCell {
         weatherTempLabel.text = nil
         weatherTempLabel.isHidden = true
         locationWeatherSpacer.isHidden = true
-        moodStack.isHidden = true
-        moodEmoteView?.removeFromSuperview()
-        moodEmoteView = nil
-        moodLabel.text = nil
     }
 
     // MARK: - 文案与样式 helpers
@@ -2162,27 +2135,9 @@ class BearyDiaryCardCell: UITableViewCell {
         // configure 同样按新档重解）；装饰性小字不动。
         let bodyFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: fontSize))
         // 内联心情：正文里的记号转回熊脸附件（与编辑器同一中间层），
-        // 附件字号跟随正文字号；旧心情缀尾仍由 bodyWithTrailingMood 另 append。
+        // 附件字号跟随正文字号。
         // 内联 GIF 同款：记号按 entry.images 解析，动画走覆盖层播（见 refreshGIFOverlays）。
         return BearyText.inlineAttributedText(from: text, font: bodyFont, color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: currentEntry?.images)
-    }
-
-    /// 旧日记心情改位：心情不再单独贴在作者行，改跟在正文最后一个字
-    /// 后面——用静态熊图附件直接缀在正文 attributed 串末尾（紧贴末字、
-    /// 无空格）；无心情时原样返回。深浅变体按当前 trait 取，主题切换
-    /// 时由 trait handler 重建正文换变体。
-    private func bodyWithTrailingMood(_ text: String, fontSize: CGFloat, moodKey: String?) -> NSAttributedString {
-        let base = attributedBody(text, fontSize: fontSize)
-        guard let key = moodKey, !key.isEmpty,
-              let image = BearyEmoteImages.image(for: key, dark: traitCollection.userInterfaceStyle == .dark) else { return base }
-        let font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: fontSize))
-        let attachment = NSTextAttachment()
-        attachment.image = image
-        let emoteSize = font.pointSize * 1.2
-        attachment.bounds = CGRect(x: 0, y: font.descender, width: emoteSize, height: emoteSize)
-        let result = NSMutableAttributedString(attributedString: base)
-        result.append(NSAttributedString(attachment: attachment))
-        return result
     }
 
     /// R4 App：日记标题渲染（两路 configure 共用，模型 Entry.title 由 A4-App
@@ -2438,16 +2393,6 @@ class BearyDiaryCardCell: UITableViewCell {
         pinRow.isHidden = cardMode == .feed || !entry.isPinned
     }
 
-    /// 旧心情改位：作者行心情位一律隐藏，心情改缀正文末尾
-    /// （见 bodyWithTrailingMood）；旧播放器视图一并摘掉。
-    private func refreshMoodView() {
-        moodStack.isHidden = true
-        moodLabel.text = nil
-        moodEmoteView?.removeFromSuperview()
-        moodEmoteView = nil
-    }
-
-
     /// E3：天气 key → Lottie 资源 key（编辑器选择器同款映射，唯 night 对应 moon）。
     private static func weatherLottieKey(for weatherKey: String) -> String {
         weatherKey == "night" ? "moon" : weatherKey
@@ -2589,9 +2534,6 @@ class BearyDiaryCardCell: UITableViewCell {
         // （地址行随后 refreshLocationRow 再结算一次）。
         updateBottomRowVisibility()
 
-        // F9：心情。
-        refreshMoodView()
-
         // 置顶标识行（卡片最上方；两模式同款）。
         refreshPinRow(entry: entry)
 
@@ -2690,8 +2632,7 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         // 天气图标改动态 Lottie（落点行 playWeatherLottie 同款；无天气时其内守卫停播）。
         playWeatherLottie()
-        // #427 的气温显示保留；作者行心情位按 #421 新模型一律隐藏
-        // （refreshMoodView），心情缀正文末尾，不恢复旧心情标签。
+        // #427 的气温显示保留。
         if let temp = entry.temperatureC, entry.weather != nil, !entry.weather!.isEmpty {
             weatherTempLabel.text = "\(temp)°"
             weatherTempLabel.isHidden = false
@@ -2702,14 +2643,13 @@ class BearyDiaryCardCell: UITableViewCell {
         // 底行显隐跟图标／中文名／气温走：三者全无时整行隐藏、不占位
         // （地址行随后 refreshLocationRow 再结算一次）。
         updateBottomRowVisibility()
-        refreshMoodView()
         // 置顶标识行（卡片最上方；两模式同款）。
         refreshPinRow(entry: entry)
         // R4 App：日记标题在作者行（titleStack）与正文之间，空标题不占位。
         updateEntryTitle(entry.title)
         // 正文 + 300 字折叠（网页 renderPublic foldLong 口径；折叠态收起 6 行）。
         let bodyText = entry.content ?? ""
-        contentLabel.attributedText = bodyWithTrailingMood(bodyText, fontSize: currentBodyFontSize, moodKey: entry.mood)
+        contentLabel.attributedText = attributedBody(bodyText, fontSize: currentBodyFontSize)
         foldApplies = bodyText.count > 300
         foldButton.isHidden = !foldApplies
         if foldApplies {
@@ -2935,7 +2875,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private func updateContentAndFold() {
         let fullText = currentEntry?.content ?? ""
-        contentLabel.attributedText = bodyWithTrailingMood(fullText, fontSize: currentBodyFontSize, moodKey: currentEntry?.mood)
+        contentLabel.attributedText = attributedBody(fullText, fontSize: currentBodyFontSize)
         let width = contentLabel.bounds.width > 0 ? contentLabel.bounds.width : bodyColumnWidthEstimate()
         let overflow = measuredFoldOverflow(contentWidth: width)
         foldOverflow = overflow
@@ -4741,8 +4681,6 @@ extension BearyDiaryCardCell {
         // 与 measuredFoldOverflow 同口径：≤300 字恒不折叠。
         let overflow = text.count > 300 && lines > 6
         var textHeight = fullHeight
-        // 只有心情缀尾、无正文时占一行（bodyWithTrailingMood 仍会缀一个附件）。
-        if text.isEmpty, (entry.mood ?? "").isEmpty == false { textHeight = singleHeight }
         if overflow && !expanded { textHeight = CGFloat(6) * singleHeight }
 
         let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && !BearyGIF.isInlineImageKey($0, content: text) }

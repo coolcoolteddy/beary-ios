@@ -618,7 +618,6 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         target.title = updated.title
         target.content = updated.content
         target.images = updated.images
-        target.mood = updated.mood
         target.weather = updated.weather
         target.locationName = updated.locationName
         target.locationDistrict = updated.locationDistrict
@@ -1853,7 +1852,7 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
         guard !isUnburying else { return }
         isUnburying = true
         unburyButton.isEnabled = false
-        BearyAPI.shared.updateEntry(id: entryId, content: entry.content ?? "", images: entry.images ?? [], mood: entry.mood, weather: entry.weather, quoteId: entry.quoteId, title: entry.title, mentionedUserId: entry.mentionedUserId, clearCapsule: true) { [weak self] result in
+        BearyAPI.shared.updateEntry(id: entryId, content: entry.content ?? "", images: entry.images ?? [], weather: entry.weather, quoteId: entry.quoteId, title: entry.title, mentionedUserId: entry.mentionedUserId, clearCapsule: true) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isUnburying = false

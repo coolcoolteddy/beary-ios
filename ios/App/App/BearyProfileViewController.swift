@@ -7162,7 +7162,6 @@ class BearyProfileViewController: UIViewController {
             livePart,
             entryValue.weather ?? "",
             entryValue.temperatureC.map(String.init) ?? "",
-            entryValue.mood ?? "",
             entryValue.title ?? "",
             quotePart,
             entryValue.authorName ?? "",
@@ -8271,7 +8270,6 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             copy.title = entry.title
             copy.content = entry.content
             copy.images = entry.images
-            copy.mood = entry.mood
             copy.weather = entry.weather
             // 审计 7-5：标签全量拷贝（空数组 = 清掉标签，不是忽略；编辑器回传
             // updated.tags = selectedTags，清标签时即 []）。

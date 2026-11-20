@@ -1783,7 +1783,6 @@ class BearyFeedViewController: UIViewController {
     private func applyEditedFields(to target: inout Entry, from updated: Entry) {
         target.content = updated.content
         target.images = updated.images
-        target.mood = updated.mood
         target.weather = updated.weather
         // 审计 7-5：标签全量拷贝（空数组 = 清掉标签，不是忽略；编辑器回传
         // updated.tags = selectedTags，清标签时即 []）。
@@ -1991,13 +1990,13 @@ class BearyFeedViewController: UIViewController {
         }
     }
 
-    /// 展示字段指纹（内容/图片/心情/天气/气温/标题/引用/作者/公开态/限时）：
+    /// 展示字段指纹（内容/图片/天气/气温/标题/引用/作者/公开态/限时）：
     /// 变了才 reloadRows；只变互动字段时走就地同步，不重建行。
     /// 审计 4：此前缺 temperatureC——只改气温时指纹不变，广场恒显旧气温。
     private func feedDisplayFingerprint(_ e: Entry) -> String {
         let images = (e.images ?? []).joined(separator: ",")
         let dims = (e.imgDims ?? [:]).map { "\($0.key):\($0.value.map(String.init).joined(separator: "x"))" }.sorted().joined(separator: ",")
-        return [e.content ?? "", images, dims, e.mood ?? "", e.weather ?? "", e.temperatureC.map(String.init) ?? "", e.title ?? "", e.quoteId ?? "", e.authorName ?? "", e.authorAvatar ?? "", "\(e.authorPlus ?? 0)", "\(e.publishedAt ?? 0)", "\(e.isPublic ?? false)", "\(e.ephemeralUntil ?? 0)", e.mentionedName ?? "", e.locationName ?? "", e.locationDistrict ?? ""].joined(separator: "|")
+        return [e.content ?? "", images, dims, e.weather ?? "", e.temperatureC.map(String.init) ?? "", e.title ?? "", e.quoteId ?? "", e.authorName ?? "", e.authorAvatar ?? "", "\(e.authorPlus ?? 0)", "\(e.publishedAt ?? 0)", "\(e.isPublic ?? false)", "\(e.ephemeralUntil ?? 0)", e.mentionedName ?? "", e.locationName ?? "", e.locationDistrict ?? ""].joined(separator: "|")
     }
 
     /// 互动字段指纹（赞数/已赞/已收藏/收藏数/回应）：只变这些时，

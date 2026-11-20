@@ -485,9 +485,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 状态
 
-    private var selectedMood: String? {
-        didSet { editorEditVersion += 1 }
-    }
     /// 标签完整版（2026-11-18）：本篇选中的标签列（原序保留）；编辑回填、
     /// 草稿保存/恢复、检查点保存/恢复、发布快照均走本字段。
     private var selectedTags: [String] = [] {
@@ -585,7 +582,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 心情/天气旧条带已删（见下），入口只走天气尖角弹出框（心情入口已删），不再走本值；
     /// 旧附加栏三态随双重入口删除而整组拆除，不再有“附加栏撑着显示天气行”的压制状态机。
     private enum ToolStrip {
-        case mood, weather, recipient
+        case weather, recipient
     }
     private var activeToolStrip: ToolStrip?
     /// C11：删图撤销缓冲（单槽，只留最近一次删除）：项本身不改字段（key/localFile/
@@ -834,7 +831,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard let req = draftClientReq else { return nil }
         return PublishSnapshot(
             content: trimmed,
-            mood: selectedMood,
             weather: selectedWeather,
             temperature: selectedTemperature,
             quoteId: (selectedQuote?.isDeleted == true) ? nil : selectedQuote?.entryId,
@@ -3025,7 +3021,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 2026-10-31：限时行已删，原“锚限时行顶”档并入工具栏档（心情/天气旧条带
     /// 已删、入口只走弹出框，不再为其预留行高；新建态滚动区因此下探 48pt）。
     private func updateScrollBottomAnchoring() {
-        let otherStripOpen = activeToolStrip != nil && activeToolStrip != .mood && activeToolStrip != .weather
+        let otherStripOpen = activeToolStrip == .recipient
         scrollBottomToToolbarConstraint?.isActive = !otherStripOpen
         scrollBottomToStripConstraint?.isActive = otherStripOpen
         scrollBottomToViewConstraint?.isActive = false
@@ -7541,7 +7537,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 applyBodyLineHeight()
                 setHeadlineText(restored.title)
             }
-            selectedMood = entry.mood
             selectedWeather = entry.weather
             // 标签完整版（2026-11-18）：编辑回填标签列，同时拍原快照（PUT 比对用）。
             selectedTags = entry.tags ?? []
@@ -8076,7 +8071,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // textView 本体不动，组词继续。
             content: committedContent(),
             title: headlineForCreate,
-            mood: selectedMood,
             images: images,
             clientReq: req,
             updatedAt: Date().timeIntervalSince1970,
@@ -8247,7 +8241,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
                 // 109：草稿标题回填进新输入框。
                 self.setHeadlineText(draft.title)
-                self.selectedMood = draft.mood
                 self.selectedWeather = draft.weather
                 self.selectedTemperature = draft.temperature
                 self.selectedTags = draft.tags ?? []
@@ -8711,7 +8704,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         setBodyAttributedText("")
         // 空白新日记：标题输入框同清（按无标题处理）。
         setHeadlineText("")
-        selectedMood = nil
         selectedWeather = nil
         selectedTemperature = nil
         selectedTags = []
@@ -8810,7 +8802,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         applyBodyLineHeight()
         // 草稿续写：标题回填进新输入框。
         setHeadlineText(draft.title)
-        selectedMood = draft.mood
         selectedTags = draft.tags ?? []
         selectedWeather = draft.weather
         selectedTemperature = draft.temperature
@@ -8931,7 +8922,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard let entry = editingEntry else { return false }
         if committedContent() != (entry.content ?? "") { return true }
         if headlineText != (entry.title ?? "") { return true }
-        if selectedMood != entry.mood { return true }
         if selectedWeather != entry.weather { return true }
         if selectedTemperature != entry.temperatureC { return true }
         if selectedLocation != originalLocation { return true }
@@ -8969,7 +8959,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             accountId: accountId,
             content: committedContent(),
             title: headlineText.isEmpty ? nil : headlineText,
-            mood: selectedMood,
             weather: selectedWeather,
             temperature: selectedTemperature,
             tags: selectedTags,
@@ -9065,7 +9054,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard let entry = editingEntry else { return false }
         if checkpoint.content != (entry.content ?? "") { return true }
         if (checkpoint.title ?? "") != (entry.title ?? "") { return true }
-        if checkpoint.mood != entry.mood { return true }
         if checkpoint.weather != entry.weather { return true }
         if checkpoint.temperature != entry.temperatureC { return true }
         let checkpointLocation = DiaryLocation(name: checkpoint.locationName, district: checkpoint.locationDistrict, latitude: checkpoint.locationLatitude, longitude: checkpoint.locationLongitude, country: checkpoint.locationCountry, region: checkpoint.locationRegion, city: checkpoint.locationCity, street: checkpoint.locationStreet)
@@ -9149,13 +9137,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         ])
     }
 
-    /// 把检查点内容应用回编辑器（正文/标题/心情/天气/气温/位置/图片条）。
+    /// 把检查点内容应用回编辑器（正文/标题/天气/气温/位置/图片条）。
     /// 编辑永久可改，不再按期限冻结；检查点本身不清——仍是未提交的修改，
     /// 再崩溃仍可恢复；提交成功（performUpdate）或取消时才清。
     private func applyEditCheckpoint(_ checkpoint: BearyDraftStore.BearyEditCheckpoint) {
         setBodyAttributedText(checkpoint.content)
         setHeadlineText(checkpoint.title)
-        selectedMood = checkpoint.mood
         selectedWeather = checkpoint.weather
         selectedTemperature = checkpoint.temperature
         selectedTags = checkpoint.tags ?? []
@@ -9836,7 +9823,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let editLiveVideos: [String: String]? = uploadedLiveVideos().isEmpty
             ? ((editingEntry?.liveVideos?.isEmpty == false) ? [:] : nil)
             : uploadedLiveVideos()
-                BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil, locationLatitude: locationChanged ? selectedLocation?.latitude : nil, locationLongitude: locationChanged ? selectedLocation?.longitude : nil, clearLocationCoords: locationChanged && selectedLocation?.latitude == nil, locationCountry: locationChanged ? selectedLocation?.country : nil, locationRegion: locationChanged ? selectedLocation?.region : nil, locationCity: locationChanged ? selectedLocation?.city : nil, locationStreet: locationChanged ? selectedLocation?.street : nil, clearLocationDetail: locationChanged, temperature: selectedTemperature, liveVideos: editLiveVideos, tags: tagsChanged ? selectedTags : nil) { [weak self] result in
+                BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), weather: selectedWeather, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil, locationLatitude: locationChanged ? selectedLocation?.latitude : nil, locationLongitude: locationChanged ? selectedLocation?.longitude : nil, clearLocationCoords: locationChanged && selectedLocation?.latitude == nil, locationCountry: locationChanged ? selectedLocation?.country : nil, locationRegion: locationChanged ? selectedLocation?.region : nil, locationCity: locationChanged ? selectedLocation?.city : nil, locationStreet: locationChanged ? selectedLocation?.street : nil, clearLocationDetail: locationChanged, temperature: selectedTemperature, liveVideos: editLiveVideos, tags: tagsChanged ? selectedTags : nil) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -9865,7 +9852,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         updated.title = self.headlineText.isEmpty ? nil : self.headlineText
                         updated.images = self.uploadedImageKeys()
                         updated.liveVideos = self.uploadedLiveVideos().isEmpty ? nil : self.uploadedLiveVideos()
-                        updated.mood = self.selectedMood
                         updated.weather = self.selectedWeather
                         // 标签完整版（2026-11-18）：编辑成功后本地副本跟随标签终态。
                         updated.tags = self.selectedTags
