@@ -1052,6 +1052,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             chevron.heightAnchor.constraint(equalToConstant: 16),
         ])
         row.addTarget(self, action: #selector(didTapRow(_:)), for: .touchUpInside)
+        row.bearyAddPressHaptic()
         // 起手态：无头像态（头像藏、占位显）；configure 会按实际用户改写。
         avatarView.isHidden = true
         fallbackLabel.isHidden = false

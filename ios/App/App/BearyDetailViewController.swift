@@ -459,6 +459,7 @@ final class BearyDetailViewController: UIViewController {
         btn.clipsToBounds = true
         btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
+        btn.bearyAddPressHaptic()
         return btn
     }()
 

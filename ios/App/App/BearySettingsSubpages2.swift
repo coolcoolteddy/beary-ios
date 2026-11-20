@@ -190,6 +190,7 @@ final class BearyThemeSettingsViewController: BearySettingsSubpageViewController
     private func optionButton(action: Selector) -> UIButton {
         let button = UIButton(type: .custom)
         button.addTarget(self, action: action, for: .touchUpInside)
+        button.bearyAddPressHaptic()
         return button
     }
 
@@ -247,6 +248,7 @@ final class BearyLanguageSettingsViewController: BearySettingsSubpageViewControl
     private func optionButton(action: Selector) -> UIButton {
         let button = UIButton(type: .custom)
         button.addTarget(self, action: action, for: .touchUpInside)
+        button.bearyAddPressHaptic()
         return button
     }
 
@@ -489,6 +491,7 @@ final class BearyDataUsageSettingsViewController: BearySettingsSubpageViewContro
         let hiresButton = UIButton(type: .custom)
         hiresButton.accessibilityLabel = "高画质图片"
         hiresButton.addTarget(self, action: #selector(hiresRowTapped), for: .touchUpInside)
+        hiresButton.bearyAddPressHaptic()
         let hiresRow = bearySettingsTappableRow(content: bearySettingsNavContent(title: "高画质图片", detail: hiresDetail), button: hiresButton)
         let autoplayOn = BearyLivePhotoAutoplay.isEnabled
         let autoplayDetail = saverOn ? "流量节省程序开启时不自动播放" : "时间线和详情里的实况照片就绪后自动播放"
@@ -566,11 +569,13 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
         let precisionButton = UIButton(type: .custom)
         precisionButton.accessibilityLabel = "定位地址精度"
         precisionButton.addTarget(self, action: #selector(precisionRowTapped), for: .touchUpInside)
+        precisionButton.bearyAddPressHaptic()
         let precisionRow = bearySettingsTappableRow(content: bearySettingsNavContent(title: "定位地址精度", detail: BearyLocationPrecision.current.title), button: precisionButton)
         let (autoWeatherRow, _) = bearySettingsSwitchContent(title: "自动获取天气", detail: "写日记时自动获取当地天气", isOn: BearyAutoFetch.isWeatherEnabled, target: self, action: #selector(autoWeatherSwitchChanged(_:)))
         let blockedButton = UIButton(type: .custom)
         blockedButton.accessibilityLabel = "已拉黑用户"
         blockedButton.addTarget(self, action: #selector(blockedRowTapped), for: .touchUpInside)
+        blockedButton.bearyAddPressHaptic()
         let blockedRow = bearySettingsTappableRow(content: bearySettingsNavContent(title: "已拉黑用户", detail: nil), button: blockedButton)
         // 私信行：标题＋副标题“你关注的人始终可以给你发私信”，行尾当前档位。
         let dmTitle = UILabel()
@@ -602,6 +607,7 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
         let dmButton = UIButton(type: .custom)
         dmButton.accessibilityLabel = "谁可以私信我"
         dmButton.addTarget(self, action: #selector(dmRowTapped), for: .touchUpInside)
+        dmButton.bearyAddPressHaptic()
         dmRowButton = dmButton
         let dmRow = bearySettingsTappableRow(content: dmContent, button: dmButton)
         contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: [maskRow, autoLocationRow, precisionRow, autoWeatherRow, blockedRow, dmRow]))
@@ -856,6 +862,7 @@ final class BearySecuritySettingsViewController: BearySettingsSubpageViewControl
         let deviceButton = UIButton(type: .custom)
         deviceButton.accessibilityLabel = "登录设备"
         deviceButton.addTarget(self, action: #selector(devicesRowTapped), for: .touchUpInside)
+        deviceButton.bearyAddPressHaptic()
         let deviceRow = bearySettingsTappableRow(content: deviceContent, button: deviceButton)
         // 生物识别锁（设置主页同款：开关默认关，未录入置灰并给原因；
         // 开启/关闭都要先验一次生物识别，验证失败开关视觉回滚）。
@@ -959,6 +966,7 @@ final class BearyNotificationSettingsViewController: BearySettingsSubpageViewCon
         let hintButton = UIButton(type: .custom)
         hintButton.accessibilityLabel = "通知权限未开启，去系统设置里打开"
         hintButton.addTarget(self, action: #selector(hintTapped), for: .touchUpInside)
+        hintButton.bearyAddPressHaptic()
         let hintRowView = bearySettingsTappableRow(content: bearySettingsNavContent(title: "通知权限未开启", detail: "去系统设置里打开"), button: hintButton)
         hintRowView.isHidden = true
         hintRow = hintRowView

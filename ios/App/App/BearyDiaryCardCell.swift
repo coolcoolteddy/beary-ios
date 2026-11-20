@@ -1088,6 +1088,7 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         btn.isHidden = true
         btn.addTarget(self, action: #selector(foldButtonTapped), for: .touchUpInside)
+        btn.bearyAddPressHaptic()
         return btn
     }()
 
@@ -1106,6 +1107,7 @@ class BearyDiaryCardCell: UITableViewCell {
         btn.clipsToBounds = true
         btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
+        btn.bearyAddPressHaptic()
         return btn
     }()
 

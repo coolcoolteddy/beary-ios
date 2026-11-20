@@ -3686,6 +3686,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 separator.bottomAnchor.constraint(equalTo: rowButton.bottomAnchor),
             ])
             rowButton.addTarget(self, action: #selector(didTapQuotePanelRow(_:)), for: .touchUpInside)
+            rowButton.bearyAddPressHaptic()
             // 审计 R9 ⑤：候选行无障碍名按「作者、标题、正文摘要、图片数量」组成，
             // 纯图片无正文的日记也不再是空名；选中态同步读屏（isSelected + .selected 特征）。
             rowButton.isSelected = isSelectedRow

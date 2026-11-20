@@ -204,6 +204,16 @@ extension UIButton {
         addTarget(self, action: #selector(bearyPressDownVisual), for: .touchDragEnter)
     }
 
+    /// 只补轻震（2026-11-21 行级按钮抬起轻震恢复）：不改任何视觉（不缩放、
+    /// 不压暗），轻震只在 touchUpInside 点按确认时发一次；touchDown 不发震——
+    /// 滚动容器内滑动误震的根因就是按下瞬间发震。复用 bearyPressDownHapticOnly
+    ///（BearyHaptics.press()），与 bearyAddPressFeedback 的触感同一路。
+    /// 行级全宽钮专用：全宽行缩 .84 会像整行抖动，已有底色按压反馈的行也
+    /// 只补震动，不叠加缩放（W6 原口径，触发时机改抬起）。
+    func bearyAddPressHaptic() {
+        addTarget(self, action: #selector(bearyPressDownHapticOnly), for: .touchUpInside)
+    }
+
     /// 重新滑入只恢复视觉按压态，不发触感。
     @objc func bearyPressDownVisual() { BearyIconMotion.pressDownVisual(on: self) }
     @objc func bearyPressUp() { BearyIconMotion.pressUp(on: self) }

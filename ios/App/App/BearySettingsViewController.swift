@@ -913,6 +913,7 @@ final class BearySettingsViewController: UIViewController {
         headerButton.translatesAutoresizingMaskIntoConstraints = false
         headerButton.accessibilityLabel = title
         headerButton.accessibilityValue = "已收起"
+        headerButton.bearyAddPressHaptic()
         headerWrap.addSubview(headerButton)
         headerWrap.bearyAddRowPressFeedback()
         NSLayoutConstraint.activate([
@@ -1221,6 +1222,7 @@ final class BearySettingsViewController: UIViewController {
         let plusEntryButton = UIButton(type: .custom)
         plusEntryButton.accessibilityLabel = "Plus 会员"
         plusEntryButton.addTarget(self, action: #selector(openPlusPage), for: .touchUpInside)
+        plusEntryButton.bearyAddPressHaptic()
         let plusEntryRow = makeSettingsTappableRow(content: plusEntryContent, button: plusEntryButton)
         // F4：标题入卡内（网页 Plus 会员 group-title 口径）；Plus 组网页行本身无图标，不补。
         let plusGroup = makeGroupCard(title: "Plus 会员", rows: [plusEntryRow])
@@ -1238,10 +1240,12 @@ final class BearySettingsViewController: UIViewController {
         let storageButton = UIButton(type: .custom)
         storageButton.accessibilityLabel = "管理存储"
         storageButton.addTarget(self, action: #selector(openStorageSettingsPage), for: .touchUpInside)
+        storageButton.bearyAddPressHaptic()
         let dataUsageContent = makeRow(title: "数据用量", iconName: "icon_chart", showChevron: true)
         let dataUsageButton = UIButton(type: .custom)
         dataUsageButton.accessibilityLabel = "数据用量"
         dataUsageButton.addTarget(self, action: #selector(openDataUsageSettingsPage), for: .touchUpInside)
+        dataUsageButton.bearyAddPressHaptic()
         let dataStatusContent = makeRow(title: "数据状态", iconName: "icon_info", showChevron: true)
         let dataStatusButton = UIButton(type: .custom)
         dataStatusButton.accessibilityLabel = "数据状态"
@@ -1278,10 +1282,12 @@ final class BearySettingsViewController: UIViewController {
         let privacyButton = UIButton(type: .custom)
         privacyButton.accessibilityLabel = "隐私"
         privacyButton.addTarget(self, action: #selector(openPrivacySettingsPage), for: .touchUpInside)
+        privacyButton.bearyAddPressHaptic()
         let securityContent = makeRow(title: "安全", iconName: "icon_key", showChevron: true)
         let securityButton = UIButton(type: .custom)
         securityButton.accessibilityLabel = "安全"
         securityButton.addTarget(self, action: #selector(openSecuritySettingsPage), for: .touchUpInside)
+        securityButton.bearyAddPressHaptic()
         let group = makeGroupCard(title: "隐私与安全", rows: [
             makeSettingsTappableRow(content: privacyContent, button: privacyButton),
             makeSettingsTappableRow(content: securityContent, button: securityButton),
@@ -1822,12 +1828,14 @@ final class BearySettingsViewController: UIViewController {
         logoutStandaloneButton.translatesAutoresizingMaskIntoConstraints = false
         logoutStandaloneButton.setTitle("退出登录", for: .normal)
         logoutStandaloneButton.addTarget(self, action: #selector(logoutButtonTapped), for: .touchUpInside)
+        logoutStandaloneButton.bearyAddPressHaptic()
         deleteRowButton.translatesAutoresizingMaskIntoConstraints = false
         deleteRowButton.setTitle("注销账户", for: .normal)
         deleteRowButton.setTitleColor(BearyColors.gray, for: .normal)
         deleteRowButton.titleLabel?.font = BearyDynamicType.secondaryFont()
         deleteRowButton.titleLabel?.adjustsFontForContentSizeCategory = true
         deleteRowButton.addTarget(self, action: #selector(deleteButtonTapped), for: .touchUpInside)
+        deleteRowButton.bearyAddPressHaptic()
         let logoutRow = UIView()
         logoutRow.translatesAutoresizingMaskIntoConstraints = false
         logoutRow.addSubview(logoutStandaloneButton)
@@ -1872,6 +1880,7 @@ final class BearySettingsViewController: UIViewController {
         exportRowButton.translatesAutoresizingMaskIntoConstraints = false
         exportRowButton.accessibilityLabel = "导出我的数据"
         exportRowButton.addTarget(self, action: #selector(exportButtonTapped), for: .touchUpInside)
+        exportRowButton.bearyAddPressHaptic()
         let exportRow = UIStackView(arrangedSubviews: [makeRowIcon("icon_download"), exportStack])
         exportRow.translatesAutoresizingMaskIntoConstraints = false
         exportRow.axis = .horizontal
@@ -1970,6 +1979,7 @@ final class BearySettingsViewController: UIViewController {
         privacyButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         privacyButton.titleLabel?.adjustsFontForContentSizeCategory = true
         privacyButton.addTarget(self, action: #selector(openPrivacyText), for: .touchUpInside)
+        privacyButton.bearyAddPressHaptic()
         let termsButton = UIButton(type: .system)
         termsButton.translatesAutoresizingMaskIntoConstraints = false
         termsButton.setTitle("用户协议", for: .normal)
@@ -1977,6 +1987,7 @@ final class BearySettingsViewController: UIViewController {
         termsButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         termsButton.titleLabel?.adjustsFontForContentSizeCategory = true
         termsButton.addTarget(self, action: #selector(openTermsText), for: .touchUpInside)
+        termsButton.bearyAddPressHaptic()
         let linksRow = UIStackView(arrangedSubviews: [privacyButton, termsButton])
         linksRow.translatesAutoresizingMaskIntoConstraints = false
         linksRow.axis = .horizontal
@@ -3173,6 +3184,7 @@ final class BearySettingsViewController: UIViewController {
         let themeButton = UIButton(type: .custom)
         themeButton.accessibilityLabel = "主题"
         themeButton.addTarget(self, action: #selector(openThemeSettingsPage), for: .touchUpInside)
+        themeButton.bearyAddPressHaptic()
         // 语言行：点进语言子页（目前只有跟随系统、中国大陆两档）。
         // 图标用官方包的 language（双文种字形）；地球 icon_globe 是公开可见性图标，一图两义，2026-11-19 Li 定改掉。
         let languageDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
@@ -3182,11 +3194,13 @@ final class BearySettingsViewController: UIViewController {
         let languageButton = UIButton(type: .custom)
         languageButton.accessibilityLabel = "语言"
         languageButton.addTarget(self, action: #selector(openLanguageSettingsPage), for: .touchUpInside)
+        languageButton.bearyAddPressHaptic()
         // C2：使用指南行（原齿轮菜单项，改由设置页承载；容器接线到教程重播页）。
         let tutorialContent = makeRow(title: "使用指南", iconName: "icon_help", showChevron: true)
         let tutorialButton = UIButton(type: .custom)
         tutorialButton.accessibilityLabel = "使用指南"
         tutorialButton.addTarget(self, action: #selector(tutorialButtonTapped), for: .touchUpInside)
+        tutorialButton.bearyAddPressHaptic()
         // 2026-10-29 音效包接入：音效开关行（默认开，关后全部音效静默；只门控音效，不动震动）。
         let soundSwitchTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
@@ -3216,6 +3230,7 @@ final class BearySettingsViewController: UIViewController {
         let notificationButton = UIButton(type: .custom)
         notificationButton.accessibilityLabel = "通知"
         notificationButton.addTarget(self, action: #selector(openNotificationSettingsPage), for: .touchUpInside)
+        notificationButton.bearyAddPressHaptic()
         // 2026-10-29 第 10 项：通用组版本行已删，版本只留页底脚注一处
         // （见 buildVersionFooter，Bundle 动态读，不写死）。
         let rows: [UIView] = [
@@ -3476,17 +3491,20 @@ final class BearySettingsViewController: UIViewController {
         let feedbackButton = UIButton(type: .custom)
         feedbackButton.accessibilityLabel = "反馈与改进"
         feedbackButton.addTarget(self, action: #selector(openFeedbackPage), for: .touchUpInside)
+        feedbackButton.bearyAddPressHaptic()
         // 补缺第 21 项：功能许愿墙入口（反馈相邻行；官方包 icon_sparkles，右箭头走 tappableRow 既有口径）。
         let wishContent = makeRow(title: "功能许愿墙", iconName: "icon_sparkles", showChevron: true)
         let wishButton = UIButton(type: .custom)
         wishButton.accessibilityLabel = "功能许愿墙"
         wishButton.addTarget(self, action: #selector(openWishWallPage), for: .touchUpInside)
+        wishButton.bearyAddPressHaptic()
         let devDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         devDetail.text = "已开启"
         let devContent = makeRow(title: "开发者模式", detailLabel: devDetail, iconName: "icon_sliders")
         let devButton = UIButton(type: .custom)
         devButton.accessibilityLabel = "开发者模式，已开启"
         devButton.addTarget(self, action: #selector(openDeveloperModePage), for: .touchUpInside)
+        devButton.bearyAddPressHaptic()
         let devRow = makeSettingsTappableRow(content: devContent, button: devButton)
         devRow.isHidden = !BearyDeveloperMode.shared.isEnabled
         developerModeRow = devRow
@@ -3551,6 +3569,7 @@ final class BearySettingsViewController: UIViewController {
         let diagButton = UIButton(type: .custom)
         diagButton.accessibilityLabel = "诊断日志"
         diagButton.addTarget(self, action: #selector(openDiagnosticsPage), for: .touchUpInside)
+        diagButton.bearyAddPressHaptic()
         let diagRow = makeSettingsTappableRow(content: diagContent, button: diagButton)
         // 2026-10-29 第 12 项（合并 A）：诊断日志两行（开关 + 查看）抽出并成
         // 独立的「诊断日志」卡片，列在反馈与建议卡之后（顺序由 buildLayout 的

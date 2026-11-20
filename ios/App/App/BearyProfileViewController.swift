@@ -7898,9 +7898,10 @@ class BearyProfileViewController: UIViewController {
                 // 个人页照片墙：长按不给按压效果、不变暗。长按即按住不放的
                 // touchDown，与点按走同一条按压路径（bearyAddPressFeedback 的
                 // touchDown 缩 .84 + 系统 highlighted 压暗），无法只在长按时
-                // 单独关掉；故墙上照片钮不挂按压反馈，只关掉系统高亮压暗。
-                // 点按进灯箱的 touchUpInside 不动。（2026-11-19 震动精简：
-                // 点按轻震去掉）
+                // 单独关掉；故墙上照片钮只挂抬起轻震（bearyAddPressHaptic：
+                // touchUpInside 发一次轻震，不缩放、不压暗），长按仍无按压效果。
+                // 点按进灯箱的 touchUpInside 不动。
+                photoButton.bearyAddPressHaptic()
                 photoButton.adjustsImageWhenHighlighted = false
                 if photoIndex < wall.count {
                     let imageKey = wall[photoIndex].imageKey
