@@ -418,6 +418,8 @@ class BearyFeedViewController: UIViewController {
         // 游客/未登录：不调接口，走与“我的”同口径的登录门，段强制回广场。
         // 游客即弹游客提示 Sheet；非游客未登录先 toast、1.2s 后弹登录页
         //（与 showTabLoginGate 同口径，toast 先可见；回包前已登录则不再弹）。
+        // U21 同口径：延迟回调里校验仍停留在触发页（首页）且前面无其他弹窗，
+        // 否则取消本次自动弹登录——1.2s 内切去搜索，就让他搜索。
         guard SessionManager.shared.currentUser?.id != nil else {
             feedFollowingSegment = false
             sender.selectedSegmentIndex = 0
@@ -427,9 +429,16 @@ class BearyFeedViewController: UIViewController {
                 BearyToast.show(in: view, message: "请先登录")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                     guard let self = self else { return }
-                    if SessionManager.shared.currentUser?.id == nil {
-                        self.onRequireLogin?()
-                    }
+                    // 仍在触发页：容器切页只改 isHidden（不离窗），切走后 view 即隐藏。
+                    guard SessionManager.shared.currentUser?.id == nil,
+                          let window = self.view.window,
+                          !self.view.isHidden,
+                          self.presentedViewController == nil else { return }
+                    // 前面没有其他弹窗：沿 window 根视图控制器查最上层，已有 modal 在前则不弹。
+                    var topVC = window.rootViewController
+                    while let presented = topVC?.presentedViewController { topVC = presented }
+                    guard topVC === window.rootViewController else { return }
+                    self.onRequireLogin?()
                 }
             }
             return
