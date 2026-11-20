@@ -453,6 +453,7 @@ final class BearyCalendarCardView: UIView {
             prevButton.titleLabel?.font = UIFont.systemFont(ofSize: 17)
         }
         prevButton.addTarget(self, action: #selector(didTapPrevious), for: .touchUpInside)
+        prevButton.bearyAddPressHaptic()
 
         nextButton.translatesAutoresizingMaskIntoConstraints = false
         nextButton.backgroundColor = BearyColors.surface2
@@ -939,6 +940,7 @@ final class BearyTimelineCell: UITableViewCell {
         btn.clipsToBounds = true
         btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
+        btn.bearyAddPressHaptic()
         return btn
     }()
 
