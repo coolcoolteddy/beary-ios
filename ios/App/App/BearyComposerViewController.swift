@@ -3475,8 +3475,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             headerStack.addArrangedSubview(dateLabel)
             // 112 引用列表 v2：状态 pill 放在作者名与时间之后、同一头行；
             // 四态按真实可见性实时取（不写死）：存活期限时 → 虚线边蓝字“限时”，
-            // 有效公开 → 实线边橙字“公开”，仅好友 → 实线边蓝字“仅好友”
-            // （蓝档与私密同色，不新发明颜色；搜索页同口径），其余 → 实线边蓝字“私密”。
+            // 有效公开 → 实线边橙字“公开”，仅好友 → 墨字灰底“仅好友”
+            // （与搜索页同口径，黑白灰新标准），其余 → 实线边蓝字“私密”。
             // 颜色口径走现行三色制（公开橙 #ff9500、私密蓝 #007aff/#0a84ff），不自创新色；
             // 天气图标仍在 pill 之后，名截断优先、pill 不让步。
             let statusPill = BearyQuoteStatusPillView()
@@ -3486,7 +3486,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             } else if BearyEphemeral.isEffectivelyPublic(entry) {
                 statusPill.configure(text: "公开", style: .public)
             } else if entry.isFriendsOnly {
-                statusPill.configure(text: "仅好友", style: .private)
+                statusPill.configure(text: "仅好友", style: .friends)
             } else {
                 statusPill.configure(text: "私密", style: .private)
             }
@@ -10331,6 +10331,7 @@ private final class BearyQuoteStatusPillView: UIView {
         case `public`
         case `private`
         case limited
+        case friends
     }
 
     private let label = UILabel()
@@ -10369,6 +10370,15 @@ private final class BearyQuoteStatusPillView: UIView {
     }
 
     private func applyColors() {
+        if style == .friends {
+            // 仅好友与搜索页同口径：墨字灰底（黑白灰新标准），与私密蓝档区分。
+            label.textColor = BearyColors.ink
+            backgroundColor = BearyColors.surface2
+            dashedLayer.isHidden = true
+            layer.borderWidth = 0
+            return
+        }
+        backgroundColor = .clear
         let color: UIColor = (style == .public) ? BearyColors.orange : BearyColors.blue
         label.textColor = (style == .public) ? BearyColors.deepOrangeText : BearyColors.blue
         if style == .limited {

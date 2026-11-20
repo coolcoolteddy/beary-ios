@@ -1301,7 +1301,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
             meta += " · \(place)"
         }
         sheetStack.addArrangedSubview(sheetBodyLabel(meta))
-        // 可见性行：公开 = 地球橙，其余 = 锁蓝（与主页 pill 同色，不复用文字 pill）；
+        // 可见性行：公开 = 地球橙，私密 = 锁蓝，仅好友 = 双人锁墨
+        // （与引用面板 pill／时间线圆点／搜索页 pill 的仅好友墨色同口径）；
         // 文案按实际档位：仅好友不再误标私密，存活限时篇补限时剩余信息。
         // （星图只对作者本人放行非公开篇，故仅好友档只在作者视角出现。）
         let visRow = UIStackView()
@@ -1312,7 +1313,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let isPublic = visValue == "public"
         let isFriendsOnly = visValue == "friends"
         visIcon.image = BearyIconImages.image(named: isPublic ? "icon_globe" : (isFriendsOnly ? "icon_friends_lock" : "icon_lock"), pointSize: 16)
-        visIcon.tintColor = isPublic ? BearyColors.orange : BearyColors.blue
+        visIcon.tintColor = isPublic ? BearyColors.orange : (isFriendsOnly ? BearyColors.ink : BearyColors.blue)
         visIcon.contentMode = .scaleAspectFit
         visRow.addArrangedSubview(visIcon)
         var visText = BearyVisibility.title(for: visValue)
