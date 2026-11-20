@@ -280,6 +280,41 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     // 审计第 9 项：滚动取消走共享类（见 BearyNativeCommon.BearyCancellableScrollView）——
     // 从结果行按钮上起滑时滚动视图能抢到 pan，点按行为不变；搜索输入框不在本滚动区内。
     private let scrollView = BearyCancellableScrollView()
+
+    // 下拉刷新：通知页同款自定义下拉头，复用 #2044 的实现（固定高 116、
+    // 手指行程 ×0.48 阻尼、32pt 官方刷新图标），不用系统 UIRefreshControl。
+    /// 自定义下拉指示器图标（32pt 官方刷新图标、灰色；平时 alpha 0，
+    /// 下拉时淡入＋跟随旋转，刷新中常亮连续旋转）。
+    private lazy var pullIconView = BearyRefreshIconView()
+
+    /// 自定义下拉指示器（通知页同款）：固定高 116、藏在表内容上方
+    /// （content y=-116..0），指示高按手指行程 ×0.48 阻尼（上限 116），
+    /// 不拦截触摸；刷新中改固定 84 高。
+    private lazy var pullView: UIView = {
+        let pull = UIView()
+        pull.backgroundColor = BearyColors.bg
+        pull.isUserInteractionEnabled = false
+        pull.frame = CGRect(x: 0, y: -116, width: 0, height: 116)
+        pull.addSubview(pullIconView)
+        NSLayoutConstraint.activate([
+            pullIconView.centerXAnchor.constraint(equalTo: pull.centerXAnchor),
+            pullIconView.bottomAnchor.constraint(equalTo: pull.bottomAnchor, constant: -14),
+            pullIconView.widthAnchor.constraint(equalToConstant: 32),
+            pullIconView.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        return pull
+    }()
+
+    private var isCustomPullRefreshing = false
+    /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
+    private var customPullEndInFlight = false
+    /// 一次拖动的 engage 锚点：只锁一次，中途不再凭 offset/inset 阈值清掉。
+    private var pullEngageTranslation: CGFloat?
+
+    /// 下拉刷新收尾时恢复的顶内边距：与 applyHeaderTopInset 同口径（60/0＋devBannerInset）。
+    private var pullBaseTopInset: CGFloat {
+        (headerTopInsetVisible ? 60 : 0) + BearyDeveloperMode.shared.devBannerInset
+    }
     private let contentStack = UIStackView()
     private let columnWrap = UIView()
 
@@ -585,6 +620,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 本页无公开回顶方法、无 contentOffset 在顶判定（容器回顶走 BFS 的 -contentInset.top，收起态为 0）。
     func applyHeaderTopInset(visible: Bool) {
         headerTopInsetVisible = visible
+        // 下拉刷新进行中不改顶内边距（刷新占 84，收尾时 endCustomPullRefresh 按记录值恢复）。
+        guard !isCustomPullRefreshing else { return }
         let top: CGFloat = (visible ? 60 : 0) + BearyDeveloperMode.shared.devBannerInset
         if scrollView.contentInset.top != top {
             scrollView.contentInset.top = top
@@ -596,6 +633,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         super.viewDidLayoutSubviews()
         updateColumnLayout()
         updateStickyBoxPosition()
+        if scrollView.bounds.width > 0 && pullView.frame.width != scrollView.bounds.width {
+            pullView.frame.size.width = scrollView.bounds.width
+        }
         // 8-11：状态圆圆角走高/2（54 圆 -> 27），不再只靠手写 27；
         // bounds 在首次布局后才定，故此处跟随布局刷新（只动 layer，不改约束）。
         if stateCircle.bounds.height > 0 {
@@ -626,6 +666,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
            shouldReorderFollowStatesForScroll(offsetY: scrollView.contentOffset.y) {
             requestFollowStatesForVisibleRows()
         }
+        updateCustomPullIndicator()
     }
 
     /// r11-11：滚动重排节流判定——首次滚动（无上次记录）或偏移自上次
@@ -640,12 +681,117 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         if !decelerate, !followStatePendingIds.isEmpty {
             requestFollowStatesForVisibleRows()
         }
+        // 自定义下拉触发：手指原始行程满 140pt 松手才刷新。
+        let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        pullEngageTranslation = nil
+        if fingerRaw >= 140 && !isCustomPullRefreshing && !lastQuery.isEmpty {
+            // 自定义下拉触发（满 140pt 松手）给一次轻触觉；程序触发的刷新不走这里。
+            BearyHaptics.press()
+            beginCustomPullRefresh()
+        }
     }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         // r11-11：减速停稳时强制重排一次，停稳态队列与改前一致。
         if !followStatePendingIds.isEmpty {
             requestFollowStatesForVisibleRows()
+        }
+    }
+
+    /// 改 contentInset.top 或重载顶 offset，都会把阈值顶到手指下面，旧口径
+    /// 一清锚点 fingerRaw 即归零、指示高塌掉，图标还没触发就缩回去。
+    /// 锚点只在拖动结束清（scrollViewDidEndDragging 与下方 !isDragging 分支）。
+    private func updateCustomPullIndicator() {
+        if isCustomPullRefreshing {
+            return
+        }
+        if !scrollView.isDragging {
+            pullEngageTranslation = nil
+            pullView.frame = CGRect(x: 0, y: -116, width: scrollView.bounds.width, height: 116)
+            pullIconView.setPullProgress(0)
+            return
+        }
+        let contentRaw = max(0, -(scrollView.contentOffset.y + scrollView.contentInset.top))
+        let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
+        if scrollView.contentOffset.y <= -scrollView.contentInset.top && pullEngageTranslation == nil {
+            pullEngageTranslation = panTranslation
+        }
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        let indicatorHeight = min(fingerRaw * 0.48, 116)
+        pullView.frame = CGRect(x: 0, y: indicatorHeight - 116 - contentRaw, width: scrollView.bounds.width, height: 116)
+        if indicatorHeight <= 0 {
+            pullIconView.setPullProgress(0)
+        } else {
+            let progress = min(1, indicatorHeight / 67.2)
+            pullIconView.setPullProgress(progress)
+        }
+    }
+
+    private func beginCustomPullRefresh() {
+        // 初始态（最近搜索）是本地内容、无可刷新的服务端结果，不触发。
+        if isCustomPullRefreshing || lastQuery.isEmpty {
+            return
+        }
+        isCustomPullRefreshing = true
+        pullIconView.startSpinning()
+        // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
+        // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
+        // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”。
+        scrollView.setContentOffset(scrollView.contentOffset, animated: false)
+        let pullIn = {
+            self.scrollView.contentInset.top = 84
+            self.scrollView.scrollIndicatorInsets.top = 84
+            self.scrollView.contentOffset = CGPoint(x: 0, y: -84)
+            self.pullView.frame = CGRect(x: 0, y: -84, width: self.scrollView.bounds.width, height: 84)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullIn()
+        } else {
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
+        }
+        runSearch(query: lastQuery)
+    }
+
+    private func endCustomPullRefresh() {
+        if !isCustomPullRefreshing || customPullEndInFlight {
+            return
+        }
+        customPullEndInFlight = true
+        // 收回动画全程仍持刷新旗：跟随侧不中途重写 pullView.frame。
+        // 结束时只收指示器——若刷新在途用户已滑到深处（或仍按住拖动），
+        // 不再把 contentOffset 拽回顶部，只复位内边距、藏指示头，留在原位置；
+        // 仍停在下拉位的才按旧口径回到基线顶（指示区须收掉）。
+        // 下拉位 = -84（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
+        let baseTop = pullBaseTopInset
+        let stillAtPullPosition = !self.scrollView.isDragging
+            && self.scrollView.contentOffset.y <= -84 + 8
+        // 动量截断（进入侧同款）：只在仍停在下拉位时——此时收回动画要接管
+        // offset；松手后的表减速若还在跑，会与收回 easing 双路驱动
+        // contentOffset，图标先往下掉一下再上去；先掐断再播动画。
+        // 用户已滑走时 offset 不参与收回动画，不碰他的滚动。
+        if stillAtPullPosition {
+            scrollView.setContentOffset(scrollView.contentOffset, animated: false)
+        }
+        let pullOut = {
+            self.scrollView.contentInset.top = baseTop
+            self.scrollView.scrollIndicatorInsets.top = baseTop
+            if stillAtPullPosition {
+                self.scrollView.contentOffset = CGPoint(x: 0, y: -baseTop)
+            }
+            self.pullView.frame = CGRect(x: 0, y: -116, width: self.scrollView.bounds.width, height: 116)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullOut()
+            self.isCustomPullRefreshing = false
+            self.customPullEndInFlight = false
+            self.pullIconView.stopSpinning()
+        } else {
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
+                self.isCustomPullRefreshing = false
+                self.customPullEndInFlight = false
+                self.pullIconView.stopSpinning()
+            })
         }
     }
 
@@ -822,6 +968,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         scrollView.delaysContentTouches = false
         view.addSubview(scrollView)
+        scrollView.addSubview(pullView)
 
         columnWrap.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(columnWrap)
@@ -1689,6 +1836,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             BearyIconMotion.startSpin(on: boxRingView, duration: 0.9, key: "bearyBoxSpin")
         } else {
             BearyIconMotion.stopSpin(on: boxRingView, key: "bearyBoxSpin")
+            // 搜索轮次结束（两路到齐才停，见 runSearch 的 applySearchLegs）：收下拉指示器。
+            endCustomPullRefresh()
         }
     }
 

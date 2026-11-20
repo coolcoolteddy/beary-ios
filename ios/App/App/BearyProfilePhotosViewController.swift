@@ -28,6 +28,36 @@ final class BearyProfilePhotosViewController: UIViewController {
     /// r24-#2：照片拉取代次——切号即换代，在途旧身份分页／首拉回包一律丢弃，
     /// 不得写回新身份的页面。
     private var photosGeneration = 0
+
+    // 下拉刷新：通知页同款自定义下拉头，复用 #2044 的实现（固定高 116、
+    // 手指行程 ×0.48 阻尼、32pt 官方刷新图标），不用系统 UIRefreshControl。
+    /// 自定义下拉指示器图标（32pt 官方刷新图标、灰色；平时 alpha 0，
+    /// 下拉时淡入＋跟随旋转，刷新中常亮连续旋转）。
+    private lazy var pullIconView = BearyRefreshIconView()
+
+    /// 自定义下拉指示器（通知页同款）：固定高 116、藏在表内容上方
+    /// （content y=-116..0），指示高按手指行程 ×0.48 阻尼（上限 116），
+    /// 不拦截触摸；刷新中改固定 84 高。
+    private lazy var pullView: UIView = {
+        let pull = UIView()
+        pull.backgroundColor = BearyColors.bg
+        pull.isUserInteractionEnabled = false
+        pull.frame = CGRect(x: 0, y: -116, width: 0, height: 116)
+        pull.addSubview(pullIconView)
+        NSLayoutConstraint.activate([
+            pullIconView.centerXAnchor.constraint(equalTo: pull.centerXAnchor),
+            pullIconView.bottomAnchor.constraint(equalTo: pull.bottomAnchor, constant: -14),
+            pullIconView.widthAnchor.constraint(equalToConstant: 32),
+            pullIconView.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        return pull
+    }()
+
+    private var isCustomPullRefreshing = false
+    /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
+    private var customPullEndInFlight = false
+    /// 一次拖动的 engage 锚点：只锁一次，中途不再凭 offset/inset 阈值清掉。
+    private var pullEngageTranslation: CGFloat?
     /// r24-#2：切号重拉进行中时空态显加载占位（D5 3 列灰色缩略图），
     /// 而非“还没有照片”。
     private var isReloadingPhotos = false
@@ -339,6 +369,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         topBarView.addSubview(backButton)
         topBarView.addSubview(titleLabel)
         view.addSubview(collectionView)
+        collectionView.addSubview(pullView)
         view.addSubview(emptyLabel)
         view.addSubview(emptyRetryButton)
         view.addSubview(photosLoadingPlaceholderView)
@@ -671,6 +702,9 @@ final class BearyProfilePhotosViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updatePhotosGridWidth()
+        if collectionView.bounds.width > 0 && pullView.frame.width != collectionView.bounds.width {
+            pullView.frame.size.width = collectionView.bounds.width
+        }
     }
 
     /// 08：网格宽按实宽定——仅 iPad 且页面宽度 ≥821 时 600 居中、其余时全宽，与全站
@@ -834,6 +868,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         photosFetching = true
         BearyAPI.shared.fetchEntries(scope: .author(authorId), limit: 50) { [weak self] result in
             DispatchQueue.main.async {
+                self?.endCustomPullRefresh()
                 guard let strongSelf = self, generation == strongSelf.photosGeneration else { return }
                 strongSelf.photosFetching = false
                 strongSelf.isReloadingPhotos = false
@@ -1559,6 +1594,114 @@ extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollec
         let originFrame = collectionView.cellForItem(at: indexPath).map { $0.convert($0.bounds, to: nil) }
         let thumbnail = (collectionView.cellForItem(at: indexPath) as? BearyProfilePhotoCell)?.displayedThumbnail
         presentLightbox(startIndex: flatIndex(for: indexPath), originFrame: originFrame, thumbnail: thumbnail)
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        updateCustomPullIndicator()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        // 自定义下拉触发：手指原始行程满 140pt 松手才刷新。
+        let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        pullEngageTranslation = nil
+        if fingerRaw >= 140 && !isCustomPullRefreshing && !photosFetching && authorIdValue != nil {
+            // 自定义下拉触发（满 140pt 松手）给一次轻触觉；程序触发的刷新不走这里。
+            BearyHaptics.press()
+            beginCustomPullRefresh()
+        }
+    }
+
+    /// 改 contentInset.top 或重载顶 offset，都会把阈值顶到手指下面，旧口径
+    /// 一清锚点 fingerRaw 即归零、指示高塌掉，图标还没触发就缩回去。
+    /// 锚点只在拖动结束清（scrollViewDidEndDragging 与下方 !isDragging 分支）。
+    private func updateCustomPullIndicator() {
+        if isCustomPullRefreshing {
+            return
+        }
+        if !collectionView.isDragging {
+            pullEngageTranslation = nil
+            pullView.frame = CGRect(x: 0, y: -116, width: collectionView.bounds.width, height: 116)
+            pullIconView.setPullProgress(0)
+            return
+        }
+        let contentRaw = max(0, -(collectionView.contentOffset.y + collectionView.contentInset.top))
+        let panTranslation = collectionView.panGestureRecognizer.translation(in: collectionView).y
+        if collectionView.contentOffset.y <= -collectionView.contentInset.top && pullEngageTranslation == nil {
+            pullEngageTranslation = panTranslation
+        }
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        let indicatorHeight = min(fingerRaw * 0.48, 116)
+        pullView.frame = CGRect(x: 0, y: indicatorHeight - 116 - contentRaw, width: collectionView.bounds.width, height: 116)
+        if indicatorHeight <= 0 {
+            pullIconView.setPullProgress(0)
+        } else {
+            let progress = min(1, indicatorHeight / 67.2)
+            pullIconView.setPullProgress(progress)
+        }
+    }
+
+    private func beginCustomPullRefresh() {
+        guard !isCustomPullRefreshing, !photosFetching, let authorId = authorIdValue else { return }
+        isCustomPullRefreshing = true
+        pullIconView.startSpinning()
+        // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
+        // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
+        // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”。
+        collectionView.setContentOffset(collectionView.contentOffset, animated: false)
+        let pullIn = {
+            self.collectionView.contentInset.top = 84
+            self.collectionView.scrollIndicatorInsets.top = 84
+            self.collectionView.contentOffset = CGPoint(x: 0, y: -84)
+            self.pullView.frame = CGRect(x: 0, y: -84, width: self.collectionView.bounds.width, height: 84)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullIn()
+        } else {
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
+        }
+        reloadPhotosFirstPage(authorId: authorId, generation: photosGeneration)
+    }
+
+    private func endCustomPullRefresh() {
+        if !isCustomPullRefreshing || customPullEndInFlight {
+            return
+        }
+        customPullEndInFlight = true
+        // 收回动画全程仍持刷新旗：跟随侧不中途重写 pullView.frame。
+        // 结束时只收指示器——若刷新在途用户已滑到深处（或仍按住拖动），
+        // 不再把 contentOffset 拽回 0 顶部，只复位内边距、藏指示头，留在原位置；
+        // 仍停在下拉位的才按旧口径回到 0（指示区须收掉）。
+        // 下拉位 = -84（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
+        let stillAtPullPosition = !self.collectionView.isDragging
+            && self.collectionView.contentOffset.y <= -84 + 8
+        // 动量截断（进入侧同款）：只在仍停在下拉位时——此时收回动画要接管
+        // offset；松手后的表减速若还在跑，会与收回 easing 双路驱动
+        // contentOffset，图标先往下掉一下再上去；先掐断再播动画。
+        // 用户已滑走时 offset 不参与收回动画，不碰他的滚动。
+        if stillAtPullPosition {
+            collectionView.setContentOffset(collectionView.contentOffset, animated: false)
+        }
+        let pullOut = {
+            self.collectionView.contentInset.top = 0
+            self.collectionView.scrollIndicatorInsets.top = 0
+            if stillAtPullPosition {
+                self.collectionView.contentOffset = CGPoint(x: 0, y: 0)
+            }
+            self.pullView.frame = CGRect(x: 0, y: -116, width: self.collectionView.bounds.width, height: 116)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullOut()
+            self.isCustomPullRefreshing = false
+            self.customPullEndInFlight = false
+            self.pullIconView.stopSpinning()
+        } else {
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
+                self.isCustomPullRefreshing = false
+                self.customPullEndInFlight = false
+                self.pullIconView.stopSpinning()
+            })
+        }
     }
 }
 

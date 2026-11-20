@@ -42,7 +42,47 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     ///（照片墙 #729 同款口径：失败不 reload 已有行，保内容与滚动位置）。
     /// 401 不进此态（走登录门）。
     private var trashLoadMoreFailed = false
-    private var trashSilentRefreshing = false
+    private var trashSilentRefreshing = false {
+        didSet {
+            // 下拉刷新终点：静默刷新链的任何终态（成功收尾／失败／过期／强制态）
+            // 都把本旗清掉，顺手收下拉指示器；未下拉时 completion 为 nil，无动作。
+            if !trashSilentRefreshing {
+                pullRefreshCompletion?()
+                pullRefreshCompletion = nil
+            }
+        }
+    }
+    private var pullRefreshCompletion: (() -> Void)?
+
+    // 下拉刷新：通知页同款自定义下拉头，复用 #2044 的实现（固定高 116、
+    // 手指行程 ×0.48 阻尼、32pt 官方刷新图标），不用系统 UIRefreshControl。
+    /// 自定义下拉指示器图标（32pt 官方刷新图标、灰色；平时 alpha 0，
+    /// 下拉时淡入＋跟随旋转，刷新中常亮连续旋转）。
+    private lazy var pullIconView = BearyRefreshIconView()
+
+    /// 自定义下拉指示器（通知页同款）：固定高 116、藏在表内容上方
+    /// （content y=-116..0），指示高按手指行程 ×0.48 阻尼（上限 116），
+    /// 不拦截触摸；刷新中改固定 84 高。
+    private lazy var pullView: UIView = {
+        let pull = UIView()
+        pull.backgroundColor = BearyColors.bg
+        pull.isUserInteractionEnabled = false
+        pull.frame = CGRect(x: 0, y: -116, width: 0, height: 116)
+        pull.addSubview(pullIconView)
+        NSLayoutConstraint.activate([
+            pullIconView.centerXAnchor.constraint(equalTo: pull.centerXAnchor),
+            pullIconView.bottomAnchor.constraint(equalTo: pull.bottomAnchor, constant: -14),
+            pullIconView.widthAnchor.constraint(equalToConstant: 32),
+            pullIconView.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        return pull
+    }()
+
+    private var isCustomPullRefreshing = false
+    /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
+    private var customPullEndInFlight = false
+    /// 一次拖动的 engage 锚点：只锁一次，中途不再凭 offset/inset 阈值清掉。
+    private var pullEngageTranslation: CGFloat?
     /// 静默刷新代次守卫（全量同步 trash 腿同款口径，见 BearyEntrySync）：
     /// 刷新开始时记下回收站写盘代际，终态提交前比对——期间发生过任何
     /// trash.json 写盘（恢复/彻底删除清桶、删帖进桶、全量同步提交），
@@ -145,6 +185,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         super.viewDidLayoutSubviews()
         // 列宽由 bounds 直接派生（见 updateColumnWidth）；值不变时不写，避免布局循环。
         updateColumnWidth()
+        if scrollView.bounds.width > 0 && pullView.frame.width != scrollView.bounds.width {
+            pullView.frame.size.width = scrollView.bounds.width
+        }
     }
 
     /// 列宽直派：仅 iPad 且宽 ≥821 取 600 居中、其余取全宽减 32（两侧各 16），与旧口径一致。
@@ -224,6 +267,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // 视觉清单第 12 项：模态玻璃背板已撤（玻璃范围 Token 只允许栏/菜单，
         // 全屏页不在内）；页底改 BearyColors.bg（整页标准底色），行卡片底不动。
         scrollView.delegate = self
+        scrollView.addSubview(pullView)
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         scrollView.delaysContentTouches = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -784,9 +828,126 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        updateCustomPullIndicator()
         let threshold = scrollView.contentSize.height - scrollView.bounds.height - 200
         if threshold > 0 && scrollView.contentOffset.y > threshold {
             loadMoreIfNeeded()
+        }
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        // 自定义下拉触发：手指原始行程满 140pt 松手才刷新。
+        let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        pullEngageTranslation = nil
+        if fingerRaw >= 140 && !isCustomPullRefreshing && !trashLoading && !trashBucketLoading {
+            // 自定义下拉触发（满 140pt 松手）给一次轻触觉；程序触发的刷新不走这里。
+            BearyHaptics.press()
+            beginCustomPullRefresh()
+        }
+    }
+
+    /// 改 contentInset.top 或重载顶 offset，都会把阈值顶到手指下面，旧口径
+    /// 一清锚点 fingerRaw 即归零、指示高塌掉，图标还没触发就缩回去。
+    /// 锚点只在拖动结束清（scrollViewDidEndDragging 与下方 !isDragging 分支）。
+    private func updateCustomPullIndicator() {
+        if isCustomPullRefreshing {
+            return
+        }
+        if !scrollView.isDragging {
+            pullEngageTranslation = nil
+            pullView.frame = CGRect(x: 0, y: -116, width: scrollView.bounds.width, height: 116)
+            pullIconView.setPullProgress(0)
+            return
+        }
+        let contentRaw = max(0, -(scrollView.contentOffset.y + scrollView.contentInset.top))
+        let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
+        if scrollView.contentOffset.y <= -scrollView.contentInset.top && pullEngageTranslation == nil {
+            pullEngageTranslation = panTranslation
+        }
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        let indicatorHeight = min(fingerRaw * 0.48, 116)
+        pullView.frame = CGRect(x: 0, y: indicatorHeight - 116 - contentRaw, width: scrollView.bounds.width, height: 116)
+        if indicatorHeight <= 0 {
+            pullIconView.setPullProgress(0)
+        } else {
+            let progress = min(1, indicatorHeight / 67.2)
+            pullIconView.setPullProgress(progress)
+        }
+    }
+
+    private func beginCustomPullRefresh() {
+        if isCustomPullRefreshing || trashLoading || trashBucketLoading {
+            return
+        }
+        isCustomPullRefreshing = true
+        pullIconView.startSpinning()
+        // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
+        // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
+        // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”。
+        scrollView.setContentOffset(scrollView.contentOffset, animated: false)
+        let pullIn = {
+            self.scrollView.contentInset.top = 84
+            self.scrollView.scrollIndicatorInsets.top = 84
+            self.scrollView.contentOffset = CGPoint(x: 0, y: -84)
+            self.pullView.frame = CGRect(x: 0, y: -84, width: self.scrollView.bounds.width, height: 84)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullIn()
+        } else {
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
+        }
+        pullRefreshCompletion = { [weak self] in self?.endCustomPullRefresh() }
+        if trashSilentRefreshing {
+            // 已在途的静默刷新跑完即调 completion 收指示器，不另起一轮。
+            return
+        }
+        silentRefreshTrash()
+        if !trashSilentRefreshing {
+            // 未登录 / 行拖动中被 defer：本次静默刷新没跑起来，无终点会调 completion。
+            pullRefreshCompletion = nil
+            endCustomPullRefresh()
+        }
+    }
+
+    private func endCustomPullRefresh() {
+        if !isCustomPullRefreshing || customPullEndInFlight {
+            return
+        }
+        customPullEndInFlight = true
+        // 收回动画全程仍持刷新旗：跟随侧不中途重写 pullView.frame。
+        // 结束时只收指示器——若刷新在途用户已滑到深处（或仍按住拖动），
+        // 不再把 contentOffset 拽回 0 顶部，只复位内边距、藏指示头，留在原位置；
+        // 仍停在下拉位的才按旧口径回到 0（指示区须收掉）。
+        // 下拉位 = -84（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
+        let stillAtPullPosition = !self.scrollView.isDragging
+            && self.scrollView.contentOffset.y <= -84 + 8
+        // 动量截断（进入侧同款）：只在仍停在下拉位时——此时收回动画要接管
+        // offset；松手后的表减速若还在跑，会与收回 easing 双路驱动
+        // contentOffset，图标先往下掉一下再上去；先掐断再播动画。
+        // 用户已滑走时 offset 不参与收回动画，不碰他的滚动。
+        if stillAtPullPosition {
+            scrollView.setContentOffset(scrollView.contentOffset, animated: false)
+        }
+        let pullOut = {
+            self.scrollView.contentInset.top = 0
+            self.scrollView.scrollIndicatorInsets.top = 0
+            if stillAtPullPosition {
+                self.scrollView.contentOffset = CGPoint(x: 0, y: 0)
+            }
+            self.pullView.frame = CGRect(x: 0, y: -116, width: self.scrollView.bounds.width, height: 116)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullOut()
+            self.isCustomPullRefreshing = false
+            self.customPullEndInFlight = false
+            self.pullIconView.stopSpinning()
+        } else {
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
+                self.isCustomPullRefreshing = false
+                self.customPullEndInFlight = false
+                self.pullIconView.stopSpinning()
+            })
         }
     }
 
