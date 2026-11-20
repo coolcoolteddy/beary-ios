@@ -3486,7 +3486,7 @@ final class BearyDetailViewController: UIViewController {
 
     @objc private func likePressDown() {
         // 2026-11-19 震动精简：touchDown 只 prepare，不再发 press 轻震；
-        // likeTap 在抬起确认时恒播一次（与卡片页同款）。
+        // 确认轻震只由 helper 在抬起时发一次，likeTapped 不再补 likeTap。
         BearyHaptics.prepareLike()
     }
 
@@ -3510,13 +3510,12 @@ final class BearyDetailViewController: UIViewController {
         let targetLiked = !currentlyLiked
         // 先行反馈（卡片口径）：点赞即填亮红＋计数 +1，取消即褪色＋计数 −1；
         // 液体炸开与填色同起——点按确认时即播，不再等服务端回包。
-        // 审计动效组：确认时恒播 likeTap＋音效（touchDown 已不再发 press 轻震，
-        // 不会双震；与卡片页 feedLikeTapped 同款）。
+        // 点按确认震动只由 bearyAddPressFeedback 在 touchUpInside 发一次，
+        // likeTapped 不再补 likeTap（卡片页点赞钮未挂 helper，仍靠自身补震，
+        // 见 BearyDiaryCardCell，此处不照搬）；音效只在确认时播。
         if !currentlyLiked {
-            BearyHaptics.likeTap()
             BearySoundPlayer.play(.likePop)
         } else {
-            BearyHaptics.likeTap()
             BearySoundPlayer.play(.unlikeSoft)
         }
         entry.likedByMe = targetLiked

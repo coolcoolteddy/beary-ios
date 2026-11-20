@@ -4663,8 +4663,8 @@ class BearyTimelineViewController: UIViewController {
         }
         let streak = data.streak ?? 0
         let monthTotal = data.monthTotal ?? 0
-        // R15-L1：统计行恒不可点——禁用即去掉按压反馈（touchDown 缩放/震动
-        // 只在启用钮上触发）；didTapStats 的重试逻辑只由日历卡内失败行触发，
+        // R15-L1：统计行恒不可点——禁用即去掉按压反馈（touchDown 缩放／点按
+        // 确认轻震只在启用钮上触发）；didTapStats 的重试逻辑只由日历卡内失败行触发，
         // 不再经统计行可达；P1-26：无障碍名与可见统计文案一致。
         statsButton.isEnabled = false
         statsButton.accessibilityLabel = "已连续写 \(streak) 天，本月共 \(monthTotal) 篇"
