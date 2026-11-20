@@ -1531,6 +1531,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         searchTimer?.invalidate()
+        // 键盘「搜索」提交的才是最终用词：记一次最近搜索。
+        recordRecentSearch(textField.text ?? "")
         runSearch(query: textField.text ?? "")
         textField.resignFirstResponder()
         return true
@@ -1607,7 +1609,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             case .success(var data):
                 if !serverApplied {
                     serverApplied = true
-                    self.recordRecentSearch(trimmed)
+                    // 最近搜索只在键盘提交或点开结果行时记（textFieldShouldReturn／
+                    // entryRowTapped／userRowTapped），防抖搜索成功不再写历史。
                     // sweep32-2：先按服务端原始回包记当批翻页态（游标与 hasMore
                     // 只属于服务端页），再把 FTS 结果并进「我的」组；renderResults
                     // 末尾的 updateSearchFooter 才能据此亮起“加载更多”。
@@ -3378,6 +3381,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 // 震动只在点按确认（touchUpInside）后触发：行在主 scrollView 内且
                 // delaysContentTouches=false，手指按上即滑会在 touchDown 误震。
                 BearyHaptics.press()
+                // 点开结果行才记最终用词：本次搜索词即 lastQuery。
+                recordRecentSearch(lastQuery)
                 onOpenUserHandler(user)
                 return
             }
@@ -3807,6 +3812,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 BearyHaptics.press()
                 // iCity §12：搜索结果点按记 search_click（只记 id，不记查询词；失败静默）。
                 BearyAPI.shared.sendEvent(eventType: "search_click", targetId: rowEntryIds[index])
+                // 点开结果行才记最终用词：本次搜索词即 lastQuery。
+                recordRecentSearch(lastQuery)
                 onOpenEntryHandler(rowEntryIds[index])
                 return
             }
