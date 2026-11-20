@@ -1022,8 +1022,10 @@ final class BearyDetailViewController: UIViewController {
             avatarInitialLabel.centerYAnchor.constraint(equalTo: avatarButton.centerYAnchor),
             avatarRetryButton.centerXAnchor.constraint(equalTo: avatarButton.centerXAnchor),
             avatarRetryButton.centerYAnchor.constraint(equalTo: avatarButton.centerYAnchor),
-            avatarRetryButton.widthAnchor.constraint(equalToConstant: 28),
-            avatarRetryButton.heightAnchor.constraint(equalToConstant: 28),
+            // 头像重试与卡片同款 44（卡片头像帧已改 44，详情仍 28、同一
+            // 元件两页一边大一边小；图片槽重试仍 28，不动）。
+            avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
+            avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
             avatarImageView.topAnchor.constraint(equalTo: avatarButton.topAnchor),
             avatarImageView.leadingAnchor.constraint(equalTo: avatarButton.leadingAnchor),
             avatarImageView.trailingAnchor.constraint(equalTo: avatarButton.trailingAnchor),
