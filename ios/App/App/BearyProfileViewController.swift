@@ -4800,8 +4800,8 @@ class BearyProfileViewController: UIViewController {
         // 不在此处同步算（指纹遍历与 NLTokenizer 逐篇分词会卡住个人页渲染）：
         // 先藏旧词——旧年 / 旧号的词绝不在新年份名下多留一帧；命中与未命中
         // 一律后台算完回主线程一次性呈现。
-        let currentYear = Calendar.current.component(.year, from: Date())
-        let availableYears = BearyProfilePersonalLogic.availableYears(entries: visible, isOwn: isOwnProfile, calendar: .current)
+        let currentYear = Self.beijingCalendar.component(.year, from: Date())
+        let availableYears = BearyProfilePersonalLogic.availableYears(entries: visible, isOwn: isOwnProfile, calendar: Self.beijingCalendar)
         let resolvedYear = availableYears.contains(currentYear) ? currentYear : availableYears.first
         statsWordprintYear = resolvedYear
         statsWordprintView.isHidden = true
@@ -4814,7 +4814,7 @@ class BearyProfileViewController: UIViewController {
                 entries: visible,
                 year: resolvedYear,
                 isOwn: isOwnProfile,
-                calendar: .current
+                calendar: Self.beijingCalendar
             ) { [weak self] wordprintValue in
                 guard let self = self,
                       self.statsWordprintRequest == request,
@@ -4937,8 +4937,8 @@ class BearyProfileViewController: UIViewController {
     private func openYearReview() -> Bool {
         let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
         guard !visible.isEmpty else { return false }
-        let currentYear = Calendar.current.component(.year, from: Date())
-        let availableYears = BearyProfilePersonalLogic.availableYears(entries: visible, isOwn: isOwnProfile, calendar: .current)
+        let currentYear = Self.beijingCalendar.component(.year, from: Date())
+        let availableYears = BearyProfilePersonalLogic.availableYears(entries: visible, isOwn: isOwnProfile, calendar: Self.beijingCalendar)
         guard let resolvedYear = availableYears.contains(currentYear) ? currentYear : availableYears.first else { return false }
         guard presentedViewController == nil else { return false }
         let sheet = BearyYearReviewViewController(year: resolvedYear, allEntries: visible, isOwn: isOwnProfile)
@@ -4992,16 +4992,16 @@ class BearyProfileViewController: UIViewController {
         // 开发者模式时间旅行（仅内存）：标题月日与历史查询都跟假日；
         // 写路径（留话 createdAtMs）保持真实，不读这里。
         let fakeToday = BearyDevPreviewState.fakeTodayDate()
-        let todayParts = Calendar.current.dateComponents([.month, .day], from: fakeToday ?? Date())
+        let todayParts = calendar.dateComponents([.month, .day], from: fakeToday ?? Date())
         guard let month = todayParts.month, let day = todayParts.day else {
             thisDayCard.isHidden = true
             return
         }
-        var history = BearyProfilePersonalLogic.thisDayInHistory(entries: visible, today: fakeToday ?? Date(), calendar: Calendar.current)
+        var history = BearyProfilePersonalLogic.thisDayInHistory(entries: visible, today: fakeToday ?? Date(), calendar: calendar)
         // 开发者模式假数据预览（仅内存）：往年今天无日记时也亮一张假卡；
         // 假篇 id 带 dev- 前缀，点按进详情会被拦截、留话入口同样拦截。
         if history == nil && BearyDevPreviewState.pastDayPreview {
-            let fakeYear = (Calendar.current.component(.year, from: fakeToday ?? Date())) - 1
+            let fakeYear = (calendar.component(.year, from: fakeToday ?? Date())) - 1
             let fakeEntry = BearyDeveloperMode.shared.makeFakePastDayEntry(fakeYear: fakeYear, month: month, day: day)
             history = BearyProfilePersonalLogic.ThisDayHistory(year: fakeYear, entries: [fakeEntry])
         }
@@ -6018,8 +6018,8 @@ class BearyProfileViewController: UIViewController {
             yearCard.isHidden = true
             return
         }
-        let year = Calendar.current.component(.year, from: Date())
-        let yearEntries = BearyProfilePersonalLogic.yearEntries(entries: visible, year: year, calendar: .current)
+        let year = Self.beijingCalendar.component(.year, from: Date())
+        let yearEntries = BearyProfilePersonalLogic.yearEntries(entries: visible, year: year, calendar: Self.beijingCalendar)
         guard !yearEntries.isEmpty else {
             yearCard.isHidden = true
             return
@@ -6029,10 +6029,10 @@ class BearyProfileViewController: UIViewController {
         for entry in visible {
             if let createdAt = entry.createdAt {
                 let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
-                writtenDays.insert(Calendar.current.startOfDay(for: date))
+                writtenDays.insert(Self.beijingCalendar.startOfDay(for: date))
             }
         }
-        let streak = BearyProfilePersonalLogic.currentStreak(from: Date(), writtenDays: writtenDays, calendar: .current)
+        let streak = BearyProfilePersonalLogic.currentStreak(from: Date(), writtenDays: writtenDays, calendar: Self.beijingCalendar)
         yearSummaryLabel.text = "今年已写 \(yearEntries.count) 篇 · 连续 \(streak) 天"
         yearCard.accessibilityLabel = "\(year) 年度回顾"
     }
@@ -6165,7 +6165,7 @@ class BearyProfileViewController: UIViewController {
             yearCard.isHidden = true
             return
         }
-        let year = Calendar.current.component(.year, from: Date())
+        let year = Self.beijingCalendar.component(.year, from: Date())
         let count = snap.yearCounts["\(year)"] ?? 0
         guard count > 0 else {
             yearCard.isHidden = true
@@ -6199,7 +6199,7 @@ class BearyProfileViewController: UIViewController {
         for entry in visible {
             guard let createdAt = entry.createdAt else { continue }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
-            let year = Calendar.current.component(.year, from: date)
+            let year = Self.beijingCalendar.component(.year, from: date)
             yearCounts["\(year)", default: 0] += 1
         }
         let snap = BearyProfileStatsCache.Snapshot(
