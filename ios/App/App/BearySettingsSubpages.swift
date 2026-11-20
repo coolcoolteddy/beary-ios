@@ -705,3 +705,179 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
         }
     }
 }
+
+// MARK: - 离线保存页（第二批体验检查第 6 项）
+//
+// 本账号占用＋逐篇下载状态＋清除：
+//   - 占用行：本账号离线副本总字节与篇数（Application Support 持久目录，
+//     不走 24h/200MB 的 Caches 缓存、不参与淘汰）；
+//   - 逐篇行：标题＋状态（已保存／部分保存／未完成）＋张数＋占用，附“移除”；
+//   - 批量：保存全部本人日记（以本地已同步归档为源，只取本人篇、跳过已完成篇）；
+//   - 清除：全部清除只删本账号离线副本，已同步的日记与 Caches 缓存不受影响。
+// 未登录只显登录提示，不拉数据、不建目录。
+
+final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
+    private var isSaving = false
+    private var saveProgressText: String?
+    /// 当前屏上逐篇行的记录（与移除钮 tag 下标一一对应；每次 render 重建时同步更新）。
+    private var currentRecords: [BearyOfflineSaveRecord] = []
+
+    /// 子页标题收进类里（同 BearyDevicesViewController 各子页自带参数的口径）；
+    /// 调用方直接 BearyOfflineSaveViewController()，不用再传标题。
+    init() {
+        super.init(title: "离线保存")
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        render()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // 子页内改动（批量保存/清除）后返回仍是本页：每次出现都重刷，
+        // 行尾占用与逐篇状态不滞后。
+        if isViewLoaded { render() }
+    }
+
+    private func render() {
+        for view in contentStack.arrangedSubviews {
+            contentStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        guard BearyOfflineSaveManager.shared.currentAccountId != nil else {
+            let hint = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
+            hint.text = "登录后可离线保存自己的日记"
+            contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: [hint]))
+            return
+        }
+        let usage = BearyOfflineSaveManager.shared.usage()
+        let records = BearyOfflineSaveManager.shared.savedRecords()
+        currentRecords = records
+
+        let summary = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
+        if let progress = saveProgressText {
+            summary.text = progress
+        } else if usage.entryCount > 0 {
+            summary.text = "本账号占用 \(BearyOfflineSaveStore.formattedBytes(usage.bytes)) · \(usage.entryCount) 篇"
+        } else {
+            summary.text = "还没有离线保存的日记"
+        }
+        contentStack.addArrangedSubview(summary)
+
+        let saveAllButton = BearyButton(style: .secondaryOutline(.regular))
+        saveAllButton.setTitle(isSaving ? "正在保存…" : "保存全部本人日记", for: .normal)
+        saveAllButton.isEnabled = !isSaving
+        saveAllButton.addTarget(self, action: #selector(saveAllTapped), for: .touchUpInside)
+        saveAllButton.bearyAddPressFeedback()
+        let clearButton = BearyButton(style: .destructiveOutline(.regular))
+        clearButton.setTitle("清除全部离线保存", for: .normal)
+        clearButton.isEnabled = !isSaving && usage.entryCount > 0
+        clearButton.addTarget(self, action: #selector(clearAllTapped), for: .touchUpInside)
+        clearButton.bearyAddPressFeedback()
+        contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: [saveAllButton, clearButton]))
+
+        if records.isEmpty {
+            let empty = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
+            empty.text = "在日记详情页 ⋯ 菜单里点“离线保存”，或点上方保存全部本人日记。"
+            contentStack.addArrangedSubview(makeGroupCard(title: "已保存的日记", rows: [empty]))
+        } else {
+            contentStack.addArrangedSubview(makeGroupCard(title: "已保存的日记", rows: records.enumerated().map { recordRow($0.element, index: $0.offset) }))
+        }
+    }
+
+    private func recordRow(_ record: BearyOfflineSaveRecord, index: Int) -> UIView {
+        let titleLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink, lines: 0)
+        titleLabel.text = record.title
+        let statusLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
+        statusLabel.text = Self.statusText(for: record)
+        let dateLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray)
+        dateLabel.text = BearyAccountText.dateString(ms: Int(record.savedAt * 1000))
+        let textStack = UIStackView(arrangedSubviews: [titleLabel, statusLabel, dateLabel])
+        textStack.axis = .vertical
+        textStack.spacing = 2
+        textStack.alignment = .leading
+        let removeButton = BearyHit44Button(type: .system)
+        removeButton.setTitle("移除", for: .normal)
+        removeButton.setTitleColor(BearyColors.destructiveText, for: .normal)
+        removeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        removeButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        removeButton.accessibilityLabel = "移除\(record.title)的离线保存"
+        removeButton.tag = index
+        removeButton.addTarget(self, action: #selector(removeTapped(_:)), for: .touchUpInside)
+        removeButton.bearyAddPressFeedback()
+        let row = UIStackView(arrangedSubviews: [textStack, removeButton])
+        row.axis = .horizontal
+        row.spacing = 12
+        row.alignment = .center
+        textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        removeButton.setContentHuggingPriority(.required, for: .horizontal)
+        return row
+    }
+
+    private static func statusText(for record: BearyOfflineSaveRecord) -> String {
+        let size = BearyOfflineSaveStore.formattedBytes(record.totalBytes)
+        if record.imageCount == 0 {
+            return record.isComplete ? "已保存 · 无图片 · \(size)" : "未完成 · \(size)"
+        }
+        switch record.status {
+        case "complete":
+            return "已保存 · \(record.downloadedCount) 张图 · \(size)"
+        case "partial":
+            return "部分保存 · \(record.downloadedCount)/\(record.imageCount) 张图 · \(record.failedKeys.count) 张失败 · \(size)"
+        default:
+            return "未完成 · \(record.downloadedCount)/\(record.imageCount) 张图 · \(size)"
+        }
+    }
+
+    @objc private func removeTapped(_ sender: UIButton) {
+        guard sender.tag >= 0, sender.tag < currentRecords.count else { return }
+        let entryId = currentRecords[sender.tag].entryId
+        let removed = BearyOfflineSaveManager.shared.remove(entryId: entryId)
+        BearyToast.show(in: view, message: removed ? "已移除离线保存" : "移除失败，请重试")
+        render()
+    }
+
+    @objc private func saveAllTapped() {
+        guard !isSaving else { return }
+        isSaving = true
+        saveProgressText = "正在保存…"
+        render()
+        BearyOfflineSaveManager.shared.saveAllOwnEntries(progress: { [weak self] done, total in
+            guard let self = self else { return }
+            self.saveProgressText = "正在保存 \(done)/\(total)…"
+            self.render()
+        }, completion: { [weak self] result in
+            guard let self = self else { return }
+            self.isSaving = false
+            self.saveProgressText = nil
+            self.render()
+            if result.saved == 0 && result.partial == 0 && result.skipped == 0 && result.failed == 0 {
+                BearyToast.show(in: self.view, message: "没有可保存的日记")
+            } else if result.failed > 0 {
+                BearyToast.show(in: self.view, message: "已保存 \(result.saved) 篇，\(result.failed) 篇失败")
+            } else if result.partial > 0 {
+                BearyToast.show(in: self.view, message: "已保存 \(result.saved) 篇，\(result.partial) 篇部分保存")
+            } else {
+                BearyToast.show(in: self.view, message: "已保存 \(result.saved) 篇")
+            }
+        })
+    }
+
+    @objc private func clearAllTapped() {
+        guard !isSaving else { return }
+        BearyConfirmSheet.show(from: self, title: "清除全部离线保存？", message: "已离线保存的日记文字与图片将从本设备删除，已同步的日记不受影响。", actions: [
+            BearyConfirmSheet.Action(title: "清除全部", style: .destructive) { [weak self] in
+                guard let self = self else { return }
+                let cleared = BearyOfflineSaveManager.shared.removeAll()
+                BearyToast.show(in: self.view, message: cleared ? "已清除全部离线保存" : "清除失败，请重试")
+                self.render()
+            },
+            BearyConfirmSheet.Action(title: "取消", style: .cancel),
+        ])
+    }
+}

@@ -519,6 +519,77 @@ final class BearyImageRedirectGuard: NSObject, URLSessionTaskDelegate {
     }
 }
 
+/// 图片与实况两路磁盘缓存的单账号总盘点（第二批体验检查第 6 项）：
+/// 此前图片桶（BearyImageCache）与实况桶（BearyLiveCache）各有自己的
+/// 200MB 上限，单账号合计可占 400MB；现合并为单账号合计 200MB——
+/// 两桶共用一个上限，超了按修改时间删最旧文件直至回落，不分桶删别人的文件。
+/// 两加载器各自的触发逻辑（累计值、首写校准）不动，只把“枚举＋淘汰”这一步
+/// 收敛到这里：淘汰决策永远用枚举出的真实总量，累计值只作触发依据。
+enum BearyDiskCacheBudget {
+    static let totalCapBytes: Int64 = 200 * 1024 * 1024
+    static let imageDirName = "BearyImageCache"
+    static let liveDirName = "BearyLiveCache"
+
+    private static func dirURL(name: String, bucket: String) -> URL? {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent(name).appendingPathComponent(bucket)
+    }
+
+    private struct CacheEntry {
+        let url: URL
+        let size: Int64
+        let mtime: Date
+        /// 0 = 图片桶，1 = 实况桶。
+        let dirIndex: Int
+    }
+
+    private static func enumerate(bucket: String) -> (entries: [CacheEntry], imageTotal: Int64, liveTotal: Int64, ok: Bool) {
+        var entries: [CacheEntry] = []
+        var totals: [Int64] = [0, 0]
+        var ok = true
+        for (index, name) in [imageDirName, liveDirName].enumerated() {
+            guard let dir = dirURL(name: name, bucket: bucket) else { ok = false; continue }
+            guard FileManager.default.fileExists(atPath: dir.path) else { continue }
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
+                // 目录存在但枚举失败：不静默低估，调用方凭 ok=false 保留越限累计值、下次写重试。
+                ok = false
+                continue
+            }
+            for fileName in names {
+                let url = dir.appendingPathComponent(fileName)
+                guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+                      let size = values.fileSize, let mtime = values.contentModificationDate else { continue }
+                entries.append(CacheEntry(url: url, size: Int64(size), mtime: mtime, dirIndex: index))
+                totals[index] += Int64(size)
+            }
+        }
+        return (entries, totals[0], totals[1], ok)
+    }
+
+    /// 两桶合计超限时删最旧文件直至回落；返回两桶各自淘汰后的真实总量。
+    /// ok=false 表示某已存在目录枚举失败，总量不可信，调用方应保留越限累计值、下次写重试。
+    static func enforceCombined(bucket: String) -> (imageTotal: Int64, liveTotal: Int64, ok: Bool) {
+        let scanned = enumerate(bucket: bucket)
+        guard scanned.ok else { return (scanned.imageTotal, scanned.liveTotal, false) }
+        var total = scanned.imageTotal + scanned.liveTotal
+        var imageTotal = scanned.imageTotal
+        var liveTotal = scanned.liveTotal
+        guard total > totalCapBytes else { return (imageTotal, liveTotal, true) }
+        let sorted = scanned.entries.sorted { $0.mtime < $1.mtime }
+        for entry in sorted {
+            if total <= totalCapBytes { break }
+            do {
+                try FileManager.default.removeItem(at: entry.url)
+                total -= entry.size
+                if entry.dirIndex == 0 { imageTotal -= entry.size } else { liveTotal -= entry.size }
+            } catch {
+                // 删失败不扣账，累计值保持真实总量，下次越限再枚举重试。
+            }
+        }
+        return (imageTotal, liveTotal, true)
+    }
+}
+
 final class BearyImageLoader {
     static let shared = BearyImageLoader()
 
@@ -725,8 +796,9 @@ final class BearyImageLoader {
     // 绝不跨账号命中；旧版无子目录的缓存文件自然失效、不再被读到）。
     // 键 = URL 字符串的 SHA256 十六进制（CryptoKit，系统框架）；存的是网络
     // 返回的原始字节，与下采样参数无关，同一 URL 的完整图与下采样图共用
-    // 一份磁盘数据、解码时再按需下采样。审计 B 批：每账号桶磁盘上限 200MB，
-    // 写时超了删最旧文件直至回落（enforceDiskCacheCap，简单 sweep，不新增清理状态机）。
+    // 一份磁盘数据、解码时再按需下采样。审计 B 批：每账号磁盘上限 200MB，
+    // 与实况桶（BearyLiveCache）共用单账号总盘点（BearyDiskCacheBudget），
+    // 写时合计超了删最旧文件直至回落（enforceDiskCacheCap，简单 sweep，不新增清理状态机）。
     // 顺序：内存 NSCache → 磁盘 → 网络；网络成功后同时写内存与磁盘。
     // 内存 NSCache 的上限与行为保持原样（G23 的 totalCostLimit 不动）。
     /// S2：bucket 由调用方在请求发起时固定后传入，不在异步执行时再读
@@ -896,12 +968,13 @@ final class BearyImageLoader {
         enforceDiskCacheCap(bucket: bucket, writtenDelta: delta)
     }
 
-    /// 审计 B 批：图片磁盘缓存上限 200MB（按账号桶分别算，不跨桶删别人的文件）。
-    /// 上限语义与淘汰策略不变：超了按修改时间升序删最旧文件直至回落，刚写入
-    /// 的最新文件天然在最后、不会被误删；简单 sweep，不新增清理状态机。
+    /// 审计 B 批：图片磁盘缓存上限 200MB——与实况桶共用单账号总盘点
+    ///（BearyDiskCacheBudget：两桶合计 200MB，不再各算各的 200MB）。
+    /// 上限语义与淘汰策略不变：合计超了按修改时间升序删最旧文件直至回落，
+    /// 刚写入的最新文件天然在最后、不会被误删；简单 sweep，不新增清理状态机。
     /// 审计三轮 23 项改动只在触发时机：稳态写盘不枚举，仅累计值越限（或本进程
     /// 首写校准）时枚举一次，枚举出的真实总量写回累计值。
-    private static let diskCacheCapBytes: Int64 = 200 * 1024 * 1024
+    private static let diskCacheCapBytes: Int64 = BearyDiskCacheBudget.totalCapBytes
     private func enforceDiskCacheCap(bucket: Int?, writtenDelta: Int64) {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
         let bucketName = bucket.map(String.init) ?? "guest"
@@ -917,36 +990,18 @@ final class BearyImageLoader {
         }
         // 越限（或本进程首写、累计值未知）才枚举：首写时枚举值已含本次写入，
         // 不再另加 writtenDelta；越限时枚举值同样是写后真实总量。
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
-            // 枚举失败不静默低估：已知累计已是越限值、保持它则下次写重试；
-            // 未知时置为越限值，同样保证下次写重试枚举，而非长期不淘汰。
+        // 合并口径：淘汰走两桶合计（图片桶 + 实况桶），删最旧文件直至合计回落，
+        // 写回本桶淘汰后的真实总量；枚举失败时保持越限累计值，下次写重试。
+        guard FileManager.default.fileExists(atPath: dir.path) || hadKnownTotal else {
+            diskCacheTotals[bucketName] = Self.diskCacheCapBytes + 1
+            return
+        }
+        let swept = BearyDiskCacheBudget.enforceCombined(bucket: bucketName)
+        guard swept.ok else {
             if !hadKnownTotal { diskCacheTotals[bucketName] = Self.diskCacheCapBytes + 1 }
             return
         }
-        var entries: [(url: URL, size: Int64, mtime: Date)] = []
-        var total: Int64 = 0
-        for name in names {
-            let url = dir.appendingPathComponent(name)
-            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
-                  let size = values.fileSize, let mtime = values.contentModificationDate else { continue }
-            entries.append((url: url, size: Int64(size), mtime: mtime))
-            total += Int64(size)
-        }
-        guard total > Self.diskCacheCapBytes else {
-            diskCacheTotals[bucketName] = total
-            return
-        }
-        entries.sort { $0.mtime < $1.mtime }
-        for entry in entries {
-            if total <= Self.diskCacheCapBytes { break }
-            do {
-                try FileManager.default.removeItem(at: entry.url)
-                total -= entry.size
-            } catch {
-                // 删失败不扣账，累计值保持真实总量，下次越限再枚举重试。
-            }
-        }
-        diskCacheTotals[bucketName] = total
+        diskCacheTotals[bucketName] = swept.imageTotal
     }
 
     /// 内存键：账号隔离 4 号——键首含账号维度（未登录为 guest），同 URL
@@ -1006,6 +1061,23 @@ final class BearyImageLoader {
             switch result {
             case .success(let img):
                 completion(img)
+            case .failure:
+                completion(nil)
+            }
+        }
+    }
+
+    /// 离线保存用：取一张图的原始字节（不解码）。磁盘命中即复用、不重复下载；
+    /// 未命中走一次网络下载，入库前验 HTTP 200–299 + image/* MIME + 可解码探针，
+    /// 不符按脏数据失败、不写缓存（与 loadRawData 同口径）。
+    /// 完成回调在后台队列执行，不回主线程；失败（网络错／非 2xx／非图片 MIME／
+    /// 不可解码）回 nil，调用方按缺失记、不亮失败态。
+    func fetchRawData(url: URL, completion: @escaping (Data?) -> Void) {
+        let bucket = currentAccountId
+        _ = loadRawData(for: url, bucket: bucket) { result in
+            switch result {
+            case .success(let pair):
+                completion(pair.data)
             case .failure:
                 completion(nil)
             }

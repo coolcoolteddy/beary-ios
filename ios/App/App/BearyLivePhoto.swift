@@ -135,8 +135,10 @@ final class BearyLivePhotoLoader {
     /// 实况视频与静态图同一可见性口径：转私密后旧盘缓存至多再活 24 小时，
     /// 之后强制走网络、服务端按最新可见性判定，不无限期可读。
     private static let diskCacheMaxAge: TimeInterval = 24 * 3600
-    /// 每账号桶磁盘上限 200MB：与图片桶同款；超了按修改时间删最旧文件直至回落。
-    private static let diskCacheCapBytes: Int64 = 200 * 1024 * 1024
+    /// 每账号桶磁盘上限 200MB：与图片桶共用单账号总盘点
+    ///（BearyDiskCacheBudget：图片桶 + 实况桶合计 200MB，不再各算各的 200MB）；
+    /// 合计超了按修改时间删最旧文件直至回落。
+    private static let diskCacheCapBytes: Int64 = BearyDiskCacheBudget.totalCapBytes
 
     private let stateLock = NSLock()
     /// 第十一轮 06：写盘与清理的共享锁（图片加载器 diskWriteLock 同款）——
@@ -310,6 +312,9 @@ final class BearyLivePhotoLoader {
     /// 旧优先、同本进程首写校准；累计值只作触发依据，淘汰决策永远用枚举
     /// 出的真实总量（高估只提前触发一次校准，低估至多延迟到下次越限校准，
     /// 与图片加载器同款容差）。
+    /// 合并口径（第二批体验检查第 6 项）：淘汰走两桶合计（图片桶 + 实况桶，
+    /// BearyDiskCacheBudget.enforceCombined），删最旧文件直至合计回落，
+    /// 写回本桶淘汰后的真实总量；枚举失败时累计值保持越限、下次写重试。
     private func enforceDiskCacheCap(bucket: String, writtenDelta: Int64) {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
         let dir = caches.appendingPathComponent("BearyLiveCache").appendingPathComponent(bucket)
@@ -333,33 +338,15 @@ final class BearyLivePhotoLoader {
         let scanGeneration = generation(for: bucket)
         Self.diskQueue.async { [weak self] in
             guard let self = self, self.isCurrentGeneration(scanGeneration, bucket: bucket) else { return }
-            guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
+            guard FileManager.default.fileExists(atPath: dir.path) else { return }
+            let swept = BearyDiskCacheBudget.enforceCombined(bucket: bucket)
+            guard swept.ok else {
                 // 枚举失败不静默低估：累计值仍是越限值，下次写重试枚举。
                 return
             }
-            var entries: [(url: URL, size: Int64, mtime: Date)] = []
-            var total: Int64 = 0
-            for name in names {
-                let url = dir.appendingPathComponent(name)
-                guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
-                      let size = values.fileSize, let mtime = values.contentModificationDate else { continue }
-                entries.append((url: url, size: Int64(size), mtime: mtime))
-                total += Int64(size)
-            }
-            // 短锁：只写回枚举出的真实总量。
+            // 短锁：只写回淘汰后的真实总量。
             self.stateLock.lock()
-            self.diskCacheTotals[bucket] = total
-            self.stateLock.unlock()
-            guard total > Self.diskCacheCapBytes else { return }
-            entries.sort { $0.mtime < $1.mtime }
-            for entry in entries {
-                if total <= Self.diskCacheCapBytes { break }
-                try? FileManager.default.removeItem(at: entry.url)
-                total -= entry.size
-            }
-            // 短锁：只写回淘汰后的总量。
-            self.stateLock.lock()
-            self.diskCacheTotals[bucket] = total
+            self.diskCacheTotals[bucket] = swept.liveTotal
             self.stateLock.unlock()
         }
     }

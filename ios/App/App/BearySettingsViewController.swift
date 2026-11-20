@@ -463,6 +463,9 @@ final class BearySettingsViewController: UIViewController {
     private let exportRowButton = UIButton(type: .custom)
     private let deleteRowButton = UIButton(type: .custom)
 
+    // 离线保存行（第二批体验检查第 6 项）：行尾占用文案，由 refreshOfflineSaveRow 刷。
+    private let offlineSaveDetailLabel = UILabel()
+
     init() {
         super.init(nibName: nil, bundle: nil)
         self.title = "账户设置"
@@ -497,6 +500,7 @@ final class BearySettingsViewController: UIViewController {
         refreshAccountSwitchSection()
         refreshGeneralRowDetails()
         refreshDeveloperModeRow()
+        refreshOfflineSaveRow()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -3384,6 +3388,30 @@ final class BearySettingsViewController: UIViewController {
     /// 2026-11-19 七组版：反馈与建议卡——反馈与改进／功能许愿墙／开发者模式
     /// 三行，另加诊断日志折叠（记录诊断日志开关、诊断日志查看；原在通用组，
     /// 随本支搬到这里，开关与跳转行为一字不动）。
+
+    /// 第二批体验检查第 6 项：离线保存行尾占用（本账号）：未登录显“未登录”，
+    /// 无保存篇显“未保存”，否则“N 篇 · X”。子页关闭回本页时 viewWillAppear 再刷。
+    private func refreshOfflineSaveRow() {
+        guard BearyOfflineSaveManager.shared.currentAccountId != nil else {
+            offlineSaveDetailLabel.text = "未登录"
+            return
+        }
+        let usage = BearyOfflineSaveManager.shared.usage()
+        guard usage.entryCount > 0 else {
+            offlineSaveDetailLabel.text = "未保存"
+            return
+        }
+        offlineSaveDetailLabel.text = "\(usage.entryCount) 篇 · \(BearyOfflineSaveStore.formattedBytes(usage.bytes))"
+    }
+
+    /// 第二批体验检查第 6 项：离线保存子页（逐篇状态、批量保存、清除）。
+    @objc private func openOfflineSavePage() {
+        let vc = BearyOfflineSaveViewController()
+        vc.modalPresentationStyle = .fullScreen
+        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        presentSettingsPage(vc)
+    }
+
     private func buildDataFeedbackSection() {
         let feedbackContent = makeRow(title: "反馈与改进", iconName: "icon_comment", showChevron: true)
         let feedbackButton = UIButton(type: .custom)
@@ -3410,6 +3438,22 @@ final class BearySettingsViewController: UIViewController {
         ]
         let group = makeGroupCard(title: "反馈与建议", rows: rows)
         dataFeedbackWrap.addArrangedSubview(group.card)
+        // 第二批体验检查第 6 项：离线保存独立组（与反馈组并列，不混进反馈组标题下）。
+        // 行尾只显本账号占用（篇数 · 字节），逐篇状态与清除在子页里。
+        offlineSaveDetailLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        offlineSaveDetailLabel.adjustsFontForContentSizeCategory = true
+        offlineSaveDetailLabel.textColor = BearyColors.gray
+        offlineSaveDetailLabel.numberOfLines = 0
+        offlineSaveDetailLabel.textAlignment = .right
+        let offlineSaveContent = makeRow(title: "离线保存", detailLabel: offlineSaveDetailLabel, iconName: "icon_download", showChevron: true)
+        let offlineSaveButton = UIButton(type: .custom)
+        offlineSaveButton.accessibilityLabel = "离线保存"
+        offlineSaveButton.addTarget(self, action: #selector(openOfflineSavePage), for: .touchUpInside)
+        offlineSaveButton.bearyAddPressFeedback()
+        let offlineSaveGroup = makeGroupCard(title: "离线保存", rows: [
+            makeSettingsTappableRow(content: offlineSaveContent, button: offlineSaveButton),
+        ])
+        dataFeedbackWrap.addArrangedSubview(offlineSaveGroup.card)
         // 第十一轮审计 1：开发者模式行是组内末行——只藏 row 会留 wrap 的 28pt
         // 内边距与其前分隔线；改藏 wrapper＋separator＋row 三者（Plus 限免行同款口径）。
         if let devIndex = rows.firstIndex(where: { $0 === devRow }) {
