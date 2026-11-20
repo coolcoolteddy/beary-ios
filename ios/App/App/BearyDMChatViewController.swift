@@ -1,4 +1,5 @@
 import UIKit
+import Network
 
 // MARK: - 私信：会话页（聊天页，modal 全屏）
 //
@@ -70,7 +71,16 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     /// 60 秒轮询（通知页 pollTimer 同款口径）：聊天页打开时对方发来的新消息
     /// 实时出现，不用退出重进。每拍走 loadLatest()——在途守卫、锚点保位、
     /// 新消息 pill、重标已读全走原有路径；无变化时只换同内容，不闪不丢位。
+    /// 第二批体验检查第 9 项：连续失败指数退避——loadLatest 连续失败时
+    /// 下一拍拉长（60 秒→120 秒→300 秒封顶），成功一次即复位回 60 秒；
+    /// 弱网（NWPathMonitor 报不满足）时停轮询，恢复后立即重拉一次。
     private var pollTimer: Timer?
+    /// loadLatest 连续失败次数（成功即清零；只影响轮询间隔，不拦手动刷新）。
+    private var pollFailureCount = 0
+    /// 弱网监听（图片预热器同款：每页自持一个轻量 monitor，只读 path.status）。
+    private var networkMonitor: NWPathMonitor?
+    /// 首报前默认有网，不拦首拉；断网后由回调置 false 并停轮询。
+    private var isNetworkSatisfied = true
     // 新行首次出现透明度过渡的已播记账（按消息 id 键，已有行更新不重播）。
     private var fadedRowKeys = Set<String>()
     private let inputBar = UIView()
@@ -554,12 +564,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         NotificationCenter.default.addObserver(self, selector: #selector(handleUserChanged), name: .bearyUserDidChange, object: nil)
         loadLatest()
         checkDMPermission()
+        ensureNetworkMonitor()
         startPolling()
     }
 
     deinit {
         relativeTimeTimer?.invalidate()
         pollTimer?.invalidate()
+        networkMonitor?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -600,15 +612,58 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         relativeTimeTimer = nil
     }
 
-    /// 60 秒轮询（通知页 startPolling 同款）：首拍对齐下一分钟边界，之后
-    /// 每 60 秒一拍（自调度，计时漂移自动纠回边界）；每拍走 loadLatest()，
+    /// 当前轮询间隔：无失败 60 秒；连续失败 1 次 120 秒、≥2 次 300 秒封顶。
+    private var pollInterval: TimeInterval {
+        switch pollFailureCount {
+        case 0: return 60
+        case 1: return 120
+        default: return 300
+        }
+    }
+
+    /// 弱网监听：首报前默认有网（不拦首拉）；断网即停轮询（在途请求由原有
+    /// 回包路径收尾），恢复后若页面仍可见立即重拉一次并重开轮询。
+    /// monitor 只在页面存续期间跑，deinit 取消。
+    private func ensureNetworkMonitor() {
+        guard networkMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                let wasSatisfied = self.isNetworkSatisfied
+                self.isNetworkSatisfied = path.status == .satisfied
+                if !wasSatisfied && self.isNetworkSatisfied {
+                    guard self.view.window != nil && !self.view.isHidden else { return }
+                    self.startPolling()
+                    self.loadLatest()
+                } else if wasSatisfied && !self.isNetworkSatisfied {
+                    self.stopPolling()
+                }
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "com.beary.dm-chat.network"))
+        networkMonitor = monitor
+    }
+
+    /// 60 秒轮询（通知页 startPolling 同款）：无失败时首拍对齐下一分钟边界，
+    /// 之后每 60 秒一拍（自调度，计时漂移自动纠回边界）；每拍走 loadLatest()，
     /// 在途时由 loadLatest 内部的 refreshQueued 排队补跑，不丢刷新。
+    /// 退避中（pollFailureCount > 0）不再对齐分钟边界，直接按退避间隔排下一拍；
+    /// 弱网时不排 timer，等网络恢复回调再重开（见 ensureNetworkMonitor）。
     private func startPolling() {
         pollTimer?.invalidate()
-        let delay = 60.0 - Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 60.0)
+        pollTimer = nil
+        guard isNetworkSatisfied else { return }
+        let delay: TimeInterval
+        if pollFailureCount == 0 {
+            delay = 60.0 - Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 60.0)
+        } else {
+            delay = pollInterval
+        }
         pollTimer = Timer.scheduledTimer(withTimeInterval: max(delay, 1.0), repeats: false) { [weak self] _ in
             self?.startPolling()
-            guard let strongSelf = self, strongSelf.view.window != nil && !strongSelf.view.isHidden else { return }
+            guard let strongSelf = self, strongSelf.view.window != nil && !strongSelf.view.isHidden,
+                  strongSelf.isNetworkSatisfied else { return }
             strongSelf.loadLatest()
         }
     }
@@ -1286,6 +1341,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 self.tableView.refreshControl?.endRefreshing()
                 switch result {
                 case .success(let history):
+                    // 第二批体验检查第 9 项：成功一次即复位退避；退避中成功时
+                    // 重排 timer，把已按 300 秒排好的下一拍拉回正常节拍
+                    //（页面不可见时不重排，离页已停轮询，回来由 viewWillAppear 重开）。
+                    let wasBackedOff = self.pollFailureCount > 0
+                    self.pollFailureCount = 0
+                    if wasBackedOff && self.view.window != nil {
+                        self.startPolling()
+                    }
                     // 成功即会话打开：清掉权限横幅与关闭态，恢复输入。
                     self.dmNotAllowed = false
                     self.sessionClosed = false
@@ -1421,11 +1484,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.firstLoadPending = false
                     self.firstLoadStateView.isHidden = true
                     self.updateEmptyState()
-                    // 在途加载失败也不吞排队的刷新：用户要的是最新页，照常跑
-                    //（与 loadOlder 失败口径一致）。
-                    if self.refreshQueued {
-                        self.refreshQueued = false
-                        self.loadLatest()
+                    // 第二批体验检查第 9 项：连续失败即退避——次数 +1 并按新
+                    // 间隔重排下一拍（页面不可见时不重排，离页已停轮询）；
+                    // 排队的刷新不再失败当刻立即重跑（弱网下会连着再败一次），
+                    // 它的“取最新”意图由退避后的下一拍承接，不丢。
+                    self.pollFailureCount += 1
+                    self.refreshQueued = false
+                    if self.view.window != nil {
+                        self.startPolling()
                     }
                 }
             }
