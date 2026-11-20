@@ -8,7 +8,6 @@ import Foundation
 
 enum BearyRoute: Equatable {
     case home
-    case notifications
     case timeline
     case profile
     case search
@@ -34,7 +33,6 @@ enum BearyRoute: Equatable {
         var path = url.path
         while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
         if path == "/beary" { return .home }
-        if path == "/beary/notifications" { return .notifications }
         if path == "/beary/timeline" { return .timeline }
         if path == "/beary/profile" { return .profile }
         if path == "/beary/search" { return .search }
@@ -65,7 +63,6 @@ enum BearyRoute: Equatable {
     var webURL: URL? {
         switch self {
         case .home: return URL(string: "https://teddyhn.com/beary")
-        case .notifications: return URL(string: "https://teddyhn.com/beary/notifications")
         case .timeline: return URL(string: "https://teddyhn.com/beary/timeline")
         case .profile: return URL(string: "https://teddyhn.com/beary/profile")
         case .search: return URL(string: "https://teddyhn.com/beary/search")
@@ -96,7 +93,6 @@ final class BearyNavigationCoordinator {
         switch key {
         case "timeline": handler(.timeline)
         case "home": handler(.home)
-        case "notif": handler(.notifications)
         case "me": handler(.profile)
         // 9-2：未知 key 原先静默 break，联调时难发现——记一条日志。
         default: NSLog("[BearyNavigator] goTab unknown key: %@", key)

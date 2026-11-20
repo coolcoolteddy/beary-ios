@@ -17,7 +17,6 @@ final class BearyRouteTests: XCTestCase {
     func testParsePages() {
         XCTAssertEqual(BearyRoute.parse(url: URL(string: "https://teddyhn.com/beary")!), .home)
         XCTAssertEqual(BearyRoute.parse(url: URL(string: "https://teddyhn.com/beary/")!), .home)
-        XCTAssertEqual(BearyRoute.parse(url: URL(string: "https://teddyhn.com/beary/notifications")!), .notifications)
         XCTAssertEqual(BearyRoute.parse(url: URL(string: "https://teddyhn.com/beary/timeline")!), .timeline)
         XCTAssertEqual(BearyRoute.parse(url: URL(string: "https://teddyhn.com/beary/profile")!), .profile)
         XCTAssertEqual(BearyRoute.parse(url: URL(string: "https://teddyhn.com/beary/search")!), .search)
