@@ -935,7 +935,7 @@ final class BearyDMConversationCell: UITableViewCell {
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         backgroundColor = BearyColors.bg
-        selectionStyle = .default
+        selectionStyle = .none
 
         avatarView.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
