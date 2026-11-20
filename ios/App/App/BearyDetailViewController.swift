@@ -67,8 +67,19 @@ final class BearyDetailViewController: UIViewController {
     /// 详情页滚动出屏后仍播（只按页显隐，不跟滚动），长按 GIF 弹「添加表情」。
     private let bodyGIFOverlay = BearyInlineGIFOverlay()
     private let titleGIFOverlay = BearyInlineGIFOverlay()
-    private let isGuest: Bool
-    private let isAuthor: Bool
+    /// 游客身份不快照：登录成功后原页按新身份刷新（见 handleUserChangedNotification），
+    /// 此处每次都读实时值；进页时是谁已不重要。
+    private var isGuest: Bool { SessionManager.shared.isGuestMode }
+
+    /// 作者身份不快照：与 isGuest 同理，登录后按当前账号重算（本人篇的 ⋯ 菜单、
+    /// 分享门控、私密自互动才跟得上新身份）。
+    private var isAuthor: Bool {
+        if let authorId = entry.authorId {
+            let viewerId = SessionManager.shared.currentUser?.id
+            return viewerId != nil && authorId == viewerId
+        }
+        return entry.isMine == true
+    }
     /// R22-A1：详情落盘桶——进页时按当时账号钉住，不跟随后来的切号走；
     /// 旧账号回包已由容器复核丢弃，此处再钉一次桶，防写盘时账号已变。
     private let snapshotBucket: String
@@ -696,21 +707,12 @@ final class BearyDetailViewController: UIViewController {
     private var limitedCountdownState: BearyEphemeral.CountdownState?
     private var imageKeys: [String] = []
 
-    init(entry: Entry, isGuest: Bool) {
+    init(entry: Entry) {
         self.entry = entry
-        self.isGuest = isGuest
         // 传入的 entry 来自服务端数据，即初始确认态。
         self.confirmedLiked = entry.likedByMe ?? false
         self.confirmedLikeCount = entry.likeCount ?? 0
         self.confirmedBookmarked = entry.bookmarkedByMe ?? false
-        let viewerId = SessionManager.shared.currentUser?.id
-        // R22-A1：authorId 在时以它为准；isMine 只在同一已验证会话且缺
-        // 作者 ID 时兜底（进页前容器 routeFetchedEntry 已验过会话）。
-        if let authorId = entry.authorId {
-            self.isAuthor = viewerId != nil && authorId == viewerId
-        } else {
-            self.isAuthor = entry.isMine == true
-        }
         // R22-A1：落盘桶按进页时账号钉住（let 属性须在 super.init 前初始化）。
         self.snapshotBucket = BearyDetailCache.bucket()
         super.init(nibName: nil, bundle: nil)
@@ -745,6 +747,10 @@ final class BearyDetailViewController: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
         // 审计三轮第二批 9：回前台复核限时到期（后台期间定时器不触发时补位）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleForegroundEphemeralCheck(_:)), name: UIApplication.willEnterForegroundNotification, object: nil)
+        // 游客登录后原页刷新：进页时是游客、登录成功后仍显示登录提示（isGuest
+        // 已改实时读，见本文件头）；账号变化通知到时按补拉路径重拉本篇，
+        // 拿回登录态的点赞／收藏／回应状态，原位替换操作栏、不丢阅读位置。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleUserChangedNotification), name: .bearyUserDidChange, object: nil)
         // 已到期（打开时即过期）直接按有效态落定，未到期才排单次定时。
         if !applyEphemeralExpiryIfNeeded() {
             scheduleEphemeralExpiry()
@@ -756,6 +762,7 @@ final class BearyDetailViewController: UIViewController {
         ephemeralExpiryTimer = nil
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .bearyUserDidChange, object: nil)
         NotificationCenter.default.removeObserver(self, name: UIApplication.willEnterForegroundNotification, object: nil)
     }
 
@@ -771,6 +778,19 @@ final class BearyDetailViewController: UIViewController {
     @objc private func handleReportedEntryNotification(_ note: Notification) {
         guard let entryId = note.object as? String, entryId == entry.id else { return }
         flipToModerationPlaceholder()
+    }
+
+    /// 游客登录后原页刷新（.bearyUserDidChange）：容器只在用户 id 真变时发
+    /// 本通知（重复 /me 不发），到这里即身份已变。⋯ 显隐只认身份不认取数，
+    /// 先立即刷一次（登录瞬间即出现）；点赞／收藏／回应状态须问服务端
+    /// （游客期取到的 likedByMe／bookmarkedByMe 全是空），走既有补拉
+    /// retryFetchDetail——回包经 update(with:) 合并、按阅读锚点恢复位置，
+    /// 操作栏与回应行原位替换，不重开页面、不跳滚动。补拉失败走既有失败态
+    /// （旧内容＋横幅重试），不提前翻操作栏（旧态点按会反向切换）。
+    @objc private func handleUserChangedNotification() {
+        guard isViewLoaded, view.window != nil, !locallyHiddenByModeration else { return }
+        refreshAuthorActions()
+        retryFetchDetail()
     }
 
     private func flipToModerationPlaceholder() {
