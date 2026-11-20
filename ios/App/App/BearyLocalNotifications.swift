@@ -189,6 +189,44 @@ final class BearyLocalNotifications {
         center.add(request)
     }
 
+    // MARK: - 点按路由
+    //
+    // 通知点按（SceneDelegate.didReceive）按标识解析目标：标识里已带目标 id
+    //（pastself-<message.id>、limited-<entry.id>）；每日提醒与那年今日是固定 id。
+    // 正文只设 body＋sound、无 userInfo，故路由只读标识与触发器，不读 userInfo。
+    // 测试通知（beary.local.test-…）与未知标识返回 nil，只打开 App、不路由。
+    enum NotificationRoute {
+        /// 每晚写日记提醒 → 编辑器。
+        case dailyReminder
+        /// 那年今日 → 时间线该日；日期取触发器的日历分量（即通知当天），取不到时为 nil（调用方用今天）。
+        case pastDay(dayKey: String?)
+        /// 限时日记到期 → 该篇详情。
+        case limitedEntry(id: String)
+        /// 过去的自己送达 → 该条留话。
+        case pastSelfMessage(id: String)
+    }
+
+    static func route(for request: UNNotificationRequest) -> NotificationRoute? {
+        let id = request.identifier
+        if id == dailyIdentifier { return .dailyReminder }
+        if id == pastDayIdentifier {
+            if let comps = (request.trigger as? UNCalendarNotificationTrigger)?.dateComponents,
+               let year = comps.year, let month = comps.month, let day = comps.day {
+                return .pastDay(dayKey: BearyBeijingDay.dayKey(year: year, month: month, day: day))
+            }
+            return .pastDay(dayKey: nil)
+        }
+        if id.hasPrefix(limitedPrefix) {
+            let entryId = String(id.dropFirst(limitedPrefix.count))
+            return entryId.isEmpty ? nil : .limitedEntry(id: entryId)
+        }
+        if id.hasPrefix(pastSelfPrefix) {
+            let messageId = String(id.dropFirst(pastSelfPrefix.count))
+            return messageId.isEmpty ? nil : .pastSelfMessage(id: messageId)
+        }
+        return nil
+    }
+
     // MARK: - 刷新
 
     /// 幂等重算。非强制时 5 分钟内只刷一次（回前台高频触发时不反复读盘）；
