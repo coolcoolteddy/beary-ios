@@ -126,6 +126,13 @@ struct BearyDraft: Codable {
     var quoteVisibility: String? = nil
     var quoteEphemeralUntil: Int? = nil
     var quoteDeleted: Bool
+    /// 最近一次后台发布失败的文案（nil = 无失败记录）：发布中心失败时写，
+    /// 新一轮发布开始时清、成功后草稿随篇删除。草稿箱据此出失败行与重试入口；
+    /// 老草稿缺本键时按 nil 解码。重启后仍在，故“只重试新篇”不依赖内存态。
+    var lastPublishFailure: String? = nil
+    /// 最近一次失败时原日记是否已公开（部分成功态）：只重试新篇时跳过
+    /// setVisibility 的依据；与 lastPublishFailure 同写同清，老草稿缺省 false。
+    var sourcePublished: Bool = false
 
     /// 有实质内容：空白篇（全空）不迁入、不展示为有效草稿。
     /// 心情不算内容（网页口径：只选表情、没写字的日记不保存），与编辑器

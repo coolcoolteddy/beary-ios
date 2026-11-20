@@ -362,8 +362,9 @@ private final class BearyToastView: UIView {
 /// BearyColors.line、fill ink，内缩 14pt、底边之上 6pt，避开 pill 圆角）；
 /// 成功时 fill 走满、对勾 +「已发布」，2.0s 后淡出；失败时文案换调用方传的
 /// 现有失败文案、进度条隐去，按文案长度分档（同 BearyToast.displayDuration）
-/// 后淡出。isUserInteractionEnabled = false，不吞下方点按；减动效时直现直消、
-/// 进度直设终值；VoiceOver 在各态切换时播报文案。
+/// 后淡出。无点按回调时 isUserInteractionEnabled = false，不吞下方点按；
+/// 发布中心设了点按回调后（多篇并行时点开状态表）pill 接点按。
+/// 减动效时直现直消、进度直设终值；VoiceOver 在各态切换时播报文案。
 /// 同容器已有 pill 时 show 先移除旧 pill（新任务接管）；视图从容器移除后
 /// 全部更新为空操作。键盘不避让：pill 在编辑器退出时才露出，键盘随编辑器
 /// 一起收走，落点即无键盘基线。
@@ -410,6 +411,9 @@ enum BearyPublishPill {
 }
 
 /// 发布 pill 视图本体（类型即身份，show 以此识别同容器旧 pill）。
+/// 多篇并行时标题报篇数（「正在发布 N 篇」，见 setTitle），点按打开
+/// 发布中心的状态表（见 setTapHandler）；不设点按回调时沿用旧版
+/// 不参与触摸，不吞下方点按。
 final class BearyPublishPillView: UIView {
 
     private let label = UILabel()
@@ -419,6 +423,8 @@ final class BearyPublishPillView: UIView {
     private var fillWidthConstraint: NSLayoutConstraint?
     private var progress: Double = 0
     private var dismissed = false
+    /// 点按回调（发布中心设）：非空时 pill 接点按，打开状态表。
+    private var tapHandler: (() -> Void)?
 
     init() {
         super.init(frame: .zero)
@@ -486,6 +492,29 @@ final class BearyPublishPillView: UIView {
         fillView.layer.cornerRadius = 1
         clipsToBounds = false
         fillWidthConstraint?.constant = trackView.bounds.width * CGFloat(progress)
+    }
+
+    /// 标题：单篇「正在发布…」，多篇「正在发布 N 篇」（发布中心在任务
+    /// 起止时同步）；文案不变时不重设、不重复播报。
+    func setTitle(_ text: String) {
+        guard superview != nil, !dismissed else { return }
+        guard label.text != text else { return }
+        label.text = text
+        UIAccessibility.post(notification: .announcement, argument: text)
+    }
+
+    /// 点按回调：设了即接点按（打开状态表），撤了即恢复不参与触摸；
+    /// 手势只加一次，回调为空时动作为空操作。
+    func setTapHandler(_ handler: (() -> Void)?) {
+        tapHandler = handler
+        isUserInteractionEnabled = handler != nil
+        if handler != nil, gestureRecognizers?.contains(where: { $0 is UITapGestureRecognizer }) != true {
+            addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(pillTapped)))
+        }
+    }
+
+    @objc private func pillTapped() {
+        tapHandler?()
     }
 
     /// 进度 0...1：调用方按真实上传字节比喂；animated 只在收尾走满时用，
