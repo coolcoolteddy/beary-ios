@@ -1150,7 +1150,6 @@ class BearyEditProfileViewController: UIViewController {
             // （重新拉 /me 再刷新链接行，拿到 id/handle 即补复制）。
             // 原 alert 无标题，底 sheet 标题传空（只显说明＋按钮，不另起文案）。
             BearyConfirmSheet.show(from: self, title: "", message: "主页链接加载失败", actions: [
-                BearyConfirmSheet.Action(title: "取消", style: .cancel),
                 BearyConfirmSheet.Action(title: "重试", style: .default) { [weak self] in
                     self?.refreshLinkRowFromMe(thenCopy: true)
                 },

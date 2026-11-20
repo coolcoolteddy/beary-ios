@@ -1174,7 +1174,6 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                           let button = self.purgeEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button else { return }
                     self.purgeTapped(button)
                 },
-                BearyConfirmSheet.Action(title: "取消", style: .cancel, handler: nil),
             ]
         )
     }
@@ -1385,7 +1384,6 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 }
             }
                 },
-                BearyConfirmSheet.Action(title: "取消", style: .cancel, handler: nil),
             ]
         )
         // 审计-时间线：此处不加 presentedViewController 守卫——本确认框可由左滑菜单的 action 回调触发，

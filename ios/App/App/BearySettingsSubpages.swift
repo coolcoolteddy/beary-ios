@@ -619,7 +619,6 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
             BearyConfirmSheet.Action(title: "退出", style: .destructive, handler: { [weak self] in
                 self?.confirmLogoutOthers()
             }),
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
         ])
     }
 

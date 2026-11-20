@@ -1849,7 +1849,6 @@ final class BearyTimeCapsuleCardViewController: UIViewController {
             BearyConfirmSheet.Action(title: "取消埋藏", style: .destructive) { [weak self] in
                 self?.performUnbury(entryId: entryId)
             },
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
         ])
     }
 

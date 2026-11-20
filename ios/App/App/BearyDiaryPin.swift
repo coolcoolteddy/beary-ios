@@ -80,7 +80,6 @@ enum BearyDiaryPin {
             message: "已有置顶日记，置顶这篇会取消上一篇的置顶。",
             actions: [
                 BearyConfirmSheet.Action(title: "置顶", style: .default) { completion(true) },
-                BearyConfirmSheet.Action(title: "取消", style: .cancel) { completion(false) },
             ],
             onDismissWithoutAction: { completion(false) }
         )

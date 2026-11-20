@@ -4082,7 +4082,6 @@ enum BearyReportFlow {
                 }
             }
         }
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: vc, title: title, message: "举报后这篇日记将从你的信息流消失，不可撤销。", actions: actions)
     }
 
@@ -4111,7 +4110,6 @@ enum BearyReportFlow {
                 }
             }
         }
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: vc, title: title, message: nil, actions: actions)
     }
 }
@@ -4124,7 +4122,6 @@ enum BearyBlockFlow {
         guard BearyPresentGuard.canPresent(from: vc) else { onDone?(false); return }
         let name = (userName ?? "").isEmpty ? "这位用户" : userName!
         BearyConfirmSheet.show(from: vc, title: "拉黑\(name)？", message: "拉黑后将不再看到 TA 的日记，可在设置页「已拉黑用户」里解除。", actions: [
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
             BearyConfirmSheet.Action(title: "拉黑", style: .destructive) {
                 let busy = BearyFlowBusy.show(in: vc.view)
                 // 第六轮审计 02：发起时拍身份快照，成功回包先校验——旧账号的
@@ -4326,7 +4323,6 @@ enum BearyQuoteGate {
         }
         actions.append(BearyConfirmSheet.Action(title: "删除引用并公开", style: .default) { onDeleteQuote() })
         actions.append(BearyConfirmSheet.Action(title: "保持私密发布", style: .default) { onKeepPrivate() })
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel, handler: nil))
         BearyConfirmSheet.show(
             from: vc,
             title: "引用的日记还是\(sourceWord)",
@@ -4385,7 +4381,6 @@ enum BearyQuoteGate {
                             message: "这篇日记被 \(count) 篇日记引用，改私密后这些引用将显示“该日记已设为私密”。",
                             actions: [
                                 BearyConfirmSheet.Action(title: "改私密", style: .destructive) { completion(true) },
-                                BearyConfirmSheet.Action(title: "取消", style: .cancel) { completion(false) },
                             ],
                             onDismissWithoutAction: { completion(false) }
                         )

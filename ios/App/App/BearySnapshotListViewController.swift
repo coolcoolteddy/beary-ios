@@ -192,7 +192,6 @@ final class BearySnapshotListViewController: UIViewController {
             BearyConfirmSheet.Action(title: "清空", style: .destructive, handler: { [weak self] in
                 self?.clearSnapshots()
             }),
-            BearyConfirmSheet.Action(title: "取消", style: .cancel, handler: {}),
         ])
     }
 

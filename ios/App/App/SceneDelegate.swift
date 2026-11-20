@@ -2795,7 +2795,6 @@ final class BearyChromeViewController: UIViewController {
                 }
             }
                 },
-                BearyConfirmSheet.Action(title: "取消", style: .cancel, handler: nil),
             ]
         )
     }
