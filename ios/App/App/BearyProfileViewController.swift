@@ -888,6 +888,10 @@ class BearyProfileViewController: UIViewController {
     private var festivalTheme: FestivalTheme = .none
     private var festivalWallpaperVisible = false
     private var profileCoverVisible = false
+    private var profileCoverScrolling = false
+    /// 个人页 table 拖动／减速中：陀螺仪 30fps 重画与滚动拉伸的 bounds 重画
+    /// 叠加抢主线程，拖动期间先停封面／墙纸动效，停稳再开（并进下面两个
+    /// visibility 函数的可见性计算；滚动代理只改本旗标，不直接写 isPlaying）。
 
     private var festivalThemeDefaultsKey: String {
         // 切号／退出不串号：键跟当前账号 id 走；未取到 id 时落单键（仅游客态兜底，
@@ -2290,7 +2294,9 @@ class BearyProfileViewController: UIViewController {
         profileLastScrollOffsetY = tableView.contentOffset.y
         SceneDelegate.chrome?.setChromeHidden(false, animated: false)
         updateTopBarVisibility()
-        // 景深背景：回页时按当前带子位置重算动画开关。
+        // 景深背景：回页时按当前带子位置重算动画开关。回页即不可能仍在拖动
+        //（切页／进栈会打断手势），先清滚动态，防拖动被后台打断后封面一直停着。
+        profileCoverScrolling = false
         updateFestivalWallpaperVisibility()
         updateProfileCoverVisibility()
         // 封面（六地）：每次进页重置彩蛋可见态（组件说明：每次打开新主页调用 restartVisit）。
@@ -2310,6 +2316,8 @@ class BearyProfileViewController: UIViewController {
         // 与 viewWillAppear 回页路（经 updateTopBarVisibility）同款调用。
         updateProfileCoverScroll(offsetY: tableView.contentOffset.y, topBaseline: -tableView.contentInset.top)
         // 景深背景：容器切回时滚动事件不一定触发，按当前带子位置重算动画开关。
+        // 切回即不可能仍在拖动，先清滚动态，防拖动被打断后状态残留。
+        profileCoverScrolling = false
         updateFestivalWallpaperVisibility()
         updateProfileCoverVisibility()
     }
@@ -9983,10 +9991,11 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
 
     /// 滚动可见性开关：带子滚出视野（或切走页、未进窗口）时关动画，防列表下面
     /// 白跑陀螺仪＋30fps 刷新；回视野再开。变化守卫防滚动每帧重复 attach/detach。
+    /// 拖动／减速期间也停（与滚动拉伸重画抢主线程），停稳由滚动代理重算恢复。
     private func updateFestivalWallpaperVisibility() {
         guard let wallpaperView = festivalWallpaperView else { return }
         let bandFrame = coverClipView.convert(coverClipView.bounds, to: view)
-        let visible = view.window != nil && !view.isHidden && view.bounds.intersects(bandFrame)
+        let visible = view.window != nil && !view.isHidden && view.bounds.intersects(bandFrame) && !profileCoverScrolling
         guard visible != festivalWallpaperVisible else { return }
         festivalWallpaperVisible = visible
         wallpaperView.isAnimationEnabled = visible
@@ -9994,10 +10003,13 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
 
     /// 封面（中美日）：与节日款同款可见性开关；带子滚出视野（或切走页、
     /// 未进窗口）时停陀螺仪动画，回视野再开。变化守卫防滚动每帧重复开关。
+    /// 拖动／减速期间也停：滚动时陀螺仪 30fps 重画与下拉拉伸的 bounds 重画
+    /// 叠加抢主线程；停稳后由滚动代理重算恢复。滚动代理只改 profileCoverScrolling，
+    /// 不直接写 isPlaying（拆视图的 teardown 除外），与出视野门控不打架。
     private func updateProfileCoverVisibility() {
         guard let coverView = profileCoverView else { return }
         let bandFrame = coverClipView.convert(coverClipView.bounds, to: view)
-        let visible = view.window != nil && !view.isHidden && view.bounds.intersects(bandFrame)
+        let visible = view.window != nil && !view.isHidden && view.bounds.intersects(bandFrame) && !profileCoverScrolling
         guard visible != profileCoverVisible else { return }
         profileCoverVisible = visible
         coverView.isPlaying = visible
@@ -10112,11 +10124,25 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         }
     }
 
+    /// 拖动开始即停封面／墙纸陀螺仪重画（与景深选择页同款：拖动即关预览动效，
+    /// 停稳才重开，见 BearyDepthBackgroundViewController.scrollViewWillBeginDragging）。
+    /// 下拉拉伸本身的 bounds 驱动重画不受影响，仍跟手。
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard scrollView === tableView else { return }
+        profileCoverScrolling = true
+        updateFestivalWallpaperVisibility()
+        updateProfileCoverVisibility()
+    }
+
     /// 顶端残留修法（2026-10-30）：甩回顶端或程序化回顶（点 tab 回顶、
     /// setContentOffset 动画）时，滚动事件可能停在动画期瞬时拉量那一帧，
     /// 之后不再有滚动事件来复位；减速/动画结束时若已在顶端，强制归自然态。
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         guard scrollView === tableView else { return }
+        // 停稳：陀螺仪重画恢复（带子可见时才开，见 updateProfileCoverVisibility）。
+        profileCoverScrolling = false
+        updateFestivalWallpaperVisibility()
+        updateProfileCoverVisibility()
         if scrollView.contentOffset.y <= -scrollView.contentInset.top && !isCustomPullRefreshing {
             resetCoverStretch()
         }
@@ -10126,6 +10152,10 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
 
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
         guard scrollView === tableView else { return }
+        // 程序化滚动结束也清滚动态（与拖动不重叠，只防拖动被后台打断后状态残留）。
+        profileCoverScrolling = false
+        updateFestivalWallpaperVisibility()
+        updateProfileCoverVisibility()
         if scrollView.contentOffset.y <= -scrollView.contentInset.top && !isCustomPullRefreshing {
             resetCoverStretch()
         }
@@ -10152,7 +10182,12 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             resetCoverStretchAnimated()
             beginCustomPullRefresh()
         }
+        // 不减速即停稳：陀螺仪重画恢复（带子可见时才开）；减速时继续停，
+        // 由 scrollViewDidEndDecelerating 恢复。
         if !decelerate {
+            profileCoverScrolling = false
+            updateFestivalWallpaperVisibility()
+            updateProfileCoverVisibility()
             // 跳动修复（第 8 轮第 2 项）：手指松开且不再减速，滚动真正结束，
             // 补算拖动期间跳过的墙底位移补偿；还要减速的等 didEndDecelerating。
             applyPendingPhotowallCompensation()
