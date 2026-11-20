@@ -859,11 +859,9 @@ final class BearyTimelineCell: UITableViewCell {
     /// 天气 Lottie 覆盖层（仅 gotoEntry 落点行创建，其他行恒为 nil）。
     private var weatherIconView: UIImageView?
     private var weatherEmoteView: BearyEmoteView?
-    private let moodLabel = UILabel()
-    /// 2-1：本行天气/心情行视图（configure 现建现存；复用/重配即清），
-    /// 供 layoutSubviews 在窄屏下隐藏天气/心情用（见该函数注释）。
+    /// 2-1：本行天气行视图（configure 现建现存；复用/重配即清），
+    /// 供 layoutSubviews 在窄屏下隐藏天气用（见该函数注释）。
     private var metaWeatherRow: UIView?
-    private var metaMoodRow: UIView?
     private let recipientLabel = UILabel()
     private let contentLabel = UILabel()
     /// 审计 P2-12：时间线补标题行（卡片同款 16.5 粗体、单行截断，空标题不占位）。
@@ -1057,18 +1055,11 @@ final class BearyTimelineCell: UITableViewCell {
         weatherLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         weatherLabel.adjustsFontForContentSizeCategory = true
         weatherLabel.textColor = BearyColors.gray
-        // 2026-10-28 Li 定：天气/心情文字一律单行（多行换行会把两字词挤成竖排，
-        // 如“心动”上下排）；空间不足时由写给（单行截断）承接挤压，时间与 pill 不动。
+        // 2026-10-28 Li 定：天气文字一律单行（多行换行会把两字词挤成竖排）；空间不足时由写给（单行截断）承接挤压，时间与 pill 不动。
         weatherLabel.numberOfLines = 1
         weatherLabel.lineBreakMode = .byTruncatingTail
         weatherLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-        moodLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        moodLabel.adjustsFontForContentSizeCategory = true
-        moodLabel.textColor = BearyColors.gray
-        moodLabel.numberOfLines = 1
-        moodLabel.lineBreakMode = .byTruncatingTail
-        moodLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-        // 112 视觉扫查：同行时间/天气/心情均已走 scaledFont（见上方 8-3），@ 行此前独漏；
+        // 112 视觉扫查：同行时间/天气均已走 scaledFont（见上方 8-3），@ 行此前独漏；
         // 默认档仍为 12 粗体，仅跟随系统字号，170 上限与单行截断口径不动。
         recipientLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
         recipientLabel.adjustsFontForContentSizeCategory = true
@@ -1265,9 +1256,6 @@ final class BearyTimelineCell: UITableViewCell {
         if let weatherRow = metaWeatherRow, weatherRow.isHidden != narrow {
             weatherRow.isHidden = narrow
         }
-        if let moodRow = metaMoodRow, moodRow.isHidden != narrow {
-            moodRow.isHidden = narrow
-        }
         // 限时虚线边框不再在此手工重画 path：BearyDashedBorderView 自身按
         // 约束后的 cardView bounds 重画，引用卡进栈后框高自动跟上。
     }
@@ -1454,7 +1442,6 @@ final class BearyTimelineCell: UITableViewCell {
             arranged.removeFromSuperview()
         }
         metaWeatherRow = nil
-        metaMoodRow = nil
     }
 
     /// 批 E 补漏：时间线位置行刷新，卡片 refreshLocationRow 同款口径
@@ -1608,7 +1595,6 @@ final class BearyTimelineCell: UITableViewCell {
         stopWeatherLottie()
         weatherIconView = nil
         metaWeatherRow = nil
-        metaMoodRow = nil
         currentEntry = entry
         for arranged in metaStack.arrangedSubviews {
             metaStack.removeArrangedSubview(arranged)
@@ -1716,24 +1702,6 @@ final class BearyTimelineCell: UITableViewCell {
             weatherRow.setContentHuggingPriority(.required, for: .horizontal)
             metaWeatherRow = weatherRow
             metaStack.addArrangedSubview(weatherRow)
-        }
-        if let moodKey = entry.mood, let moodName = BearyText.moodNames[moodKey] {
-            moodLabel.text = moodName
-            let emoteView = BearyEmoteView(key: moodKey, animated: true)
-            emoteView.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                emoteView.widthAnchor.constraint(equalToConstant: 14),
-                emoteView.heightAnchor.constraint(equalToConstant: 14),
-            ])
-            let moodRow = UIStackView(arrangedSubviews: [emoteView, moodLabel])
-            moodRow.axis = .horizontal
-            moodRow.spacing = 3
-            moodRow.alignment = .center
-            moodRow.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-            // 6A pill 左 packed：心情行横向抗拉伸提到 required，不吸 slack。
-            moodRow.setContentHuggingPriority(.required, for: .horizontal)
-            metaMoodRow = moodRow
-            metaStack.addArrangedSubview(moodRow)
         }
         if let mentionedName = entry.mentionedName, !mentionedName.isEmpty {
             // 32 注销口径：被 @ 者已注销时显“@用户已注销”。
@@ -3514,7 +3482,6 @@ class BearyTimelineViewController: UIViewController {
             copy.title = entry.title
             copy.content = entry.content
             copy.images = entry.images
-            copy.mood = entry.mood
             copy.weather = entry.weather
             copy.locationName = entry.locationName
             copy.locationDistrict = entry.locationDistrict
@@ -5251,7 +5218,7 @@ class BearyTimelineViewController: UIViewController {
         let quoteImages = (quote?.images ?? []).joined(separator: ",")
         let quoteDims = (quote?.imgDims ?? [:]).map { "\($0.key):\($0.value.map(String.init).joined(separator: "x"))" }.sorted().joined(separator: ",")
         let quotePart = "\(entry.quoteId ?? "")|\(quote?.id ?? "")|\(quote?.content ?? "")|\(quote?.gone ?? false)|\(quote?.locked ?? false)|\(quote?.isPublic ?? false)|\(quoteImages)|\(quoteDims)|\(quote?.authorName ?? "")|\(quote?.authorAvatar ?? "")|\(quote?.authorHandle ?? "")|\(quote?.visibility ?? "")|\(quote?.publishedAt ?? 0)|\(quote?.ephemeralUntil ?? 0)"
-        return "\(entry.content ?? "")|\(entry.isPublic ?? false)|\(entry.visibility ?? "")|\(entry.likeCount ?? 0)|\(entry.likedByMe ?? false)|\(entry.bookmarkedByMe ?? false)|\(entry.bookmarkCount ?? 0)|\(emoteParts.joined(separator: ","))|\(entry.locationName ?? "")|\(entry.locationDistrict ?? "")|\(images)|\(tagsPart)|\(dims)|\(live)|\(entry.weather ?? "")|\(entry.temperatureC.map(String.init) ?? "")|\(entry.mood ?? "")|\(entry.title ?? "")|\(quotePart)|\(entry.authorName ?? "")|\(entry.authorAvatar ?? "")|\(entry.authorPlus ?? 0)|\(entry.mentionedName ?? "")|\(entry.createdAt ?? 0)|\(entry.publishedAt ?? 0)|\(entry.ephemeralUntil ?? 0)"
+        return "\(entry.content ?? "")|\(entry.isPublic ?? false)|\(entry.visibility ?? "")|\(entry.likeCount ?? 0)|\(entry.likedByMe ?? false)|\(entry.bookmarkedByMe ?? false)|\(entry.bookmarkCount ?? 0)|\(emoteParts.joined(separator: ","))|\(entry.locationName ?? "")|\(entry.locationDistrict ?? "")|\(images)|\(tagsPart)|\(dims)|\(live)|\(entry.weather ?? "")|\(entry.temperatureC.map(String.init) ?? "")|\(entry.title ?? "")|\(quotePart)|\(entry.authorName ?? "")|\(entry.authorAvatar ?? "")|\(entry.authorPlus ?? 0)|\(entry.mentionedName ?? "")|\(entry.createdAt ?? 0)|\(entry.publishedAt ?? 0)|\(entry.ephemeralUntil ?? 0)"
     }
 
     private func loadTimelineNextPage(manual: Bool = false) {

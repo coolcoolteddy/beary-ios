@@ -1108,7 +1108,6 @@ final class BearyProfilePhotosViewController: UIViewController {
         patched.title = entry.title
         patched.content = entry.content
         patched.images = entry.images
-        patched.mood = entry.mood
         patched.weather = entry.weather
         patched.locationName = entry.locationName
         patched.locationDistrict = entry.locationDistrict

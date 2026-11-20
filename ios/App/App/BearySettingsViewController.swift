@@ -3010,7 +3010,6 @@ final class BearySettingsViewController: UIViewController {
                 ] as [String: Any]
             }
         }
-        if let value = entry.mood { dict["mood"] = value }
         if let value = entry.weather { dict["weather"] = value }
         if let value = entry.temperatureC { dict["temperature_c"] = value }
         if let value = entry.locationName { dict["location_name"] = value }

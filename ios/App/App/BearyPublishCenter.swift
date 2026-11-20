@@ -1,6 +1,6 @@
 import UIKit
 
-/// 第一次点按时拍下的不可变完整发布快照（quote-freeze）：正文、心情、
+/// 第一次点按时拍下的不可变完整发布快照（quote-freeze）：正文、
 /// 天气、气温、引用、可见性、@、标题、限时、位置、clientReq 全在点按瞬间
 /// 定格；门禁与 setVisibility 在途期间用户改什么都不再进提交载荷，
 /// 发布中心只读本快照。
@@ -9,7 +9,6 @@ import UIKit
 /// 发布时才上传，keys 由发布中心按交接的图片清单顺序算出。）
 struct PublishSnapshot {
     let content: String
-    let mood: String?
     let weather: String?
     let temperature: Int?
     var quoteId: String?
@@ -232,13 +231,12 @@ final class BearyPublishCenter {
         let failedAt: Date
         let draft: BearyDraft?
 
-        /// 草稿仍与失败时一致（正文／标题／心情／天气／引用／@／位置／
+        /// 草稿仍与失败时一致（正文／标题／天气／引用／@／位置／
         /// 可见性／图片清单逐项比对；updatedAt 每次保存都刷新，不能当改过依据）。
         func matches(draft: BearyDraft) -> Bool {
             guard let base = self.draft else { return false }
             guard draft.content == base.content,
                   draft.title == base.title,
-                  draft.mood == base.mood,
                   draft.weather == base.weather,
                   draft.temperature == base.temperature,
                   draft.quoteId == base.quoteId,
@@ -553,7 +551,7 @@ final class BearyPublishCenter {
             }
         }
         BearyAPI.shared.publishEntry(
-            content: snapshot.content, images: runningJob.imageKeys, mood: snapshot.mood,
+            content: snapshot.content, images: runningJob.imageKeys,
             weather: snapshot.weather, quoteId: snapshot.quoteId, published: snapshot.published,
             mentionedUserId: snapshot.mentionedUserId, title: snapshot.title, ephemeral: snapshot.ephemeral,
             clientReq: snapshot.clientReq, locationName: snapshot.locationName,

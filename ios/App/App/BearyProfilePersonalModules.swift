@@ -95,14 +95,13 @@ enum BearyProfilePersonalLogic {
     }
 
     static func writingStats(entries: [Entry], now: Date, calendar: Calendar) -> WritingStats {
-        // 时间胶囊 v1：胶囊篇不进写作统计（总数／字数／时段／心情／天气／
+        // 时间胶囊 v1：胶囊篇不进写作统计（总数／字数／时段／天气／
         // 连续天数一律先滤掉 isCapsule==1 的篇再算）。
         let entries = entries.filter { $0.isCapsuleBuried != true }
         let total = entries.count
         let totalChars = entries.reduce(0) { $0 + ($1.content ?? "").count }
         // 2 小时桶。
         var slotCounts = [Int: Int](minimumCapacity: 12)
-        var moodCounts: [String: Int] = [:]
         var weatherCounts: [String: Int] = [:]
         var writtenDays = Set<Date>()
         for entry in entries {
@@ -110,7 +109,6 @@ enum BearyProfilePersonalLogic {
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
             let hour = calendar.component(.hour, from: date)
             slotCounts[(hour / 2) * 2, default: 0] += 1
-            if let mood = entry.mood, !mood.isEmpty { moodCounts[mood, default: 0] += 1 }
             if let weather = entry.weather, !weather.isEmpty { weatherCounts[weather, default: 0] += 1 }
             writtenDays.insert(calendar.startOfDay(for: date))
         }
@@ -136,7 +134,9 @@ enum BearyProfilePersonalLogic {
             totalChars: totalChars,
             bestSlotStartHour: bestSlot,
             currentStreakDays: currentStreak(from: now, writtenDays: writtenDays, calendar: calendar),
-            topMoodKey: topKey(moodCounts),
+            // 2026-11-21 entry.mood 字段删除：最常心情的数据源没了，恒为 nil，
+            // 调用方按无心情处理（心情行隐藏）；统计行本身是否彻底移除由主代理定。
+            topMoodKey: nil,
             topWeatherKey: topKey(weatherCounts)
         )
     }
@@ -258,16 +258,10 @@ enum BearyProfilePersonalLogic {
         }.sorted { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) }
     }
 
-    /// 心情分布（年报首屏条形用）：计数降序，平手按 key 升序（稳定）。
+    /// 心情分布（年报首屏条形用）：2026-11-21 entry.mood 字段删除，数据源没了，
+    /// 恒返回空（调用方按无分布处理，不出分布图）；是否彻底移除分布 UI 由主代理定。
     static func moodDistribution(entries: [Entry]) -> [(key: String, count: Int)] {
-        var counts: [String: Int] = [:]
-        for entry in entries {
-            if let mood = entry.mood, !mood.isEmpty { counts[mood, default: 0] += 1 }
-        }
-        return counts.map { (key: $0.key, count: $0.value) }.sorted {
-            if $0.count != $1.count { return $0.count > $1.count }
-            return $0.key < $1.key
-        }
+        return []
     }
 
     /// 停用词（中文高频虚词 + 人称代词 + 时间副词骨架；只拦虚词，不拦实词——
@@ -526,7 +520,6 @@ enum BearyProfilePersonalLogic {
             hasher.combine(entry.id)
             hasher.combine(entry.createdAt)
             hasher.combine(entry.content)
-            hasher.combine(entry.mood)
             hasher.combine(entry.weather)
             hasher.combine(entry.isPublic)
             hasher.combine(entry.visibility)

@@ -1084,12 +1084,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             chip.translatesAutoresizingMaskIntoConstraints = false
             metaFlow.addSubview(chip)
         }
-        // DF-1 心情 chip 带 emote 图（网页 df-chip 内 emote 图 + 心情名）。
-        if let moodKey = draftValue.mood, let moodName = BearyText.moodNames[moodKey] {
-            let chip = moodChip(key: moodKey, name: moodName)
-            chip.translatesAutoresizingMaskIntoConstraints = false
-            metaFlow.addSubview(chip)
-        }
         // DF-1 “忽略丢失图片”可点清除 chip：只针对已无物可续传的失败图
         // （本地文件与服务端 key 皆无，网页 imgs_lost 的等价情形）；点一下清掉
         // 这些图项与提示，可续传的失败图仍走“图片已存本机，待上传”状态行。
@@ -1320,44 +1314,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         return BearyEmoteImages.image(for: key, dark: dark) != nil
     }
 
-    private func moodChip(key: String, name: String) -> UIView {
-        let chip = chipShell()
-        let row = UIStackView()
-        row.axis = .horizontal
-        row.spacing = 4
-        row.alignment = .center
-        row.translatesAutoresizingMaskIntoConstraints = false
-        // I16：emote 加载失败时隐藏 14px 视图，只留心情名。
-        // D-G12：网页 .df-chip img 为 14px，原 16 改 14。
-        if isEmoteAssetAvailable(key: key) {
-            let emoteView = BearyEmoteView(key: key, animated: false)
-            emoteView.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                emoteView.widthAnchor.constraint(equalToConstant: 14),
-                emoteView.heightAnchor.constraint(equalToConstant: 14),
-            ])
-            row.addArrangedSubview(emoteView)
-        }
-        let label = UILabel()
-        label.text = name
-        label.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
-        label.textColor = BearyColors.ink
-        // L7：chip label 省略号 + 低压缩，chip 本身设最大宽，不挤走状态文案。
-        label.numberOfLines = 1
-        label.lineBreakMode = .byTruncatingTail
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        row.addArrangedSubview(label)
-        chip.addSubview(row)
-        NSLayoutConstraint.activate([
-            row.topAnchor.constraint(equalTo: chip.topAnchor, constant: 2.5),
-            row.bottomAnchor.constraint(equalTo: chip.bottomAnchor, constant: -2.5),
-            row.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: 9),
-            row.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -9),
-            chip.widthAnchor.constraint(lessThanOrEqualToConstant: 180),
-        ])
-        return chip
-    }
-
     private func recipientChip(name: String) -> UIView {
         let chip = chipShell()
         let row = UIStackView()
@@ -1530,9 +1486,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         }
         if draftValue.quoteId != nil {
             return "（只有引用）"
-        }
-        if let moodKey = draftValue.mood, BearyText.moodNames[moodKey] != nil {
-            return "（只有心情）"
         }
         // G19：recipientName 口径收紧为非空（空字符串不再触发“还没写字”兜底，
         // 与存储层 hasContent 的 recipientName 非空判定一致）。
