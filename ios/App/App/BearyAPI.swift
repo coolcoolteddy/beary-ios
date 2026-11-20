@@ -176,9 +176,6 @@ struct Entry: Codable {
     var quote: Quote?
     var createdAt: Int?
     var publishAt: Int?
-    /// 旧 B 方案公开倒计时截止（iCity 已废弃：服务端不再写 pending，字段仅保留解码兼容，
-    /// 不得再用于任何 UI 或门控判断；可见性唯一事实来源是 isPublic + publishedAt）。
-    var publishPendingUntil: Int?
     var editDeadline: Int?
     /// 冲突清单第 4 条：最后一次编辑时刻（毫秒，后端 updated_at；未编辑过为 nil）。
     /// 公开内容凭它显示「编辑于 X」；卡片不加「已修订」标记。
@@ -261,16 +258,6 @@ struct EntryList: Decodable {
     /// 旧广场附加字段（iCity 已删模块：客户端不再渲染它；字段仅保留解码兼容，
     /// 服务端停发后自然为 nil）。
     var recentPublished: [Entry]?
-}
-
-/// B 方案公开/取消响应：服务端 POST /publish 与 /publish/cancel 均返回
-/// {ok, publish_pending_until, published}（published 为 0/1 数字；取消成功时 publish_pending_until 为 null）。
-/// 旧公开/取消响应（iCity：调用方改走 setVisibility 的 VisibilityResponse；本结构仅保留解码兼容）。
-struct PublishResponse: Decodable {
-    var ok: Bool?
-    var publishPendingUntil: Int?
-    var published: Int?
-    var publishedAt: Int?
 }
 
 /// iCity 可见性切换响应：POST /beary/api/entries/:id/visibility → {published, published_at}。
@@ -1681,21 +1668,6 @@ final class BearyAPI {
             }
             completion(.failure(.decoding(NSError(domain: "BearyAPI", code: -1, userInfo: nil))))
         }
-    }
-
-    // MARK: - B 方案公开 / 取消（网页 doPublish / doPublishCancel 同款端点，见 teddy_beary/worker.js）
-
-    /// 旧公开端点（iCity 已废弃：调用方改走 setVisibility；仅保留，调用点已全部迁移）。
-    /// 服务端兼容语义改为立即公开，但 App 不再使用。
-    func requestPublish(id: String, completion: @escaping (Result<PublishResponse, APIError>) -> Void) {
-        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        request("/beary/api/entries/\(safe)/publish", method: "POST", completion: completion)
-    }
-
-    /// 旧取消公开端点（iCity 已废弃：调用方改走 setVisibility 显式目标态；仅保留，调用点已全部迁移）。
-    func cancelPublish(id: String, completion: @escaping (Result<PublishResponse, APIError>) -> Void) {
-        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        request("/beary/api/entries/\(safe)/publish/cancel", method: "POST", completion: completion)
     }
 
     // MARK: - iCity 可见性切换 / 举报 / 拉黑 / 行为事件

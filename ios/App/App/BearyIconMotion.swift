@@ -52,25 +52,6 @@ enum BearyIconMotion {
         imageView.layer.add(pop, forKey: "bearyLikeBurstPop")
     }
 
-    /// 点赞填充淡入（网页 .fill transition fill .3s）。
-    /// 网页另有 .25s 延迟（与描边后半段重叠），原生因网络时序已与描边解耦，
-    /// 故成功到达时直接淡入 motion.normal 0.26s，不再额外延迟。
-    /// fixall-cell 6-12：点赞填充淡入（网页 .fill transition fill .3s）。
-    /// 中途换图处理：先按 key 清掉在途淡入（旧图淡入不再与新图叠加），
-    /// 再以 keyed CA 淡入从 0 → 1；模型 alpha 全程保持 1，新图不会在
-    /// 淡入前以满透明度闪一下，也不会停在半透明态。
-    static func playFillFade(on button: UIButton) {
-        guard let imageView = button.imageView else { return }
-        imageView.layer.removeAnimation(forKey: "bearyFillFade")
-        imageView.alpha = 1
-        if UIAccessibility.isReduceMotionEnabled { return }
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 0
-        fade.toValue = 1
-        fade.duration = BearyMotion.normal
-        fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        imageView.layer.add(fade, forKey: "bearyFillFade")
-    }
 
     /// 收藏弹一下（视觉清单第 9 项：峰值由 1.3 收到 1.12、时长由 .28s 收到 .16s，
     /// 曲线与回弹终态不变，作用于图标本身）。星星炸开不在此播，由调用方

@@ -245,31 +245,18 @@ struct BlindBoxRequestIdentity {
 // 切号不删旧号桶（与图片/日记缓存“切号保留、切回可复用”同口径）；
 // 显式退出走 clearAccount(accountId:) 删该号全部盲盒桶（见
 // SessionManager.signOutLocally，与 P2-22 退出清该号落盘同口径）。
-// 旧扁平键升级时直接丢弃、不迁移——旧镜像归属账号已不可考，服务端
-// /today 是事实来源，流程页进页即重拉覆盖；入口只读镜像、不发请求。
+// 旧镜像归属账号已不可考，服务端 /today 是事实来源，流程页进页即重拉覆盖；入口只读镜像、不发请求。
 
 final class BlindBoxState {
     static let shared = BlindBoxState()
 
     private let defaults = UserDefaults.standard
-    /// 旧扁平键（无账号维度，已废弃）：初始化时删掉，之后永不读写。
-    private let legacyKeys = [
-        "beary.blindbox.date",
-        "beary.blindbox.used",
-        "beary.blindbox.exchangeId",
-        "beary.blindbox.receivedWithdrawn",
-        "beary.blindbox.myWithdrawn",
-    ]
     /// 上次被读到/写到的桶；桶变化（切号或跨日）时给在线入口发一次
     /// .bearyBlindBoxDidChange，使不重建的入口行也能即时刷新（发通知
     /// 前先更新该值，入口 refresh() 回读时桶已不变，不会循环发通知）。
     private var lastSeenBucket: String?
 
-    private init() {
-        for key in legacyKeys {
-            defaults.removeObject(forKey: key)
-        }
-    }
+    private init() {}
 
     /// 当前账号维度的键前缀。未登录时落 "guest" 桶——游客入口本就硬编码
     /// 显示 0/1、不读镜像（见 BearyBlindBoxEntryView.refresh），该桶只

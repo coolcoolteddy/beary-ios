@@ -824,20 +824,7 @@ final class BearyDMConversationCell: UITableViewCell {
     /// 新一轮 01：只刷新本行的时间标签（页面分钟边界定时器调），不触其他内容。
     func refreshTimeLabel() {
         guard let ms = lastAtMs else { return }
-        timeLabel.text = Self.relativeTimeText(ms: ms)
-    }
-
-    /// 通知时间口径（2026-11-11 定版带空格，取代 2026-11-05 口径）：不到 1 分钟“刚刚”，不到 1 小时“X 分钟前”，
-    /// 不到 24 小时“X 小时前”，超过 24 小时写天数“X 天前”。
-    /// 新一轮 01：几秒内的时钟偏差仍算“刚刚”；明显未来（> 5 秒）不误报为刚发送，
-    /// 改走绝对时间显示。
-    private static func relativeTimeText(ms: Int?) -> String {
-        guard let msValue = ms else { return "" }
-        let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
-        let diff = Date().timeIntervalSince(date)
-        if diff < -5 { return BearyText.timeString(ms: msValue) }
-        // 相对档位复用带空格共享实现（规范 §12）；共享实现无未来分支，故未来守卫留本地。
-        return BearyVisibilityText.publishedRelativeString(publishedAtMs: msValue) ?? ""
+        timeLabel.text = BearyVisibilityText.relativeTimeText(ms: ms)
     }
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
@@ -972,7 +959,7 @@ final class BearyDMConversationCell: UITableViewCell {
         // 时间口径与通知行一致（相对时间：刚刚/X 分钟前/X 小时前/X 天前；2026-11-11 定版带空格，取代 2026-11-05 无空格口径）。
         if let lastAt = conversation.lastAt {
             lastAtMs = lastAt
-            timeLabel.text = Self.relativeTimeText(ms: lastAt)
+            timeLabel.text = BearyVisibilityText.relativeTimeText(ms: lastAt)
         } else {
             lastAtMs = nil
             timeLabel.text = ""

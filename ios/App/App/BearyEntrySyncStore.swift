@@ -24,9 +24,8 @@ import Foundation
 /// status：complete = 最近一次全量同步分页到齐且写入校验成功并已发布；
 /// partial = 最近一次尝试中断（分页失败/超限/游标缺失/写盘校验失败），
 /// 盘上是上一份完整版本。
-/// 名字说明：与 BearyEntrySync.swift 里设置页展示用的 enum BearySyncState
-/// （usingLocal/syncing/synced/failed 四态）区分——enum 是内存快照，
-/// record 是落盘的状态文件内容。
+/// 名字说明：record 是落盘的状态文件内容（complete/partial 两态），
+/// 不是内存里的同步状态快照。
 struct BearySyncStateRecord: Codable {
     var status: String
     var updatedAt: TimeInterval

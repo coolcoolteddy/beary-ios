@@ -43,10 +43,6 @@ import UIKit
 // 未登录（网页 openNotifs 同口径）：首拉 401 且列表为空时 toast“请先登录”，
 //   1200ms 后走 onRequireLogin 弹登录；本页不再设页内登录引导态，
 //   失败态按“加载失败 / 重试”显示；登录提示一集只发一次，成功加载后清零。
-// 角标：未读数每次变化都在主线程 post NotificationCenter，
-//   name = BearyNotificationsViewController.unreadChangedNotificationName
-//   （即 "BearyUnreadChanged"），userInfo = ["unread": Int, "sysUnread": Int]；
-//   sysUnread 随 unread 一起透传，底栏接线由总协调收尾做，本文件不碰底栏、不碰 SceneDelegate。
 // 轻量刷新：60 秒定时 + 回前台各一次 limit=2 拉取，只更新未读数与角标，
 //   不动列表；401 与其他失败一律静默忽略。limit 取 2 不取 1 的原因见
 //   refreshUnreadCountLightly：后端 limit<=1 轻路径只回空 items，拿不到最新消息 ID。
@@ -75,9 +71,6 @@ import UIKit
 //   无 force unwrap；变量名不用裸 id。
 
 final class BearyNotificationsViewController: UIViewController {
-
-    /// 未读数变化通知名（容器监听它刷新底栏角标）。
-    static let unreadChangedNotificationName = Notification.Name("BearyUnreadChanged")
 
     /// 未登录时登录引导按钮的出口：交由容器弹登录页，本页不弹。
     var onRequireLogin: (() -> Void)?
@@ -238,8 +231,6 @@ final class BearyNotificationsViewController: UIViewController {
     /// 结果。查询发起时快照本代次，回包时代次不等即丢弃（仍清 loading
     /// 旗，不写态、不刷新行）。
     private var followCardOperationGeneration: [Int: Int] = [:]
-    private var lastPublishedUnread = -1
-    private var lastPublishedSysUnread = -1
     /// 上次整页加载时的未读数快照（门控用，与 unreadTotal 严格分开）：
     /// nil = 尚未整页成功加载过，门控不触发（首拉/重试仍由 viewDidLoad 与
     /// 失败态按钮负责）。轻量刷新只更新 unreadTotal/sysUnreadTotal，绝不写
@@ -727,7 +718,6 @@ final class BearyNotificationsViewController: UIViewController {
         rebuildDisplayRows()
         tableView.reloadData()
         refreshVisibleState()
-        publishUnread(unreadTotal)
         updateReadAllButton()
         // 缓存即上次整页成功加载的结果：门控快照与缓存未读数同值，
         // 之后轻量拉取比对它，变了才整页重拉。
@@ -906,7 +896,6 @@ final class BearyNotificationsViewController: UIViewController {
                     if let sysValue = list.sysUnread {
                         strongSelf.sysUnreadTotal = max(0, sysValue)
                     }
-                    strongSelf.publishUnread(strongSelf.unreadTotal)
                     strongSelf.updateReadAllButton()
                     // C-G4：401 清场后轻量刷新一旦成功（说明已重新登录），
                     // 旗立起时无条件整页拉取新账号首拉——此时快照为 nil，
@@ -955,7 +944,6 @@ final class BearyNotificationsViewController: UIViewController {
         if removedUnread > 0 {
             unreadTotal = max(0, unreadTotal - removedUnread)
             sysUnreadTotal = max(0, sysUnreadTotal - removedSysUnread)
-            publishUnread(unreadTotal)
         }
         rebuildDisplayRows()
         tableView.reloadData()
@@ -1216,7 +1204,6 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.hasMore = false
                     strongSelf.loadMoreFailed = false
                     strongSelf.computeHasMore(fetchedCount: strongSelf.items.count, requestedLimit: requestedLimit)
-                    strongSelf.publishUnread(strongSelf.unreadTotal)
                     // 整页成功加载：门控快照与本次未读数同值，之后轻量比对以此为准；
                     // D3-App：同时落版本号（响应未带时为 nil，旧快照版本号保留）
                     // 与最新消息 ID（recordFullLoadUnread 内从 items 首条取）。
@@ -1274,7 +1261,6 @@ final class BearyNotificationsViewController: UIViewController {
     /// 真正首拉由 needsReloadAfterUnauthorized 旗驱动（见下两处）：
     /// refreshListIfUnreadChanged（切回/ viewWillAppear）与轻量刷新成功分支
     /// （轮询/回前台时已重新登录）都会在旗立起时无条件 loadFirstPage。
-    /// 角标同步归零：publishUnread(0) 把旧账号角标清掉，底栏不残留旧数。
     /// P1-21：清态时 bumpAuthEpoch()——此前在途请求的回包随后一律过期，
     /// 各请求回包的代次校验（见 isStaleRequestEpoch）会把它们丢弃。
     /// P1-22：清态重载前先灭卡片动画（见 cancelCardAnimation），摘掉在途
@@ -1306,7 +1292,6 @@ final class BearyNotificationsViewController: UIViewController {
         needsReloadAfterUnauthorized = true
         notifPageEntered = false
         displayHighlightWatermarkMs = nil
-        publishUnread(0)
         cancelCardAnimation()
         BearyAPI.shared.bumpAuthEpoch()
         tableView.reloadData()
@@ -1346,7 +1331,6 @@ final class BearyNotificationsViewController: UIViewController {
         displayedPageAccountId = nil
         loadMoreFailed = false
         needsReloadAfterUnauthorized = true
-        publishUnread(0)
         cancelCardAnimation()
         tableView.reloadData()
     }
@@ -1963,7 +1947,6 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.computeHasMore(fetchedCount: appendedCount, requestedLimit: strongSelf.pageLimit)
                     // 翻页只追加旧条：不写门控快照——顶条仍可能滞后，写了会把
                     // 新消息的门控信号吃掉；未读数本身照常更新角标。
-                    strongSelf.publishUnread(strongSelf.unreadTotal)
                     // M12：翻页追加用 insertRows 动画（尾行随加载结束一并删掉）；
                     // 已有行不动，不走整表 reloadData。
                     // 并发守卫：加载中途用户若展开/收起卡片改了行表，旧坐标已失配，
@@ -2141,7 +2124,6 @@ final class BearyNotificationsViewController: UIViewController {
         }
         unreadTotal = 0
         sysUnreadTotal = 0
-        publishUnread(0)
         recordFullLoadUnread()
         rebuildDisplayRows()
         applyReadAppearanceToVisibleRows()
@@ -2167,7 +2149,6 @@ final class BearyNotificationsViewController: UIViewController {
                     }
                     strongSelf.unreadTotal = 0
                     strongSelf.sysUnreadTotal = 0
-                    strongSelf.publishUnread(0)
                     // 本页全部已读成功：列表已读态与服务端一致，快照同步归零，
                     // 否则下次轻量比对会把这次已读误判为变化而多拉一次整页。
                     strongSelf.recordFullLoadUnread()
@@ -2186,7 +2167,6 @@ final class BearyNotificationsViewController: UIViewController {
                     }
                     strongSelf.unreadTotal = snapshotUnreadTotal
                     strongSelf.sysUnreadTotal = snapshotSysUnreadTotal
-                    strongSelf.publishUnread(snapshotUnreadTotal)
                     strongSelf.recordFullLoadUnread()
                     strongSelf.rebuildDisplayRows()
                     strongSelf.applyReadAppearanceToVisibleRows()
@@ -2424,7 +2404,6 @@ final class BearyNotificationsViewController: UIViewController {
         let item = items[index]
         items[index].read = true
         unreadTotal = max(0, unreadTotal - 1)
-        publishUnread(unreadTotal)
         updateReadAllButton()
         recordFullLoadUnread()
         applyReadAppearanceToVisibleRows()
@@ -2442,7 +2421,6 @@ final class BearyNotificationsViewController: UIViewController {
             if item.type == "system" {
                 sysUnreadTotal = max(0, sysUnreadTotal - 1)
             }
-            publishUnread(unreadTotal)
             updateReadAllButton()
             // 本页乐观标已读：行已读态与本地未读数已一致，快照同步跟进，
             // 否则 POST 成功后轻量比对会误判为变化而多拉一次整页；失败回滚处同步改回。
@@ -2521,7 +2499,6 @@ final class BearyNotificationsViewController: UIViewController {
         }
         if newlyReadCount > 0 {
             unreadTotal = max(0, unreadTotal - newlyReadCount)
-            publishUnread(unreadTotal)
             updateReadAllButton()
             recordFullLoadUnread()
             applyReadAppearanceToVisibleRows()
@@ -2628,7 +2605,6 @@ final class BearyNotificationsViewController: UIViewController {
                     if item.type == "system" {
                         strongSelf.sysUnreadTotal += 1
                     }
-                    strongSelf.publishUnread(strongSelf.unreadTotal)
                     strongSelf.updateReadAllButton()
                     // 标已读失败回滚：快照随本地未读数改回，与回滚后的列表一致。
                     strongSelf.recordFullLoadUnread()
@@ -2669,7 +2645,6 @@ final class BearyNotificationsViewController: UIViewController {
             if wasSystem {
                 sysUnreadTotal = max(0, sysUnreadTotal - 1)
             }
-            publishUnread(unreadTotal)
             updateReadAllButton()
             recordFullLoadUnread()
         }
@@ -2702,7 +2677,6 @@ final class BearyNotificationsViewController: UIViewController {
                             if wasSystem {
                                 strongSelf.sysUnreadTotal += 1
                             }
-                            strongSelf.publishUnread(strongSelf.unreadTotal)
                             strongSelf.updateReadAllButton()
                             strongSelf.recordFullLoadUnread()
                         }
@@ -2737,22 +2711,6 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     // MARK: - 角标与顶栏
-
-    /// 未读数变化才发，避免同一数值反复刷底栏；sysUnread 随 unread 一起透传。
-    private func publishUnread(_ value: Int) {
-        let clamped = max(0, value)
-        let sysClamped = max(0, sysUnreadTotal)
-        if clamped == lastPublishedUnread && sysClamped == lastPublishedSysUnread {
-            return
-        }
-        lastPublishedUnread = clamped
-        lastPublishedSysUnread = sysClamped
-        NotificationCenter.default.post(
-            name: Self.unreadChangedNotificationName,
-            object: nil,
-            userInfo: ["unread": clamped, "sysUnread": sysClamped]
-        )
-    }
 
     /// 全部已读钮三态外观（R10-#5）：正常／处理中／完成共用同一刷新方法，
     /// 对勾始终 14pt——完成态此前误写 24pt。显隐仍由 updateReadAllButton() 管，
@@ -4505,14 +4463,6 @@ class BearyNotificationCell: UITableViewCell {
         return BearyText.inlineAttributedText(from: BearyText.stripTrailingPartialInlineToken(string), font: font, color: color, paragraphStyle: paragraph, dark: dark, gifImageKeys: nil)
     }
 
-    /// 审计-性能：逐行新建 DateFormatter 改静态复用（每种格式一个静态实例，
-    /// 不复用同一实例改 dateFormat；调用方只在主线程做行渲染，不跨线程用）。
-    private static let monthDayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月d日"
-        return formatter
-    }()
 
     /// 通知时间口径（2026-11-11 定版带空格，取代 2026-11-05 口径）：24 小时内相对时间——不到 1 分钟“刚刚”，
     /// 不到 1 小时“X 分钟前”，不到 24 小时“X 小时前”；超过 24 小时写天数“X 天前”。
@@ -4527,12 +4477,6 @@ class BearyNotificationCell: UITableViewCell {
         return BearyVisibilityText.publishedRelativeString(publishedAtMs: msValue) ?? ""
     }
 
-    /// 网页 fmtDay 口径：M月d日（无空格，信件引用 meta 用它）。
-    static func dayText(ms: Int?) -> String {
-        guard let msValue = ms else { return "" }
-        let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
-        return monthDayFormatter.string(from: date)
-    }
 
     /// 互动动词（卡面最新一条与行标题共用，须对 VC 可见，故不 private）。
     /// 网页 ntVerb 口径：非 like / bookmark / mention 一律回退为“给你的日记贴了小熊回应”

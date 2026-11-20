@@ -160,12 +160,6 @@ enum BearySheetChrome {
     static let scrimAlpha: CGFloat = 0.45
     static var scrimColor: UIColor { BearyColors.scrim.withAlphaComponent(scrimAlpha) }
     static var shadowColor: CGColor { UIColor.black.cgColor }
-    /// 面板阴影唯一入口（规格附录第 2 项已定：阴影一档化为 raised）：
-    /// 兼容别名，转调 BearyShadow.applyRaised（0.12 / 8 / (0, 2)）；底 sheet 旧档
-    /// 0.22 / 16 / (0, -12) 已废弃，不删除本函数以防其他分支引用断裂。
-    static func applyShadow(to layer: CALayer) {
-        BearyShadow.applyRaised(to: layer)
-    }
 }
 
 // MARK: - 抓手拖动统一口径（2026-10-30 抓手批）
@@ -3695,6 +3689,17 @@ enum BearyVisibilityText {
         // （详情、卡片、私信、通知、我的页）自动跟这条口径，不用各处另处理。
         if diff < 7 * 86400 { return "\(Int(diff / 86400)) 天前" }
         return BearyText.absoluteDateString(from: date)
+    }
+
+    /// 气泡/会话时间口径：相对时间（刚刚/X 分钟前/X 小时前/X 天前；2026-11-11 定版带空格）。
+    /// 新一轮 01：几秒内的时钟偏差仍算"刚刚"；明显未来（> 5 秒）不误报为刚发送，改走绝对时间显示。
+    static func relativeTimeText(ms: Int?) -> String {
+        guard let msValue = ms else { return "" }
+        let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
+        let diff = Date().timeIntervalSince(date)
+        if diff < -5 { return BearyText.timeString(ms: msValue) }
+        // 相对档位复用带空格共享实现（规范 §12）；共享实现无未来分支，故未来守卫放这里。
+        return publishedRelativeString(publishedAtMs: msValue) ?? ""
     }
 }
 
