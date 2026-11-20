@@ -637,7 +637,7 @@ final class BearyYearReviewViewController: UIViewController {
     private let titleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 22, weight: .heavy))
+        label.font = BearyDynamicType.scaledFont(for: BearyDynamicType.serifDesign(for: UIFont.systemFont(ofSize: 22, weight: .heavy)))
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         return label

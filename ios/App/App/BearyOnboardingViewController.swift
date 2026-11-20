@@ -252,6 +252,11 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: size, weight: weight))
     }
 
+    /// 衬线版 scaledFont（2026-11-19 Li 定，规范 §11）：引导页各页标题（含指南页，同 titleLabel）26 bold 走衬线。
+    private func serifScaledFont(size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
+        return BearyDynamicType.scaledFont(for: BearyDynamicType.serifDesign(for: UIFont.systemFont(ofSize: size, weight: weight)))
+    }
+
     private func makeLabel(size: CGFloat, weight: UIFont.Weight = .regular, color: UIColor, alignment: NSTextAlignment = .left) -> UILabel {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -328,7 +333,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         bottomCard.addSubview(bottomStack)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = scaledFont(size: 26, weight: .bold)
+        titleLabel.font = serifScaledFont(size: 26, weight: .bold)
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         titleLabel.numberOfLines = 0
