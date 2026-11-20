@@ -149,6 +149,19 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var searchMineCursorBefore: Int?
     private var searchMineCursorId: String?
     private var searchUsersCursorId: Int?
+    /// 离线搜索（第二批体验检查第 3 项）：本地 FTS 分页态——本轮已取到的
+    /// 本地命中累计（searchLocalMineEntries，含翻页追加）、已消费条数
+    /// （searchMineLocalOffset）与是否还有本地下一批
+    /// （searchMineLocalHasMore）；searchMineLocalOnly 为真时当前“我的”组
+    /// 只来自本设备（服务端还没到或已失败），横幅见 updateLocalOnlyBanner。
+    /// ftsMineEntryIds 是本轮本地命中的 id 集：本地命中的本人日记（含已
+    /// 公开篇）进“我的”组不走 isPublic 过滤，见 isMineSearchEntry。
+    private var searchLocalMineEntries: [Entry] = []
+    private var searchMineLocalOffset: Int = 0
+    private var searchMineLocalHasMore: Bool = false
+    private var searchMineLocalOnly: Bool = false
+    private var searchServerPending: Bool = false
+    private var ftsMineEntryIds: Set<String> = []
     /// Q9 最近搜索：只存本机 UserDefaults，不走服务端；最多 8 条，新在前、去重。
     /// 按账号分桶：登录时键为 bearyRecentSearches_<uid>；未登录（含游客模式）
     /// 一律走独立 guest 桶 bearyRecentSearches_guest，登录后不并入任何账号桶。
@@ -1118,7 +1131,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         guard showingResults, !isLoadingMore else { return }
         guard let query = lastRenderedQuery, !query.isEmpty else { return }
         guard var merged = lastRenderedData else { return }
-        guard searchHasMorePublic || searchHasMoreMine || searchHasMoreUsers else { return }
+        guard searchHasMorePublic || searchHasMoreMine || searchHasMoreUsers || searchMineLocalHasMore else { return }
         // 重试只补失败组：无失败组时直接返回，不亮加载态。
         guard !retryFailedOnly || loadMoreFailedPublic || loadMoreFailedMine || loadMoreFailedUsers else { return }
         isLoadingMore = true
@@ -1138,6 +1151,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 本批各组新行（原始未过滤；过滤口径统一由 appendResultRows
         // 按 renderResults 逐字执行，避免两处过滤口径漂移）。
         var freshMineEntries: [Entry] = []
+        var freshLocalMineEntries: [Entry] = []
         var freshPublicEntries: [Entry] = []
         var freshUsersList: [SearchUser] = []
         // 本批翻页内的去重基准：已在屏上的 id（公开/我的按日记 id、用户按 id）。
@@ -1166,7 +1180,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 // 改增量追加本批新行（游标/hasMore/去重口径不动，见
                 // appendResultRows）；末尾 updateSearchFooter 按新 hasMore
                 // 决定尾行（取尽则隐藏、失败则亮翻页重试）。
-                self.appendResultRows(data: merged, mine: freshMineEntries, publicEntries: freshPublicEntries, users: freshUsersList, query: query)
+                self.appendResultRows(data: merged, mine: freshMineEntries + freshLocalMineEntries, publicEntries: freshPublicEntries, users: freshUsersList, query: query)
             }
             self.updateSearchFooter()
         }
@@ -1276,6 +1290,43 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 currentLoadMoreTasks.append(task)
             }
         }
+        // “我的”组本地续页：离线（或服务端“我的”组已取尽）时本地 FTS 仍有
+        // 下一批就继续翻本地结果；后台算、回主线程合并（与 runSearch 的
+        // FTS 腿同口径）。本地腿失败返回 []（与空结果同形）：不计失败，
+        // 只按取尽处理；翻页重试（retryFailedOnly）不重发本地腿。
+        if searchMineLocalHasMore, !retryFailedOnly {
+            pending += 1
+            let localOffset = searchMineLocalOffset
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let page = BearyMineSearchIndex.shared.searchMine(query: query, offset: localOffset)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    if seq != self.searchSeq { return }
+                    self.searchMineLocalHasMore = page.count == 20
+                    self.searchMineLocalOffset += page.count
+                    self.searchLocalMineEntries.append(contentsOf: page)
+                    var fresh: [Entry] = []
+                    for entry in page {
+                        guard let entryId = entry.id else { continue }
+                        self.ftsMineEntryIds.insert(entryId)
+                        if !seenMineEntryIds.contains(entryId) {
+                            seenMineEntryIds.insert(entryId)
+                            fresh.append(entry)
+                        }
+                    }
+                    freshLocalMineEntries = fresh
+                    if !fresh.isEmpty {
+                        mergedChanged = true
+                        if merged.mine == nil {
+                            merged.mine = fresh
+                        } else {
+                            merged.mine?.append(contentsOf: fresh)
+                        }
+                    }
+                    finishOne()
+                }
+            }
+        }
         // 用户组下一批：只传 before_id（id 升序、id > before_id），不传 before。
         // 第 14 轮审计 6：重试只发失败组。
         if searchHasMoreUsers, let userCursor = searchUsersCursorId, !retryFailedOnly || loadMoreFailedUsers {
@@ -1383,29 +1434,31 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 旧写法是服务端回包后才同步查本地索引：慢归档拖住公开组和用户组，
         // 断网时本地搜索直接跳过。FTS 失败／本地归档不完整时返回 []，
         // 服务端「我的」组原样兜底，不断档；公开组与用户组不碰，仍是服务端原样。
-        // 下面两路只在主线程读写共享态（serverResult / ftsMine / 各 done 位），
-        // 后台线程只做 FTS 计算、不碰共享态；旧轮回包凭 searchSeq 丢弃。
+        // 下面两路只在主线程读写共享态（serverResult / searchLocalMineEntries /
+        // 各 done 位），后台线程只做 FTS 计算、不碰共享态；旧轮回包凭 searchSeq 丢弃。
         var serverResult: Result<SearchResult, APIError>?
-        var ftsMine: [Entry] = []
         var ftsDone = false
         var serverApplied = false
-        var localFirstShown = false
         // 两路任一到达即调：只能在主线程调用。
         let applySearchLegs: () -> Void = { [weak self] in
             guard let self = self else { return }
             if seq != self.searchSeq { return }
             guard let serverResult = serverResult else {
-                // 审计 #20：FTS 先到且本地有命中时先渲仅「我的」组的临时结果，
-                // 不等服务端回包；服务端到达后全量重渲。走同一 renderResults，
-                // 「我的」组过滤与失败分支的 localOnly 同口径；框内圈照旧等
-                // 两路到齐才停。
-                if !localFirstShown, !ftsMine.isEmpty {
-                    localFirstShown = true
-                    let localOnly = SearchResult(users: nil, entries: nil, mine: ftsMine)
+                // 本地先到：不等服务端，先渲本地「我的」组（含已公开篇，
+                // 见 isMineSearchEntry）；公开组与用户组仍在路上，横幅写清
+                // 当前只有本设备结果（见 updateLocalOnlyBanner）。
+                // （审计 #20 的本地先到已合入 main，本支以持久态累计集
+                // searchLocalMineEntries 承接，支持离线翻页追加。）
+                if !self.searchLocalMineEntries.isEmpty {
+                    self.searchMineLocalOnly = true
+                    self.searchHasMoreMine = self.searchMineLocalHasMore
+                    let localOnly = SearchResult(users: nil, entries: nil, mine: self.searchLocalMineEntries)
                     self.renderResults(data: localOnly, query: trimmed)
                 }
                 return
             }
+            // 服务端 leg 已到（成功或失败），公开/用户组不再是“加载中”。
+            self.searchServerPending = false
             switch serverResult {
             case .success(var data):
                 if !serverApplied {
@@ -1416,7 +1469,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                     // 末尾的 updateSearchFooter 才能据此亮起“加载更多”。
                     self.updateSearchPagination(from: data)
                 }
-                data.mine = self.mergedMine(serverMine: data.mine, ftsMine: ftsMine)
+                // 服务端到了：本地先到横幅摘掉；合并用本轮累计本地集（含已
+                // 翻出的本地页），服务端重渲不丢离线翻页追加的行。
+                self.searchMineLocalOnly = false
+                data.mine = self.mergedMine(serverMine: data.mine, ftsMine: self.searchLocalMineEntries)
                 self.renderResults(data: data, query: trimmed)
                 // FTS 晚到时再渲一次：同 query 走行复用路径，只补「我的」组行；
                 // 两路都到齐才停框内圈。
@@ -1427,12 +1483,21 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                     return
                 }
                 self.setBoxBusy(false)
-                if !ftsMine.isEmpty {
+                if !self.searchLocalMineEntries.isEmpty {
                     // 断网兜底：只渲本地「我的」组（公开组与用户组不编造数据）；
-                    // 尾行重试入口照旧亮起，提示服务端那半失败了。
-                    let localOnly = SearchResult(users: nil, entries: nil, mine: ftsMine)
+                    // 本地仍有下一批时尾行亮“加载更多”走本地翻页（见 loadMore
+                    // 本地腿）；本地取尽时才亮整搜重试。
+                    self.searchMineLocalOnly = true
+                    self.searchHasMoreMine = self.searchMineLocalHasMore
+                    let localOnly = SearchResult(users: nil, entries: nil, mine: self.searchLocalMineEntries)
                     self.renderResults(data: localOnly, query: trimmed)
-                    self.setSearchFooter(failed: true)
+                    if self.searchMineLocalHasMore {
+                        self.loadMoreFailed = false
+                        self.searchFooterRetryIsLoadMore = false
+                        self.updateSearchFooter()
+                    } else {
+                        self.setSearchFooter(failed: true)
+                    }
                 } else if self.showingResults {
                     // S7：已有旧结果时不进失败态（showState 会清结果区），
                     // 只在结果区行内补重试入口，旧结果行原样保留。
@@ -1442,6 +1507,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 }
             }
         }
+        searchServerPending = true
         currentSearchTask = BearyAPI.shared.search(q: trimmed) { result in
             // BearyAPI 回调不在主线程，碰 UI 与共享态必须回主线程。
             DispatchQueue.main.async {
@@ -1453,9 +1519,17 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // searchMine 是同步调用、内部有自己的串行队列，须在后台队列调。
         DispatchQueue.global(qos: .userInitiated).async {
             let mine = BearyMineSearchIndex.shared.searchMine(query: trimmed)
-            DispatchQueue.main.async {
-                ftsMine = mine
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                // 旧轮 FTS 晚到：序号守卫丢弃，不碰本轮本地集。
+                if seq != self.searchSeq { return }
                 ftsDone = true
+                // 首批记入本轮本地集：后续离线翻页继续追加；服务端晚到
+                // 重渲时 mergedMine 用累计集，已翻出的本地页不丢。
+                self.searchLocalMineEntries = mine
+                self.searchMineLocalOffset = mine.count
+                self.searchMineLocalHasMore = mine.count == 20
+                self.ftsMineEntryIds = Set(mine.compactMap { $0.id })
                 applySearchLegs()
             }
         }
@@ -1800,6 +1874,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 88 包 M13：失败重试改走结果区尾行（原行内重试行已并入尾行）。
         setSearchFooter(failed: true)
         updateStaleResultsBanner()
+        updateLocalOnlyBanner()
     }
 
     /// B2：旧结果保留提示横幅——换词搜索失败、旧结果仍在屏时，列表头写清
@@ -1877,6 +1952,53 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         scrollView.contentOffset.y = min(max(scrollView.contentOffset.y + delta, minY), maxY)
     }
 
+    /// 离线搜索第 3 项：本地先到／断网兜底提示横幅——当前结果只来自本设备
+    /// FTS，列表头写清“当前搜索本设备已有的日记”；服务端仍在路上时追加
+    /// “公开与用户结果加载中”。服务端回包成功即摘掉（renderResults 末尾
+    /// 的 updateLocalOnlyBanner）；清结果时随 clearResultRows 摘掉。
+    private var localOnlyBanner: UIView?
+
+    private func updateLocalOnlyBanner() {
+        guard showingResults, searchMineLocalOnly else {
+            removeLocalOnlyBanner()
+            return
+        }
+        let text = searchServerPending
+            ? "当前搜索本设备已有的日记，公开与用户结果加载中"
+            : "当前搜索本设备已有的日记"
+        if let banner = localOnlyBanner, banner.superview == resultsStack,
+           let label = banner.subviews.first as? UILabel {
+            label.text = text
+            return
+        }
+        removeLocalOnlyBanner()
+        let wrap = UIView()
+        wrap.translatesAutoresizingMaskIntoConstraints = false
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.gray
+        label.numberOfLines = 0
+        label.text = text
+        wrap.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 12),
+            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 6),
+            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -6),
+            label.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -4),
+        ])
+        localOnlyBanner = wrap
+        resultsStack.insertArrangedSubview(wrap, at: 0)
+    }
+
+    private func removeLocalOnlyBanner() {
+        guard let banner = localOnlyBanner else { return }
+        localOnlyBanner = nil
+        resultsStack.removeArrangedSubview(banner)
+        banner.removeFromSuperview()
+    }
+
     /// 尾行四态（与时间线/个人主页尾行同形态；搜索进行时不显示尾行，只转框内圈）：
     /// 未出结果时隐藏；出结果后：翻页进行中 → 转圈；翻页失败 → 重试钮
     /// （走 loadMore 再试）；整搜失败保结果 → 重试钮（走整搜重跑，见
@@ -1898,7 +2020,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         } else if loadMoreFailed {
             searchFooterRow.isHidden = false
             searchFooterRetryButton.isHidden = false
-        } else if searchHasMorePublic || searchHasMoreMine || searchHasMoreUsers {
+        } else if searchHasMorePublic || searchHasMoreMine || searchHasMoreUsers || searchMineLocalHasMore {
             searchFooterRow.isHidden = false
             searchFooterLoadMoreButton.isHidden = false
         } else {
@@ -1938,6 +2060,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchMineCursorBefore = nil
         searchMineCursorId = nil
         searchUsersCursorId = nil
+        searchLocalMineEntries = []
+        searchMineLocalOffset = 0
+        searchMineLocalHasMore = false
+        searchMineLocalOnly = false
+        searchServerPending = false
+        ftsMineEntryIds = []
+        removeLocalOnlyBanner()
     }
 
     /// 从服务端回包原始数组更新三组 hasMore 与游标（LIMIT：日记组 20、用户组 8；
@@ -1991,6 +2120,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         // B2：旧结果提示横幅随结果区一并摘掉（视图已在上循环里移除）。
         staleResultsBanner = nil
+        localOnlyBanner = nil
         mineSectionHeader = nil
         publicSectionHeader = nil
         usersSectionHeader = nil
@@ -2020,6 +2150,17 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         imageRetryHolders = []
         // 88 包 M13：尾行不属于结果区；成功重渲末尾尾行由 updateSearchFooter 按翻页态重算。
         setSearchFooter(failed: false)
+    }
+
+    /// “我的”组收录口径（离线搜索第 3 项）：私密／仅好友／存活限时篇照旧；
+    /// 本地 FTS 命中的本人日记（含已公开篇）同样收——离线搜自己已公开的
+    /// 日记不能被 isPublic 过滤挡掉。本地来源按 entry id 认
+    /// （ftsMineEntryIds，见 runSearch）；服务端 mine 里的已公开篇仍不进
+    /// 本组（公开组出，不重复）；已过期篇两组皆不进。
+    private func isMineSearchEntry(_ entry: Entry) -> Bool {
+        if BearyEphemeral.isExpired(entry) { return false }
+        if let entryId = entry.id, ftsMineEntryIds.contains(entryId) { return true }
+        return entry.isPublic == false || BearyEphemeral.isLive(entry)
     }
 
     /// 第十二轮 02：设备 FTS 与服务端「我的」组按 entry id 去重合并。
@@ -2071,7 +2212,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 // 存活限时篇（stored 公开、未过期）同样归本组、不再无处可寻；
                 // 已过期篇两组皆不进（公开组有效态过滤已挡；第十二轮 02：FTS
                 // 建索引时已排除已过期篇，这里再挡一道服务端回包里的过期篇）。
-                if (entry.isPublic == false || BearyEphemeral.isLive(entry)) && !BearyEphemeral.isExpired(entry) {
+                // 离线搜索第 3 项：本地 FTS 命中的本人日记（含已公开篇）同样
+                // 收，见 isMineSearchEntry。
+                if isMineSearchEntry(entry) {
                     mineEntries.append(entry)
                 }
             }
@@ -2080,7 +2223,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // published=1 过滤并写死 is_public: true、visibility: "public"；任一公开
         // 信号即可，缺 is_public 不再丢行；仍挡过期篇作防御（时钟/缓存边缘）。
         // 我的组保留 is_public 过滤（服务端对 mine 下发 is_public）。
-        let publicEntries = (data.entries ?? []).filter { ($0.visibility == "public" || $0.isPublic == true) && !BearyEphemeral.isExpired($0) }.filter { !isBlockedForSearch(userId: $0.authorId) }
+        // 已在“我的”组出的篇不重复进公开组（本地公开篇进我的组后同此；
+        // 与 appendResultRows 的 rowEntryIds 去重同口径）。
+        let mineEntryIds = Set(mineEntries.compactMap { $0.id })
+        let publicEntries = (data.entries ?? []).filter { ($0.visibility == "public" || $0.isPublic == true) && !BearyEphemeral.isExpired($0) }.filter { !isBlockedForSearch(userId: $0.authorId) }.filter { $0.id.map { !mineEntryIds.contains($0) } ?? true }
         let users = (data.users ?? []).filter { !isBlockedForSearch(userId: $0.id) }
         if mineEntries.isEmpty && publicEntries.isEmpty && users.isEmpty {
             showNoneState(query: query)
@@ -2163,6 +2309,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // （clearResultRows / syncResultRowsReuse 已摘旧横幅；新词成功渲染时
         // 本调用自行摘横幅）。放行入场动画之前，横幅先占位、行在其下入场。
         updateStaleResultsBanner()
+        updateLocalOnlyBanner()
         // 第七轮 02：横幅也可能插在结果上方，恢复放在横幅落位之后、
         // 入场动画之前，一次把锚点行顶回原视口位置。
         restoreResultAnchor(reuseAnchor)
@@ -2195,6 +2342,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             entry.authorName ?? "",
             isSelf ? "self" : "",
             entry.isFriendsOnly ? "friends" : "",
+            entry.isPublic == true ? "public" : "",
             BearyEphemeral.isLive(entry) ? "live" : "",
             reported ? "reported" : "",
         ].joined(separator: "\u{1F}")
@@ -2440,9 +2588,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         var mineRows: [UIView] = []
         var newEntryIds: [String] = []
         for entry in mine {
-            // 与 renderResults 逐字一致：只取确认为私密篇（is_public == false）
-            // 与存活限时篇；缺失字段（nil）不进私密组；已过期篇两组皆不进。
-            guard (entry.isPublic == false || BearyEphemeral.isLive(entry)) && !BearyEphemeral.isExpired(entry) else { continue }
+            // 与 renderResults 同口径（见 isMineSearchEntry）：私密篇与存活
+            // 限时篇之外，本地 FTS 命中的本人日记（含已公开篇）同样收；
+            // 缺失字段（nil）不进私密组；已过期篇两组皆不进。
+            guard isMineSearchEntry(entry) else { continue }
             guard let entryId = entry.id, rowEntryIds.contains(entryId) == false else { continue }
             if let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
                 mineRows.append(row)
@@ -2914,7 +3063,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             // 审计 2026-11-02 第十节：我的组按三档标 pill——存活限时篇标“限时”
             // （沿用私密档蓝底，不新发明颜色），仅好友标“仅好友”，其余标“私密”。
             metaStack.addArrangedSubview(dateLabel)
-            metaStack.addArrangedSubview(makePrivatePill(friendsOnly: entry.isFriendsOnly, ephemeralLive: BearyEphemeral.isLive(entry)))
+            metaStack.addArrangedSubview(makePrivatePill(friendsOnly: entry.isFriendsOnly, ephemeralLive: BearyEphemeral.isLive(entry), isPublic: entry.isPublic == true))
         } else {
             let authorLabel = BearyRoundedMarkLabel()
             authorLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -3002,6 +3151,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             entryA11yParts.append("限时")
         } else if entry.isFriendsOnly {
             entryA11yParts.append("仅好友")
+        } else if entry.isPublic == true {
+            entryA11yParts.append("公开")
         } else if isMineGroup {
             entryA11yParts.append("私密")
         } else {
@@ -3026,7 +3177,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 故代码保持 11、只改注释，不写 999。字号注：旧注释称 11.5pt 有误，代码实为 12pt
     /// （11.5＋2.5×2＝16.5 与实测约 19 也不符）；先前固定 12pt 是有意的偏离，规范并无
     /// 「8-3 豁免」背书（规范全文查无此条），现改为跟随系统字号（scaled）。
-    private func makePrivatePill(friendsOnly: Bool = false, ephemeralLive: Bool = false) -> UIView {
+    private func makePrivatePill(friendsOnly: Bool = false, ephemeralLive: Bool = false, isPublic: Bool = false) -> UIView {
         let pill = UIView()
         pill.translatesAutoresizingMaskIntoConstraints = false
         // 2026-11-18：metaStack 是 .fill 分布，pill 只设抗压、不设贴紧时，
@@ -3041,7 +3192,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         pill.layer.masksToBounds = true
         // 黑白灰新标准：仅好友 pill 改墨字灰底（与编辑器 chip 同口径）；
         // 私密/限时仍沿用蓝档（可见性语义，不动）。
-        let lock = UIImageView(image: BearyIconImages.image(named: friendsOnly ? "icon_friends_lock" : "icon_lock", pointSize: 12))
+        let lock = UIImageView(image: BearyIconImages.image(named: friendsOnly ? "icon_friends_lock" : (isPublic ? "icon_globe" : "icon_lock"), pointSize: 12))
         lock.translatesAutoresizingMaskIntoConstraints = false
         lock.tintColor = friendsOnly ? BearyColors.ink : BearyColors.blue
         lock.contentMode = .scaleAspectFit
@@ -3050,7 +3201,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12, weight: .semibold))
         label.adjustsFontForContentSizeCategory = true
         label.textColor = friendsOnly ? BearyColors.ink : BearyColors.blue
-        label.text = ephemeralLive ? "限时" : (friendsOnly ? "仅好友" : "私密")
+        label.text = ephemeralLive ? "限时" : (friendsOnly ? "仅好友" : (isPublic ? "公开" : "私密"))
         pill.addSubview(lock)
         pill.addSubview(label)
         NSLayoutConstraint.activate([

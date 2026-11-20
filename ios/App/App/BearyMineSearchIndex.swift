@@ -46,11 +46,13 @@ final class BearyMineSearchIndex {
 
     /// 搜本人日记（标题＋正文），按 created_at DESC、id DESC 返回（与服务端序一致）。
     /// 同步调用，调用方须在后台队列调。未登录、本地归档不完整、FTS 不可用时返回 []。
-    func searchMine(query: String) -> [Entry] {
-        queue.sync { searchMineLocked(query: query) }
+    /// offset：跳过前面多少条有效命中再取一页（pageSize 条）——离线翻页用；
+    /// 缺省 0 即首批。过期过滤放截取之前，offset 只计有效命中。
+    func searchMine(query: String, offset: Int = 0) -> [Entry] {
+        queue.sync { searchMineLocked(query: query, offset: max(0, offset)) }
     }
 
-    private func searchMineLocked(query: String) -> [Entry] {
+    private func searchMineLocked(query: String, offset: Int) -> [Entry] {
         guard let accountId = SessionManager.shared.currentUser?.id else { return [] }
         guard let phrase = ftsPhraseQuery(query) else { return [] }
         guard openIfNeeded(accountId: accountId) else { return [] }
@@ -103,9 +105,10 @@ final class BearyMineSearchIndex {
         // sqlite3_reset 不清绑定，循环内只需重绑 offset。
         let offsetParam = shortQuery ? 4 : 3
         var results: [Entry] = []
-        var offset = 0
+        var skipped = 0
+        var ftsOffset = 0
         while results.count < pageSize {
-            sqlite3_bind_int(stmt, Int32(offsetParam), Int32(offset))
+            sqlite3_bind_int(stmt, Int32(offsetParam), Int32(ftsOffset))
             sqlite3_reset(stmt)
             var pageIds: [String] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -113,7 +116,7 @@ final class BearyMineSearchIndex {
                 pageIds.append(String(cString: text))
             }
             guard !pageIds.isEmpty else { break }
-            offset += pageIds.count
+            ftsOffset += pageIds.count
             // 命中取回：刚重建过时手头已有全量快照，直接按 id 挑；否则只读
             // 命中 id 所在的日文件（最新日优先、找齐即停），不读全量。
             let pageEntries: [Entry]
@@ -137,6 +140,11 @@ final class BearyMineSearchIndex {
             // 后面的有效匹配。
             for id in pageIds {
                 if let entry = pageById[id], !BearyEphemeral.isExpired(entry) {
+                    // 翻页 offset 只计有效命中：先跳过前面 offset 条，再收一页。
+                    if skipped < offset {
+                        skipped += 1
+                        continue
+                    }
                     results.append(entry)
                     if results.count >= pageSize { break }
                 }
