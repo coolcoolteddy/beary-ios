@@ -6,9 +6,11 @@ import UIKit
 /// 四种：每晚写日记提醒 / 限时日记到期 / 那年今日 / 过去的自己送达。
 /// 刷新幂等：按本地数据 + 开关重算，失效的待发送一律清掉再重排。
 /// 文案为初稿，Li 定夺后可改（见 PR 说明）。
-/// 已知局限：判定只读本机日文件；发布后单篇落盘是异步拉取（upsertPublished），
-/// 若 21:00 前一直没回前台，当晚提醒可能误弹一次；删除当天的唯一一篇后，
+/// 已知局限：判定只读本机日文件；删除当天的唯一一篇后，
 /// 本机日文件要等同步才清，提醒可能少弹一次。回前台刷新是兜底。
+/// 每晚提醒按日期提前排满 7 晚（每天一条独立标识），不再只排最近一晚；
+/// 发布成功时按账号与发布日立即撤掉当晚那条（不等本地补拉），补拉落盘
+/// 成功时再撤一次、2 秒后重算校正全量排程，闭合补拉竞态。
 final class BearyLocalNotifications {
     static let shared = BearyLocalNotifications()
 
@@ -44,12 +46,19 @@ final class BearyLocalNotifications {
 
     private static let permissionRequestedKey = "beary.localNotifications.permissionRequested"
     private static let firstEntryPromptShownKey = "beary.localNotifications.firstEntryPromptShown"
-    private static let dailyIdentifier = "beary.local.daily-reminder"
+    /// 每晚提醒按北京日分条排程：标识 = 前缀 + 北京日（YYYY-MM-DD），
+    /// 每天一条独立标识；旧的单条固定标识 beary.local.daily-reminder
+    /// 在下一轮差分提交里被当作失效项清掉，无需单独迁移。
+    private static let dailyIdentifierPrefix = "beary.local.daily-reminder-"
+    private static func dailyIdentifier(forDayKey dayKey: String) -> String { dailyIdentifierPrefix + dayKey }
     private static let pastDayIdentifier = "beary.local.past-day"
     private static let limitedPrefix = "beary.local.limited-"
     private static let pastSelfPrefix = "beary.local.pastself-"
 
     private static let dailyHour = 21
+    /// 每晚提醒提前排几晚：7 晚（覆盖一周）。久未打开的 App 后台刷新会被
+    /// 系统节流，只排一晚时断链即丢提醒；7 条待发送也远低于系统 64 条上限。
+    private static let dailyReminderDays = 7
     private static let morningHour = 9
 
     private var lastRefreshAt: Date?
@@ -95,6 +104,13 @@ final class BearyLocalNotifications {
         // 切号时按新号重算（SceneDelegate onUserChanged 在 id 真变时广播）。
         NotificationCenter.default.addObserver(forName: .bearyUserDidChange, object: nil, queue: .main) { [weak self] _ in
             self?.refreshAll(force: true)
+        }
+        // 发布后单篇补拉落盘：按广播里的账号与北京日撤掉当晚提醒
+        //（发布成功时已撤过；2 秒重算若在落盘前跑过可能暂补回，这里再撤一次闭合）。
+        NotificationCenter.default.addObserver(forName: .bearyPublishedEntryDidLand, object: nil, queue: .main) { [weak self] note in
+            guard let dayKey = note.userInfo?["dayKey"] as? String,
+                  let accountId = note.userInfo?["accountId"] as? Int else { return }
+            self?.cancelDailyReminder(forDayKey: dayKey, accountId: accountId)
         }
     }
 
@@ -236,6 +252,16 @@ final class BearyLocalNotifications {
         }
     }
 
+    /// 发布成功即撤：收到服务端返回的日记编号时，按账号与发布日（北京日）
+    /// 撤掉当晚 21:00 的提醒，不等本地补拉落盘。发布成功即服务端已落库，
+    /// 当天算写完，提醒不该再弹；本地同步完成后的重算再校正全量排程。
+    /// 账号守卫：切号后旧账号的调用直接丢弃。离线只存草稿时不调（草稿不算写完）。
+    func cancelDailyReminder(forDayKey dayKey: String, accountId: Int) {
+        guard SessionManager.shared.currentUser?.id == accountId else { return }
+        UNUserNotificationCenter.current().removePendingNotificationRequests(
+            withIdentifiers: [Self.dailyIdentifier(forDayKey: dayKey)])
+    }
+
     private struct DesiredRequest {
         var identifier: String
         var fireDate: Date
@@ -253,27 +279,37 @@ final class BearyLocalNotifications {
         let now = Date()
         let nowMs = Int(now.timeIntervalSince1970 * 1000)
         let calendar = BearyBeijingDay.calendar
-        let todayKey = BearyBeijingDay.dayKey(ofMs: nowMs) ?? ""
         // 存档读盘失败则本轮不重算（保留已排提醒，下次重算补上）；
         // 主线 loadAllEntries 自 #1069 起返回可选（读盘失败为 nil）。
         // 注意：已关种类的取消在上面已做完，不受这次 return 影响（第 4 项）。
         guard let entries = BearyEntrySyncStore.loadAllEntries(accountId: accountId) else { return }
         let messages = PastSelfStore(userId: accountId).loadAll()
+        // 已写北京日的集合：每晚提醒只排还没写的日子。
+        let writtenDayKeys: Set<String> = Set(entries.compactMap { entry in
+            guard let createdAt = entry.createdAt else { return nil }
+            return BearyBeijingDay.dayKey(ofMs: createdAt)
+        })
         var desired: [DesiredRequest] = []
 
-        // 1. 每晚写日记提醒：下一个 21:00（北京）；今天已写则排明晚 21:00，不留空窗——
-        // 单次触发不重复，差分删了今晚的就没人补明晚的，不再依赖之后 rebuild。
+        // 1. 每晚写日记提醒：接下来 7 晚 21:00（北京），每天一条独立标识；
+        // 当天已写的那晚不排，已过的 21:00 不排。提前排满一周，不再只排
+        // 最近一晚——久未打开的 App 后台刷新会被系统节流，最需要提醒的人
+        // 最容易断链。写完当天、发布成功、回前台都会触发重算或撤除：
+        // 重算的期望集里不再含已写那晚，差分提交自动把它从待发送里清掉；
+        // 回前台时窗口前移，补足后续日期。
         if enabled[.dailyReminder] == true {
-            var nextEvening = Self.nextOccurrence(hour: Self.dailyHour, after: now, calendar: calendar)
-            let isToday = calendar.isDate(nextEvening, inSameDayAs: now)
-            let hasEntryToday = entries.contains { entry in
-                guard let createdAt = entry.createdAt else { return false }
-                return BearyBeijingDay.dayKey(ofMs: createdAt) == todayKey
+            var collected = 0
+            var dayOffset = 0
+            while collected < Self.dailyReminderDays && dayOffset < Self.dailyReminderDays + 7 {
+                guard let dayDate = calendar.date(byAdding: .day, value: dayOffset, to: now) else { break }
+                dayOffset += 1
+                guard let dayKey = BearyBeijingDay.dayKey(ofMs: Int(dayDate.timeIntervalSince1970 * 1000)),
+                      let evening = Self.dateOf(dayKey: dayKey, hour: Self.dailyHour, calendar: calendar),
+                      evening > now,
+                      !writtenDayKeys.contains(dayKey) else { continue }
+                desired.append(DesiredRequest(identifier: Self.dailyIdentifier(forDayKey: dayKey), fireDate: evening, body: "今天还没有写日记，写一点，留一点。", kind: .dailyReminder))
+                collected += 1
             }
-            if isToday && hasEntryToday {
-                nextEvening = calendar.date(byAdding: .day, value: 1, to: nextEvening) ?? nextEvening
-            }
-            desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: "今天还没有写日记，写一点，留一点。", kind: .dailyReminder))
         }
 
         // 2. 那年今日：下一个 9:00（北京）；那天往年有日记才排。
@@ -312,7 +348,8 @@ final class BearyLocalNotifications {
     }
 
     /// 取消指定种类的全部待发送（第 4 项：不依赖归档，先行取消）。
-    /// 单条与前缀两种口径：每日提醒 / 那年今日各一条固定 id，限时 / 留话按前缀。
+    /// 单条与前缀两种口径：那年今日一条固定 id，每晚提醒按日分条（前缀），
+    /// 限时 / 留话按前缀。
     /// 测试通知（beary.local.test-…）不属于任一种类，不会被取消。
     private func cancelKinds(_ kinds: [Kind], center: UNUserNotificationCenter, generation gen: UInt64) {
         center.getPendingNotificationRequests { [weak self] requests in
@@ -330,7 +367,7 @@ final class BearyLocalNotifications {
 
     private static func identifier(_ id: String, belongsTo kind: Kind) -> Bool {
         switch kind {
-        case .dailyReminder: return id == dailyIdentifier
+        case .dailyReminder: return id.hasPrefix(dailyIdentifierPrefix)
         case .pastDay: return id == pastDayIdentifier
         case .limitedExpiry: return id.hasPrefix(limitedPrefix)
         case .pastSelfDelivery: return id.hasPrefix(pastSelfPrefix)
