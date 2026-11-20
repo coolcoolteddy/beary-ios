@@ -47,6 +47,9 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
     /// frame，内层只写 bounds/center，永不在非 identity transform 下写 frame。
     private let cardFrameView = UIView()
     private var lastShadowBounds: CGRect = .zero
+    /// 跳动审计第九轮第 2 项：上一次落位的外框（containerViewWillLayoutSubviews 记），
+    /// preferredContentSizeDidChange 用它比对，等值不重播。
+    private var lastPresentedFrame: CGRect = .zero
     var dimTapCloses = false
     var dimTapHandler: (() -> Void)?
     var dismissalHandler: (() -> Void)?
@@ -185,6 +188,9 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
         // transform/alpha 是视图自身属性，移层不影响正在播的动画。
         guard let container = containerView else { return }
         let frame = frameOfPresentedViewInContainerView
+        // 跳动审计第九轮第 2 项：记下已落位的外框，供 preferredContentSizeDidChange
+        // 比对——等值不重播，保证一次高度变化只发生一次尺寸过渡。
+        lastPresentedFrame = frame
         if cardFrameView.superview !== container {
             if cardShadowView.superview === container {
                 container.insertSubview(cardFrameView, aboveSubview: cardShadowView)
@@ -213,6 +219,32 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
         if cardShadowView.bounds != lastShadowBounds {
             lastShadowBounds = cardShadowView.bounds
             cardShadowView.layer.shadowPath = UIBezierPath(roundedRect: cardShadowView.bounds, cornerRadius: 20).cgPath
+        }
+    }
+
+    /// 邀请弹窗宽屏居中版：内容高变化时外框跟动画走。
+    /// 跳动审计第九轮第 2 项：preferredContentSize 只改数值本身，默认实现仅把容器
+    /// 布局标脏；邀请页 applySheetHeight 的动画块只对 presentedView 的父视图
+    /// （cardFrameView）调 layoutIfNeeded()，外框帧只在 containerView 布局时重算，
+    /// 故改高后外框不在动画块内动、到下一轮布局才落（跳变）。与底 sheet 的
+    /// BearyBottomSheetPresentationController 同款：在 motion.normal 内把容器布局
+    /// 跑完，帧与调用方的动画同速跟进；减动效直落终值。
+    /// 窄屏底 sheet 不动：presentedView 直属 containerView，调用方动画块里的
+    /// superview.layoutIfNeeded() 本就是容器布局，已在块内跟帧；再补一份
+    /// motion.normal 动画反而会让同一帧变化播两次。
+    /// 只在外框真正变化时才播一次：同一目标帧重复触发（键盘动画重发、改高被 80%
+    /// 封顶吃掉）直接跳过，保证键盘动画期间与宽屏居中模式都只发生一次尺寸过渡。
+    override func preferredContentSizeDidChange(forChildContentContainer container: UIContentContainer) {
+        super.preferredContentSizeDidChange(forChildContentContainer: container)
+        guard let containerView = containerView else { return }
+        let newFrame = frameOfPresentedViewInContainerView
+        guard newFrame != lastPresentedFrame else { return }
+        if UIAccessibility.isReduceMotionEnabled {
+            containerView.layoutIfNeeded()
+        } else {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState], animations: {
+                containerView.layoutIfNeeded()
+            })
         }
     }
 }
