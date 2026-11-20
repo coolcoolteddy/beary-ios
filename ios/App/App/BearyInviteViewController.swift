@@ -167,6 +167,10 @@ final class BearyInviteViewController: UIViewController {
         if transitionCoordinator != nil {
             if abs(height - lastPreferredSheetHeight) > 0.5 {
                 pendingSheetHeight = height
+            } else {
+                // 高度又回到已应用值：清除之前暂存的旧高度，避免
+                // 入场结束后 viewDidAppear 把过期的旧值再应用一次。
+                pendingSheetHeight = nil
             }
             return
         }
