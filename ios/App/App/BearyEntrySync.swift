@@ -87,6 +87,9 @@ extension Notification.Name {
     /// 该日待办已清干净（已落盘 / 已删 / 触顶摘除），时间线凭它决定是否
     /// 静默重拉该日；resolved=false 是该日新出现待办，只刷新表头“同步中”。
     static let bearyPendingRefetchDidChange = Notification.Name("bearyPendingRefetchDidChange")
+    /// 发布后单篇补拉落盘广播（主线程发出；本地通知据此撤掉该日 21:00 提醒）。
+    /// userInfo: ["accountId": Int, "dayKey": String]——dayKey 是本篇的北京日。
+    static let bearyPublishedEntryDidLand = Notification.Name("bearyPublishedEntryDidLand")
 }
 
 /// 登录后全量同步编排：后台翻页拉取 + 整批提交，不碰任何 UI。
@@ -464,6 +467,18 @@ final class BearyEntrySync {
                         let ok = BearyEntrySyncStore.upsertEntry(accountId: accountId, entry: entry)
                         if ok {
                             BearyEntrySync.shared.dequeuePendingRefetch(entryId: entryId, accountId: accountId)
+                            // 本地通知：单篇已落盘，广播本篇北京日——
+                            // 发布成功时已撤过，但 2 秒重算若在落盘前跑过可能暂补回，
+                            // 本地通知收到广播再撤一次闭合竞态（用服务端条目的
+                            // createdAt 定日，不用今天）。不直接调 BearyLocalNotifications：
+                            // 该文件不在测试 target 清单里，直接引用会让 test 构建红，故走广播解耦。
+                            if let createdAt = entry.createdAt,
+                               let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt) {
+                                NotificationCenter.default.post(
+                                    name: .bearyPublishedEntryDidLand,
+                                    object: nil,
+                                    userInfo: ["accountId": accountId, "dayKey": dayKey])
+                            }
                         } else {
                             NSLog("[BearyEntrySync] upsertEntry failed account=%d entry=%@", accountId, entry.id ?? "-")
                             BearyEntrySync.shared.enqueuePendingRefetch(entryId: entryId, accountId: accountId)

@@ -4370,9 +4370,14 @@ final class BearyChromeViewController: UIViewController {
             // 下次同步/切日刷新纠正）；内存日缓存由切日静默刷新接管，不在此处碰。
             if let uid = SessionManager.shared.currentUser?.id {
                 BearyEntrySync.shared.upsertPublished(entryId: entryId, accountId: uid)
+                // 本地通知：服务端已确认落库，发布成功即撤当晚提醒，不等本地补拉；
+                // 补拉落盘成功时再撤一次、2 秒后重算校正全量排程，闭合补拉竞态。
+                if let dayKey = BearyBeijingDay.dayKey(ofMs: Int(Date().timeIntervalSince1970 * 1000)) {
+                    BearyLocalNotifications.shared.cancelDailyReminder(forDayKey: dayKey, accountId: uid)
+                }
             }
-            // 本地通知：落盘是异步拉取，2 秒后重算（当天已写则取消今晚提醒）；
-            // 回前台刷新是兜底。
+            // 本地通知：2 秒后重算校正（补拉已落盘则当天已写，今晚提醒不回补；
+            // 未落盘时可能暂补回，补拉落盘成功时再撤一次）；回前台刷新是兜底。
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 BearyLocalNotifications.shared.refreshAll(force: true)
             }
