@@ -2042,6 +2042,54 @@ final class BearySettingsViewController: UIViewController {
         fadeView(view)
     }
 
+    /// 第七轮审计 09：阅读锚点——上方插入/删除内容前后，保持用户
+    /// 正在看的设置区在屏幕上的位置不动。采样时取候选视图里第一个与
+    /// 当前视口相交且当时可见的（其顶边相对视口的位置即锚点）；恢复时
+    /// 按其新位置修正 contentOffset（钳制在合法范围）。候选视图须是
+    /// 本次变化点下方的持久视图——变化点本身及其同批显隐的容器不能
+    /// 当锚点，采样时它们的帧还无意义。
+    private struct SettingsScrollAnchor {
+        let view: UIView
+        /// 锚点顶边相对视口顶边的位置。
+        let viewportY: CGFloat
+    }
+
+    private func captureSettingsScrollAnchor(candidates: [UIView]) -> SettingsScrollAnchor? {
+        let visibleTop = scrollView.contentOffset.y
+        let visibleBottom = visibleTop + scrollView.bounds.height
+        for candidate in candidates {
+            guard !candidate.isHidden, candidate.window != nil else { continue }
+            let frame = candidate.convert(candidate.bounds, to: scrollView)
+            guard frame.maxY > visibleTop, frame.minY < visibleBottom else { continue }
+            return SettingsScrollAnchor(view: candidate, viewportY: frame.minY - visibleTop)
+        }
+        return nil
+    }
+
+    private func restoreSettingsScrollAnchor(_ anchor: SettingsScrollAnchor?) {
+        guard let anchor = anchor, anchor.view.window != nil else { return }
+        view.layoutIfNeeded()
+        let frame = anchor.view.convert(anchor.view.bounds, to: scrollView)
+        let maxOffsetY = max(0, scrollView.contentSize.height + scrollView.adjustedContentInset.bottom - scrollView.bounds.height)
+        let targetY = min(max(0, frame.minY - anchor.viewportY), maxOffsetY)
+        scrollView.setContentOffset(CGPoint(x: 0, y: targetY), animated: false)
+    }
+
+    /// 上方布局变化收尾：已滚动时按采样锚点瞬时恢复偏移；停在顶部时
+    /// 不改偏移，布局变化走一次 normal 动画平滑过渡（与年度回顾顶部
+    /// 场景同款口径）；减动效时直接落位。
+    private func finishSettingsLayoutChange(anchor: SettingsScrollAnchor?, wasScrolled: Bool) {
+        if wasScrolled {
+            restoreSettingsScrollAnchor(anchor)
+        } else if BearyMotion.animated(true) {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: {
+                self.view.layoutIfNeeded()
+            })
+        } else {
+            view.layoutIfNeeded()
+        }
+    }
+
     private func loadAll() {
         guard !isLoadingMe else { return }
         isLoadingMe = true
@@ -2116,6 +2164,12 @@ final class BearySettingsViewController: UIViewController {
                 guard meGeneration == self.meLoadGeneration else { return }
                 self.isLoadingMe = false
                 self.loadingView.stopSpinning()
+                // 第七轮审计 09：/me 回包一次性改多组容器显隐（菊花收起＋
+                // 账户三组出现），上方净增数百 pt；变化前采样阅读锚点，
+                // defer 保证各分支（含提前 return）都走收尾保位。
+                let meAnchor = self.captureSettingsScrollAnchor(candidates: [self.generalNotifyWrap, self.storageDataWrap, self.dataFeedbackWrap, self.versionFooterWrap])
+                let meWasScrolled = self.scrollView.contentOffset.y > 0
+                defer { self.finishSettingsLayoutChange(anchor: meAnchor, wasScrolled: meWasScrolled) }
                 self.loadingView.isHidden = true
                 switch result {
                 case .success(let user):
