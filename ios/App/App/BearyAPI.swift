@@ -1273,14 +1273,26 @@ final class BearyAPI {
         }
     }
 
+    /// since 增量取数结果。hasGap=true 表示补拉未接上旧表头（补拉页失败，
+    /// 或 4 页耗尽仍未撞见已知 id）：entries 只是已收集的新篇、中间有缺口；
+    /// 调用方不得把游标推进到缺口之外（下次 since 仍从旧表头起拉）。
+    struct EntriesSinceResult {
+        let entries: [Entry]
+        let firstList: EntryList
+        let hasGap: Bool
+    }
+
     /// 113 since 增量取数（含截断 gap-fill）：首发 since 一页（limit 50 封顶）；
     /// 未截断（< limit）即返回；截断时（== limit）以末条为 before 游标向后
     /// 续拉，直到撞见 knownIds（旧表头）或页不满或最多再拉 4 页——>50 条新篇
     /// 的缺口由此补齐，不靠下次刷新（下次游标已是最新，缺口永不到）。
-    /// gap-fill 页失败时返回已收集到的新篇（不整批作废）；首发 since 失败时
-    /// 原样返回失败，调用方回落全量口径。sortKey 由调用方按 scope 给
-    /// （plaza=publishedAt、saved=bmAt、其余=createdAt），取不到游标时停拉。
-    /// 返回首包 EntryList 供调用方取计数（since 回包仅不含 recent_published）。
+    /// 补拉页失败、或 4 页耗尽仍未撞见旧表头时，entries 只是已收集到的新篇、
+    /// 中间有缺口，以 hasGap=true 返回（不整批作废、也不谎报成功）；调用方
+    /// 不得把游标推进到缺口之外，须置失败态并给重试/回落全量入口。
+    /// 首发 since 失败时原样返回失败，调用方回落全量口径。sortKey 由调用方
+    /// 按 scope 给（plaza=publishedAt、saved=bmAt、其余=createdAt），取不到
+    /// 游标时停拉、同样记缺口。返回首包 EntryList 供调用方取计数
+    /// （since 回包仅不含 recent_published）。
     func fetchEntriesSince(
         scope: Scope,
         since: Int,
@@ -1288,7 +1300,7 @@ final class BearyAPI {
         sortKey: @escaping (Entry) -> Int?,
         knownIds: Set<String>,
         vis: String? = nil,
-        completion: @escaping (Result<([Entry], EntryList), APIError>) -> Void
+        completion: @escaping (Result<EntriesSinceResult, APIError>) -> Void
     ) {
         fetchEntries(scope: scope, limit: 50, since: since, sinceId: sinceId, vis: vis) { [weak self] result in
             guard let strongSelf = self else { return }
@@ -1298,7 +1310,7 @@ final class BearyAPI {
             case .success(let list):
                 let collected = list.entries ?? []
                 guard collected.count >= 50 else {
-                    completion(.success((collected, list)))
+                    completion(.success(EntriesSinceResult(entries: collected, firstList: list, hasGap: false)))
                     return
                 }
                 strongSelf.fetchSinceGap(
@@ -1317,24 +1329,26 @@ final class BearyAPI {
         firstList: EntryList,
         remainingPages: Int,
         vis: String? = nil,
-        completion: @escaping (Result<([Entry], EntryList), APIError>) -> Void
+        completion: @escaping (Result<EntriesSinceResult, APIError>) -> Void
     ) {
         guard remainingPages > 0,
               let last = collected.last,
               let lastKey = sortKey(last), let lastId = last.id, !lastId.isEmpty else {
-            completion(.success((collected, firstList)))
+            // 页数耗尽或取不到游标：未接上旧表头，记缺口（不谎报成功）。
+            completion(.success(EntriesSinceResult(entries: collected, firstList: firstList, hasGap: true)))
             return
         }
         fetchEntries(scope: scope, limit: 50, before: lastKey, beforeId: lastId, vis: vis) { [weak self] result in
             guard let strongSelf = self else { return }
             switch result {
             case .failure:
-                // gap-fill 页失败：返回已收集的新篇，不整批作废。
-                completion(.success((collected, firstList)))
+                // gap-fill 页失败：返回已收集的新篇、记缺口，不整批作废。
+                completion(.success(EntriesSinceResult(entries: collected, firstList: firstList, hasGap: true)))
             case .success(let list):
                 let batch = list.entries ?? []
                 if batch.isEmpty {
-                    completion(.success((collected, firstList)))
+                    // 服务端已无更旧条目：旧表头在服务端已不存在，无可补的缺口。
+                    completion(.success(EntriesSinceResult(entries: collected, firstList: firstList, hasGap: false)))
                     return
                 }
                 var merged = collected
@@ -1347,7 +1361,8 @@ final class BearyAPI {
                     merged.append(entry)
                 }
                 if hitKnown || batch.count < 50 {
-                    completion(.success((merged, firstList)))
+                    // 已接上旧表头，或已到服务端最旧处（短页，无更多可拉）。
+                    completion(.success(EntriesSinceResult(entries: merged, firstList: firstList, hasGap: false)))
                 } else {
                     strongSelf.fetchSinceGap(
                         scope: scope, sortKey: sortKey, knownIds: knownIds,

@@ -6411,7 +6411,14 @@ class BearyProfileViewController: UIViewController {
                 switch result {
                 case .failure:
                     strongSelf.fetchTabFirstPageFull(scope: scope, tabAtStart: tabAtStart)
-                case .success(let (fresh, _)):
+                case .success(let result):
+                    // 补拉带缺口：不谎报成功，走失败同款回落全量首拉（全量换新模型，
+                    // 缺口不再是 since 缺口，未加载深度走正常分页）。
+                    if result.hasGap {
+                        strongSelf.fetchTabFirstPageFull(scope: scope, tabAtStart: tabAtStart)
+                        return
+                    }
+                    let fresh = result.entries
                     let newItems = fresh.filter { entry in
                         guard let entryId = entry.id else { return false }
                         return !knownIds.contains(entryId)

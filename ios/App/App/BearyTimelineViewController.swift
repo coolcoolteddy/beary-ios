@@ -5056,7 +5056,16 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.fetchTimelineFirstPageFull(
                         seq: seq, oldSections: oldSections, hadOldRows: hadOldRows, completion: completion
                     )
-                case .success(let (fresh, firstList)):
+                case .success(let result):
+                    // 补拉带缺口：不谎报成功，走失败同款回落全量首拉。
+                    if result.hasGap {
+                        strongSelf.fetchTimelineFirstPageFull(
+                            seq: seq, oldSections: oldSections, hadOldRows: hadOldRows, completion: completion
+                        )
+                        return
+                    }
+                    let fresh = result.entries
+                    let firstList = result.firstList
                     // 开发者模式 1000 篇假日记：增量前插不混入假模型，走全量由注入点统一处理。
                     if BearyDevPreviewState.fakeEntriesEnabled {
                         strongSelf.fetchTimelineFirstPageFull(
