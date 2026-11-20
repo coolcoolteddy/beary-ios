@@ -37,10 +37,16 @@ private struct BearyProfileUpdateResponse: Decodable {
     /// 不写本地已提交态、不调 onSaved；键存在但值为 null = 已确认清空。
     var signature: String?
     var signatureKeyPresent: Bool = false
+    /// 服务端回包是否原样带回 birthday_month / birthday_day（签名诚实口径同款）。
+    var birthdayMonth: Int?
+    var birthdayDay: Int?
+    var birthdayKeyPresent: Bool = false
 
     enum CodingKeys: String, CodingKey {
         case ok
         case signature
+        case birthdayMonth
+        case birthdayDay
     }
 
     init(from decoder: Decoder) throws {
@@ -48,6 +54,9 @@ private struct BearyProfileUpdateResponse: Decodable {
         ok = try container.decodeIfPresent(Bool.self, forKey: .ok)
         signatureKeyPresent = container.contains(.signature)
         signature = try container.decodeIfPresent(String.self, forKey: .signature)
+        birthdayKeyPresent = container.contains(.birthdayMonth) || container.contains(.birthdayDay)
+        birthdayMonth = try container.decodeIfPresent(Int.self, forKey: .birthdayMonth)
+        birthdayDay = try container.decodeIfPresent(Int.self, forKey: .birthdayDay)
     }
 }
 
@@ -67,7 +76,7 @@ class BearyEditProfileViewController: UIViewController {
     private let initialAvatarUrl: String?
     private let initialCoverUrl: String?
 
-    init(displayName: String?, handle: String?, avatarUrl: String?, coverUrl: String?, userId: Int? = nil, signature: String? = nil) {
+    init(displayName: String?, handle: String?, avatarUrl: String?, coverUrl: String?, userId: Int? = nil, signature: String? = nil, birthdayMonth: Int? = nil, birthdayDay: Int? = nil) {
         self.initialDisplayName = displayName
         self.initialHandle = handle
         self.initialAvatarUrl = avatarUrl
@@ -76,6 +85,8 @@ class BearyEditProfileViewController: UIViewController {
         // 见 viewDidLoad）；签名缺失时按已知 ID 补查，不等 /me。
         self.fetchedUserId = userId
         self.initialSignature = signature
+        self.initialBirthdayMonth = birthdayMonth
+        self.initialBirthdayDay = birthdayDay
         self.committedDisplayName = displayName
         super.init(nibName: nil, bundle: nil)
     }
@@ -133,6 +144,9 @@ class BearyEditProfileViewController: UIViewController {
         let coverRemoved: Bool
         let signatureValue: String
         let signatureChanged: Bool
+        let birthdayMonth: Int?
+        let birthdayDay: Int?
+        let birthdayChanged: Bool
     }
     private var savingSnapshot: SaveSnapshot?
     /// 成功后提交的基线：initialDisplayName 是 let，成功后改名仍需新的
@@ -146,6 +160,14 @@ class BearyEditProfileViewController: UIViewController {
     /// 非空输入仍按改动发。
     private var initialSignature: String?
     private var signatureLoaded = false
+    /// 生日初值（入口带服务端值；缺失时 viewDidLoad 读本地卡数据兜底，见下）。
+    private var initialBirthdayMonth: Int?
+    private var initialBirthdayDay: Int?
+    /// 生日当前值与是否已确认初值（签名 initialSignature / signatureLoaded 同款口径）。
+    private var birthdayMonth: Int?
+    private var birthdayDay: Int?
+    private var birthdayLoaded = false
+    private var birthdayEdited = false
     private var signatureEdited = false
     private var signatureFetchStarted = false
     /// G3：handle POST 成功后立即记下的已提交 handle（initialHandle 是 let，不可改；
@@ -361,6 +383,34 @@ class BearyEditProfileViewController: UIViewController {
         return fieldValue
     }()
 
+    /// 生日行（2026-11-20 服务端同步，只月日）：与名字行同款单行输入（58 标签 + 16 字
+    /// 输入框）；只读文本框，点按弹日期选择器（ID 卡表单同款 wheels）；工具栏带
+    /// 「清除」可清空。生日行不配图标（表单行统一只有文字标签，不自绘、不补新图标）。
+    private let birthdayField: UITextField = {
+        let fieldValue = UITextField()
+        fieldValue.translatesAutoresizingMaskIntoConstraints = false
+        // U7：字号跟随系统（默认档 = 16 不变），高度见下方最小高度约束。
+        fieldValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        fieldValue.adjustsFontForContentSizeCategory = true
+        fieldValue.textColor = BearyColors.ink
+        fieldValue.attributedPlaceholder = NSAttributedString(string: "选填", attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)),
+        ])
+        fieldValue.borderStyle = .none
+        fieldValue.autocorrectionType = .no
+        return fieldValue
+    }()
+
+    private let birthdayPicker: UIDatePicker = {
+        let picker = UIDatePicker()
+        picker.datePickerMode = .date
+        if #available(iOS 13.4, *) {
+            picker.preferredDatePickerStyle = .wheels
+        }
+        return picker
+    }()
+
     /// F15：网页 ed-subnote 口径——12 灰、仅「修改后 7 天内不能更改」一行；
     /// 旧三规则合并长提示取消（格式规则改由占位文案 + 保存校验承担）。
     private let hintLabel: UILabel = {
@@ -426,6 +476,7 @@ class BearyEditProfileViewController: UIViewController {
         nameField.delegate = self
         signatureField.delegate = self
         handleField.delegate = self
+        birthdayField.delegate = self
         nameField.returnKeyType = .next
         signatureField.returnKeyType = .next
         handleField.returnKeyType = .done
@@ -462,6 +513,35 @@ class BearyEditProfileViewController: UIViewController {
             signatureField.text = signature
             signatureLoaded = true
         }
+        // 生日初值：入口带服务端值优先；没有时读本地卡数据兜底（未同步的迁移值）；
+        // 两者皆无时初值未知（birthdayLoaded=false），空着不发，防误删。
+        // 选择器与工具栏是 ID 卡表单同款（wheels + 完成／清除）。
+        birthdayPicker.addTarget(self, action: #selector(birthdayPickerChanged(_:)), for: .valueChanged)
+        birthdayField.inputView = birthdayPicker
+        let birthdayToolbar = UIToolbar()
+        birthdayToolbar.sizeToFit()
+        let birthdayClearItem = UIBarButtonItem(title: "清除", style: .plain, target: self, action: #selector(birthdayPickerClear))
+        let birthdayFlexibleItem = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
+        let birthdayDoneItem = UIBarButtonItem(title: "完成", style: .done, target: self, action: #selector(birthdayPickerDone))
+        birthdayToolbar.items = [birthdayClearItem, birthdayFlexibleItem, birthdayDoneItem]
+        birthdayField.inputAccessoryView = birthdayToolbar
+        if let month = initialBirthdayMonth, let day = initialBirthdayDay {
+            birthdayMonth = month
+            birthdayDay = day
+            birthdayLoaded = true
+        } else if let id = fetchedUserId ?? SessionManager.shared.currentUser?.id,
+                  let local = BearyIDCardStore.load(userId: id),
+                  let month = local.birthdayMonth, let day = local.birthdayDay {
+            initialBirthdayMonth = month
+            initialBirthdayDay = day
+            birthdayMonth = month
+            birthdayDay = day
+            birthdayLoaded = true
+        }
+        if let month = birthdayMonth, let day = birthdayDay {
+            birthdayField.text = "\(month)月\(day)日"
+        }
+        syncBirthdayPickerDate()
         if fetchedUserId != nil {
             // 已确认的 ID：链接行首屏即定稿（@handle 优先、否则 /u/id），
             // 签名缺失时立即按已知 ID 补查。
@@ -491,6 +571,7 @@ class BearyEditProfileViewController: UIViewController {
                     strongSelf.fetchedPlus = user?.plus == true
                     strongSelf.updateLinkRow()
                     strongSelf.fetchInitialSignature()
+                    strongSelf.fillBirthdayInitialFromMe(user)
                     if thenCopy {
                         if !strongSelf.effectiveHandle.isEmpty || strongSelf.fetchedUserId != nil {
                             strongSelf.copyLinkButtonTapped()
@@ -567,6 +648,65 @@ class BearyEditProfileViewController: UIViewController {
 
     @objc private func signatureFieldChanged() {
         signatureEdited = true
+    }
+
+    /// 生日改动判定（月日成对比较）：已拉到初值时与初值比；未拉到初值时
+    /// 只有选了日期才算改动——空输入不发，避免把未知的旧生日误删成空
+    ///（签名 signatureHasChange 同款口径）。
+    private var birthdayHasChange: Bool {
+        if birthdayLoaded {
+            return birthdayMonth != initialBirthdayMonth || birthdayDay != initialBirthdayDay
+        }
+        return birthdayMonth != nil && birthdayDay != nil
+    }
+
+    /// 生日选择器指到当前值（已有生日时指到该日，没选过时保持今天）；
+    /// ID 卡表单 textFieldDidBeginEditing 同款。
+    private func syncBirthdayPickerDate() {
+        var components = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        if let month = birthdayMonth, let day = birthdayDay {
+            components.month = month
+            components.day = day
+        }
+        if let date = Calendar.current.date(from: components) {
+            birthdayPicker.date = date
+        }
+    }
+
+    /// 生日初值补填（签名初值同款口径）：入口没带、本地也没有时，用 /me 回来的
+    /// 服务端值补初值；用户已动手改过时不覆盖。
+    private func fillBirthdayInitialFromMe(_ user: MeUser?) {
+        guard !birthdayLoaded, !birthdayEdited else { return }
+        guard let month = user?.birthdayMonth, let day = user?.birthdayDay else { return }
+        initialBirthdayMonth = month
+        initialBirthdayDay = day
+        birthdayMonth = month
+        birthdayDay = day
+        birthdayLoaded = true
+        birthdayField.text = "\(month)月\(day)日"
+        syncBirthdayPickerDate()
+    }
+
+    @objc private func birthdayPickerChanged(_ sender: UIDatePicker) {
+        let components = Calendar.current.dateComponents([.month, .day], from: sender.date)
+        birthdayMonth = components.month
+        birthdayDay = components.day
+        birthdayEdited = true
+        if let month = birthdayMonth, let day = birthdayDay {
+            birthdayField.text = "\(month)月\(day)日"
+        }
+    }
+
+    @objc private func birthdayPickerDone() {
+        birthdayField.resignFirstResponder()
+    }
+
+    @objc private func birthdayPickerClear() {
+        birthdayMonth = nil
+        birthdayDay = nil
+        birthdayEdited = true
+        birthdayField.text = ""
+        birthdayField.resignFirstResponder()
     }
 
     /// 批 D 签名改动判定（trim 后比较）：已拉到初值时与初值比；未拉到初值时
@@ -694,6 +834,13 @@ class BearyEditProfileViewController: UIViewController {
         signatureRow.axis = .horizontal
         signatureRow.spacing = 14
         signatureRow.alignment = .center
+        // 生日行（2026-11-20 服务端同步）：位置在签名行下方、用户名行上方；
+        // 与名字/用户名行同款 58 标签 + 输入框结构。
+        let birthdayRow = UIStackView(arrangedSubviews: [makeFormLabel("生日"), birthdayField])
+        birthdayRow.translatesAutoresizingMaskIntoConstraints = false
+        birthdayRow.axis = .horizontal
+        birthdayRow.spacing = 14
+        birthdayRow.alignment = .center
         // F15：提示行与标签同宽占位（网页 ed-subnote 左 90 = 页边 18 + 标签 58 + 间隙 14；
         // 本页内容列左 20，故占位取 58 + 间隙 14，与标签结构对齐）。
         let hintSpacer = UIView()
@@ -728,6 +875,8 @@ class BearyEditProfileViewController: UIViewController {
         formStack.addArrangedSubview(makeFormRowWrap(nameRow))
         formStack.addArrangedSubview(makeFormSeparator())
         formStack.addArrangedSubview(makeFormRowWrap(signatureRow))
+        formStack.addArrangedSubview(makeFormSeparator())
+        formStack.addArrangedSubview(makeFormRowWrap(birthdayRow))
         formStack.addArrangedSubview(makeFormSeparator())
         formStack.addArrangedSubview(makeFormRowWrap(handleRow))
         formStack.addArrangedSubview(hintWrap)
@@ -794,6 +943,7 @@ class BearyEditProfileViewController: UIViewController {
             // U7：三输入框高度改最小 28（默认档外观不变），大字号时随字长高、不裁字。
             nameField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
             signatureField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
+            birthdayField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
             handleField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
         ])
         // 封面通栏 + 点按：封面挂 scrollView、左右贴 frameLayoutGuide（与个人主页
@@ -850,6 +1000,9 @@ class BearyEditProfileViewController: UIViewController {
             return true
         }
         if signatureHasChange {
+            return true
+        }
+        if birthdayHasChange {
             return true
         }
         return false
@@ -1230,7 +1383,10 @@ class BearyEditProfileViewController: UIViewController {
             coverChanged: coverChanged,
             coverRemoved: coverRemoved,
             signatureValue: signatureValue,
-            signatureChanged: signatureHasChange)
+            signatureChanged: signatureHasChange,
+            birthdayMonth: birthdayMonth,
+            birthdayDay: birthdayDay,
+            birthdayChanged: birthdayHasChange)
         savingSnapshot = snapshot
         isSaving = true
         updateSaveButtonState()
@@ -1268,6 +1424,7 @@ class BearyEditProfileViewController: UIViewController {
         saveButton.setTitle("保存", for: .normal)
         nameField.isEnabled = !isSaving
         signatureField.isEnabled = !isSaving
+        birthdayField.isEnabled = !isSaving
         handleField.isEnabled = !isSaving
         avatarTapButton.isEnabled = !isSaving
         coverTapButton.isEnabled = !isSaving
@@ -1299,6 +1456,17 @@ class BearyEditProfileViewController: UIViewController {
                 body["signature"] = NSNull()
             } else {
                 body["signature"] = snapshot.signatureValue
+            }
+        }
+        // 生日（2026-11-20 服务端同步，只月日）：成对发；清空发两个 null；
+        // 只在有改动时发，未改动不发，避免无意义写。
+        if snapshot.birthdayChanged {
+            if let month = snapshot.birthdayMonth, let day = snapshot.birthdayDay {
+                body["birthday_month"] = month
+                body["birthday_day"] = day
+            } else {
+                body["birthday_month"] = NSNull()
+                body["birthday_day"] = NSNull()
             }
         }
         if snapshot.coverChanged {
@@ -1370,11 +1538,30 @@ class BearyEditProfileViewController: UIViewController {
             } else {
                 signatureConfirmed = !snapshot.signatureChanged
             }
+            let birthdayConfirmed: Bool
+            if snapshot.birthdayChanged, let response = profileResponse {
+                birthdayConfirmed = response.birthdayKeyPresent && response.birthdayMonth == snapshot.birthdayMonth && response.birthdayDay == snapshot.birthdayDay
+            } else {
+                birthdayConfirmed = !snapshot.birthdayChanged
+            }
             committedDisplayName = snapshot.displayName
             if snapshot.signatureChanged && signatureConfirmed {
                 initialSignature = snapshot.signatureValue
                 signatureLoaded = true
                 signatureEdited = false
+            }
+            if snapshot.birthdayChanged && birthdayConfirmed {
+                initialBirthdayMonth = snapshot.birthdayMonth
+                initialBirthdayDay = snapshot.birthdayDay
+                birthdayLoaded = true
+                birthdayEdited = false
+                // 本地卡数据同步成服务端值（ID 卡显示同一份）。
+                if let id = fetchedUserId ?? SessionManager.shared.currentUser?.id,
+                   var local = BearyIDCardStore.load(userId: id) {
+                    local.birthdayMonth = snapshot.birthdayMonth
+                    local.birthdayDay = snapshot.birthdayDay
+                    BearyIDCardStore.save(local, userId: id)
+                }
             }
             avatarChanged = false
             coverChanged = false
@@ -1399,6 +1586,12 @@ class BearyEditProfileViewController: UIViewController {
             updateSaveButtonState()
             if snapshot.signatureChanged && !signatureConfirmed {
                 verifySignatureAfterSave(expected: snapshot.signatureValue.isEmpty ? nil : snapshot.signatureValue)
+                return
+            }
+            if snapshot.birthdayChanged && !birthdayConfirmed {
+                // 生日无公开读口可核对（不进公开资料）：只提示不确认落库，
+                // 输入框原样保留，可直接重试（签名 verifySignatureAfterSave 同款诚实口径）。
+                BearyToast.show(in: view, message: "资料已提交，生日尚未同步，请稍后再试")
                 return
             }
             onSaved?()
@@ -1741,6 +1934,13 @@ extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
 // MARK: - UITextFieldDelegate（U3：名字 Return 切到 handle，handle Return 收键盘）
 
 extension BearyEditProfileViewController: UITextFieldDelegate {
+    func textFieldDidBeginEditing(_ textField: UITextField) {
+        // 生日选择器先指到当前值（ID 卡表单同款）；名字/签名/用户名行不处理。
+        if textField === birthdayField {
+            syncBirthdayPickerDate()
+        }
+    }
+
     /// F13：网页 maxlength 口径——打字即截断（名字 30、签名 60、用户名 20；输入法
     /// 组字中不截断，组字结束后的超长部分在下一次输入时截断）。
     /// 计数单位与服务端一致：服务端用 JS `.length`（UTF-16 码元）判上限，
@@ -1760,6 +1960,8 @@ extension BearyEditProfileViewController: UITextFieldDelegate {
     }
 
     func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
+        // 生日行只读（只走选择器）：禁键盘输入与粘贴，避免文本与生日状态脱节。
+        if textField === birthdayField { return false }
         if textField.markedTextRange != nil { return true }
         let maxLength: Int
         if textField === nameField {

@@ -3334,7 +3334,7 @@ final class BearyChromeViewController: UIViewController {
         } else {
             coverUrl = nil
         }
-        let vc = BearyEditProfileViewController(displayName: user?.displayName, handle: user?.handle, avatarUrl: user?.avatar, coverUrl: coverUrl, userId: user?.id, signature: profileVC?.currentSignature)
+        let vc = BearyEditProfileViewController(displayName: user?.displayName, handle: user?.handle, avatarUrl: user?.avatar, coverUrl: coverUrl, userId: user?.id, signature: profileVC?.currentSignature, birthdayMonth: user?.birthdayMonth, birthdayDay: user?.birthdayDay)
         vc.modalPresentationStyle = .fullScreen
         vc.onSaved = { [weak self, weak vc] in
             vc?.dismiss(animated: BearyMotion.animated(true)) {
@@ -3637,6 +3637,11 @@ final class BearyChromeViewController: UIViewController {
             strongSelf.isIDCardFormPresenting = false
             BearyIDCardStore.markFormSeen(userId: userId)
             BearyIDCardStore.save(data, userId: userId)
+            // 生日服务端同步（2026-11-20）：填了生日就上传（只发生日两字段）；
+            // 失败静默，下次 /me 成功时由迁移补传。
+            if let month = data.birthdayMonth, let day = data.birthdayDay {
+                BearyBirthdaySync.uploadBirthday(month: month, day: day)
+            }
             // B1：卡片待弹先记下来——380ms 窗口内有 modal 在前或被杀时，下次冷启动补弹。
             BearyIDCardStore.markCardPending(userId: userId)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.38) {

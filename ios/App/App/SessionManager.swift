@@ -233,6 +233,11 @@ final class SessionManager {
                     self.snapshotCurrentAccount()
                 }
                 self.notifyUserChanged(user)
+                // 生日服务端同步（2026-11-20）：/me 成功后同步一次——服务端有即写回本地，
+                // 服务端无、本地有即上传迁移；失败静默，下次 /me 再试。
+                if let meUser = user {
+                    BearyBirthdaySync.syncFromMe(meUser, userId: meUser.id)
+                }
                 completion?(.success(user))
             case .failure(let e):
                 switch e {

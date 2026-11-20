@@ -137,3 +137,48 @@ enum BearyIDCardStore {
         return Stats(joinDays: joinDays, diaryCount: diaryCount, streakDays: 1, sinceText: formatter.string(from: sinceDate))
     }
 }
+
+// MARK: - Birthday server sync（2026-11-20 Li 定服务端同步，只月日）
+
+/// 生日 PUT 回包（只取 echo 的两个字段；失败时不关心内容）。
+/// CodingKeys 显式写 snake_case，不依赖 decoder 的 key 策略。
+private struct BearyBirthdayUpdateResponse: Decodable {
+    var ok: Bool?
+    var birthdayMonth: Int?
+    var birthdayDay: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case birthdayMonth = "birthday_month"
+        case birthdayDay = "birthday_day"
+    }
+}
+
+enum BearyBirthdaySync {
+    /// /me 成功后调一次：服务端有生日 → 以服务端为准写回本地卡数据（只动生日两字段，
+    /// 昵称/城市不动）；服务端没有、本地有 → 上传一次做迁移（同值重发是幂等写，不怕重复）；
+    /// 两边都没有 → 什么都不做。失败静默（下次 /me 再试），不阻塞登录流程。
+    static func syncFromMe(_ me: MeUser, userId: Int?) {
+        guard let userId = userId, userId != 0 else { return }
+        if let month = me.birthdayMonth, let day = me.birthdayDay {
+            // 服务端为准：本地已有卡数据时只改生日；本地还没有卡数据时不新建
+            //（编辑资料页初值直接读 MeUser，不依赖本地那份）。
+            guard var local = BearyIDCardStore.load(userId: userId) else { return }
+            guard local.birthdayMonth != month || local.birthdayDay != day else { return }
+            local.birthdayMonth = month
+            local.birthdayDay = day
+            BearyIDCardStore.save(local, userId: userId)
+            return
+        }
+        guard let local = BearyIDCardStore.load(userId: userId),
+              let month = local.birthdayMonth, let day = local.birthdayDay else { return }
+        uploadBirthday(month: month, day: day)
+    }
+
+    /// 只发生日两字段的 PUT（不带 display_name，不触发唯一性校验）。
+    static func uploadBirthday(month: Int, day: Int) {
+        BearyAPI.shared.request("/api/account/profile", method: "PUT", jsonBody: ["birthday_month": month, "birthday_day": day]) { (result: Result<BearyBirthdayUpdateResponse, APIError>) in
+            // 失败静默：下次 /me 成功时再试；成功也不用再做什么（服务端已有）。
+        }
+    }
+}

@@ -385,6 +385,10 @@ struct MeUser: Decodable {
     /// serial_id（TD-000001 式），现行 /me 不再下发；字段留作可选，服务端将来恢复下发时
     /// 账号页 ID 行直接显示它，未下发时账号页按 @handle / 数字 id 回退，绝不编造。
     var serialId: String?
+    /// 生日服务端同步（2026-11-20）：/me 下发生日月日（未填为 null；decoder 用
+    /// convertFromSnakeCase，birthday_month / birthday_day 自动映射）。
+    var birthdayMonth: Int?
+    var birthdayDay: Int?
 }
 
 struct MeResponse: Decodable {
