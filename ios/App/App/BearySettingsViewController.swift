@@ -2178,7 +2178,7 @@ final class BearySettingsViewController: UIViewController {
         } else {
             coverUrl = nil
         }
-        let editVC = BearyEditProfileViewController(displayName: user.displayName, handle: user.handle, avatarUrl: user.avatar, coverUrl: coverUrl, userId: user.id, birthdayMonth: user.birthdayMonth, birthdayDay: user.birthdayDay)
+        let editVC = BearyEditProfileViewController(displayName: user.displayName, handle: user.handle, avatarUrl: user.avatar, coverUrl: coverUrl, userId: user.id, birthdayYear: user.birthdayYear, birthdayMonth: user.birthdayMonth, birthdayDay: user.birthdayDay)
         editVC.modalPresentationStyle = .fullScreen
         // 审计 P2-16：全屏 modal 补 fadeRise。
         editVC.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate

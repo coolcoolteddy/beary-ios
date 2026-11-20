@@ -37,7 +37,8 @@ private struct BearyProfileUpdateResponse: Decodable {
     /// 不写本地已提交态、不调 onSaved；键存在但值为 null = 已确认清空。
     var signature: String?
     var signatureKeyPresent: Bool = false
-    /// 服务端回包是否原样带回 birthday_month / birthday_day（签名诚实口径同款）。
+    /// 服务端回包是否原样带回 birthday_year / birthday_month / birthday_day（签名诚实口径同款）。
+    var birthdayYear: Int?
     var birthdayMonth: Int?
     var birthdayDay: Int?
     var birthdayKeyPresent: Bool = false
@@ -45,6 +46,7 @@ private struct BearyProfileUpdateResponse: Decodable {
     enum CodingKeys: String, CodingKey {
         case ok
         case signature
+        case birthdayYear
         case birthdayMonth
         case birthdayDay
     }
@@ -54,7 +56,8 @@ private struct BearyProfileUpdateResponse: Decodable {
         ok = try container.decodeIfPresent(Bool.self, forKey: .ok)
         signatureKeyPresent = container.contains(.signature)
         signature = try container.decodeIfPresent(String.self, forKey: .signature)
-        birthdayKeyPresent = container.contains(.birthdayMonth) || container.contains(.birthdayDay)
+        birthdayKeyPresent = container.contains(.birthdayYear) || container.contains(.birthdayMonth) || container.contains(.birthdayDay)
+        birthdayYear = try container.decodeIfPresent(Int.self, forKey: .birthdayYear)
         birthdayMonth = try container.decodeIfPresent(Int.self, forKey: .birthdayMonth)
         birthdayDay = try container.decodeIfPresent(Int.self, forKey: .birthdayDay)
     }
@@ -76,7 +79,7 @@ class BearyEditProfileViewController: UIViewController {
     private let initialAvatarUrl: String?
     private let initialCoverUrl: String?
 
-    init(displayName: String?, handle: String?, avatarUrl: String?, coverUrl: String?, userId: Int? = nil, signature: String? = nil, birthdayMonth: Int? = nil, birthdayDay: Int? = nil) {
+    init(displayName: String?, handle: String?, avatarUrl: String?, coverUrl: String?, userId: Int? = nil, signature: String? = nil, birthdayYear: Int? = nil, birthdayMonth: Int? = nil, birthdayDay: Int? = nil) {
         self.initialDisplayName = displayName
         self.initialHandle = handle
         self.initialAvatarUrl = avatarUrl
@@ -85,6 +88,7 @@ class BearyEditProfileViewController: UIViewController {
         // 见 viewDidLoad）；签名缺失时按已知 ID 补查，不等 /me。
         self.fetchedUserId = userId
         self.initialSignature = signature
+        self.initialBirthdayYear = birthdayYear
         self.initialBirthdayMonth = birthdayMonth
         self.initialBirthdayDay = birthdayDay
         self.committedDisplayName = displayName
@@ -144,6 +148,7 @@ class BearyEditProfileViewController: UIViewController {
         let coverRemoved: Bool
         let signatureValue: String
         let signatureChanged: Bool
+        let birthdayYear: Int?
         let birthdayMonth: Int?
         let birthdayDay: Int?
         let birthdayChanged: Bool
@@ -161,9 +166,11 @@ class BearyEditProfileViewController: UIViewController {
     private var initialSignature: String?
     private var signatureLoaded = false
     /// 生日初值（入口带服务端值；缺失时 viewDidLoad 读本地卡数据兜底，见下）。
+    private var initialBirthdayYear: Int?
     private var initialBirthdayMonth: Int?
     private var initialBirthdayDay: Int?
     /// 生日当前值与是否已确认初值（签名 initialSignature / signatureLoaded 同款口径）。
+    private var birthdayYear: Int?
     private var birthdayMonth: Int?
     private var birthdayDay: Int?
     private var birthdayLoaded = false
@@ -526,21 +533,22 @@ class BearyEditProfileViewController: UIViewController {
         birthdayToolbar.items = [birthdayClearItem, birthdayFlexibleItem, birthdayDoneItem]
         birthdayField.inputAccessoryView = birthdayToolbar
         if let month = initialBirthdayMonth, let day = initialBirthdayDay {
+            birthdayYear = initialBirthdayYear
             birthdayMonth = month
             birthdayDay = day
             birthdayLoaded = true
         } else if let id = fetchedUserId ?? SessionManager.shared.currentUser?.id,
                   let local = BearyIDCardStore.load(userId: id),
                   let month = local.birthdayMonth, let day = local.birthdayDay {
+            initialBirthdayYear = local.birthdayYear
             initialBirthdayMonth = month
             initialBirthdayDay = day
+            birthdayYear = local.birthdayYear
             birthdayMonth = month
             birthdayDay = day
             birthdayLoaded = true
         }
-        if let month = birthdayMonth, let day = birthdayDay {
-            birthdayField.text = "\(month)月\(day)日"
-        }
+        birthdayField.text = birthdayFieldText(year: birthdayYear, month: birthdayMonth, day: birthdayDay)
         syncBirthdayPickerDate()
         if fetchedUserId != nil {
             // 已确认的 ID：链接行首屏即定稿（@handle 优先、否则 /u/id），
@@ -650,20 +658,29 @@ class BearyEditProfileViewController: UIViewController {
         signatureEdited = true
     }
 
-    /// 生日改动判定（月日成对比较）：已拉到初值时与初值比；未拉到初值时
+    /// 生日改动判定（年月日成对比较）：已拉到初值时与初值比；未拉到初值时
     /// 只有选了日期才算改动——空输入不发，避免把未知的旧生日误删成空
     ///（签名 signatureHasChange 同款口径）。
     private var birthdayHasChange: Bool {
         if birthdayLoaded {
-            return birthdayMonth != initialBirthdayMonth || birthdayDay != initialBirthdayDay
+            return birthdayYear != initialBirthdayYear || birthdayMonth != initialBirthdayMonth || birthdayDay != initialBirthdayDay
         }
         return birthdayMonth != nil && birthdayDay != nil
+    }
+
+    /// 生日行显示文案（2026-11-20 17:38 Li 纠正：具体出生日期只在本页显示）：
+    /// 有年份显完整年月日，否则只显月日。
+    private func birthdayFieldText(year: Int?, month: Int?, day: Int?) -> String? {
+        guard let month = month, let day = day else { return nil }
+        if let year = year { return "\(year)年\(month)月\(day)日" }
+        return "\(month)月\(day)日"
     }
 
     /// 生日选择器指到当前值（已有生日时指到该日，没选过时保持今天）；
     /// ID 卡表单 textFieldDidBeginEditing 同款。
     private func syncBirthdayPickerDate() {
         var components = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        if let year = birthdayYear { components.year = year }
         if let month = birthdayMonth, let day = birthdayDay {
             components.month = month
             components.day = day
@@ -678,23 +695,24 @@ class BearyEditProfileViewController: UIViewController {
     private func fillBirthdayInitialFromMe(_ user: MeUser?) {
         guard !birthdayLoaded, !birthdayEdited else { return }
         guard let month = user?.birthdayMonth, let day = user?.birthdayDay else { return }
+        initialBirthdayYear = user?.birthdayYear
         initialBirthdayMonth = month
         initialBirthdayDay = day
+        birthdayYear = user?.birthdayYear
         birthdayMonth = month
         birthdayDay = day
         birthdayLoaded = true
-        birthdayField.text = "\(month)月\(day)日"
+        birthdayField.text = birthdayFieldText(year: birthdayYear, month: month, day: day)
         syncBirthdayPickerDate()
     }
 
     @objc private func birthdayPickerChanged(_ sender: UIDatePicker) {
-        let components = Calendar.current.dateComponents([.month, .day], from: sender.date)
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: sender.date)
+        birthdayYear = components.year
         birthdayMonth = components.month
         birthdayDay = components.day
         birthdayEdited = true
-        if let month = birthdayMonth, let day = birthdayDay {
-            birthdayField.text = "\(month)月\(day)日"
-        }
+        birthdayField.text = birthdayFieldText(year: birthdayYear, month: birthdayMonth, day: birthdayDay)
     }
 
     @objc private func birthdayPickerDone() {
@@ -702,6 +720,7 @@ class BearyEditProfileViewController: UIViewController {
     }
 
     @objc private func birthdayPickerClear() {
+        birthdayYear = nil
         birthdayMonth = nil
         birthdayDay = nil
         birthdayEdited = true
@@ -1384,6 +1403,7 @@ class BearyEditProfileViewController: UIViewController {
             coverRemoved: coverRemoved,
             signatureValue: signatureValue,
             signatureChanged: signatureHasChange,
+            birthdayYear: birthdayYear,
             birthdayMonth: birthdayMonth,
             birthdayDay: birthdayDay,
             birthdayChanged: birthdayHasChange)
@@ -1458,13 +1478,15 @@ class BearyEditProfileViewController: UIViewController {
                 body["signature"] = snapshot.signatureValue
             }
         }
-        // 生日（2026-11-20 服务端同步，只月日）：成对发；清空发两个 null；
+        // 生日（2026-11-20 服务端同步，年月日三件套）：成组发；清空发三个 null；
         // 只在有改动时发，未改动不发，避免无意义写。
         if snapshot.birthdayChanged {
             if let month = snapshot.birthdayMonth, let day = snapshot.birthdayDay {
+                if let year = snapshot.birthdayYear { body["birthday_year"] = year }
                 body["birthday_month"] = month
                 body["birthday_day"] = day
             } else {
+                body["birthday_year"] = NSNull()
                 body["birthday_month"] = NSNull()
                 body["birthday_day"] = NSNull()
             }
@@ -1540,7 +1562,7 @@ class BearyEditProfileViewController: UIViewController {
             }
             let birthdayConfirmed: Bool
             if snapshot.birthdayChanged, let response = profileResponse {
-                birthdayConfirmed = response.birthdayKeyPresent && response.birthdayMonth == snapshot.birthdayMonth && response.birthdayDay == snapshot.birthdayDay
+                birthdayConfirmed = response.birthdayKeyPresent && response.birthdayYear == snapshot.birthdayYear && response.birthdayMonth == snapshot.birthdayMonth && response.birthdayDay == snapshot.birthdayDay
             } else {
                 birthdayConfirmed = !snapshot.birthdayChanged
             }
@@ -1551,6 +1573,7 @@ class BearyEditProfileViewController: UIViewController {
                 signatureEdited = false
             }
             if snapshot.birthdayChanged && birthdayConfirmed {
+                initialBirthdayYear = snapshot.birthdayYear
                 initialBirthdayMonth = snapshot.birthdayMonth
                 initialBirthdayDay = snapshot.birthdayDay
                 birthdayLoaded = true
@@ -1558,6 +1581,7 @@ class BearyEditProfileViewController: UIViewController {
                 // 本地卡数据同步成服务端值（ID 卡显示同一份）。
                 if let id = fetchedUserId ?? SessionManager.shared.currentUser?.id,
                    var local = BearyIDCardStore.load(userId: id) {
+                    local.birthdayYear = snapshot.birthdayYear
                     local.birthdayMonth = snapshot.birthdayMonth
                     local.birthdayDay = snapshot.birthdayDay
                     BearyIDCardStore.save(local, userId: id)

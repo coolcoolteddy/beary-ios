@@ -9,6 +9,9 @@ import Foundation
 struct BearyIDCardData: Codable {
     /// 解析后昵称（表单空着时填默认名 Teddy，永不为空）。
     var nickname: String
+    /// 出生年份（2026-11-20 17:31 Li 追加：算年龄用；只有月日没有年份时年龄
+    /// 算不出，等用户在编辑资料页补年份；老本地数据没有该字段，解码为 nil）。
+    var birthdayYear: Int?
     var birthdayMonth: Int?
     var birthdayDay: Int?
     var country: String?
@@ -141,9 +144,12 @@ enum BearyIDCardStore {
 // MARK: - ID card server sync（2026-11-20 Li 定：生日只月日、城市三级选，均服务端同步）
 
 /// 生日/城市 PUT 回包（只取 echo 的字段；失败时不关心内容）。
-/// CodingKeys 显式写 snake_case，不依赖 decoder 的 key 策略。
+/// decoder 用 convertFromSnakeCase（BearyAPI.shared），CodingKeys 只写
+/// camelCase 名（显式 snake_case rawValue 与该策略叠加后恒为 nil，见
+/// BearyUserProfile 同款教训）；单字字段直接映射。
 private struct BearyIDCardUpdateResponse: Decodable {
     var ok: Bool?
+    var birthdayYear: Int?
     var birthdayMonth: Int?
     var birthdayDay: Int?
     var country: String?
@@ -152,8 +158,9 @@ private struct BearyIDCardUpdateResponse: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case ok
-        case birthdayMonth = "birthday_month"
-        case birthdayDay = "birthday_day"
+        case birthdayYear
+        case birthdayMonth
+        case birthdayDay
         case country
         case region
         case city
@@ -169,19 +176,21 @@ enum BearyIDCardSync {
     /// 两边都没有 → 什么都不做。失败静默（下次 /me 再试），不阻塞登录流程。
     static func syncFromMe(_ me: MeUser, userId: Int?) {
         guard let userId = userId, userId != 0 else { return }
-        let serverBirthday: (month: Int, day: Int)? = {
+        let serverBirthday: (year: Int?, month: Int, day: Int)? = {
             guard let month = me.birthdayMonth, let day = me.birthdayDay else { return nil }
-            return (month, day)
+            return (me.birthdayYear, month, day)
         }()
         let serverCity: (country: String, region: String, city: String)? = {
             guard let country = me.country, let region = me.region, let city = me.city else { return nil }
             return (country, region, city)
         }()
-        // 下行：服务端有值 → 写回本地（只改动有变化的字段）。
+        // 下行：服务端有值 → 写回本地（只改动有变化的字段；年份可能为空，
+        // 老服务端数据只有月日时年份不动、不清空本地已有年份）。
         if serverBirthday != nil || serverCity != nil {
             if var local = BearyIDCardStore.load(userId: userId) {
                 var changed = false
-                if let birthday = serverBirthday, (local.birthdayMonth != birthday.month || local.birthdayDay != birthday.day) {
+                if let birthday = serverBirthday, (local.birthdayMonth != birthday.month || local.birthdayDay != birthday.day || (birthday.year != nil && local.birthdayYear != birthday.year)) {
+                    local.birthdayYear = birthday.year ?? local.birthdayYear
                     local.birthdayMonth = birthday.month
                     local.birthdayDay = birthday.day
                     changed = true
@@ -198,6 +207,7 @@ enum BearyIDCardSync {
                 let resolved = (trimmed?.isEmpty == false) ? (trimmed ?? "Teddy") : "Teddy"
                 BearyIDCardStore.save(BearyIDCardData(
                     nickname: resolved,
+                    birthdayYear: serverBirthday?.year,
                     birthdayMonth: serverBirthday?.month,
                     birthdayDay: serverBirthday?.day,
                     country: serverCity?.country,
@@ -206,11 +216,12 @@ enum BearyIDCardSync {
                 ), userId: userId)
             }
         }
-        // 上行：服务端没有、本地有 → 上传迁移。
+        // 上行：服务端没有、本地有 → 上传迁移（年份有就带上，没有就只发月日，
+        // 服务端年份留空，等用户在编辑资料页补）。
         let local = BearyIDCardStore.load(userId: userId)
         if serverBirthday == nil,
            let month = local?.birthdayMonth, let day = local?.birthdayDay {
-            uploadBirthday(month: month, day: day)
+            uploadBirthday(month: month, day: day, year: local?.birthdayYear)
         }
         if serverCity == nil,
            let country = local?.country, let region = local?.region, let city = local?.city {
@@ -218,9 +229,12 @@ enum BearyIDCardSync {
         }
     }
 
-    /// 只发生日两字段的 PUT（不带 display_name，不触发唯一性校验）。
-    static func uploadBirthday(month: Int, day: Int) {
-        BearyAPI.shared.request("/api/account/profile", method: "PUT", jsonBody: ["birthday_month": month, "birthday_day": day]) { (result: Result<BearyIDCardUpdateResponse, APIError>) in
+    /// 只发生日三字段的 PUT（不带 display_name，不触发唯一性校验；年份
+    /// 为空时不发该键，服务端年份不动）。
+    static func uploadBirthday(month: Int, day: Int, year: Int? = nil) {
+        var body: [String: Any] = ["birthday_month": month, "birthday_day": day]
+        if let year = year { body["birthday_year"] = year }
+        BearyAPI.shared.request("/api/account/profile", method: "PUT", jsonBody: body) { (result: Result<BearyIDCardUpdateResponse, APIError>) in
             // 失败静默：下次 /me 成功时再试；成功也不用再做什么（服务端已有）。
         }
     }

@@ -385,8 +385,11 @@ struct MeUser: Decodable {
     /// serial_id（TD-000001 式），现行 /me 不再下发；字段留作可选，服务端将来恢复下发时
     /// 账号页 ID 行直接显示它，未下发时账号页按 @handle / 数字 id 回退，绝不编造。
     var serialId: String?
-    /// 生日服务端同步（2026-11-20）：/me 下发生日月日（未填为 null；decoder 用
-    /// convertFromSnakeCase，birthday_month / birthday_day 自动映射）。
+    /// 生日服务端同步（2026-11-20）：/me 下发生日年月日（未填为 null；decoder 用
+    /// convertFromSnakeCase，birthday_year / birthday_month / birthday_day 自动映射）。
+    /// 年份用来算周岁年龄（公开资料只回 age，不回出生日期）；只有月日没有年份时
+    /// 年龄算不出，等用户在编辑资料页补年份。
+    var birthdayYear: Int?
     var birthdayMonth: Int?
     var birthdayDay: Int?
     /// 城市服务端同步（2026-11-20）：/me 下发 ID 卡三级选的国家/地区/市

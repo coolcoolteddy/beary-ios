@@ -3334,7 +3334,7 @@ final class BearyChromeViewController: UIViewController {
         } else {
             coverUrl = nil
         }
-        let vc = BearyEditProfileViewController(displayName: user?.displayName, handle: user?.handle, avatarUrl: user?.avatar, coverUrl: coverUrl, userId: user?.id, signature: profileVC?.currentSignature, birthdayMonth: user?.birthdayMonth, birthdayDay: user?.birthdayDay)
+        let vc = BearyEditProfileViewController(displayName: user?.displayName, handle: user?.handle, avatarUrl: user?.avatar, coverUrl: coverUrl, userId: user?.id, signature: profileVC?.currentSignature, birthdayYear: user?.birthdayYear, birthdayMonth: user?.birthdayMonth, birthdayDay: user?.birthdayDay)
         vc.modalPresentationStyle = .fullScreen
         vc.onSaved = { [weak self, weak vc] in
             vc?.dismiss(animated: BearyMotion.animated(true)) {
@@ -3644,10 +3644,10 @@ final class BearyChromeViewController: UIViewController {
             strongSelf.isIDCardFormPresenting = false
             BearyIDCardStore.markFormSeen(userId: userId)
             BearyIDCardStore.save(data, userId: userId)
-            // 生日服务端同步（2026-11-20）：填了生日就上传（只发生日两字段）；
-            // 失败静默，下次 /me 成功时由迁移补传。
+            // 生日服务端同步（2026-11-20）：填了生日就上传（只发生日三字段，
+            // 有年份带年份）；失败静默，下次 /me 成功时由迁移补传。
             if let month = data.birthdayMonth, let day = data.birthdayDay {
-                BearyIDCardSync.uploadBirthday(month: month, day: day)
+                BearyIDCardSync.uploadBirthday(month: month, day: day, year: data.birthdayYear)
             }
             // 城市服务端同步（2026-11-20）：填了城市就上传（只发城市三字段）；
             // 失败静默，下次 /me 成功时由迁移补传。

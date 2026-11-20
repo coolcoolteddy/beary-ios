@@ -24,7 +24,7 @@ import CoreImage
 // - GET /beary/api/users/:id/profile 与 GET /beary/api/users/by-handle/:handle 共用
 //   profilePayload，返回 {id, display_name, handle, avatar_url, cover_url, created_at,
 //   diary_count, likes_received, emotes_received, emotes_total, plus, plus_free,
-//   signature, city}；by-handle 另可能带 moved_from / moved_to（30 天内改名信号）。
+//   signature, city, age}；by-handle 另可能带 moved_from / moved_to（30 天内改名信号）。
 //   两接口均为公开数据、免登录；查不到人返回 404。
 // - 三标签列表接 GET /beary/api/entries（BearyAPI.fetchEntries 既有方法）：
 //   日记 scope=author + author_id、赞过 scope=author_liked + author_id（两者公开、免登录）、
@@ -76,6 +76,11 @@ struct BearyUserProfile: Decodable {
     /// users 表 city 列，beary Worker 公开资料读口下发（列未建为 null）；
     /// 本人页与他人页同一口径——看的是该主页用户的城市。
     var city: String?
+    /// 周岁年龄（2026-11-20 17:31 Li 定、17:38 纠正：个人主页上本人与他人
+    /// 一律只看年龄，如“21岁”；具体出生日期只在编辑资料页那一行显示）：
+    /// 服务端按 birthday_year/month/day 以北京时间今天算好下发；
+    /// 三项缺一即 null，该行不显示。出生年月日本身不下发。
+    var age: Int?
     /// 32 注销口径：已注销判定（App 侧唯一信号，后端 profile 不下发 deleted 字段）。
     /// 注销 sweep 把 display_name 精确写成“已注销用户”，profilePayload 对
     /// deleted 用户恒置 handle/avatar 为 null；活号 handle 永不为空，故
@@ -109,6 +114,7 @@ struct BearyUserProfile: Decodable {
         case movedTo
         case signature
         case city
+        case age
     }
 }
 
@@ -1304,6 +1310,39 @@ class BearyProfileViewController: UIViewController {
         return labelValue
     }()
 
+    /// 年龄行（2026-11-20 17:31 Li 定、17:38 纠正）：城市行下方一行，本人与
+    /// 他人一律只显周岁（如“21岁”）；算不出（没填年份）整行塌掉（容器 hidden
+    /// + 0 高约束，不留空行、不留占位文案），与城市行同款口径。
+    private let birthdayContainer: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = .clear
+        viewValue.isHidden = true
+        return viewValue
+    }()
+
+    /// 年龄图标：官方包 cake.svg（2026-11-20 新接入 Assets，
+    /// icon_cake.imageset，24/48/72 三档、template 渲染）；加入时间行
+    /// icon_calendar 14pt 同几何。资产缺失时 BearyIconImages 回 nil，
+    /// 只显文字、不画替代图。
+    private let birthdayIconView: UIImageView = {
+        let imageViewValue = UIImageView()
+        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        imageViewValue.image = BearyIconImages.image(named: "icon_cake", pointSize: 14)
+        imageViewValue.tintColor = BearyColors.gray
+        imageViewValue.contentMode = .scaleAspectFit
+        return imageViewValue
+    }()
+
+    private let birthdayLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = BearyDynamicType.secondaryFont()
+        labelValue.adjustsFontForContentSizeCategory = true
+        labelValue.textColor = BearyColors.gray
+        return labelValue
+    }()
+
     /// 模块容器（tab 区挪位后：标签之后）：内为纵向 stack，各卡按预览顺序排列；
     /// 单卡隐藏即从 stack 塌掉（UIStackView 对 hidden 的 arrangedSubview 不占位），
     /// 各卡全隐藏时容器本身以 0 高约束塌掉，不留空标题区。
@@ -2052,6 +2091,8 @@ class BearyProfileViewController: UIViewController {
     /// 城市行 0 高约束（renderCity 用，签名行同款）：隐藏时压住容器，
     /// handle 仍贴签名底 +8，布局一字不差。
     private lazy var cityHeightConstraint: NSLayoutConstraint = cityContainer.heightAnchor.constraint(equalToConstant: 0)
+    /// 年龄行 0 高约束（renderBirthdayAge 用，城市行同款）。
+    private lazy var birthdayHeightConstraint: NSLayoutConstraint = birthdayContainer.heightAnchor.constraint(equalToConstant: 0)
     /// 批 D：签名行右缘——本人时留 48 给右上角编辑钮，他人只读时不留（长签名不提前换行）。
     private lazy var signatureLabelTrailingConstraint: NSLayoutConstraint = signatureLabel.trailingAnchor.constraint(lessThanOrEqualTo: signatureContainer.trailingAnchor, constant: -48)
     /// F17：头模块间距链（网页口径：墙 margin-top 10、模块 margin-top 16、标签 margin-top 16）。
@@ -2062,12 +2103,12 @@ class BearyProfileViewController: UIViewController {
     private lazy var joinedIconLeadingWithHandleConstraint: NSLayoutConstraint = joinedIconView.leadingAnchor.constraint(equalTo: handleLabel.trailingAnchor, constant: 5)
     private lazy var joinedIconLeadingWithoutHandleConstraint: NSLayoutConstraint = joinedIconView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16)
     /// 第 6 轮第 8 项：无 handle 时加入日期行改锚点。纵向约束二选一：
-    /// 有 handle 时日期行居中贴 handle 行；无 handle 时日期行顶贴城市行底 +8
-    /// （城市行塌掉时即签名底 +8，与改动前一字不差）、图标居中贴日期行
+    /// 有 handle 时日期行居中贴 handle 行；无 handle 时日期行顶贴年龄行底 +8
+    /// （年龄行塌掉时即城市行底 +8、签名底 +8，与改动前一字不差）、图标居中贴日期行
     /// （不沿用已塌掉的 handle 行中心）；统计行锚点见 applyEmailRow。
     private lazy var joinedIconCenterYWithHandleConstraint: NSLayoutConstraint = joinedIconView.centerYAnchor.constraint(equalTo: handleLabel.centerYAnchor)
     private lazy var joinedLabelCenterYWithHandleConstraint: NSLayoutConstraint = joinedLabel.centerYAnchor.constraint(equalTo: handleLabel.centerYAnchor)
-    private lazy var joinedLabelTopWithoutHandleConstraint: NSLayoutConstraint = joinedLabel.topAnchor.constraint(equalTo: cityContainer.bottomAnchor, constant: 8)
+    private lazy var joinedLabelTopWithoutHandleConstraint: NSLayoutConstraint = joinedLabel.topAnchor.constraint(equalTo: birthdayContainer.bottomAnchor, constant: 8)
     private lazy var joinedIconCenterYWithoutHandleConstraint: NSLayoutConstraint = joinedIconView.centerYAnchor.constraint(equalTo: joinedLabel.centerYAnchor)
     /// 无 handle 且有加入日期时统计行贴日期行下 12（与 #1252 改后的统计行距 12 一致，原支写 13 是旧值）。
     private lazy var statsTopAfterJoinedConstraint: NSLayoutConstraint = publicCountLabel.topAnchor.constraint(equalTo: joinedLabel.bottomAnchor, constant: 12)
@@ -2874,6 +2915,8 @@ class BearyProfileViewController: UIViewController {
         // 城市行与签名同值平移（签名松动同款根因：后加的行必须补进本函数，
         // 否则名字下移时城市原地不动、与签名／handle 的间距跟着变）。
         cityContainer.transform = fullShift
+        // 年龄行与城市行同值平移（签名松动同款根因）。
+        birthdayContainer.transform = fullShift
         handleLabel.transform = fullShift
         joinedIconView.transform = fullShift
         joinedLabel.transform = fullShift
@@ -3068,6 +3111,9 @@ class BearyProfileViewController: UIViewController {
         headerView.addSubview(cityContainer)
         cityContainer.addSubview(cityIconView)
         cityContainer.addSubview(cityLabel)
+        headerView.addSubview(birthdayContainer)
+        birthdayContainer.addSubview(birthdayIconView)
+        birthdayContainer.addSubview(birthdayLabel)
         headerView.addSubview(wallContainer)
         headerView.addSubview(tabsContainer)
         // 模块容器不在 header：tab 下方直接就是表格行，模块组改由
@@ -3098,6 +3144,7 @@ class BearyProfileViewController: UIViewController {
             modulesHeightConstraint,
             signatureHeightConstraint,
             cityHeightConstraint,
+            birthdayHeightConstraint,
         ])
         // 批 D：模块卡片进纵向 stack（顺序即预览排法）；各卡内部结构在
         // buildPersonalModuleCards 内一次搭好，render 时只改文案与显隐。
@@ -3198,7 +3245,20 @@ class BearyProfileViewController: UIViewController {
             cityLabel.leadingAnchor.constraint(equalTo: cityIconView.trailingAnchor, constant: 5),
             cityLabel.trailingAnchor.constraint(lessThanOrEqualTo: cityContainer.trailingAnchor),
             cityLabel.bottomAnchor.constraint(equalTo: cityContainer.bottomAnchor),
-            handleLabel.topAnchor.constraint(equalTo: cityContainer.bottomAnchor, constant: 8),
+            // 年龄行：容器顶贴城市行底（0 间隙），行内顶留 8；年龄隐藏时容器高
+            // 被 0 约束压住，handle 距城市 = 0 + 8，与只有城市行时一字不差。
+            birthdayContainer.topAnchor.constraint(equalTo: cityContainer.bottomAnchor, constant: 0),
+            birthdayContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+            birthdayContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
+            birthdayIconView.leadingAnchor.constraint(equalTo: birthdayContainer.leadingAnchor),
+            birthdayIconView.centerYAnchor.constraint(equalTo: birthdayLabel.centerYAnchor),
+            birthdayIconView.widthAnchor.constraint(equalToConstant: 14),
+            birthdayIconView.heightAnchor.constraint(equalToConstant: 14),
+            birthdayLabel.topAnchor.constraint(equalTo: birthdayContainer.topAnchor, constant: 8),
+            birthdayLabel.leadingAnchor.constraint(equalTo: birthdayIconView.trailingAnchor, constant: 5),
+            birthdayLabel.trailingAnchor.constraint(lessThanOrEqualTo: birthdayContainer.trailingAnchor),
+            birthdayLabel.bottomAnchor.constraint(equalTo: birthdayContainer.bottomAnchor),
+            handleLabel.topAnchor.constraint(equalTo: birthdayContainer.bottomAnchor, constant: 8),
             handleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
             // I7：加入时间前补 14px 日历图标，图标与加入时间同显隐（见 applyProfile）。
             joinedIconCenterYWithHandleConstraint,
@@ -3937,6 +3997,7 @@ class BearyProfileViewController: UIViewController {
             // 不动旧模块（与 G12「保留整套旧头」同哲学，失败不清空已显内容）。
             renderSignature()
             renderCity()
+            renderBirthdayAge()
             applyProfileThemeTint()
             scheduleModulesRefresh(fromProfileResult: true)
             if targetHandleValue != nil {
@@ -4472,6 +4533,29 @@ class BearyProfileViewController: UIViewController {
             layoutHeaderForced(widthValue: headerWidthValue)
         }
         cityContainer.transform = CGAffineTransform(translationX: 0, y: currentBelowShift)
+    }
+
+    // MARK: 批 D —— 个人主页年龄行
+
+    // 2026-11-20 17:31 起纯展示、17:38 纠正：本人页与他人页同一口径——
+    // 一律只显周岁（如“21岁”），不显具体出生日期；算不出（没填年份）整行
+    // 塌掉（容器 hidden + 0 高约束，不留空行、不留占位文案），与城市行同款口径。
+    private func renderBirthdayAge() {
+        if let age = profile?.age, age >= 0 {
+            let birthdayWasHidden = birthdayContainer.isHidden
+            birthdayContainer.isHidden = false
+            birthdayHeightConstraint.isActive = false
+            setLabelTextFaded(birthdayLabel, "\(age)岁")
+            birthdayLabel.textColor = BearyColors.gray
+            fadeInViewIfAppearing(birthdayContainer, wasHidden: birthdayWasHidden)
+        } else {
+            birthdayContainer.isHidden = true
+            birthdayHeightConstraint.isActive = true
+        }
+        if headerWidthValue > 0 {
+            layoutHeaderForced(widthValue: headerWidthValue)
+        }
+        birthdayContainer.transform = CGAffineTransform(translationX: 0, y: currentBelowShift)
     }
 
     // MARK: 批 D —— 模块语料（作者 scope 全量分页）
