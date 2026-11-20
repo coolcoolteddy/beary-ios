@@ -62,12 +62,12 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     private var loadFailed = false
     // 第 7 轮属实项 6：已有内容时刷新失败的非阻断提示条。只在
     // loadFailed && !conversations.isEmpty 时显（空列表仍走居中空态文案，
-    // 不与本条重复）；显隐只切换表顶约束，不动 contentOffset、不清列表。
+    // 不与本条重复）。失败条不占位、不挤压列表：表顶恒贴顶栏，显隐只淡入
+    // 淡出，列表 frame 与滚动位置全程不动，可见行不跳动；不清列表。
     private let refreshFailedBanner = UIView()
     private let refreshFailedLabel = UILabel()
     private let refreshFailedRetryButton = UIButton(type: .system)
     private var tableViewTopToTopBarConstraint: NSLayoutConstraint?
-    private var tableViewTopToBannerConstraint: NSLayoutConstraint?
 
     /// 合并列表快照变化通知（容器接；独立会话页不设，行为不变）。
     var onMergeSnapshotChanged: (() -> Void)?
@@ -114,13 +114,29 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         conversationStateView.translatesAutoresizingMaskIntoConstraints = false
         conversationStateView.isHidden = true
         view.addSubview(conversationStateView)
-        // 已有内容刷新失败条：常驻于顶栏下方、列表上方（非弹框、非 toast，
+        // 已有内容刷新失败条：覆盖在顶栏下方、列表顶部之上（非弹框、非 toast，
         // 失败不消失直至下次成功）；点“重试”只重拉，不改列表与滚动位置。
         // 注：旧 emptyLabel 已退役（#706），失败／空态走 conversationStateView，
         // 本条只负责已有内容时的非阻断失败提示。
+        // 覆盖式底色须不透明，否则列表内容会透过半透明条显出来；底色 = bg 上
+        // 叠 12% 语义红，与旧“red 0.12 透在 bg 上”的观感一致（深浅模式各自
+        // 按当前 trait 混合）。
         refreshFailedBanner.translatesAutoresizingMaskIntoConstraints = false
-        refreshFailedBanner.backgroundColor = BearyColors.alpha(BearyColors.red, 0.12)
+        refreshFailedBanner.backgroundColor = UIColor { trait in
+            let base = BearyColors.bg.resolvedColor(with: trait)
+            let tint = BearyColors.red.resolvedColor(with: trait)
+            var baseR: CGFloat = 0, baseG: CGFloat = 0, baseB: CGFloat = 0, baseA: CGFloat = 0
+            var tintR: CGFloat = 0, tintG: CGFloat = 0, tintB: CGFloat = 0, tintA: CGFloat = 0
+            base.getRed(&baseR, green: &baseG, blue: &baseB, alpha: &baseA)
+            tint.getRed(&tintR, green: &tintG, blue: &tintB, alpha: &tintA)
+            let a: CGFloat = 0.12
+            return UIColor(red: tintR * a + baseR * (1 - a),
+                           green: tintG * a + baseG * (1 - a),
+                           blue: tintB * a + baseB * (1 - a),
+                           alpha: 1)
+        }
         refreshFailedBanner.isHidden = true
+        refreshFailedBanner.alpha = 0
         view.addSubview(refreshFailedBanner)
         refreshFailedLabel.translatesAutoresizingMaskIntoConstraints = false
         refreshFailedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
@@ -178,10 +194,9 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             conversationStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
             conversationStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
         ])
-        // 表顶二选一：无失败条时贴顶栏，有失败条时贴失败条底部。
-        // 只换约束，不碰 tableView.contentOffset，故列表滚动位置不动。
+        // 表顶恒贴顶栏：失败条覆盖在列表顶部之上、不占位，故表顶约束只有
+        // 这一条，不随失败条显隐切换，列表 frame 全程不动。
         tableViewTopToTopBarConstraint = tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor)
-        tableViewTopToBannerConstraint = tableView.topAnchor.constraint(equalTo: refreshFailedBanner.bottomAnchor)
         tableViewTopToTopBarConstraint?.isActive = true
 
         NotificationCenter.default.addObserver(self, selector: #selector(friendsChanged), name: .bearyFriendsChanged, object: nil)
@@ -655,9 +670,32 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     }
 
     private func setRefreshFailedBannerVisible(_ visible: Bool) {
-        refreshFailedBanner.isHidden = !visible
-        tableViewTopToTopBarConstraint?.isActive = !visible
-        tableViewTopToBannerConstraint?.isActive = visible
+        // 覆盖式：只淡入淡出，不碰表顶约束与 contentOffset，列表不跳动。
+        // 减动效直设终值；收起动画被新显隐打断时 completion 的 finished 为
+        // false，不藏条，防新显的条被旧收起动画的 completion 误藏。
+        if visible {
+            refreshFailedBanner.isHidden = false
+            guard BearyMotion.animated(true) else {
+                refreshFailedBanner.alpha = 1
+                return
+            }
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: {
+                self.refreshFailedBanner.alpha = 1
+            })
+        } else {
+            guard BearyMotion.animated(true) else {
+                refreshFailedBanner.alpha = 0
+                refreshFailedBanner.isHidden = true
+                return
+            }
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: {
+                self.refreshFailedBanner.alpha = 0
+            }, completion: { finished in
+                if finished {
+                    self.refreshFailedBanner.isHidden = true
+                }
+            })
+        }
     }
 
     // MARK: - Table
