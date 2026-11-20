@@ -4,7 +4,7 @@ import UIKit
 // 来源：首页 BearyFeedCell 内的 BearyFeedEmoteFlowView（网页 .emote-row 口径：
 // gap 8、自动换行），个人主页的单行横滑 emoteScrollView 已废弃，两页回应流
 // 统一走本视图。合并时新增一点：point(inside:) 透传——回应 chip 的点击层与
-// + 钮已升级为 BearyHit44Button（热区扩到 44），而 flow 视图本身只有 32–34 高，
+// + 钮已升级为 BearyHit44Button（热区扩到 44），而 flow 视图本身只有 34 高，
 // 若不透传，扩出去的热区会被 flow 视图的 hitTest 截掉；本透传只认 UIButton
 // 子孙（chip 内层透明钮、+ 钮），不改变任何视觉尺寸与布局。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
@@ -17,7 +17,7 @@ final class BearyEmoteFlowView: UIView {
     var lineSpacing: CGFloat = 10
 
     /// 唯一换行布局算法（5-18）：height(forWidth:) 与 layoutSubviews 同调此处。
-    /// gap（itemSpacing / lineSpacing）、最小高 32、换行条件只在此一处定义，
+    /// gap（itemSpacing / lineSpacing）、最小高 34、换行条件只在此一处定义，
     /// 任一处改口径即两处同步，行高与实测不再错位。applyFrames 为 false 时
     /// 只算总高不写 frame（供 height(forWidth:) 用），为 true 时落位子视图。
     private func layoutItems(forWidth width: CGFloat, applyFrames: Bool) -> CGFloat {
@@ -32,7 +32,7 @@ final class BearyEmoteFlowView: UIView {
             if sub.isHidden { continue }
             let size = sub.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
             let itemWidth = size.width
-            let itemHeight = max(size.height, 32)
+            let itemHeight = max(size.height, 34)
             if firstInRow == false && x + itemSpacing + itemWidth > width {
                 y += rowHeight + lineSpacing
                 x = 0
@@ -169,7 +169,7 @@ final class BearyEmoteFlowView: UIView {
 // MARK: - 清单 18：回应行中间容器透传栈
 
 /// cell 与详情共用的 rightStack（内容列与 emoteFlowView 之间的垂直栈）
-/// 改用此类：回应行末行 chip 的扩后热区（上下各 6pt）会伸出 flow 视图、
+/// 改用此类：回应行末行 chip 的扩后热区（上下各 5pt）会伸出 flow 视图、
 /// 乃至伸出 rightStack 下沿——普通 UIStackView 会在栈 bounds 外直接截掉，
 /// 边缘点按到不了 flow。此处 point(inside:)/hitTest 只对 passThroughRoot
 /// （即 emoteFlowView）内 UIButton 子孙的扩后热区放行并直返该钮，栈内
