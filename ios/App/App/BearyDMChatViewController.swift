@@ -43,7 +43,7 @@ private final class OlderLoadingHitView: UIView {
     }
 }
 
-final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UITableViewDataSource, UITextViewDelegate {
+final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UITableViewDataSource, UITextViewDelegate, UITextFieldDelegate {
 
     /// 对方（id 必填；容器只在 id 存在时建页）。
     let peer: BearyAPI.FriendUser
@@ -165,6 +165,21 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private var permBannerMinHeight: NSLayoutConstraint?
     private var lastMarkedReadMessageId: Int?
 
+    // MARK: - 会话内本机搜索（第二批体验检查第 12 项）
+    /// 只搜本设备已有的消息（本地库＋待发），不联网；结果显示日期与关键词
+    /// 附近的片段，点按跳回原消息保留上下文。
+    private let searchButton = UIButton(type: .system)
+    private let searchContainer = UIView()
+    private var searchContainerHeight: NSLayoutConstraint?
+    private let searchFieldBox = UIView()
+    private let searchField = UITextField()
+    private let searchCancelButton = UIButton(type: .system)
+    private let searchHintLabel = UILabel()
+    private let searchResultsTableView = UITableView(frame: .zero, style: .plain)
+    private let searchEmptyLabel = UILabel()
+    private var searchResults: [BearyAPI.DMMessage] = []
+    private var searchGeneration = 0
+
     init(peer: BearyAPI.FriendUser) {
         self.peer = peer
         self.storeAccountId = SessionManager.shared.currentUser?.id
@@ -200,6 +215,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         titleLabel.textColor = BearyColors.ink
         titleLabel.text = (peer.displayName?.isEmpty == false) ? peer.displayName! : "beary 用户"
         topBar.addSubview(titleLabel)
+        // 会话内搜索入口：顶栏右侧放大镜（与返回钮同款 44 热区），点按展开搜索栏。
+        searchButton.translatesAutoresizingMaskIntoConstraints = false
+        searchButton.setImage(BearyIconImages.image(named: "icon_search", pointSize: 24), for: .normal)
+        searchButton.tintColor = BearyColors.ink
+        searchButton.accessibilityLabel = "搜索聊天记录"
+        searchButton.addTarget(self, action: #selector(searchButtonTapped), for: .touchUpInside)
+        searchButton.bearyAddPressFeedback()
+        topBar.addSubview(searchButton)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.backgroundColor = BearyColors.bg
@@ -359,7 +382,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         let permBannerLabelBottom = permBannerLabel.bottomAnchor.constraint(equalTo: permBannerView.bottomAnchor, constant: -8)
         permBannerLabelBottom.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            permBannerView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            permBannerView.topAnchor.constraint(equalTo: searchContainer.bottomAnchor),
             permBannerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             permBannerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             permBannerLabel.leadingAnchor.constraint(equalTo: permBannerView.leadingAnchor, constant: 16),
@@ -420,11 +443,15 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             closeButton.widthAnchor.constraint(equalToConstant: 44),
             closeButton.heightAnchor.constraint(equalToConstant: 44),
+            searchButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            searchButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            searchButton.widthAnchor.constraint(equalToConstant: 44),
+            searchButton.heightAnchor.constraint(equalToConstant: 44),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             // 审计：居中标题加左右限位，小屏＋大字体时不与关闭钮重叠（超长截断）。
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: closeButton.trailingAnchor, constant: 8),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: searchButton.leadingAnchor, constant: -8),
             // V6：标题加纵向限高——大字号下标题不超出 44 高顶栏（超高按压缩裁剪，不顶开顶栏）。
             titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor),
@@ -459,6 +486,112 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             sendButton.bottomAnchor.constraint(equalTo: inputBar.bottomAnchor, constant: -9),
             // V6：发送钮改最小高度 32——常规字号视觉仍 32，大字号下字高超 32 时钮随内容长高不截字。
             sendButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
+        ])
+
+        // 会话内搜索栏（默认收起、高 0 不占位）：搜索框＋取消＋提示行。
+        // 提示行明说只搜本机已有消息；结果表盖在聊天列表上方，输入条不动。
+        searchContainer.translatesAutoresizingMaskIntoConstraints = false
+        searchContainer.isHidden = true
+        view.addSubview(searchContainer)
+        searchFieldBox.translatesAutoresizingMaskIntoConstraints = false
+        searchFieldBox.backgroundColor = BearyColors.surface2
+        searchFieldBox.layer.cornerRadius = 18
+        searchFieldBox.clipsToBounds = true
+        searchContainer.addSubview(searchFieldBox)
+        let searchIconView = UIImageView()
+        searchIconView.translatesAutoresizingMaskIntoConstraints = false
+        searchIconView.image = BearyIconImages.image(named: "icon_search", pointSize: 18)
+        searchIconView.tintColor = BearyColors.gray
+        searchIconView.contentMode = .scaleAspectFit
+        searchFieldBox.addSubview(searchIconView)
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        searchField.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        searchField.adjustsFontForContentSizeCategory = true
+        searchField.textColor = BearyColors.ink
+        searchField.attributedPlaceholder = NSAttributedString(string: "搜索聊天记录", attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15)),
+        ])
+        searchField.returnKeyType = .search
+        searchField.autocorrectionType = .no
+        searchField.delegate = self
+        searchField.accessibilityLabel = "搜索聊天记录"
+        searchField.addTarget(self, action: #selector(searchFieldChanged), for: .editingChanged)
+        searchFieldBox.addSubview(searchField)
+        searchCancelButton.translatesAutoresizingMaskIntoConstraints = false
+        searchCancelButton.setTitle("取消", for: .normal)
+        searchCancelButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        searchCancelButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        searchCancelButton.setTitleColor(BearyColors.ink, for: .normal)
+        searchCancelButton.addTarget(self, action: #selector(searchCancelTapped), for: .touchUpInside)
+        searchCancelButton.bearyAddPressFeedback()
+        searchContainer.addSubview(searchCancelButton)
+        searchHintLabel.translatesAutoresizingMaskIntoConstraints = false
+        searchHintLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        searchHintLabel.adjustsFontForContentSizeCategory = true
+        searchHintLabel.textColor = BearyColors.gray
+        searchHintLabel.text = "仅搜索本设备已有的消息"
+        searchContainer.addSubview(searchHintLabel)
+        searchContainerHeight = searchContainer.heightAnchor.constraint(equalToConstant: 0)
+        searchContainerHeight?.isActive = true
+        NSLayoutConstraint.activate([
+            searchContainer.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            searchContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            searchContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            searchFieldBox.topAnchor.constraint(equalTo: searchContainer.topAnchor, constant: 8),
+            searchFieldBox.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            searchFieldBox.trailingAnchor.constraint(equalTo: searchCancelButton.leadingAnchor, constant: -8),
+            searchFieldBox.heightAnchor.constraint(equalToConstant: 36),
+            searchIconView.leadingAnchor.constraint(equalTo: searchFieldBox.leadingAnchor, constant: 12),
+            searchIconView.centerYAnchor.constraint(equalTo: searchFieldBox.centerYAnchor),
+            searchIconView.widthAnchor.constraint(equalToConstant: 18),
+            searchIconView.heightAnchor.constraint(equalToConstant: 18),
+            searchField.leadingAnchor.constraint(equalTo: searchIconView.trailingAnchor, constant: 8),
+            searchField.trailingAnchor.constraint(equalTo: searchFieldBox.trailingAnchor, constant: -12),
+            searchField.topAnchor.constraint(equalTo: searchFieldBox.topAnchor),
+            searchField.bottomAnchor.constraint(equalTo: searchFieldBox.bottomAnchor),
+            searchCancelButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            searchCancelButton.centerYAnchor.constraint(equalTo: searchFieldBox.centerYAnchor),
+            searchCancelButton.widthAnchor.constraint(equalToConstant: 44),
+            searchCancelButton.heightAnchor.constraint(equalToConstant: 44),
+            searchHintLabel.topAnchor.constraint(equalTo: searchFieldBox.bottomAnchor, constant: 6),
+            searchHintLabel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            searchHintLabel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+        ])
+        // 提示行底约束定容器展开时的高度（defaultHigh：收起时 0 高约束优先，
+        // 它静默让位，不报约束冲突）；收起时只剩 0 高约束生效。
+        let searchHintBottom = searchHintLabel.bottomAnchor.constraint(equalTo: searchContainer.bottomAnchor, constant: -8)
+        searchHintBottom.priority = .defaultHigh
+        searchHintBottom.isActive = true
+        // 搜索结果表：与聊天列表同区，打开搜索时盖住聊天列表；无结果时显提示行。
+        searchResultsTableView.translatesAutoresizingMaskIntoConstraints = false
+        searchResultsTableView.backgroundColor = BearyColors.bg
+        searchResultsTableView.separatorStyle = .singleLine
+        searchResultsTableView.separatorColor = BearyColors.line
+        searchResultsTableView.rowHeight = UITableView.automaticDimension
+        searchResultsTableView.estimatedRowHeight = 64
+        searchResultsTableView.delegate = self
+        searchResultsTableView.dataSource = self
+        searchResultsTableView.register(BearyDMChatSearchResultCell.self, forCellReuseIdentifier: "dmSearchResultCell")
+        searchResultsTableView.isHidden = true
+        view.addSubview(searchResultsTableView)
+        searchEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        searchEmptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        searchEmptyLabel.adjustsFontForContentSizeCategory = true
+        searchEmptyLabel.textColor = BearyColors.gray
+        searchEmptyLabel.textAlignment = .center
+        searchEmptyLabel.text = "没有找到相关消息"
+        searchEmptyLabel.isHidden = true
+        view.addSubview(searchEmptyLabel)
+        NSLayoutConstraint.activate([
+            searchResultsTableView.topAnchor.constraint(equalTo: permBannerView.bottomAnchor),
+            searchResultsTableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            searchResultsTableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            searchResultsTableView.bottomAnchor.constraint(equalTo: inputBar.topAnchor),
+            searchEmptyLabel.centerXAnchor.constraint(equalTo: searchResultsTableView.centerXAnchor),
+            searchEmptyLabel.centerYAnchor.constraint(equalTo: searchResultsTableView.centerYAnchor),
+            searchEmptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
+            searchEmptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
         ])
 
         // 2026-11-04：键盘跟随改走 keyboardLayoutGuide，不再监听键盘通知。
@@ -587,6 +720,121 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         guard !didShowCorruptStoreToast, BearyDMStore.isStoreCorrupt(accountId: storeAccountId) else { return }
         didShowCorruptStoreToast = true
         BearyToast.show(in: view, message: "本地聊天记录读取失败，原始文件已保留备份")
+    }
+
+    // MARK: - 会话内本机搜索
+
+    @objc private func searchButtonTapped() {
+        setSearchVisible(true)
+        searchField.becomeFirstResponder()
+    }
+
+    @objc private func searchCancelTapped() {
+        searchField.text = nil
+        searchResults = []
+        searchResultsTableView.reloadData()
+        setSearchVisible(false)
+        searchField.resignFirstResponder()
+    }
+
+    private func setSearchVisible(_ visible: Bool) {
+        searchContainer.isHidden = !visible
+        // 展开时 0 高约束停用、高度由搜索框＋提示行内容定；收起时 0 高约束生效。
+        searchContainerHeight?.isActive = !visible
+        searchResultsTableView.isHidden = !visible
+        searchEmptyLabel.isHidden = true
+        if !visible {
+            // 代次 +1：在途的搜索回包按代次丢弃，不回填已关掉的结果表。
+            searchGeneration += 1
+            searchResults = []
+            searchResultsTableView.reloadData()
+        }
+        UIView.animate(withDuration: BearyMotion.normal) { self.view.layoutIfNeeded() }
+    }
+
+    @objc private func searchFieldChanged() {
+        searchGeneration += 1
+        let generation = searchGeneration
+        let query = searchField.text ?? ""
+        guard let peerId = peer.id else { return }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            searchResults = []
+            searchEmptyLabel.isHidden = true
+            searchResultsTableView.reloadData()
+            return
+        }
+        BearyDMStore.searchMessages(accountId: storeAccountId, peerId: peerId, query: trimmed) { [weak self] results in
+            guard let self = self, generation == self.searchGeneration else { return }
+            self.searchResults = results
+            self.searchEmptyLabel.isHidden = !results.isEmpty
+            self.searchResultsTableView.reloadData()
+        }
+    }
+
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        textField.resignFirstResponder()
+        return true
+    }
+
+    /// 点结果跳回原消息：已在当前页直接滚到该行；未加载出的旧消息先把本地
+    /// 全量并回当前列表再滚，保留上下文（可继续上下翻）。
+    private func jumpToSearchResult(_ message: BearyAPI.DMMessage) {
+        setSearchVisible(false)
+        searchField.resignFirstResponder()
+        if let row = indexOfMessage(message) {
+            scrollToMessageRow(row)
+            return
+        }
+        guard let peerId = peer.id else { return }
+        BearyDMStore.messages(accountId: storeAccountId, peerId: peerId) { [weak self] local in
+            guard let self = self else { return }
+            BearyDMStore.loadPendings(accountId: self.storeAccountId, peerId: peerId) { [weak self] pendings in
+                guard let self = self else { return }
+                var byId: [Int: BearyAPI.DMMessage] = [:]
+                for m in self.messages where m.localKey == nil { if let id = m.id { byId[id] = m } }
+                for m in local where m.localKey == nil { if let id = m.id { byId[id] = m } }
+                let temps = self.messages.filter { $0.localKey != nil }
+                let existingKeys = Set(temps.compactMap { $0.localKey })
+                var restoredPendings: [BearyAPI.DMMessage] = []
+                for p in pendings where !existingKeys.contains(p.localKey) {
+                    restoredPendings.append(BearyAPI.DMMessage(id: nil, senderId: self.storeAccountId, fromMe: true, body: p.body, createdAt: p.createdAt, localKey: p.localKey))
+                }
+                self.messages = byId.values.sorted { ($0.id ?? 0) < ($1.id ?? 0) } + temps + restoredPendings
+                self.tableView.reloadData()
+                if let row = self.indexOfMessage(message) {
+                    self.scrollToMessageRow(row)
+                }
+            }
+        }
+    }
+
+    private func indexOfMessage(_ message: BearyAPI.DMMessage) -> Int? {
+        if let id = message.id {
+            return messages.firstIndex { $0.id == id }
+        }
+        if let key = message.localKey {
+            return messages.firstIndex { $0.localKey == key }
+        }
+        return nil
+    }
+
+    private func scrollToMessageRow(_ row: Int) {
+        guard row < messages.count else { return }
+        tableView.layoutIfNeeded()
+        let path = IndexPath(row: row, section: 0)
+        tableView.scrollToRow(at: path, at: .middle, animated: true)
+        // 命中行短暂高亮：入场淡入（willDisplay）走完后再闪一次底色，位置即上下文。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self = self, let cell = self.tableView.cellForRow(at: path) else { return }
+            UIView.animate(withDuration: 0.3, animations: {
+                cell.contentView.backgroundColor = BearyColors.surface2
+            }, completion: { _ in
+                UIView.animate(withDuration: 0.6) {
+                    cell.contentView.backgroundColor = BearyColors.bg
+                }
+            })
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -1823,10 +2071,19 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        messages.count
+        if tableView == searchResultsTableView { return searchResults.count }
+        return messages.count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        if tableView == searchResultsTableView {
+            let cell = tableView.dequeueReusableCell(withIdentifier: "dmSearchResultCell", for: indexPath) as! BearyDMChatSearchResultCell
+            let message = searchResults[indexPath.row]
+            let isMine = message.senderId != nil && message.senderId == storeAccountId
+            let peerName = (peer.displayName?.isEmpty == false) ? peer.displayName! : "对方"
+            cell.configure(message: message, isMine: isMine, peerName: peerName, query: searchField.text ?? "")
+            return cell
+        }
         let cell = tableView.dequeueReusableCell(withIdentifier: "dmMessageCell", for: indexPath) as! BearyDMMessageCell
         let message = messages[indexPath.row]
         let isMine = message.senderId != nil && message.senderId == storeAccountId
@@ -1849,6 +2106,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     // 翻旧消息前插的行同样按 id 键：旧行不重播，只有真正新露出的旧消息行淡入。
     // 复用 cell 的 alpha 必须显式复位，否则上行动画中途的 cell 会带着半透明进新行。
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        guard tableView == self.tableView else { return }
         guard indexPath.row < messages.count else { return }
         let message = messages[indexPath.row]
         // 2026-11-04 乐观发送：待发行无服务端 id，凭本地键记已播（发送时已预记，
@@ -1872,6 +2130,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     // 长按菜单：复制本条消息；对方消息行另附举报／拉黑（对方无公开日记时也能举报／拉黑）。
     // 自己的消息行只有复制。拉黑成功后离场（本页 modal 全屏 present，走 dismiss）。
     func tableView(_ tableView: UITableView, contextMenuConfigurationForRowAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {
+        guard tableView == self.tableView else { return nil }
         guard indexPath.row < messages.count else { return nil }
         let message = messages[indexPath.row]
         let body = message.body ?? ""
@@ -1907,7 +2166,15 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }
     }
 
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        guard tableView == searchResultsTableView, indexPath.row < searchResults.count else { return }
+        tableView.deselectRow(at: indexPath, animated: true)
+        jumpToSearchResult(searchResults[indexPath.row])
+    }
+
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        // 搜索结果表不走聊天页的新消息 pill／翻旧逻辑。
+        guard scrollView == tableView else { return }
         // 回到底部附近即收起“新消息”pill（程序化跟随到底同样收起）。
         if isNearBottom() {
             setNewMessagePillVisible(false)
@@ -2135,5 +2402,62 @@ private final class BearyDMMessageCell: UITableViewCell {
             theirsTextLabel.text = body
             theirsTimeLabel.text = formattedTimeText(ms: message.createdAt, showUnconfirmed: false)
         }
+    }
+}
+
+// MARK: - 搜索结果 Cell（发送者＋日期一行，关键词附近片段一行；点按跳回原消息）
+
+private final class BearyDMChatSearchResultCell: UITableViewCell {
+
+    private let titleLabel = UILabel()
+    private let snippetLabel = UILabel()
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        backgroundColor = BearyColors.bg
+        selectionStyle = .default
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textColor = BearyColors.gray
+        contentView.addSubview(titleLabel)
+
+        snippetLabel.translatesAutoresizingMaskIntoConstraints = false
+        snippetLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        snippetLabel.adjustsFontForContentSizeCategory = true
+        snippetLabel.textColor = BearyColors.ink
+        snippetLabel.numberOfLines = 2
+        contentView.addSubview(snippetLabel)
+
+        NSLayoutConstraint.activate([
+            titleLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
+            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            snippetLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
+            snippetLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            snippetLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            snippetLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        titleLabel.text = nil
+        snippetLabel.text = nil
+    }
+
+    func configure(message: BearyAPI.DMMessage, isMine: Bool, peerName: String, query: String) {
+        let sender = isMine ? "我" : peerName
+        if let ms = message.createdAt {
+            titleLabel.text = "\(sender) · \(BearyText.timeString(ms: ms))"
+        } else {
+            titleLabel.text = sender
+        }
+        snippetLabel.text = BearyDMStoreCore.searchSnippet(body: message.body ?? "", query: query)
     }
 }

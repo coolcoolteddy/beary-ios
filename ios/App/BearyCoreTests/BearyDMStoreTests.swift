@@ -469,4 +469,80 @@ final class BearyDMStoreTests: XCTestCase {
         XCTAssertEqual(loadPendings(accountId: 9020, peerId: 5).map { $0.localKey }, ["k1"])
         XCTAssertEqual(loadPendings(accountId: 9020, peerId: 7).map { $0.localKey }, ["k3"])
     }
+
+    // MARK: - 会话内本机搜索（第二批体验检查第 12 项）
+
+    func testCoreSearchMessagesFiltersAndOrdersNewestFirst() {
+        let messages = [
+            BearyAPI.DMMessage(id: 1, senderId: 99, body: "周末去爬山吗", createdAt: 1000),
+            BearyAPI.DMMessage(id: 2, senderId: 7, body: "周末要加班", createdAt: 3000),
+            BearyAPI.DMMessage(id: 3, senderId: 99, body: "今天天气不错", createdAt: 2000),
+            BearyAPI.DMMessage(id: 4, senderId: 99, body: nil, createdAt: 4000),
+            BearyAPI.DMMessage(id: nil, senderId: 7, body: "周末的待发", createdAt: 5000, localKey: "pending-1"),
+        ]
+        // 新的在前；无正文的行不进结果；待发行同样可搜。
+        XCTAssertEqual(BearyDMStoreCore.searchMessages(messages, query: "周末").map { $0.id }, [nil, 2, 1])
+        // 大小写不敏感；空关键词／纯空白回 []。
+        let english = [BearyAPI.DMMessage(id: 10, senderId: 99, body: "Hello Beary", createdAt: 1000)]
+        XCTAssertEqual(BearyDMStoreCore.searchMessages(english, query: "hello").count, 1)
+        XCTAssertTrue(BearyDMStoreCore.searchMessages(messages, query: "  ").isEmpty)
+        XCTAssertTrue(BearyDMStoreCore.searchMessages(messages, query: "").isEmpty)
+        XCTAssertTrue(BearyDMStoreCore.searchMessages(messages, query: "不存在的词").isEmpty)
+    }
+
+    func testCoreSearchSnippetCentersOnKeyword() {
+        // 短正文直接返回全文，不加省略号。
+        XCTAssertEqual(BearyDMStoreCore.searchSnippet(body: "周末去爬山", query: "周末"), "周末去爬山")
+        // 长正文：命中处前留 20 字、后留 40 字，两头截断加 "…"。
+        let long = String(repeating: "甲", count: 50) + "关键词" + String(repeating: "乙", count: 60)
+        let snippet = BearyDMStoreCore.searchSnippet(body: long, query: "关键词")
+        XCTAssertTrue(snippet.hasPrefix("…" + String(repeating: "甲", count: 20)))
+        XCTAssertTrue(snippet.hasSuffix(String(repeating: "乙", count: 40) + "…"))
+        XCTAssertTrue(snippet.contains("关键词"))
+        // 关键词不在正文里时返回全文。
+        XCTAssertEqual(BearyDMStoreCore.searchSnippet(body: "你好", query: "再见"), "你好")
+    }
+
+    func testStoreSearchMessagesSearchesLocalOnlyAndIncludesPendings() {
+        let accountId = 9030
+        _ = saveMessages(accountId: accountId, peer: 5, messages: [
+            message(id: 1, body: "周末去爬山吗"),
+            message(id: 2, body: "今天天气不错"),
+        ])
+        // 另一会话的同词消息不进结果。
+        _ = saveMessages(accountId: accountId, peer: 6, messages: [message(id: 3, body: "周末去爬山吗")])
+        // 待发同样可搜。
+        let pendingExp = expectation(description: "savePending")
+        BearyDMStore.savePending(.init(localKey: "sk1", peerId: 5, body: "周末的待发", createdAt: 1793000000001, status: .sending), accountId: accountId) { _ in
+            pendingExp.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        let exp = expectation(description: "searchMessages")
+        var results: [BearyAPI.DMMessage] = []
+        BearyDMStore.searchMessages(accountId: accountId, peerId: 5, query: "周末") { found in
+            results = found
+            exp.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        // 待发最新在前，其次是已落盘的同会话消息；另一会话的不在内。
+        XCTAssertEqual(results.map { $0.id }, [nil, 1])
+        XCTAssertEqual(results.first?.localKey, "sk1")
+        // 另一账号的同会话消息不进结果。
+        _ = saveMessages(accountId: 9031, peer: 5, messages: [message(id: 9, body: "周末去爬山吗")])
+        let exp2 = expectation(description: "searchMessages other account")
+        var results2: [BearyAPI.DMMessage] = []
+        BearyDMStore.searchMessages(accountId: accountId, peerId: 5, query: "周末") { found in
+            results2 = found
+            exp2.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        XCTAssertEqual(results2.map { $0.id }, [nil, 1])
+        // accountId==nil 回 []。
+        let exp3 = expectation(description: "searchMessages nil account")
+        BearyDMStore.searchMessages(accountId: nil, peerId: 5, query: "周末") { found in
+            XCTAssertTrue(found.isEmpty)
+            exp3.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+    }
 }

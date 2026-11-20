@@ -521,6 +521,35 @@ enum BearyDMStore {
         }
     }
 
+    /// 会话内本机搜索（第二批体验检查第 12 项）：只读当前账号、当前会话的
+    /// 本地库（已落盘消息＋待发），不联网；损坏的库回 []（不读坏数据）；
+    /// accountId==nil 或关键词为空回 []。一次 ioQueue 操作内完成读盘＋过滤。
+    static func searchMessages(accountId: Int?, peerId: Int, query: String, completion: @escaping ([BearyAPI.DMMessage]) -> Void) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let accountId = accountId, !trimmed.isEmpty else {
+            DispatchQueue.main.async { completion([]) }
+            return
+        }
+        ioQueue.async {
+            let (all, corrupt) = cachedAll(accountId: accountId)
+            guard !corrupt else {
+                DispatchQueue.main.async { completion([]) }
+                return
+            }
+            var candidates = dmMessages(from: all["\(peerId)"]?.messages ?? [])
+            switch loadPendingList(accountId: accountId) {
+            case .loaded(let pendings):
+                for p in pendings where p.peerId == peerId {
+                    candidates.append(BearyAPI.DMMessage(id: nil, senderId: accountId, fromMe: true, body: p.body, createdAt: p.createdAt, localKey: p.localKey))
+                }
+            case .missing, .corrupt:
+                break
+            }
+            let results = BearyDMStoreCore.searchMessages(candidates, query: trimmed)
+            DispatchQueue.main.async { completion(results) }
+        }
+    }
+
     /// 读某对方的待发（按创建时间升序）。
     static func loadPendings(accountId: Int?, peerId: Int, completion: @escaping ([PendingSend]) -> Void) {
         ioQueue.async {
@@ -688,5 +717,35 @@ enum BearyDMStoreCore {
     /// 待发损坏备份名：秒级时间戳＋UUID，同秒内多次损坏也不撞名（草稿 #1133 同款）。
     static func pendingCorruptBackupURL(for fileURL: URL) -> URL {
         fileURL.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString).bak")
+    }
+
+    // MARK: - 会话内本机搜索（第二批体验检查第 12 项）
+
+    /// 本机聊天记录搜索（纯函数）：只按正文子串匹配（大小写不敏感；中文按原串
+    /// 子串匹配），空关键词/纯空白回 []；无正文的行不进结果；按 createdAt 倒序、
+    /// id 倒序（新的在前）。待发行（无 id）同样可搜，按 createdAt 排。
+    static func searchMessages(_ messages: [BearyAPI.DMMessage], query: String) -> [BearyAPI.DMMessage] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        return messages.filter { message in
+            guard let body = message.body, !body.isEmpty else { return false }
+            return body.range(of: trimmed, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+        }.sorted {
+            if ($0.createdAt ?? 0) != ($1.createdAt ?? 0) { return ($0.createdAt ?? 0) > ($1.createdAt ?? 0) }
+            return ($0.id ?? 0) > ($1.id ?? 0)
+        }
+    }
+
+    /// 关键词附近的片段：命中处前留 20 字、后留 40 字，截断处加 "…"；
+    /// 短正文直接返回全文，不加省略号；关键词不在正文里时返回全文。
+    static func searchSnippet(body: String, query: String) -> String {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let range = body.range(of: trimmed, options: [.caseInsensitive, .diacriticInsensitive]) else { return body }
+        let before = body[body.startIndex..<range.lowerBound]
+        let after = body[range.upperBound..<body.endIndex]
+        let lead = before.count > 20 ? "…" + String(before.suffix(20)) : String(before)
+        let tail = after.count > 40 ? String(after.prefix(40)) + "…" : String(after)
+        return lead + body[range] + tail
     }
 }
