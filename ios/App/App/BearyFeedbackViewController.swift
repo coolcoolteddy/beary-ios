@@ -913,8 +913,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         attachProgressLabel.accessibilityLabel = text
     }
 
-    /// B6：本批就绪后进度在原位淡出（减动效时直接隐藏）；淡出完成时若
-    /// 已有新一批在读，不碰新批的进度行（见 attachmentReading 守卫）。
+    /// B6：本批就绪后进度在原位淡出，同时卡片收高（减动效时直接隐藏）；
+    /// 淡出完成时若已有新一批在读，不碰新批的进度行（见 attachmentReading 守卫）。
     /// 审计 26-6：约束归零与 layoutIfNeeded() 须在淡出动画块内完成，
     /// 使进度行边淡边收起；完成回调只负责隐藏，否则下面的表单会在
     /// 淡出结束后才上跳 28 pt（24 pt 行高＋4 pt 间距）。
