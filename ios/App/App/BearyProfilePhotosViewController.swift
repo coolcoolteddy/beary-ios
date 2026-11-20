@@ -896,6 +896,89 @@ final class BearyProfilePhotosViewController: UIViewController {
         fetchMoreWhileEmptyIfNeeded()
     }
 
+    // MARK: - 详情返回锚点与定向同步（第三批第 7 项）
+
+    /// 详情打开时记下该篇首张照片相对视口的位置（格顶相对可见区顶）；
+    /// 该篇不在墙里时返回 nil（关闭时不恢复）。与广场/时间线同口径，
+    /// 只是本页是 collectionView、按篇 id 找首张照片（同篇多图只锚首张）。
+    func detailReturnAnchor(for entryId: String) -> CGFloat? {
+        guard let index = photosValue.firstIndex(where: { $0.entry.id == entryId }) else { return nil }
+        collectionView.layoutIfNeeded()
+        guard let frame = collectionView.layoutAttributesForItem(at: IndexPath(item: index, section: 0))?.frame else { return nil }
+        return frame.minY - collectionView.contentOffset.y
+    }
+
+    /// 详情关闭时把该篇首张照片放回打开时的视口位置；该篇已不在墙里
+    /// （删图/翻私密滤掉）、或已在原位（±1pt）时不动。viewWillAppear
+    /// 的重算 reload 先于本调用（详情 dismiss 时 appear 在先、onDismissed
+    /// 在后），故此处读到的已是重算后的新位置。
+    func restoreDetailReturnAnchor(entryId: String, viewportOffset: CGFloat) {
+        guard let index = photosValue.firstIndex(where: { $0.entry.id == entryId }) else { return }
+        collectionView.layoutIfNeeded()
+        guard let frame = collectionView.layoutAttributesForItem(at: IndexPath(item: index, section: 0))?.frame else { return }
+        let targetY = frame.minY - viewportOffset
+        guard abs(targetY - collectionView.contentOffset.y) >= 1 else { return }
+        let minY = -collectionView.contentInset.top
+        let maxY = max(minY, collectionView.contentSize.height - collectionView.bounds.height + collectionView.contentInset.bottom)
+        collectionView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
+    }
+
+    /// 详情内编辑/可见性变化按 id 定向同步：模型原地改字段后重算照片索引；
+    /// 照片不变（只改文字）时不 reload；删图/换图/翻可见性才 reload，
+    /// 滚动位置不动（回位由详情关闭的锚点恢复管）。
+    func applyEditedEntry(_ entry: Entry) {
+        guard let entryId = entry.id,
+              let index = diaryEntriesValue.firstIndex(where: { $0.id == entryId }) else { return }
+        var patched = diaryEntriesValue[index]
+        patched.title = entry.title
+        patched.content = entry.content
+        patched.images = entry.images
+        patched.mood = entry.mood
+        patched.weather = entry.weather
+        patched.locationName = entry.locationName
+        patched.locationDistrict = entry.locationDistrict
+        patched.locationLatitude = entry.locationLatitude
+        patched.locationLongitude = entry.locationLongitude
+        patched.quoteId = entry.quoteId
+        patched.quote = entry.quote
+        if let v = entry.publishedAt { patched.publishedAt = v }
+        if let v = entry.editDeadline { patched.editDeadline = v }
+        if let v = entry.isPublic { patched.isPublic = v }
+        if let v = entry.visibility { patched.visibility = v }
+        patched.ephemeralUntil = entry.ephemeralUntil
+        diaryEntriesValue[index] = patched
+        refreshPhotosFromDiaryEntriesIfChanged()
+    }
+
+    /// 详情内点赞/收藏/回应变化：网格只画缩略图，不显示这些数，只改
+    /// 日记模型（灯箱“查看日记”用的 Entry 即新值），不重渲。
+    func applyInteraction(entryId: String, likeCount: Int?, likedByMe: Bool?, bookmarkedByMe: Bool?, emotes: [EmoteCount]?) {
+        for index in diaryEntriesValue.indices where diaryEntriesValue[index].id == entryId {
+            if let v = likeCount { diaryEntriesValue[index].likeCount = v }
+            if let v = likedByMe { diaryEntriesValue[index].likedByMe = v }
+            if let v = bookmarkedByMe { diaryEntriesValue[index].bookmarkedByMe = v }
+            if let v = emotes { diaryEntriesValue[index].emotes = BearyEmoteOrder.merged(previous: diaryEntriesValue[index].emotes, server: v) }
+        }
+    }
+
+    /// 详情内删帖：按 id 摘日记并重算照片索引，签名变了才 reload。
+    func removeDeletedEntry(entryId: String) {
+        guard diaryEntriesValue.contains(where: { $0.id == entryId }) else { return }
+        diaryEntriesValue.removeAll { $0.id == entryId }
+        refreshPhotosFromDiaryEntriesIfChanged()
+    }
+
+    /// 详情扇入后按日记重算照片索引：签名变了才 reload（签名不变不碰，
+    /// 不动滚动位置）；视图未加载时只改模型。
+    private func refreshPhotosFromDiaryEntriesIfChanged() {
+        let freshPhotos = BearyProfileViewController.profilePhotoItems(from: diaryEntriesValue, isOwnProfile: ownProfileValue, isMutualFriend: currentMutualFriend)
+        guard photosSignature(freshPhotos) != photosSignature(photosValue) else { return }
+        photosValue = freshPhotos
+        guard isViewLoaded else { return }
+        collectionView.reloadData()
+        updateTitleAndEmpty()
+    }
+
     private func fetchNextPageIfNeeded() {
         // 04：失败后自动入口守门——失败态下 willDisplay 不再自动重拉，只留
         // 手动重试（尾部重试节 / 空态重试按钮）；点“重试”清掉失败态后才再拉。

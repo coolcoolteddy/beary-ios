@@ -133,6 +133,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     // 末条，不取客户端过滤后末条——过滤掉的拉黑/过期行仍占服务端页内位置，
     // 用过滤后末条当游标会把已回包的行重拉一遍，LIMIT 截断下还可能卡住进度）。
     private var isLoadingMore = false
+    /// 翻页在途离页被取消：viewWillDisappear / pageDidLeave 取消在途翻页时记一笔，
+    /// 回来（viewDidAppear）按原游标续跑同一页——游标未动、去重仍以
+    /// 在屏 id 为基准，不会重行；新搜索/切号由 resetSearchPagination 清掉。
+    private var loadMoreCancelledMidFlight = false
     private var loadMoreFailed = false
     /// 第 14 轮审计 6：按组保留翻页失败态——重试只补失败的组，不重发已成功组。
     private var loadMoreFailedPublic = false
@@ -436,6 +440,144 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         renderResults(data: data, query: query)
     }
 
+    // MARK: - 详情返回锚点与定向同步（第三批第 7 项）
+
+    /// 详情打开时容器问本页要的关键词：关闭时换过词就不恢复旧位置。
+    var renderedQueryForReturn: String? { lastRenderedQuery }
+
+    /// 详情打开时记下该篇行相对视口的位置（行顶相对可见区顶）；该篇
+    /// 不在当前结果里时返回 nil（关闭时不恢复）。与广场/时间线同口径，
+    /// 只是本页行是 UIStackView 里的按钮、不是 tableView 行。
+    func detailReturnAnchor(for entryId: String) -> CGFloat? {
+        guard showingResults, let row = entryRowById[entryId] else { return nil }
+        scrollView.layoutIfNeeded()
+        let frame = row.convert(row.bounds, to: scrollView)
+        return frame.minY - scrollView.contentOffset.y
+    }
+
+    /// 详情关闭时把该篇行放回打开时的视口位置；关键词变了、该篇已不在
+    /// 结果里、或已在原位（±1pt）时不动。
+    func restoreDetailReturnAnchor(entryId: String, viewportOffset: CGFloat, query: String?) {
+        guard let query = query, query == lastRenderedQuery, showingResults,
+              let row = entryRowById[entryId] else { return }
+        scrollView.layoutIfNeeded()
+        let frame = row.convert(row.bounds, to: scrollView)
+        let targetY = frame.minY - viewportOffset
+        guard abs(targetY - scrollView.contentOffset.y) >= 1 else { return }
+        let minY = -scrollView.contentInset.top
+        let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom)
+        scrollView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
+    }
+
+    /// 详情内编辑/可见性变化按 id 定向同步本页：模型原地改字段，
+    /// 可见性翻转按新有效态换组（公开 ↔ 我的）；同关键词重渲走
+    /// syncResultRowsReuse（未变行原地保留、不动滚动位置）；本篇
+    /// 不在结果里时不动。
+    func applyEditedEntry(_ entry: Entry) {
+        guard let entryId = entry.id, showingResults,
+              var data = lastRenderedData, let query = lastRenderedQuery else { return }
+        var found = false
+        if var entries = data.entries {
+            for index in entries.indices where entries[index].id == entryId {
+                patchSearchEntryFields(&entries[index], from: entry)
+                found = true
+            }
+            data.entries = entries
+        }
+        if var mine = data.mine {
+            for index in mine.indices where mine[index].id == entryId {
+                patchSearchEntryFields(&mine[index], from: entry)
+                found = true
+            }
+            data.mine = mine
+        }
+        guard found else { return }
+        // 可见性翻转换组：只在两组里已有本篇时才动归属（不把没搜到的篇插进结果）。
+        if let current = data.entries?.first(where: { $0.id == entryId })
+            ?? data.mine?.first(where: { $0.id == entryId }) {
+            let isMine = current.authorId != nil && current.authorId == SessionManager.shared.currentUser?.id
+            let belongsPublic = BearyEphemeral.isEffectivelyPublic(current)
+            let belongsMine = isMine && (current.isPublic == false || BearyEphemeral.isLive(current)) && !BearyEphemeral.isExpired(current)
+            if belongsPublic {
+                data.entries = insertSearchEntrySorted(current, into: data.entries ?? [])
+            } else {
+                data.entries?.removeAll { $0.id == entryId }
+            }
+            if belongsMine {
+                data.mine = insertSearchEntrySorted(current, into: data.mine ?? [])
+            } else {
+                data.mine?.removeAll { $0.id == entryId }
+            }
+        }
+        lastRenderedData = data
+        renderResults(data: data, query: query)
+    }
+
+    /// 详情内点赞/收藏/回应变化：行上不显示这些数，只改模型（点行进
+    /// 详情用的卡片数据即新值），不重渲、不重播入场。
+    func applyInteraction(entryId: String, likeCount: Int?, likedByMe: Bool?, bookmarkedByMe: Bool?, emotes: [EmoteCount]?) {
+        guard var data = lastRenderedData else { return }
+        var updated = false
+        func patch(_ target: inout Entry) {
+            if let v = likeCount { target.likeCount = v }
+            if let v = likedByMe { target.likedByMe = v }
+            if let v = bookmarkedByMe { target.bookmarkedByMe = v }
+            if let v = emotes { target.emotes = BearyEmoteOrder.merged(previous: target.emotes, server: v) }
+            updated = true
+        }
+        if var entries = data.entries {
+            for index in entries.indices where entries[index].id == entryId { patch(&entries[index]) }
+            data.entries = entries
+        }
+        if var mine = data.mine {
+            for index in mine.indices where mine[index].id == entryId { patch(&mine[index]) }
+            data.mine = mine
+        }
+        guard updated else { return }
+        lastRenderedData = data
+    }
+
+    /// 详情内删帖：按 id 摘行（引用缓存同清），空了走无结果态。
+    func removeDeletedEntry(entryId: String) {
+        guard var data = lastRenderedData, let query = lastRenderedQuery, showingResults else { return }
+        data.entries?.removeAll { $0.id == entryId }
+        data.mine?.removeAll { $0.id == entryId }
+        lastRenderedData = data
+        BearyDiaryCardCell.quoteCache.removeValue(forKey: entryId)
+        renderResults(data: data, query: query)
+    }
+
+    /// 编辑回传字段（个人页 patched 同款：行上显示标题/正文/首图/
+    /// 可见性 pill，缺一不可；editDeadline/isPublic 只在新值非空时覆盖）。
+    private func patchSearchEntryFields(_ target: inout Entry, from updated: Entry) {
+        target.title = updated.title
+        target.content = updated.content
+        target.images = updated.images
+        target.mood = updated.mood
+        target.weather = updated.weather
+        target.locationName = updated.locationName
+        target.locationDistrict = updated.locationDistrict
+        target.locationLatitude = updated.locationLatitude
+        target.locationLongitude = updated.locationLongitude
+        target.quoteId = updated.quoteId
+        target.quote = updated.quote
+        if let v = updated.publishedAt { target.publishedAt = v }
+        if let v = updated.editDeadline { target.editDeadline = v }
+        if let v = updated.isPublic { target.isPublic = v }
+        if let v = updated.visibility { target.visibility = v }
+        target.ephemeralUntil = updated.ephemeralUntil
+    }
+
+    /// 按 createdAt 倒序插回一组（换组时用）；已在组里时不动。
+    private func insertSearchEntrySorted(_ entry: Entry, into list: [Entry]) -> [Entry] {
+        guard let entryId = entry.id, !list.contains(where: { $0.id == entryId }) else { return list }
+        var result = list
+        let created = entry.createdAt ?? 0
+        let index = result.firstIndex(where: { ($0.createdAt ?? 0) < created }) ?? result.endIndex
+        result.insert(entry, at: index)
+        return result
+    }
+
     /// 顶栏透度批（容器调用，见 SceneDelegate.applyHeaderTopInsets）：主滚动视图即 scrollView。
     /// 本页滚动框顶锚页安全区（容器页顶改 view.top 后，页安全区顶仍为容器安全区顶，框绝对位置不变），
     /// 故属性内边距只需 60/0：显示 60、收起 0，视觉顶距即安全区顶 + 60 / 安全区顶。
@@ -555,6 +697,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 runSearch(query: query)
             }
         }
+        // 详情往返：离页时取消的在途翻页回来续跑（同一游标、同一批），
+        // 正翻到一半回来不再丢那一页；无取消在途时本旗为 false，不动。
+        if loadMoreCancelledMidFlight {
+            loadMoreCancelledMidFlight = false
+            if showingResults {
+                loadMore()
+            }
+        }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -573,6 +723,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 翻页在途离页：取消任务并复位加载态——旧回包凭序号丢弃、不调
         // finishOne，若不复位则 pending 永不到 0，回来后尾行转圈卡死、
         // “加载更多”再也点不动；新搜索另有 resetSearchPagination 兜底。
+        // 离页时在途翻页被取消：记一笔，回来时按原游标续跑（见 viewDidAppear）。
+        loadMoreCancelledMidFlight = isLoadingMore
         for task in currentLoadMoreTasks { task.cancel() }
         currentLoadMoreTasks = []
         isLoadingMore = false
@@ -596,6 +748,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 翻页在途离页：取消任务并复位加载态——旧回包凭序号丢弃、不调
         // finishOne，若不复位则 pending 永不到 0，回来后尾行转圈卡死、
         // “加载更多”再也点不动；新搜索另有 resetSearchPagination 兜底。
+        // 同 viewWillDisappear：记一笔，回来时按原游标续跑。
+        loadMoreCancelledMidFlight = isLoadingMore
         for task in currentLoadMoreTasks { task.cancel() }
         currentLoadMoreTasks = []
         isLoadingMore = false
@@ -616,16 +770,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         let targetY = min(max(savedY, minY), maxY)
         guard abs(targetY - scrollView.contentOffset.y) >= 1 else { return }
         scrollView.contentOffset = CGPoint(x: 0, y: targetY)
-    }
-
-    /// T3：详情打开时记下该篇相对视口的位置（行顶相对可见区顶）；不在
-    /// 结果列表里时返回 nil（与广场／时间线／个人页同口径，见 SceneDelegate
-    /// detailReturnAnchor）。关闭时由 restoreDetailReturnAnchor 放回原位。
-    func detailReturnAnchor(for entryId: String) -> CGFloat? {
-        guard let row = entryRowById[entryId] else { return nil }
-        scrollView.layoutIfNeeded()
-        let rowTop = row.convert(CGPoint.zero, to: scrollView).y
-        return rowTop - scrollView.contentOffset.y
     }
 
     /// T3：详情关闭时把该篇放回打开时的视口位置；已在原位（±1pt）或
@@ -2047,6 +2191,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         currentLoadMoreTasks = []
         isLoadingMore = false
+        loadMoreCancelledMidFlight = false
         loadMoreFailed = false
         loadMoreFailedPublic = false
         loadMoreFailedMine = false

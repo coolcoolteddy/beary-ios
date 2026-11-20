@@ -1266,6 +1266,14 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 点胶囊标记弹卡（只给卡片，不直接进详情；解锁判定在卡内做）。
     private func openCapsuleCard(entry: Entry) {
         BearyTimeCapsuleCardSheet.show(from: self, entry: entry, onOpenEntry: { [weak self] opened in
+            // 胶囊卡进详情：同组内行点按口径记返回上下文——当前选中组＋
+            // 列表偏移＋组内篇快照；未选中组时只记列表偏移，回来仍回到原位。
+            // 卡片先关再进详情（见卡片“查看日记”），此时顶层即本页，
+            // 全屏详情的 appear/disappear 正常走，viewWillAppear 当场消费。
+            self?.returnGroupId = self?.selectedGroup?.id
+            self?.returnTableOffset = self?.tableView.contentOffset
+            self?.returnGroupEntryIds = self?.selectedGroup?.entries.compactMap { $0.id }
+            self?.pendingMapReturnRestore = true
             self?.onOpenEntry?(opened)
         }, onUnburied: { [weak self] entryId in
             self?.removeCapsuleAnnotation(entryId: entryId)

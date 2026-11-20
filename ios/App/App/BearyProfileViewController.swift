@@ -159,6 +159,11 @@ class BearyProfileViewController: UIViewController {
     /// 接线到详情页且跳过后台补拉（未接线时调用方回落 onOpenEntry 原路径）。
     var onOpenFreshEntry: ((Entry) -> Void)?
 
+    /// 全量照片页里灯箱“查看日记”点按：容器接线到详情页且来源记 .photos
+    /// （锚点问照片墙要该篇首张照片的视口位置，而非本页列表行）；
+    /// 未接线时调用方回落 onOpenEntry 原路径（modal 他人主页同款）。
+    var onOpenEntryFromPhotos: ((Entry) -> Void)?
+
     /// 批 C：日记 tab“更多日记”点按，容器接线到时间线页（仅本人页触发，见下）。
     var onOpenTimeline: (() -> Void)?
 
@@ -182,6 +187,11 @@ class BearyProfileViewController: UIViewController {
     /// 容器不持有子页。
     private weak var presentedMapVC: BearyDiaryMapViewController?
     private weak var presentedStarVC: BearyDiaryStarMapViewController?
+    /// C4：当前打开的全量照片页弱引用（morePhotosButtonTapped 内赋值，
+    /// dismiss 后自动置空）。详情编辑/删除/可见性变化由容器扇到本页
+    /// applyEditedEntry/removeDeletedEntry 时，本页再按 id 转发给照片页——
+    /// 容器不持有照片页（与地图/星图同款）。
+    private weak var presentedPhotosVC: BearyProfilePhotosViewController?
     /// 景深背景新页的 EdgeDismiss 强持有（仅窄屏全屏路用，见 presentDepthBackgroundPicker）。
     private var depthPickerEdgeDismiss: BearyEdgeDismissController?
     /// Plus 页的 EdgeDismiss 强持有（仅窄屏全屏路用，见 presentPlusPage）。
@@ -6743,6 +6753,17 @@ class BearyProfileViewController: UIViewController {
         return tableView.cellForRow(at: IndexPath(row: row, section: 0))
     }
 
+    /// 照片墙来源的详情返回锚点：问照片页要该篇首张照片的视口位置；
+    /// 照片页不在栈上时返回 nil（关闭时不恢复）。
+    func photosDetailReturnAnchor(for entryId: String) -> CGFloat? {
+        presentedPhotosVC?.detailReturnAnchor(for: entryId)
+    }
+
+    /// 照片墙来源的详情关闭恢复：把该篇首张照片放回打开时的视口位置。
+    func restorePhotosDetailReturnAnchor(entryId: String, viewportOffset: CGFloat) {
+        presentedPhotosVC?.restoreDetailReturnAnchor(entryId: entryId, viewportOffset: viewportOffset)
+    }
+
     /// 详情关闭时把该篇放回打开时的视口位置；已在原位（±1pt）或不在展示行里时不动。
     func restoreDetailReturnAnchor(entryId: String, viewportOffset: CGFloat) {
         guard let row = displayedEntries.firstIndex(where: { $0.id == entryId }) else { return }
@@ -7669,11 +7690,18 @@ class BearyProfileViewController: UIViewController {
             isOwnProfileValue: isOwnProfile,
             initialEntries: BearyProfileViewController.sortedDisplayableDiaryEntries(from: photoWallSourceEntries, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend),
             diaryHasMoreValue: photoOverflowEntries.isEmpty ? diaryHasMore : photoOverflowHasMore,
-            onOpenEntryValue: { [weak self] entryValue in self?.onOpenEntry?(entryValue) },
+            onOpenEntryValue: { [weak self] entryValue in
+                if let openFromPhotos = self?.onOpenEntryFromPhotos {
+                    openFromPhotos(entryValue)
+                } else {
+                    self?.onOpenEntry?(entryValue)
+                }
+            },
             isMutualFriendValue: isMutualFriend,
             isMutualFriendProvider: { [weak self] in self?.isMutualFriend ?? false }
         )
         photosVC.modalPresentationStyle = .fullScreen
+        presentedPhotosVC = photosVC
         // r17-C6：返回本页时按日记 ID 重算照片索引（删图/换图后不再显示已删的图）。
         photosVC.onRefreshEntries = { [weak self] in
             guard let self = self else { return (entries: [], hasMore: false) }
@@ -8182,6 +8210,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             savedEntries[index] = patched(savedEntries[index])
             updatedEntry = savedEntries[index]
         }
+        // 照片页网格不显示点赞/收藏数，转发只改其日记模型（灯箱“查看日记”
+        // 用的 Entry 即新值），不重渲照片墙。
+        presentedPhotosVC?.applyInteraction(entryId: entryId, likeCount: likeCount, likedByMe: likedByMe, bookmarkedByMe: bookmarkedByMe, emotes: emotes)
         guard let entry = updatedEntry else { return }
         // 当前展示行在屏内时就地同步（不在当前页签时模型已改，切过去即新值）。
         _ = syncVisibleCell(entry: entry)
@@ -8278,6 +8309,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             // 本页模型里没有本篇（只在溢出集/语料里）：仍转发子页，不动界面。
             presentedMapVC?.applyEditedEntry(entry)
             presentedStarVC?.applyEditedEntry(entry)
+            presentedPhotosVC?.applyEditedEntry(entry)
             return
         }
         // 公开 ↔ 非公开翻转时“公开日记”计数 ±1（header 用 diaryCount；
@@ -8316,6 +8348,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         // 子页转发（在栈上才有，pop 后弱引用已空）。
         presentedMapVC?.applyEditedEntry(entry)
         presentedStarVC?.applyEditedEntry(entry)
+        presentedPhotosVC?.applyEditedEntry(entry)
         guard isViewLoaded else { return }
         if photoWallBaseChanged {
             refreshFooter()
@@ -8345,6 +8378,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         }
         presentedMapVC?.removeDeletedEntry(entryId: entryId)
         presentedStarVC?.removeDeletedEntry(entryId: entryId)
+        presentedPhotosVC?.removeDeletedEntry(entryId: entryId)
         diaryEntries.removeAll { $0.id == entryId }
         likedEntries.removeAll { $0.id == entryId }
         savedEntries.removeAll { $0.id == entryId }
