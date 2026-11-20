@@ -44,6 +44,7 @@ final class BearyLocalNotifications {
 
     private static let permissionRequestedKey = "beary.localNotifications.permissionRequested"
     private static let firstEntryPromptShownKey = "beary.localNotifications.firstEntryPromptShown"
+    private static let legacyDefaultMigrationDoneKey = "beary.localNotifications.legacyDefaultMigrated"
     private static let dailyIdentifier = "beary.local.daily-reminder"
     private static let pastDayIdentifier = "beary.local.past-day"
     private static let limitedPrefix = "beary.local.limited-"
@@ -100,14 +101,35 @@ final class BearyLocalNotifications {
 
     // MARK: - 开关
 
+    /// 开关默认值：无已存值时一律关（2026-11-21 首篇弹窗改法：弹窗只问写作提醒，
+    /// 其余三项不再默认开启，留给用户在设置里按需打开）。已存值一律不动，不重置、
+    /// 不覆盖；老用户之前手动改过的开关保持原样。
     func isEnabled(_ kind: Kind) -> Bool {
-        if UserDefaults.standard.object(forKey: kind.defaultsKey) == nil { return true }
+        if UserDefaults.standard.object(forKey: kind.defaultsKey) == nil { return false }
         return UserDefaults.standard.bool(forKey: kind.defaultsKey)
     }
 
     func setEnabled(_ enabled: Bool, for kind: Kind) {
         UserDefaults.standard.set(enabled, forKey: kind.defaultsKey)
         refreshAll(force: true)
+    }
+
+    /// 一次性迁移（#2076 后补）：旧默认开时代收过提醒的老用户，无已存值时继续收。
+    /// 判定用两个事实：① 弹过首篇弹窗（firstEntryPromptShownKey）；② 当前已授权
+    /// （.authorized／.provisional）。旧弹窗点“好”只请求授权、不写开关值，四项默认开，
+    /// 所以同时满足这两条的老用户就是之前在收提醒的人；没弹过弹窗的新用户、拒绝授权
+    /// 的用户都不符合。只写无已存值的种类；已存值（手动改过开关）一律不动。
+    /// 待发送请求不作判定信号：每日提醒只排当晚一条、到期／留话只在有待办事件时才有
+    /// 待发送，查不到不代表没收过。
+    /// 在 refreshAll 的授权回调里跑：授权状态现成，跑完再读开关；只跑一次（标记键防重复）。
+    private func runLegacyDefaultMigrationIfNeeded(authorizationStatus: UNAuthorizationStatus) {
+        guard !UserDefaults.standard.bool(forKey: Self.legacyDefaultMigrationDoneKey) else { return }
+        UserDefaults.standard.set(true, forKey: Self.legacyDefaultMigrationDoneKey)
+        guard authorizationStatus == .authorized || authorizationStatus == .provisional else { return }
+        guard UserDefaults.standard.bool(forKey: Self.firstEntryPromptShownKey) else { return }
+        for kind in Kind.allCases where UserDefaults.standard.object(forKey: kind.defaultsKey) == nil {
+            UserDefaults.standard.set(true, forKey: kind.defaultsKey)
+        }
     }
 
     // MARK: - 权限
@@ -132,8 +154,10 @@ final class BearyLocalNotifications {
         }
     }
 
-    /// 门槛 4：写完第一篇日记后问一次。先弹自建说明卡，点了「好」再调系统框；
-    /// 系统态已决定（已授权／已拒绝）或卡已弹过，均不再弹。
+    /// 门槛 4：写完第一篇日记后问一次。先弹自建说明卡，点了「开启写作提醒」
+    /// 只开每日 21:00 写作提醒这一项（其余三项仍关，留设置里按需开），再调系统框；
+    /// 点「暂时不用」四项全关，不再问。系统态已决定（已授权／已拒绝）或卡已弹过，
+    /// 均不再弹。
     func promptAfterFirstEntryIfNeeded(from presenter: UIViewController) {
         guard !UserDefaults.standard.bool(forKey: Self.firstEntryPromptShownKey) else { return }
         fetchAuthorizationStatus { [weak self, weak presenter] status in
@@ -142,14 +166,17 @@ final class BearyLocalNotifications {
             DispatchQueue.main.async {
                 UserDefaults.standard.set(true, forKey: Self.firstEntryPromptShownKey)
                 BearyConfirmSheet.show(from: presenter, title: "晚上 9 点提醒你写一句", message: nil, actions: [
-                    BearyConfirmSheet.Action(title: "好", style: .default) { [weak self, weak presenter] in
+                    BearyConfirmSheet.Action(title: "开启写作提醒", style: .default) { [weak self, weak presenter] in
                         guard let self = self, let presenter = presenter else { return }
+                        // 只开刚答应的写作提醒一项；其余三项不动（默认关，设置里按需开）。
+                        self.setEnabled(true, for: .dailyReminder)
                         self.requestAuthorizationIfNeeded {
                             BearyToast.show(in: presenter.view, message: "通知权限未开启，去系统设置里打开才生效", actionTitle: "去设置") { [weak self] in
                                 self?.openSystemSettings()
                             }
                         }
-                    }
+                    },
+                    BearyConfirmSheet.Action(title: "暂时不用", style: .cancel) { }
                 ])
             }
         }
@@ -202,6 +229,8 @@ final class BearyLocalNotifications {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { [weak self] settings in
             guard let self = self else { return }
+            // 一次性迁移先跑：授权状态现成，跑完再读开关（见 runLegacyDefaultMigrationIfNeeded）。
+            self.runLegacyDefaultMigrationIfNeeded(authorizationStatus: settings.authorizationStatus)
             guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
                 self.setLatestAccountId(nil)
                 self.removeAllLocalPending(center: center, generation: gen)
