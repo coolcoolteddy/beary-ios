@@ -45,6 +45,7 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
     private let locatedCity: (country: String, region: String, city: String)?
 
     // 表单状态。
+    private var birthdayYear: Int?
     private var birthdayMonth: Int?
     private var birthdayDay: Int?
     private var selectedCountry: String?
@@ -331,7 +332,7 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         didChoose = true
         let nickname = nicknameField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let resolved = nickname.isEmpty ? "Teddy" : nickname
-        let data = BearyIDCardData(nickname: resolved, birthdayMonth: birthdayMonth, birthdayDay: birthdayDay, country: selectedCountry, region: selectedRegion, city: selectedCity)
+        let data = BearyIDCardData(nickname: resolved, birthdayYear: birthdayYear, birthdayMonth: birthdayMonth, birthdayDay: birthdayDay, country: selectedCountry, region: selectedRegion, city: selectedCity)
         onGenerate?(data)
         dismiss(animated: BearyMotion.animated(true))
     }
@@ -339,7 +340,7 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
     @objc private func skipFormTapped() {
         guard !didChoose else { return }
         didChoose = true
-        let data = BearyIDCardData(nickname: initialNickname, birthdayMonth: nil, birthdayDay: nil, country: nil, region: nil, city: nil)
+        let data = BearyIDCardData(nickname: initialNickname, birthdayYear: nil, birthdayMonth: nil, birthdayDay: nil, country: nil, region: nil, city: nil)
         onSkip?(data)
         dismiss(animated: BearyMotion.animated(true))
     }
@@ -347,7 +348,8 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
     // MARK: - Birthday picker
 
     @objc private func birthdayPickerChanged(_ sender: UIDatePicker) {
-        let components = Calendar.current.dateComponents([.month, .day], from: sender.date)
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: sender.date)
+        birthdayYear = components.year
         birthdayMonth = components.month
         birthdayDay = components.day
         if let month = birthdayMonth, let day = birthdayDay {
@@ -366,9 +368,10 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
             nicknameContainer.layer.borderColor = BearyOnboardingPalette.ink.cgColor
         } else if textField == birthdayField {
             birthdayContainer.layer.borderColor = BearyOnboardingPalette.ink.cgColor
-            // 已有生日时选择器先指到该日；没选过时保持系统默认（今天）。
+            // 已有生日时选择器先指到该日（有年份指到该年，没选过时保持系统默认（今天））。
             if let month = birthdayMonth, let day = birthdayDay {
                 var components = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+                if let year = birthdayYear { components.year = year }
                 components.month = month
                 components.day = day
                 if let date = Calendar.current.date(from: components) {
