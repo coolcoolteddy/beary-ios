@@ -15,7 +15,9 @@ public final class ProfileCoverView: UIView {
     }
 
     private static let artSize = CGSize(width: 1230, height: 385)
-    private let art: [String: UIImage]
+    /// art 图：init 先按原样加载（只建对象不解码，首帧不阻塞）；后台预解码完
+    /// 后在主线程把解码后的图换进来（见 predecodeArt），没解完之前绘制与原来一致。
+    private var art: [String: UIImage]
     /// 底图：后台全幅解码后回填主线程；没到之前 draw() 走 poster 兜底。
     private var backdrop: CGImage?
     private var backdropFrames: [Int: UIImage] = [:]
@@ -92,9 +94,11 @@ public final class ProfileCoverView: UIView {
             names.append("golden-marigold-wreath")
         }
         var images: [String: UIImage] = [:]
+        var urls: [String: URL] = [:]
         for name in names {
             guard let url = Bundle.main.url(forResource: name, withExtension: "png") else { continue }
             images[name] = UIImage(contentsOfFile: url.path)
+            urls[name] = url
         }
         art = images
         super.init(frame: .zero)
@@ -124,6 +128,16 @@ public final class ProfileCoverView: UIView {
             }
             self.setNeedsDisplay()
         }
+        // art 图后台预解码：init 只建 UIImage 对象不解码，首次 draw() 才在主线程
+        // 解码——七夕彩蛋首次展开要一次解 6 张全帧图，那一帧就是毛刺。照底图缓存
+        // 同款做法在后台队列逐张强制解码，解完回主线程换进 art 并重画一次；没解
+        // 完之前绘制与原来一致（bitmap 画未解码图时系统按需解码）。不降画质：
+        // #846 的 720 缩略图方案不恢复。
+        Self.predecodeArt(images: images, urls: urls) { [weak self] decoded in
+            guard let self, !decoded.isEmpty else { return }
+            for (key, image) in decoded { self.art[key] = image }
+            if self.window != nil { self.setNeedsDisplay() }
+        }
     }
 
     /// 景深设置页进页时预热：只解当前已应用主题（个人页封面已在用，多半已缓存）；
@@ -132,6 +146,29 @@ public final class ProfileCoverView: UIView {
     /// 只改加载时机＋内存预算）。
     static func prewarmBackdrops(for themes: [ProfileCoverTheme]) {
         CoverBackdropCache.shared.preload(themes: themes)
+    }
+
+    /// art 图后台预解码队列（串行，与底图缓存同款 qos）。
+    private static let artPredecodeQueue = DispatchQueue(label: "com.beary.cover-art-predecode", qos: .userInitiated)
+
+    /// 后台逐张强制解码 art 图（kCGImageSourceShouldCacheImmediately，与底图
+    /// 缓存 decoded() 同款），解完回主线程交付；单张解码失败只跳过那张，调用方
+    /// 保留原图（bitmap 画未解码图时系统按需解码，原行为不变）。解码后的图沿用
+    /// 原图的 scale／orientation，绘制尺寸与原来一致。
+    private static func predecodeArt(images: [String: UIImage], urls: [String: URL],
+                                     completion: @escaping ([String: UIImage]) -> Void) {
+        artPredecodeQueue.async {
+            var decoded: [String: UIImage] = [:]
+            for (key, url) in urls {
+                guard let original = images[key],
+                      let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                      let cgImage = CGImageSourceCreateImageAtIndex(
+                        source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else { continue }
+                decoded[key] = UIImage(cgImage: cgImage, scale: original.scale, orientation: original.imageOrientation)
+            }
+            let result = decoded
+            DispatchQueue.main.async { completion(result) }
+        }
     }
 
     @available(*, unavailable)
