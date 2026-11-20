@@ -44,6 +44,7 @@ final class BearyLocalNotifications {
 
     private static let permissionRequestedKey = "beary.localNotifications.permissionRequested"
     private static let firstEntryPromptShownKey = "beary.localNotifications.firstEntryPromptShown"
+    private static let legacyDefaultMigrationDoneKey = "beary.localNotifications.legacyDefaultMigrated"
     private static let dailyIdentifier = "beary.local.daily-reminder"
     private static let pastDayIdentifier = "beary.local.past-day"
     private static let limitedPrefix = "beary.local.limited-"
@@ -111,6 +112,24 @@ final class BearyLocalNotifications {
     func setEnabled(_ enabled: Bool, for kind: Kind) {
         UserDefaults.standard.set(enabled, forKey: kind.defaultsKey)
         refreshAll(force: true)
+    }
+
+    /// 一次性迁移（#2076 后补）：旧默认开时代收过提醒的老用户，无已存值时继续收。
+    /// 判定用两个事实：① 弹过首篇弹窗（firstEntryPromptShownKey）；② 当前已授权
+    /// （.authorized／.provisional）。旧弹窗点“好”只请求授权、不写开关值，四项默认开，
+    /// 所以同时满足这两条的老用户就是之前在收提醒的人；没弹过弹窗的新用户、拒绝授权
+    /// 的用户都不符合。只写无已存值的种类；已存值（手动改过开关）一律不动。
+    /// 待发送请求不作判定信号：每日提醒只排当晚一条、到期／留话只在有待办事件时才有
+    /// 待发送，查不到不代表没收过。
+    /// 在 refreshAll 的授权回调里跑：授权状态现成，跑完再读开关；只跑一次（标记键防重复）。
+    private func runLegacyDefaultMigrationIfNeeded(authorizationStatus: UNAuthorizationStatus) {
+        guard !UserDefaults.standard.bool(forKey: Self.legacyDefaultMigrationDoneKey) else { return }
+        UserDefaults.standard.set(true, forKey: Self.legacyDefaultMigrationDoneKey)
+        guard authorizationStatus == .authorized || authorizationStatus == .provisional else { return }
+        guard UserDefaults.standard.bool(forKey: Self.firstEntryPromptShownKey) else { return }
+        for kind in Kind.allCases where UserDefaults.standard.object(forKey: kind.defaultsKey) == nil {
+            UserDefaults.standard.set(true, forKey: kind.defaultsKey)
+        }
     }
 
     // MARK: - 权限
@@ -210,6 +229,8 @@ final class BearyLocalNotifications {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { [weak self] settings in
             guard let self = self else { return }
+            // 一次性迁移先跑：授权状态现成，跑完再读开关（见 runLegacyDefaultMigrationIfNeeded）。
+            self.runLegacyDefaultMigrationIfNeeded(authorizationStatus: settings.authorizationStatus)
             guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
                 self.setLatestAccountId(nil)
                 self.removeAllLocalPending(center: center, generation: gen)
