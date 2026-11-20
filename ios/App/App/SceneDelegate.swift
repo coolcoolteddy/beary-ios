@@ -4017,6 +4017,9 @@ final class BearyChromeViewController: UIViewController {
         self.trashEdgeDismiss = trashEdgeDismiss
         vc.onClose = { [weak self] in self?.dismiss(animated: BearyMotion.animated(true)) }
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
+        // 恢复成功 toast 的「查看日记」：详情盖在回收站 modal 之上，
+        // 关详情后落回回收站（行已移除，位置与返回锚点均不记）。
+        vc.onOpenEntry = { [weak self] entryId in self?.gotoEntry(entryId: entryId) }
         // TR-1（收尾）：恢复/彻底删除后刷新时间线、首页与我页（角标随时间线重拉更新）。
         vc.onRestored = { [weak self] _ in
             self?.timelineVC?.refreshAfterDetailChange()
