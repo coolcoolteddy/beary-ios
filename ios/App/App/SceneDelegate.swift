@@ -78,6 +78,25 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
         completionHandler([.banner, .sound])
     }
 
+    // UNUserNotificationCenterDelegate：点按本地通知时按标识路由（此前只有 willPresent，
+    // 点按只打开 App、不进任何页）。标识解析见 BearyLocalNotifications.route(for:)。
+    // 冷启动锁着时不立即路由：解锁后再继续，且不覆盖已有的 onUnlocked（veil 起播），
+    // 链在它后面；验证未通过一直停在锁屏，路由随解锁回调留着、不丢。
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        defer { completionHandler() }
+        guard let route = BearyLocalNotifications.route(for: response.notification.request),
+              let chrome = window?.rootViewController as? BearyChromeViewController else { return }
+        if BearyAppLockManager.shared.isColdLocked {
+            let previous = BearyAppLockManager.shared.onUnlocked
+            BearyAppLockManager.shared.onUnlocked = { [weak chrome] in
+                previous?()
+                chrome?.openNotificationRoute(route)
+            }
+        } else {
+            chrome.openNotificationRoute(route)
+        }
+    }
+
     // 反馈日志：前后台切换只记固定事件名（不含任何用户内容）。
     func sceneDidBecomeActive(_ scene: UIScene) {
         BearyAppLog.event("app foreground")
@@ -2250,6 +2269,35 @@ final class BearyChromeViewController: UIViewController {
         guard let route = BearyRoute.parse(url: url) else { return false }
         navigator.open(route)
         return true
+    }
+
+    /// 通知点按路由（SceneDelegate.didReceive 转交）：按标识解析出的目标导航。
+    /// 各目标复用已有入口（编辑器／单篇／时间线选日／我页留话卡），游客门控由各入口自带。
+    func openNotificationRoute(_ route: BearyLocalNotifications.NotificationRoute) {
+        switch route {
+        case .dailyReminder:
+            navigator.open(.editor)
+        case .limitedEntry(let entryId):
+            gotoEntry(entryId: entryId)
+        case .pastSelfMessage(let messageId):
+            openPastSelfMessage(messageId: messageId)
+        case .pastDay(let dayKey):
+            let key = dayKey ?? BearyBeijingDay.dayKey(ofMs: Int(Date().timeIntervalSince1970 * 1000)) ?? ""
+            guard !key.isEmpty else { return }
+            showPage(.timeline)
+            timelineVC?.openDay(key: key)
+        }
+    }
+
+    /// 通知点按 → 旧留言：进我页“去年的对话”卡，滚到该留话所在的串。
+    /// 留话找不着（本地行已不在）时只进我页，不 toast。
+    private func openPastSelfMessage(messageId: String) {
+        guard let userId = SessionManager.shared.currentUser?.id else { return }
+        let chainId = PastSelfStore(userId: userId).loadAll().first { $0.id == messageId }?.chainId
+        showPage(.me)
+        if let chainId = chainId {
+            profileVC?.scrollToPastSelfDelivery(chainId: chainId)
+        }
     }
 
     // MARK: - 原生页接线（批一：原生栏行为、动画、无障碍标签一律不动；页切换只在原生页之间）

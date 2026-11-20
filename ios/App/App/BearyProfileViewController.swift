@@ -1583,6 +1583,9 @@ class BearyProfileViewController: UIViewController {
     /// 送达卡当前栈内各节的链 id（与 pastSelfDeliveryStack 子视图一一对应，
     /// 供刚到期单节定点插入 / 原位替换时算位置；切目标时与展开态一起复位）。
     private var pastSelfDeliveredChainIds: [String] = []
+    /// 通知点按 → 旧留言：节还没渲染出来（资料未回）时先记下的链 id，
+    /// renderPastSelfDelivery 下次渲染到它时再滚一次；找不到也不再等。
+    private var pendingPastSelfDeliveryChainId: String?
 
     /// 随机漫步卡：点卡片进详情；「换一篇」只换卡片不跳转（文字按钮——
     /// 洗牌图标官方包缺失，见本批缺图标清单，不用 icon_refresh 顶替）。
@@ -5352,6 +5355,26 @@ class BearyProfileViewController: UIViewController {
         return (messages, latestDelivered, origin, visibility, isAnswered, waiting)
     }
 
+    /// 通知点按 → 旧留言：滚到“去年的对话”卡里该链的那一节。
+    /// 节还没渲染出来（资料未回）时先记下，renderPastSelfDelivery 下次渲染到它时再滚一次。
+    func scrollToPastSelfDelivery(chainId: String) {
+        if scrollToPastSelfDeliverySection(chainId: chainId) { return }
+        pendingPastSelfDeliveryChainId = chainId
+    }
+
+    /// 按链 id 找节并滚到可见；节不在栈里返回 false（调用方决定要不要等下次渲染）。
+    @discardableResult
+    private func scrollToPastSelfDeliverySection(chainId: String) -> Bool {
+        guard let index = pastSelfDeliveredChainIds.firstIndex(of: chainId),
+              index < pastSelfDeliveryStack.arrangedSubviews.count else { return false }
+        let sectionView = pastSelfDeliveryStack.arrangedSubviews[index]
+        view.layoutIfNeeded()
+        tableView.layoutIfNeeded()
+        let rect = sectionView.convert(sectionView.bounds, to: tableView)
+        tableView.scrollRectToVisible(rect, animated: !UIAccessibility.isReduceMotionEnabled)
+        return true
+    }
+
     private func renderPastSelfDelivery(visible: [Entry]) {
         // 09：重建前记下正在输入的串与选区——各节重建会把输入框摘出
         // 窗口（丢焦点），重建后凭缓存的同一个框恢复。
@@ -5418,6 +5441,14 @@ class BearyProfileViewController: UIViewController {
             compose.textView.selectedRange = NSRange(location: location, length: min(selection.length, max(length - location, 0)))
         }
         pastSelfReplyComposeViews = pastSelfReplyComposeViews.filter { sectionChainIds.contains($0.key) }
+        // 通知点按 → 旧留言：本轮已建好节，待滚的链到了就滚一次（下一 runloop，
+        // 等脚部高度落位）；找不到也不再等，停在“我页”即是兜底。
+        if let pending = pendingPastSelfDeliveryChainId {
+            pendingPastSelfDeliveryChainId = nil
+            DispatchQueue.main.async { [weak self] in
+                self?.scrollToPastSelfDeliverySection(chainId: pending)
+            }
+        }
     }
 
     // MARK: 过去的自己对话 —— 回前台 / 时间显著变化时复核送达日
