@@ -29,14 +29,13 @@ import Foundation
 //
 // 失败静默：任一页失败、401、游标缺失即中止，不弹 toast、不阻塞，下次触发
 // 重跑。第四轮增量 01：分批持久化取代整批提交——每页拉完即按日并入落盘
-// （不攒全量进内存、不设页数/篇数上限），失败时只记失败态、已落盘的有效页
+// （不攒全量进内存、不设页数/篇数上限），失败时只记 partial、已落盘的有效页
 // 保留，下次 kick 续跑（同 epoch 且其间无本地写盘时用进度文件里的游标接着
 // 拉，否则从头重跑）；带删除行为的收尾（精确集合重写、清旧日文件）只在整轮
 // 拉完且完整性校验通过后做。第四轮增量 04：entries 缺字段（nil）绝不等同
-// 于空列表、分组跳过数大于 0 即中止并记失败态。第四轮增量 11：kick 时捕获
+// 于空列表、分组跳过数大于 0 即中止并记 partial。第四轮增量 11：kick 时捕获
 // authEpoch 与任务代次，分页回调与最终提交前双重校验，旧任务回包丢弃。
-// 第四轮审计 15：静默仍是设计意图，另加只读状态模型（见 BearySyncState）
-// 供设置页展示四态，失败只改状态、不弹打扰性提示。
+// 第四轮审计 15：静默仍是设计意图，失败只记 partial、不弹打扰性提示。
 //
 // 登出：同步桶按草稿口径保留（现行登出只清当前账号图片缓存，草稿与搜索桶均保留；
 // 同步桶只含本账号自己的日记，与草稿同级敏感度；下次登录全量覆盖写入，
@@ -56,33 +55,6 @@ import Foundation
 //   - 提交守卫（5-26）：与日记腿同款写盘代际——同步拉取开始后发生过任何
 //     trash.json 写盘，本次提交跳过保旧盘（不抹同步途中删帖进桶的记录），下次 kick 重跑。
 
-/// 第四轮审计 15：只读同步状态模型——设置页据此展示四态，不弹打扰性提示。
-/// 状态由日记腿与回收站腿共同决定（取较差者）：任一腿在途即正在同步，
-/// 任一腿失败即同步失败，两腿都已提交成功才算已同步。
-enum BearySyncState {
-    /// 使用本地内容：本启动尚未同步成功过（首启、未登录、或同步从未跑完）。
-    case usingLocal
-    /// 正在同步：任一腿在途。
-    case syncing
-    /// 已同步：日记腿与回收站腿本启动都已提交成功。
-    case synced
-    /// 同步失败：任一腿失败（拉取失败、写盘失败、超限、游标缺失），下次触发重跑。
-    case failed
-
-    var displayText: String {
-        switch self {
-        case .usingLocal: return "使用本地内容"
-        case .syncing: return "正在同步"
-        case .synced: return "已同步"
-        case .failed: return "同步失败"
-        }
-    }
-}
-
-extension Notification.Name {
-    /// 第四轮审计 15：同步状态变迁广播（主线程发出；设置页据此刷新同步状态行）。
-    static let bearySyncStateDidChange = Notification.Name("bearySyncStateDidChange")
-}
 
 /// 登录后全量同步编排：后台翻页拉取 + 整批提交，不碰任何 UI。
 final class BearyEntrySync {
@@ -94,13 +66,6 @@ final class BearyEntrySync {
     // 回收站腿（与日记腿同批触发、各自独立成败：日记已同步不影响回收站重试，反之亦然）。
     private var trashSyncingAccountId: Int?
     private var trashSyncedAccountIdThisLaunch: Int?
-    /// 第四轮审计 15：各腿失败账号（拉取失败、写盘失败、超限、游标缺失时记；
-    /// 重跑 kick 与提交成功时清）。只读状态模型据此算失败态。
-    private var diaryFailedAccountId: Int?
-    private var trashFailedAccountId: Int?
-    /// 第四轮审计 15：只读同步状态快照（主线程读）——设置页据此展示四态。
-    /// 各腿状态变迁时由同步串行队列算好、dispatch 到主线程更新并广播。
-    private(set) var currentSyncState: BearySyncState = .usingLocal
     /// 日记写盘代际：每次日记落盘写（发布/编辑 upsert、删帖、日加载写透）
     /// 都在同步串行队列上 +1；全量同步开始时记下基线，提交前比对——
     /// 拉取开始后发生过写盘即旧快照已过期，跳过本次提交保旧盘，下次 kick 重跑。
@@ -247,28 +212,6 @@ final class BearyEntrySync {
         }
     }
 
-    /// 第四轮审计 15：按当前账号算组合状态并推到主线程快照＋广播。
-    /// 在同步串行队列上调用；切号后到达的旧账号状态不覆盖新账号快照。
-    private func publishCombinedSyncState(for accountId: Int) {
-        let state: BearySyncState
-        if syncingAccountId == accountId || trashSyncingAccountId == accountId {
-            state = .syncing
-        } else if diaryFailedAccountId == accountId || trashFailedAccountId == accountId {
-            state = .failed
-        } else if syncedAccountIdThisLaunch == accountId && trashSyncedAccountIdThisLaunch == accountId {
-            state = .synced
-        } else {
-            state = .usingLocal
-        }
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            guard SessionManager.shared.currentUser?.id == accountId else { return }
-            guard self.currentSyncState != state else { return }
-            self.currentSyncState = state
-            NotificationCenter.default.post(name: .bearySyncStateDidChange, object: nil)
-        }
-    }
-
     /// 5-27 重跑入口：前台恢复 / 时间线下拉刷新时调本方法即可补一次 kick。
     /// 内部去重已覆盖：已同步（synced 标志）→ 不跑；在途 → 不重复；
     /// 曾被写盘守卫挡下（未置 synced）→ 重跑。无登录态时不做任何事。
@@ -288,8 +231,6 @@ final class BearyEntrySync {
             // 日记腿（守卫口径与原来完全一致：同一启动同一账号只跑一次，在途不重复）。
             if self.syncingAccountId != userId && self.syncedAccountIdThisLaunch != userId {
                 self.syncingAccountId = userId
-                // 重跑清掉上次的失败态，状态行先显“正在同步”。
-                self.diaryFailedAccountId = nil
                 // 提交守卫基线：记下拉取开始时的写盘代际。
                 self.diarySyncStartSequence[userId] = self.diaryWriteSequence
                 // r17-C2：换盘中途崩溃的恢复（活盘缺失且 .bak 存在即搬回）。
@@ -324,7 +265,6 @@ final class BearyEntrySync {
             // 回收站腿：同批触发，失败不拖日记腿，下次 kick 独立重跑。
             if self.trashSyncingAccountId != userId && self.trashSyncedAccountIdThisLaunch != userId {
                 self.trashSyncingAccountId = userId
-                self.trashFailedAccountId = nil
                 // 5-26 提交守卫基线：记下拉取开始时的回收站写盘代际。
                 self.trashSyncStartSequence[userId] = BearyTrashSyncStore.currentWriteSequence()
                 // 第四轮增量 11：同日记腿，捕获 authEpoch 与任务代次。
@@ -348,7 +288,6 @@ final class BearyEntrySync {
                 self.trashRuns[userId] = trashRun
                 self.fetchTrashPage(run: trashRun)
             }
-            self.publishCombinedSyncState(for: userId)
         }
     }
 
@@ -359,8 +298,6 @@ final class BearyEntrySync {
             self.syncedAccountIdThisLaunch = nil
             self.trashSyncingAccountId = nil
             self.trashSyncedAccountIdThisLaunch = nil
-            self.diaryFailedAccountId = nil
-            self.trashFailedAccountId = nil
             self.diarySyncStartSequence.removeAll()
             self.trashSyncStartSequence.removeAll()
             // 第四轮增量 11：退出时令全部在途同步任务整体失效——已发请求的
@@ -369,11 +306,6 @@ final class BearyEntrySync {
             self.trashRuns.removeAll()
             self.diarySyncIdentity.removeAll()
             self.trashSyncIdentity.removeAll()
-            DispatchQueue.main.async {
-                guard self.currentSyncState != .usingLocal else { return }
-                self.currentSyncState = .usingLocal
-                NotificationCenter.default.post(name: .bearySyncStateDidChange, object: nil)
-            }
         }
     }
 
@@ -429,20 +361,20 @@ final class BearyEntrySync {
                       self.diarySyncIdentity[run.accountId] == run.identity,
                       BearyAPI.shared.authEpoch == run.identity.epoch else { return }
                 // 退出清理代次：快照已在退出时被清掉——本轮回包不得再写盘
-                // 重建，丢弃旧任务（不记失败态，下次 kick 重跑）。
+                // 重建，丢弃旧任务（不记 partial，下次 kick 重跑）。
                 if self.purgeGeneration(forAccountId: run.accountId) != run.purgeGeneration {
                     self.abandonDiaryRun(run, failed: false)
                     return
                 }
                 switch result {
                 case .failure:
-                    // 静默中止：只记失败态供设置页展示，不弹提示，下次触发重跑；
+                    // 静默中止：只记 partial，不弹提示，下次触发重跑；
                     // 已落盘的有效页保留，进度文件在，下次 kick 可续跑。
                     self.abandonDiaryRun(run, failed: true)
                 case .success(let list):
                     // 第四轮增量 04：entries 缺字段绝不能等同于空列表——服务端
                     // 恒下发数组（worker listPayload），nil 说明回包形状异常，
-                    // 中止本次同步并记失败态，不清缓存、不记已同步。
+                    // 中止本次同步并记 partial，不清缓存、不记已同步。
                     guard let page = list.entries else {
                         NSLog("[BearyEntrySync] diary page entries missing, aborting sync")
                         self.abandonDiaryRun(run, failed: true)
@@ -450,7 +382,7 @@ final class BearyEntrySync {
                     }
                     let grouped = BearyEntrySyncStore.groupByDay(page)
                     // 第四轮增量 04：有条目无法归日即终止本次同步——不做带删除
-                    // 行为的收尾、不记已同步、记失败态；已落盘的页是有效服务端
+                    // 行为的收尾、不记已同步、记 partial；已落盘的页是有效服务端
                     // 数据的 additive 合并，保留。
                     if grouped.skippedCount > 0 {
                         NSLog("[BearyEntrySync] diary page has %d ungroupable entries, aborting sync", grouped.skippedCount)
@@ -458,7 +390,7 @@ final class BearyEntrySync {
                         return
                     }
                     // 写盘代际守卫：拉取开始后发生过本地写盘，旧快照已过期——
-                    // 停止续拉、不做收尾、不记已同步（不记失败态，下次 kick 重跑）。
+                    // 停止续拉、不做收尾、不记已同步（不记 partial，下次 kick 重跑）。
                     if let start = self.diarySyncStartSequence[run.accountId], start != self.diaryWriteSequence {
                         self.abandonDiaryRun(run, failed: false)
                         return
@@ -491,7 +423,7 @@ final class BearyEntrySync {
                         }
                         self.fetchDiaryPage(run: run)
                     } else {
-                        // 满页却无游标（末条缺 createdAt/id）：无法续翻，中止记失败态。
+                        // 满页却无游标（末条缺 createdAt/id）：无法续翻，中止记 partial。
                         NSLog("[BearyEntrySync] diary page has no cursor for next page, aborting sync")
                         self.abandonDiaryRun(run, failed: true)
                     }
@@ -501,7 +433,7 @@ final class BearyEntrySync {
     }
 
     /// 收尾（第四轮增量 01）：把每见日重写为本次拉到的精确集合、清未见日文件、
-    /// 再做完整性校验；任一步失败即不记已同步、记失败态。收尾前在主线程做
+    /// 再做完整性校验；任一步失败即不记已同步、记 partial。收尾前在主线程做
     /// 账号守卫、再验一次 epoch 与任务代次。
     private func finishDiaryRun(_ run: DiarySyncRun) {
         // 代际守卫（同 meSeq 口径）：登出/切号后到达的旧同步不提交。
@@ -567,13 +499,7 @@ final class BearyEntrySync {
                 self.diarySyncIdentity[run.accountId] = nil
                 BearyEntrySyncStore.clearDiaryProgress(accountId: run.accountId)
                 if self.syncingAccountId == run.accountId { self.syncingAccountId = nil }
-                if ok {
-                    self.diaryFailedAccountId = nil
-                    self.syncedAccountIdThisLaunch = run.accountId
-                } else {
-                    self.diaryFailedAccountId = run.accountId
-                }
-                self.publishCombinedSyncState(for: run.accountId)
+                if ok { self.syncedAccountIdThisLaunch = run.accountId }
             }
         }
     }
@@ -590,9 +516,9 @@ final class BearyEntrySync {
         return total == run.totalFetched
     }
 
-    /// 中止一次日记同步：清在途标志与运行态。failed=true 记失败态（设置页可见，
-    /// 下次 kick 重跑，进度文件保留可续跑）；failed=false 是陈旧任务丢弃，
-    /// 不记失败态。已落盘的页是有效服务端数据的 additive 合并，保留。
+    /// 中止一次日记同步：清在途标志与运行态。failed=true 记 partial
+    /// （下次 kick 重跑，进度文件保留可续跑）；failed=false 是陈旧任务丢弃，
+    /// 不记 partial。已落盘的页是有效服务端数据的 additive 合并，保留。
     /// 调用方须在同步串行队列上；非当前任务（已被新一轮替换）时不做任何事。
     private func abandonDiaryRun(_ run: DiarySyncRun, failed: Bool) {
         guard diaryRuns[run.accountId] === run else { return }
@@ -601,19 +527,17 @@ final class BearyEntrySync {
         diarySyncStartSequence[run.accountId] = nil
         if syncingAccountId == run.accountId { syncingAccountId = nil }
         if failed {
-            diaryFailedAccountId = run.accountId
             // r17-C2：分页/写盘中断记 partial（盘上是上一份完整版本，仍可读）。
             self.markDiaryPartial(accountId: run.accountId)
         }
-        publishCombinedSyncState(for: run.accountId)
     }
 
     /// 回收站翻页链（第四轮增量 01：分批持久化——每页拉完即并入 trash.json，
     /// 不攒全量进内存，不设页数/篇数上限；与日记腿同款失败口径：任一页失败、
-    /// 游标缺失即中止记失败态，已落盘的有效页保留，下次触发重跑）。
+    /// 游标缺失即中止记 partial，已落盘的有效页保留，下次触发重跑）。
     /// R16-13：TrashPage 解码器已收紧——items / hasMore 缺失即抛解码失败，
     /// 经 request 走 .failure(.decoding) 到本函数的 .failure 分支静默中止
-    /// 记失败态，不再把异常回包当成“回收站为空”覆写本地快照；服务端恒下发
+    /// 记 partial，不再把异常回包当成“回收站为空”覆写本地快照；服务端恒下发
     /// 两字段（worker GET /beary/api/trash），缺失只会是回包形状异常。
     private func fetchTrashPage(run: TrashSyncRun) {
         BearyAPI.shared.fetchTrash(before: run.before, beforeId: run.beforeId) { [weak self] result in
@@ -624,21 +548,21 @@ final class BearyEntrySync {
                       self.trashSyncIdentity[run.accountId] == run.identity,
                       BearyAPI.shared.authEpoch == run.identity.epoch else { return }
                 // 退出清理代次：快照已在退出时被清掉——本轮回包不得再写盘
-                // 重建，丢弃旧任务（不记失败态，下次 kick 重跑）。
+                // 重建，丢弃旧任务（不记 partial，下次 kick 重跑）。
                 if self.purgeGeneration(forAccountId: run.accountId) != run.purgeGeneration {
                     self.abandonTrashRun(run, failed: false)
                     return
                 }
                 switch result {
                 case .failure:
-                    // 静默中止：只记失败态供设置页展示，不弹提示，下次触发重跑。
+                    // 静默中止：只记 partial，不弹提示，下次触发重跑。
                     self.abandonTrashRun(run, failed: true)
                 case .success(let page):
                     let items = page.items
                     // 审计新一轮 #4：写盘代际守卫与读-改-写同锁——锁外的预检拦不住
                     // 检查与写盘之间的主线程删帖进桶（旧快照会覆盖刚进桶的条目），
                     // 故基线直接传进 store，锁内验代际：过期报 stale 按过期放弃，
-                    // 写盘失败报 failed 记失败态。无基线记录时不拦截（只走正常提交）。
+                    // 写盘失败报 failed 记 partial。无基线记录时不拦截（只走正常提交）。
                     let mergeOutcome = BearyTrashSyncStore.mergeTrashPage(accountId: run.accountId, items: items, unchangedSince: self.trashSyncStartSequence[run.accountId])
                     if mergeOutcome == .stale {
                         self.abandonTrashRun(run, failed: false)
@@ -667,7 +591,7 @@ final class BearyEntrySync {
                         }
                         self.fetchTrashPage(run: run)
                     } else {
-                        // 满页却无游标（末条缺 deletedAt）：无法续翻，中止记失败态。
+                        // 满页却无游标（末条缺 deletedAt）：无法续翻，中止记 partial。
                         NSLog("[BearyEntrySync] trash page has no cursor for next page, aborting sync")
                         self.abandonTrashRun(run, failed: true)
                     }
@@ -677,7 +601,7 @@ final class BearyEntrySync {
     }
 
     /// 收尾（第四轮增量 01）：把 trash.json 重写为本次拉到的精确集合、再做
-    /// 完整性校验；任一步失败即不记已同步、记失败态。收尾前在主线程做账号
+    /// 完整性校验；任一步失败即不记已同步、记 partial。收尾前在主线程做账号
     /// 守卫、再验一次 epoch 与任务代次。
     private func finishTrashRun(_ run: TrashSyncRun) {
         // 代际守卫（同日记腿）：登出/切号后到达的旧同步不提交。
@@ -706,7 +630,7 @@ final class BearyEntrySync {
                 // 重跑；无基线记录时不拦截（只走正常提交）。
                 // 审计新一轮 #4：代际检查须与收尾的读-改-写同锁——收尾是过滤型
                 // 写盘，锁外预检拦不住的窗口会把同步途中删帖进桶的条目滤掉，
-                // 故基线传进 store 锁内验（stale 按过期放弃，failed 记失败态）。
+                // 故基线传进 store 锁内验（stale 按过期放弃，failed 记 partial）。
                 let baseline = self.trashSyncStartSequence[run.accountId]
                 self.trashSyncStartSequence[run.accountId] = nil
                 let finalizeOutcome = BearyTrashSyncStore.finalizeTrash(accountId: run.accountId, seenIds: run.seenIds, unchangedSince: baseline)
@@ -730,13 +654,7 @@ final class BearyEntrySync {
                 self.trashSyncIdentity[run.accountId] = nil
                 BearyTrashSyncStore.clearTrashProgress(accountId: run.accountId)
                 if self.trashSyncingAccountId == run.accountId { self.trashSyncingAccountId = nil }
-                if ok {
-                    self.trashFailedAccountId = nil
-                    self.trashSyncedAccountIdThisLaunch = run.accountId
-                } else {
-                    self.trashFailedAccountId = run.accountId
-                }
-                self.publishCombinedSyncState(for: run.accountId)
+                if ok { self.trashSyncedAccountIdThisLaunch = run.accountId }
             }
         }
     }
@@ -757,11 +675,9 @@ final class BearyEntrySync {
         trashSyncStartSequence[run.accountId] = nil
         if trashSyncingAccountId == run.accountId { trashSyncingAccountId = nil }
         if failed {
-            trashFailedAccountId = run.accountId
             // r17-C2：分页/写盘中断记 partial（桶里是上一份完整版本，仍可读）。
             self.markTrashPartial(accountId: run.accountId)
         }
-        publishCombinedSyncState(for: run.accountId)
     }
 }
 

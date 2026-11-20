@@ -15,9 +15,6 @@ enum BearyEmoteImages {
     private static let missingDarkKeysLock = NSLock()
     private(set) static var missingDarkKeys: Set<String> = []
 
-    /// C3：深色资产缺失通知（userInfo ["key": String]），容器可订阅后上报；
-    /// 与日志、missingDarkKeys 记录三路上报，缺一不可谓“静默”。
-    static let darkAssetMissingNotification = Notification.Name("BearyEmoteDarkAssetMissing")
 
     static func image(for key: String, dark: Bool) -> UIImage? {
         if dark {
@@ -25,11 +22,10 @@ enum BearyEmoteImages {
                 return darkImage
             }
             // C3：深色缺失不得静默回退浅色版蒙混（浅色版为深色线条稿，
-            // 深色底上对比度骤降）。首次缺失时日志 + 记录 + 通知三路上报，
+            // 深色底上对比度骤降）。首次缺失时日志 + 记录两路上报，
             // 并返回 nil（调用方显示空白占位），不让浅色版冒充深色版；
             // 同一 key 只上报一次，避免列表滚动时日志刷屏。
-            // 查-插在同一把锁内原子完成；日志与通知放锁外，避免观察者
-            // 回调 image(for:) 时重入同一把锁。
+            // 查-插在同一把锁内原子完成；日志放锁外。
             missingDarkKeysLock.lock()
             let isFirstMissing = !missingDarkKeys.contains(key)
             if isFirstMissing {
@@ -38,7 +34,6 @@ enum BearyEmoteImages {
             missingDarkKeysLock.unlock()
             if isFirstMissing {
                 NSLog("[BearyEmoteImages] missing dark asset for key=%@", key)
-                NotificationCenter.default.post(name: darkAssetMissingNotification, object: nil, userInfo: ["key": key])
             }
             return nil
         }

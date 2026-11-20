@@ -731,11 +731,6 @@ public final class BearyEmoteView: UIView {
         }
     }
 
-    /// ②预热入口（供调用方在启动/首屏出现后显式调用；首个 BearyEmoteView 创建时也会自动调度一次，
-    /// 同一外观只调度一次，重复调用为空操作）。只解析当前外观版本，不同时预热深浅两版。
-    public static func prewarmCommonEmotes(dark: Bool) {
-        Self.schedulePrewarm(dark: dark)
-    }
 
     /// ②预热调度：先占位标记防重复，再在 utility 队列上延迟 1 秒顺序解析。
     /// 延迟是给按需解析让路：首个视图自己的解析走 userInitiated 队列先跑，1 秒内大概率已写缓存，

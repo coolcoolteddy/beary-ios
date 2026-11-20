@@ -5010,14 +5010,6 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
     }
 }
 
-/// 未读角标 label：左右 padding 各 5（intrinsic 宽 = 文字宽 + 10，下限 17）、高固定 17。
-/// UILabel 本身无内容边距，故用子类改 intrinsicContentSize；角标数据逻辑不动。
-private final class BearyBadgeLabel: UILabel {
-    override var intrinsicContentSize: CGSize {
-        let base = super.intrinsicContentSize
-        return CGSize(width: max(17, base.width + 10), height: 17)
-    }
-}
 
 // 94 包：淡入 + 上移模态过渡（他人主页/设置页/回收站/诊断页共用，
 // 与草稿箱入场同款手感：0.26s easeOut 淡入上移；只做动画不改帧，
@@ -5312,47 +5304,5 @@ enum DiagFile {
             writesSinceTrim = 0
             try? FileManager.default.removeItem(at: url)
         }
-    }
-}
-
-
-/// iCity 私密单篇占位页：仅一句居中文案，不带标题/封面/时间/作者名；
-/// 顶栏只留一个关闭钮（ chrome，不属日记内容）。由容器以子页方式挂载，非 modal。
-final class BearyPrivatePlaceholderViewController: UIViewController {
-    var onClose: (() -> Void)?
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = BearyColors.bg
-        let closeButton = BearyHit44Button(type: .system)
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        // 全屏页左上角统一左箭头：此前是文字“关闭”，现改 icon_back
-        // 图标钮（左上角位置与 44pt 热区不动，行为仍是 onClose）。
-        closeButton.setTitle(nil, for: .normal)
-        closeButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
-        closeButton.tintColor = BearyColors.ink
-        closeButton.accessibilityLabel = "返回"
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.text = "该日记已设为私密"
-        label.font = UIFont.systemFont(ofSize: 15)
-        label.textColor = BearyColors.gray
-        label.textAlignment = .center
-        view.addSubview(closeButton)
-        view.addSubview(label)
-        NSLayoutConstraint.activate([
-            closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
-            closeButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            label.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
-        ])
-    }
-
-    @objc private func closeTapped() {
-        onClose?()
     }
 }

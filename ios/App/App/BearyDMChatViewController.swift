@@ -1986,21 +1986,10 @@ private final class BearyDMMessageCell: UITableViewCell {
         onRetry = nil
     }
 
-    /// 气泡时间口径与通知行一致（相对时间：刚刚/X 分钟前/X 小时前/X 天前；2026-11-11 定版带空格，取代 2026-11-05 无空格口径）。
-    /// 新一轮 01：几秒内的时钟偏差仍算“刚刚”；明显未来（> 5 秒）不误报为刚发送，
-    /// 改走绝对时间显示。
-    private static func relativeTimeText(ms: Int?) -> String {
-        guard let msValue = ms else { return "" }
-        let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
-        let diff = Date().timeIntervalSince(date)
-        if diff < -5 { return BearyText.timeString(ms: msValue) }
-        // 相对档位复用带空格共享实现（规范 §12）；共享实现无未来分支，故未来守卫留本地。
-        return BearyVisibilityText.publishedRelativeString(publishedAtMs: msValue) ?? ""
-    }
 
     /// 第三轮审计 1：相对时间 + 未确认后缀的统一组合（建行与分钟刷新共用）。
     private func formattedTimeText(ms: Int?, showUnconfirmed: Bool) -> String {
-        let timeText = Self.relativeTimeText(ms: ms)
+        let timeText = BearyVisibilityText.relativeTimeText(ms: ms)
         return showUnconfirmed ? timeText + " · 未确认" : timeText
     }
 
