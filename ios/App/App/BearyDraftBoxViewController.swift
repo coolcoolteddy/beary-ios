@@ -1713,6 +1713,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     /// U18：把手下滑关闭——下滑跟手，超过 80pt 或快速下滑时走 closeBox 同动画；
     /// 否则统一弹簧（0.26s／damping 0.7＋松手速度）弹回原位，减动效直接落位（不播回弹动画）。遮罩点按关闭不受影响。
     /// 2026-10-30 抓手批：上滑按统一口径阻尼微移后回弹，不扩高、不关闭。
+    /// 2026-11-19 改：上滑不动（弹窗贴底，底部不空），见 BearySheetDrag.offset。
     @objc private func handlePanGesture(_ gesture: UIPanGestureRecognizer) {
         guard !isDismissing else { return }
         let translation = gesture.translation(in: view)
