@@ -17,6 +17,11 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     var onRequireLogin: (() -> Void)?
     /// 顶栏返回点按：容器接线回好友段。
     var onBack: (() -> Void)?
+    /// 失败 toast 转投：嵌入消息页时容器接过去投容器 view（子页 view 不进
+    /// 层级，原 view 不可见）；独立页不设，投本页 view。
+    var toastOverride: ((String) -> Void)?
+    /// 左滑删除在途对方 id 集合：同一会话只发一次 POST，失败回滚前不重复删。
+    private var deletingConversationPeerIds: Set<Int> = []
 
     private let tableView = UITableView(frame: .zero, style: .plain)
     // C5：空态/失败态走统一 BearyStateView（旧 emptyLabel 退役；文案与下拉重试不变，
@@ -657,6 +662,86 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
 
     // MARK: - Table
 
+    /// 左滑删除单个会话（消息页会话行与独立会话列表页共用）：乐观从列表
+    /// 移除＋快照通知＋缓存写盘，服务端确认；失败按最后消息时间倒序插回
+    /// 原位＋toast 提示。服务端删的只是我这一侧的会话（对方记录不动）；
+    /// 成功后本地库里该对方的消息一并清掉，否则本地并入会把行带回来。
+    /// 无对方 id 的行不删；同一会话在途只发一次；切号后到达的旧回包丢弃、
+    /// 不回滚新账号。completion 在主线程回 true（服务端确认）/ false（失败已回滚）。
+    func deleteConversation(peerId: Int, completion: ((Bool) -> Void)? = nil) {
+        guard let index = conversations.firstIndex(where: { $0.peer?.id == peerId }) else {
+            completion?(false)
+            return
+        }
+        if deletingConversationPeerIds.contains(peerId) {
+            completion?(false)
+            return
+        }
+        deletingConversationPeerIds.insert(peerId)
+        let conv = conversations[index]
+        let uid = SessionManager.shared.currentUser?.id
+        conversations.remove(at: index)
+        updateEmptyState()
+        // 嵌入消息页时本表不在窗口里：只改模型＋快照通知，容器 diff 动画
+        // 负责可见行；直接调 deleteRows 会因本表未载入行数而崩溃，离屏时
+        // 用 reloadData 保行数与模型一致（之后再打开独立页不越界）。
+        if tableView.window != nil {
+            tableView.deleteRows(at: [IndexPath(row: index, section: 0)], with: BearyMotion.animated(true) ? .fade : .none)
+        } else {
+            tableView.reloadData()
+        }
+        notifyDMConversationsMergeChanged()
+        if let uid = uid {
+            BearyDMConversationsCache.save(bucket: "\(uid)", conversations: conversations)
+        }
+        let requestEpoch = BearyAPI.shared.authEpoch
+        BearyAPI.shared.deleteDMConversation(userId: peerId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.deletingConversationPeerIds.remove(peerId)
+                if requestEpoch != BearyAPI.shared.authEpoch || !SessionManager.shared.isLoggedIn {
+                    completion?(false)
+                    return
+                }
+                switch result {
+                case .success:
+                    // 服务端删成功后清本地库：否则仅本地有消息的会话会在下次
+                    // 合并时从 BearyDMStore 重新并入、行又回来。
+                    BearyDMStore.removeConversation(accountId: uid, peerId: peerId)
+                    completion?(true)
+                case .failure:
+                    if strongSelf.conversations.firstIndex(where: { $0.peer?.id == peerId }) == nil {
+                        let insertAt = strongSelf.conversations.firstIndex(where: { ($0.lastAt ?? 0) < (conv.lastAt ?? 0) }) ?? strongSelf.conversations.count
+                        strongSelf.conversations.insert(conv, at: insertAt)
+                        strongSelf.updateEmptyState()
+                        if strongSelf.tableView.window != nil {
+                            strongSelf.tableView.insertRows(at: [IndexPath(row: insertAt, section: 0)], with: BearyMotion.animated(true) ? .fade : .none)
+                        } else {
+                            strongSelf.tableView.reloadData()
+                        }
+                        strongSelf.notifyDMConversationsMergeChanged()
+                        if let uid = uid {
+                            BearyDMConversationsCache.save(bucket: "\(uid)", conversations: strongSelf.conversations)
+                        }
+                    }
+                    BearyHaptics.rejectionWarning()
+                    BearySoundPlayer.play(.refuseBonk)
+                    strongSelf.showToast(message: "删除失败，请重试")
+                    completion?(false)
+                }
+            }
+        }
+    }
+
+    /// 失败 toast：嵌入消息页时投容器 view，独立页投本页 view。
+    private func showToast(message: String) {
+        if let override = toastOverride {
+            override(message)
+            return
+        }
+        BearyToast.show(in: view, message: message)
+    }
+
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         // 第十轮 #20：首拉无数据时出 3 行会话骨架（不冒充具体会话）；
         // 落定后按真实会话数出行，骨架行不与真实行叠加。
@@ -697,6 +782,22 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         onOpenChat?(conversations[indexPath.row])
+    }
+
+    /// 左滑删除单个会话：只给「删除」一个红色动作（卡片本身不在本页）。
+    /// 骨架行与无对方 id 的行不删；在途重复删由编排层拦。
+    func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        guard !showingSkeleton,
+              indexPath.row < conversations.count,
+              let peerId = conversations[indexPath.row].peer?.id else { return nil }
+        let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
+            guard let self = self else { done(false); return }
+            BearyHaptics.press()
+            self.deleteConversation(peerId: peerId) { _ in }
+            done(true)
+        }
+        delete.accessibilityLabel = "删除这个会话"
+        return UISwipeActionsConfiguration(actions: [delete])
     }
 }
 

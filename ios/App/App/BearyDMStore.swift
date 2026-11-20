@@ -266,6 +266,29 @@ enum BearyDMStore {
         }
     }
 
+    /// 左滑删除会话：清掉该对方的全部本地消息（键即对方 id 字符串，与
+    /// persistMessages 同口径）。只在服务端删成功后调；损坏时不写盘、
+    /// 不动原文件（调用方不得把失败当成功，列表回滚与本地库一致）。
+    /// 待发送消息不动（属聊天页发送流，删会话不静默丢未发出的消息）。
+    static func removeConversation(accountId: Int?, peerId: Int, completion: ((Bool) -> Void)? = nil) {
+        ioQueue.async {
+            guard let accountId = accountId else {
+                DispatchQueue.main.async { completion?(false) }
+                return
+            }
+            let (base, corrupt) = cachedAll(accountId: accountId)
+            guard !corrupt else {
+                DispatchQueue.main.async { completion?(false) }
+                return
+            }
+            var all = base
+            all.removeValue(forKey: "\(peerId)")
+            memoryIndex[accountId] = all
+            let saved = saveAll(all, accountId: accountId)
+            DispatchQueue.main.async { completion?(saved) }
+        }
+    }
+
     /// 该会话本地消息（按 id 升序；无 id/无 senderId 的脏行跳过）。
     /// 异步读盘：文件 I/O 走后台串行队列，结果回主线程。
     /// 第七轮 #4：整库取自内存索引，不再每次读盘解码。
