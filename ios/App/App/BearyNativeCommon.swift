@@ -2315,6 +2315,23 @@ enum BearyText {
         "snowycabin", "santasleigh", "twinchristmasbells", "woolenmittens",
         "mistletoe", "nutcracker", "hotcocoa", "christmaspostbox",
     ]
+    /// 心情统计用白名单：前 32 只熊脸（旧 entry.mood 的取值域，也是服务端
+    /// MOOD_KEYS 的 32 key）。节日 200 款是装饰贴纸，不进心情统计。
+    static let baseMoodKeys: Set<String> = Set(bearMoodKeys.prefix(32))
+    /// 正文首枚心情记号：取正文里第一个白名单内的 [mood:<key>] 记号；
+    /// 白名单外的记号（未知 key、节日贴纸）不计，继续往后找。每篇只算一票。
+    /// 与渲染侧同款正则（inlineAttributedText），不另起一套。
+    static func firstMoodKey(in plain: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: "\\[mood:([a-z]+)\\]|\\[gif:([a-z0-9]+)\\]", options: []) else { return nil }
+        let ns = plain as NSString
+        for match in regex.matches(in: plain, options: [], range: NSRange(location: 0, length: ns.length)) {
+            if match.range(at: 1).location != NSNotFound {
+                let key = ns.substring(with: match.range(at: 1))
+                if baseMoodKeys.contains(key) { return key }
+            }
+        }
+        return nil
+    }
     static let inlineMoodKeyAttribute = NSAttributedString.Key(rawValue: "BearyInlineMoodKey")
     static func inlineMoodToken(for key: String) -> String? {
         guard bearMoodKeys.contains(key) else { return nil }
