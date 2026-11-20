@@ -997,12 +997,6 @@ final class BearyTimelineCell: UITableViewCell {
     var onTapImages: (([String], Int, CGRect?, UIImage?) -> Void)?
     /// 九宫格入口点按：容器接线（Plus 门控 + 开网格都在容器侧，本处只转发）。
     var onNineGridTapped: ((UIButton) -> Void)?
-    private let actsStack = UIStackView()
-    /// 2026-10-29 Li 定编辑态口径：无图标、只留文字；冲突清单第 4 条取消
-    /// 15 分钟锁后，本行只剩可点按的“编辑”二字（本行唯一的编辑入口，
-    /// 旧图标编辑钮已摘；倒计时文案与“编辑已结束”态随锁一并取消）。
-    private let editStatusGroup = UIStackView()
-    private let editTextButton = BearyHit44Button(type: .custom)
     // 时间线卡片 ⋯ 菜单钮（2026-10-29 改版）：卡片顶行右端（meta 行末），
     // 官方 icon_more 横向三点 21pt 灰色，44pt 热区由 BearyHit44Button 的 28 帧扩后保证；
     // 点开菜单：编辑内容／修改权限／删除（原 meta 行末地球切换钮与右下角删除钮均已摘除，
@@ -1128,16 +1122,6 @@ final class BearyTimelineCell: UITableViewCell {
         // 不导航的守卫仍在 quoteTapped 内，不凭渲染快照放行。
         quoteCard.onTapped = { [weak self] in self?.quoteTapped() }
         quoteCard.onExpansionChanged = { [weak self] in self?.notifyQuoteExpanded() }
-
-        // 2026-10-29 编辑态口径：可点按的“编辑”二字（12pt 灰字按钮，
-        // BearyHit44Button 扩后热区 44；点按即进编辑器，与旧图标编辑钮同一回调）。
-        editTextButton.translatesAutoresizingMaskIntoConstraints = false
-        editTextButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
-        editTextButton.setTitle("编辑", for: .normal)
-        editTextButton.setTitleColor(BearyColors.gray, for: .normal)
-        editTextButton.addTarget(self, action: #selector(editTapped), for: .touchUpInside)
-        editTextButton.bearyAddPressFeedback()
-        editTextButton.isHidden = true
         moreButton.translatesAutoresizingMaskIntoConstraints = false
         // 2026-10-29 改版：⋯ 菜单钮接替原 meta 行末地球钮的位置，
         // 21pt 灰色图标、28×28 帧（BearyHit44Button 扩后热区仍 44）。
@@ -1151,24 +1135,11 @@ final class BearyTimelineCell: UITableViewCell {
         moreButton.widthAnchor.constraint(equalToConstant: 28).isActive = true
         moreButton.addTarget(self, action: #selector(moreTapped), for: .touchUpInside)
         moreButton.bearyAddPressFeedback()
-        actsStack.translatesAutoresizingMaskIntoConstraints = false
-        actsStack.axis = .horizontal
-        actsStack.spacing = 14
-        actsStack.alignment = .center
-        let actsSpacer = UIView()
-        // 2026-10-29 改版：操作行只剩编辑态文字组（旧图标编辑钮已摘，编辑只走
-        // 文字“编辑”）；删除钮已摘除，删除收进卡片右上角 ⋯ 菜单。
-        editStatusGroup.axis = .horizontal
-        editStatusGroup.spacing = 8
-        editStatusGroup.alignment = .center
-        editStatusGroup.addArrangedSubview(editTextButton)
-        actsStack.addArrangedSubview(editStatusGroup)
-        actsStack.addArrangedSubview(actsSpacer)
 
         // 批 E 补漏：位置行落点 = 图片条 → 引用卡 → 位置行 → 足行（操作行一带），与卡片
         // “图片条之后、操作行之前”同序；图片条后的动态间距（configure 内按有图
         // 9 / 无图 0）现为图片条→引用卡间距，位置行隐藏时栈自动塌掉不留空行。
-        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleLabel, contentLabel, thumbsScrollView, nineGridWrapView, quoteCard, timelineLocationStack, footStack, actsStack])
+        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleLabel, contentLabel, thumbsScrollView, nineGridWrapView, quoteCard, timelineLocationStack, footStack])
         cardStack.translatesAutoresizingMaskIntoConstraints = false
         cardStack.axis = .vertical
         cardStack.spacing = 0
@@ -1416,15 +1387,6 @@ final class BearyTimelineCell: UITableViewCell {
         // 80 包 A4/A2-3④：错峰改 cell.alpha/transform，对称复位，防复用残留。
         alpha = 1
         transform = .identity
-        // 按压缩放残留复位：通用按压反馈把按钮 imageView 缩到 .84，
-        // 触摸序列异常打断时回弹没跑到，复用会把 .84 带到下一行。
-        editTextButton.imageView?.transform = .identity
-        editStatusGroup.alpha = 1
-        editStatusGroup.accessibilityElementsHidden = false
-        editStatusGroup.isHidden = false
-        editTextButton.isHidden = true
-        editTextButton.alpha = 1
-        editTextButton.isEnabled = true
         setTimelineLineEdges(isFirstInDay: true, isLastInDay: true)
         currentEntry = nil
         titleLabel.text = nil
@@ -1439,7 +1401,6 @@ final class BearyTimelineCell: UITableViewCell {
         quoteCard.clear()
         quoteCard.isHidden = true
         pillIconView.image = nil
-        actsStack.isHidden = true
         for imageView in thumbImageViews {
             imageView.bearySetImage(url: nil)
             imageView.removeFromSuperview()
@@ -1877,7 +1838,6 @@ final class BearyTimelineCell: UITableViewCell {
         // 私密精确、公开精确 + 橙色提示两态，他人态由 display 兜底）。
         refreshTimelineLocationRow(entry: entry)
         footStack.isHidden = true
-        actsStack.isHidden = true
         // 与 metaStack 在 configure 开头先清后加一致：foot 行只靠
         // prepareForReuse 清理时，configure 重跑会把足行与 spacer 叠加。
         for arranged in footStack.arrangedSubviews {
@@ -1916,7 +1876,7 @@ final class BearyTimelineCell: UITableViewCell {
                 for item in footItems {
                     footStack.addArrangedSubview(item)
                 }
-                // 足行吸宽 spacer（与 actsStack 的 actsSpacer 同款做法）：
+                // 足行吸宽 spacer：
                 // footStack 全宽 321pt，足项本身抗拉伸 required 后，多余宽度
                 // 只能被这个 defaultLow 的空视图吃掉，足项贴左、按本宽显示。
                 // spacer 仍在 footStack 内，prepareForReuse 的全清循环会一并移除，
@@ -1927,19 +1887,6 @@ final class BearyTimelineCell: UITableViewCell {
                 footStack.addArrangedSubview(footSpacer)
                 footStack.isHidden = false
             }
-        } else {
-            // TL-3 私密行操作行（2026-10-29 口径）：只剩编辑态文字组（倒计时 + “编辑”）；
-            // 删除已收进卡片右上角 ⋯ 菜单。删除本身不由本页发请求：
-            // 走容器回调，容器按网页 confirmDelete 流程弹“确认删除？/ 删除后会移入回收站，
-            // 30 天内可在「回收站」里恢复。”再调删除接口。
-            updateEditRow(entry: entry)
-            actsStack.isHidden = false
-        }
-        // iCity：公开行与私密行共用操作行——公开行在计数足行之外同样出操作行
-        //（只剩编辑态文字组，编辑永久可改；删除走 ⋯ 菜单，公开/私密均可）。
-        if published {
-            updateEditRow(entry: entry)
-            actsStack.isHidden = false
         }
     }
 
@@ -1960,21 +1907,6 @@ final class BearyTimelineCell: UITableViewCell {
         onTapImages?(keys, index, sender.view.map { $0.convert($0.bounds, to: nil) }, (sender.view as? UIImageView)?.image)
     }
 
-    /// 冲突清单第 4 条：编辑永久可改——本行只剩可点按的“编辑”二字（本人篇才有），
-    /// 不再算倒计时、不再翻转“编辑已结束”；⋯ 菜单钮常驻 meta 行末。
-    private func updateEditRow(entry: Entry) {
-        guard entry.isMine == true else {
-            editStatusGroup.isHidden = true
-            return
-        }
-        editStatusGroup.isHidden = false
-        editStatusGroup.alpha = 1
-        editStatusGroup.accessibilityElementsHidden = false
-        editTextButton.isHidden = false
-        editTextButton.alpha = 1
-        editTextButton.isEnabled = true
-    }
-
     @objc private func moreTapped() {
         guard let entry = currentEntry else { return }
         onMoreEntry?(entry, moreButton)
@@ -1993,12 +1925,6 @@ final class BearyTimelineCell: UITableViewCell {
         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
         shake.duration = BearyMotion.screen
         moreButton.layer.add(shake, forKey: "bearyDenyShake")
-    }
-
-
-    @objc private func editTapped() {
-        guard let entry = currentEntry else { return }
-        onEditEntry?(entry)
     }
 
     @objc private func quoteTapped() {
