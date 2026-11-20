@@ -926,6 +926,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let topBar = UIView()
     private let cancelButton = UIButton(type: .system)
     private let titleLabel = UILabel()
+    /// 限时态副标题：新建＋限时档时显在主标题下方，文案「24 小时后自动私密」；
+    /// 小字弱色（captionFont 12 regular、BearyColors.gray），其余态隐藏。
+    /// 顶栏高 60 不动，两行塞进现有高度（主标题上移量见 titleLabelCenterYConstraint）。
+    private let limitedSubtitleLabel = UILabel()
+    /// 顶栏主标题垂直居中约束：限时态上移 9pt 给副标题留位，其余态回 0。
+    private var titleLabelCenterYConstraint: NSLayoutConstraint?
     // 109：发布 pill 改 BearyHit44Button——视觉高仍钉死 36、圆角 18 与文案不动，
     // 仅 point(inside:) 把热区扩到 44（同栏其余三钮均为 44；此前普通钮高 36，
     // 上下各缺 4pt 可点区）。不要把视觉高改成 44。
@@ -1745,6 +1751,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 看不见），草稿 pill（required）与可见性钮（下文 required）与发布显式宽
         // 全数保全；常态宽度够用时标题完整显示，布局语义不变。
         titleLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
+        // 限时态副标题：只在新建＋限时档时显（见 refreshTopTitle），小字弱色、
+        // 左缘与主标题齐平；默认隐藏，不占布局（无底锚，隐藏即不影响顶栏高）。
+        limitedSubtitleLabel.text = "24 小时后自动私密"
+        limitedSubtitleLabel.font = BearyDynamicType.captionFont()
+        limitedSubtitleLabel.adjustsFontForContentSizeCategory = true
+        limitedSubtitleLabel.textColor = BearyColors.gray
+        limitedSubtitleLabel.textAlignment = .left
+        limitedSubtitleLabel.numberOfLines = 1
+        limitedSubtitleLabel.lineBreakMode = .byTruncatingTail
+        limitedSubtitleLabel.isHidden = true
+        limitedSubtitleLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
         // 发布：墨底白字 pill + 发送图标（网页 obtn p）；禁用时按网页口径：无底灰字。
         publishButton.setTitle(isEditMode ? "保存" : "发布", for: .normal)
         // 按钮普查：36 高固定容器，标题走 cappedFont（上限 20，工厂紧凑款同款口径），
@@ -1774,7 +1791,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             publishRingView.widthAnchor.constraint(equalToConstant: 18),
             publishRingView.heightAnchor.constraint(equalToConstant: 18),
         ])
-        for v in [cancelButton, titleLabel, publishButton, topSeparator] {
+        for v in [cancelButton, titleLabel, limitedSubtitleLabel, publishButton, topSeparator] {
             v.translatesAutoresizingMaskIntoConstraints = false
             topBar.addSubview(v)
         }
@@ -1810,6 +1827,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         visibilityButton.translatesAutoresizingMaskIntoConstraints = false
         visibilityButton.isHidden = isEditMode
         topBar.addSubview(visibilityButton)
+        // 主标题垂直居中约束单独存：限时态上移 9pt（见 refreshTopTitle），其余态回 0。
+        let titleCenterY = titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor)
+        titleCenterY.isActive = true
+        titleLabelCenterYConstraint = titleCenterY
         NSLayoutConstraint.activate([
             cancelButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             cancelButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
@@ -1817,8 +1838,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             cancelButton.heightAnchor.constraint(equalToConstant: 44),
             // v6-2：标题靠左——左侧钉死叉叉右侧 8pt，右侧仍离草稿钮 8pt 不等式，窄屏先截断标题。
             titleLabel.leadingAnchor.constraint(equalTo: cancelButton.trailingAnchor, constant: 8),
-            titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: draftPillButton.leadingAnchor, constant: -8),
+            // 限时态副标题：左缘与主标题齐平、钉在主标题下方 2pt，右缘同主标题；
+            // 隐藏时无底锚，不撑顶栏高。
+            limitedSubtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            limitedSubtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
+            limitedSubtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: draftPillButton.leadingAnchor, constant: -8),
             // 顶栏右上角三钮间距（样式规格定版）：钮间 gap 统一 8（草稿—可见性、可见性—发布、
             // 编辑态草稿—发布同口径）；右沿留白仍 16，与左沿关闭钮对称口径不变。
             visibilityButton.trailingAnchor.constraint(equalTo: publishButton.leadingAnchor, constant: -8),
@@ -3096,6 +3121,25 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
+    /// 顶栏标题随可见性走：新建＋限时态时变两行——主标题「限时日记」上移、
+    /// 下方小字副标题「24 小时后自动私密」；切回其他档或编辑模式时恢复单行
+    /// 「新日记」／「编辑日记」。顶栏高 60 不变，两行塞进现有高度。
+    /// 调用点：refreshVisibilityButton 末尾（一切改旗标的路径都经它：
+    /// 菜单选档、草稿恢复、清空重开、胶囊确认／清除）。
+    private func refreshTopTitle() {
+        titleLabel.text = !isEditMode && isEphemeral ? "限时日记" : (isEditMode ? "编辑日记" : "新日记")
+        syncLimitedSubtitle()
+    }
+
+    /// 副标题显隐与主标题上移量只跟当前可见性走（与标题文本的还原路径无关）：
+    /// 限时态显副标题、主标题上移 9pt；其余态藏副标题、主标题回中。
+    /// 引用面板关闭时标题文本按打开前存的那句还原，本函数另行同步副标题。
+    private func syncLimitedSubtitle() {
+        let limited = !isEditMode && isEphemeral
+        limitedSubtitleLabel.isHidden = !limited
+        titleLabelCenterYConstraint?.constant = limited ? -9 : 0
+    }
+
     /// 顶栏可见性钮图标：锁＝私密、双人锁＝仅好友（官方 icon_friends_lock）、地球＝公开、
     /// 限时＝官方 icon_limited
     /// （熊头 + 外围虚线环，#162 落位的 imageset，#272 删限时行时误删、
@@ -3117,6 +3161,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         visibilityButton.menu = makeVisibilityMenu()
         // 任务2：选档变化时准备发布行 chip 选中态与限时注行同步变。
         refreshPublishVisibilityRow()
+        refreshTopTitle()
     }
 
     @objc private func didTapQuoteTab(_ sender: UIButton) {
