@@ -5,8 +5,10 @@ import Network
 //
 // 四档开放、纯文字：无图片按钮、无引用、无群聊、无撤回/编辑。
 // 档位由对方设置决定；无权限时页顶横幅提示并禁用输入（见 dmNotAllowed）。
-// 进入会话即调 dm/read 清未读；对方发来新消息时沿用现有列表刷新口径
-//（下拉刷新 + 重进），不另搭长连接、不搭推送。
+// 标已读只在用户实际看到最新消息时：进页首拉到底、回到底部、点按“新消息”
+// pill 跳到底、或手动滚到底后才调 dm/read；读旧消息时回包带了新到的对方
+// 消息只出 pill、不标已读，未读一直留到用户真正看到那条消息。
+// 对方发来新消息时沿用现有列表刷新口径（下拉刷新 + 重进），不另搭长连接、不搭推送。
 // 已读回执不显示给对方：read_at 只用于自己未读计数，本页不画任何已读态。
 // 档位不允许时 history/send 回 403 dm_not_allowed：页顶横幅提示并禁用输入；
 // 拉黑 403 仍走原“会话已关闭”路径，不泄露拉黑方向。
@@ -70,7 +72,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private var relativeTimeTimer: Timer?
     /// 60 秒轮询（通知页 pollTimer 同款口径）：聊天页打开时对方发来的新消息
     /// 实时出现，不用退出重进。每拍走 loadLatest()——在途守卫、锚点保位、
-    /// 新消息 pill、重标已读全走原有路径；无变化时只换同内容，不闪不丢位。
+    /// 新消息 pill 全走原有路径；标已读只在已到底部时（见 markReadIfNeeded），
+    /// 读旧消息时回包不标；无变化时只换同内容，不闪不丢位。
     /// 第二批体验检查第 9 项：连续失败指数退避——loadLatest 连续失败时
     /// 下一拍拉长（60 秒→120 秒→300 秒封顶），成功一次即复位回 60 秒；
     /// 弱网（NWPathMonitor 报不满足）时停轮询，恢复后立即重拉一次。
@@ -128,6 +131,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private var loadFailed = false
     private var sessionClosed = false
     private var didMarkRead = false
+    /// 标已读请求在途（防到底触发点多路并发重复 POST：成功置 didMarkRead，
+    /// 失败清在途，下次到底再试）。
+    private var markReadInFlight = false
     /// 本页私信本地文件的账号（进页时捕获，切号后仍写原账号文件，不串号）。
     /// 只固定写盘位置不够：拉取用的当前会话在切号后已是新号，旧回包仍会
     /// 按原账号写盘——故本页另钉住会话代次（见 identityGeneration），
@@ -858,6 +864,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     @objc private func newMessagePillTapped() {
         setNewMessagePillVisible(false)
         scrollToBottomIfNeeded()
+        // 点按 pill 即跳到底：最新消息已在眼前，标已读以当时最新对方消息 id 为准。
+        markReadIfNeeded()
     }
 
     /// A6：新消息入口——只在用户读旧消息（不在底部）且回包带了新到的对方消息时出现；
@@ -1205,20 +1213,26 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }
     }
 
+    /// 标已读唯一入口：只在用户实际看到最新消息时调（回包当刻已到底部、
+    /// 点按 pill 跳到底、手动滚到底）；读旧消息时不调，未读一直留到用户
+    /// 真正看到最新对方消息。标哪条以调用时最新对方消息 id 为准。
     private func markReadIfNeeded() {
-        guard let userId = peer.id, !didMarkRead else { return }
+        guard let userId = peer.id, !didMarkRead, !markReadInFlight else { return }
         guard ensureIdentityCurrent() else { return }
         // 审计：已读失败不再“本页永不重试”——失败时不置 didMarkRead，
-        // 下次 loadLatest 成功时再试，并 toast 说明（重试入口即下拉刷新）。
+        // 下次回到到底部时再试，并 toast 说明（重试入口即下拉刷新后回到到底部）。
         // 标哪条：调用时最新对方消息 id；成功才记，下次以此为准判断有无新消息。
         // 对方判定用本页账号（storeAccountId），不用当前登录账号——切号后
         // 当前账号已变，仍按旧号比对才会把新号的消息当成对方消息误标。
         let markId = messages.last(where: { $0.senderId != nil && $0.senderId != storeAccountId })?.id
         let requestAccountId = SessionManager.shared.currentUser?.id
         let requestEpoch = BearyAPI.shared.authEpoch
+        markReadInFlight = true
         BearyAPI.shared.markDMRead(userId: userId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                // 请求已结束：在途复位（身份过期也复位，免旧回包把本页的下次标已读锁死）。
+                self.markReadInFlight = false
                 // 标已读回包同样校验身份：切号后的旧回包不得把已读态记到新号会话上。
                 guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else { return }
                 switch result {
@@ -1266,7 +1280,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }
     }
 
-    /// 最新页：服务端按 id 倒序下发，展示时反转为正序；成功后清未读。
+    /// 最新页：服务端按 id 倒序下发，展示时反转为正序；成功后只在已到底部时清未读
+    ///（读旧消息时回包不标已读，等用户点 pill 或手动滚到底再标，见 applyMerged 尾巴）。
     /// 根因补全：后端 history 只给 from_me、不给 sender_id，入库前须把
     /// senderId 补全（自己发 = 本人 id，否则 = 对方 id），否则本地 store
     /// 会把无 senderId 的行当脏行跳过，整页历史永远显空态。
@@ -1422,13 +1437,17 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                             // 读旧消息且有新到的对方消息：出带计数的入口，点按才跳。
                             self.showNewMessagePill(count: self.pendingNewMessageCount + freshNewCount)
                         }
-                        // 对方发了新消息时重标已读：以最新一条对方消息 id 为准，
-                        // 变了才放行再标（旧 didMarkRead 本页只标一次，之后的新消息永不清未读）。
+                        // 新到的对方消息只放行再标、不立即标：didMarkRead 复位后，
+                        // 标已读只在用户实际在底部时发生（本回包已到底即下面标；
+                        // 读旧消息时 pill 已出、未读保留，等用户点 pill 或手动滚到底再标）。
                         let latestPeerId = self.messages.last(where: { $0.senderId != nil && $0.senderId != self.storeAccountId })?.id
                         if let latestPeerId = latestPeerId, latestPeerId != self.lastMarkedReadMessageId {
                             self.didMarkRead = false
                         }
-                        self.markReadIfNeeded()
+                        if atBottomNow {
+                            // 已在底部：最新消息就在眼前，以当时最新对方消息 id 为准标已读。
+                            self.markReadIfNeeded()
+                        }
                         // M3 待补刷新：在途期间攒下的那次刷新现在补跑（发送成功撞上
                         // 在途最新页、或下拉刷新撞上在途最新页，都靠它不丢）。
                         if self.refreshQueued {
@@ -1892,6 +1911,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         // 回到底部附近即收起“新消息”pill（程序化跟随到底同样收起）。
         if isNearBottom() {
             setNewMessagePillVisible(false)
+            // 手动滚到底：最新消息已在眼前，标已读（首拉未完成前不标，
+            // 免本地旧内容先把服务端未读清掉）。
+            if !firstLoadPending {
+                markReadIfNeeded()
+            }
         }
         // 翻旧失败浮标只在顶部附近有意义：滑离顶部即收起，回到顶部滚动本身即重试。
         if olderLoadFailed && scrollView.contentOffset.y > 120 {
