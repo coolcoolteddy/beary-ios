@@ -235,20 +235,26 @@ final class BearyLimitedPillView: UILabel {
         return rect.inset(by: UIEdgeInsets(top: -insets.top, left: -insets.left, bottom: -insets.bottom, right: -insets.right))
     }
 
-    /// 存活“限时”虚线边／到期“私密”实线边；边色恒为蓝（CGColor 快照，
-    /// 主题切换时重刷）。
-    func configure(text: String, expired: Bool) {
+    /// 上次 configure 给的边色（CGColor 是快照，浅深切换时重刷用；
+    /// 字色是动态 UIColor，UILabel 自己跟主题走，不用存）。
+    private var lastBorderColor: UIColor = BearyColors.blue
+
+    /// 四档 pill（2026-11-20 Li 定，卡片／详情四档都显）：字色／边色／虚实边由调用方按档位给。
+    /// 边色是 CGColor 快照，主题切换时重刷（与原有限时 pill 同口径）。
+    func configure(text: String, textColor: UIColor, borderColor: UIColor, dashed: Bool) {
         self.text = text
-        layer.borderColor = BearyColors.blue.cgColor
-        if expired {
-            layer.borderWidth = 1.5
+        self.textColor = textColor
+        lastBorderColor = borderColor
+        layer.borderColor = borderColor.cgColor
+        if dashed {
+            layer.borderWidth = 0
+            dashedLayer.strokeColor = borderColor.cgColor
+            dashedLayer.isHidden = false
+        } else {
             // 实线边：用 borderWidth 走实线；虚线用 dashedLayer 才画得出，
             // 故虚线态另挂 dashedLayer（见下）。
+            layer.borderWidth = 1.5
             dashedLayer.isHidden = true
-        } else {
-            layer.borderWidth = 0
-            dashedLayer.strokeColor = BearyColors.blue.cgColor
-            dashedLayer.isHidden = false
         }
         setNeedsLayout()
     }
@@ -270,7 +276,8 @@ final class BearyLimitedPillView: UILabel {
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        layer.borderColor = BearyColors.blue.cgColor
-        dashedLayer.strokeColor = BearyColors.blue.cgColor
+        // 边色按上次 configure 的档位重刷（四档 pill：公开橙／仅好友墨不再恒蓝）。
+        layer.borderColor = lastBorderColor.cgColor
+        dashedLayer.strokeColor = lastBorderColor.cgColor
     }
 }

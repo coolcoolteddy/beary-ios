@@ -3692,6 +3692,18 @@ enum BearyVisibility {
         return BearyEphemeral.isEffectivelyPublic(entry) ? "public" : "private"
     }
 
+    /// 作者行可见性 pill（2026-11-20 Li 定：卡片／详情四档都显）：
+    /// 限时存活期显“限时”（蓝字蓝边、虚线边），到期限时篇按私密算（蓝字蓝边、实线边）；
+    /// 仅好友墨字墨边、公开橙边（字走 deepOrangeText——橙字浅色下对比度约 2.2:1，
+    /// 与引用面板 pill、引导演示 pill 同口径）、私密蓝字蓝边，均为实线边。
+    /// 与时间线 meta 行四档灰图标、搜索组文字 pill、引用面板四态 pill 同口径。
+    static func pill(for entry: Entry) -> (text: String, textColor: UIColor, borderColor: UIColor, dashed: Bool) {
+        if BearyEphemeral.isLive(entry) { return ("限时", BearyColors.blue, BearyColors.blue, true) }
+        if entry.isFriendsOnly { return ("仅好友", BearyColors.ink, BearyColors.ink, false) }
+        if BearyEphemeral.isEffectivelyPublic(entry) { return ("公开", BearyColors.deepOrangeText, BearyColors.orange, false) }
+        return ("私密", BearyColors.blue, BearyColors.blue, false)
+    }
+
     static func isPublicValue(_ visibility: String) -> Bool { visibility == "public" }
 
     /// 同档判定（四处“修改权限”入口共用）：目标档等于当前档即无变化，
