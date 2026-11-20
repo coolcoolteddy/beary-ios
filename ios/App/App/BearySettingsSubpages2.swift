@@ -1,4 +1,5 @@
 import UIKit
+import UserNotifications
 
 // ===== 设置页重组（2026-11-19 七组版）：新子页 =====
 // 主题／语言／存储／数据用量／隐私／安全／通知各一页，
@@ -918,10 +919,16 @@ final class BearySecuritySettingsViewController: BearySettingsSubpageViewControl
 // MARK: - 通知子页
 
 /// 通知：写日记提醒、限时日记到期、那年今日、留给明年的自己四个开关＋
-/// 通知权限未开启提示（设置主页同款逻辑整段搬过来）。
+/// 权限提示行（设置主页同款逻辑整段搬过来）：系统尚未询问时显示“开启通知后生效”，
+/// 已拒绝时显示“通知权限未开启”；已授权时不显示。
 final class BearyNotificationSettingsViewController: BearySettingsSubpageViewController {
     private var notificationSwitches: [BearyLocalNotifications.Kind: UISwitch] = [:]
     private var hintRow: UIView?
+    private var hintButton: UIButton?
+    private var hintTitleLabel: UILabel?
+    private var hintDetailLabel: UILabel?
+    /// 提示行最近一次读到的系统权限状态（hintTapped 按它分流：未询问走授权请求，已拒绝走系统设置）。
+    private var hintStatus: UNAuthorizationStatus?
 
     init() { super.init(title: "通知") }
 
@@ -959,7 +966,14 @@ final class BearyNotificationSettingsViewController: BearySettingsSubpageViewCon
         let hintButton = UIButton(type: .custom)
         hintButton.accessibilityLabel = "通知权限未开启，去系统设置里打开"
         hintButton.addTarget(self, action: #selector(hintTapped), for: .touchUpInside)
-        let hintRowView = bearySettingsTappableRow(content: bearySettingsNavContent(title: "通知权限未开启", detail: "去系统设置里打开"), button: hintButton)
+        let hintContent = bearySettingsNavContent(title: "通知权限未开启", detail: "去系统设置里打开")
+        // 提示行文案随系统权限状态变（未询问／已拒绝两档）：留住标题与详情 label，
+        // refreshHintRow 只改文字，不重建行。
+        let hintLabels = hintContent.arrangedSubviews.compactMap { $0 as? UILabel }
+        hintTitleLabel = hintLabels.first
+        hintDetailLabel = hintLabels.last
+        self.hintButton = hintButton
+        let hintRowView = bearySettingsTappableRow(content: hintContent, button: hintButton)
         hintRowView.isHidden = true
         hintRow = hintRowView
         rows.append(hintRowView)
@@ -971,25 +985,75 @@ final class BearyNotificationSettingsViewController: BearySettingsSubpageViewCon
         guard kinds.indices.contains(sender.tag) else { return }
         let kind = kinds[sender.tag]
         BearyLocalNotifications.shared.setEnabled(sender.isOn, for: kind)
-        if sender.isOn {
-            BearyLocalNotifications.shared.fetchAuthorizationStatus { [weak self] status in
-                guard status == .denied else { return }
+        guard sender.isOn else { return }
+        BearyLocalNotifications.shared.fetchAuthorizationStatus { [weak self] status in
+            guard let self = self else { return }
+            switch status {
+            case .denied:
+                // 已拒绝过：只引导去系统设置，不再弹系统框。
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
                     BearyToast.show(in: self.view, message: "通知权限未开启，去系统设置里打开才生效")
+                    self.refreshHintRow()
                 }
+            case .notDetermined:
+                // 系统还没问过：在这里请求授权；用户答完（允许／拒绝）后刷新提示行。
+                BearyLocalNotifications.shared.requestAuthorizationIfNeeded(
+                    onDenied: { [weak self] in
+                        guard let self = self else { return }
+                        BearyToast.show(in: self.view, message: "通知权限未开启，去系统设置里打开才生效")
+                    },
+                    onCompleted: { [weak self] _ in
+                        DispatchQueue.main.async { [weak self] in self?.refreshHintRow() }
+                    }
+                )
+            case .authorized, .provisional, .ephemeral:
+                break
+            @unknown default:
+                break
             }
         }
     }
 
     @objc private func hintTapped() {
-        BearyLocalNotifications.shared.openSystemSettings()
+        switch hintStatus {
+        case .notDetermined:
+            // 系统还没问过：点提示行直接请求授权（与打开开关同口径）。
+            BearyLocalNotifications.shared.requestAuthorizationIfNeeded(
+                onDenied: { [weak self] in
+                    guard let self = self else { return }
+                    BearyToast.show(in: self.view, message: "通知权限未开启，去系统设置里打开才生效")
+                },
+                onCompleted: { [weak self] _ in
+                    DispatchQueue.main.async { [weak self] in self?.refreshHintRow() }
+                }
+            )
+        default:
+            BearyLocalNotifications.shared.openSystemSettings()
+        }
     }
 
     private func refreshHintRow() {
         BearyLocalNotifications.shared.fetchAuthorizationStatus { [weak self] status in
             DispatchQueue.main.async { [weak self] in
-                self?.hintRow?.isHidden = (status != .denied)
+                guard let self = self else { return }
+                self.hintStatus = status
+                switch status {
+                case .denied:
+                    self.hintTitleLabel?.text = "通知权限未开启"
+                    self.hintDetailLabel?.text = "去系统设置里打开"
+                    self.hintButton?.accessibilityLabel = "通知权限未开启，去系统设置里打开"
+                    self.hintRow?.isHidden = false
+                case .notDetermined:
+                    self.hintTitleLabel?.text = "开启通知后生效"
+                    self.hintDetailLabel?.text = "点按请求通知权限"
+                    self.hintButton?.accessibilityLabel = "开启通知后生效，点按请求通知权限"
+                    self.hintRow?.isHidden = false
+                case .authorized, .provisional, .ephemeral:
+                    self.hintRow?.isHidden = true
+                @unknown default:
+                    self.hintRow?.isHidden = true
+                }
             }
         }
     }

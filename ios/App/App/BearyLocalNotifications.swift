@@ -112,21 +112,29 @@ final class BearyLocalNotifications {
 
     // MARK: - 权限
 
-    /// 门槛 4：首启不再问；只在用户写完第一篇日记后、由 promptAfterFirstEntryIfNeeded
-    /// 经自建说明卡调一次（系统弹窗）。问过就不再问；被拒时走 onDenied（App 内引导去设置）；
-    /// 弹窗出错（如被系统打断）不记已问、不走 onDenied，下次满足条件可再问。
-    func requestAuthorizationIfNeeded(onDenied: (() -> Void)? = nil) {
+    /// 门槛 4：首启不再问。两条调用路：用户写完第一篇日记后、由 promptAfterFirstEntryIfNeeded
+    /// 经自建说明卡调一次（系统弹窗）；设置页通知开关打开／提示行点按时调一次。
+    /// 问过就不再问；被拒时走 onDenied（App 内引导去设置）；系统框有结果后走
+    /// onCompleted（主线程，granted）；弹窗出错（如被系统打断）不记已问、不走
+    /// onDenied、不走 onCompleted，下次满足条件可再问。
+    func requestAuthorizationIfNeeded(onDenied: (() -> Void)? = nil, onCompleted: ((Bool) -> Void)? = nil) {
         guard !UserDefaults.standard.bool(forKey: Self.permissionRequestedKey) else { return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
             if granted {
                 UserDefaults.standard.set(true, forKey: Self.permissionRequestedKey)
                 self?.refreshAll(force: true)
+                if let onCompleted = onCompleted {
+                    DispatchQueue.main.async { onCompleted(true) }
+                }
             } else if error != nil {
                 // 弹窗出错：不记已问、不按拒绝处理，下次满足条件可再问。
             } else {
                 UserDefaults.standard.set(true, forKey: Self.permissionRequestedKey)
                 if let onDenied = onDenied {
                     DispatchQueue.main.async { onDenied() }
+                }
+                if let onCompleted = onCompleted {
+                    DispatchQueue.main.async { onCompleted(false) }
                 }
             }
         }
