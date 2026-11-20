@@ -1628,6 +1628,42 @@ final class BearyAPI {
         }
     }
 
+    /// Google 登录：POST /api/account/google-login {id_token, full_name?, dev?, confirm_cancel?}。
+    /// 服务端验 Google ID token（RS256 JWKS，核 iss/aud/exp；email_verified=true 才按邮箱关联已有账号），
+    /// 按 google_sub 找账号、找不到建新号；发与验码同一套 session（cookie 由共享 URLSession 存）。
+    /// 响应与 verify() 同形（VerifyResponse：ok / pendingDelete / referral）。
+    /// 本方法不走通用 mapStatus、不触发 onUnauthorized（登录请求不该清用户态）。
+    @discardableResult
+    func loginWithGoogle(idToken: String, fullName: String?, dev: [String: Any]?, confirmCancel: Bool, completion: @escaping (Result<VerifyResponse, APIError>) -> Void) -> URLSessionDataTask? {
+        var body: [String: Any] = ["id_token": idToken]
+        if let fullName = fullName, !fullName.isEmpty { body["full_name"] = fullName }
+        if let dev = dev, !dev.isEmpty { body["dev"] = dev }
+        if confirmCancel { body["confirm_cancel"] = true }
+        return perform("/api/account/google-login", method: "POST", jsonBody: body) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let e = error as NSError?, e.code == NSURLErrorCancelled {
+                completion(.failure(.cancelled))
+                return
+            }
+            if let e = error {
+                completion(.failure(.network(e)))
+                return
+            }
+            if let data = data, let resp = try? self.decoder.decode(VerifyResponse.self, from: data) {
+                if resp.pendingDelete == true { completion(.success(resp)); return }
+                if resp.ok == true { completion(.success(resp)); return }
+                let message = resp.message ?? resp.error ?? "验证失败"
+                completion(.failure(.server(message, nil)))
+                return
+            }
+            if !(200...299).contains(status) {
+                completion(.failure(.http(status, self.errorSnippet(from: data))))
+                return
+            }
+            completion(.failure(.decoding(NSError(domain: "BearyAPI", code: -1, userInfo: nil))))
+        }
+    }
+
     /// 发码/验码共用的失败映射：不触发 onUnauthorized，只把服务端 message 透传为 .server。
     private func accountActionError(_ status: Int, data: Data?, error: Error?, fallback: String) -> APIError? {
         if let e = error as NSError?, e.code == NSURLErrorCancelled { return .cancelled }

@@ -1,4 +1,5 @@
 import UIKit
+import GoogleSignIn
 import Lottie
 import UserNotifications
 
@@ -107,11 +108,17 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        // Google 登录（2026-11-20）：OAuth 回调先交给 GoogleSignIn SDK 解析；
+        // 未配置真实 client ID（占位）时不碰 SDK，直接走深链。
+        let deepLinkURLs = URLContexts.compactMap { context -> URL? in
+            if BearyGoogleSignIn.isConfigured && GIDSignIn.sharedInstance.handle(context.url) { return nil }
+            return context.url
+        }
         // F4：先走原生深链解析，命中则经容器 navigator 打开；未命中直接丢弃
         if let chrome = window?.rootViewController as? BearyChromeViewController {
             var handledAny = false
-            for context in URLContexts {
-                if chrome.handleDeepLink(url: context.url) { handledAny = true }
+            for url in deepLinkURLs {
+                if chrome.handleDeepLink(url: url) { handledAny = true }
             }
             if handledAny { return }
         }
