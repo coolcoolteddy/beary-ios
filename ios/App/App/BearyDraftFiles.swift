@@ -27,10 +27,21 @@ import ImageIO
 // MARK: - 草稿模型 v3
 
 /// 落盘的上传状态只有三态：上传中是内存态，杀 App 后重读一律按 pending 续传。
+/// unreadable 不是第四个落盘态：读库归一化时派生（本地文件在、但读不出图片头），
+/// 仅内存态；编码时按 .failed 写回，磁盘上永不出现 "unreadable"，旧版本读库
+/// 不会因未知 rawValue 丢整库；下次读库仍由文件重算。
 enum BearyDraftImageState: String, Codable {
     case pending
     case uploaded
     case failed
+    case unreadable
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        // 内存态不落盘：写回时按 .failed，本地文件与 key 原样保留，
+        // 下次读库归一化重算可读性，仍派生为 .unreadable。
+        try container.encode(self == .unreadable ? BearyDraftImageState.failed.rawValue : rawValue)
+    }
 }
 
 struct BearyDraftImageItem: Codable {
@@ -350,6 +361,20 @@ enum BearyDraftImageStore {
               let h = props[kCGImagePropertyPixelHeight] as? Int,
               w > 0, h > 0 else { return nil }
         return (full: (data: fullData, w: w, h: h), thumb: thumbData)
+    }
+
+    /// 可读性校验（归一化用）：只读图片头判定宽高合法，不解码像素；
+    /// 文件为空、损坏/截断、非图片一律返回 false。
+    /// 与 existingPreparedJPEG 同款 CGImageSource 只读头口径，本处不读
+    /// 全文件字节、不要求缩略图齐全——归一化每次读库都走，须轻。
+    static func isImageReadable(at url: URL) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              CGImageSourceGetCount(source) > 0,
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? Int,
+              let h = props[kCGImagePropertyPixelHeight] as? Int,
+              w > 0, h > 0 else { return false }
+        return true
     }
 
     static func image(for name: String) -> UIImage? {
@@ -1177,7 +1202,10 @@ enum BearyDraftStore {
 
     /// 归一化 + 倒序：本地文件已不在磁盘的项——有 key 则退为纯 key 项（走远程图），
     /// 无 key 则转为失败态图项保留（localFile/serverKey 双空、state=.failed，
-    /// 草稿箱按此三元组识别并出“图片未保存”提示，不得直接丢弃，见 G6）；
+    /// 草稿箱按此三元组识别并出“草稿保存失败，请重试”，不得直接丢弃，见 G6）；
+    /// 本地文件在、但读不出图片头（损坏/截断）且仍待上传的项派生为 .unreadable
+    /// （内存态，不落盘），草稿箱出“有图片无法恢复，请重新选择”；已上传项
+    /// （服务端已有副本）不因此改态，本地副本损坏不丢内容；
     /// 同秒按 draftId 升序兜底。
     private static func sortedNormalized(_ drafts: [BearyDraft]) -> [BearyDraft] {
         return sortedNormalized(drafts, forAccount: currentAccountId)
@@ -1208,7 +1236,17 @@ enum BearyDraftStore {
             if let name = item.localFile {
                 if let url = BearyDraftImageStore.fileURL(for: name, accountId: accountId),
                    FileManager.default.fileExists(atPath: url.path) {
-                    kept.append(item)
+                    // 可读性校验：文件在还不够，读不出图片头（损坏/截断）且仍待上传
+                    // 时派生为 .unreadable，不再按“已存本机，待上传”显示；已上传项
+                    // 服务端已有副本，本地副本损坏不改态、不丢内容。
+                    if (item.state == .pending || item.state == .failed),
+                       !BearyDraftImageStore.isImageReadable(at: url) {
+                        var unreadable = item
+                        unreadable.state = .unreadable
+                        kept.append(unreadable)
+                    } else {
+                        kept.append(item)
+                    }
                 } else if let key = item.serverKey {
                     // B1：静图已丢但 key 还在时，实况视频文件若还在也一并保留
                     //（上传成功过的 liveVideoKey 本就随本分支保留；待传视频
