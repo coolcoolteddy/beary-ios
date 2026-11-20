@@ -207,6 +207,19 @@ class BearyFeedViewController: UIViewController {
     /// iCity：公开倒计时 60 秒定时器已删（切换钮文案不随时间变，无需定时重算）。
     /// 后台重拉发现新头条、且用户已读到深处时暂存，等点 pill 才换上（不打断阅读）。
     private var pendingPlaza: [Entry]?
+    /// 点“有新内容”前记下的阅读位置：首个可见篇 id＋视口相对偏移（复用
+    /// 详情返回的 detailReturnAnchor 口径）＋旧行号＋点按前相邻两篇 id。
+    /// 点按后顶部出“回到刚才的位置”入口，恢复时先按 id＋偏移定位，锚点篇
+    /// 不在新列表里时取相邻篇，再没有才按旧行号钳制到最近行。只存内存，
+    /// 不上云、不进切段缓存（切段／换号即丢，与新内容 pill 同口径）。
+    private struct PillReturnAnchor {
+        let entryId: String
+        let viewportOffset: CGFloat
+        let row: Int
+        let previousId: String?
+        let nextId: String?
+    }
+    private var pillReturnAnchor: PillReturnAnchor?
     /// 行/图点按防连点：各自独立时间戳，0.8 秒内同一动作重复点按直接丢弃。
     /// 看图与进详情分开节流：点图进灯箱后关闭、立即点行进详情，不再被看图的时钟丢弃；
     /// 同一动作连续快点仍各自防叠页。
@@ -247,6 +260,31 @@ class BearyFeedViewController: UIViewController {
         btn.contentEdgeInsets = UIEdgeInsets(top: 9, left: 16, bottom: 9, right: 16)
         btn.isHidden = true
         btn.addTarget(self, action: #selector(newContentPillTapped), for: .touchUpInside)
+        btn.bearyAddPressFeedback()
+        return btn
+    }()
+
+    /// “回到刚才的位置”pill：点“有新内容”回顶后才出现，与新内容 pill
+    /// 同视觉（ink 底、bg 字、13 semibold、999 圆角、padding 9/16、
+    /// 底部 92 + 安全区上方），点按回到点 pill 前的阅读位置（一次有效）。
+    private lazy var previousPositionPill: UIButton = {
+        let btn = BearyHit44Button(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.setTitle("回到刚才的位置", for: .normal)
+        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        btn.titleLabel?.adjustsFontForContentSizeCategory = true
+        btn.setTitleColor(BearyColors.bg, for: .normal)
+        // 下箭头（与“有新内容”的上箭头同款官方路径渲染），与标题 gap 6。
+        btn.setImage(BearyIconImages.image(named: "icon_arrow_down", pointSize: 15), for: .normal)
+        btn.tintColor = BearyColors.bg
+        btn.titleEdgeInsets.left = 6
+        btn.backgroundColor = BearyColors.ink
+        btn.clipsToBounds = false
+        btn.layer.shadowColor = UIColor.black.cgColor
+        BearyShadow.applyRaised(to: btn.layer)
+        btn.contentEdgeInsets = UIEdgeInsets(top: 9, left: 16, bottom: 9, right: 16)
+        btn.isHidden = true
+        btn.addTarget(self, action: #selector(previousPositionPillTapped), for: .touchUpInside)
         btn.bearyAddPressFeedback()
         return btn
     }()
@@ -390,6 +428,7 @@ class BearyFeedViewController: UIViewController {
         setRefreshFailedBannerVisible(false)
         hideNewContentPill()
         pendingPlaza = nil
+        clearPillReturnAnchor()
         feedFollowingSegment = wantFollowing
         updateEmptyCopyForSegment()
         tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: false)
@@ -640,6 +679,7 @@ class BearyFeedViewController: UIViewController {
         tableViewTopToViewTopConstraint = tableView.topAnchor.constraint(equalTo: view.topAnchor)
         tableViewTopToBannerConstraint = tableView.topAnchor.constraint(equalTo: refreshFailedBanner.bottomAnchor)
         tableViewTopToViewTopConstraint?.isActive = true
+        view.addSubview(previousPositionPill)
         // P2-1：内容列走网页 821 断点——宽 ≥821 时 600 居中，宽 ≤820 时 iPhone 式全宽
         //（600 上限只在 ≥821 激活，开关在 viewDidLayoutSubviews；容器层 SceneDelegate 同断点开关，
         // 本文件不再常驻 600 上限，避免 633–820 档被双重收窄）。
@@ -671,6 +711,8 @@ class BearyFeedViewController: UIViewController {
             spinnerTop,
             newContentPill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             newContentPill.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -92),
+            previousPositionPill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            previousPositionPill.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -92),
         ])
         initialLoadStarted = true
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
@@ -756,6 +798,7 @@ class BearyFeedViewController: UIViewController {
             revalidateGeneration += 1
             hideNewContentPill()
             pendingPlaza = nil
+            clearPillReturnAnchor()
             // 出段在途首拉已作废（代际守卫会丢弃其回包），loading 标记同步
             // 清掉，不让旧请求的菊花／节流残留到入段画面上。
             plazaLoading = false
@@ -846,6 +889,9 @@ class BearyFeedViewController: UIViewController {
         // 8-11：新内容 pill 圆角取半高（只写 layer 值，不改约束，不触发布局循环）。
         if newContentPill.bounds.height > 0 {
             newContentPill.layer.cornerRadius = newContentPill.bounds.height / 2
+        }
+        if previousPositionPill.bounds.height > 0 {
+            previousPositionPill.layer.cornerRadius = previousPositionPill.bounds.height / 2
         }
     }
 
@@ -1695,6 +1741,12 @@ class BearyFeedViewController: UIViewController {
     /// 详情关闭时把该篇放回打开时的视口位置；已在原位（±1pt）或不在列表里时不动。
     func restoreDetailReturnAnchor(entryId: String, viewportOffset: CGFloat) {
         guard let path = indexPath(for: entryId) else { return }
+        scrollRowTop(toViewportOffset: viewportOffset, at: path)
+    }
+
+    /// 把指定行行顶放到给定的视口偏移处；已在原位（±1pt）时不动，
+    /// 偏移钳制在可滚范围内（详情返回与 pill 返回位置共用）。
+    private func scrollRowTop(toViewportOffset viewportOffset: CGFloat, at path: IndexPath) {
         tableView.layoutIfNeeded()
         let targetY = tableView.rectForRow(at: path).origin.y - viewportOffset
         guard abs(targetY - tableView.contentOffset.y) >= 1 else { return }
@@ -1794,6 +1846,7 @@ class BearyFeedViewController: UIViewController {
         isRevalidating = false
         hideNewContentPill()
         pendingPlaza = nil
+        clearPillReturnAnchor()
         // 审计 13：同 loadCachedFeedOrRefresh，读盘异步；桶又换时旧回包丢弃。
         BearyFeedCache.load(bucket: newBucket) { [weak self] snap in
             guard let strongSelf = self, strongSelf.feedCacheOwnerKey == newBucket else { return }
@@ -2100,6 +2153,9 @@ class BearyFeedViewController: UIViewController {
 
     /// M5：“有新内容”pill 出现/消失：0.26s 淡入 + 轻微上滑；减动效直设终值。
     private func showNewContentPill() {
+        // 新的待定内容取代了旧的返回锚点：旧“回到刚才的位置”入口即丢，
+        // 下次点 pill 时重新记当前位置。
+        clearPillReturnAnchor()
         if newContentPill.isHidden == false {
             newContentPill.layer.removeAllAnimations()
             newContentPill.alpha = 1
@@ -2143,6 +2199,8 @@ class BearyFeedViewController: UIViewController {
             hideNewContentPill()
             return
         }
+        // 点按前记下当前阅读位置（首个可见篇），点后顶部出“回到刚才的位置”。
+        capturePillReturnAnchor()
         pendingPlaza = nil
         hideNewContentPill()
         // feedfast：pill 换上同样走 diff（只插/删/改变了的行，已有行不重建、
@@ -2152,6 +2210,111 @@ class BearyFeedViewController: UIViewController {
         // “内容立即就位比再播一遍入场更重要”的取舍。
         applyFirstPageDiff(newPlaza)
         tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: false)
+        if pillReturnAnchor != nil {
+            showPreviousPositionPill()
+        }
+    }
+
+    /// 点 pill 前记下首个可见篇的阅读位置（复用详情返回的
+    /// detailReturnAnchor 口径：行顶相对视口顶的偏移）；表空、无可见行
+    /// 或取不到偏移时不记，点后不出返回入口。
+    private func capturePillReturnAnchor() {
+        guard let firstVisible = tableView.indexPathsForVisibleRows?.sorted().first else {
+            pillReturnAnchor = nil
+            return
+        }
+        let entries = plazaEntries()
+        guard entries.indices.contains(firstVisible.row),
+              let entryId = entries[firstVisible.row].id, !entryId.isEmpty,
+              let offset = detailReturnAnchor(for: entryId) else {
+            pillReturnAnchor = nil
+            return
+        }
+        let previousId: String? = {
+            guard firstVisible.row > 0, let id = entries[firstVisible.row - 1].id, !id.isEmpty else { return nil }
+            return id
+        }()
+        let nextId: String? = {
+            guard entries.indices.contains(firstVisible.row + 1), let id = entries[firstVisible.row + 1].id, !id.isEmpty else { return nil }
+            return id
+        }()
+        pillReturnAnchor = PillReturnAnchor(
+            entryId: entryId,
+            viewportOffset: offset,
+            row: firstVisible.row,
+            previousId: previousId,
+            nextId: nextId
+        )
+    }
+
+    /// “回到刚才的位置”pill 出现/消失：与新内容 pill 同动效
+    ///（0.26s 淡入 + 轻微上滑；减动效直设终值）。
+    private func showPreviousPositionPill() {
+        if previousPositionPill.isHidden == false {
+            previousPositionPill.layer.removeAllAnimations()
+            previousPositionPill.alpha = 1
+            previousPositionPill.transform = .identity
+            return
+        }
+        previousPositionPill.isHidden = false
+        if UIAccessibility.isReduceMotionEnabled {
+            previousPositionPill.alpha = 1
+            previousPositionPill.transform = .identity
+            return
+        }
+        previousPositionPill.alpha = 0
+        previousPositionPill.transform = CGAffineTransform(translationX: 0, y: 8)
+        UIView.animate(withDuration: BearyMotion.normal) {
+            self.previousPositionPill.alpha = 1
+            self.previousPositionPill.transform = .identity
+        }
+    }
+
+    private func hidePreviousPositionPill() {
+        if previousPositionPill.isHidden { return }
+        if UIAccessibility.isReduceMotionEnabled {
+            previousPositionPill.isHidden = true
+            previousPositionPill.alpha = 1
+            previousPositionPill.transform = .identity
+            return
+        }
+        UIView.animate(withDuration: BearyMotion.normal, animations: {
+            self.previousPositionPill.alpha = 0
+            self.previousPositionPill.transform = CGAffineTransform(translationX: 0, y: -8)
+        }, completion: { [weak self] _ in
+            self?.previousPositionPill.isHidden = true
+            self?.previousPositionPill.alpha = 1
+            self?.previousPositionPill.transform = .identity
+        })
+    }
+
+    /// 返回入口作废：锚点清掉、pill 藏起（切段／换号／新内容到达／手动下滚时调）。
+    private func clearPillReturnAnchor() {
+        pillReturnAnchor = nil
+        hidePreviousPositionPill()
+    }
+
+    /// “回到刚才的位置”：先按锚点篇 id＋偏移定位；锚点篇不在新列表里时
+    /// 取点按前相邻的上一篇／下一篇定位（上一篇优先）；相邻篇也不在时
+    /// 按旧行号钳制到最近行定位；表空时停在顶部。定位后入口即消失（一次有效）。
+    @objc private func previousPositionPillTapped() {
+        hidePreviousPositionPill()
+        guard let anchor = pillReturnAnchor else { return }
+        pillReturnAnchor = nil
+        if indexPath(for: anchor.entryId) != nil {
+            restoreDetailReturnAnchor(entryId: anchor.entryId, viewportOffset: anchor.viewportOffset)
+            return
+        }
+        for neighbourId in [anchor.previousId, anchor.nextId].compactMap({ $0 }) {
+            if indexPath(for: neighbourId) != nil {
+                restoreDetailReturnAnchor(entryId: neighbourId, viewportOffset: anchor.viewportOffset)
+                return
+            }
+        }
+        let entries = plazaEntries()
+        guard !entries.isEmpty else { return }
+        let row = min(max(anchor.row, 0), entries.count - 1)
+        scrollRowTop(toViewportOffset: anchor.viewportOffset, at: IndexPath(row: row, section: 0))
     }
 
     /// M1：新行错峰淡入 + 轻微上滑（只针对本批新行，已有行不重播；减动效直设终值）。
@@ -3063,6 +3226,11 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate, U
                 feedChromeHidden = false
                 SceneDelegate.chrome?.setChromeHidden(false, animated: true)
             }
+        }
+        // “回到刚才的位置”入口只在顶部有效：手动下滚超 600pt 即撤掉
+        //（与新内容 pill 出现阈值同口径），锚点同步清掉。
+        if !previousPositionPill.isHidden, y + scrollView.contentInset.top > 600 {
+            clearPillReturnAnchor()
         }
         // 加载三件套·加载更多：滑到离底部一屏时预加载下一页（willDisplay
         // 距末尾 3 行是兜底，滚动触发更早一屏；loading/失败/无更多时守卫拦住）。
