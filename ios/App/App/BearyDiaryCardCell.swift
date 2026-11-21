@@ -272,7 +272,8 @@ final class BearyEmoteChipView: UIView {
             overlayButton.bottomAnchor.constraint(equalTo: bottomAnchor),
             overlayButton.leadingAnchor.constraint(equalTo: leadingAnchor),
             overlayButton.trailingAnchor.constraint(equalTo: trailingAnchor),
-            heightAnchor.constraint(equalToConstant: 34),
+            // v19：最小高 34（minHeight）——大字号时内容长高，chip 跟着长，不裁内容。
+            heightAnchor.constraint(greaterThanOrEqualToConstant: 34),
         ])
         self.applyChrome()
     }
