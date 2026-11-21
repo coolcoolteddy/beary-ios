@@ -217,12 +217,13 @@ final class BearyThemeSettingsViewController: BearySettingsSubpageViewController
 
 // MARK: - 语言子页
 
-/// 语言：目前只有跟随系统、中国大陆两档；跟随系统即跟随系统语言，
-/// 中国大陆即强制简体中文。切换即时生效（Bundle 覆盖＋重建根界面，
+/// 语言：跟随系统、中国大陆、English 三档；跟随系统即跟随系统语言，
+/// 中国大陆即强制简体中文，English 即强制英文。切换即时生效（Bundle 覆盖＋重建根界面，
 /// 见 BearyAppLanguage；SceneDelegate 监听广播重建）。
 /// 注意：App 自身文案目前是硬编码中文（工程里没有 .xcstrings/.lproj，
 /// 没有任何 NSLocalizedString 调用），切换对 App 自身界面暂无可见变化，
-/// 只对走 Bundle 的第三方文案生效；完整切换须先做全站文案抽取，见 PR 说明。
+/// 只对走 Bundle 的第三方文案生效；English 档下已迁进 Catalog 的批显示英文，
+/// 未迁移的批仍显示中文原文；完整切换须先做全站文案抽取，见 PR 说明。
 final class BearyLanguageSettingsViewController: BearySettingsSubpageViewController {
     init() { super.init(title: "语言") }
 
@@ -241,7 +242,8 @@ final class BearyLanguageSettingsViewController: BearySettingsSubpageViewControl
         let mode = BearyAppLanguage.mode
         let systemRow = bearySettingsTappableRow(content: bearySettingsOptionContent(title: "跟随系统", isSelected: mode == .system), button: optionButton(action: #selector(systemTapped)))
         let mainlandRow = bearySettingsTappableRow(content: bearySettingsOptionContent(title: "中国大陆", isSelected: mode == .mainland), button: optionButton(action: #selector(mainlandTapped)))
-        contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: [systemRow, mainlandRow]))
+        let englishRow = bearySettingsTappableRow(content: bearySettingsOptionContent(title: "English", isSelected: mode == .english), button: optionButton(action: #selector(englishTapped)))
+        contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: [systemRow, mainlandRow, englishRow]))
     }
 
     private func optionButton(action: Selector) -> UIButton {
@@ -257,6 +259,11 @@ final class BearyLanguageSettingsViewController: BearySettingsSubpageViewControl
 
     @objc private func mainlandTapped() {
         BearyAppLanguage.setMode(.mainland)
+        render()
+    }
+
+    @objc private func englishTapped() {
+        BearyAppLanguage.setMode(.english)
         render()
     }
 }
