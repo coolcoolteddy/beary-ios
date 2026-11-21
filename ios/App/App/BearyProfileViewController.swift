@@ -5287,9 +5287,18 @@ class BearyProfileViewController: UIViewController {
         }
         pastSelfComposingThisDay = false
         pastSelfThisDayDraft = ""
+        // 裁剪发生时给一次提示（不是只说“满了”）：旧留话仍在服务端，
+        // 换设备登录可恢复。未裁剪时沿用旧的成功提示；新 toast 会清掉
+        // 旧 toast，两者只取其一。计数在 add 刚返回时立刻读走——后续
+        // 的创建回包还会走 save，读晚了计数会被清零。
+        let trimmed = store.takeTrimmedCount()
         pastSelfPushCreate(message)
         BearyHaptics.publishSuccess()
-        BearyToast.show(in: view, message: "已留给明年的自己")
+        if trimmed > 0 {
+            BearyToast.show(in: view, message: "已保留最近 200 条，旧留话仍在服务端，换设备登录可恢复")
+        } else {
+            BearyToast.show(in: view, message: "已留给明年的自己")
+        }
         // 本地通知：新留话排一条送达日早上 9:00 的提醒。
         BearyLocalNotifications.shared.refreshAll(force: true)
         renderPastSelf(visible: pastSelfVisibleEntries())
@@ -5751,9 +5760,16 @@ class BearyProfileViewController: UIViewController {
         }
         pastSelfReplyingChainId = nil
         pastSelfReplyDrafts[chainId] = nil
+        // 同上：裁剪发生时给一次提示，旧留话仍在服务端；计数在 add 刚返回时
+        // 立刻读走，后续的创建回包还会走 save，读晚了计数会被清零。
+        let trimmed = store.takeTrimmedCount()
         pastSelfPushCreate(message)
         BearyHaptics.publishSuccess()
-        BearyToast.show(in: view, message: "已留给明年的自己")
+        if trimmed > 0 {
+            BearyToast.show(in: view, message: "已保留最近 200 条，旧留话仍在服务端，换设备登录可恢复")
+        } else {
+            BearyToast.show(in: view, message: "已留给明年的自己")
+        }
         // 本地通知：续一年留话排一条新送达日早上 9:00 的提醒。
         BearyLocalNotifications.shared.refreshAll(force: true)
         renderPastSelf(visible: pastSelfVisibleEntries())

@@ -699,6 +699,87 @@ final class BearyPastSelfTests: XCTestCase {
         suite.removePersistentDomain(forName: "beary.pastself.tests")
     }
 
+    func testMergeDoesNotRetrimRestoredRows() throws {
+        // 合并路径跳过裁剪：本地 100 行（50 条链 × 新旧两行已送达）+ 服务端
+        // 下发 101 行，合并后 201 行已超 200 上限；旧行为是 merge 末尾的
+        // save 立刻裁掉最旧可丢行（local-0-0），恢复不持久；新行为是
+        // 合并跳过裁剪，刚拉回的行全留下来，等下次本地新增时再裁。
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let store = PastSelfStore(userId: 91, defaults: suite)
+        let base = ms(year: 2020, month: 1, day: 1)
+        var local: [PastSelfMessage] = []
+        for chain in 0..<50 {
+            for j in 0..<2 {
+                var row = message(id: "local-\(chain)-\(j)", chain: "c\(chain)",
+                                  createdMs: base + (chain * 2 + j) * 86_400_000, deliverOn: "2020-01-01")
+                row.authorId = 91
+                local.append(row)
+            }
+        }
+        suite.set(try JSONEncoder().encode(local), forKey: "beary.pastSelf.v1.91")
+        var server: [PastSelfMessage] = []
+        for chain in 0..<50 {
+            for j in 0..<2 {
+                var row = message(id: "srv-\(chain)-\(j)", chain: "d\(chain)",
+                                  createdMs: base + (100 + chain * 2 + j) * 86_400_000, deliverOn: "2020-01-01")
+                row.authorId = 91
+                server.append(row)
+            }
+        }
+        var last = message(id: "srv-50-0", chain: "d50", createdMs: base + 200 * 86_400_000, deliverOn: "2020-01-01")
+        last.authorId = 91
+        server.append(last)
+        store.mergeServerRows(server)
+        let ids = store.loadAll().map { $0.id }
+        XCTAssertEqual(ids.count, 201)
+        XCTAssertTrue(ids.contains("local-0-0"))
+        XCTAssertTrue(ids.contains("srv-0-0"))
+        XCTAssertEqual(store.takeTrimmedCount(), 0)
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
+    func testTrimKeepsLocalOnlyDeliveredAndReportsCount() throws {
+        // 真丢口径：一条已送达但从未同步过的本地留话（localOnly），若不是
+        // 链最新，旧裁剪会把它裁掉且服务端从未见过它、永久丢失；新口径下
+        // 它永不参与淘汰，裁剪改裁最旧的已同步可丢行；裁剪计数可供调用方
+        // 读一次、给一次提示（takeTrimmedCount 读后清零）。
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let store = PastSelfStore(userId: 90, defaults: suite)
+        let base = ms(year: 2020, month: 1, day: 1)
+        var rows: [PastSelfMessage] = []
+        var idx = 0
+        func delivered(id: String, chain: String, localOnly: Bool) -> PastSelfMessage {
+            var row = message(id: id, chain: chain, createdMs: base + idx * 86_400_000, deliverOn: "2020-01-01")
+            row.authorId = 90
+            row.localOnly = localOnly
+            idx += 1
+            return row
+        }
+        rows.append(delivered(id: "old-local", chain: "c0", localOnly: true))
+        rows.append(delivered(id: "c0-new", chain: "c0", localOnly: false))
+        for chain in 1..<100 {
+            rows.append(delivered(id: "c\(chain)-old", chain: "c\(chain)", localOnly: false))
+            rows.append(delivered(id: "c\(chain)-new", chain: "c\(chain)", localOnly: false))
+        }
+        rows.append(delivered(id: "c100-only", chain: "c100", localOnly: false))
+        XCTAssertEqual(rows.count, 201)
+        suite.set(try JSONEncoder().encode(rows), forKey: "beary.pastSelf.v1.90")
+        let added = store.add(originEntryId: "b_new", body: "新一句",
+                              createdAtMs: ms(year: 2026, month: 1, day: 1), calendar: calendar)
+        XCTAssertNotNil(added)
+        let ids = store.loadAll().map { $0.id }
+        XCTAssertEqual(ids.count, 200)
+        // 未同步的已送达旧行保住了；改裁最旧的两条已同步可丢行。
+        XCTAssertTrue(ids.contains("old-local"))
+        XCTAssertFalse(ids.contains("c1-old"))
+        XCTAssertFalse(ids.contains("c2-old"))
+        XCTAssertEqual(store.takeTrimmedCount(), 2)
+        XCTAssertEqual(store.takeTrimmedCount(), 0)
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
     func testBackupKeepsLastGoodAndRestores() throws {
         // 审计新一轮 05：每次成功写入前，上一份好数据进独立备份 key；
         // 主 key 损坏后可从备份恢复，无备份时恢复失败、主 key 不动。
