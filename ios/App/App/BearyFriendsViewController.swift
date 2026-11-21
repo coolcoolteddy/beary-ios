@@ -239,6 +239,13 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         load()
     }
 
+    /// 进页重拉（容器 showPage 切入时调，与消息页同口径）：本页此前只在
+    /// viewDidLoad 拉一次；首拉失败／回空后切走再进不再重拉，会一直停在
+    /// 失败／空态。进页即重拉自愈；在途时 load() 内守卫直接返回，不重复请求。
+    func pageDidEnter() {
+        load()
+    }
+
     @objc private func refreshPulled() {
         load()
     }
