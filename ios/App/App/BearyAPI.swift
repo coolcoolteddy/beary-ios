@@ -162,7 +162,7 @@ struct Entry: Codable {
     var locationName: String?
     var locationDistrict: String?
     /// 日记地点经纬度（2026-11-14 Li 定，见 BearyLocation.swift；旧日记无本字段时为 nil，
-    /// 只显示原存地名。埋藏定位仍只存区级名、不存经纬度，与本字段无关）。
+    /// 只显示原存地名）。
     var locationLatitude: Double?
     var locationLongitude: Double?
     /// 2026-11-19 七组版：定位地址精度分级字段（服务端 entries 列
@@ -208,15 +208,6 @@ struct Entry: Codable {
     var pinnedAt: Int?
     /// 置顶判定：只认显式 1；缺失／其他值一律不算（fail-closed，与 isFriendsOnly 同口径）。
     var isPinned: Bool { pinned == 1 }
-    /// 时间胶囊 v1：后端已部署字段（is_capsule 0/1、capsule_unlock_at 毫秒戳、
-    /// capsule_district 区级文本），convertFromSnakeCase 直解。
-    /// 注意：ios/Docs/time-capsule-fields.md 仍写旧名 capsule_buried /
-    /// capsule_unlock_date，那是错的，以此处为准（#1345 另行修正文档，本支不动它）。
-    var isCapsule: Int?
-    var capsuleUnlockAt: Int?
-    var capsuleDistrict: String?
-    /// 埋藏判定：只认显式 1（fail-closed，与 isPinned 同口径）。
-    var isCapsuleBuried: Bool { isCapsule == 1 }
     /// iCity 私密占位：服务端对非作者的私密单篇只下发 {placeholder: true, id, published: 0}，
     /// 详情页凭此只显一句“该日记已设为私密”，不带标题／封面／时间／作者名。
     var placeholder: Bool?

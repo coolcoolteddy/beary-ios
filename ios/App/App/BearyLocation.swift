@@ -35,7 +35,6 @@ struct DiaryLocation: Equatable {
     var street: String?
     /// 2026-11-14 Li 定：地点改存经纬度（推翻方案 A 只存文本口径）；写路径下坐标
     /// 恒随文本一起存（定位／搜索结果自带坐标）；显示层按当前语言逆地理编码取地名。
-    /// 埋藏定位仍只存区级名、不存经纬度（见 BearyTimeCapsule），与本字段无关。
     var latitude: Double?
     var longitude: Double?
 
@@ -372,91 +371,6 @@ enum BearyLocationMap {
 enum BearyLocationIcon {
     static func image(pointSize: CGFloat) -> UIImage? {
         return BearyIconImages.image(named: "icon_location", pointSize: pointSize)
-    }
-}
-
-// MARK: - 时间胶囊 v1（2026-11-12，最小版）
-
-/// 胶囊判定与本地解锁口径（纯函数 + 一次定位取区级，不新文件）。
-/// 字段口径以后端已部署的为准：is_capsule / capsule_unlock_at（毫秒戳）/
-/// capsule_district（区级文本）；旧分支的 capsule_buried /
-/// capsule_unlock_date 是错名，绝不引用。
-enum BearyTimeCapsule {
-    /// 地图渲染资格：埋了（isCapsule==1）且公开态（visibility public 或
-    /// isPublic；限时过期按 BearyEphemeral 口径算不公开）。公开转私密
-    /// 后资格即失，标记随重算下线，不改服务端。
-    static func isPublicCapsule(_ entry: Entry) -> Bool {
-        guard entry.isCapsuleBuried else { return false }
-        guard entry.visibility == "public" || entry.isPublic == true else { return false }
-        return !BearyEphemeral.isExpired(entry)
-    }
-
-    /// 本地解锁判定：时间到了 AND 当前区级与埋藏区级去空白后精确相等。
-    /// 不做包含／模糊匹配；取不到当前区级时按未解锁处理（fail-closed）。
-    static func isUnlocked(_ entry: Entry, currentDistrict: String?, nowMs: Int? = nil) -> Bool {
-        guard let unlockAt = entry.capsuleUnlockAt else { return false }
-        let now = nowMs ?? Int(Date().timeIntervalSince1970 * 1000)
-        guard now >= unlockAt else { return false }
-        guard let current = currentDistrict?.trimmingCharacters(in: .whitespacesAndNewlines), !current.isEmpty,
-              let buried = entry.capsuleDistrict?.trimmingCharacters(in: .whitespacesAndNewlines), !buried.isEmpty else { return false }
-        return current == buried
-    }
-
-    /// 解锁日期文案：与现有日期文案同格式（yyyy年M月d日）。
-    static func unlockDateText(_ entry: Entry) -> String? {
-        guard let unlockAt = entry.capsuleUnlockAt else { return nil }
-        let date = Date(timeIntervalSince1970: TimeInterval(unlockAt) / 1000)
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "yyyy年M月d日"
-        return formatter.string(from: date)
-    }
-
-    /// 当前区级一次定位＋逆地理编码：只取区级文本，不存坐标、不上传、
-    /// 不写盘。取不到／无权限时回 nil，调用方按未解锁处理。
-    /// 2026-11-14 埋藏定位修：冷启动 GPS 下单次 requestLocation 常在拿到
-    /// 定位前先报 kCLErrorLocationUnknown、或 10 秒超时，先到即判失败；
-    /// 失败分两类——拒绝（.denied）直接回 nil 不重试，暂不可用
-    /// （.unavailable，含定位超时与逆地理编码超时／无结果）自动再试一次，
-    /// 首轮已把 GPS 热起来，第二轮通常很快拿到；逆地理编码另加 8 秒超时，
-    /// 不再无限等。仍只取区级文本，不存坐标。
-    static func fetchCurrentDistrict(completion: @escaping (String?) -> Void) {
-        fetchCurrentDistrict(attemptsRemaining: 2, completion: completion)
-    }
-
-    private static func fetchCurrentDistrict(attemptsRemaining: Int, completion: @escaping (String?) -> Void) {
-        BearyOneShotLocation.request { result in
-            switch result {
-            case .coordinate(let latitude, let longitude):
-                let geocoder = CLGeocoder()
-                var settled = false
-                let settle: (String?) -> Void = { district in
-                    guard !settled else { return }
-                    settled = true
-                    if let district = district, !district.isEmpty {
-                        DispatchQueue.main.async { completion(district) }
-                    } else if attemptsRemaining > 1 {
-                        fetchCurrentDistrict(attemptsRemaining: attemptsRemaining - 1, completion: completion)
-                    } else {
-                        DispatchQueue.main.async { completion(nil) }
-                    }
-                }
-                geocoder.reverseGeocodeLocation(CLLocation(latitude: latitude, longitude: longitude)) { placemarks, _ in
-                    DispatchQueue.main.async {
-                        settle(placemarks?.first.flatMap { BearyLocationDisplay.district(from: $0) })
-                    }
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 8) { settle(nil) }
-            case .denied:
-                DispatchQueue.main.async { completion(nil) }
-            case .unavailable:
-                if attemptsRemaining > 1 {
-                    fetchCurrentDistrict(attemptsRemaining: attemptsRemaining - 1, completion: completion)
-                } else {
-                    DispatchQueue.main.async { completion(nil) }
-                }
-            }
-        }
     }
 }
 
