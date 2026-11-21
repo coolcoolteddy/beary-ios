@@ -7186,6 +7186,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         return !undecidedImageItems().isEmpty
     }
 
+    /// 准备已完成的未确认项：本批新选图在 pendingChoiceAwaiting 里时
+    /// 仍在准备（压缩落盘＋原图取文件未都 settled），确认弹窗只列已就绪项——
+    /// 就绪项的 localFile 与 originalBytes 已回填，不会显示 0 B，
+    /// 压缩分支也不会因预览未到而误判失败。
+    private func readyUndecidedImageItems() -> [ComposerImageItem] {
+        return undecidedImageItems().filter { item in
+            !pendingChoiceAwaiting.contains { $0 === item }
+        }
+    }
+
     /// 待确认条：有未确认方式的图时显示「N 张照片待确认上传方式」，点按重开
     /// 确认弹窗；无未确认项时隐藏。显隐变化时同步一次 sheet 高。
     private func refreshPendingUploadBar() {
@@ -7215,6 +7225,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     @objc private func didTapPendingUploadBar() {
+        guard !readyUndecidedImageItems().isEmpty else {
+            showToast(message: "照片准备中，请稍候")
+            return
+        }
         presentUploadChoiceSheet()
     }
 
@@ -7306,13 +7320,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 弹原图/压缩确认弹窗（面向当前全部未确认项）：先取 Plus 态，再按
+    /// 弹原图/压缩确认弹窗（面向当前已就绪的未确认项）：先取 Plus 态，再按
     /// 各原图字节和与压缩字节和建模；关闭（×/下拉）后不做任何事，待确认条留着重开。
     /// 选择按整批算：弹窗张数 = 待确认项＋本批已自动压缩的超限项（总数），
     /// 压缩行体积含超限项的压缩字节；oversizeCount 与 oversizeCompressedBytes
     /// 只在批收尾那次传（弹窗脚注用），待确认条/发布重开时传 0。
     private func presentUploadChoiceSheet(oversizeCount: Int = 0, oversizeCompressedBytes: Int = 0, allowRetry: Bool = true) {
-        let undecided = undecidedImageItems()
+        let undecided = readyUndecidedImageItems()
         guard !undecided.isEmpty, !uploadChoiceSheetVisible else { return }
         // 2026-11-14：选图刚结束时相册可能还在退场动画里，presentedViewController
         // 仍非 nil；此时直接 return 会把本次触发丢掉（批已消费、再无重试），
@@ -7330,7 +7344,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         ensurePlusStatus { [weak self] isPlus in
             guard let self = self else { return }
-            let undecided = self.undecidedImageItems()
+            let undecided = self.readyUndecidedImageItems()
             guard !undecided.isEmpty, !self.uploadChoiceSheetVisible, self.presentedViewController == nil else { return }
             guard let isPlus = isPlus else {
                 self.showToast(message: "会员状态没加载出来，请重试")
@@ -7350,11 +7364,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             let sheet = BearyOriginalUploadSheet.show(from: self, model: model, onPickOriginal: { [weak self] in
                 guard let self = self else { return }
                 self.uploadChoiceSheetVisible = false
-                self.applyUploadChoice(.original, for: self.undecidedImageItems())
+                self.applyUploadChoice(.original, for: undecided)
             }, onPickCompressed: { [weak self] in
                 guard let self = self else { return }
                 self.uploadChoiceSheetVisible = false
-                self.applyUploadChoice(.compressed, for: self.undecidedImageItems())
+                self.applyUploadChoice(.compressed, for: undecided)
             }, onShowPlus: { [weak self] in
                 guard let self = self else { return }
                 self.uploadChoiceSheetVisible = false
@@ -9666,7 +9680,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         // 原图确认：有未确认上传方式的图时先弹确认弹窗，不直接发布；
         // 用户选完方式后需再点一次发布（不做选完自动续发）。
+        // 准备未完成时不弹选择（弹窗只列已就绪项，大小才真实），先提示准备中。
         if hasUndecidedImage() {
+            guard !readyUndecidedImageItems().isEmpty else {
+                showToast(message: "照片准备中，请稍候")
+                return
+            }
             presentUploadChoiceSheet()
             return
         }
