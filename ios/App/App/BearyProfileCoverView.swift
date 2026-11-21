@@ -358,6 +358,12 @@ public final class ProfileCoverView: UIView {
     /// 动态物／彩蛋／光晕／线条；底图未到时不画（poster 层在底下兜底，与原来
     /// backdrop == nil 时只画 poster 的行为一致）。
     fileprivate func drawOverlay(in ctx: CGContext) {
+        // 叠加层位姿收集：本轮 drawOverlay 里 layered 的 bitmap() 只记录位姿不画，
+        // 结束时统一贴到图层上（见 applyStagedOverlayPoses）。defer 保证 poster
+        // 兜底等提前返回时也把旧图层藏掉，不留上一帧的残影。
+        stagedOverlayPoses = []
+        poseOccurrence = [:]
+        defer { applyStagedOverlayPoses() }
         guard backdrop != nil else { return }
         let size = Self.artSize
         let fit = max(bounds.width / size.width, bounds.height / size.height)
@@ -505,11 +511,11 @@ public final class ProfileCoverView: UIView {
             // 星点层：只沿银河带多出的小金点，淡淡浮现、不密。
             bitmap("qixi-egg-stars", in: ctx,
                    center: CGPoint(x: padded.midX + structureX, y: padded.midY),
-                   width: padded.width, height: padded.height, angle: 0, alpha: egg)
+                   width: padded.width, height: padded.height, angle: 0, alpha: egg, layered: true)
             // 闪烁层：金丝带随移动轻微起伏（静止 0.35、动起来到 0.8），柔和不刺眼。
             bitmap("qixi-egg-shimmer", in: ctx,
                    center: CGPoint(x: padded.midX + structureX, y: padded.midY),
-                   width: padded.width, height: padded.height, angle: 0, alpha: egg * (0.35 + 0.45 * motion))
+                   width: padded.width, height: padded.height, angle: 0, alpha: egg * (0.35 + 0.45 * motion), layered: true)
         }
         // 两只喜鹊中心（帧坐标）：大喜鹊 (545.5, 263)，小喜鹊 (883, 57.5)；
         // 桥心取两者中点 (714.25, 160.25)；靠拢走 55% 的路、留翼尖相触的距离，
@@ -531,25 +537,25 @@ public final class ProfileCoverView: UIView {
             bitmap("qixi-egg-magpie-big-body", in: ctx,
                    center: CGPoint(x: padded.midX + subjectX + bigFrame.x * scaleX,
                                    y: padded.midY + bigFrame.y * scaleY),
-                   width: padded.width, height: padded.height, angle: 0, alpha: split)
+                   width: padded.width, height: padded.height, angle: 0, alpha: split, layered: true)
             bitmap("qixi-egg-magpie-big-gold", in: ctx,
                    center: CGPoint(x: padded.midX + subjectX + bigFrame.x * scaleX,
                                    y: padded.midY + bigFrame.y * scaleY),
-                   width: padded.width, height: padded.height, angle: 0, alpha: split * goldBright)
+                   width: padded.width, height: padded.height, angle: 0, alpha: split * goldBright, layered: true)
             bitmap("qixi-egg-magpie-small-body", in: ctx,
                    center: CGPoint(x: padded.midX + subjectX + smallFrame.x * scaleX,
                                    y: padded.midY + smallFrame.y * scaleY),
-                   width: padded.width, height: padded.height, angle: 0, alpha: split)
+                   width: padded.width, height: padded.height, angle: 0, alpha: split, layered: true)
             bitmap("qixi-egg-magpie-small-gold", in: ctx,
                    center: CGPoint(x: padded.midX + subjectX + smallFrame.x * scaleX,
                                    y: padded.midY + smallFrame.y * scaleY),
-                   width: padded.width, height: padded.height, angle: 0, alpha: split * goldBright)
+                   width: padded.width, height: padded.height, angle: 0, alpha: split * goldBright, layered: true)
         }
         // 未触发时整张喜鹊：PNG 左上角对帧坐标 (483, 7)、473×313。
         bitmap("qixi-magpie", in: ctx,
                center: CGPoint(x: -32 + (483 + 473 / 2) * scaleX + subjectX,
                                y: -12 + (7 + 313 / 2) * scaleY + vertical),
-               width: 473 * scaleX, height: 313 * scaleY, angle: 0, alpha: 1 - split)
+               width: 473 * scaleX, height: 313 * scaleY, angle: 0, alpha: 1 - split, layered: true)
     }
 
     /// 圣诞（北欧木刻、深蓝雪夜）：图集只含背景，雪花由动态物层单独贴；
@@ -569,13 +575,13 @@ public final class ProfileCoverView: UIView {
         if egg > 0.001 {
             bitmap("christmas-egg-globe", in: ctx,
                    center: CGPoint(x: padded.midX + structureX, y: padded.midY),
-                   width: padded.width, height: padded.height, angle: 0, alpha: egg)
+                   width: padded.width, height: padded.height, angle: 0, alpha: egg, layered: true)
         }
         // 雪花动态物：PNG 左上角对帧坐标 (212, 0)、600×323，中心即帧中心
         // (512, 161.5)；padded.midY 已含 vertical，不再另加。
         bitmap("christmas-snowflakes", in: ctx,
                center: CGPoint(x: padded.midX + subjectX, y: padded.midY),
-               width: 600 * scaleX, height: 323 * scaleY, angle: 0, alpha: 1)
+               width: 600 * scaleX, height: 323 * scaleY, angle: 0, alpha: 1, layered: true)
     }
     /// 元旦 v2（木窗框雪夜、深蓝夜＋金色烟花）：图集 5 列 × 3 行 13 帧，
     /// 三层视差已 baked 进帧——远层帧移 1(f−6) px（±6）、中层 2(f−6) px
@@ -595,7 +601,7 @@ public final class ProfileCoverView: UIView {
         if egg > 0.001 {
             bitmap("newyear-egg-burst", in: ctx,
                    center: CGPoint(x: padded.midX + farX, y: padded.midY),
-                   width: padded.width, height: padded.height, angle: 0, alpha: egg)
+                   width: padded.width, height: padded.height, angle: 0, alpha: egg, layered: true)
         }
     }
 
@@ -618,7 +624,7 @@ public final class ProfileCoverView: UIView {
         if egg > 0.001 {
             bitmap("easter-golden-egg", in: ctx,
                    center: CGPoint(x: padded.midX + middleX, y: padded.midY),
-                   width: padded.width, height: padded.height, angle: 0, alpha: egg)
+                   width: padded.width, height: padded.height, angle: 0, alpha: egg, layered: true)
         }
         // 动态彩蛋：PNG 512×560，宽 90、高 90*560/512；中心帧坐标 (380, 269)。
         let eggWidth: CGFloat = 90
@@ -626,7 +632,7 @@ public final class ProfileCoverView: UIView {
         bitmap("easter-painted-egg", in: ctx,
                center: CGPoint(x: -32 + 380 * scaleX + middleX,
                                y: -12 + 269 * scaleY + vertical),
-               width: eggWidth, height: eggHeight, angle: 0, alpha: 1)
+               width: eggWidth, height: eggHeight, angle: 0, alpha: 1, layered: true)
     }
     /// 元宵（深红夜景剪纸风）：图集只含背景，莲花灯由动态物层单独贴；
     /// 万灯齐明光效按图层拆成两片（近景片跟近景灯笼、远景片跟远景），
@@ -655,10 +661,10 @@ public final class ProfileCoverView: UIView {
         if egg > 0.001 {
             bitmap("lantern-lights-far", in: ctx,
                    center: CGPoint(x: padded.midX + farX, y: padded.midY),
-                   width: padded.width, height: padded.height, angle: 0, alpha: egg)
+                   width: padded.width, height: padded.height, angle: 0, alpha: egg, layered: true)
             bitmap("lantern-lights-near", in: ctx,
                    center: CGPoint(x: padded.midX + nearX, y: padded.midY),
-                   width: padded.width, height: padded.height, angle: 0, alpha: egg)
+                   width: padded.width, height: padded.height, angle: 0, alpha: egg, layered: true)
         }
         // 莲花灯：PNG 520×484，宽 70、高 70*484/520；中心帧坐标 (430, 288)。
         let lanternWidth: CGFloat = 70
@@ -669,7 +675,7 @@ public final class ProfileCoverView: UIView {
         glow(ctx, center: CGPoint(x: lanternCenter.x, y: lanternCenter.y + lanternHeight * 0.42),
              rx: 52, ry: 8, color: UIColor(red: 1, green: 0.69, blue: 0.34, alpha: 1), alpha: 0.30)
         bitmap("flower-lantern", in: ctx, center: lanternCenter,
-               width: lanternWidth, height: lanternHeight, angle: 0.03 * travel, alpha: 1)
+               width: lanternWidth, height: lanternHeight, angle: 0.03 * travel, alpha: 1, layered: true)
     }
 
     /// 中秋（深蓝夜色水墨）：图集只含背景，孔明灯由动态物层单独贴；
@@ -694,7 +700,7 @@ public final class ProfileCoverView: UIView {
         if egg > 0.001 {
             bitmap("jade-rabbit-egg", in: ctx,
                    center: CGPoint(x: padded.midX + farX, y: padded.midY),
-                   width: padded.width, height: padded.height, angle: 0, alpha: egg)
+                   width: padded.width, height: padded.height, angle: 0, alpha: egg, layered: true)
         }
         // 孔明灯：三盏错开相位循环上飘（周期 14 秒，从 y≈290 升到 y≈30）。
         let lanternWidth: CGFloat = 56
@@ -709,7 +715,7 @@ public final class ProfileCoverView: UIView {
             bitmap("sky-lantern", in: ctx,
                    center: CGPoint(x: -32 + CGFloat(baseX) * scaleX + farX + 6 * travel * scaleX,
                                    y: -12 + centerY * scaleY + vertical),
-                   width: lanternWidth, height: lanternHeight, angle: 0.03 * travel, alpha: fade)
+                   width: lanternWidth, height: lanternHeight, angle: 0.03 * travel, alpha: fade, layered: true)
         }
     }
     /// 亡灵节（深紫夜＋万寿菊花丛）：图集只含背景，花瓣与花环由 App 单独贴。
@@ -739,7 +745,7 @@ public final class ProfileCoverView: UIView {
             let gold = UIColor(red: 1, green: 0.69, blue: 0.34, alpha: 1)
             glow(ctx, center: wreathCenter, rx: 78, ry: 78, color: gold, alpha: 0.28 * egg)
             bitmap("golden-marigold-wreath", in: ctx,
-                   center: wreathCenter, width: 130, height: 130, angle: 0, alpha: egg)
+                   center: wreathCenter, width: 130, height: 130, angle: 0, alpha: egg, layered: true)
         }
         // 花瓣：四片错开相位循环飘落（周期 12 秒，从 y≈-30 落到 y≈350）。
         let petalWidth: CGFloat = 46
@@ -761,7 +767,7 @@ public final class ProfileCoverView: UIView {
                    center: CGPoint(x: -32 + (petal.baseX + sway) * scaleX + foregroundX * 0.5,
                                    y: -12 + centerY * scaleY + vertical),
                    width: petalWidth, height: petalWidth * petal.aspect,
-                   angle: 0.15 * sin(phase * .pi * 2 + CGFloat(index)) + 0.03 * travel, alpha: fade)
+                   angle: 0.15 * sin(phase * .pi * 2 + CGFloat(index)) + 0.03 * travel, alpha: fade, layered: true)
         }
     }
 
@@ -920,8 +926,87 @@ public final class ProfileCoverView: UIView {
         backdropFrontLayer.opacity = Float(pair.blend)
     }
 
+    /// 叠加层位姿（画布坐标）：节日款 bitmap 不再逐帧画进 drawOverlay，改由图层贴。
+    /// 位姿与 drawOverlay 同一次计算、同一套公式，不另复制。
+    private struct OverlayPose {
+        let id: String
+        let key: String
+        let center: CGPoint
+        let width: CGFloat
+        let height: CGFloat
+        let angle: CGFloat
+        let alpha: CGFloat
+    }
+
+    /// 本轮 drawOverlay 收集到的位姿；同 key 多次出现（孔明灯 ×3、花瓣 ×4）按出现顺序编号。
+    /// 灯是同一张图，编号轮换时画面集合不变（见 applyStagedOverlayPoses 的说明）。
+    private var stagedOverlayPoses: [OverlayPose] = []
+    private var poseOccurrence: [String: Int] = [:]
+    private var overlayLayers: [String: CALayer] = [:]
+
+    /// 画布坐标 → 视图坐标的映射（与 drawOverlay 里的 ctx 变换同一套数学：
+    /// translate(mid) → scale(fit) → scale(1.037) → translate(-size/2)）。
+    /// 与 C 分支（底图改图层）的 canvasRectToView 同一套数学，改动时两处同步。
+    private var coverCanvasScale: CGFloat {
+        guard bounds.width > 0, bounds.height > 0 else { return 1 }
+        let size = Self.artSize
+        return max(bounds.width / size.width, bounds.height / size.height) * 1.037
+    }
+
+    private func canvasPointToView(_ point: CGPoint) -> CGPoint {
+        let k = coverCanvasScale
+        let size = Self.artSize
+        return CGPoint(x: bounds.midX + k * (point.x - size.width / 2),
+                       y: bounds.midY + k * (point.y - size.height / 2))
+    }
+
+    /// 把本轮收集到的位姿贴到图层上：只改 bounds／position／transform／opacity，
+    /// 不触发重画；本轮没出现的旧图层藏掉。图层恒在自身绘制内容之上，节日款
+    /// 光晕画在 drawOverlay 里、本就在 bitmap 之下，顺序与原来一致；只有元宵莲花灯下
+    /// 那圈暖光晕本在两片光效层之下、灯之上，改后落到两片层之下——0.30 透明度的
+    /// 柔光，肉眼不可见的差别。
+    private func applyStagedOverlayPoses() {
+        var visible = Set<String>()
+        let k = coverCanvasScale
+        for pose in stagedOverlayPoses {
+            guard let cgImage = art[pose.key]?.cgImage else { continue }
+            visible.insert(pose.id)
+            let layer: CALayer
+            if let existing = overlayLayers[pose.id] {
+                layer = existing
+            } else {
+                layer = CALayer()
+                layer.contentsGravity = .resize
+                layer.contents = cgImage
+                self.layer.addSublayer(layer)
+                overlayLayers[pose.id] = layer
+            }
+            layer.isHidden = false
+            layer.bounds = CGRect(x: 0, y: 0, width: pose.width * k, height: pose.height * k)
+            layer.position = canvasPointToView(pose.center)
+            layer.transform = CATransform3DMakeRotation(pose.angle, 0, 0, 1)
+            layer.opacity = Float(min(1, max(0, pose.alpha)))
+        }
+        for (id, layer) in overlayLayers where !visible.contains(id) {
+            layer.isHidden = true
+        }
+    }
+
     private func bitmap(_ key: String, in ctx: CGContext, center: CGPoint, width: CGFloat, height: CGFloat,
-                        angle: CGFloat, mirror: Bool = false, alpha: CGFloat = 1, overlay: (() -> Void)? = nil) {
+                        angle: CGFloat, mirror: Bool = false, alpha: CGFloat = 1, overlay: (() -> Void)? = nil,
+                        layered: Bool = false) {
+        // 节日款叠加层：只记录位姿、不画进 drawOverlay，由 drawOverlay 结束时的
+        // applyStagedOverlayPoses 贴到图层上。带 overlay 闭包的调用（国家款小图，
+        // 闭包里还有附加绘制）不走图层，照旧画。
+        if layered {
+            if alpha > 0 {
+                let n = poseOccurrence[key, default: 0]
+                poseOccurrence[key] = n + 1
+                stagedOverlayPoses.append(OverlayPose(id: "\(key)#\(n)", key: key, center: center,
+                                                      width: width, height: height, angle: angle, alpha: alpha))
+            }
+            return
+        }
         guard let image = art[key], alpha > 0 else { return }
         ctx.saveGState()
         ctx.translateBy(x: center.x, y: center.y)
