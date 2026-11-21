@@ -399,6 +399,9 @@ class BearyProfileViewController: UIViewController {
     /// r17-C7：上次渲染「那年今天」的北京时间日期（yyyy-MM-dd）——跨
     /// 0 点停留本页时与今日比对，变了即藏旧卡、重拉新语料。
     private var lastBeijingDateRendered: String?
+    /// 那年今日锚点走查看设备时区：上次渲染「那年今天」的设备时区日期
+    /// （yyyy-MM-dd，.current），与 lastBeijingDateRendered 同口径并行比对。
+    private var lastDeviceDateRendered: String?
     /// 113 模块分页失败态：失败不再静默全灭——本轮已拉到的页（或旧全量语料）
     /// 照常渲染，另加重试行明示失败；从未拉到页时只显重试行。
     private var modulesLoadFailed = false
@@ -4520,6 +4523,14 @@ class BearyProfileViewController: UIViewController {
         return String(format: "%04d-%02d-%02d", year, month, day)
     }
 
+    /// 查看设备时区日期串（yyyy-MM-dd，.current）——那年今日锚点与快照
+    /// 失效走它（日记时区 v20 §二）；写作统计与 streak 仍走北京时间串。
+    private static func deviceDateString(from date: Date) -> String {
+        let parts = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        guard let year = parts.year, let month = parts.month, let day = parts.day else { return "" }
+        return String(format: "%04d-%02d-%02d", year, month, day)
+    }
+
     private func scheduleModulesRefresh(fromProfileResult: Bool = false) {
         // 112 他人页口径：日记下方模块全去（写作统计／那年今日／随机漫步／
         // 地图／星图），故他人页不拉模块语料——作者 scope 分页请求一律不发；
@@ -4731,6 +4742,7 @@ class BearyProfileViewController: UIViewController {
         showingCachedStats = false
         cachedStatsSnapshot = nil
         lastBeijingDateRendered = Self.beijingDateString(from: Date())
+        lastDeviceDateRendered = Self.deviceDateString(from: Date())
         let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
         renderHeatmap(visible: visible)
         renderStats(visible: visible)
@@ -6301,10 +6313,18 @@ class BearyProfileViewController: UIViewController {
         cachedStatsSnapshot = snap
         showingCachedStats = true
         lastBeijingDateRendered = snap.beijingDate
+        lastDeviceDateRendered = snap.deviceDate ?? Self.deviceDateString(from: Date())
         renderStatsFromSnapshot(snap)
         renderYearFromSnapshot(snap)
-        // 那年今天只在快照日期仍是今天（北京时间）时才贴；跨日后不贴旧日，等新语料。
-        if snap.beijingDate == Self.beijingDateString(from: Date()) {
+        // 那年今天只在快照日期仍是今天（查看设备时区）时才贴；跨日后不贴旧日，等新语料。
+        // 旧快照无 deviceDate 时按 beijingDate 回退（过渡期，行为与之前一致）。
+        let thisDayValid: Bool
+        if let deviceDate = snap.deviceDate {
+            thisDayValid = deviceDate == Self.deviceDateString(from: Date())
+        } else {
+            thisDayValid = snap.beijingDate == Self.beijingDateString(from: Date())
+        }
+        if thisDayValid {
             renderThisDayFromSnapshot(snap)
         } else {
             thisDayCard.isHidden = true
@@ -6394,6 +6414,7 @@ class BearyProfileViewController: UIViewController {
             accountId: accountId,
             sessionGeneration: SessionManager.shared.currentSessionGeneration,
             beijingDate: Self.beijingDateString(from: Date()),
+            deviceDate: Self.deviceDateString(from: Date()),
             total: stats.total,
             totalChars: stats.totalChars,
             bestSlotStartHour: stats.bestSlotStartHour,
@@ -6407,21 +6428,22 @@ class BearyProfileViewController: UIViewController {
         BearyProfileStatsCache.save(bucket: bucket, snapshot: snap)
     }
 
-    /// 跨日复核（北京时间）：系统跨日通知、回前台、回到本页时都调。
+    /// 跨日复核（北京时间 + 查看设备时区）：系统跨日通知、回前台、回到本页时都调。
     /// 统计数字本身不按日失效，只「那年今天」换日——旧卡先藏、重拉新语料，
     /// 新语料到齐后 renderModules 按新日期重算；统计数字在重拉期间继续显旧值。
+    /// 那年今天锚点走查看设备时区，故设备日期换日同样触发（北京日期未换也触发）。
     @objc private func handleBeijingDayRollover() {
         checkBeijingDayRollover()
     }
 
     private func checkBeijingDayRollover() {
-        let today = Self.beijingDateString(from: Date())
-        guard let last = lastBeijingDateRendered else {
-            lastBeijingDateRendered = today
-            return
-        }
-        guard last != today else { return }
-        lastBeijingDateRendered = today
+        let todayBeijing = Self.beijingDateString(from: Date())
+        let todayDevice = Self.deviceDateString(from: Date())
+        let beijingChanged = lastBeijingDateRendered.map { $0 != todayBeijing } ?? false
+        let deviceChanged = lastDeviceDateRendered.map { $0 != todayDevice } ?? false
+        lastBeijingDateRendered = todayBeijing
+        lastDeviceDateRendered = todayDevice
+        guard beijingChanged || deviceChanged else { return }
         thisDayCard.isHidden = true
         thisDayMainEntry = nil
         cachedStatsSnapshot = nil
@@ -10496,8 +10518,10 @@ enum BearyProfileCache {
 // 冷开即可渲染）；只有确认到尾（末页不足 50）才覆盖，失败 / 部分语料
 // （含末页游标缺失的截断语料）不写。按账号分桶，读取时校验账号 id 与会话代次
 // （退出/401/换号后代次推进，旧快照弃用）；退出/401 时由 SessionManager 清桶。
-// 「那年今天」按北京时间日期失效：快照存 beijingDate（Asia/Shanghai），
+// 「那年今天」按查看设备时区日期失效：快照存 deviceDate（.current），
 // 冷开比对当日，跨日不贴旧日；跨 0 点停留本页时由跨日复核藏旧卡、重拉新语料。
+// beijingDate 仍存（写作统计与跨日复核的北京口径）；旧快照无 deviceDate
+// 时那年今天按 beijingDate 回退。
 enum BearyProfileStatsCache {
     private static let filePrefix = "beary_profile_stats_cache_"
 
@@ -10507,6 +10531,9 @@ enum BearyProfileStatsCache {
         var sessionGeneration: Int
         /// 北京时间日期（yyyy-MM-dd，Asia/Shanghai）。
         var beijingDate: String
+        /// 查看设备时区日期（yyyy-MM-dd，.current）；那年今日条目按它失效。
+        /// Optional：旧快照无此字段时解码为 nil，按 beijingDate 回退。
+        var deviceDate: String?
         var total: Int
         var totalChars: Int
         var bestSlotStartHour: Int?
