@@ -4657,6 +4657,11 @@ class BearyProfileViewController: UIViewController {
 
     // MARK: 批 D —— 模块渲染
 
+    /// v24：模块区只在本人页「日记」tab 显示。切到「赞过」/「收藏」时整块
+    /// 隐藏（高度约束收起，不留空白占位）；照片墙不受影响，始终显示；
+    /// 他人页模块区本来就不出现（renderModules 首分支已处理）。
+    private var modulesShownForCurrentTab: Bool { currentTab == .diary }
+
     private func renderModules() {
         // 112 他人页口径：模块组永不渲染（即使语料已到齐也塌掉），脚部
         // 只留照片区；本人页走原有语料到齐分支。113：失败行在他人页同样不显。
@@ -4696,8 +4701,8 @@ class BearyProfileViewController: UIViewController {
             modulesRetryRow.isHidden = false
             // 失败态容器恒显：有语料时装各卡 + 重试行，无语料时只装重试行。
             let modulesWasHidden = modulesContainer.isHidden
-            modulesContainer.isHidden = false
-            modulesHeightConstraint.isActive = false
+            modulesContainer.isHidden = !modulesShownForCurrentTab
+            modulesHeightConstraint.isActive = !modulesShownForCurrentTab
             if headerWidthValue > 0 {
                 layoutHeaderForced(widthValue: headerWidthValue)
             }
@@ -4718,8 +4723,8 @@ class BearyProfileViewController: UIViewController {
             updateModulesRetryRow()
             modulesRetryRow.isHidden = false
             let modulesWasHidden = modulesContainer.isHidden
-            modulesContainer.isHidden = false
-            modulesHeightConstraint.isActive = false
+            modulesContainer.isHidden = !modulesShownForCurrentTab
+            modulesHeightConstraint.isActive = !modulesShownForCurrentTab
             if headerWidthValue > 0 {
                 layoutHeaderForced(widthValue: headerWidthValue)
             }
@@ -4740,8 +4745,8 @@ class BearyProfileViewController: UIViewController {
         renderYear(visible: visible)
         let anyVisible = [pastSelfDeliveryCard, heatmapView, statsCard, thisDayCard, randomCard, yearCard].contains { !$0.isHidden }
         let modulesWasHidden = modulesContainer.isHidden
-        modulesContainer.isHidden = !anyVisible
-        modulesHeightConstraint.isActive = !anyVisible
+        modulesContainer.isHidden = !anyVisible || !modulesShownForCurrentTab
+        modulesHeightConstraint.isActive = !anyVisible || !modulesShownForCurrentTab
         if headerWidthValue > 0 {
             layoutHeaderForced(widthValue: headerWidthValue)
         }
@@ -4920,7 +4925,7 @@ class BearyProfileViewController: UIViewController {
     private func syncModulesContainerVisibilityAfterAsyncStats() {
         guard !modulesLoadFailed else { return }
         let anyVisible = [pastSelfDeliveryCard, statsCard, thisDayCard, randomCard, yearCard].contains { !$0.isHidden }
-        if anyVisible, modulesContainer.isHidden {
+        if anyVisible, modulesShownForCurrentTab, modulesContainer.isHidden {
             modulesContainer.isHidden = false
             modulesHeightConstraint.isActive = false
             if headerWidthValue > 0 {
@@ -5622,7 +5627,7 @@ class BearyProfileViewController: UIViewController {
         pastSelfDeliveryCard.isHidden = pastSelfDeliveryStack.arrangedSubviews.isEmpty
         // 送达卡从空变有、且模块容器此前因各卡全空而塌掉时，把容器一并恢复，
         // 否则新节插进了隐藏的容器里、用户仍看不见（与 renderModules 的显隐口径一致）。
-        if !pastSelfDeliveryCard.isHidden, modulesContainer.isHidden {
+        if !pastSelfDeliveryCard.isHidden, modulesShownForCurrentTab, modulesContainer.isHidden {
             modulesContainer.isHidden = false
             modulesHeightConstraint.isActive = false
             if headerWidthValue > 0 { layoutHeaderForced(widthValue: headerWidthValue) }
@@ -6317,8 +6322,8 @@ class BearyProfileViewController: UIViewController {
         modulesRetryRow.isHidden = true
         let anyVisible = [statsCard, thisDayCard, yearCard].contains { !$0.isHidden }
         let modulesWasHidden = modulesContainer.isHidden
-        modulesContainer.isHidden = !anyVisible
-        modulesHeightConstraint.isActive = !anyVisible
+        modulesContainer.isHidden = !anyVisible || !modulesShownForCurrentTab
+        modulesHeightConstraint.isActive = !anyVisible || !modulesShownForCurrentTab
         if headerWidthValue > 0 {
             layoutHeaderForced(widthValue: headerWidthValue)
         }
@@ -7088,6 +7093,16 @@ class BearyProfileViewController: UIViewController {
         if tab == .saved && !isOwnProfile { return }
         currentTab = tab
         applyTabSelection()
+        // v24：模块区只在「日记」tab 显示。切到「赞过」/「收藏」整块隐藏
+        // （高度约束收起，不留空白占位）；切回「日记」按语料现状恢复显隐
+        // （renderModules 的显隐口径）。
+        if tab == .diary {
+            renderModules()
+        } else if !modulesContainer.isHidden {
+            modulesContainer.isHidden = true
+            modulesHeightConstraint.isActive = true
+            refreshFooter()
+        }
         // 2026-10-28 定版：切 tab 不再整表 crossDissolve——直接换数据，新行错峰
         // （animateNewRows 只针对未播过的新行；指示条仍走自己的 0.28s 动画）。
         tableView.reloadData()
