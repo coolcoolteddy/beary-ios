@@ -1570,11 +1570,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         scrollLeadingConstraint = scrollView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor)
         scrollTrailingConstraint = scrollView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)
         topBarCenterXConstraint = topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor)
-        topBarWidthConstraint = topBar.widthAnchor.constraint(equalToConstant: 640)
+        topBarWidthConstraint = topBar.widthAnchor.constraint(equalToConstant: 600)
         toolbarCenterXConstraint = toolbarContainer.centerXAnchor.constraint(equalTo: view.centerXAnchor)
-        toolbarWidthConstraint = toolbarContainer.widthAnchor.constraint(equalToConstant: 608)
+        toolbarWidthConstraint = toolbarContainer.widthAnchor.constraint(equalToConstant: 568)
         scrollCenterXConstraint = scrollView.centerXAnchor.constraint(equalTo: view.centerXAnchor)
-        scrollWidthConstraint = scrollView.widthAnchor.constraint(equalToConstant: 640)
+        scrollWidthConstraint = scrollView.widthAnchor.constraint(equalToConstant: 600)
         // 任务2：准备发布行高约束先建好（初值 0、不占位），显隐由
         // refreshPublishVisibilityRow 改它；约束在 buildLayout 建、样式在
         // buildPublishVisibilityRow 建，首帧布局前两者都已就位。
