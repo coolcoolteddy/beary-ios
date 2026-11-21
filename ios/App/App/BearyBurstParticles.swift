@@ -41,9 +41,9 @@ enum BearyBurstParticles {
         durMin: 0.48, durMax: 0.62, spin: false, stretch: 1.3)
 
     /// 收藏星星：7 颗、2.5–4.5pt、10–21pt、500–660ms、带旋转。
-    /// 颜色只用点按后填色本体（品牌橙 #ff9500，单色），不配浅色渐变。
+    /// 颜色只用点按后填色本体（收藏金 #FFCC00，单色），不配浅色渐变。
     private static let starStyle = Style(
-        colors: [UIColor(red: 1, green: 149.0 / 255.0, blue: 0, alpha: 1)],
+        colors: [BearyColors.bookmarkGold],
         count: 7, sizeMin: 2.5, sizeMax: 4.5, distMin: 10, distMax: 21,
         durMin: 0.50, durMax: 0.66, spin: true, stretch: 1.0)
 
@@ -52,7 +52,7 @@ enum BearyBurstParticles {
         burst(from: button, style: likeStyle, star: false)
     }
 
-    /// 收藏变橙时炸（只在变橙时调；取消收藏不调）。
+    /// 收藏变金时炸（只在变金时调；取消收藏不调）。
     static func burstStar(from button: UIButton) {
         burst(from: button, style: starStyle, star: true)
     }

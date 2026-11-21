@@ -10,6 +10,11 @@ enum BearyColors {
     static var ink: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.96, alpha: 1) : .black } }
     static var gray: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.66, alpha: 1) : UIColor(white: 0.45, alpha: 1) } }
     static var orange: UIColor { UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1) }
+    /// 收藏选中金：浅 #B8860B／深 #FFCC00（2026-11-21 Li 定，规范 v12 选 1：收藏选中色从 orange 换暖金，
+    /// 橙只留给公开档位；单值 #FFCC00 浅色对白底仅 1.51:1、不到非文本 3:1 线，故拆深浅）。
+    /// 浅色对白底约 3.25:1、深色对黑底约 13.89:1，均 ≥3:1。只用于收藏选中态；
+    /// 公开 pill／公开橙边／FAB／置顶等仍走 orange，不动。
+    static var bookmarkGold: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 204.0/255.0, blue: 0.0, alpha: 1) : UIColor(red: 184.0/255.0, green: 134.0/255.0, blue: 11.0/255.0, alpha: 1) } }
     /// 品牌橙上的固定前景色（深墨色，视觉清单第 5 项）：固定纯黑，不随深浅切换。
     /// 不用 ink——ink 深色下是近白，放在固定橙底上会变白字（白字/橙底对比度
     /// 仅约 2.20:1，见 #508 注释）；onBrand 在深浅两模式下恒为墨色，
@@ -30,7 +35,7 @@ enum BearyColors {
     /// 新底 #F5F5F5 上约 5.01:1，本 token 字色不动、仍保留。
     static var surface3ErrorText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 107.0/255.0, blue: 97.0/255.0, alpha: 1) : UIColor(red: 189.0/255.0, green: 36.0/255.0, blue: 36.0/255.0, alpha: 1) } }
     /// 点赞填色：亮红 #ff3b30（2026-10-29 Li 定，明显亮于语义红 #e5484d；仅点赞入口用——
-    /// 删除按钮走 destructiveText，语义红仍走 red，收藏点亮仍走 orange，不动）。
+    /// 删除按钮走 destructiveText，语义红仍走 red，收藏点亮走 bookmarkGold（2026-11-21 v12），不动）。
     static var likeRed: UIColor { UIColor(red: 1.0, green: 59.0/255.0, blue: 48.0/255.0, alpha: 1) }
     /// 图片上的深色衬底：固定黑色半透明（与 ink 不同——深色下 ink 是近白，白字会看不清）。
     static var scrim: UIColor { UIColor(white: 0, alpha: 0.6) }
@@ -40,7 +45,7 @@ enum BearyColors {
     static var green: UIColor { UIColor(red: 47.0/255.0, green: 191.0/255.0, blue: 113.0/255.0, alpha: 1) }
     /// 正文用深橙（ChatGPT 审计第四类新 token）：浅 #C2410C / 深 #ff9500。
     /// 浅色白底对比约 5.18:1、橙底 0.12 浅底对比约 4.69:1；深色黑底对比约 9.55:1。
-    /// 只用于文字前景；图标/FAB/收藏/大号文字/描边仍走 orange，不动。
+    /// 只用于文字前景；图标/FAB/大号文字/描边仍走 orange，收藏选中走 bookmarkGold，不动。
     /// 唯一例外（第十轮 #13）：系统通知图标（19pt 信封，橙 14% 底）浅色对比仅
     /// 约 2.20:1，浅色改走本 token（深色与 orange 同值 #ff9500，不变）。
     static var deepOrangeText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1) : UIColor(red: 194.0/255.0, green: 65.0/255.0, blue: 12.0/255.0, alpha: 1) } }
