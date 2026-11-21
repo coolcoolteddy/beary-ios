@@ -45,6 +45,10 @@ final class BearyLoginViewController: UIViewController {
     /// 登录成功（验码 {ok: true}）。容器随后刷新登录态并关闭本页。
     /// 参数：邀请绑定文案（未填邀请码时为 nil），容器进 App 后 toast 一次。
     var onLoggedIn: ((String?) -> Void)?
+    /// 本次验码是否新建了账号（服务端 verify 回包 is_new）。容器据此决定
+    /// 是否在登录成功后走注册后引导（只给新注册用户、只弹一次）。
+    /// 每次 verify 前清零，避免旧值漏到下一次登录。
+    var loggedInIsNew = false
     /// 用户关闭。本页不自己 dismiss，容器负责关闭。
     var onCancelled: (() -> Void)?
     /// 用户点“先逛逛（游客模式）”。本页不自己 dismiss，容器负责关闭并进入游客态。
@@ -1030,6 +1034,7 @@ final class BearyLoginViewController: UIViewController {
     }
 
     private func verify(email: String, code: String, confirmCancel: Bool) {
+        loggedInIsNew = false
         verifyTask = BearyAPI.shared.verify(
             email: email,
             code: code,
@@ -1082,6 +1087,7 @@ final class BearyLoginViewController: UIViewController {
     /// granted → 到账文案；flagged → 待审核文案；其余（失败态 / 无 referral 回包）
     /// 均显式提示“邀请码绑定失败”，且不影响登录本身；绑定规则与文案不动。
     private func handleLoginReferralFeedback(resp: VerifyResponse) {
+        loggedInIsNew = resp.isNew ?? false
         let inviteCode = normalizedInviteCode()
         guard !inviteCode.isEmpty else {
             onLoggedIn?(nil)
