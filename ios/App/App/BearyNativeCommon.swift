@@ -3885,6 +3885,64 @@ enum BearyReportedStore {
     }
 }
 
+/// 已举报用户 id 本地集（UserDefaults）：举报某用户后，其日记立刻从举报人
+/// 眼前消失（列表／搜索／单篇／引用，与拉黑同口径：只查“我举报作者”，
+/// 作者举报我不影响我看作者）。与 BearyReportedStore（按篇）同口径：
+/// 按账号分桶、本地播种、无服务端拉取端点（服务端真相源是列表 SQL 过滤，
+/// 见后端 diff；本集只用于即时隐藏与单点入口同步比对，点按路径不发网络）。
+/// 旧单键不迁移、不删除；换号/退出靠桶切换防漏，guest 桶永不命中（举报须登录）。
+enum BearyReportedUserStore {
+    private static let baseKey = "beary.reportedUserIds"
+    private static var cached: Set<Int>?
+    private static var cachedBucket: String?
+    private static var accountChangeObserver: NSObjectProtocol?
+
+    private static func currentBucket() -> String {
+        if let id = SessionManager.shared.currentUser?.id {
+            return String(id)
+        }
+        return "guest"
+    }
+
+    private static func key(for bucket: String) -> String {
+        return baseKey + "." + bucket
+    }
+
+    static func clearMemory() {
+        cached = nil
+        cachedBucket = nil
+    }
+
+    private static func observeAccountChanges() {
+        guard accountChangeObserver == nil else { return }
+        accountChangeObserver = NotificationCenter.default.addObserver(forName: .bearyUserDidChange, object: nil, queue: .main) { _ in
+            BearyReportedUserStore.clearMemory()
+        }
+    }
+
+    private static func ensureLoaded() {
+        observeAccountChanges()
+        let bucket = currentBucket()
+        if cached == nil || cachedBucket != bucket {
+            cachedBucket = bucket
+            cached = Set(UserDefaults.standard.array(forKey: key(for: bucket)) as? [Int] ?? [])
+        }
+    }
+
+    static func isReportedUser(_ userId: Int) -> Bool {
+        ensureLoaded()
+        return cached?.contains(userId) ?? false
+    }
+
+    static func markReportedUser(_ userId: Int) {
+        ensureLoaded()
+        cached?.insert(userId)
+        if let bucket = cachedBucket {
+            UserDefaults.standard.set(Array(cached ?? []), forKey: key(for: bucket))
+        }
+    }
+}
+
 /// 第六轮审计 02：写操作身份守卫（小机制，供举报/拉黑/解除拉黑等调用点复用）。
 /// 发起时拍一张 (accountId, authEpoch)，回包时一行 stillValid 判断；
 /// 任一变化（切号/退出/重登）即判定过期，旧回包不得再写本地状态、发广播、弹提示。
@@ -4042,6 +4100,8 @@ extension Notification.Name {
     static let bearyDidReportEntry = Notification.Name("bearyDidReportEntry")
     /// 拉黑成功后广播（object = blockedUserId Int）：各列表页据此过滤该作者条目。
     static let bearyDidBlockUser = Notification.Name("bearyDidBlockUser")
+    /// 按用户举报成功后广播（object = reportedUserId Int）：各列表页据此过滤该作者条目，与拉黑同口径。
+    static let bearyDidReportUser = Notification.Name("bearyDidReportUser")
     /// 补缺 P3-38：账号真变广播（SceneDelegate onUserChanged 去重后发，无 object）：通知页据此复位 seen 水印。
     static let bearyUserDidChange = Notification.Name("bearyUserDidChange")
     /// 秒开-启动瘦身：首页首屏网络回包已终结（广场首拉成功，或空表/有缓存时的失败终结），
@@ -4175,6 +4235,10 @@ enum BearyReportFlow {
                         switch result {
                         case .success(let resp):
                             guard BearyIdentityGuard.stillValid(identity) else { return }
+                            // 举报口径：成功即记入本地已举报用户集并广播，各列表页
+                            // 立刻清掉该作者的日记（与拉黑同口径；重复举报同样处理）。
+                            BearyReportedUserStore.markReportedUser(userId)
+                            NotificationCenter.default.post(name: .bearyDidReportUser, object: userId)
                             BearyToast.show(in: vc.view, message: resp.duplicate == true ? "已举报" : "已举报，谢谢反馈")
                         case .failure:
                             BearyToast.show(in: vc.view, message: "举报失败，请重试")

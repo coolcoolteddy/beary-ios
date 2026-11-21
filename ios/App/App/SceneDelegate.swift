@@ -4321,7 +4321,7 @@ final class BearyChromeViewController: UIViewController {
         if SessionManager.shared.isGuestMode { return false }
         guard let authorId = entry.authorId else { return false }
         if let viewerId = SessionManager.shared.currentUser?.id, viewerId == authorId { return false }
-        return BearyBlockedStore.isBlocked(authorId)
+        return BearyBlockedStore.isBlocked(authorId) || BearyReportedUserStore.isReportedUser(authorId)
     }
 
     @discardableResult
