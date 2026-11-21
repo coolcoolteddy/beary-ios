@@ -9044,13 +9044,37 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
     private func handleCellShare(entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         // 审计 P0-4：有效态门控（过期限时篇不放行分享/回应）。
-        guard BearyEphemeral.isEffectivelyPublic(entry) else { return }
-        guard let shareURL = URL(string: "https://teddyhn.com/beary/d/\(entryId)") else { return }
+        // 单次浏览分享：作者本人看自己的非公开篇取一次性链接再分享；他人看非公开篇仍 return。
+        if BearyEphemeral.isEffectivelyPublic(entry) {
+            guard let shareURL = URL(string: "https://teddyhn.com/beary/d/\(entryId)") else { return }
+            presentCellShareSheet(entry: entry, url: shareURL)
+            return
+        }
+        let isAuthor = entry.isMine == true
+            || (entry.authorId != nil && entry.authorId == SessionManager.shared.currentUser?.id)
+        guard isAuthor else { return }
+        BearyAPI.shared.createOneTimeShareLink(id: entryId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success(let link):
+                    guard let url = URL(string: link.url) else { return }
+                    self.presentCellShareSheet(entry: entry, url: url)
+                case .failure:
+                    BearyToast.show(in: self.view, message: "操作失败，请重试")
+                }
+            }
+        }
+    }
+
+    /// 个人页卡片分享 sheet 统一出口：items 为正文前 60 字 + 链接（公开永久链接与
+    /// 一次性链接同口径）。
+    private func presentCellShareSheet(entry: Entry, url: URL) {
         var items: [Any] = []
         if let content = entry.content, !content.isEmpty {
             items.append(String(content.prefix(60)))
         }
-        items.append(shareURL)
+        items.append(url)
         let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
         if let popover = sheet.popoverPresentationController {
             popover.sourceView = view

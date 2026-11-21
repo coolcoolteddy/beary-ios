@@ -2807,17 +2807,18 @@ final class BearyDetailViewController: UIViewController {
         shareButton.accessibilityLabel = "分享"
 
         // 卡片互动门控同口径：2026-10-31 私密自互动口径——点赞／收藏为“有效公开 或 作者本人”
-        // 时正常显示，非作者看非公开篇仍压暗；分享不动，仍仅有效公开才有（私密不交出正文与链接），
+        // 时正常显示，非作者看非公开篇仍压暗；分享同款：有效公开 或 作者本人时显示
+        // （作者本人看自己的非公开篇点按走一次性链接，见 presentShareSheet），
         // 分享隐藏时留 24pt 槽位占位（首页 shareSlotSpacer 同款），行尾槽位不随分享显隐变化。
         // 限时已到期按私密算（与卡片同口径）。
         // 注意：按钮不禁用（首页卡片禁用），点按仍走详情原有拒绝动效 + toast
         // （审计 P2-11 口径），非作者的非公开互动有明确反馈而非静默无反应。
-        // 后端缺口见 PR 说明：后端目前仍以 published=1 拦私密互动，作者私密请求仍会 404 回滚。
+        // 单次浏览分享：作者本人看自己的非公开篇点按取一次性链接，接口随本支后端 diff 上线。
         let publicOK = BearyEphemeral.isEffectivelyPublic(entry)
         let interactOK = publicOK || isAuthor
         likeButton.alpha = interactOK ? 1.0 : 0.4
         bookmarkButton.alpha = interactOK ? 1.0 : 0.4
-        shareButton.isHidden = !publicOK
+        shareButton.isHidden = !interactOK
         shareSlotSpacer.isHidden = !shareButton.isHidden
     }
 
@@ -3172,11 +3173,33 @@ final class BearyDetailViewController: UIViewController {
     // MARK: - 分享
 
     private func presentShareSheet() {
-        // 现有分享流程同口径：私密直接 return，不交出正文与链接。
-        // 限时已到期按私密算。
-        if !BearyEphemeral.isEffectivelyPublic(entry) { return }
-        guard let entryId = entry.id, !entryId.isEmpty,
-              let url = URL(string: "https://teddyhn.com/beary/d/" + entryId) else { return }
+        // 分享分两路：公开篇走永久链接；作者本人看自己的非公开篇（私密／仅好友／
+        // 已到期的限时）取一次性链接再分享。限时已到期按私密算。
+        // 他人看非公开篇没有分享钮、到不了这里。
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        if BearyEphemeral.isEffectivelyPublic(entry) {
+            guard let url = URL(string: "https://teddyhn.com/beary/d/" + entryId) else { return }
+            presentShareSheet(with: url)
+            return
+        }
+        guard isAuthor else { return }
+        BearyAPI.shared.createOneTimeShareLink(id: entryId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success(let link):
+                    guard let url = URL(string: link.url) else { return }
+                    self.presentShareSheet(with: url)
+                case .failure:
+                    BearyToast.show(in: self.view, message: "操作失败，请重试")
+                }
+            }
+        }
+    }
+
+    /// 分享 sheet 统一出口：items 为标题 + 正文前 60 字 + 链接；已有 presented 时复制链接 + toast；
+    /// sheet 回调带错时同样复制 + toast（公开与一次性链接同口径）。
+    private func presentShareSheet(with url: URL) {
         let shareText = (entry.content ?? "").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
         var items: [Any] = ["beary 日记"]
         if !shareText.isEmpty {

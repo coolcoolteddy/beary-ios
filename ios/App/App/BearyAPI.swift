@@ -1379,6 +1379,17 @@ final class BearyAPI {
         request("/beary/api/entries/\(safe)", completion: completion)
     }
 
+    /// 单次浏览分享：作者本人给自己的日记发一次性链接（服务端 diff 随本支上线；未上线前调失败即走调用方失败提示）。
+    /// 链接谁点开都能看一次，不用登录、不验互关；点开即失效。公开篇不走这里，走原永久链接分享。
+    struct OneTimeShareLinkResponse: Decodable {
+        let url: String
+    }
+
+    func createOneTimeShareLink(id: String, completion: @escaping (Result<OneTimeShareLinkResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/entries/\(safe)/one-time-share", method: "POST", completion: completion)
+    }
+
     // MARK: - 通知与搜索
 
     func fetchNotifications(

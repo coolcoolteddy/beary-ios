@@ -2733,8 +2733,10 @@ class BearyDiaryCardCell: UITableViewCell {
         likeButton.isEnabled = !interactionDisabled
         bookmarkButton.isEnabled = !interactionDisabled
         shareButton.isEnabled = !interactionDisabled
+        // 单次浏览分享：分享钮对“有效公开 或 作者本人”显示；作者本人看自己的
+        // 私密／仅好友／已到期的限时篇也有分享钮（点按走一次性链接，见控制器侧）。
         let publicOK = BearyEphemeral.isEffectivelyPublic(entry)
-        shareButton.isHidden = publicOK == false
+        shareButton.isHidden = !(publicOK || isEntryAuthor(entry))
         shareSlotSpacer.isHidden = !shareButton.isHidden
         // 2026-10-29 100 包反馈第 4 项根因 A：个人页 configure 此前从未调
         // refreshMoreRow，而 prepareForReuse 把 moreButton 藏起，导致本人
@@ -3504,11 +3506,12 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     /// 2026-10-31 私密自互动口径：点赞／收藏门控为“有效公开 或 作者本人”（详情同口径）；
-    /// 分享不动，仍仅有效公开才有。注意：后端目前仍以 published=1 拦私密互动（见 PR 说明），
-    /// 作者私密点赞／收藏的服务端请求仍会 404 并走既有失败回滚，本处只改 App 侧放行。
+    /// 分享同款：有效公开 或 作者本人时显示分享钮（作者本人看自己的非公开篇点按走一次性链接，
+    /// 见控制器侧 presentShareSheet／handleCellShare；他人看非公开篇仍无分享钮）。
     /// F7/F8（首页模式）：首页与详情互动门控统一为上述口径。
     private func updateActionInteractivity() {
-        // 审计 P0-4：有效态门控（过期限时篇不放行点赞/收藏/分享；作者本人例外只放行点赞/收藏）。
+        // 审计 P0-4：有效态门控（过期限时篇不放行点赞/收藏；作者本人例外只放行点赞/收藏；
+        // 分享的作者例外见下：作者本人看自己的非公开篇也有分享钮，走一次性链接）。
         // 2026-10-29 及时性口径：在途请求不再禁用按钮——快连点每次都必须立即
         // 落地，防重入只靠代次守卫，不靠按钮禁用。
         let publicOK = currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false
@@ -3518,7 +3521,8 @@ class BearyDiaryCardCell: UITableViewCell {
         likeButton.alpha = interactOK ? 1.0 : 0.4
         bookmarkButton.alpha = interactOK ? 1.0 : 0.4
         // 网页口径：shBtn 仅 is_public 时输出——非公开卡直接没有分享钮（不禁用占位）。
-        shareButton.isHidden = publicOK == false
+        // 单次浏览分享：作者本人看自己的非公开篇也有分享钮（一次性链接，不交出永久深链）。
+        shareButton.isHidden = !interactOK
         shareSlotSpacer.isHidden = !shareButton.isHidden
     }
 
@@ -3758,7 +3762,8 @@ class BearyDiaryCardCell: UITableViewCell {
         // 公开→私密仍显），失败回滚后文案也停在目标态（⋯ 菜单内无文案态可停）。
         // 此处按新 entry 的有效态同步两处（与 profile configure 同款口径；
         // 控制器失败回滚同样走本方法，文案随之回到原态）。
-        shareButton.isHidden = BearyEphemeral.isEffectivelyPublic(entry) == false
+        // 单次浏览分享：作者本人看自己的非公开篇也有分享钮（一次性链接）。
+        shareButton.isHidden = !(BearyEphemeral.isEffectivelyPublic(entry) || isEntryAuthor(entry))
         shareSlotSpacer.isHidden = !shareButton.isHidden
         refreshMoreRow()
         // 批 E 补漏：就地同步此前不刷位置行——可见行经本方法同步新模型
@@ -4064,7 +4069,11 @@ class BearyDiaryCardCell: UITableViewCell {
             return
         }
         // 分享用原生分享 sheet（控制器侧 present，payload 见 presentShareSheet）。
-        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
+        // 单次浏览分享：有效公开 或 作者本人时放行点按；作者本人看自己的非公开篇
+        // 走一次性链接（控制器侧取链接），他人看非公开篇仍无分享钮、点按不到这里。
+        let shareOK = (currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false)
+            || (currentEntry.map(isEntryAuthor) ?? false)
+        if !shareOK { return }
         if let entryValue = currentEntry {
             onShareRequested?(entryValue)
         }

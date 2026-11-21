@@ -1184,13 +1184,40 @@ class BearyFeedViewController: UIViewController {
     /// 回退（原生能力映射）：① 系统分享 sheet；② 已有 presented 时复制到剪贴板 + toast；
     /// ③ sheet 回调带错时同样复制 + toast。
     private func presentShareSheet(for entry: Entry) {
-        // B3：私密直接 return，不进分享 sheet、不交出正文前 60 字、不走剪贴板回退。
+        // B3：非公开篇不进分享 sheet、不交出正文前 60 字、不走剪贴板回退。
         // 审计-广场（分享守卫有效态，中）：存储态 isPublic 不够——已过期限时篇
         // 存储公开、有效私密，旧口径仍可分享出正文与深链；改与菜单/可见性切换
         // 同口径的有效态 isEffectivelyPublic。
-        if BearyEphemeral.isEffectivelyPublic(entry) == false { return }
-        guard let entryIdValue = entry.id, !entryIdValue.isEmpty,
-              let urlValue = URL(string: "https://teddyhn.com/beary/d/" + entryIdValue) else { return }
+        // 单次浏览分享：作者本人看自己的非公开篇取一次性链接再分享；他人看非公开篇仍 return。
+        guard let entryIdValue = entry.id, !entryIdValue.isEmpty else { return }
+        if BearyEphemeral.isEffectivelyPublic(entry) {
+            guard let urlValue = URL(string: "https://teddyhn.com/beary/d/" + entryIdValue) else { return }
+            presentShareSheet(with: urlValue, for: entry)
+            return
+        }
+        // 卡片点按已按“有效公开 或 作者本人”放行；此处再核一次作者身份，防他人口径漂移。
+        let isAuthor = entry.isMine == true
+            || (entry.authorId != nil && entry.authorId == SessionManager.shared.currentUser?.id)
+        guard isAuthor else { return }
+        BearyAPI.shared.createOneTimeShareLink(id: entryIdValue) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success(let link):
+                    guard let urlValue = URL(string: link.url) else { return }
+                    self.presentShareSheet(with: urlValue, for: entry)
+                case .failure:
+                    BearyToast.show(in: self.view, message: "操作失败，请重试")
+                }
+            }
+        }
+    }
+
+    /// 分享 sheet 统一出口：items 为标题 + 正文前 60 字 + 日记深链（公开永久链接与
+    /// 一次性链接同口径）；已有 presented 时先 toast 说明再复制，不再静默改复制；
+    /// sheet 回调带错时同样复制 + toast。
+    private func presentShareSheet(with urlValue: URL, for entry: Entry) {
+        guard let entryIdValue = entry.id, !entryIdValue.isEmpty else { return }
         let shareText = (entry.content ?? "").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
         var items: [Any] = ["beary 日记"]
         if !shareText.isEmpty {

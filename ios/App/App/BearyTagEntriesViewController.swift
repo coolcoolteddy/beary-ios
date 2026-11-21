@@ -344,10 +344,36 @@ final class BearyTagEntriesViewController: UIViewController {
         cell.onEmoteAddRequested = { [weak self] in
             self?.onOpenEntry?(entry)
         }
-        cell.onShareRequested = { [weak self] _ in
+        cell.onShareRequested = { [weak self] entryValue in
             guard let self = self else { return }
-            let sheet = UIActivityViewController(activityItems: [entry.content ?? ""], applicationActivities: nil)
-            self.present(sheet, animated: true)
+            if BearyEphemeral.isEffectivelyPublic(entryValue) {
+                let sheet = UIActivityViewController(activityItems: [entryValue.content ?? ""], applicationActivities: nil)
+                self.present(sheet, animated: true)
+                return
+            }
+            // 单次浏览分享：作者本人看自己的非公开篇走一次性链接，不直接交出正文；
+            // 他人看非公开篇没有分享钮、到不了这里。
+            let isAuthor = entryValue.isMine == true
+                || (entryValue.authorId != nil && entryValue.authorId == SessionManager.shared.currentUser?.id)
+            guard isAuthor, let entryId = entryValue.id, !entryId.isEmpty else { return }
+            BearyAPI.shared.createOneTimeShareLink(id: entryId) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    switch result {
+                    case .success(let link):
+                        guard let url = URL(string: link.url) else { return }
+                        var items: [Any] = []
+                        if let content = entryValue.content, !content.isEmpty {
+                            items.append(String(content.prefix(60)))
+                        }
+                        items.append(url)
+                        let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
+                        self.present(sheet, animated: true)
+                    case .failure:
+                        BearyToast.show(in: self.view, message: "操作失败，请重试")
+                    }
+                }
+            }
         }
         cell.onActionFailed = { [weak self] in
             self?.presentActionFailedAlert()
