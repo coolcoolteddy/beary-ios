@@ -2839,7 +2839,7 @@ final class BearyDetailViewController: UIViewController {
         let bookmarkImage = BearyFeedIconCache.image(named: bookmarked ? "icon_bookmark_fill" : "icon_bookmark", pointSize: 24)
             ?? BearyFeedIconCache.image(named: "icon_bookmark", pointSize: 24)
         bookmarkButton.setImage(bookmarkImage, for: .normal)
-        bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
+        bookmarkButton.tintColor = bookmarked ? BearyColors.bookmarkGold : BearyColors.gray
         bookmarkButton.accessibilityLabel = bookmarked ? "已收藏" : "收藏"
         shareButton.accessibilityLabel = "分享"
 

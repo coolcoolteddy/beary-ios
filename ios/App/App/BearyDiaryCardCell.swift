@@ -3512,7 +3512,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private func applyProfileBookmarkState(bookmarked: Bool) {
         let bookmarkImageName = bookmarked ? "icon_bookmark_fill" : "icon_bookmark"
         bookmarkButton.setImage(BearyFeedIconCache.image(named: bookmarkImageName, pointSize: 24), for: .normal)
-        bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
+        bookmarkButton.tintColor = bookmarked ? BearyColors.bookmarkGold : BearyColors.gray
         refreshActionAccessibility()
     }
 
@@ -3539,7 +3539,7 @@ class BearyDiaryCardCell: UITableViewCell {
         let bookmarked = currentEntry?.bookmarkedByMe ?? false
         let bookmarkImage = BearyFeedIconCache.image(named: bookmarked ? "icon_bookmark_fill" : "icon_bookmark", pointSize: 24) ?? BearyFeedIconCache.image(named: "icon_bookmark", pointSize: 24)
         bookmarkButton.setImage(bookmarkImage, for: .normal)
-        bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
+        bookmarkButton.tintColor = bookmarked ? BearyColors.bookmarkGold : BearyColors.gray
         refreshActionAccessibility()
     }
 
