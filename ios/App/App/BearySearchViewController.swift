@@ -3467,7 +3467,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             separator.leadingAnchor.constraint(equalTo: row.leadingAnchor),
             separator.trailingAnchor.constraint(equalTo: row.trailingAnchor),
             separator.bottomAnchor.constraint(equalTo: row.bottomAnchor),
-            separator.heightAnchor.constraint(equalToConstant: 1),
+            separator.heightAnchor.constraint(equalToConstant: 0.5),
         ]
         if let thumbWrap = thumbWrapView {
             constraints.append(thumbWrap.widthAnchor.constraint(equalToConstant: 44))

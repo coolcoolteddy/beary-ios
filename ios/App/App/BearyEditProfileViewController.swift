@@ -647,7 +647,7 @@ class BearyEditProfileViewController: UIViewController {
         separator.translatesAutoresizingMaskIntoConstraints = false
         separator.backgroundColor = BearyColors.line
         NSLayoutConstraint.activate([
-            separator.heightAnchor.constraint(equalToConstant: 1),
+            separator.heightAnchor.constraint(equalToConstant: 0.5),
         ])
         return separator
     }

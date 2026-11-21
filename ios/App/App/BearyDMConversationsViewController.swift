@@ -1201,11 +1201,11 @@ final class BearyDMConversationCell: UITableViewCell {
             // 审计 N1：角标底边 ≤ 行底 -14——大字号下变高的角标能撑起行高，
             // 而不是溢出到行外；默认字号下角标底 52.5 ≤ 58，不影响现行高。
             unreadBadge.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
-            // 审计低风险项：行底 1pt 分隔线。
+            // 审计低风险项：行底 0.5pt 分隔线。
             separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             separatorView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            separatorView.heightAnchor.constraint(equalToConstant: 1),
+            separatorView.heightAnchor.constraint(equalToConstant: 0.5),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
         ])
         // 审计：角标隐藏时不占位——隐藏态用 0 宽约束替换 ≥17 宽约束

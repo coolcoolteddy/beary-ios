@@ -934,7 +934,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
                 let hairline = UIView()
                 hairline.translatesAutoresizingMaskIntoConstraints = false
                 hairline.backgroundColor = BearyOnboardingPalette.line2
-                hairline.heightAnchor.constraint(equalToConstant: 1).isActive = true
+                hairline.heightAnchor.constraint(equalToConstant: 0.5).isActive = true
                 stack.addArrangedSubview(hairline)
             }
             let row = VisibilityRowView(title: option.1, subtitle: option.2, selected: visibility == option.0)
@@ -1299,7 +1299,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         let hairline = UIView()
         hairline.translatesAutoresizingMaskIntoConstraints = false
         hairline.backgroundColor = BearyOnboardingPalette.line2
-        hairline.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        hairline.heightAnchor.constraint(equalToConstant: 0.5).isActive = true
         stack.addArrangedSubview(hairline)
         // 行 2：好友通知提醒（推送未上线，置灰、无开关）。
         let row2 = UIView()

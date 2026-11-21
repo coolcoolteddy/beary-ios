@@ -1195,7 +1195,7 @@ final class BearyIDCardView: UIView {
             detailsHairline.topAnchor.constraint(equalTo: detailsContainer.topAnchor),
             detailsHairline.leadingAnchor.constraint(equalTo: detailsContainer.leadingAnchor),
             detailsHairline.trailingAnchor.constraint(equalTo: detailsContainer.trailingAnchor),
-            detailsHairline.heightAnchor.constraint(equalToConstant: 1),
+            detailsHairline.heightAnchor.constraint(equalToConstant: 0.5),
         ])
         let detailsRow = UIStackView()
         detailsRow.translatesAutoresizingMaskIntoConstraints = false
@@ -1233,7 +1233,7 @@ final class BearyIDCardView: UIView {
             statsHairline.topAnchor.constraint(equalTo: statsContainer.topAnchor),
             statsHairline.leadingAnchor.constraint(equalTo: statsContainer.leadingAnchor),
             statsHairline.trailingAnchor.constraint(equalTo: statsContainer.trailingAnchor),
-            statsHairline.heightAnchor.constraint(equalToConstant: 1),
+            statsHairline.heightAnchor.constraint(equalToConstant: 0.5),
         ])
         let statsRow = UIStackView()
         statsRow.translatesAutoresizingMaskIntoConstraints = false
