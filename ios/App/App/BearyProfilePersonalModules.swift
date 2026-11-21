@@ -209,10 +209,18 @@ enum BearyProfilePersonalLogic {
 
     /// 同月同日、往年（年份 < 今天年份）按年份倒序，只取最近一年。
     static func thisDayInHistory(entries: [Entry], today: Date, calendar: Calendar) -> ThisDayHistory? {
+        thisDayHistoryByYear(entries: entries, today: today, calendar: calendar).first
+    }
+
+    /// 同月同日、往年（年份 < 今天年份）按年份倒序全量分组：每年条目
+    /// createdAt 降序。thisDayInHistory 只取其中最近一年；卡片展开态用
+    /// 全量分组解释各年份（有记录的年份进当年篇，无记录的年份由调用方
+    /// 按 availableYears 对照标「这一年没有」/「尚未检查完」）。
+    static func thisDayHistoryByYear(entries: [Entry], today: Date, calendar: Calendar) -> [ThisDayHistory] {
         let todayParts = calendar.dateComponents([.year, .month, .day], from: today)
         guard let todayYear = todayParts.year,
               let todayMonth = todayParts.month,
-              let todayDay = todayParts.day else { return nil }
+              let todayDay = todayParts.day else { return [] }
         var byYear: [Int: [Entry]] = [:]
         for entry in entries {
             // 时间胶囊 v1：胶囊篇不进那年今日入口（只在取数处过滤，
@@ -225,10 +233,9 @@ enum BearyProfilePersonalLogic {
                   parts.month == todayMonth, parts.day == todayDay else { continue }
             byYear[year, default: []].append(entry)
         }
-        guard let latestYear = byYear.keys.max() else { return nil }
-        var yearEntries = byYear[latestYear] ?? []
-        yearEntries.sort { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) }
-        return ThisDayHistory(year: latestYear, entries: yearEntries)
+        return byYear.keys.sorted(by: >).map { year in
+            ThisDayHistory(year: year, entries: (byYear[year] ?? []).sorted { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) })
+        }
     }
 
     // MARK: - 随机漫步
