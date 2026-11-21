@@ -201,9 +201,9 @@ struct Entry: Codable {
     /// 限时日记：到期时间戳（毫秒）；nil = 非限时。存活期（now < 该值）才算限时态，
     /// 到期后按普通私密渲染（见 BearyEphemeral）。
     var ephemeralUntil: Int?
-    /// 日记时区（2026-11-21 v20 §二）：写下时的设备时区 IANA 标识
+    /// 日记时区（2026-11-21 v21 §二，17:02 Li 改）：创建草稿时的设备时区 IANA 标识
     /// （服务端 tz_name；旧行缺失时 nil，展示与分组回落 Asia/Shanghai）。
-    /// 写在异地、发在异地时以发布时的设备时区为准（发布快照拍定时刻取 TimeZone.current.identifier）。
+    /// 写在异地、发在异地时以创建草稿时的设备时区为准，之后编辑/发布都不改。
     var tzName: String? = nil
     /// 展示用时区：有值用写下时的时区标识，缺失回落 Asia/Shanghai（存量行保持现有显示不变）。
     var diaryTimeZone: TimeZone { BearyBeijingDay.timeZone(tzName: tzName) }

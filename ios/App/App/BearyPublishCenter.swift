@@ -32,8 +32,8 @@ struct PublishSnapshot {
     let locationRegion: String?
     let locationCity: String?
     let locationStreet: String?
-    /// 日记时区（2026-11-21 v20 §二）：发布时的设备时区 IANA 标识
-    /// （拍快照时刻取 TimeZone.current.identifier；写在异地、发在异地时以发布时为准）。
+    /// 日记时区（2026-11-21 v21 §二，17:02 Li 改）：创建草稿时的设备时区 IANA 标识
+    /// （草稿创建时取一次，之后编辑/发布都不改；无记录的旧草稿回落发布时设备时区）。
     /// 快照不做 Codable 持久化，只经 saveDraftNow 落草稿，加字段安全。
     /// 编辑不改时区：updateEntry 不发本键。
     let tzName: String?

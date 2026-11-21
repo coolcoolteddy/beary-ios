@@ -2718,8 +2718,8 @@ extension BearyAPI {
     /// create_ip_limit(429) / create_dup。
     func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, locationLatitude: Double? = nil, locationLongitude: Double? = nil, locationCountry: String? = nil, locationRegion: String? = nil, locationCity: String? = nil, locationStreet: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, tags: [String]? = nil, timeZoneName: String? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
-        // 日记时区（2026-11-21 v20 §二）：发布时的设备时区 IANA 标识；
-        // nil=省略不传，服务端回落 Asia/Shanghai。编辑不改时区，故 updateEntry 不发本键。
+        // 日记时区（2026-11-21 v21 §二，17:02 Li 改）：创建草稿时的设备时区 IANA 标识；
+        // nil=省略不传（无记录的旧草稿），服务端回落 Asia/Shanghai。编辑不改时区，故 updateEntry 不发本键。
         if let tz = timeZoneName { body["tz_name"] = tz }
         // 实况：非空才发 live_videos（无实况的新建与旧版 body 一字相同）；
         // 空映射不发（新建无旧态可清，编辑清实况走 updateEntry 的显式空映射）。
