@@ -395,7 +395,7 @@ final class BearySettingsViewController: UIViewController {
     // 本页 delaysContentTouches=false 时，从行按钮（全宽 UIControl）上起滑会滑不动：
     // 系统默认 touchesShouldCancel 对 UIControl 返回 false，长按后按钮一直占住触摸、
     // 滚动视图抢不到 pan；共享类对 UIButton 返回 true，拖动即取消按钮跟踪并滚动，
-    // 点按不动仍走 touchUpInside（settingsRowPressUp 的 touchCancel 回弹照常走）。
+    // 点按不动仍走 touchUpInside。
     private let scrollView = BearyCancellableScrollView()
     private let contentStack = UIStackView()
     private let closeButton = BearyHit44Button(type: .system)
@@ -885,8 +885,6 @@ final class BearySettingsViewController: UIViewController {
         headerButton.accessibilityLabel = title
         headerButton.accessibilityValue = "已收起"
         headerWrap.addSubview(headerButton)
-        headerButton.addTarget(self, action: #selector(settingsRowPressDown(_:)), for: .touchDown)
-        headerButton.addTarget(self, action: #selector(settingsRowPressUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         NSLayoutConstraint.activate([
             headerContent.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 14),
             headerContent.leadingAnchor.constraint(equalTo: headerWrap.leadingAnchor, constant: 16),
@@ -3071,17 +3069,6 @@ final class BearySettingsViewController: UIViewController {
         return spacer
     }
 
-    /// 设置行按压视觉反馈：只走 opacity（不动布局、不缩放）；点按不再震动，
-    /// 关了系统触感时仍能看到行面变暗，点按不再像没点中。
-    /// 全宽行不用 bearyAddPressFeedback 的缩放（整行抖动），故只降 wrap 透明度。
-    @objc private func settingsRowPressDown(_ sender: UIButton) {
-        sender.superview?.alpha = 0.55
-    }
-
-    @objc private func settingsRowPressUp(_ sender: UIButton) {
-        sender.superview?.alpha = 1
-    }
-
     private func makeSettingsTappableRow(content: UIView, button: UIButton) -> UIView {
         let wrap = UIView()
         wrap.translatesAutoresizingMaskIntoConstraints = false
@@ -3089,8 +3076,6 @@ final class BearySettingsViewController: UIViewController {
         wrap.addSubview(content)
         button.translatesAutoresizingMaskIntoConstraints = false
         wrap.addSubview(button)
-        button.addTarget(self, action: #selector(settingsRowPressDown(_:)), for: .touchDown)
-        button.addTarget(self, action: #selector(settingsRowPressUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         NSLayoutConstraint.activate([
             content.topAnchor.constraint(equalTo: wrap.topAnchor),
             content.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
