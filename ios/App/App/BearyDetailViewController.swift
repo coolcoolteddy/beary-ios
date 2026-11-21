@@ -3219,7 +3219,7 @@ final class BearyDetailViewController: UIViewController {
                         }
                         self.confirmedEmotes = merged
                     } else {
-                        self.confirmedEmotes = self.entry.emotes
+                        self.confirmedEmotes = self.entry.emotes ?? []
                     }
                     self.refreshActionRow()
                     self.onInteractionChanged?(entryId, nil, nil, nil, self.entry.emotes)
