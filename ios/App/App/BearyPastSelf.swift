@@ -225,8 +225,11 @@ final class PastSelfStore {
     /// 单用户留话上限（防无界增长）。
     /// 审计登录杂项丢弃顺序：已撤回 → 已送达旧串 → 绝不丢等待中与各链最新
     /// 已送达行（等待中的留话是未来的送达，丢了即静默丢未来留话；最新已送
-    /// 达行是待回复的锚点，裁掉即丢“去年的对话”展示）；若只剩不可丢行仍
+    /// 达行是待回复的锚点，裁掉即丢“去年的对话”展示）；未同步行（localOnly）
+    /// 同样绝不丢——服务端从未见过它，裁掉即永久丢失；若只剩不可丢行仍
     /// 超限，save 不再硬砍（宁可暂时超 cap），新增由 add 的超限拒绝挡下。
+    /// 同步合并时跳过裁剪（见 mergeServerRows）：刚从服务端拉回的行不立刻
+    /// 再裁，恢复才持久；上限只在本地新增时执行。
     static let maxStoredMessages = 200
 
     /// 新增留话被拒的原因（调用方据此给行内提示，见 ProfileVC 两处提交）。
@@ -299,7 +302,7 @@ final class PastSelfStore {
     }
 
     /// 存储已满且无可丢行时为 true，新增应拒绝并行内提示。可丢行 = 已撤回行，
-    /// 或已被取代的已送达旧串；只剩等待中行与各链最新已送达行（待回复锚点）
+    /// 或已被取代的已送达旧串（不含未同步行）；只剩等待中行与各链最新已送达行（待回复锚点）
     /// 时无行可丢——与 save() 的淘汰口径一致。
     var isWaitingCapped: Bool {
         let all = loadAll()
@@ -312,9 +315,12 @@ final class PastSelfStore {
     /// 各链最新一条已送达行之外的已送达行下标（按 createdAt 升序；即“已被
     /// 后行取代的旧串”，淘汰时可丢）。最新一条已送达行是待回复的锚点——
     /// 送达卡按它渲染“去年的对话”，裁掉即丢展示，故永不参与淘汰。
+    /// 未同步行（localOnly）同样永不参与淘汰：一条已送达但从未同步过的
+    /// 本地留话，服务端从未见过它，裁掉即永久丢失、无法恢复（同步成功后
+    /// replaceLocalRow 去 localOnly 化，才可丢）。
     private static func droppableDeliveredIndices(_ messages: [PastSelfMessage], today: String) -> [Int] {
         let delivered = messages.indices.filter {
-            messages[$0].revokedAtMs == nil && PastSelfLogic.isDue(deliverOn: messages[$0].deliverOn, today: today)
+            messages[$0].revokedAtMs == nil && !messages[$0].localOnly && PastSelfLogic.isDue(deliverOn: messages[$0].deliverOn, today: today)
         }
         var latestByChain: [String: Int] = [:]
         for index in delivered {
@@ -331,12 +337,24 @@ final class PastSelfStore {
         }
     }
 
-    private func save(_ messages: [PastSelfMessage]) {
+    /// 最近一次 save 裁掉的行数（0 = 没裁）。调用方用 takeTrimmedCount
+    /// 读一次即清零，裁剪发生时给一次提示用；裁剪不再全程静默。
+    private(set) var lastTrimmedCount = 0
+
+    /// 读走并清零最近一次的裁剪计数（只给一次提示用，见上）。
+    func takeTrimmedCount() -> Int {
+        let count = lastTrimmedCount
+        lastTrimmedCount = 0
+        return count
+    }
+
+    private func save(_ messages: [PastSelfMessage], skipTrim: Bool = false) {
         var capped = messages
-        if capped.count > Self.maxStoredMessages {
+        if !skipTrim, capped.count > Self.maxStoredMessages {
             let today = PastSelfLogic.localDateString(from: Date(), calendar: .current)
             let overflow = capped.count - Self.maxStoredMessages
-            // 先丢最旧的已撤回且撤回已同步行，再丢最旧的、已被取代的已送达旧串；
+            // 先丢最旧的已撤回且撤回已同步行，再丢最旧的、已被取代的已送达旧串
+            //（不含 localOnly 行：未同步的已送达行裁掉即永久丢失）；
             // 未同步的撤回行（revokeSynced == false）绝不丢——丢了补推循环就
             // 再无记录可发，服务端旧留话下次拉取即重新出现；等待中行与各链
             // 最新已送达行（待回复锚点）同样绝不丢——若可丢行不够填 overflow，
@@ -351,6 +369,9 @@ final class PastSelfStore {
                 for index in droppable.prefix(overflow - drop.count) { drop.insert(index) }
             }
             capped = capped.enumerated().filter { !drop.contains($0.offset) }.map { $0.element }
+            lastTrimmedCount = drop.count
+        } else {
+            lastTrimmedCount = 0
         }
         guard let data = try? JSONEncoder().encode(capped) else { return }
         // 审计新一轮 05：覆盖主 key 之前，先把当前能解码的原始数据存进
@@ -514,7 +535,10 @@ final class PastSelfStore {
         }
         // 服务端已删的行不在回包里时不主动清本地（服务端未承诺全量下发），
         // 只做并集覆盖，避免一次分页缺失误删整串。
-        save(Array(byId.values))
+        // 合并路径跳过裁剪：服务端是全量事实来源，刚拉回的最旧可丢行若
+        // 立刻再裁，恢复不持久（下次同步又拉回、又裁掉）；上限只在本地
+        // 新增时执行（add 的 save），超 cap 态暂留，等下次新增再裁。
+        save(Array(byId.values), skipTrim: true)
     }
 
     /// 用服务端行替换一条本地行（创建成功后去 localOnly 化）。
