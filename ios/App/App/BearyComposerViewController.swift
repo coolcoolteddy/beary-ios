@@ -4348,7 +4348,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             weatherChipButton.isHidden = false
             let weatherTitle = selectedTemperature != nil ? "\(name) \(selectedTemperature!)°" : name
             weatherChipButton.setTitle(weatherTitle, for: .normal)
-            let icon = BearyIconImages.image(named: "icon_wx_\(BearyText.weatherStaticKey(for: weather))", pointSize: 16)
+            let icon = BearyIconImages.image(named: "icon_wx_\(BearyText.weatherStaticKey(for: weather))", pointSize: 15)
             if icon == nil {
                 NSLog("[BearyComposer] selected weather chip icon missing key=%@", weather)
             }
