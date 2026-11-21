@@ -6,7 +6,7 @@ import UIKit
 /// 今天在最右列，未来的格子不画、不可点。颜色橙色五档（0 篇为空格，
 /// 1 / 2 / 3 / 4+ 篇逐档加深）；右上角月份名、左侧星期名、右下“少 → 多”
 /// 图例、底部“点某一天，看那天的日记”提示；模块内不写篇数/天数/连续天。
-/// 模块本身 surface1 底、无描边，与同页其他模块（写作统计等）统一。
+/// 模块本身透明、无描边，顶部一条 0.5pt 横隔线，与同页其他模块（写作统计等）统一。
 ///
 /// HorizonCalendar 核实结论（2026-11-06，见 PR 描述）：该库按月分块布局，
 /// 行高 = 列宽 × 纵横比（下限 0.5，见其 FrameProvider.daySize），27 周会排成
@@ -80,10 +80,12 @@ final class BearyHeatmapView: UIView {
 
     private func setup() {
         translatesAutoresizingMaskIntoConstraints = false
-        backgroundColor = BearyColors.surface1
+        backgroundColor = .clear
         layer.cornerRadius = BearyCorners.single
         clipsToBounds = true
 
+        let divider = bearyModuleDivider()
+        addSubview(divider)
         addSubview(titleLabel)
         gridArea.translatesAutoresizingMaskIntoConstraints = false
         addSubview(gridArea)
@@ -169,6 +171,10 @@ final class BearyHeatmapView: UIView {
         let gridHeight = gridArea.heightAnchor.constraint(equalToConstant: 0)
         gridAreaHeightConstraint = gridHeight
         NSLayoutConstraint.activate([
+            divider.topAnchor.constraint(equalTo: topAnchor),
+            divider.leadingAnchor.constraint(equalTo: leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: trailingAnchor),
+            divider.heightAnchor.constraint(equalToConstant: 0.5),
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 14),
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),

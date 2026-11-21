@@ -1417,7 +1417,17 @@ final class BearyYearReviewViewController: UIViewController {
     }
 }
 
-// MARK: - 模块卡片容器（与墙同口径：圆角 14、1px 边线、标题 14 粗体）
+/// 模块区横隔线（v7 透明模块）：0.5pt、BearyColors.line，与日记卡底线同 token。
+/// 调用方自行定锚（横线定高 0.5、竖线定宽 0.5）；不拦截点按。
+func bearyModuleDivider() -> UIView {
+    let divider = UIView()
+    divider.translatesAutoresizingMaskIntoConstraints = false
+    divider.backgroundColor = BearyColors.line
+    divider.isUserInteractionEnabled = false
+    return divider
+}
+
+// MARK: - 模块卡片容器（v7 透明：无底色，顶部一条 0.5pt 横隔线；标题 14 粗体）
 //
 // 调用方（ProfileVC）只负责把卡片排进 modulesStack 并按显隐开关 isHidden；
 // 卡片自身不决定可见性（可见性由语料口径定，见 renderModules）。
@@ -1447,10 +1457,12 @@ final class BearyProfilePersonalModulesCard: UIView {
     init(title: String) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        backgroundColor = BearyColors.surface1
+        backgroundColor = .clear
         layer.borderWidth = 0
         layer.cornerRadius = BearyCorners.single
         clipsToBounds = true
+        let divider = bearyModuleDivider()
+        addSubview(divider)
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))
@@ -1460,6 +1472,10 @@ final class BearyProfilePersonalModulesCard: UIView {
         contentStack.addArrangedSubview(titleLabel)
         addSubview(contentStack)
         NSLayoutConstraint.activate([
+            divider.topAnchor.constraint(equalTo: topAnchor),
+            divider.leadingAnchor.constraint(equalTo: leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: trailingAnchor),
+            divider.heightAnchor.constraint(equalToConstant: 0.5),
             contentStack.topAnchor.constraint(equalTo: topAnchor, constant: 12),
             contentStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             contentStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
