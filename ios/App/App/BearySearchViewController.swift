@@ -3409,7 +3409,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             // 2-3：私密行只留 pill，不再拼“· 未公开”文字（双重状态文案已删）。
             // 好友第一期：仅好友篇在我的组里同样只留 pill，文案“仅好友”、蓝档不变。
             // 审计 2026-11-02 第十节：我的组按三档标 pill——存活限时篇标“限时”
-            // （沿用私密档蓝底，不新发明颜色），仅好友标“仅好友”，其余标“私密”。
+            // （紫字＋紫 13% 底，G6 对比度修复），仅好友标“仅好友”，其余标“私密”。
             metaStack.addArrangedSubview(dateLabel)
             metaStack.addArrangedSubview(makePrivatePill(friendsOnly: entry.isFriendsOnly, ephemeralLive: BearyEphemeral.isLive(entry), isPublic: entry.isPublic == true))
         } else {
@@ -3535,20 +3535,34 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 同款口径见 BlindBox pillLabel（2026-11-04）、Composer statusPill。
         pill.setContentHuggingPriority(.required, for: .horizontal)
         pill.setContentCompressionResistancePriority(.required, for: .horizontal)
-        pill.backgroundColor = friendsOnly ? BearyColors.surface2 : BearyColors.alpha(BearyColors.blue, 0.13)
+        // G6 对比度修复（2026-11-21）：私密／限时 pill 文字按规范值取色——
+        // 私密深蓝字（浅 #0066CC／深 #0A84FF）＋蓝 13% 底、限时深紫字
+        // （浅 #8E2FB8／深 #BE6FE8，紫 13% 深底上 #AF52DE 仅 4.27:1 故加亮）
+        // ＋紫 13% 底；锁图标跟文字同色。仅好友墨字灰底不动；公开沿用蓝档
+        // （规范无搜索公开 pill 定义，不动）。
+        let pillColors: (text: UIColor, bg: UIColor, icon: UIColor)
+        if friendsOnly {
+            pillColors = (BearyColors.ink, BearyColors.surface2, BearyColors.ink)
+        } else if ephemeralLive {
+            pillColors = (BearyColors.deepPurpleTextOnTint, BearyColors.alpha(BearyColors.limitedPurple, 0.13), BearyColors.deepPurpleTextOnTint)
+        } else if isPublic {
+            pillColors = (BearyColors.blue, BearyColors.alpha(BearyColors.blue, 0.13), BearyColors.blue)
+        } else {
+            pillColors = (BearyColors.deepBlueText, BearyColors.alpha(BearyColors.blue, 0.13), BearyColors.deepBlueText)
+        }
+        pill.backgroundColor = pillColors.bg
         pill.layer.cornerRadius = 11
         pill.layer.masksToBounds = true
-        // 黑白灰新标准：仅好友 pill 改墨字灰底（与编辑器 chip 同口径）；
-        // 私密/限时仍沿用蓝档（可见性语义，不动）。
+        // 黑白灰新标准：仅好友 pill 改墨字灰底（与编辑器 chip 同口径）。
         let lock = UIImageView(image: BearyIconImages.image(named: friendsOnly ? "icon_friends_lock" : (isPublic ? "icon_globe" : "icon_lock"), pointSize: 12))
         lock.translatesAutoresizingMaskIntoConstraints = false
-        lock.tintColor = friendsOnly ? BearyColors.ink : BearyColors.blue
+        lock.tintColor = pillColors.icon
         lock.contentMode = .scaleAspectFit
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
         label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12, weight: .semibold))
         label.adjustsFontForContentSizeCategory = true
-        label.textColor = friendsOnly ? BearyColors.ink : BearyColors.blue
+        label.textColor = pillColors.text
         label.text = ephemeralLive ? "限时" : (friendsOnly ? "仅好友" : (isPublic ? "公开" : "私密"))
         pill.addSubview(lock)
         pill.addSubview(label)
