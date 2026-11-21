@@ -633,6 +633,26 @@ final class BearyPastSelfTests: XCTestCase {
         suite.removePersistentDomain(forName: "beary.pastself.tests")
     }
 
+    func testUnsyncedCountCountsLocalOnlyRows() throws {
+        // 数据状态页「留话」分项：只计未同步行；服务端确认后清零；
+        // 已撤回未同步行也计入（撤回本身未同步，同步扫描会补推）。
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let store = PastSelfStore(userId: 91, defaults: suite)
+        let created = ms(year: 2025, month: 10, day: 30)
+        XCTAssertEqual(store.unsyncedCount, 0)
+        let local = store.add(originEntryId: "b_6", body: "待同步句", createdAtMs: created, calendar: calendar)!
+        XCTAssertEqual(store.unsyncedCount, 1)
+        var serverRow = local
+        serverRow.localOnly = false
+        store.mergeServerRows([serverRow])
+        XCTAssertEqual(store.unsyncedCount, 0)
+        let second = store.add(originEntryId: "b_5", body: "第二句", createdAtMs: created, calendar: calendar)!
+        XCTAssertTrue(store.revoke(messageId: second.id, nowMs: created, today: "2026-01-01"))
+        XCTAssertEqual(store.unsyncedCount, 1)
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
     func testMergeAdoptsLocalOnlyRowWhenServerHasIdenticalContent() throws {
         // #37 回包丢失兜底：创建回包丢了时，本地 ps_… 行仍 localOnly；
         // 下次同步拉回内容全等的服务端行时，本地行认领服务端 id，

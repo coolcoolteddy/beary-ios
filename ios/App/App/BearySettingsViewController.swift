@@ -3794,6 +3794,18 @@ private final class BearyDataStatusViewController: UIViewController {
             diaryDetail = state.displayText
         }
         rows.append(makeStatusRow(title: "日记与回收站", detail: diaryDetail))
+        // 留话：未同步条数（localOnly 行；含已撤回未同步行，撤回本身也未同步）。
+        // 0 条即全部已同步；有未同步时提醒换设备前先打开个人页同步——留话
+        // 同步只在个人页语料加载完成时触发，不走本页「重新同步」的日记/
+        // 回收站入口（kickForCurrentUser 不推留话）。
+        let pastSelfUnsynced: Int = {
+            guard let userId = SessionManager.shared.currentUser?.id else { return 0 }
+            return PastSelfStore(userId: userId).unsyncedCount
+        }()
+        let pastSelfDetail = pastSelfUnsynced == 0
+            ? "全部已同步"
+            : "\(pastSelfUnsynced) 条未同步，换设备前请先打开个人页同步"
+        rows.append(makeStatusRow(title: "留话", detail: pastSelfDetail))
         rows.append(makeStatusRow(title: "草稿", detail: "仅保存在本设备"))
         rows.append(makeStatusRow(title: "私信", detail: "更早的记录保存在本设备"))
         // 失败行只在组合状态为失败时出现（失败腿标题与状态同批更新，

@@ -301,6 +301,13 @@ final class PastSelfStore {
         return decoded
     }
 
+    /// 未同步行数（localOnly）：创建尚未获服务端确认的行；含已撤回未同步行
+    /// （撤回本身也未同步——同步扫描先补推创建、回包一到再补推撤回）。
+    /// 数据状态页「留话」分项用。
+    var unsyncedCount: Int {
+        loadAll().filter { $0.localOnly }.count
+    }
+
     /// 存储已满且无可丢行时为 true，新增应拒绝并行内提示。可丢行 = 已撤回行，
     /// 或已被取代的已送达旧串（不含未同步行）；只剩等待中行与各链最新已送达行（待回复锚点）
     /// 时无行可丢——与 save() 的淘汰口径一致。
