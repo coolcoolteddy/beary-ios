@@ -277,9 +277,10 @@ final class BearyLocalNotifications {
         }
 
         // 2. 那年今日：下一个 9:00（北京）；那天往年有日记才排。
+        // “那天”按提醒响起时的查看设备时区算（日记时区 v20 §二）；发火时刻仍是北京 9:00。
         if enabled[.pastDay] == true {
             let nextMorning = Self.nextOccurrence(hour: Self.morningHour, after: now, calendar: calendar)
-            if BearyProfilePersonalLogic.thisDayInHistory(entries: entries, today: nextMorning, calendar: calendar) != nil {
+            if BearyProfilePersonalLogic.thisDayInHistory(entries: entries, today: nextMorning, calendar: Calendar.current) != nil {
                 desired.append(DesiredRequest(identifier: Self.pastDayIdentifier, fireDate: nextMorning, body: "往年今天，你写过日记，打开看看吧。", kind: .pastDay))
             }
         }
