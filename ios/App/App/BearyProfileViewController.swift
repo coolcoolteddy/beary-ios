@@ -4144,7 +4144,7 @@ class BearyProfileViewController: UIViewController {
             let dateValue = Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0)
             // F18：网页 "2026 年 10 月加入" 口径——年 / 月前后带空格（静态 formatter 同口径）。
             joinedLabel.isHidden = false
-            setLabelTextFaded(joinedLabel, Self.profileJoinedFormatter.string(from: dateValue))
+            setLabelTextFaded(joinedLabel, Self.joinedText(from: dateValue))
             let joinedIconWasHidden = joinedIconView.isHidden
             joinedIconView.isHidden = false
             fadeInViewIfAppearing(joinedIconView, wasHidden: joinedIconWasHidden)
@@ -4285,12 +4285,21 @@ class BearyProfileViewController: UIViewController {
     private var wallHasAnimated = false
 
     /// 80 包 B4-1：加入日期 formatter 静态复用（主线程 UI 路径使用，原每次 applyHeader 新建）。
+    /// 2026-11-21 日期完全本地化：中文沿用“yyyy 年 M 月加入”，非中文为草稿
+    /// “Joined <Month Year>”（待 Li 定稿）；年月走共享 helper（时区沿用既有口径，原来没写时区）。
     private static let profileJoinedFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")
         f.dateFormat = "yyyy 年 M 月加入"
         return f
     }()
+
+    private static func joinedText(from date: Date) -> String {
+        if BearyLocalizedDate.isChinese {
+            return profileJoinedFormatter.string(from: date)
+        }
+        return "Joined " + BearyLocalizedDate.yearMonthString(from: date)
+    }
 
     private func applyWall() {
         guard let profileValue = profile else { return }
@@ -4844,9 +4853,13 @@ class BearyProfileViewController: UIViewController {
         scheduleModulesRefresh()
     }
 
+    /// 2026-11-21 日期完全本地化：中文沿用既有插值，非中文走共享 helper。
     private func personalDateString(timestampMs: Int?) -> String {
         guard let timestampMs = timestampMs else { return "" }
         let date = Date(timeIntervalSince1970: TimeInterval(timestampMs) / 1000)
+        if !BearyLocalizedDate.isChinese {
+            return BearyLocalizedDate.yearMonthDayString(from: date)
+        }
         let parts = Calendar.current.dateComponents([.year, .month, .day], from: date)
         guard let year = parts.year, let month = parts.month, let day = parts.day else { return "" }
         return "\(year) 年 \(month) 月 \(day) 日"
@@ -5191,7 +5204,14 @@ class BearyProfileViewController: UIViewController {
         thisDayBodyLabel.isHidden = false
         thisDayBodyLabel.textAlignment = .left
         thisDayBodyLabel.textColor = BearyColors.ink
-        var meta = "\(history.year) 年 \(month) 月 \(day) 日"
+        var meta: String
+        if BearyLocalizedDate.isChinese {
+            meta = "\(history.year) 年 \(month) 月 \(day) 日"
+        } else {
+            // 2026-11-21 日期完全本地化：非中文走共享 helper（与既有那年今日同口径，GMT+8）。
+            let date = BearyLocalizedDate.dateFromComponents(year: history.year, month: month, day: day, timeZone: BearyLocalizedDate.gmt8) ?? Date()
+            meta = BearyLocalizedDate.yearMonthDayString(from: date, timeZone: BearyLocalizedDate.gmt8)
+        }
         if isOwnProfile {
             // 可见性三档实标：仅好友不再误标私密；存活限时篇补限时剩余信息。
             let visValue = BearyVisibility.current(for: main)
@@ -5287,10 +5307,15 @@ class BearyProfileViewController: UIViewController {
         Int(Date().timeIntervalSince1970 * 1000)
     }
 
+    /// 2026-11-21 日期完全本地化：中文沿用既有插值，非中文走共享 helper。
     private func pastSelfDisplayDate(_ yyyyMMdd: String) -> String {
         let parts = yyyyMMdd.split(separator: "-")
         guard parts.count == 3,
               let month = Int(parts[1]), let day = Int(parts[2]) else { return yyyyMMdd }
+        if !BearyLocalizedDate.isChinese, let year = Int(parts[0]),
+           let date = BearyLocalizedDate.dateFromComponents(year: year, month: month, day: day) {
+            return BearyLocalizedDate.yearMonthDayString(from: date)
+        }
         return "\(parts[0]) 年 \(month) 月 \(day) 日"
     }
 
@@ -5298,6 +5323,10 @@ class BearyProfileViewController: UIViewController {
         let parts = yyyyMMdd.split(separator: "-")
         guard parts.count == 3,
               let month = Int(parts[1]), let day = Int(parts[2]) else { return yyyyMMdd }
+        if !BearyLocalizedDate.isChinese, let year = Int(parts[0]),
+           let date = BearyLocalizedDate.dateFromComponents(year: year, month: month, day: day) {
+            return BearyLocalizedDate.monthDayString(from: date)
+        }
         return "\(month) 月 \(day) 日"
     }
 

@@ -1529,17 +1529,15 @@ final class BearyDiaryStarMapViewController: UIViewController {
     /// yyyy年M月d日）。调用点全在主线程 sheet UI（见 sheetEntryButton／
     /// showStarSheet／edgeEntryName），DateFormatter 非线程安全，此处
     /// 单线程使用无虞（与画布 starDateFormatter 同款做法）。
-    private static let sheetDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "M月d日"
-        return formatter
-    }()
+    /// 2026-11-21 日期完全本地化：走共享 helper，跟 App 语言；时区沿用
+    /// 既有行为（原来没写时区，跟设备走）；中文输出与改前一致。
+    private static var sheetDateFormatter: DateFormatter {
+        BearyLocalizedDate.formatter(template: "MMMMd", zhFormat: "M月d日")
+    }
 
-    private static let sheetDateYearFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy年M月d日"
-        return formatter
-    }()
+    private static var sheetDateYearFormatter: DateFormatter {
+        BearyLocalizedDate.formatter(template: "yyyyMMMMd", zhFormat: "yyyy年M月d日")
+    }
 
     private func sheetDateString(_ entry: Entry) -> String {
         guard let ms = entry.createdAt, ms > 0 else { return "" }
@@ -1918,11 +1916,11 @@ private final class StarMapSkyView: UIView {
     /// 每颗星新建 DateFormatter 是重复开销（200 篇即约 200 个/次）；格式一字
     /// 不动（M月d日）。setStars 只在主线程调用（见 applyModelToSky），
     /// DateFormatter 非线程安全，此处单线程使用无虞。
-    private static let starDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "M月d日"
-        return formatter
-    }()
+    /// 2026-11-21 日期完全本地化：走共享 helper，跟 App 语言；时区沿用
+    /// 既有行为（原来没写时区，跟设备走）。
+    private static var starDateFormatter: DateFormatter {
+        BearyLocalizedDate.formatter(template: "MMMMd", zhFormat: "M月d日")
+    }
 
     /// r17 M2 入场态：新星延后表 + 新线集合 + 入场起始时刻（CACurrentMediaTime）。
     /// 无入场时延后表为空、起始为 0，draw 按终态画，不多一帧重绘。

@@ -1571,10 +1571,9 @@ final class BearyLoginViewController: UIViewController {
                 if hours > 0 { leftText += "\(hours) 小时 " }
                 leftText += "\(minutes) 分钟"
             }
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "zh_CN")
-            formatter.dateFormat = "yyyy/M/d HH:mm"
-            let dateText = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(deleteAt) / 1000.0))
+            // 2026-11-21 日期完全本地化：括号里的注销日期走共享 helper（跟 App
+            // 语言；时区沿用既有行为，原来没写时区）；句式与“X 天 X 小时 X 分钟”倒计时不动。
+            let dateText = BearyLocalizedDate.shortDateTimeString(from: Date(timeIntervalSince1970: TimeInterval(deleteAt) / 1000.0))
             message = "距离正式注销还剩：\(leftText)（\(dateText)）。继续登录将取消注销。"
         }
         return message
@@ -1736,10 +1735,9 @@ enum BearyReferralFeedback {
         if until >= 4102444800000 {
             return base + "，Plus 永久有效"
         }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "yyyy/M/d"
-        return base + "，Plus 至 " + formatter.string(from: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0))
+        // 2026-11-21 日期完全本地化：“Plus 至 <短日期>”走共享 helper（跟 App
+        // 语言；非中文为草稿 Plus until <短日期>，待 Li 定稿）。
+        return base + BearyLocalizedDate.plusUntilSuffix(untilMs: until)
     }
 }
 

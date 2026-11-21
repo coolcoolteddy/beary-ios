@@ -2068,35 +2068,261 @@ extension UIImageView {
 
 // MARK: - 时间与名字
 
+/// 日期完全本地化（2026-11-21）：相对时间跟 App 语言，绝对日期／数字／周起始日跟 region（本地化规范 v4 §二）。
+/// 时区不由本支定：各处沿用既有口径——写死 GMT+8 的地方调用方仍传 GMT+8，
+/// 没写过时区的地方跟设备（timeZone 传 nil，即不设）；日记时区（按写入时
+/// 设备时区记录、展示用该时区，2026-11-21 15:01 Li 定，取代“时区永远北京
+/// 时间”）另开一支做，不在本支里。
+/// 中文当原文：语言为中文时沿用既有格式串，输出与改前逐字节一致；非中文走系统模板
+/// （setLocalizedDateFormatFromTemplate／RelativeDateTimeFormatter），英文输出以系统
+/// 模板实际输出为准，是草稿、待 Li 定稿。@handle 不本地化，不归这里管。
+/// 语言切换重建根界面（见 BearyAppLanguage.didChangeNotification），formatter 按
+/// 当前语言缓存、语言变了下次调用重建；调用方只在主线程做行渲染
+/// （DateFormatter 非线程安全，与既有静态 formatter 同约束）。
+enum BearyLocalizedDate {
+    /// App 有效 locale（本地化规范 v4 §二）：language 与 region 分开。
+    /// language：中国大陆档→zh-Hans；English 档→en；跟随系统→系统首选语言属于 {zh, en} 时用它，否则用 en。
+    /// region：中国大陆档→CN；其余→系统地区。日期／数字／周起始日一律按 region 生成，不再用 Locale.current 混算。
+    static var locale: Locale {
+        let language: String
+        switch BearyAppLanguage.mode {
+        case .mainland:
+            language = "zh-Hans"
+        case .english:
+            language = "en"
+        case .system:
+            let preferred = Locale.preferredLanguages.first ?? "en"
+            let code = Locale(identifier: preferred).languageCode ?? "en"
+            language = (code == "zh" || code == "en") ? languagePart(of: preferred) : "en"
+        }
+        let region: String
+        switch BearyAppLanguage.mode {
+        case .mainland:
+            region = "CN"
+        default:
+            region = Locale.current.regionCode ?? "US"
+        }
+        return Locale(identifier: "\(language)_\(region)")
+    }
+
+    /// preferredLanguages 条目（如 zh-Hans-CN／en-US）去掉末尾地区码，只留语言（＋书写体）。
+    private static func languagePart(of identifier: String) -> String {
+        let parts = identifier.split(separator: "-")
+        guard parts.count > 1, parts.last?.count == 2 else { return identifier }
+        return parts.dropLast().joined(separator: "-")
+    }
+    /// 部署目标仍为 iOS 15（升 16 的 #2054 未合），不用 iOS 16 才有的
+    /// Locale.Language API；languageCode 在 15 上可用。
+    static var isChinese: Bool { locale.languageCode == "zh" }
+
+    /// 既有写死时区（与原有各处 GMT+8 同值；本支不新定口径，只是把原来
+    /// 散在各处的 `TimeZone(secondsFromGMT: 8 * 3600)` 收到一处）。
+    static var gmt8: TimeZone {
+        TimeZone(secondsFromGMT: 8 * 3600) ?? .current
+    }
+    /// 既有写死时区（星图底卡／照片页原来用的 Asia/Shanghai，与 GMT+8 同值）。
+    static var shanghai: TimeZone {
+        TimeZone(identifier: "Asia/Shanghai") ?? gmt8
+    }
+
+    /// 一周首日（1=周日 … 7=周六），跟 region 走：语言行
+    /// “中国大陆”固定周一（2）；否则取设备日历的首日（美国 1=周日，
+    /// 欧洲多数地区 2=周一）。只影响时间线周条／月历的列对齐，不动时区口径。
+    static var firstWeekday: Int {
+        if BearyAppLanguage.mode == .mainland { return 2 }
+        return Calendar.current.firstWeekday
+    }
+
+    /// 星期单字头（veryShortWeekdaySymbols），按首日起排，供月历表头用：
+    /// 中文为 ["一"…"日"]，与改前写死值一致；非中文取系统单字（如 "S" "M" …）。
+    static var orderedVeryShortWeekdaySymbols: [String] {
+        var cal = Calendar(identifier: .gregorian)
+        cal.locale = locale
+        let symbols = cal.veryShortWeekdaySymbols // 周日开头，索引 0=周日
+        let start = firstWeekday - 1
+        guard start > 0, start < symbols.count else { return symbols }
+        return Array(symbols[start...] + symbols[..<start])
+    }
+
+    private static var cachedLocaleID: String?
+    private static var cachedFormatters: [String: DateFormatter] = [:]
+    private static var cachedRelativeFormatter: RelativeDateTimeFormatter?
+    private static var cachedRelativeLocaleID: String?
+
+    private static func resetCacheIfNeeded() {
+        let id = locale.identifier
+        if cachedLocaleID != id {
+            cachedLocaleID = id
+            cachedFormatters.removeAll()
+            cachedRelativeFormatter = nil
+            cachedRelativeLocaleID = nil
+        }
+    }
+
+    /// 与 timeZone 对应的日历（nil = 设备日历）。
+    static func calendar(for timeZone: TimeZone?) -> Calendar {
+        guard let timeZone = timeZone else { return Calendar.current }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = timeZone
+        return cal
+    }
+
+    /// 由年月日拼 Date：与格式化用同一时区（nil = 设备），中午 12 点拼，
+    /// 跨时区也不挪日。供插值型日期（那年今日／与过去的自己对话／周标题／
+    /// ID 卡生日）非中文分支用。
+    static func dateFromComponents(year: Int, month: Int, day: Int, timeZone: TimeZone? = nil) -> Date? {
+        var comps = DateComponents()
+        comps.year = year; comps.month = month; comps.day = day; comps.hour = 12
+        return calendar(for: timeZone).date(from: comps)
+    }
+
+    /// 中文用既有格式串（输出与改前一致），非中文用系统模板。
+    /// timeZone：nil = 跟设备（不设，沿用各处原来没写时区的行为）；
+    /// 传值 = 该处原来写死的时区。
+    static func formatter(template: String, zhFormat: String, timeZone: TimeZone? = nil) -> DateFormatter {
+        resetCacheIfNeeded()
+        let key = template + "|" + zhFormat + "|" + (timeZone?.identifier ?? "device")
+        if let f = cachedFormatters[key] { return f }
+        let f = DateFormatter()
+        f.locale = locale
+        if let timeZone = timeZone { f.timeZone = timeZone }
+        if isChinese { f.dateFormat = zhFormat } else { f.setLocalizedDateFormatFromTemplate(template) }
+        cachedFormatters[key] = f
+        return f
+    }
+
+    /// H:mm（小时不补零，卡片／详情／通知同口径）。
+    static func timeString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        formatter(template: "jmm", zhFormat: "H:mm", timeZone: timeZone).string(from: date)
+    }
+    /// HH:mm（小时补零，草稿箱／时间线行内时间同口径）。
+    static func timeStringPadded(from date: Date, timeZone: TimeZone? = nil) -> String {
+        formatter(template: "jmm", zhFormat: "HH:mm", timeZone: timeZone).string(from: date)
+    }
+    /// M月d日 H:mm（小时不补零）。
+    static func monthDayTimeString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        formatter(template: "MMMMdjmm", zhFormat: "M月d日 H:mm", timeZone: timeZone).string(from: date)
+    }
+    /// yyyy年M月d日。
+    static func yearMonthDayString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        formatter(template: "yyyyMMMMd", zhFormat: "yyyy年M月d日", timeZone: timeZone).string(from: date)
+    }
+    /// M月d日。
+    static func monthDayString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        formatter(template: "MMMMd", zhFormat: "M月d日", timeZone: timeZone).string(from: date)
+    }
+    /// 月日插值（如 ID 卡生日“11月3日”）：中文沿用既有插值，非中文走共享 helper。
+    static func monthDayString(month: Int, day: Int, timeZone: TimeZone? = nil) -> String {
+        if isChinese { return "\(month)月\(day)日" }
+        let year = calendar(for: timeZone).component(.year, from: Date())
+        guard let date = dateFromComponents(year: year, month: month, day: day, timeZone: timeZone) else { return "\(month)/\(day)" }
+        return monthDayString(from: date, timeZone: timeZone)
+    }
+    /// yyyy年M月。
+    static func yearMonthString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        formatter(template: "yyyyMMMM", zhFormat: "yyyy年M月", timeZone: timeZone).string(from: date)
+    }
+    /// yyyy/M/d（Plus 有效期／注销倒计时里的短日期）。
+    static func shortDateString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        formatter(template: "yyyyMd", zhFormat: "yyyy/M/d", timeZone: timeZone).string(from: date)
+    }
+    /// yyyy/M/d HH:mm（注销倒计时括号里的短日期时间）。
+    static func shortDateTimeString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        formatter(template: "yyyyMdjmm", zhFormat: "yyyy/M/d HH:mm", timeZone: timeZone).string(from: date)
+    }
+    /// yyyy年M月d日 HH:mm（账号类日期时间）。
+    static func yearMonthDayTimeString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        yearMonthDayString(from: date, timeZone: timeZone) + " " + timeStringPadded(from: date, timeZone: timeZone)
+    }
+
+    /// RelativeDateTimeFormatter：locale 跟 App 语言；不另 pin 日历／时区
+    /// （相对时间原来就是纯秒数差，不跟任何日历走）。
+    static func relativeFormatter() -> RelativeDateTimeFormatter {
+        resetCacheIfNeeded()
+        if cachedRelativeLocaleID != locale.identifier {
+            let f = RelativeDateTimeFormatter()
+            f.locale = locale
+            f.unitsStyle = .full
+            cachedRelativeFormatter = f
+            cachedRelativeLocaleID = locale.identifier
+        }
+        return cachedRelativeFormatter!
+    }
+
+    /// 1 分钟内：中文“刚刚”，非中文走系统相对时间（如 now／30 seconds ago）。
+    static func justNowString(date: Date) -> String {
+        if isChinese { return "刚刚" }
+        // 未来时间戳（时钟不准）当成现在：英文不再显示 in X，直接 now。
+        let clamped = min(date, Date())
+        return relativeFormatter().localizedString(for: clamped, relativeTo: Date())
+    }
+    /// X 分钟前：中文沿用既有词，非中文如 5 minutes ago。
+    static func minutesAgoString(_ value: Int) -> String {
+        if isChinese { return "\(value) 分钟前" }
+        let ref = Date().addingTimeInterval(TimeInterval(-value * 60))
+        return relativeFormatter().localizedString(for: ref, relativeTo: Date())
+    }
+    /// X 小时前：中文沿用既有词，非中文如 2 hours ago。
+    static func hoursAgoString(_ value: Int) -> String {
+        if isChinese { return "\(value) 小时前" }
+        let ref = Date().addingTimeInterval(TimeInterval(-value * 3600))
+        return relativeFormatter().localizedString(for: ref, relativeTo: Date())
+    }
+    /// X 天前：中文沿用既有词，非中文如 3 days ago（1 天为 yesterday）。
+    static func daysAgoString(_ value: Int) -> String {
+        if isChinese { return "\(value) 天前" }
+        let ref = Date().addingTimeInterval(TimeInterval(-value * 86400))
+        return relativeFormatter().localizedString(for: ref, relativeTo: Date())
+    }
+
+    /// “今天／昨天”：中文沿用既有词，非中文走 doesRelativeDateFormatting（如 Today／Yesterday）。
+    /// timeZone 与调用方判定今天／昨天用的日历一致（卡片／草稿箱／回收站三处原来都是 GMT+8）。
+    static func todayWord(timeZone: TimeZone? = nil) -> String { relativeDayWord(for: Date(), timeZone: timeZone) }
+    static func yesterdayWord(timeZone: TimeZone? = nil) -> String {
+        let yesterday = calendar(for: timeZone).date(byAdding: .day, value: -1, to: Date()) ?? Date()
+        return relativeDayWord(for: yesterday, timeZone: timeZone)
+    }
+    private static func relativeDayWord(for date: Date, timeZone: TimeZone? = nil) -> String {
+        if isChinese {
+            return calendar(for: timeZone).isDateInToday(date) ? "今天" : "昨天"
+        }
+        let f = DateFormatter()
+        f.locale = locale
+        if let timeZone = timeZone { f.timeZone = timeZone }
+        f.dateStyle = .medium
+        f.timeStyle = .none
+        f.doesRelativeDateFormatting = true
+        return f.string(from: date)
+    }
+
+    /// “Plus 至 <短日期>”后缀：中文沿用既有词，非中文为草稿（Plus until <短日期>，待 Li 定稿）。
+    static func plusUntilSuffix(untilMs: Int, timeZone: TimeZone? = nil) -> String {
+        let date = Date(timeIntervalSince1970: TimeInterval(untilMs) / 1000.0)
+        if isChinese { return "，Plus 至 " + shortDateString(from: date, timeZone: timeZone) }
+        return ", Plus until " + shortDateString(from: date, timeZone: timeZone)
+    }
+}
+
 enum BearyText {
     /// 审计-性能：逐行新建 DateFormatter 改静态复用（每种格式一个静态实例，
     /// 不复用同一实例改 dateFormat；调用方只在主线程做行渲染，不跨线程用）。
-    private static let hourMinuteFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        formatter.dateFormat = "H:mm"
-        return formatter
-    }()
+    /// 2026-11-21 日期完全本地化：formatter 跟 App 语言（见 BearyLocalizedDate），
+    /// 按语言缓存、语言切换后下次调用重建；中文输出与改前逐字节一致。
+    /// 时区沿用既有 GMT+8（原来写死的值，原样不动）。
+    private static var hourMinuteFormatter: DateFormatter {
+        BearyLocalizedDate.formatter(template: "jmm", zhFormat: "H:mm", timeZone: BearyLocalizedDate.gmt8)
+    }
     /// 审计四轮 14：月日时分静态复用——聊天页行渲染与 timeString 共用，
     /// 只在主线程用（DateFormatter 非线程安全，不跨线程用）。
-    static let monthDayHourMinuteFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        formatter.dateFormat = "M月d日 H:mm"
-        return formatter
-    }()
+    static var monthDayHourMinuteFormatter: DateFormatter {
+        BearyLocalizedDate.formatter(template: "MMMMdjmm", zhFormat: "M月d日 H:mm", timeZone: BearyLocalizedDate.gmt8)
+    }
 
     /// 跨年绝对日期（规范 §12）：同年不带年份，跨年「yyyy年M月d日」
     /// （不带时刻，与回收站 createdLabel 同口径）；显示走北京时区。
-    static let yearMonthDayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        formatter.dateFormat = "yyyy年M月d日"
-        return formatter
-    }()
+    static var yearMonthDayFormatter: DateFormatter {
+        BearyLocalizedDate.formatter(template: "yyyyMMMMd", zhFormat: "yyyy年M月d日", timeZone: BearyLocalizedDate.gmt8)
+    }
 
     /// 7 天外绝对时间：同年「M月d日 H:mm」，跨年「yyyy年M月d日」；
     /// 年份判定与显示均走北京日历/时区，不跟设备时区。
@@ -2122,7 +2348,7 @@ enum BearyText {
             return hourMinuteFormatter.string(from: date)
         }
         if cal.isDateInYesterday(date) {
-            return "昨天 " + hourMinuteFormatter.string(from: date)
+            return BearyLocalizedDate.yesterdayWord(timeZone: BearyLocalizedDate.gmt8) + " " + hourMinuteFormatter.string(from: date)
         }
         return absoluteDateString(from: date)
     }
@@ -3761,18 +3987,22 @@ enum BearyVisibility {
 }
 
 enum BearyVisibilityText {
+    /// 2026-11-21 日期完全本地化：相对时间跟 App 语言（见 BearyLocalizedDate），
+    /// 中文沿用既有词、输出与改前逐字节一致；非中文走 RelativeDateTimeFormatter
+    /// （英文如 now／5 minutes ago／2 hours ago／yesterday／3 days ago，草稿待 Li 定稿）。
+    /// 口径不变：7 天内相对、7 天外绝对（同年 M月d日 H:mm、跨年 yyyy年M月d日，规范 §12），
+    /// 时区沿用既有口径。所有调用点（详情、卡片、私信、通知、我的页）自动跟这条口径。
     static func publishedRelativeString(publishedAtMs: Int?) -> String? {
         guard let ms = publishedAtMs, ms > 0 else { return nil }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
-        if diff < 60 { return "刚刚" }
-        if diff < 3600 { return "\(Int(diff / 60)) 分钟前" }
-        if diff < 86400 { return "\(Int(diff / 3600)) 小时前" }
+        if diff < 60 { return BearyLocalizedDate.justNowString(date: date) }
+        if diff < 3600 { return BearyLocalizedDate.minutesAgoString(Int(diff / 60)) }
+        if diff < 86400 { return BearyLocalizedDate.hoursAgoString(Int(diff / 3600)) }
         // 7 天口径（2026-11-15 Li 定，全站日记时间统一）：7 天内用相对时间，
         // 7 天外回落绝对时间：同年 M月d日 H:mm、跨年 yyyy年M月d日（规范 §12），
-        // 北京时间。截断放在共用工具里，所有调用点
-        // （详情、卡片、私信、通知、我的页）自动跟这条口径，不用各处另处理。
-        if diff < 7 * 86400 { return "\(Int(diff / 86400)) 天前" }
+        // 北京时间。
+        if diff < 7 * 86400 { return BearyLocalizedDate.daysAgoString(Int(diff / 86400)) }
         return BearyText.absoluteDateString(from: date)
     }
 }

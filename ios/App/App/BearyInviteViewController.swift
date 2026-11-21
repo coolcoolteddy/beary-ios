@@ -809,11 +809,9 @@ final class BearyInviteViewController: UIViewController {
             messageLabel.text = baseText + "，Plus 永久有效"
             return
         }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "yyyy/M/d"
-        let dateText = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0))
-        messageLabel.text = baseText + "，Plus 至 \(dateText)"
+        // 2026-11-21 日期完全本地化：“Plus 至 <短日期>”走共享 helper（跟 App
+        // 语言；非中文为草稿 Plus until <短日期>，待 Li 定稿）。
+        messageLabel.text = baseText + BearyLocalizedDate.plusUntilSuffix(untilMs: until)
     }
 
     // MARK: - 动作

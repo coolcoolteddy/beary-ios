@@ -4572,12 +4572,11 @@ class BearyNotificationCell: UITableViewCell {
 
     /// 审计-性能：逐行新建 DateFormatter 改静态复用（每种格式一个静态实例，
     /// 不复用同一实例改 dateFormat；调用方只在主线程做行渲染，不跨线程用）。
-    private static let monthDayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月d日"
-        return formatter
-    }()
+    /// 2026-11-21 日期完全本地化：走共享 helper，跟 App 语言；时区沿用
+    /// 既有行为（这里原来没写时区，跟设备走）。
+    private static var monthDayFormatter: DateFormatter {
+        BearyLocalizedDate.formatter(template: "MMMMd", zhFormat: "M月d日")
+    }
 
     /// 通知时间口径（2026-11-11 定版带空格，取代 2026-11-05 口径）：24 小时内相对时间——不到 1 分钟“刚刚”，
     /// 不到 1 小时“X 分钟前”，不到 24 小时“X 小时前”；超过 24 小时写天数“X 天前”。

@@ -4117,19 +4117,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         return parts.joined(separator: " ")
     }
 
-    /// 搜索结果日记行日期：7 天内相对时间、7 天外绝对时间（共用口径）。
-    /// 绝对时间：同年 M 月 d 日，跨年 yyyy 年 M 月 d 日（带空格，不带时间）。
+    /// 搜索结果日记行日期：7 天内相对时间、7 天外“/”绝对日期（同年只写月日，
+    /// 跨年带年；月日顺序跟地区走），不带时分。见 BearyVisibilityText.diaryTimeString。
     private func searchDateString(ms: Int) -> String {
-        if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
-            return relative
-        }
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
-        let year = Calendar.current.component(.year, from: date)
-        let currentYear = Calendar.current.component(.year, from: Date())
-        fmt.dateFormat = year == currentYear ? "M 月 d 日" : "yyyy 年 M 月 d 日"
-        return fmt.string(from: date)
+        BearyVisibilityText.diaryTimeString(publishedAtMs: ms) ?? BearyDiaryCardCell.feedTimeString(ms: ms)
     }
 
     /// 网页用户行名字回退口径：display_name || ('@' + handle) || 'beary 用户'。

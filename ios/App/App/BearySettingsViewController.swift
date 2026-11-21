@@ -184,25 +184,9 @@ enum BearyAccountText {
     /// 永久会员阈值：网页与服务端同款常量（plus_until >= 该值即永久）。
     static let permanentThreshold: Int = 4102444800000
 
-    /// 日期格式化器只建一次复用：DateFormatter 创建昂贵，导出每篇调
-    /// isoString 三次、设置页反复调 dateString／dateTimeString。
-    /// DateFormatter 非线程安全：date／dateTime 两档只在主线程用（设置页
-    /// 文案）；iso 档只在导出后台链用（单次导出串行，isExporting 守卫），
-    /// 不可拿到别的队列共用。
-    private static let dateFormatter: DateFormatter = {
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "yyyy年M月d日"
-        return fmt
-    }()
-
-    private static let dateTimeFormatter: DateFormatter = {
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "yyyy年M月d日 HH:mm"
-        return fmt
-    }()
-
+    /// 2026-11-21 日期完全本地化：走共享 helper，跟 App 语言；时区沿用
+    /// 既有行为（原来没写时区，跟设备走）；中文输出与改前一致。
+    /// ISO 档仍只建一次复用（导出后台链用，见 isoString）。
     private static let isoFormatter: DateFormatter = {
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "en_US_POSIX")
@@ -214,13 +198,13 @@ enum BearyAccountText {
     static func dateString(ms: Int?) -> String {
         guard let value = ms, value > 0 else { return "–" }
         let date = Date(timeIntervalSince1970: TimeInterval(value) / 1000.0)
-        return dateFormatter.string(from: date)
+        return BearyLocalizedDate.yearMonthDayString(from: date)
     }
 
     static func dateTimeString(ms: Int?) -> String {
         guard let value = ms, value > 0 else { return "–" }
         let date = Date(timeIntervalSince1970: TimeInterval(value) / 1000.0)
-        return dateTimeFormatter.string(from: date)
+        return BearyLocalizedDate.yearMonthDayTimeString(from: date)
     }
 
     /// 毫秒转 ISO（网页导出 toMs + toISOString 同口径：秒级值先 ×1000）。

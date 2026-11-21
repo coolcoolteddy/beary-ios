@@ -3938,15 +3938,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 面板行日期：7 天内相对时间、7 天外绝对时间（共用口径；小时不补零）。
+    /// 2026-11-21 日期完全本地化：走共享 helper，跟 App 语言；兜底沿用
+    /// 原来的 "M月d日 H:mm"（不带年）与既有时区（原来没写时区，跟设备走）。
     private func quoteRowDate(ms: Int) -> String {
         if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
             return relative
         }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "M月d日 H:mm"
-        return fmt.string(from: date)
+        return BearyLocalizedDate.monthDayTimeString(from: date)
     }
 
     // MARK: - 图片预览（网页 img-preview：无标题、无 + 块，空时整条隐藏）

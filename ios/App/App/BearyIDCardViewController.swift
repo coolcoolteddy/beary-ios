@@ -324,7 +324,8 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         birthdayMonth = components.month
         birthdayDay = components.day
         if let month = birthdayMonth, let day = birthdayDay {
-            birthdayField.text = "\(month)月\(day)日"
+            // 2026-11-21 日期完全本地化：中文沿用“X月X日”，非中文走共享 helper。
+            birthdayField.text = BearyLocalizedDate.monthDayString(month: month, day: day)
         }
     }
 

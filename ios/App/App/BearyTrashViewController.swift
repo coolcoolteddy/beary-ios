@@ -1645,39 +1645,33 @@ private enum TrashText {
             return relative
         }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
         // 跨年显示年份（规范 §12）：同年 "M月d日 H:mm"，跨年 "yyyy年M月d日"；
         // 年份判定走北京日历，与本文件 G8 时区口径一致。
-        let calendar = BearyBeijingDay.calendar
-        let year = calendar.component(.year, from: date)
-        let currentYear = calendar.component(.year, from: Date())
-        formatter.dateFormat = year == currentYear ? "M月d日 H:mm" : "yyyy年M月d日"
-        return formatter.string(from: date)
+        // 2026-11-21 日期完全本地化：走共享 helper（跟 App 语言；时区沿用既有 GMT+8），
+        // 中文输出与改前一致。
+        return BearyText.absoluteDateString(from: date)
     }
 
     /// 网页 fmtDelLabel：今天 → 今天 H:mm；昨天 → 昨天；否则 M月d日。
     /// [24] 小项 6：今天态小时亦不补零，与上条同口径。
     /// G8：今天/昨天判定与显示均走北京日历/时区，不用设备时区。
+    /// 2026-11-21 日期完全本地化：今天／昨天词与日期跟 App 语言（见 BearyLocalizedDate），
+    /// 时区沿用既有 GMT+8；中文输出与改前一致。
     static func deletedLabel(ms: Int) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let calendar = BearyBeijingDay.calendar
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
         if calendar.isDateInToday(date) {
-            formatter.dateFormat = "H:mm"
-            return "今天 " + formatter.string(from: date)
+            return BearyLocalizedDate.todayWord(timeZone: BearyLocalizedDate.gmt8) + " " + BearyLocalizedDate.timeString(from: date, timeZone: BearyLocalizedDate.gmt8)
         }
         if calendar.isDateInYesterday(date) {
-            return "昨天"
+            return BearyLocalizedDate.yesterdayWord(timeZone: BearyLocalizedDate.gmt8)
         }
         // 跨年显示年份（规范 §12）：同年「M月d日」，跨年「yyyy年M月d日」。
         let year = calendar.component(.year, from: date)
         let currentYear = calendar.component(.year, from: Date())
-        formatter.dateFormat = year == currentYear ? "M月d日" : "yyyy年M月d日"
-        return formatter.string(from: date)
+        return year == currentYear
+            ? BearyLocalizedDate.monthDayString(from: date, timeZone: BearyLocalizedDate.gmt8)
+            : BearyLocalizedDate.yearMonthDayString(from: date, timeZone: BearyLocalizedDate.gmt8)
     }
 
     /// 网页 trash-meta：写于 … · 删除于 … · 还剩 N 天。
