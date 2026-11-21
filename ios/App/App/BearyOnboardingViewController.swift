@@ -67,13 +67,15 @@ private final class OnboardingPillView: UIView {
 
 private enum OnboardingVisibilityDemo: Int, CaseIterable {
     case `private` = 0
-    case `public` = 1
-    case ephemeral = 2
+    case friendsOnly = 1
+    case `public` = 2
+    case ephemeral = 3
 
     /// 官方图标资产名（beary-ui，仓库已核实）。
     var iconName: String {
         switch self {
         case .private: return "icon_lock"
+        case .friendsOnly: return "icon_friends_lock"
         case .public: return "icon_globe"
         case .ephemeral: return "icon_clock"
         }
@@ -82,6 +84,7 @@ private enum OnboardingVisibilityDemo: Int, CaseIterable {
     var title: String {
         switch self {
         case .private: return "私密"
+        case .friendsOnly: return "仅好友"
         case .public: return "公开"
         case .ephemeral: return "限时"
         }
@@ -91,17 +94,19 @@ private enum OnboardingVisibilityDemo: Int, CaseIterable {
     var subtitle: String {
         switch self {
         case .private: return "仅自己可见"
+        case .friendsOnly: return "仅互关好友可见"
         case .public: return "所有人可见"
         case .ephemeral: return "公开 24 小时后自动转私密"
         }
     }
 
-    /// 状态标签色：只用私密蓝／公开橙两种；限时存活期即公开态，故用公开橙。
+    /// 状态标签：私密／限时蓝 pill、公开橙 pill；仅好友墨字灰边 pill（规范：仅好友 pill 墨字灰底）。
     var pillColor: UIColor {
         switch self {
         case .private: return BearyColors.blue
+        case .friendsOnly: return BearyColors.gray
         case .public: return BearyColors.orange
-        case .ephemeral: return BearyColors.orange
+        case .ephemeral: return BearyColors.blue
         }
     }
 
@@ -865,7 +870,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         content.setCustomSpacing(22, after: line2)
         stack.addArrangedSubview(card)
 
-        // 分段切换（卡片下方）：等宽三栏、每栏内居中；选中加粗＋底部 2pt 墨色短线。
+        // 分段切换（卡片下方）：等宽四栏、每栏内居中；选中加粗＋底部 2pt 墨色短线。
         let switchContainer = buildVisibilitySwitch()
         stack.addArrangedSubview(switchContainer)
         let explain = makeLabel(size: 12.5, color: BearyColors.gray, alignment: .center)
@@ -1070,7 +1075,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         switch page {
         case 0: return "写下今天的事和心情。"
         case 1: return "发布前，确认这篇日记的可见范围。"
-        case 2: return "用小熊回应这篇日记。"
+        case 2: return "" // 第 3 页无副标题：与标题重复（2026-11-14 第 19 轮审计 B5 定版）。
         default: return "想写什么，就写什么。"
         }
     }
@@ -1109,6 +1114,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         pageNumberLabel.attributedText = kernedText(pageNumberText(currentPage), font: scaledFont(size: 11), color: BearyColors.gray, kern: 2.4)
         titleLabel.text = pageTitle(currentPage)
         subtitleLabel.attributedText = kernedText(pageSubtitle(currentPage), font: scaledFont(size: 14), color: BearyColors.gray, kern: 0, lineHeightMultiple: 1.65)
+        subtitleLabel.isHidden = pageSubtitle(currentPage).isEmpty
         setPrimaryTitle(pagePrimaryTitle(currentPage))
         if currentPage == 3 {
             secondaryButton.setTitle(pageSecondaryTitle(), for: .normal)
