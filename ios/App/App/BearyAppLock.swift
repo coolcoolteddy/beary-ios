@@ -20,7 +20,7 @@ enum BearyAppLockSettings {
 
     /// 冷启动锁说明（dsh II-4）：锁屏与设置页详情共用同一句，旧句 35 字，
     /// 现 25 字——“冷启动时验证一次；切到别的 App 再回来不重复。”
-    static let coldStartNote = "冷启动时验证一次；切到别的 App 再回来不重复。"
+    static let coldStartNote = NSLocalizedString("冷启动时验证一次；切到别的 App 再回来不重复。", comment: "")
 
     /// 开关值（默认关）。只读走 UserDefaults，写走 setEnabled（设置页已验身份后才调）。
     static var isEnabled: Bool {
@@ -49,10 +49,10 @@ enum BearyAppLockSettings {
         let context = LAContext()
         _ = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
         switch context.biometryType {
-        case .faceID: return "面容识别"
-        case .touchID: return "触控 ID"
+        case .faceID: return NSLocalizedString("面容识别", comment: "")
+        case .touchID: return NSLocalizedString("触控 ID", comment: "")
         case .opticID: return "Optic ID"
-        default: return "生物识别"
+        default: return NSLocalizedString("生物识别", comment: "")
         }
     }
 
@@ -66,13 +66,13 @@ enum BearyAppLockSettings {
         let reason: String
         switch error?.code {
         case LAError.biometryNotEnrolled.rawValue:
-            reason = "设备未录入\(biometryName)，请先在系统设置中录入"
+            reason = String(format: NSLocalizedString("设备未录入%@，请先在系统设置中录入", comment: ""), biometryName)
         case LAError.biometryNotAvailable.rawValue:
-            reason = "此设备不支持生物识别"
+            reason = NSLocalizedString("此设备不支持生物识别", comment: "")
         case LAError.passcodeNotSet.rawValue:
-            reason = "设备未设置密码，请先在系统设置中设置密码"
+            reason = NSLocalizedString("设备未设置密码，请先在系统设置中设置密码", comment: "")
         default:
-            reason = "此设备暂无法使用生物识别"
+            reason = NSLocalizedString("此设备暂无法使用生物识别", comment: "")
         }
         return (false, reason)
     }
@@ -142,7 +142,7 @@ final class BearyAppLockManager {
         // VoiceOver：锁屏为普通叠加层、非 VC，须显式声明模态，焦点才不越过
         // 覆盖层浏览到底下的内容（与通知弹层 overlayView 同款声明）。
         overlay.accessibilityViewIsModal = true
-        overlay.accessibilityLabel = "beary 已锁定"
+        overlay.accessibilityLabel = NSLocalizedString("beary 已锁定", comment: "")
 
         let logo = UIImageView(image: UIImage(named: "LogoHorizontal"))
         logo.contentMode = .scaleAspectFit
@@ -157,7 +157,7 @@ final class BearyAppLockManager {
         title.adjustsFontForContentSizeCategory = true
         title.textColor = BearyColors.ink
         title.textAlignment = .center
-        title.text = "使用\(name)解锁"
+        title.text = String(format: NSLocalizedString("使用%@解锁", comment: ""), name)
 
         let status = UILabel()
         status.translatesAutoresizingMaskIntoConstraints = false
@@ -171,8 +171,8 @@ final class BearyAppLockManager {
 
         let button = BearyButton(style: .secondaryOutline(.regular))
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.setTitle("解锁", for: .normal)
-        button.accessibilityLabel = "解锁"
+        button.setTitle(NSLocalizedString("解锁", comment: ""), for: .normal)
+        button.accessibilityLabel = NSLocalizedString("解锁", comment: "")
         button.addTarget(self, action: #selector(lockUnlockButtonTapped), for: .touchUpInside)
         lockUnlockButton = button
 
@@ -234,7 +234,7 @@ final class BearyAppLockManager {
         guard !lockEvaluating else { return }
         lockEvaluating = true
         let name = BearyAppLockSettings.biometryName
-        BearyAppLockSettings.evaluate(reason: "使用\(name)解锁 beary") { [weak self] success in
+        BearyAppLockSettings.evaluate(reason: String(format: NSLocalizedString("使用%@解锁 beary", comment: ""), name)) { [weak self] success in
             guard let self = self else { return }
             self.lockEvaluating = false
             if success {
@@ -245,7 +245,7 @@ final class BearyAppLockManager {
                 // 只有最终仍未通过才走到这里。）
                 // 审计-个人页设置：失败文案补设备密码入口（旧文案只说再试一次，
                 // 未提示点“解锁”可改走设备密码）。
-                self.lockStatusLabel?.text = "验证未通过，请再试一次，也可用设备密码解锁"
+                self.lockStatusLabel?.text = NSLocalizedString("验证未通过，请再试一次，也可用设备密码解锁", comment: "")
             }
         }
     }
