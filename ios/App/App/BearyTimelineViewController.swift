@@ -2896,9 +2896,9 @@ class BearyTimelineViewController: UIViewController {
     @objc private func handleKeyboardWillShow(_ note: Notification) {
         guard inlineComposerFocused,
               let frameValue = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
-        let keyboardHeight = frameValue.cgRect.height
+        let keyboardHeight = frameValue.cgRectValue.height
         let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? BearyMotion.normal
-        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue ?? UIView.AnimationOptions.curveEaseOut.rawValue
+        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue ?? Int(UIView.AnimationOptions.curveEaseOut.rawValue)
         let options = UIView.AnimationOptions(rawValue: UInt(curveRaw << 16))
         let bottomInset = max(keyboardHeight - view.safeAreaInsets.bottom, 0)
         UIView.animate(withDuration: duration, delay: 0, options: options, animations: {
@@ -2917,7 +2917,7 @@ class BearyTimelineViewController: UIViewController {
 
     @objc private func handleKeyboardWillHide(_ note: Notification) {
         let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? BearyMotion.normal
-        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue ?? UIView.AnimationOptions.curveEaseOut.rawValue
+        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue ?? Int(UIView.AnimationOptions.curveEaseOut.rawValue)
         let options = UIView.AnimationOptions(rawValue: UInt(curveRaw << 16))
         UIView.animate(withDuration: duration, delay: 0, options: options, animations: {
             self.tableView.contentInset.bottom = 0
@@ -7479,7 +7479,7 @@ final class BearyInlineComposerView: UIView, UITextViewDelegate, PHPickerViewCon
     private var textViewHeightConstraint: NSLayoutConstraint?
     private var lastTextViewWidth: CGFloat = 0
 
-    private var isFocused = false
+    private var composerFocused = false
     /// 发布在途（发布中心 pill 负责失败重试；成功回包后 VC 调 reset 清掉）。
     var isPublishing = false { didSet { updatePublishButton() } }
 
@@ -7524,7 +7524,7 @@ final class BearyInlineComposerView: UIView, UITextViewDelegate, PHPickerViewCon
         // 闲置态虚线框（现成 BearyDashedBorderView：1.5pt、[4,3]、圆角 16、line 色）；
         // 聚焦时切微明度底（surface 系），虚线框不动。
         focusedBackgroundView.translatesAutoresizingMaskIntoConstraints = false
-        focusedBackgroundView.backgroundColor = BearyColors.surface
+        focusedBackgroundView.backgroundColor = BearyColors.surface1
         focusedBackgroundView.layer.cornerRadius = BearyCorners.single
         focusedBackgroundView.alpha = 0
         dashedBorderView.translatesAutoresizingMaskIntoConstraints = false
@@ -7811,7 +7811,7 @@ final class BearyInlineComposerView: UIView, UITextViewDelegate, PHPickerViewCon
     }
 
     func textViewDidBeginEditing(_ textView: UITextView) {
-        isFocused = true
+        composerFocused = true
         toolRow.isHidden = false
         UIView.animate(withDuration: BearyMotion.micro, animations: {
             self.focusedBackgroundView.alpha = 1
@@ -7821,7 +7821,7 @@ final class BearyInlineComposerView: UIView, UITextViewDelegate, PHPickerViewCon
     }
 
     func textViewDidEndEditing(_ textView: UITextView) {
-        isFocused = false
+        composerFocused = false
         // 内容全空时工具行收起；有内容时留着（用户点发布不用再聚焦）。
         if textView.text.isEmpty && imageItems.isEmpty && gifKeys.isEmpty
             && selectedLocation == nil && selectedTags.isEmpty
@@ -8038,7 +8038,7 @@ final class BearyInlineComposerView: UIView, UITextViewDelegate, PHPickerViewCon
         deleteButton.translatesAutoresizingMaskIntoConstraints = false
         deleteButton.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
         deleteButton.tintColor = BearyColors.gray
-        deleteButton.backgroundColor = BearyColors.surface
+        deleteButton.backgroundColor = BearyColors.surface1
         deleteButton.layer.cornerRadius = 10
         deleteButton.accessibilityLabel = "删除这张图片"
         deleteButton.tag = index
