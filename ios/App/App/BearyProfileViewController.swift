@@ -5029,11 +5029,12 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func renderThisDay(visible: [Entry]) {
-        // r17-C7：今天按北京时间算（设备时区≠北京时，0 点分界仍以北京时间为准）。
-        renderThisDayWithEntries(visible: visible, today: Date(), calendar: Self.beijingCalendar)
+        // v28 §二：今天按查看设备时区算（不再走北京时间）。
+        renderThisDayWithEntries(visible: visible, today: Date(), calendar: .current)
     }
 
-    /// 那年今天渲染体：today/calendar 由调用方定——新语料与快照都走北京时间。
+    /// 那年今天渲染体：calendar 定「今天」（调用方传设备时区日历）；各篇月日
+    /// 按各篇自己的时区算（v28 §二），见 thisDayHistoryByYear。
     private func renderThisDayWithEntries(visible: [Entry], today: Date, calendar: Calendar) {
         // 语料为 0 时整卡隐藏；语料非空但往年今天没写时显示解释性空态（预览定版），
         // 不编造、不拿别的日子顶替。
@@ -5053,8 +5054,9 @@ class BearyProfileViewController: UIViewController {
         }
         // 年份解释：同月同日往年全量按年分组（旧口径只取最近一年、
         // 更早年份算出后即丢，见 thisDayHistoryByYear）；主显仍取最近一年
-        // 首篇，展开态按年列出各年份。时区跟本函数既有三处同口径走 calendar
-        // 形参（#1794 已合，合入变基时一并换过）。
+        // 首篇，展开态按年列出各年份。月日按各篇自己的时区算，「今天」按
+        // calendar（调用方传设备时区日历）；展开态年份清单见
+        // thisDayAvailableYears，同口径。
         var grouped = BearyProfilePersonalLogic.thisDayHistoryByYear(entries: visible, today: fakeToday ?? Date(), calendar: calendar)
         // 开发者模式假数据预览（仅内存）：往年今天无日记时也亮一张假卡；
         // 假篇 id 带 dev- 前缀，点按进详情会被拦截、留话入口同样拦截。
@@ -5069,7 +5071,7 @@ class BearyProfileViewController: UIViewController {
         // 只取今年之前的年份；当年不算「往年」。分组里已有的年份一定在
         // 其中（同语料同口径），并集是防御占位符等边缘情形。
         let todayYear = calendar.component(.year, from: fakeToday ?? Date())
-        var yearsToShow = BearyProfilePersonalLogic.availableYears(entries: visible, isOwn: isOwnProfile, calendar: calendar).filter { $0 < todayYear }
+        var yearsToShow = BearyProfilePersonalLogic.thisDayAvailableYears(entries: visible, isOwn: isOwnProfile, calendar: calendar).filter { $0 < todayYear }
         for year in grouped.map(\.year) where !yearsToShow.contains(year) {
             yearsToShow.append(year)
         }
@@ -6363,7 +6365,7 @@ class BearyProfileViewController: UIViewController {
         yearCard.accessibilityLabel = "\(year) 年度回顾"
     }
 
-    /// 快照渲染那年今日：条目来自快照（带 ID 与正文），按北京时间算今天；展开行点按
+    /// 快照渲染那年今日：条目来自快照（带 ID 与正文），按查看设备时区算今天；展开行点按
     /// 经 thisDayEntryTapped 回落快照条目（语料未到齐时 modulesCorpus 里还没有它）。
     private func renderThisDayFromSnapshot(_ snap: BearyProfileStatsCache.Snapshot) {
         guard snap.thisDayEntries.isEmpty == false else {
@@ -6371,7 +6373,7 @@ class BearyProfileViewController: UIViewController {
             thisDayMainEntry = nil
             return
         }
-        renderThisDayWithEntries(visible: snap.thisDayEntries, today: Date(), calendar: Self.beijingCalendar)
+        renderThisDayWithEntries(visible: snap.thisDayEntries, today: Date(), calendar: .current)
     }
 
     /// 语料到齐才覆盖：只在末页不足 50 的到齐分支调用；失败 / 部分语料
@@ -6381,7 +6383,8 @@ class BearyProfileViewController: UIViewController {
               let accountId = SessionManager.shared.currentUser?.id else { return }
         let visible = BearyProfilePersonalLogic.visibleEntries(entries, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
         let stats = BearyProfilePersonalLogic.writingStats(entries: visible, now: Date(), calendar: Self.beijingCalendar)
-        let history = BearyProfilePersonalLogic.thisDayInHistory(entries: visible, today: Date(), calendar: Self.beijingCalendar)
+        // 那年今日快照条目：今天按查看设备时区，各篇按各篇时区（v28 §二）。
+        let history = BearyProfilePersonalLogic.thisDayInHistory(entries: visible, today: Date(), calendar: .current)
         var yearCounts: [String: Int] = [:]
         for entry in visible {
             guard let createdAt = entry.createdAt else { continue }

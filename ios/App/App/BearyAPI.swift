@@ -176,6 +176,9 @@ struct Entry: Codable {
     var quote: Quote?
     var createdAt: Int?
     var publishAt: Int?
+    /// 日记时区（IANA 时区名，创建草稿时的设备时区；服务端 tz_name，diary-timezone
+    /// 未部署前不回传即 nil，调用方按查看设备时区兜底——只做模型字段）。
+    var tzName: String?
     /// 旧 B 方案公开倒计时截止（iCity 已废弃：服务端不再写 pending，字段仅保留解码兼容，
     /// 不得再用于任何 UI 或门控判断；可见性唯一事实来源是 isPublic + publishedAt）。
     var publishPendingUntil: Int?
