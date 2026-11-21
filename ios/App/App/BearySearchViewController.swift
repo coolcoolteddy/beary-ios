@@ -3976,6 +3976,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     /// 搜索结果日记行日期：7 天内相对时间、7 天外绝对时间（共用口径）。
+    /// 绝对时间：同年 M 月 d 日，跨年 yyyy 年 M 月 d 日（带空格，不带时间）。
     private func searchDateString(ms: Int) -> String {
         if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
             return relative
@@ -3983,7 +3984,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "M 月 d 日"
+        let year = Calendar.current.component(.year, from: date)
+        let currentYear = Calendar.current.component(.year, from: Date())
+        fmt.dateFormat = year == currentYear ? "M 月 d 日" : "yyyy 年 M 月 d 日"
         return fmt.string(from: date)
     }
 
