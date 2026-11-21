@@ -3,7 +3,7 @@ import UIKit
 // 快照列表（2026-11-14 Li 定版，照截图改成底部弹窗两层中的列表层）：
 // 详情页 ••• 菜单「快照」进入，仅作者本人可见；只列最近 7 天内产生的文字版本，
 // 星标版长期保留。排序沿用服务端口径：created_at 倒序，星标不置顶（只豁免 7 天清理）。
-// 行：首行绝对时间（yyyy-MM-dd HH:mm:ss，等宽数字）＋星标 ★，次行正文首句
+// 行：首行绝对时间（yyyy-MM-dd HH:mm:ss，等宽数字）＋星标（官方图标），次行正文首句
 // （开头与上一版本相同时取本版第一句有变化的那一句；正文为空沿用旧固定文案
 // 「纯文本 · 保存成功」）；点行进预览层。右上「清空快照」删全部（含已加星标），先弹确认、不可撤销。
 // 字号照截图实测：标题 pageTitleFont 17 粗体、说明与副行 captionFont 12、行时间 17 半粗。
@@ -279,7 +279,26 @@ private final class BearySnapshotRowCell: UITableViewCell {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func configure(with snapshot: BearyEntrySnapshot, previousSnapshot: BearyEntrySnapshot? = nil) {
-        timeLabel.text = snapshot.isStarred ? "\(snapshot.displayDateString)  ★" : snapshot.displayDateString
+        let titleFont = timeLabel.font
+        if snapshot.isStarred,
+           let starImage = BearyIconImages.image(named: "icon_star_fill", pointSize: titleFont.pointSize * 1.2) {
+            // 行内星标只用官方手绘图标（icon_star_fill），不用文字符号星标；
+            // 尺寸与字号走内联附件同款 1.2 倍、基线按 descender 对齐（心情附件同口径），
+            // 模板图由 timeLabel.tintColor 着色，与正文同墨色。
+            let attachment = NSTextAttachment()
+            attachment.image = starImage
+            let starSize = titleFont.pointSize * 1.2
+            attachment.bounds = CGRect(x: 0, y: titleFont.descender, width: starSize, height: starSize)
+            attachment.accessibilityLabel = "已加星"
+            let title = NSMutableAttributedString(string: snapshot.displayDateString + "  ", attributes: [.font: titleFont, .foregroundColor: BearyColors.ink])
+            title.append(NSAttributedString(attachment: attachment))
+            timeLabel.tintColor = BearyColors.ink
+            timeLabel.attributedText = title
+        } else {
+            // cell 复用时清掉旧的 attributedText，避免未加星行残留星标。
+            timeLabel.attributedText = nil
+            timeLabel.text = snapshot.displayDateString
+        }
         subtitleLabel.text = snapshot.listSubtitle(previousSnapshot: previousSnapshot)
     }
 }
