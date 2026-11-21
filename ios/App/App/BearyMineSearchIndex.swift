@@ -11,8 +11,12 @@ import SQLite3
 ///   同一篇只留一行；公开组与用户组继续走服务端，一字不动。
 /// - 已过期限时篇建索引时排除（入库前跳过）；查询时再按
 ///   `BearyEphemeral.isExpired` 过一遍——建索引后才过期的篇也不会进结果。
-/// - 本地归档不完整（`loadAllEntries` 返回 nil）时返回空数组，调用方仍用
-///   服务端「我的」组兜底，不出现搜索结果断档的窗口。
+/// - 本地归档三态（离线搜索完整性门控）：完整时正常搜；部分归档
+///   （标记在且账号相符、但全量读盘失败且至少一日可读）只对可读日
+///   建／查索引，坏日排除在索引外、不参与计数，调用方在断网只渲本
+///   地组时亮「仅搜索已下载的部分日记」；无标记／账号不符／无可读
+///   日时返回空数组，调用方仍用服务端「我的」组兜底，不出现搜索
+///   结果断档的窗口；归档损坏（无可读日）维持 fail-closed。
 /// - 实现用系统 SQLite FTS5（`import SQLite3`，无需新依赖）；中文按 trigram
 ///   分词（建 3 字子串索引，子串可搜；2 字及以下查询没有 trigram 可匹配，
 ///   走 LIKE 兜底查 title/body），与服务端 LIKE“整串子串匹配”的口径对齐。
@@ -45,29 +49,57 @@ final class BearyMineSearchIndex {
     }
 
     /// 搜本人日记（标题＋正文），按 created_at DESC、id DESC 返回（与服务端序一致）。
-    /// 同步调用，调用方须在后台队列调。未登录、本地归档不完整、FTS 不可用时返回 []。
+    /// 同步调用，调用方须在后台队列调。未登录、FTS 不可用时返回空结果。
+    /// 三态：完整归档正常搜；部分归档（标记在且账号相符、但全量读盘失败
+    /// 且至少一日可读）只搜可读日，partialArchive 置 true；无标记／账号
+    /// 不符／无可读日时返回空结果（fail-closed，调用方用服务端兜底）。
     /// offset：跳过前面多少条有效命中再取一页（pageSize 条）——离线翻页用；
     /// 缺省 0 即首批。过期过滤放截取之前，offset 只计有效命中。
-    func searchMine(query: String, offset: Int = 0) -> [Entry] {
+    /// - Returns: entries＝命中；partialArchive＝本次结果是否只来自部分归档
+    ///   （调用方只在断网只渲本地组时据此亮横幅；在线合并服务端结果时不亮）。
+    func searchMine(query: String, offset: Int = 0) -> (entries: [Entry], partialArchive: Bool) {
         queue.sync { searchMineLocked(query: query, offset: max(0, offset)) }
     }
 
-    private func searchMineLocked(query: String, offset: Int) -> [Entry] {
-        guard let accountId = SessionManager.shared.currentUser?.id else { return [] }
-        guard let phrase = ftsPhraseQuery(query) else { return [] }
-        guard openIfNeeded(accountId: accountId) else { return [] }
-        // 修订号快查：本地归档不完整时返回 []（调用方用服务端兜底）；
+    private func searchMineLocked(query: String, offset: Int) -> (entries: [Entry], partialArchive: Bool) {
+        guard let accountId = SessionManager.shared.currentUser?.id else { return ([], false) }
+        guard let phrase = ftsPhraseQuery(query) else { return ([], false) }
+        guard openIfNeeded(accountId: accountId) else { return ([], false) }
+        // 修订号快查：无标记／账号不符时返回空结果（调用方用服务端兜底）；
         // 修订号与上次见到的不一致时才读全量、算指纹重建，否则跳过
         // 全量读盘与全量指纹，只查 FTS + 按 id 取命中。
-        guard BearyEntrySyncStore.isArchiveComplete(accountId: accountId) else { return [] }
+        // 注意 isArchiveComplete 只认标记：标记在但全量读盘失败（任一日
+        // 不可恢复／总数对不上）同样是部分态，判定在下面读盘处做，不只在门控处。
+        guard BearyEntrySyncStore.isArchiveComplete(accountId: accountId) else { return ([], false) }
         let revision = BearyEntrySyncStore.archiveRevision(accountId: accountId)
         var loadedEntries: [Entry]? = nil
+        // 本次结果是否只来自部分归档：读盘时定；修订号未变时读上次建索引
+        // 时存下的值（与索引内容一致——索引即按该快照所建）；重建失败时
+        // 沿用存下的旧值（索引仍是旧快照），下次搜索重试读盘重建。
+        var partialArchive = storedPartialArchive() ?? false
         if storedRevision() != revision {
-            guard let entries = BearyEntrySyncStore.loadAllEntries(accountId: accountId) else { return [] }
-            if rebuildIfNeeded(entries: entries) {
-                storeRevision(revision)
+            if let entries = BearyEntrySyncStore.loadAllEntries(accountId: accountId) {
+                if rebuildIfNeeded(entries: entries) {
+                    storeRevision(revision)
+                    storePartialArchive(false)
+                    partialArchive = false
+                }
+                loadedEntries = entries
+            } else if let partialEntries = BearyEntrySyncStore.loadReadableEntries(accountId: accountId) {
+                // 部分归档：全量读盘失败，但标记账号相符且至少一日可读——
+                // 只对可读日建索引（坏日排除在索引外、不参与计数），不复用
+                // loadAllEntries「总数对不上即整体 nil」的口径；归档损坏
+                // （无可读日）时 loadReadableEntries 返回 nil，仍走空结果
+                // fail-closed。
+                if rebuildIfNeeded(entries: partialEntries) {
+                    storeRevision(revision)
+                    storePartialArchive(true)
+                    partialArchive = true
+                }
+                loadedEntries = partialEntries
+            } else {
+                return ([], false)
             }
-            loadedEntries = entries
         }
         // 只搜已索引列（title/body）；entry_id 与 created_at 为 UNINDEXED 存量列，
         // 不进倒排、只用于取 id 与排序。
@@ -83,7 +115,7 @@ final class BearyMineSearchIndex {
             ? "SELECT entry_id FROM mine_fts WHERE title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' ORDER BY created_at DESC, entry_id DESC LIMIT ? OFFSET ?"
             : "SELECT entry_id FROM mine_fts WHERE mine_fts MATCH ? ORDER BY created_at DESC, entry_id DESC LIMIT ? OFFSET ?"
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return [] }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return ([], false) }
         defer { sqlite3_finalize(stmt) }
         let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
         if shortQuery {
@@ -124,7 +156,12 @@ final class BearyMineSearchIndex {
                 let wanted = Set(pageIds)
                 pageEntries = loaded.filter { $0.id.map { wanted.contains($0) } ?? false }
             } else {
-                guard let loaded = BearyEntrySyncStore.loadEntries(accountId: accountId, byIds: Set(pageIds)) else { return [] }
+                // 命中取回：部分态走容错取回（坏日跳过不判 nil），与建索引的
+                // 可读日快照同口径；完整态仍走严格取回（任一日坏即整体空）。
+                let loaded = partialArchive
+                    ? BearyEntrySyncStore.loadReadableEntries(accountId: accountId, byIds: Set(pageIds))
+                    : BearyEntrySyncStore.loadEntries(accountId: accountId, byIds: Set(pageIds))
+                guard let loaded = loaded else { return ([], false) }
                 pageEntries = loaded
             }
             var pageById: [String: Entry] = [:]
@@ -150,7 +187,7 @@ final class BearyMineSearchIndex {
                 }
             }
         }
-        return results
+        return (results, partialArchive)
     }
 
     // MARK: - 索引维护
@@ -276,6 +313,31 @@ final class BearyMineSearchIndex {
         defer { sqlite3_finalize(stmt) }
         let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
         String(value).withCString { ptr in
+            sqlite3_bind_text(stmt, 1, ptr, -1, transient)
+        }
+        sqlite3_step(stmt)
+    }
+
+    /// 上次建索引的快照是否只来自部分归档（mine_meta.partial_archive，
+    /// "1"/"0"）：与修订号同批存取，修订号未变时读它即知索引内容是完整
+    /// 还是部分快照；老版本建的索引无此键，按 false（完整）处理——老版本
+    /// 只从完整归档建索引，口径一致。
+    private func storedPartialArchive() -> Bool? {
+        let sql = "SELECT value FROM mine_meta WHERE key = 'partial_archive'"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW, let text = sqlite3_column_text(stmt, 0) else { return nil }
+        return String(cString: text) == "1"
+    }
+
+    private func storePartialArchive(_ value: Bool) {
+        let sql = "INSERT OR REPLACE INTO mine_meta(key, value) VALUES ('partial_archive', ?)"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return }
+        defer { sqlite3_finalize(stmt) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        (value ? "1" : "0").withCString { ptr in
             sqlite3_bind_text(stmt, 1, ptr, -1, transient)
         }
         sqlite3_step(stmt)
