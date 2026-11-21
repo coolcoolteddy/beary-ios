@@ -79,11 +79,9 @@ enum BlindBoxDate {
         if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
             return relative
         }
-        let fmt = DateFormatter()
-        fmt.timeZone = shanghai
-        fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "M月d日 H:mm"
-        return fmt.string(from: Date(timeIntervalSince1970: TimeInterval(ms) / 1000))
+        // 2026-11-21 日期完全本地化：走共享 helper，跟 App 语言；兜底沿用
+        // 原来的 "M月d日 H:mm"（不带年）与既有时区（Asia/Shanghai）。
+        return BearyLocalizedDate.monthDayTimeString(from: Date(timeIntervalSince1970: TimeInterval(ms) / 1000), timeZone: BearyLocalizedDate.shanghai)
     }
 }
 

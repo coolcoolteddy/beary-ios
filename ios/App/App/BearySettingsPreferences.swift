@@ -262,6 +262,8 @@ enum BearyAppLanguage {
         case system = "system"
         /// 强制简体中文。
         case mainland = "zh-Hans"
+        /// 强制英文。
+        case english = "en"
     }
 
     private static let key = "beary_app_language"
@@ -280,6 +282,9 @@ enum BearyAppLanguage {
             return nil
         case .mainland:
             guard let path = Bundle.main.path(forResource: "zh-Hans", ofType: "lproj") else { return nil }
+            return Bundle(path: path)
+        case .english:
+            guard let path = Bundle.main.path(forResource: "en", ofType: "lproj") else { return nil }
             return Bundle(path: path)
         }
     }
