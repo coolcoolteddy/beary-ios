@@ -93,7 +93,10 @@ App 跟随系统语言；设置页语言行留着；关键文案英文由 Li 定
  （只加 job，不动原有 test / sideload / simulator 三 job；跑在
   `ubuntu-latest`，`pull_request` 才跑，`fetch-depth: 0`）。
 - 只查本 PR diff 的**新增行**：新增行里出现 `NSLocalizedString` /
-  `String(localized:)` 之外的中文字符串字面量即失败。
+  `String(localized:)` 之外的中文字符串字面量即失败；写进界面文案位置
+  （`.text`／`.title`／`setTitle(`／`.placeholder`／`accessibilityLabel`／
+  `accessibilityHint`／`UIAlertController` 的 `title:`／`message:`）的英文
+  literal 同样失败，品牌词 beary／Plus 本身除外。
   不扫存量——队里排队 PR 不会因此变红；但排队 PR 若新增中文文案，
   合入本 PR 后 rebase 即触发检查，须改走 NSLocalizedString。
 - 豁免：注释、`dateFormat =` 格式串、`BearyI18nCatalogTests.swift`
