@@ -88,7 +88,15 @@ final class BearyDetailViewController: UIViewController {
     private var lastNavigationAt: Date?
     private var lastImageViewerAt: Date?
     private var confirmedBookmarked = false
-    private var isEmoteBusy = false
+    /// 回应快连点代次（2026-11-21 Li 定，点赞串行同款）：写请求一次只发一个，
+    /// 在途点按只记最新意图，回包后按最新意图补发；失败回滚到最后确认态。
+    private var emoteSeq = 0
+    private var emoteConfirmedSeq = 0
+    /// 最后服务端确认的回应列表（init 与补拉合并时刷新；最新请求失败时
+    /// 回滚到这里，不回滚到本次点按前的中间态）。
+    private var confirmedEmotes: [EmoteCount] = []
+    private var emoteInFlight = false
+    private var pendingEmoteTarget: (key: String, added: Bool)?
     private var isVisibilityBusy = false
     /// 审计三轮第二批 9：限时到期单次定时器（只按最近 ephemeralUntil 排一次，
     /// 绝不按秒/按分钟全量刷新；到点只重算有效态，见 applyEphemeralExpiryIfNeeded）。
@@ -704,6 +712,7 @@ final class BearyDetailViewController: UIViewController {
         self.confirmedLiked = entry.likedByMe ?? false
         self.confirmedLikeCount = entry.likeCount ?? 0
         self.confirmedBookmarked = entry.bookmarkedByMe ?? false
+        self.confirmedEmotes = entry.emotes ?? []
         let viewerId = SessionManager.shared.currentUser?.id
         // R22-A1：authorId 在时以它为准；isMine 只在同一已验证会话且缺
         // 作者 ID 时兜底（进页前容器 routeFetchedEntry 已验过会话）。
@@ -2113,8 +2122,10 @@ final class BearyDetailViewController: UIViewController {
             confirmedBookmarked = merged.bookmarkedByMe ?? false
         }
         let emotesChangedDuringFetch = baseline.map { $0.emotesSignature != BearyEmoteOrder.signature(old.emotes) } ?? false
-        if isEmoteBusy || emotesChangedDuringFetch {
+        if emoteSeq != emoteConfirmedSeq || emotesChangedDuringFetch {
             merged.emotes = old.emotes
+        } else {
+            confirmedEmotes = merged.emotes ?? []
         }
         let visibilityChangedDuringFetch = baseline.map { $0.isPublic != old.isPublic || $0.visibility != old.visibility || $0.publishedAt != old.publishedAt || $0.ephemeralUntil != old.ephemeralUntil } ?? false
         if isVisibilityBusy || visibilityChangedDuringFetch {
@@ -3104,6 +3115,7 @@ final class BearyDetailViewController: UIViewController {
 
     /// 选回应（chip 点按取下／picker 选定贴上共用）：先行增量 → POST → 成功对齐服务端值，
     /// 失败回滚＋拒绝动效；未登录走登录提示（先行态复原），非公开弹“公开后才能回应”。
+    /// 点赞串行同款：写请求一次只发一个，在途点按只记最新意图，回包后按最新意图补发。
     private func chooseEmote(key: String) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         if !BearyEphemeral.isEffectivelyPublic(entry) {
@@ -3114,18 +3126,34 @@ final class BearyDetailViewController: UIViewController {
             onRequireLogin?()
             return
         }
-        if isEmoteBusy { return }
-        let original = entry.emotes ?? []
-        let mine = original.first(where: { $0.emote == key })?.mine ?? false
-        let optimistic = emoteDelta(original, key: key, added: !mine)
+        let mine = (entry.emotes ?? []).first(where: { $0.emote == key })?.mine ?? false
+        let added = !mine
+        let optimistic = emoteDelta(entry.emotes ?? [], key: key, added: added)
         entry.emotes = optimistic
         renderEmotes()
         refreshActionRow()
-        isEmoteBusy = true
+        // 串行提交：一次只发一个写请求；在途时只记最新意图，不并行发请求，
+        // 回包后再按最新意图补发——先前成功的回包不再被后发的请求丢弃。
+        if emoteInFlight {
+            pendingEmoteTarget = (key: key, added: added)
+            return
+        }
+        submitEmote(entryId: entryId, key: key)
+    }
+
+    /// 发一次回应写请求（串行：调用前须确认无在途请求）。回包后若期间有
+    /// 更新的点按意图，按最新意图再发一次；意图与已确认态相同（两次点按
+    /// 互相抵消）时不发，只把界面刷回已确认态。
+    private func submitEmote(entryId: String, key: String) {
+        emoteSeq += 1
+        let reqSeq = emoteSeq
+        emoteInFlight = true
         BearyAPI.shared.postEmote(id: entryId, emote: key) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.isEmoteBusy = false
+                // 代次守卫：已有更新点按时，过期回包直接丢弃。
+                guard reqSeq == self.emoteSeq else { return }
+                self.emoteConfirmedSeq = reqSeq
                 switch result {
                 case .success(let resp):
                     if let server = resp.emotes {
@@ -3134,11 +3162,15 @@ final class BearyDetailViewController: UIViewController {
                             self.entry.emotes = merged
                             self.renderEmotes()
                         }
+                        self.confirmedEmotes = merged
+                    } else {
+                        self.confirmedEmotes = self.entry.emotes ?? []
                     }
                     self.refreshActionRow()
                     self.onInteractionChanged?(entryId, nil, nil, nil, self.entry.emotes)
                 case .failure(let err):
-                    self.entry.emotes = original
+                    // 失败回滚到最后服务端确认态（不是本次点按前的中间态）。
+                    self.entry.emotes = self.confirmedEmotes
                     self.renderEmotes()
                     self.refreshActionRow()
                     if case .unauthorized = err {
@@ -3151,6 +3183,23 @@ final class BearyDetailViewController: UIViewController {
                             self.playDenyShake(on: self.likeButton)
                         }
                         BearyToast.show(in: self.view, message: "操作失败，请重试")
+                    }
+                }
+                self.emoteInFlight = false
+                if let pending = self.pendingEmoteTarget {
+                    self.pendingEmoteTarget = nil
+                    let confirmedMine = (self.confirmedEmotes.first(where: { $0.emote == pending.key })?.mine) ?? false
+                    if pending.added != confirmedMine {
+                        // 按最新意图补发：先行反馈已在点按时给过，这里只同步
+                        // 字段与计数，不重播动效与音效。
+                        self.entry.emotes = self.emoteDelta(self.confirmedEmotes, key: pending.key, added: pending.added)
+                        self.renderEmotes()
+                        self.refreshActionRow()
+                        self.submitEmote(entryId: entryId, key: pending.key)
+                    } else {
+                        self.entry.emotes = self.confirmedEmotes
+                        self.renderEmotes()
+                        self.refreshActionRow()
                     }
                 }
             }
