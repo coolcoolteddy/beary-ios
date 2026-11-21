@@ -31,6 +31,15 @@ final class BearySnapshotPreviewViewController: UIViewController {
     private let restoreButton = BearyButton.make(style: .primaryPill(.orange), title: "恢复到编辑器")
     private var textHeightConstraint: NSLayoutConstraint?
 
+    /// 量高缓存（快照弹窗卡顿根因，见 updateTextHeight / updatePreferredContentSize）：
+    /// viewDidLayoutSubviews 每轮布局都会进，高度动画期间也会反复进；
+    /// 正文固定、只随宽度变，宽度没变时不再反复整篇排版、整树量高。
+    private var lastTextMeasuredWidth: CGFloat = -1
+    private var lastMeasuredWidth: CGFloat = -1
+    private var lastMeasuredTextHeight: CGFloat = -1
+    private var lastMeasuredSafeAreaBottom: CGFloat = -1
+    private var lastFittingHeight: CGFloat = 0
+
     /// 正文区最高 360pt，超出内部滚动；最少 80pt，空内容也不塌。
     private static let maxTextHeight: CGFloat = 360
     private static let minTextHeight: CGFloat = 80
@@ -144,8 +153,23 @@ final class BearySnapshotPreviewViewController: UIViewController {
         updatePreferredContentSize()
     }
 
+    /// 字号档变化时量高缓存失效，下一帧按新字号重算。
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            lastTextMeasuredWidth = -1
+            lastMeasuredWidth = -1
+        }
+    }
+
     /// 正文区按内容高撑开（上限 360pt 内部滚动），宽/字号档变化时跟帧补齐。
+    /// 卡顿根因：此前每轮 viewDidLayoutSubviews 都调 contentTextView.layoutIfNeeded()
+    /// 强制整篇 TextKit 排版再读 contentSize，高度动画期间每轮都排一遍；
+    /// 正文在 viewDidLoad 后固定、只随宽度变，宽度没变直接跳过。
     private func updateTextHeight() {
+        let width = view.bounds.width
+        if width == lastTextMeasuredWidth { return }
+        lastTextMeasuredWidth = width
         contentTextView.layoutIfNeeded()
         let contentHeight = contentTextView.contentSize.height
         let height = min(max(contentHeight, Self.minTextHeight), Self.maxTextHeight)
@@ -156,11 +180,25 @@ final class BearySnapshotPreviewViewController: UIViewController {
 
     /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档变化时跟帧补齐。
     /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
+    /// 同列表层：只有宽／正文高／底安全区变了才重算 systemLayoutSizeFitting，
+    /// 其余布局轮次复用上次量到的高，不再每轮整树量一遍。
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         let width = view.bounds.width > 0 ? view.bounds.width : 375
-        let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
-        let size = view.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
-        let height = ceil(size.height) + extraBottomInset
+        let textHeight = textHeightConstraint?.constant ?? 0
+        let safeBottom = view.safeAreaInsets.bottom
+        let fittingHeight: CGFloat
+        if width == lastMeasuredWidth && textHeight == lastMeasuredTextHeight && safeBottom == lastMeasuredSafeAreaBottom {
+            fittingHeight = lastFittingHeight
+        } else {
+            let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
+            let size = view.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+            fittingHeight = size.height
+            lastMeasuredWidth = width
+            lastMeasuredTextHeight = textHeight
+            lastMeasuredSafeAreaBottom = safeBottom
+            lastFittingHeight = fittingHeight
+        }
+        let height = ceil(fittingHeight) + extraBottomInset
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
