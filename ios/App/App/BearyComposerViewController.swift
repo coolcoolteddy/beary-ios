@@ -2782,7 +2782,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanelLoadingLabel.text = "正在加载可引用的日记…"
         quotePanelLoadingLabel.isHidden = true
         quotePanelEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
-        quotePanelEmptyLabel.font = UIFont.systemFont(ofSize: 15)
+        // 第一轮 11：裸 15pt 改 scaledFont，跟随系统字号（重试钮同口径）。
+        quotePanelEmptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        quotePanelEmptyLabel.adjustsFontForContentSizeCategory = true
         quotePanelEmptyLabel.textColor = BearyColors.gray
         quotePanelEmptyLabel.textAlignment = .center
         quotePanelEmptyLabel.numberOfLines = 0
@@ -3311,12 +3313,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 头行 stack 与分隔线设不可交互、图条点按走同一选篇路径，行内不留
     /// 第二触摸目标（看不见又能点的半截热区）。
     private func renderQuotePanelRows(entries: [Entry]) {
-        for arranged in quotePanelRows.arrangedSubviews {
-            quotePanelRows.removeArrangedSubview(arranged)
-            arranged.removeFromSuperview()
+        // 第一轮 19：按 ID 复用行——旧行先按 id 建表；新列表同 id 且可见字段、
+        // 选中态均未变者复用行视图（不重建、不重载图、不重播入场）；字段变了、
+        // 选中态翻了、无 id 者重建；旧列表多余的行在循环后摘掉并停掉它的天气动效。
+        // （缓存→网络交接、预览→网络补齐、取消选中重渲染三路都走这里。）
+        var oldRowsById: [String: (button: UIButton, entry: Entry)] = [:]
+        for (index, button) in quotePanelRowButtons.enumerated() where index < quotePanelRowEntries.count {
+            if let id = quotePanelRowEntries[index].id {
+                oldRowsById[id] = (button, quotePanelRowEntries[index])
+            }
         }
-        // 行重渲染：旧行天气覆盖层随旧行一并离树，此处清掉持有、不留空转播放器。
-        clearQuoteWeatherEmotes()
+        let previousButtons = quotePanelRowButtons
         quotePanelRowEntries = []
         quotePanelRowButtons = []
         // 录屏批 (e/f)：行渲染即加载结束，转圈与加载文案到此为止，不留残影。
@@ -3325,7 +3332,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanelEmptyLabel.text = quotePanelEmptyText()
         quotePanelEmptyLabel.isHidden = !entries.isEmpty
         quotePanelRetryButton.isHidden = !quotePanelFailed
+        // 预览选中态（重进面板时淡橙底 + 右侧对勾；编辑态比 lockedQuote，
+        // 新建态比 selectedQuote），循环内共用同一值。
+        let currentSelectedQuoteId = isEditMode ? lockedQuote?.entryId : selectedQuote?.entryId
         for entry in entries {
+            // 第一轮 19：同 id 行复用——可见字段与选中态均未变者只调换栈内位置，
+            // 不重建、不重载图、不重播入场；字段变了、选中态翻了、无 id 者走下建行。
+            let isSelectedRow = currentSelectedQuoteId != nil && entry.id == currentSelectedQuoteId
+            if let id = entry.id, let old = oldRowsById[id],
+               !quotePanelRowNeedsRebuild(old: old.entry, new: entry),
+               old.button.isSelected == isSelectedRow {
+                oldRowsById.removeValue(forKey: id)
+                quotePanelRows.removeArrangedSubview(old.button)
+                quotePanelRows.addArrangedSubview(old.button)
+                quotePanelRowEntries.append(entry)
+                quotePanelRowButtons.append(old.button)
+                continue
+            }
             // 审计 P0-2：选择引用加卡片同款 viewer 门控——赞过/收藏 tab 里翻回私密的
             // 他人日记不得出全文：只显占位行、不可选（作者本人或有效公开才出全文行）。
             // 审计 26-12：仅好友档例外——先占位、互关确认后补全文行（见
@@ -3370,10 +3393,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 quotePanelRowButtons.append(lockedButton)
                 continue
             }
-            // 预览选中态：已选中的引用行（重进面板时）淡橙底 + 右侧橙色对勾；
-            // 未选行仍走页面底色。编辑态比 lockedQuote，新建态比 selectedQuote。
-            let currentSelectedQuoteId = isEditMode ? lockedQuote?.entryId : selectedQuote?.entryId
-            let isSelectedRow = currentSelectedQuoteId != nil && entry.id == currentSelectedQuoteId
+            // 预览选中态见循环顶（isSelectedRow 已算好）：选中行淡橙底 + 右侧对勾，
+            // 未选行仍走页面底色。
             let rowButton = UIButton(type: .custom)
             rowButton.translatesAutoresizingMaskIntoConstraints = false
             // 112 v2：去掉每行外面的灰色方块感——行底色显式走页面底色
@@ -3435,7 +3456,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // separator 只创建未挂载（见 rowButton.addSubview(separator) 处注释）。
             let dateLabel = UILabel()
             dateLabel.translatesAutoresizingMaskIntoConstraints = false
-            dateLabel.font = UIFont.systemFont(ofSize: 13)
+            // 第一轮 11：裸 13pt 改 scaledFont，跟随系统字号。
+            dateLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            dateLabel.adjustsFontForContentSizeCategory = true
             dateLabel.textColor = BearyColors.gray
             dateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
             if let ms = entry.createdAt {
@@ -3640,7 +3663,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quotePanelRowEntries.append(entry)
             quotePanelRowButtons.append(rowButton)
         }
-        // M6：行入场错峰淡入（减动效跳过；审计 P2-24：只播新 key 行——换 tab
+        // 第一轮 19：摘掉旧列表里多余的行（无新 id、字段变了重建、选中态翻了
+        // 重建所产生的旧钮），只停掉这些行的天气动效，复用行的动效不动。
+        for oldButton in previousButtons where !quotePanelRowButtons.contains(where: { $0 === oldButton }) {
+            quotePanelRows.removeArrangedSubview(oldButton)
+            oldButton.removeFromSuperview()
+            clearQuoteWeatherEmotes(in: oldButton)
+        }
+        // M6：行入场错峰淡入＋8pt 上滑（减动效跳过；审计 P2-24：只播新 key 行——换 tab
         // 重建时已播过的行不重播，错峰序号按本轮新行动，不按绝对行号）。
         if UIAccessibility.isReduceMotionEnabled == false {
             var animIndex = 0
@@ -3649,8 +3679,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 guard !quotePanelAnimatedRowKeys.contains(key) else { continue }
                 quotePanelAnimatedRowKeys.insert(key)
                 button.alpha = 0
+                button.transform = CGAffineTransform(translationX: 0, y: 8)
                 UIView.animate(withDuration: BearyMotion.normal, delay: min(Double(animIndex) * 0.03, 0.24), options: [], animations: {
                     button.alpha = 1
+                    button.transform = .identity
                 }, completion: nil)
                 animIndex += 1
             }
@@ -3698,6 +3730,38 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
             }
         }
+    }
+    /// 第一轮 19：引用行复用判定——行渲染读到的可见字段任一不同即重建该行。
+    /// （选中态另由调用处比对：行钮 isSelected 翻了也重建。）
+    private func quotePanelRowNeedsRebuild(old: Entry, new: Entry) -> Bool {
+        old.authorId != new.authorId
+            || old.authorName != new.authorName
+            || old.authorAvatar != new.authorAvatar
+            || old.content != new.content
+            || old.images != new.images
+            || old.imgDims != new.imgDims
+            || old.weather != new.weather
+            || old.createdAt != new.createdAt
+            || old.visibility != new.visibility
+            || old.ephemeralUntil != new.ephemeralUntil
+            || old.isPublic != new.isPublic
+            || old.isMine != new.isMine
+    }
+
+    /// 第一轮 19：只停掉某行内的天气动效（行复用时其余行的动效不动；
+    /// 面板关闭仍走全量 clearQuoteWeatherEmotes）。
+    private func clearQuoteWeatherEmotes(in rowButton: UIButton) {
+        var remaining: [BearyEmoteView] = []
+        remaining.reserveCapacity(quoteWeatherEmoteViews.count)
+        for overlay in quoteWeatherEmoteViews {
+            if overlay.isDescendant(of: rowButton) {
+                overlay.stop()
+                overlay.removeFromSuperview()
+            } else {
+                remaining.append(overlay)
+            }
+        }
+        quoteWeatherEmoteViews = remaining
     }
 
     /// 面板行与日记的并行映射（行按钮按顺序与 entries 对应，渲染时同步重建）。
@@ -10348,7 +10412,9 @@ private final class BearyQuoteStatusPillView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 12)
+        // 第一轮 11：裸 12pt 改 scaledFont，跟随系统字号。
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = 1
         addSubview(label)
         NSLayoutConstraint.activate([
