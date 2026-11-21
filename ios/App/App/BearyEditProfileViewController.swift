@@ -971,7 +971,6 @@ class BearyEditProfileViewController: UIViewController {
             BearyConfirmSheet.Action(title: "景深背景", style: .default) { [weak self] in
                 self?.presentDepthBackgroundPicker()
             },
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
         ])
     }
 
