@@ -2411,8 +2411,6 @@ class BearyTimelineViewController: UIViewController {
     /// 分桶，不动）；由 SceneDelegate onUserChanged 的 userChanged 分支在
     /// reloadTimeline 之前调用，登录与退出两个方向都覆盖。时间线 VC 换账号
     /// 不重建，故必须显式清，否则新账号当日面板会先闪出旧账号的日缓存。
-    /// 审计四轮第 7 项（P1）：筛选内存快照同款处理——filterSnapshots 键只
-    /// 有档位、无账号，不清会在新账号点旧档位时直接展示旧账号的快照。
     func clearDayCacheForAccountChange() {
         dayEntriesCache.removeAll()
         dayCacheVersions.removeAll()
@@ -2559,7 +2557,6 @@ class BearyTimelineViewController: UIViewController {
     private let calendarCard = BearyCalendarCardView()
     /// 表头筛选行——只放筛子钮（当前可见范围：全部／公开／私密／限时／
     /// 仅好友）；日期只在当日面板组头出现，见 dayPanelTitleParts。
-    private let filterRow = UIStackView()
     private var headerStack: UIStackView?
     private var lastHeaderWidth: CGFloat = 0
 
@@ -2737,101 +2734,6 @@ class BearyTimelineViewController: UIViewController {
     private func restoreChromeAfterTimelineAction() {
         guard view.window != nil, !view.isHidden else { return }
         SceneDelegate.chrome?.setChromeHidden(false, animated: false)
-    }
-
-    /// 筛子钮标题 = 当前档位（选中态可见处）+ 无障碍文案同步。
-    /// 切档：按新 vis 重取列表，分页游标随新筛子重置（首屏 force 全量，
-    /// 不走 since 增量——since 只补新篇，旧档行会残留）。
-    /// R15-P1-1：切档不再只换标签——标签与列表一起提交、一起回滚：
-    /// 新档有内存快照即直接显示（标签与列表一起换，不闪空）；无快照则清表、
-    /// 结果区走加载态（timelineState=.loading + updateChrome 出背景 spinner，
-    /// 当日面板同清、否则面板行会挡住加载态）；失败时按 pendingFilterSwitch
-    /// 回滚到上次成功的档位与结果（见 fetchTimelineFirstPageFull 失败分支）。
-    private func applyVisFilter(_ newValue: TimelineVisFilter) {
-        guard newValue != timelineVisFilter else { return }
-        // 审计四轮第 8 项：命中缓存时面板也要按新筛子处理（见下方）。
-        let hadSnapshot = filterSnapshots[newValue] != nil
-        if let snapshot = filterSnapshots[newValue] {
-            timelineEntries = snapshot.entries
-            timelineHasMore = snapshot.hasMore
-            trashCountValue = snapshot.trashCount
-            countsValue = snapshot.counts
-            timelineState = .loaded
-            timelinePageFailed = false
-            // 切筛子错峰：只给快照里没有的新行排队（快照行是已显示行，不重播）。
-            pendingFilterSwitchOldIds = Set((timelineEntries + dayEntries).compactMap { $0.id })
-            updateTrashTitle()
-            updateCountsLabel()
-        } else {
-            pendingFilterSwitchOldIds = nil
-            timelineEntries = []
-            // 当日面板同清（否则 updateChrome 的加载态被面板行挡住、出不了
-            // 背景 spinner）；面板随首屏回包派生/回落重拉（见 deferredDayKey）。
-            dayEntries = []
-            dayState = .idle
-            timelineState = .loading
-            timelinePageFailed = false
-        }
-        timelineVisFilter = newValue
-        updateVisFilterButton()
-        pendingFilterSwitch = (from: lastSuccessfulFilter, to: newValue)
-        staggerGeneration += 1
-        clearStaggerEntries()
-        scrollToTop()
-        // 当日面板随新筛子重取：首屏回包派生（已覆盖）或回落正向拉取（带 vis）。
-        // 审计四轮第 8 项：有快照时不再留旧档面板——快照已覆盖选中日时立即
-        // 按快照派生新档面板（不闪空）；未覆盖时先清面板，待首屏回包派生/
-        // 回落重拉，与无快照分支同口径。否则列表已是新档、面板仍是旧档，
-        // 两者在首屏回包前混排。
-        if hadSnapshot, let key = selectedDayKey {
-            if firstPageCoversDay(key: key) {
-                deriveDayPanelFromFirstPageIfCovered(key: key)
-            } else {
-                dayEntries = []
-                dayState = .idle
-            }
-        }
-        deferredDayKeyForFirstPage = selectedDayKey
-        tableView.reloadData()
-        updateChrome()
-        loadTimelineFirstPage(force: true)
-        restoreChromeAfterTimelineAction()
-    }
-
-    /// R15-P1-1：切档失败回滚——标签与列表一起回到上次成功的档位：
-    /// 有该档快照即恢复其结果（state 回 .loaded，不出失败空态）；无快照
-    ///（此前从未成功过）只回标签，列表保持空失败态、由 updateChrome 出
-    /// 失败空态/登录态。随后 toast「筛选没成功，请重试」。
-    /// 调用方（fetchTimelineFirstPageFull 失败分支）在回滚后仍会走
-    /// deferredDayKey 回落，由 fetchDayEntries 按回滚后的档位重拉当日面板。
-    private func rollbackVisFilterAfterFailure(from fallback: TimelineVisFilter) {
-        timelineVisFilter = fallback
-        updateVisFilterButton()
-        if let snapshot = filterSnapshots[fallback] {
-            timelineEntries = snapshot.entries
-            timelineHasMore = snapshot.hasMore
-            trashCountValue = snapshot.trashCount
-            countsValue = snapshot.counts
-            timelineState = .loaded
-            timelinePageFailed = false
-            updateTrashTitle()
-            updateCountsLabel()
-        } else {
-            timelineState = .failed
-        }
-        tableView.reloadData()
-        updateChrome()
-        refreshHeaderHeight()
-        showTimelineToast(message: "筛选没成功，请重试")
-    }
-
-    /// 进页重置（切进时间线页时回到全部，modal 回落不走这里故不反复重置：
-    /// 容器 showPage(.timeline) 才调 pageDidEnter，详情/编辑器回落调的是
-    /// refreshAfterDetailChange / reloadTimeline，不经过本钩子）。
-    /// 重置走与切筛子同一路径（错峰口径一致：旧行不重播、新行滑入）。
-    private func resetVisFilterForPageEntry() {
-        guard timelineVisFilter != .all else { return }
-        applyVisFilter(.all)
     }
 
     /// 动画批 11 号：切 tab 离页时停掉本页可见行全部表情（容器只改 isHidden，
@@ -3034,13 +2936,7 @@ class BearyTimelineViewController: UIViewController {
         // 秒开-启动瘦身：自己的首载若与预取撞车，待发预取取消（自己的首拉
         // 已覆盖，不再重复发一份）；已发出的预取由首拉接手复用（见
         // fetchTimelineFirstPageFull 的 adoptFirstPageIfInFlight）。
-        // 账号翻转/冷启动即 fresh entry：筛子回到全部（缓存快照只存全部档，
-        // 带筛子读缓存会把全部档快照画在筛子名下），不另发请求（本函数随后即重拉）。
-        if timelineVisFilter != .all {
-            timelineVisFilter = .all
-            updateVisFilterButton()
-            pendingFilterSwitchOldIds = nil
-        }
+        // 账号翻转/冷启动即 fresh entry：不另发请求（本函数随后即重拉）。
         BearyTimelinePrefetch.cancelPendingPrefetch()
         let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id ?? BearyFeedCache.lastKnownUserId())
         // 审计 13：读盘 + 解码在缓存 IO 队列，界面先不阻塞；回包到主线程
@@ -3086,10 +2982,6 @@ class BearyTimelineViewController: UIViewController {
         timelinePageRetryNotBefore = nil
         timelineUnauthorized = false
         loginNotified = false
-        // R15-P1-1：读盘快照即 .all 档的上次成功结果，记入内存快照——
-        // 切回全部时有快照直接显示，不必清表等网络。
-        filterSnapshots[.all] = FilterSnapshot(entries: snap.entries, hasMore: snap.hasMore, trashCount: snap.trashCount, counts: countsValue)
-        lastSuccessfulFilter = .all
         // 当日面板先用缓存首屏里今天的篇顶上（静默刷新随后对齐），
         // 避免面板空等网络；缓存里今天无篇时面板空态由静默刷新补，
         // 初次进入守卫挂起（viewDidLoad 已置位）照常消费，不再跳转。
@@ -3228,7 +3120,7 @@ class BearyTimelineViewController: UIViewController {
             // 模型里没有（已被别处清掉），退回原有整页重拉保底；同时把
             // 快照同步写回（模型里已无本篇），免得重拉失败时快照复活它。
             // 筛子档不写盘：快照只代表全部档，筛后快照会污染下次冷启动。
-            if timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
+            if let uid = SessionManager.shared.currentUser?.id {
                 BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
             }
             refreshAfterDetailChange()
@@ -3296,7 +3188,7 @@ class BearyTimelineViewController: UIViewController {
         // 快照——冷启动先渲染快照，已删篇会先回来、要等一次静默刷新成功
         // 才纠掉，弱网/刷新失败时就一直复活。此处删帖即把快照同步写回。
         // 筛子档不写盘：快照只代表全部档，筛后快照会污染下次冷启动。
-        if timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
+        if let uid = SessionManager.shared.currentUser?.id {
             BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
         }
         // 连续删帖防撞：表当前已渲染行数须与 oldSections 一致才发批更新；
@@ -3343,7 +3235,7 @@ class BearyTimelineViewController: UIViewController {
         guard trashCountKnown else { return false }
         trashCountValue = max(0, trashCountValue - 1)
         updateTrashTitle()
-        if timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
+        if let uid = SessionManager.shared.currentUser?.id {
             BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
         }
         return true
@@ -3441,7 +3333,7 @@ class BearyTimelineViewController: UIViewController {
         }
         // 首屏快照同步写回（删帖同款）：冷启动先渲染快照，旧字段不得复活。
         // 筛子档不写盘：快照只代表全部档，筛后快照会污染下次冷启动。
-        if timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
+        if let uid = SessionManager.shared.currentUser?.id {
             BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
         }
         // 可见行足数重渲（applyInteraction 同款）：模型已改，滑回显示时
@@ -4137,40 +4029,6 @@ class BearyTimelineViewController: UIViewController {
             self?.didTapStats()
         }
 
-        // 时间线筛子入口（列表顶表头内，随表滚走，不常驻占位）：
-        // 回收站 pill 同款 surface2 底 + 圆角 17 + 官方 chevron；标题即当前档位。
-        visFilterButton.translatesAutoresizingMaskIntoConstraints = false
-        visFilterButton.backgroundColor = BearyColors.surface2
-        visFilterButton.layer.cornerRadius = 17
-        // 右内边距 16（含补 6pt）：钮固有宽度不计 titleEdgeInsets.left 的 6pt
-        // 间隙，实测钮宽 63pt、内容需 68pt，标题被压成“…”；右补 6 后固有宽
-        // ＝内容宽，档位名完整显示。左缘不动，气泡箭头对齐不变。
-        visFilterButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 16)
-        if let chevronImage = BearyIconImages.image(named: "icon_chevron_down", pointSize: 14) {
-            visFilterButton.setImage(chevronImage, for: .normal)
-        }
-        visFilterButton.imageView?.contentMode = .scaleAspectFit
-        visFilterButton.tintColor = BearyColors.ink
-        visFilterButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        visFilterButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        visFilterButton.setTitleColor(BearyColors.ink, for: .normal)
-        visFilterButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        // 横向 hugging 降一档：宽度现由 updateVisFilterButton 的显式约束钉死，
-        // 若 hugging 仍为 required，会与显式宽度（比固有宽大 6pt）形成
-        // required 对 required 的冲突；压缩仍为 required，防栈内挤压。
-        visFilterButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        visFilterButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        visFilterButton.addTarget(self, action: #selector(didTapVisFilter), for: .touchUpInside)
-        visFilterButton.bearyAddPressFeedback()
-        updateVisFilterButton()
-        // 筛选行只放筛子钮（当前可见范围）；日期不在此重复——只在下方
-        // 当日面板组头出现（日期＋星期＋篇数，见 dayPanelTitleParts）。
-        filterRow.translatesAutoresizingMaskIntoConstraints = false
-        filterRow.axis = .horizontal
-        filterRow.alignment = .center
-        filterRow.spacing = 8
-        filterRow.addArrangedSubview(visFilterButton)
-        filterRow.addArrangedSubview(UIView())
 
         // R15-L1：表头顺序改为标题与回收站 → 统计（共 X 篇／已连续写 X 天，
         // 紧贴标题「时间线」下方，2026-11-12 Li 定）→ 日历 → 筛选 → 日记；
@@ -4437,7 +4295,6 @@ class BearyTimelineViewController: UIViewController {
         super.traitCollectionDidChange(previousTraitCollection)
         // 字号变化时筛子钮显式宽度随新字号重算（否则标题仍按旧宽截断）。
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
-            updateVisFilterButton()
             // 跳动修：计数行最小高度随新字号重算（否则大字号下行高钉死旧值、文案被裁）。
             countsLabelMinHeightConstraint?.constant = countsLabel.font.lineHeight
         }
@@ -4762,15 +4619,9 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.trashCountKnown = true
                     strongSelf.countsValue = list.tlCounts
                     strongSelf.timelineHasMore = (list.entries ?? []).count >= strongSelf.firstPageLimit
-                    // R15-P1-1：首屏成功即写本档内存快照（切档时有快照直接显示）
-                    // 并记下上次成功档位、清掉在途切档标记。
-                    strongSelf.filterSnapshots[strongSelf.timelineVisFilter] = FilterSnapshot(entries: strongSelf.timelineEntries, hasMore: strongSelf.timelineHasMore, trashCount: strongSelf.trashCountValue, counts: strongSelf.countsValue)
-                    strongSelf.lastSuccessfulFilter = strongSelf.timelineVisFilter
-                    strongSelf.pendingFilterSwitch = nil
                     // 110：首屏成功即写时间线缓存（下次冷启动缓存优先；
                     // 只在已登录时写，避免游客态写 guest 桶；失败不写）。
-                    // 筛子档不写盘：快照只代表全部档，筛后快照会污染下次冷启动。
-                    if strongSelf.timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
+                    if let uid = SessionManager.shared.currentUser?.id {
                         BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: strongSelf.timelineEntries, hasMore: strongSelf.timelineHasMore, trashCount: strongSelf.trashCountValue, counts: strongSelf.countsValue)
                     }
                     // 开发者模式 1000 篇假日记（仅内存）：快照已存真实首屏，
@@ -4780,30 +4631,6 @@ class BearyTimelineViewController: UIViewController {
                         strongSelf.timelineHasMore = false
                         if let key = strongSelf.selectedDayKey {
                             strongSelf.deriveDayPanelFromFirstPageIfCovered(key: key)
-                        }
-                    }
-                    // 切筛子错峰：只给切档前不在列表里的新行排队（已有元素不重播；
-                    // 减动效时队列为空，不播；分页同款 willDisplay 起播机制）。
-                    // 当日面板分区（选中日时 section 0）排除在外：首屏后派生/
-                    // 正向拉取还会换面板行，队列行号会对不上、且面板行有
-                    // 自己的换日错峰口径；时间线分区序号不受面板行数影响。
-                    if let oldIds = strongSelf.pendingFilterSwitchOldIds {
-                        strongSelf.pendingFilterSwitchOldIds = nil
-                        if UIAccessibility.isReduceMotionEnabled == false {
-                            var queue: [IndexPath: Int] = [:]
-                            var order = 0
-                            for (section, sec) in strongSelf.currentSections().enumerated() {
-                                if section == 0, strongSelf.selectedDayKey != nil { continue }
-                                for (row, entry) in sec.entries.enumerated() {
-                                    guard let entryId = entry.id, !oldIds.contains(entryId) else { continue }
-                                    queue[IndexPath(row: row, section: section)] = order
-                                    order += 1
-                                }
-                            }
-                            strongSelf.staggerInsertOrder = queue
-                            // 审计 r16 第 10 项：筛子切换的新行按首屏档入场（60ms／8pt）。
-                            strongSelf.staggerInsertFirstLoad = true
-                            strongSelf.staggerQueueGeneration = strongSelf.staggerGeneration
                         }
                     }
                     strongSelf.lastTimelineFirstPageSuccessAt = Date()
@@ -4826,17 +4653,8 @@ class BearyTimelineViewController: UIViewController {
                     if hadOldRows {
                         strongSelf.setRefreshFailedBannerVisible(true)
                     }
-                    // 切筛子失败不排错峰：旧档行仍在，失败态不播入场。
-                    strongSelf.pendingFilterSwitchOldIds = nil
                     if case .unauthorized = error {
                         strongSelf.timelineUnauthorized = true
-                        strongSelf.pendingFilterSwitch = nil
-                    } else if let pending = strongSelf.pendingFilterSwitch, pending.to == strongSelf.timelineVisFilter {
-                        // R15-P1-1：切档失败回滚到上次成功的档位与结果（标签与
-                        // 列表一起回，不留“新标签＋旧日记”错配态），并 toast 提示重试。
-                        // 未授权不回滚：登录态失效时由 updateChrome 出登录空态。
-                        strongSelf.pendingFilterSwitch = nil
-                        strongSelf.rollbackVisFilterAfterFailure(from: pending.from)
                     }
                     // 112：首屏失败时暂存的当日面板仍需刷新——回落正向拉取，
                     // 面板失败态与旧口径一致（面板不被首屏失败拖空）。
@@ -4856,14 +4674,14 @@ class BearyTimelineViewController: UIViewController {
                 )
             }
         }
-        // A4：接手在途预取——同账号、同筛选（全部档）的首屏请求已在途时
+        // A4：接手在途预取——同账号的首屏请求已在途时
         // 不再另发一份，复用同一份回包走同一套首拉渲染；seq 与在途标记
         // 归本函数所有，预取回包到时按首拉口径渲染并清标记。
-        if timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id,
+        if let uid = SessionManager.shared.currentUser?.id,
            BearyTimelinePrefetch.adoptFirstPageIfInFlight(userId: uid, vis: nil, completion: handleResult) {
             return
         }
-        BearyAPI.shared.fetchTimelineFirstPage(vis: timelineVisFilter.queryValue, completion: handleResult)
+        BearyAPI.shared.fetchTimelineFirstPage(completion: handleResult)
     }
 
     /// 113：首屏收尾（原 loadTimelineFirstPage 的尾巴，全量与 since 共用）——
@@ -4903,7 +4721,7 @@ class BearyTimelineViewController: UIViewController {
         for pendingCompletion in pendingFirstPageCompletions {
             pendingCompletion()
         }
-        // 刷新跑完后栏回到可见（下拉刷新/筛子切档/首拉均经此收口）。
+        // 刷新跑完后栏回到可见（下拉刷新/首拉均经此收口）。
         restoreChromeAfterTimelineAction()
     }
 
@@ -4916,7 +4734,6 @@ class BearyTimelineViewController: UIViewController {
         BearyAPI.shared.fetchEntriesSince(
             scope: .timeline, since: cursor, sinceId: headId,
             sortKey: { $0.createdAt }, knownIds: knownIds,
-            vis: timelineVisFilter.queryValue
         ) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -4995,16 +4812,8 @@ class BearyTimelineViewController: UIViewController {
                         strongSelf.trashCountKnown = true
                     }
                     if let counts = firstList.tlCounts { strongSelf.countsValue = counts }
-                    // R15-P1-1：since 增量成功同样刷新本档内存快照（首屏前插了新篇）；
-                    // 若本回包顶替了在途切档请求（seq 守卫已丢弃旧回包），切档即成功。
-                    strongSelf.filterSnapshots[strongSelf.timelineVisFilter] = FilterSnapshot(entries: strongSelf.timelineEntries, hasMore: strongSelf.timelineHasMore, trashCount: strongSelf.trashCountValue, counts: strongSelf.countsValue)
-                    if strongSelf.pendingFilterSwitch?.to == strongSelf.timelineVisFilter {
-                        strongSelf.lastSuccessfulFilter = strongSelf.timelineVisFilter
-                        strongSelf.pendingFilterSwitch = nil
-                    }
                     // hasMore 不动：since 只补头部，旧页分页游标不受影响。
-                    // 筛子档不写盘（快照只代表全部档，见首屏同款守卫）。
-                    if strongSelf.timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
+                    if let uid = SessionManager.shared.currentUser?.id {
                         BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: strongSelf.timelineEntries, hasMore: strongSelf.timelineHasMore, trashCount: strongSelf.trashCountValue, counts: strongSelf.countsValue)
                     }
                     strongSelf.lastTimelineFirstPageSuccessAt = Date()
@@ -5139,7 +4948,7 @@ class BearyTimelineViewController: UIViewController {
         let oldSections = currentSections()
         // 80 包 A3：分页代际（首屏 timelineFirstPageSeq 同口径）——首屏重拉即作废在途分页。
         let nextPageSeq = timelineFirstPageSeq
-        BearyAPI.shared.fetchEntries(scope: .timeline, limit: pageLimit, before: lastCreated, beforeId: lastEntryIdValue, vis: timelineVisFilter.queryValue) { [weak self] result in
+        BearyAPI.shared.fetchEntries(scope: .timeline, limit: pageLimit, before: lastCreated, beforeId: lastEntryIdValue) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.timelineLoadingMore = false
@@ -5857,17 +5666,14 @@ class BearyTimelineViewController: UIViewController {
             // 已命中；仍未命中时落盘读改异步（审计四轮增量 06 的 dayDiskReadQueue），
             // 回主线程复核通过才回填内存并按命中同款处理 + 静默刷新。
             // 提交处永不在主线程碰磁盘。
-            // 筛子档不读日缓存：缓存是全部档行，命中会先闪出非本档行、
-            // 再由带 vis 的静默刷新纠正——“只出对应篇”不容这一帧。
-            // 筛子档直接走下方网络分支（带 vis）。
-            if self.timelineVisFilter == .all, let cached = self.dayEntriesCache[key] {
+            if let cached = self.dayEntriesCache[key] {
                 self.showCachedDayPanel(entries: cached, key: key, reduceMotion: reduceMotion)
-            } else if self.timelineVisFilter == .all {
+            } else {
                 // 审计四轮增量 06：内存未命中时落盘读改异步——Data(contentsOf:)
                 // ＋JSON 解码不再占切日首帧。面板先不动（旧日行已退场淡出），
                 // 读完回主线程复核代次/选中日/账号，通过才回填内存并按命中/
-                // 未命中分流；期间用户又切日/清选区/切号/改筛子（筛子改动
-                // 同样 +1 代际），过期结果直接丢弃，由新的 selectDay 流程接管。
+                // 未命中分流；期间用户又切日/清选区/切号（同样 +1 代际），
+                // 过期结果直接丢弃，由新的 selectDay 流程接管。
                 let requestAccountId = SessionManager.shared.currentUser?.id
                 self.dayDiskReadQueue.async { [weak self] in
                     let disk: [Entry]? = {
@@ -5887,8 +5693,6 @@ class BearyTimelineViewController: UIViewController {
                         }
                     }
                 }
-            } else {
-                self.showNetworkDayPanel(key: key, reduceMotion: reduceMotion)
             }
         }
         // N3：旧日卡片退场（仅非减动效、表已入窗、旧面板存在且有可见行时）：
@@ -6079,7 +5883,7 @@ class BearyTimelineViewController: UIViewController {
         dayState = .loaded
         // 筛子档派生不写日缓存：派生行已按 vis 过滤，写盘会污染全部档日缓存。
         // 开发者模式假日记同样不写盘（假数据只放内存）。
-        if timelineVisFilter == .all && !BearyDevPreviewState.fakeEntriesEnabled {
+        if !BearyDevPreviewState.fakeEntriesEnabled {
             cacheDayEntries(key: key, entries: derived)
         }
         prefetchAdjacentDays(for: key)
@@ -6109,25 +5913,16 @@ class BearyTimelineViewController: UIViewController {
         // 账号代际：请求时捕获 uid，回包写缓存/落盘前比对——中途切号到达的
         // 旧账号回包直接丢弃（新账号的 reloadTimeline 会重拉，不靠旧回包对齐）。
         let requestUid = SessionManager.shared.currentUser?.id
-        let requestVis = timelineVisFilter
         // 按日请求序号：每次发出即 +1，回调先比序号——切回同日的旧回包
         // 即使日期、账号、筛子档全对上，也因序号过期而丢弃，不动面板与缓存。
         dayLoadSeq += 1
         let requestDaySeq = dayLoadSeq
-        BearyAPI.shared.fetchTimelineDay(date: key, vis: timelineVisFilter.queryValue) { [weak self] result in
+        BearyAPI.shared.fetchTimelineDay(date: key) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 guard requestDaySeq == strongSelf.dayLoadSeq else { return }
                 if strongSelf.dayKeyForLoad != key { return }
                 if SessionManager.shared.currentUser?.id != requestUid { return }
-                // 筛子档快照：请求发出后用户切了档，旧档回包不得写入当日面板
-                // 与日缓存；状态复位后按当前档重拉（在途守卫已让位，不重复发）。
-                if requestVis != strongSelf.timelineVisFilter {
-                    strongSelf.dayKeyForLoad = nil
-                    strongSelf.dayState = .idle
-                    strongSelf.fetchDayEntries(key: key, clear: false)
-                    return
-                }
                 // N2/N3 回包快照：静默刷新比对用旧签名；换日到达标志在此消费
                 // （早退分支如 fixSel 跳转也不留残标志，避免后一次回包误错峰）。
                 let oldDaySignatures = strongSelf.dayEntries.map { strongSelf.entrySignature($0) }
@@ -6147,11 +5942,7 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.dayEntries = list.entries ?? []
                     // N2：成功回包写入日缓存（失败不写）；静默刷新比对签名。
                     // 写透：内存与落盘同写（见 cacheDayEntries）。
-                    // 筛子档不写盘：过滤行写盘会污染全部档日缓存（按请求时档位判，
-                    // 不按回包时档位判，切档中途的旧档回包到此已被上游丢弃）。
-                    if requestVis == .all {
-                        strongSelf.cacheDayEntries(key: key, entries: strongSelf.dayEntries)
-                    }
+                    strongSelf.cacheDayEntries(key: key, entries: strongSelf.dayEntries)
                     dayUnchanged = (clear == false && oldDaySignatures == strongSelf.dayEntries.map { strongSelf.entrySignature($0) })
                     // B-G7: patch the timeline copy from the fresh day-panel copy
                     // before reload, so both copies render the same state.
@@ -6163,28 +5954,23 @@ class BearyTimelineViewController: UIViewController {
                     // 相邻日预取触发点：正向加载成功后才触发（失败不触发）；
                     // 预取只写日缓存，不动面板与时间线行（见 prefetchAdjacentDays）。
                     strongSelf.prefetchAdjacentDays(for: key)
-                    // 筛子档下当日空是预期（该日无此分类篇），不是删空：
-                    // 选区守卫一律按全部档口径，不在筛子档里挪选区
-                    // （下方两段原语义一字不动，只包一层档位守卫）。
-                    if strongSelf.timelineVisFilter == .all {
-                        // 第 4 项：删除后挂起的守卫在当日面板已空时也跑一次
-                        // （以日历计数为准；守卫现不跳转，恒返回 false、走正常重载）。
-                        if strongSelf.pendingFixSelCheck && strongSelf.dayEntries.isEmpty {
-                            if strongSelf.checkFixSelForSelectedDay() {
-                                strongSelf.pendingEntryJumpCheck = false
-                                return
-                            }
-                        }
-                        // 第 2 项 A：初次进入 / 下拉刷新守卫在当日回包处消费。
-                        // 当日已空才跑（非空即清挂起、不跳转）；缓存未到时
-                        // checkEntryJumpForSelectedDay 会重新挂起并补拉该月，
-                        // 到达后由月份回包分支重试，本处先按空面板正常重载。
-                        if strongSelf.pendingEntryJumpCheck {
+                    // 第 4 项：删除后挂起的守卫在当日面板已空时也跑一次
+                    // （以日历计数为准；守卫现不跳转，恒返回 false、走正常重载）。
+                    if strongSelf.pendingFixSelCheck && strongSelf.dayEntries.isEmpty {
+                        if strongSelf.checkFixSelForSelectedDay() {
                             strongSelf.pendingEntryJumpCheck = false
-                            if strongSelf.dayEntries.isEmpty {
-                                if strongSelf.checkEntryJumpForSelectedDay() {
-                                    return
-                                }
+                            return
+                        }
+                    }
+                    // 第 2 项 A：初次进入 / 下拉刷新守卫在当日回包处消费。
+                    // 当日已空才跑（非空即清挂起、不跳转）；缓存未到时
+                    // checkEntryJumpForSelectedDay 会重新挂起并补拉该月，
+                    // 到达后由月份回包分支重试，本处先按空面板正常重载。
+                    if strongSelf.pendingEntryJumpCheck {
+                        strongSelf.pendingEntryJumpCheck = false
+                        if strongSelf.dayEntries.isEmpty {
+                            if strongSelf.checkEntryJumpForSelectedDay() {
+                                return
                             }
                         }
                     }
@@ -6314,8 +6100,7 @@ class BearyTimelineViewController: UIViewController {
     /// “日期段不保留”）已废止——失败文案本身不再兼重试入口。
     /// head/suffix 分段供表头富文本使用（日期加粗 15 + 后段灰色 12）；
     /// failed 供组头决定是否出日期旁重试钮。
-    /// 日期去重：日期只在此处出现，表头筛选行不再重复（只留筛子钮，见
-    /// filterRow）。日历标题是“日历翻到了哪月／哪周”，此处是“下面正在看
+    /// 日期去重：日期只在此处出现，不在表头重复。日历标题是“日历翻到了哪月／哪周”，此处是“下面正在看
     /// 哪天”——翻到无记录的月／周时选区保留原日（见 tryStepFollowSelection），
     /// 两处所指可能不同月；此时 head 带年份写全（“2026 年 11 月 18 日”），
     /// 让正在看的那天自带年月，与日历标题一眼分清；在当前日历视图内时仍
@@ -6473,23 +6258,13 @@ class BearyTimelineViewController: UIViewController {
                 newBackgroundKind = "failed"
             }
         } else if timelineState == .loaded && !hasRows {
-            if timelineVisFilter != .all {
-                // 筛子档空态：不是“没有日记”，是该档无篇；给“回到全部”
-                // 快捷键（走同一切换路径，错峰口径一致），不用“写一篇”
-                // 误导（新篇默认私密，未必落进当前档）。
-                tableView.backgroundView = emptyView(title: "该分类下还没有日记", subtitle: "切回全部看看，或者写一篇新的", actionTitle: "回到全部", action: { [weak self] in
-                    self?.applyVisFilter(.all)
-                }, iconName: "icon_tray")
-                newBackgroundKind = "empty-filter"
-            } else {
-                // B-G9: web renderTimeline empty state uses beary-diary, not tray.
-                // Q5：时间线空态加“写一篇”按钮（走 onCompose 回调，容器接线打开编辑器；
-                // 回收站空态不在本文件，不动）。
-                tableView.backgroundView = emptyView(title: "把日子留在这里", subtitle: "写下第一篇，它会出现在这里", actionTitle: "写一篇", action: { [weak self] in
-                    self?.onCompose?()
-                }, iconName: "icon_diary")
-                newBackgroundKind = "empty"
-            }
+            // B-G9: web renderTimeline empty state uses beary-diary, not tray.
+            // Q5：时间线空态加“写一篇”按钮（走 onCompose 回调，容器接线打开编辑器；
+            // 回收站空态不在本文件，不动）。
+            tableView.backgroundView = emptyView(title: "把日子留在这里", subtitle: "写下第一篇，它会出现在这里", actionTitle: "写一篇", action: { [weak self] in
+                self?.onCompose?()
+            }, iconName: "icon_diary")
+            newBackgroundKind = "empty"
         } else {
             // 加载三件套·骨架淡出：首屏骨架出过屏时，背景视图 0.26s 淡出再摘；
             // 减动效或非骨架背景时直接摘（骨架淡出与内容 60ms/8px 入场同步）。
@@ -7489,188 +7264,3 @@ enum BearyCalendarSnapshotStore {
     }
 }
 
-// MARK: - 时间线可见性筛选底 sheet
-
-/// 时间线可见性筛选底 sheet（2026-11-18：尖角气泡改底部 sheet）。
-/// 5 行：文字左对齐、无分隔线、篇数靠右、选中行最右打勾；行上下内边距 8、
-/// 顶留白 6、底留白 10、行内元素间距 8（BearySheetChrome 列表值）。
-/// 篇数只显调用方给的三档（全部／公开／私密）；无计数档不显示、不编造。
-/// 点一行即选定并收起，收起后由调用方切档；抓手下滑／点外收起走容器。
-final class BearyVisFilterSheetViewController: UIViewController {
-
-    /// 与 fileprivate enum 配对：init 参数走本别名，须同为 fileprivate（否则
-    /// 编译器按 private 别名卡初始化器级别）。
-    fileprivate typealias Filter = BearyTimelineViewController.TimelineVisFilter
-
-    private let selected: Filter
-    private let counts: [Filter: Int]
-    private let onPick: (Filter) -> Void
-
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页同款做法）。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
-
-    private let grabberView = UIView()
-    private let stackView = UIStackView()
-
-    /// 初始化器须与参数类型同级：Filter 是 fileprivate 枚举，init 只给同文件内的
-    /// presentVisFilterSheet 用，故也声明为 fileprivate。
-    fileprivate init(selected: Filter, counts: [Filter: Int], onPick: @escaping (Filter) -> Void) {
-        self.selected = selected
-        self.counts = counts
-        self.onPick = onPick
-        super.init(nibName: nil, bundle: nil)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = BearyColors.surface3
-        view.layer.cornerRadius = BearySheetChrome.topCornerRadius
-        view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        view.layer.masksToBounds = true
-
-        grabberView.translatesAutoresizingMaskIntoConstraints = false
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        view.addSubview(grabberView)
-
-        stackView.translatesAutoresizingMaskIntoConstraints = false
-        stackView.axis = .vertical
-        stackView.spacing = 0
-        view.addSubview(stackView)
-
-        for filter in Filter.allCases {
-            let row = RowView(filter: filter, count: counts[filter], selected: filter == selected)
-            row.onTap = { [weak self] tier in
-                guard let self = self else { return }
-                // 点当前档也只收起、不切档（调用方 applyVisFilter 有同值早退）。
-                self.dismiss(animated: BearyMotion.animated(true)) {
-                    self.onPick(tier)
-                }
-            }
-            stackView.addArrangedSubview(row)
-        }
-
-        NSLayoutConstraint.activate([
-            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding),
-            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-
-            stackView.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: BearySheetChrome.listTopPadding),
-            stackView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            stackView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            stackView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -BearySheetChrome.listBottomPadding),
-        ])
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        updatePreferredContentSize()
-    }
-
-    /// 按当前宽度算内容高，推给容器当 sheet 高（标签选择器同款公式）。
-    func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
-        let width = view.bounds.width > 0 ? view.bounds.width : 375
-        let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
-        let contentHeight = view.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height
-        let safeBottom = view.safeAreaInsets.bottom > 0 ? view.safeAreaInsets.bottom : extraBottomInset
-        let height = ceil(contentHeight) + safeBottom
-        let preferred = CGSize(width: width, height: height)
-        if preferredContentSize != preferred {
-            preferredContentSize = preferred
-        }
-    }
-
-    /// 选项行（气泡版 RowView 同款：普通 UIView＋手势，选中行半粗体＋对勾，
-    /// 未选中行垫同宽空位、标题不漂移；按压轻震＋微缩）。
-    private final class RowView: UIView {
-        let filter: Filter
-        var onTap: ((Filter) -> Void)?
-
-        private let titleLabel = UILabel()
-        private let countLabel = UILabel()
-        private let checkImageView = UIImageView()
-
-        init(filter: Filter, count: Int?, selected: Bool) {
-            self.filter = filter
-            super.init(frame: .zero)
-            backgroundColor = .clear
-            titleLabel.translatesAutoresizingMaskIntoConstraints = false
-            titleLabel.font = BearyDynamicType.scaledFont(for: selected ? UIFont.boldSystemFont(ofSize: 15) : UIFont.systemFont(ofSize: 15))
-            titleLabel.adjustsFontForContentSizeCategory = true
-            titleLabel.textColor = BearyColors.ink
-            titleLabel.text = filter.title
-            countLabel.translatesAutoresizingMaskIntoConstraints = false
-            countLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-            countLabel.adjustsFontForContentSizeCategory = true
-            countLabel.textColor = BearyColors.gray
-            countLabel.text = count.map { "\($0) 篇" }
-            checkImageView.translatesAutoresizingMaskIntoConstraints = false
-            checkImageView.contentMode = .scaleAspectFit
-            checkImageView.tintColor = BearyColors.ink
-            // 未选中行不挂图、但留 24 宽位，标题与篇数不漂移（气泡版垫透明图同款）。
-            checkImageView.image = selected ? BearyIconImages.image(named: "icon_check", pointSize: 24) : nil
-            addSubview(titleLabel)
-            addSubview(countLabel)
-            addSubview(checkImageView)
-            NSLayoutConstraint.activate([
-                checkImageView.widthAnchor.constraint(equalToConstant: 24),
-                checkImageView.heightAnchor.constraint(equalToConstant: 24),
-                checkImageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-                checkImageView.centerYAnchor.constraint(equalTo: centerYAnchor),
-                countLabel.trailingAnchor.constraint(equalTo: checkImageView.leadingAnchor, constant: -BearySheetChrome.listRowElementSpacing),
-                countLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-                titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-                titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: countLabel.leadingAnchor, constant: -BearySheetChrome.listRowElementSpacing),
-                titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-                titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: BearySheetChrome.listRowVerticalPadding),
-                titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -BearySheetChrome.listRowVerticalPadding),
-                heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
-            ])
-            isAccessibilityElement = true
-            accessibilityLabel = filter.title + (count.map { "，\($0) 篇" } ?? "")
-            accessibilityTraits = selected ? [.button, .selected] : [.button]
-            let tap = UITapGestureRecognizer(target: self, action: #selector(didTap))
-            addGestureRecognizer(tap)
-        }
-
-        required init?(coder: NSCoder) {
-            fatalError("init(coder:) has not been implemented")
-        }
-
-        @objc private func didTap() {
-            onTap?(filter)
-        }
-
-        override func accessibilityActivate() -> Bool {
-            onTap?(filter)
-            return true
-        }
-
-        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-            super.touchesBegan(touches, with: event)
-            BearyHaptics.press()
-            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
-                           delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
-                           animations: { self.transform = CGAffineTransform(scaleX: 0.98, y: 0.98) })
-        }
-
-        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-            super.touchesEnded(touches, with: event)
-            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
-                           delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
-                           animations: { self.transform = .identity })
-        }
-
-        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-            super.touchesCancelled(touches, with: event)
-            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
-                           delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
-                           animations: { self.transform = .identity })
-        }
-    }
-}
