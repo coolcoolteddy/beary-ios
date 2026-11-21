@@ -2181,57 +2181,8 @@ class BearyTimelineViewController: UIViewController {
     /// 时间线可见性筛子（好友第一期 §八）：五档互斥，默认全部。
     /// 档位名不用 `private` 作 case 名（关键字），另取 privatePosts 等名、
     /// queryValue 映射回后端 vis 取值；全部档 queryValue 为 nil（不发参数）。
-    fileprivate enum TimelineVisFilter: CaseIterable {
-        case all, publicPosts, privatePosts, ephemeral, friendsOnly
-        var title: String {
-            switch self {
-            case .all: return "全部"
-            case .publicPosts: return "公开"
-            case .privatePosts: return "私密"
-            case .ephemeral: return "限时"
-            case .friendsOnly: return "仅好友"
-            }
-        }
-        var queryValue: String? {
-            switch self {
-            case .all: return nil
-            case .publicPosts: return "public"
-            case .privatePosts: return "private"
-            case .ephemeral: return "ephemeral"
-            case .friendsOnly: return "friends"
-            }
-        }
-    }
-    private var timelineVisFilter: TimelineVisFilter = .all
-    /// R15-P1-1：按筛子档的内存快照（首屏成功回包写，见 fetchTimelineFirstPageFull /
-    /// loadTimelineSince 成功分支；只活在内存里，不落盘——落盘快照仍只代表
-    /// 全部档，筛子档不写盘）。切档时有对应快照即直接显示（标签与列表一起换，
-    /// 不闪空）；无快照则清表、结果区走加载态。
-    private struct FilterSnapshot {
-        let entries: [Entry]
-        let hasMore: Bool
-        let trashCount: Int
-        let counts: TlCounts?
-    }
-    private var filterSnapshots: [TimelineVisFilter: FilterSnapshot] = [:]
-    /// R15-P1-1：上次成功拿到首屏的档位（切档失败回滚的目的地；冷启动读盘
-    /// 成功即为 .all，见 applyTimelineCacheSnapshot）。
-    private var lastSuccessfulFilter: TimelineVisFilter = .all
-    /// R15-P1-1：在途切档（from = 切档前上次成功的档位，to = 目标档位）；
-    /// 成功时清掉，失败时按它回滚；非切档刷新失败不触发回滚。
-    private var pendingFilterSwitch: (from: TimelineVisFilter, to: TimelineVisFilter)?
-    /// 切筛子时的错峰来源：切档前已在列表里的 entry id 集合。
-    /// 首屏回包后只给不在此集合里的新行排错峰——已有元素不重播。
-    /// 失败/陈旧回包时清掉，不留残标志给下一次加载。
-    private var pendingFilterSwitchOldIds: Set<String>?
-    /// 筛子触发钮（列表顶表头内，个人页展开钮同款：官方 icon_chevron_down
-    /// 在左 + 档位名在右；标题即当前档位 = 选中态可见处）。
-    private let visFilterButton = BearyHit44Button(type: .system)
-    /// 筛子钮显式宽度约束：UIButton 固有宽度不计 titleEdgeInsets（见 updateVisFilterButton）。
-    private var visFilterButtonWidthConstraint: NSLayoutConstraint?
-    /// 筛子走底部 sheet（2026-11-18：尖角气泡改 BearyBottomSheet，见文件末
-    /// BearyVisFilterSheetViewController；旧 BearyBubbleMenuView 已删）。
-    /// 入口钮本身不动（#612 定圆角 17 的口径原样保留）。
+    /// 可见性筛选已整支撤掉（时间线改版 v14）：时间线恒出全部档，
+    /// 筛子钮、底 sheet 与切档状态机一并删除，不留死状态。
     /// 冷启动框架先行：首个宽就绪布局时先画日历框（当日周/月格＋占位圆点），
     /// 月份圆点由随后回包异步填入；只 prime 一次，后续由月份回包驱动。
     private var calendarFramePrimed = false
@@ -2430,15 +2381,12 @@ class BearyTimelineViewController: UIViewController {
     /// Data(contentsOf:) + JSONDecoder.decode，旧路在主线程调它会卡住切日），
     /// 与旧日退场动画并行；读到后回主线程回填内存缓存（与旧同步回填
     /// 同款语义），退场结束的提交只读内存，永不在主线程碰磁盘。
-    /// 校验：只在全部档（.all）预读——日缓存是全部档行，筛子档不读缓存
-    /// （与提交分支同口径）；回填前比对账号（uid 分桶，中途切号的旧账号
+    /// 校验：日缓存是全部档行；回填前比对账号（uid 分桶，中途切号的旧账号
     /// 落盘绝不写进新账号缓存）与日期（按 key 回填），并复用日缓存版本
     /// 检查（与相邻日预取同款）：期间网络已写过该日则版本已变、或槽位
-    /// 已被占，迟到的磁盘结果拒写，不覆盖新数据；筛子档位在提交处
-    /// 的内存查表时再校验（见 commitDaySwitch）。
+    /// 已被占，迟到的磁盘结果拒写，不覆盖新数据。
     private func prepareDayEntriesInBackground(key: String) {
-        guard timelineVisFilter == .all,
-              dayEntriesCache[key] == nil,
+        guard dayEntriesCache[key] == nil,
               !dayDiskLoadInFlight.contains(key),
               let uid = SessionManager.shared.currentUser?.id else { return }
         dayDiskLoadInFlight.insert(key)
@@ -2479,15 +2427,6 @@ class BearyTimelineViewController: UIViewController {
         calendarFailed.removeAll()
         calendarStreakUnknownKeys.removeAll()
         calendarSnapshotRestoreTried.removeAll()
-        // 审计四轮第 7 项（P1）：筛选内存快照按账号隔离——字典键只有档位、
-        // 无账号，时间线 VC 切号不重建，不清会在新账号点旧档位时直接展示
-        // 旧账号的快照（含私密日记）。切号即清空全部五档，并把上次成功档
-        // 位与在途切档标记一并复位；新账号各档由成功回包重写（.all 档另由
-        // applyTimelineCacheSnapshot 读盘覆写）。
-        filterSnapshots.removeAll()
-        lastSuccessfulFilter = .all
-        pendingFilterSwitch = nil
-        pendingFilterSwitchOldIds = nil
     }
     /// 相邻日预取在途集合（key=北京日）：独立通道专用，与正向单槽
     /// （dayKeyForLoad + dayState）完全分开；同日只发一次，失败不留痕。
@@ -2763,7 +2702,6 @@ class BearyTimelineViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         stopCountdownTimer()
-        dismissVisFilterSheet()
     }
 
     /// 审计-时间线：Timer 自保失效——容器切页走 pageDidLeave、模态离页走 viewWillDisappear，
@@ -2785,14 +2723,11 @@ class BearyTimelineViewController: UIViewController {
         // 都不碰栏，栏一旦藏住便无恢复路径。进页、切档、跳转、刷新完成四处
         // 均显式亮回（animated:false，不与在途动画打架），不靠“再滚一下”。
         restoreChromeAfterTimelineAction()
-        // 筛子进页重置：每次切进时间线都回到全部（默认态 no-op，不多发请求）。
-        resetVisFilterForPageEntry()
     }
 
 
     func pageDidLeave() {
         stopCountdownTimer()
-        dismissVisFilterSheet()
     }
 
     /// 底栏复位（时间线页从不藏栏，故任何时刻亮回都是正确态；animated:false
@@ -2805,74 +2740,6 @@ class BearyTimelineViewController: UIViewController {
     }
 
     /// 筛子钮标题 = 当前档位（选中态可见处）+ 无障碍文案同步。
-    private func updateVisFilterButton() {
-        visFilterButton.setTitle(timelineVisFilter.title, for: .normal)
-        visFilterButton.accessibilityLabel = "按可见性筛选，当前：\(timelineVisFilter.title)"
-        visFilterButton.accessibilityHint = "点按展开选择全部、公开、私密、限时、仅好友"
-        // 显式宽度：UIButton 的固有宽度不计 titleEdgeInsets.left 的 6pt 间隙，
-        // 布局时标题区实得少 6pt、档位名被压成“…”；#810 的右补 6 无效
-        // （content insets 在固有宽与布局宽里同时出现、互相抵消）。
-        // 按当前标题实算所需宽度并显式约束；档位变化与字号变化时重算。
-        let font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        let titleWidth = (timelineVisFilter.title as NSString).size(withAttributes: [.font: font]).width
-        let imageWidth = visFilterButton.image(for: .normal)?.size.width ?? 0
-        let insets = visFilterButton.contentEdgeInsets
-        let titleInsets = visFilterButton.titleEdgeInsets
-        let width = ceil(insets.left + imageWidth + titleInsets.left + titleWidth + titleInsets.right + insets.right)
-        if let constraint = visFilterButtonWidthConstraint {
-            constraint.constant = width
-        } else {
-            let constraint = visFilterButton.widthAnchor.constraint(equalToConstant: width)
-            constraint.isActive = true
-            visFilterButtonWidthConstraint = constraint
-        }
-    }
-
-    /// 切筛子：点按弹出底部 sheet 选择（2026-11-18：尖角气泡改底 sheet，
-    /// 替代系统 actionSheet；不摊五段条）。五档、默认全部、进页回全部、
-    /// 切档错峰均不动，只换呈现形态。当前档仍列出（半粗体 + 对勾），
-    /// 点按即无操作、只收 sheet。
-    @objc private func didTapVisFilter() {
-        guard presentedViewController == nil else { return }
-        presentVisFilterSheet()
-    }
-
-    /// 弹出可见性筛选底 sheet：行上下内边距 8、顶留白 6、底留白 10、
-    /// 行内元素间距 8、无分隔线（规范 §1 列表 sheet 值）。
-    /// 篇数只取服务端下发的三档（全部／公开／私密）；限时／仅好友无
-    /// 服务端计数，不显示、不编造 0。
-    private func presentVisFilterSheet() {
-        let counts: [TimelineVisFilter: Int]
-        if let c = countsValue {
-            counts = [.all: c.total ?? 0, .publicPosts: c.pub ?? 0, .privatePosts: c.priv ?? 0]
-        } else {
-            counts = [:]
-        }
-        let sheet = BearyVisFilterSheetViewController(selected: timelineVisFilter, counts: counts, onPick: { [weak self] tier in
-            // 先收 sheet 再切档：切档会 scrollToTop + 重拉，与收起动画并行会抢布局（气泡版同款顺序）。
-            self?.applyVisFilter(tier)
-        })
-        let delegate = BearyBottomSheetTransitioningDelegate()
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
-        sheet.loadViewIfNeeded()
-        let presenterWidth = view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
-        sheet.updatePreferredContentSize(extraBottomInset: view.safeAreaInsets.bottom)
-        present(sheet, animated: BearyMotion.animated(true))
-    }
-
-    /// 离页时收起在场的筛选 sheet（viewWillDisappear／pageDidLeave 共用）。
-    private func dismissVisFilterSheet() {
-        if let sheet = presentedViewController as? BearyVisFilterSheetViewController {
-            sheet.dismiss(animated: false)
-        }
-    }
-
     /// 切档：按新 vis 重取列表，分页游标随新筛子重置（首屏 force 全量，
     /// 不走 since 增量——since 只补新篇，旧档行会残留）。
     /// R15-P1-1：切档不再只换标签——标签与列表一起提交、一起回滚：

@@ -36,6 +36,9 @@ enum BearyColors {
     static var scrim: UIColor { UIColor(white: 0, alpha: 0.6) }
     /// 网页 --blue：浅 #007aff / 深 #0a84ff（深色 G 通道精确 132/255，勿再写 0.52）。
     static var blue: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 10.0/255.0, green: 132.0/255.0, blue: 1.0, alpha: 1) : UIColor(red: 0.0, green: 0.478, blue: 1.0, alpha: 1) } }
+    /// 限时紫：规范四档代表色之一 #AF52DE，深浅同值（2026-11-20 Li 定）。
+    /// 只用于限时可见性的标识（日历圆点、限时 pill）；别处紫色不动。
+    static var limitedPurple: UIColor { UIColor(red: 175.0/255.0, green: 82.0/255.0, blue: 222.0/255.0, alpha: 1) }
     /// 语义绿：网页 --green #2fbf71，深浅同值。
     static var green: UIColor { UIColor(red: 47.0/255.0, green: 191.0/255.0, blue: 113.0/255.0, alpha: 1) }
     /// 正文用深橙（ChatGPT 审计第四类新 token）：浅 #C2410C / 深 #ff9500。
