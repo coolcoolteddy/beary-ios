@@ -1581,7 +1581,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     @objc private func emoteAddTapped() {
         guard let exchangeId = exchangeId, reactBusy == false, withdrawBusy == false else { return }
         if presentedViewController != nil { return }
-        // 选择器本身只出熊脸（BearyEmoteKeys.bearFaces），与小熊回应墙同口径。
+        // 选择器本身只出熊脸（BearyEmoteKeys.bearMoodKeysActive），与小熊回应墙同口径。
         let sheet = BearyEmotePickerSheetViewController()
         sheet.modalPresentationStyle = .overFullScreen
         sheet.onPick = { [weak self] pickedKey in

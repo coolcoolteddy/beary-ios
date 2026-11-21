@@ -3,7 +3,7 @@ import UIKit
 // ===== BearyEmotePickerSheet 统一回应 Sheet（B 批卡片合并）=====
 // 来源二合一：首页 BearyFeedEmoteSheetViewController ＋个人主页
 // BearyProfileEmoteSheetViewController。两边共用同一选择器；可选列表
-// 用保序熊脸列表 BearyEmoteKeys.bearFaces（all 原顺序去掉 8 个物件）。统一参数一律取
+// 用回应选择器有效集 BearyEmoteKeys.bearMoodKeysActive（附录 A 顺序，32 只）。统一参数一律取
 // 首页口径（任务定版）：动态 4 列（宽 - 54）/ 4 × 72、行距 10、槽位 46、
 // 按压高亮（surface2 底）、遮罩 0.45、抓手顶距 10、iPad ≥821 宽屏分支
 // （全圆角 20 + 1px line 边框 + 底部偏移 24 的浮起卡片；移动端顶部圆角
@@ -23,15 +23,22 @@ enum BearyEmoteKeys {
     static let nonBearFaceKeys: Set<String> = ["candle", "flower", "letter", "paperplane", "sprout", "tea", "umbrella", "wish"]
     /// 熊脸 key 集 = 全部回应 key 减去非熊脸 key；个人页小熊回应墙只显示这些。
     static let bearFaceKeys: Set<String> = Set(all).subtracting(nonBearFaceKeys)
-    /// 选择器用的保序熊脸列表 = all 原顺序去掉非熊脸（32 项）；不要直接用
-    /// bearFaceKeys（Set 迭代顺序不定，会打乱选择器原有顺序）。回应选择器
-    /// 与墙共用同一口径：只留熊脸。
-    static let bearFaces: [String] = all.filter { !nonBearFaceKeys.contains($0) }
+    /// 回应选择器有效集（32 只，附录 A 顺序）——规范 v19 §八：
+    /// 附录 A 冻结（与 BearyText.bearMoodKeys 前 32 只同序），UI 增减只改
+    /// 这里，不改附录；两者不一致时以附录为准做迁移、以 active 为准做渲染。
+    /// 不要直接用 bearFaceKeys（Set 迭代顺序不定，会打乱选择器顺序）。
+    /// 墙仍用 bearFaceKeys 过滤（只留熊脸），不走 active。
+    static let bearMoodKeysActive: [String] = [
+        "agree", "happy", "applause", "cheer", "comfort", "confused", "love", "determined",
+        "facepalm", "shy", "goodnight", "hug", "wink", "idea", "kiss", "thinking",
+        "listening", "lonely", "speechless", "nope", "surprised", "pat", "peek", "sleepy",
+        "proud", "shrug", "sorry", "cry", "angry", "thanks", "zap", "wave",
+    ]
 }
 
 // MARK: - 视觉批 2-2：表情选择器首行“最近使用”
 // 本机记忆，不走后端：UserDefaults 里只存一份有序 key 列表，首位即最近一次
-// 使用（点选即把该 key 移到首位），最多 8 个；读时过滤掉已不在熊脸列表里的
+// 使用（点选即把该 key 移到首位），最多 8 个；读时过滤掉已不在选择器有效集里的
 // 旧 key（如资产调整后），不做时间戳字段——顺序本身就是最近使用时间倒序。
 private enum BearyEmoteRecentStore {
     static let defaultsKey = "beary.recentEmoteKeys"
@@ -39,11 +46,11 @@ private enum BearyEmoteRecentStore {
 
     static func load() -> [String] {
         let stored = UserDefaults.standard.stringArray(forKey: defaultsKey) ?? []
-        return Array(stored.filter { BearyEmoteKeys.bearFaces.contains($0) }.prefix(maxCount))
+        return Array(stored.filter { BearyEmoteKeys.bearMoodKeysActive.contains($0) }.prefix(maxCount))
     }
 
     static func record(_ key: String) {
-        guard BearyEmoteKeys.bearFaces.contains(key) else { return }
+        guard BearyEmoteKeys.bearMoodKeysActive.contains(key) else { return }
         var list = load().filter { $0 != key }
         list.insert(key, at: 0)
         UserDefaults.standard.set(Array(list.prefix(maxCount)), forKey: defaultsKey)
@@ -89,7 +96,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     private var hasRecentSection: Bool { !recentEmoteKeys.isEmpty }
     private func emoteKeys(forSection section: Int) -> [String] {
         if hasRecentSection, section == 0 { return recentEmoteKeys }
-        return BearyEmoteKeys.bearFaces
+        return BearyEmoteKeys.bearMoodKeysActive
     }
     /// 弹窗高度封顶 480：内容不足 480 时按内容高，超出时封顶、列表内部滚动。
     private let maxSheetHeight: CGFloat = 480
