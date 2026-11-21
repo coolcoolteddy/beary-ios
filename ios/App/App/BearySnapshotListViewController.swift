@@ -28,6 +28,15 @@ final class BearySnapshotListViewController: UIViewController {
     private let emptyLabel = UILabel()
     private var tableHeightConstraint: NSLayoutConstraint?
 
+    /// 量高缓存（快照弹窗卡顿根因，见 updatePreferredContentSize）：
+    /// viewDidLayoutSubviews 每轮布局都会进，高度动画期间也会反复进；
+    /// 只有宽／表高／底安全区变了才重算 systemLayoutSizeFitting，
+    /// 否则直接用上次量到的内容高，动画帧不再整树量一遍。
+    private var lastMeasuredWidth: CGFloat = -1
+    private var lastMeasuredTableHeight: CGFloat = -1
+    private var lastMeasuredSafeAreaBottom: CGFloat = -1
+    private var lastFittingHeight: CGFloat = 0
+
     /// 行高 64：时间 17＋副行 12＋行距＋上下留白；表最多露 6 行，超出滚动。
     private static let rowHeight: CGFloat = 64
     private static let maxTableHeight: CGFloat = 384
@@ -133,13 +142,37 @@ final class BearySnapshotListViewController: UIViewController {
         updatePreferredContentSize()
     }
 
+    /// 字号档变化时量高缓存失效，下一帧按新字号重算。
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            lastMeasuredWidth = -1
+        }
+    }
+
     /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档变化时跟帧补齐。
     /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
+    /// 卡顿根因：此前每轮 viewDidLayoutSubviews 都整树跑一遍
+    /// systemLayoutSizeFitting；高度一变，容器 preferredContentSizeDidChange
+    /// 又开 0.26s 动画跑 layoutIfNeeded，动画期间布局反复进、每帧都重算一遍。
+    /// 现只有宽／表高／底安全区变了才重算，其余布局轮次直接复用上次量到的高。
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         let width = view.bounds.width > 0 ? view.bounds.width : 375
-        let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
-        let size = view.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
-        let height = ceil(size.height) + extraBottomInset
+        let tableHeight = tableHeightConstraint?.constant ?? 0
+        let safeBottom = view.safeAreaInsets.bottom
+        let fittingHeight: CGFloat
+        if width == lastMeasuredWidth && tableHeight == lastMeasuredTableHeight && safeBottom == lastMeasuredSafeAreaBottom {
+            fittingHeight = lastFittingHeight
+        } else {
+            let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
+            let size = view.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+            fittingHeight = size.height
+            lastMeasuredWidth = width
+            lastMeasuredTableHeight = tableHeight
+            lastMeasuredSafeAreaBottom = safeBottom
+            lastFittingHeight = fittingHeight
+        }
+        let height = ceil(fittingHeight) + extraBottomInset
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
