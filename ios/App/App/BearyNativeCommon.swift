@@ -200,13 +200,27 @@ final class BearyCancellableScrollView: UIScrollView {
     }
 }
 
-/// 抓手跟手位移统一口径：下滑原样跟手；上滑不动（不扩高、不关闭、也不上浮，
-/// 弹窗始终贴底，往上拉底部不再空出来）。
+/// 抓手跟手位移统一口径：下滑 80pt 以内原样跟手，超过 80pt 后阻尼渐增
+///（橡皮筋：多拖的距离按渐减比例跟进，拖得越远、单位距离跟进越少，
+/// 额外跟进量封顶约 120pt；2026-11-17 Li 定，弹窗拒绝手感统一——
+/// 拉抓手要有阻力感）；上滑不动（不扩高、不关闭、也不上浮，弹窗始终贴底，
+/// 往上拉底部不再空出来）。
 /// 2026-11-19 改：此前上滑按 0.25 阻尼跟手微移、上限 24pt，弹窗上浮脱底、
 /// 底部露出一截遮罩后页面，Li 截图报“往上拉时底部会空出来”。
 enum BearySheetDrag {
+    /// 下滑关闭阈值（规范 §6：拖动关闭统一位移 ＞80pt，与
+    /// BearyBottomSheet.dismissDistance 同值）。
+    static let dismissDistance: CGFloat = 80
+    /// 超阈值橡皮筋常数：超过 80pt 后额外跟进量 = 120x／(120＋x)，
+    /// x 为超阈值多拖的距离；x 越大、单位距离跟进越少，额外跟进渐近 120pt。
+    static let overshootRubberBand: CGFloat = 120
+
     static func offset(for translationY: CGFloat) -> CGFloat {
-        if translationY >= 0 { return translationY }
+        if translationY >= 0 {
+            if translationY <= dismissDistance { return translationY }
+            let extra = translationY - dismissDistance
+            return dismissDistance + overshootRubberBand * extra / (overshootRubberBand + extra)
+        }
         return 0
     }
 
