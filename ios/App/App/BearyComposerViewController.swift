@@ -3422,7 +3422,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     lockedSeparator.topAnchor.constraint(equalTo: lockedLabel.bottomAnchor, constant: 16),
                     lockedSeparator.leadingAnchor.constraint(equalTo: lockedButton.leadingAnchor, constant: 16),
                     lockedSeparator.trailingAnchor.constraint(equalTo: lockedButton.trailingAnchor, constant: -16),
-                    lockedSeparator.heightAnchor.constraint(equalToConstant: 2),
+                    lockedSeparator.heightAnchor.constraint(equalToConstant: 0.5),
                     lockedSeparator.bottomAnchor.constraint(equalTo: lockedButton.bottomAnchor),
                 ])
                 quotePanelRows.addArrangedSubview(lockedButton)
