@@ -639,13 +639,20 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 旧按位复用在 count 降序变化时，会把原槽位 chip 的播放器换成另一只熊；
     /// 按 key 复用后，排序变化只是同一节点换位，计数只改文字，不重建播放器。
     private var emoteChipPoolByKey: [String: BearyEmoteChipView] = [:]
-    private var isEmoteBusy = false
+    /// 回应快连点代次（首页模式，2026-11-21 Li 定，点赞同款口径）：每次点按
+    /// 都立即落地、代次 +1；在途回包代次落后于最新代次时直接丢弃，不得覆盖
+    /// 更新的点按态；失败回滚到最后服务端确认态（confirmedEmotes）。
+    private var emoteSeq = 0
+    /// 本次在途回应请求的代次（摘下退场动画完成时校验，过期动画不碰新态）。
+    private var emoteFlightSeq = 0
+    /// 最后服务端确认的回应列表（configure 与服务端同步时刷新；最新请求
+    /// 失败时回滚到这里，不回滚到本次点按前的中间态）。
+    private var confirmedEmotes: [EmoteCount] = []
     /// 回应先行反馈在途态（首页模式，点赞/收藏同款口径）：点选后 chip 行立即按
     /// 先行值重绘、API 在后台跑，成功对齐服务端值、失败回滚。旧 E3-3 pending
     /// 半透明视觉随先行反馈废止（先行 chip 全量显示，不再 0.6 置灰）。
     private var emoteFlightKey: String?
     private var emoteFlightAdded = false
-    private var emoteFlightOriginal: [EmoteCount]?
     private var emoteFlightServerEmotes: [EmoteCount]?
     private var emoteFlightFailed = false
     private var emoteFlightUnauthorized = false
@@ -2054,10 +2061,11 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         currentEmoteList = []
         chipKeys = []
-        isEmoteBusy = false
+        emoteSeq = 0
+        emoteFlightSeq = 0
+        confirmedEmotes = []
         emoteFlightKey = nil
         emoteFlightAdded = false
-        emoteFlightOriginal = nil
         emoteFlightServerEmotes = nil
         emoteFlightFailed = false
         emoteFlightUnauthorized = false
@@ -2507,6 +2515,7 @@ class BearyDiaryCardCell: UITableViewCell {
         confirmedLiked = entry.likedByMe ?? false
         confirmedLikeCount = entry.likeCount ?? 0
         confirmedBookmarked = entry.bookmarkedByMe ?? false
+        confirmedEmotes = entry.emotes ?? []
         if let entryIdValue = entry.id {
             isExpanded = BearyDiaryCardCell.expandedEntryIds.contains(entryIdValue)
         } else {
@@ -3729,6 +3738,8 @@ class BearyDiaryCardCell: UITableViewCell {
         if bookmarkChanged { updateBookmarkButton() }
         if let server = emotes {
             let merged = BearyEmoteOrder.merged(previous: currentEntry?.emotes, server: server)
+            // 控制器经服务端全副本同步的值即确认态：快连点下失败回滚滚到这里。
+            confirmedEmotes = merged
             if BearyEmoteOrder.signature(merged) != BearyEmoteOrder.signature(currentEntry?.emotes) {
                 currentEntry?.emotes = merged
                 renderEmotes()
@@ -4378,7 +4389,7 @@ class BearyDiaryCardCell: UITableViewCell {
         let publicOK = currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false
         for sub in emoteFlowView.subviews {
             if let button = sub as? UIButton {
-                button.isEnabled = publicOK && isEmoteBusy == false
+                button.isEnabled = publicOK
                 if publicOK == false {
                     button.alpha = 0.4
                 } else {
@@ -4388,7 +4399,7 @@ class BearyDiaryCardCell: UITableViewCell {
             }
             guard let chip = sub as? BearyEmoteChipView else { continue }
             let overlay = chip.overlayButton
-            overlay.isEnabled = publicOK && isEmoteBusy == false
+            overlay.isEnabled = publicOK
             if publicOK == false {
                 sub.alpha = 0.4
             } else {
@@ -4412,7 +4423,6 @@ class BearyDiaryCardCell: UITableViewCell {
             onRequireLogin?()
             return
         }
-        if isEmoteBusy { return }
         let index = sender.tag
         if index < 0 || index >= chipKeys.count { return }
         let tappedKey = chipKeys[index]
@@ -4436,7 +4446,6 @@ class BearyDiaryCardCell: UITableViewCell {
             onRequireLogin?()
             return
         }
-        if isEmoteBusy { return }
         onEmoteAddRequested?()
     }
 
@@ -4465,7 +4474,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 先行反馈（点赞/收藏同款口径）：贴上立即进场 + 计数 +1，摘下先播退场
     /// 动画再离行，API 在后台跑；成功对齐服务端值，失败回滚 + 拒绝动效。
     private func chooseEmote(key: String) {
-        if key.isEmpty || isEmoteBusy { return }
+        if key.isEmpty { return }
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
         if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
         if SessionManager.shared.isLoggedIn == false {
@@ -4479,29 +4488,38 @@ class BearyDiaryCardCell: UITableViewCell {
                 tappedMine = true
             }
         }
+        // 退场动画进行中时模型仍是摘下前的值：同只再点即重新贴上，不再当撤下。
+        let restagingSameKey = emoteFlightRemovalStaged && emoteFlightKey == key
+        if restagingSameKey {
+            tappedMine = false
+        }
+        // 快连点代次（点赞同款）：每次点按都立即落地，代次 +1；在途回包
+        // 代次落后时直接丢弃。摘下退场动画完成时同样校验代次，过期动画
+        // 不碰已被更新点按改过的态。
+        emoteSeq += 1
+        let reqSeq = emoteSeq
+        emoteFlightSeq = reqSeq
         emoteFlightKey = key
         emoteFlightAdded = tappedMine == false
-        emoteFlightOriginal = currentEntry?.emotes ?? []
         emoteFlightServerEmotes = nil
         emoteFlightFailed = false
         emoteFlightUnauthorized = false
         emoteFlightAPIDone = false
         emoteFlightRemovalStaged = false
-        isEmoteBusy = true
-        updateEmoteInteractivity()
         if tappedMine {
             // 摘下：先播退场动画再离行；API 立即发出，回包到达若动画未完
             // 先记结果、不抢动画中的 chip，动画完再对齐或回滚。
             emoteFlightRemovalStaged = true
             animateEmoteChipOut(key: key) { [weak self] in
-                guard let strongSelf = self, strongSelf.cellEntryId == entryIdValue else { return }
+                guard let strongSelf = self, strongSelf.cellEntryId == entryIdValue,
+                      strongSelf.emoteFlightSeq == reqSeq else { return }
                 strongSelf.emoteFlightRemovalStaged = false
                 if strongSelf.emoteFlightFailed {
                     if strongSelf.emoteFlightUnauthorized {
                         // 未登录：先行态静默复原，再走登录页（不摇不 toast）。
-                        strongSelf.currentEntry?.emotes = strongSelf.emoteFlightOriginal ?? []
+                        strongSelf.currentEntry?.emotes = strongSelf.confirmedEmotes
                         strongSelf.renderEmotes()
-                        strongSelf.onEmoteChanged?(entryIdValue, strongSelf.emoteFlightOriginal)
+                        strongSelf.onEmoteChanged?(entryIdValue, strongSelf.confirmedEmotes)
                         strongSelf.clearEmoteFlight()
                         strongSelf.onRequireLogin?()
                     } else {
@@ -4509,7 +4527,7 @@ class BearyDiaryCardCell: UITableViewCell {
                     }
                     return
                 }
-                let removal = strongSelf.emoteDelta((strongSelf.emoteFlightOriginal ?? []), key: key, added: false)
+                let removal = strongSelf.emoteDelta((strongSelf.currentEntry?.emotes ?? []), key: key, added: false)
                 strongSelf.currentEntry?.emotes = removal
                 strongSelf.renderEmotes(animatedLayout: true)
                 strongSelf.onEmoteChanged?(entryIdValue, removal)
@@ -4517,15 +4535,17 @@ class BearyDiaryCardCell: UITableViewCell {
                     strongSelf.alignEmoteFlight(entryIdValue: entryIdValue)
                 }
             }
-            postEmoteOnce(key: key)
+            postEmoteOnce(key: key, reqSeq: reqSeq)
             return
         }
-        let optimistic = emoteDelta((currentEntry?.emotes ?? []), key: key, added: true)
+        // 重贴退场中的同只时，先按“已摘下”算有效态再 +1，否则计数会多 +1。
+        let base = restagingSameKey ? emoteDelta((currentEntry?.emotes ?? []), key: key, added: false) : (currentEntry?.emotes ?? [])
+        let optimistic = emoteDelta(base, key: key, added: true)
         currentEntry?.emotes = optimistic
         renderEmotes(animatedLayout: true)
         playChipIn(forKey: key)
         onEmoteChanged?(entryIdValue, optimistic)
-        postEmoteOnce(key: key)
+        postEmoteOnce(key: key, reqSeq: reqSeq)
     }
 
     /// 先行增量：贴上时该 key 计数 +1（无此 key 则 mine 新建 1）；摘下时
@@ -4560,12 +4580,14 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     /// 在途 POST（首页模式）：只发请求与终态处理，先行渲染由 chooseEmote 做。
-    /// cell 复用后回包到达时直接丢弃（不碰新条目）。
-    private func postEmoteOnce(key: String) {
+    /// cell 复用后回包到达时直接丢弃（不碰新条目）；代次落后于最新点按时
+    /// 同样丢弃（不覆盖更新的点按态、不回滚）。
+    private func postEmoteOnce(key: String, reqSeq: Int) {
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
         BearyAPI.shared.postEmote(id: entryIdValue, emote: key) { [weak self] result in
             DispatchQueue.main.async {
-                guard let strongSelf = self, strongSelf.cellEntryId == entryIdValue else { return }
+                guard let strongSelf = self, strongSelf.cellEntryId == entryIdValue,
+                      reqSeq == strongSelf.emoteSeq else { return }
                 switch result {
                 case .success(let resp):
                     // 表情排序批：回包先按已显示顺序合并（新贴追加末尾），再对齐；
@@ -4588,9 +4610,9 @@ class BearyDiaryCardCell: UITableViewCell {
                     }
                     if case .unauthorized = err {
                         // 未登录：先行态静默复原，再走登录页（不摇不 toast）。
-                        strongSelf.currentEntry?.emotes = strongSelf.emoteFlightOriginal ?? []
+                        strongSelf.currentEntry?.emotes = strongSelf.confirmedEmotes
                         strongSelf.renderEmotes()
-                        strongSelf.onEmoteChanged?(entryIdValue, strongSelf.emoteFlightOriginal)
+                        strongSelf.onEmoteChanged?(entryIdValue, strongSelf.confirmedEmotes)
                         strongSelf.clearEmoteFlight()
                         strongSelf.onRequireLogin?()
                         return
@@ -4603,6 +4625,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     /// 成功对齐：服务端值与先行值一致时不动（不重建、不重播已有 chip）；
     /// 不一致时瞬时重绘（非用户动作，不带位移动画）并通知容器。
+    /// 对齐后的服务端值即新确认态。
     private func alignEmoteFlight(entryIdValue: String) {
         let merged = emoteFlightServerEmotes ?? currentEntry?.emotes
         if let merged = merged, BearyEmoteOrder.signature(merged) != BearyEmoteOrder.signature(currentEntry?.emotes) {
@@ -4610,15 +4633,18 @@ class BearyDiaryCardCell: UITableViewCell {
             renderEmotes()
             onEmoteChanged?(entryIdValue, merged)
         }
+        if let merged = merged {
+            confirmedEmotes = merged
+        }
         clearEmoteFlight()
     }
 
-    /// 失败回滚：恢复点选前快照（位移带动画），摘下失败时被摘 chip 带出现
-    /// 动画回来，再补拒绝动效（摇头 + toast）；容器同步回滚值。
+    /// 失败回滚：恢复最后服务端确认态（不是本次点按前的中间态；位移带动画），
+    /// 摘下失败时被摘 chip 带出现动画回来，再补拒绝动效（摇头 + toast）；容器同步回滚值。
     private func rollbackEmoteFlight(entryIdValue: String) {
         let key = emoteFlightKey
         let wasAdded = emoteFlightAdded
-        let original = emoteFlightOriginal ?? []
+        let original = confirmedEmotes
         currentEntry?.emotes = original
         renderEmotes(animatedLayout: true)
         if wasAdded == false, let backKey = key {
@@ -4633,10 +4659,8 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     private func clearEmoteFlight() {
-        isEmoteBusy = false
         emoteFlightKey = nil
         emoteFlightAdded = false
-        emoteFlightOriginal = nil
         emoteFlightServerEmotes = nil
         emoteFlightFailed = false
         emoteFlightUnauthorized = false
