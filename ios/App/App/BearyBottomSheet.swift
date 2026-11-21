@@ -6,8 +6,8 @@ import UIKit
 // 供自定义子类，如登录弹窗的 chrome + 键盘逻辑）；容器负责其余全部：
 // 出现——弹窗弹簧 0.38s / damping 0.7 从底部升起，背后页面在弹窗高于容器一半时
 // 同步缩 0.92 倍、圆角 16pt（Li 2026-11-18 定：半屏及更矮的弹窗不缩背景，
-// 只压暗遮罩；门槛见 BearyBottomSheet.backgroundShrinkHeightRatio）、黑色遮罩压暗 0.45；拖动——弹窗可上下拖，下滑 1:1 跟手、上滑
-// 不动（弹窗始终贴底，往上拉底部不再空出来），松手下拖超 80pt 或下甩速度 > 600pt/s 关闭、否则弹簧
+// 只压暗遮罩；门槛见 BearyBottomSheet.backgroundShrinkHeightRatio）、黑色遮罩压暗 0.45；拖动——弹窗可上下拖，下滑 80pt 内 1:1 跟手、
+// 超 80pt 后阻尼渐增（橡皮筋跟进），上滑不动（弹窗始终贴底，往上拉底部不再空出来），松手下拖超 80pt 或下甩速度 > 600pt/s 关闭、否则弹簧
 // （0.26s / damping 0.7）弹回；关闭——背后页面同步恢复。遮罩点按与拖动关闭都走 requestDismiss
 //（子类可重写，如登录弹窗改走 cancelFromSheet——先停倒计时与在途任务，
 // 容器不得绕开它直接 dismiss，否则添加账号会话守卫 stays armed）。
@@ -360,12 +360,13 @@ class BearyBottomSheetPresentationController: UIPresentationController {
         return pan === dragPan || extraDragPans.contains(pan)
     }
 
-    /// 拖动位移：下滑 1:1 跟手；上滑不动（弹窗始终贴底，往上拉底部不再空出来）。
+    /// 拖动位移：走 BearySheetDrag 共用口径（下滑 80pt 内 1:1、超 80pt 橡皮筋
+    /// 阻尼；上滑不动，弹窗始终贴底，往上拉底部不再空出来），与表情／@ 选人／草稿箱／
+    /// 编辑器底 sheet 同一套公式，不再各写一份。
     /// 2026-11-19 改：此前上滑按 0.25 阻尼微移、上浮封顶 24pt，弹窗上浮脱底、
     /// 底部露出一截遮罩后页面，Li 截图报“往上拉时底部会空出来”。
     private static func dragOffset(for translationY: CGFloat) -> CGFloat {
-        if translationY >= 0 { return translationY }
-        return 0
+        BearySheetDrag.offset(for: translationY)
     }
 
     /// 拖动进度：下滑位移占弹窗高比例（0 = 静止，1 = 完全滑出）；
