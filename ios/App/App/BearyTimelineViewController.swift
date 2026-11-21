@@ -1283,14 +1283,14 @@ final class BearyTimelineCell: UITableViewCell {
         // 限时虚线描边色由 BearyDashedBorderView 自身在 trait 变化时重刷。
         timelineLineView.backgroundColor = BearyColors.line
         dotRingView.backgroundColor = BearyColors.line
-        // C1：圆点边框按当前有效态重设（公开橙、仅好友墨、私密蓝），
+        // C1：圆点边框按当前有效态重设（公开橙、存活限时紫、仅好友墨、私密蓝），
         // 不得无条件写 bg（否则主题切换后私密蓝圈变隐形）。
         // N1：已公开圆点填充改橙色（与 configure 同口径），主题切换后仍是橙。
         if let entry = currentEntry {
             // 限时已到期按私密算（与 configure 同口径）。
             let published = BearyEphemeral.isEffectivelyPublic(entry)
             dotView.backgroundColor = BearyColors.bg
-            dotView.layer.bearyDynamicBorderColor = published ? BearyColors.orange : (entry.isFriendsOnly ? BearyColors.ink : BearyColors.blue)
+            dotView.layer.bearyDynamicBorderColor = BearyEphemeral.isLive(entry) ? BearyColors.limitedPurple : (published ? BearyColors.orange : (entry.isFriendsOnly ? BearyColors.ink : BearyColors.blue))
         } else {
             dotView.layer.bearyDynamicBorderColor = BearyColors.bg
         }
@@ -1587,22 +1587,22 @@ final class BearyTimelineCell: UITableViewCell {
         let published = BearyEphemeral.isEffectivelyPublic(entry)
         if published {
             // 2026-10-29 晚：pill 已整个去掉，只留图标本体——公开＝地球，固定灰 #8e8e93（v3 值）；
-            // 圆点口径不动（公开橙边见下）。
+            // 圆点口径不动（公开橙边、存活限时紫边见下）。
             // 109：限时存活期只换图标为官方 icon_limited（熊头 + 虚线环，
             // 与顶栏限时态同款，#272 误删后本支从 2bb7df9^ 原样恢复；
             // 纠正：不要 icon_clock；尺寸/灰色与公开/私密同款）；
-            // 圆点仍走公开橙边、虚线框与倒计时行一字不动；到期后 isLive 为假、
+            // 圆点仍走公开橙边（存活限时走紫边）、虚线框与倒计时行一字不动；到期后 isLive 为假、
             // isEffectivelyPublic 回私密，走下方锁分支，图标自动回锁。
             pillIconView.image = BearyIconImages.image(named: BearyEphemeral.isLive(entry) ? "icon_limited" : "icon_globe", pointSize: 14)
             pillIconView.tintColor = BearyColors.timelineIconGray
             // 竖线圆点统一用私密的尺寸和结构（9pt 空心 + 12pt 环），只变颜色：
-            // 已公开橙边、私密蓝边（2026-10-28 Li 定，覆盖 #125 的已公开几何口径）。
+            // 已公开橙边、存活限时紫边、私密蓝边（2026-10-28 Li 定，覆盖 #125 的已公开几何口径；限时紫 2026-11-21 Li 定，与日历圆点同口径）。
             dotSizeConstraint?.constant = 9
             dotRingSizeConstraint?.constant = 12
             dotTopConstraint?.constant = 14.5
             dotView.backgroundColor = BearyColors.bg
             dotView.layer.borderWidth = 2.5
-            dotView.layer.bearyDynamicBorderColor = BearyColors.orange
+            dotView.layer.bearyDynamicBorderColor = BearyEphemeral.isLive(entry) ? BearyColors.limitedPurple : BearyColors.orange
             dotView.layer.cornerRadius = 4.5
             dotRingView.isHidden = true
         } else if entry.isFriendsOnly {

@@ -108,6 +108,8 @@ enum BearyColors {
     static var limitedExpiredCountdown: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 142.0/255.0, green: 142.0/255.0, blue: 138.0/255.0, alpha: 1) : UIColor(red: 109.0/255.0, green: 109.0/255.0, blue: 104.0/255.0, alpha: 1) } }
     /// 限时气泡底（预览值）：深 #1d1d1f／浅 #f4f4f2。
     static var limitedBubbleBg: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 29.0/255.0, green: 29.0/255.0, blue: 31.0/255.0, alpha: 1) : UIColor(red: 244.0/255.0, green: 244.0/255.0, blue: 242.0/255.0, alpha: 1) } }
+    /// 限时紫（规范值，深浅同值 #AF52DE）：限时 pill 的紫底／紫字基色；时间线竖线圆点存活限时边亦走它。
+    static var limitedPurple: UIColor { UIColor(red: 175.0/255.0, green: 82.0/255.0, blue: 222.0/255.0, alpha: 1) }
 
     /// C6：按当前 trait 重解 base 色再降透明度的动态色。0.13 透明底
     /// （私密 pill 蓝底、草稿 chip 灰底、图片未保存红底等）一律走这里，
