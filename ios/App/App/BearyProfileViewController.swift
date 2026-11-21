@@ -414,6 +414,10 @@ class BearyProfileViewController: UIViewController {
     private var randomWalkSwapEntryId: String?
     /// 那年今日同年多篇展开态（默认收起）。
     private var thisDayExpanded = false
+    /// 那年今日展开钮收起态文案（按年展开：「展开各年 N 篇」/「查看各年」；
+    /// 展开栈里既有年份小标题又有篇行，行数 ≠ 篇数，收起文案须由渲染时记下、
+    /// 不再由 thisDayExpandTapped 现算）。
+    private var thisDayExpandCollapsedTitle = ""
     private var tabBackgroundTab: ProfileTab?
     /// 审计第 8 轮第 2 项：后台回填按分栏记请求代次。tabBackgroundTab 只记一个
     /// 分栏，快速 A→B→A 会发出两次 A 请求，旧 A 回包仍能通过 currentTab ==
@@ -4597,8 +4601,8 @@ class BearyProfileViewController: UIViewController {
                         strongSelf.modulesLoadFailed = false
                         strongSelf.modulesRetrying = false
                         strongSelf.renderModules()
-                        // r17-C7：本分支现行即按到齐处理，快照同口径覆盖。
-                        strongSelf.saveStatsSnapshotIfNeeded(entries: merged)
+                        // r17-C7：本分支是部分语料，不覆盖快照——快照只认上一次
+                        // 到齐的聚合（见 saveStatsSnapshotIfNeeded），半截聚合不写回。
                         strongSelf.pastSelfSyncFromServer(generation: generation)
                     }
                 case .failure:
@@ -4975,8 +4979,7 @@ class BearyProfileViewController: UIViewController {
     @objc private func thisDayExpandTapped() {
         thisDayExpanded.toggle()
         thisDayExpandStack.isHidden = !thisDayExpanded
-        let count = thisDayExpandStack.arrangedSubviews.count
-        thisDayExpandButton.setTitle(thisDayExpanded ? "收起" : "展开同年 \(count) 篇", for: .normal)
+        thisDayExpandButton.setTitle(thisDayExpanded ? "收起" : thisDayExpandCollapsedTitle, for: .normal)
         thisDayExpandButton.setImage(BearyIconImages.image(named: thisDayExpanded ? "icon_chevron_up" : "icon_chevron_down", pointSize: 14), for: .normal)
         // 01：展开 / 收起改的是脚部容器内的卡片高度，只调 layoutHeaderForced
         // （只重算表头）脚部高度钉住旧值——走 pastSelfRefreshLayout 一并
@@ -5015,14 +5018,30 @@ class BearyProfileViewController: UIViewController {
             thisDayCard.isHidden = true
             return
         }
-        var history = BearyProfilePersonalLogic.thisDayInHistory(entries: visible, today: fakeToday ?? Date(), calendar: calendar)
+        // 年份解释：同月同日往年全量按年分组（旧口径只取最近一年、
+        // 更早年份算出后即丢，见 thisDayHistoryByYear）；主显仍取最近一年
+        // 首篇，展开态按年列出各年份。时区跟本函数既有三处同口径走 calendar
+        // 形参（#1794 已合，合入变基时一并换过）。
+        var grouped = BearyProfilePersonalLogic.thisDayHistoryByYear(entries: visible, today: fakeToday ?? Date(), calendar: calendar)
         // 开发者模式假数据预览（仅内存）：往年今天无日记时也亮一张假卡；
         // 假篇 id 带 dev- 前缀，点按进详情会被拦截、留话入口同样拦截。
-        if history == nil && BearyDevPreviewState.pastDayPreview {
+        // 假卡同样进分组，展开行与年份解释与真卡同口径。
+        if grouped.isEmpty && BearyDevPreviewState.pastDayPreview {
             let fakeYear = (calendar.component(.year, from: fakeToday ?? Date())) - 1
             let fakeEntry = BearyDeveloperMode.shared.makeFakePastDayEntry(fakeYear: fakeYear, month: month, day: day)
-            history = BearyProfilePersonalLogic.ThisDayHistory(year: fakeYear, entries: [fakeEntry])
+            grouped = [BearyProfilePersonalLogic.ThisDayHistory(year: fakeYear, entries: [fakeEntry])]
         }
+        let history = grouped.first
+        // 往年（< 今年）有日记的年份：复用 availableYears（年度回顾同源），
+        // 只取今年之前的年份；当年不算「往年」。分组里已有的年份一定在
+        // 其中（同语料同口径），并集是防御占位符等边缘情形。
+        let todayYear = calendar.component(.year, from: fakeToday ?? Date())
+        var yearsToShow = BearyProfilePersonalLogic.availableYears(entries: visible, isOwn: isOwnProfile, calendar: calendar).filter { $0 < todayYear }
+        for year in grouped.map(\.year) where !yearsToShow.contains(year) {
+            yearsToShow.append(year)
+        }
+        yearsToShow.sort(by: >)
+        let groupedByYear = Dictionary(uniqueKeysWithValues: grouped.map { ($0.year, $0.entries) })
         for arrangedView in thisDayExpandStack.arrangedSubviews {
             thisDayExpandStack.removeArrangedSubview(arrangedView)
             arrangedView.removeFromSuperview()
@@ -5031,12 +5050,30 @@ class BearyProfileViewController: UIViewController {
         thisDayExpandButton.isHidden = true
         guard let history = history, let main = history.entries.first else {
             thisDayMainEntry = nil
+            // 部分语料下的「没有」断言不可信：往年同日篇可能还在未拉到的
+            // 页里——半截不画，藏卡（容器级重试行仍明示未完整），不写
+            // 「往年今天还没有日记。」；语料到齐才断言没有。
+            if !modulesCorpusComplete {
+                thisDayCard.isHidden = true
+                return
+            }
             thisDayMetaLabel.isHidden = true
             thisDayTitleLabel.isHidden = true
             thisDayBodyLabel.isHidden = false
             thisDayBodyLabel.textAlignment = .center
             thisDayBodyLabel.textColor = BearyColors.gray
             thisDayBodyLabel.text = "往年今天还没有日记。"
+            // 语料到齐：展开态列出已检查过的往年，各标「这一年没有」。
+            if !yearsToShow.isEmpty {
+                thisDayExpandCollapsedTitle = "查看各年"
+                thisDayExpandButton.isHidden = false
+                thisDayExpandButton.setTitle(thisDayExpanded ? "收起" : thisDayExpandCollapsedTitle, for: .normal)
+                thisDayExpandButton.setImage(BearyIconImages.image(named: thisDayExpanded ? "icon_chevron_up" : "icon_chevron_down", pointSize: 14), for: .normal)
+                for year in yearsToShow {
+                    thisDayExpandStack.addArrangedSubview(thisDayYearRowLabel(year: year, hasEntries: false))
+                }
+                thisDayExpandStack.isHidden = !thisDayExpanded
+            }
             return
         }
         thisDayMainEntry = main
@@ -5064,30 +5101,56 @@ class BearyProfileViewController: UIViewController {
         let body = personalExcerpt(entry: main, limit: 120)
         thisDayBodyLabel.text = body
         thisDayBodyLabel.isHidden = body.isEmpty
-        if history.entries.count > 1 {
+        // 展开态按年列出：有记录的年份先标年份、其下再列当年篇；无记录的
+        // 年份单行说明——语料到齐标「这一年没有」，未到齐标「尚未检查完」。
+        // 单篇单年且无其他往年时不展开（与旧口径同：无可展开内容不露钮）。
+        let totalCount = grouped.reduce(0) { $0 + $1.entries.count }
+        let hasYearNotes = yearsToShow.contains { groupedByYear[$0] == nil }
+        if totalCount > 1 || hasYearNotes {
+            thisDayExpandCollapsedTitle = totalCount > 1 ? "展开各年 \(totalCount) 篇" : "查看各年"
             thisDayExpandButton.isHidden = false
-            thisDayExpandButton.setTitle(thisDayExpanded ? "收起" : "展开同年 \(history.entries.count) 篇", for: .normal)
+            thisDayExpandButton.setTitle(thisDayExpanded ? "收起" : thisDayExpandCollapsedTitle, for: .normal)
             thisDayExpandButton.setImage(BearyIconImages.image(named: thisDayExpanded ? "icon_chevron_up" : "icon_chevron_down", pointSize: 14), for: .normal)
-            for entry in history.entries {
-                guard let entryId = entry.id else { continue }
-                // Hit44：行高 ≥32、栈间距 8，上下各扩 6 不及间距，不抢邻行热区；视觉不动。
-                let rowButton = BearyHit44Button(type: .system)
-                rowButton.translatesAutoresizingMaskIntoConstraints = false
-                rowButton.setTitle(personalTitle(entry: entry), for: .normal)
-                rowButton.setTitleColor(BearyColors.ink, for: .normal)
-                rowButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-                rowButton.titleLabel?.numberOfLines = 1
-                rowButton.contentHorizontalAlignment = .leading
-                rowButton.accessibilityIdentifier = entryId
-                rowButton.addTarget(self, action: #selector(thisDayEntryTapped(_:)), for: .touchUpInside)
-                rowButton.bearyAddPressFeedback()
-                thisDayExpandStack.addArrangedSubview(rowButton)
-                NSLayoutConstraint.activate([
-                    rowButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
-                ])
+            for year in yearsToShow {
+                guard let yearEntries = groupedByYear[year] else {
+                    thisDayExpandStack.addArrangedSubview(thisDayYearRowLabel(year: year, hasEntries: false))
+                    continue
+                }
+                thisDayExpandStack.addArrangedSubview(thisDayYearRowLabel(year: year, hasEntries: true))
+                for entry in yearEntries {
+                    guard let entryId = entry.id else { continue }
+                    // Hit44：行高 ≥32、栈间距 8，上下各扩 6 不及间距，不抢邻行热区；视觉不动。
+                    let rowButton = BearyHit44Button(type: .system)
+                    rowButton.translatesAutoresizingMaskIntoConstraints = false
+                    rowButton.setTitle(personalTitle(entry: entry), for: .normal)
+                    rowButton.setTitleColor(BearyColors.ink, for: .normal)
+                    rowButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+                    rowButton.titleLabel?.numberOfLines = 1
+                    rowButton.contentHorizontalAlignment = .leading
+                    rowButton.accessibilityIdentifier = entryId
+                    rowButton.addTarget(self, action: #selector(thisDayEntryTapped(_:)), for: .touchUpInside)
+                    rowButton.bearyAddPressFeedback()
+                    thisDayExpandStack.addArrangedSubview(rowButton)
+                    NSLayoutConstraint.activate([
+                        rowButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
+                    ])
+                }
             }
             thisDayExpandStack.isHidden = !thisDayExpanded
         }
+    }
+
+    /// 那年今日展开态的年份行（caption 灰字，与卡片 meta 同款）：
+    /// 有记录的年份只标年份（其下再列当年篇）；无记录的年份单行说明——
+    /// 语料到齐标「这一年没有」，未到齐标「尚未检查完」。
+    private func thisDayYearRowLabel(year: Int, hasEntries: Bool) -> UILabel {
+        let label = BearyProfilePersonalModulesCard.metaLabel()
+        if hasEntries {
+            label.text = "\(year) 年"
+        } else {
+            label.text = modulesCorpusComplete ? "\(year) 年 · 这一年没有" : "\(year) 年 · 尚未检查完"
+        }
+        return label
     }
 
     // MARK: 批 D —— 与过去的自己对话（不新开页，不走 AI）
@@ -6221,8 +6284,8 @@ class BearyProfileViewController: UIViewController {
         renderThisDayWithEntries(visible: snap.thisDayEntries, today: Date(), calendar: Self.beijingCalendar)
     }
 
-    /// 语料到齐才覆盖：只在两个“到齐”分支（末页不足 50、末页游标缺失按到齐处理）
-    /// 调用；失败/部分语料分支不调，不拿半截聚合覆盖已确认的快照。
+    /// 语料到齐才覆盖：只在末页不足 50 的到齐分支调用；失败 / 部分语料
+    /// 分支（含末页游标缺失的截断语料）不调，不拿半截聚合覆盖已确认的快照。
     private func saveStatsSnapshotIfNeeded(entries: [Entry]) {
         guard isOwnProfile, let bucket = profileCacheBucket(),
               let accountId = SessionManager.shared.currentUser?.id else { return }
@@ -10337,8 +10400,8 @@ enum BearyProfileCache {
 // MARK: - 个人页统计卡首屏磁盘缓存（r17-C7，与 BearyProfileCache 同口径，不新增文件）
 //
 // 缓存最近一次完整语料算出的数字、年度分组与那年今日条目 ID（条目带正文，
-// 冷开即可渲染）；只有确认到尾（末页不足 50，或末页游标缺失按到齐处理）
-// 才覆盖，失败/部分语料不写。按账号分桶，读取时校验账号 id 与会话代次
+// 冷开即可渲染）；只有确认到尾（末页不足 50）才覆盖，失败 / 部分语料
+// （含末页游标缺失的截断语料）不写。按账号分桶，读取时校验账号 id 与会话代次
 // （退出/401/换号后代次推进，旧快照弃用）；退出/401 时由 SessionManager 清桶。
 // 「那年今天」按北京时间日期失效：快照存 beijingDate（Asia/Shanghai），
 // 冷开比对当日，跨日不贴旧日；跨 0 点停留本页时由跨日复核藏旧卡、重拉新语料。
