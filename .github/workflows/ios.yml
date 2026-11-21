@@ -153,3 +153,16 @@ jobs:
           DEVICE=$(xcrun simctl list devices available | grep -oE 'iPhone [^()]+' | head -n 1 | sed 's/ *$//')
           echo "Using simulator device: $DEVICE"
           xcodebuild -project ios/App/App.xcodeproj -scheme BearyCoreTests -configuration Debug -destination "platform=iOS Simulator,name=$DEVICE" CODE_SIGNING_ALLOWED=NO test
+
+  # 多语言防回潮检查（地基 PR 新增）：只查本 PR diff 新增行里的硬编码中文，
+  # 不扫存量——队里排队 PR 不会因此变红。脚本见 scripts/check-i18n-hardcoded.py，
+  # 口径见 docs/i18n-plan.md。只在 pull_request 跑，push 到 main 不跑。
+  i18n-guard:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check no new hardcoded Chinese copy
+        run: python3 scripts/check-i18n-hardcoded.py --base ${{ github.event.pull_request.base.sha }}
