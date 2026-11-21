@@ -3058,6 +3058,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
         let nameLabel = BearyRoundedMarkLabel()
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.adjustsFontForContentSizeCategory = true
         nameLabel.font = BearyDynamicType.cardTitleFont()
         nameLabel.textColor = BearyColors.ink
         nameLabel.numberOfLines = 1
@@ -3065,6 +3066,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
         let handleLabel = BearyRoundedMarkLabel()
         handleLabel.translatesAutoresizingMaskIntoConstraints = false
+        handleLabel.adjustsFontForContentSizeCategory = true
         handleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         handleLabel.textColor = BearyColors.gray
         handleLabel.numberOfLines = 1
@@ -3196,6 +3198,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         let contentLabel = BearyRoundedMarkLabel()
         contentLabel.translatesAutoresizingMaskIntoConstraints = false
+        contentLabel.adjustsFontForContentSizeCategory = true
         contentLabel.numberOfLines = 3
         contentLabel.lineBreakMode = .byCharWrapping
         contentLabel.clipsToBounds = true
@@ -3283,6 +3286,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         } else {
             let authorLabel = BearyRoundedMarkLabel()
             authorLabel.translatesAutoresizingMaskIntoConstraints = false
+            authorLabel.adjustsFontForContentSizeCategory = true
             authorLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 14))
             authorLabel.textColor = BearyColors.ink
             authorLabel.numberOfLines = 1
