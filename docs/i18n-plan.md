@@ -2,6 +2,8 @@
 
 Li 2026-11-19 定：String Catalog（.xcstrings）抽字符串，中文当原文，先只翻英文；
 App 跟随系统语言；设置页语言行留着；关键文案英文由 Li 定；CI 加防硬编码回潮检查。
+2026-11-21 改（Li 定，B1）：catalog key 由中文原文改语义 key，中文只作 source value——
+中文文案以后随便改都不丢翻译。
 地基 PR：多语言地基＋生物识别锁样板（分支 `fix/i18n-foundation`）。
 
 ## 一、清点（基线 main e06c8cb0，2026-11-19）
@@ -57,9 +59,15 @@ App 跟随系统语言；设置页语言行留着；关键文案英文由 Li 定
 
 - 位置：项目级 `ios/App/App/Localizable.xcstrings`（App target Resources，
   已在 pbxproj 注册）；一个 catalog 管全站，不按模块拆文件——
-  key 即中文原文，各批共用同一 key 可复用翻译。
-- `sourceLanguage = zh-Hans`；每条 key 同时写 `zh-Hans`（值与 key 一致）
-  与 `en`（翻译，状态 `translated`）。
+  key 是语义 key，各批共用同一 key 可复用翻译。
+- key 命名约定：`<模块>.<snake_case 目的>`（如 `app_lock.unlock`、
+  `settings.language.title`），模块名与功能区对应；key 一旦合入不再改名，
+  改名即丢翻译。中文文案改只改该 key 的 `zh-Hans` 值，不动 key；
+  同一中文在不同语境含义不同时用不同 key 区分，不再靠 `comment` 区分。
+- `sourceLanguage = zh-Hans`；每条 key 同时写 `zh-Hans`（中文原文，
+  source value）与 `en`（翻译，状态 `translated`）。
+  注意：key 不是文案，catalog 里缺 key 时运行时显示 key 本身、不回落中文——
+  新 key 进 catalog 与调用点须同一批进，测试的 en 非空断言守着。
 - pbxproj：`developmentRegion = zh-Hans`（中文是开发语言，之前是 en）、
   新增 `knownLocalizations = (en, zh-Hans)`、`knownRegions` 补 `zh-Hans`；
   `Info.plist` 的 `CFBundleDevelopmentRegion` 同步改 `zh-Hans`——
@@ -68,14 +76,13 @@ App 跟随系统语言；设置页语言行留着；关键文案英文由 Li 定
 ### 代码写法（统一口径，二选一已定：NSLocalizedString）
 
 - 部署目标 iOS 15，`String(localized:)`（需 iOS 16+）不可用；
-  全站统一 `NSLocalizedString("中文原文", comment: "")`，
+  全站统一 `NSLocalizedString("语义 key", comment: "")`，
   与 #1990 既有的一处写法一致。
 - 插值一律改 `String(format:)`：`"使用\(name)解锁"` →
-  `String(format: NSLocalizedString("使用%@解锁", comment: ""), name)`。
+  `String(format: NSLocalizedString("app_lock.unlock_with_biometry", comment: ""), name)`。
   禁止把插值留在 NSLocalizedString 的 key 里（运行时 key 会带入变量值，
   catalog 查不到）。
-- `comment:` 写 `""` 即可；歧义 key（同一中文在不同语境含义不同）
-  才在 comment 里注明语境，届时在 Xcode 里以 `comment` 区分。
+- `comment:` 写 `""` 即可。
 - 抽取方式：Xcode → Product → Export Localizations（认 NSLocalizedString，
   自动补 key 进 catalog）；或手工按 key 追加 JSON（key 按字母序排，
   与 Xcode 导出格式保持一致）。禁止手写 `.strings` 文件。
@@ -90,7 +97,7 @@ App 跟随系统语言；设置页语言行留着；关键文案英文由 Li 定
   不扫存量——队里排队 PR 不会因此变红；但排队 PR 若新增中文文案，
   合入本 PR 后 rebase 即触发检查，须改走 NSLocalizedString。
 - 豁免：注释、`dateFormat =` 格式串、`BearyI18nCatalogTests.swift`
-  （以中文 key 做 catalog 断言，中文是测试数据本身）。
+  （以中文原文作期望值断言，中文是测试数据本身）。
 
 ### 样板模块（本 PR 已做）
 
@@ -101,7 +108,7 @@ App 跟随系统语言；设置页语言行留着；关键文案英文由 Li 定
 - 测试：`ios/App/BearyCoreTests/BearyI18nCatalogTests.swift`。
   测试 target 无宿主 App、catalog 不在测试包内，故直接读仓库里的
   xcstrings JSON 断言：sourceLanguage 为 zh-Hans；样板 13 条 key 的
-  zh 值与 key 一致、en 非空且与中文不同、`%@` 个数中英一致；
+  zh 值为中文原文（与期望值表一致）、en 非空且与中文不同、`%@` 个数中英一致；
   外加全 catalog 扫一遍（任一 key 缺 en 即失败）。
 - 真机待验（未验证，不谎称已验）：Li 手机切系统语言为英文，
   锁屏应显示英文（Unlock / Unlock with Face ID 等），切回中文正常；
@@ -109,8 +116,8 @@ App 跟随系统语言；设置页语言行留着；关键文案英文由 Li 定
 
 ## 三、分批计划（地基合入后，每批一支 PR、一批一合）
 
-每批：迁移该批文件 → catalog 追加 key（en 由 Li 定版后填，
-未定版前先写草稿并标待定）→ `BearyI18nCatalogTests` 的样板 key 表
+每批：迁移该批文件 → catalog 追加 key（key 按命名约定取，中文作 source value；
+en 由 Li 定版后填，未定版前先写草稿并标待定）→ `BearyI18nCatalogTests` 的样板 key 表
 按需扩展（全 catalog 的 en 非空断言已覆盖新 key）→ 等 main CI 绿再合下一批。
 语言行选项改动在 B6。
 
@@ -148,21 +155,21 @@ App 跟随系统语言；设置页语言行留着；关键文案英文由 Li 定
 
 ### 样板模块（本 PR 已进 catalog，英文为草稿）
 
-| 中文原文 | 英文草稿 |
-| --- | --- |
-| 冷启动时验证一次；切到别的 App 再回来不重复。 | Verify once on a cold start. Switching to another app and back won't ask again. |
-| 面容识别 | Face ID |
-| 触控 ID | Touch ID |
-| 生物识别 | Biometrics |
-| 设备未录入%@，请先在系统设置中录入 | %@ isn't set up on this device. Set it up in Settings first. |
-| 此设备不支持生物识别 | This device doesn't support biometrics |
-| 设备未设置密码，请先在系统设置中设置密码 | No device passcode is set. Set one in Settings first. |
-| 此设备暂无法使用生物识别 | Biometrics is temporarily unavailable on this device |
-| beary 已锁定 | beary is locked |
-| 使用%@解锁 | Unlock with %@ |
-| 解锁 | Unlock |
-| 使用%@解锁 beary | Use %@ to unlock beary |
-| 验证未通过，请再试一次，也可用设备密码解锁 | Verification failed. Try again, or use your device passcode to unlock. |
+| 语义 key | 中文原文 | 英文草稿 |
+| --- | --- | --- |
+| app_lock.cold_start_note | 冷启动时验证一次；切到别的 App 再回来不重复。 | Verify once on a cold start. Switching to another app and back won't ask again. |
+| app_lock.face_id | 面容识别 | Face ID |
+| app_lock.touch_id | 触控 ID | Touch ID |
+| app_lock.biometrics | 生物识别 | Biometrics |
+| app_lock.biometry_not_enrolled | 设备未录入%@，请先在系统设置中录入 | %@ isn't set up on this device. Set it up in Settings first. |
+| app_lock.biometry_not_available | 此设备不支持生物识别 | This device doesn't support biometrics |
+| app_lock.passcode_not_set | 设备未设置密码，请先在系统设置中设置密码 | No device passcode is set. Set one in Settings first. |
+| app_lock.biometry_unavailable | 此设备暂无法使用生物识别 | Biometrics is temporarily unavailable on this device |
+| app_lock.locked | beary 已锁定 | beary is locked |
+| app_lock.unlock_with_biometry | 使用%@解锁 | Unlock with %@ |
+| app_lock.unlock | 解锁 | Unlock |
+| app_lock.unlock_beary_with_biometry | 使用%@解锁 beary | Use %@ to unlock beary |
+| app_lock.verification_failed | 验证未通过，请再试一次，也可用设备密码解锁 | Verification failed. Try again, or use your device passcode to unlock. |
 
 ### 品牌文案与主按钮、空态（后续各批，英文为草稿）
 
