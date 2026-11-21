@@ -4,11 +4,12 @@
 设计（防炸队里约 270 支排队 PR）：
 - 只看 `git diff <base>...HEAD` 的新增行（+ 行），不动存量；
 - 只扫 Swift 源码（ios/App/App/*.swift、ios/App/BearyCoreTests/*.swift）；
-- 已包进 NSLocalizedString(...) / String(localized: ...) 的中文不算；
+- 已包进 NSLocalizedString(...) / String(localized: ...) 的 key 参数不算
+  （key 是语义 key，不含中文）；
 - 注释里的中文不算；DateFormatter 的 dateFormat（如 "M月d日"）不算，
   那是格式串不是文案；
 - 白名单文件：ios/App/BearyCoreTests/BearyI18nCatalogTests.swift——
-  它以中文 key 做 catalog 断言，中文是测试数据本身。
+  它以中文原文作期望值断言，中文是测试数据本身。
 
 用法：python3 scripts/check-i18n-hardcoded.py [--base <ref>]
 默认 base 为 origin/main；CI 里传 pull_request.base.sha。
@@ -20,7 +21,7 @@ import subprocess
 import sys
 
 CJK = re.compile(r"[\u4e00-\u9fff]")
-# 注意：只扫 *.swift，不扫同目录下的 .xcstrings（catalog 本身就是中文 key，
+# 注意：只扫 *.swift，不扫同目录下的 .xcstrings（catalog 里是翻译数据，
 # 不能把它当新增硬编码文案查——此前写目录曾误扫 catalog，已改 glob）。
 SWIFT_PATHS = ["ios/App/App/*.swift", "ios/App/BearyCoreTests/*.swift"]
 ALLOWLIST_FILES = {
@@ -138,7 +139,7 @@ def main() -> int:
     for path, line, lit, code in violations:
         print(f"  {path}:{line} {lit!r}")
         print(f"    {code}")
-    print("说明：中文原文进 ios/App/App/Localizable.xcstrings，代码用 NSLocalizedString(中文原文)；")
+    print("说明：中文原文进 ios/App/App/Localizable.xcstrings 作 source value，代码用 NSLocalizedString(语义 key)；")
     print("      插值改 String(format: NSLocalizedString(\"...%@...\"), 变量)；见 docs/i18n-plan.md。")
     return 1
 
