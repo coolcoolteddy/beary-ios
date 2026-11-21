@@ -27,6 +27,11 @@ import UIKit
 struct BearyCalendarDayCount: Codable {
     var pub: Int?
     var priv: Int?
+    /// 四色圆点新增档（服务端新增键，旧快照缺省即 nil→0）：仅好友、限时。
+    /// 服务端 pub 仍含限时、priv 仍含仅好友（网页旧口径不动），App 侧
+    /// 橙 = pub - limited、蓝 = priv - friends（见 calendarDayCounts）。
+    var friends: Int?
+    var limited: Int?
 }
 
 struct BearyCalendarMonthResponse: Codable {
@@ -71,11 +76,15 @@ extension BearyAPI {
 enum BearyCalendarMarkColor {
     case published
     case unpublished
+    case friends
+    case limited
 
     var uiColor: UIColor {
         switch self {
         case .published: return BearyColors.orange
         case .unpublished: return BearyColors.blue
+        case .friends: return BearyColors.ink
+        case .limited: return BearyColors.limitedPurple
         }
     }
 }
@@ -94,38 +103,18 @@ struct BearyCalendarMark {
 }
 
 enum BearyCalendarMarks {
-    /// 64 包反馈修（第 4 项，Li 混色方案）：旧“全天同色多数判定”整段删除——
-    /// 每种状态各自按数量拆现有图形词汇（公开=橙、私密=蓝），一天内先画公开组、
-    /// 再画私密组拼进同一格：1→1 点、2→2 点、3→三角形、4→正方形、5→五边形、
-    /// 6→五边形+1 点、7→五边形+2 点、单状态 8+ 按 7 封顶。
-    /// 逐一核对 Li 的例子：2 篇 1 公开 = 1 橙点 + 1 蓝点；3 篇 2 公开 = 2 橙点 + 1 蓝点；
-    /// 10 篇 7 公开 3 私密 = 橙五边形 + 橙 2 点 + 蓝三角形。
-    static func marks(published: Int, unpublished: Int) -> [BearyCalendarMark] {
-        return marksForCount(published, color: .published) + marksForCount(unpublished, color: .unpublished)
-    }
-
-    private static func marksForCount(_ count: Int, color: BearyCalendarMarkColor) -> [BearyCalendarMark] {
-        let dot = BearyCalendarMark(kind: .dot, color: color, size: 6)
-        switch min(max(count, 0), 7) {
-        case 0:
-            return []
-        case 1:
-            return [dot]
-        case 2:
-            return [dot, dot]
-        case 3:
-            return [BearyCalendarMark(kind: .triangle, color: color, size: 12)]
-        case 4:
-            return [BearyCalendarMark(kind: .square, color: color, size: 11)]
-        case 5:
-            return [BearyCalendarMark(kind: .pentagon, color: color, size: 12)]
-        case 6:
-            return [BearyCalendarMark(kind: .pentagon, color: color, size: 12), dot]
-        case 7:
-            return [BearyCalendarMark(kind: .pentagon, color: color, size: 12), dot, dot]
-        default:
-            return []
-        }
+    /// 时间线改版 v14：几何编码整段删除——圆点数与每天篇数一一对应，
+    /// 四色：公开橙、私密蓝、仅好友墨、限时紫（规范四档代表色）。
+    /// 顺序：公开 → 私密 → 仅好友 → 限时；单日总共最多 5 点
+    /// （格宽约 41pt，5 点 × 6pt + 间距刚好放下；超 5 篇的日子只画前 5 点，
+    /// 篇数仍以当日面板标题为准）。
+    static func marks(published: Int, unpublished: Int, friends: Int = 0, limited: Int = 0) -> [BearyCalendarMark] {
+        var out: [BearyCalendarMark] = []
+        for _ in 0..<max(published, 0) { out.append(BearyCalendarMark(kind: .dot, color: .published, size: 6)) }
+        for _ in 0..<max(unpublished, 0) { out.append(BearyCalendarMark(kind: .dot, color: .unpublished, size: 6)) }
+        for _ in 0..<max(friends, 0) { out.append(BearyCalendarMark(kind: .dot, color: .friends, size: 6)) }
+        for _ in 0..<max(limited, 0) { out.append(BearyCalendarMark(kind: .dot, color: .limited, size: 6)) }
+        return Array(out.prefix(5))
     }
 }
 
@@ -228,6 +217,10 @@ struct BearyCalendarDay {
     var isSelected: Bool
     var published: Int
     var unpublished: Int
+    /// 四色圆点新增档（展示口径：橙 = 公开且非限时、蓝 = 私密且非仅好友；
+    /// 服务端 pub 含限时、priv 含仅好友，换算在 calendarDayCounts 里做）。
+    var friends: Int = 0
+    var limited: Int = 0
     var dataLoaded: Bool
     var dataFailed: Bool
 
@@ -240,7 +233,7 @@ struct BearyCalendarDay {
     /// renderCalendar 重渲后才启用（与网页 calPatchDots 到达后启用一致）。
     var isEnabled: Bool {
         if isOffMonth || isFuture { return false }
-        return published + unpublished > 0
+        return published + unpublished + friends + limited > 0
     }
 }
 
@@ -306,8 +299,8 @@ final class BearyCalendarDayButton: UIButton {
             accessibilityLabel = "\(day.month)月\(day.day)日，非本月"
         } else if !day.dataLoaded {
             accessibilityLabel = day.dataFailed ? "\(day.month)月\(day.day)日，日历加载失败" : "\(day.month)月\(day.day)日，加载中"
-        } else if day.published + day.unpublished > 0 {
-            accessibilityLabel = "\(day.month)月\(day.day)日，共 \(day.published + day.unpublished) 篇，其中 \(day.unpublished) 篇私密"
+        } else if day.published + day.unpublished + day.friends + day.limited > 0 {
+            accessibilityLabel = "\(day.month)月\(day.day)日，共 \(day.published + day.unpublished + day.friends + day.limited) 篇"
         } else {
             accessibilityLabel = "\(day.month)月\(day.day)日，无日记"
         }
@@ -316,7 +309,7 @@ final class BearyCalendarDayButton: UIButton {
         accessibilityTraits = dayTraits
         if day.isToday { accessibilityLabel = (accessibilityLabel ?? "") + "，今天" }
         if day.isSelected { accessibilityLabel = (accessibilityLabel ?? "") + "，已选中" }
-        markView.marks = day.isOffMonth ? [] : BearyCalendarMarks.marks(published: day.published, unpublished: day.unpublished)
+        markView.marks = day.isOffMonth ? [] : BearyCalendarMarks.marks(published: day.published, unpublished: day.unpublished, friends: day.friends, limited: day.limited)
         // 标记行背景每格都显式清透明（init 已设，此处防复用残留）。
         markView.backgroundColor = .clear
         isEnabled = day.isEnabled
@@ -336,16 +329,17 @@ final class BearyCalendarDayButton: UIButton {
             numberLabel.font = UIFont.systemFont(ofSize: 15)
             numberLabel.backgroundColor = .clear
         } else if day.isSelected {
-            // 网页 .sel 后于 .today：选中态盖过今天态（墨底白字）。
-            numberLabel.textColor = BearyColors.bg
-            numberLabel.font = UIFont.boldSystemFont(ofSize: 15)
-            numberLabel.backgroundColor = BearyColors.ink
-        } else if day.isToday {
+            // 时间线改版 v14：选中日改橙色描边圆圈（墨底白字废止）。
             numberLabel.textColor = BearyColors.deepOrangeText
             numberLabel.font = UIFont.boldSystemFont(ofSize: 15)
             numberLabel.backgroundColor = .clear
             numberLabel.layer.borderWidth = 1.5
             numberLabel.layer.bearyDynamicBorderColor = BearyColors.orange
+        } else if day.isToday {
+            // 今天（未选中）只橙字、不描边，与选中日的橙圈区分。
+            numberLabel.textColor = BearyColors.deepOrangeText
+            numberLabel.font = UIFont.boldSystemFont(ofSize: 15)
+            numberLabel.backgroundColor = .clear
         } else if !day.isEnabled {
             numberLabel.textColor = BearyCalendarDayButton.disabledTextColor
             numberLabel.font = UIFont.systemFont(ofSize: 15)
@@ -358,6 +352,31 @@ final class BearyCalendarDayButton: UIButton {
     }
 }
 
+/// 年月标题里的数字把手（时间线改版 v14）：年份数字与月份数字各一个，
+/// 点按聚焦（橙字）后按上下方向键调整（上 +1、下 -1）。长按拖动的
+/// 手势由卡片挂在 label 上，不在本类里。
+final class BearyCalendarTitleNumberLabel: UILabel {
+    var onStep: ((Int) -> Void)?
+    /// 聚焦/亮起态：橙字；平时墨字。长按 0.4 秒亮起与点按聚焦共用本态。
+    var isTitleFocused: Bool = false {
+        didSet {
+            textColor = isTitleFocused ? BearyColors.deepOrangeText : BearyColors.ink
+        }
+    }
+
+    override var canBecomeFirstResponder: Bool { true }
+
+    override var keyCommands: [UIKeyCommand]? {
+        [
+            UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [], action: #selector(stepUp)),
+            UIKeyCommand(input: UIKeyCommand.inputDownArrow, modifierFlags: [], action: #selector(stepDown)),
+        ]
+    }
+
+    @objc private func stepUp() { onStep?(1) }
+    @objc private func stepDown() { onStep?(-1) }
+}
+
 // MARK: - 日历卡（网页 .cal-card：边框 1 line、圆角 14、padding 16、底色 bg（与页面背景同色））
 
 final class BearyCalendarCardView: UIView {
@@ -368,18 +387,27 @@ final class BearyCalendarCardView: UIView {
 
     var onSelectDay: ((BearyCalendarDay) -> Void)?
     var onToggleView: (() -> Void)?
-    var onPrevious: (() -> Void)?
-    var onNext: (() -> Void)?
+    /// 周/月内前后步进（左滑 +1、右滑 -1；周模式 ±7 天、月模式 ±1 月，VC 内换算）。
+    var onStepCalendar: ((Int) -> Void)?
     var onGoToday: (() -> Void)?
+    /// 年月数字把手步进（VC 内换算：年 ±1 年、月 ±1 月跨年）。
+    var onStepYear: ((Int) -> Void)?
+    var onStepMonth: ((Int) -> Void)?
     /// R15-L1：日历失败重试入口（卡内行，见 setLoadFailed）。旧口径在统计行
     /// 与顶部悬浮条各放一处，本支收掉两处、只留卡内一处。
     var onRetry: (() -> Void)?
 
-    private let titleLabel = UILabel()
+    private let yearNumberLabel = BearyCalendarTitleNumberLabel()
+    private let monthNumberLabel = BearyCalendarTitleNumberLabel()
+    private let titleTextStack = UIStackView()
+    private let titleRow = UIStackView()
     private let todayButton = BearyHit44Button(type: .system)
-    private let toggleButton = BearyHit44Button(type: .system)
-    private let prevButton = BearyHit44Button(type: .system)
-    private let nextButton = BearyHit44Button(type: .system)
+    private let gestureHintLabel = UILabel()
+    /// 当前视图模式（render 时更新；上下轻扫的展开/收起、提示文案按它分流）。
+    private(set) var currentMode: ViewMode = .week
+    /// 年月长按拖动的锚点 y（手势起始触点）与已消耗量（30pt 一步，步进后扣掉）。
+    private var titleDragAnchorY: CGFloat = 0
+    private var titleDragConsumedY: CGFloat = 0
     private let gridStack = UIStackView()
     /// R15-L1：日历失败行（文案 + 文字重试钮），默认隐藏；失败时由 VC 经
     /// setLoadFailed 显隐。行内重试钮是 BearyHit44Button，视觉小、热区 44。
@@ -402,105 +430,97 @@ final class BearyCalendarCardView: UIView {
         layer.cornerRadius = BearyCorners.single
         layer.masksToBounds = true
 
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        // 审计-时间线：日历卡标题跟随 Dynamic Type（格内数字仍按 8-3 例外不缩放，不动）。
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
-        titleLabel.adjustsFontForContentSizeCategory = true
-        titleLabel.textColor = BearyColors.ink
-        // 第 7 轮属实项 1：标题独占一行，极端字号下换行不断字、不裁字。
-        titleLabel.numberOfLines = 0
-        titleLabel.lineBreakMode = .byCharWrapping
+        // 年月标题常驻：年份数字与月份数字是两个分开的把手（各管各的），
+        // 其间“年”“月”两字是静态文本；标题行右侧是“回到今天”小药丸。
+        yearNumberLabel.translatesAutoresizingMaskIntoConstraints = false
+        yearNumberLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        yearNumberLabel.adjustsFontForContentSizeCategory = true
+        yearNumberLabel.textColor = BearyColors.ink
+        yearNumberLabel.isUserInteractionEnabled = true
+        yearNumberLabel.accessibilityHint = "点按聚焦后按上下方向键调整，长按上下拖动调整"
+        monthNumberLabel.translatesAutoresizingMaskIntoConstraints = false
+        monthNumberLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        monthNumberLabel.adjustsFontForContentSizeCategory = true
+        monthNumberLabel.textColor = BearyColors.ink
+        monthNumberLabel.isUserInteractionEnabled = true
+        monthNumberLabel.accessibilityHint = "点按聚焦后按上下方向键调整，长按上下拖动调整"
+        let yearSuffixLabel = UILabel()
+        yearSuffixLabel.translatesAutoresizingMaskIntoConstraints = false
+        yearSuffixLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        yearSuffixLabel.adjustsFontForContentSizeCategory = true
+        yearSuffixLabel.textColor = BearyColors.ink
+        yearSuffixLabel.text = "年"
+        let monthSuffixLabel = UILabel()
+        monthSuffixLabel.translatesAutoresizingMaskIntoConstraints = false
+        monthSuffixLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        monthSuffixLabel.adjustsFontForContentSizeCategory = true
+        monthSuffixLabel.textColor = BearyColors.ink
+        monthSuffixLabel.text = "月"
+        titleTextStack.translatesAutoresizingMaskIntoConstraints = false
+        titleTextStack.axis = .horizontal
+        titleTextStack.alignment = .center
+        titleTextStack.spacing = 2
+        titleTextStack.addArrangedSubview(yearNumberLabel)
+        titleTextStack.addArrangedSubview(yearSuffixLabel)
+        titleTextStack.addArrangedSubview(monthNumberLabel)
+        titleTextStack.addArrangedSubview(monthSuffixLabel)
+        // 年月把手手势：点按聚焦（方向键调整）、长按 0.4 秒亮起后上下拖动
+        // （30pt 一步）；点按须等长按失败，免得一次长按拖动又聚焦。
+        let yearTap = UITapGestureRecognizer(target: self, action: #selector(didTapYearNumber))
+        let yearLongPress = UILongPressGestureRecognizer(target: self, action: #selector(handleYearLongPress(_:)))
+        yearLongPress.minimumPressDuration = 0.4
+        yearLongPress.allowableMovement = .greatestFiniteMagnitude
+        yearTap.require(toFail: yearLongPress)
+        yearNumberLabel.addGestureRecognizer(yearTap)
+        yearNumberLabel.addGestureRecognizer(yearLongPress)
+        yearNumberLabel.onStep = { [weak self] delta in self?.onStepYear?(delta) }
+        let monthTap = UITapGestureRecognizer(target: self, action: #selector(didTapMonthNumber))
+        let monthLongPress = UILongPressGestureRecognizer(target: self, action: #selector(handleMonthLongPress(_:)))
+        monthLongPress.minimumPressDuration = 0.4
+        monthLongPress.allowableMovement = .greatestFiniteMagnitude
+        monthTap.require(toFail: monthLongPress)
+        monthNumberLabel.addGestureRecognizer(monthTap)
+        monthNumberLabel.addGestureRecognizer(monthLongPress)
+        monthNumberLabel.onStep = { [weak self] delta in self?.onStepMonth?(delta) }
 
-        toggleButton.translatesAutoresizingMaskIntoConstraints = false
-        toggleButton.backgroundColor = BearyColors.surface2
-        toggleButton.layer.cornerRadius = BearyCorners.single
-        toggleButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
-        toggleButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        toggleButton.setTitleColor(BearyColors.ink, for: .normal)
-        // 第 7 轮属实项 1：切换钮按内容撑宽、不被相邻钮挤压（宽度下限见约束处）。
-        toggleButton.setContentHuggingPriority(.required, for: .horizontal)
-        toggleButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        toggleButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        toggleButton.addTarget(self, action: #selector(didTapToggle), for: .touchUpInside)
-        toggleButton.bearyAddPressFeedback()
-
-        // C10 回到今天：轻量 pill“今”，与翻页钮同款（surface2 底、32×32、
-        // 圆角 16、12 粗体），默认隐藏，只由 VC 的 setTodayButtonVisible
-        // 在显示月份/周不含今天或选中日不是今天时浮现；无障碍名“回到今天”。
+        // “回到今天”小药丸：surface2 底、圆角 14、高 28，默认隐藏；
+        // 显隐只由 VC 的 setTodayButtonVisible 控制（选中日非今天时浮现）。
         todayButton.translatesAutoresizingMaskIntoConstraints = false
         todayButton.backgroundColor = BearyColors.surface2
-        todayButton.layer.cornerRadius = BearyCorners.single
+        todayButton.layer.cornerRadius = 14
         todayButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
         todayButton.titleLabel?.adjustsFontForContentSizeCategory = true
         todayButton.setTitleColor(BearyColors.ink, for: .normal)
-        todayButton.setTitle("今", for: .normal)
+        todayButton.setTitle("回到今天", for: .normal)
+        todayButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         todayButton.accessibilityLabel = "回到今天"
         todayButton.addTarget(self, action: #selector(didTapToday), for: .touchUpInside)
         todayButton.bearyAddPressFeedback()
         todayButton.isHidden = true
         todayButton.alpha = 0
 
-        prevButton.translatesAutoresizingMaskIntoConstraints = false
-        prevButton.backgroundColor = BearyColors.surface2
-        prevButton.layer.cornerRadius = BearyCorners.single
-        prevButton.tintColor = BearyColors.gray
-        if let chevron = BearyIconImages.image(named: "icon_chevron_right", pointSize: 15) {
-            prevButton.setImage(chevron, for: .normal)
-            prevButton.imageView?.transform = CGAffineTransform(rotationAngle: CGFloat(Double.pi))
-        } else {
-            // I14：资产缺失时补文字回退，翻页路径不断。
-            prevButton.setTitle("‹", for: .normal)
-            prevButton.titleLabel?.font = UIFont.systemFont(ofSize: 17)
-        }
-        prevButton.addTarget(self, action: #selector(didTapPrevious), for: .touchUpInside)
-
-        nextButton.translatesAutoresizingMaskIntoConstraints = false
-        nextButton.backgroundColor = BearyColors.surface2
-        nextButton.layer.cornerRadius = BearyCorners.single
-        nextButton.tintColor = BearyColors.gray
-        if let chevron = BearyIconImages.image(named: "icon_chevron_right", pointSize: 15) {
-            nextButton.setImage(chevron, for: .normal)
-        } else {
-            // I14：资产缺失时补文字回退，翻页路径不断。
-            nextButton.setTitle("›", for: .normal)
-            nextButton.titleLabel?.font = UIFont.systemFont(ofSize: 17)
-        }
-        nextButton.addTarget(self, action: #selector(didTapNext), for: .touchUpInside)
-        nextButton.bearyAddPressFeedback()
-
-        // 第 7 轮属实项 1：顶行拆为两行——第 1 行只放月份标题，第 2 行放
-        // 操作钮（今 / 周月切换 / 上一 / 下一）。窄屏或大字号下两行不再同行
-        // 抢宽，标题与切换钮互不挤压、不裁字；操作钮仍靠右对齐，与改前
-        // 右侧成组的位置一致。原标题→“今”钮的 8pt 垫片随拆行作废（“今”钮
-        // 改为操作行首钮，显隐仍由 setTodayButtonVisible 控制栈内占位）。
-        let titleRow = UIStackView(arrangedSubviews: [titleLabel])
         titleRow.translatesAutoresizingMaskIntoConstraints = false
         titleRow.axis = .horizontal
         titleRow.alignment = .center
-        let controlsSpacer = UIView()
-        controlsSpacer.translatesAutoresizingMaskIntoConstraints = false
-        // R10-#19：控制行重分组——上一页／下一页是相邻导航组（组内 6pt），
-        // 周／月切换是模式切换（组间 12pt），“今”放组左边缘作快速归位入口。
-        // 各钮顺序／尺寸／样式不动；上一／下一仍优先官方 chevron 资产，
-        // 缺失才用 ‹ / › 文字兜底（兜底不是正式图标，不动）。
-        let pageNavStack = UIStackView(arrangedSubviews: [prevButton, nextButton])
-        pageNavStack.translatesAutoresizingMaskIntoConstraints = false
-        pageNavStack.axis = .horizontal
-        pageNavStack.alignment = .center
-        pageNavStack.spacing = 6
-        let controlsRow = UIStackView(arrangedSubviews: [controlsSpacer, todayButton, toggleButton, pageNavStack])
-        controlsRow.translatesAutoresizingMaskIntoConstraints = false
-        controlsRow.axis = .horizontal
-        controlsRow.alignment = .center
-        controlsRow.spacing = BearySpace.md
+        let titleSpacer = UIView()
+        titleSpacer.translatesAutoresizingMaskIntoConstraints = false
+        titleRow.addArrangedSubview(titleTextStack)
+        titleRow.addArrangedSubview(titleSpacer)
+        titleRow.addArrangedSubview(todayButton)
 
+        // 星期头行按 locale 取首日重排（#2092 同口径，不写死周一）：
+        // veryShortWeekdaySymbols 本就是周日起排，按 firstWeekday 旋转；
+        // 取不到 7 个符号时回落中文周一起始（不裸奔）。
         let weekdayRow = UIStackView()
         weekdayRow.translatesAutoresizingMaskIntoConstraints = false
         weekdayRow.axis = .horizontal
         weekdayRow.distribution = .fillEqually
-        for weekdayName in ["一", "二", "三", "四", "五", "六", "日"] {
+        let symbols = Calendar.current.veryShortWeekdaySymbols
+        let weekdayNames: [String] = symbols.count == 7 ? symbols : ["日", "一", "二", "三", "四", "五", "六"]
+        let firstWeekday = BearyBeijingDay.localeFirstWeekday
+        for offset in 0..<7 {
             let label = UILabel()
-            label.text = weekdayName
+            label.text = weekdayNames[(firstWeekday - 1 + offset) % 7]
             // 8-3 例外：星期单字属日历格装饰头，不缩放。
             label.font = UIFont.systemFont(ofSize: 12)
             label.textColor = BearyColors.gray
@@ -511,34 +531,51 @@ final class BearyCalendarCardView: UIView {
         gridStack.translatesAutoresizingMaskIntoConstraints = false
         gridStack.axis = .vertical
 
-        let outer = UIStackView(arrangedSubviews: [titleRow, controlsRow, weekdayRow, gridStack])
+        // 手势提示（模式相关文案见 render）：周视图下拉展开、左右切周；
+        // 月视图上滑收起、左右切月。
+        gestureHintLabel.translatesAutoresizingMaskIntoConstraints = false
+        gestureHintLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        gestureHintLabel.adjustsFontForContentSizeCategory = true
+        gestureHintLabel.textColor = BearyColors.gray
+        gestureHintLabel.textAlignment = .center
+        gestureHintLabel.text = "向下滑动展开整月 · 左右滑动切换周"
+
+        let outer = UIStackView(arrangedSubviews: [titleRow, weekdayRow, gridStack, gestureHintLabel])
         outer.translatesAutoresizingMaskIntoConstraints = false
         outer.axis = .vertical
         outer.spacing = 0
         outer.setCustomSpacing(8, after: titleRow)
-        outer.setCustomSpacing(8, after: controlsRow)
         outer.setCustomSpacing(BearySpace.sm, after: weekdayRow)
+        outer.setCustomSpacing(4, after: gridStack)
         addSubview(outer)
         NSLayoutConstraint.activate([
             outer.topAnchor.constraint(equalTo: topAnchor, constant: BearySpace.lg),
             outer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: BearySpace.lg),
             outer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -BearySpace.lg),
             outer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -BearySpace.lg),
-            todayButton.widthAnchor.constraint(equalToConstant: 32),
-            todayButton.heightAnchor.constraint(equalToConstant: 32),
-            toggleButton.heightAnchor.constraint(equalToConstant: 32),
-            // 第 7 轮属实项 1：切换钮不再钉死 64。64 只作最小宽（内边距
-            // 12+12 + 默认字号 3 字标题的旧定值）；大字号下标题变宽时按钮随
-            // 内容增长，不再裁字。旧 64 包反馈修“两态同宽”与审计-时间线
-            // “宽度档位未定版前不改数值”的注释随本支 supersede：此前 V4
-            // 宽度档位待 Li 定版，本支按报告方向实现，Li 可再纠正数值。
-            // 其余数值（高 32、圆角 16、内边距 12、翻页钮 32）一律不动。
-            toggleButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 64),
-            prevButton.widthAnchor.constraint(equalToConstant: 32),
-            prevButton.heightAnchor.constraint(equalToConstant: 32),
-            nextButton.widthAnchor.constraint(equalToConstant: 32),
-            nextButton.heightAnchor.constraint(equalToConstant: 32),
+            todayButton.heightAnchor.constraint(equalToConstant: 28),
         ])
+
+        // 轻扫手势（卡片整块）：左/右切周或切月（VC 内按模式换算），
+        // 下滑只在周视图展开整月、上滑只在月视图收起回周条；慢速拖动
+        // 仍走列表滚动（不抢滚动），轻扫才触发——与预览的下拉/上滑口径
+        // 一致，见 PR 说明。
+        let swipeLeft = UISwipeGestureRecognizer(target: self, action: #selector(didSwipeLeft))
+        swipeLeft.direction = .left
+        swipeLeft.cancelsTouchesInView = false
+        addGestureRecognizer(swipeLeft)
+        let swipeRight = UISwipeGestureRecognizer(target: self, action: #selector(didSwipeRight))
+        swipeRight.direction = .right
+        swipeRight.cancelsTouchesInView = false
+        addGestureRecognizer(swipeRight)
+        let swipeDown = UISwipeGestureRecognizer(target: self, action: #selector(didSwipeDown))
+        swipeDown.direction = .down
+        swipeDown.cancelsTouchesInView = false
+        addGestureRecognizer(swipeDown)
+        let swipeUp = UISwipeGestureRecognizer(target: self, action: #selector(didSwipeUp))
+        swipeUp.direction = .up
+        swipeUp.cancelsTouchesInView = false
+        addGestureRecognizer(swipeUp)
 
         // R15-L1：失败行挂在网格下方（卡内最后一行），默认隐藏、不占位；
         // 显隐只由 setLoadFailed 改，render 的格子签名不管它。
@@ -561,40 +598,11 @@ final class BearyCalendarCardView: UIView {
         calendarFailedRow.addArrangedSubview(UIView())
         calendarFailedRow.isHidden = true
         outer.addArrangedSubview(calendarFailedRow)
-        outer.setCustomSpacing(8, after: gridStack)
+        outer.setCustomSpacing(8, after: gestureHintLabel)
     }
 
     required init?(coder: NSCoder) {
         return nil
-    }
-
-    /// 审计-时间线：顶行 Hit44 热区重划——32pt 钮各扩 6pt 后，相邻热区在 6pt 间隙内重叠 6pt；
-    /// 顶行条带内按视觉归属分区（离哪钮中心近归哪钮），禁用钮不抢区（落回默认 hitTest）；
-    /// 其余区域走默认；重划逻辑未经真机验证（见 PR 说明，需真机点按复验）。
-    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        let candidates = [todayButton, toggleButton, prevButton, nextButton].filter { !$0.isHidden }
-        if !candidates.isEmpty {
-            var expanded: [(button: UIButton, rect: CGRect)] = []
-            var minY = CGFloat.greatestFiniteMagnitude
-            var maxY = -CGFloat.greatestFiniteMagnitude
-            var minX = CGFloat.greatestFiniteMagnitude
-            var maxX = -CGFloat.greatestFiniteMagnitude
-            for button in candidates {
-                let rect = convert(button.bounds, from: button).insetBy(dx: -6, dy: -6)
-                expanded.append((button, rect))
-                minY = min(minY, rect.minY)
-                maxY = max(maxY, rect.maxY)
-                minX = min(minX, rect.minX)
-                maxX = max(maxX, rect.maxX)
-            }
-            if point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY {
-                let sorted = expanded.sorted { abs(point.x - $0.rect.midX) < abs(point.x - $1.rect.midX) }
-                for entry in sorted where entry.button.isEnabled && entry.rect.contains(point) {
-                    return entry.button
-                }
-            }
-        }
-        return super.hitTest(point, with: event)
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -602,57 +610,56 @@ final class BearyCalendarCardView: UIView {
         layer.bearyDynamicBorderColor = BearyColors.line
     }
 
-    /// 标题只在值变化时更新：同周/同月内切日期标题值不变时不重复赋值、
+    /// 年月标题只在值变化时更新：同月内切日期标题值不变时不重复赋值、
     /// 不重排；fadeTitleForDaySwitch 只在标题真变了时才淡入，同值切日期
     /// 不再先置 0 再淡回（即此前“标题闪一下”的来源）。
     private var titleChangedSinceSet = false
 
-    func setTitle(_ text: String) {
-        guard titleLabel.text != text else {
+    /// 年月标题常驻（周/月视图同一块日历，标题只写年月）：年份与月份
+    /// 数字分开设值（各是独立的长按把手），值不变时不重复赋值。
+    func setYearMonth(year: Int, month: Int) {
+        let yearText = "\(year)"
+        let monthText = "\(month)"
+        guard yearNumberLabel.text != yearText || monthNumberLabel.text != monthText else {
             titleChangedSinceSet = false
             return
         }
-        titleLabel.text = text
+        yearNumberLabel.text = yearText
+        monthNumberLabel.text = monthText
+        yearNumberLabel.accessibilityLabel = "\(year) 年"
+        monthNumberLabel.accessibilityLabel = "\(month) 月"
         titleChangedSinceSet = true
     }
 
     /// N3：换日时日历标题淡入（0.18s、只动 alpha；减动效时调用方不调本方法）。
-    /// 标题 label 是卡内常驻节点，不重建、不重播其他元素；标题值未变时直接
+    /// 标题是卡内常驻节点，不重建、不重播其他元素；标题值未变时直接
     /// 返回，不播淡入。
     func fadeTitleForDaySwitch() {
         guard titleChangedSinceSet else { return }
         titleChangedSinceSet = false
-        titleLabel.alpha = 0
+        titleTextStack.alpha = 0
         UIView.animate(withDuration: BearyMotion.micro, animations: {
-            self.titleLabel.alpha = 1
+            self.titleTextStack.alpha = 1
         })
     }
 
-    /// 周视图下按钮文案为“月视图”，月视图下为“周视图”（网页 calViewBtn 口径）。
-    func setToggleTitle(_ text: String) {
-        toggleButton.setTitle(text, for: .normal)
-    }
-
-    func setNavigation(prevEnabled: Bool, nextEnabled: Bool) {
-        prevButton.isEnabled = prevEnabled
-        nextButton.isEnabled = nextEnabled
-        prevButton.alpha = prevEnabled ? 1 : 0.35
-        nextButton.alpha = nextEnabled ? 1 : 0.35
-    }
-
-    /// C10 “今”钮显隐（VC 在每次 renderCalendar 末尾重算）：浮现 0.18s
-    /// 淡入、隐藏 0.18s 淡出后才 isHidden（栈内不占位）；减动效直设终值。
-    /// 重复调用同态时直接返回，不重播淡入淡出。
+    /// “回到今天”小药丸显隐（VC 在每次 renderCalendar 末尾重算）：
+    /// 浮现淡入＋回弹缩放（0.35s、阻尼 0.7）、隐藏淡出后才 isHidden
+    /// （栈内不占位）；减动效直设终值。重复调用同态时直接返回，不重播。
     func setTodayButtonVisible(_ visible: Bool) {
         if visible {
             guard todayButton.isHidden || todayButton.alpha < 1 else { return }
             todayButton.isHidden = false
             if UIAccessibility.isReduceMotionEnabled {
                 todayButton.alpha = 1
+                todayButton.transform = .identity
             } else {
-                UIView.animate(withDuration: BearyMotion.micro, animations: {
+                todayButton.alpha = 0
+                todayButton.transform = CGAffineTransform(scaleX: 0.85, y: 0.85)
+                UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0.5, options: [.beginFromCurrentState], animations: {
                     self.todayButton.alpha = 1
-                })
+                    self.todayButton.transform = .identity
+                }, completion: nil)
             }
         } else {
             guard !todayButton.isHidden else { return }
@@ -662,8 +669,10 @@ final class BearyCalendarCardView: UIView {
             } else {
                 UIView.animate(withDuration: BearyMotion.micro, animations: {
                     self.todayButton.alpha = 0
+                    self.todayButton.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
                 }, completion: { _ in
                     self.todayButton.isHidden = true
+                    self.todayButton.transform = .identity
                 })
             }
         }
@@ -694,9 +703,12 @@ final class BearyCalendarCardView: UIView {
     /// weekKeys：月视图入场错峰时要跳过的本周日期 key（网页 calStaggerMonthCells
     /// 口径：本周格子不加 .cal-in）。周视图下本参数无用。
     func render(days: [BearyCalendarDay], mode: ViewMode, weekKeys: Set<String> = []) {
+        currentMode = mode
+        // 手势提示按模式换文案（周视图：下拉展开、左右切周；月视图：上滑收起、左右切月）。
+        gestureHintLabel.text = (mode == .week) ? "向下滑动展开整月 · 左右滑动切换周" : "向上滑动收起整月 · 左右滑动切换月份"
         // 审计-时间线：月份回包增量——格子签名不变时不重建网格行（复用格子不重播错峰）；
         // 签名含 key/跨月/未来/今天/选中/篇数/加载态/失败态，任一变化即重建。
-        let daysSignature = "\(mode)|" + days.map { "\($0.key)|\($0.isOffMonth)|\($0.isFuture)|\($0.isToday)|\($0.isSelected)|\($0.published)|\($0.unpublished)|\($0.dataLoaded)|\($0.dataFailed)" }.joined(separator: ";")
+        let daysSignature = "\(mode)|" + days.map { "\($0.key)|\($0.isOffMonth)|\($0.isFuture)|\($0.isToday)|\($0.isSelected)|\($0.published)|\($0.unpublished)|\($0.friends)|\($0.limited)|\($0.dataLoaded)|\($0.dataFailed)" }.joined(separator: ";")
         if daysSignature == lastRenderedDaysSignature { return }
         lastRenderedDaysSignature = daysSignature
         // 日历卡底色与页面背景同色：周/月视图卡填充均走 BearyColors.bg（动态色，
@@ -704,9 +716,6 @@ final class BearyCalendarCardView: UIView {
         // 日记卡等其他卡片一律不动。（#410 只改了月视图，周视图仍走 surface
         // 深灰，本支补齐周视图。）
         backgroundColor = BearyColors.bg
-        // F3：翻页钮按周/月模式补无障碍文案。
-        prevButton.accessibilityLabel = (mode == .week) ? "上一周" : "上个月"
-        nextButton.accessibilityLabel = (mode == .week) ? "下一周" : "下个月"
         let wantedKeys = Set(days.map { $0.key })
         for key in Array(buttonByKey.keys) {
             if !wantedKeys.contains(key) {
@@ -778,20 +787,95 @@ final class BearyCalendarCardView: UIView {
         }
     }
 
-    @objc private func didTapToggle() {
-        onToggleView?()
-    }
-
     @objc private func didTapToday() {
         onGoToday?()
     }
 
-    @objc private func didTapPrevious() {
-        onPrevious?()
+    /// 轻扫：左滑去下一周/月、右滑回上一周/月（VC 内按模式换算步长）；
+    /// 下滑只在周视图展开整月、上滑只在月视图收起回周条。
+    @objc private func didSwipeLeft() {
+        resignYearMonthFocus()
+        onStepCalendar?(1)
     }
 
-    @objc private func didTapNext() {
-        onNext?()
+    @objc private func didSwipeRight() {
+        resignYearMonthFocus()
+        onStepCalendar?(-1)
+    }
+
+    @objc private func didSwipeDown() {
+        guard currentMode == .week else { return }
+        resignYearMonthFocus()
+        onToggleView?()
+    }
+
+    @objc private func didSwipeUp() {
+        guard currentMode == .month else { return }
+        resignYearMonthFocus()
+        onToggleView?()
+    }
+
+    /// 年月数字点按聚焦：成为第一响应者（方向键可用）并亮起；
+    /// 另一数字聚焦时先收回。切日/切视图/轻扫时收回（见 didTapDay 与各轻扫）。
+    @objc private func didTapYearNumber() {
+        focusYearMonthLabel(yearNumberLabel)
+    }
+
+    @objc private func didTapMonthNumber() {
+        focusYearMonthLabel(monthNumberLabel)
+    }
+
+    private func focusYearMonthLabel(_ label: BearyCalendarTitleNumberLabel) {
+        for other in [yearNumberLabel, monthNumberLabel] where other !== label {
+            other.isTitleFocused = false
+            other.resignFirstResponder()
+        }
+        label.isTitleFocused = true
+        _ = label.becomeFirstResponder()
+    }
+
+    /// 收回年月聚焦（切日/切视图/轻扫时调，不改标题值）。
+    func resignYearMonthFocus() {
+        for label in [yearNumberLabel, monthNumberLabel] {
+            label.isTitleFocused = false
+            label.resignFirstResponder()
+        }
+    }
+
+    /// 年月长按拖动（0.4 秒亮起后上下拖，30pt 一步）：下拖 +1、上拖 -1；
+    /// 年只换年、月只换月（拖过 12 月自动跨年由 VC 的 shiftedMonth 处理）。
+    @objc private func handleYearLongPress(_ gesture: UILongPressGestureRecognizer) {
+        handleTitleLongPress(gesture, isYear: true)
+    }
+
+    @objc private func handleMonthLongPress(_ gesture: UILongPressGestureRecognizer) {
+        handleTitleLongPress(gesture, isYear: false)
+    }
+
+    private func handleTitleLongPress(_ gesture: UILongPressGestureRecognizer, isYear: Bool) {
+        let label = isYear ? yearNumberLabel : monthNumberLabel
+        switch gesture.state {
+        case .began:
+            label.isTitleFocused = true
+            titleDragAnchorY = gesture.location(in: label).y
+            titleDragConsumedY = 0
+        case .changed:
+            let deltaY = gesture.location(in: label).y - titleDragAnchorY - titleDragConsumedY
+            let steps = Int(deltaY / 30)
+            guard steps != 0 else { return }
+            titleDragConsumedY += CGFloat(steps) * 30
+            if isYear {
+                onStepYear?(steps)
+            } else {
+                onStepMonth?(steps)
+            }
+        case .ended, .cancelled, .failed:
+            label.isTitleFocused = false
+            titleDragAnchorY = 0
+            titleDragConsumedY = 0
+        default:
+            break
+        }
     }
 
     @objc private func didTapDay(_ sender: BearyCalendarDayButton) {
@@ -799,6 +883,7 @@ final class BearyCalendarCardView: UIView {
         // 5-22 第二道守卫：跨月占位格即使上层 isEnabled 漏算仍不可点，
         // 此处直接返回，不进 selectDay。
         guard !day.isOffMonth else { return }
+        resignYearMonthFocus()
         onSelectDay?(day)
     }
 }
