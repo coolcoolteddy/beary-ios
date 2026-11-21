@@ -8742,7 +8742,11 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                 })
             }
         }
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
+        // 取消行已摘，只剩动作行；过期限时篇可能让动作全落空（同广场卡片菜单
+        // 的既有守卫），零项时不 present，不弹空表。
+        if actions.isEmpty {
+            return
+        }
         BearyConfirmSheet.show(from: self, title: "", message: nil, actions: actions)
     }
 
@@ -9077,7 +9081,6 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                 }
             }
         })
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: self, title: "", message: nil, actions: actions)
     }
 

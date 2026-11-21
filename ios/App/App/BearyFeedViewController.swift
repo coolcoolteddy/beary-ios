@@ -2942,7 +2942,6 @@ class BearyFeedViewController: UIViewController {
         if actions.isEmpty {
             return
         }
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: self, title: "", message: nil, actions: actions)
     }
 

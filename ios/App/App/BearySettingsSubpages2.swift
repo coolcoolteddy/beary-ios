@@ -723,7 +723,6 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
                 self?.saveDMLevel(option.value)
             }, isSelected: option.value == dmLevel)
         }
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: self, title: "谁可以私信我", message: "你关注的人始终可以给你发私信", actions: actions)
     }
 

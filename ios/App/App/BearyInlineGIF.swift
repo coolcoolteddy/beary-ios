@@ -387,7 +387,6 @@ enum BearyGIFAddPresenter {
                     }
                 }
             }),
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
         ])
     }
 
