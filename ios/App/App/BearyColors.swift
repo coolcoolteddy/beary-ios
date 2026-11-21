@@ -10,9 +10,11 @@ enum BearyColors {
     static var ink: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.96, alpha: 1) : .black } }
     static var gray: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.66, alpha: 1) : UIColor(white: 0.45, alpha: 1) } }
     static var orange: UIColor { UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1) }
-    /// 收藏选中金：暖金 #FFCC00（2026-11-21 Li 定，规范 v12 选 1：收藏选中色从 orange 换暖金，
-    /// 橙只留给公开档位）。只用于收藏选中态；公开 pill／公开橙边／FAB／置顶等仍走 orange，不动。
-    static var bookmarkGold: UIColor { UIColor(red: 1.0, green: 204.0/255.0, blue: 0.0, alpha: 1) }
+    /// 收藏选中金：浅 #B8860B／深 #FFCC00（2026-11-21 Li 定，规范 v12 选 1：收藏选中色从 orange 换暖金，
+    /// 橙只留给公开档位；单值 #FFCC00 浅色对白底仅 1.51:1、不到非文本 3:1 线，故拆深浅）。
+    /// 浅色对白底约 3.25:1、深色对黑底约 13.89:1，均 ≥3:1。只用于收藏选中态；
+    /// 公开 pill／公开橙边／FAB／置顶等仍走 orange，不动。
+    static var bookmarkGold: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 204.0/255.0, blue: 0.0, alpha: 1) : UIColor(red: 184.0/255.0, green: 134.0/255.0, blue: 11.0/255.0, alpha: 1) } }
     /// 品牌橙上的固定前景色（深墨色，视觉清单第 5 项）：固定纯黑，不随深浅切换。
     /// 不用 ink——ink 深色下是近白，放在固定橙底上会变白字（白字/橙底对比度
     /// 仅约 2.20:1，见 #508 注释）；onBrand 在深浅两模式下恒为墨色，
