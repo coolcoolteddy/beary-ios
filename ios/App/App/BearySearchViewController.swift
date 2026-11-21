@@ -1442,7 +1442,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             pending += 1
             let localOffset = searchMineLocalOffset
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                let page = BearyMineSearchIndex.shared.searchMine(query: query, offset: localOffset)
+                let page = BearyMineSearchIndex.shared.searchMine(query: query, offset: localOffset).entries
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
                     if seq != self.searchSeq { return }
@@ -1576,11 +1576,16 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 第十二轮 02（搜索链路审计）：设备 FTS 与服务端搜索真正并行——
         // 两路同时出发，各自完成后在主线程按 searchSeq 合并、逐步更新结果。
         // 旧写法是服务端回包后才同步查本地索引：慢归档拖住公开组和用户组，
-        // 断网时本地搜索直接跳过。FTS 失败／本地归档不完整时返回 []，
-        // 服务端「我的」组原样兜底，不断档；公开组与用户组不碰，仍是服务端原样。
+        // 断网时本地搜索直接跳过。FTS 失败／本地归档无标记或无可读日时返回空，
+        // 服务端「我的」组原样兜底，不断档；部分归档（标记在且账号相符、但
+        // 全量读盘失败）只搜可读日，断网只渲本地组时列表头亮「仅搜索已下载
+        // 的部分日记」；公开组与用户组不碰，仍是服务端原样。
         // 下面两路只在主线程读写共享态（serverResult / searchLocalMineEntries /
         // 各 done 位），后台线程只做 FTS 计算、不碰共享态；旧轮回包凭 searchSeq 丢弃。
         var serverResult: Result<SearchResult, APIError>?
+        // 本轮本地结果是否只来自部分归档（与 searchLocalMineEntries 同批由 FTS 腿带回，
+        // 主线程读——后台腿写完才发主线程回包，无竞态）。
+        var ftsPartialArchive = false
         var ftsDone = false
         var serverApplied = false
         // 两路任一到达即调：只能在主线程调用。
@@ -1605,6 +1610,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             self.searchServerPending = false
             switch serverResult {
             case .success(var data):
+                // 服务端回包在手，「我的」组合并后是完整口径（本地只是子集
+                // 补充），不亮部分归档横幅（见 failure 分支的本地兜底）。
+                self.partialArchiveNotice = false
                 if !serverApplied {
                     serverApplied = true
                     self.recordRecentSearch(trimmed)
@@ -1629,8 +1637,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 self.setBoxBusy(false)
                 if !self.searchLocalMineEntries.isEmpty {
                     // 断网兜底：只渲本地「我的」组（公开组与用户组不编造数据）；
+                    // 断网兜底：只渲本地「我的」组（公开组与用户组不编造数据）；
+                    // 本地归档是部分态时，列表头亮「仅搜索已下载的部分日记」
+                    // （renderResults 末尾经 updatePartialArchiveBanner 亮起）；
+                    // 尾行重试入口照旧亮起，提示服务端那半失败了。
                     // 本地仍有下一批时尾行亮“加载更多”走本地翻页（见 loadMore
                     // 本地腿）；本地取尽时才亮整搜重试。
+                    self.partialArchiveNotice = ftsPartialArchive
                     self.searchMineLocalOnly = true
                     self.searchHasMoreMine = self.searchMineLocalHasMore
                     let localOnly = SearchResult(users: nil, entries: nil, mine: self.searchLocalMineEntries)
@@ -1662,7 +1675,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 本地 FTS 腿：与服务端请求同时出发，后台算、回主线程交结果。
         // searchMine 是同步调用、内部有自己的串行队列，须在后台队列调。
         DispatchQueue.global(qos: .userInitiated).async {
-            let mine = BearyMineSearchIndex.shared.searchMine(query: trimmed)
+            let mineResult = BearyMineSearchIndex.shared.searchMine(query: trimmed)
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 // 旧轮 FTS 晚到：序号守卫丢弃，不碰本轮本地集。
@@ -1670,10 +1683,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 ftsDone = true
                 // 首批记入本轮本地集：后续离线翻页继续追加；服务端晚到
                 // 重渲时 mergedMine 用累计集，已翻出的本地页不丢。
-                self.searchLocalMineEntries = mine
-                self.searchMineLocalOffset = mine.count
-                self.searchMineLocalHasMore = mine.count == 20
-                self.ftsMineEntryIds = Set(mine.compactMap { $0.id })
+                self.searchLocalMineEntries = mineResult.entries
+                ftsPartialArchive = mineResult.partialArchive
+                self.searchMineLocalOffset = mineResult.entries.count
+                self.searchMineLocalHasMore = mineResult.entries.count == 20
+                self.ftsMineEntryIds = Set(mineResult.entries.compactMap { $0.id })
                 applySearchLegs()
             }
         }
@@ -2018,6 +2032,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 88 包 M13：失败重试改走结果区尾行（原行内重试行已并入尾行）。
         setSearchFooter(failed: true)
         updateStaleResultsBanner()
+        updatePartialArchiveBanner()
         updateLocalOnlyBanner()
     }
 
@@ -2143,6 +2158,57 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         banner.removeFromSuperview()
     }
 
+    /// 部分归档提示横幅——断网兜底只渲本地「我的」组、且本地归档只是部分
+    /// 可读时，列表头亮「仅搜索已下载的部分日记」。与 B2 旧结果横幅同样式、
+    /// 同位置（都是 resultsStack 的首个 arranged 子视图），同由
+    /// clearResultRows 摘掉；renderResults 与 showFailedStateKeepingResults
+    /// 末尾随 updateStaleResultsBanner 一并刷新（两条同时亮时本横幅在上）。
+    /// partialArchiveNotice 只在两处改：服务端成功回包时清掉，断网本地
+    /// 兜底时按本轮 FTS 腿的 partialArchive 置起——新搜索加载中旧结果仍在
+    /// 屏时不碰它（屏上仍是上一轮的部分子集，横幅留着才对）；拉黑／举报
+    /// 重渲同批部分数据时横幅照旧留着（数据仍是部分子集）。
+    private var partialArchiveBanner: UIView?
+    private var partialArchiveNotice = false
+
+    private func updatePartialArchiveBanner() {
+        guard showingResults, partialArchiveNotice else {
+            removePartialArchiveBanner()
+            return
+        }
+        let text = "仅搜索已下载的部分日记"
+        if let banner = partialArchiveBanner, banner.superview == resultsStack,
+           let label = banner.subviews.first as? UILabel {
+            label.text = text
+            return
+        }
+        removePartialArchiveBanner()
+        let wrap = UIView()
+        wrap.translatesAutoresizingMaskIntoConstraints = false
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.gray
+        label.numberOfLines = 0
+        label.text = text
+        wrap.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 12),
+            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 6),
+            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -6),
+            label.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -4),
+        ])
+        partialArchiveBanner = wrap
+        resultsStack.insertArrangedSubview(wrap, at: 0)
+    }
+
+    private func removePartialArchiveBanner() {
+        guard let banner = partialArchiveBanner else { return }
+        partialArchiveBanner = nil
+        resultsStack.removeArrangedSubview(banner)
+        banner.removeFromSuperview()
+    }
+
     /// 尾行四态（与时间线/个人主页尾行同形态；搜索进行时不显示尾行，只转框内圈）：
     /// 未出结果时隐藏；出结果后：翻页进行中 → 转圈；翻页失败 → 重试钮
     /// （走 loadMore 再试）；整搜失败保结果 → 重试钮（走整搜重跑，见
@@ -2263,8 +2329,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             resultsStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        // B2：旧结果提示横幅随结果区一并摘掉（视图已在上循环里移除）。
+        // B2：旧结果提示横幅与部分归档横幅随结果区一并摘掉（视图已在上循环里移除）。
         staleResultsBanner = nil
+        partialArchiveBanner = nil
         localOnlyBanner = nil
         mineSectionHeader = nil
         publicSectionHeader = nil
@@ -2453,7 +2520,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // B2：拉黑/举报过滤后按旧词重渲时，旧结果提示横幅须重新亮起
         // （clearResultRows / syncResultRowsReuse 已摘旧横幅；新词成功渲染时
         // 本调用自行摘横幅）。放行入场动画之前，横幅先占位、行在其下入场。
+        // 部分归档横幅同此刷新（只在断网本地兜底渲染时 partialArchiveNotice 为真）。
         updateStaleResultsBanner()
+        updatePartialArchiveBanner()
         updateLocalOnlyBanner()
         // 第七轮 02：横幅也可能插在结果上方，恢复放在横幅落位之后、
         // 入场动画之前，一次把锚点行顶回原视口位置。

@@ -192,6 +192,70 @@ enum BearyEntrySyncStore {
         return found
     }
 
+    /// 部分归档快照（离线搜索部分态）：逐日解码，只取可读日——活盘损坏时
+    /// .bak 回落仍算可读，仍不可恢复的坏日跳过，不参与计数、不进索引。
+    /// 与 loadAllEntries 的区别：不复用「总数对不上即整体 nil」的口径——
+    /// 任一日不可恢复／总数对不上标记时，loadAllEntries 返回 nil，本函数
+    /// 仍返回其余可读日的并集（与 loadAllEntries 同款排序去重）。
+    /// nil 只在三种情形下返回：无标记／标记账号不符／无可读日——账号正确
+    /// 且至少一日可读是部分态的前提；无标记时不认部分态（fail-closed，
+    /// 调用方走服务端兜底）。标记总数为 0 且无日文件时同样返回 nil
+    /// （无可读日），与“已同步、本地无日记”的完整空档区分——完整空档
+    /// 走 loadAllEntries 的空数组路径，不进部分态。
+    /// 判定口径与 readableDataSummary 同款（按日解码、损坏日不计），只
+    /// 多两点：标记账号校验，以及 .bak 可恢复的日算可读（与 loadAllEntries
+    /// 经 loadDay 的回落口径一致；readableDataSummary 只读活盘，供
+    /// markDiaryPartial 的状态计数用，不复用）。
+    /// 同步读盘，调用方须在后台队列调。
+    static func loadReadableEntries(accountId: Int) -> [Entry]? {
+        guard let marker = loadCompletion(accountId: accountId),
+              marker.accountId == accountId,
+              let dir = accountDir(accountId: accountId) else { return nil }
+        var merged: [Entry] = []
+        var anyReadable = false
+        for dayKey in dayKeys(in: dir) {
+            guard let entries = loadDay(accountId: accountId, dayKey: dayKey) else { continue }
+            anyReadable = true
+            merged.append(contentsOf: entries)
+        }
+        guard anyReadable else { return nil }
+        merged.sort { (a, b) in
+            if a.createdAt != b.createdAt { return (a.createdAt ?? 0) > (b.createdAt ?? 0) }
+            return (a.id ?? "") > (b.id ?? "")
+        }
+        var seenIds = Set<String>()
+        let deduped = merged.filter { entry in
+            guard let id = entry.id else { return true }
+            if seenIds.contains(id) { return false }
+            seenIds.insert(id)
+            return true
+        }
+        return deduped
+    }
+
+    /// 按 id 取回日记（部分态）：只读命中 id 所在的日文件（最新日优先、找齐即停），
+    /// 不读全量、不排序、不去重——调用方（搜索）按 FTS 返回序取用。
+    /// 与 loadEntries 的区别：不可恢复的坏日跳过不判 nil（loadEntries 任一日
+    /// 坏即整体 nil）；无可读日时返回空数组（调用方按无命中处理）。
+    /// 注意：本函数不核对完整性标记，调用方须先确认是部分态（索引即按
+    /// loadReadableEntries 的可读日快照所建，坏日里的 id 本就不在索引里）。
+    static func loadReadableEntries(accountId: Int, byIds ids: Set<String>) -> [Entry]? {
+        guard !ids.isEmpty else { return [] }
+        guard let dir = accountDir(accountId: accountId) else { return nil }
+        var found: [Entry] = []
+        var remaining = ids
+        for dayKey in dayKeys(in: dir).sorted().reversed() {
+            guard let entries = loadDay(accountId: accountId, dayKey: dayKey) else { continue }
+            for entry in entries {
+                guard let id = entry.id, remaining.contains(id) else { continue }
+                found.append(entry)
+                remaining.remove(id)
+                if remaining.isEmpty { return found }
+            }
+        }
+        return found
+    }
+
     /// 写某日落盘（单日写透：时间线日拉取/预取成功、发布/编辑 upsert 均走这里）。
     /// 返回写盘是否成功：任一步失败或回读校验不过均为 false。
     @discardableResult

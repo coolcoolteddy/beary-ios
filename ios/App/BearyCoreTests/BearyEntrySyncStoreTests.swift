@@ -117,6 +117,69 @@ final class BearyEntrySyncStoreTests: XCTestCase {
         XCTAssertEqual(result.skippedCount, 1)
     }
 
+    // MARK: - 部分归档可读（离线搜索部分态）
+
+    /// 帮手：不经 saveDay 直接写一日文件（绕开标记计数维护，专造
+    /// “总数对不上标记”的部分态；编码口径与落盘一致）。
+    private func writeDayFileRaw(dayKey: String, entries: [Entry]) {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try! encoder.encode(entries)
+        let url = BearyEntrySyncStore.dayFileURL(accountId: testAccountId, dayKey: dayKey)!
+        try! FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try! data.write(to: url, options: .atomic)
+    }
+
+    func testLoadReadableEntriesSkipsUnrecoverableDay() {
+        // 两日全量提交（标记总数 2）；随后把其中一日活盘文件写坏
+        // （本支是全新账号、无 .bak 可回落，该日不可恢复）。
+        XCTAssertTrue(BearyEntrySyncStore.commitFullSync(accountId: testAccountId, grouped: [
+            "2025-01-01": [makeEntry(id: "e1", createdAtMs: 1735689600000)],
+            "2025-01-02": [makeEntry(id: "e2", createdAtMs: 1735776000000)],
+        ]))
+        XCTAssertTrue(BearyEntrySyncStore.isArchiveComplete(accountId: testAccountId))
+        let badURL = BearyEntrySyncStore.dayFileURL(accountId: testAccountId, dayKey: "2025-01-02")!
+        try! Data("not json".utf8).write(to: badURL, options: .atomic)
+        // 全量读盘整体 nil（任一日不可恢复即不认）；部分读盘只返回可读日。
+        XCTAssertNil(BearyEntrySyncStore.loadAllEntries(accountId: testAccountId))
+        XCTAssertEqual(BearyEntrySyncStore.loadReadableEntries(accountId: testAccountId)?.map({ $0.id }), ["e1"])
+        // 按 id 取回（部分态）：坏日里的 id 取不到，好日里的能取到，不判 nil。
+        XCTAssertEqual(BearyEntrySyncStore.loadReadableEntries(accountId: testAccountId, byIds: ["e1", "e2"])?.map({ $0.id }), ["e1"])
+        // 对照：严格取回任一日坏即整体 nil。
+        XCTAssertNil(BearyEntrySyncStore.loadEntries(accountId: testAccountId, byIds: ["e1", "e2"]))
+    }
+
+    func testLoadReadableEntriesIgnoresCountMismatch() {
+        // 一日全量提交（标记总数 1）；再直接落第二日（不维护标记计数），
+        // 标记总数对不上实际篇数。
+        XCTAssertTrue(BearyEntrySyncStore.commitFullSync(accountId: testAccountId, grouped: [
+            "2025-01-01": [makeEntry(id: "e1", createdAtMs: 1735689600000)],
+        ]))
+        writeDayFileRaw(dayKey: "2025-01-02", entries: [makeEntry(id: "e2", createdAtMs: 1735776000000)])
+        // 全量读盘整体 nil（总数对不上）；部分读盘返回全部可读日，不判 nil。
+        XCTAssertNil(BearyEntrySyncStore.loadAllEntries(accountId: testAccountId))
+        XCTAssertEqual(BearyEntrySyncStore.loadReadableEntries(accountId: testAccountId)?.map({ $0.id }), ["e2", "e1"])
+    }
+
+    func testLoadReadableEntriesNilWithoutMarker() {
+        // 只有落盘日、无完整性标记：不认部分态（fail-closed），调用方走服务端。
+        XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: testAccountId, dayKey: "2025-01-01", entries: [makeEntry(id: "e1", createdAtMs: 1735689600000)]))
+        XCTAssertFalse(BearyEntrySyncStore.isArchiveComplete(accountId: testAccountId))
+        XCTAssertNil(BearyEntrySyncStore.loadAllEntries(accountId: testAccountId))
+        XCTAssertNil(BearyEntrySyncStore.loadReadableEntries(accountId: testAccountId))
+    }
+
+    func testLoadReadableEntriesNilWhenNoDayReadable() {
+        // 归档损坏：唯一一日不可恢复——部分读盘同样 nil，维持 fail-closed。
+        XCTAssertTrue(BearyEntrySyncStore.commitFullSync(accountId: testAccountId, grouped: [
+            "2025-01-01": [makeEntry(id: "e1", createdAtMs: 1735689600000)],
+        ]))
+        let badURL = BearyEntrySyncStore.dayFileURL(accountId: testAccountId, dayKey: "2025-01-01")!
+        try! Data("not json".utf8).write(to: badURL, options: .atomic)
+        XCTAssertNil(BearyEntrySyncStore.loadAllEntries(accountId: testAccountId))
+        XCTAssertNil(BearyEntrySyncStore.loadReadableEntries(accountId: testAccountId))
+    }
+
     // MARK: - 回收站整桶写盘
 
     func testTrashSaveAllRoundTripReturnsTrue() {
