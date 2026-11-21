@@ -81,6 +81,32 @@ enum BearyColors {
     /// 限时气泡底（预览值）：深 #1d1d1f／浅 #f4f4f2。
     static var limitedBubbleBg: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 29.0/255.0, green: 29.0/255.0, blue: 31.0/255.0, alpha: 1) : UIColor(red: 244.0/255.0, green: 244.0/255.0, blue: 242.0/255.0, alpha: 1) } }
 
+    /// 盲盒页暖纸色板（2026-11-18 Li 批准预览，Space mang-he-ye-zhong-she-ji-yu-lan
+    /// 源码值；仅盲盒流程页用，不替代全局 surface/ink/gray）：
+    /// 页底 #FDFCFA／#1C1A17、次面 #F7F3EC／#24211D、弹窗底 #FDFCFA／#24211D、
+    /// 次文 #57504A／#C9C0B2、弱文 #8A8178／#9A9084、线 #E6DED2／#35302A、
+    /// 发丝线 #EFE9DF／#2B2721、橙 #C96A1B／#E08A3C、深橙 #A8560F／#EFA65C、
+    /// 橙浅底 #FBEBD9／#3A2A18、橙更浅底 #FDF3E4／#2E2317、危险 #B3382E／#E08A80、
+    /// 危险浅底 #FAECEA／#38211E、墨 chip 底 #211C16／#F2EDE4（深浅反色）、
+    /// 墨 chip 字 #F7F1E6／#211C16、熊脸圆面 #FBEED3（深浅同值）、状态绿点 #4C9A5B（深浅同值）。
+    static var blindBoxSurface: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 28.0/255.0, green: 26.0/255.0, blue: 23.0/255.0, alpha: 1) : UIColor(red: 253.0/255.0, green: 252.0/255.0, blue: 250.0/255.0, alpha: 1) } }
+    static var blindBoxSurface2: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 36.0/255.0, green: 33.0/255.0, blue: 29.0/255.0, alpha: 1) : UIColor(red: 247.0/255.0, green: 243.0/255.0, blue: 236.0/255.0, alpha: 1) } }
+    static var blindBoxSheetBg: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 36.0/255.0, green: 33.0/255.0, blue: 29.0/255.0, alpha: 1) : UIColor(red: 253.0/255.0, green: 252.0/255.0, blue: 250.0/255.0, alpha: 1) } }
+    static var blindBoxInk2: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 201.0/255.0, green: 192.0/255.0, blue: 178.0/255.0, alpha: 1) : UIColor(red: 87.0/255.0, green: 80.0/255.0, blue: 74.0/255.0, alpha: 1) } }
+    static var blindBoxMuted: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 154.0/255.0, green: 144.0/255.0, blue: 132.0/255.0, alpha: 1) : UIColor(red: 138.0/255.0, green: 129.0/255.0, blue: 120.0/255.0, alpha: 1) } }
+    static var blindBoxLine: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 53.0/255.0, green: 48.0/255.0, blue: 42.0/255.0, alpha: 1) : UIColor(red: 230.0/255.0, green: 222.0/255.0, blue: 210.0/255.0, alpha: 1) } }
+    static var blindBoxLineSoft: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 43.0/255.0, green: 39.0/255.0, blue: 33.0/255.0, alpha: 1) : UIColor(red: 239.0/255.0, green: 233.0/255.0, blue: 223.0/255.0, alpha: 1) } }
+    static var blindBoxAccent: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 224.0/255.0, green: 138.0/255.0, blue: 60.0/255.0, alpha: 1) : UIColor(red: 201.0/255.0, green: 106.0/255.0, blue: 27.0/255.0, alpha: 1) } }
+    static var blindBoxAccentDeep: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 239.0/255.0, green: 166.0/255.0, blue: 92.0/255.0, alpha: 1) : UIColor(red: 168.0/255.0, green: 86.0/255.0, blue: 15.0/255.0, alpha: 1) } }
+    static var blindBoxAccentTint: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 58.0/255.0, green: 42.0/255.0, blue: 24.0/255.0, alpha: 1) : UIColor(red: 251.0/255.0, green: 235.0/255.0, blue: 217.0/255.0, alpha: 1) } }
+    static var blindBoxAccentTint2: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 46.0/255.0, green: 35.0/255.0, blue: 23.0/255.0, alpha: 1) : UIColor(red: 253.0/255.0, green: 243.0/255.0, blue: 228.0/255.0, alpha: 1) } }
+    static var blindBoxDanger: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 224.0/255.0, green: 138.0/255.0, blue: 128.0/255.0, alpha: 1) : UIColor(red: 179.0/255.0, green: 56.0/255.0, blue: 46.0/255.0, alpha: 1) } }
+    static var blindBoxDangerTint: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 56.0/255.0, green: 33.0/255.0, blue: 30.0/255.0, alpha: 1) : UIColor(red: 250.0/255.0, green: 236.0/255.0, blue: 234.0/255.0, alpha: 1) } }
+    static var blindBoxChipDark: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 242.0/255.0, green: 237.0/255.0, blue: 228.0/255.0, alpha: 1) : UIColor(red: 33.0/255.0, green: 28.0/255.0, blue: 22.0/255.0, alpha: 1) } }
+    static var blindBoxChipDarkText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 33.0/255.0, green: 28.0/255.0, blue: 22.0/255.0, alpha: 1) : UIColor(red: 247.0/255.0, green: 241.0/255.0, blue: 230.0/255.0, alpha: 1) } }
+    static var blindBoxBearDisc: UIColor { UIColor(red: 251.0/255.0, green: 238.0/255.0, blue: 211.0/255.0, alpha: 1) }
+    static var blindBoxStatusDot: UIColor { UIColor(red: 76.0/255.0, green: 154.0/255.0, blue: 91.0/255.0, alpha: 1) }
+
     /// C6：按当前 trait 重解 base 色再降透明度的动态色。0.13 透明底
     /// （私密 pill 蓝底、草稿 chip 灰底、图片未保存红底等）一律走这里，
     /// 不得对动态色直接 withAlphaComponent——后者会在生成时固化当前

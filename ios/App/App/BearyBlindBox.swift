@@ -199,6 +199,13 @@ extension BearyAPI {
         request("/beary/api/blindbox/exchanges/\(safe)/withdraw", method: "POST", completion: completion)
     }
 
+    /// 撤回已入池未开盒的日记（等待屏“撤回交换”用）：把调用方自己的入池篇移出池子，
+    /// 返回当日状态。服务端端点待部署（POST /beary/api/blindbox/unpool {} → 当日状态体；
+    /// 无入池篇时 400 not_pooled）；未部署前本调用 404，走调用方“撤回失败，请重试”。
+    func unpoolBlindBoxEntry(completion: @escaping (Result<BlindBoxStateBody, APIError>) -> Void) {
+        request("/beary/api/blindbox/unpool", method: "POST", completion: completion)
+    }
+
     /// 匿名回应：只走盲盒端点，不走通用 /entries/:id/emote（防带身份通知，见 U1）。
     func reactBlindBoxExchange(id: String, emote: String, completion: @escaping (Result<BlindBoxReactResponse, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
