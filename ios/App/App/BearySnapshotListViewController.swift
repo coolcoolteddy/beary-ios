@@ -279,7 +279,8 @@ private final class BearySnapshotRowCell: UITableViewCell {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func configure(with snapshot: BearyEntrySnapshot, previousSnapshot: BearyEntrySnapshot? = nil) {
-        let titleFont = timeLabel.font
+        // timeLabel.font 在当前 SDK 下是 UIFont?，init 里已赋 tabularDigitsFont，兜底同款。
+        let titleFont = timeLabel.font ?? BearyDynamicType.tabularDigitsFont(ofSize: 17, weight: .semibold)
         if snapshot.isStarred,
            let starImage = BearyIconImages.image(named: "icon_star_fill", pointSize: titleFont.pointSize * 1.2) {
             // 行内星标只用官方手绘图标（icon_star_fill），不用文字符号星标；
