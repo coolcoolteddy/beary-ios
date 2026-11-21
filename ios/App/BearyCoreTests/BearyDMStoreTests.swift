@@ -146,6 +146,60 @@ final class BearyDMStoreTests: XCTestCase {
         }
     }
 
+    // 无变化短路：空批／重复批不写盘（测量 #1817：24/24 空批与重复批都整文件重写）。
+    func testPersistMessagesSkipsWriteWhenNothingChanged() {
+        let accountId = 9032
+        let batch = (1...5).map { message(id: $0, body: "新 \($0)") }
+        let exp1 = expectation(description: "persist first batch")
+        var firstSaved = false
+        BearyDMStore.persistMessages(accountId: accountId, peer: peer(id: 5), messages: batch) { outcome in
+            if case .merged(_, let saved) = outcome { firstSaved = saved }
+            exp1.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        XCTAssertTrue(firstSaved)
+        let bytesAfterFirst = try? Data(contentsOf: storeFile(accountId: accountId))
+        let mtimeAfterFirst = try? FileManager.default.attributesOfItem(atPath: storeFile(accountId: accountId).path)[.modificationDate] as? Date
+        XCTAssertNotNil(bytesAfterFirst)
+        XCTAssertNotNil(mtimeAfterFirst)
+        // 空批：不写盘（字节与 mtime 都不动），仍回 saved=true——磁盘上已是同一份内容。
+        let expEmpty = expectation(description: "persist empty batch")
+        var emptySaved = false
+        BearyDMStore.persistMessages(accountId: accountId, peer: peer(id: 5), messages: []) { outcome in
+            if case .merged(_, let saved) = outcome { emptySaved = saved }
+            expEmpty.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        XCTAssertTrue(emptySaved)
+        XCTAssertEqual(try? Data(contentsOf: storeFile(accountId: accountId)), bytesAfterFirst)
+        XCTAssertEqual(try? FileManager.default.attributesOfItem(atPath: storeFile(accountId: accountId).path)[.modificationDate] as? Date, mtimeAfterFirst)
+        // 重复批：同样不写盘。
+        let expDup = expectation(description: "persist duplicate batch")
+        var dupSaved = false
+        BearyDMStore.persistMessages(accountId: accountId, peer: peer(id: 5), messages: batch) { outcome in
+            if case .merged(_, let saved) = outcome { dupSaved = saved }
+            expDup.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        XCTAssertTrue(dupSaved)
+        XCTAssertEqual(try? Data(contentsOf: storeFile(accountId: accountId)), bytesAfterFirst)
+        XCTAssertEqual(try? FileManager.default.attributesOfItem(atPath: storeFile(accountId: accountId).path)[.modificationDate] as? Date, mtimeAfterFirst)
+        // 有新消息时照常写盘。
+        let expNew = expectation(description: "persist new batch")
+        var newSaved = false
+        BearyDMStore.persistMessages(accountId: accountId, peer: peer(id: 5), messages: [message(id: 6, body: "新 6")]) { outcome in
+            if case .merged(_, let saved) = outcome { newSaved = saved }
+            expNew.fulfill()
+        }
+        waitForExpectations(timeout: 30)
+        XCTAssertTrue(newSaved)
+        if case .loaded(let all) = BearyDMStore.loadAll(accountId: accountId) {
+            XCTAssertEqual(all["5"]?.messages.map { $0.id }, [1, 2, 3, 4, 5, 6])
+        } else {
+            XCTFail("有新消息后磁盘上应有 6 条")
+        }
+    }
+
     func testPersistMessagesCorruptStoreReturnsFreshOnly() {
         let accountId = 9031
         let garbage = Data("这不是 JSON，文件已损坏".utf8)

@@ -23,14 +23,14 @@ import Foundation
 
 enum BearyDMStore {
 
-    struct StoredPeer: Codable {
+    struct StoredPeer: Codable, Equatable {
         var id: Int?
         var displayName: String?
         var handle: String?
         var avatarUrl: String?
     }
 
-    struct StoredMessage: Codable {
+    struct StoredMessage: Codable, Equatable {
         var id: Int?
         var senderId: Int?
         var body: String?
@@ -41,7 +41,7 @@ enum BearyDMStore {
         var clientMessageId: String? = nil
     }
 
-    struct StoredConversation: Codable {
+    struct StoredConversation: Codable, Equatable {
         var peer: StoredPeer
         var messages: [StoredMessage]
     }
@@ -59,7 +59,7 @@ enum BearyDMStore {
         didSet {
             // 换目录即清内存索引：单测每测换临时目录，旧目录的数据不得串进新目录；
             // 只在 ioQueue 内读写索引（syncOnIO 排队，队列内重入直接执行）。
-            syncOnIO { memoryIndex = [:] }
+            syncOnIO { memoryIndex = [:]; persistedAccountIds = [] }
         }
     }
 
@@ -89,6 +89,13 @@ enum BearyDMStore {
     /// 字典本就是每次调用的临时常驻量，新索引只是把它留了下来，不另增量级）。
     private static var memoryIndex: [Int: [String: StoredConversation]] = [:]
 
+    /// 内存索引与磁盘一致的账号：cachedAll 从盘上读入（.loaded／.missing）或
+    /// persistMessages 写盘成功后记入；写盘失败即除名。persistMessages 的无
+    /// 变化短路只对已记入的账号生效——上次写盘失败过、内存里攥着未落盘数据
+    /// 时不得跳过，否则失败重试会被吞掉、调用方还收不到 saved=false。
+    /// 只在 ioQueue 上读写；换测试目录清索引时一并清掉。
+    private static var persistedAccountIds: Set<Int> = []
+
     /// 取某账号整库（只在 ioQueue 上调）。返回整库与是否损坏：
     /// .loaded 缓存并返回；.missing 缓存 [:] 返回 [:]；
     /// .corrupt 返回 [:] 但不缓存——否则下次 save 会把损坏文件覆盖掉，
@@ -98,9 +105,11 @@ enum BearyDMStore {
         switch loadAll(accountId: accountId) {
         case .loaded(let all):
             memoryIndex[accountId] = all
+            persistedAccountIds.insert(accountId)
             return (all, false)
         case .missing:
             memoryIndex[accountId] = [:]
+            persistedAccountIds.insert(accountId)
             return ([:], false)
         case .corrupt:
             return ([:], true)
@@ -169,6 +178,7 @@ enum BearyDMStore {
                 corruptAccountIds.remove(accountId)
                 corruptBackupAccountIds.remove(accountId)
                 memoryIndex.removeValue(forKey: accountId)
+                persistedAccountIds.remove(accountId)
                 DispatchQueue.main.async { completion(true) }
             } catch {
                 DispatchQueue.main.async { completion(false) }
@@ -191,6 +201,7 @@ enum BearyDMStore {
                 corruptAccountIds.remove(accountId)
                 corruptBackupAccountIds.remove(accountId)
                 memoryIndex.removeValue(forKey: accountId)
+                persistedAccountIds.remove(accountId)
                 DispatchQueue.main.async { completion(true) }
             } catch {
                 DispatchQueue.main.async { completion(false) }
@@ -340,7 +351,18 @@ enum BearyDMStore {
             }
             let mergedAll = BearyDMStoreCore.merge(base, peer: peer, messages: messages)
             memoryIndex[accountId] = mergedAll
+            // 无变化短路（测量 #1817：60 秒轮询的空批／重复批 24/24 都整文件重写）：
+            // 合并后与内存索引一致、且内存索引与磁盘一致时，跳过 encode＋saveAll
+            // 整文件重写。saved 回 true——磁盘上已是同一份内容，不是写盘失败。
+            // 有新消息、对方信息变了、或上次写盘失败过（persistedAccountIds 未
+            // 记入），一律照常写盘。
+            if mergedAll == base, persistedAccountIds.contains(accountId) {
+                let merged = dmMessages(from: mergedAll["\(peerId)"]?.messages ?? [])
+                DispatchQueue.main.async { completion?(.merged(merged, saved: true)) }
+                return
+            }
             let saved = saveAll(mergedAll, accountId: accountId)
+            if saved { persistedAccountIds.insert(accountId) } else { persistedAccountIds.remove(accountId) }
             let merged = dmMessages(from: mergedAll["\(peerId)"]?.messages ?? [])
             DispatchQueue.main.async { completion?(.merged(merged, saved: saved)) }
         }
