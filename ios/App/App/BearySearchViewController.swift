@@ -3960,15 +3960,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     /// 搜索结果日记行日期：7 天内相对时间、7 天外绝对时间（共用口径）。
+    /// 2026-11-21 日期完全本地化：走共享 helper，跟 App 语言；时区沿用
+    /// 既有行为（原来没写时区，跟设备走）。注意：中文月日由改前的 "M 月 d 日"
+    /// （带空格）变为 "M月d日"（与卡片／详情同口径）。
     private func searchDateString(ms: Int) -> String {
         if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
             return relative
         }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "M 月 d 日"
-        return fmt.string(from: date)
+        return BearyLocalizedDate.monthDayString(from: date)
     }
 
     /// 网页用户行名字回退口径：display_name || ('@' + handle) || 'beary 用户'。
