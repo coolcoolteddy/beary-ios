@@ -102,10 +102,10 @@ final class BearyNineGridViewController: UIViewController {
         updateGridWidth()
     }
 
-    /// 网格宽按实宽定——页面宽度 ≥821 时 600 居中、≤820 时全宽，与全站 iPad 口径一致；
+    /// 网格宽按实宽定——仅 iPad 且宽 ≥821 时 600 居中、其余全宽，与全站 iPad 口径一致；
     /// 只在目标宽变化时改约束并失效布局，不反复触发（照片页同款）。
     private func updateGridWidth() {
-        let targetWidth: CGFloat = view.bounds.width >= 821 ? 600 : view.bounds.width
+        let targetWidth: CGFloat = BearyDesktop.isWide(view.bounds.width) ? 600 : view.bounds.width
         guard collectionViewWidthConstraint?.constant != targetWidth else { return }
         collectionViewWidthConstraint?.constant = targetWidth
         collectionView.collectionViewLayout.invalidateLayout()
