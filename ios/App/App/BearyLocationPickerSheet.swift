@@ -74,6 +74,10 @@ final class BearyLocationPickerViewController: UIViewController {
     private var searchGeneration = 0
     /// 附近拉取代次：旧拉取回包过期作废。
     private var nearbyGeneration = 0
+    /// 已播过入场错峰的行键（@ 选人 animatedRowKeys 同口径）：同一选地点
+    /// 会话内多次刷新，已播过的行不重播，只播新 key 行；sheet 每次新建实例，
+    /// 键集随实例生灭。
+    private var animatedRowKeys: Set<String> = []
 
     private let completer = MKLocalSearchCompleter()
 
@@ -102,6 +106,22 @@ final class BearyLocationPickerViewController: UIViewController {
         case manual(query: String)
         case completion(MKLocalSearchCompletion)
         case nearby(MKMapItem)
+
+        /// 错峰键：按展示内容取（标题＋副标题，与 #1606 同口径）；manual 行取
+        /// 查询词，nearby 行取名字＋区域＋坐标（同名同区连锁店靠坐标区分）。
+        var staggerKey: String {
+            switch self {
+            case .manual(let query):
+                return "manual:\n" + query
+            case .completion(let completion):
+                return "completion:\n" + completion.title + "\n" + completion.subtitle
+            case .nearby(let item):
+                let name = item.name ?? ""
+                let district = BearyLocationDisplay.district(from: item.placemark) ?? ""
+                let coordinate = item.placemark.coordinate
+                return "nearby:\n" + name + "\n" + district + "\n\(coordinate.latitude),\(coordinate.longitude)"
+            }
+        }
     }
     private var rows: [Row] = []
 
@@ -588,6 +608,25 @@ extension BearyLocationPickerViewController: UITableViewDataSource, UITableViewD
         cell.backgroundColor = .clear
         cell.selectionStyle = .none
         return cell
+    }
+
+    /// 新行错峰滑入（#1606 错峰半边移植到新 sheet；复用半边已由 UITableView
+    /// 的 dequeueReusableCell 解决，不移植）：行将上屏时，未播过的 key 按
+    /// BearyEntranceConfig 分页档（0.26s、8pt 上移、步进 0.03、封顶 0.24）
+    /// 从透明＋下偏滑入，播过即记、不重播；减动效直接落终值。只动
+    /// transform/opacity，不改布局、不改行高。
+    func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        guard indexPath.row < rows.count else { return }
+        let key = rows[indexPath.row].staggerKey
+        guard !animatedRowKeys.contains(key) else { return }
+        animatedRowKeys.insert(key)
+        cell.alpha = 0
+        cell.transform = CGAffineTransform(translationX: 0, y: BearyEntranceConfig.yOffset(for: .pagination))
+        UIView.animate(withDuration: BearyEntranceConfig.duration, delay: BearyEntranceConfig.delay(for: .pagination, order: indexPath.row), options: [.curveEaseOut, .allowUserInteraction], animations: {
+            cell.alpha = 1
+            cell.transform = .identity
+        }, completion: nil)
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
