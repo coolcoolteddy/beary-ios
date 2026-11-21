@@ -190,10 +190,10 @@ final class BearyLimitedBubbleView: UIView {
     }
 }
 
-// MARK: - 限时 pill（作者行时间后；13 semibold 蓝档）
+// MARK: - 限时 pill（作者行时间后；13 semibold，按态取色：存活限时深紫、到期私密深蓝）
 
-/// 限时／私密 pill：存活“限时”虚线蓝边、到期“私密”实线蓝边（与气泡虚实同理；
-/// 规范 §3：私密／限时 pill 沿用蓝档）。本身就是 UILabel，作者行 firstBaseline
+/// 限时／私密 pill：存活“限时”虚线深紫边、到期“私密”实线深蓝边（与气泡虚实同理；
+/// 规范 §九：限时深紫字＋深紫边、私密深蓝字＋深蓝边，G6 对比度修复）。本身就是 UILabel，作者行 firstBaseline
 /// 对齐走文字基线，与名字／时间天然对齐（不要用 UIView 容器＋viewForFirstBaselineLayout
 /// override——该方法在本工程 SDK 下不成立，编译报错；容器底边对齐又会让 pill
 /// 文字比时间高约 8pt）。
@@ -202,16 +202,21 @@ final class BearyLimitedPillView: UILabel {
     /// pill 内边距（左右 10、上下 3）。
     private let insets = UIEdgeInsets(top: 3, left: 10, bottom: 3, right: 10)
 
+    /// 当前态（存活限时／到期私密）：文字色与边色跟随态（存活深紫、到期深蓝），
+    /// 深浅切换时重刷（CGColor 快照）。
+    private var isExpired = false
+    private var stateColor: UIColor { isExpired ? BearyColors.deepBlueText : BearyColors.deepPurpleText }
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)
         font = UIFont.systemFont(ofSize: 13, weight: .semibold)
-        textColor = BearyColors.blue
+        textColor = BearyColors.deepPurpleText
         numberOfLines = 1
         layer.cornerRadius = 999
         layer.borderWidth = 1.5
-        layer.borderColor = BearyColors.blue.cgColor
+        layer.borderColor = BearyColors.deepPurpleText.cgColor
     }
 
     required init?(coder: NSCoder) {
@@ -235,11 +240,13 @@ final class BearyLimitedPillView: UILabel {
         return rect.inset(by: UIEdgeInsets(top: -insets.top, left: -insets.left, bottom: -insets.bottom, right: -insets.right))
     }
 
-    /// 存活“限时”虚线边／到期“私密”实线边；边色恒为蓝（CGColor 快照，
-    /// 主题切换时重刷）。
+    /// 存活“限时”虚线边／到期“私密”实线边；边色与文字色跟随态（存活深紫、
+    /// 到期深蓝；CGColor 快照，主题切换时重刷）。
     func configure(text: String, expired: Bool) {
         self.text = text
-        layer.borderColor = BearyColors.blue.cgColor
+        isExpired = expired
+        textColor = stateColor
+        layer.borderColor = stateColor.cgColor
         if expired {
             layer.borderWidth = 1.5
             // 实线边：用 borderWidth 走实线；虚线用 dashedLayer 才画得出，
@@ -247,7 +254,7 @@ final class BearyLimitedPillView: UILabel {
             dashedLayer.isHidden = true
         } else {
             layer.borderWidth = 0
-            dashedLayer.strokeColor = BearyColors.blue.cgColor
+            dashedLayer.strokeColor = stateColor.cgColor
             dashedLayer.isHidden = false
         }
         setNeedsLayout()
@@ -270,7 +277,7 @@ final class BearyLimitedPillView: UILabel {
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        layer.borderColor = BearyColors.blue.cgColor
-        dashedLayer.strokeColor = BearyColors.blue.cgColor
+        layer.borderColor = stateColor.cgColor
+        dashedLayer.strokeColor = stateColor.cgColor
     }
 }
