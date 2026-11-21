@@ -484,6 +484,7 @@ class BearyDiaryCardCell: UITableViewCell {
         quoteCacheOrder = []
         // 账号/刷新失效：互关验证结果与引用缓存同清，下次按现行关系重验。
         quoteMutualAccessBuckets = [:]
+        emoteMutualAccessBuckets = [:]
     }
 
     /// 换桶：桶变了才清空（同桶重调不丢缓存）；Feed 切号与冷启动首桶均走这里。
@@ -598,6 +599,35 @@ class BearyDiaryCardCell: UITableViewCell {
         }
     }
 
+    /// 仅好友回应互关验证结果（v15）：作者 id → 是否互关，按账号分桶保存
+    /// （桶 key 与引用缓存同款 currentQuoteBucket：当前登录用户 id，游客 guest）。
+    /// 只记本次 viewer 对该作者的互关结论；未知时 fail-closed（不放行），
+    /// 由 refreshEmoteMutualAccessIfNeeded 按需查 fetchFollowState 补齐。
+    /// 失效见 resetQuoteFetchState（账号/刷新）、invalidateEmoteMutualAccess
+    /// （关系变化：取关/拉黑与引用标记同清）。
+    private static var emoteMutualAccessBuckets: [String: [Int: Bool]] = [:]
+
+    /// 读：当前账号桶里该作者是否已验证互关（nil＝未知，需发请求）。
+    static func emoteMutualAccess(for authorId: Int) -> Bool? {
+        emoteMutualAccessBuckets[currentQuoteBucket()]?[authorId]
+    }
+
+    /// 写：互关回包确认后记下（含否定结论，防重配反复发请求）。
+    static func setEmoteMutualAccess(_ mutual: Bool, for authorId: Int) {
+        emoteMutualAccessBuckets[currentQuoteBucket(), default: [:]][authorId] = mutual
+    }
+
+    /// 关系变化失效：取关/拉黑时清掉当前桶里该作者的验证结论；
+    /// authorId 为 nil 时清当前桶全部（保守清理，与引用标记同口径）。
+    static func invalidateEmoteMutualAccess(forAuthorId authorId: Int? = nil) {
+        let bucket = currentQuoteBucket()
+        if let authorId = authorId {
+            emoteMutualAccessBuckets[bucket]?.removeValue(forKey: authorId)
+        } else {
+            emoteMutualAccessBuckets[bucket] = [:]
+        }
+    }
+
     private var currentEntry: Entry?
     /// 就地同步用条目 id（首页 currentEntryIdValue 与个人主页 cellEntryId 合并为一处；
     /// 个人主页控制器以 cellEntryId 读取，故本属性为 internal，不再是原同文件 fileprivate）。
@@ -631,6 +661,12 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 行数会变，旧档结论不得复用）；超 200 条清库防无界增长。
     private var foldOverflowCache: [String: Bool] = [:]
     /// 回应行当前快照（按 count 降序；chip 点选按下标取 key；成功后由服务端聚合覆盖）。
+    /// 仅好友回应互关态（v15）：当前篇作者是否与 viewer 互关。
+    /// 仅当 currentEntry 为仅好友篇且 viewer 非作者时有效；其余一律 false。
+    /// 由 refreshEmoteMutualAccessIfNeeded 按需查（静态桶缓存＋fetchFollowState），
+    /// emoteMutualCheckEntryId 钉住已查过的篇，复用不再重复发请求。
+    private var emoteMutualFriend = false
+    private var emoteMutualCheckEntryId: String?
     private var currentEmoteList: [EmoteCount] = []
     /// 个人主页模式 chip key 快照（与 currentEmoteList 同序，点选按下标取 key）。
     private var chipKeys: [String] = []
@@ -4421,26 +4457,73 @@ class BearyDiaryCardCell: UITableViewCell {
     ///（overlay isEnabled=false + chip alpha=0.4），作者本人对自己私密日记
     /// 的回应同样不放行（无 isMine 例外）；“+”钮只控 busy 不按公开态
     /// 禁用/置灰，否则非公开提示（见 emoteAddTapped）无从触发。
+    /// 回应点按门（v15）：有效公开篇谁都能贴；仅好友篇只放行互关好友。
+    /// 互关态按作者查（静态桶缓存，未知时 refreshEmoteMutualAccessIfNeeded
+    /// 发 fetchFollowState 补齐；未知＝fail-closed，不放行）。
+    private var canPostEmoteForCurrentEntry: Bool {
+        guard let entry = currentEntry else { return false }
+        if BearyEphemeral.isEffectivelyPublic(entry) { return true }
+        return entry.isFriendsOnly && emoteMutualFriend
+    }
+
+    /// 仅好友篇互关态按需补齐：仅好友＋已登录＋非作者时查；其余直接记 false。
+    /// 命中静态缓存即落值；未命中发一次 fetchFollowState（API 层在途去重，
+    /// 同作者并发只发一条），回包写缓存后若仍是本篇即刷新 chip 启用态。
+    /// 调用点在 updateEmoteInteractivity 开头（每次渲染都过一遍，同一篇只查一次）。
+    private func refreshEmoteMutualAccessIfNeeded() {
+        guard let entry = currentEntry, let entryId = cellEntryId, !entryId.isEmpty else { return }
+        guard entry.isFriendsOnly, SessionManager.shared.isLoggedIn, !isEntryAuthor(entry), let authorId = entry.authorId else {
+            emoteMutualFriend = false
+            emoteMutualCheckEntryId = entryId
+            return
+        }
+        if let cached = Self.emoteMutualAccess(for: authorId) {
+            emoteMutualFriend = cached
+            emoteMutualCheckEntryId = entryId
+            return
+        }
+        if emoteMutualCheckEntryId == entryId { return }
+        emoteMutualCheckEntryId = entryId
+        // 先按未知（false）落值，防复用旧篇的互关态串到本篇；回包再纠正。
+        emoteMutualFriend = false
+        BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self] result in
+            DispatchQueue.main.async {
+                let mutual: Bool
+                if case .success(let state) = result {
+                    mutual = (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false))
+                } else {
+                    mutual = false
+                }
+                Self.setEmoteMutualAccess(mutual, for: authorId)
+                guard let strongSelf = self, strongSelf.cellEntryId == entryId else { return }
+                strongSelf.emoteMutualFriend = mutual
+                strongSelf.updateEmoteInteractivity()
+            }
+        }
+    }
+
     private func updateEmoteInteractivity() {
+        // 互关态先补齐（仅好友篇按需查一次；其余直接记 false，不发请求）。
+        refreshEmoteMutualAccessIfNeeded()
         if cardMode == .profile {
-            // 审计 P0-4：有效态门控（过期限时篇不放行回应）。
-            let publicOK = currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false
+            // 审计 P0-4：有效态门控（过期限时篇不放行回应；仅好友篇互关好友可贴，v15）。
+            let emoteOK = canPostEmoteForCurrentEntry
             for sub in emoteFlowView.subviews {
                 if let chip = sub as? BearyEmoteChipView {
-                    chip.overlayButton.isEnabled = publicOK && !profileDisabled
-                    sub.alpha = publicOK ? 1.0 : 0.4
+                    chip.overlayButton.isEnabled = emoteOK && !profileDisabled
+                    sub.alpha = emoteOK ? 1.0 : 0.4
                 } else if let button = sub as? UIButton {
                     button.isEnabled = !profileDisabled
                 }
             }
             return
         }
-        // 审计 P0-4：有效态门控（过期限时篇不放行回应）。
-        let publicOK = currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false
+        // 审计 P0-4：有效态门控（过期限时篇不放行回应；仅好友篇互关好友可贴，v15）。
+        let emoteOK = canPostEmoteForCurrentEntry
         for sub in emoteFlowView.subviews {
             if let button = sub as? UIButton {
-                button.isEnabled = publicOK && isEmoteBusy == false
-                if publicOK == false {
+                button.isEnabled = emoteOK && isEmoteBusy == false
+                if emoteOK == false {
                     button.alpha = 0.4
                 } else {
                     button.alpha = 1.0
@@ -4449,8 +4532,8 @@ class BearyDiaryCardCell: UITableViewCell {
             }
             guard let chip = sub as? BearyEmoteChipView else { continue }
             let overlay = chip.overlayButton
-            overlay.isEnabled = publicOK && isEmoteBusy == false
-            if publicOK == false {
+            overlay.isEnabled = emoteOK && isEmoteBusy == false
+            if emoteOK == false {
                 sub.alpha = 0.4
             } else {
                 sub.alpha = 1.0
@@ -4460,15 +4543,15 @@ class BearyDiaryCardCell: UITableViewCell {
 
     @objc private func emoteChipTapped(_ sender: UIButton) {
         if cardMode == .profile {
-            // A1 纵深守卫：chip 非公开时本已禁用（点按无事件），此处再拦一道，
+            // A1 纵深守卫：chip 不可贴时本已禁用（点按无事件），此处再拦一道，
             // 确保私密日记的回应绝不经本路径转发（含作者本人）。
-            if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
+            if !canPostEmoteForCurrentEntry { return }
             let index = sender.tag
             guard index >= 0, index < chipKeys.count else { return }
             onEmoteTap?(chipKeys[index])
             return
         }
-        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
+        if !canPostEmoteForCurrentEntry { return }
         if SessionManager.shared.isLoggedIn == false {
             onRequireLogin?()
             return
@@ -4483,16 +4566,16 @@ class BearyDiaryCardCell: UITableViewCell {
 
     @objc private func emoteAddTapped() {
         if cardMode == .profile {
-            // A1：非公开卡片点“+”不打开选择器，改走提示回调（控制器弹 toast）
-            // 并返回，杜绝旧静默丢弃；公开卡片原样走 onEmoteAdd。
-            if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) {
+            // A1：不可贴回应的卡片点“+”不打开选择器，改走提示回调（控制器弹 toast）
+            // 并返回，杜绝旧静默丢弃；可贴卡片原样走 onEmoteAdd。
+            if !canPostEmoteForCurrentEntry {
                 onEmoteAddNotPublic?()
                 return
             }
             onEmoteAdd?()
             return
         }
-        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
+        if !canPostEmoteForCurrentEntry { return }
         if SessionManager.shared.isLoggedIn == false {
             onRequireLogin?()
             return
@@ -4528,7 +4611,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private func chooseEmote(key: String) {
         if key.isEmpty || isEmoteBusy { return }
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
-        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
+        if !canPostEmoteForCurrentEntry { return }
         if SessionManager.shared.isLoggedIn == false {
             onRequireLogin?()
             return

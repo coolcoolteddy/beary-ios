@@ -4281,7 +4281,8 @@ final class BearyChromeViewController: UIViewController {
                         // 互关结论不得把旧篇放进新账号页面。
                         guard fetched.id == request.entryId, self.isStillSameDetailSession(request) else { return }
                         switch decision {
-                        case .show(let updatedEntry):
+                        case .show(let updatedEntry, let isMutualFriend):
+                            detail.noteMutualFriend(isMutualFriend, forEntryId: updatedEntry.id)
                             detail.update(with: updatedEntry, baseline: supplementBaseline)
                         case .showPlaceholder(let placeholderEntry):
                             detail.update(with: placeholderEntry, baseline: supplementBaseline)

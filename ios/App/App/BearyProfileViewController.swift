@@ -9370,8 +9370,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
 
     private func handleCellEmoteAdd(entry: Entry) {
         guard requireLoginForCellAction() else { return }
-        // 审计 P0-4：有效态门控（过期限时篇不放行分享/回应）。
-        guard BearyEphemeral.isEffectivelyPublic(entry) else { return }
+        // 审计 P0-4：有效态门控（过期限时篇不放行分享/回应）；仅好友篇互关好友可贴（v15）。
+        guard BearyEphemeral.isEffectivelyPublic(entry) || (entry.isFriendsOnly && isMutualFriend) else { return }
         let sheet = BearyEmotePickerSheetViewController()
         sheet.modalPresentationStyle = .overFullScreen
         sheet.onPick = { [weak self] pickedKey in
@@ -9388,8 +9388,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
     private func handleCellEmote(entry: Entry, key: String) {
         guard let entryId = entry.id, !entryId.isEmpty, !key.isEmpty else { return }
         guard requireLoginForCellAction() else { return }
-        // 审计 P0-4：有效态门控（过期限时篇不放行分享/回应）。
-        guard BearyEphemeral.isEffectivelyPublic(entry) else { return }
+        // 审计 P0-4：有效态门控（过期限时篇不放行分享/回应）；仅好友篇互关好友可贴（v15）。
+        guard BearyEphemeral.isEffectivelyPublic(entry) || (entry.isFriendsOnly && isMutualFriend) else { return }
         guard !emoteBusyIds.contains(entryId) else { return }
         emoteBusyIds.insert(entryId)
         let mine = (entry.emotes ?? []).contains(where: { ($0.emote ?? "") == key && ($0.mine ?? false) })

@@ -100,6 +100,23 @@ final class BearyDetailViewController: UIViewController {
     private var lastImageViewerAt: Date?
     private var confirmedBookmarked = false
     private var isEmoteBusy = false
+    /// 仅好友篇互关态（v15）：decideFetchedDetail 裁决时写入，按 entry id 钉住防串篇；
+    /// 未裁决（首开补拉未回包／占位）时 false＝fail-closed。
+    /// 作者本人走只读行（#2087 口径），本标记只影响非作者的回应点按门。
+    var isMutualFriendForEntry = false
+    private var mutualFriendEntryId: String?
+
+    /// 互关裁决落值（decideFetchedDetail 的 .show 携带；两处调用方共用）。
+    func noteMutualFriend(_ mutual: Bool, forEntryId id: String?) {
+        isMutualFriendForEntry = mutual
+        mutualFriendEntryId = id
+    }
+
+    /// 回应点按门（v15）：有效公开篇谁都能贴；仅好友篇只放行互关好友。
+    private var canPostEmote: Bool {
+        if BearyEphemeral.isEffectivelyPublic(entry) { return true }
+        return entry.isFriendsOnly && isMutualFriendForEntry && mutualFriendEntryId == entry.id
+    }
     private var isVisibilityBusy = false
     /// 审计三轮第二批 9：限时到期单次定时器（只按最近 ephemeralUntil 排一次，
     /// 绝不按秒/按分钟全量刷新；到点只重算有效态，见 applyEphemeralExpiryIfNeeded）。
@@ -1484,7 +1501,7 @@ final class BearyDetailViewController: UIViewController {
     /// 页内已因拉黑/举报转占位时不动（隐私占位优先于失败态）。
     /// B1：详情取数统一裁决——首开补拉与手动重试共用（与 routeFetchedEntry 同口径）。
     enum DetailFetchDecision {
-        case show(Entry)
+        case show(Entry, isMutualFriend: Bool)
         case showPlaceholder(Entry)
         case keepContent
     }
@@ -1521,7 +1538,7 @@ final class BearyDetailViewController: UIViewController {
             viewerIsAuthor = fetched.isMine == true
         }
         if viewerIsAuthor {
-            completion(.show(fetched))
+            completion(.show(fetched, isMutualFriend: false))
             return
         }
         if isBlockedAuthor(fetched) {
@@ -1531,11 +1548,11 @@ final class BearyDetailViewController: UIViewController {
             return
         }
         if BearyEphemeral.isEffectivelyPublic(fetched), fetched.authorId != nil {
-            completion(.show(fetched))
+            completion(.show(fetched, isMutualFriend: false))
             return
         }
         if fetched.placeholder == true {
-            completion(.show(fetched))
+            completion(.show(fetched, isMutualFriend: false))
             return
         }
         if fetched.isFriendsOnly, let authorId = fetched.authorId, SessionManager.shared.isLoggedIn {
@@ -1544,7 +1561,7 @@ final class BearyDetailViewController: UIViewController {
                     switch stateResult {
                     case .success(let state)
                         where (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false)):
-                        completion(.show(fetched))
+                        completion(.show(fetched, isMutualFriend: true))
                     default:
                         var placeholderEntry = fetched
                         placeholderEntry.placeholder = true
@@ -1696,7 +1713,8 @@ final class BearyDetailViewController: UIViewController {
                               requestAccountId == BearyAPI.shared.authAccountId,
                               requestAccountId == SessionManager.shared.currentUser?.id else { return }
                         switch decision {
-                        case .show(let updatedEntry):
+                        case .show(let updatedEntry, let isMutualFriend):
+                            self.noteMutualFriend(isMutualFriend, forEntryId: updatedEntry.id)
                             self.update(with: updatedEntry, baseline: retryBaseline)
                         case .showPlaceholder(let placeholderEntry):
                             self.update(with: placeholderEntry, baseline: retryBaseline)
@@ -3143,7 +3161,7 @@ final class BearyDetailViewController: UIViewController {
     /// 失败回滚＋拒绝动效；未登录走登录提示（先行态复原），非公开弹“公开后才能回应”。
     private func chooseEmote(key: String) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
-        if !BearyEphemeral.isEffectivelyPublic(entry) {
+        if !canPostEmote {
             BearyToast.show(in: view, message: "公开后才能回应")
             return
         }
@@ -3711,7 +3729,7 @@ final class BearyDetailViewController: UIViewController {
             onRequireLogin?()
             return
         }
-        if !BearyEphemeral.isEffectivelyPublic(entry) {
+        if !canPostEmote {
             BearyToast.show(in: view, message: "公开后才能回应")
             return
         }
