@@ -3792,7 +3792,7 @@ enum BearyVisibility {
         if isLiveEphemeral {
             actions.insert(BearyConfirmSheet.Action(title: "✓ 限时", style: .default, isEnabled: false), at: 0)
         }
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
+        // 2026-11-17 底部弹窗取消行去掉：关闭走抓手下滑／点外收起，不再垫底放“取消”。
         BearyConfirmSheet.show(from: vc, title: "修改权限", message: nil, actions: actions)
     }
 }
