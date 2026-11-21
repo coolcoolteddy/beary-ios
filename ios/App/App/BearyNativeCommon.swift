@@ -3249,6 +3249,16 @@ extension BearyAPI {
         request("/beary/api/entries/\(safe)/emote", method: "POST", jsonBody: ["emote": emote], completion: completion)
     }
 
+    /// 某只回应的贴出人（只读，作者本人看自己的日记用）：GET /beary/api/entries/:id/emotes/:emote/users。
+    /// 客户端没有每表情的贴出人数据（EmoteCount 只有 emote／count／mine），点 chip 时现取。
+    /// 仅作者可查（服务端作者门，非作者／不存在回 404）；回包与好友列表同形 {users: [{id, display_name, handle, avatar_url}]}。
+    /// 服务端 diff 在 ~/workspace/no-self-emote-server-diff/，随 PR #2087 合入后部署；未部署前调它会 404，调用方按失败态处理。
+    func fetchEmotePosters(entryId: String, emote: String, completion: @escaping (Result<BearyAPI.FriendListResponse, APIError>) -> Void) {
+        let safeId = entryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? entryId
+        let safeEmote = emote.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? emote
+        request("/beary/api/entries/\(safeId)/emotes/\(safeEmote)/users", completion: completion)
+    }
+
     /// 图片上传：dataUrl 与 thumb 均为 data:image/jpeg;base64,...；单图 ≤5MB、缩略图 ≤2MB。
     /// 成功返回 R2 key（原图与缩略图共用该 key，缩略图另存 key+'_t'）。
     /// 实况：videoDataUrl 非空时才附带（data:video/quicktime;base64,... 的 mov，
