@@ -125,6 +125,9 @@ enum BearyToast {
     /// pill 永远悬在栏上方 12pt，不会像旧的一次性常数那样在栏藏起回落 -32
     /// 时落进底栏带里（底栏顶在安全区底之上 64pt，-32 正好盖住它上半截，
     /// 而发布成功后 showPage(.timeline) 又把栏升回 pill 底下）。
+    /// 2026-11-17 贴底栏修：pill 底不再锚这个返回值，改落固定常数 -76
+    /// （底栏顶沿之上 12pt）；本方法现仅作 Chrome 存在性判断，供 show 的
+    /// 回落分支用。
     /// fileprivate：发布 pill 与 toast 同文件。
     fileprivate static func publishPillTopAnchor(in container: UIView) -> NSLayoutYAxisAnchor? {
         guard let chrome = chromeViewController(for: container) else { return nil }
@@ -354,10 +357,10 @@ private final class BearyToastView: UIView {
 
 // MARK: - 发布后台化底部 pill（Threads Posting/Posted 同款位置）
 
-/// 发布后台化底部 pill：底贴底栏/FAB 顶沿之上 12pt（layout 锚点，见
-/// BearyToast.publishPillTopAnchor；栏藏起时锚点不动，pill 永远悬在栏
-/// 上方、不盖栏；找不到 Chrome 时回落安全区常数）、同 surface3 底、ink 字、14pt
-/// medium、10/18 内边距、半高圆角、hairline 阴影。
+/// 发布后台化底部 pill：底贴底栏顶沿之上 12pt（固定常数 -76，见 show；
+/// 栏藏起时 pill 仍悬在栏将回到的位置上方 12pt、不盖栏；找不到 Chrome
+/// 时回落安全区常数）、同 surface3 底、ink 字、14pt medium、10/18 内边距、
+/// 半高圆角、hairline 阴影；宽度按内容定（2026-11-17，见 init 内 stack 约束）。
 /// 结构：文案 label（进行中「正在发布…」）＋ 底部 2pt 进度条（track
 /// BearyColors.line、fill ink，内缩 14pt、底边之上 6pt，避开 pill 圆角）；
 /// 成功时 fill 走满、对勾 +「已发布」，2.0s 后淡出；失败时文案换调用方传的
@@ -377,15 +380,19 @@ enum BearyPublishPill {
         let pill = BearyPublishPillView()
         container.addSubview(pill)
         container.bringSubviewToFront(pill)
-        // 2026-11-14 盖底栏修：pill 底贴底栏/FAB 顶沿之上 12pt（layout 锚点，
-        // 藏栏 transform 不动锚点，栏回来时 pill 已在它上方、不盖栏）。
-        // 旧口径用一次性安全区常数（BearyToast.bottomConstant）：栏藏起时
-        // 回落 -32、正好落进底栏带（底栏顶在安全区底之上 64pt），栏一回来
-        // 就被盖住，且常数只在 show 时算一次、永不重算。找不到 Chrome
-        // 时仍回落旧常数（宿主不是 Chrome 容器时无栏可锚）。
+        // 2026-11-17 贴底栏修：pill 底贴底栏顶沿之上 12pt（底栏底边安全区 -6、
+        // 高 58、顶为 -64，故为 -76；与 BearyToast 仅底栏可见时的落点同值）。
+        // 之前锚 FAB 顶沿（首页/时间线非游客时），pill 底在安全区底之上 158pt，
+        // 比底栏顶高出 94pt、悬在中间。-76 是固定几何常数，不取决于 show 瞬间
+        // 的栏可见性——栏藏起时 pill 仍悬在栏将回到的位置上方 12pt，与 layout
+        // 锚点同效；找不到 Chrome 时仍回落旧常数（宿主不是 Chrome 容器时无栏可锚）。
+        // FAB 相邻：FAB 是右下角 54pt 圆钮（左缘在屏宽 -72 处），pill 按内容定宽
+        // 居中，常规文案（“正在发布…”约 80pt、“已发布”约 80pt、失败文案约 140pt）
+        // 够不着 FAB；只有超长文案在窄屏上才可能轻擦 FAB 左下弧。
         let bottomConstraint: NSLayoutConstraint
-        if let topAnchor = BearyToast.publishPillTopAnchor(in: container) {
-            bottomConstraint = pill.bottomAnchor.constraint(equalTo: topAnchor, constant: -12)
+        if BearyToast.publishPillTopAnchor(in: container) != nil {
+            bottomConstraint = pill.bottomAnchor.constraint(
+                equalTo: container.safeAreaLayoutGuide.bottomAnchor, constant: -76)
         } else {
             bottomConstraint = pill.bottomAnchor.constraint(
                 equalTo: container.safeAreaLayoutGuide.bottomAnchor,
@@ -465,8 +472,12 @@ final class BearyPublishPillView: UIView {
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
-            stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 18),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -18),
+            // 按内容定宽（2026-11-17）：两侧用等式钉死，pill 宽 = 内容宽 + 36；
+            // 之前用 ≥/≤ 不等式，pill 宽无等式定死，布局按最大可宽拉满屏
+            // （BearyToastView 的 label 是等式钉死，故 toast 一直是收窄的）。
+            // 最宽仍受 show 的容器两侧 ≥20/≤-20 夹住，超长文案换行不溢出。
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
             stack.centerXAnchor.constraint(equalTo: centerXAnchor),
             checkView.widthAnchor.constraint(equalToConstant: 15),
             checkView.heightAnchor.constraint(equalToConstant: 15),
