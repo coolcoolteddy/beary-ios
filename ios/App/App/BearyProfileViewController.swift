@@ -1529,6 +1529,32 @@ class BearyProfileViewController: UIViewController {
         stackValue.alignment = .center
         return stackValue
     }()
+    /// 等待态同步说明（仅本设备行）：「仅保存在本设备，等待同步」；
+    /// 已同步行不显示（原句即已同步态）。失败时改由重试钮接替本行。
+    private let pastSelfSyncPendingLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.textColor = BearyColors.gray
+        labelValue.numberOfLines = 0
+        labelValue.isHidden = true
+        return labelValue
+    }()
+    /// 等待态同步失败重试（仅网络/5xx 创建失败过的行）：点按即重发创建，
+    /// 在途守卫防重复提交。BearyHit44Button 保证 44pt 命中，不另占行高。
+    private lazy var pastSelfSyncRetryButton: BearyHit44Button = {
+        let buttonValue = BearyHit44Button(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("同步失败，点按重试", for: .normal)
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
+        buttonValue.titleLabel?.font = BearyDynamicType.smallActionFont()
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
+        buttonValue.contentHorizontalAlignment = .left
+        buttonValue.isHidden = true
+        buttonValue.addTarget(self, action: #selector(pastSelfSyncRetryTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
     private let pastSelfWaitingBodyLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
@@ -1576,6 +1602,11 @@ class BearyProfileViewController: UIViewController {
     /// 现行两者调同一函数、无守卫，每调一次即发一次 POST，同一行会重复
     /// 创建；在途时后调者直接返回，等回包。
     private var pastSelfCreateInFlight: Set<String> = []
+    /// 创建失败过的本地 id（仅网络/5xx，见 pastSelfCreateErrorIsRetryable）：
+    /// 等待态行给「同步失败，点按重试」；业务码拒绝不进本集（不重试，
+    /// 行仍只显「仅保存在本设备，等待同步」）。只记内存——重启后个人页
+    /// 加载即重跑同步，失败会重新记入。
+    private var pastSelfCreateFailedLocalIds: Set<String> = []
     /// 待撤回确认的 id：创建未回包时点的撤回记本地 id（服务端从未签发该
     /// id，不能拿本地 ps_… id 发撤回；创建回包一到即按服务端 id 补发，
     /// 见 pastSelfPushCreate 成功分支）；服务端已知行点的撤回记服务端
@@ -4367,6 +4398,8 @@ class BearyProfileViewController: UIViewController {
         pastSelfWaitingStatusRow.addArrangedSubview(pastSelfWaitingStatusIconView)
         pastSelfWaitingStatusRow.addArrangedSubview(pastSelfWaitingStatusLabel)
         pastSelfWaitingSection.addArrangedSubview(pastSelfWaitingStatusRow)
+        pastSelfWaitingSection.addArrangedSubview(pastSelfSyncPendingLabel)
+        pastSelfWaitingSection.addArrangedSubview(pastSelfSyncRetryButton)
         pastSelfWaitingSection.addArrangedSubview(pastSelfWaitingBodyLabel)
         pastSelfWaitingSection.addArrangedSubview(pastSelfRevokeButton)
         pastSelfThisDaySection.addArrangedSubview(pastSelfEntryRow)
@@ -5254,6 +5287,8 @@ class BearyProfileViewController: UIViewController {
         pastSelfEntryRow.isHidden = true
         pastSelfComposeSection.isHidden = true
         pastSelfWaitingSection.isHidden = true
+        pastSelfSyncPendingLabel.isHidden = true
+        pastSelfSyncRetryButton.isHidden = true
         pastSelfDueNoteLabel.isHidden = true
         // 无主显篇 = 往年今天没写：不留入口、不硬推（一年没写不推的客户端一侧）。
         // 开发者模式假篇（dev- 前缀）同样不留入口：留话会写真实存储，不能挂假篇上。
@@ -5281,6 +5316,19 @@ class BearyProfileViewController: UIViewController {
             pastSelfWaitingSection.isHidden = false
             pastSelfWaitingStatusLabel.text = "已留话 · 明年 \(pastSelfDisplayMonthDay(message.deliverOn))见"
             pastSelfWaitingBodyLabel.text = message.body
+            // 等待态按 localOnly 区分：仅本设备行显「仅保存在本设备，等待同步」，
+            // 已同步行只留原句（原句即已同步态，不另加字样）；网络/5xx 创建
+            // 失败过的行改显「同步失败，点按重试」，点按重发创建（见
+            // pastSelfSyncRetryTapped）。业务码拒绝不给重试，只显等待同步。
+            if message.localOnly {
+                pastSelfSyncPendingLabel.text = "仅保存在本设备，等待同步"
+                let failed = pastSelfCreateFailedLocalIds.contains(message.id)
+                pastSelfSyncPendingLabel.isHidden = failed
+                pastSelfSyncRetryButton.isHidden = !failed
+            } else {
+                pastSelfSyncPendingLabel.isHidden = true
+                pastSelfSyncRetryButton.isHidden = true
+            }
         case .due:
             pastSelfDueNoteLabel.isHidden = false
             pastSelfDueNoteLabel.text = "对话已送达，见上方「去年的对话」"
@@ -5393,6 +5441,20 @@ class BearyProfileViewController: UIViewController {
         } else {
             BearyToast.show(in: view, message: "这句话已送达，撤回不了了")
         }
+        renderPastSelf(visible: pastSelfVisibleEntries())
+    }
+
+    /// 等待态同步失败重试：只重发当前这条等待中的留话创建（走留话自己的
+    /// pastSelfPushCreate，不复用日记/回收站的 kickForCurrentUser）。
+    /// 点按即把行切回「仅保存在本设备，等待同步」（在途守卫防重复提交；
+    /// 再失败时回包会把重试钮带回来，成功则行变已同步态）。
+    @objc private func pastSelfSyncRetryTapped() {
+        guard let main = thisDayMainEntry, let mainId = main.id, let store = pastSelfStore() else { return }
+        let today = pastSelfToday()
+        guard let waiting = PastSelfLogic.waitingMessage(store.loadAll(), chainId: mainId, today: today),
+              waiting.localOnly else { return }
+        pastSelfCreateFailedLocalIds.remove(waiting.id)
+        pastSelfPushCreate(waiting)
         renderPastSelf(visible: pastSelfVisibleEntries())
     }
 
@@ -5872,6 +5934,19 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
+    /// 留话创建失败是否可重试：只认网络失败与 5xx。业务码拒绝（4xx 带码，
+    /// 如重复提交）不重试——重发无用（见 createPastSelfMessage 契约）。
+    /// 注意 5xx 也可能带 error 体（mapStatus 会升成 .server(码, 500)），
+    /// 故按第二值的 HTTP 状态判，不按有无业务码判。
+    private func pastSelfCreateErrorIsRetryable(_ error: APIError) -> Bool {
+        switch error {
+        case .network: return true
+        case .http(let status, _): return status >= 500
+        case .server(_, let status): return (status ?? 0) >= 500
+        default: return false
+        }
+    }
+
     private func pastSelfPushCreate(_ message: PastSelfMessage) {
         let localId = message.id
         // 在途守卫：同一本地行只发一次创建（同步扫描与手动提交共用一条任务）。
@@ -5887,6 +5962,7 @@ class BearyProfileViewController: UIViewController {
                 strongSelf.pastSelfCreateInFlight.remove(localId)
                 switch result {
                 case .success(let response):
+                    strongSelf.pastSelfCreateFailedLocalIds.remove(localId)
                     if let serverRow = response.message {
                         store.replaceLocalRow(localId: localId, with: serverRow)
                         // 创建回包到了：本地已撤回过的行（replaceLocalRow 保留了
@@ -5907,8 +5983,22 @@ class BearyProfileViewController: UIViewController {
                         if strongSelf.isOwnProfile {
                             strongSelf.renderPastSelf(visible: strongSelf.pastSelfVisibleEntries())
                         }
+                    } else if strongSelf.isOwnProfile {
+                        // 成功回包无行：本地仍 localOnly，下一轮同步拉回；
+                        // 先把重试态清掉，等下一轮同步（行仍显等待同步）。
+                        strongSelf.renderPastSelf(visible: strongSelf.pastSelfVisibleEntries())
                     }
-                case .failure:
+                case .failure(let error):
+                    // 创建失败不再静默：网络/5xx 记失败、等待态行给点按重试；
+                    // 业务码拒绝不重试（行仍仅保存在本设备，见等待态文案）。
+                    if strongSelf.pastSelfCreateErrorIsRetryable(error) {
+                        strongSelf.pastSelfCreateFailedLocalIds.insert(localId)
+                    } else {
+                        strongSelf.pastSelfCreateFailedLocalIds.remove(localId)
+                    }
+                    if strongSelf.isOwnProfile {
+                        strongSelf.renderPastSelf(visible: strongSelf.pastSelfVisibleEntries())
+                    }
                     // #37 回包丢失兜底：创建失败可能是服务端已保存、回包
                     // 丢了。再拉一次列表；若服务端已有内容全等的行，
                     // mergeServerRows 会让本地行认领服务端 id，不再重推。
