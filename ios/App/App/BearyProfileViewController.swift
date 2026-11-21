@@ -3316,7 +3316,7 @@ class BearyProfileViewController: UIViewController {
             tabsBorder.leadingAnchor.constraint(equalTo: tabsContainer.leadingAnchor),
             tabsBorder.trailingAnchor.constraint(equalTo: tabsContainer.trailingAnchor),
             tabsBorder.bottomAnchor.constraint(equalTo: tabsContainer.bottomAnchor),
-            tabsBorder.heightAnchor.constraint(equalToConstant: 1),
+            tabsBorder.heightAnchor.constraint(equalToConstant: 0.5),
             tabsUnderline.bottomAnchor.constraint(equalTo: tabsContainer.bottomAnchor),
             tabsUnderline.heightAnchor.constraint(equalToConstant: 2),
         ])

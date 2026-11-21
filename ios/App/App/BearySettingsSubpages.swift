@@ -282,7 +282,7 @@ class BearySettingsSubpageViewController: UIViewController {
                 let separator = UIView()
                 separator.translatesAutoresizingMaskIntoConstraints = false
                 separator.backgroundColor = BearyColors.line
-                NSLayoutConstraint.activate([separator.heightAnchor.constraint(equalToConstant: 1)])
+                NSLayoutConstraint.activate([separator.heightAnchor.constraint(equalToConstant: 0.5)])
                 stack.addArrangedSubview(separator)
             }
             let wrap = UIView()
