@@ -3182,7 +3182,7 @@ final class BearySettingsViewController: UIViewController {
         let themeButton = UIButton(type: .custom)
         themeButton.accessibilityLabel = "主题"
         themeButton.addTarget(self, action: #selector(openThemeSettingsPage), for: .touchUpInside)
-        // 语言行：点进语言子页（目前只有跟随系统、中国大陆两档）。
+        // 语言行：点进语言子页（跟随系统、中国大陆、English 三档）。
         // 图标用官方包的 language（双文种字形）；地球 icon_globe 是公开可见性图标，一图两义，2026-11-19 Li 定改掉。
         let languageDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         languageDetail.text = languageRowDetailText()
@@ -3247,9 +3247,13 @@ final class BearySettingsViewController: UIViewController {
         }
     }
 
-    /// 语言行尾文案（与语言子页选项同词：跟随系统／中国大陆）。
+    /// 语言行尾文案（与语言子页选项同词：跟随系统／中国大陆／English）。
     private func languageRowDetailText() -> String {
-        BearyAppLanguage.mode == .system ? "跟随系统" : "中国大陆"
+        switch BearyAppLanguage.mode {
+        case .system: return "跟随系统"
+        case .mainland: return "中国大陆"
+        case .english: return "English"
+        }
     }
 
     /// 子页返回后刷新通用卡行尾文案（主题／语言在子页里改，回来即跟上）。
