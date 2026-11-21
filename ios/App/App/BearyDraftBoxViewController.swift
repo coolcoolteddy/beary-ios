@@ -519,9 +519,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         // 不被父容器截断；文案与位置不变，只虚线框高一档。
         newButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         newButton.addTarget(self, action: #selector(newDraftTapped), for: .touchUpInside)
-        // M19：新建钮加与卡片一致的按压底色反馈。
-        newButton.addTarget(self, action: #selector(newButtonTouchDown(_:)), for: .touchDown)
-        newButton.addTarget(self, action: #selector(newButtonTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         let newWrap = wrapWithBottomPadding(newButton, bottom: 12, horizontal: 16)
         contentStack.addArrangedSubview(newWrap)
 
@@ -948,8 +945,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         card.backgroundColor = BearyColors.surface1
         card.layer.borderWidth = 0
         card.layer.cornerRadius = BearyCorners.single
-        card.addTarget(self, action: #selector(cardTouchDown(_:)), for: .touchDown)
-        card.addTarget(self, action: #selector(cardTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         card.addTarget(self, action: #selector(cardTapped(_:)), for: .touchUpInside)
 
         let inner = UIStackView()
@@ -1749,17 +1744,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         }
     }
 
-    // M19：新建钮按压底色（与卡片 cardTouchDown/cardTouchUp 同口径）。
-    @objc private func newButtonTouchDown(_ sender: UIButton) {
-        sender.backgroundColor = BearyColors.surface2
-        // 只留底色按压反馈：轻震已移到点按确认处（newDraftTapped），
-        // sheet 内起滑不该震。
-    }
-
-    @objc private func newButtonTouchUp(_ sender: UIButton) {
-        sender.backgroundColor = UIColor.clear
-    }
-
     /// U18：把手下滑关闭——下滑跟手，超过 80pt 或快速下滑时走 closeBox 同动画；
     /// 否则统一弹簧（0.26s／damping 0.7＋松手速度）弹回原位，减动效直接落位（不播回弹动画）。遮罩点按关闭不受影响。
     /// 2026-10-30 抓手批：上滑按统一口径阻尼微移后回弹，不扩高、不关闭。
@@ -1895,16 +1879,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 sheetScrollView.contentOffset.y = targetY
             }
         }
-    }
-
-    @objc private func cardTouchDown(_ sender: UIButton) {
-        sender.backgroundColor = BearyColors.surface2
-        // 只留底色按压反馈：轻震已移到点按确认处（cardTapped），
-        // sheet 内起滑不该震。
-    }
-
-    @objc private func cardTouchUp(_ sender: UIButton) {
-        sender.backgroundColor = BearyColors.surface1
     }
 
     @objc private func cardTapped(_ sender: UIButton) {
