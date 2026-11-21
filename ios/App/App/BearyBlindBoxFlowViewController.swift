@@ -234,7 +234,15 @@ private final class BlindBoxEmoteChipView: UIControl {
             heightAnchor.constraint(equalToConstant: 44),
         ])
         addTarget(self, action: #selector(tapped), for: .touchUpInside)
-        bearyAddPressFeedback()
+        // UIControl 不能用 UIButton 扩展 bearyAddPressFeedback()：按压反馈
+        // 在此就地接线，行为与该扩展同款（按下缩 0.95、松手弹簧回 1、
+        // 轻震只在 touchUpInside 发一次）。不改父类为 UIButton——flow 容器
+        // 用 sizeThatFits 量宽，UIButton 的 sizeThatFits 走标题／图片、
+        // 不走内部约束，会把 chip 宽量成 0。
+        addTarget(self, action: #selector(chipPressDown), for: .touchDown)
+        addTarget(self, action: #selector(chipPressDown), for: .touchDragEnter)
+        addTarget(self, action: #selector(chipPressUp), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
+        addTarget(self, action: #selector(chipPressHaptic), for: .touchUpInside)
         accessibilityLabel = "小熊回应"
     }
 
@@ -244,6 +252,31 @@ private final class BlindBoxEmoteChipView: UIControl {
 
     @objc private func tapped() {
         onTap?()
+    }
+
+    @objc private func chipPressDown() {
+        let pressed = CGAffineTransform(scaleX: 0.95, y: 0.95)
+        guard BearyMotion.animated(true) else {
+            transform = pressed
+            return
+        }
+        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState], animations: {
+            self.transform = pressed
+        })
+    }
+
+    @objc private func chipPressUp() {
+        guard BearyMotion.animated(true) else {
+            transform = .identity
+            return
+        }
+        UIView.animate(withDuration: BearyMotion.micro, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+            self.transform = .identity
+        })
+    }
+
+    @objc private func chipPressHaptic() {
+        BearyHaptics.press()
     }
 
     /// face 为调用方按底色缩好的 30pt 熊脸图（mine 态按墨底取深色版，其余按主题取）。
@@ -2388,7 +2421,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     /// imageView 72pt 高塞进 36pt chip、又被 masksToBounds 切掉，只剩顶部
     ///（133 真机：只看得见爱心、熊脸基本在 chip 外）。缩到 22pt 再设，
     /// 熊脸完整可见、与 chip 高度匹配。
-    private static func chipEmoteImage(_ face: UIImage, side: CGFloat = 22) -> UIImage {
+    /// fileprivate：同文件的 6 熊选择器也要调它（40pt 熊脸），private 跨类调不到。
+    fileprivate static func chipEmoteImage(_ face: UIImage, side: CGFloat = 22) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
         format.scale = face.scale > 0 ? face.scale : UIScreen.main.scale
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format)
