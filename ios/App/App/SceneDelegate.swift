@@ -2542,6 +2542,7 @@ final class BearyChromeViewController: UIViewController {
         // 不离窗，离页表情必须在这里显式停掉，否则切走的页在后台继续播。
         if previousPage == .home {
             feedVC?.stopVisibleEmotes()
+            feedVC?.pageDidLeave()
         } else if previousPage == .timeline {
             timelineVC?.stopVisibleEmotes()
         } else if previousPage == .me {

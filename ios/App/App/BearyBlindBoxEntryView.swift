@@ -16,6 +16,20 @@ final class BearyBlindBoxEntryView: UIView {
 
     var onTap: (() -> Void)?
 
+    /// 紧凑模式（广场轮播下方的小卡）：只留标题与今日计数，副文案去掉，
+    /// 上下边距收窄；点按链路与现在一致。时间线已无此入口，默认 false 不影响他处。
+    var compactMode = false {
+        didSet {
+            guard compactMode != oldValue else { return }
+            subtitleLabel.isHidden = compactMode
+            rowTopConstraint?.constant = compactMode ? 10 : 12
+            rowBottomConstraint?.constant = compactMode ? -10 : -12
+        }
+    }
+
+    private var rowTopConstraint: NSLayoutConstraint?
+    private var rowBottomConstraint: NSLayoutConstraint?
+
     private let iconView = UIImageView()
     private let pendingChip = UILabel()
     private let titleLabel = UILabel()
@@ -116,10 +130,6 @@ final class BearyBlindBoxEntryView: UIView {
         addSubview(tapButton)
 
         NSLayoutConstraint.activate([
-            row.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
             iconView.widthAnchor.constraint(equalToConstant: 28),
             iconView.heightAnchor.constraint(equalToConstant: 28),
             pendingChip.widthAnchor.constraint(equalToConstant: 30),
@@ -130,6 +140,16 @@ final class BearyBlindBoxEntryView: UIView {
             tapButton.leadingAnchor.constraint(equalTo: leadingAnchor),
             tapButton.trailingAnchor.constraint(equalTo: trailingAnchor),
             tapButton.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        let rowTop = row.topAnchor.constraint(equalTo: topAnchor, constant: 12)
+        let rowBottom = row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12)
+        rowTopConstraint = rowTop
+        rowBottomConstraint = rowBottom
+        NSLayoutConstraint.activate([
+            rowTop,
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            rowBottom,
         ])
 
         NotificationCenter.default.addObserver(self, selector: #selector(handleStateChanged), name: .bearyBlindBoxDidChange, object: nil)

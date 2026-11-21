@@ -342,6 +342,8 @@ final class SessionManager {
             // 盲盒次数串账号修法：显式退出删该号全部盲盒桶，退出后不残留；
             // 切号不走这里（旧号桶保留、切回可复用），切号隔离靠分桶本身。
             BlindBoxState.shared.clearAccount(accountId: id)
+            // 轮播精选同口径：显式退出删该号当日精选桶。
+            BearyPlazaFeaturedPicker.clearAccount(accountId: id)
         }
         sessionGeneration += 1
         meSeq += 1
@@ -381,6 +383,7 @@ final class SessionManager {
         purgeImageCache(forAccountId: id)
         purgeLocalSnapshots(forAccountId: id)
         BlindBoxState.shared.clearAccount(accountId: id)
+        BearyPlazaFeaturedPicker.clearAccount(accountId: id)
     }
 
     /// 账号隔离 4 号：显式退出清态时清掉该账号的图片缓存（内存全清 +
