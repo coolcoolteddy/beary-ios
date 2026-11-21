@@ -205,24 +205,41 @@ enum BearyProfilePersonalLogic {
     }
 
     /// 同月同日、往年（年份 < 今天年份）按年份倒序，只取最近一年。
+    /// 月日按各篇自己的时区算，「今天」按传入的 calendar（调用方传设备
+    /// 时区日历）；无时区记录的旧篇按 calendar 时区兜底（v28 §二）。
     static func thisDayInHistory(entries: [Entry], today: Date, calendar: Calendar) -> ThisDayHistory? {
         thisDayHistoryByYear(entries: entries, today: today, calendar: calendar).first
+    }
+
+    /// 各篇自己的时区日历：`Entry.tzName`（IANA 名）解析得到，无记录的旧篇
+    /// 或非法标识一律按传入的 todayCalendar 时区兜底；同名时区的日历只建一次。
+    private static func calendarForThisDayEntry(_ entry: Entry, todayCalendar: Calendar, cache: inout [String: Calendar]) -> Calendar {
+        guard let tzName = entry.tzName, !tzName.isEmpty else { return todayCalendar }
+        if let cached = cache[tzName] { return cached }
+        var calendar = todayCalendar
+        calendar.timeZone = TimeZone(identifier: tzName) ?? todayCalendar.timeZone
+        cache[tzName] = calendar
+        return calendar
     }
 
     /// 同月同日、往年（年份 < 今天年份）按年份倒序全量分组：每年条目
     /// createdAt 降序。thisDayInHistory 只取其中最近一年；卡片展开态用
     /// 全量分组解释各年份（有记录的年份进当年篇，无记录的年份由调用方
-    /// 按 availableYears 对照标「这一年没有」/「尚未检查完」）。
+    /// 按 thisDayAvailableYears 对照标「这一年没有」/「尚未检查完」）。
+    /// calendar 只定「今天」（调用方传设备时区日历）；各篇月日按各篇自己
+    /// 的时区算，无时区记录的旧篇按 calendar 时区兜底（v28 §二）。
     static func thisDayHistoryByYear(entries: [Entry], today: Date, calendar: Calendar) -> [ThisDayHistory] {
         let todayParts = calendar.dateComponents([.year, .month, .day], from: today)
         guard let todayYear = todayParts.year,
               let todayMonth = todayParts.month,
               let todayDay = todayParts.day else { return [] }
         var byYear: [Int: [Entry]] = [:]
+        var entryCalendars: [String: Calendar] = [:]
         for entry in entries {
             guard let createdAt = entry.createdAt else { continue }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
-            let parts = calendar.dateComponents([.year, .month, .day], from: date)
+            let entryCalendar = calendarForThisDayEntry(entry, todayCalendar: calendar, cache: &entryCalendars)
+            let parts = entryCalendar.dateComponents([.year, .month, .day], from: date)
             guard let year = parts.year, year < todayYear,
                   parts.month == todayMonth, parts.day == todayDay else { continue }
             byYear[year, default: []].append(entry)
@@ -230,6 +247,21 @@ enum BearyProfilePersonalLogic {
         return byYear.keys.sorted(by: >).map { year in
             ThisDayHistory(year: year, entries: (byYear[year] ?? []).sorted { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) })
         }
+    }
+
+    /// 那年今日展开态的年份清单：各篇年份按各篇自己的时区算（与
+    /// thisDayHistoryByYear 同口径）；无时区记录的旧篇按传入的 calendar
+    /// 时区兜底。年度回顾的 availableYears 不动（仍走北京口径，另支按时区总纲改）。
+    static func thisDayAvailableYears(entries: [Entry], isOwn: Bool, calendar: Calendar) -> [Int] {
+        var years = Set<Int>()
+        var entryCalendars: [String: Calendar] = [:]
+        for entry in visibleEntries(entries, isOwn: isOwn) {
+            guard let createdAt = entry.createdAt else { continue }
+            let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
+            let entryCalendar = calendarForThisDayEntry(entry, todayCalendar: calendar, cache: &entryCalendars)
+            years.insert(entryCalendar.component(.year, from: date))
+        }
+        return years.sorted(by: >)
     }
 
     // MARK: - 随机漫步

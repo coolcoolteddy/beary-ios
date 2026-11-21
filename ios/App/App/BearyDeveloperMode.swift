@@ -139,6 +139,8 @@ final class BearyDeveloperMode {
             e.createdAt = Int(date.timeIntervalSince1970 * 1000)
             e.publishedAt = e.createdAt
         }
+        // 假篇时间戳按北京午夜造，月日须按北京算才对得上（v28 §二按各篇时区匹配）。
+        e.tzName = "Asia/Shanghai"
         e.isPublic = true
         e.visibility = "public"
         e.isMine = true
