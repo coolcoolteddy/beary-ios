@@ -74,16 +74,15 @@ enum BlindBoxDate {
     }
 
     /// 卡片日期：7 天内相对时间、7 天外绝对时间（共用口径）。
-    static func displayString(ms: Int?) -> String {
+    /// 日记时区（2026-11-21 v18 §二）：按被抽篇时区显示；nil = 设备时区。
+    /// 入池当日边界 todayStartMs 不动（仍按北京 00:00，见 item 11）。
+    static func displayString(ms: Int?, timeZone: TimeZone? = nil) -> String {
         guard let ms = ms, ms > 0 else { return "" }
-        if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
+        let tz = timeZone ?? .current
+        if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms, timeZone: tz) {
             return relative
         }
-        let fmt = DateFormatter()
-        fmt.timeZone = shanghai
-        fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "M月d日 H:mm"
-        return fmt.string(from: Date(timeIntervalSince1970: TimeInterval(ms) / 1000))
+        return BearyText.absoluteDateString(from: Date(timeIntervalSince1970: TimeInterval(ms) / 1000), timeZone: tz)
     }
 }
 
@@ -150,6 +149,10 @@ struct BlindBoxReceivedEntry: Decodable {
     var imgDims: [String: [Int]]?
     var publishedAt: Int?
     var emotes: [EmoteCount]?
+    /// 被抽篇的日记时区（服务端 blind-box exchange 回包透传；缺失回落北京）。
+    var tzOffsetMinutes: Int?
+    /// 展示用时区。
+    var diaryTimeZone: TimeZone { BearyBeijingDay.timeZone(offsetMinutes: tzOffsetMinutes) }
 }
 
 /// 当日 / 开盒 / 详情 / 撤回共用状态体（各端点缺失字段时按 nil 兜底，不猜状态）。
