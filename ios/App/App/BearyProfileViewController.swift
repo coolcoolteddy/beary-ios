@@ -7489,10 +7489,10 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 109：占位行文案，复用现行空态脚部（makeEmptyFooter）的本人页文案，
-    /// 不造新文案。日记 tab 的“还没有公开的日记”沿用脚部原话（脚部亦如此写）。
+    /// 不造新文案。日记 tab 的“还没有日记”沿用脚部原话（脚部亦如此写）。
     private var ownEmptyPlaceholderText: (title: String, subtitle: String) {
         switch currentTab {
-        case .diary: return ("还没有公开的日记", "写下第一篇，默认私密")
+        case .diary: return ("还没有日记", "写下第一篇，默认私密")
         case .liked: return ("还没有赞过的日记", "去广场逛逛吧")
         case .saved: return ("还没有收藏的日记", "看到喜欢的日记，点书签存到这里，只有你能看到")
         }
@@ -8108,7 +8108,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             // 取广场空态前半句“公开的日记会出现在这里”（后半句“写一篇并
             // 公开试试”是给本人的动作指引，他人页不适用，故不取）；本人页
             // 原文案一字不动。
-            titleText = isOwnProfile ? "还没有公开的日记" : "TA 还没有公开的日记"
+            titleText = isOwnProfile ? "还没有日记" : "TA 还没有公开的日记"
             subtitleText = isOwnProfile ? "写下第一篇，默认私密" : "公开的日记会出现在这里"
             let pencilView = BearyPencilView()
             pencilView.strokeColor = BearyColors.gray
