@@ -841,9 +841,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             locationRegion: selectedLocation?.region,
             locationCity: selectedLocation?.city,
             locationStreet: selectedLocation?.street,
-            // 日记时区（2026-11-21 v18 §二）：发布点按时的设备偏移；
-            // secondsFromGMT 本就是东正（北京 +28800 秒），直接 /60，不加负号。
-            tzOffsetMinutes: TimeZone.current.secondsFromGMT() / 60,
+            // 日记时区（2026-11-21 v20 §二）：发布点按时的设备时区 IANA 标识。
+            tzName: TimeZone.current.identifier,
             clientReq: req,
             originAccountId: currentAccountIdForPublish(),
             draftId: currentDraftId,

@@ -222,7 +222,7 @@ enum BearyProfilePersonalLogic {
         for entry in entries {
             guard let createdAt = entry.createdAt else { continue }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
-            // 日记时区（2026-11-21 v18 §二）：月日归属按各篇自身时区；
+            // 日记时区（2026-11-21 v20 §二）：月日归属按各篇自身时区；
             // “今天”仍走传入日历（调用方传查看设备日历）。
             let parts = entry.diaryCalendar.dateComponents([.year, .month, .day], from: date)
             guard let year = parts.year, year < todayYear,
@@ -251,7 +251,7 @@ enum BearyProfilePersonalLogic {
 
     // MARK: - 年度回顾
 
-    /// 当年条目（按各篇自身时区算年，2026-11-21 v18 §二），createdAt 降序。
+    /// 当年条目（按各篇自身时区算年，2026-11-21 v20 §二），createdAt 降序。
     /// 当年条目是年度回顾总篇数、最长连续、心情分布与词汇指纹的共同源头。
     static func yearEntries(entries: [Entry], year: Int, calendar: Calendar) -> [Entry] {
         entries.filter { entry in
@@ -308,7 +308,7 @@ enum BearyProfilePersonalLogic {
 
     /// 有词条目的年份（降序）：只取年份数字，不算任何一年的词表——
     /// 看当年不触发旧年重算；切到旧年时只算旧年那一张。
-    /// 年份按各篇自身时区算（2026-11-21 v18 §二）；传入 calendar 不再用于归属。
+    /// 年份按各篇自身时区算（2026-11-21 v20 §二）；传入 calendar 不再用于归属。
     static func availableYears(entries: [Entry], isOwn: Bool, calendar: Calendar) -> [Int] {
         var years = Set<Int>()
         for entry in visibleEntries(entries, isOwn: isOwn) {
@@ -346,7 +346,7 @@ enum BearyProfilePersonalLogic {
             guard let content = entry.content, !content.isEmpty,
                   let createdAt = entry.createdAt else { continue }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
-            // 词汇指纹月份按篇时区（2026-11-21 v18 §二）。
+            // 词汇指纹月份按篇时区（2026-11-21 v20 §二）。
             let month = entry.diaryCalendar.component(.month, from: date)
             var entryCounts: [String: Int] = [:]
             tokenizer.string = content

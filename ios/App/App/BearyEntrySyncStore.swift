@@ -474,13 +474,13 @@ enum BearyEntrySyncStore {
         var skippedCount: Int = 0
     }
 
-    /// 按篇时区日分组（2026-11-21 v18 §二：每篇按其自身时区定日组；无法归日的条目跳过并计数，不静默丢弃）。
+    /// 按篇时区日分组（2026-11-21 v20 §二：每篇按其自身时区定日组；无法归日的条目跳过并计数，不静默丢弃）。
     /// 组内按服务端序重排：created_at DESC, id DESC。
     static func groupByDay(_ entries: [Entry]) -> GroupedDays {
         var result = GroupedDays()
         for entry in entries {
             guard let createdAt = entry.createdAt, entry.id != nil,
-                  let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt, offsetMinutes: entry.tzOffsetMinutes) else {
+                  let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt, tzName: entry.tzName) else {
                 // 5-30：静默丢条改记一条日志——若服务端某天漏发或改名字段，
                 // 联调时能从日志发现，而不是无声少篇。
                 NSLog("[BearyEntrySync] groupByDay dropped entry without createdAt or id: id=%@", entry.id ?? "-")
@@ -817,7 +817,7 @@ enum BearyEntrySyncStore {
     /// 返回 false 仅当无法归日或写盘失败。
     @discardableResult
     static func upsertEntry(accountId: Int, entry: Entry) -> Bool {
-        guard let createdAt = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt, offsetMinutes: entry.tzOffsetMinutes) else { return false }
+        guard let createdAt = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt, tzName: entry.tzName) else { return false }
         var entries = loadDay(accountId: accountId, dayKey: dayKey) ?? []
         if let idx = entries.firstIndex(where: { $0.id == entry.id }) {
             entries[idx] = entry
@@ -1157,7 +1157,7 @@ enum BearyTrashSyncStore {
         // 不接收这三个字段，本地删帖进桶的条目从构造时就没有标题与图片数，
         // 即便编码补齐也无从恢复；质保三轮 T3-C1：published 取 isPublic
         //（nil 按私密 0，fail-closed），恢复文案走 visibility。
-        let item = TrashItem(id: entryId, content: entry.content, createdAt: entry.createdAt, publishAt: entry.publishAt, deletedAt: nowMs, daysLeft: 30, published: entry.isPublic == true ? 1 : 0, visibility: entry.visibility, title: entry.title, imageKeys: entry.images, tzOffsetMinutes: entry.tzOffsetMinutes)
+        let item = TrashItem(id: entryId, content: entry.content, createdAt: entry.createdAt, publishAt: entry.publishAt, deletedAt: nowMs, daysLeft: 30, published: entry.isPublic == true ? 1 : 0, visibility: entry.visibility, title: entry.title, imageKeys: entry.images, tzName: entry.tzName)
         items.insert(item, at: 0)
         noteTrashWrite()
         return publishTrashFileAtomically(accountId: accountId, items: items)

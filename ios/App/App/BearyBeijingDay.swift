@@ -13,19 +13,20 @@ enum BearyBeijingDay {
         return cal
     }
 
-    /// 日记时区（2026-11-21 v18 §二）：写下时的设备时区相对 UTC 的分钟偏移。
-    /// nil = 存量旧行（写时未记），回落北京 +480，保持现有显示不变。
-    /// 选偏移量不存 IANA 名：写下那一刻的偏移即为当地时间，展示与分组只需
-    /// 偏移量；且服务端 SQL 可直接用它算每篇的日界（IANA 名在 SQLite 里算不出）。
-    static func timeZone(offsetMinutes: Int?) -> TimeZone {
-        let minutes = offsetMinutes ?? 480
-        return TimeZone(secondsFromGMT: minutes * 60) ?? TimeZone(identifier: "Asia/Shanghai") ?? .current
+    /// 日记时区（2026-11-21 v20 §二）：写下时的设备时区 IANA 标识
+    /// （如 Asia/Shanghai、America/New_York）。
+    /// nil = 存量旧行（写时未记），回落 Asia/Shanghai，保持现有显示不变；
+    /// 非法标识也回落 Asia/Shanghai。
+    /// 存 IANA 名不存 offset：标识本身带夏令时规则，展示与分组由标识算出；
+    /// 服务端按篇过滤/聚合在 JS 层用 Intl.DateTimeFormat 算（D1/SQLite 不认 IANA 名）。
+    static func timeZone(tzName: String?) -> TimeZone {
+        TimeZone(identifier: tzName ?? "Asia/Shanghai") ?? TimeZone(identifier: "Asia/Shanghai") ?? .current
     }
 
-    /// 按偏移量取公历（周一起始，与 calendar 同口径）。
-    static func calendar(offsetMinutes: Int?) -> Calendar {
+    /// 按时区名取公历（周一起始，与 calendar 同口径）。
+    static func calendar(tzName: String?) -> Calendar {
         var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = timeZone(offsetMinutes: offsetMinutes)
+        cal.timeZone = timeZone(tzName: tzName)
         cal.firstWeekday = 2
         return cal
     }
@@ -39,16 +40,16 @@ enum BearyBeijingDay {
     }
 
     /// 毫秒时间戳 → 指定时区的年月日。
-    static func components(ofMs ms: Int, offsetMinutes: Int?) -> (year: Int, month: Int, day: Int)? {
+    static func components(ofMs ms: Int, tzName: String?) -> (year: Int, month: Int, day: Int)? {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let comps = calendar(offsetMinutes: offsetMinutes).dateComponents([.year, .month, .day], from: date)
+        let comps = calendar(tzName: tzName).dateComponents([.year, .month, .day], from: date)
         guard let year = comps.year, let month = comps.month, let day = comps.day else { return nil }
         return (year, month, day)
     }
 
     /// 毫秒时间戳 → 指定时区的日 key（yyyy-MM-dd）。
-    static func dayKey(ofMs ms: Int, offsetMinutes: Int?) -> String? {
-        guard let c = components(ofMs: ms, offsetMinutes: offsetMinutes) else { return nil }
+    static func dayKey(ofMs ms: Int, tzName: String?) -> String? {
+        guard let c = components(ofMs: ms, tzName: tzName) else { return nil }
         return dayKey(year: c.year, month: c.month, day: c.day)
     }
 

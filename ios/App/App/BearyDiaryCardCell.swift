@@ -2144,7 +2144,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 同年「M月d日 H:mm」，跨年「yyyy年M月d日」，按传入时区显示；
     /// 无篇场景（旧签名）回落北京，日记面一律走带时区的重载。
     static func feedTimeString(ms: Int) -> String {
-        feedTimeString(ms: ms, timeZone: BearyBeijingDay.timeZone(offsetMinutes: nil))
+        feedTimeString(ms: ms, timeZone: BearyBeijingDay.timeZone(tzName: nil))
     }
     static func feedTimeString(ms: Int, timeZone: TimeZone) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
@@ -2548,7 +2548,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
         // F3：时间一律相对时间（与私信/通知同口径，7 天外回绝对时间；2026-11-15 改，取代绝对时间）。
         // 广场卡有效公开且有 publishedAt 时按发布时间相对；其余按创建时间相对。
-        // 日记时区（2026-11-21 v18 §二）：7 天外绝对回落按篇时区显示。
+        // 日记时区（2026-11-21 v20 §二）：7 天外绝对回落按篇时区显示。
         if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt, timeZone: entry.diaryTimeZone) {
             timeLabel.text = relative
         } else {
@@ -2644,7 +2644,7 @@ class BearyDiaryCardCell: UITableViewCell {
         nameLabel.text = authorNameValue
         // 我的页时间改相对时间（与 feed 模式同口径：有效公开取发布时间，否则取创建时间；
         // 共用 BearyVisibilityText.publishedRelativeString，不另造工具）。
-        // 日记时区（2026-11-21 v18 §二）：7 天外绝对回落按篇时区显示。
+        // 日记时区（2026-11-21 v20 §二）：7 天外绝对回落按篇时区显示。
         if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt, timeZone: entry.diaryTimeZone) {
             timeLabel.text = relative
         } else if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.createdAt, timeZone: entry.diaryTimeZone) {

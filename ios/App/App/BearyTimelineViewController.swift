@@ -3236,7 +3236,7 @@ class BearyTimelineViewController: UIViewController {
         // 初次进入守卫挂起（viewDidLoad 已置位）照常消费，不再跳转。
         if let dayKey = selectedDayKey {
             dayEntries = snap.entries.filter { entry in
-                guard let created = entry.createdAt, let key = BearyBeijingDay.dayKey(ofMs: created, offsetMinutes: entry.tzOffsetMinutes) else { return false }
+                guard let created = entry.createdAt, let key = BearyBeijingDay.dayKey(ofMs: created, tzName: entry.tzName) else { return false }
                 return key == dayKey
             }
             dayEntriesKey = dayKey
@@ -5115,7 +5115,7 @@ class BearyTimelineViewController: UIViewController {
                     if let selectedKey = strongSelf.selectedDayKey, strongSelf.dayEntriesKey == selectedKey {
                         let dayNew = newItems.filter { entry in
                             guard let created = entry.createdAt else { return false }
-                            return BearyBeijingDay.dayKey(ofMs: created, offsetMinutes: entry.tzOffsetMinutes) == selectedKey
+                            return BearyBeijingDay.dayKey(ofMs: created, tzName: entry.tzName) == selectedKey
                         }
                         if !dayNew.isEmpty {
                             let dayKnown = Set(strongSelf.dayEntries.compactMap { $0.id })
@@ -6056,9 +6056,9 @@ class BearyTimelineViewController: UIViewController {
 
     /// 6A gotoEntry 落点（自己篇）：按 createdAt 日切到当日面板并滚动高亮。
     /// 已在当日面板里时直接滚，不重拉；无 createdAt 时只在已加载分区里找。
-    /// tzOffsetMinutes：有则按篇时区定日（日记时区口径），缺省回落北京（旧调用方）。
-    func locateEntry(entryId: String, createdAt: Int?, tzOffsetMinutes: Int? = nil) {
-        guard let ms = createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: ms, offsetMinutes: tzOffsetMinutes) else {
+    /// tzName：有则按篇时区定日（日记时区口径），缺省回落 Asia/Shanghai（旧调用方）。
+    func locateEntry(entryId: String, createdAt: Int?, tzName: String? = nil) {
+        guard let ms = createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: ms, tzName: tzName) else {
             pendingLocateEntryId = nil
             pendingLocateDayKey = nil
             tryLocateInLoadedSections(entryId: entryId)
@@ -6208,7 +6208,7 @@ class BearyTimelineViewController: UIViewController {
         }
         let derived = timelineEntries.filter { entry in
             guard let created = entry.createdAt else { return false }
-            return BearyBeijingDay.dayKey(ofMs: created, offsetMinutes: entry.tzOffsetMinutes) == key
+            return BearyBeijingDay.dayKey(ofMs: created, tzName: entry.tzName) == key
         }
         if pendingEntryJumpCheck {
             pendingEntryJumpCheck = false
@@ -6233,7 +6233,7 @@ class BearyTimelineViewController: UIViewController {
     /// 立即派生面板还是先清面板等首屏回包。
     private func firstPageCoversDay(key: String) -> Bool {
         timelineEntries.contains { entry in
-            guard let created = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: created, offsetMinutes: entry.tzOffsetMinutes) else { return false }
+            guard let created = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: created, tzName: entry.tzName) else { return false }
             return dayKey < key
         }
     }
@@ -6535,7 +6535,7 @@ class BearyTimelineViewController: UIViewController {
         var indexByKey: [String: Int] = [:]
         for entry in timelineEntries {
             guard let createdMs = entry.createdAt else { continue }
-            // 日记时区：每篇按其自身时区定日组（cachedDayKey 内按 entry 时区换算）。
+            // 日记时区（2026-11-21 v20 §二）：每篇按其自身时区定日组（cachedDayKey 内按 entry 时区换算）。
             guard let key = cachedDayKey(for: entry, createdMs: createdMs) else { continue }
             // 84 包：当日面板已展示该天条目时，时间线不再重复建组；dayEntries 为空时保留时间线组，避免取数失败藏条目。非今天的选中日同样适用。
             if key == selectedDayKey, !dayEntries.isEmpty { continue }
@@ -6543,7 +6543,7 @@ class BearyTimelineViewController: UIViewController {
                 sections[existing].entries.append(entry)
             } else {
                 indexByKey[key] = sections.count
-                sections.append(DaySection(dayKey: key, title: cachedDayTitle(for: key, ms: createdMs, offsetMinutes: entry.tzOffsetMinutes), entries: [entry]))
+                sections.append(DaySection(dayKey: key, title: cachedDayTitle(for: key, ms: createdMs, tzName: entry.tzName), entries: [entry]))
             }
         }
         return sections
@@ -6554,15 +6554,15 @@ class BearyTimelineViewController: UIViewController {
     /// 日记时区：按 entry 自身时区换算（entry 时区固定，按 id 缓存安全）。
     private func cachedDayKey(for entry: Entry, createdMs: Int) -> String? {
         if let entryId = entry.id, let cached = dayKeyCacheByEntryId[entryId] { return cached }
-        guard let key = BearyBeijingDay.dayKey(ofMs: createdMs, offsetMinutes: entry.tzOffsetMinutes) else { return nil }
+        guard let key = BearyBeijingDay.dayKey(ofMs: createdMs, tzName: entry.tzName) else { return nil }
         if let entryId = entry.id { dayKeyCacheByEntryId[entryId] = key }
         return key
     }
 
     /// 审计 r18 第 37 项：按 dayKey 取组标题——同 key 的标题只算一次。
-    private func cachedDayTitle(for key: String, ms: Int, offsetMinutes: Int? = nil) -> String {
+    private func cachedDayTitle(for key: String, ms: Int, tzName: String? = nil) -> String {
         if let cached = dayTitleCacheByKey[key] { return cached }
-        let title = dayTitleForMs(ms, offsetMinutes: offsetMinutes)
+        let title = dayTitleForMs(ms, tzName: tzName)
         dayTitleCacheByKey[key] = title
         return title
     }
@@ -6570,8 +6570,8 @@ class BearyTimelineViewController: UIViewController {
     /// 追加 6①：日组标题统一格式——此前今天/昨天带“今天 · / 昨天 · ”前缀、
     /// 更早的日期没有前缀，同页内格式不统一；统一为一律“X 月 X 日”
     /// （当日面板表头是另一组件，口径不动）。
-    private func dayTitleForMs(_ ms: Int, offsetMinutes: Int? = nil) -> String {
-        guard let comps = BearyBeijingDay.components(ofMs: ms, offsetMinutes: offsetMinutes) else { return "" }
+    private func dayTitleForMs(_ ms: Int, tzName: String? = nil) -> String {
+        guard let comps = BearyBeijingDay.components(ofMs: ms, tzName: tzName) else { return "" }
         return "\(comps.month) 月 \(comps.day) 日"
     }
 

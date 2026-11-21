@@ -111,10 +111,10 @@ struct Quote: Codable {
     /// 审计 2026-11-02 第十节：被引篇限时到期戳（毫秒；服务端 attachQuotes 透传后
     /// 判定可算有效态；缺失时调用方按 isPublic 原值兜底，绝不凭缺失推断已过期）。
     var ephemeralUntil: Int? = nil
-    /// 被引篇的日记时区（服务端 attachQuotes 透传 tz_offset_minutes；缺失回落北京）。
-    var tzOffsetMinutes: Int? = nil
+    /// 被引篇的日记时区（服务端 attachQuotes 透传 tz_name；缺失回落 Asia/Shanghai）。
+    var tzName: String? = nil
     /// 被引篇展示用时区（来源行日期用）。
-    var diaryTimeZone: TimeZone { BearyBeijingDay.timeZone(offsetMinutes: tzOffsetMinutes) }
+    var diaryTimeZone: TimeZone { BearyBeijingDay.timeZone(tzName: tzName) }
 
     /// 引用有效公开态：公开且未过期；仅好友/私密/过期一律 false（fail-closed）。
     var isEffectivelyPublic: Bool {
@@ -201,14 +201,14 @@ struct Entry: Codable {
     /// 限时日记：到期时间戳（毫秒）；nil = 非限时。存活期（now < 该值）才算限时态，
     /// 到期后按普通私密渲染（见 BearyEphemeral）。
     var ephemeralUntil: Int?
-    /// 日记时区（2026-11-21 v18 §二）：写下时的设备时区相对 UTC 的分钟偏移
-    /// （服务端 tz_offset_minutes；旧行缺失时 nil，展示与分组回落北京 +480）。
-    /// 写在异地、发在异地时以发布时的设备时区为准（发布快照拍定时刻取 TimeZone.current）。
-    var tzOffsetMinutes: Int? = nil
-    /// 展示用时区：有值用写下时的固定偏移，缺失回落北京（存量行保持现有显示不变）。
-    var diaryTimeZone: TimeZone { BearyBeijingDay.timeZone(offsetMinutes: tzOffsetMinutes) }
+    /// 日记时区（2026-11-21 v20 §二）：写下时的设备时区 IANA 标识
+    /// （服务端 tz_name；旧行缺失时 nil，展示与分组回落 Asia/Shanghai）。
+    /// 写在异地、发在异地时以发布时的设备时区为准（发布快照拍定时刻取 TimeZone.current.identifier）。
+    var tzName: String? = nil
+    /// 展示用时区：有值用写下时的时区标识，缺失回落 Asia/Shanghai（存量行保持现有显示不变）。
+    var diaryTimeZone: TimeZone { BearyBeijingDay.timeZone(tzName: tzName) }
     /// 展示用日历（公历、周一起始，与 BearyBeijingDay 同口径）。
-    var diaryCalendar: Calendar { BearyBeijingDay.calendar(offsetMinutes: tzOffsetMinutes) }
+    var diaryCalendar: Calendar { BearyBeijingDay.calendar(tzName: tzName) }
     /// iCity @：被 @ 者 id（可空）与显示名（卡片/详情 @ 标签用）。
     var mentionedUserId: Int?
     var mentionedName: String?
@@ -466,11 +466,11 @@ struct TrashItem: Codable {
     var visibility: String?
     var deletedAt: Int?
     var daysLeft: Int?
-    /// 回收站原篇的日记时区（服务端 trash 列表透传 tz_offset_minutes；旧行缺失时 nil，
-    /// “写于”回落北京，与 Entry 同口径）。
-    var tzOffsetMinutes: Int?
+    /// 回收站原篇的日记时区（服务端 trash 列表透传 tz_name；旧行缺失时 nil，
+    /// “写于”回落 Asia/Shanghai，与 Entry 同口径）。
+    var tzName: String?
     /// “写于”展示用时区。
-    var diaryTimeZone: TimeZone { BearyBeijingDay.timeZone(offsetMinutes: tzOffsetMinutes) }
+    var diaryTimeZone: TimeZone { BearyBeijingDay.timeZone(tzName: tzName) }
     /// 回收站原篇标题（服务端透传；旧缓存缺本键时按 nil 解码）。
     var title: String? = nil
     /// 回收站原篇图片 keys（服务端透传；App 只取数量，不下载旧图）。
@@ -488,7 +488,7 @@ struct TrashItem: Codable {
         case visibility
         case deletedAt
         case daysLeft
-        case tzOffsetMinutes
+        case tzName
         case title
         case imageKeys = "images"
     }
@@ -514,7 +514,7 @@ struct TrashItem: Codable {
         visibility = try container.decodeIfPresent(String.self, forKey: .visibility)
         deletedAt = try container.decodeIfPresent(Int.self, forKey: .deletedAt)
         daysLeft = try container.decodeIfPresent(Int.self, forKey: .daysLeft)
-        tzOffsetMinutes = try container.decodeIfPresent(Int.self, forKey: .tzOffsetMinutes)
+        tzName = try container.decodeIfPresent(String.self, forKey: .tzName)
         title = try container.decodeIfPresent(String.self, forKey: .title)
         imageKeys = try container.decodeIfPresent([String].self, forKey: .imageKeys)
     }
@@ -526,7 +526,7 @@ struct TrashItem: Codable {
     /// 标题与图片数，离线重读后 trashSummary 只能回落到正文/“无文字”）。
     /// 质保三轮 T3-C1：published 也随 Entry 原值带上（共四字段），彻底删除后
     /// 图片缓存精确逐出才有效；缺失时按 nil 由服务端纠正。
-    init(id: String, content: String?, createdAt: Int?, publishAt: Int?, deletedAt: Int?, daysLeft: Int?, published: Int? = nil, visibility: String? = nil, title: String? = nil, imageKeys: [String]? = nil, tzOffsetMinutes: Int? = nil) {
+    init(id: String, content: String?, createdAt: Int?, publishAt: Int?, deletedAt: Int?, daysLeft: Int?, published: Int? = nil, visibility: String? = nil, title: String? = nil, imageKeys: [String]? = nil, tzName: String? = nil) {
         self.id = id
         self.content = content
         self.createdAt = createdAt
@@ -537,7 +537,7 @@ struct TrashItem: Codable {
         self.daysLeft = daysLeft
         self.title = title
         self.imageKeys = imageKeys
-        self.tzOffsetMinutes = tzOffsetMinutes
+        self.tzName = tzName
     }
 
     /// 落盘编码：id 固定写 String（解码端 String 分支命中）；其余字段与解码同名，
@@ -555,7 +555,7 @@ struct TrashItem: Codable {
         try container.encodeIfPresent(visibility, forKey: .visibility)
         try container.encodeIfPresent(deletedAt, forKey: .deletedAt)
         try container.encodeIfPresent(daysLeft, forKey: .daysLeft)
-        try container.encodeIfPresent(tzOffsetMinutes, forKey: .tzOffsetMinutes)
+        try container.encodeIfPresent(tzName, forKey: .tzName)
         try container.encodeIfPresent(title, forKey: .title)
         try container.encodeIfPresent(imageKeys, forKey: .imageKeys)
     }

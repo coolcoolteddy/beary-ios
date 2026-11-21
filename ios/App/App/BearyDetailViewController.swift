@@ -1798,7 +1798,7 @@ final class BearyDetailViewController: UIViewController {
             // 冲突清单第 4 条：公开内容显示「编辑于 X」（编辑过才显；私密不显）。
             // 时间一律相对时间（与私信/通知/广场卡同口径：刚刚/X 分钟前/X 小时前/X 天前，
             // 7 天外回绝对时间，见 BearyVisibilityText.publishedRelativeString；2026-11-15 改，取代绝对时间）。
-            // 日记时区（2026-11-21 v18 §二）：创建时间与编辑时间均按本篇时区显示
+            // 日记时区（2026-11-21 v20 §二）：创建时间与编辑时间均按本篇时区显示
             // （7 天外绝对回落走篇时区；编辑不换日记的时区归属）。
             let createdText = BearyVisibilityText.publishedRelativeString(publishedAtMs: createdAt, timeZone: entry.diaryTimeZone) ?? BearyDiaryCardCell.feedTimeString(ms: createdAt, timeZone: entry.diaryTimeZone)
             if BearyEphemeral.isEffectivelyPublic(entry),

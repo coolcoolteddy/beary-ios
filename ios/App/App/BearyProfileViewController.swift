@@ -4507,7 +4507,7 @@ class BearyProfileViewController: UIViewController {
 
     /// r17-C7：北京时间日历（Asia/Shanghai）——写作统计（连续天数）与
     /// 快照失效日串仍按北京时间；「那年今天」与年度回顾的“今天／今年”
-    /// 改走查看设备日历（2026-11-21 v18 §二），条目归属按各篇自身时区。
+    /// 改走查看设备日历（2026-11-21 v20 §二），条目归属按各篇自身时区。
     private static var beijingCalendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
@@ -5030,7 +5030,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func renderThisDay(visible: [Entry]) {
-        // 日记时区（2026-11-21 v18 §二）：“今天”按查看设备时区，条目月日按各篇自身时区。
+        // 日记时区（2026-11-21 v20 §二）：“今天”按查看设备时区，条目月日按各篇自身时区。
         renderThisDayWithEntries(visible: visible, today: Date(), calendar: BearyBeijingDay.deviceCalendar)
     }
 

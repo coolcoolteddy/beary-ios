@@ -2071,7 +2071,7 @@ extension UIImageView {
 enum BearyText {
     /// 审计-性能：逐行新建 DateFormatter 改静态复用（每种格式一个静态实例，
     /// 不复用同一实例改 dateFormat；调用方只在主线程做行渲染，不跨线程用）。
-    /// 日记时区（2026-11-21 v18 §二）：三格式按（语言，时区）取实例——语言
+    /// 日记时区（2026-11-21 v20 §二）：三格式按（语言，时区）取实例——语言
     /// 目前固定 zh_CN（日期语言本地化 #2092 另行接管 locale 来源，本处只接时区）；
     /// 时区由调用方按面传：日记面传篇时区，私信/通知面传设备时区，旧行缺失回落北京。
     private static var formatterCache: [String: DateFormatter] = [:]
@@ -2086,7 +2086,7 @@ enum BearyText {
         return formatter
     }
     /// 北京时区（存量口径：无篇场景与旧签名回落用）。
-    static var beijingTimeZone: TimeZone { BearyBeijingDay.timeZone(offsetMinutes: nil) }
+    static var beijingTimeZone: TimeZone { BearyBeijingDay.timeZone(tzName: nil) }
 
     /// 审计四轮 14：月日时分静态复用——聊天页行渲染与 timeString 共用，
     /// 只在主线程用（DateFormatter 非线程安全，不跨线程用）。
@@ -2716,11 +2716,11 @@ extension BearyAPI {
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
     /// create_ip_limit(429) / create_dup。
-    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, locationLatitude: Double? = nil, locationLongitude: Double? = nil, locationCountry: String? = nil, locationRegion: String? = nil, locationCity: String? = nil, locationStreet: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, tags: [String]? = nil, timeZoneOffsetMinutes: Int? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, locationLatitude: Double? = nil, locationLongitude: Double? = nil, locationCountry: String? = nil, locationRegion: String? = nil, locationCity: String? = nil, locationStreet: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, tags: [String]? = nil, timeZoneName: String? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
-        // 日记时区（2026-11-21 v18 §二）：发布时的设备时区相对 UTC 的分钟偏移；
-        // nil=省略不传，服务端回落 +480（北京）。编辑不改时区，故 updateEntry 不发本键。
-        if let tz = timeZoneOffsetMinutes { body["tz_offset_minutes"] = tz }
+        // 日记时区（2026-11-21 v20 §二）：发布时的设备时区 IANA 标识；
+        // nil=省略不传，服务端回落 Asia/Shanghai。编辑不改时区，故 updateEntry 不发本键。
+        if let tz = timeZoneName { body["tz_name"] = tz }
         // 实况：非空才发 live_videos（无实况的新建与旧版 body 一字相同）；
         // 空映射不发（新建无旧态可清，编辑清实况走 updateEntry 的显式空映射）。
         if let live = liveVideos, !live.isEmpty { body["live_videos"] = live }

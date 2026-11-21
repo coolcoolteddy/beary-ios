@@ -32,11 +32,11 @@ struct PublishSnapshot {
     let locationRegion: String?
     let locationCity: String?
     let locationStreet: String?
-    /// 日记时区（2026-11-21 v18 §二）：发布时的设备时区相对 UTC 的分钟偏移
-    /// （拍快照时刻取 TimeZone.current；写在异地、发在异地时以发布时为准）。
+    /// 日记时区（2026-11-21 v20 §二）：发布时的设备时区 IANA 标识
+    /// （拍快照时刻取 TimeZone.current.identifier；写在异地、发在异地时以发布时为准）。
     /// 快照不做 Codable 持久化，只经 saveDraftNow 落草稿，加字段安全。
     /// 编辑不改时区：updateEntry 不发本键。
-    let tzOffsetMinutes: Int?
+    let tzName: String?
     let clientReq: String
     /// 快照拍定时的发起账号：发布中心起飞前再校验一次，防门禁/
     /// setVisibility 在途期间账号已变仍把旧篇以新账号发出。
@@ -563,7 +563,7 @@ final class BearyPublishCenter {
             liveVideos: runningJob.liveVideos.isEmpty ? nil : runningJob.liveVideos,
             visibility: snapshot.visibility,
             tags: snapshot.tags,
-            timeZoneOffsetMinutes: snapshot.tzOffsetMinutes,
+            timeZoneName: snapshot.tzName,
             uploadProgress: progressHandler
         ) { [weak self, weak runningJob] result in
             DispatchQueue.main.async {

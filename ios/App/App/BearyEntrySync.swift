@@ -480,8 +480,7 @@ final class BearyEntrySync {
         queue.async { [weak self] in
             guard let self = self else { return }
             // 待发布回取的当日桶 key：按查看设备时区（与时间线 device-today 一致）。
-            // secondsFromGMT 本就是东正（北京 +28800 秒），直接 /60 即偏移分钟，不加负号。
-            let dayKey = BearyBeijingDay.dayKey(ofMs: Int(Date().timeIntervalSince1970 * 1000), offsetMinutes: TimeZone.current.secondsFromGMT() / 60) ?? ""
+            let dayKey = BearyBeijingDay.dayKey(ofMs: Int(Date().timeIntervalSince1970 * 1000), tzName: TimeZone.current.identifier) ?? ""
             if BearyEntrySyncStore.addPendingPublishRefetch(accountId: accountId, entryId: entryId, dayKey: dayKey) {
                 NSLog("[BearyEntrySync] pending refetch enqueued account=%d entry=%@", accountId, entryId)
             } else {

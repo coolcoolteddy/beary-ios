@@ -3960,7 +3960,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     /// 搜索结果日记行日期：7 天内相对时间、7 天外绝对时间（共用口径）。
-    /// 日记时区（2026-11-21 v18 §二）：绝对回落按篇时区显示。
+    /// 日记时区（2026-11-21 v20 §二）：绝对回落按篇时区显示。
     private func searchDateString(ms: Int, timeZone: TimeZone) -> String {
         if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms, timeZone: timeZone) {
             return relative

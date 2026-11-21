@@ -1470,11 +1470,11 @@ private enum TrashText {
 
     /// [24] 小项 6：7 天内相对时间、7 天外绝对时间（共用口径，M月d日 H:mm；
     /// 小时不补零；ms 无效时回落下方的旧绝对格式）。
-    /// 日记时区（2026-11-21 v18 §二）：“写于”是日记时间，按原篇时区显示；
+    /// 日记时区（2026-11-21 v20 §二）：“写于”是日记时间，按原篇时区显示；
     /// “删除于”（deletedLabel）是删除时刻，不动，仍走北京。
     /// 旧签名保留作兼容（回落北京）；日记面一律走带时区的重载。
     static func createdLabel(ms: Int) -> String {
-        createdLabel(ms: ms, timeZone: BearyBeijingDay.timeZone(offsetMinutes: nil))
+        createdLabel(ms: ms, timeZone: BearyBeijingDay.timeZone(tzName: nil))
     }
     static func createdLabel(ms: Int, timeZone: TimeZone) -> String {
         // #32：共用函数 7 天外也返回绝对串（M月d日 H:mm，设备时区、无跨年分支），
