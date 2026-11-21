@@ -2715,12 +2715,12 @@ class BearyTimelineViewController: UIViewController {
         if !calendarFramePrimed, tableView.bounds.width > 0 {
             calendarFramePrimed = true
             if calendarAnchor == nil {
-                calendarAnchor = BearyBeijingDay.todayComponents()
+                calendarAnchor = BearyBeijingDay.todayComponents(timeZone: .current)
             }
             if calendarDisplayedMonth == nil, let anchor = calendarAnchor {
                 calendarDisplayedMonth = (anchor.year, anchor.month)
             }
-            if selectedDayKey == nil, let today = BearyBeijingDay.todayComponents() {
+            if selectedDayKey == nil, let today = BearyBeijingDay.todayComponents(timeZone: .current) {
                 selectedDayKey = BearyBeijingDay.dayKey(year: today.year, month: today.month, day: today.day)
             }
             renderCalendar()
@@ -3203,12 +3203,12 @@ class BearyTimelineViewController: UIViewController {
             return
         }
         if calendarAnchor == nil {
-            calendarAnchor = BearyBeijingDay.todayComponents()
+            calendarAnchor = BearyBeijingDay.todayComponents(timeZone: .current)
         }
         if calendarDisplayedMonth == nil, let anchor = calendarAnchor {
             calendarDisplayedMonth = (anchor.year, anchor.month)
         }
-        if let today = BearyBeijingDay.todayComponents() {
+        if let today = BearyBeijingDay.todayComponents(timeZone: .current) {
             selectedDayKey = BearyBeijingDay.dayKey(year: today.year, month: today.month, day: today.day)
         } else {
             selectedDayKey = nil
@@ -3236,7 +3236,7 @@ class BearyTimelineViewController: UIViewController {
         // 初次进入守卫挂起（viewDidLoad 已置位）照常消费，不再跳转。
         if let dayKey = selectedDayKey {
             dayEntries = snap.entries.filter { entry in
-                guard let created = entry.createdAt, let key = BearyBeijingDay.dayKey(ofMs: created) else { return false }
+                guard let created = entry.createdAt, let key = BearyBeijingDay.dayKey(ofMs: created, tzName: entry.tzName) else { return false }
                 return key == dayKey
             }
             dayEntriesKey = dayKey
@@ -3282,7 +3282,7 @@ class BearyTimelineViewController: UIViewController {
             setRefreshFailedBannerVisible(false)
         }
         if calendarAnchor == nil {
-            calendarAnchor = BearyBeijingDay.todayComponents()
+            calendarAnchor = BearyBeijingDay.todayComponents(timeZone: .current)
         }
         if calendarDisplayedMonth == nil, let anchor = calendarAnchor {
             calendarDisplayedMonth = (anchor.year, anchor.month)
@@ -3292,7 +3292,7 @@ class BearyTimelineViewController: UIViewController {
         if keepDay {
             // 选中日与当日面板原样保留，只刷新时间线与日历。
         } else {
-            if let today = BearyBeijingDay.todayComponents() {
+            if let today = BearyBeijingDay.todayComponents(timeZone: .current) {
                 selectedDayKey = BearyBeijingDay.dayKey(year: today.year, month: today.month, day: today.day)
             } else {
                 selectedDayKey = nil
@@ -5115,7 +5115,7 @@ class BearyTimelineViewController: UIViewController {
                     if let selectedKey = strongSelf.selectedDayKey, strongSelf.dayEntriesKey == selectedKey {
                         let dayNew = newItems.filter { entry in
                             guard let created = entry.createdAt else { return false }
-                            return BearyBeijingDay.dayKey(ofMs: created) == selectedKey
+                            return BearyBeijingDay.dayKey(ofMs: created, tzName: entry.tzName) == selectedKey
                         }
                         if !dayNew.isEmpty {
                             let dayKnown = Set(strongSelf.dayEntries.compactMap { $0.id })
@@ -5514,7 +5514,7 @@ class BearyTimelineViewController: UIViewController {
             isFuture = false
         }
         var isToday = false
-        if let today = BearyBeijingDay.todayComponents() {
+        if let today = BearyBeijingDay.todayComponents(timeZone: .current) {
             isToday = (today.year == year && today.month == month && today.day == day)
         }
         let key = BearyBeijingDay.dayKey(year: year, month: month, day: day)
@@ -5544,7 +5544,7 @@ class BearyTimelineViewController: UIViewController {
             // TL-6：各段之间有空格（网页 us=' '），≤340px 窄屏才去空格紧凑写。
             let isNarrow = tableView.bounds.width <= 340
             let us = isNarrow ? "" : " "
-            let todayYear = BearyBeijingDay.todayComponents()?.year
+            let todayYear = BearyBeijingDay.todayComponents(timeZone: .current)?.year
             var title = ""
             if first.year != todayYear { title += "\(first.year)\(us)年\(us)" }
             title += "\(first.month)\(us)月\(us)\(first.day)\(us)日 – "
@@ -5598,13 +5598,13 @@ class BearyTimelineViewController: UIViewController {
     }
 
     private func isCurrentWeek(monday: (year: Int, month: Int, day: Int)) -> Bool {
-        guard let today = BearyBeijingDay.todayComponents() else { return false }
+        guard let today = BearyBeijingDay.todayComponents(timeZone: .current) else { return false }
         guard let currentMonday = BearyBeijingDay.mondayOf(year: today.year, month: today.month, day: today.day) else { return false }
         return currentMonday.year == monday.year && currentMonday.month == monday.month && currentMonday.day == monday.day
     }
 
     private func isCurrentMonth(displayed: (year: Int, month: Int)) -> Bool {
-        guard let today = BearyBeijingDay.todayComponents() else { return false }
+        guard let today = BearyBeijingDay.todayComponents(timeZone: .current) else { return false }
         return today.year == displayed.year && today.month == displayed.month
     }
 
@@ -5633,7 +5633,7 @@ class BearyTimelineViewController: UIViewController {
                 if parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) {
                     targetAnchor = (year, month, day)
                 }
-            } else if let displayed = calendarDisplayedMonth, let today = BearyBeijingDay.todayComponents(), today.year == displayed.year && today.month == displayed.month {
+            } else if let displayed = calendarDisplayedMonth, let today = BearyBeijingDay.todayComponents(timeZone: .current), today.year == displayed.year && today.month == displayed.month {
                 targetAnchor = today
             }
         }
@@ -5854,7 +5854,7 @@ class BearyTimelineViewController: UIViewController {
     /// selected，不改任何已有状态；renderCalendar 是唯一漏斗（翻页、
     /// 切换视图、月份回包、点选日全经此），故挂在末尾即全覆盖。
     private func updateCalendarTodayButton() {
-        guard let today = BearyBeijingDay.todayComponents() else {
+        guard let today = BearyBeijingDay.todayComponents(timeZone: .current) else {
             calendarCard.setTodayButtonVisible(false)
             return
         }
@@ -5888,7 +5888,7 @@ class BearyTimelineViewController: UIViewController {
     /// 防在途月份回包把选区跟回旧视图；reload 守卫挂起不动，与点选
     /// 当日格子同语义（见未决风险）。
     private func goToToday() {
-        guard let today = BearyBeijingDay.todayComponents() else { return }
+        guard let today = BearyBeijingDay.todayComponents(timeZone: .current) else { return }
         pendingStepFollow = false
         calendarAnchor = (year: today.year, month: today.month, day: today.day)
         calendarDisplayedMonth = (year: today.year, month: today.month)
@@ -6054,10 +6054,11 @@ class BearyTimelineViewController: UIViewController {
         commitDaySwitch()
     }
 
-    /// 6A gotoEntry 落点（自己篇）：按 createdAt 北京日切到当日面板并滚动高亮。
+    /// 6A gotoEntry 落点（自己篇）：按 createdAt 日切到当日面板并滚动高亮。
     /// 已在当日面板里时直接滚，不重拉；无 createdAt 时只在已加载分区里找。
-    func locateEntry(entryId: String, createdAt: Int?) {
-        guard let ms = createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: ms) else {
+    /// tzName：有则按篇时区定日（日记时区口径），缺省回落 Asia/Shanghai（旧调用方）。
+    func locateEntry(entryId: String, createdAt: Int?, tzName: String? = nil) {
+        guard let ms = createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: ms, tzName: tzName) else {
             pendingLocateEntryId = nil
             pendingLocateDayKey = nil
             tryLocateInLoadedSections(entryId: entryId)
@@ -6207,7 +6208,7 @@ class BearyTimelineViewController: UIViewController {
         }
         let derived = timelineEntries.filter { entry in
             guard let created = entry.createdAt else { return false }
-            return BearyBeijingDay.dayKey(ofMs: created) == key
+            return BearyBeijingDay.dayKey(ofMs: created, tzName: entry.tzName) == key
         }
         if pendingEntryJumpCheck {
             pendingEntryJumpCheck = false
@@ -6232,7 +6233,7 @@ class BearyTimelineViewController: UIViewController {
     /// 立即派生面板还是先清面板等首屏回包。
     private func firstPageCoversDay(key: String) -> Bool {
         timelineEntries.contains { entry in
-            guard let created = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: created) else { return false }
+            guard let created = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: created, tzName: entry.tzName) else { return false }
             return dayKey < key
         }
     }
@@ -6534,6 +6535,7 @@ class BearyTimelineViewController: UIViewController {
         var indexByKey: [String: Int] = [:]
         for entry in timelineEntries {
             guard let createdMs = entry.createdAt else { continue }
+            // 日记时区（2026-11-21 v20 §二）：每篇按其自身时区定日组（cachedDayKey 内按 entry 时区换算）。
             guard let key = cachedDayKey(for: entry, createdMs: createdMs) else { continue }
             // 84 包：当日面板已展示该天条目时，时间线不再重复建组；dayEntries 为空时保留时间线组，避免取数失败藏条目。非今天的选中日同样适用。
             if key == selectedDayKey, !dayEntries.isEmpty { continue }
@@ -6541,7 +6543,7 @@ class BearyTimelineViewController: UIViewController {
                 sections[existing].entries.append(entry)
             } else {
                 indexByKey[key] = sections.count
-                sections.append(DaySection(dayKey: key, title: cachedDayTitle(for: key, ms: createdMs), entries: [entry]))
+                sections.append(DaySection(dayKey: key, title: cachedDayTitle(for: key, ms: createdMs, tzName: entry.tzName), entries: [entry]))
             }
         }
         return sections
@@ -6549,17 +6551,18 @@ class BearyTimelineViewController: UIViewController {
 
     /// 审计 r18 第 37 项：按 entry id 取 dayKey——命中缓存即不跑日历换算；
     /// 未命中时现算并记入缓存；无 id 的条目不缓存、每次现算。
+    /// 日记时区：按 entry 自身时区换算（entry 时区固定，按 id 缓存安全）。
     private func cachedDayKey(for entry: Entry, createdMs: Int) -> String? {
         if let entryId = entry.id, let cached = dayKeyCacheByEntryId[entryId] { return cached }
-        guard let key = BearyBeijingDay.dayKey(ofMs: createdMs) else { return nil }
+        guard let key = BearyBeijingDay.dayKey(ofMs: createdMs, tzName: entry.tzName) else { return nil }
         if let entryId = entry.id { dayKeyCacheByEntryId[entryId] = key }
         return key
     }
 
     /// 审计 r18 第 37 项：按 dayKey 取组标题——同 key 的标题只算一次。
-    private func cachedDayTitle(for key: String, ms: Int) -> String {
+    private func cachedDayTitle(for key: String, ms: Int, tzName: String? = nil) -> String {
         if let cached = dayTitleCacheByKey[key] { return cached }
-        let title = dayTitleForMs(ms)
+        let title = dayTitleForMs(ms, tzName: tzName)
         dayTitleCacheByKey[key] = title
         return title
     }
@@ -6567,8 +6570,8 @@ class BearyTimelineViewController: UIViewController {
     /// 追加 6①：日组标题统一格式——此前今天/昨天带“今天 · / 昨天 · ”前缀、
     /// 更早的日期没有前缀，同页内格式不统一；统一为一律“X 月 X 日”
     /// （当日面板表头是另一组件，口径不动）。
-    private func dayTitleForMs(_ ms: Int) -> String {
-        guard let comps = BearyBeijingDay.components(ofMs: ms) else { return "" }
+    private func dayTitleForMs(_ ms: Int, tzName: String? = nil) -> String {
+        guard let comps = BearyBeijingDay.components(ofMs: ms, tzName: tzName) else { return "" }
         return "\(comps.month) 月 \(comps.day) 日"
     }
 

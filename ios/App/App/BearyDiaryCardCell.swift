@@ -2141,10 +2141,14 @@ class BearyDiaryCardCell: UITableViewCell {
     /// F3：时间一律 M月d日 H:mm（小时不补零，网页 fmtDate 口径；今天也不只显示 H:mm）。
     /// 80 包 B4-1：时间 formatter 静态复用（主线程 UI 路径使用，原每次调用新建）。
     /// 共用绝对时间回落（publishedRelativeString 无效 ms 时的兜底）：
-    /// 同年「M月d日 H:mm」，跨年「yyyy年M月d日」，北京时间。
+    /// 同年「M月d日 H:mm」，跨年「yyyy年M月d日」，按传入时区显示；
+    /// 无篇场景（旧签名）回落北京，日记面一律走带时区的重载。
     static func feedTimeString(ms: Int) -> String {
+        feedTimeString(ms: ms, timeZone: BearyBeijingDay.timeZone(tzName: nil))
+    }
+    static func feedTimeString(ms: Int, timeZone: TimeZone) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        return BearyText.absoluteDateString(from: date)
+        return BearyText.absoluteDateString(from: date, timeZone: timeZone)
     }
 
     /// F2：正文 16pt（首页）、行高 1.6（段落样式实现，非默认行高）。
@@ -2544,10 +2548,11 @@ class BearyDiaryCardCell: UITableViewCell {
 
         // F3：时间一律相对时间（与私信/通知同口径，7 天外回绝对时间；2026-11-15 改，取代绝对时间）。
         // 广场卡有效公开且有 publishedAt 时按发布时间相对；其余按创建时间相对。
-        if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt) {
+        // 日记时区（2026-11-21 v20 §二）：7 天外绝对回落按篇时区显示。
+        if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt, timeZone: entry.diaryTimeZone) {
             timeLabel.text = relative
         } else {
-            timeLabel.text = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.createdAt) ?? BearyDiaryCardCell.feedTimeString(ms: entry.createdAt ?? 0)
+            timeLabel.text = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.createdAt, timeZone: entry.diaryTimeZone) ?? BearyDiaryCardCell.feedTimeString(ms: entry.createdAt ?? 0, timeZone: entry.diaryTimeZone)
         }
 
         // F10：天气图标 15px（icon_wx_<weatherKey>，取不到图时隐藏、不留空）。
@@ -2639,9 +2644,10 @@ class BearyDiaryCardCell: UITableViewCell {
         nameLabel.text = authorNameValue
         // 我的页时间改相对时间（与 feed 模式同口径：有效公开取发布时间，否则取创建时间；
         // 共用 BearyVisibilityText.publishedRelativeString，不另造工具）。
-        if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt) {
+        // 日记时区（2026-11-21 v20 §二）：7 天外绝对回落按篇时区显示。
+        if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt, timeZone: entry.diaryTimeZone) {
             timeLabel.text = relative
-        } else if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.createdAt) {
+        } else if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.createdAt, timeZone: entry.diaryTimeZone) {
             timeLabel.text = relative
         } else {
             timeLabel.text = nil
@@ -3004,7 +3010,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// - 正文空：未公开→未公开占位，其余→已删占位；
     /// - 正文非空但 viewer 非作者且未公开：占位（绝不凭“正文非空”推断作者身份，fail-closed）。
     /// 缩略图门控：仅被引公开或 viewer 为作者时出。
-    private func presentQuoteCard(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int?, isPublic: Bool?, gone: Bool?, locked: Bool?, quoteId: String?, quoteAuthorId: Int?, quoteIsMine: Bool?, hostIsPublic: Bool, quotePublishedAt: Int? = nil, authorHandle: String? = nil, quoteVisibility: String? = nil) {
+    private func presentQuoteCard(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int?, isPublic: Bool?, gone: Bool?, locked: Bool?, quoteId: String?, quoteAuthorId: Int?, quoteIsMine: Bool?, hostIsPublic: Bool, quotePublishedAt: Int? = nil, authorHandle: String? = nil, quoteVisibility: String? = nil, quoteTimeZone: TimeZone? = nil) {
         // 112：落卡即不再等待，回包补刷不再重复命中本卡。
         quoteAwaitingId = nil
         quoteTapId = quoteId
@@ -3019,7 +3025,7 @@ class BearyDiaryCardCell: UITableViewCell {
         if locked == true {
             quoteTapGoneOrLocked = true
             let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quotePublishedAt, locked: true, visibility: quoteVisibility)
-            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
+            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt, sourceTimeZone: quoteTimeZone)
             quoteView.isHidden = false
             return
         }
@@ -3027,7 +3033,7 @@ class BearyDiaryCardCell: UITableViewCell {
             quoteTapGoneOrLocked = true
             if isPublic == false {
                 let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quotePublishedAt, locked: false, visibility: quoteVisibility)
-                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
+                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt, sourceTimeZone: quoteTimeZone)
             } else {
                 quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
             }
@@ -3039,7 +3045,7 @@ class BearyDiaryCardCell: UITableViewCell {
         guard viewerIsAuthor || isPublic == true else {
             quoteTapGoneOrLocked = true
             let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quotePublishedAt, locked: false, visibility: quoteVisibility)
-            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
+            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt, sourceTimeZone: quoteTimeZone)
             quoteView.isHidden = false
             // 审计 2026-11-02 第十节：仅好友档互关通道——先占位（fail-closed），
             // 服务端 state 确认互关后再补全文；cell 已复用（quoteTapId 已变）时丢弃。
@@ -3064,7 +3070,8 @@ class BearyDiaryCardCell: UITableViewCell {
                         hostIsPublic: hostIsPublic,
                         quotePublishedAt: quotePublishedAt,
                         authorHandle: authorHandle,
-                        quoteVisibility: quoteVisibility
+                        quoteVisibility: quoteVisibility,
+                        quoteTimeZone: quoteTimeZone
                     )
                     return
                 }
@@ -3091,7 +3098,8 @@ class BearyDiaryCardCell: UITableViewCell {
                             hostIsPublic: hostIsPublic,
                             quotePublishedAt: quotePublishedAt,
                             authorHandle: authorHandle,
-                            quoteVisibility: quoteVisibility
+                            quoteVisibility: quoteVisibility,
+                            quoteTimeZone: quoteTimeZone
                         )
                         strongSelf.updateDiaryStackSpacing()
                         strongSelf.onNeedsRowReload?()
@@ -3110,7 +3118,8 @@ class BearyDiaryCardCell: UITableViewCell {
             allowThumbs: isPublic == true || viewerIsAuthor,
             authorHandle: authorHandle,
             sourceTappable: true,
-            quoteId: quoteId
+            quoteId: quoteId,
+            sourceTimeZone: quoteTimeZone
         )
         quoteView.isHidden = false
     }
@@ -3217,7 +3226,8 @@ class BearyDiaryCardCell: UITableViewCell {
                 hostIsPublic: BearyEphemeral.isEffectivelyPublic(entry),
                 quotePublishedAt: quoteValue.publishedAt,
                 authorHandle: quoteValue.authorHandle,
-                quoteVisibility: quoteValue.visibility
+                quoteVisibility: quoteValue.visibility,
+                quoteTimeZone: quoteValue.diaryTimeZone
             )
             return
         }
@@ -3244,7 +3254,8 @@ class BearyDiaryCardCell: UITableViewCell {
                 hostIsPublic: BearyEphemeral.isEffectivelyPublic(entry),
                 quotePublishedAt: cachedEntry.publishedAt,
                 authorHandle: cachedEntry.authorHandle,
-                quoteVisibility: cachedEntry.visibility
+                quoteVisibility: cachedEntry.visibility,
+                quoteTimeZone: cachedEntry.diaryTimeZone
             )
             return
         }
@@ -3303,7 +3314,8 @@ class BearyDiaryCardCell: UITableViewCell {
                         hostIsPublic: BearyEphemeral.isEffectivelyPublic(entry),
                         quotePublishedAt: fetchedEntry.publishedAt,
                         authorHandle: fetchedEntry.authorHandle,
-                        quoteVisibility: fetchedEntry.visibility
+                        quoteVisibility: fetchedEntry.visibility,
+                        quoteTimeZone: fetchedEntry.diaryTimeZone
                     )
                     strongSelf.updateDiaryStackSpacing()
                     strongSelf.onNeedsRowReload?()
@@ -3348,7 +3360,7 @@ class BearyDiaryCardCell: UITableViewCell {
             // 审计 2026-11-02 第十节：个人主页模式同样走有效态（过期即非公开）。
             if quoteValue.isEffectivelyPublic == false {
                 let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quoteValue.publishedAt, locked: quoteValue.locked == true, visibility: quoteValue.visibility)
-                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quoteValue.authorHandle, sourceDateMs: quoteValue.createdAt)
+                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quoteValue.authorHandle, sourceDateMs: quoteValue.createdAt, sourceTimeZone: quoteValue.diaryTimeZone)
             } else {
                 quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
             }
@@ -3362,7 +3374,7 @@ class BearyDiaryCardCell: UITableViewCell {
         let viewerIsAuthor = quoteValue.isMine == true || (quoteValue.authorId != nil && viewerId != nil && quoteValue.authorId == viewerId)
         guard viewerIsAuthor || quoteValue.isEffectivelyPublic else {
             let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quoteValue.publishedAt, locked: false, visibility: quoteValue.visibility)
-            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quoteValue.authorHandle, sourceDateMs: quoteValue.createdAt)
+            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quoteValue.authorHandle, sourceDateMs: quoteValue.createdAt, sourceTimeZone: quoteValue.diaryTimeZone)
             quoteView.isHidden = false
             return
         }
@@ -3376,7 +3388,8 @@ class BearyDiaryCardCell: UITableViewCell {
             allowThumbs: quoteValue.isEffectivelyPublic || viewerIsAuthor,
             authorHandle: quoteValue.authorHandle,
             sourceTappable: true,
-            quoteId: quoteValue.id
+            quoteId: quoteValue.id,
+            sourceTimeZone: quoteValue.diaryTimeZone
         )
         quoteView.isHidden = false
     }

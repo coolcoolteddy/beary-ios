@@ -3177,7 +3177,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         dateLabel.adjustsFontForContentSizeCategory = true
         dateLabel.textColor = BearyColors.gray
         if let created = entry.createdAt {
-            dateLabel.text = searchDateString(ms: created)
+            dateLabel.text = searchDateString(ms: created, timeZone: entry.diaryTimeZone)
         }
 
         let contentText = collapsedWhitespace(entry.content ?? "")
@@ -3355,7 +3355,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             entryA11yParts.append("作者：" + author)
         }
         if let created = entry.createdAt {
-            entryA11yParts.append(searchDateString(ms: created))
+            entryA11yParts.append(searchDateString(ms: created, timeZone: entry.diaryTimeZone))
         }
         if BearyEphemeral.isLive(entry) {
             entryA11yParts.append("限时")
@@ -3960,13 +3960,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     /// 搜索结果日记行日期：7 天内相对时间、7 天外绝对时间（共用口径）。
-    private func searchDateString(ms: Int) -> String {
-        if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
+    /// 日记时区（2026-11-21 v20 §二）：绝对回落按篇时区显示。
+    private func searchDateString(ms: Int, timeZone: TimeZone) -> String {
+        if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms, timeZone: timeZone) {
             return relative
         }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "zh_CN")
+        fmt.timeZone = timeZone
         fmt.dateFormat = "M 月 d 日"
         return fmt.string(from: date)
     }

@@ -1470,26 +1470,24 @@ private enum TrashText {
 
     /// [24] 小项 6：7 天内相对时间、7 天外绝对时间（共用口径，M月d日 H:mm；
     /// 小时不补零；ms 无效时回落下方的旧绝对格式）。
-    /// G8：显示用 formatter 统一设北京时区，与服务端日界一致。
+    /// 日记时区（2026-11-21 v20 §二）：“写于”是日记时间，按原篇时区显示；
+    /// “删除于”（deletedLabel）是删除时刻，不动，仍走北京。
+    /// 旧签名保留作兼容（回落北京）；日记面一律走带时区的重载。
     static func createdLabel(ms: Int) -> String {
+        createdLabel(ms: ms, timeZone: BearyBeijingDay.timeZone(tzName: nil))
+    }
+    static func createdLabel(ms: Int, timeZone: TimeZone) -> String {
         // #32：共用函数 7 天外也返回绝对串（M月d日 H:mm，设备时区、无跨年分支），
         // 直接 early-return 会吞掉下方的跨年分支；只在 7 天内用它做相对显示，
-        // 7 天及以外落回下方的跨年分支（同年 M月d日 H:mm／跨年 yyyy年M月d日，北京时间）。
+        // 7 天及以外落回下方的跨年分支（同年 M月d日 H:mm／跨年 yyyy年M月d日，按篇时区）。
         let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
-        if diff < 7 * 86400, let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
+        if diff < 7 * 86400, let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms, timeZone: timeZone) {
             return relative
         }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
         // 跨年显示年份（规范 §12）：同年 "M月d日 H:mm"，跨年 "yyyy年M月d日"；
-        // 年份判定走北京日历，与本文件 G8 时区口径一致。
-        let calendar = BearyBeijingDay.calendar
-        let year = calendar.component(.year, from: date)
-        let currentYear = calendar.component(.year, from: Date())
-        formatter.dateFormat = year == currentYear ? "M月d日 H:mm" : "yyyy年M月d日"
-        return formatter.string(from: date)
+        // 年份判定与显示均走篇时区。
+        return BearyText.absoluteDateString(from: date, timeZone: timeZone)
     }
 
     /// 网页 fmtDelLabel：今天 → 今天 H:mm；昨天 → 昨天；否则 M月d日。
@@ -1520,7 +1518,7 @@ private enum TrashText {
     static func metaLine(trashValue: TrashItem) -> String {
         let createdPart: String
         if let createdAt = trashValue.createdAt {
-            createdPart = "写于 " + createdLabel(ms: createdAt)
+            createdPart = "写于 " + createdLabel(ms: createdAt, timeZone: trashValue.diaryTimeZone)
         } else {
             createdPart = "写于 —"
         }

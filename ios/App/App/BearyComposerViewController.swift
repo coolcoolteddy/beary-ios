@@ -630,6 +630,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.uploadTask = nil
     }
     private var draftClientReq: String?
+    /// 日记时区（2026-11-21 v21 §二，17:02 Li 改）：创建草稿时的设备时区 IANA 标识，
+    /// 草稿创建时取一次、之后全程复用（与 clientReq/draftId 同款“创建时生成”口径）；
+    /// 从箱内/恢复打开时取草稿存下的值，无记录的旧草稿为 nil、发布时取设备时区回落。
+    private var draftTimeZoneName: String?
     /// 当前正在写的草稿篇 id（v3 多槽键）：恢复/从箱打开时取该篇 draftId，
     /// 首次保存时生成；发布成功与丢弃只删这一篇，不碰其他篇。
     private var currentDraftId: String?
@@ -819,6 +823,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if currentDraftId == nil {
             currentDraftId = BearyDraftStore.newDraftId()
             clearedCurrentDraftId = nil
+            // 日记时区：未经过保存直发时在此取一次（见 saveDraftNow 同款口径）——
+            // 正常路径保存已取过，这里不再重复取；编辑模式取原日记的时区（编辑不改时区）。
+            if draftTimeZoneName == nil {
+                draftTimeZoneName = editingEntry?.tzName ?? TimeZone.current.identifier
+            }
         }
         guard let req = draftClientReq else { return nil }
         return PublishSnapshot(
@@ -841,6 +850,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             locationRegion: selectedLocation?.region,
             locationCity: selectedLocation?.city,
             locationStreet: selectedLocation?.street,
+            // 日记时区（2026-11-21 v21 §二，17:02 Li 改）：创建草稿时的设备时区 IANA 标识
+            //（草稿创建时取一次，之后编辑/发布都不改；无记录的旧草稿回落发布时设备时区）。
+            tzName: draftTimeZoneName ?? TimeZone.current.identifier,
             clientReq: req,
             originAccountId: currentAccountIdForPublish(),
             draftId: currentDraftId,
@@ -7845,6 +7857,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if currentDraftId == nil {
             currentDraftId = BearyDraftStore.newDraftId()
             clearedCurrentDraftId = nil
+            // 日记时区：草稿创建时取一次（见 saveDraftNow 同款口径）——退出保存先建 id 时一并取，
+            // 之后 saveDraftNow 不再重复取；编辑模式取原日记的时区（编辑不改时区）。
+            if draftTimeZoneName == nil {
+                draftTimeZoneName = editingEntry?.tzName ?? TimeZone.current.identifier
+            }
         }
         let snapshotDraftId = currentDraftId
         setDraftExitSaving(true)
@@ -7957,6 +7974,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if currentDraftId == nil {
             currentDraftId = BearyDraftStore.newDraftId()
             clearedCurrentDraftId = nil
+            // 日记时区：与 draftId 同款创建时取一次——编辑模式取原日记的时区（编辑不改时区）。
+            if draftTimeZoneName == nil {
+                draftTimeZoneName = editingEntry?.tzName ?? TimeZone.current.identifier
+            }
         }
         guard let req = draftClientReq, let draftIdValue = currentDraftId else {
             // 上文刚生成过两者，此分支实际不可达；沿旧口径照常回调，不拦后续流程。
@@ -7984,6 +8005,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             currentDraftId = nil
             clearedCurrentDraftId = nil
             draftClientReq = nil
+            draftTimeZoneName = nil
             // 删篇走 deleteAsyncReporting（ioQueue 内删，完成后回主线程刷新状态与 pill，
             // 并回传成败——此前 deleteAsync 不回传，删篇失败会被关闭路径当成功关掉）。
             // 状态只在仍是空篇时清：删盘期间用户已开始写新篇（currentDraftId 已换）
@@ -8079,7 +8101,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quoteIsPublic: selectedQuote?.isPublic,
             quoteVisibility: selectedQuote?.visibility,
             quoteEphemeralUntil: selectedQuote?.ephemeralUntil,
-            quoteDeleted: selectedQuote?.isDeleted ?? false)
+            quoteDeleted: selectedQuote?.isDeleted ?? false,
+            tzName: draftTimeZoneName)
         // 快照里的图片在途态拍在主线程（内存态），整库写 + 回读验证走后台队列。
         var hasUnsavedImageSnapshot = false
         for item in imageItems {
@@ -8204,6 +8227,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.currentDraftId = draft.draftId
                 self.clearedCurrentDraftId = nil
                 self.draftClientReq = draft.clientReq
+                self.draftTimeZoneName = draft.tzName
                 // 内联图预填：先从 draft.images 里分出内联图片键（只进 inlineGifKeys，
                 // 不进图片条；[gif:] 记号引用的才是内联图，见 BearyGIF.isInlineImageKey），
                 // 再 setBody/setHeadline——否则首渲时 [gif:] 解析不到 key。
@@ -8471,6 +8495,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         currentDraftId = nil
         clearedCurrentDraftId = nil
         draftClientReq = nil
+        draftTimeZoneName = nil
         // 发布绑定与打开时绑定随篇清掉：丢弃/发布成功后不再有“本篇发起账号”，
         // 下一篇发布重新捕获，不被旧绑定误拦。原日记已公开态同清。
         publishOriginAccountId = nil
@@ -8574,6 +8599,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // 落盘，覆盖箱内撤销刚写回的旧键；与 loadDraftFromBox /
                     // restoreDraft 的成对绑回一致。
                     self.draftClientReq = draft.clientReq
+                    self.draftTimeZoneName = draft.tzName
                     // 2026-11-14：删时已把编辑器清成空白（防落盘复活），撤销
                     // 后把内容接回来；编辑器已有新内容时不动，恢复的篇仍在
                     // 箱里、点开即是原有 onOpen 路径。
@@ -8715,6 +8741,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 删本篇，保留路径先调 saveDraftNow 落盘本篇）；这里再整库清会误删其他篇。
         currentDraftId = nil
         draftClientReq = nil
+        draftTimeZoneName = nil
         // P1-4：空白新篇重新计，已发布标记清掉。
         publishedCurrentDraft = false
         // 空白新篇不再继承上一篇的发布绑定与部分成功态。
@@ -8774,6 +8801,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         publishedCurrentDraft = false
         currentDraftId = draft.draftId
         draftClientReq = draft.clientReq
+        draftTimeZoneName = draft.tzName
         // 内联图预填：先从 draft.images 里分出内联图片键（只进 inlineGifKeys，
         // 不进图片条；[gif:] 记号引用的才是内联图，见 BearyGIF.isInlineImageKey），
         // 再 setBody/setHeadline——否则首渲时 [gif:] 解析不到 key。
