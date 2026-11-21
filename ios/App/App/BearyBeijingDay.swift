@@ -130,6 +130,18 @@ enum BearyBeijingDay {
         return (y, m, d)
     }
 
+    /// 所在周的周首日：firstWeekday 为 Calendar weekday 编号（1=周日…7=周六），
+    /// 与 mondayOf 同口径、只换锚点；firstWeekday=2 时与 mondayOf 等价。
+    static func weekStartOf(year: Int, month: Int, day: Int, firstWeekday: Int) -> (year: Int, month: Int, day: Int)? {
+        guard let date = date(year: year, month: month, day: day) else { return nil }
+        let weekday = calendar.component(.weekday, from: date)
+        let offset = (weekday - firstWeekday + 7) % 7
+        guard let start = calendar.date(byAdding: .day, value: -offset, to: date) else { return nil }
+        let comps = calendar.dateComponents([.year, .month, .day], from: start)
+        guard let y = comps.year, let m = comps.month, let d = comps.day else { return nil }
+        return (y, m, d)
+    }
+
     static func shifted(year: Int, month: Int, day: Int, byDays delta: Int) -> (year: Int, month: Int, day: Int)? {
         guard let date = date(year: year, month: month, day: day) else { return nil }
         guard let moved = calendar.date(byAdding: .day, value: delta, to: date) else { return nil }

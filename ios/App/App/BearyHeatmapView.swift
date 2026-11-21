@@ -2,7 +2,8 @@ import UIKit
 
 /// 写作热力图模块：GitHub 式 27 周 × 7 天格子（预览 v5 定版）。
 ///
-/// 布局：列 = 周（最左为 26 周前的周一，最右为本周）、行 = 星期一到星期日；
+/// 布局：列 = 周（最左为 26 周前的周首日，最右为本周）、行 = 周首日起的 7 天
+///（地区首日：跟随系统地区，语言行「中国大陆」固定周一）；
 /// 今天在最右列，未来的格子不画、不可点。颜色橙色五档（0 篇为空格，
 /// 1 / 2 / 3 / 4+ 篇逐档加深）；右上角月份名、左侧星期名、右下“少 → 多”
 /// 图例、底部“点某一天，看那天的日记”提示；模块内不写篇数/天数/连续天。
@@ -105,17 +106,21 @@ final class BearyHeatmapView: UIView {
             gridArea.addSubview(label)
             monthLabels.append(label)
         }
-        // 星期名（周一在首行）：规范 §11 星期名 12 regular scaled（captionFont），
-        // 框高取整行 pitch 使文字在行内居中；大字号下星期名（28pt 宽框）可能溢出：
-        // 允许缩到 0.8 倍兜底（与月份名同款写法），星期列 28pt 宽不放宽。
-        for weekday in ["周一", "周二", "周三", "周四", "周五", "周六", "周日"] {
+        // 星期名（周首日在首行）：顺序按地区首日排（v7 §五）；规范 §11 星期名
+        // 12 regular scaled（captionFont），框高取整行 pitch 使文字在行内居中；
+        // 大字号下星期名（28pt 宽框）可能溢出：允许缩到 0.8 倍兜底（与月份名
+        // 同款写法），星期列 28pt 宽不放宽。
+        let weekdayNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
+        let firstWeekday = Self.regionFirstWeekday()
+        for row in 0..<Self.daysPerWeek {
+            let weekday = (firstWeekday - 1 + row) % Self.daysPerWeek + 1
             let label = UILabel()
             label.font = BearyDynamicType.captionFont()
             label.adjustsFontForContentSizeCategory = true
             label.adjustsFontSizeToFitWidth = true
             label.minimumScaleFactor = 0.8
             label.textColor = BearyColors.gray
-            label.text = weekday
+            label.text = weekdayNames[weekday - 1]
             gridArea.addSubview(label)
             weekdayLabels.append(label)
         }
@@ -137,7 +142,7 @@ final class BearyHeatmapView: UIView {
         // touchUpInside 留给 VoiceOver 激活（读屏点按不经过手势）。
         let gridTap = UITapGestureRecognizer(target: self, action: #selector(gridTapped(_:)))
         gridArea.addGestureRecognizer(gridTap)
-        // VoiceOver 按周浏览：转子“周”逐周跳到每周一，不用逐个滑过 189 个格。
+        // VoiceOver 按周浏览：转子“周”逐周跳到每周首日，不用逐个滑过 189 个格。
         let weekRotor = makeWeekRotor()
         for button in dayButtons {
             button.accessibilityCustomRotors = [weekRotor]
@@ -193,6 +198,14 @@ final class BearyHeatmapView: UIView {
 
     // MARK: - 数据
 
+    /// 地区周首日（Calendar weekday 编号 1=周日…7=周六）：语言行「中国大陆」
+    /// 固定周一，否则跟随系统地区（Calendar.current.firstWeekday），与周条／
+    /// 月历同口径（v7 §五）。「今天」按哪篇时区算不归这里（时区总纲支范围）。
+    private static func regionFirstWeekday() -> Int {
+        if BearyAppLanguage.mode == .mainland { return 2 }
+        return Calendar.current.firstWeekday
+    }
+
     /// 窗口内可见日记按北京日计数（createdAt 缺失的篇跳过，与 BearyEntrySyncStore.groupByDay 同口径）。
     /// 窗口外的篇先按北京日序号（纯算术，不建 Date/Calendar）滤掉，不换算日期、不入表。
     static func counts(from entries: [Entry], windowStartNumber: Int, windowEndNumber: Int) -> [String: Int] {
@@ -229,13 +242,13 @@ final class BearyHeatmapView: UIView {
     }
 
     /// 按可见日记重算每格颜色与文案；visible 为空时调用方直接藏卡，不调这里。
-    /// 窗口：今天所在周的周一往前推 26 周（共 27 列），最早一周不丢——
+    /// 窗口：今天所在周的周首日（跟系统地区）往前推 26 周（共 27 列），最早一周不丢——
     /// 首列是完整一周（即使其中几天在账号首篇之前，也画 line 空格，不截掉）。
     func configure(entries: [Entry]) {
         guard let today = BearyBeijingDay.todayComponents(),
               let todayNumber = BearyBeijingDay.todayNumber(),
-              let monday = BearyBeijingDay.mondayOf(year: today.year, month: today.month, day: today.day),
-              let windowStart = BearyBeijingDay.shifted(year: monday.0, month: monday.1, day: monday.2, byDays: -26 * 7),
+              let weekStart = BearyBeijingDay.weekStartOf(year: today.year, month: today.month, day: today.day, firstWeekday: Self.regionFirstWeekday()),
+              let windowStart = BearyBeijingDay.shifted(year: weekStart.0, month: weekStart.1, day: weekStart.2, byDays: -26 * 7),
               let windowStartNumber = BearyBeijingDay.dayNumber(year: windowStart.0, month: windowStart.1, day: windowStart.2) else { return }
         // 只算窗口内 27 周 × 7 天：窗口外的篇不换算日期、不入表。
         let counts = Self.counts(from: entries, windowStartNumber: windowStartNumber, windowEndNumber: todayNumber)
@@ -279,8 +292,8 @@ final class BearyHeatmapView: UIView {
         let gridX = Self.weekdayWidth + Self.gridLeadingGap
         let gridTop = Self.monthRowHeight + Self.monthGridGap
         guard let today = BearyBeijingDay.todayComponents(),
-              let monday = BearyBeijingDay.mondayOf(year: today.year, month: today.month, day: today.day),
-              let windowStart = BearyBeijingDay.shifted(year: monday.0, month: monday.1, day: monday.2, byDays: -26 * 7) else { return }
+              let weekStart = BearyBeijingDay.weekStartOf(year: today.year, month: today.month, day: today.day, firstWeekday: Self.regionFirstWeekday()),
+              let windowStart = BearyBeijingDay.shifted(year: weekStart.0, month: weekStart.1, day: weekStart.2, byDays: -26 * 7) else { return }
         // 月份名：每列首日换月时一个，标在该列 x 上；超出右缘的不标（不裁字）。
         var monthLabelIndex = 0
         var previousMonth: Int?
@@ -348,7 +361,7 @@ final class BearyHeatmapView: UIView {
         onSelectDay?(key)
     }
 
-    /// VoiceOver 转子“周”：双指旋转切到“周”后上下滑，逐周跳到每周一。
+    /// VoiceOver 转子“周”：双指旋转切到“周”后上下滑，逐周跳到每周首日。
     private func makeWeekRotor() -> UIAccessibilityCustomRotor {
         UIAccessibilityCustomRotor(name: "周") { [weak self] predicate in
             guard let self else { return nil }
@@ -367,7 +380,7 @@ final class BearyHeatmapView: UIView {
             @unknown default: return nil
             }
             guard (0..<Self.weeks).contains(targetWeek) else { return nil }
-            // 每周一恒为过去或今天，一定可见、可达。
+            // 每周首日恒为过去或今天，一定可见、可达。
             let target = self.dayButtons[targetWeek * Self.daysPerWeek]
             return UIAccessibilityCustomRotorItemResult(targetElement: target, targetRange: nil)
         }
