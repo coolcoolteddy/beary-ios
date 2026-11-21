@@ -1884,63 +1884,52 @@ final class BearyTimelineCell: UITableViewCell {
             footStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
-        if published {
-            // 2026-10-29 改版：足行三项按数量显隐——任一项为 0 就不显示该图标与数字，
-            // 三项全 0 时整行塌掉（footStack 保持隐藏，cardStack 间距自然承接，不留空行）。
-            var footItems: [UIView] = []
-            let likeCount = entry.likeCount ?? 0
-            if likeCount > 0 {
-                // 2026-10-29 Li 定（第 5 项）：自己点过赞的日记，卡片下方爱心
-                // 须按已点赞态上色——此前足行只按计数渲染、一律空心灰，
-                // likedByMe 被忽略；本人日记自点赞同样计入，不得特殊处理成空心。
-                // 纯展示不动：仍无互动入口，只改颜色态。
-                let liked = entry.likedByMe ?? false
-                footItems.append(footItem(iconName: liked ? "icon_heart_fill" : "icon_heart", text: "\(likeCount)", accessibilityName: "点赞", highlighted: liked))
-            }
-            var emoteTotal = 0
-            for emote in entry.emotes ?? [] {
-                emoteTotal += emote.count ?? 0
-            }
-            if emoteTotal > 0 {
-                // 回应数图标：单张熊脸 icon_mood（官方资产，放大核对过：只有熊脸，
-                // 无手臂、无抱抱动作、无道具），不再用 hug 拥抱表情，避免被误读为
-                // “N 个抱抱”。走足项同款 footItem：14pt 图＋13pt 灰字、间距 4，
-                // 模板渲染＋灰 tint，深浅模式自动跟走，无需深色变体重刷。
-                footItems.append(footItem(iconName: "icon_mood", text: "\(emoteTotal)", accessibilityName: "回应"))
-            }
-            let bookmarkCount = entry.bookmarkCount ?? 0
-            if bookmarkCount > 0 {
-                footItems.append(footItem(iconName: "icon_bookmark", text: "\(bookmarkCount)", accessibilityName: "收藏"))
-            }
-            if !footItems.isEmpty {
-                for item in footItems {
-                    footStack.addArrangedSubview(item)
-                }
-                // 足行吸宽 spacer（与 actsStack 的 actsSpacer 同款做法）：
-                // footStack 全宽 321pt，足项本身抗拉伸 required 后，多余宽度
-                // 只能被这个 defaultLow 的空视图吃掉，足项贴左、按本宽显示。
-                // spacer 仍在 footStack 内，prepareForReuse 的全清循环会一并移除，
-                // 不新增清理机制。
-                let footSpacer = UIView()
-                footSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-                footSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-                footStack.addArrangedSubview(footSpacer)
-                footStack.isHidden = false
-            }
-        } else {
-            // TL-3 私密行操作行（2026-10-29 口径）：只剩编辑态文字组（倒计时 + “编辑”）；
-            // 删除已收进卡片右上角 ⋯ 菜单。删除本身不由本页发请求：
-            // 走容器回调，容器按网页 confirmDelete 流程弹“确认删除？/ 删除后会移入回收站，
-            // 30 天内可在「回收站」里恢复。”再调删除接口。
-            updateEditRow(entry: entry)
-            actsStack.isHidden = false
+        // 可见性不限：私密／仅好友／已到期的限时与公开一样出足行（时间线只列本人日记）。
+        // 2026-10-29 改版：足行三项按数量显隐——任一项为 0 就不显示该图标与数字，
+        // 三项全 0 时整行塌掉（footStack 保持隐藏，cardStack 间距自然承接，不留空行）。
+        var footItems: [UIView] = []
+        let likeCount = entry.likeCount ?? 0
+        if likeCount > 0 {
+            // 2026-10-29 Li 定（第 5 项）：自己点过赞的日记，卡片下方爱心
+            // 须按已点赞态上色——此前足行只按计数渲染、一律空心灰，
+            // likedByMe 被忽略；本人日记自点赞同样计入，不得特殊处理成空心。
+            // 纯展示不动：仍无互动入口，只改颜色态。
+            let liked = entry.likedByMe ?? false
+            footItems.append(footItem(iconName: liked ? "icon_heart_fill" : "icon_heart", text: "\(likeCount)", accessibilityName: "点赞", highlighted: liked))
         }
-        // iCity：公开行与私密行共用操作行——公开行在计数足行之外同样出操作行
-        //（只剩编辑态文字组，编辑永久可改；删除走 ⋯ 菜单，公开/私密均可）。
-        if published {
-            updateEditRow(entry: entry)
-            actsStack.isHidden = false
+        var emoteTotal = 0
+        for emote in entry.emotes ?? [] {
+            emoteTotal += emote.count ?? 0
         }
+        if emoteTotal > 0 {
+            // 回应数图标：单张熊脸 icon_mood（官方资产，放大核对过：只有熊脸，
+            // 无手臂、无抱抱动作、无道具），不再用 hug 拥抱表情，避免被误读为
+            // “N 个抱抱”。走足项同款 footItem：14pt 图＋13pt 灰字、间距 4，
+            // 模板渲染＋灰 tint，深浅模式自动跟走，无需深色变体重刷。
+            footItems.append(footItem(iconName: "icon_mood", text: "\(emoteTotal)", accessibilityName: "回应"))
+        }
+        let bookmarkCount = entry.bookmarkCount ?? 0
+        if bookmarkCount > 0 {
+            footItems.append(footItem(iconName: "icon_bookmark", text: "\(bookmarkCount)", accessibilityName: "收藏"))
+        }
+        if !footItems.isEmpty {
+            for item in footItems {
+                footStack.addArrangedSubview(item)
+            }
+            // 足行吸宽 spacer（与 actsStack 的 actsSpacer 同款做法）：
+            // footStack 全宽 321pt，足项本身抗拉伸 required 后，多余宽度
+            // 只能被这个 defaultLow 的空视图吃掉，足项贴左、按本宽显示。
+            // spacer 仍在 footStack 内，prepareForReuse 的全清循环会一并移除，
+            // 不新增清理机制。
+            let footSpacer = UIView()
+            footSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            footSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            footStack.addArrangedSubview(footSpacer)
+            footStack.isHidden = false
+        }
+        // 操作行（编辑态文字组）公开与非公开共用：编辑永久可改；删除走 ⋯ 菜单，公开/私密均可。
+        updateEditRow(entry: entry)
+        actsStack.isHidden = false
     }
 
     /// N7 主图条点按：下标取自 imageView.tag，keys 从 currentEntry 按
@@ -6982,7 +6971,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         let likeCount = entry.likeCount ?? 0
         let emoteTotal = (entry.emotes ?? []).reduce(0) { $0 + ($1.count ?? 0) }
         let bookmarkCount = entry.bookmarkCount ?? 0
-        let hasFootCounts = BearyEphemeral.isEffectivelyPublic(entry) && (likeCount > 0 || emoteTotal > 0 || bookmarkCount > 0)
+        let hasFootCounts = likeCount > 0 || emoteTotal > 0 || bookmarkCount > 0
 
         var height: CGFloat = 6 + 14  // 列顶 + 栈顶
         height += 28   // meta 行（⋯钮 28）
